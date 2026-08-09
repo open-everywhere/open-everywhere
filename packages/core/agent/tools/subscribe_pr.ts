@@ -9,7 +9,7 @@ import { auditToolAction } from "../audit/tool-action.js";
 import { describeTrigger, routineMarker, type Routine } from "../routines/routine.js";
 import { repoAllowed } from "../scm/provider.js";
 import { wrapUntrusted } from "../access/untrusted.js";
-import { noteIngestionDryRun } from "../access/taint-dryrun.js";
+import { noteIngestionVerdict } from "../access/taint-enforcement.js";
 import {
   fetchPullRequestStatus,
   describePrStatus,
@@ -27,7 +27,7 @@ export const MAX_CHECK_INTERVAL_MINUTES = 1440;
 export type SubscribeStopReason = "settled" | "cap";
 
 function prTitleFence(repo: string, number: number, title: string, repoPrivate: boolean | undefined): string {
-  noteIngestionDryRun({ kind: "github", label: "subscribe_pr:title", ...(repoPrivate !== undefined ? { repoPrivate } : {}) }, false);
+  noteIngestionVerdict({ kind: "github", label: "subscribe_pr:title", ...(repoPrivate !== undefined ? { repoPrivate } : {}) }, false);
   return wrapUntrusted(title, { source: `github pr title ${repo}#${number}` });
 }
 

@@ -1,7 +1,7 @@
 import { markUntrustedIngestedThisTurn } from "./taint-signal.js";
 import { capResult } from "./result-cap.js";
 import { noteToolResultLoop } from "./loop-breaker.js";
-import { noteIngestionDryRun } from "./taint-dryrun.js";
+import { decideIngestion } from "./taint-enforcement.js";
 import type { IngestionSource } from "./taint-tiers.js";
 
 export const UNTRUSTED_OPEN = "<untrusted_external_data";
@@ -43,8 +43,9 @@ export function untrustedModelOutput(
 }
 
 export function ingestUntrusted(content: string, opts: UntrustedOpts = {}): string {
-  markUntrustedIngestedThisTurn(opts.ingestion?.kind);
-  noteIngestionDryRun(opts.ingestion, true);
+  if (decideIngestion(opts.ingestion, true)) {
+    markUntrustedIngestedThisTurn(opts.ingestion?.kind);
+  }
   return wrapUntrusted(content, opts);
 }
 

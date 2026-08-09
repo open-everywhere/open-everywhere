@@ -1,5 +1,5 @@
 import { ingestUntrusted } from "../access/untrusted.js";
-import { noteIngestionDryRun } from "../access/taint-dryrun.js";
+import { noteIngestionVerdict } from "../access/taint-enforcement.js";
 import { taintMarkLands } from "../access/taint-signal.js";
 
 export const MAX_MESSAGES = 10;
@@ -40,7 +40,7 @@ export function renderContext(
   }
   if (kept.length === 0) return null;
   const body = `Recent conversation (oldest first), for context:\n${kept.join("\n")}`;
-  noteIngestionDryRun({ kind: "chat-message", label: "context-render" }, taintMarkLands());
+  noteIngestionVerdict({ kind: "chat-message", label: "context-render" }, taintMarkLands());
   const wrapped = ingestUntrusted(body, { source });
   return kept.length === MAX_MESSAGES && opts.readMoreHint ? `${wrapped}\n\n${opts.readMoreHint}` : wrapped;
 }

@@ -8,12 +8,14 @@ import {
   type IngestionSource,
 } from "../agent/access/taint-tiers.js";
 import {
-  beginTaintDryRunTurn,
-  noteIngestionDryRun,
-  registerTaintDryRunSink,
-  currentTaintDryRunSink,
-  type TaintDryRunRow,
-} from "../agent/access/taint-dryrun.js";
+  beginTaintVerdictTurn,
+  decideIngestion,
+  noteIngestionVerdict,
+  registerTaintVerdictSink,
+  currentTaintVerdictSink,
+  taintTierMode,
+  type TaintVerdictRow,
+} from "../agent/access/taint-enforcement.js";
 import { ingestUntrusted, UNTRUSTED_OPEN } from "../agent/access/untrusted.js";
 import { untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
 import { openTaintTurn } from "../agent/hooks/spawn-taint.js";
@@ -103,7 +105,7 @@ for (const kind of INGESTION_KINDS) {
 }
 eq(INGESTION_KINDS.length, 13, "the table has exactly the 13 ruled kinds (a 14th means a design decision, not a drive-by add — the 12th, `aws`, was one: OPE-305; the 13th, `handoff`, was one too: OPE-340)");
 
-console.log("2. the dry run:");
+console.log("2. the enforced seam:");
 
 class FakeSession {
   private readonly store = new Map<string, unknown>();
@@ -136,67 +138,165 @@ function eveContextStorage(): AsyncLocalStorage<unknown> {
   return g[key] as AsyncLocalStorage<unknown>;
 }
 
-const rows: TaintDryRunRow[] = [];
-const restore = currentTaintDryRunSink();
-registerTaintDryRunSink((r) => rows.push(r));
+const rows: TaintVerdictRow[] = [];
+const restore = currentTaintVerdictSink();
+registerTaintVerdictSink((r) => rows.push(r));
 
 await eveContextStorage().run(new FakeSession(), async () => {
   rows.length = 0;
   const out = ingestUntrusted("hello from a colleague", { source: "read_channel:slack", ingestion: { kind: "chat-message", label: "read_channel:slack" } });
-  ok(untrustedIngestedThisTurn() === true, "🔴 THE DRY RUN CHANGES NOTHING: ingestUntrusted STILL taints over a source the table calls trusted");
-  ok(out.includes("hello from a colleague"), "…and still fences the content (the funnel is untouched)");
+  ok(untrustedIngestedThisTurn() === false, "🔴 THE TABLE DECIDES (OPE-324): ingestUntrusted over a source the table calls TRUSTED does NOT taint the turn");
+  ok(out.includes("hello from a colleague"), "…and STILL fences the content — the wrap half is unconditional, only the mark is the table's call");
+  ok(out.includes(UNTRUSTED_OPEN), "…inside the real envelope, not a weakened one");
   eq(rows.length, 1, "one over-taint row");
-  eq(rows[0].divergence, "over-taint", "…classified as over-taint (enforcement would RELAX here)");
-  eq(rows[0].taintsToday, true, "row records what the SITE does today");
-  eq(rows[0].tableTier, "trusted", "row records what the TABLE would do");
+  eq(rows[0].divergence, "over-taint", "…classified as over-taint (enforcement RELAXED here)");
+  eq(rows[0].mode, "enforced", "…in `enforced` mode — the row says which world wrote it, so the kill switch is queryable");
+  eq(rows[0].applied, true, "🔴 …and `applied: true`, which is what distinguishes 'the mark was dropped' from 'the table merely disagreed'");
+  eq(rows[0].taintsToday, true, "row records what the SITE's own pre-flip call did");
+  eq(rows[0].tableTier, "trusted", "row records what the TABLE says");
   eq(rows[0].label, "read_channel:slack", "row carries the site's taint-clean label");
   ok(!JSON.stringify(rows[0]).includes("hello from a colleague"), "🔴 the row carries NO ingested content — names, tiers and reasons only");
 
   for (let i = 0; i < 40; i++) ingestUntrusted(`msg ${i}`, { ingestion: { kind: "chat-message" } });
   eq(rows.length, 1, "40 further reads of the same kind in one turn add NO rows (per-turn dedupe on (kind, divergence))");
+  ok(untrustedIngestedThisTurn() === false, "🔴 …and the 40 deduped reads did not taint either — the dedupe suppresses ROWS, never DECISIONS");
 
   ingestUntrusted("some page", { ingestion: { kind: "notion", label: "read_notion_page" } });
   eq(rows.length, 2, "a different kind in the same turn logs its own row");
   eq(rows[1].divergence, "assumed", "notion with no declared workspace tier: site and table AGREE (both untrusted) but only via the fail-closed default — logged as `assumed`");
   ok(rows[1].assumed, "…and the row says so explicitly");
+  ok(untrustedIngestedThisTurn() === true, "🔴 …and the `assumed` verdict DECIDES: an unvouched Notion workspace still taints — fail-closed survived the flip");
 });
 
 await eveContextStorage().run(new FakeSession(), async () => {
+  ingestUntrusted("a page", { ingestion: { kind: "notion", workspaceTrust: "internal" } });
+  ok(untrustedIngestedThisTurn() === false, "a VOUCHED-internal Notion workspace read does not taint (ratified 2026-08-09)");
+});
+await eveContextStorage().run(new FakeSession(), async () => {
+  ingestUntrusted("an issue", { ingestion: { kind: "linear", workspaceTrust: "internal" } });
+  ok(untrustedIngestedThisTurn() === false, "a VOUCHED-internal Linear workspace read does not taint (ratified 2026-08-09)");
+});
+await eveContextStorage().run(new FakeSession(), async () => {
+  ingestUntrusted("a review body", { ingestion: { kind: "github", repoPrivate: true } });
+  ok(untrustedIngestedThisTurn() === false, "a PRIVATE org repo's PR feedback does not taint — org-authored bytes");
+});
+await eveContextStorage().run(new FakeSession(), async () => {
+  ingestUntrusted("a connector result", { ingestion: { kind: "connector", grantTrust: "internal" } });
+  ok(untrustedIngestedThisTurn() === false, "a connector whose GRANT declares `trust: internal` does not taint — the reviewed-config branch, now with teeth");
+});
+for (const [label, src] of [
+  ["a PUBLIC repo", { kind: "github", repoPrivate: false }],
+  ["a PUBLIC notion workspace", { kind: "notion", workspaceTrust: "public" }],
+  ["an UNDECLARED connector", { kind: "connector" }],
+  ["the open web", { kind: "web" }],
+  ["a webhook payload", { kind: "webhook" }],
+  ["a file upload", { kind: "file-upload" }],
+  ["an image description", { kind: "image-description" }],
+  ["aws CLI output", { kind: "aws" }],
+] as const satisfies readonly (readonly [string, IngestionSource])[]) {
+  await eveContextStorage().run(new FakeSession(), async () => {
+    ingestUntrusted("content", { ingestion: src });
+    ok(untrustedIngestedThisTurn() === true, `${label} STILL taints — enforcement only ever relaxes, and these rows say untrusted`);
+  });
+}
+
+await eveContextStorage().run(new FakeSession(), async () => {
   rows.length = 0;
-  noteIngestionDryRun({ kind: "github", repoPrivate: false, label: "walk_pr" }, false);
+  noteIngestionVerdict({ kind: "github", repoPrivate: false, label: "walk_pr" }, false);
   eq(rows.length, 1, "a fence-only site over a PUBLIC repo logs a row");
-  eq(rows[0].divergence, "under-taint", "…classified as under-taint (enforcement would TIGHTEN here — a live gap until it does)");
-  eq(rows[0].taintsToday, false, "row records that the site does NOT taint today");
-  ok(untrustedIngestedThisTurn() === false, "…and noting it does NOT taint the turn — the dry run only observes");
+  eq(rows[0].divergence, "under-taint", "…classified as under-taint — enforcement WOULD tighten here and deliberately does not");
+  eq(rows[0].taintsToday, false, "row records that the site does NOT taint");
+  eq(rows[0].applied, false, "🔴 …and `applied: false` — the table OBSERVED this site, it did not decide it. That field is the whole difference from an over-taint row");
+  ok(untrustedIngestedThisTurn() === false, "…and noting it does NOT taint the turn — an observation never marks");
 });
 
 await eveContextStorage().run(new FakeSession(), async () => {
   rows.length = 0;
   ingestUntrusted("a page", { ingestion: { kind: "notion", workspaceTrust: "public" } });
   ingestUntrusted("a page", { ingestion: { kind: "web" } });
-  noteIngestionDryRun({ kind: "chat-message" }, false);
+  noteIngestionVerdict({ kind: "chat-message" }, false);
   eq(rows.length, 0, "site and table agreeing on REAL metadata writes nothing (in either direction)");
 });
 
 await eveContextStorage().run(new FakeSession(), async () => {
   rows.length = 0;
   ingestUntrusted("anything", { source: "not wired yet" });
-  eq(rows.length, 0, "an un-wired site logs nothing (absent descriptor ⇒ absent from the dry run)");
-  ok(untrustedIngestedThisTurn() === true, "…and still taints exactly as before");
+  eq(rows.length, 0, "an un-wired site logs nothing (absent descriptor ⇒ absent from the table)");
+  ok(untrustedIngestedThisTurn() === true, "🔴 …and STILL taints unconditionally — an undeclared site is UNGOVERNED, never quietly trusted");
 });
 
 await eveContextStorage().run(new FakeSession(), async () => {
-  registerTaintDryRunSink(() => {
+  registerTaintVerdictSink(() => {
     throw new Error("sink exploded");
   });
   const out = ingestUntrusted("content", { ingestion: { kind: "chat-message" } });
   ok(out.includes("content"), "a THROWING sink never propagates — the ingestion returns normally");
-  ok(untrustedIngestedThisTurn() === true, "…and the taint still landed");
+  ok(untrustedIngestedThisTurn() === false, "🔴 …and the table's TRUSTED verdict still held: an exploding LOG cannot resurrect a mark the table dropped");
 });
+await eveContextStorage().run(new FakeSession(), async () => {
+  registerTaintVerdictSink(() => {
+    throw new Error("sink exploded");
+  });
+  ingestUntrusted("content", { ingestion: { kind: "web" } });
+  ok(untrustedIngestedThisTurn() === true, "…and an exploding log cannot drop a mark the table REQUIRED either");
+});
+registerTaintVerdictSink((r) => rows.push(r));
+
+{
+  const shapes: readonly IngestionSource[] = [
+    ...INGESTION_KINDS.map((kind) => ({ kind }) as IngestionSource),
+    { kind: "github", repoPrivate: true },
+    { kind: "github", repoPrivate: false },
+    { kind: "notion", workspaceTrust: "internal" },
+    { kind: "notion", workspaceTrust: "public" },
+    { kind: "linear", workspaceTrust: "internal" },
+    { kind: "linear", workspaceTrust: "public" },
+    { kind: "connector", grantTrust: "internal" },
+    { kind: "connector", grantTrust: "public" },
+  ];
+  const tightened = shapes.filter((s) => decideIngestion(s, false));
+  eq(tightened, [], "🔴 NO SHAPE TIGHTENS: decideIngestion(src, false) is false for every kind and every metadata branch — enforcement can only ever REMOVE a mark the site would have set");
+  const relaxedWhenTrusted = shapes.filter((s) => classifyIngestion(s).tier === "trusted" && decideIngestion(s, true));
+  eq(relaxedWhenTrusted, [], "every TRUSTED verdict drops the mark at a tainting site");
+  const keptWhenUntrusted = shapes.filter((s) => classifyIngestion(s).tier === "untrusted" && !decideIngestion(s, true));
+  eq(keptWhenUntrusted, [], "every UNTRUSTED verdict keeps it");
+}
+
+{
+  const prior = process.env.OE_TAINT_TIERS;
+  const withMode = async (v: string | undefined, fn: () => Promise<void> | void) => {
+    if (v === undefined) delete process.env.OE_TAINT_TIERS;
+    else process.env.OE_TAINT_TIERS = v;
+    await fn();
+  };
+
+  await withMode(undefined, () => eq(taintTierMode(), "enforced", "UNSET ⇒ enforced — the flip's default is the absence of configuration"));
+  await withMode("enforce", () => eq(taintTierMode(), "enforced", "`enforce` ⇒ enforced"));
+  await withMode("ENFORCED", () => eq(taintTierMode(), "enforced", "`ENFORCED` ⇒ enforced (case-insensitive, and both spellings accepted so a plausible variant cannot silently disarm the flip)"));
+  await withMode("dryrun", () => eq(taintTierMode(), "dryrun", "`dryrun` ⇒ dryrun — the documented revert"));
+  await withMode("1", () => eq(taintTierMode(), "dryrun", "🔴 an UNRECOGNISED value ⇒ dryrun — the OLD, over-tainting behaviour. A typo may only ever fail toward more marking"));
+  await withMode("  ", () => eq(taintTierMode(), "enforced", "whitespace-only reads as unset, not as a value"));
+
+  await withMode("dryrun", async () => {
+    await eveContextStorage().run(new FakeSession(), async () => {
+      rows.length = 0;
+      ingestUntrusted("hello", { source: "read_channel:slack", ingestion: { kind: "chat-message", label: "read_channel:slack" } });
+      ok(untrustedIngestedThisTurn() === true, "🔴 KILL SWITCH: with OE_TAINT_TIERS=dryrun a chat read TAINTS AGAIN — the pre-flip site behaviour, restored without a redeploy");
+      eq(rows.length, 1, "…and the row still lands, so the log does not go dark when the switch is thrown");
+      eq(rows[0].mode, "dryrun", "…stamped `mode: dryrun`, which is how an audit reader tells a disarmed deployment from an enforcing one");
+      eq(rows[0].applied, false, "…and `applied: false`: in dryrun the table never decides");
+    });
+    eq(INGESTION_KINDS.filter((kind) => decideIngestion({ kind }, false)), [], "dryrun cannot tighten either: a fence-only site still does not taint");
+  });
+
+  if (prior === undefined) delete process.env.OE_TAINT_TIERS;
+  else process.env.OE_TAINT_TIERS = prior;
+  eq(taintTierMode(), "enforced", "the switch is restored to the enforcing default for the rest of the suite");
+}
 
 console.log("3. per-TURN, not per-session:");
 
-registerTaintDryRunSink((r) => rows.push(r));
+registerTaintVerdictSink((r) => rows.push(r));
 
 const boundary = (turnId: string | undefined) =>
   openTaintTurn({ session: { turn: { id: turnId }, auth: { current: { attributes: {} } } } } as unknown as Parameters<typeof openTaintTurn>[0]);
@@ -225,21 +325,21 @@ await eveContextStorage().run(new FakeSession(), async () => {
 
 await eveContextStorage().run(new FakeSession(), async () => {
   rows.length = 0;
-  beginTaintDryRunTurn("t1");
-  noteIngestionDryRun({ kind: "github", repoPrivate: false, label: "walk_pr" }, false);
-  noteIngestionDryRun({ kind: "github", repoPrivate: false, label: "walk_pr" }, false);
+  beginTaintVerdictTurn("t1");
+  noteIngestionVerdict({ kind: "github", repoPrivate: false, label: "walk_pr" }, false);
+  noteIngestionVerdict({ kind: "github", repoPrivate: false, label: "walk_pr" }, false);
   eq(rows.length, 1, "under-taint rows dedupe within a turn too");
-  beginTaintDryRunTurn("t2");
-  noteIngestionDryRun({ kind: "github", repoPrivate: false, label: "walk_pr" }, false);
-  eq(rows.length, 2, "…and a new turn re-opens them (beginTaintDryRunTurn is the whole boundary)");
+  beginTaintVerdictTurn("t2");
+  noteIngestionVerdict({ kind: "github", repoPrivate: false, label: "walk_pr" }, false);
+  eq(rows.length, 2, "…and a new turn re-opens them (beginTaintVerdictTurn is the whole boundary)");
 });
 
-beginTaintDryRunTurn("no-context");
-ok(true, "beginTaintDryRunTurn outside a session context is a silent no-op, never a throw");
+beginTaintVerdictTurn("no-context");
+ok(true, "beginTaintVerdictTurn outside a session context is a silent no-op, never a throw");
 
 console.log("4. the declared sites:");
 
-registerTaintDryRunSink((r) => rows.push(r));
+registerTaintVerdictSink((r) => rows.push(r));
 
 const wakeFixture = {
   reason: "mention",
@@ -345,14 +445,17 @@ console.log("5. the plumbed metadata:");
     const text = renderPrFeedbackForModel(digest(true));
     ok(text.includes("please fix the fence"), "the digest still renders + fences every third-party body");
     eq(rows.length, 1, "a private repo logs one row");
-    eq(rows[0].divergence, "over-taint", "…OVER-taint: the table calls a private org repo trusted while get_pr_feedback taints");
+    eq(rows[0].divergence, "over-taint", "…OVER-taint: the table calls a private org repo trusted while get_pr_feedback's pre-flip call tainted");
     eq(rows[0].assumed, false, "🔴 …and it is NOT `assumed` any more — `base.repo.private` rides the PR object fetchPrFeedback already GETs, so the old 'that would need an extra API call' premise was simply wrong");
+    eq(rows[0].applied, true, "…and the table DECIDED here (OPE-324): this is an in-turn read tool, not a render-time observer");
+    ok(untrustedIngestedThisTurn() === false, "🔴 …so reading a PRIVATE repo's review bodies no longer taints the turn — the plumbed fact is what makes that verdict real rather than assumed");
   });
 
   await eveContextStorage().run(new FakeSession(), async () => {
     rows.length = 0;
     renderPrFeedbackForModel(digest(false));
     eq(rows.length, 0, "a PUBLIC repo agrees with the site (both untrusted) on REAL metadata ⇒ silent — before the plumbing this same read logged an `assumed` row");
+    ok(untrustedIngestedThisTurn() === true, "…and it still TAINTS: a public repo's review bodies can be authored by anyone with a fork, and the flip changed nothing there");
   });
 
   await eveContextStorage().run(new FakeSession(), async () => {
@@ -360,6 +463,7 @@ console.log("5. the plumbed metadata:");
     renderPrFeedbackForModel(digest(undefined));
     eq(rows.length, 1, "an ABSENT visibility still logs");
     ok(rows[0].assumed, "…and is still marked `assumed` — the fail-closed default is untouched, it is just no longer the ONLY answer this seam can give");
+    ok(untrustedIngestedThisTurn() === true, "🔴 …and the fail-closed verdict DECIDES: unreadable visibility ⇒ the read taints. `assumed` never resolves upward");
   });
 }
 
@@ -434,7 +538,7 @@ console.log("6. connector grantTrust, end to end:");
   });
 }
 
-registerTaintDryRunSink(restore);
-ok(currentTaintDryRunSink() === restore, "the sink is restorable (test seam behaves)");
+registerTaintVerdictSink(restore);
+ok(currentTaintVerdictSink() === restore, "the sink is restorable (test seam behaves)");
 
 console.log(`✓ taint-tiers: ${n} assertions passed`);

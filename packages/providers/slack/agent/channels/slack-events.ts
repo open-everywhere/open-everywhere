@@ -7,7 +7,7 @@ import {
   bindFrom,
   getConfig,
   ingestUntrusted,
-  noteIngestionDryRun,
+  noteIngestionVerdict,
   taintMarkLands,
   nameDropWakeEnabled,
   engagementTierFor,
@@ -1410,7 +1410,7 @@ export interface ChannelJoinContext {
 export const JOIN_ACK_TEXT = "👋 Just joined — reading up on this channel; back in a moment.";
 
 function joinTranscriptFence(transcript: string): string {
-  noteIngestionDryRun({ kind: "chat-message", label: "slack:channel-join-intro" }, taintMarkLands());
+  noteIngestionVerdict({ kind: "chat-message", label: "slack:channel-join-intro" }, taintMarkLands());
   return ingestUntrusted(transcript, { source: "channel join intro" });
 }
 

@@ -187,7 +187,7 @@ export { ingestUntrustedModelOutput, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "./a
 
 export type { IngestionSource, IngestionKind, IngestionTier, IngestionVerdict } from "./access/taint-tiers.js";
 export { classifyIngestion, INGESTION_KINDS } from "./access/taint-tiers.js";
-export { noteIngestionDryRun } from "./access/taint-dryrun.js";
+export { noteIngestionVerdict } from "./access/taint-enforcement.js";
 export { taintMarkLands } from "./access/taint-signal.js";
 
 export { sourceScopedMount } from "./access/source-scoped-mount.js";

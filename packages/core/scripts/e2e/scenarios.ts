@@ -3193,7 +3193,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S-TAINT-DRYRUN",
-    title: "Taint source-tier DRY RUN: drive the divergent read shapes and assert `taint.dryrun` rows land (opt-in — volume, not doubt)",
+    title: "Taint source-tier table, ENFORCED (OPE-324): drive the divergent read shapes and assert `taint.verdict` rows land, applied (opt-in — volume, not doubt)",
     requires: ["slack"],
     surface: "slack",
     suite: "extended",
@@ -3206,7 +3206,7 @@ export const SCENARIOS: readonly Scenario[] = [
       }
       if (!ctx.auditRead) {
         ctx.skip(
-          "taint.dryrun rows are ONLY assertable over the audit trail — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN. Without it a run cannot tell a missing row " +
+          "taint.verdict rows are ONLY assertable over the audit trail — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN. Without it a run cannot tell a missing row " +
             "from a deployment whose sink was never registered, which is precisely the failure this scenario exists to catch.",
         );
       }
@@ -3219,7 +3219,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const awaitRows = async (kind: string, what: string, timeoutMs = REPLY_WAIT) =>
         await pollOptional(
           async () => {
-            const r = await auditRead({ sinceIso: runStart, actions: ["taint.dryrun"] });
+            const r = await auditRead({ sinceIso: runStart, actions: ["taint.verdict"] });
             const mine = r.filter((e) => (e.detail as { kind?: unknown } | undefined)?.kind === kind);
             return mine.length > 0 ? mine : undefined;
           },
@@ -3231,23 +3231,31 @@ export const SCENARIOS: readonly Scenario[] = [
       await slack.post(
         slack.mention("read this channel's recent messages and tell me, in one line, what the last few were about. Read them properly — don't answer from what's already in front of you."),
       );
-      const chatRows = await awaitRows("chat-message", 'a taint.dryrun row with kind "chat-message" (read_channel over-tainting a source the table calls trusted)');
+      const chatRows = await awaitRows("chat-message", 'a taint.verdict row with kind "chat-message" (read_channel over a source the table calls trusted)');
       ctx.gate(
         chatRows !== undefined,
-        "ARM A (hard): reading the channel produced a `taint.dryrun` audit row for kind `chat-message` — the §C sink is live in prod and the ingestion site's descriptor reaches it",
+        "ARM A (hard): reading the channel produced a `taint.verdict` audit row for kind `chat-message` — the sink is live in prod and the ingestion site's descriptor reaches it",
       );
-      const chat = chatRows![0].detail as { divergence?: unknown; taintsToday?: unknown; tableTier?: unknown; assumed?: unknown; label?: unknown };
+      const chat = chatRows![0].detail as { divergence?: unknown; taintsToday?: unknown; tableTier?: unknown; assumed?: unknown; label?: unknown; mode?: unknown; applied?: unknown };
       ctx.gate(
         chat.divergence === "over-taint" && chat.taintsToday === true && chat.tableTier === "trusted",
-        "ARM A: the row is an OVER-taint — the site taints, the table says trusted (enforcement would RELAX here). This is the exact shape §A's volume complaint is about.",
+        "ARM A: the row is an OVER-taint — the site's pre-flip call tainted, the table says trusted. This is the exact shape §A's volume complaint was about.",
       );
-      ctx.gate(chat.assumed === false, "ARM A: the chat-message verdict is NOT `assumed` — it needs no metadata, so a row here is a real divergence rather than a fail-closed guess");
-      const allDryRun = await auditRead({ sinceIso: runStart, actions: ["taint.dryrun"] });
+      ctx.gate(
+        chat.mode === "enforced",
+        "🔴 ARM A (hard): the row is stamped `mode: \"enforced\"` — the source-tier table is DECIDING on this deployment. `dryrun` here means OE_TAINT_TIERS is set to the kill-switch value in prod env, not that the code regressed",
+      );
+      ctx.gate(
+        chat.applied === true,
+        "🔴 ARM A (hard): `applied: true` — the table's TRUSTED verdict governed this read, i.e. reading the channel did NOT mark the turn as having ingested untrusted content. This is the OPE-324 behaviour change, proven on a real turn rather than in a unit test",
+      );
+      ctx.gate(chat.assumed === false, "ARM A: the chat-message verdict is NOT `assumed` — it needs no metadata, so this is a real verdict rather than a fail-closed guess");
+      const allDryRun = await auditRead({ sinceIso: runStart, actions: ["taint.verdict"] });
       ctx.gate(
         !JSON.stringify(allDryRun).includes(marker),
-        "🔴 CONTENT INVARIANT (hard): the run's channel-content token appears in NO taint.dryrun row — the log carries names, tiers and reasons only, never a byte of what was ingested",
+        "🔴 CONTENT INVARIANT (hard): the run's channel-content token appears in NO taint.verdict row — the log carries names, tiers and reasons only, never a byte of what was ingested",
       );
-      ctx.log(`arm A: ${allDryRun.length} taint.dryrun row(s) so far; kinds = [${kindsOf(allDryRun).join(", ")}]`);
+      ctx.log(`arm A: ${allDryRun.length} taint.verdict row(s) so far; kinds = [${kindsOf(allDryRun).join(", ")}]`);
       await slack.awaitAnyReply(askTs, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
 
       if (ctx.notionAmbient) {
@@ -3258,8 +3266,8 @@ export const SCENARIOS: readonly Scenario[] = [
         } else {
           const since = new Date().toISOString();
           const { discussionId } = await not.createBlockDiscussion(blocks[0], "Open Everywhere — please READ this page's content and summarise it in one line right here.");
-          const notionRows = await awaitRows("notion", 'a taint.dryrun row with kind "notion" (read_notion_page declaring the bound workspace tier)');
-          ctx.gate(notionRows !== undefined, "ARM B: a Notion page read produced a `taint.dryrun` row for kind `notion`");
+          const notionRows = await awaitRows("notion", 'a taint.verdict row with kind "notion" (read_notion_page declaring the bound workspace tier)');
+          ctx.gate(notionRows !== undefined, "ARM B: a Notion page read produced a `taint.verdict` row for kind `notion`");
           const nd = notionRows![0].detail as { assumed?: unknown; divergence?: unknown };
           ctx.log(
             `arm B: notion row divergence=${String(nd.divergence)} assumed=${String(nd.assumed)} — ` +
@@ -3279,8 +3287,8 @@ export const SCENARIOS: readonly Scenario[] = [
         try {
           const before = new Set((await lin.comments(issue.id)).map((c) => c.id));
           const askId = await lin.comment(issue.id, lin.mention("read this issue — its description and comments — and summarise it in one line."));
-          const linearRows = await awaitRows("linear", 'a taint.dryrun row with kind "linear" (read_linear_issue declaring the bound workspace tier)');
-          ctx.gate(linearRows !== undefined, "ARM C: a Linear issue read produced a `taint.dryrun` row for kind `linear`");
+          const linearRows = await awaitRows("linear", 'a taint.verdict row with kind "linear" (read_linear_issue declaring the bound workspace tier)');
+          ctx.gate(linearRows !== undefined, "ARM C: a Linear issue read produced a `taint.verdict` row for kind `linear`");
           ctx.log(`arm C: linear row assumed=${String((linearRows![0].detail as { assumed?: unknown }).assumed)}`);
           await lin.awaitAppReply(issue.id, before.add(askId), { timeoutMs: REPLY_WAIT }).catch(() => undefined);
         } finally {
@@ -3317,13 +3325,13 @@ export const SCENARIOS: readonly Scenario[] = [
           );
           const ghRows = await awaitRows(
             "github",
-            `a taint.dryrun row with kind "github" (expected ${expected} for this fixture)`,
+            `a taint.verdict row with kind "github" (expected ${expected} for this fixture)`,
             900_000,
           );
           if (owesRow) {
             ctx.gate(
               ghRows !== undefined,
-              `ARM D (hard): reading ${ctx.prRepo}#${prNumber} produced a \`taint.dryrun\` row for kind \`github\`. This fixture OWES one — it is ${shape.repoPrivate ? "private with third-party bodies, so get_pr_feedback must over-taint" : "public, so walk_pr must under-taint"} — so an absence is the seam failing to declare its source, not a fixture that had nothing to say`,
+              `ARM D (hard): reading ${ctx.prRepo}#${prNumber} produced a \`taint.verdict\` row for kind \`github\`. This fixture OWES one — it is ${shape.repoPrivate ? "private with third-party bodies, so get_pr_feedback must over-taint" : "public, so walk_pr must under-taint"} — so an absence is the seam failing to declare its source, not a fixture that had nothing to say`,
             );
           } else if (ghRows === undefined) {
             ctx.log(
@@ -3337,7 +3345,7 @@ export const SCENARIOS: readonly Scenario[] = [
             ctx.log(`arm D: ${ghRows.length} github row(s) — ${details.map((d) => `${String(d.divergence)}@${String(d.label)} assumed=${String(d.assumed)}`).join("; ")}`);
             ctx.gate(
               details.every((d) => d.divergence === expected),
-              `ARM D: EVERY \`github\` row carries the one direction this repo's visibility permits (${expected}). The opposite direction on a ${shape.repoPrivate ? "private" : "public"} repo would mean a seam read visibility differently from the table — the exact disagreement the dry run exists to surface before enforcement`,
+              `ARM D: EVERY \`github\` row carries the one direction this repo's visibility permits (${expected}). The opposite direction on a ${shape.repoPrivate ? "private" : "public"} repo would mean a seam read visibility differently from the table — a seam and the table disagreeing about the SAME repository, which post-flip is a live wrong verdict rather than a logged one`,
             );
             ctx.gate(
               details.every((d) => d.assumed === false),
@@ -3352,11 +3360,19 @@ export const SCENARIOS: readonly Scenario[] = [
         );
       }
 
-      const finalRows = await auditRead({ sinceIso: runStart, actions: ["taint.dryrun"] });
-      ctx.log(`S-TAINT-DRYRUN sample: ${finalRows.length} taint.dryrun row(s) across kinds [${kindsOf(finalRows).join(", ")}] since ${runStart}`);
+      const finalRows = await auditRead({ sinceIso: runStart, actions: ["taint.verdict"] });
+      ctx.log(`S-TAINT-DRYRUN sample: ${finalRows.length} taint.verdict row(s) across kinds [${kindsOf(finalRows).join(", ")}] since ${runStart}`);
       ctx.gate(
         finalRows.every((e) => typeof (e.detail as { reason?: unknown } | undefined)?.reason === "string"),
-        "every taint.dryrun row carries the table row's own prose reasoning — a divergence a reviewer cannot read the argument for is not reviewable",
+        "every taint.verdict row carries the table row's own prose reasoning — a divergence a reviewer cannot read the argument for is not reviewable",
+      );
+      const tightened = finalRows.filter((e) => {
+        const d = e.detail as { divergence?: unknown; applied?: unknown } | undefined;
+        return d?.divergence === "under-taint" && d?.applied === true;
+      });
+      ctx.gate(
+        tightened.length === 0,
+        `🔴 DIRECTION INVARIANT (hard): NO row is an under-taint with \`applied: true\` — enforcement never tightened a site. ${tightened.length} row(s) violated it, which would mean a seam started marking content the pre-flip code left clean`,
       );
     },
   },
