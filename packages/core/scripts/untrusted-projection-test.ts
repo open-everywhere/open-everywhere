@@ -338,6 +338,47 @@ function buildSet(defs: Array<Record<string, unknown>>): Record<string, BuiltToo
       ok(untrustedIngestedThisTurn() === true, `connection_search shape check fails CLOSED for ${label} — an eve reshape degrades to over-taint, never under-taint`);
     });
   }
+
+  const { setConnectorTrust } = await import("../agent/access/connector-trust-state.js");
+  const { registerTaintDryRunSink, currentTaintDryRunSink } = await import("../agent/access/taint-dryrun.js");
+  const dryRows: { kind: string; label?: string; tableTier: string; assumed: boolean }[] = [];
+  const priorSink = currentTaintDryRunSink();
+  registerTaintDryRunSink((r) => dryRows.push(r));
+
+  const connectorTool = (name: string) => {
+    const set = buildSet([
+      { name, description: "an mcp tool", inputSchema: { type: "object", properties: {} }, execute: async () => "x" },
+    ]);
+    projectToolSet(set as Record<string, unknown>);
+    return set[name];
+  };
+
+  await inTurn(async () => {
+    setConnectorTrust({ notion: "internal", "acme__forms": "public" });
+    dryRows.length = 0;
+    const out = await connectorTool("notion__search").toModelOutput!({ output: { results: ["hello"] }, toolCallId: "gt-1" });
+    ok(String(out.value).startsWith(UNTRUSTED_OPEN), "a declared-internal connector's result is STILL fenced and still taints — the table is in DRY RUN, so plumbing grantTrust changes the LOG, never the behaviour");
+    ok(untrustedIngestedThisTurn() === true, "…and the turn is still marked, unchanged");
+    const row = dryRows.find((r) => r.label === "notion__search");
+    ok(!!row && row.tableTier === "trusted" && row.assumed === false, "🔴 the dry-run row for a DECLARED-internal connector reads `trusted` and NOT `assumed` — the branch that config could never reach before");
+  });
+
+  await inTurn(async () => {
+    setConnectorTrust({ notion: "internal" });
+    dryRows.length = 0;
+    await connectorTool("linear__issues").toModelOutput!({ output: "x", toolCallId: "gt-2" });
+    const row = dryRows.find((r) => r.label === "linear__issues");
+    ok(!!row && row.tableTier === "untrusted" && row.assumed === true, "an UNDECLARED connector still logs the fail-closed default MARKED `assumed` — silence in config is not an assurance, and one bundle's vouch does not travel to another connector");
+  });
+
+  await inTurn(async () => {
+    dryRows.length = 0;
+    await connectorTool("notion__search").toModelOutput!({ output: "x", toolCallId: "gt-3" });
+    const row = dryRows.find((r) => r.label === "notion__search");
+    ok(!!row && row.assumed === true, "with NOTHING stamped every connector is `assumed` — the fail-closed direction, and the one a resolve failure lands in");
+  });
+
+  registerTaintDryRunSink(priorSink);
 }
 
-console.log(`\n✓ untrusted-projection: ${n} assertions passed (eve drop tripwire, authored restore, connector fence + auth passthrough, provider skip, registration wiring, web_fetch envelope, browser family seam, connection_search status-only no-taint)\n`);
+console.log(`\n✓ untrusted-projection: ${n} assertions passed (eve drop tripwire, authored restore, connector fence + auth passthrough, provider skip, registration wiring, web_fetch envelope, browser family seam, connection_search status-only no-taint, OPE-339 declared grantTrust)\n`);

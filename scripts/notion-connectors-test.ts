@@ -7,6 +7,7 @@ import { loadProviders } from "../agent/access/providers.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
 import { SKILL_CONTENT, NOTION_SCRIPT_SOURCE } from "../agent/plugins/skill-content.js";
 import { resolveAccess, type ResolveRequest } from "@open-everywhere/core/agent/access/resolver.js";
+import { bundleConnectorNames } from "@open-everywhere/core/agent/access/bundle.js";
 import { compileNetworkPolicy } from "@open-everywhere/core/agent/access/egress.js";
 import { resolveHeaders } from "@open-everywhere/core/agent/access/credentials.js";
 
@@ -82,7 +83,7 @@ ok(!dm.reachableHosts.some((h) => h.host === "api.notion.com"), "DM: api.notion.
 const providersByName = new Map(providers.map((p) => [p.name, p]));
 const grantedConnectorNames = new Set<string>();
 for (const b of bundles) {
-  for (const name of b.connectors ?? []) grantedConnectorNames.add(name);
+  for (const name of bundleConnectorNames(b)) grantedConnectorNames.add(name);
   for (const g of b.providers ?? []) {
     const p = providersByName.get(g.provider);
     if (p) grantedConnectorNames.add(p.connection);

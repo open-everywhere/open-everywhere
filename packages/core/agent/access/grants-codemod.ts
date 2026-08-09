@@ -1,4 +1,4 @@
-import { type Binding, type Bundle, type Connection, type HttpMethod, type Scope } from "./bundle.js";
+import { connectorGrantName, type Binding, type Bundle, type Connection, type HttpMethod, type Scope } from "./bundle.js";
 import { HTTP_METHODS, requestingScopeProblem, sameScope, type AccessDelta, type RequestingScope } from "./delta.js";
 import { overlayModuleHeader, unwrapOverlayModule, wrapOverlayModule, type OverlayModuleGrammar } from "./overlay-module.js";
 
@@ -70,7 +70,7 @@ export function parseGrantsFile(value: unknown): GrantsFile {
       }
     }
     if (b.connectors !== undefined && !isStringArray(b.connectors)) {
-      throw new GrantsCodemodError(`grants bundle "${b.name}" connectors must be a string array`);
+      throw new GrantsCodemodError(`grants bundle "${b.name}" connectors must be a string array (a \`{ name, trust }\` declaration is an operator assertion — put it in a code bundle, not the machine-written overlay)`);
     }
     if (b.connections !== undefined) {
       if (!Array.isArray(b.connections)) throw new GrantsCodemodError(`grants bundle "${b.name}" connections must be an array`);
@@ -143,7 +143,7 @@ function canonicalConnection(c: Connection): Record<string, unknown> {
 function canonicalBundle(b: Bundle): Record<string, unknown> {
   const obj: Record<string, unknown> = { ...b };
   if (b.connections) obj.connections = [...b.connections].sort((x, y) => x.id.localeCompare(y.id)).map(canonicalConnection);
-  if (b.connectors) obj.connectors = [...b.connectors].sort();
+  if (b.connectors) obj.connectors = [...b.connectors].sort((x, y) => connectorGrantName(x).localeCompare(connectorGrantName(y)));
   return orderKeys(obj, BUNDLE_KEYS);
 }
 

@@ -2,6 +2,7 @@ import { readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadBundles } from "../agent/access/bundles.js";
+import { bundleConnectorNames } from "@open-everywhere/core/agent/access/bundle.js";
 import { loadProviders } from "../agent/access/providers.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -19,7 +20,7 @@ try {
 const providersByName = new Map(loadProviders().map((p) => [p.name, p]));
 const granted = new Set<string>();
 for (const bundle of loadBundles()) {
-  for (const name of bundle.connectors ?? []) granted.add(name);
+  for (const name of bundleConnectorNames(bundle)) granted.add(name);
   for (const g of bundle.providers ?? []) {
     const provider = providersByName.get(g.provider);
     if (provider) granted.add(provider.connection);

@@ -235,6 +235,85 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
 
 {
   const bundles: Bundle[] = [
+    { name: "declared", connectors: [{ name: "notion", trust: "internal" }] },
+    { name: "bare", connectors: ["linear-mcp"] },
+  ];
+  const bindings: Binding[] = [
+    { bundle: "declared", scope: { level: "domain", domain: "d" } },
+    { bundle: "bare", scope: { level: "domain", domain: "d" } },
+  ];
+  const a = resolveAccess(chan("T1", "C1", ["d"]), bundles, bindings);
+  ok(a.connectors.includes("notion") && a.connectors.includes("linear-mcp"), "a declared `{ name, trust }` grant mounts the same connector a bare slug does — the widening changes the DECLARATION, never the capability");
+  ok(a.connectorTrust["notion"] === "internal", "the declared tier resolves onto EffectiveAccess.connectorTrust, keyed by connection name");
+  ok(!("linear-mcp" in a.connectorTrust), "🔴 a BARE grant contributes NO key — silence is not a declaration, and an absent key is what keeps the table's verdict marked `assumed`");
+  ok(a.connectorTrust["nothing-like-this"] === undefined, "an ungranted connector is absent too (the map is sparse, never a default-filled table)");
+
+  ok(Object.keys(a.connectorTrust).length === 1, "one declaration produces exactly one key — a bundle's vouch cannot leak onto a sibling bundle's connector");
+
+  const other = resolveAccess(chan("T1", "C9"), bundles, [{ bundle: "bare", scope: { level: "org" } }]);
+  ok(other.connectors.includes("linear-mcp") && Object.keys(other.connectorTrust).length === 0, "a scope that resolves only the undeclaring bundle carries an EMPTY declaration map — declarations travel with the binding, not with the deployment");
+
+  const viaPlugin = resolveAccess(
+    chan("T1", "C1", ["d"]),
+    [{ name: "p", plugins: ["acme"] }],
+    [{ bundle: "p", scope: { level: "domain", domain: "d" } }],
+    { acme: { connectors: ["notion"], skills: [], subagents: [] } } as PluginRegistry,
+  );
+  ok(viaPlugin.connectors.includes("notion") && viaPlugin.connectorTrust["notion"] === undefined, "a plugin-granted connector declares nothing — the plugin vocabulary has no trust field, and the resolver must not borrow a same-named raw grant's declaration");
+}
+
+{
+  const bundles: Bundle[] = [
+    { name: "wide", connectors: [{ name: "notion", trust: "internal" }] },
+    { name: "narrow", connectors: [{ name: "notion", trust: "public" }] },
+  ];
+  const a = resolveAccess(chan("T1", "C1"), bundles, [
+    { bundle: "wide", scope: { level: "org" } },
+    { bundle: "narrow", scope: { level: "surface", surface: "slack/T1/C1" } },
+  ]);
+  ok(a.connectorTrust["notion"] === "public", "🔴 internal + public for the SAME connection resolves to public — NOT narrowest-wins, because the two grants describe one global instance rather than choosing between interchangeable credentials");
+  ok(a.warnings.some((w) => w.includes('connector "notion"') && w.includes("contradictory")), "…and it warns: a config that contradicts itself about trust is something an operator has to answer, not something to resolve silently");
+
+  const flipped = resolveAccess(chan("T1", "C1"), bundles, [
+    { bundle: "narrow", scope: { level: "org" } },
+    { bundle: "wide", scope: { level: "surface", surface: "slack/T1/C1" } },
+  ]);
+  ok(flipped.connectorTrust["notion"] === "public", "the contradiction resolves the same way with the bindings swapped — specificity does not get a vote on trust");
+
+  const withBare: Bundle[] = [
+    { name: "wide", connectors: ["notion"] },
+    { name: "narrow", connectors: [{ name: "notion", trust: "internal" }] },
+  ];
+  const mixed = resolveAccess(chan("T1", "C1"), withBare, [
+    { bundle: "wide", scope: { level: "org" } },
+    { bundle: "narrow", scope: { level: "surface", surface: "slack/T1/C1" } },
+  ]);
+  ok(mixed.connectorTrust["notion"] === "internal", "a BARE grant beside a declared one keeps the declaration — silence is the absence of a claim, so it cannot outrank one");
+  ok(!mixed.warnings.some((w) => w.includes("contradictory")), "…and that is not warned about: nothing disagrees");
+}
+
+{
+  throwsWith(
+    () => assertBundlesValid([{ name: "b", connectors: [{ name: "notion", trust: "trusted" } as unknown as { name: string; trust: "internal" }] }]),
+    "declares unknown trust",
+    "an unknown `trust` value is a boot error, not a silently-undeclared grant",
+  );
+  throwsWith(
+    () => assertBundlesValid([{ name: "b", connectors: [{ trust: "internal" } as unknown as { name: string; trust: "internal" }] }]),
+    "neither a slug string nor",
+    "a grant object with no name is rejected by shape",
+  );
+  throwsWith(
+    () => assertBundlesValid([{ name: "b", connectors: ["notion", { name: "notion", trust: "public" }] }]),
+    'grants connector "notion" more than once',
+    "🔴 the duplicate check spans BOTH spellings — `\"notion\"` beside a declared `notion` is the self-contradiction 'declares nothing' vs 'declares public', not two grants",
+  );
+  assertBundlesValid([{ name: "b", connectors: ["a", { name: "b", trust: "internal" }, { name: "c", trust: "public" }] }]);
+  ok(true, "a mixed bare/declared list with distinct names is valid");
+}
+
+{
+  const bundles: Bundle[] = [
     { name: "svc", connectors: ["notion"] },
     { name: "mine", connectors: ["my-gmail"] },
   ];

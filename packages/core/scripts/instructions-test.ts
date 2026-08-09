@@ -23,6 +23,7 @@ const base: EffectiveAccess = {
   domains: [],
   connections: [],
   connectorCredentials: {},
+  connectorTrust: {},
   reachableHosts: [],
   repos: [],
   awsRoles: [], approvers: [],

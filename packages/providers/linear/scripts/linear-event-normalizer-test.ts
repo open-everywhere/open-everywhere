@@ -90,6 +90,7 @@ function accessIn(...domains: string[]): EffectiveAccess {
     skills: [],
     subagents: [],
     connectors: [],
+    connectorTrust: {},
     connectorCredentials: {},
     instructionStack: [],
     warnings: [],

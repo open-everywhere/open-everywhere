@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
+import { bundleConnectorNames } from "../access/bundle.js";
 import { getConfig } from "../access/config.js";
 import { resolveAccessFor } from "../access/request.js";
 import { resolveSkillDomainDetailed } from "../skills/domain-skills.js";
@@ -71,7 +72,7 @@ export default defineTool({
         awsRoles: (b.awsRoles ?? [])
           .filter((r) => effectiveArns.has(r.roleArn))
           .map((r) => ({ roleArn: r.roleArn, allow: r.allow })),
-        connectors: (b.connectors ?? []).filter((c) => effectiveConnectors.has(c)),
+        connectors: bundleConnectorNames(b).filter((c) => effectiveConnectors.has(c)),
       }))
       .filter((g) => g.awsRoles.length > 0 || g.connectors.length > 0);
 

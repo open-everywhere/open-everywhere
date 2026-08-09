@@ -1,4 +1,5 @@
-import type { AwsRoleGrant, Binding, Bundle, Connection, HttpMethod, Scope } from "./bundle.js";
+import type { AwsRoleGrant, Binding, Bundle, Connection, ConnectorTrust, HttpMethod, Scope } from "./bundle.js";
+import { connectorGrantName, connectorGrantTrust } from "./bundle.js";
 import type { OperatorApprover } from "./approver-chain.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { isLinkSetRef, parseLinkSetRef } from "../identity/link-set-ref.js";
@@ -45,6 +46,7 @@ export interface EffectiveAccess {
   readonly skills: readonly string[];
   readonly subagents: readonly string[];
   readonly connectors: readonly string[];
+  readonly connectorTrust: Readonly<Record<string, ConnectorTrust>>;
   readonly connectorCredentials: Readonly<Record<string, ResolvedConnectorCredential>>;
   readonly instructionStack: readonly InstructionLayer[];
   readonly warnings: readonly string[];
@@ -237,11 +239,34 @@ export function resolveAccess(
 
   const connectors = [
     ...new Set([
-      ...ordered.flatMap(({ bundle }) => bundle.connectors ?? []),
+      ...ordered.flatMap(({ bundle }) => (bundle.connectors ?? []).map(connectorGrantName)),
       ...pluginConnectors,
       ...providerConnectors,
     ]),
   ].sort();
+
+  const declaredByName = new Map<string, Set<ConnectorTrust>>();
+  for (const { bundle } of ordered) {
+    for (const grant of bundle.connectors ?? []) {
+      const declared = connectorGrantTrust(grant);
+      if (declared === undefined) continue;
+      const name = connectorGrantName(grant);
+      const set = declaredByName.get(name) ?? new Set<ConnectorTrust>();
+      set.add(declared);
+      declaredByName.set(name, set);
+    }
+  }
+  const connectorTrust: Record<string, ConnectorTrust> = {};
+  for (const [name, declared] of [...declaredByName.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    if (declared.size > 1) {
+      warnings.push(
+        `connector "${name}" is declared BOTH \`trust: "internal"\` and \`trust: "public"\` by bundles bound to this scope — an Eve connection is one global instance, so these are contradictory claims about the same thing; resolving to "public" (fail-closed). Make the declarations agree.`,
+      );
+      connectorTrust[name] = "public";
+      continue;
+    }
+    connectorTrust[name] = [...declared][0]!;
+  }
 
   const instructionStack: InstructionLayer[] = ordered
     .filter(({ bundle }) => bundle.instructions && bundle.instructions.trim().length > 0)
@@ -302,6 +327,7 @@ export function resolveAccess(
     skills,
     subagents,
     connectors,
+    connectorTrust,
     connectorCredentials,
     instructionStack,
     warnings,

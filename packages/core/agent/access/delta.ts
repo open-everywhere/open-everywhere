@@ -1,4 +1,4 @@
-import { SURFACE_KEY, type Binding, type Bundle, type Connection, type HttpMethod } from "./bundle.js";
+import { SURFACE_KEY, bundleConnectorNames, type Binding, type Bundle, type Connection, type HttpMethod } from "./bundle.js";
 import { DIRECTORY_GROUP_PREFIX, type Group } from "../identity/groups.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 import { tenantRungRemedy } from "./tenant-admission.js";
@@ -95,7 +95,7 @@ function isHttpMethod(v: string): v is HttpMethod {
 }
 
 export function definedConnectors(bundles: readonly Bundle[]): readonly string[] {
-  return [...new Set(bundles.flatMap((b) => b.connectors ?? []))].sort();
+  return [...new Set(bundles.flatMap((b) => bundleConnectorNames(b)))].sort();
 }
 
 export function scopeWhere(scope: RequestingScope): string {

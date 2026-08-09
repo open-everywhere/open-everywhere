@@ -43,6 +43,29 @@ export interface Connection {
   readonly authorizationDetails?: readonly CredentialAuthorizationDetail[];
 }
 
+export type ConnectorTrust = "internal" | "public";
+
+export interface ConnectorGrant {
+  readonly name: string;
+  readonly trust: ConnectorTrust;
+}
+
+export type ConnectorGrantSpec = string | ConnectorGrant;
+
+const KNOWN_CONNECTOR_TRUST: ReadonlySet<string> = new Set<ConnectorTrust>(["internal", "public"]);
+
+export function connectorGrantName(grant: ConnectorGrantSpec): string {
+  return typeof grant === "string" ? grant : grant.name;
+}
+
+export function connectorGrantTrust(grant: ConnectorGrantSpec): ConnectorTrust | undefined {
+  return typeof grant === "string" ? undefined : grant.trust;
+}
+
+export function bundleConnectorNames(bundle: Pick<Bundle, "connectors">): readonly string[] {
+  return (bundle.connectors ?? []).map(connectorGrantName);
+}
+
 export interface ConnectorOpGating {
   readonly connector: string;
   readonly gated?: readonly string[];
@@ -60,7 +83,7 @@ export interface Bundle {
   readonly name: string;
   readonly title?: string;
   readonly connections?: readonly Connection[];
-  readonly connectors?: readonly string[];
+  readonly connectors?: readonly ConnectorGrantSpec[];
   readonly connectorOps?: readonly ConnectorOpGating[];
   readonly providers?: readonly ProviderGrant[];
   readonly repos?: readonly string[];
@@ -130,7 +153,20 @@ export function assertBundlesValid(bundles: readonly Bundle[]): void {
     }
     bad.push(...broadHostProblems(b.name, "domains", b.domains ?? []));
     const connectors = new Set<string>();
-    for (const name of b.connectors ?? []) {
+    for (const grant of b.connectors ?? []) {
+      if (typeof grant !== "string") {
+        if (grant === null || typeof grant !== "object" || typeof (grant as ConnectorGrant).name !== "string" || (grant as ConnectorGrant).name.trim() === "") {
+          bad.push(`  bundle "${b.name}" has a connector grant that is neither a slug string nor { name, trust } — got ${JSON.stringify(grant)}`);
+          continue;
+        }
+        if (!KNOWN_CONNECTOR_TRUST.has((grant as ConnectorGrant).trust)) {
+          bad.push(
+            `  bundle "${b.name}" connector "${(grant as ConnectorGrant).name}" declares unknown trust ${JSON.stringify((grant as ConnectorGrant).trust)} — known: ${[...KNOWN_CONNECTOR_TRUST].map((t) => JSON.stringify(t)).join(", ")} (omit the field entirely to declare nothing)`,
+          );
+          continue;
+        }
+      }
+      const name = connectorGrantName(grant);
       if (connectors.has(name)) bad.push(`  bundle "${b.name}" grants connector "${name}" more than once — remove the duplicate`);
       connectors.add(name);
     }

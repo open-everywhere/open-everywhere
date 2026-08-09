@@ -23,6 +23,9 @@ import { formatTaskResultDelta } from "../agent/access/task-result-delta.js";
 import { subscribePrPrompt } from "../agent/tools/subscribe_pr.js";
 import { renderPrFeedbackForModel } from "../agent/scm/pr-feedback.js";
 import { declaredWorkspaceTrust, defineSurface, registerSurfaces, _resetSurfacesForTest } from "../agent/identity/trust.js";
+import { resolveAccess } from "../agent/access/resolver.js";
+import type { Binding, Bundle } from "../agent/access/bundle.js";
+import { setConnectorTrust, declaredConnectorTrust, declaredTrustForToolName } from "../agent/access/connector-trust-state.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -374,6 +377,61 @@ console.log("5. the plumbed metadata:");
   );
   _resetSurfacesForTest();
   eq(tier({ kind: "notion", workspaceTrust: declaredWorkspaceTrust("notion/ws1") }), "untrusted", "…and an undefined tier flows into the table as the fail-closed answer, unchanged");
+}
+
+console.log("6. connector grantTrust, end to end:");
+{
+  const bundles: Bundle[] = [
+    { name: "vouched", connectors: [{ name: "notion", trust: "internal" }] },
+    { name: "silent", connectors: ["linear-mcp"] },
+    { name: "declared-public", connectors: [{ name: "acme-forms", trust: "public" }] },
+  ];
+  const bindings: Binding[] = [
+    { bundle: "vouched", scope: { level: "domain", domain: "d" } },
+    { bundle: "silent", scope: { level: "domain", domain: "d" } },
+    { bundle: "declared-public", scope: { level: "domain", domain: "d" } },
+  ];
+  const access = resolveAccess(
+    { mode: "channel", platform: "slack", workspace: "T1", channel: "C1", domains: ["d"] },
+    bundles,
+    bindings,
+  );
+
+  eq(declaredConnectorTrust("notion"), undefined, "with NOTHING stamped (no eve context) the declaration is undefined — fail-closed, and setConnectorTrust below is what changes that");
+
+  await eveContextStorage().run(new FakeSession(), async () => {
+    setConnectorTrust(access.connectorTrust);
+
+    eq(declaredConnectorTrust("notion"), "internal", "the resolved declaration reaches the seam through the session stamp");
+    eq(declaredTrustForToolName("notion__search"), "internal", "…and resolves from the eve-mounted `<connection>__<tool>` name the projection seam actually holds");
+    const declared = classifyIngestion({ kind: "connector", label: "notion__search", grantTrust: declaredTrustForToolName("notion__search") });
+    eq(declared.tier, "trusted", "🔴 a connector whose grant declares `trust: internal` classifies TRUSTED — the row's config branch is reachable for the first time");
+    eq(declared.assumed, false, "…and NOT `assumed`: the verdict came from a declaration, not from the fail-closed default");
+
+    eq(declaredTrustForToolName("linear-mcp__issues"), undefined, "a BARE grant declares nothing — the stamp has no key for it");
+    const silent = classifyIngestion({ kind: "connector", label: "linear-mcp__issues", grantTrust: declaredTrustForToolName("linear-mcp__issues") });
+    eq(silent.tier, "untrusted", "…so it still falls to the ruled default (public/untrusted), unchanged");
+    ok(silent.assumed, "…and is still MARKED assumed — which is what lets the dry-run log say 'this deployment never declared' rather than 'this deployment declared public'");
+
+    const publicDecl = classifyIngestion({ kind: "connector", label: "acme-forms__submit", grantTrust: declaredTrustForToolName("acme-forms__submit") });
+    eq(publicDecl.tier, "untrusted", "a declared `trust: public` connector is untrusted");
+    eq(publicDecl.assumed, false, "🔴 …but NOT assumed — same tier as silence, different claim, and only the log can tell them apart");
+
+    eq(declaredTrustForToolName("acme-forms__submit"), "public", "each connector answers with its OWN bundle's declaration");
+    eq(declaredConnectorTrust("something-ungranted"), undefined, "an unknown connection name is undefined, never the map's first/any value");
+    eq(declaredTrustForToolName("connection_search"), undefined, "🔴 `connection_search` matches NO declaration — its result aggregates several connections, so no single grant may speak for it");
+  });
+
+  await eveContextStorage().run(new FakeSession(), async () => {
+    eq(declaredConnectorTrust("notion"), undefined, "a SECOND session carries no declaration from the first — the carriage is a per-session slot, not a module global");
+  });
+
+  await eveContextStorage().run(new FakeSession(), async () => {
+    setConnectorTrust({ acme: "internal", "acme__search": "public" });
+    eq(declaredTrustForToolName("acme__search__query"), "public", "🔴 LONGEST declared prefix wins — a plugin connector named `acme__search` keeps its own declaration instead of inheriting `acme`'s");
+    eq(declaredTrustForToolName("acme__list"), "internal", "…and a tool that really does belong to `acme` still resolves `acme`'s declaration");
+    eq(declaredTrustForToolName("acmelike__x"), undefined, "the match requires the `__` separator — a name that merely starts with the same letters is not the same connection");
+  });
 }
 
 registerTaintDryRunSink(restore);

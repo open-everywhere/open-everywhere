@@ -1,3 +1,4 @@
+import { connectorGrantName } from "../access/bundle.js";
 import type { Binding, Bundle, Scope } from "../access/bundle.js";
 import { overlayModuleHeader, unwrapOverlayModule, wrapOverlayModule, type OverlayModuleGrammar } from "../access/overlay-module.js";
 import type { Domain } from "./domain.js";
@@ -163,7 +164,7 @@ export function parseAgentsFile(value: unknown): AgentsFile {
       throw new AgentsCodemodError(`every agents bundle needs an "agent:"-prefixed name (got: ${JSON.stringify(isRecord(b) ? b.name : b)})`);
     }
     refuseUnknownFields(`agents bundle "${b.name}"`, b, BUNDLE_FIELDS);
-    if (b.connectors !== undefined && !isStringArray(b.connectors)) throw new AgentsCodemodError(`agents bundle "${b.name}" connectors must be a string array`);
+    if (b.connectors !== undefined && !isStringArray(b.connectors)) throw new AgentsCodemodError(`agents bundle "${b.name}" connectors must be a string array (a \`{ name, trust }\` declaration is an operator assertion — put it in a code bundle)`);
     if (b.instructions !== undefined && typeof b.instructions !== "string") throw new AgentsCodemodError(`agents bundle "${b.name}" instructions must be a string`);
     bundles.push(b as unknown as Bundle);
   }
@@ -243,7 +244,7 @@ function canonicalSilo(s: MemorySilo): Record<string, unknown> {
 
 function canonicalBundle(b: Bundle): Record<string, unknown> {
   const obj: Record<string, unknown> = { ...b };
-  if (b.connectors) obj.connectors = [...b.connectors].sort();
+  if (b.connectors) obj.connectors = [...b.connectors].sort((x, y) => connectorGrantName(x).localeCompare(connectorGrantName(y)));
   return orderKeys(obj, BUNDLE_KEYS);
 }
 
