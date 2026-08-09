@@ -613,6 +613,7 @@ export interface OperationalStore {
   putStoredCredential(org: string, rec: StoredCredentialRow): Promise<void>;
   getStoredCredential(org: string, ref: string): Promise<StoredCredentialRow | null>;
   deleteStoredCredential(org: string, ref: string): Promise<boolean>;
+  listStoredCredentialRefs(org: string): Promise<readonly string[]>;
 
   putGitHubInstallation(org: string, rec: GitHubInstallationRow): Promise<void>;
   deleteGitHubInstallation(org: string, owner: string): Promise<boolean>;

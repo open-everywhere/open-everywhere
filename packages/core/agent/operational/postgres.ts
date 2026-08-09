@@ -1957,6 +1957,11 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return rows.length > 0;
     },
 
+    async listStoredCredentialRefs(org) {
+      const { rows } = await client.query("SELECT ref FROM stored_credential WHERE org_id = $1 ORDER BY ref", [org]);
+      return (rows as { ref: string }[]).map((r) => r.ref);
+    },
+
     async putGitHubInstallation(org, rec) {
       await client.query(
         `INSERT INTO github_installation (org_id, owner, installation_id, account_type, repository_selection, updated_at)

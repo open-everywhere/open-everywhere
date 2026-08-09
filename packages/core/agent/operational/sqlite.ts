@@ -1584,6 +1584,11 @@ export const sqliteOperationalStore: OperationalStore = {
     return getDb().prepare("DELETE FROM stored_credential WHERE org_id = ? AND ref = ?").run(org, ref).changes > 0;
   },
 
+  async listStoredCredentialRefs(org) {
+    const rows = getDb().prepare("SELECT ref FROM stored_credential WHERE org_id = ? ORDER BY ref").all(org) as { ref: string }[];
+    return rows.map((r) => r.ref);
+  },
+
   async putGitHubInstallation(org, rec) {
     getDb()
       .prepare(
