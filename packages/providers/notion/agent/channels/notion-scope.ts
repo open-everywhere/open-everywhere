@@ -99,6 +99,22 @@ export function notionScopeRefusal(pageId: string, verdict: NotionScopeVerdict):
   );
 }
 
+export function notionPageOrBlockRefusal(id: string, verdict: NotionScopeVerdict, resolvedPage: string | null): string {
+  if (resolvedPage) {
+    const scope = verdict.callerDomain ? `domain "${verdict.callerDomain}"` : "this session's";
+    return (
+      `Notion id "${id}" resolved to its parent page "${resolvedPage}", but that page is not in ${scope} read scope either ` +
+      `(${verdict.reason}). Add "${resolvedPage}" to the domain's \`channels\` as \`notion/<workspace>/<page>\`, or claim the ` +
+      "workspace in `containers`, to grant it."
+    );
+  }
+  return (
+    `${notionScopeRefusal(id, verdict)} If "${id}" is a discussion/block id rather than a page id, this looks like a block id ` +
+    "— automatic resolution to its parent page did not succeed (not a block, no API access, or the hop limit), so try passing " +
+    "its parent page id directly."
+  );
+}
+
 export async function assertNotionPageAllowed(
   ctx: BindableContext,
   pageId: string,
@@ -122,6 +138,7 @@ async function auditNotionReadRefusal(
   reason: string,
   verdict: { readonly callerDomain?: string; readonly targetDomain?: string },
   deps?: NotionScopeDeps,
+  resolvedPage?: string | null,
 ): Promise<void> {
   const partition = resolvePartition(ctx);
   const principalId = bindFrom(ctx).principalId;
@@ -138,8 +155,29 @@ async function auditNotionReadRefusal(
       callerDomain: verdict.callerDomain ?? null,
       targetDomain: verdict.targetDomain ?? null,
       callerSurfaceKey: partition.surfaceKey,
+      ...(resolvedPage !== undefined ? { resolvedPage } : {}),
     },
   });
+}
+
+interface NotionResolveOutcome {
+  readonly allowed: boolean;
+  readonly verdict: NotionScopeVerdict;
+  readonly resolvedPage?: string | null;
+}
+
+async function resolveNotionReadTarget(
+  callerSurfaceKey: string,
+  requestedId: string,
+  domains: readonly Domain[],
+  resolveOwningPage: (id: string) => Promise<string | undefined>,
+): Promise<NotionResolveOutcome> {
+  const direct = notionReadScope(callerSurfaceKey, requestedId, domains);
+  if (direct.allowed) return { allowed: true, verdict: direct };
+  const owning = await resolveOwningPage(requestedId);
+  if (!owning) return { allowed: false, verdict: direct, resolvedPage: null };
+  const viaPage = notionReadScope(callerSurfaceKey, owning, domains);
+  return { allowed: viaPage.allowed, verdict: viaPage, resolvedPage: owning };
 }
 
 export async function assertNotionBlockAllowed(
@@ -150,15 +188,33 @@ export async function assertNotionBlockAllowed(
   deps?: NotionScopeDeps,
 ): Promise<void> {
   const partition = resolvePartition(ctx);
-  const direct = notionReadScope(partition.surfaceKey, blockId, domains);
-  if (direct.allowed) return;
-  const owning = await resolveOwningPage(blockId);
-  if (owning) {
-    const viaPage = notionReadScope(partition.surfaceKey, owning, domains);
-    if (viaPage.allowed) return;
-    await auditNotionReadRefusal(ctx, blockId, `block:${viaPage.reason}`, viaPage, deps);
-    throw new ChannelScopeError(notionBlockRefusal(blockId, viaPage.callerDomain));
+  const res = await resolveNotionReadTarget(partition.surfaceKey, blockId, domains, resolveOwningPage);
+  if (res.allowed) return;
+  if (res.resolvedPage) {
+    await auditNotionReadRefusal(ctx, blockId, `block:${res.verdict.reason}`, res.verdict, deps, res.resolvedPage);
+  } else {
+    await auditNotionReadRefusal(ctx, blockId, "block-unresolvable", res.verdict, deps);
   }
-  await auditNotionReadRefusal(ctx, blockId, "block-unresolvable", direct, deps);
-  throw new ChannelScopeError(notionBlockRefusal(blockId, direct.callerDomain));
+  throw new ChannelScopeError(notionBlockRefusal(blockId, res.verdict.callerDomain));
+}
+
+export async function assertNotionPageAllowedOrResolveBlock(
+  ctx: BindableContext,
+  requestedId: string,
+  domains: readonly Domain[],
+  resolveOwningPage: (id: string) => Promise<string | undefined>,
+  deps?: NotionScopeDeps,
+): Promise<string> {
+  const partition = resolvePartition(ctx);
+  const res = await resolveNotionReadTarget(partition.surfaceKey, requestedId, domains, resolveOwningPage);
+  if (res.allowed) return res.resolvedPage ?? requestedId;
+  await auditNotionReadRefusal(
+    ctx,
+    requestedId,
+    res.resolvedPage ? `page-via-block:${res.verdict.reason}` : "page-block-unresolvable",
+    res.verdict,
+    deps,
+    res.resolvedPage ?? null,
+  );
+  throw new ChannelScopeError(notionPageOrBlockRefusal(requestedId, res.verdict, res.resolvedPage ?? null));
 }

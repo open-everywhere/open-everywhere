@@ -1,7 +1,7 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { readNotionPage, resolveNotionApiKey } from "../channels/notion-api.js";
-import { assertNotionPageAllowed } from "../channels/notion-scope.js";
+import { readNotionPage, resolveBlockOwningPage, resolveNotionApiKey } from "../channels/notion-api.js";
+import { assertNotionPageAllowed, assertNotionPageAllowedOrResolveBlock } from "../channels/notion-scope.js";
 import {
   ingestUntrustedModelOutput,
   assertTurnSurface,
@@ -39,10 +39,17 @@ export const readNotionPageEntry = defineTool({
         }),
         async execute(input, ctx2) {
           assertTurnSurface(ctx2 as BindableContext, "notion");
-          const page = input.page ?? bindFrom(ctx2 as BindableContext).surface;
-          if (!page) throw new Error("No Notion page id available for this session — pass `page` explicitly.");
-          await assertNotionPageAllowed(ctx2 as BindableContext, page, getConfig().loadDomains());
+          const requestedPage = input.page ?? bindFrom(ctx2 as BindableContext).surface;
+          if (!requestedPage) throw new Error("No Notion page id available for this session — pass `page` explicitly.");
+          const domains = getConfig().loadDomains();
           const apiKey = await resolveNotionApiKey();
+          let page: string;
+          if (apiKey) {
+            page = await assertNotionPageAllowedOrResolveBlock(ctx2 as BindableContext, requestedPage, domains, (id) => resolveBlockOwningPage(id, { apiKey }));
+          } else {
+            await assertNotionPageAllowed(ctx2 as BindableContext, requestedPage, domains);
+            page = requestedPage;
+          }
           if (!apiKey) throw new Error("NOTION_CHANNEL_API_KEY is not set — cannot read the page.");
           const res = await readNotionPage(page, { apiKey, maxChars: MAX_CHARS, maxBlocks: MAX_BLOCKS });
           let workspaceTrust: "internal" | undefined;

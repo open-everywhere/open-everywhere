@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   assertNotionBlockAllowed,
   assertNotionPageAllowed,
+  assertNotionPageAllowedOrResolveBlock,
   canonicalNotionId,
   notionPageDomain,
   notionReadScope,
@@ -165,6 +166,56 @@ const ctxFor = (page: string, ws = WS): BindableContext =>
     { audit },
   );
   ok(rows.length === 0 && lookups === 0, "a page-level anchor is admitted by id alone (no parent lookup)");
+}
+
+{
+  const rows: Array<{ detail?: Record<string, unknown> }> = [];
+  const audit = async (e: { detail?: Record<string, unknown> }) => void rows.push(e);
+  const OWN_BLOCK = "33333333-1111-4111-8111-333333333333";
+  const FOREIGN_BLOCK = "44444444-2222-4222-8222-444444444444";
+  const UNRESOLVABLE = "55555555-9999-4999-8999-555555555555";
+  const owner = async (id: string): Promise<string | undefined> =>
+    id === OWN_BLOCK ? PAGE_A2 : id === FOREIGN_BLOCK ? PAGE_B : undefined;
+
+  const resolved = await assertNotionPageAllowedOrResolveBlock(ctxFor(PAGE_A), OWN_BLOCK, DOMAINS, owner, { audit });
+  ok(resolved === PAGE_A2, "a block whose owning page is in the domain resolves to that PAGE id, not the block id");
+  ok(rows.length === 0, "…and admits silently, same as a directly-passed rostered page");
+
+  rows.length = 0;
+  let lookups = 0;
+  const direct = await assertNotionPageAllowedOrResolveBlock(
+    ctxFor(PAGE_A),
+    PAGE_A2,
+    DOMAINS,
+    async (id) => {
+      lookups++;
+      return owner(id);
+    },
+    { audit },
+  );
+  ok(direct === PAGE_A2 && lookups === 0, "a directly-rostered page id is admitted by id alone (no parent lookup)");
+
+  rows.length = 0;
+  await assert.rejects(
+    () => assertNotionPageAllowedOrResolveBlock(ctxFor(PAGE_A), UNRESOLVABLE, DOMAINS, owner, { audit }),
+    (err: unknown) => {
+      ok(err instanceof ChannelScopeError, "an unresolvable id is refused with ChannelScopeError");
+      ok((err as Error).message.includes("block id"), "the refusal names the block-id possibility (residual-arm wording)");
+      return true;
+    },
+    "an unresolvable id (not a block Notion can place) is refused",
+  );
+  ok(rows.length === 1 && rows[0]!.detail?.reason === "page-block-unresolvable", "the unresolvable refusal is audited under its own reason");
+  ok(rows[0]!.detail?.target === UNRESOLVABLE && rows[0]!.detail?.resolvedPage === null, "the row records the ORIGINAL id and resolvedPage:null (attempted, found nothing)");
+
+  rows.length = 0;
+  await assert.rejects(
+    () => assertNotionPageAllowedOrResolveBlock(ctxFor(PAGE_A), FOREIGN_BLOCK, DOMAINS, owner, { audit }),
+    ChannelScopeError,
+    "a block owned by ANOTHER domain's page stays refused — resolution is not a bypass",
+  );
+  ok(rows.length === 1 && rows[0]!.detail?.reason === "page-via-block:cross-domain", "…audited as a page-via-block cross-domain");
+  ok(rows[0]!.detail?.target === FOREIGN_BLOCK && rows[0]!.detail?.resolvedPage === PAGE_B, "the row shows the HOP: the original id AND the page it resolved to");
 }
 
 {
