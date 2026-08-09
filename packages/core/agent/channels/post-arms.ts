@@ -3,8 +3,10 @@ import type { ReplyTarget } from "./reply-post.js";
 import type { UnifiedWakeOrigin } from "./unified-window.js";
 import type { UnifiedReplyDeps } from "./unified-reply.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
+import { soleAdmittedTenantFromConfig } from "../access/tenant-admission.js";
+import { appendAudit } from "../audit/audit.js";
 import { expandLinkSet } from "../identity/link-store.js";
-import { tryPrincipalKey } from "../identity/principal-key.js";
+import { isTenantScopedPlatform, tryPrincipalKey } from "../identity/principal-key.js";
 import type { LinkedAccount } from "../identity/link-store.js";
 
 export interface TargetResolveBag {
@@ -22,6 +24,25 @@ export interface DirectMessageDelivery {
 export interface DirectMessageRequest {
   readonly principalId: string;
   readonly text: string;
+}
+
+export const DM_WORKSPACE_UNREACHABLE_REASON = "workspace-unreachable";
+
+export type DmWorkspaceReachability =
+  | { readonly reachable: true }
+  | { readonly reachable: false; readonly targetTenant: string; readonly armTenant: string };
+
+export function classifyDmWorkspaceReachability(platform: string, targetTenant: string | undefined, armTenant: string | undefined): DmWorkspaceReachability {
+  if (!isTenantScopedPlatform(platform)) return { reachable: true };
+  const target = typeof targetTenant === "string" ? targetTenant.trim() : "";
+  if (target.length === 0) return { reachable: true };
+  if (armTenant === undefined) return { reachable: true };
+  if (armTenant === target) return { reachable: true };
+  return { reachable: false, targetTenant: target, armTenant };
+}
+
+export function dmWorkspaceReachableFromConfig(platform: string, targetTenant: string | undefined): DmWorkspaceReachability {
+  return classifyDmWorkspaceReachability(platform, targetTenant, soleAdmittedTenantFromConfig(platform));
 }
 
 export interface PostArm {
@@ -87,6 +108,23 @@ export async function notifyLinkSetMembers(
       const key = tryPrincipalKey(m.platform, m.tenant, m.nativeId);
       if (key !== undefined && skip.has(key)) continue;
       if (!canDeliverDirectMessage(m.platform)) continue;
+      const reach = dmWorkspaceReachableFromConfig(m.platform, m.tenant);
+      if (!reach.reachable) {
+        await appendAudit({
+          org,
+          platform: m.platform,
+          workspace: reach.targetTenant,
+          action: "dm.delivery.skipped",
+          detail: {
+            reason: DM_WORKSPACE_UNREACHABLE_REASON,
+            linkSetId,
+            targetWorkspaceId: reach.targetTenant,
+            armWorkspaceId: reach.armTenant,
+          },
+        }).catch(() => undefined);
+        console.log(`[open-everywhere:identity] link-set ${linkSetId}: SKIPPED notifying ${key ?? `${m.platform} account \"${m.nativeId}\"`} — its workspace ("${reach.targetTenant}") is not the one this deployment's ${m.platform} credential serves ("${reach.armTenant}"); see the dm.delivery.skipped audit row.`);
+        continue;
+      }
       try {
         await dispatchDirectMessage(m.platform, { principalId: m.nativeId, text });
         delivered++;
