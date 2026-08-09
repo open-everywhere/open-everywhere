@@ -98,12 +98,23 @@ eq(tier({ kind: "delegation-result" }), "untrusted", "delegation-result: the tab
   eq(handoff.assumed, false, "handoff: a POSITIVE ruling — no metadata is needed to decide the seat's own shift note");
 }
 
+{
+  const skill = classifyIngestion({ kind: "skill-declared", label: "support-desk" });
+  eq(skill.tier, "untrusted", "skill-declared: a sandbox script's self-declared external fetch is unconditionally untrusted");
+  eq(skill.assumed, false, "🔴 skill-declared: a POSITIVE ruling, never `assumed` — no metadata is consulted, so none can be absent");
+  eq(
+    classifyIngestion({ kind: "skill-declared", workspaceTrust: "internal", repoPrivate: true, grantContentOrigin: "internal" }).tier,
+    "untrusted",
+    "🔴 skill-declared: NO metadata branch — setting every trusting field another row reads does NOT make a sandbox-emitted envelope trusted (the whole add-taint-only property)",
+  );
+}
+
 for (const kind of INGESTION_KINDS) {
   const v = classifyIngestion({ kind: kind as IngestionKind });
   ok(v.tier === "trusted" || v.tier === "untrusted", `every kind resolves to a tier — "${kind}"`);
   ok(typeof v.reason === "string" && v.reason.length > 0, `every kind carries prose reasoning — "${kind}"`);
 }
-eq(INGESTION_KINDS.length, 13, "the table has exactly the 13 ruled kinds (a 14th means a design decision, not a drive-by add — the 12th, `aws`, was one: OPE-305; the 13th, `handoff`, was one too: OPE-340)");
+eq(INGESTION_KINDS.length, 14, "the table has exactly the 14 ruled kinds (a 15th means a design decision, not a drive-by add — the 12th `aws` was OPE-305; the 13th `handoff` OPE-340; the 14th `skill-declared` OPE-361)");
 
 console.log("2. the enforced seam:");
 

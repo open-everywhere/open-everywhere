@@ -13,7 +13,8 @@ export type IngestionKind =
   | "image-description"
   | "file-upload"
   | "aws"
-  | "handoff";
+  | "handoff"
+  | "skill-declared";
 
 export interface IngestionSource {
   readonly kind: IngestionKind;
@@ -80,6 +81,9 @@ export function classifyIngestion(src: IngestionSource): IngestionVerdict {
 
     case "handoff":
       return trusted("a rotation handoff note — the same governed seat's own distilled prose (previous generation); taint, if any, was marked at original ingestion, and a re-render does not re-taint");
+
+    case "skill-declared":
+      return untrusted("a skill script's self-declared external fetch — a sandbox script vouching for its own bytes may only ADD taint, never relax; unconditional, no metadata branch");
   }
 }
 
@@ -97,4 +101,5 @@ export const INGESTION_KINDS: readonly IngestionKind[] = [
   "file-upload",
   "aws",
   "handoff",
+  "skill-declared",
 ];
