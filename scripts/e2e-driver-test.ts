@@ -546,6 +546,61 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
 }
 
 {
+  const { findJudgeAllow, prOpenRowNumbers, JUDGE_ARM_PROBE_MS } = await import("../packages/core/scripts/e2e/journey.js");
+  const row = (action: string, detail: Record<string, unknown>) => ({
+    ts: "2026-04-13T17:44:49.000Z",
+    org: "default",
+    platform: "slack",
+    workspace: "acme",
+    action,
+    detail,
+  });
+  const allowRow = row("approval.judge.verdict", {
+    tool: "open_pull_request",
+    action: "pr.open",
+    mode: "enforce",
+    verdict: "allow",
+    enforcedVerdict: "allow",
+    resolvedBy: "judge",
+    source: "model",
+    passes: 2,
+    reasoning: "a one-line README addition against a granted fixture repo, requested in-room",
+  });
+
+  ok(findJudgeAllow([], "open_pull_request") === undefined, "findJudgeAllow: an EMPTY window is not an allow — no rows, no arm (card absence alone must stay a skip)");
+  const hit = findJudgeAllow([allowRow], "open_pull_request");
+  ok(hit?.enforcedVerdict === "allow" && hit.resolvedBy === "judge" && hit.passes === 2, "findJudgeAllow: a matching enforce-mode allow row is returned with resolvedBy/passes/reasoning for the caller to log");
+  ok((hit?.reasoning ?? "").includes("granted fixture repo"), "findJudgeAllow: the judge's REASONING is carried through — it is the only review surface for an auto-approved consequential write");
+  ok(
+    findJudgeAllow([row("approval.judge.verdict", { tool: "forget", enforcedVerdict: "allow" })], "open_pull_request") === undefined,
+    "findJudgeAllow: another judge-deferred verb's allow in the SAME window is NOT this action's arm (the row must name the tool)",
+  );
+  ok(
+    findJudgeAllow([row("approval.judge.verdict", { tool: "open_pull_request", verdict: "allow", enforcedVerdict: "ask" })], "open_pull_request") === undefined,
+    "findJudgeAllow: a judge allow that the chain RAISED back to ask is not the arm — a card was posted, so arm (a) owns that run (enforcedVerdict is the field, not verdict)",
+  );
+  ok(
+    findJudgeAllow([row("approval.judge.verdict", { tool: "open_pull_request", verdict: "ask", enforcedVerdict: "allow", resolvedBy: "domain-mode" })], "open_pull_request")?.resolvedBy === "domain-mode",
+    "findJudgeAllow: a judge ask that a CONFIG element lowered to allow still explains the missing card — the arm is about what was enforced, and resolvedBy says which happened",
+  );
+  ok(
+    findJudgeAllow([row("approval.judge.shadow", { tool: "open_pull_request", enforcedVerdict: "allow" })], "open_pull_request") === undefined,
+    "findJudgeAllow: a phase-1 approval.judge.shadow row never arms anything — shadow rows are log-only and influenced nothing",
+  );
+
+  const prRows = [
+    row("pr.open", { repo: "acme/e2e-scratch", number: 18, head: "e2e-wf-1", base: "main" }),
+    row("pr.update", { repo: "acme/e2e-scratch", number: 4, head: "old", base: "main" }),
+    row("pr.open", { repo: "other/repo", number: 99, head: "x", base: "main" }),
+    row("pr.open", { repo: "acme/e2e-scratch", number: 18, head: "e2e-wf-1", base: "main" }),
+  ];
+  ok(JSON.stringify(prOpenRowNumbers(prRows)) === JSON.stringify([18, 99]), "prOpenRowNumbers: pr.open rows only (a pr.update means a PR was ALREADY open for that head — a different state), de-duplicated, newest-first");
+  ok(JSON.stringify(prOpenRowNumbers(prRows, "acme/e2e-scratch")) === JSON.stringify([18]), "prOpenRowNumbers: narrowing to the fixture repo drops another repo's publish from the same window");
+  ok(prOpenRowNumbers([row("pr.open", { repo: "acme/e2e-scratch" })]).length === 0, "prOpenRowNumbers: a pr.open row with no `number` yields nothing (never guess a PR number — the teardown closes whatever it is handed)");
+  ok(JUDGE_ARM_PROBE_MS > 0 && JUDGE_ARM_PROBE_MS <= 120_000, `the judge-arm probe budget stays small (${JUDGE_ARM_PROBE_MS}ms) — its rows are written BEFORE the reply the drive already awaited, so it covers audit propagation, not a race`);
+}
+
+{
   const { describeSpendGateRows, spendGateDoorOf, silenceCauseGate, SPEND_GATE_DOORS } = await import("../packages/core/scripts/e2e/journey.js");
   const row = (action: string, detail?: Record<string, unknown>) => ({
     ts: "2026-04-09T23:30:00.000Z",

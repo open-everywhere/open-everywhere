@@ -2314,7 +2314,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "J-PR",
     title:
-      "Consequential PR write: Slack ask → open_pull_request → pr.open approval card (nothing published pre-consent) → admin approve → a REAL PR opens whose diff carries the run token; teardown",
+      "Consequential PR write: Slack ask → open_pull_request → EITHER a pr.open card (nothing published pre-consent → admin approve) OR the armed judge's allow (no card, verdict-row evidenced) → a REAL PR opens whose diff carries the run token; teardown on both arms",
     requires: ["slack", "synthetic", "pr"],
     surface: "cross",
     suite: "core",
@@ -2334,6 +2334,8 @@ export const SCENARIOS: readonly Scenario[] = [
         `commit it on a new branch, and open a pull request titled "${title}" against ${base}. Keep the change to that one line. ` +
         `Note: the earlier write-access problem on this repo has been fixed server-side — don't refuse from memory, attempt the flow.`;
 
+      const opened: { number: number; head: string }[] = [];
+      try {
       const drive = await drivePrOpen({
         slack,
         synthetic,
@@ -2345,6 +2347,9 @@ export const SCENARIOS: readonly Scenario[] = [
         base,
         leg: "pr",
         timeoutMs: REPLY_WAIT,
+        onPublished: (p) => opened.push({ number: p.number, head: p.head }),
+        ...(ctx.auditRead ? { auditRead: ctx.auditRead } : {}),
+        repo,
         beforeApprove: async (card) => {
           ctx.gate(card.text.includes(repo), "pr.open card names the target repo");
           const branches = card.text.match(/`([^`]+)`\s*→\s*`([^`]+)`/);
@@ -2365,22 +2370,35 @@ export const SCENARIOS: readonly Scenario[] = [
         throw new ScenarioSkip(
           drive.miss === "grant-refused"
             ? `repo ${repo} is not granted to the e2e channel's domain — grant it via a bundle's repos (agent/access/bundle.ts) + install the App on it, then re-run. Agent reply: ${drive.reason}`
-            : `the model replied but did not call open_pull_request this run (no pr.open card; session ran; reply: ${drive.reason})`,
+            : `the model replied but did not call open_pull_request this run (no pr.open card AND no approval.judge.verdict allow row; session ran; reply: ${drive.reason})`,
         );
       }
 
-      await ctx.judgePass(
-        closedQA("Does the card clearly state it will open a pull request, naming the repository?", { mustMatch: [/pull request/i] }),
-        drive.card.text,
-        "pr.open card legibility",
-      );
+      if (drive.arm === "card") {
+        await ctx.judgePass(
+          closedQA("Does the card clearly state it will open a pull request, naming the repository?", { mustMatch: [/pull request/i] }),
+          drive.card.text,
+          "pr.open card legibility",
+        );
+      } else {
+        ctx.gate(drive.judge.tool === "open_pull_request", "judge-allow arm: the verdict row names open_pull_request (the row is JOINED to this action, not merely contemporaneous)");
+        ctx.gate(
+          (drive.judge.reasoning ?? "").trim().length > 0,
+          "judge-allow arm: the verdict row records the judge's REASONING — the auto-approved write is reviewable after the fact (hard gate)",
+        );
+        ctx.log(`judge-allow arm: no pr.open card was posted and PR #${drive.prNumber} published anyway; every PR-shape gate above still ran`);
+      }
 
-      try {
-        await prApi.closePr(drive.prNumber);
-        await prApi.deleteBranch(drive.head);
-        ctx.log(`teardown: closed PR #${drive.prNumber} and deleted branch ${drive.head}`);
-      } catch (err) {
-        ctx.log(`teardown (best-effort) did not complete: ${String(err instanceof Error ? err.message : err)}`);
+      } finally {
+        for (const p of opened) {
+          try {
+            await prApi.closePr(p.number);
+            await prApi.deleteBranch(p.head);
+            ctx.log(`teardown: closed PR #${p.number} and deleted branch ${p.head}`);
+          } catch (err) {
+            ctx.log(`teardown (best-effort) PR #${p.number} did not complete: ${String(err instanceof Error ? err.message : err)}`);
+          }
+        }
       }
     },
   },
@@ -2402,6 +2420,8 @@ export const SCENARIOS: readonly Scenario[] = [
       const base = (process.env.E2E_PR_BASE ?? "").trim() || "main";
       const runStart = new Date(Date.now() - 60_000).toISOString();
 
+      const opened: { number: number; head: string }[] = [];
+      try {
       const token1 = factToken("sess1");
       const ask1 =
         `checkout ${repo}, add a line to README.md that reads exactly ${token1} (that token and nothing else on the line), ` +
@@ -2412,17 +2432,23 @@ export const SCENARIOS: readonly Scenario[] = [
         slack, synthetic, gate: ctx.gate, log: ctx.log, pr: prApi,
         ask: ask1, token: token1, base, leg: "sess-grant", timeoutMs: REPLY_WAIT,
         decision: "approve_session",
+        onPublished: (p) => opened.push({ number: p.number, head: p.head }),
+        ...(ctx.auditRead ? { auditRead: ctx.auditRead } : {}),
+        repo,
       });
       if (!drive.published) {
         if (drive.miss === "errored") ctx.gate(false, `open_pull_request tried and errored: ${drive.reason}`);
         throw new ScenarioSkip(
           drive.miss === "grant-refused"
             ? `repo ${repo} is not granted to the e2e channel's domain (provision per J-PR's guidance). Agent reply: ${drive.reason}`
-            : `the model did not call open_pull_request this run (session ran; reply: ${drive.reason})`,
+            : `the model did not call open_pull_request this run (no card AND no approval.judge.verdict allow row; session ran; reply: ${drive.reason})`,
         );
       }
-      const opened: { number: number; head: string }[] = [{ number: drive.prNumber, head: drive.head }];
-      try {
+      if (drive.arm === "judge-allow") {
+        throw new ScenarioSkip(
+          `the armed approval judge ALLOWED open_pull_request (approval.judge.verdict enforcedVerdict:"allow", resolvedBy "${drive.judge.resolvedBy ?? "?"}") so PR #${drive.prNumber} published with NO card — there was nothing to click "Approve for this session" on, so the OPE-53 grant→skip pair could not be exercised this run. The PR has been torn down. Re-run against a deployment where this verb resolves to ask (OE_APPROVAL_JUDGE off, or the verb unflipped) to cover the session-grant path.`,
+        );
+      }
       if (ctx.auditRead) {
         const granted = await ctx.auditRead({ sinceIso: runStart, actions: ["approval.session_granted"] });
         ctx.gate(
@@ -2618,22 +2644,37 @@ export const SCENARIOS: readonly Scenario[] = [
         `checkout ${repo}, add a line to README.md that reads exactly ${token} (that token and nothing else on the line), ` +
         `commit it on a new branch, and open a pull request titled "${title}" against ${base}. Keep the change to that one line. ` +
         `Note: the earlier write-access problem on this repo has been fixed server-side — don't refuse from memory, attempt the flow.`;
-      const drive = await drivePrOpen({ slack, synthetic, gate: ctx.gate, log: ctx.log, pr: prApi, ask, token, base, leg: "pr", timeoutMs: REPLY_WAIT });
+      const opened: { number: number; head: string }[] = [];
+      let rememberedFact: string | undefined;
+      try {
+      const drive = await drivePrOpen({
+        slack, synthetic, gate: ctx.gate, log: ctx.log, pr: prApi, ask, token, base, leg: "pr", timeoutMs: REPLY_WAIT,
+        onPublished: (p) => opened.push({ number: p.number, head: p.head }),
+        ...(ctx.auditRead ? { auditRead: ctx.auditRead } : {}),
+        repo,
+      });
       if (!drive.published) {
         if (drive.miss === "errored") ctx.gate(false, `open_pull_request tried and errored (E2E_PR_REPO set): ${drive.reason}`);
         throw new ScenarioSkip(
           drive.miss === "grant-refused"
             ? `repo ${repo} is not granted to the e2e channel's domain — grant it via a bundle's repos + install the App, then re-run. Agent reply: ${drive.reason}`
-            : `the model replied but did not open a PR this run (no pr.open card; session ran; reply: ${drive.reason})`,
+            : `the model replied but did not open a PR this run (no pr.open card AND no approval.judge.verdict allow row; session ran; reply: ${drive.reason})`,
         );
       }
-      await ctx.judgePass(
-        closedQA("Does the card state it will open a pull request?", { mustMatch: [/pull request/i] }),
-        drive.card.text,
-        "pr: card legibility",
-      );
+      if (drive.arm === "card") {
+        await ctx.judgePass(
+          closedQA("Does the card state it will open a pull request?", { mustMatch: [/pull request/i] }),
+          drive.card.text,
+          "pr: card legibility",
+        );
+      } else {
+        ctx.gate(drive.judge.tool === "open_pull_request", "pr: the judge verdict row names open_pull_request (joined to this action, not merely contemporaneous)");
+        ctx.gate((drive.judge.reasoning ?? "").trim().length > 0, "pr: the judge verdict row records its REASONING (the auto-approved write stays reviewable)");
+        ctx.log(`pr: ARM (b) — the armed judge allowed the write, PR #${drive.prNumber} published with no card; the chain continues unchanged`);
+      }
 
       const decision = factToken("shipit");
+      rememberedFact = decision;
       const { ts: memTs } = await slack.post(slack.mention(`remember: the release decision we made is ${decision}`));
       const memAck = await slack.awaitThreadReply(memTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       await ctx.judgePass(
@@ -2650,26 +2691,32 @@ export const SCENARIOS: readonly Scenario[] = [
         `recall: the release decision "${decision}" is recalled from the silo across threads (hard gate)`,
       );
 
-      try {
-        await prApi.closePr(drive.prNumber);
-        await prApi.deleteBranch(drive.head);
-        ctx.log(`teardown: closed PR #${drive.prNumber} and deleted branch ${drive.head}`);
-      } catch (err) {
-        ctx.log(`teardown (best-effort) did not complete: ${String(err instanceof Error ? err.message : err)}`);
-      }
-      try {
-        await driveDecide({
-          slack,
-          synthetic,
-          gate: ctx.gate,
-          log: ctx.log,
-          ask: `forget the stored fact about the release decision ${decision} — it was test data`,
-          leg: "forget-teardown",
-          decision: "approve",
-          timeoutMs: FILE_REPLY_WAIT,
-        });
-      } catch (err) {
-        ctx.log(`forget teardown (best-effort) did not complete: ${String(err instanceof Error ? err.message : err)}`);
+      } finally {
+        for (const p of opened) {
+          try {
+            await prApi.closePr(p.number);
+            await prApi.deleteBranch(p.head);
+            ctx.log(`teardown: closed PR #${p.number} and deleted branch ${p.head}`);
+          } catch (err) {
+            ctx.log(`teardown (best-effort) PR #${p.number} did not complete: ${String(err instanceof Error ? err.message : err)}`);
+          }
+        }
+        if (rememberedFact !== undefined) {
+          try {
+            await driveDecide({
+              slack,
+              synthetic,
+              gate: ctx.gate,
+              log: ctx.log,
+              ask: `forget the stored fact about the release decision ${rememberedFact} — it was test data`,
+              leg: "forget-teardown",
+              decision: "approve",
+              timeoutMs: FILE_REPLY_WAIT,
+            });
+          } catch (err) {
+            ctx.log(`forget teardown (best-effort) did not complete: ${String(err instanceof Error ? err.message : err)}`);
+          }
+        }
       }
     },
   },

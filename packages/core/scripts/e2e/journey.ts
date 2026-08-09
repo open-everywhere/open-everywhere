@@ -1,7 +1,7 @@
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import type { SyntheticSlack } from "./synthetic.js";
 import { APPROVAL_PREFIX } from "./synthetic.js";
-import { pollUntil } from "./poll.js";
+import { pollOptional, pollUntil } from "./poll.js";
 import type { AuditQueryOpts, AuditWireEntry } from "./audit-read.js";
 
 export function factToken(stem: string): string {
@@ -180,9 +180,54 @@ export function classifyPrMiss(replyText: string): "grant-refused" | "errored" |
   return "no-tool";
 }
 
+export interface JudgeAllowEvidence {
+  readonly tool: string;
+  readonly action?: string;
+  readonly verdict?: string;
+  readonly enforcedVerdict: "allow";
+  readonly resolvedBy?: string;
+  readonly source?: string;
+  readonly passes?: number;
+  readonly reasoning?: string;
+}
+
+export function findJudgeAllow(rows: readonly AuditWireEntry[], tool: string): JudgeAllowEvidence | undefined {
+  for (const row of rows) {
+    if (row.action !== "approval.judge.verdict") continue;
+    const d = row.detail as Record<string, unknown> | undefined;
+    if (d?.tool !== tool || d?.enforcedVerdict !== "allow") continue;
+    return {
+      tool,
+      enforcedVerdict: "allow",
+      ...(typeof d.action === "string" ? { action: d.action } : {}),
+      ...(typeof d.verdict === "string" ? { verdict: d.verdict } : {}),
+      ...(typeof d.resolvedBy === "string" ? { resolvedBy: d.resolvedBy } : {}),
+      ...(typeof d.source === "string" ? { source: d.source } : {}),
+      ...(typeof d.passes === "number" ? { passes: d.passes } : {}),
+      ...(typeof d.reasoning === "string" ? { reasoning: d.reasoning } : {}),
+    };
+  }
+  return undefined;
+}
+
+export function prOpenRowNumbers(rows: readonly AuditWireEntry[], repo?: string): readonly number[] {
+  const out: number[] = [];
+  for (const row of rows) {
+    if (row.action !== "pr.open") continue;
+    const d = row.detail as Record<string, unknown> | undefined;
+    if (repo !== undefined && d?.repo !== repo) continue;
+    const n = d?.number;
+    if (typeof n === "number" && Number.isInteger(n) && n > 0 && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
 export type PrDriveResult =
-  | { readonly published: true; readonly card: SlackMessage; readonly prNumber: number; readonly head: string }
+  | { readonly published: true; readonly arm: "card"; readonly card: SlackMessage; readonly prNumber: number; readonly head: string }
+  | { readonly published: true; readonly arm: "judge-allow"; readonly card?: undefined; readonly judge: JudgeAllowEvidence; readonly prNumber: number; readonly head: string }
   | { readonly published: false; readonly miss: "grant-refused" | "errored" | "no-tool"; readonly reason: string };
+
+export const JUDGE_ARM_PROBE_MS = 60_000;
 
 export async function drivePrOpen(args: {
   slack: SlackDriver;
@@ -197,13 +242,60 @@ export async function drivePrOpen(args: {
   timeoutMs: number;
   beforeApprove?: (card: SlackMessage) => void | Promise<void>;
   decision?: "approve" | "approve_session";
+  onPublished?: (pr: { readonly number: number; readonly head: string }) => void;
+  auditRead?: (opts: AuditQueryOpts) => Promise<readonly AuditWireEntry[]>;
+  repo?: string;
+  judgeArmProbeMs?: number;
 }): Promise<PrDriveResult> {
   const { slack, synthetic, pr, ask, token, base, timeoutMs } = args;
   const decision = args.decision ?? "approve";
   const gate = legGate(args.gate, args.leg);
+  const askIso = new Date(Date.now() - 5_000).toISOString();
   const { ts: askTs } = await slack.post(slack.mention(ask));
   const firstReply = await slack.awaitThreadReply(askTs, { timeoutMs });
-  let card = approveButton(firstReply) !== undefined ? firstReply : await awaitCard(slack, askTs, timeoutMs).catch(() => undefined);
+
+  let card: SlackMessage | undefined = approveButton(firstReply) !== undefined ? firstReply : undefined;
+  if (card === undefined && args.auditRead !== undefined) {
+    const auditRead = args.auditRead;
+    let seenJudge: JudgeAllowEvidence | undefined;
+    let seenNumbers: readonly number[] = [];
+    const matched = await pollOptional<{ judge: JudgeAllowEvidence; prNumber: number }>(
+      async () => {
+        const rows = await auditRead({ sinceIso: askIso, actions: ["approval.judge.verdict", "pr.open"] });
+        const judge = findJudgeAllow(rows, "open_pull_request");
+        if (judge === undefined) return undefined;
+        seenJudge = judge;
+        const numbers = prOpenRowNumbers(rows, args.repo);
+        if (numbers.length > 0) seenNumbers = numbers;
+        for (const n of numbers) {
+          if (await pr.prContainsToken(n, token)) return { judge, prNumber: n };
+        }
+        return undefined;
+      },
+      { timeoutMs: args.judgeArmProbeMs ?? JUDGE_ARM_PROBE_MS, what: `an approval.judge.verdict allow + a token-carrying pr.open audit row for the card-less "${args.leg}" publish` },
+    );
+    const found = matched ?? (seenJudge !== undefined && seenNumbers.length > 0 ? { judge: seenJudge, prNumber: seenNumbers[0]! } : undefined);
+    if (found !== undefined) {
+      const { judge, prNumber } = found;
+      args.log(
+        `ARM (b) JUDGE-ALLOW: no pr.open card — the chain resolved allow (judge said "${judge.verdict ?? "?"}", resolvedBy "${judge.resolvedBy ?? "?"}", source "${judge.source ?? "?"}", passes ${judge.passes ?? "?"}) and published PR #${prNumber} directly. Reasoning: ${(judge.reasoning ?? "(none recorded)").replace(/\s+/g, " ").slice(0, 400)}`,
+      );
+      const details = await pollUntil(async () => args.pr.getPr(prNumber), { timeoutMs, what: `the judge-published PR #${prNumber} readable via the GitHub API` });
+      args.onPublished?.({ number: prNumber, head: details.head });
+      gate(details.base === base, `the judge-published PR targets the "${base}" base branch (got "${details.base}")`);
+      gate(
+        await pr.prContainsToken(prNumber, token),
+        `the judge-published PR's diff carries the run token "${token}" (the agent really made the change)`,
+      );
+      return { published: true, arm: "judge-allow", judge, prNumber, head: details.head };
+    }
+  } else if (card === undefined) {
+    args.log(
+      "no card in the first reply and NO audit read wired — arm (b) is off, so a judge-allow publish would read as a no-tool skip here. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN.",
+    );
+  }
+
+  card ??= await awaitCard(slack, askTs, timeoutMs).catch(() => undefined);
   if (!card) {
     const reason = firstReply.text.replace(/\s+/g, " ").trim().slice(0, 240);
     return { published: false, miss: classifyPrMiss(firstReply.text), reason };
@@ -226,8 +318,9 @@ export async function drivePrOpen(args: {
   args.log(`published PR ${urlMatch![1]}#${prNumber}`);
 
   const details = await pollUntil(async () => args.pr.getPr(prNumber), { timeoutMs, what: `the published PR #${prNumber} readable via the GitHub API` });
+  args.onPublished?.({ number: prNumber, head: details.head });
   gate(details.base === base, `the published PR targets the "${base}" base branch (got "${details.base}")`);
   const hasToken = await pr.prContainsToken(prNumber, token);
   gate(hasToken, `the published PR's diff carries the run token "${token}" (the agent really made the change)`);
-  return { published: true, card, prNumber, head: details.head };
+  return { published: true, arm: "card", card, prNumber, head: details.head };
 }
