@@ -32,8 +32,7 @@ import {
   markSurfaceOnboarded,
   registerGovernanceMemberSupplier,
   consumeNoReplyThisTurn,
-  generateHandoffNote,
-  recordHandoffNoteLoss,
+  distillRotationHandoff,
   renderWake,
   mkMessageTrigger,
   NO_REPLY_SENTINEL,
@@ -1185,14 +1184,12 @@ export async function distillSlackRotationHandoff(
   outgoing: ChannelSessionRow | null,
   org?: string,
 ): Promise<string | undefined> {
-  try {
-    const history = transcriptFromHistory(await slackForm("conversations.history", `channel=${encodeURIComponent(channelId)}&limit=50`)) ?? "";
-    const note = await generateHandoffNote(scope, outgoing?.handoffNote ?? null, history, { org });
-    return note ?? undefined;
-  } catch (err) {
-    await recordHandoffNoteLoss({ scope, org, reason: "distiller-error", generation: outgoing?.generation, error: err });
-    return undefined;
-  }
+  return distillRotationHandoff({
+    scope,
+    outgoing,
+    org,
+    fetchHistory: async () => transcriptFromHistory(await slackForm("conversations.history", `channel=${encodeURIComponent(channelId)}&limit=50`)) ?? "",
+  });
 }
 
 export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {

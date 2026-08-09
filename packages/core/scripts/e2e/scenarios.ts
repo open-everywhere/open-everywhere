@@ -591,7 +591,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "S-DM-DISCORD",
     title:
-      "Discord DM delegation parity (OPE-329): a forged relay MESSAGE_CREATE wakes a Discord DM seat on a `remember` ask — asserted PURELY from the audit trail (task.spawned on an oe-dm/discord/… pseudo-domain, then the answer landing back in the DM via reply.post), because a third-party bot cannot itself read a DM channel it is not a party to. A soft turn.tool_gated(reason:lean-seat) check adds confirming evidence when the DM seat's session hasn't already logged its once-per-session gate row in an earlier run.",
+      "Discord DM delegation parity (OPE-329, re-anchored at OPE-356): a forged relay MESSAGE_CREATE wakes a Discord DM seat on a `remember` ask — asserted PURELY from the audit trail (task.spawned on an oe-dm/discord/… pseudo-domain, then the worker's completion WAKE reaching the DM's own standing window: task.returned delivered:true joined by its wakeId to a unified.self_dispatch onto that pseudo-domain), because a third-party bot cannot itself read a DM channel it is not a party to. A soft turn.tool_gated(reason:lean-seat) check adds confirming evidence when the DM seat's session hasn't already logged its once-per-session gate row in an earlier run.",
     requires: ["syntheticDiscordDm"],
     surface: "discord",
     suite: "extended",
@@ -639,15 +639,42 @@ export const SCENARIOS: readonly Scenario[] = [
         { timeoutMs: FILE_REPLY_WAIT, what: "the spawn's own task.returned row (the delegated worker finishing)" },
       );
       ctx.gate(returned.workspace === spawn.workspace, `worker returned on the SAME pseudo-domain it spawned on (${spawn.workspace})`);
-      const workerSession = (returned.detail as { sessionId?: unknown } | undefined)?.sessionId;
-      const answered = await pollUntil(
-        async () => {
-          const rows = await auditRead!({ sinceIso: since, actions: ["reply.post"] });
-          return rows.find((r) => r.platform === "discord" && (r.detail as { sessionId?: unknown } | undefined)?.sessionId === workerSession);
-        },
-        { timeoutMs: FILE_REPLY_WAIT, what: `a reply.post row (platform:discord) from the worker's own session — the delegated answer landing back in the DM` },
+      const rd = returned.detail as { delivered?: unknown; wakeId?: unknown; backstop?: unknown } | undefined;
+      ctx.gate(
+        rd?.delivered === true,
+        `🎯 THE PAYOFF: the completion wake was DELIVERED to the Discord DM seat (task.returned delivered:true) — before OPE-356 this seat ran on a native token, so parseWindowToken resolved no domain and BOTH wake sites skipped fail-closed; found ${JSON.stringify(rd?.delivered ?? (rd?.backstop === true ? "backstop:true (the worker ended without calling return_result)" : "no delivered field"))}`,
       );
-      ctx.log(`answer landed: reply.post id=${String((answered.detail as { id?: unknown } | undefined)?.id ?? "?")} chars=${String((answered.detail as { chars?: unknown } | undefined)?.chars ?? "?")}`);
+      const completionWakeId = typeof rd?.wakeId === "string" ? rd.wakeId : "";
+      ctx.gate(completionWakeId.length > 0, "the return row names the completion wakeId (the join key for the dispatch row)");
+      ctx.gate(
+        completionWakeId !== (spawn.detail as { wakeId?: unknown } | undefined)?.wakeId,
+        "the completion wakeId is DISTINCT from the spawn hop's (so the dispatch row below is the return leg, not the delegation that started it)",
+      );
+      const wake = await pollUntil(
+        async () => {
+          const rows = await auditRead!({ sinceIso: since, actions: ["unified.self_dispatch"] });
+          return rows.find((r) => (r.detail as { wakeId?: unknown } | undefined)?.wakeId === completionWakeId);
+        },
+        { timeoutMs: REPLY_WAIT, what: `a unified.self_dispatch row carrying the completion wakeId ${completionWakeId} (the wake hop into the DM window)` },
+      );
+      ctx.gate(
+        wake.workspace === spawn.workspace,
+        `the completion wake TARGETS THE DM WINDOW — its dispatch row is labelled with the token's own pseudo-domain (expected ${spawn.workspace}, got ${wake.workspace})`,
+      );
+      ctx.gate(
+        typeof (wake.detail as { surfaceKey?: unknown } | undefined)?.surfaceKey === "string" &&
+          dmAnchorDomain((wake.detail as { surfaceKey: string }).surfaceKey) === spawn.workspace,
+        `…and the surface it was admitted for is byte-exactly the DM inside that token (the privacy fence: a DM window is deliverable to its own DM and nowhere else) — got ${String((wake.detail as { surfaceKey?: unknown } | undefined)?.surfaceKey)}`,
+      );
+      ctx.log(`wake hop: unified.self_dispatch wakeId=${completionWakeId} workspace=${wake.workspace}`);
+
+      const replies = await auditRead!({ sinceIso: since, actions: ["reply.post"] });
+      const afterWake = replies.filter((r) => r.platform === "discord" && r.ts > wake.ts);
+      ctx.log(
+        afterWake.length > 0
+          ? `the woken seat also spoke in the DM (${afterWake.length} reply.post row(s) after the wake)`
+          : "the woken seat stayed silent after the wake (allowed — the wake hop is the evidence)",
+      );
     },
   },
   {

@@ -564,22 +564,26 @@ const stubResolveParent = async (): Promise<string | undefined> => undefined;
 
   const m4 = discordMsg({ id: "5004", guildId: undefined, channelType: "1", content: "psst, what was that token?" });
   await dispatchTurn(m4, authForRelayMessage(m4)!, discordSend, stubCreateThread, stubResolveParent, captureReceive);
-  ok(received.length === 6 && discordBaseSends.length === 1, "discord: a DM stays on the NATIVE path (never a personal surface into a team-shared window)");
-  discordBaseSends.length = 0;
+  ok(received.length === 7 && discordBaseSends.length === 0, "discord: a DM diverts to a window of its OWN (OPE-356 — it no longer runs on the native per-channel session)");
+  const dmTarget = received[6].target;
+  ok(dmTarget.token !== RAW_TOKEN && !dmTarget.token.includes(":payments:"), "🔴 discord: …and it is NOT the shared domain's token — a personal surface never enters a team-shared window");
+  ok(dmTarget.token.startsWith("oe-dom:oe-dm/discord/"), "discord: the DM's token is on the reserved `oe-dm/` pseudo-domain (which matches no config domain, by construction)");
+  ok(dmTarget.surfaceKey === "discord/U_D1/CH_WIN", "discord: …carrying the DM's OWN surface key (workspace = the caller's user id — a DM has no guild), the byte-exact fence both admission gates match on");
+  ok((dmTarget.origin as { dm?: boolean; guildId?: string }).dm === true && (dmTarget.origin as { guildId?: string }).guildId === undefined, "discord: the DM origin is the OPE-315 `dm:true` variant with NO guildId — no path from a DM to guild authority");
 
   const m5 = discordMsg({ id: "5005", channelId: "TH_WIN", channelType: "11" });
   await dispatchTurn(m5, authForRelayMessage(m5)!, discordSend, stubCreateThread, async () => "CH_WIN", captureReceive);
   ok(
-    received.length === 7 && discordBaseSends.length === 0,
+    received.length === 8 && discordBaseSends.length === 0,
     "discord: a mention INSIDE a thread DIVERTS (domain-grain key resolves the parent; the receive gate does NOT refuse) — no orphaned silence, forum channels work",
   );
-  const dOrigin5 = received[6].target.origin as { platform: string; channelId?: string; messageId?: string };
+  const dOrigin5 = received[7].target.origin as { platform: string; channelId?: string; messageId?: string };
   ok(
     dOrigin5.platform === "discord" && dOrigin5.channelId === "TH_WIN" && dOrigin5.messageId === "5005",
     "discord: the thread wake's reply targets the thread's OWN channel + message (not the parent) — the answer lands where the human asked",
   );
   ok(
-    effectiveEveToken(UNIFIED_CHANNEL_NAME, received[4].target.token) === effectiveEveToken(UNIFIED_CHANNEL_NAME, received[6].target.token),
+    effectiveEveToken(UNIFIED_CHANNEL_NAME, received[4].target.token) === effectiveEveToken(UNIFIED_CHANNEL_NAME, received[7].target.token),
     "discord: the thread wake shares the SAME effective unified token as the base-channel wake (one context window across channel + thread)",
   );
   discordBaseSends.length = 0;

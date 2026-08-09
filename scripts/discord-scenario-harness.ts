@@ -24,7 +24,8 @@ export class Timeline {
       this.lines
         .join("\n")
         .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "<uuid>")
-        .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, "<iso-ts>") + "\n"
+        .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, "<iso-ts>")
+        .replace(/(:oe-sup:g\d+)-[0-9a-f]{6}\b/g, "$1-<salt>") + "\n"
     );
   }
 }
@@ -312,9 +313,16 @@ export class ScenarioDriver {
         attachSession: () => {
           throw new Error("scenario driver: attachSession is not modeled");
         },
-        to: () => {
-          throw new Error("scenario driver: cross-channel dispatch is not modeled");
-        },
+        to: (_channel: unknown, target: { token?: string; wakeId?: string; surfaceKey?: string; origin?: Record<string, unknown> }) => ({
+          send: async (message: string) => {
+            const origin = target.origin ?? {};
+            this.timeline.addBlock(
+              `  ⇢ DIVERT unified · token ${target.token ?? "?"} · surface ${target.surfaceKey ?? "?"} · origin ${String(origin.platform)}/${String(origin.channelId)}${origin.dm === true ? " dm" : ""}`,
+              message,
+            );
+            return {} as never;
+          },
+        }),
         params: {},
         requestIp: null,
       },

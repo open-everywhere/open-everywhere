@@ -405,6 +405,7 @@ export { MAX_MESSAGES } from "./channels/context-render.js";
 
 export {
   generateHandoffNote,
+  distillRotationHandoff,
   handoffPrompt,
   clampHandoffNote,
   HANDOFF_NOTE_MAX_CHARS,

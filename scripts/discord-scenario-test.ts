@@ -90,7 +90,7 @@ await scenario("02-thread-followup-resume", async (s) => {
   await s.event("discord:TH1", "message.completed", { finishReason: "stop", message: "no-unused-vars, in ci.ts line 12." });
 }, { channelInfo: { TH1: { name: "can you check the failing build?", type: 11, parent_id: "C2" } } });
 
-await scenario("03-dm-direct-reply", async (s) => {
+await scenario("03-dm-direct-divert", async (s) => {
   await s.inbound({
     id: "M31",
     content: "remind me what the deploy command is",
@@ -99,8 +99,6 @@ await scenario("03-dm-direct-reply", async (s) => {
     authorId: "U_DM3",
     mentionsBot: false,
   });
-  await s.event("discord:D3", "turn.started");
-  await s.event("discord:D3", "message.completed", { finishReason: "stop", message: "vercel deploy --prod" });
 });
 
 await scenario("04-judged-silence", async (s) => {
@@ -189,14 +187,15 @@ await scenario("07-cap-admin-bypass-throttle", async (s) => {
 await scenario("08-turn-failed", async (s) => {
   await s.inbound({
     id: "M81",
-    content: "run the weekly report",
-    channelId: "D8",
-    channelType: "1",
-    authorId: "U_DM8",
-    mentionsBot: false,
+    content: "<@BOT> run the weekly report",
+    channelId: "C8",
+    channelType: "0",
+    guildId: "G8",
+    authorId: "U_DEV8",
+    mentionsBot: true,
   });
-  await s.event("discord:D8", "turn.started");
-  await s.event("discord:D8", "turn.failed", { error: { message: "model exploded" } });
+  await s.event("discord:TH1", "turn.started");
+  await s.event("discord:TH1", "turn.failed", { error: { message: "model exploded" } });
 });
 
 await scenario(

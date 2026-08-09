@@ -56,6 +56,9 @@ import {
   consumeRepliedThisTurn,
   postTerminalProse,
   isAllowedDriver,
+  getOrCreateDmSeat,
+  touchDmSeat,
+  dmSeatRotationEnabled,
   buildIngestedReaction,
   ingestReaction,
   liveReactionSink,
@@ -64,7 +67,7 @@ import {
   type ReactionIngestOutcome,
   type ReactionVerb,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { fetchDiscordBackscroll, fetchDiscordBackscrollLines } from "./discord-backscroll.js";
+import { fetchDiscordBackscroll, fetchDiscordBackscrollLines, distillDiscordRotationHandoff } from "./discord-backscroll.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:discord-gateway] ${msg}`);
@@ -686,6 +689,88 @@ export function discordNativeWake(input: DiscordNativeWakeInput): NormalizedWake
   };
 }
 
+export interface DiscordDmWakeInput {
+  readonly channelId: string;
+  readonly wakeId: string;
+  readonly handoffNote?: string;
+  readonly handoffFromGeneration?: number;
+  readonly trigger: {
+    readonly id: string;
+    readonly author: string;
+    readonly authorId: string;
+    readonly sentAt: string;
+    readonly text: string;
+    readonly trust?: WakeTrust;
+  };
+}
+
+export function buildDiscordDmWake(input: DiscordDmWakeInput): NormalizedWake {
+  return {
+    platform: "discord",
+    reason: "dm",
+    addressing: "direct-mention",
+    wakeId: input.wakeId,
+    locus: { channel: { id: input.channelId } },
+    handoff: input.handoffNote ? { note: input.handoffNote, fromGeneration: input.handoffFromGeneration ?? 0 } : undefined,
+    trigger: mkMessageTrigger({
+      from: "human",
+      author: input.trigger.author,
+      authorId: input.trigger.authorId,
+      id: input.trigger.id,
+      sentAt: input.trigger.sentAt,
+      trust: input.trigger.trust ?? "principal",
+      mention: true,
+      body: input.trigger.text,
+    }),
+  };
+}
+
+async function divertDiscordDmToWindow(input: {
+  readonly msg: DiscordRelayMessage;
+  readonly auth: OpenEverywhereDiscordAuth;
+  readonly partition: Partition;
+  readonly receive: UnifiedReceive;
+}): Promise<void> {
+  const { msg } = input;
+  const org = deploymentOrg();
+  const atIso = new Date().toISOString();
+  const surfaceKey = input.partition.surfaceKey;
+
+  const seat = await getOrCreateDmSeat(org, { surfaceKey }, atIso, {
+    distillHandoff: (scope, outgoing) => distillDiscordRotationHandoff(scope, msg.channelId, outgoing, org, msg.botId),
+  });
+
+  const trust = resolveWakeTrustFromContext(ctxFromAuth(input.auth), { id: msg.author.id, isBot: msg.author.bot }, { principalFallback: true });
+  const wakeId = mintWakeId();
+
+  const origin: UnifiedWakeOrigin = { platform: "discord", channelId: msg.channelId, dm: true };
+
+  const rendered = renderWake(
+    buildDiscordDmWake({
+      channelId: msg.channelId,
+      wakeId,
+      ...(seat.freshGeneration && seat.handoffNote ? { handoffNote: seat.handoffNote, handoffFromGeneration: Math.max(seat.generation - 1, 0) } : {}),
+      trigger: {
+        id: msg.id || "unknown",
+        author: msg.author.username ?? msg.author.id,
+        authorId: msg.author.id,
+        sentAt: atIso,
+        text: msg.content,
+        trust,
+      },
+    }),
+  );
+  await divertToUnifiedWindow(input.receive, {
+    message: rendered.message,
+    ...(rendered.context && rendered.context.length > 0 ? { context: rendered.context } : {}),
+    token: seat.token,
+    window: { wakeId, origin, addressing: "direct-mention" } satisfies UnifiedWindowWake,
+    surfaceKey,
+    auth: input.auth as unknown as { attributes?: Record<string, unknown> },
+  });
+  await touchDmSeat(org, surfaceKey, atIso).catch(() => undefined);
+}
+
 async function divertDiscordWakeToUnifiedWindow(input: {
   readonly msg: DiscordRelayMessage;
   readonly auth: OpenEverywhereDiscordAuth;
@@ -845,6 +930,22 @@ export async function dispatchTurn(
       },
     })) === "declined"
   ) {
+    return;
+  }
+
+  if (isDm && receive && dmSeatRotationEnabled()) {
+    if (statusUxEnabled()) await setDiscordReaction(msg.channelId, msg.id, EYES_EMOJI, "PUT");
+    await divertDiscordDmToWindow({ msg, auth, partition, receive });
+    await appendAudit({
+      org: deploymentOrg(),
+      platform: "discord",
+      workspace: partition.workspace,
+      surface: partition.surfaceKey,
+      principalId: msg.author.id,
+      action: "discord.dispatched",
+      detail: { addressing: "direct-mention", dmWindow: true, channelId: msg.channelId },
+    }).catch(() => undefined);
+    log(`dm-window divert ${partition.surfaceKey}`);
     return;
   }
 
