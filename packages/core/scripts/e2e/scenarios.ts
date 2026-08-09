@@ -2672,13 +2672,41 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const decision = factToken("shipit");
       rememberedFact = decision;
+      const memAskStart = new Date().toISOString();
       const { ts: memTs } = await slack.post(slack.mention(`remember: the release decision we made is ${decision}`));
       const memAck = await slack.awaitThreadReply(memTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      ctx.gate(memAck.text.trim().length > 0, "remember: the ask drew a reply (the turn ran, interim or final)");
       await ctx.judgePass(
-        closedQA("Does it confirm it stored the fact?", { mustMatch: [/remember|stored|noted|got it|saved/i] }),
+        closedQA(
+          "Is this a plausible acknowledgement of a save request — either confirming the fact is stored, or an honest interim note that the save is in progress / will be confirmed once it lands — with no error, refusal, or tool-failure text?",
+          { mustNotMatch: [/error|exception|traceback|I (?:can.?t|cannot|won.?t) (?:remember|save|store)/i] },
+        ),
         memAck.text,
-        "remember: release decision stored",
+        "remember: reply is a sane ack (interim or final) — NOT the storage gate (that's the audit row below)",
       );
+      if (ctx.auditRead) {
+        const auditRead = ctx.auditRead;
+        const rememberWrites = await pollOptional(
+          async () => {
+            const rows = await auditRead({ sinceIso: memAskStart, platform: "slack", surface: slack.channelId, actions: ["memory.write"] });
+            const remembered = rows.filter((r) => (r.detail as { outcome?: unknown } | undefined)?.outcome === "remember");
+            return remembered.length > 0 ? remembered : undefined;
+          },
+          { timeoutMs: FILE_REPLY_WAIT, what: `a memory.write audit row (outcome:"remember") for this channel's silo since the remember ask` },
+        );
+        ctx.gate(
+          rememberWrites !== undefined && rememberWrites.length > 0,
+          `remember: a real memory.write audit row (outcome:"remember") exists for this channel's silo since the ask — the audit row is the gate, not the seat's prose (found ${rememberWrites?.length ?? 0})`,
+        );
+      } else {
+        ctx.log(
+          "remember: audit-row gate SKIPPED — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN so this leg can assert the authoritative memory.write row (OPE-367); falling back to a lenient prose check.",
+        );
+        ctx.gate(
+          /remember|stored|noted|got it|saved|saving|will confirm|in progress/i.test(memAck.text),
+          "remember: fallback lenient prose check (no audit reader wired) — the reply at least looks like a save-in-progress ack",
+        );
+      }
 
       const { ts: recallTs } = await slack.post(slack.mention("what was the release decision we agreed on? if you don't know, say so plainly"));
       const recall = await slack.awaitThreadReply(recallTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
