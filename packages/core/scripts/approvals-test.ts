@@ -17,7 +17,7 @@ const { registerConfig, getConfig } = await import("../agent/access/config.js");
 const { defineDomain } = await import("../agent/memory/domain.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
-const { parseApprovalAction, requestApproval, handleApprovalPayload, clickerMayDecide, OE_APPROVAL_PREFIX, sweepExpiredPendings } = await import("../agent/approvals/flow.js");
+const { parseApprovalAction, requestApproval, handleApprovalPayload, resolveApprovalClick, clickerMayDecide, OE_APPROVAL_PREFIX, sweepExpiredPendings } = await import("../agent/approvals/flow.js");
 const { pendingCardBlocks, decidedCardBlocks } = await import("../agent/approvals/card.js");
 const { registerActionKind, actionKind } = await import("../agent/approvals/actions.js");
 const { effectiveCaps } = await import("../agent/spend/caps.js");
@@ -357,6 +357,10 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   ok(calls.some((c) => c.method === "chat.postMessage" && (bodyField(c.body, "text") ?? "").includes("only a domain/org admin")), "handleApprovalPayload: a denial posts an explanatory note");
   const adminDenied = (await readAudit({ org: "default", action: "approval.denied" })).find((e) => e.detail?.id === "p-admin-denied");
   ok(adminDenied?.detail?.reason === "not-admin" && adminDenied?.principalId === "U_RANDOM_MEMBER", "a refused ADMIN-tier click audits approval.denied (reason \"not-admin\") — it audited nothing at all before OPE-185");
+  ok(
+    adminDenied?.detail?.venuePlatform === "slack" && adminDenied?.detail?.venueWorkspace === "T1" && adminDenied?.detail?.venueChannel === "C1",
+    "OPE-332: approval.denied names the venue the refused click happened in (non-redirected)",
+  );
 
   ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_ORG_ADMIN", "slack", "T1") === true, "clickerMayDecide: org admin covers a domain-less scope");
   ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_RANDOM_MEMBER", "slack", "T1") === false, "clickerMayDecide: a plain member does not cover a domain-less scope");
@@ -436,6 +440,11 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
 
   const audit = await readAudit({ org: "default", action: "approval.approved" });
   ok(audit.some((e) => e.detail?.id === "p-happy" && e.principalId === "U_ORG_ADMIN"), "handleApprovalPayload: audits approval.approved with the clicker as principal");
+  const happy = audit.find((e) => e.detail?.id === "p-happy");
+  ok(
+    happy?.detail?.venuePlatform === "slack" && happy?.detail?.venueWorkspace === "T1" && happy?.detail?.venueChannel === "C1",
+    "OPE-332: approval.approved names the venue it was decided in (non-redirected — the asking room)",
+  );
 
   await getOperationalStore().clearSpendLimit("default", "slack/T3/C3", "surface");
 }
@@ -1119,4 +1128,72 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   _resetAudienceFloorCacheForTest();
 }
 
-console.log(`\n✓ approvals: ${n} assertions passed (card render, OPE-307 taint disclosure, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback, OPE-185 clicker gate, OPE-220 card audience gate)\n`);
+{
+  const store = getOperationalStore();
+  const entryFor = async (action: string, id: string) => (await readAudit({ org: "default", action })).find((e) => e.detail?.id === id);
+
+  const redirected = (over: Partial<PendingActionRow>) =>
+    row({ kind: "test.member", argsJson: "{}", domain: null, scopeKey: "linear/WS9/ISSUE-42", channelId: "C_ENG", postedTo: "slack/T1/C_ENG", ...over });
+
+  memberExecuted = [];
+  await store.addPendingAction(redirected({ id: "p-332-redirect" }));
+  const approved332 = await resolveApprovalClick({ org: "default", id: "p-332-redirect", decision: "approve", clickerId: "U_RANDOM_MEMBER" });
+  ok(approved332.outcome === "decided", "OPE-332 fixture: the redirected member-tier card approves normally");
+  const rApproved = await entryFor("approval.approved", "p-332-redirect");
+  ok(
+    rApproved?.detail?.venuePlatform === "slack" && rApproved?.detail?.venueWorkspace === "T1" && rApproved?.detail?.venueChannel === "C_ENG",
+    "🔴 OPE-332: a REDIRECTED approval.approved names the room the card was actually posted into, which the scopeKey cannot say",
+  );
+  ok(
+    rApproved?.platform === "linear" && rApproved?.workspace === "WS9",
+    "🔴 OPE-332: the audit row still PARTITIONS on the frozen asking scope — the venue was added as detail, nothing was re-partitioned",
+  );
+
+  await store.addPendingAction(redirected({ id: "p-332-reject" }));
+  const rejected332 = await resolveApprovalClick({
+    org: "default",
+    id: "p-332-reject",
+    decision: "reject",
+    clickerId: "U_RANDOM_MEMBER",
+    clickerPlatform: "slack",
+    clickerTenant: "T1",
+    clickContext: { surfaceKey: "slack/T1/C_ENG" },
+  });
+  ok(rejected332.outcome === "decided", "OPE-332 fixture: the redirected card rejects normally");
+  const rRejected = await entryFor("approval.rejected", "p-332-reject");
+  ok(
+    rRejected?.detail?.venuePlatform === "slack" && rRejected?.detail?.venueWorkspace === "T1" && rRejected?.detail?.venueChannel === "C_ENG",
+    "🔴 OPE-332: a REDIRECTED approval.rejected names the deciding room too — approve and deny stamp the same shape",
+  );
+
+  await store.addPendingAction(redirected({ id: "p-332-denied", kind: "spend.set", argsJson: JSON.stringify({ org: "default", scopeKey: "slack/T1/C_ENG", level: "surface", monthlyTokens: 10, currentCap: null }) }));
+  const denied332 = await resolveApprovalClick({
+    org: "default",
+    id: "p-332-denied",
+    decision: "approve",
+    clickerId: "U_RANDOM_MEMBER",
+    clickerPlatform: "slack",
+    clickerTenant: "T1",
+    clickContext: { surfaceKey: "slack/T1/C_ENG" },
+  });
+  ok(denied332.outcome === "denied", "OPE-332 fixture: a non-admin click on the redirected admin-tier card is refused");
+  const rDenied = await entryFor("approval.denied", "p-332-denied");
+  ok(
+    rDenied?.detail?.reason === "not-admin" && rDenied?.detail?.venuePlatform === "slack" && rDenied?.detail?.venueWorkspace === "T1" && rDenied?.detail?.venueChannel === "C_ENG",
+    "🔴 OPE-332: a REDIRECTED approval.denied names the room the refused click happened in, alongside the reason",
+  );
+  ok((await store.getPendingAction("default", "p-332-denied"))?.status === "pending", "OPE-332 fixture: the refused click still leaves the row pending (unchanged by this ticket)");
+
+  memberExecuted = [];
+  await store.addPendingAction(row({ id: "p-332-domain", kind: "test.member", argsJson: "{}", domain: "eng", scopeKey: "eng", channelId: "C_ENG", postedTo: null }));
+  await resolveApprovalClick({ org: "default", id: "p-332-domain", decision: "approve", clickerId: "U_RANDOM_MEMBER" });
+  const rDomain = await entryFor("approval.approved", "p-332-domain");
+  ok(rDomain?.platform === "domain" && rDomain?.workspace === "eng", "OPE-332 fixture: the domain-scoped row partitions as {platform: domain, workspace: eng} (whereFromScope, unchanged)");
+  ok(
+    rDomain?.detail?.venuePlatform === undefined && rDomain?.detail?.venueWorkspace === undefined,
+    "🔴 OPE-332: a scope that names no ROOM leaves venuePlatform/venueWorkspace ABSENT — a venue field never carries a pseudo-workspace an audit reader would absorb as a real one",
+  );
+  ok(rDomain?.detail?.venueChannel === "C_ENG", "OPE-332: …but the channel still lands, because channelId IS the channel the card was posted into whatever the scopeKey says");
+}
+
+console.log(`\n✓ approvals: ${n} assertions passed (card render, OPE-307 taint disclosure, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback, OPE-185 clicker gate, OPE-220 card audience gate, OPE-332 decision venue)\n`);

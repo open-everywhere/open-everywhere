@@ -86,6 +86,32 @@ function approvalTtlHours(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : 24;
 }
 
+export interface DecisionVenueDetail {
+  readonly venuePlatform?: string;
+  readonly venueWorkspace?: string;
+  readonly venueChannel?: string;
+}
+
+function venueRoom(key: string | undefined | null): { readonly platform: string; readonly workspace: string; readonly channel?: string } | undefined {
+  if (!key) return undefined;
+  const parsed = parseScopeKey(key);
+  if (parsed.kind === "surface") return { platform: parsed.platform, workspace: parsed.workspace, channel: parsed.surface };
+  if (parsed.kind === "tenant") return { platform: parsed.platform, workspace: parsed.workspace };
+  return undefined;
+}
+
+function venueDetail(
+  where: { readonly postedTo?: string | null; readonly channelId?: string | null; readonly scopeKey: string },
+  clickSurfaceKey?: string,
+): DecisionVenueDetail {
+  const room = venueRoom(where.postedTo) ?? venueRoom(clickSurfaceKey) ?? venueRoom(where.scopeKey);
+  const channel = where.channelId ?? room?.channel;
+  return {
+    ...(room ? { venuePlatform: room.platform, venueWorkspace: room.workspace } : {}),
+    ...(channel ? { venueChannel: channel } : {}),
+  };
+}
+
 export function postedToSurfaceKey(binding: { readonly platform: string; readonly workspace: string }, channelId: string): string {
   return `${binding.platform}/${binding.workspace}/${channelId}`;
 }
@@ -243,7 +269,14 @@ export async function requestApproval(
         ...whereFromScope(input.org, input.scopeKey),
         principalId: input.requestedBy,
         action: "approval.denied",
-        detail: { kind: input.kind, scopeKey: input.scopeKey, postedTo: input.postedTo, reason: disclosure.reason, at: "propose" },
+        detail: {
+          kind: input.kind,
+          scopeKey: input.scopeKey,
+          postedTo: input.postedTo,
+          ...venueDetail({ postedTo: input.postedTo, channelId: input.channelId, scopeKey: input.scopeKey }),
+          reason: disclosure.reason,
+          at: "propose",
+        },
       }).catch(() => undefined);
       emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "withheld" });
       throw new Error(cardDisclosureRefusalNotice());
@@ -448,12 +481,18 @@ export interface ResolveApprovalClickInput {
   readonly clickerTenant?: string;
 }
 
-async function auditClickerDenial(org: string, row: PendingActionRow, clickerId: string, reason: ClickerFloorRefusal | "not-admin"): Promise<void> {
+async function auditClickerDenial(
+  org: string,
+  row: PendingActionRow,
+  clickerId: string,
+  reason: ClickerFloorRefusal | "not-admin",
+  clickSurfaceKey?: string,
+): Promise<void> {
   await appendAudit({
     ...whereFromScope(org, row.scopeKey),
     principalId: clickerId,
     action: "approval.denied",
-    detail: { id: row.id, kind: row.kind, reason },
+    detail: { id: row.id, kind: row.kind, ...venueDetail(row, clickSurfaceKey), reason },
   }).catch(() => undefined);
 }
 
@@ -494,7 +533,7 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     if (kindDef.policy === "member") {
       const verdict = await checkClickerFloor(surfaceKey, { beneficiaryClicker: kindDef.beneficiaryClicker === true });
       if (!verdict.ok) {
-        await auditClickerDenial(input.org, row, input.clickerId, verdict.reason);
+        await auditClickerDenial(input.org, row, input.clickerId, verdict.reason, surfaceKey);
         return { outcome: "clicker-denied", row, reason: verdict.reason };
       }
     }
@@ -504,9 +543,11 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
   const clickerPlatform = input.clickerPlatform ?? clickerRoom?.platform;
   const clickerTenant = input.clickerTenant ?? clickerRoom?.tenant;
   if (kindDef.policy === "admin" && !clickerMayDecide(row, input.clickerId, clickerPlatform, clickerTenant) && (await input.platformAdmin?.(row)) !== true) {
-    await auditClickerDenial(input.org, row, input.clickerId, "not-admin");
+    await auditClickerDenial(input.org, row, input.clickerId, "not-admin", input.clickContext?.surfaceKey);
     return { outcome: "denied", row };
   }
+
+  const venue = venueDetail(row, input.clickContext?.surfaceKey);
 
   const status = input.decision === "reject" ? "rejected" : "approved";
   const cas = await store.decidePendingAction(input.org, row.id, status, input.clickerId, nowIso);
@@ -516,7 +557,7 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
   const summaryLines = summaryLinesFor(decidedRow);
 
   if (status === "rejected") {
-    await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.rejected", detail: { id: row.id, kind: row.kind } });
+    await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.rejected", detail: { id: row.id, kind: row.kind, ...venue } });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "rejected" });
     return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: "rejected" };
   }
@@ -527,19 +568,19 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     if (memoKind && sessionId) {
       const expiresAt = new Date(Date.now() + sessionApprovalTtlHours() * 3_600_000).toISOString();
       await store.setSessionApproval({ org: input.org, sessionId, kind: memoKind, grantedBy: input.clickerId, createdAt: nowIso, expiresAt }).catch(() => {});
-      await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.session_granted", detail: { id: row.id, kind: row.kind, memoKind } }).catch(() => undefined);
+      await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.session_granted", detail: { id: row.id, kind: row.kind, memoKind, ...venue } }).catch(() => undefined);
     }
   }
 
   try {
     const args = JSON.parse(row.argsJson) as unknown;
     const outcome = await withArmingApproval({ id: row.id, kind: row.kind }, () => kindDef.execute(args, input.clickerId));
-    await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.approved", detail: { id: row.id, kind: row.kind, outcome } });
+    await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.approved", detail: { id: row.id, kind: row.kind, ...venue, outcome } });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "approved" });
     return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: outcome };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.failed", detail: { id: row.id, kind: row.kind, error: message } });
+    await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.failed", detail: { id: row.id, kind: row.kind, ...venue, error: message } });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "failed" });
     return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: `FAILED: ${message}` };
   }
