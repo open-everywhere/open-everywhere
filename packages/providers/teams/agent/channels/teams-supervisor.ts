@@ -3,6 +3,7 @@ import {
   mkMessageTrigger,
   mintWakeId,
   singleWindowMentionPolicy,
+  distillRotationHandoff,
   type NormalizedWake,
   type WakeEngagementTier,
   type WakeTrust,
@@ -157,4 +158,53 @@ export async function handleTeamsSingleWindowDispatch(d: TeamsSupervisorDispatch
 
   await doWake(session.token, session.generation, session.freshGeneration ? session.handoffNote : undefined);
   if (deps.touchSession) await deps.touchSession(d.surfaceKey, atIso);
+}
+
+export interface TeamsDmWakeInput {
+  readonly conversationId: string;
+  readonly wakeId: string;
+  readonly handoffNote?: string;
+  readonly handoffFromGeneration?: number;
+  readonly trigger: {
+    readonly id: string;
+    readonly author: string;
+    readonly authorId: string;
+    readonly sentAt: string;
+    readonly text: string;
+    readonly trust?: WakeTrust;
+  };
+}
+
+export function buildTeamsDmWake(input: TeamsDmWakeInput): NormalizedWake {
+  return {
+    platform: "teams",
+    reason: "dm",
+    addressing: "direct-mention",
+    wakeId: input.wakeId,
+    locus: { channel: { id: input.conversationId } },
+    handoff: input.handoffNote ? { note: input.handoffNote, fromGeneration: input.handoffFromGeneration ?? 0 } : undefined,
+    trigger: mkMessageTrigger({
+      from: "human",
+      author: input.trigger.author,
+      authorId: input.trigger.authorId,
+      id: input.trigger.id,
+      sentAt: input.trigger.sentAt,
+      trust: input.trigger.trust ?? "principal",
+      mention: true,
+      body: input.trigger.text,
+    }),
+  };
+}
+
+export function distillTeamsRotationHandoff(
+  scope: string,
+  outgoing: { readonly handoffNote?: string | null; readonly generation?: number } | null,
+  org?: string,
+): Promise<string | undefined> {
+  return distillRotationHandoff({
+    scope,
+    outgoing,
+    org,
+    fetchHistory: async () => "",
+  });
 }

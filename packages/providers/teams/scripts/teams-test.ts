@@ -11,6 +11,8 @@ import {
 import { registerTeamsProvider } from "../agent/register.js";
 import { teamsWakeOriginCodec, isTrustedTeamsServiceUrl } from "../agent/channels/teams-origin-codec.js";
 import { teamsPostArm } from "../agent/channels/teams-post-arm.js";
+import { buildTeamsDmWake } from "../agent/channels/teams-supervisor.js";
+import { buildTeamsFrontHandler, type TeamsFrontPlan } from "../agent/channels/teams-front.js";
 import {
   bindFrom,
   resolvePartition,
@@ -309,4 +311,110 @@ const memCfg: MemoryResolveConfig = {
   }
 }
 
-console.log(`✓ teams: ${passed} assertions passed (activity → REAL bindFrom/partition/memory; fail-closed visibility + trust; DM delegation anchor + the mid-turn host allowlist)`);
+{
+  const w = buildTeamsDmWake({
+    conversationId: "19:1on1@thread.v2",
+    wakeId: "wk-1",
+    trigger: { id: "act-1", author: "Frank", authorId: "29:frank", sentAt: "2026-08-10T00:00:00Z", text: "hello" },
+  });
+  ok(w.platform === "teams", "H1: platform teams");
+  ok(w.reason === "dm", "H1: reason is `dm` (the SURFACE SHAPE, not `mention` — core opens with the DM sentence)");
+  ok(w.addressing === "direct-mention", "H1: addressing is `direct-mention` ALWAYS (a DM is always answered; arms the addressed-prose bridge)");
+  ok(w.unifiedDisclosure === undefined, "H1: NO unifiedDisclosure (a DM window sees exactly one surface — no cross-surface fan-in to disclose)");
+  ok(w.engagementTier === undefined, "H1: NO engagementTier (the ambient dial does not apply to an always-answered DM)");
+  ok(w.locus?.channel?.id === "19:1on1@thread.v2" && w.locus?.channel?.platform === undefined, "H1: locus is the DM conversation, with NO platform address stamp (one surface)");
+  ok(w.trigger.kind === "message", "H1: message trigger");
+  ok(w.trigger.kind === "message" && w.trigger.message.mention === true, "H1: mention:true (the response-obligation flag, as Slack/Discord carry it)");
+  ok(w.trigger.kind === "message" && w.trigger.message.from === "human", "H1: from:human (bot/self authors are dropped upstream)");
+  ok(w.trigger.kind === "message" && w.trigger.message.trust === "principal", "H1: trust defaults to `principal` (a DM partner is the seat's principal)");
+  const wOverride = buildTeamsDmWake({
+    conversationId: "19:1on1@thread.v2",
+    wakeId: "wk-2",
+    trigger: { id: "act-2", author: "Frank", authorId: "29:frank", sentAt: "2026-08-10T00:00:00Z", text: "hi", trust: "relay" },
+  });
+  ok(wOverride.trigger.kind === "message" && wOverride.trigger.message.trust === "relay", "H1: an explicit trust tier overrides the principal default (the live dispatch resolves it)");
+  const wHandoff = buildTeamsDmWake({
+    conversationId: "19:1on1@thread.v2",
+    wakeId: "wk-3",
+    handoffNote: "open ask: ship the report",
+    handoffFromGeneration: 4,
+    trigger: { id: "act-3", author: "Frank", authorId: "29:frank", sentAt: "2026-08-10T00:00:00Z", text: "?" },
+  });
+  ok(wHandoff.handoff?.note === "open ask: ship the report" && wHandoff.handoff?.fromGeneration === 4, "H1: a fresh generation carries the rotation handoff note (the ONLY thing it carries — no backscroll)");
+}
+
+{
+  const GOOD_URL = "https://smba.trafficmanager.net/uk/";
+  const activityBody = (scope: "personal" | "groupChat" | "channel"): string => {
+    const conversationType = scope;
+    const conversation: Record<string, unknown> = { id: "19:conv-h@thread.v2", conversationType, tenantId: "TENANT_H" };
+    const base: Record<string, unknown> = {
+      type: "message",
+      id: `act-${scope}`,
+      serviceUrl: GOOD_URL,
+      from: { id: "29:user-h", name: "Hazel" },
+      recipient: { id: "28:bot" },
+      conversation,
+      text: "hello there",
+    };
+    if (scope === "channel") base.channelData = { channel: { id: "19:team-chan" }, team: { id: "TEAM_H" } };
+    return JSON.stringify(base);
+  };
+
+  async function run(body: string): Promise<{ dm: number; dmSurface?: string; plan: number; forward: number }> {
+    let dm = 0;
+    let dmSurface: string | undefined;
+    let plan = 0;
+    let forward = 0;
+    const waits: Promise<unknown>[] = [];
+    const handler = buildTeamsFrontHandler(
+      async () => {
+        forward++;
+        return new Response("native");
+      },
+      {
+        verify: async () => body,
+        markEventSeen: async () => true,
+        planFor: (): TeamsFrontPlan | null => {
+          plan++;
+          return null;
+        },
+        dmDivert: async (_a, _auth, partition) => {
+          dm++;
+          dmSurface = partition.surfaceKey;
+        },
+      },
+    );
+    const args = { to: {} as never, waitUntil: (p: Promise<unknown>) => waits.push(p) } as unknown as Parameters<typeof handler>[1];
+    await handler(new Request("https://oe.test/eve/v1/teams", { method: "POST", body }), args);
+    await Promise.all(waits);
+    return { dm, dmSurface, plan, forward };
+  }
+
+  const personal = await run(activityBody("personal"));
+  ok(personal.dm === 1, "H2: a PERSONAL chat diverts to its own DM window (dmDivert called once)");
+  ok(personal.plan === 0, "H2: …and NEVER consults planFor / the shared-window privacy floor (the DM branch sits before it)");
+  ok(personal.forward === 0, "H2: …and is not forwarded to the native channel");
+  ok(personal.dmSurface?.startsWith("teams/TENANT_H/") === true, "H2: the DM window is keyed on the DM's OWN surface key (real bindFrom → resolvePartition)");
+
+  const group = await run(activityBody("groupChat"));
+  ok(group.dm === 1 && group.plan === 0 && group.forward === 0, "H2: a GROUP chat diverts on the same terms (the predicate covers personal + groupChat, the Slack mpim parity)");
+
+  const channel = await run(activityBody("channel"));
+  ok(channel.dm === 0, "H2: a CHANNEL activity does NOT take the DM branch");
+  ok(channel.plan === 1, "H2: …it reaches planFor (the shared single-window path), unchanged");
+  ok(channel.forward === 1, "H2: …and forwards here because this fixture's planFor returns null (byte-identical native fallback)");
+
+  const prev = process.env.OE_DM_SEAT_ROTATION;
+  process.env.OE_DM_SEAT_ROTATION = "0";
+  try {
+    const off = await run(activityBody("personal"));
+    ok(off.dm === 0, "H2: with OE_DM_SEAT_ROTATION=0 the DM does NOT divert (fail-closed to native)");
+    ok(off.plan === 1 && off.forward === 1, "H2: …it takes the ordinary planFor→forward native path, byte-identical to pre-OPE-357");
+  } finally {
+    if (prev === undefined) delete process.env.OE_DM_SEAT_ROTATION;
+    else process.env.OE_DM_SEAT_ROTATION = prev;
+  }
+}
+
+console.log(`✓ teams: ${passed} assertions passed (activity → REAL bindFrom/partition/memory; fail-closed visibility + trust; DM delegation anchor + the mid-turn host allowlist; OPE-357 first-class DM window divert)`);

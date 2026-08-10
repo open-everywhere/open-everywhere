@@ -5,6 +5,8 @@ import {
   planTeamsSingleWindow,
   handleTeamsSingleWindowDispatch,
   teamsSupervisorToken,
+  buildTeamsDmWake,
+  distillTeamsRotationHandoff,
   type TeamsSupervisorDeps,
   type TeamsSingleWindowFacts,
 } from "./teams-supervisor.js";
@@ -25,8 +27,14 @@ import {
   resolveWakeTrustFromContext,
   deploymentOrg,
   appendAudit,
+  getOrCreateDmSeat,
+  touchDmSeat,
+  dmSeatRotationEnabled,
+  renderWake,
+  mintWakeId,
   type SupervisorGrain,
   type UnifiedWindowWake,
+  type UnifiedWakeOrigin,
   type Partition,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -131,6 +139,7 @@ export interface TeamsFrontOptions {
   readonly markEventSeen?: (org: string, key: string, atIso: string) => Promise<boolean>;
   readonly planFor?: (a: TeamsMessageActivity) => TeamsFrontPlan | null;
   readonly dispatch?: (a: TeamsMessageActivity, plan: TeamsFrontPlan, to: RouteHandlerArgs["to"]) => Promise<void>;
+  readonly dmDivert?: (a: TeamsMessageActivity, auth: OpenEverywhereTeamsAuth, partition: Partition, to: RouteHandlerArgs["to"]) => Promise<void>;
 }
 
 const OK = () => new Response("ok");
@@ -199,6 +208,65 @@ async function liveTeamsDispatch(a: TeamsMessageActivity, plan: TeamsFrontPlan, 
   }).catch(() => undefined);
 }
 
+async function liveTeamsDmDivert(
+  a: TeamsMessageActivity,
+  auth: OpenEverywhereTeamsAuth,
+  partition: Partition,
+  to: RouteHandlerArgs["to"],
+): Promise<void> {
+  const org = partition.org;
+  const atIso = new Date().toISOString();
+  const surfaceKey = partition.surfaceKey;
+  const conversationId = a.conversation.id;
+
+  const seat = await getOrCreateDmSeat(org, { surfaceKey }, atIso, {
+    distillHandoff: (scope, outgoing) => distillTeamsRotationHandoff(scope, outgoing, org),
+  });
+
+  const wakeCtx: BindableContext = {
+    channel: { kind: "teams" },
+    session: { auth: { current: auth as unknown as { attributes?: Readonly<Record<string, string>> } } },
+  };
+  const trust = resolveWakeTrustFromContext(wakeCtx, { id: a.from.id, isBot: false }, { principalFallback: true });
+  const wakeId = mintWakeId();
+
+  const origin: UnifiedWakeOrigin = { platform: "teams", serviceUrl: a.serviceUrl, conversationId };
+
+  const rendered = renderWake(
+    buildTeamsDmWake({
+      conversationId,
+      wakeId,
+      ...(seat.freshGeneration && seat.handoffNote ? { handoffNote: seat.handoffNote, handoffFromGeneration: Math.max(seat.generation - 1, 0) } : {}),
+      trigger: {
+        id: a.id || "unknown",
+        author: a.from.name ?? a.from.id,
+        authorId: a.from.id,
+        sentAt: atIso,
+        text: a.text || "(the message had no text)",
+        trust,
+      },
+    }),
+  );
+  await divertToUnifiedWindow(to, {
+    message: rendered.message,
+    ...(rendered.context && rendered.context.length > 0 ? { context: rendered.context } : {}),
+    token: seat.token,
+    window: { wakeId, origin, addressing: "direct-mention" } satisfies UnifiedWindowWake,
+    surfaceKey,
+    auth: auth as unknown as { attributes?: Record<string, unknown> },
+  });
+  await touchDmSeat(org, surfaceKey, atIso).catch(() => undefined);
+  await appendAudit({
+    org,
+    platform: "teams",
+    workspace: partition.workspace,
+    surface: surfaceKey,
+    principalId: a.from.id,
+    action: "teams.dispatched",
+    detail: { addressing: "direct-mention", dmWindow: true, conversationId },
+  }).catch(() => undefined);
+}
+
 export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFrontOptions = {}): RouteHandler {
   const verify = opts.verify ?? ((req: Request) => verifyTeamsRequest(req, {}));
   const dedupe = opts.dedupe ?? new EventDedupe();
@@ -207,6 +275,7 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
   const markEventSeen = opts.markEventSeen ?? liveMarkEventSeen;
   const planFor = opts.planFor ?? liveTeamsFrontPlan;
   const dispatch = opts.dispatch ?? liveTeamsDispatch;
+  const dmDivert = opts.dmDivert ?? liveTeamsDmDivert;
 
   return async (req: Request, args: RouteHandlerArgs): Promise<Response> => {
     let rawBody: string;
@@ -229,6 +298,29 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
     const activity = parseTeamsActivity(parsed);
     if (!activity || activity.type !== "message") {
       return forward();
+    }
+
+    if ((activity.scope === "personal" || activity.scope === "groupChat") && dmSeatRotationEnabled()) {
+      if (activity.from.id === activity.recipient.id || activity.from.role === "bot" || activity.from.id.startsWith("28:")) {
+        return OK();
+      }
+      const dmKey = `teams:${activity.conversation.id}:${activity.id}`;
+      if (dedupe.seen(dmKey, now())) return OK();
+      dedupe.mark(dmKey, now());
+      let dm: { auth: OpenEverywhereTeamsAuth; partition: Partition } | null;
+      try {
+        const auth = authForActivity(activity);
+        const partition = resolvePartition({ channel: { kind: "teams" }, session: { auth: { current: auth } } });
+        dm = { auth, partition };
+      } catch {
+        dm = null;
+      }
+      if (!dm) return forward();
+      const { auth: dmAuth, partition: dmPartition } = dm;
+      if (!(await markEventSeen(dmPartition.org, dmKey, new Date(now()).toISOString()))) return OK();
+      tlog(`activity ${activity.id} on ${dmPartition.surfaceKey}: DM — diverting to its own first-class DM window`);
+      args.waitUntil(fifo.enqueue(dmPartition.surfaceKey, () => dmDivert(activity, dmAuth, dmPartition, args.to)));
+      return OK();
     }
 
     const plan = planFor(activity);
