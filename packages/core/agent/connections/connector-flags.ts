@@ -1,20 +1,15 @@
-function armed(name: string, env: NodeJS.ProcessEnv): boolean {
-  const raw = env[name];
-  if (raw === undefined) return false;
-  const v = raw.trim().toLowerCase();
-  return v !== "" && v !== "0" && v !== "false" && v !== "off" && v !== "no";
-}
+import { SETTINGS, getSettings } from "../settings/settings.js";
 
-export const OE_CONNECTOR_USER_PRINCIPAL_ENV = "OE_CONNECTOR_USER_PRINCIPAL";
+export const OE_CONNECTOR_USER_PRINCIPAL_ENV: string = SETTINGS.connectors.userPrincipal.env;
 
 export function connectorUserPrincipalEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return armed(OE_CONNECTOR_USER_PRINCIPAL_ENV, env);
+  return getSettings(env).connectors.userPrincipal;
 }
 
-export const OE_CONNECTOR_LINKSET_VAULT_ENV = "OE_CONNECTOR_LINKSET_VAULT";
+export const OE_CONNECTOR_LINKSET_VAULT_ENV: string = SETTINGS.connectors.linkSetVault.env;
 
 export function connectorLinkSetVaultEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return armed(OE_CONNECTOR_LINKSET_VAULT_ENV, env);
+  return getSettings(env).connectors.linkSetVault;
 }
 
 export function directoryLinkSetVaultArmed(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -25,8 +20,8 @@ export function directoryLinkSetVaultArmed(env: NodeJS.ProcessEnv = process.env)
   }
 }
 
-export const OE_CONNECTOR_OP_TIERING_ENV = "OE_CONNECTOR_OP_TIERING";
+export const OE_CONNECTOR_OP_TIERING_ENV: string = SETTINGS.connectors.opTiering.env;
 
 export function connectorOpTieringEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return armed(OE_CONNECTOR_OP_TIERING_ENV, env);
+  return getSettings(env).connectors.opTiering;
 }

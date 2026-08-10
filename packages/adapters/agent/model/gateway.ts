@@ -1,4 +1,4 @@
-import { gateway } from "ai";
+import { gateway, createGateway } from "ai";
 import {
   type ModelRoute,
   type BindableContext,
@@ -10,6 +10,10 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 type GatewayModel = ReturnType<typeof gateway>;
+
+const GATEWAY_BASE_URL = process.env.OE_AI_GATEWAY_URL?.trim();
+
+const provider = GATEWAY_BASE_URL ? createGateway({ baseURL: GATEWAY_BASE_URL }) : gateway;
 
 export interface GatewayRoutedDefaults {
   readonly id: string;
@@ -40,7 +44,7 @@ export function applyGatewayOptions(
 
 export function gatewayModelBackend(defaults?: Record<string, unknown>): ModelBackend<GatewayModel> {
   return {
-    model: (id) => gateway(id),
+    model: (id) => provider(id),
     applyOptions: (route, options, ids) => applyGatewayOptions(route, options, ids, defaults),
   };
 }

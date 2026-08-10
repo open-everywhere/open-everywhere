@@ -1,20 +1,16 @@
 import type { ToolContext, ToolDefinition } from "eve/tools";
 import { auditToolAction } from "../audit/tool-action.js";
 import { emitTelemetry } from "../observability/telemetry.js";
+import { SETTINGS, getSettings } from "../settings/settings.js";
 
-export const DEFAULT_BASH_TIMEOUT_MS = 600_000;
+export const DEFAULT_BASH_TIMEOUT_MS: number = SETTINGS.bash.timeoutMs.shipped;
 
 export function bashTimeoutMs(): number {
-  const raw = (process.env.OE_BASH_TIMEOUT_MS ?? "").trim().toLowerCase();
-  if (raw === "") return DEFAULT_BASH_TIMEOUT_MS;
-  if (raw === "0" || raw === "off" || raw === "false") return 0;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_BASH_TIMEOUT_MS;
+  return getSettings().bash.timeoutMs;
 }
 
 export function backgroundGuardEnabled(): boolean {
-  const raw = (process.env.OE_BASH_BACKGROUND_GUARD ?? "").trim().toLowerCase();
-  return !(raw === "0" || raw === "off" || raw === "false");
+  return getSettings().bash.backgroundGuard;
 }
 
 interface CommandScan {

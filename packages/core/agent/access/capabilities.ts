@@ -1,13 +1,9 @@
-export const WINDOW_TOPOLOGY_ENABLED: boolean = false;
+import { SETTINGS, getSettings } from "../settings/settings.js";
 
-export const OE_WINDOW_TOPOLOGY_ENV = "OE_WINDOW_TOPOLOGY";
+export const WINDOW_TOPOLOGY_ENABLED: boolean = SETTINGS.window.topology.shipped;
+
+export const OE_WINDOW_TOPOLOGY_ENV: string = SETTINGS.window.topology.env;
 
 export function windowTopologyEnabled(): boolean {
-  const raw = process.env[OE_WINDOW_TOPOLOGY_ENV];
-  if (raw !== undefined) {
-    const v = raw.trim().toLowerCase();
-    if (v === "1" || v === "true" || v === "yes" || v === "on") return true;
-    if (v === "0" || v === "false" || v === "no" || v === "off") return false;
-  }
-  return WINDOW_TOPOLOGY_ENABLED;
+  return getSettings().window.topology;
 }

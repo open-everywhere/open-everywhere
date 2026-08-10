@@ -56,23 +56,39 @@ for (const raw of ["0", "false", "no", "off", "OFF", " false "]) {
   );
 }
 
-console.log("3 — precedence: the env is consulted BEFORE the constant:");
+console.log("3 — precedence: the env is consulted BEFORE the shipped default:");
 {
-  const src = await import("node:fs").then((fs) =>
-    fs.readFileSync(new URL("../agent/access/capabilities.ts", import.meta.url), "utf8"),
-  );
-  const body = src.slice(src.indexOf("export function windowTopologyEnabled"));
-  const envAt = body.indexOf("process.env[OE_WINDOW_TOPOLOGY_ENV]");
-  const constAt = body.indexOf("return WINDOW_TOPOLOGY_ENABLED");
-  ok(envAt >= 0, "[3] the resolver still reads process.env[OE_WINDOW_TOPOLOGY_ENV]");
-  ok(constAt >= 0, "[3] the resolver still falls through to `return WINDOW_TOPOLOGY_ENABLED`");
+  const fs = await import("node:fs");
+  const capabilities = fs.readFileSync(new URL("../agent/access/capabilities.ts", import.meta.url), "utf8");
+  const settings = fs.readFileSync(new URL("../agent/settings/settings.ts", import.meta.url), "utf8");
+
+  const gate = capabilities.slice(capabilities.indexOf("export function windowTopologyEnabled"));
   ok(
-    envAt < constAt,
-    "[3] the env read comes BEFORE the constant fallback — the constant is the DEFAULT, never the sole authority",
+    /getSettings\(\)\.window\.topology/u.test(gate),
+    "[3] the gate resolves through getSettings().window.topology — one resolver, shared with every other behaviour switch",
   );
   ok(
-    !/NODE_ENV|isTest|VITEST|JEST|import\.meta\.vitest/.test(body),
-    "[3] the resolver has NO test-mode guard — if one is added, the comment calling this a deployment switch must be rewritten in the same diff",
+    capabilities.includes("SETTINGS.window.topology.shipped") && capabilities.includes("SETTINGS.window.topology.env"),
+    "[3] the constant and the env-var name are the SCHEMA's, not second copies that could drift from it",
+  );
+
+  const spec = settings.slice(settings.indexOf("  window: {"));
+  ok(/env:\s*"OE_WINDOW_TOPOLOGY"/u.test(spec), "[3] the schema still declares OE_WINDOW_TOPOLOGY as this setting's ops override");
+  ok(/shipped:\s*false/u.test(spec.slice(0, spec.indexOf("parseEnv"))), "[3] …with the shipped default still FALSE in the schema itself");
+
+  const resolverFrom = settings.slice(settings.indexOf("function resolve<T>"));
+  const resolver = resolverFrom.slice(0, resolverFrom.indexOf("\n}") + 2);
+  const envAt = resolver.indexOf("env[spec.env]");
+  const defaultAt = resolver.indexOf("override ?? spec.shipped");
+  ok(envAt >= 0, "[3] the shared resolver still reads the declared env var");
+  ok(defaultAt >= 0, "[3] the shared resolver still falls through to the registered override, then the shipped default");
+  ok(
+    envAt < defaultAt,
+    "[3] the env read comes BEFORE the fallback — the shipped value is the DEFAULT, never the sole authority",
+  );
+  ok(
+    !/NODE_ENV|isTest|VITEST|JEST|import\.meta\.vitest/.test(resolver) && !/NODE_ENV|isTest|VITEST|JEST/.test(gate),
+    "[3] neither the gate nor the shared resolver has a test-mode guard — if one is added, the comment calling this a deployment switch must be rewritten in the same diff",
   );
 }
 

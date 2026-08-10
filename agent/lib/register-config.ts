@@ -1,4 +1,6 @@
 import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
+import { registerSettings } from "@open-everywhere/core/agent/settings/settings.js";
+import { SETTINGS_OVERRIDES } from "../settings/settings.js";
 import { setRegisteredProviders } from "@open-everywhere/core/agent/access/providers.js";
 import { assertRoutesWithinPolicy } from "@open-everywhere/core/agent/model/policy.js";
 import { assertWindowSourcesVouched, assertGovernanceDomains, assertComplianceDomains, assertReportChannels } from "@open-everywhere/core/agent/memory/domain.js";
@@ -19,6 +21,8 @@ import { loadPrincipals } from "../identity/principals.js";
 import { loadGroups } from "../identity/groups.js";
 import "../identity/surfaces.js";
 import "./register-docs.js";
+
+registerSettings(SETTINGS_OVERRIDES);
 
 registerConfig({
   loadBundles,

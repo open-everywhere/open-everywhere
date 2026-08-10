@@ -8,17 +8,14 @@ import { assertConnectorDisclosure } from "./connector-disclosure.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
+import { SETTINGS, getSettings } from "../settings/settings.js";
 
 export class ConnectorScopeError extends Error {}
 
-export const OE_CONNECTOR_DM_ONLY_ENV = "OE_CONNECTOR_DM_ONLY";
+export const OE_CONNECTOR_DM_ONLY_ENV: string = SETTINGS.connectors.dmOnly.env;
 
 export function connectorDmOnlyEnabled(): boolean {
-  const raw = process.env[OE_CONNECTOR_DM_ONLY_ENV];
-  if (raw === undefined) return true;
-  const v = raw.trim().toLowerCase();
-  if (v === "") return true;
-  return v !== "0" && v !== "false" && v !== "off";
+  return getSettings().connectors.dmOnly;
 }
 
 interface ContextStore {

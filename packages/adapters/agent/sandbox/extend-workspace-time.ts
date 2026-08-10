@@ -1,14 +1,11 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { Sandbox } from "@vercel/sandbox";
-import { auditToolAction } from "@open-everywhere/core/agent/adapter-api.js";
+import { auditToolAction, getSettings } from "@open-everywhere/core/agent/adapter-api.js";
 import { shouldStop } from "./vercel-lifecycle.js";
 
-const DEFAULT_MAX_MINUTES = 120;
-
 export function maxExtendMinutes(): number {
-  const raw = Number(process.env.OE_SANDBOX_EXTEND_MAX_MIN);
-  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_MAX_MINUTES;
+  return getSettings().sandbox.extendMaxMinutes;
 }
 
 export interface ExtendDeps {

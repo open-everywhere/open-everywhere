@@ -8,14 +8,12 @@ import type { ApprovalChainRequest, ChainResolution } from "./approver-chain.js"
 import { taintKindsThisTurn, untrustedIngestedThisTurn } from "./taint-signal.js";
 import { requesterMessagesThisTurn } from "./requester-messages.js";
 import { appendAudit, readAudit } from "../audit/audit.js";
+import { getSettings, type ApprovalJudgeMode as SettingsApprovalJudgeMode } from "../settings/settings.js";
 
-export type ApprovalJudgeMode = "off" | "shadow" | "enforce";
+export type ApprovalJudgeMode = SettingsApprovalJudgeMode;
 
 export function approvalJudgeMode(): ApprovalJudgeMode {
-  const raw = process.env.OE_APPROVAL_JUDGE?.trim();
-  if (raw === "shadow") return "shadow";
-  if (raw === "enforce") return "enforce";
-  return "off";
+  return getSettings().approvals.judgeMode;
 }
 
 export type JudgePass = "scrutiny" | "verdict";

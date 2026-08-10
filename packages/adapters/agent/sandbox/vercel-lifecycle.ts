@@ -1,13 +1,13 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { Sandbox } from "@vercel/sandbox";
-import { bindFrom, domainKeyOf, resolvePartition, appendUsageEvent, usageForSession, recordSpend, periodOf, estimateSandboxCostUsd, routineIdOf } from "@open-everywhere/core/agent/adapter-api.js";
+import { bindFrom, domainKeyOf, resolvePartition, appendUsageEvent, usageForSession, recordSpend, periodOf, estimateSandboxCostUsd, routineIdOf, getSettings } from "@open-everywhere/core/agent/adapter-api.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:sandbox-lifecycle] ${msg}`);
 }
 
 export function stopAfterTurnEnabled(): boolean {
-  return process.env.OE_SANDBOX_STOP_AFTER_TURN !== "0";
+  return getSettings().sandbox.stopAfterTurn;
 }
 
 export function shouldStop(status: string): boolean {

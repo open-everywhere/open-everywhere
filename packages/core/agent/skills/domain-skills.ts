@@ -7,16 +7,15 @@ import type { DomainSkillProvenance, DomainSkillRevisionRow, DomainSkillRow } fr
 import { isSafeSkillName } from "../scm/repo-skills.js";
 import { parseFrontmatter } from "../plugins/extract.js";
 import { MAX_SKILL_BYTES } from "../scm/git.js";
+import { SETTINGS, getSettings } from "../settings/settings.js";
 import type { SkillPackageDefinition } from "eve/skills";
 
 export const MAX_DOMAIN_SKILL_BYTES = MAX_SKILL_BYTES;
 
-export const DEFAULT_DOMAIN_SKILL_CAP = 50;
+export const DEFAULT_DOMAIN_SKILL_CAP: number = SETTINGS.skills.domainSkillCap.shipped;
 
 export function domainSkillCap(): number {
-  const raw = process.env.OE_DOMAIN_SKILL_CAP;
-  const n = raw ? Number.parseInt(raw, 10) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_DOMAIN_SKILL_CAP;
+  return getSettings().skills.domainSkillCap;
 }
 
 export type SkillDomainRefusal = "dm" | "mpim" | "external" | "unassigned";

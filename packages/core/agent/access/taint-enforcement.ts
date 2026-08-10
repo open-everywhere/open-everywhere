@@ -1,12 +1,11 @@
 import { defineState } from "eve/context";
 import { classifyIngestion, type IngestionSource, type IngestionVerdict } from "./taint-tiers.js";
+import { getSettings, type TaintTierMode as SettingsTaintTierMode } from "../settings/settings.js";
 
-export type TaintTierMode = "enforced" | "dryrun";
+export type TaintTierMode = SettingsTaintTierMode;
 
 export function taintTierMode(): TaintTierMode {
-  const raw = (process.env.OE_TAINT_TIERS ?? "").trim().toLowerCase();
-  if (raw === "") return "enforced";
-  return raw === "enforce" || raw === "enforced" ? "enforced" : "dryrun";
+  return getSettings().taint.tierMode;
 }
 
 export interface TaintVerdictRow {
