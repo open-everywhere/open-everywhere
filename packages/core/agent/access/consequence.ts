@@ -335,11 +335,6 @@ export const NON_TOOL_ACTION_KINDS: Readonly<Record<string, ActionKindEntry>> = 
     reason:
       "the ❌-reaction undo of a FLOATED memory write (Stage T3): removes the bullet the float notice named. Raised by a reaction, so there is no tool source to scan. Member is the symmetric bar to the write it reverses — the float itself is ungated, and gating the undo harder than the write would make the reversible half the expensive one",
   },
-  "executor.op": {
-    tier: "gate:member",
-    reason:
-      "a connector WRITE that paused inside Executor and resumes on the click (connections/executor-approval-bridge.ts). Registered by that module rather than by a tool because the op is eve-injected — it has no authored file anywhere. Member, matching the connector-op plane's own write tier (classifyConnectorOp): this is the one connector-write path that DOES get a frozen-args card plus a verified clicker, and the honest note is that the eve-injected path for the same effect gets only a session-scoped confirmation (the split-brain recorded at the top of this file). Pinning it here is what stops the stronger of the two bars being lowered silently",
-  },
 };
 
 export function checkActionKindRegistry(

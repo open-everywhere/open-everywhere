@@ -217,10 +217,9 @@ function tsFilesUnder(dir: string): string[] {
   ok(at("access/analytics-scope.ts")?.accessor === "opaque", "real: analytics-scope's `role.principalId` is SEEN as opaque — the measured case the third accessor value exists for");
   ok(at("connections/aws-identity.ts")?.accessor === "acting", "real: planAwsIdentity's DESTRUCTURED fence is SEEN and reads acting — a fire may not assume a human's AWS SSO identity, and the lint certified this file as gate-free until shape C landed");
   ok(at("connections/connector-auth.ts")?.intent === "presence", "real: the Connect per-user mint's `principalId` refusal is SEEN — destructured off resolveDmPrincipal, which returns the ACTING principal despite the bound-looking spelling");
-  ok(at("connections/executor-user-oauth.ts")?.intent === "presence", "real: …and its Executor twin too, so the pair cannot drift apart unnoticed");
 
   const presence = gates.filter((g) => g.intent === "presence").length;
-  ok(presence >= 15 && gates.length >= 25, `real: the inventory is the size the three sweeps left behind (${gates.length} gates, ${presence} presence) — a collapse here means the detector stopped seeing, not that the gates went away`);
+  ok(presence >= 14 && gates.length >= 24, `real: the inventory is the size the three sweeps left behind (${gates.length} gates, ${presence} presence) — a collapse here means the detector stopped seeing, not that the gates went away`);
 
   const sites = files.flatMap((f) => findUnattendedDispatchSites(relative(root, f), readFileSync(f, "utf8")));
   ok(checkUnattendedDispatch(sites).length === 0, `real: every service-principal dispatch builds its bag through fire-auth (${checkUnattendedDispatch(sites).map((d) => `${d.file}:${d.line}`).join(", ")})`);

@@ -1,7 +1,6 @@
 import {
   assertProvidersValid,
   defineProvider,
-  executorHome,
   vercelConnectorHome,
   type Provider,
 } from "@open-everywhere/core/agent/access/providers.js";
@@ -18,17 +17,6 @@ const providers: Provider[] = [
       { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" },
       { id: "channel-key", type: "api-key", secretRef: "NOTION_CHANNEL_API_KEY", broker: "env", intake: false },
       { id: "user-oauth", type: "user-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp") },
-      {
-        id: "user-oauth-executor",
-        type: "user-oauth",
-        home: executorHome({
-          integration: "notion-mcp",
-          owner: "user",
-          connection: "personal",
-          client: "dcr-mcp-notion-com",
-          template: "notion-mcp",
-        }),
-      },
     ],
   }),
 

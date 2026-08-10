@@ -29,12 +29,10 @@ export { findProviderCredential } from "./access/providers.js";
 export type { ProviderCredential } from "./access/providers.js";
 export {
   registerExclusiveCredentialHome,
-  executorHome,
   vercelConnectorHome,
-  executorHomeOf,
   vercelConnectorOf,
 } from "./access/providers.js";
-export type { ExclusiveCredentialHome, CredentialHomeRef, ExecutorConnectionRef, ProviderCredentialType } from "./access/providers.js";
+export type { ExclusiveCredentialHome, CredentialHomeRef, ProviderCredentialType } from "./access/providers.js";
 export { grantFamilyOf, isHumanActing, principalOfCredential, humanActingSupport } from "./access/providers.js";
 export type { CredentialGrantFamily, CredentialLifecycle, CredentialRefreshPosture, HumanActingSupport } from "./access/providers.js";
 
@@ -81,15 +79,7 @@ export type {
   ConnectorTransport,
   ConnectorTransportSpec,
   ResolvedConnectorTransport,
-  PausableTransport,
-  PausableDispatch,
-  TransportPause,
-  TransportPauseInteraction,
 } from "./connections/connector-transport.js";
-
-export { registerExecutorTransportClient } from "./connections/executor-transport.js";
-export { registerExecutorProvisioningClient } from "./connections/executor-user-oauth.js";
-export { registerExecutorConnectionStore } from "./credentials/executor-store.js";
 
 export { registerActionKind } from "./approvals/actions.js";
 export type { ActionKind, PendingActionRow } from "./approvals/types.js";

@@ -41,32 +41,15 @@ export function humanActingSupport(provider: {
   return provider.humanActing.supported ? "supported" : "vendor-incapable";
 }
 
-export interface ExecutorConnectionRef {
-  readonly integration: string;
-  readonly owner: string;
-  readonly connection: string;
-  readonly client?: string;
-  readonly template?: string;
-}
-
 export interface CredentialHomeRef {
   readonly kind: string;
   readonly config: Readonly<Record<string, unknown>>;
 }
 
-export const EXECUTOR_HOME_KIND = "executor";
 export const VERCEL_CONNECT_HOME_KIND = "vercel-connect";
-
-export function executorHome(config: ExecutorConnectionRef): CredentialHomeRef {
-  return { kind: EXECUTOR_HOME_KIND, config: config as unknown as Readonly<Record<string, unknown>> };
-}
 
 export function vercelConnectorHome(connector: string): CredentialHomeRef {
   return { kind: VERCEL_CONNECT_HOME_KIND, config: { connector } };
-}
-
-export function executorHomeOf(cred: { readonly home?: CredentialHomeRef }): ExecutorConnectionRef | undefined {
-  return cred.home?.kind === EXECUTOR_HOME_KIND ? (cred.home.config as unknown as ExecutorConnectionRef) : undefined;
 }
 
 export function vercelConnectorOf(cred: { readonly home?: CredentialHomeRef }): string | undefined {
@@ -140,16 +123,6 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 function registerCoreExclusiveHomes(): void {
-  registerExclusiveCredentialHome({
-    name: EXECUTOR_HOME_KIND,
-    validFor: ["api-key", "service-oauth", "user-oauth"],
-    validateConfig: (config, where) => {
-      const e = config as Partial<ExecutorConnectionRef>;
-      if (!isRecord(config) || !e.integration || !e.owner || !e.connection) {
-        throw new Error(`${where}: executor binding needs non-empty { integration, owner, connection }`);
-      }
-    },
-  });
   registerExclusiveCredentialHome({
     name: VERCEL_CONNECT_HOME_KIND,
     validFor: ["service-oauth", "user-oauth"],
@@ -226,7 +199,7 @@ export function assertProvidersValid(providers: readonly Provider[]): void {
           throw new Error(`${where}: api-key needs an explicit broker stamp ("env" | "db" | ...) — a credential has exactly one home; unstamped-follows-selection is not allowed`);
         }
         if (c.type === "service-oauth" || c.type === "user-oauth") {
-          throw new Error(`${where}: ${c.type} needs a home — a vercel-connect connector (vercelConnectorHome) or an exclusive vendor home (e.g. executorHome)`);
+          throw new Error(`${where}: ${c.type} needs a home — a vercel-connect connector (vercelConnectorHome) or a registered exclusive vendor home`);
         }
       }
 

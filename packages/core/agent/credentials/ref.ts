@@ -21,37 +21,9 @@ export function parseDbCredentialRef(ref: string): { provider: string; credentia
   return { provider, credentialId };
 }
 
-export const EXECUTOR_REF_PREFIX = "executor:";
-
-export function executorCredentialRef(integration: string, owner: string, connection: string): string {
-  if (!integration || !owner || !connection) {
-    throw new Error(
-      `executorCredentialRef needs non-empty integration/owner/connection (got "${integration}"/"${owner}"/"${connection}")`,
-    );
-  }
-  if (integration.includes(":") || owner.includes(":") || connection.includes(":")) {
-    throw new Error(
-      `executorCredentialRef: no segment may contain ":" — it is the ref delimiter (got ` +
-        `"${integration}"/"${owner}"/"${connection}")`,
-    );
-  }
-  return `${EXECUTOR_REF_PREFIX}${integration}:${owner}:${connection}`;
-}
-
-export function parseExecutorCredentialRef(ref: string): { integration: string; owner: string; connection: string } | null {
-  if (typeof ref !== "string" || !ref.startsWith(EXECUTOR_REF_PREFIX)) return null;
-  const rest = ref.slice(EXECUTOR_REF_PREFIX.length);
-  const parts = rest.split(":");
-  if (parts.length !== 3) return null;
-  const [integration, owner, connection] = parts;
-  if (!integration || !owner || !connection) return null;
-  return { integration, owner, connection };
-}
-
 export interface CredentialRefDeriveInput {
   readonly provider: string;
   readonly credentialId: string;
-  readonly executor?: { readonly integration: string; readonly owner: string; readonly connection: string };
 }
 
 export interface RefCodec {
@@ -61,7 +33,6 @@ export interface RefCodec {
 }
 
 export const DB_HOME = "db";
-export const EXECUTOR_HOME = "executor";
 
 const REF_CODECS = new Map<string, RefCodec>();
 
@@ -97,15 +68,7 @@ function registerCoreRefCodecs(): void {
   registerRefCodec({
     home: DB_HOME,
     parse: parseDbCredentialRef,
-    derive: (input) => (input.executor ? null : dbCredentialRef(input.provider, input.credentialId)),
-  });
-  registerRefCodec({
-    home: EXECUTOR_HOME,
-    parse: parseExecutorCredentialRef,
-    derive: (input) =>
-      input.executor
-        ? executorCredentialRef(input.executor.integration, input.executor.owner, input.executor.connection)
-        : null,
+    derive: (input) => dbCredentialRef(input.provider, input.credentialId),
   });
 }
 

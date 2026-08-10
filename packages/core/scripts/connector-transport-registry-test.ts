@@ -20,7 +20,6 @@ const baseSpec = {
   directUrl: NOTION_URL,
   fallbackSecretRef: "NOTION_API_KEY",
   fallbackBroker: "env",
-  executorCredentialId: "user-oauth-executor",
 };
 
 function setEnv(env: Record<string, string | undefined>): () => void {
@@ -40,7 +39,7 @@ function setEnv(env: Record<string, string | undefined>): () => void {
 
 {
   {
-    const restore = setEnv({ OE_CONNECTOR_USER_PRINCIPAL: undefined, OE_EXECUTOR_ENABLED: undefined, OE_EXECUTOR_URL: undefined });
+    const restore = setEnv({ OE_CONNECTOR_USER_PRINCIPAL: undefined });
     resetConnectorTransports();
     const t = selectConnectorTransport(baseSpec);
     ok(t.url === NOTION_URL, "flags-off: direct-mcp keeps the vendor URL");
@@ -49,29 +48,12 @@ function setEnv(env: Record<string, string | undefined>): () => void {
   }
 
   {
-    const restore = setEnv({ OE_CONNECTOR_USER_PRINCIPAL: "1", OE_EXECUTOR_ENABLED: undefined, OE_EXECUTOR_URL: undefined });
+    const restore = setEnv({ OE_CONNECTOR_USER_PRINCIPAL: "1" });
     resetConnectorTransports();
     const t = selectConnectorTransport(baseSpec);
     ok(t.url === NOTION_URL, "user-principal armed: direct-mcp still uses the vendor URL");
     restore();
   }
-
-  {
-    const restore = setEnv({ OE_CONNECTOR_USER_PRINCIPAL: undefined, OE_EXECUTOR_ENABLED: "1", OE_EXECUTOR_URL: "https://exec.example.com" });
-    resetConnectorTransports();
-    const t = selectConnectorTransport(baseSpec);
-    ok(t.url === "https://exec.example.com/mcp", "executor armed: routes through Executor's /mcp URL (wins by priority)");
-    restore();
-  }
-}
-
-{
-  const restore = setEnv({ OE_EXECUTOR_ENABLED: "1", OE_EXECUTOR_URL: "https://exec.example.com" });
-  resetConnectorTransports();
-  const noExecSpec = { ...baseSpec, executorCredentialId: undefined };
-  const t = selectConnectorTransport(noExecSpec);
-  ok(t.url === NOTION_URL, "executor armed but spec has no executor credential id ⇒ direct-mcp (opt-in gate holds)");
-  restore();
 }
 
 {
@@ -90,7 +72,7 @@ function setEnv(env: Record<string, string | undefined>): () => void {
 {
   resetConnectorTransports();
   const names = registeredConnectorTransports().map((t) => t.name).sort();
-  ok(names.length === 2 && names[0] === "direct-mcp" && names[1] === "executor", "reset restores exactly { direct-mcp, executor }");
+  ok(names.length === 1 && names[0] === "direct-mcp", "reset restores exactly { direct-mcp }");
 }
 
 console.log(`✓ connector-transport-registry: ${n} assertions passed`);

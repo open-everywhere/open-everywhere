@@ -11,7 +11,6 @@ import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import { resolveConnectorOptions, optionLabel, hostWriteHomeAvailable, offerableCredential, type ConnectMode, type ConnectorOption } from "../connections/connector-offer.js";
 import { registeredCredentialHomes } from "../credentials/home.js";
 import { buildConnectCard, renderNonSlackConnect } from "../connections/connector-card.js";
-import { executorHomeOf } from "../access/providers.js";
 import { deriveCredentialRef } from "../credentials/ref.js";
 import { intakePageAvailable, issueIntakePageLink } from "../credentials/intake-page.js";
 
@@ -135,8 +134,7 @@ const connectorEntry = defineTool({
       if (!binding.principalId) return undefined;
       const cred = offerableCredential(provider, o.credentialType);
       if (!cred) return undefined;
-      const execHome = executorHomeOf(cred);
-      const ref = deriveCredentialRef({ provider: provider.name, credentialId: cred.id, ...(execHome ? { executor: execHome } : {}) });
+      const ref = deriveCredentialRef({ provider: provider.name, credentialId: cred.id });
       if (!ref) return undefined;
       const link = await issueIntakePageLink({
         org: binding.org,

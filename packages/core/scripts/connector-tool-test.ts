@@ -18,13 +18,12 @@ const {
 } = await import("../agent/connections/connector-offer.js");
 type CredentialHome = import("../agent/credentials/home.js").CredentialHome;
 const fakeHome = (name: string, hw: boolean): CredentialHome => ({ name, hostWriteAvailable: () => hw, store: async () => {} });
-const { executorCredentialRef } = await import("../agent/credentials/ref.js");
 const { buildConnectCard, handleConnectClick, OE_CONNECT_ACTION_PREFIX } = await import("../agent/connections/connector-card.js");
 const { AUTH_URL_TTL_MS } = await import("../agent/connections/connector-auth.js");
 const { rawVaultSubject } = await import("../agent/identity/oauth-vault-share.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 type Provider = import("../agent/access/providers.js").Provider;
-const { vercelConnectorHome, executorHome } = await import("../agent/access/providers.js");
+const { vercelConnectorHome } = await import("../agent/access/providers.js");
 type ConnectorOption = import("../agent/connections/connector-offer.js").ConnectorOption;
 type Domain = import("../agent/memory/domain.js").Domain;
 
@@ -97,11 +96,11 @@ console.log("1. resolver matrix:");
   ok(hostWriteBrokerAvailable([]) === false, "hostWriteBrokerAvailable: nothing registered ⇒ false (fail closed)");
 
   ok(hostWriteHomeAvailable([fakeHome("db", false), fakeHome("env", false)]) === false, "hostWriteHomeAvailable: only non-host-write homes ⇒ no host-write home");
-  ok(hostWriteHomeAvailable([fakeHome("executor", true)]) === true, "hostWriteHomeAvailable: an executor home reporting host-write ⇒ available");
+  ok(hostWriteHomeAvailable([fakeHome("vaultx", true)]) === true, "hostWriteHomeAvailable: a registered vendor home reporting host-write ⇒ available");
   ok(hostWriteHomeAvailable([fakeHome("db", true), fakeHome("env", false)]) === true, "hostWriteHomeAvailable: the db home reporting host-write ⇒ available");
   ok(hostWriteHomeAvailable([]) === false, "hostWriteHomeAvailable: no homes ⇒ false (fail closed)");
 
-  eq(kinds(R({ mode: "channel", isAdmin: true, hostWriteBroker: true })), ["Connect org account:url", "Set API key:modal"], "executor-armed (hostWriteBroker true via executor) ⇒ api-key offered as a modal, no db broker needed");
+  eq(kinds(R({ mode: "channel", isAdmin: true, hostWriteBroker: true })), ["Connect org account:url", "Set API key:modal"], "vendor-home-armed (hostWriteBroker true via a registered home) ⇒ api-key offered as a modal, no db broker needed");
 }
 
 console.log("2. card build:");
@@ -247,18 +246,6 @@ ok((await handleConnectClick({ type: "block_actions", actions: [{ action_id: "oe
   );
   eq(intakeCalls3.length, 1, "admin api-key click against the plumbing-carrying provider ⇒ intake invoked");
   ok(intakeCalls3[0].ref === "db:notion:team-key", "the forged api-key click resolves the intake-able team-key (db:notion:team-key), NEVER the intake:false channel-key plumbing");
-
-  const NOTION_EXECUTOR: Provider = {
-    name: "notion",
-    connection: "notion",
-    allows: ["api-key"],
-    credentials: [{ id: "team-key", type: "api-key", home: executorHome({ integration: "notion-mcp", owner: "org", connection: "oe-notion-team-key" }) }],
-  };
-  const intakeCalls4: Array<Record<string, unknown>> = [];
-  const requestIntake4 = async (input: Record<string, unknown>) => (intakeCalls4.push(input), { id: "e" });
-  await handleConnectClick(click("api-key", "U_ADMIN", "C123"), deps({ loadProviders: () => [NOTION_EXECUTOR], post: recorder().post, requestIntake: requestIntake4 }));
-  eq(intakeCalls4.length, 1, "admin api-key click against an executor-homed provider ⇒ intake invoked");
-  ok(intakeCalls4[0].ref === executorCredentialRef("notion-mcp", "org", "oe-notion-team-key"), "the executor-homed api-key click stamps an executor: ref (the connection address), NOT a db ref");
 }
 
 {

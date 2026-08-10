@@ -386,7 +386,7 @@ firesWith(
   ok(TOOL_CONSEQUENCE.set_spend_limit.tier === "gate:admin", "set_spend_limit is declared gate:admin");
   ok(TOOL_CONSEQUENCE.reply.tier === "open", "reply is declared open (same-room, fails all three rubric axes)");
 
-  for (const kind of ["session.checkpoint", "memory.float-undo", "executor.op"]) {
+  for (const kind of ["session.checkpoint", "memory.float-undo"]) {
     const pin = NON_TOOL_ACTION_KINDS[kind];
     ok(pin?.tier === "gate:member", `${kind} is pinned gate:member as a non-tool ActionKind`);
     ok((pin?.reason.length ?? 0) > 60, `${kind}'s pin carries a real reason, not a rubber stamp`);
@@ -400,15 +400,14 @@ firesWith(
     "packages/core/agent/approvals/actions.ts",
     "packages/core/agent/approvals/session-checkpoint.ts",
     "packages/core/agent/approvals/memory-float.ts",
-    "packages/core/agent/connections/executor-approval-bridge.ts",
   ];
   const realRegistrations = registeringFiles.flatMap((f) => findActionKindRegistrations(f, readFileSync(join(repoRoot, f), "utf8")));
-  ok(realRegistrations.length >= 7, `the real-tree registration scan is populated (saw ${realRegistrations.length})`);
+  ok(realRegistrations.length >= 6, `the real-tree registration scan is populated (saw ${realRegistrations.length})`);
   ok(
     realRegistrations.every((r) => r.kind !== undefined),
     "every real-tree `registerActionKind` site RESOLVES to a kind — an unresolvable one would report as a problem forever, and a check nobody can satisfy gets deleted",
   );
-  for (const kind of ["session.checkpoint", "memory.float-undo", "executor.op"]) {
+  for (const kind of ["session.checkpoint", "memory.float-undo"]) {
     ok(realRegistrations.some((r) => r.kind === kind), `the coverage scan resolves "${kind}" off disk — it is spelled via a module const, the shape a literal-only scan would miss`);
   }
 

@@ -18,8 +18,6 @@ const { getOperationalStore } = await import("../agent/operational/provider.js")
 const { getSecretVia, brokerFor, resolveHeaders, registerBroker, resetBrokers, CredentialError } = await import("../agent/access/credentials.js");
 const dbBroker = await import("../agent/credentials/db-broker.js");
 const intake = await import("../agent/credentials/intake.js");
-const execStore = await import("../agent/credentials/executor-store.js");
-const { executorCredentialRef } = await import("../agent/credentials/ref.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { runtimeRoleGrantsSql } = await import("../agent/operational/postgres.js");
 
@@ -229,101 +227,5 @@ function recorder() {
   delete process.env[ENV_ONLY_REF];
 }
 
-{
-  const OWNER = "U_OWNER";
-  const CH = "C_EXEC";
-  const EXEC_REF = executorCredentialRef("notion-mcp", "org", "oe-notion-team-key");
-  const t0 = new Date("2026-07-24T21:30:00Z");
-
-  type ExecCreate = import("../agent/credentials/executor-store.js").ExecutorConnectionCreate;
-  function fakeStore() {
-    const creates: ExecCreate[] = [];
-    const store = { createConnection: async (payload: ExecCreate) => (creates.push(payload), { ok: true } as unknown) };
-    return { store, creates };
-  }
-
-  const submitFor = (id: string, value: string) => ({
-    type: "view_submission",
-    user: { id: OWNER },
-    team: { id: "T1" },
-    view: {
-      callback_id: intake.OE_SETKEY_MODAL_CALLBACK,
-      private_metadata: JSON.stringify({ org: ORG, id, channelId: CH }),
-      state: { values: { [intake.SETKEY_INPUT_BLOCK]: { [intake.SETKEY_INPUT_ACTION]: { value } } } },
-    },
-  });
-
-  {
-    const rq = recorder();
-    const { id } = await intake.requestCredentialIntake(
-      { org: ORG, provider: "notion", domain: "eng", ref: EXEC_REF, requestedBy: OWNER, channelId: CH, teamId: "T1" },
-      { post: rq.post, now: () => t0, mintId: () => "intake-exec-a" },
-    );
-    const fs = fakeStore();
-    const sub = recorder();
-    const logs: string[] = [];
-    const orig = { log: console.log, error: console.error, warn: console.warn };
-    console.log = (...a: unknown[]) => void logs.push(a.map(String).join(" "));
-    console.error = (...a: unknown[]) => void logs.push(a.map(String).join(" "));
-    console.warn = (...a: unknown[]) => void logs.push(a.map(String).join(" "));
-    let res: Awaited<ReturnType<typeof intake.handleSetKeyViewSubmission>>;
-    try {
-      res = await intake.handleSetKeyViewSubmission(submitFor(id, SENTINEL), { post: sub.post, now: () => t0, executorStore: fs.store });
-    } finally {
-      console.log = orig.log;
-      console.error = orig.error;
-      console.warn = orig.warn;
-    }
-    ok(res.handled === true && res.response === undefined, "exec-intake: a valid executor-homed submit succeeds + closes the modal");
-    ok(fs.creates.length === 1, "exec-intake: the Executor connection store's createConnection is called EXACTLY once");
-    const c = fs.creates[0];
-    ok(c.name === "oe-notion-team-key" && c.owner === "org" && c.integration === "notion-mcp" && c.template === "notion-mcp", "exec-intake: connection created with the oe- name / owner / integration / template from the ref");
-    ok(c.value === SENTINEL, "exec-intake: the pasted value passes through to createConnection verbatim (transits TLS only)");
-    ok((await getOperationalStore().getStoredCredential(ORG, EXEC_REF)) === null, "exec-intake: NOTHING is written to the db broker (executor path bypasses storeDbSecret)");
-    ok(!logs.some((l) => l.includes(SENTINEL)), "exec-intake leak-proof: the value appears in NO console output");
-    ok(!sub.calls.some((cc) => cc.body.includes(SENTINEL)), "exec-intake leak-proof: the value appears in NO posted Slack body");
-    const rows = await readAudit({ org: ORG });
-    ok(rows.some((r) => r.action === "credential.stored" && (r.detail as { ref?: unknown }).ref === EXEC_REF), "exec-intake: credential.stored audit carries the executor ref (never the value)");
-    ok(!JSON.stringify(rows).includes(SENTINEL), "exec-intake leak-proof: the value appears in NO audit row");
-  }
-
-  {
-    execStore.resetExecutorConnectionStore();
-    const rq = recorder();
-    const { id } = await intake.requestCredentialIntake(
-      { org: ORG, provider: "notion", ref: EXEC_REF, requestedBy: OWNER, channelId: CH, teamId: "T1" },
-      { post: rq.post, now: () => t0, mintId: () => "intake-exec-b" },
-    );
-    const before = (await readAudit({ org: ORG })).filter((r) => r.action === "credential.stored").length;
-    const out = await intake.handleSetKeyViewSubmission(submitFor(id, SENTINEL), { post: recorder().post, now: () => t0 });
-    ok(out.handled === true && !!out.response && (out.response as Record<string, unknown>).response_action === "errors", "exec-intake fail-closed: an executor ref with no store registered returns an inline error (never a silent db fallback)");
-    const after = (await readAudit({ org: ORG })).filter((r) => r.action === "credential.stored").length;
-    ok(after === before, "exec-intake fail-closed: NO credential.stored row written when the executor layer is absent");
-  }
-
-  {
-    ok(execStore.executorConnectionStore() === undefined, "exec-store registry: unregistered ⇒ executorConnectionStore() is undefined");
-    const fs = fakeStore();
-    execStore.registerExecutorConnectionStore(fs.store);
-    ok(execStore.executorConnectionStore() === fs.store, "exec-store registry: after register ⇒ the store is returned (the api-key offer's armed signal)");
-    execStore.resetExecutorConnectionStore();
-    ok(execStore.executorConnectionStore() === undefined, "exec-store registry: reset ⇒ undefined again");
-  }
-
-  {
-    await assert.rejects(
-      () => execStore.storeExecutorSecret({ ref: { integration: "notion-mcp", owner: "org", connection: "oe-c" }, plaintext: "v" }),
-      /no Executor connection store is registered/,
-      "storeExecutorSecret: fails closed with no store registered",
-    );
-    const fs = fakeStore();
-    await assert.rejects(
-      () => execStore.storeExecutorSecret({ ref: { integration: "notion-mcp", owner: "org", connection: "their-conn" }, plaintext: "v" }, { store: fs.store }),
-      /"oe-"-prefixed/,
-      "storeExecutorSecret: refuses a non-oe- connection name (never clobber an org's own connection)",
-    );
-    ok(fs.creates.length === 0, "storeExecutorSecret: the non-oe- refusal never called createConnection");
-  }
-}
 
 console.log(`credential-broker-test: ${n} checks passed`);

@@ -1,4 +1,4 @@
-import { assertProvidersValid, executorHomeOf, vercelConnectorHome, vercelConnectorOf, type Provider } from "../agent/access/providers.js";
+import { assertProvidersValid, vercelConnectorHome, vercelConnectorOf, type Provider } from "../agent/access/providers.js";
 import {
   applyBindingOverride,
   applyOverridesToProviders,
@@ -135,51 +135,5 @@ const notion: Provider = {
   ok(applyOverridesToProviders(base, []) === base, "overlay: empty overrides returns the base set unchanged");
 }
 
-const EXEC_OV: CredentialBindingOverride = {
-  provider: "notion",
-  credential: "team-key",
-  executor: { integration: "notion-mcp", owner: "org", connection: "oe-notion-team-key" },
-};
-{
-  const parsed = parseCredentialBindingsFile({ overrides: [EXEC_OV] }).overrides[0];
-  ok(parsed.executor?.connection === "oe-notion-team-key" && parsed.broker === undefined && parsed.secretRef === undefined, "parse: executor-home override (no broker/secretRef)");
-
-  throwsWith(
-    () => parseCredentialBindingsFile({ overrides: [{ provider: "n", credential: "k", broker: "db", secretRef: "db:n:k", executor: EXEC_OV.executor }] }),
-    "BOTH a broker home and an executor home",
-    "parse: broker+executor on one override refused (one home)",
-  );
-  throwsWith(() => parseCredentialBindingsFile({ overrides: [{ provider: "n", credential: "k" }] }), "has no home", "parse: an override with NO home refused");
-  throwsWith(() => parseCredentialBindingsFile({ overrides: [{ provider: "n", credential: "k", executor: { integration: "i", owner: "o" } }] }), "{ integration, owner, connection }", "parse: executor home missing a field refused");
-  throwsWith(() => parseCredentialBindingsFile({ overrides: [{ provider: "n", credential: "k", executor: { integration: "i", owner: "", connection: "oe-c" } }] }), "blank field", "parse: executor home blank field refused");
-  throwsWith(() => parseCredentialBindingsFile({ overrides: [{ provider: "n", credential: "k", executor: { integration: "i:x", owner: "o", connection: "oe-c" } }] }), 'must not contain ":"', "parse: executor home colon-in-segment refused");
-
-  const s = stringifyCredentialBindings({ overrides: [EXEC_OV] });
-  ok(
-    s.endsWith("\n") && stringifyCredentialBindings(parseCredentialBindingsModule(emitCredentialBindingsModule({ overrides: [EXEC_OV] }))) === s,
-    "stringify: executor override round-trips (fixpoint)",
-  );
-  ok(/"provider"[\s\S]*"credential"[\s\S]*"executor"[\s\S]*"integration"[\s\S]*"owner"[\s\S]*"connection"/.test(s), "stringify: executor override canonical key order (incl. ordered sub-object)");
-  ok(!s.includes('"broker"') && !s.includes('"secretRef"'), "stringify: an executor override emits NO broker/secretRef keys");
-
-  const first = applyBindingOverride(emptyCredentialBindingsFile(), EXEC_OV);
-  ok(first.changed && first.file.overrides[0].executor?.connection === "oe-notion-team-key", "apply: executor override lands (changed:true)");
-  ok(!applyBindingOverride(first.file, EXEC_OV).changed, "apply: identical executor re-apply is a no-op (changed:false)");
-  const dbToExec = applyBindingOverride(applyBindingOverride(emptyCredentialBindingsFile(), OV).file, { provider: "notion", credential: "team-key", executor: EXEC_OV.executor });
-  ok(dbToExec.changed && dbToExec.file.overrides.length === 1 && dbToExec.file.overrides[0].executor !== undefined, "apply: re-homing broker → executor REPLACES (one entry, now executor)");
-  const execMoved = applyBindingOverride(first.file, { provider: "notion", credential: "team-key", executor: { integration: "notion-mcp", owner: "org", connection: "oe-notion-team-key-v2" } });
-  ok(execMoved.changed && execMoved.file.overrides[0].executor?.connection === "oe-notion-team-key-v2", "apply: a different executor address REPLACES");
-}
-
-{
-  const base = [notion];
-  const merged = applyOverridesToProviders(base, [EXEC_OV]);
-  const cred = merged[0].credentials.find((c) => c.id === "team-key")!;
-  ok(executorHomeOf(cred)?.connection === "oe-notion-team-key", "overlay(exec): team-key re-homed to the Executor connection");
-  ok(cred.broker === undefined && cred.secretRef === undefined, "overlay(exec): the broker/secretRef stamps are STRIPPED (one home, mutual exclusivity)");
-  ok(base[0].credentials.find((c) => c.id === "team-key")!.broker === "env", "overlay(exec): base set NOT mutated (pure)");
-  assertProvidersValid(merged);
-  ok(true, "overlay(exec): merged provider set with an executor-homed credential passes assertProvidersValid");
-}
 
 console.log(`✓ credential-bindings-codemod: ${passed} assertions passed`);

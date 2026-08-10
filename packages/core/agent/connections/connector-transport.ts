@@ -1,7 +1,6 @@
 import type { ConnectionAuthResolver } from "eve/connections";
 import { appProviderToken, userAwareProviderToken } from "./connector-auth.js";
 import { connectorUserPrincipalEnabled } from "./connector-flags.js";
-import { executorMcpUrl, executorNotionArmed, notionExecutorAuth } from "./executor-user-oauth.js";
 
 export interface ConnectorTransportSpec {
   readonly connector: string;
@@ -9,7 +8,6 @@ export interface ConnectorTransportSpec {
   readonly provider?: string;
   readonly fallbackSecretRef?: string;
   readonly fallbackBroker?: string;
-  readonly executorCredentialId?: string;
 }
 
 export interface ResolvedConnectorTransport {
@@ -68,41 +66,5 @@ function registerCoreConnectorTransports(): void {
       };
     },
   });
-
-  registerConnectorTransport({
-    name: "executor",
-    priority: 100,
-    isActive: (spec) => spec.executorCredentialId !== undefined && executorNotionArmed(),
-    resolve: (spec) => ({
-      url: executorMcpUrl()!,
-      auth: notionExecutorAuth({ connector: spec.connector, provider: spec.provider!, credentialId: spec.executorCredentialId! }),
-    }),
-  });
 }
 registerCoreConnectorTransports();
-
-export interface TransportPauseInteraction {
-  readonly kind: string;
-  readonly message?: string;
-  readonly url?: string;
-  readonly requestedSchema?: unknown;
-}
-
-export interface TransportPause {
-  readonly resumeHandle: string;
-  readonly interaction: TransportPauseInteraction;
-  readonly expiresAt?: string;
-  readonly ttlMs?: number;
-}
-
-export interface PausableDispatch<Ctx = unknown> {
-  readonly ctx: Ctx;
-  readonly connector: string;
-  readonly op: string;
-  readonly args?: Readonly<Record<string, unknown>>;
-  readonly pause: TransportPause;
-}
-
-export interface PausableTransport {
-  resume(handle: string): Promise<unknown>;
-}

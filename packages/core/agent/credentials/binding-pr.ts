@@ -13,7 +13,6 @@ import {
 import { isSafeBranchName } from "../scm/git.js";
 import { appendAudit } from "../audit/audit.js";
 import { DB_BROKER } from "./db-broker.js";
-import { parseCredentialRef, EXECUTOR_HOME } from "./ref.js";
 import { getConfigPrProvider, type ConfigPrProvider } from "./config-pr.js";
 
 export interface BindingAuditWhere {
@@ -90,18 +89,9 @@ export async function stageCredentialBindingPr(
   const liveArmed = process.env.OE_CREDENTIAL_BINDING_LIVE === "1" && cfg.dryRun !== true;
   const dryRun = deps.dryRun ?? !liveArmed;
 
-  const parsedStored = parseCredentialRef(args.storedRef);
-  const executorHome =
-    parsedStored?.home === EXECUTOR_HOME
-      ? { integration: parsedStored.integration, owner: parsedStored.owner, connection: parsedStored.connection }
-      : null;
-  const override: CredentialBindingOverride = executorHome
-    ? { provider: args.provider, credential: args.credential, executor: executorHome }
-    : { provider: args.provider, credential: args.credential, broker: DB_BROKER, secretRef: args.storedRef };
-  const home = executorHome ? "executor" : DB_BROKER;
-  const homePrBody = executorHome
-    ? `an **Executor** connection (\`${executorHome.integration}/${executorHome.owner}/${executorHome.connection}\`)`
-    : `\`broker: "${DB_BROKER}"\``;
+  const override: CredentialBindingOverride = { provider: args.provider, credential: args.credential, broker: DB_BROKER, secretRef: args.storedRef };
+  const home = DB_BROKER;
+  const homePrBody = `\`broker: "${DB_BROKER}"\``;
   const branch = `credential-binding/${args.provider}-${args.credential}`;
   if (!isSafeBranchName(branch)) {
     throw new Error(`unsafe credential-binding branch name "${branch}"`);

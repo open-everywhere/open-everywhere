@@ -222,7 +222,7 @@ ok(OE_SOURCES.length > 200, `the OE agent-source sweep found ${OE_SOURCES.length
 
 {
   const definers = OE_SOURCES.filter((rel) => /\basync getToken\s*\(/.test(codeOf(rel)));
-  ok(definers.length >= 3, `the getToken sweep found ${definers.length} implementation sites (the gate assertion below is not vacuous)`);
+  ok(definers.length >= 2, `the getToken sweep found ${definers.length} implementation sites (the gate assertion below is not vacuous)`);
   const ungated = definers.filter((rel) => {
     const code = codeOf(rel);
     return !/\bassertConnectorGranted\b/.test(code) || !/\bassert\w*Granted\s*\(/.test(code);

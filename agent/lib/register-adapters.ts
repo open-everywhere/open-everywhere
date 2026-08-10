@@ -1,7 +1,5 @@
 import { registerOeOauth } from "@open-everywhere/adapters/agent/oe-oauth/register.js";
 import { oeOauthEnabled, loadOeOauthConfig } from "@open-everywhere/adapters/agent/oe-oauth/config.js";
-import { registerExecutor } from "@open-everywhere/adapters/agent/executor/register.js";
-import { executorEnabled, loadExecutorConfig } from "@open-everywhere/adapters/agent/executor/config.js";
 import { registerAgentBrowser } from "@open-everywhere/adapters/agent/browser/register.js";
 import { agentBrowserEnabled, loadAgentBrowserConfig } from "@open-everywhere/adapters/agent/browser/config.js";
 import { registerAwsAccess } from "@open-everywhere/adapters/agent/aws/register.js";
@@ -37,13 +35,6 @@ declareProviderSelection(SELECTED_PROVIDER_IDS);
 
 if (process.env[CREDENTIAL_KEY_ENV]) {
   registerDbCredentialBroker();
-}
-
-{
-  const executorCfg = executorEnabled() ? loadExecutorConfig() : undefined;
-  if (executorCfg) {
-    registerExecutor(executorCfg);
-  }
 }
 
 {

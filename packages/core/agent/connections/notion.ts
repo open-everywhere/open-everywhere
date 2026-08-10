@@ -10,7 +10,6 @@ const transport = selectConnectorTransport({
   directUrl: NOTION_MCP_URL,
   fallbackSecretRef: "NOTION_API_KEY",
   fallbackBroker: "env",
-  executorCredentialId: "user-oauth-executor",
 });
 
 export default defineMcpClientConnection({

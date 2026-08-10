@@ -26,8 +26,6 @@ import { proposingSessionId } from "../agent/identity/binding.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { addRoutine, getRoutine } from "../agent/routines/store.js";
 import type { Partition } from "../agent/memory/partition.js";
-import { surfaceExecutorApproval, type ExecutorApprovalContext } from "../agent/connections/executor-approval-bridge.js";
-import { requestApproval } from "../agent/approvals/flow.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -94,7 +92,6 @@ const NOW = "2026-03-30T11:30:00.000Z";
     "delete",
     "notion__notion_delete_page",
     "connector.op:notion",
-    "executor.op",
     "connector:",
     "connector:Notion",
     "connector:no tion",
@@ -209,60 +206,6 @@ const NOW = "2026-03-30T11:30:00.000Z";
   ok(proposingSessionId(ctxWith({}) as never) === "oe-dom:eng:win:slack/T1/C1:oe-sup:g1", "an ordinary human turn is untouched: it still keys on its window token");
   ok(proposingSessionId(ctxWith({ [ROUTINE_MARKER.grant]: "slack/T1/C1" }) as never) === "oe-dom:eng:win:slack/T1/C1:oe-sup:g1", "a stamp WITHOUT the routine namespace is ignored — the key cannot be redirected at an arbitrary session");
   ok(routineGrantKeyStamped({ [ROUTINE_MARKER.grant]: "nonsense" }) === undefined, "…and the reader itself refuses a non-namespaced value");
-}
-
-{
-  const key = routineGrantKey(ROUTINE);
-  const frozen = (over: Record<string, unknown>) => ({ kind: "executor.op", argsJson: JSON.stringify({ tier: "write", tainted: false, connector: "notion", sessionId: key, ...over }) });
-  ok(sessionGrantKind(frozen({})) === connectorSessionKind("notion"), "a WRITE proposed by a fire is grantable — under the per-connector grain, unchanged");
-  ok(sessionGrantKind(frozen({ tier: "destructive" })) === null, "🔴 DESTRUCTIVE-NEVER carries onto the routine-keyed path");
-  ok(sessionGrantKind(frozen({ tainted: true })) === null, "🔴 TAINTED-NEVER carries onto the routine-keyed path");
-
-  await getOperationalStore().setSessionApproval({ org: ORG, sessionId: key, kind: connectorSessionKind("notion"), grantedBy: "U_NIGHT", createdAt: NOW, expiresAt: ROUTINE_GRANT_NO_EXPIRY });
-  const context: ExecutorApprovalContext = {
-    org: ORG,
-    scopeKey: ROUTINE.surfaceKey,
-    connector: "notion",
-    op: "notion_create_page",
-    callArgs: { title: "nightly" },
-    executionId: "exec_night",
-    requestedBy: "U_REQ",
-    channelId: "C1",
-    threadTs: null,
-    postedTo: ROUTINE.surfaceKey,
-    domain: null,
-    platform: "slack",
-    sessionId: key,
-  };
-  const run = async (over: Partial<ExecutorApprovalContext>) => {
-    let mints = 0;
-    let resumes = 0;
-    const mint = (async () => {
-      mints++;
-      return { id: `pend-${mints}`, expiresAt: new Date(Date.now() + 3_600_000).toISOString() };
-    }) as unknown as typeof requestApproval;
-    await surfaceExecutorApproval({ ...context, ...over }, {
-      requestApproval: mint,
-      resume: async () => {
-        resumes++;
-        return "resumed";
-      },
-      audit: (async () => undefined) as never,
-      now: () => NOW,
-    });
-    return { mints, resumes };
-  };
-  const granted = await run({ tier: "write" });
-  ok(granted.resumes === 1 && granted.mints === 0, "THE POINT: a granted write lands UNATTENDED at 03:00 — no card, no stall");
-  const destructive = await run({ tier: "destructive" });
-  ok(destructive.mints === 1 && destructive.resumes === 0, "🔴 a DESTRUCTIVE op still cards, standing grant or not");
-  const tainted = await run({ tier: "write", tainted: true });
-  ok(tainted.mints === 1 && tainted.resumes === 0, "🔴 a fire that ingested untrusted content still cards, standing grant or not");
-  const other = await run({ tier: "write", connector: "linear" });
-  ok(other.mints === 1 && other.resumes === 0, "a Notion grant does not authorise a Linear write");
-  await revokeRoutinePermissions(ORG, ROUTINE);
-  const afterRevoke = await run({ tier: "write" });
-  ok(afterRevoke.mints === 1 && afterRevoke.resumes === 0, "after a revoke the same write CARDS again");
 }
 
 {

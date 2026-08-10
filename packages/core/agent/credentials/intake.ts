@@ -5,7 +5,6 @@ import { getOperationalStore } from "../operational/provider.js";
 import { DB_BROKER } from "./db-broker.js";
 import { parseDbCredentialRef, parseCredentialRef } from "./ref.js";
 import { credentialHome } from "./home.js";
-import { type ExecutorConnectionStore } from "./executor-store.js";
 import { stageCredentialBindingPr } from "./binding-pr.js";
 
 type PostFn = (method: string, body: string) => Promise<Record<string, unknown> | undefined>;
@@ -33,7 +32,6 @@ export interface CredentialIntakeDeps {
   readonly post?: PostFn;
   readonly now?: () => Date;
   readonly mintId?: () => string;
-  readonly executorStore?: ExecutorConnectionStore;
 }
 
 function intakeWhere(org: string, teamId: string | undefined, channelId: string, platform = "slack"): { org: string; platform: string; workspace: string; surface: string } {
@@ -258,7 +256,6 @@ export async function completeCredentialIntake(
       ...(intake.domain ? { domain: intake.domain } : {}),
       createdBy: input.submittedBy,
       parsed: parsed ?? {},
-      ...(deps.executorStore ? { deps: { executorStore: deps.executorStore } } : {}),
     });
   } catch (err) {
     console.error(`[open-everywhere:credentials] failed to store credential for ref "${intake.ref}": ${String(err)}`);

@@ -6,7 +6,7 @@ import { deploymentOrg, type SurfaceBinding } from "../identity/binding.js";
 import { rawVaultSubject } from "../identity/oauth-vault-share.js";
 import type { Domain } from "../memory/domain.js";
 import type { Provider, ProviderCredentialType } from "../access/providers.js";
-import { executorHomeOf, vercelConnectorOf } from "../access/providers.js";
+import { vercelConnectorOf } from "../access/providers.js";
 import {
   AUTH_URL_TTL_MS,
   defaultConnectorAuthStarter,
@@ -235,8 +235,7 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
         await ephemeral(post, channelId, clickerId, "Setting an *org* API key is admin-only — your id isn't listed as an admin for this workspace/domain.");
         return true;
       }
-      const execHome = executorHomeOf(cred);
-      if (!cred.secretRef && !execHome) {
+      if (!cred.secretRef) {
         await ephemeral(post, channelId, clickerId, "This provider's API-key credential has no configured storage ref. Ask an operator.");
         return true;
       }
@@ -244,7 +243,6 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
       const ref = deriveCredentialRef({
         provider: providerName,
         credentialId: cred.id,
-        ...(execHome ? { executor: execHome } : {}),
       });
       if (!ref) {
         await ephemeral(post, channelId, clickerId, "This provider's API-key credential has no resolvable storage home. Ask an operator.");

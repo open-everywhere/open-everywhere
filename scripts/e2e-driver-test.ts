@@ -257,7 +257,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
     "J1", "J2", "S-MEM-READ", "J3", "J4", "S6", "J-DISC", "S-DM-DISCORD", "S8", "S9", "S10", "S11", "S13", "S14",
     "S-LINK-SLACK", "S20", "S23", "S24", "J-TEAMS", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC", "J-SUP",
     "J-UNIFIED", "J-UNI-X", "J-PR", "S-PR-SESSION", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "J-WORKFLOW", "S-NOTION-WRITE", "S-CONNECTOR-TIER",
-    "S-CONNECTOR-TIER-EXECUTOR", "S-DM-NOTION", "J-DM-SYNC", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-TAINT-DRYRUN",
+    "S-DM-NOTION", "J-DM-SYNC", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-TAINT-DRYRUN",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
@@ -275,8 +275,8 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   }
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
   ok(
-    optional.join(",") === "S-MEM-READ,S-DM-DISCORD,S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER,S-CONNECTOR-TIER-EXECUTOR,S-DM-NOTION,J-DM-SYNC,S-CONNECT-CARD,S-APIKEY-INTAKE,S-TAINT-DRYRUN",
-    "the plan's stretch scenarios PLUS the gated Notion read PLUS the cross-surface unified money-shot PLUS the two connector-WRITE scenarios PLUS the Stage-2 executor-transport tier-split variant PLUS the folded DM personal-Notion + channel connector-card journeys PLUS the api-key intake leg PLUS S-MEM-READ (the OPE-121 memory-READ assertion: needs the control-read creds to see anything, and pays a delegation round-trip) PLUS S-DM-DISCORD (OPE-329: needs the control-read creds to see anything — same reason as S-MEM-READ/S-DM-NOTION — and pays a delegation round-trip) PLUS S-TAINT-DRYRUN (double opt-in: extended lane AND E2E_TAINT_DRYRUN=1 — it drives read tools across up to four surfaces purely to populate the source-tier verdict log) PLUS J-DM-SYNC (OPE-351: needs the control-read creds — its entire evidence is the audit trail, since a completion WAKE leaves no message of its own — and it pays a delegation round trip PLUS the deliberate sync degrade) are optional (S11–S23 are core coverage)",
+    optional.join(",") === "S-MEM-READ,S-DM-DISCORD,S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER,S-DM-NOTION,J-DM-SYNC,S-CONNECT-CARD,S-APIKEY-INTAKE,S-TAINT-DRYRUN",
+    "the plan's stretch scenarios PLUS the gated Notion read PLUS the cross-surface unified money-shot PLUS the two connector-WRITE scenarios PLUS the folded DM personal-Notion + channel connector-card journeys PLUS the api-key intake leg PLUS S-MEM-READ (the OPE-121 memory-READ assertion: needs the control-read creds to see anything, and pays a delegation round-trip) PLUS S-DM-DISCORD (OPE-329: needs the control-read creds to see anything — same reason as S-MEM-READ/S-DM-NOTION — and pays a delegation round-trip) PLUS S-TAINT-DRYRUN (double opt-in: extended lane AND E2E_TAINT_DRYRUN=1 — it drives read tools across up to four surfaces purely to populate the source-tier verdict log) PLUS J-DM-SYNC (OPE-351: needs the control-read creds — its entire evidence is the audit trail, since a completion WAKE leaves no message of its own — and it pays a delegation round trip PLUS the deliberate sync degrade) are optional (S11–S23 are core coverage)",
   );
 
   const KNOWN_SURFACES = new Set(["slack", "teams", "discord", "github", "linear", "notion", "cross"]);
@@ -292,8 +292,8 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   ok(SCENARIOS.find((s) => s.id === "J-GH")!.surface === "github", "J-GH is the github surface");
   const nonSlack = SCENARIOS.filter((s) => s.surface !== "slack").map((s) => s.id).sort();
   ok(
-    nonSlack.join(",") === "J-DISC,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-UNI-X,J-WORKFLOW,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-CONNECTOR-TIER-EXECUTOR,S-DM-DISCORD,S-DM-NOTION,S-NOTION-WRITE,S-PR-SESSION,S8",
-    "the non-slack scenarios are exactly J-DISC+S-DM-DISCORD(discord)/S8+J-UNI-X+J-PR+S-PR-SESSION+J-WORKFLOW(cross)/J-TEAMS(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER+S-CONNECTOR-TIER-EXECUTOR+S-DM-NOTION+S-CONNECT-CARD+S-APIKEY-INTAKE(notion)",
+    nonSlack.join(",") === "J-DISC,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-UNI-X,J-WORKFLOW,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DM-DISCORD,S-DM-NOTION,S-NOTION-WRITE,S-PR-SESSION,S8",
+    "the non-slack scenarios are exactly J-DISC+S-DM-DISCORD(discord)/S8+J-UNI-X+J-PR+S-PR-SESSION+J-WORKFLOW(cross)/J-TEAMS(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER+S-DM-NOTION+S-CONNECT-CARD+S-APIKEY-INTAKE(notion)",
   );
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
   ok(smoke.join(",") === "J1,J-TEAMS", "the smoke lane is exactly J1 (slack wake+reply) + J-TEAMS (teams)");
