@@ -3,7 +3,6 @@ import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent
 import { capabilitiesForPlatform, capabilitiesFor } from "@open-everywhere/core/agent/identity/capabilities.js";
 import { resolveMessagePermalink } from "@open-everywhere/core/agent/channels/surface-message-ops.js";
 import { nativeMemberCheck } from "@open-everywhere/core/agent/access/native-admin.js";
-import { canDecideMemberStanding } from "@open-everywhere/core/agent/approvals/memory-float.js";
 import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import reply from "@open-everywhere/core/agent/tools/reply.js";
 
@@ -49,7 +48,6 @@ ok(
 );
 ok((await resolveMessagePermalink("teams", { channelId: "C7", messageId: "M9", workspace: "W1" })) === undefined, "permalink: a surface with no registered ops resolves undefined");
 
-ok(nativeMemberCheck("discord") !== undefined, "native member check: the bundle registers one, so core's float-undo gate can decide standing on discord at all");
-ok(canDecideMemberStanding("discord"), "native member check: …which is exactly what the honest-availability predicate reports (no platform literal anywhere in the path)");
+ok(nativeMemberCheck("discord") !== undefined, "native member check: the bundle registers one into core's registry, so a standing question on discord is answerable at all (no core caller today — see access/native-admin.ts)");
 
 console.log(`✓ discord-provider-integration: ${n} assertions passed (capability manifest + namespace/alias resolution + reply arming + message permalink + native member check, composed core + bundle)`);
