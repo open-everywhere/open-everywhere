@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { checkAll, runWizard, type StepContext, type WizardIO, type WizardStep } from "../src/engine.js";
 import { databaseStep } from "../src/steps/database.js";
 import { repoStep } from "../src/steps/repo.js";
-import { toolRosterStep } from "../src/steps/tool-roster.js";
+import { rosterStep } from "../src/steps/roster.js";
 import { verifyStep, verifyVerdict } from "../src/steps/verify.js";
 
 let n = 0;
@@ -328,76 +328,70 @@ const OWNER = "postgres://neondb_owner:ownerpass@ep-x.us-east-2.aws.neon.tech/ne
 }
 
 {
-  const shim = (name: string) => `export { default } from "@open-everywhere/core/agent/tools/${name}.js";\n`;
-  const scaffold = (opts: { readonly coreTools: readonly string[]; readonly appTools: Record<string, string> }) => {
+  const scaffold = (opts: { readonly config?: boolean; readonly lock?: boolean; readonly oe?: "clean" | "drifted" }) => {
     const dir = mkdtempSync(join(tmpdir(), "oe-rosterstep-"));
-    const coreDir = join(dir, "node_modules", "@open-everywhere", "core", "agent", "tools");
-    mkdirSync(coreDir, { recursive: true });
-    for (const t of opts.coreTools) writeFileSync(join(coreDir, `${t}.ts`), "export default {};\n");
-    const appDir = join(dir, "agent", "tools");
-    mkdirSync(appDir, { recursive: true });
-    for (const [f, body] of Object.entries(opts.appTools)) writeFileSync(join(appDir, f), body);
+    if (opts.config !== false) writeFileSync(join(dir, "roster.config.ts"), "export default {};\n");
+    if (opts.lock !== false) writeFileSync(join(dir, "roster.lock.json"), "{}\n");
+    if (opts.oe !== undefined) {
+      const bin = join(dir, "node_modules", ".bin");
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(
+        join(bin, "oe"),
+        opts.oe === "clean"
+          ? "#!/usr/bin/env node\nconsole.log('ok');\n"
+          : "#!/usr/bin/env node\nconsole.error('  - DRIFTED · agent/tools/reply.ts differs from the plan');\nprocess.exit(1);\n",
+        { mode: 0o755 },
+      );
+    }
     return dir;
   };
 
-  const full = scaffold({ coreTools: ["alpha", "beta"], appTools: { "alpha.ts": shim("alpha"), "beta.ts": shim("beta") } });
+  const clean = scaffold({ oe: "clean" });
   try {
-    const res = await toolRosterStep.check({ cwd: full, env: {} });
-    ok(res.satisfied, "toolRosterStep: a roster covering every core tool is satisfied");
-    ok(/2\/2 core tools mounted/.test(res.detail), "toolRosterStep: the detail states how much of core is mounted");
+    const res = await rosterStep.check({ cwd: clean, env: {} });
+    ok(res.satisfied, "rosterStep: a materialised tree that matches the declaration is satisfied");
   } finally {
-    rmSync(full, { recursive: true, force: true });
+    rmSync(clean, { recursive: true, force: true });
   }
 
-  const thin = scaffold({ coreTools: ["alpha", "beta"], appTools: { "alpha.ts": shim("alpha") } });
+  const drifted = scaffold({ oe: "drifted" });
   try {
-    const before = await toolRosterStep.check({ cwd: thin, env: {} });
-    ok(!before.satisfied, "toolRosterStep: a core tool with no shim leaves the step unsatisfied");
-    ok(/beta/.test(before.detail), "toolRosterStep: the detail names the tool that has no file");
-
-    const io = fakeIO();
-    const result = await toolRosterStep.automate!({ cwd: thin, env: {} }, io);
-    ok(result.ran && result.ok, "toolRosterStep: automate() writes the missing shims");
-    ok(
-      readFileSync(join(thin, "agent", "tools", "beta.ts"), "utf8") === shim("beta"),
-      "toolRosterStep: the generated file is the same one-line re-export the tree carries by hand",
-    );
-    ok(io.printed.some((l) => /COMMIT them/.test(l)), "toolRosterStep: tells the operator to COMMIT the shims — generation is not the decision");
-    ok((await toolRosterStep.check({ cwd: thin, env: {} })).satisfied, "toolRosterStep: the re-check passes on the files existing");
+    const before = await rosterStep.check({ cwd: drifted, env: {} });
+    ok(!before.satisfied, "rosterStep: a tree that differs from the declaration leaves the step unsatisfied");
+    ok(/DRIFTED/.test(before.detail), "rosterStep: the detail carries the CLI's own red");
+    const auto = await rosterStep.automate!({ cwd: drifted, env: {} }, fakeIO());
+    ok(auto.ran && !auto.ok, "rosterStep: automate() ran the build and reported the still-failing re-check honestly");
   } finally {
-    rmSync(thin, { recursive: true, force: true });
+    rmSync(drifted, { recursive: true, force: true });
   }
 
-  const declined = scaffold({
-    coreTools: ["alpha", "beta"],
-    appTools: { "alpha.ts": shim("alpha"), "beta.ts": 'import { disableTool } from "eve/tools";\n\nexport default disableTool();\n' },
-  });
+  const noConfig = scaffold({ config: false, oe: "clean" });
   try {
-    const res = await toolRosterStep.check({ cwd: declined, env: {} });
-    ok(res.satisfied, "toolRosterStep: a tool DECLINED by sentinel is a decision, so the step is satisfied");
-    ok(/1 declined by sentinel/.test(res.detail), "toolRosterStep: the detail counts the declined capabilities");
+    const res = await rosterStep.check({ cwd: noConfig, env: {} });
+    ok(!res.satisfied, "rosterStep: a checkout with no roster.config.ts is UNSATISFIED, not vacuously clean");
+    ok(/roster\.config\.ts/.test(res.detail), "rosterStep: says which file is missing");
+    const auto = await rosterStep.automate!({ cwd: noConfig, env: {} }, fakeIO());
+    ok(!auto.ran, "rosterStep: automate() refuses to run anything it cannot justify");
   } finally {
-    rmSync(declined, { recursive: true, force: true });
+    rmSync(noConfig, { recursive: true, force: true });
   }
 
-  const noCore = mkdtempSync(join(tmpdir(), "oe-rosterstep-nocore-"));
+  const noLock = scaffold({ lock: false, oe: "clean" });
   try {
-    mkdirSync(join(noCore, "agent", "tools"), { recursive: true });
-    const res = await toolRosterStep.check({ cwd: noCore, env: {} });
-    ok(!res.satisfied, "toolRosterStep: a checkout with no @open-everywhere/core is UNSATISFIED, not vacuously clean");
-    ok(/npm install/.test(res.detail), "toolRosterStep: says what to do about it");
-    const auto = await toolRosterStep.automate!({ cwd: noCore, env: {} }, fakeIO());
-    ok(!auto.ran, "toolRosterStep: automate() refuses to write anything it cannot justify");
+    const res = await rosterStep.check({ cwd: noLock, env: {} });
+    ok(!res.satisfied, "rosterStep: a checkout with no roster.lock.json has reviewed nothing and is UNSATISFIED");
+    ok(/REVIEWED/.test(res.detail), "rosterStep: names the property that is missing, not just the file");
   } finally {
-    rmSync(noCore, { recursive: true, force: true });
+    rmSync(noLock, { recursive: true, force: true });
   }
 
-  const emptyCore = scaffold({ coreTools: [], appTools: {} });
+  const noBin = scaffold({});
   try {
-    const res = await toolRosterStep.check({ cwd: emptyCore, env: {} });
-    ok(!res.satisfied, "toolRosterStep: a core that exports no tools is UNKNOWN, not clean");
+    const res = await rosterStep.check({ cwd: noBin, env: {} });
+    ok(!res.satisfied, "rosterStep: with no `oe` CLI the step is UNKNOWN, never clean");
+    ok(/npm install/.test(res.detail), "rosterStep: says what to do about it");
   } finally {
-    rmSync(emptyCore, { recursive: true, force: true });
+    rmSync(noBin, { recursive: true, force: true });
   }
 }
 

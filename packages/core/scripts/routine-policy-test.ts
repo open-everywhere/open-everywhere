@@ -23,6 +23,9 @@ async function throwsAsync(fn: () => Promise<unknown>, match: RegExp, label: str
 const here = dirname(fileURLToPath(import.meta.url));
 const coreRoot = join(here, "..");
 const repoRoot = join(coreRoot, "..", "..");
+const ROSTER_LOCK = JSON.parse(readFileSync(join(repoRoot, "roster.lock.json"), "utf8")) as {
+  packages: Record<string, { contributions: Record<string, string> }>;
+};
 
 process.env.OE_ORG = "acme";
 
@@ -221,8 +224,10 @@ for (const name of ["add_routine_rule", "remove_routine_rule"] as const) {
   ok("reply" in toolset, `mounts/${name}: …and the restriction is selective — a job-kit verb next to it survives`);
   ok(withheldFromJobWake().includes(name), `mounts/${name}: the withheld list names it, so the audit row is the proof`);
 
-  const shim = readFileSync(join(repoRoot, "agent", "tools", `${name}.ts`), "utf8");
-  ok(shim.includes(`@open-everywhere/core/agent/tools/${name}.js`), `mounts/${name}: the deploy shim re-exports the core tool`);
+  ok(
+    ROSTER_LOCK.packages["@open-everywhere/core"]?.contributions[`tool/${name}`] === "mounted",
+    `mounts/${name}: roster.lock.json records it as mounted from @open-everywhere/core`,
+  );
 }
 
 {

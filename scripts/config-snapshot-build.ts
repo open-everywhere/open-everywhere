@@ -11,6 +11,7 @@ import { loadWebhooks } from "../agent/webhooks/hooks.js";
 import { loadPrincipals } from "../agent/identity/principals.js";
 import { resolveDomainForChannel } from "@open-everywhere/core/agent/memory/domain.js";
 import { classifyPrimitiveSource } from "@open-everywhere/core/agent/scaffold/tool-roster.js";
+import { mountedRowsFromLock } from "@open-everywhere/core/agent/scaffold/roster-plan.js";
 import { resolveAccess, type ResolveRequest } from "@open-everywhere/core/agent/access/resolver.js";
 import {
   SNAPSHOT_FORMAT_VERSION,
@@ -88,7 +89,7 @@ export function boundScopes(): BoundScope[] {
   );
 }
 
-const MOUNTED_DIRS = ["tools", "connections", "subagents", "skills", "schedules", "hooks"] as const;
+const AUTHORED_MOUNTED_DIRS = ["subagents"] as const;
 
 function classifyPrimitive(path: string): string {
   try {
@@ -98,9 +99,19 @@ function classifyPrimitive(path: string): string {
   }
 }
 
-function mountedRows(agentDir: string): SnapshotRow[] {
+function generatedMountedRows(repoRoot: string): SnapshotRow[] {
+  let lock: unknown;
+  try {
+    lock = JSON.parse(readFileSync(join(repoRoot, "roster.lock.json"), "utf8")) as unknown;
+  } catch {
+    lock = undefined;
+  }
+  return mountedRowsFromLock(lock).map((r) => ({ section: "mounted", key: r.key, value: r.value }));
+}
+
+function authoredMountedRows(agentDir: string): SnapshotRow[] {
   const rows: SnapshotRow[] = [];
-  for (const dir of MOUNTED_DIRS) {
+  for (const dir of AUTHORED_MOUNTED_DIRS) {
     const full = join(agentDir, dir);
     let entries: string[];
     try {
@@ -207,7 +218,8 @@ export function buildConfigSnapshot(agentDir = "agent"): ConfigSnapshot {
     ...entityRows("roles", loadRoles(), (r: { name: string }) => r.name),
     ...entityRows("silos", loadSilos(), (s: { name: string }) => s.name),
     ...entityRows("webhooks", loadWebhooks(), (w: { id: string }) => w.id),
-    ...mountedRows(agentDir),
+    ...generatedMountedRows(join(agentDir, "..")),
+    ...authoredMountedRows(agentDir),
   ];
   rows.sort((a, b) => a.section.localeCompare(b.section) || a.key.localeCompare(b.key));
   return { formatVersion: SNAPSHOT_FORMAT_VERSION, sections: [...SNAPSHOT_SECTIONS], rows };

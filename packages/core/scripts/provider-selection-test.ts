@@ -146,8 +146,6 @@ const MANIFEST = (...ids: string[]) =>
   ids.map((id) => `  { id: "${id}", register: register${id}Provider },`).join("\n") +
   "\n];\n";
 const WIRING = `declareProviderSelection(SELECTED_PROVIDER_IDS);\nfor (const p of SELECTED_PROVIDERS) { p.register(); }\n`;
-const stub = (id: string, slug: string) =>
-  [`channels/${slug}`, `export { default } from ${providerSpec(id, `agent/channels/${slug}.js`)};`] as const;
 const GATED_SEAM = `export function registerThing(platform: string, x: T): void {\n  if (!admitProviderRegistration(platform, "thing")) return;\n  R.set(platform, x);\n}\n`;
 const UNGATED_SEAM = `export function registerThing(platform: string, x: T): void {\n  R.set(platform, x);\n}\n`;
 const NEUTRAL_SEAM = `export function registerThing(fn: Fn): void {\n  R = fn;\n}\n`;
@@ -155,8 +153,6 @@ const NEUTRAL_SEAM = `export function registerThing(fn: Fn): void {\n  R = fn;\n
 const base = (over: Partial<ProviderSelectionInput> = {}): ProviderSelectionInput => ({
   manifestSource: MANIFEST("alpha"),
   wiringSource: WIRING,
-  bundlesPresent: ["alpha"],
-  appStubs: new Map([stub("alpha", "alpha")]),
   appDependencies: ["@open-everywhere/provider-alpha"],
   coreSeams: [{ path: "channels/thing.ts", source: GATED_SEAM }],
   ...over,
@@ -176,48 +172,19 @@ assert.deepEqual(
 n++;
 
 firesWith(
-  checkProviderSelection(base({ appStubs: new Map([stub("alpha", "alpha"), stub("beta", "beta")]) })),
-  "is NOT in agent/lib/providers.ts",
-  "checker: THE fail-closed rule — an app-tree stub for an unselected provider fails the build",
-);
-firesWith(
-  checkProviderSelection(base({ bundlesPresent: [] })),
-  "packages/providers/alpha/ does not exist",
-  "checker: a selected provider with no bundle dir fails",
-);
-firesWith(
-  checkProviderSelection(base({ appStubs: new Map() })),
-  "no app-tree stub re-exports",
-  "checker: a selected provider with no stub is a dead selection",
-);
-firesWith(
   checkProviderSelection(base({ appDependencies: [] })),
   "package.json does not depend on @open-everywhere/provider-alpha",
   "checker: a selected provider must be a declared dependency",
 );
 firesWith(
   checkProviderSelection(base({ appDependencies: ["@open-everywhere/provider-alpha", "@open-everywhere/provider-beta"] })),
-  "but agent/lib/providers.ts does not select it",
+  "but roster.config.ts does not select it",
   "checker: a dependency on an unselected provider fails",
 );
 firesWith(
-  checkProviderSelection(
-    base({
-      manifestSource: `${importLine("beta")}\nexport const SELECTED_PROVIDERS = [\n  { id: "alpha", register: registerbetaProvider },\n];\n`,
-    }),
-  ),
-  "the row id and the package must be the same provider",
-  "checker: a row registering a DIFFERENT bundle than its id fails",
-);
-firesWith(
-  checkProviderSelection(base({ manifestSource: MANIFEST("alpha") + `  { id: "alpha", register: registeralphaProvider },\n` })),
-  'declares provider "alpha" TWICE',
-  "checker: a duplicate manifest row fails",
-);
-firesWith(
-  checkProviderSelection(base({ manifestSource: "export const SELECTED_PROVIDERS = [];\n", appStubs: new Map(), appDependencies: [] })),
+  checkProviderSelection(base({ manifestSource: "export const SELECTED_PROVIDERS = [];\n", appDependencies: [] })),
   "declares NO providers",
-  "checker: an empty manifest fails",
+  "checker: an empty selection fails — an instance with no bundle can never wake on any surface",
 );
 firesWith(
   checkProviderSelection(base({ wiringSource: "for (const p of SELECTED_PROVIDERS) { p.register(); }\n" })),
@@ -233,11 +200,6 @@ firesWith(
   checkProviderSelection(base({ wiringSource: `${WIRING}import x from ${providerSpec("beta", "agent/register.js")};\n` })),
   "references @open-everywhere/provider-beta directly",
   "checker: a second selection list in the wiring fails",
-);
-firesWith(
-  checkProviderSelection(base({ manifestSource: `${MANIFEST("alpha")}${importLine("beta")}\n` })),
-  "declares no row for \"beta\"",
-  "checker: an import with no row fails",
 );
 
 firesWith(

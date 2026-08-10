@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -189,12 +189,19 @@ try {
 }
 
 {
+  const appToolsDir = join(repoRoot, "agent", "tools");
+  if (!existsSync(appToolsDir)) {
+    console.error(
+      `✗ tool-roster-test: ${appToolsDir} does not exist. Since OPE-375 the slot tree is BUILD OUTPUT — run \`npm run oe:build\` first (the \`pretest\` hook does it for \`npm test\`).`,
+    );
+    process.exit(1);
+  }
   const coreToolsDir = resolveCoreToolsDir(repoRoot);
   ok(coreToolsDir !== undefined, "core's agent/tools/ is locatable from the repo root");
   const core = readCoreToolExports(coreToolsDir!);
   ok(core.length > 0, "core exports at least one tool — an empty list would make every roster vacuously clean");
 
-  const roster = readToolRoster(join(repoRoot, "agent", "tools"));
+  const roster = readToolRoster(appToolsDir);
   const drift = diffToolRoster(core, roster);
   ok(rosterDriftIsClean(drift), "THE REAL TREE: agent/tools/ is a decision about every tool core exports");
   ok(drift.mountedFromCore.length === core.length, "every core tool this app mounts is mounted under its own name");

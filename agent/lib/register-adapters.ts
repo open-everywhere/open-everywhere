@@ -20,7 +20,7 @@ import {
   declareProviderSelection,
   assertConnectorMemoryGrants,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { SELECTED_PROVIDERS, SELECTED_PROVIDER_IDS } from "./providers.js";
+import { SELECTED_PROVIDERS, SELECTED_PROVIDER_IDS } from "./providers.generated.js";
 import { loadDomains, loadSilos } from "../memory/domains.js";
 import { domainMemoryGrants } from "./memory-grants.js";
 import { registerNeon } from "@open-everywhere/adapters/agent/postgres/neon.js";

@@ -114,11 +114,12 @@ const MIN = 60_000;
   }
 
   const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-  const shim = join(repoRoot, "agent", "tools", `${RUN_FAILED_TOOL}.ts`);
-  ok(existsSync(shim), "deploy shim: agent/tools/report_run_failed.ts exists — without it the app mounts nothing and the tool is dead in prod");
+  const lockPath = join(repoRoot, "roster.lock.json");
+  ok(existsSync(lockPath), "roster.lock.json exists — it is the app's committed record of what it mounts");
+  const lock = JSON.parse(readFileSync(lockPath, "utf8")) as { packages: Record<string, { contributions: Record<string, string> }> };
   ok(
-    readFileSync(shim, "utf8").includes(`@open-everywhere/core/agent/tools/${RUN_FAILED_TOOL}.js`),
-    "deploy shim: it re-exports the core tool (the window-gate lint's shim-integrity rule, pinned here too because this is the file that makes the tool real)",
+    lock.packages["@open-everywhere/core"]?.contributions[`tool/${RUN_FAILED_TOOL}`] === "mounted",
+    "the roster MOUNTS report_run_failed — without that line the app mounts nothing and the tool is dead in prod",
   );
 
   const block = renderFailureBlock();

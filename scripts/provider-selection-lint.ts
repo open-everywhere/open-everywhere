@@ -5,25 +5,13 @@ import { checkProviderSelection, type CoreSeamSource } from "@open-everywhere/co
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-const manifestSource = readFileSync(join(root, "agent/lib/providers.ts"), "utf8");
-const wiringSource = readFileSync(join(root, "agent/lib/register-adapters.ts"), "utf8");
-
-const providersRoot = join(root, "packages/providers");
-const bundlesPresent = existsSync(providersRoot)
-  ? readdirSync(providersRoot, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && !e.name.startsWith("."))
-      .map((e) => e.name)
-      .sort()
-  : [];
-
-const appStubs = new Map<string, string>();
-for (const sub of ["channels", "tools"]) {
-  const dir = join(root, "agent", sub);
-  if (!existsSync(dir)) continue;
-  for (const f of readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.startsWith("_"))) {
-    appStubs.set(`${sub}/${f.replace(/\.ts$/u, "")}`, readFileSync(join(dir, f), "utf8"));
-  }
+const manifestPath = join(root, "agent/lib/providers.generated.ts");
+if (!existsSync(manifestPath)) {
+  console.error("✗ provider-selection-lint: agent/lib/providers.generated.ts does not exist — run `npm run oe:build` first (it is build output, not a tracked file).");
+  process.exit(1);
 }
+const manifestSource = readFileSync(manifestPath, "utf8");
+const wiringSource = readFileSync(join(root, "agent/lib/register-adapters.ts"), "utf8");
 
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
   dependencies?: Record<string, string>;
@@ -44,14 +32,14 @@ const coreSeams: CoreSeamSource[] = tsFiles(coreAgentRoot).map((f) => ({
   source: readFileSync(f, "utf8"),
 }));
 
-const problems = checkProviderSelection({ manifestSource, wiringSource, bundlesPresent, appStubs, appDependencies, coreSeams, fullCoreSweep: true });
+const problems = checkProviderSelection({ manifestSource, wiringSource, appDependencies, coreSeams, fullCoreSweep: true });
 
 if (problems.length > 0) {
   console.error(`✗ provider-selection-lint: ${problems.length} problem(s):\n` + problems.map((p) => `  - ${p}`).join("\n"));
   process.exit(1);
 }
 console.log(
-  `✓ provider-selection-lint: the declared selection agrees with every artefact that implements it ` +
-    `(${bundlesPresent.length} bundle dir(s), ${appStubs.size} app-tree stub(s), ${appDependencies.length} app dependencies) ` +
-    `and every provider-plane seam across ${coreSeams.length} core sources asks the boot gate.`,
+  `✓ provider-selection-lint: the generated selection agrees with the artefacts that are still authored ` +
+    `(${appDependencies.length} app dependencies, the boot wiring) and every provider-plane seam across ` +
+    `${coreSeams.length} core sources asks the boot gate.`,
 );

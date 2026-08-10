@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { SELECTED_PROVIDERS, SELECTED_PROVIDER_IDS } from "../agent/lib/providers.js";
+import { SELECTED_PROVIDERS, SELECTED_PROVIDER_IDS } from "../agent/lib/providers.generated.js";
 import { declareProviderSelection } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
 import {

@@ -11,6 +11,7 @@ import {
   type RosterPackageConfig,
   type RosterPackageDecision,
 } from "./roster-config.js";
+import { PRIMITIVE_DISABLED, PRIMITIVE_MOUNTED } from "./tool-roster.js";
 
 const SLUG_PATTERN: Readonly<Record<ContributionKind, RegExp>> = {
   tool: /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/u,
@@ -659,17 +660,38 @@ export function goldenPlanLines(plan: PlanResult, agentDir: string): string[] {
 }
 
 export function mountedRosterRows(plan: PlanResult): { readonly key: string; readonly value: string }[] {
+  return rosterRows(
+    plan.resolved.filter((r) => r.decision === "mounted").map((r) => ({ dir: SLOT_DIR[r.kind], name: r.name })),
+    Object.keys(plan.frameworkDisabled),
+  );
+}
+
+export function mountedRowsFromLock(lock: unknown): { readonly key: string; readonly value: string }[] {
+  if (!isRecord(lock) || !isRecord(lock.packages)) return [{ key: "roster.lock.json", value: "<lock absent or unreadable>" }];
+  const mounted: { dir: string; name: string }[] = [];
+  for (const pkg of Object.values(lock.packages)) {
+    if (!isRecord(pkg) || !isRecord(pkg.contributions)) continue;
+    for (const [key, decision] of Object.entries(pkg.contributions)) {
+      if (decision !== "mounted") continue;
+      const kind = key.slice(0, key.indexOf("/")) as ContributionKind;
+      const dir = SLOT_DIR[kind];
+      if (dir === undefined) continue;
+      mounted.push({ dir, name: key.slice(key.indexOf("/") + 1) });
+    }
+  }
+  return rosterRows(mounted, isRecord(lock.framework) ? Object.keys(lock.framework) : []);
+}
+
+function rosterRows(
+  mounted: readonly { readonly dir: string; readonly name: string }[],
+  frameworkDisabled: readonly string[],
+): { readonly key: string; readonly value: string }[] {
   const rows: { key: string; value: string }[] = [];
   const perDir = new Map<string, number>();
   const add = (key: string, value: string) => rows.push({ key, value });
   const planned: { dir: string; file: string; value: string }[] = [];
-  for (const r of plan.resolved) {
-    if (r.decision !== "mounted") continue;
-    planned.push({ dir: SLOT_DIR[r.kind], file: `${r.name}.ts`, value: "mounted" });
-  }
-  for (const name of Object.keys(plan.frameworkDisabled)) {
-    planned.push({ dir: SLOT_DIR.tool, file: `${name}.ts`, value: "disabled (disableTool sentinel)" });
-  }
+  for (const r of mounted) planned.push({ dir: r.dir, file: `${r.name}.ts`, value: PRIMITIVE_MOUNTED });
+  for (const name of frameworkDisabled) planned.push({ dir: SLOT_DIR.tool, file: `${name}.ts`, value: PRIMITIVE_DISABLED });
   for (const p of planned) perDir.set(p.dir, (perDir.get(p.dir) ?? 0) + 1);
   for (const dir of [...new Set(planned.map((p) => p.dir))].sort((a, b) => a.localeCompare(b))) {
     add(`${dir}/`, `${perDir.get(dir)!} entr(y|ies)`);
