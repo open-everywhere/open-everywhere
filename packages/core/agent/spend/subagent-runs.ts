@@ -1,23 +1,44 @@
 import { usageForSession } from "./usage-events.js";
-import type { UsageEventEntry } from "../operational/store.js";
+import { MAX_OBSERVABLE_DELEGATION_DEPTH, type UsageEventEntry } from "../operational/store.js";
+
+export { MAX_OBSERVABLE_DELEGATION_DEPTH };
 
 export const SUBAGENT_RUN_DETAIL_KEY = "subagentRun";
 
 export interface SubagentRunStamp {
   readonly callId: string;
   readonly sessionId: string;
+  readonly rootSessionId?: string;
+  readonly depth?: number;
 }
 
 export function stampSubagentRun(run: SubagentRunStamp): Readonly<Record<string, unknown>> {
-  return { [SUBAGENT_RUN_DETAIL_KEY]: { callId: run.callId, sessionId: run.sessionId } };
+  return {
+    [SUBAGENT_RUN_DETAIL_KEY]: {
+      callId: run.callId,
+      sessionId: run.sessionId,
+      ...(run.rootSessionId !== undefined ? { rootSessionId: run.rootSessionId } : {}),
+      ...(run.depth !== undefined ? { depth: run.depth } : {}),
+    },
+  };
 }
 
 export function subagentRunOf(row: { readonly detail?: Readonly<Record<string, unknown>> }): SubagentRunStamp | undefined {
   const raw = row.detail?.[SUBAGENT_RUN_DETAIL_KEY];
   if (typeof raw !== "object" || raw === null) return undefined;
-  const { callId, sessionId } = raw as { callId?: unknown; sessionId?: unknown };
+  const { callId, sessionId, rootSessionId, depth } = raw as { callId?: unknown; sessionId?: unknown; rootSessionId?: unknown; depth?: unknown };
   if (typeof callId !== "string" || typeof sessionId !== "string" || sessionId.length === 0) return undefined;
-  return { callId, sessionId };
+  return {
+    callId,
+    sessionId,
+    ...(typeof rootSessionId === "string" && rootSessionId.length > 0 ? { rootSessionId } : {}),
+    ...(typeof depth === "number" && Number.isInteger(depth) && depth > 0 ? { depth } : {}),
+  };
+}
+
+export function delegationDepthOf(parentSessionId: string, rootSessionId?: string): number {
+  if (rootSessionId === undefined || rootSessionId === parentSessionId) return 1;
+  return MAX_OBSERVABLE_DELEGATION_DEPTH;
 }
 
 export type NarrationAttestation =

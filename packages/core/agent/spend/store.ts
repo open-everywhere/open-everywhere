@@ -15,6 +15,7 @@ export interface SpendEntry {
   readonly routineId?: string;
   readonly model?: string;
   readonly usdMicros?: number;
+  readonly measuredUsd?: number;
 }
 
 export async function recordSpend(p: Partition, entry: SpendEntry): Promise<void> {
@@ -24,6 +25,7 @@ export async function recordSpend(p: Partition, entry: SpendEntry): Promise<void
     await ensurePricingFor([model || undefined]);
     usdMicros = usdMicrosAtWrite(entry.usage, model || undefined);
   }
+  const measuredMicros = entry.measuredUsd !== undefined && Number.isFinite(entry.measuredUsd) ? Math.round(entry.measuredUsd * 1_000_000) : undefined;
   await getOperationalStore().recordSpend(p.org, {
     surfaceKey: domainKeyOf(p),
     principalId: entry.principalId ?? "",
@@ -35,6 +37,7 @@ export async function recordSpend(p: Partition, entry: SpendEntry): Promise<void
     cacheReadTokens: entry.usage.cacheReadTokens ?? 0,
     cacheWriteTokens: entry.usage.cacheWriteTokens ?? 0,
     usdMicros,
+    ...(measuredMicros !== undefined ? { usdMicrosMeasured: measuredMicros, costSource: "measured" as const } : { costSource: "derived" as const }),
   });
 }
 
@@ -69,20 +72,42 @@ export interface SurfacePeriodSpend {
   readonly period: string;
   readonly tokens: number;
   readonly usd: number;
+  readonly usdMeasured: number;
+  readonly usdDerivedOnMeasured: number;
+  readonly measuredCalls: number;
   readonly calls: number;
 }
 
 export function aggregateSpendBySurfacePeriod(rows: readonly SpendLedgerRow[]): SurfacePeriodSpend[] {
-  const byKey = new Map<string, { org: string; surfaceKey: string; period: string; tokens: number; usdMicros: number; calls: number }>();
+  const byKey = new Map<
+    string,
+    { org: string; surfaceKey: string; period: string; tokens: number; usdMicros: number; measuredMicros: number; derivedOnMeasuredMicros: number; measuredCalls: number; calls: number }
+  >();
   for (const r of rows) {
     const k = `${r.org}\u0000${r.surfaceKey}\u0000${r.period}`;
-    const acc = byKey.get(k) ?? { org: r.org, surfaceKey: r.surfaceKey, period: r.period, tokens: 0, usdMicros: 0, calls: 0 };
+    const acc =
+      byKey.get(k) ?? { org: r.org, surfaceKey: r.surfaceKey, period: r.period, tokens: 0, usdMicros: 0, measuredMicros: 0, derivedOnMeasuredMicros: 0, measuredCalls: 0, calls: 0 };
     acc.tokens += billableTokens(r);
     acc.usdMicros += r.usdMicros;
     acc.calls += r.calls;
+    if (r.costSource === "measured") {
+      acc.measuredMicros += r.usdMicrosMeasured;
+      acc.derivedOnMeasuredMicros += r.usdMicros;
+      acc.measuredCalls += r.calls;
+    }
     byKey.set(k, acc);
   }
-  return [...byKey.values()].map((a) => ({ org: a.org, surfaceKey: a.surfaceKey, period: a.period, tokens: a.tokens, usd: a.usdMicros / 1_000_000, calls: a.calls }));
+  return [...byKey.values()].map((a) => ({
+    org: a.org,
+    surfaceKey: a.surfaceKey,
+    period: a.period,
+    tokens: a.tokens,
+    usd: a.usdMicros / 1_000_000,
+    usdMeasured: a.measuredMicros / 1_000_000,
+    usdDerivedOnMeasured: a.derivedOnMeasuredMicros / 1_000_000,
+    measuredCalls: a.measuredCalls,
+    calls: a.calls,
+  }));
 }
 
 export async function spendRollup(): Promise<SurfacePeriodSpend[]> {

@@ -17,7 +17,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DO $$ BEGIN
      IF to_regclass('public.spend_ledger') IS NOT NULL AND NOT EXISTS (
        SELECT 1 FROM information_schema.columns
-       WHERE table_schema = 'public' AND table_name = 'spend_ledger' AND column_name = 'usd_micros'
+       WHERE table_schema = 'public' AND table_name = 'spend_ledger' AND column_name = 'usd_micros_measured'
      ) THEN
        EXECUTE 'DROP TABLE spend_ledger';
      END IF;
@@ -27,15 +27,19 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      surface_key        text   NOT NULL,
      principal_id       text   NOT NULL DEFAULT '',  -- '' = unattributed (PK columns can't be NULL)
      routine_id         text   NOT NULL DEFAULT '',  -- '' = not a routine turn
-     model              text   NOT NULL DEFAULT '',  -- '' = no model (unstamped call; sandbox runtime)
+     model              text   NOT NULL DEFAULT '',  -- '' = no model (sandbox runtime); '(unknown)' = an unattributed model call
      period             text   NOT NULL,
      input_tokens       bigint NOT NULL DEFAULT 0,
      output_tokens      bigint NOT NULL DEFAULT 0,
      cache_read_tokens  bigint NOT NULL DEFAULT 0,
      cache_write_tokens bigint NOT NULL DEFAULT 0,
-     usd_micros         bigint NOT NULL DEFAULT 0,   -- millionths of a dollar, priced at write
+     usd_micros         bigint NOT NULL DEFAULT 0,   -- millionths of a dollar, DERIVED at write from the rate table (what caps sum)
+     -- OPE-369: the GATEWAY's own billed figure for these same calls, when it published one.
+     -- 0 on a cost_source='derived' row. Never read by a cap — see store.ts's CostSource section.
+     usd_micros_measured bigint NOT NULL DEFAULT 0,
+     cost_source        text   NOT NULL DEFAULT 'derived', -- 'measured' | 'derived'; in the PK so a row is homogeneous
      calls              bigint NOT NULL DEFAULT 0,
-     PRIMARY KEY (org_id, surface_key, principal_id, routine_id, model, period)
+     PRIMARY KEY (org_id, surface_key, principal_id, routine_id, model, period, cost_source)
    )`,
   `CREATE TABLE IF NOT EXISTS routine (
      org_id      text NOT NULL,
@@ -279,7 +283,12 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      cache_read_tokens  bigint NOT NULL DEFAULT 0,
      cache_write_tokens bigint NOT NULL DEFAULT 0,
      model              text,
-     detail             text
+     detail             text,
+     -- OPE-369 (mirrored in the ALTER list below, which is what an existing DB takes)
+     usd_micros_measured bigint,             -- the gateway's billed figure for THIS call; NULL = nothing measured it
+     cost_source        text,                -- 'measured' | 'derived'; NULL on pre-migration/non-model rows
+     delegation_depth   integer,             -- 0 = root turn, 1 = direct child, 2 = two-or-more hops (a BAND — see store.ts)
+     root_session_id    text                 -- top of this call's delegation chain (its own session id on a root turn)
    )`,
   `CREATE INDEX IF NOT EXISTS usage_events_org_session ON usage_events (org_id, session_id)`,
   `CREATE INDEX IF NOT EXISTS usage_events_org_surface_ts ON usage_events (org_id, surface_key, ts)`,
@@ -353,6 +362,10 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claimed_at text`,
   `ALTER TABLE audit_entry ADD COLUMN IF NOT EXISTS prev_sha text`,
   `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS routine_id text`,
+  `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS usd_micros_measured bigint`,
+  `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cost_source text`,
+  `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS delegation_depth integer`,
+  `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS root_session_id text`,
   `ALTER TABLE identity_linked_ids ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT ''`,
   `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS initiating_tenant text NOT NULL DEFAULT ''`,
   `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS claimed_tenant text`,
@@ -861,16 +874,17 @@ function mutableTableGrantsSql(role: string): string[] {
 
 const UPSERT_SPEND =
   `INSERT INTO spend_ledger
-     (org_id, surface_key, principal_id, routine_id, model, period,
-      input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, usd_micros, calls)
-   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 1)
-   ON CONFLICT (org_id, surface_key, principal_id, routine_id, model, period) DO UPDATE SET
-     input_tokens       = spend_ledger.input_tokens       + excluded.input_tokens,
-     output_tokens      = spend_ledger.output_tokens      + excluded.output_tokens,
-     cache_read_tokens  = spend_ledger.cache_read_tokens  + excluded.cache_read_tokens,
-     cache_write_tokens = spend_ledger.cache_write_tokens + excluded.cache_write_tokens,
-     usd_micros         = spend_ledger.usd_micros         + excluded.usd_micros,
-     calls              = spend_ledger.calls + 1`;
+     (org_id, surface_key, principal_id, routine_id, model, period, cost_source,
+      input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, usd_micros, usd_micros_measured, calls)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 1)
+   ON CONFLICT (org_id, surface_key, principal_id, routine_id, model, period, cost_source) DO UPDATE SET
+     input_tokens        = spend_ledger.input_tokens        + excluded.input_tokens,
+     output_tokens       = spend_ledger.output_tokens       + excluded.output_tokens,
+     cache_read_tokens   = spend_ledger.cache_read_tokens   + excluded.cache_read_tokens,
+     cache_write_tokens  = spend_ledger.cache_write_tokens  + excluded.cache_write_tokens,
+     usd_micros          = spend_ledger.usd_micros          + excluded.usd_micros,
+     usd_micros_measured = spend_ledger.usd_micros_measured + excluded.usd_micros_measured,
+     calls               = spend_ledger.calls + 1`;
 
 function renderSpendConjuncts(conjuncts: string[], offset: number): string[] {
   let n = offset;
@@ -1003,6 +1017,8 @@ type SpendLedgerPgRow = {
   cache_read_tokens: number | string;
   cache_write_tokens: number | string;
   usd_micros: number | string;
+  usd_micros_measured: number | string;
+  cost_source: string;
   calls: number | string;
 };
 
@@ -1014,11 +1030,13 @@ function spendRowFromPg(r: SpendLedgerPgRow): SpendLedgerRow {
     routineId: r.routine_id,
     model: r.model,
     period: r.period,
+    costSource: r.cost_source === "measured" ? "measured" : "derived",
     inputTokens: Number(r.input_tokens),
     outputTokens: Number(r.output_tokens),
     cacheReadTokens: Number(r.cache_read_tokens),
     cacheWriteTokens: Number(r.cache_write_tokens),
     usdMicros: Number(r.usd_micros),
+    usdMicrosMeasured: Number(r.usd_micros_measured),
     calls: Number(r.calls),
   };
 }
@@ -1036,11 +1054,13 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         write.routineId ?? "",
         write.model ?? "",
         write.period,
+        write.costSource ?? "derived",
         write.inputTokens ?? 0,
         write.outputTokens ?? 0,
         write.cacheReadTokens ?? 0,
         write.cacheWriteTokens ?? 0,
         write.usdMicros ?? 0,
+        write.usdMicrosMeasured ?? 0,
       ]);
     },
 
@@ -1052,17 +1072,19 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
                 COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
                 COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
                 COALESCE(SUM(usd_micros), 0) AS usd_micros,
+                COALESCE(SUM(usd_micros_measured), 0) AS usd_micros_measured,
                 COALESCE(SUM(calls), 0) AS calls
          FROM spend_ledger WHERE ${["org_id = $1", ...renderSpendConjuncts(conjuncts, 1)].join(" AND ")}`,
         [org, ...params],
       );
-      const r = rows[0] as { input_tokens: number | string; output_tokens: number | string; cache_read_tokens: number | string; cache_write_tokens: number | string; usd_micros: number | string; calls: number | string };
+      const r = rows[0] as { input_tokens: number | string; output_tokens: number | string; cache_read_tokens: number | string; cache_write_tokens: number | string; usd_micros: number | string; usd_micros_measured: number | string; calls: number | string };
       return {
         inputTokens: Number(r.input_tokens),
         outputTokens: Number(r.output_tokens),
         cacheReadTokens: Number(r.cache_read_tokens),
         cacheWriteTokens: Number(r.cache_write_tokens),
         usdMicros: Number(r.usd_micros),
+        usdMicrosMeasured: Number(r.usd_micros_measured),
         calls: Number(r.calls),
       };
     },
@@ -1603,8 +1625,9 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       await client.query(
         `INSERT INTO usage_events
            (org_id, surface_key, session_id, principal_id, ts, kind, routine_id,
-            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail,
+            usd_micros_measured, cost_source, delegation_depth, root_session_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
         [
           entry.org,
           entry.surfaceKey,
@@ -1619,6 +1642,10 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           entry.cacheWriteTokens,
           entry.model ?? null,
           entry.detail ? JSON.stringify(entry.detail) : null,
+          entry.usdMicrosMeasured ?? null,
+          entry.costSource ?? null,
+          entry.delegationDepth ?? null,
+          entry.rootSessionId ?? null,
         ],
       );
     },
@@ -1626,7 +1653,8 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     async usageForSession(org, sessionId) {
       const { rows } = await client.query(
         `SELECT surface_key, session_id, principal_id, ts, kind, routine_id,
-                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail
+                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail,
+                usd_micros_measured, cost_source, delegation_depth, root_session_id
          FROM usage_events WHERE org_id = $1 AND session_id = $2 ORDER BY seq ASC`,
         [org, sessionId],
       );
@@ -1643,6 +1671,10 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         cache_write_tokens: number;
         model: string | null;
         detail: string | null;
+        usd_micros_measured: number | string | null;
+        cost_source: string | null;
+        delegation_depth: number | string | null;
+        root_session_id: string | null;
       }[]).map((r) => ({
         org,
         surfaceKey: r.surface_key,
@@ -1656,6 +1688,10 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         cacheReadTokens: Number(r.cache_read_tokens),
         cacheWriteTokens: Number(r.cache_write_tokens),
         ...(r.model ? { model: r.model } : {}),
+        ...(r.usd_micros_measured != null ? { usdMicrosMeasured: Number(r.usd_micros_measured) } : {}),
+        ...(r.cost_source ? { costSource: r.cost_source === "measured" ? ("measured" as const) : ("derived" as const) } : {}),
+        ...(r.delegation_depth != null ? { delegationDepth: Number(r.delegation_depth) } : {}),
+        ...(r.root_session_id ? { rootSessionId: r.root_session_id } : {}),
         ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),
       }));
     },

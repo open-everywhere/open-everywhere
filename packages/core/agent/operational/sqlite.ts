@@ -28,7 +28,7 @@ function getDb(): DatabaseSync {
   const handle = new DatabaseSync(path);
   handle.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
   const spendCols = handle.prepare("SELECT name FROM pragma_table_info('spend_ledger')").all() as { name: string }[];
-  if (spendCols.length > 0 && !spendCols.some((c) => c.name === "usd_micros")) handle.exec("DROP TABLE spend_ledger");
+  if (spendCols.length > 0 && !spendCols.some((c) => c.name === "usd_micros_measured")) handle.exec("DROP TABLE spend_ledger");
   const linkedIdCols = handle.prepare("SELECT name FROM pragma_table_info('identity_linked_ids')").all() as { name: string }[];
   const needsLinkedIdTenantRebuild = linkedIdCols.length > 0 && !linkedIdCols.some((c) => c.name === "tenant");
   if (needsLinkedIdTenantRebuild) {
@@ -46,9 +46,13 @@ function getDb(): DatabaseSync {
       output_tokens      INTEGER NOT NULL DEFAULT 0,
       cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
       cache_write_tokens INTEGER NOT NULL DEFAULT 0,
-      usd_micros         INTEGER NOT NULL DEFAULT 0, -- millionths of a dollar, priced at write
+      usd_micros         INTEGER NOT NULL DEFAULT 0, -- millionths of a dollar, DERIVED at write from the rate table (what caps sum)
+      -- OPE-369: the GATEWAY's own billed figure for these same calls, when it published one.
+      -- 0 on a cost_source='derived' row. Never read by a cap — see store.ts's CostSource section.
+      usd_micros_measured INTEGER NOT NULL DEFAULT 0,
+      cost_source        TEXT NOT NULL DEFAULT 'derived', -- 'measured' | 'derived'; in the PK so a row is homogeneous
       calls              INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (org_id, surface_key, principal_id, routine_id, model, period)
+      PRIMARY KEY (org_id, surface_key, principal_id, routine_id, model, period, cost_source)
     );
     CREATE TABLE IF NOT EXISTS routine (
       org_id      TEXT NOT NULL,
@@ -331,7 +335,12 @@ function getDb(): DatabaseSync {
       cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
       cache_write_tokens INTEGER NOT NULL DEFAULT 0,
       model              TEXT,
-      detail             TEXT                  -- JSON
+      detail             TEXT,                 -- JSON
+      -- OPE-369 (mirrored in the ALTER list below, which is what an existing DB takes)
+      usd_micros_measured INTEGER,             -- the gateway's billed figure for THIS call; NULL = nothing measured it
+      cost_source        TEXT,                 -- 'measured' | 'derived'; NULL on pre-migration/non-model rows
+      delegation_depth   INTEGER,              -- 0 = root turn, 1 = direct child, 2 = two-or-more hops (a BAND — see store.ts)
+      root_session_id    TEXT                  -- top of this call's delegation chain (its own session id on a root turn)
     );
     CREATE INDEX IF NOT EXISTS usage_events_org_session ON usage_events (org_id, session_id);
     CREATE INDEX IF NOT EXISTS usage_events_org_surface_ts ON usage_events (org_id, surface_key, ts);
@@ -441,6 +450,11 @@ function getDb(): DatabaseSync {
 
     "ALTER TABLE usage_events ADD COLUMN routine_id TEXT",
 
+    "ALTER TABLE usage_events ADD COLUMN usd_micros_measured INTEGER",
+    "ALTER TABLE usage_events ADD COLUMN cost_source TEXT",
+    "ALTER TABLE usage_events ADD COLUMN delegation_depth INTEGER",
+    "ALTER TABLE usage_events ADD COLUMN root_session_id TEXT",
+
     "ALTER TABLE identity_link_challenges ADD COLUMN initiating_tenant TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE identity_link_challenges ADD COLUMN claimed_tenant TEXT",
   ]) {
@@ -483,6 +497,8 @@ type SpendLedgerDbRow = {
   cache_read_tokens: number;
   cache_write_tokens: number;
   usd_micros: number;
+  usd_micros_measured: number;
+  cost_source: string;
   calls: number;
 };
 
@@ -494,11 +510,13 @@ function spendRowFrom(r: SpendLedgerDbRow): SpendLedgerRow {
     routineId: r.routine_id,
     model: r.model,
     period: r.period,
+    costSource: r.cost_source === "measured" ? "measured" : "derived",
     inputTokens: r.input_tokens,
     outputTokens: r.output_tokens,
     cacheReadTokens: r.cache_read_tokens,
     cacheWriteTokens: r.cache_write_tokens,
     usdMicros: r.usd_micros,
+    usdMicrosMeasured: r.usd_micros_measured,
     calls: r.calls,
   };
 }
@@ -516,6 +534,10 @@ type UsageEventRow = {
   cache_write_tokens: number;
   model: string | null;
   detail: string | null;
+  usd_micros_measured: number | null;
+  cost_source: string | null;
+  delegation_depth: number | null;
+  root_session_id: string | null;
 };
 
 function usageEventFromRow(org: string, r: UsageEventRow): UsageEventEntry {
@@ -532,6 +554,10 @@ function usageEventFromRow(org: string, r: UsageEventRow): UsageEventEntry {
     cacheReadTokens: r.cache_read_tokens,
     cacheWriteTokens: r.cache_write_tokens,
     ...(r.model ? { model: r.model } : {}),
+    ...(r.usd_micros_measured != null ? { usdMicrosMeasured: Number(r.usd_micros_measured) } : {}),
+    ...(r.cost_source ? { costSource: r.cost_source === "measured" ? ("measured" as const) : ("derived" as const) } : {}),
+    ...(r.delegation_depth != null ? { delegationDepth: Number(r.delegation_depth) } : {}),
+    ...(r.root_session_id ? { rootSessionId: r.root_session_id } : {}),
     ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),
   };
 }
@@ -664,16 +690,17 @@ export const sqliteOperationalStore: OperationalStore = {
     getDb()
       .prepare(
         `INSERT INTO spend_ledger
-           (org_id, surface_key, principal_id, routine_id, model, period,
-            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, usd_micros, calls)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-         ON CONFLICT(org_id, surface_key, principal_id, routine_id, model, period) DO UPDATE SET
-           input_tokens       = input_tokens       + excluded.input_tokens,
-           output_tokens      = output_tokens      + excluded.output_tokens,
-           cache_read_tokens  = cache_read_tokens  + excluded.cache_read_tokens,
-           cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens,
-           usd_micros         = usd_micros         + excluded.usd_micros,
-           calls              = calls + 1`,
+           (org_id, surface_key, principal_id, routine_id, model, period, cost_source,
+            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, usd_micros, usd_micros_measured, calls)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+         ON CONFLICT(org_id, surface_key, principal_id, routine_id, model, period, cost_source) DO UPDATE SET
+           input_tokens        = input_tokens        + excluded.input_tokens,
+           output_tokens       = output_tokens       + excluded.output_tokens,
+           cache_read_tokens   = cache_read_tokens   + excluded.cache_read_tokens,
+           cache_write_tokens  = cache_write_tokens  + excluded.cache_write_tokens,
+           usd_micros          = usd_micros          + excluded.usd_micros,
+           usd_micros_measured = usd_micros_measured + excluded.usd_micros_measured,
+           calls               = calls + 1`,
       )
       .run(
         org,
@@ -682,11 +709,13 @@ export const sqliteOperationalStore: OperationalStore = {
         write.routineId ?? "",
         write.model ?? "",
         write.period,
+        write.costSource ?? "derived",
         write.inputTokens ?? 0,
         write.outputTokens ?? 0,
         write.cacheReadTokens ?? 0,
         write.cacheWriteTokens ?? 0,
         write.usdMicros ?? 0,
+        write.usdMicrosMeasured ?? 0,
       );
   },
 
@@ -699,16 +728,18 @@ export const sqliteOperationalStore: OperationalStore = {
                 COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
                 COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
                 COALESCE(SUM(usd_micros), 0) AS usd_micros,
+                COALESCE(SUM(usd_micros_measured), 0) AS usd_micros_measured,
                 COALESCE(SUM(calls), 0) AS calls
          FROM spend_ledger WHERE ${["org_id = ?", ...conjuncts].join(" AND ")}`,
       )
-      .get(org, ...params) as { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; usd_micros: number; calls: number };
+      .get(org, ...params) as { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; usd_micros: number; usd_micros_measured: number; calls: number };
     return {
       inputTokens: row.input_tokens,
       outputTokens: row.output_tokens,
       cacheReadTokens: row.cache_read_tokens,
       cacheWriteTokens: row.cache_write_tokens,
       usdMicros: row.usd_micros,
+      usdMicrosMeasured: row.usd_micros_measured,
       calls: row.calls,
     };
   },
@@ -1274,8 +1305,9 @@ export const sqliteOperationalStore: OperationalStore = {
       .prepare(
         `INSERT INTO usage_events
            (org_id, surface_key, session_id, principal_id, ts, kind, routine_id,
-            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail,
+            usd_micros_measured, cost_source, delegation_depth, root_session_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         entry.org,
@@ -1291,6 +1323,10 @@ export const sqliteOperationalStore: OperationalStore = {
         entry.cacheWriteTokens,
         entry.model ?? null,
         entry.detail ? JSON.stringify(entry.detail) : null,
+        entry.usdMicrosMeasured ?? null,
+        entry.costSource ?? null,
+        entry.delegationDepth ?? null,
+        entry.rootSessionId ?? null,
       );
   },
 
@@ -1298,7 +1334,8 @@ export const sqliteOperationalStore: OperationalStore = {
     const rows = getDb()
       .prepare(
         `SELECT surface_key, session_id, principal_id, ts, kind, routine_id,
-                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail
+                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail,
+                usd_micros_measured, cost_source, delegation_depth, root_session_id
          FROM usage_events WHERE org_id = ? AND session_id = ? ORDER BY seq ASC`,
       )
       .all(org, sessionId) as UsageEventRow[];

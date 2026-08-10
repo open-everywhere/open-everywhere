@@ -7,6 +7,8 @@ import type { UsageSummaryRow } from "../operational/store.js";
 import { parseCron, cronMatches, DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
 import type { RoutineTrigger } from "../routines/routine.js";
 import { modelPricing, estimateCostUsd, soleConfiguredModel, type ModelPricing, type UsageTokens } from "./pricing.js";
+import { UNKNOWN_MODEL } from "./spend.js";
+import type { SurfacePeriodSpend } from "./store.js";
 import type { BindableContext } from "../identity/binding.js";
 
 export type ReportScope = "domain" | "org";
@@ -93,23 +95,26 @@ export interface PricingMix {
   readonly exact: number;
   readonly assumed: number;
   readonly unpriced: number;
+  readonly unattributed: number;
 }
 
 export function pricingMix(rows: readonly PriceableRow[], assumed: AssumedModelPricing): PricingMix {
   let exact = 0;
   let assumedCount = 0;
   let unpriced = 0;
+  let unattributed = 0;
   for (const r of rows) {
     if (r.model) {
       if (modelPricing(r.model)) exact++;
       else unpriced++;
+      if (r.model === UNKNOWN_MODEL) unattributed++;
     } else if (assumed.pricing) {
       assumedCount++;
     } else {
       unpriced++;
     }
   }
-  return { exact, assumed: assumedCount, unpriced };
+  return { exact, assumed: assumedCount, unpriced, unattributed };
 }
 
 export function pricingNote(mix: PricingMix, assumed: AssumedModelPricing): string {
@@ -120,8 +125,60 @@ export function pricingNote(mix: PricingMix, assumed: AssumedModelPricing): stri
       : `${mix.exact} row(s) priced exactly by their own recorded model id.`,
   ];
   if (mix.assumed > 0) parts.push(`${mix.assumed} row(s) with no recorded model: ${assumed.note}`);
-  if (mix.unpriced > 0) parts.push(`${mix.unpriced} row(s) omitted — a recorded model this deployment hasn't configured a rate for (see OE_MODEL_PRICING), never priced at another model's rate.`);
+  const unpricedButAttributed = mix.unpriced - mix.unattributed;
+  if (unpricedButAttributed > 0) {
+    parts.push(`${unpricedButAttributed} row(s) omitted — a recorded model this deployment hasn't configured a rate for (see OE_MODEL_PRICING), never priced at another model's rate.`);
+  }
+  if (mix.unattributed > 0) {
+    parts.push(
+      `${mix.unattributed} row(s) omitted as "${UNKNOWN_MODEL}" — a real model call the host could not attribute to any model (the per-call model stamp was missing), so no rate was applied to it. ` +
+        `Its tokens are recorded in full, and where the gateway measured the call its exact $ is stored too; only the rate-derived $ is withheld. This is an instrumentation gap, not a pricing one.`,
+    );
+  }
   return parts.join(" ");
+}
+
+export interface CostDrift {
+  readonly measuredUsd: number;
+  readonly derivedUsd: number;
+  readonly divergenceUsd: number;
+  readonly divergencePct?: number;
+  readonly measuredCalls: number;
+  readonly totalCalls: number;
+}
+
+export function summariseCostDrift(rows: readonly SurfacePeriodSpend[]): CostDrift {
+  let measuredUsd = 0;
+  let derivedUsd = 0;
+  let measuredCalls = 0;
+  let totalCalls = 0;
+  for (const r of rows) {
+    measuredUsd += r.usdMeasured;
+    derivedUsd += r.usdDerivedOnMeasured;
+    measuredCalls += r.measuredCalls;
+    totalCalls += r.calls;
+  }
+  const divergenceUsd = derivedUsd - measuredUsd;
+  return {
+    measuredUsd,
+    derivedUsd,
+    divergenceUsd,
+    ...(measuredCalls > 0 && measuredUsd > 0 ? { divergencePct: (divergenceUsd / measuredUsd) * 100 } : {}),
+    measuredCalls,
+    totalCalls,
+  };
+}
+
+export function costDriftNote(drift: CostDrift): string {
+  if (drift.measuredCalls === 0) {
+    return `costDrift: no gateway-measured cost on any ledger row this period (${drift.totalCalls} call(s) in scope), so every $ above is rate-derived from this deployment's own price table. Measured cost is a GATEWAY feature — its absence is expected on a direct-provider deployment and is not a fault.`;
+  }
+  const pct = drift.divergencePct === undefined ? "n/a" : `${drift.divergencePct >= 0 ? "+" : ""}${drift.divergencePct.toFixed(1)}%`;
+  const direction = drift.divergenceUsd === 0 ? "agrees with" : drift.divergenceUsd > 0 ? "OVER-states" : "UNDER-states";
+  return (
+    `costDrift: over the ${drift.measuredCalls} of ${drift.totalCalls} call(s) the gateway measured, it billed $${drift.measuredUsd.toFixed(4)} where this deployment's rate table derived $${drift.derivedUsd.toFixed(4)} ` +
+    `— the rate table ${direction} the bill by $${Math.abs(drift.divergenceUsd).toFixed(4)} (${pct}). The caps enforce the DERIVED figure, so a persistent divergence means the price table needs re-measuring (spend/pricing.ts), not that the caps are broken.`
+  );
 }
 
 const MAX_FIRES_PER_DAY = 1440 / DISPATCH_TICK_MINUTES;

@@ -19,6 +19,8 @@ import {
   maskDmSurfaceKey,
   isDmSurface,
   dmBucketKey,
+  summariseCostDrift,
+  costDriftNote,
 } from "../spend/reporting.js";
 import { bridgeFetchUserDisplayName, bridgeFetchChannelDisplayName } from "../channels/slack-bridge.js";
 import { fulfilPaneRead } from "../access/pane-venue.js";
@@ -99,6 +101,18 @@ export default defineTool({
       costUsd: z.number().optional(),
     }),
     pricedModel: z.string().optional(),
+    costDrift: z
+      .object({
+        measuredUsd: z.number().describe("What the gateway actually billed, over the calls it measured."),
+        derivedUsd: z.number().describe("What this deployment's rate table derived for those SAME calls."),
+        divergenceUsd: z.number().describe("derived - measured. Positive = the rate table over-states the bill."),
+        divergencePct: z.number().optional(),
+        measuredCalls: z.number(),
+        totalCalls: z.number().describe("Calls in scope overall — the denominator the divergence must be read against."),
+      })
+      .describe(
+        "Measured-vs-derived cost divergence for the ledger period (OPE-369). Gateway-measured cost is stored alongside the rate-derived figure on every row that had one, so this compares the two over exactly the same calls. The caps enforce the DERIVED figure, always — a divergence here is a signal that the price table needs re-measuring, never that enforcement is off.",
+      ),
     ledger: z.object({
       period: z.string(),
       totalTokens: z.number(),
@@ -217,6 +231,8 @@ export default defineTool({
         .filter((l) => l.org === resolved.org && l.period === period)
         .filter((l) => !resolved.domain || domainOfUsageRow(l.surfaceKey, undefined, domains) === resolved.domain);
 
+      const costDrift = summariseCostDrift(orgLedgers);
+
       const overrideLimits = await activeSpendLimitsForOrg(resolved.org);
       const effCapsForScope = (workspaceKey: string, surfaceKey: string): Caps => {
         const config = resolveCaps(workspaceKey, surfaceKey, domainNameForScope(surfaceKey));
@@ -289,6 +305,7 @@ export default defineTool({
 
       const notes = [
         pricingNote(mix, assumed),
+        costDriftNote(costDrift),
         "the bySurfaceAndKind usage-window figures exclude sandbox runtime (see session_cost for a conversation's sandbox seconds/$); the monthly ledger.*.usd figures DO include sandbox runtime (OPE-266) — an estimate priced at stop time from the platform rate, assuming the configured/default sandbox memory size.",
         "routinePredictions project future spend from this window's history and each surface's CURRENT active cron/interval routines — always an estimate, not a bill.",
         "ledger.surfaces/ledger.workspaces use the existing monthly spend ledger (the caps engine), which may cover a different window than sinceDays (it's keyed by calendar month).",
@@ -318,6 +335,7 @@ export default defineTool({
         bySurfaceAndKind: bySurfaceAndKind.map(labelled),
         totals: totalsWithCost,
         ...(assumed.model ? { pricedModel: assumed.model } : {}),
+        costDrift,
         ledger: {
           period,
           totalTokens: ledgerTotalTokens,

@@ -92,12 +92,15 @@ export interface AuditFilter {
   readonly limit?: number;
 }
 
+export type CostSource = "measured" | "derived";
+
 export interface SpendLedgerKey {
   readonly surfaceKey: string;
   readonly principalId: string;
   readonly routineId: string;
   readonly model: string;
   readonly period: string;
+  readonly costSource: CostSource;
 }
 
 export interface SpendLedgerRow extends SpendLedgerKey {
@@ -107,6 +110,7 @@ export interface SpendLedgerRow extends SpendLedgerKey {
   readonly cacheReadTokens: number;
   readonly cacheWriteTokens: number;
   readonly usdMicros: number;
+  readonly usdMicrosMeasured: number;
   readonly calls: number;
 }
 
@@ -121,6 +125,8 @@ export interface SpendLedgerWrite {
   readonly cacheReadTokens?: number;
   readonly cacheWriteTokens?: number;
   readonly usdMicros?: number;
+  readonly usdMicrosMeasured?: number;
+  readonly costSource?: CostSource;
 }
 
 export interface SpendLedgerFilter {
@@ -129,6 +135,7 @@ export interface SpendLedgerFilter {
   readonly principalId?: string;
   readonly routineId?: string;
   readonly period?: string;
+  readonly costSource?: CostSource;
 }
 
 export interface SpendTotals {
@@ -137,6 +144,7 @@ export interface SpendTotals {
   readonly cacheReadTokens: number;
   readonly cacheWriteTokens: number;
   readonly usdMicros: number;
+  readonly usdMicrosMeasured: number;
   readonly calls: number;
 }
 
@@ -162,6 +170,10 @@ export function spendLedgerConjuncts(filter: SpendLedgerFilter): { conjuncts: st
   if (filter.period !== undefined) {
     conjuncts.push("period = ?");
     params.push(filter.period);
+  }
+  if (filter.costSource !== undefined) {
+    conjuncts.push("cost_source = ?");
+    params.push(filter.costSource);
   }
   return { conjuncts, params };
 }
@@ -313,6 +325,8 @@ export function routinePromptRevisionWrites(input: {
   ];
 }
 
+export const MAX_OBSERVABLE_DELEGATION_DEPTH = 2;
+
 export interface UsageEventEntry {
   readonly org: string;
   readonly surfaceKey: string;
@@ -326,6 +340,10 @@ export interface UsageEventEntry {
   readonly cacheReadTokens: number;
   readonly cacheWriteTokens: number;
   readonly model?: string;
+  readonly usdMicrosMeasured?: number;
+  readonly costSource?: CostSource;
+  readonly delegationDepth?: number;
+  readonly rootSessionId?: string;
   readonly detail?: Readonly<Record<string, unknown>>;
 }
 

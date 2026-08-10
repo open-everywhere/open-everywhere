@@ -8,7 +8,10 @@ export interface Usage {
   readonly outputTokens?: number;
   readonly cacheReadTokens?: number;
   readonly cacheWriteTokens?: number;
+  readonly costUsd?: number;
 }
+
+export const UNKNOWN_MODEL = "(unknown)";
 
 export function periodOf(iso: string): string {
   return iso.slice(0, 7);

@@ -76,8 +76,22 @@ function withMode<T>(mode: string, fn: () => T): T {
 
 {
   const projected = { ...ctx, session: { ...ctx.session, parent: { sessionId: "ses_01ABCDEF", callId: "call_7", rootSessionId: "ses_01ABCDEF", turn: { id: "turn_1", sequence: 1 } } } };
-  eq(subagentParentOf(projected, undefined), { parentSessionId: "ses_01ABCDEF", callId: "call_7" }, "the parent is recovered from eve's TYPED projection with no token at all");
-  eq(subagentParentOf(ctx, CHILD), { parentSessionId: "ses_01ABCDEF", callId: "call_7" }, "…and from the continuation token with no projection at all — the two sources agree on the same child");
+  eq(
+    subagentParentOf(projected, undefined),
+    { parentSessionId: "ses_01ABCDEF", callId: "call_7", rootSessionId: "ses_01ABCDEF" },
+    "the parent is recovered from eve's TYPED projection with no token at all — now carrying the denormalised root too (OPE-369)",
+  );
+  const deeper = { ...ctx, session: { ...ctx.session, parent: { sessionId: "ses_CHILD", callId: "call_9", rootSessionId: "ses_ROOT", turn: { id: "turn_1", sequence: 1 } } } };
+  eq(
+    subagentParentOf(deeper, undefined),
+    { parentSessionId: "ses_CHILD", callId: "call_9", rootSessionId: "ses_ROOT" },
+    "🔴 OPE-369: on a GRANDCHILD the root and the immediate parent DIFFER — which is exactly the signal delegationDepthOf reads to tell a direct child from a deeper one",
+  );
+  eq(
+    subagentParentOf(ctx, CHILD),
+    { parentSessionId: "ses_01ABCDEF", callId: "call_7" },
+    "…and from the continuation token with no projection at all — the two sources agree on the same child, though the TOKEN encodes no root (so none is invented)",
+  );
   eq(subagentParentOf(ctx, "cse_example5"), undefined, "an ordinary root turn has no parent — the fail-closed answer");
   for (const junk of [undefined, null, 42, {}, { session: null }, { session: { parent: { sessionId: "" } } }, { session: { parent: { sessionId: "p" } } }]) {
     eq(subagentParentOf(junk as never, undefined), undefined, `subagentParentOf is fail-soft and never half-reads ${JSON.stringify(junk)}`);

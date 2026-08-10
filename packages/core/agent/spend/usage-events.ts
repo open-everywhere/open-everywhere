@@ -5,6 +5,13 @@ export type { UsageEventEntry, UsageEventInput, UsageSummaryFilter, UsageSummary
 
 const DEFAULT_TTL_DAYS = 90;
 
+export const GENERATION_ID_DETAIL_KEY = "generationId";
+
+export function generationIdOf(row: { readonly detail?: Readonly<Record<string, unknown>> }): string | undefined {
+  const raw = row.detail?.[GENERATION_ID_DETAIL_KEY];
+  return typeof raw === "string" && raw.length > 0 ? raw : undefined;
+}
+
 export function usageEventsTtlDays(): number {
   const raw = Number(process.env.OE_USAGE_EVENTS_TTL_DAYS);
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_TTL_DAYS;

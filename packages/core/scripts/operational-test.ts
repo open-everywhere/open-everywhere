@@ -52,6 +52,25 @@ const store = makeOperationalPostgresStore(client);
   await store.recordSpend("acme", { surfaceKey: "slack/T1/C1", principalId: "U1", model: "m-1", period: "2026-06", inputTokens: 777 });
   ok((await store.spendTotals("default", { surfaceKey: "slack/T1/C1", period: "2026-06" })).inputTokens === 130, "spend: another org's usage doesn't bleed into this org");
   ok((await store.spendTotals("acme", { surfaceKey: "slack/T1/C1", period: "2026-06" })).inputTokens === 777, "spend: the other org has its own isolated ledger");
+
+  {
+    const key = { surfaceKey: "slack/T1/C_MEASURED", principalId: "U1", model: "m-1", period: "2026-06" } as const;
+    await store.recordSpend("default", { ...key, inputTokens: 1000, usdMicros: 300, usdMicrosMeasured: 250, costSource: "measured" });
+    await store.recordSpend("default", { ...key, inputTokens: 1000, usdMicros: 300, usdMicrosMeasured: 250, costSource: "measured" });
+    await store.recordSpend("default", { ...key, inputTokens: 500, usdMicros: 150 });
+
+    const measuredRows = (await store.listSpendLedger("default")).filter((r) => r.surfaceKey === "slack/T1/C_MEASURED");
+    ok(measuredRows.length === 2, "🔴 OPE-369(pg): one key, two cost paths -> TWO rows — cost_source is part of the PK, so a measured call can never be summed into a derived bucket");
+    const measured = measuredRows.find((r) => r.costSource === "measured");
+    const derived = measuredRows.find((r) => r.costSource === "derived");
+    ok(measured?.usdMicros === 600 && measured.usdMicrosMeasured === 500 && measured.calls === 2, "OPE-369(pg): the measured row upsert-and-adds BOTH money columns (derived shadow kept beside the gateway's own figure)");
+    ok(derived?.usdMicrosMeasured === 0 && derived.calls === 1, "OPE-369(pg): a derived row defaults its measured column to 0 — it claims no measurement it didn't get");
+
+    const all = await store.spendTotals("default", { surfaceKey: "slack/T1/C_MEASURED", period: "2026-06" });
+    ok(all.usdMicros === 750 && all.usdMicrosMeasured === 500 && all.calls === 3, "🔴 OPE-369(pg): an UNFILTERED total still sums every derived micro — the caps' denomination is unchanged by measurement being available");
+    const onlyMeasured = await store.spendTotals("default", { surfaceKey: "slack/T1/C_MEASURED", period: "2026-06", costSource: "measured" });
+    ok(onlyMeasured.usdMicros === 600 && onlyMeasured.usdMicrosMeasured === 500 && onlyMeasured.calls === 2, "OPE-369(pg): the costSource filter isolates the comparable pair (600 derived vs 500 measured over the same 2 calls)");
+  }
 }
 
 {
@@ -194,6 +213,33 @@ const store = makeOperationalPostgresStore(client);
 
   ok((await store.pruneUsageEvents("acme", "2099-01-01T00:00:00Z")) === 0, "usage events: pruneUsageEvents is a no-op on Postgres (append-only)");
   ok((await store.usageForSession("acme", "sess-1")).length === 2, "usage events: rows survive the no-op prune untouched");
+
+  await store.appendUsageEvent({
+    ...base,
+    sessionId: "sess-measured",
+    ts: "2026-06-24T11:00:00Z",
+    inputTokens: 1000,
+    outputTokens: 100,
+    model: "m-1",
+    usdMicrosMeasured: 250,
+    costSource: "measured",
+    delegationDepth: 1,
+    rootSessionId: "sess-root",
+    detail: { generationId: "gen_pg_1" },
+  });
+  await store.appendUsageEvent({ ...base, sessionId: "sess-zero", ts: "2026-06-24T11:01:00Z", usdMicrosMeasured: 0, costSource: "measured", delegationDepth: 0, rootSessionId: "sess-zero" });
+
+  const [m] = await store.usageForSession("acme", "sess-measured");
+  ok(m.usdMicrosMeasured === 250 && m.costSource === "measured", "OPE-369(pg): the gateway-measured micros + cost_source round-trip on usage_events");
+  ok(m.delegationDepth === 1 && m.rootSessionId === "sess-root", "OPE-369(pg): delegation depth + root session round-trip as columns, so query_analytics can group by them");
+  ok(m.detail?.generationId === "gen_pg_1", "OPE-369(pg): the gateway generation id round-trips in detail — the join key to the gateway's own billing record");
+
+  const [z] = await store.usageForSession("acme", "sess-zero");
+  ok(z.usdMicrosMeasured === 0, "🔴 OPE-369(pg): a MEASURED ZERO survives the read (the gateway answered and said $0) — a truthiness read would have demoted it to 'nothing measured it'");
+  ok(z.delegationDepth === 0, "🔴 OPE-369(pg): a ROOT turn's depth 0 survives the read — same trap, same fix");
+
+  const [legacy] = await store.usageForSession("acme", "sess-2");
+  ok(legacy.usdMicrosMeasured === undefined && legacy.costSource === undefined && legacy.delegationDepth === undefined && legacy.rootSessionId === undefined, "OPE-369(pg): a row written without the new fields reads them back ABSENT — nothing is backfilled or invented");
 }
 
 {

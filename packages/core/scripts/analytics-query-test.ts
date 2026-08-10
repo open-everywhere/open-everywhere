@@ -150,4 +150,51 @@ const canon = (rows: readonly Record<string, unknown>[]) =>
   ok(s.rows.every((r) => !("est_usd" in r) || typeof r.est_usd === "number"), "est_usd is a number when priced, absent when not — never a fabricated value");
 }
 
-console.log(`\n✓ analytics-query: ${n} assertions passed (dual-engine parity, scope isolation A↮B, self-scope, no-rows-for-degraded, audit detail gating, domain fold + est_usd)\n`);
+{
+  const lineage = [
+    { surfaceKey: "slack/T1/CA", sessionId: "root-1", principalId: "U_A", ts: "2026-07-04T10:00:00Z", kind: "channel", inputTokens: 10, outputTokens: 1, delegationDepth: 0, rootSessionId: "root-1", usdMicrosMeasured: 100, costSource: "measured" as const },
+    { surfaceKey: "slack/T1/CA", sessionId: "root-1", principalId: "U_A", ts: "2026-07-04T10:01:00Z", kind: "subagent", inputTokens: 20, outputTokens: 2, delegationDepth: 1, rootSessionId: "root-1", usdMicrosMeasured: 200, costSource: "measured" as const },
+    { surfaceKey: "slack/T1/CA", sessionId: "child-1", principalId: "U_A", ts: "2026-07-04T10:02:00Z", kind: "subagent", inputTokens: 40, outputTokens: 4, delegationDepth: 2, rootSessionId: "root-1" },
+  ];
+  for (const e of lineage) {
+    await sqlStore.appendUsageEvent({ org: ORG, cacheReadTokens: 0, cacheWriteTokens: 0, ...e });
+    await pgStore.appendUsageEvent({ org: ORG, cacheReadTokens: 0, cacheWriteTokens: 0, ...e });
+  }
+
+  const byDepth = await runBoth({ dataset: "usage", scope: "org", groupBy: ["depth"], select: ["events", "input_tokens"] }, orgScope);
+  ok(canon(byDepth.s.rows) === canon(byDepth.p.rows), "OPE-369: grouping by delegation depth is dual-engine identical");
+  const depth2 = byDepth.s.rows.find((r) => Number(r.depth) === 2);
+  ok(depth2?.input_tokens === 40 && depth2.events === 1, "🔴 OPE-369: `depth` separates a grandchild-or-deeper call from a direct child's — the dimension the ticket asked for");
+
+  const byRoot = await runBoth({ dataset: "usage", scope: "org", groupBy: ["root_session"], select: ["input_tokens"] }, orgScope);
+  ok(canon(byRoot.s.rows) === canon(byRoot.p.rows), "OPE-369: grouping by root session is dual-engine identical");
+  const tree = byRoot.s.rows.find((r) => r.root_session === "root-1");
+  ok(tree?.input_tokens === 70, "🔴 OPE-369: ONE group-by recovers the whole tree (10 root + 20 child + 40 GRANDCHILD) — the grandchild's row files under the child, so a session-keyed read would have missed it entirely");
+
+  const bySource = await runBoth({ dataset: "usage", scope: "org", groupBy: ["cost_source"], select: ["events", "measured_usd"] }, orgScope);
+  ok(canon(bySource.s.rows) === canon(bySource.p.rows), "OPE-369: cost_source + measured_usd are dual-engine identical");
+  const measured = bySource.s.rows.find((r) => r.cost_source === "measured");
+  ok(Math.abs(Number(measured?.measured_usd) - 0.0003) < 1e-9, "OPE-369: measured_usd sums the GATEWAY's own micros as dollars (100 + 200 micros = $0.0003)");
+  const unmeasured = bySource.s.rows.find((r) => r.cost_source === null || r.cost_source === undefined);
+  ok(Number(unmeasured?.measured_usd ?? 0) === 0, "🔴 OPE-369: rows with NO measured cost sum to 0, not to NULL — the COALESCE keeps a pre-migration row from poisoning the whole sum");
+}
+
+{
+  await sqlStore.recordSpend(ORG, { surfaceKey: "slack/T1/CA", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 100, usdMicros: 2_500_000 });
+  await pgStore.recordSpend(ORG, { surfaceKey: "slack/T1/CA", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 100, usdMicros: 2_500_000 });
+  await sqlStore.recordSpend(ORG, { surfaceKey: "slack/T1/CA", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 50, usdMicros: 1_500_000, usdMicrosMeasured: 1_000_000, costSource: "measured" });
+  await pgStore.recordSpend(ORG, { surfaceKey: "slack/T1/CA", principalId: "U_A", model: "m-1", period: "2026-07", inputTokens: 50, usdMicros: 1_500_000, usdMicrosMeasured: 1_000_000, costSource: "measured" });
+
+  const spendUsd = await runBoth({ dataset: "spend", scope: "org", groupBy: ["surface"], select: ["usd", "usd_measured", "calls"] }, orgScope);
+  ok(canon(spendUsd.s.rows) === canon(spendUsd.p.rows), "spend usd: dual-engine parity");
+  const ca = spendUsd.s.rows.find((r) => r.surface === "slack/T1/CA");
+  ok(Number(ca?.usd) === 4, "🔴 REGRESSION: the spend dataset's `usd` measure returns the real total ($2.50 + $1.50) — it silently reported 0 for every query before this fix");
+  ok(Number(ca?.usd_measured) === 1, "OPE-369: `usd_measured` sums the gateway's own figure over the measured rows only");
+  ok(Number(ca?.calls) === 2, "…alongside the call count, which was in the old allowlist and is unchanged");
+
+  const measuredOnly = await runBoth({ dataset: "spend", scope: "org", groupBy: ["cost_source"], select: ["usd", "usd_measured"] }, orgScope);
+  const m = measuredOnly.s.rows.find((r) => r.cost_source === "measured");
+  ok(Number(m?.usd) === 1.5 && Number(m?.usd_measured) === 1, "🔴 OPE-369: grouping by cost_source gives the APPLES-TO-APPLES drift pair — $1.50 derived vs $1.00 measured over the SAME call (the unfiltered $4 total would have overstated the divergence 3x)");
+}
+
+console.log(`\n✓ analytics-query: ${n} assertions passed (dual-engine parity, scope isolation A↮B, self-scope, no-rows-for-degraded, audit detail gating, domain fold + est_usd, OPE-369 depth/root/cost_source dims + measured_usd)\n`);

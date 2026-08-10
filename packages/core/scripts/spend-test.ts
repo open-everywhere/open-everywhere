@@ -2,7 +2,7 @@ import { deepStrictEqual } from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { periodOf, billableTokens, checkCap, assertSpendBudgetsValid, type SpendBudgets } from "../agent/spend/spend.js";
+import { periodOf, billableTokens, checkCap, assertSpendBudgetsValid, UNKNOWN_MODEL, type SpendBudgets } from "../agent/spend/spend.js";
 import { isSpendLimitActive, activeSpendLimits, applyCapOverrides } from "../agent/spend/caps.js";
 import type { SpendLimitRow } from "../agent/operational/store.js";
 
@@ -336,17 +336,100 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
     await spendHook.events!["step.completed"]!(stepEvent(20, 10) as never, hookCtx("sess-unstamped") as never);
   });
   const unstampedRows = await usageEvents.usageForSession("default", "sess-unstamped");
-  ok(unstampedRows.length === 1 && unstampedRows[0].model === undefined, "hooks/spend: no stamp this session -> model absent (fail-soft, unchanged default)");
+  ok(unstampedRows.length === 1 && unstampedRows[0].model === UNKNOWN_MODEL, "🔴 OPE-369 hooks/spend: no stamp on a TOKEN-BEARING step -> the row is recorded under the explicit unknown-model sentinel, never silently attributed");
+  ok(unstampedRows[0].inputTokens === 20 && unstampedRows[0].outputTokens === 10, "…with its tokens intact — the fix withholds the rate-derived $, it never drops the usage");
 
   await spendHook.events!["step.completed"]!(stepEvent(1, 1) as never, hookCtx("sess-no-context") as never);
   const noContextRows = await usageEvents.usageForSession("default", "sess-no-context");
-  ok(noContextRows.length === 1 && noContextRows[0].model === undefined, "hooks/spend: step.completed outside any Eve context still records the row, unstamped");
+  ok(noContextRows.length === 1 && noContextRows[0].model === UNKNOWN_MODEL, "hooks/spend: step.completed outside any Eve context still records the row, under the unknown-model sentinel");
 
   await contextStorage.run(new ContextContainer(), async () => {
     await spendHook.events!["step.completed"]!(stepEvent(2, 2) as never, hookCtx("sess-isolated") as never);
   });
   const isolatedRows = await usageEvents.usageForSession("default", "sess-isolated");
-  ok(isolatedRows.length === 1 && isolatedRows[0].model === undefined, "hooks/spend: a fresh session context is unaffected by an earlier session's stamp");
+  ok(isolatedRows.length === 1 && isolatedRows[0].model === UNKNOWN_MODEL, "hooks/spend: a fresh session context is unaffected by an earlier session's stamp");
+
+  {
+    const { usdMicrosAtWrite } = await import("../agent/spend/pricing.js");
+    const big = { inputTokens: 5_000_000, outputTokens: 5_000_000 };
+    ok(usdMicrosAtWrite(big) > 0, "control: a STAMPLESS write still prices at the deploy's sole configured model — the legacy fallback is intact and is what a legacy row still gets");
+    ok(
+      usdMicrosAtWrite(big, UNKNOWN_MODEL) === 0,
+      "🔴 OPE-369: the SAME tokens under the unknown-model sentinel price at $0 — the deploy's sole-model rate is deliberately NOT borrowed for a call whose model was never observed",
+    );
+  }
+
+  {
+    const { spendTotals } = await import("../agent/spend/store.js");
+    const { periodOf: periodOfIso } = await import("../agent/spend/spend.js");
+    const { generationIdOf } = await import("../agent/spend/usage-events.js");
+    const opStore = (await import("../agent/operational/provider.js")).getOperationalStore();
+    const period = periodOfIso(new Date().toISOString());
+
+    const measuredEvent = {
+      data: {
+        usage: { inputTokens: 1000, outputTokens: 100, costUsd: 0.00025 },
+        providerMetadata: { gateway: { generationId: "gen_abc123" } },
+      },
+    };
+    const measuredCtx = () => ({
+      channel: { kind: "slack" },
+      session: { id: "sess-measured", auth: { current: { attributes: { team_id: "T1", channel_id: "C_MEASURED" }, principalId: "U1", principalType: "slack-user" } } },
+    });
+    await contextStorage.run(new ContextContainer(), async () => {
+      stampModelCall(PRICED_MODEL);
+      await spendHook.events!["step.completed"]!(measuredEvent as never, measuredCtx() as never);
+    });
+
+    const measuredRows = await usageEvents.usageForSession("default", "sess-measured");
+    ok(measuredRows.length === 1 && measuredRows[0].usdMicrosMeasured === 250, "🔴 OPE-369: the gateway-measured cost reaches usage_events in MICROS (0.00025 USD -> 250), instead of being dropped in the cast");
+    ok(measuredRows[0].costSource === "measured", "…stamped cost_source='measured', so a reader can tell an exact figure from a rate-derived one");
+    ok(generationIdOf(measuredRows[0]) === "gen_abc123", "🔴 OPE-369: the gateway generation id is stamped into detail — the join key between an OE row and the gateway's own billing record");
+    ok(measuredRows[0].delegationDepth === 0 && measuredRows[0].rootSessionId === "sess-measured", "…and a ROOT turn records depth 0 with itself as the root of its (so far empty) delegation tree");
+
+    const ledger = (await opStore.listSpendLedger("default")).filter((r) => r.surfaceKey === "slack/T1/C_MEASURED" && r.period === period);
+    ok(ledger.length === 1 && ledger[0].costSource === "measured", "🔴 OPE-369: the LEDGER row is keyed by cost_source, so measured and derived calls can never be summed into one bucket");
+    ok(ledger[0].usdMicrosMeasured === 250, "…carrying the gateway's own figure in usd_micros_measured");
+    ok(ledger[0].usdMicros > 0, "🔴 …AND the rate-derived usd_micros beside it — never displaced, because that column is the one every cap sums (a cap may not depend on a gateway feature)");
+
+    const totals = await spendTotals("default", { surfaceKey: "slack/T1/C_MEASURED", period });
+    ok(totals.usdMicrosMeasured === 250 && totals.usdMicros > 0, "spendTotals surfaces BOTH denominations, so the drift read needs no second query");
+    const measuredOnly = await spendTotals("default", { surfaceKey: "slack/T1/C_MEASURED", period, costSource: "measured" });
+    const derivedOnly = await spendTotals("default", { surfaceKey: "slack/T1/C_MEASURED", period, costSource: "derived" });
+    ok(measuredOnly.calls === 1 && derivedOnly.calls === 0, "the costSource filter isolates one cost path — the apples-to-apples half of the drift comparison");
+
+    await contextStorage.run(new ContextContainer(), async () => {
+      stampModelCall(PRICED_MODEL);
+      await spendHook.events!["step.completed"]!({ data: { usage: { inputTokens: 10, outputTokens: 5 } } } as never, {
+        channel: { kind: "slack" },
+        session: { id: "sess-unmeasured", auth: { current: { attributes: { team_id: "T1", channel_id: "C_UNMEASURED" }, principalId: "U1", principalType: "slack-user" } } },
+      } as never);
+    });
+    const unmeasured = await usageEvents.usageForSession("default", "sess-unmeasured");
+    ok(unmeasured.length === 1 && unmeasured[0].usdMicrosMeasured === undefined && unmeasured[0].costSource === "derived", "a direct-provider step (no gateway cost) records cost_source='derived' and NO measured figure — never a fabricated 0 that would read as 'the gateway billed nothing'");
+    ok(generationIdOf(unmeasured[0]) === undefined && unmeasured[0].detail === undefined, "…and carries no detail at all, so an ordinary turn's row is unchanged from before this landed");
+
+    const costOnlyCtx = {
+      channel: { kind: "slack" },
+      session: { id: "sess-cost-only", auth: { current: { attributes: { team_id: "T1", channel_id: "C_COSTONLY" }, principalId: "U1", principalType: "slack-user" } } },
+    };
+    await contextStorage.run(new ContextContainer(), async () => {
+      stampModelCall(PRICED_MODEL);
+      await spendHook.events!["step.completed"]!({ data: { usage: { costUsd: 0.0009 } } } as never, costOnlyCtx as never);
+    });
+    const costOnly = await usageEvents.usageForSession("default", "sess-cost-only");
+    ok(costOnly.length === 1 && costOnly[0].usdMicrosMeasured === 900, "🔴 OPE-369: a step the gateway BILLED but reported no tokens for is recorded — a measured cost is positive evidence of model spend, and dropping it lost real money from the caps");
+    const costOnlyLedger = await spendTotals("default", { surfaceKey: "slack/T1/C_COSTONLY", period });
+    ok(costOnlyLedger.calls === 1 && costOnlyLedger.usdMicrosMeasured === 900, "…and reaches the LEDGER, which is what the USD caps sum over");
+
+    await contextStorage.run(new ContextContainer(), async () => {
+      await spendHook.events!["step.completed"]!({ data: { usage: {} } } as never, {
+        channel: { kind: "slack" },
+        session: { id: "sess-empty", auth: { current: { attributes: { team_id: "T1", channel_id: "C_EMPTY" }, principalId: "U1", principalType: "slack-user" } } },
+      } as never);
+    });
+    ok((await usageEvents.usageForSession("default", "sess-empty")).length === 0, "…while a step with neither tokens NOR a cost still records nothing — the guard was tightened, not loosened");
+  }
 }
 
 {
@@ -355,11 +438,11 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   const { attestSubagentRuns, subagentRunOf } = await import("../agent/spend/subagent-runs.js");
   const { turnKind } = await import("../agent/hooks/spend.js");
 
-  const runCtx = (id: string, over: { parent?: { sessionId: string; callId: string }; token?: string } = {}) => ({
+  const runCtx = (id: string, over: { parent?: { sessionId: string; callId: string; rootSessionId?: string }; token?: string } = {}) => ({
     channel: { kind: "slack", ...(over.token !== undefined ? { continuationToken: over.token } : {}) },
     session: {
       id,
-      ...(over.parent ? { parent: { ...over.parent, rootSessionId: over.parent.sessionId, turn: { id: "turn_1", sequence: 1 } } } : {}),
+      ...(over.parent ? { parent: { ...over.parent, rootSessionId: over.parent.rootSessionId ?? over.parent.sessionId, turn: { id: "turn_1", sequence: 1 } } } : {}),
       auth: { current: { attributes: { team_id: "T1", channel_id: "C_DELEG" }, principalId: "U1", principalType: "slack-user" } },
     },
   });
@@ -407,6 +490,34 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
     const delegRows = (await opStore.listSpendLedger("default")).filter((r) => r.surfaceKey === "slack/T1/C_DELEG");
     ok(delegRows.length === 1, `all three writes collapsed into ONE (surface, principal, routine, model) row — the children carried the parent's dimensions, so nothing forked (got ${delegRows.length})`);
     ok(delegRows[0].principalId !== "", "…and the row is principal-attributed (the child ran under the parent's carried auth, not unattributed)");
+  }
+
+  {
+    const { delegationDepthOf, MAX_OBSERVABLE_DELEGATION_DEPTH } = await import("../agent/spend/subagent-runs.js");
+
+    const rootRow = parentRows.find((r) => subagentRunOf(r) === undefined)!;
+    ok(rootRow.delegationDepth === 0 && rootRow.rootSessionId === "sess-deleg-parent", "🔴 OPE-369: a ROOT turn stamps depth 0 and names ITSELF as the root — the column is total, so grouping by it never drops the root's own spend");
+
+    const childRow = parentRows.find((r) => subagentRunOf(r)?.sessionId === "sess-deleg-child-a")!;
+    ok(childRow.delegationDepth === 1, "🔴 a DIRECT child (parent === root) stamps depth 1");
+    ok(childRow.rootSessionId === "sess-deleg-parent", "…and carries the ROOT session, which is what makes a whole tree one GROUP BY");
+    ok(subagentRunOf(childRow)?.rootSessionId === "sess-deleg-parent" && subagentRunOf(childRow)?.depth === 1, "…mirrored into the delegation stamp, so a detail-only reader sees the same lineage");
+
+    const tokenChildRow = parentRows.find((r) => subagentRunOf(r)?.sessionId === "sess-deleg-child-b")!;
+    ok(tokenChildRow.delegationDepth === 1 && tokenChildRow.rootSessionId === "sess-deleg-parent", "a child recognised through the CONTINUATION TOKEN alone (no root in the token) still reports depth 1 with the parent as the deepest visible ancestor");
+
+    await spendHook.events!["step.completed"]!(
+      step(3, 1) as never,
+      runCtx("sess-deleg-grandchild", { parent: { sessionId: "sess-deleg-child-a", callId: "call_11", rootSessionId: "sess-deleg-parent" } }) as never,
+    );
+    const childFiled = await usageEvents.usageForSession("default", "sess-deleg-child-a");
+    ok(childFiled.length === 1, "the grandchild still files under its IMMEDIATE parent — OPE-263's attestation semantics are untouched by this ticket");
+    ok(childFiled[0].delegationDepth === MAX_OBSERVABLE_DELEGATION_DEPTH, "🔴 a GRANDCHILD stamps the depth BAND (2 = two-or-more hops) — eve publishes the root and the immediate parent, never the hop count between, so an exact number would be invented");
+    ok(childFiled[0].rootSessionId === "sess-deleg-parent", "🔴 …but it names the SAME root as its parent, which is exactly what makes a grandchild's cost reachable from the conversation that caused it");
+
+    ok(delegationDepthOf("p", "p") === 1, "delegationDepthOf: parent IS the root -> depth 1");
+    ok(delegationDepthOf("c", "r") === MAX_OBSERVABLE_DELEGATION_DEPTH, "delegationDepthOf: parent is not the root -> the two-or-more band");
+    ok(delegationDepthOf("p") === 1, "delegationDepthOf: NO root known (a token-recognised child — eve's continuation token encodes no root) -> 1, the deepest ancestor we can actually see, never a guess");
   }
 }
 

@@ -1,15 +1,15 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { recordSpend } from "../spend/store.js";
-import { appendUsageEvent } from "../spend/usage-events.js";
-import { periodOf, type Usage } from "../spend/spend.js";
+import { appendUsageEvent, GENERATION_ID_DETAIL_KEY } from "../spend/usage-events.js";
+import { periodOf, UNKNOWN_MODEL, type Usage } from "../spend/spend.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { routineMarker } from "../routines/routine.js";
 import { readModelStamp } from "../model/model-stamp.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { isSupervisorToken, standingSeatRegistryKey, unifiedWindowFromToken } from "../channels/unified-supervisor.js";
 import { parseDmSeatToken, dmSeatRegistryKey, bareTokenFromEveContext, parseSubagentToken } from "../channels/window-key.js";
-import { stampSubagentRun } from "../spend/subagent-runs.js";
+import { delegationDepthOf, stampSubagentRun } from "../spend/subagent-runs.js";
 import { isRunFireSeatWindowId } from "../routines/fire-window.js";
 
 export function routineIdOf(ctx: BindableContext): string | undefined {
@@ -22,14 +22,21 @@ export function routineIdOf(ctx: BindableContext): string | undefined {
 }
 
 export type DelegatableContext = BindableContext & {
-  readonly session?: { readonly parent?: { readonly sessionId?: string; readonly callId?: string } };
+  readonly session?: { readonly parent?: { readonly sessionId?: string; readonly callId?: string; readonly rootSessionId?: string } };
 };
 
-export function subagentParentOf(ctx: DelegatableContext, continuationToken?: unknown): { parentSessionId: string; callId: string } | undefined {
+export function subagentParentOf(
+  ctx: DelegatableContext,
+  continuationToken?: unknown,
+): { parentSessionId: string; callId: string; rootSessionId?: string } | undefined {
   try {
     const p = ctx.session?.parent;
     if (typeof p?.sessionId === "string" && p.sessionId.length > 0 && typeof p.callId === "string" && p.callId.length > 0) {
-      return { parentSessionId: p.sessionId, callId: p.callId };
+      return {
+        parentSessionId: p.sessionId,
+        callId: p.callId,
+        ...(typeof p.rootSessionId === "string" && p.rootSessionId.length > 0 ? { rootSessionId: p.rootSessionId } : {}),
+      };
     }
     const parsed = parseSubagentToken(continuationToken);
     return parsed ? { parentSessionId: parsed.parentSessionId, callId: parsed.callId } : undefined;
@@ -55,12 +62,30 @@ export default defineHook({
   events: {
     "step.completed": async (event, ctx: HookContext) => {
       const usage = event.data?.usage as Usage | undefined;
-      if (!usage || (usage.inputTokens == null && usage.outputTokens == null)) return;
+      if (!usage || (usage.inputTokens == null && usage.outputTokens == null && usage.costUsd == null)) return;
       const p = resolvePartition(ctx);
       const token = bareTokenFromEveContext(ctx.channel?.continuationToken) ?? ctx.channel?.continuationToken;
       const routineId = routineIdOf(ctx);
       const delegatedFrom = subagentParentOf(ctx, token);
-      const model = readModelStamp() ?? undefined;
+      const stampedModel = readModelStamp() ?? undefined;
+      const model = stampedModel ?? UNKNOWN_MODEL;
+      if (stampedModel === undefined) {
+        console.warn(
+          `[open-everywhere:spend] a token-bearing step carried NO model stamp — recording as model="${UNKNOWN_MODEL}" and SKIPPING rate-derived pricing ` +
+            `(session=${ctx.session?.id ?? "?"} surface=${p.key} in=${usage.inputTokens ?? 0} out=${usage.outputTokens ?? 0}). ` +
+            `Tokens and (where the gateway measured it) exact $ are still recorded; only the rate-derived $ is withheld, because nothing observed which model ran.`,
+        );
+      }
+
+      const measuredUsd = typeof usage.costUsd === "number" && Number.isFinite(usage.costUsd) && usage.costUsd >= 0 ? usage.costUsd : undefined;
+
+      const generationId = ((): string | undefined => {
+        const raw = (event.data as { providerMetadata?: { gateway?: { generationId?: unknown } } } | undefined)?.providerMetadata?.gateway?.generationId;
+        return typeof raw === "string" && raw.length > 0 ? raw : undefined;
+      })();
+
+      const delegationDepth = delegatedFrom ? delegationDepthOf(delegatedFrom.parentSessionId, delegatedFrom.rootSessionId) : 0;
+      const rootSessionId = delegatedFrom?.rootSessionId ?? delegatedFrom?.parentSessionId ?? ctx.session.id;
 
       try {
         await recordSpend(p, {
@@ -69,6 +94,7 @@ export default defineHook({
           principalId: bindFrom(ctx).principalId,
           routineId,
           model,
+          ...(measuredUsd !== undefined ? { measuredUsd } : {}),
         });
       } catch (err) {
         console.log(`[open-everywhere:spend] record skipped: ${String(err)}`);
@@ -81,7 +107,23 @@ export default defineHook({
           sessionId: delegatedFrom?.parentSessionId ?? ctx.session.id,
           principalId: bindFrom(ctx).principalId,
           kind: turnKind(ctx, token),
-          ...(delegatedFrom ? { detail: stampSubagentRun({ callId: delegatedFrom.callId, sessionId: ctx.session.id }) } : {}),
+          ...((): { detail?: Readonly<Record<string, unknown>> } => {
+            const detail = {
+              ...(delegatedFrom
+                ? stampSubagentRun({
+                    callId: delegatedFrom.callId,
+                    sessionId: ctx.session.id,
+                    ...(delegatedFrom.rootSessionId !== undefined ? { rootSessionId: delegatedFrom.rootSessionId } : {}),
+                    depth: delegationDepth,
+                  })
+                : {}),
+              ...(generationId !== undefined ? { [GENERATION_ID_DETAIL_KEY]: generationId } : {}),
+            };
+            return Object.keys(detail).length > 0 ? { detail } : {};
+          })(),
+          ...(measuredUsd !== undefined ? { usdMicrosMeasured: Math.round(measuredUsd * 1_000_000), costSource: "measured" as const } : { costSource: "derived" as const }),
+          delegationDepth,
+          rootSessionId,
           ...(routineId !== undefined ? { routineId } : {}),
           model,
           inputTokens: usage.inputTokens,

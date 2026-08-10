@@ -1,6 +1,7 @@
 import type { OperationalStore } from "../operational/store.js";
 import type { Domain } from "../memory/domain.js";
 import { type AnalyticsPlan, type CompiledAnalytics, domainOfRow, isoWeekStart } from "./compile.js";
+import { DATASETS, type DatasetName } from "./registry.js";
 import { isDmSurface, dmBucketKey, rowCostUsd, type AssumedModelPricing } from "../spend/reporting.js";
 
 export interface AnalyticsResult {
@@ -17,7 +18,9 @@ export interface AnalyticsExecuteDeps {
   readonly assumed: AssumedModelPricing;
 }
 
-const NUMERIC_MEASURE = new Set(["events", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "sessions", "rows", "calls"]);
+function isSummableMeasure(dataset: string, measure: string): boolean {
+  return DATASETS[dataset as DatasetName]?.measures[measure]?.kind === "sql";
+}
 
 function maskSurface(value: unknown, dmUnmasked: boolean): unknown {
   if (dmUnmasked || typeof value !== "string") return value;
@@ -61,7 +64,7 @@ export async function executeAnalytics(compiled: CompiledAnalytics, deps: Analyt
     }
     for (const m of plan.measures) {
       if (m === "est_usd") continue;
-      if (NUMERIC_MEASURE.has(m)) acc[m] = num(acc[m]) + num(r[m]);
+      if (isSummableMeasure(plan.dataset, m)) acc[m] = num(acc[m]) + num(r[m]);
     }
     if (plan.wantsEstUsd) {
       const cost = rowCostUsd(

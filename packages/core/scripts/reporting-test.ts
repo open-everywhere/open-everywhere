@@ -6,7 +6,8 @@ import { defineBundle, defineBinding } from "../agent/access/bundle.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { appendUsageEvent } from "../agent/spend/usage-events.js";
-import { periodOf } from "../agent/spend/spend.js";
+import { periodOf, UNKNOWN_MODEL } from "../agent/spend/spend.js";
+import type { SurfacePeriodSpend } from "../agent/spend/store.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import {
   pricedModelIds,
@@ -36,6 +37,8 @@ import {
   isDmSurface,
   dmBucketKey,
   maskDmSurfaceKey,
+  summariseCostDrift,
+  costDriftNote,
 } from "../agent/spend/reporting.js";
 import sessionCostTool from "../agent/tools/session_cost.js";
 import spendReportTool from "../agent/tools/spend_report.js";
@@ -192,8 +195,59 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const legacyMix = pricingMix([stamplessRow], explicitAssumed);
   ok(pricingNote(legacyMix, explicitAssumed) === explicitAssumed.note, "pricingNote: zero stamped rows -> reproduces resolveAssumedModel's note verbatim (pre-item-17 wording, unchanged)");
 
+  {
+    const unattributedRow = { model: UNKNOWN_MODEL, inputTokens: 1_000_000, outputTokens: 0 };
+    ok(rowCostUsd(unattributedRow, explicitAssumed) === undefined, "🔴 OPE-369: an unknown-model row is NEVER priced at the assumed model's rate — the read path inherits the same refusal the write path makes");
+
+    const unattributedMix = pricingMix([exactRow, stampedUnpricedRow, unattributedRow], explicitAssumed);
+    ok(unattributedMix.unpriced === 2 && unattributedMix.unattributed === 1, "pricingMix: unattributed rows are counted as a SUBSET of unpriced, not a fourth disjoint bucket");
+
+    const note = pricingNote(unattributedMix, explicitAssumed);
+    ok(/1 row\(s\) omitted — a recorded model this deployment hasn't configured a rate for/.test(note), "pricingNote: the unattributed row is subtracted out of the 'configure a rate' sentence rather than double-counted into it");
+    ok(note.includes(UNKNOWN_MODEL) && /instrumentation gap, not a pricing one/.test(note), "🔴 pricingNote: the unattributed rows get their OWN sentence naming the sentinel and the right remedy");
+
+    const noneUnattributed = pricingNote(pricingMix([exactRow, stampedUnpricedRow], explicitAssumed), explicitAssumed);
+    ok(!noneUnattributed.includes(UNKNOWN_MODEL) && /1 row\(s\) omitted/.test(noneUnattributed), "pricingNote: with nothing unattributed the wording is byte-identical to before OPE-369");
+  }
+
   delete process.env.OE_MODEL_PRICING;
   _resetPricingCacheForTest();
+}
+
+{
+  const row = (over: Partial<SurfacePeriodSpend>): SurfacePeriodSpend => ({
+    org: "default",
+    surfaceKey: "slack/T1/C1",
+    period: "2026-08",
+    tokens: 0,
+    usd: 0,
+    usdMeasured: 0,
+    usdDerivedOnMeasured: 0,
+    measuredCalls: 0,
+    calls: 0,
+    ...over,
+  });
+
+  const none = summariseCostDrift([row({ usd: 12.5, calls: 40 })]);
+  ok(none.measuredCalls === 0 && none.measuredUsd === 0 && none.divergencePct === undefined, "summariseCostDrift: nothing measured -> no divergence AND no percentage (a percentage of zero is not a number a report may print)");
+  ok(/no gateway-measured cost/.test(costDriftNote(none)) && /not a fault/.test(costDriftNote(none)), "🔴 costDriftNote: absent measurement is reported as EXPECTED on a direct-provider deployment, never as a defect");
+
+  const over = summariseCostDrift([row({ usd: 3.1, calls: 40, usdMeasured: 1, usdDerivedOnMeasured: 1.1, measuredCalls: 10 })]);
+  ok(Math.abs(over.divergenceUsd - 0.1) < 1e-9, "summariseCostDrift: divergence = derived − measured, over EXACTLY the measured rows (never against the unmeasured ones the total also carries)");
+  ok(over.divergencePct !== undefined && Math.abs(over.divergencePct - 10) < 1e-9, "summariseCostDrift: divergence as a percentage of the MEASURED figure");
+  ok(over.measuredCalls === 10 && over.totalCalls === 40, "summariseCostDrift: the coverage denominator travels with the number — 10 of 40 calls means something different from 40 of 40");
+  const overNote = costDriftNote(over);
+  ok(/OVER-states/.test(overNote) && /10 of 40 call/.test(overNote), "🔴 costDriftNote: names the DIRECTION and the coverage, so a reader can tell a rate-table error from a sampling artefact");
+  ok(/caps enforce the DERIVED figure/.test(overNote), "🔴 costDriftNote: says which figure is enforced, so a divergence never reads as 'the caps are broken'");
+
+  const under = summariseCostDrift([row({ usdMeasured: 2, usdDerivedOnMeasured: 1, measuredCalls: 4, calls: 4 })]);
+  ok(under.divergenceUsd === -1 && /UNDER-states/.test(costDriftNote(under)), "costDriftNote: an under-stating rate table reads as UNDER-states (the direction that silently lets a cap run over)");
+
+  const agree = summariseCostDrift([row({ usdMeasured: 5, usdDerivedOnMeasured: 5, measuredCalls: 2, calls: 2 })]);
+  ok(agree.divergenceUsd === 0 && /agrees with/.test(costDriftNote(agree)), "costDriftNote: an exact match says so plainly");
+
+  const multi = summariseCostDrift([row({ usdMeasured: 1, usdDerivedOnMeasured: 2, measuredCalls: 1, calls: 3 }), row({ surfaceKey: "slack/T1/C2", usdMeasured: 3, usdDerivedOnMeasured: 4, measuredCalls: 2, calls: 5 })]);
+  ok(multi.measuredUsd === 4 && multi.derivedUsd === 6 && multi.measuredCalls === 3 && multi.totalCalls === 8, "summariseCostDrift: sums across every scoped surface, both halves and both denominators");
 }
 
 {
