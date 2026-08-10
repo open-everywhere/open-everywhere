@@ -3,33 +3,31 @@ import { join } from "node:path";
 import type { AuditWireEntry } from "../e2e/audit-read.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "../e2e/rotate-window-lib.js";
 import { isModelUsable, clampReasoning, type ModelPolicy } from "../../agent/model/policy.js";
+import { modelAllowList, PRIMARY_MODEL } from "../../../../agent/model/models.js";
 import type { ModelReasoning } from "../../agent/memory/domain.js";
 import type { OperationalStore, DomainModelRow } from "../../agent/operational/store.js";
 import { controlPartition } from "../../agent/memory/partition.js";
 import { siloTier } from "../../agent/memory/store.js";
 import { tierSandboxDir } from "../../agent/memory/sandbox-sync.js";
 import {
-  TARGET, READ, INJECT, sleep, injectWake, auditSince, dS, rowsForWake,
+  TARGET, READ, INJECT, sleep, injectWake, auditSince, dS,
   readTranscript, extractMemoryPathReads, terminalProse, replyText, scoreNavigation,
-  transcriptServedWake, attributeRow, newTierContent, type RowAttribution,
+  transcriptServedWake, attributeRowInFamily, newTierContent, traceDelegation,
+  NO_REPLY_ACTIONS, REPLIED_ACTIONS, type RowAttribution, type DelegationTrace,
   type Injection, type InjectBody, type HarnessMsg,
 } from "./memory-eval-harness.js";
 import { buildTopology, type Topology, type PlantedFact } from "./seed-silo.js";
 
-const ALLOW_POLICY: ModelPolicy = {
-  allow: [
-    { id: "zai/glm-5.2", tier: "high" },
-    { id: "deepseek/deepseek-v4-flash", tier: "low" },
-    { id: "alibaba/qwen3.5-flash", tier: "low" },
-  ],
-  reasoningCeiling: "high",
-};
-const DOMAIN_CEILING: ModelReasoning = "high";
+export const DOMAIN_REASONING_CEILING: ModelReasoning = "high";
+
+const ALLOW_POLICY: ModelPolicy = { allow: modelAllowList(), reasoningCeiling: DOMAIN_REASONING_CEILING };
+const DOMAIN_CEILING: ModelReasoning = DOMAIN_REASONING_CEILING;
 
 const FACT_WAIT_MS = Number.parseInt(process.env.MEM_FACT_WAIT_MS ?? "20000", 10);
 const REPLY_TIMEOUT_MS = Number.parseInt(process.env.MEM_REPLY_TIMEOUT_MS ?? "300000", 10);
 const POLL_MS = Number.parseInt(process.env.MEM_POLL_MS ?? "7000", 10);
 const SETTLE_MS = Number.parseInt(process.env.MEM_SETTLE_MS ?? "12000", 10);
+const DELEGATION_GRACE_MS = Number.parseInt(process.env.MEM_DELEGATION_GRACE_MS ?? "60000", 10);
 
 const SLACK_SURFACE = (process.env.EVAL_MEM_SLACK_SURFACE ?? process.env.EVAL_SLACK_SURFACE ?? "").trim();
 const NOTION_SURFACE = (process.env.EVAL_MEM_NOTION_SURFACE ?? process.env.EVAL_NOTION_SURFACE ?? "").trim();
@@ -170,10 +168,32 @@ const COMPLETION_ACTIONS = new Set([
   "memory.write",
 ]);
 
+type PollOutcome = "replied" | "no_reply" | "delegation_no_reply" | "other" | "timeout";
+
+export function terminalVerdict(
+  observed: { readonly replied: boolean; readonly noReply: boolean; readonly other: boolean },
+  del: Pick<DelegationTrace, "spawned" | "outstanding" | "lastReturnTs">,
+  nowMs: number,
+  graceMs: number = DELEGATION_GRACE_MS,
+): PollOutcome | null {
+  if (observed.replied) return "replied";
+  if (del.outstanding.length > 0) return null;
+  if (del.spawned.length > 0) {
+    const since = del.lastReturnTs ? nowMs - Date.parse(del.lastReturnTs) : 0;
+    if (Number.isFinite(since) && since < graceMs) return null;
+    return "delegation_no_reply";
+  }
+  if (observed.noReply) return "no_reply";
+  if (observed.other) return "other";
+  return null;
+}
+
 interface ProbeRun {
   readonly probe: BatteryProbe;
   readonly injection: Injection | null;
   readonly sessionId: string | null;
+  readonly workerSessionIds: readonly string[];
+  readonly pollOutcome?: PollOutcome;
   readonly replied: boolean;
   readonly replyPlatform: string | null;
   readonly prose: string | null;
@@ -198,7 +218,7 @@ async function drive(probe: BatteryProbe, cli: Cli, store: OperationalStore, pro
   const origin = originFor(probe.platform);
   const surfaceKey = surfaceFor(probe.platform);
   if (!origin || !surfaceKey) {
-    return { probe, injection: null, sessionId: null, replied: false, replyPlatform: null, prose: null, replyText: null, navReads: [], windowRows: [], probeStart: new Date().toISOString(), skip: `no ${probe.platform} surface configured` };
+    return { probe, injection: null, sessionId: null, workerSessionIds: [], replied: false, replyPlatform: null, prose: null, replyText: null, navReads: [], windowRows: [], probeStart: new Date().toISOString(), skip: `no ${probe.platform} surface configured` };
   }
 
   await rotateUnifiedWindow(store, cli.org, cli.domain);
@@ -224,61 +244,89 @@ async function drive(probe: BatteryProbe, cli: Cli, store: OperationalStore, pro
   };
   const injection = await injectWake(body, probe.m === "M2" ? "chatter" : "probe", probe.tag, log);
 
-  const sessionServed = new Map<string, boolean>();
+  let del: DelegationTrace = traceDelegation([], injection.wakeId);
+  const negativeAt = new Map<string, number>();
+  const ownSessionIds = new Set<string>();
   const verifySession = async (sid: string): Promise<boolean> => {
-    const cached = sessionServed.get(sid);
-    if (cached !== undefined) return cached;
-    const served = transcriptServedWake(await readTranscript(sid), injection.wakeId);
-    sessionServed.set(sid, served);
+    if (ownSessionIds.has(sid)) return true;
+    const seenAt = negativeAt.get(sid);
+    if (seenAt !== undefined && seenAt >= del.wakeIds.size) return false;
+    const events = await readTranscript(sid);
+    const served = [...del.wakeIds].some((w) => transcriptServedWake(events, w));
+    if (served) ownSessionIds.add(sid);
+    else negativeAt.set(sid, del.wakeIds.size);
     return served;
   };
   const attribute = async (r: AuditWireEntry): Promise<RowAttribution> => {
     const rw = dS(r, "wakeId") ?? null;
     const rs = dS(r, "sessionId") ?? null;
+    if (rs !== null && ownSessionIds.has(rs)) return "session";
     const verified = rw === null && rs !== null ? await verifySession(rs) : null;
-    return attributeRow(rw, rs, injection.wakeId, verified);
+    const verdict = attributeRowInFamily(rw, rs, del.wakeIds, verified);
+    if (verdict !== "reject" && rs) ownSessionIds.add(rs);
+    return verdict;
   };
 
   const deadline = Date.now() + REPLY_TIMEOUT_MS;
   let sessionId: string | null = null;
+  let outcome: PollOutcome = "timeout";
+  let allRows: AuditWireEntry[] = [];
+  let settled = false;
   while (Date.now() < deadline) {
-    const rows = await auditSince(probeStart);
-    const candidates = rows.filter((r) => r.ts >= probeStart && COMPLETION_ACTIONS.has(r.action)).sort((a, b) => a.ts.localeCompare(b.ts));
+    allRows = [...(await auditSince(probeStart))].filter((r) => r.ts >= probeStart);
+    del = traceDelegation(allRows, injection.wakeId);
+    for (const sid of del.workerSessionIds) ownSessionIds.add(sid);
+    const observed = { replied: false, noReply: false, other: false };
+    const candidates = allRows.filter((r) => COMPLETION_ACTIONS.has(r.action)).sort((a, b) => a.ts.localeCompare(b.ts));
     for (const r of candidates) {
       const verdict = await attribute(r);
       if (verdict === "reject") {
         const rw = dS(r, "wakeId");
-        if (rw && rw !== injection.wakeId) {
-          console.warn(`  [cascade-guard] ${probe.id}: ignoring a late ${r.action} row from a PREVIOUS probe (row wakeId=${rw} ≠ probe wakeId=${injection.wakeId})`);
+        if (rw && !del.wakeIds.has(rw)) {
+          console.warn(`  [cascade-guard] ${probe.id}: ignoring a late ${r.action} row from a PREVIOUS probe (row wakeId=${rw} ∉ this probe's wake family [${[...del.wakeIds].join(", ")}])`);
         }
         continue;
       }
+      if (REPLIED_ACTIONS.has(r.action)) observed.replied = true;
+      else if (NO_REPLY_ACTIONS.has(r.action)) observed.noReply = true;
+      else observed.other = true;
       const rs = dS(r, "sessionId");
-      if (rs) { sessionId = rs; break; }
+      if (rs && sessionId === null && !del.workerSessionIds.includes(rs)) sessionId = rs;
     }
-    if (sessionId) break;
+    const verdict = terminalVerdict(observed, del, Date.now());
+    if (verdict !== null) {
+      outcome = verdict;
+      await sleep(SETTLE_MS);
+      settled = true;
+      const after = traceDelegation([...(await auditSince(probeStart))].filter((r) => r.ts >= probeStart), injection.wakeId);
+      if (outcome === "no_reply" && after.spawned.length > 0 && Date.now() < deadline) { settled = false; continue; }
+      break;
+    }
     await sleep(POLL_MS);
   }
-  await sleep(SETTLE_MS);
+  if (!settled) await sleep(SETTLE_MS);
 
-  const allRows = [...(await auditSince(probeStart))].filter((r) => r.ts >= probeStart);
+  allRows = [...(await auditSince(probeStart))].filter((r) => r.ts >= probeStart);
+  del = traceDelegation(allRows, injection.wakeId);
+  for (const sid of del.workerSessionIds) ownSessionIds.add(sid);
   if (!sessionId) {
     for (const r of allRows.filter((r) => COMPLETION_ACTIONS.has(r.action)).sort((a, b) => a.ts.localeCompare(b.ts))) {
       if ((await attribute(r)) === "reject") continue;
       const rs = dS(r, "sessionId");
-      if (rs) { sessionId = rs; break; }
+      if (rs && !del.workerSessionIds.includes(rs)) { sessionId = rs; break; }
     }
   }
 
+  const ownSessions = new Set<string>([...ownSessionIds, ...(sessionId ? [sessionId] : [])]);
   const windowRows = allRows.filter((r) => {
     const rw = dS(r, "wakeId");
-    if (rw != null && rw.length > 0) return rw === injection.wakeId;
+    if (rw != null && rw.length > 0) return del.wakeIds.has(rw);
     const rs = dS(r, "sessionId");
-    if (rs != null && rs.length > 0) return sessionId != null && rs === sessionId;
+    if (rs != null && rs.length > 0) return ownSessions.has(rs);
     return true;
   });
 
-  const replyPost = rowsForWake(windowRows, injection.wakeId).find((r) => r.action === "reply.post")
+  const replyPost = windowRows.find((r) => r.action === "reply.post" && del.wakeIds.has(dS(r, "wakeId") ?? ""))
     ?? windowRows.find((r) => r.action === "reply.post" && (dS(r, "sessionId") ?? sessionId) === sessionId);
   const replied = Boolean(replyPost) || windowRows.some((r) => r.action === "turn.direct_mention_prose_delivered" && (dS(r, "sessionId") ?? sessionId) === sessionId);
 
@@ -291,11 +339,14 @@ async function drive(probe: BatteryProbe, cli: Cli, store: OperationalStore, pro
     spoken = replyText(events);
     navReads = extractMemoryPathReads(events);
   }
-  return { probe, injection, sessionId, replied, replyPlatform: replyPost ? (dS(replyPost, "platform") ?? probe.platform) : null, prose, replyText: spoken, navReads, windowRows, probeStart, ...(m2Baseline !== undefined ? { m2Baseline } : {}) };
+  const workerSessionIds = del.workerSessionIds.filter((sid) => sid !== sessionId);
+  for (const sid of workerSessionIds) navReads = navReads.concat(extractMemoryPathReads(await readTranscript(sid)));
+  return { probe, injection, sessionId, workerSessionIds, pollOutcome: outcome, replied, replyPlatform: replyPost ? (dS(replyPost, "platform") ?? probe.platform) : null, prose, replyText: spoken, navReads, windowRows, probeStart, ...(m2Baseline !== undefined ? { m2Baseline } : {}) };
 }
 
 function writeRowsIn(run: ProbeRun): AuditWireEntry[] {
-  return run.windowRows.filter((r) => r.action === "memory.write" && (run.sessionId === null || (dS(r, "sessionId") ?? run.sessionId) === run.sessionId));
+  const own = new Set<string>([...(run.sessionId ? [run.sessionId] : []), ...run.workerSessionIds]);
+  return run.windowRows.filter((r) => r.action === "memory.write" && (own.size === 0 || own.has(dS(r, "sessionId") ?? "") || dS(r, "sessionId") === undefined));
 }
 
 interface ProbeResult {
@@ -307,11 +358,13 @@ interface ProbeResult {
   readonly pass: boolean | null;
   readonly detail: Record<string, unknown>;
   readonly sessionId: string | null;
+  readonly workerSessionIds?: readonly string[];
+  readonly pollOutcome?: PollOutcome;
 }
 
 async function scoreProbe(run: ProbeRun, topology: Topology, provider: MemProvider | null, store: OperationalStore): Promise<ProbeResult> {
   const { probe } = run;
-  const base = { id: probe.id, m: probe.m, tag: probe.tag, expected: probe.expected, sessionId: run.sessionId };
+  const base = { id: probe.id, m: probe.m, tag: probe.tag, expected: probe.expected, sessionId: run.sessionId, workerSessionIds: run.workerSessionIds, ...(run.pollOutcome ? { pollOutcome: run.pollOutcome } : {}) };
   if (run.skip) return { ...base, outcome: "SKIP", pass: null, detail: { skip: run.skip } };
 
   const fact = probe.factId ? topology.facts.find((f) => f.id === probe.factId) : undefined;
@@ -434,7 +487,7 @@ function parseCli(argv: readonly string[]): Cli {
   const get = (f: string): string | undefined => { const i = argv.indexOf(f); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : undefined; };
   const effRaw = (get("--effort") ?? "high").toLowerCase();
   return {
-    model: get("--model") ?? "zai/glm-5.2",
+    model: get("--model") ?? PRIMARY_MODEL,
     effort: (effRaw === "med" ? "medium" : effRaw) as ModelReasoning,
     size: get("--size") ?? "small",
     seed: Number.parseInt(get("--seed") ?? "1", 10),

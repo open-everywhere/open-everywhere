@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const NOTION = "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000101";
 const SLACK_MEM = "slack/T0EXAMPLE/C0EXCHAN005";
+const DOMAIN_REASONING_CEILING = "high";
 const UNMOVED = [
   "slack/T0EXAMPLE/C0EXCHAN003",
   "slack/T0EXAMPLE/C0EXRANDM",
@@ -16,6 +17,7 @@ type Snapshot = {
   readonly resolved: Record<string, string | null>;
   readonly names: readonly string[];
   readonly channels: Record<string, readonly string[]>;
+  readonly ceilings: Record<string, string | null>;
 };
 
 const PROBE_KEYS = [NOTION, SLACK_MEM, ...UNMOVED];
@@ -33,6 +35,9 @@ if (process.argv.includes("--probe")) {
     names: domains.map((d) => d.name),
     channels: Object.fromEntries(
       domains.filter((d) => ["e2e-unified", "e2e-memory", "e2e-b"].includes(d.name)).map((d) => [d.name, [...(d.channels ?? [])]]),
+    ),
+    ceilings: Object.fromEntries(
+      domains.filter((d) => ["e2e-unified", "e2e-memory"].includes(d.name)).map((d) => [d.name, d.reasoningCeiling ?? null]),
     ),
   };
   process.stdout.write(`__SNAPSHOT__${JSON.stringify(snapshot)}`);
@@ -86,6 +91,10 @@ ok(true, "domains.ts loads clean with OE_MEMORY_EVAL=1 (channel exclusivity + un
   ok(new Set(mem.map((k) => k.split("/")[0])).size >= 2, "flag on: e2e-memory spans >1 PLATFORM — the precondition M4's one-brain claim needs");
   ok(on.resolved[SLACK_MEM] === "e2e-memory", `flag on: the Slack channel is on loan from e2e-b (got ${on.resolved[SLACK_MEM]})`);
   ok(!on.names.includes("e2e-b"), "flag on: e2e-b has yielded (gated out), which is what frees its Slack channel");
+  ok(
+    on.ceilings["e2e-memory"] === DOMAIN_REASONING_CEILING,
+    `flag on: e2e-memory declares reasoningCeiling "${DOMAIN_REASONING_CEILING}" (got ${on.ceilings["e2e-memory"] ?? "none — every --effort high run silently clamps to the org default"})`,
+  );
 }
 
 for (const key of UNMOVED) {

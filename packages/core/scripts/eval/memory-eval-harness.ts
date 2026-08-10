@@ -156,10 +156,65 @@ export function attributeRow(
   probeWakeId: string,
   sessionVerified: boolean | null,
 ): RowAttribution {
-  if (rowWakeId != null && rowWakeId.length > 0) return rowWakeId === probeWakeId ? "wakeId" : "reject";
+  return attributeRowInFamily(rowWakeId, rowSessionId, new Set([probeWakeId]), sessionVerified);
+}
+
+export function attributeRowInFamily(
+  rowWakeId: string | null | undefined,
+  rowSessionId: string | null | undefined,
+  familyWakeIds: ReadonlySet<string>,
+  sessionVerified: boolean | null,
+): RowAttribution {
+  if (rowWakeId != null && rowWakeId.length > 0) return familyWakeIds.has(rowWakeId) ? "wakeId" : "reject";
   if (rowSessionId != null && rowSessionId.length > 0) return sessionVerified === true ? "session" : "reject";
   return "reject";
 }
+
+export interface DelegationTrace {
+  readonly wakeIds: ReadonlySet<string>;
+  readonly spawned: readonly string[];
+  readonly returned: readonly string[];
+  readonly outstanding: readonly string[];
+  readonly workerSessionIds: readonly string[];
+  readonly lastReturnTs: string | null;
+}
+export function traceDelegation(rows: readonly AuditWireEntry[], rootWakeId: string): DelegationTrace {
+  const wakeIds = new Set<string>([rootWakeId]);
+  const spawned: string[] = [];
+  const returned: string[] = [];
+  const workerSessionIds: string[] = [];
+  let lastReturnTs: string | null = null;
+  const ordered = [...rows].sort((a, b) => a.ts.localeCompare(b.ts));
+  for (let pass = 0; pass < 5; pass++) {
+    let grew = false;
+    for (const r of ordered) {
+      if (r.action !== "task.spawned") continue;
+      const parent = dS(r, "parentWakeId");
+      const taskId = dS(r, "taskId");
+      if (!parent || !wakeIds.has(parent) || !taskId || spawned.includes(taskId)) continue;
+      spawned.push(taskId);
+      const child = dS(r, "wakeId");
+      if (child && !wakeIds.has(child)) wakeIds.add(child);
+      grew = true;
+    }
+    for (const r of ordered) {
+      if (r.action !== "task.returned") continue;
+      const taskId = dS(r, "taskId");
+      if (!taskId || !spawned.includes(taskId)) continue;
+      if (!returned.includes(taskId)) { returned.push(taskId); grew = true; }
+      const completion = dS(r, "wakeId");
+      if (completion && !wakeIds.has(completion)) { wakeIds.add(completion); grew = true; }
+      const sid = dS(r, "sessionId");
+      if (sid && !workerSessionIds.includes(sid)) { workerSessionIds.push(sid); grew = true; }
+      if (lastReturnTs === null || r.ts > lastReturnTs) lastReturnTs = r.ts;
+    }
+    if (!grew) break;
+  }
+  return { wakeIds, spawned, returned, outstanding: spawned.filter((t) => !returned.includes(t)), workerSessionIds, lastReturnTs };
+}
+
+export const NO_REPLY_ACTIONS: ReadonlySet<string> = new Set(["reply.no_reply", "unified.no_reply"]);
+export const REPLIED_ACTIONS: ReadonlySet<string> = new Set(["reply.post", "turn.direct_mention_prose_delivered"]);
 
 export function newTierContent(before: Readonly<Record<string, string>>, after: Readonly<Record<string, string>>): string {
   const parts: string[] = [];

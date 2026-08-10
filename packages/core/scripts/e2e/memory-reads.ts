@@ -2,6 +2,7 @@ import type { TranscriptWireEvent } from "./transcript-read.js";
 
 const MEMORY_PATH_RE = /(?:^|["'\s(])((?:\/workspace\/)?memory\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)/g;
 const PATH_KEYS = new Set(["path", "file_path", "filepath", "filePath", "paths", "files", "command", "cmd", "input"]);
+const NON_PATH_KEYS = new Set(["brief", "prompt", "instructions"]);
 
 export function normaliseMemoryPath(raw: string): string {
   return raw.replace(/^\/workspace\//, "").replace(/\/+$/, "");
@@ -21,7 +22,7 @@ function collectPaths(value: unknown, underPathKey: boolean, out: string[]): voi
   }
   if (value && typeof value === "object") {
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      collectPaths(v, underPathKey || PATH_KEYS.has(k), out);
+      collectPaths(v, !NON_PATH_KEYS.has(k) && (underPathKey || PATH_KEYS.has(k)), out);
     }
   }
 }

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import {
   scoreRecall, scoreAbstention, scoreCapture, scoreUpdate, scorePoison, scoreAccessClause,
-  buildBattery, M5_POISON_NEEDLES,
+  buildBattery, terminalVerdict, M5_POISON_NEEDLES, DOMAIN_REASONING_CEILING,
 } from "./eval/memory-eval.js";
 import {
   scoreNavigation, extractMemoryPathReads, terminalProse, siloOfPath, normaliseMemoryPath, mulberry32,
-  attributeRow, transcriptServedWake, newTierContent, anyStringContains,
+  attributeRow, attributeRowInFamily, traceDelegation, transcriptServedWake, newTierContent, anyStringContains,
 } from "./eval/memory-eval-harness.js";
+import type { AuditWireEntry } from "./e2e/audit-read.js";
 import { buildTopology } from "./eval/seed-silo.js";
 import type { TranscriptWireEvent } from "./e2e/transcript-read.js";
 
@@ -147,6 +148,54 @@ const ok = (cond: boolean, label: string): void => { assert.ok(cond, label); n++
   ok(attributeRow(null, null, mine, null) === "reject", "attributeRow: neither a wakeId nor a sessionId → never accepted");
   ok(attributeRow("", "", mine, true) === "reject", "attributeRow: empty-string fields are treated as absent (no wakeId, no session) → reject");
 }
+
+{
+  const row = (action: string, ts: string, detail: Record<string, unknown>): AuditWireEntry =>
+    ({ ts, org: "o", platform: "unified", workspace: "e2e-memory", action, detail } as unknown as AuditWireEntry);
+  const PROBE = "wake-PROBE";
+  const rows: AuditWireEntry[] = [
+    row("task.spawned", "2026-02-20T05:30:40.000Z", { taskId: "T1", wakeId: "wake-CHILD", parentWakeId: PROBE, parentSessionId: "sess-seat" }),
+    row("unified.no_reply", "2026-02-20T05:31:08.000Z", { wakeId: PROBE, sessionId: "sess-seat" }),
+  ];
+  const mid = traceDelegation(rows, PROBE);
+  ok(mid.spawned.join() === "T1" && mid.outstanding.join() === "T1", "traceDelegation: a task.spawned joined by parentWakeId is OUTSTANDING until its task.returned lands");
+  ok(mid.wakeIds.has(PROBE) && mid.wakeIds.has("wake-CHILD"), "traceDelegation: the worker's CHILD wake joins the probe's wake family");
+  ok(terminalVerdict({ replied: false, noReply: true, other: false }, mid, Date.parse("2026-02-20T05:31:20.000Z")) === null, "terminalVerdict: a no-reply while a worker is OUTSTANDING is interim — the poll must NOT stop (the false red)");
+
+  const done = [...rows, row("task.returned", "2026-02-20T05:31:45.000Z", { taskId: "T1", wakeId: "wake-DONE", sessionId: "sess-worker", delivered: true })];
+  const tr = traceDelegation(done, PROBE);
+  ok(tr.outstanding.length === 0 && tr.returned.join() === "T1", "traceDelegation: task.returned clears the outstanding worker");
+  ok(tr.workerSessionIds.join() === "sess-worker", "traceDelegation: task.returned names the WORKER's session — where the greps and the memory.write actually happen");
+  ok(tr.wakeIds.has("wake-DONE"), "traceDelegation: the COMPLETION wake (which carries the seat's answer) joins the family too");
+  ok(terminalVerdict({ replied: false, noReply: true, other: false }, tr, Date.parse("2026-02-20T05:31:50.000Z"), 60000) === null, "terminalVerdict: inside the grace after a return, keep waiting for the seat's post");
+  ok(terminalVerdict({ replied: false, noReply: true, other: false }, tr, Date.parse("2026-02-20T05:33:00.000Z"), 60000) === "delegation_no_reply", "terminalVerdict: past the grace with no post → a NAMED outcome (delegation_no_reply), not a silent miss");
+  ok(terminalVerdict({ replied: true, noReply: true, other: false }, tr, Date.parse("2026-02-20T05:31:50.000Z"), 60000) === "replied", "terminalVerdict: a delivered answer always ends the probe");
+
+  const none = traceDelegation([row("unified.no_reply", "2026-02-20T05:31:08.000Z", { wakeId: PROBE, sessionId: "sess-seat" })], PROBE);
+  ok(terminalVerdict({ replied: false, noReply: true, other: false }, none, Date.now()) === "no_reply", "terminalVerdict: with NO delegation a no-reply is terminal exactly as before (an M5 refusal still scores immediately)");
+  ok(terminalVerdict({ replied: false, noReply: false, other: false }, none, Date.now()) === null, "terminalVerdict: nothing observed yet → keep polling");
+
+  const foreign = traceDelegation([row("task.spawned", "2026-02-20T05:30:40.000Z", { taskId: "T9", wakeId: "wake-OTHERCHILD", parentWakeId: "wake-OTHERPROBE" })], PROBE);
+  ok(foreign.spawned.length === 0 && !foreign.wakeIds.has("wake-OTHERCHILD"), "traceDelegation: ANOTHER probe's delegation never joins this family (the cascade guard stays as strict as before)");
+
+  const fam = new Set([PROBE, "wake-CHILD", "wake-DONE"]);
+  ok(attributeRowInFamily("wake-DONE", null, fam, null) === "wakeId", "attributeRowInFamily: the completion wake carrying the ANSWER is accepted (a single-id join rejected the probe's own reply.post)");
+  ok(attributeRowInFamily("wake-OTHERPROBE", "sess-x", fam, true) === "reject", "attributeRowInFamily: a wakeId outside the family is rejected even with a verified session");
+  ok(attributeRowInFamily(null, "sess-worker", fam, true) === "session", "attributeRowInFamily: a transcript-verified session (the worker's, serving the CHILD wake) is accepted");
+}
+
+{
+  const events: TranscriptWireEvent[] = [
+    { index: 0, at: null, type: "tool.call", data: { name: "agent", input: { brief: "look in memory/handbook-cache/policies/retention.md and report back", mode: "sync" } } },
+  ];
+  ok(extractMemoryPathReads(events).length === 0, "extractMemoryPathReads: a path NAMED in a delegation brief is not a read (live: M7 scored grepped:true off its own brief)");
+  const real: TranscriptWireEvent[] = [
+    { index: 0, at: null, type: "tool.call", data: { name: "bash", input: { command: "grep -rn foo memory/payments-brain/MEMORY.md" } } },
+  ];
+  ok(extractMemoryPathReads(real).join() === "memory/payments-brain/MEMORY.md", "extractMemoryPathReads: a real tool-call path is still counted (the deny-list is brief-shaped keys only)");
+}
+
+ok(DOMAIN_REASONING_CEILING === "high", "DOMAIN_REASONING_CEILING is 'high' — must equal the e2e-memory domain's reasoningCeiling in agent/memory/domains.ts, or every '@high' battery result is really @medium");
 
 {
   const wakeId = "0d9f-uuid-1234";

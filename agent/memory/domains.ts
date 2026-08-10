@@ -76,6 +76,7 @@ const rawDomains: Domain[] = [
           memory: ["payments-brain", "platform-notes", "misc", "handbook-cache"],
           ambientSupervisor: true,
           mode: "unified",
+          reasoningCeiling: "high",
         }),
       ]
     : []),
