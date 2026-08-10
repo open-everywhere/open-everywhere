@@ -8,7 +8,6 @@ import { registerDirectoryAdapter } from "@open-everywhere/adapters/agent/direct
 import {
   registerDbCredentialBroker,
   CREDENTIAL_KEY_ENV,
-  registerGitHubMemory,
   registerGitHubConfigPrProvider,
   setBlobPutter,
   registerAuditDropCounter,
@@ -19,8 +18,11 @@ import {
   registerOperationalPglite,
   onVercel,
   declareProviderSelection,
+  assertConnectorMemoryGrants,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { SELECTED_PROVIDERS, SELECTED_PROVIDER_IDS } from "./providers.js";
+import { loadDomains, loadSilos } from "../memory/domains.js";
+import { domainMemoryGrants } from "./memory-grants.js";
 import { registerNeon } from "@open-everywhere/adapters/agent/postgres/neon.js";
 import { vercelBlobPutter } from "@open-everywhere/adapters/agent/blob/hosting.js";
 
@@ -50,13 +52,13 @@ if (awsAccessEnabled()) {
 
 registerDirectoryAdapter();
 
-registerGitHubMemory();
-
 registerGitHubConfigPrProvider();
 
 for (const provider of SELECTED_PROVIDERS) {
   provider.register();
 }
+
+assertConnectorMemoryGrants(loadDomains(), loadSilos(), domainMemoryGrants);
 
 if (
   (process.env.OE_MEMORY_PROVIDER === "postgres" || process.env.OE_OPERATIONAL_PROVIDER === "postgres") &&

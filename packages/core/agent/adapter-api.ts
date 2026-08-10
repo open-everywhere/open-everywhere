@@ -51,6 +51,9 @@ export {
   resolveGitHubInstallationId,
   hydrateGitHubInstallations,
 } from "./scm/installations.js";
+export { getGitHubApp } from "./scm/provider.js";
+export { GitHubContents } from "./scm/contents.js";
+export type { CommitId } from "./scm/contents.js";
 export type { GitHubInstallationRow } from "./operational/store.js";
 
 export { encryptedKvVault } from "./credentials/kv-vault.js";
@@ -104,14 +107,15 @@ export type { AgentSettings, AgentSettingsOverrides, SettingSpec, SettingDoc, Ta
 
 export { registerProvider, registerPostgres } from "./memory/provider.js";
 export type { MemoryProvider } from "./memory/provider.js";
-export { registerGitHubMemory } from "./memory/github.js";
+export { registerConnectorMemory, connectorMemoryFor, connectorMemoryCapabilities, assertConnectorMemoryGrants, resetConnectorMemoryForTest } from "./memory/connector-memory.js";
+export type { ConnectorMemoryCapability, ConnectorMemoryMode, DomainMemoryGrants } from "./memory/connector-memory.js";
 export { initPostgresSchema } from "./memory/postgres.js";
 export type { PgClient } from "./memory/postgres.js";
 export { registerOperationalPostgres, getOperationalStore, registerOperationalStore, resetOperationalStore } from "./operational/provider.js";
 export { initOperationalSchema } from "./operational/postgres.js";
 export { registerOperationalPglite, pgliteOperationalDataDir } from "./operational/pglite-client.js";
 
-export { safeName } from "./memory/layout.js";
+export { safeName, tierRelDir, seedFor } from "./memory/layout.js";
 export { domainKeyOf, resolvePartition } from "./memory/partition.js";
 export type { Partition } from "./memory/partition.js";
 export type { MemorySilo } from "./memory/silo.js";

@@ -1,14 +1,23 @@
 import { createHash } from "node:crypto";
-import type { Partition } from "./partition.js";
-import type { MemorySilo } from "./silo.js";
-import type { MemoryProvider } from "./provider.js";
-import { registerProvider } from "./provider.js";
-import { type MemoryFiles, type Tier } from "./store.js";
-import { tierRelDir, safeName, seedFor } from "./layout.js";
-import { makeSelector, normalizeSelection } from "./selection.js";
-import { GitHubContents, type CommitId } from "../scm/contents.js";
-import { getGitHubApp } from "../scm/provider.js";
-import { warmCredential } from "../credentials/warm.js";
+import {
+  type MemoryProvider,
+  type MemorySilo,
+  type MemoryFiles,
+  type Partition,
+  type Tier,
+  type DomainMemoryGrants,
+  registerProvider,
+  registerConnectorMemory,
+  tierRelDir,
+  safeName,
+  seedFor,
+  makeSelector,
+  normalizeSelection,
+  GitHubContents,
+  type CommitId,
+  getGitHubApp,
+  warmCredential,
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 const DEFAULT_BRANCH = process.env.OE_MEMORY_GIT_BRANCH || "main";
 
@@ -112,6 +121,19 @@ export function makeGitHubProvider(deps: GitHubMemoryDeps): MemoryProvider {
   };
 }
 
+export function githubMemoryContainerProblem(silo: MemorySilo, grants: DomainMemoryGrants): string | null {
+  const repo = silo.container;
+  if (typeof repo !== "string" || repo.length === 0) {
+    return `github-backed silos need container = "owner/repo" (memory/silo.ts)`;
+  }
+  if (grants.repos.includes(repo)) return null;
+  return (
+    `container "${repo}" is NOT in this domain's granted repos [${grants.repos.join(", ") || "none"}] — ` +
+    `a memory projection is read access, and the scm tools already refuse an ungranted repo fail-closed, so ` +
+    `add "${repo}" to a bundle bound to this domain (bundle.repos) or point the silo at a granted repo.`
+  );
+}
+
 export function registerGitHubMemory(): boolean {
   const app = getGitHubApp();
   if (!app) return false;
@@ -140,5 +162,17 @@ export function registerGitHubMemory(): boolean {
     mintToken: (repo: string) => memoryToken.get(repo),
   });
   registerProvider(provider);
+  declareGitHubMemoryCapability();
   return true;
+}
+
+export function declareGitHubMemoryCapability(): void {
+  registerConnectorMemory({
+    provider: "github",
+    connector: "github",
+    mode: "read-write",
+    subject: "app-principal",
+    containerLabel: 'a repo, "owner/repo"',
+    assertContainerGranted: githubMemoryContainerProblem,
+  });
 }

@@ -7,6 +7,7 @@ import {
   registerWebhookVerifier,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
+import { registerGitHubMemory, declareGitHubMemoryCapability } from "./memory/memory.js";
 import { bindGitHub } from "./channels/github-identity.js";
 import { githubPostArm } from "./channels/github-post-arm.js";
 import { githubWakeOriginCodec } from "./channels/github-origin-codec.js";
@@ -19,4 +20,6 @@ export function registerGithubProvider(): void {
   registerWakeOriginCodec("github", githubWakeOriginCodec);
   registerWebhookVerifier(githubWebhookVerifier);
   registerProviderDocs("github", PROVIDER_DOCS);
+
+  if (!registerGitHubMemory()) declareGitHubMemoryCapability();
 }

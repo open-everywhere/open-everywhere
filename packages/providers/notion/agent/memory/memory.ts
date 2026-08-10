@@ -1,6 +1,7 @@
 import {
   type MemoryProvider,
   registerProvider,
+  registerConnectorMemory,
   getSecretVia,
   safeName,
   type Partition,
@@ -177,4 +178,11 @@ export function registerNotionMemory(
   broker = process.env.OE_NOTION_SECRET_BROKER ?? "env",
 ): void {
   registerProvider(makeNotionProvider({ client: async () => new NotionClient(await getSecretVia(broker, secretRef)) }));
+  registerConnectorMemory({
+    provider: "notion",
+    connector: "notion",
+    mode: "materialise",
+    subject: "app-principal",
+    containerLabel: "the root page id",
+  });
 }

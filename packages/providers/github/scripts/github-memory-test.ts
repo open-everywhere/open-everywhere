@@ -1,8 +1,19 @@
-import { GitHubContents, type HttpFetch } from "../agent/scm/contents.js";
-import { makeGitHubProvider } from "../agent/memory/github.js";
-import { siloTier } from "../agent/memory/store.js";
-import type { Partition } from "../agent/memory/partition.js";
-import type { MemorySilo } from "../agent/memory/silo.js";
+
+import {
+  GitHubContents,
+  siloTier,
+  registerConnectorMemory,
+  connectorMemoryFor,
+  connectorMemoryCapabilities,
+  assertConnectorMemoryGrants,
+  resetConnectorMemoryForTest,
+  type Partition,
+  type MemorySilo,
+  type DomainMemoryGrants,
+} from "@open-everywhere/core/agent/adapter-api.js";
+import { makeGitHubProvider, githubMemoryContainerProblem, declareGitHubMemoryCapability } from "../agent/memory/memory.js";
+
+type HttpFetch = NonNullable<ConstructorParameters<typeof GitHubContents>[0]>;
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -191,4 +202,46 @@ try {
   ok(true, "missing container → throws");
 }
 
-console.log(`✓ github-memory: ${passed} assertions passed (Contents API client + github backing, offline fake)`);
+{
+  const granted: DomainMemoryGrants = { connectors: ["github"], repos: ["acme/brain"] };
+  ok(githubMemoryContainerProblem({ name: "txn", provider: "github", container: "acme/brain" }, granted) === null, "prefetch: a silo whose container IS in the domain's repo grants passes");
+  const problem = githubMemoryContainerProblem({ name: "txn", provider: "github", container: "acme/secrets" }, granted);
+  ok(problem !== null && problem.includes("acme/secrets") && problem.includes("bundle.repos"), "prefetch: 🔴 an UNGRANTED repo is refused, and the refusal names the config to change");
+  ok(githubMemoryContainerProblem({ name: "txn", provider: "github" }, granted) !== null, "prefetch: a github silo with no container is refused (it could never resolve anyway)");
+
+  resetConnectorMemoryForTest();
+  declareGitHubMemoryCapability();
+  const cap = connectorMemoryFor("github")!;
+  ok(cap.connector === "github" && cap.mode === "read-write", "capability: the github backing declares itself connector-owned and read-write (the files ARE the source of truth)");
+  ok(cap.subject === "app-principal", "capability: 🔴 the subject is pinned app-principal — a shared brain is never projected through a user-subject token");
+  ok(connectorMemoryCapabilities().some((c) => c.provider === "github"), "capability: it shows up in the roster contribution view");
+
+  const domain = { name: "transactions", channels: ["slack/T/A"], memory: ["txn-silo"] } as never;
+  const silos: MemorySilo[] = [{ name: "txn-silo", provider: "github", container: "acme/brain", path: "memory" }];
+  assertConnectorMemoryGrants([domain], silos, () => granted);
+  ok(true, "config load: a granted github silo validates clean");
+
+  let threw: string | null = null;
+  try {
+    assertConnectorMemoryGrants([domain], silos, () => ({ connectors: [], repos: ["acme/brain"] }));
+  } catch (e) {
+    threw = e instanceof Error ? e.message : String(e);
+  }
+  ok(threw !== null && threw.includes("connector grant"), "config load: 🔴 a domain WITHOUT the github connector grant fails loud — memory cannot be a side door onto the connector plane");
+
+  threw = null;
+  try {
+    assertConnectorMemoryGrants([domain], silos, () => ({ connectors: ["github"], repos: ["acme/other"] }));
+  } catch (e) {
+    threw = e instanceof Error ? e.message : String(e);
+  }
+  ok(threw !== null && threw.includes("acme/brain"), "config load: 🔴 a granted CONNECTOR but an ungranted CONTAINER still fails loud");
+
+  assertConnectorMemoryGrants([domain], [{ name: "txn-silo", provider: "postgres" }], () => {
+    ok(false, "first-party silos must never even ask for grants");
+    return null;
+  });
+  ok(true, "config load: a first-party (postgres) silo is skipped — the deployment IS the credential holder");
+}
+
+console.log(`✓ github-memory: ${passed} assertions passed (Contents API client + github backing + the OPE-390 prefetch invariant, offline fake)`);
