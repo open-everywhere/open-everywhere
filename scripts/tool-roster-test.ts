@@ -9,11 +9,8 @@ import {
   classifyRosterTransition,
   coreToolSpecifier,
   diffToolRoster,
-  generateMissingShims,
   isConventionFile,
   reexportSpecifierOf,
-  renderDisableSentinel,
-  renderToolShim,
   rosterDriftIsClean,
   rosterToolNameOf,
 } from "@open-everywhere/core/agent/scaffold/tool-roster.js";
@@ -70,9 +67,13 @@ try {
   ok(core.length === 3, "readCoreToolExports enumerates core's tool files");
   ok(core[0].specifier === coreToolSpecifier("alpha"), "each core export carries the specifier a shim must name");
 
-  writeFileSync(join(appDir, "alpha.ts"), renderToolShim("alpha"));
-  writeFileSync(join(appDir, "beta.ts"), renderToolShim("beta"));
-  writeFileSync(join(appDir, "gamma.ts"), renderDisableSentinel("gamma", "not wanted in this deployment"));
+  const shim = (name: string) => `export { default } from "${coreToolSpecifier(name)}";\n`;
+  const sentinel = (name: string, reason: string) =>
+    `// ${name} — DECLINED as a static tool: ${reason}\nimport { disableTool } from "eve/tools";\n\nexport default disableTool();\n`;
+
+  writeFileSync(join(appDir, "alpha.ts"), shim("alpha"));
+  writeFileSync(join(appDir, "beta.ts"), shim("beta"));
+  writeFileSync(join(appDir, "gamma.ts"), sentinel("gamma", "not wanted in this deployment"));
   {
     const drift = diffToolRoster(core, readToolRoster(appDir));
     ok(rosterDriftIsClean(drift), "a roster that mounts two core tools and declines one by sentinel is CLEAN");
@@ -86,34 +87,22 @@ try {
     const drift = diffToolRoster(core, readToolRoster(appDir));
     ok(!rosterDriftIsClean(drift), "MISSING: a core tool with no file in the roster makes the drift check RED");
     ok(drift.missing.map((m) => m.name).join(",") === "beta", "the red names the tool that is neither mounted nor declined");
-    writeFileSync(join(appDir, "beta.ts"), renderDisableSentinel("beta", "declined on purpose"));
+    writeFileSync(join(appDir, "beta.ts"), sentinel("beta", "declined on purpose"));
     const declined = diffToolRoster(core, readToolRoster(appDir));
     ok(rosterDriftIsClean(declined), "the red clears when the tool is DECLINED by sentinel, not only when it is mounted");
     ok(declined.declined.length === 2, "the sentinel is recorded as a declined capability");
   }
 
-  rmSync(join(appDir, "beta.ts"));
-  {
-    const pending = generateMissingShims(diffToolRoster(core, readToolRoster(appDir)));
-    ok(pending.length === 1 && pending[0].file === "beta.ts", "generation targets exactly the missing tool");
-    ok(
-      pending[0].content === 'export { default } from "@open-everywhere/core/agent/tools/beta.js";\n',
-      "a generated shim is the same one-line re-export the tree already carries by hand",
-    );
-    writeFileSync(join(appDir, pending[0].file), pending[0].content);
-    ok(rosterDriftIsClean(diffToolRoster(core, readToolRoster(appDir))), "writing the generated shims clears the drift");
-  }
-
-  writeFileSync(join(appDir, "beta.ts"), renderToolShim("alpha"));
+  writeFileSync(join(appDir, "beta.ts"), shim("alpha"));
   {
     const drift = diffToolRoster(core, readToolRoster(appDir));
     ok(!rosterDriftIsClean(drift), "MISDIRECTED: a shim whose filename and specifier name different tools is RED");
     ok(drift.misdirected[0]?.name === "beta" && drift.misdirected[0]?.actual === coreToolSpecifier("alpha"), "the red names both sides");
     ok(drift.missing.length === 0, "a misdirected shim is not ALSO reported as missing — one file, one verdict");
   }
-  writeFileSync(join(appDir, "beta.ts"), renderToolShim("beta"));
+  writeFileSync(join(appDir, "beta.ts"), shim("beta"));
 
-  writeFileSync(join(appDir, "delta.ts"), renderToolShim("delta"));
+  writeFileSync(join(appDir, "delta.ts"), shim("delta"));
   {
     const drift = diffToolRoster(core, readToolRoster(appDir));
     ok(!rosterDriftIsClean(drift), "DANGLING: a shim re-exporting a core tool core no longer has is RED");
@@ -122,7 +111,7 @@ try {
   rmSync(join(appDir, "delta.ts"));
 
   writeFileSync(join(appDir, "my_own_tool.ts"), 'export { default } from "@my-org/extras/agent/tools/my_own_tool.js";\n');
-  writeFileSync(join(appDir, "bash.ts"), renderDisableSentinel("bash", "framework tool, re-provided per session grain"));
+  writeFileSync(join(appDir, "bash.ts"), sentinel("bash", "framework tool, re-provided per session grain"));
   {
     const drift = diffToolRoster(core, readToolRoster(appDir));
     ok(rosterDriftIsClean(drift), "a locally-written tool and a framework sentinel are NOT drift");

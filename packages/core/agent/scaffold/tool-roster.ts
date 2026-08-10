@@ -96,24 +96,6 @@ export function rosterDriftIsClean(drift: RosterDrift): boolean {
   return drift.missing.length === 0 && drift.misdirected.length === 0 && drift.dangling.length === 0;
 }
 
-export function renderToolShim(name: string): string {
-  return `export { default } from "${coreToolSpecifier(name)}";\n`;
-}
-
-export function renderDisableSentinel(name: string, reason: string): string {
-  return (
-    `// ${name} — DECLINED as a static tool: ${reason}\n` +
-    `// A sentinel is how the roster records a REFUSAL. Deleting this file does not disable the\n` +
-    `// tool, it un-decides it: \`npm run lint:tool-roster\` then reports the tool as MISSING.\n` +
-    `import { disableTool } from "eve/tools";\n\n` +
-    `export default disableTool();\n`
-  );
-}
-
-export function generateMissingShims(drift: RosterDrift): { readonly file: string; readonly content: string }[] {
-  return drift.missing.map((m) => ({ file: `${m.name}.ts`, content: renderToolShim(m.name) }));
-}
-
 export type CapabilityDirection = "gain" | "loss" | "neutral";
 
 export function classifyRosterTransition(before: string | undefined, after: string | undefined): CapabilityDirection {

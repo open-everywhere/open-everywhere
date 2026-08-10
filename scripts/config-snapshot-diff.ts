@@ -260,13 +260,13 @@ export function toolRosterFindings(diff: ConfigDiff): Finding[] {
   if (gained.length > 0) {
     findings.push({
       id: "tool-roster-capability-gain",
-      detail: `${gained.length} tool(s) become MOUNTED in agent/tools/: ${gained.sort((a, b) => a.localeCompare(b)).join(", ")}. Eve names a tool after its file, so each of these is a capability the model can now call that it could not before — either a new roster file or a \`disableTool()\` sentinel replaced by a real tool. A sentinel→tool flip is the one worth reading twice: it looks like an edit to an existing file and it is a GRANT.`,
+      detail: `${gained.length} tool(s) become MOUNTED: ${gained.sort((a, b) => a.localeCompare(b)).join(", ")}. Each is a capability the model can now call that it could not before — a contribution newly decided as \`mounted\` in roster.lock.json, or an entry dropped from \`framework.disable\` so Eve's built-in comes back. Both look like a one-line edit to a committed file and both are GRANTS.`,
     });
   }
   if (lost.length > 0) {
     findings.push({
       id: "tool-roster-capability-loss",
-      detail: `${lost.length} tool(s) stop being mounted in agent/tools/: ${lost.sort((a, b) => a.localeCompare(b)).join(", ")}. Reported for symmetry — a removal is not a hazard, but a roster whose declined set changed without anyone saying so is how a sentinel gets deleted as a "cleanup". Declining a tool means committing a sentinel; deleting the file un-decides it and \`npm run lint:tool-roster\` reports the tool as MISSING.`,
+      detail: `${lost.length} tool(s) stop being mounted: ${lost.sort((a, b) => a.localeCompare(b)).join(", ")}. Reported for symmetry — a removal is not a hazard, but a roster whose declined set changed without anyone saying so is how a refusal gets undone as a "cleanup". Declining means an \`exclude\` entry in roster.config.ts carrying a REASON, recorded as \`excluded\` in roster.lock.json; there is no way to un-decide a contribution silently.`,
     });
   }
   return findings;
