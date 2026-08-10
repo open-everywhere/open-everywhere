@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-s2-ingress-")), "ops.sqlite3");
 delete process.env.OE_ORG;
-delete process.env.OE_ONESHOT_AGENT;
+process.env.OE_ONESHOT_AGENT = "0";
 
 import { divertToUnifiedWindow, divertInboundToUnifiedWindow, type UnifiedReceiveTarget } from "../agent/channels/unified.js";
 import { OE_ONESHOT_AGENT_ENV } from "../agent/access/delegation-flag.js";

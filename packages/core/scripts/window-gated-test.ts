@@ -75,7 +75,7 @@ function stubEntry(name: string): GatedToolEntry {
 console.log("0. WINDOW_GATED_TOOLS table pins:");
 const WIDE_HANDS = ["bash", "glob", "grep", "read_file", "write_file", "web_fetch", "checkout_repo", "open_pull_request", "post_file", "create_skill", "delete_skill"] as const;
 for (const name of WIDE_HANDS) {
-  eq(WINDOW_GATED_TOOLS[name], ["task", "native"], `"${name}" mounts on task+native only, flag-off (withheld from standing)`);
+  eq(WINDOW_GATED_TOOLS[name], ["task"], `"${name}" mounts on the one-shot task worker only, delegation armed (the shipped default — withheld from standing AND native)`);
 }
 eq(WINDOW_GATED_TOOLS.spawn_task, ["standing"], "spawn_task is standing-only (no recursive spawn; native has no window to mint into)");
 eq(WINDOW_GATED_TOOLS.spawn_thread_session, ["standing"], "spawn_thread_session is standing-only (window-only mint; no recursive thread trees)");
@@ -116,7 +116,7 @@ eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_task", "
   ok(can(bomb), "seat: an identity read that THROWS ⇒ fail-OPEN as well (never fewer signals than the wall behind it)");
 }
 eq([...withheldFromGrain("task")].sort(), ["agent", "complete_thread", "spawn_task", "spawn_thread_session"].sort(), "task (the worker) withholds agent + the standing-only spawners + complete_thread (it has its own wide hands + complete_task + return_result; a worker leaf must not delegate recursively — since #96 that is ABSENCE, not an execute refusal)");
-eq([...withheldFromGrain("native")].sort(), ["agent", "complete_task", "complete_thread", "return_result", "spawn_task", "spawn_thread_session"].sort(), "native withholds agent + the delegation/lifecycle set; flag-off it KEEPS the wide hands (the byte-identical Stage-C state — narrowing is flag-on)");
+eq([...withheldFromGrain("native")].sort(), [...WIDE_HANDS, "agent", "complete_task", "complete_thread", "return_result", "spawn_task", "spawn_thread_session"].sort(), "native withholds agent + the delegation/lifecycle set AND the wide hands — the T2 narrowing, which since OPE-370 is the shipped default (disarm delegation and native keeps its wide hands again, the byte-identical Stage-C state)");
 eq([...withheldFromGrain("thread")].sort(), [...WIDE_HANDS, "complete_task", "return_result", "spawn_task", "spawn_thread_session"].sort(), "a thread seat withholds the wide hands + complete_task + return_result + the spawners (it keeps the conversational kit + agent + complete_thread)");
 
 console.log("1. presence/absence matrix (windowGated):");
@@ -151,8 +151,7 @@ console.log("2. windowGatedKit:");
   eq(await resolveWindowGated(kit, grainCtx.standing()), null, "kit resolves NULL on standing (all entries withheld)");
   const onTask = (await resolveWindowGated(kit, grainCtx.task())) as Record<string, GatedToolEntry>;
   eq(Object.keys(onTask).sort(), ["bash", "web_fetch"], "kit resolves BOTH entries on task grain, under their bare names");
-  const onNative = (await resolveWindowGated(kit, grainCtx.native())) as Record<string, GatedToolEntry>;
-  eq(Object.keys(onNative).sort(), ["bash", "web_fetch"], "kit resolves both entries on native grain");
+  eq(await resolveWindowGated(kit, grainCtx.native()), null, "kit resolves NULL on native grain too, delegation armed (the T2 narrowing — wide hands live on the one-shot worker alone)");
   assert.throws(() => windowGatedKit("bad_kit", { not_gated: stubEntry("x") }), /WINDOW_GATED_TOOLS/, "kit throws for an entry with no kit row");
   n++;
 }
@@ -187,8 +186,9 @@ _resetWindowGateAuditForTest();
 
   const beforeFull = await countRows();
   await resolveWindowGated(windowGated("spawn_task", stubEntry("spawn_task")), grainCtx.task());
+  eq(await countRows(), beforeFull, "withholding spawn_task from a TASK worker emits NO resolve-time row (task ∈ FULL_KIT — confinement, not narrowing)");
   await resolveWindowGated(windowGated("spawn_task", stubEntry("spawn_task")), grainCtx.native());
-  eq(await countRows(), beforeFull, "withholding spawn_task/complete_task from task/native seats emits NO resolve-time row");
+  eq(await countRows(), beforeFull + 1, "a NATIVE seat DOES emit one resolve-time row, delegation armed — it is narrowed of the wide hands, and that narrowing is an auditable event");
 
   await resolveWindowGated(windowGated("bash", stubEntry("bash")), ctxOf(PER_CONTAINER_TOKEN, { sessionId: "sess-audit-3" }));
   const rows3 = await rowsFor("sess-audit-3");
@@ -229,7 +229,7 @@ console.log("5. replay pre-registration (eve step registry):");
   ok(typeof reg.get(kitNames.execute) === "function", "windowGatedKit pre-registered each map entry under <slug>:<entryKey>");
 
   const fn = reg.get(single.execute) as (cv: unknown, input: unknown, ctx: unknown) => Promise<unknown>;
-  eq(await fn({}, { v: "y" }, grainCtx.native()), { ran: "bash" }, "the replayed execute runs the real tool on an allowed grain");
+  eq(await fn({}, { v: "y" }, grainCtx.task()), { ran: "bash" }, "the replayed execute runs the real tool on an allowed grain");
   await assert.rejects(() => fn({}, { v: "y" }, ctxOf(STANDING_TOKEN, { sessionId: "sess-replay" })), /not held by this conversational seat/, "the replayed execute STILL carries the backstop (replay cannot shed the gate; on a delegating standing seat the lean arm speaks)");
   n++;
 

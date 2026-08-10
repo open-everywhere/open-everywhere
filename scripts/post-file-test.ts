@@ -20,7 +20,7 @@ registerSlackFixtureManifest();
 process.env.DISCORD_BOT_TOKEN = "test-bot-token";
 
 const { resolveWindowGated } = await import("@open-everywhere/core/agent/access/window-gated.js");
-const postFile = (await resolveWindowGated((await import("@open-everywhere/core/agent/tools/post_file.js")).default, { channel: { kind: "slack", continuationToken: "cse_test_native" }, session: { auth: { current: { attributes: {} } } } } as never)) as unknown as {
+const postFile = (await resolveWindowGated((await import("@open-everywhere/core/agent/tools/post_file.js")).default, { channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_grain: "task" } } } } } as never)) as unknown as {
   readonly description: string;
   readonly inputSchema: { safeParse: (v: unknown) => { success: boolean } };
   readonly execute: (input: unknown, ctx: unknown) => Promise<{ posted: boolean; count: number; platform: string }>;
@@ -99,7 +99,7 @@ function slackCtx(threadTs?: string, sandbox?: { missing?: readonly string[]; ov
     session: {
       auth: {
         current: {
-          attributes: { team_id: "T1", channel_id: "C1", channel_type: "channel", ...(threadTs ? { thread_ts: threadTs } : {}) },
+          attributes: { team_id: "T1", channel_id: "C1", channel_type: "channel", oe_grain: "task", ...(threadTs ? { thread_ts: threadTs } : {}) },
           principalId: "U1",
           principalType: "slack-user",
         },
@@ -114,7 +114,7 @@ function discordCtx(sandbox?: { missing?: readonly string[]; oversize?: readonly
     session: {
       auth: {
         current: {
-          attributes: { guild_id: "G1", channel_id: "D_CHAN", channel_type: "0", user_id: "U9" },
+          attributes: { guild_id: "G1", channel_id: "D_CHAN", channel_type: "0", user_id: "U9", oe_grain: "task" },
           principalId: "U9",
           principalType: "discord-user",
         },
@@ -124,7 +124,7 @@ function discordCtx(sandbox?: { missing?: readonly string[]; oversize?: readonly
   return withSandbox(base, sandbox);
 }
 function platformCtx(kind: string, withSb = true) {
-  const base = { channel: { kind }, session: { auth: { current: { attributes: { channel_id: "X1" }, principalId: "U1" } } } };
+  const base = { channel: { kind }, session: { auth: { current: { attributes: { channel_id: "X1", oe_grain: "task" }, principalId: "U1" } } } };
   return withSb ? withSandbox(base) : base;
 }
 

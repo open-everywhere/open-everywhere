@@ -41,7 +41,7 @@ const { ingestUntrusted } = await import("@open-everywhere/core/agent/access/unt
 const { untrustedIngestedThisTurn } = await import("@open-everywhere/core/agent/access/taint-signal.js");
 const { default: createSkillGated } = await import("@open-everywhere/core/agent/tools/create_skill.js");
 const { resolveWindowGated } = await import("@open-everywhere/core/agent/access/window-gated.js");
-const createSkillTool = (await resolveWindowGated(createSkillGated, { channel: { kind: "slack", continuationToken: "cse_test_native" }, session: { auth: { current: { attributes: {} } } } } as never)) as { execute(input: unknown, ctx: unknown): Promise<any> };
+const createSkillTool = (await resolveWindowGated(createSkillGated, { channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_grain: "task" } } } } } as never)) as { execute(input: unknown, ctx: unknown): Promise<any> };
 const { default: createRoutineTool } = await import("@open-everywhere/core/agent/tools/create_routine.js");
 const { default: describeImageTool } = await import("@open-everywhere/core/agent/tools/describe_image.js");
 const { registerImageDescriber, _resetImageDescriberForTest } = await import("@open-everywhere/core/agent/model/vision.js");
@@ -422,7 +422,7 @@ class FakeSession {
   });
   const ctx = {
     channel: { kind: "slack" },
-    session: { auth: { current: { attributes: { team_id: "T_SEC13", channel_id: "C_ENG13", trust_checked: "true" }, principalId: "U_ATK13", principalType: "slack-user" } } },
+    session: { auth: { current: { attributes: { team_id: "T_SEC13", channel_id: "C_ENG13", trust_checked: "true", oe_grain: "task" }, principalId: "U_ATK13", principalType: "slack-user" } } },
   } as unknown as BindableContext;
   const p = { org: "default", platform: "slack", workspace: "T_SEC13", surface: "C_ENG13", workspaceKey: "slack/T_SEC13", surfaceKey: "slack/T_SEC13/C_ENG13", key: "slack/T_SEC13/C_ENG13" } as unknown as import("@open-everywhere/core/agent/memory/partition.js").Partition;
 

@@ -48,7 +48,7 @@ registerConfig({
   domainsForSurface: ({ surface }: { surface: string }) => (surface === "C_FAST" ? ["fastlane"] : surface === "C_ENG" ? ["eng"] : []),
 });
 
-const FULL_GRAIN_TEST_CTX = { channel: { kind: "slack", continuationToken: "cse_test_native" }, session: { auth: { current: { attributes: {} } } } };
+const FULL_GRAIN_TEST_CTX = { channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_grain: "task" } } } } };
 type ExecTool = { execute(input: unknown, ctx: unknown): Promise<Record<string, unknown>> };
 const createSkillGated = (await import("../agent/tools/create_skill.js")).default;
 const deleteSkillGated = (await import("../agent/tools/delete_skill.js")).default;
@@ -58,7 +58,7 @@ const deleteSkill = (await resolveWindowGated(deleteSkillGated, FULL_GRAIN_TEST_
 function ctxFor(channelId: string): unknown {
   return {
     channel: { kind: "slack" },
-    session: { auth: { current: { attributes: { team_id: "T1", channel_id: channelId, trust_checked: "true" }, principalId: "U_HUMAN", principalType: "slack-user" } } },
+    session: { auth: { current: { attributes: { team_id: "T1", channel_id: channelId, trust_checked: "true", oe_grain: "task" }, principalId: "U_HUMAN", principalType: "slack-user" } } },
   };
 }
 const ctxFast = ctxFor("C_FAST");

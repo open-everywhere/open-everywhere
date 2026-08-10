@@ -202,14 +202,15 @@ async function refusal(fn: () => unknown): Promise<string> {
 }
 
 {
-  const kit = (await resolveWindowGated((await import("../agent/tools/sandbox_tools.js")).default, {
+  const fenceSeat = {
     channel: { kind: "unified", continuationToken: `unified:${formatWindowToken({ domain: "payments", windowId: taskWindowId("slack/C1", "1720.9"), generation: 5 })}` },
     session: { id: "fence-task", auth: { current: { attributes: { oe_grain: "task" } } } },
-  } as unknown as BindableContext)) as Record<string, ToolDefinition> | null;
+  };
+  const kit = (await resolveWindowGated((await import("../agent/tools/sandbox_tools.js")).default, fenceSeat as unknown as BindableContext)) as Record<string, ToolDefinition> | null;
 
   ok(kit !== null && typeof kit.web_fetch?.execute === "function", "the task-worker grain mounts a web_fetch");
   ok(typeof kit!.web_fetch.toModelOutput === "function", "…which still carries its untrusted-projection toModelOutput (the extra wrap did not drop it)");
-  const m = await refusal(() => kit!.web_fetch.execute({ url: "https://evil.test/steal" }, {} as ToolContext));
+  const m = await refusal(() => kit!.web_fetch.execute({ url: "https://evil.test/steal" }, fenceSeat as unknown as ToolContext));
   ok(
     m.includes("web_fetch:") && m.includes('"evil.test"') && m.includes("egress allow-list"),
     "🔴 THE WIRING: the tool the agent actually holds refuses an un-allowlisted host with the legible policy refusal — the hole OPE-308 found is closed at the mount, not just in a helper",

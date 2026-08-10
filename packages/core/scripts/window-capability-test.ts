@@ -3,16 +3,21 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { ConsequenceTier } from "../agent/access/consequence.js";
+import type { BindableContext } from "../agent/identity/binding.js";
+
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-window-capability-")), "ops.sqlite3");
 
-import { TOOL_CONSEQUENCE, type ConsequenceTier } from "../agent/access/consequence.js";
-import { WINDOW_GATED_TOOLS, withheldFromGrain, resolveWindowGated } from "../agent/access/window-gated.js";
-import { defineDomain, assertWindowSourcesVouched } from "../agent/memory/domain.js";
-import { supervisorGrainFor } from "../agent/channels/unified-supervisor.js";
-import { singleWindowMentionPolicy } from "../agent/channels/unified-window.js";
-import { isVouchedInternal, registerSurfaces, defineSurface, _resetSurfacesForTest } from "../agent/identity/trust.js";
-import { windowGrainOf, type BindableContext } from "../agent/identity/binding.js";
-import { dmWindowKey, formatWindowToken, taskWindowId } from "../agent/channels/window-key.js";
+process.env.OE_ONESHOT_AGENT = "0";
+
+const { TOOL_CONSEQUENCE } = await import("../agent/access/consequence.js");
+const { WINDOW_GATED_TOOLS, withheldFromGrain, resolveWindowGated } = await import("../agent/access/window-gated.js");
+const { defineDomain, assertWindowSourcesVouched } = await import("../agent/memory/domain.js");
+const { supervisorGrainFor } = await import("../agent/channels/unified-supervisor.js");
+const { singleWindowMentionPolicy } = await import("../agent/channels/unified-window.js");
+const { isVouchedInternal, registerSurfaces, defineSurface, _resetSurfacesForTest } = await import("../agent/identity/trust.js");
+const { windowGrainOf } = await import("../agent/identity/binding.js");
+const { dmWindowKey, formatWindowToken, taskWindowId } = await import("../agent/channels/window-key.js");
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

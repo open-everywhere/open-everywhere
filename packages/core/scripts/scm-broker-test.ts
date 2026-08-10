@@ -15,7 +15,7 @@ import { stampEnforcement, isEnforced } from "../agent/access/enforcement.js";
 import checkoutRepoGated from "../agent/tools/checkout_repo.js";
 import { resolveWindowGated } from "../agent/access/window-gated.js";
 
-const checkoutRepoTool = (await resolveWindowGated(checkoutRepoGated, { channel: { kind: "slack", continuationToken: "cse_test_native" }, session: { auth: { current: { attributes: {} } } } } as never)) as { execute(input: unknown, ctx: unknown): Promise<any> };
+const checkoutRepoTool = (await resolveWindowGated(checkoutRepoGated, { channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_grain: "task" } } } } } as never)) as { execute(input: unknown, ctx: unknown): Promise<any> };
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -171,7 +171,7 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
   const ctxFor = (getSandbox: () => Promise<unknown>) =>
     ({
       channel: { kind: "slack" },
-      session: { auth: { current: { attributes: { team_id: "T1", channel_id: "C1" }, principalId: "U1", principalType: "slack-user" } } },
+      session: { auth: { current: { attributes: { team_id: "T1", channel_id: "C1", oe_grain: "task" }, principalId: "U1", principalType: "slack-user" } } },
       getSandbox,
     }) as unknown as BindableContext;
 

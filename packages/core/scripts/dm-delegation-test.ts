@@ -5,7 +5,7 @@ __slackStubs.registerSlackFixtureMapper();
 __slackStubs.registerSlackFixtureCodec();
 
 delete process.env.OE_ORG;
-delete process.env.OE_ONESHOT_AGENT;
+process.env.OE_ONESHOT_AGENT = "0";
 
 import {
   DM_ANCHOR_DOMAIN_PREFIX,
@@ -263,7 +263,7 @@ await withEnv(OE_ONESHOT_AGENT_ENV, "1", () => {
   eq(memoryRecallRouteFor("standing", ["task"], true, false), "none", "…and still says \"none\" for a seat with no route at all");
 });
 
-await withEnv(OE_ONESHOT_AGENT_ENV, undefined, () => {
+await withEnv(OE_ONESHOT_AGENT_ENV, "0", () => {
   const dm = seatCtx({ channelId: "D_ASKER", channelType: "im", token: DM_TOKEN });
   ok(resolveDmDelegationAnchor(dm) !== undefined, "the RESOLVER itself is flag-free (it is a pure identity question)");
   ok(!canDelegateFromSeat(dm), "but canDelegateFromSeat's DM arm is FLAG-GATED: flag-OFF a DM root still cannot delegate — the anchor widened `agent`'s wall, NOT spawn_task's, so mounting there would be the dead affordance OPE-299 removed");

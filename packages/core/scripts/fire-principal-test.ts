@@ -26,7 +26,7 @@ async function refuses(fn: () => unknown, needle: RegExp, label: string): Promis
 const dir = mkdtempSync(join(tmpdir(), "oe-fire-principal-"));
 process.env.OE_SQLITE_PATH = join(dir, "store.db");
 delete process.env.OE_TRUST;
-delete process.env.OE_ONESHOT_AGENT;
+process.env.OE_ONESHOT_AGENT = "0";
 
 const { registerSlackFixtureMapper, registerSlackTestBridge } = await import("./_slack-test-stubs.js");
 registerSlackFixtureMapper();
@@ -336,7 +336,7 @@ const staleBag = delivered[1]!.attributes;
       (await resolveWindowGated((await import(`../agent/tools/${name}.js`)).default, ctx as never)) as Entry | null;
 
     for (const name of ["create_skill", "delete_skill", "open_pull_request"]) {
-      ok((await mountOn(name, chanFire)) !== null, `skills: 🔴 a CHANNEL fire on a DEFAULT self-host (OE_ONESHOT_AGENT off ⇒ FULL_KIT = ["task","native"]) really does MOUNT ${name} — grain withholds nothing here, so the identity gate is the whole control`);
+      ok((await mountOn(name, chanFire)) !== null, `skills: 🔴 a CHANNEL fire on a DELEGATION-DISARMED deployment (OE_ONESHOT_AGENT off ⇒ FULL_KIT = ["task","native"]) really does MOUNT ${name} — grain withholds nothing here, so the identity gate is the whole control`);
     }
 
     await putDomainSkill(ORG, "eng", "deploy-runbook", "# Deploy\nSteps.", CREATOR, "2026-07-01T00:00:00.000Z");

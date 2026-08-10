@@ -16,7 +16,7 @@ const dir = join(tmpdir(), `open-everywhere-routine-reliability-${process.pid}`)
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_ORG = "acme";
-delete process.env.OE_ONESHOT_AGENT;
+process.env.OE_ONESHOT_AGENT = "0";
 delete process.env.OE_WINDOW_TOPOLOGY;
 
 const { computeNextRun, DISPATCH_TICK_MINUTES } = await import("../agent/routines/schedule.js");

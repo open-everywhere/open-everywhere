@@ -11,6 +11,7 @@ delete process.env.OE_GENERIC_READ_VERBS;
 delete process.env.OE_SOURCE_SCOPED_TOOLS;
 
 import { replayStepNames } from "../agent/access/window-gated.js";
+import { formatWindowToken, taskWindowId } from "../agent/channels/window-key.js";
 import { registerBrowserToolkit } from "../agent/access/browser-toolkit.js";
 
 import { registerSlackFixtureMapper, registerSlackFixtureManifest } from "./_slack-test-stubs.js";
@@ -41,6 +42,10 @@ interface ToolCase {
 const slackCtx = { channel: { kind: "slack" }, session: { auth: { current: { attributes: {} } } } };
 const githubCtx = { channel: { kind: "github" }, session: { auth: { current: { attributes: {} } } } };
 const unifiedCtx = { channel: { kind: "unified" }, session: { auth: { current: { attributes: { oe_platform: "slack" } } } } };
+const taskCtx = {
+  channel: { kind: "unified", continuationToken: `unified:${formatWindowToken({ domain: "payments", windowId: taskWindowId("slack/C1", "1720.5"), generation: 2 })}` },
+  session: { auth: { current: { attributes: { oe_platform: "slack", oe_grain: "task" } } } },
+};
 const CASES: readonly ToolCase[] = [
   { slug: "reply", entryKey: "_base", ctx: slackCtx },
   { slug: "reply", entryKey: "_single", ctx: unifiedCtx },
@@ -62,8 +67,8 @@ const CASES: readonly ToolCase[] = [
     ctx: slackCtx,
     env: { OE_TRANSCRIPT_RELAY_SECRET: "fixture-relay-secret", OE_PUBLIC_BASE_URL: "https://fixture.invalid" },
   },
-  { slug: "browser_tools", entryKey: "browser_navigate", ctx: slackCtx },
-  { slug: "browser_tools", entryKey: "browser_screenshot", ctx: slackCtx },
+  { slug: "browser_tools", entryKey: "browser_navigate", ctx: taskCtx },
+  { slug: "browser_tools", entryKey: "browser_screenshot", ctx: taskCtx },
 ];
 const SLUGS = [...new Set(CASES.map((c) => c.slug))];
 

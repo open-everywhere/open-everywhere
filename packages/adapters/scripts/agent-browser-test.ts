@@ -148,7 +148,9 @@ function setEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>): voi
   ok(resolveBrowserKit("task") !== null, "armed: a task (worker) seat mounts the kit");
   ok(resolveBrowserKit("standing") === null, "armed: a standing seat gets NOTHING (wide-hands doctrine, structural absence)");
   ok(resolveBrowserKit("thread") === null, "armed: a thread seat gets nothing");
-  if (process.env.OE_ONESHOT_AGENT !== "1") {
+  const raw = process.env.OE_ONESHOT_AGENT?.trim().toLowerCase();
+  const delegationDisarmed = raw !== undefined && ["", "0", "false", "off", "no"].includes(raw);
+  if (delegationDisarmed) {
     ok(resolveBrowserKit("native") !== null, "armed, delegation flag off: a native mention keeps wide hands ⇒ kit mounts");
   }
 

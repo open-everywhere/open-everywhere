@@ -14,7 +14,7 @@ const { actionKind } = await import("../agent/approvals/actions.js");
 const { executePrOpen } = await import("../agent/approvals/pr-open.js");
 const { default: openPullRequestGated } = await import("../agent/tools/open_pull_request.js");
 const { resolveWindowGated } = await import("../agent/access/window-gated.js");
-const openPullRequestTool = (await resolveWindowGated(openPullRequestGated, { channel: { kind: "slack", continuationToken: "cse_test_native" }, session: { auth: { current: { attributes: {} } } } } as never)) as { execute(input: unknown, ctx: unknown): Promise<any> };
+const openPullRequestTool = (await resolveWindowGated(openPullRequestGated, { channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_grain: "task" } } } } } as never)) as { execute(input: unknown, ctx: unknown): Promise<any> };
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
 type PrOpenArgs = import("../agent/approvals/pr-open.js").PrOpenArgs;
@@ -174,7 +174,7 @@ ok(kind!.policy === "member", "pr.open is MEMBER policy — the card is the inje
   const ctx = (platform: string, attrs: Record<string, unknown>, principalId?: string): BindableContext =>
     ({
       channel: { kind: platform },
-      session: { auth: { current: { attributes: attrs, ...(principalId ? { principalId, principalType: `${platform}-user` } : {}) } } },
+      session: { auth: { current: { attributes: { ...attrs, oe_grain: "task" }, ...(principalId ? { principalId, principalType: `${platform}-user` } : {}) } } },
       ...spySandbox,
     }) as unknown as BindableContext;
 

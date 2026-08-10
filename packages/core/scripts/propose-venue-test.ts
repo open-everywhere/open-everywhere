@@ -171,18 +171,18 @@ const sandbox = {
   setNetworkPolicy: async () => {},
 };
 
-const teamsCtx = (conversationId: string, continuationToken?: string) =>
+const teamsCtx = (conversationId: string, fullKit?: boolean) =>
   ({
-    channel: { kind: "teams", ...(continuationToken ? { continuationToken } : {}) },
-    session: { auth: { current: { attributes: { workspace_id: "W1", conversation_id: conversationId, user_id: "U_ASK" }, principalId: "U_ASK" } } },
+    channel: { kind: "teams" },
+    session: { auth: { current: { attributes: { workspace_id: "W1", conversation_id: conversationId, user_id: "U_ASK", ...(fullKit ? { oe_grain: "task" } : {}) }, principalId: "U_ASK" } } },
     getSandbox: async () => sandbox,
   }) as never;
 
-const slackCtx = (channelId: string, continuationToken?: string) =>
+const slackCtx = (channelId: string, fullKit?: boolean) =>
   ({
-    channel: { kind: "slack", ...(continuationToken ? { continuationToken } : {}) },
+    channel: { kind: "slack" },
     session: {
-      auth: { current: { attributes: { team_id: "T1", channel_id: channelId, channel_type: "channel", trust_checked: "true", user_id: "U_ASK" }, principalId: "U_ASK" } },
+      auth: { current: { attributes: { team_id: "T1", channel_id: channelId, channel_type: "channel", trust_checked: "true", user_id: "U_ASK", ...(fullKit ? { oe_grain: "task" } : {}) }, principalId: "U_ASK" } },
     },
     getSandbox: async () => sandbox,
   }) as never;
@@ -455,7 +455,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   ok(remembered.note.includes("card posted in slack/T1/C_OPS") && remembered.note.includes("confirm it"), "325-redirect: …and the note names the venue and the verb");
   ok(JSON.parse(rememberedRow["argsJson"] as string).float === undefined, "325-redirect: …and with the float posture off, no float target is frozen at all (float, when armed, would stay the ORIGIN room — see remember.ts)");
 
-  const skillCtx = teamsCtx("CONV1", "cse_test_native");
+  const skillCtx = teamsCtx("CONV1", true);
   const created = (await (await armed(createSkillTool, skillCtx, "create_skill")).execute({ name: "venue-skill", content: "Do the thing, carefully." }, skillCtx)) as {
     pending: boolean;
     pendingId: string;
@@ -475,7 +475,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   ok(deletedRow["postedTo"] === "slack/T1/C_OPS", "325-redirect: delete_skill routes too — the sibling that TAKES a guardrail (a skill) away");
   ok(deleted.message.includes("card posted in slack/T1/C_OPS") && deleted.message.includes("confirm the removal"), "325-redirect: …with its own verb");
 
-  const prCtx = teamsCtx("CONV1", "cse_test_native");
+  const prCtx = teamsCtx("CONV1", true);
   const pr = (await (await armed(openPullRequestTool, prCtx, "open_pull_request")).execute({ repo: "acme/web", head: "fix/1", base: "main", title: "Fix the widget", body: "What changed." }, prCtx)) as {
     pending: boolean;
     pendingId: string;
@@ -495,7 +495,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
     /I can't cancel that routine from here.*domain "lonely" has no Slack or Discord channel.*domains\.ts/s,
     "325-refuse: cancel_routine refuses with the venue's copy and its own verb — no card-capable channel in the domain",
   );
-  const skillLoneCtx = teamsCtx("CONV_LONE", "cse_test_native");
+  const skillLoneCtx = teamsCtx("CONV_LONE", true);
   await refuses(
     () => (armed(createSkillTool, skillLoneCtx, "create_skill") as Promise<Entry>).then((e) => e.execute({ name: "x", content: "y" }, skillLoneCtx)),
     /I can't create that skill from here.*domain "lonely" has no Slack or Discord channel.*domains\.ts/s,
@@ -513,7 +513,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   ok(cancelRow["channelId"] === "C1" && cancelRow["postedTo"] === "slack/T1/C1", "325-unchanged: cancel_routine in a card-capable own room hosts its own card");
   ok(!cancel.message.includes("card posted in") && !cancel.message.includes("This surface can't host an approval card"), "325-unchanged: …no venue named, no redirect sentence appended");
 
-  const skillOwnCtx = slackCtx("C1", "cse_test_native");
+  const skillOwnCtx = slackCtx("C1", true);
   const created = (await (await armed(createSkillTool, skillOwnCtx, "create_skill")).execute({ name: "own-room-skill", content: "Do it here." }, skillOwnCtx)) as {
     pendingId: string;
     message: string;

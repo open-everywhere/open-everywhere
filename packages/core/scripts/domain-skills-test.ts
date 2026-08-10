@@ -31,8 +31,7 @@ import { execTool } from "./_tool-exec.js";
 registerSlackFixtureMapper();
 registerSlackTestBridge();
 
-
-const FULL_GRAIN_TEST_CTX = { channel: { kind: "slack", continuationToken: "cse_test_native" }, session: { auth: { current: { attributes: {} } } } };
+const FULL_GRAIN_TEST_CTX = { channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_grain: "task" } } } } };
 type ExecTool = { execute(input: unknown, ctx: unknown): Promise<any> };
 const createSkillTool = (await resolveWindowGated(createSkillGated, FULL_GRAIN_TEST_CTX as never)) as ExecTool;
 const deleteSkillTool = (await resolveWindowGated(deleteSkillGated, FULL_GRAIN_TEST_CTX as never)) as ExecTool;
@@ -57,7 +56,7 @@ registerConfig({
 });
 
 function ctxFor(opts: { channelId: string; channelType?: string; principalId?: string; internal?: boolean }): BindableContext {
-  const attributes: Record<string, string> = { team_id: "T1", channel_id: opts.channelId };
+  const attributes: Record<string, string> = { team_id: "T1", channel_id: opts.channelId, oe_grain: "task" };
   if (opts.channelType) attributes.channel_type = opts.channelType;
   if (opts.internal) attributes.trust_checked = "true";
   return {

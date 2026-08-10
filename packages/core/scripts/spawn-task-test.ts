@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-spawn-task-")), "ops.sqlite3");
 delete process.env.OE_ORG;
+process.env.OE_ONESHOT_AGENT = "0";
 
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";

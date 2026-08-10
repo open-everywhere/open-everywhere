@@ -15,7 +15,7 @@ const dir = join(tmpdir(), `open-everywhere-triggered-fire-test-${process.pid}`)
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_ORG;
-delete process.env.OE_ONESHOT_AGENT;
+process.env.OE_ONESHOT_AGENT = "0";
 process.env.OE_WINDOW_TOPOLOGY = "1";
 
 const { registerSlackTestBridge, registerSlackFixtureCodec, registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
@@ -287,7 +287,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
 }
 
 {
-  delete process.env.OE_ONESHOT_AGENT;
+  process.env.OE_ONESHOT_AGENT = "0";
   await routineStore.addRoutine({} as never, routine({ id: "r-off" }));
   const { seen, to } = captureReceive();
   await tick(NOW, to);
@@ -397,7 +397,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
   const et = seen[0].target as unknown as UnifiedReceiveTarget;
   ok((await store.getUnifiedWakeTarget(ORG, et.wakeId)) !== null, "event/ANSWERABLE: the `wakeId → origin` row is registered");
 
-  delete process.env.OE_ONESHOT_AGENT;
+  process.env.OE_ONESHOT_AGENT = "0";
   const off = captureReceive();
   await fanOutDelivery(body, "pull_request", "delivery-2", { to: off.to, org: ORG, listRoutines: async () => [ev], grant: GRANT });
   ok(off.seen.length === 1 && !off.seen[0].unified, "event/flag-off: byte-identical native fire");
@@ -435,7 +435,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
   const wres = await resolveAnswerableReplyTarget(store, ORG, wt.wakeId, wt.token, "turn-w", wt.wakeId);
   ok(wres.ok, "webhook/ANSWERABLE: the fire's wake resolves through the unified reply fence");
 
-  delete process.env.OE_ONESHOT_AGENT;
+  process.env.OE_ONESHOT_AGENT = "0";
   const off = captureReceive();
   await fireWebhook(hook, JSON.stringify({ status: "ok" }), { to: off.to, confirmInternal: async () => true });
   ok(off.seen.length === 1 && !off.seen[0].unified, "webhook/flag-off: byte-identical native fire");
@@ -545,7 +545,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
 }
 
 {
-  delete process.env.OE_ONESHOT_AGENT;
+  process.env.OE_ONESHOT_AGENT = "0";
   await routineStore.addRoutine({} as never, routine({ id: "r-native", prompt: "Post the deploy digest." }));
   const { seen, to } = captureReceive();
   await tick(NOW, to);
@@ -554,6 +554,6 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
   await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-native");
 }
 
-delete process.env.OE_ONESHOT_AGENT;
+process.env.OE_ONESHOT_AGENT = "0";
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ triggered-fire-window: ${passed} assertions passed`);

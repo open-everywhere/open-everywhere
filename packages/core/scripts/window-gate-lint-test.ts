@@ -77,8 +77,13 @@ firesWith(
 
 firesWith(
   checkWindowGateManifest([{ name: "open_pull_request", source: wrapped("open_pull_request") }], new Map([["open_pull_request", ""]]), [], g({ open_pull_request: ["standing"] }), u()),
+  'must be exactly ["task"]',
+  "a wide-hands tool leaking onto a STANDING seat FAILS (ambient = the ARMED shipped default since OPE-370, so FULL_KIT is task-only)",
+);
+firesWith(
+  checkWindowGateManifest([{ name: "open_pull_request", source: wrapped("open_pull_request") }], new Map([["open_pull_request", ""]]), [], g({ open_pull_request: ["task"] }), u(), ["task", "native"]),
   'must be exactly ["task","native"]',
-  "a wide-hands tool leaking onto a STANDING seat FAILS",
+  "flag-OFF (injected): a wide-hands tool missing the native grain FAILS under the disarmed Stage-C matrix",
 );
 firesWith(
   checkWindowGateManifest([{ name: "spawn_task", source: wrapped("spawn_task") }], new Map([["spawn_task", ""]]), [], g({ spawn_task: ["task"] }), u()),
@@ -171,14 +176,14 @@ ok(JSON.stringify([...WINDOW_GATED_TOOLS.spawn_thread_session]) === JSON.stringi
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.complete_task]) === JSON.stringify(["task"]), "complete_task is task-only");
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.complete_thread]) === JSON.stringify(["thread"]), "complete_thread is thread-only");
 ok(JSON.stringify([...(WINDOW_GATED_TOOLS.agent ?? [])]) === JSON.stringify(["standing", "thread"]) && !WINDOW_UNGATED_TOOLS.has("agent"), "agent is grain-gated to standing+thread (a gated row again since #96; the disableTool() sentinel removes eve's built-in and delegation_tools.ts re-provides it per grain)");
-ok([...FULL_KIT].sort().join(",") === "native,task", "FULL_KIT = task+native, flag-OFF (byte-identical Stage C; the T2 narrowing to task-only is flag-ON, pinned by the crafted case below)");
+ok([...FULL_KIT].sort().join(",") === "task", "FULL_KIT = task-only — the ARMED shipped default since OPE-370 (default==prod); the flag-OFF Stage-C widening to task+native is pinned by the injected crafted case above");
 ok(
   withheldFromGrain("standing").includes("bash") && withheldFromGrain("standing").includes("complete_task") && withheldFromGrain("standing").includes("complete_thread"),
   "a standing seat withholds the wide-hands set + complete_task + complete_thread",
 );
 ok(
-  withheldFromGrain("native").length === 6,
-  "flag-off a native seat withholds the delegation/lifecycle set (agent/spawn_task/spawn_thread_session/complete_task/complete_thread/return_result) — it KEEPS the wide hands (Stage-C byte-identical; the flag-ON wide-hands narrowing is the crafted case below). `agent` joined this set at #96: it is standing/thread-only, so native withholds it too.",
+  withheldFromGrain("native").length === 17,
+  "under the ARMED shipped default (OPE-370) a native seat withholds the delegation/lifecycle set (agent/spawn_task/spawn_thread_session/complete_task/complete_thread/return_result) AND the 11 wide-hands tools — the T2 narrowing is now the default posture (flag-off, native regains wide hands: the Stage-C byte-identical state, exercised via the injected crafted case above).",
 );
 
 firesWith(
