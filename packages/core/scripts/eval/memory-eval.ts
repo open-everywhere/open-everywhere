@@ -27,7 +27,7 @@ const FACT_WAIT_MS = Number.parseInt(process.env.MEM_FACT_WAIT_MS ?? "20000", 10
 const REPLY_TIMEOUT_MS = Number.parseInt(process.env.MEM_REPLY_TIMEOUT_MS ?? "300000", 10);
 const POLL_MS = Number.parseInt(process.env.MEM_POLL_MS ?? "7000", 10);
 const SETTLE_MS = Number.parseInt(process.env.MEM_SETTLE_MS ?? "12000", 10);
-const DELEGATION_GRACE_MS = Number.parseInt(process.env.MEM_DELEGATION_GRACE_MS ?? "60000", 10);
+const DELEGATION_GRACE_MS = Number.parseInt(process.env.MEM_DELEGATION_GRACE_MS ?? "90000", 10);
 
 const SLACK_SURFACE = (process.env.EVAL_MEM_SLACK_SURFACE ?? process.env.EVAL_SLACK_SURFACE ?? "").trim();
 const NOTION_SURFACE = (process.env.EVAL_MEM_NOTION_SURFACE ?? process.env.EVAL_NOTION_SURFACE ?? "").trim();
@@ -202,13 +202,13 @@ export function terminalVerdict(
   nowMs: number,
   graceMs: number = DELEGATION_GRACE_MS,
 ): PollOutcome | null {
-  if (observed.replied) return "replied";
   if (del.outstanding.length > 0) return null;
   if (del.spawned.length > 0) {
     const since = del.lastReturnTs ? nowMs - Date.parse(del.lastReturnTs) : 0;
     if (Number.isFinite(since) && since < graceMs) return null;
-    return "delegation_no_reply";
+    return observed.replied ? "replied" : "delegation_no_reply";
   }
+  if (observed.replied) return "replied";
   if (observed.noReply) return "no_reply";
   if (observed.other) return "other";
   return null;
@@ -426,7 +426,17 @@ async function scoreProbe(run: ProbeRun, topology: Topology, provider: MemProvid
       let fileContent: string | null = null;
       if (provider) fileContent = (await provider.readTier(controlPartition(topology.org), siloTier(fact.silo), { name: fact.silo, provider: "postgres" }))[fact.path] ?? null;
       const verdict = scoreUpdate(fileContent, fact.needles, ["2031-12-31", "R-UPD-777"]);
-      return { ...base, outcome: verdict.toUpperCase(), pass: verdict === "update", detail: { verdict, writes: writeRowsIn(run).length, fileFound: fileContent !== null } };
+      const writes = writeRowsIn(run).length;
+      const unpersisted = verdict === "none" && writes === 0 && run.workerSessionIds.length > 0;
+      return {
+        ...base,
+        outcome: unpersisted ? "NONE_NO_PERSIST" : verdict.toUpperCase(),
+        pass: verdict === "update",
+        detail: {
+          verdict, writes, fileFound: fileContent !== null,
+          ...(unpersisted ? { note: `a worker ran (${run.workerSessionIds.join(", ")}) but no memory.write row landed — its edit is unpersisted (persist happens at WORKER SESSION END), not necessarily un-made; read the worker transcript before calling this a model failure` } : {}),
+        },
+      };
     }
     case "M4": {
       if (!fact) return { ...base, outcome: "NO_FACT", pass: null, detail: {} };

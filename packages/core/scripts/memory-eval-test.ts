@@ -197,7 +197,8 @@ const ok = (cond: boolean, label: string): void => { assert.ok(cond, label); n++
   ok(tr.wakeIds.has("wake-DONE"), "traceDelegation: the COMPLETION wake (which carries the seat's answer) joins the family too");
   ok(terminalVerdict({ replied: false, noReply: true, other: false }, tr, Date.parse("2026-02-20T05:31:50.000Z"), 60000) === null, "terminalVerdict: inside the grace after a return, keep waiting for the seat's post");
   ok(terminalVerdict({ replied: false, noReply: true, other: false }, tr, Date.parse("2026-02-20T05:33:00.000Z"), 60000) === "delegation_no_reply", "terminalVerdict: past the grace with no post → a NAMED outcome (delegation_no_reply), not a silent miss");
-  ok(terminalVerdict({ replied: true, noReply: true, other: false }, tr, Date.parse("2026-02-20T05:31:50.000Z"), 60000) === "replied", "terminalVerdict: a delivered answer always ends the probe");
+  ok(terminalVerdict({ replied: true, noReply: true, other: false }, tr, Date.parse("2026-02-20T05:33:00.000Z"), 60000) === "replied", "terminalVerdict: a delivered answer ends the probe once the workers are done and the grace is out");
+  ok(terminalVerdict({ replied: true, noReply: false, other: false }, mid, Date.parse("2026-02-20T05:31:20.000Z")) === null, "terminalVerdict: an interim 'on it' reply.post while a worker is OUTSTANDING is NOT terminal either");
 
   const none = traceDelegation([row("unified.no_reply", "2026-02-20T05:31:08.000Z", { wakeId: PROBE, sessionId: "sess-seat" })], PROBE);
   ok(terminalVerdict({ replied: false, noReply: true, other: false }, none, Date.now()) === "no_reply", "terminalVerdict: with NO delegation a no-reply is terminal exactly as before (an M5 refusal still scores immediately)");
