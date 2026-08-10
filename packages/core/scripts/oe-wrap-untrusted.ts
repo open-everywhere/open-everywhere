@@ -18,7 +18,7 @@ export function runWrapUntrusted(argv: readonly string[], stdin: string): string
 
 function isMain(): boolean {
   const entry = process.argv[1] ?? "";
-  return entry.endsWith("oe-wrap-untrusted.ts") || entry.endsWith("oe-wrap-untrusted.js") || entry.endsWith("/oe");
+  return entry.endsWith("oe-wrap-untrusted.ts") || entry.endsWith("oe-wrap-untrusted.js");
 }
 
 if (isMain()) {
