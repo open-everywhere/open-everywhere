@@ -78,8 +78,7 @@ for (const name of ["read_channel", "read_thread", "read_notion_page", "read_lin
 ok(allowedOnRestrictedJobWake("final_output"), "job kit keeps eve's structured-output sink (a restricted turn must still be able to return)");
 
 const mustBeWithheld: readonly [string, string][] = [
-  ["remember", "durable memory write — the PERSIST leg of the land→exfil→persist chain"],
-  ["forget", "durable memory mutation"],
+  ["purge_memory", "durable memory ERASURE — an injected fire that can empty the brain is a denial weapon"],
   ["set_state", "ticket mutation — escapes the conversation"],
   ["assign", "ticket mutation"],
   ["add_label", "ticket mutation"],
@@ -133,7 +132,7 @@ for (const name of Object.keys(WINDOW_GATED_TOOLS)) {
 }
 
 const withheldList = withheldFromJobWake();
-ok(withheldList.includes("remember") && withheldList.includes("agent") && withheldList.includes("bash"), "withheldFromJobWake lists the consequential names (the audit row's content)");
+ok(withheldList.includes("purge_memory") && withheldList.includes("agent") && withheldList.includes("bash"), "withheldFromJobWake lists the consequential names (the audit row's content)");
 ok(!withheldList.includes("reply") && !withheldList.includes("complete_job"), "withheldFromJobWake excludes the kit");
 ok(withheldList.join(",") === [...withheldList].sort().join(","), "withheldFromJobWake is sorted (a stable, diffable audit row)");
 
@@ -187,7 +186,7 @@ inSession(() => {
   ok(currentJobWakePosture() === "restricted", "an un-escalated job wake resolves RESTRICTED inside a live session");
   const toolset = makeToolset();
   projectToolSet(toolset as unknown as Record<string, unknown>);
-  ok(!("remember" in toolset) && !("open_pull_request" in toolset) && !("agent" in toolset) && !("web_search" in toolset), "projectToolSet withholds the consequential names on an un-escalated job wake");
+  ok(!("purge_memory" in toolset) && !("open_pull_request" in toolset) && !("agent" in toolset) && !("web_search" in toolset), "projectToolSet withholds the consequential names on an un-escalated job wake");
   ok("reply" in toolset && "record_job_state" in toolset && "complete_job" in toolset && "read_channel" in toolset, "projectToolSet keeps the job kit");
   ok("notion__search" in toolset && !("notion__create_page" in toolset), "connector reads survive the seam, connector writes do not");
 });
@@ -200,7 +199,7 @@ inSession(() => {
   const before = Object.keys(toolset).length;
   projectToolSet(toolset as unknown as Record<string, unknown>);
   ok(Object.keys(toolset).length === before, "an ESCALATED job wake keeps the full toolset — the restriction exists because nobody is watching, so it lifts when somebody is");
-  ok("open_pull_request" in toolset && "remember" in toolset && "agent" in toolset, "the escalated turn holds the human's normal posture");
+  ok("open_pull_request" in toolset && "purge_memory" in toolset && "agent" in toolset, "the escalated turn holds the human's normal posture");
 });
 
 inSession(() => {

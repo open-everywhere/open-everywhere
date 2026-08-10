@@ -62,8 +62,7 @@ const mustBeRelocated: readonly [string, string][] = [
   ["check_pr_status", "PR read"],
   ["set_state", "ticket mutation — belongs to the worker handling the task"],
   ["assign", "ticket mutation"],
-  ["remember", "memory write runs worker-side (Tag routes these via subagent too)"],
-  ["forget", "memory write runs worker-side"],
+  ["purge_memory", "memory erasure runs worker-side"],
   ["create_routine", "routine authoring"],
   ["edit_routine", "routine authoring"],
   ["declare_webhook", "webhook plane"],
@@ -94,7 +93,7 @@ for (const name of LEAN_SEAT_TOOLS) {
 }
 
 const withheldList = withheldFromLeanSeat(WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS);
-ok(withheldList.includes("remember") && withheldList.includes("aws") && withheldList.includes("describe_image"), "withheldFromLeanSeat lists the relocated names (the audit row's content)");
+ok(withheldList.includes("purge_memory") && withheldList.includes("aws") && withheldList.includes("describe_image"), "withheldFromLeanSeat lists the relocated names (the audit row's content)");
 ok(!withheldList.includes("reply") && !withheldList.includes("agent"), "withheldFromLeanSeat excludes the roster");
 ok(withheldList.join(",") === [...withheldList].sort().join(","), "withheldFromLeanSeat is sorted (a stable, diffable audit row)");
 
@@ -146,7 +145,7 @@ inSession(() => {
   ok(currentLeanSeatPosture() === "lean", "a marked wake resolves LEAN inside a live session");
   const toolset = makeToolset();
   projectToolSet(toolset as unknown as Record<string, unknown>);
-  ok(!("remember" in toolset) && !("read_channel" in toolset) && !("aws" in toolset) && !("describe_image" in toolset) && !("web_search" in toolset), "projectToolSet withholds the relocated names on a lean wake");
+  ok(!("purge_memory" in toolset) && !("read_channel" in toolset) && !("aws" in toolset) && !("describe_image" in toolset) && !("web_search" in toolset), "projectToolSet withholds the relocated names on a lean wake");
   ok("reply" in toolset && "no_reply" in toolset && "agent" in toolset && "spawn_thread_session" in toolset && "todo" in toolset, "projectToolSet keeps the conversational roster");
   ok("final_output" in toolset, "the harness sink survives");
 });
@@ -197,7 +196,7 @@ ok(!canDelegateFromSeat(dmSeatCtx() as never), "fixture sanity: the DM-shaped se
 
 let refused: string | undefined;
 try {
-  await grainBackstopAtExecute("remember", ["task", "native", "standing", "thread"], windowSeatCtx() as never);
+  await grainBackstopAtExecute("purge_memory", ["task", "native", "standing", "thread"], windowSeatCtx() as never);
 } catch (err) {
   refused = String(err);
 }
@@ -207,21 +206,21 @@ ok(refused?.includes("talks and delegates") === true && refused?.includes("agent
 await grainBackstopAtExecute("agent", ["standing", "thread"], windowSeatCtx() as never);
 ok(true, "the backstop lets a roster verb through on a lean seat");
 
-await grainBackstopAtExecute("remember", ["task", "native", "standing", "thread"], dmSeatCtx() as never);
+await grainBackstopAtExecute("purge_memory", ["task", "native", "standing", "thread"], dmSeatCtx() as never);
 ok(true, "a NON-delegating standing seat is untouched by the lean backstop — it keeps the verbs it cannot delegate");
 
-await grainBackstopAtExecute("remember", ["task", "native", "standing", "thread"], fireSeatCtx() as never);
+await grainBackstopAtExecute("purge_memory", ["task", "native", "standing", "thread"], fireSeatCtx() as never);
 ok(true, "a stamped unattended FIRE is untouched by the lean backstop — fires keep their own posture");
 
 const standingWorkerOnly = workerOnlyTools("standing");
-ok(standingWorkerOnly.includes("remember") && standingWorkerOnly.includes("aws") && standingWorkerOnly.includes("describe_image") && standingWorkerOnly.includes("read_channel"), "the worker-capability index counts the relocated tools as worker-only from a delegating standing seat");
+ok(standingWorkerOnly.includes("purge_memory") && standingWorkerOnly.includes("aws") && standingWorkerOnly.includes("describe_image") && standingWorkerOnly.includes("read_channel"), "the worker-capability index counts the relocated tools as worker-only from a delegating standing seat");
 ok(!standingWorkerOnly.includes("reply") && !standingWorkerOnly.includes("update_status"), "…and never the seat's own roster verbs");
 ok(standingWorkerOnly.length >= 60, `the index grew to the relocated surface (${standingWorkerOnly.length} worker-only tools — the roster cut, seen from the routing table)`);
 
 const leanPreview = approvalPreviewFor("standing", undefined, undefined, undefined, "agent");
-ok(!leanPreview.member.includes("remember") && leanPreview.elsewhere.includes("remember"), "a delegating seat's approval preview moves `remember` to elsewhere (a worker holds it; the card is unchanged)");
+ok(!leanPreview.member.includes("purge_memory") && leanPreview.elsewhere.includes("purge_memory"), "a delegating seat's approval preview moves `purge_memory` to elsewhere (a worker holds it; the card is unchanged)");
 ok(leanPreview.member.length === 0 || leanPreview.member.every((t) => allowedOnLeanSeat(t)), "a delegating seat's preview only claims verbs the lean roster actually holds");
 const dmPreview = approvalPreviewFor("standing", undefined, undefined, undefined, "none");
-ok(dmPreview.member.includes("remember"), "a NON-delegating standing seat's preview still holds `remember` — the preview never contradicts the filter");
+ok(dmPreview.member.includes("purge_memory"), "a NON-delegating standing seat's preview still holds `purge_memory` — the preview never contradicts the filter");
 
 console.log(`\n✓ lean-seat (OPE-301): ${n} assertions passed (posture truth table, roster membership, toolset filter, live-context wiring incl. job mutual-exclusion, execute backstop, derived surfaces)\n`);

@@ -279,10 +279,7 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
 
   create_skill: member("skill.create", "disclose", "self-modification: a skill is a procedure the agent will load and FOLLOW by name (persistent RCE-of-behaviour)"),
   create_routine: deferToJudge(member("routine.create", "disclose", "self-modification: a standing scheduled behaviour that outlives the turn")),
-  remember: member("memory.remember", "disclose",
-    "self-modification, CONDITIONAL: a plain fact writes directly (not consequential); a standing RULE always freezes onto a card, because doctrine every future turn is told to follow must not land mid-injection. A fact from a TAINTED turn also writes directly (OPE-307) and carries a durable external-provenance mark on the bullet itself — the provenance travels with the entry and is visible on every later recall, which a one-time card was not",
-  ),
-  forget: deferToJudge(member("memory.forget", "disclose", "hard-to-reverse: destroys memory (and the frozen args carry only the bullet's hash — GDPR redaction)")),
+  purge_memory: deferToJudge(member("memory.purge", "disclose", "hard-to-reverse: ERASES memory across every writable silo (and the frozen args carry only the bullets' hashes — GDPR redaction)")),
   open_pull_request: deferToJudge(member("pr.open", "disclose",
     "audience-expanding: a PR reaches repo watchers, CI and reviewers beyond the asking room; commits stage on a hidden ref and publish only on the click",
   )),
@@ -329,11 +326,6 @@ export const NON_TOOL_ACTION_KINDS: Readonly<Record<string, ActionKindEntry>> = 
     tier: "gate:member",
     reason:
       "the SOFT session cost checkpoint (OPE-62): past a configured per-session spend threshold, consequential work pauses on a card until a human confirms continuing. Raised by the spend path, not by a verb — which is precisely why it needs pinning here: the tier is a real decision (a member may unblock their own session's spend, an admin bar would make an ordinary long task need an admin) and nothing else in the tree records that it was made",
-  },
-  "memory.float-undo": {
-    tier: "gate:member",
-    reason:
-      "the ❌-reaction undo of a FLOATED memory write (Stage T3): removes the bullet the float notice named. Raised by a reaction, so there is no tool source to scan. Member is the symmetric bar to the write it reverses — the float itself is ungated, and gating the undo harder than the write would make the reversible half the expensive one",
   },
 };
 

@@ -1,7 +1,6 @@
 import { appendAudit } from "../audit/audit.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import type { Partition } from "../memory/partition.js";
-import { memoryFloatMode, handleNegativeReactionUndo } from "../approvals/memory-float.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 
 export type EmojiClass = "positive" | "negative" | "other";
@@ -93,7 +92,7 @@ export function buildIngestedReaction(input: {
 export interface ReactionSinkDeps {
   readonly record: (r: IngestedReaction, atIso: string) => Promise<void>;
   readonly telemetry: (r: IngestedReaction) => void;
-  readonly floatUndo?: (r: IngestedReaction) => Promise<void>;
+  readonly negativeOnBotReply?: (r: IngestedReaction) => Promise<void>;
   readonly now?: () => string;
 }
 
@@ -107,8 +106,8 @@ export const REACTION_FEEDBACK_ACTION = "reaction.feedback";
 
 export async function ingestReaction(r: IngestedReaction, deps: ReactionSinkDeps): Promise<ReactionIngestOutcome> {
   deps.telemetry(r);
-  if (r.verb === "added" && r.emojiClass === "negative" && r.onBotReply && deps.floatUndo) {
-    await deps.floatUndo(r);
+  if (r.verb === "added" && r.emojiClass === "negative" && r.onBotReply && deps.negativeOnBotReply) {
+    await deps.negativeOnBotReply(r);
   }
   if (!r.onBotReply) {
     return { recorded: false, onBotReply: false, reason: "reaction not on the bot's own message — telemetry only" };
@@ -148,6 +147,5 @@ export function liveReactionSink(): ReactionSinkDeps {
         },
       }),
     telemetry: emitReactionTelemetry,
-    ...(memoryFloatMode() !== "off" ? { floatUndo: handleNegativeReactionUndo } : {}),
   };
 }

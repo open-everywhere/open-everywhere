@@ -169,7 +169,7 @@ const rotateKind = actionKind("webhook.rotate")!;
     eq(entry.via.kind === "action-kind" ? entry.via.action : undefined, kind, `🔴 …naming "${kind}" specifically, so consequence.ts and the ActionKind cannot drift unnoticed`);
   }
 
-  for (const kind of ["webhook.rotate", "webhook.declare", "routine.create", "memory.forget"]) {
+  for (const kind of ["webhook.rotate", "webhook.declare", "routine.create", "memory.purge"]) {
     const def = actionKind(kind);
     ok(def !== undefined && typeof def.policy === "string", `🔴 ${kind}'s approver tier is a per-KIND constant, not a function of the frozen args`);
   }

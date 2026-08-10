@@ -213,7 +213,7 @@ function tsFilesUnder(dir: string): string[] {
   ok(at("tools/set_spend_limit.ts")?.intent === "presence", "real: set_spend_limit's gate is SEEN and reads presence (OPE-273) — the detector still matches `actingPrincipalId(binding)` inside a pure planner");
   ok(at("tools/run_routine_now.ts")?.intent === "presence", "real: run_routine_now's loop guard is SEEN and reads presence (OPE-269)");
   ok(at("tools/create_ticket.ts")?.intent === "accountability", "real: create_ticket is SEEN and stays accountability — a routine filing work is the product, and this test is what stops a future 'fences everywhere' sweep converting it");
-  ok(at("tools/forget.ts")?.accessor === "bound", "real: forget's `binding.principalId` is SEEN as a BOUND property read — the exact spelling five of OPE-273's seven gates used");
+  ok(at("tools/purge_memory.ts")?.accessor === "bound", "real: purge_memory's `binding.principalId` is SEEN as a BOUND property read — the exact spelling five of OPE-273's seven gates used");
   ok(at("access/analytics-scope.ts")?.accessor === "opaque", "real: analytics-scope's `role.principalId` is SEEN as opaque — the measured case the third accessor value exists for");
   ok(at("connections/aws-identity.ts")?.accessor === "acting", "real: planAwsIdentity's DESTRUCTURED fence is SEEN and reads acting — a fire may not assume a human's AWS SSO identity, and the lint certified this file as gate-free until shape C landed");
   ok(at("connections/connector-auth.ts")?.intent === "presence", "real: the Connect per-user mint's `principalId` refusal is SEEN — destructured off resolveDmPrincipal, which returns the ACTING principal despite the bound-looking spelling");

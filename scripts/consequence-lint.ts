@@ -16,7 +16,6 @@ import { readAuthoredTools, readFrameworkToolNames, readSubagentToolNames } from
 import { actionKind, registeredActionKinds } from "@open-everywhere/core/agent/approvals/actions.js";
 import "@open-everywhere/core/agent/approvals/flow.js";
 import "@open-everywhere/core/agent/approvals/session-checkpoint.js";
-import "@open-everywhere/core/agent/approvals/memory-float.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const tools = readAuthoredTools(root);

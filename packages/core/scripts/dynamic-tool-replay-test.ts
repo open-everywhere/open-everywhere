@@ -58,7 +58,7 @@ const CASES: readonly ToolCase[] = [
   { slug: "create_ticket", entryKey: "_single", ctx: githubCtx },
   { slug: "request_access", entryKey: "_single", ctx: slackCtx },
   { slug: "connector", entryKey: "_single", ctx: slackCtx },
-  { slug: "forget", entryKey: "_single", ctx: slackCtx },
+  { slug: "purge_memory", entryKey: "_single", ctx: slackCtx },
   { slug: "clear_connector_override", entryKey: "_single", ctx: slackCtx },
   { slug: "clear_spend_limit", entryKey: "_single", ctx: slackCtx },
   {

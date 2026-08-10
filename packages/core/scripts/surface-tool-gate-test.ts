@@ -1,6 +1,6 @@
 import clearConnectorOverride from "../agent/tools/clear_connector_override.js";
 import clearSpendLimit from "../agent/tools/clear_spend_limit.js";
-import forget from "../agent/tools/forget.js";
+import purgeMemory from "../agent/tools/purge_memory.js";
 import requestAccess from "../agent/tools/request_access.js";
 import react from "../agent/tools/react.js";
 import type { BindableContext } from "../agent/identity/binding.js";
@@ -74,7 +74,7 @@ async function assertGate(name: string, def: unknown, descNeedle: string, armedK
 
 const EVERY_KIND = [...CARD_PATH_KINDS, ...NON_CARD_KINDS];
 await assertGate("clear_connector_override", clearConnectorOverride, "PROPOSE reverting an earlier break-glass connector revoke", EVERY_KIND, []);
-await assertGate("forget", forget, "PROPOSE forgetting one remembered fact", EVERY_KIND, []);
+await assertGate("purge_memory", purgeMemory, "PROPOSE ERASING remembered fact(s)", EVERY_KIND, []);
 await assertGate("request_access", requestAccess, "PROPOSE widening access", EVERY_KIND, []);
 await assertGate("clear_spend_limit", clearSpendLimit, "PROPOSE clearing a spend-limit override", EVERY_KIND, []);
 

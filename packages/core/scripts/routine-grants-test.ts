@@ -97,7 +97,7 @@ const NOW = "2026-03-30T11:30:00.000Z";
     "connector:no tion",
     "connector:a:b",
     "skill.create",
-    "memory.remember",
+    "memory.purge",
     "spend.set",
     "pr.merge",
     "",

@@ -62,10 +62,11 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   {
     id: "memory",
     headline:
-      "Commit something to the team's durable memory, take it back out, or audit what is stored. " +
-      "A plain fact saves instantly; only a standing INSTRUCTION (a rule future turns must obey) is " +
-      "gated behind a human approval card — so brief a fact as a fact, never as a rule",
-    tools: ["remember", "forget", "memory_admin_list", "memory_admin_read"],
+      "Read, add to and correct the team's durable memory — the memory files are editable in the " +
+      "worker's workspace and every edit is saved and audited when the task finishes, so brief a " +
+      "fact or a correction as an ordinary edit. Only genuine ERASURE (remove this permanently) " +
+      "goes through a human approval card, and auditing what is stored is its own read",
+    tools: ["purge_memory", "memory_admin_list", "memory_admin_read"],
   },
   {
     id: "standing-behaviour",

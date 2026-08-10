@@ -187,16 +187,16 @@ console.log("5. lean-seat interplay:");
   }
   eq([...DM_SEAT_CARVE_IN].sort(), ["confirm_link", "link_identity", "unlink_identity"], "the carve-in is EXACTLY the identity trio — nothing else is seat-shaped");
 
-  ok(!allowedOnLeanSeat("remember", true), "a DM seat does NOT keep `remember` — the memory write relocates cleanly (the worker inherits the DM binding, so its trust gate is the same one)");
+  ok(!allowedOnLeanSeat("purge_memory", true), "a DM seat does NOT keep `purge_memory` — memory work relocates cleanly (the worker inherits the DM binding, so its trust gate is the same one)");
   ok(!allowedOnLeanSeat("connection_search", true), "…nor `connection_search` — a DM-spawned worker inherits mode \"dm\", so the DM-only connector wall passes inside it");
   ok(!allowedOnLeanSeat("aws", true) && !allowedOnLeanSeat("notion__search", true), "…nor anything else: default-deny is unchanged for a DM seat");
   ok(allowedOnLeanSeat("reply", true) && allowedOnLeanSeat("agent", true), "the base roster still applies on a DM seat");
 
-  const toolset: Record<string, unknown> = { reply: {}, no_reply: {}, agent: {}, remember: {}, aws: {}, link_identity: {}, confirm_link: {}, unlink_identity: {}, notion__search: {} };
+  const toolset: Record<string, unknown> = { reply: {}, no_reply: {}, agent: {}, purge_memory: {}, aws: {}, link_identity: {}, confirm_link: {}, unlink_identity: {}, notion__search: {} };
   const dmSet = { ...toolset };
   const removedOnDm = restrictToolsetForLeanSeat(dmSet, true);
   eq(Object.keys(dmSet).sort(), ["agent", "confirm_link", "link_identity", "no_reply", "reply", "unlink_identity"], "a delegating DM seat keeps the speak verbs, the delegation verb AND the identity trio");
-  ok(removedOnDm.includes("remember") && removedOnDm.includes("aws") && removedOnDm.includes("notion__search"), "…and loses everything worker-shaped");
+  ok(removedOnDm.includes("purge_memory") && removedOnDm.includes("aws") && removedOnDm.includes("notion__search"), "…and loses everything worker-shaped");
 
   const channelSet = { ...toolset };
   restrictToolsetForLeanSeat(channelSet);
@@ -206,7 +206,7 @@ console.log("5. lean-seat interplay:");
   for (const name of DM_SEAT_CARVE_IN) {
     ok(!workerOnly.includes(name), `the worker-capability index does NOT list ${name} as routable — an interactive challenge is not a thing a leaf worker can carry out`);
   }
-  ok(workerOnly.includes("remember") && workerOnly.includes("connection_search"), "…while everything that genuinely DOES relocate is still listed (the index stays a complete routing table)");
+  ok(workerOnly.includes("purge_memory") && workerOnly.includes("connection_search"), "…while everything that genuinely DOES relocate is still listed (the index stays a complete routing table)");
 }
 
 console.log("6. OPE-351 fences (capacity only — nothing mints a DM window token yet):");

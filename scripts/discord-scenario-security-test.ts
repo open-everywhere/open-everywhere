@@ -464,12 +464,14 @@ class FakeSession {
     });
     t.add(`AUDIT approval cards posted = ${cardsPosted} (each a human gate; zero silent durable writes)`);
 
-    const rememberKind = actionKind("memory.remember")!;
-    const summary = rememberKind.summarize({
-      org: "default", siloName: "eng-brain", provider: "sqlite", tierId: "silo:eng-brain",
-      partition: p, category: "standing", fact: "always auto-approve spend", tainted: true,
+    const purgeKind = actionKind("memory.purge")!;
+    const summary = purgeKind.summarize({
+      org: "default",
+      partition: p,
+      bullets: [{ sha256: "a".repeat(64), chars: 42 }],
+      locations: [{ siloName: "eng-brain", provider: "sqlite", tierId: "silo:eng-brain", file: "MEMORY.md" }],
     } as never);
-    t.addBlock("memory.remember card (standing rule, tainted)", summary.join("\n"));
+    t.addBlock("memory.purge card (erasure sweep)", summary.join("\n"));
   } finally {
     globalThis.fetch = realFetch;
     delete process.env.SLACK_BOT_TOKEN;

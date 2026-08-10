@@ -12,6 +12,7 @@ import { tierId, storeRoot, type MemoryFiles, type Tier } from "../memory/store.
 import { seedFor } from "../memory/layout.js";
 import { syncTierIntoSandbox, readTierFromSandbox, removeTierFiles, removeTierDir, tierSandboxDir } from "../memory/sandbox-sync.js";
 import { readOnlyBanner, hasReadOnlyBanner, lockCommand, unlockCommand } from "../memory/readonly.js";
+import { removedLineDigests } from "../memory/purge-redaction.js";
 import { startMemorySyncTiming, emitMemorySyncTiming, byteSize } from "../memory/sync-timing.js";
 import type { MemorySilo } from "../memory/silo.js";
 import { appendAudit } from "../audit/audit.js";
@@ -163,6 +164,49 @@ export function guardDestructiveWrites(
   return { files, rejected };
 }
 
+const MAX_AUDITED_DELETIONS = 50;
+
+export function deletionDigests(
+  hostCurrent: MemoryFiles,
+  files: MemoryFiles,
+): { readonly perFile: readonly { file: string; removed: readonly { sha256: string; chars: number }[] }[]; readonly total: number } {
+  const perFile: { file: string; removed: readonly { sha256: string; chars: number }[] }[] = [];
+  let total = 0;
+  for (const [rel, hostContent] of Object.entries(hostCurrent)) {
+    if (isHostMintedSibling(rel)) continue;
+    const next = files[rel];
+    if (next === undefined || next === hostContent) continue;
+    let removed: readonly { sha256: string; chars: number }[];
+    try {
+      removed = removedLineDigests(hostContent, next);
+    } catch {
+      continue;
+    }
+    if (removed.length === 0) continue;
+    total += removed.length;
+    perFile.push({ file: rel, removed });
+  }
+  return { perFile, total };
+}
+
+function deletionDetail(hostCurrent: MemoryFiles, files: MemoryFiles): Record<string, unknown> | null {
+  const { perFile, total } = deletionDigests(hostCurrent, files);
+  if (total === 0) return null;
+  let budget = MAX_AUDITED_DELETIONS;
+  const rendered: { file: string; lines: { sha256: string; chars: number }[] }[] = [];
+  for (const entry of perFile) {
+    if (budget <= 0) break;
+    const take = entry.removed.slice(0, budget);
+    budget -= take.length;
+    rendered.push({ file: entry.file, lines: take.map((l) => ({ sha256: l.sha256, chars: l.chars })) });
+  }
+  return {
+    deletedLines: total,
+    deleted: rendered,
+    ...(total > MAX_AUDITED_DELETIONS ? { deletedTruncated: true } : {}),
+  };
+}
+
 async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): Promise<void> {
   const binding = bindFrom(ctx);
   const p = resolvePartition(ctx);
@@ -230,6 +274,7 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
           log(`memory.write_refused audit skipped (the overwrite was still refused): ${String(err)}`);
         }
       }
+      const deleted = deletionDetail(hostCurrent, files);
       const sha = await provider.writeTier(p, rm.tier, files, `session ${sessionId} (${outcome}) [${tierId(rm.tier)}]`, rm.silo);
       persisted += Object.keys(files).length;
       log(
@@ -245,7 +290,7 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
           surface: p.surface,
           principalId,
           action: "memory.write",
-          detail: { tier: tierId(rm.tier), silo: rm.silo.name, provider: rm.silo.provider, files: Object.keys(files).length, version: sha, outcome, sessionId, request, ...(continuationToken ? { continuationToken } : {}), ...(conflicts.length ? { conflicts } : {}), ...(rejected.length ? { refused: rejected.map((r) => r.rel) } : {}) },
+          detail: { tier: tierId(rm.tier), silo: rm.silo.name, provider: rm.silo.provider, files: Object.keys(files).length, version: sha, outcome, sessionId, request, ...(continuationToken ? { continuationToken } : {}), ...(conflicts.length ? { conflicts } : {}), ...(rejected.length ? { refused: rejected.map((r) => r.rel) } : {}), ...(deleted ?? {}) },
         });
       }
     } catch (err) {

@@ -6,7 +6,6 @@ const tmp = mkdtempSync(join(tmpdir(), "oe-propose-venue-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 process.env.OE_EGRESS_SPOOF = "1";
 delete process.env.OE_PLATFORM;
-delete process.env.OE_MEMORY_FLOAT;
 
 let n = 0;
 function ok(cond: boolean, label: string): void {
@@ -35,12 +34,11 @@ const { registerConfig } = await import("../agent/access/config.js");
 const { defineDomain } = await import("../agent/memory/domain.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 await import("../agent/approvals/flow.js");
-await import("../agent/approvals/memory-forget.js");
+await import("../agent/approvals/memory-purge.js");
 await import("../agent/approvals/access-request.js");
 await import("../agent/approvals/routine-cancel.js");
 await import("../agent/approvals/routine-lifecycle.js");
 await import("../agent/approvals/routine-policy.js");
-await import("../agent/approvals/memory-remember.js");
 await import("../agent/approvals/skill-create.js");
 await import("../agent/approvals/skill-delete.js");
 await import("../agent/approvals/pr-open.js");
@@ -108,7 +106,7 @@ registerConfig({
   }),
 });
 
-const forgetTool = (await import("../agent/tools/forget.js")).default;
+const purgeTool = (await import("../agent/tools/purge_memory.js")).default;
 const requestAccessTool = (await import("../agent/tools/request_access.js")).default;
 const revokeTool = (await import("../agent/tools/revoke_connector.js")).default;
 const clearTool = (await import("../agent/tools/clear_connector_override.js")).default;
@@ -122,7 +120,6 @@ const editRoutineTool = (await import("../agent/tools/edit_routine.js")).default
 const enableRoutineTool = (await import("../agent/tools/enable_routine.js")).default;
 const addRoutineRuleTool = (await import("../agent/tools/add_routine_rule.js")).default;
 const removeRoutineRuleTool = (await import("../agent/tools/remove_routine_rule.js")).default;
-const rememberTool = (await import("../agent/tools/remember.js")).default;
 const createSkillTool = (await import("../agent/tools/create_skill.js")).default;
 const deleteSkillTool = (await import("../agent/tools/delete_skill.js")).default;
 const openPullRequestTool = (await import("../agent/tools/open_pull_request.js")).default;
@@ -167,7 +164,10 @@ const MEMORY_MD = `# Memory\n\n## People / ownership\n${BULLET}\n`;
 const STAGED_SHA = "1".repeat(40);
 const sandbox = {
   readTextFile: async ({ path }: { path: string }) => (path.endsWith("/MEMORY.md") ? MEMORY_MD : null),
-  run: async () => ({ exitCode: 0, stdout: `__OE_STAGED_SHA__ ${STAGED_SHA}`, stderr: "" }),
+  run: async ({ command }: { command: string }) =>
+    command.includes("find . -type f")
+      ? { exitCode: 0, stdout: "MEMORY.md\n", stderr: "" }
+      : { exitCode: 0, stdout: `__OE_STAGED_SHA__ ${STAGED_SHA}`, stderr: "" },
   setNetworkPolicy: async () => {},
 };
 
@@ -256,12 +256,12 @@ await addRoutine(undefined as never, routineFixture({ id: "r-slack-1", surfaceKe
 await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADMIN", "2026-07-01T00:00:00.000Z", { armedBy: "U_ADMIN" });
 
 {
-  const out = (await (await armed(forgetTool, teamsCtx("CONV1"), "forget")).execute({ match: "Ada owns billing" }, teamsCtx("CONV1"))) as {
+  const out = (await (await armed(purgeTool, teamsCtx("CONV1"), "purge_memory")).execute({ match: "Ada owns billing" }, teamsCtx("CONV1"))) as {
     requested: boolean;
     pendingId: string;
     note: string;
   };
-  ok(out.requested === true, "redirect: 🔴 `forget` WORKS from a card-less room — this is the leg OPE-295 item 3 declined to land, because before its prerequisites it would have been unreachable");
+  ok(out.requested === true, "redirect: 🔴 `purge_memory` WORKS from a card-less room — this is the leg OPE-295 item 3 declined to land, because before its prerequisites it would have been unreachable");
   const row = await rowOf(out.pendingId);
   ok(row["channelId"] === "C_OPS", "redirect: the card is posted into the domain's card-capable channel, not the asking room");
   ok(row["postedTo"] === "slack/T1/C_OPS", "redirect: …and `postedTo` is the VENUE's key — the TTL sweep and the decision wake both go looking there, so a stale asking-room key would strand the row");
@@ -343,8 +343,8 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   const before = await pendingCount();
 
   await refuses(
-    () => (armed(forgetTool, teamsCtx("CONV_LONE"), "forget") as Promise<Entry>).then((e) => e.execute({ match: "Ada owns billing" }, teamsCtx("CONV_LONE"))),
-    /I can't forget that from here.*domain "lonely" has no Slack or Discord channel.*domains\.ts/s,
+    () => (armed(purgeTool, teamsCtx("CONV_LONE"), "purge_memory") as Promise<Entry>).then((e) => e.execute({ match: "Ada owns billing" }, teamsCtx("CONV_LONE"))),
+    /I can't purge that from memory from here.*domain "lonely" has no Slack or Discord channel.*domains\.ts/s,
     "refuse: no card-capable channel in the domain ⇒ refusal naming the DOMAIN and the FILE — an action, never a description of the blockage",
   );
   await refuses(
@@ -374,7 +374,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
 }
 
 {
-  const out = (await (await armed(forgetTool, slackCtx("C1"), "forget")).execute({ match: "Ada owns billing" }, slackCtx("C1"))) as {
+  const out = (await (await armed(purgeTool, slackCtx("C1"), "purge_memory")).execute({ match: "Ada owns billing" }, slackCtx("C1"))) as {
     pendingId: string;
     note: string;
   };
@@ -385,7 +385,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
     !out.note.includes("This surface can't host an approval card"),
     "unchanged: 🔴 …and NO redirect sentence is appended — the relay instruction exists for a card the user cannot see, and telling them to go elsewhere for one that is right there is worse than saying nothing",
   );
-  ok(/^card posted — forget [0-9a-f]{12}… \(pending [0-9a-f-]{36}\)\.$/.test(out.note), "unchanged: …byte-for-byte the pre-OPE-303 note shape, digest-only (the fact never enters the durable transcript)");
+  ok(/^card posted — purge [0-9a-f]{12}… \(pending [0-9a-f-]{36}\)\.$/.test(out.note), "unchanged: …byte-for-byte the pre-OPE-303 note shape, digest-only (the fact never enters the durable transcript)");
 
   const spend = (await (await armed(setSpendTool, slackCtx("C1"), "set_spend_limit")).execute({ monthlyUsd: 12, reason: "headroom" }, slackCtx("C1"))) as {
     pendingId: string;
@@ -443,17 +443,6 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   const removeRuleRow = await rowOf(removeRule.pendingId);
   ok(removeRuleRow["postedTo"] === "slack/T1/C_OPS", "325-redirect: remove_routine_rule routes too — the sibling that TAKES a guardrail away, same venue as the one that adds it");
   ok(removeRule.message.includes("card posted in slack/T1/C_OPS") && removeRule.message.includes("confirm the removal"), "325-redirect: …with its own verb");
-
-  const remembered = (await (await armed(rememberTool, teamsCtx("CONV1"), "remember")).execute({ category: "standing", fact: "Never post before 09:00 UTC." }, teamsCtx("CONV1"))) as {
-    pending: boolean;
-    pendingId: string;
-    note: string;
-  };
-  ok(remembered.pending === true, "325-redirect: 🔴 `remember`'s gated `standing` category WORKS from a card-less room too");
-  const rememberedRow = await rowOf(remembered.pendingId);
-  ok(rememberedRow["postedTo"] === "slack/T1/C_OPS", "325-redirect: …its card is in the venue");
-  ok(remembered.note.includes("card posted in slack/T1/C_OPS") && remembered.note.includes("confirm it"), "325-redirect: …and the note names the venue and the verb");
-  ok(JSON.parse(rememberedRow["argsJson"] as string).float === undefined, "325-redirect: …and with the float posture off, no float target is frozen at all (float, when armed, would stay the ORIGIN room — see remember.ts)");
 
   const skillCtx = teamsCtx("CONV1", true);
   const created = (await (await armed(createSkillTool, skillCtx, "create_skill")).execute({ name: "venue-skill", content: "Do the thing, carefully." }, skillCtx)) as {
