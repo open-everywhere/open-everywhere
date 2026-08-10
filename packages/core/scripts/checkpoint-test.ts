@@ -218,14 +218,14 @@ passed++;
   const grant = await store.getSessionApproval("default", sid, CHECKPOINT_GRANT_MEMO, new Date().toISOString());
   ok(grant === null, "guard: a rejected card writes NO continue grant");
   const pendingBefore = (await store.listPendingActions("default")).filter((r) => r.kind === "session.checkpoint").length;
-  await throws(() => requireSessionContinuation(ctxFor(sid), "forget"), "guard: after a deny the session stays soft-blocked");
+  await throws(() => requireSessionContinuation(ctxFor(sid), "purge_memory"), "guard: after a deny the session stays soft-blocked");
   const pendingAfter = (await store.listPendingActions("default")).filter((r) => r.kind === "session.checkpoint").length;
   ok(pendingAfter === pendingBefore, "guard: after a deny no fresh card is posted (deny keeps the block quietly)");
 }
 
 {
   const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "agent", "tools");
-  const guarded = ["open_pull_request", "create_skill", "create_routine", "remember", "forget", "request_access", "cancel_routine", "delete_skill"];
+  const guarded = ["open_pull_request", "create_skill", "create_routine", "purge_memory", "request_access", "cancel_routine", "delete_skill"];
   const reads = ["reply", "react", "no_reply", "session_cost", "spend_report", "check_pr_status"];
   const slackToolsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "providers", "slack", "agent", "tools");
   const slackReads = ["read_slack_channel", "read_slack_thread"];
@@ -296,7 +296,7 @@ passed++;
     await addJob(id);
     await seed(sid, 5000);
     const pendingBefore = (await store.listPendingActions("default")).filter((r) => r.kind === "session.checkpoint").length;
-    await throws(() => requireSessionContinuation(fireCtx(sid, id), "remember"), "fire: a crossed routine fire is still BLOCKED — the stop is the right direction and OPE-253 did not change it");
+    await throws(() => requireSessionContinuation(fireCtx(sid, id), "purge_memory"), "fire: a crossed routine fire is still BLOCKED — the stop is the right direction and OPE-253 did not change it");
     const pendingAfter = (await store.listPendingActions("default")).filter((r) => r.kind === "session.checkpoint").length;
     ok(pendingAfter === pendingBefore + 1, "fire: THE CARD STILL POSTS — whether an unattended fire should card at all is a doctrine question about the approvals plane, deliberately left alone");
 
@@ -307,7 +307,7 @@ passed++;
     );
     const rows = (await readAudit({ org: "default", limit: 1000 })).filter((a) => a.action === ROUTINE_AUDIT.stalled && (a.detail as { routineId?: string } | undefined)?.routineId === id);
     ok(rows.length === 1, "🔴 THE ROW: one routine.stalled forensic row, written at the MOMENT of the block — checkpoint.trip is once per SESSION, and a durable job's session spans every fire, so without this the 2nd..200th blocked fire wrote nothing at all");
-    ok((rows[0]?.detail as { tool?: string }).tool === "remember", "fire: the row names the tool that was refused");
+    ok((rows[0]?.detail as { tool?: string }).tool === "purge_memory", "fire: the row names the tool that was refused");
 
     await throws(() => requireSessionContinuation(fireCtx(sid, id), "open_pull_request"), "fire: a second consequential call in the same fire is still blocked");
     const after = (await readAudit({ org: "default", limit: 1000 })).filter((a) => a.action === ROUTINE_AUDIT.stalled && (a.detail as { routineId?: string } | undefined)?.routineId === id);
@@ -332,7 +332,7 @@ passed++;
         },
       },
     } as never;
-    await requireSessionContinuation(ctx, "remember");
+    await requireSessionContinuation(ctx, "purge_memory");
     passed++;
     const row = await routineStore.getRoutine("default", SURFACE, id);
     ok(
@@ -349,7 +349,7 @@ passed++;
     const sid = "sess-human";
     await seed(sid, 5000);
     const beforeRows = (await readAudit({ org: "default", limit: 1000 })).filter((a) => a.action === ROUTINE_AUDIT.stalled).length;
-    await throws(() => requireSessionContinuation(ctxFor(sid), "remember"), "parity: a live human session over threshold blocks exactly as before");
+    await throws(() => requireSessionContinuation(ctxFor(sid), "purge_memory"), "parity: a live human session over threshold blocks exactly as before");
     const afterRows = (await readAudit({ org: "default", limit: 1000 })).filter((a) => a.action === ROUTINE_AUDIT.stalled).length;
     ok(afterRows === beforeRows, "parity: …and records no stall — a stall is a property of an UNATTENDED fire, and a human who is right there can answer the card");
   }
@@ -357,7 +357,7 @@ passed++;
   {
     const sid = "sess-fire-gone";
     await seed(sid, 5000);
-    await throws(() => requireSessionContinuation(fireCtx(sid, "r-does-not-exist"), "remember"), "fail-soft: a marker with no surviving routine still produces the guard's own block, not a store error");
+    await throws(() => requireSessionContinuation(fireCtx(sid, "r-does-not-exist"), "purge_memory"), "fail-soft: a marker with no surviving routine still produces the guard's own block, not a store error");
   }
 }
 

@@ -77,7 +77,7 @@ for (const [tool, entry] of Object.entries(TOOL_CONSEQUENCE)) {
   const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)]!;
 
   const verdicts: readonly ApproverVerdict[] = ["allow", "deny", "ask", undefined];
-  const tools = ["create_ticket", "reply", "remember", "add_routine_rule", "notion__create_page", "notion__search", "no_such_tool", "open_pull_request"];
+  const tools = ["create_ticket", "reply", "purge_memory", "add_routine_rule", "notion__create_page", "notion__search", "no_such_tool", "open_pull_request"];
   const modes = [undefined, { mode: "DANGEROUSLY_BYPASS" as const }, { mode: "APPROVE_ALL" as const, allowlist: ["reply", "create_ticket"] }, { mode: "DENY_ALL" as const }];
 
   let denyIns = 0;
@@ -222,7 +222,7 @@ ok(!ELEMENT_CLAMPS.registry.includes("defer"), "pin4: the registry may not defer
       .map(([t]) => t)
       .sort();
     ok(
-      JSON.stringify(flipped) === JSON.stringify(["create_routine", "forget", "open_pull_request", "request_access", "set_spend_limit"]),
+      JSON.stringify(flipped) === JSON.stringify(["create_routine", "open_pull_request", "purge_memory", "request_access", "set_spend_limit"]),
       `pin5: exactly the five shadow-evidenced rows carry the defer flip (got ${flipped.join(", ")})`,
     );
     ok(judgeDeferredTool("open_pull_request") && !judgeDeferredTool("create_ticket"), "pin5: judgeDeferredTool reads the flip, and an unflipped gated row stays plain ask");
@@ -318,7 +318,7 @@ const EXAMPLES: readonly ApprovalScenario[] = [
 }
 
 ok(taintToleranceOf("add_routine_rule") === "refuse", "taint: add_routine_rule is a refuse-sink");
-ok(taintToleranceOf("remember") === "disclose", "taint: remember DISCLOSES — the column is now marking vocabulary, not a gate (OPE-307)");
+ok(taintToleranceOf("purge_memory") === "disclose", "taint: purge_memory DISCLOSES — the column is now marking vocabulary, not a gate (OPE-307)");
 ok(taintToleranceOf("reply") === undefined, "taint: an open conversational verb carries no tolerance — a tainted turn can still reply");
 ok(taintToleranceOf("notion__create_page") === "disclose", "taint: a connector write discloses on a tainted turn");
 ok(taintToleranceOf("notion__search") === undefined, "taint: a connector read is not taint-gated");
@@ -338,13 +338,13 @@ ok(taintToleranceOf("no_such_tool") === "refuse", "taint: an unknown name fails 
   const write = await resolveApproverChain(req("notion__create_page", { tainted: true }));
   ok(write.verdict === "ask" && write.transforms.length === 0, "taint: a tainted connector write was ALREADY ask — no taint arrow moved it");
 
-  const lowered = await resolveApproverChain(req("remember", { tainted: true }), { approvers: [approver("domain-lower", "allow")] });
+  const lowered = await resolveApproverChain(req("purge_memory", { tainted: true }), { approvers: [approver("domain-lower", "allow")] });
   ok(lowered.verdict === "allow", "taint: a tainted turn's CONFIG-LOWERED allow proceeds — the demoted arrow is really gone");
   ok(lowered.transforms.length === 0, "taint: …and no transform fired at all on that resolution");
-  const detail = chainAuditDetail(req("remember", { tainted: true }), lowered);
+  const detail = chainAuditDetail(req("purge_memory", { tainted: true }), lowered);
   ok(detail.tainted === true, "taint: …while the audit row still DISCLOSES the provenance (marking, not gating)");
 
-  const clean = await resolveApproverChain(req("remember", { tainted: false }), { approvers: [approver("domain-lower", "allow")] });
+  const clean = await resolveApproverChain(req("purge_memory", { tainted: false }), { approvers: [approver("domain-lower", "allow")] });
   ok(clean.verdict === "allow" && clean.transforms.length === 0, "taint: the untainted control resolves the same way");
 
   const grantedFire = await resolveApproverChain(

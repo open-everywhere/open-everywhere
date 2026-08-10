@@ -310,7 +310,7 @@ async function shadowRows(expectAtLeast = 1): Promise<{ detail?: Record<string, 
           })
         : Promise.resolve("VERDICT: allow\nREASON: late"),
   );
-  const timed = await runApprovalJudge(ctxOf("forget"), { enforce: true, timeoutMs: 40 });
+  const timed = await runApprovalJudge(ctxOf("purge_memory"), { enforce: true, timeoutMs: 40 });
   ok(timed.verdict === "defer" && timed.source === "timeout", "timeout: a hung transport defers (⇒ the last-resort ask) instead of wedging the turn");
   releaseScrutiny?.("YES");
   await new Promise((r) => setTimeout(r, 20));

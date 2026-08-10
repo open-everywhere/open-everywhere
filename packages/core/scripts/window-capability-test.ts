@@ -288,7 +288,7 @@ console.log("P0-f — per-channel STANDING seat is NARROWED (Stage C flip):");
 {
   const STANDING_KEPT = [
     "reply", "no_reply", "update_status", "react",
-    "remember", "forget",
+    "purge_memory",
     "create_routine", "subscribe_pr", "cancel_routine",
     "describe_image",
     "read_slack_channel", "read_slack_thread", "read_notion_page", "check_pr_status",

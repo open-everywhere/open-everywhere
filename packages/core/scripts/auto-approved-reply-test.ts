@@ -131,7 +131,7 @@ globalThis.fetch = (async () => {
     const schema = src.slice(src.indexOf("outputSchema: z.object({"), src.indexOf("}),", src.indexOf("outputSchema: z.object({")));
     ok(schema.includes("autoApproved:"), `${f}: DECLARES autoApproved on its outputSchema (an undeclared key is one the model may never be shown)`);
   }
-  ok(proposers.length >= 22, `the sweep saw every propose tool (${proposers.length} found)`);
+  ok(proposers.length >= 21, `the sweep saw every propose tool (${proposers.length} found)`);
 
   const cmds = readFileSync(new URL("../agent/commands/core.ts", import.meta.url).pathname, "utf8");
   ok((cmds.match(/posted\.autoApproved/g) ?? []).length >= 2, "commands/core.ts: both budget commands branch on the auto-approved result");
