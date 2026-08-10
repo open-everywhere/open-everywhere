@@ -8,7 +8,7 @@ export interface GatedToolEntry {
   approval?(ctx: any): any;
   toModelOutput?(output: any): any;
 }
-import { windowGrainOf, currentWakeId, deploymentOrg, FIRE_UNATTENDED_ATTR, type BindableContext, type WindowGrain } from "../identity/binding.js";
+import { bindFrom, windowGrainOf, currentWakeId, deploymentOrg, FIRE_UNATTENDED_ATTR, type BindableContext, type WindowGrain } from "../identity/binding.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
 import { classifySessionId } from "../channels/window-key.js";
 import { registerReplayModelProjection } from "./untrusted-projection.js";
@@ -16,7 +16,7 @@ import { WINDOW_GATED_TOOLS, withheldFromGrain, FULL_KIT } from "./window-gate-m
 import { allowedOnRestrictedJobWake, jobFireStamped, resolveJobWakePosture } from "./job-posture.js";
 import { isJobSession, jobWakeEscalated } from "./job-session-state.js";
 import { allowedOnLeanSeat, resolveLeanSeatPosture } from "./lean-seat.js";
-import { canDelegateFromSeat, resolveDmDelegationAnchor } from "./delegation-mount.js";
+import { canDelegateFromSeat } from "./delegation-mount.js";
 export { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, withheldFromGrain, checkWindowGateManifest, FULL_KIT } from "./window-gate-manifest.js";
 export type { WindowToolSource } from "./window-gate-manifest.js";
 
@@ -124,9 +124,18 @@ export async function grainBackstopAtExecute(
   throw new Error(refusal(grain));
 }
 
+function isDmFamilySeat(ctx: BindableContext): boolean {
+  try {
+    const mode = bindFrom(ctx).mode;
+    return mode === "dm" || mode === "mpim";
+  } catch {
+    return false;
+  }
+}
+
 function leanSeatWithholds(name: string, ctx: BindableContext): boolean {
   try {
-    if (allowedOnLeanSeat(name, resolveDmDelegationAnchor(ctx) !== undefined)) return false;
+    if (allowedOnLeanSeat(name, isDmFamilySeat(ctx))) return false;
     const attrs = ctx.session?.auth?.current?.attributes ?? ctx.session?.auth?.initiator?.attributes;
     const v = attrs?.[FIRE_UNATTENDED_ATTR];
     const unattended = (typeof v === "string" ? v : Array.isArray(v) ? v[0] : undefined) === "true";

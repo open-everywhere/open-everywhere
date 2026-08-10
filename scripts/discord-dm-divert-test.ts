@@ -190,17 +190,17 @@ async function run(msg: DiscordRelayMessage, opts: { noReceive?: boolean } = {})
   const surface = `discord/${USER}/${GROUP_DM_CHANNEL}`;
   eq(r.received[0]!.target.surfaceKey, surface, "…keyed on its OWN surface, so a group DM's window is fenced to the group DM and never to the 1:1");
   ok(r.received[0]!.target.token.startsWith(`oe-dom:${dmAnchorDomain(surface)}:oe-sup:g`), "…on its own pseudo-domain");
-  eq((r.received[0]!.target.origin as { dm?: boolean }).dm, true, "…with the same DM-variant origin (the codec's dmOrigin arm already accepted mpim)");
+  eq((r.received[0]!.target.origin as { dm?: boolean }).dm, true, "…with the same DM-variant origin the divert mints for a 1:1");
 }
 
 {
-  process.env.OE_DM_SEAT_ROTATION = "0";
+  process.env["OE_DM_SEAT_ROTATION"] = "0";
   try {
     const r = await run(dmMsg({ id: "5006" }));
-    eq(r.received.length, 0, "OE_DM_SEAT_ROTATION=0 diverts nothing");
-    eq(r.nativeSends.length, 1, "…the DM takes eve's native per-channel session instead — the fallback a deployment reaches without a redeploy");
+    eq(r.received.length, 1, "a STALE OE_DM_SEAT_ROTATION=0 no longer disables the DM window — the flag is gone, the divert is unconditional");
+    eq(r.nativeSends.length, 0, "…and the DM does NOT fall back to eve's native per-channel session");
   } finally {
-    delete process.env.OE_DM_SEAT_ROTATION;
+    delete process.env["OE_DM_SEAT_ROTATION"];
   }
 
   const noReceive = await run(dmMsg({ id: "5007" }), { noReceive: true });

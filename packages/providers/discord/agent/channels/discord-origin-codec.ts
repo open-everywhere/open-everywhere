@@ -24,9 +24,4 @@ export const discordWakeOriginCodec: WakeOriginCodec<DiscordOrigin> = {
       : { channelKey: noColon(`discord/${origin.guildId}/${origin.channelId}`), threadKey: noColon(origin.channelId) },
   isThreadScoped: () => false,
   containerId: (origin) => origin.channelId,
-  dmOrigin: (binding) => {
-    if (binding.mode !== "dm" && binding.mode !== "mpim") return undefined;
-    const channelId = binding.target?.["channelId"];
-    return typeof channelId === "string" && channelId.length > 0 ? { platform: "discord", channelId, dm: true } : undefined;
-  },
 };

@@ -26,13 +26,12 @@ import {
   taskWindowId,
 } from "../agent/channels/window-key.js";
 import { assertDomainsValid, defineDomain, domainForChannel } from "../agent/memory/domain.js";
-import { canDelegateFromSeat, resolveDmDelegationAnchor } from "../agent/access/delegation-mount.js";
+import { canDelegateFromSeat } from "../agent/access/delegation-mount.js";
 import { DM_SEAT_CARVE_IN, LEAN_SEAT_TOOLS, allowedOnLeanSeat, resolveLeanSeatPosture, restrictToolsetForLeanSeat } from "../agent/access/lean-seat.js";
 import { memoryRecallRouteFor } from "../agent/access/window-gate-manifest.js";
 import { workerOnlyTools } from "../agent/access/worker-capabilities.js";
 import { OE_ONESHOT_AGENT_ENV } from "../agent/access/delegation-flag.js";
-import { bindFrom, registerIdentityMapper } from "../agent/identity/binding.js";
-import { registerWakeOriginCodec } from "../agent/channels/wake-origin-codec.js";
+import { bindFrom } from "../agent/identity/binding.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
 let n = 0;
@@ -73,78 +72,6 @@ function seatCtx(opts: { channelId: string; channelType?: string; token?: string
 
 const DM_SURFACE_KEY = "slack/T1/D_ASKER";
 const DM_TOKEN = "slack:D_ASKER:oe-dm:g2";
-
-const TARGETY_PLATFORM = "oe-test-targety";
-const DM_FLAGGED_PLATFORM = "oe-test-dmflag";
-const ARMLESS_PLATFORM = "oe-test-armless";
-const NOCODEC_PLATFORM = "oe-test-nocodec";
-
-interface StubRaw {
-  readonly surface: string;
-  readonly mode: "dm" | "mpim" | "channel";
-  readonly target?: Record<string, unknown>;
-  readonly threadTs?: string;
-  readonly workspace?: string;
-}
-
-function stubCtx(platform: string, raw: StubRaw, token = ""): BindableContext {
-  return {
-    channel: { kind: platform, continuationToken: token },
-    session: {
-      id: `sess-${raw.surface}`,
-      auth: { current: { principalId: "U_STUB", attributes: { oe_platform: platform, oe_grain: "standing", stub_raw: JSON.stringify(raw) } } },
-    },
-  } as unknown as BindableContext;
-}
-
-for (const platform of [TARGETY_PLATFORM, DM_FLAGGED_PLATFORM, ARMLESS_PLATFORM, NOCODEC_PLATFORM]) {
-  registerIdentityMapper(platform, (c) => {
-    const a = (c.session?.auth?.current?.attributes ?? {}) as Record<string, string>;
-    const raw = JSON.parse(a["stub_raw"] ?? "{}") as StubRaw;
-    return {
-      workspace: raw.workspace ?? "W1",
-      surface: raw.surface,
-      mode: raw.mode,
-      visibility: "private",
-      trust: "internal",
-      trustVerified: true,
-      principalId: "U_STUB",
-      target: raw.target,
-      threadTs: raw.threadTs,
-    };
-  });
-}
-
-const registerStubCodec = (platform: string, codec: Record<string, unknown>): void =>
-  registerWakeOriginCodec(platform as "slack", codec as never);
-
-const stubDerivations = {
-  validate: () => true,
-  threadRef: (o: { channelId?: string; conversationId?: string }) => ({ channelKey: `stub/${o.channelId ?? o.conversationId}`, threadKey: `${o.channelId ?? o.conversationId}` }),
-  isThreadScoped: () => false,
-  containerId: (o: { channelId?: string; conversationId?: string }) => `${o.channelId ?? o.conversationId}`,
-};
-
-registerStubCodec(TARGETY_PLATFORM, {
-  ...stubDerivations,
-  dmOrigin: (b: { target?: Record<string, unknown> }) => {
-    const serviceUrl = b.target?.["serviceUrl"];
-    const conversationId = b.target?.["conversationId"];
-    return typeof serviceUrl === "string" && serviceUrl.length > 0 && typeof conversationId === "string" && conversationId.length > 0
-      ? { platform: TARGETY_PLATFORM, serviceUrl, conversationId }
-      : undefined;
-  },
-});
-
-registerStubCodec(DM_FLAGGED_PLATFORM, {
-  ...stubDerivations,
-  dmOrigin: (b: { target?: Record<string, unknown> }) => {
-    const channelId = b.target?.["channelId"];
-    return typeof channelId === "string" && channelId.length > 0 ? { platform: DM_FLAGGED_PLATFORM, channelId, dm: true } : undefined;
-  },
-});
-
-registerStubCodec(ARMLESS_PLATFORM, { ...stubDerivations });
 
 console.log("1. token grammar (dm anchor pseudo-domain):");
 {
@@ -202,74 +129,33 @@ console.log("2. reserved-namespace exclusivity:");
   }
 }
 
-console.log("3. anchor resolution:");
-await withEnv(OE_ONESHOT_AGENT_ENV, "1", () => {
-  const dm = seatCtx({ channelId: "D_ASKER", channelType: "im", token: DM_TOKEN });
-  const anchor = resolveDmDelegationAnchor(dm);
-  ok(anchor !== undefined, "a 1:1 DM root resolves a delegation anchor");
-  eq(anchor?.surfaceKey, DM_SURFACE_KEY, "…keyed on the DM's OWN partition surface key");
-  eq(anchor?.key.domain, dmAnchorDomain(DM_SURFACE_KEY), "…and its pseudo-domain is derived from exactly that key");
-  eq(anchor?.origin, { platform: "slack", channelId: "D_ASKER" }, "…with an origin derived from the binding by the platform's dmOrigin codec arm (no stored wake row — a DM has none)");
-  ok(canDelegateFromSeat(dm), "canDelegateFromSeat flips TRUE for a DM root — the OPE-301 lean filter narrows it from here with no edit of its own");
+console.log("3. delegation predicate (window token, no anchor):");
+{
+  const dmWindowSeat = seatCtx({ channelId: "D_ASKER", channelType: "im", token: `unified:${formatWindowToken(dmWindowKey(DM_SURFACE_KEY, 4))}` });
+  ok(canDelegateFromSeat(dmWindowSeat), "a first-class DM WINDOW seat can delegate — through the window arm, the only arm");
+  eq(memoryRecallRouteFor("standing", ["task"], true, canDelegateFromSeat(dmWindowSeat)), "agent", "…and the memory index names that real route");
 
-  const groupDm = seatCtx({ channelId: "G_TEAM", channelType: "mpim", token: "slack:G_TEAM:oe-dm:g1", userId: "U_SENDER" });
-  const groupAnchor = resolveDmDelegationAnchor(groupDm);
-  ok(groupAnchor !== undefined, "a GROUP DM root on a NATIVE token resolves an anchor — the same class of closed conversation");
-  eq(groupAnchor?.surfaceKey, "slack/T1/G_TEAM", "…on the group DM's own surface key");
-  eq((groupDm.session?.auth?.current?.attributes as Record<string, string>)["user_id"], "U_SENDER", "a group-DM turn's acting principal is the VERIFIED SENDER (host-stamped), which is what the worker inherits — never the room");
+  const dmNativeSeat = seatCtx({ channelId: "D_ASKER", channelType: "im", token: DM_TOKEN });
+  ok(!canDelegateFromSeat(dmNativeSeat), "a DM on a NATIVE token CANNOT delegate — the OPE-306 anchor arm is gone (OPE-368), so a seat with no window token has no route");
+  eq(memoryRecallRouteFor("standing", ["task"], true, canDelegateFromSeat(dmNativeSeat)), "none", "…and the memory index says \"none\" rather than naming a verb that would throw");
+  eq(resolveLeanSeatPosture({ grain: "standing", canDelegate: canDelegateFromSeat(dmNativeSeat), unattendedFire: false }), "full", "…and the lean filter leaves it WHOLE — a seat that cannot delegate keeps what it would have delegated (access/lean-seat.ts property 1)");
+  const groupNativeSeat = seatCtx({ channelId: "G_TEAM", channelType: "mpim", token: "slack:G_TEAM:oe-dm:g1", userId: "U_SENDER" });
+  ok(!canDelegateFromSeat(groupNativeSeat), "…and a GROUP DM on a native token is the same answer (the anchor served both, and serves neither now)");
 
-  const threaded = resolveDmDelegationAnchor(seatCtx({ channelId: "D_ASKER", channelType: "im", token: DM_TOKEN, threadTs: "1720.5" }));
-  eq(threaded?.origin, { platform: "slack", channelId: "D_ASKER", threadTs: "1720.5" }, "a threaded DM turn carries its thread anchor into the origin, so the worker answers in the same thread");
+  ok(!canDelegateFromSeat(seatCtx({ channelId: "C1", channelType: "channel", token: "slack:C1:oe-sup:g1" })), "a per-container CHANNEL standing root still cannot delegate (OPE-299, unchanged)");
 
-  eq(resolveDmDelegationAnchor(seatCtx({ channelId: "C1", channelType: "channel", token: "slack:C1:oe-sup:g1" })), undefined, "a CHANNEL standing root is not a DM anchor");
-  eq(
-    resolveDmDelegationAnchor(seatCtx({ channelId: "D_ASKER", channelType: "im", token: `unified:${formatWindowToken({ domain: "payments", windowId: "payments", generation: 3 })}` })),
-    undefined,
-    "a seat that HAS a window token is never an anchor — the real window always wins",
-  );
-  eq(resolveDmDelegationAnchor({} as BindableContext), undefined, "an unreadable ctx resolves nothing (fail-closed — a mount predicate may not invent a seat)");
-  eq(
-    resolveDmDelegationAnchor(stubCtx(ARMLESS_PLATFORM, { surface: "D_ARMLESS", mode: "dm" })),
-    undefined,
-    "a DM on a platform whose codec has NO dmOrigin arm resolves nothing: omission is the fail-closed default",
-  );
-  eq(
-    resolveDmDelegationAnchor(stubCtx(NOCODEC_PLATFORM, { surface: "D_NONE", mode: "dm" })),
-    undefined,
-    "…and so does a platform with no registered codec AT ALL (the registry miss is the same fail-closed answer)",
-  );
+  ok(canDelegateFromSeat(seatCtx({ channelId: "D_ASKER", channelType: "im", token: "" })), "a BLANK token fails OPEN — no readable identity is the §S3 degradation, not a \"not a window seat\" signal");
+  ok(canDelegateFromSeat({} as BindableContext), "…and so does a wholly unreadable ctx");
+}
 
-  {
-    const RAW_CONV = "19:1on1-frank@thread.v2;messageid=99";
-    const ctx = stubCtx(TARGETY_PLATFORM, { surface: RAW_CONV, mode: "dm", target: { serviceUrl: "https://svc.example/", conversationId: RAW_CONV } });
-    const anchor = resolveDmDelegationAnchor(ctx);
-    ok(anchor !== undefined, "a conversation-reference platform's DM root resolves an anchor (the OPE-315 parity landing)");
-    eq(anchor?.origin, { platform: TARGETY_PLATFORM, serviceUrl: "https://svc.example/", conversationId: RAW_CONV }, "…with the RAW conversation id off `target` — the address the reply actually needs");
-    ok(anchor?.surfaceKey.includes(RAW_CONV) === false, "…and the surfaceKey is the SANITISED one, which is exactly why the origin could not have come from it");
-    eq(resolveDmDelegationAnchor(stubCtx(TARGETY_PLATFORM, { surface: RAW_CONV, mode: "dm" })), undefined, "…and WITHOUT a target the same DM resolves nothing — the plumbing is load-bearing, not decorative");
-  }
-
-  {
-    const dmCtx = stubCtx(DM_FLAGGED_PLATFORM, { surface: "D_DM", mode: "dm", target: { channelId: "D_DM" } });
-    const anchor = resolveDmDelegationAnchor(dmCtx);
-    eq(anchor?.origin, { platform: DM_FLAGGED_PLATFORM, channelId: "D_DM", dm: true }, "a discriminated DM-variant origin rides through the resolver with its discriminant intact");
-    eq(anchor?.surfaceKey, `${DM_FLAGGED_PLATFORM}/W1/D_DM`, "…anchored on the DM's OWN surface key (the pseudo-domain is surface-derived on every platform alike)");
-    ok(canDelegateFromSeat(dmCtx), "…so a DM root on a variant platform can delegate, exactly like a Slack one");
-    ok(resolveDmDelegationAnchor(stubCtx(DM_FLAGGED_PLATFORM, { surface: "G_GRP", mode: "mpim", target: { channelId: "G_GRP" } })) !== undefined, "…and so does a group DM (mpim)");
-    eq(resolveDmDelegationAnchor(stubCtx(DM_FLAGGED_PLATFORM, { surface: "C_ENG", mode: "channel", target: { channelId: "C_ENG" } })), undefined, "…while a CHANNEL binding on that same platform resolves nothing");
-  }
-
-  eq(memoryRecallRouteFor("standing", ["task"], true, canDelegateFromSeat(dm)), "agent", "the memory index now names a REAL route on a DM seat (it said \"none\" before — the honest dead end OPE-299 wrote)");
-  eq(memoryRecallRouteFor("standing", ["task"], true, false), "none", "…and still says \"none\" for a seat with no route at all");
-});
-
-await withEnv(OE_ONESHOT_AGENT_ENV, "0", () => {
-  const dm = seatCtx({ channelId: "D_ASKER", channelType: "im", token: DM_TOKEN });
-  ok(resolveDmDelegationAnchor(dm) !== undefined, "the RESOLVER itself is flag-free (it is a pure identity question)");
-  ok(!canDelegateFromSeat(dm), "but canDelegateFromSeat's DM arm is FLAG-GATED: flag-OFF a DM root still cannot delegate — the anchor widened `agent`'s wall, NOT spawn_task's, so mounting there would be the dead affordance OPE-299 removed");
-  eq(memoryRecallRouteFor("standing", ["task"], false, canDelegateFromSeat(dm)), "none", "…so the flag-off memory index is byte-identical to before");
-  eq(resolveLeanSeatPosture({ grain: "standing", canDelegate: canDelegateFromSeat(dm), unattendedFire: false }), "full", "…and the flag-off lean filter still leaves a DM seat whole");
-});
+for (const flag of ["1", "0"]) {
+  await withEnv(OE_ONESHOT_AGENT_ENV, flag, () => {
+    const win = seatCtx({ channelId: "D_ASKER", channelType: "im", token: `unified:${formatWindowToken(dmWindowKey(DM_SURFACE_KEY, 4))}` });
+    const native = seatCtx({ channelId: "D_ASKER", channelType: "im", token: DM_TOKEN });
+    ok(canDelegateFromSeat(win), `OE_ONESHOT_AGENT=${flag}: a DM WINDOW seat delegates`);
+    ok(!canDelegateFromSeat(native), `OE_ONESHOT_AGENT=${flag}: a NATIVE-token DM does not — the predicate has no flag-gated arm left`);
+  });
+}
 
 console.log("4. inherit-never-escalate:");
 {
@@ -348,8 +234,7 @@ await withEnv(OE_ONESHOT_AGENT_ENV, "1", () => {
 
   eq(bindFrom(mpimSeat).mode, "mpim", "🔴 a first-classed group DM still binds mode `mpim` — the divert stamps channel_type on the wake auth, so the mode is invariant across the re-seat even though the token is not");
 
-  eq(resolveDmDelegationAnchor(mpimSeat), undefined, "…and it is NO LONGER a delegation ANCHOR: the real window wins, so `resolveDmDelegationAnchor` is not a 'is this a DM?' predicate for it either");
-  ok(canDelegateFromSeat(mpimSeat), "…while it CAN still delegate — through the window arm now, not the anchor arm (the affordance moved, it did not disappear)");
+  ok(canDelegateFromSeat(mpimSeat), "a first-classed group DM delegates through the WINDOW arm — the affordance moved off the retired anchor, it did not disappear");
 
   const dmSeatBit = bindFrom(mpimSeat).mode === "dm" || bindFrom(mpimSeat).mode === "mpim";
   ok(dmSeatBit, "the hooks/lean-seat.ts DM bit (mode-keyed) is TRUE for the group-DM window seat");
@@ -363,4 +248,4 @@ await withEnv(OE_ONESHOT_AGENT_ENV, "1", () => {
   ok(dmAnchorSurfaceForToken(mpimSeat.channel!.continuationToken) !== DM_SURFACE_KEY, "…never a 1:1 DM's surface in the same workspace");
 });
 
-console.log(`\n✓ dm-delegation: ${n} assertions passed (OPE-306 token grammar · namespace exclusivity · anchor resolution · inherit-never-escalate · lean-seat interplay · OPE-351 fences · stage-4 group-DM window composition)`);
+console.log(`\n✓ dm-delegation: ${n} assertions passed (OPE-306 token grammar · namespace exclusivity · delegation predicate (window-only, no anchor) · inherit-never-escalate · lean-seat interplay · OPE-351 fences · stage-4 group-DM window composition)`);

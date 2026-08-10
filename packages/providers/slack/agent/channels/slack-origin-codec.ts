@@ -13,5 +13,4 @@ export const slackWakeOriginCodec: WakeOriginCodec<SlackOrigin> = {
   threadRef: (origin) => ({ channelKey: noColon(`slack/${origin.channelId}`), threadKey: noColon(origin.threadTs ?? origin.channelId) }),
   isThreadScoped: (origin) => typeof origin.threadTs === "string" && origin.threadTs.length > 0,
   containerId: (origin) => origin.channelId,
-  dmOrigin: (binding) => (binding.surface.length > 0 ? { platform: "slack", channelId: binding.surface, ...(binding.threadTs ? { threadTs: binding.threadTs } : {}) } : undefined),
 };

@@ -87,7 +87,6 @@ async function runFront(
   opts: {
     seat?: { token: string; generation: number; freshGeneration: boolean; handoffNote: string | null };
     seatThrows?: boolean;
-    dmSeatEnabled?: boolean;
     partnerTrust?: "internal" | "external";
     dedupe?: EventDedupe;
     fifo?: SpyFifo;
@@ -123,7 +122,6 @@ async function runFront(
       getBotIdentity: async () => ({ userId: "UBOT" }),
       fifo,
       ...(opts.dedupe ? { dedupe: opts.dedupe } : {}),
-      ...(opts.dmSeatEnabled === false ? { dmSeatEnabled: () => false } : {}),
       dmPartnerTrustFor: async () => {
         partnerLookups++;
         return opts.partnerTrust;
@@ -308,10 +306,14 @@ async function runFront(
 }
 
 {
-  const r = await runFront(dmEnvelope("Ev10"), { dmSeatEnabled: false });
-  ok(r.innerCalled, "with DM-seat rotation disabled a DM forwards to eve's native dispatch — the fallback a deployment can reach without a redeploy");
-  eq(r.dispatched.length, 0, "…and nothing is diverted");
-  eq(await r.res.text(), "inner", "…the native handler's response is returned verbatim");
+  process.env["OE_DM_SEAT_ROTATION"] = "0";
+  try {
+    const r = await runFront(dmEnvelope("Ev10"));
+    ok(!r.innerCalled, "a STALE OE_DM_SEAT_ROTATION=0 no longer forwards a DM to eve's native dispatch — the flag is gone, the divert is unconditional");
+    eq(r.dispatched.length, 1, "…the DM still diverts into its own window seat");
+  } finally {
+    delete process.env["OE_DM_SEAT_ROTATION"];
+  }
 }
 
 {
@@ -395,9 +397,15 @@ async function runFront(
 }
 
 {
-  const r = await runFront(mentionEnvelope("Ev12d", MPIM_CHANNEL), { dmSeatEnabled: false });
-  ok(r.innerCalled, "with DM-seat rotation disabled the group DM's mention forwards natively, like every other pre-OPE-351 path");
-  eq(r.factsLookups.length, 0, "…and the Slack lookup is skipped entirely — the escape hatch costs nothing");
+  process.env["OE_DM_SEAT_ROTATION"] = "0";
+  try {
+    const r = await runFront(mentionEnvelope("Ev12d", MPIM_CHANNEL));
+    ok(!r.innerCalled, "a STALE OE_DM_SEAT_ROTATION=0 no longer forwards a group DM's mention natively — the mention leg's hatch went with the message leg's");
+    eq(r.dispatched.length, 1, "…the mention still diverts into the mpim window seat");
+    eq(r.factsLookups[0], MPIM_CHANNEL, "…and the `conversations.info` read still runs on this channel, because that read (not a flag) is what proves the mention is an mpim");
+  } finally {
+    delete process.env["OE_DM_SEAT_ROTATION"];
+  }
 }
 
 {
@@ -417,4 +425,4 @@ async function runFront(
   );
 }
 
-console.log(`✓ slack-dm-divert: ${n} assertions passed (classification, window token + fence, addressing, DM auth attrs, dm envelope, handoff context, bot/dedupe/fail-closed/escape-hatch, group-DM divert + mention leg + sibling suppression)`);
+console.log(`✓ slack-dm-divert: ${n} assertions passed (classification, window token + fence, addressing, DM auth attrs, dm envelope, handoff context, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression)`);

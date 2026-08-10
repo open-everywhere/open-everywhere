@@ -58,7 +58,6 @@ import {
   isAllowedDriver,
   getOrCreateDmSeat,
   touchDmSeat,
-  dmSeatRotationEnabled,
   buildIngestedReaction,
   ingestReaction,
   liveReactionSink,
@@ -933,7 +932,7 @@ export async function dispatchTurn(
     return;
   }
 
-  if (isDm && receive && dmSeatRotationEnabled()) {
+  if (isDm && receive) {
     if (statusUxEnabled()) await setDiscordReaction(msg.channelId, msg.id, EYES_EMOJI, "PUT");
     await divertDiscordDmToWindow({ msg, auth, partition, receive });
     await appendAudit({

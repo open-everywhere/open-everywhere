@@ -244,11 +244,14 @@ const memCfg: MemoryResolveConfig = {
 }
 
 {
-  const arm = teamsWakeOriginCodec.dmOrigin;
-  ok(typeof arm === "function", "F: the teams codec REGISTERS a dmOrigin arm (the OPE-315 parity landing)");
-
   const RAW_CONV = "19:1on1-frank@thread.v2;messageid=99";
   const GOOD_URL = "https://smba.trafficmanager.net/uk/";
+
+  ok(
+    (teamsWakeOriginCodec as { dmOrigin?: unknown }).dmOrigin === undefined,
+    "F: the teams codec no longer carries a `dmOrigin` arm — OPE-368 removed the DM delegation anchor it fed, so nothing mints an origin from a binding",
+  );
+
   const { binding: dmBinding } = dispatch({
     userId: "29:user-frank",
     tenantId: "TENANT_ACME",
@@ -256,35 +259,17 @@ const memCfg: MemoryResolveConfig = {
     serviceUrl: GOOD_URL,
     scope: "personal",
   });
-  ok(dmBinding.mode === "dm", "F: the fixture really is a dm-mode binding");
-  ok(dmBinding.target?.["conversationId"] === RAW_CONV, "F: the binding's TARGET carries the RAW conversation id (unsanitised through bindFrom)");
-  ok(dmBinding.surface !== RAW_CONV, "F: …while `surface` is seg()-sanitised — which is exactly why the arm may not read it");
+  ok(dmBinding.mode === "dm", "F: a personal-chat activity still binds mode `dm`");
+  ok(dmBinding.target?.["conversationId"] === RAW_CONV, "F: the binding's TARGET carries the RAW conversation id (unsanitised through bindFrom) — what the DM divert addresses its window with");
+  ok(dmBinding.surface !== RAW_CONV, "F: …while `surface` is seg()-sanitised, so it never was and never is an address");
 
-  const slice = { surface: dmBinding.surface, threadTs: dmBinding.threadTs, mode: "dm" as const, target: dmBinding.target };
-  const minted = arm?.(slice);
-  ok(
-    JSON.stringify(minted) === JSON.stringify({ platform: "teams", serviceUrl: GOOD_URL, conversationId: RAW_CONV }),
-    "F: the arm mints {platform, serviceUrl, conversationId} straight off the target — no replyToActivityId (a personal chat has no reply chain), no tenantId (audit-only)",
-  );
-  ok(minted !== undefined && teamsWakeOriginCodec.validate(minted as unknown as Record<string, unknown>), "F: the minted origin passes the STORED-ROW validator unchanged (one shape, one contract)");
-
-  const diverged = arm?.({ surface: "some-other-sanitised-surface", mode: "dm", target: { serviceUrl: GOOD_URL, conversationId: RAW_CONV } });
-  ok(diverged?.conversationId === RAW_CONV, "F: the arm reads the TARGET, never the surface (pinned by diverging the two)");
-
-  const groupMint = arm?.({ surface: "19-groupchat-thread.v2", mode: "mpim", target: { serviceUrl: GOOD_URL, conversationId: "19:groupchat@thread.v2" } });
-  ok(groupMint?.conversationId === "19:groupchat@thread.v2", "F: a GROUP chat (mpim) resolves an anchor too");
-
-  ok(arm?.({ surface: "s", mode: "dm" }) === undefined, "F: NO target at all ⇒ undefined");
-  ok(arm?.({ surface: "s", mode: "dm", target: { serviceUrl: GOOD_URL } }) === undefined, "F: missing conversationId ⇒ undefined");
-  ok(arm?.({ surface: "s", mode: "dm", target: { serviceUrl: GOOD_URL, conversationId: "" } }) === undefined, "F: BLANK conversationId ⇒ undefined");
-  ok(arm?.({ surface: "s", mode: "dm", target: { conversationId: RAW_CONV } }) === undefined, "F: missing serviceUrl ⇒ undefined");
-  ok(arm?.({ surface: "s", mode: "dm", target: { serviceUrl: "", conversationId: RAW_CONV } }) === undefined, "F: BLANK serviceUrl ⇒ undefined");
-  ok(arm?.({ surface: "s", mode: "dm", target: { serviceUrl: 5, conversationId: RAW_CONV } }) === undefined, "F: non-string serviceUrl ⇒ undefined");
-  ok(arm?.({ surface: "s", mode: "dm", target: { serviceUrl: GOOD_URL, conversationId: 5 } }) === undefined, "F: non-string conversationId ⇒ undefined");
-  ok(arm?.({ surface: "s", mode: "dm", target: { serviceUrl: "https://evil.example/api", conversationId: RAW_CONV } }) === undefined, "F/T1: an UN-ALLOWLISTED https host ⇒ no anchor (fail closed at MINT, not at reply)");
-  ok(arm?.({ surface: "s", mode: "dm", target: { serviceUrl: "http://smba.trafficmanager.net/uk/", conversationId: RAW_CONV } }) === undefined, "F/T1: plain http ⇒ no anchor");
-  ok(arm?.({ surface: "s", mode: "dm", target: { serviceUrl: "https://smba.trafficmanager.net.evil.example/", conversationId: RAW_CONV } }) === undefined, "F/T1: a lookalike-SUFFIX host ⇒ no anchor");
-  ok(arm?.({ surface: "s", mode: "channel" as unknown as "dm", target: { serviceUrl: GOOD_URL, conversationId: RAW_CONV } }) === undefined, "F: a CHANNEL mode ⇒ no anchor (the arm refuses on its own account)");
+  const v = (serviceUrl: unknown): boolean => teamsWakeOriginCodec.validate({ serviceUrl, conversationId: RAW_CONV });
+  ok(v(GOOD_URL), "F/T1: a real Bot Connector host validates (the refusals below are host-specific, not blanket)");
+  ok(!v("https://evil.example/api"), "F/T1: an UN-ALLOWLISTED https host is refused at the stored-row validator");
+  ok(!v("http://smba.trafficmanager.net/uk/"), "F/T1: plain http is refused");
+  ok(!v("https://smba.trafficmanager.net.evil.example/"), "F/T1: a lookalike-SUFFIX host is refused (the allowlist is dot-anchored, not substring)");
+  ok(!v(""), "F/T1: a blank serviceUrl is refused");
+  ok(!v(5), "F/T1: a non-string serviceUrl is refused");
 }
 
 {
@@ -405,16 +390,16 @@ const memCfg: MemoryResolveConfig = {
   ok(channel.plan === 1, "H2: …it reaches planFor (the shared single-window path), unchanged");
   ok(channel.forward === 1, "H2: …and forwards here because this fixture's planFor returns null (byte-identical native fallback)");
 
-  const prev = process.env.OE_DM_SEAT_ROTATION;
-  process.env.OE_DM_SEAT_ROTATION = "0";
+  const prev = process.env["OE_DM_SEAT_ROTATION"];
+  process.env["OE_DM_SEAT_ROTATION"] = "0";
   try {
-    const off = await run(activityBody("personal"));
-    ok(off.dm === 0, "H2: with OE_DM_SEAT_ROTATION=0 the DM does NOT divert (fail-closed to native)");
-    ok(off.plan === 1 && off.forward === 1, "H2: …it takes the ordinary planFor→forward native path, byte-identical to pre-OPE-357");
+    const stale = await run(activityBody("personal"));
+    ok(stale.dm === 1, "H2: a STALE OE_DM_SEAT_ROTATION=0 in the env no longer disables the DM window — the flag is gone, the divert is unconditional");
+    ok(stale.plan === 0 && stale.forward === 0, "H2: …and it still never consults planFor nor forwards to the native path");
   } finally {
-    if (prev === undefined) delete process.env.OE_DM_SEAT_ROTATION;
-    else process.env.OE_DM_SEAT_ROTATION = prev;
+    if (prev === undefined) delete process.env["OE_DM_SEAT_ROTATION"];
+    else process.env["OE_DM_SEAT_ROTATION"] = prev;
   }
 }
 
-console.log(`✓ teams: ${passed} assertions passed (activity → REAL bindFrom/partition/memory; fail-closed visibility + trust; DM delegation anchor + the mid-turn host allowlist; OPE-357 first-class DM window divert)`);
+console.log(`✓ teams: ${passed} assertions passed (activity → REAL bindFrom/partition/memory; fail-closed visibility + trust; the retired DM anchor + the surviving host allowlist; OPE-357 first-class DM window divert, unconditional since OPE-368)`);

@@ -29,7 +29,6 @@ import {
   appendAudit,
   getOrCreateDmSeat,
   touchDmSeat,
-  dmSeatRotationEnabled,
   renderWake,
   mintWakeId,
   type SupervisorGrain,
@@ -300,7 +299,7 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
       return forward();
     }
 
-    if ((activity.scope === "personal" || activity.scope === "groupChat") && dmSeatRotationEnabled()) {
+    if (activity.scope === "personal" || activity.scope === "groupChat") {
       if (activity.from.id === activity.recipient.id || activity.from.role === "bot" || activity.from.id.startsWith("28:")) {
         return OK();
       }

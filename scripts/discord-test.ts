@@ -163,23 +163,11 @@ function dispatch(input: {
 }
 
 {
-  const arm = discordWakeOriginCodec.dmOrigin;
-  ok(typeof arm === "function", "I: the discord codec REGISTERS a dmOrigin arm");
-
-  const { binding: dmBinding } = dispatch({ userId: "U_bob", channelId: "D_bob", channelType: "1" });
-  const minted = arm?.({ surface: dmBinding.surface, mode: "dm", target: dmBinding.target });
-  ok(JSON.stringify(minted) === JSON.stringify({ platform: "discord", channelId: "D_bob", dm: true }), "I: mints the DM VARIANT from target.channelId — a positive dm:true, never a guildless guild-shape");
-  ok(discordWakeOriginCodec.validate(minted as unknown as Record<string, unknown>), "I: …and the minted origin is exactly what the validator's DM branch admits");
-  const { binding: groupBinding } = dispatch({ userId: "U_bob", channelId: "G_grp", channelType: "3" });
-  ok(groupBinding.mode === "mpim" && arm?.({ surface: groupBinding.surface, mode: "mpim", target: groupBinding.target })?.channelId === "G_grp", "I: a GROUP DM (type 3 ⇒ mpim) resolves an anchor too");
-
-  const { binding: chanBinding } = dispatch({ userId: "U_alice", guildId: "G_ACME", channelId: "C_ENG", channelType: "0" });
-  ok(chanBinding.mode === "channel", "I: the guild fixture really is channel-mode");
-  ok(arm?.({ surface: chanBinding.surface, mode: "channel" as unknown as "dm", target: chanBinding.target }) === undefined, "I: a CHANNEL binding yields NO anchor");
-  ok(arm?.({ surface: "D_x", mode: "dm" }) === undefined, "I: no target ⇒ no anchor (sourced from `target`, never from `surface`)");
-  ok(arm?.({ surface: "D_x", mode: "dm", target: {} }) === undefined, "I: a target with no channelId ⇒ no anchor");
-  ok(arm?.({ surface: "D_x", mode: "dm", target: { channelId: "" } }) === undefined, "I: a BLANK channelId ⇒ no anchor");
-  ok(arm?.({ surface: "D_x", mode: "dm", target: { channelId: 5 } }) === undefined, "I: a non-string channelId ⇒ no anchor");
+  ok(discordWakeOriginCodec.validate({ channelId: "D_bob", dm: true }), "I: the DM variant the divert mints is exactly what the validator's DM branch admits");
+  ok(
+    (discordWakeOriginCodec as { dmOrigin?: unknown }).dmOrigin === undefined,
+    "I: the codec no longer carries a `dmOrigin` arm — OPE-368 removed the DM delegation anchor it fed, so nothing mints an origin from a binding",
+  );
 
   const v = (o: Record<string, unknown>): boolean => discordWakeOriginCodec.validate(o);
   ok(v({ channelId: "C1", guildId: "G1" }), "I/XOR: the GUILD shape is unchanged — non-empty guildId, no dm");

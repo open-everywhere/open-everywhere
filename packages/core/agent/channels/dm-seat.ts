@@ -5,10 +5,6 @@ import { recordHandoffNoteLoss } from "../model/rotation-handoff.js";
 import { dmSeatRegistryKey, dmWindowKey, formatWindowToken, saltSupervisorGeneration } from "./window-key.js";
 import { dmWindowRegistryKey } from "./unified-supervisor.js";
 
-export function dmSeatRotationEnabled(): boolean {
-  return (process.env.OE_DM_SEAT_ROTATION ?? "1") !== "0";
-}
-
 export const DM_SEAT_ROTATE_EXPIRY_MS = rotationClockMsFromDays(process.env.OE_DM_SEAT_ROTATE_EXPIRY_DAYS, 30);
 
 export const DM_SEAT_ROTATE_TURN_BUDGET = Number(process.env.OE_DM_SEAT_ROTATE_TURN_BUDGET) || 50;

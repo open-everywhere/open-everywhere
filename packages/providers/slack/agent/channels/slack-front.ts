@@ -30,7 +30,6 @@ import {
   ThreadFifo,
   getOrCreateDmSeat as liveGetOrCreateDmSeat,
   touchDmSeat as liveTouchDmSeat,
-  dmSeatRotationEnabled,
   dmSeatThresholds,
   resolvePartition,
   isThreadEngaged,
@@ -260,7 +259,6 @@ export interface FrontOptions {
   readonly handleSetKeyViewSubmission?: (payload: unknown) => Promise<SetKeyViewResult>;
   readonly handleConnectClick?: (payload: unknown) => Promise<boolean>;
   readonly mentionPolicyFor?: (channelId: string, surfaceKey: string) => Promise<SingleWindowMentionPolicy>;
-  readonly dmSeatEnabled?: () => boolean;
   readonly resolveDmSeat?: (org: string, dm: { surfaceKey: string; channelId?: string; legacyChannelId?: string }, atIso: string) => Promise<DmSeat>;
   readonly touchDmSeatFn?: (org: string, dmSurfaceKey: string, atIso: string) => Promise<void>;
   readonly dmPartnerTrustFor?: (userId: string, teamId: string | undefined) => Promise<"internal" | "external" | undefined>;
@@ -377,7 +375,6 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const handleConnectClick = opts.handleConnectClick ?? liveHandleConnectClick;
   const ambientEnabledFor = opts.ambientEnabledFor ?? ((surfaceKey: string) => ambientSupervisorEnabled(surfaceKey, getConfig().loadDomains()));
   const mentionPolicyFor = opts.mentionPolicyFor ?? slackSingleWindowMentionPolicy;
-  const dmSeatEnabled = opts.dmSeatEnabled ?? dmSeatRotationEnabled;
   const resolveDmSeat =
     opts.resolveDmSeat ??
     ((org, dm, atIso) =>
@@ -514,10 +511,6 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     }
 
     if (decision.kind === "dm-wake") {
-      if (!dmSeatEnabled()) {
-        const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
-        return innerHandler(forwarded, args);
-      }
       const dev = parseMessageEvent(decision.env);
       if (!dev || dev.botId) return OK();
       if (decision.dmKind === "mpim") {
@@ -554,7 +547,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         scheduleUnownedWake(mev, "single-window-mention", true);
         return OK();
       }
-      if (mev && dmSeatEnabled()) {
+      if (mev) {
         const mentionChannelType = await channelFactsFor(mev.channelId)
           .then((f) => f.channelType)
           .catch(() => undefined);

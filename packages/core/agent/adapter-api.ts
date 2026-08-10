@@ -423,7 +423,7 @@ export { getProvider, providerById } from "./memory/provider.js";
 export { upsertUnderSection } from "./memory/markdown.js";
 export { planFor } from "./memory/resolve.js";
 
-export { getOrCreateDmSeat, touchDmSeat, dmSeatRotationEnabled, dmSeatThresholds } from "./channels/dm-seat.js";
+export { getOrCreateDmSeat, touchDmSeat, dmSeatThresholds } from "./channels/dm-seat.js";
 export type { DmSeat } from "./channels/dm-seat.js";
 
 export { divertInboundToUnifiedWindow } from "./channels/unified.js";
