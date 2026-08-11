@@ -15,7 +15,7 @@ import {
   getOperationalStore,
   bootVerifyAuditChainTail,
   bootBackfillLinkTenants,
-  registerOperationalPglite,
+  registerOperationalPgliteLazy,
   onVercel,
   declareProviderSelection,
   assertConnectorMemoryGrants,
@@ -67,24 +67,27 @@ if (
   await registerNeon();
 }
 
-if (
+const pgliteFloorArmed =
   !process.env.OE_OPERATIONAL_PROVIDER &&
   !process.env.DATABASE_URL &&
-  (!onVercel() || process.env.OE_ALLOW_EPHEMERAL_OPERATIONAL === "1")
-) {
-  await registerOperationalPglite();
+  (!onVercel() || process.env.OE_ALLOW_EPHEMERAL_OPERATIONAL === "1");
+if (pgliteFloorArmed) {
+  registerOperationalPgliteLazy(undefined, runBootStoreChecks);
 }
 
 registerAuditDropCounter((action, platform) => emitTelemetry("oe.audit.dropped", { "oe.action": action, "oe.platform": platform }));
 
 setBlobPutter(vercelBlobPutter);
 
-try {
-  await bootVerifyAuditChainTail(getOperationalStore());
-} catch {
+async function runBootStoreChecks(): Promise<void> {
+  try {
+    await bootVerifyAuditChainTail(getOperationalStore());
+  } catch {
+  }
+  try {
+    await bootBackfillLinkTenants();
+  } catch {
+  }
 }
 
-try {
-  await bootBackfillLinkTenants();
-} catch {
-}
+if (!pgliteFloorArmed) await runBootStoreChecks();

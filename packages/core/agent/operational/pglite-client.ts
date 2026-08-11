@@ -70,6 +70,16 @@ function installReleaseHook(): void {
   }
 }
 
+function liveLockError(dir: string, lockPath: string, existing: LockContent): Error {
+  return new Error(
+    `operational pglite floor: data dir "${dir}" is LOCKED by a LIVE process (PID ${existing.pid}, ` +
+      `since ${existing.acquiredAt || "unknown"}). PGlite has NO cross-process lock — opening it from a ` +
+      "second process would corrupt the data dir unrecoverably. Refusing to boot. Stop the other " +
+      `instance, or point this one at a different OE_PGLITE_DIR / at hosted Postgres (DATABASE_URL). ` +
+      `If PID ${existing.pid} is genuinely dead, remove ${lockPath} by hand.`,
+  );
+}
+
 export function acquirePgliteLock(dir: string): void {
   const lockPath = pgliteLockPath(dir);
   mkdirSync(dirname(lockPath), { recursive: true });
@@ -81,15 +91,7 @@ export function acquirePgliteLock(dir: string): void {
       installReleaseHook();
       return;
     }
-    if (pidIsLive(existing.pid)) {
-      throw new Error(
-        `operational pglite floor: data dir "${dir}" is LOCKED by a LIVE process (PID ${existing.pid}, ` +
-          `since ${existing.acquiredAt || "unknown"}). PGlite has NO cross-process lock — opening it from a ` +
-          "second process would corrupt the data dir unrecoverably. Refusing to boot. Stop the other " +
-          `instance, or point this one at a different OE_PGLITE_DIR / at hosted Postgres (DATABASE_URL). ` +
-          `If PID ${existing.pid} is genuinely dead, remove ${lockPath} by hand.`,
-      );
-    }
+    if (pidIsLive(existing.pid)) throw liveLockError(dir, lockPath, existing);
     console.warn(
       `[open-everywhere:operational] ⚠ replacing a STALE pglite lock at ${lockPath} ` +
         `(PID ${existing.pid} is no longer running — likely a kill -9'd previous instance).`,
@@ -111,7 +113,7 @@ export function releasePgliteLock(dir: string): void {
 }
 
 async function loadPglite(): Promise<new (dataDir?: string) => PGlite> {
-  const pkg = "@electric-sql/pglite";
+  const pkg = ["@electric-sql", "pglite"].join("/");
   const mod = (await import(pkg)) as { PGlite: new (dataDir?: string) => PGlite };
   return mod.PGlite;
 }
@@ -150,4 +152,32 @@ export async function registerOperationalPglite(dir = pgliteOperationalDataDir()
   const { client } = await openOperationalPglite(dir);
   await initOperationalSchema(client);
   return registerOperationalPostgres(client);
+}
+
+export function registerOperationalPgliteLazy(
+  dir = pgliteOperationalDataDir(),
+  onFirstOpen?: () => void | Promise<void>,
+): OperationalStore {
+  const preexisting = readLock(pgliteLockPath(dir));
+  if (preexisting && preexisting.pid !== process.pid && pidIsLive(preexisting.pid)) {
+    throw liveLockError(dir, pgliteLockPath(dir), preexisting);
+  }
+
+  let opening: Promise<PgClient> | null = null;
+  const open = async (): Promise<PgClient> => {
+    opening ??= (async () => {
+      const { client } = await openOperationalPglite(dir);
+      await initOperationalSchema(client);
+      void (async () => {
+        try {
+          await onFirstOpen?.();
+        } catch {
+        }
+      })();
+      return client;
+    })();
+    return await opening;
+  };
+  const lazy: PgClient = { query: async (text, params) => await (await open()).query(text, params) };
+  return registerOperationalPostgres(lazy);
 }

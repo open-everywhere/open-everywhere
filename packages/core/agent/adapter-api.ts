@@ -113,7 +113,7 @@ export { initPostgresSchema } from "./memory/postgres.js";
 export type { PgClient } from "./memory/postgres.js";
 export { registerOperationalPostgres, getOperationalStore, registerOperationalStore, resetOperationalStore } from "./operational/provider.js";
 export { initOperationalSchema } from "./operational/postgres.js";
-export { registerOperationalPglite, pgliteOperationalDataDir } from "./operational/pglite-client.js";
+export { registerOperationalPglite, registerOperationalPgliteLazy, pgliteOperationalDataDir } from "./operational/pglite-client.js";
 
 export { safeName, tierRelDir, seedFor } from "./memory/layout.js";
 export { domainKeyOf, resolvePartition } from "./memory/partition.js";
