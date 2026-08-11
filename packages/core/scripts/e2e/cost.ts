@@ -55,9 +55,11 @@ export async function fetchRunUsage(
   readToken: string,
   sinceIso: string,
   workspaceKeys: readonly string[],
+  sessionStartedAfter?: string,
 ): Promise<readonly UsageWindowWireRow[]> {
   const base = targetUrl.replace(/\/+$/, "");
   const qs = new URLSearchParams({ since: sinceIso, workspaces: workspaceKeys.join(",") });
+  if (sessionStartedAfter) qs.set("sessionStartedAfter", sessionStartedAfter);
   const res = await fetch(`${base}/control/v1/usage?${qs.toString()}`, {
     headers: { authorization: `Bearer ${readToken}`, accept: "application/json" },
   });

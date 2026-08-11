@@ -110,6 +110,46 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
 }
 
 {
+  const boundIso = new Date(Date.now() - 1_800_000).toISOString();
+  await appendUsageEvent({
+    org: "acme",
+    surfaceKey: "slack/T1/C3",
+    sessionId: "s-late",
+    principalId: "u1",
+    kind: "channel",
+    model: "test/model-a",
+    inputTokens: 10,
+    outputTokens: 10,
+    ts: new Date(Date.parse(boundIso) - 60_000).toISOString(),
+  });
+  await appendUsageEvent({
+    org: "acme",
+    surfaceKey: "slack/T1/C3",
+    sessionId: "s-late",
+    principalId: "u1",
+    kind: "channel",
+    model: "test/model-a",
+    inputTokens: 20,
+    outputTokens: 20,
+    ts: new Date(Date.parse(boundIso) + 60_000).toISOString(),
+  });
+
+  const q = `?since=${encodeURIComponent(boundIso)}&workspaces=${encodeURIComponent("slack/T1")}`;
+  const withoutBoundBody = (await (await get(q, SECRET)).json()) as { rows: { surfaceKey: string; calls: number }[] };
+  const lateRowNoBound = withoutBoundBody.rows.find((r) => r.surfaceKey === "slack/T1/C3");
+  ok(lateRowNoBound?.calls === 1, "OPE-402: absent sessionStartedAfter, s-late's in-window write still counts (byte-identical default)");
+
+  const withBoundRes = await get(`${q}&sessionStartedAfter=${encodeURIComponent(boundIso)}`, SECRET);
+  ok(withBoundRes.status === 200, "OPE-402: sessionStartedAfter query param → 200 on a good ISO value");
+  const withBoundBody = (await withBoundRes.json()) as { rows: { surfaceKey: string; calls: number }[]; sessionStartedAfter?: string };
+  ok(withBoundBody.rows.find((r) => r.surfaceKey === "slack/T1/C3") === undefined, "OPE-402: with sessionStartedAfter set, s-late's session is excluded wholesale over HTTP");
+  ok(withBoundBody.sessionStartedAfter === boundIso, "OPE-402: the response echoes the applied sessionStartedAfter bound");
+
+  const badBound = await get(`${q}&sessionStartedAfter=not-a-date`, SECRET);
+  ok(badBound.status === 400, "OPE-402: unparseable sessionStartedAfter → 400, same contract as since");
+}
+
+{
   const { registerPricingSource, _resetPricingSourceForTest } = await import("../agent/spend/pricing.js");
   let catalog: Record<string, { inPerMtok: number; outPerMtok: number }> = {};
   registerPricingSource({

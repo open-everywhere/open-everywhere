@@ -40,6 +40,7 @@ export async function handleUsageWindowRead(req: Request): Promise<Response> {
   if (!since || workspaces.length === 0) {
     return json(400, { error: 'expected query params: since=<ISO-8601 timestamp> and workspaces=<comma-separated "platform/workspace" keys>' });
   }
+  const sessionStartedAfter = (url.searchParams.get("sessionStartedAfter") ?? "").trim() || undefined;
 
   await appendAudit({
     org: deploymentOrg(),
@@ -47,11 +48,11 @@ export async function handleUsageWindowRead(req: Request): Promise<Response> {
     workspace: "control",
     principalId: identity.subject,
     action: "control.service_call",
-    detail: { service: identity.subject, view: "usage_window", since, workspaces: workspaces.join(",") },
+    detail: { service: identity.subject, view: "usage_window", since, workspaces: workspaces.join(","), ...(sessionStartedAfter ? { sessionStartedAfter } : {}) },
   });
 
   try {
-    return json(200, await usageWindowView({ sinceIso: since, workspaceKeys: workspaces }));
+    return json(200, await usageWindowView({ sinceIso: since, workspaceKeys: workspaces, ...(sessionStartedAfter ? { sessionStartedAfter } : {}) }));
   } catch (err) {
     return json(400, { error: err instanceof Error ? err.message : String(err) });
   }

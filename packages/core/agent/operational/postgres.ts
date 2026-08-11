@@ -1711,6 +1711,12 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         params.push(filter.untilTs);
         where.push(`ts <= $${params.length}`);
       }
+      if (filter.sessionStartedAfter !== undefined) {
+        params.push(filter.sessionStartedAfter);
+        where.push(
+          `session_id IN (SELECT session_id FROM usage_events WHERE org_id = $1 GROUP BY session_id HAVING MIN(ts) >= $${params.length})`,
+        );
+      }
       const { rows } = await client.query(
         `SELECT surface_key, principal_id, kind, routine_id, model,
                 SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,

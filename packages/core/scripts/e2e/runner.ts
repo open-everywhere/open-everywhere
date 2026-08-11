@@ -326,7 +326,7 @@ async function main(): Promise<void> {
   let modelRoutingFailed = false;
   if (costTarget && readToken && workspaces.length > 0) {
     try {
-      const rows = await fetchRunUsage(costTarget, readToken, runStartedIso, workspaces);
+      const rows = await fetchRunUsage(costTarget, readToken, runStartedIso, workspaces, runStartedIso);
       for (const line of renderCostReport(buildCostReport(rows))) console.log(line);
       const expectModelsOverride = (process.env.E2E_EXPECT_MODELS ?? "").trim();
       const expectModels = resolveExpectedModels(process.env.E2E_EXPECT_MODELS);

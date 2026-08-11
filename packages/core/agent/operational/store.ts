@@ -359,6 +359,7 @@ export interface UsageSummaryFilter {
   readonly surfaceKeyPrefix?: string;
   readonly sinceTs?: string;
   readonly untilTs?: string;
+  readonly sessionStartedAfter?: string;
 }
 
 export interface UsageSummaryRow {

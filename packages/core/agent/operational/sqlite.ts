@@ -1357,6 +1357,10 @@ export const sqliteOperationalStore: OperationalStore = {
       where.push("ts <= ?");
       params.push(filter.untilTs);
     }
+    if (filter.sessionStartedAfter !== undefined) {
+      where.push("session_id IN (SELECT session_id FROM usage_events WHERE org_id = ? GROUP BY session_id HAVING MIN(ts) >= ?)");
+      params.push(org, filter.sessionStartedAfter);
+    }
     const rows = getDb()
       .prepare(
         `SELECT surface_key, principal_id, kind, routine_id, model,

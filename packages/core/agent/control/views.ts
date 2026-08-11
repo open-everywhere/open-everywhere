@@ -297,6 +297,7 @@ export interface UsageWindowQuery {
   readonly sinceIso: string;
   readonly workspaceKeys: readonly string[];
   readonly org?: string;
+  readonly sessionStartedAfter?: string;
 }
 export interface UsageWindowRow {
   readonly surfaceKey: string;
@@ -315,6 +316,7 @@ export interface UsageWindowResult {
   readonly rows: readonly UsageWindowRow[];
   readonly totalUsd: number;
   readonly unpricedModels: readonly string[];
+  readonly sessionStartedAfter?: string;
 }
 
 const WORKSPACE_KEY_SHAPE = /^[^/\s]+\/[^/\s]+$/;
@@ -333,9 +335,19 @@ export async function usageWindowView(q: UsageWindowQuery): Promise<UsageWindowR
       throw new Error(`workspaceKeys entry "${String(wk)}" must be exactly "platform/workspace" (two segments, e.g. "slack/T1") — not a surface key or a bare platform.`);
     }
   }
+  let sessionStartedAfter: string | undefined;
+  if (q.sessionStartedAfter !== undefined) {
+    const parsedSessionStartedAfter = Date.parse(q.sessionStartedAfter);
+    if (Number.isNaN(parsedSessionStartedAfter)) {
+      throw new Error(`sessionStartedAfter "${q.sessionStartedAfter}" is not a parseable ISO-8601 timestamp (e.g. "2026-07-11T12:00:00Z").`);
+    }
+    sessionStartedAfter = new Date(parsedSessionStartedAfter).toISOString();
+  }
   const org = q.org ?? deploymentOrg();
   const keys = [...new Set(q.workspaceKeys)];
-  const grouped = await Promise.all(keys.map((wk) => usageSummary(org, { sinceTs: since, surfaceKeyPrefix: `${wk}/` })));
+  const grouped = await Promise.all(
+    keys.map((wk) => usageSummary(org, { sinceTs: since, surfaceKeyPrefix: `${wk}/`, ...(sessionStartedAfter !== undefined ? { sessionStartedAfter } : {}) })),
+  );
 
   const SEP = "\u0000";
   const acc = new Map<string, { surfaceKey: string; model?: string; calls: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }>();
@@ -365,7 +377,7 @@ export async function usageWindowView(q: UsageWindowQuery): Promise<UsageWindowR
       return { ...r, ...(usd !== undefined ? { estimatedUsd: usd } : {}) };
     });
 
-  return { org, since, workspaceKeys: keys, rows, totalUsd, unpricedModels: [...unpriced].sort() };
+  return { org, since, workspaceKeys: keys, rows, totalUsd, unpricedModels: [...unpriced].sort(), ...(sessionStartedAfter !== undefined ? { sessionStartedAfter } : {}) };
 }
 
 export interface SkillsListQuery {

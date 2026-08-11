@@ -240,6 +240,17 @@ const store = makeOperationalPostgresStore(client);
 
   const [legacy] = await store.usageForSession("acme", "sess-2");
   ok(legacy.usdMicrosMeasured === undefined && legacy.costSource === undefined && legacy.delegationDepth === undefined && legacy.rootSessionId === undefined, "OPE-369(pg): a row written without the new fields reads them back ABSENT — nothing is backfilled or invented");
+
+  await store.appendUsageEvent({ ...base, sessionId: "sess-late", ts: "2026-06-24T09:00:00Z", principalId: "U1", kind: "channel", inputTokens: 7, outputTokens: 1 });
+  await store.appendUsageEvent({ ...base, sessionId: "sess-late", ts: "2026-06-24T10:20:00Z", principalId: "U1", kind: "channel", inputTokens: 3, outputTokens: 1 });
+  const boundIso = "2026-06-24T10:00:00Z";
+  const unbounded = await store.usageSummary("acme", { sinceTs: boundIso });
+  const unboundedChan = unbounded.find((r) => r.kind === "channel");
+  ok(unboundedChan?.events === 3 && unboundedChan.sessions === 2, "OPE-402(pg): absent sessionStartedAfter, sess-late's in-window write still counts (unchanged default behaviour)");
+  const bounded = await store.usageSummary("acme", { sinceTs: boundIso, sessionStartedAfter: boundIso });
+  const boundedChan = bounded.find((r) => r.kind === "channel");
+  ok(boundedChan?.events === 2 && boundedChan.sessions === 1, "OPE-402(pg): with sessionStartedAfter set, sess-late is excluded wholesale (leak closed)");
+  ok(!bounded.some((r) => r.kind === "channel" && r.sessions !== 1), "OPE-402(pg): the bounded read carries no trace of sess-late's rows");
 }
 
 {

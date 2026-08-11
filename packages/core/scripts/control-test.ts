@@ -235,6 +235,21 @@ const CTL_ORG = `ctl-test-${process.pid}-${Date.now()}`;
   ok("usage_window: empty workspaceKeys is refused", await throws(() => usageWindowView({ org: UW_ORG, sinceIso: iso(t0), workspaceKeys: [] })));
   ok("usage_window: a surface-grain key (3 segments) is refused", await throws(() => usageWindowView({ org: UW_ORG, sinceIso: iso(t0), workspaceKeys: ["slack/TW1/C1"] })));
   ok("usage_window: a bare platform (1 segment) is refused", await throws(() => usageWindowView({ org: UW_ORG, sinceIso: iso(t0), workspaceKeys: ["slack"] })));
+
+  const lateFlushWindowStart = iso(t0 - 1000);
+  await appendUsageEvent({ org: UW_ORG, surfaceKey: "slack/TW1/C1", sessionId: "u-late-flush", principalId: "U1", kind: "channel", inputTokens: 42, outputTokens: 4, model: PRICED_MODEL, ts: iso(t0 - 5000) });
+  await appendUsageEvent({ org: UW_ORG, surfaceKey: "slack/TW1/C1", sessionId: "u-late-flush", principalId: "U1", kind: "channel", inputTokens: 8, outputTokens: 1, model: PRICED_MODEL, ts: iso(t0 + 6000) });
+
+  const viewWithoutBound = await usageWindowView({ org: UW_ORG, sinceIso: lateFlushWindowStart, workspaceKeys: ["slack/TW1"] });
+  const lateFlushRow = viewWithoutBound.rows.find((r) => r.surfaceKey === "slack/TW1/C1" && r.model === PRICED_MODEL);
+  ok("OPE-402: absent sessionStartedAfter, a late-flushing write from a pre-window session still counts (today's unchanged behaviour)", lateFlushRow?.calls === 3);
+  ok("OPE-402: …and sessionStartedAfter is absent from the result when the query didn't carry one", !("sessionStartedAfter" in viewWithoutBound));
+
+  const viewWithBound = await usageWindowView({ org: UW_ORG, sinceIso: lateFlushWindowStart, workspaceKeys: ["slack/TW1"], sessionStartedAfter: lateFlushWindowStart });
+  const boundedRow = viewWithBound.rows.find((r) => r.surfaceKey === "slack/TW1/C1" && r.model === PRICED_MODEL);
+  ok("OPE-402: with sessionStartedAfter set, the late-flusher's session is excluded wholesale (leak closed)", boundedRow?.calls === 2);
+  ok("OPE-402: sessionStartedAfter echoes the normalised bound actually applied", viewWithBound.sessionStartedAfter === lateFlushWindowStart);
+  ok("OPE-402: unparseable sessionStartedAfter is refused, same as sinceIso", await throws(() => usageWindowView({ org: UW_ORG, sinceIso: iso(t0), workspaceKeys: ["slack/TW1"], sessionStartedAfter: "not-a-time" })));
 }
 
 const server = buildControlServer();
