@@ -1,5 +1,7 @@
 export type TaintTierMode = "enforced" | "dryrun";
 
+export type TaintMode = "on" | "off";
+
 export type ApprovalJudgeMode = "off" | "shadow" | "enforce";
 
 export interface AgentSettings {
@@ -28,6 +30,7 @@ export interface AgentSettings {
     readonly domainSkillCap: number;
   };
   readonly taint: {
+    readonly mode: TaintMode;
     readonly tierMode: TaintTierMode;
   };
   readonly window: {
@@ -39,7 +42,7 @@ export interface SettingSpec<T> {
   readonly path: string;
   readonly env?: string;
   readonly shipped: T;
-  readonly parseEnv: (raw: string) => T | undefined;
+  readonly parseEnv?: (raw: string) => T | undefined;
   readonly validate?: (value: T) => string | undefined;
   readonly summary: string;
   readonly format?: (value: T) => string;
@@ -190,6 +193,13 @@ export const SETTINGS = {
     } satisfies SettingSpec<number>,
   },
   taint: {
+    mode: {
+      path: "taint.mode",
+      shipped: "on",
+      validate: (v) => (v === "on" || v === "off" ? undefined : 'must be "on" or "off"'),
+      summary:
+        "Whether the tainted-turn model runs at all. `on` (shipped) marks a turn that ingests untrusted content and lets that marking reach approval disclosure, the four `taint: refuse` sinks, memory provenance and the native-delegation withdrawal. `off` is a deployer's reviewed opt-out: no marks, no gates, no delegation withdrawal — untrusted content is still FENCED, and every session records `taint.mode: off` in the audit trail. **Code-only on purpose: no environment variable can reach `off`.**",
+    } satisfies SettingSpec<TaintMode>,
     tierMode: {
       path: "taint.tierMode",
       env: "OE_TAINT_TIERS",
@@ -268,7 +278,7 @@ export function resetSettingsForTest(): void {
 }
 
 function resolve<T>(spec: SettingSpec<T>, override: T | undefined, env: NodeJS.ProcessEnv): T {
-  if (spec.env !== undefined) {
+  if (spec.env !== undefined && spec.parseEnv !== undefined) {
     const raw = env[spec.env];
     if (raw !== undefined) {
       const parsed = spec.parseEnv(raw);
@@ -306,6 +316,7 @@ export function getSettings(env: NodeJS.ProcessEnv = process.env): AgentSettings
       domainSkillCap: resolve(SETTINGS.skills.domainSkillCap, o.skills?.domainSkillCap, env),
     },
     taint: {
+      mode: resolve(SETTINGS.taint.mode, o.taint?.mode, env),
       tierMode: resolve(SETTINGS.taint.tierMode, o.taint?.tierMode, env),
     },
     window: {
