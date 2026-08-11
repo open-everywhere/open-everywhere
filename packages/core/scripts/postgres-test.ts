@@ -1,8 +1,8 @@
 
-import { PGlite } from "@electric-sql/pglite";
 import { initPostgresSchema, makePostgresProvider, setOrgContext, type PgClient } from "../agent/memory/postgres.js";
 import { WORKSPACE, SURFACE, siloTier } from "../agent/memory/store.js";
 import type { Partition } from "../agent/memory/partition.js";
+import { openTestPg, closeAllTestPg } from "./test-pg-driver.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -19,8 +19,8 @@ function partition(workspace: string, surface: string, org = "default"): Partiti
   return { org, platform: "slack", workspace, surface, workspaceKey, surfaceKey, key: surfaceKey };
 }
 
-const db = new PGlite();
-const client: PgClient = { query: (text, params) => db.query(text, params ? [...params] : undefined) };
+const pg = await openTestPg();
+const client: PgClient = pg.client;
 await initPostgresSchema(client);
 const provider = makePostgresProvider(client);
 
@@ -101,10 +101,11 @@ const provider = makePostgresProvider(client);
   await provider.ensureTier(b, WORKSPACE);
   await provider.writeTier(b, WORKSPACE, { "MEMORY.md": "B under rls\n" }, "b");
 
-  await db.exec(`CREATE ROLE open_everywhere_app NOSUPERUSER;
+  await pg.exec(`DROP ROLE IF EXISTS open_everywhere_app;
+                 CREATE ROLE open_everywhere_app NOSUPERUSER;
                  GRANT SELECT, INSERT, UPDATE, DELETE ON memory_file, memory_tier TO open_everywhere_app;`);
   try {
-    await db.exec("SET ROLE open_everywhere_app");
+    await pg.exec("SET ROLE open_everywhere_app");
     await setOrgContext(client, "rls-org-a");
     const all = await client.query("SELECT DISTINCT org_id FROM memory_file");
     const orgs = (all.rows as { org_id: string }[]).map((r) => r.org_id);
@@ -113,9 +114,9 @@ const provider = makePostgresProvider(client);
     ok((await provider.readTier(a, WORKSPACE))["MEMORY.md"] === "A under rls\n", "RLS: provider reads its own org under the app role");
     ok(Object.keys(await provider.readTier(b, WORKSPACE)).length === 0, "RLS: provider sees nothing for the other org under the app role");
   } finally {
-    await db.exec("RESET ROLE");
+    await pg.exec("RESET ROLE");
   }
 }
 
-await db.close();
+await closeAllTestPg();
 console.log(`✓ postgres — ${passed} assertions (pglite contract, column isolation, erasure, versioning, RLS enforcement)`);

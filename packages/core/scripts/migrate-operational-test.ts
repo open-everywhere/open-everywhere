@@ -3,11 +3,10 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PGlite } from "@electric-sql/pglite";
-
 import { initOperationalSchema, makeOperationalPostgresStore, type PgClient } from "../agent/operational/postgres.js";
 import { OPERATIONAL_TABLES } from "../agent/operational/store.js";
 import { migrateOperational } from "./migrate-operational-lib.js";
+import { openTestPg, closeAllTestPg } from "./test-pg-driver.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -18,9 +17,8 @@ const ok = (cond: boolean, label: string) => {
 function tmpFile(name: string): string {
   return join(mkdtempSync(join(tmpdir(), "oe-mig-")), name);
 }
-function newPg(): PgClient {
-  const db = new PGlite();
-  return { query: (text, params) => db.query(text, params ? [...params] : undefined) };
+async function newPg(): Promise<PgClient> {
+  return (await openTestPg()).client;
 }
 async function pgTableNames(target: PgClient): Promise<string[]> {
   const { rows } = await target.query("SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename");
@@ -35,7 +33,7 @@ const sortedEq = (a: string[], b: string[]) => JSON.stringify([...a].sort()) ===
   const sqliteTables = sqliteMod.sqliteOperationalTableNames();
   ok(sortedEq(sqliteTables, [...OPERATIONAL_TABLES]), "honesty: sqlite creates exactly OPERATIONAL_TABLES");
 
-  const pg = newPg();
+  const pg = await newPg();
   await initOperationalSchema(pg);
   const pgTables = await pgTableNames(pg);
   ok(sortedEq(pgTables, [...OPERATIONAL_TABLES]), "honesty: a freshly-init'd Postgres has exactly OPERATIONAL_TABLES");
@@ -90,7 +88,7 @@ function roSqlite(path: string): DatabaseSync {
   });
 
   const source = roSqlite(srcPath);
-  const target = newPg();
+  const target = await newPg();
   const report = await migrateOperational({ source, target, memoryProvider: "git" });
   source.close();
 
@@ -136,7 +134,7 @@ function roSqlite(path: string): DatabaseSync {
     await s.recordSpend("acme", { surfaceKey: "slack/T1/C1", period: "2026-07", inputTokens: 1, outputTokens: 1 });
   });
   const source = roSqlite(srcPath);
-  const target = newPg();
+  const target = await newPg();
   await initOperationalSchema(target);
   await target.query("INSERT INTO spend_ledger (org_id, surface_key, period, input_tokens, output_tokens, calls) VALUES ($1,$2,$3,$4,$5,$6)", ["x", "s", "2026-07", 1, 1, 1]);
 
@@ -165,7 +163,7 @@ function roSqlite(path: string): DatabaseSync {
   w.close();
 
   const source = roSqlite(srcPath);
-  const target = newPg();
+  const target = await newPg();
   let threw = false;
   try {
     await migrateOperational({ source, target, memoryProvider: "git" });
@@ -191,7 +189,7 @@ function roSqlite(path: string): DatabaseSync {
   w.close();
 
   const source = roSqlite(srcPath);
-  const target = newPg();
+  const target = await newPg();
   const report = await migrateOperational({ source, target, memoryProvider: "sqlite" });
   source.close();
 
@@ -236,4 +234,5 @@ function roSqlite(path: string): DatabaseSync {
   }
 }
 
+await closeAllTestPg();
 console.log(`\n✓ migrate-operational: ${n} assertions passed`);

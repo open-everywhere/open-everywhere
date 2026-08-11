@@ -1,8 +1,8 @@
 
 import { readFileSync } from "node:fs";
-import { PGlite } from "@electric-sql/pglite";
 import { initOperationalSchema, makeOperationalPostgresStore, setOrgContext, type PgClient } from "../agent/operational/postgres.js";
 import type { Routine } from "../agent/routines/routine.js";
+import { openTestPg, closeAllTestPg } from "./test-pg-driver.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -27,8 +27,8 @@ function routine(org: string, surfaceKey: string, id: string, over: Partial<Rout
   };
 }
 
-const db = new PGlite();
-const client: PgClient = { query: (text, params) => db.query(text, params ? [...params] : undefined) };
+const pg = await openTestPg();
+const client: PgClient = pg.client;
 await initOperationalSchema(client);
 const store = makeOperationalPostgresStore(client);
 
@@ -310,10 +310,11 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
-  await db.exec(`CREATE ROLE open_everywhere_app NOSUPERUSER;
+  await pg.exec(`DROP ROLE IF EXISTS open_everywhere_app;
+                 CREATE ROLE open_everywhere_app NOSUPERUSER;
                  GRANT SELECT, INSERT, UPDATE, DELETE ON spend_ledger, routine, audit_entry, usage_events TO open_everywhere_app;`);
   try {
-    await db.exec("SET ROLE open_everywhere_app");
+    await pg.exec("SET ROLE open_everywhere_app");
     await setOrgContext(client, "acme");
 
     const spendOrgs = ((await client.query("SELECT DISTINCT org_id FROM spend_ledger")).rows as { org_id: string }[]).map((r) => r.org_id);
@@ -330,19 +331,20 @@ const store = makeOperationalPostgresStore(client);
     ok((await client.query("UPDATE usage_events SET kind = 'tampered' RETURNING seq")).rows.length === 0, "append-only: UPDATE on usage_events affects 0 rows under the app role");
     await client.query("INSERT INTO audit_entry (ts, org_id, platform, workspace, action) VALUES ('2026-06-24T13:00:00Z', 'acme', 'slack', 'T1', 'probe.append')");
   } finally {
-    await db.exec("RESET ROLE");
+    await pg.exec("RESET ROLE");
   }
-  await db.exec("REVOKE UPDATE, DELETE ON audit_entry, usage_events FROM open_everywhere_app");
+  await pg.exec("REVOKE UPDATE, DELETE ON audit_entry, usage_events FROM open_everywhere_app");
 }
 
 {
-  await db.exec(`CREATE ROLE oe_table_owner NOSUPERUSER;
+  await pg.exec(`DROP ROLE IF EXISTS oe_table_owner;
+                 CREATE ROLE oe_table_owner NOSUPERUSER;
                  GRANT CREATE ON SCHEMA public TO oe_table_owner;
                  GRANT SELECT, INSERT, UPDATE, DELETE ON audit_entry, usage_events TO oe_table_owner;
                  ALTER TABLE audit_entry OWNER TO oe_table_owner;
                  ALTER TABLE usage_events OWNER TO oe_table_owner;`);
   try {
-    await db.exec("SET ROLE oe_table_owner");
+    await pg.exec("SET ROLE oe_table_owner");
     ok(((await client.query("SELECT count(*)::int AS n FROM audit_entry")).rows as { n: number }[])[0].n > 0, "FORCE: the non-superuser OWNER can still SELECT audit_entry");
     await client.query("INSERT INTO audit_entry (ts, org_id, platform, workspace, action) VALUES ('2026-06-24T14:00:00Z', 'acme', 'slack', 'T1', 'owner.append')");
     ok((await client.query("DELETE FROM audit_entry RETURNING seq")).rows.length === 0, "FORCE: DELETE on audit_entry affects 0 rows for the NON-SUPERUSER OWNER (owner-bypass closed)");
@@ -350,8 +352,8 @@ const store = makeOperationalPostgresStore(client);
     ok((await client.query("DELETE FROM usage_events RETURNING seq")).rows.length === 0, "FORCE: DELETE on usage_events affects 0 rows for the owner (append-only)");
     ok((await client.query("UPDATE usage_events SET kind = 'tampered' RETURNING seq")).rows.length === 0, "FORCE: UPDATE on usage_events affects 0 rows for the owner (immutable)");
   } finally {
-    await db.exec("RESET ROLE");
-    await db.exec("ALTER TABLE audit_entry OWNER TO CURRENT_USER; ALTER TABLE usage_events OWNER TO CURRENT_USER;");
+    await pg.exec("RESET ROLE");
+    await pg.exec("ALTER TABLE audit_entry OWNER TO CURRENT_USER; ALTER TABLE usage_events OWNER TO CURRENT_USER;");
   }
   const acmeAudit = await store.readAudit({ org: "acme" });
   ok(
@@ -605,8 +607,8 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
-  const oldDb = new PGlite();
-  const oldClient: PgClient = { query: (text, params) => oldDb.query(text, params ? [...params] : undefined) };
+  const oldPg = await openTestPg();
+  const oldClient: PgClient = oldPg.client;
   await oldClient.query(
     `CREATE TABLE thread_engagement (
        org_id text NOT NULL, surface_key text NOT NULL, thread_ts text NOT NULL,
@@ -728,7 +730,8 @@ const store = makeOperationalPostgresStore(client);
     }
   }
 
-  await db.exec("CREATE ROLE oe_runtime NOSUPERUSER");
+  await pg.exec("DROP ROLE IF EXISTS oe_runtime");
+  await pg.exec("CREATE ROLE oe_runtime NOSUPERUSER");
   for (const stmt of runtimeRoleGrantsSql("oe_runtime")) await client.query(stmt);
 
   {
@@ -775,7 +778,7 @@ const store = makeOperationalPostgresStore(client);
   await client.query("SELECT set_config('app.current_org', '', false)");
 
   try {
-    await db.exec("SET ROLE oe_runtime");
+    await pg.exec("SET ROLE oe_runtime");
 
     await initOperationalSchema(client);
     await initPostgresSchema(client);
@@ -840,11 +843,11 @@ const store = makeOperationalPostgresStore(client);
 
     ok((await verifyAppendOnlyAudit(client)).length === 0, "two-role: verifyAppendOnlyAudit reports a sound posture");
   } finally {
-    await db.exec("RESET ROLE");
+    await pg.exec("RESET ROLE");
   }
 
   {
-    await db.exec("DROP POLICY audit_insert ON audit_entry");
+    await pg.exec("DROP POLICY audit_insert ON audit_entry");
     const found = await verifyAppendOnlyAudit(client);
     ok(found.some((v) => v.includes("no INSERT policy")), "tamper: verifyAppendOnlyAudit detects the dropped policy");
 
@@ -856,15 +859,15 @@ const store = makeOperationalPostgresStore(client);
   }
 
   {
-    await db.exec("ALTER TABLE audit_entry NO FORCE ROW LEVEL SECURITY");
-    await db.exec("SET ROLE oe_runtime");
+    await pg.exec("ALTER TABLE audit_entry NO FORCE ROW LEVEL SECURITY");
+    await pg.exec("SET ROLE oe_runtime");
     let threw = "";
     try {
       await initOperationalSchema(client);
     } catch (e) {
       threw = e instanceof Error ? e.message : String(e);
     } finally {
-      await db.exec("RESET ROLE");
+      await pg.exec("RESET ROLE");
     }
     ok(threw.includes("FAILED verification") && threw.includes("FORCE"), "tamper: the runtime-role boot refuses to serve on a tampered posture (fail-closed)");
 
@@ -880,18 +883,18 @@ const store = makeOperationalPostgresStore(client);
   }
 
   {
-    await db.exec("CREATE FUNCTION oe_swallow_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$");
-    await db.exec("CREATE TRIGGER oe_swallow BEFORE INSERT ON audit_entry FOR EACH ROW EXECUTE FUNCTION oe_swallow_audit()");
+    await pg.exec("CREATE FUNCTION oe_swallow_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$");
+    await pg.exec("CREATE TRIGGER oe_swallow BEFORE INSERT ON audit_entry FOR EACH ROW EXECUTE FUNCTION oe_swallow_audit()");
     ok((await verifyAppendOnlyAudit(client)).some((v) => v.includes("hostile trigger") && v.includes("oe_swallow")), "probe(a): verify detects the insert-swallowing trigger");
 
-    await db.exec("SET ROLE oe_runtime");
+    await pg.exec("SET ROLE oe_runtime");
     let threw = "";
     try {
       await initOperationalSchema(client);
     } catch (e) {
       threw = e instanceof Error ? e.message : String(e);
     } finally {
-      await db.exec("RESET ROLE");
+      await pg.exec("RESET ROLE");
     }
     ok(threw.includes("FAILED verification") && threw.includes("hostile trigger"), "probe(a): runtime-role boot fails closed on the hostile trigger");
 
@@ -903,7 +906,7 @@ const store = makeOperationalPostgresStore(client);
   }
 
   {
-    await db.exec("CREATE POLICY oe_block_insert ON audit_entry AS RESTRICTIVE FOR INSERT WITH CHECK (false)");
+    await pg.exec("CREATE POLICY oe_block_insert ON audit_entry AS RESTRICTIVE FOR INSERT WITH CHECK (false)");
     ok((await verifyAppendOnlyAudit(client)).some((v) => v.includes("unexpected RESTRICTIVE policy") && v.includes("oe_block_insert")), "probe(b): verify detects the restrictive insert-blocking policy");
 
     await initOperationalSchema(client);
@@ -920,14 +923,14 @@ const store = makeOperationalPostgresStore(client);
     await initOperationalSchema(client);
     ok((await verifyAppendOnlyAudit(client)).length === 0, "probe(c): owner boot revokes the stray grant — posture sound");
     ok(await integrityHealMentions("oe_runtime"), "probe(c): the revoked grant is recorded in healed_artifacts");
-    await db.exec("SET ROLE oe_runtime");
+    await pg.exec("SET ROLE oe_runtime");
     try {
       await client.query("TRUNCATE audit_entry");
       ok(false, "probe(c): TRUNCATE unexpectedly succeeded for the runtime role");
     } catch (e) {
       ok((e instanceof Error ? e.message : String(e)).includes("permission denied"), "probe(c): TRUNCATE is permission-denied for the runtime role after the revoke");
     } finally {
-      await db.exec("RESET ROLE");
+      await pg.exec("RESET ROLE");
     }
   }
 }
@@ -1020,5 +1023,5 @@ const store = makeOperationalPostgresStore(client);
   ok((await store.getWebhookCaptureWindow("default", "old-hook"))?.captureUntil === "2020-01-01T00:00:00.000Z", "capture window: an ELAPSED deadline is returned unchanged, never filtered out by the store");
 }
 
-await db.close();
+await closeAllTestPg();
 console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, two-role runtime posture (DDL escape closed) + tamper detection/refusal, broadened suppression detection (hostile trigger / restrictive policy / stray grant — detect+heal+fail-closed), event dedupe, domain skills, routine prompt revisions, domain model pick, ownership routing (ownerToken/kind), durable stopped marker, channel supervisor sessions, pending-action posted_to round-trip + decide CAS, github installations (upsert/list/delete + org isolation), migration)`);
