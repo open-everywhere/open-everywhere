@@ -218,29 +218,50 @@ function skipAsSubagentChild(ctx: HookContext, phase: string): boolean {
   return child;
 }
 
-async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): Promise<void> {
-  if (skipAsSubagentChild(ctx, `session.${outcome}`)) return;
+type MemorySandbox = Awaited<ReturnType<HookContext["getSandbox"]>>;
+
+export type MemoryPersistOutcome = "completed" | "failed" | "returned";
+
+export type MemoryPersistContext = BindableContext & {
+  readonly session?: { readonly id?: string };
+  readonly channel?: { readonly continuationToken?: string };
+  getSandbox?: () => Promise<MemorySandbox>;
+};
+
+export interface MemoryFlushSummary {
+  readonly silos: number;
+  readonly persisted: number;
+  readonly changed: number;
+  readonly failed: number;
+}
+
+const NOTHING_PERSISTED: MemoryFlushSummary = { silos: 0, persisted: 0, changed: 0, failed: 0 };
+
+export async function persistMemoryNow(ctx: MemoryPersistContext, outcome: MemoryPersistOutcome): Promise<MemoryFlushSummary> {
+  const where = outcome === "returned" ? "return_result" : `session.${outcome}`;
+  if (skipAsSubagentChild(ctx as unknown as HookContext, where)) return NOTHING_PERSISTED;
   const binding = bindFrom(ctx);
   const p = resolvePartition(ctx);
   const plan = planFor(binding, p);
   if (plan.writes.length === 0) {
-    log(`session.${outcome}: nothing to persist — ${plan.reason}`);
-    return;
+    log(`${where}: nothing to persist — ${plan.reason}`);
+    return NOTHING_PERSISTED;
   }
-  const sessionId = ctx.session.id;
+  const sessionId = ctx.session?.id ?? "";
   const principalId = binding.principalId;
   const request = sessionLog.get().firstMessage?.trim().replace(/\n+/g, " ").slice(0, 200);
   const continuationToken = ctx.channel?.continuationToken;
 
-  let sandbox: Awaited<ReturnType<HookContext["getSandbox"]>> | null = null;
+  let sandbox: MemorySandbox | null = null;
   try {
-    sandbox = await ctx.getSandbox();
+    sandbox = ctx.getSandbox ? await ctx.getSandbox() : null;
   } catch {
-    log(`sandbox unavailable at session.${outcome}; persisting host-store state only`);
+    log(`sandbox unavailable at ${where}; persisting host-store state only`);
   }
 
   const baselines = writeBaseline.get();
   let persisted = 0;
+  let changed = 0;
   const failed: string[] = [];
   for (const rm of plan.writes) {
     try {
@@ -289,6 +310,12 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
       const deleted = deletionDetail(hostCurrent, files);
       const sha = await provider.writeTier(p, rm.tier, files, `session ${sessionId} (${outcome}) [${tierId(rm.tier)}]`, rm.silo);
       persisted += Object.keys(files).length;
+      if (sha) changed++;
+      try {
+        writeBaseline.update((b) => ({ ...b, [tierId(rm.tier)]: hashFiles(files) }));
+      } catch (err) {
+        log(`write-baseline advance skipped for ${tierId(rm.tier)} (the persist itself landed; a later pass may re-file our own write as a conflict): ${String(err)}`);
+      }
       log(
         `persisted ${tierId(rm.tier)} → ${rm.silo.name}/${rm.silo.provider}: ${Object.keys(files).length} file(s)` +
           `${sha ? ` @ ${sha}` : ""}${conflicts.length ? ` (preserved ${conflicts.length} concurrent-write conflict(s): ${conflicts.join(", ")})` : ""}` +
@@ -314,6 +341,7 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
     `session ${sessionId} ${outcome}: ${persisted} file(s) for ${p.key} (${plan.reason}) -> ${storeRoot()}` +
       `${failed.length ? ` — ${failed.length} silo(s) FAILED to persist: ${failed.join(", ")}` : ""}`,
   );
+  return { silos: plan.writes.length, persisted, changed, failed: failed.length };
 }
 
 function withReadOnlyBanner(files: MemoryFiles, silo: MemorySilo): MemoryFiles {
@@ -675,11 +703,11 @@ export default defineHook({
     },
 
     "session.completed": async (_event, ctx) => {
-      await persistOnEnd(ctx, "completed");
+      await persistMemoryNow(ctx, "completed");
     },
 
     "session.failed": async (_event, ctx) => {
-      await persistOnEnd(ctx, "failed");
+      await persistMemoryNow(ctx, "failed");
     },
   },
 });

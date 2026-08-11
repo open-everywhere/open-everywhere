@@ -413,7 +413,7 @@ process.env.OE_WINDOW_TOPOLOGY = "1";
   await fire(s, "turn.started");
   ok(s.sandbox.files.get("memory/brain-silo/ghost.md") === undefined, "FIX-2: the upstream delete PROPAGATES — the file is removed from the sandbox (no longer model-visible)");
   await fire(s, "session.completed");
-  ok(!("ghost.md" in brain.tiers.get(tierId(BRAIN))!.files), "FIX-2: persistOnEnd does NOT resurrect the deleted file into the store (the {...host,...sandbox} union no longer re-adds it)");
+  ok(!("ghost.md" in brain.tiers.get(tierId(BRAIN))!.files), "FIX-2: persistMemoryNow does NOT resurrect the deleted file into the store (the {...host,...sandbox} union no longer re-adds it)");
 }
 
 {
@@ -500,7 +500,7 @@ process.env.OE_WINDOW_TOPOLOGY = "1";
   await fire(s, "session.completed");
 
   const stored = brain.tiers.get(tierId(BRAIN))!.files;
-  ok(stored["MEMORY.md"] === BRAIN_TEXT, "OPE-245: persistOnEnd REFUSES the truncation — the domain's brain is intact in the store");
+  ok(stored["MEMORY.md"] === BRAIN_TEXT, "OPE-245: persistMemoryNow REFUSES the truncation — the domain's brain is intact in the store");
   const parked = Object.keys(stored).find((k) => k.includes(".rejected-"));
   ok(parked !== undefined && stored[parked] === "", "OPE-245: the refused version is parked as a `.rejected-` sibling (recoverable, not silently dropped)");
   const refusal = (await readAudit({ action: "memory.write_refused" })).find((r) => r.detail?.sessionId === "sup-destroy");
@@ -571,4 +571,4 @@ const setPaymentsMemory = (memory: string[]) => {
   setPaymentsMemory(DEFAULT_PAYMENTS_MEMORY);
 }
 
-console.log(`\n✓ memory-resync: ${n} assertions passed (concurrent write visible on turn.started, version-gated skip, read-only relock, probe-less skip, edit-preserving refresh, non-supervisor + gate-off byte-identical; FIX-1 unlock-leak re-lock; FIX-2 delete propagation + no persist-resurrection + agent-edit preserved + read-only ghost removal; trust/domain isolation; failed-silo heal index refresh; OPE-245 destructive-write floor wired into persistOnEnd + append still lands; OPE-300 G4 un-materialisation of dropped tiers)\n`);
+console.log(`\n✓ memory-resync: ${n} assertions passed (concurrent write visible on turn.started, version-gated skip, read-only relock, probe-less skip, edit-preserving refresh, non-supervisor + gate-off byte-identical; FIX-1 unlock-leak re-lock; FIX-2 delete propagation + no persist-resurrection + agent-edit preserved + read-only ghost removal; trust/domain isolation; failed-silo heal index refresh; OPE-245 destructive-write floor wired into persistMemoryNow + append still lands; OPE-300 G4 un-materialisation of dropped tiers)\n`);
