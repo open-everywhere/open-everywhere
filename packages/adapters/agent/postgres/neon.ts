@@ -10,8 +10,7 @@ export async function registerNeon(connectionString = process.env.DATABASE_URL):
   if (!connectionString) {
     throw new Error("registerNeon: no connection string (set DATABASE_URL)");
   }
-  const pkg = ["@neondatabase", "serverless"].join("/");
-  const mod = (await import(pkg)) as {
+  const mod = (await import("@neondatabase/serverless")) as {
     Pool: new (cfg: { connectionString: string }) => unknown;
     neonConfig: NeonConfig;
   };

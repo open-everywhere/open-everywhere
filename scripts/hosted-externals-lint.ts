@@ -24,6 +24,48 @@ function bareImportsOf(source: string): Set<string> {
   return found;
 }
 
+const RUNTIME_SRC_DIRS = [
+  "packages/core/agent",
+  "packages/adapters/agent",
+  "agent",
+  ...readdirSync(join(process.cwd(), "packages", "providers"), { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => join("packages", "providers", e.name, "agent")),
+].filter((d) => existsSync(join(process.cwd(), d)));
+
+function walkTs(dir: string): string[] {
+  const out: string[] = [];
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) out.push(...walkTs(p));
+    else if (e.name.endsWith(".ts") && !e.name.endsWith(".d.ts")) out.push(p);
+  }
+  return out;
+}
+
+const srcFailures: string[] = [];
+for (const dir of RUNTIME_SRC_DIRS) {
+  for (const file of walkTs(join(process.cwd(), dir))) {
+    const lines = readFileSync(file, "utf8").split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i] ?? "";
+      const trimmed = line.trimStart();
+      if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) continue;
+      if (!/\bimport\s*\(\s*[^"'`\s)]/.test(line)) continue;
+      const context = [lines[i - 3], lines[i - 2], lines[i - 1], line].filter((l) => l !== undefined).join("\n");
+      if (context.includes("hosted-inline-exempt:")) continue;
+      srcFailures.push(
+        `${file.slice(process.cwd().length + 1)}:${i + 1}: computed dynamic import — the bundler cannot inline what it cannot see; if this package is needed hosted this is a cold-start-class crash. Inline a literal specifier, or add \`// hosted-inline-exempt: <why>\`.`,
+      );
+    }
+  }
+}
+if (srcFailures.length > 0) {
+  console.error("✗ computed dynamic import specifier(s) in runtime source:\n");
+  for (const f of srcFailures) console.error(`  ${f}`);
+  process.exit(1);
+}
+
 if (!existsSync(OUTPUT_DIR)) {
   console.error(
     `✗ no build output at ${OUTPUT_DIR}\n` +
