@@ -5,18 +5,17 @@ import { siloTier, tierId, type Tier } from "../memory/store.js";
 import type { Partition } from "../memory/partition.js";
 import { tidySilo, tidySiloJudged, type TidyResult, type JudgeStats } from "../memory/dream/tidy.js";
 import { dreamJudge } from "../memory/dream/judge.js";
-import { DEFAULT_CANDIDATE_CAP } from "../memory/dream/candidates.js";
 import { recordMemoryOpProposals, DREAM_ACTOR } from "../memory/dream/proposal.js";
 import { appendAudit } from "../audit/audit.js";
 import { sweepExpiredPendings } from "../approvals/flow.js";
+import { getSettings } from "../settings/settings.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:dream/tidy] ${msg}`);
 }
 
 export function dreamCandidateCap(): number {
-  const n = Number.parseInt(process.env.OE_DREAM_MAX_CANDIDATES ?? "", 10);
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_CANDIDATE_CAP;
+  return getSettings().memory.dreamCandidateCap;
 }
 
 export function tidyOrgs(): string[] {

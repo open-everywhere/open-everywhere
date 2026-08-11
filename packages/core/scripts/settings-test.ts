@@ -29,6 +29,12 @@ import { redriveEnabled } from "../agent/channels/unified-redrive.js";
 import { sourceScopedToolsEnabled, genericReadVerbsEnabled } from "../agent/access/source-scoped-mount.js";
 import { maxResultChars, DEFAULT_MAX_RESULT_CHARS } from "../agent/access/result-cap.js";
 import { stallThreshold, DEFAULT_STALL_THRESHOLD } from "../agent/stall/guard.js";
+import { checkpointTtlHours } from "../agent/approvals/session-checkpoint.js";
+import { usageEventsTtlDays } from "../agent/spend/usage-events.js";
+import { sandboxMemoryGiB, sandboxGiBHourUsd, estimateSandboxCostUsd } from "../agent/spend/sandbox-pricing.js";
+import { jobBoundMaxDays, jobBoundMaxFires, DEFAULT_JOB_MAX_DAYS, DEFAULT_JOB_MAX_FIRES } from "../agent/routines/bound.js";
+import { dreamCandidateCap } from "../agent/schedules/tidy.js";
+import { DEFAULT_CANDIDATE_CAP } from "../agent/memory/dream/candidates.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -220,6 +226,53 @@ for (const raw of ["", "  ", "-2", "garbage"]) {
   eq(at({ OE_STALL_REPEAT_THRESHOLD: raw }).stall.repeatThreshold, 3, `[3] stall.repeatThreshold: ${JSON.stringify(raw)} ⇒ default (fail-safe: the guard stays ON)`);
 }
 
+for (const [label, envName, shipped, read] of [
+  ["approvals.ttlHours", "OE_APPROVAL_TTL_HOURS", 24, (e: NodeJS.ProcessEnv) => at(e).approvals.ttlHours],
+  ["approvals.sessionTtlHours", "OE_PR_SESSION_APPROVAL_TTL_HOURS", 24, (e: NodeJS.ProcessEnv) => at(e).approvals.sessionTtlHours],
+  ["approvals.checkpointTtlHours", "OE_CHECKPOINT_TTL_HOURS", 24, (e: NodeJS.ProcessEnv) => at(e).approvals.checkpointTtlHours],
+  ["spend.usageEventsTtlDays", "OE_USAGE_EVENTS_TTL_DAYS", 90, (e: NodeJS.ProcessEnv) => at(e).spend.usageEventsTtlDays],
+  ["spend.sandboxMemoryGiB", "OE_SANDBOX_MEMORY_GIB", 4, (e: NodeJS.ProcessEnv) => at(e).spend.sandboxMemoryGiB],
+  ["spend.sandboxGiBHourUsd", "OE_SANDBOX_GIB_HOUR_USD", 0.0212, (e: NodeJS.ProcessEnv) => at(e).spend.sandboxGiBHourUsd],
+] as const) {
+  eq(read({}), shipped, `[3] ${label}: shipped ${shipped}`);
+  eq(read({ [envName]: "12" }), 12, `[3] ${label}: a positive number applies`);
+  eq(read({ [envName]: "0.5" }), 0.5, `[3] 🔴 ${label} does NOT floor — a fractional override was always honoured`);
+  eq(read({ [envName]: " 12 " }), 12, `[3] ${label}: Number() tolerates padding, so a padded value still applies`);
+  for (const raw of ["", "  ", "0", "-4", "banana"]) {
+    eq(read({ [envName]: raw }), shipped, `[3] ${label}: ${JSON.stringify(raw)} ⇒ default (garbage, zero and negatives all mean "not configured")`);
+  }
+}
+
+for (const [label, envName, read] of [
+  ["routines.eventMaxFanout", "OE_EVENT_MAX_FANOUT", (e: NodeJS.ProcessEnv) => at(e).routines.eventMaxFanout],
+  ["routines.maxConcurrency", "OE_ROUTINE_MAX_CONCURRENCY", (e: NodeJS.ProcessEnv) => at(e).routines.maxConcurrency],
+] as const) {
+  eq(read({}), 3, `[3] ${label}: shipped 3`);
+  eq(read({ [envName]: "7" }), 7, `[3] ${label}: a whole positive number applies`);
+  for (const raw of ["2.5", "0", "-1", "", "many"]) {
+    eq(read({ [envName]: raw }), 3, `[3] 🔴 ${label}: ${JSON.stringify(raw)} ⇒ default — a FRACTION is refused here, not floored`);
+  }
+}
+
+for (const [label, envName, shipped, read] of [
+  ["routines.jobMaxFires", "OE_JOB_MAX_FIRES", 200, (e: NodeJS.ProcessEnv) => at(e).routines.jobMaxFires],
+  ["routines.jobMaxDays", "OE_JOB_MAX_DAYS", 7, (e: NodeJS.ProcessEnv) => at(e).routines.jobMaxDays],
+] as const) {
+  eq(read({}), shipped, `[3] ${label}: shipped ${shipped}`);
+  eq(read({ [envName]: "12" }), 12, `[3] ${label}: a positive number applies`);
+  eq(read({ [envName]: "12.9" }), 12, `[3] 🔴 ${label} FLOORS a fraction (its sibling fan-out caps refuse one) — both conventions preserved`);
+  for (const raw of ["0", "-1", "", "lots"]) {
+    eq(read({ [envName]: raw }), shipped, `[3] ${label}: ${JSON.stringify(raw)} ⇒ default`);
+  }
+}
+
+eq(at({}).memory.dreamCandidateCap, 10, "[3] memory.dreamCandidateCap: shipped 10");
+eq(at({ OE_DREAM_MAX_CANDIDATES: "25" }).memory.dreamCandidateCap, 25, "[3] memory.dreamCandidateCap: a positive integer applies");
+eq(at({ OE_DREAM_MAX_CANDIDATES: "25x" }).memory.dreamCandidateCap, 25, "[3] 🔴 memory.dreamCandidateCap uses parseInt, so a trailing-garbage value parses its prefix — preserved");
+for (const raw of ["", "0", "-2", "x25"]) {
+  eq(at({ OE_DREAM_MAX_CANDIDATES: raw }).memory.dreamCandidateCap, 10, `[3] memory.dreamCandidateCap: ${JSON.stringify(raw)} ⇒ default`);
+}
+
 console.log("4 — the safety-asymmetric parsers resolve unrecognised input to the safer value:");
 {
   resetSettingsForTest();
@@ -285,6 +338,10 @@ console.log("6 — the public resolvers are now schema-backed, with their names 
   eq(DEFAULT_DOMAIN_SKILL_CAP, 50, "[6] DEFAULT_DOMAIN_SKILL_CAP still exports 50 from the schema");
   eq(DEFAULT_MAX_RESULT_CHARS, SETTINGS.tools.maxResultChars.shipped, "[6] DEFAULT_MAX_RESULT_CHARS IS the schema's shipped cap — one source");
   eq(DEFAULT_STALL_THRESHOLD, SETTINGS.stall.repeatThreshold.shipped, "[6] DEFAULT_STALL_THRESHOLD IS the schema's shipped threshold — one source");
+  eq(DEFAULT_JOB_MAX_DAYS, SETTINGS.routines.jobMaxDays.shipped, "[6] DEFAULT_JOB_MAX_DAYS IS the schema's shipped grace — one source");
+  eq(DEFAULT_JOB_MAX_FIRES, SETTINGS.routines.jobMaxFires.shipped, "[6] DEFAULT_JOB_MAX_FIRES IS the schema's shipped cap — one source");
+  eq(DEFAULT_CANDIDATE_CAP, SETTINGS.memory.dreamCandidateCap.shipped, "[6] DEFAULT_CANDIDATE_CAP IS the schema's shipped cap — one source");
+  eq(DEFAULT_JOB_MAX_FIRES, 200, "[6] …and the derived 200 (>168 hourly fires in the default week) is unchanged by the migration");
   eq(OE_WINDOW_TOPOLOGY_ENV, "OE_WINDOW_TOPOLOGY", "[6] the env-var-name constants are stable (docs and tests name these strings)");
   eq(OE_ONESHOT_AGENT_ENV, "OE_ONESHOT_AGENT", "[6] …OE_ONESHOT_AGENT");
   eq(OE_CONNECTOR_DM_ONLY_ENV, "OE_CONNECTOR_DM_ONLY", "[6] …OE_CONNECTOR_DM_ONLY");
@@ -320,6 +377,14 @@ console.log("6 — the public resolvers are now schema-backed, with their names 
     ok(!genericReadVerbsEnabled(), "[6] genericReadVerbsEnabled() ⇒ shipped OFF");
     eq(maxResultChars(), 120_000, "[6] maxResultChars() ⇒ shipped 120k");
     eq(stallThreshold(), 3, "[6] stallThreshold() ⇒ shipped 3");
+    eq(checkpointTtlHours(), 24, "[6] checkpointTtlHours() ⇒ shipped 24h");
+    eq(usageEventsTtlDays(), 90, "[6] usageEventsTtlDays() ⇒ shipped 90d");
+    eq(sandboxMemoryGiB(), 4, "[6] sandboxMemoryGiB() ⇒ shipped 4 GiB");
+    eq(sandboxGiBHourUsd(), 0.0212, "[6] sandboxGiBHourUsd() ⇒ the twice-verified shipped rate");
+    eq(estimateSandboxCostUsd(3600), 4 * 0.0212, "[6] estimateSandboxCostUsd still composes the two through the schema");
+    eq(jobBoundMaxDays(), 7, "[6] jobBoundMaxDays() ⇒ shipped 7d");
+    eq(jobBoundMaxFires(), 200, "[6] jobBoundMaxFires() ⇒ shipped 200");
+    eq(dreamCandidateCap(), 10, "[6] dreamCandidateCap() ⇒ shipped 10");
   } finally {
     for (const k of names) {
       if (saved[k] === undefined) delete process.env[k];

@@ -11,6 +11,7 @@ import { routineFireAttributes } from "./fire-auth.js";
 import { recheckFireCreator, type CreatorStandingCheck } from "./fire-creator.js";
 import { routinePartition } from "./partition.js";
 import { scopeOverBudget } from "../spend/check.js";
+import { getSettings } from "../settings/settings.js";
 import type { Trust } from "../identity/binding.js";
 import { divertTriggeredFire, runFireSeatKey, type FireWindowDeps } from "./fire-window.js";
 import { auditRoutineFireLost, auditRoutineSkip, type RoutineAuditDeps } from "./fire-audit.js";
@@ -42,12 +43,8 @@ function log(msg: string): void {
   console.log(`[open-everywhere:routines] ${msg}`);
 }
 
-const DEFAULT_MAX_FANOUT = 3;
 function eventMaxFanOut(): number {
-  const raw = process.env.OE_EVENT_MAX_FANOUT;
-  if (raw === undefined) return DEFAULT_MAX_FANOUT;
-  const n = Number(raw);
-  return Number.isInteger(n) && n > 0 ? n : DEFAULT_MAX_FANOUT;
+  return getSettings().routines.eventMaxFanout;
 }
 
 export const DELIVERY_DEDUPE_TTL_MS = 10 * 60_000;

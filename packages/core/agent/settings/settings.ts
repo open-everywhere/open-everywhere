@@ -7,6 +7,9 @@ export type ApprovalJudgeMode = "off" | "shadow" | "enforce";
 export interface AgentSettings {
   readonly approvals: {
     readonly judgeMode: ApprovalJudgeMode;
+    readonly ttlHours: number;
+    readonly sessionTtlHours: number;
+    readonly checkpointTtlHours: number;
   };
   readonly audit: {
     readonly silences: boolean;
@@ -31,9 +34,23 @@ export interface AgentSettings {
     readonly enforce: boolean;
     readonly allowUnenforced: boolean;
   };
+  readonly memory: {
+    readonly dreamCandidateCap: number;
+  };
+  readonly routines: {
+    readonly eventMaxFanout: number;
+    readonly maxConcurrency: number;
+    readonly jobMaxFires: number;
+    readonly jobMaxDays: number;
+  };
   readonly sandbox: {
     readonly stopAfterTurn: boolean;
     readonly extendMaxMinutes: number;
+  };
+  readonly spend: {
+    readonly usageEventsTtlDays: number;
+    readonly sandboxMemoryGiB: number;
+    readonly sandboxGiBHourUsd: number;
   };
   readonly skills: {
     readonly domainSkillCap: number;
@@ -73,6 +90,24 @@ const parseWideBoolean = (raw: string): boolean => !OFF_SPELLINGS_WIDE.has(raw.t
 const positiveInt = (value: number): string | undefined =>
   Number.isInteger(value) && value > 0 ? undefined : "must be a positive integer";
 
+const positiveNumber = (value: number): string | undefined =>
+  Number.isFinite(value) && value > 0 ? undefined : "must be a positive number";
+
+const positiveNumberEnv = (raw: string): number | undefined => {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+};
+
+const positiveIntEnv = (raw: string): number | undefined => {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+};
+
+const wholePositiveIntEnv = (raw: string): number | undefined => {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+};
+
 export const SETTINGS = {
   approvals: {
     judgeMode: {
@@ -86,6 +121,35 @@ export const SETTINGS = {
       summary:
         "LLM approval judge arming. `shadow` logs a would-be verdict beside every real card; `enforce` applies the judge's verdict for defer-flipped rows. Any other value is off, fail-closed.",
     } satisfies SettingSpec<ApprovalJudgeMode>,
+    ttlHours: {
+      path: "approvals.ttlHours",
+      env: "OE_APPROVAL_TTL_HOURS",
+      shipped: 24,
+      parseEnv: positiveNumberEnv,
+      validate: positiveNumber,
+      summary: "TTL before a pending approval action lazily expires, in hours.",
+      format: (v) => `${v} h`,
+    } satisfies SettingSpec<number>,
+    sessionTtlHours: {
+      path: "approvals.sessionTtlHours",
+      env: "OE_PR_SESSION_APPROVAL_TTL_HOURS",
+      shipped: 24,
+      parseEnv: positiveNumberEnv,
+      validate: positiveNumber,
+      summary:
+        "TTL for a `pr.open` session-approval memo (the `approve_session` third click verb), in hours. A GC bound only — the memo's frozen session id embeds the window generation, so a rotation stops it matching regardless.",
+      format: (v) => `${v} h`,
+    } satisfies SettingSpec<number>,
+    checkpointTtlHours: {
+      path: "approvals.checkpointTtlHours",
+      env: "OE_CHECKPOINT_TTL_HOURS",
+      shipped: 24,
+      parseEnv: positiveNumberEnv,
+      validate: positiveNumber,
+      summary:
+        "TTL for the session-checkpoint continue/asked memos, in hours. Also a GC bound, not the death mechanism.",
+      format: (v) => `${v} h`,
+    } satisfies SettingSpec<number>,
   },
   audit: {
     silences: {
@@ -215,6 +279,56 @@ export const SETTINGS = {
         "Let a session CONTINUE when the sandbox backend cannot apply fine-grained network policy. Off, an unenforceable policy aborts the session instead of running it unfirewalled.",
     } satisfies SettingSpec<boolean>,
   },
+  memory: {
+    dreamCandidateCap: {
+      path: "memory.dreamCandidateCap",
+      env: "OE_DREAM_MAX_CANDIDATES",
+      shipped: 10,
+      parseEnv: (raw) => {
+        const n = Number.parseInt(raw, 10);
+        return Number.isFinite(n) && n > 0 ? n : undefined;
+      },
+      validate: positiveInt,
+      summary: "Per-silo judge budget for the dream/tidy sweep — how many candidate memories one pass may put in front of the judge.",
+    } satisfies SettingSpec<number>,
+  },
+  routines: {
+    eventMaxFanout: {
+      path: "routines.eventMaxFanout",
+      env: "OE_EVENT_MAX_FANOUT",
+      shipped: 3,
+      parseEnv: wholePositiveIntEnv,
+      validate: positiveInt,
+      summary:
+        "Max routines ONE inbound event may fan out to. Every over-cap match is a genuine drop, so it writes a throttled `routine.skip` audit row (reason `fanout_cap`) rather than silently not firing.",
+    } satisfies SettingSpec<number>,
+    maxConcurrency: {
+      path: "routines.maxConcurrency",
+      env: "OE_ROUTINE_MAX_CONCURRENCY",
+      shipped: 3,
+      parseEnv: wholePositiveIntEnv,
+      validate: positiveInt,
+      summary:
+        "Max routine ROOT sessions started per dispatcher tick. The rest stay claimable and fire on a later tick (their `nextRunAt` is untouched, so they remain due).",
+    } satisfies SettingSpec<number>,
+    jobMaxFires: {
+      path: "routines.jobMaxFires",
+      env: "OE_JOB_MAX_FIRES",
+      shipped: 200,
+      parseEnv: positiveIntEnv,
+      validate: positiveInt,
+      summary: "Fire cap minted onto a fresh durable-job bound. Plain `cron`/`interval` routines are unbounded by design.",
+    } satisfies SettingSpec<number>,
+    jobMaxDays: {
+      path: "routines.jobMaxDays",
+      env: "OE_JOB_MAX_DAYS",
+      shipped: 7,
+      parseEnv: positiveIntEnv,
+      validate: positiveInt,
+      summary: "Wall-clock grace minted onto a fresh durable-job bound, in days. Stretched so a slow cadence still gets a fair sample of runs.",
+      format: (v) => `${v} d`,
+    } satisfies SettingSpec<number>,
+  },
   sandbox: {
     stopAfterTurn: {
       path: "sandbox.stopAfterTurn",
@@ -249,6 +363,38 @@ export const SETTINGS = {
       validate: positiveInt,
       summary:
         "Max runtime-authored domain skills per domain (`create_skill` refuses past this). Per-skill content size is capped separately, in code.",
+    } satisfies SettingSpec<number>,
+  },
+  spend: {
+    usageEventsTtlDays: {
+      path: "spend.usageEventsTtlDays",
+      env: "OE_USAGE_EVENTS_TTL_DAYS",
+      shipped: 90,
+      parseEnv: positiveNumberEnv,
+      validate: positiveNumber,
+      summary:
+        "Retention window for the per-event `usage_events` table, in days. Pruned opportunistically on write; a documented no-op on Postgres, where the table is append-only.",
+      format: (v) => `${v} d`,
+    } satisfies SettingSpec<number>,
+    sandboxMemoryGiB: {
+      path: "spend.sandboxMemoryGiB",
+      env: "OE_SANDBOX_MEMORY_GIB",
+      shipped: 4,
+      parseEnv: positiveNumberEnv,
+      validate: positiveNumber,
+      summary:
+        "The sandbox memory size the $ estimate prices against, in GiB. 4 is Vercel's platform default, confirmed by the same real-billing reconciliation as the rate — change it only if this deploy pins an explicit `memory` on its sandbox backend.",
+      format: (v) => `${v} GiB`,
+    } satisfies SettingSpec<number>,
+    sandboxGiBHourUsd: {
+      path: "spend.sandboxGiBHourUsd",
+      env: "OE_SANDBOX_GIB_HOUR_USD",
+      shipped: 0.0212,
+      parseEnv: positiveNumberEnv,
+      validate: positiveNumber,
+      summary:
+        "Vercel Sandbox's 'Provisioned Memory' rate, $/GiB-hr. EVIDENCE-ONLY: this number is here because it was verified twice — the published pricing page AND a real bill that matched it to the cent. A deployment that cannot verify its own rate should report seconds, never a guessed $ figure.",
+      format: (v) => `$${v}/GiB-hr`,
     } satisfies SettingSpec<number>,
   },
   stall: {
@@ -414,6 +560,9 @@ export function getSettings(
   return {
     approvals: {
       judgeMode: resolve(SETTINGS.approvals.judgeMode, o.approvals?.judgeMode, env),
+      ttlHours: resolve(SETTINGS.approvals.ttlHours, o.approvals?.ttlHours, env),
+      sessionTtlHours: resolve(SETTINGS.approvals.sessionTtlHours, o.approvals?.sessionTtlHours, env),
+      checkpointTtlHours: resolve(SETTINGS.approvals.checkpointTtlHours, o.approvals?.checkpointTtlHours, env),
     },
     audit: {
       silences: resolve(SETTINGS.audit.silences, o.audit?.silences, env),
@@ -438,9 +587,23 @@ export function getSettings(
       enforce: resolve(SETTINGS.egress.enforce, o.egress?.enforce, env),
       allowUnenforced: resolve(SETTINGS.egress.allowUnenforced, o.egress?.allowUnenforced, env),
     },
+    memory: {
+      dreamCandidateCap: resolve(SETTINGS.memory.dreamCandidateCap, o.memory?.dreamCandidateCap, env),
+    },
+    routines: {
+      eventMaxFanout: resolve(SETTINGS.routines.eventMaxFanout, o.routines?.eventMaxFanout, env),
+      maxConcurrency: resolve(SETTINGS.routines.maxConcurrency, o.routines?.maxConcurrency, env),
+      jobMaxFires: resolve(SETTINGS.routines.jobMaxFires, o.routines?.jobMaxFires, env),
+      jobMaxDays: resolve(SETTINGS.routines.jobMaxDays, o.routines?.jobMaxDays, env),
+    },
     sandbox: {
       stopAfterTurn: resolve(SETTINGS.sandbox.stopAfterTurn, o.sandbox?.stopAfterTurn, env),
       extendMaxMinutes: resolve(SETTINGS.sandbox.extendMaxMinutes, o.sandbox?.extendMaxMinutes, env),
+    },
+    spend: {
+      usageEventsTtlDays: resolve(SETTINGS.spend.usageEventsTtlDays, o.spend?.usageEventsTtlDays, env),
+      sandboxMemoryGiB: resolve(SETTINGS.spend.sandboxMemoryGiB, o.spend?.sandboxMemoryGiB, env),
+      sandboxGiBHourUsd: resolve(SETTINGS.spend.sandboxGiBHourUsd, o.spend?.sandboxGiBHourUsd, env),
     },
     skills: {
       domainSkillCap: resolve(SETTINGS.skills.domainSkillCap, o.skills?.domainSkillCap, env),

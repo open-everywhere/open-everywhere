@@ -31,6 +31,7 @@ import { sessionGrantKind } from "./session-grant.js";
 import { markCardPostedThisTurn } from "./card-signal.js";
 import { withTaintDisclosure } from "./taint-disclosure.js";
 import { withArmingApproval } from "./arming-context.js";
+import { getSettings } from "../settings/settings.js";
 import type { PendingActionRow, PendingStatus } from "./types.js";
 import "./memory-purge.js";
 import "./access-request.js";
@@ -66,8 +67,7 @@ export function parseApprovalAction(actionId: string): { decision: ApprovalDecis
 }
 
 function sessionApprovalTtlHours(): number {
-  const raw = Number(process.env.OE_PR_SESSION_APPROVAL_TTL_HOURS);
-  return Number.isFinite(raw) && raw > 0 ? raw : 24;
+  return getSettings().approvals.sessionTtlHours;
 }
 
 function sessionIdFromFrozenArgs(argsJson: string): string | undefined {
@@ -80,8 +80,7 @@ function sessionIdFromFrozenArgs(argsJson: string): string | undefined {
 }
 
 function approvalTtlHours(): number {
-  const raw = Number(process.env.OE_APPROVAL_TTL_HOURS);
-  return Number.isFinite(raw) && raw > 0 ? raw : 24;
+  return getSettings().approvals.ttlHours;
 }
 
 export interface DecisionVenueDetail {

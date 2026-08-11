@@ -1,20 +1,11 @@
-const DEFAULT_SANDBOX_MEMORY_GIB = 4;
-
-const DEFAULT_SANDBOX_GIB_HOUR_USD = 0.0212;
-
-function envFloat(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw.trim() === "") return fallback;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
+import { getSettings } from "../settings/settings.js";
 
 export function sandboxMemoryGiB(): number {
-  return envFloat("OE_SANDBOX_MEMORY_GIB", DEFAULT_SANDBOX_MEMORY_GIB);
+  return getSettings().spend.sandboxMemoryGiB;
 }
 
 export function sandboxGiBHourUsd(): number {
-  return envFloat("OE_SANDBOX_GIB_HOUR_USD", DEFAULT_SANDBOX_GIB_HOUR_USD);
+  return getSettings().spend.sandboxGiBHourUsd;
 }
 
 export function estimateSandboxCostUsd(totalSeconds: number): number {

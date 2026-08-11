@@ -1,6 +1,7 @@
 import { buildGraph, parseWikiLinks, resolveNode } from "../graph.js";
 import type { MemoryFiles } from "../store.js";
 import { contentWords, jaccard, isNegated, bulletDate } from "./ops.js";
+import { SETTINGS } from "../../settings/settings.js";
 
 export type CandidateKind = "consolidate" | "contradiction" | "stale";
 
@@ -21,7 +22,7 @@ export interface CandidateOptions {
   readonly exclude?: ReadonlySet<string>;
 }
 
-export const DEFAULT_CANDIDATE_CAP = 10;
+export const DEFAULT_CANDIDATE_CAP = SETTINGS.memory.dreamCandidateCap.shipped;
 
 const HUB_LINK_BULLETS = 5;
 

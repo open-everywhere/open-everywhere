@@ -1,9 +1,8 @@
 import { getOperationalStore } from "../operational/provider.js";
 import type { UsageEventEntry, UsageEventInput, UsageSummaryFilter, UsageSummaryRow } from "../operational/store.js";
+import { getSettings } from "../settings/settings.js";
 
 export type { UsageEventEntry, UsageEventInput, UsageSummaryFilter, UsageSummaryRow } from "../operational/store.js";
-
-const DEFAULT_TTL_DAYS = 90;
 
 export const GENERATION_ID_DETAIL_KEY = "generationId";
 
@@ -13,8 +12,7 @@ export function generationIdOf(row: { readonly detail?: Readonly<Record<string, 
 }
 
 export function usageEventsTtlDays(): number {
-  const raw = Number(process.env.OE_USAGE_EVENTS_TTL_DAYS);
-  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_TTL_DAYS;
+  return getSettings().spend.usageEventsTtlDays;
 }
 
 export async function appendUsageEvent(entry: UsageEventInput): Promise<void> {

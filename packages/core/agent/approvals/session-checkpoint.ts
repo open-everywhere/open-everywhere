@@ -2,6 +2,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
+import { getSettings } from "../settings/settings.js";
 import type { ActionKind } from "./types.js";
 
 export const CHECKPOINT_KIND = "session.checkpoint";
@@ -9,8 +10,7 @@ export const CHECKPOINT_GRANT_MEMO = "session.checkpoint.grant";
 export const CHECKPOINT_ASK_MEMO = "session.checkpoint.asked";
 
 export function checkpointTtlHours(): number {
-  const raw = Number(process.env.OE_CHECKPOINT_TTL_HOURS);
-  return Number.isFinite(raw) && raw > 0 ? raw : 24;
+  return getSettings().approvals.checkpointTtlHours;
 }
 
 export interface SessionCheckpointArgs {

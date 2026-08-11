@@ -2,26 +2,22 @@ import { MAX_CONSECUTIVE_FAILURES } from "./lifecycle.js";
 import { computeNextRun } from "./schedule.js";
 import { stallExhausted, stallReason } from "./stall.js";
 import type { Routine, RoutineBound, RoutineTrigger } from "./routine.js";
+import { SETTINGS, getSettings } from "../settings/settings.js";
 
-export const DEFAULT_JOB_MAX_DAYS = 7;
+export const DEFAULT_JOB_MAX_DAYS = SETTINGS.routines.jobMaxDays.shipped;
 
-export const DEFAULT_JOB_MAX_FIRES = 200;
+export const DEFAULT_JOB_MAX_FIRES = SETTINGS.routines.jobMaxFires.shipped;
 
 export const MIN_FIRES_BEFORE_DEADLINE = MAX_CONSECUTIVE_FAILURES;
 
 const DAY_MS = 24 * 60 * 60_000;
 
-function positiveIntEnv(name: string, fallback: number): number {
-  const raw = Number(process.env[name]);
-  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : fallback;
-}
-
 export function jobBoundMaxDays(): number {
-  return positiveIntEnv("OE_JOB_MAX_DAYS", DEFAULT_JOB_MAX_DAYS);
+  return getSettings().routines.jobMaxDays;
 }
 
 export function jobBoundMaxFires(): number {
-  return positiveIntEnv("OE_JOB_MAX_FIRES", DEFAULT_JOB_MAX_FIRES);
+  return getSettings().routines.jobMaxFires;
 }
 
 export function triggerPeriodMs(trigger: RoutineTrigger, from: Date): number | undefined {

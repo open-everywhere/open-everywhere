@@ -17,17 +17,14 @@ import { scopeOverBudget } from "../spend/check.js";
 import type { Trust } from "../identity/binding.js";
 import type { Partition } from "../memory/partition.js";
 import { emitTelemetry } from "../observability/telemetry.js";
+import { getSettings } from "../settings/settings.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:routines] ${msg}`);
 }
 
-const DEFAULT_MAX_CONCURRENCY = 3;
 function routineMaxConcurrency(): number {
-  const raw = process.env.OE_ROUTINE_MAX_CONCURRENCY;
-  if (raw === undefined) return DEFAULT_MAX_CONCURRENCY;
-  const n = Number(raw);
-  return Number.isInteger(n) && n > 0 ? n : DEFAULT_MAX_CONCURRENCY;
+  return getSettings().routines.maxConcurrency;
 }
 
 function onceDisablePatch(r: Routine, now: Date, note: string): Partial<Routine> {
