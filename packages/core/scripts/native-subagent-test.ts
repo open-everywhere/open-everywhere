@@ -281,6 +281,20 @@ function inSession<T>(fn: () => T): T {
   });
 
   inSession(() => {
+    setNativeDelegationSeat("leaf");
+    const toolset: Record<string, unknown> = {
+      agent: { execute: () => undefined },
+      describe_image: { execute: () => undefined },
+      read_file_upload: { execute: () => undefined },
+      bash: { execute: () => undefined },
+      post_file: { execute: () => undefined },
+      return_result: { execute: () => undefined },
+    };
+    projectToolSet(toolset);
+    eq(Object.keys(toolset).sort(), ["bash", "describe_image", "post_file", "read_file_upload", "return_result"], "🔴 D6 LEAF, WHOLE KIT: the leaf withdrawal removes `agent` and NOTHING ELSE — a native child keeps its vision read, its upload read, its sandbox and its return leg");
+  });
+
+  inSession(() => {
     const toolset = makeToolset();
     projectToolSet(toolset as unknown as Record<string, unknown>);
     ok(!("agent" in toolset), "🔴 D6 FAIL-CLOSED: a wake nothing classified loses `agent` — the OPPOSITE default from the lean slot next door, because a wrongly-allowed delegation route is worse than a turn that has to do its own work");

@@ -184,4 +184,39 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   _resetImageDescriberForTest();
 }
 
-console.log(`✓ describe-image: ${n} assertions passed (untrusted wrap+defang+taint · ZDR fail-closed · no-describer/unsupported fail-closed · attachment-plane route+fail-closed+2nd-platform · path sandbox read+confine+fail-closed · inferImageMime/confineToWorkspacePath — slack legs in @open-everywhere/provider-slack)`);
+{
+  const schema = (describeImage as unknown as { inputSchema: { safeParse: (v: unknown) => { success: boolean } } }).inputSchema;
+  const parses = (v: unknown) => schema.safeParse(v).success;
+
+  ok(parses({ source: '{"attachmentId":"F0BQ89BMX7S"}', hint: "what does it show?" }), "arg shape: the LIVE INCIDENT payload (`source` as a JSON string) VALIDATES — the pre-fix schema rejected it at the provider, invisibly");
+  ok(parses({ attachmentId: "F0BQ89BMX7S" }), "arg shape: flat { attachmentId } validates — this is the exact string read_file_upload's wrong-tool redirect emits");
+  ok(parses({ path: ".browser/shot.png" }), "arg shape: flat { path } validates — the spelling docs/capabilities/browser-qa.md documents");
+  ok(parses({ url: "https://x.test/a.png" }), "arg shape: flat { url } validates");
+  ok(parses({ source: { attachmentId: "F0BQ89BMX7S" } }), "arg shape: the original nested { source: { attachmentId } } still validates — the fix only widens");
+
+  _resetAttachmentPlaneForTest();
+  _resetImageDescriberForTest();
+  registerImageDescriber({ describe: async () => ({ description: "a red square." }) });
+  registerAttachmentResolver({ platform: "fake", resolve: async (id) => (id === "F0BQ89BMX7S" ? { bytes: PNG_BYTES, ref: `fake:${id}`, mimeType: "image/png" } : undefined) });
+  const stringified = await tool.execute({ source: '{"attachmentId":"F0BQ89BMX7S"}', hint: "what does it show?" }, ctx);
+  ok(stringified.ok === true && stringified.description === "a red square.", "🔴 arg shape: the JSON-STRING `source` the live worker emitted now DESCRIBES the image — the F-ART leg-3 red, closed");
+  const flat = await tool.execute({ attachmentId: "F0BQ89BMX7S" }, ctx);
+  ok(flat.ok === true && flat.description === "a red square.", "🔴 arg shape: the FLAT { attachmentId } call describes the same image — the contract read_file_upload redirects to actually works");
+
+  const empty = await tool.execute({ hint: "go on then" }, ctx);
+  ok(empty.ok === false && /no image source was given/.test(empty.message ?? ""), "arg shape: NO source → an explicit ok:false naming the flat form (a readable tool result, not an invisible rejection)");
+  const two = await tool.execute({ attachmentId: "F0BQ89BMX7S", path: "shot.png" }, ctx);
+  ok(two.ok === false && /more than one image source/.test(two.message ?? ""), "arg shape: TWO sources → refused rather than silently preferring one");
+  const bareString = await tool.execute({ source: "F0BQ89BMX7S" }, ctx);
+  ok(bareString.ok === false && /plain string/.test(bareString.message ?? ""), "arg shape: a BARE (non-JSON) `source` string is refused, NOT guessed into an arm — routing it would send a path through oeFetch or an id at the sandbox");
+
+  await eveContextStorage().run(new FakeSession(), async () => {
+    const mo = tool.toModelOutput(empty);
+    ok(!mo.value.includes(UNTRUSTED_OPEN), "arg shape: a bad-source refusal renders as OUR OWN plain message (no untrusted envelope)");
+    ok(untrustedIngestedThisTurn() === false, "arg shape: a bad-source refusal ingests nothing, so it does NOT taint the turn");
+  });
+  _resetImageDescriberForTest();
+  _resetAttachmentPlaneForTest();
+}
+
+console.log(`✓ describe-image: ${n} assertions passed (untrusted wrap+defang+taint · ZDR fail-closed · no-describer/unsupported fail-closed · attachment-plane route+fail-closed+2nd-platform · path sandbox read+confine+fail-closed · ARG SHAPE flat+nested+JSON-string, visible refusals · inferImageMime/confineToWorkspacePath — slack legs in @open-everywhere/provider-slack)`);
