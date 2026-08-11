@@ -255,6 +255,7 @@ const EVE_POLICY_SITES = [
   "execution/sandbox/logging-session.js",
   "execution/sandbox/session.js",
   "public/channels/github/checkout.js",
+  "context/build-callback-context.js",
 ];
 pinMatchSet(
   /setNetworkPolicy/g,
@@ -266,9 +267,16 @@ pinMatchSet(
 );
 {
   const offSandbox = [...distFilesMatching(/setNetworkPolicy/g)].filter(
-    (f) => !f.startsWith("execution/sandbox/") && !f.startsWith("public/channels/"),
+    (f) => !f.startsWith("execution/sandbox/") && !f.startsWith("public/channels/") && f !== "context/build-callback-context.js",
   );
   ok(offSandbox.length === 0, "no module outside execution/sandbox/** or public/channels/** names setNetworkPolicy (never on the model tool surface)");
+  const cbctx = readFileSync(join(distSrc, "context/build-callback-context.js"), "utf8");
+  const mentions = cbctx.match(/setNetworkPolicy[^,}]*/g) ?? [];
+  ok(mentions.length > 0, "the reviewed 0.32.0 site still exists (drop the exemption when eve removes it)");
+  ok(
+    mentions.every((m) => /^setNetworkPolicy:[A-Za-z_$]{1,3}=>[A-Za-z_$]{1,3}\.setNetworkPolicy\([A-Za-z_$]{1,3}\)$/.test(m)),
+    `context/build-callback-context.js setNetworkPolicy mentions are all verbatim pass-throughs (got: ${mentions.join(" | ")})`,
+  );
   const toolSurface = distFiles("public/tools").filter((f) => /etworkPolicy/.test(readFileSync(join(distSrc, f), "utf8")));
   ok(toolSurface.length === 0, "eve's built-in TOOL definitions (public/tools/**) never mention a network policy — there is no model tool for it");
 }
