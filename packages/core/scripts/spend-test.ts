@@ -438,14 +438,18 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   const { attestSubagentRuns, subagentRunOf } = await import("../agent/spend/subagent-runs.js");
   const { turnKind } = await import("../agent/hooks/spend.js");
 
-  const runCtx = (id: string, over: { parent?: { sessionId: string; callId: string; rootSessionId?: string }; token?: string } = {}) => ({
-    channel: { kind: "slack", ...(over.token !== undefined ? { continuationToken: over.token } : {}) },
-    session: {
-      id,
-      ...(over.parent ? { parent: { ...over.parent, rootSessionId: over.parent.rootSessionId ?? over.parent.sessionId, turn: { id: "turn_1", sequence: 1 } } } : {}),
-      auth: { current: { attributes: { team_id: "T1", channel_id: "C_DELEG" }, principalId: "U1", principalType: "slack-user" } },
-    },
-  });
+  const CHILD_ATTRS = { team_id: "T1", channel_id: "C_DELEG", oe_platform: "slack" } as const;
+  const runCtx = (id: string, over: { parent?: { sessionId: string; callId: string; rootSessionId?: string }; token?: string } = {}) => {
+    const child = over.parent !== undefined || over.token !== undefined;
+    return {
+      channel: { kind: child ? "subagent" : "slack", ...(over.token !== undefined ? { continuationToken: over.token } : {}) },
+      session: {
+        id,
+        ...(over.parent ? { parent: { ...over.parent, rootSessionId: over.parent.rootSessionId ?? over.parent.sessionId, turn: { id: "turn_1", sequence: 1 } } } : {}),
+        auth: { current: { attributes: { ...CHILD_ATTRS }, principalId: "U1", principalType: "slack-user" } },
+      },
+    };
+  };
   const step = (i: number, o: number) => ({ data: { usage: { inputTokens: i, outputTokens: o } } });
 
   await spendHook.events!["step.completed"]!(step(100, 10) as never, runCtx("sess-deleg-parent") as never);
@@ -518,6 +522,60 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
     ok(delegationDepthOf("p", "p") === 1, "delegationDepthOf: parent IS the root -> depth 1");
     ok(delegationDepthOf("c", "r") === MAX_OBSERVABLE_DELEGATION_DEPTH, "delegationDepthOf: parent is not the root -> the two-or-more band");
     ok(delegationDepthOf("p") === 1, "delegationDepthOf: NO root known (a token-recognised child — eve's continuation token encodes no root) -> 1, the deepest ancestor we can actually see, never a guess");
+  }
+
+  {
+    const { spendTotals } = await import("../agent/spend/store.js");
+    const { bindFrom } = await import("../agent/identity/binding.js");
+    const period394 = (await import("../agent/spend/spend.js")).periodOf(new Date().toISOString());
+
+    const parent394 = {
+      channel: { kind: "slack" },
+      session: { id: "sess-394-parent", auth: { current: { attributes: { team_id: "T1", channel_id: "C_394", oe_platform: "slack" }, principalId: "U394", principalType: "slack-user" } } },
+    };
+    const child394 = {
+      channel: { kind: "subagent" },
+      session: {
+        id: "sess-394-child",
+        parent: { sessionId: "sess-394-parent", callId: "call_394", rootSessionId: "sess-394-parent", turn: { id: "turn_1", sequence: 1 } },
+        auth: { current: { attributes: { team_id: "T1", channel_id: "C_394", oe_platform: "slack" }, principalId: "U394", principalType: "slack-user" } },
+      },
+    };
+    const unstamped394 = {
+      channel: { kind: "subagent" },
+      session: {
+        id: "sess-394-unstamped",
+        parent: { sessionId: "sess-394-parent", callId: "call_394b", rootSessionId: "sess-394-parent", turn: { id: "turn_1", sequence: 1 } },
+        auth: { current: { attributes: { team_id: "T1", channel_id: "C_394" }, principalId: "", principalType: "slack-user" } },
+      },
+    };
+
+    const unstampedBinding = bindFrom(unstamped394 as never);
+    ok(unstampedBinding.platform === "subagent", `🔴 OPE-394 RED: with no inherited oe_platform a child still binds platform "subagent" (got "${unstampedBinding.platform}") — fail-closed to the env partition, exactly as any unknown kind does`);
+    ok(unstampedBinding.principalId === undefined || unstampedBinding.principalId === "", "…with no principal, so its rows are unattributed as well as mis-partitioned");
+    ok(unstampedBinding.surface !== "C_394", "…and NOT on the parent's surface — which is the whole defect: those tokens escape the parent surface's cap");
+
+    const childBinding = bindFrom(child394 as never);
+    const parentBinding = bindFrom(parent394 as never);
+    eq(
+      { platform: childBinding.platform, workspace: childBinding.workspace, surface: childBinding.surface, mode: childBinding.mode, visibility: childBinding.visibility, trust: childBinding.trust, principalId: childBinding.principalId },
+      { platform: parentBinding.platform, workspace: parentBinding.workspace, surface: parentBinding.surface, mode: parentBinding.mode, visibility: parentBinding.visibility, trust: parentBinding.trust, principalId: parentBinding.principalId },
+      "🔴 OPE-393: a subagent child binds IDENTICALLY to its parent — the channelPlatform origin-hop reads the inherited oe_platform stamp, so the parent's real mapper runs against the parent's real attributes",
+    );
+
+    await spendHook.events!["step.completed"]!(step(50, 5) as never, parent394 as never);
+    await spendHook.events!["step.completed"]!(step(11, 4) as never, child394 as never);
+
+    const totals394 = await spendTotals("default", { surfaceKey: "slack/T1/C_394", period: period394 });
+    ok(
+      billableTokens(totals394) === 70 && totals394.calls === 2,
+      `🔴 OPE-394: the child's tokens land on the PARENT's surface_key — inside the parent's cap, not on subagent/dev/default (got ${billableTokens(totals394)} tokens / ${totals394.calls} calls)`,
+    );
+    const escaped = await spendTotals("default", { surfaceKey: "subagent/dev/default", period: period394 });
+    ok(escaped.calls === 0, "…and NOTHING landed on the escape partition, which is the assertion the old `kind: \"slack\"` fixture could never make");
+    const store394 = (await import("../agent/operational/provider.js")).getOperationalStore();
+    const rows394 = (await store394.listSpendLedger("default")).filter((r) => r.surfaceKey === "slack/T1/C_394");
+    ok(rows394.length === 1 && rows394[0].principalId === "U394", "…and both writes collapsed into ONE principal-attributed ledger row: the child carried the parent's dimensions, so nothing forked");
   }
 }
 

@@ -1,18 +1,31 @@
 import { defineRoster } from "@open-everywhere/core/agent/scaffold/roster-config.js";
+import { nativeSubagentAtBuild } from "@open-everywhere/core/agent/settings/settings.js";
+import { SETTINGS_OVERRIDES } from "./agent/settings/settings.js";
+
+const NATIVE_SUBAGENT = nativeSubagentAtBuild(SETTINGS_OVERRIDES);
 
 export default defineRoster({
   framework: {
     disable: {
-      agent:
-        "eve's built-in recursive self-subagent of this name is DISABLED as a framework tool. " +
-        "OE's real delegation tool is re-provided per session GRAIN (standing/thread only, " +
-        "flag-gated) under this same bare name by tools/delegation_tools.ts. The sentinel is what " +
-        "makes that authoritative — a dynamic tool can only SHADOW a harness-injected built-in " +
-        "when it resolves, never REMOVE it — and eve's built-in is credential-broken for OE (no " +
-        "binding ⇒ no surface identity ⇒ connector.grant [], egress default-deny) and FABRICATES " +
-        "task results (live-hit 2026-07-16). Needs eve >= 0.24.5: before that `agent` was not in " +
-        "getAllFrameworkToolNames(), so this sentinel failed the deploy-time graph resolve and " +
-        "the tool had to be static instead (task #80 → #96).",
+      ...(NATIVE_SUBAGENT
+        ? {}
+        : {
+            agent:
+              "eve's built-in recursive self-subagent of this name is DISABLED as a framework tool. " +
+              "OE's real delegation tool is re-provided per session GRAIN (standing/thread only, " +
+              "flag-gated) under this same bare name by tools/delegation_tools.ts. The sentinel is what " +
+              "makes that authoritative: it is the ONLY way to remove the built-in — a dynamic `agent` " +
+              "does NOT shadow it but COLLIDES with it (eve harness/tool-loop.js throws \"Dynamic tool " +
+              "\\\"agent\\\" collides with a runtime-visible subagent.\" because the built-in carries a " +
+              "runtimeAction; measured 2026-08-11, correcting the older \"can shadow\" note). And eve's " +
+              "built-in was credential-broken for OE — no binding ⇒ no surface identity ⇒ " +
+              "connector.grant [], egress default-deny — and FABRICATED task results (live-hit " +
+              "2026-07-16). OPE-393 fixed the binding half (identity/binding.ts channelPlatform's " +
+              "subagent origin-hop) and the rest of that ticket's gates, which is what makes the " +
+              "`delegation.nativeSubagent` setting able to drop this row at all. Needs eve >= 0.24.5: " +
+              "before that `agent` was not in getAllFrameworkToolNames(), so this sentinel failed the " +
+              "deploy-time graph resolve and the tool had to be static instead (task #80 → #96).",
+          }),
       bash:
         "the eve built-in is DISABLED as a static tool. It is re-provided per session GRAIN " +
         "(stall-guarded) by tools/sandbox_tools.ts: task/native sessions mount it, standing seats " +

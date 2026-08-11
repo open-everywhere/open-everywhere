@@ -18,6 +18,7 @@ export interface AgentSettings {
   };
   readonly delegation: {
     readonly oneshotAgent: boolean;
+    readonly nativeSubagent: boolean;
   };
   readonly sandbox: {
     readonly stopAfterTurn: boolean;
@@ -139,6 +140,17 @@ export const SETTINGS = {
       parseEnv: parseWideBoolean,
       summary:
         "The one-shot `agent` delegation model: `agent` spawns a credential-correct new session that works, calls `return_result` and tears down. Disarming makes the whole delegation machinery inert.",
+    } satisfies SettingSpec<boolean>,
+    nativeSubagent: {
+      path: "delegation.nativeSubagent",
+      env: "OE_NATIVE_SUBAGENT",
+      shipped: false,
+      parseEnv: (raw) => {
+        const v = raw.trim().toLowerCase();
+        return v === "" || v === "0" || v === "false" || v === "off" || v === "no" ? false : undefined;
+      },
+      summary:
+        "Use eve's BUILT-IN `agent` subagent as the delegation route instead of OE's roll-own one-shot worker. Arming it takes a reviewed diff AND an `oe build` (the built-in is suppressed by a generated static sentinel); the env var is an OFF-ONLY kill switch. Native children share the parent's sandbox and bind to the parent's identity; delegation is withdrawn entirely on a tainted turn, because eve has no seam to forward taint into a child.",
     } satisfies SettingSpec<boolean>,
   },
   sandbox: {
@@ -284,6 +296,7 @@ export function getSettings(env: NodeJS.ProcessEnv = process.env): AgentSettings
     },
     delegation: {
       oneshotAgent: resolve(SETTINGS.delegation.oneshotAgent, o.delegation?.oneshotAgent, env),
+      nativeSubagent: resolve(SETTINGS.delegation.nativeSubagent, o.delegation?.nativeSubagent, env),
     },
     sandbox: {
       stopAfterTurn: resolve(SETTINGS.sandbox.stopAfterTurn, o.sandbox?.stopAfterTurn, env),
@@ -322,6 +335,10 @@ export function settingDocs(): readonly SettingDoc[] {
     }
   }
   return out.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+export function nativeSubagentAtBuild(overrides: AgentSettingsOverrides): boolean {
+  return overrides.delegation?.nativeSubagent ?? SETTINGS.delegation.nativeSubagent.shipped;
 }
 
 export function settingEnvNames(): readonly string[] {

@@ -1,12 +1,14 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { resolveLeanSeatPosture, withheldFromLeanSeat } from "../access/lean-seat.js";
 import { setLeanSeatWake } from "../access/lean-seat-state.js";
+import { setNativeDelegationSeat } from "../access/native-delegation-state.js";
 import { jobFireStamped } from "../access/job-posture.js";
+import { nativeSubagentEnabled, oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { canDelegateFromSeat } from "../access/delegation-mount.js";
 import { domainLabelOf } from "../access/window-gated.js";
 import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../access/window-gate-manifest.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
-import { bindFrom, currentWakeId, deploymentOrg, windowGrainOf, FIRE_UNATTENDED_ATTR, type BindableContext, type WindowGrain } from "../identity/binding.js";
+import { bindFrom, currentWakeId, deploymentOrg, isSubagentChildContext, windowGrainOf, FIRE_UNATTENDED_ATTR, type BindableContext, type WindowGrain } from "../identity/binding.js";
 import { routineMarker } from "../routines/routine.js";
 
 type Attrs = Readonly<Record<string, string | readonly string[]>> | undefined;
@@ -59,7 +61,25 @@ async function auditLeanSeatOnce(ctx: HookContext, grain: WindowGrain, dmSeat: b
   }
 }
 
+function classifyNativeDelegationSeat(ctx: HookContext): void {
+  if (!nativeSubagentEnabled()) return;
+  const c = ctx as unknown as BindableContext;
+  try {
+    if (isSubagentChildContext(c)) {
+      setNativeDelegationSeat("leaf");
+      return;
+    }
+    const grain = grainOf(c);
+    const admitted = WINDOW_GATED_TOOLS["agent"]?.includes(grain) === true;
+    setNativeDelegationSeat(admitted && oneshotAgentEnabled() && canDelegateFromSeat(c) ? "allow" : "no-seat");
+  } catch {
+    setNativeDelegationSeat("unclassified");
+  }
+}
+
 async function classifyWake(ctx: HookContext): Promise<void> {
+  setNativeDelegationSeat("unclassified");
+  classifyNativeDelegationSeat(ctx);
   setLeanSeatWake(false);
   const attrs = attrsOf(ctx);
   if (fireDelivery(attrs)) return;
@@ -83,7 +103,13 @@ export default defineHook({
     "turn.started": async (_event, ctx) => {
       await classifyWake(ctx);
     },
-    "turn.completed": () => setLeanSeatWake(false),
-    "turn.failed": () => setLeanSeatWake(false),
+    "turn.completed": () => {
+      setLeanSeatWake(false);
+      setNativeDelegationSeat("unclassified");
+    },
+    "turn.failed": () => {
+      setLeanSeatWake(false);
+      setNativeDelegationSeat("unclassified");
+    },
   },
 });
