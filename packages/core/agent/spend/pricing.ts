@@ -5,7 +5,7 @@ export interface ModelPricing {
 }
 
 const BUILT_IN: Readonly<Record<string, ModelPricing>> = {
-  "deepseek/deepseek-v4-flash-0731": { inPerMtok: 0.14, outPerMtok: 0.28, cachedInPerMtok: 0.028 },
+  "openai/gpt-5.6-luna": { inPerMtok: 0.25, outPerMtok: 1.2, cachedInPerMtok: 0.02 },
 };
 
 let envTable: Readonly<Record<string, ModelPricing>> | null | undefined;

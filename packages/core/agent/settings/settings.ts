@@ -22,6 +22,9 @@ export interface AgentSettings {
     readonly oneshotAgent: boolean;
     readonly nativeSubagent: boolean;
   };
+  readonly models: {
+    readonly stack: string;
+  };
   readonly sandbox: {
     readonly stopAfterTurn: boolean;
     readonly extendMaxMinutes: number;
@@ -156,6 +159,20 @@ export const SETTINGS = {
         "Use eve's BUILT-IN `agent` subagent as the delegation route instead of OE's roll-own one-shot worker. Arming it takes a reviewed diff AND an `oe build` (the built-in is suppressed by a generated static sentinel); the env var is an OFF-ONLY kill switch. Native children share the parent's sandbox and bind to the parent's identity; delegation is withdrawn entirely on a tainted turn, because eve has no seam to forward taint into a child.",
     } satisfies SettingSpec<boolean>,
   },
+  models: {
+    stack: {
+      path: "models.stack",
+      env: "OE_MODEL_STACK",
+      shipped: "american-closed",
+      parseEnv: (raw) => {
+        const v = raw.trim();
+        return v === "" ? undefined : v;
+      },
+      validate: (v) => (v.trim().length > 0 ? undefined : "must be a non-empty stack alias"),
+      summary:
+        "The named model stack this deployment runs — one alias picks a coherent model for all five roles (primary/utility/vision/supervisor/judge). Aliases are defined in `agent/model/stacks.ts`; an unknown one fails config load. Per-role overrides layer on top there, and `OE_FORCE_MODEL`/`OE_PRIMARY_MODEL` still override the primary role last.",
+    } satisfies SettingSpec<string>,
+  },
   sandbox: {
     stopAfterTurn: {
       path: "sandbox.stopAfterTurn",
@@ -288,8 +305,11 @@ function resolve<T>(spec: SettingSpec<T>, override: T | undefined, env: NodeJS.P
   return override ?? spec.shipped;
 }
 
-export function getSettings(env: NodeJS.ProcessEnv = process.env): AgentSettings {
-  const o = registered;
+export function getSettings(
+  env: NodeJS.ProcessEnv = process.env,
+  overrides: AgentSettingsOverrides = registered,
+): AgentSettings {
+  const o = overrides;
   return {
     approvals: {
       judgeMode: resolve(SETTINGS.approvals.judgeMode, o.approvals?.judgeMode, env),
@@ -307,6 +327,9 @@ export function getSettings(env: NodeJS.ProcessEnv = process.env): AgentSettings
     delegation: {
       oneshotAgent: resolve(SETTINGS.delegation.oneshotAgent, o.delegation?.oneshotAgent, env),
       nativeSubagent: resolve(SETTINGS.delegation.nativeSubagent, o.delegation?.nativeSubagent, env),
+    },
+    models: {
+      stack: resolve(SETTINGS.models.stack, o.models?.stack, env),
     },
     sandbox: {
       stopAfterTurn: resolve(SETTINGS.sandbox.stopAfterTurn, o.sandbox?.stopAfterTurn, env),

@@ -1,25 +1,38 @@
-import type { ModelTier } from "@open-everywhere/core/agent/memory/domain.js";
 import type { ModelPolicyAllowEntry } from "@open-everywhere/core/agent/model/policy.js";
-import { defaultAgentModelId } from "@open-everywhere/core/agent/model/default-model.js";
+import {
+  defaultAgentModelId,
+  registerDefaultAgentModelId,
+} from "@open-everywhere/core/agent/model/default-model.js";
+import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
+import { SETTINGS_OVERRIDES } from "../settings/settings.js";
+import { resolveStack, type ModelRoleSpec, type ModelStack } from "./stacks.js";
 
-export interface ModelRoleSpec {
-  readonly id: string;
-  readonly tier: ModelTier;
-}
+export type { ModelRole, ModelRoleSpec, ModelStack, StackAlias } from "./stacks.js";
+
+const STACK_ALIAS = getSettings({ ...process.env }, SETTINGS_OVERRIDES).models.stack;
+
+const STACK: ModelStack = resolveStack(STACK_ALIAS, {});
+
+registerDefaultAgentModelId(STACK.primary.id);
 
 export const MODELS = {
-  primary: { id: defaultAgentModelId(), tier: "high" },
-  utility: { id: "deepseek/deepseek-v4-flash-0731", tier: "low" },
-  vision: { id: "alibaba/qwen3-vl-instruct", tier: "low" },
-  supervisor: { id: "deepseek/deepseek-v4-flash-0731", tier: "low" },
-  judge: { id: "openai/gpt-5.6-luna", tier: "low" },
+  primary: { ...STACK.primary, id: defaultAgentModelId() },
+  utility: STACK.utility,
+  vision: STACK.vision,
+  supervisor: STACK.supervisor,
+  judge: STACK.judge,
 } as const satisfies Record<string, ModelRoleSpec>;
+
+export const MODEL_STACK = STACK_ALIAS;
 
 export const PRIMARY_MODEL = MODELS.primary.id;
 export const UTILITY_MODEL = MODELS.utility.id;
 export const VISION_MODEL = MODELS.vision.id;
 export const SUPERVISOR_MODEL = MODELS.supervisor.id;
 export const JUDGE_MODEL = MODELS.judge.id;
+
+export const PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS = MODELS.primary.contextWindowTokens;
+export const UTILITY_MODEL_CONTEXT_WINDOW_TOKENS = MODELS.utility.contextWindowTokens;
 
 export function modelAllowList(extra: readonly ModelPolicyAllowEntry[] = []): ModelPolicyAllowEntry[] {
   const out: ModelPolicyAllowEntry[] = [];

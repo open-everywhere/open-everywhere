@@ -9,7 +9,14 @@ import { registerGatewayImageDescriber } from "@open-everywhere/adapters/agent/m
 import { gatewayCatalogPricingSource } from "@open-everywhere/adapters/agent/spend/gateway-pricing.js";
 import { registerPricingSource } from "@open-everywhere/core/agent/spend/pricing.js";
 import { isModelUsable } from "@open-everywhere/core/agent/model/policy.js";
-import { JUDGE_MODEL, PRIMARY_MODEL, UTILITY_MODEL, VISION_MODEL } from "./model/models.js";
+import {
+  JUDGE_MODEL,
+  PRIMARY_MODEL,
+  PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS,
+  UTILITY_MODEL,
+  UTILITY_MODEL_CONTEXT_WINDOW_TOKENS,
+  VISION_MODEL,
+} from "./model/models.js";
 import { loadModelPolicy } from "./model/policy.js";
 import { registerAppInfo } from "@open-everywhere/core/agent/commands/core.js";
 import { readFileSync } from "node:fs";
@@ -20,7 +27,6 @@ const GATEWAY_DEFAULTS = {
 } as const;
 const DEFAULT_MODEL = PRIMARY_MODEL;
 
-const UTILITY_MODEL_CONTEXT_WINDOW_TOKENS = 1_000_000;
 const UTILITY_GATEWAY_DEFAULTS = {
   caching: "auto",
 } as const;
@@ -70,7 +76,7 @@ export default defineAgent({
       ),
     },
   }),
-  modelContextWindowTokens: 1_000_000,
+  modelContextWindowTokens: PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS,
   reasoning: "medium",
   limits: { maxInputTokensPerSession: SESSION_INPUT_TOKEN_BUDGET, sessionTimeoutMs: false },
   compaction: {

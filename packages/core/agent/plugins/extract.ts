@@ -11,8 +11,6 @@ import type {
 import type { SkillPackageDefinition } from "eve/skills";
 import { defaultAgentModelId } from "../model/default-model.js";
 
-const DEFAULT_SUBAGENT_MODEL = defaultAgentModelId();
-
 const MODEL_ALIASES: Record<string, string> = {
   opus: "anthropic/claude-opus-4.8",
   sonnet: "anthropic/claude-sonnet-4.6",
@@ -226,7 +224,7 @@ export function extractPlugin(
   plugin: ParsedPlugin,
   opts: { defaultModel?: string } = {},
 ): ExtractionPlan {
-  const defaultModel = opts.defaultModel ?? DEFAULT_SUBAGENT_MODEL;
+  const defaultModel = opts.defaultModel ?? defaultAgentModelId();
   const name = plugin.manifest.name;
   const pluginKey = slugify(name);
   const files: OutputFile[] = [];
