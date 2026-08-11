@@ -4,7 +4,7 @@ import { posix } from "node:path";
 import { type BindableContext } from "../identity/binding.js";
 import { oeFetch } from "../access/host-egress.js";
 import { resolveAttachment, type ResolvedAttachment } from "../channels/attachments.js";
-import { auditToolAction } from "../audit/tool-action.js";
+import { auditErrorDetail, auditToolAction } from "../audit/tool-action.js";
 import { getImageDescriber } from "../model/vision.js";
 import { ingestUntrustedModelOutput } from "../access/untrusted.js";
 
@@ -172,7 +172,7 @@ export default defineTool({
 
     const normalized = normalizeImageSource(input);
     if (!normalized.ok) {
-      await auditToolAction(ctx, "describe_image", { ok: false, reason: "bad-source" });
+      await auditToolAction(ctx, "describe_image", { ok: false, reason: "bad-source", ...auditErrorDetail(normalized.message) });
       return { ok: false, message: `image could not be described: ${normalized.message}` };
     }
     const source = normalized.source;
@@ -183,7 +183,7 @@ export default defineTool({
       try {
         resolved = await resolveAttachment(source.attachmentId, bctx);
       } catch (err) {
-        await auditToolAction(ctx, "describe_image", { ok: false, reason: "fetch-failed", ref });
+        await auditToolAction(ctx, "describe_image", { ok: false, reason: "fetch-failed", ref, ...auditErrorDetail(err) });
         return { ok: false, message: `image could not be described: ${err instanceof Error ? err.message : String(err)}.` };
       }
       if (!resolved) {
@@ -212,7 +212,7 @@ export default defineTool({
       try {
         ({ bytes } = await resolveImageBytes(source, bctx));
       } catch (err) {
-        await auditToolAction(ctx, "describe_image", { ok: false, reason: "fetch-failed", ref });
+        await auditToolAction(ctx, "describe_image", { ok: false, reason: "fetch-failed", ref, ...auditErrorDetail(err) });
         return { ok: false, message: `image could not be described: ${err instanceof Error ? err.message : String(err)}.` };
       }
     }
@@ -229,7 +229,7 @@ export default defineTool({
     try {
       result = await describer.describe({ bytes, mimeType, hint: input.hint });
     } catch (err) {
-      await auditToolAction(ctx, "describe_image", { ok: false, reason: "vision-error", ref });
+      await auditToolAction(ctx, "describe_image", { ok: false, reason: "vision-error", ref, ...auditErrorDetail(err) });
       return { ok: false, message: `image could not be described: ${err instanceof Error ? err.message : String(err)}.` };
     }
 

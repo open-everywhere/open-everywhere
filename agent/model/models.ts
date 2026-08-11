@@ -10,7 +10,7 @@ export interface ModelRoleSpec {
 export const MODELS = {
   primary: { id: defaultAgentModelId(), tier: "high" },
   utility: { id: "deepseek/deepseek-v4-flash-0731", tier: "low" },
-  vision: { id: "alibaba/qwen3.5-flash", tier: "low" },
+  vision: { id: "alibaba/qwen3-vl-instruct", tier: "low" },
   supervisor: { id: "deepseek/deepseek-v4-flash-0731", tier: "low" },
   judge: { id: "openai/gpt-5.6-luna", tier: "low" },
 } as const satisfies Record<string, ModelRoleSpec>;

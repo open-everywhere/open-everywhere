@@ -219,4 +219,48 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   _resetAttachmentPlaneForTest();
 }
 
-console.log(`✓ describe-image: ${n} assertions passed (untrusted wrap+defang+taint · ZDR fail-closed · no-describer/unsupported fail-closed · attachment-plane route+fail-closed+2nd-platform · path sandbox read+confine+fail-closed · ARG SHAPE flat+nested+JSON-string, visible refusals · inferImageMime/confineToWorkspacePath — slack legs in @open-everywhere/provider-slack)`);
+{
+  const { readAudit } = await import("../agent/audit/audit.js");
+  const { auditErrorDetail } = await import("../agent/audit/tool-action.js");
+
+  _resetImageDescriberForTest();
+  registerImageDescriber({
+    describe: async () => {
+      throw new Error(
+        'vision model "alibaba/qwen3-vl-instruct": Your team has restricted access to this provider. Contact the owner of the account for more details. Providers considered: alibaba',
+      );
+    },
+  });
+  const visionOut = await tool.execute({ path: "audit-probe.png" }, ctxWithSandbox(async () => PNG_BYTES));
+  ok(visionOut.ok === false, "audit detail: the restricted-provider refusal still fails CLOSED (unchanged contract)");
+  const visionRow = (await readAudit({ action: "describe_image", limit: 50 })).find(
+    (r) => (r.detail as { reason?: unknown } | undefined)?.reason === "vision-error",
+  );
+  ok(visionRow !== undefined, "audit detail: a vision-error row landed");
+  const visionErr = String((visionRow?.detail as { error?: unknown } | undefined)?.error ?? "");
+  ok(/restricted access to this provider/.test(visionErr), "🔴 audit detail: the vision-error row carries the PROVIDER'S refusal text — the 2026-08-11 red is now self-diagnosing from the audit alone");
+  ok(/alibaba\/qwen3-vl-instruct/.test(visionErr), "audit detail: …and the vision MODEL ID the role asked for (gateway-vision.ts's prefix), so a swap is the obvious next move");
+
+  const fetchOut = await tool.execute({ path: "missing.png" }, ctxWithSandbox(async () => { throw new Error("ENOENT: no such file"); }));
+  ok(fetchOut.ok === false, "audit detail: a workspace read failure still fails closed");
+  const fetchRow = (await readAudit({ action: "describe_image", limit: 50 })).find(
+    (r) => (r.detail as { reason?: unknown } | undefined)?.reason === "fetch-failed",
+  );
+  ok(/ENOENT/.test(String((fetchRow?.detail as { error?: unknown } | undefined)?.error ?? "")), "audit detail: the fetch-failed row carries the underlying read error, not just the code");
+
+  const badRow0 = await tool.execute({ hint: "no source at all" }, ctx);
+  ok(badRow0.ok === false, "audit detail: an unusable argument bag still returns a readable refusal");
+  const badRow = (await readAudit({ action: "describe_image", limit: 50 })).find(
+    (r) => (r.detail as { reason?: unknown } | undefined)?.reason === "bad-source",
+  );
+  ok(/no image source was given/.test(String((badRow?.detail as { error?: unknown } | undefined)?.error ?? "")), "audit detail: the bad-source row carries the refusal text naming the flat form");
+
+  ok(auditErrorDetail(new Error("x".repeat(500))).error.length <= 301, "audit detail: a long error is truncated (an audit row stays a row)");
+  ok(auditErrorDetail(new Error("upstream said: Authorization: Bearer sk-live-abcdefghijklmnop rejected")).error.includes("[redacted]"), "audit detail: a Bearer/sk- credential shape echoed back by a provider is REDACTED before it reaches our own audit store");
+  ok(!auditErrorDetail(new Error("token xoxb-1234567890-abcdefghijkl expired")).error.includes("xoxb-1234567890"), "audit detail: a Slack bot-token shape is redacted too");
+  ok(auditErrorDetail("a plain thrown string").error === "a plain thrown string", "audit detail: a non-Error throw is still carried (String(err)), never dropped");
+  ok(auditErrorDetail(new Error("line one\n  line two")).error === "line one line two", "audit detail: newlines collapse to single spaces (one audit row = one line)");
+  _resetImageDescriberForTest();
+}
+
+console.log(`✓ describe-image: ${n} assertions passed (untrusted wrap+defang+taint · ZDR fail-closed · no-describer/unsupported fail-closed · attachment-plane route+fail-closed+2nd-platform · path sandbox read+confine+fail-closed · ARG SHAPE flat+nested+JSON-string, visible refusals · AUDIT DETAIL carries+bounds+scrubs the underlying error · inferImageMime/confineToWorkspacePath — slack legs in @open-everywhere/provider-slack)`);

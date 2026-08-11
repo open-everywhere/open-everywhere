@@ -9,9 +9,9 @@ import type { OperationalStore, DomainModelRow } from "../../agent/operational/s
 
 const ALLOW_POLICY: ModelPolicy = {
   allow: [
-    { id: "zai/glm-5.2", tier: "high" },
-    { id: "deepseek/deepseek-v4-flash", tier: "low" },
-    { id: "alibaba/qwen3.5-flash", tier: "low" },
+    { id: "deepseek/deepseek-v4-flash-0731", tier: "high" },
+    { id: "alibaba/qwen3-vl-instruct", tier: "low" },
+    { id: "openai/gpt-5.6-luna", tier: "low" },
   ],
   reasoningCeiling: "high",
 };

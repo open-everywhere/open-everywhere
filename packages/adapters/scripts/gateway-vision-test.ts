@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { parseVisionResult } from "../agent/model/gateway-vision.js";
+import { parseVisionResult, visionCallError } from "../agent/model/gateway-vision.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -33,4 +33,11 @@ const ok = (cond: boolean, label: string) => {
   ok(r.description === "{ not valid json ]" && r.ocrText === undefined, "malformed JSON → raw-text fallback (no throw)");
 }
 
-console.log(`✓ gateway-vision: ${n} assertions passed (strict-JSON parse + OCR-only + raw-text fallback + malformed/empty)`);
+{
+  const e = visionCallError("alibaba/qwen3-vl-instruct", new Error("Your team has restricted access to this provider. Providers considered: alibaba"));
+  ok(/^vision model "alibaba\/qwen3-vl-instruct": /.test(e.message), "a failed vision call is re-thrown prefixed with the ROLE'S model id");
+  ok(/restricted access to this provider/.test(e.message), "…and the upstream refusal text is preserved verbatim after the prefix");
+  ok(visionCallError("m", "a plain string throw").message === 'vision model "m": a plain string throw', "a non-Error throw is stringified, never dropped");
+}
+
+console.log(`✓ gateway-vision: ${n} assertions passed (strict-JSON parse + OCR-only + raw-text fallback + malformed/empty + model-id error attribution)`);

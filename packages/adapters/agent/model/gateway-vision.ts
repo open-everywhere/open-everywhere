@@ -36,24 +36,33 @@ export function parseVisionResult(text: string): ImageDescribeResult {
   return { description: raw.length > 0 ? raw : "(no description returned)" };
 }
 
+export function visionCallError(id: string, err: unknown): Error {
+  return new Error(`vision model "${id}": ${err instanceof Error ? err.message : String(err)}`);
+}
+
 export function gatewayImageDescriber(defaults: GatewayVisionDefaults): ImageDescriber {
   return {
     async describe(req: ImageDescribeRequest): Promise<ImageDescribeResult> {
-      const { text } = await generateText({
-        model: gateway(defaults.id),
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: req.hint ? `${VISION_PROMPT}\nContext hint: ${req.hint}` : VISION_PROMPT },
-              { type: "image", image: req.bytes, mediaType: req.mimeType },
-            ],
-          },
-        ],
-        ...(defaults.gateway !== undefined
-          ? { providerOptions: { gateway: defaults.gateway } as Parameters<typeof generateText>[0]["providerOptions"] }
-          : {}),
-      });
+      let text: string;
+      try {
+        ({ text } = await generateText({
+          model: gateway(defaults.id),
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: req.hint ? `${VISION_PROMPT}\nContext hint: ${req.hint}` : VISION_PROMPT },
+                { type: "image", image: req.bytes, mediaType: req.mimeType },
+              ],
+            },
+          ],
+          ...(defaults.gateway !== undefined
+            ? { providerOptions: { gateway: defaults.gateway } as Parameters<typeof generateText>[0]["providerOptions"] }
+            : {}),
+        }));
+      } catch (err) {
+        throw visionCallError(defaults.id, err);
+      }
       return parseVisionResult(text);
     },
   };
