@@ -20,6 +20,7 @@ import {
   type EgressStatusInput,
 } from "../access/egress-status.js";
 import { rememberEgressAttribution, type EgressAttribution } from "../access/egress-denial-poller.js";
+import { getSettings } from "../settings/settings.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:egress] ${msg}`);
@@ -181,8 +182,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
 
   const { reapply, reason } = planEgressApply({ phase, fingerprint, lastApplied: deps.lastApplied() });
 
-  const wantEnforce = process.env.OE_EGRESS_ENFORCE !== "0";
-  const allowUnenforced = process.env.OE_ALLOW_UNENFORCED_EGRESS === "1";
+  const { enforce: wantEnforce, allowUnenforced } = getSettings().egress;
   let applied = false;
   let enforced = false;
   let enforceError: string | undefined;

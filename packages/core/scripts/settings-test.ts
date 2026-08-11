@@ -24,6 +24,11 @@ import {
 } from "../agent/connections/connector-flags.js";
 import { bashTimeoutMs, backgroundGuardEnabled, DEFAULT_BASH_TIMEOUT_MS } from "../agent/stall/bash-hang-guard.js";
 import { domainSkillCap, DEFAULT_DOMAIN_SKILL_CAP } from "../agent/skills/domain-skills.js";
+import { auditSilencesEnabled } from "../agent/audit/audit.js";
+import { redriveEnabled } from "../agent/channels/unified-redrive.js";
+import { sourceScopedToolsEnabled, genericReadVerbsEnabled } from "../agent/access/source-scoped-mount.js";
+import { maxResultChars, DEFAULT_MAX_RESULT_CHARS } from "../agent/access/result-cap.js";
+import { stallThreshold, DEFAULT_STALL_THRESHOLD } from "../agent/stall/guard.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -159,6 +164,62 @@ for (const raw of ["0", "-3", "lots", ""]) {
   eq(at({ OE_DOMAIN_SKILL_CAP: raw }).skills.domainSkillCap, 50, `[3] skills.domainSkillCap: ${JSON.stringify(raw)} ⇒ default`);
 }
 
+eq(at({}).audit.silences, false, "[3] audit.silences: shipped OFF (the ACTIONS-ONLY posture)");
+eq(at({ OE_AUDIT_SILENCES: "1" }).audit.silences, true, '[3] audit.silences: exactly "1" arms');
+for (const raw of ["", "0", "true", "yes", "on", " 1 "]) {
+  eq(at({ OE_AUDIT_SILENCES: raw }).audit.silences, false, `[3] 🔴 audit.silences: ${JSON.stringify(raw)} does NOT arm — not even "true"/" 1 " (no trim, no alias), exactly as before`);
+}
+
+eq(at({}).egress.enforce, true, "[3] egress.enforce: shipped ON (the firewall is up)");
+eq(at({ OE_EGRESS_ENFORCE: "0" }).egress.enforce, false, '[3] egress.enforce: exactly "0" drops to dry-run');
+for (const raw of ["", "false", "off", "no", " 0 "]) {
+  eq(at({ OE_EGRESS_ENFORCE: raw }).egress.enforce, true, `[3] 🔴 egress.enforce: ${JSON.stringify(raw)} does NOT disable enforcement — only "0" does, preserved verbatim`);
+}
+eq(at({}).egress.allowUnenforced, false, "[3] egress.allowUnenforced: shipped OFF (an unenforceable policy aborts the session)");
+eq(at({ OE_ALLOW_UNENFORCED_EGRESS: "1" }).egress.allowUnenforced, true, '[3] egress.allowUnenforced: exactly "1" accepts an unenforced run');
+for (const raw of ["", "0", "true", "yes"]) {
+  eq(at({ OE_ALLOW_UNENFORCED_EGRESS: raw }).egress.allowUnenforced, false, `[3] egress.allowUnenforced: ${JSON.stringify(raw)} does not accept it`);
+}
+
+eq(at({}).window.unifiedRedrive, true, "[3] window.unifiedRedrive: shipped ON (catch-and-correct is the safe default)");
+for (const raw of ["0", "false", "no", "off", " OFF "]) {
+  eq(at({ OE_UNIFIED_REDRIVE: raw }).window.unifiedRedrive, false, `[3] window.unifiedRedrive: ${JSON.stringify(raw)} turns the correction off`);
+}
+eq(
+  at({ OE_UNIFIED_REDRIVE: "" }).window.unifiedRedrive,
+  true,
+  '[3] 🔴 window.unifiedRedrive treats BLANK as ON — unlike its wide-vocabulary siblings, because the old resolver defaulted the raw value to "" and compared only the four off spellings',
+);
+
+for (const [label, envName, read] of [
+  ["tools.sourceScopedMount", "OE_SOURCE_SCOPED_TOOLS", (e: NodeJS.ProcessEnv) => at(e).tools.sourceScopedMount],
+  ["tools.genericReadVerbs", "OE_GENERIC_READ_VERBS", (e: NodeJS.ProcessEnv) => at(e).tools.genericReadVerbs],
+] as const) {
+  eq(read({}), false, `[3] ${label}: shipped OFF (flag-off is byte-identical to the historical guard)`);
+  for (const raw of ["", "0", "false", "off", "no", " NO "]) {
+    eq(read({ [envName]: raw }), false, `[3] ${label}: ${envName}=${JSON.stringify(raw)} is an off spelling (blank included)`);
+  }
+  for (const raw of ["1", "true", "on", "stage1"]) {
+    eq(read({ [envName]: raw }), true, `[3] ${label}: ${envName}=${JSON.stringify(raw)} arms (anything not an off spelling)`);
+  }
+}
+
+eq(at({}).tools.maxResultChars, 120_000, "[3] tools.maxResultChars: shipped 120k");
+eq(at({ OE_MAX_TOOL_RESULT_CHARS: "5000" }).tools.maxResultChars, 5_000, "[3] tools.maxResultChars: a positive integer applies");
+eq(at({ OE_MAX_TOOL_RESULT_CHARS: "9000rubbish" }).tools.maxResultChars, 9_000, "[3] 🔴 tools.maxResultChars uses parseInt, so a trailing-garbage value still parses its prefix — preserved");
+for (const raw of ["", "0", "-1", "banana"]) {
+  eq(at({ OE_MAX_TOOL_RESULT_CHARS: raw }).tools.maxResultChars, 120_000, `[3] tools.maxResultChars: ${JSON.stringify(raw)} ⇒ default`);
+}
+
+eq(at({}).stall.repeatThreshold, 3, "[3] stall.repeatThreshold: shipped 3");
+eq(at({ OE_STALL_REPEAT_THRESHOLD: "5" }).stall.repeatThreshold, 5, "[3] stall.repeatThreshold: a positive integer applies");
+for (const raw of ["0", "off", "false", " OFF "]) {
+  eq(at({ OE_STALL_REPEAT_THRESHOLD: raw }).stall.repeatThreshold, 0, `[3] stall.repeatThreshold: ${JSON.stringify(raw)} DISABLES the guard (0 is a value, not a rejection)`);
+}
+for (const raw of ["", "  ", "-2", "garbage"]) {
+  eq(at({ OE_STALL_REPEAT_THRESHOLD: raw }).stall.repeatThreshold, 3, `[3] stall.repeatThreshold: ${JSON.stringify(raw)} ⇒ default (fail-safe: the guard stays ON)`);
+}
+
 console.log("4 — the safety-asymmetric parsers resolve unrecognised input to the safer value:");
 {
   resetSettingsForTest();
@@ -222,6 +283,8 @@ console.log("6 — the public resolvers are now schema-backed, with their names 
   eq(WINDOW_TOPOLOGY_ENABLED, false, "[6] …and it is still FALSE (the open-source posture pin, unchanged by the migration)");
   eq(DEFAULT_BASH_TIMEOUT_MS, 600_000, "[6] DEFAULT_BASH_TIMEOUT_MS still exports 600s from the schema");
   eq(DEFAULT_DOMAIN_SKILL_CAP, 50, "[6] DEFAULT_DOMAIN_SKILL_CAP still exports 50 from the schema");
+  eq(DEFAULT_MAX_RESULT_CHARS, SETTINGS.tools.maxResultChars.shipped, "[6] DEFAULT_MAX_RESULT_CHARS IS the schema's shipped cap — one source");
+  eq(DEFAULT_STALL_THRESHOLD, SETTINGS.stall.repeatThreshold.shipped, "[6] DEFAULT_STALL_THRESHOLD IS the schema's shipped threshold — one source");
   eq(OE_WINDOW_TOPOLOGY_ENV, "OE_WINDOW_TOPOLOGY", "[6] the env-var-name constants are stable (docs and tests name these strings)");
   eq(OE_ONESHOT_AGENT_ENV, "OE_ONESHOT_AGENT", "[6] …OE_ONESHOT_AGENT");
   eq(OE_CONNECTOR_DM_ONLY_ENV, "OE_CONNECTOR_DM_ONLY", "[6] …OE_CONNECTOR_DM_ONLY");
@@ -251,6 +314,12 @@ console.log("6 — the public resolvers are now schema-backed, with their names 
     eq(bashTimeoutMs(), 600_000, "[6] bashTimeoutMs() ⇒ shipped 600s");
     ok(backgroundGuardEnabled(), "[6] backgroundGuardEnabled() ⇒ shipped ON");
     eq(domainSkillCap(), 50, "[6] domainSkillCap() ⇒ shipped 50");
+    ok(!auditSilencesEnabled(), "[6] auditSilencesEnabled() ⇒ shipped OFF");
+    ok(redriveEnabled(), "[6] redriveEnabled() ⇒ shipped ON");
+    ok(!sourceScopedToolsEnabled(), "[6] sourceScopedToolsEnabled() ⇒ shipped OFF");
+    ok(!genericReadVerbsEnabled(), "[6] genericReadVerbsEnabled() ⇒ shipped OFF");
+    eq(maxResultChars(), 120_000, "[6] maxResultChars() ⇒ shipped 120k");
+    eq(stallThreshold(), 3, "[6] stallThreshold() ⇒ shipped 3");
   } finally {
     for (const k of names) {
       if (saved[k] === undefined) delete process.env[k];

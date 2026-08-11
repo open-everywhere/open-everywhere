@@ -1,9 +1,9 @@
-export const DEFAULT_MAX_RESULT_CHARS = 120_000;
+import { SETTINGS, getSettings } from "../settings/settings.js";
+
+export const DEFAULT_MAX_RESULT_CHARS = SETTINGS.tools.maxResultChars.shipped;
 
 export function maxResultChars(): number {
-  const raw = process.env.OE_MAX_TOOL_RESULT_CHARS;
-  const n = raw !== undefined && raw !== "" ? Number.parseInt(raw, 10) : Number.NaN;
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_RESULT_CHARS;
+  return getSettings().tools.maxResultChars;
 }
 
 const HEAD_FRACTION = 0.8;

@@ -7,6 +7,7 @@ import {
   type UnifiedWakeTargetStore,
 } from "./unified-window.js";
 import { postArm } from "./post-arms.js";
+import { getSettings } from "../settings/settings.js";
 
 export const REDRIVE_ACTION = "unified.turn.redrive";
 
@@ -15,8 +16,7 @@ export const REDRIVE_GUARD_PREFIX = "unified-redrive:";
 export const REDRIVE_GUARD_TTL_MS = WAKE_TARGET_TTL_MS;
 
 export function redriveEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const v = (env.OE_UNIFIED_REDRIVE ?? "").trim().toLowerCase();
-  return !(v === "0" || v === "false" || v === "no" || v === "off");
+  return getSettings(env).window.unifiedRedrive;
 }
 
 export function redriveGuardKey(wakeId: string): string {

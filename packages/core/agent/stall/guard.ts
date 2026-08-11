@@ -3,15 +3,12 @@ import { defineState } from "eve/context";
 import type { ToolContext, ToolDefinition } from "eve/tools";
 import { auditToolAction } from "../audit/tool-action.js";
 import { emitTelemetry } from "../observability/telemetry.js";
+import { SETTINGS, getSettings } from "../settings/settings.js";
 
-export const DEFAULT_STALL_THRESHOLD = 3;
+export const DEFAULT_STALL_THRESHOLD = SETTINGS.stall.repeatThreshold.shipped;
 
 export function stallThreshold(): number {
-  const raw = (process.env.OE_STALL_REPEAT_THRESHOLD ?? "").trim().toLowerCase();
-  if (raw === "") return DEFAULT_STALL_THRESHOLD;
-  if (raw === "0" || raw === "off" || raw === "false") return 0;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_STALL_THRESHOLD;
+  return getSettings().stall.repeatThreshold;
 }
 
 export const RESULT_HASH_CAP_BYTES = 8192;

@@ -1,4 +1,5 @@
 import { getOperationalStore } from "../operational/provider.js";
+import { getSettings } from "../settings/settings.js";
 import { withOrgAuditLock } from "./chain.js";
 import type { AuditEntry, AuditInput, AuditFilter } from "../operational/store.js";
 
@@ -29,7 +30,7 @@ export async function appendAudit(entry: AuditInput): Promise<void> {
 }
 
 export function auditSilencesEnabled(): boolean {
-  return process.env.OE_AUDIT_SILENCES === "1";
+  return getSettings().audit.silences;
 }
 
 export async function readAudit(filter: AuditFilter = {}): Promise<AuditEntry[]> {

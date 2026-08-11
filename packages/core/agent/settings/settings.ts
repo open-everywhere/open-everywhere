@@ -8,6 +8,9 @@ export interface AgentSettings {
   readonly approvals: {
     readonly judgeMode: ApprovalJudgeMode;
   };
+  readonly audit: {
+    readonly silences: boolean;
+  };
   readonly bash: {
     readonly timeoutMs: number;
     readonly backgroundGuard: boolean;
@@ -24,6 +27,9 @@ export interface AgentSettings {
   };
   readonly models: {
     readonly stack: string;
+  readonly egress: {
+    readonly enforce: boolean;
+    readonly allowUnenforced: boolean;
   };
   readonly sandbox: {
     readonly stopAfterTurn: boolean;
@@ -32,12 +38,21 @@ export interface AgentSettings {
   readonly skills: {
     readonly domainSkillCap: number;
   };
+  readonly stall: {
+    readonly repeatThreshold: number;
+  };
   readonly taint: {
     readonly mode: TaintMode;
     readonly tierMode: TaintTierMode;
   };
+  readonly tools: {
+    readonly maxResultChars: number;
+    readonly sourceScopedMount: boolean;
+    readonly genericReadVerbs: boolean;
+  };
   readonly window: {
     readonly topology: boolean;
+    readonly unifiedRedrive: boolean;
   };
 }
 
@@ -71,6 +86,16 @@ export const SETTINGS = {
       summary:
         "LLM approval judge arming. `shadow` logs a would-be verdict beside every real card; `enforce` applies the judge's verdict for defer-flipped rows. Any other value is off, fail-closed.",
     } satisfies SettingSpec<ApprovalJudgeMode>,
+  },
+  audit: {
+    silences: {
+      path: "audit.silences",
+      env: "OE_AUDIT_SILENCES",
+      shipped: false,
+      parseEnv: (raw) => raw === "1",
+      summary:
+        "Write the judged-SILENCE audit rows (`unified.no_reply` and the `reply.no_reply` tool row). Off is the ACTIONS-ONLY posture: on an ambient surface these are the ~99% majority and would bury the rows that mean something.",
+    } satisfies SettingSpec<boolean>,
   },
   bash: {
     timeoutMs: {
@@ -172,6 +197,23 @@ export const SETTINGS = {
       summary:
         "The named model stack this deployment runs — one alias picks a coherent model for all five roles (primary/utility/vision/supervisor/judge). Aliases are defined in `agent/model/stacks.ts`; an unknown one fails config load. Per-role overrides layer on top there, and `OE_FORCE_MODEL`/`OE_PRIMARY_MODEL` still override the primary role last.",
     } satisfies SettingSpec<string>,
+  egress: {
+    enforce: {
+      path: "egress.enforce",
+      env: "OE_EGRESS_ENFORCE",
+      shipped: true,
+      parseEnv: (raw) => raw !== "0",
+      summary:
+        "Apply the compiled per-session egress policy for real. Off ⇒ dry-run (compile + audit, no apply) — except a COMPILE ERROR, whose deny-all is applied either way: dry-run relaxes the intended policy, never a failure to compute one.",
+    } satisfies SettingSpec<boolean>,
+    allowUnenforced: {
+      path: "egress.allowUnenforced",
+      env: "OE_ALLOW_UNENFORCED_EGRESS",
+      shipped: false,
+      parseEnv: (raw) => raw === "1",
+      summary:
+        "Let a session CONTINUE when the sandbox backend cannot apply fine-grained network policy. Off, an unenforceable policy aborts the session instead of running it unfirewalled.",
+    } satisfies SettingSpec<boolean>,
   },
   sandbox: {
     stopAfterTurn: {
@@ -209,6 +251,23 @@ export const SETTINGS = {
         "Max runtime-authored domain skills per domain (`create_skill` refuses past this). Per-skill content size is capped separately, in code.",
     } satisfies SettingSpec<number>,
   },
+  stall: {
+    repeatThreshold: {
+      path: "stall.repeatThreshold",
+      env: "OE_STALL_REPEAT_THRESHOLD",
+      shipped: 3,
+      parseEnv: (raw) => {
+        const v = raw.trim().toLowerCase();
+        if (v === "") return undefined;
+        if (v === "0" || v === "off" || v === "false") return 0;
+        const n = Number.parseInt(v, 10);
+        return Number.isFinite(n) && n > 0 ? n : undefined;
+      },
+      validate: (v) => (Number.isInteger(v) && v >= 0 ? undefined : "must be a non-negative integer (0 disables the stall guard)"),
+      summary:
+        "Identical-(tool, args, result) run length before the NEXT identical call is nudged instead of executed. `0` disables the stall guard entirely.",
+    } satisfies SettingSpec<number>,
+  },
   taint: {
     mode: {
       path: "taint.mode",
@@ -230,6 +289,37 @@ export const SETTINGS = {
         "Whether the reviewed source-tier table DECIDES a read's untrusted-content marking (`enforced`) or only logs what it would have decided (`dryrun`). Enforcement is relaxation-only.",
     } satisfies SettingSpec<TaintTierMode>,
   },
+  tools: {
+    maxResultChars: {
+      path: "tools.maxResultChars",
+      env: "OE_MAX_TOOL_RESULT_CHARS",
+      shipped: 120_000,
+      parseEnv: (raw) => {
+        const n = raw !== "" ? Number.parseInt(raw, 10) : Number.NaN;
+        return Number.isFinite(n) && n > 0 ? n : undefined;
+      },
+      validate: positiveInt,
+      summary:
+        "Per-tool-result character cap (~30k tokens), applied inside the untrusted-ingestion funnel so one avalanche result cannot blow the context window in a single shot.",
+      format: (v) => `${v} chars`,
+    } satisfies SettingSpec<number>,
+    sourceScopedMount: {
+      path: "tools.sourceScopedMount",
+      env: "OE_SOURCE_SCOPED_TOOLS",
+      shipped: false,
+      parseEnv: parseWideBoolean,
+      summary:
+        "Stage 1 of the uniform mount rule: a per-surface reader (`read_slack_channel`, …) mounts iff its platform is one of the window's SOURCES. Off, the historical arm-on-any-unified-window guard applies and every live window keeps every reader it mounts today.",
+    } satisfies SettingSpec<boolean>,
+    genericReadVerbs: {
+      path: "tools.genericReadVerbs",
+      env: "OE_GENERIC_READ_VERBS",
+      shipped: false,
+      parseEnv: parseWideBoolean,
+      summary:
+        "Stage 2: the surface-agnostic `read_channel` / `read_thread` pair mounts and the Slack-specific `read_slack_*` readers retire. A model-facing tool-surface change, deliberately armed independently of `tools.sourceScopedMount`.",
+    } satisfies SettingSpec<boolean>,
+  },
   window: {
     topology: {
       path: "window.topology",
@@ -243,6 +333,17 @@ export const SETTINGS = {
       },
       summary:
         "The standing-WINDOW apparatus — the ONE gate governing both the per-channel `solo` window and the cross-surface `unified` window. Off, every domain runs the native per-container path and its `mode` is inert. **Arm deliberately: a window is a wider data blast radius.**",
+    } satisfies SettingSpec<boolean>,
+    unifiedRedrive: {
+      path: "window.unifiedRedrive",
+      env: "OE_UNIFIED_REDRIVE",
+      shipped: true,
+      parseEnv: (raw) => {
+        const v = raw.trim().toLowerCase();
+        return !(v === "0" || v === "false" || v === "no" || v === "off");
+      },
+      summary:
+        "Auto-redrive a unified turn that ended in terminal prose instead of a `reply`, so the answer is delivered rather than dropped. Off restores the pre-redrive drop-and-lose behaviour exactly.",
     } satisfies SettingSpec<boolean>,
   },
 };
@@ -314,6 +415,9 @@ export function getSettings(
     approvals: {
       judgeMode: resolve(SETTINGS.approvals.judgeMode, o.approvals?.judgeMode, env),
     },
+    audit: {
+      silences: resolve(SETTINGS.audit.silences, o.audit?.silences, env),
+    },
     bash: {
       timeoutMs: resolve(SETTINGS.bash.timeoutMs, o.bash?.timeoutMs, env),
       backgroundGuard: resolve(SETTINGS.bash.backgroundGuard, o.bash?.backgroundGuard, env),
@@ -330,6 +434,9 @@ export function getSettings(
     },
     models: {
       stack: resolve(SETTINGS.models.stack, o.models?.stack, env),
+    egress: {
+      enforce: resolve(SETTINGS.egress.enforce, o.egress?.enforce, env),
+      allowUnenforced: resolve(SETTINGS.egress.allowUnenforced, o.egress?.allowUnenforced, env),
     },
     sandbox: {
       stopAfterTurn: resolve(SETTINGS.sandbox.stopAfterTurn, o.sandbox?.stopAfterTurn, env),
@@ -338,12 +445,21 @@ export function getSettings(
     skills: {
       domainSkillCap: resolve(SETTINGS.skills.domainSkillCap, o.skills?.domainSkillCap, env),
     },
+    stall: {
+      repeatThreshold: resolve(SETTINGS.stall.repeatThreshold, o.stall?.repeatThreshold, env),
+    },
     taint: {
       mode: resolve(SETTINGS.taint.mode, o.taint?.mode, env),
       tierMode: resolve(SETTINGS.taint.tierMode, o.taint?.tierMode, env),
     },
+    tools: {
+      maxResultChars: resolve(SETTINGS.tools.maxResultChars, o.tools?.maxResultChars, env),
+      sourceScopedMount: resolve(SETTINGS.tools.sourceScopedMount, o.tools?.sourceScopedMount, env),
+      genericReadVerbs: resolve(SETTINGS.tools.genericReadVerbs, o.tools?.genericReadVerbs, env),
+    },
     window: {
       topology: resolve(SETTINGS.window.topology, o.window?.topology, env),
+      unifiedRedrive: resolve(SETTINGS.window.unifiedRedrive, o.window?.unifiedRedrive, env),
     },
   };
 }
