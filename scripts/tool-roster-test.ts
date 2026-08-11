@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { nativeSubagentAtBuild } from "@open-everywhere/core/agent/settings/settings.js";
 import {
   PRIMITIVE_DISABLED,
   PRIMITIVE_MOUNTED,
@@ -196,8 +197,15 @@ try {
   ok(drift.mountedFromCore.length === core.length, "every core tool this app mounts is mounted under its own name");
 
   const declined = drift.declined.map((d) => d.name).sort((a, b) => a.localeCompare(b));
-  for (const name of ["agent", "bash", "glob", "grep", "read_file", "web_fetch", "write_file"]) {
+  const { SETTINGS_OVERRIDES: appOverrides } = (await import(
+    pathToFileURL(join(repoRoot, "agent", "settings", "settings.ts")).href
+  )) as { SETTINGS_OVERRIDES: Parameters<typeof nativeSubagentAtBuild>[0] };
+  const expectAgentSentinel = !nativeSubagentAtBuild(appOverrides);
+  for (const name of ["bash", "glob", "grep", "read_file", "web_fetch", "write_file", ...(expectAgentSentinel ? ["agent"] : [])]) {
     ok(declined.includes(name), `the real roster DECLINES the framework tool "${name}" by sentinel`);
+  }
+  if (!expectAgentSentinel) {
+    ok(!declined.includes("agent"), "armed native regime: the real roster does NOT decline `agent` (the built-in is the delegation path)");
   }
   ok(
     drift.mountedFromCore.every((e) => !declined.includes(e.name)),
