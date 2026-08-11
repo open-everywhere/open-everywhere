@@ -7,7 +7,7 @@ import { join } from "node:path";
 const tmp = mkdtempSync(join(tmpdir(), "oe-describe-image-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 
-import describeImage, { inferImageMime, confineToWorkspacePath } from "../agent/tools/describe_image.js";
+import describeImage, { inferImageMime, confineToWorkspacePath, normalizeImageSource } from "../agent/tools/describe_image.js";
 import { registerImageDescriber, _resetImageDescriberForTest, type ImageDescriber } from "../agent/model/vision.js";
 import { registerAttachmentResolver, _resetAttachmentPlaneForTest } from "../agent/channels/attachments.js";
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
@@ -206,7 +206,21 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   const empty = await tool.execute({ hint: "go on then" }, ctx);
   ok(empty.ok === false && /no image source was given/.test(empty.message ?? ""), "arg shape: NO source → an explicit ok:false naming the flat form (a readable tool result, not an invisible rejection)");
   const two = await tool.execute({ attachmentId: "F0BQ89BMX7S", path: "shot.png" }, ctx);
-  ok(two.ok === false && /more than one image source/.test(two.message ?? ""), "arg shape: TWO sources → refused rather than silently preferring one");
+  ok(two.ok === true && two.description === "a red square.", "arg shape: TWO sources → the most-governed (attachmentId) wins and DESCRIBES, no refusal");
+  const flooded = await tool.execute(
+    { attachmentId: "F0BQ89BMX7S", path: "shot.png", url: "https://example.com/x.png", source: { attachmentId: "F0BQ89BMX7S" } } as never,
+    ctx,
+  );
+  ok(flooded.ok === true && flooded.description === "a red square.", "arg shape: the luna FLOOD (all flat fields + nested duplicate) resolves to the attachment plane and describes");
+  {
+    const n = normalizeImageSource({ attachmentId: "F0BQ89BMX7S", path: "shot.png", url: "https://example.com/x.png", source: { attachmentId: "F0BQ89BMX7S" } } as never);
+    ok(n.ok === true && "attachmentId" in n.source, "precedence: attachmentId out-ranks path and url");
+    ok(n.ok === true && (n.ignored?.join(",") ?? "") === "path,url", "precedence: the out-ranked keys are reported (deduped — the nested duplicate is not listed twice)");
+    const dup = normalizeImageSource({ attachmentId: "F0BQ89BMX7S", source: { attachmentId: "F0BQ89BMX7S" } } as never);
+    ok(dup.ok === true && dup.ignored === undefined, "precedence: an exact nested DUPLICATE is deduped away — one source, nothing ignored");
+    const pu = normalizeImageSource({ path: "shot.png", url: "https://example.com/x.png" } as never);
+    ok(pu.ok === true && "path" in pu.source && (pu.ignored?.join(",") ?? "") === "url", "precedence: path out-ranks url when no attachmentId is given");
+  }
   const bareString = await tool.execute({ source: "F0BQ89BMX7S" }, ctx);
   ok(bareString.ok === false && /plain string/.test(bareString.message ?? ""), "arg shape: a BARE (non-JSON) `source` string is refused, NOT guessed into an arm — routing it would send a path through oeFetch or an id at the sandbox");
 
