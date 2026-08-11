@@ -9,7 +9,7 @@ import { resolveStack, type ModelRoleSpec, type ModelStack } from "./stacks.js";
 
 export type { ModelRole, ModelRoleSpec, ModelStack, StackAlias } from "./stacks.js";
 
-const STACK_ALIAS = getSettings({ ...process.env }, SETTINGS_OVERRIDES).models.stack;
+const STACK_ALIAS = getSettings(process.env, SETTINGS_OVERRIDES).models.stack;
 
 const STACK: ModelStack = resolveStack(STACK_ALIAS, {});
 
