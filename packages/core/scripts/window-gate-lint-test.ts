@@ -13,6 +13,7 @@ import {
   type WindowToolSource,
 } from "../agent/access/window-gate-manifest.js";
 import type { WindowGrain } from "../agent/identity/binding.js";
+import { nativeSubagentAtBuild } from "../agent/settings/settings.js";
 
 const require = createRequire(import.meta.url);
 const eveRoot = dirname(require.resolve("eve/package.json"));
@@ -219,6 +220,40 @@ firesWith(
   ok(problems.length === 0, `agent gated [standing,thread] + kit + sentinel is clean (the #96 post-fix shape) (got: ${JSON.stringify(problems)})`);
 }
 
+const armedKit = [{ name: "delegation_tools", source: 'export default windowGatedKit("delegation_tools", {\n  agent: defineTool(x),\n});' }];
+firesWith(
+  checkWindowGateManifest(
+    armedKit,
+    new Map([["agent", SENTINEL], ["delegation_tools", 'export { default } from "@open-everywhere/core/agent/tools/delegation_tools.js";']]),
+    ["agent"],
+    g({ agent: ["standing", "thread"] }),
+    u("delegation_tools"),
+    undefined,
+    undefined,
+    undefined,
+    true,
+  ),
+  "roster artefacts are stale",
+  "ARMED + a still-present agent sentinel FAILS (roster generated against a different settings state — run oe build --accept)",
+);
+{
+  const problems = checkWindowGateManifest(
+    armedKit,
+    new Map([["delegation_tools", 'export { default } from "@open-everywhere/core/agent/tools/delegation_tools.js";']]),
+    ["agent"],
+    g({ agent: ["standing", "thread"] }),
+    u("delegation_tools"),
+    undefined,
+    undefined,
+    undefined,
+    true,
+  );
+  ok(
+    !problems.some((p) => p.includes('"agent"')),
+    `ARMED + sentinel absent raises no agent problem (the built-in IS the delegation path; runtime gate = the projection seam) (got: ${JSON.stringify(problems)})`,
+  );
+}
+
 firesWith(
   checkWindowGateManifest([{ name: "spawn_thread_session", source: wrapped("spawn_thread_session") }], new Map([["spawn_thread_session", ""]]), [], g({ spawn_thread_session: ["thread"] }), u()),
   'spawn_thread_session"] must be exactly ["standing"]',
@@ -261,7 +296,11 @@ for (const name of Object.keys(WINDOW_GATED_TOOLS)) {
   const subagentNames = existsSync(subagentDir)
     ? readdirSync(subagentDir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)
     : [];
-  const problems = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOL_NAMES, undefined, undefined, undefined, subagentNames);
+  const { SETTINGS_OVERRIDES: appOverrides } = (await import(
+    pathToFileURL(join(here, "../../../agent/settings/settings.ts")).href
+  )) as { SETTINGS_OVERRIDES: Parameters<typeof nativeSubagentAtBuild>[0] };
+  const realArmed = nativeSubagentAtBuild(appOverrides);
+  const problems = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOL_NAMES, undefined, undefined, undefined, subagentNames, undefined, realArmed);
   ok(problems.length === 0, `the REAL tool surface carries a clean, total window-gate manifest (problems: ${JSON.stringify(problems)})`);
   ok(coreTools.length >= 37, `the real scan actually covered the core tools dir (saw ${coreTools.length})`);
   ok(appShims.size >= 40, `the real scan covered the deploy shims (saw ${appShims.size})`);
@@ -276,9 +315,10 @@ for (const name of Object.keys(WINDOW_GATED_TOOLS)) {
     FULL_KIT,
     subagentNames,
     new Set([...JOB_WAKE_TOOLS, "ghost_job_verb"]),
+    realArmed,
   );
   firesWith(stale, 'JOB_WAKE_TOOLS names "ghost_job_verb"', "a stale JOB_WAKE_TOOLS row FAILS (rule 6)");
-  const cleanKit = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOL_NAMES, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, FULL_KIT, subagentNames, JOB_WAKE_TOOLS);
+  const cleanKit = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOL_NAMES, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, FULL_KIT, subagentNames, JOB_WAKE_TOOLS, realArmed);
   ok(cleanKit.length === 0, `the REAL job kit is clean against the real surface (problems: ${JSON.stringify(cleanKit)})`);
 }
 

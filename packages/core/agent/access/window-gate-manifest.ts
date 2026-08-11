@@ -179,6 +179,7 @@ export function checkWindowGateManifest(
   wideHandsGrains: readonly WindowGrain[] = FULL_KIT,
   subagentNames: readonly string[] = [],
   jobKit: ReadonlySet<string> = JOB_WAKE_TOOLS,
+  nativeSubagentArmed = false,
 ): string[] {
   const WIDE_HANDS_KEY = grainKey(wideHandsGrains);
   const problems: string[] = [];
@@ -257,9 +258,15 @@ export function checkWindowGateManifest(
         );
       }
       const shim = appShims.get(name);
-      if (shim === undefined || !/\bdisableTool\s*\(\s*\)/.test(shim)) {
+      if (name === "agent" && nativeSubagentArmed) {
+        if (shim !== undefined && /\bdisableTool\s*\(\s*\)/.test(shim)) {
+          problems.push(
+            `delegation.nativeSubagent is armed at build but agent/tools/agent.ts is still a disableTool() sentinel — roster artefacts are stale against the settings state; run \`oe build --accept\``,
+          );
+        }
+      } else if (shim === undefined || !/\bdisableTool\s*\(\s*\)/.test(shim)) {
         problems.push(
-          `framework tool "${name}" is grain-gated but its app shim agent/tools/${name}.ts is not a \`disableTool()\` sentinel — without it eve's built-in of that name stays mounted on EVERY session incl. standing seats, silently bypassing the grain gate (for \`agent\` specifically: eve's harness injects its built-in recursive subagent unless disabledFrameworkTools carries the name, and that built-in is the credential-broken path live-hit on 2026-07-16)`,
+          `framework tool "${name}" is grain-gated but its app shim agent/tools/${name}.ts is not a \`disableTool()\` sentinel — without it eve's built-in of that name stays mounted on EVERY session incl. standing seats, silently bypassing the grain gate (for \`agent\` specifically: eve's harness injects its built-in recursive subagent unless disabledFrameworkTools carries the name, and that built-in — pre-OPE-393-hop — was the credential-broken path live-hit on 2026-07-16; under the armed native regime this arm is bypassed for \`agent\` above)`,
         );
       }
     } else if (!new RegExp(`windowGated\\(\\s*"${name}"`).test(coreSrc)) {
