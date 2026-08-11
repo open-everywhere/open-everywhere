@@ -19,6 +19,7 @@ import {
 } from "./model/models.js";
 import { loadModelPolicy } from "./model/policy.js";
 import { registerAppInfo } from "@open-everywhere/core/agent/commands/core.js";
+import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -31,9 +32,9 @@ const UTILITY_GATEWAY_DEFAULTS = {
   caching: "auto",
 } as const;
 
-const SESSION_INPUT_TOKEN_BUDGET = Number(process.env.OE_SESSION_INPUT_TOKEN_BUDGET) || 30_000_000;
+const SESSION_INPUT_TOKEN_BUDGET = getSettings().agent.sessionInputTokenBudget;
 
-const COMPACTION_THRESHOLD_PERCENT = Number(process.env.OE_COMPACTION_THRESHOLD_PERCENT) || 0.5;
+const COMPACTION_THRESHOLD_PERCENT = getSettings().agent.compactionThresholdPercent;
 
 registerGatewayDreamJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
 

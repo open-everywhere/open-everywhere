@@ -278,6 +278,21 @@ for (const raw of ["", "0", "  ", "banana"]) {
   eq(at({ OE_GOVERNANCE_FLOOR_TTL_MS: raw }).governance.floorTtlMs, 900_000, `[3] governance.floorTtlMs: ${JSON.stringify(raw)} ⇒ default (0 is falsy under \`||\`)`);
 }
 
+eq(at({}).agent.sessionInputTokenBudget, 30_000_000, "[3] agent.sessionInputTokenBudget: shipped 30M (under the hosted 40M hard kill)");
+eq(at({}).agent.compactionThresholdPercent, 0.5, "[3] agent.compactionThresholdPercent: shipped 0.5");
+eq(at({ OE_SESSION_INPUT_TOKEN_BUDGET: "20000000" }).agent.sessionInputTokenBudget, 20_000_000, "[3] agent.sessionInputTokenBudget: a positive number applies");
+eq(at({ OE_COMPACTION_THRESHOLD_PERCENT: "0.7" }).agent.compactionThresholdPercent, 0.7, "[3] agent.compactionThresholdPercent: a fraction applies");
+for (const raw of ["", "0", "loads"]) {
+  eq(at({ OE_SESSION_INPUT_TOKEN_BUDGET: raw }).agent.sessionInputTokenBudget, 30_000_000, `[3] agent.sessionInputTokenBudget: ${JSON.stringify(raw)} ⇒ default`);
+  eq(at({ OE_COMPACTION_THRESHOLD_PERCENT: raw }).agent.compactionThresholdPercent, 0.5, `[3] agent.compactionThresholdPercent: ${JSON.stringify(raw)} ⇒ default`);
+}
+eq(
+  at({ OE_SESSION_INPUT_TOKEN_BUDGET: "-1" }).agent.sessionInputTokenBudget,
+  -1,
+  "[3] 🔴 agent.sessionInputTokenBudget HONOURS a negative — the resolver was `Number(raw) || 30_000_000`, which only rejects 0/NaN. Its own comment claimed 'non-positive falls back' and was WRONG about negatives; the behaviour is preserved and the comment corrected, not the other way round",
+);
+eq(at({ OE_COMPACTION_THRESHOLD_PERCENT: "-1" }).agent.compactionThresholdPercent, -1, "[3] …and the compaction threshold has the identical hole, likewise preserved");
+
 eq(at({}).rotation.quietGapHours, 24, "[3] rotation.quietGapHours: shipped 24h");
 eq(at({}).rotation.tokenBudget, 4_000_000, "[3] rotation.tokenBudget: shipped 4M (OPE-345 demoted it from primary; the number did not move)");
 eq(at({}).rotation.turnBudget, 60, "[3] rotation.turnBudget: shipped 60 (derived from the ~85-turn workflow event wall)");
@@ -395,6 +410,7 @@ console.log("5 — a bad override fails the boot, not a turn:");
   refuses(() => defineSettings({ bash: { timeoutMs: "600000" } } as never), "expected number", "[5] a wrong-typed value is refused");
   refuses(() => defineSettings({ skills: { domainSkillCap: 0 } }), "positive integer", "[5] an out-of-range value is refused by its validator");
   refuses(() => defineSettings({ sandbox: { extendMaxMinutes: -1 } }), "positive integer", "[5] …in both numeric settings");
+  refuses(() => defineSettings({ agent: { compactionThresholdPercent: 1 } }), "strictly between 0 and 1", "[5] a compaction threshold of 1 is refused — a fraction of the window, not a percentage");
   ok(
     defineSettings({ bash: { timeoutMs: 0 } }).bash?.timeoutMs === 0,
     "[5] bash.timeoutMs accepts 0 — that is the documented 'disable the timeout' value, not an out-of-range one",

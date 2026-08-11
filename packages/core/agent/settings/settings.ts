@@ -5,6 +5,10 @@ export type TaintMode = "on" | "off";
 export type ApprovalJudgeMode = "off" | "shadow" | "enforce";
 
 export interface AgentSettings {
+  readonly agent: {
+    readonly sessionInputTokenBudget: number;
+    readonly compactionThresholdPercent: number;
+  };
   readonly approvals: {
     readonly judgeMode: ApprovalJudgeMode;
     readonly ttlHours: number;
@@ -133,6 +137,27 @@ const wholePositiveIntEnv = (raw: string): number | undefined => {
 };
 
 export const SETTINGS = {
+  agent: {
+    sessionInputTokenBudget: {
+      path: "agent.sessionInputTokenBudget",
+      env: "OE_SESSION_INPUT_TOKEN_BUDGET",
+      shipped: 30_000_000,
+      parseEnv: (raw) => Number(raw) || undefined,
+      validate: positiveNumber,
+      summary:
+        "eve's `limits.maxInputTokensPerSession`, set BELOW the hosted 40M hard kill so the graceful park/fail fires first. KEEP IT UNDER 40M — above that the hosted wall wins and the session dies ungracefully instead of parking. Read at BOOT (it is a `defineAgent` argument).",
+    } satisfies SettingSpec<number>,
+    compactionThresholdPercent: {
+      path: "agent.compactionThresholdPercent",
+      env: "OE_COMPACTION_THRESHOLD_PERCENT",
+      shipped: 0.5,
+      parseEnv: (raw) => Number(raw) || undefined,
+      validate: (v) => (Number.isFinite(v) && v > 0 && v < 1 ? undefined : "must be a fraction strictly between 0 and 1"),
+      summary:
+        "eve's `compaction.thresholdPercent` — the fraction of the model context window at which compaction fires. COMPACTION OWNS SIZE for every window type (rotation is context-motivated and time-triggered), so this is the in-generation size lever. Per-type thresholds are not reachable on the pinned eve. Read at BOOT.",
+      format: (v) => `${v} (${Math.round(v * 100)}% of the window)`,
+    } satisfies SettingSpec<number>,
+  },
   approvals: {
     judgeMode: {
       path: "approvals.judgeMode",
@@ -734,6 +759,10 @@ export function settingAtLoad<T>(spec: SettingSpec<T> & { readonly loadTime: tru
 export function getSettings(env: NodeJS.ProcessEnv = process.env): AgentSettings {
   const o = registered;
   return {
+    agent: {
+      sessionInputTokenBudget: resolve(SETTINGS.agent.sessionInputTokenBudget, o.agent?.sessionInputTokenBudget, env),
+      compactionThresholdPercent: resolve(SETTINGS.agent.compactionThresholdPercent, o.agent?.compactionThresholdPercent, env),
+    },
     approvals: {
       judgeMode: resolve(SETTINGS.approvals.judgeMode, o.approvals?.judgeMode, env),
       ttlHours: resolve(SETTINGS.approvals.ttlHours, o.approvals?.ttlHours, env),
