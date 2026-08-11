@@ -277,4 +277,23 @@ console.log("7 — every setting reaches the generated operator table:");
   eq(new Set(settingEnvNames()).size, settingEnvNames().length, "[7] no env var name is claimed by two settings");
 }
 
+console.log("8 — a setting either has an env path or has none, with nothing in between:");
+{
+  for (const [group, specs] of Object.entries(SETTINGS as unknown as Record<string, Record<string, { env?: string; parseEnv?: unknown }>>)) {
+    for (const [key, spec] of Object.entries(specs)) {
+      ok(
+        (spec.env === undefined) === (spec.parseEnv === undefined),
+        `[8] ${group}.${key}: \`env\` and \`parseEnv\` are present together or absent together`,
+      );
+    }
+  }
+  resetSettingsForTest();
+  eq(at({}).taint.mode, "on", "[8] taint.mode: the shipped default is ON");
+  eq(at({ OE_TAINT_MODE: "off", OE_TAINT_TIERS: "off" }).taint.mode, "on", "[8] 🔴 no environment reaches `off` — there is no parser for a value to be read by");
+  registerSettings(defineSettings({ taint: { mode: "off" } }));
+  eq(at({}).taint.mode, "off", "[8] …a REGISTERED override does, which is the reviewed-diff route and the only one");
+  eq(at({ OE_TAINT_MODE: "on" }).taint.mode, "off", "[8] …and no environment pulls it back either: `env` is not consulted at all for a code-only spec");
+  resetSettingsForTest();
+}
+
 console.log(`\nsettings: ${n} assertions passed.`);

@@ -68,16 +68,16 @@ export const TAINT_MODE_ACTION = "taint.mode";
 
 const taintModeAnnounced = defineState<boolean>("open-everywhere.taint-mode-announced", () => false);
 
-export function announceTaintOff(ctx: HookContext): void {
+export function announceTaintOff(ctx: HookContext): boolean {
   try {
-    if (taintEnabled()) return;
+    if (taintEnabled()) return false;
     let first = false;
     taintModeAnnounced.update((cur) => {
       if (cur === true) return true;
       first = true;
       return true;
     });
-    if (!first) return;
+    if (!first) return false;
     const sessionId = (ctx as { session?: { id?: string } }).session?.id;
     void appendAudit({
       org: deploymentOrg(),
@@ -91,7 +91,9 @@ export function announceTaintOff(ctx: HookContext): void {
         fencing: "unchanged",
       },
     }).catch(() => undefined);
+    return true;
   } catch {
+    return false;
   }
 }
 
