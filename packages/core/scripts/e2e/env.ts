@@ -73,6 +73,7 @@ export const ENV = {
   accessPersonalFixture: "E2E_ACCESS_PERSONAL_FIXTURE",
   linkIdentityArmed: "E2E_LINK_IDENTITY",
   expectModels: "E2E_EXPECT_MODELS",
+  expectModelsRequired: "E2E_EXPECT_MODELS_REQUIRED",
 } as const;
 
 export type Capability =

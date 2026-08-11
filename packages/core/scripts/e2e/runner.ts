@@ -332,6 +332,10 @@ async function main(): Promise<void> {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
+      const requiredModels = (process.env.E2E_EXPECT_MODELS_REQUIRED ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
       if (expectModels.length > 0) {
         const check = checkExpectedModels(rows, expectModels);
         if (check.ok) {
@@ -339,6 +343,20 @@ async function main(): Promise<void> {
         } else {
           modelRoutingFailed = true;
           console.error(`✗ model routing: unexpected model(s) [${check.unexpected.join(", ")}] appeared (expected only [${expectModels.join(", ")}]; saw [${check.seen.join(", ")}])`);
+        }
+      }
+      if (requiredModels.length > 0) {
+        const seen = new Set(checkExpectedModels(rows, []).seen);
+        const missing = requiredModels.filter((m) => !seen.has(m));
+        if (missing.length === 0) {
+          console.log(`✓ model routing: every required model appeared [${requiredModels.join(", ")}]`);
+        } else {
+          modelRoutingFailed = true;
+          console.error(
+            `✗ model routing: required model(s) [${missing.join(", ")}] NEVER appeared in this run's usage rows` +
+              ` (saw [${[...seen].join(", ") || "nothing"}]). The target deployment is not running the stack this` +
+              ` run was pinned against — check OE_MODEL_STACK on the deployment, not the scenarios.`,
+          );
         }
       }
     } catch (err) {
