@@ -1,4 +1,5 @@
 import { NO_REPLY_SENTINEL } from "./normalized-wake.js";
+import { SETTINGS, settingAtLoad } from "../settings/settings.js";
 import { consumeNoReplyThisTurn } from "./no-reply-signal.js";
 import { silentRoutineThisTurn, SILENT_ROUTINE_DROP_REASON } from "../routines/report.js";
 import type { ChannelSessionRow } from "../operational/store.js";
@@ -42,22 +43,25 @@ export function nameDropPattern(name: string): RegExp {
   return new RegExp(`(?:^|[^\\p{L}\\p{N}_])${escaped}(?=$|[^\\p{L}\\p{N}_])`, "iu");
 }
 
-export const SUPERVISOR_ROTATE_QUIET_GAP_MS =
-  (Number(process.env.OE_SUPERVISOR_ROTATE_QUIET_GAP_HOURS) || 24) * 3_600_000;
+export const SUPERVISOR_ROTATE_QUIET_GAP_MS = settingAtLoad(SETTINGS.rotation.quietGapHours) * 3_600_000;
 
 export function rotationClockMsFromDays(raw: string | undefined, defaultDays: number): number {
   const fallback = defaultDays * 86_400_000;
   if (raw === undefined || raw.trim() === "") return fallback;
   const days = Number(raw);
   if (!Number.isFinite(days)) return fallback;
+  return rotationClockMs(days);
+}
+
+export function rotationClockMs(days: number): number {
   return days > 0 ? days * 86_400_000 : Number.POSITIVE_INFINITY;
 }
 
-export const SUPERVISOR_ROTATE_EXPIRY_MS = rotationClockMsFromDays(process.env.OE_SUPERVISOR_ROTATE_EXPIRY_DAYS, 7);
+export const SUPERVISOR_ROTATE_EXPIRY_MS = rotationClockMs(settingAtLoad(SETTINGS.rotation.expiryDays));
 
-export const SUPERVISOR_ROTATE_TOKEN_BUDGET = Number(process.env.OE_SUPERVISOR_ROTATE_TOKEN_BUDGET) || 4_000_000;
+export const SUPERVISOR_ROTATE_TOKEN_BUDGET = settingAtLoad(SETTINGS.rotation.tokenBudget);
 
-export const SUPERVISOR_ROTATE_TURN_BUDGET = Number(process.env.OE_SUPERVISOR_ROTATE_TURN_BUDGET) || 60;
+export const SUPERVISOR_ROTATE_TURN_BUDGET = settingAtLoad(SETTINGS.rotation.turnBudget);
 
 export type RotationTrigger =
   | "unknown-accumulation"

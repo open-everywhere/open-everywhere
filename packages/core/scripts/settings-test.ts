@@ -278,6 +278,23 @@ for (const raw of ["", "0", "  ", "banana"]) {
   eq(at({ OE_GOVERNANCE_FLOOR_TTL_MS: raw }).governance.floorTtlMs, 900_000, `[3] governance.floorTtlMs: ${JSON.stringify(raw)} ⇒ default (0 is falsy under \`||\`)`);
 }
 
+eq(at({}).rotation.quietGapHours, 24, "[3] rotation.quietGapHours: shipped 24h");
+eq(at({}).rotation.tokenBudget, 4_000_000, "[3] rotation.tokenBudget: shipped 4M (OPE-345 demoted it from primary; the number did not move)");
+eq(at({}).rotation.turnBudget, 60, "[3] rotation.turnBudget: shipped 60 (derived from the ~85-turn workflow event wall)");
+eq(at({ OE_SUPERVISOR_ROTATE_QUIET_GAP_HOURS: "6" }).rotation.quietGapHours, 6, "[3] rotation.quietGapHours: a positive number applies");
+for (const raw of ["", "0", "junk"]) {
+  eq(at({ OE_SUPERVISOR_ROTATE_QUIET_GAP_HOURS: raw }).rotation.quietGapHours, 24, `[3] rotation.quietGapHours: ${JSON.stringify(raw)} ⇒ default`);
+  eq(at({ OE_SUPERVISOR_ROTATE_TOKEN_BUDGET: raw }).rotation.tokenBudget, 4_000_000, `[3] rotation.tokenBudget: ${JSON.stringify(raw)} ⇒ default`);
+  eq(at({ OE_SUPERVISOR_ROTATE_TURN_BUDGET: raw }).rotation.turnBudget, 60, `[3] rotation.turnBudget: ${JSON.stringify(raw)} ⇒ default`);
+}
+eq(at({}).rotation.expiryDays, 7, "[3] rotation.expiryDays: shipped 7d");
+eq(at({ OE_SUPERVISOR_ROTATE_EXPIRY_DAYS: "30" }).rotation.expiryDays, 30, "[3] rotation.expiryDays: a positive number applies");
+eq(at({ OE_SUPERVISOR_ROTATE_EXPIRY_DAYS: "0" }).rotation.expiryDays, 0, "[3] 🔴 rotation.expiryDays keeps 0 as a VALUE (⇒ the expiry trigger is disabled), not as 'unset' — unlike every sibling clock");
+eq(at({ OE_SUPERVISOR_ROTATE_EXPIRY_DAYS: "-1" }).rotation.expiryDays, -1, "[3] …and a negative likewise disables");
+for (const raw of ["", "   ", "soon"]) {
+  eq(at({ OE_SUPERVISOR_ROTATE_EXPIRY_DAYS: raw }).rotation.expiryDays, 7, `[3] rotation.expiryDays: ${JSON.stringify(raw)} ⇒ the shipped 7 (a typo must never silently DISABLE a trigger)`);
+}
+
 eq(at({}).sandbox.timeoutMs, 30 * 60 * 1000, "[3] sandbox.timeoutMs: shipped 30 min");
 eq(at({}).sandbox.snapshotExpirationMs, 7 * 24 * 60 * 60 * 1000, "[3] sandbox.snapshotExpirationMs: shipped 7 days");
 for (const [label, envName, shipped, read] of [
@@ -383,6 +400,21 @@ console.log("5 — a bad override fails the boot, not a turn:");
     "[5] bash.timeoutMs accepts 0 — that is the documented 'disable the timeout' value, not an out-of-range one",
   );
   eq(defineSettings({}), {}, "[5] an EMPTY override object is valid — 'this deployment holds no opinion beyond the shipped ones'");
+
+  refuses(
+    () => defineSettings({ rotation: { turnBudget: 90 } }),
+    "resolved ONCE at module load",
+    "[5] 🔴 a loadTime setting refuses an app override BY NAME instead of ignoring it",
+  );
+  refuses(
+    () => defineSettings({ rotation: { quietGapHours: 6 } }),
+    "OE_SUPERVISOR_ROTATE_QUIET_GAP_HOURS",
+    "[5] …and the message names the env var that CAN express it",
+  );
+  ok(
+    settingDocs().filter((d) => d.path.startsWith("rotation.")).length === 4,
+    "[5] all four rotation clocks still reach the generated operator table (refusing an app override is not hiding the knob)",
+  );
 }
 
 console.log("6 — the public resolvers are now schema-backed, with their names and shapes intact:");
