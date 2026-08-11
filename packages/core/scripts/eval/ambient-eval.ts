@@ -1092,6 +1092,9 @@ async function main() {
   await store.setDomainModel(cli.org, cli.domain, { modelId: cli.model, reasoning: effort }, "ambient-eval");
   console.log(`set  pick: ${JSON.stringify({ modelId: cli.model, reasoning: effort })}`);
 
+  const restore = makeRestore(store, cli, effort, prior);
+  const onSignal = signalRestore(restore);
+
   const startedAt = new Date().toISOString();
   const okRuns: SeriesRunResult[] = [];
   const errored: { repeat: number; error: string }[] = [];
@@ -1108,14 +1111,46 @@ async function main() {
     }
     if (cli.repeats > 1) writeAggregate(cli, effort, startedAt, okRuns, errored);
   } finally {
-    if (cli.restore) {
-      try {
-        if (prior) await store.setDomainModel(cli.org, cli.domain, { modelId: prior.modelId, reasoning: prior.reasoning }, "ambient-eval-restore");
-        else await store.clearDomainModel(cli.org, cli.domain);
-        console.log(`\nrestored pick: ${prior ? JSON.stringify({ modelId: prior.modelId, reasoning: prior.reasoning }) : "cleared (git route)"}`);
-      } catch (e) { console.error(`⚠ FAILED to restore pick — domain left on ${cli.model}@${effort}. Fix manually. (${(e as Error).message})`); }
-    }
+    onSignal.off();
+    await restore();
   }
+}
+
+function makeRestore(
+  store: OperationalStore,
+  cli: Cli,
+  effort: ModelReasoning,
+  prior: DomainModelRow | null,
+): () => Promise<void> {
+  let done = false;
+  return async () => {
+    if (done || !cli.restore) return;
+    done = true;
+    try {
+      const restorable = prior !== null && (prior.modelId === undefined || isModelUsable(prior.modelId, ALLOW_POLICY));
+      if (prior !== null && !restorable) {
+        console.error(
+          `⚠ prior pick "${prior.modelId}" is OUT OF ENVELOPE for the current config — NOT restoring it.\n` +
+            `  Clearing the domain to its git route instead. (Restoring a stale id would silently re-pin routing.)`,
+        );
+      }
+      if (restorable && prior !== null) await store.setDomainModel(cli.org, cli.domain, { modelId: prior.modelId, reasoning: prior.reasoning }, "ambient-eval-restore");
+      else await store.clearDomainModel(cli.org, cli.domain);
+      console.log(`\nrestored pick: ${restorable && prior ? JSON.stringify({ modelId: prior.modelId, reasoning: prior.reasoning }) : "cleared (git route)"}`);
+    } catch (e) { console.error(`⚠ FAILED to restore pick — domain left on ${cli.model}@${effort}. Fix manually. (${(e as Error).message})`); }
+  };
+}
+
+function signalRestore(restore: () => Promise<void>): { off: () => void } {
+  const handlers: [NodeJS.Signals, () => void][] = (["SIGINT", "SIGTERM"] as const).map((sig) => [
+    sig,
+    () => {
+      console.error(`\n⚠ ${sig} — restoring the domain pick before exit.`);
+      void restore().finally(() => process.exit(130));
+    },
+  ]);
+  for (const [sig, h] of handlers) process.on(sig, h);
+  return { off: () => { for (const [sig, h] of handlers) process.off(sig, h); } };
 }
 
 const invokedDirectly = process.argv[1]?.endsWith("ambient-eval.ts") || process.argv[1]?.endsWith("ambient-eval.js");

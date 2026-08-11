@@ -1,5 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { STACKS, STACK_ALIASES, type ModelRole, type StackAlias } from "../agent/model/stacks.js";
+import { STACKS, STACK_ALIASES, resolveStack, type ModelRole, type StackAlias } from "../agent/model/stacks.js";
+import { allowListForStack } from "../agent/model/models.js";
+import { isModelUsable } from "@open-everywhere/core/agent/model/policy.js";
+import { wireNeonOperationalStore } from "../packages/core/scripts/e2e/rotate-window-lib.js";
 
 const DEFAULT_SCENARIOS = ["S20", "J1", "F-ART"] as const;
 
@@ -57,6 +60,37 @@ if (missing.length > 0 && !dryRun) {
       `  skipped entirely and the run would pass without evidence — which is the failure this lane closes.`,
   );
   process.exit(2);
+}
+
+const ORG = process.env["E2E_ORG"] ?? "default";
+const dbUrl = (process.env["DATABASE_URL"] ?? "").trim();
+if (dbUrl === "") {
+  console.warn(
+    `  ⚠️ PREFLIGHT SKIPPED — DATABASE_URL is unset, so the runtime domain-model picks could not be read.\n` +
+      `     A pick set on the target (set_domain_model, or an eval harness that pinned one and did not\n` +
+      `     restore) silently overrides routing for its domain and would defeat the switch this lane\n` +
+      `     exists to prove. Source the e2e env to arm this check.\n`,
+  );
+} else {
+  const envelope = { allow: allowListForStack(resolveStack(alias)) };
+  const store = await wireNeonOperationalStore(dbUrl);
+  const rows = await store.domainModels(ORG);
+  const picks = rows.flatMap((r) => (r.modelId === undefined ? [] : [{ ...r, modelId: r.modelId }]));
+  const outside = picks.filter((r) => !isModelUsable(r.modelId, envelope));
+  if (outside.length > 0) {
+    console.error(
+      `✗ PREFLIGHT: ${outside.length} runtime domain pick(s) in org "${ORG}" sit OUTSIDE stack "${alias}":\n` +
+        outside.map((r) => `    domain "${r.domain}" → "${r.modelId}"  (set by ${r.setBy ?? "unknown"}, ${r.updatedAt})`).join("\n") +
+        `\n  Those domains route to that model regardless of OE_MODEL_STACK, so this run would not prove the\n` +
+        `  switch. Clear them first (\`clear_domain_model\`), then re-run.`,
+    );
+    process.exit(2);
+  }
+  console.log(
+    `  preflight    ${picks.length} runtime domain pick(s) in org "${ORG}", all inside stack "${alias}"` +
+      (picks.length > 0 ? ` (${picks.map((r) => `${r.domain}→${r.modelId}`).join(", ")})` : "") +
+      `\n`,
+  );
 }
 
 if (dryRun) {

@@ -578,6 +578,9 @@ async function main(): Promise<void> {
   await store.setDomainModel(cli.org, cli.domain, { modelId: cli.model, reasoning: effort }, "memory-eval");
   console.log(`set pick: ${JSON.stringify({ modelId: cli.model, reasoning: effort })} (prior: ${prior ? prior.modelId : "none"})`);
 
+  const restore = makeRestore(store, cli, prior);
+  const onSignal = signalRestore(restore);
+
   const startedAt = new Date().toISOString();
   const results: ProbeResult[] = [];
   try {
@@ -595,13 +598,8 @@ async function main(): Promise<void> {
       }
     }
   } finally {
-    if (cli.restore) {
-      try {
-        if (prior) await store.setDomainModel(cli.org, cli.domain, { modelId: prior.modelId, reasoning: prior.reasoning }, "memory-eval-restore");
-        else await store.clearDomainModel(cli.org, cli.domain);
-        console.log(`\nrestored pick: ${prior ? prior.modelId : "cleared"}`);
-      } catch (e) { console.error(`⚠ FAILED to restore pick — domain left on ${cli.model}. (${(e as Error).message})`); }
-    }
+    onSignal.off();
+    await restore();
   }
 
   const summary = summarize(results);
@@ -613,6 +611,38 @@ async function main(): Promise<void> {
   const outPath = join(outDir, `memory-eval-${slug}-${effort}-${cli.size}-${startedAt.replace(/[:.]/g, "-")}.json`);
   writeFileSync(outPath, JSON.stringify({ config: { model: cli.model, effort, size: cli.size, seed: cli.seed, domain: cli.domain, org: cli.org }, startedAt, finishedAt: new Date().toISOString(), topology: { silos: topology.silos.map((s) => ({ name: s.name, shape: s.shape, descriptionQuality: s.descriptionQuality, readOnly: s.readOnly, files: Object.keys(s.files).length })), facts: topology.facts, distractors: topology.distractors }, results, summary }, null, 2));
   console.log(`\nwrote ${outPath}`);
+}
+
+function makeRestore(store: OperationalStore, cli: Cli, prior: DomainModelRow | null): () => Promise<void> {
+  let done = false;
+  return async () => {
+    if (done || !cli.restore) return;
+    done = true;
+    try {
+      const restorable = prior !== null && (prior.modelId === undefined || isModelUsable(prior.modelId, ALLOW_POLICY));
+      if (prior !== null && !restorable) {
+        console.error(
+          `⚠ prior pick "${prior.modelId}" is OUT OF ENVELOPE for the current config — NOT restoring it.\n` +
+            `  Clearing the domain to its git route instead. (Restoring a stale id would silently re-pin routing.)`,
+        );
+      }
+      if (restorable && prior !== null) await store.setDomainModel(cli.org, cli.domain, { modelId: prior.modelId, reasoning: prior.reasoning }, "memory-eval-restore");
+      else await store.clearDomainModel(cli.org, cli.domain);
+      console.log(`\nrestored pick: ${restorable && prior ? prior.modelId : "cleared"}`);
+    } catch (e) { console.error(`⚠ FAILED to restore pick — domain left on ${cli.model}. (${(e as Error).message})`); }
+  };
+}
+
+function signalRestore(restore: () => Promise<void>): { off: () => void } {
+  const handlers: [NodeJS.Signals, () => void][] = (["SIGINT", "SIGTERM"] as const).map((sig) => [
+    sig,
+    () => {
+      console.error(`\n⚠ ${sig} — restoring the domain pick before exit.`);
+      void restore().finally(() => process.exit(130));
+    },
+  ]);
+  for (const [sig, h] of handlers) process.on(sig, h);
+  return { off: () => { for (const [sig, h] of handlers) process.off(sig, h); } };
 }
 
 const invokedDirectly = process.argv[1]?.endsWith("memory-eval.ts") || process.argv[1]?.endsWith("memory-eval.js");
