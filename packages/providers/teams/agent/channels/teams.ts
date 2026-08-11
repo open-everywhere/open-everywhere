@@ -9,6 +9,7 @@ import {
   resolvePartition,
   ingressSpendGate,
   type ChatAuditPartition,
+  dmTrustTtlMs,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 function auditPartitionForState(state: {
@@ -40,7 +41,6 @@ function auditPartitionForState(state: {
   }
 }
 
-const TEAMS_TRUST_TTL = Number(process.env.OE_DM_TRUST_TTL_MS) || 5 * 60_000;
 const teamsUserTypeCache = new Map<string, { userType: "guest" | "member"; at: number }>();
 
 async function resolveTeamsUserType(
@@ -51,7 +51,7 @@ async function resolveTeamsUserType(
   if (!conversationId || !userId) return undefined;
   const key = `${conversationId}:${userId}`;
   const hit = teamsUserTypeCache.get(key);
-  if (hit && Date.now() - hit.at < TEAMS_TRUST_TTL) return hit.userType;
+  if (hit && Date.now() - hit.at < dmTrustTtlMs()) return hit.userType;
   try {
     const res = await teams.request(
       `v3/conversations/${encodeURIComponent(conversationId)}/members/${encodeURIComponent(userId)}`,

@@ -54,6 +54,7 @@ import {
   type SingleWindowMentionPolicy,
   type DmSeat,
   type SetKeyViewResult,
+  dmTrustTtlMs,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { slackForm, renderWakeMessage, distillSlackRotationHandoff, slackChannelFactsFor } from "./slack-events.js";
 import { buildSlackAuth, partnerFactsFromInfo } from "./slack-identity.js";
@@ -341,12 +342,11 @@ export function withSingleWindowDiversion(
   };
 }
 
-const DM_TRUST_TTL_MS = Number(process.env.OE_DM_TRUST_TTL_MS) || 5 * 60_000;
 const dmTrustCache = new Map<string, { trust: "internal" | "external"; at: number }>();
 
 async function liveDmPartnerTrust(userId: string, teamId: string | undefined): Promise<"internal" | "external" | undefined> {
   const hit = dmTrustCache.get(userId);
-  if (hit && Date.now() - hit.at < DM_TRUST_TTL_MS) return hit.trust;
+  if (hit && Date.now() - hit.at < dmTrustTtlMs()) return hit.trust;
   try {
     const info = await slackForm("users.info", `user=${encodeURIComponent(userId)}`);
     if (!info) return undefined;

@@ -54,6 +54,7 @@ import {
   type SupervisorGrain,
   type UnifiedWindowWake,
   type EngagementTier,
+  dmTrustTtlMs,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 const ROUTE = "/eve/v1/linear";
@@ -117,7 +118,6 @@ export async function enrichIssueTeam(
   }
 }
 
-const LINEAR_GUEST_TTL = Number(process.env.OE_DM_TRUST_TTL_MS) || 5 * 60_000;
 const linearGuestCache = new Map<string, { guest: boolean; at: number }>();
 
 export async function enrichUserGuest(
@@ -126,7 +126,7 @@ export async function enrichUserGuest(
 ): Promise<boolean | undefined> {
   if (!userId) return undefined;
   const hit = linearGuestCache.get(userId);
-  if (hit && Date.now() - hit.at < LINEAR_GUEST_TTL) return hit.guest;
+  if (hit && Date.now() - hit.at < dmTrustTtlMs()) return hit.guest;
   try {
     const d = await callLinearGraphQL<{ user?: { guest?: boolean } }>({
       api: opts?.api,

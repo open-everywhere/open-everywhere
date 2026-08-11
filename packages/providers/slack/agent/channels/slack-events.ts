@@ -54,6 +54,7 @@ import {
   type WakeReason,
   type NormalizedWake,
   type WakeEngagementTier,
+  dmTrustTtlMs,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { slackMode, buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
 import { slackSpendGate, type SpendGateDecision, type SpendGateDoor } from "./slack-spend-gate.js";
@@ -799,12 +800,11 @@ export function _resetBotDisplayName(): void {
   botDisplayNamePromise = undefined;
 }
 
-const CHANNEL_TRUST_TTL = Number(process.env.OE_DM_TRUST_TTL_MS) || 5 * 60_000;
 const channelTrustCache = new Map<string, { internal: boolean; meta?: ChannelJoinMeta; at: number }>();
 
 async function channelInternalAndMeta(channelId: string): Promise<{ internal: boolean; meta?: ChannelJoinMeta }> {
   const hit = channelTrustCache.get(channelId);
-  if (hit && Date.now() - hit.at < CHANNEL_TRUST_TTL) return { internal: hit.internal, meta: hit.meta };
+  if (hit && Date.now() - hit.at < dmTrustTtlMs()) return { internal: hit.internal, meta: hit.meta };
   try {
     const info = await slackForm("conversations.info", `channel=${encodeURIComponent(channelId)}&include_num_members=true`);
     if (!info) return { internal: false };

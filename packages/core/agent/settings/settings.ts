@@ -45,6 +45,9 @@ export interface AgentSettings {
   readonly governance: {
     readonly floorTtlMs: number;
   };
+  readonly identity: {
+    readonly dmTrustTtlMs: number;
+  };
   readonly memory: {
     readonly dreamCandidateCap: number;
   };
@@ -336,6 +339,18 @@ export const SETTINGS = {
       validate: positiveNumber,
       summary:
         "Memoisation TTL for the room roster and the governance attestation behind the audience floor — the one computation shared by the admin-governance floor, the connector-disclosure floor, the triggered-fire disclosure floor, the approval-card clicker floor and the card-disclosure floor.",
+      format: (v) => `${v} ms`,
+    } satisfies SettingSpec<number>,
+  },
+  identity: {
+    dmTrustTtlMs: {
+      path: "identity.dmTrustTtlMs",
+      env: "OE_DM_TRUST_TTL_MS",
+      shipped: 5 * 60_000,
+      parseEnv: (raw) => Number(raw) || undefined,
+      validate: positiveNumber,
+      summary:
+        "Memo TTL for live trust verification on every surface that performs one — the Slack DM-partner and channel-internal caches, the Teams member/guest lookup and the Linear guest lookup. One knob, because it is one question asked four ways; a miss re-verifies against the platform and every failure still fails closed.",
       format: (v) => `${v} ms`,
     } satisfies SettingSpec<number>,
   },
@@ -657,6 +672,9 @@ export function getSettings(
     },
     governance: {
       floorTtlMs: resolve(SETTINGS.governance.floorTtlMs, o.governance?.floorTtlMs, env),
+    },
+    identity: {
+      dmTrustTtlMs: resolve(SETTINGS.identity.dmTrustTtlMs, o.identity?.dmTrustTtlMs, env),
     },
     memory: {
       dreamCandidateCap: resolve(SETTINGS.memory.dreamCandidateCap, o.memory?.dreamCandidateCap, env),

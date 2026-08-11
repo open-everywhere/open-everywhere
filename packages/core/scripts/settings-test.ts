@@ -35,6 +35,7 @@ import { sandboxMemoryGiB, sandboxGiBHourUsd, estimateSandboxCostUsd } from "../
 import { jobBoundMaxDays, jobBoundMaxFires, DEFAULT_JOB_MAX_DAYS, DEFAULT_JOB_MAX_FIRES } from "../agent/routines/bound.js";
 import { dreamCandidateCap } from "../agent/schedules/tidy.js";
 import { DEFAULT_CANDIDATE_CAP } from "../agent/memory/dream/candidates.js";
+import { dmTrustTtlMs } from "../agent/identity/trust.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -277,6 +278,13 @@ for (const raw of ["", "0", "  ", "banana"]) {
   eq(at({ OE_GOVERNANCE_FLOOR_TTL_MS: raw }).governance.floorTtlMs, 900_000, `[3] governance.floorTtlMs: ${JSON.stringify(raw)} ⇒ default (0 is falsy under \`||\`)`);
 }
 
+eq(at({}).identity.dmTrustTtlMs, 300_000, "[3] identity.dmTrustTtlMs: shipped 5 min");
+eq(at({ OE_DM_TRUST_TTL_MS: "1000" }).identity.dmTrustTtlMs, 1_000, "[3] identity.dmTrustTtlMs: a positive number applies");
+eq(at({ OE_DM_TRUST_TTL_MS: "-1" }).identity.dmTrustTtlMs, -1, "[3] 🔴 identity.dmTrustTtlMs honours a negative (⇒ every lookup re-verifies, the SAFE direction for a trust cache) — preserved");
+for (const raw of ["", "0", "nope"]) {
+  eq(at({ OE_DM_TRUST_TTL_MS: raw }).identity.dmTrustTtlMs, 300_000, `[3] identity.dmTrustTtlMs: ${JSON.stringify(raw)} ⇒ default`);
+}
+
 eq(at({}).browser.enabled, false, "[3] browser.enabled: shipped OFF (the capability does not exist)");
 eq(at({ OE_AGENT_BROWSER: "1" }).browser.enabled, true, '[3] browser.enabled: exactly "1" arms');
 for (const raw of ["", "0", "true", "yes", "on", " 1 "]) {
@@ -417,6 +425,7 @@ console.log("6 — the public resolvers are now schema-backed, with their names 
     eq(jobBoundMaxDays(), 7, "[6] jobBoundMaxDays() ⇒ shipped 7d");
     eq(jobBoundMaxFires(), 200, "[6] jobBoundMaxFires() ⇒ shipped 200");
     eq(dreamCandidateCap(), 10, "[6] dreamCandidateCap() ⇒ shipped 10");
+    eq(dmTrustTtlMs(), 300_000, "[6] dmTrustTtlMs() ⇒ shipped 5 min — the ONE resolver the five surface trust caches now share");
   } finally {
     for (const k of names) {
       if (saved[k] === undefined) delete process.env[k];

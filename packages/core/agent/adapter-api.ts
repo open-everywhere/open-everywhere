@@ -256,6 +256,7 @@ export { consumeRepliedThisTurn } from "./channels/reply-signal.js";
 
 export { resolveWakeTrustFromContext } from "./identity/wake-trust.js";
 export { isVouchedInternal, isVouchedSurface, declaredWorkspaceTrust } from "./identity/trust.js";
+export { dmTrustTtlMs } from "./identity/trust.js";
 
 export { ambientSupervisorEnabled, engagementTierFor, domainForChannel, resolveDomainForChannel, ambientSkipFor } from "./memory/domain.js";
 export type { EngagementTier, Domain, DomainVia, DomainRouting, AmbientSkip } from "./memory/domain.js";

@@ -1,3 +1,5 @@
+import { getSettings } from "../settings/settings.js";
+
 export type SurfaceTrust = "internal";
 
 export interface Surface {
@@ -63,4 +65,8 @@ export function declaredWorkspaceTrust(workspaceKey: string): "internal" | undef
 
 export function vouchedSurfaces(): string[] {
   return [...surfaces.values()].filter((s) => s.trust === "internal").map((s) => s.key);
+}
+
+export function dmTrustTtlMs(): number {
+  return getSettings().identity.dmTrustTtlMs;
 }

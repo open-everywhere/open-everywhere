@@ -61,6 +61,7 @@ import {
   type Partition,
   type BindableContext,
   type ReactionState,
+  dmTrustTtlMs,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { loadConversationContext } from "./slack-context.js";
 import { slackSpendGate } from "./slack-spend-gate.js";
@@ -218,14 +219,13 @@ async function enrichVisibility(ctx: SlackContext, channelId: string, base: Chan
   }
 }
 
-const DM_TRUST_TTL = Number(process.env.OE_DM_TRUST_TTL_MS) || 5 * 60_000;
 const dmTrustCache = new Map<string, { trust: "internal" | "external"; at: number }>();
 
 async function enrichDmPartner(ctx: SlackContext, message: SlackMessage, base: ChannelFacts): Promise<ChannelFacts> {
   const userId = message.author?.userId;
   if (!userId) return base;
   const hit = dmTrustCache.get(userId);
-  if (hit && Date.now() - hit.at < DM_TRUST_TTL) return { ...base, dmPartnerTrust: hit.trust };
+  if (hit && Date.now() - hit.at < dmTrustTtlMs()) return { ...base, dmPartnerTrust: hit.trust };
   try {
     const info = await ctx.slack.request("users.info", { user: userId });
     const { dmPartnerTrust } = partnerFactsFromInfo(info, message.teamId);
