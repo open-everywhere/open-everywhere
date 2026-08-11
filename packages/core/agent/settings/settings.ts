@@ -60,6 +60,9 @@ export interface AgentSettings {
   readonly sandbox: {
     readonly stopAfterTurn: boolean;
     readonly extendMaxMinutes: number;
+    readonly timeoutMs: number;
+    readonly snapshotExpirationMs: number;
+    readonly image: string;
   };
   readonly spend: {
     readonly usageEventsTtlDays: number;
@@ -425,6 +428,35 @@ export const SETTINGS = {
       summary: "Per-call cap on the `extend_workspace_time` tool, in minutes. Plan ceilings still apply.",
       format: (v) => `${v} min`,
     } satisfies SettingSpec<number>,
+    timeoutMs: {
+      path: "sandbox.timeoutMs",
+      env: "OE_SANDBOX_TIMEOUT_MS",
+      shipped: 30 * 60 * 1000,
+      parseEnv: (raw) => (raw.trim() === "" ? undefined : positiveIntEnv(raw)),
+      validate: positiveInt,
+      summary:
+        "The per-session sandbox window, in ms. With stop-after-turn owning idle cost this is a BACKSTOP fuse — it binds only when the turn-end hook cannot run — and the max continuous work one session may do. **Applied at sandbox CREATE and persisted on the sandbox, so a change only affects NEW conversations.**",
+      format: (v) => `${v} ms`,
+    } satisfies SettingSpec<number>,
+    snapshotExpirationMs: {
+      path: "sandbox.snapshotExpirationMs",
+      env: "OE_SANDBOX_SNAPSHOT_EXPIRATION_MS",
+      shipped: 7 * 24 * 60 * 60 * 1000,
+      parseEnv: (raw) => (raw.trim() === "" ? undefined : positiveIntEnv(raw)),
+      validate: positiveInt,
+      summary:
+        "Auto-GC age for a stopped sandbox's snapshot, in ms. Past it a conversation resumes onto a FRESH sandbox: the working tree is lost, the conversation and memory are not (`git push` is the real durability boundary for code). Also applied at CREATE.",
+      format: (v) => `${v} ms`,
+    } satisfies SettingSpec<number>,
+    image: {
+      path: "sandbox.image",
+      env: "OE_SANDBOX_IMAGE",
+      shipped: "",
+      parseEnv: (raw) => raw.trim(),
+      summary:
+        "Off-Vercel `docker()` backend only: the sandbox container image. Empty ⇒ the bare `docker({})` eve otherwise mints. Ignored under `justbash` and on Vercel.",
+      format: (v) => (v === "" ? "`` (the backend's own default)" : v),
+    } satisfies SettingSpec<string>,
   },
   skills: {
     domainSkillCap: {
@@ -688,6 +720,9 @@ export function getSettings(
     sandbox: {
       stopAfterTurn: resolve(SETTINGS.sandbox.stopAfterTurn, o.sandbox?.stopAfterTurn, env),
       extendMaxMinutes: resolve(SETTINGS.sandbox.extendMaxMinutes, o.sandbox?.extendMaxMinutes, env),
+      timeoutMs: resolve(SETTINGS.sandbox.timeoutMs, o.sandbox?.timeoutMs, env),
+      snapshotExpirationMs: resolve(SETTINGS.sandbox.snapshotExpirationMs, o.sandbox?.snapshotExpirationMs, env),
+      image: resolve(SETTINGS.sandbox.image, o.sandbox?.image, env),
     },
     spend: {
       usageEventsTtlDays: resolve(SETTINGS.spend.usageEventsTtlDays, o.spend?.usageEventsTtlDays, env),

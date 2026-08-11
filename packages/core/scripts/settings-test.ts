@@ -278,6 +278,22 @@ for (const raw of ["", "0", "  ", "banana"]) {
   eq(at({ OE_GOVERNANCE_FLOOR_TTL_MS: raw }).governance.floorTtlMs, 900_000, `[3] governance.floorTtlMs: ${JSON.stringify(raw)} ⇒ default (0 is falsy under \`||\`)`);
 }
 
+eq(at({}).sandbox.timeoutMs, 30 * 60 * 1000, "[3] sandbox.timeoutMs: shipped 30 min");
+eq(at({}).sandbox.snapshotExpirationMs, 7 * 24 * 60 * 60 * 1000, "[3] sandbox.snapshotExpirationMs: shipped 7 days");
+for (const [label, envName, shipped, read] of [
+  ["sandbox.timeoutMs", "OE_SANDBOX_TIMEOUT_MS", 30 * 60 * 1000, (e: NodeJS.ProcessEnv) => at(e).sandbox.timeoutMs],
+  ["sandbox.snapshotExpirationMs", "OE_SANDBOX_SNAPSHOT_EXPIRATION_MS", 7 * 24 * 60 * 60 * 1000, (e: NodeJS.ProcessEnv) => at(e).sandbox.snapshotExpirationMs],
+] as const) {
+  eq(read({ [envName]: "60000" }), 60_000, `[3] ${label}: a positive number applies`);
+  eq(read({ [envName]: "60000.7" }), 60_000, `[3] ${label} FLOORS a fraction (the intFromEnv convention)`);
+  for (const raw of ["", "   ", "0", "-1", "banana"]) {
+    eq(read({ [envName]: raw }), shipped, `[3] ${label}: ${JSON.stringify(raw)} ⇒ default`);
+  }
+}
+eq(at({}).sandbox.image, "", "[3] sandbox.image: shipped empty ⇒ the backend's own default");
+eq(at({ OE_SANDBOX_IMAGE: "  node:24-alpine " }).sandbox.image, "node:24-alpine", "[3] sandbox.image IS trimmed (unlike sandbox.stopAfterTurn beside it) — preserved from the resolver it replaced");
+eq(at({ OE_SANDBOX_IMAGE: "   " }).sandbox.image, "", '[3] sandbox.image: whitespace trims to "" ⇒ no image, i.e. `docker({})`');
+
 eq(at({}).identity.dmTrustTtlMs, 300_000, "[3] identity.dmTrustTtlMs: shipped 5 min");
 eq(at({ OE_DM_TRUST_TTL_MS: "1000" }).identity.dmTrustTtlMs, 1_000, "[3] identity.dmTrustTtlMs: a positive number applies");
 eq(at({ OE_DM_TRUST_TTL_MS: "-1" }).identity.dmTrustTtlMs, -1, "[3] 🔴 identity.dmTrustTtlMs honours a negative (⇒ every lookup re-verifies, the SAFE direction for a trust cache) — preserved");

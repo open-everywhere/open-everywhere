@@ -11,17 +11,12 @@ import { agentBrowserSandboxHooks } from "@open-everywhere/adapters/agent/browse
 import { resolveSelfHostBackendKind, selfHostBackendBootLog } from "./backend-select.js";
 import { selfHostEgressBootLog } from "@open-everywhere/core/agent/access/self-host-egress.js";
 import { startEgressDenialPoller } from "@open-everywhere/core/agent/access/egress-denial-poller.js";
+import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
 import "../lib/register-config.js";
 
-function intFromEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw.trim() === "") return fallback;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
-}
-
-const TIMEOUT_MS = intFromEnv("OE_SANDBOX_TIMEOUT_MS", 30 * 60 * 1000);
-const SNAPSHOT_EXPIRATION_MS = intFromEnv("OE_SANDBOX_SNAPSHOT_EXPIRATION_MS", 7 * 24 * 60 * 60 * 1000);
+const SANDBOX_SETTINGS = getSettings().sandbox;
+const TIMEOUT_MS = SANDBOX_SETTINGS.timeoutMs;
+const SNAPSHOT_EXPIRATION_MS = SANDBOX_SETTINGS.snapshotExpirationMs;
 
 const ON_VERCEL = onVercel();
 
@@ -37,7 +32,7 @@ function selfHostBackend() {
   console.info(egressLog.info);
   startEgressDenialPoller();
   if (kind === "justbash") return justbash();
-  const image = process.env.OE_SANDBOX_IMAGE?.trim();
+  const image = getSettings().sandbox.image;
   return docker(image ? { image } : {});
 }
 
