@@ -62,6 +62,7 @@ const {
 } = await import("../packages/core/scripts/e2e/synthetic.js");
 const {
   buildDiscordDmRelayEnvelope,
+  buildDiscordGuildMentionRelayEnvelope,
   signDiscordRelayRequest,
   SYNTHETIC_DISCORD_GATEWAY_ROUTE,
   DISCORD_RELAY_SIGNATURE_HEADER,
@@ -1047,6 +1048,38 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
 
   ok(DISCORD_RELAY_SIGNATURE_HEADER === "x-oe-relay-signature", "DISCORD_RELAY_SIGNATURE_HEADER matches discord-gateway.ts's relay-signature header name");
   ok(SYNTHETIC_DISCORD_GATEWAY_ROUTE === "/eve/v1/discord-gateway", "SYNTHETIC_DISCORD_GATEWAY_ROUTE matches discord-gateway.ts's mounted route");
+}
+
+{
+  const input = {
+    text: "<@900000000000000001> oe-wake-nonce:deadbeef please answer",
+    guildId: "1300000000000000100",
+    channelId: "9000000000000000383",
+    userId: "9000000000000000042",
+    botId: "900000000000000001",
+    botName: "open-everywhere",
+  };
+  const envelope = buildDiscordGuildMentionRelayEnvelope(input) as { source: string; message: Record<string, unknown> };
+  ok(envelope.source === "discord-gateway-relay", "guild-mention envelope carries the relay's own source marker");
+  ok(envelope.message.channelType === "0", 'guild-mention envelope is channelType "0" (Discord\'s base guild text enum)');
+  ok(envelope.message.guildId === input.guildId, "guild-mention envelope carries the guild id (the DM shape's exact opposite)");
+  ok(envelope.message.mentionsBot === true, "guild-mention envelope sets mentionsBot — the direct-address wake path");
+
+  const raw = JSON.stringify(envelope);
+  const secret = "e2e-discord-relay-secret-never-real";
+  const sig = signDiscordRelayRequest(raw, secret);
+  ok(relayGate(sig, raw, secret) === null, "a synthetic guild-mention relay signature verifies against the deployment's OWN relayGate");
+  ok(relayGate(sig, raw + "x", secret) !== null, "a tampered guild-mention body fails relayGate");
+
+  const parsed = parseRelayPayload(JSON.parse(raw));
+  ok(parsed !== null && parsed.guildId === input.guildId, "parseRelayPayload reads the guild id back off the forged mention");
+  ok(parsed !== null && parsed.channelType === "0", 'parseRelayPayload reads channelType "0"');
+  ok(parsed !== null && parsed.mentionsBot === true, "parseRelayPayload reads mentionsBot back as true");
+  ok(parsed !== null && parsed.botId === input.botId && parsed.botName === input.botName, "parseRelayPayload reads the relayed bot id/name (multi-bot attribution + name-drop)");
+  ok(parsed !== null && parsed.content === input.text, "parseRelayPayload preserves the wake text byte-for-byte (the nonce echo depends on it)");
+
+  const auth = parsed ? authForRelayMessage(parsed) : null;
+  ok(auth !== null, "authForRelayMessage resolves a dispatch auth for the forged human guild author");
 }
 
 {

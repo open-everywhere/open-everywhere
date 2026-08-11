@@ -18,6 +18,7 @@ import {
   VISION_MODEL,
 } from "./model/models.js";
 import { loadModelPolicy } from "./model/policy.js";
+import { evalMockModel, mockModelArmed } from "./model/mock-model.js";
 import { registerAppInfo } from "@open-everywhere/core/agent/commands/core.js";
 import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
 import { readFileSync } from "node:fs";
@@ -71,10 +72,12 @@ export default defineAgent({
   model: defineDynamic({
     fallback: DEFAULT_MODEL,
     events: {
-      "step.started": gatewayModelResolver(
-        { id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS },
-        { id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS },
-      ),
+      "step.started": mockModelArmed()
+        ? () => evalMockModel()
+        : gatewayModelResolver(
+            { id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS },
+            { id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS },
+          ),
     },
   }),
   modelContextWindowTokens: PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS,

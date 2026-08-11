@@ -120,6 +120,45 @@ for (const [rel, mod] of loaded) {
   }
 }
 
+{
+  const { evalMockModel, MOCK_MODEL_ID, mockModelArmed } = await import("../agent/model/mock-model.js");
+  if (mockModelArmed()) {
+    problems.push(
+      "MOCK MODEL: OE_EVAL_MOCK_MODEL is armed in this process — the boot gate must run with it UNSET, " +
+        "or ⑤ asserts nothing. (It is armed only by scripts/wake-smoke-test.ts, for its own child target.)",
+    );
+  } else {
+    let refused = false;
+    try {
+      evalMockModel();
+    } catch {
+      refused = true;
+    }
+    if (!refused) {
+      problems.push(
+        "MOCK MODEL: evalMockModel() returned a model with OE_EVAL_MOCK_MODEL unset — the fail-closed guard is gone, " +
+          "so a real deployment could answer a chat surface with canned text.",
+      );
+    }
+
+    const agent = loaded.get("agent/agent.ts")?.default as
+      | { model?: { events?: Record<string, (event: unknown, ctx: unknown) => unknown> } }
+      | undefined;
+    const resolver = agent?.model?.events?.["step.started"];
+    if (typeof resolver !== "function") {
+      problems.push("MOCK MODEL: agent/agent.ts exposes no step.started model resolver to check.");
+    } else {
+      const resolved = (await resolver(undefined, {})) as { modelId?: unknown } | null;
+      if (resolved && typeof resolved === "object" && resolved.modelId === MOCK_MODEL_ID) {
+        problems.push(
+          `MODEL SEAT: the turn seat resolved to the EVAL MOCK (${MOCK_MODEL_ID}) with OE_EVAL_MOCK_MODEL unset — ` +
+            "this build would answer every wake with canned text instead of calling a model.",
+        );
+      }
+    }
+  }
+}
+
 rmSync(scratch, { recursive: true, force: true });
 
 if (problems.length > 0) {
@@ -130,6 +169,6 @@ if (problems.length > 0) {
 
 console.log(
   `✓ boot-smoke: ${modules.length} agent module(s) load clean; ${routeCount} channel route(s), no collisions; ` +
-    `${scheduleCount} schedule cron(s) valid; dynamic model bound at step.started`,
+    `${scheduleCount} schedule cron(s) valid; dynamic model bound at step.started; eval mock inert`,
 );
 process.exit(0);
