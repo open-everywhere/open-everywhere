@@ -38,6 +38,7 @@ export interface AgentSettings {
   };
   readonly models: {
     readonly stack: string;
+  };
   readonly discord: {
     readonly autoThread: boolean;
     readonly statusUx: boolean;
@@ -329,6 +330,7 @@ export const SETTINGS = {
       summary:
         "The named model stack this deployment runs — one alias picks a coherent model for all five roles (primary/utility/vision/supervisor/judge). Aliases are defined in `agent/model/stacks.ts`; an unknown one fails config load. Per-role overrides layer on top there, and `OE_FORCE_MODEL`/`OE_PRIMARY_MODEL` still override the primary role last.",
     } satisfies SettingSpec<string>,
+  },
   discord: {
     autoThread: {
       path: "discord.autoThread",
@@ -747,17 +749,15 @@ function resolve<T>(spec: SettingSpec<T>, override: T | undefined, env: NodeJS.P
   return override ?? spec.shipped;
 }
 
+export function settingAtLoad<T>(spec: SettingSpec<T> & { readonly loadTime: true }, env: NodeJS.ProcessEnv = process.env): T {
+  return resolve(spec, undefined, env);
+}
+
 export function getSettings(
   env: NodeJS.ProcessEnv = process.env,
   overrides: AgentSettingsOverrides = registered,
 ): AgentSettings {
   const o = overrides;
-export function settingAtLoad<T>(spec: SettingSpec<T> & { readonly loadTime: true }, env: NodeJS.ProcessEnv = process.env): T {
-  return resolve(spec, undefined, env);
-}
-
-export function getSettings(env: NodeJS.ProcessEnv = process.env): AgentSettings {
-  const o = registered;
   return {
     agent: {
       sessionInputTokenBudget: resolve(SETTINGS.agent.sessionInputTokenBudget, o.agent?.sessionInputTokenBudget, env),
@@ -792,6 +792,7 @@ export function getSettings(env: NodeJS.ProcessEnv = process.env): AgentSettings
     },
     models: {
       stack: resolve(SETTINGS.models.stack, o.models?.stack, env),
+    },
     discord: {
       autoThread: resolve(SETTINGS.discord.autoThread, o.discord?.autoThread, env),
       statusUx: resolve(SETTINGS.discord.statusUx, o.discord?.statusUx, env),
