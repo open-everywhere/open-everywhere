@@ -80,6 +80,33 @@ ok(pickTierModel("low", POLICY) === "deepseek/deepseek-v4-flash", "tier: low →
 ok(safeFallbackModel(POLICY, "fallback/default") === "deepseek/deepseek-v4-flash", "fallback: cheapest usable allow entry (low tier first)");
 ok(safeFallbackModel(undefined, "fallback/default") === "fallback/default", "fallback: no policy → the agent static default");
 
+ok(safeFallbackModel(POLICY, "fallback/default", "zai/glm-5.2") === "zai/glm-5.2", "fallback: a USABLE preferred id wins over the cheapest tier");
+ok(safeFallbackModel(POLICY, "fallback/default", "openai/gpt-6") === "deepseek/deepseek-v4-flash", "fallback: an UNUSABLE preferred id is ignored → cheapest tier");
+ok(safeFallbackModel(POLICY, "fallback/default", undefined) === "deepseek/deepseek-v4-flash", "fallback: no preferred id → today's behaviour, unchanged (backward-compat)");
+{
+  const DENIED_PREF: ModelPolicy = { allow: [{ id: "zai/glm-5.2", tier: "high" }, { id: "deepseek/deepseek-v4-flash", tier: "low" }], deny: ["zai/glm-5.2"] };
+  ok(safeFallbackModel(DENIED_PREF, "fallback/default", "zai/glm-5.2") === "deepseek/deepseek-v4-flash", "fallback: a DENIED preferred id is ignored (deny wins over the caller's preference)");
+}
+ok(safeFallbackModel({ deny: ["bad/model"] }, "fallback/default", "any/model") === "any/model", "fallback: with no allow-list, a not-denied preferred id is honoured");
+
+{
+  const NON_SELECTABLE: ModelPolicy = defineModelPolicy({
+    allow: [
+      { id: "zai/glm-5.2", tier: "high" },
+      { id: "vendor/describer-only", tier: "low", selectable: false },
+    ],
+  });
+  assertModelPolicyValid(NON_SELECTABLE);
+  passed++;
+  ok(isModelUsable("vendor/describer-only", NON_SELECTABLE), "selectable:false: the id stays USABLE (its own role still calls it)");
+  ok(pickTierModel("low", NON_SELECTABLE) === undefined, "selectable:false: no tier pick resolves to it");
+  ok(safeFallbackModel(NON_SELECTABLE, "fallback/default") === "zai/glm-5.2", "selectable:false: the cheapest-tier scan skips it and keeps walking (→ the high entry)");
+  const r = applyModelPolicyToRoute({ tier: "low" }, NON_SELECTABLE, "fallback/default");
+  ok(r.id === "zai/glm-5.2" && r.warnings.length === 1, "selectable:false: a tier the only entry can't fill warns and falls back, never selecting the entry");
+  const concrete = applyModelPolicyToRoute({ id: "vendor/describer-only" }, NON_SELECTABLE, "fallback/default");
+  ok(concrete.id === "vendor/describer-only" && concrete.warnings.length === 0, "selectable:false: a route naming it CONCRETELY is still honoured (callable, just not selectable)");
+}
+
 ok(reasoningRank("high") > reasoningRank("medium") && reasoningRank("xhigh") > reasoningRank("high"), "rank: ascending effort order");
 ok(clampReasoning("high", "medium") === "medium", "clamp: high under a medium ceiling → medium");
 ok(clampReasoning("xhigh", "medium") === "medium", "clamp: xhigh under a medium ceiling → medium");

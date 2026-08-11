@@ -213,7 +213,7 @@ function deps(opts: {
     policy: POLICY,
     pick: async () => ({ modelId: "openai/gpt-6" }),
   }));
-  ok("resolver: an out-of-envelope pick is CLAMPED by the envelope (→ safe fallback, not gpt-6)", r.id === "deepseek/deepseek-v4-flash");
+  ok("resolver: an out-of-envelope pick is CLAMPED by the envelope (→ the role default, not gpt-6)", r.id === DEFAULT_ID);
 }
 
 {

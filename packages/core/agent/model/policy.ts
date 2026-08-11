@@ -3,6 +3,7 @@ import type { ModelReasoning, ModelRoute, ModelTier, Domain, NamedKnobLayer } fr
 export interface ModelPolicyAllowEntry {
   readonly id: string;
   readonly tier: ModelTier;
+  readonly selectable?: boolean;
 }
 
 export interface ModelPolicy {
@@ -62,14 +63,18 @@ export function isModelUsable(id: string, policy: ModelPolicy | undefined): bool
 }
 
 export function pickTierModel(tier: ModelTier, policy: ModelPolicy): string | undefined {
-  const entry = policy.allow?.find((a) => a.tier === tier && !isProviderDenied(a.id, policy) && !isModelDenied(a.id, policy));
+  const entry = policy.allow?.find(
+    (a) => a.tier === tier && a.selectable !== false && !isProviderDenied(a.id, policy) && !isModelDenied(a.id, policy),
+  );
   return entry?.id;
 }
 
 const TIER_FALLBACK_ORDER: readonly ModelTier[] = ["low", "medium", "high"];
 
-export function safeFallbackModel(policy: ModelPolicy | undefined, defaultId: string): string {
-  if (policy?.allow?.length) {
+export function safeFallbackModel(policy: ModelPolicy | undefined, defaultId: string, preferredId?: string): string {
+  if (!policy) return defaultId;
+  if (preferredId !== undefined && isModelUsable(preferredId, policy)) return preferredId;
+  if (policy.allow?.length) {
     for (const tier of TIER_FALLBACK_ORDER) {
       const id = pickTierModel(tier, policy);
       if (id) return id;
@@ -89,6 +94,7 @@ export function applyModelPolicyToRoute(
   policy: ModelPolicy | undefined,
   defaultId: string,
   effectiveCeiling?: ModelReasoning,
+  preferredId?: string,
 ): EnvelopeResult {
   if (!policy) return { id: route.id, reasoning: route.reasoning, warnings: [] };
 
@@ -107,7 +113,7 @@ export function applyModelPolicyToRoute(
       id = undefined;
     }
     if (id === undefined) {
-      id = safeFallbackModel(policy, defaultId);
+      id = safeFallbackModel(policy, defaultId, preferredId);
     }
   }
 

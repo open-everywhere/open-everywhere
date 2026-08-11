@@ -5,7 +5,7 @@ import {
 } from "@open-everywhere/core/agent/model/default-model.js";
 import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
 import { SETTINGS_OVERRIDES } from "../settings/settings.js";
-import { resolveStack, type ModelRoleSpec, type ModelStack } from "./stacks.js";
+import { resolveStack, type ModelRole, type ModelRoleSpec, type ModelStack } from "./stacks.js";
 
 export type { ModelRole, ModelRoleSpec, ModelStack, StackAlias } from "./stacks.js";
 
@@ -34,13 +34,22 @@ export const JUDGE_MODEL = MODELS.judge.id;
 export const PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS = MODELS.primary.contextWindowTokens;
 export const UTILITY_MODEL_CONTEXT_WINDOW_TOKENS = MODELS.utility.contextWindowTokens;
 
-export function modelAllowList(extra: readonly ModelPolicyAllowEntry[] = []): ModelPolicyAllowEntry[] {
+export function allowListForStack(stack: ModelStack, extra: readonly ModelPolicyAllowEntry[] = []): ModelPolicyAllowEntry[] {
   const out: ModelPolicyAllowEntry[] = [];
   const seen = new Set<string>();
-  for (const { id, tier } of [...Object.values(MODELS), ...extra]) {
-    if (seen.has(id)) continue;
-    seen.add(id);
-    out.push({ id, tier });
+  for (const [role, spec] of Object.entries(stack) as [ModelRole, ModelRoleSpec][]) {
+    if (seen.has(spec.id)) continue;
+    seen.add(spec.id);
+    out.push(role === "vision" ? { id: spec.id, tier: spec.tier, selectable: false } : { id: spec.id, tier: spec.tier });
+  }
+  for (const entry of extra) {
+    if (seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    out.push(entry);
   }
   return out;
+}
+
+export function modelAllowList(extra: readonly ModelPolicyAllowEntry[] = []): ModelPolicyAllowEntry[] {
+  return allowListForStack(MODELS, extra);
 }

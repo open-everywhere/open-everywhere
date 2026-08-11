@@ -160,7 +160,7 @@ export async function resolveRoute(
         effectiveCeiling = undefined;
       }
     }
-    const enveloped = applyModelPolicyToRoute(pickedRoute, policy, defaultId, effectiveCeiling);
+    const enveloped = applyModelPolicyToRoute(pickedRoute, policy, defaultId, effectiveCeiling, defaultId);
     for (const w of enveloped.warnings) logOnce("warn", `${role}: model policy: ${w}`);
     const forcedId = process.env.OE_FORCE_MODEL?.trim();
     const route: ModelRoute = forcedId
