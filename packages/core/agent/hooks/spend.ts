@@ -56,82 +56,116 @@ export function turnKind(ctx: DelegatableContext, continuationToken?: unknown): 
   }
 }
 
+export function turnWindowToken(ctx: BindableContext): string | undefined {
+  return bareTokenFromEveContext(ctx.channel?.continuationToken) ?? ctx.channel?.continuationToken;
+}
+
+export type SpendAttributionContext = DelegatableContext & { readonly session?: { readonly id?: string } };
+
+export interface AttributedModelCall {
+  readonly usage: Usage;
+  readonly model?: string;
+  readonly generationId?: string;
+  readonly what?: string;
+}
+
+export async function recordModelCall(ctx: SpendAttributionContext, call: AttributedModelCall): Promise<void> {
+  try {
+    const usage = call.usage;
+    if (!usage || (usage.inputTokens == null && usage.outputTokens == null && usage.costUsd == null)) return;
+    const p = resolvePartition(ctx);
+    const token = turnWindowToken(ctx);
+    const routineId = routineIdOf(ctx);
+    const delegatedFrom = subagentParentOf(ctx, token);
+    const sessionId = ctx.session?.id ?? "";
+
+    const model = call.model ?? UNKNOWN_MODEL;
+    if (call.model === undefined) {
+      console.warn(
+        `[open-everywhere:spend] a billable model call (${call.what ?? "unknown source"}) carried NO model id — recording as model="${UNKNOWN_MODEL}" and SKIPPING rate-derived pricing ` +
+          `(session=${sessionId || "?"} surface=${p.key} in=${usage.inputTokens ?? 0} out=${usage.outputTokens ?? 0}). ` +
+          `Tokens and (where the gateway measured it) exact $ are still recorded; only the rate-derived $ is withheld, because nothing observed which model ran.`,
+      );
+    }
+
+    const measuredUsd = typeof usage.costUsd === "number" && Number.isFinite(usage.costUsd) && usage.costUsd >= 0 ? usage.costUsd : undefined;
+
+    const delegationDepth = delegatedFrom ? delegationDepthOf(delegatedFrom.parentSessionId, delegatedFrom.rootSessionId) : 0;
+    const rootSessionId = delegatedFrom?.rootSessionId ?? delegatedFrom?.parentSessionId ?? sessionId;
+
+    try {
+      await recordSpend(p, {
+        period: periodOf(new Date().toISOString()),
+        usage,
+        principalId: bindFrom(ctx).principalId,
+        routineId,
+        model,
+        ...(measuredUsd !== undefined ? { measuredUsd } : {}),
+      });
+    } catch (err) {
+      console.log(`[open-everywhere:spend] record skipped: ${String(err)}`);
+    }
+
+    try {
+      await appendUsageEvent({
+        org: p.org,
+        surfaceKey: domainKeyOf(p),
+        sessionId: delegatedFrom?.parentSessionId ?? sessionId,
+        principalId: bindFrom(ctx).principalId,
+        kind: turnKind(ctx, token),
+        ...((): { detail?: Readonly<Record<string, unknown>> } => {
+          const detail = {
+            ...(delegatedFrom
+              ? stampSubagentRun({
+                  callId: delegatedFrom.callId,
+                  sessionId,
+                  ...(delegatedFrom.rootSessionId !== undefined ? { rootSessionId: delegatedFrom.rootSessionId } : {}),
+                  depth: delegationDepth,
+                })
+              : {}),
+            ...(call.generationId !== undefined ? { [GENERATION_ID_DETAIL_KEY]: call.generationId } : {}),
+          };
+          return Object.keys(detail).length > 0 ? { detail } : {};
+        })(),
+        ...(measuredUsd !== undefined ? { usdMicrosMeasured: Math.round(measuredUsd * 1_000_000), costSource: "measured" as const } : { costSource: "derived" as const }),
+        delegationDepth,
+        rootSessionId,
+        ...(routineId !== undefined ? { routineId } : {}),
+        model,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        cacheReadTokens: usage.cacheReadTokens,
+        cacheWriteTokens: usage.cacheWriteTokens,
+      });
+    } catch (err) {
+      console.warn(`[open-everywhere:usage] event append skipped: ${String(err)}`);
+    }
+  } catch (err) {
+    console.warn(`[open-everywhere:spend] model-call record skipped: ${String(err)}`);
+  }
+}
+
 export default defineHook({
   events: {
     "step.completed": async (event, ctx: HookContext) => {
       const usage = event.data?.usage as Usage | undefined;
       if (!usage || (usage.inputTokens == null && usage.outputTokens == null && usage.costUsd == null)) return;
-      const p = resolvePartition(ctx);
-      const token = bareTokenFromEveContext(ctx.channel?.continuationToken) ?? ctx.channel?.continuationToken;
-      const routineId = routineIdOf(ctx);
-      const delegatedFrom = subagentParentOf(ctx, token);
-      const stampedModel = readModelStamp() ?? undefined;
-      const model = stampedModel ?? UNKNOWN_MODEL;
-      if (stampedModel === undefined) {
-        console.warn(
-          `[open-everywhere:spend] a token-bearing step carried NO model stamp — recording as model="${UNKNOWN_MODEL}" and SKIPPING rate-derived pricing ` +
-            `(session=${ctx.session?.id ?? "?"} surface=${p.key} in=${usage.inputTokens ?? 0} out=${usage.outputTokens ?? 0}). ` +
-            `Tokens and (where the gateway measured it) exact $ are still recorded; only the rate-derived $ is withheld, because nothing observed which model ran.`,
-        );
-      }
-
-      const measuredUsd = typeof usage.costUsd === "number" && Number.isFinite(usage.costUsd) && usage.costUsd >= 0 ? usage.costUsd : undefined;
+      const token = turnWindowToken(ctx);
 
       const generationId = ((): string | undefined => {
         const raw = (event.data as { providerMetadata?: { gateway?: { generationId?: unknown } } } | undefined)?.providerMetadata?.gateway?.generationId;
         return typeof raw === "string" && raw.length > 0 ? raw : undefined;
       })();
 
-      const delegationDepth = delegatedFrom ? delegationDepthOf(delegatedFrom.parentSessionId, delegatedFrom.rootSessionId) : 0;
-      const rootSessionId = delegatedFrom?.rootSessionId ?? delegatedFrom?.parentSessionId ?? ctx.session.id;
+      const stampedModel = readModelStamp() ?? undefined;
+      await recordModelCall(ctx, {
+        usage,
+        ...(stampedModel !== undefined ? { model: stampedModel } : {}),
+        ...(generationId !== undefined ? { generationId } : {}),
+        what: "a turn step",
+      });
 
-      try {
-        await recordSpend(p, {
-          period: periodOf(new Date().toISOString()),
-          usage,
-          principalId: bindFrom(ctx).principalId,
-          routineId,
-          model,
-          ...(measuredUsd !== undefined ? { measuredUsd } : {}),
-        });
-      } catch (err) {
-        console.log(`[open-everywhere:spend] record skipped: ${String(err)}`);
-      }
-
-      try {
-        await appendUsageEvent({
-          org: p.org,
-          surfaceKey: domainKeyOf(p),
-          sessionId: delegatedFrom?.parentSessionId ?? ctx.session.id,
-          principalId: bindFrom(ctx).principalId,
-          kind: turnKind(ctx, token),
-          ...((): { detail?: Readonly<Record<string, unknown>> } => {
-            const detail = {
-              ...(delegatedFrom
-                ? stampSubagentRun({
-                    callId: delegatedFrom.callId,
-                    sessionId: ctx.session.id,
-                    ...(delegatedFrom.rootSessionId !== undefined ? { rootSessionId: delegatedFrom.rootSessionId } : {}),
-                    depth: delegationDepth,
-                  })
-                : {}),
-              ...(generationId !== undefined ? { [GENERATION_ID_DETAIL_KEY]: generationId } : {}),
-            };
-            return Object.keys(detail).length > 0 ? { detail } : {};
-          })(),
-          ...(measuredUsd !== undefined ? { usdMicrosMeasured: Math.round(measuredUsd * 1_000_000), costSource: "measured" as const } : { costSource: "derived" as const }),
-          delegationDepth,
-          rootSessionId,
-          ...(routineId !== undefined ? { routineId } : {}),
-          model,
-          inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens,
-          cacheReadTokens: usage.cacheReadTokens,
-          cacheWriteTokens: usage.cacheWriteTokens,
-        });
-      } catch (err) {
-        console.warn(`[open-everywhere:usage] event append skipped: ${String(err)}`);
-      }
+      const p = resolvePartition(ctx);
 
       if (isSupervisorToken(token)) {
         try {

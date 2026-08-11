@@ -4,9 +4,20 @@ export interface ImageDescribeRequest {
   readonly hint?: string;
 }
 
+export interface ImageDescribeUsage {
+  readonly model: string;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly cacheReadTokens?: number;
+  readonly cacheWriteTokens?: number;
+  readonly costUsd?: number;
+  readonly generationId?: string;
+}
+
 export interface ImageDescribeResult {
   readonly description: string;
   readonly ocrText?: string;
+  readonly usage?: ImageDescribeUsage;
 }
 
 export interface ImageDescriber {

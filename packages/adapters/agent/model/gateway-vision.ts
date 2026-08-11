@@ -2,6 +2,7 @@ import { gateway, generateText } from "ai";
 import {
   type ImageDescribeRequest,
   type ImageDescribeResult,
+  type ImageDescribeUsage,
   type ImageDescriber,
   registerImageDescriber,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -40,12 +41,55 @@ export function visionCallError(id: string, err: unknown): Error {
   return new Error(`vision model "${id}": ${err instanceof Error ? err.message : String(err)}`);
 }
 
+interface VisionCallTelemetry {
+  readonly usage?: {
+    readonly inputTokens?: number;
+    readonly outputTokens?: number;
+    readonly inputTokenDetails?: { readonly cacheReadTokens?: number; readonly cacheWriteTokens?: number };
+  };
+  readonly providerMetadata?: Record<string, unknown>;
+}
+
+export function visionCallUsage(id: string, res: VisionCallTelemetry): ImageDescribeUsage {
+  const u = res.usage;
+  const gw = ((): Record<string, unknown> | undefined => {
+    const raw = res.providerMetadata?.["gateway"];
+    return raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : undefined;
+  })();
+  const costUsd = ((): number | undefined => {
+    const raw = gw?.["cost"];
+    if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+    if (typeof raw === "string") {
+      const n = Number(raw);
+      if (Number.isFinite(n)) return n;
+    }
+    return undefined;
+  })();
+  const generationId = typeof gw?.["generationId"] === "string" && (gw["generationId"] as string).length > 0 ? (gw["generationId"] as string) : undefined;
+  const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+  const tok = {
+    inputTokens: num(u?.inputTokens),
+    outputTokens: num(u?.outputTokens),
+    cacheReadTokens: num(u?.inputTokenDetails?.cacheReadTokens),
+    cacheWriteTokens: num(u?.inputTokenDetails?.cacheWriteTokens),
+  };
+  return {
+    model: id,
+    ...(tok.inputTokens !== undefined ? { inputTokens: tok.inputTokens } : {}),
+    ...(tok.outputTokens !== undefined ? { outputTokens: tok.outputTokens } : {}),
+    ...(tok.cacheReadTokens !== undefined ? { cacheReadTokens: tok.cacheReadTokens } : {}),
+    ...(tok.cacheWriteTokens !== undefined ? { cacheWriteTokens: tok.cacheWriteTokens } : {}),
+    ...(costUsd !== undefined ? { costUsd } : {}),
+    ...(generationId !== undefined ? { generationId } : {}),
+  };
+}
+
 export function gatewayImageDescriber(defaults: GatewayVisionDefaults): ImageDescriber {
   return {
     async describe(req: ImageDescribeRequest): Promise<ImageDescribeResult> {
-      let text: string;
+      let res: { text: string } & VisionCallTelemetry;
       try {
-        ({ text } = await generateText({
+        res = await generateText({
           model: gateway(defaults.id),
           messages: [
             {
@@ -59,11 +103,11 @@ export function gatewayImageDescriber(defaults: GatewayVisionDefaults): ImageDes
           ...(defaults.gateway !== undefined
             ? { providerOptions: { gateway: defaults.gateway } as Parameters<typeof generateText>[0]["providerOptions"] }
             : {}),
-        }));
+        });
       } catch (err) {
         throw visionCallError(defaults.id, err);
       }
-      return parseVisionResult(text);
+      return { ...parseVisionResult(res.text), usage: visionCallUsage(defaults.id, res) };
     },
   };
 }

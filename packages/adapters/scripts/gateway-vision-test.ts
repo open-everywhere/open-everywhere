@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { parseVisionResult, visionCallError } from "../agent/model/gateway-vision.js";
+import { parseVisionResult, visionCallError, visionCallUsage } from "../agent/model/gateway-vision.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -40,4 +40,28 @@ const ok = (cond: boolean, label: string) => {
   ok(visionCallError("m", "a plain string throw").message === 'vision model "m": a plain string throw', "a non-Error throw is stringified, never dropped");
 }
 
-console.log(`✓ gateway-vision: ${n} assertions passed (strict-JSON parse + OCR-only + raw-text fallback + malformed/empty + model-id error attribution)`);
+{
+  const u = visionCallUsage("alibaba/qwen3-vl-instruct", {
+    usage: { inputTokens: 1500, outputTokens: 120, inputTokenDetails: { cacheReadTokens: 40, cacheWriteTokens: 9 } },
+    providerMetadata: { gateway: { cost: 0.00042, generationId: "gen_abc123" } },
+  });
+  ok(u.model === "alibaba/qwen3-vl-instruct", "usage names the model the ROLE ASKED FOR (the gateway publishes no resolved-model field; inventing one would be worse)");
+  ok(u.inputTokens === 1500 && u.outputTokens === 120, "usage carries in/out tokens");
+  ok(u.cacheReadTokens === 40 && u.cacheWriteTokens === 9, "🔴 cache tokens are read from the NESTED usage.inputTokenDetails, exactly where eve reads them");
+  ok(u.costUsd === 0.00042, "the gateway's measured cost rides through (→ cost_source 'measured')");
+  ok(u.generationId === "gen_abc123", "the gateway generation id rides through (the join key to the gateway's billing record)");
+}
+{
+  const u = visionCallUsage("m", { providerMetadata: { gateway: { cost: "0.0031" } } });
+  ok(u.costUsd === 0.0031, "🔴 a gateway cost delivered as a NUMERIC STRING is coerced, same as eve's extractGatewayCostUsd — otherwise a measured vision call would silently record $0");
+  ok(u.inputTokens === undefined && u.outputTokens === undefined, "no usage block → no invented token counts");
+}
+{
+  const u = visionCallUsage("m", {});
+  ok(u.model === "m" && Object.keys(u).length === 1, "a response with neither usage nor gateway metadata yields the model id alone — nothing fabricated");
+  const junk = visionCallUsage("m", { providerMetadata: { gateway: "not-an-object" } as never, usage: { inputTokens: Number.NaN } as never });
+  ok(junk.costUsd === undefined && junk.generationId === undefined, "junk provider metadata is ignored rather than trusted (this number reaches a money column)");
+  ok(junk.inputTokens === undefined, "🔴 a NaN token count is DROPPED, not propagated — NaN is a number, and this column is one a cap sums");
+}
+
+console.log(`✓ gateway-vision: ${n} assertions passed (strict-JSON parse + OCR-only + raw-text fallback + malformed/empty + model-id error attribution + OPE-403 usage extraction: nested cache tokens, string cost, junk metadata)`);

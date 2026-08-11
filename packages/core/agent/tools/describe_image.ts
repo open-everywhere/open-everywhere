@@ -5,8 +5,9 @@ import { type BindableContext } from "../identity/binding.js";
 import { oeFetch } from "../access/host-egress.js";
 import { resolveAttachment, type ResolvedAttachment } from "../channels/attachments.js";
 import { auditErrorDetail, auditToolAction } from "../audit/tool-action.js";
-import { getImageDescriber } from "../model/vision.js";
+import { getImageDescriber, type ImageDescribeResult } from "../model/vision.js";
 import { ingestUntrustedModelOutput } from "../access/untrusted.js";
+import { recordModelCall, type SpendAttributionContext } from "../hooks/spend.js";
 
 const IMAGE_MIME: Readonly<Record<string, string>> = {
   png: "image/png",
@@ -254,12 +255,33 @@ export default defineTool({
       return { ok: false, message: `image could not be described: too large (${bytes.byteLength} bytes; max ${MAX_BYTES}).` };
     }
 
-    let result: { description: string; ocrText?: string };
+    let result: ImageDescribeResult;
     try {
       result = await describer.describe({ bytes, mimeType, hint: input.hint });
     } catch (err) {
       await auditToolAction(ctx, "describe_image", { ok: false, reason: "vision-error", ref, ...auditErrorDetail(err) });
       return { ok: false, message: `image could not be described: ${err instanceof Error ? err.message : String(err)}.` };
+    }
+
+    if (result.usage) {
+      const u = result.usage;
+      await recordModelCall(ctx as unknown as SpendAttributionContext, {
+        usage: {
+          ...(u.inputTokens !== undefined ? { inputTokens: u.inputTokens } : {}),
+          ...(u.outputTokens !== undefined ? { outputTokens: u.outputTokens } : {}),
+          ...(u.cacheReadTokens !== undefined ? { cacheReadTokens: u.cacheReadTokens } : {}),
+          ...(u.cacheWriteTokens !== undefined ? { cacheWriteTokens: u.cacheWriteTokens } : {}),
+          ...(u.costUsd !== undefined ? { costUsd: u.costUsd } : {}),
+        },
+        model: u.model,
+        ...(u.generationId !== undefined ? { generationId: u.generationId } : {}),
+        what: "describe_image (vision)",
+      });
+    } else {
+      console.warn(
+        `[open-everywhere:spend] describe_image: the registered vision describer reported NO usage — this call's cost is UNATTRIBUTED ` +
+          `(invisible to the USD caps and to every cost view). A transport should return ImageDescribeResult.usage (model/vision.ts, OPE-403).`,
+      );
     }
 
     await auditToolAction(ctx, "describe_image", {

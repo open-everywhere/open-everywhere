@@ -132,7 +132,7 @@ export type { ModelRoute } from "./memory/domain.js";
 export { createRoutedCompactionModel, liveIdentity, resolvePrimaryModel } from "./model/routing.js";
 export type { ModelBackend, RoutedCallOptions } from "./model/routing.js";
 export { registerImageDescriber } from "./model/vision.js";
-export type { ImageDescribeRequest, ImageDescribeResult, ImageDescriber } from "./model/vision.js";
+export type { ImageDescribeRequest, ImageDescribeResult, ImageDescribeUsage, ImageDescriber } from "./model/vision.js";
 export { judgeFromCompletion, registerDreamJudge, dreamJudge } from "./memory/dream/judge.js";
 export type { DreamCompletion, DreamJudge } from "./memory/dream/judge.js";
 export { facetJudgeFromCompletion, registerFailureFacetJudge } from "./memory/dream/mode3.js";

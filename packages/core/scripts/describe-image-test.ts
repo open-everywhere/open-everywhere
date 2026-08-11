@@ -347,4 +347,59 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   _resetAttachmentPlaneForTest();
 }
 
-console.log(`✓ describe-image: ${n} assertions passed (untrusted wrap+defang+taint · ZDR fail-closed · no-describer/unsupported fail-closed · attachment-plane route+fail-closed+2nd-platform · path sandbox read+confine+fail-closed · ARG SHAPE flat+nested+JSON-string, visible refusals · PRIMARY { kind, ref } per-arm + half-spelling corrective + beats-legacy precedence + ignoredSources + NO anyOf in the emitted schema · AUDIT DETAIL carries+bounds+scrubs the underlying error · inferImageMime/confineToWorkspacePath — slack legs in @open-everywhere/provider-slack)`);
+{
+  const { usageForSession } = await import("../agent/spend/usage-events.js");
+  const { getOperationalStore } = await import("../agent/operational/provider.js");
+  const { deploymentOrg } = await import("../agent/identity/binding.js");
+  const { periodOf } = await import("../agent/spend/spend.js");
+  const { resolvePartition, domainKeyOf } = await import("../agent/memory/partition.js");
+  const org = deploymentOrg();
+  const period = periodOf(new Date().toISOString());
+  const VISION_MODEL = "fake/vision-test-7b";
+  const spendCtx = (sessionId: string) =>
+    ({
+      channel: { kind: "slack" },
+      session: {
+        id: sessionId,
+        auth: { current: { attributes: { team_id: "T_SPEND", channel_id: "C_SPEND", channel_type: "channel" }, principalId: "U_SPEND", principalType: "slack-user" } },
+      },
+      getSandbox: async () => ({ resolvePath: eveResolvePath, readBinaryFile: async () => PNG_BYTES }),
+    }) as unknown as BindableContext;
+
+  _resetImageDescriberForTest();
+  registerImageDescriber({
+    describe: async () => ({
+      description: "a dashboard.",
+      usage: { model: VISION_MODEL, inputTokens: 1200, outputTokens: 90, cacheReadTokens: 7, costUsd: 0.0004, generationId: "gen_vision_1" },
+    }),
+  });
+  const SURFACE = domainKeyOf(resolvePartition(spendCtx("probe") as never));
+  const before = (await getOperationalStore().spendTotals(org, { surfaceKey: SURFACE, period })).inputTokens;
+  const okOut = await tool.execute({ kind: "path", ref: "dash.png" } as never, spendCtx("sess-vision-1"));
+  ok(okOut.ok === true && okOut.description === "a dashboard.", "vision spend: the described image still returns normally (bookkeeping never costs the caller its answer)");
+
+  const after = await getOperationalStore().spendTotals(org, { surfaceKey: SURFACE, period });
+  ok(after.inputTokens === before + 1200, "🔴 OPE-403 cap ledger: the vision call's input tokens reach spend_ledger — a USD/token cap can now see vision spend at all");
+  ok(after.usdMicrosMeasured === 400, "cap ledger: the gateway's MEASURED cost lands in usd_micros_measured (0.0004 USD → 400 micros), beside the derived figure");
+
+  const rows = await usageForSession(org, "sess-vision-1");
+  ok(rows.length === 1, "usage_events: exactly ONE row for the vision call (no double-write, no parallel bookkeeping path)");
+  const row = rows[0];
+  ok(row.model === VISION_MODEL, "🔴 OPE-403 usage row: stamped with the VISION model id — the evidence the per-stack e2e lane's required-role pin reads");
+  ok(row.surfaceKey === SURFACE, "usage row: SPEND-grain surface key of the CALLING turn, not a synthetic vision scope");
+  ok(row.principalId === "U_SPEND", "usage row: the calling turn's attributed principal — vision dollars reach that person's per-user budget");
+  ok(row.inputTokens === 1200 && row.outputTokens === 90 && row.cacheReadTokens === 7, "usage row: in/out/cache tokens as the gateway reported them");
+  ok(row.kind === "channel", "usage row: carries the CALLING TURN's origin kind — a vision call belongs to the turn that made it, so every kind-keyed read keeps counting it");
+  ok(row.costSource === "measured" && row.usdMicrosMeasured === 400, "usage row: cost_source 'measured' + the gateway's exact micros");
+  ok((row.detail as { generationId?: unknown } | undefined)?.generationId === "gen_vision_1", "usage row: the gateway generation id is the join key back to the gateway's own billing record");
+  ok(row.delegationDepth === 0 && row.rootSessionId === "sess-vision-1", "usage row: delegation lineage stamped like any other model call (a delegated worker's vision spend rolls up to its parent)");
+
+  _resetImageDescriberForTest();
+  registerImageDescriber({ describe: async () => ({ description: "an unmeasured image." }) });
+  const quiet = await tool.execute({ kind: "path", ref: "quiet.png" } as never, spendCtx("sess-vision-2"));
+  ok(quiet.ok === true, "vision spend: a transport that cannot observe its usage still describes (the seam's `usage` is optional)");
+  ok((await usageForSession(org, "sess-vision-2")).length === 0, "vision spend: no usage reported → NO row invented (a fabricated cost is worse than a warned-about gap)");
+  _resetImageDescriberForTest();
+}
+
+console.log(`✓ describe-image: ${n} assertions passed (untrusted wrap+defang+taint · ZDR fail-closed · no-describer/unsupported fail-closed · attachment-plane route+fail-closed+2nd-platform · path sandbox read+confine+fail-closed · ARG SHAPE flat+nested+JSON-string, visible refusals · PRIMARY { kind, ref } per-arm + half-spelling corrective + beats-legacy precedence + ignoredSources + NO anyOf in the emitted schema · AUDIT DETAIL carries+bounds+scrubs the underlying error · VISION SPEND attributed to both sinks (OPE-403) · inferImageMime/confineToWorkspacePath — slack legs in @open-everywhere/provider-slack)`);
