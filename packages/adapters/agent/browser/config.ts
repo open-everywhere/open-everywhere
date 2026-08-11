@@ -1,3 +1,5 @@
+import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
+
 export const AGENT_BROWSER_FLAG = "OE_AGENT_BROWSER";
 export const AGENT_BROWSER_DOMAINS_ENV = "OE_AGENT_BROWSER_DOMAINS";
 
@@ -6,7 +8,7 @@ export interface AgentBrowserConfig {
 }
 
 export function agentBrowserEnabled(): boolean {
-  return process.env[AGENT_BROWSER_FLAG] === "1";
+  return getSettings().browser.enabled;
 }
 
 export function isLoopbackBrowseHost(host: string): boolean {
@@ -59,7 +61,7 @@ export function loadAgentBrowserConfig(): AgentBrowserConfig | undefined {
   cachedResolved = true;
   cached = undefined;
   if (!agentBrowserEnabled()) return undefined;
-  const { domains, problems } = parseAgentBrowserDomains(process.env[AGENT_BROWSER_DOMAINS_ENV]);
+  const { domains, problems } = parseAgentBrowserDomains(getSettings().browser.domains);
   if (problems.length > 0) {
     console.error(
       `[open-everywhere:agent-browser] ${AGENT_BROWSER_FLAG}=1 but the domain allowlist is unusable — NOT arming (fail closed):\n` +

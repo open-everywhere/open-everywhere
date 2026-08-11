@@ -14,6 +14,10 @@ export interface AgentSettings {
   readonly audit: {
     readonly silences: boolean;
   };
+  readonly browser: {
+    readonly enabled: boolean;
+    readonly domains: string;
+  };
   readonly bash: {
     readonly timeoutMs: number;
     readonly backgroundGuard: boolean;
@@ -30,6 +34,10 @@ export interface AgentSettings {
   };
   readonly models: {
     readonly stack: string;
+  readonly discord: {
+    readonly autoThread: boolean;
+    readonly statusUx: boolean;
+  };
   readonly egress: {
     readonly enforce: boolean;
     readonly allowUnenforced: boolean;
@@ -161,6 +169,25 @@ export const SETTINGS = {
         "Write the judged-SILENCE audit rows (`unified.no_reply` and the `reply.no_reply` tool row). Off is the ACTIONS-ONLY posture: on an ambient surface these are the ~99% majority and would bury the rows that mean something.",
     } satisfies SettingSpec<boolean>,
   },
+  browser: {
+    enabled: {
+      path: "browser.enabled",
+      env: "OE_AGENT_BROWSER",
+      shipped: false,
+      parseEnv: (raw) => raw === "1",
+      summary:
+        "The Browser-QA master flag. Unarmed the capability does not exist: no `browser_*` tools mount, no egress hosts open, no browser bakes into the sandbox template. Arming ALSO requires a valid `browser.domains` allowlist, and the value must reach the BUILD env too (the template revalidation key resolves at build).",
+    } satisfies SettingSpec<boolean>,
+    domains: {
+      path: "browser.domains",
+      env: "OE_AGENT_BROWSER_DOMAINS",
+      shipped: "",
+      parseEnv: (raw) => raw,
+      summary:
+        "Comma-separated browse-target hostnames — the operator's containment decision, enforced on BOTH walls (agent-browser `--allowed-domains` and the sandbox egress firewall). Bare lowercase hostnames only; ANY invalid entry invalidates the whole list, and `browser.enabled` with an empty or invalid list does not arm.",
+      format: (v) => (v === "" ? "`` (unset — the capability cannot arm)" : v),
+    } satisfies SettingSpec<string>,
+  },
   bash: {
     timeoutMs: {
       path: "bash.timeoutMs",
@@ -261,6 +288,24 @@ export const SETTINGS = {
       summary:
         "The named model stack this deployment runs — one alias picks a coherent model for all five roles (primary/utility/vision/supervisor/judge). Aliases are defined in `agent/model/stacks.ts`; an unknown one fails config load. Per-role overrides layer on top there, and `OE_FORCE_MODEL`/`OE_PRIMARY_MODEL` still override the primary role last.",
     } satisfies SettingSpec<string>,
+  discord: {
+    autoThread: {
+      path: "discord.autoThread",
+      env: "OE_DISCORD_AUTO_THREAD",
+      shipped: true,
+      parseEnv: (raw) => raw !== "false" && raw !== "0",
+      summary:
+        "Reply in a thread when the bot is @mentioned in a Discord text or announcement channel (never inside a thread — threads don't nest, and an unknown channel type keeps the inline reply).",
+    } satisfies SettingSpec<boolean>,
+    statusUx: {
+      path: "discord.statusUx",
+      env: "OE_DISCORD_STATUS_UX",
+      shipped: true,
+      parseEnv: (raw) => raw !== "false" && raw !== "0",
+      summary:
+        "The Discord 'working' affordances — the 👀/✅ reaction and the holding message edited into the reply. Off, the surface behaves exactly as before the feature: one plain reply post, no reaction, no holding message.",
+    } satisfies SettingSpec<boolean>,
+  },
   egress: {
     enforce: {
       path: "egress.enforce",
@@ -567,6 +612,10 @@ export function getSettings(
     audit: {
       silences: resolve(SETTINGS.audit.silences, o.audit?.silences, env),
     },
+    browser: {
+      enabled: resolve(SETTINGS.browser.enabled, o.browser?.enabled, env),
+      domains: resolve(SETTINGS.browser.domains, o.browser?.domains, env),
+    },
     bash: {
       timeoutMs: resolve(SETTINGS.bash.timeoutMs, o.bash?.timeoutMs, env),
       backgroundGuard: resolve(SETTINGS.bash.backgroundGuard, o.bash?.backgroundGuard, env),
@@ -583,6 +632,10 @@ export function getSettings(
     },
     models: {
       stack: resolve(SETTINGS.models.stack, o.models?.stack, env),
+    discord: {
+      autoThread: resolve(SETTINGS.discord.autoThread, o.discord?.autoThread, env),
+      statusUx: resolve(SETTINGS.discord.statusUx, o.discord?.statusUx, env),
+    },
     egress: {
       enforce: resolve(SETTINGS.egress.enforce, o.egress?.enforce, env),
       allowUnenforced: resolve(SETTINGS.egress.allowUnenforced, o.egress?.allowUnenforced, env),

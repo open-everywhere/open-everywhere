@@ -266,6 +266,27 @@ for (const [label, envName, shipped, read] of [
   }
 }
 
+eq(at({}).browser.enabled, false, "[3] browser.enabled: shipped OFF (the capability does not exist)");
+eq(at({ OE_AGENT_BROWSER: "1" }).browser.enabled, true, '[3] browser.enabled: exactly "1" arms');
+for (const raw of ["", "0", "true", "yes", "on", " 1 "]) {
+  eq(at({ OE_AGENT_BROWSER: raw }).browser.enabled, false, `[3] 🔴 browser.enabled: ${JSON.stringify(raw)} does NOT arm — not even "true"`);
+}
+eq(at({}).browser.domains, "", "[3] browser.domains: shipped empty ⇒ the capability cannot arm");
+eq(at({ OE_AGENT_BROWSER_DOMAINS: " Preview.Example.COM , localhost " }).browser.domains, " Preview.Example.COM , localhost ", "[3] browser.domains is verbatim — no trim, no split, no lowercase; the adapter parses and fail-closes");
+
+for (const [label, envName, read] of [
+  ["discord.autoThread", "OE_DISCORD_AUTO_THREAD", (e: NodeJS.ProcessEnv) => at(e).discord.autoThread],
+  ["discord.statusUx", "OE_DISCORD_STATUS_UX", (e: NodeJS.ProcessEnv) => at(e).discord.statusUx],
+] as const) {
+  eq(read({}), true, `[3] ${label}: shipped ON (a deployer opts OUT of the on-brand behaviour)`);
+  for (const raw of ["false", "0"]) {
+    eq(read({ [envName]: raw }), false, `[3] ${label}: ${JSON.stringify(raw)} disables`);
+  }
+  for (const raw of ["", "true", "1", "off", "no", "FALSE"]) {
+    eq(read({ [envName]: raw }), true, `[3] 🔴 ${label}: ${JSON.stringify(raw)} leaves it ON — the vocabulary is only "false"/"0", case-sensitive and untrimmed`);
+  }
+}
+
 eq(at({}).memory.dreamCandidateCap, 10, "[3] memory.dreamCandidateCap: shipped 10");
 eq(at({ OE_DREAM_MAX_CANDIDATES: "25" }).memory.dreamCandidateCap, 25, "[3] memory.dreamCandidateCap: a positive integer applies");
 eq(at({ OE_DREAM_MAX_CANDIDATES: "25x" }).memory.dreamCandidateCap, 25, "[3] 🔴 memory.dreamCandidateCap uses parseInt, so a trailing-garbage value parses its prefix — preserved");

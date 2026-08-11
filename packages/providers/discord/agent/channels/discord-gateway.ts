@@ -65,6 +65,7 @@ import {
   type ReactionSinkDeps,
   type ReactionIngestOutcome,
   type ReactionVerb,
+  getSettings,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { fetchDiscordBackscroll, fetchDiscordBackscrollLines, distillDiscordRotationHandoff } from "./discord-backscroll.js";
 
@@ -406,12 +407,12 @@ export function shouldAutoThread(channelType: string | undefined, enabled: boole
   return channelType === "0" || channelType === "5";
 }
 
-export function autoThreadEnabled(env: string | undefined = process.env.OE_DISCORD_AUTO_THREAD): boolean {
-  return env !== "false" && env !== "0";
+export function autoThreadEnabled(env?: string): boolean {
+  return env === undefined ? getSettings().discord.autoThread : env !== "false" && env !== "0";
 }
 
-export function statusUxEnabled(env: string | undefined = process.env.OE_DISCORD_STATUS_UX): boolean {
-  return env !== "false" && env !== "0";
+export function statusUxEnabled(env?: string): boolean {
+  return env === undefined ? getSettings().discord.statusUx : env !== "false" && env !== "0";
 }
 
 export function deriveThreadName(content: string, botName?: string): string {
