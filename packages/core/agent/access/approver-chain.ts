@@ -1,6 +1,7 @@
 import { classifyConnectorOp, isConnectorOpTool, judgeDeferredTool, TOOL_CONSEQUENCE, type ConsequenceEntry } from "./consequence.js";
 import { awsCommandVerdict, type AwsScreenInput } from "./aws-screen.js";
 import { untrustedIngestedThisTurn, taintKindsThisTurn } from "./taint-signal.js";
+import { taintMode, type TaintMode } from "./taint-enforcement.js";
 import {
   approvalJudgeBreakerTripped,
   approvalJudgeMode,
@@ -54,6 +55,11 @@ export function chainTaintKinds(): readonly string[] {
 
 function taintedOf(req: ApprovalChainRequest): boolean {
   return req.tainted ?? chainTaintSignal();
+}
+
+function taintModeNote(): { taintMode: TaintMode } | Record<string, never> {
+  const mode = taintMode();
+  return mode === "off" ? { taintMode: mode } : {};
 }
 
 export type ApproverLevel = "custom" | "surface" | "classifier" | "registry";
@@ -435,6 +441,7 @@ export function chainAuditDetail(req: ApprovalChainRequest, res: ChainResolution
     unattended: req.unattended,
     tainted: taintedOf(req),
     ...(taintedOf(req) && chainTaintKinds().length > 0 ? { taintKinds: [...chainTaintKinds()] } : {}),
+    ...taintModeNote(),
     ...(req.mode !== undefined ? { mode: req.mode.mode } : {}),
     ...(req.domain !== undefined ? { domain: req.domain } : {}),
   };
@@ -464,7 +471,7 @@ export function renderChainResolution(req: ApprovalChainRequest, res: ChainResol
   const kinds = taintedOf(req) ? chainTaintKinds() : [];
   const context = [
     `unattended: ${req.unattended}`,
-    `tainted: ${taintedOf(req)}${kinds.length > 0 ? ` (${kinds.join(", ")})` : ""}`,
+    `tainted: ${taintedOf(req)}${kinds.length > 0 ? ` (${kinds.join(", ")})` : ""}${taintMode() === "off" ? " — taint.mode: off (the model is not running)" : ""}`,
     ...(req.mode !== undefined ? [`mode: ${req.mode.mode}`] : []),
   ];
   lines.push(`context: ${context.join(" · ")}`);

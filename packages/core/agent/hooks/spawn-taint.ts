@@ -10,7 +10,7 @@ import {
 } from "../access/taint-signal.js";
 import { markSubagentTainted, subagentWasTainted } from "../access/subagent-taint.js";
 import { JOB_TAINT_ATTR } from "../access/job-posture.js";
-import { beginTaintVerdictTurn, registerTaintVerdictSink, type TaintVerdictRow } from "../access/taint-enforcement.js";
+import { beginTaintVerdictTurn, registerTaintVerdictSink, taintEnabled, taintMode, type TaintVerdictRow } from "../access/taint-enforcement.js";
 import { appendAudit } from "../audit/audit.js";
 import { currentTurnId, deploymentOrg, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 
@@ -61,6 +61,38 @@ export function openTaintTurn(ctx: HookContext): void {
   beginTaintVerdictTurn(turnId);
   seedIfTainted(ctx);
   rememberSubagentIdentity(ctx);
+  announceTaintOff(ctx);
+}
+
+export const TAINT_MODE_ACTION = "taint.mode";
+
+const taintModeAnnounced = defineState<boolean>("open-everywhere.taint-mode-announced", () => false);
+
+export function announceTaintOff(ctx: HookContext): void {
+  try {
+    if (taintEnabled()) return;
+    let first = false;
+    taintModeAnnounced.update((cur) => {
+      if (cur === true) return true;
+      first = true;
+      return true;
+    });
+    if (!first) return;
+    const sessionId = (ctx as { session?: { id?: string } }).session?.id;
+    void appendAudit({
+      org: deploymentOrg(),
+      platform: "ingest",
+      workspace: "taint",
+      action: TAINT_MODE_ACTION,
+      detail: {
+        mode: taintMode(),
+        ...(typeof sessionId === "string" && sessionId.length > 0 ? { session: sessionId } : {}),
+        marking: "disabled",
+        fencing: "unchanged",
+      },
+    }).catch(() => undefined);
+  } catch {
+  }
 }
 
 const subagentIdentity = defineState<{ org: string; sessionId: string } | null>(
@@ -100,6 +132,7 @@ export function rememberDispatchedChild(callId: string, childSessionId: string):
 }
 
 export async function adoptSubagentTaint(callId: string): Promise<boolean> {
+  if (!taintEnabled()) return false;
   try {
     const childSessionId = dispatchedChildren.get()[callId];
     if (childSessionId === undefined) return false;
