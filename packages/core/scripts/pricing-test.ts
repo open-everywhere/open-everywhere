@@ -29,12 +29,12 @@ delete process.env.OE_MODEL_PRICING;
 _resetPricingCacheForTest();
 const BUILT_IN_ID = builtInModelIds()[0];
 const priced = modelPricing(BUILT_IN_ID);
-ok(priced?.inPerMtok === 0.14 && priced?.outPerMtok === 0.28 && priced?.cachedInPerMtok === 0.028, `built-in: ${BUILT_IN_ID} matches the gateway-billing-MEASURED rate ($0.14/$0.28, cache read $0.028)`);
+ok(priced?.inPerMtok === 0.25 && priced?.outPerMtok === 1.2 && priced?.cachedInPerMtok === 0.02, `built-in: ${BUILT_IN_ID} matches the gateway-billing-MEASURED rate ($0.25/$1.20, cache read $0.02)`);
 ok(modelPricing("some/unknown-model") === undefined, "built-in: an unpriced model returns undefined, never a guess");
 
-ok(close(estimateCostUsd({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, priced), 0.14 + 0.28), "estimateCostUsd: 1M in + 1M out at the built-in rate");
-ok(close(estimateCostUsd({ inputTokens: 500_000 }, priced), 0.14 / 2), "estimateCostUsd: partial input-only usage scales linearly");
-ok(close(estimateCostUsd({ inputTokens: 1_000_000, cacheReadTokens: 1_000_000 }, priced), 0.028), "estimateCostUsd: an all-cached prompt bills ONLY the cache rate (input==cached -> $0 non-cached), no double-count");
+ok(close(estimateCostUsd({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, priced), 0.25 + 1.2), "estimateCostUsd: 1M in + 1M out at the built-in rate");
+ok(close(estimateCostUsd({ inputTokens: 500_000 }, priced), 0.25 / 2), "estimateCostUsd: partial input-only usage scales linearly");
+ok(close(estimateCostUsd({ inputTokens: 1_000_000, cacheReadTokens: 1_000_000 }, priced), 0.02), "estimateCostUsd: an all-cached prompt bills ONLY the cache rate (input==cached -> $0 non-cached), no double-count");
 ok(close(estimateCostUsd({ inputTokens: 1_000_000, cacheReadTokens: 800_000, outputTokens: 100_000 }, priced), 0.2 * priced!.inPerMtok + 0.8 * priced!.cachedInPerMtok! + 0.1 * priced!.outPerMtok), "estimateCostUsd: only the NON-cached remainder of input is billed at the input rate (partial-cache, no double-count)");
 ok(estimateCostUsd({ inputTokens: 1_000_000 }, undefined) === undefined, "estimateCostUsd: no pricing -> undefined (tokens-only upstream), never fabricated");
 const noCacheRate = { inPerMtok: 2, outPerMtok: 6 };
@@ -48,11 +48,11 @@ ok(modelPricing("acme/custom")?.cachedInPerMtok === 0.5, "env override: a deploy
 
 process.env.OE_MODEL_PRICING = "{ not json";
 _resetPricingCacheForTest();
-ok(modelPricing(BUILT_IN_ID)?.inPerMtok === 0.14, "env override: malformed JSON is ignored — falls through to the built-in table");
+ok(modelPricing(BUILT_IN_ID)?.inPerMtok === 0.25, "env override: malformed JSON is ignored — falls through to the built-in table");
 
 process.env.OE_MODEL_PRICING = "[1,2,3]";
 _resetPricingCacheForTest();
-ok(modelPricing(BUILT_IN_ID)?.inPerMtok === 0.14, "env override: a non-object JSON value is ignored");
+ok(modelPricing(BUILT_IN_ID)?.inPerMtok === 0.25, "env override: a non-object JSON value is ignored");
 
 process.env.OE_MODEL_PRICING = JSON.stringify({ "acme/bad": { inPerMtok: "nope" }, "acme/good": { inPerMtok: 3, outPerMtok: 4 } });
 _resetPricingCacheForTest();
@@ -64,7 +64,7 @@ _resetPricingCacheForTest();
 
 _resetPricingSourceForTest();
 ok(modelPricing("acme/live-only") === undefined, "no source registered: an id absent from env+built-in is still undefined");
-ok(modelPricing(BUILT_IN_ID)?.inPerMtok === 0.14, "no source registered: built-in lookup behaves exactly as before this seam existed");
+ok(modelPricing(BUILT_IN_ID)?.inPerMtok === 0.25, "no source registered: built-in lookup behaves exactly as before this seam existed");
 
 const fakeSource: PricingSource = {
   priceFor(modelId: string): ModelPricing | undefined {
@@ -76,7 +76,7 @@ const fakeSource: PricingSource = {
   },
 };
 registerPricingSource(fakeSource);
-ok(modelPricing(BUILT_IN_ID)?.inPerMtok === 0.14, "registered source: the built-in table's entry wins over the source's for the same id (hand-verified beats fetched)");
+ok(modelPricing(BUILT_IN_ID)?.inPerMtok === 0.25, "registered source: the built-in table's entry wins over the source's for the same id (hand-verified beats fetched)");
 ok(modelPricing("minimax/minimax-m2.7")?.inPerMtok === 0.3, "registered source: fills a gap the built-in table + env override leave open");
 ok(modelPricing("totally/unknown") === undefined, "registered source: an id the source also doesn't have stays undefined, not a guess");
 
@@ -102,7 +102,7 @@ try {
 }
 ok(!threw, "registered source: a throwing priceFor() is caught — modelPricing never propagates it");
 ok(modelPricing("minimax/minimax-m2.7") === undefined, "registered source: a throwing source's id is treated as unpriced, not a crash");
-ok(modelPricing(BUILT_IN_ID)?.inPerMtok === 0.14, "registered source: a throwing source doesn't disturb built-in lookups for OTHER ids");
+ok(modelPricing(BUILT_IN_ID)?.inPerMtok === 0.25, "registered source: a throwing source doesn't disturb built-in lookups for OTHER ids");
 
 _resetPricingSourceForTest();
 
