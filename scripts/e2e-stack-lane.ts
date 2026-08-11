@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { STACKS, STACK_ALIASES, resolveStack, type ModelRole, type StackAlias } from "../agent/model/stacks.js";
+import { STACKS, STACK_ALIASES, resolveStack, stackModelIds, type ModelRole, type StackAlias } from "../agent/model/stacks.js";
 import { allowListForStack } from "../agent/model/models.js";
 import { isModelUsable } from "@open-everywhere/core/agent/model/policy.js";
 import { wireNeonOperationalStore } from "../packages/core/scripts/e2e/rotate-window-lib.js";
@@ -25,7 +25,7 @@ if (!STACK_ALIASES.includes(alias as StackAlias)) {
 }
 
 const stack = STACKS[alias as StackAlias];
-const allIds = [...new Set(Object.values(stack).map((s) => s.id))].sort();
+const allIds = stackModelIds(stack);
 const requiredIds = [...new Set(REQUIRED_ROLES.map((r) => stack[r].id))].sort();
 
 const onlyIdx = argv.indexOf("--only");

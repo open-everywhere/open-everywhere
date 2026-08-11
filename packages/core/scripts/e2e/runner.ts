@@ -33,7 +33,7 @@ import { SyntheticDiscordDm } from "./discord-synthetic.js";
 import { WebhookDriver } from "./webhook.js";
 import { judge3, judgeBannerTag, resolveJudge, type Rubric } from "./judge.js";
 import { GateFailure, ScenarioSkip, SCENARIOS, skipReason, type ScenarioContext } from "./scenarios.js";
-import { buildCostReport, checkExpectedModels, fetchRunUsage, renderCostReport } from "./cost.js";
+import { buildCostReport, checkExpectedModels, fetchRunUsage, renderCostReport, resolveExpectedModels } from "./cost.js";
 import { callUnifiedAudit, fetchAudit } from "./audit-read.js";
 import { fetchTranscript, type TranscriptWireEvent } from "./transcript-read.js";
 import { summariseTimings, writeTimingsRecords, type TimingsRecord } from "./timings-record.js";
@@ -328,10 +328,11 @@ async function main(): Promise<void> {
     try {
       const rows = await fetchRunUsage(costTarget, readToken, runStartedIso, workspaces);
       for (const line of renderCostReport(buildCostReport(rows))) console.log(line);
-      const expectModels = (process.env.E2E_EXPECT_MODELS ?? "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
+      const expectModelsOverride = (process.env.E2E_EXPECT_MODELS ?? "").trim();
+      const expectModels = resolveExpectedModels(process.env.E2E_EXPECT_MODELS);
+      console.log(
+        `model routing: expecting [${expectModels.join(", ")}] (${expectModelsOverride ? "E2E_EXPECT_MODELS override" : "derived from the shipped default stack"})`,
+      );
       const requiredModels = (process.env.E2E_EXPECT_MODELS_REQUIRED ?? "")
         .split(",")
         .map((s) => s.trim())

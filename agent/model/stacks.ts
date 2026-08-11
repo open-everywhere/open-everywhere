@@ -32,6 +32,10 @@ export type StackAlias = keyof typeof STACKS;
 
 export const STACK_ALIASES: readonly StackAlias[] = (Object.keys(STACKS) as StackAlias[]).sort();
 
+export function stackModelIds(stack: ModelStack): readonly string[] {
+  return [...new Set(Object.values(stack).map((s) => s.id))].sort();
+}
+
 export const SHIPPED_STACK: StackAlias = "american-closed";
 
 export type StackOverrides = {

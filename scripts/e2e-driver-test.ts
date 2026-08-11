@@ -1325,6 +1325,16 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   ok(ok4.ok && !ok4.seen.includes("(sandbox)"), "checkExpectedModels ignores zero-token model-less rows (sandbox runtime billing, not a model call)");
   const ok5 = checkExpectedModels([{ surfaceKey: "slack/T1/C1", calls: 1, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }], ["test/model-a"]);
   ok(ok5.ok && ok5.seen.length === 0, "a window containing ONLY sandbox runtime rows passes with an empty seen set");
+
+  const { defaultExpectedModels, resolveExpectedModels } = await import("../packages/core/scripts/e2e/cost.js");
+  const { STACKS, SHIPPED_STACK, stackModelIds } = await import("../agent/model/stacks.js");
+  const shippedIds = stackModelIds(STACKS[SHIPPED_STACK]);
+  ok(JSON.stringify(defaultExpectedModels()) === JSON.stringify(shippedIds), "defaultExpectedModels() names exactly the shipped default stack's ids — a stack flip changes this with zero e2e-side edits");
+  ok(JSON.stringify(resolveExpectedModels(undefined)) === JSON.stringify(shippedIds), "resolveExpectedModels(undefined) — unset E2E_EXPECT_MODELS — falls back to the shipped stack, not 'off'");
+  ok(JSON.stringify(resolveExpectedModels("")) === JSON.stringify(shippedIds), "resolveExpectedModels('') — blank E2E_EXPECT_MODELS — same fallback as unset");
+  ok(JSON.stringify(resolveExpectedModels("  ,  ")) === JSON.stringify(shippedIds), "resolveExpectedModels ignores a whitespace/empty-entries-only override and falls back");
+  ok(JSON.stringify(resolveExpectedModels("deepseek/deepseek-v4-flash-0731, alibaba/qwen3-vl-instruct")) === JSON.stringify(["deepseek/deepseek-v4-flash-0731", "alibaba/qwen3-vl-instruct"]), "resolveExpectedModels honours an explicit operator override over the shipped default, trimmed (order preserved, same as the CSV it replaces)");
+  ok(shippedIds.length === 1, "the shipped default stack (american-closed) collapses to a single model id across all five roles — the case that most needs dedup to be real");
 }
 
 {

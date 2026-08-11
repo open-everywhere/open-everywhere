@@ -1,3 +1,5 @@
+import { STACKS, SHIPPED_STACK, stackModelIds } from "../../../../agent/model/stacks.js";
+
 export interface UsageSlice {
   readonly surfaceKey: string;
   readonly model: string;
@@ -66,6 +68,18 @@ export async function fetchRunUsage(
   const parsed = (await res.json()) as { rows?: UsageWindowWireRow[] };
   if (!Array.isArray(parsed.rows)) throw new Error("GET /control/v1/usage returned no rows array (malformed response)");
   return parsed.rows;
+}
+
+export function defaultExpectedModels(): readonly string[] {
+  return stackModelIds(STACKS[SHIPPED_STACK]);
+}
+
+export function resolveExpectedModels(envValue: string | undefined): readonly string[] {
+  const explicit = (envValue ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return explicit.length > 0 ? explicit : defaultExpectedModels();
 }
 
 export function checkExpectedModels(
