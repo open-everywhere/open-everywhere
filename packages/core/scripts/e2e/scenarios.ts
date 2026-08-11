@@ -1932,7 +1932,7 @@ export const SCENARIOS: readonly Scenario[] = [
               "`node -e 'require(\"http\").createServer((_,r)=>r.end(\"<h1>OPE43-OK</h1>\")).listen(8000)' > server.log 2>&1 &`; " +
               "(2) use browser_navigate to open http://localhost:8000/ ; (3) use browser_screenshot to SAVE the page to a file in your CURRENT WORKING " +
               "DIRECTORY using a RELATIVE path — save it as `ope43-shot.png` (NOT /tmp, NOT an absolute path: describe_image can only read files inside " +
-              "your workspace, and /tmp is outside it); (4) use describe_image with { path: \"ope43-shot.png\" } to VISION-READ the heading from the " +
+              "your workspace, and /tmp is outside it); (4) use describe_image with { kind: \"path\", ref: \"ope43-shot.png\" } to VISION-READ the heading from the " +
               "screenshot IMAGE. " +
               "CRITICAL: obtain the heading text ONLY by vision-reading the screenshot via describe_image — do NOT read the page text or DOM " +
               "with browser_get, browser_evaluate, browser_snapshot, or any HTML/text extraction; the whole point is to vision-verify the " +

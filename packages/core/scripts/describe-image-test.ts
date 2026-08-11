@@ -222,7 +222,14 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
     ok(pu.ok === true && "path" in pu.source && (pu.ignored?.join(",") ?? "") === "url", "precedence: path out-ranks url when no attachmentId is given");
   }
   const bareString = await tool.execute({ source: "F0BQ89BMX7S" }, ctx);
-  ok(bareString.ok === false && /plain string/.test(bareString.message ?? ""), "arg shape: a BARE (non-JSON) `source` string is refused, NOT guessed into an arm — routing it would send a path through oeFetch or an id at the sandbox");
+  ok(bareString.ok === false && /plain string/.test(bareString.message ?? ""), "arg shape: a BARE (non-JSON) `source` string is STILL refused, NOT guessed into an arm — routing it would send a path through oeFetch or an id at the sandbox");
+  ok(/kind: "attachment" \| "path" \| "url"/.test(bareString.message ?? ""), "arg shape: …and the bare-string refusal names the PRIMARY { kind, ref } spelling so the model can self-correct");
+  const junkBeside = await tool.execute({ attachmentId: "F0BQ89BMX7S", source: "not json at all" }, ctx);
+  ok(junkBeside.ok === true && junkBeside.description === "a red square.", "arg shape: an unusable `source` string BESIDE a usable source is out-ranked, not fatal (refusing a resolvable call over a junk sibling is the flood failure)");
+  {
+    const n2 = normalizeImageSource({ attachmentId: "F0BQ89BMX7S", source: "not json at all" } as never);
+    ok(n2.ok === true && (n2.ignored?.join(",") ?? "") === "source", "arg shape: the unusable `source` still lands in ignoredSources — nothing is silently dropped");
+  }
 
   await eveContextStorage().run(new FakeSession(), async () => {
     const mo = tool.toModelOutput(empty);
@@ -277,4 +284,67 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   _resetImageDescriberForTest();
 }
 
-console.log(`✓ describe-image: ${n} assertions passed (untrusted wrap+defang+taint · ZDR fail-closed · no-describer/unsupported fail-closed · attachment-plane route+fail-closed+2nd-platform · path sandbox read+confine+fail-closed · ARG SHAPE flat+nested+JSON-string, visible refusals · AUDIT DETAIL carries+bounds+scrubs the underlying error · inferImageMime/confineToWorkspacePath — slack legs in @open-everywhere/provider-slack)`);
+{
+  const { asSchema } = await import("ai");
+  const { readAudit } = await import("../agent/audit/audit.js");
+  const declared = (describeImage as unknown as { inputSchema: unknown }).inputSchema;
+
+  const emitted = asSchema(declared as never).jsonSchema;
+  const emittedJson = JSON.stringify(emitted);
+  ok(!emittedJson.includes("anyOf"), "🔴 schema shape: the emitted tool declaration contains NO `anyOf` anywhere — the union serialisation weaker models mangle is gone from this contract");
+  ok(!emittedJson.includes("oneOf") && !emittedJson.includes("allOf"), "schema shape: no `oneOf`/`allOf` either — the declaration is a flat object of scalars");
+  const props = (emitted as { properties?: Record<string, { type?: unknown; enum?: unknown }> }).properties ?? {};
+  ok(Array.isArray(props.kind?.enum) && (props.kind!.enum as string[]).join(",") === "attachment,path,url", "schema shape: `kind` is a plain string enum of the three arms (explicit classification, no server-side inference)");
+  ok(props.ref?.type === "string", "schema shape: `ref` is a single string slot — flood-proof, because there is no second value slot to invent");
+
+  _resetAttachmentPlaneForTest();
+  _resetImageDescriberForTest();
+  registerImageDescriber({ describe: async () => ({ description: "a red square." }) });
+  registerAttachmentResolver({ platform: "fake", resolve: async (id) => (id === "F0BQ89BMX7S" ? { bytes: PNG_BYTES, ref: `fake:${id}`, mimeType: "image/png" } : undefined) });
+
+  const kAttach = await tool.execute({ kind: "attachment", ref: "F0BQ89BMX7S" }, ctx);
+  ok(kAttach.ok === true && kAttach.description === "a red square.", "🔴 kind/ref: { kind: \"attachment\", ref } describes via the attachment plane — the primary spelling");
+  const kPath = await tool.execute({ kind: "path", ref: ".browser/shot.png" }, ctxWithSandbox(async () => PNG_BYTES));
+  ok(kPath.ok === true && kPath.description === "a red square.", "kind/ref: { kind: \"path\", ref } reads through the bound sandbox");
+  {
+    const nUrl = normalizeImageSource({ kind: "url", ref: "https://x.test/a.png" } as never);
+    ok(nUrl.ok === true && "url" in nUrl.source && nUrl.source.url === "https://x.test/a.png", "kind/ref: { kind: \"url\", ref } normalises to the { url } arm (governed egress; no fetch in this offline leg)");
+  }
+  const kEscape = await tool.execute({ kind: "path", ref: "../../secrets/evil.png" }, ctxWithSandbox(async () => PNG_BYTES));
+  ok(kEscape.ok === false && /path outside the workspace/.test(kEscape.message ?? ""), "kind/ref: a stated kind does NOT relax the workspace confinement — a ../ ref is still rejected before any read");
+
+  const noRef = await tool.execute({ kind: "attachment" }, ctx);
+  ok(noRef.ok === false && /without `ref`/.test(noRef.message ?? "") && /attachment id/.test(noRef.message ?? ""), "🔴 kind/ref: `kind` with no `ref` → a corrective error naming the missing half AND what belongs in it");
+  const noKind = await tool.execute({ ref: "F0BQ89BMX7S" }, ctx);
+  ok(noKind.ok === false && /without `kind`/.test(noKind.message ?? "") && /never guessed into an arm/.test(noKind.message ?? ""), "🔴 kind/ref: `ref` with no `kind` → a corrective error; a bare ref is NEVER guessed into an arm (an id at the sandbox / a path through oeFetch)");
+  ok(noKind.ok === false && /"attachment" \| "path" \| "url"/.test(noKind.message ?? ""), "kind/ref: the missing-kind error enumerates the arms so the next step is obvious");
+
+  {
+    const nWin = normalizeImageSource({ kind: "url", ref: "https://x.test/win.png", attachmentId: "F0BQ89BMX7S", path: "shot.png", source: { path: "nested.png" } } as never);
+    ok(nWin.ok === true && "url" in nWin.source && nWin.source.url === "https://x.test/win.png", "🔴 precedence: { kind, ref } wins even over attachmentId — the most-governed rule ranks the LEGACY field, it does not out-rank the explicit spelling");
+    ok(nWin.ok === true && (nWin.ignored?.join(",") ?? "") === "attachmentId,path", "precedence: the out-ranked legacy keys are reported in governance order (the nested duplicate of `path` deduped away)");
+    const nDup = normalizeImageSource({ kind: "attachment", ref: "F0BQ89BMX7S", attachmentId: "F0BQ89BMX7S" } as never);
+    ok(nDup.ok === true && nDup.ignored === undefined, "precedence: a legacy field RESTATING the winner is a duplicate, not a loser — nothing ignored");
+  }
+  registerAttachmentResolver({ platform: "fake2", resolve: async (id) => (id === "F_WIN" ? { bytes: PNG_BYTES, ref: `fake2:${id}`, mimeType: "image/png" } : undefined) });
+  const won = await tool.execute({ kind: "attachment", ref: "F_WIN", path: "invented.png", url: "https://example.com/invented.png" } as never, ctx);
+  ok(won.ok === true && won.description === "a red square.", "precedence: the luna-shaped flood WITH an explicit { kind, ref } describes the classified image");
+  {
+    const row = (await readAudit({ action: "describe_image", limit: 50 })).find(
+      (r) => (r.detail as { ref?: unknown } | undefined)?.ref === "fake2:F_WIN",
+    );
+    const ignored = (row?.detail as { ignoredSources?: unknown } | undefined)?.ignoredSources;
+    ok(Array.isArray(ignored) && (ignored as string[]).join(",") === "path,url", "🔴 audit: the ok:true row stamps ignoredSources with the out-ranked legacy fields — 'which source actually fetched' stays answerable from the row alone");
+  }
+
+  const legacyFlat = await tool.execute({ attachmentId: "F0BQ89BMX7S" }, ctx);
+  ok(legacyFlat.ok === true && legacyFlat.description === "a red square.", "legacy: flat { attachmentId } still describes, unchanged");
+  const legacyNested = await tool.execute({ source: { attachmentId: "F0BQ89BMX7S" } }, ctx);
+  ok(legacyNested.ok === true && legacyNested.description === "a red square.", "legacy: nested { source: { attachmentId } } still describes, unchanged");
+  const legacyJson = await tool.execute({ source: '{"attachmentId":"F0BQ89BMX7S"}' }, ctx);
+  ok(legacyJson.ok === true && legacyJson.description === "a red square.", "legacy: the JSON-STRING `source` (the OPE-393 incident payload) still describes, unchanged");
+  _resetImageDescriberForTest();
+  _resetAttachmentPlaneForTest();
+}
+
+console.log(`✓ describe-image: ${n} assertions passed (untrusted wrap+defang+taint · ZDR fail-closed · no-describer/unsupported fail-closed · attachment-plane route+fail-closed+2nd-platform · path sandbox read+confine+fail-closed · ARG SHAPE flat+nested+JSON-string, visible refusals · PRIMARY { kind, ref } per-arm + half-spelling corrective + beats-legacy precedence + ignoredSources + NO anyOf in the emitted schema · AUDIT DETAIL carries+bounds+scrubs the underlying error · inferImageMime/confineToWorkspacePath — slack legs in @open-everywhere/provider-slack)`);

@@ -111,7 +111,7 @@ export default defineTool({
         cls.reason === "pdf"
           ? `file could not be read: PDF text extraction isn't supported — ask the uploader for a text/CSV/markdown export.`
           : isImage
-            ? `file could not be read: "${src.mimeType ?? src.name ?? "this file"}" is an IMAGE, not a text file — use describe_image with { attachmentId: "${id}" } to SEE it instead of read_file_upload.`
+            ? `file could not be read: "${src.mimeType ?? src.name ?? "this file"}" is an IMAGE, not a text file — use describe_image with { kind: "attachment", ref: "${id}" } to SEE it instead of read_file_upload.`
             : `file could not be read: unsupported type (${src.mimeType ?? src.name ?? "unknown"}) — supported: plain text, CSV, TSV, JSON, markdown, log, XML, YAML.`;
       return { ok: false, message: msg };
     }
