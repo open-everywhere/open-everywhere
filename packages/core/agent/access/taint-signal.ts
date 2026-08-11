@@ -1,5 +1,6 @@
 import { defineState } from "eve/context";
 import type { IngestionKind } from "./taint-tiers.js";
+import { taintEnabled } from "./taint-enforcement.js";
 
 interface TaintState {
   readonly turn?: string;
@@ -37,6 +38,7 @@ export function beginTaintTurn(turnId: string | undefined): void {
 }
 
 export function markUntrustedIngestedThisTurn(kind?: IngestionKind): void {
+  if (!taintEnabled()) return;
   let flipped = false;
   try {
     slot.update((cur) => {
@@ -70,6 +72,7 @@ function notifyTaintFlipped(): void {
 }
 
 export function untrustedIngestedThisTurn(): boolean {
+  if (!taintEnabled()) return false;
   try {
     return readState(slot.get()).tainted;
   } catch {
@@ -87,6 +90,7 @@ export function taintMarkLands(): boolean {
 }
 
 export function taintKindsThisTurn(): readonly string[] {
+  if (!taintEnabled()) return [];
   try {
     return readState(slot.get()).kinds ?? [];
   } catch {

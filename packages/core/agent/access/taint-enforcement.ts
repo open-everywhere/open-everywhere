@@ -1,8 +1,18 @@
 import { defineState } from "eve/context";
 import { classifyIngestion, type IngestionSource, type IngestionVerdict } from "./taint-tiers.js";
-import { getSettings, type TaintTierMode as SettingsTaintTierMode } from "../settings/settings.js";
+import { getSettings, type TaintTierMode as SettingsTaintTierMode, type TaintMode } from "../settings/settings.js";
 
 export type TaintTierMode = SettingsTaintTierMode;
+
+export type { TaintMode };
+
+export function taintMode(): TaintMode {
+  return getSettings().taint.mode;
+}
+
+export function taintEnabled(): boolean {
+  return taintMode() !== "off";
+}
 
 export function taintTierMode(): TaintTierMode {
   return getSettings().taint.tierMode;
@@ -78,6 +88,7 @@ function firstThisTurn(key: string): boolean {
 }
 
 export function decideIngestion(src: IngestionSource | undefined, siteWouldTaint: boolean): boolean {
+  if (!taintEnabled()) return false;
   if (src === undefined) return siteWouldTaint;
   try {
     const mode = taintTierMode();
@@ -93,6 +104,7 @@ export function decideIngestion(src: IngestionSource | undefined, siteWouldTaint
 }
 
 export function noteIngestionVerdict(src: IngestionSource | undefined, taintsToday: boolean): void {
+  if (!taintEnabled()) return;
   if (src === undefined) return;
   try {
     noteRow(src, classifyIngestion(src), { mode: taintTierMode(), applied: false, siteWouldTaint: taintsToday });
