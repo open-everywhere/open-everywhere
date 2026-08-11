@@ -2,6 +2,7 @@ import { appendAudit } from "../audit/audit.js";
 import { criteriaDomain, domainForChannel, type Domain } from "../memory/domain.js";
 import { principalIdsOnPlatform } from "../identity/principal-key.js";
 import { parseScopeKey } from "./scope-key.js";
+import { getSettings } from "../settings/settings.js";
 
 export type AudienceFloor = "guest" | "member" | "admin";
 
@@ -76,7 +77,9 @@ interface CachedAttestation {
   readonly attestation: FloorAttestation;
   readonly at: number;
 }
-const FLOOR_TTL_MS = Number(process.env.OE_GOVERNANCE_FLOOR_TTL_MS) || 15 * 60_000;
+function floorTtlMs(): number {
+  return getSettings().governance.floorTtlMs;
+}
 const floorCache = new Map<string, CachedAttestation>();
 
 interface CachedRoster {
@@ -108,7 +111,7 @@ export interface AudienceFloorResolution {
 
 export async function resolveRoomRoster(channelKey: string): Promise<RoomRoster> {
   const cached = rosterCache.get(channelKey);
-  if (cached && Date.now() - cached.at < FLOOR_TTL_MS) return cached.roster;
+  if (cached && Date.now() - cached.at < floorTtlMs()) return cached.roster;
   const roster = (await governanceMemberSupplier()(channelKey)) ?? UNRESOLVED_ROSTER;
   rosterCache.set(channelKey, { roster, at: Date.now() });
   return roster;
@@ -136,7 +139,7 @@ export async function attestGovernanceChannel(
   ctx: FloorAttestContext,
 ): Promise<FloorAttestation> {
   const cached = floorCache.get(channelKey);
-  if (cached && Date.now() - cached.at < FLOOR_TTL_MS) return cached.attestation;
+  if (cached && Date.now() - cached.at < floorTtlMs()) return cached.attestation;
 
   const roster = await resolveRoomRoster(channelKey);
   const attestation = attestGovernanceFloor(roster, governanceAdminSet(channelKey, domains));

@@ -266,6 +266,17 @@ for (const [label, envName, shipped, read] of [
   }
 }
 
+eq(at({}).governance.floorTtlMs, 900_000, "[3] governance.floorTtlMs: shipped 15 min");
+eq(at({ OE_GOVERNANCE_FLOOR_TTL_MS: "60000" }).governance.floorTtlMs, 60_000, "[3] governance.floorTtlMs: a positive number applies");
+eq(
+  at({ OE_GOVERNANCE_FLOOR_TTL_MS: "-1" }).governance.floorTtlMs,
+  -1,
+  "[3] 🔴 governance.floorTtlMs HONOURS a negative (which disables the memo) — `Number(raw) || default` never guarded the sign, and preserving that is the no-op",
+);
+for (const raw of ["", "0", "  ", "banana"]) {
+  eq(at({ OE_GOVERNANCE_FLOOR_TTL_MS: raw }).governance.floorTtlMs, 900_000, `[3] governance.floorTtlMs: ${JSON.stringify(raw)} ⇒ default (0 is falsy under \`||\`)`);
+}
+
 eq(at({}).browser.enabled, false, "[3] browser.enabled: shipped OFF (the capability does not exist)");
 eq(at({ OE_AGENT_BROWSER: "1" }).browser.enabled, true, '[3] browser.enabled: exactly "1" arms');
 for (const raw of ["", "0", "true", "yes", "on", " 1 "]) {

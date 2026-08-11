@@ -42,6 +42,9 @@ export interface AgentSettings {
     readonly enforce: boolean;
     readonly allowUnenforced: boolean;
   };
+  readonly governance: {
+    readonly floorTtlMs: number;
+  };
   readonly memory: {
     readonly dreamCandidateCap: number;
   };
@@ -323,6 +326,18 @@ export const SETTINGS = {
       summary:
         "Let a session CONTINUE when the sandbox backend cannot apply fine-grained network policy. Off, an unenforceable policy aborts the session instead of running it unfirewalled.",
     } satisfies SettingSpec<boolean>,
+  },
+  governance: {
+    floorTtlMs: {
+      path: "governance.floorTtlMs",
+      env: "OE_GOVERNANCE_FLOOR_TTL_MS",
+      shipped: 15 * 60_000,
+      parseEnv: (raw) => Number(raw) || undefined,
+      validate: positiveNumber,
+      summary:
+        "Memoisation TTL for the room roster and the governance attestation behind the audience floor — the one computation shared by the admin-governance floor, the connector-disclosure floor, the triggered-fire disclosure floor, the approval-card clicker floor and the card-disclosure floor.",
+      format: (v) => `${v} ms`,
+    } satisfies SettingSpec<number>,
   },
   memory: {
     dreamCandidateCap: {
@@ -639,6 +654,9 @@ export function getSettings(
     egress: {
       enforce: resolve(SETTINGS.egress.enforce, o.egress?.enforce, env),
       allowUnenforced: resolve(SETTINGS.egress.allowUnenforced, o.egress?.allowUnenforced, env),
+    },
+    governance: {
+      floorTtlMs: resolve(SETTINGS.governance.floorTtlMs, o.governance?.floorTtlMs, env),
     },
     memory: {
       dreamCandidateCap: resolve(SETTINGS.memory.dreamCandidateCap, o.memory?.dreamCandidateCap, env),
