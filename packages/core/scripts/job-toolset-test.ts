@@ -27,6 +27,7 @@ import {
 } from "../agent/access/job-session-state.js";
 import { JOB_WAKE_TOOLS, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../agent/access/window-gate-manifest.js";
 import { projectToolSet } from "../agent/access/untrusted-projection.js";
+import { setNativeDelegationSeat } from "../agent/access/native-delegation-state.js";
 import { grainBackstopAtExecute } from "../agent/access/window-gated.js";
 import { isJobRoutine, JOB_STATE_MAX_BYTES, type Routine } from "../agent/routines/routine.js";
 import { applyJobStateObservation, renderJobMessage } from "../agent/routines/job.js";
@@ -194,6 +195,7 @@ inSession(() => {
 inSession(() => {
   markJobSession();
   setJobWakeEscalated(true);
+  setNativeDelegationSeat("allow");
   ok(currentJobWakePosture() === "unrestricted", "an escalated wake on a job session resolves UNRESTRICTED");
   const toolset = makeToolset();
   const before = Object.keys(toolset).length;
@@ -203,6 +205,7 @@ inSession(() => {
 });
 
 inSession(() => {
+  setNativeDelegationSeat("allow");
   ok(currentJobWakePosture() === "unrestricted", "a session that never took a job fire is out of scope");
   const toolset = makeToolset();
   const before = Object.keys(toolset).length;
@@ -215,7 +218,8 @@ inSession(() => {
   const toolset = makeToolset();
   const before = Object.keys(toolset).length;
   projectToolSet(toolset as unknown as Record<string, unknown>);
-  ok(Object.keys(toolset).length === before, "a context-less projectToolSet call is unchanged (the existing projection tests keep passing)");
+  ok(!("agent" in toolset), "…while the DELEGATION verdict fails CLOSED outside a context (unclassified ⇒ deny) — the opposite direction, on purpose");
+  ok(Object.keys(toolset).length === before - 1, "a context-less projectToolSet call withholds nothing from the job plane (only the fail-closed `agent`)");
 }
 
 inSession(() => {
@@ -224,6 +228,15 @@ inSession(() => {
   const toolset = makeToolset();
   projectToolSet(toolset as unknown as Record<string, unknown>);
   ok(!("open_pull_request" in toolset), "the unclassifiable wake gets the restricted set");
+});
+
+inSession(() => {
+  const toolset = makeToolset();
+  const before = Object.keys(toolset).length;
+  projectToolSet(toolset as unknown as Record<string, unknown>);
+  ok(!("agent" in toolset), "OPE-396: on a default (native-armed) deployment an UNCLASSIFIED seat loses `agent` at the projection seam — the delegation verdict fails closed");
+  ok("open_pull_request" in toolset && "purge_memory" in toolset, "…and nothing else moves: the job filter is untouched by the delegation one");
+  ok(Object.keys(toolset).length === before - 1, "…exactly one name withdrawn, so the two filters compose without overlap");
 });
 
 const fireCtx = (stamped: boolean) => ({

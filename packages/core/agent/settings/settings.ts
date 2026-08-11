@@ -308,13 +308,13 @@ export const SETTINGS = {
     nativeSubagent: {
       path: "delegation.nativeSubagent",
       env: "OE_NATIVE_SUBAGENT",
-      shipped: false,
+      shipped: true,
       parseEnv: (raw) => {
         const v = raw.trim().toLowerCase();
         return v === "" || v === "0" || v === "false" || v === "off" || v === "no" ? false : undefined;
       },
       summary:
-        "Use eve's BUILT-IN `agent` subagent as the delegation route instead of OE's roll-own one-shot worker. Arming it takes a reviewed diff AND an `oe build` (the built-in is suppressed by a generated static sentinel); the env var is an OFF-ONLY kill switch. Native children share the parent's sandbox and bind to the parent's identity; delegation is withdrawn entirely on a tainted turn, because eve has no seam to forward taint into a child.",
+        "Use eve's BUILT-IN `agent` subagent as the delegation route. ON by default since OPE-396 — the roll-own SYNC delegation leg it replaced has been deleted, so the OFF-ONLY env kill switch now leaves the deployment with async-only roll-own delegation rather than falling back to a synchronous one. Disarming also takes an `oe build` (it must EMIT the static sentinel that suppresses the built-in). Native children share the parent's sandbox and bind to the parent's identity; delegation is withdrawn entirely on a tainted turn, because eve has no seam to forward taint into a child (opt out with `taint.mode: \"off\"`).",
     } satisfies SettingSpec<boolean>,
   },
   models: {

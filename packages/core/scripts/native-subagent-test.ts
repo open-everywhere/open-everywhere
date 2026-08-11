@@ -202,7 +202,7 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
   ok(rootRes.abortError === undefined && root.applied.length === 1, "a root session's deps carry no parentPublishedFingerprint, so the tripwire costs it not even a read");
 }
 
-ok(SETTINGS.delegation.nativeSubagent.shipped === false, "🔴 D6: the shipped default is OFF — everything below is behind it, and a fresh clone gets today's world byte-identical");
+ok(SETTINGS.delegation.nativeSubagent.shipped === true, "🔴 D6 (OPE-396): the shipped default is ON — a fresh clone gets eve-native delegation, which is what we run");
 ok(SETTINGS.delegation.nativeSubagent.env === "OE_NATIVE_SUBAGENT", "…with the declared ops override name");
 {
   const parse = SETTINGS.delegation.nativeSubagent.parseEnv;
@@ -212,15 +212,16 @@ ok(SETTINGS.delegation.nativeSubagent.env === "OE_NATIVE_SUBAGENT", "…with the
   for (const on of ["1", "true", "on", "yes", "banana"]) {
     ok(parse(on) === undefined, `🔴 D6: "${on}" FALLS THROUGH (undefined), it does not arm — arming has a BUILD half (the generated sentinel) that no env var can perform, so an env-armed setting on a sentinel'd tree would leave the seat with no delegation verb at all`);
   }
-  ok(getSettings({}).delegation.nativeSubagent === false, "…and with a blank environment the resolved value is the shipped OFF");
-  ok(getSettings({ OE_NATIVE_SUBAGENT: "1" }).delegation.nativeSubagent === false, "🔴 …so `OE_NATIVE_SUBAGENT=1` on a default deployment does NOT arm it (fall-through to the shipped default)");
+  ok(getSettings({}).delegation.nativeSubagent === true, "…and with a blank environment the resolved value is the shipped ON");
+  ok(getSettings({ OE_NATIVE_SUBAGENT: "0" }).delegation.nativeSubagent === false, "🔴 …and `OE_NATIVE_SUBAGENT=0` really does disarm it at runtime — the kill switch is the whole point of the off-only parser");
+  ok(getSettings({ OE_NATIVE_SUBAGENT: "1" }).delegation.nativeSubagent === true, "…while `=1` still FALLS THROUGH rather than arming (it now lands on the shipped ON, so it looks like a no-op — the parser's contract is unchanged)");
 }
 {
-  ok(nativeSubagentAtBuild({}) === false, "🔴 D6 BUILD: with no app override the build-time value is the shipped OFF ⇒ roster.config.ts emits the `agent` disable sentinel ⇒ eve's built-in is never injected");
-  ok(nativeSubagentAtBuild({ delegation: { nativeSubagent: true } }) === true, "…and an app override in agent/settings/settings.ts is what drops it — a reviewed diff, paired with `oe build --accept` in the same PR");
+  ok(nativeSubagentAtBuild({}) === true, "🔴 D6 BUILD (OPE-396): with no app override the build-time value is the shipped ON ⇒ roster.config.ts omits the `agent` disable sentinel ⇒ eve's built-in IS injected");
+  ok(nativeSubagentAtBuild({ delegation: { nativeSubagent: false } }) === false, "…and an app override in agent/settings/settings.ts is what RE-EMITS it — a reviewed diff, paired with `oe build --accept` in the same PR (the direction that now takes review)");
   const saved = process.env.OE_NATIVE_SUBAGENT;
   process.env.OE_NATIVE_SUBAGENT = "0";
-  ok(nativeSubagentAtBuild({ delegation: { nativeSubagent: true } }) === true, "🔴 D6: the BUILD resolver is ENV-BLIND — a stray OE_NATIVE_SUBAGENT in whoever ran `oe build --accept` must never rewrite the committed roster.lock.json for everyone else");
+  ok(nativeSubagentAtBuild({}) === true, "🔴 D6: the BUILD resolver is ENV-BLIND — a stray OE_NATIVE_SUBAGENT in whoever ran `oe build --accept` must never rewrite the committed roster.lock.json for everyone else");
   if (saved === undefined) delete process.env.OE_NATIVE_SUBAGENT;
   else process.env.OE_NATIVE_SUBAGENT = saved;
 }
@@ -243,7 +244,7 @@ function inSession<T>(fn: () => T): T {
 
   const makeToolset = () => ({ agent: { execute: () => undefined }, reply: { execute: () => undefined }, no_reply: { execute: () => undefined } });
 
-  delete process.env.OE_NATIVE_SUBAGENT;
+  process.env.OE_NATIVE_SUBAGENT = "0";
   inSession(() => {
     setNativeDelegationSeat("no-seat");
     const toolset = makeToolset();
@@ -251,9 +252,8 @@ function inSession<T>(fn: () => T): T {
     ok("agent" in toolset, "🔴 D6 OFF: with the regime disarmed the projection seam never withdraws `agent` — the world is byte-identical, and the slot is not even read");
   });
 
-  const { registerSettings, resetSettingsForTest } = await import("../agent/settings/settings.js");
-  registerSettings({ delegation: { nativeSubagent: true } });
-  ok(getSettings({}).delegation.nativeSubagent === true, "the app-override arming path is what the remaining legs run under");
+  delete process.env.OE_NATIVE_SUBAGENT;
+  ok(getSettings({}).delegation.nativeSubagent === true, "the SHIPPED default is what the remaining legs run under (no override needed since OPE-396)");
 
   inSession(() => {
     setNativeDelegationSeat("allow");
@@ -306,16 +306,19 @@ function inSession<T>(fn: () => T): T {
     ok(resolvedOnParent === null, "🔴 D6 THE COLLISION WALL: armed, OE's dynamic `agent` resolves to NOTHING even on a seat that would otherwise mount it. eve's harness/tool-loop.js throws `Dynamic tool \"agent\" collides with a runtime-visible subagent.` when a dynamic name meets the built-in's runtimeAction — a dynamic tool does NOT shadow the built-in, it kills the model call");
   }
 
-  resetSettingsForTest();
-  ok(getSettings({}).delegation.nativeSubagent === false, "…and the regime is disarmed again for the remaining sections");
+  process.env.OE_NATIVE_SUBAGENT = "0";
+  ok(getSettings({ OE_NATIVE_SUBAGENT: "0" }).delegation.nativeSubagent === false, "…and the KILL SWITCH disarms the regime again for the remaining sections");
 
   {
     const delegationKit = (await import("../agent/tools/delegation_tools.js")).default;
     const resolved = (await resolveWindowGated(delegationKit, parentCtx)) as Record<string, unknown> | null;
-    ok(resolved !== null && "agent" in resolved, "🔴 D6 OFF: disarmed, OE's roll-own `agent` mounts on a delegating standing seat exactly as before — the byte-identical claim, asserted rather than argued");
+    ok(resolved !== null && "agent" in resolved, "🔴 D6 OFF: disarmed, OE's roll-own `agent` mounts on a delegating standing seat — this is what the kill switch actually buys, asserted rather than argued");
+    const shape = (resolved as Record<string, { inputSchema?: { shape?: Record<string, unknown> } }>).agent?.inputSchema?.shape ?? {};
+    eq(Object.keys(shape).sort(), ["brief", "thread"], "🔴 OPE-396: the roll-own fallback is ASYNC-ONLY — no `mode` argument exists, so disarming the native route REMOVES synchronous delegation rather than restoring it");
     const onChild = await resolveWindowGated(delegationKit, childResolverCtx);
     ok(onChild === null, "…and it does NOT mount inside a native child, in either regime: `task` grain is not on the `agent` row of the window-gate manifest, and the leaf rule refuses underneath it");
   }
+  delete process.env.OE_NATIVE_SUBAGENT;
 }
 
 {

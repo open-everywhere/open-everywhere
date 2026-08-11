@@ -16,9 +16,14 @@ import {
 } from "../channels/window-key.js";
 import { recordThreadOwner, resolveThreadOwner } from "../channels/thread-ownership.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { resolveOwnWindowToken, deterministicChildWakeId } from "../access/oneshot-spawn.js";
+import { resolveOwnWindowToken } from "../access/oneshot-spawn.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
 import { appendAudit } from "../audit/audit.js";
+import { createHash } from "node:crypto";
+
+export function deterministicChildWakeId(callId: string): string {
+  return createHash("sha256").update(`oe-oneshot:${callId}`).digest("hex").slice(0, 32);
+}
 
 function ownWindowKey(ctx: BindableContext): WindowKey | undefined {
   const token = resolveOwnWindowToken(ctx);

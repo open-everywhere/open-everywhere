@@ -12,6 +12,7 @@ import { setLeanSeatWake, currentLeanSeatPosture } from "../agent/access/lean-se
 import { markJobSession, setJobWakeEscalated } from "../agent/access/job-session-state.js";
 import { JOB_WAKE_TOOLS, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../agent/access/window-gate-manifest.js";
 import { projectToolSet } from "../agent/access/untrusted-projection.js";
+import { setNativeDelegationSeat } from "../agent/access/native-delegation-state.js";
 import { grainBackstopAtExecute } from "../agent/access/window-gated.js";
 import { workerOnlyTools } from "../agent/access/worker-capabilities.js";
 import { approvalPreviewFor } from "../agent/access/approval-preview.js";
@@ -141,6 +142,7 @@ function inSession<T>(fn: () => T): T {
 }
 
 inSession(() => {
+  setNativeDelegationSeat("allow");
   setLeanSeatWake(true);
   ok(currentLeanSeatPosture() === "lean", "a marked wake resolves LEAN inside a live session");
   const toolset = makeToolset();
@@ -151,6 +153,7 @@ inSession(() => {
 });
 
 inSession(() => {
+  setNativeDelegationSeat("allow");
   ok(currentLeanSeatPosture() === "full", "the slot's default is FULL — the fail direction that can never strand a seat");
   const toolset = makeToolset();
   const beforeCount = Object.keys(toolset).length;
@@ -163,7 +166,8 @@ inSession(() => {
   const toolset = makeToolset();
   const beforeCount = Object.keys(toolset).length;
   projectToolSet(toolset as unknown as Record<string, unknown>);
-  ok(Object.keys(toolset).length === beforeCount, "a context-less projectToolSet call is unchanged");
+  ok(!("agent" in toolset), "…while the delegation verdict fails CLOSED outside a context (unclassified ⇒ deny)");
+  ok(Object.keys(toolset).length === beforeCount - 1, "a context-less projectToolSet call withholds nothing from the LEAN plane (only the fail-closed `agent`)");
 }
 
 inSession(() => {
