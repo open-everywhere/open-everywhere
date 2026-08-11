@@ -37,15 +37,35 @@ export function beginTaintTurn(turnId: string | undefined): void {
 }
 
 export function markUntrustedIngestedThisTurn(kind?: IngestionKind): void {
+  let flipped = false;
   try {
     slot.update((cur) => {
       const state = readState(cur);
       const kinds = state.kinds ?? [];
       const nextKinds = kind !== undefined && !kinds.includes(kind) ? [...kinds, kind] : kinds;
       if (state.tainted && nextKinds.length === kinds.length) return state;
+      if (!state.tainted) flipped = true;
       return { turn: state.turn, tainted: true, ...(nextKinds.length > 0 ? { kinds: nextKinds } : {}) };
     });
   } catch {
+  }
+  if (flipped) notifyTaintFlipped();
+}
+
+type TaintFlipObserver = () => void;
+
+const flipObservers: TaintFlipObserver[] = [];
+
+export function registerTaintFlipObserver(observer: TaintFlipObserver): void {
+  flipObservers.push(observer);
+}
+
+function notifyTaintFlipped(): void {
+  for (const observer of flipObservers) {
+    try {
+      observer();
+    } catch {
+    }
   }
 }
 

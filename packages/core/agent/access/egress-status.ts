@@ -131,6 +131,22 @@ export interface EgressStatusSandbox {
   run(options: { command: string }): PromiseLike<unknown>;
 }
 
+export interface EgressStatusReadableSandbox {
+  readTextFile(options: { path: string }): PromiseLike<string | null>;
+}
+
+export async function readPublishedEgressFingerprint(sandbox: EgressStatusReadableSandbox): Promise<string | undefined> {
+  try {
+    const raw = await sandbox.readTextFile({ path: EGRESS_STATUS_PATH });
+    if (typeof raw !== "string" || raw.length === 0) return undefined;
+    const parsed: unknown = JSON.parse(raw);
+    const fp = (parsed as { policyFingerprint?: unknown } | null)?.policyFingerprint;
+    return typeof fp === "string" && fp.length > 0 ? fp : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function publishEgressStatus(sandbox: EgressStatusSandbox, input: EgressStatusInput): Promise<void> {
   await sandbox.run({ command: `${unlockCommand(EGRESS_DIR)} 2>/dev/null || true` });
   await sandbox.writeTextFile({ path: EGRESS_STATUS_PATH, content: renderEgressStatus(input) });

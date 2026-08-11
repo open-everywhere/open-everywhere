@@ -7,7 +7,7 @@ import { compileNetworkPolicy } from "../access/egress.js";
 import type { EffectiveAccess } from "../access/resolver.js";
 import { resolveHeaders } from "../access/credentials.js";
 import { resolvePartition } from "../memory/partition.js";
-import { bindFrom } from "../identity/binding.js";
+import { bindFrom, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { narrowByConnectorOverride } from "../access/connector-scope.js";
 import { setConnectorContentOrigin, type ConnectorContentOriginMap } from "../access/connector-content-origin-state.js";
 import { appendAudit, type AuditInput } from "../audit/audit.js";
@@ -15,6 +15,7 @@ import { stampEnforcement } from "../access/enforcement.js";
 import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.js";
 import {
   publishEgressStatus,
+  readPublishedEgressFingerprint,
   type EgressEnforcementState,
   type EgressStatusInput,
 } from "../access/egress-status.js";
@@ -109,6 +110,7 @@ export interface EgressEnforcementDeps {
   readonly stamp?: (enforced: boolean) => void;
   readonly publish?: (input: EgressStatusInput) => Promise<void>;
   readonly rememberScope?: (input: EgressAttribution) => void;
+  readonly parentPublishedFingerprint?: () => Promise<string | undefined>;
   readonly stampConnectorContentOrigin?: (declared: ConnectorContentOriginMap) => void;
 }
 
@@ -142,6 +144,41 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
       : `allow ${hostCount} host(s), default-deny`;
 
   const fingerprint = egressPolicyFingerprint(policy, compileError);
+
+  if (deps.parentPublishedFingerprint) {
+    let parentFingerprint: string | undefined;
+    try {
+      parentFingerprint = await deps.parentPublishedFingerprint();
+    } catch (err) {
+      log(`subagent child: parent egress fingerprint unreadable, invariant not asserted this pass: ${String(err)}`);
+    }
+    if (parentFingerprint !== undefined && parentFingerprint !== fingerprint) {
+      const failure = new Error(
+        `egress identical-binding invariant VIOLATED: this subagent child compiled policy ${fingerprint} ` +
+          `while its parent published ${parentFingerprint} into the sandbox they share. A native child binds to ` +
+          `its parent's identity (identity/binding.ts channelPlatform's subagent origin-hop), so the two policies ` +
+          `must be byte-identical; a divergence means the child would REPLACE its parent's live firewall. Failing ` +
+          `the child rather than applying.`,
+      );
+      log(failure.message);
+      try {
+        const s = deps.scope();
+        await audit({
+          org: s.org,
+          platform: s.platform,
+          workspace: s.workspace,
+          surface: s.surface,
+          principalId: s.principalId,
+          action: "egress.policy",
+          detail: { phase, reason: "subagent-binding-divergence", policyFingerprint: fingerprint, parentPolicyFingerprint: parentFingerprint, aborted: true },
+        });
+      } catch (err) {
+        log(`subagent divergence audit skipped (the child is still being failed): ${String(err)}`);
+      }
+      return { phase, applied: false, reason: "policy-changed", fingerprint, abortError: failure };
+    }
+  }
+
   const { reapply, reason } = planEgressApply({ phase, fingerprint, lastApplied: deps.lastApplied() });
 
   const wantEnforce = process.env.OE_EGRESS_ENFORCE !== "0";
@@ -285,6 +322,9 @@ function liveDeps(ctx: HookContext): EgressEnforcementDeps {
       }
     },
     publish: async (input) => publishEgressStatus(await ctx.getSandbox(), input),
+    ...(isSubagentChildContext(ctx as unknown as BindableContext)
+      ? { parentPublishedFingerprint: async () => readPublishedEgressFingerprint(await ctx.getSandbox()) }
+      : {}),
     rememberScope: rememberEgressAttribution,
     lastApplied: () => egressApplied.get().fingerprint,
     rememberApplied: (fingerprint) => egressApplied.update((s) => ({ ...s, fingerprint })),
@@ -312,8 +352,10 @@ export default defineHook({
 
     "turn.started": async (_event, ctx) => {
       try {
-        await enforceEgress("turn.started", liveDeps(ctx));
+        const result = await enforceEgress("turn.started", liveDeps(ctx));
+        if (result.abortError) throw result.abortError;
       } catch (err) {
+        if (err instanceof Error && err.message.includes("identical-binding invariant VIOLATED")) throw err;
         log(`turn.started re-apply skipped (session-start policy still in force): ${String(err)}`);
       }
     },

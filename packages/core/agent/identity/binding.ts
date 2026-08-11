@@ -39,6 +39,7 @@ export interface BindableContext {
       readonly current?: AuthPrincipal | null;
       readonly initiator?: AuthPrincipal | null;
     } | null;
+    readonly parent?: { readonly sessionId?: string; readonly callId?: string; readonly rootSessionId?: string };
   };
   readonly channel?: { readonly kind?: string; readonly continuationToken?: string };
 }
@@ -132,7 +133,28 @@ export function registerIdentityMapper(platform: string, mapper: IdentityMapper)
   MAPPERS[platform] = mapper;
 }
 
+export const SUBAGENT_CHANNEL_KIND = "subagent";
+
+export function subagentParentSessionId(ctx: BindableContext): string | undefined {
+  const id = ctx.session?.parent?.sessionId;
+  return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
+export function isSubagentChildContext(ctx: BindableContext): boolean {
+  try {
+    if (subagentParentSessionId(ctx) !== undefined) return true;
+    if (platformFromKind(ctx.channel?.kind) === SUBAGENT_CHANNEL_KIND) return true;
+    return classifySessionId(ctx.channel?.continuationToken).kind === "subagent";
+  } catch {
+    return false;
+  }
+}
+
 export function channelPlatform(ctx: BindableContext): string | undefined {
+  if (platformFromKind(ctx.channel?.kind) === SUBAGENT_CHANNEL_KIND) {
+    const inherited = attr(authOf(ctx)?.attributes, ["oe_platform", "oePlatform"]);
+    return inherited ? normalizePlatform(inherited) : SUBAGENT_CHANNEL_KIND;
+  }
   const kind = platformFromKind(ctx.channel?.kind ?? process.env.OE_PLATFORM);
   if (kind === "unified") {
     const stamped = attr(authOf(ctx)?.attributes, ["oe_platform", "oePlatform"]);
@@ -146,6 +168,7 @@ export function isUnifiedWindowContext(ctx: BindableContext): boolean {
 }
 
 export function currentWakeId(ctx: BindableContext): string | undefined {
+  if (isSubagentChildContext(ctx)) return undefined;
   return attr(authOf(ctx)?.attributes, ["oe_wake_id", "oeWakeId"]);
 }
 
@@ -161,16 +184,22 @@ export function currentWindowToken(ctx: BindableContext): string | undefined {
 export function proposingSessionId(ctx: BindableContext): string | undefined {
   const routineKey = routineGrantKeyStamped(authOf(ctx)?.attributes);
   if (routineKey !== undefined) return routineKey;
+  if (isSubagentChildContext(ctx)) {
+    const inherited = currentWindowToken(ctx);
+    if (inherited !== undefined) return sessionGrantKeyFromToken(inherited);
+  }
   const raw = (ctx as { channel?: { continuationToken?: unknown } }).channel?.continuationToken;
   const token = bareTokenFromEveContext(raw) ?? currentWindowToken(ctx);
   return token === undefined ? undefined : sessionGrantKeyFromToken(token);
 }
 
 export function currentTurnAddressing(ctx: BindableContext): string | undefined {
+  if (isSubagentChildContext(ctx)) return undefined;
   return attr(authOf(ctx)?.attributes, ["oe_addressing", "oeAddressing"]);
 }
 
 export function currentTurnAddressed(ctx: BindableContext): boolean {
+  if (isSubagentChildContext(ctx)) return false;
   const a = authOf(ctx)?.attributes;
   const flag = attr(a, ["oe_addressed", "oeAddressed"]);
   if (flag !== undefined) return flag === "1" || flag.toLowerCase() === "true";
@@ -220,6 +249,7 @@ function classifyTokenGrain(token: unknown): WindowGrain {
 }
 
 export function windowGrainOf(ctx: BindableContext): WindowGrain {
+  if (isSubagentChildContext(ctx)) return "task";
   const rawToken = ctx.channel?.continuationToken;
   const stamped = attr(authOf(ctx)?.attributes, ["oe_grain", "oeGrain"]);
   const tokenGrain = classifyTokenGrain(rawToken);

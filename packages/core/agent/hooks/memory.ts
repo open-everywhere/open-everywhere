@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { resolvePartition } from "../memory/partition.js";
-import { bindFrom } from "../identity/binding.js";
+import { bindFrom, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { planFor, type ResolvedMemory } from "../memory/resolve.js";
 import { providerById } from "../memory/provider.js";
 import { renderMemoryIndex } from "../memory/listing.js";
@@ -207,7 +207,19 @@ function deletionDetail(hostCurrent: MemoryFiles, files: MemoryFiles): Record<st
   };
 }
 
+function skipAsSubagentChild(ctx: HookContext, phase: string): boolean {
+  let child = false;
+  try {
+    child = isSubagentChildContext(ctx as unknown as BindableContext);
+  } catch {
+    child = false;
+  }
+  if (child) log(`${phase}: SKIPPED — this is an eve subagent child; the parent owns the shared sandbox's memory tree`);
+  return child;
+}
+
 async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): Promise<void> {
+  if (skipAsSubagentChild(ctx, `session.${outcome}`)) return;
   const binding = bindFrom(ctx);
   const p = resolvePartition(ctx);
   const plan = planFor(binding, p);
@@ -329,6 +341,7 @@ async function lock(sandbox: Awaited<ReturnType<HookContext["getSandbox"]>>, pat
 
 function resyncArmed(ctx: HookContext): boolean {
   try {
+    if (isSubagentChildContext(ctx as unknown as BindableContext)) return false;
     if (!isSupervisorSession(ctx)) return false;
     return windowTopologyEnabled();
   } catch {
@@ -532,6 +545,7 @@ async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
 export default defineHook({
   events: {
     "session.started": async (_event, ctx) => {
+      if (skipAsSubagentChild(ctx, "session.started")) return;
       const timing = startMemorySyncTiming();
       try {
         const binding = bindFrom(ctx);

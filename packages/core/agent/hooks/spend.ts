@@ -21,9 +21,7 @@ export function routineIdOf(ctx: BindableContext): string | undefined {
   }
 }
 
-export type DelegatableContext = BindableContext & {
-  readonly session?: { readonly parent?: { readonly sessionId?: string; readonly callId?: string; readonly rootSessionId?: string } };
-};
+export type DelegatableContext = BindableContext;
 
 export function subagentParentOf(
   ctx: DelegatableContext,
