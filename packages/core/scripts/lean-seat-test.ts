@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
@@ -9,6 +9,9 @@ process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-lean-seat-")), 
 
 import { LEAN_SEAT_TOOLS, allowedOnLeanSeat, resolveLeanSeatPosture, restrictToolsetForLeanSeat, withheldFromLeanSeat } from "../agent/access/lean-seat.js";
 import { setLeanSeatWake, currentLeanSeatPosture } from "../agent/access/lean-seat-state.js";
+import { WORKER_WITHHELD_TOOLS, allowedOnWorkerSeat, restrictToolsetForWorkerSeat } from "../agent/access/worker-seat.js";
+import { setWorkerWake, currentWorkerWake } from "../agent/access/worker-seat-state.js";
+import { renderSupervisorPersona } from "../agent/instructions/access.js";
 import { markJobSession, setJobWakeEscalated } from "../agent/access/job-session-state.js";
 import { JOB_WAKE_TOOLS, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../agent/access/window-gate-manifest.js";
 import { projectToolSet } from "../agent/access/untrusted-projection.js";
@@ -98,6 +101,20 @@ ok(withheldList.includes("purge_memory") && withheldList.includes("aws") && with
 ok(!withheldList.includes("reply") && !withheldList.includes("agent"), "withheldFromLeanSeat excludes the roster");
 ok(withheldList.join(",") === [...withheldList].sort().join(","), "withheldFromLeanSeat is sorted (a stable, diffable audit row)");
 
+ok(!allowedOnWorkerSeat("ask_question"), "🔴 a delegated WORKER does not hold ask_question — the question posts, the answer routes to the PARENT, the delegated work is silently abandoned");
+ok(allowedOnLeanSeat("ask_question"), "…and the INTERACTIVE seat still holds it — the defect is the worker's return leg, not the verb");
+for (const name of ["bash", "read_file", "write_file", "post_file", "web_search", "return_result", "complete_task", "reply", "final_output", "notion__search", "some_tool_nobody_declared"]) {
+  ok(allowedOnWorkerSeat(name), `the worker keeps ${name} — this set is ALLOW-by-default, an exclusion of BROKEN verbs, never a narrowing of the worker's kit`);
+}
+ok(
+  WORKER_WITHHELD_TOOLS.size === 1 && WORKER_WITHHELD_TOOLS.has("ask_question"),
+  "the withheld set is EXACTLY one name — it grows only for another structurally-unanswerable verb, never for 'tools a worker shouldn't use' (that is the lean roster's question, or the consequence registry's)",
+);
+ok(
+  WINDOW_UNGATED_TOOLS.has("ask_question"),
+  "ask_question stays a MOUNT-time ungated row: the narrowing is per-wake, and a grain row is not even available — manifest rule 4 needs a windowGatedKit to re-provide a framework tool, and eve exports no ask_question definition to re-provide",
+);
+
 function makeToolset(): Record<string, { description: string; execute: () => unknown }> {
   const names = [
     ...Object.keys(WINDOW_GATED_TOOLS),
@@ -128,6 +145,15 @@ function makeToolset(): Record<string, { description: string; execute: () => unk
   ok(removed.join(",") === [...removed].sort().join(","), "the removed list is sorted");
   ok([...survivors].every((k) => toolset[k] === before[k]), "surviving tool OBJECTS keep their identity — eve keys approvals in a WeakMap on them");
   ok(!survivors.has("browser_navigate") && !survivors.has("notion__search"), "runtime-injected families are removed by default-deny (no static table could enumerate them)");
+}
+
+{
+  const toolset = makeToolset();
+  const before = { ...toolset };
+  const removed = restrictToolsetForWorkerSeat(toolset);
+  ok(removed.join(",") === "ask_question", `the worker subtraction removes EXACTLY ask_question (got "${removed.join(",")}")`);
+  ok(Object.keys(toolset).length === Object.keys(before).length - 1, "…and nothing else — a worker's wide hands are the design, not a thing this subtracts from");
+  ok(Object.keys(toolset).every((k) => toolset[k] === before[k]), "surviving tool OBJECTS keep their identity — eve keys approvals in a WeakMap on them");
 }
 
 const require = createRequire(import.meta.url);
@@ -181,6 +207,40 @@ inSession(() => {
   ok([...JOB_WAKE_TOOLS].filter((k) => k in makeToolset()).every((k) => k in toolset), "every job-kit name present in the assembled set survived — the lean filter subtracted nothing from the job wake");
 });
 
+inSession(() => {
+  setNativeDelegationSeat("allow");
+  setWorkerWake(true);
+  ok(currentWorkerWake(), "a marked wake resolves as a WORKER inside a live session");
+  const toolset = makeToolset();
+  projectToolSet(toolset as unknown as Record<string, unknown>);
+  ok(!("ask_question" in toolset), "projectToolSet withholds ask_question on a worker wake — absence, not refusal: no refusal text for an injected instruction to argue with, and no retry loop");
+  ok("bash" in toolset && "write_file" in toolset && "post_file" in toolset && "web_search" in toolset && "purge_memory" in toolset, "…and the worker keeps everything else — this is NOT a second lean cut");
+});
+
+inSession(() => {
+  setNativeDelegationSeat("allow");
+  ok(!currentWorkerWake(), "the worker slot's default is FALSE");
+  const toolset = makeToolset();
+  projectToolSet(toolset as unknown as Record<string, unknown>);
+  ok("ask_question" in toolset, "an unmarked (non-worker) wake keeps ask_question");
+});
+
+{
+  const hookSrc = readFileSync(new URL("../agent/hooks/lean-seat.ts", import.meta.url), "utf8");
+  ok(/setWorkerWake\(grainOf\([\s\S]{0,80}?\) === "task"\)/.test(hookSrc), "hooks/lean-seat.ts classifies the worker bit off grain `task`");
+  ok(/setWorkerWake\(false\)/.test(hookSrc), "…written CLEAR-FIRST, so no early return can leave a stale verdict");
+}
+
+{
+  const persona = (token: string) => renderSupervisorPersona({ channel: { kind: "unified", continuationToken: token } } as never);
+  const workerText = persona("unified:oe-dom:acme:win:t/C1/1721018940.000100:oe-sup:g3");
+  const seatText = persona("unified:oe-dom:acme:oe-sup:g3");
+  ok(workerText.length > 0 && seatText.length > 0, "fixture sanity: the persona renders for BOTH a task token and a standing one");
+  ok(!workerText.includes("ask_question"), "🔴 a WORKER's escalation valve never names ask_question — it cannot resolve there");
+  ok(workerText.includes("return_result"), "…it names the worker's own report verb instead, so a blocked worker finishes rather than stalling");
+  ok(seatText.includes("ask_question") && !seatText.includes("return_result"), "the interactive seat's valve is unchanged — it still asks the room");
+}
+
 const windowSeatCtx = () => ({
   channel: { kind: "slack", continuationToken: "unified:oe-dom:acme:oe-sup:g3" },
   session: { id: "sess-lean", auth: { current: { attributes: { channel_id: "C1" }, principalId: "U1", principalType: "slack-user" } } },
@@ -227,4 +287,4 @@ ok(leanPreview.member.length === 0 || leanPreview.member.every((t) => allowedOnL
 const dmPreview = approvalPreviewFor("standing", undefined, undefined, undefined, "none");
 ok(dmPreview.member.includes("purge_memory"), "a NON-delegating standing seat's preview still holds `purge_memory` — the preview never contradicts the filter");
 
-console.log(`\n✓ lean-seat (OPE-301): ${n} assertions passed (posture truth table, roster membership, toolset filter, live-context wiring incl. job mutual-exclusion, execute backstop, derived surfaces)\n`);
+console.log(`\n✓ lean-seat (OPE-301 + the OPE-420 worker subtraction): ${n} assertions passed (posture truth table, roster membership, toolset filter, live-context wiring incl. job mutual-exclusion, execute backstop, derived surfaces)\n`);

@@ -2,6 +2,7 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { resolveLeanSeatPosture, withheldFromLeanSeat } from "../access/lean-seat.js";
 import { setLeanSeatWake } from "../access/lean-seat-state.js";
 import { setNativeDelegationSeat } from "../access/native-delegation-state.js";
+import { setWorkerWake } from "../access/worker-seat-state.js";
 import { jobFireStamped } from "../access/job-posture.js";
 import { nativeSubagentEnabled, oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { canDelegateFromSeat } from "../access/delegation-mount.js";
@@ -77,9 +78,15 @@ function classifyNativeDelegationSeat(ctx: HookContext): void {
   }
 }
 
+function classifyWorkerSeat(ctx: HookContext): void {
+  setWorkerWake(grainOf(ctx as unknown as BindableContext) === "task");
+}
+
 async function classifyWake(ctx: HookContext): Promise<void> {
   setNativeDelegationSeat("unclassified");
   classifyNativeDelegationSeat(ctx);
+  setWorkerWake(false);
+  classifyWorkerSeat(ctx);
   setLeanSeatWake(false);
   const attrs = attrsOf(ctx);
   if (fireDelivery(attrs)) return;
@@ -106,10 +113,12 @@ export default defineHook({
     "turn.completed": () => {
       setLeanSeatWake(false);
       setNativeDelegationSeat("unclassified");
+      setWorkerWake(false);
     },
     "turn.failed": () => {
       setLeanSeatWake(false);
       setNativeDelegationSeat("unclassified");
+      setWorkerWake(false);
     },
   },
 });

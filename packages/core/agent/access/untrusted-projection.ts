@@ -4,6 +4,8 @@ import { restrictToolsetForJobWake } from "./job-posture.js";
 import { currentJobWakePosture } from "./job-session-state.js";
 import { restrictToolsetForLeanSeat } from "./lean-seat.js";
 import { currentLeanSeatIsDm, currentLeanSeatPosture } from "./lean-seat-state.js";
+import { restrictToolsetForWorkerSeat } from "./worker-seat.js";
+import { currentWorkerWake } from "./worker-seat-state.js";
 import { nativeSubagentEnabled } from "./delegation-flag.js";
 import { nativeAgentAllowedNow } from "./native-delegation-state.js";
 
@@ -52,6 +54,8 @@ function isStatusOnlyConnectionSearch(output: unknown): boolean {
 export function projectToolSet(toolset: Record<string, unknown>): void {
   if (currentJobWakePosture() === "restricted") restrictToolsetForJobWake(toolset);
   else if (currentLeanSeatPosture() === "lean") restrictToolsetForLeanSeat(toolset, currentLeanSeatIsDm());
+
+  if (currentWorkerWake()) restrictToolsetForWorkerSeat(toolset);
 
   if (nativeSubagentEnabled() && toolset["agent"] !== undefined && !nativeAgentAllowedNow()) {
     delete toolset["agent"];
