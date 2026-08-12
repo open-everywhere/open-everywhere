@@ -77,6 +77,18 @@ const keyFor = (ws: string, page: string): string => `notion/${ws}/${page}`;
   ok(notionPageDomain(WS, PAGE_LOOSE, overlapping).domain?.name === "wide", "…and the claim still covers the pages nobody listed");
   const annex = notionReadScope(keyFor(WS, PAGE_LOOSE), PAGE_A, overlapping);
   ok(!annex.allowed && annex.reason === "cross-domain", "a claiming domain cannot read a page another domain listed");
+
+  const carved: readonly Domain[] = [
+    defineDomain({ name: "wide", containers: [`notion/${WS}`], excludeContainers: [`notion/${WS}/${PAGE_LOOSE}`] }),
+  ];
+  ok(notionPageDomain(WS, PAGE_B, carved).domain?.name === "wide", "the workspace claim still covers the pages nobody carved out");
+  ok(notionPageDomain(WS, PAGE_LOOSE, carved).domain === undefined, "an EXCLUDED page is in no domain, even under a whole-workspace claim");
+  const excluded = notionReadScope(keyFor(WS, PAGE_B), PAGE_LOOSE, carved);
+  ok(!excluded.allowed && excluded.reason === "target-unassigned", "…so reading it is refused, fail-closed, like any unassigned page");
+  const bareCarve: readonly Domain[] = [
+    defineDomain({ name: "wide", containers: [`notion/${WS}`], excludeContainers: [`notion/${WS}/${PAGE_LOOSE.replace(/-/g, "").toUpperCase()}`] }),
+  ];
+  ok(notionPageDomain(WS, PAGE_LOOSE, bareCarve).domain === undefined, "an exclusion written in the bare/upper spelling still carves the page out");
 }
 
 {

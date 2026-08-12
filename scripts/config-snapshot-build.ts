@@ -76,9 +76,10 @@ export function boundScopes(): BoundScope[] {
         if (parts) add(parts.platform, parts.workspace, parts.channel, `domain binding "${b.bundle}" via ${s.domain}`);
       }
       for (const key of domain?.containers ?? []) {
-        const [platform, workspace] = key.split("/");
+        const [platform, workspace, surface] = key.split("/");
         if (platform && workspace) {
-          add(platform, workspace, "C__PROBE__", `domain binding "${b.bundle}" via ${s.domain} (containers claim "${key}", probe channel)`);
+          const probe = surface?.endsWith("*") ? `${surface.slice(0, -1)}C__PROBE__` : "C__PROBE__";
+          add(platform, workspace, probe, `domain binding "${b.bundle}" via ${s.domain} (containers claim "${key}", probe channel)`);
         }
       }
     }

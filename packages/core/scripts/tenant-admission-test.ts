@@ -38,6 +38,10 @@ const ok = (cond: boolean, label: string) => {
 
   const malformed: Domain[] = [defineDomain({ name: "x", channels: ["slack/"], memory: "brain" })];
   ok(admittedTenants("slack", malformed).size === 0, "a key that names no tenant contributes none — inventing one from a broken string would hide the real bug");
+
+  const globOnly: Domain[] = [defineDomain({ name: "pay", containers: ["github/acme/pay-*", "slack/T_ONE/C_PAY_*"], memory: "brain" })];
+  ok([...admittedTenants("github", globOnly)].join(",") === "acme", "a glob-only claim admits its tenant (the `*` can only ever be in the LAST segment, so the tenant read is never a pattern)");
+  ok([...admittedTenants("slack", globOnly)].join(",") === "T_ONE", "…on every platform, not just the one the two-segment form was written for");
 }
 
 {

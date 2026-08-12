@@ -19,8 +19,8 @@ export function admittedTenants(platform: string, domains: readonly Domain[]): R
     }
     for (const key of d.containers ?? []) {
       if (!key.startsWith(prefix)) continue;
-      const segs = key.slice(prefix.length).split("/");
-      if (segs.length === 1 && segs[0]) admitted.add(segs[0]);
+      const tenant = key.slice(prefix.length).split("/")[0];
+      if (tenant) admitted.add(tenant);
     }
   }
   return admitted;

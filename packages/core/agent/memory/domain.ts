@@ -47,6 +47,7 @@ export interface Domain {
   readonly title?: string;
   readonly channels?: readonly string[];
   readonly containers?: readonly string[];
+  readonly excludeContainers?: readonly string[];
   readonly match?: DomainMatch;
   readonly memory?: string | readonly string[];
   readonly includeOrg?: "readonly" | "inherit";
@@ -80,28 +81,67 @@ export function defineDomain(domain: Domain): Domain {
   return domain;
 }
 
-export type DomainVia = "roster" | `container:${string}` | "none";
+export type DomainVia = "roster" | `container:${string}` | `excluded:${string}` | "none";
 
 export interface DomainRouting {
   readonly domain: Domain | undefined;
   readonly via: DomainVia;
 }
 
-function tenantKeyOf(channelKey: string): string | undefined {
+type ContainerEntry =
+  | { readonly kind: "tenant"; readonly platform: string; readonly tenant: string }
+  | { readonly kind: "surface"; readonly platform: string; readonly tenant: string; readonly prefix: string; readonly glob: boolean };
+
+function parseContainerEntry(entry: string): ContainerEntry | undefined {
+  const segs = entry.split("/");
+  const [platform, tenant, surface] = segs;
+  if (!platform || !tenant || platform.includes("*") || tenant.includes("*")) return undefined;
+  if (segs.length === 2) return { kind: "tenant", platform, tenant };
+  if (segs.length !== 3 || surface === undefined) return undefined;
+  const star = surface.indexOf("*");
+  if (star === -1) return surface === "" ? undefined : { kind: "surface", platform, tenant, prefix: surface, glob: false };
+  if (star !== surface.length - 1) return undefined;
+  return { kind: "surface", platform, tenant, prefix: surface.slice(0, -1), glob: true };
+}
+
+function entryMatchesKey(e: ContainerEntry, channelKey: string): boolean {
   const segs = channelKey.split("/");
-  if (segs.length < 2 || !segs[0] || !segs[1]) return undefined;
-  return `${segs[0]}/${segs[1]}`;
+  if (segs[0] !== e.platform || segs[1] !== e.tenant) return false;
+  if (e.kind === "tenant") return true;
+  if (segs.length !== 3) return false;
+  const surface = segs[2] ?? "";
+  return e.glob ? surface.startsWith(e.prefix) : surface === e.prefix;
+}
+
+function firstMatching(entries: readonly string[] | undefined, channelKey: string): string | undefined {
+  for (const entry of entries ?? []) {
+    const parsed = parseContainerEntry(entry);
+    if (parsed && entryMatchesKey(parsed, channelKey)) return entry;
+  }
+  return undefined;
+}
+
+export function domainClaimVerdict(
+  domain: Domain,
+  channelKey: string,
+): { readonly kind: "admits" | "excluded"; readonly entry: string } | undefined {
+  const admits = firstMatching(domain.containers, channelKey);
+  if (admits === undefined) return undefined;
+  const excluded = firstMatching(domain.excludeContainers, channelKey);
+  return excluded === undefined ? { kind: "admits", entry: admits } : { kind: "excluded", entry: excluded };
 }
 
 export function resolveDomainForChannel(channelKey: string, domains: readonly Domain[]): DomainRouting {
   const roster = domains.find((d) => d.channels?.includes(channelKey));
   if (roster) return { domain: roster, via: "roster" };
-  const tenantKey = tenantKeyOf(channelKey);
-  if (tenantKey) {
-    const claim = domains.find((d) => d.containers?.includes(tenantKey));
-    if (claim) return { domain: claim, via: `container:${tenantKey}` };
+  let vetoed: DomainVia | undefined;
+  for (const d of domains) {
+    const verdict = domainClaimVerdict(d, channelKey);
+    if (!verdict) continue;
+    if (verdict.kind === "admits") return { domain: d, via: `container:${verdict.entry}` };
+    vetoed ??= `excluded:${d.name}:${verdict.entry}`;
   }
-  return { domain: undefined, via: "none" };
+  return { domain: undefined, via: vetoed ?? "none" };
 }
 
 export function domainForChannel(channelKey: string, domains: readonly Domain[]): Domain | undefined {
@@ -259,7 +299,10 @@ export function assertGovernanceDomains(domains: readonly Domain[], vouched: rea
       bad.push(`  "${d.name}" is governance but has an empty admins roster — a governance venue with no admins unlocks nothing (add the org's admin principal ids to its admins list)`);
     }
     if (d.containers !== undefined) {
-      bad.push(`  "${d.name}" is governance but claims tenant container(s) [${d.containers.join(", ")}] — a governance venue is a SMALL, enumerated, individually-vouched audience, and neither the ${GOVERNANCE_CHANNEL_MAX}-channel cap nor the per-channel vouch can be decided over an unbounded claim (list the concrete channels, or drop governance from this domain)`);
+      bad.push(`  "${d.name}" is governance but claims container(s) [${d.containers.join(", ")}] — a governance venue is a SMALL, enumerated, individually-vouched audience, and neither the ${GOVERNANCE_CHANNEL_MAX}-channel cap nor the per-channel vouch can be decided over an unbounded claim, whether it is a whole tenant or a \`prefix*\` glob (list the concrete channels, or drop governance from this domain)`);
+    }
+    if (d.excludeContainers !== undefined) {
+      bad.push(`  "${d.name}" is governance but sets excludeContainers [${d.excludeContainers.join(", ")}] — an exclusion carves surfaces out of a CLAIM, and a governance venue may not claim at all; its audience is the enumerated \`channels\` roster and nothing else (drop excludeContainers)`);
     }
     if (channels.length > GOVERNANCE_CHANNEL_MAX) {
       bad.push(`  "${d.name}" is governance with ${channels.length} channels — that exceeds the ${GOVERNANCE_CHANNEL_MAX}-channel governance cap (a governance domain is a SMALL uniformly-privileged venue; split it or re-tag)`);
@@ -460,6 +503,31 @@ export function reasoningCeilingForDomain(
   return ceiling;
 }
 
+function entriesIntersect(a: ContainerEntry, b: ContainerEntry): boolean {
+  if (a.platform !== b.platform || a.tenant !== b.tenant) return false;
+  if (a.kind === "tenant" || b.kind === "tenant") return true;
+  if (a.glob && b.glob) return a.prefix.startsWith(b.prefix) || b.prefix.startsWith(a.prefix);
+  if (a.glob) return b.prefix.startsWith(a.prefix);
+  if (b.glob) return a.prefix.startsWith(b.prefix);
+  return a.prefix === b.prefix;
+}
+
+function entryContains(outer: ContainerEntry, inner: ContainerEntry): boolean {
+  if (outer.platform !== inner.platform || outer.tenant !== inner.tenant) return false;
+  if (outer.kind === "tenant") return true;
+  if (inner.kind === "tenant") return false;
+  if (!outer.glob) return !inner.glob && inner.prefix === outer.prefix;
+  return inner.prefix.startsWith(outer.prefix);
+}
+
+function exclusionCovering(domain: Domain, set: ContainerEntry): string | undefined {
+  for (const entry of domain.excludeContainers ?? []) {
+    const parsed = parseContainerEntry(entry);
+    if (parsed && entryContains(parsed, set)) return entry;
+  }
+  return undefined;
+}
+
 export function assertChannelExclusivity(domains: readonly Domain[]): void {
   const owner = new Map<string, string>();
   const clashes: string[] = [];
@@ -473,21 +541,41 @@ export function assertChannelExclusivity(domains: readonly Domain[]): void {
       }
     }
   }
-  const claimant = new Map<string, string>();
-  for (const d of domains) {
-    for (const key of d.containers ?? []) {
-      const roster = owner.get(key);
+  const claims = domains.map((d) => ({
+    domain: d,
+    entries: (d.containers ?? []).flatMap((entry) => {
+      const parsed = parseContainerEntry(entry);
+      return parsed ? [{ entry, parsed }] : [];
+    }),
+  }));
+  for (const { domain: d, entries } of claims) {
+    for (const { entry } of entries) {
+      const roster = owner.get(entry);
       if (roster !== undefined) {
         clashes.push(
-          `  "${key}" is claimed as a container by "${d.name}" but is also a channels entry of "${roster}" — a roster entry and a tenant claim are different things; say which you meant`,
+          `  "${entry}" is claimed as a container by "${d.name}" but is also a channels entry of "${roster}" — a roster entry and a tenant claim are different things; say which you meant`,
         );
-        continue;
       }
-      const prev = claimant.get(key);
-      if (prev !== undefined && prev !== d.name) {
-        clashes.push(`  the tenant "${key}" is claimed in containers by both "${prev}" and "${d.name}"`);
-      } else {
-        claimant.set(key, d.name);
+    }
+  }
+  for (let i = 0; i < claims.length; i++) {
+    for (let j = i + 1; j < claims.length; j++) {
+      const a = claims[i]!;
+      const b = claims[j]!;
+      if (a.domain.name === b.domain.name) continue;
+      for (const ae of a.entries) {
+        for (const be of b.entries) {
+          if (!entriesIntersect(ae.parsed, be.parsed)) continue;
+          const overlap = entryContains(ae.parsed, be.parsed) ? be.parsed : ae.parsed;
+          if (exclusionCovering(a.domain, overlap) !== undefined) continue;
+          if (exclusionCovering(b.domain, overlap) !== undefined) continue;
+          const overlapText = entryContains(ae.parsed, be.parsed) ? be.entry : ae.entry;
+          clashes.push(
+            ae.entry === be.entry && ae.parsed.kind === "tenant"
+              ? `  the tenant "${ae.entry}" is claimed in containers by both "${a.domain.name}" and "${b.domain.name}"`
+              : `  the containers entries "${ae.entry}" ("${a.domain.name}") and "${be.entry}" ("${b.domain.name}") can match the SAME surface key, so which domain owns it would depend on declaration order — narrow one of them, or add excludeContainers: ["${overlapText}"] to the domain that should NOT get the overlap`,
+          );
+        }
       }
     }
   }
@@ -515,14 +603,54 @@ export function assertDomainsValid(domains: readonly Domain[]): void {
     if (hasExplicit === hasMatch) {
       bad.push(`  "${d.name}" must have EITHER explicit membership (channels and/or containers) OR match (criteria), not ${hasExplicit ? "both" : "neither"}`);
     }
+    const claimEntries: { readonly entry: string; readonly parsed: ContainerEntry }[] = [];
     for (const key of d.containers ?? []) {
+      const parsed = parseContainerEntry(key);
+      if (parsed) {
+        if (parsed.kind === "surface" && !parsed.glob) {
+          bad.push(
+            `  "${d.name}" claims container "${key}", which names ONE exact surface — that is a roster entry, so list it in \`channels\` instead (containers is the unbounded CLAIM tier: a two-segment tenant key \`platform/<tenant>\`, or a same-level glob \`platform/<tenant>/<prefix>*\`)`,
+          );
+          continue;
+        }
+        claimEntries.push({ entry: key, parsed });
+        continue;
+      }
       const segs = key.split("/");
-      if (segs.length === 2 && segs[0] && segs[1]) continue;
       bad.push(
-        segs.length > 2
-          ? `  "${d.name}" claims container "${key}", but INTERMEDIATE containers are not supported yet — a containers entry must be a two-segment tenant key \`platform/<tenant>\` (e.g. "github/acme", "linear/<orgId>", "notion/<workspaceId>"), never a deeper path. List the concrete surfaces in channels instead.`
-          : `  "${d.name}" claims container "${key}", which is not a two-segment tenant key \`platform/<tenant>\` (e.g. "github/acme", "linear/<orgId>", "notion/<workspaceId>")`,
+        segs.length > 3
+          ? `  "${d.name}" claims container "${key}", but INTERMEDIATE containers are not supported — a containers entry is a two-segment tenant key \`platform/<tenant>\` (e.g. "github/acme", "linear/<orgId>", "notion/<workspaceId>") or a THREE-segment same-level glob \`platform/<tenant>/<prefix>*\` (e.g. "github/acme/payments-*"), never a deeper path. A deeper claim ("every row under this database") needs an ancestor walk the webhook payload cannot prove and an API call per level, so it is refused BY NAME rather than admitted with no reader. List the concrete surfaces in channels instead.`
+          : `  "${d.name}" claims container "${key}", which is neither a two-segment tenant key \`platform/<tenant>\` (e.g. "github/acme", "linear/<orgId>", "notion/<workspaceId>") nor a same-level glob \`platform/<tenant>/<prefix>*\` (e.g. "github/acme/payments-*"). The glob is deliberately ONE trailing \`*\` on the LAST segment — never \`**\`, never mid-string, never in the platform or tenant segment, never a regex — because overlap between two entries has to be decidable at config load (assertChannelExclusivity), and an undecidable overlap is an at-most-one-domain hole.`,
       );
+    }
+    for (const key of d.excludeContainers ?? []) {
+      const parsed = parseContainerEntry(key);
+      if (!parsed || parsed.kind === "tenant") {
+        bad.push(
+          parsed
+            ? `  "${d.name}" excludes "${key}", which is a WHOLE TENANT — an exclusion carves surfaces out of a claim, so it is a three-segment surface key ("github/acme/payments-secrets") or a same-level glob ("github/acme/payments-secret-*"). A tenant-wide exclusion either cancels the claim outright or means nothing; drop the containers entry instead.`
+            : `  "${d.name}" excludes "${key}", which is not a surface key \`platform/<tenant>/<surface>\` nor a same-level glob \`platform/<tenant>/<prefix>*\` (one trailing \`*\` on the last segment only — see the containers rule)`,
+        );
+        continue;
+      }
+      const ownRoster = (d.channels ?? []).find((ch) => entryMatchesKey(parsed, ch));
+      if (ownRoster !== undefined) {
+        bad.push(
+          `  "${d.name}" excludes "${key}" but also lists "${ownRoster}" in its own \`channels\` — exclusions carve out of the CLAIM tier only, and the roster wins regardless, so this is a contradiction: delete the channels entry, or the exclusion.`,
+        );
+      }
+      const cancels = claimEntries.find((c) => entryContains(parsed, c.parsed));
+      if (cancels) {
+        bad.push(
+          `  "${d.name}" excludes "${key}", which cancels the WHOLE of its containers entry "${cancels.entry}" — that pair is dead config (the claim can never admit anything). Delete both, or narrow the exclusion.`,
+        );
+        continue;
+      }
+      if (!claimEntries.some((c) => entriesIntersect(parsed, c.parsed))) {
+        bad.push(
+          `  "${d.name}" excludes "${key}", but none of its \`containers\` entries [${(d.containers ?? []).join(", ") || "<none>"}] can match it — a dead exclusion reads like a carve-out and grants everything it was meant to withhold. Fix the key, or drop it.`,
+        );
+      }
     }
     if (d.approvalMode !== undefined) {
       const mode = d.approvalMode.mode;

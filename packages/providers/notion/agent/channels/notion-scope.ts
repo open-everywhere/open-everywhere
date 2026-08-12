@@ -1,6 +1,7 @@
 import {
   appendAudit,
   bindFrom,
+  domainClaimVerdict,
   resolvePartition,
   ChannelScopeError,
   type BindableContext,
@@ -50,9 +51,27 @@ export function notionPageDomain(workspace: string | undefined, pageId: string, 
   );
   if (roster) return { domain: roster, via: "roster" };
   if (!workspace) return { via: "none" };
-  const claim = domains.find((d) => d.containers?.includes(`notion/${workspace}`));
-  if (claim) return { domain: claim, via: "container" };
+  const key = `notion/${workspace}/${wanted}`;
+  for (const d of domains) {
+    if (domainClaimVerdict(canonicalDomainClaims(d), key)?.kind === "admits") return { domain: d, via: "container" };
+  }
   return { via: "none" };
+}
+
+function canonicalDomainClaims(d: Domain): Domain {
+  const fix = (entry: string): string => {
+    const parts = entry.split("/");
+    if (parts.length !== 3 || !parts[2]) return entry;
+    const glob = parts[2].endsWith("*");
+    const body = glob ? parts[2].slice(0, -1) : parts[2];
+    return `${parts[0]}/${parts[1]}/${canonicalNotionId(body)}${glob ? "*" : ""}`;
+  };
+  if (!d.containers && !d.excludeContainers) return d;
+  return {
+    ...d,
+    ...(d.containers ? { containers: d.containers.map(fix) } : {}),
+    ...(d.excludeContainers ? { excludeContainers: d.excludeContainers.map(fix) } : {}),
+  };
 }
 
 export function notionReadScope(callerSurfaceKey: string, pageId: string, domains: readonly Domain[]): NotionScopeVerdict {
