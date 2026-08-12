@@ -52,7 +52,7 @@ export function gatewayModelBackend(defaults?: Record<string, unknown>): ModelBa
 export function gatewayModelResolver(
   primary: GatewayRoutedDefaults,
   utility: GatewayRoutedDefaults,
-): (event: unknown, ctx: unknown) => Promise<GatewayModel | null> {
+): (event: unknown, ctx: unknown) => Promise<GatewayModel> {
   const deps = { ...liveIdentity, backend: gatewayModelBackend(primary.gateway) };
   return (_event, ctx) =>
     resolvePrimaryModel(ctx as BindableContext, { primary: { id: primary.id }, utility: { id: utility.id } }, deps);

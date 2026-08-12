@@ -234,7 +234,7 @@ async function resolveRoutedPrimaryModel<TModel extends RoutableModel>(
   ctx: BindableContext,
   defaults: { readonly primary: { readonly id: string }; readonly utility: { readonly id: string } },
   deps: RoutingDeps<TModel>,
-): Promise<TModel | null> {
+): Promise<TModel> {
   let surfaceKey: string;
   let surfaceMatch: DomainMatch | undefined;
   try {
@@ -245,7 +245,7 @@ async function resolveRoutedPrimaryModel<TModel extends RoutableModel>(
     logOnce("warn", `primary: surface unbindable from ctx (${String(err)}) — default model, routing inactive`);
     stampUtilityRoute(null);
     stampModelCall(defaults.primary.id);
-    return null;
+    return deps.backend.model(defaults.primary.id);
   }
 
   try {
@@ -263,10 +263,10 @@ async function resolveRoutedPrimaryModel<TModel extends RoutableModel>(
   } catch (err) {
     logOnce("warn", `primary: route resolution failed (${String(err)}) — default model`);
     stampModelCall(defaults.primary.id);
-    return null;
+    return deps.backend.model(defaults.primary.id);
   }
   stampModelCall(route.id ?? defaults.primary.id);
-  if (isNoOpRoute(route, defaults.primary.id)) return null;
+  if (isNoOpRoute(route, defaults.primary.id)) return deps.backend.model(defaults.primary.id);
   return makeRoutedModel(() => route, defaults.primary, deps.backend);
 }
 
@@ -274,7 +274,7 @@ export async function resolvePrimaryModel<TModel extends RoutableModel>(
   ctx: BindableContext,
   defaults: { readonly primary: { readonly id: string }; readonly utility: { readonly id: string } },
   deps: RoutingDeps<TModel>,
-): Promise<TModel | null> {
+): Promise<TModel> {
   const boundary = noteTurnStep(ctx);
   if (boundary.tier === "hard") {
     reportStepBoundary(ctx, boundary);
@@ -284,7 +284,7 @@ export async function resolvePrimaryModel<TModel extends RoutableModel>(
   const routed = await resolveRoutedPrimaryModel(ctx, defaults, deps);
   if (boundary.tier !== "soft") return routed;
   reportStepBoundary(ctx, boundary);
-  return withWrapUpNotice(routed ?? deps.backend.model(defaults.primary.id), wrapUpNotice(boundary));
+  return withWrapUpNotice(routed, wrapUpNotice(boundary));
 }
 
 export function createRoutedCompactionModel<TModel extends RoutableModel>(

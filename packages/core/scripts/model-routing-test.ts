@@ -303,19 +303,28 @@ const PRIMARY_UTIL = { primary: { id: DEFAULT_ID }, utility: { id: UTILITY_ID } 
 {
   const calls: FakeCall[] = [];
   const onlyExec = () => [defineDomain({ name: "exec", channels: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } })];
-  const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_OTHER"), PRIMARY_UTIL, fakeDeps(onlyExec, calls));
-  ok(m === null, "resolvePrimaryModel: a surface that routes to nothing → null (static fallback)");
+  const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_OTHER"), PRIMARY_UTIL, fakeDeps(onlyExec, calls, true));
+  ok(m.modelId === DEFAULT_ID, "resolvePrimaryModel: a surface that routes to nothing returns the DEFAULT model concretely — never null (OPE-412)");
+  await m.doGenerate(turnCall);
+  ok(calls[0].id === DEFAULT_ID, "resolvePrimaryModel: …and the call really lands on the default — exactly the model eve's static fallback would have run");
+  ok(calls[0].options["marked"] === undefined, "resolvePrimaryModel: …and it is the BARE default, not a routed wrapper (a no-op route still skips wrapper construction)");
 }
 {
+  const calls: FakeCall[] = [];
   const onlyExec = () => [defineDomain({ name: "exec", channels: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } })];
-  const m = await resolvePrimaryModel({} as BindableContext, PRIMARY_UTIL, fakeDeps(onlyExec, []));
-  ok(m === null, "resolvePrimaryModel: an identity-less ctx does not throw (fail-soft → null, no matching domain)");
+  const m = await resolvePrimaryModel({} as BindableContext, PRIMARY_UTIL, fakeDeps(onlyExec, calls, true));
+  ok(m.modelId === DEFAULT_ID, "resolvePrimaryModel: an identity-less ctx does not throw (fail-soft → the default model, no matching domain)");
+  await m.doGenerate(turnCall);
+  ok(calls[0].options["marked"] === undefined, "resolvePrimaryModel: …and the fail-soft return is the bare default, not a wrapper");
 }
 {
+  const calls: FakeCall[] = [];
   const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_UTIL, fakeDeps(() => {
     throw new Error("config exploded");
-  }, []));
-  ok(m === null, "resolvePrimaryModel: a throwing config → null, no throw (fail-soft)");
+  }, calls, true));
+  ok(m.modelId === DEFAULT_ID, "resolvePrimaryModel: a throwing config → the default model, no throw (fail-soft)");
+  await m.doGenerate(turnCall);
+  ok(calls[0].id === DEFAULT_ID, "resolvePrimaryModel: …and that default really is what gets called");
 }
 
 ok(isSupervisorSession(slackSupervisorCtx("T1", "C_TXN", 3)), "isSupervisorSession: a ctx with the oe-sup:g<n> continuation token is a supervisor session");
@@ -448,8 +457,9 @@ const supDomains: Domain[] = [
     await contextStorage.run(new ContextContainer(), async () => {
       const onlyExec = () => [defineDomain({ name: "exec", channels: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } })];
       const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_OTHER"), PRIMARY_UTIL, fakeDeps(onlyExec, []));
-      ok(m === null, "regression: an unrouted surface returns null (eve uses the static fallback)");
+      ok(m.modelId === DEFAULT_ID, "regression: an unrouted surface returns the default model concretely (OPE-412 — eve 0.33 throws on a null return)");
       ok(readModelStamp() === DEFAULT_ID, "regression: the default/no-op path stamps the default id (row still priced)");
+      ok(readModelStamp() === m.modelId, "regression: the stamped id and the RETURNED model agree — the audit row can no longer claim a model the resolver didn't hand back");
     });
     {
       const { normalizeDynamicRuntimeModelResult } = await import(abs("dist/src/runtime/agent/resolve-model.js"));

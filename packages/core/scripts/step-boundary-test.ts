@@ -240,7 +240,11 @@ const smallSettings = (budget: number, multiple = 2): void => {
   const ctx = unroutableTurnCtx("turn-bypass");
 
   const plain = await resolvePrimaryModel(ctx, DEFAULTS, deps);
-  eq(plain, null, "bypass: an unroutable ctx returns null below the budget — plain routing behaviour, unchanged");
+  eq(plain.modelId, DEFAULT_ID, "bypass: an unroutable ctx returns the DEFAULT model below the budget — plain routing behaviour, unchanged (OPE-412: concretely, not null)");
+  await plain.doGenerate({ prompt: [] });
+  eq(calls[0]!.id, DEFAULT_ID, "bypass: …and it is a real callable model at the default id");
+  eq((calls[0]!.options["prompt"] as unknown[]).length, 0, "bypass: …carrying NO wrap-up notice — below the budget the boundary injects nothing");
+  calls.length = 0;
   await resolvePrimaryModel(ctx, DEFAULTS, deps);
 
   const soft = await resolvePrimaryModel(ctx, DEFAULTS, deps);
@@ -267,7 +271,9 @@ const smallSettings = (budget: number, multiple = 2): void => {
   ok(!tripped, "disabled: with `turn.stepBudget` at 0, a thousand round-trips never trip either tier (strict off)");
   const calls: FakeCall[] = [];
   const m = await resolvePrimaryModel(turnCtx("turn-off-2"), DEFAULTS, { domains: () => [], backend: fakeBackend(calls) });
-  eq(m, null, "disabled: …and the resolver's return is byte-identical to plain routing (null → eve's static fallback)");
+  eq(m.modelId, DEFAULT_ID, "disabled: …and the resolver's return is byte-identical to plain routing (the bare DEFAULT model — OPE-412 — with no boundary wrapper)");
+  await m.doGenerate({ prompt: [] });
+  eq((calls[0]!.options["prompt"] as unknown[]).length, 0, "disabled: …and nothing is injected into the call");
   resetSettingsForTest();
 }
 
