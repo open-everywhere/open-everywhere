@@ -2,7 +2,7 @@ import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } f
 import { verifyDiscordSignature } from "eve/channels/discord";
 import { OE_DISCORD_APPROVAL_PREFIX } from "../approvals/discord-card.js";
 import { handleDiscordApprovalInteraction, type DiscordInteractionResponse } from "../approvals/discord-flow.js";
-import { OE_COMMAND_NAME } from "@open-everywhere/core/agent/adapter-api.js";
+import { OE_COMMAND_NAME, type AttachSessionForCancel } from "@open-everywhere/core/agent/adapter-api.js";
 import { handleDiscordOeCommandInteraction } from "../commands/discord-commands.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
@@ -65,7 +65,7 @@ export interface DiscordFrontOptions {
   readonly publicKey?: string;
   readonly now?: () => number;
   readonly handleApprovalInteraction?: (raw: unknown) => Promise<DiscordInteractionResponse | null>;
-  readonly handleOeCommand?: (raw: unknown) => Promise<DiscordInteractionResponse | null>;
+  readonly handleOeCommand?: (raw: unknown, attachSession?: AttachSessionForCancel) => Promise<DiscordInteractionResponse | null>;
 }
 
 function interactionJson(body: DiscordInteractionResponse): Response {
@@ -91,7 +91,7 @@ export function buildDiscordFrontHandler(innerHandler: RouteHandler, opts: Disco
     }
 
     if (decision.kind === "oe-command") {
-      const response = await handleOeCommand(decision.interaction);
+      const response = await handleOeCommand(decision.interaction, args.attachSession);
       if (response) return interactionJson(response);
     }
 

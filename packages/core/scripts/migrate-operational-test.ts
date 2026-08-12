@@ -37,6 +37,23 @@ const sortedEq = (a: string[], b: string[]) => JSON.stringify([...a].sort()) ===
   await initOperationalSchema(pg);
   const pgTables = await pgTableNames(pg);
   ok(sortedEq(pgTables, [...OPERATIONAL_TABLES]), "honesty: a freshly-init'd Postgres has exactly OPERATIONAL_TABLES");
+
+  const NON_ORG_TABLES = new Set(["instance_meta"]);
+  const { rows: rlsRows } = await pg.query(
+    `SELECT c.relname AS table_name, c.relrowsecurity AS rls, count(p.polname) AS policies
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       LEFT JOIN pg_policy p ON p.polrelid = c.oid
+      WHERE n.nspname = 'public' AND c.relkind = 'r'
+      GROUP BY c.relname, c.relrowsecurity`,
+  );
+  const byTable = new Map((rlsRows as { table_name: string; rls: boolean; policies: number | string }[]).map((r) => [r.table_name, r]));
+  for (const table of OPERATIONAL_TABLES) {
+    if (NON_ORG_TABLES.has(table)) continue;
+    const row = byTable.get(table);
+    ok(row?.rls === true, `isolation: ${table} has ROW LEVEL SECURITY enabled`);
+    ok(Number(row?.policies ?? 0) > 0, `isolation: ${table} carries at least one RLS policy (an armed table with NO policy denies everything; an unarmed one isolates nothing)`);
+  }
 }
 
 const { sqliteOperationalStore, _resetOperationalDbForTest } = await import("../agent/operational/sqlite.js");

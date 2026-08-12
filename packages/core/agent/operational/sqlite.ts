@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type UsageEventEntry } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { auditRowSha } from "../audit/chain.js";
@@ -176,6 +176,17 @@ function getDb(): DatabaseSync {
       task_token  TEXT NOT NULL,              -- the owning task window token (embeds its generation)
       created_at  TEXT NOT NULL,              -- ISO-8601 (lexicographic = chronological; TTL prune key)
       PRIMARY KEY (org_id, channel_key, thread_key)
+    );
+    CREATE TABLE IF NOT EXISTS turn_anchor (
+      org_id      TEXT NOT NULL,
+      window_key  TEXT NOT NULL,              -- the continuation token / window this turn belongs to
+      anchor_key  TEXT,                       -- "<platform>:<channelId>:<messageId>" where the surface knows it
+      channel_key TEXT,                       -- "<platform>:<channelId>" — the slash-command arm (NOT unique)
+      session_id  TEXT NOT NULL,              -- → attachSession(session_id)
+      turn_id     TEXT NOT NULL,              -- → cancel({turnId})
+      surface_key TEXT NOT NULL,
+      created_at  TEXT NOT NULL,              -- ISO-8601 (lexicographic = chronological; TTL prune key)
+      PRIMARY KEY (org_id, window_key)
     );
     CREATE TABLE IF NOT EXISTS task_result (
       org_id       TEXT NOT NULL,
@@ -603,6 +614,32 @@ function pendingActionFromRow(org: string, r: PendingActionSqlRow): PendingActio
 
 function placeholders(n: number): string {
   return new Array(n).fill("?").join(", ");
+}
+
+const TURN_ANCHOR_SELECT = "SELECT window_key, anchor_key, channel_key, session_id, turn_id, surface_key, created_at FROM turn_anchor";
+
+type TurnAnchorSqlRow = {
+  window_key: string;
+  anchor_key: string | null;
+  channel_key: string | null;
+  session_id: string;
+  turn_id: string;
+  surface_key: string;
+  created_at: string;
+};
+
+function readTurnAnchorRow(raw: unknown): TurnAnchorRow | null {
+  const r = raw as TurnAnchorSqlRow | undefined;
+  if (!r) return null;
+  return {
+    windowKey: r.window_key,
+    ...(r.anchor_key !== null ? { anchorKey: r.anchor_key } : {}),
+    ...(r.channel_key !== null ? { channelKey: r.channel_key } : {}),
+    sessionId: r.session_id,
+    turnId: r.turn_id,
+    surfaceKey: r.surface_key,
+    createdAt: r.created_at,
+  };
 }
 
 type LinkSetSqliteRow = { id: string; handle: string; status: string; created_at: string; updated_at: string };
@@ -1510,6 +1547,40 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async clearThreadOwner(org, channelKey, threadKey) {
     return getDb().prepare("DELETE FROM thread_ownership WHERE org_id = ? AND channel_key = ? AND thread_key = ?").run(org, channelKey, threadKey).changes > 0;
+  },
+
+  async putTurnAnchor(org, anchor, at, ttlMs) {
+    const handle = getDb();
+    const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
+    handle.prepare("DELETE FROM turn_anchor WHERE created_at < ? AND org_id = ?").run(cutoff, org);
+    handle
+      .prepare(
+        `INSERT INTO turn_anchor (org_id, window_key, anchor_key, channel_key, session_id, turn_id, surface_key, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (org_id, window_key) DO UPDATE SET
+           anchor_key = excluded.anchor_key, channel_key = excluded.channel_key,
+           session_id = excluded.session_id, turn_id = excluded.turn_id,
+           surface_key = excluded.surface_key, created_at = excluded.created_at`,
+      )
+      .run(org, anchor.windowKey, anchor.anchorKey ?? null, anchor.channelKey ?? null, anchor.sessionId, anchor.turnId, anchor.surfaceKey, at);
+  },
+
+  async getTurnAnchorByWindow(org, windowKey) {
+    return readTurnAnchorRow(getDb().prepare(`${TURN_ANCHOR_SELECT} WHERE org_id = ? AND window_key = ?`).get(org, windowKey));
+  },
+
+  async getTurnAnchorByAnchor(org, anchorKey) {
+    return readTurnAnchorRow(getDb().prepare(`${TURN_ANCHOR_SELECT} WHERE org_id = ? AND anchor_key = ?`).get(org, anchorKey));
+  },
+
+  async getLatestTurnAnchorForChannel(org, channelKey) {
+    return readTurnAnchorRow(
+      getDb().prepare(`${TURN_ANCHOR_SELECT} WHERE org_id = ? AND channel_key = ? ORDER BY created_at DESC, window_key DESC LIMIT 1`).get(org, channelKey),
+    );
+  },
+
+  async clearTurnAnchor(org, windowKey) {
+    return getDb().prepare("DELETE FROM turn_anchor WHERE org_id = ? AND window_key = ?").run(org, windowKey).changes > 0;
   },
 
   async putTaskResult(org, taskId, resultJson, at, ttlMs, callerToken) {

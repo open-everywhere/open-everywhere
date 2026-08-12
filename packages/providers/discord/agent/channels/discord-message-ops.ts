@@ -26,6 +26,20 @@ export const discordMessageOps: SurfaceMessageOps = {
     const guild = ref.dm ? "@me" : ref.workspace;
     return guild ? `https://discord.com/channels/${guild}/${ref.channelId}/${ref.messageId}` : undefined;
   },
+  async setReaction(channelId, messageId, emoji, on) {
+    const encoded = encodeURIComponent(emoji);
+    try {
+      const res = await fetch(`${API}/channels/${channelId}/messages/${messageId}/reactions/${encoded}/@me`, {
+        method: on ? "PUT" : "DELETE",
+        headers: { authorization: `Bot ${botToken()}` },
+      });
+      if (!res.ok && !(!on && res.status === 404)) {
+        console.warn(`[open-everywhere:discord] reaction ${on ? "add" : "remove"} failed (${res.status}) for message ${messageId}`);
+      }
+    } catch (err) {
+      console.warn(`[open-everywhere:discord] reaction ${on ? "add" : "remove"} error: ${(err as Error)?.message ?? String(err)}`);
+    }
+  },
   async postFiles(channelId, files: readonly OutboundFile[], comment) {
     const form = new FormData();
     const attachments = files.map((file, i) => ({ id: i, filename: file.filename, ...(file.caption ? { description: file.caption } : {}) }));

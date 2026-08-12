@@ -15,6 +15,7 @@ export const OPERATIONAL_TABLES = [
   "event_dedupe",
   "unified_wake_target",
   "thread_ownership",
+  "turn_anchor",
   "task_result",
   "slack_attachment",
   "stored_credential",
@@ -399,6 +400,19 @@ export interface EngagementRow {
   readonly stopped: boolean;
 }
 
+export interface TurnAnchorWrite {
+  readonly windowKey: string;
+  readonly anchorKey?: string;
+  readonly channelKey?: string;
+  readonly sessionId: string;
+  readonly turnId: string;
+  readonly surfaceKey: string;
+}
+
+export interface TurnAnchorRow extends TurnAnchorWrite {
+  readonly createdAt: string;
+}
+
 export interface ChannelSessionRow {
   readonly org: string;
   readonly surfaceKey: string;
@@ -606,6 +620,12 @@ export interface OperationalStore {
   putThreadOwner(org: string, channelKey: string, threadKey: string, taskToken: string, at: string, ttlMs: number): Promise<void>;
   getThreadOwner(org: string, channelKey: string, threadKey: string): Promise<string | null>;
   clearThreadOwner(org: string, channelKey: string, threadKey: string): Promise<boolean>;
+
+  putTurnAnchor(org: string, anchor: TurnAnchorWrite, at: string, ttlMs: number): Promise<void>;
+  getTurnAnchorByWindow(org: string, windowKey: string): Promise<TurnAnchorRow | null>;
+  getTurnAnchorByAnchor(org: string, anchorKey: string): Promise<TurnAnchorRow | null>;
+  getLatestTurnAnchorForChannel(org: string, channelKey: string): Promise<TurnAnchorRow | null>;
+  clearTurnAnchor(org: string, windowKey: string): Promise<boolean>;
 
   putTaskResult(org: string, taskId: string, resultJson: string, at: string, ttlMs: number, callerToken?: string): Promise<void>;
   putTaskResultIfAbsent(org: string, taskId: string, resultJson: string, at: string, ttlMs: number, callerToken?: string): Promise<boolean>;

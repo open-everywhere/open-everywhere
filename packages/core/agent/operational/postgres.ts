@@ -1,6 +1,6 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { auditRowSha } from "../audit/chain.js";
@@ -149,6 +149,17 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      task_token  text NOT NULL,
      created_at  text NOT NULL,
      PRIMARY KEY (org_id, channel_key, thread_key)
+   )`,
+  `CREATE TABLE IF NOT EXISTS turn_anchor (
+     org_id      text NOT NULL,
+     window_key  text NOT NULL,
+     anchor_key  text,
+     channel_key text,
+     session_id  text NOT NULL,
+     turn_id     text NOT NULL,
+     surface_key text NOT NULL,
+     created_at  text NOT NULL,
+     PRIMARY KEY (org_id, window_key)
    )`,
   `CREATE TABLE IF NOT EXISTS task_result (
      org_id       text NOT NULL,
@@ -396,6 +407,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE webhook_capture ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE unified_wake_target ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE thread_ownership ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE turn_anchor ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE task_result ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE slack_attachment ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE stored_credential ENABLE ROW LEVEL SECURITY`,
@@ -428,6 +440,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS webhook_capture_org_isolation ON webhook_capture`,
   `DROP POLICY IF EXISTS unified_wake_target_org_isolation ON unified_wake_target`,
   `DROP POLICY IF EXISTS thread_ownership_org_isolation ON thread_ownership`,
+  `DROP POLICY IF EXISTS turn_anchor_org_isolation ON turn_anchor`,
   `DROP POLICY IF EXISTS task_result_org_isolation ON task_result`,
   `DROP POLICY IF EXISTS slack_attachment_org_isolation ON slack_attachment`,
   `DROP POLICY IF EXISTS stored_credential_org_isolation ON stored_credential`,
@@ -477,6 +490,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY thread_ownership_org_isolation ON thread_ownership
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY turn_anchor_org_isolation ON turn_anchor
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY task_result_org_isolation ON task_result
@@ -834,6 +850,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   domain_model: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   instance_meta: ["SELECT", "INSERT", "UPDATE"],
   thread_ownership: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  turn_anchor: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   task_result: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   slack_attachment: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   stored_credential: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -927,6 +944,32 @@ function pendingActionFromPgRow(org: string, r: PendingActionPgRow): PendingActi
     expiresAt: r.expires_at,
     decidedBy: r.decided_by,
     decidedAt: r.decided_at,
+  };
+}
+
+const TURN_ANCHOR_SELECT = "SELECT window_key, anchor_key, channel_key, session_id, turn_id, surface_key, created_at FROM turn_anchor";
+
+type TurnAnchorPgRow = {
+  window_key: string;
+  anchor_key: string | null;
+  channel_key: string | null;
+  session_id: string;
+  turn_id: string;
+  surface_key: string;
+  created_at: string;
+};
+
+function turnAnchorFromPgRow(raw: unknown): TurnAnchorRow | null {
+  const r = raw as TurnAnchorPgRow | undefined;
+  if (!r) return null;
+  return {
+    windowKey: r.window_key,
+    ...(r.anchor_key !== null ? { anchorKey: r.anchor_key } : {}),
+    ...(r.channel_key !== null ? { channelKey: r.channel_key } : {}),
+    sessionId: r.session_id,
+    turnId: r.turn_id,
+    surfaceKey: r.surface_key,
+    createdAt: r.created_at,
   };
 }
 
@@ -1883,6 +1926,43 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         "DELETE FROM thread_ownership WHERE org_id = $1 AND channel_key = $2 AND thread_key = $3 RETURNING task_token",
         [org, channelKey, threadKey],
       );
+      return rows.length > 0;
+    },
+
+    async putTurnAnchor(org, anchor, at, ttlMs) {
+      const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
+      await client.query("DELETE FROM turn_anchor WHERE created_at < $1 AND org_id = $2", [cutoff, org]);
+      await client.query(
+        `INSERT INTO turn_anchor (org_id, window_key, anchor_key, channel_key, session_id, turn_id, surface_key, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (org_id, window_key) DO UPDATE SET
+           anchor_key = EXCLUDED.anchor_key, channel_key = EXCLUDED.channel_key,
+           session_id = EXCLUDED.session_id, turn_id = EXCLUDED.turn_id,
+           surface_key = EXCLUDED.surface_key, created_at = EXCLUDED.created_at`,
+        [org, anchor.windowKey, anchor.anchorKey ?? null, anchor.channelKey ?? null, anchor.sessionId, anchor.turnId, anchor.surfaceKey, at],
+      );
+    },
+
+    async getTurnAnchorByWindow(org, windowKey) {
+      const { rows } = await client.query(`${TURN_ANCHOR_SELECT} WHERE org_id = $1 AND window_key = $2`, [org, windowKey]);
+      return turnAnchorFromPgRow(rows[0]);
+    },
+
+    async getTurnAnchorByAnchor(org, anchorKey) {
+      const { rows } = await client.query(`${TURN_ANCHOR_SELECT} WHERE org_id = $1 AND anchor_key = $2`, [org, anchorKey]);
+      return turnAnchorFromPgRow(rows[0]);
+    },
+
+    async getLatestTurnAnchorForChannel(org, channelKey) {
+      const { rows } = await client.query(
+        `${TURN_ANCHOR_SELECT} WHERE org_id = $1 AND channel_key = $2 ORDER BY created_at DESC, window_key DESC LIMIT 1`,
+        [org, channelKey],
+      );
+      return turnAnchorFromPgRow(rows[0]);
+    },
+
+    async clearTurnAnchor(org, windowKey) {
+      const { rows } = await client.query("DELETE FROM turn_anchor WHERE org_id = $1 AND window_key = $2 RETURNING window_key", [org, windowKey]);
       return rows.length > 0;
     },
 

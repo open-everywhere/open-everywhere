@@ -17,6 +17,11 @@ import {
   singleWindowMentionPolicy,
   divertToUnifiedWindow,
   verifyWebhookSignature,
+  cancelAnchoredTurn,
+  turnAnchorKey,
+  STOP_HAND_UNICODE,
+  STOP_HAND_SLACK_NAME,
+  type AttachSessionForCancel,
   domainKeyOf,
   resolvePartition,
   nameDropWakeEnabled,
@@ -175,9 +180,39 @@ export function parseRelayReaction(raw: unknown): DiscordRelayReaction | null {
 
 export interface DiscordReactionRouteDeps {
   readonly sink: ReactionSinkDeps;
+  readonly attachSession?: AttachSessionForCancel;
+}
+
+function isStopHand(emoji: string): boolean {
+  const bare = emoji.trim();
+  return bare === STOP_HAND_UNICODE || bare === STOP_HAND_SLACK_NAME;
+}
+
+async function routeStopHandReaction(rx: DiscordRelayReaction, attachSession: AttachSessionForCancel): Promise<ReactionIngestOutcome> {
+  if (!rx.botId) {
+    return { recorded: false, onBotReply: false, reason: "stop: bot identity unresolved — refusing to cancel (fail-closed)" };
+  }
+  if (rx.reactorId === rx.botId) {
+    return { recorded: false, onBotReply: false, reason: "stop: the reactor is the bot itself — never a self-cancel" };
+  }
+  const auth = buildDiscordAuth({ userId: rx.reactorId, guildId: rx.guildId, channelId: rx.channelId, channelType: rx.channelType });
+  const p = resolvePartition(ctxFromAuth(auth));
+  const result = await cancelAnchoredTurn({
+    org: p.org,
+    platform: "discord",
+    workspace: p.workspace,
+    requestedBy: rx.reactorId,
+    via: "reaction",
+    query: { anchorKey: turnAnchorKey("discord", rx.channelId, rx.messageId)! },
+    attachSession,
+  });
+  return { recorded: false, onBotReply: false, reason: `stop: ${result.outcome}` };
 }
 
 export async function routeDiscordReaction(rx: DiscordRelayReaction, deps: DiscordReactionRouteDeps): Promise<ReactionIngestOutcome> {
+  if (rx.verb === "added" && isStopHand(rx.emoji) && deps.attachSession) {
+    return routeStopHandReaction(rx, deps.attachSession);
+  }
   if (rx.botId && rx.reactorId === rx.botId) {
     return { recorded: false, onBotReply: false, reason: "reactor is the bot itself — ignored (not feedback)" };
   }
@@ -196,8 +231,8 @@ export async function routeDiscordReaction(rx: DiscordRelayReaction, deps: Disco
   return ingestReaction(reaction, deps.sink);
 }
 
-export function liveDiscordReactionDeps(): DiscordReactionRouteDeps {
-  return { sink: liveReactionSink() };
+export function liveDiscordReactionDeps(attachSession?: AttachSessionForCancel): DiscordReactionRouteDeps {
+  return { sink: liveReactionSink(), ...(attachSession ? { attachSession } : {}) };
 }
 
 export interface RelayRejection {
@@ -1136,7 +1171,7 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
     state,
   }),
   routes: [
-    POST<DiscordGatewayState>("/eve/v1/discord-gateway", async (req, { from, waitUntil, to }) => {
+    POST<DiscordGatewayState>("/eve/v1/discord-gateway", async (req, { from, waitUntil, to, attachSession }) => {
       const gatewaySend: DiscordGatewaySend = (message, options) => {
         const payload = typeof message === "string" ? { message, context: undefined } : message;
         return from(options.continuationToken).send(payload.message, {
@@ -1162,7 +1197,7 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
       const reaction = parseRelayReaction(json);
       if (reaction) {
         waitUntil(
-          routeDiscordReaction(reaction, liveDiscordReactionDeps()).then((o) =>
+          routeDiscordReaction(reaction, liveDiscordReactionDeps(attachSession)).then((o) =>
             log(`reaction ${reaction.channelId}/${reaction.messageId}: ${o.recorded ? "recorded" : "not recorded"} — ${o.reason}`),
           ),
         );

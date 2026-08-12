@@ -2,6 +2,7 @@ import {
   bindFrom,
   OE_COMMAND_NAME,
   runOeCommand,
+  type AttachSessionForCancel,
   type BindableContext,
   type OeCommand,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -59,6 +60,7 @@ export function parseDiscordOeCommandOptions(rawOptions: unknown): OeCommand {
   const first = top[0];
   const name = str(first.name);
   if (name === "status") return { kind: "status" };
+  if (name === "stop") return { kind: "stop" };
   if (name === "help") return { kind: "help" };
   if (name === "budget") {
     const sub = optArray(first.options)[0];
@@ -110,7 +112,10 @@ export function parseOeCommandInteraction(raw: unknown): ParsedOeInvocation | { 
   return { auth, command };
 }
 
-export async function handleDiscordOeCommandInteraction(raw: unknown): Promise<DiscordInteractionResponse | null> {
+export async function handleDiscordOeCommandInteraction(
+  raw: unknown,
+  attachSession?: AttachSessionForCancel,
+): Promise<DiscordInteractionResponse | null> {
   const parsed = parseOeCommandInteraction(raw);
   if (parsed === null) return null;
   if ("error" in parsed) return ephemeral(parsed.error);
@@ -118,7 +123,7 @@ export async function handleDiscordOeCommandInteraction(raw: unknown): Promise<D
   try {
     const ctx: BindableContext = { channel: { kind: "discord" }, session: { auth: { current: parsed.auth } } };
     const binding = bindFrom(ctx);
-    const text = await runOeCommand(parsed.command, binding);
+    const text = await runOeCommand(parsed.command, binding, attachSession ? { attachSession } : {});
     return ephemeral(text);
   } catch (err) {
     console.error(`[open-everywhere:discord-commands] "/oe" command failed softly: ${String(err)}`);
@@ -161,6 +166,7 @@ export function buildOeDiscordCommandDefinition(): Record<string, unknown> {
         ],
       },
       { name: "status", description: "Deploy sanity: app version, model config, memory provider.", type: SUB_COMMAND },
+      { name: "stop", description: "Stand down the turn running in this channel.", type: SUB_COMMAND },
       { name: "help", description: "List the /oe commands.", type: SUB_COMMAND },
     ],
   };

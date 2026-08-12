@@ -7,6 +7,15 @@ export function slackManifest(): string {
       display_information: { name: "Open Everywhere" },
       features: {
         bot_user: { display_name: "Open Everywhere", always_online: true },
+        slash_commands: [
+          {
+            command: "/oe",
+            url: "https://YOUR-DEPLOY-URL/eve/v1/slack/commands",
+            description: "Open Everywhere control commands — status, budget, stop.",
+            usage_hint: "stop | status | budget",
+            should_escape: false,
+          },
+        ],
       },
       oauth_config: {
         scopes: {

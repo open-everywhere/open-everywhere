@@ -271,8 +271,12 @@ export { postOnce, outboundKey } from "./operational/post-once.js";
 
 export { liveMemoryDeltaDep } from "./memory/wake-delta.js";
 
-export { registerSurfaceMessageOps, surfaceMessageOps, postSurfaceText, resolveMessagePermalink } from "./channels/surface-message-ops.js";
+export { registerSurfaceMessageOps, surfaceMessageOps, postSurfaceText, resolveMessagePermalink, setSurfaceReaction } from "./channels/surface-message-ops.js";
 export type { SurfaceMessageOps, OutboundFile, MessageRef } from "./channels/surface-message-ops.js";
+
+export { cancelAnchoredTurn, TURN_CANCEL_ACTION } from "./channels/turn-cancel.js";
+export type { AttachSessionForCancel, CancelResult, CancelOutcome } from "./channels/turn-cancel.js";
+export { turnAnchorKey, turnChannelKey, TURN_ANCHOR_TTL_MS } from "./channels/turn-registry.js";
 
 export {
   registerCardPoster,
@@ -294,7 +298,7 @@ export { registerScopeLabelResolver } from "./approvals/scope-label.js";
 export type { ScopeLabelResolver } from "./approvals/scope-label.js";
 
 export { OE_COMMAND_NAME, runOeCommand } from "./commands/core.js";
-export type { OeCommand } from "./commands/core.js";
+export type { OeCommand, OeCommandDeps } from "./commands/core.js";
 
 export { verifyWebhookSignature, webhookMaxSkewSeconds } from "./webhooks/gate.js";
 
@@ -426,7 +430,7 @@ export type { IngestedReaction } from "./channels/reaction-ingest.js";
 
 export { isAllowedSlackDriver, parseDriverAllowlist } from "./testing/driver-allowlist.js";
 
-export { STATUS_REACTION, renderPinned, isPinnedStatusMessage } from "./status/status.js";
+export { STATUS_REACTION, renderPinned, isPinnedStatusMessage, STOP_HAND_SLACK_NAME, STOP_HAND_UNICODE } from "./status/status.js";
 export type { ReactionState } from "./status/status.js";
 
 export { SURFACE, tierId } from "./memory/store.js";

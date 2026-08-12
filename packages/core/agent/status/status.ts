@@ -7,6 +7,9 @@ export const STATUS_REACTION = {
 export type ReactionState = keyof typeof STATUS_REACTION;
 export const ALL_STATUS_REACTIONS: readonly string[] = Object.values(STATUS_REACTION);
 
+export const STOP_HAND_SLACK_NAME = "raised_hand";
+export const STOP_HAND_UNICODE = "✋";
+
 const ICON: Record<WorkState, string> = {
   working: "⏳",
   done: "✅",

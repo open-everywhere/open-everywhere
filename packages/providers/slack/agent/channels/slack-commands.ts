@@ -40,7 +40,7 @@ function ephemeralResponse(text: string): Response {
 
 export default defineChannel({
   routes: [
-    POST(SLACK_COMMANDS_ROUTE, async (req) => {
+    POST(SLACK_COMMANDS_ROUTE, async (req, { attachSession }) => {
       const rawBody = await req.text();
       if (!verifySlackSignature(rawBody, req.headers, process.env.SLACK_SIGNING_SECRET)) {
         return new Response("unauthorized", { status: 401 });
@@ -56,7 +56,7 @@ export default defineChannel({
       const cmd = parseSlackCommandText(formField(params, "text"));
       const binding = bindFrom(bindableForSlashCommand(params));
       try {
-        const reply = await runOeCommand(cmd, binding);
+        const reply = await runOeCommand(cmd, binding, { attachSession });
         return ephemeralResponse(reply);
       } catch (err) {
         log(`"/oe" command failed softly: ${String(err)}`);

@@ -1,4 +1,6 @@
 import type { SurfaceBinding } from "../identity/binding.js";
+import { cancelAnchoredTurn, type AttachSessionForCancel } from "../channels/turn-cancel.js";
+import { turnChannelKey } from "../channels/turn-registry.js";
 import { type Caps } from "../spend/spend.js";
 import { periodOf } from "../spend/spend.js";
 import { effectiveCaps, domainNameForScope } from "../spend/caps.js";
@@ -49,6 +51,7 @@ export type OeCommand =
   | { readonly kind: "budget-status" }
   | { readonly kind: "budget-raise"; readonly usd: number }
   | { readonly kind: "budget-clear" }
+  | { readonly kind: "stop" }
   | { readonly kind: "error"; readonly message: string };
 
 function parseBudgetTokens(rest: readonly string[]): OeCommand {
@@ -72,6 +75,7 @@ export function parseOeCommandTokens(tokens: readonly string[]): OeCommand {
   const [sub, ...rest] = tokens;
   if (!sub || sub === "help") return { kind: "help" };
   if (sub === "status") return { kind: "status" };
+  if (sub === "stop") return { kind: "stop" };
   if (sub === "budget") return parseBudgetTokens(rest);
   return { kind: "error", message: `Unknown command "${sub}" — try "/oe help" to see what's available.` };
 }
@@ -89,6 +93,7 @@ export function renderHelp(): string {
     "*/oe* — zero-inference control-plane commands (pure logic, code-rendered, no model turn — " +
       "these work even during a spend-cap decline or a model/gateway outage):",
     "• `/oe status` — deploy sanity: app version, model config, memory provider.",
+    "• `/oe stop` — stand down the turn running in this channel (free, instant, works over a spend cap).",
     "• `/oe budget` — this channel's and workspace's effective spend caps + current-month spend.",
     "• `/oe budget raise <usd>` — propose a new monthly USD cap for this channel (posts an approval card; an admin decides).",
     "• `/oe budget clear` — propose clearing this channel's spend-limit override back to config (posts an approval card).",
@@ -277,7 +282,32 @@ export async function runBudgetClear(binding: SurfaceBinding, deps: OeApprovalDe
   );
 }
 
-export async function runOeCommand(cmd: OeCommand, binding: SurfaceBinding): Promise<string> {
+export interface OeCommandDeps {
+  readonly attachSession?: AttachSessionForCancel;
+}
+
+export async function runStop(binding: SurfaceBinding, attachSession: AttachSessionForCancel | undefined): Promise<string> {
+  if (!attachSession) {
+    return "Stop isn't wired on this surface yet — react with the raised-hand emoji on the thread instead.";
+  }
+  const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
+  const channelKey = turnChannelKey(binding.platform, channelId);
+  if (!channelKey) {
+    return "Couldn't resolve this channel — try `/oe stop` from a real channel or DM, not a synthetic context.";
+  }
+  const result = await cancelAnchoredTurn({
+    org: binding.org,
+    platform: binding.platform,
+    workspace: binding.workspace,
+    ...(binding.principalId ? { requestedBy: binding.principalId } : {}),
+    via: "command",
+    query: { channelKey },
+    attachSession,
+  });
+  return result.message;
+}
+
+export async function runOeCommand(cmd: OeCommand, binding: SurfaceBinding, deps: OeCommandDeps = {}): Promise<string> {
   switch (cmd.kind) {
     case "error":
       return cmd.message;
@@ -304,5 +334,7 @@ export async function runOeCommand(cmd: OeCommand, binding: SurfaceBinding): Pro
       return runBudgetRaise(binding, cmd.usd);
     case "budget-clear":
       return runBudgetClear(binding);
+    case "stop":
+      return runStop(binding, deps.attachSession);
   }
 }

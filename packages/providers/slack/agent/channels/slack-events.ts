@@ -1,6 +1,10 @@
 import { callSlackApi, slackContinuationToken } from "eve/channels/slack";
 import {
   resolvePartition,
+  cancelAnchoredTurn,
+  turnAnchorKey,
+  STOP_HAND_SLACK_NAME,
+  type AttachSessionForCancel,
   domainKeyOf,
   resolveWakeTrust,
   backscrollTrustResolver,
@@ -1600,9 +1604,38 @@ export function bindableForReaction(ev: ParsedSlackReaction): BindableContext {
 export interface SlackReactionRouteDeps {
   readonly botIdentity: { readonly userId?: string; readonly botId?: string };
   readonly sink: ReactionSinkDeps;
+  readonly attachSession?: AttachSessionForCancel;
+}
+
+async function routeSlackStopReaction(ev: ParsedSlackReaction, deps: SlackReactionRouteDeps, attachSession: AttachSessionForCancel): Promise<ReactionIngestOutcome> {
+  const botUserId = deps.botIdentity.userId;
+  if (!botUserId) {
+    return { recorded: false, onBotReply: false, reason: "stop: bot identity unresolved — refusing to cancel (fail-closed)" };
+  }
+  if (ev.reactorId === botUserId) {
+    return { recorded: false, onBotReply: false, reason: "stop: the reactor is the bot itself — never a self-cancel" };
+  }
+  const p = resolvePartition(bindableForReaction(ev));
+  const result = await cancelAnchoredTurn({
+    org: p.org,
+    platform: "slack",
+    workspace: p.workspace,
+    requestedBy: ev.reactorId,
+    via: "reaction",
+    query: { anchorKey: turnAnchorKey("slack", ev.channelId, ev.messageTs)! },
+    attachSession,
+  });
+  return { recorded: false, onBotReply: false, reason: `stop: ${result.outcome}` };
+}
+
+function isSlackStopHand(emoji: string): boolean {
+  return emoji.split("::")[0] === STOP_HAND_SLACK_NAME;
 }
 
 export async function routeReactionEvent(ev: ParsedSlackReaction, deps: SlackReactionRouteDeps): Promise<ReactionIngestOutcome> {
+  if (ev.verb === "added" && isSlackStopHand(ev.emoji) && deps.attachSession) {
+    return routeSlackStopReaction(ev, deps, deps.attachSession);
+  }
   const botUserId = deps.botIdentity.userId;
   if (botUserId && ev.reactorId === botUserId) {
     return { recorded: false, onBotReply: false, reason: "reactor is the bot itself — ignored (not feedback)" };
@@ -1621,8 +1654,11 @@ export async function routeReactionEvent(ev: ParsedSlackReaction, deps: SlackRea
   return ingestReaction(reaction, deps.sink);
 }
 
-export function liveReactionDeps(botIdentity: { readonly userId?: string; readonly botId?: string }): SlackReactionRouteDeps {
-  return { botIdentity, sink: liveReactionSink() };
+export function liveReactionDeps(
+  botIdentity: { readonly userId?: string; readonly botId?: string },
+  attachSession?: AttachSessionForCancel,
+): SlackReactionRouteDeps {
+  return { botIdentity, sink: liveReactionSink(), ...(attachSession ? { attachSession } : {}) };
 }
 
 export function liveChannelJoinDeps(send: WakeSend): ChannelJoinRouteDeps {

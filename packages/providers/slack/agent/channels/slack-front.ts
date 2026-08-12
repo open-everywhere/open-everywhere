@@ -645,7 +645,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
 
       const identity = await getBotIdentity();
       args.waitUntil(
-        routeReactionEvent(rev, liveReactionDeps(identity)).then((o) =>
+        routeReactionEvent(rev, liveReactionDeps(identity, args.attachSession)).then((o) =>
           console.log(`[open-everywhere:slack-front] reaction ${rev.channelId}/${rev.messageTs}: ${o.recorded ? "recorded" : "not recorded"} — ${o.reason}`),
         ),
       );
