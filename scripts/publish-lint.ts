@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { PUBLISHABLE_PACKAGES, exportsMapFor } from "./publish-exports-generate.js";
 
 const FORBIDDEN_LIFECYCLE = ["preinstall", "install", "postinstall", "prepublish", "prepare"];
@@ -77,7 +77,9 @@ for (const pkgDir of targets) {
     if (!listing.some((f) => f.startsWith("agent/") && f.endsWith(".ts"))) fail("no .ts sources in the tarball");
     for (const f of listing) {
       if (/(^|\/)\.env/.test(f)) fail(`tarball contains an env file: ${f}`);
-      if (f.startsWith("scripts/") && f !== "scripts/oe-cli.ts") fail(`tarball contains an unexpected script: ${f}`);
+      if (f.startsWith("scripts/") && !(manifest.files as string[]).includes(f)) {
+        fail(`tarball contains an unexpected script: ${f}`);
+      }
       if (f.endsWith(".tsbuildinfo")) fail(`tarball contains build bookkeeping: ${f}`);
     }
     for (const [subpath, target] of Object.entries(manifest.exports as Record<string, any>)) {
@@ -85,6 +87,17 @@ for (const pkgDir of targets) {
       for (const t of files) {
         const rel = (t as string).replace(/^\.\//, "");
         if (!listing.includes(rel)) fail(`export "${subpath}" points at ${rel}, which is NOT in the tarball`);
+      }
+    }
+
+    for (const f of listing.filter((l) => l.startsWith("scripts/") && l.endsWith(".ts"))) {
+      const src = readFileSync(join(pkgDir, f), "utf8");
+      const specs = [...src.matchAll(/(?:from|import\()\s*"(\.[^"]+)"/g)].map((m) => m[1]!);
+      for (const spec of specs) {
+        const resolved = join(dirname(f), spec).replace(/\\/g, "/").replace(/\.js$/, ".ts");
+        if (!listing.includes(resolved)) {
+          fail(`shipped script ${f} imports ${spec}, which resolves to ${resolved} — NOT in the tarball`);
+        }
       }
     }
 
