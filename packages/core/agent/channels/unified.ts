@@ -13,6 +13,8 @@ import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorTok
 import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId, isThreadSeatWindowToken, dmAnchorSurfaceForToken, dmSurfaceKeyFromAnchorDomain } from "./window-key.js";
 import { resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "./thread-ownership.js";
 import { oneshotAgentEnabled } from "../access/delegation-flag.js";
+import { INVOKER_POSTURE_ATTR } from "../access/invoker-posture.js";
+import { currentInvokerPosture } from "../access/invoker-posture-state.js";
 import { sourcesForWindow } from "./window-sources.js";
 import { finalMessageActionForTurn } from "./turn-delivery.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
@@ -493,6 +495,7 @@ export async function dispatchTaskWindow(input: {
   }
   const attributes: Record<string, unknown> = { ...(input.parentAuthAttributes ?? {}) };
   attributes[OE_GRAIN_ATTR] = input.grain ?? "task";
+  attributes[INVOKER_POSTURE_ATTR] = currentInvokerPosture();
   if (input.tainted) attributes[OE_SPAWN_TAINTED_ATTR] = "true";
   await deliverUnifiedDispatch({
     message: input.message,

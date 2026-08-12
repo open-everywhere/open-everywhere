@@ -3,6 +3,9 @@ import { resolveLeanSeatPosture, withheldFromLeanSeat } from "../access/lean-sea
 import { setLeanSeatWake } from "../access/lean-seat-state.js";
 import { setNativeDelegationSeat } from "../access/native-delegation-state.js";
 import { setWorkerWake } from "../access/worker-seat-state.js";
+import { INVOKER_POSTURE_ATTR, resolveInvokerPosture } from "../access/invoker-posture.js";
+import { setInvokerPosture } from "../access/invoker-posture-state.js";
+import { WEBHOOK_MARKER_ATTR } from "../routines/fire-auth.js";
 import { jobFireStamped } from "../access/job-posture.js";
 import { nativeSubagentEnabled, oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { canDelegateFromSeat } from "../access/delegation-mount.js";
@@ -10,13 +13,17 @@ import { domainLabelOf } from "../access/window-gated.js";
 import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../access/window-gate-manifest.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
 import { bindFrom, currentWakeId, deploymentOrg, isSubagentChildContext, windowGrainOf, FIRE_UNATTENDED_ATTR, type BindableContext, type WindowGrain } from "../identity/binding.js";
-import { routineMarker } from "../routines/routine.js";
+import { routineManualStamped, routineMarker } from "../routines/routine.js";
 
 type Attrs = Readonly<Record<string, string | readonly string[]>> | undefined;
 
 function attrsOf(ctx: HookContext): Attrs {
-  const c = ctx as unknown as BindableContext;
-  return c.session?.auth?.current?.attributes;
+  try {
+    const c = ctx as unknown as BindableContext;
+    return c.session?.auth?.current?.attributes;
+  } catch {
+    return undefined;
+  }
 }
 
 function unattendedStamped(attributes: Attrs): boolean {
@@ -82,13 +89,33 @@ function classifyWorkerSeat(ctx: HookContext): void {
   setWorkerWake(grainOf(ctx as unknown as BindableContext) === "task");
 }
 
+function classifyInvokerPosture(ctx: HookContext, attrs: Attrs): void {
+  try {
+    const auth = (ctx as unknown as BindableContext).session?.auth?.current as { authenticator?: unknown; principalId?: unknown } | undefined;
+    const principalId = typeof auth?.principalId === "string" ? auth.principalId : "";
+    setInvokerPosture(
+      resolveInvokerPosture({
+        webhookFire: auth?.authenticator === "webhook" || attrs?.[WEBHOOK_MARKER_ATTR] !== undefined,
+        eventSubFire: principalId.endsWith(":webhook"),
+        unattendedFire: fireDelivery(attrs),
+        manualFire: routineManualStamped(attrs),
+        stamped: attrs?.[INVOKER_POSTURE_ATTR],
+      }),
+    );
+  } catch {
+    setInvokerPosture("untrusted-remote");
+  }
+}
+
 async function classifyWake(ctx: HookContext): Promise<void> {
+  setInvokerPosture("untrusted-remote");
   setNativeDelegationSeat("unclassified");
   classifyNativeDelegationSeat(ctx);
   setWorkerWake(false);
   classifyWorkerSeat(ctx);
   setLeanSeatWake(false);
   const attrs = attrsOf(ctx);
+  classifyInvokerPosture(ctx, attrs);
   if (fireDelivery(attrs)) return;
   const c = ctx as unknown as BindableContext;
   const grain = grainOf(c);
@@ -114,11 +141,13 @@ export default defineHook({
       setLeanSeatWake(false);
       setNativeDelegationSeat("unclassified");
       setWorkerWake(false);
+      setInvokerPosture("untrusted-remote");
     },
     "turn.failed": () => {
       setLeanSeatWake(false);
       setNativeDelegationSeat("unclassified");
       setWorkerWake(false);
+      setInvokerPosture("untrusted-remote");
     },
   },
 });

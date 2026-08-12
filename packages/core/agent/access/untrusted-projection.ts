@@ -6,6 +6,8 @@ import { restrictToolsetForLeanSeat } from "./lean-seat.js";
 import { currentLeanSeatIsDm, currentLeanSeatPosture } from "./lean-seat-state.js";
 import { restrictToolsetForWorkerSeat } from "./worker-seat.js";
 import { currentWorkerWake } from "./worker-seat-state.js";
+import { restrictToolsetForInvokerPosture } from "./invoker-posture.js";
+import { currentInvokerPosture } from "./invoker-posture-state.js";
 import { nativeSubagentEnabled } from "./delegation-flag.js";
 import { nativeAgentAllowedNow } from "./native-delegation-state.js";
 
@@ -56,6 +58,7 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
   else if (currentLeanSeatPosture() === "lean") restrictToolsetForLeanSeat(toolset, currentLeanSeatIsDm());
 
   if (currentWorkerWake()) restrictToolsetForWorkerSeat(toolset);
+  restrictToolsetForInvokerPosture(toolset, currentInvokerPosture());
 
   if (nativeSubagentEnabled() && toolset["agent"] !== undefined && !nativeAgentAllowedNow()) {
     delete toolset["agent"];
