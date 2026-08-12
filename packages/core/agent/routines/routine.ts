@@ -106,10 +106,19 @@ export function isSilentRoutine(r: Pick<Routine, "report">): boolean {
   return r.report?.kind === "silent";
 }
 
-export function assertReportConsistent(trigger: RoutineTrigger, report: RoutineReport | undefined): void {
+export function assertReportConsistent(
+  trigger: RoutineTrigger,
+  report: RoutineReport | undefined,
+  sessionMode?: "job",
+): void {
   if (report?.kind === "silent" && trigger.kind === "watch") {
     throw new Error(
       "A routine can't be both `never` (posts nothing) and only-on-change — a silent watch is just a silent cron. Pick one.",
+    );
+  }
+  if (sessionMode === "job" && trigger.kind === "watch") {
+    throw new Error(
+      "A durable job can't use only-on-change — a job's fire always gets the job protocol (its own accumulated thread context), which supersedes the watch protocol entirely, so the diff step that would post only on change never runs and the job posts on EVERY fire instead. Drop `job`, or use `every-run` or `never` instead of `only-on-change`.",
     );
   }
 }

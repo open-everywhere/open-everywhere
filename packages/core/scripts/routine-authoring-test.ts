@@ -120,8 +120,20 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
   ok(renderFireMessage(watch).includes("[watch]"), "preview seam: a watch routine renders the post-on-diff protocol");
   ok(renderFireMessage(job).includes("[job]") && renderFireMessage(job).includes("step 2 of 4 done"), "preview seam: a durable job renders the job protocol AND its ledger");
   ok(renderFireMessage(silent).includes("[silent]"), "preview seam: a silent routine renders the trusted silent block");
-  const jobWatch = routine({ id: "r-prev-jw", sessionMode: "job", trigger: { kind: "watch", everyMinutes: 15 } });
-  ok(renderFireMessage(jobWatch).includes("[job]") && !renderFireMessage(jobWatch).includes("[watch]"), "preview seam: job is checked FIRST — the job protocol supersedes the watch protocol, exactly as the dispatcher's ternary did");
+  await refuses(
+    () =>
+      createRoutineTool.execute(
+        { prompt: "Watch it.", trigger: { kind: "scheduled", everyMinutes: 15, postPolicy: "only-on-change" }, job: true } as never,
+        ctx,
+      ),
+    /durable job can't use only-on-change/,
+    "create_routine refuses job + only-on-change",
+  );
+  await refuses(
+    () => store.addRoutine(partition, routine({ id: "r-prev-jw", sessionMode: "job", trigger: { kind: "watch", everyMinutes: 15 } })),
+    /durable job can't use only-on-change/,
+    "addRoutine refuses a hand-built job + watch row",
+  );
 }
 
 {

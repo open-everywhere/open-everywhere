@@ -85,6 +85,7 @@ export default defineTool({
           requestedBy,
           trigger: routine.trigger,
           ...(routine.report ? { report: routine.report } : {}),
+          ...(routine.sessionMode ? { sessionMode: routine.sessionMode } : {}),
           tainted,
           generation: routineGrantGeneration(routine),
         },

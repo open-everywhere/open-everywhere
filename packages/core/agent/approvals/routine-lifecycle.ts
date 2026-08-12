@@ -35,6 +35,7 @@ export interface RoutineEditArgs {
   readonly requestedBy: string;
   readonly trigger: RoutineTrigger;
   readonly report?: RoutineReport;
+  readonly sessionMode?: "job";
   readonly tainted?: boolean;
   readonly generation: number;
 }
@@ -53,7 +54,7 @@ const routineEdit: ActionKind<RoutineEditArgs> = {
     ];
   },
   async execute(args, decidedBy) {
-    assertReportConsistent(args.trigger, args.report);
+    assertReportConsistent(args.trigger, args.report, args.sessionMode);
 
     const generation = args.generation + 1;
     const patch: Partial<Routine> = { prompt: args.prompt, promptGeneration: generation };

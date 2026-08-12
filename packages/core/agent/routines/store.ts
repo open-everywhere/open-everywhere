@@ -25,7 +25,7 @@ export function getRoutine(org: string, surfaceKey: string, id: string): Promise
 }
 
 export function addRoutine(_p: Partition, routine: Routine): Promise<Routine> {
-  assertReportConsistent(routine.trigger, routine.report);
+  assertReportConsistent(routine.trigger, routine.report, routine.sessionMode);
   return getOperationalStore().addRoutine(routine);
 }
 

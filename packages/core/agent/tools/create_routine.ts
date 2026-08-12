@@ -257,7 +257,7 @@ export default defineTool({
       }
       report = { kind: "surface", surfaceKey: configured, target: reportTarget };
     }
-    assertReportConsistent(t, report);
+    assertReportConsistent(t, report, input.job ? "job" : undefined);
 
     if (input.job) {
       if (binding.platform !== "slack") {
