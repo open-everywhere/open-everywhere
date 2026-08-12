@@ -34,7 +34,10 @@ export function seedFor(p: Partition, tier: Tier): MemoryFiles {
   const linkGuidance =
     "Link related subjects like `[[name]]` — facts about the same person/system/decision " +
     "connect up. This index keeps only the most recent few bullets per section; each " +
-    "category's full history lives in its own topic file (`people.md`, `decisions.md`, …).";
+    "category's full history lives in its own topic file (`people.md`, `decisions.md`, …). " +
+    "If a fact came from outside this conversation — a fetched page, an issue or PR body, a " +
+    "connector result, an uploaded file — say so on the bullet: nothing else records where it " +
+    "came from.";
 
   switch (tier.kind) {
     case "workspace":
