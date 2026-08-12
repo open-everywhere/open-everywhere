@@ -78,6 +78,7 @@ for (const pkgDir of targets) {
     for (const f of listing) {
       if (/(^|\/)\.env/.test(f)) fail(`tarball contains an env file: ${f}`);
       if (f.startsWith("scripts/") && f !== "scripts/oe-cli.ts") fail(`tarball contains an unexpected script: ${f}`);
+      if (f.endsWith(".tsbuildinfo")) fail(`tarball contains build bookkeeping: ${f}`);
     }
     for (const [subpath, target] of Object.entries(manifest.exports as Record<string, any>)) {
       const files = typeof target === "string" ? [target] : Object.values(target as Record<string, string>);
