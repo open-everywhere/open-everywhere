@@ -22,9 +22,11 @@ import { projectToolSet } from "../agent/access/untrusted-projection.js";
 import { setNativeDelegationSeat } from "../agent/access/native-delegation-state.js";
 import { currentLeanSeatPosture } from "../agent/access/lean-seat-state.js";
 import { webhookFireAttributes, WEBHOOK_MARKER_ATTR } from "../agent/routines/fire-auth.js";
-import { FIRE_UNATTENDED_ATTR } from "../agent/identity/binding.js";
+import { FIRE_UNATTENDED_ATTR, windowGrainOf, type BindableContext } from "../agent/identity/binding.js";
 import { ROUTINE_MARKER } from "../agent/routines/routine.js";
 import { OE_GRAIN_ATTR } from "../agent/channels/unified-window.js";
+import { formatWindowToken, taskWindowId, threadSeatWindowId } from "../agent/channels/window-key.js";
+import { WORKER_WITHHELD_TOOLS } from "../agent/access/worker-seat.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -68,6 +70,8 @@ ok([...UNTRUSTED_REMOTE_WITHHELD_TOOLS].every((k) => manifestWideHands.has(k)), 
 ok(UNTRUSTED_REMOTE_WITHHELD_TOOLS.has("bash"), "`bash` is in the withheld set — the headline name");
 ok(withheldForInvokerPosture("interactive").size === 0 && withheldForInvokerPosture("attended-fire").size === 0, "interactive and attended-fire withhold NOTHING — byte-identical to today");
 ok(withheldForInvokerPosture("unattended-fire").size === 0, "unattended-fire withholds NOTHING today (a clock fire's cut is a different question — see the header)");
+ok(withheldForInvokerPosture("untrusted-remote", true).size === 0, "⭐ `untrusted-remote` withholds NOTHING from a DELEGATED WORKER — wide hands are reached by delegating, for every invoker class alike");
+ok(withheldForInvokerPosture("untrusted-remote") === withheldForInvokerPosture("untrusted-remote", false), "…and the parameter DEFAULTS to the withholding answer, so a caller that does not know is treated as the window");
 
 const require = createRequire(import.meta.url);
 const eveRoot = dirname(require.resolve("eve/package.json"));
@@ -103,17 +107,28 @@ async function kitForDelivery(ctx: unknown): Promise<{ toolset: Record<string, u
   });
 }
 
-const deliveryCtx = (attributes: Record<string, unknown>, principal?: { principalId?: string; principalType?: string; authenticator?: string }) => ({
-  channel: { kind: "slack", continuationToken: "unified:oe-dom:acme:oe-sup:g3" },
+const STANDING_TOKEN = `unified:${formatWindowToken({ domain: "acme", windowId: "acme", generation: 3 })}`;
+
+const deliveryCtx = (
+  attributes: Record<string, unknown>,
+  principal?: { principalId?: string; principalType?: string; authenticator?: string },
+  token: string = STANDING_TOKEN,
+) => ({
+  channel: { kind: "slack", continuationToken: token },
   session: { id: `sess-${Math.random().toString(36).slice(2)}`, auth: { current: { attributes, ...(principal ?? {}) } } },
 });
+
+const grainFixtureCheck = (ctx: unknown, expected: string, label: string) =>
+  ok(windowGrainOf(ctx as BindableContext) === expected, `fixture provenance: ${label} really resolves grain \`${expected}\``);
 
 const webhookBag = webhookFireAttributes("hook-abc", "T1", "C1", false, false) as Record<string, unknown>;
 ok(webhookBag[WEBHOOK_MARKER_ATTR] === "hook-abc", "fixture provenance: the real webhookFireAttributes bag carries the webhook marker");
 ok(webhookBag[FIRE_UNATTENDED_ATTR] === "true", "fixture provenance: …and the unconditional unattended-origin stamp");
 
 {
-  const { toolset, posture } = await kitForDelivery(deliveryCtx(webhookBag, { authenticator: "webhook", principalId: "webhook:hook-abc", principalType: "service" }));
+  const ctx = deliveryCtx(webhookBag, { authenticator: "webhook", principalId: "webhook:hook-abc", principalType: "service" });
+  ok(windowGrainOf(ctx as BindableContext) !== "task", "fixture provenance: a fire's OWN delivery never resolves grain `task` — the worker exemption cannot reach the window it is scoped away from");
+  const { toolset, posture } = await kitForDelivery(ctx);
   ok(posture === "untrusted-remote", "a REAL webhook fire delivery classifies `untrusted-remote` through the real hook");
   ok(!("bash" in toolset), "⭐ THE PROPERTY: a webhook fire's assembled toolset has NO `bash` — asserted at the model-call seam that decides");
   ok([...UNTRUSTED_REMOTE_WITHHELD_TOOLS].every((k) => !(k in toolset)), "…and no other wide-hands tool either (checkout_repo, write_file, web_fetch, open_pull_request, create_skill, …)");
@@ -121,29 +136,50 @@ ok(webhookBag[FIRE_UNATTENDED_ATTR] === "true", "fixture provenance: …and the 
   ok("remember" in toolset || "read_channel" in toolset, "…including the reads/memory a fire is FOR (it was not collapsed onto the lean conversational roster)");
 }
 
-const childBag = (parent: Record<string, unknown>, stamp?: InvokerPosture): Record<string, unknown> => ({
+const childBag = (parent: Record<string, unknown>, stamp?: InvokerPosture, grain: "task" | "thread" = "task"): Record<string, unknown> => ({
   ...parent,
-  [OE_GRAIN_ATTR]: "task",
+  [OE_GRAIN_ATTR]: grain,
   ...(stamp !== undefined ? { [INVOKER_POSTURE_ATTR]: stamp } : {}),
 });
+const TASK_TOKEN = `unified:${formatWindowToken({ domain: "acme", windowId: taskWindowId("slack/C1", "1720.5", "n1"), generation: 3 })}`;
+const THREAD_SEAT_TOKEN = `unified:${formatWindowToken({ domain: "acme", windowId: threadSeatWindowId("slack/C1", "1720.5"), generation: 3 })}`;
 
 {
-  const { toolset, posture } = await kitForDelivery(deliveryCtx(childBag(webhookBag, "untrusted-remote")));
-  ok(posture === "untrusted-remote", "a webhook fire's DELEGATED CHILD classifies `untrusted-remote`");
-  ok(!("bash" in toolset), "⭐ THE PROPERTY, SECOND ROUTE: the `task`-grain child of a webhook fire has NO `bash` — remote input cannot reach the shell one hop later either");
+  const ctx = deliveryCtx(childBag(webhookBag, "untrusted-remote"), undefined, TASK_TOKEN);
+  grainFixtureCheck(ctx, "task", "the dispatchTaskWindow child (task stamp + task token)");
+  const { toolset, posture } = await kitForDelivery(ctx);
+  ok(posture === "untrusted-remote", "a webhook fire's DELEGATED CHILD still CLASSIFIES `untrusted-remote` — the class survives the hop; what changes is what it withholds");
+  ok("bash" in toolset, "⭐⭐ THE SECOND HALF: the `task`-grain child of a webhook fire DOES hold `bash` — a fire reaches a shell by delegating, exactly like every other seat");
+  ok(
+    [...UNTRUSTED_REMOTE_WITHHELD_TOOLS].every((k) => k in toolset),
+    "…and the WHOLE wide-hands family, not just bash (write_file, web_fetch, checkout_repo, open_pull_request, create_skill, …) — the worker kit is the same one any seat's worker gets",
+  );
+  ok(
+    [...WORKER_WITHHELD_TOOLS].every((k) => !(k in toolset)),
+    "…while the OPE-420 worker subtraction still bites (`ask_question` is gone) — proof the wake really was classified a worker, so the exemption above is not passing by accident",
+  );
 }
 
 {
-  const { toolset, posture } = await kitForDelivery(deliveryCtx(childBag(webhookBag)));
+  const ctx = deliveryCtx(childBag(webhookBag), undefined, TASK_TOKEN);
+  const { toolset, posture } = await kitForDelivery(ctx);
   ok(posture === "untrusted-remote", "…and it classifies `untrusted-remote` with NO stamp at all — the webhook marker rides the attributes bag on its own");
-  ok(!("bash" in toolset), "⭐ so the property does NOT rest on the delegation stamp being present or honest");
+  ok("bash" in toolset, "…and holds `bash` regardless, because the exemption keys on the `task` GRAIN, never on the stamp");
 }
 
 {
   const eventSubChild = childBag({ [FIRE_UNATTENDED_ATTR]: "true" }, "untrusted-remote");
-  const { toolset, posture } = await kitForDelivery(deliveryCtx(eventSubChild));
+  const { toolset, posture } = await kitForDelivery(deliveryCtx(eventSubChild, undefined, TASK_TOKEN));
   ok(posture === "untrusted-remote", "an EVENT-SUB fire's child classifies `untrusted-remote` via the stamp — the class whose raw marker cannot survive the hop");
-  ok(!("bash" in toolset), "…and holds no `bash`");
+  ok("bash" in toolset, "…and it too holds `bash`: a worker is a worker whichever remote class caused the run");
+}
+
+{
+  const ctx = deliveryCtx(childBag(webhookBag, "untrusted-remote", "thread"), undefined, THREAD_SEAT_TOKEN);
+  grainFixtureCheck(ctx, "thread", "the spawn_thread_session child (thread stamp + thread-seat token)");
+  const { toolset, posture } = await kitForDelivery(ctx);
+  ok(posture === "untrusted-remote", "a webhook fire's THREAD-SEAT child classifies `untrusted-remote`");
+  ok(!("bash" in toolset), "⭐ …and holds NO `bash`: only a `task`-grain WORKER is exempt, so a non-worker descendant stays narrowed");
 }
 
 {
@@ -206,6 +242,14 @@ ok(currentInvokerPosture() === "interactive", "outside an eve context the postur
   ok(removed.every((k) => !(k in toolset)), "every reported name really is gone");
   ok(Object.keys(toolset).every((k) => toolset[k] === before[k]), "surviving tool OBJECTS keep their identity — eve keys approvals in a WeakMap on them");
   ok(restrictToolsetForInvokerPosture(makeToolset() as unknown as Record<string, unknown>, "interactive").length === 0, "an interactive run's toolset is not touched at all");
+  const workerSet = makeToolset() as unknown as Record<string, unknown>;
+  const workerBefore = Object.keys(workerSet).length;
+  ok(
+    restrictToolsetForInvokerPosture(workerSet, "untrusted-remote", true).length === 0 && Object.keys(workerSet).length === workerBefore,
+    "…and an untrusted-remote WORKER's toolset is not touched at all either — the exemption is a genuine no-op, not a re-add",
+  );
 }
 
-console.log(`\n✓ invoker-posture (OPE-421): ${n} assertions passed (truth table + minimum composition, withheld-set = manifest wide-hands, the DIRECT and DELEGATED webhook routes proven at the model-call seam, the human-into-parked-fire arm, clock/manual classes, fail-narrow directions)\n`);
+console.log(
+  `\n✓ invoker-posture (OPE-421): ${n} assertions passed (truth table + minimum composition, withheld-set = manifest wide-hands, the fire's OWN window narrowed and its task-grain WORKER wide — both proven at the model-call seam on real tokens — the thread-seat child still narrowed, the human-into-parked-fire arm, clock/manual classes, fail-narrow directions)\n`,
+);

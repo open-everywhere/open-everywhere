@@ -57,8 +57,9 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
   if (currentJobWakePosture() === "restricted") restrictToolsetForJobWake(toolset);
   else if (currentLeanSeatPosture() === "lean") restrictToolsetForLeanSeat(toolset, currentLeanSeatIsDm());
 
-  if (currentWorkerWake()) restrictToolsetForWorkerSeat(toolset);
-  restrictToolsetForInvokerPosture(toolset, currentInvokerPosture());
+  const workerWake = currentWorkerWake();
+  if (workerWake) restrictToolsetForWorkerSeat(toolset);
+  restrictToolsetForInvokerPosture(toolset, currentInvokerPosture(), workerWake);
 
   if (nativeSubagentEnabled() && toolset["agent"] !== undefined && !nativeAgentAllowedNow()) {
     delete toolset["agent"];

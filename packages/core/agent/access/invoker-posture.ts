@@ -49,7 +49,8 @@ export const UNTRUSTED_REMOTE_WITHHELD_TOOLS: ReadonlySet<string> = new Set([
   "delete_skill",
 ]);
 
-export function withheldForInvokerPosture(posture: InvokerPosture): ReadonlySet<string> {
+export function withheldForInvokerPosture(posture: InvokerPosture, delegatedWorker = false): ReadonlySet<string> {
+  if (delegatedWorker) return EMPTY;
   return posture === "untrusted-remote" ? UNTRUSTED_REMOTE_WITHHELD_TOOLS : EMPTY;
 }
 
@@ -59,8 +60,8 @@ export function allowedUnderInvokerPosture(name: string, posture: InvokerPosture
   return !withheld.has(name);
 }
 
-export function restrictToolsetForInvokerPosture(toolset: Record<string, unknown>, posture: InvokerPosture): string[] {
-  const withheld = withheldForInvokerPosture(posture);
+export function restrictToolsetForInvokerPosture(toolset: Record<string, unknown>, posture: InvokerPosture, delegatedWorker = false): string[] {
+  const withheld = withheldForInvokerPosture(posture, delegatedWorker);
   if (withheld.size === 0) return [];
   const removed: string[] = [];
   for (const name of Object.keys(toolset)) {
