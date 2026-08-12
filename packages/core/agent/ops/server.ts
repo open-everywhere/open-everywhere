@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { preflight, quickstartPlan, mergeEnv } from "./quickstart.js";
 
-export const OPS_TOOL_NAMES = ["preflight", "quickstart", "scaffold_env"] as const;
+export const OPS_TOOL_NAMES = ["preflight", "quickstart", "scaffold_env", "secret_set", "secret_list", "secret_rm"] as const;
 
 function projectDir(): string {
   return process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
@@ -31,8 +31,19 @@ function json(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
 }
 
-export function buildOpsServer(): McpServer {
+export interface OpsServerDeps {
+  connectStore?: (envPath: string) => Promise<{ label: string }>;
+}
+
+export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
   const server = new McpServer({ name: "open-everywhere-ops", version: "0.1.0" });
+  const connectStore =
+    deps.connectStore ??
+    (async (envPath: string) => {
+      const mod = await import("../../scripts/operator-store-connect.js");
+      mod.loadRootOfTrustEnv(envPath);
+      return await mod.connectOperatorStore();
+    });
 
   server.registerTool(
     "preflight",
@@ -70,6 +81,66 @@ export function buildOpsServer(): McpServer {
       const next = mergeEnv(existing, a.values);
       writeFileSync(file, next.endsWith("\n") ? next : next + "\n", "utf-8");
       return json({ ok: true, file, keysSet: Object.keys(a.values) });
+    },
+  );
+
+  server.registerTool(
+    "secret_set",
+    {
+      title: "Store a secret in the deployment's credential store",
+      description:
+        "Encrypt one or more secrets into this deployment's own credential store (AES-256-GCM, keyed by OE_CREDENTIAL_ENCRYPTION_KEY) so channels and connectors resolve them WITHOUT env vars. Write-only: no tool reads a value back, and the confirmation reports only the byte count. Needs DATABASE_URL + OE_CREDENTIAL_ENCRYPTION_KEY (from the environment or the project's .env.local).",
+      inputSchema: {
+        secrets: z
+          .record(z.string(), z.string())
+          .describe("name → value, e.g. { ACME_API_TOKEN: '<the token>' }. The name is the secretRef a credential points at."),
+        org: z.string().optional().describe("override the org the rows are keyed by (default OE_ORG)"),
+        envPath: z.string().optional(),
+      },
+    },
+    async (a) => {
+      const store = await connectStore(envFilePath(a.envPath));
+      const { setOperatorSecret, SET_BY_OPS_MCP } = await import("../credentials/operator-secrets.js");
+      const set: unknown[] = [];
+      for (const [name, value] of Object.entries(a.secrets)) {
+        const r = await setOperatorSecret({ name, value, setBy: SET_BY_OPS_MCP, ...(a.org ? { org: a.org } : {}) });
+        set.push({ name: r.name, bytes: r.bytes, at: r.at, replaced: r.replaced });
+      }
+      return json({ ok: true, store: store.label, set, note: "Values are write-only — nothing can read them back out." });
+    },
+  );
+
+  server.registerTool(
+    "secret_list",
+    {
+      title: "List stored secret NAMES",
+      description: "Names, who set them and when — NEVER values or any part of one. Use it to check what a deployment already holds before setting more.",
+      inputSchema: {
+        includeInternal: z.boolean().optional().describe("also list host-minted internal refs (hook:/oe-oauth:/notion-handshake:)"),
+        org: z.string().optional(),
+        envPath: z.string().optional(),
+      },
+    },
+    async (a) => {
+      const store = await connectStore(envFilePath(a.envPath));
+      const { listOperatorSecrets } = await import("../credentials/operator-secrets.js");
+      const secrets = await listOperatorSecrets({ ...(a.includeInternal ? { includeInternal: true } : {}), ...(a.org ? { org: a.org } : {}) });
+      return json({ store: store.label, secrets });
+    },
+  );
+
+  server.registerTool(
+    "secret_rm",
+    {
+      title: "Delete a stored secret",
+      description: "Remove one secret from the credential store. The ciphertext row is DELETED, not retired — anything still resolving that name fails closed afterwards.",
+      inputSchema: { name: z.string(), org: z.string().optional(), envPath: z.string().optional() },
+    },
+    async (a) => {
+      const store = await connectStore(envFilePath(a.envPath));
+      const { removeOperatorSecret } = await import("../credentials/operator-secrets.js");
+      const removed = await removeOperatorSecret(a.name, a.org ? { org: a.org } : {});
+      return json({ ok: removed, store: store.label, removed: removed ? [a.name] : [], ...(removed ? {} : { note: `no secret named "${a.name}" was stored` }) });
     },
   );
 

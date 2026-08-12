@@ -35,10 +35,18 @@ if (subcommand === "wrap-untrusted") {
   const chunks: Buffer[] = [];
   process.stdin.on("data", (c: Buffer) => chunks.push(c));
   process.stdin.on("end", () => process.stdout.write(runWrapUntrusted(argv.slice(1), Buffer.concat(chunks).toString("utf8"))));
+} else if (subcommand === "secret") {
+  const { runSecretCommand, readAllStdin } = await import("./oe-secret.js");
+  const code = await runSecretCommand(argv.slice(1), {
+    out: (l) => console.log(l),
+    err: (l) => console.error(l),
+    readStdin: readAllStdin,
+  });
+  process.exit(code);
 } else if (subcommand === "build" || subcommand.startsWith("--")) {
   await runBuild(subcommand === "build" ? argv.slice(1) : argv);
 } else {
-  console.error(`oe: unknown subcommand "${subcommand}". Known: build, wrap-untrusted.`);
+  console.error(`oe: unknown subcommand "${subcommand}". Known: build, secret, wrap-untrusted.`);
   process.exit(2);
 }
 

@@ -36,6 +36,15 @@ function loadKey(): Buffer {
   return key;
 }
 
+export function credentialKeyArmed(): boolean {
+  try {
+    loadKey();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function encryptCredential(plaintext: string): string {
   const key = loadKey();
   const iv = randomBytes(IV_BYTES);
