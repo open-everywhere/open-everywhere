@@ -95,6 +95,10 @@ export interface AgentSettings {
     readonly sourceScopedMount: boolean;
     readonly genericReadVerbs: boolean;
   };
+  readonly turn: {
+    readonly stepBudget: number;
+    readonly stepBackstopMultiple: number;
+  };
   readonly window: {
     readonly topology: boolean;
     readonly unifiedRedrive: boolean;
@@ -650,6 +654,24 @@ export const SETTINGS = {
         "Stage 2: the surface-agnostic `read_channel` / `read_thread` pair mounts and the Slack-specific `read_slack_*` readers retire. A model-facing tool-surface change, deliberately armed independently of `tools.sourceScopedMount`.",
     } satisfies SettingSpec<boolean>,
   },
+  turn: {
+    stepBudget: {
+      path: "turn.stepBudget",
+      shipped: 120,
+      validate: (v) => (Number.isInteger(v) && v >= 0 ? undefined : "must be a whole number of round-trips (0 disables the boundary)"),
+      summary:
+        "SOFT per-turn boundary: model round-trips one turn may take before every subsequent call carries a wrap-up instruction (finish, report, yield — the turn is NOT killed). Guards the runaway tool spiral (one live turn ran 446 steps / 36 min of gateway spend) without capping legitimately long work. `0` disables both tiers.",
+      format: (v) => `${v} round-trips`,
+    } satisfies SettingSpec<number>,
+    stepBackstopMultiple: {
+      path: "turn.stepBackstopMultiple",
+      shipped: 3,
+      validate: (v) => (Number.isFinite(v) && v >= 1 ? undefined : "must be at least 1 (a backstop below the soft boundary would fire before the model is ever asked to wrap up)"),
+      summary:
+        "HARD backstop, as a multiple of `turn.stepBudget`: past it the resolver returns a text-only stub whose reply says the turn was stopped, so eve's own continue-decision ends the turn. For the pathological loop that ignores the wrap-up instruction. Clamped to a minimum of 1.",
+      format: (v) => `${v}× the budget`,
+    } satisfies SettingSpec<number>,
+  },
   window: {
     topology: {
       path: "window.topology",
@@ -831,6 +853,10 @@ export function getSettings(
       maxResultChars: resolve(SETTINGS.tools.maxResultChars, o.tools?.maxResultChars, env),
       sourceScopedMount: resolve(SETTINGS.tools.sourceScopedMount, o.tools?.sourceScopedMount, env),
       genericReadVerbs: resolve(SETTINGS.tools.genericReadVerbs, o.tools?.genericReadVerbs, env),
+    },
+    turn: {
+      stepBudget: resolve(SETTINGS.turn.stepBudget, o.turn?.stepBudget, env),
+      stepBackstopMultiple: resolve(SETTINGS.turn.stepBackstopMultiple, o.turn?.stepBackstopMultiple, env),
     },
     window: {
       topology: resolve(SETTINGS.window.topology, o.window?.topology, env),

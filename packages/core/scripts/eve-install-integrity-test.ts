@@ -66,7 +66,7 @@ assert.ok(
       .map((p) => `${p.file} (${p.field}) pins "${p.version}"`)
       .join("; ") +
     ". A divergent pin installs a NESTED node_modules/eve that patch-package never patches — " +
-    "the OE additions (__oeCeil step ceiling, __oeProjectToolSet projection) are silently absent from it.",
+    "the OE addition (the __oeProjectToolSet untrusted-output projection) is silently absent from it.",
 );
 n++;
 ok(/^\d+\.\d+\.\d+$/.test(pinned), `pins: eve is pinned to an EXACT version (got "${pinned}") — a range would let the installed bytes drift off the patch`);
@@ -111,15 +111,28 @@ ok(
 const TOOL_LOOP = join("dist", "src", "harness", "tool-loop.js");
 
 const RETIRED = [
-  "__oeCfg",
-  "__oeMatch",
-  "__oeWrapPrepareStep",
-  "__oeNoteTerminal",
-  "__oeForceContinue",
-  "__oeHistoryHasTerminal",
-  "__OE_FORCE_NUDGE",
-  "OE_FORCE_TOOL_TURN",
+  { symbol: "__oeCfg", why: "OPE-172" },
+  { symbol: "__oeMatch", why: "OPE-172" },
+  { symbol: "__oeWrapPrepareStep", why: "OPE-172" },
+  { symbol: "__oeNoteTerminal", why: "OPE-172" },
+  { symbol: "__oeForceContinue", why: "OPE-172" },
+  { symbol: "__oeHistoryHasTerminal", why: "OPE-172" },
+  { symbol: "__OE_FORCE_NUDGE", why: "OPE-172" },
+  { symbol: "OE_FORCE_TOOL_TURN", why: "OPE-172" },
+  { symbol: "__oeCeil", why: "OPE-407" },
+  { symbol: "__oeCeilTrip", why: "OPE-407" },
+  { symbol: "__oeCeilClear", why: "OPE-407" },
+  { symbol: "__oeCeilStop", why: "OPE-407" },
+  { symbol: "__oeStepCounts", why: "OPE-407" },
+  { symbol: "__oeCONT", why: "OPE-407" },
+  { symbol: "OE_TURN_STEP_CEILING", why: "OPE-407" },
 ] as const;
+
+const WHY: Record<string, string> = {
+  "OPE-172": "the force-tool-turn nudge was retired in OPE-172 (gated on an env var that was never set anywhere, so it never ran once)",
+  "OPE-407":
+    "the per-turn step ceiling LEFT the patch in OPE-407 and lives in userland at packages/core/agent/model/step-boundary.ts (two-tier: a wrap-up instruction at the budget, a text-only stub at the backstop). Porting it back would regress behaviour — the bytes could only stop the loop mutely",
+};
 
 for (const eveDir of copies) {
   const where = rel(eveDir);
@@ -132,21 +145,17 @@ for (const eveDir of copies) {
   ok(existsSync(toolLoop), `copies: ${where}/${TOOL_LOOP} exists (if eve moved the harness file, the patch and every sibling test are stale)`);
   const src = readFileSync(toolLoop, "utf8");
   ok(
-    src.includes("__oeCeilTrip"),
-    `copies: ${where} carries the __oeCeil* step-ceiling helpers — an unpatched copy means a runaway tool spiral has no upper bound (the default ceiling is 120 and is LIVE even with OE_TURN_STEP_CEILING unset)`,
-  );
-  ok(
     src.includes("__oeProjectToolSet"),
     `copies: ${where} carries the __oeProjectToolSet hook (OPE-73) — an unpatched copy means authored toModelOutput is dropped on session-mounted dynamic tools, so untrusted-content envelopes never reach the model (prompt-injection containment regression)`,
   );
   for (const dead of RETIRED) {
     ok(
-      !src.includes(dead),
-      `absent: ${where} must NOT contain \`${dead}\` — the force-tool-turn nudge was retired in OPE-172 (gated on an env var that was never set anywhere, so it never ran once). A re-roll that ports the old __oe* block wholesale drags it back; port only the step-ceiling and projection helpers`,
+      !src.includes(dead.symbol),
+      `absent: ${where} must NOT contain \`${dead.symbol}\` — ${WHY[dead.why]}. A re-roll that ports an old __oe* block wholesale drags it back; port ONLY the __oeProjectToolSet projection helper and its one call site`,
     );
   }
 }
 
 console.log(
-  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} both OE additions and none of the ${RETIRED.length} retired force-tool-turn symbols)\n`,
+  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} the OE projection hook and none of the ${RETIRED.length} retired symbols)\n`,
 );

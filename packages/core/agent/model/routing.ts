@@ -5,6 +5,7 @@ import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { stampModelCall } from "./model-stamp.js";
 import { stampUtilityRoute, readStampedUtilityRoute } from "./utility-route-stamp.js";
+import { noteTurnStep, reportStepBoundary, withWrapUpNotice, turnBackstopModel, wrapUpNotice, backstopReply } from "./step-boundary.js";
 import type { ModelPolicy } from "./policy.js";
 import { applyModelPolicyToRoute } from "./policy.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -229,7 +230,7 @@ export function makeRoutedModel<TModel extends RoutableModel>(
   return routed as TModel;
 }
 
-export async function resolvePrimaryModel<TModel extends RoutableModel>(
+async function resolveRoutedPrimaryModel<TModel extends RoutableModel>(
   ctx: BindableContext,
   defaults: { readonly primary: { readonly id: string }; readonly utility: { readonly id: string } },
   deps: RoutingDeps<TModel>,
@@ -267,6 +268,23 @@ export async function resolvePrimaryModel<TModel extends RoutableModel>(
   stampModelCall(route.id ?? defaults.primary.id);
   if (isNoOpRoute(route, defaults.primary.id)) return null;
   return makeRoutedModel(() => route, defaults.primary, deps.backend);
+}
+
+export async function resolvePrimaryModel<TModel extends RoutableModel>(
+  ctx: BindableContext,
+  defaults: { readonly primary: { readonly id: string }; readonly utility: { readonly id: string } },
+  deps: RoutingDeps<TModel>,
+): Promise<TModel | null> {
+  const boundary = noteTurnStep(ctx);
+  if (boundary.tier === "hard") {
+    reportStepBoundary(ctx, boundary);
+    stampModelCall(defaults.primary.id);
+    return turnBackstopModel(deps.backend.model(defaults.primary.id), backstopReply(boundary));
+  }
+  const routed = await resolveRoutedPrimaryModel(ctx, defaults, deps);
+  if (boundary.tier !== "soft") return routed;
+  reportStepBoundary(ctx, boundary);
+  return withWrapUpNotice(routed ?? deps.backend.model(defaults.primary.id), wrapUpNotice(boundary));
 }
 
 export function createRoutedCompactionModel<TModel extends RoutableModel>(
