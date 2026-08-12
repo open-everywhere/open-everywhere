@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 let n = 0;
@@ -129,7 +129,68 @@ for (const method of ROSTER_METHODS) {
   }
 }
 
+const SELF_ADMISSION_SCOPES = ["channels:join"] as const;
+for (const scope of SELF_ADMISSION_SCOPES) {
+  ok(
+    !runbook.includes(`\`${scope}\``),
+    `🔴 docs/deploy/surfaces/slack.md must NOT document "${scope}" as a Bot Token Scope. It is the scope ` +
+      `conversations.join requires, i.e. the one that lets the bot ADD ITSELF to a channel — and we publish ` +
+      `that the agent can only read rooms it was put into and cannot put itself into one. Adding it would ` +
+      `silently falsify that claim. See this section's header before changing anything here.`,
+  );
+  ok(
+    !manifestScopes.includes(scope),
+    `🔴 the install wizard's manifest (packages/create/src/steps/slack.ts) must NOT request "${scope}" — ` +
+      `it is what a deployer actually grants on Slack's consent screen, so a scope here is a scope the bot ` +
+      `really holds. See this section's header.`,
+  );
+}
+
+const PROD_SCAN_ROOTS = [join(REPO_ROOT, "packages"), join(REPO_ROOT, "agent")];
+const prodFiles = PROD_SCAN_ROOTS.flatMap(tsFiles).filter(
+  (f) => !f.split(sep).includes("scripts") && !f.split(sep).includes("generated") && !f.endsWith("docs-generated.ts"),
+);
+ok(
+  prodFiles.length >= 100,
+  `scan sanity: the production .ts scan found at least 100 files (found ${prodFiles.length}) — a near-empty ` +
+    `result means the roots/filters broke, not that the fence below is satisfied`,
+);
+
+const SELF_ADMISSION_METHODS = ["conversations.join", "channels.join"] as const;
+for (const method of SELF_ADMISSION_METHODS) {
+  const callers = prodFiles.filter((f) => new RegExp(`["'\`]${method.replace(".", "\\.")}["'\`]`).test(readFileSync(f, "utf8")));
+  ok(
+    callers.length === 0,
+    `🔴 no production file may call "${method}" — it is how a Slack app adds ITSELF to a channel, and we ` +
+      `publish that the agent cannot do that. Found in: ${callers.join(", ")}. See this section's header.`,
+  );
+}
+
+const slackTokenEnvVars = new Set<string>();
+for (const f of prodFiles) {
+  for (const m of readFileSync(f, "utf8").matchAll(/SLACK_[A-Z0-9_]*TOKEN/g)) slackTokenEnvVars.add(m[0]);
+}
+ok(
+  slackTokenEnvVars.size === 1 && slackTokenEnvVars.has("SLACK_BOT_TOKEN"),
+  `🔴 production code may read exactly ONE Slack token env var, SLACK_BOT_TOKEN — found ` +
+    `{${[...slackTokenEnvVars].sort().join(", ")}}. A Slack USER token is the one credential that CAN read ` +
+    `public channels the app was never added to, which is precisely what we publish the agent cannot do. ` +
+    `If a second token is genuinely needed, prove it is not a user token and update this section's header.`,
+);
+
+const slackRead = readFileSync(join(REPO_ROOT, "packages/providers/slack/agent/channels/slack-read.ts"), "utf8");
+ok(
+  slackRead.includes("SLACK_BOT_TOKEN"),
+  `the Slack read chokepoint (agent/channels/slack-read.ts callSlackRead) still resolves SLACK_BOT_TOKEN — ` +
+    `the bot-token-only property is what makes Slack return not_in_channel for unjoined public channels`,
+);
+const READ_METHODS = ["conversations.history", "conversations.replies"] as const;
+for (const method of READ_METHODS) {
+  ok(found.has(method), `scan sanity: "${method}" is still a called read method (the self-admission fence is about its reach)`);
+}
+
 console.log(
   `✓ slack-scope-audit: ${n} assertions passed (${found.size} distinct Slack Web API methods checked against the ` +
-    `runbook; ${manifestScopes.length} wizard-manifest scopes checked both ways)`,
+    `runbook; ${manifestScopes.length} wizard-manifest scopes checked both ways; self-admission fence over ` +
+    `${SELF_ADMISSION_SCOPES.length} scope(s) + ${SELF_ADMISSION_METHODS.length} method(s) across ${prodFiles.length} production files)`,
 );
