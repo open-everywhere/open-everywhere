@@ -2,6 +2,7 @@
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -16,8 +17,8 @@ const dir = join(tmpdir(), `open-everywhere-routine-forensics-test-${process.pid
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_ORG = "acme";
-delete process.env.OE_ROUTINE_MAX_CONCURRENCY;
-delete process.env.OE_EVENT_MAX_FANOUT;
+overrideSettingsForTest({ routines: { maxConcurrency: 3 } });
+overrideSettingsForTest({ routines: { eventMaxFanout: 3 } });
 
 const { registerSlackTestBridge, registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
 const fireAudit = await import("../agent/routines/fire-audit.js");
@@ -173,7 +174,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 }
 
 {
-  process.env.OE_ROUTINE_MAX_CONCURRENCY = "1";
+  overrideSettingsForTest({ routines: { maxConcurrency: 1 } });
   const ids = ["r-burst1", "r-burst2", "r-burst3"];
   for (const id of ids) await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, routine({ id, nextRunAt: "2026-07-21T00:00:00.000Z" }));
   const before = (await rowsFor(ROUTINE_AUDIT.skip)).length;
@@ -181,7 +182,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
   const after = (await rowsFor(ROUTINE_AUDIT.skip)).filter((e) => ids.includes(String(detailOf(e, "routineId"))));
   ok(after.length === 0, "deferred: an over-cap routine writes NO skip row (it is going to fire, just on a later tick)");
   ok((await rowsFor(ROUTINE_AUDIT.skip)).length === before, "deferred: nothing else was written either");
-  delete process.env.OE_ROUTINE_MAX_CONCURRENCY;
+  overrideSettingsForTest({ routines: { maxConcurrency: 3 } });
 }
 
 {
@@ -189,7 +190,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
   await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
   const rejecting = (() => ({ send: () => Promise.reject(new Error("channel_not_found")) })) as never;
   const pending: Promise<unknown>[] = [];
-  process.env.OE_ROUTINE_MAX_CONCURRENCY = "20";
+  overrideSettingsForTest({ routines: { maxConcurrency: 20 } });
   await dispatch.dispatchTick({
     now: new Date("2026-07-22T00:05:00.000Z"),
     to: rejecting,
@@ -197,7 +198,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
     appAuth: { attributes: {} } as never,
   } as never);
   await Promise.all(pending);
-  delete process.env.OE_ROUTINE_MAX_CONCURRENCY;
+  overrideSettingsForTest({ routines: { maxConcurrency: 3 } });
 
   const lost = (await rowsFor(ROUTINE_AUDIT.fireLost)).filter((e) => detailOf(e, "routineId") === "r-lost");
   ok(lost.length === 1, "fire_lost: a rejected receive writes a routine.fire_lost row (the fire used to vanish into a console line)");
@@ -232,7 +233,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
     repository: { full_name: "me/proj" },
     sender: { login: "alice" },
   });
-  process.env.OE_EVENT_MAX_FANOUT = "1";
+  overrideSettingsForTest({ routines: { eventMaxFanout: 1 } });
   for (let i = 0; i < 5; i++) await fanOutDelivery(body, "pull_request", undefined, deps);
 
   const skips = audited.filter((e) => e.action === ROUTINE_AUDIT.skip);
@@ -255,7 +256,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 
   closed.clear();
   await fanOutDelivery(body, "pull_request", undefined, deps);
-  delete process.env.OE_EVENT_MAX_FANOUT;
+  overrideSettingsForTest({ routines: { eventMaxFanout: 3 } });
   const second = audited.filter((e) => e.action === ROUTINE_AUDIT.skip)[1];
   ok(second !== undefined && Number(second.detail?.["suppressed"]) === 4, "throttle: the next emitted row reports the 4 it suppressed — the throttle never hides itself");
   ok(Number(second!.detail?.["windowMs"]) === fireAudit.SKIP_WINDOW_MS, "throttle: …and names the window that count is over");

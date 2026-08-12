@@ -10,6 +10,7 @@ import {
 import { taskWindowId, formatWindowToken } from "../agent/channels/window-key.js";
 import completeTask from "../agent/tools/complete_task.js";
 import { resolveWindowGated } from "../agent/access/window-gated.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -80,7 +81,7 @@ await stale.putThreadOwner("acme", "slack/C2", "999", taskTokenFor("slack/C2", "
 ok((await resolveThreadOwner(stale, "acme", ref)) === null, "an ownership row past its TTL is pruned on the next same-org write (bounded table)");
 
 console.log("3. complete_task task-only guard:");
-process.env.OE_ONESHOT_AGENT = "0";
+overrideSettingsForTest({ delegation: { oneshotAgent: false } });
 const taskCtx = { channel: { kind: "unified", continuationToken: "unified:oe-dom:payments:win:t/slack/C9/171.5:oe-sup:g3" }, session: { auth: { current: { attributes: {} } } } };
 eq(
   await resolveWindowGated(completeTask, { channel: { kind: "unified", continuationToken: "unified:oe-dom:payments:oe-sup:g3" }, session: { auth: { current: { attributes: {} } } } } as never),

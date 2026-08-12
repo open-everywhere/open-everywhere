@@ -5,7 +5,6 @@ __slackStubs.registerSlackFixtureMapper();
 __slackStubs.registerSlackFixtureCodec();
 
 delete process.env.OE_ORG;
-process.env.OE_ONESHOT_AGENT = "0";
 
 import {
   DM_ANCHOR_DOMAIN_PREFIX,
@@ -30,7 +29,7 @@ import { canDelegateFromSeat } from "../agent/access/delegation-mount.js";
 import { DM_SEAT_CARVE_IN, LEAN_SEAT_TOOLS, allowedOnLeanSeat, resolveLeanSeatPosture, restrictToolsetForLeanSeat } from "../agent/access/lean-seat.js";
 import { memoryRecallRouteFor } from "../agent/access/window-gate-manifest.js";
 import { workerOnlyTools } from "../agent/access/worker-capabilities.js";
-import { OE_ONESHOT_AGENT_ENV } from "../agent/access/delegation-flag.js";
+import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
 import { bindFrom } from "../agent/identity/binding.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
@@ -39,15 +38,12 @@ const ok = (cond: boolean, label: string) => { assert.ok(cond, label); n++; };
 const eq = (a: unknown, b: unknown, label: string) => { assert.deepStrictEqual(a, b, label); n++; };
 const throws = (fn: () => unknown, label: string) => { assert.throws(fn); n++; };
 
-async function withEnv<T>(key: string, value: string | undefined, fn: () => T | Promise<T>): Promise<T> {
-  const prev = process.env[key];
-  if (value === undefined) delete process.env[key];
-  else process.env[key] = value;
+async function withOneshot<T>(armed: boolean, fn: () => T | Promise<T>): Promise<T> {
+  registerSettings({ delegation: { oneshotAgent: armed } });
   try {
     return await fn();
   } finally {
-    if (prev === undefined) delete process.env[key];
-    else process.env[key] = prev;
+    resetSettingsForTest();
   }
 }
 
@@ -148,12 +144,12 @@ console.log("3. delegation predicate (window token, no anchor):");
   ok(canDelegateFromSeat({} as BindableContext), "…and so does a wholly unreadable ctx");
 }
 
-for (const flag of ["1", "0"]) {
-  await withEnv(OE_ONESHOT_AGENT_ENV, flag, () => {
+for (const flag of [true, false]) {
+  await withOneshot(flag, () => {
     const win = seatCtx({ channelId: "D_ASKER", channelType: "im", token: `unified:${formatWindowToken(dmWindowKey(DM_SURFACE_KEY, 4))}` });
     const native = seatCtx({ channelId: "D_ASKER", channelType: "im", token: DM_TOKEN });
-    ok(canDelegateFromSeat(win), `OE_ONESHOT_AGENT=${flag}: a DM WINDOW seat delegates`);
-    ok(!canDelegateFromSeat(native), `OE_ONESHOT_AGENT=${flag}: a NATIVE-token DM does not — the predicate has no flag-gated arm left`);
+    ok(canDelegateFromSeat(win), `delegation.oneshotAgent=${flag}: a DM WINDOW seat delegates`);
+    ok(!canDelegateFromSeat(native), `delegation.oneshotAgent=${flag}: a NATIVE-token DM does not — the predicate has no flag-gated arm left`);
   });
 }
 
@@ -228,7 +224,7 @@ console.log("6. OPE-351 fences (capacity only — nothing mints a DM window toke
 }
 
 console.log("7. OPE-351 stage 4 — a group DM on a window token:");
-await withEnv(OE_ONESHOT_AGENT_ENV, "1", () => {
+await withOneshot(true, () => {
   const MPIM_SURFACE_KEY = "slack/T1/G_TEAM";
   const mpimSeat = seatCtx({ channelId: "G_TEAM", channelType: "mpim", token: `unified:${formatWindowToken(dmWindowKey(MPIM_SURFACE_KEY, 2))}`, userId: "U_SENDER" });
 

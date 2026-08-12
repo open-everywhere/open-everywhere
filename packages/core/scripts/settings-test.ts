@@ -8,19 +8,16 @@ import {
   settingDocs,
   settingEnvNames,
 } from "../agent/settings/settings.js";
-import { windowTopologyEnabled, WINDOW_TOPOLOGY_ENABLED, OE_WINDOW_TOPOLOGY_ENV } from "../agent/access/capabilities.js";
-import { oneshotAgentEnabled, OE_ONESHOT_AGENT_ENV } from "../agent/access/delegation-flag.js";
+import { windowTopologyEnabled, WINDOW_TOPOLOGY_ENABLED } from "../agent/access/capabilities.js";
+import { oneshotAgentEnabled } from "../agent/access/delegation-flag.js";
 import { taintTierMode } from "../agent/access/taint-enforcement.js";
 import { approvalJudgeMode } from "../agent/access/approval-judge.js";
-import { connectorDmOnlyEnabled, OE_CONNECTOR_DM_ONLY_ENV } from "../agent/access/connector-scope.js";
+import { connectorDmOnlyEnabled } from "../agent/access/connector-scope.js";
 import {
   connectorUserPrincipalEnabled,
   connectorOpTieringEnabled,
   connectorLinkSetVaultEnabled,
   directoryLinkSetVaultArmed,
-  OE_CONNECTOR_USER_PRINCIPAL_ENV,
-  OE_CONNECTOR_OP_TIERING_ENV,
-  OE_CONNECTOR_LINKSET_VAULT_ENV,
 } from "../agent/connections/connector-flags.js";
 import { bashTimeoutMs, backgroundGuardEnabled, DEFAULT_BASH_TIMEOUT_MS } from "../agent/stall/bash-hang-guard.js";
 import { domainSkillCap, DEFAULT_DOMAIN_SKILL_CAP } from "../agent/skills/domain-skills.js";
@@ -49,348 +46,132 @@ const eq = (a: unknown, b: unknown, label: string): void => {
 
 const at = (env: NodeJS.ProcessEnv): ReturnType<typeof getSettings> => getSettings(env);
 
-console.log("1 — precedence is uniform: env wins, then registered settings, then the shipped default:");
+console.log("1 — precedence is two tiers: the registered override, then the shipped default:");
 {
   resetSettingsForTest();
-  eq(at({}).window.topology, false, "[1] nothing set ⇒ the shipped default (window.topology ships OFF)");
-  eq(at({}).delegation.oneshotAgent, true, "[1] nothing set ⇒ the shipped default (delegation.oneshotAgent ships ON, OPE-370)");
+  eq(at({}).window.topology, false, "[1] nothing registered ⇒ the shipped default (window.topology ships OFF)");
+  eq(at({}).delegation.oneshotAgent, true, "[1] nothing registered ⇒ the shipped default (delegation.oneshotAgent ships ON, OPE-370)");
+  eq(at({}).connectors.dmOnly, true, "[1] …and the security defaults ship in the closed position");
 
   registerSettings(defineSettings({ window: { topology: true }, bash: { timeoutMs: 5_000 } }));
-  eq(at({}).window.topology, true, "[1] a REGISTERED override beats the shipped default — arming by reviewed diff, the OPE-371 route");
+  eq(at({}).window.topology, true, "[1] a REGISTERED override beats the shipped default — arming by reviewed diff, the only route there is");
   eq(at({}).bash.timeoutMs, 5_000, "[1] a registered numeric override applies");
   eq(at({}).connectors.dmOnly, true, "[1] settings not overridden keep their shipped default");
+  resetSettingsForTest();
+  eq(at({}).window.topology, false, "[1] resetSettingsForTest() drops back to the shipped defaults");
+}
 
-  eq(at({ OE_WINDOW_TOPOLOGY: "0" }).window.topology, false, "[1] 🔴 the env override beats the REGISTERED setting, not just the shipped default");
-  eq(at({ OE_BASH_TIMEOUT_MS: "1234" }).bash.timeoutMs, 1234, "[1] the env override beats a registered numeric setting");
-  eq(
-    at({ OE_WINDOW_TOPOLOGY: "banana" }).window.topology,
-    true,
-    "[1] an UNRECOGNISED env value falls through to the registered setting — a typo can never decide anything",
+const DELETED_ENV_MIRRORS: ReadonlyArray<readonly [string, string]> = [
+  ["OE_SESSION_INPUT_TOKEN_BUDGET", "20000000"],
+  ["OE_COMPACTION_THRESHOLD_PERCENT", "0.7"],
+  ["OE_APPROVAL_JUDGE", "enforce"],
+  ["OE_APPROVAL_TTL_HOURS", "12"],
+  ["OE_PR_SESSION_APPROVAL_TTL_HOURS", "12"],
+  ["OE_CHECKPOINT_TTL_HOURS", "12"],
+  ["OE_AUDIT_SILENCES", "1"],
+  ["OE_AGENT_BROWSER", "1"],
+  ["OE_AGENT_BROWSER_DOMAINS", "qa.example.com"],
+  ["OE_BASH_TIMEOUT_MS", "90000"],
+  ["OE_BASH_BACKGROUND_GUARD", "0"],
+  ["OE_CONNECTOR_DM_ONLY", "0"],
+  ["OE_CONNECTOR_USER_PRINCIPAL", "1"],
+  ["OE_CONNECTOR_LINKSET_VAULT", "1"],
+  ["OE_CONNECTOR_OP_TIERING", "1"],
+  ["OE_ONESHOT_AGENT", "0"],
+  ["OE_NATIVE_SUBAGENT", "0"],
+  ["OE_DISCORD_AUTO_THREAD", "false"],
+  ["OE_DISCORD_STATUS_UX", "false"],
+  ["OE_EGRESS_ENFORCE", "0"],
+  ["OE_ALLOW_UNENFORCED_EGRESS", "1"],
+  ["OE_GOVERNANCE_FLOOR_TTL_MS", "60000"],
+  ["OE_DM_TRUST_TTL_MS", "1000"],
+  ["OE_DREAM_MAX_CANDIDATES", "25"],
+  ["OE_EVENT_MAX_FANOUT", "7"],
+  ["OE_ROUTINE_MAX_CONCURRENCY", "7"],
+  ["OE_JOB_MAX_FIRES", "12"],
+  ["OE_JOB_MAX_DAYS", "12"],
+  ["OE_SUPERVISOR_ROTATE_QUIET_GAP_HOURS", "6"],
+  ["OE_SUPERVISOR_ROTATE_EXPIRY_DAYS", "30"],
+  ["OE_SUPERVISOR_ROTATE_TOKEN_BUDGET", "1000000"],
+  ["OE_SUPERVISOR_ROTATE_TURN_BUDGET", "120"],
+  ["OE_SANDBOX_STOP_AFTER_TURN", "0"],
+  ["OE_SANDBOX_EXTEND_MAX_MIN", "45"],
+  ["OE_SANDBOX_TIMEOUT_MS", "60000"],
+  ["OE_SANDBOX_SNAPSHOT_EXPIRATION_MS", "60000"],
+  ["OE_SANDBOX_IMAGE", "node:24-alpine"],
+  ["OE_DOMAIN_SKILL_CAP", "12"],
+  ["OE_USAGE_EVENTS_TTL_DAYS", "12"],
+  ["OE_SANDBOX_MEMORY_GIB", "8"],
+  ["OE_SANDBOX_GIB_HOUR_USD", "0.05"],
+  ["OE_STALL_REPEAT_THRESHOLD", "5"],
+  ["OE_TAINT_TIERS", "dryrun"],
+  ["OE_MAX_TOOL_RESULT_CHARS", "5000"],
+  ["OE_SOURCE_SCOPED_TOOLS", "1"],
+  ["OE_GENERIC_READ_VERBS", "1"],
+  ["OE_WINDOW_TOPOLOGY", "1"],
+  ["OE_UNIFIED_REDRIVE", "0"],
+];
+
+console.log("2 — every deleted env mirror is inert, individually and all at once:");
+{
+  resetSettingsForTest();
+  eq(DELETED_ENV_MIRRORS.length, 48, "[2] the historical set is FORTY-EIGHT names (49 mirrors existed; OE_MODEL_STACK survives as a harness seam)");
+
+  const shipped = at({});
+  const all: NodeJS.ProcessEnv = {};
+  for (const [name, raw] of DELETED_ENV_MIRRORS) {
+    all[name] = raw;
+    eq(at({ [name]: raw }), shipped, `[2] ${name}=${JSON.stringify(raw)} moves NOTHING — the mirror is deleted, not merely undocumented`);
+  }
+  eq(at(all), shipped, "[2] 🔴 …and all forty-eight set AT ONCE are still byte-identical to an empty environment");
+
+  registerSettings(
+    defineSettings({
+      window: { topology: true },
+      taint: { tierMode: "dryrun" },
+      connectors: { dmOnly: false },
+      rotation: { turnBudget: 90 },
+    }),
   );
+  const configured = at({});
+  eq(at(all), configured, "[2] 🔴 …and they do not beat a REGISTERED value either — the committed file is the authority, which is the whole ticket");
+  eq(configured.window.topology, true, "[2] (the registered posture really is the non-default one, so the assertion above has teeth)");
+  eq(configured.rotation.turnBudget, 90, "[2] …including a rotation clock, the group OPE-409 unblocked");
   resetSettingsForTest();
 }
 
-console.log("2 — every read re-resolves (the kill switches depend on it):");
-{
-  const seq = [
-    at({ OE_TAINT_TIERS: "dryrun" }).taint.tierMode,
-    at({ OE_TAINT_TIERS: "enforce" }).taint.tierMode,
-    at({ OE_TAINT_TIERS: "dryrun" }).taint.tierMode,
-    at({}).taint.tierMode,
-  ];
-  eq(seq, ["dryrun", "enforced", "dryrun", "enforced"], "[2] four reads in one process track the env — no module-level cache");
-
-  const prev = process.env[OE_WINDOW_TOPOLOGY_ENV];
-  try {
-    process.env[OE_WINDOW_TOPOLOGY_ENV] = "1";
-    ok(windowTopologyEnabled(), "[2] the legacy resolver sees a mid-process env change too (it reads process.env by default)");
-    process.env[OE_WINDOW_TOPOLOGY_ENV] = "0";
-    ok(!windowTopologyEnabled(), "[2] …and back again");
-  } finally {
-    if (prev === undefined) delete process.env[OE_WINDOW_TOPOLOGY_ENV];
-    else process.env[OE_WINDOW_TOPOLOGY_ENV] = prev;
-  }
-}
-
-console.log("3 — every parser's vocabulary is byte-for-byte what it replaced:");
-
-for (const raw of ["1", "true", "yes", "on", "TRUE", "  On  "]) {
-  eq(at({ OE_WINDOW_TOPOLOGY: raw }).window.topology, true, `[3] OE_WINDOW_TOPOLOGY=${JSON.stringify(raw)} arms (case/whitespace-insensitive)`);
-}
-for (const raw of ["0", "false", "no", "off", "OFF", " false "]) {
-  eq(at({ OE_WINDOW_TOPOLOGY: raw }).window.topology, false, `[3] OE_WINDOW_TOPOLOGY=${JSON.stringify(raw)} disarms`);
-}
-for (const raw of ["", "   ", "maybe", "2", "enabled", "null", "undefined"]) {
-  eq(
-    at({ OE_WINDOW_TOPOLOGY: raw }).window.topology,
-    SETTINGS.window.topology.shipped,
-    `[3] OE_WINDOW_TOPOLOGY=${JSON.stringify(raw)} is out of vocabulary ⇒ defers (a typo never silently widens the blast radius)`,
-  );
-}
-
-for (const [label, envName, read] of [
-  ["delegation.oneshotAgent", OE_ONESHOT_AGENT_ENV, (e: NodeJS.ProcessEnv) => at(e).delegation.oneshotAgent],
-  ["connectors.userPrincipal", OE_CONNECTOR_USER_PRINCIPAL_ENV, (e: NodeJS.ProcessEnv) => at(e).connectors.userPrincipal],
-  ["connectors.opTiering", OE_CONNECTOR_OP_TIERING_ENV, (e: NodeJS.ProcessEnv) => at(e).connectors.opTiering],
-  ["connectors.linkSetVault", OE_CONNECTOR_LINKSET_VAULT_ENV, (e: NodeJS.ProcessEnv) => at(e).connectors.linkSetVault],
-] as const) {
-  for (const raw of ["", "0", "false", "off", "no", " OFF "]) {
-    eq(read({ [envName]: raw }), false, `[3] ${label}: ${envName}=${JSON.stringify(raw)} is an off spelling`);
-  }
-  for (const raw of ["1", "true", "on", "yes", "anything"]) {
-    eq(read({ [envName]: raw }), true, `[3] ${label}: ${envName}=${JSON.stringify(raw)} is ON (anything not an off spelling arms)`);
-  }
-}
-
-eq(at({}).connectors.dmOnly, true, "[3] connectors.dmOnly: unset ⇒ the wall is UP (a security default fails closed)");
-eq(at({ OE_CONNECTOR_DM_ONLY: "" }).connectors.dmOnly, true, "[3] connectors.dmOnly: blank ⇒ still UP");
-for (const raw of ["0", "false", "off", " OFF "]) {
-  eq(at({ OE_CONNECTOR_DM_ONLY: raw }).connectors.dmOnly, false, `[3] connectors.dmOnly: ${JSON.stringify(raw)} disarms the wall`);
-}
-eq(
-  at({ OE_CONNECTOR_DM_ONLY: "no" }).connectors.dmOnly,
-  true,
-  '[3] 🔴 connectors.dmOnly does NOT honour "no" — an asymmetry against its siblings, PRESERVED deliberately: normalising it would change what an existing deployment\'s env means',
-);
-
-eq(at({}).bash.timeoutMs, 600_000, "[3] bash.timeoutMs: shipped default is 600s");
-for (const raw of ["0", "off", "false", " OFF "]) {
-  eq(at({ OE_BASH_TIMEOUT_MS: raw }).bash.timeoutMs, 0, `[3] bash.timeoutMs: ${JSON.stringify(raw)} disables the timeout entirely`);
-}
-eq(at({ OE_BASH_TIMEOUT_MS: "90000" }).bash.timeoutMs, 90_000, "[3] bash.timeoutMs: a positive integer applies");
-for (const raw of ["", "  ", "-5", "banana"]) {
-  eq(
-    at({ OE_BASH_TIMEOUT_MS: raw }).bash.timeoutMs,
-    600_000,
-    `[3] bash.timeoutMs: ${JSON.stringify(raw)} is unparseable ⇒ falls back (fail-safe — the guard stays ON)`,
-  );
-}
-
-eq(at({ OE_BASH_BACKGROUND_GUARD: "" }).bash.backgroundGuard, true, "[3] bash.backgroundGuard: blank stays armed");
-for (const raw of ["0", "off", "false"]) {
-  eq(at({ OE_BASH_BACKGROUND_GUARD: raw }).bash.backgroundGuard, false, `[3] bash.backgroundGuard: ${JSON.stringify(raw)} disarms`);
-}
-eq(at({ OE_BASH_BACKGROUND_GUARD: "no" }).bash.backgroundGuard, true, '[3] bash.backgroundGuard does not honour "no" either — same preserved asymmetry');
-
-eq(at({ OE_SANDBOX_STOP_AFTER_TURN: "0" }).sandbox.stopAfterTurn, false, "[3] sandbox.stopAfterTurn: exactly \"0\" disables");
-eq(
-  at({ OE_SANDBOX_STOP_AFTER_TURN: " 0 " }).sandbox.stopAfterTurn,
-  true,
-  '[3] 🔴 sandbox.stopAfterTurn does NOT trim — " 0 " is not "0", exactly as before the migration',
-);
-eq(at({ OE_SANDBOX_STOP_AFTER_TURN: "false" }).sandbox.stopAfterTurn, true, '[3] sandbox.stopAfterTurn: "false" is NOT an off spelling here');
-
-eq(at({}).sandbox.extendMaxMinutes, 120, "[3] sandbox.extendMaxMinutes: shipped 120");
-eq(at({ OE_SANDBOX_EXTEND_MAX_MIN: "45.9" }).sandbox.extendMaxMinutes, 45, "[3] sandbox.extendMaxMinutes: fractional input floors");
-for (const raw of ["0", "-1", "banana", ""]) {
-  eq(at({ OE_SANDBOX_EXTEND_MAX_MIN: raw }).sandbox.extendMaxMinutes, 120, `[3] sandbox.extendMaxMinutes: ${JSON.stringify(raw)} ⇒ default`);
-}
-eq(at({}).skills.domainSkillCap, 50, "[3] skills.domainSkillCap: shipped 50");
-eq(at({ OE_DOMAIN_SKILL_CAP: "12" }).skills.domainSkillCap, 12, "[3] skills.domainSkillCap: a positive integer applies");
-for (const raw of ["0", "-3", "lots", ""]) {
-  eq(at({ OE_DOMAIN_SKILL_CAP: raw }).skills.domainSkillCap, 50, `[3] skills.domainSkillCap: ${JSON.stringify(raw)} ⇒ default`);
-}
-
-eq(at({}).audit.silences, false, "[3] audit.silences: shipped OFF (the ACTIONS-ONLY posture)");
-eq(at({ OE_AUDIT_SILENCES: "1" }).audit.silences, true, '[3] audit.silences: exactly "1" arms');
-for (const raw of ["", "0", "true", "yes", "on", " 1 "]) {
-  eq(at({ OE_AUDIT_SILENCES: raw }).audit.silences, false, `[3] 🔴 audit.silences: ${JSON.stringify(raw)} does NOT arm — not even "true"/" 1 " (no trim, no alias), exactly as before`);
-}
-
-eq(at({}).egress.enforce, true, "[3] egress.enforce: shipped ON (the firewall is up)");
-eq(at({ OE_EGRESS_ENFORCE: "0" }).egress.enforce, false, '[3] egress.enforce: exactly "0" drops to dry-run');
-for (const raw of ["", "false", "off", "no", " 0 "]) {
-  eq(at({ OE_EGRESS_ENFORCE: raw }).egress.enforce, true, `[3] 🔴 egress.enforce: ${JSON.stringify(raw)} does NOT disable enforcement — only "0" does, preserved verbatim`);
-}
-eq(at({}).egress.allowUnenforced, false, "[3] egress.allowUnenforced: shipped OFF (an unenforceable policy aborts the session)");
-eq(at({ OE_ALLOW_UNENFORCED_EGRESS: "1" }).egress.allowUnenforced, true, '[3] egress.allowUnenforced: exactly "1" accepts an unenforced run');
-for (const raw of ["", "0", "true", "yes"]) {
-  eq(at({ OE_ALLOW_UNENFORCED_EGRESS: raw }).egress.allowUnenforced, false, `[3] egress.allowUnenforced: ${JSON.stringify(raw)} does not accept it`);
-}
-
-eq(at({}).window.unifiedRedrive, true, "[3] window.unifiedRedrive: shipped ON (catch-and-correct is the safe default)");
-for (const raw of ["0", "false", "no", "off", " OFF "]) {
-  eq(at({ OE_UNIFIED_REDRIVE: raw }).window.unifiedRedrive, false, `[3] window.unifiedRedrive: ${JSON.stringify(raw)} turns the correction off`);
-}
-eq(
-  at({ OE_UNIFIED_REDRIVE: "" }).window.unifiedRedrive,
-  true,
-  '[3] 🔴 window.unifiedRedrive treats BLANK as ON — unlike its wide-vocabulary siblings, because the old resolver defaulted the raw value to "" and compared only the four off spellings',
-);
-
-for (const [label, envName, read] of [
-  ["tools.sourceScopedMount", "OE_SOURCE_SCOPED_TOOLS", (e: NodeJS.ProcessEnv) => at(e).tools.sourceScopedMount],
-  ["tools.genericReadVerbs", "OE_GENERIC_READ_VERBS", (e: NodeJS.ProcessEnv) => at(e).tools.genericReadVerbs],
-] as const) {
-  eq(read({}), false, `[3] ${label}: shipped OFF (flag-off is byte-identical to the historical guard)`);
-  for (const raw of ["", "0", "false", "off", "no", " NO "]) {
-    eq(read({ [envName]: raw }), false, `[3] ${label}: ${envName}=${JSON.stringify(raw)} is an off spelling (blank included)`);
-  }
-  for (const raw of ["1", "true", "on", "stage1"]) {
-    eq(read({ [envName]: raw }), true, `[3] ${label}: ${envName}=${JSON.stringify(raw)} arms (anything not an off spelling)`);
-  }
-}
-
-eq(at({}).tools.maxResultChars, 120_000, "[3] tools.maxResultChars: shipped 120k");
-eq(at({ OE_MAX_TOOL_RESULT_CHARS: "5000" }).tools.maxResultChars, 5_000, "[3] tools.maxResultChars: a positive integer applies");
-eq(at({ OE_MAX_TOOL_RESULT_CHARS: "9000rubbish" }).tools.maxResultChars, 9_000, "[3] 🔴 tools.maxResultChars uses parseInt, so a trailing-garbage value still parses its prefix — preserved");
-for (const raw of ["", "0", "-1", "banana"]) {
-  eq(at({ OE_MAX_TOOL_RESULT_CHARS: raw }).tools.maxResultChars, 120_000, `[3] tools.maxResultChars: ${JSON.stringify(raw)} ⇒ default`);
-}
-
-eq(at({}).stall.repeatThreshold, 3, "[3] stall.repeatThreshold: shipped 3");
-eq(at({ OE_STALL_REPEAT_THRESHOLD: "5" }).stall.repeatThreshold, 5, "[3] stall.repeatThreshold: a positive integer applies");
-for (const raw of ["0", "off", "false", " OFF "]) {
-  eq(at({ OE_STALL_REPEAT_THRESHOLD: raw }).stall.repeatThreshold, 0, `[3] stall.repeatThreshold: ${JSON.stringify(raw)} DISABLES the guard (0 is a value, not a rejection)`);
-}
-for (const raw of ["", "  ", "-2", "garbage"]) {
-  eq(at({ OE_STALL_REPEAT_THRESHOLD: raw }).stall.repeatThreshold, 3, `[3] stall.repeatThreshold: ${JSON.stringify(raw)} ⇒ default (fail-safe: the guard stays ON)`);
-}
-
-for (const [label, envName, shipped, read] of [
-  ["approvals.ttlHours", "OE_APPROVAL_TTL_HOURS", 24, (e: NodeJS.ProcessEnv) => at(e).approvals.ttlHours],
-  ["approvals.sessionTtlHours", "OE_PR_SESSION_APPROVAL_TTL_HOURS", 24, (e: NodeJS.ProcessEnv) => at(e).approvals.sessionTtlHours],
-  ["approvals.checkpointTtlHours", "OE_CHECKPOINT_TTL_HOURS", 24, (e: NodeJS.ProcessEnv) => at(e).approvals.checkpointTtlHours],
-  ["spend.usageEventsTtlDays", "OE_USAGE_EVENTS_TTL_DAYS", 90, (e: NodeJS.ProcessEnv) => at(e).spend.usageEventsTtlDays],
-  ["spend.sandboxMemoryGiB", "OE_SANDBOX_MEMORY_GIB", 4, (e: NodeJS.ProcessEnv) => at(e).spend.sandboxMemoryGiB],
-  ["spend.sandboxGiBHourUsd", "OE_SANDBOX_GIB_HOUR_USD", 0.0212, (e: NodeJS.ProcessEnv) => at(e).spend.sandboxGiBHourUsd],
-] as const) {
-  eq(read({}), shipped, `[3] ${label}: shipped ${shipped}`);
-  eq(read({ [envName]: "12" }), 12, `[3] ${label}: a positive number applies`);
-  eq(read({ [envName]: "0.5" }), 0.5, `[3] 🔴 ${label} does NOT floor — a fractional override was always honoured`);
-  eq(read({ [envName]: " 12 " }), 12, `[3] ${label}: Number() tolerates padding, so a padded value still applies`);
-  for (const raw of ["", "  ", "0", "-4", "banana"]) {
-    eq(read({ [envName]: raw }), shipped, `[3] ${label}: ${JSON.stringify(raw)} ⇒ default (garbage, zero and negatives all mean "not configured")`);
-  }
-}
-
-for (const [label, envName, read] of [
-  ["routines.eventMaxFanout", "OE_EVENT_MAX_FANOUT", (e: NodeJS.ProcessEnv) => at(e).routines.eventMaxFanout],
-  ["routines.maxConcurrency", "OE_ROUTINE_MAX_CONCURRENCY", (e: NodeJS.ProcessEnv) => at(e).routines.maxConcurrency],
-] as const) {
-  eq(read({}), 3, `[3] ${label}: shipped 3`);
-  eq(read({ [envName]: "7" }), 7, `[3] ${label}: a whole positive number applies`);
-  for (const raw of ["2.5", "0", "-1", "", "many"]) {
-    eq(read({ [envName]: raw }), 3, `[3] 🔴 ${label}: ${JSON.stringify(raw)} ⇒ default — a FRACTION is refused here, not floored`);
-  }
-}
-
-for (const [label, envName, shipped, read] of [
-  ["routines.jobMaxFires", "OE_JOB_MAX_FIRES", 200, (e: NodeJS.ProcessEnv) => at(e).routines.jobMaxFires],
-  ["routines.jobMaxDays", "OE_JOB_MAX_DAYS", 7, (e: NodeJS.ProcessEnv) => at(e).routines.jobMaxDays],
-] as const) {
-  eq(read({}), shipped, `[3] ${label}: shipped ${shipped}`);
-  eq(read({ [envName]: "12" }), 12, `[3] ${label}: a positive number applies`);
-  eq(read({ [envName]: "12.9" }), 12, `[3] 🔴 ${label} FLOORS a fraction (its sibling fan-out caps refuse one) — both conventions preserved`);
-  for (const raw of ["0", "-1", "", "lots"]) {
-    eq(read({ [envName]: raw }), shipped, `[3] ${label}: ${JSON.stringify(raw)} ⇒ default`);
-  }
-}
-
-eq(at({}).governance.floorTtlMs, 900_000, "[3] governance.floorTtlMs: shipped 15 min");
-eq(at({ OE_GOVERNANCE_FLOOR_TTL_MS: "60000" }).governance.floorTtlMs, 60_000, "[3] governance.floorTtlMs: a positive number applies");
-eq(
-  at({ OE_GOVERNANCE_FLOOR_TTL_MS: "-1" }).governance.floorTtlMs,
-  -1,
-  "[3] 🔴 governance.floorTtlMs HONOURS a negative (which disables the memo) — `Number(raw) || default` never guarded the sign, and preserving that is the no-op",
-);
-for (const raw of ["", "0", "  ", "banana"]) {
-  eq(at({ OE_GOVERNANCE_FLOOR_TTL_MS: raw }).governance.floorTtlMs, 900_000, `[3] governance.floorTtlMs: ${JSON.stringify(raw)} ⇒ default (0 is falsy under \`||\`)`);
-}
-
-eq(at({}).agent.sessionInputTokenBudget, 30_000_000, "[3] agent.sessionInputTokenBudget: shipped 30M (under the hosted 40M hard kill)");
-eq(at({}).agent.compactionThresholdPercent, 0.5, "[3] agent.compactionThresholdPercent: shipped 0.5");
-eq(at({ OE_SESSION_INPUT_TOKEN_BUDGET: "20000000" }).agent.sessionInputTokenBudget, 20_000_000, "[3] agent.sessionInputTokenBudget: a positive number applies");
-eq(at({ OE_COMPACTION_THRESHOLD_PERCENT: "0.7" }).agent.compactionThresholdPercent, 0.7, "[3] agent.compactionThresholdPercent: a fraction applies");
-for (const raw of ["", "0", "loads"]) {
-  eq(at({ OE_SESSION_INPUT_TOKEN_BUDGET: raw }).agent.sessionInputTokenBudget, 30_000_000, `[3] agent.sessionInputTokenBudget: ${JSON.stringify(raw)} ⇒ default`);
-  eq(at({ OE_COMPACTION_THRESHOLD_PERCENT: raw }).agent.compactionThresholdPercent, 0.5, `[3] agent.compactionThresholdPercent: ${JSON.stringify(raw)} ⇒ default`);
-}
-eq(
-  at({ OE_SESSION_INPUT_TOKEN_BUDGET: "-1" }).agent.sessionInputTokenBudget,
-  -1,
-  "[3] 🔴 agent.sessionInputTokenBudget HONOURS a negative — the resolver was `Number(raw) || 30_000_000`, which only rejects 0/NaN. Its own comment claimed 'non-positive falls back' and was WRONG about negatives; the behaviour is preserved and the comment corrected, not the other way round",
-);
-eq(at({ OE_COMPACTION_THRESHOLD_PERCENT: "-1" }).agent.compactionThresholdPercent, -1, "[3] …and the compaction threshold has the identical hole, likewise preserved");
-
-eq(at({}).rotation.quietGapHours, 24, "[3] rotation.quietGapHours: shipped 24h");
-eq(at({}).rotation.tokenBudget, 4_000_000, "[3] rotation.tokenBudget: shipped 4M (OPE-345 demoted it from primary; the number did not move)");
-eq(at({}).rotation.turnBudget, 60, "[3] rotation.turnBudget: shipped 60 (derived from the ~85-turn workflow event wall)");
-eq(at({ OE_SUPERVISOR_ROTATE_QUIET_GAP_HOURS: "6" }).rotation.quietGapHours, 6, "[3] rotation.quietGapHours: a positive number applies");
-for (const raw of ["", "0", "junk"]) {
-  eq(at({ OE_SUPERVISOR_ROTATE_QUIET_GAP_HOURS: raw }).rotation.quietGapHours, 24, `[3] rotation.quietGapHours: ${JSON.stringify(raw)} ⇒ default`);
-  eq(at({ OE_SUPERVISOR_ROTATE_TOKEN_BUDGET: raw }).rotation.tokenBudget, 4_000_000, `[3] rotation.tokenBudget: ${JSON.stringify(raw)} ⇒ default`);
-  eq(at({ OE_SUPERVISOR_ROTATE_TURN_BUDGET: raw }).rotation.turnBudget, 60, `[3] rotation.turnBudget: ${JSON.stringify(raw)} ⇒ default`);
-}
-eq(at({}).rotation.expiryDays, 7, "[3] rotation.expiryDays: shipped 7d");
-eq(at({ OE_SUPERVISOR_ROTATE_EXPIRY_DAYS: "30" }).rotation.expiryDays, 30, "[3] rotation.expiryDays: a positive number applies");
-eq(at({ OE_SUPERVISOR_ROTATE_EXPIRY_DAYS: "0" }).rotation.expiryDays, 0, "[3] 🔴 rotation.expiryDays keeps 0 as a VALUE (⇒ the expiry trigger is disabled), not as 'unset' — unlike every sibling clock");
-eq(at({ OE_SUPERVISOR_ROTATE_EXPIRY_DAYS: "-1" }).rotation.expiryDays, -1, "[3] …and a negative likewise disables");
-for (const raw of ["", "   ", "soon"]) {
-  eq(at({ OE_SUPERVISOR_ROTATE_EXPIRY_DAYS: raw }).rotation.expiryDays, 7, `[3] rotation.expiryDays: ${JSON.stringify(raw)} ⇒ the shipped 7 (a typo must never silently DISABLE a trigger)`);
-}
-
-eq(at({}).sandbox.timeoutMs, 30 * 60 * 1000, "[3] sandbox.timeoutMs: shipped 30 min");
-eq(at({}).sandbox.snapshotExpirationMs, 7 * 24 * 60 * 60 * 1000, "[3] sandbox.snapshotExpirationMs: shipped 7 days");
-for (const [label, envName, shipped, read] of [
-  ["sandbox.timeoutMs", "OE_SANDBOX_TIMEOUT_MS", 30 * 60 * 1000, (e: NodeJS.ProcessEnv) => at(e).sandbox.timeoutMs],
-  ["sandbox.snapshotExpirationMs", "OE_SANDBOX_SNAPSHOT_EXPIRATION_MS", 7 * 24 * 60 * 60 * 1000, (e: NodeJS.ProcessEnv) => at(e).sandbox.snapshotExpirationMs],
-] as const) {
-  eq(read({ [envName]: "60000" }), 60_000, `[3] ${label}: a positive number applies`);
-  eq(read({ [envName]: "60000.7" }), 60_000, `[3] ${label} FLOORS a fraction (the intFromEnv convention)`);
-  for (const raw of ["", "   ", "0", "-1", "banana"]) {
-    eq(read({ [envName]: raw }), shipped, `[3] ${label}: ${JSON.stringify(raw)} ⇒ default`);
-  }
-}
-eq(at({}).sandbox.image, "", "[3] sandbox.image: shipped empty ⇒ the backend's own default");
-eq(at({ OE_SANDBOX_IMAGE: "  node:24-alpine " }).sandbox.image, "node:24-alpine", "[3] sandbox.image IS trimmed (unlike sandbox.stopAfterTurn beside it) — preserved from the resolver it replaced");
-eq(at({ OE_SANDBOX_IMAGE: "   " }).sandbox.image, "", '[3] sandbox.image: whitespace trims to "" ⇒ no image, i.e. `docker({})`');
-
-eq(at({}).identity.dmTrustTtlMs, 300_000, "[3] identity.dmTrustTtlMs: shipped 5 min");
-eq(at({ OE_DM_TRUST_TTL_MS: "1000" }).identity.dmTrustTtlMs, 1_000, "[3] identity.dmTrustTtlMs: a positive number applies");
-eq(at({ OE_DM_TRUST_TTL_MS: "-1" }).identity.dmTrustTtlMs, -1, "[3] 🔴 identity.dmTrustTtlMs honours a negative (⇒ every lookup re-verifies, the SAFE direction for a trust cache) — preserved");
-for (const raw of ["", "0", "nope"]) {
-  eq(at({ OE_DM_TRUST_TTL_MS: raw }).identity.dmTrustTtlMs, 300_000, `[3] identity.dmTrustTtlMs: ${JSON.stringify(raw)} ⇒ default`);
-}
-
-eq(at({}).browser.enabled, false, "[3] browser.enabled: shipped OFF (the capability does not exist)");
-eq(at({ OE_AGENT_BROWSER: "1" }).browser.enabled, true, '[3] browser.enabled: exactly "1" arms');
-for (const raw of ["", "0", "true", "yes", "on", " 1 "]) {
-  eq(at({ OE_AGENT_BROWSER: raw }).browser.enabled, false, `[3] 🔴 browser.enabled: ${JSON.stringify(raw)} does NOT arm — not even "true"`);
-}
-eq(at({}).browser.domains, "", "[3] browser.domains: shipped empty ⇒ the capability cannot arm");
-eq(at({ OE_AGENT_BROWSER_DOMAINS: " Preview.Example.COM , localhost " }).browser.domains, " Preview.Example.COM , localhost ", "[3] browser.domains is verbatim — no trim, no split, no lowercase; the adapter parses and fail-closes");
-
-for (const [label, envName, read] of [
-  ["discord.autoThread", "OE_DISCORD_AUTO_THREAD", (e: NodeJS.ProcessEnv) => at(e).discord.autoThread],
-  ["discord.statusUx", "OE_DISCORD_STATUS_UX", (e: NodeJS.ProcessEnv) => at(e).discord.statusUx],
-] as const) {
-  eq(read({}), true, `[3] ${label}: shipped ON (a deployer opts OUT of the on-brand behaviour)`);
-  for (const raw of ["false", "0"]) {
-    eq(read({ [envName]: raw }), false, `[3] ${label}: ${JSON.stringify(raw)} disables`);
-  }
-  for (const raw of ["", "true", "1", "off", "no", "FALSE"]) {
-    eq(read({ [envName]: raw }), true, `[3] 🔴 ${label}: ${JSON.stringify(raw)} leaves it ON — the vocabulary is only "false"/"0", case-sensitive and untrimmed`);
-  }
-}
-
-eq(at({}).memory.dreamCandidateCap, 10, "[3] memory.dreamCandidateCap: shipped 10");
-eq(at({ OE_DREAM_MAX_CANDIDATES: "25" }).memory.dreamCandidateCap, 25, "[3] memory.dreamCandidateCap: a positive integer applies");
-eq(at({ OE_DREAM_MAX_CANDIDATES: "25x" }).memory.dreamCandidateCap, 25, "[3] 🔴 memory.dreamCandidateCap uses parseInt, so a trailing-garbage value parses its prefix — preserved");
-for (const raw of ["", "0", "-2", "x25"]) {
-  eq(at({ OE_DREAM_MAX_CANDIDATES: raw }).memory.dreamCandidateCap, 10, `[3] memory.dreamCandidateCap: ${JSON.stringify(raw)} ⇒ default`);
-}
-
-console.log("4 — the safety-asymmetric parsers resolve unrecognised input to the safer value:");
+console.log("3 — models.stack is the one env seam, and it is a harness seam:");
 {
   resetSettingsForTest();
-  registerSettings(defineSettings({ taint: { tierMode: "enforced" }, approvals: { judgeMode: "enforce" } }));
-  for (const raw of ["dryrun", "1", "true", "off", "banana"]) {
-    eq(
-      at({ OE_TAINT_TIERS: raw }).taint.tierMode,
-      "dryrun",
-      `[4] 🔴 OE_TAINT_TIERS=${JSON.stringify(raw)} ⇒ dryrun even though the deployment CONFIGURED "enforced" — an unrecognised value can only ever fail toward MORE marking`,
-    );
-  }
-  for (const raw of ["enforce", "enforced", " Enforced ", "ENFORCE"]) {
-    eq(at({ OE_TAINT_TIERS: raw }).taint.tierMode, "enforced", `[4] OE_TAINT_TIERS=${JSON.stringify(raw)} ⇒ enforced`);
-  }
-  eq(at({ OE_TAINT_TIERS: "" }).taint.tierMode, "enforced", "[4] OE_TAINT_TIERS blank defers to the configured value");
-  eq(
-    at({ OE_APPROVAL_JUDGE: "ENFORCE" }).approvals.judgeMode,
-    "off",
-    "[4] 🔴 the judge is CASE-SENSITIVE where the taint switch is not — `ENFORCE` does not arm it. Preserved, not tidied",
-  );
+  eq(at({}).models.stack, "american-closed", "[3] models.stack: the shipped alias");
+  eq(at({ OE_MODEL_STACK: "chinese-open" }).models.stack, "chinese-open", "[3] 🔴 OE_MODEL_STACK still selects a stack per RUN — the e2e:stack harness depends on this");
+  eq(at({ OE_MODEL_STACK: "   " }).models.stack, "american-closed", "[3] …a blank value falls through rather than naming an empty stack");
 
-  for (const raw of ["Enforce", "armed", "ON", "on", "1", "off", ""]) {
-    eq(
-      at({ OE_APPROVAL_JUDGE: raw }).approvals.judgeMode,
-      "off",
-      `[4] 🔴 OE_APPROVAL_JUDGE=${JSON.stringify(raw)} ⇒ OFF even though the deployment configured "enforce" — no unrecognised string can arm a verdict-applying judge`,
-    );
-  }
-  eq(at({ OE_APPROVAL_JUDGE: "shadow" }).approvals.judgeMode, "shadow", "[4] exactly `shadow` arms shadow");
-  eq(at({ OE_APPROVAL_JUDGE: "enforce" }).approvals.judgeMode, "enforce", "[4] exactly `enforce` arms enforcement");
+  registerSettings(defineSettings({ models: { stack: "registered-alias" } }));
+  eq(at({}).models.stack, "registered-alias", "[3] a registered override applies when the variable is unset");
+  eq(at({ OE_MODEL_STACK: "chinese-open" }).models.stack, "chinese-open", "[3] …and the harness seam still wins over it, which is what makes a per-run switch possible");
+  resetSettingsForTest();
+
+  eq([...settingEnvNames()], ["OE_MODEL_STACK"], "[3] 🔴 it is the ONLY env name the schema owns — the list is the ratchet scripts/settings-docs.ts guards");
+}
+
+console.log("4 — every read re-resolves (registration order and the test seam both depend on it):");
+{
+  resetSettingsForTest();
+  const seq: unknown[] = [];
+  seq.push(at({}).taint.tierMode);
+  registerSettings(defineSettings({ taint: { tierMode: "dryrun" } }));
+  seq.push(at({}).taint.tierMode);
+  registerSettings(defineSettings({ taint: { tierMode: "enforced" } }));
+  seq.push(at({}).taint.tierMode);
+  resetSettingsForTest();
+  seq.push(at({}).taint.tierMode);
+  eq(seq, ["enforced", "dryrun", "enforced", "enforced"], "[4] four reads in one process track registration — no module-level cache");
+
+  registerSettings(defineSettings({ window: { topology: true } }));
+  ok(windowTopologyEnabled(), "[4] the public resolver sees a mid-process registration too");
+  registerSettings(defineSettings({ window: { topology: false } }));
+  ok(!windowTopologyEnabled(), "[4] …and back again");
   resetSettingsForTest();
 }
 
@@ -411,10 +192,19 @@ console.log("5 — a bad override fails the boot, not a turn:");
   refuses(() => defineSettings({ skills: { domainSkillCap: 0 } }), "positive integer", "[5] an out-of-range value is refused by its validator");
   refuses(() => defineSettings({ sandbox: { extendMaxMinutes: -1 } }), "positive integer", "[5] …in both numeric settings");
   refuses(() => defineSettings({ agent: { compactionThresholdPercent: 1 } }), "strictly between 0 and 1", "[5] a compaction threshold of 1 is refused — a fraction of the window, not a percentage");
+  refuses(() => defineSettings({ models: { stack: "  " } }), "non-empty stack alias", "[5] a blank stack alias is refused");
+
+  refuses(() => defineSettings({ taint: { tierMode: "Enforced" } } as never), 'must be "enforced" or "dryrun"', "[5] 🔴 a mis-cased taint tier mode is refused rather than silently resolving");
+  refuses(() => defineSettings({ approvals: { judgeMode: "ENFORCE" } } as never), 'must be "off", "shadow" or "enforce"', "[5] 🔴 …and a mis-cased judge mode likewise — the old parser answered `off` here, which was fail-safe but silent");
+  refuses(() => defineSettings({ taint: { mode: "disabled" } } as never), 'must be "on" or "off"', "[5] …and taint.mode keeps the validator it has always had");
+
   ok(
     defineSettings({ bash: { timeoutMs: 0 } }).bash?.timeoutMs === 0,
     "[5] bash.timeoutMs accepts 0 — that is the documented 'disable the timeout' value, not an out-of-range one",
   );
+  ok(defineSettings({ stall: { repeatThreshold: 0 } }).stall?.repeatThreshold === 0, "[5] …and stall.repeatThreshold accepts 0 for the same reason");
+  ok(defineSettings({ rotation: { expiryDays: 0 } }).rotation?.expiryDays === 0, "[5] …and rotation.expiryDays, where 0 DISABLES the trigger rather than being out of range");
+  ok(defineSettings({ rotation: { expiryDays: -1 } }).rotation?.expiryDays === -1, "[5] …negatives too, same meaning");
   eq(defineSettings({}), {}, "[5] an EMPTY override object is valid — 'this deployment holds no opinion beyond the shipped ones'");
 
   ok(defineSettings({ rotation: { turnBudget: 90 } }).rotation?.turnBudget === 90, "[5] 🔴 a rotation override is ACCEPTED (OPE-409 removed the by-name refusal)");
@@ -422,26 +212,22 @@ console.log("5 — a bad override fails the boot, not a turn:");
   {
     resetSettingsForTest();
     registerSettings(defineSettings({ rotation: { turnBudget: 90, quietGapHours: 6 } }));
-    eq(getSettings({}).rotation.turnBudget, 90, "[5] 🔴 …and it REACHES getSettings — the load-order defect OPE-409 closed");
-    eq(getSettings({}).rotation.quietGapHours, 6, "[5] …for every row in the group");
-    eq(
-      getSettings({ OE_SUPERVISOR_ROTATE_TURN_BUDGET: "120" }).rotation.turnBudget,
-      120,
-      "[5] …with the ordinary precedence on top: a recognised env value still beats the app override",
-    );
+    eq(at({}).rotation.turnBudget, 90, "[5] 🔴 …and it REACHES getSettings — the load-order defect OPE-409 closed");
+    eq(at({}).rotation.quietGapHours, 6, "[5] …for every row in the group");
     resetSettingsForTest();
   }
+  eq(at({}).rotation.turnBudget, 60, "[5] the shipped turn backstop is 60 — DERIVED from the ~85-turn workflow event wall, not nudged (see the spec's summary before changing it)");
   ok(
     settingDocs().filter((d) => d.path.startsWith("rotation.")).length === 4,
     "[5] all four rotation clocks reach the generated operator table",
   );
 }
 
-console.log("6 — the public resolvers are now schema-backed, with their names and shapes intact:");
+console.log("6 — the public resolvers are schema-backed, with their names and shapes intact:");
 {
   resetSettingsForTest();
   eq(WINDOW_TOPOLOGY_ENABLED, SETTINGS.window.topology.shipped, "[6] WINDOW_TOPOLOGY_ENABLED IS the schema's shipped default — one source, not two that can drift");
-  eq(WINDOW_TOPOLOGY_ENABLED, false, "[6] …and it is still FALSE (the open-source posture pin, unchanged by the migration)");
+  eq(WINDOW_TOPOLOGY_ENABLED, false, "[6] …and it is still FALSE (the open-source posture pin)");
   eq(DEFAULT_BASH_TIMEOUT_MS, 600_000, "[6] DEFAULT_BASH_TIMEOUT_MS still exports 600s from the schema");
   eq(DEFAULT_DOMAIN_SKILL_CAP, 50, "[6] DEFAULT_DOMAIN_SKILL_CAP still exports 50 from the schema");
   eq(DEFAULT_MAX_RESULT_CHARS, SETTINGS.tools.maxResultChars.shipped, "[6] DEFAULT_MAX_RESULT_CHARS IS the schema's shipped cap — one source");
@@ -449,57 +235,61 @@ console.log("6 — the public resolvers are now schema-backed, with their names 
   eq(DEFAULT_JOB_MAX_DAYS, SETTINGS.routines.jobMaxDays.shipped, "[6] DEFAULT_JOB_MAX_DAYS IS the schema's shipped grace — one source");
   eq(DEFAULT_JOB_MAX_FIRES, SETTINGS.routines.jobMaxFires.shipped, "[6] DEFAULT_JOB_MAX_FIRES IS the schema's shipped cap — one source");
   eq(DEFAULT_CANDIDATE_CAP, SETTINGS.memory.dreamCandidateCap.shipped, "[6] DEFAULT_CANDIDATE_CAP IS the schema's shipped cap — one source");
-  eq(DEFAULT_JOB_MAX_FIRES, 200, "[6] …and the derived 200 (>168 hourly fires in the default week) is unchanged by the migration");
-  eq(OE_WINDOW_TOPOLOGY_ENV, "OE_WINDOW_TOPOLOGY", "[6] the env-var-name constants are stable (docs and tests name these strings)");
-  eq(OE_ONESHOT_AGENT_ENV, "OE_ONESHOT_AGENT", "[6] …OE_ONESHOT_AGENT");
-  eq(OE_CONNECTOR_DM_ONLY_ENV, "OE_CONNECTOR_DM_ONLY", "[6] …OE_CONNECTOR_DM_ONLY");
-  eq(OE_CONNECTOR_USER_PRINCIPAL_ENV, "OE_CONNECTOR_USER_PRINCIPAL", "[6] …OE_CONNECTOR_USER_PRINCIPAL");
-  eq(OE_CONNECTOR_OP_TIERING_ENV, "OE_CONNECTOR_OP_TIERING", "[6] …OE_CONNECTOR_OP_TIERING");
-  eq(OE_CONNECTOR_LINKSET_VAULT_ENV, "OE_CONNECTOR_LINKSET_VAULT", "[6] …OE_CONNECTOR_LINKSET_VAULT");
+  eq(DEFAULT_JOB_MAX_FIRES, 200, "[6] …and the derived 200 (>168 hourly fires in the default week) is unchanged");
 
-  ok(!connectorUserPrincipalEnabled({}), "[6] connectorUserPrincipalEnabled({}) — the injected-env affordance survives the move");
-  ok(connectorUserPrincipalEnabled({ OE_CONNECTOR_USER_PRINCIPAL: "1" }), "[6] …and honours the injected value");
-  ok(!connectorOpTieringEnabled({}), "[6] connectorOpTieringEnabled({}) is off by default");
-  ok(!connectorLinkSetVaultEnabled({}), "[6] connectorLinkSetVaultEnabled({}) is off by default");
-  ok(directoryLinkSetVaultArmed({ OE_CONNECTOR_LINKSET_VAULT: "1" }), "[6] directoryLinkSetVaultArmed still reads the vault flag alone");
-  ok(!directoryLinkSetVaultArmed({ OE_CONNECTOR_LINKSET_VAULT: "0" }), "[6] …and an off spelling is not armed");
+  ok(!windowTopologyEnabled(), "[6] windowTopologyEnabled() ⇒ shipped OFF");
+  ok(oneshotAgentEnabled(), "[6] oneshotAgentEnabled() ⇒ shipped ON");
+  eq(taintTierMode(), "enforced", "[6] taintTierMode() ⇒ shipped enforced");
+  eq(approvalJudgeMode(), "off", "[6] approvalJudgeMode() ⇒ shipped off");
+  ok(connectorDmOnlyEnabled(), "[6] connectorDmOnlyEnabled() ⇒ shipped ON (the wall is up)");
+  ok(!connectorUserPrincipalEnabled(), "[6] connectorUserPrincipalEnabled() ⇒ shipped OFF");
+  ok(!connectorOpTieringEnabled(), "[6] connectorOpTieringEnabled() ⇒ shipped OFF");
+  ok(!connectorLinkSetVaultEnabled(), "[6] connectorLinkSetVaultEnabled() ⇒ shipped OFF");
+  ok(!directoryLinkSetVaultArmed(), "[6] directoryLinkSetVaultArmed() ⇒ shipped OFF (the C2.4 guard alone)");
+  eq(bashTimeoutMs(), 600_000, "[6] bashTimeoutMs() ⇒ shipped 600s");
+  ok(backgroundGuardEnabled(), "[6] backgroundGuardEnabled() ⇒ shipped ON");
+  eq(domainSkillCap(), 50, "[6] domainSkillCap() ⇒ shipped 50");
+  ok(!auditSilencesEnabled(), "[6] auditSilencesEnabled() ⇒ shipped OFF");
+  ok(redriveEnabled(), "[6] redriveEnabled() ⇒ shipped ON");
+  ok(!sourceScopedToolsEnabled(), "[6] sourceScopedToolsEnabled() ⇒ shipped OFF");
+  ok(!genericReadVerbsEnabled(), "[6] genericReadVerbsEnabled() ⇒ shipped OFF");
+  eq(maxResultChars(), 120_000, "[6] maxResultChars() ⇒ shipped 120k");
+  eq(stallThreshold(), 3, "[6] stallThreshold() ⇒ shipped 3");
+  eq(checkpointTtlHours(), 24, "[6] checkpointTtlHours() ⇒ shipped 24h");
+  eq(usageEventsTtlDays(), 90, "[6] usageEventsTtlDays() ⇒ shipped 90d");
+  eq(sandboxMemoryGiB(), 4, "[6] sandboxMemoryGiB() ⇒ shipped 4 GiB");
+  eq(sandboxGiBHourUsd(), 0.0212, "[6] sandboxGiBHourUsd() ⇒ the twice-verified shipped rate");
+  eq(estimateSandboxCostUsd(3600), 4 * 0.0212, "[6] estimateSandboxCostUsd still composes the two through the schema");
+  eq(jobBoundMaxDays(), 7, "[6] jobBoundMaxDays() ⇒ shipped 7d");
+  eq(jobBoundMaxFires(), 200, "[6] jobBoundMaxFires() ⇒ shipped 200");
+  eq(dreamCandidateCap(), 10, "[6] dreamCandidateCap() ⇒ shipped 10");
+  eq(dmTrustTtlMs(), 300_000, "[6] dmTrustTtlMs() ⇒ shipped 5 min — the ONE resolver the surface trust caches share");
 
-  const saved: Record<string, string | undefined> = {};
-  const names = [...settingEnvNames()];
-  for (const k of names) {
-    saved[k] = process.env[k];
-    delete process.env[k];
-  }
-  try {
-    ok(!windowTopologyEnabled(), "[6] windowTopologyEnabled() ⇒ shipped OFF");
-    ok(oneshotAgentEnabled(), "[6] oneshotAgentEnabled() ⇒ shipped ON");
-    eq(taintTierMode(), "enforced", "[6] taintTierMode() ⇒ shipped enforced");
-    eq(approvalJudgeMode(), "off", "[6] approvalJudgeMode() ⇒ shipped off");
-    ok(connectorDmOnlyEnabled(), "[6] connectorDmOnlyEnabled() ⇒ shipped ON (the wall is up)");
-    eq(bashTimeoutMs(), 600_000, "[6] bashTimeoutMs() ⇒ shipped 600s");
-    ok(backgroundGuardEnabled(), "[6] backgroundGuardEnabled() ⇒ shipped ON");
-    eq(domainSkillCap(), 50, "[6] domainSkillCap() ⇒ shipped 50");
-    ok(!auditSilencesEnabled(), "[6] auditSilencesEnabled() ⇒ shipped OFF");
-    ok(redriveEnabled(), "[6] redriveEnabled() ⇒ shipped ON");
-    ok(!sourceScopedToolsEnabled(), "[6] sourceScopedToolsEnabled() ⇒ shipped OFF");
-    ok(!genericReadVerbsEnabled(), "[6] genericReadVerbsEnabled() ⇒ shipped OFF");
-    eq(maxResultChars(), 120_000, "[6] maxResultChars() ⇒ shipped 120k");
-    eq(stallThreshold(), 3, "[6] stallThreshold() ⇒ shipped 3");
-    eq(checkpointTtlHours(), 24, "[6] checkpointTtlHours() ⇒ shipped 24h");
-    eq(usageEventsTtlDays(), 90, "[6] usageEventsTtlDays() ⇒ shipped 90d");
-    eq(sandboxMemoryGiB(), 4, "[6] sandboxMemoryGiB() ⇒ shipped 4 GiB");
-    eq(sandboxGiBHourUsd(), 0.0212, "[6] sandboxGiBHourUsd() ⇒ the twice-verified shipped rate");
-    eq(estimateSandboxCostUsd(3600), 4 * 0.0212, "[6] estimateSandboxCostUsd still composes the two through the schema");
-    eq(jobBoundMaxDays(), 7, "[6] jobBoundMaxDays() ⇒ shipped 7d");
-    eq(jobBoundMaxFires(), 200, "[6] jobBoundMaxFires() ⇒ shipped 200");
-    eq(dreamCandidateCap(), 10, "[6] dreamCandidateCap() ⇒ shipped 10");
-    eq(dmTrustTtlMs(), 300_000, "[6] dmTrustTtlMs() ⇒ shipped 5 min — the ONE resolver the five surface trust caches now share");
-  } finally {
-    for (const k of names) {
-      if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
-    }
-  }
+  registerSettings(
+    defineSettings({
+      window: { topology: true },
+      delegation: { oneshotAgent: false },
+      taint: { tierMode: "dryrun" },
+      approvals: { judgeMode: "shadow" },
+      connectors: { dmOnly: false, userPrincipal: true, opTiering: true, linkSetVault: true },
+      bash: { timeoutMs: 1_000, backgroundGuard: false },
+      skills: { domainSkillCap: 7 },
+      audit: { silences: true },
+    }),
+  );
+  ok(windowTopologyEnabled(), "[6] …windowTopologyEnabled() follows a registered override");
+  ok(!oneshotAgentEnabled(), "[6] …oneshotAgentEnabled()");
+  eq(taintTierMode(), "dryrun", "[6] …taintTierMode()");
+  eq(approvalJudgeMode(), "shadow", "[6] …approvalJudgeMode()");
+  ok(!connectorDmOnlyEnabled(), "[6] …connectorDmOnlyEnabled()");
+  ok(connectorUserPrincipalEnabled(), "[6] …connectorUserPrincipalEnabled()");
+  ok(connectorOpTieringEnabled(), "[6] …connectorOpTieringEnabled()");
+  ok(directoryLinkSetVaultArmed(), "[6] …directoryLinkSetVaultArmed()");
+  eq(bashTimeoutMs(), 1_000, "[6] …bashTimeoutMs()");
+  ok(!backgroundGuardEnabled(), "[6] …backgroundGuardEnabled()");
+  eq(domainSkillCap(), 7, "[6] …domainSkillCap()");
+  ok(auditSilencesEnabled(), "[6] …auditSilencesEnabled()");
+  resetSettingsForTest();
 }
 
 console.log("7 — every setting reaches the generated operator table:");
@@ -518,24 +308,30 @@ console.log("7 — every setting reaches the generated operator table:");
     "[7] rows are emitted sorted — a deterministic generator, so a re-run rewrites byte-identical output",
   );
   eq(new Set(settingEnvNames()).size, settingEnvNames().length, "[7] no env var name is claimed by two settings");
+  eq(docs.filter((d) => d.env !== undefined).length, 1, "[7] 🔴 exactly ONE row renders an ops override; the other 51 render as code-only");
 }
 
 console.log("8 — a setting either has an env path or has none, with nothing in between:");
 {
+  let withEnvField = 0;
   for (const [group, specs] of Object.entries(SETTINGS as unknown as Record<string, Record<string, { env?: string; parseEnv?: unknown }>>)) {
     for (const [key, spec] of Object.entries(specs)) {
       ok(
         (spec.env === undefined) === (spec.parseEnv === undefined),
         `[8] ${group}.${key}: \`env\` and \`parseEnv\` are present together or absent together`,
       );
+      if (spec.env !== undefined) withEnvField++;
     }
   }
+  eq(withEnvField, 1, "[8] 🔴 exactly one spec declares an env path (models.stack). A second one is a ticket, not a tidy-up");
+  eq(SETTINGS.models.stack.env, "OE_MODEL_STACK", "[8] …and it is the harness seam, by name");
+
   resetSettingsForTest();
   eq(at({}).taint.mode, "on", "[8] taint.mode: the shipped default is ON");
   eq(at({ OE_TAINT_MODE: "off", OE_TAINT_TIERS: "off" }).taint.mode, "on", "[8] 🔴 no environment reaches `off` — there is no parser for a value to be read by");
   registerSettings(defineSettings({ taint: { mode: "off" } }));
   eq(at({}).taint.mode, "off", "[8] …a REGISTERED override does, which is the reviewed-diff route and the only one");
-  eq(at({ OE_TAINT_MODE: "on" }).taint.mode, "off", "[8] …and no environment pulls it back either: `env` is not consulted at all for a code-only spec");
+  eq(at({ OE_TAINT_MODE: "on" }).taint.mode, "off", "[8] …and no environment pulls it back either");
   resetSettingsForTest();
 }
 

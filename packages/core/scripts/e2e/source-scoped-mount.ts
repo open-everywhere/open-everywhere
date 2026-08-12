@@ -129,7 +129,7 @@ async function main(): Promise<void> {
   console.log(`=== SOURCE-SCOPED MOUNT · Stage 1 per-route e2e · run ${RUN} · ${new Date().toISOString()} ===`);
   console.log(`target=${TARGET || "(unset)"} domain=${DOMAIN} slack=${SLACK_SURFACE} github=${GITHUB_SURFACE}`);
   if (!sourceScopedToolsEnabled()) {
-    for (const id of ["S1", "S2"]) if (want(id)) record(id, "SKIP", "OE_SOURCE_SCOPED_TOOLS is not set in THIS process — flag-OFF the mount is byte-identical (arm-on-unified), nothing to narrow. Re-run with the flag on AND a target started with OE_SOURCE_SCOPED_TOOLS=1.");
+    for (const id of ["S1", "S2"]) if (want(id)) record(id, "SKIP", "tools.sourceScopedMount is not set in THIS process — flag-OFF the mount is byte-identical (arm-on-unified), nothing to narrow. Re-run with the flag on AND a target deployed with `tools.sourceScopedMount` armed");
     return summary();
   }
   if (!TARGET || !READ || !INJECT) {

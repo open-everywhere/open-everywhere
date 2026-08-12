@@ -1,9 +1,10 @@
 import readNotionPage from "../agent/tools/read_notion_page.js";
 import readNotionComments from "../agent/tools/read_notion_comments.js";
 import type { BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 delete process.env.OE_PLATFORM;
-delete process.env.OE_SOURCE_SCOPED_TOOLS;
+overrideSettingsForTest({ tools: { sourceScopedMount: false } });
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {

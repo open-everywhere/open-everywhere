@@ -8,11 +8,9 @@ import { assertConnectorDisclosure } from "./connector-disclosure.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
-import { SETTINGS, getSettings } from "../settings/settings.js";
+import { getSettings } from "../settings/settings.js";
 
 export class ConnectorScopeError extends Error {}
-
-export const OE_CONNECTOR_DM_ONLY_ENV: string = SETTINGS.connectors.dmOnly.env;
 
 export function connectorDmOnlyEnabled(): boolean {
   return getSettings().connectors.dmOnly;

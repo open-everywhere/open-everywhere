@@ -5,13 +5,14 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "oe-chat-audit-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_ORG", "OE_TRUST"]) {
   delete process.env[k];
 }
-delete process.env.OE_AUDIT_SILENCES;
+overrideSettingsForTest({ audit: { silences: false } });
 process.env.OE_EGRESS_SPOOF = "1";
 delete process.env.VERCEL;
 

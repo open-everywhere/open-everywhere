@@ -120,7 +120,7 @@ this sandbox: \`curl\`, \`git\`, \`npm\`, and anything else you shell out to.
 
 ## If \`enforcement\` is not "enforced"
 
-\`dry-run\` means the intended policy was computed but not applied (\`OE_EGRESS_ENFORCE=0\`);
+\`dry-run\` means the intended policy was computed but not applied (\`egress.enforce: false\`);
 \`unenforced\` means the backend refused it and the operator accepted that. In both cases the
 list is what the operator INTENDS you to reach. Stay inside it, and say so if you notice you
 did not have to.

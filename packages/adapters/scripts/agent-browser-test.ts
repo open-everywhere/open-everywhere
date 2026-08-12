@@ -17,6 +17,8 @@ import {
   resolveBrowserKit,
   extraEgressHosts,
   resetExtraEgressHostsForTest,
+  overrideSettingsForTest,
+  resetSettingsForTest,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 let n = 0;
@@ -25,13 +27,11 @@ const ok = (cond: boolean, label: string) => {
   n++;
 };
 
-const ENV_KEYS = ["OE_AGENT_BROWSER", "OE_AGENT_BROWSER_DOMAINS", "OE_PLATFORM"] as const;
-const saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
-function setEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>): void {
-  for (const k of ENV_KEYS) {
-    if (values[k] === undefined) delete process.env[k];
-    else process.env[k] = values[k];
-  }
+const saved = process.env.OE_PLATFORM;
+function setEnv(values: { enabled?: boolean; domains?: string; platform?: string }): void {
+  overrideSettingsForTest({ browser: { enabled: values.enabled ?? false, domains: values.domains ?? "" } });
+  if (values.platform === undefined) delete process.env.OE_PLATFORM;
+  else process.env.OE_PLATFORM = values.platform;
   resetAgentBrowserConfigForTest();
 }
 
@@ -40,20 +40,20 @@ function setEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>): voi
   ok(!agentBrowserEnabled(), "flag unset ⇒ disabled");
   ok(loadAgentBrowserConfig() === undefined, "flag unset ⇒ no config");
 
-  setEnv({ OE_AGENT_BROWSER_DOMAINS: "qa.example.com" });
+  setEnv({ domains: "qa.example.com" });
   ok(loadAgentBrowserConfig() === undefined, "domains without the flag ⇒ still no config (the flag is the master switch)");
 
-  setEnv({ OE_AGENT_BROWSER: "1" });
-  ok(agentBrowserEnabled(), "flag=1 ⇒ enabled");
+  setEnv({ enabled: true });
+  ok(agentBrowserEnabled(), "`browser.enabled: true` ⇒ enabled");
   ok(loadAgentBrowserConfig() === undefined, "flag on with NO domain allowlist ⇒ no config (fail closed)");
 
-  setEnv({ OE_AGENT_BROWSER: "1", OE_AGENT_BROWSER_DOMAINS: "  , ," });
+  setEnv({ enabled: true, domains: "  , ," });
   ok(loadAgentBrowserConfig() === undefined, "flag on with an empty allowlist ⇒ no config (fail closed)");
 
-  setEnv({ OE_AGENT_BROWSER: "1", OE_AGENT_BROWSER_DOMAINS: "qa.example.com,*.example.com" });
+  setEnv({ enabled: true, domains: "qa.example.com,*.example.com" });
   ok(loadAgentBrowserConfig() === undefined, "ANY invalid entry (wildcard) invalidates the whole config — no partial allowlist");
 
-  setEnv({ OE_AGENT_BROWSER: "1", OE_AGENT_BROWSER_DOMAINS: "localhost, QA.Example.com ,qa.example.com" });
+  setEnv({ enabled: true, domains: "localhost, QA.Example.com ,qa.example.com" });
   const cfg = loadAgentBrowserConfig();
   ok(cfg !== undefined && cfg.domains.join("|") === "localhost|qa.example.com", "valid list parses: trimmed, lowercased, deduped, order-preserving");
   ok(loadAgentBrowserConfig() === cfg, "config is memoized per process");
@@ -83,7 +83,7 @@ function setEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>): voi
 {
   resetBrowserToolkitForTest();
   resetExtraEgressHostsForTest();
-  setEnv({ OE_AGENT_BROWSER: "1", OE_AGENT_BROWSER_DOMAINS: "localhost,qa.example.com,preview.vercel.app" });
+  setEnv({ enabled: true, domains: "localhost,qa.example.com,preview.vercel.app" });
   const cfg = loadAgentBrowserConfig();
   ok(cfg !== undefined, "arming config parses");
   ok(registerAgentBrowser(cfg!) === true, "registerAgentBrowser arms (extension config binding took)");
@@ -162,13 +162,13 @@ function setEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>): voi
   setEnv({});
   ok(Object.keys(agentBrowserSandboxHooks()).length === 0, "flag off ⇒ hooks are {} (defineSandbox carries NO bootstrap/revalidationKey property)");
 
-  setEnv({ OE_AGENT_BROWSER: "1", OE_PLATFORM: "vercel" });
+  setEnv({ enabled: true, platform: "vercel" });
   ok(Object.keys(agentBrowserSandboxHooks()).length === 0, "flag on but no allowlist ⇒ no bake (fail closed)");
 
-  setEnv({ OE_AGENT_BROWSER: "1", OE_AGENT_BROWSER_DOMAINS: "localhost", OE_PLATFORM: "self-host" });
+  setEnv({ enabled: true, domains: "localhost", platform: "self-host" });
   ok(Object.keys(agentBrowserSandboxHooks()).length === 0, "armed but off-Vercel ⇒ no bake (self-host image has no Chromium — the Browser-QA MVP posture)");
 
-  setEnv({ OE_AGENT_BROWSER: "1", OE_AGENT_BROWSER_DOMAINS: "localhost", OE_PLATFORM: "vercel" });
+  setEnv({ enabled: true, domains: "localhost", platform: "vercel" });
   const installed: string[] = [];
   const hooks = agentBrowserSandboxHooks(async (sb) => {
     installed.push(sb.id);
@@ -196,10 +196,9 @@ function setEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>): voi
   ok(/agent-browser.*install/.test(commands[2] ?? ""), "install 3/3: `agent-browser install` fetches Chromium into the template");
 }
 
-for (const k of ENV_KEYS) {
-  if (saved[k] === undefined) delete process.env[k];
-  else process.env[k] = saved[k]!;
-}
+if (saved === undefined) delete process.env.OE_PLATFORM;
+else process.env.OE_PLATFORM = saved;
+resetSettingsForTest();
 resetAgentBrowserConfigForTest();
 resetBrowserToolkitForTest();
 resetExtraEgressHostsForTest();

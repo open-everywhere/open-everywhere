@@ -219,7 +219,7 @@ await db.close();
   );
   ok(vaulted.steps.every((s) => s.kind !== "confirm"), "…and no confirm step is emitted for it either");
   ok(
-    vaulted.warnings.some((w) => w.includes("OE_CONNECTOR_LINKSET_VAULT") && w.includes("SUPPRESSED") && w.includes("ALL link-sets")),
+    vaulted.warnings.some((w) => w.includes("connectors.linkSetVault") && w.includes("SUPPRESSED") && w.includes("ALL link-sets")),
     "…with ONE loud deployment-level warning naming the flag (the reason is a property of the deployment, not of any one set)",
   );
   ok(

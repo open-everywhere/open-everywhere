@@ -5,10 +5,11 @@ import { join } from "node:path";
 
 import type { ConsequenceTier } from "../agent/access/consequence.js";
 import type { BindableContext } from "../agent/identity/binding.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-window-capability-")), "ops.sqlite3");
 
-process.env.OE_ONESHOT_AGENT = "0";
+overrideSettingsForTest({ delegation: { oneshotAgent: false } });
 
 const { TOOL_CONSEQUENCE } = await import("../agent/access/consequence.js");
 const { WINDOW_GATED_TOOLS, withheldFromGrain, resolveWindowGated } = await import("../agent/access/window-gated.js");
@@ -34,13 +35,11 @@ const noThrow = (fn: () => unknown, label: string) => {
 };
 
 const withWindowEnv = <T>(fn: () => T): T => {
-  const prev = process.env.OE_WINDOW_TOPOLOGY;
-  process.env.OE_WINDOW_TOPOLOGY = "1";
+  overrideSettingsForTest({ window: { topology: true } });
   try {
     return fn();
   } finally {
-    if (prev === undefined) delete process.env.OE_WINDOW_TOPOLOGY;
-    else process.env.OE_WINDOW_TOPOLOGY = prev;
+    overrideSettingsForTest({ window: { topology: false } });
   }
 };
 
@@ -252,14 +251,12 @@ console.log("P0-e — assertWindowSourcesVouched direct unit tests:");
     "[P0-e] surface-grain vouch satisfies the exact source",
   );
   {
-    const prev = process.env.OE_TRUST;
     process.env.OE_TRUST = "internal";
     noThrow(
       () => assertWindowSourcesVouched([win(["github/acme/one", "notion/ws/pg"]), orgGate], []),
       "[P0-e] OE_TRUST=internal blanket satisfies all sources with an EMPTY vouch set",
     );
-    if (prev === undefined) delete process.env.OE_TRUST;
-    else process.env.OE_TRUST = prev;
+    delete process.env.OE_TRUST;
   }
   noThrow(
     () => assertWindowSourcesVouched([win(["slack/T1/C_X", "github/acme/one"]), orgGate], ["github/acme/one"]),

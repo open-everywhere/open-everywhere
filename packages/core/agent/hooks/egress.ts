@@ -63,7 +63,7 @@ export async function applyEgressPolicy(
     if (allowUnenforced) return { enforced: false, enforceError: String(err) };
     throw new Error(
       `egress enforcement failed — aborting the session rather than running on Eve's allow-all default ` +
-        `(set OE_ALLOW_UNENFORCED_EGRESS=1 to warn-and-continue in dev): ${String(err)}`,
+        `(set egress.allowUnenforced: true to warn-and-continue in dev): ${String(err)}`,
     );
   }
 }
@@ -207,7 +207,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
         );
       } else {
         publishState = "unenforced";
-        log(`enforce FAILED (backend rejected setNetworkPolicy) — running UNENFORCED (OE_ALLOW_UNENFORCED_EGRESS=1): ${enforceError}`);
+        log(`enforce FAILED (backend rejected setNetworkPolicy) — running UNENFORCED (egress.allowUnenforced: true): ${enforceError}`);
       }
     } catch (err) {
       const failure = err instanceof Error ? err : new Error(String(err));
@@ -222,7 +222,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
   } else {
     deps.rememberApplied(fingerprint);
     publishState = "dry-run";
-    log(`dry-run (OE_EGRESS_ENFORCE=0) [${phase} · ${reason}]: ${summary} for ${scopeKey}`);
+    log(`dry-run (egress.enforce: false) [${phase} · ${reason}]: ${summary} for ${scopeKey}`);
   }
 
   if (publishState !== null && deps.publish) {

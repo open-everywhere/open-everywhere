@@ -52,10 +52,10 @@ async function t1aAsync(): Promise<void> {
       if (calls.some((c) => c.name === "agent")) {
         return record("T1a", "FAIL", `the model CALLED agent (session ${sid}) but NO task.spawned row landed for wake ${wakeId} — the execute refused/errored (window-token attr absent?) or the self-dispatch route failed (OE_SPAWN_DISPATCH_SECRET / OE_PUBLIC_BASE_URL); read the action.result error in the transcript.`);
       }
-      return record("T1a", "SKIP", `the seat replied (session ${sid}, tools=[${[...new Set(calls.map((c) => c.name))].join(",") || "none"}]) without invoking agent — the model did not choose agent(async) this turn (delegation is model-dependent), or the flag was off. Re-run with OE_ONESHOT_AGENT=1.`);
+      return record("T1a", "SKIP", `the seat replied (session ${sid}, tools=[${[...new Set(calls.map((c) => c.name))].join(",") || "none"}]) without invoking agent — the model did not choose agent(async) this turn (delegation is model-dependent), or the flag was off. Re-run with delegation.oneshotAgent`);
     }
   }
-  record("T1a", "SKIP", `no task.spawned row (and no reply) for wake ${wakeId} within ${TIMEOUT_MS}ms — the model did not choose agent(async) this turn (delegation is model-dependent), OR the target was not started with OE_ONESHOT_AGENT=1 (agent is then absent). Re-run with the flag ON.${auditReadFailed() ? " NOTE: at least one audit READ failed during the poll — this SKIP may be an audit-route observability failure, not model behaviour." : ""}`);
+  record("T1a", "SKIP", `no task.spawned row (and no reply) for wake ${wakeId} within ${TIMEOUT_MS}ms — the model did not choose agent(async) this turn (delegation is model-dependent), OR the target was not started with delegation.oneshotAgent (agent is then absent). Re-run with the flag ON.${auditReadFailed() ? " NOTE: at least one audit READ failed during the poll — this SKIP may be an audit-route observability failure, not model behaviour." : ""}`);
 }
 
 async function t1cFile(): Promise<void> {
@@ -88,17 +88,17 @@ async function t1cFile(): Promise<void> {
         if (calls.some((c) => c.name === "agent")) {
           return record("T1c", "FAIL", `the model CALLED agent (session ${sid}) but NO task.spawned row landed for wake ${wakeId} — the execute refused/errored or the self-dispatch route failed; read the action.result error in the transcript.`);
         }
-        return record("T1c", "SKIP", `the seat replied (session ${sid}, tools=[${[...new Set(calls.map((c) => c.name))].join(",") || "none"}]) without delegating the file ask — the model did not choose agent this turn (model-dependent), or the flag was off. Re-run with OE_ONESHOT_AGENT=1.`);
+        return record("T1c", "SKIP", `the seat replied (session ${sid}, tools=[${[...new Set(calls.map((c) => c.name))].join(",") || "none"}]) without delegating the file ask — the model did not choose agent this turn (model-dependent), or the flag was off. Re-run with delegation.oneshotAgent`);
       }
     }
   }
-  record("T1c", "SKIP", `no task.spawned/post_file (and no reply) for wake ${wakeId} within ${TIMEOUT_MS}ms — the model did not delegate the file ask this turn (model-dependent), OR the target was not started with OE_ONESHOT_AGENT=1.${auditReadFailed() ? " NOTE: an audit READ failed during the poll — this SKIP may be an observability failure, not model behaviour." : ""}`);
+  record("T1c", "SKIP", `no task.spawned/post_file (and no reply) for wake ${wakeId} within ${TIMEOUT_MS}ms — the model did not delegate the file ask this turn (model-dependent), OR the target was not started with delegation.oneshotAgent${auditReadFailed() ? " NOTE: an audit READ failed during the poll — this SKIP may be an observability failure, not model behaviour." : ""}`);
 }
 
 async function main(): Promise<void> {
   console.log(`agent-delegation e2e — target=${TARGET || "(none)"} org=${ORG} domain=${DOMAIN} surface=${SURFACE}`);
   if (!TARGET || !READ || !INJECT) {
-    for (const id of ["T1a", "T1c"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN / E2E_CONTROL_INJECT_TOKEN — the delegation e2e needs the live spoofed-ingest target started with OE_ONESHOT_AGENT=1");
+    for (const id of ["T1a", "T1c"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN / E2E_CONTROL_INJECT_TOKEN — the delegation e2e needs the live spoofed-ingest target deployed with `delegation.oneshotAgent` armed");
   } else {
     if (want("T1a")) await t1aAsync();
     if (want("T1c")) await t1cFile();

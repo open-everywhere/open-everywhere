@@ -4,12 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 registerSlackFixtureMapper();
 
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-dm-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-delete process.env.OE_CONNECTOR_DM_ONLY;
+overrideSettingsForTest({ connectors: { dmOnly: true } });
 delete process.env.OE_ORG;
 process.env.OE_PLATFORM = "slack";
 
@@ -69,11 +70,11 @@ async function refusal(name: string, auth: unknown): Promise<string> {
 }
 
 ok(scope.connectorDmOnlyEnabled(), "OE_CONNECTOR_DM_ONLY unset -> wall ON (security default)");
-process.env.OE_CONNECTOR_DM_ONLY = "";
+overrideSettingsForTest({ connectors: { dmOnly: true } });
 ok(scope.connectorDmOnlyEnabled(), "OE_CONNECTOR_DM_ONLY empty -> wall still ON");
-process.env.OE_CONNECTOR_DM_ONLY = "0";
+overrideSettingsForTest({ connectors: { dmOnly: false } });
 ok(!scope.connectorDmOnlyEnabled(), 'OE_CONNECTOR_DM_ONLY="0" -> wall off (explicit disarm only)');
-delete process.env.OE_CONNECTOR_DM_ONLY;
+overrideSettingsForTest({ connectors: { dmOnly: true } });
 
 {
   const msg = await refusal("notion", channelAuth);
@@ -120,14 +121,14 @@ delete process.env.OE_CONNECTOR_DM_ONLY;
 }
 
 {
-  process.env.OE_CONNECTOR_DM_ONLY = "0";
+  overrideSettingsForTest({ connectors: { dmOnly: false } });
   const msg = await refusal("notion", channelAuth);
   ok(msg === "", "OE_CONNECTOR_DM_ONLY=0 -> a granted channel surface passes (legacy test-deployment path)");
   const rows = await readAudit({ org: "default", action: "connector.use" });
   ok(rows.some((r) => r.detail?.mode === "channel"), "disarmed-wall channel pass is still audited as connector.use");
   const denied = await refusal("not-a-connection", channelAuth);
   ok(denied.includes("not granted"), "disarming the wall does NOT disarm the grant gate");
-  delete process.env.OE_CONNECTOR_DM_ONLY;
+  overrideSettingsForTest({ connectors: { dmOnly: true } });
 }
 
 rmSync(tmp, { recursive: true, force: true });

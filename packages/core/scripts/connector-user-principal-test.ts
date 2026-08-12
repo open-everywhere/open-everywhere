@@ -9,7 +9,6 @@ registerSlackFixtureMapper();
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-user-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-delete process.env.OE_CONNECTOR_DM_ONLY;
 delete process.env.OE_ORG;
 process.env.OE_PLATFORM = "slack";
 process.env.NOTION_API_KEY = "STATIC-TEAM-KEY";
@@ -45,10 +44,9 @@ registerConfig({
 const { userAwareProviderToken } = await import("../agent/connections/connector-auth.js");
 const {
   connectorUserPrincipalEnabled,
-  OE_CONNECTOR_USER_PRINCIPAL_ENV,
   connectorLinkSetVaultEnabled,
-  OE_CONNECTOR_LINKSET_VAULT_ENV,
 } = await import("../agent/connections/connector-flags.js");
+const { registerSettings, resetSettingsForTest } = await import("../agent/settings/settings.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { sharedVaultSubject, rawVaultSubject } = await import("../agent/identity/oauth-vault-share.js");
 const { setLinkSetHold, revokeLinkSet } = await import("../agent/identity/link-store.js");
@@ -146,11 +144,11 @@ function eveContextStorage(): AsyncLocalStorage<unknown> {
   return g[key] as AsyncLocalStorage<unknown>;
 }
 
-delete process.env[OE_CONNECTOR_USER_PRINCIPAL_ENV];
-ok(!connectorUserPrincipalEnabled(), "OE_CONNECTOR_USER_PRINCIPAL unset → OFF (default, flag-off byte-identical)");
-process.env[OE_CONNECTOR_USER_PRINCIPAL_ENV] = "1";
-ok(connectorUserPrincipalEnabled(), 'OE_CONNECTOR_USER_PRINCIPAL="1" → ON');
-delete process.env[OE_CONNECTOR_USER_PRINCIPAL_ENV];
+resetSettingsForTest();
+ok(!connectorUserPrincipalEnabled(), "connectors.userPrincipal unregistered → OFF (the shipped default, flag-off byte-identical)");
+registerSettings({ connectors: { userPrincipal: true } });
+ok(connectorUserPrincipalEnabled(), "connectors.userPrincipal: true → ON");
+resetSettingsForTest();
 
 {
   const m = makeMinter("ok");
@@ -208,17 +206,17 @@ await eveContextStorage().run(new FakeSession(), async () => {
 }
 
 {
-  process.env.OE_CONNECTOR_DM_ONLY = "0";
+  registerSettings({ connectors: { dmOnly: false } });
   const m = makeMinter("ok");
   const r = await getToken(channelAuth, m);
   ok(r.token === "STATIC-TEAM-KEY", "channel + wall OFF → falls through to the app fallback key (universe gate blocks user-oauth on a channel)");
   ok(m.calls.length === 0, "still no per-user mint on a channel even with the wall disarmed");
-  delete process.env.OE_CONNECTOR_DM_ONLY;
+  resetSettingsForTest();
 }
 
 {
-  delete process.env[OE_CONNECTOR_LINKSET_VAULT_ENV];
-  ok(!connectorLinkSetVaultEnabled(), "C.3: OE_CONNECTOR_LINKSET_VAULT unset → OFF (default, raw-principal keying)");
+  resetSettingsForTest();
+  ok(!connectorLinkSetVaultEnabled(), "C.3: connectors.linkSetVault unregistered → OFF (the shipped default, raw-principal keying)");
 
   const org = deploymentOrg();
   const store = getOperationalStore();
@@ -234,7 +232,7 @@ await eveContextStorage().run(new FakeSession(), async () => {
     ok(m.calls[0].id === RAW, "C.3: flag OFF → the caller OWN qualified raw subject even for a confirmed member (deliberate arming; qualified since OPE-286)");
   }
 
-  process.env[OE_CONNECTOR_LINKSET_VAULT_ENV] = "1";
+  registerSettings({ connectors: { linkSetVault: true } });
   {
     const m = makeMinter("ok");
     const r = await getToken(dmAuth, m);
@@ -267,7 +265,7 @@ await eveContextStorage().run(new FakeSession(), async () => {
     await getToken(dmAuth, m);
     ok(m.calls[0].id === RAW, "C.3: revoke link-set → severed account falls back to RAW subject (threat b)");
   }
-  delete process.env[OE_CONNECTOR_LINKSET_VAULT_ENV];
+  resetSettingsForTest();
 }
 
 rmSync(tmp, { recursive: true, force: true });

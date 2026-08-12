@@ -1609,7 +1609,7 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.gate(rows.length > 0, "audited silence: a github.no_reply/unified.no_reply row exists for the run (positive assertion of judged silence)");
       } else if (ctx.auditRead) {
         ctx.log(
-          "silence auditing off — prod is actions-only; leg-2's silence WINDOW carried the negative; set E2E_AUDIT_SILENCES=1 against an OE_AUDIT_SILENCES deployment to assert the positive no_reply row",
+          "silence auditing off — prod is actions-only; leg-2's silence WINDOW carried the negative; set E2E_AUDIT_SILENCES=1 against an audit.silences deployment to assert the positive no_reply row",
         );
       }
 
@@ -1727,7 +1727,7 @@ export const SCENARIOS: readonly Scenario[] = [
         } else {
           if (ctx.auditRead) {
             ctx.log(
-              "silence auditing off — prod is actions-only; asserting the silence WINDOW instead; set E2E_AUDIT_SILENCES=1 against an OE_AUDIT_SILENCES deployment to assert the positive no_reply row",
+              "silence auditing off — prod is actions-only; asserting the silence WINDOW instead; set E2E_AUDIT_SILENCES=1 against an audit.silences deployment to assert the positive no_reply row",
             );
           }
           await sleep(SILENCE_WINDOW);
@@ -1843,7 +1843,7 @@ export const SCENARIOS: readonly Scenario[] = [
       } else {
         if (ctx.auditRead) {
           ctx.log(
-            "silence auditing off — prod is actions-only; asserting the silence WINDOW instead; set E2E_AUDIT_SILENCES=1 against an OE_AUDIT_SILENCES deployment to assert the positive no_reply row",
+            "silence auditing off — prod is actions-only; asserting the silence WINDOW instead; set E2E_AUDIT_SILENCES=1 against an audit.silences deployment to assert the positive no_reply row",
           );
         }
         await sleep(SILENCE_WINDOW);
@@ -1942,7 +1942,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
 
       if (process.env.E2E_BROWSER_QA !== "1") {
-        ctx.log("browser-QA leg skipped — set E2E_BROWSER_QA=1 (and arm OE_AGENT_BROWSER + OE_AGENT_BROWSER_DOMAINS=…,localhost) to run the expensive sandbox-only agent-browser loop");
+        ctx.log("browser-QA leg skipped — set E2E_BROWSER_QA=1 (and arm browser.enabled + browser.domains=…,localhost) to run the expensive sandbox-only agent-browser loop");
       } else {
         const browserStart = new Date(Date.now() - 60_000).toISOString();
         const { ts: qaTs } = await slack.post(
@@ -2170,7 +2170,7 @@ export const SCENARIOS: readonly Scenario[] = [
           ctx.skip(
             `deployment reports domain "${domainName}" is NOT unified (unified:false — WINDOW_TOPOLOGY_ENABLED off and/or the domain's mode is not "unified"); ` +
               "flag-off is byte-identical per-container ambient, so the cross-container legs would test nothing new — " +
-              "arm OE_WINDOW_TOPOLOGY=1 (the WINDOW_TOPOLOGY_ENABLED code capability) + set the domain's mode to \"unified\" to run them",
+              "arm window.topology: true (the WINDOW_TOPOLOGY_ENABLED code capability) + set the domain's mode to \"unified\" to run them",
           );
         }
       } else {
@@ -2268,7 +2268,7 @@ export const SCENARIOS: readonly Scenario[] = [
       if (wire.unified !== true) {
         pending(
           `live-fixture-pending: deployment reports domain "${domainName}" is NOT unified (WINDOW_TOPOLOGY_ENABLED off and/or the domain's mode is not "unified") — ` +
-            "arm OE_WINDOW_TOPOLOGY=1 (the WINDOW_TOPOLOGY_ENABLED code capability) + set the domain's mode to \"unified\"",
+            "arm window.topology: true (the WINDOW_TOPOLOGY_ENABLED code capability) + set the domain's mode to \"unified\"",
         );
       }
       const ghKey = `github/${gh.repo}`;
@@ -2468,7 +2468,7 @@ export const SCENARIOS: readonly Scenario[] = [
       }
       if (drive.arm === "judge-allow") {
         throw new ScenarioSkip(
-          `the armed approval judge ALLOWED open_pull_request (approval.judge.verdict enforcedVerdict:"allow", resolvedBy "${drive.judge.resolvedBy ?? "?"}") so PR #${drive.prNumber} published with NO card — there was nothing to click "Approve for this session" on, so the OPE-53 grant→skip pair could not be exercised this run. The PR has been torn down. Re-run against a deployment where this verb resolves to ask (OE_APPROVAL_JUDGE off, or the verb unflipped) to cover the session-grant path.`,
+          `the armed approval judge ALLOWED open_pull_request (approval.judge.verdict enforcedVerdict:"allow", resolvedBy "${drive.judge.resolvedBy ?? "?"}") so PR #${drive.prNumber} published with NO card — there was nothing to click "Approve for this session" on, so the OPE-53 grant→skip pair could not be exercised this run. The PR has been torn down. Re-run against a deployment where this verb resolves to ask (approvals.judgeMode off, or the verb unflipped) to cover the session-grant path.`,
         );
       }
       if (ctx.auditRead) {
@@ -2846,7 +2846,7 @@ export const SCENARIOS: readonly Scenario[] = [
         "tier-split: the write is gated where the read was not (classifyConnectorOp's split, enforced live)",
       );
       ctx.log(
-        "tier-split: proves classifyConnectorOp gates writes but not reads at RUNTIME (not just in connector-op-tier-test.ts). Needs OE_CONNECTOR_OP_TIERING armed + a write-capable bound Notion credential.",
+        "tier-split: proves classifyConnectorOp gates writes but not reads at RUNTIME (not just in connector-op-tier-test.ts). Needs connectors.opTiering armed + a write-capable bound Notion credential.",
       );
     },
   },
@@ -3159,7 +3159,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       ctx.gate(
         chat.mode === "enforced",
-        "🔴 ARM A (hard): the row is stamped `mode: \"enforced\"` — the source-tier table is DECIDING on this deployment. `dryrun` here means OE_TAINT_TIERS is set to the kill-switch value in prod env, not that the code regressed",
+        "🔴 ARM A (hard): the row is stamped `mode: \"enforced\"` — the source-tier table is DECIDING on this deployment. `dryrun` here means taint.tierMode is set to the kill-switch value in prod env, not that the code regressed",
       );
       ctx.gate(
         chat.applied === true,

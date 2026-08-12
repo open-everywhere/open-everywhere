@@ -70,7 +70,7 @@ export default windowGated("create_skill", defineTool({
     const already = existing.some((s) => s.name === name);
     const cap = domainSkillCap();
     if (!already && existing.length >= cap) {
-      throw new Error(`Domain "${domain}" already has ${existing.length} skill(s) — the cap is ${cap} (OE_DOMAIN_SKILL_CAP). Delete one with delete_skill first.`);
+      throw new Error(`Domain "${domain}" already has ${existing.length} skill(s) — the cap is ${cap} (skills.domainSkillCap). Delete one with delete_skill first.`);
     }
 
     const binding = bindFrom(ctx);

@@ -182,7 +182,7 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     "posts connect OPTIONS (a Block Kit card on Slack, links on other surfaces) for a provider — same class as a reply. It stores no secret and grants nothing itself; the CONSEQUENTIAL acts (minting an org-level OAuth URL, opening the api-key intake) happen host-side at the CLICK, where standing is re-verified (connections/connector-card.ts) — the model is never in that loop, and org-level/personal options a requester can't use are OMITTED from the card, not shown-and-refused. resolveRole is read only to omit, never to refuse, so no in-tool gate",
   ),
   browser_tools: open(
-    "the resolver FILE that mounts the flag-gated agent-browser tool family (access/browser-toolkit.ts, OPE-43); mounts nothing under its own name. The injected browser_* tools are a runtime-injected family (the connector-op precedent): each is open on the bash rationale — in-sandbox execution whose reach is bounded by the OPERATOR's OE_AGENT_BROWSER_DOMAINS allowlist enforced twice (agent-browser containment + the egress firewall), never by this table",
+    "the resolver FILE that mounts the flag-gated agent-browser tool family (access/browser-toolkit.ts, OPE-43); mounts nothing under its own name. The injected browser_* tools are a runtime-injected family (the connector-op precedent): each is open on the bash rationale — in-sandbox execution whose reach is bounded by the OPERATOR's browser.domains allowlist enforced twice (agent-browser containment + the egress firewall), never by this table",
   ),
   post_file: {
     tier: "open",
@@ -244,7 +244,7 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   revoke_routine_permissions: open(
     "de-escalation only (OPE-152): withdraws a routine's STANDING permissions so it goes back to drawing an approval card for every gated action, leaving the routine itself running. There is no configuration in which it widens anything — after it runs the routine can do strictly less unattended — so gating it would put a confirmation in front of the brake pedal. It still REFUSES without a verified principal, for attribution (the routine.grants_revoked audit row names who withdrew them), and the grants it deletes were each minted by a human's click in the first place",
   ),
-  extend_workspace_time: open("extends this session's own sandbox window; capped (OE_SANDBOX_EXTEND_MAX_MIN) and audited"),
+  extend_workspace_time: open("extends this session's own sandbox window; capped (sandbox.extendMaxMinutes) and audited"),
   spawn_task: open(
     "delegation: mints an async thread-grain worker and dispatches to it, non-blocking. Escapes nothing this table doesn't re-gate INSIDE the child (egress + every L2 consequence gate fire again there); widens hands, not consequence, and delegation IS the standing seat's job — so open, fully audited (task.spawned). Taint is forwarded onto the child, not gated here",
   ),

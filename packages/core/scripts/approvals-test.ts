@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import type { PendingActionRow } from "../agent/approvals/types.js";
 import type { UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -662,8 +663,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   type WakeInput = Parameters<typeof dispatchApprovalDecisionWake>[0];
   const slackOrigin = (o: UnifiedWakeOrigin): Extract<UnifiedWakeOrigin, { platform: "slack" }> | null => (o.platform === "slack" ? o : null);
 
-  const prevTopology = process.env.OE_WINDOW_TOPOLOGY;
-  process.env.OE_WINDOW_TOPOLOGY = "1";
+  overrideSettingsForTest({ window: { topology: true } });
   try {
     const grain = supervisorGrainFor("slack/TW/C_WIN", getConfig().loadDomains());
     ok(grain.unified === true && grain.domainName === "win", "window setup: the win domain's channel resolves a unified grain keyed by the domain");
@@ -739,8 +739,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     );
     ok(wakes.length === 0, "decision wake: a payload missing team.id emits no wake (the surfaceKey can't be formed — fail-soft)");
   } finally {
-    if (prevTopology === undefined) delete process.env.OE_WINDOW_TOPOLOGY;
-    else process.env.OE_WINDOW_TOPOLOGY = prevTopology;
+    overrideSettingsForTest({ window: { topology: false } });
   }
 }
 
@@ -750,8 +749,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   const { supervisorGrainFor } = await import("../agent/channels/unified-supervisor.js");
   type WakeInput = Parameters<typeof dispatchApprovalDecisionWake>[0];
 
-  const prevTopology = process.env.OE_WINDOW_TOPOLOGY;
-  process.env.OE_WINDOW_TOPOLOGY = "1";
+  overrideSettingsForTest({ window: { topology: true } });
   try {
     const past = new Date(Date.now() - 60_000).toISOString();
     const spendArgs = (scopeKey: string, tokens: number) => JSON.stringify({ org: "sweepfb", scopeKey, level: "surface", monthlyTokens: tokens, currentCap: null });
@@ -835,8 +833,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     ok(dispatchAttempts === 1, "sweep feedback: the wake is still attempted after the notice threw (the two legs are independent)");
     ok((await store.getPendingAction("sweepthrow", "fb-throws"))?.status === "expired", "sweep feedback: the row is terminal despite both feedback legs failing");
   } finally {
-    if (prevTopology === undefined) delete process.env.OE_WINDOW_TOPOLOGY;
-    else process.env.OE_WINDOW_TOPOLOGY = prevTopology;
+    overrideSettingsForTest({ window: { topology: false } });
   }
 }
 

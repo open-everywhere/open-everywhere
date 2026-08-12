@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -16,7 +17,7 @@ const dir = join(tmpdir(), `open-everywhere-test-wake-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_ORG = "acme";
-process.env.OE_WINDOW_TOPOLOGY = "1";
+overrideSettingsForTest({ window: { topology: true } });
 delete process.env.OE_TEST_WAKE;
 delete process.env.OE_CONTROL_READ_TOKENS;
 delete process.env.OE_CONTROL_INJECT_TOKENS;
@@ -295,7 +296,7 @@ function soloBody(over: Record<string, unknown> = {}): Record<string, unknown> {
 }
 
 {
-  process.env.OE_WINDOW_TOPOLOGY = "1";
+  overrideSettingsForTest({ window: { topology: true } });
   useDomains(soloDomains);
   const soloGrain = supervisorGrainFor(SOLO_SURFACE, soloDomains);
   ok(soloGrain.registryKey === unifiedDomainSessionKey(SOLO_SURFACE), "solo grain keys the registry row by the surfaceKey windowId, not the domain");
@@ -306,7 +307,7 @@ function soloBody(over: Record<string, unknown> = {}): Record<string, unknown> {
 
 {
   captured.length = 0;
-  process.env.OE_WINDOW_TOPOLOGY = "1";
+  overrideSettingsForTest({ window: { topology: true } });
   useDomains(soloDomains);
   await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(SOLO_DOMAIN), unifiedSupervisorToken(SOLO_DOMAIN, Date.now()), new Date().toISOString());
   ok((await post(soloBody(), INJECT_SECRET)).status === 400, "solo domain with ONLY a domain-keyed row → 400 (the route reads the WINDOW's row, not the domain's)");
@@ -323,11 +324,11 @@ function soloBody(over: Record<string, unknown> = {}): Record<string, unknown> {
 
 {
   captured.length = 0;
-  process.env.OE_WINDOW_TOPOLOGY = "0";
+  overrideSettingsForTest({ window: { topology: false } });
   useDomains(soloDomains);
   ok((await post(soloBody(), INJECT_SECRET)).status === 400, "mode:solo but WINDOW_TOPOLOGY_ENABLED off → 400 (gate-off makes the mode inert)");
   ok(captured.length === 0, "no divert on any window-gate rejection");
-  process.env.OE_WINDOW_TOPOLOGY = "1";
+  overrideSettingsForTest({ window: { topology: true } });
 }
 
 {

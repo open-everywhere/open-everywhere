@@ -1,6 +1,7 @@
+
 process.env.OE_SQLITE_PATH = ":memory:";
-process.env.OE_DISCORD_AUTO_THREAD = "false";
-process.env.OE_DISCORD_STATUS_UX = "false";
+overrideSettingsForTest({ discord: { autoThread: false } });
+overrideSettingsForTest({ discord: { statusUx: false } });
 
 import assert from "node:assert/strict";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
@@ -9,6 +10,7 @@ import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
 import { defineDomain } from "@open-everywhere/core/agent/memory/domain.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
 import { WARM_SILENT_LIMIT } from "@open-everywhere/core/agent/channels/engagement.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 import {
   dispatchTurn,
   authForRelayMessage,

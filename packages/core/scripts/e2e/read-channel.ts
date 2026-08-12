@@ -108,7 +108,7 @@ async function g1(): Promise<void> {
   const calls = await toolNamesOf(sid, since);
   if (calls === null) return record("G1", "SKIP", `transcript fetch failed for session ${sid} — the mount cannot be observed this run. Render byte-identity + gate pinned offline (generic-read-verbs-test.ts).`);
   if (calls.includes("read_channel")) return record("G1", "PASS", `session ${sid} invoked the GENERIC read_channel for slack (the behaviour-preserving successor to read_slack_channel) and replied.`);
-  if (calls.includes("read_slack_channel")) return record("G1", "FAIL", `session ${sid} invoked read_slack_channel — the target was NOT started with OE_GENERIC_READ_VERBS=1 (the Slack-specific reader should have retired).`);
+  if (calls.includes("read_slack_channel")) return record("G1", "FAIL", `session ${sid} invoked read_slack_channel — the target was NOT started with tools.genericReadVerbs: true (the Slack-specific reader should have retired).`);
   record("G1", "SKIP", `session ${sid} replied but did not invoke read_channel (tools=[${[...new Set(calls)].join(",") || "none"}]) — the model chose not to read (mount presence can't be proven passively). Binding proof: the offline unit test.`);
 }
 
@@ -130,7 +130,7 @@ async function main(): Promise<void> {
   console.log(`=== GENERIC READ VERBS · Stage 2 per-route e2e · run ${RUN} · ${new Date().toISOString()} ===`);
   console.log(`target=${TARGET || "(unset)"} domain=${DOMAIN} slack=${SLACK_SURFACE} discord=${DISCORD_SURFACE || "(unset)"}`);
   if (!genericReadVerbsEnabled()) {
-    for (const id of ["G1", "G2"]) if (want(id)) record(id, "SKIP", "OE_GENERIC_READ_VERBS is not set in THIS process — flag-OFF the generic verbs are absent (read_slack_* is the reader). Re-run with the flag on AND a target started with OE_GENERIC_READ_VERBS=1.");
+    for (const id of ["G1", "G2"]) if (want(id)) record(id, "SKIP", "tools.genericReadVerbs is not set in THIS process — flag-OFF the generic verbs are absent (read_slack_* is the reader). Re-run with the flag on AND a target deployed with `tools.genericReadVerbs` armed");
     return summary();
   }
   if (!TARGET || !READ || !INJECT) {

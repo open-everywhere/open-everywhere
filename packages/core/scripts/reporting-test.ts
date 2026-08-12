@@ -46,6 +46,7 @@ import usageReportTool from "../agent/tools/usage_report.js";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { execTool } from "./_tool-exec.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 const PRICED_MODEL = builtInModelIds()[0];
 
@@ -107,8 +108,8 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 }
 
 {
-  delete process.env.OE_SANDBOX_MEMORY_GIB;
-  delete process.env.OE_SANDBOX_GIB_HOUR_USD;
+  overrideSettingsForTest({ spend: { sandboxMemoryGiB: 4 } });
+  overrideSettingsForTest({ spend: { sandboxGiBHourUsd: 0.0212 } });
   ok(sandboxMemoryGiB() === 4, "sandboxMemoryGiB: default is Vercel Sandbox's platform default (4 GiB)");
   ok(sandboxGiBHourUsd() === 0.0212, "sandboxGiBHourUsd: default is the verified Vercel rate");
   const oneHour = estimateSandboxCostUsd(3600);
@@ -116,11 +117,11 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   ok(estimateSandboxCostUsd(0) === 0, "estimateSandboxCostUsd: zero seconds -> $0, not undefined");
   ok(estimateSandboxCostUsd(-10) === 0, "estimateSandboxCostUsd: never goes negative on bad input");
 
-  process.env.OE_SANDBOX_MEMORY_GIB = "8";
-  process.env.OE_SANDBOX_GIB_HOUR_USD = "0.01";
+  overrideSettingsForTest({ spend: { sandboxMemoryGiB: 8 } });
+  overrideSettingsForTest({ spend: { sandboxGiBHourUsd: 0.01 } });
   ok(estimateSandboxCostUsd(3600) === 0.08, "estimateSandboxCostUsd: env overrides both the memory size and the rate");
-  delete process.env.OE_SANDBOX_MEMORY_GIB;
-  delete process.env.OE_SANDBOX_GIB_HOUR_USD;
+  overrideSettingsForTest({ spend: { sandboxMemoryGiB: 4 } });
+  overrideSettingsForTest({ spend: { sandboxGiBHourUsd: 0.0212 } });
 }
 
 {

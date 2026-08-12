@@ -20,7 +20,8 @@ import { discordReadAdapter, discordLinesFromRaw } from "@open-everywhere/provid
 import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
 import { teamsReadAdapter } from "@open-everywhere/provider-teams/agent/channels/teams-read.js";
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
-import { genericReadVerbsEnabled, OE_GENERIC_READ_VERBS_ENV } from "@open-everywhere/core/agent/access/source-scoped-mount.js";
+import { genericReadVerbsEnabled } from "@open-everywhere/core/agent/access/source-scoped-mount.js";
+import { overrideSettingsForTest, resetSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 import { ingestUntrusted } from "@open-everywhere/core/agent/access/untrusted.js";
 import { defineDomain } from "@open-everywhere/core/agent/memory/domain.js";
 import type { BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
@@ -147,13 +148,16 @@ registerReadAdapter(fakeSlackAdapter);
 }
 
 {
-  delete process.env[OE_GENERIC_READ_VERBS_ENV];
-  ok(genericReadVerbsEnabled() === false, "flag: OE_GENERIC_READ_VERBS unset ⇒ OFF (read_slack_* is the live reader, byte-identical)");
-  process.env[OE_GENERIC_READ_VERBS_ENV] = "1";
-  ok(genericReadVerbsEnabled() === true, "flag: OE_GENERIC_READ_VERBS=1 ⇒ ON (generic verbs mount, read_slack_* retire)");
-  process.env[OE_GENERIC_READ_VERBS_ENV] = "0";
-  ok(genericReadVerbsEnabled() === false, "flag: OE_GENERIC_READ_VERBS=0 ⇒ OFF (fail-soft convention)");
-  delete process.env[OE_GENERIC_READ_VERBS_ENV];
+  resetSettingsForTest();
+  ok(genericReadVerbsEnabled() === false, "flag: nothing registered ⇒ OFF (read_slack_* is the live reader, byte-identical)");
+  overrideSettingsForTest({ tools: { genericReadVerbs: true } });
+  ok(genericReadVerbsEnabled() === true, "flag: `tools.genericReadVerbs: true` ⇒ ON (generic verbs mount, read_slack_* retire)");
+  overrideSettingsForTest({ tools: { genericReadVerbs: false } });
+  ok(genericReadVerbsEnabled() === false, "flag: `tools.genericReadVerbs: false` ⇒ OFF");
+  process.env.OE_GENERIC_READ_VERBS = "1";
+  ok(genericReadVerbsEnabled() === false, "flag: 🔴 a stray OE_GENERIC_READ_VERBS=1 does NOT arm the generic verbs — the mirror is deleted (OPE-411)");
+  delete process.env.OE_GENERIC_READ_VERBS;
+  resetSettingsForTest();
 
   const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "../packages/core/agent/tools");
   const slackToolsDir = join(dirname(fileURLToPath(import.meta.url)), "../packages/providers/slack/agent/tools");

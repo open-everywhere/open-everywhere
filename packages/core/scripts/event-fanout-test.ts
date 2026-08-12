@@ -1,6 +1,7 @@
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -15,7 +16,7 @@ const dir = join(tmpdir(), `open-everywhere-event-fanout-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_ORG = "acme";
-delete process.env.OE_EVENT_MAX_FANOUT;
+overrideSettingsForTest({ routines: { eventMaxFanout: 3 } });
 
 const { registerSlackTestBridge } = await import("./_slack-test-stubs.js");
 const { registerRoutineDispatch, resolveRoutineTarget } = await import("../agent/schedules/routine-dispatch.js");
@@ -185,7 +186,7 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
 }
 
 {
-  process.env.OE_EVENT_MAX_FANOUT = "2";
+  overrideSettingsForTest({ routines: { eventMaxFanout: 2 } });
   const rs = [routine({ id: "r-1" }), routine({ id: "r-2" }), routine({ id: "r-3" })];
   const h = harness(rs);
   await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
@@ -196,7 +197,7 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
   ok(row.org === "acme" && row.platform === "slack" && row.workspace === "T1" && row.surface === "C1", "cap: the skip row is attributed to the SKIPPED routine's own partition");
   ok(row.detail?.["routineId"] === "r-3" && row.detail?.["reason"] === "fanout_cap", "cap: the skip row names the routine and the reason");
   ok(row.detail?.["cap"] === 2 && row.detail?.["matched"] === 3, "cap: the skip row records the cap and the match count");
-  delete process.env.OE_EVENT_MAX_FANOUT;
+  overrideSettingsForTest({ routines: { eventMaxFanout: 3 } });
 }
 
 {
@@ -206,15 +207,12 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
   ok(h.fired.length === 3, "cap: the default fan-out cap is 3 (mirrors the clock dispatcher's DEFAULT_MAX_CONCURRENCY)");
   ok(h.audited.length === 2, "cap: every over-cap match is audited, not just the first");
 
-  process.env.OE_EVENT_MAX_FANOUT = "not-a-number";
+  process.env.OE_EVENT_MAX_FANOUT = "1";
   const h2 = harness(rs);
   await fanOutDelivery(PR_BODY, "pull_request", undefined, h2.deps);
-  ok(h2.fired.length === 3, "cap: a non-numeric OE_EVENT_MAX_FANOUT falls back to the default");
-  process.env.OE_EVENT_MAX_FANOUT = "0";
-  const h3 = harness(rs);
-  await fanOutDelivery(PR_BODY, "pull_request", undefined, h3.deps);
-  ok(h3.fired.length === 3, "cap: a zero/negative OE_EVENT_MAX_FANOUT falls back to the default (never a silent total mute)");
+  ok(h2.fired.length === 3, "cap: a stray OE_EVENT_MAX_FANOUT=1 does NOT narrow the fan-out — the mirror is deleted (OPE-411)");
   delete process.env.OE_EVENT_MAX_FANOUT;
+  overrideSettingsForTest({ routines: { eventMaxFanout: 3 } });
 }
 
 {
@@ -360,7 +358,7 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
 }
 
 {
-  process.env.OE_EVENT_MAX_FANOUT = "1";
+  overrideSettingsForTest({ routines: { eventMaxFanout: 1 } });
   const rs = [routine({ id: "r-cap-ungranted", surfaceKey: "slack/T1/C2", target: { channelId: "C2" } }), routine({ id: "r-cap-granted" })];
   const h = {
     fired: [] as Fired[],
@@ -382,7 +380,7 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
   await fanOutDelivery(PR_BODY, "pull_request", undefined, deps);
   ok(h.fired.length === 1, "grant: the granted routine still fires with a cap of 1");
   ok(h.fired[0]!.auth.attributes[ROUTINE_MARKER.id] === "r-cap-granted", "grant: an UNGRANTED routine never consumes fan-out cap");
-  delete process.env.OE_EVENT_MAX_FANOUT;
+  overrideSettingsForTest({ routines: { eventMaxFanout: 3 } });
 }
 
 {
@@ -468,14 +466,14 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
   }
 
   {
-    process.env.OE_EVENT_MAX_FANOUT = "1";
+    overrideSettingsForTest({ routines: { eventMaxFanout: 1 } });
     const rs = [routine({ id: "r-stamp-cap1" }), routine({ id: "r-stamp-cap2" })];
     const h = stampHarness(rs);
     await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
     ok(h.fired.length === 1, "match stamp: with a cap of 1 exactly one of the two fires");
     ok(h.writes.length === 2, "OPE-184: BOTH matches stamp — the stamp is strictly BEFORE the fan-out cap");
     ok(h.writes.map((w) => w.id).join(",") === "r-stamp-cap1,r-stamp-cap2", "match stamp: …including the routine that was skipped as over-cap");
-    delete process.env.OE_EVENT_MAX_FANOUT;
+    overrideSettingsForTest({ routines: { eventMaxFanout: 3 } });
   }
 
   {

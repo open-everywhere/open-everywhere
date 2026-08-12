@@ -11,8 +11,8 @@ process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 process.env.OE_RELAY_SECRET = RELAY_SECRET;
 process.env.SLACK_SIGNING_SECRET = SLACK_SECRET;
 process.env.DISCORD_BOT_TOKEN = "sec-bot-token-never-real";
-delete process.env.OE_DISCORD_AUTO_THREAD;
-delete process.env.OE_DISCORD_STATUS_UX;
+overrideSettingsForTest({ discord: { autoThread: true } });
+overrideSettingsForTest({ discord: { statusUx: true } });
 delete process.env.DISCORD_PUBLIC_KEY;
 for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_ORG", "OE_TRUST"]) {
   delete process.env[k];
@@ -53,6 +53,7 @@ import type { BindableContext } from "@open-everywhere/core/agent/identity/bindi
 import type { Partition } from "@open-everywhere/core/agent/memory/partition.js";
 import type { PendingActionRow } from "@open-everywhere/core/agent/approvals/types.js";
 import type { ScenarioDriver } from "./discord-scenario-harness.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
 registerConfig({
   loadBundles: () => [],

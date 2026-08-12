@@ -2,6 +2,7 @@
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -16,10 +17,10 @@ const dir = join(tmpdir(), `open-everywhere-routine-bound-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_ORG = "acme";
-process.env.OE_ONESHOT_AGENT = "0";
-delete process.env.OE_WINDOW_TOPOLOGY;
-delete process.env.OE_JOB_MAX_FIRES;
-delete process.env.OE_JOB_MAX_DAYS;
+overrideSettingsForTest({ delegation: { oneshotAgent: false } });
+overrideSettingsForTest({ window: { topology: false } });
+overrideSettingsForTest({ routines: { jobMaxFires: 200 } });
+overrideSettingsForTest({ routines: { jobMaxDays: 7 } });
 
 const {
   DEFAULT_JOB_MAX_DAYS,
@@ -65,16 +66,15 @@ const MIN = 60_000;
 }
 
 {
-  ok(jobBoundMaxFires() === DEFAULT_JOB_MAX_FIRES && jobBoundMaxDays() === DEFAULT_JOB_MAX_DAYS, "unset env ⇒ the defaults");
-  process.env.OE_JOB_MAX_FIRES = "12";
-  process.env.OE_JOB_MAX_DAYS = "2";
-  ok(jobBoundMaxFires() === 12 && jobBoundMaxDays() === 2, "an operator can tighten (or widen) either dimension by env");
-  for (const bad of ["0", "-5", "banana", ""]) {
-    process.env.OE_JOB_MAX_FIRES = bad;
-    ok(jobBoundMaxFires() === DEFAULT_JOB_MAX_FIRES, `a garbage override (${JSON.stringify(bad)}) falls back to the default rather than minting a nonsense ceiling`);
-  }
+  ok(jobBoundMaxFires() === DEFAULT_JOB_MAX_FIRES && jobBoundMaxDays() === DEFAULT_JOB_MAX_DAYS, "nothing registered ⇒ the shipped defaults");
+  overrideSettingsForTest({ routines: { jobMaxFires: 12, jobMaxDays: 2 } });
+  ok(jobBoundMaxFires() === 12 && jobBoundMaxDays() === 2, "a deployment can tighten (or widen) either dimension in agent/settings.ts");
+  process.env.OE_JOB_MAX_FIRES = "999";
+  process.env.OE_JOB_MAX_DAYS = "999";
+  ok(jobBoundMaxFires() === 12 && jobBoundMaxDays() === 2, "🔴 a stray OE_JOB_MAX_FIRES/OE_JOB_MAX_DAYS cannot widen a bound the deployment declared — the mirrors are deleted (OPE-411)");
   delete process.env.OE_JOB_MAX_FIRES;
   delete process.env.OE_JOB_MAX_DAYS;
+  overrideSettingsForTest({ routines: { jobMaxFires: 200, jobMaxDays: 7 } });
 }
 
 {

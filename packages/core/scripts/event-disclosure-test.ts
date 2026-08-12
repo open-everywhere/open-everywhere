@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -20,7 +21,7 @@ const dir = join(tmpdir(), `open-everywhere-event-disclosure-test-${process.pid}
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_ORG = "acme";
-delete process.env.OE_EVENT_MAX_FANOUT;
+overrideSettingsForTest({ routines: { eventMaxFanout: 3 } });
 
 const { registerSlackTestBridge } = await import("./_slack-test-stubs.js");
 const { fanOutDelivery } = await import("../agent/routines/github-fanout.js");
@@ -226,7 +227,7 @@ function harness(routines: Routine[], rosters: Record<string, RoomRoster>, hydra
 }
 
 {
-  process.env.OE_EVENT_MAX_FANOUT = "1";
+  overrideSettingsForTest({ routines: { eventMaxFanout: 1 } });
   const h = harness(
     [
       routine({ id: "r-cap-guest", surfaceKey: "slack/T1/CEXT", target: { channelId: "CEXT" } }),
@@ -237,7 +238,7 @@ function harness(routines: Routine[], rosters: Record<string, RoomRoster>, hydra
   await fanOutDelivery(ISSUE_BODY, "issues", undefined, h.deps);
   ok(h.fired.length === 1, "cap: with cap=1, the WITHHELD routine does not consume the slot — the internal room still gets its fire");
   ok(h.skips("fanout_cap").length === 0, "cap: and nothing was dropped for being over cap");
-  delete process.env.OE_EVENT_MAX_FANOUT;
+  overrideSettingsForTest({ routines: { eventMaxFanout: 3 } });
 }
 
 {

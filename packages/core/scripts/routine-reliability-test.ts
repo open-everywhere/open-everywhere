@@ -2,6 +2,7 @@
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -16,8 +17,8 @@ const dir = join(tmpdir(), `open-everywhere-routine-reliability-${process.pid}`)
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_ORG = "acme";
-process.env.OE_ONESHOT_AGENT = "0";
-delete process.env.OE_WINDOW_TOPOLOGY;
+overrideSettingsForTest({ delegation: { oneshotAgent: false } });
+overrideSettingsForTest({ window: { topology: false } });
 
 const { computeNextRun, DISPATCH_TICK_MINUTES } = await import("../agent/routines/schedule.js");
 const { firesPerDay } = await import("../agent/spend/reporting.js");

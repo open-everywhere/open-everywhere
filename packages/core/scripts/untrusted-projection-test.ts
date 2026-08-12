@@ -7,8 +7,8 @@ import { pathToFileURL } from "node:url";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-untrusted-proj-")), "ops.sqlite3");
 delete process.env.OE_PLATFORM;
-delete process.env.OE_GENERIC_READ_VERBS;
-delete process.env.OE_SOURCE_SCOPED_TOOLS;
+overrideSettingsForTest({ tools: { genericReadVerbs: false } });
+overrideSettingsForTest({ tools: { sourceScopedMount: false } });
 
 import {
   projectToolSet,
@@ -18,6 +18,7 @@ import {
 } from "../agent/access/untrusted-projection.js";
 import { wrapUntrusted, UNTRUSTED_OPEN, UNTRUSTED_CLOSE, ingestUntrustedModelOutput } from "../agent/access/untrusted.js";
 import { preRegisterDynamicEntry } from "../agent/access/window-gated.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

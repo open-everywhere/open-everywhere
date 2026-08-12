@@ -9,6 +9,7 @@ import {
   type PushPolicyBody,
 } from "../agent/access/self-host-egress.js";
 import type { SandboxNetworkPolicy } from "eve/sandbox";
+import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -114,11 +115,17 @@ function fakeFetch(res: { ok: boolean; status: number; text?: string }): {
   ok(enforced.warn === undefined, "proxy configured → no boot warning");
   ok(enforced.info.includes("ENFORCED"), "proxy configured → info says egress ENFORCED");
 
-  const unenforced = selfHostEgressBootLog({ OE_ALLOW_UNENFORCED_EGRESS: "1" } as NodeJS.ProcessEnv);
+  overrideSettingsForTest({ egress: { allowUnenforced: true } });
+  const unenforced = selfHostEgressBootLog({} as NodeJS.ProcessEnv);
   ok(unenforced.warn !== undefined && unenforced.warn.includes("UNENFORCED"), "no proxy + hatch → loud UNENFORCED warn");
   ok(unenforced.info.includes("unenforced"), "no proxy + hatch → info says unenforced");
+  ok(
+    selfHostEgressBootLog({ OE_ALLOW_UNENFORCED_EGRESS: "1" } as NodeJS.ProcessEnv).warn?.includes("ABORT") !== true,
+    "…and the hatch is read from the SETTINGS, so the reading above was not an accident of the env argument",
+  );
+  resetSettingsForTest();
 
-  const willAbort = selfHostEgressBootLog({} as NodeJS.ProcessEnv);
+  const willAbort = selfHostEgressBootLog({ OE_ALLOW_UNENFORCED_EGRESS: "1" } as NodeJS.ProcessEnv);
   ok(willAbort.warn !== undefined && willAbort.warn.includes("ABORT"), "no proxy, no hatch → warn that sessions will ABORT");
   ok(willAbort.info.includes("none"), "no proxy, no hatch → info says posture = none");
 

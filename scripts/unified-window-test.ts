@@ -94,6 +94,7 @@ import { readAudit } from "@open-everywhere/core/agent/audit/audit.js";
 import replyTool from "@open-everywhere/core/agent/tools/reply.js";
 import readSlackChannel from "@open-everywhere/provider-slack/agent/tools/read_slack_channel.js";
 import type { RouteHandlerArgs } from "eve/channels";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -164,13 +165,11 @@ registerDiscordProvider();
 }
 
 const withGate = async <T>(on: boolean, fn: () => T | Promise<T>): Promise<T> => {
-  const prev = process.env.OE_WINDOW_TOPOLOGY;
-  process.env.OE_WINDOW_TOPOLOGY = on ? "1" : "0";
+  overrideSettingsForTest({ window: { topology: on } });
   try {
     return await fn();
   } finally {
-    if (prev === undefined) delete process.env.OE_WINDOW_TOPOLOGY;
-    else process.env.OE_WINDOW_TOPOLOGY = prev;
+    overrideSettingsForTest({ window: { topology: false } });
   }
 };
 
@@ -268,7 +267,7 @@ await withGate(false, () => {
   );
 });
 
-process.env.OE_WINDOW_TOPOLOGY = "1";
+overrideSettingsForTest({ window: { topology: true } });
 
 interface ReceivedWake {
   channel: unknown;
@@ -1005,7 +1004,7 @@ const store = getOperationalStore();
   );
 }
 
-process.env.OE_WINDOW_TOPOLOGY = "0";
+overrideSettingsForTest({ window: { topology: false } });
 {
   received.length = 0;
   baseWakes.length = 0;

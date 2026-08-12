@@ -1,6 +1,7 @@
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -1392,8 +1393,7 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   const ambientTwin = defineDomain({ name: "e2e-unified", channels: [A, B], ambientSupervisor: true });
   const org = defineDomain({ name: "org", match: "org" });
 
-  const prevGate = process.env.OE_WINDOW_TOPOLOGY;
-  delete process.env.OE_WINDOW_TOPOLOGY;
+  overrideSettingsForTest({ window: { topology: false } });
   try {
     for (const key of [A, B]) {
       const off = supervisorGrainFor(key, [fixture, org]);
@@ -1403,7 +1403,7 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
     }
     ok(supervisorGrainFor(A, [fixture, org]).unified === false, "gate OFF: a domain with mode set still plans per-container until the WINDOW_TOPOLOGY_ENABLED code capability is flipped ON");
 
-    process.env.OE_WINDOW_TOPOLOGY = "1";
+    overrideSettingsForTest({ window: { topology: true } });
     const onA = supervisorGrainFor(A, [fixture, org]);
     const onB = supervisorGrainFor(B, [fixture, org]);
     ok(
@@ -1415,8 +1415,7 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
       "gate ON: the fixture domain's session token is oe-dom:<domain>:oe-sup:g<n> (carries the :oe-sup:g infix so spend/rotation/model-routing detectors are unchanged)",
     );
   } finally {
-    if (prevGate === undefined) delete process.env.OE_WINDOW_TOPOLOGY;
-    else process.env.OE_WINDOW_TOPOLOGY = prevGate;
+    overrideSettingsForTest({ window: { topology: false } });
   }
 
   ok(!throws(() => assertUnifiedDomainTrust([fixture, org])), "the documented J-UNIFIED fixture passes assertUnifiedDomainTrust");

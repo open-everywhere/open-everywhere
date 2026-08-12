@@ -223,7 +223,7 @@ async function f6(store: OperationalStore | null): Promise<void> {
     if (!ok) {
       return record("F6", "FAIL", `store/decision mismatch: owner=${owner === taskToken}, owned→${routeOwned.kind}, other→${routeOther.kind}, stale→${routeStale.kind}, cleared=${cleared}, afterClear→${routeAfterClear.kind}`);
     }
-    record("F6", "PASS", `ownership routing store+decision hold e2e against the live store: owned thread→task (${taskToken.slice(0, 40)}…), unowned/other thread→standing, stale-generation→standing, clear→standing. Ingress wiring (§S2) is LIVE for Slack under OE_ONESHOT_AGENT: divertInboundToUnifiedWindow (channels/unified.ts) consults this same store per inbound single-window wake and dispatches an owned thread's message to the owner session's token (unit pack: test:s2-ingress). Other surfaces adopt by swapping their inbound divert call.`);
+    record("F6", "PASS", `ownership routing store+decision hold e2e against the live store: owned thread→task (${taskToken.slice(0, 40)}…), unowned/other thread→standing, stale-generation→standing, clear→standing. Ingress wiring (§S2) is LIVE for Slack under delegation.oneshotAgent: divertInboundToUnifiedWindow (channels/unified.ts) consults this same store per inbound single-window wake and dispatches an owned thread's message to the owner session's token (unit pack: test:s2-ingress). Other surfaces adopt by swapping their inbound divert call.`);
   } catch (e) {
     record("F6", "FAIL", `ownership store round-trip threw: ${(e as Error).message}`);
   }
@@ -256,7 +256,7 @@ async function f8(): Promise<void> {
 
 async function f9(): Promise<void> {
   if (!oneshotAgentEnabled()) {
-    return record("F9", "SKIP", "OE_ONESHOT_AGENT is not set in THIS process — spawn_thread_session is flag-gated absent. Re-run with the flag on AND a target started with OE_ONESHOT_AGENT=1.");
+    return record("F9", "SKIP", "delegation.oneshotAgent is not set in THIS process — spawn_thread_session is flag-gated absent. Re-run with the flag on AND a target deployed with `delegation.oneshotAgent` armed.");
   }
   const since = new Date().toISOString();
   const brief = `We'll be going back and forth in this thread for a while about the ${RUN} rollout — please open a lasting presence here to keep track, then say READY-${RUN}.`;
@@ -275,7 +275,7 @@ async function f9(): Promise<void> {
     if (calls?.some((c) => c.name === "spawn_thread_session")) {
       return record("F9", "FAIL", `the model CALLED spawn_thread_session (session ${sid}) but NO thread_seat.spawned row landed for wake ${wakeId} — the tool is mounted but its execute refused/errored; read the action.result error in transcript ${sid}.`);
     }
-    return record("F9", "SKIP", `no thread_seat.spawned row for wake ${wakeId} within ${REPLY_TIMEOUT_MS}ms${sid && calls ? ` (session ${sid} ran without invoking spawn_thread_session)` : calls === null && sid ? ` (session ${sid} joined but its transcript is unreadable — outcome UNVERIFIED)` : ""} — the model did not choose spawn_thread_session this turn (delegation is model-dependent), or the target was not started with OE_ONESHOT_AGENT=1. Re-run with the flag ON.`);
+    return record("F9", "SKIP", `no thread_seat.spawned row for wake ${wakeId} within ${REPLY_TIMEOUT_MS}ms${sid && calls ? ` (session ${sid} ran without invoking spawn_thread_session)` : calls === null && sid ? ` (session ${sid} joined but its transcript is unreadable — outcome UNVERIFIED)` : ""} — the model did not choose spawn_thread_session this turn (delegation is model-dependent), or the target was not started with delegation.oneshotAgent Re-run with the flag ON.`);
   }
   const seatId = dS(row, "seatId") ?? "";
   if (!isThreadSeatWindowToken(seatId)) {

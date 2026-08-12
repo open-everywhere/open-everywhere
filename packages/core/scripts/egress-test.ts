@@ -3,6 +3,7 @@ import { compileNetworkPolicy } from "../agent/access/egress.js";
 import { computeEgressPolicy, applyEgressPolicy } from "../agent/hooks/egress.js";
 import type { EffectiveAccess, ReachableHost } from "../agent/access/resolver.js";
 import type { Connection } from "../agent/access/bundle.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -114,7 +115,7 @@ const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: str
     threw = err;
   }
   ok(threw instanceof Error && threw.message.includes("aborting the session"), "apply failure without the escape hatch throws (aborts the session, NOT warn-and-continue)");
-  ok(threw instanceof Error && threw.message.includes("OE_ALLOW_UNENFORCED_EGRESS"), "abort error names the escape hatch");
+  ok(threw instanceof Error && threw.message.includes("egress.allowUnenforced"), "abort error names the escape hatch (the SETTING since OPE-411 — an operator told to set a deleted env var would be stuck)");
   ok(threw instanceof Error && threw.message.includes("backend rejected setNetworkPolicy"), "abort error carries the underlying cause");
 
   const degraded = await applyEgressPolicy(async () => {
@@ -289,7 +290,7 @@ const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: str
   }
 
   {
-    process.env.OE_EGRESS_ENFORCE = "0";
+    overrideSettingsForTest({ egress: { enforce: false } });
     try {
       let secret = "OLD";
       const r = rig(async () => ({ allow: { "api.acme.test": [{ transform: [{ headers: { authorization: `Bearer ${secret}` } }] }] } }));
@@ -301,7 +302,7 @@ const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: str
       await enforceEgress("turn.started", r.deps as never);
       ok(r.audits.filter((a) => a.action === "egress.policy").length === 2, "G1 dry-run: a CHANGED policy is still reported — dry-run is 'don't apply', not 'don't look'");
     } finally {
-      delete process.env.OE_EGRESS_ENFORCE;
+      overrideSettingsForTest({ egress: { enforce: true } });
     }
   }
 

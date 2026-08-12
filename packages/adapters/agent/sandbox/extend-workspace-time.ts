@@ -62,7 +62,7 @@ export default defineTool({
     if (extended.length === 0) {
       return "No workspace VM is currently running — nothing to extend. Your next command boots a fresh session with a full time window, so just proceed.";
     }
-    const clampNote = clampedTo !== input.minutes ? ` (requested ${input.minutes}, capped at ${clampedTo} by OE_SANDBOX_EXTEND_MAX_MIN)` : "";
+    const clampNote = clampedTo !== input.minutes ? ` (requested ${input.minutes}, capped at ${clampedTo} by sandbox.extendMaxMinutes)` : "";
     return `Extended the workspace lifetime by ${clampedTo} minutes${clampNote}. Start the long-running work now.`;
   },
 });

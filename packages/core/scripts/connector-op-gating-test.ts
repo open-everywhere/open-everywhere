@@ -1,7 +1,8 @@
-process.env.OE_CONNECTOR_OP_TIERING = "1";
+overrideSettingsForTest({ connectors: { opTiering: true } });
 
 import { assertBundlesValid, defineBundle, type Bundle } from "../agent/access/bundle.js";
 import { classifyConnectorOpTier, type ConnectorOpTier } from "../agent/access/consequence.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import {
   declaredConnectorOpRaise,
   effectiveConnectorOpConsequence,

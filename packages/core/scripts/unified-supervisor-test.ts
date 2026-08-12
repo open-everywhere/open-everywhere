@@ -40,6 +40,7 @@ import {
   assertPrincipalsValid,
 } from "../agent/identity/principals.js";
 import { unionPrincipals } from "../agent/identity/link-resolve.js";
+import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -55,16 +56,13 @@ const noThrow = (fn: () => unknown, label: string) => {
   n++;
 };
 
-const ENV = "OE_WINDOW_TOPOLOGY";
-const withEnv = <T>(val: string | undefined, fn: () => T): T => {
-  const prev = process.env[ENV];
-  if (val === undefined) delete process.env[ENV];
-  else process.env[ENV] = val;
+const withEnv = <T>(val: boolean | undefined, fn: () => T): T => {
+  if (val === undefined) resetSettingsForTest();
+  else overrideSettingsForTest({ window: { topology: val } });
   try {
     return fn();
   } finally {
-    if (prev === undefined) delete process.env[ENV];
-    else process.env[ENV] = prev;
+    resetSettingsForTest();
   }
 };
 
@@ -81,17 +79,17 @@ const orgNoGate = defineDomain({ name: "org", match: "org" });
 withEnv(undefined, () => {
   ok(windowedSupervisorEnabled(CH, [payments, orgNoGate]) === false, "gate OFF ⇒ not windowed (byte-identical per-container path)");
 });
-withEnv("0", () => ok(windowedSupervisorEnabled(CH, [payments, orgNoGate]) === false, "OE_WINDOW_TOPOLOGY=0 does not arm the gate"));
-withEnv("1", () => {
+withEnv(false, () => ok(windowedSupervisorEnabled(CH, [payments, orgNoGate]) === false, "`window.topology: false` does not arm the gate"));
+withEnv(true, () => {
   ok(windowedSupervisorEnabled(CH, [payments, orgNoGate]) === true, "gate ON + ambient explicit domain ⇒ windowed");
   ok(windowedSupervisorEnabled(GH, [payments, orgNoGate]) === true, "windowing applies to every channel in the domain");
   const noAmbient = defineDomain({ name: "x", channels: ["slack/T1/C_X"], mode: "unified" });
   ok(windowedSupervisorEnabled("slack/T1/C_X", [noAmbient, orgNoGate]) === false, "mode without ambientSupervisor ⇒ not windowed");
   ok(windowedSupervisorEnabled("slack/T1/C_ORPHAN", [payments, orgNoGate]) === false, "unassigned channel never windows");
 });
-withEnv("true", () => ok(windowedSupervisorEnabled(CH, [payments, orgNoGate]) === true, "gate ON via env=true"));
+withEnv(true, () => ok(windowedSupervisorEnabled(CH, [payments, orgNoGate]) === true, "gate ON via a registered override"));
 
-withEnv("1", () => {
+withEnv(true, () => {
   ok(windowedDomainFor(CH, [payments, orgNoGate])?.name === "payments", "windowedDomainFor returns the domain when windowed");
   ok(windowedDomainFor("slack/T1/C_ORPHAN", [payments, orgNoGate]) === undefined, "windowedDomainFor undefined when not windowed");
 });
@@ -170,7 +168,7 @@ withEnv(undefined, () => {
   const g = supervisorGrainFor(CH, [payments, orgNoGate]);
   ok(g.unified === false && g.registryKey === CH && g.domainName === undefined, "flag-off grain: per-container (registryKey === surfaceKey), byte-identical path");
 });
-withEnv("1", () => {
+withEnv(true, () => {
   const g = supervisorGrainFor(CH, [payments, orgNoGate]);
   ok(g.unified === true && g.registryKey === "oe-domain::payments" && g.domainName === "payments", "flag-on grain: domain-keyed registry row");
   const g2 = supervisorGrainFor(GH, [payments, orgNoGate]);
@@ -180,7 +178,7 @@ withEnv("1", () => {
   ok(g3.unified === false && g3.registryKey === "slack/T1/C_ORPHAN", "orphan channel stays per-container");
 });
 
-withEnv("1", () => {
+withEnv(true, () => {
   const slackGrain = supervisorGrainFor(CH, [payments, orgNoGate]);
   const ghGrain = supervisorGrainFor(GH, [payments, orgNoGate]);
   const tok = unifiedSupervisorToken("payments", 4);
@@ -194,13 +192,13 @@ withEnv(undefined, () => {
   ok(supervisorTokenForGrain(off, 2, () => "notion:page-1:oe-sup:g2") === "notion:page-1:oe-sup:g2", "flag-off notion fallback is the per-doc token");
 });
 
-withEnv("1", () => {
+withEnv(true, () => {
   const g = supervisorGrainFor(CH, [payments, orgNoGate]);
   ok(JSON.stringify(g) === JSON.stringify({ unified: true, registryKey: "oe-domain::payments", domainName: "payments", singleWindow: true }), "mode:unified grain: cross-surface (singleWindow), domain-keyed registry, NO windowId field — byte-identical to the pre-collapse cross-surface grain");
   ok(grainUsesUnifiedWindow(g) === true, "a mode:unified grain USES the unified window (cross-surface divert fires)");
   ok(supervisorTokenForGrain(g, 4, () => "C_PAY:oe-sup:g4") === "oe-dom:payments:oe-sup:g4", "mode:unified supervisorTokenForGrain emits the DEGENERATE (domain-keyed) token verbatim");
 });
-withEnv("1", () => {
+withEnv(true, () => {
   const g = supervisorGrainFor(CH, [paymentsSolo, orgNoGate]);
   ok(g.unified === true && g.domainName === "payments", "solo grain stays domain-anchored (memory/access unchanged)");
   ok(g.windowId === CH, "solo grain carries windowId === surfaceKey (one window per channel)");
@@ -398,7 +396,7 @@ ok(disclosed.includes("Cross-surface disclosure:"), "unifiedDisclosure appends t
 ok(disclosed.includes("paraphrase-and-point"), "the disclosure sentence carries the paraphrase-and-point guidance");
 ok(disclosed.startsWith("[channel-watch]"), "the disclosure sentence never replaces the channel-watch framing (still leads with it)");
 
-withEnv("1", () => {
+withEnv(true, () => {
   const ghGrain = supervisorGrainFor(GH, [payments, orgNoGate]);
   const bare = unifiedSupervisorToken("payments", 4);
   const minted = mintRotationToken(ghGrain, 4, () => githubSupervisorToken("acme", "payments-api", 4));

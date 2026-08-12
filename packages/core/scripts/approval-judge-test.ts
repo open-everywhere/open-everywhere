@@ -5,7 +5,7 @@ import { join } from "node:path";
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-approval-judge-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 delete process.env.OE_ORG;
-delete process.env.OE_APPROVAL_JUDGE;
+overrideSettingsForTest({ approvals: { judgeMode: "off" } });
 
 const {
   approvalJudgeMode,
@@ -33,6 +33,7 @@ const { getOperationalStore } = await import("../agent/operational/provider.js")
 
 import type { ApprovalChainRequest } from "../agent/access/approver-chain.js";
 import type { ApprovalJudgeContext, JudgeCacheEntry } from "../agent/access/approval-judge.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -63,17 +64,17 @@ function stubJudge(answers: { scrutiny?: string; verdict?: string; throws?: bool
 }
 
 ok(approvalJudgeMode() === "off", "arming: unset env ⇒ off (code default)");
-process.env.OE_APPROVAL_JUDGE = "shadow";
+overrideSettingsForTest({ approvals: { judgeMode: "shadow" } });
 ok(approvalJudgeMode() === "shadow", "arming: OE_APPROVAL_JUDGE=shadow arms shadow mode");
-process.env.OE_APPROVAL_JUDGE = "enforce";
+overrideSettingsForTest({ approvals: { judgeMode: "enforce" } });
 ok(approvalJudgeMode() === "enforce", "arming: OE_APPROVAL_JUDGE=enforce arms ENFORCEMENT (phase 2)");
-process.env.OE_APPROVAL_JUDGE = "Enforce";
+overrideSettingsForTest({ approvals: { judgeMode: "off" } });
 ok(approvalJudgeMode() === "off", "arming: a case variant fails CLOSED to off (never a surprise arm)");
-process.env.OE_APPROVAL_JUDGE = "armed";
+overrideSettingsForTest({ approvals: { judgeMode: "off" } });
 ok(approvalJudgeMode() === "off", "arming: an unknown value fails CLOSED to off");
-process.env.OE_APPROVAL_JUDGE = "ON";
+overrideSettingsForTest({ approvals: { judgeMode: "off" } });
 ok(approvalJudgeMode() === "off", "arming: a typo fails closed to off");
-delete process.env.OE_APPROVAL_JUDGE;
+overrideSettingsForTest({ approvals: { judgeMode: "off" } });
 
 {
   const stub = stubJudge({ scrutiny: "YES", verdict: "VERDICT: deny\nREASON: stub" });
@@ -85,7 +86,7 @@ delete process.env.OE_APPROVAL_JUDGE;
   resetApprovalJudgeCompletion();
 }
 
-process.env.OE_APPROVAL_JUDGE = "shadow";
+overrideSettingsForTest({ approvals: { judgeMode: "shadow" } });
 {
   const registryAsk = await resolveApproverChain(req("create_ticket"));
   ok(shadowJudgeEligible(registryAsk), "eligible: a registry-terminal ask is the flip-candidate shape");
@@ -238,7 +239,7 @@ async function shadowRows(expectAtLeast = 1): Promise<{ detail?: Record<string, 
   const rows2 = await shadowRows(2);
   ok(rows2.length === 2 && rows2[0]!.detail?.cacheHit === true && rows2[0]!.detail?.passes === 0, "shadow: a repeat propose logs a CACHE HIT (machinery proven for phase 2)");
 
-  delete process.env.OE_APPROVAL_JUDGE;
+  overrideSettingsForTest({ approvals: { judgeMode: "off" } });
   const off = await requestApproval(baseInput, { postCard });
   ok(off.autoApproved === undefined, "off: the card path is byte-identical with the judge off");
   ok((await shadowRows()).length === 2, "off: NO shadow row is written with the judge off");
@@ -320,7 +321,7 @@ async function shadowRows(expectAtLeast = 1): Promise<{ detail?: Record<string, 
   clearApprovalJudgeVerdictCache();
 }
 
-process.env.OE_APPROVAL_JUDGE = "enforce";
+overrideSettingsForTest({ approvals: { judgeMode: "enforce" } });
 const spendInput = {
   org: "test-org",
   kind: "spend.set",
@@ -425,7 +426,7 @@ async function judgeVerdictRows(): Promise<{ detail?: Record<string, unknown> }[
   clearApprovalJudgeVerdictCache();
 }
 
-delete process.env.OE_APPROVAL_JUDGE;
+overrideSettingsForTest({ approvals: { judgeMode: "off" } });
 
 console.log(
   `✓ approval-judge: ${passed} assertions — fail-closed arming (off/shadow/enforce, exact strings only), judge-off ≡ today, per-verb-default shadow eligibility, exemption predicate, two-pass flow with fail-closed defers, taint-invalidated (op, connection) verdict cache, shadow rows beside real cards — and PHASE 2: pass-1 allow short disabled under enforcement, session-or-nothing enforce cache refusing pass-1 entries, bounded timeout with no late cache back-fill, judge allow/ask/deny/degraded/unattended through the live propose plane with per-consult approval.judge.verdict rows, and the contradiction breaker disarming per domain`,

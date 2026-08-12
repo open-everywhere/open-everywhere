@@ -5,10 +5,9 @@ import { join } from "node:path";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-s2-ingress-")), "ops.sqlite3");
 delete process.env.OE_ORG;
-process.env.OE_ONESHOT_AGENT = "0";
 
 import { divertToUnifiedWindow, divertInboundToUnifiedWindow, type UnifiedReceiveTarget } from "../agent/channels/unified.js";
-import { OE_ONESHOT_AGENT_ENV } from "../agent/access/delegation-flag.js";
+import { registerSettings } from "../agent/settings/settings.js";
 import { recordThreadOwner, resolveThreadOwner, clearThreadOwner } from "../agent/channels/thread-ownership.js";
 import { unifiedThreadRef, isThreadScopedWakeOrigin, mintWakeId, OE_GRAIN_ATTR, OE_ADDRESSING_ATTR, type UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
 import { formatWindowToken, taskWindowId, threadSeatWindowId } from "../agent/channels/window-key.js";
@@ -59,15 +58,14 @@ const inbound = (wakeId: string, token = STANDING, origin: UnifiedWakeOrigin = O
 
 const ingressAudit = () => readAudit({ org: ORG, action: "thread.ingress_routed" });
 
-async function withFlag<T>(value: string | undefined, fn: () => Promise<T>): Promise<T> {
-  const prev = process.env[OE_ONESHOT_AGENT_ENV];
-  if (value === undefined) delete process.env[OE_ONESHOT_AGENT_ENV];
-  else process.env[OE_ONESHOT_AGENT_ENV] = value;
+registerSettings({ delegation: { oneshotAgent: false } });
+
+async function withFlag<T>(armed: boolean, fn: () => Promise<T>): Promise<T> {
+  registerSettings({ delegation: { oneshotAgent: armed } });
   try {
     return await fn();
   } finally {
-    if (prev === undefined) delete process.env[OE_ONESHOT_AGENT_ENV];
-    else process.env[OE_ONESHOT_AGENT_ENV] = prev;
+    registerSettings({ delegation: { oneshotAgent: false } });
   }
 }
 
@@ -85,7 +83,7 @@ console.log("1. flag-off byte-identical passthrough:");
 }
 
 console.log("2. no-owner passthrough (flag on):");
-await withFlag("1", async () => {
+await withFlag(true, async () => {
   await clearThreadOwner(store, ORG, REF);
   const wakeId = mintWakeId();
   await divertInboundToUnifiedWindow(captureReceive, inbound(wakeId));
@@ -97,7 +95,7 @@ await withFlag("1", async () => {
 });
 
 console.log("3. owned-thread divert (thread seat):");
-await withFlag("1", async () => {
+await withFlag(true, async () => {
   await recordThreadOwner(store, ORG, REF, SEAT, new Date().toISOString());
   const wakeId = mintWakeId();
   await divertInboundToUnifiedWindow(captureReceive, inbound(wakeId));
@@ -124,7 +122,7 @@ await withFlag("1", async () => {
 });
 
 console.log("4. owned-thread divert (task worker):");
-await withFlag("1", async () => {
+await withFlag(true, async () => {
   await recordThreadOwner(store, ORG, REF, TASK, new Date().toISOString());
   await divertInboundToUnifiedWindow(captureReceive, inbound(mintWakeId()));
   eq(received[0].target.token, TASK, "task owner: delivered to the task token");
@@ -133,7 +131,7 @@ await withFlag("1", async () => {
 });
 
 console.log("5. stale-owner fallback (rotation):");
-await withFlag("1", async () => {
+await withFlag(true, async () => {
   const staleSeat = formatWindowToken({ domain: DOMAIN, windowId: threadSeatWindowId(REF.channelKey, REF.threadKey), generation: GEN - 1 });
   await recordThreadOwner(store, ORG, REF, staleSeat, new Date().toISOString());
   const before = (await ingressAudit()).length;
@@ -153,7 +151,7 @@ await withFlag("1", async () => {
 });
 
 console.log("6. re-homed-domain fallback:");
-await withFlag("1", async () => {
+await withFlag(true, async () => {
   const foreign = formatWindowToken({ domain: "treasury", windowId: threadSeatWindowId(REF.channelKey, REF.threadKey), generation: GEN });
   await recordThreadOwner(store, ORG, REF, foreign, new Date().toISOString());
   await divertInboundToUnifiedWindow(captureReceive, inbound(mintWakeId()));
@@ -163,7 +161,7 @@ await withFlag("1", async () => {
 });
 
 console.log("7. owner-divert failure fallback:");
-await withFlag("1", async () => {
+await withFlag(true, async () => {
   await recordThreadOwner(store, ORG, REF, SEAT, new Date().toISOString());
   const before = (await ingressAudit()).length;
   failOnToken = SEAT;
@@ -185,7 +183,7 @@ await withFlag("1", async () => {
 });
 
 console.log("8. non-standing target passthrough:");
-await withFlag("1", async () => {
+await withFlag(true, async () => {
   await recordThreadOwner(store, ORG, REF, SEAT, new Date().toISOString());
   const before = (await ingressAudit()).length;
   await divertInboundToUnifiedWindow(captureReceive, inbound(mintWakeId(), TASK));
@@ -196,7 +194,7 @@ await withFlag("1", async () => {
 });
 
 console.log("9. channel-capture guard (top-level vs thread):");
-await withFlag("1", async () => {
+await withFlag(true, async () => {
   const TOP_ORIGIN: UnifiedWakeOrigin = { platform: "slack", channelId: "C1" };
   const topRef = unifiedThreadRef(TOP_ORIGIN);
   eq(topRef, { channelKey: "slack/C1", threadKey: "C1" }, "a top-level wake's threadKey IS the channelId fallback (why the capture was possible)");

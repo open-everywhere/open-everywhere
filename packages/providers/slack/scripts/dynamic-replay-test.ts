@@ -3,10 +3,11 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { replayStepNames, registeredProjectionNames } from "@open-everywhere/core/agent/adapter-api.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 delete process.env.OE_PLATFORM;
-delete process.env.OE_SOURCE_SCOPED_TOOLS;
-delete process.env.OE_GENERIC_READ_VERBS;
+overrideSettingsForTest({ tools: { sourceScopedMount: false } });
+overrideSettingsForTest({ tools: { genericReadVerbs: false } });
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

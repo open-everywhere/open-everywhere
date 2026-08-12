@@ -4,7 +4,7 @@ import {
   isConnectorOpTool,
 } from "../agent/access/consequence.js";
 import { connectorOpApproval, connectorApprovalPolicy } from "../agent/connections/connector-auth.js";
-import { OE_CONNECTOR_OP_TIERING_ENV } from "../agent/connections/connector-flags.js";
+import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -46,18 +46,18 @@ ok(approve({ toolName: "notion__create_page", approvedTools: oneApproved } as ne
 ok(approve({ toolName: "notion__delete_page", approvedTools: oneApproved } as never) === "user-approval", "a DIFFERENT write still prompts (approval is per-op, not blanket)");
 ok(approve({ toolName: "notion__delete_page", approvedTools: new Set<string>(["notion__delete_page"]) } as never) === "user-approval", "an already-approved DESTRUCTIVE op STILL prompts (per-call, OPE-11)");
 
-delete process.env[OE_CONNECTOR_OP_TIERING_ENV];
+resetSettingsForTest();
 {
   const off = connectorApprovalPolicy();
   const read = off({ toolName: "notion__search", approvedTools: new Set<string>() } as never);
   ok(read !== "not-applicable", "flag OFF → once(): an unapproved READ is not auto-allowed (blanket policy)");
 }
-process.env[OE_CONNECTOR_OP_TIERING_ENV] = "1";
+registerSettings({ connectors: { opTiering: true } });
 {
   const on = connectorApprovalPolicy();
   ok(on({ toolName: "notion__search", approvedTools: new Set<string>() } as never) === "not-applicable", "flag ON → tiered: a READ is auto-allowed");
   ok(on({ toolName: "notion__create_page", approvedTools: new Set<string>() } as never) === "user-approval", "flag ON → tiered: a WRITE prompts");
 }
-delete process.env[OE_CONNECTOR_OP_TIERING_ENV];
+resetSettingsForTest();
 
 console.log(`✓ connector-op-tier: ${passed} assertions passed`);

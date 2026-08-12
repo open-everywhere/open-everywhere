@@ -8,7 +8,7 @@ for (const name of BROWSER_TOOL_NAMES) {
     execute: (input: unknown, ctx: unknown) => {
       const entry = registeredBrowserToolkit()?.[name];
       if (entry === undefined) {
-        throw new Error(`${name} is not available — the agent-browser capability is not armed in this deployment (OE_AGENT_BROWSER).`);
+        throw new Error(`${name} is not available — the agent-browser capability is not armed in this deployment (browser.enabled).`);
       }
       return entry.execute(input, ctx);
     },

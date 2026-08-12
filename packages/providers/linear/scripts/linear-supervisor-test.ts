@@ -18,6 +18,7 @@ import {
 import { renderWake, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
 import type { OpenEverywhereLinearAuth } from "../agent/channels/linear-identity.js";
 import { readLinearIssue } from "../agent/channels/linear-api.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -430,9 +431,8 @@ for (const [label, err] of [
     raw: {},
   });
 
-  const prevWindowTopology = process.env.OE_WINDOW_TOPOLOGY;
   try {
-    process.env.OE_WINDOW_TOPOLOGY = "1";
+    overrideSettingsForTest({ window: { topology: true } });
     registerConfig({ ...baseAppConfig, loadDomains: () => [windowDomain, org] });
 
     issueTeamCalls = 0; teamPrivacyCalls = 0;
@@ -471,7 +471,7 @@ for (const [label, err] of [
       ok(issueTeamCalls === 0 && teamPrivacyCalls === 1, "fast path makes NO issue→team call and enriches the private signal by team id (byte-identical to pre-fix)");
     }
 
-    process.env.OE_WINDOW_TOPOLOGY = "0";
+    overrideSettingsForTest({ window: { topology: false } });
     registerConfig({ ...baseAppConfig, loadDomains: () => [windowDomain, org] });
     issueTeamCalls = 0; teamPrivacyCalls = 0;
     {
@@ -480,8 +480,7 @@ for (const [label, err] of [
       ok(issueTeamCalls === 0 && teamPrivacyCalls === 0, "feature OFF ⇒ ZERO Linear API calls (byte-identical: no network added on non-single-window deployments)");
     }
   } finally {
-    if (prevWindowTopology === undefined) delete process.env.OE_WINDOW_TOPOLOGY;
-    else process.env.OE_WINDOW_TOPOLOGY = prevWindowTopology;
+    overrideSettingsForTest({ window: { topology: false } });
     globalThis.fetch = realFetch;
     _resetSurfacesForTest();
   }

@@ -15,8 +15,8 @@ export const REDRIVE_GUARD_PREFIX = "unified-redrive:";
 
 export const REDRIVE_GUARD_TTL_MS = WAKE_TARGET_TTL_MS;
 
-export function redriveEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return getSettings(env).window.unifiedRedrive;
+export function redriveEnabled(): boolean {
+  return getSettings().window.unifiedRedrive;
 }
 
 export function redriveGuardKey(wakeId: string): string {

@@ -158,7 +158,10 @@ console.log("1 — taint.mode is code-only: no env path, structurally and behavi
   ok(row !== undefined && /environment variable can reach/i.test(row.summary), "[1] …and its summary says so, since that is the property an operator needs to read");
 
   eq(taintTierMode(), "enforced", "[1] taint.tierMode still ships `enforced` — `mode` did not absorb it");
-  eq(getSettings({ OE_TAINT_TIERS: "dryrun" }).taint.tierMode, "dryrun", "[1] …and its kill switch still works, unchanged");
+  eq(getSettings({ OE_TAINT_TIERS: "dryrun" }).taint.tierMode, "enforced", "[1] …and no environment reaches IT either any more (OPE-411 deleted its mirror too)");
+  registerSettings(defineSettings({ taint: { tierMode: "dryrun" } }));
+  eq(getSettings({}).taint.tierMode, "dryrun", "[1] …a registered override still moves it independently of `mode`");
+  resetSettingsForTest();
 }
 
 console.log("2 — off: no marks, no kinds, not even over a durable pre-flip `true`:");

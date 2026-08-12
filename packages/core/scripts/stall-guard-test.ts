@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ToolContext, ToolDefinition } from "eve/tools";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import {
   DEFAULT_STALL_THRESHOLD,
   RESULT_HASH_CAP_BYTES,
@@ -88,16 +89,15 @@ async function simulateCall(
 }
 
 {
-  delete process.env.OE_STALL_REPEAT_THRESHOLD;
+  overrideSettingsForTest({ stall: { repeatThreshold: 3 } });
   ok(stallThreshold() === DEFAULT_STALL_THRESHOLD && DEFAULT_STALL_THRESHOLD === 3, "config: default threshold is 3");
-  process.env.OE_STALL_REPEAT_THRESHOLD = "5";
+  overrideSettingsForTest({ stall: { repeatThreshold: 5 } });
   ok(stallThreshold() === 5, "config: OE_STALL_REPEAT_THRESHOLD overrides the default");
-  process.env.OE_STALL_REPEAT_THRESHOLD = "0";
+  overrideSettingsForTest({ stall: { repeatThreshold: 0 } });
   ok(stallThreshold() === 0, "config: 0 disables");
-  process.env.OE_STALL_REPEAT_THRESHOLD = "off";
-  ok(stallThreshold() === 0, "config: off disables");
-  process.env.OE_STALL_REPEAT_THRESHOLD = "garbage";
-  ok(stallThreshold() === DEFAULT_STALL_THRESHOLD, "config: unparseable falls back to the default (fail-safe on)");
+  overrideSettingsForTest({ stall: { repeatThreshold: 3 } });
+  process.env.OE_STALL_REPEAT_THRESHOLD = "0";
+  ok(stallThreshold() === DEFAULT_STALL_THRESHOLD, "config: a stray OE_STALL_REPEAT_THRESHOLD=0 does NOT disable the guard — the mirror is deleted (OPE-411)");
   delete process.env.OE_STALL_REPEAT_THRESHOLD;
 }
 
@@ -186,7 +186,7 @@ await inSession(async () => {
 });
 
 await inSession(async () => {
-  process.env.OE_STALL_REPEAT_THRESHOLD = "0";
+  overrideSettingsForTest({ stall: { repeatThreshold: 0 } });
   const wrapped = withStallGuard("bash", fakeTool());
   let tripped = false;
   for (let i = 0; i < 10; i++) {
@@ -194,7 +194,7 @@ await inSession(async () => {
     tripped ||= r.tripped;
   }
   ok(!tripped, "disabled: identical calls never trip when the threshold is 0");
-  delete process.env.OE_STALL_REPEAT_THRESHOLD;
+  overrideSettingsForTest({ stall: { repeatThreshold: 3 } });
 });
 
 await inSession(async () => {

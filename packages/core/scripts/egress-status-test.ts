@@ -12,6 +12,7 @@ import { PACKAGE_REGISTRY_HOSTS } from "../agent/access/bundle.js";
 import { compileNetworkPolicy } from "../agent/access/egress.js";
 import type { EffectiveAccess, ReachableHost } from "../agent/access/resolver.js";
 import type { Connection } from "../agent/access/bundle.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -248,24 +249,24 @@ function access(hosts: ReachableHost[], connections: Connection[] = []): Effecti
   }
 
   {
-    process.env.OE_EGRESS_ENFORCE = "0";
+    overrideSettingsForTest({ egress: { enforce: false } });
     try {
       const r = rig(async () => ({ allow: { "api.acme.test": [] } }));
       await enforceEgress("session.started", r.deps as never);
       ok(r.published[0]?.state === "dry-run", "a dry-run deployment publishes state 'dry-run' — the list is what the operator INTENDS, and calling it enforced would be a security-relevant field lying");
     } finally {
-      delete process.env.OE_EGRESS_ENFORCE;
+      overrideSettingsForTest({ egress: { enforce: true } });
     }
   }
   {
-    process.env.OE_ALLOW_UNENFORCED_EGRESS = "1";
+    overrideSettingsForTest({ egress: { allowUnenforced: true } });
     try {
       const r = rig(async () => ({ allow: { "api.acme.test": [] } }));
       r.breakApply(true);
       await enforceEgress("session.started", r.deps as never);
       ok(r.published[0]?.state === "unenforced", "a backend that REFUSED the policy publishes state 'unenforced' — the agent in there is entitled to know nothing is enforcing");
     } finally {
-      delete process.env.OE_ALLOW_UNENFORCED_EGRESS;
+      overrideSettingsForTest({ egress: { allowUnenforced: false } });
     }
   }
 }

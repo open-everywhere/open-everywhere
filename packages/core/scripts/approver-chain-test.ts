@@ -19,6 +19,7 @@ import {
 } from "../agent/access/approval-judge.js";
 import { runApprovalScenarios, type ApprovalScenario } from "../agent/access/approval-scenarios.js";
 import { judgeDeferredTool, TOOL_CONSEQUENCE } from "../agent/access/consequence.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -210,7 +211,6 @@ ok(!ELEMENT_CLAMPS.registry.includes("defer"), "pin4: the registry may not defer
 }
 
 {
-  const saved = process.env.OE_APPROVAL_JUDGE;
   let transportCalls = 0;
   registerApprovalJudgeCompletion(async () => {
     transportCalls++;
@@ -228,25 +228,24 @@ ok(!ELEMENT_CLAMPS.registry.includes("defer"), "pin4: the registry may not defer
     ok(judgeDeferredTool("open_pull_request") && !judgeDeferredTool("create_ticket"), "pin5: judgeDeferredTool reads the flip, and an unflipped gated row stays plain ask");
     ok(!judgeDeferredTool("notion__create_page"), "pin5: connector ops carry NO flip — the class-policy half is a seam, not an implementation (no evidence yet)");
 
-    process.env.OE_APPROVAL_JUDGE = "enforce";
+    overrideSettingsForTest({ approvals: { judgeMode: "enforce" } });
     const noOptIn = await resolveApproverChain(req("open_pull_request"));
     ok(noOptIn.verdict === "ask" && noOptIn.judge === undefined && noOptIn.transforms.length === 0, "pin5: without the caller's judge opt-in an armed deploy still resolves the plain ask (simulators stay judge-free)");
 
     const unflipped = await resolveApproverChain(req("create_ticket"), { judge: true });
     ok(unflipped.verdict === "ask" && unflipped.judge === undefined, "pin5: an unflipped gated row never reaches the judge, whatever the env and caller say");
 
-    process.env.OE_APPROVAL_JUDGE = "shadow";
+    overrideSettingsForTest({ approvals: { judgeMode: "shadow" } });
     const shadowMode = await resolveApproverChain(req("open_pull_request"), { judge: true });
     ok(shadowMode.verdict === "ask" && shadowMode.judge === undefined, "pin5: under shadow a defer row resolves exactly as ask (shadow's own observation seam lives in the propose plane, not here)");
-    delete process.env.OE_APPROVAL_JUDGE;
+    overrideSettingsForTest({ approvals: { judgeMode: "off" } });
     const off = await resolveApproverChain(req("open_pull_request"), { judge: true });
     ok(off.verdict === "ask" && off.judge === undefined && off.resolvedBy === "registry", "pin5: with the judge off a defer row is byte-identical to the pre-flip chain");
 
     ok(transportCalls === 0, "pin5: across every gate-missing combination the transport was NEVER called");
   } finally {
     resetApprovalJudgeCompletion();
-    if (saved === undefined) delete process.env.OE_APPROVAL_JUDGE;
-    else process.env.OE_APPROVAL_JUDGE = saved;
+    overrideSettingsForTest({ approvals: { judgeMode: "off" } });
   }
 }
 

@@ -102,7 +102,7 @@ export type { BlobPutter } from "./blob/hosting.js";
 
 export { getConfig, registerConfig } from "./access/config.js";
 
-export { SETTINGS, getSettings, defineSettings, registerSettings, resetSettingsForTest, settingDocs, settingEnvNames } from "./settings/settings.js";
+export { SETTINGS, getSettings, defineSettings, registerSettings, resetSettingsForTest, overrideSettingsForTest, settingDocs, settingEnvNames } from "./settings/settings.js";
 export type { AgentSettings, AgentSettingsOverrides, SettingSpec, SettingDoc, TaintTierMode, ApprovalJudgeMode } from "./settings/settings.js";
 
 export { registerProvider, registerPostgres } from "./memory/provider.js";

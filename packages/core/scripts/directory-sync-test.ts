@@ -21,7 +21,7 @@ import {
   type DirectoryLinkState,
 } from "../agent/identity/directory-sync.js";
 import { directoryProvider, registerDirectoryProvider, resetDirectoryProvider, type DirectoryPerson, type DirectoryProvider } from "../agent/identity/directory.js";
-import { OE_CONNECTOR_LINKSET_VAULT_ENV } from "../agent/connections/connector-flags.js";
+import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
 import {
   confirmedLinkSetPrincipals,
   expandLinkSet,
@@ -569,25 +569,20 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   const erinSet = directoryLinkSetId("okta", "00u-erin");
   registerDirectoryProvider(fakeDirectory(() => [erin]));
 
-  ok(directoryLinkSetVaultArmed({}) === false, "vault reader: unset ⇒ not armed (the id-keyed C2.4 guard alone, byte-identical to before C.3)");
-  ok(directoryLinkSetVaultArmed({ [OE_CONNECTOR_LINKSET_VAULT_ENV]: "0" }) === false, "vault reader: an OFF spelling is not armed");
-  ok(directoryLinkSetVaultArmed({ [OE_CONNECTOR_LINKSET_VAULT_ENV]: "1" }) === true, "vault reader: armed");
-  const unreadable = new Proxy({} as NodeJS.ProcessEnv, {
-    get() {
-      throw new Error("environment unreadable");
-    },
-  });
-  ok(
-    directoryLinkSetVaultArmed(unreadable) === true,
-    "🔴 vault reader FAILS CLOSED: an environment whose flag state cannot be determined resolves ARMED — a false positive only makes a mapping wait for its human, a false negative is a silent credential grant",
-  );
+  resetSettingsForTest();
+  ok(directoryLinkSetVaultArmed() === false, "vault reader: nothing registered ⇒ not armed (the id-keyed C2.4 guard alone, byte-identical to before C.3)");
+  registerSettings({ connectors: { linkSetVault: false } });
+  ok(directoryLinkSetVaultArmed() === false, "vault reader: an explicit false is not armed");
+  registerSettings({ connectors: { linkSetVault: true } });
+  ok(directoryLinkSetVaultArmed() === true, "vault reader: armed");
+  resetSettingsForTest();
 
-  process.env[OE_CONNECTOR_LINKSET_VAULT_ENV] = "1";
+  registerSettings({ connectors: { linkSetVault: true } });
   const armedRun = (await syncDirectoryOrg({ org: ORG, autoConfirm: "attested" }))!;
   ok(armedRun.applied.suggested === 1 && armedRun.applied.confirmed === 0, "🔴 runner (vault armed): the attested mapping lands as a SUGGESTION and nothing is confirmed");
   ok((await resolveLinkSet(ORG, "slack", "U-ERIN", T1)) === null, "🔴 …so the new account is in no set yet — it cannot reach the set's shared OAuth token");
   ok(
-    armedRun.plan.warnings.some((w) => w.includes(OE_CONNECTOR_LINKSET_VAULT_ENV) && w.includes("SUPPRESSED")),
+    armedRun.plan.warnings.some((w) => w.includes("connectors.linkSetVault") && w.includes("SUPPRESSED")),
     "…and the run says LOUDLY why an operator's armed auto-confirm stopped confirming",
   );
   ok(
@@ -595,7 +590,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
     "…without naming the set: the reason is the deployment's flag, not anything about Erin's set (which no config mentions)",
   );
 
-  delete process.env[OE_CONNECTOR_LINKSET_VAULT_ENV];
+  resetSettingsForTest();
   const offRun = (await syncDirectoryOrg({ org: ORG, autoConfirm: "attested" }))!;
   ok(offRun.applied.confirmed === 1, "🔴 runner (vault OFF): the SAME fixture auto-confirms exactly as before C.3 — the guard adds nothing when the vault is not armed");
   ok((await resolveLinkSet(ORG, "slack", "U-ERIN", T1))?.id === erinSet, "…the account resolves to its directory-derived set");

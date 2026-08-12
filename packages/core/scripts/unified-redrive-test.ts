@@ -6,6 +6,7 @@ import type { UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
 import type { RedriveReinject } from "../agent/channels/unified-redrive.js";
 
 import { registerSlackFixtureMapper, registerSlackFixturePostArm, registerSlackFixtureCodec, registerSlackTestBridge } from "./_slack-test-stubs.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 registerSlackFixtureMapper();
 registerSlackFixturePostArm();
 registerSlackFixtureCodec();
@@ -13,7 +14,7 @@ registerSlackTestBridge();
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-unified-redrive-")), "ops.sqlite3");
 delete process.env.OE_ORG;
-delete process.env.OE_UNIFIED_REDRIVE;
+overrideSettingsForTest({ window: { unifiedRedrive: true } });
 delete process.env.OE_SPAWN_DISPATCH_SECRET;
 
 const { registerUnifiedWakeTarget } = await import("../agent/channels/unified-window.js");
@@ -49,15 +50,14 @@ function makeAudit(sink: Record<string, unknown>[]): (e: Record<string, unknown>
 }
 
 {
-  const prev = process.env.OE_UNIFIED_REDRIVE;
-  ok(redriveEnabled({} as NodeJS.ProcessEnv) === true, "flag: UNSET → ON (default-on, catch-and-correct)");
-  ok(redriveEnabled({ OE_UNIFIED_REDRIVE: "1" } as unknown as NodeJS.ProcessEnv) === true, "flag: '1' → ON");
-  ok(redriveEnabled({ OE_UNIFIED_REDRIVE: "on" } as unknown as NodeJS.ProcessEnv) === true, "flag: 'on' → ON");
-  for (const off of ["0", "false", "no", "off", "OFF", "False"]) {
-    ok(redriveEnabled({ OE_UNIFIED_REDRIVE: off } as unknown as NodeJS.ProcessEnv) === false, `flag: '${off}' → OFF`);
-  }
-  if (prev === undefined) delete process.env.OE_UNIFIED_REDRIVE;
-  else process.env.OE_UNIFIED_REDRIVE = prev;
+  overrideSettingsForTest({ window: { unifiedRedrive: true } });
+  ok(redriveEnabled() === true, "flag: the shipped default is ON (catch-and-correct is the safe posture)");
+  overrideSettingsForTest({ window: { unifiedRedrive: false } });
+  ok(redriveEnabled() === false, "flag: a registered `window.unifiedRedrive: false` turns the correction off");
+  process.env.OE_UNIFIED_REDRIVE = "1";
+  ok(redriveEnabled() === false, "🔴 flag: a stray OE_UNIFIED_REDRIVE cannot pull it back on — the mirror is deleted (OPE-411)");
+  delete process.env.OE_UNIFIED_REDRIVE;
+  overrideSettingsForTest({ window: { unifiedRedrive: true } });
 }
 
 {
@@ -132,7 +132,7 @@ function makeAudit(sink: Record<string, unknown>[]): (e: Record<string, unknown>
 }
 
 {
-  process.env.OE_UNIFIED_REDRIVE = "0";
+  overrideSettingsForTest({ window: { unifiedRedrive: false } });
   const W = "wake-flag-off";
   await registerUnifiedWakeTarget(store, ORG, W, SLACK_ORIGIN, new Date().toISOString());
   const injected: Captured[] = [];
@@ -140,7 +140,7 @@ function makeAudit(sink: Record<string, unknown>[]): (e: Record<string, unknown>
   const res = await maybeRedrive({ org: ORG, workspace: "p", wakeId: W, chars: 200, replied: false }, { store, reinject: makeReinject(injected), audit: makeAudit(audits) });
   ok(res.status === "disabled" && injected.length === 0 && audits.length === 0, "flag OFF: no reinject, no audit, no store touch — byte-identical no-op");
   ok((await store.markEventSeen(ORG, redriveGuardKey(W), new Date().toISOString(), 1000)) === true, "flag OFF: the guard was NOT touched (the redrive never ran)");
-  delete process.env.OE_UNIFIED_REDRIVE;
+  overrideSettingsForTest({ window: { unifiedRedrive: true } });
 }
 
 {
@@ -161,7 +161,7 @@ function makeAudit(sink: Record<string, unknown>[]): (e: Record<string, unknown>
   const { buildRedriveReinject, divertToUnifiedWindow } = await import("../agent/channels/unified.js");
   const { mintWakeId } = await import("../agent/channels/unified-window.js");
 
-  process.env.OE_WINDOW_TOPOLOGY = "1";
+  overrideSettingsForTest({ window: { topology: true } });
   const PAY_SLACK = "slack/T_PAY/C_PAY";
   registerConfig({
     loadBundles: () => [],

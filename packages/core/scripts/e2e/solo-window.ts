@@ -70,7 +70,7 @@ function wakeAt(domain: string, surfaceKey: string, text: string): Promise<Injec
 function unarmedReason(e: unknown, surfaceKey: string): string | null {
   const m = (e as Error).message ?? "";
   if (m.includes("no standing window")) {
-    return `the target REFUSED to inject at ${surfaceKey} — fail-closed at test-route gate 3a: no standing window (mode solo / unified) is enabled for it. The target must be started with OE_WINDOW_TOPOLOGY=1 (arms the WINDOW_TOPOLOGY_ENABLED code capability the ${DOMAIN} fixture's mode "solo" needs; the fixture itself is always registered in agent/memory/domains.ts). This is the state W5 asserts as CORRECT — it is only a SKIP here.`;
+    return `the target REFUSED to inject at ${surfaceKey} — fail-closed at test-route gate 3a: no standing window (mode solo / unified) is enabled for it. The target must be started with window.topology: true (arms the WINDOW_TOPOLOGY_ENABLED code capability the ${DOMAIN} fixture's mode "solo" needs; the fixture itself is always registered in agent/memory/domains.ts). This is the state W5 asserts as CORRECT — it is only a SKIP here.`;
   }
   if (m.includes("no unified session for window")) {
     return `the ${surfaceKey} window has NO channel_session row yet and this run could not seed one (DATABASE_URL ${DB ? "wired but the rotate failed — see the [store] warning above" : "unset"}). The solo windows are per-CHANNEL and brand new, so nothing has ever minted their rows: re-run with DATABASE_URL pointed at the target's database (rotation is what mints them).`;
@@ -241,7 +241,7 @@ async function w3(): Promise<void> {
     return record("W3", "SKIP", "no dedicated Discord channel configured (E2E_SOLO_DISCORD unset) — the prod-resident e2e-solo domain is Slack-only until a Discord channel it OWNS exists (the bot lacks Manage Channels / the Slack token lacks channels:write, so one can't be auto-provisioned). The core solo proof is W1/W2/W4/W5; set E2E_SOLO_DISCORD to light up the sources-narrowing leg.");
   }
   if (!sourceScopedToolsEnabled()) {
-    return record("W3", "SKIP", "OE_SOURCE_SCOPED_TOOLS is not set in THIS process — flag-OFF the mount is byte-identical (arm-on-unified) and there is nothing to narrow, so a run would prove nothing. Re-run with the flag on AND a target started with OE_SOURCE_SCOPED_TOOLS=1.");
+    return record("W3", "SKIP", "tools.sourceScopedMount is not set in THIS process — flag-OFF the mount is byte-identical (arm-on-unified) and there is nothing to narrow, so a run would prove nothing. Re-run with the flag on AND a target deployed with `tools.sourceScopedMount` armed");
   }
   const since = new Date().toISOString();
   const slackChannelId = SLACK_A.split("/").slice(2).join("/");
@@ -312,10 +312,10 @@ async function w5(): Promise<void> {
   } catch (e) {
     const m = (e as Error).message ?? "";
     if (m.includes("no standing window")) {
-      return record("W5", "PASS", `flag-OFF control HOLDS — the target REFUSED the injection at ${SLACK_A} fail-closed ("no standing window (mode solo / unified) is enabled"), so the ${DOMAIN} fixture mints NO token while unarmed even though it is always registered. This is a single-gate refusal: WINDOW_TOPOLOGY_ENABLED (OE_WINDOW_TOPOLOGY) is off, which IS the inertness being asserted. DIVERGENCE from the matrix spec's W5 (which predicted a degenerate \`oe-dom:${DOMAIN}:oe-sup:g<N>\` mint): that mint is unreachable through this seam, because gate 3a refuses before any token is minted. The degenerate-mint shape is pinned where it is deterministic — supervisorTokenForGrain with a flag-off grain, scripts/unified-supervisor-test.ts.`);
+      return record("W5", "PASS", `flag-OFF control HOLDS — the target REFUSED the injection at ${SLACK_A} fail-closed ("no standing window (mode solo / unified) is enabled"), so the ${DOMAIN} fixture mints NO token while unarmed even though it is always registered. This is a single-gate refusal: WINDOW_TOPOLOGY_ENABLED (window.topology) is off, which IS the inertness being asserted. DIVERGENCE from the matrix spec's W5 (which predicted a degenerate \`oe-dom:${DOMAIN}:oe-sup:g<N>\` mint): that mint is unreachable through this seam, because gate 3a refuses before any token is minted. The degenerate-mint shape is pinned where it is deterministic — supervisorTokenForGrain with a flag-off grain, scripts/unified-supervisor-test.ts.`);
     }
     if (m.includes("no unified session for window")) {
-      return record("W5", "SKIP", `the target ACCEPTED ${SLACK_A} as a windowed surface (so the window topology IS enabled — the armed state) but has no session row for it: ${m}. W5 is the flag-OFF control; re-run against a target started WITHOUT OE_WINDOW_TOPOLOGY to exercise it.`);
+      return record("W5", "SKIP", `the target ACCEPTED ${SLACK_A} as a windowed surface (so the window topology IS enabled — the armed state) but has no session row for it: ${m}. W5 is the flag-OFF control; re-run against a target started WITHOUT window.topology to exercise it.`);
     }
     return record("W5", "FAIL", `the flag-off probe failed in an unexpected way (neither the fail-closed refusal nor a clean accept): ${m}`);
   }
@@ -323,7 +323,7 @@ async function w5(): Promise<void> {
   if (key && key.windowId === key.domain) {
     return record("W5", "FAIL", `the target ACCEPTED the injection and minted the DEGENERATE token ${token} for a mode-"solo" domain — a solo domain must key its window by surfaceKey, never by domain. The likeliest cause is the fixture carrying mode "unified" instead of "solo" on "${DOMAIN}" (supervisorGrainFor's \`const solo = !unifiedMode\`, unified-supervisor.ts), which would silently destroy the whole topology this pack tests.`);
   }
-  record("W5", "SKIP", `the target is ARMED (the injection was accepted and minted ${token}), so the flag-OFF control cannot run — W5 asserts that an UNARMED target refuses. Re-run the pack against a target started WITHOUT OE_WINDOW_TOPOLOGY (the fixture stays registered regardless) to exercise it; W1–W4 will then SKIP with the mirror-image reason. Not faked here.`);
+  record("W5", "SKIP", `the target is ARMED (the injection was accepted and minted ${token}), so the flag-OFF control cannot run — W5 asserts that an UNARMED target refuses. Re-run the pack against a target started WITHOUT window.topology (the fixture stays registered regardless) to exercise it; W1–W4 will then SKIP with the mirror-image reason. Not faked here.`);
 }
 
 async function main(): Promise<void> {

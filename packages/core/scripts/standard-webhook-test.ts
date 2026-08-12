@@ -4,6 +4,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "../../..");
@@ -15,7 +16,7 @@ delete process.env.OE_ORG;
 const ORG = "default";
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 delete process.env.OE_WEBHOOK_MAX_SKEW_SECONDS;
-delete process.env.OE_EVENT_MAX_FANOUT;
+overrideSettingsForTest({ routines: { eventMaxFanout: 3 } });
 
 const { registerSlackTestBridge } = await import("./_slack-test-stubs.js");
 const { registerConfig } = await import("../agent/access/config.js");

@@ -7,6 +7,7 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { generateKeyPairSync, sign } from "node:crypto";
 import type { PendingActionRow } from "@open-everywhere/core/agent/approvals/types.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
 const dir = join(tmpdir(), `open-everywhere-discord-approvals-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
@@ -461,8 +462,7 @@ const store = getOperationalStore();
   const { dispatchApprovalDecisionWake } = await import("@open-everywhere/core/agent/channels/unified.js");
   type WakeInput = Parameters<typeof dispatchApprovalDecisionWake>[0];
 
-  const prevTopology = process.env.OE_WINDOW_TOPOLOGY;
-  process.env.OE_WINDOW_TOPOLOGY = "1";
+  overrideSettingsForTest({ window: { topology: true } });
   try {
     const grain = supervisorGrainFor("discord/G1/C_WIN", getConfig().loadDomains());
     ok(grain.unified === true && grain.domainName === "dwin", "wake setup: the dwin domain's channel resolves a unified grain");
@@ -537,8 +537,7 @@ const store = getOperationalStore();
     ok((await store.getPendingAction("default", "dw-throws"))?.status === "approved", "decision feedback: the decide is durable regardless of feedback failures");
     await store.clearSpendLimit("default", "discord/G1/C_WIN", "surface");
   } finally {
-    if (prevTopology === undefined) delete process.env.OE_WINDOW_TOPOLOGY;
-    else process.env.OE_WINDOW_TOPOLOGY = prevTopology;
+    overrideSettingsForTest({ window: { topology: false } });
   }
 }
 

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import extendTool, {
   extendSessionSandboxes,
   maxExtendMinutes,
@@ -17,13 +18,14 @@ const ok = (cond: boolean, label: string) => {
 }
 
 {
-  delete process.env.OE_SANDBOX_EXTEND_MAX_MIN;
+  overrideSettingsForTest({ sandbox: { extendMaxMinutes: 120 } });
   ok(maxExtendMinutes() === 120, "cap defaults to 120 minutes");
-  process.env.OE_SANDBOX_EXTEND_MAX_MIN = "45";
-  ok(maxExtendMinutes() === 45, "OE_SANDBOX_EXTEND_MAX_MIN overrides the cap");
-  process.env.OE_SANDBOX_EXTEND_MAX_MIN = "junk";
-  ok(maxExtendMinutes() === 120, "unparseable cap falls back to the default");
+  overrideSettingsForTest({ sandbox: { extendMaxMinutes: 45 } });
+  ok(maxExtendMinutes() === 45, "a registered `sandbox.extendMaxMinutes` overrides the cap");
+  process.env.OE_SANDBOX_EXTEND_MAX_MIN = "5";
+  ok(maxExtendMinutes() === 45, "a stray OE_SANDBOX_EXTEND_MAX_MIN is inert — the mirror is deleted, not merely undocumented");
   delete process.env.OE_SANDBOX_EXTEND_MAX_MIN;
+  overrideSettingsForTest({ sandbox: { extendMaxMinutes: 120 } });
 }
 
 {

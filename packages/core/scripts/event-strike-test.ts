@@ -2,6 +2,7 @@
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -16,7 +17,7 @@ const dir = join(tmpdir(), `open-everywhere-event-strike-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_ORG = "acme";
-delete process.env.OE_EVENT_MAX_FANOUT;
+overrideSettingsForTest({ routines: { eventMaxFanout: 3 } });
 
 const { registerSlackTestBridge, registerSlackFixturePostArm } = await import("./_slack-test-stubs.js");
 const { fanOutDelivery } = await import("../agent/routines/github-fanout.js");

@@ -28,6 +28,7 @@ import { resolveWindowGated } from "../agent/access/window-gated.js";
 
 import { registerSlackFixtureMapper, registerSlackTestBridge } from "./_slack-test-stubs.js";
 import { execTool } from "./_tool-exec.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 registerSlackFixtureMapper();
 registerSlackTestBridge();
 
@@ -170,15 +171,14 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 }
 
 {
-  delete process.env.OE_DOMAIN_SKILL_CAP;
+  overrideSettingsForTest({ skills: { domainSkillCap: 50 } });
   ok(domainSkillCap() === 50, "domainSkillCap: default is 50 with no env override");
-  process.env.OE_DOMAIN_SKILL_CAP = "5";
-  ok(domainSkillCap() === 5, "domainSkillCap: env override applies");
-  process.env.OE_DOMAIN_SKILL_CAP = "not-a-number";
-  ok(domainSkillCap() === 50, "domainSkillCap: garbage env falls back to the default (never throws)");
-  process.env.OE_DOMAIN_SKILL_CAP = "0";
-  ok(domainSkillCap() === 50, "domainSkillCap: a non-positive override falls back to the default");
+  overrideSettingsForTest({ skills: { domainSkillCap: 5 } });
+  ok(domainSkillCap() === 5, "domainSkillCap: a registered override applies");
+  process.env.OE_DOMAIN_SKILL_CAP = "999";
+  ok(domainSkillCap() === 5, "domainSkillCap: a stray OE_DOMAIN_SKILL_CAP is inert — the mirror is deleted (OPE-411)");
   delete process.env.OE_DOMAIN_SKILL_CAP;
+  overrideSettingsForTest({ skills: { domainSkillCap: 50 } });
 }
 
 {
@@ -269,12 +269,12 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
     const rows = await getOperationalStore().listDomainSkills("default", "eng");
     ok(rows.filter((r) => r.name === "new-skill").length === 1, "skill.create execute: the click writes exactly one row");
 
-    process.env.OE_DOMAIN_SKILL_CAP = String((await getOperationalStore().listDomainSkills("default", "eng")).length);
+    overrideSettingsForTest({ skills: { domainSkillCap: (await getOperationalStore().listDomainSkills("default", "eng")).length } });
     await assert.rejects(async () => { await execTool(createSkillTool)({ name: "one-too-many", content: "x" }, ctxEng as never); }, /cap/, "create_skill: refuses a NEW skill once the domain is at its cap");
     n++;
     const stillWorks = await execTool(createSkillTool)({ name: "new-skill", content: "# Body v3" }, ctxEng as never);
     ok(stillWorks.pending === true && stillWorks.action === "updated", "create_skill: an EXISTING name still proposes at the cap, as \"updated\" (cap only blocks growth)");
-    delete process.env.OE_DOMAIN_SKILL_CAP;
+    overrideSettingsForTest({ skills: { domainSkillCap: 50 } });
   } finally {
     globalThis.fetch = realFetch;
     delete process.env.SLACK_BOT_TOKEN;

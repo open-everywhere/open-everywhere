@@ -7,7 +7,7 @@ import { LINK_TENANT_NONE, linkTenantUnresolvableMessage, tryLinkTenantOf } from
 import { admittedTenantsFromConfig } from "../access/tenant-admission.js";
 import { accessReferencedLinkSets } from "../access/access-referenced-link-sets.js";
 import { getConfig } from "../access/config.js";
-import { directoryLinkSetVaultArmed, OE_CONNECTOR_LINKSET_VAULT_ENV } from "../connections/connector-flags.js";
+import { directoryLinkSetVaultArmed } from "../connections/connector-flags.js";
 import type { LinkSetRow, LinkedIdRow } from "../operational/store.js";
 
 function log(msg: string): void {
@@ -159,7 +159,7 @@ export function planDirectorySync(input: {
   const vaultArmed = input.linkSetVaultArmed === true;
   if (vaultArmed && input.autoConfirm === "attested") {
     warnings.push(
-      `${OE_CONNECTOR_LINKSET_VAULT_ENV} is armed, so EVERY confirmed member of an active link-set can mint that set's SHARED user-OAuth token (C.3) — ` +
+      `connectors.linkSetVault is armed, so EVERY confirmed member of an active link-set can mint that set's SHARED user-OAuth token (C.3) — ` +
         `directory auto-confirm is therefore SUPPRESSED for ALL link-sets, not only the ones access config names (C2.4, threat (c)). ` +
         `Every attested mapping lands as a suggestion awaiting the person's own DM confirmation, because an IdP edit must not hand a brand-new account somebody else's live credential.`,
     );

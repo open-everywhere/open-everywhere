@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { sourceScopedMount, OE_SOURCE_SCOPED_TOOLS_ENV } from "../agent/access/source-scoped-mount.js";
+import { sourceScopedMount } from "../agent/access/source-scoped-mount.js";
+import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 import { checkSourceGate, SOURCE_SCOPED_TOOLS, GENERIC_READ_VERBS, type SourceToolFile } from "../agent/access/source-gate-manifest.js";
 import { assertTurnSurface, isUnifiedWindowContext, channelPlatform, type BindableContext } from "../agent/identity/binding.js";
 import { defineDomain } from "../agent/memory/domain.js";
@@ -29,9 +30,9 @@ const payments = defineDomain({
 const hr = defineDomain({ name: "hr", channels: ["slack/T_ENG/C_HR"], ambientSupervisor: true });
 const domains = [payments, hr];
 
-const setFlag = (v: string | undefined) => {
-  if (v === undefined) delete process.env[OE_SOURCE_SCOPED_TOOLS_ENV];
-  else process.env[OE_SOURCE_SCOPED_TOOLS_ENV] = v;
+const setFlag = (v: boolean | undefined) => {
+  if (v === undefined) resetSettingsForTest();
+  else overrideSettingsForTest({ tools: { sourceScopedMount: v } });
 };
 
 setFlag(undefined);
@@ -56,7 +57,7 @@ setFlag(undefined);
   }
 }
 
-setFlag("1");
+setFlag(true);
 {
   const multi = mk("unified", { oe_platform: "slack", oe_sources: "slack,github,notion" });
   ok(sourceScopedMount(multi, "slack", () => domains) === true, "flag-ON: a multi-source window mounts the Slack reader (slack ∈ sources)");

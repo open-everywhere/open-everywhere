@@ -2,6 +2,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -25,8 +26,8 @@ const dir = join(tmpdir(), `open-everywhere-routine-semantic-failure-${process.p
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_ORG = "acme";
-process.env.OE_ONESHOT_AGENT = "0";
-delete process.env.OE_WINDOW_TOPOLOGY;
+overrideSettingsForTest({ delegation: { oneshotAgent: false } });
+overrideSettingsForTest({ window: { topology: false } });
 
 const { applyOutcome, declareRunFailed, settleOutcome, MAX_CONSECUTIVE_FAILURES } = await import("../agent/routines/lifecycle.js");
 const { ROUTINE_MARKER, RUN_FAILURE_REASON_MAX_CHARS, routineMarker } = await import("../agent/routines/routine.js");

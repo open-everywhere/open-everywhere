@@ -12,6 +12,7 @@ import { classifyWindowRouting, WINDOW_ROUTING_DEGRADED_ACTION } from "../agent/
 import { readAudit } from "../agent/audit/audit.js";
 import routingHook from "../agent/hooks/window-routing.js";
 import { registerSlackFixtureMapper, registerSlackFixtureCodec } from "./_slack-test-stubs.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 registerSlackFixtureMapper();
 registerSlackFixtureCodec();
@@ -43,14 +44,14 @@ registerConfig({
 });
 
 console.log("1. classifyWindowRouting:");
-process.env.OE_WINDOW_TOPOLOGY = "1";
+overrideSettingsForTest({ window: { topology: true } });
 eq(classifyWindowRouting("native", WINDOWED_KEY, domains), "native-degraded", "ARMED + a windowing domain + a native seat = the invariant violation");
 eq(classifyWindowRouting("native", PLAIN_KEY, domains), "native-by-design", "an explicit domain that is not an ambient supervisor cannot window — native is correct there");
 eq(classifyWindowRouting("native", "slack/T_ROUTE/C_UNMAPPED", domains), "native-by-design", "a channel with NO domain has no window to divert into (the OPE-119 shape) — not a routing bug");
 for (const grain of ["standing", "task", "thread"] as const) {
   eq(classifyWindowRouting(grain, WINDOWED_KEY, domains), "windowed", `a ${grain} seat is on the intended path by construction`);
 }
-process.env.OE_WINDOW_TOPOLOGY = "0";
+overrideSettingsForTest({ window: { topology: false } });
 eq(classifyWindowRouting("native", WINDOWED_KEY, domains), "native-by-design", "gate OFF (the CI-pinned OSS default) ⇒ EVERY seat is native and NOTHING is degraded — the detector must be silent on a fresh clone");
 
 console.log("2. hooks/window-routing turn.started:");
@@ -64,11 +65,11 @@ const nativeCtx = (channel: string) => ({
 const since = new Date(Date.now() - 60_000).toISOString();
 const rowsFor = async () => (await readAudit({ org: "default", action: WINDOW_ROUTING_DEGRADED_ACTION, since })).filter((r) => r.action === WINDOW_ROUTING_DEGRADED_ACTION);
 
-process.env.OE_WINDOW_TOPOLOGY = "0";
+overrideSettingsForTest({ window: { topology: false } });
 await turnStarted(null, nativeCtx("C_WINDOWED"));
 eq((await rowsFor()).length, 0, "gate OFF: a native wake on a windowing domain writes NO row (that is the default posture, not a fault)");
 
-process.env.OE_WINDOW_TOPOLOGY = "1";
+overrideSettingsForTest({ window: { topology: true } });
 await turnStarted(null, nativeCtx("C_PLAIN"));
 eq((await rowsFor()).length, 0, "armed: a native wake on a NON-windowing domain writes no row");
 

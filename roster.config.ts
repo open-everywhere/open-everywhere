@@ -89,12 +89,12 @@ export default defineRoster({
         "Stop-after-turn sandbox lifecycle (Vercel): terminate the session VM the moment a turn " +
         "finishes — auto-snapshot preserves the tree, the next turn auto-resumes in ~0.5–3s, and " +
         "idle Provisioned-Memory billing (~99% of the sandbox bill) disappears. Vendor impl lives " +
-        "in @open-everywhere/adapters. OE_SANDBOX_STOP_AFTER_TURN=0 disables.",
+        "in @open-everywhere/adapters. `sandbox.stopAfterTurn: false` disables it.",
       "tool/extend_workspace_time":
         "Extend the sandbox session's fixed time window before long-running work (a command still " +
         "running when the window expires is killed). Live-verified: extendTimeout() mid-session " +
         "lets an in-flight command outlive its original fuse. Vendor impl in " +
-        "@open-everywhere/adapters; capped by OE_SANDBOX_EXTEND_MAX_MIN (default 120), audited.",
+        "@open-everywhere/adapters; capped by `sandbox.extendMaxMinutes` (default 120), audited.",
     },
   },
 

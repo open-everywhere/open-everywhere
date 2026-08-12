@@ -115,47 +115,24 @@ export interface SettingSpec<T> {
   readonly format?: (value: T) => string;
 }
 
-const OFF_SPELLINGS_WIDE = new Set(["", "0", "false", "off", "no"]);
-
-const parseWideBoolean = (raw: string): boolean => !OFF_SPELLINGS_WIDE.has(raw.trim().toLowerCase());
-
 const positiveInt = (value: number): string | undefined =>
   Number.isInteger(value) && value > 0 ? undefined : "must be a positive integer";
 
 const positiveNumber = (value: number): string | undefined =>
   Number.isFinite(value) && value > 0 ? undefined : "must be a positive number";
 
-const positiveNumberEnv = (raw: string): number | undefined => {
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : undefined;
-};
-
-const positiveIntEnv = (raw: string): number | undefined => {
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
-};
-
-const wholePositiveIntEnv = (raw: string): number | undefined => {
-  const n = Number(raw);
-  return Number.isInteger(n) && n > 0 ? n : undefined;
-};
-
 export const SETTINGS = {
   agent: {
     sessionInputTokenBudget: {
       path: "agent.sessionInputTokenBudget",
-      env: "OE_SESSION_INPUT_TOKEN_BUDGET",
       shipped: 30_000_000,
-      parseEnv: (raw) => Number(raw) || undefined,
       validate: positiveNumber,
       summary:
         "eve's `limits.maxInputTokensPerSession`, set BELOW the hosted 40M hard kill so the graceful park/fail fires first. KEEP IT UNDER 40M — above that the hosted wall wins and the session dies ungracefully instead of parking. Read at BOOT (it is a `defineAgent` argument).",
     } satisfies SettingSpec<number>,
     compactionThresholdPercent: {
       path: "agent.compactionThresholdPercent",
-      env: "OE_COMPACTION_THRESHOLD_PERCENT",
       shipped: 0.5,
-      parseEnv: (raw) => Number(raw) || undefined,
       validate: (v) => (Number.isFinite(v) && v > 0 && v < 1 ? undefined : "must be a fraction strictly between 0 and 1"),
       summary:
         "eve's `compaction.thresholdPercent` — the fraction of the model context window at which compaction fires. COMPACTION OWNS SIZE for every window type (rotation is context-motivated and time-triggered), so this is the in-generation size lever. Per-type thresholds are not reachable on the pinned eve. Read at BOOT.",
@@ -165,29 +142,21 @@ export const SETTINGS = {
   approvals: {
     judgeMode: {
       path: "approvals.judgeMode",
-      env: "OE_APPROVAL_JUDGE",
       shipped: "off",
-      parseEnv: (raw) => {
-        const v = raw.trim();
-        return v === "shadow" ? "shadow" : v === "enforce" ? "enforce" : "off";
-      },
+      validate: (v) => (v === "off" || v === "shadow" || v === "enforce" ? undefined : 'must be "off", "shadow" or "enforce"'),
       summary:
-        "LLM approval judge arming. `shadow` logs a would-be verdict beside every real card; `enforce` applies the judge's verdict for defer-flipped rows. Any other value is off, fail-closed.",
+        "LLM approval judge arming. `shadow` logs a would-be verdict beside every real card; `enforce` applies the judge's verdict for defer-flipped rows. `off` (shipped) runs no judge at all.",
     } satisfies SettingSpec<ApprovalJudgeMode>,
     ttlHours: {
       path: "approvals.ttlHours",
-      env: "OE_APPROVAL_TTL_HOURS",
       shipped: 24,
-      parseEnv: positiveNumberEnv,
       validate: positiveNumber,
       summary: "TTL before a pending approval action lazily expires, in hours.",
       format: (v) => `${v} h`,
     } satisfies SettingSpec<number>,
     sessionTtlHours: {
       path: "approvals.sessionTtlHours",
-      env: "OE_PR_SESSION_APPROVAL_TTL_HOURS",
       shipped: 24,
-      parseEnv: positiveNumberEnv,
       validate: positiveNumber,
       summary:
         "TTL for a `pr.open` session-approval memo (the `approve_session` third click verb), in hours. A GC bound only — the memo's frozen session id embeds the window generation, so a rotation stops it matching regardless.",
@@ -195,9 +164,7 @@ export const SETTINGS = {
     } satisfies SettingSpec<number>,
     checkpointTtlHours: {
       path: "approvals.checkpointTtlHours",
-      env: "OE_CHECKPOINT_TTL_HOURS",
       shipped: 24,
-      parseEnv: positiveNumberEnv,
       validate: positiveNumber,
       summary:
         "TTL for the session-checkpoint continue/asked memos, in hours. Also a GC bound, not the death mechanism.",
@@ -207,27 +174,21 @@ export const SETTINGS = {
   audit: {
     silences: {
       path: "audit.silences",
-      env: "OE_AUDIT_SILENCES",
       shipped: false,
-      parseEnv: (raw) => raw === "1",
       summary:
-        "Write the judged-SILENCE audit rows (`unified.no_reply` and the `reply.no_reply` tool row). Off is the ACTIONS-ONLY posture: on an ambient surface these are the ~99% majority and would bury the rows that mean something.",
+        "Write the judged-SILENCE audit rows (`unified.no_reply` and the `reply.no_reply` tool row). Off is the ACTIONS-ONLY posture: on an ambient surface these are the ~99% majority and would bury the rows that mean something. A deployment that scores abstention (the local eval targets do) turns it on in `agent/settings.ts`.",
     } satisfies SettingSpec<boolean>,
   },
   browser: {
     enabled: {
       path: "browser.enabled",
-      env: "OE_AGENT_BROWSER",
       shipped: false,
-      parseEnv: (raw) => raw === "1",
       summary:
-        "The Browser-QA master flag. Unarmed the capability does not exist: no `browser_*` tools mount, no egress hosts open, no browser bakes into the sandbox template. Arming ALSO requires a valid `browser.domains` allowlist, and the value must reach the BUILD env too (the template revalidation key resolves at build).",
+        "The Browser-QA master flag. Unarmed the capability does not exist: no `browser_*` tools mount, no egress hosts open, no browser bakes into the sandbox template. Arming ALSO requires a valid `browser.domains` allowlist. Both halves are compiled into the build, so the sandbox template and the runtime mount cannot disagree.",
     } satisfies SettingSpec<boolean>,
     domains: {
       path: "browser.domains",
-      env: "OE_AGENT_BROWSER_DOMAINS",
       shipped: "",
-      parseEnv: (raw) => raw,
       summary:
         "Comma-separated browse-target hostnames — the operator's containment decision, enforced on BOTH walls (agent-browser `--allowed-domains` and the sandbox egress firewall). Bare lowercase hostnames only; ANY invalid entry invalidates the whole list, and `browser.enabled` with an empty or invalid list does not arm.",
       format: (v) => (v === "" ? "`` (unset — the capability cannot arm)" : v),
@@ -236,27 +197,14 @@ export const SETTINGS = {
   bash: {
     timeoutMs: {
       path: "bash.timeoutMs",
-      env: "OE_BASH_TIMEOUT_MS",
       shipped: 600_000,
-      parseEnv: (raw) => {
-        const v = raw.trim().toLowerCase();
-        if (v === "") return undefined;
-        if (v === "0" || v === "off" || v === "false") return 0;
-        const n = Number.parseInt(v, 10);
-        return Number.isFinite(n) && n > 0 ? n : undefined;
-      },
       validate: (v) => (Number.isInteger(v) && v >= 0 ? undefined : "must be a non-negative integer (0 disables the timeout)"),
       summary: "Wall-clock cap on one `bash` call, in ms. `0` disables the timeout entirely.",
       format: (v) => `${v} ms`,
     } satisfies SettingSpec<number>,
     backgroundGuard: {
       path: "bash.backgroundGuard",
-      env: "OE_BASH_BACKGROUND_GUARD",
       shipped: true,
-      parseEnv: (raw) => {
-        const v = raw.trim().toLowerCase();
-        return !(v === "0" || v === "off" || v === "false");
-      },
       summary:
         "Refuse before it runs any command that backgrounds a segment with a bare `&` while redirecting neither stdout nor stderr.",
     } satisfies SettingSpec<boolean>,
@@ -264,37 +212,25 @@ export const SETTINGS = {
   connectors: {
     dmOnly: {
       path: "connectors.dmOnly",
-      env: "OE_CONNECTOR_DM_ONLY",
       shipped: true,
-      parseEnv: (raw) => {
-        const v = raw.trim().toLowerCase();
-        if (v === "") return true;
-        return !(v === "0" || v === "false" || v === "off");
-      },
       summary:
         "The connector DM-only wall: a connector operation must come from a positively-DM context (or a task worker spawned from one) or it is refused fail-closed before a token exists.",
     } satisfies SettingSpec<boolean>,
     userPrincipal: {
       path: "connectors.userPrincipal",
-      env: "OE_CONNECTOR_USER_PRINCIPAL",
       shipped: false,
-      parseEnv: parseWideBoolean,
       summary:
         "The per-user credential path (A1): a DM surface with a `user-oauth` credential bound resolves the OAuth subject to the calling human instead of the app principal.",
     } satisfies SettingSpec<boolean>,
     linkSetVault: {
       path: "connectors.linkSetVault",
-      env: "OE_CONNECTOR_LINKSET_VAULT",
       shipped: false,
-      parseEnv: parseWideBoolean,
       summary:
         "The C.3 shared user-OAuth vault: a confirmed link-set member keys the vault by their org-scoped link-set subject, so one consent covers all their linked DMs. Also suppresses directory auto-confirm for every link-set.",
     } satisfies SettingSpec<boolean>,
     opTiering: {
       path: "connectors.opTiering",
-      env: "OE_CONNECTOR_OP_TIERING",
       shipped: false,
-      parseEnv: parseWideBoolean,
       summary:
         "The per-op consequence gate (A2): each `<connection>__<op>` call is classified individually (reads open, writes gated) instead of a blanket `once()`.",
     } satisfies SettingSpec<boolean>,
@@ -302,22 +238,15 @@ export const SETTINGS = {
   delegation: {
     oneshotAgent: {
       path: "delegation.oneshotAgent",
-      env: "OE_ONESHOT_AGENT",
       shipped: true,
-      parseEnv: parseWideBoolean,
       summary:
         "The one-shot `agent` delegation model: `agent` spawns a credential-correct new session that works, calls `return_result` and tears down. Disarming makes the whole delegation machinery inert.",
     } satisfies SettingSpec<boolean>,
     nativeSubagent: {
       path: "delegation.nativeSubagent",
-      env: "OE_NATIVE_SUBAGENT",
       shipped: true,
-      parseEnv: (raw) => {
-        const v = raw.trim().toLowerCase();
-        return v === "" || v === "0" || v === "false" || v === "off" || v === "no" ? false : undefined;
-      },
       summary:
-        "Use eve's BUILT-IN `agent` subagent as the delegation route. ON by default since OPE-396 — the roll-own SYNC delegation leg it replaced has been deleted, so the OFF-ONLY env kill switch now leaves the deployment with async-only roll-own delegation rather than falling back to a synchronous one. Disarming also takes an `oe build` (it must EMIT the static sentinel that suppresses the built-in). Native children share the parent's sandbox and bind to the parent's identity; delegation is withdrawn entirely on a tainted turn, because eve has no seam to forward taint into a child (opt out with `taint.mode: \"off\"`).",
+        "Use eve's BUILT-IN `agent` subagent as the delegation route. ON by default since OPE-396 — the roll-own SYNC delegation leg it replaced has been deleted, so disarming leaves the deployment with async-only roll-own delegation rather than a synchronous fallback. Disarming also takes an `oe build` (it must EMIT the static sentinel that suppresses the built-in), which is why it is code-only. Native children share the parent's sandbox and bind to the parent's identity; delegation is withdrawn entirely on a tainted turn, because eve has no seam to forward taint into a child (opt out with `taint.mode: \"off\"`).",
     } satisfies SettingSpec<boolean>,
   },
   models: {
@@ -337,17 +266,13 @@ export const SETTINGS = {
   discord: {
     autoThread: {
       path: "discord.autoThread",
-      env: "OE_DISCORD_AUTO_THREAD",
       shipped: true,
-      parseEnv: (raw) => raw !== "false" && raw !== "0",
       summary:
         "Reply in a thread when the bot is @mentioned in a Discord text or announcement channel (never inside a thread — threads don't nest, and an unknown channel type keeps the inline reply).",
     } satisfies SettingSpec<boolean>,
     statusUx: {
       path: "discord.statusUx",
-      env: "OE_DISCORD_STATUS_UX",
       shipped: true,
-      parseEnv: (raw) => raw !== "false" && raw !== "0",
       summary:
         "The Discord 'working' affordances — the 👀/✅ reaction and the holding message edited into the reply. Off, the surface behaves exactly as before the feature: one plain reply post, no reaction, no holding message.",
     } satisfies SettingSpec<boolean>,
@@ -355,27 +280,21 @@ export const SETTINGS = {
   egress: {
     enforce: {
       path: "egress.enforce",
-      env: "OE_EGRESS_ENFORCE",
       shipped: true,
-      parseEnv: (raw) => raw !== "0",
       summary:
         "Apply the compiled per-session egress policy for real. Off ⇒ dry-run (compile + audit, no apply) — except a COMPILE ERROR, whose deny-all is applied either way: dry-run relaxes the intended policy, never a failure to compute one.",
     } satisfies SettingSpec<boolean>,
     allowUnenforced: {
       path: "egress.allowUnenforced",
-      env: "OE_ALLOW_UNENFORCED_EGRESS",
       shipped: false,
-      parseEnv: (raw) => raw === "1",
       summary:
-        "Let a session CONTINUE when the sandbox backend cannot apply fine-grained network policy. Off, an unenforceable policy aborts the session instead of running it unfirewalled.",
+        "Let a session CONTINUE when the sandbox backend cannot apply fine-grained network policy. Off, an unenforceable policy aborts the session instead of running it unfirewalled. Dev and self-host-without-a-proxy only — a deployment that needs it says so in `agent/settings.ts`, where the choice is reviewable.",
     } satisfies SettingSpec<boolean>,
   },
   governance: {
     floorTtlMs: {
       path: "governance.floorTtlMs",
-      env: "OE_GOVERNANCE_FLOOR_TTL_MS",
       shipped: 15 * 60_000,
-      parseEnv: (raw) => Number(raw) || undefined,
       validate: positiveNumber,
       summary:
         "Memoisation TTL for the room roster and the governance attestation behind the audience floor — the one computation shared by the admin-governance floor, the connector-disclosure floor, the triggered-fire disclosure floor, the approval-card clicker floor and the card-disclosure floor.",
@@ -385,9 +304,7 @@ export const SETTINGS = {
   identity: {
     dmTrustTtlMs: {
       path: "identity.dmTrustTtlMs",
-      env: "OE_DM_TRUST_TTL_MS",
       shipped: 5 * 60_000,
-      parseEnv: (raw) => Number(raw) || undefined,
       validate: positiveNumber,
       summary:
         "Memo TTL for live trust verification on every surface that performs one — the Slack DM-partner and channel-internal caches, the Teams member/guest lookup and the Linear guest lookup. One knob, because it is one question asked four ways; a miss re-verifies against the platform and every failure still fails closed.",
@@ -397,12 +314,7 @@ export const SETTINGS = {
   memory: {
     dreamCandidateCap: {
       path: "memory.dreamCandidateCap",
-      env: "OE_DREAM_MAX_CANDIDATES",
       shipped: 10,
-      parseEnv: (raw) => {
-        const n = Number.parseInt(raw, 10);
-        return Number.isFinite(n) && n > 0 ? n : undefined;
-      },
       validate: positiveInt,
       summary: "Per-silo judge budget for the dream/tidy sweep — how many candidate memories one pass may put in front of the judge.",
     } satisfies SettingSpec<number>,
@@ -410,35 +322,27 @@ export const SETTINGS = {
   routines: {
     eventMaxFanout: {
       path: "routines.eventMaxFanout",
-      env: "OE_EVENT_MAX_FANOUT",
       shipped: 3,
-      parseEnv: wholePositiveIntEnv,
       validate: positiveInt,
       summary:
         "Max routines ONE inbound event may fan out to. Every over-cap match is a genuine drop, so it writes a throttled `routine.skip` audit row (reason `fanout_cap`) rather than silently not firing.",
     } satisfies SettingSpec<number>,
     maxConcurrency: {
       path: "routines.maxConcurrency",
-      env: "OE_ROUTINE_MAX_CONCURRENCY",
       shipped: 3,
-      parseEnv: wholePositiveIntEnv,
       validate: positiveInt,
       summary:
         "Max routine ROOT sessions started per dispatcher tick. The rest stay claimable and fire on a later tick (their `nextRunAt` is untouched, so they remain due).",
     } satisfies SettingSpec<number>,
     jobMaxFires: {
       path: "routines.jobMaxFires",
-      env: "OE_JOB_MAX_FIRES",
       shipped: 200,
-      parseEnv: positiveIntEnv,
       validate: positiveInt,
       summary: "Fire cap minted onto a fresh durable-job bound. Plain `cron`/`interval` routines are unbounded by design.",
     } satisfies SettingSpec<number>,
     jobMaxDays: {
       path: "routines.jobMaxDays",
-      env: "OE_JOB_MAX_DAYS",
       shipped: 7,
-      parseEnv: positiveIntEnv,
       validate: positiveInt,
       summary: "Wall-clock grace minted onto a fresh durable-job bound, in days. Stretched so a slow cadence still gets a fair sample of runs.",
       format: (v) => `${v} d`,
@@ -447,9 +351,7 @@ export const SETTINGS = {
   rotation: {
     quietGapHours: {
       path: "rotation.quietGapHours",
-      env: "OE_SUPERVISOR_ROTATE_QUIET_GAP_HOURS",
       shipped: 24,
-      parseEnv: (raw) => Number(raw) || undefined,
       validate: positiveNumber,
       summary:
         "Idleness threshold, in hours: a standing generation not woken for this long rotates fresh on its NEXT wake rather than resuming a stale session. The first-wake backscroll DERIVES its cluster boundary from the same value, so a gap long enough to rotate is treated as a session boundary.",
@@ -457,32 +359,22 @@ export const SETTINGS = {
     } satisfies SettingSpec<number>,
     expiryDays: {
       path: "rotation.expiryDays",
-      env: "OE_SUPERVISOR_ROTATE_EXPIRY_DAYS",
       shipped: 7,
-      parseEnv: (raw) => {
-        if (raw.trim() === "") return undefined;
-        const n = Number(raw);
-        return Number.isFinite(n) ? n : undefined;
-      },
       validate: (v) => (Number.isFinite(v) ? undefined : "must be a finite number of days (0 or negative disables the expiry trigger)"),
       summary:
-        "PRIMARY rotation trigger, in days: a standing generation older than this is retired for context freshness (measured from its own `created_at`, reset on every rotation). `0` or a negative value DISABLES the trigger; an unparseable value falls back to the shipped 7, because a typo must never silently switch a trigger off.",
+        "PRIMARY rotation trigger, in days: a standing generation older than this is retired for context freshness (measured from its own `created_at`, reset on every rotation). `0` or a negative value DISABLES the trigger.",
       format: (v) => `${v} d`,
     } satisfies SettingSpec<number>,
     tokenBudget: {
       path: "rotation.tokenBudget",
-      env: "OE_SUPERVISOR_ROTATE_TOKEN_BUDGET",
       shipped: 4_000_000,
-      parseEnv: (raw) => Number(raw) || undefined,
       validate: positiveNumber,
       summary:
         "Token BACKSTOP (demoted from primary by OPE-345, value unchanged): the measured cumulative `inputTokens + cacheReadTokens` on one generation. Also the route the session-park remedy uses — parking saturates this counter.",
     } satisfies SettingSpec<number>,
     turnBudget: {
       path: "rotation.turnBudget",
-      env: "OE_SUPERVISOR_ROTATE_TURN_BUDGET",
       shipped: 60,
-      parseEnv: (raw) => Number(raw) || undefined,
       validate: positiveNumber,
       summary:
         "Turn BACKSTOP: turn count on one generation. 60 is derived from the substrate — a workflow run caps at 25,000 events and OE measures ~295 events/turn, so the wall binds near ~85 turns and this sits ~30% under it. It must ALSO satisfy the older invariant it was first derived against, C(budget) < 40M cumulative input on its own (C(60)≈4.9M ✓; the pre-OPE-345 150 was ✓ at 25.65M, 300 is ✗ at ~96M) — both bounds are pinned in `scripts/rotation-trigger-test.ts`. RE-DERIVE it (do not nudge it) if the events-per-turn measurement moves.",
@@ -491,29 +383,20 @@ export const SETTINGS = {
   sandbox: {
     stopAfterTurn: {
       path: "sandbox.stopAfterTurn",
-      env: "OE_SANDBOX_STOP_AFTER_TURN",
       shipped: true,
-      parseEnv: (raw) => raw !== "0",
       summary:
         "Stop the sandbox VM the moment each turn's reply is sent rather than letting it idle out the timeout window. The stop auto-snapshots; the next turn auto-resumes.",
     } satisfies SettingSpec<boolean>,
     extendMaxMinutes: {
       path: "sandbox.extendMaxMinutes",
-      env: "OE_SANDBOX_EXTEND_MAX_MIN",
       shipped: 120,
-      parseEnv: (raw) => {
-        const n = Number(raw);
-        return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
-      },
       validate: positiveInt,
       summary: "Per-call cap on the `extend_workspace_time` tool, in minutes. Plan ceilings still apply.",
       format: (v) => `${v} min`,
     } satisfies SettingSpec<number>,
     timeoutMs: {
       path: "sandbox.timeoutMs",
-      env: "OE_SANDBOX_TIMEOUT_MS",
       shipped: 30 * 60 * 1000,
-      parseEnv: (raw) => (raw.trim() === "" ? undefined : positiveIntEnv(raw)),
       validate: positiveInt,
       summary:
         "The per-session sandbox window, in ms. With stop-after-turn owning idle cost this is a BACKSTOP fuse — it binds only when the turn-end hook cannot run — and the max continuous work one session may do. **Applied at sandbox CREATE and persisted on the sandbox, so a change only affects NEW conversations.**",
@@ -521,9 +404,7 @@ export const SETTINGS = {
     } satisfies SettingSpec<number>,
     snapshotExpirationMs: {
       path: "sandbox.snapshotExpirationMs",
-      env: "OE_SANDBOX_SNAPSHOT_EXPIRATION_MS",
       shipped: 7 * 24 * 60 * 60 * 1000,
-      parseEnv: (raw) => (raw.trim() === "" ? undefined : positiveIntEnv(raw)),
       validate: positiveInt,
       summary:
         "Auto-GC age for a stopped sandbox's snapshot, in ms. Past it a conversation resumes onto a FRESH sandbox: the working tree is lost, the conversation and memory are not (`git push` is the real durability boundary for code). Also applied at CREATE.",
@@ -531,9 +412,7 @@ export const SETTINGS = {
     } satisfies SettingSpec<number>,
     image: {
       path: "sandbox.image",
-      env: "OE_SANDBOX_IMAGE",
       shipped: "",
-      parseEnv: (raw) => raw.trim(),
       summary:
         "Off-Vercel `docker()` backend only: the sandbox container image. Empty ⇒ the bare `docker({})` eve otherwise mints. Ignored under `justbash` and on Vercel.",
       format: (v) => (v === "" ? "`` (the backend's own default)" : v),
@@ -542,12 +421,7 @@ export const SETTINGS = {
   skills: {
     domainSkillCap: {
       path: "skills.domainSkillCap",
-      env: "OE_DOMAIN_SKILL_CAP",
       shipped: 50,
-      parseEnv: (raw) => {
-        const n = raw ? Number.parseInt(raw, 10) : Number.NaN;
-        return Number.isFinite(n) && n > 0 ? n : undefined;
-      },
       validate: positiveInt,
       summary:
         "Max runtime-authored domain skills per domain (`create_skill` refuses past this). Per-skill content size is capped separately, in code.",
@@ -556,9 +430,7 @@ export const SETTINGS = {
   spend: {
     usageEventsTtlDays: {
       path: "spend.usageEventsTtlDays",
-      env: "OE_USAGE_EVENTS_TTL_DAYS",
       shipped: 90,
-      parseEnv: positiveNumberEnv,
       validate: positiveNumber,
       summary:
         "Retention window for the per-event `usage_events` table, in days. Pruned opportunistically on write; a documented no-op on Postgres, where the table is append-only.",
@@ -566,9 +438,7 @@ export const SETTINGS = {
     } satisfies SettingSpec<number>,
     sandboxMemoryGiB: {
       path: "spend.sandboxMemoryGiB",
-      env: "OE_SANDBOX_MEMORY_GIB",
       shipped: 4,
-      parseEnv: positiveNumberEnv,
       validate: positiveNumber,
       summary:
         "The sandbox memory size the $ estimate prices against, in GiB. 4 is Vercel's platform default, confirmed by the same real-billing reconciliation as the rate — change it only if this deploy pins an explicit `memory` on its sandbox backend.",
@@ -576,9 +446,7 @@ export const SETTINGS = {
     } satisfies SettingSpec<number>,
     sandboxGiBHourUsd: {
       path: "spend.sandboxGiBHourUsd",
-      env: "OE_SANDBOX_GIB_HOUR_USD",
       shipped: 0.0212,
-      parseEnv: positiveNumberEnv,
       validate: positiveNumber,
       summary:
         "Vercel Sandbox's 'Provisioned Memory' rate, $/GiB-hr. EVIDENCE-ONLY: this number is here because it was verified twice — the published pricing page AND a real bill that matched it to the cent. A deployment that cannot verify its own rate should report seconds, never a guessed $ figure.",
@@ -588,15 +456,7 @@ export const SETTINGS = {
   stall: {
     repeatThreshold: {
       path: "stall.repeatThreshold",
-      env: "OE_STALL_REPEAT_THRESHOLD",
       shipped: 3,
-      parseEnv: (raw) => {
-        const v = raw.trim().toLowerCase();
-        if (v === "") return undefined;
-        if (v === "0" || v === "off" || v === "false") return 0;
-        const n = Number.parseInt(v, 10);
-        return Number.isFinite(n) && n > 0 ? n : undefined;
-      },
       validate: (v) => (Number.isInteger(v) && v >= 0 ? undefined : "must be a non-negative integer (0 disables the stall guard)"),
       summary:
         "Identical-(tool, args, result) run length before the NEXT identical call is nudged instead of executed. `0` disables the stall guard entirely.",
@@ -608,17 +468,12 @@ export const SETTINGS = {
       shipped: "on",
       validate: (v) => (v === "on" || v === "off" ? undefined : 'must be "on" or "off"'),
       summary:
-        "Whether the tainted-turn model runs at all. `on` (shipped) marks a turn that ingests untrusted content and lets that marking reach approval disclosure, the four `taint: refuse` sinks, memory provenance and the native-delegation withdrawal. `off` is a deployer's reviewed opt-out: no marks, no gates, no delegation withdrawal — untrusted content is still FENCED, and every session records `taint.mode: off` in the audit trail. **Code-only on purpose: no environment variable can reach `off`.**",
+        "Whether the tainted-turn model runs at all. `on` (shipped) marks a turn that ingests untrusted content and lets that marking reach approval disclosure, the four `taint: refuse` sinks, memory provenance and the native-delegation withdrawal. `off` is a deployer's reviewed opt-out: no marks, no gates, no delegation withdrawal — untrusted content is still FENCED, and every session records `taint.mode: off` in the audit trail. **No environment variable can reach `off`** — it is a one-line diff in `agent/settings.ts`, which is the bar disabling a security model deserves.",
     } satisfies SettingSpec<TaintMode>,
     tierMode: {
       path: "taint.tierMode",
-      env: "OE_TAINT_TIERS",
       shipped: "enforced",
-      parseEnv: (raw) => {
-        const v = raw.trim().toLowerCase();
-        if (v === "") return undefined;
-        return v === "enforce" || v === "enforced" ? "enforced" : "dryrun";
-      },
+      validate: (v) => (v === "enforced" || v === "dryrun" ? undefined : 'must be "enforced" or "dryrun"'),
       summary:
         "Whether the reviewed source-tier table DECIDES a read's untrusted-content marking (`enforced`) or only logs what it would have decided (`dryrun`). Enforcement is relaxation-only.",
     } satisfies SettingSpec<TaintTierMode>,
@@ -626,12 +481,7 @@ export const SETTINGS = {
   tools: {
     maxResultChars: {
       path: "tools.maxResultChars",
-      env: "OE_MAX_TOOL_RESULT_CHARS",
       shipped: 120_000,
-      parseEnv: (raw) => {
-        const n = raw !== "" ? Number.parseInt(raw, 10) : Number.NaN;
-        return Number.isFinite(n) && n > 0 ? n : undefined;
-      },
       validate: positiveInt,
       summary:
         "Per-tool-result character cap (~30k tokens), applied inside the untrusted-ingestion funnel so one avalanche result cannot blow the context window in a single shot.",
@@ -639,17 +489,13 @@ export const SETTINGS = {
     } satisfies SettingSpec<number>,
     sourceScopedMount: {
       path: "tools.sourceScopedMount",
-      env: "OE_SOURCE_SCOPED_TOOLS",
       shipped: false,
-      parseEnv: parseWideBoolean,
       summary:
         "Stage 1 of the uniform mount rule: a per-surface reader (`read_slack_channel`, …) mounts iff its platform is one of the window's SOURCES. Off, the historical arm-on-any-unified-window guard applies and every live window keeps every reader it mounts today.",
     } satisfies SettingSpec<boolean>,
     genericReadVerbs: {
       path: "tools.genericReadVerbs",
-      env: "OE_GENERIC_READ_VERBS",
       shipped: false,
-      parseEnv: parseWideBoolean,
       summary:
         "Stage 2: the surface-agnostic `read_channel` / `read_thread` pair mounts and the Slack-specific `read_slack_*` readers retire. A model-facing tool-surface change, deliberately armed independently of `tools.sourceScopedMount`.",
     } satisfies SettingSpec<boolean>,
@@ -675,25 +521,13 @@ export const SETTINGS = {
   window: {
     topology: {
       path: "window.topology",
-      env: "OE_WINDOW_TOPOLOGY",
       shipped: false,
-      parseEnv: (raw) => {
-        const v = raw.trim().toLowerCase();
-        if (v === "1" || v === "true" || v === "yes" || v === "on") return true;
-        if (v === "0" || v === "false" || v === "no" || v === "off") return false;
-        return undefined;
-      },
       summary:
         "The standing-WINDOW apparatus — the ONE gate governing both the per-channel `solo` window and the cross-surface `unified` window. Off, every domain runs the native per-container path and its `mode` is inert. **Arm deliberately: a window is a wider data blast radius.**",
     } satisfies SettingSpec<boolean>,
     unifiedRedrive: {
       path: "window.unifiedRedrive",
-      env: "OE_UNIFIED_REDRIVE",
       shipped: true,
-      parseEnv: (raw) => {
-        const v = raw.trim().toLowerCase();
-        return !(v === "0" || v === "false" || v === "no" || v === "off");
-      },
       summary:
         "Auto-redrive a unified turn that ended in terminal prose instead of a `reply`, so the answer is delivered rather than dropped. Off restores the pre-redrive drop-and-lose behaviour exactly.",
     } satisfies SettingSpec<boolean>,
@@ -745,6 +579,18 @@ export function registerSettings(overrides: AgentSettingsOverrides): void {
 
 export function resetSettingsForTest(): void {
   registered = {};
+}
+
+export function overrideSettingsForTest(patch: AgentSettingsOverrides): void {
+  const next: Record<string, Record<string, unknown>> = {};
+  for (const [group, values] of Object.entries(registered as Record<string, Record<string, unknown> | undefined>)) {
+    if (values !== undefined) next[group] = { ...values };
+  }
+  for (const [group, values] of Object.entries(patch as Record<string, Record<string, unknown> | undefined>)) {
+    if (values === undefined) continue;
+    next[group] = { ...(next[group] ?? {}), ...values };
+  }
+  registered = next as AgentSettingsOverrides;
 }
 
 function resolve<T>(spec: SettingSpec<T>, override: T | undefined, env: NodeJS.ProcessEnv): T {

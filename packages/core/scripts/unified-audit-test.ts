@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -17,7 +18,7 @@ const dir = join(tmpdir(), `open-everywhere-unified-audit-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_ORG = "acme";
-process.env.OE_WINDOW_TOPOLOGY = "1";
+overrideSettingsForTest({ window: { topology: true } });
 delete process.env.OE_CONTROL_READ_TOKENS;
 
 const { registerConfig } = await import("../agent/access/config.js");

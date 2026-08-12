@@ -64,6 +64,7 @@ import type { BindableContext } from "@open-everywhere/core/agent/adapter-api.js
 import type { WakeMessageInput } from "@open-everywhere/core/agent/adapter-api.js";
 import { renderContext } from "@open-everywhere/core/agent/adapter-api.js";
 import type { WakeBackscrollLines } from "../agent/channels/slack-wake-backscroll.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 registerIdentityMapper("slack", bindSlack);
 
@@ -322,7 +323,6 @@ registerConfig({
   {
     const evT = (over: Record<string, unknown> = {}) =>
       parseMessageEvent({ type: "event_callback", team_id: "TENG123", event: { type: "message", channel: "C_TXN", ts: "9.9", thread_ts: "1.1", user: "U1", text: "more please", ...over } })!;
-    const prevEnv = process.env.OE_TEST_DRIVER_IDS;
     process.env.OE_TEST_DRIVER_IDS = "TENG123:B9";
     process.env.OE_ALLOW_MULTI_TENANT_PRINCIPALS = "1";
     woke.length = 0;
@@ -333,8 +333,7 @@ registerConfig({
     process.env.OE_TEST_DRIVER_IDS = "T_ENG:B9";
     out = await routeMessageEvent(ev({ bot_id: "B9" }), deps(true));
     ok(!out.woke, "a malformed (non-Slack-shaped) pair never arms — parse can only narrow");
-    if (prevEnv === undefined) delete process.env.OE_TEST_DRIVER_IDS;
-    else process.env.OE_TEST_DRIVER_IDS = prevEnv;
+    delete process.env.OE_TEST_DRIVER_IDS;
     out = await routeMessageEvent(evT({ bot_id: "B9" }), deps(true));
     ok(!out.woke, "seam disarmed (env cleared) → the driver bot drops again (default off)");
     delete process.env.OE_ALLOW_MULTI_TENANT_PRINCIPALS;
@@ -1601,8 +1600,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
     const pol = await slackSingleWindowMentionPolicy("C_TXN", "slack/T_ENG/C_TXN");
     ok(!pol.suppressNative && pol.addressing === undefined, "live policy: non-single-window domain → native keeps the mention (no suppression, no addressing)");
     const baseConfig = getConfig();
-    const prevWin = process.env.OE_WINDOW_TOPOLOGY;
-    process.env.OE_WINDOW_TOPOLOGY = "1";
+    overrideSettingsForTest({ window: { topology: true } });
     registerConfig({
       ...baseConfig,
       loadDomains: () => [
@@ -1621,8 +1619,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
       "live policy: single-window domain but channel NOT positively confirmed internal → FAIL-CLOSED (native keeps the mention, nothing joins the window)",
     );
     registerConfig(baseConfig);
-    if (prevWin === undefined) delete process.env.OE_WINDOW_TOPOLOGY;
-    else process.env.OE_WINDOW_TOPOLOGY = prevWin;
+    overrideSettingsForTest({ window: { topology: false } });
   }
 
   {
@@ -1897,7 +1894,6 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
     .run("orgM", "slack/T/CM", "m.1", "2026-07-01T00:00:00Z", "2026-07-01T00:00:00Z");
   seed.close();
 
-  const prev = process.env.OE_SQLITE_PATH;
   process.env.OE_SQLITE_PATH = file;
   _resetOperationalDbForTest();
   const migStore = getOperationalStore();
@@ -1916,8 +1912,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
   const rotated = await migStore.rotateChannelSession("orgM", "slack/T/CM", "T:oe-sup:1", "2026-07-01T03:00:00Z");
   ok(rotated.generation === 1, "sqlite migration: channel_session rotation works on a migrated DB");
 
-  if (prev === undefined) delete process.env.OE_SQLITE_PATH;
-  else process.env.OE_SQLITE_PATH = prev;
+  delete process.env.OE_SQLITE_PATH;
   _resetOperationalDbForTest();
 }
 

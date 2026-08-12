@@ -8,8 +8,8 @@ const tmp = mkdtempSync(join(tmpdir(), "oe-scenarios-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 process.env.OE_RELAY_SECRET = RELAY_SECRET;
 process.env.DISCORD_BOT_TOKEN = "test-bot-token-never-real";
-delete process.env.OE_DISCORD_AUTO_THREAD;
-delete process.env.OE_DISCORD_STATUS_UX;
+overrideSettingsForTest({ discord: { autoThread: true } });
+overrideSettingsForTest({ discord: { statusUx: true } });
 for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_ORG", "OE_TRUST"]) {
   delete process.env[k];
 }
@@ -29,6 +29,7 @@ const { markCardPostedThisTurn } = await import("@open-everywhere/core/agent/app
 const { NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/channels/turn-delivery.js");
 import type { BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import type { Partition } from "@open-everywhere/core/agent/memory/partition.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
 registerConfig({
   loadBundles: () => [],

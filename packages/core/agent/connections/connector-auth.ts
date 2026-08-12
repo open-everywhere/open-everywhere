@@ -104,7 +104,7 @@ async function resolveAppTokenFromCred(
   }
   throw new Error(
     `connection "${opts.connector}": credential type "${cred.type}" is not valid on an app connection ` +
-      `(user-principal credentials resolve in the DM universe — arm OE_CONNECTOR_USER_PRINCIPAL and wire ` +
+      `(user-principal credentials resolve in the DM universe — arm connectors.userPrincipal and wire ` +
       `userAwareProviderToken to mint a per-user token).`,
   );
 }

@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -21,7 +22,7 @@ const dir = join(tmpdir(), `open-everywhere-trigger-ingress-test-${process.pid}`
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_ORG = "acme";
-delete process.env.OE_EVENT_MAX_FANOUT;
+overrideSettingsForTest({ routines: { eventMaxFanout: 3 } });
 
 const { registerSlackTestBridge } = await import("./_slack-test-stubs.js");
 const { admitTrigger, deliveryDedupeKey } = await import("../agent/routines/ingress.js");

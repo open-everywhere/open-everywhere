@@ -68,7 +68,7 @@ export default windowGated("spawn_thread_session", defineTool({
   async execute(input, ctx) {
     const c = ctx as BindableContext;
     if (!oneshotAgentEnabled()) {
-      throw new Error("spawn_thread_session: delegation (OE_ONESHOT_AGENT) is disarmed on this deployment — no new thread seats can be opened.");
+      throw new Error("spawn_thread_session: delegation (delegation.oneshotAgent) is disarmed on this deployment — no new thread seats can be opened.");
     }
     if (isOwnTokenTaskOrThread(c)) {
       throw new Error("spawn_thread_session: a worker or thread seat cannot open another thread seat — no recursive thread trees. Delegate work with `agent`, or ask the channel watcher to open one.");

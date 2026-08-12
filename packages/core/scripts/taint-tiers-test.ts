@@ -28,6 +28,7 @@ import { declaredWorkspaceTrust, defineSurface, registerSurfaces, _resetSurfaces
 import { resolveAccess } from "../agent/access/resolver.js";
 import type { Binding, Bundle } from "../agent/access/bundle.js";
 import { setConnectorContentOrigin, declaredContentOriginForConnection, declaredContentOriginForToolName } from "../agent/access/connector-content-origin-state.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -274,25 +275,27 @@ registerTaintVerdictSink((r) => rows.push(r));
 }
 
 {
-  const prior = process.env.OE_TAINT_TIERS;
-  const withMode = async (v: string | undefined, fn: () => Promise<void> | void) => {
-    if (v === undefined) delete process.env.OE_TAINT_TIERS;
-    else process.env.OE_TAINT_TIERS = v;
+  const withMode = async (mode: "enforced" | "dryrun", fn: () => Promise<void> | void) => {
+    overrideSettingsForTest({ taint: { tierMode: mode } });
     await fn();
   };
 
-  await withMode(undefined, () => eq(taintTierMode(), "enforced", "UNSET ⇒ enforced — the flip's default is the absence of configuration"));
-  await withMode("enforce", () => eq(taintTierMode(), "enforced", "`enforce` ⇒ enforced"));
-  await withMode("ENFORCED", () => eq(taintTierMode(), "enforced", "`ENFORCED` ⇒ enforced (case-insensitive, and both spellings accepted so a plausible variant cannot silently disarm the flip)"));
+  overrideSettingsForTest({ taint: { tierMode: "enforced" } });
+  eq(taintTierMode(), "enforced", "nothing registered beyond the shipped default ⇒ enforced — the flip's default is the absence of configuration");
   await withMode("dryrun", () => eq(taintTierMode(), "dryrun", "`dryrun` ⇒ dryrun — the documented revert"));
-  await withMode("1", () => eq(taintTierMode(), "dryrun", "🔴 an UNRECOGNISED value ⇒ dryrun — the OLD, over-tainting behaviour. A typo may only ever fail toward more marking"));
-  await withMode("  ", () => eq(taintTierMode(), "enforced", "whitespace-only reads as unset, not as a value"));
+  await withMode("enforced", () => eq(taintTierMode(), "enforced", "…and back"));
+  {
+    overrideSettingsForTest({ taint: { tierMode: "enforced" } });
+    process.env.OE_TAINT_TIERS = "dryrun";
+    eq(taintTierMode(), "enforced", "🔴 a stray OE_TAINT_TIERS=dryrun does NOT disarm the table — the mirror is deleted (OPE-411), so disarming is a reviewed diff");
+    delete process.env.OE_TAINT_TIERS;
+  }
 
   await withMode("dryrun", async () => {
     await eveContextStorage().run(new FakeSession(), async () => {
       rows.length = 0;
       ingestUntrusted("hello", { source: "read_channel:slack", ingestion: { kind: "chat-message", label: "read_channel:slack" } });
-      ok(untrustedIngestedThisTurn() === true, "🔴 KILL SWITCH: with OE_TAINT_TIERS=dryrun a chat read TAINTS AGAIN — the pre-flip site behaviour, restored without a redeploy");
+      ok(untrustedIngestedThisTurn() === true, "🔴 REVERT: with `taint.tierMode: \"dryrun\"` a chat read TAINTS AGAIN — the pre-flip site behaviour, restored by a reviewed diff");
       eq(rows.length, 1, "…and the row still lands, so the log does not go dark when the switch is thrown");
       eq(rows[0].mode, "dryrun", "…stamped `mode: dryrun`, which is how an audit reader tells a disarmed deployment from an enforcing one");
       eq(rows[0].applied, false, "…and `applied: false`: in dryrun the table never decides");
@@ -300,9 +303,8 @@ registerTaintVerdictSink((r) => rows.push(r));
     eq(INGESTION_KINDS.filter((kind) => decideIngestion({ kind }, false)), [], "dryrun cannot tighten either: a fence-only site still does not taint");
   });
 
-  if (prior === undefined) delete process.env.OE_TAINT_TIERS;
-  else process.env.OE_TAINT_TIERS = prior;
-  eq(taintTierMode(), "enforced", "the switch is restored to the enforcing default for the rest of the suite");
+  overrideSettingsForTest({ taint: { tierMode: "enforced" } });
+  eq(taintTierMode(), "enforced", "the mode is restored to the enforcing default for the rest of the suite");
 }
 
 console.log("3. per-TURN, not per-session:");

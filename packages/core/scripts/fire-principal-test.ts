@@ -4,6 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import type { MemoryPlan } from "../agent/memory/resolve.js";
 import { principalKey } from "../agent/identity/principal-key.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -26,7 +27,7 @@ async function refuses(fn: () => unknown, needle: RegExp, label: string): Promis
 const dir = mkdtempSync(join(tmpdir(), "oe-fire-principal-"));
 process.env.OE_SQLITE_PATH = join(dir, "store.db");
 delete process.env.OE_TRUST;
-process.env.OE_ONESHOT_AGENT = "0";
+overrideSettingsForTest({ delegation: { oneshotAgent: false } });
 
 const { registerSlackFixtureMapper, registerSlackTestBridge } = await import("./_slack-test-stubs.js");
 registerSlackFixtureMapper();

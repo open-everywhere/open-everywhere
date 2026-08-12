@@ -7,14 +7,15 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-dynamic-replay-")), "ops.sqlite3");
 delete process.env.OE_PLATFORM;
-delete process.env.OE_GENERIC_READ_VERBS;
-delete process.env.OE_SOURCE_SCOPED_TOOLS;
+overrideSettingsForTest({ tools: { genericReadVerbs: false } });
+overrideSettingsForTest({ tools: { sourceScopedMount: false } });
 
 import { replayStepNames } from "../agent/access/window-gated.js";
 import { formatWindowToken, taskWindowId } from "../agent/channels/window-key.js";
 import { registerBrowserToolkit } from "../agent/access/browser-toolkit.js";
 
 import { registerSlackFixtureMapper, registerSlackFixtureManifest } from "./_slack-test-stubs.js";
+import { overrideSettingsForTest, type AgentSettingsOverrides } from "../agent/settings/settings.js";
 registerSlackFixtureMapper();
 registerSlackFixtureManifest();
 
@@ -38,6 +39,7 @@ interface ToolCase {
   readonly entryKey: string;
   readonly ctx: unknown;
   readonly env?: Readonly<Record<string, string>>;
+  readonly settings?: AgentSettingsOverrides;
 }
 const slackCtx = { channel: { kind: "slack" }, session: { auth: { current: { attributes: {} } } } };
 const githubCtx = { channel: { kind: "github" }, session: { auth: { current: { attributes: {} } } } };
@@ -50,8 +52,8 @@ const CASES: readonly ToolCase[] = [
   { slug: "reply", entryKey: "_base", ctx: slackCtx },
   { slug: "reply", entryKey: "_single", ctx: unifiedCtx },
   { slug: "react", entryKey: "_single", ctx: slackCtx },
-  { slug: "read_channel", entryKey: "_single", ctx: slackCtx, env: { OE_GENERIC_READ_VERBS: "1" } },
-  { slug: "read_thread", entryKey: "_single", ctx: slackCtx, env: { OE_GENERIC_READ_VERBS: "1" } },
+  { slug: "read_channel", entryKey: "_single", ctx: slackCtx, settings: { tools: { genericReadVerbs: true } } },
+  { slug: "read_thread", entryKey: "_single", ctx: slackCtx, settings: { tools: { genericReadVerbs: true } } },
   { slug: "add_label", entryKey: "_single", ctx: githubCtx },
   { slug: "set_state", entryKey: "_single", ctx: githubCtx },
   { slug: "assign", entryKey: "_single", ctx: githubCtx },
@@ -122,6 +124,7 @@ for (const c of CASES) {
     saved[k] = process.env[k];
     process.env[k] = v;
   }
+  if (c.settings) overrideSettingsForTest(c.settings);
   try {
     const resolved = (await resolvers.get(c.slug)!({}, c.ctx)) as Record<string, unknown> | null;
     const entry =
@@ -137,6 +140,7 @@ for (const c of CASES) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
+    if (c.settings) overrideSettingsForTest({ tools: { genericReadVerbs: false, sourceScopedMount: false } });
   }
 }
 

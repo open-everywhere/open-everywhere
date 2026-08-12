@@ -11,6 +11,7 @@ import { resolvePartition } from "@open-everywhere/core/agent/memory/partition.j
 import { registerConfig, getConfig } from "@open-everywhere/core/agent/access/config.js";
 import { defineDomain, domainForChannel } from "@open-everywhere/core/agent/memory/domain.js";
 import { registerSlackBridge } from "@open-everywhere/core/agent/channels/slack-bridge.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
 const SENTINEL_SLACK_CHANNEL = {} as never;
 registerSlackBridge({
@@ -52,7 +53,7 @@ function ok(cond: boolean, label: string): void {
 const dir = join(tmpdir(), `open-everywhere-dispatch-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-process.env.OE_ROUTINE_MAX_CONCURRENCY = "2";
+overrideSettingsForTest({ routines: { maxConcurrency: 2 } });
 
 const store = await import("@open-everywhere/core/agent/routines/store.js");
 const dispatch = await import("@open-everywhere/core/agent/schedules/dispatch.js");

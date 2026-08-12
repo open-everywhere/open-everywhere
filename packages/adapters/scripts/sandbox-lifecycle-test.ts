@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import lifecycleHook, {
   shouldStop,
   stopAfterTurnEnabled,
@@ -32,13 +33,13 @@ const ok = (cond: boolean, label: string) => {
 }
 
 {
-  delete process.env.OE_SANDBOX_STOP_AFTER_TURN;
+  overrideSettingsForTest({ sandbox: { stopAfterTurn: true } });
   ok(stopAfterTurnEnabled(), "enabled by default");
-  process.env.OE_SANDBOX_STOP_AFTER_TURN = "0";
+  overrideSettingsForTest({ sandbox: { stopAfterTurn: false } });
   ok(!stopAfterTurnEnabled(), "OE_SANDBOX_STOP_AFTER_TURN=0 disables");
-  process.env.OE_SANDBOX_STOP_AFTER_TURN = "1";
+  overrideSettingsForTest({ sandbox: { stopAfterTurn: true } });
   ok(stopAfterTurnEnabled(), "OE_SANDBOX_STOP_AFTER_TURN=1 keeps it on");
-  delete process.env.OE_SANDBOX_STOP_AFTER_TURN;
+  overrideSettingsForTest({ sandbox: { stopAfterTurn: true } });
 }
 
 {

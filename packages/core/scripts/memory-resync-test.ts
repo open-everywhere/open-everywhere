@@ -11,6 +11,7 @@ import { readAudit } from "../agent/audit/audit.js";
 import type { HookContext } from "eve/hooks";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 registerSlackFixtureMapper();
 
 
@@ -296,7 +297,7 @@ const partition = resolvePartition(makeCtx("p", SUP_TOKEN, new FakeSandbox()));
 
 ok(typeof hook.events["turn.started"] === "function", "the memory hook registers a turn.started handler");
 
-process.env.OE_WINDOW_TOPOLOGY = "1";
+overrideSettingsForTest({ window: { topology: true } });
 {
   const s = makeSession("sup-1", SUP_TOKEN);
   await fire(s, "session.started");
@@ -369,7 +370,7 @@ process.env.OE_WINDOW_TOPOLOGY = "1";
   ok(s.sandbox.files.get("memory/brain-silo/thread-test.md") === undefined, "non-supervisor session keeps today's session-start snapshot");
 }
 
-delete process.env.OE_WINDOW_TOPOLOGY;
+overrideSettingsForTest({ window: { topology: false } });
 {
   const s = makeSession("sup-off", SUP_TOKEN);
   const probesBefore = brain.calls.tierVersion + roStore.calls.tierVersion;
@@ -385,7 +386,7 @@ delete process.env.OE_WINDOW_TOPOLOGY;
   ok(s.sandbox.files.get("memory/brain-silo/gate-off.md") === undefined, "gate OFF: the supervisor keeps the session-start snapshot exactly as before this change");
 }
 
-process.env.OE_WINDOW_TOPOLOGY = "1";
+overrideSettingsForTest({ window: { topology: true } });
 {
   const s = makeSession("sup-lock", SUP_TOKEN);
   await fire(s, "session.started");

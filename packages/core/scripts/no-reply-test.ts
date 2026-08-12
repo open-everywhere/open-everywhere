@@ -5,11 +5,12 @@ import { rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 const dir = join(tmpdir(), `open-everywhere-no-reply-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-process.env.OE_AUDIT_SILENCES = "1";
+overrideSettingsForTest({ audit: { silences: true } });
 
 const noReply = (await import("../agent/tools/no_reply.js")).default as unknown as {
   readonly description: string;
@@ -85,7 +86,7 @@ await inSession(async () => {
 });
 
 await inSession(async () => {
-  delete process.env.OE_AUDIT_SILENCES;
+  overrideSettingsForTest({ audit: { silences: false } });
   try {
     const before = (await readAudit({ org: "default", action: "reply.no_reply" })).length;
     const res = await noReply.execute({ reason: "nothing_to_add" }, ctx());
@@ -94,7 +95,7 @@ await inSession(async () => {
     const after = (await readAudit({ org: "default", action: "reply.no_reply" })).length;
     ok(after === before, "no_reply: flag OFF (actions-only) writes NO reply.no_reply row");
   } finally {
-    process.env.OE_AUDIT_SILENCES = "1";
+    overrideSettingsForTest({ audit: { silences: true } });
   }
 });
 

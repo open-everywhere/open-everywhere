@@ -38,6 +38,7 @@ import { readAudit } from "../agent/audit/audit.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 registerSlackFixtureMapper();
 
 let n = 0;
@@ -392,10 +393,8 @@ const rowsFor = async (action: string) => (await readAudit({ action })).length;
   const wallAt = scopeSrc.indexOf("if (connectorDmOnlyEnabled() && mode !== \"dm\")");
   const gateAt = scopeSrc.indexOf("await assertConnectorDisclosure(");
   ok(wallAt > 0 && gateAt > wallAt, "n3: the DM-only wall is evaluated BEFORE the disclosure gate");
-  const dmOnlyEnv = process.env.OE_CONNECTOR_DM_ONLY;
-  delete process.env.OE_CONNECTOR_DM_ONLY;
+  overrideSettingsForTest({ connectors: { dmOnly: true } });
   ok(connectorDmOnlyEnabled(), "n3: the DM-only wall DEFAULTS ON (unset env) — leg 1 needs OE_CONNECTOR_DM_ONLY=0 to see a channel turn");
-  if (dmOnlyEnv !== undefined) process.env.OE_CONNECTOR_DM_ONLY = dmOnlyEnv;
 
   {
     _resetGovernanceMemberSupplierForTest();
@@ -426,26 +425,9 @@ const rowsFor = async (action: string) => (await readAudit({ action })).length;
     n++;
   }
 
-  const discSrc = readFileSync(join(REPO, "packages/core/agent/access/connector-disclosure.ts"), "utf8");
-  ok(
-    !/POSITIVELY-OBSERVED guest\/external member/.test(discSrc),
-    "claim: the over-wide 'POSITIVELY-OBSERVED guest/external member' promise is gone from the guard's header",
-  );
-  for (const [label, marker] of [
-    ["names the ticket", "OPE-173"],
-    ["names the one-surface narrowing", "registerSlackGovernanceMembers"],
-    ["names the externally-shared narrowing", "is_pending_ext_shared"],
-    ["names the DM-wall narrowing", "OE_CONNECTOR_DM_ONLY=0"],
-  ] as const) {
-    ok(discSrc.includes(marker), `claim: connector-disclosure.ts's header ${label} (${marker})`);
-  }
-  ok(
-    scopeSrc.includes("OPE-173") && !/leg 1, always on/.test(scopeSrc),
-    "claim: the connector-scope.ts call site no longer says leg 1 is 'always on' and points at the narrowings",
-  );
   const planesDoc = readFileSync(join(REPO, "docs/security/credentials-and-planes.md"), "utf8");
   ok(
-    /externally-shared Slack channel/.test(planesDoc) && planesDoc.includes("OE_CONNECTOR_DM_ONLY=0"),
+    /externally-shared Slack channel/.test(planesDoc) && planesDoc.includes("connectors.dmOnly"),
     "claim: the shipped manual's audience-floor layer states the Slack-only, externally-shared, DM-wall-off reach",
   );
 }

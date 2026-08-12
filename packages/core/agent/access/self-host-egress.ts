@@ -1,5 +1,7 @@
 import type { SandboxNetworkPolicy } from "eve/sandbox";
 
+import { getSettings } from "../settings/settings.js";
+
 import { onVercel } from "./platform.js";
 export { onVercel };
 
@@ -19,25 +21,25 @@ export interface EgressBootLog {
 
 export function selfHostEgressBootLog(env: NodeJS.ProcessEnv = process.env): EgressBootLog {
   const proxy = (env.OE_EGRESS_PROXY_URL ?? "").trim();
-  const allowUnenforced = env.OE_ALLOW_UNENFORCED_EGRESS === "1";
+  const allowUnenforced = getSettings().egress.allowUnenforced;
   if (proxy) {
     return {
-      info: "[open-everywhere:egress] self-host egress ENFORCED via proxy sidecar (OE_EGRESS_PROXY_URL set) — the compiled policy is pushed to the proxy natively; OE_ALLOW_UNENFORCED_EGRESS is not needed.",
+      info: "[open-everywhere:egress] self-host egress ENFORCED via proxy sidecar (OE_EGRESS_PROXY_URL set) — the compiled policy is pushed to the proxy natively; `egress.allowUnenforced` is not needed.",
     };
   }
   if (allowUnenforced) {
     return {
       warn:
-        "[open-everywhere:egress] ⚠ UNENFORCED egress — no OE_EGRESS_PROXY_URL and OE_ALLOW_UNENFORCED_EGRESS=1: the agent runs WITHOUT a network firewall " +
+        "[open-everywhere:egress] ⚠ UNENFORCED egress — no OE_EGRESS_PROXY_URL and `egress.allowUnenforced: true` in agent/settings.ts: the agent runs WITHOUT a network firewall " +
         "(default-deny egress + at-boundary credential injection are OFF). Dev/testing ONLY — wire the egress-proxy sidecar (docker-compose.yml) for real deployments.",
-      info: "[open-everywhere:egress] self-host egress posture = unenforced (OE_ALLOW_UNENFORCED_EGRESS=1)",
+      info: "[open-everywhere:egress] self-host egress posture = unenforced (egress.allowUnenforced)",
     };
   }
   return {
     warn:
-      "[open-everywhere:egress] ⚠ egress NOT enforceable — no OE_EGRESS_PROXY_URL configured and OE_ALLOW_UNENFORCED_EGRESS is unset: EVERY session will ABORT at session.started (fail-closed). " +
-      "Wire the egress-proxy sidecar (docker-compose.yml / docs/deploy/platforms/self-host-egress.md), or set OE_ALLOW_UNENFORCED_EGRESS=1 to run unenforced in dev.",
-    info: "[open-everywhere:egress] self-host egress posture = none (sessions fail-closed until a proxy is wired or OE_ALLOW_UNENFORCED_EGRESS=1)",
+      "[open-everywhere:egress] ⚠ egress NOT enforceable — no OE_EGRESS_PROXY_URL configured and `egress.allowUnenforced` is off: EVERY session will ABORT at session.started (fail-closed). " +
+      "Wire the egress-proxy sidecar (docker-compose.yml / docs/deploy/platforms/self-host-egress.md), or declare `egress: { allowUnenforced: true }` in agent/settings.ts to run unenforced in dev.",
+    info: "[open-everywhere:egress] self-host egress posture = none (sessions fail-closed until a proxy is wired or egress.allowUnenforced is declared)",
   };
 }
 

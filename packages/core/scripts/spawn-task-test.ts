@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-spawn-task-")), "ops.sqlite3");
 delete process.env.OE_ORG;
-process.env.OE_ONESHOT_AGENT = "0";
+overrideSettingsForTest({ delegation: { oneshotAgent: false } });
 
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
@@ -23,6 +23,7 @@ import { resolveWindowGated } from "../agent/access/window-gated.js";
 import type { RouteHandlerArgs } from "eve/channels";
 
 import { registerSlackFixtureMapper, registerSlackFixtureCodec } from "./_slack-test-stubs.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 registerSlackFixtureMapper();
 registerSlackFixtureCodec();
 
@@ -46,7 +47,7 @@ const spawnDomain = defineDomain({
   mode: "unified",
 });
 const orgBoth = defineDomain({ name: "org", match: "org" });
-process.env.OE_WINDOW_TOPOLOGY = "1";
+overrideSettingsForTest({ window: { topology: true } });
 registerConfig({
   loadBundles: () => [],
   loadBindings: () => [],

@@ -1,6 +1,7 @@
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -15,8 +16,8 @@ const dir = join(tmpdir(), `open-everywhere-triggered-fire-test-${process.pid}`)
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_ORG;
-process.env.OE_ONESHOT_AGENT = "0";
-process.env.OE_WINDOW_TOPOLOGY = "1";
+overrideSettingsForTest({ delegation: { oneshotAgent: false } });
+overrideSettingsForTest({ window: { topology: true } });
 
 const { registerSlackTestBridge, registerSlackFixtureCodec, registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
 const { registerConfig } = await import("../agent/access/config.js");
@@ -262,7 +263,7 @@ async function tick(now: Date, to: unknown): Promise<void> {
 const NOW = new Date("2026-07-02T12:00:00.000Z");
 
 {
-  process.env.OE_ONESHOT_AGENT = "1";
+  overrideSettingsForTest({ delegation: { oneshotAgent: true } });
   await routineStore.addRoutine({} as never, routine({ id: "r-clock" }));
   const { seen, to } = captureReceive();
   await tick(NOW, to);
@@ -287,7 +288,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
 }
 
 {
-  process.env.OE_ONESHOT_AGENT = "0";
+  overrideSettingsForTest({ delegation: { oneshotAgent: false } });
   await routineStore.addRoutine({} as never, routine({ id: "r-off" }));
   const { seen, to } = captureReceive();
   await tick(NOW, to);
@@ -296,7 +297,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
   ok(seen[0].attrs[OE_GRAIN_ATTR] === undefined, "flag-off: no window stamps are added — byte-identical to the pre-OPE-144 fire");
   await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-off");
 
-  process.env.OE_ONESHOT_AGENT = "1";
+  overrideSettingsForTest({ delegation: { oneshotAgent: true } });
   await routineStore.addRoutine({} as never, routine({ id: "r-lonely", surfaceKey: LONELY_SURFACE, target: { channelId: "C_LONELY" } }));
   const l = captureReceive();
   await tick(NOW, l.to);
@@ -305,7 +306,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
 }
 
 {
-  process.env.OE_ONESHOT_AGENT = "1";
+  overrideSettingsForTest({ delegation: { oneshotAgent: true } });
   await routineStore.addRoutine({} as never, routine({ id: "r-job", sessionMode: "job", trigger: { kind: "interval", everyMinutes: 1 } }));
   const a = captureReceive();
   await tick(NOW, a.to);
@@ -340,7 +341,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
 }
 
 {
-  process.env.OE_ONESHOT_AGENT = "1";
+  overrideSettingsForTest({ delegation: { oneshotAgent: true } });
   await routineStore.addRoutine({} as never, routine({ id: "r-run-only" }));
   const a = captureReceive();
   await tick(NOW, a.to);
@@ -360,7 +361,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
 }
 
 {
-  process.env.OE_ONESHOT_AGENT = "1";
+  overrideSettingsForTest({ delegation: { oneshotAgent: true } });
   await routineStore.addRoutine({} as never, routine({ id: "r-lost" }));
   const before = (await readAudit({ org: ORG, limit: 200 })).length;
   const boom = (() => ({
@@ -377,7 +378,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
 }
 
 {
-  process.env.OE_ONESHOT_AGENT = "1";
+  overrideSettingsForTest({ delegation: { oneshotAgent: true } });
   const { fanOutDelivery } = await import("../agent/routines/github-fanout.js");
   const { registerEntityRead } = await import("../agent/routines/entity-read.js");
   registerEntityRead({ platform: "github", read: async () => ({ status: "gone" }) });
@@ -397,7 +398,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
   const et = seen[0].target as unknown as UnifiedReceiveTarget;
   ok((await store.getUnifiedWakeTarget(ORG, et.wakeId)) !== null, "event/ANSWERABLE: the `wakeId → origin` row is registered");
 
-  process.env.OE_ONESHOT_AGENT = "0";
+  overrideSettingsForTest({ delegation: { oneshotAgent: false } });
   const off = captureReceive();
   await fanOutDelivery(body, "pull_request", "delivery-2", { to: off.to, org: ORG, listRoutines: async () => [ev], grant: GRANT });
   ok(off.seen.length === 1 && !off.seen[0].unified, "event/flag-off: byte-identical native fire");
@@ -422,7 +423,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
   ok(bag["trust_checked"] === "true", "webhook/bag: the live trust verdict rides, positive-only");
   ok(webhookFireAttributes("h", TEAM, "D_X", true, false)[OE_GRAIN_ATTR] === "standing", "webhook/bag: a DM-family target would stamp the standing grain — the shared builder can no longer omit a deliberate stamp");
 
-  process.env.OE_ONESHOT_AGENT = "1";
+  overrideSettingsForTest({ delegation: { oneshotAgent: true } });
   const { seen, to } = captureReceive();
   const res = await fireWebhook(hook, JSON.stringify({ status: "failed" }), { to, confirmInternal: async () => true });
   ok(res.fired, "webhook: the fire reports fired");
@@ -435,7 +436,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
   const wres = await resolveAnswerableReplyTarget(store, ORG, wt.wakeId, wt.token, "turn-w", wt.wakeId);
   ok(wres.ok, "webhook/ANSWERABLE: the fire's wake resolves through the unified reply fence");
 
-  process.env.OE_ONESHOT_AGENT = "0";
+  overrideSettingsForTest({ delegation: { oneshotAgent: false } });
   const off = captureReceive();
   await fireWebhook(hook, JSON.stringify({ status: "ok" }), { to: off.to, confirmInternal: async () => true });
   ok(off.seen.length === 1 && !off.seen[0].unified, "webhook/flag-off: byte-identical native fire");
@@ -459,7 +460,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
 }
 
 {
-  process.env.OE_ONESHOT_AGENT = "1";
+  overrideSettingsForTest({ delegation: { oneshotAgent: true } });
   const w1 = mintWakeId();
   const w2 = mintWakeId();
   const base = { surfaceKey: SURFACE, origin: SLACK_ORIGIN, domains: DOMAINS, generation: 1, armed: true };
@@ -488,7 +489,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
   const wakeIdInMessage = (message: string): string | undefined =>
     /`wake-id` for this fire is `([^`]+)`/.exec(message)?.[1];
 
-  process.env.OE_ONESHOT_AGENT = "1";
+  overrideSettingsForTest({ delegation: { oneshotAgent: true } });
   await routineStore.addRoutine({} as never, routine({ id: "r-speak", prompt: "Post the deploy digest." }));
   const { seen, to } = captureReceive();
   await tick(NOW, to);
@@ -529,7 +530,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
 }
 
 {
-  process.env.OE_ONESHOT_AGENT = "1";
+  overrideSettingsForTest({ delegation: { oneshotAgent: true } });
   await routineStore.addRoutine({} as never, routine({ id: "r-silent", report: { kind: "silent" }, prompt: "Archive yesterday's rows." }));
   const { seen, to } = captureReceive();
   await tick(NOW, to);
@@ -545,7 +546,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
 }
 
 {
-  process.env.OE_ONESHOT_AGENT = "0";
+  overrideSettingsForTest({ delegation: { oneshotAgent: false } });
   await routineStore.addRoutine({} as never, routine({ id: "r-native", prompt: "Post the deploy digest." }));
   const { seen, to } = captureReceive();
   await tick(NOW, to);
@@ -554,6 +555,6 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
   await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-native");
 }
 
-process.env.OE_ONESHOT_AGENT = "0";
+overrideSettingsForTest({ delegation: { oneshotAgent: false } });
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ triggered-fire-window: ${passed} assertions passed`);

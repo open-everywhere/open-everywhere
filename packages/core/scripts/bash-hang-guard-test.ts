@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import type { ToolContext, ToolDefinition } from "eve/tools";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import {
   DEFAULT_BASH_TIMEOUT_MS,
   bashTimeoutMs,
@@ -46,27 +47,26 @@ async function refusal(tool: ToolDefinition, command: string): Promise<string | 
 }
 
 {
-  delete process.env.OE_BASH_TIMEOUT_MS;
+  overrideSettingsForTest({ bash: { timeoutMs: 600_000 } });
   ok(bashTimeoutMs() === DEFAULT_BASH_TIMEOUT_MS && DEFAULT_BASH_TIMEOUT_MS === 600_000, "config: default timeout is 600s");
   ok(
     DEFAULT_BASH_TIMEOUT_MS > 400_000,
     "config: the default clears the ~400s foreground command measured returning cleanly in prod (OPE-132)",
   );
-  process.env.OE_BASH_TIMEOUT_MS = "90000";
+  overrideSettingsForTest({ bash: { timeoutMs: 90000 } });
   ok(bashTimeoutMs() === 90_000, "config: OE_BASH_TIMEOUT_MS overrides the default");
-  process.env.OE_BASH_TIMEOUT_MS = "0";
+  overrideSettingsForTest({ bash: { timeoutMs: 0 } });
   ok(bashTimeoutMs() === 0, "config: 0 disables the timeout");
-  process.env.OE_BASH_TIMEOUT_MS = "off";
-  ok(bashTimeoutMs() === 0, "config: off disables the timeout");
-  process.env.OE_BASH_TIMEOUT_MS = "garbage";
-  ok(bashTimeoutMs() === DEFAULT_BASH_TIMEOUT_MS, "config: unparseable falls back to the default (fail-safe on)");
+  overrideSettingsForTest({ bash: { timeoutMs: 600_000 } });
+  process.env.OE_BASH_TIMEOUT_MS = "0";
+  ok(bashTimeoutMs() === DEFAULT_BASH_TIMEOUT_MS, "config: a stray OE_BASH_TIMEOUT_MS=0 does NOT disable the timeout — the mirror is deleted (OPE-411)");
   delete process.env.OE_BASH_TIMEOUT_MS;
 
-  delete process.env.OE_BASH_BACKGROUND_GUARD;
+  overrideSettingsForTest({ bash: { backgroundGuard: true } });
   ok(backgroundGuardEnabled(), "config: the background guard is armed by default");
-  process.env.OE_BASH_BACKGROUND_GUARD = "off";
+  overrideSettingsForTest({ bash: { backgroundGuard: false } });
   ok(!backgroundGuardEnabled(), "config: OE_BASH_BACKGROUND_GUARD=off disarms the detector");
-  delete process.env.OE_BASH_BACKGROUND_GUARD;
+  overrideSettingsForTest({ bash: { backgroundGuard: true } });
 }
 
 {
@@ -134,7 +134,7 @@ async function refusal(tool: ToolDefinition, command: string): Promise<string | 
 }
 
 {
-  process.env.OE_BASH_TIMEOUT_MS = "1000";
+  overrideSettingsForTest({ bash: { timeoutMs: 1000 } });
   const { tool } = fakeBash({ hang: true });
   const wrapped = withBashHangGuard(tool);
   const keepAlive = setInterval(() => {}, 50);
@@ -150,32 +150,32 @@ async function refusal(tool: ToolDefinition, command: string): Promise<string | 
   );
   ok(/> \/tmp\/out\.log 2>&1 &/.test(msg!), "timeout: the diagnostic hands back the corrected form");
   ok(/still be running in the workspace/.test(msg!), "timeout: the diagnostic says the command may still be alive — don't just re-run it");
-  delete process.env.OE_BASH_TIMEOUT_MS;
+  overrideSettingsForTest({ bash: { timeoutMs: 600_000 } });
 }
 
 {
-  process.env.OE_BASH_TIMEOUT_MS = "5000";
+  overrideSettingsForTest({ bash: { timeoutMs: 5000 } });
   const { tool } = fakeBash({ delayMs: 5 });
   const wrapped = withBashHangGuard(tool);
   const out = (await wrapped.execute({ command: "echo hi" }, fakeCtx)) as { exitCode: number };
   ok(out.exitCode === 0, "timeout: a command that finishes in time is unaffected");
-  delete process.env.OE_BASH_TIMEOUT_MS;
+  overrideSettingsForTest({ bash: { timeoutMs: 600_000 } });
 }
 
 {
-  process.env.OE_BASH_BACKGROUND_GUARD = "off";
+  overrideSettingsForTest({ bash: { backgroundGuard: false } });
   const { tool, ran } = fakeBash();
   const wrapped = withBashHangGuard(tool);
   await wrapped.execute({ command: "python3 -m http.server 8000 &" }, fakeCtx);
   ok(ran.length === 1, "disable: OE_BASH_BACKGROUND_GUARD=off lets the broken form through (the escape hatch works)");
-  delete process.env.OE_BASH_BACKGROUND_GUARD;
+  overrideSettingsForTest({ bash: { backgroundGuard: true } });
 
-  process.env.OE_BASH_TIMEOUT_MS = "0";
+  overrideSettingsForTest({ bash: { timeoutMs: 0 } });
   const slow = fakeBash({ delayMs: 30 });
   const wrapped2 = withBashHangGuard(slow.tool);
   const out = (await wrapped2.execute({ command: "sleep 0.03" }, fakeCtx)) as { exitCode: number };
   ok(out.exitCode === 0 && slow.ran.length === 1, "disable: OE_BASH_TIMEOUT_MS=0 removes the timeout race entirely");
-  delete process.env.OE_BASH_TIMEOUT_MS;
+  overrideSettingsForTest({ bash: { timeoutMs: 600_000 } });
 }
 
 console.log(`✓ bash-hang-guard: ${n} assertions passed`);
