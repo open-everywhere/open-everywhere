@@ -1,4 +1,4 @@
-import { currentTurnId, type BindableContext } from "../identity/binding.js";
+import { currentTurnId, currentSessionId, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getSettings } from "../settings/settings.js";
 import { appendAudit } from "../audit/audit.js";
@@ -12,6 +12,7 @@ export interface StepBoundaryDecision {
   readonly budget: number;
   readonly backstop: number;
   readonly turnId?: string;
+  readonly sessionId?: string;
   readonly crossed: boolean;
 }
 
@@ -21,9 +22,13 @@ export const MAX_TRACKED_TURNS = 512;
 
 const counts = new Map<string, number>();
 
-function bump(turnId: string): number {
-  const next = (counts.get(turnId) ?? 0) + 1;
-  counts.set(turnId, next);
+export function stepCountKey(sessionId: string | undefined, turnId: string): string {
+  return sessionId !== undefined ? `${sessionId}:${turnId}` : turnId;
+}
+
+function bump(key: string): number {
+  const next = (counts.get(key) ?? 0) + 1;
+  counts.set(key, next);
   if (counts.size > MAX_TRACKED_TURNS) {
     const oldest = counts.keys().next();
     if (!oldest.done) counts.delete(oldest.value);
@@ -31,8 +36,8 @@ function bump(turnId: string): number {
   return next;
 }
 
-export function clearTurnStepCount(turnId: string | undefined): void {
-  if (turnId !== undefined) counts.delete(turnId);
+export function clearTurnStepCount(sessionId: string | undefined, turnId: string | undefined): void {
+  if (turnId !== undefined) counts.delete(stepCountKey(sessionId, turnId));
 }
 
 export function _resetStepBoundaryCountsForTest(): void {
@@ -62,16 +67,18 @@ export function noteTurnStep(ctx: BindableContext, settings = getSettings()): St
   }
   if (budget <= 0) return INERT;
   let turnId: string | undefined;
+  let sessionId: string | undefined;
   try {
     turnId = currentTurnId(ctx);
+    sessionId = currentSessionId(ctx);
   } catch {
     return INERT;
   }
   if (turnId === undefined) return INERT;
-  const count = bump(turnId);
+  const count = bump(stepCountKey(sessionId, turnId));
   const tier = classifyStepCount(count, budget, backstop);
   const previous = classifyStepCount(count - 1, budget, backstop);
-  return { tier, count, budget, backstop, turnId, crossed: tier !== previous };
+  return { tier, count, budget, backstop, turnId, sessionId, crossed: tier !== previous };
 }
 
 export const STEP_BOUNDARY_MARKER = "⏸️ TURN STEP BOUNDARY (open-everywhere harness — not from the person)";
@@ -186,7 +193,7 @@ export function reportStepBoundary(ctx: BindableContext, d: StepBoundaryDecision
   void appendAudit({
     ...where,
     action: STEP_BOUNDARY_ACTION,
-    detail: { tier: d.tier, steps: d.count, budget: d.budget, backstop: d.backstop, turnId: d.turnId },
+    detail: { tier: d.tier, steps: d.count, budget: d.budget, backstop: d.backstop, turnId: d.turnId, ...(d.sessionId ? { sessionId: d.sessionId } : {}) },
   }).catch(() => {
   });
 }

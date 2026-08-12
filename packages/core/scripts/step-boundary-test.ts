@@ -67,11 +67,12 @@ function fakeBackend(calls: FakeCall[]): ModelBackend {
 const DEFAULT_ID = "vendor/default-model";
 const DEFAULTS = { primary: { id: DEFAULT_ID }, utility: { id: "vendor/utility-model" } };
 
-function turnCtx(turnId: string, channel = "C_TXN"): BindableContext {
+function turnCtx(turnId: string, channel = "C_TXN", sessionId?: string): BindableContext {
   return {
     channel: { kind: "slack" },
     session: {
       turn: { id: turnId },
+      ...(sessionId !== undefined ? { sessionId } : {}),
       auth: {
         current: {
           attributes: { team_id: "T1", channel_id: channel, channel_type: "channel", is_private: "false", trust_checked: "true" },
@@ -135,13 +136,39 @@ const smallSettings = (budget: number, multiple = 2): void => {
   eq(other.tier, "none", "isolation: a different turn id starts its own count at 1");
   eq(other.count, 1, "isolation: …and that count is 1, not the other turn's 9");
 
-  clearTurnStepCount("turn-count-A");
+  clearTurnStepCount(undefined, "turn-count-A");
   eq(noteTurnStep(ctx).count, 1, "count: clearTurnStepCount drops a turn's counter (the stopped-turn cleanup path)");
 
   const noTurn = noteTurnStep({ session: { auth: {} } } as unknown as BindableContext);
   eq(noTurn.tier, "none", "count: a ctx with no turn id is INERT — nothing to key a counter on, so the boundary can never trip (patch parity)");
   eq(noTurn.count, 0, "count: …and nothing is counted for it");
   ok(MAX_TRACKED_TURNS >= 128, "count: the tracked-turn map is LRU-bounded in place of the terminal-decision clear the patched loop had");
+  resetSettingsForTest();
+}
+
+{
+  _resetStepBoundaryCountsForTest();
+  smallSettings(3, 2);
+  const sessionA = turnCtx("turn_0", "C_TXN", "sess-A");
+  const sessionB = turnCtx("turn_0", "C_TXN", "sess-B");
+
+  const tiersA: string[] = [];
+  const tiersB: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    tiersA.push(noteTurnStep(sessionA).tier);
+    tiersB.push(noteTurnStep(sessionB).tier);
+  }
+  eq(tiersA, ["none", "none", "none", "soft"], "session-scope: session A's four round-trips on turn_0 walk its OWN tiers (budget 3) — unaffected by B's identical turn id");
+  eq(tiersB, ["none", "none", "none", "soft"], "session-scope: session B, ALSO on turn_0, gets the identical independent sequence — proof the two are not sharing one counter");
+
+  const again = noteTurnStep(sessionA);
+  eq(again.count, 5, "session-scope: session A's count keeps advancing from its own 4, not from a combined 8");
+  eq(again.sessionId, "sess-A", "session-scope: the decision carries the session id the count was keyed on");
+  eq(again.turnId, "turn_0", "session-scope: …and the (colliding) turn id, for forensic readability alongside sessionId");
+
+  clearTurnStepCount("sess-A", "turn_0");
+  eq(noteTurnStep(sessionA).count, 1, "session-scope: clearTurnStepCount(sessionId, turnId) drops exactly A's counter…");
+  eq(noteTurnStep(sessionB).count, 5, "session-scope: …and leaves B's counter (still at 4 from the interleave) untouched, proving they were never the same map entry");
   resetSettingsForTest();
 }
 
