@@ -477,15 +477,48 @@ registerConfig({
   ok(inDomain.domain === "transactions" && inDomain.ids.has("C_TXN") && inDomain.ids.has("C_TXN_EMEA"), "domain channel → both siblings allowed");
   ok(readableChannelList(ctxFor("C_TXN")).length === 2, "readable list exposes both channels");
 
-  assert.doesNotThrow(() => assertChannelAllowed(ctxFor("C_TXN"), "C_TXN_EMEA"), "sibling read allowed");
+  await assert.doesNotReject(() => assertChannelAllowed(ctxFor("C_TXN"), "C_TXN_EMEA"), "sibling read allowed");
   ok(true, "sibling read allowed (no throw)");
-  assert.throws(() => assertChannelAllowed(ctxFor("C_TXN"), "C_OTHER"), ChannelScopeError, "foreign channel refused");
+  await assert.rejects(() => assertChannelAllowed(ctxFor("C_TXN"), "C_OTHER"), ChannelScopeError, "foreign channel refused");
   ok(true, "foreign channel refused (ChannelScopeError)");
 
   const lone = allowedChannelIds(ctxFor("C_RANDOM"));
   ok(lone.domain === undefined && lone.ids.has("C_RANDOM") && lone.ids.size === 1, "unassigned channel → only itself readable");
-  assert.throws(() => assertChannelAllowed(ctxFor("C_RANDOM"), "C_TXN"), ChannelScopeError, "unassigned channel can't read a domain channel");
+  await assert.rejects(() => assertChannelAllowed(ctxFor("C_RANDOM"), "C_TXN"), ChannelScopeError, "unassigned channel can't read a domain channel");
   ok(true, "unassigned channel can't reach into a domain (fail closed)");
+
+  {
+    const rows: Array<Record<string, unknown>> = [];
+    const audit = async (e: Record<string, unknown>) => {
+      rows.push(e);
+    };
+    await assert.rejects(() => assertChannelAllowed(ctxFor("C_TXN"), "C_OTHER", { audit }), ChannelScopeError, "audited refusal still throws");
+    ok(rows.length === 1, "exactly one read.refused row per refused read");
+    const row = rows[0] as { action?: string; platform?: string; workspace?: string; principalId?: string; detail?: Record<string, unknown> };
+    ok(row.action === "read.refused" && row.platform === "slack", "the row is a slack read.refused");
+    ok(row.workspace === "T_ENG" && row.principalId === "U1", "…stamped with the workspace and the asking principal");
+    ok(row.detail?.target === "C_OTHER" && row.detail?.reason === "cross-domain", "…naming the refused channel id and the verdict");
+    ok(
+      row.detail?.callerDomain === "transactions" && row.detail?.callerSurfaceKey === "slack/T_ENG/C_TXN" && row.detail?.targetDomain === null,
+      "…both sides: the caller's domain + surface key, and no owning domain for an unlisted channel",
+    );
+    ok(Object.keys(row.detail ?? {}).length === 5, "…and nothing else — ids, domains and a verdict, never channel CONTENT");
+
+    rows.length = 0;
+    await assert.rejects(() => assertChannelAllowed(ctxFor("C_RANDOM"), "C_TXN", { audit }), ChannelScopeError, "unassigned caller's refusal is audited too");
+    ok(rows[0]?.detail !== undefined && (rows[0].detail as Record<string, unknown>).reason === "caller-unassigned", "a caller in no domain reports caller-unassigned, not cross-domain");
+    ok((rows[0]!.detail as Record<string, unknown>).targetDomain === "transactions", "…and the row still names the domain the target belongs to");
+
+    const exploding = async () => {
+      throw new Error("audit store is down");
+    };
+    await assert.rejects(
+      () => assertChannelAllowed(ctxFor("C_TXN"), "C_OTHER", { audit: exploding }),
+      ChannelScopeError,
+      "a failing audit sink still yields the SAME ChannelScopeError — best-effort, never control flow",
+    );
+    ok(true, "audit failure does not change the refusal");
+  }
 }
 
 {

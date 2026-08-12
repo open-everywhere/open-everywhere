@@ -1,5 +1,6 @@
 import { resolveTeamsAppId, resolveTeamsAppPassword, resolveTeamsTenantId } from "eve/channels/teams";
 import {
+  auditChannelReadRefusal,
   bindFrom,
   resolvePartition,
   domainKeyOf,
@@ -10,6 +11,7 @@ import {
   type BindableContext,
   type BrokeredSecret,
   type Domain,
+  type ReadScopeAuditDeps,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -172,10 +174,14 @@ export function allowedTeamsChannelIds(channelGrainKey: string, domains: readonl
   return { ids, domain: domain?.name };
 }
 
-function assertTeamsChannelAllowed(ctx: BindableContext, channelId: string): void {
+export async function assertTeamsChannelAllowed(ctx: BindableContext, channelId: string, deps?: ReadScopeAuditDeps): Promise<void> {
   const p = resolvePartition(ctx);
-  const { ids, domain } = allowedTeamsChannelIds(domainKeyOf(p), getConfig().loadDomains());
-  if (ids.has(sanitizeTeamsChannelId(channelId))) return;
+  const domains = getConfig().loadDomains();
+  const callerKey = domainKeyOf(p);
+  const { ids, domain } = allowedTeamsChannelIds(callerKey, domains);
+  const wanted = sanitizeTeamsChannelId(channelId);
+  if (ids.has(wanted)) return;
+  await auditChannelReadRefusal(ctx, { platform: "teams", surfaceId: wanted, callerKey, callerDomain: domain, domains }, deps);
   const scope = domain ? `domain "${domain}"` : "this channel's (no multi-channel domain)";
   throw new ChannelScopeError(
     `channel "${channelId}" is not in ${scope} teams read scope. The agent may only read channels in its ` +
@@ -197,7 +203,7 @@ function noTeamIdError(what: string): Error {
 export const teamsReadAdapter = {
   platform: "teams" as const,
   async readChannel(ctx: BindableContext, channel: string, limit?: number, req: TeamsGraphRequester = liveTeamsGraphRequest): Promise<readonly TeamsRenderedLine[]> {
-    assertTeamsChannelAllowed(ctx, channel);
+    await assertTeamsChannelAllowed(ctx, channel);
     const teamId = currentTeamId(ctx);
     if (!teamId) throw noTeamIdError("channel reads");
     const n = limit ?? TEAMS_CHANNEL_DEFAULT_LIMIT;
@@ -205,7 +211,7 @@ export const teamsReadAdapter = {
     return teamsLinesFromRaw(raw).slice(-n);
   },
   async readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number, req: TeamsGraphRequester = liveTeamsGraphRequest): Promise<readonly TeamsRenderedLine[]> {
-    assertTeamsChannelAllowed(ctx, channel);
+    await assertTeamsChannelAllowed(ctx, channel);
     const teamId = currentTeamId(ctx);
     if (!teamId) throw noTeamIdError("thread reads");
     const n = limit ?? TEAMS_THREAD_DEFAULT_LIMIT;

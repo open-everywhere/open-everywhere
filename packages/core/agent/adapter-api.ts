@@ -370,6 +370,9 @@ export type { ReactionSinkDeps, ReactionIngestOutcome, ReactionVerb } from "./ch
 export { assertSurfaceAllowed } from "./channels/channel-read.js";
 export type { RenderedLine } from "./channels/channel-read.js";
 
+export { auditChannelReadRefusal } from "./channels/read-scope-audit.js";
+export type { ReadScopeAuditDeps, ReadScopeReason, ReadScopeRefusal } from "./channels/read-scope-audit.js";
+
 export type { Trust } from "./identity/binding.js";
 
 export { registerSlackBridge, _resetSlackBridgeForTest, slackBridge } from "./channels/slack-bridge.js";

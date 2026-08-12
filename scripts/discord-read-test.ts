@@ -3,7 +3,10 @@ import {
   READ_ADAPTERS,
   supportedReadPlatforms,
   resolveReadAdapter,
+  assertSurfaceAllowed,
 } from "@open-everywhere/core/agent/channels/channel-read.js";
+import { readAudit } from "@open-everywhere/core/agent/audit/audit.js";
+import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import {
   discordReadAdapter,
   discordLinesFromRaw,
@@ -126,6 +129,50 @@ const engCtx = discordCtx({ userId: "U-ALICE", guildId: GUILD, channelId: CHAN_E
     "readThread: an out-of-domain thread id is refused before any Discord GET (assertSurfaceAllowed's generic \"channel\" wording, since a thread id IS a channel id on Discord)",
   );
   n++;
+}
+
+{
+  const rows: Array<Record<string, unknown>> = [];
+  const audit = async (e: Record<string, unknown>) => {
+    rows.push(e);
+  };
+  await assert.rejects(
+    () => assertSurfaceAllowed(engCtx, "discord", CHAN_OUTSIDE, { audit }),
+    /channel "C-OUTSIDE" is not in domain "eng" discord read scope/u,
+    "an audited refusal throws exactly the error the silent version threw",
+  );
+  n++;
+  ok(rows.length === 1, "exactly one read.refused row per refused read");
+  const row = rows[0] as { action?: string; platform?: string; workspace?: string; detail?: Record<string, unknown> };
+  ok(row.action === "read.refused" && row.platform === "discord", "the row is a discord read.refused");
+  ok(row.workspace === GUILD, "…stamped with the guild as the workspace");
+  ok(row.detail?.target === CHAN_OUTSIDE && row.detail?.reason === "cross-domain", "…naming the refused channel id and the verdict");
+  ok(
+    row.detail?.callerDomain === "eng" && row.detail?.callerSurfaceKey === `discord/${GUILD}/${CHAN_ENG}` && row.detail?.targetDomain === null,
+    "…both sides: the caller's domain + surface key, and no owning domain for an unlisted channel",
+  );
+  ok(Object.keys(row.detail ?? {}).length === 5, "…and nothing else — ids, domains and a verdict, never message CONTENT");
+
+  const exploding = async () => {
+    throw new Error("audit store is down");
+  };
+  await assert.rejects(
+    () => assertSurfaceAllowed(engCtx, "discord", CHAN_OUTSIDE, { audit: exploding }),
+    /channel "C-OUTSIDE" is not in domain "eng" discord read scope/u,
+    "a failing audit sink still yields the SAME ChannelScopeError — best-effort, never control flow",
+  );
+  n++;
+
+  const org = deploymentOrg();
+  const before = (await readAudit({ org, platform: "discord", action: "read.refused" })).length;
+  await assert.rejects(
+    () => discordReadAdapter.readChannel(engCtx, CHAN_OUTSIDE, undefined, async () => []),
+    /is not in domain "eng" discord read scope/u,
+    "a refusal through the ADAPTER (no deps override) still throws",
+  );
+  n++;
+  const after = await readAudit({ org, platform: "discord", action: "read.refused" });
+  ok(after.length === before + 1, "…and appends exactly one durable read.refused row through the real appendAudit");
 }
 
 {

@@ -4,6 +4,7 @@ import {
   teamsLinesFromRaw,
   sanitizeTeamsChannelId,
   allowedTeamsChannelIds,
+  assertTeamsChannelAllowed,
   teamsReadAdapter,
   _resetTeamsGraphTokenCache,
   type TeamsGraphRequester,
@@ -153,6 +154,46 @@ const engCtx = teamsCtx({
     "readChannel: an out-of-domain channel is refused before any Graph call",
   );
   n++;
+}
+
+{
+  const rows: Array<Record<string, unknown>> = [];
+  const audit = async (e: Record<string, unknown>) => {
+    rows.push(e);
+  };
+  await assert.rejects(
+    () => assertTeamsChannelAllowed(engCtx, RAW_OUTSIDE, { audit }),
+    /is not in domain "eng" teams read scope/u,
+    "an audited refusal throws exactly the error the silent version threw",
+  );
+  n++;
+  ok(rows.length === 1, "exactly one read.refused row per refused read");
+  const row = rows[0] as { action?: string; platform?: string; detail?: Record<string, unknown> };
+  ok(row.action === "read.refused" && row.platform === "teams", "the row is a teams read.refused");
+  ok(row.detail?.target === sanitizeTeamsChannelId(RAW_OUTSIDE) && row.detail?.reason === "cross-domain", "…naming the SANITIZED refused channel id and the verdict");
+  ok(row.detail?.callerDomain === "eng" && row.detail?.targetDomain === null, "…both sides: the caller's domain, and no owning domain for an unlisted channel");
+  ok(Object.keys(row.detail ?? {}).length === 5, "…and nothing else — ids, domains and a verdict, never message CONTENT");
+
+  const exploding = async () => {
+    throw new Error("audit store is down");
+  };
+  await assert.rejects(
+    () => assertTeamsChannelAllowed(engCtx, RAW_OUTSIDE, { audit: exploding }),
+    /is not in domain "eng" teams read scope/u,
+    "a failing audit sink still yields the SAME ChannelScopeError — best-effort, never control flow",
+  );
+  n++;
+
+  const org = deploymentOrg();
+  const before = (await readAudit({ org, platform: "teams", action: "read.refused" })).length;
+  await assert.rejects(
+    () => teamsReadAdapter.readChannel(engCtx, RAW_OUTSIDE, 50, async () => ({ value: [] })),
+    /is not in domain "eng" teams read scope/u,
+    "a refusal through the ADAPTER (no deps override) still throws",
+  );
+  n++;
+  const after = await readAudit({ org, platform: "teams", action: "read.refused" });
+  ok(after.length === before + 1, "…and appends exactly one durable read.refused row through the real appendAudit");
 }
 
 {

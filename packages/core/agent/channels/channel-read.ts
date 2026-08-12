@@ -10,6 +10,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
 
 import { ChannelScopeError } from "./read-scope-error.js";
+import { auditChannelReadRefusal, type ReadScopeAuditDeps } from "./read-scope-audit.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 export { ChannelScopeError };
 
@@ -64,10 +65,12 @@ export function allowedSurfaceIdsFrom(
   return { ids, domain: domain?.name };
 }
 
-export function assertSurfaceAllowed(ctx: BindableContext, platform: string, surfaceId: string): void {
+export async function assertSurfaceAllowed(ctx: BindableContext, platform: string, surfaceId: string, deps?: ReadScopeAuditDeps): Promise<void> {
   const p = resolvePartition(ctx);
-  const { ids, domain } = allowedSurfaceIdsFrom(p.surfaceKey, platform, getConfig().loadDomains());
+  const domains = getConfig().loadDomains();
+  const { ids, domain } = allowedSurfaceIdsFrom(p.surfaceKey, platform, domains);
   if (ids.has(surfaceId)) return;
+  await auditChannelReadRefusal(ctx, { platform, surfaceId, callerKey: p.surfaceKey, callerDomain: domain, domains }, deps);
   const scope = domain ? `domain "${domain}"` : "this channel's (no multi-channel domain)";
   throw new ChannelScopeError(
     `channel "${surfaceId}" is not in ${scope} ${platform} read scope. The agent may only read channels in its ` +

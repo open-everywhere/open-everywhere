@@ -31,11 +31,11 @@ export function discordLinesFromRaw(raw: unknown): RenderedLine[] {
 export const discordReadAdapter = {
   platform: "discord" as const,
   async readChannel(ctx: BindableContext, channel: string, limit?: number, req: DiscordReadRequester = liveDiscordRead): Promise<readonly RenderedLine[]> {
-    assertSurfaceAllowed(ctx, "discord", channel);
+    await assertSurfaceAllowed(ctx, "discord", channel);
     return discordLinesFromRaw(await req(channel, limit ?? DISCORD_CHANNEL_DEFAULT_LIMIT));
   },
   async readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number, req: DiscordReadRequester = liveDiscordRead): Promise<readonly RenderedLine[]> {
-    assertSurfaceAllowed(ctx, "discord", threadTs);
+    await assertSurfaceAllowed(ctx, "discord", threadTs);
     return discordLinesFromRaw(await req(threadTs, limit ?? DISCORD_THREAD_DEFAULT_LIMIT));
   },
 };

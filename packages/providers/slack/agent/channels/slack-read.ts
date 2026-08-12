@@ -1,10 +1,12 @@
 import { callSlackApi } from "eve/channels/slack";
 import {
+  auditChannelReadRefusal,
   getConfig,
   domainForChannel,
   resolvePartition,
   ChannelScopeError,
   type BindableContext,
+  type ReadScopeAuditDeps,
   type RenderedLine,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -31,9 +33,15 @@ export function allowedChannelIds(ctx: BindableContext): { ids: Set<string>; dom
   return { ids, domain: domain?.name };
 }
 
-export function assertChannelAllowed(ctx: BindableContext, channelId: string): void {
+export async function assertChannelAllowed(ctx: BindableContext, channelId: string, deps?: ReadScopeAuditDeps): Promise<void> {
   const { ids, domain } = allowedChannelIds(ctx);
   if (ids.has(channelId)) return;
+  const p = resolvePartition(ctx);
+  await auditChannelReadRefusal(
+    ctx,
+    { platform: "slack", surfaceId: channelId, callerKey: p.surfaceKey, callerDomain: domain, domains: getConfig().loadDomains() },
+    deps,
+  );
   const scope = domain ? `domain "${domain}"` : "this channel's (no multi-channel domain)";
   throw new ChannelScopeError(
     `channel "${channelId}" is not in ${scope} read scope. The agent may only read channels in its ` +
@@ -87,12 +95,12 @@ export type SlackReadCall = typeof callSlackRead;
 export const slackReadAdapter = {
   platform: "slack" as const,
   async readChannel(ctx: BindableContext, channel: string, limit?: number, call: SlackReadCall = callSlackRead): Promise<readonly RenderedLine[]> {
-    assertChannelAllowed(ctx, channel);
+    await assertChannelAllowed(ctx, channel);
     const res = await call("conversations.history", { channel, limit: limit ?? SLACK_CHANNEL_DEFAULT_LIMIT, inclusive: true });
     return renderMessages(res.messages, { oldestFirst: false });
   },
   async readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number, call: SlackReadCall = callSlackRead): Promise<readonly RenderedLine[]> {
-    assertChannelAllowed(ctx, channel);
+    await assertChannelAllowed(ctx, channel);
     const res = await call("conversations.replies", { channel, ts: threadTs, limit: limit ?? SLACK_THREAD_DEFAULT_LIMIT });
     return renderMessages(res.messages, { oldestFirst: true });
   },
