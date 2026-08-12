@@ -195,7 +195,7 @@ function nameDropFollowUp(followUp: NonNullable<NormalizedWake["nameDrop"]>["fol
       return `If you do reply, you will be following the thread from then on, so make it count.`;
     case "thread-engaged":
       return `You are now following this thread — later messages here will reach you for the same ` +
-        `judged treatment, and the humans can say "stop" to end that.`;
+        `judged treatment. If they ask you to stop, call \`stand_down\`.`;
     case "channel-not-following":
       return `If you do reply, note that you are NOT following this channel: tell the humans to ` +
         `@mention you (or say your name again) for follow-ups.`;

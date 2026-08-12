@@ -345,7 +345,6 @@ export {
   bumpThreadSilentStreak,
   disengageThread,
   getThreadEngagement,
-  isStopRequest,
   isThreadEngaged,
   markThreadEngaged,
   WARM_SILENT_LIMIT,
@@ -382,7 +381,7 @@ export type { Trust } from "./identity/binding.js";
 export { registerSlackBridge, _resetSlackBridgeForTest, slackBridge } from "./channels/slack-bridge.js";
 export type { SlackBridge, SlackFormFn, SlackReadCallFn } from "./channels/slack-bridge.js";
 
-export { markThreadStopped, shouldDeliverReply, classifyParticipation, STOP_ACK_COPY } from "./channels/engagement.js";
+export { markThreadStopped, shouldDeliverReply, classifyParticipation } from "./channels/engagement.js";
 export type { ReplyDecision, ParticipationSignals } from "./channels/engagement.js";
 
 export { resolveWakeTrust, backscrollTrustResolver } from "./identity/wake-trust.js";

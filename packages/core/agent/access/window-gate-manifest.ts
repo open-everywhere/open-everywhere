@@ -30,6 +30,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "no_reply",
   "react",
   "update_status",
+  "stand_down",
   "check_pr_status",
   "get_pr_feedback",
   "walk_pr",

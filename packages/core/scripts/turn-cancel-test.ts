@@ -1,3 +1,4 @@
+
 import { registerOperationalStore } from "../agent/operational/provider.js";
 import { renderCancelNote } from "../agent/hooks/turn-anchor.js";
 import { parseOeCommandTokens, parseSlackCommandText, renderHelp, runStop } from "../agent/commands/core.js";
@@ -169,4 +170,28 @@ ok(renderHelp().includes("/oe stop"), "…and help ADVERTISES stop — an afford
   ok(wired.length > 0, "…and answers the invoker with a user-facing sentence");
 }
 
-console.log(`✓ turn-cancel: ${passed} assertions passed`);
+
+{
+  const { LEAN_SEAT_TOOLS } = await import("../agent/access/lean-seat.js");
+  const { WINDOW_UNGATED_TOOLS, WINDOW_GATED_TOOLS } = await import("../agent/access/window-gate-manifest.js");
+  const { WORKER_INDEX_SEAT_VERBS } = await import("../agent/access/worker-capabilities.js");
+  const { shouldDeliverReply } = await import("../agent/channels/engagement.js");
+  const engagement = await import("../agent/channels/engagement.js");
+
+  ok(LEAN_SEAT_TOOLS.has("stand_down"), "🔴 stand_down is on the LEAN SEAT roster — NO LINT COVERS THIS, and omission is a silent removal from every delegating seat");
+  ok(WINDOW_UNGATED_TOOLS.has("stand_down"), "stand_down is window-UNGATED — it removes the agent's reach, the opposite of a wide-hands tool");
+  ok(!(("stand_down") in WINDOW_GATED_TOOLS), "…and is NOT in the gated table (a gated row would be forced to carry the full wide-hands matrix)");
+  ok(WORKER_INDEX_SEAT_VERBS.has("stand_down"), "stand_down is a SEAT verb, not a worker capability — a worker has no relationship with the room to end");
+
+  ok(!("isStopRequest" in engagement), "🔴 isStopRequest is GONE from the engagement module");
+  ok(!("STOP_ACK_COPY" in engagement), "🔴 STOP_ACK_COPY is GONE — the host no longer authors the stand-down copy; the model does");
+
+  const base = { isEngaged: true, authorIsBot: false, isAppMention: false, inThread: true } as const;
+  ok(shouldDeliverReply(base).deliver, "engaged + not stood down → deliver");
+  ok(!shouldDeliverReply({ ...base, stopped: true }).deliver, "engaged + STOOD DOWN → drop");
+  ok(/stand down/.test(shouldDeliverReply({ ...base, stopped: true }).reason), "…and the reason names the stand-down");
+  ok(shouldDeliverReply({ ...base, stopped: undefined }).deliver, "an ABSENT flag reads as not-stopped — pre-OPE-418 behaviour exactly, for callers that never pass it");
+  ok(!shouldDeliverReply({ ...base, isEngaged: false, stopped: true }).deliver, "not engaged still drops first — order unchanged");
+}
+
+console.log(`✓ turn-cancel: ${passed} assertions passed (registry, cancel, note, /oe stop, stand_down registration)`);

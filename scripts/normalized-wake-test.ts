@@ -34,7 +34,7 @@ const G_DISCORD_JUDGED = `[thread-follow] You were not mentioned — this reply 
   </channel>
 </wake>`;
 
-const G_DISCORD_NAMEDROP_THREAD = `[name-drop] A top-level channel message said your name ("OpenBot") without @mentioning you. You were NOT invited into this conversation — reply only if the message is clearly asking for you or requesting something you can directly do. When in doubt, stay out: output exactly NO_REPLY and nothing else — nothing will be posted. If you have a \`no_reply\` tool, prefer calling it (with a reason) over the bare NO_REPLY text — it's audited and unambiguous; the text sentinel still works if you don't. You are now following this thread — later messages here will reach you for the same judged treatment, and the humans can say "stop" to end that.
+const G_DISCORD_NAMEDROP_THREAD = `[name-drop] A top-level channel message said your name ("OpenBot") without @mentioning you. You were NOT invited into this conversation — reply only if the message is clearly asking for you or requesting something you can directly do. When in doubt, stay out: output exactly NO_REPLY and nothing else — nothing will be posted. If you have a \`no_reply\` tool, prefer calling it (with a reason) over the bare NO_REPLY text — it's audited and unambiguous; the text sentinel still works if you don't. You are now following this thread — later messages here will reach you for the same judged treatment. If they ask you to stop, call \`stand_down\`.
 
 <wake reason="thread-activity" current-time="2026-07-10T10:00:00.000Z">
   <channel id="disc-ch">

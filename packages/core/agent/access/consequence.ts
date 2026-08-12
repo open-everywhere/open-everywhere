@@ -257,6 +257,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   complete_thread: open(
     "a thread seat releasing its own thread's ownership — the next message then wakes the standing seat instead. Reversible (the seat re-opens), touches no memory/spend/audience beyond the ownership index; a conversational verb, audited (thread_seat.completed)",
   ),
+  stand_down: open(
+    "the agent stopping following a conversation it was asked to leave (OPE-418 Part B). It REMOVES the agent's own reach — one durable `stopped` flag on this surface's engagement row, cleared by the next @mention — and touches no memory, no spend, no credential and no audience. Nothing here for an approver to weigh: putting a card in front of \"please be quiet\" would be the product asking permission to stop annoying someone. Audited (engagement.stood_down)",
+  ),
   return_result: open(
     "a one-shot task worker reporting its result back to the seat that delegated it (delegation reshape, Phase 1): writes the durable result row + wakes the CALLER's OWN seat with the caller's OWN forwarded identity — no new audience. The summary rides untrusted-wrapped, so a consequential action the caller takes off it re-gates via the normal ingest-taint path. Widens nothing; audited (task.returned)",
   ),

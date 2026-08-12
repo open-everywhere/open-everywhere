@@ -63,17 +63,9 @@ export async function isThreadEngaged(p: Partition, threadTs: string): Promise<b
   }
 }
 
-const STOP_RE =
-  /^\s*(?:hey\s+)?(?:please\s+)?(?:stop(?:\s+(?:following|replying|listening|now|here|this\s+thread))?|stand[\s-]*down|disengage|drop\s+(?:out\s+of\s+)?(?:this\s+)?thread|leave\s+(?:this\s+)?thread|you\s+can\s+stop(?:\s+now)?|that'?s\s+all(?:\s+(?:for\s+now|thanks?))?)\s*[.!]*\s*$/i;
-
-export function isStopRequest(text: string): boolean {
-  return STOP_RE.test(text.trim());
-}
-
-export const STOP_ACK_COPY = "Standing down — I'll stop following this thread. @-mention me to pull me back in.";
-
 export interface ReplyDeliveryInput {
   readonly isEngaged: boolean;
+  readonly stopped?: boolean;
   readonly authorIsBot: boolean;
   readonly isAppMention: boolean;
   readonly inThread: boolean;
@@ -93,6 +85,7 @@ export function shouldDeliverReply(input: ReplyDeliveryInput): ReplyDecision {
   if (input.isAppMention) return { deliver: false, reason: "app_mention — handled by the mention path" };
   if (!input.inThread) return { deliver: false, reason: "not a thread reply — engagement is per-thread" };
   if (!input.isEngaged) return { deliver: false, reason: "thread is not engaged — only @mention/DM starts engagement" };
+  if (input.stopped) return { deliver: false, reason: "asked to stand down in this thread — @mention to pull the agent back in" };
   return { deliver: true, reason: "engaged thread, human reply — deliver to the live session" };
 }
 

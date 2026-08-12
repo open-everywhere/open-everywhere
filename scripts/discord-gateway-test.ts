@@ -631,7 +631,7 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   ok(turn.includes("Test Slack Bot help") && turn.includes("<untrusted_external_data"), "name-drop turn: the body rides FENCED as untrusted data (P0-3)");
   const threadTurn = renderWake(discordNativeWake({ channelId: "t1", parentChannelId: "c1", isThread: true, isDm: false, addressing: "name-drop", botName: "Bot", trigger: ndTrig("help") })).message;
   ok(threadTurn.includes("now following this thread"), "name-drop turn (thread): says the thread IS followed (engaged at dispatch)");
-  ok(threadTurn.includes('"stop"'), "name-drop turn (thread): names the stop verb as the undo");
+  ok(threadTurn.includes("stand_down"), "name-drop turn (thread): names the stand_down VERB as the undo (OPE-418 — the line used to promise a magic word, which is now false)");
   ok(!threadTurn.includes("NOT following"), "name-drop turn (thread): no contradictory not-following note");
 
   ok(stripLeadingMention("<@123> stop") === "stop", "stripLeadingMention: bare mention prefix removed");

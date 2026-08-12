@@ -26,8 +26,6 @@ import {
   getThreadEngagement,
   disengageThread,
   markThreadStopped,
-  isStopRequest,
-  STOP_ACK_COPY,
   shouldDeliverReply,
   getOperationalStore,
   postOnce,
@@ -343,8 +341,6 @@ export interface MessageRouteDeps {
   readonly touch?: (p: ReturnType<typeof resolvePartition>, threadTs: string, atIso: string) => Promise<void>;
   readonly now?: () => string;
   readonly confirmInternal?: (channelId: string) => Promise<boolean>;
-  readonly disengage?: (p: Partition, threadTs: string) => Promise<boolean>;
-  readonly stopAck?: (channelId: string, threadTs: string) => Promise<void>;
   readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
   readonly resolveProfile?: ResolveProfile;
 }
@@ -387,14 +383,11 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
   }
 
   const p = resolvePartition(bindableFor(ev));
+  const engRow = deps.getEngagement ? await deps.getEngagement(p, ev.threadTs!) : null;
   const engaged = await deps.isEngaged(p, ev.threadTs!);
-  if (engaged && isStopRequest(ev.text)) {
-    const dropped = deps.disengage ? await deps.disengage(p, ev.threadTs!) : false;
-    if (deps.stopAck) await deps.stopAck(ev.channelId, ev.threadTs!);
-    return { deliver: false, reason: `stop request — thread disengaged${dropped ? "" : " (no record found)"}`, woke: false };
-  }
   const decision = shouldDeliverReply({
     isEngaged: engaged,
+    stopped: engRow?.stopped ?? false,
     authorIsBot: Boolean(ev.botId) && !isAllowedSlackDriver(ev.teamId, ev.botId),
     isAppMention: ev.isAppMention,
     inThread,
@@ -412,8 +405,7 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
   const confirmable = ev.channelType === "channel" || ev.channelType === "group";
   const internal = confirmable && deps.confirmInternal ? await deps.confirmInternal(ev.channelId).catch(() => false) : false;
   const auth = authForEvent(ev, internal ? { isExternal: false, trustChecked: true } : undefined);
-  const rec = deps.getEngagement ? await deps.getEngagement(p, ev.threadTs!) : null;
-  const uninvited = rec?.participating !== true;
+  const uninvited = engRow?.participating !== true;
   const names = await resolveWakeNames(ev.userId, undefined, deps.resolveProfile);
   const trigger = displayNameOpts(names.triggerAuthor);
   const wakeTrust = resolveWakeTrust({
@@ -463,16 +455,6 @@ async function appendRouteAudit(surfaceKey: string, action: string, detail: Reco
     await getOperationalStore().appendAudit({ ts: new Date().toISOString(), org, platform, workspace, surface, action, detail });
   } catch (err) {
     console.warn(`[open-everywhere:slack] route audit write failed: ${String(err)}`);
-  }
-}
-
-export async function postSlackStopAck(channelId: string, threadTs: string): Promise<void> {
-  try {
-    await slackForm(
-      "chat.postMessage",
-      `channel=${encodeURIComponent(channelId)}&thread_ts=${encodeURIComponent(threadTs)}&text=${encodeURIComponent(STOP_ACK_COPY)}`,
-    );
-  } catch {
   }
 }
 
@@ -587,8 +569,6 @@ export function liveDeps(send: WakeSend): MessageRouteDeps {
     touch: (p, threadTs, atIso) => markThreadEngaged(p, threadTs, atIso),
     confirmInternal: confirmChannelInternal,
     resolveProfile: liveResolveProfile,
-    disengage: (p, threadTs) => disengageThread(p, threadTs),
-    stopAck: (channelId, threadTs) => postSlackStopAck(channelId, threadTs),
     audit: (action, detail) => appendRouteAudit(typeof detail.surfaceKey === "string" ? detail.surfaceKey : "slack//", action, detail),
     async wake({ channelId, threadTs, auth, message, state }) {
       await send({ message }, { auth, continuationToken: slackContinuationToken(channelId, threadTs), state });
@@ -1050,7 +1030,6 @@ export interface SupervisorRouteDeps {
   readonly markEngaged?: (p: Partition, threadTs: string, atIso: string) => Promise<void>;
   readonly getEngagement?: (p: Partition, threadTs: string) => Promise<EngagementRow | null>;
   readonly markStopped?: (p: Partition, threadTs: string) => Promise<boolean>;
-  readonly stopAck?: (channelId: string, threadTs: string) => Promise<void>;
   readonly now?: () => string;
   readonly resolveProfile?: ResolveProfile;
   readonly engagementTier?: (surfaceKey: string) => WakeEngagementTier;
@@ -1085,13 +1064,6 @@ export async function routeSupervisorEvent(
   const atIso = deps.now ? deps.now() : new Date().toISOString();
 
   const engRow = ev.threadTs && deps.getEngagement ? await deps.getEngagement(p, ev.threadTs) : null;
-
-  if (ev.threadTs && isStopRequest(ev.text) && engRow) {
-    const marked = deps.markStopped ? await deps.markStopped(p, ev.threadTs) : false;
-    if (deps.stopAck) await deps.stopAck(ev.channelId, ev.threadTs);
-    if (deps.audit) await deps.audit("engagement.stop", { surfaceKey: p.surfaceKey, threadTs: ev.threadTs });
-    return { deliver: false, reason: `stop request — thread stopped${marked ? "" : " (no record found)"}`, woke: false };
-  }
 
   if (ev.threadTs && !directMention && engRow?.stopped) {
     return { deliver: false, reason: "thread stopped — deterministic silence until an explicit @-mention re-invites", woke: false };
@@ -1239,7 +1211,6 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
     getEngagement: (p, threadTs) => getThreadEngagement(p, threadTs),
     markStopped: (p, threadTs) => markThreadStopped(p, threadTs),
     markEngaged: (p, threadTs, atIso) => markThreadEngaged(p, threadTs, atIso, { participating: true }),
-    stopAck: (channelId, threadTs) => postSlackStopAck(channelId, threadTs),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, state }) {
       await send({ message }, { auth, continuationToken: token, state });

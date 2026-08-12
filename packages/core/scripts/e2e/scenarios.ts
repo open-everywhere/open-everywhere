@@ -118,8 +118,7 @@ const isFillerAck = (text: string): boolean =>
   ) ||
   /^(?:done|ok|okay|sorted|sure|got it|will do|no problem)[.!]?\s*(?::[a-z_+-]+:|✅|👍)?$/i.test(text.trim());
 
-const STOP_ACK = "Standing down";
-const DISCORD_STOP_ACK = "Stopped following here";
+const STOOD_DOWN_ACTION = "engagement.stood_down";
 const CAP_REFUSAL = "I'm holding off here";
 const CAP_REFUSAL_MARKER = /holding off/i;
 const NON_ADMIN_DENIAL = "only a domain/org admin can decide this request";
@@ -209,15 +208,26 @@ export const SCENARIOS: readonly Scenario[] = [
         "no_reply: recovery reply quality (not an apology for the silence)",
       );
 
-      const { ts: stopTs } = await slack.post("stop", rootTs);
+      const standDownFrom = new Date().toISOString();
+      const { ts: stopTs } = await slack.post("thanks, you can stop following this thread now", rootTs);
       const ack = await slack.awaitThreadReply(rootTs, { afterTs: stopTs, timeoutMs: REPLY_WAIT });
-      ctx.gate(ack.text.includes(STOP_ACK), `stop: acknowledgement contains "${STOP_ACK}" (exact-string gate)`);
+      await ctx.judgePass(
+        closedQA("Is this an acknowledgement that the agent will stop following the thread?", {}),
+        ack.text,
+        "stand down: the acknowledgement says it will stop following",
+      );
+      if (ctx.auditRead) {
+        const rows = await ctx.auditRead({ sinceIso: standDownFrom, platform: "slack", actions: [STOOD_DOWN_ACTION] });
+        ctx.gate(rows.length > 0, `stand down: an ${STOOD_DOWN_ACTION} audit row exists (found ${rows.length}) — the verb ran, the ack is not just words`);
+      } else {
+        ctx.log(`stand-down effect check skipped — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to assert the ${STOOD_DOWN_ACTION} audit row`);
+      }
       const { ts: afterStopTs } = await slack.post("and what's 5 plus 5?", rootTs);
       const silent = await slack.collectRepliesDuring(rootTs, afterStopTs, SILENCE_WINDOW);
-      ctx.gate(silent.length === 0, "stop: a further thread message gets NO reply after stop");
+      ctx.gate(silent.length === 0, "stand down: a further thread message gets NO reply");
       const { ts: reviveTs } = await slack.post(slack.mention("ok, back — what's 5 plus 5?"), rootTs);
       await slack.awaitThreadReply(rootTs, { afterTs: reviveTs, timeoutMs: REPLY_WAIT });
-      ctx.gate(true, "stop: a re-mention revives the thread");
+      ctx.gate(true, "stand down: a re-mention revives the thread");
     },
   },
   {
@@ -571,13 +581,24 @@ export const SCENARIOS: readonly Scenario[] = [
       const reply2 = await discord.awaitReply(threadId, followUp.id, { timeoutMs: REPLY_WAIT });
       await ctx.judgePass(closedQA("Is the reply a short multi-sentence expansion/elaboration of a channel-topic summary (continuing the prior answer), rather than unrelated content or a refusal?", { mustMatch: [/.{5,}/] }), reply2.content, "turn-2 continuity");
 
-      const stopMsg = await discord.post("stop", threadId);
+      const discordStandDownFrom = new Date().toISOString();
+      const stopMsg = await discord.post("thanks, you can stop following this thread now", threadId);
       const stopAck = await discord.awaitReply(threadId, stopMsg.id, { timeoutMs: REPLY_WAIT });
-      ctx.gate(stopAck.content.includes(DISCORD_STOP_ACK), `stop: acknowledgement contains "${DISCORD_STOP_ACK}" (exact-string gate)`);
+      await ctx.judgePass(
+        closedQA("Is this an acknowledgement that the agent will stop following the thread?", {}),
+        stopAck.content,
+        "stand down: the acknowledgement says it will stop following",
+      );
+      if (ctx.auditRead) {
+        const rows = await ctx.auditRead({ sinceIso: discordStandDownFrom, platform: "discord", actions: [STOOD_DOWN_ACTION] });
+        ctx.gate(rows.length > 0, `stand down: an ${STOOD_DOWN_ACTION} audit row exists (found ${rows.length}) — the verb ran`);
+      } else {
+        ctx.log(`stand-down effect check skipped — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to assert the ${STOOD_DOWN_ACTION} audit row`);
+      }
       const afterStop = await discord.post("and who else works on it?", threadId);
       const silent = await discord.collectRepliesDuring(threadId, afterStop.id, SILENCE_WINDOW);
-      ctx.gate(silent.length === 0, "stop: a further thread message gets NO reply after stop");
-      ctx.log(`(stop driven at ${stopMsg.id})`);
+      ctx.gate(silent.length === 0, "stand down: a further thread message gets NO reply");
+      ctx.log(`(stand-down driven at ${stopMsg.id})`);
 
       const fileAsk = await discord.post(discord.mention("post a tiny text or image file here as an attachment using post_file"), threadId);
       const fileReply = await discord.awaitReplyMatching(threadId, fileAsk.id, (m) => m.attachments.length > 0, { timeoutMs: FILE_REPLY_WAIT, what: "a bot reply carrying a file attachment" });

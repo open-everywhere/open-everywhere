@@ -7,9 +7,9 @@ import {
   defineDomain,
   getOperationalStore,
   registerIdentityMapper,
-  isStopRequest,
   shouldDeliverReply,
   classifyParticipation,
+  type EngagementRow,
   type ParticipationSignals,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import {
@@ -241,15 +241,6 @@ registerConfig({
 }
 
 {
-  for (const t of ["stop", "Stop.", "stand down", "STAND DOWN", "stop following", "you can stop now", "that's all thanks", "disengage", "leave this thread", "please stop"]) {
-    ok(isStopRequest(t), `stop verb: "${t}"`);
-  }
-  for (const t of ["don't stop the deploy", "we should stop doing X", "stop the build then retry", "can you stop the job and report", "stopwatch", "stops here is wrong"]) {
-    ok(!isStopRequest(t), `NOT a stop verb: "${t}"`);
-  }
-}
-
-{
   const base = { isEngaged: true, authorIsBot: false, isAppMention: false, inThread: true } as const;
   ok(shouldDeliverReply(base).deliver, "engaged human thread reply → deliver");
   ok(!shouldDeliverReply({ ...base, subtype: "channel_join" }).deliver, "subtype → drop");
@@ -381,33 +372,41 @@ registerConfig({
   }
 
   {
-    const disengaged: string[] = [];
-    const acked: string[] = [];
-    const stopDeps = (engaged: boolean): MessageRouteDeps => ({
-      isEngaged: async () => engaged,
+    const rowDeps = (row: EngagementRow | null): MessageRouteDeps => ({
+      isEngaged: async () => row !== null,
+      getEngagement: async () => row,
       wake: async ({ message }) => {
         woke.push(message);
       },
-      disengage: async (_p, threadTs) => {
-        disengaged.push(threadTs);
-        return true;
-      },
-      stopAck: async (channelId, threadTs) => {
-        acked.push(`${channelId}:${threadTs}`);
-      },
     });
+    const engagedRow = (stopped: boolean): EngagementRow => ({
+      org: "orgS",
+      surfaceKey: "slack/T_ENG/C1",
+      threadTs: "1.1",
+      engagedAt: "2026-08-12T00:00:00Z",
+      lastTurnAt: "2026-08-12T00:00:00Z",
+      participating: true,
+      silentStreak: 0,
+      kind: "thread",
+      stopped,
+    });
+
     woke.length = 0;
-    out = await routeMessageEvent(ev({ text: "stop" }), stopDeps(true));
-    ok(!out.woke && disengaged.length === 1 && acked.length === 1 && woke.length === 0, "engaged + 'stop' → disengage + ack, NO agent wake");
-    ok(/stop request/.test(out.reason), "stop outcome says why");
-    out = await routeMessageEvent(ev({ text: "please stand down" }), stopDeps(true));
-    ok(!out.woke && disengaged.length === 2, "stop phrasing variants disengage too");
-    out = await routeMessageEvent(ev({ text: "don't stop the deploy" }), stopDeps(true));
-    ok(out.woke, "a sentence merely CONTAINING stop still wakes normally");
-    disengaged.length = 0;
-    acked.length = 0;
-    out = await routeMessageEvent(ev({ text: "stop" }), stopDeps(false));
-    ok(!out.woke && disengaged.length === 0 && acked.length === 0, "'stop' in a NOT-engaged thread is inert chatter (no disengage, no ack)");
+    out = await routeMessageEvent(ev({ text: "any follow-up at all" }), rowDeps(engagedRow(false)));
+    ok(out.woke && woke.length === 1, "engaged + not stood down → the follow-up wakes normally");
+
+    woke.length = 0;
+    out = await routeMessageEvent(ev({ text: "any follow-up at all" }), rowDeps(engagedRow(true)));
+    ok(!out.woke && woke.length === 0, "engaged + STOOD DOWN → dropped before any wake");
+    ok(/stand down/.test(out.reason), "…and the outcome says why, naming the stand-down");
+
+    woke.length = 0;
+    out = await routeMessageEvent(ev({ text: "stop" }), rowDeps(engagedRow(false)));
+    ok(out.woke, "🔴 the word 'stop' NO LONGER disengages anything — no magic string survives");
+
+    woke.length = 0;
+    out = await routeMessageEvent(ev({ text: "stop" }), rowDeps(null));
+    ok(!out.woke && woke.length === 0, "an un-engaged thread is still inert");
   }
 }
 
@@ -1156,9 +1155,6 @@ registerConfig({
   ok(!out.woke && confirmCalls === 0, "system subtype → dropped before the internal confirmation");
 
   {
-    const marked: string[] = [];
-    const acked: string[] = [];
-    const stopAudits: Array<{ action: string; detail: Record<string, unknown> }> = [];
     const row = (opts: { stopped?: boolean } = {}) =>
       ({ participating: true, stopped: opts.stopped ?? false } as unknown as Awaited<ReturnType<NonNullable<SupervisorRouteDeps["getEngagement"]>>>);
     const stopEv = (over: Record<string, unknown> = {}) =>
@@ -1167,46 +1163,10 @@ registerConfig({
         team_id: "T_ENG",
         event: { type: "message", channel: "C_SUP", ts: "80.1", thread_ts: "77.7", user: "U1", channel_type: "channel", text: "stop", ...over },
       })!;
-    const stopDeps = (engaged: boolean): SupervisorRouteDeps =>
-      supDeps(true, 12, {
-        getEngagement: async () => (engaged ? row() : null),
-        markStopped: async (_p, threadTs) => {
-          marked.push(threadTs);
-          return true;
-        },
-        stopAck: async (channelId, threadTs) => {
-          acked.push(`${channelId}:${threadTs}`);
-        },
-        audit: async (action, detail) => {
-          stopAudits.push({ action, detail });
-        },
-      });
-    wakes.length = 0;
-    out = await routeSupervisorEvent(stopEv(), stopDeps(true));
-    ok(!out.woke && wakes.length === 0, "engaged thread + 'stop' → NO supervisor wake (no session mint, no divert)");
-    ok(marked.length === 1 && marked[0] === "77.7", "engaged 'stop' MARKS the thread stopped (durable marker, NOT a delete)");
-    ok(acked.length === 1 && acked[0] === "C_SUP:77.7", "engaged 'stop' posts the shared stop ack into the thread");
-    ok(stopAudits.length === 1 && stopAudits[0].action === "engagement.stop" && stopAudits[0].detail.threadTs === "77.7", "engaged 'stop' writes an engagement.stop audit row");
-    ok(/stop request/.test(out.reason), "the stop outcome reason says why");
 
-    marked.length = 0;
-    acked.length = 0;
-    stopAudits.length = 0;
     wakes.length = 0;
-    out = await routeSupervisorEvent(stopEv(), stopDeps(false));
-    ok(out.woke && marked.length === 0 && acked.length === 0 && stopAudits.length === 0, "'stop' in a NON-engaged thread → no mark/ack/audit; wakes the supervisor as normal traffic");
-
-    marked.length = 0;
-    acked.length = 0;
-    wakes.length = 0;
-    out = await routeSupervisorEvent(stopEv({ text: "don't stop the deploy" }), stopDeps(true));
-    ok(out.woke && marked.length === 0 && acked.length === 0, "a sentence containing 'stop' still wakes the supervisor (no false mark)");
-
-    marked.length = 0;
-    acked.length = 0;
-    wakes.length = 0;
-    out = await routeSupervisorEvent(stopEv({ thread_ts: undefined, ts: "81.0" }), stopDeps(true));
-    ok(out.woke && marked.length === 0, "a top-level 'stop' (no thread) is not a thread stop — wakes as normal ambient traffic");
+    out = await routeSupervisorEvent(stopEv(), supDeps(true, 12, { getEngagement: async () => row() }));
+    ok(out.woke, "🔴 a bare 'stop' in an engaged thread now WAKES the supervisor like any other message — the regex is gone, the model judges the ask");
 
     const followUpEv = parseMessageEvent({
       type: "event_callback",
@@ -2022,4 +1982,4 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
   }
 }
 
-console.log(`✓ engagement: ${n} assertions passed (registry + warm-on-wake participating/streak + ownership routing (ownerToken/kind) + durable stopped marker + channel supervisor sessions (get/rotate/touch) + migration + stop-verb + supervisor stop+suppression + delivery policy + event parse/route + domain read gate + fronting-route classify/verify/dedupe/FIFO/in-thread-branch + judged-reply sentinel + name-drop wake + channel-join intro + participation-certainty classifier)`);
+console.log(`✓ engagement: ${n} assertions passed (registry + warm-on-wake participating/streak + ownership routing (ownerToken/kind) + durable stopped marker + channel supervisor sessions (get/rotate/touch) + migration + stand-down suppression on BOTH routes (the stop regex is deleted) + delivery policy + event parse/route + domain read gate + fronting-route classify/verify/dedupe/FIFO/in-thread-branch + judged-reply sentinel + name-drop wake + channel-join intro + participation-certainty classifier)`);

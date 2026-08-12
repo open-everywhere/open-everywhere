@@ -24,6 +24,7 @@ export const WORKER_INDEX_SEAT_VERBS: ReadonlySet<string> = new Set([
   "no_reply",
   "react",
   "update_status",
+  "stand_down",
   "ask_question",
   "todo",
 ]);

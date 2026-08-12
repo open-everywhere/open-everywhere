@@ -50,8 +50,6 @@ import {
   bumpThreadSilentStreak,
   disengageThread,
   getThreadEngagement,
-  isStopRequest,
-  isThreadEngaged,
   markThreadEngaged,
   WARM_SILENT_LIMIT,
   ingressSpendGate,
@@ -923,12 +921,11 @@ export async function dispatchTurn(
   const partition: Partition = resolvePartition(ctxFromAuth(auth));
   const key = engagementKey(msg);
   const isDm = isDmChannel(msg.channelType);
-  const engaged = isDm || msg.mentionsBot ? true : await isThreadEngaged(partition, key);
+  const engRow = isDm || msg.mentionsBot ? null : await getThreadEngagement(partition, key);
+  const engaged = isDm || msg.mentionsBot ? true : engRow !== null;
 
-  if (!isDm && (engaged || msg.mentionsBot) && isStopRequest(stripLeadingMention(msg.content))) {
-    await disengageThread(partition, key);
-    await discordCreateMessage(msg.channelId, "👍 Stopped following here — @mention me (or say my name) when you need me again.");
-    log(`disengaged ${partition.surfaceKey} on stop request`);
+  if (!isDm && !msg.mentionsBot && engRow?.stopped) {
+    log(`suppressed ${partition.surfaceKey} — stood down here until an explicit @mention`);
     return;
   }
 

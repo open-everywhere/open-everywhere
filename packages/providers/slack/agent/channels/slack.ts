@@ -34,8 +34,6 @@ import {
   disengageThread,
   getThreadEngagement,
   bumpThreadSilentStreak,
-  isStopRequest,
-  STOP_ACK_COPY,
   WARM_SILENT_LIMIT,
   SURFACE,
   tierId,
@@ -405,16 +403,6 @@ async function onInbound(
   } catch {
   }
   await setStatusReaction(ctx.slack, "working");
-
-  if (!isDm && message.author && isStopRequest(message.markdown)) {
-    await disengageThread(partitionForMessage(message, facts), message.threadTs);
-    try {
-      await ctx.thread.post(STOP_ACK_COPY);
-    } catch {
-    }
-    await setStatusReaction(ctx.slack, "none");
-    return DROP;
-  }
 
   let context: readonly string[] | undefined;
   if (!isDm) {
