@@ -1,5 +1,6 @@
 import type { UnifiedThreadRef, UnifiedWakeOrigin } from "./unified-window.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
+import { processRegistryMap } from "../lib/process-registry.js";
 
 export interface WakeOriginCodec<O extends UnifiedWakeOrigin = UnifiedWakeOrigin> {
   validate(o: Record<string, unknown>): boolean;
@@ -8,7 +9,7 @@ export interface WakeOriginCodec<O extends UnifiedWakeOrigin = UnifiedWakeOrigin
   containerId(origin: O): string;
 }
 
-const WAKE_ORIGIN_CODECS = new Map<string, WakeOriginCodec>();
+const WAKE_ORIGIN_CODECS = processRegistryMap<WakeOriginCodec>("wake-origin-codecs.v1");
 
 export function registerWakeOriginCodec<P extends UnifiedWakeOrigin["platform"]>(
   platform: P,

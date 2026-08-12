@@ -8,6 +8,7 @@ import { appendAudit } from "../audit/audit.js";
 import { expandLinkSet } from "../identity/link-store.js";
 import { isTenantScopedPlatform, tryPrincipalKey } from "../identity/principal-key.js";
 import type { LinkedAccount } from "../identity/link-store.js";
+import { processRegistryMap } from "../lib/process-registry.js";
 
 export interface TargetResolveBag {
   str(k: string): string | undefined;
@@ -57,23 +58,23 @@ export interface PostArm {
   deliverDirectMessage?(input: DirectMessageRequest): Promise<DirectMessageDelivery>;
 }
 
-const POST_ARMS: Record<string, PostArm> = {};
+const POST_ARMS = processRegistryMap<PostArm>("post-arms.v1");
 
 export function registerPostArm(arm: PostArm): void {
   if (!admitProviderRegistration(arm.platform, "post-arm")) return;
-  POST_ARMS[arm.platform] = arm;
+  POST_ARMS.set(arm.platform, arm);
 }
 
 export function postArm(platform: string | undefined): PostArm | undefined {
-  return platform === undefined ? undefined : POST_ARMS[platform];
+  return platform === undefined ? undefined : POST_ARMS.get(platform);
 }
 
 export function registeredPostArmPlatforms(): readonly string[] {
-  return Object.keys(POST_ARMS);
+  return [...POST_ARMS.keys()];
 }
 
 export function directMessageCapablePlatforms(): readonly string[] {
-  return Object.values(POST_ARMS)
+  return [...POST_ARMS.values()]
     .filter((a) => typeof a.deliverDirectMessage === "function")
     .map((a) => a.platform);
 }

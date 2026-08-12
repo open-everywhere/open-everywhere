@@ -8,6 +8,7 @@ import { bareTokenFromEveContext, classifySessionId, parseWindowToken, sessionGr
 import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
 import { routineGrantKeyStamped } from "../routines/routine.js";
 import type { Domain } from "../memory/domain.js";
+import { processRegistryMap } from "../lib/process-registry.js";
 
 export type Visibility = "public" | "private";
 
@@ -126,11 +127,11 @@ const bindLocal: Mapper = (ctx) => {
   };
 };
 
-const MAPPERS: Record<string, Mapper> = {};
+const MAPPERS = processRegistryMap<Mapper>("identity-mappers.v1");
 
 export function registerIdentityMapper(platform: string, mapper: IdentityMapper): void {
   if (!admitProviderRegistration(platform, "identity-mapper")) return;
-  MAPPERS[platform] = mapper;
+  MAPPERS.set(platform, mapper);
 }
 
 export const SUBAGENT_CHANNEL_KIND = "subagent";
@@ -287,13 +288,13 @@ export function resolveWindowSources(ctx: BindableContext, domains: readonly Dom
 export function bindBridged(bridged: BridgedIdentity): { platform: string; raw: RawIdentity } {
   const bctx = bridgedContext(bridged);
   const platform = seg(channelPlatform(bctx), "local");
-  const raw = (MAPPERS[platform] ?? bindLocal)(bctx);
+  const raw = (MAPPERS.get(platform) ?? bindLocal)(bctx);
   return { platform, raw };
 }
 
 export function bindFrom(ctx: BindableContext): SurfaceBinding {
   let platform = seg(channelPlatform(ctx), "local");
-  let raw = (MAPPERS[platform] ?? bindLocal)(ctx);
+  let raw = (MAPPERS.get(platform) ?? bindLocal)(ctx);
   let fire = attestedFirePrincipal(ctx);
   let unattended = unattendedOrigin(ctx);
   if (raw.workspace === undefined && raw.surface === undefined) {

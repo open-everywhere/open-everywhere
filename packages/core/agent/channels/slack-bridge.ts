@@ -1,5 +1,6 @@
 import type { Channel } from "eve/channels";
 import type { BindableContext } from "../identity/binding.js";
+import { processRegistrySlot } from "../lib/process-registry.js";
 
 export type SlackFormFn = (method: string, body: string, token?: string) => Promise<Record<string, unknown> | undefined>;
 
@@ -20,52 +21,52 @@ export interface SlackBridge {
   readonly channel: Channel<any, any, any>;
 }
 
-let bridge: SlackBridge | null = null;
+const bridgeSlot = processRegistrySlot<SlackBridge>("slack-bridge.v1");
 
 export function registerSlackBridge(b: SlackBridge): void {
-  bridge = b;
+  bridgeSlot.set(b);
 }
 
 export function _resetSlackBridgeForTest(): void {
-  bridge = null;
+  bridgeSlot.set(null);
 }
 
 export function slackBridge(): SlackBridge | null {
-  return bridge;
+  return bridgeSlot.get();
 }
 
 export const bridgeSlackForm: SlackFormFn = async (method, body, token) =>
-  bridge ? bridge.form(method, body, token) : undefined;
+  bridgeSlot.get() ? bridgeSlot.get()!.form(method, body, token) : undefined;
 
 export const bridgeSlackReadCall: SlackReadCallFn = async (operation, params) => {
-  if (!bridge) throw new Error("no Slack provider is registered — the Slack Web API is unavailable (registerSlackProvider).");
-  return bridge.readCall(operation, params);
+  if (!bridgeSlot.get()) throw new Error("no Slack provider is registered — the Slack Web API is unavailable (registerSlackProvider).");
+  return bridgeSlot.get()!.readCall(operation, params);
 };
 
 export async function bridgeFetchUserDisplayName(userId: string): Promise<string | undefined> {
-  return bridge ? bridge.fetchUserDisplayName(userId) : undefined;
+  return bridgeSlot.get() ? bridgeSlot.get()!.fetchUserDisplayName(userId) : undefined;
 }
 
 export async function bridgeFetchChannelDisplayName(channelId: string): Promise<string | undefined> {
-  return bridge ? bridge.fetchChannelDisplayName(channelId) : undefined;
+  return bridgeSlot.get() ? bridgeSlot.get()!.fetchChannelDisplayName(channelId) : undefined;
 }
 
 export async function bridgeBotDisplayName(): Promise<string | undefined> {
-  return bridge ? bridge.botDisplayName() : undefined;
+  return bridgeSlot.get() ? bridgeSlot.get()!.botDisplayName() : undefined;
 }
 
 export async function bridgeConfirmChannelInternal(channelId: string): Promise<boolean> {
-  return bridge ? bridge.confirmChannelInternal(channelId) : false;
+  return bridgeSlot.get() ? bridgeSlot.get()!.confirmChannelInternal(channelId) : false;
 }
 
 export function bridgePartnerFactsFromInfo(info: unknown, expectedTeamId?: string): { dmPartnerTrust: "internal" | "external" } {
-  return bridge ? bridge.partnerFactsFromInfo(info, expectedTeamId) : { dmPartnerTrust: "external" };
+  return bridgeSlot.get() ? bridgeSlot.get()!.partnerFactsFromInfo(info, expectedTeamId) : { dmPartnerTrust: "external" };
 }
 
 export function bridgeReadableChannelList(ctx: BindableContext): string[] {
-  return bridge ? bridge.readableChannelList(ctx) : [];
+  return bridgeSlot.get() ? bridgeSlot.get()!.readableChannelList(ctx) : [];
 }
 
 export function bridgeSlackChannel(): Channel<any, any, any> | undefined {
-  return bridge?.channel;
+  return bridgeSlot.get()?.channel;
 }
