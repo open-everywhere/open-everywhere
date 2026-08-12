@@ -48,9 +48,9 @@ import {
   NO_REPLY_SENTINEL,
   nameDropPattern,
   shouldRotate,
-  SUPERVISOR_ROTATE_QUIET_GAP_MS,
-  SUPERVISOR_ROTATE_TURN_BUDGET,
-  SUPERVISOR_ROTATE_TOKEN_BUDGET,
+  supervisorRotateQuietGapMs,
+  supervisorRotateTurnBudget,
+  supervisorRotateTokenBudget,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { nameDropWakeEnabled, ambientSupervisorEnabled, awarenessWakeEnabled, engagementTierFor, domainForChannel, statusVerbsFor, DEFAULT_STATUS_VERBS } from "@open-everywhere/core/agent/adapter-api.js";
 import { createHmac } from "node:crypto";
@@ -1279,11 +1279,11 @@ registerConfig({
   );
 
   ok(
-    shouldRotate({ ...base, inputTokensTotal: SUPERVISOR_ROTATE_TOKEN_BUDGET }, "2026-07-08T12:00:01Z"),
+    shouldRotate({ ...base, inputTokensTotal: supervisorRotateTokenBudget() }, "2026-07-08T12:00:01Z"),
     "inputTokensTotal AT the token backstop → rotate (>=)",
   );
   ok(
-    !shouldRotate({ ...base, inputTokensTotal: SUPERVISOR_ROTATE_TOKEN_BUDGET - 1 }, "2026-07-08T12:00:01Z"),
+    !shouldRotate({ ...base, inputTokensTotal: supervisorRotateTokenBudget() - 1 }, "2026-07-08T12:00:01Z"),
     "inputTokensTotal just under the token backstop → no rotate",
   );
 
@@ -1293,11 +1293,11 @@ registerConfig({
   );
 
   ok(
-    shouldRotate({ ...base, turnCount: SUPERVISOR_ROTATE_TURN_BUDGET + 1, inputTokensTotal: 0 }, "2026-07-08T12:00:01Z"),
+    shouldRotate({ ...base, turnCount: supervisorRotateTurnBudget() + 1, inputTokensTotal: 0 }, "2026-07-08T12:00:01Z"),
     "turnCount OVER the backstop → rotate even with a zero token counter + fresh wake",
   );
   ok(
-    !shouldRotate({ ...base, turnCount: SUPERVISOR_ROTATE_TURN_BUDGET, inputTokensTotal: 0 }, "2026-07-08T12:00:01Z"),
+    !shouldRotate({ ...base, turnCount: supervisorRotateTurnBudget(), inputTokensTotal: 0 }, "2026-07-08T12:00:01Z"),
     "turnCount AT (not over) the backstop → no rotate",
   );
 
@@ -1308,9 +1308,9 @@ registerConfig({
   ok(shouldRotate(base, "2026-07-08T12:00:01Z", { tokenBudget: 500 }), "a custom tokenBudget below the current token count → rotate");
   ok(shouldRotate(base, "2026-07-08T13:00:00Z", { quietGapMs: 1000 }), "a custom quietGapMs smaller than the elapsed gap → rotate");
   ok(shouldRotate(base, "2026-07-08T12:00:02Z", { expiryMs: 1000 }), "a custom expiryMs smaller than the generation's age → rotate");
-  ok(SUPERVISOR_ROTATE_QUIET_GAP_MS === 24 * 3_600_000, "default quiet-gap threshold is 24h");
-  ok(SUPERVISOR_ROTATE_TOKEN_BUDGET === 4_000_000, "default token BACKSTOP is 4M (OPE-345 demoted it from primary; the number did not move)");
-  ok(SUPERVISOR_ROTATE_TURN_BUDGET === 60, "default turn BACKSTOP is 60 (OPE-345: down from 150, which sat ABOVE the ~85-turn workflow event wall it was meant to guard)");
+  ok(supervisorRotateQuietGapMs() === 24 * 3_600_000, "default quiet-gap threshold is 24h");
+  ok(supervisorRotateTokenBudget() === 4_000_000, "default token BACKSTOP is 4M (OPE-345 demoted it from primary; the number did not move)");
+  ok(supervisorRotateTurnBudget() === 60, "default turn BACKSTOP is 60 (OPE-345: down from 150, which sat ABOVE the ~85-turn workflow event wall it was meant to guard)");
 }
 
 {
@@ -1319,8 +1319,8 @@ registerConfig({
     k * (prefix * turnBudget + (g * turnBudget * turnBudget) / 2);
   const cCostModel = (n: number) => projectedCumulativeInput(n, 2, 10_500, 1_000);
   const cH11 = (n: number) => projectedCumulativeInput(n, 2, 10_500, 500);
-  ok(cCostModel(SUPERVISOR_ROTATE_TURN_BUDGET) < WALL, `backstop ${SUPERVISOR_ROTATE_TURN_BUDGET}: C=${Math.round(cCostModel(SUPERVISOR_ROTATE_TURN_BUDGET))} < 40M (cost-model g=1000)`);
-  ok(cH11(SUPERVISOR_ROTATE_TURN_BUDGET) < WALL, `backstop ${SUPERVISOR_ROTATE_TURN_BUDGET}: C=${Math.round(cH11(SUPERVISOR_ROTATE_TURN_BUDGET))} < 40M (H11 g=500)`);
+  ok(cCostModel(supervisorRotateTurnBudget()) < WALL, `backstop ${supervisorRotateTurnBudget()}: C=${Math.round(cCostModel(supervisorRotateTurnBudget()))} < 40M (cost-model g=1000)`);
+  ok(cH11(supervisorRotateTurnBudget()) < WALL, `backstop ${supervisorRotateTurnBudget()}: C=${Math.round(cH11(supervisorRotateTurnBudget()))} < 40M (H11 g=500)`);
   ok(cCostModel(300) >= WALL, `300 FAILS the wall under g=1000 (C=${Math.round(cCostModel(300))} ≥ 40M) — why the backstop is not 300`);
   ok(cH11(300) >= WALL, `300 FAILS the wall under H11 g=500 (C=${Math.round(cH11(300))} ≥ 40M)`);
   ok(cCostModel(1500) >= WALL, `1500 (the old default) FAILS the wall (C=${Math.round(cCostModel(1500))} ≥ 40M)`);
@@ -1344,7 +1344,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
   s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-01T00:05:00Z");
   ok(s.generation === 1 && s.freshGeneration === false && mintedAt(s.token, supervisorToken(channelId, 1)), "resumed within budget/gap after a delivered wake → same generation, freshGeneration false");
 
-  for (let i = 0; i <= SUPERVISOR_ROTATE_TURN_BUDGET; i++) {
+  for (let i = 0; i <= supervisorRotateTurnBudget(); i++) {
     await store.touchChannelSession(org, surfaceKey, "2026-07-01T00:06:00Z");
   }
   s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-01T00:07:00Z");
@@ -1358,7 +1358,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
 
   await store.touchChannelSession(org, surfaceKey, "2026-07-03T00:00:02Z");
   const gen3Token = s.token;
-  await store.bumpChannelSessionUsage(org, surfaceKey, gen3Token, SUPERVISOR_ROTATE_TOKEN_BUDGET);
+  await store.bumpChannelSessionUsage(org, surfaceKey, gen3Token, supervisorRotateTokenBudget());
   s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-03T00:05:00Z");
   ok(s.generation === 4 && s.freshGeneration === true && mintedAt(s.token, supervisorToken(channelId, 4)), "token budget exceeded → rotates to generation 4 (primary trigger), fresh counter reset to 0");
   const gen4Row = await store.getChannelSession(org, surfaceKey);

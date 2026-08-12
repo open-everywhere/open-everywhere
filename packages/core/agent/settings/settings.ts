@@ -107,7 +107,6 @@ export interface SettingSpec<T> {
   readonly shipped: T;
   readonly parseEnv?: (raw: string) => T | undefined;
   readonly validate?: (value: T) => string | undefined;
-  readonly loadTime?: true;
   readonly summary: string;
   readonly format?: (value: T) => string;
 }
@@ -446,18 +445,16 @@ export const SETTINGS = {
       path: "rotation.quietGapHours",
       env: "OE_SUPERVISOR_ROTATE_QUIET_GAP_HOURS",
       shipped: 24,
-      loadTime: true,
       parseEnv: (raw) => Number(raw) || undefined,
       validate: positiveNumber,
       summary:
-        "Idleness threshold, in hours: a standing generation not woken for this long rotates fresh on its NEXT wake rather than resuming a stale session. The first-wake backscroll DERIVES its cluster boundary from the same value, so a gap long enough to rotate is treated as a session boundary. Read once at BOOT.",
+        "Idleness threshold, in hours: a standing generation not woken for this long rotates fresh on its NEXT wake rather than resuming a stale session. The first-wake backscroll DERIVES its cluster boundary from the same value, so a gap long enough to rotate is treated as a session boundary.",
       format: (v) => `${v} h`,
     } satisfies SettingSpec<number>,
     expiryDays: {
       path: "rotation.expiryDays",
       env: "OE_SUPERVISOR_ROTATE_EXPIRY_DAYS",
       shipped: 7,
-      loadTime: true,
       parseEnv: (raw) => {
         if (raw.trim() === "") return undefined;
         const n = Number(raw);
@@ -465,28 +462,26 @@ export const SETTINGS = {
       },
       validate: (v) => (Number.isFinite(v) ? undefined : "must be a finite number of days (0 or negative disables the expiry trigger)"),
       summary:
-        "PRIMARY rotation trigger, in days: a standing generation older than this is retired for context freshness (measured from its own `created_at`, reset on every rotation). `0` or a negative value DISABLES the trigger; an unparseable value falls back to the shipped 7, because a typo must never silently switch a trigger off. Read once at BOOT.",
+        "PRIMARY rotation trigger, in days: a standing generation older than this is retired for context freshness (measured from its own `created_at`, reset on every rotation). `0` or a negative value DISABLES the trigger; an unparseable value falls back to the shipped 7, because a typo must never silently switch a trigger off.",
       format: (v) => `${v} d`,
     } satisfies SettingSpec<number>,
     tokenBudget: {
       path: "rotation.tokenBudget",
       env: "OE_SUPERVISOR_ROTATE_TOKEN_BUDGET",
       shipped: 4_000_000,
-      loadTime: true,
       parseEnv: (raw) => Number(raw) || undefined,
       validate: positiveNumber,
       summary:
-        "Token BACKSTOP (demoted from primary by OPE-345, value unchanged): the measured cumulative `inputTokens + cacheReadTokens` on one generation. Also the route the session-park remedy uses — parking saturates this counter. Read once at BOOT.",
+        "Token BACKSTOP (demoted from primary by OPE-345, value unchanged): the measured cumulative `inputTokens + cacheReadTokens` on one generation. Also the route the session-park remedy uses — parking saturates this counter.",
     } satisfies SettingSpec<number>,
     turnBudget: {
       path: "rotation.turnBudget",
       env: "OE_SUPERVISOR_ROTATE_TURN_BUDGET",
       shipped: 60,
-      loadTime: true,
       parseEnv: (raw) => Number(raw) || undefined,
       validate: positiveNumber,
       summary:
-        "Turn BACKSTOP: turn count on one generation. 60 is derived from the substrate — a workflow run caps at 25,000 events and OE measures ~295 events/turn, so the wall binds near ~85 turns and this sits ~30% under it. RE-DERIVE it (do not nudge it) if the events-per-turn measurement moves. Read once at BOOT.",
+        "Turn BACKSTOP: turn count on one generation. 60 is derived from the substrate — a workflow run caps at 25,000 events and OE measures ~295 events/turn, so the wall binds near ~85 turns and this sits ~30% under it. It must ALSO satisfy the older invariant it was first derived against, C(budget) < 40M cumulative input on its own (C(60)≈4.9M ✓; the pre-OPE-345 150 was ✓ at 25.65M, 300 is ✗ at ~96M) — both bounds are pinned in `scripts/rotation-trigger-test.ts`. RE-DERIVE it (do not nudge it) if the events-per-turn measurement moves.",
     } satisfies SettingSpec<number>,
   },
   sandbox: {
@@ -703,14 +698,6 @@ export function defineSettings(overrides: AgentSettingsOverrides): AgentSettings
         continue;
       }
       if (value === undefined) continue;
-      if (spec.loadTime === true) {
-        problems.push(
-          `${spec.path}: cannot be set here — it is resolved ONCE at module load, before registerSettings runs, ` +
-            `so a value in this file could never take effect. Change its shipped default in ` +
-            `packages/core/agent/settings/settings.ts${spec.env === undefined ? "" : `, or set ${spec.env} on the deployment`}.`,
-        );
-        continue;
-      }
       if (typeof value !== typeof spec.shipped) {
         problems.push(`${spec.path}: expected ${typeof spec.shipped}, got ${typeof value}`);
         continue;
@@ -747,10 +734,6 @@ function resolve<T>(spec: SettingSpec<T>, override: T | undefined, env: NodeJS.P
     }
   }
   return override ?? spec.shipped;
-}
-
-export function settingAtLoad<T>(spec: SettingSpec<T> & { readonly loadTime: true }, env: NodeJS.ProcessEnv = process.env): T {
-  return resolve(spec, undefined, env);
 }
 
 export function getSettings(
@@ -817,10 +800,10 @@ export function getSettings(
       jobMaxDays: resolve(SETTINGS.routines.jobMaxDays, o.routines?.jobMaxDays, env),
     },
     rotation: {
-      quietGapHours: settingAtLoad(SETTINGS.rotation.quietGapHours, env),
-      expiryDays: settingAtLoad(SETTINGS.rotation.expiryDays, env),
-      tokenBudget: settingAtLoad(SETTINGS.rotation.tokenBudget, env),
-      turnBudget: settingAtLoad(SETTINGS.rotation.turnBudget, env),
+      quietGapHours: resolve(SETTINGS.rotation.quietGapHours, o.rotation?.quietGapHours, env),
+      expiryDays: resolve(SETTINGS.rotation.expiryDays, o.rotation?.expiryDays, env),
+      tokenBudget: resolve(SETTINGS.rotation.tokenBudget, o.rotation?.tokenBudget, env),
+      turnBudget: resolve(SETTINGS.rotation.turnBudget, o.rotation?.turnBudget, env),
     },
     sandbox: {
       stopAfterTurn: resolve(SETTINGS.sandbox.stopAfterTurn, o.sandbox?.stopAfterTurn, env),

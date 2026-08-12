@@ -1,7 +1,7 @@
 import { appendAudit, type AuditInput } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { OperationalStore } from "../operational/store.js";
-import { SUPERVISOR_ROTATE_TOKEN_BUDGET } from "./turn-delivery.js";
+import { supervisorRotateTokenBudget } from "./turn-delivery.js";
 import { DM_SEAT_ROTATE_TOKEN_BUDGET } from "./dm-seat.js";
 import { standingSeatRegistryKey } from "./unified-supervisor.js";
 
@@ -14,7 +14,7 @@ export const SESSION_PARK_AUDIT_ACTION = "session.token_limit_park";
 export const PARK_AUDIT_WINDOW_MS = 60 * 60_000;
 
 export function parkRotateDelta(): number {
-  return Math.max(SUPERVISOR_ROTATE_TOKEN_BUDGET, DM_SEAT_ROTATE_TOKEN_BUDGET);
+  return Math.max(supervisorRotateTokenBudget(), DM_SEAT_ROTATE_TOKEN_BUDGET);
 }
 
 export interface SessionLimitPark {

@@ -417,19 +417,23 @@ console.log("5 — a bad override fails the boot, not a turn:");
   );
   eq(defineSettings({}), {}, "[5] an EMPTY override object is valid — 'this deployment holds no opinion beyond the shipped ones'");
 
-  refuses(
-    () => defineSettings({ rotation: { turnBudget: 90 } }),
-    "resolved ONCE at module load",
-    "[5] 🔴 a loadTime setting refuses an app override BY NAME instead of ignoring it",
-  );
-  refuses(
-    () => defineSettings({ rotation: { quietGapHours: 6 } }),
-    "OE_SUPERVISOR_ROTATE_QUIET_GAP_HOURS",
-    "[5] …and the message names the env var that CAN express it",
-  );
+  ok(defineSettings({ rotation: { turnBudget: 90 } }).rotation?.turnBudget === 90, "[5] 🔴 a rotation override is ACCEPTED (OPE-409 removed the by-name refusal)");
+  refuses(() => defineSettings({ rotation: { turnBudget: 0 } }), "positive number", "[5] …and is validated like any other row, not waved through");
+  {
+    resetSettingsForTest();
+    registerSettings(defineSettings({ rotation: { turnBudget: 90, quietGapHours: 6 } }));
+    eq(getSettings({}).rotation.turnBudget, 90, "[5] 🔴 …and it REACHES getSettings — the load-order defect OPE-409 closed");
+    eq(getSettings({}).rotation.quietGapHours, 6, "[5] …for every row in the group");
+    eq(
+      getSettings({ OE_SUPERVISOR_ROTATE_TURN_BUDGET: "120" }).rotation.turnBudget,
+      120,
+      "[5] …with the ordinary precedence on top: a recognised env value still beats the app override",
+    );
+    resetSettingsForTest();
+  }
   ok(
     settingDocs().filter((d) => d.path.startsWith("rotation.")).length === 4,
-    "[5] all four rotation clocks still reach the generated operator table (refusing an app override is not hiding the knob)",
+    "[5] all four rotation clocks reach the generated operator table",
   );
 }
 

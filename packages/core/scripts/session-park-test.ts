@@ -18,7 +18,7 @@ import {
 } from "../agent/channels/session-park.js";
 import { standingSeatRegistryKey, isSupervisorToken, unifiedDomainSessionKey } from "../agent/channels/unified-supervisor.js";
 import { dmSeatRegistryKey } from "../agent/channels/window-key.js";
-import { SUPERVISOR_ROTATE_TOKEN_BUDGET, shouldRotate } from "../agent/channels/turn-delivery.js";
+import { supervisorRotateTokenBudget, shouldRotate } from "../agent/channels/turn-delivery.js";
 import { DM_SEAT_ROTATE_TOKEN_BUDGET } from "../agent/channels/dm-seat.js";
 import type { AuditInput } from "../agent/audit/audit.js";
 
@@ -175,12 +175,12 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
 }
 
 {
-  ok(parkRotateDelta() >= SUPERVISOR_ROTATE_TOKEN_BUDGET, "the park delta reaches the supervisor rotation budget");
+  ok(parkRotateDelta() >= supervisorRotateTokenBudget(), "the park delta reaches the supervisor rotation budget");
   ok(parkRotateDelta() >= DM_SEAT_ROTATE_TOKEN_BUDGET, "…and the (larger) DM-seat rotation budget");
   const at = "2026-03-30T11:30:00.000Z";
   const neutralised = { quietGapMs: Number.POSITIVE_INFINITY, turnBudget: 1_000_000, expiryMs: Number.POSITIVE_INFINITY };
   for (const prior of [0, 1, 3_999_999, 4_000_001]) {
-    for (const tokenBudget of [SUPERVISOR_ROTATE_TOKEN_BUDGET, DM_SEAT_ROTATE_TOKEN_BUDGET]) {
+    for (const tokenBudget of [supervisorRotateTokenBudget(), DM_SEAT_ROTATE_TOKEN_BUDGET]) {
       ok(
         shouldRotate({ createdAt: at, lastWakeAt: at, turnCount: 1, inputTokensTotal: prior + parkRotateDelta() }, at, { ...neutralised, tokenBudget }),
         `a seat at ${prior} + the park delta rotates under a ${tokenBudget}-token budget`,

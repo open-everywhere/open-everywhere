@@ -467,10 +467,10 @@ export type { EffectiveAccess } from "./access/resolver.js";
 export { defineBundle, defineBinding } from "./access/bundle.js";
 
 export {
-  SUPERVISOR_ROTATE_QUIET_GAP_MS,
-  SUPERVISOR_ROTATE_EXPIRY_MS,
-  SUPERVISOR_ROTATE_TURN_BUDGET,
-  SUPERVISOR_ROTATE_TOKEN_BUDGET,
+  supervisorRotateQuietGapMs,
+  supervisorRotateExpiryMs,
+  supervisorRotateTurnBudget,
+  supervisorRotateTokenBudget,
   rotationTrigger,
   rotationClockMsFromDays,
   type RotationTrigger,

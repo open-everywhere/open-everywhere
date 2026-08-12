@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readAudit } from "../agent/audit/audit.js";
 import { HANDOFF_NOTE_LOSS_AUDIT_ACTION } from "../agent/model/rotation-handoff.js";
 import { getOrCreateDmSeat, touchDmSeat, dmSeatThresholds, DM_SEAT_ROTATE_TURN_BUDGET, DM_SEAT_ROTATE_TOKEN_BUDGET, DM_SEAT_ROTATE_EXPIRY_MS } from "../agent/channels/dm-seat.js";
-import { SUPERVISOR_ROTATE_QUIET_GAP_MS, SUPERVISOR_ROTATE_TOKEN_BUDGET, SUPERVISOR_ROTATE_TURN_BUDGET, SUPERVISOR_ROTATE_EXPIRY_MS } from "../agent/channels/turn-delivery.js";
+import { supervisorRotateQuietGapMs, supervisorRotateTokenBudget, supervisorRotateTurnBudget, supervisorRotateExpiryMs } from "../agent/channels/turn-delivery.js";
 import {
   classifySessionId,
   parseWindowToken,
@@ -291,10 +291,10 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
   eq(dmSeatThresholds().expiryMs, DM_SEAT_ROTATE_EXPIRY_MS, "dmSeatThresholds() reports the DM expiry clock (this is the object getOrCreateDmSeat actually passes to shouldRotate — an omission here would silently give every DM the unified window's 7d clock)");
   eq(dmSeatThresholds().turnBudget, DM_SEAT_ROTATE_TURN_BUDGET, "…and the DM turn backstop");
   eq(dmSeatThresholds().tokenBudget, DM_SEAT_ROTATE_TOKEN_BUDGET, "…and the DM token backstop");
-  ok(dmSeatThresholds().quietGapMs !== SUPERVISOR_ROTATE_QUIET_GAP_MS, "🔴 the DM quiet-gap is NOT the channel supervisor's 24h — the mechanism unified, the policy did not");
-  ok(DM_SEAT_ROTATE_EXPIRY_MS !== SUPERVISOR_ROTATE_EXPIRY_MS, "🔴 the DM expiry clock is NOT the unified window's");
-  ok(DM_SEAT_ROTATE_TURN_BUDGET !== SUPERVISOR_ROTATE_TURN_BUDGET, "🔴 the DM turn backstop is NOT the supervisor's");
-  ok(DM_SEAT_ROTATE_TOKEN_BUDGET !== SUPERVISOR_ROTATE_TOKEN_BUDGET, "🔴 the DM token backstop is NOT the supervisor's");
+  ok(dmSeatThresholds().quietGapMs !== supervisorRotateQuietGapMs(), "🔴 the DM quiet-gap is NOT the channel supervisor's 24h — the mechanism unified, the policy did not");
+  ok(DM_SEAT_ROTATE_EXPIRY_MS !== supervisorRotateExpiryMs(), "🔴 the DM expiry clock is NOT the unified window's");
+  ok(DM_SEAT_ROTATE_TURN_BUDGET !== supervisorRotateTurnBudget(), "🔴 the DM turn backstop is NOT the supervisor's");
+  ok(DM_SEAT_ROTATE_TOKEN_BUDGET !== supervisorRotateTokenBudget(), "🔴 the DM token backstop is NOT the supervisor's");
   const store = makeStore({
     surfaceKey: REG,
     token: "oe-dom:oe-dm/slack/T1/D0EXDMCH001:oe-sup:g7-ddd444",
@@ -304,7 +304,7 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
     firstWakeAt: "2026-07-21T00:00:00.000Z",
     lastWakeAt: "2026-07-21T00:00:00.000Z",
   });
-  ok(DM_SEAT_ROTATE_TURN_BUDGET + 1 <= SUPERVISOR_ROTATE_TURN_BUDGET, "…and that turn count is still WITHIN the supervisor's budget (so the next assertion is about the DM policy, not about any policy)");
+  ok(DM_SEAT_ROTATE_TURN_BUDGET + 1 <= supervisorRotateTurnBudget(), "…and that turn count is still WITHIN the supervisor's budget (so the next assertion is about the DM policy, not about any policy)");
   const seat = await getOrCreateDmSeat(ORG, DM, "2026-07-22T10:00:00.000Z", { store });
   eq(seat.generation, 8, "a seat over the DM turn budget but under the supervisor's ROTATES — the DM thresholds are the ones that bind");
 }

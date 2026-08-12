@@ -5,10 +5,10 @@ import {
   rotationTrigger,
   shouldRotate,
   rotationClockMsFromDays,
-  SUPERVISOR_ROTATE_EXPIRY_MS,
-  SUPERVISOR_ROTATE_QUIET_GAP_MS,
-  SUPERVISOR_ROTATE_TURN_BUDGET,
-  SUPERVISOR_ROTATE_TOKEN_BUDGET,
+  supervisorRotateExpiryMs,
+  supervisorRotateQuietGapMs,
+  supervisorRotateTurnBudget,
+  supervisorRotateTokenBudget,
   type RotationTrigger,
 } from "../agent/channels/turn-delivery.js";
 import { DM_SEAT_ROTATE_EXPIRY_MS, dmSeatThresholds } from "../agent/channels/dm-seat.js";
@@ -76,9 +76,9 @@ const OFF = {
 }
 
 {
-  eq(SUPERVISOR_ROTATE_EXPIRY_MS, 7 * DAY, "the unified-window expiry clock defaults to 7 days (stated for tuning, not ratified as final)");
+  eq(supervisorRotateExpiryMs(), 7 * DAY, "the unified-window expiry clock defaults to 7 days (stated for tuning, not ratified as final)");
   eq(DM_SEAT_ROTATE_EXPIRY_MS, 30 * DAY, "the DM seat's clock defaults to 30 days — the SAME mechanism, deliberately longer");
-  ok(DM_SEAT_ROTATE_EXPIRY_MS > SUPERVISOR_ROTATE_EXPIRY_MS, "🔴 a DM's clock is LONGER than a room's: a personal thread accrues staleness far more slowly than a channel full of other people");
+  ok(DM_SEAT_ROTATE_EXPIRY_MS > supervisorRotateExpiryMs(), "🔴 a DM's clock is LONGER than a room's: a personal thread accrues staleness far more slowly than a channel full of other people");
   eq(dmSeatThresholds().expiryMs, DM_SEAT_ROTATE_EXPIRY_MS, "dmSeatThresholds() carries the expiry — this is the object getOrCreateDmSeat actually passes, so an omission here would silently give a DM the 7d clock");
 
   const busy = { createdAt: iso(7 * DAY + 1000), lastWakeAt: iso(60_000), turnCount: 12, inputTokensTotal: 50_000 };
@@ -94,34 +94,34 @@ const OFF = {
 }
 
 {
-  eq(SUPERVISOR_ROTATE_TURN_BUDGET, 60, "the unified turn BACKSTOP is 60 (OPE-345; was 150)");
-  eq(SUPERVISOR_ROTATE_TOKEN_BUDGET, 4_000_000, "the token BACKSTOP is unchanged at 4M — OPE-345 demoted it, it did not re-value it");
-  eq(SUPERVISOR_ROTATE_QUIET_GAP_MS, 24 * 3_600_000, "the quiet gap is unchanged at 24h (backscroll-cluster.ts derives its cluster boundary from this exact value)");
+  eq(supervisorRotateTurnBudget(), 60, "the unified turn BACKSTOP is 60 (OPE-345; was 150)");
+  eq(supervisorRotateTokenBudget(), 4_000_000, "the token BACKSTOP is unchanged at 4M — OPE-345 demoted it, it did not re-value it");
+  eq(supervisorRotateQuietGapMs(), 24 * 3_600_000, "the quiet gap is unchanged at 24h (backscroll-cluster.ts derives its cluster boundary from this exact value)");
 
-  eq(rotationTrigger({ ...quiet, turnCount: SUPERVISOR_ROTATE_TURN_BUDGET + 1 }, NOW), "turn-backstop" satisfies RotationTrigger, "one turn over the backstop rotates");
-  ok(!shouldRotate({ ...quiet, turnCount: SUPERVISOR_ROTATE_TURN_BUDGET }, NOW), "…exactly AT it does not (strict >)");
-  eq(rotationTrigger({ ...quiet, inputTokensTotal: SUPERVISOR_ROTATE_TOKEN_BUDGET }, NOW), "token-backstop" satisfies RotationTrigger, "the token backstop is inclusive (>=)");
-  ok(!shouldRotate({ ...quiet, inputTokensTotal: SUPERVISOR_ROTATE_TOKEN_BUDGET - 1 }, NOW), "…one token under it does not");
+  eq(rotationTrigger({ ...quiet, turnCount: supervisorRotateTurnBudget() + 1 }, NOW), "turn-backstop" satisfies RotationTrigger, "one turn over the backstop rotates");
+  ok(!shouldRotate({ ...quiet, turnCount: supervisorRotateTurnBudget() }, NOW), "…exactly AT it does not (strict >)");
+  eq(rotationTrigger({ ...quiet, inputTokensTotal: supervisorRotateTokenBudget() }, NOW), "token-backstop" satisfies RotationTrigger, "the token backstop is inclusive (>=)");
+  ok(!shouldRotate({ ...quiet, inputTokensTotal: supervisorRotateTokenBudget() - 1 }, NOW), "…one token under it does not");
 
   const MAX_EVENTS_PER_RUN = 25_000;
   const EVENTS_PER_TURN = 295;
   const wallTurns = MAX_EVENTS_PER_RUN / EVENTS_PER_TURN;
   ok(wallTurns < 150, `the event wall binds at ~${wallTurns.toFixed(0)} turns — BELOW the old 150 backstop, which is why 150 was never a backstop at all`);
   ok(
-    SUPERVISOR_ROTATE_TURN_BUDGET < wallTurns,
-    `the backstop (${SUPERVISOR_ROTATE_TURN_BUDGET}) binds BEFORE the ~${wallTurns.toFixed(0)}-turn event wall`,
+    supervisorRotateTurnBudget() < wallTurns,
+    `the backstop (${supervisorRotateTurnBudget()}) binds BEFORE the ~${wallTurns.toFixed(0)}-turn event wall`,
   );
   ok(
-    SUPERVISOR_ROTATE_TURN_BUDGET <= wallTurns * 0.75,
-    `…with ≥25% headroom (${SUPERVISOR_ROTATE_TURN_BUDGET} ≤ ${(wallTurns * 0.75).toFixed(1)}) — the ~295 events/turn is a MEAN over one seat, and a tool-heavy turn is a multiple of it, so a backstop set at the mean-derived limit protects only an average seat`,
+    supervisorRotateTurnBudget() <= wallTurns * 0.75,
+    `…with ≥25% headroom (${supervisorRotateTurnBudget()} ≤ ${(wallTurns * 0.75).toFixed(1)}) — the ~295 events/turn is a MEAN over one seat, and a tool-heavy turn is a multiple of it, so a backstop set at the mean-derived limit protects only an average seat`,
   );
 
   const projected = (turns: number, k: number, prefix: number, g: number): number => k * (prefix * turns + (g * turns * turns) / 2);
-  ok(projected(SUPERVISOR_ROTATE_TURN_BUDGET, 2, 10_500, 1_000) < 40_000_000, `backstop ${SUPERVISOR_ROTATE_TURN_BUDGET}: C=${Math.round(projected(SUPERVISOR_ROTATE_TURN_BUDGET, 2, 10_500, 1_000))} < 40M (cost-model g=1000)`);
+  ok(projected(supervisorRotateTurnBudget(), 2, 10_500, 1_000) < 40_000_000, `backstop ${supervisorRotateTurnBudget()}: C=${Math.round(projected(supervisorRotateTurnBudget(), 2, 10_500, 1_000))} < 40M (cost-model g=1000)`);
   ok(projected(300, 2, 10_500, 1_000) >= 40_000_000, "300 still FAILS the 40M wall — the older derivation is preserved, not replaced");
 
   ok(dmSeatThresholds().turnBudget < wallTurns, `the DM turn backstop (${dmSeatThresholds().turnBudget}) is under the event wall too`);
-  ok(dmSeatThresholds().turnBudget !== SUPERVISOR_ROTATE_TURN_BUDGET, "🔴 DM and unified turn backstops are DIFFERENT numbers — the policies are deliberately not the same, and a re-point to one number must fail a test");
+  ok(dmSeatThresholds().turnBudget !== supervisorRotateTurnBudget(), "🔴 DM and unified turn backstops are DIFFERENT numbers — the policies are deliberately not the same, and a re-point to one number must fail a test");
 }
 
 {

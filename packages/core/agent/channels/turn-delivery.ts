@@ -1,5 +1,5 @@
 import { NO_REPLY_SENTINEL } from "./normalized-wake.js";
-import { SETTINGS, settingAtLoad } from "../settings/settings.js";
+import { getSettings } from "../settings/settings.js";
 import { consumeNoReplyThisTurn } from "./no-reply-signal.js";
 import { silentRoutineThisTurn, SILENT_ROUTINE_DROP_REASON } from "../routines/report.js";
 import type { ChannelSessionRow } from "../operational/store.js";
@@ -43,7 +43,9 @@ export function nameDropPattern(name: string): RegExp {
   return new RegExp(`(?:^|[^\\p{L}\\p{N}_])${escaped}(?=$|[^\\p{L}\\p{N}_])`, "iu");
 }
 
-export const SUPERVISOR_ROTATE_QUIET_GAP_MS = settingAtLoad(SETTINGS.rotation.quietGapHours) * 3_600_000;
+export function supervisorRotateQuietGapMs(): number {
+  return getSettings().rotation.quietGapHours * 3_600_000;
+}
 
 export function rotationClockMsFromDays(raw: string | undefined, defaultDays: number): number {
   const fallback = defaultDays * 86_400_000;
@@ -57,11 +59,17 @@ export function rotationClockMs(days: number): number {
   return days > 0 ? days * 86_400_000 : Number.POSITIVE_INFINITY;
 }
 
-export const SUPERVISOR_ROTATE_EXPIRY_MS = rotationClockMs(settingAtLoad(SETTINGS.rotation.expiryDays));
+export function supervisorRotateExpiryMs(): number {
+  return rotationClockMs(getSettings().rotation.expiryDays);
+}
 
-export const SUPERVISOR_ROTATE_TOKEN_BUDGET = settingAtLoad(SETTINGS.rotation.tokenBudget);
+export function supervisorRotateTokenBudget(): number {
+  return getSettings().rotation.tokenBudget;
+}
 
-export const SUPERVISOR_ROTATE_TURN_BUDGET = settingAtLoad(SETTINGS.rotation.turnBudget);
+export function supervisorRotateTurnBudget(): number {
+  return getSettings().rotation.turnBudget;
+}
 
 export type RotationTrigger =
   | "unknown-accumulation"
@@ -88,10 +96,10 @@ export function rotationTrigger(
   const createdAtMs = Date.parse(row.createdAt);
   const lastWakeAtMs = Date.parse(row.lastWakeAt);
   if (!Number.isFinite(nowMs) || !Number.isFinite(createdAtMs) || !Number.isFinite(lastWakeAtMs)) return "unparseable-timestamp";
-  if (nowMs - createdAtMs > (opts.expiryMs ?? SUPERVISOR_ROTATE_EXPIRY_MS)) return "expiry";
-  if (nowMs - lastWakeAtMs > (opts.quietGapMs ?? SUPERVISOR_ROTATE_QUIET_GAP_MS)) return "quiet-gap";
-  if (row.turnCount > (opts.turnBudget ?? SUPERVISOR_ROTATE_TURN_BUDGET)) return "turn-backstop";
-  if (row.inputTokensTotal >= (opts.tokenBudget ?? SUPERVISOR_ROTATE_TOKEN_BUDGET)) return "token-backstop";
+  if (nowMs - createdAtMs > (opts.expiryMs ?? supervisorRotateExpiryMs())) return "expiry";
+  if (nowMs - lastWakeAtMs > (opts.quietGapMs ?? supervisorRotateQuietGapMs())) return "quiet-gap";
+  if (row.turnCount > (opts.turnBudget ?? supervisorRotateTurnBudget())) return "turn-backstop";
+  if (row.inputTokensTotal >= (opts.tokenBudget ?? supervisorRotateTokenBudget())) return "token-backstop";
   return null;
 }
 
