@@ -276,6 +276,27 @@ ok(true, "a NON-delegating standing seat is untouched by the lean backstop — i
 await grainBackstopAtExecute("purge_memory", ["task", "native", "standing", "thread"], fireSeatCtx() as never);
 ok(true, "a stamped unattended FIRE is untouched by the lean backstop — fires keep their own posture");
 
+const staleInitiatorSeatCtx = () => ({
+  channel: { kind: "slack", continuationToken: "unified:oe-dom:acme:oe-sup:g3" },
+  session: {
+    id: "sess-stale-initiator",
+    auth: {
+      current: { principalId: "U1", principalType: "slack-user" },
+      initiator: { attributes: { channel_id: "C1", [FIRE_UNATTENDED_ATTR]: "true" }, principalId: "U1" },
+    },
+  },
+});
+let staleRefused: string | undefined;
+try {
+  await grainBackstopAtExecute("purge_memory", ["task", "native", "standing", "thread"], staleInitiatorSeatCtx() as never);
+} catch (err) {
+  staleRefused = String(err);
+}
+ok(staleRefused !== undefined, "a delivery with NO `current` attributes does NOT inherit the session-opening fire stamp — the posture fallback fails NARROW (OPE-421)");
+
+await grainBackstopAtExecute("purge_memory", ["task", "native", "standing", "thread"], fireSeatCtx() as never);
+ok(true, "…while a fire stamp on THIS delivery's own `current` still keeps the fire's posture");
+
 const standingWorkerOnly = workerOnlyTools("standing");
 ok(standingWorkerOnly.includes("purge_memory") && standingWorkerOnly.includes("aws") && standingWorkerOnly.includes("describe_image") && standingWorkerOnly.includes("read_channel"), "the worker-capability index counts the relocated tools as worker-only from a delegating standing seat");
 ok(!standingWorkerOnly.includes("reply") && !standingWorkerOnly.includes("update_status"), "…and never the seat's own roster verbs");

@@ -136,7 +136,7 @@ function isDmFamilySeat(ctx: BindableContext): boolean {
 function leanSeatWithholds(name: string, ctx: BindableContext): boolean {
   try {
     if (allowedOnLeanSeat(name, isDmFamilySeat(ctx))) return false;
-    const attrs = ctx.session?.auth?.current?.attributes ?? ctx.session?.auth?.initiator?.attributes;
+    const attrs = ctx.session?.auth?.current?.attributes;
     const v = attrs?.[FIRE_UNATTENDED_ATTR];
     const unattended = (typeof v === "string" ? v : Array.isArray(v) ? v[0] : undefined) === "true";
     if (unattended || jobFireStamped(attrs)) return false;

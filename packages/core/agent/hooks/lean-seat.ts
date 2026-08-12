@@ -16,7 +16,7 @@ type Attrs = Readonly<Record<string, string | readonly string[]>> | undefined;
 
 function attrsOf(ctx: HookContext): Attrs {
   const c = ctx as unknown as BindableContext;
-  return c.session?.auth?.current?.attributes ?? c.session?.auth?.initiator?.attributes;
+  return c.session?.auth?.current?.attributes;
 }
 
 function unattendedStamped(attributes: Attrs): boolean {
