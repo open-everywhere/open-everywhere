@@ -97,7 +97,9 @@ const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/wor
   ok(/function coalesceTurnInputs/.test(messages), "harness/messages.js still exports coalesceTurnInputs");
   const body = /function coalesceTurnInputs\([^)]*\)\{[\s\S]*?\n?\}(?=function )/.exec(messages)?.[0] ?? messages.slice(messages.indexOf("function coalesceTurnInputs"), messages.indexOf("function normalizeUserContent"));
   ok(!/auth/.test(body), "coalesceTurnInputs still merges only inputResponses/message/context/outputSchema — never `auth`");
-  ok(/inputResponses:\w+\}\}\)\)/.test(read("execution/subagent-hitl-proxy.js")), "routeDeliverPayload still routes HITL answers as `inputResponses` payloads");
+  const hitlProxy = read("execution/subagent-hitl-proxy.js");
+  ok(/payload:\{inputResponses:/.test(hitlProxy), "routeDeliverPayload still routes HITL answers as `inputResponses` payloads");
+  ok(!/auth/.test(hitlProxy), "the HITL proxy still never touches `auth` — an answer cannot become an attribute");
 }
 
 {

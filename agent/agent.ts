@@ -88,7 +88,6 @@ export default defineAgent({
   build: { externalDependencies: ["just-bash"] },
 
   model: defineDynamic({
-    fallback: DEFAULT_MODEL,
     events: {
       "step.started": mockModelArmed()
         ? () => primaryModelSelection(evalMockModel())

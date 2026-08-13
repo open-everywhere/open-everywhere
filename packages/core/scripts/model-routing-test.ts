@@ -462,12 +462,30 @@ const supDomains: Domain[] = [
       ok(readModelStamp() === m.modelId, "regression: the stamped id and the RETURNED model agree — the audit row can no longer claim a model the resolver didn't hand back");
     });
     {
-      const { normalizeDynamicRuntimeModelResult } = await import(abs("dist/src/runtime/agent/resolve-model.js"));
+      const { resolveRuntimeModelSelection } = await import(abs("dist/src/runtime/agent/resolve-model.js"));
       const wrapper = await contextStorage.run(new ContextContainer(), async () =>
         resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_UTIL, fakeDeps(() => domains2, [])),
       );
-      const selection = normalizeDynamicRuntimeModelResult({ fallback: { id: DEFAULT_ID }, result: wrapper });
-      ok(selection.model !== undefined, "regression: the resolver returns a model-INSTANCE selection — the shape eve honors ONLY at step.started (a turn.started wiring silently drops it to the fallback)");
+      const selection = { model: wrapper, modelContextWindowTokens: 1_000_000 };
+      const resolved = await resolveRuntimeModelSelection({ selection, durability: "step", state: new ContextContainer() });
+      ok(resolved.model !== undefined, "regression: the resolver returns a model-INSTANCE selection — the shape eve honors at step scope");
+      ok(resolved.reference?.contextWindowTokens === 1_000_000, "regression: the window stated on the selection reaches eve's reference — this is what rescales the compaction threshold");
+
+      let durableError = "";
+      try {
+        await resolveRuntimeModelSelection({ selection, durability: "durable", state: new ContextContainer() });
+      } catch (error) {
+        durableError = error instanceof Error ? error.message : String(error);
+      }
+      ok(/must be serializable/.test(durableError), "regression: a model INSTANCE is REFUSED at durable (session/turn) scope — the routed wrapper only survives at step.started");
+
+      let nullError = "";
+      try {
+        await resolveRuntimeModelSelection({ selection: null, durability: "step", state: new ContextContainer() });
+      } catch (error) {
+        nullError = error instanceof Error ? error.message : String(error);
+      }
+      ok(/returned no model/.test(nullError), "regression: eve throws on a null resolver return — every OE return path must be concrete (no `fallback` key exists)");
     }
   }
 }

@@ -104,6 +104,7 @@ export const teamsOnMessage = async (ctx: TeamsInboundMessageContext, message: T
 
 const native = teamsChannel({
   route: INTERNAL_TEAMS_ROUTE,
+  turnPolicy: "queue",
   onMessage: teamsOnMessage,
   events: {
     "message.completed": async (data, channel, ctx) => {

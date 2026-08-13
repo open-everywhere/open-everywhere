@@ -50,6 +50,7 @@ function authFromInteraction(interaction: DiscordCommandInteraction): OpenEveryw
 
 const discordInteractionChannel = discordChannel({
   route: INTERNAL_DISCORD_ROUTE,
+  turnPolicy: "queue",
   onCommand: async (ctx: DiscordContext, interaction: DiscordCommandInteraction) => {
     const auth = authFromInteraction(interaction);
     if (auth === null) return null;

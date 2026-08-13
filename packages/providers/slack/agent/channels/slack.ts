@@ -433,6 +433,7 @@ export async function admitInbound(
 
 const slackMentionChannel = slackChannel({
   route: INTERNAL_SLACK_ROUTE,
+  turnPolicy: "queue",
   onAppMention: (ctx, message) => admitInbound(ctx, message, false),
   onDirectMessage: (ctx, message) => admitInbound(ctx, message, true),
   events: {

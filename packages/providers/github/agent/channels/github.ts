@@ -331,6 +331,7 @@ export const githubOnComment = async (ctx: GitHubInboundContext, comment: GitHub
 
 const native: GitHubChannel = githubChannel({
   botName: BOT_NAME,
+  turnPolicy: "queue",
   onComment: githubOnComment,
   events: {
     async "turn.started"(data, channel, ctx) {

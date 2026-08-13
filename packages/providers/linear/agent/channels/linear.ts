@@ -639,6 +639,7 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
 
 const native: LinearChannel = linearChannel({
   credentials: linearAppActorCredentials,
+  turnPolicy: "queue",
   onAgentSession: linearOnAgentSession,
   events: {
     async "turn.started"(data, channel, ctx) {
