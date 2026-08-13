@@ -151,5 +151,73 @@ const baseInput = {
   ok(carded === 0, "default: …and mints no card, so a forgotten line fails loudly instead of silently carding an autonomous run");
 }
 
+{
+  const measuredProdBag: Attrs = {
+    channel_id: "C_PLAIN",
+    channel_type: "channel",
+    is_ext_shared: "false",
+    open_everywhere_routine_id: "r1",
+    open_everywhere_routine_org: ORG,
+    open_everywhere_routine_surface: `slack/${TEAM}/C_PLAIN`,
+    team_id: TEAM,
+    trust_checked: "true",
+  };
+  ok(
+    measuredProdBag["oe_fire_unattended"] === undefined && measuredProdBag["oe_fire_principal"] === undefined,
+    "fail-closed/prod: the measured bag really is missing BOTH stamps — otherwise the leg below would pass on the old arm",
+  );
+  const prodShapeFire = fireCtx(measuredProdBag);
+  ok(unattendedOf(prodShapeFire) === true, "fail-closed/prod: 🔴 the shape the deployment measured derives true — the routine marker alone says nobody is acting");
+  ok(actingPrincipalIdOf(prodShapeFire) === undefined, "fail-closed/prod: …and its presence fence closes, so a propose tool refuses it instead of carding into an empty room");
+  ok(principalIdOf(prodShapeFire) === "eve:app", "fail-closed/prod: …while WHO stays honestly answerable — the floor removes authority, never attribution");
+
+  const bareScheduleFire = fireCtx({});
+  ok(unattendedOf(bareScheduleFire) === true, "fail-closed/bare: 🔴 a schedule-started session with NO attributes at all still derives true — the arm that survives losing the whole bag");
+  ok(actingPrincipalIdOf(bareScheduleFire) === undefined, "fail-closed/bare: …and its fence closes too");
+
+  ok(
+    unattendedOf({ channel: { kind: "slack" }, session: { auth: { current: { authenticator: "app", principalId: "eve:app", principalType: "slack-user", attributes: {} } } } } as never) === false,
+    "fail-closed/human: a slot with the WRONG principalType is not a schedule fire — the predicate reads all three fields",
+  );
+  ok(
+    unattendedOf({ channel: { kind: "slack" }, session: { auth: { current: { principalId: "eve:app", principalType: "runtime", attributes: {} } } } } as never) === false,
+    "fail-closed/human: …and a slot with NO authenticator is not one either",
+  );
+  ok(unattendedOf(human) === false, "fail-closed/human: 🔴 a LIVE HUMAN turn still derives EXACTLY false — the floor did not swallow the true/false distinction");
+  ok(actingPrincipalIdOf(human) === HUMAN, "fail-closed/human: …and that human still has an acting principal, so their proposes still card");
+}
+{
+  carded = 0;
+  const before = (await getOperationalStore().listPendingActions(ORG)).length;
+  await throwsWith(
+    () =>
+      requestApproval(
+        { ...baseInput, args: { ...baseInput.args, name: "ghost-skill-3" }, chain: { unattended: unattendedOf(fireCtx({})) } },
+        { postCard: countingPostCard },
+      ),
+    /DENIED by the approver chain.*ask-unattended/s,
+    "fail-closed/join: 🔴 the value derived from a BAGLESS schedule fire denies — end to end, not only at the predicate",
+  );
+  ok(carded === 0, "fail-closed/join: …and posts no card");
+  ok((await getOperationalStore().listPendingActions(ORG)).length === before, "fail-closed/join: …and mints no pending row");
+}
+{
+  const bridgedProdShape = bridgedContext({
+    platform: "slack",
+    principalId: "eve:app",
+    principalType: "runtime",
+    authenticator: "app",
+    attributes: { team_id: TEAM, channel_id: "C_PLAIN", channel_type: "channel" },
+  });
+  ok(unattendedOf(bridgedProdShape) === true, "fail-closed/bridge: 🔴 a bagless fire reconstituted through the identity bridge still derives true");
+  const bridgedHuman = bridgedContext({
+    platform: "slack",
+    principalId: HUMAN,
+    principalType: "slack-user",
+    attributes: { team_id: TEAM, channel_id: "C_PLAIN", channel_type: "channel", user_id: HUMAN },
+  });
+  ok(unattendedOf(bridgedHuman) === false, "fail-closed/bridge: …and a bridged human still derives false");
+}
+
 rmSync(tmp, { recursive: true, force: true });
 console.log(`✓ unattended-derivation: ${passed} assertions passed`);

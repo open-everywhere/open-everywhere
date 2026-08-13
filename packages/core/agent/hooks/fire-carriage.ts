@@ -1,7 +1,7 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { resolvePartition } from "../memory/partition.js";
-import { auditFireAttrsSeen, isScheduleOriginatedAuth } from "../routines/fire-carriage.js";
-import type { BindableContext } from "../identity/binding.js";
+import { auditFireAttrsSeen } from "../routines/fire-carriage.js";
+import { isScheduleOriginatedAuth, type BindableContext } from "../identity/binding.js";
 
 interface AuthSlotContext {
   readonly session?: {

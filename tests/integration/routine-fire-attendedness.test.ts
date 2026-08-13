@@ -165,7 +165,7 @@ test("the schedule-auth constants the SEEN row keys on still match eve's own", a
   const { join } = await import("node:path");
   const src = readFileSync(join(process.cwd(), "node_modules", "eve", "dist", "src", "channel", "schedule-auth.js"), "utf8");
   const { SCHEDULE_APP_AUTHENTICATOR, SCHEDULE_APP_PRINCIPAL_ID, SCHEDULE_APP_PRINCIPAL_TYPE } = await import(
-    "@open-everywhere/core/agent/routines/fire-carriage.js"
+    "@open-everywhere/core/agent/identity/binding.js"
   );
   expect(src).toContain("SCHEDULE_APP_AUTH");
   for (const literal of [SCHEDULE_APP_AUTHENTICATOR, SCHEDULE_APP_PRINCIPAL_ID, SCHEDULE_APP_PRINCIPAL_TYPE]) {

@@ -6,6 +6,7 @@ export interface BridgedIdentity {
   readonly platform: string;
   readonly principalId?: string;
   readonly principalType?: string;
+  readonly authenticator?: string;
   readonly attributes: Readonly<Record<string, string>>;
 }
 
@@ -31,6 +32,7 @@ export function stampBindingBridge(ctx: BindableContext): void {
       platform,
       principalId: auth?.principalId && auth.principalId.length > 0 ? auth.principalId : undefined,
       principalType: auth?.principalType,
+      authenticator: auth?.authenticator,
       attributes,
     }));
   } catch {
@@ -54,6 +56,7 @@ export function bridgedContext(b: BridgedIdentity): BindableContext {
           attributes: b.attributes,
           principalId: b.principalId,
           principalType: b.principalType,
+          authenticator: b.authenticator,
         },
       },
     },

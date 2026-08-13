@@ -10,25 +10,6 @@ export function attributeKeyNames(attributes: Readonly<Record<string, unknown>> 
   return Object.keys(attributes ?? {}).sort();
 }
 
-export const SCHEDULE_APP_AUTHENTICATOR = "app";
-export const SCHEDULE_APP_PRINCIPAL_ID = "eve:app";
-export const SCHEDULE_APP_PRINCIPAL_TYPE = "runtime";
-
-interface RawAuthSlot {
-  readonly authenticator?: unknown;
-  readonly principalId?: unknown;
-  readonly principalType?: unknown;
-  readonly attributes?: Readonly<Record<string, unknown>>;
-}
-
-export function isScheduleOriginatedAuth(auth: RawAuthSlot | null | undefined): boolean {
-  return (
-    auth?.authenticator === SCHEDULE_APP_AUTHENTICATOR &&
-    auth?.principalId === SCHEDULE_APP_PRINCIPAL_ID &&
-    auth?.principalType === SCHEDULE_APP_PRINCIPAL_TYPE
-  );
-}
-
 export async function auditFireAttrsSent(
   routine: Routine,
   attributes: Readonly<Record<string, unknown>> | undefined,

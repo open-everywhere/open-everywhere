@@ -6,7 +6,7 @@ import { isVouchedInternal } from "./trust.js";
 import { UNNAMED_TENANT } from "./principal-key.js";
 import { bareTokenFromEveContext, classifySessionId, parseWindowToken, sessionGrantKeyFromToken } from "../channels/window-key.js";
 import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
-import { routineGrantKeyStamped } from "../routines/routine.js";
+import { ROUTINE_MARKER, routineGrantKeyStamped } from "../routines/routine.js";
 import type { Domain } from "../memory/domain.js";
 import { processRegistryMap } from "../lib/process-registry.js";
 
@@ -33,6 +33,7 @@ interface AuthPrincipal {
   readonly attributes?: Readonly<Record<string, string | readonly string[]>>;
   readonly principalId?: string;
   readonly principalType?: string;
+  readonly authenticator?: string;
 }
 export interface BindableContext {
   readonly session?: {
@@ -89,6 +90,32 @@ function attestedFirePrincipal(ctx: BindableContext): { readonly id: string; rea
 
 function unattendedOrigin(ctx: BindableContext): boolean {
   return attr(authOf(ctx)?.attributes, [FIRE_UNATTENDED_ATTR, "oeFireUnattended"]) === "true";
+}
+
+export const SCHEDULE_APP_AUTHENTICATOR = "app";
+export const SCHEDULE_APP_PRINCIPAL_ID = "eve:app";
+export const SCHEDULE_APP_PRINCIPAL_TYPE = "runtime";
+
+interface ScheduleAuthSlot {
+  readonly authenticator?: unknown;
+  readonly principalId?: unknown;
+  readonly principalType?: unknown;
+}
+
+export function isScheduleOriginatedAuth(auth: ScheduleAuthSlot | null | undefined): boolean {
+  return (
+    auth?.authenticator === SCHEDULE_APP_AUTHENTICATOR &&
+    auth?.principalId === SCHEDULE_APP_PRINCIPAL_ID &&
+    auth?.principalType === SCHEDULE_APP_PRINCIPAL_TYPE
+  );
+}
+
+function routineMarkerDelivery(ctx: BindableContext): boolean {
+  return attr(authOf(ctx)?.attributes, [ROUTINE_MARKER.id]) !== undefined;
+}
+
+function unattendedDelivery(ctx: BindableContext): boolean {
+  return unattendedOrigin(ctx) || routineMarkerDelivery(ctx) || isScheduleOriginatedAuth(authOf(ctx));
 }
 
 export function actingPrincipalId(binding: SurfaceBinding): string | undefined {
@@ -306,13 +333,13 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
   let platform = seg(channelPlatform(ctx), "local");
   let raw = (MAPPERS.get(platform) ?? bindLocal)(ctx);
   let fire = attestedFirePrincipal(ctx);
-  let unattended = unattendedOrigin(ctx);
+  let unattended = unattendedDelivery(ctx);
   if (raw.workspace === undefined && raw.surface === undefined) {
     const bridged = readBindingBridge();
     if (bridged) {
       ({ platform, raw } = bindBridged(bridged));
       fire ??= attestedFirePrincipal(bridgedContext(bridged));
-      unattended ||= unattendedOrigin(bridgedContext(bridged));
+      unattended ||= unattendedDelivery(bridgedContext(bridged));
       console.warn(
         `[open-everywhere:binding-bridge] context carried no platform identity — bound via the session's stamped ${platform} identity`,
       );
