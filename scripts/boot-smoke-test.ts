@@ -121,53 +121,13 @@ for (const [rel, mod] of loaded) {
 }
 
 {
-  const { evalMockModel, MOCK_MODEL_ID, mockModelArmed } = await import("../agent/model/mock-model.js");
-  if (mockModelArmed()) {
-    problems.push(
-      "MOCK MODEL: OE_EVAL_MOCK_MODEL is armed in this process — the boot gate must run with it UNSET, " +
-        "or ⑤ asserts nothing. (Nothing currently arms it — see the OPE-463 retirement note above.)",
-    );
-  } else {
-    let refused = false;
-    try {
-      evalMockModel();
-    } catch {
-      refused = true;
-    }
-    if (!refused) {
-      problems.push(
-        "MOCK MODEL: evalMockModel() returned a model with OE_EVAL_MOCK_MODEL unset — the fail-closed guard is gone, " +
-          "so a real deployment could answer a chat surface with canned text.",
-      );
-    }
-
-    const agent = loaded.get("agent/agent.ts")?.default as
-      | { model?: { events?: Record<string, (event: unknown, ctx: unknown) => unknown> } }
-      | undefined;
-    const resolver = agent?.model?.events?.["step.started"];
-    if (typeof resolver !== "function") {
-      problems.push("MOCK MODEL: agent/agent.ts exposes no step.started model resolver to check.");
-    } else {
-      const selection = (await resolver(undefined, {})) as { model?: { modelId?: unknown } } | null;
-      const seated = selection && typeof selection === "object" ? selection.model : undefined;
-      if (seated && typeof seated === "object" && seated.modelId === MOCK_MODEL_ID) {
-        problems.push(
-          `MODEL SEAT: the turn seat resolved to the EVAL MOCK (${MOCK_MODEL_ID}) with OE_EVAL_MOCK_MODEL unset — ` +
-            "this build would answer every wake with canned text instead of calling a model.",
-        );
-      }
-    }
-  }
-}
-
-{
   const { SCRIPTED_MODEL_ENV, SCRIPTED_MODEL_ID, scriptedModelArmed } = await import("../agent/model/scripted-model.js");
   const { registerScript } = await import("../agent/model/scripted-model.js");
   const { scriptedModelFor } = await import("../agent/model/scripted-resolve.js");
   if (scriptedModelArmed()) {
     problems.push(
       `SCRIPTED MODEL: ${SCRIPTED_MODEL_ENV} is armed in this process — the boot gate must run with it UNSET, ` +
-        "or ⑤b asserts nothing. (It is armed only inside the vitest integration forks.)",
+        "or ⑤ asserts nothing. (It is armed only inside the vitest integration forks.)",
     );
   } else {
     if (scriptedModelFor(undefined, {}) !== null) {
@@ -301,7 +261,7 @@ if (problems.length > 0) {
 
 console.log(
   `✓ boot-smoke: ${modules.length} agent module(s) load clean; ${routeCount} channel route(s), no collisions; ` +
-    `${scheduleCount} schedule cron(s) valid; dynamic model bound at step.started; eval mock inert; ` +
+    `${scheduleCount} schedule cron(s) valid; dynamic model bound at step.started; scripted model inert; ` +
     `turn-model selection carries the primary window + gateway options`,
 );
 process.exit(0);

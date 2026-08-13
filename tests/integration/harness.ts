@@ -40,7 +40,7 @@ export async function bootAgent(): Promise<{ base: string }> {
   if (booted !== undefined) return booted;
   guardProcess();
 
-  for (const k of ["AI_GATEWAY_API_KEY", "VERCEL_AI_GATEWAY_KEY", "DATABASE_URL", "VERCEL", "OE_EVAL_MOCK_MODEL"]) {
+  for (const k of ["AI_GATEWAY_API_KEY", "VERCEL_AI_GATEWAY_KEY", "DATABASE_URL", "VERCEL"]) {
     delete process.env[k];
   }
 
