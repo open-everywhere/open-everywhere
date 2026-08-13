@@ -3,7 +3,7 @@ import { z } from "zod";
 import { resolvePartition, type Partition } from "../memory/partition.js";
 import { bindFrom, type SurfaceBinding } from "../identity/binding.js";
 import { planFor, type ResolvedMemory } from "../memory/resolve.js";
-import { principalIdOf, actingPrincipalIdOf } from "../access/request.js";
+import { principalIdOf, unattendedOf } from "../access/request.js";
 import { resolveSkillDomain } from "../skills/domain-skills.js";
 import { readTierFromSandbox } from "../memory/sandbox-sync.js";
 import { bulletSha256 } from "../memory/purge-redaction.js";
@@ -198,7 +198,7 @@ const purgeEntry = defineTool({
         channelId: venue.channelId,
         threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
         postedTo: venue.surfaceKey,
-        chain: { unattended: actingPrincipalIdOf(ctx) === undefined },
+        chain: { unattended: unattendedOf(ctx) },
         summaryLines: purgePlan.cardLines,
       },
       approvalPostDeps(venue.platform),

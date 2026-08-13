@@ -207,6 +207,7 @@ const baseInput = {
   scopeKey: "slack/T1/C_PLAIN",
   domain: "plain",
   args: { org: "test-org", domain: "plain", name: "ghost-skill", requestedBy: "U_HUMAN" },
+  chain: { unattended: false },
 };
 async function shadowRows(expectAtLeast = 1): Promise<{ detail?: Record<string, unknown> }[]> {
   for (let i = 0; i < 50; i++) {
@@ -331,6 +332,7 @@ const spendInput = {
   scopeKey: "slack/T1/C_PLAIN",
   domain: "plain",
   args: { org: "test-org", scopeKey: "slack/T1/C_PLAIN", level: "surface", monthlyTokens: 500_000, currentCap: null },
+  chain: { unattended: false },
 };
 
 async function judgeVerdictRows(): Promise<{ detail?: Record<string, unknown> }[]> {

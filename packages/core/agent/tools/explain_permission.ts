@@ -9,7 +9,7 @@ import {
   type ApprovalChainRequest,
 } from "../access/approver-chain.js";
 import { TOOL_CONSEQUENCE } from "../access/consequence.js";
-import { actingPrincipalIdOf, resolveAccessFor } from "../access/request.js";
+import { actingPrincipalIdOf, resolveAccessFor, unattendedOf } from "../access/request.js";
 import type { BindableContext } from "../identity/binding.js";
 
 export default defineTool({
@@ -40,7 +40,7 @@ export default defineTool({
       scopeKey: access.surfaceKey,
       ...(domain !== undefined ? { domain, mode: approvalModeForDomain(domain) } : {}),
       ...(acting !== undefined ? { principalId: acting } : {}),
-      unattended: input.unattended ?? acting === undefined,
+      unattended: input.unattended ?? unattendedOf(ctx as BindableContext),
       tainted: input.tainted ?? chainTaintSignal(),
     };
     const resolution = await resolveApproverChain(request, { approvers: access.approvers });

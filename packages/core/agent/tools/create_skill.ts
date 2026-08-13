@@ -3,7 +3,7 @@ import { windowGated } from "../access/window-gated.js";
 import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
-import { actingPrincipalIdOf, resolveAccessFor } from "../access/request.js";
+import { actingPrincipalIdOf, resolveAccessFor, unattendedOf } from "../access/request.js";
 import { isSafeSkillName } from "../scm/repo-skills.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
@@ -98,6 +98,7 @@ export default windowGated("create_skill", defineTool({
         channelId: venue.channelId,
         threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
         postedTo: venue.surfaceKey,
+        chain: { unattended: unattendedOf(ctx) },
       },
       approvalPostDeps(venue.platform),
     );

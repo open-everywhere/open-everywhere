@@ -28,7 +28,15 @@ export interface PrincipalGate {
 export interface PrincipalGateDefect {
   readonly file: string;
   readonly line: number;
-  readonly rule: "unmarked" | "mismatched" | "unknown-intent" | "no-reason" | "unattended-inline-bag";
+  readonly rule:
+    | "unmarked"
+    | "mismatched"
+    | "unknown-intent"
+    | "no-reason"
+    | "unattended-inline-bag"
+    | "attendedness-missing"
+    | "attendedness-hand-rolled"
+    | "attendedness-exempt-no-reason";
   readonly message: string;
 }
 
@@ -265,6 +273,152 @@ export function checkPrincipalGates(gates: readonly PrincipalGate[]): PrincipalG
         line: g.line,
         rule: "no-reason",
         message: `principal-gate marker declares "${g.intent}" with no reason after it. Write why — the word alone is a rubber stamp, and the reason is what a later reader needs to tell whether it still holds.`,
+      });
+    }
+  }
+  return defects;
+}
+
+export const ATTENDEDNESS_DERIVATION = "unattendedOf(ctx)";
+export const ATTENDEDNESS_DERIVATION_BINDING = "unattendedFrom(binding)";
+const DERIVATION_CALL_RE = /\b(?:unattendedOf|unattendedFrom)\s*\(/;
+
+export interface AttendednessSite {
+  readonly file: string;
+  readonly line: number;
+  readonly shape: "propose" | "chain-literal";
+  readonly expr?: string;
+  readonly exemptReason?: string;
+  readonly exempt: boolean;
+}
+
+const PROPOSE_CALL_RE = /\brequestApproval\s*\(/;
+const PROPOSE_ALIAS_DECL_RE = /^\s*(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(.*)$/;
+
+function proposeAliasOn(line: string): string | undefined {
+  const m = PROPOSE_ALIAS_DECL_RE.exec(line);
+  if (!m) return undefined;
+  const rhs = m[2] ?? "";
+  if (!/\brequestApproval\b/.test(rhs) || PROPOSE_CALL_RE.test(rhs)) return undefined;
+  return m[1] === "requestApproval" ? undefined : m[1];
+}
+const CHAIN_LITERAL_RE = /\bresolveApproverChain\s*\(\s*\{|:\s*ApprovalChainRequest\s*=\s*\{/;
+const DECLARATION_RE = /\bfunction\s+(?:requestApproval|resolveApproverChain)\b/;
+const UNATTENDED_KEY_RE = /\bunattended\s*:\s*(.+)$/;
+const UNATTENDED_SHORTHAND_RE = /^\s*unattended\s*,\s*$/;
+const ATTENDEDNESS_WINDOW = 60;
+const EXEMPT_MARKER_RE = /approval-chain:\s*exempt\s*(?:—|-{1,2}|:)?\s*(.*)$/;
+
+function exemptMarkerAbove(lines: readonly string[], line: number): { reason: string } | undefined {
+  for (let i = line - 2; i >= 0; i--) {
+    const t = (lines[i] ?? "").trim();
+    if (t === "") continue;
+    if (!(t.startsWith("//") || t.startsWith("*") || t.startsWith("/*"))) return undefined;
+    const m = EXEMPT_MARKER_RE.exec(t);
+    if (m) return { reason: (m[1] ?? "").trim() };
+  }
+  return undefined;
+}
+
+function derivedNames(code: readonly string[]): Set<string> {
+  const names = new Set<string>();
+  for (const line of code) {
+    const m = /^\s*(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(.*)$/.exec(line);
+    if (m && DERIVATION_CALL_RE.test(m[2] ?? "")) names.add(m[1]!);
+  }
+  return names;
+}
+
+function proposeAliases(code: readonly string[]): RegExp | undefined {
+  const names: string[] = [];
+  for (const line of code) {
+    const name = proposeAliasOn(line);
+    if (name !== undefined) names.push(name);
+  }
+  return names.length === 0 ? undefined : new RegExp(`\\b(?:${names.join("|")})\\s*\\(`);
+}
+
+export function findAttendednessSites(file: string, source: string): AttendednessSite[] {
+  const lines = source.split("\n");
+  const code = stripComments(lines);
+  const aliasCall = proposeAliases(code);
+  const sites: AttendednessSite[] = [];
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i] ?? "";
+    if (DECLARATION_RE.test(c) || proposeAliasOn(c) !== undefined) continue;
+    const isPropose = PROPOSE_CALL_RE.test(c) || (aliasCall !== undefined && aliasCall.test(c));
+    if (!isPropose && !CHAIN_LITERAL_RE.test(c)) continue;
+    const indent = (c.match(/^\s*/) ?? [""])[0].length;
+    let expr: string | undefined;
+    for (let j = i; j < Math.min(i + 1 + ATTENDEDNESS_WINDOW, code.length); j++) {
+      const line = code[j] ?? "";
+      if (j > i && /^\s*[)}]/.test(line) && (line.match(/^\s*/) ?? [""])[0].length <= indent) break;
+      if (UNATTENDED_SHORTHAND_RE.test(line)) {
+        expr = "unattended";
+        break;
+      }
+      const m = UNATTENDED_KEY_RE.exec(line);
+      if (m) {
+        expr = (m[1] ?? "").trim().replace(/[,}]+\s*$/, "").trim();
+        break;
+      }
+    }
+    const marker = exemptMarkerAbove(lines, i + 1);
+    sites.push({
+      file,
+      line: i + 1,
+      shape: isPropose ? "propose" : "chain-literal",
+      ...(expr !== undefined ? { expr } : {}),
+      ...(marker !== undefined ? { exemptReason: marker.reason } : {}),
+      exempt: marker !== undefined,
+    });
+  }
+  const derived = derivedNames(code);
+  return sites.map((s) =>
+    s.expr !== undefined && derived.has(s.expr) ? { ...s, expr: `${s.expr} = ${ATTENDEDNESS_DERIVATION}` } : s,
+  );
+}
+
+export function checkAttendednessSites(sites: readonly AttendednessSite[]): PrincipalGateDefect[] {
+  const defects: PrincipalGateDefect[] = [];
+  for (const s of sites) {
+    if (s.exempt) {
+      if ((s.exemptReason ?? "").length < 12) {
+        defects.push({
+          file: s.file,
+          line: s.line,
+          rule: "attendedness-exempt-no-reason",
+          message:
+            `an \`approval-chain: exempt\` marker with no reason after it. Write why this site cannot derive attendedness ` +
+            `from a turn — the word alone is a rubber stamp, and this marker is the one way to opt OUT of a security control.`,
+        });
+      }
+      continue;
+    }
+    if (s.expr === undefined) {
+      if (s.shape !== "propose") continue;
+      defects.push({
+        file: s.file,
+        line: s.line,
+        rule: "attendedness-missing",
+        message:
+          `a propose site with no \`chain:\` bag. Pass \`chain: { unattended: ${ATTENDEDNESS_DERIVATION} },\`.\n` +
+          `      The approver chain turns \`ask\` into \`deny\` on this signal, so a site that omits it lets an autonomous\n` +
+          `      fire card into an empty room (OPE-440). If this kind never routes through the chain (a NON_TOOL_ACTION_KIND):\n` +
+          `      // approval-chain: exempt — <why the chain never sees this kind>`,
+      });
+      continue;
+    }
+    if (!DERIVATION_CALL_RE.test(s.expr)) {
+      defects.push({
+        file: s.file,
+        line: s.line,
+        rule: "attendedness-hand-rolled",
+        message:
+          `derives attendedness as \`${s.expr}\` instead of \`${ATTENDEDNESS_DERIVATION}\` (access/request.ts) or ` +
+          `\`${ATTENDEDNESS_DERIVATION_BINDING}\` (identity/binding.ts).\n` +
+          `      One function, one place to test it. A hand-rolled spelling is how the wrong accessor gets in: read the BOUND\n` +
+          `      principal here and every fire answers "a human is present", because a fire binds as its attested creator.`,
       });
     }
   }

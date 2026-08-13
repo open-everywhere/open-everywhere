@@ -125,7 +125,7 @@ export interface RequestApprovalInput {
   readonly postedTo?: string | null;
   readonly summaryLines?: readonly string[];
   readonly chain?: {
-    readonly unattended?: boolean;
+    readonly unattended: boolean;
     readonly tainted?: boolean;
   };
 }
@@ -185,7 +185,7 @@ export async function requestApproval(
       scopeKey: input.scopeKey,
       ...(input.domain != null ? { domain: input.domain } : {}),
       principalId: input.requestedBy,
-      unattended: input.chain?.unattended ?? false,
+      unattended: input.chain?.unattended ?? true,
       ...(input.chain?.tainted !== undefined ? { tainted: input.chain.tainted } : {}),
       ...(input.domain != null ? { mode: approvalModeForDomain(input.domain) } : {}),
       ...(kindDef.beneficiaryClicker === true ? { beneficiaryClicker: true } : {}),

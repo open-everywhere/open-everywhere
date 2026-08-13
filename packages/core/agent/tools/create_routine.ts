@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
-import { resolveMode, actingPrincipalIdOf } from "../access/request.js";
+import { resolveMode, actingPrincipalIdOf, unattendedOf } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
 import { computeNextRun, parseCron } from "../routines/schedule.js";
 import { assertReportConsistent, describeTrigger, type RoutineReport, type RoutineTrigger } from "../routines/routine.js";
@@ -288,6 +288,7 @@ export default defineTool({
         channelId,
         threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
         postedTo: venue.surfaceKey,
+        chain: { unattended: unattendedOf(ctx) },
       },
       approvalPostDeps(venue.platform),
     );

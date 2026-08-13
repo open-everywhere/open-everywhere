@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/binding.js";
-import { principalIdOf } from "../access/request.js";
+import { principalIdOf, unattendedOf } from "../access/request.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { domainForChannel } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
@@ -226,6 +226,7 @@ export default defineTool({
         channelId: venue.channelId,
         threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
         postedTo: venue.surfaceKey,
+        chain: { unattended: unattendedOf(ctx) },
       },
       approvalPostDeps(venue.platform),
     );

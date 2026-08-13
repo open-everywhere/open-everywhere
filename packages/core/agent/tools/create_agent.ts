@@ -4,7 +4,7 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { bindFrom } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
-import { actingPrincipalIdOf, buildResolveRequest, resolveAccessFor } from "../access/request.js";
+import { actingPrincipalIdOf, buildResolveRequest, resolveAccessFor, unattendedOf } from "../access/request.js";
 import { surfaceKeyOf } from "../access/resolver.js";
 import { getConfig } from "../access/config.js";
 import { definedConnectors } from "../access/delta.js";
@@ -190,6 +190,7 @@ export default defineTool({
         channelId: venue.channelId,
         threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
         postedTo: venue.surfaceKey,
+        chain: { unattended: unattendedOf(ctx) },
       },
       approvalPostDeps(venue.platform),
     );

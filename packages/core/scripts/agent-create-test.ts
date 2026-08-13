@@ -358,7 +358,7 @@ function fakeDeps(state: FakeState) {
   };
   const pending = await inSession(() =>
     requestApproval(
-      { org: "default", kind: "agent.create", args, scopeKey: args.scopeKey, requestedBy: args.requestedBy, channelId: args.channelId, threadTs: args.threadTs },
+      { org: "default", kind: "agent.create", args, scopeKey: args.scopeKey, requestedBy: args.requestedBy, channelId: args.channelId, threadTs: args.threadTs, chain: { unattended: false } },
       { post },
     ),
   );

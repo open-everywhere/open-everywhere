@@ -294,6 +294,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
       domain: "eng",
       requestedBy: "U_AUTHOR",
       channelId: "C_ENG",
+      chain: { unattended: false },
     },
     { postCard: async () => "ts-skill-1" },
   );
@@ -314,6 +315,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
       domain: "eng",
       requestedBy: "U_AUTHOR",
       channelId: "C_ENG",
+      chain: { unattended: false },
     },
     { postCard: async () => "ts-skill-2" },
   );

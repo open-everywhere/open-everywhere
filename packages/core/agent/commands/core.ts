@@ -1,4 +1,4 @@
-import type { SurfaceBinding } from "../identity/binding.js";
+import { unattendedFrom, type SurfaceBinding } from "../identity/binding.js";
 import { cancelAnchoredTurn, type AttachSessionForCancel } from "../channels/turn-cancel.js";
 import { turnChannelKey } from "../channels/turn-registry.js";
 import { type Caps } from "../spend/spend.js";
@@ -224,6 +224,7 @@ export async function runBudgetRaise(binding: SurfaceBinding, usd: number, deps:
       requestedBy: binding.principalId!,
       channelId,
       threadTs: binding.threadTs ?? null,
+      chain: { unattended: unattendedFrom(binding) },
     },
     approvalPostDeps(binding.platform),
   );
@@ -267,6 +268,7 @@ export async function runBudgetClear(binding: SurfaceBinding, deps: OeApprovalDe
       requestedBy: binding.principalId!,
       channelId,
       threadTs: binding.threadTs ?? null,
+      chain: { unattended: unattendedFrom(binding) },
     },
     approvalPostDeps(binding.platform),
   );

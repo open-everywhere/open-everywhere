@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
-import { actingPrincipalIdOf, resolveMode } from "../access/request.js";
+import { actingPrincipalIdOf, resolveMode, unattendedOf } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
@@ -94,6 +94,7 @@ export default defineTool({
         channelId,
         threadTs: binding.threadTs ?? null,
         postedTo: postedToSurfaceKey(binding, channelId),
+        chain: { unattended: unattendedOf(ctx) },
       },
       approvalPostDeps(binding.platform),
     );

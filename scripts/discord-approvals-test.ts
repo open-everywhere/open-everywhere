@@ -263,6 +263,7 @@ const signedHeaders = (body: string, timestamp: string): Headers =>
       scopeKey: "discord/G1/C_ENG",
       requestedBy: "U_REQUESTER",
       channelId: "C_ENG",
+      chain: { unattended: false },
     },
     { postCard },
   );
@@ -283,6 +284,7 @@ const signedHeaders = (body: string, timestamp: string): Headers =>
         scopeKey: "discord/G1/C_FAIL",
         requestedBy: "U_REQUESTER",
         channelId: "C_FAIL",
+        chain: { unattended: false },
       },
       { postCard: async () => undefined },
     );

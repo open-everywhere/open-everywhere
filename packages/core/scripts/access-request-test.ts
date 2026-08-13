@@ -538,6 +538,7 @@ function fakeDeps(state: FakeState) {
         requestedBy: args.requestedBy,
         channelId: args.channelId,
         threadTs: args.threadTs,
+        chain: { unattended: false },
       },
       { post },
     ),

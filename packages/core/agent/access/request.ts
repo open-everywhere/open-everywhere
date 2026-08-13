@@ -1,5 +1,5 @@
 import { resolvePartition } from "../memory/partition.js";
-import { actingPrincipalId, bindFrom, type BindableContext, type Visibility, type Trust } from "../identity/binding.js";
+import { actingPrincipalId, bindFrom, unattendedFrom, type BindableContext, type Visibility, type Trust } from "../identity/binding.js";
 import { resolveAccess, type EffectiveAccess, type ResolveRequest, type SessionMode } from "./resolver.js";
 import { getConfig } from "./config.js";
 import { groupsForPrincipal } from "../identity/groups.js";
@@ -25,6 +25,10 @@ export function principalIdOf(ctx: BindableContext): string | undefined {
 
 export function actingPrincipalIdOf(ctx: BindableContext): string | undefined {
   return actingPrincipalId(bindFrom(ctx));
+}
+
+export function unattendedOf(ctx: BindableContext): boolean {
+  return unattendedFrom(bindFrom(ctx));
 }
 
 export function buildResolveRequest(ctx: BindableContext): ResolveRequest {

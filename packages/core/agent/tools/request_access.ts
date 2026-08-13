@@ -3,7 +3,7 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
-import { buildResolveRequest, resolveAccessFor } from "../access/request.js";
+import { buildResolveRequest, resolveAccessFor, unattendedOf } from "../access/request.js";
 import { resolveAccess, surfaceKeyOf } from "../access/resolver.js";
 import { getConfig } from "../access/config.js";
 import { planAccessDelta, grantSentence, HTTP_METHODS, type AccessDelta, type PlanContext, type RequestingScope } from "../access/delta.js";
@@ -281,6 +281,7 @@ const requestAccessEntry = defineTool({
               channelId: venue.channelId,
               threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
               postedTo: venue.surfaceKey,
+              chain: { unattended: unattendedOf(ctx) },
             },
             approvalPostDeps(venue.platform),
           );

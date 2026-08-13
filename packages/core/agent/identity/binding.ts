@@ -95,6 +95,10 @@ export function actingPrincipalId(binding: SurfaceBinding): string | undefined {
   return binding.principalAttested ? undefined : binding.principalId;
 }
 
+export function unattendedFrom(binding: SurfaceBinding): boolean {
+  return actingPrincipalId(binding) === undefined;
+}
+
 export interface RawIdentity {
   readonly workspace?: string;
   readonly surface?: string;

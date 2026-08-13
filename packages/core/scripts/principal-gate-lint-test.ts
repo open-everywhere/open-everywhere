@@ -2,12 +2,16 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  ATTENDEDNESS_DERIVATION,
+  ATTENDEDNESS_DERIVATION_BINDING,
   BINDING_RECEIVERS,
   DESTRUCTURED_PRINCIPAL_KEYS,
   INTENT_FOR_ACCESSOR,
   PRINCIPAL_GATE_INTENTS,
+  checkAttendednessSites,
   checkPrincipalGates,
   checkUnattendedDispatch,
+  findAttendednessSites,
   findPrincipalGates,
   findUnattendedDispatchSites,
   type PrincipalGate,
@@ -227,6 +231,132 @@ function tsFilesUnder(dir: string): string[] {
   ok(siteAt("webhooks/dispatch.ts")?.viaFireAuth === true, "real: the webhook fire's dispatch is SEEN and builds through webhookFireAttributes — the site OPE-278 is about");
   ok(siteAt("routines/ingress.ts")?.viaFireAuth === true, "real: the event fan-out's dispatch is SEEN and builds through routineFireAttributes — the site whose creator-less rows were the third family");
   ok(sites.length >= 2, `real: the site inventory did not collapse (${sites.length}) — zero would mean the detector went blind, not that the dispatches went away`);
+}
+
+{
+  const sitesIn = (src: string) => findAttendednessSites("fixture.ts", src);
+  const r5 = (src: string) => checkAttendednessSites(sitesIn(src));
+
+  const noBag = `
+async function execute(input, ctx) {
+  const posted = await requestApproval(
+    {
+      org: p.org,
+      kind: "skill.delete",
+      scopeKey: p.surfaceKey,
+      postedTo: venue.surfaceKey,
+    },
+    approvalPostDeps(venue.platform),
+  );
+}`;
+  ok(sitesIn(noBag).length === 1 && sitesIn(noBag)[0]!.shape === "propose", "synthetic-r5: a propose site is SEEN, and seen as a propose");
+  ok(sitesIn(noBag)[0]!.expr === undefined, "synthetic-r5: …carrying no attendedness value, which is the whole defect");
+  ok(r5(noBag).map((d) => d.rule).join() === "attendedness-missing", "synthetic-r5: 🔴 …and it is RED — the shape fourteen tools shipped with, now caught when it is written");
+
+  const handRolled = noBag.replace("postedTo: venue.surfaceKey,", "postedTo: venue.surfaceKey,\n      chain: { unattended: principalIdOf(ctx) === undefined },");
+  ok(sitesIn(handRolled)[0]!.expr === "principalIdOf(ctx) === undefined", "synthetic-r5: a hand-rolled value is SEEN as written");
+  ok(r5(handRolled).map((d) => d.rule).join() === "attendedness-hand-rolled", "synthetic-r5: 🔴 …and RED — a fire binds as its attested creator, so this spelling answers \"a human is present\" for every fire");
+  ok(new RegExp(ATTENDEDNESS_DERIVATION.replace(/[()]/g, "\\$&")).test(r5(handRolled)[0]!.message), "synthetic-r5: …and the message names the one approved derivation, so the red is a fix and not a puzzle");
+
+  const derived = noBag.replace("postedTo: venue.surfaceKey,", "postedTo: venue.surfaceKey,\n      chain: { unattended: unattendedOf(ctx) },");
+  ok(r5(derived).length === 0, "synthetic-r5: the SAME site deriving through unattendedOf(ctx) is GREEN");
+
+  const viaLocal = `
+async function execute(input, ctx) {
+  const unattended = unattendedOf(ctx);
+  const resolution = await resolveApproverChain({
+    tool: "aws",
+    unattended,
+  });
+}`;
+  ok(sitesIn(viaLocal).length === 1 && sitesIn(viaLocal)[0]!.shape === "chain-literal", "synthetic-r5: an inline chain-request literal is SEEN too, and classified as a literal");
+  ok(r5(viaLocal).length === 0, "synthetic-r5: …and a shorthand `unattended,` bound from the derivation is GREEN — provenance is what the rule is about, not the identifier");
+  const viaBadLocal = viaLocal.replace("const unattended = unattendedOf(ctx);", "const unattended = principalIdOf(ctx) === undefined;");
+  ok(r5(viaBadLocal).map((d) => d.rule).join() === "attendedness-hand-rolled", "synthetic-r5: 🔴 …while the same shorthand bound from the WRONG accessor is RED, so the local cannot launder the spelling");
+
+  const namedLiteral = `
+async function execute(input, ctx) {
+  const request: ApprovalChainRequest = {
+    tool: input.tool,
+    unattended: input.unattended ?? unattendedOf(ctx as BindableContext),
+  };
+}`;
+  ok(sitesIn(namedLiteral).length === 1 && r5(namedLiteral).length === 0, "synthetic-r5: a NAMED chain-request literal is seen, and a simulator override that still bottoms out in the derivation is GREEN");
+
+  const exemptOk = `
+async function trip(ctx) {
+  // approval-chain: exempt — session.checkpoint is a NON_TOOL_ACTION_KIND, so the chain never runs.
+  await requestApproval({ org, kind: CHECKPOINT_KIND, postedTo: key }, deps);
+}`;
+  ok(sitesIn(exemptOk)[0]!.exempt === true && r5(exemptOk).length === 0, "synthetic-r5: an `approval-chain: exempt` marker WITH a reason opts the site out");
+  const exemptBare = exemptOk.replace(" — session.checkpoint is a NON_TOOL_ACTION_KIND, so the chain never runs.", "");
+  ok(r5(exemptBare).map((d) => d.rule).join() === "attendedness-exempt-no-reason", "synthetic-r5: 🔴 …and a bare marker is RED — this is the one way to opt OUT of a security control");
+
+  const aliased = `
+export async function runBudgetRaise(binding, deps = {}) {
+  const requestApprovalFn = deps.requestApproval ?? requestApproval;
+  const posted = await requestApprovalFn(
+    {
+      org: plan.args.org,
+      kind: plan.kind,
+      channelId,
+      threadTs: binding.threadTs ?? null,
+    },
+    approvalPostDeps(binding.platform),
+  );
+}`;
+  ok(sitesIn(aliased).length === 1 && sitesIn(aliased)[0]!.shape === "propose", "synthetic-r5: 🔴 a propose through an ALIAS of requestApproval is SEEN — the shape that hid a whole front door");
+  ok(r5(aliased).map((d) => d.rule).join() === "attendedness-missing", "synthetic-r5: …and its missing bag is RED, which is the state commands/core.ts actually shipped in");
+  const aliasedFixed = aliased.replace("threadTs: binding.threadTs ?? null,", `threadTs: binding.threadTs ?? null,\n      chain: { unattended: ${ATTENDEDNESS_DERIVATION_BINDING} },`);
+  ok(r5(aliasedFixed).length === 0, "synthetic-r5: the binding-taking derivation is GREEN — a caller holding a SurfaceBinding and no ctx has an approved spelling too");
+  ok(sitesIn(aliased).filter((x) => x.line === 3).length === 0, "synthetic-r5: 🔴 the ALIAS DECLARATION itself is not counted as a site — it references requestApproval without calling it");
+  ok(sitesIn(`
+async function f(ctx) {
+  const posted = await requestApproval({ org, kind: "a", postedTo: k }, deps);
+}`).length === 1, "synthetic-r5: 🔴 …while `const posted = await requestApproval(` IS still a site — the alias matcher requires a reference, never a call");
+
+  ok(sitesIn(`// await requestApproval({ postedTo: k }, deps);`).length === 0, "synthetic-r5: the idiom quoted in a COMMENT is not a site, so this tree can keep explaining itself");
+  ok(sitesIn(`export async function requestApproval(input, deps) { return null; }`).length === 0, "synthetic-r5: the function's own DECLARATION is not a call site");
+  const twoCalls = `
+async function f(ctx) {
+  await requestApproval(
+    { org, kind: "a", postedTo: k },
+    deps,
+  );
+  await requestApproval(
+    { org, kind: "b", postedTo: k, chain: { unattended: unattendedOf(ctx) } },
+    deps,
+  );
+}`;
+  ok(sitesIn(twoCalls).length === 2 && sitesIn(twoCalls)[0]!.expr === undefined, "synthetic-r5: 🔴 a value-less call does NOT borrow the next call's — the scan stops at its own closer");
+  ok(r5(twoCalls).map((d) => d.rule).join() === "attendedness-missing", "synthetic-r5: …so exactly the first one is red");
+}
+
+{
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+  const agentDir = join(root, "packages", "core", "agent");
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const name of readdirSync(dir)) {
+      if (name === "node_modules" || name === "dist" || name === "generated") continue;
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) out.push(...walk(full));
+      else if (name.endsWith(".ts") && !name.endsWith(".d.ts")) out.push(full);
+    }
+    return out;
+  };
+  const attended = walk(agentDir).flatMap((f) => findAttendednessSites(relative(root, f), readFileSync(f, "utf8")));
+  const defects = checkAttendednessSites(attended);
+  ok(defects.length === 0, `real-r5: every approval site derives attendedness through unattendedOf (${defects.map((d) => `${d.file}:${d.line}`).join(", ")})`);
+  const proposes = attended.filter((a) => a.shape === "propose" && !a.exempt);
+  ok(proposes.length >= 20, `real-r5: the propose inventory did not collapse (${proposes.length}) — zero would mean the detector went blind, not that the tools stopped proposing`);
+  const at = (needle: string) => attended.find((a) => a.file.endsWith(needle));
+  ok(at("tools/create_ticket.ts")?.expr === ATTENDEDNESS_DERIVATION, "real-r5: create_ticket — one of the seven that hand-rolled it — now derives through the shared function");
+  ok(at("tools/rotate_webhook.ts")?.expr === ATTENDEDNESS_DERIVATION, "real-r5: rotate_webhook — one of the fourteen that passed NO bag — now derives it too");
+  ok(at("spend/checkpoint.ts")?.exempt === true && (at("spend/checkpoint.ts")?.exemptReason ?? "").length >= 12, "real-r5: the ONE exempt site is the non-tool checkpoint kind, and it states why");
+  ok(attended.filter((a) => a.exempt).length === 2, "real-r5: exactly two exemptions exist — the non-tool checkpoint and requestApproval's own default site. A third is a decision, not a detail");
+  ok(attended.filter((a) => a.file.endsWith("commands/core.ts")).length === 2, "real-r5: 🔴 BOTH slash-command propose sites are seen — they call through an injected alias, and a checker blind to that reported the file clean while both shipped with no bag");
+  ok(attended.filter((a) => a.file.endsWith("commands/core.ts")).every((a) => a.expr === ATTENDEDNESS_DERIVATION_BINDING), "real-r5: …and both derive through the binding-taking twin, which is the only spelling available to a caller with no ctx");
 }
 
 {

@@ -289,7 +289,7 @@ function tiersOf(eng: Record<string, string | undefined>, org: Record<string, st
 
   let cardBody: readonly string[] = [];
   const posted = await requestApproval(
-    { org: "default", kind: plan.kind, args: plan.args, scopeKey: plan.scopeKey, domain: plan.domain, requestedBy: "U_REQUESTER", channelId: "C1", summaryLines: plan.cardLines },
+    { org: "default", kind: plan.kind, args: plan.args, scopeKey: plan.scopeKey, domain: plan.domain, requestedBy: "U_REQUESTER", channelId: "C1", summaryLines: plan.cardLines, chain: { unattended: false } },
     { postCard: async (_row, summaryLines) => ((cardBody = summaryLines), "ts-pii-1") },
   );
   ok(cardBody.some((l) => l.includes(bullet)), "round-trip: the PENDING card body carries the verbatim bullet (display-only injection gate)");

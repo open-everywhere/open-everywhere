@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
-import { actingPrincipalIdOf } from "../access/request.js";
+import { actingPrincipalIdOf, unattendedOf } from "../access/request.js";
 import { approvalModeForDomain, resolveApproverChain } from "../access/approver-chain.js";
 import { awsCommandVerdict } from "../access/aws-screen.js";
 import { redactAwsOutput, redactionCount, renderAwsResultForModel } from "../access/aws-output.js";
@@ -50,7 +50,7 @@ export default defineTool({
   }),
   approval: never(),
   async execute(input, ctx) {
-    const unattended = actingPrincipalIdOf(ctx) === undefined;
+    const unattended = unattendedOf(ctx);
     const command = awsCommandLabel(input.args);
 
     const plan = planAwsIdentityFor(ctx as BindableContext, {

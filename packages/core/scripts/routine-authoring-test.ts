@@ -295,6 +295,7 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
       domain: null,
       requestedBy: "U_ASKER",
       channelId: "C1",
+      chain: { unattended: false },
     },
     { postCard: async () => "ts-routine-1" },
   );

@@ -1,0 +1,155 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const tmp = mkdtempSync(join(tmpdir(), "oe-unattended-derivation-"));
+process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
+delete process.env.OE_ORG;
+delete process.env.OE_TRUST;
+
+let passed = 0;
+function ok(cond: boolean, label: string): void {
+  if (!cond) {
+    console.error(`✗ ${label}`);
+    rmSync(tmp, { recursive: true, force: true });
+    process.exit(1);
+  }
+  passed++;
+}
+async function throwsWith(fn: () => unknown, needle: RegExp, label: string): Promise<void> {
+  let msg: string | null = null;
+  try {
+    await fn();
+  } catch (err) {
+    msg = err instanceof Error ? err.message : String(err);
+  }
+  ok(msg !== null && needle.test(msg), `${label} (got: ${msg ?? "no throw"})`);
+}
+
+const { registerConfig } = await import("../agent/access/config.js");
+const { requestApproval } = await import("../agent/approvals/flow.js");
+const { getOperationalStore } = await import("../agent/operational/provider.js");
+const { principalIdOf, actingPrincipalIdOf, unattendedOf } = await import("../agent/access/request.js");
+const { bridgedContext } = await import("../agent/identity/binding-bridge.js");
+const { routineFireAttributes, webhookFireAttributes } = await import("../agent/routines/fire-auth.js");
+
+const ORG = "test-org";
+const TEAM = "T1";
+const CREATOR = "U_CREATOR";
+const HUMAN = "U_HUMAN";
+
+registerConfig({
+  loadBundles: () => [],
+  loadBindings: () => [],
+  pluginRegistry: {},
+  skillContent: {},
+  loadDomains: () => [{ name: "plain", channels: [`slack/${TEAM}/C_PLAIN`] }],
+  loadSilos: () => [],
+  domainsForSurface: () => [],
+});
+
+type Attrs = Record<string, string>;
+function fireCtx(attributes: Attrs, principalId = "eve:app"): never {
+  return {
+    channel: { kind: "slack" },
+    session: { auth: { current: { authenticator: "app", principalId, principalType: "runtime", attributes } } },
+  } as never;
+}
+function liveCtx(): never {
+  return {
+    channel: { kind: "slack" },
+    session: {
+      auth: {
+        current: {
+          attributes: { team_id: TEAM, channel_id: "C_PLAIN", channel_type: "channel", user_id: HUMAN, is_ext_shared: "false", trust_checked: "true" },
+          principalId: HUMAN,
+          principalType: "slack-user",
+        },
+      },
+    },
+  } as never;
+}
+
+const destAttrs = { team_id: TEAM, channel_id: "C_PLAIN", channel_type: "channel" };
+const routine = { id: "r1", org: ORG, surfaceKey: `slack/${TEAM}/C_PLAIN`, createdBy: CREATOR, promptGeneration: 1 } as never;
+const orphanRoutine = { id: "r2", org: ORG, surfaceKey: `slack/${TEAM}/C_PLAIN`, promptGeneration: 1 } as never;
+
+const routineBag = routineFireAttributes(routine, destAttrs, "channel", true, true);
+const orphanBag = routineFireAttributes(orphanRoutine, destAttrs, "channel", true);
+const webhookBag = webhookFireAttributes("inbound", TEAM, "C_PLAIN", false, true);
+const routineFire = fireCtx(routineBag);
+const orphanFire = fireCtx(orphanBag);
+const webhookFire = fireCtx(webhookBag, "webhook:inbound");
+const human = liveCtx();
+{
+  ok(unattendedOf(routineFire) === true, "derive: a ROUTINE fire's real attribute bag derives unattended: true");
+  ok(unattendedOf(orphanFire) === true, "derive: a CREATOR-LESS routine fire derives true too — the marker is stamped unconditionally, so a fire with nobody to name still says it is a fire");
+  ok(unattendedOf(webhookFire) === true, "derive: a WEBHOOK fire derives true — the family that used to bind `webhook:<hookId>` and satisfy every presence gate");
+  ok(unattendedOf(human) === false, "derive: 🔴 a LIVE HUMAN turn on the same channel derives EXACTLY false — the control has to distinguish, not just refuse");
+  ok(actingPrincipalIdOf(human) === HUMAN, "derive: …and that human's acting principal is really there, so the false is earned and not an empty bag reading as attended");
+}
+
+{
+  ok(principalIdOf(routineFire) === CREATOR, "trap: the routine fire's BOUND principal is the creator — a real person's id, non-empty");
+  ok(principalIdOf(webhookFire) === "webhook:inbound", "trap: the webhook fire's BOUND principal is its hook's service id — also non-empty");
+  const boundSpelling = (ctx: never): boolean => principalIdOf(ctx) === undefined;
+  ok(boundSpelling(routineFire) === false, "trap: 🔴 the BOUND spelling answers `false` for a routine fire — that is the substitution that would card every fire into an empty room, and it type-checks");
+  ok(boundSpelling(webhookFire) === false, "trap: 🔴 …and `false` for a webhook fire too");
+  ok(boundSpelling(human) === false && unattendedOf(human) === false, "trap: …while BOTH spellings answer false on a live human, which is exactly why no test that used a human ever caught it");
+}
+
+{
+  const carried = bridgedContext({ platform: "slack", principalId: "webhook:inbound", principalType: "service", attributes: webhookBag });
+  ok(unattendedOf(carried) === true, "bridge: a tool context reconstituted through identity/binding-bridge.ts still derives true — the bag rides verbatim");
+  const carriedHuman = bridgedContext({ platform: "slack", principalId: HUMAN, principalType: "slack-user", attributes: { team_id: TEAM, channel_id: "C_PLAIN", channel_type: "channel", user_id: HUMAN } });
+  ok(unattendedOf(carriedHuman) === false, "bridge: …and a human's bridged context still derives false");
+}
+
+const postCard = async (): Promise<string> => `ts-${Math.random().toString(36).slice(2)}`;
+let carded = 0;
+const countingPostCard = async (): Promise<string> => {
+  carded += 1;
+  return postCard();
+};
+const baseInput = {
+  org: ORG,
+  kind: "skill.delete",
+  args: { org: ORG, domain: "plain", name: "ghost-skill", requestedBy: CREATOR },
+  scopeKey: `slack/${TEAM}/C_PLAIN`,
+  domain: "plain",
+  channelId: "C_PLAIN",
+  requestedBy: CREATOR,
+  threadTs: null,
+};
+{
+  const before = (await getOperationalStore().listPendingActions(ORG)).length;
+  await throwsWith(
+    () => requestApproval({ ...baseInput, chain: { unattended: unattendedOf(routineFire) } }, { postCard: countingPostCard }),
+    /DENIED by the approver chain.*ask-unattended/s,
+    "join: 🔴 the value DERIVED from a real fire denies the propose with reason ask-unattended",
+  );
+  ok(carded === 0, "join: …no card was posted — a card in an empty room is the thing the transform exists to stop");
+  ok((await getOperationalStore().listPendingActions(ORG)).length === before, "join: …and no pending row was minted, so nothing is left behind to expire");
+}
+{
+  ok(unattendedOf(human) === false, "join: the human context feeding the next propose derives exactly false");
+  carded = 0;
+  const res = await requestApproval({ ...baseInput, requestedBy: HUMAN, chain: { unattended: unattendedOf(human) } }, { postCard: countingPostCard });
+  ok(res.autoApproved === undefined && typeof res.id === "string", "join: 🔴 the value derived from a LIVE HUMAN turn cards normally — the same verb, denied a moment ago");
+  ok(carded === 1, "join: …exactly one card was posted");
+  const row = (await getOperationalStore().listPendingActions(ORG)).find((r) => r.id === res.id);
+  ok(row !== undefined && row.status === "pending", "join: …and its pending row awaits the click");
+}
+
+{
+  carded = 0;
+  await throwsWith(
+    () => requestApproval({ ...baseInput, args: { ...baseInput.args, name: "ghost-skill-2" }, requestedBy: HUMAN }, { postCard: countingPostCard }),
+    /DENIED by the approver chain.*ask-unattended/s,
+    "default: 🔴 a propose with NO chain bag denies — absence of the signal means nobody is watching",
+  );
+  ok(carded === 0, "default: …and mints no card, so a forgotten line fails loudly instead of silently carding an autonomous run");
+}
+
+rmSync(tmp, { recursive: true, force: true });
+console.log(`✓ unattended-derivation: ${passed} assertions passed`);

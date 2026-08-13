@@ -1,3 +1,4 @@
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync, readFileSync } from "node:fs";
@@ -465,6 +466,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
       requestedBy: "U_REQUESTER",
       channelId: "C4",
       postedTo: "slack/T4/C4",
+      chain: { unattended: false },
     },
     { post },
   );
@@ -487,6 +489,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
       requestedBy: "U_REQUESTER",
       channelId: "C4",
       threadTs: "1751.0042",
+      chain: { unattended: false },
     },
     { post },
   );
@@ -496,7 +499,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   );
 
   await assert.rejects(
-    async () => requestApproval({ org: "default", kind: "no.such.kind", args: {}, scopeKey: "slack/T4/C4", requestedBy: "U_REQUESTER", channelId: "C4" }, { post }),
+    async () => requestApproval({ org: "default", kind: "no.such.kind", args: {}, scopeKey: "slack/T4/C4", requestedBy: "U_REQUESTER", channelId: "C4", chain: { unattended: false } }, { post }),
     /no registered ActionKind/,
     "requestApproval: rejects an unregistered kind",
   );
@@ -506,7 +509,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   let threw = false;
   try {
     await requestApproval(
-      { org: "default", kind: "spend.set", args: { org: "default", scopeKey: "slack/T5/C5", level: "surface", monthlyTokens: 1, currentCap: null }, scopeKey: "slack/T5/C5", requestedBy: "U_REQUESTER", channelId: "C5" },
+      { org: "default", kind: "spend.set", args: { org: "default", scopeKey: "slack/T5/C5", level: "surface", monthlyTokens: 1, currentCap: null }, scopeKey: "slack/T5/C5", requestedBy: "U_REQUESTER", channelId: "C5", chain: { unattended: false } },
       { post: failingPost },
     );
   } catch (err) {
@@ -526,7 +529,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     calls.push({ method, body });
     return { ok: true, ts: `${ts++}.0` };
   };
-  const args = { org: "default", kind: "spend.set", args: { org: "default", scopeKey: "slack/T9/C9", level: "surface", monthlyTokens: 1234, currentCap: null }, scopeKey: "slack/T9/C9", requestedBy: "U_REQUESTER", channelId: "C9" } as const;
+  const args = { org: "default", kind: "spend.set", args: { org: "default", scopeKey: "slack/T9/C9", level: "surface", monthlyTokens: 1234, currentCap: null }, scopeKey: "slack/T9/C9", requestedBy: "U_REQUESTER", channelId: "C9", chain: { unattended: false } } as const;
 
   const first = await requestApproval(args, { post });
   ok(first.deduped !== true, "requestApproval dedup: the FIRST proposal is a real mint (not deduped)");
@@ -554,7 +557,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     row({ id: "p-wall-expired", scopeKey: "slack/T11/C11", channelId: "C11", argsJson: JSON.stringify(proposal), expiresAt: new Date(Date.now() - 60_000).toISOString() }),
   );
   const fresh = await requestApproval(
-    { org: "default", kind: "spend.set", args: proposal, scopeKey: "slack/T11/C11", requestedBy: "U_REQUESTER", channelId: "C11" },
+    { org: "default", kind: "spend.set", args: proposal, scopeKey: "slack/T11/C11", requestedBy: "U_REQUESTER", channelId: "C11", chain: { unattended: false } },
     { post },
   );
   ok(fresh.deduped !== true, "dedup: a wall-expired row the sweep hasn't reaped yet is NOT deduped against");
@@ -569,7 +572,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     calls.push({ method, body });
     return { ok: true, ts: `${ts++}.0` };
   };
-  const args = { org: "default", kind: "spend.set", args: { org: "default", scopeKey: "slack/T10/C10", level: "surface", monthlyTokens: 42, currentCap: null }, scopeKey: "slack/T10/C10", requestedBy: "U_REQUESTER", channelId: "C10", threadTs: "ANCHOR.10" } as const;
+  const args = { org: "default", kind: "spend.set", args: { org: "default", scopeKey: "slack/T10/C10", level: "surface", monthlyTokens: 42, currentCap: null }, scopeKey: "slack/T10/C10", requestedBy: "U_REQUESTER", channelId: "C10", threadTs: "ANCHOR.10", chain: { unattended: false } } as const;
 
   const first = await requestApproval(args, { post });
   await handleApprovalPayload(payloadFor(`oe_approval:reject:${first.id}`, { user: "U_ORG_ADMIN", channel: "C10", ts: "800.0" }), { post });
@@ -616,7 +619,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   await inSession(async () => {
     ok(consumeCardPostedThisTurn() === false, "card-signal: a fresh session starts with no card posted");
     await requestApproval(
-      { org: "default", kind: "spend.set", args: { org: "default", scopeKey: "slack/T6/C6", level: "surface", monthlyTokens: 1, currentCap: null }, scopeKey: "slack/T6/C6", requestedBy: "U_REQUESTER", channelId: "C6" },
+      { org: "default", kind: "spend.set", args: { org: "default", scopeKey: "slack/T6/C6", level: "surface", monthlyTokens: 1, currentCap: null }, scopeKey: "slack/T6/C6", requestedBy: "U_REQUESTER", channelId: "C6", chain: { unattended: false } },
       { post },
     );
     ok(consumeCardPostedThisTurn() === true, "card-signal: requestApproval's successful post marks the flag");
@@ -632,7 +635,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     await assert.rejects(
       async () =>
         requestApproval(
-          { org: "default", kind: "spend.set", args: { org: "default", scopeKey: "slack/T7/C7", level: "surface", monthlyTokens: 1, currentCap: null }, scopeKey: "slack/T7/C7", requestedBy: "U_REQUESTER", channelId: "C7" },
+          { org: "default", kind: "spend.set", args: { org: "default", scopeKey: "slack/T7/C7", level: "surface", monthlyTokens: 1, currentCap: null }, scopeKey: "slack/T7/C7", requestedBy: "U_REQUESTER", channelId: "C7", chain: { unattended: false } },
           { post: failingPost },
         ),
       /failed to post/,
@@ -1034,6 +1037,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
         requestedBy: "U_ADMIN",
         channelId: "C_SHARED",
         ...over,
+        chain: { unattended: false },
       } as Parameters<typeof requestApproval>[0],
       { post },
     );

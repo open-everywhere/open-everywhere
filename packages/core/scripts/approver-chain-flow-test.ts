@@ -66,6 +66,7 @@ const baseInput = {
   channelId: "C_PLAIN",
   requestedBy: "U_HUMAN",
   threadTs: null,
+  chain: { unattended: false },
 };
 const argsFor = (domain: string) => ({ org: "test-org", domain, name: "ghost-skill", requestedBy: "U_HUMAN" });
 

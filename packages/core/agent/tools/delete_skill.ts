@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { windowGated } from "../access/window-gated.js";
 import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
-import { actingPrincipalIdOf } from "../access/request.js";
+import { actingPrincipalIdOf, unattendedOf } from "../access/request.js";
 import { listDomainSkills, domainSkillRefusalMessage, resolveSkillDomainDetailed } from "../skills/domain-skills.js";
 import { resolvePartition } from "../memory/partition.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
@@ -63,6 +63,7 @@ export default windowGated("delete_skill", defineTool({
         channelId: venue.channelId,
         threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
         postedTo: venue.surfaceKey,
+        chain: { unattended: unattendedOf(ctx) },
       },
       approvalPostDeps(venue.platform),
     );

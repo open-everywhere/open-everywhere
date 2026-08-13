@@ -1,7 +1,7 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/binding.js";
-import { principalIdOf } from "../access/request.js";
+import { principalIdOf, unattendedOf } from "../access/request.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { domainForChannel } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
@@ -105,6 +105,7 @@ const clearSpendLimitEntry = defineTool({
         channelId: venue.channelId,
         threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
         postedTo: venue.surfaceKey,
+        chain: { unattended: unattendedOf(ctx) },
       },
       approvalPostDeps(venue.platform),
     );
