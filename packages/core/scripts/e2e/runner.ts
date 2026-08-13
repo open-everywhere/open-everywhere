@@ -317,6 +317,15 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (passed === 0 && failed === 0) {
+    console.error(
+      `✗ e2e driver pack: 0 scenarios ran (${skipped}/${SCENARIOS.length} skipped) even though live capabilities ` +
+        `are configured (${[...report.available].join(", ")}) — check --only / E2E_SUITE / E2E_SURFACES for a filter ` +
+        `matching nothing, or a capability gap against what the roster actually requires.`,
+    );
+    process.exit(1);
+  }
+
   const costTarget = (process.env.E2E_TARGET_URL ?? "").trim();
   const readToken = (process.env.E2E_CONTROL_READ_TOKEN ?? "").trim();
   const workspaces = (process.env.E2E_USAGE_WORKSPACES ?? "")

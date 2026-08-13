@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   contributionKey,
   declaredPackages,
@@ -86,6 +89,20 @@ const ONE = [{ kind: "tool", name: "remember", module: "agent/tools/remember.js"
   hasRed(p.reds, `npm i ${CORE}`, "rule 6: the red names the exact install command");
   const off = planAccepted({ core: false }, [{ declaredAs: "core", name: CORE, decision: false }]);
   eq(off.reds.length, 0, "rule 6: `false` does not require the package to be installed");
+}
+
+{
+  const noVersion = planAccepted({ core: true }, [pkg(manifest(ONE), { version: undefined })]);
+  hasRed(noVersion.reds, "no `version` field", "rule 6b: a package.json missing `version` reds the build");
+  eq(noVersion.verdict, "invalid", "rule 6b: the build is refused, not silently completed");
+  eq(
+    JSON.stringify(noVersion.lock.packages).includes("0.0.0"),
+    false,
+    "rule 6b: the computed lock never carries the silent 0.0.0 placeholder",
+  );
+
+  const healthy = planAccepted({ core: true }, [pkg(manifest(ONE), { version: "3.4.5" })]);
+  eq(healthy.lock.packages[CORE]?.version, "3.4.5", "rule 6b: a real version is recorded as-is");
 }
 
 {
@@ -265,6 +282,19 @@ const ONE = [{ kind: "tool", name: "remember", module: "agent/tools/remember.js"
     "provider ids expand to @open-everywhere/provider-<id>; `packages` is the escape hatch",
   );
   eq(declared.find((d) => d.declaredAs === "providers.slack")?.providerId, "slack", "only `providers` entries carry a provider id");
+}
+
+{
+  const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  const lock = JSON.parse(readFileSync(join(repoRoot, "roster.lock.json"), "utf8")) as {
+    packages: Record<string, { version: string }>;
+  };
+  const names = Object.keys(lock.packages);
+  ok(names.length >= 8, "the committed lock still names all packages (sanity: not reading an empty/wrong file)");
+  for (const name of names) {
+    ok(lock.packages[name]!.version !== "0.0.0", `${name}'s committed lock version is not the silent "0.0.0" placeholder (OPE-432)`);
+    ok(/^\d+\.\d+\.\d+/u.test(lock.packages[name]!.version), `${name}'s committed lock version ("${lock.packages[name]!.version}") looks like a real semver`);
+  }
 }
 
 console.log(`✓ roster-test: ${n} assertions passed (validation rules, determinism, lock diffing, render shapes, projections)`);

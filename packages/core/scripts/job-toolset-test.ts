@@ -256,11 +256,21 @@ try {
 ok(refused !== undefined, "the execute backstop refuses a withheld tool on a STAMPED fire even when the grain matrix would admit it");
 ok(refused?.includes("durable-job") === true, "the refusal names the durable-job shape (and points at record_job_state), not the grain");
 
-await grainBackstopAtExecute("read_channel", ["native"], fireCtx(true) as never);
-ok(true, "the execute backstop lets a JOB-KIT name through on a stamped fire");
+let jobKitThrew = false;
+try {
+  await grainBackstopAtExecute("read_channel", ["native"], fireCtx(true) as never);
+} catch {
+  jobKitThrew = true;
+}
+ok(!jobKitThrew, "the execute backstop lets a JOB-KIT name through on a stamped fire");
 
-await grainBackstopAtExecute("open_pull_request", ["native"], fireCtx(false) as never);
-ok(true, "an ordinary (unstamped) turn is unaffected by the job backstop");
+let unstampedThrew = false;
+try {
+  await grainBackstopAtExecute("open_pull_request", ["native"], fireCtx(false) as never);
+} catch {
+  unstampedThrew = true;
+}
+ok(!unstampedThrew, "an ordinary (unstamped) turn is unaffected by the job backstop");
 
 let refusedSticky: string | undefined;
 await inSession(async () => {

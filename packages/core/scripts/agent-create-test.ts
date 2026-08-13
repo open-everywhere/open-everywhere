@@ -173,7 +173,16 @@ await rejectsWith(
   "WRITABLE",
   "tool: an EXPOSED agent reading a writable silo is refused (curated-read-only invariant)",
 );
-ok(true, "tool: (exposed + read-only silo clears the exposure guard — proven not to throw 'WRITABLE' above)");
+let readOnlyExposureRefusal: string | undefined;
+try {
+  await createAgentTool.execute({ name: "helper", memory: existing("ro-baseline"), exposed: true }, liveCtx("C_NEW"));
+} catch (err) {
+  readOnlyExposureRefusal = err instanceof Error ? err.message : String(err);
+}
+ok(
+  readOnlyExposureRefusal === undefined || !readOnlyExposureRefusal.includes("WRITABLE"),
+  `tool: an EXPOSED agent reading a READ-ONLY silo clears the exposure guard — never refused for WRITABLE (got: ${readOnlyExposureRefusal ?? "no throw"})`,
+);
 
 const spec: AgentSpec = { name: "support-desk", title: "Support Desk", channels: ["slack/T1/C_AGENT"], memory: { kind: "new-readonly", provider: "notion", container: "root-page" }, connectors: ["notion"], instructions: "Answer support questions from the handbook." };
 

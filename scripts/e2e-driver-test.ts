@@ -12,6 +12,12 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
+let shapeChecks = 0;
+function okShape(cond: boolean, label: string): void {
+  ok(cond, label);
+  shapeChecks++;
+}
+
 const dir = join(tmpdir(), `open-everywhere-e2e-driver-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
@@ -267,13 +273,13 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   );
   const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackCapFixture", "slackSupervisor", "syntheticDm", "syntheticDiscordDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite"]);
   for (const s of SCENARIOS) {
-    ok(s.title.trim().length > 0, `${s.id} has a title`);
-    ok(typeof s.run === "function", `${s.id} has a run body`);
-    ok(
+    okShape(s.title.trim().length > 0, `${s.id} has a title`);
+    okShape(typeof s.run === "function", `${s.id} has a run body`);
+    okShape(
       s.requires.length > 0 && s.requires.every((c) => KNOWN.has(c)),
       `${s.id} requires only known capabilities`,
     );
-    ok(s.timeoutMs >= 120_000 && s.timeoutMs <= 3_900_000, `${s.id} budget is within the 120s–65min envelope`);
+    okShape(s.timeoutMs >= 120_000 && s.timeoutMs <= 3_900_000, `${s.id} budget is within the 120s–65min envelope`);
   }
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
   ok(
@@ -284,9 +290,9 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   const KNOWN_SURFACES = new Set(["slack", "teams", "discord", "github", "linear", "notion", "cross"]);
   const KNOWN_SUITES = new Set(["core", "extended", "security"]);
   for (const s of SCENARIOS) {
-    ok(KNOWN_SURFACES.has(s.surface), `${s.id} declares a known surface (got "${s.surface}")`);
-    ok(KNOWN_SUITES.has(s.suite), `${s.id} declares a known suite (got "${s.suite}")`);
-    ok((s.suite === "extended") === s.optional, `${s.id}: suite==="extended" iff optional (${s.suite}/${s.optional})`);
+    okShape(KNOWN_SURFACES.has(s.surface), `${s.id} declares a known surface (got "${s.surface}")`);
+    okShape(KNOWN_SUITES.has(s.suite), `${s.id} declares a known suite (got "${s.suite}")`);
+    okShape((s.suite === "extended") === s.optional, `${s.id}: suite==="extended" iff optional (${s.suite}/${s.optional})`);
   }
   ok(SCENARIOS.find((s) => s.id === "J-DISC")!.surface === "discord", "J-DISC is the discord surface");
   ok(SCENARIOS.find((s) => s.id === "S8")!.surface === "cross", "S8 (Slack→Discord recall) is the cross surface");
@@ -1485,4 +1491,7 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
 }
 
 rmSync(dir, { recursive: true, force: true });
-console.log(`✓ e2e-driver: ${passed} assertions passed`);
+console.log(
+  `✓ e2e-driver: ${passed} assertions passed (${shapeChecks} are per-scenario roster-shape checks, ` +
+    `${passed - shapeChecks} are harness/driver logic — neither half is a product-behaviour coverage figure)`,
+);

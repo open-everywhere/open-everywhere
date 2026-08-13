@@ -226,8 +226,8 @@ export const SCENARIOS: readonly Scenario[] = [
       const silent = await slack.collectRepliesDuring(rootTs, afterStopTs, SILENCE_WINDOW);
       ctx.gate(silent.length === 0, "stand down: a further thread message gets NO reply");
       const { ts: reviveTs } = await slack.post(slack.mention("ok, back — what's 5 plus 5?"), rootTs);
-      await slack.awaitThreadReply(rootTs, { afterTs: reviveTs, timeoutMs: REPLY_WAIT });
-      ctx.gate(true, "stand down: a re-mention revives the thread");
+      const revived = await slack.awaitThreadReply(rootTs, { afterTs: reviveTs, timeoutMs: REPLY_WAIT });
+      ctx.gate(revived.text.includes("10"), "stand down: a re-mention revives the thread and answers correctly (10)");
     },
   },
   {
@@ -482,7 +482,7 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.log(`${rejected.label}: admin reject ${btn1.pendingId} → ${rejected.status}`);
       ctx.gate(rejected.status === 200, "S15: admin forged reject acked 200");
       await awaitDecided(slack, ask1Ts, card1.ts, REPLY_WAIT);
-      ctx.gate(true, "S15: admin reject DECIDES card1 (buttons removed) — reject-path coverage");
+      ctx.log("S15: admin reject DECIDES card1 (buttons removed) — reject-path coverage");
       await sleep(15_000);
 
       const card2 = await driveDecide({
@@ -796,7 +796,7 @@ export const SCENARIOS: readonly Scenario[] = [
         const { ts } = await slack.post(slack.mention(`cap check ${i + 1}: summarise the last message`));
         const reply = await slack.awaitThreadReply(ts, { timeoutMs: REPLY_WAIT });
         if (CAP_REFUSAL_MARKER.test(reply.text)) {
-          ctx.gate(true, `cap refusal posted (structural marker ${CAP_REFUSAL_MARKER} — pinned copy: "${CAP_REFUSAL}")`);
+          ctx.log(`cap refusal posted (structural marker ${CAP_REFUSAL_MARKER} — pinned copy: "${CAP_REFUSAL}")`);
           const more = await slack.collectRepliesDuring(ts, reply.ts, 20_000);
           ctx.gate(more.length === 0, "NO model turn follows the refusal");
 
@@ -1160,7 +1160,7 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.log(`${sent.label}: non-admin member tap ${btn.pendingId} as ${user2} → ${sent.status}`);
         ctx.gate(sent.status === 200, "S17: member tap acked 200");
         const decided = await awaitDecided(slack, askTs, card.ts, REPLY_WAIT);
-        ctx.gate(true, "S17: non-admin member tap DECIDES the card (buttons removed) — member-policy coverage");
+        ctx.log("S17: non-admin member tap DECIDES the card (buttons removed) — member-policy coverage");
 
         if (/dry-run/i.test(decided.text)) {
           ctx.log("S17: dry-run confirmed (OE_ACCESS_DRY_RUN=1 on the deployment) — validated, no PR, nothing to tear down");
@@ -1805,7 +1805,6 @@ export const SCENARIOS: readonly Scenario[] = [
               "createCommentReply's reply-targeting live needs a judge-reply (aggressive tier, not forced here) or the " +
               "restored forge path. Distinct-discussion mechanics are verified above.",
           );
-          ctx.gate(true, "real-comment reply-targeting WIRED; reply-POST assertion blocked on the silence-biased judge (documented — ingestion unobserved, no audit read)");
         }
       }
 
@@ -2013,7 +2012,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "F-SEC",
-    title: "Security probes: tainted-remember→card (P0-4), SSRF/egress-deny on post_file, prompt-injection no-leak (three isolated threads)",
+    title: "Security probes: untrusted-content decline-or-disclose (P0-4, model-judgment — the old tainted-remember→card mechanism is deleted, OPE-389), SSRF/egress-deny on post_file, prompt-injection no-leak (three isolated threads)",
     requires: ["slack"],
     surface: "slack",
     suite: "security",
@@ -3015,7 +3014,7 @@ export const SCENARIOS: readonly Scenario[] = [
         )
         .catch(() => undefined);
       if (offerCard)
-        ctx.gate(true, "offer: the connector card OFFERS notion 'Set API key' (api-key) — the db broker's hostWrite route is live (the env broker would omit it)");
+        ctx.log("offer: the connector card OFFERS notion 'Set API key' (api-key) — the db broker's hostWrite route is live (the env broker would omit it)");
       else
         ctx.log(
           "offer: no notion api-key card observed (the model may not have posted it, or notion isn't granted to this channel) — proceeding to the deterministic host-intake forge, which needs no card",
@@ -3061,7 +3060,7 @@ export const SCENARIOS: readonly Scenario[] = [
         { timeoutMs: REPLY_WAIT, what: "a credential.stored audit row for the forged view_submission" },
       );
       if (storedRows) {
-        ctx.gate(true, "store: credential.stored audit row written for the intake (the host encrypt+store path ran end-to-end under the db broker)");
+        ctx.gate(storedRows.length === 1, `store: exactly one credential.stored row for this intake (single-use CAS held, got ${storedRows.length})`);
         ctx.log(`store: credential.stored id=${intakeId} ref=${intakeRef} — the value was stored ENCRYPTED and is NEVER read back here.`);
       } else {
         ctx.gate(

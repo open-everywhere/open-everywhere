@@ -267,14 +267,29 @@ try {
 ok(refused !== undefined, "the execute backstop refuses a relocated name on a delegating conversational seat even when the grain matrix would admit it");
 ok(refused?.includes("talks and delegates") === true && refused?.includes("agent") === true, "the refusal states the seat's shape and names the delegation route — a clean refusal, never a crash");
 
-await grainBackstopAtExecute("agent", ["standing", "thread"], windowSeatCtx() as never);
-ok(true, "the backstop lets a roster verb through on a lean seat");
+let rosterVerbThrew = false;
+try {
+  await grainBackstopAtExecute("agent", ["standing", "thread"], windowSeatCtx() as never);
+} catch {
+  rosterVerbThrew = true;
+}
+ok(!rosterVerbThrew, "the backstop lets a roster verb through on a lean seat");
 
-await grainBackstopAtExecute("purge_memory", ["task", "native", "standing", "thread"], dmSeatCtx() as never);
-ok(true, "a NON-delegating standing seat is untouched by the lean backstop — it keeps the verbs it cannot delegate");
+let dmSeatThrew = false;
+try {
+  await grainBackstopAtExecute("purge_memory", ["task", "native", "standing", "thread"], dmSeatCtx() as never);
+} catch {
+  dmSeatThrew = true;
+}
+ok(!dmSeatThrew, "a NON-delegating standing seat is untouched by the lean backstop — it keeps the verbs it cannot delegate");
 
-await grainBackstopAtExecute("purge_memory", ["task", "native", "standing", "thread"], fireSeatCtx() as never);
-ok(true, "a stamped unattended FIRE is untouched by the lean backstop — fires keep their own posture");
+let fireThrew = false;
+try {
+  await grainBackstopAtExecute("purge_memory", ["task", "native", "standing", "thread"], fireSeatCtx() as never);
+} catch {
+  fireThrew = true;
+}
+ok(!fireThrew, "a stamped unattended FIRE is untouched by the lean backstop — fires keep their own posture");
 
 const staleInitiatorSeatCtx = () => ({
   channel: { kind: "slack", continuationToken: "unified:oe-dom:acme:oe-sup:g3" },
@@ -294,8 +309,13 @@ try {
 }
 ok(staleRefused !== undefined, "a delivery with NO `current` attributes does NOT inherit the session-opening fire stamp — the posture fallback fails NARROW (OPE-421)");
 
-await grainBackstopAtExecute("purge_memory", ["task", "native", "standing", "thread"], fireSeatCtx() as never);
-ok(true, "…while a fire stamp on THIS delivery's own `current` still keeps the fire's posture");
+let currentFireThrew = false;
+try {
+  await grainBackstopAtExecute("purge_memory", ["task", "native", "standing", "thread"], fireSeatCtx() as never);
+} catch {
+  currentFireThrew = true;
+}
+ok(!currentFireThrew, "…while a fire stamp on THIS delivery's own `current` still keeps the fire's posture");
 
 const standingWorkerOnly = workerOnlyTools("standing");
 ok(standingWorkerOnly.includes("purge_memory") && standingWorkerOnly.includes("aws") && standingWorkerOnly.includes("describe_image") && standingWorkerOnly.includes("read_channel"), "the worker-capability index counts the relocated tools as worker-only from a delegating standing seat");

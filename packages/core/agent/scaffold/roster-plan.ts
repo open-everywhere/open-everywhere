@@ -404,6 +404,10 @@ export function planRoster(input: PlanInput): PlanResult {
       reds.push(`PACKAGE · \`${pkg.declaredAs}\` resolved to package.json name "${pkg.resolvedName}", not "${pkg.name}".`);
       continue;
     }
+    if (pkg.version === undefined) {
+      reds.push(`PACKAGE · \`${pkg.declaredAs}\` (${pkg.name}) resolved with no \`version\` field in its package.json — the lock cannot record one.`);
+      continue;
+    }
     const parsed = parseContributionManifest(pkg.manifest, pkg.name);
     if (parsed.manifest === undefined) {
       reds.push(...parsed.reds);
