@@ -24,6 +24,7 @@ import {
   SUBAGENT_CHANNEL_KIND,
   type BindableContext,
 } from "../agent/identity/binding.js";
+import { OE_SPAWN_TAINTED_ATTR } from "../agent/channels/unified.js";
 import { canDelegateFromSeat, resolveOwnWindowToken } from "../agent/access/delegation-mount.js";
 import { resolveLeanSeatPosture } from "../agent/access/lean-seat.js";
 import { SETTINGS, getSettings, nativeSubagentAtBuild, registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
@@ -570,7 +571,20 @@ function inSession<T>(fn: () => T): T {
       fwdCtx({ id: "sess-fwd-unwired", turn: { id: "turn_0", sequence: 0 }, parent: { sessionId: "sess-fwd-parent", callId: "call_f9", turn: { id: "turn_7", sequence: 7 } } }),
     );
     await settle();
-    eq(untrustedIngestedThisTurn(), false, "🔴 D9 THE GAP, PINNED: `turn.started` does NOT adopt — the forward leg RECORDS but does not PROPAGATE. Delete this assertion when OPE-464 wires the read");
+    eq(untrustedIngestedThisTurn(), false, "🔴 D9 THE GAP, PINNED: `turn.started` does NOT adopt — the forward leg RECORDS but does not PROPAGATE. Delete this assertion when the read is wired");
+  });
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    await turnStarted(
+      fwdCtx({
+        id: "sess-fwd-unwired-seeded",
+        turn: { id: "turn_0", sequence: 0 },
+        parent: { sessionId: "sess-fwd-parent", callId: "call_f10", turn: { id: "turn_7", sequence: 7 } },
+        attributes: { [OE_SPAWN_TAINTED_ATTR]: "true" },
+      }),
+    );
+    await settle();
+    eq(untrustedIngestedThisTurn(), true, "🔴 D9 THE PIN'S DISCRIMINATOR: the same `turn.started` DOES taint a child whose opening auth carries the spawn stamp — so the pin above reads 'no adoption', not 'no taint plane'");
   });
 
   await contextStorage.run(new ContextContainer(), async () => {
