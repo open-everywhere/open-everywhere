@@ -34,6 +34,7 @@ registerConfig({
 const { PAGE_AUDIENCES, mintPageToken, pageTokenSigningKey } = await import("../agent/credentials/page-token.js");
 type PageAudience = import("../agent/credentials/page-token.js").PageAudience;
 const { encryptedKvVault } = await import("../agent/credentials/kv-vault.js");
+const { resetSelfSecretCache } = await import("../agent/credentials/self-secrets.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 
 let n = 0;
@@ -220,6 +221,7 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
 
   const saved = process.env.OE_INTAKE_PAGE_SIGNING_KEY;
   delete process.env.OE_INTAKE_PAGE_SIGNING_KEY;
+  resetSelfSecretCache();
   ok(reveal.revealPageAvailable(), "no signing key env var ⇒ STILL available (mints on first use, OPE-408 step 3)");
   const { token: mintedToken } = await freshGrant();
   eq((await reveal.handleRevealGet(getReq(mintedToken))).status, 200, "no signing key env var ⇒ GET still 200 (resolves via mint)");
@@ -229,6 +231,7 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
   ok(typeof mintedValue === "string" && mintedValue.length > 0, "the minted signing key is durably stored under self:OE_INTAKE_PAGE_SIGNING_KEY");
   process.env.OE_INTAKE_PAGE_SIGNING_KEY = saved;
   await vault.delete("self:OE_INTAKE_PAGE_SIGNING_KEY");
+  resetSelfSecretCache();
 
   const savedKey = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
   delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;

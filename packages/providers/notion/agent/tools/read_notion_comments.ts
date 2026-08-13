@@ -77,7 +77,7 @@ export const readNotionCommentsEntry = defineTool({
     const domains = getConfig().loadDomains();
     await assertNotionPageAllowed(ctx2 as BindableContext, page, domains);
     const apiKey = await resolveNotionApiKey();
-    if (!apiKey) throw new Error("NOTION_CHANNEL_API_KEY is not set — cannot read the comments.");
+    if (!apiKey) throw new Error("no value stored under db:notion:channel-key — cannot read the comments.");
     if (input.block) {
       await assertNotionBlockAllowed(ctx2 as BindableContext, input.block, domains, (id) => resolveBlockOwningPage(id, { apiKey }));
     }

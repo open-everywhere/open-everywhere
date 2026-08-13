@@ -73,9 +73,9 @@ export async function captureHandshakeSecret(
   if (!link) {
     log(
       `handshake secret for ${input.label} received and STORED — NOT logged (sha256 fingerprint ${fingerprint}). ` +
-        `It cannot be shown to you because the one-shot reveal page is not configured on this deployment: set ` +
-        `OE_INTAKE_PAGE_SIGNING_KEY and OE_PUBLIC_BASE_URL, then delete and recreate the subscription so the ` +
-        `vendor sends a fresh handshake. The value will not be printed under any circumstance.`,
+        `It cannot be shown to you because the one-shot reveal page is not configured on this deployment: arm ` +
+        `OE_CREDENTIAL_ENCRYPTION_KEY and set OE_PUBLIC_BASE_URL, then delete and recreate the subscription so ` +
+        `the vendor sends a fresh handshake. The value will not be printed under any circumstance.`,
     );
     return { fingerprint, ref, stored: true, revealed: false };
   }

@@ -27,6 +27,7 @@ const { resolveConnectorOptions, optionLabel, SURFACE_INTAKE_CAPS } = await impo
 const { dbCredentialRef } = await import("../agent/credentials/ref.js");
 const { encryptedKvVault } = await import("../agent/credentials/kv-vault.js");
 const vault = encryptedKvVault();
+const { resetSelfSecretCache } = await import("../agent/credentials/self-secrets.js");
 type Provider = import("../agent/access/providers.js").Provider;
 type ConnectorOption = import("../agent/connections/connector-offer.js").ConnectorOption;
 
@@ -104,6 +105,7 @@ console.log("2. issueIntakePageLink:");
   const aud = await readAudit({ org: ORG });
   ok(aud.some((r) => r.action === "credential.intake_requested" && r.platform === "discord"), "issue: audits credential.intake_requested on the real surface platform");
 
+  resetSelfSecretCache();
   const mintedRes = await page.issueIntakePageLink(
     { org: ORG, provider: "notion", ref: REF, requestedBy: OWNER, channelId: "C_X", platform: "discord" },
     { env: { ...process.env, OE_INTAKE_PAGE_SIGNING_KEY: "" }, now: () => t0, mintId: () => "intake-link-mint" },
@@ -112,6 +114,7 @@ console.log("2. issueIntakePageLink:");
   const mintedInVault = await vault.read("self:OE_INTAKE_PAGE_SIGNING_KEY");
   ok(typeof mintedInVault === "string" && mintedInVault.length > 0, "…and the minted key is durably stored under self:OE_INTAKE_PAGE_SIGNING_KEY");
   await vault.delete("self:OE_INTAKE_PAGE_SIGNING_KEY");
+  resetSelfSecretCache();
 
   const savedRealKey = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
   delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
@@ -154,9 +157,11 @@ console.log("3. GET:");
   ok(expired.status === 404, "GET: an expired token → generic 404");
   ok((await bad.text()) === (await (await page.handleIntakePageGet(getReq(tok), { now: () => new Date(t0.getTime() + 20 * 60 * 1000) })).text()), "GET: bad-token and expired-token pages are byte-identical (no oracle)");
 
+  resetSelfSecretCache();
   const stillRoutable = await page.handleIntakePageGet(getReq(tok), { env: { ...process.env, OE_INTAKE_PAGE_SIGNING_KEY: "" }, now: () => t0 });
   ok(stillRoutable.status === 404, "GET: no signing key env var ⇒ 404 for THIS token (it mints a NEW key, so tok's old signature no longer verifies) — not a route-disarm 404");
   await vault.delete("self:OE_INTAKE_PAGE_SIGNING_KEY");
+  resetSelfSecretCache();
   const savedRealKey = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
   delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
   const disarmed = await page.handleIntakePageGet(getReq(tok), { env: { ...process.env, OE_INTAKE_PAGE_SIGNING_KEY: SIGN_KEY }, now: () => t0 });

@@ -149,7 +149,6 @@ export async function handleSelfDispatch(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<Response> {
   if (!selfSecretsArmed()) return new Response("not found", { status: 404 });
-  const secret = await getOrMintSelfSecret(SPAWN_DISPATCH_SECRET_ENV, { env });
 
   const read = await readCappedBody(req, SELF_DISPATCH_MAX_BODY_BYTES);
   if ("tooLarge" in read) {
@@ -157,6 +156,7 @@ export async function handleSelfDispatch(
   }
   const rawBody = read.body;
 
+  const secret = await getOrMintSelfSecret(SPAWN_DISPATCH_SECRET_ENV, { env });
   if (!verifyWebhookSignature(secret, rawBody, req.headers.get(SELF_DISPATCH_SIGNATURE_HEADER))) {
     return json(401, { error: "unauthorized: missing or invalid dispatch signature" });
   }

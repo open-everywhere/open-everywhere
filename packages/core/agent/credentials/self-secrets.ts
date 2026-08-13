@@ -15,6 +15,12 @@ export function resetSelfSecretWarnings(): void {
   envOnrampWarned.clear();
 }
 
+const resolvedCache = new Map<string, Promise<string>>();
+
+export function resetSelfSecretCache(): void {
+  resolvedCache.clear();
+}
+
 function noticeOnce(name: string, message: string): void {
   if (envOnrampWarned.has(name)) return;
   envOnrampWarned.add(name);
@@ -33,8 +39,18 @@ export async function getOrMintSelfSecret(name: string, deps: SelfSecretDeps = {
         `credential store.`,
     );
   }
-  const vault = deps.vault ?? encryptedKvVault();
-  const env = deps.env ?? process.env;
+  if (!deps.vault) {
+    const cached = resolvedCache.get(name);
+    if (cached) return cached;
+    const promise = resolveOrMint(name, encryptedKvVault(), deps.env ?? process.env);
+    resolvedCache.set(name, promise);
+    promise.catch(() => resolvedCache.delete(name));
+    return promise;
+  }
+  return resolveOrMint(name, deps.vault, deps.env ?? process.env);
+}
+
+async function resolveOrMint(name: string, vault: EncryptedKvVault, env: NodeJS.ProcessEnv): Promise<string> {
   const ref = `${SELF_SECRET_REF_NAMESPACE}${name}`;
 
   return vault.withLock(ref, async () => {

@@ -50,7 +50,7 @@ export const readNotionPageEntry = defineTool({
             await assertNotionPageAllowed(ctx2 as BindableContext, requestedPage, domains);
             page = requestedPage;
           }
-          if (!apiKey) throw new Error("NOTION_CHANNEL_API_KEY is not set — cannot read the page.");
+          if (!apiKey) throw new Error("no value stored under db:notion:channel-key — cannot read the page.");
           const res = await readNotionPage(page, { apiKey, maxChars: MAX_CHARS, maxBlocks: MAX_BLOCKS });
           let workspaceTrust: "internal" | undefined;
           try {

@@ -10,7 +10,7 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_ORG;
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 
-const { getOrMintSelfSecret, selfSecretsArmed, resetSelfSecretWarnings } = await import("../agent/credentials/self-secrets.js");
+const { getOrMintSelfSecret, selfSecretsArmed, resetSelfSecretWarnings, resetSelfSecretCache } = await import("../agent/credentials/self-secrets.js");
 const { encryptedKvVault } = await import("../agent/credentials/kv-vault.js");
 const { getSecretVia } = await import("../agent/access/credentials.js");
 const { registerDbCredentialBroker } = await import("../agent/credentials/db-broker.js");
@@ -87,4 +87,33 @@ console.log("5. the self: namespace is refused by the outbound resolver:");
   ok(minted.length > 0, "…even though the value genuinely exists (the refusal is about the NAMESPACE, not a missing row)");
 }
 
-console.log(`✓ self-secrets: ${n} assertions passed (resolution order, mint durability + convergence, fail-closed, reserved namespace)`);
+console.log("6. memoisation:");
+{
+  resetSelfSecretCache();
+  const first = await getOrMintSelfSecret("OE_TEST_MINT_CACHE");
+  eq(await vault.read("self:OE_TEST_MINT_CACHE"), first, "precondition: the mint landed in the vault");
+
+  await vault.write("self:OE_TEST_MINT_CACHE", "mutated-behind-the-cache");
+
+  const second = await getOrMintSelfSecret("OE_TEST_MINT_CACHE");
+  eq(second, first, "memoised: a second call returns the CACHED value, not the value now stored in the vault");
+
+  resetSelfSecretCache();
+  const third = await getOrMintSelfSecret("OE_TEST_MINT_CACHE");
+  eq(third, "mutated-behind-the-cache", "resetSelfSecretCache() clears the cache: the next call reads the vault fresh");
+
+  const counting = { calls: 0, inner: vault };
+  const countingVault = {
+    ...vault,
+    read: async (ref: string) => {
+      counting.calls++;
+      return counting.inner.read(ref);
+    },
+  };
+  await vault.write("self:OE_TEST_MINT_CACHE", "value-for-injected-vault-path");
+  const viaInjected = await getOrMintSelfSecret("OE_TEST_MINT_CACHE", { vault: countingVault });
+  eq(viaInjected, "value-for-injected-vault-path", "an injected deps.vault bypasses the cache — reads the vault fresh even though the default path has this name cached");
+  ok(counting.calls > 0, "…and genuinely called the injected vault's read (not a coincidental cache hit)");
+}
+
+console.log(`✓ self-secrets: ${n} assertions passed (resolution order, mint durability + convergence, fail-closed, reserved namespace, memoisation)`);

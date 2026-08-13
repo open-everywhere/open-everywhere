@@ -7,7 +7,7 @@ type NotionOrigin = Extract<UnifiedWakeOrigin, { platform: "notion" }>;
 async function dispatchNotionReply(target: NotionTarget, text: string): Promise<string> {
   const apiKey = await resolveNotionApiKey();
   if (!apiKey || apiKey.length === 0) {
-    throw new Error("reply couldn't post to Notion — NOTION_CHANNEL_API_KEY is not set.");
+    throw new Error("reply couldn't post to Notion — no value stored under db:notion:channel-key.");
   }
   return createCommentReply({ discussionId: target.discussionId, text, apiKey });
 }
@@ -15,7 +15,7 @@ async function dispatchNotionReply(target: NotionTarget, text: string): Promise<
 async function liveNotionPost(origin: NotionOrigin, text: string): Promise<string> {
   const apiKey = await resolveNotionApiKey();
   if (!apiKey || apiKey.length === 0) {
-    throw new Error(`unified reply couldn't post to Notion — NOTION_CHANNEL_API_KEY is not set (discussion ${origin.discussionId})`);
+    throw new Error(`unified reply couldn't post to Notion — no value stored under db:notion:channel-key (discussion ${origin.discussionId})`);
   }
   let id: string;
   try {

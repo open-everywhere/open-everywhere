@@ -101,12 +101,12 @@ export async function handleTranscriptRelay(
 ): Promise<Response> {
   const env = deps.env ?? process.env;
   if (!selfSecretsArmed()) return new Response("not found", { status: 404 });
-  const secret = await getOrMintSelfSecret(TRANSCRIPT_RELAY_SECRET_ENV, { env });
 
   const read = await readCappedBody(req, TRANSCRIPT_RELAY_MAX_BODY_BYTES);
   if ("tooLarge" in read) return json(413, { error: `payload exceeds ${TRANSCRIPT_RELAY_MAX_BODY_BYTES} bytes` });
   const rawBody = read.body;
 
+  const secret = await getOrMintSelfSecret(TRANSCRIPT_RELAY_SECRET_ENV, { env });
   if (!verifyWebhookSignature(secret, rawBody, req.headers.get(TRANSCRIPT_RELAY_SIGNATURE_HEADER))) {
     return json(401, { error: "unauthorized: missing or invalid transcript signature" });
   }

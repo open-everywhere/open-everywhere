@@ -310,7 +310,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
         repliedAnchor: { discussionId },
         post: async (text) => {
           const apiKey = await resolveNotionApiKey();
-          if (!apiKey) throw new Error("reply couldn't post to Notion — NOTION_CHANNEL_API_KEY is not set.");
+          if (!apiKey) throw new Error("reply couldn't post to Notion — no value stored under db:notion:channel-key (`oe secret set db:notion:channel-key`).");
           await postOnce({
             org,
             key: outboundKey({

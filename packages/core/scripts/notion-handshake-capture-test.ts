@@ -111,7 +111,7 @@ const armed = await run({});
   ok(!dis.text.includes(TOKEN.slice(0, 16)), "…not even truncated");
   ok(dis.result.stored && !dis.result.revealed, "the value is still captured; nothing is revealed");
   eq(await vault.read(dis.result.ref!), TOKEN, "…and it really is in the vault, retrievable once the page is armed");
-  ok(/OE_INTAKE_PAGE_SIGNING_KEY/.test(dis.text) && /OE_PUBLIC_BASE_URL/.test(dis.text), "the log names the two env vars that arm the page");
+  ok(/OE_CREDENTIAL_ENCRYPTION_KEY/.test(dis.text) && /OE_PUBLIC_BASE_URL/.test(dis.text), "the log names the two things that arm the page (the vault key + the base URL — OPE-408 step 3, the signing key itself is no longer operator-set)");
   ok(/recreate the subscription/i.test(dis.text), "…and tells the operator how to get a fresh handshake");
 
   const raced = await run({ issueLink: async () => undefined });
