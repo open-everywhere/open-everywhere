@@ -5,7 +5,6 @@ import { resolveAnalyticsScope, isAmbientNonAddressedTurn } from "../access/anal
 import { analyticsQuerySchema, compileAnalyticsQuery, type AnalyticsQuery } from "../analytics/compile.js";
 import { schemaCard } from "../analytics/registry.js";
 import { executeAnalytics } from "../analytics/execute.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { resolveAssumedModel } from "../spend/reporting.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { auditToolAction } from "../audit/tool-action.js";
@@ -37,32 +36,14 @@ export default defineTool({
       throw err;
     }
 
-    const tainted = untrustedIngestedThisTurn();
     const ambient = isAmbientNonAddressedTurn(ctx);
     let effective: AnalyticsQuery = input;
-    let taintDegraded = false;
+    let ambientDegraded = false;
 
     if (effective.mode === "rows" && ambient) {
       effective = { ...effective, mode: "aggregate" };
-      taintDegraded = true;
+      ambientDegraded = true;
       notes.push("Degraded to aggregates: rows mode requires a directly-addressed turn (this was an ambient supervisor wake).");
-    }
-    if (effective.mode === "rows" && tainted && scope.grain === "org") {
-      effective = { ...effective, mode: "aggregate" };
-      taintDegraded = true;
-      notes.push("Degraded to aggregates: this turn ingested untrusted content, so org-wide row listing is held.");
-    }
-    if (tainted && scope.grain === "org") {
-      const hadPrincipal = (effective.groupBy ?? []).includes("principal") || (effective.filters ?? []).some((f) => f.dim === "principal");
-      if (hadPrincipal) {
-        effective = {
-          ...effective,
-          groupBy: (effective.groupBy ?? []).filter((g) => g !== "principal"),
-          filters: (effective.filters ?? []).filter((f) => f.dim !== "principal"),
-        };
-        taintDegraded = true;
-        notes.push("Dropped per-person grouping/filtering: this turn ingested untrusted content, so org-wide person-targeting is held.");
-      }
     }
 
     let result;
@@ -84,7 +65,7 @@ export default defineTool({
       ...(effective.since ? { since: effective.since } : {}),
       ...(effective.until ? { until: effective.until } : {}),
       rowCount: result.rowCount,
-      ...(taintDegraded ? { taintDegraded: true } : {}),
+      ...(ambientDegraded ? { ambientDegraded: true } : {}),
     });
 
     if (result.truncated) notes.push("Result truncated to the row cap — narrow the window or add filters for a complete answer.");

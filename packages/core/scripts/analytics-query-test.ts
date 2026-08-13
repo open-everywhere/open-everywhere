@@ -125,7 +125,7 @@ const canon = (rows: readonly Record<string, unknown>[]) =>
 }
 
 {
-  assert.throws(() => compileAnalyticsQuery(parse({ dataset: "usage", scope: "domain", mode: "rows" }), engMemberScope, domains), /rows mode isn't available/, "a member (rowMode:false — the tainted/ambient degrade target) CANNOT get raw rows");
+  assert.throws(() => compileAnalyticsQuery(parse({ dataset: "usage", scope: "domain", mode: "rows" }), engMemberScope, domains), /rows mode isn't available/, "a member (rowMode:false — the ambient degrade target) CANNOT get raw rows");
   n++;
   const agg = await runBoth({ dataset: "usage", scope: "domain", groupBy: ["kind"], select: ["events"] }, engMemberScope);
   ok(agg.s.rows.length >= 1, "the same member still gets aggregates (degrade, not deny)");
