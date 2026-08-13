@@ -90,6 +90,89 @@ for (const name of GRANDFATHERED) {
   }
 }
 
+const REVERSE_SCAN_ROOTS = ["agent", "packages", "scripts", "tests", "deploy"];
+
+const REVERSE_EXEMPT = new Map<string, string>([
+  [
+    "LINEAR_WEBHOOK_SECRET",
+    "read by eve's own bundled Linear channel handler (node_modules/eve/dist/src/public/channels/linear/auth.js) — the native webhook signature check is eve's, not this repo's source.",
+  ],
+  [
+    "MICROSOFT_TENANT_ID",
+    "read by eve's own bundled Teams channel handler (node_modules/eve/dist/src/public/channels/teams/api.js).",
+  ],
+  [
+    "OTEL_EXPORTER_OTLP_HEADERS",
+    "the standard OTel var, read by eve's bundled @vercel/otel exporter — same class as the Host-injected AWS_REGION/NODE_ENV rows above, just via a vendored dependency instead of the platform.",
+  ],
+  [
+    "OE_EGRESS_MITM",
+    "read by deploy/egress-proxy/entrypoint.sh, a shell provisioning script outside every .ts/.js scan root, not by application code.",
+  ],
+]);
+
+function reverseUsedNames(): Set<string> {
+  const files = REVERSE_SCAN_ROOTS.flatMap((root) =>
+    filesUnder(root, (name) => (name.endsWith(".ts") || name.endsWith(".js")) && !name.endsWith(".d.ts")),
+  );
+  const used = new Set<string>();
+  for (const file of files) {
+    const content = readFileSync(file, "utf8");
+    for (const m of content.matchAll(/\.([A-Z][A-Z0-9_]{2,})\b/g)) used.add(m[1]);
+    for (const m of content.matchAll(/["']([A-Z][A-Z0-9_]{2,})["']/g)) used.add(m[1]);
+  }
+  return used;
+}
+
+function documentedEnvNames(): Set<string> {
+  const names = new Set<string>();
+  for (const file of DOC_ROOTS.flatMap((root) => filesUnder(root, (name) => name.endsWith(".md")))) {
+    for (const m of readFileSync(file, "utf8").matchAll(/^\|\s*`([A-Z][A-Z0-9_]*)`\s*\|/gm)) names.add(m[1]);
+  }
+  for (const file of DOC_FILES) {
+    let content: string;
+    try {
+      content = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const m of content.matchAll(/^#?\s*([A-Z][A-Z0-9_]*)=/gm)) names.add(m[1]);
+  }
+  return names;
+}
+
+const documentedNames = documentedEnvNames();
+const usedAnywhere = reverseUsedNames();
+const reverseReds: string[] = [];
+
+for (const name of [...documentedNames].sort()) {
+  if (usedAnywhere.has(name) || REVERSE_EXEMPT.has(name)) continue;
+  reverseReds.push(
+    `STALE ROW: \`${name}\` is documented (a docs/ table row or .env.example) but nothing reads it — ` +
+      `not the runtime, not scripts/, not tests/, not deploy/. Delete the row, or if the true reader is ` +
+      `real but invisible to a source scan (a vendor bundle, a shell script outside the scan roots), add ` +
+      `it to REVERSE_EXEMPT in scripts/env-docs-lint.ts WITH a reason.`,
+  );
+}
+
+for (const name of REVERSE_EXEMPT.keys()) {
+  if (!documentedNames.has(name)) {
+    reverseReds.push(
+      `STALE REVERSE_EXEMPT: ${name} is listed in scripts/env-docs-lint.ts but no doc row documents it ` +
+        `any more — delete the entry.`,
+    );
+  }
+}
+
+if (listMode) {
+  for (const name of [...documentedNames].sort()) {
+    const status = usedAnywhere.has(name) ? "read" : REVERSE_EXEMPT.has(name) ? "EXEMPT" : "STALE";
+    if (status !== "read") console.log(`  reverse ${status.padEnd(8)} ${name}`);
+  }
+}
+
+reds.push(...reverseReds);
+
 if (reds.length > 0) {
   console.error(`✗ env-docs: ${reds.length} problem(s):\n`);
   for (const r of reds) console.error(`  • ${r}`);
@@ -98,5 +181,6 @@ if (reds.length > 0) {
 
 console.log(
   `✓ env-docs: ${reads.size} env name(s) read by the runtime — ${documentedCount} documented, ` +
-    `${GRANDFATHERED.size} grandfathered (frozen 2026-08-10, must only shrink), 0 new gaps`,
+    `${GRANDFATHERED.size} grandfathered (frozen 2026-08-10, must only shrink), 0 new gaps. ` +
+    `Reverse arm: ${documentedNames.size} documented name(s), ${REVERSE_EXEMPT.size} exempt, 0 stale rows.`,
 );
