@@ -242,6 +242,86 @@ async function fire(h: FusedWebhookHook, facts: SlackFacts | "no-supplier" | "th
   }
 }
 
+{
+  console.log("\n7. behavioural: the real route stamps detail.wakeId (OPE-460/482):");
+  const { registerConfig } = await import("../agent/access/config.js");
+  const { defineDomain } = await import("../agent/memory/domain.js");
+  const { overrideSettingsForTest, resetSettingsForTest } = await import("../agent/settings/settings.js");
+  const { readAudit } = await import("../agent/audit/audit.js");
+  const { registerSlackFixtureCodec, registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
+  const sw = await import("../agent/webhooks/oe-standard-webhook.js");
+
+  registerSlackTestBridge({ confirmChannelInternal: async () => true });
+  registerSlackFixtureCodec();
+  registerSlackFixtureMapper();
+  arm(INTERNAL);
+
+  const wakeSecret = `wh-${Math.random().toString(36).slice(2)}`;
+  process.env["WAKEID_PROOF_WEBHOOK_SECRET"] = wakeSecret;
+  const wakeHook: FusedWebhookHook = defineWebhook({
+    id: "wakeid-proof",
+    source: "oe-standard-webhook",
+    secretRef: "WAKEID_PROOF_WEBHOOK_SECRET",
+    broker: "env",
+    target: "slack/T1/C1",
+    readableBy: [{ level: "domain", domain: "eng" }],
+    instruction: "Prove the wake id lands on the row.",
+  });
+
+  const winDomain = defineDomain({ name: "eng", channels: ["slack/T1/C1"], ambientSupervisor: true, mode: "unified" });
+  registerConfig({
+    loadWebhooks: () => [wakeHook],
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [winDomain],
+    loadSilos: () => [],
+    domainsForSurface: ({ surface }) => (surface === "C1" ? ["eng"] : []),
+  });
+
+  const { default: webhooksChannel } = await import("../agent/channels/webhooks.js");
+  const route = webhooksChannel.routes[0] as { handler: (req: Request, args: unknown) => Promise<Response> };
+
+  async function postSigned(deliveryId: string, body: string, armed: boolean): Promise<void> {
+    overrideSettingsForTest({ delegation: { oneshotAgent: armed }, window: { topology: true } });
+    const ts = String(Math.floor(Date.now() / 1000));
+    const sig = sw.standardWebhookSignature(wakeSecret, deliveryId, ts, body);
+    const req = new Request("http://localhost/webhooks/wakeid-proof", {
+      method: "POST",
+      headers: { "webhook-id": deliveryId, "webhook-timestamp": ts, "webhook-signature": sig, "content-type": "application/json" },
+      body,
+    });
+    const pending: Promise<unknown>[] = [];
+    const res = await route.handler(req, {
+      to: captureReceive().to,
+      waitUntil: (p: Promise<unknown>) => void pending.push(p),
+      params: { id: "wakeid-proof" },
+    } as never);
+    const text = await res.text();
+    ok(res.status === 200, `postSigned(armed=${armed}): the signed delivery is accepted (200, got ${res.status}: ${text.slice(0, 160)})`);
+    await Promise.all(pending);
+  }
+
+  const rowsFor = async (deliveryId: string): Promise<{ wakeId?: string } | undefined> => {
+    const rows = await readAudit({ org: "acme", action: "webhook.fired", limit: 200 });
+    const row = rows.find((r) => (r.detail as { hookId?: string; deliveryId?: string } | undefined)?.deliveryId === deliveryId);
+    return row?.detail as { wakeId?: string } | undefined;
+  };
+
+  await postSigned("msg_wakeid_on", JSON.stringify({ note: "wakeid on" }), true);
+  const onDetail = await rowsFor("msg_wakeid_on");
+  ok(onDetail !== undefined, "wakeId/positive: a webhook.fired row exists for the armed delivery, joined on the delivery id");
+  ok(typeof onDetail?.wakeId === "string" && onDetail.wakeId.length > 0, "🔴 wakeId/positive: the REAL route's `deliver()` stamped a non-empty `detail.wakeId` on the `webhook.fired` row");
+
+  await postSigned("msg_wakeid_off", JSON.stringify({ note: "wakeid off" }), false);
+  const offDetail = await rowsFor("msg_wakeid_off");
+  ok(offDetail !== undefined, "wakeId/negative control: a webhook.fired row exists for the disarmed delivery too");
+  ok(offDetail?.wakeId === undefined, "wakeId/negative control: the disarmed (native) fire's row carries NO wakeId — the stamp is conditional on the real divert, never a constant");
+
+  resetSettingsForTest();
+}
+
 _resetGovernanceMemberSupplierForTest();
 _resetAudienceFloorCacheForTest();
 rmSync(dir, { recursive: true, force: true });
