@@ -440,6 +440,51 @@ await seed({ id: "r-dc-legacy", surfaceKey: "discord/G2/CH2", target: { channelI
   ok(b.workspace === "G2" && b.surface === "CH2", "discord: legacy fire still attributes to the routine's real partition");
 }
 
+{
+  const { resolveDiscordTarget } = await import("@open-everywhere/provider-discord/agent/channels/discord-dispatch-target.js");
+  const { planFireWindow } = await import("@open-everywhere/core/agent/routines/fire-window.js");
+  const { isThreadSeatWindowToken } = await import("@open-everywhere/core/agent/channels/window-key.js");
+  overrideSettingsForTest({ window: { topology: true } });
+  const windowedDomain = defineDomain({ name: "discord-win", channels: ["discord/G3/CH3"], ambientSupervisor: true, mode: "unified" });
+
+  const guildRoutine: Routine = {
+    id: "r-dc-window",
+    org: "default",
+    surfaceKey: "discord/G3/CH3",
+    target: { channelId: "CH3", guildId: "G3", channelType: "0" },
+    trigger: { kind: "interval", everyMinutes: 60 },
+    prompt: "digest",
+    createdAt: now.toISOString(),
+    status: "active",
+    consecutiveFailures: 0,
+    nextRunAt: past,
+  };
+  const guildTarget = resolveDiscordTarget(guildRoutine);
+  ok(guildTarget !== null, "OPE-486/discord: a guild routine still resolves a DispatchTarget");
+  ok(guildTarget!.origin !== undefined, "OPE-486/discord: the DispatchTarget now carries an origin — pre-fix this field was always undefined");
+  ok(
+    guildTarget!.origin?.platform === "discord" &&
+      (guildTarget!.origin as { channelId: string }).channelId === "CH3" &&
+      (guildTarget!.origin as { guildId?: string }).guildId === "G3",
+    "OPE-486/discord: the origin names the routine's real guild/channel",
+  );
+
+  const guildPlan = planFireWindow({ surfaceKey: "discord/G3/CH3", origin: guildTarget!.origin!, seatKey: "run/dc-1", domains: [windowedDomain], generation: 1, armed: true });
+  ok(guildPlan !== null, "OPE-486/discord: a guild fire's origin is enough to take the divert path — pre-fix it never was");
+  ok(isThreadSeatWindowToken(guildPlan!.token), "OPE-486/discord: the diverted fire's window token is a thread-seat token, same shape a Slack fire's divert mints");
+
+  const noOriginPlan = planFireWindow({ surfaceKey: "discord/G3/CH3", origin: undefined as never, seatKey: "run/dc-1", domains: [windowedDomain], generation: 1, armed: true });
+  ok(noOriginPlan === null, "OPE-486/discord NEGATIVE CONTROL: with no origin (the pre-fix state) the divert never applies, even on an otherwise-windowed surface");
+
+  const dmRoutine: Routine = { ...guildRoutine, id: "r-dc-dm-window", surfaceKey: "discord/U9/D9", target: { channelId: "D9", channelType: "1" } };
+  const dmTarget = resolveDiscordTarget(dmRoutine);
+  ok(
+    (dmTarget!.origin as { dm?: true } | undefined)?.dm === true && (dmTarget!.origin as { guildId?: string }).guildId === undefined,
+    "OPE-486/discord: a DM fire's origin is the dm:true variant, never a guild-shaped origin with an empty guildId",
+  );
+  overrideSettingsForTest({ window: { topology: false } });
+}
+
 await seed({ id: "r-teams-noref", surfaceKey: "teams/TEN1/19-x", target: { conversationId: "19:x@thread.tacv2" } });
 await seed({ id: "r-linear", surfaceKey: "linear/W1/T1", target: { agentSessionId: "AS1" } });
 {

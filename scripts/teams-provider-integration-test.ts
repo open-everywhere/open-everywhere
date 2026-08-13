@@ -233,6 +233,30 @@ function seedRoutine(id: string, surfaceKey: string, target: Record<string, unkn
   ok(dmBinding.mode === "dm", "routine: a personal-chat fire binds dm mode (stored scope honoured)");
 
   ok(resolveTeamsTarget(seedRoutine("r-teams-noref", "teams/TEN1/19-x", { conversationId: "19:x@thread.tacv2" })) === null, "routine: a teams routine with no serviceUrl resolves null (dry-run, fail-closed)");
+
+  const { planFireWindow } = await import("@open-everywhere/core/agent/routines/fire-window.js");
+  const { isThreadSeatWindowToken } = await import("@open-everywhere/core/agent/channels/window-key.js");
+  const { defineDomain } = await import("@open-everywhere/core/agent/memory/domain.js");
+  const { overrideSettingsForTest } = await import("@open-everywhere/core/agent/settings/settings.js");
+  overrideSettingsForTest({ window: { topology: true } });
+
+  ok(chTarget!.origin !== undefined, "OPE-486/teams: the DispatchTarget now carries an origin — pre-fix this field was always undefined");
+  ok(
+    chTarget!.origin?.platform === "teams" &&
+      (chTarget!.origin as { serviceUrl: string }).serviceUrl === "https://smba.trafficmanager.net/uk/" &&
+      (chTarget!.origin as { conversationId: string }).conversationId === "19:eng@thread.tacv2" &&
+      (chTarget!.origin as { tenantId?: string }).tenantId === "TEN1",
+    "OPE-486/teams: the origin names the routine's real conversation reference",
+  );
+
+  const windowedDomain = defineDomain({ name: "teams-win", channels: ["teams/TEN1/19-eng-thread.tacv2"], ambientSupervisor: true, mode: "unified" });
+  const teamsPlan = planFireWindow({ surfaceKey: "teams/TEN1/19-eng-thread.tacv2", origin: chTarget!.origin!, seatKey: "run/tm-1", domains: [windowedDomain], generation: 1, armed: true });
+  ok(teamsPlan !== null, "OPE-486/teams: a channel fire's origin is enough to take the divert path — pre-fix it never was");
+  ok(isThreadSeatWindowToken(teamsPlan!.token), "OPE-486/teams: the diverted fire's window token is a thread-seat token, same shape a Slack fire's divert mints");
+
+  const noOriginPlan = planFireWindow({ surfaceKey: "teams/TEN1/19-eng-thread.tacv2", origin: undefined as never, seatKey: "run/tm-1", domains: [windowedDomain], generation: 1, armed: true });
+  ok(noOriginPlan === null, "OPE-486/teams NEGATIVE CONTROL: with no origin (the pre-fix state) the divert never applies, even on an otherwise-windowed surface");
+  overrideSettingsForTest({ window: { topology: false } });
 }
 
 {

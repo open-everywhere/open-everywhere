@@ -7,6 +7,7 @@ import {
   registerRoutineDispatch,
   type DispatchTarget,
   type Routine,
+  type UnifiedWakeOrigin,
   registerProviderDocs,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
@@ -31,6 +32,7 @@ export function resolveTeamsTarget(r: Routine): DispatchTarget | null {
   const teamId = storedString(r.target, "teamId");
   const tenantId = storedString(r.target, "tenantId") ?? r.surfaceKey.split("/")[1] ?? "";
   const mode = teamsMode(conversationType);
+  const origin: UnifiedWakeOrigin = { platform: "teams", serviceUrl, conversationId, ...(tenantId ? { tenantId } : {}) };
   return {
     channel: teamsChannel,
     target: {
@@ -50,6 +52,7 @@ export function resolveTeamsTarget(r: Routine): DispatchTarget | null {
       ...(teamId ? { team_id: teamId } : {}),
       ...(conversationType ? { scope: conversationType } : {}),
     },
+    origin,
   };
 }
 
