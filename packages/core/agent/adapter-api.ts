@@ -268,7 +268,8 @@ export { silentRoutineThisTurn, markSilentRoutineTurn, SILENT_ROUTINE_DROP_REASO
 export { consumeRepliedThisTurn } from "./channels/reply-signal.js";
 
 export { resolveWakeTrustFromContext } from "./identity/wake-trust.js";
-export { isVouchedInternal, isVouchedSurface, declaredWorkspaceTrust } from "./identity/trust.js";
+export { isVouchedInternal, isVouchedSurface, declaredWorkspaceTrust, declaredSurfaceTrust, declaredTrustForKeys } from "./identity/trust.js";
+export type { SurfaceTrustQuery } from "./identity/trust.js";
 export { dmTrustTtlMs } from "./identity/trust.js";
 
 export { ambientSupervisorEnabled, engagementTierFor, domainForChannel, resolveDomainForChannel, domainClaimVerdict, ambientSkipFor } from "./memory/domain.js";

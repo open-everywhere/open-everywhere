@@ -12,6 +12,7 @@ import {
   preRegisterDynamicEntry,
   resolvePartition,
   declaredWorkspaceTrust,
+  type SurfaceTrust,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -36,7 +37,7 @@ export const readNotionPageEntry = defineTool({
           blocks: z.number(),
           truncated: z.boolean(),
           text: z.string(),
-          workspaceTrust: z.literal("internal").optional(),
+          workspaceTrust: z.enum(["internal", "public"]).optional(),
         }),
         async execute(input, ctx2) {
           assertTurnSurface(ctx2 as BindableContext, "notion");
@@ -53,7 +54,7 @@ export const readNotionPageEntry = defineTool({
           }
           if (!apiKey) throw new Error("no value stored under db:notion:channel-key — cannot read the page.");
           const res = await readNotionPage(page, { apiKey, maxChars: MAX_CHARS, maxBlocks: MAX_BLOCKS });
-          let workspaceTrust: "internal" | undefined;
+          let workspaceTrust: SurfaceTrust | undefined;
           try {
             workspaceTrust = declaredWorkspaceTrust(resolvePartition(ctx2 as BindableContext).workspaceKey);
           } catch {

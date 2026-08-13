@@ -118,6 +118,11 @@ function teamsAuthPrincipalId(ctx: BindableContext): string | undefined {
   return pid && pid.length > 0 ? pid : undefined;
 }
 
+export function teamsTrustGroup(teamId: string | undefined): { readonly trustGroup: string } | undefined {
+  if (teamId === undefined || !/^[a-zA-Z0-9._-]+$/.test(teamId)) return undefined;
+  return { trustGroup: `team:${teamId}` };
+}
+
 export const bindTeams: IdentityMapper = (ctx): RawIdentity => {
   const a = teamsAuthOf(ctx)?.attributes;
   const scope = teamsAttr(a, ["scope"]);
@@ -132,6 +137,7 @@ export const bindTeams: IdentityMapper = (ctx): RawIdentity => {
     surface: conversationId,
     domainSurface: teamsAttr(a, ["channel_id", "channelId"]),
     mode,
+    ...(teamsTrustGroup(teamsAttr(a, ["team_id", "teamId"])) ?? {}),
     visibility: teamsVisibility(scope, membershipType, mode),
     trust: teamsTrust(scope, membershipType, mode, tenantId, userType),
     principalId: teamsAuthPrincipalId(ctx) ?? teamsAttr(a, ["user_id", "userId"]),

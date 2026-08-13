@@ -3,6 +3,7 @@ import {
   teamsMembershipType,
   teamsMode,
   teamsTrust,
+  teamsTrustGroup,
   teamsUserTypeFromMember,
   teamsVisibility,
   type OpenEverywhereTeamsAuth,
@@ -19,6 +20,9 @@ import {
   resolveMemoryPlan,
   defineDomain,
   defineMemorySilo,
+  defineSurface,
+  registerSurfaces,
+  _resetSurfacesForTest,
   OE_GRAIN_ATTR,
   type BindableContext,
   type MemoryResolveConfig,
@@ -399,6 +403,54 @@ const memCfg: MemoryResolveConfig = {
   } finally {
     if (prev === undefined) delete process.env["OE_DM_SEAT_ROTATION"];
     else process.env["OE_DM_SEAT_ROTATION"] = prev;
+  }
+}
+
+{
+  ok(teamsTrustGroup("19-eng-team")?.trustGroup === "team:19-eng-team", "I1: teamsTrustGroup composes the `team:<id>` marker — the spelling an operator types into surfaces.ts");
+  ok(teamsTrustGroup(undefined) === undefined, "I1: no team id (a personal or group chat) contributes NO rung");
+  ok(teamsTrustGroup("has spaces/and:colons") === undefined, "I1: an unsafe team id is REFUSED, never repaired — a repaired segment could collide with a real key");
+
+  const TENANT = "0d1f2e3a-4b5c";
+  const TEAM = "19-eng-team-id";
+  const activity = (teamId: string | undefined): BindableContext =>
+    ({
+      channel: { kind: "teams" },
+      session: {
+        auth: {
+          current: buildTeamsAuth({
+            userId: "29:user-a",
+            tenantId: TENANT,
+            conversationId: "19:conv-a@thread.tacv2",
+            channelId: "19:chan-a@thread.tacv2",
+            ...(teamId ? { teamId } : {}),
+            serviceUrl: "https://smba.trafficmanager.net/emea/",
+            scope: "channel",
+          } as TeamsIdentityInput) as unknown as OpenEverywhereTeamsAuth,
+        },
+      },
+    }) as unknown as BindableContext;
+
+  try {
+    registerSurfaces([defineSurface({ key: `teams/${TENANT}/team:${TEAM}`, trust: "public" })]);
+    ok(bindFrom(activity(TEAM)).trust === "external", "I2: a `team:<id>` PUBLIC declaration demotes a channel inside that team");
+    ok(bindFrom(activity("19-other-team")).trust === "external", "I2: a channel in ANOTHER team is untouched by it — and stays fail-closed external on its own");
+
+    registerSurfaces([defineSurface({ key: `teams/${TENANT}/team:${TEAM}`, trust: "internal" })]);
+    ok(bindFrom(activity(TEAM)).trust === "internal", "🔴 I3: a `team:<id>` INTERNAL declaration promotes a channel inside that team — the whole point of the rung");
+    ok(bindFrom(activity("19-other-team")).trust === "external", "I3: NEGATIVE CONTROL — a channel in a different team is NOT promoted");
+    ok(bindFrom(activity(undefined)).trust === "external", "I3: NEGATIVE CONTROL — an activity with no team id carries no rung and is NOT promoted");
+
+    const withDecl = resolvePartition(activity(TEAM));
+    _resetSurfacesForTest();
+    const without = resolvePartition(activity(TEAM));
+    ok(
+      withDecl.surfaceKey === without.surfaceKey && withDecl.workspaceKey === without.workspaceKey,
+      "I4: the team rung moves TRUST only — the surface key and workspace key are unchanged, so no memory/spend/audit grain moves",
+    );
+    ok(without.surfaceKey.split("/").length === 3, "I4: …and the key is still THREE segments — the rung is not a fourth segment");
+  } finally {
+    _resetSurfacesForTest();
   }
 }
 

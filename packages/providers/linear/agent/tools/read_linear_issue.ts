@@ -12,6 +12,7 @@ import {
   preRegisterDynamicEntry,
   resolvePartition,
   declaredWorkspaceTrust,
+  type SurfaceTrust,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -49,7 +50,7 @@ export const readLinearIssueEntry = defineTool({
     truncated: z.boolean(),
     description: z.string(),
     text: z.string(),
-    workspaceTrust: z.literal("internal").optional(),
+    workspaceTrust: z.enum(["internal", "public"]).optional(),
   }),
   async execute(input, ctx2) {
     assertTurnSurface(ctx2 as BindableContext, "linear");
@@ -57,7 +58,7 @@ export const readLinearIssueEntry = defineTool({
     if (!issue) throw new Error("No Linear issue available for this turn — pass `issue` explicitly (its UUID or identifier, e.g. ENG-42).");
     await assertLinearIssueAllowed(ctx2 as BindableContext, issue, getConfig().loadDomains(), async (ref) => (await enrichIssueTeam(ref))?.teamId);
     const res = await readLinearIssue(issue, { maxComments: MAX_COMMENTS });
-    let workspaceTrust: "internal" | undefined;
+    let workspaceTrust: SurfaceTrust | undefined;
     try {
       workspaceTrust = declaredWorkspaceTrust(resolvePartition(ctx2 as BindableContext).workspaceKey);
     } catch {

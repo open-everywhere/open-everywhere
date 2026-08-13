@@ -421,5 +421,20 @@ const throws = (fn: () => void, needle: string, label: string) => {
   ok(String((rows[0]?.detail as Record<string, unknown>)?.via ?? "").startsWith("excluded:"), "…and the audit row carries the exclusion provenance");
 }
 
+{
+  throws(
+    () => assertDomainsValid([defineDomain({ name: "eng", containers: ["teams/T1/team:G9"] })]),
+    "GROUP rung",
+    "a `containers` entry using the group rung is refused BY NAME (it belongs to the trust registry, not to a memory domain)",
+  );
+  throws(
+    () => assertDomainsValid([defineDomain({ name: "eng", containers: ["teams/T1"], excludeContainers: ["teams/T1/team:G9"] })]),
+    "GROUP rung",
+    "an `excludeContainers` entry using the group rung is refused the same way",
+  );
+  assertDomainsValid([defineDomain({ name: "eng", containers: ["teams/T1"], excludeContainers: ["teams/T1/G9"] })]);
+  n++;
+}
+
 rmSync(tmp, { recursive: true, force: true });
-console.log(`\n✓ domain-containers: ${n} assertions passed (OPE-205 the container tier + the audited ambient skip; OPE-417 same-level globs + exclusions)\n`);
+console.log(`\n✓ domain-containers: ${n} assertions passed (OPE-205 the container tier + the audited ambient skip; OPE-417 same-level globs + exclusions; OPE-490 the group-rung refusal)\n`);

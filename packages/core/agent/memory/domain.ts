@@ -1,5 +1,13 @@
 import { windowTopologyEnabled } from "../access/capabilities.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
+import {
+  isGroupSegment,
+  parseSurfaceKeyEntry,
+  surfaceKeyEntriesIntersect,
+  surfaceKeyEntryContains,
+  surfaceKeyEntryMatches,
+  type SurfaceKeyEntry,
+} from "../identity/surface-key-grammar.js";
 import { tenantRungRemedy } from "../access/tenant-admission.js";
 import { DM_ANCHOR_DOMAIN_PREFIX } from "../channels/window-key.js";
 import { domainCredentialProblems, type DomainCredentialOverride } from "../access/domain-credentials.js";
@@ -90,30 +98,11 @@ export interface DomainRouting {
   readonly via: DomainVia;
 }
 
-type ContainerEntry =
-  | { readonly kind: "tenant"; readonly platform: string; readonly tenant: string }
-  | { readonly kind: "surface"; readonly platform: string; readonly tenant: string; readonly prefix: string; readonly glob: boolean };
+type ContainerEntry = SurfaceKeyEntry;
 
-function parseContainerEntry(entry: string): ContainerEntry | undefined {
-  const segs = entry.split("/");
-  const [platform, tenant, surface] = segs;
-  if (!platform || !tenant || platform.includes("*") || tenant.includes("*")) return undefined;
-  if (segs.length === 2) return { kind: "tenant", platform, tenant };
-  if (segs.length !== 3 || surface === undefined) return undefined;
-  const star = surface.indexOf("*");
-  if (star === -1) return surface === "" ? undefined : { kind: "surface", platform, tenant, prefix: surface, glob: false };
-  if (star !== surface.length - 1) return undefined;
-  return { kind: "surface", platform, tenant, prefix: surface.slice(0, -1), glob: true };
-}
+const parseContainerEntry = parseSurfaceKeyEntry;
 
-function entryMatchesKey(e: ContainerEntry, channelKey: string): boolean {
-  const segs = channelKey.split("/");
-  if (segs[0] !== e.platform || segs[1] !== e.tenant) return false;
-  if (e.kind === "tenant") return true;
-  if (segs.length !== 3) return false;
-  const surface = segs[2] ?? "";
-  return e.glob ? surface.startsWith(e.prefix) : surface === e.prefix;
-}
+const entryMatchesKey = surfaceKeyEntryMatches;
 
 function firstMatching(entries: readonly string[] | undefined, channelKey: string): string | undefined {
   for (const entry of entries ?? []) {
@@ -233,8 +222,16 @@ export function assertUnifiedDomainTrust(domains: readonly Domain[]): void {
 
 export const BINDING_TRUSTED_PLATFORMS: ReadonlySet<string> = new Set(["slack", "local"]);
 
-export function assertWindowSourcesVouched(domains: readonly Domain[], vouched: readonly string[]): void {
+export type VouchedInternalFor = (workspaceKey: string, surfaceKey: string) => boolean;
+
+function vouchedPredicate(vouched: readonly string[] | VouchedInternalFor): VouchedInternalFor {
+  if (typeof vouched === "function") return vouched;
   const vset = new Set(vouched);
+  return (workspaceKey, surfaceKey) => vset.has(workspaceKey) || vset.has(surfaceKey);
+}
+
+export function assertWindowSourcesVouched(domains: readonly Domain[], vouched: readonly string[] | VouchedInternalFor): void {
+  const isInternal = vouchedPredicate(vouched);
   const trustEnv = (process.env.OE_TRUST ?? "").trim().toLowerCase() === "internal";
   const bad: string[] = [];
   for (const d of domains) {
@@ -246,7 +243,7 @@ export function assertWindowSourcesVouched(domains: readonly Domain[], vouched: 
       const platform = segs[0] ?? "";
       if (BINDING_TRUSTED_PLATFORMS.has(platform)) continue;
       const workspaceKey = segs.slice(0, 2).join("/");
-      const okay = vset.has(workspaceKey) || vset.has(ch) || trustEnv;
+      const okay = isInternal(workspaceKey, ch) || trustEnv;
       if (!okay) {
         bad.push(
           `  domain "${d.name}" includes UN-vouched source "${ch}" in a multi-source (${channels.length}-channel) cross-surface window — vouch it in agent/identity/surfaces.ts (add "${ch}" or its workspace "${workspaceKey}"), or set OE_TRUST=internal for an internal-only deploy`,
@@ -282,8 +279,8 @@ export function governanceDeliveryMode(domains: readonly Domain[]): GovernanceDe
   return criteriaDomain("org", domains)?.governanceDelivery === "dm-fallback" ? "dm-fallback" : "channel";
 }
 
-export function assertGovernanceDomains(domains: readonly Domain[], vouched: readonly string[]): void {
-  const vset = new Set(vouched);
+export function assertGovernanceDomains(domains: readonly Domain[], vouched: readonly string[] | VouchedInternalFor): void {
+  const isInternal = vouchedPredicate(vouched);
   const trustEnv = (process.env.OE_TRUST ?? "").trim().toLowerCase() === "internal";
   const bad: string[] = [];
   for (const d of domains) {
@@ -314,7 +311,7 @@ export function assertGovernanceDomains(domains: readonly Domain[], vouched: rea
       const platform = segs[0] ?? "";
       if (BINDING_TRUSTED_PLATFORMS.has(platform)) continue;
       const workspaceKey = segs.slice(0, 2).join("/");
-      if (!(vset.has(workspaceKey) || vset.has(ch) || trustEnv)) {
+      if (!(isInternal(workspaceKey, ch) || trustEnv)) {
         bad.push(`  "${d.name}" is governance but its channel "${ch}" is not operator-vouched-internal — vouch it in agent/identity/surfaces.ts (add "${ch}" or its workspace "${workspaceKey}"), or set OE_TRUST=internal for an internal-only deploy`);
       }
     }
@@ -505,22 +502,9 @@ export function reasoningCeilingForDomain(
   return ceiling;
 }
 
-function entriesIntersect(a: ContainerEntry, b: ContainerEntry): boolean {
-  if (a.platform !== b.platform || a.tenant !== b.tenant) return false;
-  if (a.kind === "tenant" || b.kind === "tenant") return true;
-  if (a.glob && b.glob) return a.prefix.startsWith(b.prefix) || b.prefix.startsWith(a.prefix);
-  if (a.glob) return b.prefix.startsWith(a.prefix);
-  if (b.glob) return a.prefix.startsWith(b.prefix);
-  return a.prefix === b.prefix;
-}
+const entriesIntersect = surfaceKeyEntriesIntersect;
 
-function entryContains(outer: ContainerEntry, inner: ContainerEntry): boolean {
-  if (outer.platform !== inner.platform || outer.tenant !== inner.tenant) return false;
-  if (outer.kind === "tenant") return true;
-  if (inner.kind === "tenant") return false;
-  if (!outer.glob) return !inner.glob && inner.prefix === outer.prefix;
-  return inner.prefix.startsWith(outer.prefix);
-}
+const entryContains = surfaceKeyEntryContains;
 
 function exclusionCovering(domain: Domain, set: ContainerEntry): string | undefined {
   for (const entry of domain.excludeContainers ?? []) {
@@ -607,8 +591,17 @@ export function assertDomainsValid(domains: readonly Domain[]): void {
       bad.push(`  "${d.name}" must have EITHER explicit membership (channels and/or containers) OR match (criteria), not ${hasExplicit ? "both" : "neither"}`);
     }
     const claimEntries: { readonly entry: string; readonly parsed: ContainerEntry }[] = [];
+    for (const key of [...(d.containers ?? []), ...(d.excludeContainers ?? [])]) {
+      const seg3 = key.split("/")[2];
+      if (seg3 !== undefined && isGroupSegment(seg3)) {
+        bad.push(
+          `  "${d.name}" names container "${key}", which uses the GROUP rung (\`<marker>:<id>\`) — that shape belongs to the TRUST registry (agent/identity/surfaces.ts), never to a memory domain. A memory key is \`platform/<tenant>\` or \`platform/<tenant>/<surface>\`, and no surface segment can contain a colon, so this entry could never match anything.`,
+        );
+      }
+    }
     for (const key of d.containers ?? []) {
       const parsed = parseContainerEntry(key);
+      if (parsed?.kind === "group") continue;
       if (parsed) {
         if (parsed.kind === "surface" && !parsed.glob) {
           bad.push(
@@ -628,6 +621,7 @@ export function assertDomainsValid(domains: readonly Domain[]): void {
     }
     for (const key of d.excludeContainers ?? []) {
       const parsed = parseContainerEntry(key);
+      if (parsed?.kind === "group") continue;
       if (!parsed || parsed.kind === "tenant") {
         bad.push(
           parsed

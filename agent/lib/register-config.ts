@@ -5,7 +5,7 @@ import { setRegisteredProviders } from "@open-everywhere/core/agent/access/provi
 import { assertRoutesWithinPolicy } from "@open-everywhere/core/agent/model/policy.js";
 import { assertDomainCredentialsResolvable } from "@open-everywhere/core/agent/access/domain-credentials.js";
 import { assertWindowSourcesVouched, assertGovernanceDomains, assertComplianceDomains, assertReportChannels } from "@open-everywhere/core/agent/memory/domain.js";
-import { vouchedSurfaces } from "@open-everywhere/core/agent/identity/trust.js";
+import { isVouchedInternal } from "@open-everywhere/core/agent/identity/trust.js";
 import { loadBundles, loadBindings } from "../access/bundles.js";
 import { loadProviders } from "../access/providers.js";
 import { loadAccessRequests } from "../access/access-requests.js";
@@ -49,9 +49,9 @@ setRegisteredProviders(loadProviders());
 
 assertRoutesWithinPolicy(loadDomains(), loadRoles(), loadModelPolicy());
 
-assertWindowSourcesVouched(loadDomains(), vouchedSurfaces());
+assertWindowSourcesVouched(loadDomains(), isVouchedInternal);
 
-assertGovernanceDomains(loadDomains(), vouchedSurfaces());
+assertGovernanceDomains(loadDomains(), isVouchedInternal);
 
 assertReportChannels(loadDomains());
 

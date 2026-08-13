@@ -2,7 +2,16 @@ import type { SessionMode } from "../access/resolver.js";
 import { readBindingBridge, bridgedContext, type BridgedIdentity } from "./binding-bridge.js";
 import { normalizePlatform, platformFromKind } from "./platform.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
-import { isVouchedInternal } from "./trust.js";
+import { declaredSurfaceTrust } from "./trust.js";
+
+function trustGroupKey(
+  platform: string,
+  workspace: string,
+  group: string | undefined,
+): { readonly groupKey: string } | undefined {
+  if (group === undefined || !/^[a-zA-Z0-9._-]+:[a-zA-Z0-9._-]+$/.test(group)) return undefined;
+  return { groupKey: `${platform}/${workspace}/${group}` };
+}
 import { UNNAMED_TENANT } from "./principal-key.js";
 import { bareTokenFromEveContext, classifySessionId, parseWindowToken, sessionGrantKeyFromToken } from "../channels/window-key.js";
 import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
@@ -134,6 +143,7 @@ export interface RawIdentity {
   readonly visibility?: Visibility;
   readonly trust?: Trust;
   readonly trustVerified?: boolean;
+  readonly trustGroup?: string;
   readonly principalId?: string;
   readonly target?: Readonly<Record<string, unknown>>;
   readonly threadTs?: string;
@@ -349,11 +359,19 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
   const mode = raw.mode ?? local.mode ?? "channel";
   const workspace = seg(raw.workspace ?? local.workspace, UNNAMED_TENANT);
   const surface = seg(raw.surface ?? local.surface, "default");
-  const vouched = isVouchedInternal(`${platform}/${workspace}`, `${platform}/${workspace}/${surface}`)
-    ? ("internal" as const)
-    : undefined;
+  const domainSurfaceSeg = raw.domainSurface ? seg(raw.domainSurface, surface) : undefined;
+  const declared = declaredSurfaceTrust({
+    tenantKey: `${platform}/${workspace}`,
+    surfaceKeys:
+      domainSurfaceSeg !== undefined && domainSurfaceSeg !== surface
+        ? [`${platform}/${workspace}/${surface}`, `${platform}/${workspace}/${domainSurfaceSeg}`]
+        : [`${platform}/${workspace}/${surface}`],
+    ...(trustGroupKey(platform, workspace, raw.trustGroup) ?? {}),
+  });
+  const vouched = declared === "internal" ? ("internal" as const) : undefined;
+  const declaredExternal = mode === "channel" && declared === "public" ? ("external" as const) : undefined;
   const fireTrust: Trust | undefined = fire?.internal === true ? "internal" : undefined;
-  let trust = raw.trust ?? fireTrust ?? vouched ?? local.trust ?? (platform === "local" ? "internal" : "external");
+  let trust = declaredExternal ?? raw.trust ?? fireTrust ?? vouched ?? local.trust ?? (platform === "local" ? "internal" : "external");
   if (
     mode === "dm" &&
     platform !== "local" &&
@@ -369,8 +387,7 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
     platform,
     workspace,
     surface,
-    domainSurface:
-      raw.domainSurface && seg(raw.domainSurface, surface) !== surface ? seg(raw.domainSurface, surface) : undefined,
+    domainSurface: domainSurfaceSeg !== undefined && domainSurfaceSeg !== surface ? domainSurfaceSeg : undefined,
     mode,
     visibility: raw.visibility ?? local.visibility ?? "public",
     trust,

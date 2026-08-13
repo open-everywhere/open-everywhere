@@ -12,6 +12,7 @@ import {
   preRegisterDynamicEntry,
   resolvePartition,
   declaredWorkspaceTrust,
+  type SurfaceTrust,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -69,7 +70,7 @@ export const readNotionCommentsEntry = defineTool({
     blocksScanned: z.number(),
     truncated: z.boolean(),
     text: z.string(),
-    workspaceTrust: z.literal("internal").optional(),
+    workspaceTrust: z.enum(["internal", "public"]).optional(),
   }),
   async execute(input, ctx2) {
     assertTurnSurface(ctx2 as BindableContext, "notion");
@@ -88,7 +89,7 @@ export const readNotionCommentsEntry = defineTool({
       maxComments: MAX_COMMENTS,
       maxBlockScans: MAX_BLOCK_SCANS,
     });
-    let workspaceTrust: "internal" | undefined;
+    let workspaceTrust: SurfaceTrust | undefined;
     try {
       workspaceTrust = declaredWorkspaceTrust(resolvePartition(ctx2 as BindableContext).workspaceKey);
     } catch {
