@@ -117,11 +117,12 @@ test("a delegated child taints itself: marking, injected judge verdict, refuse-t
   const parentResumed = handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1);
   expect(parentResumed).toBeDefined();
   expect(parentResumed!.toolResults.some((t) => t.name === "agent" && !t.isError)).toBe(true);
+  expect(parentResumed!.tools).toContain("agent");
   const parentTerminal = handle.requests.find((r) => r.role === "parent" && r.stepIndex === 2);
   expect(parentTerminal).toBeDefined();
   const secondDelegation = parentTerminal!.toolResults.filter((t) => t.name === "agent");
   expect(secondDelegation.length).toBe(2);
-  expect(secondDelegation.some((t) => t.isError)).toBe(true);
+  expect(secondDelegation.every((t) => !t.isError)).toBe(true);
 
   const rows = await waitFor(async () => {
     const got = await readAuditRows({ actions: ["approval.chain", "approval.judge.verdict", "reply.post", "taint.forward"], sinceIso });
@@ -149,7 +150,16 @@ test("a delegated child taints itself: marking, injected judge verdict, refuse-t
 
   const forward = rows.filter((r) => r.action === "taint.forward");
   const marked = forward.filter((r) => r.detail?.leg === "mark");
-  expect(new Set(marked.map((r) => String(r.detail?.session))).size).toBe(2);
+  const adopted = forward.filter((r) => r.detail?.leg === "adopt");
+
+  expect(adopted.length).toBeGreaterThanOrEqual(1);
+  const joined = adopted.filter((a) =>
+    marked.some((m) => String(m.detail?.session) === String(a.detail?.parentSession) && String(m.detail?.turn) === String(a.detail?.parentTurn)),
+  );
+  expect(joined.length).toBeGreaterThanOrEqual(1);
+  for (const a of joined) expect(String(a.detail?.session)).not.toBe(String(a.detail?.parentSession));
+
+  expect(new Set(marked.map((r) => String(r.detail?.session))).size).toBe(3);
   for (const r of marked) expect(String(r.detail?.turn ?? "")).not.toBe("");
 
   const reply = rows.find((r) => r.action === "reply.post");
@@ -176,8 +186,8 @@ test("negative control: the same run without the upload — no refusal, no marki
     }),
   );
 
-  const wakeAt = Date.now() - 1_000;
-  const sinceIso = new Date(wakeAt).toISOString();
+  const wakeAt = Date.now();
+  const sinceIso = new Date(wakeAt - 1_000).toISOString();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please set things up" });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
@@ -209,4 +219,7 @@ test("negative control: the same run without the upload — no refusal, no marki
   expect(parentTerminal).toBeDefined();
   expect(parentTerminal!.tools).toContain("agent");
   expect(parentTerminal!.toolResults.some((t) => t.name === "agent" && !t.isError)).toBe(true);
+
+  const forwardRows = await readAuditRows({ actions: ["taint.forward"], sinceIso });
+  expect(forwardRows.filter((r) => new Date(r.ts).getTime() >= wakeAt).map((r) => r.detail?.leg)).toEqual([]);
 });

@@ -1,7 +1,7 @@
 import { defineHook, type HookContext, type HookEvent } from "eve/hooks";
 import { recordRequesterMessage } from "../access/requester-messages.js";
 import { FIRE_UNATTENDED_ATTR } from "../identity/binding.js";
-import { TAINT_SEED_ATTRS } from "./spawn-taint.js";
+import { parentTurnTaintStampMatches, TAINT_SEED_ATTRS } from "./spawn-taint.js";
 
 function currentAttrs(ctx: HookContext): Record<string, unknown> | undefined {
   return (ctx as { session?: { auth?: { current?: { attributes?: Record<string, unknown> } | null } } }).session?.auth?.current?.attributes;
@@ -18,6 +18,7 @@ export function captureEligible(ctx: HookContext): boolean {
   for (const name of TAINT_SEED_ATTRS) {
     if (stampedTrue(attrs?.[name])) return false;
   }
+  if (parentTurnTaintStampMatches(ctx)) return false;
   return true;
 }
 

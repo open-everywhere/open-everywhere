@@ -13,7 +13,7 @@ import {
 } from "../agent/access/approval-judge.js";
 import { markUntrustedIngestedThisTurn, untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
 import { nativeAgentAllowedNow, setNativeDelegationSeat } from "../agent/access/native-delegation-state.js";
-import { seedIfTainted } from "../agent/hooks/spawn-taint.js";
+import { openTaintTurn, seedIfTainted, OE_PARENT_TURN_TAINTED_ATTR } from "../agent/hooks/spawn-taint.js";
 import { OE_SPAWN_TAINTED_ATTR } from "../agent/channels/unified.js";
 import { resetSettingsForTest } from "../agent/settings/settings.js";
 
@@ -179,7 +179,7 @@ console.log("4 — the judge's allow cache is invalidated by taint arriving mid-
   }
 }
 
-console.log("5 — the native child carries NO taint mark, so sections 1-4 are inert for it:");
+console.log("5 — a native child of a tainted parent turn is MARKED, so sections 1-4 apply to it:");
 {
   await inSession(() => {
     const ctx = { session: { auth: { current: { attributes: { [OE_SPAWN_TAINTED_ATTR]: "true" } } } } };
@@ -187,19 +187,43 @@ console.log("5 — the native child carries NO taint mark, so sections 1-4 are i
     eq(untrustedIngestedThisTurn(), true, "[5] POSITIVE CONTROL: the `oe_spawn_tainted` seed consumer WORKS — a stamped opening auth taints the child's turn");
   });
 
-  const parentBag: Record<string, string> = { oe_window_grain: "standing" };
+  const parentBag: Record<string, unknown> = { oe_window_grain: "standing" };
   await inSession(() => {
+    const parent = { session: { id: "wplane-parent", turn: { id: "turn_4", sequence: 4 }, auth: { current: { attributes: parentBag } } } };
+    openTaintTurn(parent as never);
     markUntrustedIngestedThisTurn("web");
     ok(untrustedIngestedThisTurn(), "[5] precondition: the PARENT turn is tainted");
+    eq(parentBag[OE_PARENT_TURN_TAINTED_ATTR], "wplane-parent|turn_4", "[5] 🔴 THE STAMP: the tainted parent turn wrote its own (session, turn) pair into the auth bag eve copies");
   });
   await inSession(() => {
-    seedIfTainted({ session: { auth: { current: { attributes: { ...parentBag } } } } } as never);
+    const child = {
+      session: {
+        id: "wplane-child",
+        turn: { id: "turn_0", sequence: 0 },
+        parent: { sessionId: "wplane-parent", callId: "call_w1", turn: { id: "turn_4", sequence: 4 } },
+        auth: { current: { attributes: { ...parentBag } } },
+      },
+    };
+    openTaintTurn(child as never);
     eq(
       untrustedIngestedThisTurn(),
-      false,
-      "[5] 🔴 THE GAP, MEASURED: a native child of a TAINTED parent turn starts CLEAN. The parent's mid-turn taint never entered the auth bag, so no TAINT_SEED_ATTRS stamp reaches the child. Delete this assertion when OPE-465 lands a replay-safe carriage",
+      true,
+      "[5] 🔴 THE CARRIAGE, MEASURED: a native child of a TAINTED parent turn starts MARKED — so sections 1-4 above (the judge signal, the ask-floor, the cache invalidation) all apply to it",
     );
-    eq(untrustedIngestedThisTurn(), false, "[5] …asserted `=== false`, not merely absent — a clean child is what every downstream sink would read");
+  });
+
+  await inSession(() => {
+    const cleanBag: Record<string, unknown> = { oe_window_grain: "standing" };
+    const child = {
+      session: {
+        id: "wplane-child-clean",
+        turn: { id: "turn_0", sequence: 0 },
+        parent: { sessionId: "wplane-parent-clean", callId: "call_w2", turn: { id: "turn_4", sequence: 4 } },
+        auth: { current: { attributes: cleanBag } },
+      },
+    };
+    openTaintTurn(child as never);
+    eq(untrustedIngestedThisTurn(), false, "[5] 🔴 NEGATIVE CONTROL: a child of a CLEAN parent turn starts clean — asserted `=== false`, not merely falsy");
   });
 
   await inSession(() => {
@@ -208,9 +232,15 @@ console.log("5 — the native child carries NO taint mark, so sections 1-4 are i
     markUntrustedIngestedThisTurn("web");
     eq(
       nativeAgentAllowedNow(),
-      false,
-      "[5] 🔴 THE WITHDRAWAL STILL FIRES, and it is load-bearing: with no mark reaching the child, lifting it would let a tainted turn dispatch a CLEAN wide-handed worker — laundering, not merely widening",
+      true,
+      "[5] 🔴 THE WITHDRAWAL IS LIFTED (OPE-471): a tainted turn KEEPS `agent`, because the child it dispatches is marked. The launder path is closed by PROPAGATION, not by absence",
     );
+  });
+
+  await inSession(() => {
+    setNativeDelegationSeat("unclassified");
+    markUntrustedIngestedThisTurn("web");
+    eq(nativeAgentAllowedNow(), false, "[5] 🔴 NEGATIVE CONTROL: an unclassified seat is still refused `agent` on the same tainted turn");
   });
 }
 

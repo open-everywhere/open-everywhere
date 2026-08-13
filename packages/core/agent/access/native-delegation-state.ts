@@ -1,5 +1,4 @@
 import { defineState } from "eve/context";
-import { untrustedIngestedThisTurn } from "./taint-signal.js";
 
 export type NativeDelegationVerdict =
   | "allow"
@@ -25,6 +24,5 @@ export function currentNativeDelegationSeat(): NativeDelegationVerdict {
 }
 
 export function nativeAgentAllowedNow(): boolean {
-  if (currentNativeDelegationSeat() !== "allow") return false;
-  return !untrustedIngestedThisTurn();
+  return currentNativeDelegationSeat() === "allow";
 }

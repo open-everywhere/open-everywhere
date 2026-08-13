@@ -31,7 +31,7 @@ import {
 } from "../agent/access/taint-signal.js";
 import { ingestUntrusted, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 import { nativeAgentAllowedNow, setNativeDelegationSeat } from "../agent/access/native-delegation-state.js";
-import { announceTaintOff, openTaintTurn } from "../agent/hooks/spawn-taint.js";
+import { announceTaintOff, openTaintTurn, OE_PARENT_TURN_TAINTED_ATTR } from "../agent/hooks/spawn-taint.js";
 import {
   chainAuditDetail,
   renderChainResolution,
@@ -319,22 +319,39 @@ console.log("5 — off: the four gate-tier sinks resolve at their registry basel
   });
 }
 
-console.log("6 — off: native delegation is never withdrawn:");
+console.log("6 — off: the forward taint stamp is never written:");
 {
+  const forwardBag = (id: string, turn: string) => ({ session: { id, turn: { id: turn, sequence: 0 }, auth: { current: { attributes: {} as Record<string, unknown> } } } });
+
   await withMode("on", async () => {
     await inSession(() => {
+      const ctx = forwardBag("tm-on", "turn_0");
+      openTaintTurn(ctx as never);
       setNativeDelegationSeat("allow");
       ok(nativeAgentAllowedNow(), "[6/on] a classified `allow` seat holds the built-in on a clean turn");
+      eq(ctx.session.auth.current.attributes[OE_PARENT_TURN_TAINTED_ATTR], undefined, "[6/on] …and a clean turn stamps nothing");
       hostileRead();
-      ok(!nativeAgentAllowedNow(), "[6/on] 🔴 …and LOSES it the moment the turn ingests untrusted content — the launder fence");
+      eq(
+        ctx.session.auth.current.attributes[OE_PARENT_TURN_TAINTED_ATTR],
+        "tm-on|turn_0",
+        "[6/on] 🔴 …and the moment the turn ingests untrusted content it STAMPS its own auth bag — the fact eve copies into every native child it then dispatches",
+      );
+      ok(nativeAgentAllowedNow(), "[6/on] …while the verb itself survives: the launder path is closed by propagation, not by withdrawal (OPE-471)");
     });
   });
 
   await withMode("off", async () => {
     await inSession(() => {
+      const ctx = forwardBag("tm-off", "turn_0");
+      openTaintTurn(ctx as never);
       setNativeDelegationSeat("allow");
       hostileRead();
-      ok(nativeAgentAllowedNow(), "[6/off] 🔴 the verb SURVIVES the same read — no code changed at the withdrawal site; the taint conjunct is simply constant-true");
+      eq(
+        ctx.session.auth.current.attributes[OE_PARENT_TURN_TAINTED_ATTR],
+        undefined,
+        "[6/off] 🔴 the same read stamps NOTHING — asserted `=== undefined`. No code changed at the stamp site; the mark that drives it is simply never written",
+      );
+      ok(nativeAgentAllowedNow(), "[6/off] …and the verb survives here too, for the same reason it does when the model is on");
     });
     await inSession(() => {
       setNativeDelegationSeat("leaf");
@@ -420,13 +437,16 @@ console.log("9 — the SHIPPED default (nothing registered) is the unchanged, fu
   resetSettingsForTest();
   ok(taintEnabled(), "[9] nothing registered ⇒ the model is ON");
   await inSession(async () => {
+    const ctx = { session: { id: "tm-default", turn: { id: "turn_0", sequence: 0 }, auth: { current: { attributes: {} as Record<string, unknown> } } } };
+    openTaintTurn(ctx as never);
     hostileRead();
     ok(untrustedIngestedThisTurn(), "[9] an undeclared read marks the turn");
     ok(decideIngestion({ kind: "web" }, true), "[9] the table decides, and says untrusted for the open web");
     ok(!decideIngestion({ kind: "chat-message" }, true), "[9] …and trusted for member-authored chat (the OPE-324 relaxation, intact)");
     eq(taintedFireAttrs(untrustedIngestedThisTurn()), { [OE_TAINTED_FIRE_ATTR]: "true" }, "[9] the cross-process stamps ride");
+    eq(ctx.session.auth.current.attributes[OE_PARENT_TURN_TAINTED_ATTR], "tm-default|turn_0", "[9] …and so does the native forward stamp, on the shipped default");
     setNativeDelegationSeat("allow");
-    ok(!nativeAgentAllowedNow(), "[9] native delegation is withdrawn for the rest of the tainted turn");
+    ok(nativeAgentAllowedNow(), "[9] native delegation SURVIVES the tainted turn — the child it dispatches inherits the stamp above (OPE-471)");
     const req: ApprovalChainRequest = { tool: "declare_webhook", unattended: false, principalId: "U1" };
     const res = await resolveApproverChain(req, { approvers: [{ name: "domain-lower", approve: () => "allow" as const }] });
     eq(res.verdict, "ask", "[9] a gate-tier sink is floored at a human decision, so an operator lowering cannot auto-approve it");
