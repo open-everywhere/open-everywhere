@@ -385,11 +385,13 @@ function throwingFetch(): typeof fetch {
   }
 
   const savedDiscordToken = process.env.DISCORD_BOT_TOKEN;
+  const savedGithubAppId = process.env.OE_GITHUB_APP_ID;
   const savedMicrosoftAppId = process.env.MICROSOFT_APP_ID;
   try {
     clearTelemetryEnv();
     process.env.MICROSOFT_APP_ID = "test-app-id";
     delete process.env.DISCORD_BOT_TOKEN;
+    delete process.env.OE_GITHUB_APP_ID;
     let surfaces = await heartbeatSurfaces("instance-surfaces-a");
     ok(surfaces.includes("teams") === false, "surfaces: MICROSOFT_APP_ID alone no longer reports teams (core's inline arm is gone)");
 
@@ -397,16 +399,30 @@ function throwingFetch(): typeof fetch {
     surfaces = await heartbeatSurfaces("instance-surfaces-b");
     ok(surfaces.filter((s) => s === "teams").length === 1, "surfaces: a registered probe reports teams exactly once");
 
-    process.env.DISCORD_BOT_TOKEN = "test-token";
-    registerSurfaceCredentialProbe("discord", () => true);
+    process.env.DISCORD_BOT_TOKEN = "test-discord-token";
     surfaces = await heartbeatSurfaces("instance-surfaces-c");
-    ok(
-      surfaces.filter((s) => s === "discord").length === 1,
-      "surfaces: an inline platform double-registered via the probe registry still reports exactly once",
-    );
+    ok(surfaces.includes("discord") === false, "surfaces: DISCORD_BOT_TOKEN alone no longer reports discord (core's inline arm is gone)");
+
+    registerSurfaceCredentialProbe("discord", () => Boolean(process.env.DISCORD_BOT_TOKEN));
+    surfaces = await heartbeatSurfaces("instance-surfaces-d");
+    ok(surfaces.filter((s) => s === "discord").length === 1, "surfaces: a registered probe reports discord exactly once");
+
+    process.env.OE_GITHUB_APP_ID = "test-app-id";
+    surfaces = await heartbeatSurfaces("instance-surfaces-e");
+    ok(surfaces.includes("github") === false, "surfaces: OE_GITHUB_APP_ID alone no longer reports github (core's inline arm is gone)");
+
+    registerSurfaceCredentialProbe("github", () => Boolean(process.env.OE_GITHUB_APP_ID));
+    surfaces = await heartbeatSurfaces("instance-surfaces-f");
+    ok(surfaces.filter((s) => s === "github").length === 1, "surfaces: a registered probe reports github exactly once");
+
+    registerSurfaceCredentialProbe("discord", () => true);
+    surfaces = await heartbeatSurfaces("instance-surfaces-g");
+    ok(surfaces.filter((s) => s === "discord").length === 1, "surfaces: replacing an already-registered probe still reports its platform exactly once");
   } finally {
     if (savedDiscordToken === undefined) delete process.env.DISCORD_BOT_TOKEN;
     else process.env.DISCORD_BOT_TOKEN = savedDiscordToken;
+    if (savedGithubAppId === undefined) delete process.env.OE_GITHUB_APP_ID;
+    else process.env.OE_GITHUB_APP_ID = savedGithubAppId;
     if (savedMicrosoftAppId === undefined) delete process.env.MICROSOFT_APP_ID;
     else process.env.MICROSOFT_APP_ID = savedMicrosoftAppId;
     clearTelemetryEnv();

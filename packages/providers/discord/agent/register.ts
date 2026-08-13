@@ -14,6 +14,7 @@ import {
   registerProviderDocs,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
+import { registerDiscordOps } from "./ops.js";
 import { resolveDiscordTarget, discordReportTargetFor } from "./channels/discord-dispatch-target.js";
 import { bindDiscord } from "./channels/discord-identity.js";
 import { discordPostArm } from "./channels/discord-post-arm.js";
@@ -44,4 +45,5 @@ export function registerDiscordProvider(): void {
   });
   registerScopeLabelResolver("discord", discordScopeLabelResolver);
   registerProviderDocs("discord", PROVIDER_DOCS);
+  registerDiscordOps();
 }

@@ -263,8 +263,6 @@ export function registerSurfaceCredentialProbe(platform: string, probe: () => bo
 
 function surfacesWithCreds(): string[] {
   const present = new Set<string>();
-  if (process.env.DISCORD_BOT_TOKEN) present.add("discord");
-  if (process.env.OE_GITHUB_APP_ID) present.add("github");
   for (const [platform, probe] of Object.entries(SURFACE_CREDENTIAL_PROBES)) {
     try {
       if (probe()) present.add(platform);
