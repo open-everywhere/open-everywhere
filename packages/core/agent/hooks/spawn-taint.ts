@@ -8,7 +8,7 @@ import {
   OE_TAINTED_FIRE_ATTR,
   OE_RESULT_TAINTED_ATTR,
 } from "../access/taint-signal.js";
-import { markSubagentTainted, subagentWasTainted } from "../access/subagent-taint.js";
+import { markSubagentTainted, claimSubagentCallClean, markSubagentCallTainted, subagentCallTaintStatus } from "../access/subagent-taint.js";
 import { JOB_TAINT_ATTR } from "../access/job-posture.js";
 import { beginTaintVerdictTurn, registerTaintVerdictSink, taintEnabled, taintMode, type TaintVerdictRow } from "../access/taint-enforcement.js";
 import { appendAudit } from "../audit/audit.js";
@@ -51,6 +51,7 @@ export function seedIfTainted(ctx: HookContext): void {
 }
 
 export function openTaintTurn(ctx: HookContext): void {
+  rememberSubagentIdentity(ctx);
   let turnId: string | undefined;
   try {
     turnId = currentTurnId(ctx as unknown as BindableContext);
@@ -60,7 +61,6 @@ export function openTaintTurn(ctx: HookContext): void {
   beginTaintTurn(turnId);
   beginTaintVerdictTurn(turnId);
   seedIfTainted(ctx);
-  rememberSubagentIdentity(ctx);
   announceTaintOff(ctx);
 }
 
@@ -97,23 +97,42 @@ export function announceTaintOff(ctx: HookContext): boolean {
   }
 }
 
-const subagentIdentity = defineState<{ org: string; sessionId: string } | null>(
+const subagentIdentity = defineState<{ org: string; sessionId: string; parent: { sessionId: string; callId: string } | null } | null>(
   "open-everywhere.subagent-taint.identity",
   () => null,
 );
+
+function readParentLink(ctx: HookContext): { sessionId: string; callId: string } | null {
+  const parent = (ctx as { session?: { parent?: { sessionId?: unknown; callId?: unknown } } }).session?.parent;
+  const sessionId = parent?.sessionId;
+  const callId = parent?.callId;
+  if (typeof sessionId === "string" && sessionId.length > 0 && typeof callId === "string" && callId.length > 0) {
+    return { sessionId, callId };
+  }
+  return null;
+}
 
 function rememberSubagentIdentity(ctx: HookContext): void {
   try {
     const c = ctx as unknown as BindableContext;
     const sessionId = (c as { session?: { id?: string } }).session?.id;
     const child = isSubagentChildContext(c) && typeof sessionId === "string" && sessionId.length > 0;
-    subagentIdentity.update(() => (child ? { org: deploymentOrg(), sessionId } : null));
+    const parent = child ? readParentLink(ctx) : null;
+    let firstSightingWithParent = false;
+    subagentIdentity.update((cur) => {
+      if (!child) return null;
+      firstSightingWithParent = cur === null && parent !== null;
+      return { org: deploymentOrg(), sessionId, parent };
+    });
+    if (firstSightingWithParent && parent !== null) {
+      void claimSubagentCallClean(deploymentOrg(), parent.sessionId, parent.callId);
+    }
   } catch {
   }
 }
 
 registerTaintFlipObserver(() => {
-  let who: { org: string; sessionId: string } | null = null;
+  let who: { org: string; sessionId: string; parent: { sessionId: string; callId: string } | null } | null = null;
   try {
     who = subagentIdentity.get();
   } catch {
@@ -121,28 +140,21 @@ registerTaintFlipObserver(() => {
   }
   if (who === null) return;
   void markSubagentTainted(who.org, who.sessionId);
+  if (who.parent !== null) {
+    void markSubagentCallTainted(who.org, who.parent.sessionId, who.parent.callId);
+  }
 });
 
-const dispatchedChildren = defineState<Record<string, string>>("open-everywhere.subagent-taint.children", () => ({}));
-
-export function rememberDispatchedChild(callId: string, childSessionId: string): void {
-  try {
-    if (callId.length === 0 || childSessionId.length === 0) return;
-    dispatchedChildren.update((cur) => ({ ...cur, [callId]: childSessionId }));
-  } catch {
-  }
-}
-
-export async function adoptSubagentTaint(callId: string): Promise<boolean> {
+export async function adoptSubagentTaint(callId: string, ownSessionId: string): Promise<boolean> {
   if (!taintEnabled()) return false;
   try {
-    const childSessionId = dispatchedChildren.get()[callId];
-    if (childSessionId === undefined) return false;
-    if (!(await subagentWasTainted(deploymentOrg(), childSessionId))) return false;
+    const status = await subagentCallTaintStatus(deploymentOrg(), ownSessionId, callId);
+    if (status === false) return false;
     markUntrustedIngestedThisTurn();
     return true;
   } catch {
-    return false;
+    markUntrustedIngestedThisTurn();
+    return true;
   }
 }
 
@@ -150,23 +162,14 @@ export default defineHook({
   events: {
     "turn.started": (_event, ctx) => openTaintTurn(ctx),
 
-    "subagent.called": (event, ctx) => {
-      try {
-        if (isSubagentChildContext(ctx as unknown as BindableContext)) return;
-        const data = event.data as { callId?: unknown; childSessionId?: unknown } | undefined;
-        if (typeof data?.callId === "string" && typeof data.childSessionId === "string") {
-          rememberDispatchedChild(data.callId, data.childSessionId);
-        }
-      } catch {
-      }
-    },
-
     "action.result": async (event, ctx) => {
       try {
         if (isSubagentChildContext(ctx as unknown as BindableContext)) return;
         const result = (event.data as { result?: { kind?: unknown; callId?: unknown } } | undefined)?.result;
         if (result?.kind !== "subagent-result" || typeof result.callId !== "string") return;
-        await adoptSubagentTaint(result.callId);
+        const ownSessionId = (ctx as { session?: { id?: string } }).session?.id;
+        if (typeof ownSessionId !== "string" || ownSessionId.length === 0) return;
+        await adoptSubagentTaint(result.callId, ownSessionId);
       } catch {
       }
     },

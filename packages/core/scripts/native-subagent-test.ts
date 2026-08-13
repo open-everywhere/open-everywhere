@@ -323,7 +323,8 @@ function inSession<T>(fn: () => T): T {
 }
 
 {
-  const { markSubagentTainted, subagentWasTainted, subagentTaintKey } = await import("../agent/access/subagent-taint.js");
+  const { markSubagentTainted, subagentWasTainted, subagentTaintKey, subagentCallTaintKey, subagentCallTaintStatus, claimSubagentCallClean, markSubagentCallTainted } =
+    await import("../agent/access/subagent-taint.js");
   const { getOperationalStore } = await import("../agent/operational/provider.js");
   const { untrustedIngestedThisTurn, markUntrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
   const spawnTaint = await import("../agent/hooks/spawn-taint.js");
@@ -338,6 +339,19 @@ function inSession<T>(fn: () => T): T {
   const undelivered = await getOperationalStore().listUndeliveredTaskResults("default", PARENT_TOKEN, 50);
   ok(undelivered.every((r) => !r.taskId.startsWith("oe-subagent-taint:")), "🔴 D7: the marker carries NO callerToken, so it never appears in listUndeliveredTaskResults — it is a marker, not a result, and nothing will try to deliver it");
 
+  ok(subagentCallTaintKey("sess-parent", "call_x").startsWith("oe-subagent-taint-by-call:"), "🔴 D7 OPE-437: the call-keyed marker is namespaced SEPARATELY from the session-keyed one, so the two rows for one delegation never collide");
+  ok((await subagentCallTaintStatus("default", "sess-parent", "call_never_written")) === undefined, "🔴 D7 OPE-437: an unwritten call marker reads back `undefined`, distinct from `false` — this is the bit the fail-closed read below depends on");
+  await claimSubagentCallClean("default", "sess-parent", "call_probe");
+  eq(await subagentCallTaintStatus("default", "sess-parent", "call_probe"), false, "…a CLEAN claim reads back as the literal boolean `false`, not `undefined`");
+  await markSubagentCallTainted("default", "sess-parent", "call_probe");
+  eq(await subagentCallTaintStatus("default", "sess-parent", "call_probe"), true, "…and the tainted write (the flip observer's) overwrites it to `true`");
+
+  await claimSubagentCallClean("default", "sess-parent", "call_probe");
+  eq(await subagentCallTaintStatus("default", "sess-parent", "call_probe"), true, "🔴 D7 OPE-437 MONOTONIC: a CLEAN claim arriving AFTER a tainted write does NOT clobber it — the claim is put-if-absent, so the row settles on tainted whichever of the two lands last");
+
+  const undeliveredCall = await getOperationalStore().listUndeliveredTaskResults("default", PARENT_TOKEN, 50);
+  ok(undeliveredCall.every((r) => !r.taskId.startsWith("oe-subagent-taint-by-call:")), "…and the call-keyed row is ALSO invisible to the undelivered-result reader, same reasoning as the session-keyed one");
+
   await (async () => {
     const childHookCtx = { ...(childCtx as unknown as Record<string, unknown>), agent: { name: "oe", nodeId: "__root__" } };
     inSession(() => {
@@ -345,7 +359,26 @@ function inSession<T>(fn: () => T): T {
       markUntrustedIngestedThisTurn();
     });
     await new Promise((r) => setTimeout(r, 50));
-    ok(await subagentWasTainted("default", "sess-child"), "🔴 D7 CHILD SIDE: a child that taints itself persists the marker at MARK time, through the taint-signal flip observer — no dependence on any child lifecycle event");
+    ok(await subagentWasTainted("default", "sess-child"), "🔴 D7 CHILD SIDE: a child that taints itself persists the session-keyed marker at MARK time, through the taint-signal flip observer — no dependence on any child lifecycle event");
+    eq(await subagentCallTaintStatus("default", "sess-parent", "call_1"), true, "🔴 D7 OPE-437 CHILD SIDE: the SAME flip ALSO persists the call-keyed marker, addressed by the PARENT's own session id + callId taken from `ctx.session.parent` — no `subagent.called` event involved anywhere in this path");
+  })();
+
+  await (async () => {
+    const seededChildHookCtx = {
+      channel: { kind: "subagent", continuationToken: "subagent:sess-parent:call_seeded" },
+      session: {
+        id: "sess-seeded-child",
+        parent: { sessionId: "sess-parent", callId: "call_seeded", rootSessionId: "sess-parent", turn: { id: "turn_1", sequence: 1 } },
+        auth: { current: { attributes: { ...PARENT_ATTRS, oe_result_tainted: "true" }, principalId: "UPROBE393", principalType: "slack-user" } },
+      },
+      agent: { name: "oe", nodeId: "__root__" },
+    };
+    inSession(() => {
+      spawnTaint.openTaintTurn(seededChildHookCtx as never);
+      ok(untrustedIngestedThisTurn(), "precondition: the seed attribute taints the child INSIDE openTaintTurn — the clean claim and the tainted write are issued on the same tick");
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    eq(await subagentCallTaintStatus("default", "sess-parent", "call_seeded"), true, "🔴 D7 OPE-437 SAME TICK: a child tainted from its very first turn settles the call marker on TAINTED — the eager clean claim cannot win the race, because it is put-if-absent and the tainted write is an upsert");
   })();
 
   inSession(() => {
@@ -354,7 +387,7 @@ function inSession<T>(fn: () => T): T {
     markUntrustedIngestedThisTurn();
   });
   await new Promise((r) => setTimeout(r, 50));
-  ok(!(await subagentWasTainted("default", "sess-parent")), "…and a ROOT session's own taint writes no marker: one slot read, no I/O, on every ordinary turn in the deployment");
+  ok(!(await subagentWasTainted("default", "sess-parent")), "…and a ROOT session's own taint writes no session-keyed marker: one slot read, no I/O, on every ordinary turn in the deployment");
 
   await (async () => {
     let adopted = false;
@@ -362,26 +395,41 @@ function inSession<T>(fn: () => T): T {
       const parentHookCtx = { ...(parentCtx as unknown as Record<string, unknown>), agent: { name: "oe", nodeId: "__root__" } };
       spawnTaint.openTaintTurn(parentHookCtx as never);
       ok(!untrustedIngestedThisTurn(), "the parent's turn starts CLEAN");
-      spawnTaint.rememberDispatchedChild("call_1", "sess-dirty-child");
-      adopted = await spawnTaint.adoptSubagentTaint("call_1");
+      adopted = await spawnTaint.adoptSubagentTaint("call_1", "sess-parent");
       ok(untrustedIngestedThisTurn(), "🔴 D7 PARENT SIDE: a TAINTED child's result marks the parent's own turn — the subagent-result lands RAW in the parent's history with no toModelOutput seam (OPE-73 class), so without this the parent would `remember`, `create_routine` and `create_skill` over hostile-derived prose with a clean signal");
     });
-    ok(adopted, "…and the adoption reports that it fired");
+    eq(adopted, true, "…and the adoption reports that it fired");
   })();
 
   await contextStorage.run(new ContextContainer(), async () => {
+    const cleanChildHookCtx = {
+      channel: { kind: "subagent", continuationToken: "subagent:sess-parent:call_clean" },
+      session: {
+        id: "sess-clean-child-2",
+        parent: { sessionId: "sess-parent", callId: "call_clean", rootSessionId: "sess-parent", turn: { id: "turn_1", sequence: 1 } },
+        auth: { current: { attributes: { ...PARENT_ATTRS }, principalId: "UPROBE393", principalType: "slack-user" } },
+      },
+      agent: { name: "oe", nodeId: "__root__" },
+    };
+    inSession(() => spawnTaint.openTaintTurn(cleanChildHookCtx as never));
+    await new Promise((r) => setTimeout(r, 50));
+    eq(await subagentCallTaintStatus("default", "sess-parent", "call_clean"), false, "the eager claim leaves a POSITIVE known-clean row for a child that never taints");
+
     const parentHookCtx = { ...(parentCtx as unknown as Record<string, unknown>), agent: { name: "oe", nodeId: "__root__" } };
     spawnTaint.openTaintTurn(parentHookCtx as never);
-    spawnTaint.rememberDispatchedChild("call_9", "sess-clean-child");
-    const adopted = await spawnTaint.adoptSubagentTaint("call_9");
-    ok(!adopted && !untrustedIngestedThisTurn(), "🔴 D7: a CLEAN child does NOT taint the parent — the bit is the child's own judgement about its own turn, and over-tainting is the failure mode OPE-299 removed");
+    const adopted = await spawnTaint.adoptSubagentTaint("call_clean", "sess-parent");
+    eq(adopted, false, "🔴 D7 NEGATIVE CONTROL: a CLEAN child does NOT taint the parent — asserted `=== false`, not merely falsy or absent");
+    eq(untrustedIngestedThisTurn(), false, "…and the parent's own turn signal reads `=== false` too — the bit is the child's own judgement about its own turn, and over-tainting is the failure mode OPE-299 removed");
   });
 
   await contextStorage.run(new ContextContainer(), async () => {
+    ok((await subagentCallTaintStatus("default", "sess-parent", "call_lost")) === undefined, "…precondition: no marker exists for this call at all — the exact 'signal cannot be established' case");
     const parentHookCtx = { ...(parentCtx as unknown as Record<string, unknown>), agent: { name: "oe", nodeId: "__root__" } };
     spawnTaint.openTaintTurn(parentHookCtx as never);
-    const adopted = await spawnTaint.adoptSubagentTaint("call_never_dispatched");
-    ok(!adopted && !untrustedIngestedThisTurn(), "…and an unrecognised callId is a strict no-op (an `action.result` for any other runtime action never reaches the marker read)");
+    ok(!untrustedIngestedThisTurn(), "the parent's turn starts CLEAN");
+    const adopted = await spawnTaint.adoptSubagentTaint("call_lost", "sess-parent");
+    eq(adopted, true, "🔴 D7 OPE-437 FAIL CLOSED: a subagent-result whose taint record was lost marks the parent tainted — the return leg no longer answers 'not tainted' for a signal it could not establish");
+    eq(untrustedIngestedThisTurn(), true, "…and the parent's own turn signal is set, so every downstream consequential sink (remember, create_routine, create_skill) gates as if the parent had read untrusted content");
   });
 }
 

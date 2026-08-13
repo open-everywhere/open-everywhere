@@ -34,3 +34,56 @@ export async function subagentWasTainted(org: string, childSessionId: string): P
     return false;
   }
 }
+
+const CALL_MARKER_PREFIX = "oe-subagent-taint-by-call:";
+
+export function subagentCallTaintKey(parentSessionId: string, callId: string): string {
+  return `${CALL_MARKER_PREFIX}${parentSessionId}:${callId}`;
+}
+
+export async function claimSubagentCallClean(org: string, parentSessionId: string, callId: string): Promise<void> {
+  try {
+    if (parentSessionId.length === 0 || callId.length === 0) return;
+    await getOperationalStore().putTaskResultIfAbsent(
+      org,
+      subagentCallTaintKey(parentSessionId, callId),
+      JSON.stringify({ tainted: false }),
+      new Date().toISOString(),
+      SUBAGENT_TAINT_TTL_MS,
+      undefined,
+    );
+  } catch {
+  }
+}
+
+export async function markSubagentCallTainted(org: string, parentSessionId: string, callId: string): Promise<void> {
+  try {
+    if (parentSessionId.length === 0 || callId.length === 0) return;
+    await getOperationalStore().putTaskResult(
+      org,
+      subagentCallTaintKey(parentSessionId, callId),
+      JSON.stringify({ tainted: true }),
+      new Date().toISOString(),
+      SUBAGENT_TAINT_TTL_MS,
+      undefined,
+    );
+  } catch {
+  }
+}
+
+export async function subagentCallTaintStatus(
+  org: string,
+  parentSessionId: string,
+  callId: string,
+): Promise<boolean | undefined> {
+  try {
+    if (parentSessionId.length === 0 || callId.length === 0) return undefined;
+    const raw = await getOperationalStore().getTaskResult(org, subagentCallTaintKey(parentSessionId, callId));
+    if (raw === null) return undefined;
+    const parsed: unknown = JSON.parse(raw);
+    const tainted = (parsed as { tainted?: unknown } | null)?.tainted;
+    return typeof tainted === "boolean" ? tainted : undefined;
+  } catch {
+    return undefined;
+  }
+}
