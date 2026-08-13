@@ -494,6 +494,21 @@ console.log("5. the plumbed metadata:");
   );
   _resetSurfacesForTest();
   eq(tier({ kind: "notion", workspaceTrust: declaredWorkspaceTrust("notion/ws1") }), "untrusted", "…and an undefined tier flows into the table as the fail-closed answer, unchanged");
+
+  _resetSurfacesForTest();
+  registerSurfaces([defineSurface({ key: "notion/ws1", trust: "public" })]);
+  eq(declaredWorkspaceTrust("notion/ws1"), "public", "a PUBLIC workspace declaration reaches the table");
+  const pub = classifyIngestion({ kind: "notion", workspaceTrust: declaredWorkspaceTrust("notion/ws1") });
+  eq(pub.tier, "untrusted", "…and it taints the read: anyone can author into a public workspace");
+  eq(pub.assumed, false, "🔴 …as a DECLARED verdict — `assumed: false`, because a human positively said so");
+  _resetSurfacesForTest();
+  const silent = classifyIngestion({ kind: "notion", workspaceTrust: declaredWorkspaceTrust("notion/ws1") });
+  eq(silent.tier, "untrusted", "NEGATIVE CONTROL: silence taints too — the fail-closed answer is the same tier…");
+  eq(
+    silent.assumed,
+    true,
+    "🔴 …but the ROW IS DIFFERENT: `assumed: true`. Same verdict, different provenance — that is the distinction the whole design exists to keep",
+  );
 }
 
 console.log("6. connector grantContentOrigin, end to end:");

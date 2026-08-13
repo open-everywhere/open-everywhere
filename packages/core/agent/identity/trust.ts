@@ -113,10 +113,6 @@ export function declaredWorkspaceTrust(workspaceKey: string): SurfaceTrust | und
   return declaredSurfaceTrust({ tenantKey: workspaceKey, surfaceKeys: [workspaceKey] });
 }
 
-export function vouchedSurfaces(): string[] {
-  return surfaces.filter((e) => e.surface.trust === "internal").map((e) => e.surface.key);
-}
-
 export function registeredSurfaces(): readonly Surface[] {
   return surfaces.map((e) => e.surface);
 }

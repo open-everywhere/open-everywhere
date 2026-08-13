@@ -468,7 +468,8 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
           isPrivate: true,
           ...(partnerTrust ? { dmPartnerTrust: partnerTrust } : {}),
         }),
-        [{ trust: wakeTrust }],
+        [{ trust: wakeTrust, refuted: partnerTrust === "external" }],
+        { dm: true },
       );
       const message = renderWakeMessage(ev, () => atIso, { dm: true, trust: wakeTrust, wakeId, ...(isGroup ? { groupDm: true } : {}) });
       const handoff =

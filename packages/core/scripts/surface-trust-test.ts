@@ -9,7 +9,6 @@ import {
   declaredWorkspaceTrust,
   isVouchedInternal,
   isVouchedSurface,
-  vouchedSurfaces,
   type Surface,
 } from "../agent/identity/trust.js";
 import { bindFrom, registerIdentityMapper, type BindableContext, type IdentityMapper } from "../agent/identity/binding.js";
@@ -77,7 +76,7 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
   _resetSurfacesForTest();
   ok(!isVouchedInternal("discord/G1", "discord/G1/C1"), "empty register: nothing is vouched-internal (fail-closed default)");
   ok(!isVouchedSurface("discord/G1/C1"), "empty register: nothing is vouched at surface grain (fail-closed default)");
-  eq(vouchedSurfaces(), [], "empty register: vouchedSurfaces() is empty");
+  eq(registeredSurfaces(), [], "empty register: registeredSurfaces() is empty");
 }
 
 {
@@ -103,12 +102,12 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
     defineSurface({ key: "github/example-owner/e2e-scratch", trust: "internal" }),
   ]);
   eq(
-    [...vouchedSurfaces()].sort(),
+    registeredSurfaces().map((e) => e.key).sort(),
     ["discord/G1", "github/example-owner/e2e-scratch"].sort(),
-    "vouchedSurfaces(): returns exactly the registered keys",
+    "registeredSurfaces(): returns exactly the registered entries",
   );
   registerSurfaces([defineSurface({ key: "teams/T1/C1", trust: "internal" })]);
-  eq(vouchedSurfaces(), ["teams/T1/C1"], "vouchedSurfaces(): a later registerSurfaces REPLACES the previous register");
+  eq(registeredSurfaces().map((e) => e.key), ["teams/T1/C1"], "registeredSurfaces(): a later registerSurfaces REPLACES the previous register");
   _resetSurfacesForTest();
 }
 
@@ -158,7 +157,11 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
     defineSurface({ key: "slack/T0/C_LOUNGE", trust: "public" }),
     defineSurface({ key: "github/acme/oss-*", trust: "public" }),
   ]);
-  eq(vouchedSurfaces(), ["slack/T0"], "vouchedSurfaces(): lists `internal` keys ONLY — a public declaration is not a vouch");
+  eq(
+    registeredSurfaces().filter((e) => e.trust === "internal").map((e) => e.key),
+    ["slack/T0"],
+    "🔴 the diagnostic read hands back every entry WITH its trust — a caller cannot lose the internal/public distinction the way a flat key list forced it to",
+  );
   ok(!isVouchedSurface("slack/T0/C_LOUNGE"), "isVouchedSurface: an EXACT `public` entry is not vouched at surface grain");
   ok(!isVouchedSurface("github/acme/oss-sdk"), "isVouchedSurface: a GLOB never satisfies the exact grain (this gate exists to require an enumeration)");
   eq(registeredSurfaces().length, 3, "registeredSurfaces(): every entry, whatever its trust (the preflight input)");

@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 
 import { chatWakeIngestsNonMember, type WakeMessageInput } from "@open-everywhere/core/agent/adapter-api.js";
 import { partnerFactsFromInfo } from "../agent/channels/slack-identity.js";
-import { slackAuthorIsMember, slackWakeSurfaceInternal, regradeSlackBackscrollTrust, type SlackMemberProbe } from "../agent/channels/slack-events.js";
+import {
+  slackAuthorIsMember,
+  slackWakeAuthorFacts,
+  regradeSlackBackscrollTrust,
+  type SlackMemberProbe,
+} from "../agent/channels/slack-events.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -16,23 +21,26 @@ function fakeProbe(members: Record<string, boolean>): SlackMemberProbe {
 }
 const PROBE = fakeProbe({ U_MEMBER: true, U_GUEST: false, U_STRANGER: false });
 
+const surfaceInternalOf = async (roomInternal: boolean, userId: string | undefined, teamId: string, probe: SlackMemberProbe) =>
+  (await slackWakeAuthorFacts(roomInternal, userId, teamId, probe)).surfaceInternal;
+
 console.log("1. the composed surface fact:");
 
 ok(
-  (await slackWakeSurfaceInternal(true, "U_GUEST", "T1", PROBE)) === false,
+  (await surfaceInternalOf(true, "U_GUEST", "T1", PROBE)) === false,
   "🔴 a GUEST in a confirmed-internal channel makes the surface fact FALSE — which is what drives resolveWakeTrust to `unauth` instead of `peer`",
 );
-ok((await slackWakeSurfaceInternal(true, "U_MEMBER", "T1", PROBE)) === true, "negative control: a full member in the same room leaves it TRUE — no over-narrowing");
-ok((await slackWakeSurfaceInternal(false, "U_MEMBER", "T1", PROBE)) === false, "negative control: an UNCONFIRMED room stays false regardless of the author — the channel gate still decides first");
+ok((await surfaceInternalOf(true, "U_MEMBER", "T1", PROBE)) === true, "negative control: a full member in the same room leaves it TRUE — no over-narrowing");
+ok((await surfaceInternalOf(false, "U_MEMBER", "T1", PROBE)) === false, "negative control: an UNCONFIRMED room stays false regardless of the author — the channel gate still decides first");
 ok(
-  (await slackWakeSurfaceInternal(true, undefined, "T1", PROBE)) === true,
+  (await surfaceInternalOf(true, undefined, "T1", PROBE)) === true,
   "an author with NO id is not narrowed here — `wakeTrustFor` already answers `unauth` for an unidentifiable human, and narrowing twice would say nothing new",
 );
 
 console.log("2. the fail direction:");
 
 ok(
-  (await slackWakeSurfaceInternal(true, "U_UNKNOWN_TO_THE_PROBE", "T1", PROBE)) === true,
+  (await surfaceInternalOf(true, "U_UNKNOWN_TO_THE_PROBE", "T1", PROBE)) === true,
   "🔴 an UNRESOLVABLE author reads as a member: this leg governs a MARK, and failing closed would taint EVERY chat wake in a workspace whose token lacks `users:read`",
 );
 
@@ -61,7 +69,12 @@ ok(
 const mixed = [sibling("U_MEMBER", "peer"), sibling("U_GUEST", "peer"), sibling("BOT", "relay", "bot")];
 const graded = await regradeSlackBackscrollTrust(mixed, "T1", PROBE);
 ok(graded[0].trust === "peer", "the member sibling keeps `peer`");
-ok(graded[1].trust === "unauth", "🔴 the GUEST sibling is demoted to `unauth` — so the envelope renders the reference-only system note AND the taint join sees it");
+ok(graded[1].trust === "unauth", "🔴 the GUEST sibling is demoted to `unauth` — the envelope renders the reference-only system note");
+ok(
+  graded[1].refuted === true,
+  "🔴 …and it carries `refuted` ON THE SAME OBJECT (OPE-489). The RENDER reads `trust`, the taint JOIN reads `refuted`, and setting both from one verdict is what stops the two consumers disagreeing about a message",
+);
+ok(graded[0].refuted === undefined, "negative control: the member sibling carries NO refutation");
 ok(graded[2].trust === "relay", "negative control: the BOT sibling keeps `relay` — a machine author is never re-graded, and is never probed");
 
 const alreadyUnauth = [sibling("U_GUEST", "unauth")];
@@ -78,6 +91,36 @@ const counting: SlackMemberProbe = async (userId) => {
 await regradeSlackBackscrollTrust([sibling("U_A", "peer"), sibling("U_A", "peer"), sibling("U_A", "peer"), sibling("U_GUEST", "peer")], "T1", counting);
 ok(calls === 2, "the probe runs once per DISTINCT author (2 for 4 messages), because it is a rate-limited API call");
 
+console.log("3b. the trigger author's two facts:");
+
+{
+  const guest = await slackWakeAuthorFacts(true, "U_GUEST", "T1", PROBE);
+  ok(guest.surfaceInternal === false && guest.refuted === true, "a GUEST narrows the wake tier AND is positively refuted — both facts, one probe call");
+
+  const member = await slackWakeAuthorFacts(true, "U_MEMBER", "T1", PROBE);
+  ok(member.surfaceInternal === true && member.refuted === false, "negative control: a full member narrows nothing and refutes nothing");
+
+  const unknown = await slackWakeAuthorFacts(true, "U_UNKNOWN_TO_THE_PROBE", "T1", PROBE);
+  ok(
+    unknown.refuted === false,
+    "🔴 AN UNRESOLVABLE PROBE IS NOT A REFUTATION. Absence of evidence, and this leg fails OPEN — failing closed would taint every chat wake in a workspace whose token lacks `users:read`",
+  );
+
+  const external = await slackWakeAuthorFacts(false, "U_MEMBER", "T1", PROBE);
+  ok(
+    external.surfaceInternal === false && external.refuted === false,
+    "an EXTERNAL room narrows the tier but says nothing about the author — the two facts are different questions and must not be re-derived from each other",
+  );
+  const externalGuest = await slackWakeAuthorFacts(false, "U_GUEST", "T1", PROBE);
+  ok(
+    externalGuest.refuted === true,
+    "🔴 …and a guest in an EXTERNAL room is still a refuted author. `surfaceInternal: false` is also what an external ROOM produces, so deriving the refutation from it would mark every turn in a Connect channel",
+  );
+
+  const noId = await slackWakeAuthorFacts(true, undefined, "T1", PROBE);
+  ok(noId.surfaceInternal === true && noId.refuted === false, "an author with NO id refutes nothing — `wakeTrustFor` already answers `unauth`, and there is nobody to refute");
+}
+
 console.log("4. the guest vocabulary:");
 
 const trustOf = (user: Record<string, unknown>): string => partnerFactsFromInfo({ user }, "T1").dmPartnerTrust;
@@ -90,12 +133,16 @@ ok(trustOf({ team_id: "T_OTHER" }) === "external", "a person from ANOTHER worksp
 console.log("5. the join over the re-graded bundle:");
 
 ok(
-  chatWakeIngestsNonMember([{ trust: "peer" }, ...graded]) === true,
+  chatWakeIngestsNonMember([{ trust: "peer" }, ...graded], {}) === true,
   "🔴 INGESTION, NOT PRESENCE: a MEMBER's trigger whose first-wake backscroll hydrates a guest's earlier message marks the wake",
 );
 ok(
-  chatWakeIngestsNonMember([{ trust: "peer" }, ...(await regradeSlackBackscrollTrust(memberOnly, "T1", PROBE))]) === false,
+  chatWakeIngestsNonMember([{ trust: "peer" }, ...(await regradeSlackBackscrollTrust(memberOnly, "T1", PROBE))], {}) === false,
   "negative control: the same trigger over a member-only bundle does NOT mark",
+);
+ok(
+  chatWakeIngestsNonMember([{ trust: "unauth" }], {}) === false,
+  "🔴 AND BARE `unauth` DOES NOT: a sibling that reached `unauth` some OTHER way (no author id, an unconfirmed room) still renders reference-only, but it no longer marks the turn — that third case is the default state of an unconfigured deployment",
 );
 
 console.log(`\n✅ slack non-member author: ${passed} assertions passed`);

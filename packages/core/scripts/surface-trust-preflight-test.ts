@@ -1,0 +1,183 @@
+import assert from "node:assert/strict";
+import {
+  surfaceTrustPreflightChecks,
+  surfaceTrafficFromAudit,
+  registerSurfaceTrustPreflight,
+  type SurfaceTraffic,
+} from "../agent/identity/trust-preflight.js";
+import { runPreflightProbes, _resetPreflightProbesForTest } from "../agent/ops/probes.js";
+import { defineSurface, type Surface } from "../agent/identity/trust.js";
+import type { Check } from "../agent/ops/quickstart.js";
+
+let n = 0;
+const ok = (cond: boolean, label: string) => {
+  assert.ok(cond, label);
+  n++;
+};
+const eq = (a: unknown, b: unknown, label: string) => {
+  assert.deepStrictEqual(a, b, label);
+  n++;
+};
+
+const NOW = new Date("2026-08-13T12:00:00.000Z");
+const daysAgo = (d: number) => new Date(NOW.getTime() - d * 86_400_000).toISOString();
+const seen = (surfaceKey: string, firstDays: number, lastDays = 0): SurfaceTraffic => ({
+  surfaceKey,
+  firstSeen: daysAgo(firstDays),
+  lastSeen: daysAgo(lastDays),
+});
+const run = (entries: readonly Surface[], traffic: readonly SurfaceTraffic[]): Check[] =>
+  surfaceTrustPreflightChecks({ entries, traffic, now: NOW });
+const find = (checks: readonly Check[], needle: string): Check | undefined => checks.find((c) => c.name.includes(needle));
+
+{
+  const checks = run(
+    [defineSurface({ key: "slack/T0", trust: "internal" })],
+    [seen("slack/T0/C_ENG", 90), seen("discord/G1/C_GENERAL", 40), seen("notion/WS/page-a", 12)],
+  );
+  const red = find(checks, "undeclared surfaces");
+  eq(red?.status, "missing", "🔴 CHECK 1: a surface with traffic and NO declaration is a RED — this is what makes the `clean` default safe");
+  ok(red?.detail.includes("discord/G1/C_GENERAL") === true, "…and it NAMES the surface, so the operator does not have to go looking");
+  ok(red?.detail.includes("notion/WS/page-a") === true, "…every one of them");
+  ok(red?.detail.includes("slack/T0/C_ENG") === false, "…and NOT the one the tenant declaration already covers");
+  ok(red?.fix?.includes("defineSurface(") === true, "…and the fix is the literal line to add, not a description of the problem");
+
+  const green = run(
+    [defineSurface({ key: "slack/T0", trust: "internal" }), defineSurface({ key: "discord/G1", trust: "public" })],
+    [seen("slack/T0/C_ENG", 90), seen("discord/G1/C_GENERAL", 40)],
+  );
+  eq(find(green, "undeclared surfaces")?.status, "ok", "🔴 NEGATIVE CONTROL: with every surface declared the check is `ok` — and a `public` declaration COUNTS as declared");
+  eq(
+    green.filter((c) => c.status === "missing").length,
+    0,
+    "…and the report carries no red at all, so `ready` is not held down by a check that cannot be satisfied",
+  );
+}
+
+{
+  const checks = run(
+    [
+      defineSurface({ key: "github/acme/e2e-scratch", trust: "internal" }),
+      defineSurface({ key: "github/acme/moved-away", trust: "internal" }),
+    ],
+    [seen("github/acme/e2e-scratch", 60, 1)],
+  );
+  const amber = find(checks, "dead declarations");
+  eq(amber?.status, "info", "CHECK 2: a declaration that matched no traffic is AMBER, never a red — it is config working exactly as written");
+  ok(amber?.detail.includes("github/acme/moved-away") === true, "…naming the dead key (a transferred repo, an archived channel, a deleted team)");
+  ok(amber?.detail.includes("github/acme/e2e-scratch") === false, "…and NOT the live one");
+
+  const live = run([defineSurface({ key: "github/acme/e2e-scratch", trust: "internal" })], [seen("github/acme/e2e-scratch", 60, 1)]);
+  eq(find(live, "dead declarations"), undefined, "🔴 NEGATIVE CONTROL: with every declaration matching, no dead row is emitted");
+
+  const tenant = run([defineSurface({ key: "github/acme", trust: "internal" })], [seen("github/acme/e2e-scratch", 60, 1)]);
+  eq(find(tenant, "dead declarations"), undefined, "a TENANT declaration is alive when a surface under it has traffic");
+
+  const dormant = run(
+    [defineSurface({ key: "github/acme/one", trust: "internal" }), defineSurface({ key: "github/acme/two", trust: "internal" })],
+    [seen("github/acme/one", 400, 200)],
+  );
+  eq(
+    find(dormant, "dead declarations"),
+    undefined,
+    "a DORMANT deployment (newest traffic older than the window) emits no dead row — absence of traffic there is not evidence about the config",
+  );
+}
+
+{
+  const checks = run(
+    [
+      defineSurface({ key: "github/acme/payments-*", trust: "internal" }),
+      defineSurface({ key: "github/acme/e2e-scratch", trust: "internal" }),
+    ],
+    [
+      seen("github/acme/payments-api", 200),
+      seen("github/acme/payments-vendor-scratch", 2),
+      seen("github/acme/e2e-scratch", 1),
+    ],
+  );
+  const amber = find(checks, "new matches");
+  eq(amber?.status, "info", "CHECK 3: a pattern's new matches are AMBER");
+  ok(amber?.name.includes("github/acme/payments-*") === true, "…and the row names the PATTERN responsible, not just the surfaces");
+  ok(
+    amber?.detail.includes("github/acme/payments-vendor-scratch") === true,
+    "🔴 CHECK 3 IS THE ONLY SIGNAL FOR RENAME-ANNEXATION: a repo renamed INTO the glob's prefix inherits its trust, and this is what surfaces it",
+  );
+  ok(amber?.detail.includes("github/acme/payments-api") === false, "…and NOT a long-standing match, which would drown the new one");
+  ok(
+    amber?.detail.includes("github/acme/e2e-scratch") === false,
+    "🔴 an EXACT entry never contributes: it enumerates one key, so it cannot annex anything — only a PATTERN can",
+  );
+  ok(amber?.fix?.includes("cannot prevent") === true, "🔴 the row says in terms that it is a DETECTOR, not a fence — an operator must not read it as a control");
+
+  const tenantDiff = run([defineSurface({ key: "slack/T0", trust: "internal" })], [seen("slack/T0/C_BRAND_NEW", 1)]);
+  ok(
+    find(tenantDiff, "new matches")?.detail.includes("slack/T0/C_BRAND_NEW") === true,
+    "a TENANT declaration is a pattern too — a room created yesterday inherits `internal` with no config change, which is exclude mode's fail-open",
+  );
+
+  const settled = run([defineSurface({ key: "github/acme/payments-*", trust: "internal" })], [seen("github/acme/payments-api", 200)]);
+  eq(find(settled, "new matches"), undefined, "🔴 NEGATIVE CONTROL: with no recently-started traffic, no claim-diff row is emitted");
+}
+
+{
+  const fresh = run([], []);
+  eq(fresh.length, 1, "a deployment with no declarations and no traffic gets exactly one row");
+  eq(fresh[0].status, "info", "…and it is INFO — nothing has gone wrong on a fresh install");
+  ok(fresh[0].detail.includes("no traffic recorded") === true, "…saying so in terms");
+  ok(
+    find(fresh, "undeclared surfaces") === undefined,
+    "🔴 it does NOT emit an `ok` undeclared-surfaces row — a green there would read as 'we checked and every surface is declared', which is the exact 'we could not ask' / 'we asked and it was fine' conflation this design forbids",
+  );
+  const declaredNoTraffic = run([defineSurface({ key: "slack/T0", trust: "internal" })], []);
+  ok(declaredNoTraffic[0].detail.includes("1 surface declaration"), "…and with declarations but no traffic it reports the count, so the operator can tell the two apart");
+}
+
+{
+  const rows = [
+    { ts: "2026-08-10T00:00:00.000Z", platform: "slack", workspace: "T0", surface: "C1" },
+    { ts: "2026-04-04T23:30:00.000Z", platform: "slack", workspace: "T0", surface: "C1" },
+    { ts: "2026-08-12T00:00:00.000Z", platform: "slack", workspace: "T0", surface: "C1" },
+    { ts: "2026-08-05T00:00:00.000Z", platform: "github", workspace: "acme", surface: "repo" },
+    { ts: "2026-04-09T23:30:00.000Z", platform: "slack", workspace: "T0" },
+  ];
+  const folded = surfaceTrafficFromAudit(rows);
+  eq(folded.length, 2, "the fold groups by surface key");
+  eq(
+    folded.find((f) => f.surfaceKey === "slack/T0/C1"),
+    { surfaceKey: "slack/T0/C1", firstSeen: "2026-04-04T23:30:00.000Z", lastSeen: "2026-08-12T00:00:00.000Z" },
+    "…and takes the EARLIEST as firstSeen and the LATEST as lastSeen, whatever order the rows arrive in",
+  );
+  ok(folded.every((f) => f.surfaceKey.split("/").length === 3), "🔴 a row with NO surface is SKIPPED — an org-scoped event names no room to declare");
+}
+
+{
+  _resetPreflightProbesForTest();
+  registerSurfaceTrustPreflight({
+    entries: () => [defineSurface({ key: "slack/T0", trust: "internal" })],
+    auditRows: async () => [{ ts: daysAgo(3), platform: "discord", workspace: "G1", surface: "C_OPEN" }],
+    now: () => NOW,
+  });
+  const checks = await runPreflightProbes({});
+  eq(find(checks, "undeclared surfaces")?.status, "missing", "the probe runs the checks over the register and the audit log");
+
+  _resetPreflightProbesForTest();
+  registerSurfaceTrustPreflight({
+    entries: () => [defineSurface({ key: "slack/T0", trust: "internal" })],
+    auditRows: async () => {
+      throw new Error("no DATABASE_URL");
+    },
+    now: () => NOW,
+  });
+  const soft = await runPreflightProbes({});
+  eq(soft.length, 1, "an unreachable store yields exactly one row");
+  eq(
+    soft[0].status,
+    "info",
+    "🔴 FAIL-SOFT: an unreachable store is INFO, never `missing` — a red there would be a complaint about the OPERATOR's shell wearing the costume of a complaint about the DEPLOYMENT's config, and it would hold `ready` down forever",
+  );
+  ok(soft[0].detail.includes("no DATABASE_URL"), "…and it says what actually failed");
+  _resetPreflightProbesForTest();
+}
+
+console.log(`\n✓ surface-trust-preflight: ${n} assertions passed`);

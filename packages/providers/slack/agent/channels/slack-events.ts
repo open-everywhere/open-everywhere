@@ -409,16 +409,17 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
   const uninvited = engRow?.participating !== true;
   const names = await resolveWakeNames(ev.userId, undefined, deps.resolveProfile);
   const trigger = displayNameOpts(names.triggerAuthor);
+  const authorFacts = await slackWakeAuthorFacts(internal, ev.userId, ev.teamId);
   const wakeTrust = resolveWakeTrust({
     authorIsBot: Boolean(ev.botId) && !isAllowedSlackDriver(ev.teamId, ev.botId),
     authorId: ev.userId,
-    surfaceInternal: await slackWakeSurfaceInternal(internal, ev.userId, ev.teamId),
+    surfaceInternal: authorFacts.surfaceInternal,
     channelKey: domainKeyOf(p),
   });
   await deps.wake({
     channelId: ev.channelId,
     threadTs: ev.threadTs!,
-    auth: stampNonMemberChatAuth(auth, [{ trust: wakeTrust }]),
+    auth: stampNonMemberChatAuth(auth, [{ trust: wakeTrust, refuted: authorFacts.refuted }], { surfaceKey: domainKeyOf(p) }),
     message: renderWakeMessage(ev, deps.now, {
       trust: wakeTrust,
       triggerAuthorName: trigger.authorName,
@@ -728,10 +729,11 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
   const names = await resolveWakeNames(ev.userId, undefined, deps.resolveProfile);
   const triggerName = displayNameOpts(names.triggerAuthor);
 
+  const authorFacts = await slackWakeAuthorFacts(internal, ev.userId, ev.teamId);
   const wakeTrust = resolveWakeTrust({
     authorIsBot: base.authorIsBot,
     authorId: ev.userId,
-    surfaceInternal: await slackWakeSurfaceInternal(internal, ev.userId, ev.teamId),
+    surfaceInternal: authorFacts.surfaceInternal,
     channelKey: domainKeyOf(p),
   });
 
@@ -751,7 +753,11 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
   await deps.wake({
     channelId: ev.channelId,
     threadTs: rootTs,
-    auth: stampNonMemberChatAuth(authForEvent({ ...ev, threadTs: rootTs }, { isExternal: false, trustChecked: true }), [{ trust: wakeTrust }]),
+    auth: stampNonMemberChatAuth(
+      authForEvent({ ...ev, threadTs: rootTs }, { isExternal: false, trustChecked: true }),
+      [{ trust: wakeTrust, refuted: authorFacts.refuted }],
+      { surfaceKey: domainKeyOf(p) },
+    ),
     message: rendered.message,
     ...(rendered.context ? { context: rendered.context } : {}),
     state: wakeState(ev, rootTs, { oeUninvited: true }),
@@ -836,15 +842,18 @@ export function _resetAuthorMemberCache(): void {
 
 export type SlackMemberProbe = (userId: string, teamId: string | undefined) => Promise<boolean | undefined>;
 
-export async function slackWakeSurfaceInternal(
+export async function slackWakeAuthorFacts(
   channelInternal: boolean,
   userId: string | undefined,
   teamId: string | undefined,
   probe: SlackMemberProbe = slackAuthorIsMember,
-): Promise<boolean> {
-  if (!channelInternal) return false;
-  if (userId === undefined || userId.length === 0) return true;
-  return (await probe(userId, teamId)) !== false;
+): Promise<{ readonly surfaceInternal: boolean; readonly refuted: boolean }> {
+  if (userId === undefined || userId.length === 0) {
+    return { surfaceInternal: channelInternal, refuted: false };
+  }
+  const member = await probe(userId, teamId);
+  const refuted = member === false;
+  return { surfaceInternal: channelInternal && !refuted, refuted };
 }
 
 export async function regradeSlackBackscrollTrust(
@@ -863,7 +872,9 @@ export async function regradeSlackBackscrollTrust(
   const verdicts = await Promise.all(ids.map((id) => probe(id, teamId)));
   const nonMembers = new Set(ids.filter((_, i) => verdicts[i] === false));
   if (nonMembers.size === 0) return messages;
-  return messages.map((m) => (m.authorId !== undefined && nonMembers.has(m.authorId) ? { ...m, trust: "unauth" as const } : m));
+  return messages.map((m) =>
+    m.authorId !== undefined && nonMembers.has(m.authorId) ? { ...m, trust: "unauth" as const, refuted: true } : m,
+  );
 }
 
 export async function slackSingleWindowMentionPolicy(channelId: string, surfaceKey: string): Promise<SingleWindowMentionPolicy> {
@@ -1135,10 +1146,11 @@ export async function routeSupervisorEvent(
     await deps.markEngaged(p, ev.threadTs ?? ev.ts, atIso);
   }
 
+  const authorFacts = await slackWakeAuthorFacts(internal, ev.userId, ev.teamId);
   const wakeTrust = resolveWakeTrust({
     authorIsBot: base.authorIsBot,
     authorId: ev.userId,
-    surfaceInternal: await slackWakeSurfaceInternal(internal, ev.userId, ev.teamId),
+    surfaceInternal: authorFacts.surfaceInternal,
     channelKey: domainKeyOf(p),
   });
   const session = await deps.getOrCreateSession(p.org, p.surfaceKey, ev.channelId, atIso);
@@ -1148,7 +1160,11 @@ export async function routeSupervisorEvent(
     : [];
   const backscroll = await regradeSlackBackscrollTrust(fetched, ev.teamId).catch(() => fetched);
 
-  const auth = stampNonMemberChatAuth(authForEvent(ev, { isExternal: false, trustChecked: true }), [{ trust: wakeTrust }, ...backscroll]);
+  const auth = stampNonMemberChatAuth(
+    authForEvent(ev, { isExternal: false, trustChecked: true }),
+    [{ trust: wakeTrust, refuted: authorFacts.refuted }, ...backscroll],
+    { surfaceKey: domainKeyOf(p) },
+  );
   let engagementTier: WakeEngagementTier | undefined;
   try {
     engagementTier = deps.engagementTier?.(p.surfaceKey);

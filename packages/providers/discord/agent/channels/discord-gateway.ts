@@ -800,7 +800,7 @@ async function divertDiscordDmToWindow(input: {
     token: seat.token,
     window: { wakeId, origin, addressing: "direct-mention" } satisfies UnifiedWindowWake,
     surfaceKey,
-    auth: stampNonMemberChatAuth(input.auth as unknown as { attributes?: Record<string, unknown> }, [{ trust }]),
+    auth: stampNonMemberChatAuth(input.auth as unknown as { attributes?: Record<string, unknown> }, [{ trust }], { dm: true }),
   });
   await touchDmSeat(org, surfaceKey, atIso).catch(() => undefined);
 }
@@ -882,7 +882,11 @@ async function divertDiscordWakeToUnifiedWindow(input: {
         ...(input.addressing === "direct-mention" ? { addressing: "direct-mention" as const } : {}),
       } satisfies UnifiedWindowWake,
       surfaceKey: domainKeyOf(input.partition),
-      auth: stampNonMemberChatAuth(input.auth as unknown as { attributes?: Record<string, unknown> }, [{ trust }]),
+      auth: stampNonMemberChatAuth(
+        input.auth as unknown as { attributes?: Record<string, unknown> },
+        [{ trust, refuted: msg.memberPending === true }],
+        { surfaceKey: domainKeyOf(input.partition) },
+      ),
     });
   };
 
@@ -1106,7 +1110,11 @@ export async function dispatchTurn(
   await send(
     rendered.context && rendered.context.length ? { message: rendered.message, context: rendered.context } : rendered.message,
     {
-      auth: stampNonMemberChatAuth(surface.auth, [{ trust }]),
+      auth: stampNonMemberChatAuth(
+        surface.auth,
+        [{ trust, refuted: msg.memberPending === true }],
+        isDm ? { dm: true } : { surfaceKey: domainKeyOf(dispatchPartition) },
+      ),
       continuationToken: surface.continuationToken,
       state: turnState,
     },

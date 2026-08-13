@@ -1,6 +1,12 @@
 import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } from "eve/channels";
 import { verifyTeamsRequest, parseTeamsActivity, teamsThreadRootActivityId, type TeamsMessageActivity } from "eve/channels/teams";
-import { buildTeamsAuth, teamsMembershipType, type OpenEverywhereTeamsAuth } from "./teams-identity.js";
+import {
+  buildTeamsAuth,
+  teamsMembershipType,
+  teamsTrustGroup,
+  teamsUserTypeFromMember,
+  type OpenEverywhereTeamsAuth,
+} from "./teams-identity.js";
 import {
   planTeamsSingleWindow,
   handleTeamsSingleWindowDispatch,
@@ -54,6 +60,24 @@ export interface TeamsFrontPlan {
   readonly partition: Partition;
   readonly grain: SupervisorGrain;
   readonly auth: OpenEverywhereTeamsAuth;
+}
+
+function teamsAttrs(auth: unknown): Record<string, unknown> {
+  const a = (auth as { attributes?: unknown } | null)?.attributes;
+  return a && typeof a === "object" ? (a as Record<string, unknown>) : {};
+}
+
+function teamsAuthorRefuted(auth: unknown): boolean {
+  const a = teamsAttrs(auth);
+  return teamsUserTypeFromMember({ userType: a["user_type"] ?? a["userType"] }) === "guest";
+}
+
+function teamsRoomGroupKey(auth: unknown): { readonly groupKey?: string } {
+  const a = teamsAttrs(auth);
+  const tenant = a["tenant_id"] ?? a["tenantId"];
+  const group = teamsTrustGroup(typeof (a["team_id"] ?? a["teamId"]) === "string" ? String(a["team_id"] ?? a["teamId"]) : undefined);
+  if (typeof tenant !== "string" || tenant.length === 0 || !group) return {};
+  return { groupKey: `teams/${tenant}/${group.trustGroup}` };
 }
 
 function authForActivity(a: TeamsMessageActivity): OpenEverywhereTeamsAuth {
@@ -182,7 +206,10 @@ async function liveTeamsDispatch(a: TeamsMessageActivity, plan: TeamsFrontPlan, 
     {
       surfaceKey: plan.surfaceKey,
       channelId: a.teamsChannelId ?? a.conversation.id,
-      auth: stampNonMemberChatAuth(plan.auth, [{ trust }]),
+      auth: stampNonMemberChatAuth(plan.auth, [{ trust, refuted: teamsAuthorRefuted(plan.auth) }], {
+        surfaceKey: plan.surfaceKey,
+        ...teamsRoomGroupKey(plan.auth),
+      }),
       trigger: {
         id: a.id,
         authorId: a.from.id,
@@ -253,7 +280,11 @@ async function liveTeamsDmDivert(
     token: seat.token,
     window: { wakeId, origin, addressing: "direct-mention" } satisfies UnifiedWindowWake,
     surfaceKey,
-    auth: stampNonMemberChatAuth(auth as unknown as { attributes?: Record<string, unknown> }, [{ trust }]),
+    auth: stampNonMemberChatAuth(
+      auth as unknown as { attributes?: Record<string, unknown> },
+      [{ trust, refuted: teamsAuthorRefuted(auth as unknown as { attributes?: Record<string, unknown> }) }],
+      { dm: true },
+    ),
   });
   await touchDmSeat(org, surfaceKey, atIso).catch(() => undefined);
   await appendAudit({

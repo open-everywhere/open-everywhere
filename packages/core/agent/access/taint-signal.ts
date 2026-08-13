@@ -2,6 +2,8 @@ import { defineState } from "eve/context";
 import type { IngestionKind } from "./taint-tiers.js";
 import type { WakeTrust } from "../channels/wake-envelope.js";
 import { taintEnabled } from "./taint-enforcement.js";
+import { declaredSurfaceTrust } from "../identity/trust.js";
+import { getSettings } from "../settings/settings.js";
 
 interface TaintState {
   readonly turn?: string;
@@ -117,18 +119,44 @@ export function nonMemberChatAttrs(nonMember: boolean): Record<string, string> {
   return nonMember ? { [OE_CHAT_NONMEMBER_ATTR]: "true" } : {};
 }
 
-export function nonMemberChatTrust(trust: WakeTrust): boolean {
-  return trust === "unauth";
+export interface IngestedChatMessage {
+  readonly trust?: WakeTrust;
+  readonly refuted?: boolean;
 }
 
-export function chatWakeIngestsNonMember(ingested: readonly { readonly trust?: WakeTrust }[]): boolean {
-  return ingested.some((m) => m.trust !== undefined && nonMemberChatTrust(m.trust));
+export function nonMemberChatTrust(m: IngestedChatMessage): boolean {
+  return m.refuted === true && m.trust !== "relay";
+}
+
+export interface ChatWakeRoom {
+  readonly surfaceKey?: string;
+  readonly groupKey?: string;
+  readonly dm?: boolean;
+}
+
+export function chatRoomMarks(room: ChatWakeRoom): boolean {
+  if (room.dm === true || room.surfaceKey === undefined) return false;
+  const segs = room.surfaceKey.split("/");
+  if (segs.length < 3) return false;
+  const declared = declaredSurfaceTrust({
+    tenantKey: segs.slice(0, 2).join("/"),
+    surfaceKeys: [room.surfaceKey],
+    ...(room.groupKey === undefined ? {} : { groupKey: room.groupKey }),
+  });
+  if (declared === "public") return true;
+  if (declared === "internal") return false;
+  return getSettings().taint.undeclaredSurface === "mark";
+}
+
+export function chatWakeIngestsNonMember(ingested: readonly IngestedChatMessage[], room: ChatWakeRoom): boolean {
+  return chatRoomMarks(room) || ingested.some(nonMemberChatTrust);
 }
 
 export function stampNonMemberChatAuth<A extends { attributes?: Record<string, unknown> }>(
   auth: A,
-  ingested: readonly { readonly trust?: WakeTrust }[],
+  ingested: readonly IngestedChatMessage[],
+  room: ChatWakeRoom,
 ): A {
-  if (!chatWakeIngestsNonMember(ingested)) return auth;
+  if (!chatWakeIngestsNonMember(ingested, room)) return auth;
   return { ...auth, attributes: { ...(auth.attributes ?? {}), ...nonMemberChatAttrs(true) } };
 }

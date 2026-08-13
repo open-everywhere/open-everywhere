@@ -45,6 +45,7 @@ export interface WakeMessageInput {
   readonly id: string;
   readonly sentAt: string;
   readonly trust: WakeTrust;
+  readonly refuted?: boolean;
   readonly trigger?: boolean;
   readonly mention?: boolean;
   readonly edited?: boolean;

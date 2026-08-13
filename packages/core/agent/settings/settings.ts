@@ -4,6 +4,8 @@ export type TaintTierMode = "enforced" | "dryrun";
 
 export type TaintMode = "on" | "off";
 
+export type TaintUndeclaredSurface = "clean" | "mark";
+
 export type ApprovalJudgeMode = "off" | "shadow" | "enforce";
 
 export interface AgentSettings {
@@ -91,6 +93,7 @@ export interface AgentSettings {
   readonly taint: {
     readonly mode: TaintMode;
     readonly tierMode: TaintTierMode;
+    readonly undeclaredSurface: TaintUndeclaredSurface;
   };
   readonly tools: {
     readonly maxResultChars: number;
@@ -479,6 +482,13 @@ export const SETTINGS = {
       summary:
         "Whether the reviewed source-tier table DECIDES a read's untrusted-content marking (`enforced`) or only logs what it would have decided (`dryrun`). Enforcement is relaxation-only.",
     } satisfies SettingSpec<TaintTierMode>,
+    undeclaredSurface: {
+      path: "taint.undeclaredSurface",
+      shipped: "clean",
+      validate: (v) => (v === "clean" || v === "mark" ? undefined : 'must be "clean" or "mark"'),
+      summary:
+        "What a chat wake does on a surface the operator has NEVER declared in the trust registry (`agent/identity/surfaces.ts`). `clean` (shipped) marks nothing and relocates the complaint to preflight, where it names the surface once and is actionable — a declared room is judged by its declaration and a refuted author still marks, so the bit keeps discriminating. `mark` restores per-turn pressure at ROOM grain: every human-authored turn on an undeclared surface marks. That is much narrower than the pre-OPE-489 behaviour, because a DECLARED surface never reaches it. The residual under `clean` is real and bounded: between install and the first declaration a genuinely public chat room reads clean, the ACL plane still fences it to the read-only `public` pseudo-domain, and the approval plane is the defence against a consequential act.",
+    } satisfies SettingSpec<TaintUndeclaredSurface>,
   },
   tools: {
     maxResultChars: {
@@ -700,6 +710,7 @@ export function getSettings(
     taint: {
       mode: resolve(SETTINGS.taint.mode, o.taint?.mode, env),
       tierMode: resolve(SETTINGS.taint.tierMode, o.taint?.tierMode, env),
+      undeclaredSurface: resolve(SETTINGS.taint.undeclaredSurface, o.taint?.undeclaredSurface, env),
     },
     tools: {
       maxResultChars: resolve(SETTINGS.tools.maxResultChars, o.tools?.maxResultChars, env),

@@ -4,14 +4,6 @@ import { normalizePlatform, platformFromKind } from "./platform.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { declaredSurfaceTrust } from "./trust.js";
 
-function trustGroupKey(
-  platform: string,
-  workspace: string,
-  group: string | undefined,
-): { readonly groupKey: string } | undefined {
-  if (group === undefined || !/^[a-zA-Z0-9._-]+:[a-zA-Z0-9._-]+$/.test(group)) return undefined;
-  return { groupKey: `${platform}/${workspace}/${group}` };
-}
 import { UNNAMED_TENANT } from "./principal-key.js";
 import { bareTokenFromEveContext, classifySessionId, parseWindowToken, sessionGrantKeyFromToken } from "../channels/window-key.js";
 import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
@@ -57,6 +49,16 @@ export interface BindableContext {
 }
 
 const SAFE = /[^a-zA-Z0-9._-]+/g;
+
+function trustGroupKey(
+  platform: string,
+  workspace: string,
+  group: string | undefined,
+): { readonly groupKey: string } | undefined {
+  if (group === undefined || !/^[a-zA-Z0-9._-]+:[a-zA-Z0-9._-]+$/.test(group)) return undefined;
+  return { groupKey: `${platform}/${workspace}/${group}` };
+}
+
 
 function seg(value: string | undefined, fallback: string): string {
   const cleaned = (value ?? "").trim().replace(SAFE, "-").replace(/^[-.]+|[-.]+$/g, "");
