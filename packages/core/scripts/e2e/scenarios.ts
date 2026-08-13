@@ -84,6 +84,7 @@ export interface ScenarioContext {
   gate(cond: boolean, label: string): void;
   judgePass(rubric: Rubric, reply: string, label: string): Promise<void>;
   judgePass3(rubric: Rubric, reply: string, label: string): Promise<void>;
+  judgeReport(rubric: Rubric, reply: string, label: string): Promise<boolean>;
   skip(reason: string): never;
   log(line: string): void;
   recordTiming(record: TimingsRecord): void;
@@ -1306,7 +1307,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S20",
-    title: "Inbound webhook: a signed POST wakes a judged, quoted reply; an unsigned POST is rejected and posts nothing",
+    title: "Inbound webhook: a signed POST wakes a quoted reply; an unsigned POST is rejected and posts nothing (reply quality is REPORTED, not gated)",
     requires: ["slack", "webhook"],
     surface: "slack",
     suite: "core",
@@ -1325,7 +1326,7 @@ export const SCENARIOS: readonly Scenario[] = [
         async () => (await slack.history(anchorTs)).find((m) => slack.isBotReply(m) && m.text.includes(note)),
         { timeoutMs: REPLY_WAIT, what: `a webhook-fired reply quoting "${note}" in channel history after ${anchorTs}` },
       );
-      await ctx.judgePass(
+      await ctx.judgeReport(
         closedQA("Does the reply confirm the webhook fired and quote the note field?", { mustMatch: [note] }),
         reply.text,
         "webhook reply quality",

@@ -26,8 +26,16 @@ export interface WebhookPostResult {
   readonly body: string;
 }
 
+export type WebhookFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{
+  readonly status: number;
+  text(): Promise<string>;
+}>;
+
 export class WebhookDriver {
-  constructor(private readonly cfg: WebhookConfig) {}
+  constructor(
+    private readonly cfg: WebhookConfig,
+    private readonly fetchImpl: WebhookFetch = (url, init) => fetch(url, init),
+  ) {}
 
   get hookId(): string {
     return this.cfg.hookId;
@@ -42,8 +50,10 @@ export class WebhookDriver {
       headers[WEBHOOK_ID_HEADER] = messageId;
       headers[WEBHOOK_TIMESTAMP_HEADER] = timestamp;
       headers[WEBHOOK_SIGNATURE_HEADER] = signWebhookBody(this.cfg.secret, rawBody, timestamp, messageId);
+    } else if (opts.deliveryId) {
+      headers[WEBHOOK_ID_HEADER] = opts.deliveryId;
     }
-    const res = await fetch(`${this.cfg.targetUrl}/webhooks/${this.cfg.hookId}`, {
+    const res = await this.fetchImpl(`${this.cfg.targetUrl}/webhooks/${this.cfg.hookId}`, {
       method: "POST",
       headers,
       body: rawBody,

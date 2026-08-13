@@ -75,8 +75,17 @@ const {
   DISCORD_RELAY_SIGNATURE_HEADER,
 } = await import("../packages/core/scripts/e2e/discord-synthetic.js");
 const { signWebhookBody, webhookTimestamp, webhookDeliveryId } = await import("../packages/core/scripts/e2e/webhook.js");
-const { runFallbackCheck, FallbackJudge, judge3, LlmJudge, buildJudgePrompt, parseJudgeResponse, judgeBannerTag } =
-  await import("../packages/core/scripts/e2e/judge.js");
+const {
+  runFallbackCheck,
+  FallbackJudge,
+  judge3,
+  LlmJudge,
+  buildJudgePrompt,
+  parseJudgeResponse,
+  judgeBannerTag,
+  createJudgeReporter,
+  renderReportedJudgeSummary,
+} = await import("../packages/core/scripts/e2e/judge.js");
 const { SCENARIOS, skipReason, ScenarioSkip } = await import("../packages/core/scripts/e2e/scenarios.js");
 const { verifySlackSignature, classifyEnvelope, buildFrontHandler, PUBLIC_SLACK_ROUTE } = await import("@open-everywhere/provider-slack/agent/channels/slack-front.js");
 const { SLACK_COMMANDS_ROUTE } = await import("@open-everywhere/provider-slack/agent/channels/slack-commands.js");
@@ -1272,6 +1281,81 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   ok(judgeBannerTag({ llm: 0, fallback: 1, reasons: ["judge output unparseable"] }) === ", judge: fallback (judge output unparseable)", "all-fallback → 'judge: fallback (<reason>)'");
   ok(judgeBannerTag({ llm: 1, fallback: 1, reasons: ["HTTP 503"] }).startsWith(", judge: mixed"), "some-of-each → 'judge: mixed …'");
   ok(judgeBannerTag({ llm: 0, fallback: 2, reasons: ["a", "b"] }).includes("a; b"), "multiple distinct fallback reasons are joined");
+
+  {
+    const qualityRubric = { kind: "closedQA" as const, criteria: "Is it good?", atLeast: 1, fallback: { mustMatch: ["391"] } };
+    const infos: string[] = [];
+    const warns: string[] = [];
+    const records: { label: string; pass: boolean }[] = [];
+    const scriptedJudge = (outcomes: boolean[]) => {
+      let i = 0;
+      return {
+        name: "scripted",
+        grade: async () => {
+          const pass = outcomes[i++ % outcomes.length];
+          return { pass, score: pass ? 1 : 0, detail: pass ? "criteria met" : "criteria not met" };
+        },
+      };
+    };
+    const reporter = (verdicts: boolean[]) =>
+      createJudgeReporter({
+        judge: scriptedJudge(verdicts),
+        info: (l) => infos.push(l),
+        warn: (l) => warns.push(l),
+        record: ({ label, pass }) => records.push({ label, pass }),
+        replyTail: (r) => ` ↳ ${r}`,
+      });
+
+    const green = await reporter([true])(qualityRubric, "a fine reply", "reply quality");
+    ok(green === true, "judgeReport resolves TRUE on a passing verdict");
+    ok(infos.length === 1 && warns.length === 0, "a green verdict prints to info, never to warn");
+    ok(infos[0].includes("non-gating") && infos[0].includes("reply quality"), "the green line names itself non-gating and carries the label");
+    ok(records.length === 1 && records[0].pass === true, "the green verdict is recorded with pass === true");
+
+    infos.length = 0;
+    warns.length = 0;
+    records.length = 0;
+    let threw = false;
+    let red: boolean | undefined;
+    try {
+      red = await reporter([false])(qualityRubric, "a poor reply", "reply quality");
+    } catch {
+      threw = true;
+    }
+    ok(threw === false, "🔴 judgeReport does NOT throw on a red verdict — this is the whole split (OPE-433/D2)");
+    ok(red === false, "judgeReport resolves FALSE on a failing verdict");
+    ok(warns.length === 1 && infos.length === 0, "a red verdict prints to warn (stderr), never to info");
+    ok(warns[0].includes("RED") && warns[0].includes("non-gating"), "the red line says RED and says it is non-gating in the same breath");
+    ok(warns[0].includes("↳ a poor reply"), "the red line carries the reply tail — a bare verdict is not debuggable");
+    ok(records.length === 1 && records[0].pass === false, "the red verdict is recorded with pass === false (the runner tallies it)");
+
+    warns.length = 0;
+    records.length = 0;
+    const exploding = createJudgeReporter({
+      judge: { name: "boom", grade: () => Promise.reject(new Error("gateway exploded")) },
+      info: (l) => infos.push(l),
+      warn: (l) => warns.push(l),
+      record: ({ label, pass }) => records.push({ label, pass }),
+      replyTail: () => "",
+    });
+    const afterThrow = await exploding(qualityRubric, "x", "reply quality");
+    ok(afterThrow === false, "a judge that throws yields a reported FALSE, not a rejection");
+    ok(warns.length === 1 && warns[0].includes("the judge threw: gateway exploded"), "the thrown reason reaches the operator in the red line");
+    ok(records.length === 1 && records[0].pass === false, "a thrown judge is still recorded as a red verdict");
+  }
+
+  {
+    const none = renderReportedJudgeSummary(0, []);
+    ok(none.lines.length === 0, "no reported verdicts → no summary lines at all (an ordinary run gains no noise)");
+    const allGreen = renderReportedJudgeSummary(3, []);
+    ok(allGreen.stream === "stdout" && allGreen.lines.length === 1 && allGreen.lines[0].includes("all green"), "all-green reported summary is one stdout line");
+    const withReds = renderReportedJudgeSummary(3, ["S20 reply quality — judge: [llm] nope"]);
+    ok(withReds.stream === "stderr", "a summary carrying a red goes to STDERR");
+    ok(withReds.lines[0].includes("1 of 3"), "the summary counts reds against the total");
+    ok(withReds.lines[0].includes("do NOT fail the run"), "the summary says outright that these did not fail the run");
+    ok(withReds.lines[0].includes("deploy:smoke"), "the summary points at the deterministic gate that DOES decide a deploy");
+    ok(withReds.lines[1].includes("S20 reply quality"), "each red verdict is re-printed under the summary");
+  }
 }
 
 {

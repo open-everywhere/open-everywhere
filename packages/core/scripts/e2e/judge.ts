@@ -175,6 +175,51 @@ export function judgeBannerTag(c: { llm: number; fallback: number; reasons: read
   return `, judge: mixed — llm×${c.llm}, fallback×${c.fallback}${reason}`;
 }
 
+export interface JudgeReportRecord {
+  readonly verdict: JudgeVerdict;
+  readonly label: string;
+  readonly pass: boolean;
+}
+
+export interface JudgeReporterDeps {
+  readonly judge: ReplyJudge;
+  readonly info: (line: string) => void;
+  readonly warn: (line: string) => void;
+  readonly record: (r: JudgeReportRecord) => void;
+  readonly replyTail: (reply: string) => string;
+}
+
+export function createJudgeReporter(deps: JudgeReporterDeps): (rubric: Rubric, reply: string, label: string) => Promise<boolean> {
+  return async (rubric, reply, label) => {
+    let verdict: JudgeVerdict;
+    try {
+      verdict = await deps.judge.grade(rubric, reply);
+    } catch (err) {
+      verdict = { pass: false, score: 0, detail: `[report] the judge threw: ${String(err instanceof Error ? err.message : err)}` };
+    }
+    const pass = verdict.score >= rubric.atLeast;
+    deps.record({ verdict, label, pass });
+    if (pass) deps.info(`ⓘ judged (non-gating) ✓ ${label} — ${verdict.detail}`);
+    else deps.warn(`⚠ judged (non-gating) RED — ${label}: ${verdict.detail}${deps.replyTail(reply)}`);
+    return pass;
+  };
+}
+
+export function renderReportedJudgeSummary(total: number, reds: readonly string[]): { stream: "stdout" | "stderr"; lines: readonly string[] } {
+  if (total === 0) return { stream: "stdout", lines: [] };
+  if (reds.length === 0) {
+    return { stream: "stdout", lines: [`ⓘ judged (non-gating): ${total} reply-quality verdict(s), all green — reported, never gated`] };
+  }
+  return {
+    stream: "stderr",
+    lines: [
+      `⚠ judged (non-gating): ${reds.length} of ${total} reply-quality verdict(s) came back RED. ` +
+        "These do NOT fail the run — read them, do not roll back on them. The deploy gate is `npm run deploy:smoke`.",
+      ...reds.map((r) => `  ⚠ ${r}`),
+    ],
+  };
+}
+
 export function resolveJudge(): ReplyJudge {
   const key = process.env.AI_GATEWAY_API_KEY;
   if (!key) return new FallbackJudge("no AI_GATEWAY_API_KEY reachable — source .env.e2e to enable the LLM judge");

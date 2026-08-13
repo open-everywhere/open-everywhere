@@ -31,7 +31,7 @@ import { PrApi } from "./pr-api.js";
 import { SyntheticDm, SyntheticSlack } from "./synthetic.js";
 import { SyntheticDiscordDm } from "./discord-synthetic.js";
 import { WebhookDriver } from "./webhook.js";
-import { judge3, judgeBannerTag, resolveJudge, type Rubric } from "./judge.js";
+import { createJudgeReporter, judge3, judgeBannerTag, renderReportedJudgeSummary, resolveJudge, type Rubric } from "./judge.js";
 import { GateFailure, ScenarioSkip, SCENARIOS, skipReason, type ScenarioContext } from "./scenarios.js";
 import { buildCostReport, checkExpectedModels, fetchRunUsage, renderCostReport, resolveExpectedModels } from "./cost.js";
 import { callUnifiedAudit, fetchAudit } from "./audit-read.js";
@@ -150,6 +150,8 @@ async function main(): Promise<void> {
   let passed = 0;
   let failed = 0;
   let skipped = 0;
+  const reportedJudgeReds: string[] = [];
+  let reportedJudgeTotal = 0;
 
   const onlyIdx = process.argv.findIndex((a) => a === "--only" || a.startsWith("--only="));
   const onlyRaw =
@@ -223,6 +225,8 @@ async function main(): Promise<void> {
 
     let gates = 0;
     let judgedCount = 0;
+    let reported = 0;
+    let reportedRed = 0;
     let judgedLlm = 0;
     let judgedFallback = 0;
     const fallbackReasons = new Set<string>();
@@ -283,6 +287,21 @@ async function main(): Promise<void> {
         if (!verdict.pass) throw new GateFailure(`${label} — ${verdict.detail}${replyTail(reply)}`);
         judgedCount++;
       },
+      judgeReport: createJudgeReporter({
+        judge,
+        info: (line) => console.log(`  [${scenario.id}] ${line}`),
+        warn: (line) => console.error(`  [${scenario.id}] ${line}`),
+        record: ({ verdict, label, pass }) => {
+          recordJudge(verdict);
+          reported++;
+          reportedJudgeTotal++;
+          if (!pass) {
+            reportedRed++;
+            reportedJudgeReds.push(`${scenario.id} ${label} — judge: ${verdict.detail}`);
+          }
+        },
+        replyTail,
+      }),
       skip(why: string): never {
         throw new ScenarioSkip(why);
       },
@@ -300,7 +319,8 @@ async function main(): Promise<void> {
       await withTimeout(scenario.run(ctx), scenario.timeoutMs);
       passed++;
       const judgeTag = judgeBannerTag({ llm: judgedLlm, fallback: judgedFallback, reasons: [...fallbackReasons] });
-      console.log(`✓ ${scenario.id} ${scenario.title}: passed (${gates} gates, ${judgedCount} judged${judgeTag}, ${secs()})`);
+      const reportTag = reported > 0 ? `, ${reported} judged-reported (${reportedRed} red, non-gating)` : "";
+      console.log(`✓ ${scenario.id} ${scenario.title}: passed (${gates} gates, ${judgedCount} judged${reportTag}${judgeTag}, ${secs()})`);
     } catch (err) {
       if (err instanceof ScenarioSkip) {
         skipped++;
@@ -392,6 +412,9 @@ async function main(): Promise<void> {
       console.log(`e2e timings: not written (${String(err instanceof Error ? err.message : err)})`);
     }
   }
+
+  const judgeSummary = renderReportedJudgeSummary(reportedJudgeTotal, reportedJudgeReds);
+  for (const line of judgeSummary.lines) (judgeSummary.stream === "stderr" ? console.error : console.log)(line);
 
   const summary = `${passed} passed, ${failed} failed, ${skipped} skipped of ${SCENARIOS.length}`;
   if (failed > 0 || modelRoutingFailed) {
