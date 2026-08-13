@@ -174,8 +174,8 @@ export function makeNotionProvider(deps: NotionMemoryDeps): MemoryProvider {
 }
 
 export function registerNotionMemory(
-  secretRef = process.env.OE_NOTION_SECRET_REF ?? "NOTION_TOKEN",
-  broker = process.env.OE_NOTION_SECRET_BROKER ?? "env",
+  secretRef = process.env.OE_NOTION_SECRET_REF ?? "db:notion:memory",
+  broker = process.env.OE_NOTION_SECRET_BROKER ?? "db",
 ): void {
   registerProvider(makeNotionProvider({ client: async () => new NotionClient(await getSecretVia(broker, secretRef)) }));
   registerConnectorMemory({

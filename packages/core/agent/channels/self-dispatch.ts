@@ -9,6 +9,9 @@ import { parseWindowToken, dmAnchorSurfaceForToken } from "./window-key.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
+import { getOrMintSelfSecret, selfSecretsArmed } from "../credentials/self-secrets.js";
+
+export const SPAWN_DISPATCH_SECRET_ENV = "OE_SPAWN_DISPATCH_SECRET";
 
 export const SELF_DISPATCH_PATH = "/eve/v1/unified/dispatch";
 
@@ -48,7 +51,7 @@ export function selfDispatchBaseUrl(env: NodeJS.ProcessEnv = process.env): strin
 }
 
 export function selfDispatchConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
-  return selfDispatchSecret(env) !== undefined && selfDispatchBaseUrl(env) !== undefined;
+  return selfSecretsArmed() && selfDispatchBaseUrl(env) !== undefined;
 }
 
 export function signSelfDispatchBody(secret: string, body: string): string {
@@ -145,8 +148,8 @@ export async function handleSelfDispatch(
   divert: SelfDispatchDivert,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<Response> {
-  const secret = selfDispatchSecret(env);
-  if (!secret) return new Response("not found", { status: 404 });
+  if (!selfSecretsArmed()) return new Response("not found", { status: 404 });
+  const secret = await getOrMintSelfSecret(SPAWN_DISPATCH_SECRET_ENV, { env });
 
   const read = await readCappedBody(req, SELF_DISPATCH_MAX_BODY_BYTES);
   if ("tooLarge" in read) {
@@ -229,13 +232,13 @@ export async function postSelfDispatch(
   deps: { env?: NodeJS.ProcessEnv; fetchImpl?: typeof fetch; timeoutMs?: number } = {},
 ): Promise<void> {
   const env = deps.env ?? process.env;
-  const secret = selfDispatchSecret(env);
   const base = selfDispatchBaseUrl(env);
-  if (!secret || !base) {
+  if (!base || !selfSecretsArmed()) {
     throw new Error(
-      "self-dispatch is not configured on this deployment — set OE_SPAWN_DISPATCH_SECRET (and OE_PUBLIC_BASE_URL when the deployment URL isn't discoverable from VERCEL_URL/VERCEL_PROJECT_PRODUCTION_URL).",
+      "self-dispatch is not configured on this deployment — arm OE_CREDENTIAL_ENCRYPTION_KEY (and set OE_PUBLIC_BASE_URL when the deployment URL isn't discoverable from VERCEL_URL/VERCEL_PROJECT_PRODUCTION_URL).",
     );
   }
+  const secret = await getOrMintSelfSecret(SPAWN_DISPATCH_SECRET_ENV, { env });
   const body = JSON.stringify({ ...payload, issuedAt: Date.now() });
   const url = `${base}${SELF_DISPATCH_PATH}`;
   const headers = { "content-type": "application/json", [SELF_DISPATCH_SIGNATURE_HEADER]: signSelfDispatchBody(secret, body) };

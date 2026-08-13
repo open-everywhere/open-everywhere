@@ -486,7 +486,7 @@ export async function dispatchTaskWindow(input: {
 }): Promise<void> {
   if (!crossProcessDispatchAvailable()) {
     throw new Error(
-      "spawn_task: no live cross-surface dispatch is available on this instance — this process has handled no surface webhook (no captured cross-channel dispatch) and the self-dispatch route is not configured (set OE_SPAWN_DISPATCH_SECRET; plus OE_PUBLIC_BASE_URL when the deployment's own URL isn't discoverable). Retry from a message-driven turn.",
+      "spawn_task: no live cross-surface dispatch is available on this instance — this process has handled no surface webhook (no captured cross-channel dispatch) and the self-dispatch route is not configured (arm OE_CREDENTIAL_ENCRYPTION_KEY; plus OE_PUBLIC_BASE_URL when the deployment's own URL isn't discoverable). Retry from a message-driven turn.",
     );
   }
   const surfaceKey = pickRedriveSurfaceKey(input.domain, input.origin.platform);

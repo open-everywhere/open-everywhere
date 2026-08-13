@@ -1,6 +1,7 @@
 import { createCredentialIntake, completeCredentialIntake, type RequestCredentialIntakeInput, type CredentialIntakeDeps } from "./intake.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { mintPageToken, pageBaseUrl, pageTokenSigningKey, verifyPageToken, PAGE_TOKEN_KEY_ENV, type PageTokenClaims } from "./page-token.js";
+import { mintPageToken, pageBaseUrl, verifyPageToken, PAGE_TOKEN_KEY_ENV, type PageTokenClaims } from "./page-token.js";
+import { getOrMintSelfSecret, selfSecretsArmed } from "./self-secrets.js";
 
 export const INTAKE_PAGE_PATH = "/connect/v1/intake";
 
@@ -9,8 +10,8 @@ export const INTAKE_PAGE_KEY_ENV = PAGE_TOKEN_KEY_ENV;
 const TOKEN_FIELD = "t";
 const VALUE_FIELD = "k";
 
-export function intakePageSigningKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  return pageTokenSigningKey(env);
+export async function intakePageSigningKey(env: NodeJS.ProcessEnv = process.env): Promise<string> {
+  return getOrMintSelfSecret(PAGE_TOKEN_KEY_ENV, { env });
 }
 
 export function intakePageBaseUrl(env: NodeJS.ProcessEnv = process.env): string | undefined {
@@ -18,7 +19,7 @@ export function intakePageBaseUrl(env: NodeJS.ProcessEnv = process.env): string 
 }
 
 export function intakePageAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
-  return intakePageSigningKey(env) !== undefined && intakePageBaseUrl(env) !== undefined;
+  return selfSecretsArmed() && intakePageBaseUrl(env) !== undefined;
 }
 
 export type IntakePageClaims = Omit<PageTokenClaims, "aud">;
@@ -41,9 +42,9 @@ export async function issueIntakePageLink(
   deps: IssueIntakePageLinkDeps = {},
 ): Promise<{ id: string; url: string } | undefined> {
   const env = deps.env ?? process.env;
-  const secret = intakePageSigningKey(env);
   const base = intakePageBaseUrl(env);
-  if (!secret || !base) return undefined;
+  if (!base || !selfSecretsArmed()) return undefined;
+  const secret = await intakePageSigningKey(env);
 
   const { id, expiresAt } = await createCredentialIntake(input, deps);
   const token = mintIntakePageToken(
@@ -101,8 +102,8 @@ export interface IntakePageHandlerDeps extends CredentialIntakeDeps {
 
 export async function handleIntakePageGet(req: Request, deps: IntakePageHandlerDeps = {}): Promise<Response> {
   const env = deps.env ?? process.env;
-  const secret = intakePageSigningKey(env);
-  if (!secret) return new Response("not found", { status: 404 });
+  if (!selfSecretsArmed()) return new Response("not found", { status: 404 });
+  const secret = await intakePageSigningKey(env);
 
   const now = (deps.now ?? (() => new Date()))().getTime();
   const token = new URL(req.url).searchParams.get(TOKEN_FIELD) ?? "";
@@ -118,8 +119,8 @@ export async function handleIntakePageGet(req: Request, deps: IntakePageHandlerD
 
 export async function handleIntakePagePost(req: Request, deps: IntakePageHandlerDeps = {}): Promise<Response> {
   const env = deps.env ?? process.env;
-  const secret = intakePageSigningKey(env);
-  if (!secret) return new Response("not found", { status: 404 });
+  if (!selfSecretsArmed()) return new Response("not found", { status: 404 });
+  const secret = await intakePageSigningKey(env);
 
   const now = (deps.now ?? (() => new Date()))().getTime();
 

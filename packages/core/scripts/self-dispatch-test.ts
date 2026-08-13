@@ -6,10 +6,12 @@ __slackStubs.registerSlackFixtureCodec();
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomBytes } from "node:crypto";
 
 const tmp = mkdtempSync(join(tmpdir(), "oe-self-dispatch-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 process.env.OE_ORG = "acme";
+process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 overrideSettingsForTest({ window: { topology: true } });
 delete process.env.OE_SPAWN_DISPATCH_SECRET;
 delete process.env.OE_PUBLIC_BASE_URL;
@@ -74,6 +76,10 @@ registerConfig({
 });
 
 const SECRET = "self-dispatch-test-secret";
+{
+  const { encryptedKvVault } = await import("../agent/credentials/kv-vault.js");
+  await encryptedKvVault().write("self:OE_SPAWN_DISPATCH_SECRET", SECRET);
+}
 const standingToken = unifiedSupervisorToken(DOMAIN, 42);
 const generation = parseWindowToken(standingToken)!.generation;
 const taskToken = formatWindowToken({ domain: DOMAIN, windowId: taskWindowId("slack_T1_C1", "thr1", "nonce1"), generation });
@@ -122,10 +128,16 @@ console.log("1. env helpers (secret / base-URL precedence / configured):");
   );
   eq(selfDispatchBaseUrl({ VERCEL_URL: "dep-abc.vercel.app" } as NodeJS.ProcessEnv), "https://dep-abc.vercel.app", "VERCEL_URL last resort");
 
-  ok(!selfDispatchConfigured({} as NodeJS.ProcessEnv), "unconfigured → false");
-  ok(!selfDispatchConfigured({ OE_SPAWN_DISPATCH_SECRET: "x" } as NodeJS.ProcessEnv), "secret without base URL → false");
-  ok(!selfDispatchConfigured({ VERCEL_URL: "x.example" } as NodeJS.ProcessEnv), "base URL without secret → false");
-  ok(selfDispatchConfigured({ OE_SPAWN_DISPATCH_SECRET: "x", VERCEL_URL: "x.example" } as NodeJS.ProcessEnv), "secret + base URL → true");
+  ok(!selfDispatchConfigured({} as NodeJS.ProcessEnv), "no base URL ⇒ false (vault is armed for this whole file, but that alone is not enough)");
+  ok(!selfDispatchConfigured({ OE_SPAWN_DISPATCH_SECRET: "x" } as NodeJS.ProcessEnv), "a secret in the env buys nothing without a base URL ⇒ still false");
+  ok(selfDispatchConfigured({ VERCEL_URL: "x.example" } as NodeJS.ProcessEnv), "base URL alone ⇒ true (OE_SPAWN_DISPATCH_SECRET is no longer required at all)");
+  ok(selfDispatchConfigured({ OE_SPAWN_DISPATCH_SECRET: "x", VERCEL_URL: "x.example" } as NodeJS.ProcessEnv), "secret + base URL → true (the secret is redundant but harmless)");
+
+  const savedKey = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  ok(!selfDispatchConfigured({ VERCEL_URL: "x.example" } as NodeJS.ProcessEnv), "vault unarmed ⇒ false even with a resolvable base URL");
+  process.env.OE_CREDENTIAL_ENCRYPTION_KEY = savedKey;
+  ok(selfDispatchConfigured({ VERCEL_URL: "x.example" } as NodeJS.ProcessEnv), "…and re-armed, the same call is true again");
 }
 
 console.log("2. sign ↔ verify:");
@@ -184,7 +196,14 @@ const armed = { OE_SPAWN_DISPATCH_SECRET: SECRET } as NodeJS.ProcessEnv;
   const body = JSON.stringify(goodPayload());
   const sig = signSelfDispatchBody(SECRET, body);
 
-  eq((await handleSelfDispatch(mkReq(body, sig), fakeReceive, captureDivert, {} as NodeJS.ProcessEnv)).status, 404, "no secret → 404 (route does not exist)");
+  const armCheckBody = JSON.stringify(goodPayload({ excludeTaskResultId: "arm-check-only" }));
+  const armCheckSig = signSelfDispatchBody(SECRET, armCheckBody);
+  eq((await handleSelfDispatch(mkReq(armCheckBody, armCheckSig), fakeReceive, captureDivert, {} as NodeJS.ProcessEnv)).status, 200, "no secret in the passed env ⇒ STILL 200 (resolves the vault-stored secret, OPE-408 step 3)");
+  const savedKeyForDisarm = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  eq((await handleSelfDispatch(mkReq(armCheckBody, armCheckSig), fakeReceive, captureDivert, armed)).status, 404, "vault unarmed → 404 (route effectively does not exist)");
+  process.env.OE_CREDENTIAL_ENCRYPTION_KEY = savedKeyForDisarm;
+  diverted.length = 0;
 
   eq((await handleSelfDispatch(mkReq(body), fakeReceive, captureDivert, armed)).status, 401, "missing signature → 401");
   eq(
@@ -417,9 +436,10 @@ process.env.OE_PUBLIC_BASE_URL = "https://self.test";
   eq(rp.token, standingToken, "reinject targets the same session token");
 
   delete process.env.OE_SPAWN_DISPATCH_SECRET;
+  delete process.env.OE_PUBLIC_BASE_URL;
   await assert.rejects(
     () => dispatchTaskWindow({ token: taskToken, message: "m", wakeId: "w", domain: DOMAIN, origin: slackOrigin, tainted: false }),
-    /OE_SPAWN_DISPATCH_SECRET/,
+    /OE_PUBLIC_BASE_URL/,
     "no path at all → dispatchTaskWindow throws the instructive not-configured error",
   );
   n++;
@@ -427,6 +447,7 @@ process.env.OE_PUBLIC_BASE_URL = "https://self.test";
   eq(buildRedriveReinject(DOMAIN, standingToken, {}), null, "no path at all → reinject null (redrive skipped, guard unburned)");
   const coldCalls = fetchCalls.length;
   process.env.OE_SPAWN_DISPATCH_SECRET = SECRET;
+  process.env.OE_PUBLIC_BASE_URL = "https://self.test";
 
   console.log("7. loop-back (captured self-call → real handler → real divert → capture receive):");
   const received: { message: string; target: UnifiedReceiveTarget; auth: { attributes?: Record<string, unknown> } }[] = [];

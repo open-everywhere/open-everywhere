@@ -3,7 +3,8 @@ import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { getConfig } from "../access/config.js";
 import { escapeHtml as esc, securePageResponse, BUTTON_STYLE, CODE_BLOCK_STYLE } from "../credentials/page-chrome.js";
-import { mintPageToken, pageBaseUrl, pageTokenSigningKey, verifyPageToken } from "../credentials/page-token.js";
+import { mintPageToken, pageBaseUrl, verifyPageToken, PAGE_TOKEN_KEY_ENV } from "../credentials/page-token.js";
+import { getOrMintSelfSecret, selfSecretsArmed } from "../credentials/self-secrets.js";
 import { webhookVerifier, type WebhookSenderGuidance } from "./verifier.js";
 import type { CredentialIntakeRow } from "../operational/store.js";
 
@@ -16,7 +17,7 @@ export const REVEAL_GRANT_TTL_MS = 15 * 60_000;
 const TOKEN_FIELD = "t";
 
 export function revealPageAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
-  return pageTokenSigningKey(env) !== undefined && pageBaseUrl(env) !== undefined;
+  return selfSecretsArmed() && pageBaseUrl(env) !== undefined;
 }
 
 export interface RevealGrantDeps {
@@ -35,9 +36,9 @@ export interface IssueRevealLinkInput {
 
 export async function issueRevealLink(input: IssueRevealLinkInput, deps: RevealGrantDeps = {}): Promise<{ id: string; url: string } | undefined> {
   const env = deps.env ?? process.env;
-  const secret = pageTokenSigningKey(env);
   const base = pageBaseUrl(env);
-  if (!secret || !base) return undefined;
+  if (!base || !selfSecretsArmed()) return undefined;
+  const secret = await getOrMintSelfSecret(PAGE_TOKEN_KEY_ENV, { env });
 
   const now = (deps.now ?? (() => new Date()))();
   const expiresAt = new Date(now.getTime() + REVEAL_GRANT_TTL_MS).toISOString();
@@ -125,8 +126,8 @@ function grantOpen(row: CredentialIntakeRow | null, boundTo: string, nowMs: numb
 
 export async function handleRevealGet(req: Request, deps: RevealPageDeps = {}): Promise<Response> {
   const env = deps.env ?? process.env;
-  const secret = pageTokenSigningKey(env);
-  if (!secret) return new Response("not found", { status: 404 });
+  if (!selfSecretsArmed()) return new Response("not found", { status: 404 });
+  const secret = await getOrMintSelfSecret(PAGE_TOKEN_KEY_ENV, { env });
 
   const nowMs = (deps.now ?? (() => new Date()))().getTime();
   const token = new URL(req.url).searchParams.get(TOKEN_FIELD) ?? "";
@@ -140,8 +141,8 @@ export async function handleRevealGet(req: Request, deps: RevealPageDeps = {}): 
 
 export async function handleRevealPost(req: Request, deps: RevealPageDeps = {}): Promise<Response> {
   const env = deps.env ?? process.env;
-  const signingKey = pageTokenSigningKey(env);
-  if (!signingKey) return new Response("not found", { status: 404 });
+  if (!selfSecretsArmed()) return new Response("not found", { status: 404 });
+  const signingKey = await getOrMintSelfSecret(PAGE_TOKEN_KEY_ENV, { env });
 
   const now = (deps.now ?? (() => new Date()))();
   const nowMs = now.getTime();

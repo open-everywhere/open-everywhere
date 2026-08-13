@@ -46,7 +46,7 @@ ok(
   "route ①: scoped to GET/POST/PATCH (no DELETE)",
 );
 const notionConn = bound.connections.find((c) => c.id === "notion-rest");
-ok(notionConn?.credentialType === "bearer" && notionConn?.secretRef === "NOTION_API_KEY", "route ①: bearer credential, secretRef NOTION_API_KEY");
+ok(notionConn?.credentialType === "bearer" && notionConn?.secretRef === "db:notion:team-key", "route ①: bearer credential, secretRef db:notion:team-key");
 
 ok(bound.plugins.includes("notion"), "route ②: bundle grants the 'notion' plugin");
 ok(bound.skills.includes("notion-rest"), "route ②: plugin expands to the 'notion-rest' skill (scoped visibility)");
@@ -118,12 +118,14 @@ if (typeof withHeaders !== "string") {
   );
 }
 
-delete process.env.NOTION_API_KEY;
 try {
   await compileNetworkPolicy(bound, resolveHeaders, async (ids) => ids);
-  ok(false, "compileNetworkPolicy with the REAL resolveHeaders + no NOTION_API_KEY should throw");
+  ok(false, "compileNetworkPolicy with the REAL resolveHeaders + no db broker registered should throw");
 } catch (err) {
-  ok(String(err).includes("NOTION_API_KEY"), `throws naming the missing secret (got: ${String(err)})`);
+  ok(
+    String(err).includes("db") && String(err).includes("not registered"),
+    `throws naming the unregistered db broker (got: ${String(err)})`,
+  );
 }
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-notion-skill-"));

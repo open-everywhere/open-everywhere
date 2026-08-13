@@ -6,6 +6,9 @@ import { drainSessionStream, probeSessionExists, type ProbeableSession, type Sou
 import { renderTranscript } from "./transcript-render.js";
 import { listRoutineFires } from "../routines/fire-audit.js";
 import { appendAudit } from "../audit/audit.js";
+import { getOrMintSelfSecret, selfSecretsArmed } from "../credentials/self-secrets.js";
+
+export const TRANSCRIPT_RELAY_SECRET_ENV = "OE_TRANSCRIPT_RELAY_SECRET";
 
 export const TRANSCRIPT_RELAY_PATH = "/eve/v1/internal/transcript";
 
@@ -52,7 +55,7 @@ export function transcriptRelaySecret(env: NodeJS.ProcessEnv = process.env): str
 }
 
 export function transcriptRelayConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
-  return transcriptRelaySecret(env) !== undefined && selfDispatchBaseUrl(env) !== undefined;
+  return selfSecretsArmed() && selfDispatchBaseUrl(env) !== undefined;
 }
 
 export function signTranscriptRelayBody(secret: string, body: string): string {
@@ -97,8 +100,8 @@ export async function handleTranscriptRelay(
   deps: TranscriptRelayDeps = {},
 ): Promise<Response> {
   const env = deps.env ?? process.env;
-  const secret = transcriptRelaySecret(env);
-  if (!secret) return new Response("not found", { status: 404 });
+  if (!selfSecretsArmed()) return new Response("not found", { status: 404 });
+  const secret = await getOrMintSelfSecret(TRANSCRIPT_RELAY_SECRET_ENV, { env });
 
   const read = await readCappedBody(req, TRANSCRIPT_RELAY_MAX_BODY_BYTES);
   if ("tooLarge" in read) return json(413, { error: `payload exceeds ${TRANSCRIPT_RELAY_MAX_BODY_BYTES} bytes` });
@@ -185,13 +188,13 @@ export async function fetchRoutineTranscript(
   deps: { env?: NodeJS.ProcessEnv; fetchImpl?: typeof fetch; timeoutMs?: number } = {},
 ): Promise<TranscriptRelayResult> {
   const env = deps.env ?? process.env;
-  const secret = transcriptRelaySecret(env);
   const base = selfDispatchBaseUrl(env);
-  if (!secret || !base) {
+  if (!base || !selfSecretsArmed()) {
     throw new TranscriptRelayError(
-      "transcript reading is not configured on this deployment — set OE_TRANSCRIPT_RELAY_SECRET (and OE_PUBLIC_BASE_URL when the deployment URL isn't discoverable from VERCEL_URL/VERCEL_PROJECT_PRODUCTION_URL).",
+      "transcript reading is not configured on this deployment — arm OE_CREDENTIAL_ENCRYPTION_KEY (and set OE_PUBLIC_BASE_URL when the deployment URL isn't discoverable from VERCEL_URL/VERCEL_PROJECT_PRODUCTION_URL).",
     );
   }
+  const secret = await getOrMintSelfSecret(TRANSCRIPT_RELAY_SECRET_ENV, { env });
   const body = JSON.stringify({ ...request, issuedAt: Date.now() });
   const url = `${base}${TRANSCRIPT_RELAY_PATH}`;
   const res = await (deps.fetchImpl ?? fetch)(url, {

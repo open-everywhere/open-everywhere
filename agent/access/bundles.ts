@@ -33,8 +33,8 @@ const bundles: Bundle[] = [
       {
         id: "notion-rest",
         credentialType: "bearer",
-        secretRef: "NOTION_API_KEY",
-        broker: "env",
+        secretRef: "db:notion:team-key",
+        broker: "db",
         allowedWebsites: ["api.notion.com"],
         methods: ["GET", "POST", "PATCH"],
       },

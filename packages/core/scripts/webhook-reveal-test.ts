@@ -214,16 +214,29 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
 }
 
 {
-  console.log("\n6. disarmed deployment:");
-  const { token } = await freshGrant();
-  ok(reveal.revealPageAvailable(), "armed: signing key + base url present");
+  console.log("\n6. disarmed deployment, and the signing key's new mint-on-first-use home:");
+  const { token: tokenBeforeMint } = await freshGrant();
+  ok(reveal.revealPageAvailable(), "armed: vault + base url present");
+
   const saved = process.env.OE_INTAKE_PAGE_SIGNING_KEY;
   delete process.env.OE_INTAKE_PAGE_SIGNING_KEY;
-  ok(!reveal.revealPageAvailable(), "no signing key ⇒ not available (declare_webhook refuses at propose time)");
-  eq((await reveal.handleRevealGet(getReq(token))).status, 404, "no signing key ⇒ GET 404 (route effectively absent)");
-  eq((await reveal.handleRevealPost(postReq(token))).status, 404, "no signing key ⇒ POST 404");
-  eq(await reveal.issueRevealLink({ org: ORG, ref: "hook:x", revealTo: USER, label: "x" }), undefined, "…and no link can be minted");
+  ok(reveal.revealPageAvailable(), "no signing key env var ⇒ STILL available (mints on first use, OPE-408 step 3)");
+  const { token: mintedToken } = await freshGrant();
+  eq((await reveal.handleRevealGet(getReq(mintedToken))).status, 200, "no signing key env var ⇒ GET still 200 (resolves via mint)");
+  const mintedLink = await reveal.issueRevealLink({ org: ORG, ref: "hook:mint-check", revealTo: USER, label: "mint-check" });
+  ok(mintedLink !== undefined, "…and a link CAN still be minted");
+  const mintedValue = await vault.read("self:OE_INTAKE_PAGE_SIGNING_KEY");
+  ok(typeof mintedValue === "string" && mintedValue.length > 0, "the minted signing key is durably stored under self:OE_INTAKE_PAGE_SIGNING_KEY");
   process.env.OE_INTAKE_PAGE_SIGNING_KEY = saved;
+  await vault.delete("self:OE_INTAKE_PAGE_SIGNING_KEY");
+
+  const savedKey = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  ok(!reveal.revealPageAvailable(), "no encryption key ⇒ not available (nothing can be read or minted)");
+  eq((await reveal.handleRevealGet(getReq(tokenBeforeMint))).status, 404, "no encryption key ⇒ GET 404 (route effectively absent)");
+  eq((await reveal.handleRevealPost(postReq(tokenBeforeMint))).status, 404, "no encryption key ⇒ POST 404");
+  eq(await reveal.issueRevealLink({ org: ORG, ref: "hook:x", revealTo: USER, label: "x" }), undefined, "…and no link can be minted");
+  process.env.OE_CREDENTIAL_ENCRYPTION_KEY = savedKey;
 
   const savedBase = process.env.OE_PUBLIC_BASE_URL;
   delete process.env.OE_PUBLIC_BASE_URL;

@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL, fileURLToPath } from "node:url";
+import { randomBytes } from "node:crypto";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-dynamic-replay-")), "ops.sqlite3");
+process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 delete process.env.OE_PLATFORM;
 overrideSettingsForTest({ tools: { genericReadVerbs: false } });
 overrideSettingsForTest({ tools: { sourceScopedMount: false } });

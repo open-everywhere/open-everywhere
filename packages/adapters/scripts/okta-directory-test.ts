@@ -264,16 +264,16 @@ const APP_USERS_P2 = `${ORG_URL}/api/v1/apps/0oaSLACK/users?after=a2`;
     OE_DIRECTORY_OKTA_APPS: "slack:0oa1",
   });
   ok(cfg.orgUrl === "https://acme.okta.com", "config: a trailing slash on the org URL is normalised away");
-  ok(cfg.tokenBroker === "env", "config: the broker defaults to core's env floor");
+  ok(cfg.tokenBroker === "db", "config: the broker defaults to the encrypted db credential store (OPE-408 step 2)");
   ok(
     loadOktaDirectoryConfig({
       OE_DIRECTORY_PROVIDER: "okta",
       OE_DIRECTORY_OKTA_ORG_URL: ORG_URL,
-      OE_DIRECTORY_OKTA_TOKEN_REF: "okta/api-token",
-      OE_DIRECTORY_OKTA_TOKEN_BROKER: "db",
+      OE_DIRECTORY_OKTA_TOKEN_REF: "OKTA_API_TOKEN",
+      OE_DIRECTORY_OKTA_TOKEN_BROKER: "env",
       OE_DIRECTORY_OKTA_APPS: "",
-    }).tokenBroker === "db",
-    "config: the broker is selectable, so the token can live in the encrypted db home instead of env",
+    }).tokenBroker === "env",
+    "config: the broker is selectable, so the token can instead live in a plain env var",
   );
 
   const orgUrlThrows = (value: string, label: string): void => {

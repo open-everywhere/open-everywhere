@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { randomBytes } from "node:crypto";
 
 const tmp = mkdtempSync(join(tmpdir(), "oe-transcript-tool-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 process.env.OE_ORG = "acme";
+process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 delete process.env.OE_TRANSCRIPT_RELAY_SECRET;
 delete process.env.OE_PUBLIC_BASE_URL;
 delete process.env.VERCEL_URL;
@@ -45,6 +47,10 @@ const ok = (cond: boolean, label: string): void => {
 
 const SECRET = "relay-secret-for-tests";
 const BASE = "https://oe.example.test";
+{
+  const { encryptedKvVault } = await import("../agent/credentials/kv-vault.js");
+  await encryptedKvVault().write("self:OE_TRANSCRIPT_RELAY_SECRET", SECRET);
+}
 
 function signedRequest(body: Record<string, unknown>, secret = SECRET): Request {
   const raw = JSON.stringify({ issuedAt: Date.now(), ...body });
@@ -238,7 +244,10 @@ const FIRE = {
   const events = [{ type: "message.received", data: { message: "WAKE-BODY-SENTINEL" }, meta: { at: "2026-07-26T03:00:00.000Z" } }];
 
   delete process.env.OE_TRANSCRIPT_RELAY_SECRET;
-  ok((await handleTranscriptRelay(signedRequest(body), fakeGetSession(events) as never, { fires })).status === 404, "route: 404 when the secret is unset");
+  const savedKeyForDisarm = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  ok((await handleTranscriptRelay(signedRequest(body), fakeGetSession(events) as never, { fires })).status === 404, "route: 404 when the vault is unarmed");
+  process.env.OE_CREDENTIAL_ENCRYPTION_KEY = savedKeyForDisarm;
   process.env.OE_TRANSCRIPT_RELAY_SECRET = SECRET;
 
   ok(
@@ -373,13 +382,16 @@ const FIRE = {
   ok((await status(502)).includes("502"), "client: any other status is reported with its code");
 
   delete process.env.OE_TRANSCRIPT_RELAY_SECRET;
-  ok(!transcriptRelayConfigured(), "client: unconfigured without the secret");
+  const savedKeyForClientDisarm = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  ok(!transcriptRelayConfigured(), "client: unconfigured without the vault armed");
   await assert.rejects(
     () => fetchRoutineTranscript(req, { fetchImpl: async () => new Response("{}", { status: 200 }) }),
-    (err: unknown) => err instanceof TranscriptRelayError && /OE_TRANSCRIPT_RELAY_SECRET/.test((err as Error).message),
+    (err: unknown) => err instanceof TranscriptRelayError && /OE_CREDENTIAL_ENCRYPTION_KEY/.test((err as Error).message),
     "client: an unconfigured deployment says which env var is missing",
   );
   n++;
+  process.env.OE_CREDENTIAL_ENCRYPTION_KEY = savedKeyForClientDisarm;
   process.env.OE_TRANSCRIPT_RELAY_SECRET = SECRET;
 
   ok("error" in parseTranscriptRelayRequest({ ...req, org: "" }), "payload: an empty org is rejected");

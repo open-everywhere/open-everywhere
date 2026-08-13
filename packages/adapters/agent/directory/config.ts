@@ -92,7 +92,7 @@ export function loadOktaDirectoryConfig(env: NodeJS.ProcessEnv = process.env): O
   return {
     orgUrl: orgUrl!.replace(/\/+$/u, ""),
     tokenRef: tokenRef!,
-    tokenBroker: env[OE_DIRECTORY_OKTA_TOKEN_BROKER_ENV]?.trim() || "env",
+    tokenBroker: env[OE_DIRECTORY_OKTA_TOKEN_BROKER_ENV]?.trim() || "db",
     apps,
   };
 }
