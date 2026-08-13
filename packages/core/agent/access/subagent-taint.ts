@@ -4,16 +4,16 @@ const MARKER_PREFIX = "oe-subagent-taint:";
 
 export const SUBAGENT_TAINT_TTL_MS = 6 * 60 * 60 * 1000;
 
-export function subagentTaintKey(childSessionId: string): string {
-  return `${MARKER_PREFIX}${childSessionId}`;
+export function subagentTaintKey(childToken: string): string {
+  return `${MARKER_PREFIX}${childToken}`;
 }
 
-export async function markSubagentTainted(org: string, childSessionId: string): Promise<void> {
+export async function markSubagentTainted(org: string, childToken: string): Promise<void> {
   try {
-    if (childSessionId.length === 0) return;
+    if (childToken.length === 0) return;
     await getOperationalStore().putTaskResult(
       org,
-      subagentTaintKey(childSessionId),
+      subagentTaintKey(childToken),
       JSON.stringify({ tainted: true }),
       new Date().toISOString(),
       SUBAGENT_TAINT_TTL_MS,
@@ -23,10 +23,10 @@ export async function markSubagentTainted(org: string, childSessionId: string): 
   }
 }
 
-export async function subagentWasTainted(org: string, childSessionId: string): Promise<boolean> {
+export async function subagentWasTainted(org: string, childToken: string): Promise<boolean> {
   try {
-    if (childSessionId.length === 0) return false;
-    const raw = await getOperationalStore().getTaskResult(org, subagentTaintKey(childSessionId));
+    if (childToken.length === 0) return false;
+    const raw = await getOperationalStore().getTaskResult(org, subagentTaintKey(childToken));
     if (raw === null) return false;
     const parsed: unknown = JSON.parse(raw);
     return (parsed as { tainted?: unknown } | null)?.tainted === true;

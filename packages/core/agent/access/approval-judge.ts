@@ -9,6 +9,7 @@ import { taintKindsThisTurn, untrustedIngestedThisTurn } from "./taint-signal.js
 import { requesterMessagesThisTurn } from "./requester-messages.js";
 import { appendAudit, readAudit } from "../audit/audit.js";
 import { getSettings, type ApprovalJudgeMode as SettingsApprovalJudgeMode } from "../settings/settings.js";
+import { processRegistrySlot } from "../lib/process-registry.js";
 
 export type ApprovalJudgeMode = SettingsApprovalJudgeMode;
 
@@ -20,14 +21,14 @@ export type JudgePass = "scrutiny" | "verdict";
 
 export type ApprovalJudgeCompletion = (prompt: string, pass: JudgePass) => Promise<string>;
 
-let completion: ApprovalJudgeCompletion | undefined;
+const completionSlot = processRegistrySlot<ApprovalJudgeCompletion>("approval-judge.completion.v1");
 
 export function registerApprovalJudgeCompletion(c: ApprovalJudgeCompletion): void {
-  completion = c;
+  completionSlot.set(c);
 }
 
 export function resetApprovalJudgeCompletion(): void {
-  completion = undefined;
+  completionSlot.set(null);
 }
 
 export interface ApprovalJudgeContext {
@@ -255,7 +256,8 @@ export async function runApprovalJudge(ctx: ApprovalJudgeContext, opts: RunAppro
       return { verdict: "allow", source: "cache", reasoning: cached.reasoning, cacheKey, cacheHit: true, passes: 0 };
     }
   }
-  if (completion === undefined) {
+  const completion = completionSlot.get();
+  if (completion === null) {
     return { verdict: "defer", source: "unavailable", reasoning: "no judge transport registered", cacheKey, cacheHit: false, passes: 0 };
   }
 
@@ -263,7 +265,7 @@ export async function runApprovalJudge(ctx: ApprovalJudgeContext, opts: RunAppro
 
   const run = async (): Promise<ApprovalJudgeRun> => {
     try {
-      const rawScrutiny = await completion!(judgeScrutinyPrompt(ctx), "scrutiny");
+      const rawScrutiny = await completion(judgeScrutinyPrompt(ctx), "scrutiny");
       const scrutiny = parseScrutiny(rawScrutiny);
       const pass1: "yes" | "no" | "unparseable" = scrutiny === undefined ? "unparseable" : scrutiny ? "yes" : "no";
       if (!enforce) {
@@ -277,7 +279,7 @@ export async function runApprovalJudge(ctx: ApprovalJudgeContext, opts: RunAppro
           return { verdict: "allow", source: "pass1", reasoning, cacheKey, cacheHit: false, passes: 1, pass1 };
         }
       }
-      const parsed = parseVerdict(await completion!(judgeVerdictPrompt(ctx), "verdict"));
+      const parsed = parseVerdict(await completion(judgeVerdictPrompt(ctx), "verdict"));
       if (parsed === undefined) {
         return { verdict: "defer", source: "pass2", reasoning: "pass-2 verdict unparseable", cacheKey, cacheHit: false, passes: 2, pass1 };
       }

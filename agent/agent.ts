@@ -19,6 +19,7 @@ import {
 } from "./model/models.js";
 import { loadModelPolicy } from "./model/policy.js";
 import { evalMockModel, mockModelArmed } from "./model/mock-model.js";
+import { scriptedModelFor } from "./model/scripted-resolve.js";
 import { registerAppInfo } from "@open-everywhere/core/agent/commands/core.js";
 import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
 import { readFileSync } from "node:fs";
@@ -91,12 +92,13 @@ export default defineAgent({
     events: {
       "step.started": mockModelArmed()
         ? () => primaryModelSelection(evalMockModel())
-        : selectingResolver(
-            gatewayModelResolver(
+        : (() => {
+            const gatewayResolve = gatewayModelResolver(
               { id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS },
               { id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS },
-            ),
-          ),
+            );
+            return selectingResolver(async (event, ctx) => scriptedModelFor(event, ctx) ?? (await gatewayResolve(event, ctx)));
+          })(),
     },
   }),
   reasoning: "medium",

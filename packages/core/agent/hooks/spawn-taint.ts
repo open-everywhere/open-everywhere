@@ -103,6 +103,11 @@ const subagentIdentity = defineState<{ org: string; sessionId: string; parent: {
 );
 
 function readParentLink(ctx: HookContext): { sessionId: string; callId: string } | null {
+  const token = (ctx as { channel?: { continuationToken?: unknown } }).channel?.continuationToken;
+  if (typeof token === "string") {
+    const m = /^subagent:([^:]+):([^:]+)$/.exec(token);
+    if (m !== null) return { sessionId: m[1]!, callId: m[2]! };
+  }
   const parent = (ctx as { session?: { parent?: { sessionId?: unknown; callId?: unknown } } }).session?.parent;
   const sessionId = parent?.sessionId;
   const callId = parent?.callId;

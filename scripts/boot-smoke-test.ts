@@ -161,6 +161,65 @@ for (const [rel, mod] of loaded) {
 }
 
 {
+  const { SCRIPTED_MODEL_ENV, SCRIPTED_MODEL_ID, scriptedModelArmed } = await import("../agent/model/scripted-model.js");
+  const { registerScript } = await import("../agent/model/scripted-model.js");
+  const { scriptedModelFor } = await import("../agent/model/scripted-resolve.js");
+  if (scriptedModelArmed()) {
+    problems.push(
+      `SCRIPTED MODEL: ${SCRIPTED_MODEL_ENV} is armed in this process — the boot gate must run with it UNSET, ` +
+        "or ⑤b asserts nothing. (It is armed only inside the vitest integration forks.)",
+    );
+  } else {
+    if (scriptedModelFor(undefined, {}) !== null) {
+      problems.push("SCRIPTED MODEL: scriptedModelFor() returned non-null with the env unset — the normal build would consult test scripts.");
+    }
+    let refused = false;
+    try {
+      registerScript({ parent: [] });
+    } catch {
+      refused = true;
+    }
+    if (!refused) {
+      problems.push("SCRIPTED MODEL: registerScript() accepted a script with the env unset — the fail-closed guard is gone.");
+    }
+    const priorArm = process.env[SCRIPTED_MODEL_ENV];
+    const priorVercel = process.env.VERCEL;
+    try {
+      process.env[SCRIPTED_MODEL_ENV] = "1";
+      process.env.VERCEL = "1";
+      let vercelRefused = false;
+      try {
+        scriptedModelFor(undefined, {});
+      } catch {
+        vercelRefused = true;
+      }
+      if (!vercelRefused) {
+        problems.push("SCRIPTED MODEL: scriptedModelFor() did not throw when armed on Vercel — a hosted deployment could answer from a script.");
+      }
+    } finally {
+      if (priorArm === undefined) delete process.env[SCRIPTED_MODEL_ENV];
+      else process.env[SCRIPTED_MODEL_ENV] = priorArm;
+      if (priorVercel === undefined) delete process.env.VERCEL;
+      else process.env.VERCEL = priorVercel;
+    }
+    const agent = loaded.get("agent/agent.ts")?.default as
+      | { model?: { events?: Record<string, (event: unknown, ctx: unknown) => unknown> } }
+      | undefined;
+    const resolver = agent?.model?.events?.["step.started"];
+    if (typeof resolver === "function") {
+      const selection = (await resolver(undefined, {})) as { model?: { modelId?: unknown } } | null;
+      const seated = selection && typeof selection === "object" ? selection.model : undefined;
+      if (seated && typeof seated === "object" && seated.modelId === SCRIPTED_MODEL_ID) {
+        problems.push(
+          `MODEL SEAT: the turn seat resolved to the SCRIPTED double (${SCRIPTED_MODEL_ID}) with ${SCRIPTED_MODEL_ENV} unset — ` +
+            "this build would answer wakes from test scripts.",
+        );
+      }
+    }
+  }
+}
+
+{
   const agent = loaded.get("agent/agent.ts")?.default as
     | {
         model?: { events?: Record<string, (event: unknown, ctx: unknown) => unknown> };

@@ -1,3 +1,5 @@
+import { processRegistrySlot } from "../lib/process-registry.js";
+
 export type TaintTierMode = "enforced" | "dryrun";
 
 export type TaintMode = "on" | "off";
@@ -571,26 +573,30 @@ export function defineSettings(overrides: AgentSettingsOverrides): AgentSettings
   return Object.freeze(overrides);
 }
 
-let registered: AgentSettingsOverrides = {};
+const registeredSlot = processRegistrySlot<AgentSettingsOverrides>("settings.registered.v1");
+
+function registeredOverrides(): AgentSettingsOverrides {
+  return registeredSlot.get() ?? {};
+}
 
 export function registerSettings(overrides: AgentSettingsOverrides): void {
-  registered = overrides;
+  registeredSlot.set(overrides);
 }
 
 export function resetSettingsForTest(): void {
-  registered = {};
+  registeredSlot.set(null);
 }
 
 export function overrideSettingsForTest(patch: AgentSettingsOverrides): void {
   const next: Record<string, Record<string, unknown>> = {};
-  for (const [group, values] of Object.entries(registered as Record<string, Record<string, unknown> | undefined>)) {
+  for (const [group, values] of Object.entries(registeredOverrides() as Record<string, Record<string, unknown> | undefined>)) {
     if (values !== undefined) next[group] = { ...values };
   }
   for (const [group, values] of Object.entries(patch as Record<string, Record<string, unknown> | undefined>)) {
     if (values === undefined) continue;
     next[group] = { ...(next[group] ?? {}), ...values };
   }
-  registered = next as AgentSettingsOverrides;
+  registeredSlot.set(next as AgentSettingsOverrides);
 }
 
 function resolve<T>(spec: SettingSpec<T>, override: T | undefined, env: NodeJS.ProcessEnv): T {
@@ -606,7 +612,7 @@ function resolve<T>(spec: SettingSpec<T>, override: T | undefined, env: NodeJS.P
 
 export function getSettings(
   env: NodeJS.ProcessEnv = process.env,
-  overrides: AgentSettingsOverrides = registered,
+  overrides: AgentSettingsOverrides = registeredOverrides(),
 ): AgentSettings {
   const o = overrides;
   return {
