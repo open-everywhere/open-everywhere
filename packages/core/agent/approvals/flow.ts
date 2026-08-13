@@ -245,12 +245,15 @@ export async function requestApproval(
             `The judge's reasoning is recorded in the audit log (approval.judge.verdict); if this looks wrong, a person can propose the action themselves, and the operator can review this verb's defer flip.`,
         );
       }
+      const taintedDeny = resolution.tainted && reason === "ask-unattended";
       throw new Error(
         `"${input.kind}" was DENIED by the approver chain (${resolution.resolvedBy}${reason !== undefined ? `, ${reason}` : ""}) — ` +
           `nothing was proposed and no card was posted. ${
-            reason === "ask-unattended"
-              ? "An unattended run cannot wait on an approval card; arm the permission on the routine's creation card, or ask a person to do this."
-              : "This refusal is config-reviewed policy; a config diff to the denying element is the only way to lift it."
+            taintedDeny
+              ? "This turn read external content, so this action needs a person to confirm it — and this run is unattended, so there is nobody to ask. No standing grant lifts that; ask a person to do this, or raise it again in a turn that has not read anything external."
+              : reason === "ask-unattended"
+                ? "An unattended run cannot wait on an approval card; arm the permission on the routine's creation card, or ask a person to do this."
+                : "This refusal is config-reviewed policy; a config diff to the denying element is the only way to lift it."
           }`,
       );
     }

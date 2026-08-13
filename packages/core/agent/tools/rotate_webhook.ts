@@ -4,7 +4,6 @@ import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
 import { actingPrincipalIdOf, resolveMode, unattendedOf } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
@@ -33,12 +32,6 @@ export default defineTool({
   approval: never(),
   async execute(input, ctx) {
     await requireSessionContinuation(ctx, "rotate_webhook");
-
-    if (untrustedIngestedThisTurn()) {
-      throw new Error(
-        "I've read external content this turn, so I won't re-mint a webhook's signing secret right now — that shouldn't be proposed off something I just read. Ask me again in a fresh message.",
-      );
-    }
 
     const mode = resolveMode(ctx);
     if (mode === "mpim") throw new Error("Group DMs are execution-only — rotate from a channel or a DM instead.");

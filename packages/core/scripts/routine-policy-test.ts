@@ -281,14 +281,19 @@ for (const name of ["add_routine_rule", "remove_routine_rule"] as const) {
 }
 
 for (const verb of ["add", "remove"] as const) {
-  ok(policyAuthorRefusal({ inRoutineFire: false, tainted: false }, verb) === null, `gate/${verb}: an ordinary human turn may propose`);
-  const fired = policyAuthorRefusal({ inRoutineFire: true, tainted: false }, verb);
+  ok(policyAuthorRefusal({ inRoutineFire: false }, verb) === null, `gate/${verb}: an ordinary human turn may propose`);
+  const fired = policyAuthorRefusal({ inRoutineFire: true }, verb);
   ok(fired !== null, `gate/${verb}: a ROUTINE FIRE is refused — no run amends its own doctrine, however clean it looks`);
   ok(/run can't/.test(fired ?? ""), `gate/${verb}: the fire refusal names the structural reason`);
-  const tainted = policyAuthorRefusal({ inRoutineFire: false, tainted: true }, verb);
-  ok(tainted !== null, `gate/${verb}: a TAINTED turn is refused OUTRIGHT — not warned-and-carded like remember/create_routine/edit_routine`);
-  ok(/external content/.test(tainted ?? ""), `gate/${verb}: the taint refusal says why, and how to retry`);
-  ok(/run can't/.test(policyAuthorRefusal({ inRoutineFire: true, tainted: true }, verb) ?? ""), `gate/${verb}: a tainted fire reports the STRUCTURAL reason first — "I read something" would imply a clean run could`);
+}
+
+for (const name of ["add_routine_rule", "remove_routine_rule", "declare_webhook", "rotate_webhook"] as const) {
+  const src = readFileSync(join(coreRoot, "agent", "tools", `${name}.ts`), "utf8");
+  ok(
+    !/^\s*(?:if|const|let)\s.*untrustedIngestedThisTurn\(\)/m.test(src),
+    `single-gate/${name}: does NOT read the taint signal in its own execute — the approver chain is the only gate on a tainted turn`,
+  );
+  ok(!/taint-signal\.js"/.test(src), `single-gate/${name}: does not even import the taint signal, so the refusal cannot creep back unnoticed`);
 }
 
 {
@@ -321,7 +326,6 @@ for (const verb of ["add", "remove"] as const) {
     const src = readFileSync(join(coreRoot, "agent", "tools", `${name}.ts`), "utf8");
     ok(/policyAuthorRefusal\(/.test(src), `wiring/${name}: calls the shared gate rather than hand-rolling its own copy`);
     ok(/inRoutineFire: routineMarker\(/.test(src), `wiring/${name}: feeds it the host-stamped routine marker`);
-    ok(/tainted: untrustedIngestedThisTurn\(\)/.test(src), `wiring/${name}: feeds it the real taint signal`);
   }
 }
 

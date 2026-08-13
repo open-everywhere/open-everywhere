@@ -108,6 +108,7 @@ export interface ChainResolution {
   readonly registryVerdict: "allow" | "ask";
   readonly elements: readonly ChainElementResult[];
   readonly transforms: readonly AppliedTransform[];
+  readonly tainted: boolean;
   readonly denyAbsolute?: true;
   readonly judge?: ApprovalJudgeRun;
 }
@@ -119,17 +120,17 @@ export function registryVerdictOf(tool: string): "allow" | "ask" {
   return row.tier === "open" ? "allow" : "ask";
 }
 
-export function taintToleranceOf(tool: string): "refuse" | "disclose" | undefined {
+export function taintToleranceOf(tool: string): "gate" | "disclose" | undefined {
   if (isConnectorOpTool(tool)) return classifyConnectorOp(tool) === "open" ? undefined : "disclose";
   const row = TOOL_CONSEQUENCE[tool];
-  if (row === undefined) return "refuse";
+  if (row === undefined) return "gate";
   if (row.taint !== undefined) return row.taint;
-  return row.tier === "open" ? undefined : "refuse";
+  return row.tier === "open" ? undefined : "gate";
 }
 
 export type TransformStage = "mode" | "unattended" | "taint" | "floor";
 
-export const TRANSFORM_STAGE_ORDER: readonly TransformStage[] = ["mode", "unattended", "taint", "floor"];
+export const TRANSFORM_STAGE_ORDER: readonly TransformStage[] = ["mode", "taint", "floor", "unattended"];
 
 export interface TransformRow {
   readonly name: string;
@@ -172,12 +173,12 @@ export const TRANSFORM_TABLE: readonly TransformRow[] = [
     to: () => "deny",
   },
   {
-    name: "taint:refuse",
+    name: "taint:ask",
     stage: "taint",
-    from: ["allow", "ask"],
-    reason: "taint-refused",
-    fires: (req) => taintedOf(req) && taintToleranceOf(req.tool) === "refuse",
-    to: () => "deny",
+    from: ["allow"],
+    reason: "taint-ask",
+    fires: (req) => taintedOf(req) && taintToleranceOf(req.tool) === "gate",
+    to: () => "ask",
   },
   {
     name: "beneficiary-clicker-floor",
@@ -317,6 +318,7 @@ export async function resolveApproverChain(
       registryVerdict: registryBaseline,
       elements: results,
       transforms: [],
+      tainted: taintedOf(req),
       denyAbsolute: true,
     };
   }
@@ -355,6 +357,7 @@ export async function resolveApproverChain(
           registryVerdict: registryBaseline,
           elements: results,
           transforms: [],
+          tainted: taintedOf(req),
           denyAbsolute: true,
           judge: judgeRun,
         };
@@ -392,6 +395,7 @@ export async function resolveApproverChain(
           registryVerdict: registryBaseline,
           elements: results,
           transforms,
+          tainted: taintedOf(req),
           ...(judgeRun !== undefined ? { judge: judgeRun } : {}),
         };
       }
@@ -406,6 +410,7 @@ export async function resolveApproverChain(
     registryVerdict: registryBaseline,
     elements: results,
     transforms,
+    tainted: taintedOf(req),
     ...(judgeRun !== undefined ? { judge: judgeRun } : {}),
   };
 }

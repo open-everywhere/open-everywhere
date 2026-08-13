@@ -7,7 +7,6 @@ import { resolvePartition } from "../memory/partition.js";
 import { getRoutine } from "../routines/store.js";
 import { describeTrigger, routineMarker } from "../routines/routine.js";
 import { policyAuthorRefusal, policyRules } from "../routines/policy.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
@@ -35,10 +34,7 @@ export default defineTool({
 
     const auth = ctx.session?.auth;
     const refusal = policyAuthorRefusal(
-      {
-        inRoutineFire: routineMarker(auth?.current?.attributes ?? auth?.initiator?.attributes) !== null,
-        tainted: untrustedIngestedThisTurn(),
-      },
+      { inRoutineFire: routineMarker(auth?.current?.attributes ?? auth?.initiator?.attributes) !== null },
       "remove",
     );
     if (refusal) throw new Error(refusal);

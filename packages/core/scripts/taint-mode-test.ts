@@ -269,23 +269,37 @@ console.log("4 — off: the source-tier table decides nothing and writes no rows
   }
 }
 
-console.log("5 — off: the four refuse-tier sinks resolve at their registry baseline:");
+console.log("5 — off: the four gate-tier sinks resolve at their registry baseline:");
 {
-  const REFUSE_SINKS = ["add_routine_rule", "remove_routine_rule", "declare_webhook", "rotate_webhook"] as const;
-  const live = (tool: string): ApprovalChainRequest => ({ tool, unattended: false, principalId: "U1" });
+  const GATE_SINKS = ["add_routine_rule", "remove_routine_rule", "declare_webhook", "rotate_webhook"] as const;
+  const live = (tool: string, unattended = false): ApprovalChainRequest => ({ tool, unattended, principalId: unattended ? undefined : "U1" });
+  const lowered = { approvers: [{ name: "domain-lower", approve: () => "allow" as const }] };
 
-  for (const tool of REFUSE_SINKS) {
-    eq(taintToleranceOf(tool), "refuse", `[5] ${tool} is a refuse-tier sink (the table itself is untouched by this ticket)`);
+  for (const tool of GATE_SINKS) {
+    eq(taintToleranceOf(tool), "gate", `[5] ${tool} is a gate-tier sink (the table itself is untouched by this ticket)`);
   }
 
   await withMode("on", async () => {
     await inSession(async () => {
       hostileRead();
       ok(untrustedIngestedThisTurn(), "[5/on] the turn is tainted by the read");
-      for (const tool of REFUSE_SINKS) {
-        const res = await resolveApproverChain(live(tool));
-        eq(res.verdict, "deny", `[5/on] ${tool}: REFUSED on a tainted turn — today's behaviour, and the thing a deployer may now decline`);
-        ok(res.transforms.some((t) => t.name === "taint:refuse"), `[5/on] ${tool}: …by the taint:refuse transform, named on the row`);
+      for (const tool of GATE_SINKS) {
+        const attended = await resolveApproverChain(live(tool), lowered);
+        eq(attended.verdict, "ask", `[5/on] ${tool}: a tainted turn is FLOORED at ask — an operator lowering cannot auto-approve it`);
+        ok(attended.transforms.some((t) => t.name === "taint:ask"), `[5/on] ${tool}: …by the taint:ask transform, named on the row`);
+        eq(attended.tainted, true, `[5/on] ${tool}: …and the resolution reports the LIVE signal it read`);
+
+        const fire = await resolveApproverChain(live(tool, true), lowered);
+        eq(fire.verdict, "deny", `[5/on] ${tool}: a tainted UNATTENDED run DENIES — ask with nobody to ask IS deny`);
+        eq(
+          fire.transforms.map((t) => t.name).join(","),
+          "taint:ask,unattended",
+          `[5/on] ${tool}: …and the row shows the order — the taint floor, then unattended reading its ask`,
+        );
+
+        const plain = await resolveApproverChain(live(tool));
+        eq(plain.verdict, "ask", `[5/on] ${tool}: with no lowering the tainted turn resolves at the registry's own ask`);
+        eq(plain.transforms.length, 0, `[5/on] ${tool}: …with NO transform — the floor only ever refuses a lowering`);
       }
     });
   });
@@ -294,10 +308,12 @@ console.log("5 — off: the four refuse-tier sinks resolve at their registry bas
     await inSession(async () => {
       hostileRead();
       ok(!untrustedIngestedThisTurn(), "[5/off] the same read leaves the turn clean");
-      for (const tool of REFUSE_SINKS) {
+      for (const tool of GATE_SINKS) {
         const res = await resolveApproverChain(live(tool));
-        ok(!res.transforms.some((t) => t.name === "taint:refuse"), `[5/off] 🔴 ${tool}: the taint refusal never fires`);
+        ok(!res.transforms.some((t) => t.name === "taint:ask"), `[5/off] 🔴 ${tool}: the taint floor never fires`);
         eq(res.verdict, registryVerdictOf(tool), `[5/off] ${tool}: …so it resolves at its REGISTRY baseline — the approval card, which is the primary control and is untouched by this switch`);
+        const res2 = await resolveApproverChain(live(tool), lowered);
+        eq(res2.verdict, "allow", `[5/off] ${tool}: …and an operator lowering now auto-approves it, which is exactly what the switch costs`);
       }
     });
   });
@@ -412,8 +428,11 @@ console.log("9 — the SHIPPED default (nothing registered) is the unchanged, fu
     setNativeDelegationSeat("allow");
     ok(!nativeAgentAllowedNow(), "[9] native delegation is withdrawn for the rest of the tainted turn");
     const req: ApprovalChainRequest = { tool: "declare_webhook", unattended: false, principalId: "U1" };
-    const res = await resolveApproverChain(req);
-    eq(res.verdict, "deny", "[9] a refuse-tier sink is refused");
+    const res = await resolveApproverChain(req, { approvers: [{ name: "domain-lower", approve: () => "allow" as const }] });
+    eq(res.verdict, "ask", "[9] a gate-tier sink is floored at a human decision, so an operator lowering cannot auto-approve it");
+    ok(res.transforms.some((t) => t.name === "taint:ask"), "[9] …by the taint:ask transform");
+    const fire = await resolveApproverChain({ tool: "declare_webhook", unattended: true }, { approvers: [{ name: "domain-lower", approve: () => "allow" as const }] });
+    eq(fire.verdict, "deny", "[9] …and the same act on an unattended run still DENIES");
     ok(!("taintMode" in chainAuditDetail(req, res)), "[9] and the audit row is byte-identical to the pre-OPE-399 shape");
     ok(!announceTaintOff({ session: { id: "sess-z" } } as unknown as Parameters<typeof announceTaintOff>[0]), "[9] …with no posture row written");
   });

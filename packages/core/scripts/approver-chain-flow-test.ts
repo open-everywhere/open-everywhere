@@ -41,6 +41,11 @@ registerConfig({
           approve: (req: { readonly domain?: string; readonly action?: string }) =>
             req.action === "webhook.rotate" && req.domain === "hookfast" ? "allow" : undefined,
         },
+        {
+          name: "rulefast-lower",
+          approve: (req: { readonly domain?: string; readonly action?: string }) =>
+            req.action === "routine.policy.add" && req.domain === "rulefast" ? "allow" : undefined,
+        },
       ],
     },
   ],
@@ -54,6 +59,7 @@ registerConfig({
     { name: "fastlane", channels: ["slack/T1/C_FAST"] },
     { name: "plain", channels: ["slack/T1/C_PLAIN"] },
     { name: "hookfast", channels: ["slack/T1/C_HOOK"] },
+    { name: "rulefast", channels: ["slack/T1/C_RULE"] },
   ],
   loadSilos: () => [],
   domainsForSurface: () => [],
@@ -116,20 +122,18 @@ async function rowsFor(action: string): Promise<Row[]> {
   ok(auto.length === 1 && (auto[0]!.detail ?? {}).resolvedBy === "custom:fastlane-lower", "allow: the approval.autoapproved row records the lowering");
 }
 
+const rotateArgs = {
+  org: "test-org",
+  args: { org: "test-org", hookId: "ci-status", posture: "read-only", surfaceKey: "slack/T1/C_HOOK", requestedBy: "U_HUMAN", platform: "slack", channelId: "C_HOOK" },
+  kind: "webhook.rotate",
+  scopeKey: "slack/T1/C_HOOK",
+  domain: "hookfast",
+  channelId: "C_HOOK",
+  requestedBy: "U_HUMAN",
+  threadTs: null,
+};
 {
-  const res = await requestApproval(
-    {
-      org: "test-org",
-      kind: "webhook.rotate",
-      args: { org: "test-org", hookId: "ci-status", posture: "read-only", surfaceKey: "slack/T1/C_HOOK", requestedBy: "U_HUMAN", platform: "slack", channelId: "C_HOOK" },
-      scopeKey: "slack/T1/C_HOOK",
-      domain: "hookfast",
-      channelId: "C_HOOK",
-      requestedBy: "U_HUMAN",
-      threadTs: null,
-    },
-    { postCard },
-  );
+  const res = await requestApproval({ ...rotateArgs, chain: { unattended: false } }, { postCard });
   ok(res.autoApproved === undefined && typeof res.id === "string", "floor: webhook.rotate under the SAME lowering that auto-approves skill.delete instead CARDS");
   const row = (await getOperationalStore().listPendingActions("test-org")).find((r) => r.id === res.id);
   ok(row !== undefined && row.status === "pending", "floor: a pending row awaits a human's click — the mint has NOT happened");
@@ -139,6 +143,22 @@ async function rowsFor(action: string): Promise<Row[]> {
   const d = (chainRows.find((r) => (r.detail ?? {}).action === "webhook.rotate")?.detail ?? {}) as { verdict?: string; registryVerdict?: string; transforms?: { name: string }[] };
   ok(d.verdict === "ask" && d.registryVerdict === "ask", "floor: the chain row shows ask despite the operator's lowering element existing");
   ok((d.transforms ?? []).some((t) => t.name === "beneficiary-clicker-floor"), "floor: the row names the arrow that refused the lowering — queryable, like every other transform");
+}
+
+{
+  let threw = "";
+  try {
+    await requestApproval({ ...rotateArgs, chain: { unattended: true } }, { postCard });
+  } catch (e) {
+    threw = String(e);
+  }
+  ok(threw.includes("DENIED") && threw.includes("ask-unattended"), "floor/unattended: a lowered beneficiary-clicker kind on an unwatched run DENIES rather than minting an unclickable card");
+  const rows = await rowsFor("approval.chain");
+  const d = (rows[0]?.detail ?? {}) as { verdict?: string; transforms?: { name: string }[] };
+  ok(
+    d.verdict === "deny" && (d.transforms ?? []).map((t) => t.name).join(",") === "beneficiary-clicker-floor,unattended",
+    "floor/unattended: the row shows the floor raising it to ask and unattended then denying that ask — the stage order, visible",
+  );
 }
 
 {
@@ -188,6 +208,88 @@ async function rowsFor(action: string): Promise<Row[]> {
 }
 
 {
+  const ruleArgs = {
+    org: "test-org",
+    partition: { org: "test-org", surfaceKey: "slack/T1/C_RULE" },
+    surfaceKey: "slack/T1/C_RULE",
+    routineId: "r-does-not-exist",
+    description: "every weekday at 09:00",
+    ruleId: "p-taint01",
+    rule: "Never post before 09:00 UTC.",
+    why: "the 2026-08-13 run woke the channel at 03:12.",
+    source: "human" as const,
+    countBefore: 0,
+    requestedBy: "U_HUMAN",
+  };
+  const ruleInput = {
+    org: "test-org",
+    kind: "routine.policy.add",
+    args: ruleArgs,
+    scopeKey: "slack/T1/C_RULE",
+    domain: "rulefast",
+    requestedBy: "U_HUMAN",
+    channelId: "C_RULE",
+    threadTs: null,
+  };
+  const ruleChainRows = async (): Promise<Row[]> => (await rowsFor("approval.chain")).filter((r) => (r.detail ?? {}).action === "routine.policy.add");
+
+  {
+    const res = await requestApproval({ ...ruleInput, chain: { unattended: false, tainted: true } }, { postCard });
+    ok(res.autoApproved === undefined && typeof res.id === "string", "taint/attended: a tainted turn CARDS instead of being refused — the act reaches a human");
+    const row = (await getOperationalStore().listPendingActions("test-org")).find((r) => r.id === res.id);
+    ok(row !== undefined && row.status === "pending", "taint/attended: a real pending row awaits the click");
+    const d = ((await ruleChainRows())[0]?.detail ?? {}) as {
+      verdict?: string;
+      registryVerdict?: string;
+      tainted?: boolean;
+      transforms?: { name: string; from?: string; to?: string; reason?: string }[];
+    };
+    ok(d.verdict === "ask" && d.registryVerdict === "ask", "taint/attended: the approval.chain row shows ask despite the operator's lowering element");
+    ok(d.tainted === true, "taint/attended: the row DISCLOSES the provenance that caused it");
+    ok(
+      (d.transforms ?? []).some((t) => t.name === "taint:ask" && t.from === "allow" && t.to === "ask" && t.reason === "taint-ask"),
+      "taint/attended: the row names the arrow that refused the lowering — queryable, like every other transform",
+    );
+  }
+
+  {
+    const before = (await ruleChainRows()).length;
+    let threw = "";
+    try {
+      await requestApproval({ ...ruleInput, chain: { unattended: true, tainted: true } }, { postCard });
+    } catch (e) {
+      threw = String(e);
+    }
+    ok(threw.includes("DENIED") && threw.includes("ask-unattended"), "taint/unattended: a tainted run with nobody watching DENIES — ask with nobody to ask IS deny");
+    ok(
+      threw.includes("read external content") && threw.includes("nobody to ask"),
+      "taint/unattended: the refusal NAMES taint — a bare 'denied' is what makes a model conclude the tool is broken and answer as if it ran",
+    );
+    ok(
+      !threw.includes("arm the permission on the routine's creation card"),
+      "taint/unattended: …and it does NOT offer the standing-grant advice, which is false here — no grant lifts a taint floor",
+    );
+    const rows = await ruleChainRows();
+    ok(rows.length === before + 1, "taint/unattended: the denied resolution still wrote its approval.chain row");
+    const d = (rows[0]?.detail ?? {}) as { verdict?: string; tainted?: boolean; transforms?: { name: string }[] };
+    ok(d.verdict === "deny" && d.tainted === true, "taint/unattended: the row carries the deny AND the taint that led to it");
+    ok(
+      (d.transforms ?? []).map((t) => t.name).join(",") === "taint:ask,unattended",
+      "taint/unattended: the row shows the ORDER — the taint floor raised it to ask, then unattended read that ask and denied",
+    );
+  }
+
+  {
+    const res = await requestApproval({ ...ruleInput, chain: { unattended: false, tainted: false } }, { postCard });
+    ok(res.autoApproved !== undefined, "taint/clean: a CLEAN turn's lowering still auto-approves — the floor is taint-conditional, not a blanket gate");
+    ok(res.autoApproved!.resolvedBy === "custom:rulefast-lower", "taint/clean: …resolved by the same element the tainted legs defeated");
+    const d = ((await ruleChainRows())[0]?.detail ?? {}) as { verdict?: string; tainted?: boolean; transforms?: { name: string }[] };
+    ok(d.verdict === "allow" && d.tainted === false, "taint/clean: the row shows allow on an untainted turn");
+    ok((d.transforms ?? []).length === 0, "taint/clean: …and NO transform fired at all");
+  }
+}
+
+{
   const res = await requestApproval(
     {
       org: "test-org",
@@ -204,5 +306,5 @@ async function rowsFor(action: string): Promise<Row[]> {
   ok(res.autoApproved === undefined && typeof res.id === "string", "non-tool kind: session.checkpoint still cards even under DENY_ALL — the chain governs tool-proposed kinds only");
 }
 
-console.log(`✓ approver-chain-flow: ${passed} assertions — ask parity (card + chain row), operator deny (nothing minted), config lowering (frozen args executed, wedge row decided by the chain), unattended fail-fast, BYPASS-as-transform, deny-survives-bypass, DENY_ALL, the non-tool-kind carve-out, and the OPE-310 beneficiary-clicker floor`);
+console.log(`✓ approver-chain-flow: ${passed} assertions — ask parity (card + chain row), operator deny (nothing minted), config lowering (frozen args executed, wedge row decided by the chain), unattended fail-fast, BYPASS-as-transform, deny-survives-bypass, DENY_ALL, the non-tool-kind carve-out, the OPE-310 beneficiary-clicker floor, and the OPE-438 taint verdict shift (attended ⇒ card, unattended ⇒ deny naming taint, clean ⇒ unchanged)`);
 rmSync(tmp, { recursive: true, force: true });

@@ -6,7 +6,6 @@ import { resolvePartition } from "../memory/partition.js";
 import { actingPrincipalIdOf, resolveMode, unattendedOf } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { describeReadableBy, readableByDefects, type ReadableBy } from "../access/read-grant.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
@@ -111,12 +110,6 @@ export default defineTool({
   approval: never(),
   async execute(input, ctx) {
     await requireSessionContinuation(ctx, "declare_webhook");
-
-    if (untrustedIngestedThisTurn()) {
-      throw new Error(
-        "I've read external content this turn, so I won't propose a webhook right now — declaring one hands an outside system a standing way to run an instruction in a channel, and that shouldn't be proposed off something I just read. Ask me again in a fresh message and I'll do it.",
-      );
-    }
 
     const mode = resolveMode(ctx);
     if (mode === "mpim") throw new Error("Group DMs are execution-only — propose webhooks from a channel or a DM instead.");
