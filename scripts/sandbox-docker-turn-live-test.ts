@@ -174,18 +174,24 @@ async function main(): Promise<void> {
 
   const beforeA = await waitFor(() => {
     const listing = dockerPsLabel(sessionA);
-    return listing.length > 0 ? listing : undefined;
-  }, "scenario A's session container to appear via `docker ps` (label=eve.sandbox.tag.sessionId)");
+    const running = listing.filter((c) => c.status === "running");
+    return running.length > 0 ? running : undefined;
+  }, "scenario A's session container to appear RUNNING via `docker ps` (label=eve.sandbox.tag.sessionId)");
   console.log(`  BEFORE (as observed): ${JSON.stringify(beforeA)}`);
+  const containerNameA = beforeA[0]?.name;
+  if (containerNameA === undefined || containerNameA.length === 0) {
+    throw new Error("scenario A: no container name captured from the running snapshot — cannot track the transition.");
+  }
+  ok(beforeA.some((c) => c.name === containerNameA && c.status === "running"), `scenario A: container ${containerNameA} observed RUNNING mid-turn`);
 
   const afterA = await waitFor(() => {
     const listing = dockerPsLabel(sessionA);
-    const notRunning = listing.filter((c) => c.status !== "running");
-    return notRunning.length > 0 ? notRunning : undefined;
-  }, "scenario A's session container to leave the running state after turn end");
+    const same = listing.find((c) => c.name === containerNameA);
+    return same !== undefined && same.status !== "running" ? same : undefined;
+  }, `scenario A's container ${containerNameA} to leave the running state after turn end`);
   console.log(`  AFTER (as observed): ${JSON.stringify(afterA)}`);
-  ok(afterA.length > 0 && afterA.every((c) => c.status !== "running"), "scenario A: the docker turn-end stop hook stopped the REAL container (status != running)");
-  ok(afterA[0]?.name.length > 0, `scenario A: container name = ${afterA[0]?.name ?? "(none)"}`);
+  ok(afterA.name === containerNameA, `scenario A: the container that stopped is the SAME container (${containerNameA}) that was running mid-turn`);
+  ok(afterA.status === "exited", `scenario A: the docker turn-end stop hook transitioned container ${containerNameA} from running to exited (observed: ${afterA.status})`);
 
   console.log("\n== scenario B: stopAfterTurn OFF — negative control, the container must stay running ==");
   settings.overrideSettingsForTest({ sandbox: { stopAfterTurn: false } });
