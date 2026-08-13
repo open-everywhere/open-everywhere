@@ -7,15 +7,38 @@ import lifecycleHook, {
   shouldStop,
   stopAfterTurnEnabled,
   stopSessionSandboxes,
+  restoreParentSandboxTag,
   recordSandboxUsage,
-  type SandboxLifecycleDeps,
+  resetStopOwnershipLogForTest,
 } from "../agent/sandbox/vercel-lifecycle.js";
+import {
+  createDockerStopper,
+  dockerStatusToSandboxStatus,
+  justBashStopper,
+  resolveSandboxStopper,
+  setSandboxStopperForTest,
+  vercelStopper,
+  DOCKER_SESSION_LABEL,
+  type SandboxStopper,
+} from "../agent/sandbox/backend-stop.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);
   n++;
 };
+
+function testStopper(parts: Partial<SandboxStopper>): SandboxStopper {
+  return {
+    backend: "test",
+    metered: true,
+    ownership: "test stopper",
+    list: async () => [],
+    stop: async () => {},
+    retag: async () => true,
+    ...parts,
+  };
+}
 
 {
   const events = lifecycleHook.events ?? {};
@@ -44,7 +67,7 @@ const ok = (cond: boolean, label: string) => {
 
 {
   const stops: string[] = [];
-  const deps: SandboxLifecycleDeps = {
+  const deps = testStopper({
     list: async (sessionId) => {
       ok(sessionId === "sess-1", "list is queried with the session id");
       return [
@@ -56,7 +79,7 @@ const ok = (cond: boolean, label: string) => {
     stop: async (name) => {
       stops.push(name);
     },
-  };
+  });
   const stopped = await stopSessionSandboxes("sess-1", deps);
   ok(stops.length === 1 && stops[0] === "sbx-main", "only the running sandbox is stopped");
   ok(stopped.length === 1 && stopped[0].name === "sbx-main", "stopped names are reported");
@@ -64,7 +87,7 @@ const ok = (cond: boolean, label: string) => {
 
 {
   const stops: string[] = [];
-  const deps: SandboxLifecycleDeps = {
+  const deps = testStopper({
     list: async () => [
       { name: "sbx-a", status: "running", createdAt: 1_000 },
       { name: "sbx-b", status: "running", createdAt: 1_000 },
@@ -73,37 +96,35 @@ const ok = (cond: boolean, label: string) => {
       if (name === "sbx-a") throw new Error("transient API error");
       stops.push(name);
     },
-  };
+  });
   const stopped = await stopSessionSandboxes("sess-2", deps);
   ok(stops.length === 1 && stops[0] === "sbx-b", "a failed stop doesn't block the next sandbox");
   ok(stopped.length === 1 && stopped[0].name === "sbx-b", "only the successful stop is reported");
 }
 
 {
-  const deps: SandboxLifecycleDeps = {
+  const deps = testStopper({
     list: async () => [],
     stop: async () => {
       throw new Error("must not be called");
     },
-  };
+  });
   const stopped = await stopSessionSandboxes("sess-3", deps);
   ok(stopped.length === 0, "no tagged sandboxes → nothing stopped, nothing thrown");
 }
 
 {
-  const deps: SandboxLifecycleDeps = {
+  const deps = testStopper({
     list: async () => [{ name: "sbx-timed", status: "running", createdAt: 10_000 }],
-    stop: async () => {},
-  };
+  });
   const stopped = await stopSessionSandboxes("sess-4", deps, () => 10_000 + 45_000);
   ok(stopped.length === 1 && stopped[0].sandboxSeconds === 45, "sandboxSeconds = (now - createdAt) via the injected clock");
 }
 
 {
-  const deps: SandboxLifecycleDeps = {
+  const deps = testStopper({
     list: async () => [{ name: "sbx-skew", status: "running", createdAt: 10_000 }],
-    stop: async () => {},
-  };
+  });
   const stopped = await stopSessionSandboxes("sess-5", deps, () => 9_000);
   ok(stopped[0].sandboxSeconds === 0, "sandboxSeconds clamps at 0 rather than going negative");
 }
@@ -283,4 +304,194 @@ const ok = (cond: boolean, label: string) => {
   delete process.env.OE_SQLITE_PATH;
 }
 
-console.log(`\n✓ sandbox-lifecycle: ${n} assertions passed (hook shape, stop decisions, fail-soft, enable flag, runtime-seconds, spend-ledger $ record + principal/routine attribution + delta billing, write-ordering safety, duplicate-name dedupe)\n`);
+{
+  const platform = process.env.OE_PLATFORM;
+  const backend = process.env.OE_SANDBOX_BACKEND;
+
+  process.env.OE_PLATFORM = "vercel";
+  ok(resolveSandboxStopper().backend === "vercel", "on Vercel the Vercel stopper owns the stop");
+  ok(resolveSandboxStopper().metered === true, "…and Vercel is the metered backend, so its stops are priced");
+
+  process.env.OE_PLATFORM = "self-host";
+  delete process.env.OE_SANDBOX_BACKEND;
+  ok(resolveSandboxStopper().backend === "docker", "🔴 OPE-450: off Vercel the DEFAULT self-host backend gets a real stop (was: nothing, silently)");
+  ok(resolveSandboxStopper().metered === false, "…and docker is NOT metered per second, so no Vercel-rate spend row is invented for it");
+
+  process.env.OE_SANDBOX_BACKEND = "justbash";
+  ok(resolveSandboxStopper().backend === "just-bash", "the just-bash backend selects its own (inert) stopper");
+  ok((await resolveSandboxStopper().list("sess-x")).length === 0, "…whose peek is empty — there is no VM or container in this app process to find");
+
+  for (const s of [vercelStopper, createDockerStopper(), justBashStopper]) {
+    ok(s.ownership.length > 0 && s.ownership.includes(s.backend === "just-bash" ? "NONE" : s.backend), `the ${s.backend} stopper's ownership line names who stops the sandbox`);
+  }
+
+  if (platform === undefined) delete process.env.OE_PLATFORM;
+  else process.env.OE_PLATFORM = platform;
+  if (backend === undefined) delete process.env.OE_SANDBOX_BACKEND;
+  else process.env.OE_SANDBOX_BACKEND = backend;
+}
+
+{
+  const calls: string[][] = [];
+  const stopper = createDockerStopper(async (args) => {
+    calls.push([...args]);
+    if (args[0] === "ps") return "oe-live\noe-dead\n";
+    if (args[0] === "inspect") return "/oe-live\trunning\t2026-08-13T00:00:00.000Z\n/oe-dead\texited\t2026-08-13T00:00:00.000Z\n";
+    return "";
+  });
+
+  const listed = await stopper.list("sess-docker");
+  ok(
+    calls[0]?.includes(`label=${DOCKER_SESSION_LABEL}=sess-docker`),
+    "the docker peek filters on eve's own per-session container label — a `docker ps`, which provisions nothing",
+  );
+  ok(listed.length === 2 && listed[0].status === "running" && listed[1].status === "exited", "…and reports each container's state, normalised onto the shared vocabulary");
+  ok(listed[0].createdAt === Date.parse("2026-08-13T00:00:00.000Z"), "…with StartedAt as the honest window start");
+
+  const stopped = await stopSessionSandboxes("sess-docker", stopper, () => Date.parse("2026-08-13T00:01:00.000Z"));
+  ok(stopped.length === 1 && stopped[0].name === "oe-live", "🔴 OPE-450: a docker deployment stops its RUNNING session container and leaves the exited one alone");
+  ok(stopped[0].sandboxSeconds === 60, "…and reports its runtime window");
+  const stopCall = calls.find((c) => c[0] === "stop");
+  ok(stopCall !== undefined && stopCall.join(" ") === "stop -t 0 oe-live", "…through `docker stop -t 0` — never `rm`, so eve restarts the same container with its filesystem intact");
+
+  ok(dockerStatusToSandboxStatus("created") === "pending" && dockerStatusToSandboxStatus("restarting") === "pending", "docker's created/restarting map onto `pending`");
+  ok(dockerStatusToSandboxStatus("exited") === "exited" && dockerStatusToSandboxStatus("paused") === "paused", "…and every other docker state passes through untouched, so it is left alone");
+  ok((await stopper.retag("oe-live", "sess-parent")) === false, "docker answers FALSE to a re-tag: eve labels a container only at creation and never re-labels on attach, so there is nothing to hand back");
+}
+
+{
+  const stops: string[] = [];
+  const stopper = createDockerStopper(async (args) => {
+    if (args[0] === "ps") return "oe-a\noe-gone\n";
+    if (args[0] === "inspect") throw new Error("Error: No such object: oe-gone");
+    if (args[0] === "stop") {
+      if (args[3] === "oe-gone") throw new Error("Error response from daemon: No such container");
+      stops.push(String(args[3]));
+    }
+    return "";
+  });
+  const stopped = await stopSessionSandboxes("sess-vanish", stopper);
+  ok(stops.length === 1 && stops[0] === "oe-a", "a failed inspect falls back to stopping every listed container, so the survivor is still stopped");
+  ok(stopped.length === 1 && stopped[0].name === "oe-a", "…and the vanished one's failed stop is reported as not stopped, not as a thrown sweep");
+}
+
+const childCtx = {
+  agent: { name: "oe" },
+  channel: { kind: "subagent", continuationToken: "subagent:sess-parent:call_1" },
+  session: {
+    id: "sess-child",
+    parent: { sessionId: "sess-parent", callId: "call_1", rootSessionId: "sess-parent" },
+    auth: { current: { attributes: { team_id: "T1", channel_id: "C_SBX" } } },
+  },
+};
+
+const parentCtx = {
+  agent: { name: "oe" },
+  channel: { kind: "slack" },
+  session: { id: "sess-parent", auth: { current: { attributes: { team_id: "T1", channel_id: "C_SBX" } } } },
+};
+
+{
+  overrideSettingsForTest({ sandbox: { stopAfterTurn: true } });
+  const stops: string[] = [];
+  const retags: Array<{ name: string; sessionId: string }> = [];
+  const stopper = testStopper({
+    backend: "vercel",
+    metered: false,
+    ownership: "stop owner = vercel — test",
+    list: async () => [{ name: "sbx-shared", status: "running", createdAt: 1_000 }],
+    stop: async (name) => {
+      stops.push(name);
+    },
+    retag: async (name, sessionId) => {
+      retags.push({ name, sessionId });
+      return true;
+    },
+  });
+  setSandboxStopperForTest(stopper);
+
+  const turnCompleted = (lifecycleHook.events ?? {})["turn.completed"] as (e: unknown, c: unknown) => Promise<void>;
+
+  await turnCompleted({}, childCtx);
+  ok(stops.length === 0, "🔴 OPE-447: a subagent child issues NO stop — the parent owns the shared VM and is still mid-turn");
+  ok(
+    retags.length === 1 && retags[0].name === "sbx-shared" && retags[0].sessionId === "sess-parent",
+    "🔴 OPE-447: …and the shared sandbox is re-tagged back to the PARENT's session id, so the parent's own sweep works unconditionally",
+  );
+
+  stops.length = 0;
+  retags.length = 0;
+  await turnCompleted({}, parentCtx);
+  ok(stops.includes("sbx-shared") === true, "negative control: an ordinary (non-child) turn DOES stop its own sandbox — the stop is issued, not merely error-free");
+  ok(retags.length === 0, "…and never re-tags anything: only a child hands ownership back");
+
+  setSandboxStopperForTest(undefined);
+}
+
+{
+  const retags: string[] = [];
+  const stopper = testStopper({
+    list: async () => [{ name: "sbx-shared", status: "running", createdAt: 1_000 }],
+    retag: async (name) => {
+      retags.push(name);
+      return true;
+    },
+  });
+  const noParent = { channel: { kind: "subagent" }, session: { id: "sess-child" } };
+  const restored = await restoreParentSandboxTag(noParent as never, stopper);
+  ok(restored.length === 0 && retags.length === 0, "with no typed parent linkage there is nothing to re-tag TO, so no re-tag is attempted (the skipped stop is still correct)");
+
+  const inert = testStopper({
+    list: async () => [{ name: "oe-live", status: "running", createdAt: 1_000 }],
+    retag: async () => false,
+  });
+  const none = await restoreParentSandboxTag(childCtx as never, inert);
+  ok(none.length === 0, "a backend that never re-tags on attach reports nothing restored — a correct outcome, not an error");
+}
+
+{
+  resetStopOwnershipLogForTest();
+  const lines: string[] = [];
+  const realLog = console.log;
+  console.log = (msg?: unknown) => {
+    lines.push(String(msg));
+  };
+  try {
+    setSandboxStopperForTest(testStopper({ metered: false, ownership: "stop owner = probe-backend", list: async () => [] }));
+    const turnCompleted = (lifecycleHook.events ?? {})["turn.completed"] as (e: unknown, c: unknown) => Promise<void>;
+    await turnCompleted({}, parentCtx);
+    await turnCompleted({}, parentCtx);
+  } finally {
+    console.log = realLog;
+    setSandboxStopperForTest(undefined);
+  }
+  const owner = lines.filter((l) => l.includes("stop owner = probe-backend"));
+  ok(owner.length === 1, `🔴 OPE-450: the deployment SAYS which backend owns the stop, once per process (got ${owner.length} lines)`);
+}
+
+{
+  const dir = join(tmpdir(), `oe-sandbox-lifecycle-metered-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+  const { resolvePartition, domainKeyOf, spendTotals, periodOf } = await import("@open-everywhere/core/agent/adapter-api.js");
+  const turnCompleted = (lifecycleHook.events ?? {})["turn.completed"] as (e: unknown, c: unknown) => Promise<void>;
+  const listing = async () => [{ name: "sbx-metered", status: "running", createdAt: Date.now() - 3_600_000 }];
+
+  setSandboxStopperForTest(testStopper({ backend: "docker", metered: false, list: listing }));
+  await turnCompleted({}, parentCtx);
+  const p = resolvePartition(parentCtx as never);
+  const period = periodOf(new Date().toISOString());
+  const unmetered = await spendTotals(p.org, { surfaceKey: domainKeyOf(p), period });
+  ok(unmetered.calls === 0 && unmetered.usdMicros === 0, "an UNMETERED backend's stop writes NO spend row — a self-hosted container has no per-second bill to book");
+
+  setSandboxStopperForTest(testStopper({ backend: "vercel", metered: true, list: listing }));
+  await turnCompleted({}, parentCtx);
+  const metered = await spendTotals(p.org, { surfaceKey: domainKeyOf(p), period });
+  ok(metered.calls === 1 && metered.usdMicros > 0, `the METERED backend's stop DOES book its runtime (got ${metered.calls} row(s), ${metered.usdMicros} micros)`);
+
+  setSandboxStopperForTest(undefined);
+  rmSync(dir, { recursive: true, force: true });
+  delete process.env.OE_SQLITE_PATH;
+}
+
+console.log(`\n✓ sandbox-lifecycle: ${n} assertions passed (hook shape, stop decisions, fail-soft, enable flag, runtime-seconds, spend-ledger $ record + principal/routine attribution + delta billing, write-ordering safety, duplicate-name dedupe, backend selection + docker stop + the subagent-child guard)\n`);

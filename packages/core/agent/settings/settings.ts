@@ -385,7 +385,7 @@ export const SETTINGS = {
       path: "sandbox.stopAfterTurn",
       shipped: true,
       summary:
-        "Stop the sandbox VM the moment each turn's reply is sent rather than letting it idle out the timeout window. The stop auto-snapshots; the next turn auto-resumes.",
+        "Stop the sandbox compute the moment each turn's reply is sent rather than letting it idle out the timeout window. On Vercel the stop auto-snapshots and the next turn auto-resumes; on the docker backend the session container is stopped (never removed) and restarted on next use. The just-bash backend has no compute to stop — it runs inside the app process — so this setting is inert there and the hook logs which backend owns the stop at the first turn end.",
     } satisfies SettingSpec<boolean>,
     extendMaxMinutes: {
       path: "sandbox.extendMaxMinutes",

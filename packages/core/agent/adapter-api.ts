@@ -89,6 +89,11 @@ export type { ActionKind, PendingActionRow } from "./approvals/types.js";
 
 export { platformName, onVercel } from "./access/platform.js";
 
+export { resolveSelfHostBackendKind } from "./sandbox/backend-select.js";
+export type { SelfHostBackendKind } from "./sandbox/backend-select.js";
+
+export { isSubagentChildContext, subagentParentSessionId } from "./identity/binding.js";
+
 export { registerBrowserToolkit, registeredBrowserToolkit, resetBrowserToolkitForTest, resolveBrowserKit, BROWSER_TOOL_NAMES } from "./access/browser-toolkit.js";
 export type { BrowserToolEntry } from "./access/browser-toolkit.js";
 

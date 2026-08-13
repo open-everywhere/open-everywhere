@@ -1,6 +1,8 @@
 import { defineHook, type HookContext } from "eve/hooks";
-import { Sandbox } from "@vercel/sandbox";
-import { bindFrom, domainKeyOf, resolvePartition, appendUsageEvent, usageForSession, recordSpend, periodOf, estimateSandboxCostUsd, routineIdOf, getSettings } from "@open-everywhere/core/agent/adapter-api.js";
+import { bindFrom, domainKeyOf, resolvePartition, appendUsageEvent, usageForSession, recordSpend, periodOf, estimateSandboxCostUsd, routineIdOf, getSettings, isSubagentChildContext, subagentParentSessionId, type BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
+import { resolveSandboxStopper, shouldStop, type SandboxListing, type SandboxStopper } from "./backend-stop.js";
+
+export { shouldStop, type SandboxListing, type SandboxStopper };
 
 function log(msg: string): void {
   console.log(`[open-everywhere:sandbox-lifecycle] ${msg}`);
@@ -10,33 +12,6 @@ export function stopAfterTurnEnabled(): boolean {
   return getSettings().sandbox.stopAfterTurn;
 }
 
-export function shouldStop(status: string): boolean {
-  return status === "running" || status === "pending";
-}
-
-export interface SandboxListing {
-  readonly name: string;
-  readonly status: string;
-  readonly createdAt: number;
-}
-
-export interface SandboxLifecycleDeps {
-  list(sessionId: string): Promise<SandboxListing[]>;
-  stop(name: string): Promise<void>;
-}
-
-const sdkDeps: SandboxLifecycleDeps = {
-  async list(sessionId) {
-    const result = await Sandbox.list({ tags: { sessionId } });
-    const out: SandboxListing[] = [];
-    for await (const s of result) out.push({ name: s.name, status: s.status, createdAt: s.createdAt });
-    return out;
-  },
-  async stop(name) {
-    await (await Sandbox.get({ name })).stop();
-  },
-};
-
 export interface StoppedSandbox {
   readonly name: string;
   readonly sandboxSeconds: number;
@@ -44,15 +19,15 @@ export interface StoppedSandbox {
 
 export async function stopSessionSandboxes(
   sessionId: string,
-  deps: SandboxLifecycleDeps = sdkDeps,
+  stopper: SandboxStopper = resolveSandboxStopper(),
   now: () => number = Date.now,
 ): Promise<StoppedSandbox[]> {
   const stopped: StoppedSandbox[] = [];
-  const sandboxes = await deps.list(sessionId);
+  const sandboxes = await stopper.list(sessionId);
   for (const s of sandboxes) {
     if (!shouldStop(s.status)) continue;
     try {
-      await deps.stop(s.name);
+      await stopper.stop(s.name);
       const sandboxSeconds = Math.max(0, (now() - s.createdAt) / 1000);
       stopped.push({ name: s.name, sandboxSeconds });
     } catch (err) {
@@ -62,13 +37,48 @@ export async function stopSessionSandboxes(
   return stopped;
 }
 
+export async function restoreParentSandboxTag(ctx: HookContext, stopper: SandboxStopper): Promise<string[]> {
+  const parentSessionId = subagentParentSessionId(ctx as unknown as BindableContext);
+  if (parentSessionId === undefined) return [];
+  const restored: string[] = [];
+  for (const s of await stopper.list(ctx.session.id)) {
+    try {
+      if (await stopper.retag(s.name, parentSessionId)) restored.push(s.name);
+    } catch (err) {
+      log(`re-tag of "${s.name}" back to parent session failed (the parent reclaims it on its next sandbox use): ${String(err)}`);
+    }
+  }
+  return restored;
+}
+
+let ownershipLogged = false;
+function logStopOwnershipOnce(stopper: SandboxStopper): void {
+  if (ownershipLogged) return;
+  ownershipLogged = true;
+  log(stopper.ownership);
+}
+
+export function resetStopOwnershipLogForTest(): void {
+  ownershipLogged = false;
+}
+
 async function onTurnEnd(ctx: HookContext, outcome: string): Promise<void> {
   if (!stopAfterTurnEnabled()) return;
   try {
-    const stopped = await stopSessionSandboxes(ctx.session.id);
+    const stopper = resolveSandboxStopper();
+    logStopOwnershipOnce(stopper);
+    if (isSubagentChildContext(ctx as unknown as BindableContext)) {
+      const restored = await restoreParentSandboxTag(ctx, stopper);
+      log(
+        `turn.${outcome}: SKIPPED the stop — this is an eve subagent child and the parent owns the shared sandbox` +
+          (restored.length > 0 ? `; handed ${restored.join(", ")} back to the parent session` : ""),
+      );
+      return;
+    }
+    const stopped = await stopSessionSandboxes(ctx.session.id, stopper);
     if (stopped.length > 0) {
       log(`turn.${outcome}: stopped ${stopped.map((s) => s.name).join(", ")} (auto-snapshot; next turn auto-resumes)`);
-      await recordSandboxUsage(ctx, stopped);
+      if (stopper.metered) await recordSandboxUsage(ctx, stopped);
     }
   } catch (err) {
     log(`turn.${outcome}: sandbox stop skipped: ${String(err)}`);
