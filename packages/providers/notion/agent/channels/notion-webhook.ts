@@ -66,6 +66,7 @@ export interface NotionDeliveryOutcome {
   readonly detail?: string;
   readonly verified: boolean;
   readonly credentialId?: string;
+  readonly signerCredentialId?: string;
 }
 
 export async function handleNotionDelivery(
@@ -73,8 +74,10 @@ export async function handleNotionDelivery(
   signatureHeader: string | null,
   deps: HandleNotionDeliveryDeps,
 ): Promise<NotionDeliveryOutcome> {
-  const { signed, ...out } = await deliver(rawBody, signatureHeader, deps);
-  return { ...out, verified: signed === true && out.action !== "handshake" && out.action !== "rejected" };
+  const signer: { credentialId?: string } = {};
+  const { signed, ...out } = await deliver(rawBody, signatureHeader, deps, signer);
+  const verified = signed === true && out.action !== "handshake" && out.action !== "rejected";
+  return { ...out, verified, ...(verified && signer.credentialId ? { signerCredentialId: signer.credentialId } : {}) };
 }
 
 type DeliverOutcome = Omit<NotionDeliveryOutcome, "verified"> & { readonly signed?: boolean };
@@ -83,6 +86,7 @@ async function deliver(
   rawBody: string,
   signatureHeader: string | null,
   deps: HandleNotionDeliveryDeps,
+  signer: { credentialId?: string },
 ): Promise<DeliverOutcome> {
   const handshake = parseVerificationHandshake(rawBody);
   if (handshake) {
@@ -93,6 +97,7 @@ async function deliver(
   const gate = gateNotionDeliveryAcross(deps.signingKeys, rawBody, signatureHeader, deps.allowUnverified);
   if (gate.rejection) return { status: 401, body: gate.rejection, action: "rejected", detail: gate.rejection };
   const signed = gate.verified;
+  if (gate.credentialId) signer.credentialId = gate.credentialId;
 
   let ev: NotionWebhookEvent;
   try {

@@ -31,10 +31,13 @@ import {
   NOTION_EVENT_SOURCE,
   NOTION_STRUCTURAL_PREFIXES,
   NOTION_CONVERSATIONAL_PREFIXES,
+  NOTION_GRANT_STEPS,
+  notionTriggerScopeVerdict,
 } from "../agent/channels/notion-event-normalizer.js";
 import { NOTION_WEBHOOK_SOURCE } from "../agent/channels/notion-webhook-verifier.js";
 import { handleNotionDelivery } from "../agent/channels/notion-webhook.js";
 import { createHmac } from "node:crypto";
+import { readFile } from "node:fs/promises";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -420,6 +423,185 @@ function normalize(body: string): NormalizedEvent | null {
   declareProviderSelection(["github", "notion"]);
   ok(registerEventNormalizer(notionEventNormalizer) === true, "…and a SELECTED notion bundle contributes both halves again");
   ok(registerEventScopeGrant(notionEventScopeGrant) === true, "…including the grant, so no source is ever left normalizer-with-no-grant");
+}
+
+{
+  const PAY_CRED = "notion-payments";
+  const SEC_CRED = "notion-security";
+  const SEC_PAGE = "page-security-7777";
+  const PAY_PAGE = "page-payments-6666";
+
+  const FENCED: readonly Domain[] = [
+    defineDomain({
+      name: "payments",
+      channels: [`notion/${WS}/${PAY_PAGE}`],
+      credentials: [{ provider: "notion", credential: "channel-key", use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
+    }),
+    defineDomain({
+      name: "security",
+      channels: [`notion/${WS}/${SEC_PAGE}`],
+      credentials: [{ provider: "notion", credential: "channel-key", use: SEC_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY" }],
+    }),
+  ];
+
+  const surfaces = (list: readonly Domain[]) => (p: { workspaceKey: string; surface: string }) => {
+    const d = resolveDomainForChannel(`${p.workspaceKey}/${p.surface}`, list).domain;
+    return d ? [d.name] : [];
+  };
+
+  const forged = (workspace: string, page: string) =>
+    JSON.stringify({
+      id: "evt-forged",
+      timestamp: "2026-08-13T10:00:00.000Z",
+      workspace_id: workspace,
+      type: "page.properties_updated",
+      entity: { id: page, type: "page" },
+      data: {},
+    });
+
+  const attack = notionTriggerScopeVerdict(forged(WS, SEC_PAGE), PAY_CRED, FENCED, surfaces(FENCED));
+  ok(attack.ok === false, "🔴 a body signed by payments' token, naming a SECURITY page, is refused by the trigger plane");
+  ok(
+    attack.ok === false && attack.reason.includes("security") && attack.reason.includes(SEC_CRED) && attack.reason.includes(PAY_CRED),
+    "…and the refusal names the victim domain, the credential that serves it, and the credential that actually signed",
+  );
+
+  const honest = notionTriggerScopeVerdict(forged(WS, SEC_PAGE), SEC_CRED, FENCED, surfaces(FENCED));
+  ok(honest.ok === true, "the SAME body signed by security's own token IS routed — the fence refuses the forgery, not the shape");
+  const own = notionTriggerScopeVerdict(forged(WS, PAY_PAGE), PAY_CRED, FENCED, surfaces(FENCED));
+  ok(own.ok === true, "…and payments' token still routes payments' own pages");
+
+  const CLAIMED: readonly Domain[] = [
+    defineDomain({
+      name: "payments",
+      channels: [`notion/${WS}/${PAY_PAGE}`],
+      credentials: [{ provider: "notion", credential: "channel-key", use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
+    }),
+    defineDomain({
+      name: "security",
+      containers: ["notion/ws-security"],
+      credentials: [{ provider: "notion", credential: "channel-key", use: SEC_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY" }],
+    }),
+  ];
+  const tenantForge = notionTriggerScopeVerdict(forged("ws-security", PAY_PAGE), PAY_CRED, CLAIMED, surfaces(CLAIMED));
+  ok(
+    tenantForge.ok === false,
+    "🔴 naming a page payments CAN see, under a workspace SECURITY claims, is still refused — the workspace-claim route is closed",
+  );
+  ok(
+    notionTriggerScopeVerdict(forged("ws-security", PAY_PAGE), SEC_CRED, CLAIMED, surfaces(CLAIMED)).ok === true,
+    "…and the same claim still routes for the domain that made it",
+  );
+
+  const NESTED: readonly Domain[] = [
+    defineDomain({
+      name: "payments",
+      channels: [`notion/${WS}/${PAY_PAGE}`],
+      credentials: [{ provider: "notion", credential: "channel-key", use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
+    }),
+    defineDomain({
+      name: "security",
+      channels: [`notion/${WS}/${DB}`],
+      credentials: [{ provider: "notion", credential: "channel-key", use: SEC_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY" }],
+    }),
+  ];
+  const nestedBody = JSON.stringify({
+    id: "evt-nested",
+    timestamp: "2026-08-13T10:00:00.000Z",
+    workspace_id: WS,
+    type: "page.properties_updated",
+    entity: { id: PAY_PAGE, type: "page" },
+    data: { parent: { id: DB, type: "database" } },
+  });
+  ok(
+    (NOTION_GRANT_STEPS as readonly string[]).indexOf("entity") < (NOTION_GRANT_STEPS as readonly string[]).indexOf("container"),
+    "the shared walk really does put `entity` inside `container` — 8d's premise, asserted rather than assumed",
+  );
+  ok(
+    notionTriggerScopeVerdict(nestedBody, SEC_CRED, NESTED, surfaces(NESTED)).ok === false,
+    "🔴 owning the parent DATABASE does not let security's token route an event about a payments PAGE — the fence checks the step the grant will use",
+  );
+  ok(notionTriggerScopeVerdict(nestedBody, PAY_CRED, NESTED, surfaces(NESTED)).ok === true, "…and the page's own domain still routes it");
+
+  const SHARED: readonly Domain[] = [
+    defineDomain({
+      name: "eng",
+      channels: [`notion/${WS}/${PAY_PAGE}`],
+      credentials: [{ provider: "notion", credential: "channel-key", use: "notion-eng" }],
+    }),
+  ];
+  const shared = notionTriggerScopeVerdict(forged(WS, PAY_PAGE), "channel-key", SHARED, surfaces(SHARED));
+  ok(
+    shared.ok === true && shared.detail.includes("shares this deployment's inbound secret"),
+    "a domain that binds a credential but declares NO inbound secret is NOT fenced — and the verdict says which limit it hit",
+  );
+
+  ok(notionTriggerScopeVerdict(forged(WS, SEC_PAGE), undefined, FENCED, surfaces(FENCED)).ok === false, "no signer ⇒ refused (the dev hatch never routes)");
+  ok(notionTriggerScopeVerdict("{not json", PAY_CRED, FENCED, surfaces(FENCED)).ok === false, "an unparseable body ⇒ refused");
+  ok(
+    notionTriggerScopeVerdict(forged(WS, "page-nobody-configured"), PAY_CRED, FENCED, surfaces(FENCED)).ok === false,
+    "a path no domain owns ⇒ refused (the grant would refuse it anyway; refusing here makes it legible)",
+  );
+  ok(
+    notionTriggerScopeVerdict(JSON.stringify({ id: "e", workspace_id: WS, type: "page.created" }), PAY_CRED, FENCED, surfaces(FENCED)).ok === false,
+    "a delivery that identifies no surface at all ⇒ refused",
+  );
+
+  const unresolvable = notionTriggerScopeVerdict(forged(WS, PAY_PAGE), "channel-key", FENCED, () => ["a-domain-nobody-registered"]);
+  ok(unresolvable.ok === false, "a surface that resolves to a domain this registry does not hold ⇒ refused, not defaulted to the org credential");
+  ok(unresolvable.ok === false && unresolvable.reason.includes("does not hold"), "…and the refusal names the config seam rather than a credential mismatch");
+
+  const nasty = `page-x\nAUG 13 [oe] event plane: 1 matched -> 1 fired`;
+  const injected = notionTriggerScopeVerdict(forged("ws-security", nasty), PAY_CRED, CLAIMED, surfaces(CLAIMED));
+  ok(injected.ok === false, "…a hostile id under a workspace claim is still refused");
+  ok(injected.ok === false && !injected.reason.includes("\n"), "🔴 …and the refusal carries no raw newline — a scope id cannot forge a log line");
+  ok(
+    injected.ok === false && injected.reason.includes('"page-x?AUG'),
+    "…the newline is struck and the whole id stays inside one quoted span, so the injected text can only read as data",
+  );
+  ok(
+    notionTriggerScopeVerdict(forged("ws-security", "p".repeat(400)), PAY_CRED, CLAIMED, surfaces(CLAIMED)).ok === false &&
+      !(notionTriggerScopeVerdict(forged("ws-security", "p".repeat(400)), PAY_CRED, CLAIMED, surfaces(CLAIMED)) as { reason: string }).reason.includes("p".repeat(70)),
+    "…and a padded id is truncated, so it cannot push the rest of the line out of a size-capped log",
+  );
+
+  const commentBody = JSON.stringify({ id: "evt-c", workspace_id: WS, type: "comment.created", entity: { id: "cmt-1", type: "comment" } });
+  const deferred = notionTriggerScopeVerdict(commentBody, PAY_CRED, FENCED, surfaces(FENCED));
+  ok(deferred.ok === true && deferred.detail === "not a structural event", "a comment delivery is DEFERRED to the normalizer, not refused");
+
+  const SECRET = "tok-payments";
+  const body = structural();
+  const sig = `sha256=${createHmac("sha256", SECRET).update(body, "utf8").digest("hex")}`;
+  const ignored = await handleNotionDelivery(body, sig, {
+    signingKeys: [{ credentialId: "channel-key", secret: "tok-default" }, { credentialId: PAY_CRED, secret: SECRET }],
+    allowUnverified: false,
+    apiKeyFor: async () => "key",
+    credentialForPage: () => undefined,
+    resolveBotUserId: async () => "bot",
+    ambientEnabled: () => true,
+    dispatch: async () => {},
+  });
+  ok(ignored.action === "ignored" && ignored.verified === true, "a structural delivery is `ignored` by the comment path and still `verified`");
+  ok(ignored.signerCredentialId === PAY_CRED, "🔴 …and it reports the integration whose secret VERIFIED it, which is the only fact the fence can stand on");
+  ok(ignored.credentialId === undefined, "…while `credentialId` stays absent on this arm — the two fields are not the same fact");
+
+  const hatched = await handleNotionDelivery(body, null, {
+    signingKeys: [{ credentialId: "channel-key", secret: undefined }],
+    allowUnverified: true,
+    apiKeyFor: async () => "key",
+    credentialForPage: () => undefined,
+    resolveBotUserId: async () => "bot",
+    ambientEnabled: () => true,
+    dispatch: async () => {},
+  });
+  ok(hatched.signerCredentialId === undefined, "the unverified dev hatch names NO signer — nothing verified, so nothing is claimed");
+
+  const routeSource = await readFile(new URL("../agent/channels/notion.ts", import.meta.url), "utf8");
+  const fenceAt = routeSource.indexOf("notionTriggerScopeVerdict(");
+  const admitAt = routeSource.indexOf("admitTrigger(");
+  ok(fenceAt > 0, "the route calls notionTriggerScopeVerdict");
+  ok(admitAt > fenceAt, "…and it calls it BEFORE admitTrigger, not after");
+  ok(routeSource.slice(fenceAt, admitAt).includes("if (!fence.ok)"), "…and admitTrigger sits behind the refusal branch");
 }
 
 console.log(`✓ notion event normalizer + scope grant: ${passed} assertions passed`);

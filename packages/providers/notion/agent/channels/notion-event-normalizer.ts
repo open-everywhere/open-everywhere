@@ -1,6 +1,8 @@
 import {
   scopeIdOf,
   getConfig,
+  domainCredentialId,
+  type Domain,
   type EventNormalizer,
   type EventScopeGrant,
   type NormalizedEvent,
@@ -9,6 +11,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { NOTION_WEBHOOK_SOURCE } from "./notion-webhook-verifier.js";
 import { notionWorkspaceKey } from "./notion-identity.js";
+import { NOTION_CHANNEL_CREDENTIAL, NOTION_PROVIDER, notionIntegrations } from "./notion-credentials.js";
 
 export const NOTION_EVENT_SOURCE = NOTION_WEBHOOK_SOURCE;
 
@@ -143,6 +146,8 @@ export const notionEventNormalizer: EventNormalizer = {
   },
 };
 
+export const NOTION_GRANT_STEPS = ["sub", "entity", "container", "group"] as const;
+
 export const notionEventScopeGrant: EventScopeGrant = {
   source: NOTION_EVENT_SOURCE,
   provider: "notion",
@@ -151,7 +156,7 @@ export const notionEventScopeGrant: EventScopeGrant = {
     if (workspace === undefined) return false;
     const workspaceKey = notionWorkspaceKey(workspace);
     const cfg = getConfig();
-    for (const kind of ["sub", "entity", "container", "group"] as const) {
+    for (const kind of NOTION_GRANT_STEPS) {
       const id = scopeIdOf(scope, kind);
       if (id === undefined) continue;
       const owning = cfg.domainsForSurface({ workspaceKey, surface: id });
@@ -161,3 +166,69 @@ export const notionEventScopeGrant: EventScopeGrant = {
     return false;
   },
 };
+
+function quote(id: string | undefined): string {
+  if (id === undefined) return '"(none)"';
+  return JSON.stringify(id.slice(0, 64).replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, "?"));
+}
+
+export type NotionTriggerScopeVerdict =
+  | { readonly ok: true; readonly detail: string }
+  | { readonly ok: false; readonly reason: string };
+
+export function notionTriggerScopeVerdict(
+  rawBody: string,
+  signerCredentialId: string | undefined,
+  domains: readonly Domain[],
+  resolveSurface: (p: { workspaceKey: string; surface: string }) => readonly string[] = (p) => getConfig().domainsForSurface(p),
+): NotionTriggerScopeVerdict {
+  const ev = parse(rawBody);
+  if (!ev) return { ok: false, reason: "the delivery body did not parse" };
+
+  if (notionEventClass(eventTypeOf(ev)) !== "structural") return { ok: true, detail: "not a structural event" };
+
+  if (!signerCredentialId) return { ok: false, reason: "no integration's secret identified this delivery" };
+
+  const scope = notionScopePath(ev);
+  const workspace = scopeIdOf(scope, "tenant");
+  if (workspace === undefined) return { ok: false, reason: "the delivery names no workspace" };
+  const workspaceKey = notionWorkspaceKey(workspace);
+
+  const integrations = notionIntegrations(domains);
+  const secretOf = (credentialId: string): string | undefined => integrations.find((i) => i.credentialId === credentialId)?.inboundSecret;
+  const signerSecret = secretOf(signerCredentialId);
+
+  for (const kind of NOTION_GRANT_STEPS) {
+    const id = scopeIdOf(scope, kind);
+    if (id === undefined) continue;
+    const owning = resolveSurface({ workspaceKey, surface: id });
+    if (owning.length === 0) continue;
+
+    let viaSharedSecret = false;
+    for (const name of owning) {
+      const owner = domains.find((d) => d.name === name);
+      if (!owner) {
+        return { ok: false, reason: `${kind} ${quote(id)} resolved to domain ${quote(name)}, which this registry does not hold` };
+      }
+      const expected = domainCredentialId(owner, NOTION_PROVIDER, NOTION_CHANNEL_CREDENTIAL);
+      if (expected === signerCredentialId) continue;
+      if (signerSecret !== undefined && secretOf(expected) === signerSecret) {
+        viaSharedSecret = true;
+        continue;
+      }
+      return {
+        ok: false,
+        reason:
+          `${kind} ${quote(id)} belongs to domain ${quote(name)}, which is served by notion credential ${quote(expected)} — ` +
+          `this delivery was signed by ${quote(signerCredentialId)}. A signed body cannot arm another domain's routines.`,
+      };
+    }
+    return {
+      ok: true,
+      detail: viaSharedSecret
+        ? `${kind} ${quote(id)} is served by an integration that shares this deployment's inbound secret`
+        : `${kind} ${quote(id)} is served by ${quote(signerCredentialId)}`,
+    };
+  }
+  return { ok: false, reason: "no step of the claimed path is a surface the deployer put in any domain" };
+}
