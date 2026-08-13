@@ -15,6 +15,7 @@ import { renderApprovalPreviewFor } from "../access/approval-preview.js";
 import { renderWorkerCapabilityIndex } from "../access/worker-capabilities.js";
 import { WORKER_ONLY_TOOLS_STANDING, WORKER_ONLY_TOOLS_THREAD } from "../access/worker-capability-index.generated.js";
 import { bridgeReadableChannelList, bridgeBotDisplayName } from "../channels/slack-bridge.js";
+import { renderPendingCancelNote } from "../channels/cancel-note.js";
 import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
 import { isSupervisorSession } from "../model/routing.js";
 import { unifiedDomainFromToken } from "../channels/unified-supervisor.js";
@@ -462,7 +463,10 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
 }
 
 export async function renderScopeMarkdown(ctx: BindableContext): Promise<string> {
-  return isUnifiedWindowContext(ctx) ? renderUnifiedScope(ctx) : renderPerSurfaceScope(ctx);
+  const scope = await (isUnifiedWindowContext(ctx) ? renderUnifiedScope(ctx) : renderPerSurfaceScope(ctx));
+  const cancelNote = renderPendingCancelNote();
+  if (!cancelNote) return scope;
+  return scope.length > 0 ? `${scope}\n\n${cancelNote}` : cancelNote;
 }
 
 async function resolve(ctx: BindableContext) {

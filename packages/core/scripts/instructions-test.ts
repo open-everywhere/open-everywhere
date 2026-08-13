@@ -1,4 +1,6 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { assembleAccessInstructions } from "../agent/access/instructions.js";
+import { clearPendingCancelNoteAfter, setPendingCancelNote } from "../agent/channels/cancel-note.js";
 import { renderSurfaceGuide, renderScopeMarkdown } from "../agent/instructions/access.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
@@ -183,6 +185,62 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     session: { auth: { current: { attributes: { oe_platform: "github" } } } },
   } as BindableContext);
   ok(!soloGh.includes(NOISE), "a non-Slack solo window adds no Slack scope (per-surface renderers fail-soft off Slack)");
+}
+
+{
+  class FakeSession {
+    private readonly store = new Map<string, unknown>();
+    get<T>(key: { name: string }): T | undefined {
+      return this.store.get(key.name) as T | undefined;
+    }
+    has(key: { name: string }): boolean {
+      return this.store.has(key.name);
+    }
+    require<T>(key: { name: string }): T {
+      if (!this.has(key)) throw new Error(`missing ${key.name}`);
+      return this.get(key) as T;
+    }
+    set<T>(key: { name: string }, v: T | ((c: T | undefined) => T)): T {
+      const next = typeof v === "function" ? (v as (c: T | undefined) => T)(this.get(key)) : v;
+      this.store.set(key.name, next);
+      return next;
+    }
+    ensure<T>(key: { name: string }, create: () => T): T {
+      return this.has(key) ? this.require(key) : this.set(key, create());
+    }
+    clearVirtualContext(): void {}
+    setVirtualContext(): void {}
+    *entries(): Generator<readonly [unknown, unknown]> {}
+  }
+  const g = globalThis as Record<PropertyKey, unknown>;
+  const storageKey = Symbol.for("eve.context-storage");
+  g[storageKey] ??= new AsyncLocalStorage();
+  const storage = g[storageKey] as AsyncLocalStorage<unknown>;
+  const inSession = <T>(fn: () => T | Promise<T>): Promise<T> => Promise.resolve(storage.run(new FakeSession(), fn));
+
+  const ctx = (): BindableContext =>
+    ({
+      channel: { kind: "channel:unified", continuationToken: "oe-dom:payments:oe-sup:g1" },
+      session: { auth: { current: { attributes: { oe_platform: "slack" } } } },
+    }) as BindableContext;
+
+  const baseline = await renderScopeMarkdown(ctx());
+  const quiet = await inSession(() => renderScopeMarkdown(ctx()));
+  ok(quiet === baseline, "no cancel pending → the standing block is BYTE-IDENTICAL to today (the cache pin holds)");
+  ok(!quiet.includes("CANCELLED"), "…and says nothing about a cancellation that did not happen");
+
+  await inSession(async () => {
+    setPendingCancelNote({ turnId: "t-1", steps: 4, ran: ["read_thread", "create_ticket"] });
+    const md = await renderScopeMarkdown(ctx());
+    ok(md.includes("CANCELLED"), "🔴 THE ACCEPTANCE: the next turn's context states the previous turn was cancelled");
+    ok(md.includes("4 steps in"), "…and how far the cancelled turn got");
+    ok(md.includes("`create_ticket`"), "…and names the tools that actually ran");
+    ok(md.includes("effects are REAL"), "🔴 …and states their effects are real but absent from history (the anti-double-execution clause)");
+    ok(md.startsWith(baseline), "the reconstruction is APPENDED LAST — every byte of the cached standing prefix is untouched");
+
+    clearPendingCancelNoteAfter("t-2");
+    ok((await renderScopeMarkdown(ctx())) === baseline, "once a later turn ends, the block returns byte-identical to the baseline");
+  });
 }
 
 console.log(`✓ instructions: ${passed} assertions passed`);

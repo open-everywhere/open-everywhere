@@ -7,6 +7,7 @@ import { STOP_HAND_SLACK_NAME, STOP_HAND_UNICODE } from "../status/status.js";
 import { setSurfaceReaction } from "../channels/surface-message-ops.js";
 import { postSurfaceText } from "../channels/surface-message-ops.js";
 import { clearTurnAnchor, recordTurnAnchor, turnAnchorKey, turnChannelKey } from "../channels/turn-registry.js";
+import { clearPendingCancelNoteAfter, setPendingCancelNote } from "../channels/cancel-note.js";
 
 export const TURN_CANCELLED_ACTION = "turn.cancelled";
 
@@ -128,6 +129,7 @@ export function renderCancelNote(steps: number, ran: readonly string[]): string 
 async function onTurnCancelled(turnId: string): Promise<void> {
   const s = read();
   if (!s || s.turnId !== turnId) return;
+  setPendingCancelNote({ turnId, steps: s.steps, ran: [...s.ran] });
   await removeStopHand(s);
   await clearTurnAnchor(s.org, s.windowKey);
 
@@ -149,6 +151,7 @@ async function onTurnCancelled(turnId: string): Promise<void> {
 }
 
 async function onTurnEnded(turnId: string): Promise<void> {
+  clearPendingCancelNoteAfter(turnId);
   const s = read();
   if (!s || s.turnId !== turnId) return;
   await removeStopHand(s);

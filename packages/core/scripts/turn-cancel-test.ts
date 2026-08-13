@@ -1,6 +1,17 @@
 
+import { AsyncLocalStorage } from "node:async_hooks";
+import { readFileSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { registerOperationalStore } from "../agent/operational/provider.js";
 import { renderCancelNote } from "../agent/hooks/turn-anchor.js";
+import {
+  clearPendingCancelNoteAfter,
+  formatCancelNoteReminder,
+  readPendingCancelNote,
+  renderPendingCancelNote,
+  setPendingCancelNote,
+} from "../agent/channels/cancel-note.js";
 import { parseOeCommandTokens, parseSlackCommandText, renderHelp, runStop } from "../agent/commands/core.js";
 import { resolveTurnAnchor, recordTurnAnchor, clearTurnAnchor, turnAnchorKey, turnChannelKey, TURN_ANCHOR_TTL_MS } from "../agent/channels/turn-registry.js";
 import { cancelAnchoredTurn, type AttachSessionForCancel } from "../agent/channels/turn-cancel.js";
@@ -152,6 +163,183 @@ ok(renderCancelNote(1, []).includes("one step in"), "one step reads as prose, no
   const note = renderCancelNote(9, ["a", "b", "c", "d", "e"]);
   ok(note.includes("and 2 earlier"), "a long turn summarises the tail rather than listing everything");
   ok(note.includes("`e`"), "…keeping the MOST RECENT actions, which are the ones a human is looking at");
+}
+
+{
+  const empty = formatCancelNoteReminder({ turnId: "t-1", steps: 1, ran: [] });
+  ok(empty !== null && empty.includes("one step in"), "one step reads as prose here too");
+  ok(empty!.includes("nothing was left half-done"), "a cancel before any tool finished says so — no false confession");
+  ok(formatCancelNoteReminder(null) === null, "no pending cancel ⇒ NO reminder (this is what keeps the standing block byte-stable)");
+
+  const note = formatCancelNoteReminder({ turnId: "t-2", steps: 5, ran: ["read_thread", "create_ticket"] });
+  ok(note !== null && note.startsWith("<system-reminder>"), "the reminder is a ready-to-emit system-reminder block");
+  ok(note!.includes("CANCELLED"), "🔴 it tells the model it was CANCELLED — the fact its rolled-back history cannot show");
+  ok(note!.includes("5 steps in"), "…how far it got");
+  ok(note!.includes("`create_ticket`"), "…which tools actually ran");
+  ok(note!.includes("effects are REAL"), "🔴 …and that their effects are REAL — the clause that prevents a silent double-execution");
+  ok(note!.includes("never recorded"), "…and that its partial final message was never recorded");
+
+  const long = formatCancelNoteReminder({ turnId: "t-3", steps: 9, ran: ["a", "b", "c", "d", "e", "f", "g", "h"] });
+  ok(long!.includes("and 2 earlier"), "a long turn summarises the tail rather than listing everything");
+  ok(long!.includes("`h`") && !long!.includes("`a`"), "…keeping the MOST RECENT tools");
+}
+
+{
+  class FakeSession {
+    private readonly store = new Map<string, unknown>();
+    get<T>(key: { name: string }): T | undefined {
+      return this.store.get(key.name) as T | undefined;
+    }
+    has(key: { name: string }): boolean {
+      return this.store.has(key.name);
+    }
+    require<T>(key: { name: string }): T {
+      if (!this.has(key)) throw new Error(`missing ${key.name}`);
+      return this.get(key) as T;
+    }
+    set<T>(key: { name: string }, v: T | ((c: T | undefined) => T)): T {
+      const next = typeof v === "function" ? (v as (c: T | undefined) => T)(this.get(key)) : v;
+      this.store.set(key.name, next);
+      return next;
+    }
+    ensure<T>(key: { name: string }, create: () => T): T {
+      return this.has(key) ? this.require(key) : this.set(key, create());
+    }
+    clearVirtualContext(): void {}
+    setVirtualContext(): void {}
+    *entries(): Generator<readonly [unknown, unknown]> {}
+  }
+  const g = globalThis as Record<PropertyKey, unknown>;
+  const storageKey = Symbol.for("eve.context-storage");
+  g[storageKey] ??= new AsyncLocalStorage();
+  const storage = g[storageKey] as AsyncLocalStorage<unknown>;
+  const inSession = <T>(fn: () => T | Promise<T>): Promise<T> => Promise.resolve(storage.run(new FakeSession(), fn));
+
+  ok(readPendingCancelNote() === null, "no eve context: the reader returns null and never throws");
+  setPendingCancelNote({ turnId: "t-x", steps: 1, ran: [] });
+  clearPendingCancelNoteAfter("t-x");
+  ok(renderPendingCancelNote() === null, "no eve context: writer and clear are no-ops, the renderer stays null");
+
+  await inSession(() => {
+    ok(readPendingCancelNote() === null, "a fresh session starts with NO pending reconstruction");
+    setPendingCancelNote({ turnId: "t-1", steps: 3, ran: ["reply"] });
+    ok(readPendingCancelNote()?.steps === 3, "the note survives the write");
+
+    clearPendingCancelNoteAfter("t-1");
+    ok(readPendingCancelNote() !== null, "🔴 ending the CANCELLED turn does NOT clear the note");
+
+    clearPendingCancelNoteAfter("t-2");
+    ok(readPendingCancelNote() === null, "a LATER turn ending retires the note");
+    ok(renderPendingCancelNote() === null, "…so the reminder stops rendering");
+  });
+
+  await inSession(() => {
+    setPendingCancelNote({ turnId: "t-9", steps: 2, ran: [] });
+  });
+  await inSession(() => {
+    ok(readPendingCancelNote() === null, "a DIFFERENT session sees no pending note (no cross-session bleed)");
+  });
+}
+
+{
+  const ANCHOR_KEY = "open-everywhere.turn-anchor";
+  class SeededSession {
+    readonly store = new Map<string, unknown>();
+    get<T>(key: { name: string }): T | undefined {
+      return this.store.get(key.name) as T | undefined;
+    }
+    has(key: { name: string }): boolean {
+      return this.store.has(key.name);
+    }
+    require<T>(key: { name: string }): T {
+      if (!this.has(key)) throw new Error(`missing ${key.name}`);
+      return this.get(key) as T;
+    }
+    set<T>(key: { name: string }, v: T | ((c: T | undefined) => T)): T {
+      const next = typeof v === "function" ? (v as (c: T | undefined) => T)(this.get(key)) : v;
+      this.store.set(key.name, next);
+      return next;
+    }
+    ensure<T>(key: { name: string }, create: () => T): T {
+      return this.has(key) ? this.require(key) : this.set(key, create());
+    }
+    clearVirtualContext(): void {}
+    setVirtualContext(): void {}
+    *entries(): Generator<readonly [unknown, unknown]> {}
+  }
+  const storage = (globalThis as Record<PropertyKey, unknown>)[Symbol.for("eve.context-storage")] as AsyncLocalStorage<unknown>;
+  const hook = (await import("../agent/hooks/turn-anchor.js")).default as unknown as {
+    events: Record<string, (e: unknown, ctx?: unknown) => Promise<void>>;
+  };
+  const anchorState = {
+    turnId: "t-1",
+    org: "org-a",
+    windowKey: "w-hook",
+    workspace: "T1",
+    surfaceKey: "slack/T1/C1",
+    handPlaced: false,
+    ran: ["read_thread", "create_ticket"],
+    steps: 4,
+  };
+
+  const session = new SeededSession();
+  session.set({ name: ANCHOR_KEY }, { ...anchorState });
+  await storage.run(session, async () => {
+    await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-1" } });
+    const pending = readPendingCancelNote();
+    ok(pending !== null, "🔴 the turn.cancelled HOOK writes the reconstruction — delete that call and this is the assertion that goes red");
+    ok(pending!.steps === 4 && pending!.ran.join(",") === "read_thread,create_ticket", "…carrying the SAME {steps, ran} the human-facing note and the audit row get");
+
+    session.set({ name: ANCHOR_KEY }, { ...anchorState });
+    await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-1" } });
+    ok(readPendingCancelNote() !== null, "🔴 the cancelled turn's own turn.completed does NOT retire the note");
+
+    session.set({ name: ANCHOR_KEY }, { ...anchorState, turnId: "t-2" });
+    await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-2" } });
+    ok(readPendingCancelNote() === null, "…and the NEXT turn's completion does retire it");
+  });
+}
+
+{
+  const eveRoot = dirname(createRequire(import.meta.url).resolve("eve/package.json"));
+  const eveDist = (rel: string): string => readFileSync(join(eveRoot, "dist", "src", rel), "utf8");
+
+  const settle = eveDist("execution/settle-cancelled-turn-step.js");
+  ok(/clearAllProxyInputRequests/.test(settle), "eve's settleCancelledTurnStep still calls clearAllProxyInputRequests (the wipe the header describes)");
+
+  ok(/dispatchStreamEventHooks\(\{ctx:\w+,event:\w+,registry:/.test(settle), "🔴 (1) authored hooks STILL fire on eve's cancel path — no dispatch, no reconstruction is ever written");
+  ok(/withContextScope\(/.test(settle), "🔴 (2) …inside a context scope, which is what makes the defineState slot resolvable from the hook");
+  ok(/serializedContext:serializeContext\(/.test(settle), "🔴 (3) …and the context is RE-SERIALIZED out of the cancel step — this is what carries the slot into the NEXT turn while history rolls back");
+
+  const proxy = eveDist("harness/proxy-input-requests.js");
+  ok(/function clearAllProxyInputRequests\(\w+\)\{return hasProxyInputRequests/.test(proxy), "clearAllProxyInputRequests still wipes the WHOLE map, not one child's entries");
+  ok(/clearProxyInputRequestsForChild/.test(proxy) && !/clearProxyInputRequestsForChild/.test(settle), "…and the cancel path still does NOT use eve's per-child clear");
+
+  const hitl = eveDist("execution/subagent-hitl-proxy.js");
+  ok(/payload:\{inputResponses:/.test(hitl), "eve still routes a child's answer ONLY through payload.inputResponses");
+}
+{
+  const roots = ["agent", "../providers", "../adapters"].map((r) => new URL(`../${r}/`, import.meta.url));
+  const offenders: string[] = [];
+  const walk = (dir: URL): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === "node_modules" || e.name === "dist") continue;
+      const child = new URL(e.isDirectory() ? `${e.name}/` : e.name, dir);
+      if (e.isDirectory()) {
+        walk(child);
+        continue;
+      }
+      if (!e.name.endsWith(".ts") || e.name.endsWith(".d.ts")) continue;
+      const src = readFileSync(child, "utf8");
+      const code = src.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+      if (/inputResponses\s*:/.test(code) || /\.respond\s*\(/.test(code)) offenders.push(child.pathname);
+    }
+  };
+  for (const r of roots) walk(r);
+  ok(
+    offenders.length === 0,
+    `🔴 OE still builds NO inputResponses payload and calls no .respond() — no HITL client, so a cleared proxy entry orphans nothing that was not already orphaned. Offenders: ${offenders.join(", ")}`,
+  );
 }
 
 ok(parseOeCommandTokens(["stop"]).kind === "stop", '"/oe stop" parses');

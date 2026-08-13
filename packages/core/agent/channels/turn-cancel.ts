@@ -42,12 +42,12 @@ export async function cancelAnchoredTurn(input: CancelAnchoredTurnInput): Promis
     const res = await input.attachSession(anchor.sessionId).cancel({ turnId: anchor.turnId });
     status = typeof res?.status === "string" ? res.status : undefined;
   } catch (err) {
-    await auditCancel(input, { outcome: "error", anchorSurfaceKey: anchor.surfaceKey, note: String(err) });
+    await auditCancel(input, { outcome: "error", anchorSurfaceKey: anchor.surfaceKey, note: String(err), sessionId: anchor.sessionId, turnId: anchor.turnId });
     return { outcome: "error", message: "Couldn't reach that turn to stand it down — try again in a moment.", sessionId: anchor.sessionId, turnId: anchor.turnId };
   }
 
   const outcome: CancelOutcome = status === "no_active_turn" ? "no_active_turn" : "requested";
-  await auditCancel(input, { outcome, anchorSurfaceKey: anchor.surfaceKey, ...(status ? { status } : {}) });
+  await auditCancel(input, { outcome, anchorSurfaceKey: anchor.surfaceKey, sessionId: anchor.sessionId, turnId: anchor.turnId, ...(status ? { status } : {}) });
   return {
     outcome,
     message: outcome === "no_active_turn" ? NOTHING_RUNNING : STANDING_DOWN,
@@ -62,7 +62,7 @@ const STANDING_DOWN = "Standing down — I'll stop this turn where it is.";
 
 async function auditCancel(
   input: CancelAnchoredTurnInput,
-  detail: { outcome: CancelOutcome; anchorSurfaceKey?: string; status?: string; note?: string },
+  detail: { outcome: CancelOutcome; anchorSurfaceKey?: string; status?: string; note?: string; sessionId?: string; turnId?: string },
 ): Promise<void> {
   try {
     await appendAudit({
@@ -74,6 +74,8 @@ async function auditCancel(
       detail: {
         via: input.via,
         outcome: detail.outcome,
+        ...(detail.sessionId ? { sessionId: detail.sessionId } : {}),
+        ...(detail.turnId ? { turnId: detail.turnId } : {}),
         ...(detail.anchorSurfaceKey ? { surfaceKey: detail.anchorSurfaceKey } : {}),
         ...(detail.status ? { eveStatus: detail.status } : {}),
         ...(detail.note ? { note: detail.note } : {}),
