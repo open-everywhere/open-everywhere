@@ -236,7 +236,7 @@ function readParentTurn(ctx: HookContext): { sessionId: string; turnId: string }
   return null;
 }
 
-export function parentTurnTaintStampMatches(ctx: HookContext): boolean {
+function parentTurnTaintStampMatches(ctx: HookContext): boolean {
   try {
     const parent = readParentTurn(ctx);
     if (parent === null) return false;
@@ -248,10 +248,36 @@ export function parentTurnTaintStampMatches(ctx: HookContext): boolean {
   }
 }
 
+const parentTurnTaintAdopted = defineState<string | null>("open-everywhere.taint-forward.adopted", () => null);
+
+export function adoptedParentTurnTaintThisTurn(ctx: HookContext): boolean {
+  try {
+    const recorded = parentTurnTaintAdopted.get();
+    if (recorded === null) return false;
+    let turnId: string | undefined;
+    try {
+      turnId = currentTurnId(ctx as unknown as BindableContext);
+    } catch {
+      turnId = undefined;
+    }
+    if (recorded.length === 0 || typeof turnId !== "string" || turnId.length === 0) return true;
+    return recorded === turnId;
+  } catch {
+    return false;
+  }
+}
+
 export function adoptParentTurnTaint(ctx: HookContext): boolean {
   if (!taintEnabled()) return false;
   try {
     if (!parentTurnTaintStampMatches(ctx)) return false;
+    let ownTurnId: string | undefined;
+    try {
+      ownTurnId = currentTurnId(ctx as unknown as BindableContext);
+    } catch {
+      ownTurnId = undefined;
+    }
+    parentTurnTaintAdopted.update(() => (typeof ownTurnId === "string" ? ownTurnId : ""));
     markUntrustedIngestedThisTurn();
     const parent = readParentTurn(ctx);
     const sessionId = (ctx as { session?: { id?: string } }).session?.id;

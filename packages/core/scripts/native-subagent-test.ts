@@ -724,6 +724,77 @@ function inSession<T>(fn: () => T): T {
     eq(spawnTaint.adoptParentTurnTaint(child as never), false, "…asserted on the exported consumer too, `=== false`");
   });
   resetSettingsForTest();
+
+  {
+    const { captureEligible } = await import("../agent/hooks/requester-messages.js");
+
+    await contextStorage.run(new ContextContainer(), async () => {
+      const child = fwdCtx({
+        id: "sess-fence-child",
+        turn: { id: "turn_0", sequence: 0 },
+        parent: { sessionId: "sess-fwd-parent", callId: "call_g1", turn: { id: "turn_7", sequence: 7 } },
+        attributes: { [ATTR]: "sess-fwd-parent|turn_7" },
+      });
+      await turnStarted(child);
+      ok(untrustedIngestedThisTurn(), "precondition: the child adopted its parent turn's taint");
+      eq(
+        bagOf(child)[ATTR],
+        "sess-fence-child|turn_0",
+        "precondition: …and the flip observer has ALREADY re-stamped the bag with the CHILD's own pair, which is what a bag-reading fence would compare against",
+      );
+      eq(
+        captureEligible(child as never),
+        false,
+        "🔴 D9 FENCE: a native child dispatched from a TAINTED parent turn is NOT capture-eligible — its brief is model-authored by the parent, and the approval judge must never read it as a requester's own words",
+      );
+    });
+
+    await contextStorage.run(new ContextContainer(), async () => {
+      const seat = fwdCtx({ id: "sess-fence-seat", turn: { id: "turn_0", sequence: 0 } });
+      await turnStarted(seat);
+      eq(untrustedIngestedThisTurn(), false, "precondition: an ordinary human wake is a clean turn");
+      eq(captureEligible(seat as never), true, "🔴 D9 FENCE NEGATIVE CONTROL: an ordinary seat wake IS capture-eligible — asserted `=== true`, so the fence above reads 'refused this case', not 'refuses everything'");
+    });
+
+    await contextStorage.run(new ContextContainer(), async () => {
+      const child = fwdCtx({
+        id: "sess-fence-clean-child",
+        turn: { id: "turn_0", sequence: 0 },
+        parent: { sessionId: "sess-fwd-clean", callId: "call_g2", turn: { id: "turn_1", sequence: 1 } },
+      });
+      await turnStarted(child);
+      eq(captureEligible(child as never), true, "🔴 D9 FENCE: a child of a CLEAN parent turn is still eligible — the fence discriminates on the ADOPTION, which is what makes the refusal above meaningful");
+    });
+
+    await contextStorage.run(new ContextContainer(), async () => {
+      const spawned = fwdCtx({ id: "sess-fence-spawn", turn: { id: "turn_0", sequence: 0 }, attributes: { [OE_SPAWN_TAINTED_ATTR]: "true" } });
+      await turnStarted(spawned);
+      eq(captureEligible(spawned as never), false, "🔴 D9 FENCE: an `oe_spawn_tainted` delivery is refused AFTER the turn preamble has run, not only before it");
+    });
+
+    await contextStorage.run(new ContextContainer(), async () => {
+      const first = fwdCtx({
+        id: "sess-fence-persistent",
+        turn: { id: "turn_0", sequence: 0 },
+        parent: { sessionId: "sess-fwd-parent", callId: "call_g3", turn: { id: "turn_7", sequence: 7 } },
+        attributes: { [ATTR]: "sess-fwd-parent|turn_7" },
+      });
+      await turnStarted(first);
+      eq(captureEligible(first as never), false, "precondition: the persistent child's FIRST turn adopted, so it is refused");
+
+      const later = fwdCtx({
+        id: "sess-fence-persistent",
+        turn: { id: "turn_1", sequence: 1 },
+        parent: { sessionId: "sess-fwd-parent", callId: "call_g3", turn: { id: "turn_7", sequence: 7 } },
+      });
+      await turnStarted(later);
+      eq(
+        captureEligible(later as never),
+        true,
+        "🔴 D9 FENCE, PER TURN: the SAME session's next turn is capture-eligible again — the adoption is recorded against a turn id, so it can never become a session-durable refusal",
+      );
+    });
+  }
 }
 
 ok(proposingSessionId(parentCtx) !== undefined, "the parent resolves a session-approval key (it has a window token)");
