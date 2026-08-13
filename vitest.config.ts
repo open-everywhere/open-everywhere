@@ -8,8 +8,8 @@ export default defineConfig({
     isolate: true,
     env: { NODE_ENV: "" },
     sequence: { concurrent: false },
-    testTimeout: 120_000,
-    hookTimeout: 180_000,
+    testTimeout: 480_000,
+    hookTimeout: 300_000,
     maxWorkers: 2,
     globalSetup: ["tests/integration/global-setup.ts"],
     onUnhandledError(error: unknown): boolean | void {

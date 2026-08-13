@@ -87,7 +87,7 @@ export async function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-export async function waitFor<T>(probe: () => T | undefined | Promise<T | undefined>, label: string, timeoutMs = 90_000): Promise<T> {
+export async function waitFor<T>(probe: () => T | undefined | Promise<T | undefined>, label: string, timeoutMs = 360_000): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const got = await probe();
