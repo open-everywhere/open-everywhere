@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,10 @@ const RELAY_SECRET = randomBytes(32).toString("hex");
 const READ_TOKEN = randomBytes(32).toString("hex");
 
 let booted: { base: string } | undefined;
+
+export interface BootOptions {
+  readonly sharedSqlite?: boolean;
+}
 
 function guardProcess(): void {
   if (process.env.NODE_ENV === "test") {
@@ -36,7 +40,7 @@ async function portFree(port: number): Promise<boolean> {
   });
 }
 
-export async function bootAgent(): Promise<{ base: string }> {
+export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string }> {
   if (booted !== undefined) return booted;
   guardProcess();
 
@@ -49,7 +53,13 @@ export async function bootAgent(): Promise<{ base: string }> {
   process.env.OE_EGRESS_SPOOF = "1";
   process.env.OE_RELAY_SECRET = RELAY_SECRET;
   process.env.OE_CONTROL_READ_TOKENS = `it:${createHash("sha256").update(READ_TOKEN, "utf8").digest("hex")}`;
-  process.env.OE_PGLITE_DIR = join(state, "pglite");
+  if (opts.sharedSqlite === true) {
+    process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
+    process.env.OE_SQLITE_PATH = join(state, "ops.sqlite3");
+    delete process.env.OE_PGLITE_DIR;
+  } else {
+    process.env.OE_PGLITE_DIR = join(state, "pglite");
+  }
   process.env.OE_MEMORY_DIR = join(state, "memory");
 
   rmSync(join(ROOT, ".eve", ".workflow-data"), { recursive: true, force: true });
@@ -184,6 +194,7 @@ export interface AuditRow {
   readonly platform: string;
   readonly workspace: string;
   readonly surface?: string;
+  readonly principalId?: string;
   readonly action: string;
   readonly detail?: Record<string, unknown>;
 }
@@ -198,4 +209,74 @@ export async function readAuditRows(input: { actions: readonly string[]; sinceIs
   if (!res.ok) throw new Error(`integration harness: audit read failed ${res.status}`);
   const parsed = (await res.json()) as { entries?: AuditRow[] };
   return parsed.entries ?? [];
+}
+
+function scheduleTaskName(logicalPath: string): string {
+  return `eve.schedule.${Buffer.from(logicalPath, "utf8").toString("base64url")}`;
+}
+
+export async function seedDueRoutine(input: {
+  readonly surfaceKey: string;
+  readonly channelId: string;
+  readonly prompt: string;
+  readonly createdBy: string;
+  readonly id?: string;
+  readonly org?: string;
+}): Promise<string> {
+  if (booted === undefined) throw new Error("integration harness: seedDueRoutine before bootAgent.");
+  if (process.env.OE_OPERATIONAL_PROVIDER !== "sqlite") {
+    throw new Error("integration harness: seedDueRoutine needs bootAgent({ sharedSqlite: true }) — PGlite is single-writer.");
+  }
+  const { addRoutine } = await import("@open-everywhere/core/agent/routines/store.js");
+  const org = input.org ?? "default";
+  const id = input.id ?? `r-it-${randomBytes(4).toString("hex")}`;
+  const [platform = "slack", workspace = "", surface = ""] = input.surfaceKey.split("/");
+  const dueAt = new Date(Date.now() - 60_000).toISOString();
+  await addRoutine(
+    {
+      org,
+      platform,
+      workspace,
+      surface,
+      workspaceKey: `${platform}/${workspace}`,
+      surfaceKey: input.surfaceKey,
+      domainKey: input.surfaceKey,
+      key: input.surfaceKey,
+    },
+    {
+      id,
+      org,
+      surfaceKey: input.surfaceKey,
+      target: { channelId: input.channelId },
+      trigger: { kind: "once", at: dueAt },
+      prompt: input.prompt,
+      createdBy: input.createdBy,
+      status: "active",
+      nextRunAt: dueAt,
+      createdAt: new Date(Date.now() - 120_000).toISOString(),
+      promptGeneration: 1,
+      consecutiveFailures: 0,
+    },
+  );
+  return id;
+}
+
+export async function runRoutineDispatchTick(): Promise<readonly string[]> {
+  if (booted === undefined) throw new Error("integration harness: runRoutineDispatchTick before bootAgent.");
+  const taskName = scheduleTaskName("schedules/dispatch.ts");
+  const dir = join(ROOT, ".output", "server", "_virtual");
+  const candidates = readdirSync(dir).filter((f) => f.endsWith(".schedule.mjs"));
+  for (const file of candidates) {
+    if (!readFileSync(join(dir, file), "utf8").includes(taskName)) continue;
+    const mod = (await import(pathToFileURL(join(dir, file)).href)) as {
+      default: { run(e: { name: string }): Promise<{ result?: { sessionIds?: readonly string[] } }> };
+    };
+    const out = await mod.default.run({ name: taskName });
+    return out.result?.sessionIds ?? [];
+  }
+  throw new Error(
+    `integration harness: no compiled virtual handler in ${dir} dispatches "${taskName}" ` +
+      `(found: ${candidates.join(", ") || "none"}). The routine dispatcher schedule was renamed, ` +
+      "removed, or eve changed its task-name derivation — fix scheduleTaskName() rather than skipping.",
+  );
 }
