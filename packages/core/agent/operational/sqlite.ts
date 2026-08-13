@@ -1456,6 +1456,14 @@ export const sqliteOperationalStore: OperationalStore = {
     return info.changes > 0;
   },
 
+  async hasEventSeen(org, key, at, ttlMs) {
+    const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
+    const row = getDb()
+      .prepare("SELECT 1 FROM event_dedupe WHERE org_id = ? AND key = ? AND seen_at >= ? LIMIT 1")
+      .get(org, key, cutoff);
+    return row !== undefined;
+  },
+
   async captureDelivery(org, source, documentJson, at, captureUntil, maxRows) {
     const handle = getDb();
     const atMs = Date.parse(at);

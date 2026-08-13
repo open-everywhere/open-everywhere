@@ -600,6 +600,7 @@ export interface OperationalStore {
   runAnalyticsQuery(compiled: CompiledAnalyticsQuery): Promise<Record<string, unknown>[]>;
 
   markEventSeen(org: string, key: string, at: string, ttlMs: number): Promise<boolean>;
+  hasEventSeen(org: string, key: string, at: string, ttlMs: number): Promise<boolean>;
 
   captureDelivery(
     org: string,

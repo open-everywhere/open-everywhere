@@ -7,6 +7,8 @@ export const DUPLICATE_APPROVAL_KEY_PREFIX = "approval-pending:";
 
 export const DUPLICATE_APPROVAL_WINDOW_MS = 5 * 60_000;
 
+export type HasEventSeen = (org: string, key: string, atIso: string, ttlMs: number) => Promise<boolean>;
+
 export type MarkEventSeen = (org: string, key: string, atIso: string, ttlMs: number) => Promise<boolean>;
 
 function stableStringify(value: unknown): string {
@@ -17,7 +19,7 @@ function stableStringify(value: unknown): string {
   return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
 }
 
-function fingerprintKey(sessionId: string, toolName: string, toolInput: unknown): string {
+export function approvalFingerprintKey(sessionId: string, toolName: string, toolInput: unknown): string {
   const material = `${sessionId}\x00${toolName}\x00${stableStringify(toolInput ?? {})}`;
   const digest = createHash("sha256").update(material).digest("hex");
   return `${DUPLICATE_APPROVAL_KEY_PREFIX}${digest}`;
@@ -31,7 +33,7 @@ function decisionPrompts(decision: ApprovalStatus): boolean {
 export interface DuplicateApprovalGuardOptions {
   readonly windowMs?: number;
   readonly now?: () => number;
-  readonly markEventSeen?: MarkEventSeen;
+  readonly hasEventSeen?: HasEventSeen;
 }
 
 export function withDuplicateApprovalGuard<TInput = Record<string, unknown>>(
@@ -40,21 +42,21 @@ export function withDuplicateApprovalGuard<TInput = Record<string, unknown>>(
 ): Approval<TInput> {
   const windowMs = opts.windowMs ?? DUPLICATE_APPROVAL_WINDOW_MS;
   const nowFn = opts.now ?? Date.now;
-  const mark: MarkEventSeen =
-    opts.markEventSeen ?? ((org, key, atIso, ttlMs) => getOperationalStore().markEventSeen(org, key, atIso, ttlMs));
+  const peek: HasEventSeen =
+    opts.hasEventSeen ?? ((org, key, atIso, ttlMs) => getOperationalStore().hasEventSeen(org, key, atIso, ttlMs));
 
   return async (ctx: ApprovalContext<TInput>): Promise<ApprovalStatus> => {
     const decision = await policy(ctx);
     if (!decisionPrompts(decision)) return decision;
 
-    let firstSighting = true;
+    let alreadyOpen = false;
     try {
-      const key = fingerprintKey(ctx.session.id, ctx.toolName, ctx.toolInput);
-      firstSighting = await mark(deploymentOrg(), key, new Date(nowFn()).toISOString(), windowMs);
+      const key = approvalFingerprintKey(ctx.session.id, ctx.toolName, ctx.toolInput);
+      alreadyOpen = await peek(deploymentOrg(), key, new Date(nowFn()).toISOString(), windowMs);
     } catch {
-      firstSighting = true;
+      alreadyOpen = false;
     }
-    if (firstSighting) return decision;
+    if (!alreadyOpen) return decision;
     return {
       type: "denied",
       reason:
@@ -62,4 +64,24 @@ export function withDuplicateApprovalGuard<TInput = Record<string, unknown>>(
         "(or wait a few minutes and ask again) instead of raising a second, separate one.",
     };
   };
+}
+
+export interface RecordApprovalRaisedOptions {
+  readonly windowMs?: number;
+  readonly now?: () => number;
+  readonly markEventSeen?: MarkEventSeen;
+}
+
+export async function recordApprovalRaised(
+  sessionId: string,
+  toolName: string,
+  toolInput: unknown,
+  opts: RecordApprovalRaisedOptions = {},
+): Promise<void> {
+  const windowMs = opts.windowMs ?? DUPLICATE_APPROVAL_WINDOW_MS;
+  const nowFn = opts.now ?? Date.now;
+  const mark: MarkEventSeen =
+    opts.markEventSeen ?? ((org, key, atIso, ttlMs) => getOperationalStore().markEventSeen(org, key, atIso, ttlMs));
+  const key = approvalFingerprintKey(sessionId, toolName, toolInput);
+  await mark(deploymentOrg(), key, new Date(nowFn()).toISOString(), windowMs);
 }

@@ -1823,6 +1823,16 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return rows.length > 0;
     },
 
+    async hasEventSeen(org, key, at, ttlMs) {
+      const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
+      const { rows } = await client.query("SELECT 1 FROM event_dedupe WHERE org_id = $1 AND key = $2 AND seen_at >= $3 LIMIT 1", [
+        org,
+        key,
+        cutoff,
+      ]);
+      return rows.length > 0;
+    },
+
     async captureDelivery(org, source, documentJson, at, captureUntil, maxRows) {
       const atMs = Date.parse(at);
       if (!Number.isFinite(atMs)) return false;
