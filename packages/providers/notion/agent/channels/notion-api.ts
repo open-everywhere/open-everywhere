@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { getSecretVia, CredentialError, findProviderCredential } from "@open-everywhere/core/agent/adapter-api.js";
 import { NOTION_CHANNEL_CREDENTIAL, NOTION_PROVIDER } from "./notion-credentials.js";
+import type { NotionParentLink } from "./notion-ancestry-trust.js";
 
 export const NOTION_API_BASE = "https://api.notion.com";
 export function notionVersion(): string {
@@ -215,6 +216,46 @@ export async function resolveBlockOwningPage(blockId: string, opts: NotionCallOp
     return undefined;
   }
   return undefined;
+}
+
+export interface NotionPageParent {
+  readonly parent?: {
+    readonly type?: string;
+    readonly page_id?: string;
+    readonly block_id?: string;
+    readonly database_id?: string;
+    readonly data_source_id?: string;
+    readonly workspace?: boolean;
+  };
+}
+
+export async function retrievePage(pageId: string, opts: NotionCallOpts): Promise<NotionPageParent> {
+  const f = opts.fetch ?? (globalThis.fetch as FetchLike);
+  const res = await f(`${NOTION_API_BASE}/v1/pages/${encodeURIComponent(pageId)}`, { method: "GET", headers: notionHeaders(opts) });
+  if (!res.ok) throw new Error(`retrievePage ${pageId} failed: ${res.status} ${await safeText(res)}`);
+  return (await res.json()) as NotionPageParent;
+}
+
+export function toNotionParentLink(parent: NotionPageParent["parent"]): NotionParentLink {
+  if (!parent) return { kind: "unresolvable" };
+  if (parent.type === "page_id" && parent.page_id) return { kind: "page", pageId: parent.page_id };
+  if (parent.type === "block_id" && parent.block_id) return { kind: "block", blockId: parent.block_id };
+  if (parent.type === "database_id" && parent.database_id) return { kind: "database", databaseId: parent.database_id };
+  if (parent.type === "data_source_id" && parent.data_source_id) return { kind: "database", databaseId: parent.data_source_id };
+  if (parent.type === "workspace") return { kind: "workspace" };
+  return { kind: "unresolvable" };
+}
+
+export async function notionParentLink(id: string, opts: NotionCallOpts): Promise<NotionParentLink> {
+  try {
+    return toNotionParentLink((await retrievePage(id, opts)).parent);
+  } catch {
+  }
+  try {
+    return toNotionParentLink((await retrieveBlock(id, opts)).parent);
+  } catch {
+    return { kind: "unresolvable" };
+  }
 }
 
 export interface NotionCommentSummary {
