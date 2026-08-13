@@ -16,6 +16,12 @@ function freshUnlistedChannelId(): string {
   return `9${randomBytes(8).readBigUInt64BE().toString().padStart(18, "0").slice(0, 18)}`;
 }
 
+test("bootAgent refuses a second boot with DIFFERENT options, rather than silently ignoring them", async () => {
+  await bootAgent();
+  await expect(bootAgent({ sharedSqlite: true })).rejects.toThrow(/cannot re-boot/);
+  await expect(bootAgent()).resolves.toBeDefined();
+});
+
 test("an unsigned Discord relay POST is refused 401, with no audit trace", async () => {
   await bootAgent();
   const channelId = freshUnlistedChannelId();

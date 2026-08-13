@@ -14,6 +14,7 @@ const RELAY_SECRET = randomBytes(32).toString("hex");
 const READ_TOKEN = randomBytes(32).toString("hex");
 
 let booted: { base: string } | undefined;
+let bootedWith: string | undefined;
 
 export interface BootOptions {
   readonly sharedSqlite?: boolean;
@@ -41,7 +42,17 @@ async function portFree(port: number): Promise<boolean> {
 }
 
 export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string }> {
-  if (booted !== undefined) return booted;
+  const want = JSON.stringify(opts, Object.keys(opts).sort());
+  if (booted !== undefined) {
+    if (want !== bootedWith) {
+      throw new Error(
+        `integration harness: bootAgent() was already called in this fork with ${bootedWith || "{}"} and cannot re-boot with ${want || "{}"} — ` +
+          "the env assembly and the entry import both happen once. Move the differently-booted test into its own file (vitest forks per file).",
+      );
+    }
+    return booted;
+  }
+  bootedWith = want;
   guardProcess();
 
   for (const k of ["AI_GATEWAY_API_KEY", "VERCEL_AI_GATEWAY_KEY", "DATABASE_URL", "VERCEL"]) {
