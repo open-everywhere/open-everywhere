@@ -266,7 +266,7 @@ export async function persistMemoryNow(ctx: MemoryPersistContext, outcome: Memor
   for (const rm of plan.writes) {
     try {
       const provider = providerById(rm.silo.provider);
-      const hostCurrent = await provider.readTier(p, rm.tier, rm.silo);
+      const hostCurrent = await provider.readTier(p, rm.tier, rm.silo, rm.access);
       let files = hostCurrent;
       let conflicts: string[] = [];
       let rejected: RejectedWrite[] = [];
@@ -308,7 +308,7 @@ export async function persistMemoryNow(ctx: MemoryPersistContext, outcome: Memor
         }
       }
       const deleted = deletionDetail(hostCurrent, files);
-      const sha = await provider.writeTier(p, rm.tier, files, `session ${sessionId} (${outcome}) [${tierId(rm.tier)}]`, rm.silo);
+      const sha = await provider.writeTier(p, rm.tier, files, `session ${sessionId} (${outcome}) [${tierId(rm.tier)}]`, rm.silo, rm.access);
       persisted += Object.keys(files).length;
       if (sha) changed++;
       try {
@@ -353,10 +353,10 @@ function withReadOnlyBanner(files: MemoryFiles, silo: MemorySilo): MemoryFiles {
 async function loadSource(p: ReturnType<typeof resolvePartition>, rm: ResolvedMemory): Promise<MemoryFiles> {
   const provider = providerById(rm.silo.provider);
   if (rm.readOnly) {
-    const files = await provider.readTier(p, rm.tier, rm.silo);
+    const files = await provider.readTier(p, rm.tier, rm.silo, rm.access);
     return withReadOnlyBanner(Object.keys(files).length > 0 ? files : seedFor(p, rm.tier), rm.silo);
   }
-  return provider.ensureTier(p, rm.tier, rm.silo);
+  return provider.ensureTier(p, rm.tier, rm.silo, rm.access);
 }
 
 async function lock(sandbox: Awaited<ReturnType<HookContext["getSandbox"]>>, path: string): Promise<void> {
@@ -394,7 +394,7 @@ async function recordReadVersions(p: ReturnType<typeof resolvePartition>, reads:
   for (const rm of reads) {
     try {
       const provider = providerById(rm.silo.provider);
-      if (provider.tierVersion) versions[tierId(rm.tier)] = await provider.tierVersion(p, rm.tier, rm.silo);
+      if (provider.tierVersion) versions[tierId(rm.tier)] = await provider.tierVersion(p, rm.tier, rm.silo, rm.access);
     } catch {
     }
   }
@@ -407,7 +407,7 @@ async function refreshWritableTier(
   rm: ResolvedMemory,
 ): Promise<void> {
   const provider = providerById(rm.silo.provider);
-  const host = await provider.readTier(p, rm.tier, rm.silo);
+  const host = await provider.readTier(p, rm.tier, rm.silo, rm.access);
   const fromSandbox = await readTierFromSandbox(sandbox, rm.tier);
   const tid = tierId(rm.tier);
   const baseline = { ...(writeBaseline.get()[tid] ?? {}) };
@@ -510,7 +510,7 @@ async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
     try {
       const provider = providerById(rm.silo.provider);
       if (!provider.tierVersion) continue;
-      const version = await provider.tierVersion(p, rm.tier, rm.silo);
+      const version = await provider.tierVersion(p, rm.tier, rm.silo, rm.access);
       const lastSynced = last[tid];
       if (lastSynced !== undefined && version === lastSynced) continue;
       sandbox ??= await ctx.getSandbox();
@@ -605,7 +605,7 @@ export default defineHook({
           for (const rm of plan.writes) {
             try {
               const provider = providerById(rm.silo.provider);
-              baselines[tierId(rm.tier)] = hashFiles(await provider.readTier(p, rm.tier, rm.silo));
+              baselines[tierId(rm.tier)] = hashFiles(await provider.readTier(p, rm.tier, rm.silo, rm.access));
             } catch (err) {
               log(`write-baseline FAILED for ${tierId(rm.tier)} ← ${rm.silo.name}/${rm.silo.provider} (sync continues; persist will treat every file as concurrently-changed): ${String(err)}`);
             }

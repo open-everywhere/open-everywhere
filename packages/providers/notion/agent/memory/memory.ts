@@ -1,7 +1,10 @@
 import {
   type MemoryProvider,
+  type MemoryAccess,
   registerProvider,
   registerConnectorMemory,
+  domainCredentialId,
+  findProviderCredential,
   getSecretVia,
   safeName,
   type Partition,
@@ -14,9 +17,12 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { posix } from "node:path";
 import { renderBlocks, pageTitle, PAGE_BLOCK_TYPES, type BlockNode, type LinkResolver, type LinkTarget } from "./blocks.js";
+import { NOTION_PROVIDER } from "../channels/notion-credentials.js";
 
 const API = "https://api.notion.com";
 const NOTION_VERSION = "2022-06-28";
+
+export const NOTION_MEMORY_CREDENTIAL = "memory";
 
 const MAX_PAGES = Number(process.env.OE_NOTION_MAX_PAGES) || 200;
 const MAX_PAGE_DEPTH = Number(process.env.OE_NOTION_MAX_DEPTH) || 6;
@@ -132,7 +138,8 @@ function renderCollected(pages: readonly CollectedPage[]): MemoryFiles {
 }
 
 export interface NotionMemoryDeps {
-  client(silo: MemorySilo): NotionClient | Promise<NotionClient>;
+  credentialFor?(access?: MemoryAccess): string;
+  client(silo: MemorySilo, credentialId: string): NotionClient | Promise<NotionClient>;
 }
 
 interface CacheEntry {
@@ -143,23 +150,25 @@ interface CacheEntry {
 export function makeNotionProvider(deps: NotionMemoryDeps): MemoryProvider {
   const cache = new Map<string, CacheEntry>();
 
-  async function read(_p: Partition, _tier: Tier, silo?: MemorySilo): Promise<MemoryFiles> {
+  async function read(_p: Partition, _tier: Tier, silo?: MemorySilo, access?: MemoryAccess): Promise<MemoryFiles> {
     if (!silo?.container) {
       throw new Error("notion memory backing needs a silo with container = the root page id (memory/silo.ts).");
     }
     const root = silo.container;
-    const hit = cache.get(root);
+    const credentialId = deps.credentialFor?.(access) ?? NOTION_MEMORY_CREDENTIAL;
+    const cacheKey = `${credentialId} ${root}`;
+    const hit = cache.get(cacheKey);
     if (hit && Date.now() - hit.atMs < TTL_MS) return hit.files;
 
     const pages: CollectedPage[] = [];
     const stats: PullStats = { pages: 0, capped: false };
     const selector = makeSelector(normalizeSelection(silo));
-    await collect(await deps.client(silo), root, "index", [], stats, pages, selector);
+    await collect(await deps.client(silo, credentialId), root, "index", [], stats, pages, selector);
     if (stats.capped) {
       console.warn(`[open-everywhere:notion] page "${root}" pull hit the cap (${MAX_PAGES} pages / depth ${MAX_PAGE_DEPTH}); some pages omitted.`);
     }
     const files = renderCollected(pages);
-    cache.set(root, { files, atMs: Date.now() });
+    cache.set(cacheKey, { files, atMs: Date.now() });
     return files;
   }
 
@@ -173,11 +182,30 @@ export function makeNotionProvider(deps: NotionMemoryDeps): MemoryProvider {
   };
 }
 
+export async function resolveNotionMemoryToken(credentialId: string, broker: string, secretRef: string): Promise<string> {
+  if (credentialId === NOTION_MEMORY_CREDENTIAL) return getSecretVia(broker, secretRef);
+  const cred = findProviderCredential(NOTION_PROVIDER, credentialId);
+  if (!cred?.secretRef) {
+    throw new Error(
+      `notion memory backing: domain credential "${credentialId}" is not a declared notion credential with a secretRef ` +
+        `(agent/access/providers.ts). A bound domain never falls back to the org default "${NOTION_MEMORY_CREDENTIAL}" key.`,
+    );
+  }
+  return getSecretVia(cred.broker, cred.secretRef);
+}
+
+export function notionMemoryDeps(secretRef: string, broker: string, fetchFn?: HttpFetch): NotionMemoryDeps {
+  return {
+    credentialFor: (access) => domainCredentialId(access?.domain, NOTION_PROVIDER, NOTION_MEMORY_CREDENTIAL),
+    client: async (_silo, credentialId) => new NotionClient(await resolveNotionMemoryToken(credentialId, broker, secretRef), fetchFn),
+  };
+}
+
 export function registerNotionMemory(
   secretRef = process.env.OE_NOTION_SECRET_REF ?? "db:notion:memory",
   broker = process.env.OE_NOTION_SECRET_BROKER ?? "db",
 ): void {
-  registerProvider(makeNotionProvider({ client: async () => new NotionClient(await getSecretVia(broker, secretRef)) }));
+  registerProvider(makeNotionProvider(notionMemoryDeps(secretRef, broker)));
   registerConnectorMemory({
     provider: "notion",
     connector: "notion",

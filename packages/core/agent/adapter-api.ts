@@ -111,7 +111,7 @@ export { SETTINGS, getSettings, defineSettings, registerSettings, resetSettingsF
 export type { AgentSettings, AgentSettingsOverrides, SettingSpec, SettingDoc, TaintTierMode, ApprovalJudgeMode } from "./settings/settings.js";
 
 export { registerProvider, registerPostgres } from "./memory/provider.js";
-export type { MemoryProvider } from "./memory/provider.js";
+export type { MemoryProvider, MemoryAccess } from "./memory/provider.js";
 export { registerConnectorMemory, connectorMemoryFor, connectorMemoryCapabilities, assertConnectorMemoryGrants, resetConnectorMemoryForTest } from "./memory/connector-memory.js";
 export type { ConnectorMemoryCapability, ConnectorMemoryMode, DomainMemoryGrants } from "./memory/connector-memory.js";
 export { initPostgresSchema } from "./memory/postgres.js";

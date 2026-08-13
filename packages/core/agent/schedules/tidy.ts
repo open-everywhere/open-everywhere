@@ -1,8 +1,10 @@
 import { defineSchedule } from "eve/schedules";
 import { getConfig } from "../access/config.js";
 import { providerById } from "../memory/provider.js";
+import { siloAccess } from "../memory/resolve.js";
 import { siloTier, tierId, type Tier } from "../memory/store.js";
 import type { Partition } from "../memory/partition.js";
+import type { Domain } from "../memory/domain.js";
 import { tidySilo, tidySiloJudged, type TidyResult, type JudgeStats } from "../memory/dream/tidy.js";
 import { dreamJudge } from "../memory/dream/judge.js";
 import { recordMemoryOpProposals, DREAM_ACTOR } from "../memory/dream/proposal.js";
@@ -52,8 +54,10 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
   const orgs = opts.orgs ?? tidyOrgs();
   let silos: readonly { name: string; provider: string; readOnly?: boolean }[];
   const noJudge: JudgeStats = { candidates: 0, confirmed: 0, rejected: 0, failed: 0 };
+  let domains: readonly Domain[] = [];
   try {
     silos = getConfig().loadSilos();
+    domains = getConfig().loadDomains();
   } catch (err) {
     log(`tick skipped — config not registered: ${String(err)}`);
     return { orgs: 0, silos: 0, applied: 0, proposed: 0, changed: 0, judged: noJudge, expiredApprovals: 0 };
@@ -76,7 +80,7 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
       const tier: Tier = siloTier(silo.name);
       let files;
       try {
-        files = await providerById(silo.provider).readTier(p, tier, silo);
+        files = await providerById(silo.provider).readTier(p, tier, silo, siloAccess(silo.name, domains));
       } catch (err) {
         log(`skip ${org}/${silo.name} (${silo.provider}) — read failed: ${String(err)}`);
         continue;
@@ -106,6 +110,7 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
             result.files,
             `dream:tidy [${tierId(tier)}] ${result.applied.length} safe op(s)`,
             silo,
+            siloAccess(silo.name, domains),
           );
           changed++;
           await appendAudit({

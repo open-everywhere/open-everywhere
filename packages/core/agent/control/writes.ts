@@ -6,6 +6,7 @@ import { scopeDenial } from "./auth.js";
 import { assertSafeRelPath } from "./views.js";
 import { getConfig } from "../access/config.js";
 import { providerById } from "../memory/provider.js";
+import { siloAccess } from "../memory/resolve.js";
 import { siloTier } from "../memory/store.js";
 import { controlPartition } from "../memory/partition.js";
 import { deleteDomainSkill } from "../skills/domain-skills.js";
@@ -698,9 +699,10 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         const provider = providerById(silo.provider);
         const p = controlPartition(a.org);
         const tier = siloTier(silo.name);
-        const files = await provider.readTier(p, tier, silo);
+        const access = siloAccess(silo.name, getConfig().loadDomains());
+        const files = await provider.readTier(p, tier, silo, access);
         files[a.relPath] = stampHumanEdit(a.content);
-        const commit = await provider.writeTier(p, tier, files, `control-plane edit by ${actor}`, silo);
+        const commit = await provider.writeTier(p, tier, files, `control-plane edit by ${actor}`, silo, access);
         await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "memory.write", detail: { silo: a.silo, relPath: a.relPath, bytes: Buffer.byteLength(a.content, "utf-8"), commit } });
         return jsonResult({ ok: true, org: a.org, silo: a.silo, relPath: a.relPath, commit });
       } catch (e) {
@@ -733,7 +735,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         }
         let commit: string | null;
         try {
-          commit = await provider.deleteFile(controlPartition(a.org), siloTier(silo.name), a.relPath, silo);
+          commit = await provider.deleteFile(controlPartition(a.org), siloTier(silo.name), a.relPath, silo, siloAccess(silo.name, getConfig().loadDomains()));
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
           await appendAudit({

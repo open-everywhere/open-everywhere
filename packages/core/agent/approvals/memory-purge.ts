@@ -1,5 +1,6 @@
 import { getConfig } from "../access/config.js";
 import { providerById } from "../memory/provider.js";
+import { siloAccess } from "../memory/resolve.js";
 import { redactedBulletLabel, removeBulletLinesBySha } from "../memory/purge-redaction.js";
 import { appendAudit } from "../audit/audit.js";
 import type { Partition } from "../memory/partition.js";
@@ -66,7 +67,7 @@ const memoryPurge: ActionKind<MemoryPurgeArgs> = {
       const provider = providerById(silo?.provider ?? loc.provider);
       const tier = tierFromFrozen(loc.tierId, loc.siloName);
 
-      const files = await provider.readTier(args.partition, tier, silo);
+      const files = await provider.readTier(args.partition, tier, silo, siloAccess(loc.siloName, getConfig().loadDomains()));
       let changed = false;
       for (const rel of rels) {
         const content = files[rel];

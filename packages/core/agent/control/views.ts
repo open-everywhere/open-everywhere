@@ -22,7 +22,8 @@ import { modelPricing, estimateCostUsd, ensurePricingFor } from "../spend/pricin
 import { deploymentOrg } from "../identity/binding.js";
 import { listDomainSkills, listDomainSkillRevisions } from "../skills/domain-skills.js";
 import type { DomainSkillRow, DomainSkillRevisionRow } from "../operational/store.js";
-import { providerById } from "../memory/provider.js";
+import { providerById, type MemoryAccess } from "../memory/provider.js";
+import { siloAccess } from "../memory/resolve.js";
 import { siloTier } from "../memory/store.js";
 import { controlPartition } from "../memory/partition.js";
 import { sourceLabel } from "../memory/listing.js";
@@ -447,9 +448,9 @@ function byteSize(content: string): number {
   return Buffer.byteLength(content, "utf-8");
 }
 
-async function memoryTierRow(org: string, silo: MemorySilo, domains: string[]): Promise<MemoryTierRow> {
+async function memoryTierRow(org: string, silo: MemorySilo, domains: string[], access: MemoryAccess): Promise<MemoryTierRow> {
   const provider = providerById(silo.provider);
-  const files = await provider.readTier(controlPartition(org), siloTier(silo.name), silo);
+  const files = await provider.readTier(controlPartition(org), siloTier(silo.name), silo, access);
   const rows: MemoryFileRow[] = Object.entries(files)
     .map(([path, content]) => ({ path, bytes: byteSize(content) }))
     .sort((a, b) => a.path.localeCompare(b.path));
@@ -474,7 +475,7 @@ export async function memoryListView(org: string, roles: readonly string[]): Pro
   for (const silo of cfg.loadSilos()) {
     const covering = siloCoveringDomains(silo.name, domains);
     if (!isAdmin && !covering.some((d) => domainRoles.has(d))) continue;
-    tiers.push(await memoryTierRow(org, silo, covering));
+    tiers.push(await memoryTierRow(org, silo, covering, siloAccess(silo.name, domains)));
   }
   return { org, tiers: tiers.sort((a, b) => a.silo.localeCompare(b.silo)) };
 }
@@ -508,7 +509,7 @@ export async function memoryReadView(q: MemoryReadQuery): Promise<MemoryReadResu
     .find((s) => s.name === q.silo);
   if (!silo) throw new Error(`no memory silo named "${q.silo}" (memory_list for the configured silos).`);
   const provider = providerById(silo.provider);
-  const files = await provider.readTier(controlPartition(q.org), siloTier(silo.name), silo);
+  const files = await provider.readTier(controlPartition(q.org), siloTier(silo.name), silo, siloAccess(silo.name, getConfig().loadDomains()));
   const content = files[q.relPath];
   if (content === undefined) {
     const have = Object.keys(files).sort().join(", ") || "(none)";

@@ -4,13 +4,14 @@ import type { Domain } from "./domain.js";
 import type { MemorySilo } from "./silo.js";
 import { SURFACE, siloTier, type Tier } from "./store.js";
 import { domainForChannel, criteriaDomain, memoryRefs } from "./domain.js";
-import { dbProviderId } from "./provider.js";
+import { dbProviderId, type MemoryAccess } from "./provider.js";
 import { getConfig } from "../access/config.js";
 
 export interface ResolvedMemory {
   readonly silo: MemorySilo;
   readonly tier: Tier;
   readonly readOnly: boolean;
+  readonly access?: MemoryAccess;
 }
 
 export interface MemoryPlan {
@@ -48,7 +49,7 @@ function resolveDomainReads(domain: Domain, cfg: MemoryResolveConfig, forceReadO
     const silo = findSilo(cfg.silos, name, `domain "${domain.name}"`);
     if (seen.has(silo.name)) continue;
     seen.add(silo.name);
-    out.push({ silo, tier: siloTier(silo.name), readOnly: forceReadOnly || silo.readOnly === true });
+    out.push({ silo, tier: siloTier(silo.name), readOnly: forceReadOnly || silo.readOnly === true, access: { domain } });
   }
   if (domain.includeOrg) {
     const org = criteriaDomain("org", cfg.domains);
@@ -57,7 +58,7 @@ function resolveDomainReads(domain: Domain, cfg: MemoryResolveConfig, forceReadO
       if (seen.has(silo.name)) continue;
       seen.add(silo.name);
       const readOnly = forceReadOnly || domain.includeOrg === "readonly" || silo.readOnly === true;
-      out.push({ silo, tier: siloTier(silo.name), readOnly });
+      out.push({ silo, tier: siloTier(silo.name), readOnly, access: org ? { domain: org } : undefined });
     }
   }
   return out;
@@ -117,6 +118,11 @@ export function resolveMemoryPlan(
   }
 
   return NONE("unassigned channel — no domain, no org default");
+}
+
+export function siloAccess(siloName: string, domains: readonly Domain[]): MemoryAccess {
+  const owners = domains.filter((d) => memoryRefs(d).includes(siloName));
+  return owners.length === 1 ? { domain: owners[0] } : {};
 }
 
 export function planFor(binding: SurfaceBinding, partition: Partition): MemoryPlan {

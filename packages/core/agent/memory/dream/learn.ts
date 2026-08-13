@@ -5,7 +5,7 @@ import type { DreamJudge, DistillInput, DistilledFact } from "./judge.js";
 import type { Partition } from "../partition.js";
 import type { Tier } from "../store.js";
 import type { MemorySilo } from "../silo.js";
-import { providerById } from "../provider.js";
+import { providerById, type MemoryAccess } from "../provider.js";
 import { upsertUnderSection } from "../markdown.js";
 
 export interface LearnSignals {
@@ -107,14 +107,14 @@ export function enrichmentBullets(
 
 export async function writeEnrichment(
   p: Partition,
-  target: { readonly tier: Tier; readonly silo: MemorySilo },
+  target: { readonly tier: Tier; readonly silo: MemorySilo; readonly access?: MemoryAccess },
   bullets: readonly string[],
 ): Promise<string | null> {
   const provider = providerById(target.silo.provider);
-  const files = await provider.readTier(p, target.tier, target.silo);
+  const files = await provider.readTier(p, target.tier, target.silo, target.access);
   const seed = `# Recurring workflows (auto-learned)\n\n## Recurring\n(none yet)\n`;
   let recurring = files["RECURRING.md"] ?? seed;
   for (const b of bullets) recurring = upsertUnderSection(recurring, "Recurring", b);
   files["RECURRING.md"] = recurring;
-  return provider.writeTier(p, target.tier, files, `dream:learn recurrence enrich [${target.silo.name}]`, target.silo);
+  return provider.writeTier(p, target.tier, files, `dream:learn recurrence enrich [${target.silo.name}]`, target.silo, target.access);
 }

@@ -1,5 +1,6 @@
 import type { Partition } from "./partition.js";
 import type { MemorySilo } from "./silo.js";
+import type { CredentialBoundDomain } from "../access/domain-credentials.js";
 import { sqliteProvider } from "./sqlite.js";
 import { makePostgresProvider, type PgClient } from "./postgres.js";
 import { onVercel } from "../access/platform.js";
@@ -15,20 +16,31 @@ import {
   type Tier,
 } from "./store.js";
 
+export interface MemoryAccess {
+  readonly domain?: CredentialBoundDomain;
+}
+
 export interface MemoryProvider {
   readonly id: string;
 
-  readTier(p: Partition, tier: Tier, silo?: MemorySilo): Promise<MemoryFiles>;
+  readTier(p: Partition, tier: Tier, silo?: MemorySilo, access?: MemoryAccess): Promise<MemoryFiles>;
 
-  ensureTier(p: Partition, tier: Tier, silo?: MemorySilo): Promise<MemoryFiles>;
+  ensureTier(p: Partition, tier: Tier, silo?: MemorySilo, access?: MemoryAccess): Promise<MemoryFiles>;
 
-  writeTier(p: Partition, tier: Tier, files: MemoryFiles, message: string, silo?: MemorySilo): Promise<string | null>;
+  writeTier(
+    p: Partition,
+    tier: Tier,
+    files: MemoryFiles,
+    message: string,
+    silo?: MemorySilo,
+    access?: MemoryAccess,
+  ): Promise<string | null>;
 
-  deleteTier(p: Partition, tier: Tier, silo?: MemorySilo): Promise<void>;
+  deleteTier(p: Partition, tier: Tier, silo?: MemorySilo, access?: MemoryAccess): Promise<void>;
 
-  tierVersion?(p: Partition, tier: Tier, silo?: MemorySilo): Promise<string | null>;
+  tierVersion?(p: Partition, tier: Tier, silo?: MemorySilo, access?: MemoryAccess): Promise<string | null>;
 
-  deleteFile?(p: Partition, tier: Tier, relPath: string, silo?: MemorySilo): Promise<string | null>;
+  deleteFile?(p: Partition, tier: Tier, relPath: string, silo?: MemorySilo, access?: MemoryAccess): Promise<string | null>;
 
   root?(): string;
 }

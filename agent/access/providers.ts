@@ -16,6 +16,7 @@ const providers: Provider[] = [
     credentials: [
       { id: "team-key", type: "api-key", secretRef: "db:notion:team-key", broker: "db" },
       { id: "channel-key", type: "api-key", secretRef: "db:notion:channel-key", broker: "db", intake: false },
+      { id: "memory", type: "api-key", secretRef: "db:notion:memory", broker: "db", intake: false },
       { id: "user-oauth", type: "user-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp") },
     ],
   }),
