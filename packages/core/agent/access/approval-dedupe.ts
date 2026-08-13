@@ -19,8 +19,21 @@ function stableStringify(value: unknown): string {
   return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
 }
 
+export function resolveApprovalFingerprintInput(value: unknown): unknown {
+  if (value === null || value === undefined) return {};
+  if (typeof value === "string") {
+    if (value.trim() === "") return {};
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }
+  return value;
+}
+
 export function approvalFingerprintKey(sessionId: string, toolName: string, toolInput: unknown): string {
-  const material = `${sessionId}\x00${toolName}\x00${stableStringify(toolInput ?? {})}`;
+  const material = `${sessionId}\x00${toolName}\x00${stableStringify(resolveApprovalFingerprintInput(toolInput))}`;
   const digest = createHash("sha256").update(material).digest("hex");
   return `${DUPLICATE_APPROVAL_KEY_PREFIX}${digest}`;
 }

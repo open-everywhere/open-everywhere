@@ -241,7 +241,44 @@ ok(DUPLICATE_APPROVAL_KEY_PREFIX.length > 0, "6a. the guard's dedupe key carries
   ok((await policy(readCtx)) === "user-approval", "8h. a DIFFERENT op in the same live session still prompts on its own first ask (per-fingerprint isolation, not per-session)");
 }
 
+{
+  const { connectorApprovalPolicy } = await import("@open-everywhere/core/agent/connections/connector-auth.js");
+  const { default: approvalRaisedHook } = await import("@open-everywhere/core/agent/hooks/approval-raised.js");
+  const inputRequestedHandler = (
+    approvalRaisedHook as unknown as {
+      events: { "input.requested": (event: unknown, ctx: unknown) => Promise<void> };
+    }
+  ).events["input.requested"];
+
+  const sessionId = "live-session-string-convergence";
+  const toolName = "notion__create_page";
+  const objectForm = { title: "hello", blocks: ["a", "b"] };
+  const stringForm = JSON.stringify(objectForm);
+
+  const hookCtx = { session: { id: sessionId, auth: {} as never, turn: {} as never } };
+  const hookEvent = {
+    data: {
+      requests: [{ action: { callId: "call-string-form", input: stringForm, kind: "tool-call", toolName }, kind: "tool-approval" }],
+      sequence: 1,
+      stepIndex: 0,
+      turnId: "turn-string-convergence",
+    },
+  };
+  await inputRequestedHandler(hookEvent, hookCtx as never);
+
+  const policy = connectorApprovalPolicy();
+  const askCtx = ctx({ sessionId, toolName, toolInput: objectForm });
+  const decision = await policy(askCtx);
+  ok(
+    typeof decision === "object" && decision !== null && decision.type === "denied",
+    "9a. a STRING-form raise and an OBJECT-form ask, for the SAME logical data, fingerprint identically — the guard fires",
+  );
+
+  const differentObject = ctx({ sessionId, toolName, toolInput: { title: "hello", blocks: ["a", "c"] } });
+  ok((await policy(differentObject)) === "user-approval", "9b. a different object under the same session/tool still prompts (fingerprint is over the DATA, not a loose match)");
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(
-  `✓ approval-dedupe — ${passed} assertions (duplicate-card suppression, crash-recovery ordering, no false dedup, fail-open, window expiry, live post_file + connector-auth wiring)`,
+  `✓ approval-dedupe — ${passed} assertions (duplicate-card suppression, crash-recovery ordering, no false dedup, fail-open, window expiry, string/object input convergence, live post_file + connector-auth wiring)`,
 );
