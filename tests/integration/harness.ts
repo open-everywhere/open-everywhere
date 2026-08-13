@@ -32,6 +32,34 @@ function guardProcess(): void {
   }
 }
 
+async function assertOwnHost(base: string): Promise<void> {
+  const { buildAuditQuery } = await import("../../packages/core/scripts/e2e/audit-read");
+  const url = `${base}/control/v1/audit?${buildAuditQuery({ sinceIso: new Date().toISOString(), actions: ["reply.post"], limit: 1 })}`;
+  const deadline = Date.now() + 10_000;
+  let refused = false;
+  for (;;) {
+    try {
+      const res = await fetch(url, {
+        headers: { authorization: `Bearer ${READ_TOKEN}`, accept: "application/json" },
+        signal: AbortSignal.timeout(2_000),
+      });
+      if (res.ok) return;
+      if (res.status === 401 || res.status === 403) refused = true;
+    } catch {
+    }
+    if (Date.now() > deadline) break;
+    await sleep(250);
+  }
+  if (refused) {
+    throw new Error(
+      `integration harness: the agent answering ${base} REFUSED this fork's control read token, so it is a DIFFERENT ` +
+        "agent host — almost certainly another worktree's integration run that bound the port between our free-port " +
+        "probe and our own listen. Every signed wake would have gone to it. Re-run when the box is not running a " +
+        "second integration suite (the tier is sized for ONE suite at a time).",
+    );
+  }
+}
+
 async function portFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const srv = createServer();
@@ -96,6 +124,7 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
       await sleep(250);
     }
   }
+  await assertOwnHost(base);
 
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.overrideSettingsForTest({ egress: { allowUnenforced: true } });

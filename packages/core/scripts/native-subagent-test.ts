@@ -763,7 +763,15 @@ function inSession<T>(fn: () => T): T {
         parent: { sessionId: "sess-fwd-clean", callId: "call_g2", turn: { id: "turn_1", sequence: 1 } },
       });
       await turnStarted(child);
-      eq(captureEligible(child as never), true, "🔴 D9 FENCE: a child of a CLEAN parent turn is still eligible — the fence discriminates on the ADOPTION, which is what makes the refusal above meaningful");
+      eq(untrustedIngestedThisTurn(), false, "precondition: nothing tainted this child — so the refusal below cannot be the taint arm's");
+      eq(captureEligible(child as never), false, "🔴 D9 FENCE (OPE-473): a child of a CLEAN parent turn is NOT capture-eligible — the brief is the parent MODEL's words, so the approval judge must never read it as a requester's");
+    });
+
+    await contextStorage.run(new ContextContainer(), async () => {
+      const child = fwdCtx({ id: "sess-fence-token-child", turn: { id: "turn_0", sequence: 0 } });
+      child.channel.continuationToken = "subagent:sess-fwd-clean:call_g2b";
+      await turnStarted(child);
+      eq(captureEligible(child as never), false, "🔴 D9 FENCE (OPE-473): a child recognised ONLY by eve's `subagent:` continuation token is refused too — the fence is not keyed on `session.parent` alone");
     });
 
     await contextStorage.run(new ContextContainer(), async () => {
@@ -780,7 +788,8 @@ function inSession<T>(fn: () => T): T {
         attributes: { [ATTR]: "sess-fwd-parent|turn_7" },
       });
       await turnStarted(first);
-      eq(captureEligible(first as never), false, "precondition: the persistent child's FIRST turn adopted, so it is refused");
+      eq(spawnTaint.adoptedParentTurnTaintThisTurn(first as never), true, "precondition: the persistent child's FIRST turn adopted");
+      eq(captureEligible(first as never), false, "…so it is refused");
 
       const later = fwdCtx({
         id: "sess-fence-persistent",
@@ -789,9 +798,14 @@ function inSession<T>(fn: () => T): T {
       });
       await turnStarted(later);
       eq(
+        spawnTaint.adoptedParentTurnTaintThisTurn(later as never),
+        false,
+        "🔴 D9 PER TURN: the SAME session's next turn reads as NOT-adopted — the adoption is recorded against a turn id, so it can never become a session-durable mark",
+      );
+      eq(
         captureEligible(later as never),
-        true,
-        "🔴 D9 FENCE, PER TURN: the SAME session's next turn is capture-eligible again — the adoption is recorded against a turn id, so it can never become a session-durable refusal",
+        false,
+        "🔴 D9 FENCE (OPE-473): …and that turn is still refused, on the DELEGATION arm rather than the adoption arm — a resumed child's brief is model-authored too",
       );
     });
   }

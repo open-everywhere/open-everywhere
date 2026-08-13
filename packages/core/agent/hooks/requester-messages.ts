@@ -1,6 +1,6 @@
 import { defineHook, type HookContext, type HookEvent } from "eve/hooks";
 import { recordRequesterMessage } from "../access/requester-messages.js";
-import { FIRE_UNATTENDED_ATTR } from "../identity/binding.js";
+import { FIRE_UNATTENDED_ATTR, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { adoptedParentTurnTaintThisTurn, TAINT_SEED_ATTRS } from "./spawn-taint.js";
 
 function currentAttrs(ctx: HookContext): Record<string, unknown> | undefined {
@@ -13,6 +13,7 @@ function stampedTrue(v: unknown): boolean {
 }
 
 export function captureEligible(ctx: HookContext): boolean {
+  if (isSubagentChildContext(ctx as unknown as BindableContext)) return false;
   const attrs = currentAttrs(ctx);
   if (stampedTrue(attrs?.[FIRE_UNATTENDED_ATTR])) return false;
   for (const name of TAINT_SEED_ATTRS) {
