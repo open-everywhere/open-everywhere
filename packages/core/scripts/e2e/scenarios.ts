@@ -1361,33 +1361,29 @@ export const SCENARIOS: readonly Scenario[] = [
         ),
       );
       let cardTs: string | undefined;
-      const first = await slack.awaitThreadMessage(
-        askTs,
-        { timeoutMs: FILE_REPLY_WAIT, what: `a routine.create approval card OR a substantive scheduling ack in thread ${askTs}` },
-        (msgs) => msgs.find((m) => slack.isBotReply(m) && (approveButton(m) !== undefined || (!isFillerAck(m.text) && m.text.trim().length > 10))),
+      const card = await pollOptional(
+        async () => (await slack.replies(askTs)).find((m) => slack.isBotReply(m) && approveButton(m) !== undefined),
+        { timeoutMs: FILE_REPLY_WAIT, what: `a routine.create approval card in thread ${askTs}` },
       );
-      if (approveButton(first) !== undefined) {
-        const btn = approveButton(first)!;
+      if (card !== undefined) {
+        const btn = approveButton(card)!;
         ctx.gate(ctx.synthetic !== undefined, "S23: a routine.create card needs the synthetic capability to decide it");
         const clicked = await ctx.synthetic!.click({
           pendingId: btn.pendingId,
           org: btn.org,
           decision: "approve",
-          messageTs: first.ts,
+          messageTs: card.ts,
           channelId: slack.channelId,
           teamId: (await slack.identity()).teamId,
         });
         ctx.log(`${clicked.label}: admin approve routine.create ${btn.pendingId} → ${clicked.status}`);
         ctx.gate(clicked.status === 200, "S23: forged admin approve on the routine.create card acked 200");
-        cardTs = first.ts;
+        cardTs = card.ts;
       }
-      const ack =
-        cardTs === undefined
-          ? first
-          : await slack.awaitThreadReply(askTs, {
-              timeoutMs: FILE_REPLY_WAIT,
-              skip: (m) => isFillerAck(m.text) || m.ts === cardTs,
-            });
+      const ack = await slack.awaitThreadReply(askTs, {
+        timeoutMs: FILE_REPLY_WAIT,
+        skip: (m) => isFillerAck(m.text) || m.ts === cardTs,
+      });
       await ctx.judgePass(
         closedQA("Does the reply confirm a ONE-TIME check-in was scheduled (not a recurring/cron schedule, not a refusal)?", {
           mustMatch: [/schedul|check.?in|check back|remind|routine/i],
