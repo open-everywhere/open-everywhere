@@ -54,8 +54,8 @@ export function gatewayModelResolver(
   utility: GatewayRoutedDefaults,
 ): (event: unknown, ctx: unknown) => Promise<GatewayModel> {
   const deps = { ...liveIdentity, backend: gatewayModelBackend(primary.gateway) };
-  return (_event, ctx) =>
-    resolvePrimaryModel(ctx as BindableContext, { primary: { id: primary.id }, utility: { id: utility.id } }, deps);
+  return (event, ctx) =>
+    resolvePrimaryModel(ctx as BindableContext, { primary: { id: primary.id }, utility: { id: utility.id } }, deps, event);
 }
 
 export function gatewayRoutedCompactionModel(defaults: GatewayRoutedDefaults): GatewayModel {

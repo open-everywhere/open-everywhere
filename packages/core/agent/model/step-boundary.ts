@@ -57,7 +57,12 @@ export function stepBoundaryLimits(settings = getSettings()): { budget: number; 
   return { budget, backstop: Math.floor(budget * multiple) };
 }
 
-export function noteTurnStep(ctx: BindableContext, settings = getSettings()): StepBoundaryDecision {
+function eventTurnId(event: unknown): string | undefined {
+  const turnId = (event as { data?: { turnId?: unknown } } | undefined)?.data?.turnId;
+  return typeof turnId === "string" && turnId.length > 0 ? turnId : undefined;
+}
+
+export function noteTurnStep(ctx: BindableContext, event?: unknown, settings = getSettings()): StepBoundaryDecision {
   let budget: number;
   let backstop: number;
   try {
@@ -69,7 +74,7 @@ export function noteTurnStep(ctx: BindableContext, settings = getSettings()): St
   let turnId: string | undefined;
   let sessionId: string | undefined;
   try {
-    turnId = currentTurnId(ctx);
+    turnId = currentTurnId(ctx) ?? eventTurnId(event);
     sessionId = currentSessionId(ctx);
   } catch {
     return INERT;

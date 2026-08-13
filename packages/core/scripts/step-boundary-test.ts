@@ -67,12 +67,11 @@ function fakeBackend(calls: FakeCall[]): ModelBackend {
 const DEFAULT_ID = "vendor/default-model";
 const DEFAULTS = { primary: { id: DEFAULT_ID }, utility: { id: "vendor/utility-model" } };
 
-function turnCtx(turnId: string, channel = "C_TXN", sessionId?: string): BindableContext {
+function turnCtx(sessionId?: string, channel = "C_TXN"): BindableContext {
   return {
     channel: { kind: "slack" },
     session: {
-      turn: { id: turnId },
-      ...(sessionId !== undefined ? { sessionId } : {}),
+      id: sessionId ?? "",
       auth: {
         current: {
           attributes: { team_id: "T1", channel_id: channel, channel_type: "channel", is_private: "false", trust_checked: "true" },
@@ -84,8 +83,12 @@ function turnCtx(turnId: string, channel = "C_TXN", sessionId?: string): Bindabl
   } as unknown as BindableContext;
 }
 
-function unroutableTurnCtx(turnId: string): BindableContext {
-  return { session: { turn: { id: turnId } } } as unknown as BindableContext;
+function stepEvent(turnId?: string): unknown {
+  return { type: "step.started", data: { turnId } };
+}
+
+function unroutableTurnCtx(sessionId?: string): BindableContext {
+  return { session: { id: sessionId ?? "" } } as unknown as BindableContext;
 }
 
 const smallSettings = (budget: number, multiple = 2): void => {
@@ -121,26 +124,27 @@ const smallSettings = (budget: number, multiple = 2): void => {
 {
   _resetStepBoundaryCountsForTest();
   smallSettings(3, 2);
-  const ctx = turnCtx("turn-count-A");
+  const ctx = turnCtx();
+  const event = stepEvent("turn-count-A");
   const tiers: string[] = [];
   const crossings: number[] = [];
   for (let i = 0; i < 8; i++) {
-    const d = noteTurnStep(ctx);
+    const d = noteTurnStep(ctx, event);
     tiers.push(d.tier);
     if (d.crossed) crossings.push(d.count);
   }
   eq(tiers, ["none", "none", "none", "soft", "soft", "soft", "hard", "hard"], "count: eight round-trips walk none×3 → soft×3 → hard, on a budget of 3 and a backstop of 6");
   eq(crossings, [4, 7], "count: `crossed` fires ONCE per tier edge (calls 4 and 7) — a 400-step turn writes two records, not four hundred");
 
-  const other = noteTurnStep(turnCtx("turn-count-B"));
+  const other = noteTurnStep(turnCtx(), stepEvent("turn-count-B"));
   eq(other.tier, "none", "isolation: a different turn id starts its own count at 1");
   eq(other.count, 1, "isolation: …and that count is 1, not the other turn's 9");
 
   clearTurnStepCount(undefined, "turn-count-A");
-  eq(noteTurnStep(ctx).count, 1, "count: clearTurnStepCount drops a turn's counter (the stopped-turn cleanup path)");
+  eq(noteTurnStep(ctx, event).count, 1, "count: clearTurnStepCount drops a turn's counter (the stopped-turn cleanup path)");
 
   const noTurn = noteTurnStep({ session: { auth: {} } } as unknown as BindableContext);
-  eq(noTurn.tier, "none", "count: a ctx with no turn id is INERT — nothing to key a counter on, so the boundary can never trip (patch parity)");
+  eq(noTurn.tier, "none", "count: a ctx with no turn id AND no event is INERT — nothing to key a counter on, so the boundary can never trip (patch parity)");
   eq(noTurn.count, 0, "count: …and nothing is counted for it");
   ok(MAX_TRACKED_TURNS >= 128, "count: the tracked-turn map is LRU-bounded in place of the terminal-decision clear the patched loop had");
   resetSettingsForTest();
@@ -149,26 +153,27 @@ const smallSettings = (budget: number, multiple = 2): void => {
 {
   _resetStepBoundaryCountsForTest();
   smallSettings(3, 2);
-  const sessionA = turnCtx("turn_0", "C_TXN", "sess-A");
-  const sessionB = turnCtx("turn_0", "C_TXN", "sess-B");
+  const sessionA = turnCtx("sess-A");
+  const sessionB = turnCtx("sess-B");
+  const turn0 = stepEvent("turn_0");
 
   const tiersA: string[] = [];
   const tiersB: string[] = [];
   for (let i = 0; i < 4; i++) {
-    tiersA.push(noteTurnStep(sessionA).tier);
-    tiersB.push(noteTurnStep(sessionB).tier);
+    tiersA.push(noteTurnStep(sessionA, turn0).tier);
+    tiersB.push(noteTurnStep(sessionB, turn0).tier);
   }
   eq(tiersA, ["none", "none", "none", "soft"], "session-scope: session A's four round-trips on turn_0 walk its OWN tiers (budget 3) — unaffected by B's identical turn id");
   eq(tiersB, ["none", "none", "none", "soft"], "session-scope: session B, ALSO on turn_0, gets the identical independent sequence — proof the two are not sharing one counter");
 
-  const again = noteTurnStep(sessionA);
+  const again = noteTurnStep(sessionA, turn0);
   eq(again.count, 5, "session-scope: session A's count keeps advancing from its own 4, not from a combined 8");
   eq(again.sessionId, "sess-A", "session-scope: the decision carries the session id the count was keyed on");
   eq(again.turnId, "turn_0", "session-scope: …and the (colliding) turn id, for forensic readability alongside sessionId");
 
   clearTurnStepCount("sess-A", "turn_0");
-  eq(noteTurnStep(sessionA).count, 1, "session-scope: clearTurnStepCount(sessionId, turnId) drops exactly A's counter…");
-  eq(noteTurnStep(sessionB).count, 5, "session-scope: …and leaves B's counter (still at 4 from the interleave) untouched, proving they were never the same map entry");
+  eq(noteTurnStep(sessionA, turn0).count, 1, "session-scope: clearTurnStepCount(sessionId, turnId) drops exactly A's counter…");
+  eq(noteTurnStep(sessionB, turn0).count, 5, "session-scope: …and leaves B's counter (still at 4 from the interleave) untouched, proving they were never the same map entry");
   resetSettingsForTest();
 }
 
@@ -193,12 +198,13 @@ const smallSettings = (budget: number, multiple = 2): void => {
   smallSettings(3, 2);
   const calls: FakeCall[] = [];
   const deps = { domains: () => [], backend: fakeBackend(calls) };
-  const ctx = turnCtx("turn-soft");
+  const ctx = turnCtx("sess-soft");
+  const event = stepEvent("turn-soft");
 
-  for (let i = 0; i < 3; i++) await resolvePrimaryModel(ctx, DEFAULTS, deps);
+  for (let i = 0; i < 3; i++) await resolvePrimaryModel(ctx, DEFAULTS, deps, event);
   eq(calls.length, 0, "soft: resolving a model does not itself call one");
 
-  const m = await resolvePrimaryModel(ctx, DEFAULTS, deps);
+  const m = await resolvePrimaryModel(ctx, DEFAULTS, deps, event);
   ok(m !== null, "soft: past the budget the resolver returns a MODEL, never null — the notice cannot be dodged by falling through to eve's static fallback");
   await m!.doGenerate({ prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }] });
   eq(calls.length, 1, "soft: the real underlying model IS called — the turn is not killed, it is nudged");
@@ -215,9 +221,10 @@ const smallSettings = (budget: number, multiple = 2): void => {
   smallSettings(3, 2);
   const calls: FakeCall[] = [];
   const deps = { domains: () => [], backend: fakeBackend(calls) };
-  const ctx = turnCtx("turn-hard");
-  for (let i = 0; i < 6; i++) await resolvePrimaryModel(ctx, DEFAULTS, deps);
-  const m = await resolvePrimaryModel(ctx, DEFAULTS, deps);
+  const ctx = turnCtx("sess-hard");
+  const event = stepEvent("turn-hard");
+  for (let i = 0; i < 6; i++) await resolvePrimaryModel(ctx, DEFAULTS, deps, event);
+  const m = await resolvePrimaryModel(ctx, DEFAULTS, deps, event);
   ok(m !== null, "hard: past the backstop the resolver returns the stub model");
   const res = (await m!.doGenerate({ prompt: [] })) as { content: { type: string; text: string }[]; finishReason: unknown };
   eq(calls.length, 0, "🔴 hard: the stub makes NO backend call at all — a runaway turn stops costing money the moment the backstop trips");
@@ -237,25 +244,26 @@ const smallSettings = (budget: number, multiple = 2): void => {
   smallSettings(2, 2);
   const calls: FakeCall[] = [];
   const deps = { domains: () => [], backend: fakeBackend(calls) };
-  const ctx = unroutableTurnCtx("turn-bypass");
+  const ctx = unroutableTurnCtx("sess-bypass");
+  const event = stepEvent("turn-bypass");
 
-  const plain = await resolvePrimaryModel(ctx, DEFAULTS, deps);
+  const plain = await resolvePrimaryModel(ctx, DEFAULTS, deps, event);
   eq(plain.modelId, DEFAULT_ID, "bypass: an unroutable ctx returns the DEFAULT model below the budget — plain routing behaviour, unchanged (OPE-412: concretely, not null)");
   await plain.doGenerate({ prompt: [] });
   eq(calls[0]!.id, DEFAULT_ID, "bypass: …and it is a real callable model at the default id");
   eq((calls[0]!.options["prompt"] as unknown[]).length, 0, "bypass: …carrying NO wrap-up notice — below the budget the boundary injects nothing");
   calls.length = 0;
-  await resolvePrimaryModel(ctx, DEFAULTS, deps);
+  await resolvePrimaryModel(ctx, DEFAULTS, deps, event);
 
-  const soft = await resolvePrimaryModel(ctx, DEFAULTS, deps);
+  const soft = await resolvePrimaryModel(ctx, DEFAULTS, deps, event);
   ok(soft !== null, "🔴 bypass: past the budget the SAME unroutable ctx gets a model instead of null — the static-fallback path cannot dodge the wrap-up notice");
   await soft!.doGenerate({ prompt: [] });
   const sentPrompt = calls[0]!.options["prompt"] as { content: { text: string }[] }[];
   ok(sentPrompt[0]!.content[0]!.text.startsWith(STEP_BOUNDARY_MARKER), "bypass: …and the notice really is on the call");
   eq(calls[0]!.id, DEFAULT_ID, "bypass: the wrapper is built over the DEFAULT id — exactly the model eve's static fallback would have run");
 
-  await resolvePrimaryModel(ctx, DEFAULTS, deps);
-  const hard = await resolvePrimaryModel(ctx, DEFAULTS, deps);
+  await resolvePrimaryModel(ctx, DEFAULTS, deps, event);
+  const hard = await resolvePrimaryModel(ctx, DEFAULTS, deps, event);
   const before = calls.length;
   const res = (await hard!.doGenerate({ prompt: [] })) as { content: { text: string }[] };
   eq(calls.length, before, "🔴 bypass: the hard backstop applies to the unroutable path too, and still makes no call");
@@ -265,12 +273,13 @@ const smallSettings = (budget: number, multiple = 2): void => {
 {
   _resetStepBoundaryCountsForTest();
   smallSettings(0);
-  const ctx = turnCtx("turn-off");
+  const ctx = turnCtx("sess-off");
+  const event = stepEvent("turn-off");
   let tripped = false;
-  for (let i = 0; i < 1000; i++) if (noteTurnStep(ctx).tier !== "none") tripped = true;
+  for (let i = 0; i < 1000; i++) if (noteTurnStep(ctx, event).tier !== "none") tripped = true;
   ok(!tripped, "disabled: with `turn.stepBudget` at 0, a thousand round-trips never trip either tier (strict off)");
   const calls: FakeCall[] = [];
-  const m = await resolvePrimaryModel(turnCtx("turn-off-2"), DEFAULTS, { domains: () => [], backend: fakeBackend(calls) });
+  const m = await resolvePrimaryModel(turnCtx("sess-off-2"), DEFAULTS, { domains: () => [], backend: fakeBackend(calls) }, stepEvent("turn-off-2"));
   eq(m.modelId, DEFAULT_ID, "disabled: …and the resolver's return is byte-identical to plain routing (the bare DEFAULT model — OPE-412 — with no boundary wrapper)");
   await m.doGenerate({ prompt: [] });
   eq((calls[0]!.options["prompt"] as unknown[]).length, 0, "disabled: …and nothing is injected into the call");
@@ -281,8 +290,9 @@ const smallSettings = (budget: number, multiple = 2): void => {
   _resetStepBoundaryCountsForTest();
   smallSettings(2, 2);
   const deps = { domains: () => [], backend: fakeBackend([]) };
-  const ctx = turnCtx("turn-audit", "C_AUDIT");
-  for (let i = 0; i < 8; i++) await resolvePrimaryModel(ctx, DEFAULTS, deps);
+  const ctx = turnCtx("sess-audit", "C_AUDIT");
+  const event = stepEvent("turn-audit");
+  for (let i = 0; i < 8; i++) await resolvePrimaryModel(ctx, DEFAULTS, deps, event);
 
   const mine = (all: { detail?: Record<string, unknown> }[]): typeof rows => all.filter((r) => r.detail?.["turnId"] === "turn-audit") as typeof rows;
   let rows: { action: string; detail?: Record<string, unknown> }[] = [];

@@ -2,6 +2,7 @@ import { mockModel } from "eve/evals";
 import { onVercel } from "@open-everywhere/core/agent/access/platform.js";
 import { isSubagentChildContext, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { classifySessionId } from "@open-everywhere/core/agent/channels/window-key.js";
+import { backstopReply, noteTurnStep, reportStepBoundary } from "@open-everywhere/core/agent/model/step-boundary.js";
 import {
   ANY_SESSION,
   SCRIPTED_MODEL_ENV,
@@ -40,6 +41,18 @@ export function scriptedModelFor(event: unknown, ctx: unknown): ReturnType<typeo
   }
 
   const bindable = ctx as BindableContext;
+
+  const boundary = noteTurnStep(bindable, event);
+  if (boundary.tier === "hard") {
+    reportStepBoundary(bindable, boundary);
+    return mockModel({
+      modelId: SCRIPTED_MODEL_ID,
+      provider: "open-everywhere-scripted",
+      respond: () => ({ text: backstopReply(boundary) }),
+    });
+  }
+  if (boundary.tier === "soft") reportStepBoundary(bindable, boundary);
+
   const rawSession = (ctx as { session?: { id?: unknown } } | undefined)?.session;
   const sessionId = typeof rawSession?.id === "string" ? rawSession.id : undefined;
   const store = scriptedStore();

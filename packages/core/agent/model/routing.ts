@@ -274,8 +274,9 @@ export async function resolvePrimaryModel<TModel extends RoutableModel>(
   ctx: BindableContext,
   defaults: { readonly primary: { readonly id: string }; readonly utility: { readonly id: string } },
   deps: RoutingDeps<TModel>,
+  event?: unknown,
 ): Promise<TModel> {
-  const boundary = noteTurnStep(ctx);
+  const boundary = noteTurnStep(ctx, event);
   if (boundary.tier === "hard") {
     reportStepBoundary(ctx, boundary);
     stampModelCall(defaults.primary.id);

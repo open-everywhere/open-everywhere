@@ -43,7 +43,7 @@ export interface BindableContext {
       readonly initiator?: AuthPrincipal | null;
     } | null;
     readonly parent?: { readonly sessionId?: string; readonly callId?: string; readonly rootSessionId?: string };
-    readonly sessionId?: string;
+    readonly id?: string;
   };
   readonly channel?: { readonly kind?: string; readonly continuationToken?: string };
 }
@@ -223,8 +223,11 @@ export function currentTurnId(ctx: BindableContext): string | undefined {
 }
 
 export function currentSessionId(ctx: BindableContext): string | undefined {
-  const id = (ctx as { session?: { sessionId?: string } }).session?.sessionId;
-  return typeof id === "string" && id.length > 0 ? id : undefined;
+  const session = (ctx as { session?: { id?: unknown; sessionId?: unknown } }).session;
+  const id = session?.id;
+  if (typeof id === "string" && id.length > 0) return id;
+  const legacy = session?.sessionId;
+  return typeof legacy === "string" && legacy.length > 0 ? legacy : undefined;
 }
 
 export function currentWindowToken(ctx: BindableContext): string | undefined {
