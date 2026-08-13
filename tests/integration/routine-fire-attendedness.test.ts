@@ -112,3 +112,63 @@ test("NEGATIVE CONTROL — an ATTENDED wake proposing the same verb passes the f
   expect(detail.verdict).toBe("ask");
   expect((detail.transforms ?? []).map((t) => t.reason)).not.toContain("ask-unattended");
 });
+
+const FIRE_STAMPS = ["oe_fire_unattended", "oe_fire_principal"] as const;
+
+function keysOf(row: AuditRow): readonly string[] {
+  return ((row.detail as { attrKeys?: readonly string[] }).attrKeys ?? []) as readonly string[];
+}
+
+test("the carriage probe records the SAME key set on both sides of the session hop", async () => {
+  await bootAgent({ sharedSqlite: true });
+  disposeLater(registerScript({ parent: [{ say: "carriage probe" }] }));
+  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+
+  const routineId = await seedDueRoutine({
+    surfaceKey: `slack/${TEAM}/${CHANNEL}`,
+    channelId: CHANNEL,
+    prompt: "say something short",
+    createdBy: CREATOR,
+  });
+  expect((await runRoutineDispatchTick()).length).toBeGreaterThan(0);
+
+  const sent = await waitFor(
+    async () =>
+      (await readAuditRows({ actions: ["routine.fire_attrs_sent"], sinceIso })).find(
+        (r) => (r.detail as { routineId?: string }).routineId === routineId,
+      ),
+    `a routine.fire_attrs_sent row for ${routineId}`,
+    150_000,
+  );
+  const seen = await waitFor(
+    async () => (await readAuditRows({ actions: ["routine.fire_attrs_seen"], sinceIso })).find((r) => r.surface === CHANNEL),
+    "a routine.fire_attrs_seen row for the fired session",
+    150_000,
+  );
+
+  for (const stamp of FIRE_STAMPS) expect(keysOf(sent)).toContain(stamp);
+
+  expect([...keysOf(seen)].sort()).toEqual([...keysOf(sent)].sort());
+
+  for (const k of keysOf(sent)) expect(keysOf(seen)).toContain(k);
+
+  for (const row of [sent, seen]) {
+    expect(keysOf(row)).not.toContain(CREATOR);
+    expect(keysOf(row)).not.toContain(CHANNEL);
+    expect(keysOf(row)).not.toContain(TEAM);
+    expect(JSON.stringify(row.detail)).not.toContain(CREATOR);
+  }
+});
+
+test("the schedule-auth constants the SEEN row keys on still match eve's own", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const src = readFileSync(join(process.cwd(), "node_modules", "eve", "dist", "src", "channel", "schedule-auth.js"), "utf8");
+  const { SCHEDULE_APP_AUTHENTICATOR, SCHEDULE_APP_PRINCIPAL_ID, SCHEDULE_APP_PRINCIPAL_TYPE } = await import(
+    "@open-everywhere/core/agent/routines/fire-carriage.js"
+  );
+  expect(src).toContain("SCHEDULE_APP_AUTH");
+  for (const literal of [SCHEDULE_APP_AUTHENTICATOR, SCHEDULE_APP_PRINCIPAL_ID, SCHEDULE_APP_PRINCIPAL_TYPE]) {
+    expect(src).toContain(`\`${literal}\``);
+  }
+});

@@ -6,6 +6,7 @@ import { recheckFireCreator, type CreatorStandingCheck } from "../routines/fire-
 import { divertTriggeredFire, jobFireSeatKey, runFireSeatKey } from "../routines/fire-window.js";
 import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { auditRoutineFireLost, auditRoutineSkip } from "../routines/fire-audit.js";
+import { auditFireAttrsSent } from "../routines/fire-carriage.js";
 import { checkBound } from "../routines/bound.js";
 import { foldRoutineOutcome, retireExhaustedRoutine } from "../routines/outcome-fold.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
@@ -182,6 +183,7 @@ export async function dispatchTick(
       const seatKey = isJobRoutine(r) ? jobFireSeatKey(r.id, routineGrantGeneration(r)) : runFireSeatKey(fireWakeId);
       const message = renderFireMessage(r);
       const deliver = async (): Promise<void> => {
+        await auditFireAttrsSent(r, markedAuth.attributes, fireWakeId);
         if (fireOrigin) {
           const diverted = await divertTriggeredFire(
             to,

@@ -139,14 +139,16 @@ const receive = ((_channel: unknown, target: Record<string, unknown> | undefined
 })) as never;
 
 async function tick(now: Date): Promise<void> {
+  const pending: Promise<unknown>[] = [];
   await dispatch.dispatchTick({
     now,
     to: receive,
-    waitUntil: (_p: Promise<unknown>) => {},
+    waitUntil: (p: Promise<unknown>) => void pending.push(p),
     appAuth: { attributes: {} } as never,
     confirmInternal: async () => false,
     postJobKickoff,
   } as never);
+  await Promise.allSettled(pending);
 }
 
 await tick(at);

@@ -79,6 +79,12 @@ for (let i = 0; i < N; i++) {
 }
 ok((await store.listAllRoutines()).length === N, "seeded all N due routines");
 
+const pendingDeliveries: Promise<unknown>[] = [];
+const collectWaitUntil = (p: Promise<unknown>): void => void pendingDeliveries.push(p);
+async function drainDeliveries(): Promise<void> {
+  await Promise.allSettled(pendingDeliveries.splice(0));
+}
+
 const firedMessages: Record<string, string> = {};
 async function tick(): Promise<string[]> {
   const started: string[] = [];
@@ -92,13 +98,17 @@ async function tick(): Promise<string[]> {
       return Promise.resolve();
     },
   })) as never;
+  const pending: Promise<unknown>[] = [];
   const args = {
     now,
     to: receive,
-    waitUntil: (_p: Promise<unknown>) => {},
+    waitUntil: (p: Promise<unknown>) => {
+      pending.push(p);
+    },
     appAuth: { attributes: {} } as never,
   };
   await dispatch.dispatchTick(args as never);
+  await Promise.allSettled(pending);
   return started;
 }
 
@@ -301,10 +311,11 @@ const captureReceive = (() => ({
 await dispatch.dispatchTick({
   now,
   to: captureReceive,
-  waitUntil: (_p: Promise<unknown>) => {},
+  waitUntil: collectWaitUntil,
   appAuth: { attributes: {} } as never,
   confirmInternal: async () => true,
 } as never);
+await drainDeliveries();
 
 ok(capturedAuth !== null, "item 15: the routine fired and its auth was captured");
 
@@ -340,10 +351,11 @@ capturedAuth = null;
 await dispatch.dispatchTick({
   now,
   to: captureReceive,
-  waitUntil: (_p: Promise<unknown>) => {},
+  waitUntil: collectWaitUntil,
   appAuth: { attributes: {} } as never,
   confirmInternal: async () => false,
 } as never);
+await drainDeliveries();
 ok(capturedAuth !== null, "trust: the routine re-fired for the unconfirmed case");
 const unconfirmedBinding = bindFrom({
   channel: { kind: "slack" },
@@ -383,10 +395,11 @@ async function tickCapture(): Promise<string[]> {
     await dispatch.dispatchTick({
       now,
       to: receive,
-      waitUntil: (_p: Promise<unknown>) => {},
+      waitUntil: collectWaitUntil,
       appAuth: { attributes: {} } as never,
       confirmInternal: async () => true,
     } as never);
+    await drainDeliveries();
     if (started.length === before) break;
   }
   return started;
@@ -484,10 +497,11 @@ await seed({ id: "r-linear", surfaceKey: "linear/W1/T1", target: { agentSessionI
     await dispatch.dispatchTick({
       now,
       to: receive,
-      waitUntil: (_p: Promise<unknown>) => {},
+      waitUntil: collectWaitUntil,
       appAuth: { attributes: {} } as never,
       confirmCreatorInternal: async () => true,
     } as never);
+    await drainDeliveries();
     ok(!started.includes("r-dm-capped"), 'OPE-275: perDomain["dm"] ALONE declines a DM cron fire — the recommended "everyone gets their own budget" config now binds the unattended leg too');
     ok(started.includes("r-dm-under"), "OPE-275: …and it is the BUDGET declining, not the DM shape — a second, under-budget DM fires on the same tick under the same config");
     const after = await store.getRoutine("default", "slack/T1/D_CREATOR", "r-dm-capped");
