@@ -149,6 +149,31 @@ export async function discordMentionWake(input: { channelId: string; text: strin
   }
 }
 
+export async function rawDiscordRelayPost(
+  input: { channelId: string; text: string; messageId?: string },
+  signature?: string | null,
+): Promise<{ status: number; text: string }> {
+  if (booted === undefined) throw new Error("integration harness: rawDiscordRelayPost before bootAgent.");
+  const { buildDiscordGuildMentionRelayEnvelope, signDiscordRelayRequest } = await import(
+    "../../packages/core/scripts/e2e/discord-synthetic"
+  );
+  const body = JSON.stringify(
+    buildDiscordGuildMentionRelayEnvelope({
+      text: input.text,
+      guildId: DISCORD_GUILD_ID,
+      channelId: input.channelId,
+      userId: DISCORD_USER_ID,
+      botId: DISCORD_BOT_ID,
+      botName: "open-everywhere",
+      messageId: input.messageId ?? `it${Date.now()}`,
+    }),
+  );
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (signature !== null) headers["x-oe-relay-signature"] = signature ?? signDiscordRelayRequest(body, RELAY_SECRET);
+  const res = await fetch(`${booted.base}/eve/v1/discord-gateway`, { method: "POST", headers, body });
+  return { status: res.status, text: await res.text() };
+}
+
 export const DISCORD_GUILD_ID = "1300000000000000100";
 export const DISCORD_LISTED_CHANNEL_ID = "1300000000000000101";
 const DISCORD_USER_ID = "9000000000000000042";

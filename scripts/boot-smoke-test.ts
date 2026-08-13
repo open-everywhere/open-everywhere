@@ -125,7 +125,7 @@ for (const [rel, mod] of loaded) {
   if (mockModelArmed()) {
     problems.push(
       "MOCK MODEL: OE_EVAL_MOCK_MODEL is armed in this process — the boot gate must run with it UNSET, " +
-        "or ⑤ asserts nothing. (It is armed only by scripts/wake-smoke-test.ts, for its own child target.)",
+        "or ⑤ asserts nothing. (Nothing currently arms it — see the OPE-463 retirement note above.)",
     );
   } else {
     let refused = false;
