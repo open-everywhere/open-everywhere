@@ -1,4 +1,4 @@
-import { appendAudit } from "../audit/audit.js";
+import { appendAudit, readAudit } from "../audit/audit.js";
 import { resolveTurnAnchor, type TurnAnchorQuery } from "./turn-registry.js";
 
 export const TURN_CANCEL_ACTION = "turn.cancel_requested";
@@ -59,6 +59,25 @@ export async function cancelAnchoredTurn(input: CancelAnchoredTurnInput): Promis
 const NOTHING_RUNNING = "Nothing running here right now — I'm already waiting on you.";
 
 const STANDING_DOWN = "Standing down — I'll stop this turn where it is.";
+
+const CANCEL_REQUEST_SCAN = 50;
+
+const PLAIN_PRINCIPAL_ID = /^[A-Za-z0-9._:@|+-]{1,64}$/;
+
+export async function findCancelRequester(org: string, turnId: string): Promise<string | undefined> {
+  try {
+    const rows = await readAudit({ org, action: TURN_CANCEL_ACTION, limit: CANCEL_REQUEST_SCAN });
+    for (const row of rows) {
+      const rowTurnId = row.detail?.["turnId"];
+      if (typeof rowTurnId !== "string" || rowTurnId !== turnId) continue;
+      const by = row.principalId;
+      return typeof by === "string" && PLAIN_PRINCIPAL_ID.test(by) ? by : undefined;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 async function auditCancel(
   input: CancelAnchoredTurnInput,

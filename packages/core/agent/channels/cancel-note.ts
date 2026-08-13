@@ -4,6 +4,7 @@ export interface PendingCancelNote {
   readonly turnId: string;
   readonly steps: number;
   readonly ran: readonly string[];
+  readonly by?: string;
 }
 
 const MAX_NAMED_ACTIONS = 6;
@@ -13,6 +14,13 @@ const slot = defineState<PendingCancelNote | null>("open-everywhere.cancel-note.
 export function setPendingCancelNote(note: PendingCancelNote): void {
   try {
     slot.update(() => note);
+  } catch {
+  }
+}
+
+export function attachCancelNoteRequester(turnId: string, by: string): void {
+  try {
+    slot.update((prev) => (prev && prev.turnId === turnId ? { ...prev, by } : prev));
   } catch {
   }
 }
@@ -35,8 +43,9 @@ export function clearPendingCancelNoteAfter(endedTurnId: string): void {
 export function formatCancelNoteReminder(note: PendingCancelNote | null): string | null {
   if (!note) return null;
   const where = note.steps === 1 ? "one step in" : `${note.steps} steps in`;
+  const who = note.by ? `by \`${note.by}\`` : "by a person";
   const head =
-    `<system-reminder>\nYour PREVIOUS turn in this session was CANCELLED by a person — you were stopped ` +
+    `<system-reminder>\nYour PREVIOUS turn in this session was CANCELLED ${who} — you were stopped ` +
     `${where}, you did not finish, and your final message (if you had started one) was never recorded.`;
   const tail =
     `\nDo not silently start again from the beginning. Take the actions below as ALREADY DONE, and if ` +
