@@ -1,4 +1,4 @@
-import { registerPreflightProbe, type Check } from "@open-everywhere/core/agent/adapter-api.js";
+import { registerPreflightProbe, registerSurfaceCredentialProbe, type Check } from "@open-everywhere/core/agent/adapter-api.js";
 import { boundaryOfGraphToken, TENANT_WIDE_CHANNEL_READ_ROLES, type TeamsReadBoundary } from "./channels/teams-graph-boundary.js";
 
 const TOKEN_LOGIN_BASE = "https://login.microsoftonline.com";
@@ -93,4 +93,5 @@ export async function teamsBoundaryProbe(env: NodeJS.ProcessEnv): Promise<readon
 
 export function registerTeamsOps(): void {
   registerPreflightProbe("teams", teamsBoundaryProbe);
+  registerSurfaceCredentialProbe("teams", () => Boolean(process.env.MICROSOFT_APP_ID));
 }

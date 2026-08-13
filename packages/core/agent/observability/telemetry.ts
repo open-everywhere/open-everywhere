@@ -262,21 +262,20 @@ export function registerSurfaceCredentialProbe(platform: string, probe: () => bo
 }
 
 function surfacesWithCreds(): string[] {
-  const present: string[] = [];
-  if (process.env.DISCORD_BOT_TOKEN) present.push("discord");
-  if (process.env.MICROSOFT_APP_ID) present.push("teams");
-  if (process.env.OE_GITHUB_APP_ID) present.push("github");
+  const present = new Set<string>();
+  if (process.env.DISCORD_BOT_TOKEN) present.add("discord");
+  if (process.env.OE_GITHUB_APP_ID) present.add("github");
   for (const [platform, probe] of Object.entries(SURFACE_CREDENTIAL_PROBES)) {
     try {
-      if (probe()) present.push(platform);
+      if (probe()) present.add(platform);
     } catch {
     }
   }
   try {
-    if ((getConfig().loadWebhooks?.() ?? []).length > 0) present.push("webhooks");
+    if ((getConfig().loadWebhooks?.() ?? []).length > 0) present.add("webhooks");
   } catch {
   }
-  return present.sort();
+  return [...present].sort();
 }
 
 function domainsCount(): number {

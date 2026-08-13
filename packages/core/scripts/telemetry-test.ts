@@ -17,6 +17,7 @@ import {
   droppedTelemetryCount,
   initTelemetry,
   maybeHeartbeat,
+  registerSurfaceCredentialProbe,
   __resetTelemetryForTest,
   __queueLengthForTest,
   __setInstanceForTest,
@@ -361,6 +362,53 @@ function throwingFetch(): typeof fetch {
       fs.unlinkSync(tmpPath);
     } catch {
     }
+    clearTelemetryEnv();
+    __resetTelemetryForTest();
+  }
+}
+
+{
+  type HeartbeatBody = {
+    resourceLogs: { scopeLogs: { logRecords: { eventName: string; attributes: { key: string; value: unknown }[] }[] }[] }[];
+  };
+  async function heartbeatSurfaces(instanceId: string): Promise<string[]> {
+    const { calls, impl } = fakeFetch();
+    __resetTelemetryForTest({ fetchImpl: impl });
+    __setInstanceForTest({ id: instanceId, ephemeral: false });
+    __setLastHeartbeatForTest(0);
+    maybeHeartbeat();
+    await flushTelemetry();
+    const body = calls[0].body as HeartbeatBody;
+    const record = body.resourceLogs[0].scopeLogs[0].logRecords.find((r) => r.eventName === "oe.instance.heartbeat")!;
+    const attr = record.attributes.find((a) => a.key === "oe.surfaces")!;
+    return (attr.value as { arrayValue: { values: { stringValue: string }[] } }).arrayValue.values.map((v) => v.stringValue);
+  }
+
+  const savedDiscordToken = process.env.DISCORD_BOT_TOKEN;
+  const savedMicrosoftAppId = process.env.MICROSOFT_APP_ID;
+  try {
+    clearTelemetryEnv();
+    process.env.MICROSOFT_APP_ID = "test-app-id";
+    delete process.env.DISCORD_BOT_TOKEN;
+    let surfaces = await heartbeatSurfaces("instance-surfaces-a");
+    ok(surfaces.includes("teams") === false, "surfaces: MICROSOFT_APP_ID alone no longer reports teams (core's inline arm is gone)");
+
+    registerSurfaceCredentialProbe("teams", () => Boolean(process.env.MICROSOFT_APP_ID));
+    surfaces = await heartbeatSurfaces("instance-surfaces-b");
+    ok(surfaces.filter((s) => s === "teams").length === 1, "surfaces: a registered probe reports teams exactly once");
+
+    process.env.DISCORD_BOT_TOKEN = "test-token";
+    registerSurfaceCredentialProbe("discord", () => true);
+    surfaces = await heartbeatSurfaces("instance-surfaces-c");
+    ok(
+      surfaces.filter((s) => s === "discord").length === 1,
+      "surfaces: an inline platform double-registered via the probe registry still reports exactly once",
+    );
+  } finally {
+    if (savedDiscordToken === undefined) delete process.env.DISCORD_BOT_TOKEN;
+    else process.env.DISCORD_BOT_TOKEN = savedDiscordToken;
+    if (savedMicrosoftAppId === undefined) delete process.env.MICROSOFT_APP_ID;
+    else process.env.MICROSOFT_APP_ID = savedMicrosoftAppId;
     clearTelemetryEnv();
     __resetTelemetryForTest();
   }
