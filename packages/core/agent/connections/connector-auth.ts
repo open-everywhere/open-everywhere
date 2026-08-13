@@ -20,6 +20,7 @@ import { sharedVaultSubjectFor } from "../access/group-request.js";
 import { rawVaultSubject, SHARED_VAULT_SUBJECT_PREFIX } from "../identity/oauth-vault-share.js";
 import { connectorOpTieringEnabled, connectorLinkSetVaultEnabled } from "./connector-flags.js";
 import { getSecretVia } from "../access/credentials.js";
+import { withDuplicateApprovalGuard } from "../access/approval-dedupe.js";
 import { resolvePartition } from "../memory/partition.js";
 import { actingPrincipalId, bindFrom, deploymentOrg } from "../identity/binding.js";
 import { appendAudit } from "../audit/audit.js";
@@ -301,7 +302,7 @@ export function connectorOpApproval(): Approval {
 }
 
 export function connectorApprovalPolicy(): Approval {
-  return connectorOpTieringEnabled() ? connectorOpApproval() : once();
+  return withDuplicateApprovalGuard(connectorOpTieringEnabled() ? connectorOpApproval() : once());
 }
 
 export function userInteractiveOAuth<Resume extends JsonValue = JsonValue>(opts: {

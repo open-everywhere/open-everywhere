@@ -278,7 +278,7 @@ await inSession(async () => {
   ok(!!getUrl, "post_file(html, opt-out): the .html is uploaded as a file (getUploadURLExternal called)");
   ok(new URLSearchParams(getUrl!.body).get("filename") === "page.html", "post_file(html, opt-out): the attachment keeps the .html filename");
   ok(!calls.some((c) => c.url.endsWith("/api/chat.postMessage")), "post_file(html, opt-out): no link message posted (nothing hosted)");
-  ok(approvalOf({ toolInput: { files: [{ source: { path: "page.html" }, filename: "page.html" }] } }) === "not-applicable", "approval(html, opt-out): not-applicable (attach path is ungated)");
+  ok((await approvalOf({ toolInput: { files: [{ source: { path: "page.html" }, filename: "page.html" }] } })) === "not-applicable", "approval(html, opt-out): not-applicable (attach path is ungated)");
 });
 restoreFetch();
 setBlobPutter(undefined);
@@ -305,8 +305,8 @@ await inSession(async () => {
   const text = new URLSearchParams(msg!.body).get("text") ?? "";
   ok(text.includes(BLOB_URL) && text.includes("rendered page"), "post_file(html, opt-in): the message carries the Blob URL + the comment");
   ok(new URLSearchParams(msg!.body).get("thread_ts") === "111.222", "post_file(html, opt-in): the link posts into the current thread");
-  ok(approvalOf({ toolInput: { files: [{ source: { path: "page.html" }, filename: "page.html" }] } }) === "user-approval", "approval(html, opt-in): user-approval (the public Blob write is gated)");
-  ok(approvalOf({ toolInput: { files: [{ source: { path: "shot.png" }, filename: "shot.png" }] } }) === "not-applicable", "approval(image, opt-in): not-applicable (only the public HTML publish is gated)");
+  ok((await approvalOf({ toolInput: { files: [{ source: { path: "page.html" }, filename: "page.html" }] } })) === "user-approval", "approval(html, opt-in): user-approval (the public Blob write is gated)");
+  ok((await approvalOf({ toolInput: { files: [{ source: { path: "shot.png" }, filename: "shot.png" }] } })) === "not-applicable", "approval(image, opt-in): not-applicable (only the public HTML publish is gated)");
   const newest = (await readAudit({ org: "default", action: "slack.post_file" }))[0];
   ok(newest?.detail?.hosted === 1 && newest?.detail?.attached === 0, "post_file(html, opt-in): audit row records hosted=1, attached=0");
 });
