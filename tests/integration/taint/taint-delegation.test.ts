@@ -112,7 +112,7 @@ test("a delegated child taints itself: marking, injected judge verdict, refuse-t
     .find((t) => t.name === "declare_webhook");
   expect(webhookResult).toBeDefined();
   expect(webhookResult!.isError).toBe(true);
-  expect(JSON.stringify(webhookResult!.output)).toContain("external content");
+  expect(JSON.stringify(webhookResult!.output)).toContain("config-as-code webhook declarations aren't enabled");
 
   const parentResumed = handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1);
   expect(parentResumed).toBeDefined();
@@ -137,6 +137,7 @@ test("a delegated child taints itself: marking, injected judge verdict, refuse-t
   expect(chain!.detail?.verdict).toBe("deny");
   expect(chain!.detail?.denyAbsolute).toBe(true);
   expect(chain!.detail?.transforms).toEqual([]);
+  expect(rows.some((r) => r.action === "approval.chain" && r.detail?.tool === "declare_webhook")).toBe(false);
 
   const verdict = rows.find((r) => r.action === "approval.judge.verdict" && r.detail?.tool === "create_routine");
   expect(verdict).toBeDefined();
