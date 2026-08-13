@@ -66,6 +66,24 @@ function readAppVersion(): string {
 }
 registerAppInfo({ version: readAppVersion(), primaryModel: DEFAULT_MODEL, utilityModel: UTILITY_MODEL });
 
+function primaryModelSelection<TModel>(model: TModel): {
+  readonly model: TModel;
+  readonly modelContextWindowTokens: number;
+  readonly modelOptions: { readonly providerOptions: { readonly gateway: typeof GATEWAY_DEFAULTS } };
+} {
+  return {
+    model,
+    modelContextWindowTokens: PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS,
+    modelOptions: { providerOptions: { gateway: GATEWAY_DEFAULTS } },
+  };
+}
+
+function selectingResolver<TModel>(
+  resolve: (event: unknown, ctx: unknown) => Promise<TModel>,
+): (event: unknown, ctx: unknown) => Promise<ReturnType<typeof primaryModelSelection<TModel>>> {
+  return async (event, ctx) => primaryModelSelection(await resolve(event, ctx));
+}
+
 export default defineAgent({
   build: { externalDependencies: ["just-bash"] },
 
@@ -73,24 +91,20 @@ export default defineAgent({
     fallback: DEFAULT_MODEL,
     events: {
       "step.started": mockModelArmed()
-        ? () => evalMockModel()
-        : gatewayModelResolver(
-            { id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS },
-            { id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS },
+        ? () => primaryModelSelection(evalMockModel())
+        : selectingResolver(
+            gatewayModelResolver(
+              { id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS },
+              { id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS },
+            ),
           ),
     },
   }),
-  modelContextWindowTokens: PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS,
   reasoning: "medium",
   limits: { maxInputTokensPerSession: SESSION_INPUT_TOKEN_BUDGET, sessionTimeoutMs: false },
   compaction: {
     model: gatewayRoutedCompactionModel({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS }),
     modelContextWindowTokens: UTILITY_MODEL_CONTEXT_WINDOW_TOKENS,
     thresholdPercent: COMPACTION_THRESHOLD_PERCENT,
-  },
-  modelOptions: {
-    providerOptions: {
-      gateway: GATEWAY_DEFAULTS,
-    },
   },
 });

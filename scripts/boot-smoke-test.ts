@@ -148,11 +148,84 @@ for (const [rel, mod] of loaded) {
     if (typeof resolver !== "function") {
       problems.push("MOCK MODEL: agent/agent.ts exposes no step.started model resolver to check.");
     } else {
-      const resolved = (await resolver(undefined, {})) as { modelId?: unknown } | null;
-      if (resolved && typeof resolved === "object" && resolved.modelId === MOCK_MODEL_ID) {
+      const selection = (await resolver(undefined, {})) as { model?: { modelId?: unknown } } | null;
+      const seated = selection && typeof selection === "object" ? selection.model : undefined;
+      if (seated && typeof seated === "object" && seated.modelId === MOCK_MODEL_ID) {
         problems.push(
           `MODEL SEAT: the turn seat resolved to the EVAL MOCK (${MOCK_MODEL_ID}) with OE_EVAL_MOCK_MODEL unset — ` +
             "this build would answer every wake with canned text instead of calling a model.",
+        );
+      }
+    }
+  }
+}
+
+{
+  const agent = loaded.get("agent/agent.ts")?.default as
+    | {
+        model?: { events?: Record<string, (event: unknown, ctx: unknown) => unknown> };
+        modelContextWindowTokens?: unknown;
+        modelOptions?: unknown;
+        compaction?: { modelContextWindowTokens?: unknown };
+      }
+    | undefined;
+
+  if (agent?.modelContextWindowTokens !== undefined) {
+    problems.push(
+      "MODEL SELECTION: agent/agent.ts sets an agent-level `modelContextWindowTokens`. With a DYNAMIC " +
+        "`model` (defineDynamic) eve 0.33 types that field as `never` — it must ride each resolver return " +
+        "as `{ model, modelContextWindowTokens }` instead (agent.ts primaryModelSelection).",
+    );
+  }
+  if (agent?.modelOptions !== undefined) {
+    problems.push(
+      "MODEL SELECTION: agent/agent.ts sets an agent-level `modelOptions`. With a DYNAMIC `model` eve 0.33 " +
+        "types that field as `never` — it must ride each resolver return as `{ model, modelOptions }` instead.",
+    );
+  }
+
+  if (typeof agent?.compaction?.modelContextWindowTokens !== "number") {
+    problems.push(
+      "MODEL SELECTION: agent/agent.ts's `compaction.modelContextWindowTokens` is missing. It is NOT the " +
+        "field the 0.33 union constrains (that is the AGENT-LEVEL one) and it is not optional in practice — " +
+        "the compaction slot is authored as a model INSTANCE, so without it `eve build` fails with " +
+        '"does not have known AI Gateway context window metadata".',
+    );
+  }
+
+  const resolver = agent?.model?.events?.["step.started"];
+  if (typeof resolver !== "function") {
+    problems.push("MODEL SELECTION: agent/agent.ts exposes no step.started model resolver to check.");
+  } else {
+    const { PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS } = await import("../agent/model/models.js");
+    const selection = (await resolver(undefined, {})) as
+      | {
+          model?: unknown;
+          modelContextWindowTokens?: unknown;
+          modelOptions?: { providerOptions?: Record<string, unknown> };
+        }
+      | null
+      | undefined;
+    if (!selection || typeof selection !== "object" || selection.model === undefined) {
+      problems.push(
+        "MODEL SELECTION: the step.started resolver did not return a selection object. Every return path must " +
+          "be `{ model, modelContextWindowTokens, modelOptions }` — a bare model silently drops the context " +
+          "window (eve never backfills it from the fallback) and with it the compaction-threshold rescale.",
+      );
+    } else {
+      if (selection.modelContextWindowTokens !== PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS) {
+        problems.push(
+          `MODEL SELECTION: the step.started selection carries modelContextWindowTokens=` +
+            `${String(selection.modelContextWindowTokens)}, expected the stack's primary window ` +
+            `(${PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS}). Compaction fires at a FRACTION of this number, so a wrong ` +
+            "or absent value compacts at the wrong point in every long session.",
+        );
+      }
+      if (selection.modelOptions?.providerOptions?.["gateway"] === undefined) {
+        problems.push(
+          "MODEL SELECTION: the step.started selection carries no `modelOptions.providerOptions.gateway`. Those " +
+            "options used to reach the model call via the agent-level `modelOptions`; with that field gone, a " +
+            "selection that omits them runs every turn with NO gateway provider options at all.",
         );
       }
     }
@@ -169,6 +242,7 @@ if (problems.length > 0) {
 
 console.log(
   `✓ boot-smoke: ${modules.length} agent module(s) load clean; ${routeCount} channel route(s), no collisions; ` +
-    `${scheduleCount} schedule cron(s) valid; dynamic model bound at step.started; eval mock inert`,
+    `${scheduleCount} schedule cron(s) valid; dynamic model bound at step.started; eval mock inert; ` +
+    `turn-model selection carries the primary window + gateway options`,
 );
 process.exit(0);
