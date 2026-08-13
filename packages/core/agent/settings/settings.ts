@@ -176,7 +176,7 @@ export const SETTINGS = {
       path: "audit.silences",
       shipped: false,
       summary:
-        "Write the judged-SILENCE audit rows (`unified.no_reply` and the `reply.no_reply` tool row). Off is the ACTIONS-ONLY posture: on an ambient surface these are the ~99% majority and would bury the rows that mean something. A deployment that scores abstention (the local eval targets do) turns it on in `agent/settings.ts`.",
+        "Write the judged-SILENCE audit rows (`unified.no_reply` and the `reply.no_reply` tool row). Off is the ACTIONS-ONLY posture: on an ambient surface these are the ~99% majority and would bury the rows that mean something. A deployment that scores abstention (the local eval targets do) turns it on in `agent/settings/settings.ts`.",
     } satisfies SettingSpec<boolean>,
   },
   browser: {
@@ -288,7 +288,7 @@ export const SETTINGS = {
       path: "egress.allowUnenforced",
       shipped: false,
       summary:
-        "Let a session CONTINUE when the sandbox backend cannot apply fine-grained network policy. Off, an unenforceable policy aborts the session instead of running it unfirewalled. Dev and self-host-without-a-proxy only — a deployment that needs it says so in `agent/settings.ts`, where the choice is reviewable.",
+        "Let a session CONTINUE when the sandbox backend cannot apply fine-grained network policy. Off, an unenforceable policy aborts the session instead of running it unfirewalled. Dev and self-host-without-a-proxy only — a deployment that needs it says so in `agent/settings/settings.ts`, where the choice is reviewable.",
     } satisfies SettingSpec<boolean>,
   },
   governance: {
@@ -468,7 +468,7 @@ export const SETTINGS = {
       shipped: "on",
       validate: (v) => (v === "on" || v === "off" ? undefined : 'must be "on" or "off"'),
       summary:
-        "Whether the tainted-turn model runs at all. `on` (shipped) marks a turn that ingests untrusted content and lets that marking reach approval disclosure, the four `taint: refuse` sinks, memory provenance and the native-delegation withdrawal. `off` is a deployer's reviewed opt-out: no marks, no gates, no delegation withdrawal — untrusted content is still FENCED, and every session records `taint.mode: off` in the audit trail. **No environment variable can reach `off`** — it is a one-line diff in `agent/settings.ts`, which is the bar disabling a security model deserves.",
+        "Whether the tainted-turn model runs at all. `on` (shipped) marks a turn that ingests untrusted content and lets that marking reach approval disclosure, the four `taint: refuse` sinks and the native-delegation withdrawal. It does not gate memory: a memory write is an ordinary file edit with no write verb to mark (OPE-389). `off` is a deployer's reviewed opt-out: no marks, no gates, no delegation withdrawal — untrusted content is still FENCED, and every session records `taint.mode: off` in the audit trail. **No environment variable can reach `off`** — it is a one-line diff in `agent/settings/settings.ts`, which is the bar disabling a security model deserves.",
     } satisfies SettingSpec<TaintMode>,
     tierMode: {
       path: "taint.tierMode",
@@ -564,7 +564,7 @@ export function defineSettings(overrides: AgentSettingsOverrides): AgentSettings
   }
   if (problems.length > 0) {
     throw new Error(
-      `open-everywhere: invalid agent settings (agent/settings.ts) —\n  • ${problems.join("\n  • ")}\n` +
+      `open-everywhere: invalid agent settings (agent/settings/settings.ts) —\n  • ${problems.join("\n  • ")}\n` +
         `See packages/core/agent/settings/settings.ts for the schema.`,
     );
   }
