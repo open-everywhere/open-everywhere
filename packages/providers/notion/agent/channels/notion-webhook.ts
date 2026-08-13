@@ -6,6 +6,7 @@ import {
   pageIdFromEvent,
   retrieveComment,
   listBlockComments,
+  resolveBlockOwningPage,
   richTextToPlainText,
   type FetchLike,
   type NotionWebhookEvent,
@@ -60,6 +61,7 @@ export interface NotionDeliveryOutcome {
     | "dropped"
     | "dispatched"
     | "no-api-key"
+    | "unresolved-page"
     | "error";
   readonly detail?: string;
   readonly verified: boolean;
@@ -124,11 +126,14 @@ async function deliver(
     return { status: 200, body: "ok", action: "error", detail: `retrieveComment: ${String(err)}`, signed, credentialId };
   }
 
-  const pageId = eventPageId ?? comment.parent?.page_id;
+  const resolvedPage = await resolveDeliveryPage(comment, { apiKey, fetch: deps.fetch, version: deps.version });
+  if (!resolvedPage.pageId) {
+    return { status: 200, body: "ok", action: "unresolved-page", detail: resolvedPage.reason, signed, credentialId };
+  }
+  const pageId = resolvedPage.pageId;
   const discussionId = comment.discussion_id ?? "";
   const workspaceId = ev.workspace_id;
-  const surface = pageId ?? (discussionId || undefined) ?? commentId;
-  const surfaceKey = notionSurfaceKey(workspaceId, surface);
+  const surfaceKey = notionSurfaceKey(workspaceId, pageId);
 
   if (!deps.ambientEnabled(surfaceKey)) {
     return { status: 200, body: "ok", action: "ambient-disabled", detail: surfaceKey, signed, credentialId };
@@ -178,7 +183,7 @@ async function deliver(
     surfaceKey,
     credentialId,
     addressing: classification.addressing,
-    pageId: pageId ?? "",
+    pageId,
     discussionId,
     workspaceId: workspaceId ?? null,
     auth,
@@ -190,14 +195,31 @@ async function deliver(
   return { status: 200, body: "ok", action: "dispatched", detail: classification.addressing, signed, credentialId };
 }
 
+export interface ResolvedDeliveryPage {
+  readonly pageId?: string;
+  readonly reason?: string;
+}
+
+export async function resolveDeliveryPage(
+  comment: NotionComment,
+  opts: { readonly apiKey: string; readonly fetch?: FetchLike; readonly version?: string },
+): Promise<ResolvedDeliveryPage> {
+  const parent = comment.parent;
+  if (parent?.page_id) return { pageId: parent.page_id };
+  if (parent?.block_id) {
+    const owner = await resolveBlockOwningPage(parent.block_id, opts);
+    return owner ? { pageId: owner } : { reason: `comment parent block "${parent.block_id}" resolved no owning page` };
+  }
+  return { reason: "the retrieved comment carries no page or block parent" };
+}
+
 async function loadThreadSiblings(
   trigger: NotionComment,
-  pageId: string | undefined,
+  pageId: string,
   discussionId: string,
   botUserId: string | undefined,
   opts: { apiKey: string; fetch?: FetchLike; version?: string },
 ): Promise<NotionWakeMessage[]> {
-  if (!pageId) return [];
   try {
     const all = await listBlockComments(pageId, opts);
     return all

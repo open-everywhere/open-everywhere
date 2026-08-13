@@ -20,7 +20,7 @@ import {
   resolveNotionInboundSecret,
 } from "../agent/channels/notion-credentials.js";
 import { gateNotionDeliveryAcross, resolveNotionApiKey, type FetchLike } from "../agent/channels/notion-api.js";
-import { handleNotionDelivery } from "../agent/channels/notion-webhook.js";
+import { handleNotionDelivery, resolveDeliveryPage } from "../agent/channels/notion-webhook.js";
 import { notionPostArm } from "../agent/channels/notion-post-arm.js";
 import { registerNotionProvider } from "../agent/register.js";
 
@@ -139,7 +139,9 @@ interface Seen {
   readonly url: string;
   readonly auth: string | undefined;
 }
-function recordingFetch(seen: Seen[]): FetchLike {
+type CommentParent = { readonly type?: string; readonly page_id?: string; readonly block_id?: string };
+
+function recordingFetch(seen: Seen[], parent?: CommentParent, blockParents?: Readonly<Record<string, CommentParent>>): FetchLike {
   return async (url, init) => {
     const headers = (init?.headers ?? {}) as Record<string, string>;
     seen.push({ url, auth: headers.authorization });
@@ -148,6 +150,7 @@ function recordingFetch(seen: Seen[]): FetchLike {
         JSON.stringify({
           id: "cmt-1",
           discussion_id: "disc-1",
+          ...(parent ? { parent } : {}),
           created_by: { id: "U_HUMAN", object: "user", type: "person" },
           created_time: "2026-08-13T10:00:00.000Z",
           rich_text: [{ type: "text", plain_text: "what is the balance flow here?" }],
@@ -155,18 +158,42 @@ function recordingFetch(seen: Seen[]): FetchLike {
         { status: 200, headers: { "content-type": "application/json" } },
       );
     }
+    const block = /\/v1\/blocks\/([^/?]+)$/.exec(url)?.[1];
+    if (block) {
+      const decoded = decodeURIComponent(block);
+      const blockParent = blockParents?.[decoded];
+      if (!blockParent) return new Response("not found", { status: 404 });
+      return new Response(JSON.stringify({ id: decoded, parent: blockParent }), { status: 200, headers: { "content-type": "application/json" } });
+    }
     return new Response(JSON.stringify({ results: [] }), { status: 200, headers: { "content-type": "application/json" } });
   };
+}
+
+interface DeliverResult {
+  seen: Seen[];
+  action: string;
+  detail?: string;
+  used?: string;
+  dispatched?: string;
+  attributes?: Record<string, string>;
+  surfaceKey?: string;
+  dispatchedPage?: string;
+  asked: string[];
 }
 
 async function deliverFor(
   page: string,
   secret: string | null,
-): Promise<{ seen: Seen[]; action: string; used?: string; dispatched?: string; attributes?: Record<string, string> }> {
+  shape?: { readonly parent?: CommentParent; readonly blockParents?: Readonly<Record<string, CommentParent>> },
+): Promise<DeliverResult> {
   const seen: Seen[] = [];
+  const asked: string[] = [];
   let dispatched: string | undefined;
   let attributes: Record<string, string> | undefined;
+  let surfaceKey: string | undefined;
+  let dispatchedPage: string | undefined;
   const body = commentEvent(page);
+  const parent: CommentParent = shape?.parent ?? { type: "page_id", page_id: page };
   const out = await handleNotionDelivery(body, secret === null ? null : sign(secret, body), {
     signingKeys:
       secret === null
@@ -179,19 +206,28 @@ async function deliverFor(
     apiKeyFor: (id) => resolveNotionApiKey(id),
     credentialForPage: (workspaceId, pageId) => notionChannelCredentialFor(workspaceId, pageId, DOMAINS),
     resolveBotUserId: async () => "U_BOT",
-    ambientEnabled: () => true,
-    fetch: recordingFetch(seen),
+    ambientEnabled: (key) => {
+      asked.push(key);
+      return true;
+    },
+    fetch: recordingFetch(seen, parent, shape?.blockParents),
     dispatch: async (d) => {
       dispatched = d.credentialId;
       attributes = { ...d.auth.attributes };
+      surfaceKey = d.surfaceKey;
+      dispatchedPage = d.pageId;
     },
   });
   return {
     seen,
+    asked,
     action: out.action,
+    ...(out.detail ? { detail: out.detail } : {}),
     ...(out.credentialId ? { used: out.credentialId } : {}),
     ...(dispatched ? { dispatched } : {}),
     ...(attributes ? { attributes } : {}),
+    ...(surfaceKey ? { surfaceKey } : {}),
+    ...(dispatchedPage ? { dispatchedPage } : {}),
   };
 }
 
@@ -331,6 +367,92 @@ async function deliverFor(
   ok((await resolveNotionInboundSecret("NOTION_WEBHOOK_SECRET", async () => ({ value: ORG_SECRET }), log)) === ORG_SECRET, "a stored key resolves");
   ok((await resolveNotionInboundSecret("NOTION_WEBHOOK_SECRET", async () => ({ value: "" }), log)) === undefined, "an EMPTY stored value is no key at all");
   ok(logged.length === 2, "…and neither happy arm logs");
+}
+
+{
+  setRegisteredProviders([
+    {
+      name: "notion",
+      connection: "notion",
+      allows: ["api-key"],
+      credentials: [
+        { id: NOTION_CHANNEL_CREDENTIAL, type: "api-key", secretRef: "db:notion:channel-key", broker: "test", intake: false },
+        { id: PAY_CRED, type: "api-key", secretRef: "db:notion:payments-channel-key", broker: "test", intake: false },
+      ],
+    },
+  ]);
+
+  const SUP_SURFACE = `notion/${WS}/${PAGE_SUP}`;
+  const PAY_SURFACE = `notion/${WS}/${PAGE_PAY}`;
+
+  const forged = await deliverFor(PAGE_PAY, ORG_SECRET, { parent: { type: "page_id", page_id: PAGE_SUP } });
+  ok(forged.action === "dispatched", "the forged delivery still dispatches (it is a real comment, on a page the org key can see)");
+  ok(forged.surfaceKey === SUP_SURFACE, "🔴 the session surfaces on the page the FETCHED COMMENT lives on");
+  ok(forged.dispatchedPage === PAGE_SUP, "…the dispatched pageId is that same resolved page");
+  ok(forged.attributes?.page_id === PAGE_SUP, "…and so is the `page_id` AUTH ATTRIBUTE the session is bound from");
+  ok(forged.surfaceKey !== PAY_SURFACE, "the page the PAYLOAD named is not the surface key");
+  ok(forged.dispatchedPage !== PAGE_PAY, "…nor the dispatched page");
+  ok(forged.attributes?.page_id !== PAGE_PAY, "…nor the auth attribute");
+  ok(forged.asked.length === 1 && forged.asked[0] === SUP_SURFACE, "…and the ambient gate was asked about the RESOLVED page only");
+  ok(notionChannelCredentialForSurface(forged.surfaceKey!, DOMAINS) === undefined, "🔴 the read tools resolve NO payments credential for this session");
+  ok(notionChannelCredentialForSurface(PAY_SURFACE, DOMAINS) === PAY_CRED, "…while the page the payload named WOULD have resolved the payments credential — the escalation this closes");
+  ok(forged.used === NOTION_CHANNEL_CREDENTIAL, "the forged delivery still runs under the credential that VERIFIED it (§4's rule is untouched)");
+  ok(forged.seen.length > 0 && forged.seen.every((s) => s.auth === `Bearer ${ORG_TOKEN}`), "…proven on the wire: no call reached the payments token");
+
+  const honest = await deliverFor(PAGE_PAY, PAY_SECRET);
+  ok(honest.surfaceKey === PAY_SURFACE && honest.dispatchedPage === PAGE_PAY, "a delivery whose payload AGREES with the comment surfaces on that page (nothing legitimate changed)");
+
+  const BLOCK = "dddddddd-4444-4444-8444-dddddddddddd";
+  const inline = await deliverFor(PAGE_PAY, ORG_SECRET, {
+    parent: { type: "block_id", block_id: BLOCK },
+    blockParents: { [BLOCK]: { type: "page_id", page_id: PAGE_SUP } },
+  });
+  ok(inline.action === "dispatched", "an INLINE comment (block parent, no page_id) still dispatches");
+  ok(inline.surfaceKey === SUP_SURFACE, "🔴 …on the block's OWNING page, not the page the payload named");
+  ok(inline.dispatchedPage === PAGE_SUP && inline.attributes?.page_id === PAGE_SUP, "…carried on the dispatch and the auth attribute alike");
+  ok(inline.surfaceKey !== PAY_SURFACE, "…and the payload's page is still nowhere (negative control)");
+  const walk = inline.seen.filter((s) => s.url.includes(`/v1/blocks/${BLOCK}`));
+  ok(walk.length === 1, "the walk made exactly one block lookup for a top-level block");
+  ok(walk[0]!.auth === `Bearer ${ORG_TOKEN}`, "🔴 …under the token that VERIFIED the delivery, not some other integration's");
+  ok(inline.seen.every((s) => s.auth !== `Bearer ${PAY_TOKEN}`), "…and no call in the whole delivery touched the payments token");
+
+  const unresolved = await deliverFor(PAGE_PAY, ORG_SECRET, { parent: { type: "block_id", block_id: BLOCK } });
+  ok(unresolved.action === "unresolved-page", "🔴 a block whose owning page does NOT resolve REFUSES the delivery");
+  ok(unresolved.surfaceKey === undefined && unresolved.dispatchedPage === undefined, "…nothing dispatched at all (negative control on the dispatch itself)");
+  ok(unresolved.attributes === undefined, "…so no session was ever bound");
+  ok((unresolved.detail ?? "").includes(BLOCK), "…and the reason names the block that could not be resolved");
+  ok(unresolved.used === NOTION_CHANNEL_CREDENTIAL, "…while the outcome still reports the credential that verified it (this is a refusal, not a gate failure)");
+
+  const parentless = await deliverFor(PAGE_PAY, ORG_SECRET, { parent: {} });
+  ok(parentless.action === "unresolved-page", "a comment carrying no parent at all refuses too");
+  ok(parentless.surfaceKey === undefined, "…and dispatches nothing (the payload's page_id is NOT a fallback)");
+
+  const B = (n: number): string => `eeeeeeee-${String(n).padStart(4, "0")}-4000-8000-eeeeeeeeeeee`;
+  const chain: Record<string, CommentParent> = { [B(6)]: { type: "page_id", page_id: PAGE_SUP } };
+  for (let i = 1; i <= 5; i++) chain[B(i)] = { type: "block_id", block_id: B(i + 1) };
+  const unitSeen: Seen[] = [];
+  const unitFetch = recordingFetch(unitSeen, undefined, {
+    ...chain,
+    "block-on-workspace": { type: "workspace" },
+    "block-self-cycle": { type: "block_id", block_id: "block-self-cycle" },
+  });
+  const at = { apiKey: ORG_TOKEN, fetch: unitFetch };
+
+  ok((await resolveDeliveryPage({ parent: { type: "page_id", page_id: PAGE_PAY } }, at)).pageId === PAGE_PAY, "a page-level comment answers from its own parent, with no lookup");
+  ok(unitSeen.length === 0, "…proven: the page-level arm made NO Notion call (negative control on the walk)");
+
+  ok((await resolveDeliveryPage({ parent: { type: "block_id", block_id: B(2) } }, at)).pageId === PAGE_SUP, "a NESTED block walks up to its owning page");
+  const tooDeep = await resolveDeliveryPage({ parent: { type: "block_id", block_id: B(1) } }, at);
+  ok(tooDeep.pageId === undefined && (tooDeep.reason ?? "").length > 0, "🔴 a chain longer than BLOCK_PARENT_MAX_HOPS refuses — the walk is bounded, not best-effort");
+
+  const onWorkspace = await resolveDeliveryPage({ parent: { type: "block_id", block_id: "block-on-workspace" } }, at);
+  ok(onWorkspace.pageId === undefined && (onWorkspace.reason ?? "").length > 0, "a block whose parent is the WORKSPACE refuses — a non-page parent is never a page");
+
+  const cycle = await resolveDeliveryPage({ parent: { type: "block_id", block_id: "block-self-cycle" } }, at);
+  ok(cycle.pageId === undefined && (cycle.reason ?? "").length > 0, "a self-referencing block refuses instead of looping");
+
+  const noParent = await resolveDeliveryPage({}, at);
+  ok(noParent.pageId === undefined && (noParent.reason ?? "").length > 0, "no parent at all refuses, and says why");
 }
 
 resetRegisteredProviders();
