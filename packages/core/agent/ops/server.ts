@@ -2,7 +2,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { preflight, quickstartPlan, mergeEnv } from "./quickstart.js";
+import { quickstartPlan, mergeEnv } from "./quickstart.js";
+import { preflightAsync } from "./probes.js";
 
 export const OPS_TOOL_NAMES = ["preflight", "quickstart", "scaffold_env", "secret_set", "secret_list", "secret_rm"] as const;
 
@@ -49,10 +50,10 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
     "preflight",
     {
       title: "Preflight check",
-      description: "Check the prerequisites for running/deploying Open Everywhere (node, model key, providers, durable DB, control-plane auth). Reads the project's .env.local. Read-only — reports what's set and how to fix what's missing.",
+      description: "Check the prerequisites for running/deploying Open Everywhere (node, model key, providers, durable DB, control-plane auth), plus the LIVE posture of each configured provider that registers a probe (a check env alone cannot answer, so it asks the vendor). Reads the project's .env.local. Read-only — reports what's set and how to fix what's missing.",
       inputSchema: { envPath: z.string().optional() },
     },
-    (a) => json(preflight(mergedEnv(a.envPath))),
+    async (a) => json(await preflightAsync(mergedEnv(a.envPath))),
   );
 
   server.registerTool(

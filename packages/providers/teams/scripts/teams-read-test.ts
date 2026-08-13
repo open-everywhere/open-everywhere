@@ -1,3 +1,4 @@
+
 import assert from "node:assert/strict";
 import {
   stripHtml,
@@ -9,6 +10,16 @@ import {
   _resetTeamsGraphTokenCache,
   type TeamsGraphRequester,
 } from "../agent/channels/teams-read.js";
+import {
+  decodeJwtRoles,
+  boundaryFromRoles,
+  boundaryOfGraphToken,
+  noteTeamsReadBoundary,
+  teamsReadBoundary,
+  _resetTeamsReadBoundaryForTest,
+  TENANT_WIDE_CHANNEL_READ_ROLES,
+} from "../agent/channels/teams-graph-boundary.js";
+import { boundaryCheck, teamsBoundaryProbe } from "../agent/ops.js";
 import { registerTeamsProvider } from "../agent/register.js";
 import {
   READ_ADAPTERS,
@@ -172,7 +183,11 @@ const engCtx = teamsCtx({
   ok(row.action === "read.refused" && row.platform === "teams", "the row is a teams read.refused");
   ok(row.detail?.target === sanitizeTeamsChannelId(RAW_OUTSIDE) && row.detail?.reason === "cross-domain", "…naming the SANITIZED refused channel id and the verdict");
   ok(row.detail?.callerDomain === "eng" && row.detail?.targetDomain === null, "…both sides: the caller's domain, and no owning domain for an unlisted channel");
-  ok(Object.keys(row.detail ?? {}).length === 5, "…and nothing else — ids, domains and a verdict, never message CONTENT");
+  ok(
+    JSON.stringify(Object.keys(row.detail ?? {}).sort()) === JSON.stringify(["boundary", "callerDomain", "callerSurfaceKey", "reason", "target", "targetDomain"]),
+    "…and nothing else — ids, domains and verdicts, never message CONTENT",
+  );
+  ok(row.detail?.boundary === "unknown", "…the boundary marker reads unknown here: no Graph token has been minted in this process");
 
   const exploding = async () => {
     throw new Error("audit store is down");
@@ -252,6 +267,125 @@ const engCtx = teamsCtx({
   const uniTeams = mk("unified", { oe_platform: "teams", oe_sources: "teams" });
   const resolved = resolveReadAdapter(uniTeams, undefined, []);
   ok(resolved.platform === "teams" && resolved.adapter === teamsReadAdapter, "registry: resolveReadAdapter routes a teams-origin turn to the Teams adapter");
+}
+
+{
+  const b64url = (s: string): string => Buffer.from(s, "utf-8").toString("base64url");
+  const jwt = (payload: unknown): string => `${b64url(JSON.stringify({ alg: "RS256", typ: "JWT" }))}.${b64url(JSON.stringify(payload))}.ZmFrZS1zaWc`;
+
+  ok(
+    JSON.stringify(decodeJwtRoles(jwt({ aud: "https://graph.microsoft.com", roles: ["ChannelMessage.Read.All"] }))) === JSON.stringify(["ChannelMessage.Read.All"]),
+    "decodeJwtRoles: reads the roles claim out of a well-formed token",
+  );
+  ok(
+    JSON.stringify(decodeJwtRoles(jwt({ aud: "https://graph.microsoft.com" }))) === JSON.stringify([]),
+    "decodeJwtRoles: a token with NO roles claim decodes to [] — a real state (no consented app permissions), not a parse failure",
+  );
+  ok(decodeJwtRoles("not-a-jwt") === undefined, "decodeJwtRoles: a non-JWT string is undefined (malformed), never []");
+  ok(decodeJwtRoles("a.b") === undefined, "decodeJwtRoles: a two-segment token is undefined");
+  ok(decodeJwtRoles("aaa..bbb") === undefined, "decodeJwtRoles: an empty payload segment is undefined");
+  ok(decodeJwtRoles(`${b64url("{}")}.${b64url("{not json")}.sig`) === undefined, "decodeJwtRoles: a payload that is not JSON is undefined");
+  ok(decodeJwtRoles(jwt(["an", "array"])) === undefined, "decodeJwtRoles: a payload that is not a JSON OBJECT is undefined");
+  ok(decodeJwtRoles(jwt({ roles: "ChannelMessage.Read.All" })) === undefined, "decodeJwtRoles: a non-array roles claim is undefined, never coerced to a match");
+  ok(
+    JSON.stringify(decodeJwtRoles(jwt({ roles: ["Group.Read.All", 7, null] }))) === JSON.stringify(["Group.Read.All"]),
+    "decodeJwtRoles: non-string entries are dropped from the roles array",
+  );
+
+  for (const role of TENANT_WIDE_CHANNEL_READ_ROLES) {
+    ok(boundaryFromRoles([role]) === "tenant-wide", `boundaryFromRoles: "${role}" alone removes the Microsoft team boundary`);
+  }
+  ok(TENANT_WIDE_CHANNEL_READ_ROLES.length === 3, "the denylist holds exactly the three application permissions Microsoft documents for these two endpoints");
+  ok(
+    boundaryFromRoles(["ChannelMessage.Read.All", "Group.Read.All"]) === "tenant-wide",
+    "boundaryFromRoles: several tenant-wide roles still read as tenant-wide",
+  );
+  ok(boundaryFromRoles([]) === "per-team", "boundaryFromRoles: no consented application permissions is the per-team path");
+  ok(
+    boundaryFromRoles(["ChannelMessage.Read.Group"]) === "per-team",
+    "boundaryFromRoles: the RSC permission itself is NOT tenant-wide (and in reality never appears in the token at all)",
+  );
+  ok(
+    boundaryFromRoles(["User.Read.All", "Group.Selected", "TeamsActivity.Send"]) === "per-team",
+    "boundaryFromRoles: unrelated consented roles do not trip the denylist",
+  );
+  ok(boundaryFromRoles(undefined) === "unknown", "boundaryFromRoles: an undecodable token is unknown — never guessed either way");
+
+  const TENANT_WIDE_TOKEN = jwt({ aud: "https://graph.microsoft.com", roles: ["User.Read.All", "ChannelMessage.Read.All"] });
+  const PER_TEAM_TOKEN = jwt({ aud: "https://graph.microsoft.com", roles: ["User.Read.All"] });
+  ok(boundaryOfGraphToken(TENANT_WIDE_TOKEN) === "tenant-wide", "boundaryOfGraphToken: a token carrying ChannelMessage.Read.All reads as tenant-wide");
+  ok(boundaryOfGraphToken(PER_TEAM_TOKEN) === "per-team", "boundaryOfGraphToken: a token carrying only unrelated roles reads as per-team");
+  ok(boundaryOfGraphToken("garbage") === "unknown", "boundaryOfGraphToken: a token that does not parse reads as unknown");
+
+  const org = deploymentOrg();
+  _resetTeamsReadBoundaryForTest();
+  ok(teamsReadBoundary() === "unknown", "teamsReadBoundary: unknown before any Graph token is minted");
+
+  const before = (await readAudit({ org, platform: "teams", action: "teams.read_boundary" })).length;
+  await noteTeamsReadBoundary(TENANT_WIDE_TOKEN);
+  ok(teamsReadBoundary() === "tenant-wide", "noteTeamsReadBoundary: holds the determination for the rest of the process");
+  const afterFirst = await readAudit({ org, platform: "teams", action: "teams.read_boundary" });
+  ok(afterFirst.length === before + 1, "noteTeamsReadBoundary: the FIRST determination appends exactly one durable teams.read_boundary row");
+  ok(afterFirst[0]!.detail?.boundary === "tenant-wide", "…whose detail names the boundary that governs");
+  ok(
+    JSON.stringify(afterFirst[0]!.detail?.tenantWideRoles) === JSON.stringify(["ChannelMessage.Read.All"]),
+    "…and names WHICH tenant-wide role removed the boundary",
+  );
+  ok(afterFirst[0]!.detail?.enforcedBy === "open-everywhere-domain-allowlist", "…and says who is left holding the fence");
+  ok(!JSON.stringify(afterFirst[0]!.detail).includes(TENANT_WIDE_TOKEN.split(".")[2]), "…and carries no part of the token itself");
+
+  await noteTeamsReadBoundary(TENANT_WIDE_TOKEN);
+  const afterRepeat = await readAudit({ org, platform: "teams", action: "teams.read_boundary" });
+  ok(afterRepeat.length === afterFirst.length, "noteTeamsReadBoundary: an UNCHANGED re-mint appends no row (a row that appears is real news)");
+
+  await noteTeamsReadBoundary(PER_TEAM_TOKEN);
+  ok(teamsReadBoundary() === "per-team", "noteTeamsReadBoundary: a changed determination replaces the held one");
+  const afterChange = await readAudit({ org, platform: "teams", action: "teams.read_boundary" });
+  ok(afterChange.length === afterRepeat.length + 1, "…and a CHANGE does append a row");
+  ok(afterChange[0]!.detail?.boundary === "per-team", "…naming the new boundary");
+  ok(afterChange[0]!.detail?.enforcedBy === "microsoft-rsc-per-team", "…and that Microsoft is holding the line again");
+
+  await noteTeamsReadBoundary(TENANT_WIDE_TOKEN);
+  const refusedBefore = (await readAudit({ org, platform: "teams", action: "read.refused" })).length;
+  await assert.rejects(
+    () => teamsReadAdapter.readChannel(engCtx, RAW_OUTSIDE, 50, async () => ({ value: [] })),
+    /is not in domain "eng" teams read scope/u,
+    "a cross-domain teams read still refuses",
+  );
+  n++;
+  const refusedRows = await readAudit({ org, platform: "teams", action: "read.refused" });
+  ok(refusedRows.length === refusedBefore + 1, "…appending one read.refused row");
+  ok(refusedRows[0]!.detail?.boundary === "tenant-wide", "…which now records WHICH boundary governs this deployment's teams reads (OPE-428)");
+  ok(refusedRows[0]!.detail?.target === sanitizeTeamsChannelId(RAW_OUTSIDE), "…without disturbing the fields the row already carried");
+
+  _resetTeamsReadBoundaryForTest();
+  const unknownBefore = (await readAudit({ org, platform: "teams", action: "read.refused" })).length;
+  await assert.rejects(() => teamsReadAdapter.readChannel(engCtx, RAW_OUTSIDE, 50, async () => ({ value: [] })), /teams read scope/u, "…refusing again with nothing determined");
+  n++;
+  const unknownRows = await readAudit({ org, platform: "teams", action: "read.refused" });
+  ok(unknownRows.length === unknownBefore + 1, "…appending one more row");
+  ok(
+    unknownRows[0]!.detail?.boundary === "unknown",
+    "…marked unknown when no Graph token has been minted in this process — the fence never makes a network call to find out",
+  );
+
+  const perTeamCheck = boundaryCheck("per-team");
+  ok(perTeamCheck.status === "ok", "preflight: the per-team path is the OK posture — Microsoft itself holds the line");
+  ok(perTeamCheck.fix === undefined, "…and needs no remediation");
+  const wideCheck = boundaryCheck("tenant-wide");
+  ok(wideCheck.status === "info", "preflight: the tenant-wide path reports as info — a documented, supported configuration");
+  ok(wideCheck.status !== "missing", "…and NEVER as missing, which would make `ready` false and block an informed operator");
+  ok(wideCheck.detail.includes("TENANT-WIDE") && wideCheck.detail.includes("ONLY fence"), "…while saying plainly what the operator gave up");
+  ok(typeof wideCheck.fix === "string" && wideCheck.fix.includes("ChannelMessage.Read.Group"), "…and how to get the boundary back");
+  ok(boundaryCheck("unknown").status === "info", "preflight: an undetermined boundary reports as info, never as a claim either way");
+
+  ok((await teamsBoundaryProbe({})).length === 0, "preflight probe: no Teams app credentials ⇒ no checks at all");
+  ok(
+    (await teamsBoundaryProbe({ MICROSOFT_APP_ID: "id", MICROSOFT_APP_PASSWORD: "pw" })).length === 1,
+    "preflight probe: credentials without a tenant id ⇒ one check, no network call",
+  );
+  const noTenant = (await teamsBoundaryProbe({ MICROSOFT_APP_ID: "id", MICROSOFT_APP_PASSWORD: "pw" }))[0]!;
+  ok(noTenant.status === "info" && noTenant.detail.includes("tenant-scoped"), "…explaining that Graph's client-credential token is tenant-scoped");
 }
 
 console.log(`✓ ${n} teams-read assertions passed`);

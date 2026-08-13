@@ -15,6 +15,7 @@ export interface ReadScopeRefusal {
   readonly callerKey: string;
   readonly callerDomain?: string;
   readonly domains: readonly Domain[];
+  readonly boundary?: string;
 }
 
 function targetDomainOf(refusal: ReadScopeRefusal): string | undefined {
@@ -44,6 +45,7 @@ export async function auditChannelReadRefusal(
         callerDomain: refusal.callerDomain ?? null,
         targetDomain: targetDomainOf(refusal) ?? null,
         callerSurfaceKey: refusal.callerKey,
+        ...(refusal.boundary ? { boundary: refusal.boundary } : {}),
       },
     });
   } catch (err) {

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { preflight, quickstartPlan, mergeEnv, registerQuickstartSurfaceGoal } from "../agent/ops/quickstart.js";
+import { preflightAsync, registerPreflightProbe, _resetPreflightProbesForTest } from "../agent/ops/probes.js";
 import { buildOpsServer, OPS_TOOL_NAMES } from "../agent/ops/server.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -132,4 +133,39 @@ const ok = (label: string, cond: boolean) => {
   ok("no durability warning once postgres backings are selected", durable.checks.every((c) => c.name !== "state durability"));
 }
 
-console.log(`\n✓ ops/quickstart: ${n} assertions passed (preflight, tailored plan, env merge, scaffold via MCP, two-role provisioning)\n`);
+{
+  _resetPreflightProbesForTest();
+
+  const bare = await preflightAsync({ AI_GATEWAY_API_KEY: "k" });
+  ok("preflightAsync with no probes matches the pure preflight", bare.checks.length === preflight({ AI_GATEWAY_API_KEY: "k" }).checks.length);
+  ok("…and stays ready", bare.ready === true);
+
+  registerPreflightProbe("fake", async (env) => [
+    { name: "fake: live posture", status: env.FAKE_WIDE ? "info" : "ok", detail: env.FAKE_WIDE ? "wide" : "narrow" },
+  ]);
+  const narrow = await preflightAsync({ AI_GATEWAY_API_KEY: "k" });
+  ok("a registered probe's check is merged into the report", narrow.checks.some((c) => c.name === "fake: live posture" && c.status === "ok"));
+  ok("…and the pure checks are still there", narrow.checks.some((c) => c.name.includes("AI_GATEWAY_API_KEY")));
+
+  const wide = await preflightAsync({ AI_GATEWAY_API_KEY: "k", FAKE_WIDE: "1" });
+  ok("a probe reports the other posture from the same env", wide.checks.some((c) => c.name === "fake: live posture" && c.status === "info"));
+  ok("a live-posture finding is advice — it never makes preflight un-ready", wide.ready === true);
+
+  registerPreflightProbe("boom", async () => {
+    throw new Error("vendor unreachable");
+  });
+  const soft = await preflightAsync({ AI_GATEWAY_API_KEY: "k" });
+  const boom = soft.checks.find((c) => c.name === "boom: live probe");
+  ok("a throwing probe degrades to one info check", boom !== undefined && boom.status === "info");
+  ok("…naming why it could not run", /vendor unreachable/.test(boom?.detail ?? ""));
+  ok("…and the other probe still ran", soft.checks.some((c) => c.name === "fake: live posture"));
+  ok("…and the report is still ready", soft.ready === true);
+
+  _resetPreflightProbesForTest();
+  registerPreflightProbe("silent", async () => []);
+  const silent = await preflightAsync({ AI_GATEWAY_API_KEY: "k" });
+  ok("an unconfigured provider's probe contributes no checks", silent.checks.length === bare.checks.length);
+  _resetPreflightProbesForTest();
+}
+
+console.log(`\n✓ ops/quickstart: ${n} assertions passed (preflight, live probes, tailored plan, env merge, scaffold via MCP, two-role provisioning)\n`);

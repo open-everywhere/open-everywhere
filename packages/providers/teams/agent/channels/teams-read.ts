@@ -13,6 +13,7 @@ import {
   type Domain,
   type ReadScopeAuditDeps,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { noteTeamsReadBoundary, teamsReadBoundary, _resetTeamsReadBoundaryForTest } from "./teams-graph-boundary.js";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 const GRAPH_TOKEN_SCOPE = "https://graph.microsoft.com/.default";
@@ -43,6 +44,7 @@ async function mintTeamsGraphTokenOnce(): Promise<BrokeredSecret> {
   if (!res.ok || !json.access_token) {
     throw new Error(`read: Teams Graph token request failed — ${json.error_description ?? json.error ?? `HTTP ${res.status}`}.`);
   }
+  await noteTeamsReadBoundary(json.access_token);
   return { value: json.access_token, expiresAtMs: Date.now() + (json.expires_in ?? GRAPH_TOKEN_FALLBACK_TTL_SEC) * 1000 };
 }
 
@@ -58,6 +60,7 @@ const teamsGraphToken = warmCredential({
 
 export function _resetTeamsGraphTokenCache(): void {
   teamsGraphToken.reset();
+  _resetTeamsReadBoundaryForTest();
 }
 
 export type TeamsGraphRequester = (url: string) => Promise<unknown>;
@@ -181,7 +184,7 @@ export async function assertTeamsChannelAllowed(ctx: BindableContext, channelId:
   const { ids, domain } = allowedTeamsChannelIds(callerKey, domains);
   const wanted = sanitizeTeamsChannelId(channelId);
   if (ids.has(wanted)) return;
-  await auditChannelReadRefusal(ctx, { platform: "teams", surfaceId: wanted, callerKey, callerDomain: domain, domains }, deps);
+  await auditChannelReadRefusal(ctx, { platform: "teams", surfaceId: wanted, callerKey, callerDomain: domain, domains, boundary: teamsReadBoundary() }, deps);
   const scope = domain ? `domain "${domain}"` : "this channel's (no multi-channel domain)";
   throw new ChannelScopeError(
     `channel "${channelId}" is not in ${scope} teams read scope. The agent may only read channels in its ` +

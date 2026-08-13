@@ -480,7 +480,9 @@ export { REACTION_FEEDBACK_ACTION } from "./channels/reaction-ingest.js";
 export { registeredProjectionNames } from "./access/untrusted-projection.js";
 
 export { registerQuickstartSurfaceGoal } from "./ops/quickstart.js";
-export type { SurfaceGoalStep, PlanStep } from "./ops/quickstart.js";
+export type { SurfaceGoalStep, PlanStep, Check } from "./ops/quickstart.js";
+export { registerPreflightProbe } from "./ops/probes.js";
+export type { PreflightProbe } from "./ops/probes.js";
 
 export { _resetOperationalDbForTest } from "./operational/sqlite.js";
 
