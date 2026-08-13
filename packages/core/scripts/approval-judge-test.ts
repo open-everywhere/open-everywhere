@@ -339,6 +339,12 @@ async function judgeVerdictRows(): Promise<{ detail?: Record<string, unknown> }[
   return (await readAudit({})).filter((r) => r.action === "approval.judge.verdict") as { detail?: Record<string, unknown> }[];
 }
 
+async function judgeDetailWhere(want: (d: Record<string, unknown>) => boolean, label: string): Promise<Record<string, unknown>> {
+  const hits = (await judgeVerdictRows()).map((r) => r.detail ?? {}).filter(want);
+  ok(hits.length === 1, `${label}: exactly one matching approval.judge.verdict row`);
+  return hits[0]!;
+}
+
 {
   clearApprovalJudgeVerdictCache();
   stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn" });
@@ -359,8 +365,8 @@ async function judgeVerdictRows(): Promise<{ detail?: Record<string, unknown> }[
   ok(asked.autoApproved === undefined && typeof asked.id === "string", "enforce/ask: a judge ask cards exactly as before the flip");
   const askedRow = (await getOperationalStore().listPendingActions("test-org")).find((r) => r.id === asked.id);
   ok(askedRow !== undefined && askedRow.status === "pending", "enforce/ask: the pending row awaits a human click");
-  const askDetail = (await judgeVerdictRows())[0]!.detail ?? {};
-  ok(askDetail.verdict === "ask" && askDetail.enforcedVerdict === "ask", "enforce/ask: the consult row records ask beside ask");
+  const askDetail = await judgeDetailWhere((d) => d.verdict === "ask", "enforce/ask");
+  ok(askDetail.enforcedVerdict === "ask", "enforce/ask: the consult row records ask beside ask");
 
   clearApprovalJudgeVerdictCache();
   stubJudge({ scrutiny: "YES", verdict: "VERDICT: deny\nREASON: outside standing policy" });
@@ -371,15 +377,15 @@ async function judgeVerdictRows(): Promise<{ detail?: Record<string, unknown> }[
     denied = e as Error;
   }
   ok(denied !== undefined && /DENIED by the approval judge/.test(denied.message), "enforce/deny: a judge deny refuses the propose with its own sentence (not the config-diff copy)");
-  const denyDetail = (await judgeVerdictRows())[0]!.detail ?? {};
-  ok(denyDetail.verdict === "deny" && denyDetail.enforcedVerdict === "deny", "enforce/deny: the consult row records the deny (the first live one gets individual review)");
+  const denyDetail = await judgeDetailWhere((d) => d.verdict === "deny", "enforce/deny");
+  ok(denyDetail.enforcedVerdict === "deny", "enforce/deny: the consult row records the deny (the first live one gets individual review)");
 
   resetApprovalJudgeCompletion();
   clearApprovalJudgeVerdictCache();
   const degraded = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 750_000 } }, { postCard });
   ok(degraded.autoApproved === undefined, "enforce/degraded: no transport ⇒ the card path, exactly the pre-flip behaviour");
-  const degradedDetail = (await judgeVerdictRows())[0]!.detail ?? {};
-  ok(degradedDetail.verdict === "defer" && degradedDetail.source === "unavailable" && degradedDetail.enforcedVerdict === "ask", "enforce/degraded: the consult row still lands — a consult that changed nothing is still evidence");
+  const degradedDetail = await judgeDetailWhere((d) => d.source === "unavailable", "enforce/degraded");
+  ok(degradedDetail.verdict === "defer" && degradedDetail.enforcedVerdict === "ask", "enforce/degraded: the consult row still lands — a consult that changed nothing is still evidence");
 
   const before = (await judgeVerdictRows()).length;
   const control = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: n/a" });
@@ -422,8 +428,8 @@ async function judgeVerdictRows(): Promise<{ detail?: Record<string, unknown> }[
   const degraded = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 250_000 } }, { postCard });
   ok(degraded.autoApproved === undefined, "breaker: the propose cards — a tripped breaker means no lift, ever");
   ok(tripped.calls.length === 0, "breaker: the transport was never consulted");
-  const breakerDetail = (await judgeVerdictRows())[0]!.detail ?? {};
-  ok(breakerDetail.source === "breaker" && breakerDetail.verdict === "defer" && breakerDetail.enforcedVerdict === "ask", "breaker: the consult row records the disarm (source: breaker) — the degrade is queryable");
+  const breakerDetail = await judgeDetailWhere((d) => d.source === "breaker", "breaker");
+  ok(breakerDetail.verdict === "defer" && breakerDetail.enforcedVerdict === "ask", "breaker: the consult row records the disarm (source: breaker) — the degrade is queryable");
   resetApprovalJudgeCompletion();
   clearApprovalJudgeVerdictCache();
 }
