@@ -60,6 +60,7 @@ export function renderWebhookMessage(hook: FusedWebhookHook, rawBody: string, he
 export interface WebhookFireResult {
   readonly fired: boolean;
   readonly reason?: string;
+  readonly wakeId?: string;
 }
 
 export const WEBHOOK_AUDIENCE_FLOOR_REASON =
@@ -133,5 +134,5 @@ export async function fireWebhook(
   );
   if (!diverted) await args.to(slackChannel, { channelId }).send(message, { auth });
   emitTelemetry("oe.feature.used", { "oe.feature": "webhook_received", "oe.outcome": "ok" });
-  return { fired: true };
+  return diverted ? { fired: true, wakeId: fireWakeId } : { fired: true };
 }

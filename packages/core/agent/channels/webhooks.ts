@@ -45,6 +45,7 @@ async function deliver(hook: WebhookHook, body: string, headers: Headers, to: Ro
       ...(emitted ? { matched: emitted.matched, fired: emitted.fired, skipped: emitted.skipped } : {}),
       ...(emitted?.deliveryId ? { deliveryId: emitted.deliveryId } : {}),
       ...(emitted && !emitted.accepted && emitted.reason ? { routingReason: emitted.reason } : {}),
+      ...(result?.wakeId ? { wakeId: result.wakeId } : {}),
     },
   });
   if (previousKey) log(`WARN "${hook.id}": verified against a PREVIOUS key (secretRef index ${keyIndex}) — a sender has not moved to the current key yet`);

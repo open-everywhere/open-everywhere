@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { renderSmokeReport, runWebhookSmoke, rowDeliveryId, type SmokeResult } from "./deploy/smoke-lib.js";
+import { renderSmokeReport, runWebhookSmoke, rowDeliveryId, rowWakeId, type SmokeResult } from "./deploy/smoke-lib.js";
 import { WEBHOOK_ID_HEADER, WEBHOOK_SIGNATURE_HEADER, WEBHOOK_TIMESTAMP_HEADER, WebhookDriver } from "../packages/core/scripts/e2e/webhook.js";
 import type { AuditWireEntry } from "../packages/core/scripts/e2e/audit-read.js";
 
@@ -25,6 +25,8 @@ interface StubOpts {
   readonly fire?: "fired" | "declined" | "none";
   readonly reply?: boolean;
   readonly replySurface?: string;
+  readonly fireWakeId?: string | null;
+  readonly replyWakeId?: string | null;
   readonly fireUnsigned?: boolean;
   readonly auditStatus?: number;
   readonly decoys?: readonly AuditWireEntry[];
@@ -48,7 +50,11 @@ function row(action: string, over: Partial<AuditWireEntry> & { detail?: Record<s
   };
 }
 
+const WAKE = "wake-0f3a2b19";
+
 function makeStub(opts: StubOpts = {}): Stub {
+  const fireWake = opts.fireWakeId === undefined ? WAKE : opts.fireWakeId;
+  const replyWake = opts.replyWakeId === undefined ? fireWake : opts.replyWakeId;
   const rows: AuditWireEntry[] = [...(opts.decoys ?? [])];
   const signedHeaders: Record<string, string>[] = [];
   const unsignedHeaders: Record<string, string>[] = [];
@@ -62,7 +68,12 @@ function makeStub(opts: StubOpts = {}): Stub {
         if ((opts.fire ?? "fired") !== "none") {
           rows.push(
             row(opts.fire === "declined" ? "webhook.declined" : "webhook.fired", {
-              detail: { hookId: HOOK, deliveryId, ...(opts.fire === "declined" ? { reason: "over the spend cap" } : {}) },
+              detail: {
+                hookId: HOOK,
+                deliveryId,
+                ...(opts.fire === "declined" ? { reason: "over the spend cap" } : {}),
+                ...(fireWake === null ? {} : { wakeId: fireWake }),
+              },
             }),
           );
         }
@@ -70,7 +81,7 @@ function makeStub(opts: StubOpts = {}): Stub {
           rows.push(
             row("reply.post", {
               ...(opts.replySurface !== undefined ? { surface: opts.replySurface } : {}),
-              detail: { route: "terminal", chars: 42, sessionId: "sess-smoke" },
+              detail: { route: "terminal", chars: 42, sessionId: "sess-smoke", ...(replyWake === null ? {} : { wakeId: replyWake }) },
             }),
           );
         }
@@ -126,6 +137,8 @@ await check("a healthy deployment passes every deterministic gate, and each is p
   assert.equal(gate(result, "unsigned webhook POST is refused").pass, true);
   assert.equal(gate(result, "leaves NO audit trace").pass, true);
   assert.equal(result.gates.length, 6, "the ladder is exactly six gates — a dropped rung is a silent coverage loss");
+  assert.match(gate(result, "reply choke point").label, /carries THIS fire's wake id/);
+  assert.match(gate(result, "reply choke point").detail, new RegExp(`wake ${WAKE}`));
 });
 
 await check("the signed POST carries all three scheme headers; the unsigned one carries ONLY the id", async () => {
@@ -170,13 +183,49 @@ await check("RED 2b — a fire with no reply.post row fails the choke-point gate
   assert.equal(gate(result, "audits OUR delivery").pass, true);
   assert.equal(gate(result, "FIRED rather than being declined").pass, true);
   assert.equal(gate(result, "reply choke point").pass, false);
-  assert.match(gate(result, "reply choke point").detail, /no reply\.post row for surface/);
+  assert.match(gate(result, "reply choke point").detail, /no reply\.post row carrying wakeId/);
 });
 
 await check("RED 2c — a reply on a DIFFERENT surface does not satisfy the choke-point gate", async () => {
   const result = await smoke({ replySurface: "C_SOME_OTHER_CHANNEL" });
   assert.equal(result.ok, false);
   assert.equal(gate(result, "reply choke point").pass, false);
+});
+
+await check("RED 2d — a reply on the right surface but from ANOTHER wake does NOT satisfy the gate", async () => {
+  const result = await smoke({ replyWakeId: "wake-someone-elses-turn" });
+  assert.equal(result.ok, false, "another turn's reply in the same channel must not fake a green");
+  assert.equal(gate(result, "audits OUR delivery").pass, true, "the fire itself was ours — the red is the REPLY's join");
+  assert.equal(gate(result, "reply choke point").pass, false);
+  assert.match(gate(result, "reply choke point").detail, new RegExp(`no reply\\.post row carrying wakeId ${WAKE}`));
+});
+
+await check("RED 2e — a reply carrying NO wake id does not satisfy the exact join either", async () => {
+  const result = await smoke({ replyWakeId: null });
+  assert.equal(result.ok, false);
+  assert.equal(gate(result, "reply choke point").pass, false);
+});
+
+await check("the exact join survives a window FULL of other replies — it picks ours out", async () => {
+  const decoys = [
+    row("reply.post", { detail: { route: "terminal", chars: 9, wakeId: "wake-another-turn" } }),
+    row("reply.post", { detail: { route: "bridge", chars: 3 } }),
+  ];
+  const result = await smoke({ decoys });
+  assert.equal(result.ok, true, `expected ok; gates: ${JSON.stringify(result.gates)}`);
+  assert.equal(gate(result, "reply choke point").pass, true);
+  assert.match(gate(result, "reply choke point").detail, new RegExp(`wake ${WAKE}`));
+});
+
+await check("a NATIVE fire (no wake id on the fired row) degrades the gate and RENAMES it to say so", async () => {
+  const result = await smoke({ fireWakeId: null, replyWakeId: null });
+  assert.equal(result.ok, true, `expected ok; gates: ${JSON.stringify(result.gates)}`);
+  const g = gate(result, "reply choke point");
+  assert.equal(g.pass, true);
+  assert.match(g.label, /SURFACE\+TIME window, not an exact join/);
+  assert.doesNotMatch(g.label, /carries THIS fire's wake id/, "a degraded join must never wear the exact join's label");
+  const other = await smoke({ fireWakeId: null, replyWakeId: null, replySurface: "C_SOME_OTHER_CHANNEL" });
+  assert.equal(gate(other, "reply choke point").pass, false);
 });
 
 await check("a delivery that reaches the hook but is DECLINED reds with the reason, not as a missing row", async () => {
@@ -226,7 +275,16 @@ await check("an unreadable audit route THROWS rather than reporting a green or a
 await check("rowDeliveryId reads a string id and refuses a non-string one", () => {
   assert.equal(rowDeliveryId(row("webhook.fired", { detail: { deliveryId: "abc" } })), "abc");
   assert.equal(rowDeliveryId(row("webhook.fired", { detail: { deliveryId: 7 } })), undefined);
+  assert.equal(rowDeliveryId(row("webhook.fired", { detail: { deliveryId: "" } })), undefined, "a BLANK id is absent, never an id that matches another blank");
   assert.equal(rowDeliveryId(row("webhook.fired")), undefined);
+});
+
+await check("rowWakeId reads the reply join the same way, and refuses a blank or non-string one", () => {
+  assert.equal(rowWakeId(row("reply.post", { detail: { wakeId: "w-1" } })), "w-1");
+  assert.equal(rowWakeId(row("reply.post", { detail: { wakeId: 7 } })), undefined);
+  assert.equal(rowWakeId(row("reply.post", { detail: { wakeId: "" } })), undefined);
+  assert.equal(rowWakeId(row("reply.post")), undefined);
+  assert.equal(rowWakeId(row("reply.post", { detail: { deliveryId: "d-1" } })), undefined, "the two joins never read each other's field");
 });
 
 await check("renderSmokeReport names the rollback checklist on a red and never on a green", async () => {

@@ -435,12 +435,14 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
   ok(isThreadSeatWindowToken(wt.token), "webhook: a thread-seat token");
   const wres = await resolveAnswerableReplyTarget(store, ORG, wt.wakeId, wt.token, "turn-w", wt.wakeId);
   ok(wres.ok, "webhook/ANSWERABLE: the fire's wake resolves through the unified reply fence");
+  ok(res.wakeId === wt.wakeId, "webhook/JOIN: the fire returns the SAME wake id the window registered — the handle the audit row carries");
 
   overrideSettingsForTest({ delegation: { oneshotAgent: false } });
   const off = captureReceive();
-  await fireWebhook(hook, JSON.stringify({ status: "ok" }), { to: off.to, confirmInternal: async () => true });
+  const offRes = await fireWebhook(hook, JSON.stringify({ status: "ok" }), { to: off.to, confirmInternal: async () => true });
   ok(off.seen.length === 1 && !off.seen[0].unified, "webhook/flag-off: byte-identical native fire");
   ok(off.seen[0].target["channelId"] === CHAN, "webhook/flag-off: the native target is unchanged");
+  ok(offRes.fired === true && offRes.wakeId === undefined, "webhook/flag-off: a NATIVE fire reports NO wake id — nothing carries it to the reply, so there is no join to claim");
 
   const dmHook = defineWebhook({
     id: "dm-hook",

@@ -62,9 +62,17 @@ async function pollForRow(
   }
 }
 
+function detailString(row: AuditWireEntry, key: string): string | undefined {
+  const v = row.detail?.[key];
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
 export function rowDeliveryId(row: AuditWireEntry): string | undefined {
-  const id = row.detail?.deliveryId;
-  return typeof id === "string" ? id : undefined;
+  return detailString(row, "deliveryId");
+}
+
+export function rowWakeId(row: AuditWireEntry): string | undefined {
+  return detailString(row, "wakeId");
 }
 
 export async function runWebhookSmoke(deps: SmokeDeps): Promise<SmokeResult> {
@@ -121,19 +129,25 @@ export async function runWebhookSmoke(deps: SmokeDeps): Promise<SmokeResult> {
   if (positiveOk && fired) {
     const surface = fired.surface;
     const firedTs = fired.ts;
+    const fireWake = rowWakeId(fired);
     const reply = await pollForRow(
       deps,
       firedTs,
       ["reply.post"],
-      (rows) => rows.find((r) => r.surface === surface && r.ts >= firedTs),
+      (rows) => rows.find((r) => r.surface === surface && r.ts >= firedTs && (fireWake === undefined || rowWakeId(r) === fireWake)),
       replyTimeoutMs,
     );
     positiveOk = gate(
-      "the fire reaches the reply choke point (a reply.post row lands on the hook's target surface)",
+      fireWake === undefined
+        ? "the fire reaches the reply choke point (a reply.post row lands on the hook's target surface — SURFACE+TIME window, not an exact join: this fire carried no wake id)"
+        : "the fire reaches the reply choke point (a reply.post row carries THIS fire's wake id)",
       reply !== undefined,
       reply
-        ? `reply.post at ${reply.ts}, route ${String(reply.detail?.route)}, ${String(reply.detail?.chars)} chars, session ${String(reply.detail?.sessionId)}`
-        : `no reply.post row for surface ${surface ?? "-"} at/after ${firedTs} within ${replyTimeoutMs}ms`,
+        ? `reply.post at ${reply.ts}, route ${String(reply.detail?.route)}, ${String(reply.detail?.chars)} chars, session ${String(reply.detail?.sessionId)}` +
+            (fireWake === undefined ? "" : `, wake ${fireWake}`)
+        : fireWake === undefined
+          ? `no reply.post row for surface ${surface ?? "-"} at/after ${firedTs} within ${replyTimeoutMs}ms`
+          : `no reply.post row carrying wakeId ${fireWake} on surface ${surface ?? "-"} at/after ${firedTs} within ${replyTimeoutMs}ms`,
     );
   }
 

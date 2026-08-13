@@ -138,6 +138,7 @@ async function fire(h: FusedWebhookHook, facts: SlackFacts | "no-supplier" | "th
     "vocabulary: the route still maps a non-fire onto the EXISTING `webhook.declined` action and a fire onto `webhook.fired`",
   );
   ok(/result\?\.reason\s*\?\s*\{\s*reason:\s*result\.reason\s*\}/.test(routeSrc), "vocabulary: …and still carries the decline's reason into that row's detail");
+  ok(/result\?\.wakeId\s*\?\s*\{\s*wakeId:\s*result\.wakeId\s*\}/.test(routeSrc), "join: the fired/declined row carries the FIRE's wake id — the handle `reply.post` is joined on (OPE-460)");
 
   const actions = new Set(
     [routeSrc, dispatchSrc, readFileSync(join(REPO, "packages/core/agent/webhooks/reject-audit.ts"), "utf8")].flatMap((s) =>
