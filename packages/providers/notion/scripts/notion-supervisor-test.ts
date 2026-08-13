@@ -213,7 +213,7 @@ const AUTH: OpenEverywhereNotionAuth = { authenticator: "notion", principalId: A
 const SURFACE = `notion/ws-1/${PAGE}`;
 
 function dispatch(over: Partial<NotionSupervisorDispatch> = {}): NotionSupervisorDispatch {
-  return { surfaceKey: SURFACE, addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, workspaceId: "ws-1", auth: AUTH, trigger, threadComments: siblings, ...over };
+  return { surfaceKey: SURFACE, credentialId: "channel-key", addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, workspaceId: "ws-1", auth: AUTH, trigger, threadComments: siblings, ...over };
 }
 
 interface WakeCapture { token: string; message: string; context: readonly string[]; state: { discussionId: string | null; pageId: string | null; workspaceId: string | null }; window?: UnifiedWindowWake }

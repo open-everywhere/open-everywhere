@@ -1,6 +1,7 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { readNotionPage, resolveBlockOwningPage, resolveNotionApiKey } from "../channels/notion-api.js";
+import { notionCallerCredential } from "../channels/notion-credentials.js";
 import { assertNotionPageAllowed, assertNotionPageAllowedOrResolveBlock } from "../channels/notion-scope.js";
 import {
   ingestUntrustedModelOutput,
@@ -42,7 +43,7 @@ export const readNotionPageEntry = defineTool({
           const requestedPage = input.page ?? bindFrom(ctx2 as BindableContext).surface;
           if (!requestedPage) throw new Error("No Notion page id available for this session — pass `page` explicitly.");
           const domains = getConfig().loadDomains();
-          const apiKey = await resolveNotionApiKey();
+          const apiKey = await resolveNotionApiKey(notionCallerCredential(ctx2 as BindableContext, domains));
           let page: string;
           if (apiKey) {
             page = await assertNotionPageAllowedOrResolveBlock(ctx2 as BindableContext, requestedPage, domains, (id) => resolveBlockOwningPage(id, { apiKey }));

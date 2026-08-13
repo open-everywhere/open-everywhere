@@ -170,6 +170,7 @@ export interface NotionSupervisorDeps {
 
 export interface NotionSupervisorDispatch {
   readonly surfaceKey: string;
+  readonly credentialId: string;
   readonly addressing: Exclude<NotionAddressing, "drop">;
   readonly pageId: string;
   readonly discussionId: string;

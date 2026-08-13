@@ -186,9 +186,10 @@ function normalize(body: string): NormalizedEvent | null {
     const body = structural({ type });
     const sig = "sha256=" + createHmac("sha256", secret).update(body, "utf8").digest("hex");
     const outcome = await handleNotionDelivery(body, sig, {
-      secret,
+      signingKeys: [{ credentialId: "channel-key", secret }],
       allowUnverified: false,
-      apiKey: "key",
+      apiKeyFor: async () => "key",
+      credentialForPage: () => undefined,
       resolveBotUserId: async () => "bot",
       ambientEnabled: () => true,
       dispatch: async () => {
@@ -374,9 +375,10 @@ function normalize(body: string): NormalizedEvent | null {
 {
   const body = structural();
   const hatch = await handleNotionDelivery(body, null, {
-    secret: undefined,
+    signingKeys: [{ credentialId: "channel-key", secret: undefined }],
     allowUnverified: true,
-    apiKey: "key",
+    apiKeyFor: async () => "key",
+    credentialForPage: () => undefined,
     resolveBotUserId: async () => "bot",
     ambientEnabled: () => true,
     dispatch: async () => {},
@@ -385,9 +387,10 @@ function normalize(body: string): NormalizedEvent | null {
   ok(hatch.verified === false, "🔴 …but it is NOT `verified`, so notion.ts never hands it to admitTrigger — a dev hatch cannot fire a routine");
 
   const rejected = await handleNotionDelivery(body, "sha256=deadbeef", {
-    secret: "tok",
+    signingKeys: [{ credentialId: "channel-key", secret: "tok" }],
     allowUnverified: false,
-    apiKey: "key",
+    apiKeyFor: async () => "key",
+    credentialForPage: () => undefined,
     resolveBotUserId: async () => "bot",
     ambientEnabled: () => true,
     dispatch: async () => {},
@@ -395,9 +398,10 @@ function normalize(body: string): NormalizedEvent | null {
   ok(rejected.action === "rejected" && rejected.verified === false, "a bad signature is rejected and never verified");
 
   const handshake = await handleNotionDelivery(JSON.stringify({ verification_token: "secret_x" }), null, {
-    secret: "tok",
+    signingKeys: [{ credentialId: "channel-key", secret: "tok" }],
     allowUnverified: false,
-    apiKey: "key",
+    apiKeyFor: async () => "key",
+    credentialForPage: () => undefined,
     resolveBotUserId: async () => "bot",
     ambientEnabled: () => true,
     dispatch: async () => {},

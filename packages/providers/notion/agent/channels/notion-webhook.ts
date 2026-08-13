@@ -1,5 +1,5 @@
 import {
-  gateNotionDelivery,
+  gateNotionDeliveryAcross,
   parseVerificationHandshake,
   notionEventType,
   commentIdFromEvent,
@@ -10,6 +10,7 @@ import {
   type FetchLike,
   type NotionWebhookEvent,
   type NotionComment,
+  type NotionSigningKey,
 } from "./notion-api.js";
 import { buildNotionAuth, notionSurfaceKey } from "./notion-identity.js";
 import { classifyNotionComment, type NotionSupervisorDispatch, type NotionWakeMessage } from "./notion-supervisor.js";
@@ -30,11 +31,12 @@ export interface NotionSessionState {
 }
 
 export interface HandleNotionDeliveryDeps {
-  readonly secret: string | undefined;
+  readonly signingKeys: readonly NotionSigningKey[];
   readonly allowUnverified: boolean;
-  readonly apiKey: string | undefined;
-  readonly resolveBotUserId: () => Promise<string | undefined>;
-  readonly resolveBotName?: () => Promise<string | undefined>;
+  readonly apiKeyFor: (credentialId: string) => Promise<string | undefined>;
+  readonly credentialForPage: (workspaceId: string | undefined, pageId: string | undefined) => string | undefined;
+  readonly resolveBotUserId: (credentialId: string) => Promise<string | undefined>;
+  readonly resolveBotName?: (credentialId: string) => Promise<string | undefined>;
   readonly ambientEnabled: (surfaceKey: string) => boolean;
   readonly engagementTier?: (surfaceKey: string) => "aggressive" | "neutral" | "reserved";
   readonly fetch?: FetchLike;
@@ -60,6 +62,7 @@ export interface NotionDeliveryOutcome {
     | "error";
   readonly detail?: string;
   readonly verified: boolean;
+  readonly credentialId?: string;
 }
 
 export async function handleNotionDelivery(
@@ -67,65 +70,74 @@ export async function handleNotionDelivery(
   signatureHeader: string | null,
   deps: HandleNotionDeliveryDeps,
 ): Promise<NotionDeliveryOutcome> {
-  const out = await deliver(rawBody, signatureHeader, deps);
-  return { ...out, verified: Boolean(deps.secret) && out.action !== "handshake" && out.action !== "rejected" };
+  const { signed, ...out } = await deliver(rawBody, signatureHeader, deps);
+  return { ...out, verified: signed === true && out.action !== "handshake" && out.action !== "rejected" };
 }
+
+type DeliverOutcome = Omit<NotionDeliveryOutcome, "verified"> & { readonly signed?: boolean };
 
 async function deliver(
   rawBody: string,
   signatureHeader: string | null,
   deps: HandleNotionDeliveryDeps,
-): Promise<Omit<NotionDeliveryOutcome, "verified">> {
+): Promise<DeliverOutcome> {
   const handshake = parseVerificationHandshake(rawBody);
   if (handshake) {
     deps.onHandshakeToken?.(handshake);
     return { status: 200, body: "ok", action: "handshake" };
   }
 
-  const rejection = gateNotionDelivery(deps.secret, rawBody, signatureHeader, deps.allowUnverified);
-  if (rejection) return { status: 401, body: rejection, action: "rejected", detail: rejection };
+  const gate = gateNotionDeliveryAcross(deps.signingKeys, rawBody, signatureHeader, deps.allowUnverified);
+  if (gate.rejection) return { status: 401, body: gate.rejection, action: "rejected", detail: gate.rejection };
+  const signed = gate.verified;
 
   let ev: NotionWebhookEvent;
   try {
     ev = JSON.parse(rawBody) as NotionWebhookEvent;
   } catch {
-    return { status: 400, body: "bad json", action: "bad-json" };
+    return { status: 400, body: "bad json", action: "bad-json", signed };
   }
 
   if (notionEventType(ev) !== "comment.created") {
-    return { status: 200, body: "ignored", action: "ignored", detail: notionEventType(ev) };
+    return { status: 200, body: "ignored", action: "ignored", detail: notionEventType(ev), signed };
   }
   const commentId = commentIdFromEvent(ev);
-  if (!commentId) return { status: 200, body: "ignored", action: "ignored", detail: "no comment id" };
+  if (!commentId) return { status: 200, body: "ignored", action: "ignored", detail: "no comment id", signed };
 
-  if (!deps.apiKey) return { status: 200, body: "ok", action: "no-api-key", detail: "NOTION_CHANNEL_API_KEY not set" };
-  const apiKey = deps.apiKey;
+  const eventPageId = pageIdFromEvent(ev);
+  const credentialId = deps.credentialForPage(ev.workspace_id, eventPageId) ?? gate.credentialId ?? deps.signingKeys[0]?.credentialId;
+  if (!credentialId) return { status: 200, body: "ok", action: "no-api-key", detail: "no Notion integration is configured", signed };
 
-  const botUserId = await deps.resolveBotUserId();
-  const botName = deps.resolveBotName ? await deps.resolveBotName() : undefined;
+  const apiKey = await deps.apiKeyFor(credentialId);
+  if (!apiKey) {
+    return { status: 200, body: "ok", action: "no-api-key", detail: `no value stored for notion credential "${credentialId}"`, signed, credentialId };
+  }
+
+  const botUserId = await deps.resolveBotUserId(credentialId);
+  const botName = deps.resolveBotName ? await deps.resolveBotName(credentialId) : undefined;
 
   let comment: NotionComment;
   try {
     comment = await retrieveComment(commentId, { apiKey, fetch: deps.fetch, version: deps.version });
   } catch (err) {
-    return { status: 200, body: "ok", action: "error", detail: `retrieveComment: ${String(err)}` };
+    return { status: 200, body: "ok", action: "error", detail: `retrieveComment: ${String(err)}`, signed, credentialId };
   }
 
-  const pageId = pageIdFromEvent(ev) ?? comment.parent?.page_id;
+  const pageId = eventPageId ?? comment.parent?.page_id;
   const discussionId = comment.discussion_id ?? "";
   const workspaceId = ev.workspace_id;
   const surface = pageId ?? (discussionId || undefined) ?? commentId;
   const surfaceKey = notionSurfaceKey(workspaceId, surface);
 
   if (!deps.ambientEnabled(surfaceKey)) {
-    return { status: 200, body: "ok", action: "ambient-disabled", detail: surfaceKey };
+    return { status: 200, body: "ok", action: "ambient-disabled", detail: surfaceKey, signed, credentialId };
   }
 
   const classification = classifyNotionComment(comment, botUserId, botName);
   if (classification.addressing === "drop") {
     const reason = classification.reason;
     const action = reason.startsWith("self") ? "skipped-self" : reason.startsWith("bot") ? "skipped-bot" : "dropped";
-    return { status: 200, body: "ok", action, detail: reason };
+    return { status: 200, body: "ok", action, detail: reason, signed, credentialId };
   }
 
   const triggerText = richTextToPlainText(comment.rich_text);
@@ -162,6 +174,7 @@ async function deliver(
 
   await deps.dispatch({
     surfaceKey,
+    credentialId,
     addressing: classification.addressing,
     pageId: pageId ?? "",
     discussionId,
@@ -172,7 +185,7 @@ async function deliver(
     engagementTier,
   });
 
-  return { status: 200, body: "ok", action: "dispatched", detail: classification.addressing };
+  return { status: 200, body: "ok", action: "dispatched", detail: classification.addressing, signed, credentialId };
 }
 
 async function loadThreadSiblings(

@@ -8,7 +8,7 @@ import { outboundKey, postOnce } from "../operational/post-once.js";
 export type ReplyTarget =
   | { readonly platform: "slack"; readonly channelId: string; readonly threadTs?: string }
   | { readonly platform: "discord"; readonly channelId: string }
-  | { readonly platform: "notion"; readonly discussionId: string }
+  | { readonly platform: "notion"; readonly discussionId: string; readonly pageId?: string; readonly workspaceId?: string }
   | { readonly platform: "teams"; readonly serviceUrl: string; readonly conversationId: string; readonly replyToActivityId?: string }
   | { readonly platform: "linear"; readonly agentSessionId: string };
 

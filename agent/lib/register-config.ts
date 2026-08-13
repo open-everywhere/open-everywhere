@@ -3,6 +3,7 @@ import { registerSettings } from "@open-everywhere/core/agent/settings/settings.
 import { SETTINGS_OVERRIDES } from "../settings/settings.js";
 import { setRegisteredProviders } from "@open-everywhere/core/agent/access/providers.js";
 import { assertRoutesWithinPolicy } from "@open-everywhere/core/agent/model/policy.js";
+import { assertDomainCredentialsResolvable } from "@open-everywhere/core/agent/access/domain-credentials.js";
 import { assertWindowSourcesVouched, assertGovernanceDomains, assertComplianceDomains, assertReportChannels } from "@open-everywhere/core/agent/memory/domain.js";
 import { vouchedSurfaces } from "@open-everywhere/core/agent/identity/trust.js";
 import { loadBundles, loadBindings } from "../access/bundles.js";
@@ -55,3 +56,5 @@ assertGovernanceDomains(loadDomains(), vouchedSurfaces());
 assertReportChannels(loadDomains());
 
 assertComplianceDomains(loadDomains());
+
+assertDomainCredentialsResolvable(loadDomains(), loadProviders());

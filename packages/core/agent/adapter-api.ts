@@ -276,6 +276,10 @@ export type { EngagementTier, Domain, DomainVia, DomainRouting, AmbientSkip } fr
 export { auditAmbientSkip, resetAmbientSkipSightings } from "./channels/ambient-skip.js";
 export type { AmbientSkipRecord } from "./channels/ambient-skip.js";
 
+export { credentialOverrideFor, domainCredentialId, providerIntegrations } from "./access/domain-credentials.js";
+export type { DomainCredentialOverride, ProviderIntegration } from "./access/domain-credentials.js";
+export { getOperatorSecret } from "./credentials/operator-secrets.js";
+
 export { windowTopologyEnabled } from "./access/capabilities.js";
 
 export type { ContextLine } from "./channels/context-render.js";

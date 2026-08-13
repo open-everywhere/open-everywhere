@@ -465,6 +465,7 @@ const notDeps: NotionSupervisorDeps = {
 await handleNotionSupervisorDispatch(
   {
     surfaceKey: NOTION_KEY,
+    credentialId: "channel-key",
     addressing: "direct",
     pageId: "P_WINPAGE",
     discussionId: "disc-win-1",

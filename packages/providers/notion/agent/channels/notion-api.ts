@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { getSecretVia, CredentialError, findProviderCredential } from "@open-everywhere/core/agent/adapter-api.js";
+import { NOTION_CHANNEL_CREDENTIAL, NOTION_PROVIDER } from "./notion-credentials.js";
 
 export const NOTION_API_BASE = "https://api.notion.com";
 export function notionVersion(): string {
@@ -7,8 +8,8 @@ export function notionVersion(): string {
   return v && v.trim().length > 0 ? v.trim() : "2022-06-28";
 }
 
-export async function resolveNotionApiKey(): Promise<string | undefined> {
-  const cred = findProviderCredential("notion", "channel-key");
+export async function resolveNotionApiKey(credentialId: string = NOTION_CHANNEL_CREDENTIAL): Promise<string | undefined> {
+  const cred = findProviderCredential(NOTION_PROVIDER, credentialId);
   if (!cred?.secretRef) return undefined;
   try {
     const k = await getSecretVia(cred.broker, cred.secretRef);
@@ -55,6 +56,36 @@ export function gateNotionDelivery(
       : "NOTION_WEBHOOK_SECRET is not set — rejecting unverified delivery (set the verification token, or OE_ALLOW_UNVERIFIED_NOTION_WEBHOOK=1 for local dev)";
   }
   return verifyNotionSignature(secret, rawBody, signatureHeader) ? null : "invalid signature";
+}
+
+export interface NotionSigningKey {
+  readonly credentialId: string;
+  readonly secret: string | undefined;
+}
+
+export interface NotionGateVerdict {
+  readonly rejection: string | null;
+  readonly credentialId?: string;
+  readonly verified: boolean;
+}
+
+export function gateNotionDeliveryAcross(
+  keys: readonly NotionSigningKey[],
+  rawBody: string,
+  signatureHeader: string | null,
+  allowUnverified: boolean,
+): NotionGateVerdict {
+  const configured = keys.filter((k): k is NotionSigningKey & { secret: string } => typeof k.secret === "string" && k.secret.length > 0);
+  if (configured.length === 0) {
+    const rejection = gateNotionDelivery(undefined, rawBody, signatureHeader, allowUnverified);
+    return { rejection, verified: false };
+  }
+  for (const key of configured) {
+    if (verifyNotionSignature(key.secret, rawBody, signatureHeader)) {
+      return { rejection: null, credentialId: key.credentialId, verified: true };
+    }
+  }
+  return { rejection: "invalid signature", verified: false };
 }
 
 export interface NotionWebhookEvent {

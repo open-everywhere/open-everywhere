@@ -144,9 +144,10 @@ const priorComment: NotionComment = {
 const botIdFn = () => Promise.resolve<string | undefined>(BOT);
 function baseDeps(fetchImpl: FetchLike, dispatch: (d: NotionSupervisorDispatch) => Promise<void>, extra?: Partial<Parameters<typeof handleNotionDelivery>[2]>) {
   return {
-    secret: SECRET,
+    signingKeys: [{ credentialId: "channel-key", secret: SECRET }],
     allowUnverified: false,
-    apiKey: "ntn_key",
+    apiKeyFor: async () => "ntn_key" as string | undefined,
+    credentialForPage: () => undefined,
     resolveBotUserId: botIdFn,
     ambientEnabled: () => true,
     fetch: fetchImpl,
@@ -275,13 +276,13 @@ function baseDeps(fetchImpl: FetchLike, dispatch: (d: NotionSupervisorDispatch) 
 {
   const raw = commentEvent();
   let dispatched = false;
-  const out = await handleNotionDelivery(raw, null, baseDeps(makeFetch({ comment: triggerMention }), async () => { dispatched = true; }, { secret: undefined, allowUnverified: true }));
+  const out = await handleNotionDelivery(raw, null, baseDeps(makeFetch({ comment: triggerMention }), async () => { dispatched = true; }, { signingKeys: [{ credentialId: "channel-key", secret: undefined }], allowUnverified: true }));
   ok(out.action === "dispatched" && dispatched, "no secret + OE_ALLOW_UNVERIFIED_NOTION_WEBHOOK -> accepted + dispatched");
 }
 
 {
   const raw = commentEvent();
-  const out = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerMention }), async () => {}, { apiKey: undefined }));
+  const out = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerMention }), async () => {}, { apiKeyFor: async () => undefined }));
   ok(out.action === "no-api-key" && out.status === 200, "missing NOTION_API_KEY -> 200 ack, action no-api-key");
 }
 

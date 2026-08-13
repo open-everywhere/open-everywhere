@@ -2,6 +2,7 @@ import { windowTopologyEnabled } from "../access/capabilities.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 import { tenantRungRemedy } from "../access/tenant-admission.js";
 import { DM_ANCHOR_DOMAIN_PREFIX } from "../channels/window-key.js";
+import { domainCredentialProblems, type DomainCredentialOverride } from "../access/domain-credentials.js";
 import type { SessionMode } from "../access/resolver.js";
 import type { Trust } from "../identity/binding.js";
 import type { ApprovalModeConfig } from "../access/approver-chain.js";
@@ -68,6 +69,7 @@ export interface Domain {
   readonly reportChannel?: string;
   readonly requestorEntitlementChecks?: boolean;
   readonly governanceDelivery?: GovernanceDeliveryMode;
+  readonly credentials?: readonly DomainCredentialOverride[];
 }
 
 export type GovernanceDeliveryMode = "channel" | "dm-fallback";
@@ -598,6 +600,7 @@ export function assertDomainsValid(domains: readonly Domain[]): void {
         `  "${d.name}" starts with the RESERVED prefix "${DM_ANCHOR_DOMAIN_PREFIX}" — that namespace belongs to the DM delegation anchor (channels/window-key.ts dmAnchorDomain, OPE-306) and can never be a configured domain name. Rename it.`,
       );
     }
+    bad.push(...domainCredentialProblems(d));
     const hasExplicit = d.channels !== undefined || d.containers !== undefined;
     const hasMatch = d.match !== undefined;
     if (hasExplicit === hasMatch) {
