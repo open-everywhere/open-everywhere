@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import {
   defineDomain,
+  OperatorSecretNotSetError,
   registerBroker,
   registerConfig,
   resetBrokers,
@@ -16,6 +17,7 @@ import {
   notionChannelCredentialFor,
   notionChannelCredentialForSurface,
   notionIntegrations,
+  resolveNotionInboundSecret,
 } from "../agent/channels/notion-credentials.js";
 import { gateNotionDeliveryAcross, resolveNotionApiKey, type FetchLike } from "../agent/channels/notion-api.js";
 import { handleNotionDelivery } from "../agent/channels/notion-webhook.js";
@@ -157,16 +159,23 @@ function recordingFetch(seen: Seen[]): FetchLike {
   };
 }
 
-async function deliverFor(page: string, secret: string): Promise<{ seen: Seen[]; action: string; used?: string; dispatched?: string }> {
+async function deliverFor(
+  page: string,
+  secret: string | null,
+): Promise<{ seen: Seen[]; action: string; used?: string; dispatched?: string; attributes?: Record<string, string> }> {
   const seen: Seen[] = [];
   let dispatched: string | undefined;
+  let attributes: Record<string, string> | undefined;
   const body = commentEvent(page);
-  const out = await handleNotionDelivery(body, sign(secret, body), {
-    signingKeys: [
-      { credentialId: NOTION_CHANNEL_CREDENTIAL, secret: ORG_SECRET },
-      { credentialId: PAY_CRED, secret: PAY_SECRET },
-    ],
-    allowUnverified: false,
+  const out = await handleNotionDelivery(body, secret === null ? null : sign(secret, body), {
+    signingKeys:
+      secret === null
+        ? [{ credentialId: NOTION_CHANNEL_CREDENTIAL, secret: undefined }]
+        : [
+            { credentialId: NOTION_CHANNEL_CREDENTIAL, secret: ORG_SECRET },
+            { credentialId: PAY_CRED, secret: PAY_SECRET },
+          ],
+    allowUnverified: secret === null,
     apiKeyFor: (id) => resolveNotionApiKey(id),
     credentialForPage: (workspaceId, pageId) => notionChannelCredentialFor(workspaceId, pageId, DOMAINS),
     resolveBotUserId: async () => "U_BOT",
@@ -174,9 +183,16 @@ async function deliverFor(page: string, secret: string): Promise<{ seen: Seen[];
     fetch: recordingFetch(seen),
     dispatch: async (d) => {
       dispatched = d.credentialId;
+      attributes = { ...d.auth.attributes };
     },
   });
-  return { seen, action: out.action, ...(out.credentialId ? { used: out.credentialId } : {}), ...(dispatched ? { dispatched } : {}) };
+  return {
+    seen,
+    action: out.action,
+    ...(out.credentialId ? { used: out.credentialId } : {}),
+    ...(dispatched ? { dispatched } : {}),
+    ...(attributes ? { attributes } : {}),
+  };
 }
 
 {
@@ -189,7 +205,7 @@ async function deliverFor(page: string, secret: string): Promise<{ seen: Seen[];
 
   const unboundRun = await deliverFor(PAGE_SUP, ORG_SECRET);
   ok(unboundRun.action === "dispatched", "a signed comment on an UNBOUND page dispatches too");
-  ok(unboundRun.used === NOTION_CHANNEL_CREDENTIAL, "…under the ORG DEFAULT credential (the fallback rule, not a refusal)");
+  ok(unboundRun.used === NOTION_CHANNEL_CREDENTIAL, "…under the ORG credential, whose secret signed it (an unbound domain adds nothing to overrule)");
   ok(unboundRun.seen.length > 0 && unboundRun.seen.every((s) => s.auth === `Bearer ${ORG_TOKEN}`), "…and every call ran under the org token");
   ok(unboundRun.dispatched === NOTION_CHANNEL_CREDENTIAL, "…and the dispatch carries the org default (negative control on the same field)");
 
@@ -197,8 +213,16 @@ async function deliverFor(page: string, secret: string): Promise<{ seen: Seen[];
   ok(looseRun.used === PAY_CRED, "a page in NO domain runs under the integration whose secret VERIFIED the delivery");
   ok(looseRun.seen.every((s) => s.auth === `Bearer ${PAY_TOKEN}`), "…proven on the wire, not just reported");
 
-  const crossed = await deliverFor(PAGE_PAY, ORG_SECRET);
-  ok(crossed.used === PAY_CRED, "the PAGE'S DOMAIN outranks the verifying integration — one rule decides the credential everywhere");
+  const forgedBody = await deliverFor(PAGE_PAY, ORG_SECRET);
+  ok(forgedBody.used === NOTION_CHANNEL_CREDENTIAL, "🔴 a delivery VERIFIED by the org integration runs under the ORG credential even when the body names a BOUND page");
+  ok(forgedBody.seen.length > 0 && forgedBody.seen.every((s) => s.auth === `Bearer ${ORG_TOKEN}`), "…proven on the wire: no REST call reached the payments token (negative control)");
+  ok(forgedBody.dispatched === NOTION_CHANNEL_CREDENTIAL, "…and the DISPATCH carries the org credential, so the reply cannot be steered onto payments either");
+
+  ok(boundRun.used === PAY_CRED && forgedBody.used === NOTION_CHANNEL_CREDENTIAL, "the SAME page resolves DIFFERENT credentials on the two subscriptions — the sender decides, not the body");
+
+  const hatched = await deliverFor(PAGE_PAY, null);
+  ok(hatched.used === PAY_CRED, "with NO integration identified (the unverified dev hatch) the page's domain binding still decides");
+  ok(hatched.seen.length > 0 && hatched.seen.every((s) => s.auth === `Bearer ${PAY_TOKEN}`), "…and the hatch's two-step really ran under the bound token");
 }
 
 {
@@ -228,6 +252,20 @@ async function deliverFor(page: string, secret: string): Promise<{ seen: Seen[];
 
     await notionPostArm.dispatchUnified!({ platform: "notion", discussionId: "disc-3", pageId: PAGE_PAY, workspaceId: WS }, "unified reply", {});
     ok(posted.at(-1)?.auth === `Bearer ${PAY_TOKEN}`, "the UNIFIED reply arm takes the same rule");
+
+    const half = await deliverFor(PAGE_LOOSE, PAY_SECRET);
+    ok(half.used === PAY_CRED, "half-configured page: the delivery fetched under the PAYMENTS integration (the one that verified it)");
+    const carried = half.attributes?.credential_id;
+    ok(carried === PAY_CRED, "half-configured page: the delivery STOWS its credential on the auth attributes, so the reply can read it");
+
+    await notionPostArm.dispatchReply!({ platform: "notion", discussionId: "disc-half", pageId: PAGE_LOOSE, workspaceId: WS, credentialId: carried }, "the same credential answers");
+    ok(posted.at(-1)?.auth === `Bearer ${PAY_TOKEN}`, "🔴 half-configured page: the reply POSTS under the credential that FETCHED — one sentence for both directions");
+
+    await notionPostArm.dispatchReply!({ platform: "notion", discussionId: "disc-half", pageId: PAGE_LOOSE, workspaceId: WS }, "no carried credential");
+    ok(posted.at(-1)?.auth === `Bearer ${ORG_TOKEN}`, "…and with NO carried id it falls back to the org default — proving the carry is what fixes it");
+
+    await notionPostArm.dispatchUnified!({ platform: "notion", discussionId: "disc-half", pageId: PAGE_LOOSE, workspaceId: WS, credentialId: carried }, "unified, same credential", {});
+    ok(posted.at(-1)?.auth === `Bearer ${PAY_TOKEN}`, "half-configured page: the UNIFIED reply arm honours the carried credential too");
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -265,6 +303,34 @@ async function deliverFor(page: string, secret: string): Promise<{ seen: Seen[];
   ok(out.action === "no-api-key" && out.status === 200, "the delivery is ACKED (no retry storm over a config gap) and nothing dispatches");
   assert.equal(seen.length, 0, "no REST call was attempted at all — least of all one under the org token");
   passed++;
+}
+
+{
+  const logged: string[] = [];
+  const log = (m: string) => void logged.push(m);
+  const throws = (err: unknown) => async () => {
+    throw err;
+  };
+
+  const notSet = new OperatorSecretNotSetError(`secret "NOTION_WEBHOOK_SECRET_PAYMENTS" is not set: no row in the db credential store for org "default", and no environment variable of that name.`);
+  ok((await resolveNotionInboundSecret("NOTION_WEBHOOK_SECRET_PAYMENTS", throws(notSet), log)) === undefined, "an unconfigured integration contributes NO key");
+  ok(logged.length === 0, "…and says NOTHING (an integration nobody configured is not news)");
+
+  const unarmed = new Error(
+    `secret "NOTION_WEBHOOK_SECRET" is stored in the db credential store but OE_CREDENTIAL_ENCRYPTION_KEY is not set (or is malformed) — refusing to fall back to the environment variable of the same name, which may be a retired value (fail closed).`,
+  );
+  ok(unarmed.message.includes("is not set"), "the unarmed-key fault DOES match the old substring test (this is the collision that hid it)");
+  ok((await resolveNotionInboundSecret("NOTION_WEBHOOK_SECRET", throws(unarmed), log)) === undefined, "a broken store still yields no key (the gate refuses the delivery)");
+  ok(logged.length === 1, "🔴 …but it is REPORTED — a broken credential store never 401s every delivery in silence");
+  ok(logged[0]!.includes("NOTION_WEBHOOK_SECRET") && logged[0]!.includes("401"), "…naming the SECRET NAME and the consequence");
+  ok(!logged.join("\n").includes("channel-key"), "…and never a credential value or ref (negative control)");
+
+  ok((await resolveNotionInboundSecret("NOTION_WEBHOOK_SECRET", throws(new Error("ECONNREFUSED")), log)) === undefined, "an unreachable store yields no key");
+  ok(logged.length === 2, "…and is reported (only OperatorSecretNotSetError buys silence)");
+
+  ok((await resolveNotionInboundSecret("NOTION_WEBHOOK_SECRET", async () => ({ value: ORG_SECRET }), log)) === ORG_SECRET, "a stored key resolves");
+  ok((await resolveNotionInboundSecret("NOTION_WEBHOOK_SECRET", async () => ({ value: "" }), log)) === undefined, "an EMPTY stored value is no key at all");
+  ok(logged.length === 2, "…and neither happy arm logs");
 }
 
 resetRegisteredProviders();

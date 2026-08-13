@@ -20,6 +20,7 @@ export interface NotionReplyTarget {
   readonly discussionId: string;
   readonly pageId?: string;
   readonly workspaceId?: string;
+  readonly credentialId?: string;
 }
 
 export interface NotionSessionState {
@@ -105,7 +106,7 @@ async function deliver(
   if (!commentId) return { status: 200, body: "ignored", action: "ignored", detail: "no comment id", signed };
 
   const eventPageId = pageIdFromEvent(ev);
-  const credentialId = deps.credentialForPage(ev.workspace_id, eventPageId) ?? gate.credentialId ?? deps.signingKeys[0]?.credentialId;
+  const credentialId = gate.credentialId ?? deps.credentialForPage(ev.workspace_id, eventPageId) ?? deps.signingKeys[0]?.credentialId;
   if (!credentialId) return { status: 200, body: "ok", action: "no-api-key", detail: "no Notion integration is configured", signed };
 
   const apiKey = await deps.apiKeyFor(credentialId);
@@ -159,6 +160,7 @@ async function deliver(
     discussionId: discussionId || undefined,
     commentId,
     principalId: comment.created_by?.id,
+    credentialId,
   });
   if (classification.addressing === "direct") {
     auth.attributes[OE_ADDRESSED_ATTR] = "1";

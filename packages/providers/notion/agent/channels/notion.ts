@@ -28,7 +28,7 @@ import {
   type Domain,
   type SupervisorGrain,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { notionChannelCredentialFor, notionIntegrations, NOTION_CHANNEL_CREDENTIAL } from "./notion-credentials.js";
+import { notionChannelCredentialFor, notionIntegrations, resolveNotionInboundSecret, NOTION_CHANNEL_CREDENTIAL } from "./notion-credentials.js";
 import { NOTION_EVENT_SOURCE, notionEventDeliveryId } from "./notion-event-normalizer.js";
 import { createCommentReply, resolveNotionApiKey, retrieveBotUser } from "./notion-api.js";
 import { notionWorkspaceKey } from "./notion-identity.js";
@@ -87,15 +87,8 @@ function notionCredentialForPage(workspaceId: string | undefined, pageId: string
   return notionChannelCredentialFor(workspaceId, pageId, notionDomains()) ?? NOTION_CHANNEL_CREDENTIAL;
 }
 
-async function notionInboundSecret(name: string): Promise<string | undefined> {
-  try {
-    const resolved = await getOperatorSecret(name);
-    return resolved.value.length > 0 ? resolved.value : undefined;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (!message.includes("is not set")) log(`inbound signing key "${name}" did not resolve — deliveries signed with it will 401: ${message}`);
-    return undefined;
-  }
+function notionInboundSecret(name: string): Promise<string | undefined> {
+  return resolveNotionInboundSecret(name, getOperatorSecret, log);
 }
 
 function notionAmbientEnabled(surfaceKey: string): boolean {
@@ -183,8 +176,16 @@ export default defineChannel<NotionState, { state: NotionState }>({
       const rawBody = await req.text();
       const signature = req.headers.get("x-notion-signature");
       const integrations = notionIntegrations(notionDomains());
+      const secrets = new Map<string, Promise<string | undefined>>();
+      const inboundSecretFor = (name: string): Promise<string | undefined> => {
+        const hit = secrets.get(name);
+        if (hit) return hit;
+        const resolved = notionInboundSecret(name);
+        secrets.set(name, resolved);
+        return resolved;
+      };
       const signingKeys = await Promise.all(
-        integrations.map(async (i) => ({ credentialId: i.credentialId, secret: await notionInboundSecret(i.inboundSecret) })),
+        integrations.map(async (i) => ({ credentialId: i.credentialId, secret: await inboundSecretFor(i.inboundSecret) })),
       );
       const apiKeys = new Map<string, Promise<string | undefined>>();
       const apiKeyFor = (credentialId: string): Promise<string | undefined> => {
@@ -209,6 +210,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
               discussionId: d.discussionId,
               pageId: d.pageId || undefined,
               workspaceId: d.workspaceId,
+              credentialId: d.credentialId,
             })
           : undefined;
         const wakeCtx = { channel: { kind: "notion" }, session: { auth: { current: d.auth as unknown as { attributes?: Readonly<Record<string, string>> } } } };
@@ -324,7 +326,12 @@ export default defineChannel<NotionState, { state: NotionState }>({
       const s = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 ? v : undefined);
       const discussionId = s(attrs?.discussion_id);
       channel.state.oeReplyTarget = discussionId
-        ? ({ discussionId, pageId: s(attrs?.page_id), workspaceId: s(attrs?.workspace_id) } satisfies NotionReplyTarget)
+        ? ({
+            discussionId,
+            pageId: s(attrs?.page_id),
+            workspaceId: s(attrs?.workspace_id),
+            credentialId: s(attrs?.credential_id),
+          } satisfies NotionReplyTarget)
         : undefined;
     },
     async "message.completed"(data, channel, ctx) {
@@ -350,7 +357,8 @@ export default defineChannel<NotionState, { state: NotionState }>({
         droppedAnchor: { discussionId: discussionId ?? null },
         repliedAnchor: { discussionId },
         post: async (text) => {
-          const credentialId = notionCredentialForPage(workspace === "unknown" ? undefined : workspace, target?.pageId ?? channel.state.pageId ?? undefined);
+          const credentialId =
+            target?.credentialId ?? notionCredentialForPage(workspace === "unknown" ? undefined : workspace, target?.pageId ?? channel.state.pageId ?? undefined);
           const apiKey = await resolveNotionApiKey(credentialId);
           if (!apiKey) throw new Error(`reply couldn't post to Notion — no value stored for notion credential "${credentialId}" (\`oe secret set\` its secretRef; see agent/access/providers.ts).`);
           await postOnce({

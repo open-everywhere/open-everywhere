@@ -170,6 +170,8 @@ export interface ResolvedOperatorSecret {
   readonly source: OperatorSecretSource;
 }
 
+export class OperatorSecretNotSetError extends CredentialError {}
+
 let envFallbackWarned = new Set<string>();
 
 export function resetOperatorSecretWarnings(): void {
@@ -209,7 +211,7 @@ export async function getOperatorSecret(name: string, opts: OperatorSecretOption
     return { value: fromEnv, source: "env" };
   }
 
-  throw new CredentialError(
+  throw new OperatorSecretNotSetError(
     `secret "${name}" is not set: no row in the db credential store for org "${org}", and no environment variable of that name. ` +
       `Store it with \`oe secret set ${name}\` (value on stdin).`,
   );

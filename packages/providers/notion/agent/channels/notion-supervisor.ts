@@ -50,6 +50,7 @@ export interface NotionSingleWindowTarget {
   readonly discussionId: string;
   readonly pageId?: string;
   readonly workspaceId?: string | null;
+  readonly credentialId?: string;
 }
 
 export function planNotionSingleWindow(
@@ -69,6 +70,7 @@ export function planNotionSingleWindow(
       discussionId: target.discussionId,
       ...(target.pageId ? { pageId: target.pageId } : {}),
       ...(target.workspaceId ? { workspaceId: target.workspaceId } : {}),
+      ...(target.credentialId ? { credentialId: target.credentialId } : {}),
     },
     ...(policy.addressing !== undefined ? { addressing: policy.addressing } : {}),
   };

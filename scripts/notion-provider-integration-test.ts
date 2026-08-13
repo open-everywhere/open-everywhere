@@ -63,7 +63,7 @@ function restoreHttp(): void {
   globalThis.fetch = realFetch;
 }
 
-function notionCtx(discussionId: string | undefined) {
+function notionCtx(discussionId: string | undefined, credentialId?: string) {
   return {
     channel: { kind: "notion" },
     session: {
@@ -73,6 +73,7 @@ function notionCtx(discussionId: string | undefined) {
             workspace_id: "W1",
             page_id: "P1",
             ...(discussionId ? { discussion_id: discussionId } : {}),
+            ...(credentialId ? { credential_id: credentialId } : {}),
           },
           principalId: "U3",
           principalType: "notion-user",
@@ -106,6 +107,11 @@ ok(slackArmed !== null && slackArmed.description === notionArmed!.description, "
   const target = resolveReplyTarget(notionCtx("disc-1") as never);
   ok(target?.platform === "notion" && (target as { discussionId: string }).discussionId === "disc-1", "resolveReplyTarget: notion carries the discussion id (the reply anchor)");
   ok(resolveReplyTarget(notionCtx(undefined) as never) === null, "resolveReplyTarget: a discussion-less notion ctx → null (no anchor to post to)");
+
+  const carried = resolveReplyTarget(notionCtx("disc-1", "payments-channel-key") as never) as { credentialId?: string } | null;
+  ok(carried?.credentialId === "payments-channel-key", "resolveReplyTarget: notion carries the DELIVERY's credential onto the reply target");
+  const uncarried = resolveReplyTarget(notionCtx("disc-1") as never) as { credentialId?: string } | null;
+  ok(uncarried !== null && uncarried.credentialId === undefined, "resolveReplyTarget: a delivery that stowed no credential leaves it absent (negative control — the arm then falls back to the page's domain binding)");
 }
 
 calls = [];

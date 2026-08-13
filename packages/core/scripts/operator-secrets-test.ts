@@ -144,6 +144,11 @@ function cli(stdin = "") {
     (e) => e instanceof CredentialError && /oe secret set/.test((e as Error).message),
     "resolve: neither home ⇒ a CredentialError that names the fix",
   );
+  await assert.rejects(
+    () => secrets.getOperatorSecret("OE_ABSENT_PROBE"),
+    (e) => e instanceof secrets.OperatorSecretNotSetError,
+    "🔴 resolve: 'nobody configured this name' throws OperatorSecretNotSetError — the class a caller may treat as silence",
+  );
 
   const saved = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
   delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
@@ -158,6 +163,12 @@ function cli(stdin = "") {
     (e) => e instanceof CredentialError && /refusing to fall back/.test((e as Error).message),
     "🔴 fail closed: a stored row that cannot be decrypted NEVER falls back to the env var",
   );
+  const unarmed = await secrets.getOperatorSecret("OE_RESOLVE_PROBE").then(
+    () => null,
+    (e: unknown) => e as Error,
+  );
+  ok(unarmed !== null && !(unarmed instanceof secrets.OperatorSecretNotSetError), "🔴 fail closed: an UNARMED encryption key is NOT an OperatorSecretNotSetError — a caller must report it");
+  ok(unarmed !== null && unarmed.message.includes("is not set"), "🔴 …and its message contains 'is not set' anyway — which is exactly why the CLASS, not the message, is the seam");
   process.env.OE_CREDENTIAL_ENCRYPTION_KEY = saved;
   delete process.env.OE_RESOLVE_PROBE;
   delete process.env.OE_ONRAMP_PROBE;

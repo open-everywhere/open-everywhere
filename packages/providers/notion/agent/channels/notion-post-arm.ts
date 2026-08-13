@@ -19,7 +19,7 @@ type NotionTarget = Extract<ReplyTarget, { platform: "notion" }>;
 type NotionOrigin = Extract<UnifiedWakeOrigin, { platform: "notion" }>;
 
 async function dispatchNotionReply(target: NotionTarget, text: string): Promise<string> {
-  const credentialId = notionReplyCredential(target.workspaceId, target.pageId);
+  const credentialId = target.credentialId ?? notionReplyCredential(target.workspaceId, target.pageId);
   const apiKey = await resolveNotionApiKey(credentialId);
   if (!apiKey || apiKey.length === 0) {
     throw new Error(`reply couldn't post to Notion — no value stored for notion credential "${credentialId ?? "channel-key"}".`);
@@ -28,7 +28,7 @@ async function dispatchNotionReply(target: NotionTarget, text: string): Promise<
 }
 
 async function liveNotionPost(origin: NotionOrigin, text: string): Promise<string> {
-  const credentialId = notionReplyCredential(origin.workspaceId, origin.pageId);
+  const credentialId = origin.credentialId ?? notionReplyCredential(origin.workspaceId, origin.pageId);
   const apiKey = await resolveNotionApiKey(credentialId);
   if (!apiKey || apiKey.length === 0) {
     throw new Error(`unified reply couldn't post to Notion — no value stored for notion credential "${credentialId ?? "channel-key"}" (discussion ${origin.discussionId})`);
@@ -54,7 +54,14 @@ export const notionPostArm: PostArm = {
       workspaceId = undefined;
     }
     const pageId = bag.str("pageId");
-    return { platform: "notion", discussionId, ...(pageId ? { pageId } : {}), ...(workspaceId ? { workspaceId } : {}) };
+    const credentialId = bag.str("credentialId");
+    return {
+      platform: "notion",
+      discussionId,
+      ...(pageId ? { pageId } : {}),
+      ...(workspaceId ? { workspaceId } : {}),
+      ...(credentialId ? { credentialId } : {}),
+    };
   },
   dispatchReply: (target, text) => dispatchNotionReply(target as NotionTarget, text),
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps) => (deps.postNotion ?? liveNotionPost)(origin as NotionOrigin, text),

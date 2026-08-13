@@ -28,6 +28,7 @@ export type UnifiedWakeOrigin =
       readonly discussionId: string;
       readonly pageId?: string;
       readonly workspaceId?: string;
+      readonly credentialId?: string;
     }
   | {
       readonly platform: "discord";

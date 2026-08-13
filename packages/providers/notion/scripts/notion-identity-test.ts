@@ -78,6 +78,15 @@ ok(b.visibility === "private", "visibility FAILS CLOSED to private");
 ok(b.trust === "external", "trust FAILS CLOSED to external (un-vouched real platform)");
 ok(b.principalId === AUTHOR, "principal = comment author");
 
+const PAY_CRED = "payments-channel-key";
+const withCred = buildNotionAuth({ workspaceId: WS, pageId: PAGE, discussionId: DISCUSSION, credentialId: PAY_CRED });
+ok(withCred.attributes.credential_id === PAY_CRED, "credential_id stowed on the auth attributes");
+const boundTarget = bindFrom(ctxFromAuth(withCred)).target as Record<string, unknown> | undefined;
+ok(boundTarget?.credentialId === PAY_CRED, "bindNotion carries the delivery's credential onto the post-back target");
+ok(boundTarget?.discussionId === DISCUSSION, "…without disturbing the reply anchor");
+const noCredTarget = bindFrom(ctxFromAuth(buildNotionAuth({ workspaceId: WS, pageId: PAGE, discussionId: DISCUSSION }))).target as Record<string, unknown> | undefined;
+ok(noCredTarget?.credentialId === undefined, "a delivery that stowed NO credential leaves the target's credentialId absent (negative control)");
+
 const noPage = bindFrom(ctxFromAuth(buildNotionAuth({ workspaceId: WS, discussionId: DISCUSSION })));
 ok(noPage.surface === DISCUSSION, "surface falls back to discussion_id when page_id absent");
 const onlyComment = bindFrom(ctxFromAuth(buildNotionAuth({ workspaceId: WS, commentId: COMMENT })));

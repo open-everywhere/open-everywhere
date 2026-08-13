@@ -278,7 +278,7 @@ export type { AmbientSkipRecord } from "./channels/ambient-skip.js";
 
 export { credentialOverrideFor, domainCredentialId, providerIntegrations } from "./access/domain-credentials.js";
 export type { DomainCredentialOverride, ProviderIntegration } from "./access/domain-credentials.js";
-export { getOperatorSecret } from "./credentials/operator-secrets.js";
+export { getOperatorSecret, OperatorSecretNotSetError } from "./credentials/operator-secrets.js";
 
 export { windowTopologyEnabled } from "./access/capabilities.js";
 

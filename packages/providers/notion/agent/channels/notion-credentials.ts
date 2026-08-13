@@ -1,5 +1,6 @@
 import {
   domainCredentialId,
+  OperatorSecretNotSetError,
   providerIntegrations,
   resolvePartition,
   type BindableContext,
@@ -42,4 +43,20 @@ export function notionCallerCredential(ctx: BindableContext, domains: readonly D
 
 export function notionIntegrations(domains: readonly Domain[]): readonly ProviderIntegration[] {
   return providerIntegrations(domains, NOTION_PROVIDER, NOTION_CHANNEL_CREDENTIAL, NOTION_WEBHOOK_SECRET_NAME);
+}
+
+export async function resolveNotionInboundSecret(
+  name: string,
+  get: (secretName: string) => Promise<{ readonly value: string }>,
+  log: (message: string) => void,
+): Promise<string | undefined> {
+  try {
+    const resolved = await get(name);
+    return resolved.value.length > 0 ? resolved.value : undefined;
+  } catch (err) {
+    if (err instanceof OperatorSecretNotSetError) return undefined;
+    const message = err instanceof Error ? err.message : String(err);
+    log(`inbound signing key "${name}" did not resolve — deliveries signed with it will 401: ${message}`);
+    return undefined;
+  }
 }
