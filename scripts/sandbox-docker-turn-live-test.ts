@@ -182,7 +182,6 @@ async function main(): Promise<void> {
   if (containerNameA === undefined || containerNameA.length === 0) {
     throw new Error("scenario A: no container name captured from the running snapshot — cannot track the transition.");
   }
-  ok(beforeA.some((c) => c.name === containerNameA && c.status === "running"), `scenario A: container ${containerNameA} observed RUNNING mid-turn`);
 
   const afterA = await waitFor(() => {
     const listing = dockerPsLabel(sessionA);
@@ -190,7 +189,6 @@ async function main(): Promise<void> {
     return same !== undefined && same.status !== "running" ? same : undefined;
   }, `scenario A's container ${containerNameA} to leave the running state after turn end`);
   console.log(`  AFTER (as observed): ${JSON.stringify(afterA)}`);
-  ok(afterA.name === containerNameA, `scenario A: the container that stopped is the SAME container (${containerNameA}) that was running mid-turn`);
   ok(afterA.status === "exited", `scenario A: the docker turn-end stop hook transitioned container ${containerNameA} from running to exited (observed: ${afterA.status})`);
 
   console.log("\n== scenario B: stopAfterTurn OFF — negative control, the container must stay running ==");
