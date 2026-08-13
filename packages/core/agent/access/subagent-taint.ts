@@ -71,6 +71,39 @@ export async function markSubagentCallTainted(org: string, parentSessionId: stri
   }
 }
 
+const PARENT_TURN_MARKER_PREFIX = "oe-parent-turn-taint:";
+
+export function parentTurnTaintKey(sessionId: string, turnId: string): string {
+  return `${PARENT_TURN_MARKER_PREFIX}${sessionId}:${turnId}`;
+}
+
+export async function markParentTurnTainted(org: string, sessionId: string, turnId: string): Promise<void> {
+  try {
+    if (sessionId.length === 0 || turnId.length === 0) return;
+    await getOperationalStore().putTaskResult(
+      org,
+      parentTurnTaintKey(sessionId, turnId),
+      JSON.stringify({ tainted: true }),
+      new Date().toISOString(),
+      SUBAGENT_TAINT_TTL_MS,
+      undefined,
+    );
+  } catch {
+  }
+}
+
+export async function parentTurnWasTainted(org: string, sessionId: string, turnId: string): Promise<boolean> {
+  try {
+    if (sessionId.length === 0 || turnId.length === 0) return false;
+    const raw = await getOperationalStore().getTaskResult(org, parentTurnTaintKey(sessionId, turnId));
+    if (raw === null) return false;
+    const parsed: unknown = JSON.parse(raw);
+    return (parsed as { tainted?: unknown } | null)?.tainted === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function subagentCallTaintStatus(
   org: string,
   parentSessionId: string,

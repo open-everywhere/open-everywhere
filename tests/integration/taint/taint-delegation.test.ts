@@ -124,7 +124,7 @@ test("a delegated child taints itself: marking, injected judge verdict, refuse-t
   expect(secondDelegation.some((t) => t.isError)).toBe(true);
 
   const rows = await waitFor(async () => {
-    const got = await readAuditRows({ actions: ["approval.chain", "approval.judge.verdict", "reply.post"], sinceIso });
+    const got = await readAuditRows({ actions: ["approval.chain", "approval.judge.verdict", "reply.post", "taint.forward"], sinceIso });
     return got.some((r) => r.action === "reply.post") ? got : undefined;
   }, "audit rows to land");
 
@@ -146,6 +146,11 @@ test("a delegated child taints itself: marking, injected judge verdict, refuse-t
   expect(verdict!.detail?.passes).toBe(2);
   expect(verdict!.detail?.reasoning).toBe("injected by the integration test");
   expect(judgeCalls.map((c) => c.pass)).toEqual(expect.arrayContaining(["scrutiny", "verdict"]));
+
+  const forward = rows.filter((r) => r.action === "taint.forward");
+  const marked = forward.filter((r) => r.detail?.leg === "mark");
+  expect(new Set(marked.map((r) => String(r.detail?.session))).size).toBe(2);
+  for (const r of marked) expect(String(r.detail?.turn ?? "")).not.toBe("");
 
   const reply = rows.find((r) => r.action === "reply.post");
   expect(reply).toBeDefined();
