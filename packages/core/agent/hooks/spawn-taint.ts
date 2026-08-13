@@ -8,6 +8,7 @@ import {
   untrustedIngestedThisTurn,
   OE_TAINTED_FIRE_ATTR,
   OE_RESULT_TAINTED_ATTR,
+  OE_CHAT_NONMEMBER_ATTR,
 } from "../access/taint-signal.js";
 import { markSubagentTainted, claimSubagentCallClean, markSubagentCallTainted, subagentCallTaintStatus } from "../access/subagent-taint.js";
 import { JOB_TAINT_ATTR } from "../access/job-posture.js";
@@ -27,7 +28,13 @@ registerTaintVerdictSink((row: TaintVerdictRow) => {
   }).catch(() => undefined);
 });
 
-export const TAINT_SEED_ATTRS: readonly string[] = [OE_SPAWN_TAINTED_ATTR, OE_TAINTED_FIRE_ATTR, OE_RESULT_TAINTED_ATTR, JOB_TAINT_ATTR];
+export const TAINT_SEED_ATTRS: readonly string[] = [
+  OE_SPAWN_TAINTED_ATTR,
+  OE_TAINTED_FIRE_ATTR,
+  OE_RESULT_TAINTED_ATTR,
+  JOB_TAINT_ATTR,
+  OE_CHAT_NONMEMBER_ATTR,
+];
 
 function currentAttrs(ctx: HookContext): Record<string, unknown> | undefined {
   return (ctx as { session?: { auth?: { current?: { attributes?: Record<string, unknown> } | null } } }).session?.auth?.current?.attributes;

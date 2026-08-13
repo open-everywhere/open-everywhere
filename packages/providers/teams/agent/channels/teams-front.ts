@@ -25,6 +25,7 @@ import {
   getOperationalStore,
   isVouchedSurface,
   resolveWakeTrustFromContext,
+  stampNonMemberChatAuth,
   deploymentOrg,
   appendAudit,
   getOrCreateDmSeat,
@@ -181,7 +182,7 @@ async function liveTeamsDispatch(a: TeamsMessageActivity, plan: TeamsFrontPlan, 
     {
       surfaceKey: plan.surfaceKey,
       channelId: a.teamsChannelId ?? a.conversation.id,
-      auth: plan.auth,
+      auth: stampNonMemberChatAuth(plan.auth, [{ trust }]),
       trigger: {
         id: a.id,
         authorId: a.from.id,
@@ -252,7 +253,7 @@ async function liveTeamsDmDivert(
     token: seat.token,
     window: { wakeId, origin, addressing: "direct-mention" } satisfies UnifiedWindowWake,
     surfaceKey,
-    auth: auth as unknown as { attributes?: Record<string, unknown> },
+    auth: stampNonMemberChatAuth(auth as unknown as { attributes?: Record<string, unknown> }, [{ trust }]),
   });
   await touchDmSeat(org, surfaceKey, atIso).catch(() => undefined);
   await appendAudit({

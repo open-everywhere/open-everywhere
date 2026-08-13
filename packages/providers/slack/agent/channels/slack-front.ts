@@ -54,10 +54,16 @@ import {
   type SingleWindowMentionPolicy,
   type DmSeat,
   type SetKeyViewResult,
-  dmTrustTtlMs,
+  stampNonMemberChatAuth,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { slackForm, renderWakeMessage, distillSlackRotationHandoff, slackChannelFactsFor } from "./slack-events.js";
-import { buildSlackAuth, partnerFactsFromInfo } from "./slack-identity.js";
+import {
+  renderWakeMessage,
+  distillSlackRotationHandoff,
+  slackChannelFactsFor,
+  slackAuthorIsMember,
+  _resetAuthorMemberCache,
+} from "./slack-events.js";
+import { buildSlackAuth } from "./slack-identity.js";
 import { persistSlackAttachment } from "./slack-attachments.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
@@ -342,24 +348,13 @@ export function withSingleWindowDiversion(
   };
 }
 
-const dmTrustCache = new Map<string, { trust: "internal" | "external"; at: number }>();
-
 async function liveDmPartnerTrust(userId: string, teamId: string | undefined): Promise<"internal" | "external" | undefined> {
-  const hit = dmTrustCache.get(userId);
-  if (hit && Date.now() - hit.at < dmTrustTtlMs()) return hit.trust;
-  try {
-    const info = await slackForm("users.info", `user=${encodeURIComponent(userId)}`);
-    if (!info) return undefined;
-    const { dmPartnerTrust } = partnerFactsFromInfo(info, teamId);
-    dmTrustCache.set(userId, { trust: dmPartnerTrust, at: Date.now() });
-    return dmPartnerTrust;
-  } catch {
-    return undefined;
-  }
+  const member = await slackAuthorIsMember(userId, teamId);
+  return member === undefined ? undefined : member ? "internal" : "external";
 }
 
 export function _resetDmTrustCache(): void {
-  dmTrustCache.clear();
+  _resetAuthorMemberCache();
 }
 
 export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions = {}): RouteHandler {
@@ -463,15 +458,18 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         channelKey: p.surfaceKey,
       });
       const wakeId = mintWakeId();
-      const auth = buildSlackAuth({
-        userId: ev.userId ?? "",
-        teamId: ev.teamId,
-        channelId: ev.channelId,
-        threadTs: ev.threadTs,
-        channelType: dmKind,
-        isPrivate: true,
-        ...(partnerTrust ? { dmPartnerTrust: partnerTrust } : {}),
-      });
+      const auth = stampNonMemberChatAuth(
+        buildSlackAuth({
+          userId: ev.userId ?? "",
+          teamId: ev.teamId,
+          channelId: ev.channelId,
+          threadTs: ev.threadTs,
+          channelType: dmKind,
+          isPrivate: true,
+          ...(partnerTrust ? { dmPartnerTrust: partnerTrust } : {}),
+        }),
+        [{ trust: wakeTrust }],
+      );
       const message = renderWakeMessage(ev, () => atIso, { dm: true, trust: wakeTrust, wakeId, ...(isGroup ? { groupDm: true } : {}) });
       const handoff =
         seat.freshGeneration && seat.handoffNote && seat.handoffNote.length > 0

@@ -30,6 +30,7 @@ import {
   deploymentOrg,
   isVouchedInternal,
   resolveWakeTrustFromContext,
+  stampNonMemberChatAuth,
   getOperationalStore,
   appendAudit,
   type FinalMessageAction,
@@ -799,7 +800,7 @@ async function divertDiscordDmToWindow(input: {
     token: seat.token,
     window: { wakeId, origin, addressing: "direct-mention" } satisfies UnifiedWindowWake,
     surfaceKey,
-    auth: input.auth as unknown as { attributes?: Record<string, unknown> },
+    auth: stampNonMemberChatAuth(input.auth as unknown as { attributes?: Record<string, unknown> }, [{ trust }]),
   });
   await touchDmSeat(org, surfaceKey, atIso).catch(() => undefined);
 }
@@ -881,7 +882,7 @@ async function divertDiscordWakeToUnifiedWindow(input: {
         ...(input.addressing === "direct-mention" ? { addressing: "direct-mention" as const } : {}),
       } satisfies UnifiedWindowWake,
       surfaceKey: domainKeyOf(input.partition),
-      auth: input.auth as unknown as { attributes?: Record<string, unknown> },
+      auth: stampNonMemberChatAuth(input.auth as unknown as { attributes?: Record<string, unknown> }, [{ trust }]),
     });
   };
 
@@ -1105,7 +1106,7 @@ export async function dispatchTurn(
   await send(
     rendered.context && rendered.context.length ? { message: rendered.message, context: rendered.context } : rendered.message,
     {
-      auth: surface.auth,
+      auth: stampNonMemberChatAuth(surface.auth, [{ trust }]),
       continuationToken: surface.continuationToken,
       state: turnState,
     },

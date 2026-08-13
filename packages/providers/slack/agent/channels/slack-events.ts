@@ -8,6 +8,7 @@ import {
   domainKeyOf,
   resolveWakeTrust,
   backscrollTrustResolver,
+  stampNonMemberChatAuth,
   bindFrom,
   getConfig,
   ingestUntrusted,
@@ -58,7 +59,7 @@ import {
   type WakeEngagementTier,
   dmTrustTtlMs,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { slackMode, buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
+import { slackMode, buildSlackAuth, channelFactsFromInfo, partnerFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
 import { slackSpendGate, type SpendGateDecision, type SpendGateDoor } from "./slack-spend-gate.js";
 import { slackTenantAdmission } from "./slack-tenant-fence.js";
 import { fetchWakeBackscrollLines, fetchWakeEnvelopeBackscroll, type WakeBackscrollLines } from "./slack-wake-backscroll.js";
@@ -411,13 +412,13 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
   const wakeTrust = resolveWakeTrust({
     authorIsBot: Boolean(ev.botId) && !isAllowedSlackDriver(ev.teamId, ev.botId),
     authorId: ev.userId,
-    surfaceInternal: internal,
+    surfaceInternal: await slackWakeSurfaceInternal(internal, ev.userId, ev.teamId),
     channelKey: domainKeyOf(p),
   });
   await deps.wake({
     channelId: ev.channelId,
     threadTs: ev.threadTs!,
-    auth,
+    auth: stampNonMemberChatAuth(auth, [{ trust: wakeTrust }]),
     message: renderWakeMessage(ev, deps.now, {
       trust: wakeTrust,
       triggerAuthorName: trigger.authorName,
@@ -730,7 +731,7 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
   const wakeTrust = resolveWakeTrust({
     authorIsBot: base.authorIsBot,
     authorId: ev.userId,
-    surfaceInternal: internal,
+    surfaceInternal: await slackWakeSurfaceInternal(internal, ev.userId, ev.teamId),
     channelKey: domainKeyOf(p),
   });
 
@@ -750,7 +751,7 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
   await deps.wake({
     channelId: ev.channelId,
     threadTs: rootTs,
-    auth: authForEvent({ ...ev, threadTs: rootTs }, { isExternal: false, trustChecked: true }),
+    auth: stampNonMemberChatAuth(authForEvent({ ...ev, threadTs: rootTs }, { isExternal: false, trustChecked: true }), [{ trust: wakeTrust }]),
     message: rendered.message,
     ...(rendered.context ? { context: rendered.context } : {}),
     state: wakeState(ev, rootTs, { oeUninvited: true }),
@@ -809,6 +810,60 @@ export async function confirmChannelInternal(channelId: string): Promise<boolean
 export async function confirmChannelInternalWithMeta(channelId: string): Promise<{ internal: boolean; memberCount?: number }> {
   const { internal, meta } = await channelInternalAndMeta(channelId);
   return { internal, memberCount: meta?.memberCount };
+}
+
+const authorMemberCache = new Map<string, { member: boolean; at: number }>();
+
+export async function slackAuthorIsMember(userId: string, teamId: string | undefined): Promise<boolean | undefined> {
+  if (userId.length === 0) return undefined;
+  const key = `${teamId ?? ""}/${userId}`;
+  const hit = authorMemberCache.get(key);
+  if (hit && Date.now() - hit.at < dmTrustTtlMs()) return hit.member;
+  try {
+    const info = await slackForm("users.info", `user=${encodeURIComponent(userId)}`);
+    if (!info) return undefined;
+    const member = partnerFactsFromInfo(info, teamId).dmPartnerTrust === "internal";
+    authorMemberCache.set(key, { member, at: Date.now() });
+    return member;
+  } catch {
+    return undefined;
+  }
+}
+
+export function _resetAuthorMemberCache(): void {
+  authorMemberCache.clear();
+}
+
+export type SlackMemberProbe = (userId: string, teamId: string | undefined) => Promise<boolean | undefined>;
+
+export async function slackWakeSurfaceInternal(
+  channelInternal: boolean,
+  userId: string | undefined,
+  teamId: string | undefined,
+  probe: SlackMemberProbe = slackAuthorIsMember,
+): Promise<boolean> {
+  if (!channelInternal) return false;
+  if (userId === undefined || userId.length === 0) return true;
+  return (await probe(userId, teamId)) !== false;
+}
+
+export async function regradeSlackBackscrollTrust(
+  messages: readonly WakeMessageInput[],
+  teamId: string | undefined,
+  probe: SlackMemberProbe = slackAuthorIsMember,
+): Promise<readonly WakeMessageInput[]> {
+  const candidates = new Set<string>();
+  for (const m of messages) {
+    if (m.from === "human" && (m.trust === "peer" || m.trust === "principal") && m.authorId !== undefined && m.authorId.length > 0) {
+      candidates.add(m.authorId);
+    }
+  }
+  if (candidates.size === 0) return messages;
+  const ids = [...candidates];
+  const verdicts = await Promise.all(ids.map((id) => probe(id, teamId)));
+  const nonMembers = new Set(ids.filter((_, i) => verdicts[i] === false));
+  if (nonMembers.size === 0) return messages;
+  return messages.map((m) => (m.authorId !== undefined && nonMembers.has(m.authorId) ? { ...m, trust: "unauth" as const } : m));
 }
 
 export async function slackSingleWindowMentionPolicy(channelId: string, surfaceKey: string): Promise<SingleWindowMentionPolicy> {
@@ -1083,16 +1138,17 @@ export async function routeSupervisorEvent(
   const wakeTrust = resolveWakeTrust({
     authorIsBot: base.authorIsBot,
     authorId: ev.userId,
-    surfaceInternal: internal,
+    surfaceInternal: await slackWakeSurfaceInternal(internal, ev.userId, ev.teamId),
     channelKey: domainKeyOf(p),
   });
   const session = await deps.getOrCreateSession(p.org, p.surfaceKey, ev.channelId, atIso);
 
-  const backscroll = session.freshGeneration && deps.fetchBackscroll
+  const fetched = session.freshGeneration && deps.fetchBackscroll
     ? await deps.fetchBackscroll({ channelId: ev.channelId, ts: ev.ts, surfaceInternal: internal, channelKey: domainKeyOf(p) }).catch(() => [] as readonly WakeMessageInput[])
     : [];
+  const backscroll = await regradeSlackBackscrollTrust(fetched, ev.teamId).catch(() => fetched);
 
-  const auth = authForEvent(ev, { isExternal: false, trustChecked: true });
+  const auth = stampNonMemberChatAuth(authForEvent(ev, { isExternal: false, trustChecked: true }), [{ trust: wakeTrust }, ...backscroll]);
   let engagementTier: WakeEngagementTier | undefined;
   try {
     engagementTier = deps.engagementTier?.(p.surfaceKey);

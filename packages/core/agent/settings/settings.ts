@@ -309,7 +309,7 @@ export const SETTINGS = {
       shipped: 5 * 60_000,
       validate: positiveNumber,
       summary:
-        "Memo TTL for live trust verification on every surface that performs one — the Slack DM-partner and channel-internal caches, the Teams member/guest lookup and the Linear guest lookup. One knob, because it is one question asked four ways; a miss re-verifies against the platform and every failure still fails closed.",
+        "Memo TTL for live trust verification on every surface that performs one — the Slack per-author membership probe (which answers both the DM-partner question and a channel author's own standing), the Slack channel-internal cache, the Teams member/guest lookup and the Linear guest lookup. One knob, because it is one question asked four ways; a miss re-verifies against the platform.",
       format: (v) => `${v} ms`,
     } satisfies SettingSpec<number>,
   },

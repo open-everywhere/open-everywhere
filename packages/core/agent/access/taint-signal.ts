@@ -1,5 +1,6 @@
 import { defineState } from "eve/context";
 import type { IngestionKind } from "./taint-tiers.js";
+import type { WakeTrust } from "../channels/wake-envelope.js";
 import { taintEnabled } from "./taint-enforcement.js";
 
 interface TaintState {
@@ -108,4 +109,26 @@ export const OE_RESULT_TAINTED_ATTR = "oe_result_tainted";
 
 export function resultTaintedAttrs(tainted: boolean): Record<string, string> {
   return tainted ? { [OE_RESULT_TAINTED_ATTR]: "true" } : {};
+}
+
+export const OE_CHAT_NONMEMBER_ATTR = "oe_chat_nonmember";
+
+export function nonMemberChatAttrs(nonMember: boolean): Record<string, string> {
+  return nonMember ? { [OE_CHAT_NONMEMBER_ATTR]: "true" } : {};
+}
+
+export function nonMemberChatTrust(trust: WakeTrust): boolean {
+  return trust === "unauth";
+}
+
+export function chatWakeIngestsNonMember(ingested: readonly { readonly trust?: WakeTrust }[]): boolean {
+  return ingested.some((m) => m.trust !== undefined && nonMemberChatTrust(m.trust));
+}
+
+export function stampNonMemberChatAuth<A extends { attributes?: Record<string, unknown> }>(
+  auth: A,
+  ingested: readonly { readonly trust?: WakeTrust }[],
+): A {
+  if (!chatWakeIngestsNonMember(ingested)) return auth;
+  return { ...auth, attributes: { ...(auth.attributes ?? {}), ...nonMemberChatAttrs(true) } };
 }
