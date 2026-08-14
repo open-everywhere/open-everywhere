@@ -202,6 +202,8 @@ export { classifyIngestion, INGESTION_KINDS } from "./access/taint-tiers.js";
 export { noteIngestionVerdict } from "./access/taint-enforcement.js";
 export { taintMarkLands } from "./access/taint-signal.js";
 
+export { untrustedIngestedThisTurn, taintKindsThisTurn } from "./access/taint-signal.js";
+
 export {
   nonMemberChatTrust,
   chatWakeIngestsNonMember,
@@ -442,7 +444,7 @@ export { isAllowedDriver } from "./testing/driver-allowlist.js";
 export { buildIngestedReaction, ingestReaction, liveReactionSink } from "./channels/reaction-ingest.js";
 export type { ReactionSinkDeps, ReactionIngestOutcome, ReactionVerb } from "./channels/reaction-ingest.js";
 
-export { assertSurfaceAllowed } from "./channels/channel-read.js";
+export { assertSurfaceAllowed, chatReadIngestion } from "./channels/channel-read.js";
 export type { RenderedLine } from "./channels/channel-read.js";
 
 export { readIngestsNonMember, distinctReadAuthorIds } from "./channels/read-author-trust.js";
@@ -539,6 +541,7 @@ export { assertSafeFetchUrl, setHostEgressLookup, type EgressDispatch } from "./
 export { REACTION_FEEDBACK_ACTION } from "./channels/reaction-ingest.js";
 
 export { registeredProjectionNames } from "./access/untrusted-projection.js";
+export { projectToolSet } from "./access/untrusted-projection.js";
 
 export { registerQuickstartSurfaceGoal } from "./ops/quickstart.js";
 export type { SurfaceGoalStep, PlanStep, Check } from "./ops/quickstart.js";
