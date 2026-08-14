@@ -11,8 +11,15 @@ export function resolveDiscordTarget(r: Routine): DispatchTarget | null {
   if (!channelId) return null;
   const channelType = storedString(r.target, "channelType");
   const mode: SessionMode = channelType === "1" ? "dm" : channelType === "3" ? "mpim" : "channel";
-  const guildId = storedString(r.target, "guildId") ?? r.surfaceKey.split("/")[1] ?? "";
-  const origin: UnifiedWakeOrigin = mode === "dm" || mode === "mpim" ? { platform: "discord", channelId, dm: true } : { platform: "discord", channelId, guildId };
+  const storedGuildId = storedString(r.target, "guildId");
+  const guildId = storedGuildId ?? r.surfaceKey.split("/")[1] ?? "";
+  const guildEvidence = storedGuildId !== undefined || channelType !== undefined;
+  const origin: UnifiedWakeOrigin | undefined =
+    mode === "dm" || mode === "mpim"
+      ? { platform: "discord", channelId, dm: true }
+      : guildEvidence
+        ? { platform: "discord", channelId, guildId }
+        : undefined;
   return {
     channel: discord,
     target: { channelId },
@@ -22,7 +29,7 @@ export function resolveDiscordTarget(r: Routine): DispatchTarget | null {
       guild_id: guildId,
       ...(channelType ? { channel_type: channelType } : {}),
     },
-    origin,
+    ...(origin !== undefined ? { origin } : {}),
   };
 }
 

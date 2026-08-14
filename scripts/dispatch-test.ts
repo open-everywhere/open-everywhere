@@ -482,6 +482,22 @@ await seed({ id: "r-dc-legacy", surfaceKey: "discord/G2/CH2", target: { channelI
     (dmTarget!.origin as { dm?: true } | undefined)?.dm === true && (dmTarget!.origin as { guildId?: string }).guildId === undefined,
     "OPE-486/discord: a DM fire's origin is the dm:true variant, never a guild-shaped origin with an empty guildId",
   );
+
+  const legacyDmRoutine: Routine = { ...guildRoutine, id: "r-dc-legacy-dm", surfaceKey: "discord/U9/D9", target: { channelId: "D9" } };
+  const legacyDmTarget = resolveDiscordTarget(legacyDmRoutine);
+  ok(legacyDmTarget !== null, "OPE-503/discord: a legacy DM-shaped target still resolves a DispatchTarget (fires natively)");
+  ok(
+    legacyDmTarget!.origin === undefined,
+    "OPE-503/discord: a legacy DM-shaped target (no channelType, no stored guildId) mints NO origin — refusing to guess beats minting a guild-shaped origin from the partner's user id",
+  );
+
+  const legacyGuildRoutine: Routine = { ...guildRoutine, id: "r-dc-legacy-guild-evidence", surfaceKey: "discord/G2/CH2", target: { channelId: "CH2", channelType: "0" } };
+  const legacyGuildTarget = resolveDiscordTarget(legacyGuildRoutine);
+  ok(
+    legacyGuildTarget!.origin !== undefined && (legacyGuildTarget!.origin as { guildId?: string }).guildId === "G2",
+    "OPE-503/discord NEGATIVE CONTROL: a channelType-evidenced guild row still mints its guild origin — the fix narrows on missing evidence, not on mode alone",
+  );
+
   overrideSettingsForTest({ window: { topology: false } });
 }
 
