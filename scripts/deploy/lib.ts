@@ -112,8 +112,8 @@ export function parseInspect(output: string): InspectResult {
   if (url) result.url = normalizeDeploymentUrl(url[1]);
   const state = /(?:^|\s)status\s+(\S+)|(?:^|\s)state\s+(\S+)/.exec(output);
   if (state) result.state = (state[1] ?? state[2])?.toUpperCase();
-  const created = /(?:^|\s)created\s+(\S+)/.exec(output);
-  if (created) result.createdAt = created[1];
+  const created = /(?:^|\s)created\s+(.+)$/m.exec(output);
+  if (created) result.createdAt = created[1].replace(/\s*\[[^\]]*\]\s*$/, "").trim();
   return result;
 }
 

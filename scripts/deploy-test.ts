@@ -136,7 +136,7 @@ const INSPECT_FIXTURE = `Fetched deployment "my-agent.vercel.app" in team-slug [
     name\t\t\tmy-agent
     status\t\t\tREADY
     url\t\t\tmy-agent-9f2h1kq0x.vercel.app
-    created\t\t\t2026-08-10T09:00:00.000Z
+    created\t\t\tMon Aug 10 2026 10:00:00 GMT+0100 (British Summer Time) [3m ago]
 `;
 
 check("parseInspect extracts id, url (normalised to https), status and created", () => {
@@ -144,7 +144,8 @@ check("parseInspect extracts id, url (normalised to https), status and created",
   assert.equal(inspected.id, "dpl_5RkGqXyZ11223344");
   assert.equal(inspected.url, "https://my-agent-9f2h1kq0x.vercel.app");
   assert.equal(inspected.state, "READY");
-  assert.equal(inspected.createdAt, "2026-08-10T09:00:00.000Z");
+  assert.equal(inspected.createdAt, "Mon Aug 10 2026 10:00:00 GMT+0100 (British Summer Time)");
+  assert.equal(new Date(inspected.createdAt!).toISOString(), "2026-08-10T09:00:00.000Z");
 });
 
 check("parseInspect returns empty on unrecognised output rather than throwing", () => {
