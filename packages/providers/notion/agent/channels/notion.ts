@@ -262,6 +262,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
         allowUnverified: process.env.OE_ALLOW_UNVERIFIED_NOTION_WEBHOOK === "1",
         credentialFor,
         credentialForPage: (workspaceId, pageId) => notionChannelCredentialFor(workspaceId, pageId, notionDomains()),
+        domains: notionDomains(),
         resolveBotUserId: async (credentialId) => (await botUserFor(credentialId)).id,
         resolveBotName: async (credentialId) => (await botUserFor(credentialId)).name,
         ambientEnabled: notionAmbientEnabled,
@@ -314,6 +315,17 @@ export default defineChannel<NotionState, { state: NotionState }>({
             workspace: surfaceKey.split("/")[1] ?? "unknown",
             surfaceKey,
             log,
+          }),
+        );
+      } else if (outcome.action === "scope-refused") {
+        log(`delivery scope-refused: ${outcome.detail}`);
+        waitUntil(
+          appendAudit({
+            org: deploymentOrg(),
+            platform: "notion",
+            workspace: "unknown",
+            action: "notion.scope_refused",
+            detail: { reason: outcome.detail ?? null, signer: outcome.signerCredentialId ?? null },
           }),
         );
       } else if (outcome.action === "rejected") {

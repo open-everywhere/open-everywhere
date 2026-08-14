@@ -142,8 +142,12 @@ const priorComment: NotionComment = {
 };
 
 const botIdFn = () => Promise.resolve<string | undefined>(BOT);
-function baseDeps(fetchImpl: FetchLike, dispatch: (d: NotionSupervisorDispatch) => Promise<void>, extra?: Partial<Parameters<typeof handleNotionDelivery>[2]>) {
-  return {
+function baseDeps(
+  fetchImpl: FetchLike,
+  dispatch: (d: NotionSupervisorDispatch) => Promise<void>,
+  extra?: Partial<Parameters<typeof handleNotionDelivery>[2]>,
+): Parameters<typeof handleNotionDelivery>[2] {
+  const merged = {
     signingKeys: [{ credentialId: "channel-key", secret: SECRET }],
     allowUnverified: false,
     credentialFor: async () => ({ apiKey: "ntn_key" }),
@@ -154,6 +158,7 @@ function baseDeps(fetchImpl: FetchLike, dispatch: (d: NotionSupervisorDispatch) 
     dispatch,
     ...extra,
   };
+  return { ...merged, domains: merged.domains ?? [] };
 }
 
 {

@@ -16,8 +16,9 @@ import {
   type ResolvedNotionCredential,
 } from "./notion-api.js";
 import { buildNotionAuth, notionSurfaceKey } from "./notion-identity.js";
+import { notionDeliveryScopeVerdict } from "./notion-credentials.js";
 import { classifyNotionComment, type NotionSupervisorDispatch, type NotionWakeMessage } from "./notion-supervisor.js";
-import { OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "@open-everywhere/core/agent/adapter-api.js";
+import { OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface NotionReplyTarget {
   readonly discussionId: string;
@@ -39,6 +40,7 @@ export interface HandleNotionDeliveryDeps {
   readonly allowUnverified: boolean;
   readonly credentialFor: (credentialId: string) => Promise<ResolvedNotionCredential | undefined>;
   readonly credentialForPage: (workspaceId: string | undefined, pageId: string | undefined) => string | undefined;
+  readonly domains: readonly Domain[];
   readonly resolveBotUserId: (credentialId: string) => Promise<string | undefined>;
   readonly resolveBotName?: (credentialId: string) => Promise<string | undefined>;
   readonly ambientEnabled: (surfaceKey: string) => boolean;
@@ -64,6 +66,7 @@ export interface NotionDeliveryOutcome {
     | "dispatched"
     | "no-api-key"
     | "unresolved-page"
+    | "scope-refused"
     | "error";
   readonly detail?: string;
   readonly verified: boolean;
@@ -140,6 +143,12 @@ async function deliver(
   const pageId = resolvedPage.pageId;
   const discussionId = comment.discussion_id ?? "";
   const workspaceId = ev.workspace_id;
+
+  const scope = notionDeliveryScopeVerdict(workspaceId, pageId, gate.credentialId, deps.domains);
+  if (!scope.ok) {
+    return { status: 200, body: "ok", action: "scope-refused", detail: scope.reason, signed, credentialId };
+  }
+
   const surfaceKey = notionSurfaceKey(workspaceId, pageId);
 
   if (!deps.ambientEnabled(surfaceKey)) {

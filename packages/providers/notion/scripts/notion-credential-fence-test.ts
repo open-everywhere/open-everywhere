@@ -55,6 +55,7 @@ async function deliver(rules: CredentialEndpointRules | undefined): Promise<{ ac
     allowUnverified: false,
     credentialFor: (id) => resolveNotionCredential(id),
     credentialForPage: () => undefined,
+    domains: [],
     resolveBotUserId: async () => "U_BOT",
     ambientEnabled: () => true,
     fetch: fetchImpl,

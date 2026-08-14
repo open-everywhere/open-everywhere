@@ -1,7 +1,6 @@
 import {
   scopeIdOf,
   getConfig,
-  domainCredentialId,
   type Domain,
   type EventNormalizer,
   type EventScopeGrant,
@@ -11,7 +10,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { NOTION_WEBHOOK_SOURCE } from "./notion-webhook-verifier.js";
 import { notionWorkspaceKey } from "./notion-identity.js";
-import { NOTION_CHANNEL_CREDENTIAL, NOTION_PROVIDER, notionIntegrations } from "./notion-credentials.js";
+import { notionIntegrations, notionSignerServesDomain } from "./notion-credentials.js";
 
 export const NOTION_EVENT_SOURCE = NOTION_WEBHOOK_SOURCE;
 
@@ -195,8 +194,6 @@ export function notionTriggerScopeVerdict(
   const workspaceKey = notionWorkspaceKey(workspace);
 
   const integrations = notionIntegrations(domains);
-  const secretOf = (credentialId: string): string | undefined => integrations.find((i) => i.credentialId === credentialId)?.inboundSecret;
-  const signerSecret = secretOf(signerCredentialId);
 
   for (const kind of NOTION_GRANT_STEPS) {
     const id = scopeIdOf(scope, kind);
@@ -210,16 +207,15 @@ export function notionTriggerScopeVerdict(
       if (!owner) {
         return { ok: false, reason: `${kind} ${quote(id)} resolved to domain ${quote(name)}, which this registry does not hold` };
       }
-      const expected = domainCredentialId(owner, NOTION_PROVIDER, NOTION_CHANNEL_CREDENTIAL);
-      if (expected === signerCredentialId) continue;
-      if (signerSecret !== undefined && secretOf(expected) === signerSecret) {
-        viaSharedSecret = true;
+      const served = notionSignerServesDomain(owner, signerCredentialId, integrations);
+      if (served.served) {
+        if (served.via === "shared-secret") viaSharedSecret = true;
         continue;
       }
       return {
         ok: false,
         reason:
-          `${kind} ${quote(id)} belongs to domain ${quote(name)}, which is served by notion credential ${quote(expected)} — ` +
+          `${kind} ${quote(id)} belongs to domain ${quote(name)}, which is served by notion credential ${quote(served.expected)} — ` +
           `this delivery was signed by ${quote(signerCredentialId)}. A signed body cannot arm another domain's routines.`,
       };
     }

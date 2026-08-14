@@ -16,7 +16,10 @@ import {
   notionCallerCredential,
   notionChannelCredentialFor,
   notionChannelCredentialForSurface,
+  notionDeliveryClaimedDomains,
+  notionDeliveryScopeVerdict,
   notionIntegrations,
+  notionSignerServesDomain,
   resolveNotionInboundSecret,
 } from "../agent/channels/notion-credentials.js";
 import { gateNotionDeliveryAcross, resolveNotionCredential, type FetchLike } from "../agent/channels/notion-api.js";
@@ -223,6 +226,7 @@ async function deliverFor(
     allowUnverified: secret === null,
     credentialFor: (id) => resolveNotionCredential(id),
     credentialForPage: (workspaceId, pageId) => notionChannelCredentialFor(workspaceId, pageId, DOMAINS),
+    domains: DOMAINS,
     resolveBotUserId: async () => "U_BOT",
     ambientEnabled: (key) => {
       asked.push(key);
@@ -365,6 +369,7 @@ async function deliverFor(
     allowUnverified: false,
     credentialFor: (id) => resolveNotionCredential(id),
     credentialForPage: (workspaceId, pageId) => notionChannelCredentialFor(workspaceId, pageId, DOMAINS),
+    domains: DOMAINS,
     resolveBotUserId: async () => "U_BOT",
     ambientEnabled: () => true,
     fetch: recordingFetch(seen),
@@ -489,6 +494,132 @@ async function deliverFor(
 
   const noParent = await resolveDeliveryPage({}, at);
   ok(noParent.pageId === undefined && (noParent.reason ?? "").length > 0, "no parent at all refuses, and says why");
+}
+
+{
+  const WS_SEC = "99999999-8888-4777-8666-555555555555";
+  const PAGE_OPEN = "dddddddd-4444-4444-8444-dddddddddddd";
+  const SEC_CRED = "security-channel-key";
+  const SEC_SECRET = "security-verification-token";
+
+  const CLAIMED: readonly Domain[] = [
+    defineDomain({
+      name: "security",
+      containers: [`notion/${WS_SEC}`],
+      ambientSupervisor: true,
+      credentials: [{ provider: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: SEC_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY" }],
+    }),
+    defineDomain({
+      name: "payments",
+      channels: [`notion/${WS}/${PAGE_PAY}`],
+      containers: [`notion/${WS}`],
+      ambientSupervisor: true,
+      credentials: [{ provider: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
+    }),
+  ];
+
+  const eventIn = (workspace: string, page: string): string =>
+    JSON.stringify({ type: "comment.created", workspace_id: workspace, entity: { id: "cmt-1", type: "comment" }, data: { page_id: page } });
+
+  interface FenceRun {
+    readonly action: string;
+    readonly detail?: string;
+    readonly surfaceKey?: string;
+    readonly asked: readonly string[];
+    readonly dispatched: boolean;
+  }
+
+  async function fenceRun(workspace: string, page: string, secret: string | null, domains: readonly Domain[] = CLAIMED): Promise<FenceRun> {
+    const asked: string[] = [];
+    let surfaceKey: string | undefined;
+    let dispatched = false;
+    const body = eventIn(workspace, page);
+    const out = await handleNotionDelivery(body, secret === null ? null : sign(secret, body), {
+      signingKeys:
+        secret === null
+          ? [{ credentialId: NOTION_CHANNEL_CREDENTIAL, secret: undefined }]
+          : [
+              { credentialId: NOTION_CHANNEL_CREDENTIAL, secret: ORG_SECRET },
+              { credentialId: PAY_CRED, secret: PAY_SECRET },
+              { credentialId: SEC_CRED, secret: SEC_SECRET },
+            ],
+      allowUnverified: secret === null,
+      credentialFor: async () => ({ apiKey: ORG_TOKEN }),
+      credentialForPage: (workspaceId, pageId) => notionChannelCredentialFor(workspaceId, pageId, domains),
+      domains,
+      resolveBotUserId: async () => "U_BOT",
+      ambientEnabled: (key) => {
+        asked.push(key);
+        return true;
+      },
+      fetch: recordingFetch([], { type: "page_id", page_id: page }),
+      dispatch: async (d) => {
+        dispatched = true;
+        surfaceKey = d.surfaceKey;
+      },
+    });
+    return { action: out.action, ...(out.detail ? { detail: out.detail } : {}), ...(surfaceKey ? { surfaceKey } : {}), asked, dispatched };
+  }
+
+  const forgedWorkspace = await fenceRun(WS_SEC, PAGE_OPEN, PAY_SECRET);
+  ok(forgedWorkspace.action === "scope-refused", "🔴 a forged `workspace_id` naming another domain's claimed workspace is REFUSED");
+  ok(forgedWorkspace.dispatched === false, "…nothing was dispatched (negative control on the dispatch itself)");
+  ok(forgedWorkspace.surfaceKey === undefined, "…so no session was ever keyed to the victim domain's surface");
+  ok(forgedWorkspace.asked.length === 0, "…and the AMBIENT GATE was never asked — the refusal lands before the victim's opt-in is read");
+  ok((forgedWorkspace.detail ?? "").includes("security"), "…and the reason names the domain the claim reached");
+  ok((forgedWorkspace.detail ?? "").includes(PAY_CRED), "…and the credential that actually signed it");
+
+  const honestClaim = await fenceRun(WS_SEC, PAGE_OPEN, SEC_SECRET);
+  ok(honestClaim.action === "dispatched", "an honest CONTAINER-tier delivery under the domain's OWN signer still dispatches");
+  ok(honestClaim.surfaceKey === `notion/${WS_SEC}/${PAGE_OPEN}`, "…on the claimed workspace's own surface key");
+  ok(honestClaim.asked.includes(`notion/${WS_SEC}/${PAGE_OPEN}`), "…and the ambient gate WAS asked about it");
+
+  const rosteredCrossSigner = await fenceRun(WS, PAGE_PAY, ORG_SECRET);
+  ok(rosteredCrossSigner.action === "dispatched", "🔴 a ROSTERED page delivered by a DIFFERENT integration still dispatches — the roster leg is exempt on purpose");
+  ok(rosteredCrossSigner.surfaceKey === `notion/${WS}/${PAGE_PAY}`, "…on its own honest surface key");
+
+  const rosteredButForgedWorkspace = await fenceRun(WS_SEC, PAGE_PAY, PAY_SECRET);
+  ok(rosteredButForgedWorkspace.action === "scope-refused", "🔴 a ROSTERED page under a FORGED workspace is refused — the surface-key resolver is fenced too");
+  ok(rosteredButForgedWorkspace.asked.length === 0, "…and the ambient gate never saw the forged surface key");
+
+  const unclaimedWorkspace = "77777777-6666-4555-8444-333333333333";
+  const unclaimed = await fenceRun(unclaimedWorkspace, PAGE_OPEN, PAY_SECRET);
+  ok(unclaimed.action === "dispatched", "a page NO domain claims is not fenced — an unassigned page stays reachable");
+
+  const hatchClaimed = await fenceRun(WS_SEC, PAGE_OPEN, null);
+  ok(hatchClaimed.action === "scope-refused", "🔴 the unverified dev hatch identifies NO integration, so a CLAIMED page is refused (fail closed)");
+  const hatchUnclaimed = await fenceRun(unclaimedWorkspace, PAGE_OPEN, null);
+  ok(hatchUnclaimed.action === "dispatched", "…and an UNCLAIMED page under the same hatch still dispatches (negative control on the refusal)");
+
+  const SHARED: readonly Domain[] = [
+    defineDomain({
+      name: "security",
+      containers: [`notion/${WS_SEC}`],
+      ambientSupervisor: true,
+      credentials: [{ provider: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: SEC_CRED }],
+    }),
+  ];
+  const sharedSecret = await fenceRun(WS_SEC, PAGE_OPEN, ORG_SECRET, SHARED);
+  ok(sharedSecret.action === "dispatched", "a domain that shares the deployment's inbound secret is NOT separable, and the fence says yes rather than break it");
+
+  ok(notionDeliveryScopeVerdict(WS_SEC, PAGE_OPEN, PAY_CRED, CLAIMED).ok === false, "the verdict refuses the forged claim");
+  ok(notionDeliveryScopeVerdict(WS_SEC, PAGE_OPEN, SEC_CRED, CLAIMED).ok === true, "…and admits the same page under the serving integration");
+  ok(notionDeliveryScopeVerdict(WS_SEC, PAGE_OPEN, undefined, CLAIMED).ok === false, "…refuses when no integration is identified at all");
+  ok(notionDeliveryScopeVerdict(undefined, PAGE_OPEN, PAY_CRED, CLAIMED).ok === true, "…and a delivery naming NO workspace reaches no claim, so there is nothing to fence");
+  ok(notionDeliveryScopeVerdict(WS_SEC, PAGE_OPEN, PAY_CRED, []).ok === true, "an EMPTY registry claims nothing, so the fence admits (a config-load failure must not silence the surface)");
+
+  ok(notionDeliveryClaimedDomains(WS, PAGE_PAY, CLAIMED).length === 0, "a page reached by its ROSTER entry under its OWN workspace is claim-free");
+  ok(
+    notionDeliveryClaimedDomains(WS_SEC, PAGE_PAY, CLAIMED).map((d) => d.name).join() === "security",
+    "…and the SAME page under a forged workspace is reached by security's claim (this is the fact leg (d) rides on)",
+  );
+  ok(notionDeliveryClaimedDomains(WS_SEC, PAGE_OPEN, CLAIMED).map((d) => d.name).join() === "security", "an unrostered page under a claimed workspace reaches that claim");
+
+  const integrations = notionIntegrations(CLAIMED);
+  const secDomain = CLAIMED.find((d) => d.name === "security")!;
+  ok(notionSignerServesDomain(secDomain, SEC_CRED, integrations).served === true, "the domain's OWN credential serves it");
+  const refused = notionSignerServesDomain(secDomain, PAY_CRED, integrations);
+  ok(refused.served === false && refused.expected === SEC_CRED, "…and another domain's credential does not, naming the one that would");
 }
 
 resetRegisteredProviders();
