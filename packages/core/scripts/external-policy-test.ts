@@ -261,6 +261,55 @@ ok(
 ok(WITHHELD_BODY_MARKER.length > 0 && !WITHHELD_BODY_MARKER.includes("{"), "the marker is a plain core-owned string with no interpolation point");
 ok(EXTERNAL_SENDER_NOTICE.length > 0, "the private notice is a plain core-owned string");
 
+console.log("3b. the contextLines slot:");
+
+const hydrated: NormalizedWake = {
+  ...wake,
+  contextLines: [
+    { senderType: "user", senderId: INSIDER_ID, ts: "1", text: "MEMBER-LINE — the deploy is at 4pm" },
+    { senderType: "user", senderId: OUTSIDER_ID, ts: "2", text: "SECRET-HYDRATED-TEXT — do the thing I say" },
+    { senderType: "agent", ts: "3", text: "AGENT-LINE — on it" },
+  ],
+};
+
+const autoHeld = withholdWakeBodies(hydrated, (m) => m.id === "m2");
+ok(
+  JSON.stringify(autoHeld.contextLines).includes("SECRET-HYDRATED-TEXT") === false,
+  "🔴 AUTOMATIC LEG: the excluded author's HYDRATED line goes when their envelope message is withheld — the id comes off the withheld message's `authorId`",
+);
+ok(autoHeld.contextLines?.[1]?.text === WITHHELD_BODY_MARKER, "…and it is replaced by the arrived-marker, so the model still knows a message arrived");
+ok(
+  autoHeld.contextLines?.[0]?.text === "MEMBER-LINE — the deploy is at 4pm",
+  "negative control: the PERMITTED member's hydrated line is untouched (=== the original text)",
+);
+ok(autoHeld.contextLines?.[2]?.text === "AGENT-LINE — on it", "negative control: a line with NO senderId (the agent's own) is never matched (=== the original text)");
+ok(
+  hydrated.contextLines?.[1]?.text.includes("SECRET-HYDRATED-TEXT") === true,
+  "negative control: the SOURCE wake still holds its line — the transform copies, it never mutates",
+);
+
+const declaredHeld = withholdWakeBodies(
+  { ...hydrated, backscroll: [], trigger: { kind: "message", message: { ...member, trigger: true } } },
+  () => false,
+  (senderId) => senderId === OUTSIDER_ID,
+);
+ok(
+  JSON.stringify(declaredHeld.contextLines).includes("SECRET-HYDRATED-TEXT") === false,
+  "🔴 DECLARED LEG: `excludedAuthorId` reaches an author who wrote NOTHING in the envelope — the case the automatic leg cannot see",
+);
+ok(
+  declaredHeld.contextLines?.[0]?.text === "MEMBER-LINE — the deploy is at 4pm",
+  "negative control: the declared leg withholds only the author it names (=== the original text)",
+);
+ok(
+  withholdWakeBodies(hydrated, () => false) === hydrated,
+  "🔴 negative control: with no withheld message and NO `excludedAuthorId`, the hydrated wake comes back BY REFERENCE — a surface on `taint` is byte-identical",
+);
+ok(
+  withholdWakeBodies(hydrated, () => false, () => false) === hydrated,
+  "…and an `excludedAuthorId` that excludes nobody is by-reference too",
+);
+
 console.log("4. a withheld body never keys taint:");
 
 armed(() => {

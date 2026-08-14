@@ -2,6 +2,7 @@ import { getSettings, type ExternalAuthorGrain, type ExternalRoomGrain } from ".
 import { declaredSurfaceTrust } from "../identity/trust.js";
 import { nonMemberChatTrust, type ChatWakeRoom, type IngestedChatMessage } from "./taint-signal.js";
 import type { NormalizedWake } from "../channels/normalized-wake.js";
+import type { ContextLine } from "../channels/context-render.js";
 import type { WakeMessageInput } from "../channels/wake-envelope.js";
 
 export type { ExternalAuthorGrain, ExternalRoomGrain };
@@ -48,18 +49,30 @@ export const EXTERNAL_SENDER_NOTICE =
   "I can't act on messages from outside this organisation, so I haven't done anything with that. " +
   "If you need something from me, please ask someone in the organisation to raise it.";
 
-export function withholdWakeBodies(nw: NormalizedWake, isWithheld: (m: WakeMessageInput) => boolean): NormalizedWake {
+export function withholdWakeBodies(
+  nw: NormalizedWake,
+  isWithheld: (m: WakeMessageInput) => boolean,
+  excludedAuthorId?: (senderId: string) => boolean,
+): NormalizedWake {
   const triggerHit = nw.trigger.kind === "message" && isWithheld(nw.trigger.message);
   const backscrollHit = (nw.backscroll ?? []).some(isWithheld);
-  if (!triggerHit && !backscrollHit) return nw;
+  const withheldAuthors = new Set<string>();
+  if (triggerHit && nw.trigger.kind === "message" && nw.trigger.message.authorId) withheldAuthors.add(nw.trigger.message.authorId);
+  for (const m of nw.backscroll ?? []) if (isWithheld(m) && m.authorId) withheldAuthors.add(m.authorId);
+  const lineWithheld = (l: ContextLine): boolean =>
+    l.senderId !== undefined && l.senderId.length > 0 && (withheldAuthors.has(l.senderId) || excludedAuthorId?.(l.senderId) === true);
+  const lines = nw.contextLines ?? [];
+  const contextHit = lines.some(lineWithheld);
+  if (!triggerHit && !backscrollHit && !contextHit) return nw;
   return {
     ...nw,
-    ...(backscrollHit ? { backscroll: (nw.backscroll ?? []).map((m) => (isWithheld(m) ? withheldMessage(m) : m)) } : {}),
-    ...(triggerHit ? { trigger: { kind: "message" as const, message: withheldMessage(nw.trigger.message) } } : {}),
+    ...(backscrollHit ? { backscroll: (nw.backscroll ?? []).map((m) => (isWithheld(m) ? withheldWakeMessage(m) : m)) } : {}),
+    ...(contextHit ? { contextLines: lines.map((l) => (lineWithheld(l) ? { ...l, text: WITHHELD_BODY_MARKER } : l)) } : {}),
+    ...(triggerHit ? { trigger: { kind: "message" as const, message: withheldWakeMessage(nw.trigger.message) } } : {}),
   };
 }
 
-function withheldMessage(m: WakeMessageInput): WakeMessageInput {
+export function withheldWakeMessage(m: WakeMessageInput): WakeMessageInput {
   const { previousBody: _preEdit, attachments: _attachments, ...rest } = m;
   return { ...rest, body: WITHHELD_BODY_MARKER };
 }

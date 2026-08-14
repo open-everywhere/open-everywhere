@@ -303,6 +303,7 @@ export {
   authorIsExcluded,
   withholdsBody,
   withholdWakeBodies,
+  withheldWakeMessage,
   ingestedAfterWithholding,
   suppressesAddressedWake,
   suppressesAmbientWake,

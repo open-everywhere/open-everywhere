@@ -1,5 +1,11 @@
 import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } from "eve/channels";
-import { verifyTeamsRequest, parseTeamsActivity, teamsThreadRootActivityId, type TeamsMessageActivity } from "eve/channels/teams";
+import {
+  verifyTeamsRequest,
+  parseTeamsActivity,
+  teamsThreadRootActivityId,
+  sendTeamsActivity,
+  type TeamsMessageActivity,
+} from "eve/channels/teams";
 import {
   buildTeamsAuth,
   teamsMembershipType,
@@ -38,6 +44,16 @@ import {
   touchDmSeat,
   renderWake,
   mintWakeId,
+  resolveExternalPolicy,
+  externalPolicyOverrideFor,
+  withholdsBody,
+  roomIsSilenced,
+  silentRoomNotice,
+  silentNoticeKey,
+  EXTERNAL_SENDER_NOTICE,
+  type ExternalPolicy,
+  type IngestedChatMessage,
+  type AuthorTrustQuery,
   type SupervisorGrain,
   type UnifiedWindowWake,
   type UnifiedWakeOrigin,
@@ -93,6 +109,118 @@ function authForActivity(a: TeamsMessageActivity): OpenEverywhereTeamsAuth {
     scope: a.scope,
     membershipType: teamsMembershipType(a.channelData),
   });
+}
+
+function teamsExternalPolicyForRoom(roomKey: string): ExternalPolicy {
+  try {
+    return resolveExternalPolicy(externalPolicyOverrideFor(roomKey, getConfig().loadDomains()));
+  } catch {
+    return resolveExternalPolicy();
+  }
+}
+
+export function teamsAuthorFacts(auth: unknown, authorId: string | undefined): { readonly authorTrust?: AuthorTrustQuery } {
+  const a = teamsAttrs(auth);
+  const tenant = a["tenant_id"] ?? a["tenantId"];
+  if (typeof tenant !== "string" || tenant.length === 0) return {};
+  const group = teamsTrustGroup(typeof (a["team_id"] ?? a["teamId"]) === "string" ? String(a["team_id"] ?? a["teamId"]) : undefined);
+  return {
+    authorTrust: {
+      tenantKey: `teams/${tenant}`,
+      ...(authorId ? { authorId } : {}),
+      ...(group ? { memberships: [`teams/${tenant}/${group.trustGroup}`] } : {}),
+    },
+  };
+}
+
+export function teamsVendorExternal(a: TeamsMessageActivity): boolean {
+  return teamsMembershipType(a.channelData) === "shared";
+}
+
+export type TeamsExternalVerdict = "proceed" | "withheld-addressed" | "withheld-ambient" | "silent-room";
+
+export function teamsExternalVerdict(input: {
+  readonly policy: ExternalPolicy;
+  readonly author: IngestedChatMessage;
+  readonly addressed: boolean;
+  readonly isDm: boolean;
+  readonly vendorExternal: boolean;
+  readonly roomKey: string;
+  readonly groupKey?: string;
+}): TeamsExternalVerdict {
+  if (withholdsBody(input.author, input.policy)) return input.addressed ? "withheld-addressed" : "withheld-ambient";
+  const room = input.isDm ? { dm: true } : { surfaceKey: input.roomKey, ...(input.groupKey === undefined ? {} : { groupKey: input.groupKey }) };
+  return roomIsSilenced(
+    { room, ...(input.vendorExternal ? { vendorExternal: true } : {}), ingested: [input.author] },
+    input.policy,
+  )
+    ? "silent-room"
+    : "proceed";
+}
+
+async function postTeamsNotice(a: TeamsMessageActivity, text: string): Promise<void> {
+  try {
+    await sendTeamsActivity({ serviceUrl: a.serviceUrl, conversationId: a.conversation.id, body: { type: "message", text } });
+  } catch {
+  }
+}
+
+async function postTeamsExternalSenderNotice(a: TeamsMessageActivity): Promise<void> {
+  if (a.scope !== "personal") return;
+  await postTeamsNotice(a, EXTERNAL_SENDER_NOTICE);
+}
+
+async function announceTeamsSilentRoom(a: TeamsMessageActivity, org: string, surfaceKey: string): Promise<void> {
+  if (!org) return;
+  try {
+    const won = await getOperationalStore().claimNotice(org, silentNoticeKey(surfaceKey, "suppressed-wake"), new Date().toISOString());
+    if (!won) return;
+  } catch {
+    return;
+  }
+  await postTeamsNotice(a, silentRoomNotice("suppressed-wake"));
+}
+
+async function liveTeamsExternalGate(a: TeamsMessageActivity): Promise<boolean> {
+  const isDm = a.scope === "personal" || a.scope === "groupChat";
+  let auth: OpenEverywhereTeamsAuth;
+  let partition: Partition;
+  let roomKey: string;
+  try {
+    auth = authForActivity(a);
+    partition = resolvePartition({ channel: { kind: "teams" }, session: { auth: { current: auth } } });
+    roomKey = isDm ? partition.surfaceKey : domainKeyOf(partition);
+  } catch {
+    return false;
+  }
+  const trust = resolveWakeTrustFromContext(
+    { channel: { kind: "teams" }, session: { auth: { current: auth as unknown as { attributes?: Readonly<Record<string, string>> } } } },
+    { id: a.from.id, isBot: false },
+    { principalFallback: true },
+  );
+  const verdict = teamsExternalVerdict({
+    policy: teamsExternalPolicyForRoom(roomKey),
+    author: { trust, refuted: teamsAuthorRefuted(auth), ...teamsAuthorFacts(auth, a.from.id) },
+    addressed: a.isBotMentioned === true || a.scope === "personal",
+    isDm,
+    vendorExternal: teamsVendorExternal(a),
+    roomKey,
+    ...teamsRoomGroupKey(auth),
+  });
+  if (verdict === "proceed") return false;
+  if (verdict === "withheld-addressed") await postTeamsExternalSenderNotice(a).catch(() => undefined);
+  if (verdict === "silent-room") await announceTeamsSilentRoom(a, partition.org, roomKey).catch(() => undefined);
+  await appendAudit({
+    org: partition.org || deploymentOrg(),
+    platform: "teams",
+    workspace: partition.workspace,
+    surface: roomKey,
+    principalId: a.from.id,
+    action: "teams.external_policy_suppressed",
+    detail: { verdict, conversationId: a.conversation.id },
+  }).catch(() => undefined);
+  tlog(`suppressed ${roomKey}: externalPolicy verdict "${verdict}"`);
+  return true;
 }
 
 export function liveTeamsFrontPlan(a: TeamsMessageActivity): TeamsFrontPlan | null {
@@ -164,6 +292,7 @@ export interface TeamsFrontOptions {
   readonly planFor?: (a: TeamsMessageActivity) => TeamsFrontPlan | null;
   readonly dispatch?: (a: TeamsMessageActivity, plan: TeamsFrontPlan, to: RouteHandlerArgs["to"]) => Promise<void>;
   readonly dmDivert?: (a: TeamsMessageActivity, auth: OpenEverywhereTeamsAuth, partition: Partition, to: RouteHandlerArgs["to"]) => Promise<void>;
+  readonly externalGate?: (a: TeamsMessageActivity) => Promise<boolean>;
 }
 
 const OK = () => new Response("ok");
@@ -206,7 +335,7 @@ async function liveTeamsDispatch(a: TeamsMessageActivity, plan: TeamsFrontPlan, 
     {
       surfaceKey: plan.surfaceKey,
       channelId: a.teamsChannelId ?? a.conversation.id,
-      auth: stampNonMemberChatAuth(plan.auth, [{ trust, refuted: teamsAuthorRefuted(plan.auth) }], {
+      auth: stampNonMemberChatAuth(plan.auth, [{ trust, refuted: teamsAuthorRefuted(plan.auth), ...teamsAuthorFacts(plan.auth, a.from.id) }], {
         surfaceKey: plan.surfaceKey,
         ...teamsRoomGroupKey(plan.auth),
       }),
@@ -282,7 +411,7 @@ async function liveTeamsDmDivert(
     surfaceKey,
     auth: stampNonMemberChatAuth(
       auth as unknown as { attributes?: Record<string, unknown> },
-      [{ trust, refuted: teamsAuthorRefuted(auth as unknown as { attributes?: Record<string, unknown> }) }],
+      [{ trust, refuted: teamsAuthorRefuted(auth), ...teamsAuthorFacts(auth, a.from.id) }],
       { dm: true },
     ),
   });
@@ -307,6 +436,7 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
   const planFor = opts.planFor ?? liveTeamsFrontPlan;
   const dispatch = opts.dispatch ?? liveTeamsDispatch;
   const dmDivert = opts.dmDivert ?? liveTeamsDmDivert;
+  const externalGate = opts.externalGate ?? liveTeamsExternalGate;
 
   return async (req: Request, args: RouteHandlerArgs): Promise<Response> => {
     let rawBody: string;
@@ -331,10 +461,12 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
       return forward();
     }
 
+    const machineAuthored = activity.from.id === activity.recipient.id || activity.from.role === "bot" || activity.from.id.startsWith("28:");
+
+    if (!machineAuthored && (await externalGate(activity))) return OK();
+
     if (activity.scope === "personal" || activity.scope === "groupChat") {
-      if (activity.from.id === activity.recipient.id || activity.from.role === "bot" || activity.from.id.startsWith("28:")) {
-        return OK();
-      }
+      if (machineAuthored) return OK();
       const dmKey = `teams:${activity.conversation.id}:${activity.id}`;
       if (dedupe.seen(dmKey, now())) return OK();
       dedupe.mark(dmKey, now());
@@ -357,7 +489,7 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
     const plan = planFor(activity);
     if (!plan) return forward();
 
-    if (activity.from.id === activity.recipient.id || activity.from.role === "bot" || activity.from.id.startsWith("28:")) {
+    if (machineAuthored) {
       tlog(`activity ${activity.id} on ${plan.surfaceKey}: bot/self-authored — dropped (single-window surface, relay is Phase 2)`);
       return OK();
     }

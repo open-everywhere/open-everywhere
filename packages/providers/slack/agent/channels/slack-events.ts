@@ -33,8 +33,14 @@ import {
   resolveExternalPolicy,
   externalPolicyOverrideFor,
   roomIsSilenced,
+  withholdsBody,
+  withheldWakeMessage,
+  ingestedAfterWithholding,
   silentRoomNotice,
   silentNoticeKey,
+  EXTERNAL_SENDER_NOTICE,
+  type ExternalPolicy,
+  type IngestedChatMessage,
   postOnce,
   outboundKey,
   isSurfaceOnboarded,
@@ -422,6 +428,10 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
     surfaceInternal: authorFacts.surfaceInternal,
     channelKey: domainKeyOf(p),
   });
+  {
+    const verdict = await applySlackExternalPolicy(ev, p, { trust: wakeTrust, refuted: authorFacts.refuted }, "routeMessageEvent");
+    if (verdict !== "proceed") return { deliver: false, reason: externalPolicyDropReason(verdict), woke: false };
+  }
   await deps.wake({
     channelId: ev.channelId,
     threadTs: ev.threadTs!,
@@ -746,6 +756,10 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
     surfaceInternal: authorFacts.surfaceInternal,
     channelKey: domainKeyOf(p),
   });
+  {
+    const verdict = await applySlackExternalPolicy(ev, p, { trust: wakeTrust, refuted: authorFacts.refuted }, "routeNameDropEvent");
+    if (verdict !== "proceed") return { deliver: false, reason: externalPolicyDropReason(verdict), woke: false };
+  }
 
   const rendered = renderWake(
     slackNameDropWake(ev, name!, {
@@ -864,6 +878,98 @@ export async function slackWakeAuthorFacts(
   const member = await probe(userId, teamId);
   const refuted = member === false;
   return { surfaceInternal: channelInternal && !refuted, refuted };
+}
+
+export function slackExternalPolicyForRoom(roomKey: string): ExternalPolicy {
+  try {
+    return resolveExternalPolicy(externalPolicyOverrideFor(roomKey, getConfig().loadDomains()));
+  } catch {
+    return resolveExternalPolicy();
+  }
+}
+
+export type SlackExternalVerdict = "proceed" | "withheld-addressed" | "withheld-ambient" | "silent-room";
+
+export function slackExternalVerdict(input: {
+  readonly policy: ExternalPolicy;
+  readonly author: IngestedChatMessage;
+  readonly addressed: boolean;
+  readonly isDm: boolean;
+  readonly vendorExternal?: boolean;
+  readonly roomKey: string;
+}): SlackExternalVerdict {
+  if (withholdsBody(input.author, input.policy)) return input.addressed ? "withheld-addressed" : "withheld-ambient";
+  const room = input.isDm ? { dm: true } : { surfaceKey: input.roomKey };
+  return roomIsSilenced(
+    { room, ...(input.vendorExternal === true ? { vendorExternal: true } : {}), ingested: [input.author] },
+    input.policy,
+  )
+    ? "silent-room"
+    : "proceed";
+}
+
+export async function postSlackExternalSenderNotice(userId: string | undefined, dmChannelId?: string): Promise<void> {
+  let channel = dmChannelId;
+  if (!channel) {
+    if (!userId) return;
+    const opened = await slackForm("conversations.open", `users=${encodeURIComponent(userId)}`).catch(() => undefined);
+    const ch = (opened?.["channel"] as { id?: unknown } | undefined)?.id;
+    channel = typeof ch === "string" && ch.length > 0 ? ch : undefined;
+  }
+  if (!channel) return;
+  await slackForm(
+    "chat.postMessage",
+    `channel=${encodeURIComponent(channel)}&text=${encodeURIComponent(EXTERNAL_SENDER_NOTICE)}`,
+  ).catch(() => undefined);
+}
+
+export async function announceSlackSilentRoom(
+  org: string,
+  surfaceKey: string,
+  channelId: string,
+  store?: { claimNotice: (org: string, key: string, at: string) => Promise<boolean> },
+): Promise<void> {
+  if (!org) return;
+  let won = false;
+  try {
+    won = await (store ?? getOperationalStore()).claimNotice(org, silentNoticeKey(surfaceKey, "suppressed-wake"), new Date().toISOString());
+  } catch {
+    return;
+  }
+  if (!won) return;
+  await slackForm(
+    "chat.postMessage",
+    `channel=${encodeURIComponent(channelId)}&text=${encodeURIComponent(silentRoomNotice("suppressed-wake"))}`,
+  ).catch(() => undefined);
+}
+
+async function applySlackExternalPolicy(
+  ev: ParsedMessageEvent,
+  p: Partition,
+  facts: { readonly trust: WakeTrust; readonly refuted: boolean; readonly vendorExternal?: boolean },
+  route: string,
+): Promise<SlackExternalVerdict> {
+  const isDm = ev.channelType === "im" || ev.channelType === "mpim";
+  const roomKey = domainKeyOf(p);
+  const verdict = slackExternalVerdict({
+    policy: slackExternalPolicyForRoom(roomKey),
+    author: { trust: facts.trust, refuted: facts.refuted },
+    addressed: isDm || ev.isAppMention === true,
+    isDm,
+    ...(facts.vendorExternal === true ? { vendorExternal: true } : {}),
+    roomKey,
+  });
+  if (verdict === "proceed") return verdict;
+  if (verdict === "withheld-addressed") {
+    await postSlackExternalSenderNotice(ev.userId, isDm ? ev.channelId : undefined).catch(() => undefined);
+  }
+  if (verdict === "silent-room") await announceSlackSilentRoom(p.org, roomKey, ev.channelId).catch(() => undefined);
+  await appendRouteAudit(p.surfaceKey, "slack.external_policy_suppressed", { verdict, route, channelId: ev.channelId }).catch(() => undefined);
+  return verdict;
+}
+
+export function externalPolicyDropReason(verdict: SlackExternalVerdict): string {
+  return `externalPolicy verdict "${verdict}" — the wake is suppressed`;
 }
 
 export async function regradeSlackBackscrollTrust(
@@ -1187,16 +1293,22 @@ export async function routeSupervisorEvent(
     surfaceInternal: authorFacts.surfaceInternal,
     channelKey: domainKeyOf(p),
   });
+  const externalPolicy = slackExternalPolicyForRoom(domainKeyOf(p));
+  {
+    const verdict = await applySlackExternalPolicy(ev, p, { trust: wakeTrust, refuted: authorFacts.refuted }, "routeSupervisorEvent");
+    if (verdict !== "proceed") return { deliver: false, reason: externalPolicyDropReason(verdict), woke: false };
+  }
   const session = await deps.getOrCreateSession(p.org, p.surfaceKey, ev.channelId, atIso);
 
   const fetched = session.freshGeneration && deps.fetchBackscroll
     ? await deps.fetchBackscroll({ channelId: ev.channelId, ts: ev.ts, surfaceInternal: internal, channelKey: domainKeyOf(p) }).catch(() => [] as readonly WakeMessageInput[])
     : [];
-  const backscroll = await regradeSlackBackscrollTrust(fetched, ev.teamId).catch(() => fetched);
+  const regraded = await regradeSlackBackscrollTrust(fetched, ev.teamId).catch(() => fetched);
+  const backscroll = regraded.map((m) => (withholdsBody(m, externalPolicy) ? withheldWakeMessage(m) : m));
 
   const auth = stampNonMemberChatAuth(
     authForEvent(ev, { isExternal: false, trustChecked: true }),
-    [{ trust: wakeTrust, refuted: authorFacts.refuted }, ...backscroll],
+    ingestedAfterWithholding([{ trust: wakeTrust, refuted: authorFacts.refuted }, ...regraded], externalPolicy),
     { surfaceKey: domainKeyOf(p) },
   );
   let engagementTier: WakeEngagementTier | undefined;
