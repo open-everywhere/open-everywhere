@@ -32,6 +32,7 @@ const { registerSlackTestBridge, registerSlackFixtureMapper } = await import("./
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineDomain } = await import("../agent/memory/domain.js");
 const dispatch = await import("../agent/schedules/dispatch.js");
+const routineDispatch = await import("../agent/schedules/routine-dispatch.js");
 const routineStore = await import("../agent/routines/store.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { ROUTINE_AUDIT, resetRoutineSkipThrottle } = await import("../agent/routines/fire-audit.js");
@@ -75,6 +76,45 @@ function routine(over: Partial<Routine> & Pick<Routine, "id">): Routine {
     trigger: { kind: "interval", everyMinutes: 15 },
     prompt: "Post the daily digest.",
     createdBy: CREATOR,
+    createdAt: "2026-07-01T00:00:00.000Z",
+    status: "active",
+    consecutiveFailures: 0,
+    nextRunAt: "2026-07-02T12:00:00.000Z",
+    ...over,
+  };
+}
+
+const TEAMS_TENANT = "TEN1";
+const TEAMS_CONVERSATION = "19:conv1@thread.tacv2";
+const TEAMS_TEAM_ID = "team-1";
+const TEAMS_CHANNEL_ID = "19:chan1@thread.tacv2";
+const TEAMS_AAD_ID = "aad-0001-creator";
+const TEAMS_CREATED_BY = "29:bf-creator";
+const TEAMS_SURFACE = `teams/${TEAMS_TENANT}/${TEAMS_CONVERSATION}`;
+
+const teamsFakeChannel = { kind: "teams-fake-elig" };
+routineDispatch.registerRoutineDispatch("teams", {
+  resolveTarget: (r) => ({
+    channel: teamsFakeChannel as never,
+    target: { conversationId: TEAMS_CONVERSATION },
+    mode: "channel",
+    attributes: {
+      conversation_id: TEAMS_CONVERSATION,
+      team_id: TEAMS_TEAM_ID,
+      channel_id: TEAMS_CHANNEL_ID,
+      ...(typeof r.target?.["aadObjectId"] === "string" ? { aad_object_id: r.target["aadObjectId"] as string } : {}),
+    },
+  }),
+});
+
+function teamsRoutine(over: Partial<Routine> & Pick<Routine, "id">): Routine {
+  return {
+    org: ORG,
+    surfaceKey: TEAMS_SURFACE,
+    target: { serviceUrl: "https://smba.example.com", conversationId: TEAMS_CONVERSATION, teamId: TEAMS_TEAM_ID, channelId: TEAMS_CHANNEL_ID, aadObjectId: TEAMS_AAD_ID },
+    trigger: { kind: "interval", everyMinutes: 15 },
+    prompt: "Post the daily digest.",
+    createdBy: TEAMS_CREATED_BY,
     createdAt: "2026-07-01T00:00:00.000Z",
     status: "active",
     consecutiveFailures: 0,
@@ -178,6 +218,123 @@ const rejectingReceive = (() => ({
 }
 
 {
+  const alwaysThrows = async (): Promise<boolean | undefined> => {
+    throw new Error("this check must never be called");
+  };
+
+  const removed = await checkFireEligibility({
+    createdBy: TEAMS_CREATED_BY,
+    platform: "teams",
+    roomId: TEAMS_CHANNEL_ID,
+    teamsTeamId: TEAMS_TEAM_ID,
+    teamsCreatorAadObjectId: TEAMS_AAD_ID,
+    teamsMembershipCheck: async () => false,
+    teamsActiveCheck: async () => true,
+  });
+  ok(!removed.eligible && removed.reason === "creator_removed_from_room", "§1b: TEAMS — a CONFIRMED non-member skips with reason creator_removed_from_room");
+
+  const inactive = await checkFireEligibility({
+    createdBy: TEAMS_CREATED_BY,
+    platform: "teams",
+    roomId: TEAMS_CHANNEL_ID,
+    teamsTeamId: TEAMS_TEAM_ID,
+    teamsCreatorAadObjectId: TEAMS_AAD_ID,
+    teamsMembershipCheck: async () => true,
+    teamsActiveCheck: async () => false,
+  });
+  ok(!inactive.eligible && inactive.reason === "creator_account_inactive", "§1b: TEAMS — a CONFIRMED inactive account skips with reason creator_account_inactive, independently of membership");
+
+  const both = await checkFireEligibility({
+    createdBy: TEAMS_CREATED_BY,
+    platform: "teams",
+    roomId: TEAMS_CHANNEL_ID,
+    teamsTeamId: TEAMS_TEAM_ID,
+    teamsCreatorAadObjectId: TEAMS_AAD_ID,
+    teamsMembershipCheck: async () => true,
+    teamsActiveCheck: async () => true,
+  });
+  ok(both.eligible, "§1b: TEAMS — a confirmed member with an active account is eligible");
+
+  const unresolvedBoth = await checkFireEligibility({
+    createdBy: TEAMS_CREATED_BY,
+    platform: "teams",
+    roomId: TEAMS_CHANNEL_ID,
+    teamsTeamId: TEAMS_TEAM_ID,
+    teamsCreatorAadObjectId: TEAMS_AAD_ID,
+    teamsMembershipCheck: async () => undefined,
+    teamsActiveCheck: async () => undefined,
+  });
+  ok(unresolvedBoth.eligible, "§1b: TEAMS — both probes unresolvable is still eligible, never a manufactured skip");
+
+  ok(
+    (
+      await checkFireEligibility({
+        createdBy: TEAMS_CREATED_BY,
+        platform: "teams",
+        roomId: TEAMS_CHANNEL_ID,
+        teamsCreatorAadObjectId: TEAMS_AAD_ID,
+        teamsMembershipCheck: alwaysThrows,
+        teamsActiveCheck: alwaysThrows,
+      })
+    ).eligible,
+    "§1b: TEAMS — no teamId ⇒ nothing to ask (Graph needs team+channel together) — eligible, probes never called",
+  );
+  ok(
+    (
+      await checkFireEligibility({
+        createdBy: TEAMS_CREATED_BY,
+        platform: "teams",
+        roomId: TEAMS_CHANNEL_ID,
+        teamsTeamId: TEAMS_TEAM_ID,
+        teamsMembershipCheck: alwaysThrows,
+        teamsActiveCheck: alwaysThrows,
+      })
+    ).eligible,
+    "§1b: 🔴 TEAMS — no AAD object id ⇒ nothing to ask. `createdBy` (the Bot Framework id) is NOT a substitute — this is the exact identity-mismatch the file header documents",
+  );
+  ok(
+    (
+      await checkFireEligibility({
+        createdBy: undefined,
+        platform: "teams",
+        roomId: TEAMS_CHANNEL_ID,
+        teamsTeamId: TEAMS_TEAM_ID,
+        teamsCreatorAadObjectId: TEAMS_AAD_ID,
+        teamsMembershipCheck: alwaysThrows,
+        teamsActiveCheck: alwaysThrows,
+      })
+    ).eligible,
+    "§1b: TEAMS — no creator on the row ⇒ eligible, and the probes are never even called",
+  );
+
+  const brokenMembership = await checkFireEligibility({
+    createdBy: TEAMS_CREATED_BY,
+    platform: "teams",
+    roomId: TEAMS_CHANNEL_ID,
+    teamsTeamId: TEAMS_TEAM_ID,
+    teamsCreatorAadObjectId: TEAMS_AAD_ID,
+    teamsMembershipCheck: async () => {
+      throw new Error("graph 403");
+    },
+    teamsActiveCheck: async () => true,
+  });
+  ok(brokenMembership.eligible, "§1b: TEAMS — a THROWING membership probe degrades to 'unresolved', never a crash and never a manufactured skip");
+
+  const slackOverridesIgnoredOnTeams = await checkFireEligibility({
+    createdBy: TEAMS_CREATED_BY,
+    platform: "teams",
+    roomId: TEAMS_CHANNEL_ID,
+    teamsTeamId: TEAMS_TEAM_ID,
+    teamsCreatorAadObjectId: TEAMS_AAD_ID,
+    membershipCheck: async () => false,
+    activeCheck: async () => false,
+    teamsMembershipCheck: async () => true,
+    teamsActiveCheck: async () => true,
+  });
+  ok(slackOverridesIgnoredOnTeams.eligible, "§1b: 🔴 NEGATIVE CONTROL — a Slack-shaped `membershipCheck`/`activeCheck` override does not leak into the Teams branch; only `teamsMembershipCheck`/`teamsActiveCheck` are read there");
+}
+
+{
   resetRoutineSkipThrottle();
   _resetFireEligibilityCachesForTest();
   const id = "r-removed";
@@ -254,6 +411,82 @@ const rejectingReceive = (() => ({
   await tick(new Date("2026-07-02T12:05:00.000Z"), receive, { confirmRoomMembership: async () => false, confirmCreatorActive: async () => false });
   ok(delivered.length === 1, "§2d: a creator-less routine fires normally — there is no creator to be removed or deactivated, so the predicate never engages");
   await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, id);
+}
+
+{
+  resetRoutineSkipThrottle();
+  _resetFireEligibilityCachesForTest();
+  const id = "r-teams-removed";
+  await routineStore.addRoutine({} as never, teamsRoutine({ id }));
+
+  const neverFires = (() => ({
+    send: (): never => {
+      throw new Error("this fire must never be delivered — the creator was removed from the Teams channel");
+    },
+  })) as never;
+
+  await tick(new Date("2026-07-02T12:05:00.000Z"), neverFires, { confirmTeamsRoomMembership: async () => false });
+  const after = await routineStore.getRoutine(ORG, TEAMS_SURFACE, id);
+  ok(after?.lastOutcome === "skipped", "§2-teams: TEAMS — the run is recorded SKIPPED, not failed");
+  ok(after?.consecutiveFailures === 0, "§2-teams: 🔴 THE CORE CLAIM ON TEAMS TOO — a fire-time eligibility skip is NEVER a failure");
+  ok(after?.status === "active", "§2-teams: the routine stays ACTIVE — this is a skip, not a self-disable");
+  ok(after?.nextRunAt === "2026-07-02T12:15:00.000Z", "§2-teams: RETRY POLICY — the schedule ADVANCES to the routine's own next scheduled fire, no early retry");
+
+  const rows = (await readAudit({ org: ORG, action: ROUTINE_AUDIT.skip, limit: 500 })).filter((r) => (r.detail as { routineId?: string } | undefined)?.routineId === id);
+  ok(rows.length === 1, "§2-teams: a `routine.skip` reason row IS written");
+  ok((rows[0]?.detail as { reason?: string } | undefined)?.reason === "creator_removed_from_room", "§2-teams: …carrying the SAME reason string the Slack leg uses — one vocabulary across platforms");
+
+  const okReceive = (() => ({ send: async () => undefined })) as never;
+  await tick(new Date("2026-07-02T12:15:00.000Z"), okReceive, { confirmTeamsRoomMembership: async () => true });
+  const recovered = await routineStore.getRoutine(ORG, TEAMS_SURFACE, id);
+  ok(recovered?.lastRunAt === "2026-07-02T12:15:00.000Z", "§2-teams: TEAMS — the very next scheduled fire runs normally once membership is confirmed again");
+  await routineStore.removeRoutine({ org: ORG, surfaceKey: TEAMS_SURFACE } as never, id);
+}
+
+{
+  resetRoutineSkipThrottle();
+  _resetFireEligibilityCachesForTest();
+  const id = "r-teams-inactive";
+  await routineStore.addRoutine({} as never, teamsRoutine({ id }));
+  const neverFires = (() => ({
+    send: (): never => {
+      throw new Error("this fire must never be delivered — the creator's Entra account is disabled");
+    },
+  })) as never;
+
+  await tick(new Date("2026-07-02T12:05:00.000Z"), neverFires, { confirmTeamsRoomMembership: async () => true, confirmTeamsCreatorActive: async () => false });
+  const after = await routineStore.getRoutine(ORG, TEAMS_SURFACE, id);
+  ok(after?.consecutiveFailures === 0 && after?.status === "active", "§2-teams-b: TEAMS — an inactive-account skip is ALSO not a failure, checked independently of room membership");
+  const rows = (await readAudit({ org: ORG, action: ROUTINE_AUDIT.skip, limit: 500 })).filter((r) => (r.detail as { routineId?: string } | undefined)?.routineId === id);
+  ok((rows[0]?.detail as { reason?: string } | undefined)?.reason === "creator_account_inactive", "§2-teams-b: …with the DIFFERENT reason, distinguishable from a room removal");
+  await routineStore.removeRoutine({ org: ORG, surfaceKey: TEAMS_SURFACE } as never, id);
+}
+
+{
+  resetRoutineSkipThrottle();
+  _resetFireEligibilityCachesForTest();
+  const id = "r-teams-unresolved";
+  await routineStore.addRoutine({} as never, teamsRoutine({ id }));
+  const delivered: unknown[] = [];
+  const receive = (() => ({ send: async (m: string) => void delivered.push(m) })) as never;
+
+  await tick(new Date("2026-07-02T12:05:00.000Z"), receive, { confirmTeamsRoomMembership: async () => undefined, confirmTeamsCreatorActive: async () => undefined });
+  ok(delivered.length === 1, "§2-teams-c: TEAMS — an unresolved probe on BOTH legs still fires");
+  const after = await routineStore.getRoutine(ORG, TEAMS_SURFACE, id);
+  ok(after?.lastOutcome !== "skipped", "§2-teams-c: and the run is not recorded skipped for eligibility reasons");
+  await routineStore.removeRoutine({ org: ORG, surfaceKey: TEAMS_SURFACE } as never, id);
+}
+
+{
+  resetRoutineSkipThrottle();
+  _resetFireEligibilityCachesForTest();
+  const id = "r-teams-no-aad";
+  await routineStore.addRoutine({} as never, teamsRoutine({ id, target: { serviceUrl: "https://smba.example.com", conversationId: TEAMS_CONVERSATION, teamId: TEAMS_TEAM_ID, channelId: TEAMS_CHANNEL_ID } }));
+  const delivered: unknown[] = [];
+  const receive = (() => ({ send: async (m: string) => void delivered.push(m) })) as never;
+  await tick(new Date("2026-07-02T12:05:00.000Z"), receive, { confirmTeamsRoomMembership: async () => false, confirmTeamsCreatorActive: async () => false });
+  ok(delivered.length === 1, "§2-teams-d: 🔴 TEAMS — no AAD object id on the stored target ⇒ fires normally, even though `createdBy` IS set and the probes would confirm 'removed' if consulted");
+  await routineStore.removeRoutine({ org: ORG, surfaceKey: TEAMS_SURFACE } as never, id);
 }
 
 {

@@ -8,6 +8,8 @@ import {
   type AccountActiveCheck,
   type FireEligibility,
   type RoomMembershipCheck,
+  type TeamsAccountActiveCheck,
+  type TeamsRoomMembershipCheck,
 } from "../routines/fire-eligibility.js";
 import { divertTriggeredFire, jobFireSeatKey, runFireSeatKey } from "../routines/fire-window.js";
 import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.js";
@@ -63,6 +65,8 @@ export async function dispatchTick(
     readonly confirmCreatorInternal?: CreatorStandingCheck;
     readonly confirmRoomMembership?: RoomMembershipCheck;
     readonly confirmCreatorActive?: AccountActiveCheck;
+    readonly confirmTeamsRoomMembership?: TeamsRoomMembershipCheck;
+    readonly confirmTeamsCreatorActive?: TeamsAccountActiveCheck;
   },
 ): Promise<void> {
   const { to, waitUntil, appAuth } = args;
@@ -121,6 +125,9 @@ export async function dispatchTick(
       firePlatform === "slack" && typeof (dest.target as { channelId?: unknown }).channelId === "string"
         ? (dest.target as { channelId: string }).channelId
         : undefined;
+    const teamsChannelId = firePlatform === "teams" && typeof dest.attributes["channel_id"] === "string" ? dest.attributes["channel_id"] : undefined;
+    const teamsTeamId = firePlatform === "teams" && typeof dest.attributes["team_id"] === "string" ? dest.attributes["team_id"] : undefined;
+    const teamsAadObjectId = firePlatform === "teams" && typeof dest.attributes["aad_object_id"] === "string" ? dest.attributes["aad_object_id"] : undefined;
     const internal =
       slackChannelId !== undefined && mode === "channel" ? await confirmInternal(slackChannelId).catch(() => false) : false;
     const creatorInternal = await recheckFireCreator({
@@ -134,9 +141,13 @@ export async function dispatchTick(
     const eligibility = await checkFireEligibility({
       createdBy: r.createdBy,
       platform: firePlatform,
-      roomId: slackChannelId,
+      roomId: firePlatform === "teams" ? teamsChannelId : slackChannelId,
       ...(args.confirmRoomMembership ? { membershipCheck: args.confirmRoomMembership } : {}),
       ...(args.confirmCreatorActive ? { activeCheck: args.confirmCreatorActive } : {}),
+      ...(teamsTeamId ? { teamsTeamId } : {}),
+      ...(teamsAadObjectId ? { teamsCreatorAadObjectId: teamsAadObjectId } : {}),
+      ...(args.confirmTeamsRoomMembership ? { teamsMembershipCheck: args.confirmTeamsRoomMembership } : {}),
+      ...(args.confirmTeamsCreatorActive ? { teamsActiveCheck: args.confirmTeamsCreatorActive } : {}),
     }).catch((): FireEligibility => ({ eligible: true }));
     if (!eligibility.eligible) {
       ineligible++;

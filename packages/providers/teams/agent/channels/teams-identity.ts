@@ -143,7 +143,15 @@ export const bindTeams: IdentityMapper = (ctx): RawIdentity => {
     principalId: teamsAuthPrincipalId(ctx) ?? teamsAttr(a, ["user_id", "userId"]),
     target:
       conversationId && serviceUrl
-        ? { serviceUrl, conversationId, tenantId, channelId: teamsAttr(a, ["channel_id", "channelId"]), teamId: teamsAttr(a, ["team_id", "teamId"]), conversationType: scope }
+        ? {
+            serviceUrl,
+            conversationId,
+            tenantId,
+            channelId: teamsAttr(a, ["channel_id", "channelId"]),
+            teamId: teamsAttr(a, ["team_id", "teamId"]),
+            conversationType: scope,
+            aadObjectId: teamsAttr(a, ["aad_object_id", "aadObjectId"]),
+          }
         : undefined,
   };
 };

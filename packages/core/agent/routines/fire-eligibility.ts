@@ -1,4 +1,5 @@
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
+import { bridgeTeamsRoomMembership, bridgeTeamsAccountActive } from "../channels/teams-bridge.js";
 import { dmTrustTtlMs } from "../identity/trust.js";
 import type { RoutineSkipReason } from "./fire-audit.js";
 
@@ -64,25 +65,55 @@ export function _resetFireEligibilityCachesForTest(): void {
   accountActiveCache.clear();
 }
 
+export type TeamsRoomMembershipCheck = (teamId: string, channelId: string, aadObjectId: string) => Promise<boolean | undefined>;
+
+export type TeamsAccountActiveCheck = (aadObjectId: string) => Promise<boolean | undefined>;
+
+const liveTeamsRoomMembership: TeamsRoomMembershipCheck = (teamId, channelId, aadObjectId) => bridgeTeamsRoomMembership(teamId, channelId, aadObjectId);
+
+const liveTeamsAccountActive: TeamsAccountActiveCheck = (aadObjectId) => bridgeTeamsAccountActive(aadObjectId);
+
 export interface FireEligibilityInput {
   readonly createdBy: string | undefined;
   readonly platform: string | undefined;
   readonly roomId: string | undefined;
   readonly membershipCheck?: RoomMembershipCheck;
   readonly activeCheck?: AccountActiveCheck;
+  readonly teamsTeamId?: string;
+  readonly teamsCreatorAadObjectId?: string;
+  readonly teamsMembershipCheck?: TeamsRoomMembershipCheck;
+  readonly teamsActiveCheck?: TeamsAccountActiveCheck;
 }
 
 export type FireEligibility = { readonly eligible: true } | { readonly eligible: false; readonly reason: RoutineSkipReason };
 
-export async function checkFireEligibility(input: FireEligibilityInput): Promise<FireEligibility> {
-  if (!input.createdBy || input.platform !== "slack" || !input.roomId) return { eligible: true };
-  const membershipCheck = input.membershipCheck ?? liveRoomMembership;
-  const activeCheck = input.activeCheck ?? liveAccountActive;
-  const [member, active] = await Promise.all([
-    membershipCheck(input.roomId, input.createdBy).catch((): boolean | undefined => undefined),
-    activeCheck(input.createdBy).catch((): boolean | undefined => undefined),
-  ]);
+function verdictFromChecks(member: boolean | undefined, active: boolean | undefined): FireEligibility {
   if (member === false) return { eligible: false, reason: "creator_removed_from_room" };
   if (active === false) return { eligible: false, reason: "creator_account_inactive" };
+  return { eligible: true };
+}
+
+export async function checkFireEligibility(input: FireEligibilityInput): Promise<FireEligibility> {
+  if (!input.createdBy) return { eligible: true };
+  if (input.platform === "slack") {
+    if (!input.roomId) return { eligible: true };
+    const membershipCheck = input.membershipCheck ?? liveRoomMembership;
+    const activeCheck = input.activeCheck ?? liveAccountActive;
+    const [member, active] = await Promise.all([
+      membershipCheck(input.roomId, input.createdBy).catch((): boolean | undefined => undefined),
+      activeCheck(input.createdBy).catch((): boolean | undefined => undefined),
+    ]);
+    return verdictFromChecks(member, active);
+  }
+  if (input.platform === "teams") {
+    if (!input.teamsTeamId || !input.roomId || !input.teamsCreatorAadObjectId) return { eligible: true };
+    const membershipCheck = input.teamsMembershipCheck ?? liveTeamsRoomMembership;
+    const activeCheck = input.teamsActiveCheck ?? liveTeamsAccountActive;
+    const [member, active] = await Promise.all([
+      membershipCheck(input.teamsTeamId, input.roomId, input.teamsCreatorAadObjectId).catch((): boolean | undefined => undefined),
+      activeCheck(input.teamsCreatorAadObjectId).catch((): boolean | undefined => undefined),
+    ]);
+    return verdictFromChecks(member, active);
+  }
   return { eligible: true };
 }

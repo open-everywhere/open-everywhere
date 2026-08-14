@@ -65,7 +65,7 @@ export function _resetTeamsGraphTokenCache(): void {
 
 export type TeamsGraphRequester = (url: string) => Promise<unknown>;
 
-const liveTeamsGraphRequest: TeamsGraphRequester = async (url) => {
+export const liveTeamsGraphRequest: TeamsGraphRequester = async (url) => {
   const token = await teamsGraphToken.get();
   const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
   if (!res.ok) {

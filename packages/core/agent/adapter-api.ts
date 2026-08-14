@@ -452,6 +452,9 @@ export type { Trust } from "./identity/binding.js";
 export { registerSlackBridge, _resetSlackBridgeForTest, slackBridge } from "./channels/slack-bridge.js";
 export type { SlackBridge, SlackFormFn, SlackReadCallFn } from "./channels/slack-bridge.js";
 
+export { registerTeamsBridge, _resetTeamsBridgeForTest, teamsBridge } from "./channels/teams-bridge.js";
+export type { TeamsBridge, TeamsRoomMembershipCheck, TeamsAccountActiveCheck } from "./channels/teams-bridge.js";
+
 export { markThreadStopped, shouldDeliverReply, classifyParticipation } from "./channels/engagement.js";
 export type { ReplyDecision, ParticipationSignals } from "./channels/engagement.js";
 

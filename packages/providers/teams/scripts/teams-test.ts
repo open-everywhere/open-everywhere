@@ -145,6 +145,7 @@ const memCfg: MemoryResolveConfig = {
       channelId: "19:channel-eng@thread.tacv2",
       teamId: "19:team-eng@thread.tacv2",
       conversationType: "channel",
+      aadObjectId: "aad-alice",
     }),
     "A: post-back target = Bot Connector reference (+ scope fact for the routine dispatcher)",
   );

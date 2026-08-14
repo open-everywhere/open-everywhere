@@ -5,6 +5,7 @@ import {
   registerWakeOriginCodec,
   registerReadAdapter,
   registerRoutineDispatch,
+  registerTeamsBridge,
   type DispatchTarget,
   type Routine,
   type UnifiedWakeOrigin,
@@ -17,6 +18,7 @@ import { bindTeams, teamsMode } from "./channels/teams-identity.js";
 import { teamsPostArm } from "./channels/teams-post-arm.js";
 import { teamsWakeOriginCodec } from "./channels/teams-origin-codec.js";
 import { teamsReadAdapter } from "./channels/teams-read.js";
+import { liveTeamsRoomMembership, liveTeamsAccountActive } from "./channels/teams-fire-eligibility.js";
 
 function storedString(t: Routine["target"], key: string): string | undefined {
   const v = t?.[key];
@@ -30,6 +32,7 @@ export function resolveTeamsTarget(r: Routine): DispatchTarget | null {
   const conversationType = storedString(r.target, "conversationType");
   const channelId = storedString(r.target, "channelId");
   const teamId = storedString(r.target, "teamId");
+  const aadObjectId = storedString(r.target, "aadObjectId");
   const tenantId = storedString(r.target, "tenantId") ?? r.surfaceKey.split("/")[1] ?? "";
   const mode = teamsMode(conversationType);
   const origin: UnifiedWakeOrigin = { platform: "teams", serviceUrl, conversationId, ...(tenantId ? { tenantId } : {}) };
@@ -51,6 +54,7 @@ export function resolveTeamsTarget(r: Routine): DispatchTarget | null {
       ...(channelId ? { channel_id: channelId } : {}),
       ...(teamId ? { team_id: teamId } : {}),
       ...(conversationType ? { scope: conversationType } : {}),
+      ...(aadObjectId ? { aad_object_id: aadObjectId } : {}),
     },
     origin,
   };
@@ -63,6 +67,7 @@ export function registerTeamsProvider(): void {
   registerWakeOriginCodec("teams", teamsWakeOriginCodec);
   registerReadAdapter(teamsReadAdapter);
   registerRoutineDispatch("teams", { resolveTarget: resolveTeamsTarget });
+  registerTeamsBridge({ roomMembership: liveTeamsRoomMembership, accountActive: liveTeamsAccountActive });
   registerProviderDocs("teams", PROVIDER_DOCS);
   registerTeamsOps();
 }
