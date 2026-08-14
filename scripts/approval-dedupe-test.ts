@@ -59,9 +59,13 @@ function makeFakeStore() {
   return { now, advance, markEventSeen, hasEventSeen, size: () => rows.size };
 }
 
-const ctx = (over: Partial<{ sessionId: string; toolName: string; toolInput: unknown }> = {}): ApprovalContext =>
+const ctx = (over: Partial<{ sessionId: string; toolName: string; toolInput: unknown; turnId: string }> = {}): ApprovalContext =>
   ({
-    session: { id: over.sessionId ?? "sess-1", auth: {} as never, turn: {} as never },
+    session: {
+      id: over.sessionId ?? "sess-1",
+      auth: {} as never,
+      turn: { id: over.turnId ?? "turn_0", sequence: 0 } as never,
+    },
     callId: "call-1",
     toolName: over.toolName ?? "post_file",
     toolInput: over.toolInput ?? { files: [{ filename: "x.html" }] },
@@ -278,7 +282,32 @@ ok(DUPLICATE_APPROVAL_KEY_PREFIX.length > 0, "6a. the guard's dedupe key carries
   ok((await policy(differentObject)) === "user-approval", "9b. a different object under the same session/tool still prompts (fingerprint is over the DATA, not a loose match)");
 }
 
+{
+  const store = makeFakeStore();
+  const always = async (): Promise<ApprovalStatus> => "user-approval";
+  const guarded = withDuplicateApprovalGuard(always, { now: store.now, hasEventSeen: store.hasEventSeen });
+
+  const attempt1 = await guarded(ctx({ turnId: "turn_7" }));
+  ok(attempt1 === "user-approval", "10a. attempt 1 prompts, and eve emits input.requested for it");
+
+  await simulateApprovalRaised(ctx({ turnId: "turn_7" }), store);
+  ok(store.size() === 1, "10b. the mark is durable the instant the hook writes it — it never waits for the step to commit");
+
+  const recovered = await guarded(ctx({ turnId: "turn_7" }));
+  ok(
+    typeof recovered === "object" && recovered !== null && recovered.type === "denied",
+    "10c. the recovered attempt is DENIED even though its own turn raised the (now orphaned) card — the OPE-476 residual",
+  );
+
+  const laterTurn = await guarded(ctx({ turnId: "turn_8" }));
+  ok(
+    typeof laterTurn === "object" && laterTurn !== null && laterTurn.type === "denied",
+    "10d. a LATER turn's identical ask is denied by the same rule — the guard is turn-blind by construction",
+  );
+  ok(store.size() === 1, "10e. neither read wrote anything — the ask-time check stays side-effect free");
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(
-  `✓ approval-dedupe — ${passed} assertions (duplicate-card suppression, crash-recovery ordering, no false dedup, fail-open, window expiry, string/object input convergence, live post_file + connector-auth wiring)`,
+  `✓ approval-dedupe — ${passed} assertions (duplicate-card suppression, crash-recovery ordering, OPE-476 residual, no false dedup, fail-open, window expiry, string/object input convergence, live post_file + connector-auth wiring)`,
 );
