@@ -39,9 +39,13 @@ import {
   outboundKey,
   gateGithubDelivery,
   fanOutGitHubDelivery,
+  resolveExternalPolicy,
+  externalPolicyOverrideFor,
+  roomIsSilenced,
   type SupervisorGrain,
   type UnifiedWindowWake,
   type EngagementTier,
+  type ExternalPolicy,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 const ROUTE = "/eve/v1/github";
@@ -129,6 +133,27 @@ function githubRepoVouched(owner: string, repo: string): boolean {
   return isVouchedInternal(`github/${owner}`, `github/${owner}/${repo}`) || process.env.OE_TRUST === "internal";
 }
 
+async function githubRoomSilenced(surfaceKey: string, owner: string, principalId: string | undefined): Promise<boolean> {
+  let policy: ExternalPolicy;
+  try {
+    policy = resolveExternalPolicy(externalPolicyOverrideFor(surfaceKey, getConfig().loadDomains()));
+  } catch {
+    policy = resolveExternalPolicy();
+  }
+  if (!roomIsSilenced({ room: { surfaceKey } }, policy)) return false;
+  await appendAudit({
+    org: deploymentOrg(),
+    platform: "github",
+    workspace: owner,
+    surface: surfaceKey,
+    ...(principalId ? { principalId } : {}),
+    action: "github.external_policy_suppressed",
+    detail: { verdict: "silent-room" },
+  }).catch(() => undefined);
+  slog(`suppressed ${surfaceKey}: externalPolicy verdict "silent-room"`);
+  return true;
+}
+
 type GitHubSend = (
   payload: { readonly message: string; readonly context?: readonly string[] },
   options: { readonly auth: unknown; readonly continuationToken: string; readonly state?: GitHubChannelState },
@@ -194,6 +219,7 @@ async function ambientDelivery(body: string, eventType: string, send: GitHubSend
   const ev = extractGitHubAmbientEvent(eventType, payload);
   if (!ev) return;
   const surfaceKey = `github/${ev.owner}/${ev.repo}`;
+  if (await githubRoomSilenced(surfaceKey, ev.owner, ev.comment.authorLogin)) return;
   if (!githubAmbientEnabled(surfaceKey)) {
     await auditAmbientSkip({ platform: "github", workspace: ev.owner, surfaceKey, log: slog });
     return;
@@ -298,6 +324,9 @@ const defaultEvent = (name: string): AdapterEventFn | undefined =>
 export const githubOnComment = async (ctx: GitHubInboundContext, comment: GitHubComment): Promise<GitHubInboundResult> => {
     if (!githubBotMentioned(comment.body, BOT_NAME, comment.author)) return null;
     const surfaceKey = `github/${ctx.repository.owner}/${ctx.repository.name}`;
+    if (await githubRoomSilenced(surfaceKey, ctx.repository.owner, comment.author?.login ?? ctx.sender.login)) {
+      return null;
+    }
     if (shouldSuppressNativeMention(grainUsesUnifiedWindow(githubGrainFor(surfaceKey)), githubRepoVouched(ctx.repository.owner, ctx.repository.name))) {
       return null;
     }

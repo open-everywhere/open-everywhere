@@ -53,10 +53,14 @@ import {
   admitTrigger,
   replierLabelFromAuthAttributes,
   withReplierPrefix,
+  resolveExternalPolicy,
+  externalPolicyOverrideFor,
+  roomIsSilenced,
   type SupervisorGrain,
   type UnifiedWindowWake,
   type EngagementTier,
   type ReplierLabel,
+  type ExternalPolicy,
   dmTrustTtlMs,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -276,6 +280,36 @@ function linearTeamVouched(organizationId: string, teamId: string): boolean {
   return isVouchedInternal(`linear/${organizationId}`, `linear/${organizationId}/${teamId}`) || process.env.OE_TRUST === "internal";
 }
 
+async function linearRoomSilenced(surfaceKey: string, organizationId: string, principalId: string | undefined): Promise<boolean> {
+  let policy: ExternalPolicy;
+  try {
+    policy = resolveExternalPolicy(externalPolicyOverrideFor(surfaceKey, getConfig().loadDomains()));
+  } catch {
+    policy = resolveExternalPolicy();
+  }
+  if (!roomIsSilenced({ room: { surfaceKey } }, policy)) return false;
+  await appendAudit({
+    org: deploymentOrg(),
+    platform: "linear",
+    workspace: organizationId,
+    surface: surfaceKey,
+    ...(principalId ? { principalId } : {}),
+    action: "linear.external_policy_suppressed",
+    detail: { verdict: "silent-room" },
+  }).catch(() => undefined);
+  slog(`suppressed ${surfaceKey}: externalPolicy verdict "silent-room"`);
+  return true;
+}
+
+const LINEAR_ROOM_SILENCED_STATUS = "(no reply — this room is set up as an external space)";
+
+async function silentlyCloseLinearAgentSession(agentSessionId: string): Promise<void> {
+  await createLinearAgentActivity({
+    credentials: linearAppActorCredentials,
+    activity: { agentSessionId, content: { type: "thought", body: LINEAR_ROOM_SILENCED_STATUS }, ephemeral: true, signal: "stop" },
+  }).catch((err) => slog(`room-silenced session close failed (session ${agentSessionId}): ${String(err)}`));
+}
+
 type LinearSend = (
   payload: { readonly message: string; readonly context?: readonly string[] },
   options: { readonly auth: unknown; readonly continuationToken: string; readonly state?: LinearChannelState },
@@ -352,6 +386,7 @@ async function ambientDelivery(body: string, headers: Headers, send: LinearSend,
   const c = await enrichComment(signal.commentId);
   if (!c || !c.teamId || !c.issueId) return;
   const surfaceKey = `linear/${signal.organizationId}/${c.teamId}`;
+  if (await linearRoomSilenced(surfaceKey, signal.organizationId, c.authorId)) return;
   if (!linearAmbientEnabled(surfaceKey)) {
     await auditAmbientSkip({ platform: "linear", workspace: signal.organizationId, surfaceKey, log: slog });
     return;
@@ -508,6 +543,10 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
   const agentSessionId = sig.agentSessionId!;
   const organizationId = sig.organizationId!;
   const surfaceKey = `linear/${organizationId}/${sig.teamId}`;
+  if (await linearRoomSilenced(surfaceKey, organizationId, undefined)) {
+    await silentlyCloseLinearAgentSession(agentSessionId);
+    return;
+  }
   const triggerCommentId = sig.action === "prompted" ? sig.promptSourceCommentId : sig.sourceCommentId;
   try {
     if (!to) throw new Error("no cross-channel dispatch on this route (cannot reach the unified window)");
@@ -608,6 +647,15 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
 
     const verdict = await mentionRoutingFor(event, teamId);
     if (verdict.routing === "suppress-and-divert") return null;
+
+    const nativeOrganizationId = event.organizationId ?? s.organizationId ?? undefined;
+    if (typeof nativeOrganizationId === "string" && nativeOrganizationId && teamId) {
+      const surfaceKey = `linear/${nativeOrganizationId}/${teamId}`;
+      if (await linearRoomSilenced(surfaceKey, nativeOrganizationId, undefined)) {
+        await silentlyCloseLinearAgentSession(agentSessionId);
+        return null;
+      }
+    }
 
     const isPrivate = verdict.isPrivate ?? (await enrichTeamPrivacy(teamId));
 

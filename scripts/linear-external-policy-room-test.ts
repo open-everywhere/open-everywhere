@@ -1,0 +1,113 @@
+import assert from "node:assert/strict";
+import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
+import { readAudit, resolvePartition, defineSurface, registerSurfaces, _resetSurfacesForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import type { Domain } from "@open-everywhere/core/agent/memory/domain.js";
+
+const dir = join(tmpdir(), `open-everywhere-linear-external-policy-room-${process.pid}`);
+rmSync(dir, { recursive: true, force: true });
+process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+delete process.env.OE_PLATFORM;
+process.env.LINEAR_API_KEY = "linear-test-key";
+
+const { registerLinearProvider } = await import("@open-everywhere/provider-linear/agent/register.js");
+registerLinearProvider();
+const { linearOnAgentSession } = await import("@open-everywhere/provider-linear/agent/channels/linear.js");
+const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
+
+let n = 0;
+const ok = (cond: boolean, label: string) => {
+  assert.ok(cond, label);
+  n++;
+};
+
+interface FetchCall {
+  readonly url: string;
+  readonly body: string;
+}
+let calls: FetchCall[] = [];
+const realFetch = globalThis.fetch;
+const resp = (status: number, body: unknown): Response =>
+  ({ ok: status >= 200 && status < 300, status, json: async () => body, text: async () => JSON.stringify(body) }) as unknown as Response;
+function fakeHttp(): void {
+  globalThis.fetch = (async (url: unknown, init: { body?: unknown }) => {
+    const u = String(url);
+    calls.push({ url: u, body: String(init?.body ?? "") });
+    if (u.includes("api.linear.app")) return resp(200, { data: { agentActivityCreate: { success: true, agentActivity: { id: "act-1" } } } });
+    return resp(500, { error: "unexpected host" });
+  }) as typeof fetch;
+}
+function restoreHttp(): void {
+  globalThis.fetch = realFetch;
+}
+
+const ORG = "orglin";
+const bindableOf = (teamId: string) => ({
+  channel: { kind: "linear" as const },
+  session: { auth: { current: { attributes: { organization_id: ORG, team_id: teamId }, principalId: "creator-1", principalType: "linear-user" } } },
+});
+const declaredPart = resolvePartition(bindableOf("public-team") as never);
+const undeclaredPart = resolvePartition(bindableOf("plain-team") as never);
+
+const event = (teamId: string, sessionId: string): unknown => ({
+  action: "created",
+  kind: "agent_session",
+  organizationId: ORG,
+  previousComments: [],
+  delivery: { id: `d-${sessionId}` },
+  agentSession: { id: sessionId, creator: { id: "creator-1" }, issueId: "issue-1", issue: { id: "issue-1", identifier: "CAP-1" } },
+  raw: { agentSession: { issue: { team: { id: teamId } } } },
+});
+const drive = async (teamId: string, sessionId: string) => {
+  calls = [];
+  const res = await linearOnAgentSession({} as never, event(teamId, sessionId) as never);
+  const posted = calls.filter((c) => c.url.includes("api.linear.app")).map((c) => c.body);
+  return { res, posted };
+};
+
+registerSurfaces([defineSurface({ key: `linear/${ORG}/public-team`, trust: "public" })]);
+
+const SILENT_DOMAINS: readonly Domain[] = [{ name: "org", match: "org", externalPolicy: { roomGrain: "silent" } }];
+registerConfig({
+  loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
+  loadDomains: () => SILENT_DOMAINS, loadSilos: () => [], domainsForSurface: () => [],
+});
+
+fakeHttp();
+const silenced = await drive("public-team", "as-silenced");
+ok(silenced.res === null, "room grain: a declared-public team under `silent` SILENTLY DROPS the native mention (returns null)");
+ok(
+  silenced.posted.some((b) => b.includes("\"thought\"") && b.includes("\"stop\"")) && !silenced.posted.some((b) => b.includes("\"response\"")),
+  "room grain: the already-materialised session closes via an EPHEMERAL thought+stop signal, never a visible response",
+);
+const suppressedRows = (await readAudit({ org: declaredPart.org, action: "linear.external_policy_suppressed" })).filter((r) => r.surface === declaredPart.surfaceKey);
+ok(
+  suppressedRows.length === 1 && suppressedRows[0]!.detail?.verdict === "silent-room",
+  "room grain: ONE linear.external_policy_suppressed audit row names the surface with verdict silent-room",
+);
+
+const undeclared = await drive("plain-team", "as-undeclared");
+ok(
+  undeclared.res !== null && (undeclared.res as { auth?: unknown }).auth !== undefined,
+  "room grain: an UNDECLARED team under the SAME `silent` policy DISPATCHES (negative control — undeclared is not external)",
+);
+ok(
+  (await readAudit({ org: undeclaredPart.org, action: "linear.external_policy_suppressed" })).filter((r) => r.surface === undeclaredPart.surfaceKey).length === 0,
+  "room grain: the undeclared team writes NO suppression audit row",
+);
+
+registerConfig({
+  loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
+  loadDomains: () => [], loadSilos: () => [], domainsForSurface: () => [],
+});
+const shippedDefault = await drive("public-team", "as-shipped");
+ok(
+  shippedDefault.res !== null && (shippedDefault.res as { auth?: unknown }).auth !== undefined,
+  "room grain: the SAME declared-public team DISPATCHES under the shipped `engage` default (negative control — an upgrade changes nothing)",
+);
+
+restoreHttp();
+_resetSurfacesForTest();
+rmSync(dir, { recursive: true, force: true });
+console.log(`\n✓ linear-external-policy-room: ${n} assertions passed (silent close + audit on a declared-public team, undeclared-team and shipped-default negative controls)`);
