@@ -1,4 +1,4 @@
-import { bridgeSlackForm } from "../channels/slack-bridge.js";
+import { bridgeSlackForm, type SlackFormFn } from "../channels/slack-bridge.js";
 import { bridgeTeamsRoomMembership, bridgeTeamsAccountActive } from "../channels/teams-bridge.js";
 import { dmTrustTtlMs } from "../identity/trust.js";
 import type { RoutineSkipReason } from "./fire-audit.js";
@@ -11,34 +11,36 @@ const ROOM_MEMBER_MAX_PAGES = 10;
 
 const roomMemberCache = new Map<string, { readonly member: boolean; readonly at: number }>();
 
+export async function slackRoomMembershipViaConversationsMembers(channelId: string, userId: string, form: SlackFormFn): Promise<boolean | undefined> {
+  if (channelId.length === 0 || userId.length === 0) return undefined;
+  try {
+    let cursor: string | undefined;
+    for (let page = 0; page < ROOM_MEMBER_MAX_PAGES; page++) {
+      const qs = new URLSearchParams({ channel: channelId, limit: "1000" });
+      if (cursor) qs.set("cursor", cursor);
+      const info = await form("conversations.members", qs.toString());
+      if (!info || info["ok"] !== true) return undefined;
+      if (!Array.isArray(info["members"])) return undefined;
+      const members = info["members"] as unknown[];
+      if (members.includes(userId)) return true;
+      const meta = info["response_metadata"] as { next_cursor?: unknown } | undefined;
+      cursor = typeof meta?.next_cursor === "string" && meta.next_cursor.length > 0 ? meta.next_cursor : undefined;
+      if (!cursor) break;
+    }
+    return cursor ? undefined : false;
+  } catch {
+    return undefined;
+  }
+}
+
 export const liveRoomMembership: RoomMembershipCheck = async (channelId, userId) => {
   if (channelId.length === 0 || userId.length === 0) return undefined;
   const key = `${channelId}/${userId}`;
   const hit = roomMemberCache.get(key);
   if (hit && Date.now() - hit.at < dmTrustTtlMs()) return hit.member;
-  try {
-    let cursor: string | undefined;
-    let member = false;
-    for (let page = 0; page < ROOM_MEMBER_MAX_PAGES; page++) {
-      const qs = new URLSearchParams({ channel: channelId, limit: "1000" });
-      if (cursor) qs.set("cursor", cursor);
-      const info = await bridgeSlackForm("conversations.members", qs.toString());
-      if (!info || info["ok"] !== true) return undefined;
-      if (!Array.isArray(info["members"])) return undefined;
-      const members = info["members"] as unknown[];
-      if (members.includes(userId)) {
-        member = true;
-        break;
-      }
-      const meta = info["response_metadata"] as { next_cursor?: unknown } | undefined;
-      cursor = typeof meta?.next_cursor === "string" && meta.next_cursor.length > 0 ? meta.next_cursor : undefined;
-      if (!cursor) break;
-    }
-    roomMemberCache.set(key, { member, at: Date.now() });
-    return member;
-  } catch {
-    return undefined;
-  }
+  const member = await slackRoomMembershipViaConversationsMembers(channelId, userId, bridgeSlackForm);
+  if (member !== undefined) roomMemberCache.set(key, { member, at: Date.now() });
+  return member;
 };
 
 const accountActiveCache = new Map<string, { readonly active: boolean; readonly at: number }>();
