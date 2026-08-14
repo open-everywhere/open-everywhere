@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,6 +61,32 @@ import {
 
   ok(sitesIn(`export { resolveApprovalClick } from "../approvals/flow.js";`).length === 1, "synthetic: a re-export (not just an import) of a protected name is SEEN too");
 
+  const namespaceStatic = `
+import * as flow from "../approvals/flow.js";
+export async function execute(input, ctx) {
+  return flow.resolveApprovalClick({ org: ctx.org, id: input.id, decision: "approve", clickerId: ctx.principalId });
+}`;
+  ok(sitesIn(namespaceStatic).length === 1 && sitesIn(namespaceStatic)[0]!.name === "resolveApprovalClick", "synthetic: 🔴 a static namespace import (`import * as flow`) FOLLOWED by `flow.resolveApprovalClick(...)` is SEEN — the review's first named gap");
+  ok(sitesIn(`
+import * as flow from "../approvals/flow.js";
+export async function execute(input, ctx) {
+  return flow.requestApproval({ org: ctx.org, kind: "x", args: input, scopeKey: ctx.scopeKey, requestedBy: ctx.principalId, channelId: ctx.channelId }, {});
+}`).length === 0, "synthetic: the SAME namespace shape reaching only `flow.requestApproval` (an unprotected, legitimate propose call) is CLEAN");
+
+  ok(sitesIn(`const { resolveApprovalClick } = await import("../approvals/flow.js");`).length === 1, "synthetic: 🔴 a destructured dynamic import — the review's second named gap — is SEEN");
+  ok(sitesIn(`const { resolveApprovalClick } = import("../approvals/flow.js");`).length === 1, "synthetic: …and the bare (un-awaited, `.then`-style) form is SEEN too — `await` is not required syntactically");
+
+  const dynamicNamespace = `
+async function execute() {
+  const flow = await import("../approvals/flow.js");
+  return flow.clickerMayDecide(row, "U1", "slack", "T1");
+}`;
+  ok(sitesIn(dynamicNamespace).length === 1 && sitesIn(dynamicNamespace)[0]!.name === "clickerMayDecide", "synthetic: 🔴 a dynamic import bound to a plain const, then accessed by member (`flow.clickerMayDecide`), is SEEN");
+
+  ok(sitesIn(`return (await import("../identity/trust.js")).registerSurfaces(next);`).length === 1, "synthetic: 🔴 an inline dynamic import accessed with no binding (`(await import(...)).registerSurfaces(...)`) is SEEN");
+
+  ok(sitesIn(`const label = row.resolveApprovalClick ? "carded" : "auto";`).length === 0, "synthetic: a `.resolveApprovalClick` PROPERTY READ on ordinary data (not a namespace handle) is not flagged — no alias was ever bound from an import");
+
   ok(sitesIn(`// this tool must never import resolveApprovalClick or registerSurfaces`).length === 0, "synthetic: a name mentioned only in a COMMENT is not a site — otherwise this invariant's own documentation would fail its own lint");
   ok(
     sitesIn(`
@@ -88,6 +115,14 @@ function tsFilesUnder(dir: string): string[] {
   }
   return out;
 }
+function isGitIgnored(dir: string): boolean {
+  try {
+    execFileSync("git", ["check-ignore", "-q", dir], { cwd: repoRoot, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
 {
   const toolRoots = [join(repoRoot, "packages", "core", "agent", "tools")];
   const providersDir = join(repoRoot, "packages", "providers");
@@ -98,9 +133,15 @@ function tsFilesUnder(dir: string): string[] {
     } catch {
     }
   }
+  const appTools = join(repoRoot, "agent", "tools");
+  try {
+    if (statSync(appTools).isDirectory() && !isGitIgnored(appTools)) toolRoots.push(appTools);
+  } catch {
+  }
   const files = toolRoots.flatMap(tsFilesUnder);
   ok(files.length > 30, `real: the scan actually read the tool roster (${files.length} files across ${toolRoots.length} dir(s)) — a green over an empty file list is a green produced by blindness`);
   ok(toolRoots.length >= 3, `real: at least core + two provider bundles ship a tools/ dir today (linear, notion, slack) — found ${toolRoots.length}`);
+  ok(files.every((f) => !relative(repoRoot, f).startsWith(`agent${"/"}tools${"/"}`)), "real: 🔴 the GENERATED repo-root agent/tools/ stubs (oe build output, gitignored) are excluded from the scan — they are not source, and counting them would inflate the roster with re-export shims nobody authored");
 
   const sites = files.flatMap((f) => findProtectedImports(relative(repoRoot, f), readFileSync(f, "utf8")));
   ok(

@@ -70,23 +70,63 @@ export interface ProtectedImportSite {
   readonly group: ProtectedHumanOnlyExportGroup;
 }
 
+function lineAt(stripped: string, index: number | undefined): number {
+  return stripped.slice(0, index ?? 0).split("\n").length;
+}
+
+function namesFromBraceGroup(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .map((s) => s.split(/\s+as\s+/i)[0]!.trim());
+}
+
 const IMPORT_BLOCK_RE = /\b(?:import|export)\s+(?:[A-Za-z_$][\w$]*\s*,\s*)?(?:type\s+)?\{([^}]*)\}\s*from\s*["'][^"']+["']/g;
+
+const DYNAMIC_DESTRUCTURE_RE = /\b(?:const|let)\s*\{([^}]*)\}\s*=\s*(?:await\s+)?import\s*\(\s*["'][^"']+["']\s*\)/g;
+
+const NAMESPACE_IMPORT_RE = /\bimport\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+["'][^"']+["']/g;
+const DYNAMIC_NAMESPACE_RE = /\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?import\s*\(\s*["'][^"']+["']\s*\)/g;
+
+const DYNAMIC_INLINE_ACCESS_RE = /\bimport\s*\(\s*["'][^"']+["']\s*\)\s*\)?\s*\.\s*([A-Za-z_$][\w$]*)/g;
+
+function memberAccessSites(file: string, stripped: string, alias: string): ProtectedImportSite[] {
+  const sites: ProtectedImportSite[] = [];
+  const re = new RegExp(`\\b${alias}\\s*\\.\\s*([A-Za-z_$][\\w$]*)`, "g");
+  for (const m of stripped.matchAll(re)) {
+    const name = m[1]!;
+    if (PROTECTED_NAMES.has(name)) sites.push({ file, line: lineAt(stripped, m.index), name, group: groupFor(name) });
+  }
+  return sites;
+}
 
 export function findProtectedImports(file: string, source: string): ProtectedImportSite[] {
   const lines = source.split("\n");
   const stripped = stripComments(lines).join("\n");
   const sites: ProtectedImportSite[] = [];
+
   for (const m of stripped.matchAll(IMPORT_BLOCK_RE)) {
-    const names = m[1]!
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0)
-      .map((s) => s.split(/\s+as\s+/i)[0]!.trim());
-    if (names.length === 0) continue;
-    const line = stripped.slice(0, m.index ?? 0).split("\n").length;
-    for (const name of names) {
-      if (PROTECTED_NAMES.has(name)) sites.push({ file, line, name, group: groupFor(name) });
+    for (const name of namesFromBraceGroup(m[1]!)) {
+      if (PROTECTED_NAMES.has(name)) sites.push({ file, line: lineAt(stripped, m.index), name, group: groupFor(name) });
     }
   }
+
+  for (const m of stripped.matchAll(DYNAMIC_DESTRUCTURE_RE)) {
+    for (const name of namesFromBraceGroup(m[1]!)) {
+      if (PROTECTED_NAMES.has(name)) sites.push({ file, line: lineAt(stripped, m.index), name, group: groupFor(name) });
+    }
+  }
+
+  const aliases = new Set<string>();
+  for (const m of stripped.matchAll(NAMESPACE_IMPORT_RE)) aliases.add(m[1]!);
+  for (const m of stripped.matchAll(DYNAMIC_NAMESPACE_RE)) aliases.add(m[1]!);
+  for (const alias of aliases) sites.push(...memberAccessSites(file, stripped, alias));
+
+  for (const m of stripped.matchAll(DYNAMIC_INLINE_ACCESS_RE)) {
+    const name = m[1]!;
+    if (PROTECTED_NAMES.has(name)) sites.push({ file, line: lineAt(stripped, m.index), name, group: groupFor(name) });
+  }
+
   return sites;
 }

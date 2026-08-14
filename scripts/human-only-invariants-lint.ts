@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,15 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 function isDir(p: string): boolean {
   try {
     return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function isGitIgnored(dir: string): boolean {
+  try {
+    execFileSync("git", ["check-ignore", "-q", dir], { cwd: root, stdio: "ignore" });
+    return true;
   } catch {
     return false;
   }
@@ -25,18 +35,16 @@ function tsFilesUnder(dir: string): string[] {
 }
 
 const toolRoots: string[] = [];
-const coreTools = join(root, "packages", "core", "agent", "tools");
-if (isDir(coreTools)) toolRoots.push(coreTools);
+const addRoot = (dir: string): void => {
+  if (isDir(dir) && !isGitIgnored(dir)) toolRoots.push(dir);
+};
+addRoot(join(root, "packages", "core", "agent", "tools"));
 const providersDir = join(root, "packages", "providers");
 try {
-  for (const p of readdirSync(providersDir)) {
-    const t = join(providersDir, p, "agent", "tools");
-    if (isDir(t)) toolRoots.push(t);
-  }
+  for (const p of readdirSync(providersDir)) addRoot(join(providersDir, p, "agent", "tools"));
 } catch {
 }
-const appTools = join(root, "agent", "tools");
-if (isDir(appTools)) toolRoots.push(appTools);
+addRoot(join(root, "agent", "tools"));
 
 if (toolRoots.length === 0) {
   console.error(`✗ human-only-invariants-lint: found no agent-tool roster directory under ${root} — refusing to report clean against an unread tree`);
