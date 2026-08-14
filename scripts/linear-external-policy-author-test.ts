@@ -150,7 +150,79 @@ ok(
   "order: an unrefuted author in an undeclared team proceeds under BOTH grains armed (negative control)",
 );
 
+const eventNoTeam = (sessionId: string, creatorId: string): unknown => ({
+  action: "created",
+  kind: "agent_session",
+  organizationId: ORG,
+  previousComments: [],
+  delivery: { id: `d-${sessionId}` },
+  agentSession: { id: sessionId, creator: { id: creatorId }, issueId: "issue-1", issue: { id: "issue-1", identifier: "CAP-1" } },
+  raw: { agentSession: { issue: {} } },
+});
+const driveNoTeam = async (sessionId: string, creatorId: string, guest: boolean | undefined) => {
+  calls = [];
+  guestAnswer = guest;
+  _resetLinearGuestCache();
+  const res = await linearOnAgentSession({} as never, eventNoTeam(sessionId, creatorId) as never);
+  return { res, posted: calls.filter((c) => c.url.includes("api.linear.app")).map((c) => c.body) };
+};
+const roomlessRows = async () =>
+  (await readAudit({ org: part.org, action: "linear.external_policy_suppressed" })).filter((r) => r.surface === undefined);
+
+setDomains([{ name: "org", match: "org", externalPolicy: { authorGrain: "withhold" } }]);
+const noTeamGuest = await driveNoTeam("as-noteam-guest", "guest-1", true);
+ok(
+  noTeamGuest.res === null,
+  "OPE-541: a GUEST under `withhold` is SILENTLY DROPPED even when the team id does NOT parse (the author grain needs no room)",
+);
+ok(
+  noTeamGuest.posted.some((b) => b.includes('"thought"') && b.includes('"stop"')) && !noTeamGuest.posted.some((b) => b.includes('"response"')),
+  "OPE-541: the roomless suppression closes the session via an EPHEMERAL thought+stop, never a visible response",
+);
+const rows5 = await roomlessRows();
+ok(
+  rows5.length === 1 && rows5[0]!.detail?.verdict === "withheld-author" && rows5[0]!.principalId === "guest-1",
+  "OPE-541: ONE suppression row records verdict withheld-author and names the excluded author",
+);
+ok(rows5[0]!.workspace === ORG, "OPE-541: the roomless row still names the WORKSPACE — only the team was unreadable");
+const noTeamClose = noTeamGuest.posted.find((b) => b.includes('"thought"')) ?? "";
+ok(
+  !noTeamClose.includes("external space") && noTeamClose.includes("(no reply)"),
+  "OPE-541: the roomless close states the OUTCOME only — it makes no claim about a room this delivery could not name",
+);
+
+const noTeamMember = await driveNoTeam("as-noteam-member", "member-1", false);
+ok(
+  noTeamMember.res !== null && (noTeamMember.res as { auth?: unknown }).auth !== undefined,
+  "OPE-541: a full MEMBER on the SAME unparseable-team event DISPATCHES (negative control)",
+);
+ok((await roomlessRows()).length === 1, "OPE-541: the member session writes NO roomless suppression row");
+
+const noTeamUnresolved = await driveNoTeam("as-noteam-unresolved", "unknown-1", undefined);
+ok(
+  noTeamUnresolved.res !== null && (noTeamUnresolved.res as { auth?: unknown }).auth !== undefined,
+  "OPE-541: an UNRESOLVED guest probe on an unparseable-team event DISPATCHES (negative control — fail open)",
+);
+ok((await roomlessRows()).length === 1, "OPE-541: neither negative control writes a roomless suppression row");
+
+setDomains([{ name: "org", match: "org", externalPolicy: { roomGrain: "silent" } }]);
+const noTeamRoomSilent = await driveNoTeam("as-noteam-room", "guest-1", true);
+ok(
+  noTeamRoomSilent.res !== null && (noTeamRoomSilent.res as { auth?: unknown }).auth !== undefined,
+  "OPE-541: under `roomGrain: \"silent\"` ALONE the unparseable-team wake PROCEEDS — the room leg needs a key and never guesses one",
+);
+ok((await roomlessRows()).length === 1, "OPE-541: the room leg writes NO roomless suppression row");
+
+ok(
+  linearExternalVerdict({ policy: { authorGrain: "withhold", roomGrain: "silent" }, author: refutedAuthor }) === "withheld-author",
+  "OPE-541: with NO surfaceKey an excluded author is still a withheld-author verdict",
+);
+ok(
+  linearExternalVerdict({ policy: { authorGrain: "taint", roomGrain: "silent" }, author: refutedAuthor }) === "proceed",
+  "OPE-541: with NO surfaceKey the SAME refuted author under `silent` proceeds — the room leg cannot fire without a key (negative control)",
+);
+
 globalThis.fetch = realFetch;
 _resetSurfacesForTest();
 rmSync(dir, { recursive: true, force: true });
-console.log(`\n✓ linear-external-policy-author: ${n} assertions passed (guest exclusion + guest-present room leg, with member/unresolved/shipped-default negative controls)`);
+console.log(`\n✓ linear-external-policy-author: ${n} assertions passed (guest exclusion + guest-present room leg + the roomless author grain, with member/unresolved/shipped-default negative controls)`);

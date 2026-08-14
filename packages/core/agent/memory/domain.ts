@@ -158,8 +158,8 @@ export function nameDropWakeEnabled(channelKey: string, domains: readonly Domain
   return criteriaDomain("org", domains)?.nameDropWake === true;
 }
 
-export function externalPolicyOverrideFor(channelKey: string, domains: readonly Domain[]): ExternalPolicyOverride | undefined {
-  const explicit = domainForChannel(channelKey, domains);
+export function externalPolicyOverrideFor(channelKey: string | undefined, domains: readonly Domain[]): ExternalPolicyOverride | undefined {
+  const explicit = channelKey === undefined ? undefined : domainForChannel(channelKey, domains);
   if (explicit) return explicit.externalPolicy;
   return criteriaDomain("org", domains)?.externalPolicy;
 }

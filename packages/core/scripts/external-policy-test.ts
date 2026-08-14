@@ -125,6 +125,16 @@ eq(
 );
 eq(externalPolicyOverrideFor(`${GUILD}/C_PAY`, []), undefined, "no domains at all ⇒ no override ⇒ the org default");
 eq(
+  externalPolicyOverrideFor(undefined, DOMAINS),
+  { roomGrain: "silent" },
+  "🔴 NO CHANNEL KEY reads the `org` pseudo-domain's declaration — an unnameable room is not a reason to skip the question",
+);
+eq(
+  externalPolicyOverrideFor(undefined, [{ name: "payments", channels: [`${GUILD}/C_PAY`], externalPolicy: { authorGrain: "withhold" } }]),
+  undefined,
+  "NO CHANNEL KEY never reads an EXPLICIT domain's declaration (negative control) — an unnameable room can never be in one",
+);
+eq(
   resolveExternalPolicy(externalPolicyOverrideFor(`${GUILD}/C_PAY`, DOMAINS)),
   { authorGrain: "withhold", roomGrain: "engage" },
   "the two layers compose: the domain's `authorGrain` over the org default's `roomGrain`",

@@ -287,17 +287,18 @@ export type LinearExternalVerdict = "proceed" | "withheld-author" | "silent-room
 
 export function linearExternalVerdict(input: {
   readonly policy: ExternalPolicy;
-  readonly surfaceKey: string;
+  readonly surfaceKey?: string;
   readonly author?: IngestedChatMessage;
 }): LinearExternalVerdict {
   if (input.author !== undefined && withholdsBody(input.author, input.policy)) return "withheld-author";
+  if (input.surfaceKey === undefined) return "proceed";
   const ingested = input.author === undefined ? [] : [input.author];
   return roomIsSilenced({ room: { surfaceKey: input.surfaceKey }, ingested }, input.policy) ? "silent-room" : "proceed";
 }
 
 async function linearExternalSuppressed(
-  surfaceKey: string,
-  organizationId: string,
+  surfaceKey: string | undefined,
+  organizationId: string | undefined,
   principalId: string | undefined,
   author?: IngestedChatMessage,
 ): Promise<Exclude<LinearExternalVerdict, "proceed"> | undefined> {
@@ -307,18 +308,22 @@ async function linearExternalSuppressed(
   } catch {
     policy = resolveExternalPolicy();
   }
-  const verdict = linearExternalVerdict({ policy, surfaceKey, ...(author === undefined ? {} : { author }) });
+  const verdict = linearExternalVerdict({
+    policy,
+    ...(surfaceKey === undefined ? {} : { surfaceKey }),
+    ...(author === undefined ? {} : { author }),
+  });
   if (verdict === "proceed") return undefined;
   await appendAudit({
     org: deploymentOrg(),
     platform: "linear",
-    workspace: organizationId,
-    surface: surfaceKey,
+    workspace: organizationId ?? "unknown",
+    ...(surfaceKey === undefined ? {} : { surface: surfaceKey }),
     ...(principalId ? { principalId } : {}),
     action: "linear.external_policy_suppressed",
     detail: { verdict },
   }).catch(() => undefined);
-  slog(`suppressed ${surfaceKey}: externalPolicy verdict "${verdict}"`);
+  slog(`suppressed ${surfaceKey ?? `linear/${organizationId ?? "unknown"}/<team unresolved>`}: externalPolicy verdict "${verdict}"`);
   return verdict;
 }
 
@@ -570,7 +575,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
   const sig = linearAgentSessionSignal(event, teamId);
   const agentSessionId = sig.agentSessionId!;
   const organizationId = sig.organizationId!;
-  const surfaceKey = `linear/${organizationId}/${sig.teamId}`;
+  const surfaceKey = sig.teamId ? `linear/${organizationId}/${sig.teamId}` : undefined;
   const roomVerdict = await linearExternalSuppressed(surfaceKey, organizationId, undefined);
   if (roomVerdict) {
     await silentlyCloseLinearAgentSession(agentSessionId, roomVerdict);
@@ -666,7 +671,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
       org: deploymentOrg(),
       platform: "linear",
       workspace: organizationId,
-      surface: surfaceKey,
+      ...(surfaceKey === undefined ? {} : { surface: surfaceKey }),
       action: "linear.mention_divert_failed",
       detail: { agentSessionId, error: String(err).slice(0, 300) },
     }).catch(() => undefined);
@@ -707,7 +712,7 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
     const nativeOrg = typeof nativeOrganizationId === "string" && nativeOrganizationId ? nativeOrganizationId : undefined;
     const nativeSurfaceKey = nativeOrg !== undefined && teamId ? `linear/${nativeOrg}/${teamId}` : undefined;
 
-    if (nativeOrg !== undefined && nativeSurfaceKey !== undefined) {
+    {
       const authorVerdict = await linearExternalSuppressed(nativeSurfaceKey, nativeOrg, creatorId, authorFacts);
       if (authorVerdict) {
         await silentlyCloseLinearAgentSession(agentSessionId, authorVerdict);
