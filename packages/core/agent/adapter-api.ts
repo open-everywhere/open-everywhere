@@ -297,6 +297,34 @@ export {
 } from "./identity/author-trust.js";
 export type { AuthorTrust, AuthorTrustEntry, AuthorTrustQuery, AuthorMember } from "./identity/author-trust.js";
 
+export {
+  resolveExternalPolicy,
+  shippedExternalPolicy,
+  authorIsExcluded,
+  withholdsBody,
+  withholdWakeBodies,
+  ingestedAfterWithholding,
+  suppressesAddressedWake,
+  suppressesAmbientWake,
+  roomIsExternalClass,
+  roomIsSilenced,
+  silentRoomNotice,
+  silentNoticeKey,
+  WITHHELD_BODY_MARKER,
+  EXTERNAL_SENDER_NOTICE,
+  SILENT_NOTICE_KINDS,
+} from "./access/external-policy.js";
+export type {
+  ExternalPolicy,
+  ExternalPolicyOverride,
+  ExternalAuthorGrain,
+  ExternalRoomGrain,
+  ExternalAuthorFacts,
+  ExternalRoomFacts,
+  SilentNoticeKind,
+} from "./access/external-policy.js";
+export { externalPolicyOverrideFor } from "./memory/domain.js";
+
 export { ambientSupervisorEnabled, engagementTierFor, domainForChannel, resolveDomainForChannel, domainClaimVerdict, ambientSkipFor } from "./memory/domain.js";
 export type { EngagementTier, Domain, DomainVia, DomainRouting, AmbientSkip } from "./memory/domain.js";
 export { auditAmbientSkip, resetAmbientSkipSightings } from "./channels/ambient-skip.js";

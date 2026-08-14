@@ -33,6 +33,7 @@ import {
   bindableFor,
   parseChannelJoinEvent,
   routeChannelJoinEvent,
+  announceSilentJoin,
   renderChannelJoinMessage,
   channelJoinMetaFromInfo,
   transcriptFromHistory,
@@ -1974,6 +1975,54 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
   {
     const d = classifyParticipation(sig({ reason: "thread-activity", senderKind: "bot" }));
     ok(d.status === "uncertain" && d.conservative, "participation: a foreign-bot thread reply is uncertain, not participating");
+  }
+}
+
+{
+  const jev = parseChannelJoinEvent(
+    JSON.parse(
+      JSON.stringify({
+        type: "event_callback",
+        team_id: "T_ENG",
+        event_id: "EvJOIN9",
+        event: { type: "member_joined_channel", channel: "C_CONNECT", channel_type: "C", user: "UBOT", event_ts: "88.1", inviter: "U1" },
+      }),
+    ),
+  )!;
+  const part = resolvePartition({ channel: { kind: "slack" }, session: { auth: { current: { attributes: { team_id: "T_ENG", channel_id: "C_CONNECT", channel_type: "channel" } } } } } as never);
+
+  const claimed = new Set<string>();
+  const store = { claimNotice: async (org: string, key: string) => (claimed.has(`${org}|${key}`) ? false : (claimed.add(`${org}|${key}`), true)) };
+  const posts: string[] = [];
+  const ack = async (_c: string, _t: string, text: string) => { posts.push(text); };
+
+  await announceSilentJoin(jev, part, { channelId: "C_CONNECT", vendorExternal: true }, { ack }, store);
+  ok(posts.length === 0, "🔴 on the shipped `engage` grain a Connect-channel join announces NOTHING — the feature is opt-in");
+
+  try {
+    overrideSettingsForTest({ externalPolicy: { roomGrain: "silent" } });
+
+    await announceSilentJoin(jev, part, { channelId: "C_CONNECT" }, { ack }, store);
+    ok(posts.length === 0, "🔴 an UNCLASSIFIED room announces nothing even on `silent` — 'we could not ask' is not 'it is external'");
+
+    await announceSilentJoin(jev, part, { channelId: "C_CONNECT", vendorExternal: true }, { ack }, store);
+    ok(posts.length === 1, "a Slack Connect / shared channel join announces once");
+    ok(posts[0]!.includes("stay quiet"), "…and the announcement says the agent will stay quiet here");
+
+    await announceSilentJoin(jev, part, { channelId: "C_CONNECT", vendorExternal: true }, { ack }, store);
+    await announceSilentJoin(jev, part, { channelId: "C_CONNECT", vendorExternal: true }, { ack }, store);
+    ok(posts.length === 1, "🔴 ONCE PER ROOM, EVER — the durable claim means a re-invite or a cold start never re-announces");
+
+    const other = resolvePartition({ channel: { kind: "slack" }, session: { auth: { current: { attributes: { team_id: "T_ENG", channel_id: "C_OTHER", channel_type: "channel" } } } } } as never);
+    await announceSilentJoin(jev, other, { channelId: "C_OTHER", vendorExternal: true }, { ack }, store);
+    ok(posts.length === 2, "a DIFFERENT room announces on its own claim");
+
+    const broken = { claimNotice: async () => { throw new Error("store down"); } };
+    const third = resolvePartition({ channel: { kind: "slack" }, session: { auth: { current: { attributes: { team_id: "T_ENG", channel_id: "C_THIRD", channel_type: "channel" } } } } } as never);
+    await announceSilentJoin(jev, third, { channelId: "C_THIRD", vendorExternal: true }, { ack }, broken);
+    ok(posts.length === 2, "🔴 a store outage announces NOTHING (fail-CLOSED) — an unprovable claim must not become a repeat");
+  } finally {
+    overrideSettingsForTest({ externalPolicy: { roomGrain: "engage" } });
   }
 }
 

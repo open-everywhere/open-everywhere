@@ -6,6 +6,11 @@ import {
   singleWindowMentionPolicy,
   matchesAgentName,
   stampNonMemberChatAuth,
+  resolveExternalPolicy,
+  withholdsBody,
+  withholdWakeBodies,
+  ingestedAfterWithholding,
+  type ExternalPolicy,
   type IngestedChatMessage,
   type NormalizedWake,
   type WakeEngagementTier,
@@ -183,6 +188,7 @@ export interface NotionSupervisorDispatch {
   readonly trigger: NotionWakeMessage;
   readonly threadComments: readonly NotionWakeMessage[];
   readonly engagementTier?: WakeEngagementTier;
+  readonly externalPolicy?: ExternalPolicy;
   readonly unified?: boolean;
   readonly window?: UnifiedWindowWake;
   readonly directMention?: boolean;
@@ -201,8 +207,30 @@ export function notionIngestedMessages(d: {
   return [grade(d.trigger), ...d.threadComments.map(grade)];
 }
 
+export function notionExternalAuthorDecision(d: {
+  readonly trigger: NotionWakeMessage;
+  readonly threadComments: readonly NotionWakeMessage[];
+  readonly ingested: readonly IngestedChatMessage[];
+  readonly policy: ExternalPolicy;
+}): { readonly suppressed: boolean; readonly withheldIds: ReadonlySet<string> } {
+  const ordered = [d.trigger, ...d.threadComments];
+  const withheldIds = new Set<string>();
+  let suppressed = false;
+  for (const [i, m] of ordered.entries()) {
+    const facts = d.ingested[i];
+    if (facts === undefined || !withholdsBody(facts, d.policy)) continue;
+    if (i === 0) suppressed = true;
+    else withheldIds.add(m.id);
+  }
+  return { suppressed, withheldIds };
+}
+
 export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch, deps: NotionSupervisorDeps): Promise<void> {
   const atIso = deps.now ? deps.now() : new Date().toISOString();
+  const policy = d.externalPolicy ?? resolveExternalPolicy();
+  const ingested = notionIngestedMessages(d);
+  const external = notionExternalAuthorDecision({ trigger: d.trigger, threadComments: d.threadComments, ingested, policy });
+  if (external.suppressed) return;
   const session = await deps.getOrCreateSession(d.surfaceKey, d.pageId, atIso);
   const state: NotionSessionState = {
     discussionId: d.discussionId || null,
@@ -221,7 +249,7 @@ export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch
   }
 
   const doWake = async (token: string, generation: number, handoffNote: string | null | undefined) => {
-    const nw: NormalizedWake = {
+    const built: NormalizedWake = {
       ...buildNotionSupervisorWake({
         addressing: d.addressing,
         pageId: d.pageId,
@@ -237,8 +265,9 @@ export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch
       }),
       ...(memoryDelta ? { memoryDelta } : {}),
     };
+    const nw = withholdWakeBodies(built, (m) => external.withheldIds.has(m.id));
     const { message, context } = renderWake(nw, deps.now);
-    const auth = stampNonMemberChatAuth(d.auth, notionIngestedMessages(d), { surfaceKey: d.surfaceKey });
+    const auth = stampNonMemberChatAuth(d.auth, ingestedAfterWithholding(ingested, policy), { surfaceKey: d.surfaceKey });
     await deps.wake({ token, auth, message, context: context ?? [], state, window: d.window });
   };
 

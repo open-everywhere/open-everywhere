@@ -14,6 +14,7 @@ import { domainCredentialProblems, type DomainCredentialOverride } from "../acce
 import type { SessionMode } from "../access/resolver.js";
 import type { Trust } from "../identity/binding.js";
 import type { ApprovalModeConfig } from "../access/approver-chain.js";
+import type { ExternalPolicyOverride } from "../access/external-policy.js";
 
 export type DomainMatch = "org" | "public" | "dm";
 
@@ -63,6 +64,7 @@ export interface Domain {
   readonly approvalMode?: ApprovalModeConfig;
   readonly nameDropWake?: boolean;
   readonly ambientSupervisor?: boolean;
+  readonly externalPolicy?: ExternalPolicyOverride;
   readonly awarenessWake?: boolean;
   readonly mode?: WindowMode;
   readonly engagementTier?: EngagementTier;
@@ -154,6 +156,12 @@ export function nameDropWakeEnabled(channelKey: string, domains: readonly Domain
   const explicit = domainForChannel(channelKey, domains);
   if (explicit) return explicit.nameDropWake === true;
   return criteriaDomain("org", domains)?.nameDropWake === true;
+}
+
+export function externalPolicyOverrideFor(channelKey: string, domains: readonly Domain[]): ExternalPolicyOverride | undefined {
+  const explicit = domainForChannel(channelKey, domains);
+  if (explicit) return explicit.externalPolicy;
+  return criteriaDomain("org", domains)?.externalPolicy;
 }
 
 export function ambientSupervisorEnabled(channelKey: string, domains: readonly Domain[]): boolean {

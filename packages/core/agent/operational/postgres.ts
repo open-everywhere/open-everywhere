@@ -345,6 +345,12 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      PRIMARY KEY (org_id, id)
    )`,
   `CREATE INDEX IF NOT EXISTS identity_link_challenges_org_nonce ON identity_link_challenges (org_id, nonce_hash)`,
+  `CREATE TABLE IF NOT EXISTS notice_claim (
+     org_id     text NOT NULL,
+     key        text NOT NULL,
+     claimed_at text NOT NULL,
+     PRIMARY KEY (org_id, key)
+   )`,
   `CREATE TABLE IF NOT EXISTS instance_meta (
      key   text PRIMARY KEY,
      value text NOT NULL
@@ -424,6 +430,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE identity_link_sets ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE identity_linked_ids ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE identity_link_challenges ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE notice_claim ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill_revisions FORCE ROW LEVEL SECURITY`,
@@ -460,6 +467,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS identity_link_sets_org_isolation ON identity_link_sets`,
   `DROP POLICY IF EXISTS identity_linked_ids_org_isolation ON identity_linked_ids`,
   `DROP POLICY IF EXISTS identity_link_challenges_org_isolation ON identity_link_challenges`,
+  `DROP POLICY IF EXISTS notice_claim_org_isolation ON notice_claim`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
@@ -538,6 +546,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY identity_link_challenges_org_isolation ON identity_link_challenges
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY notice_claim_org_isolation ON notice_claim
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
 ];
@@ -849,6 +860,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   domain_skill: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   domain_model: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   instance_meta: ["SELECT", "INSERT", "UPDATE"],
+  notice_claim: ["SELECT", "INSERT"],
   thread_ownership: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   turn_anchor: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   task_result: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -1830,6 +1842,19 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         key,
         cutoff,
       ]);
+      return rows.length > 0;
+    },
+
+    async claimNotice(org, key, at) {
+      const { rows } = await client.query(
+        "INSERT INTO notice_claim (org_id, key, claimed_at) VALUES ($1, $2, $3) ON CONFLICT (org_id, key) DO NOTHING RETURNING key",
+        [org, key, at],
+      );
+      return rows.length > 0;
+    },
+
+    async noticeClaimed(org, key) {
+      const { rows } = await client.query("SELECT 1 FROM notice_claim WHERE org_id = $1 AND key = $2 LIMIT 1", [org, key]);
       return rows.length > 0;
     },
 

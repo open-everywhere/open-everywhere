@@ -8,6 +8,10 @@ export type TaintUndeclaredSurface = "clean" | "mark";
 
 export type ApprovalJudgeMode = "off" | "shadow" | "enforce";
 
+export type ExternalAuthorGrain = "taint" | "withhold";
+
+export type ExternalRoomGrain = "engage" | "silent";
+
 export interface AgentSettings {
   readonly agent: {
     readonly sessionInputTokenBudget: number;
@@ -50,6 +54,10 @@ export interface AgentSettings {
   readonly egress: {
     readonly enforce: boolean;
     readonly allowUnenforced: boolean;
+  };
+  readonly externalPolicy: {
+    readonly authorGrain: ExternalAuthorGrain;
+    readonly roomGrain: ExternalRoomGrain;
   };
   readonly governance: {
     readonly floorTtlMs: number;
@@ -295,6 +303,22 @@ export const SETTINGS = {
       summary:
         "Let a session CONTINUE when the sandbox backend cannot apply fine-grained network policy. Off, an unenforceable policy aborts the session instead of running it unfirewalled. Dev and self-host-without-a-proxy only — a deployment that needs it says so in `agent/settings/settings.ts`, where the choice is reviewable.",
     } satisfies SettingSpec<boolean>,
+  },
+  externalPolicy: {
+    authorGrain: {
+      path: "externalPolicy.authorGrain",
+      shipped: "taint",
+      validate: (v) => (v === "taint" || v === "withhold" ? undefined : 'must be "taint" or "withhold"'),
+      summary:
+        'What the agent does with a message an EXCLUDED author wrote — an author the SURFACE positively refuted (Slack `is_restricted`/`is_ultra_restricted`/`is_stranger`, Entra `userType: "guest"`) or the OPERATOR\'s author-trust register refuted (`agent/identity/authors.ts`, Discord and Notion). `taint` (shipped) lets the text enter the context inside the untrusted-content envelope and leaves the consequence to the tainted-turn model and the approval plane. `withhold` stops the text ENTERING: an @mention or DM from that author gets a private notice and no action, ambient engagement never triggers on their messages, and their reply inside a permitted member\'s thread reaches the model as an arrived-marker with no body. A withheld body never ingests, so it never keys taint. The two mechanisms COEXIST — the envelope is provenance-based and stays as it is; withhold is identity-based. On a tenant the operator has NOT armed nothing is excluded, so `withhold` changes nothing there.',
+    } satisfies SettingSpec<ExternalAuthorGrain>,
+    roomGrain: {
+      path: "externalPolicy.roomGrain",
+      shipped: "engage",
+      validate: (v) => (v === "engage" || v === "silent" ? undefined : 'must be "engage" or "silent"'),
+      summary:
+        "Whether the agent engages in a room the classification calls EXTERNAL — a room the operator declared `public` in the trust registry, a room the vendor reports as spanning another organisation (Slack Connect, a Teams shared channel), or a room whose ingested set contains a refuted author. `engage` (shipped) is today's behaviour. `silent` stops the agent waking there at all, and it announces that exactly twice per room: once when it joins, and once on the first wake it suppresses. There is deliberately NO periodic re-announcement.",
+    } satisfies SettingSpec<ExternalRoomGrain>,
   },
   governance: {
     floorTtlMs: {
@@ -667,6 +691,10 @@ export function getSettings(
     egress: {
       enforce: resolve(SETTINGS.egress.enforce, o.egress?.enforce, env),
       allowUnenforced: resolve(SETTINGS.egress.allowUnenforced, o.egress?.allowUnenforced, env),
+    },
+    externalPolicy: {
+      authorGrain: resolve(SETTINGS.externalPolicy.authorGrain, o.externalPolicy?.authorGrain, env),
+      roomGrain: resolve(SETTINGS.externalPolicy.roomGrain, o.externalPolicy?.roomGrain, env),
     },
     governance: {
       floorTtlMs: resolve(SETTINGS.governance.floorTtlMs, o.governance?.floorTtlMs, env),

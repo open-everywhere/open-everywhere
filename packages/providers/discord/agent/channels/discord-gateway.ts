@@ -31,6 +31,15 @@ import {
   isVouchedInternal,
   resolveWakeTrustFromContext,
   stampNonMemberChatAuth,
+  resolveExternalPolicy,
+  externalPolicyOverrideFor,
+  withholdsBody,
+  roomIsSilenced,
+  silentRoomNotice,
+  silentNoticeKey,
+  EXTERNAL_SENDER_NOTICE,
+  type IngestedChatMessage,
+  type ExternalPolicy,
   getOperationalStore,
   appendAudit,
   type FinalMessageAction,
@@ -285,6 +294,28 @@ export function authorFacts(msg: DiscordRelayMessage): { readonly authorTrust?: 
   };
 }
 
+export type DiscordExternalVerdict = "proceed" | "withheld-addressed" | "withheld-ambient" | "silent-room";
+
+function externalPolicyForRoom(roomKey: string): ExternalPolicy {
+  try {
+    return resolveExternalPolicy(externalPolicyOverrideFor(roomKey, getConfig().loadDomains()));
+  } catch {
+    return resolveExternalPolicy();
+  }
+}
+
+export function discordExternalVerdict(input: {
+  readonly policy: ExternalPolicy;
+  readonly author: IngestedChatMessage;
+  readonly addressed: boolean;
+  readonly isDm: boolean;
+  readonly roomKey: string;
+}): DiscordExternalVerdict {
+  if (withholdsBody(input.author, input.policy)) return input.addressed ? "withheld-addressed" : "withheld-ambient";
+  const room = input.isDm ? { dm: true } : { surfaceKey: input.roomKey };
+  return roomIsSilenced({ room, ingested: [input.author] }, input.policy) ? "silent-room" : "proceed";
+}
+
 function ctxFromAuth(auth: OpenEverywhereDiscordAuth): BindableContext {
   return { channel: { kind: "discord" }, session: { auth: { current: auth } } };
 }
@@ -356,6 +387,41 @@ async function discordCreateMessage(channelId: string, content: string): Promise
     log(`Discord create-message error for channel ${channelId}: ${(err as Error)?.message ?? String(err)}`);
     return null;
   }
+}
+
+async function openDiscordDm(userId: string): Promise<string | null> {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) return null;
+  try {
+    const res = await fetch("https://discord.com/api/v10/users/@me/channels", {
+      method: "POST",
+      headers: { ...botAuthHeaders(token), "content-type": "application/json" },
+      body: JSON.stringify({ recipient_id: userId }),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { id?: unknown };
+    return typeof body.id === "string" ? body.id : null;
+  } catch {
+    return null;
+  }
+}
+
+async function postExternalSenderNotice(userId: string): Promise<void> {
+  const dmId = await openDiscordDm(userId);
+  if (!dmId) return;
+  await discordCreateMessage(dmId, EXTERNAL_SENDER_NOTICE);
+}
+
+async function announceSilentRoom(surfaceKey: string, channelId: string): Promise<void> {
+  const org = deploymentOrg();
+  if (!org) return;
+  try {
+    const won = await getOperationalStore().claimNotice(org, silentNoticeKey(surfaceKey, "suppressed-wake"), new Date().toISOString());
+    if (!won) return;
+  } catch {
+    return;
+  }
+  await discordCreateMessage(channelId, silentRoomNotice("suppressed-wake"));
 }
 
 async function postDiscordReply(channelId: string, text: string): Promise<void> {
@@ -944,6 +1010,32 @@ export async function dispatchTurn(
   const partition: Partition = resolvePartition(ctxFromAuth(auth));
   const key = engagementKey(msg);
   const isDm = isDmChannel(msg.channelType);
+  const externalVerdict = discordExternalVerdict({
+    policy: externalPolicyForRoom(domainKeyOf(partition)),
+    author: {
+      trust: resolveWakeTrustFromContext(ctxFromAuth(auth), { id: msg.author.id, isBot: msg.author.bot }, { principalFallback: true }),
+      ...authorFacts(msg),
+    },
+    addressed: isDm || msg.mentionsBot,
+    isDm,
+    roomKey: domainKeyOf(partition),
+  });
+  if (externalVerdict !== "proceed") {
+    if (externalVerdict === "withheld-addressed") await postExternalSenderNotice(msg.author.id).catch(() => undefined);
+    if (externalVerdict === "silent-room") await announceSilentRoom(partition.surfaceKey, msg.channelId).catch(() => undefined);
+    await appendAudit({
+      org: deploymentOrg(),
+      platform: "discord",
+      workspace: partition.workspace,
+      surface: partition.surfaceKey,
+      principalId: msg.author.id,
+      action: "discord.external_policy_suppressed",
+      detail: { verdict: externalVerdict, channelId: msg.channelId },
+    }).catch(() => undefined);
+    log(`suppressed ${partition.surfaceKey}: externalPolicy verdict "${externalVerdict}"`);
+    return;
+  }
+
   const engRow = isDm || msg.mentionsBot ? null : await getThreadEngagement(partition, key);
   const engaged = isDm || msg.mentionsBot ? true : engRow !== null;
 

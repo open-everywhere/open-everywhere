@@ -411,6 +411,16 @@ function getDb(): DatabaseSync {
       PRIMARY KEY (org_id, id)
     );
     CREATE INDEX IF NOT EXISTS identity_link_challenges_org_nonce ON identity_link_challenges (org_id, nonce_hash);
+    -- notice_claim: LIFETIME at-most-once claims (store.ts claimNotice). No TTL and NO prune, on
+    -- purpose: the one thing it records is "this was already said", and expiring that would make the
+    -- announcement periodic. Bounded by configuration (one row per room per notice kind), not by
+    -- traffic.
+    CREATE TABLE IF NOT EXISTS notice_claim (
+      org_id     TEXT NOT NULL,
+      key        TEXT NOT NULL,
+      claimed_at TEXT NOT NULL,                -- ISO-8601
+      PRIMARY KEY (org_id, key)
+    );
     CREATE TABLE IF NOT EXISTS instance_meta (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -1454,6 +1464,16 @@ export const sqliteOperationalStore: OperationalStore = {
       .run(org, maxCutoff, key, ttlCutoff);
     const info = handle.prepare("INSERT OR IGNORE INTO event_dedupe (org_id, key, seen_at) VALUES (?, ?, ?)").run(org, key, at);
     return info.changes > 0;
+  },
+
+  async claimNotice(org, key, at) {
+    const info = getDb().prepare("INSERT OR IGNORE INTO notice_claim (org_id, key, claimed_at) VALUES (?, ?, ?)").run(org, key, at);
+    return info.changes > 0;
+  },
+
+  async noticeClaimed(org, key) {
+    const row = getDb().prepare("SELECT 1 FROM notice_claim WHERE org_id = ? AND key = ? LIMIT 1").get(org, key);
+    return row !== undefined;
   },
 
   async hasEventSeen(org, key, at, ttlMs) {

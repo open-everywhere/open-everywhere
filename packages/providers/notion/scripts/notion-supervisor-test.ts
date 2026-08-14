@@ -359,4 +359,89 @@ for (const [label, err] of [
   }
 }
 
+{
+  const GUEST = "notion-guest-777";
+  const WS = "notion/ws-1";
+  const SECRET = "SECRET-GUEST-TEXT-do-not-deliver";
+  const guestComment: NotionWakeMessage = { from: "human", id: "c-guest", authorId: GUEST, sentAt: "2026-07-10T08:00:00Z", text: SECRET, trust: "peer" };
+
+  const session: NotionSupervisorSession = { token: notionSupervisorToken(PAGE, 1), generation: 1, freshGeneration: true, handoffNote: null };
+
+  function run(over: Partial<NotionSupervisorDispatch>): Promise<{ messages: string[]; auths: OpenEverywhereNotionAuth[] }> {
+    const messages: string[] = [];
+    const auths: OpenEverywhereNotionAuth[] = [];
+    const deps: NotionSupervisorDeps = {
+      getOrCreateSession: async () => session,
+      wake: async (w) => { messages.push(w.message); auths.push(w.auth); },
+      now: NOW,
+    };
+    return handleNotionSupervisorDispatch(dispatch(over), deps).then(() => ({ messages, auths }));
+  }
+
+  try {
+    registerAuthorTrust([defineAuthorTrust({ tenant: WS, internal: [`notion/${AUTHOR}`] })]);
+
+    const withheld = await run({
+      externalPolicy: { authorGrain: "withhold", roomGrain: "engage" },
+      trigger: { ...trigger, trust: "peer" },
+      threadComments: [guestComment],
+    });
+    ok(withheld.messages.length === 1, "BEHAVIOUR 3: a permitted member's comment still wakes the agent — withholding an author does not silence the thread");
+    ok(!withheld.messages[0]!.includes(SECRET), "🔴 BEHAVIOUR 3: the excluded author's TEXT is not in the delivered wake — it never reached renderWake");
+    ok(withheld.messages[0]!.includes("a message arrived here"), "…and the arrived-marker IS, so the model knows a message it cannot read exists");
+    ok(withheld.messages[0]!.includes(GUEST), "…still attributed: WHO and WHEN survive, which is what makes the marker legible");
+    ok(
+      withheld.auths[0]?.attributes[OE_CHAT_NONMEMBER_ATTR] === undefined,
+      "🔴 THE TAINT PROPERTY: a WITHHELD body never keys the chat-taint bit — those bytes did not enter the context, so claiming they did would be false",
+    );
+
+    const tainted = await run({
+      externalPolicy: { authorGrain: "taint", roomGrain: "engage" },
+      trigger: { ...trigger, trust: "peer" },
+      threadComments: [guestComment],
+    });
+    ok(tainted.messages[0]!.includes(SECRET), "🔴 NEGATIVE CONTROL: on the shipped `taint` grain the same comment IS delivered in full");
+    ok(
+      tainted.auths[0]?.attributes[OE_CHAT_NONMEMBER_ATTR] === "true",
+      "🔴 NEGATIVE CONTROL: …and it DOES key taint, which is the behaviour `withhold` replaces rather than duplicates",
+    );
+
+    const legacy = await run({ trigger: { ...trigger, trust: "peer" }, threadComments: [guestComment] });
+    ok(legacy.messages[0]!.includes(SECRET), "a dispatch carrying NO policy resolves the org default — byte-identical to before this field existed");
+
+    const suppressed = await run({
+      externalPolicy: { authorGrain: "withhold", roomGrain: "engage" },
+      trigger: { ...guestComment, id: "c-trigger" },
+      threadComments: [],
+    });
+    ok(suppressed.messages.length === 0, "🔴 BEHAVIOUR 2: an excluded author's own comment wakes NOTHING — no session, no turn, no reply");
+
+    const suppressedControl = await run({
+      externalPolicy: { authorGrain: "taint", roomGrain: "engage" },
+      trigger: { ...guestComment, id: "c-trigger" },
+      threadComments: [],
+    });
+    ok(suppressedControl.messages.length === 1, "🔴 NEGATIVE CONTROL: the identical trigger on `taint` DOES wake the agent");
+
+    const permitted = await run({
+      externalPolicy: { authorGrain: "withhold", roomGrain: "engage" },
+      trigger: { ...trigger, trust: "peer" },
+      threadComments: [],
+    });
+    ok(permitted.messages.length === 1 && permitted.auths[0] === AUTH, "negative control: a DECLARED author is delivered in full and stamps nothing, even on `withhold`");
+  } finally {
+    _resetAuthorTrustForTest();
+  }
+
+  const unarmed = await run({
+    externalPolicy: { authorGrain: "withhold", roomGrain: "engage" },
+    trigger: { ...trigger, trust: "peer" },
+    threadComments: [guestComment],
+  });
+  ok(
+    unarmed.messages.length === 1 && unarmed.messages[0]!.includes(SECRET),
+    "🔴 UNARMED: `withhold` on a workspace the operator never declared withholds NOTHING — silence is not a declaration",
+  );
+}
+
 console.log(`\n✓ notion-supervisor: ${passed} assertions passed`);

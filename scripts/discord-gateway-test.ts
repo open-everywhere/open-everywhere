@@ -9,6 +9,7 @@ import {
   parseRelayPayload,
   authForRelayMessage,
   authorFacts,
+  discordExternalVerdict,
 } from "@open-everywhere/provider-discord/agent/channels/discord-gateway.js";
 import {
   nonMemberChatTrust,
@@ -704,6 +705,47 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
     _resetAuthorTrustForTest();
   }
   ok(nonMemberChatTrust({ trust: "peer", ...authorFacts(withRoles!) }) === false, "the register is disarmed again after the reset");
+}
+
+{
+  const GUILD = "1300000000000000100";
+  const INSIDER = "100000000000000001";
+  const OUTSIDER = "100000000000000002";
+  const TENANT2 = `discord/${GUILD}`;
+  const ROOM = `${TENANT2}/C1`;
+  const stranger = parseRelayPayload(relayEnvelope({ id: "x1", content: "hi", channelId: "C1", guildId: GUILD, author: { id: OUTSIDER, bot: false }, member: { roles: [] } }))!;
+  const insider = parseRelayPayload(relayEnvelope({ id: "x2", content: "hi", channelId: "C1", guildId: GUILD, author: { id: INSIDER, bot: false } }))!;
+  const TAINT_ENGAGE = { authorGrain: "taint", roomGrain: "engage" } as const;
+  const WITHHOLD = { authorGrain: "withhold", roomGrain: "engage" } as const;
+  const SILENT = { authorGrain: "taint", roomGrain: "silent" } as const;
+  const verdict = (policy: typeof TAINT_ENGAGE | typeof WITHHOLD | typeof SILENT, msg: typeof stranger, addressed: boolean, isDm = false) =>
+    discordExternalVerdict({ policy, author: { trust: "peer", ...authorFacts(msg) }, addressed, isDm, roomKey: ROOM });
+
+  ok(verdict(WITHHOLD, stranger, true) === "proceed", "🔴 UNARMED: `withhold` suppresses NOTHING on an undeclared guild — silence is not a declaration");
+  ok(verdict(SILENT, stranger, false) === "proceed", "🔴 UNARMED + undeclared room: `silent` suppresses nothing either — there is no classification to act on");
+
+  try {
+    registerAuthorTrust([defineAuthorTrust({ tenant: TENANT2, internal: [`discord/${INSIDER}`] })]);
+
+    ok(verdict(TAINT_ENGAGE, stranger, true) === "proceed", "🔴 on the shipped `taint`/`engage` grains an excluded author still proceeds — an upgrade changes nothing");
+
+    ok(verdict(WITHHOLD, stranger, true) === "withheld-addressed", "BEHAVIOUR 1: an excluded author's @mention or DM is owed a PRIVATE notice and nothing else");
+    ok(verdict(WITHHOLD, stranger, false) === "withheld-ambient", "BEHAVIOUR 2: an excluded author's ambient message is owed NOTHING — suppressed in silence");
+    ok(verdict(WITHHOLD, insider, true) === "proceed", "negative control: a DECLARED author proceeds even on `withhold` (=== proceed)");
+
+    ok(verdict(SILENT, stranger, false) === "silent-room", "GUEST-PRESENT: on `silent` an excluded author in the room silences the wake and owes the room announcement");
+    ok(verdict(SILENT, insider, false) === "proceed", "negative control: with only declared authors the room is not in the external class (=== proceed)");
+    ok(
+      discordExternalVerdict({ policy: { authorGrain: "withhold", roomGrain: "silent" }, author: { trust: "peer", ...authorFacts(stranger) }, addressed: true, isDm: false, roomKey: ROOM }) === "withheld-addressed",
+      "🔴 ORDER: with BOTH grains on, an excluded author gets the AUTHOR verdict — they are owed a notice they can act on, not a room-wide announcement",
+    );
+
+    const dmMsg = parseRelayPayload(relayEnvelope({ id: "x3", content: "hi", channelId: "D1", author: { id: OUTSIDER, bot: false } }))!;
+    ok(verdict(SILENT, dmMsg, true, true) === "proceed", "🔴 a DM is never silenced by the ROOM grain — on a DM the trust plane asks about the PARTNER");
+    ok(verdict(WITHHOLD, dmMsg, true, true) === "proceed", "…and a DM has no guild to arm, so the register cannot exclude its partner either");
+  } finally {
+    _resetAuthorTrustForTest();
+  }
 }
 
 console.log(`✓ discord-gateway: ${passed} assertions passed (HMAC fail-closed, payload→identity, bot drop, wake gate incl. DM + name-drop, reply split, auto-thread decision + toggle + naming + fail-open re-key, status-UX toggle + completion plan + consume-once turn status, thread→parent grain + channel-info cache, author-trust register leg)`);

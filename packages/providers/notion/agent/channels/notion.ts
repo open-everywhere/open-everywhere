@@ -10,6 +10,8 @@ import {
   getConfig,
   ambientSupervisorEnabled,
   engagementTierFor,
+  resolveExternalPolicy,
+  externalPolicyOverrideFor,
   liveMemoryDeltaDep,
   getOperationalStore,
   capabilitiesForPlatform,
@@ -240,6 +242,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
             ...(window?.addressing === "direct-mention" ? { directMention: true } : {}),
             trigger: { ...d.trigger, trust: trustOf(d.trigger) },
             threadComments: d.threadComments.map((m) => ({ ...m, trust: trustOf(m) })),
+            externalPolicy: resolveExternalPolicy(externalPolicyOverrideFor(d.surfaceKey, getConfig().loadDomains())),
           },
           liveNotionSupervisorDeps(send, d.surfaceKey, to),
         );

@@ -29,6 +29,11 @@ import {
   markThreadStopped,
   shouldDeliverReply,
   getOperationalStore,
+  resolveExternalPolicy,
+  externalPolicyOverrideFor,
+  roomIsSilenced,
+  silentRoomNotice,
+  silentNoticeKey,
   postOnce,
   outboundKey,
   isSurfaceOnboarded,
@@ -1431,6 +1436,7 @@ export interface ChannelJoinMeta {
   readonly memberCount?: number;
   readonly channelType?: string;
   readonly isPrivate?: boolean;
+  readonly vendorExternal?: boolean;
 }
 
 export function channelJoinMetaFromInfo(channelId: string, info: unknown): ChannelJoinMeta {
@@ -1446,6 +1452,7 @@ export function channelJoinMetaFromInfo(channelId: string, info: unknown): Chann
     memberCount: typeof ch["num_members"] === "number" ? (ch["num_members"] as number) : undefined,
     channelType: facts.channelType,
     isPrivate: facts.isPrivate,
+    ...(facts.trustChecked === true && facts.isExternal === true ? { vendorExternal: true } : {}),
   };
 }
 
@@ -1524,6 +1531,35 @@ export interface ChannelJoinRouteDeps {
   readonly ack: (channelId: string, threadTs: string, text: string) => Promise<void>;
 }
 
+export async function announceSilentJoin(
+  ev: ParsedChannelJoinEvent,
+  p: ReturnType<typeof resolvePartition>,
+  meta: ChannelJoinMeta | undefined,
+  deps: Pick<ChannelJoinRouteDeps, "ack">,
+  store?: { claimNotice: (org: string, key: string, at: string) => Promise<boolean> },
+): Promise<void> {
+  let policy;
+  try {
+    policy = resolveExternalPolicy(externalPolicyOverrideFor(p.surfaceKey, getConfig().loadDomains()));
+  } catch {
+    policy = resolveExternalPolicy();
+  }
+  const silenced = roomIsSilenced(
+    { room: { surfaceKey: p.surfaceKey }, ...(meta?.vendorExternal === true ? { vendorExternal: true } : {}) },
+    policy,
+  );
+  if (!silenced) return;
+  if (!p.org) return;
+  let won = false;
+  try {
+    won = await (store ?? getOperationalStore()).claimNotice(p.org, silentNoticeKey(p.surfaceKey, "join"), new Date().toISOString());
+  } catch {
+    return;
+  }
+  if (!won) return;
+  await deps.ack(ev.channelId, ev.ts, silentRoomNotice("join"));
+}
+
 export async function routeChannelJoinEvent(ev: ParsedChannelJoinEvent, deps: ChannelJoinRouteDeps): Promise<RouteOutcome> {
   const p = resolvePartition(bindableForJoin(ev));
   if (await deps.isOnboarded(p)) {
@@ -1532,6 +1568,7 @@ export async function routeChannelJoinEvent(ev: ParsedChannelJoinEvent, deps: Ch
 
   const { internal, meta } = await deps.confirmInternal(ev.channelId);
   if (!internal) {
+    await announceSilentJoin(ev, p, meta, deps).catch(() => undefined);
     return { deliver: false, reason: "channel not confirmed internal — fail closed (externally shared or unverifiable)", woke: false };
   }
 

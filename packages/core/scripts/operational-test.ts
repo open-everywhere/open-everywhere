@@ -658,6 +658,20 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
+  const KEY = "external-silent:join:slack/T1/C_CONNECT";
+  ok(await store.claimNotice("acme", KEY, "2026-06-30T10:00:00Z"), "pg: the FIRST claim wins — the caller announces");
+  ok(!(await store.claimNotice("acme", KEY, "2026-06-30T10:00:01Z")), "pg: a second claim LOSES — the caller stays quiet");
+  ok(await store.noticeClaimed("acme", KEY), "pg: the read-only twin reports the claim without writing");
+  ok(!(await store.noticeClaimed("acme", "external-silent:suppressed-wake:slack/T1/C_CONNECT")), "pg: a DIFFERENT kind on the same room is its own claim (=== false)");
+  ok(await store.claimNotice("globex", KEY, "2026-06-30T10:00:00Z"), "pg: the same key in another ORG is a fresh claim — the table is org-partitioned");
+  ok(
+    !(await store.claimNotice("acme", KEY, "2036-06-30T10:00:00Z")),
+    "🔴 pg: a claim TEN YEARS LATER still loses — the row NEVER expires, which is what makes the announcement once-ever rather than once-a-day",
+  );
+  ok(!(await store.noticeClaimed("acme", "external-silent:join:slack/T1/C_NEVER")), "negative control: an unclaimed key reads false, so the twin is not answering true for everything");
+}
+
+{
   ok((await store.listDomainSkills("acme", "eng")).length === 0, "pg: empty domain starts with no skills");
   await store.putDomainSkill("acme", "eng", "deploy-runbook", "# Deploy\nSteps.", "U1", "2026-06-30T10:00:00Z");
   let rows = await store.listDomainSkills("acme", "eng");

@@ -33,6 +33,7 @@ export const OPERATIONAL_TABLES = [
   "identity_link_sets",
   "identity_linked_ids",
   "identity_link_challenges",
+  "notice_claim",
 ] as const;
 
 export const EVENT_DEDUPE_MAX_RETENTION_MS = 24 * 60 * 60_000;
@@ -700,6 +701,9 @@ export interface OperationalStore {
   claimLinkChallenge(org: string, nonceHash: string, platform: string, tenant: string, nativeId: string, at: string): Promise<LinkChallengeRow | null>;
   decideLinkChallenge(org: string, id: string, from: readonly LinkChallengeStatus[], to: LinkChallengeStatus, at: string): Promise<boolean>;
   expireLinkChallenges(org: string, nowIso: string): Promise<number>;
+
+  claimNotice(org: string, key: string, at: string): Promise<boolean>;
+  noticeClaimed(org: string, key: string): Promise<boolean>;
 
   getMeta(key: string): Promise<string | null>;
   setMeta(key: string, value: string): Promise<void>;
