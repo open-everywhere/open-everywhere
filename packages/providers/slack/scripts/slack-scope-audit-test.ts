@@ -53,6 +53,7 @@ const CALL_PATTERNS: RegExp[] = [
   /callSlackApi\(\{[^}]*operation:\s*"([a-zA-Z.]+)"/g,
   /callSlackRead\(\s*"([a-zA-Z.]+)"/g,
   /bridgeSlackReadCall\(\s*"([a-zA-Z.]+)"/g,
+  /\bcall\(\s*"([a-zA-Z.]+)"/g,
 ];
 
 const found = new Set<string>();

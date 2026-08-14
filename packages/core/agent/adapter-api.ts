@@ -444,7 +444,7 @@ export { isAllowedDriver } from "./testing/driver-allowlist.js";
 export { buildIngestedReaction, ingestReaction, liveReactionSink } from "./channels/reaction-ingest.js";
 export type { ReactionSinkDeps, ReactionIngestOutcome, ReactionVerb } from "./channels/reaction-ingest.js";
 
-export { assertSurfaceAllowed, chatReadIngestion } from "./channels/channel-read.js";
+export { assertSurfaceAllowed, chatReadIngestion, readChannelResult, readThreadResult } from "./channels/channel-read.js";
 export type { RenderedLine } from "./channels/channel-read.js";
 
 export { refutedReadAuthorIds, distinctReadAuthorIds } from "./channels/read-author-trust.js";
