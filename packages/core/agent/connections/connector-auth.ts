@@ -81,7 +81,7 @@ export function appProviderToken(opts: {
   });
 }
 
-async function resolveAppTokenFromCred(
+export async function resolveAppTokenFromCred(
   opts: { readonly connector: string; readonly fallbackSecretRef?: string; readonly fallbackBroker?: string },
   cred: import("../access/providers.js").ResolvedConnectorCredential | null,
   o: unknown,

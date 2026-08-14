@@ -1,5 +1,11 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { getSecretVia, CredentialError, findProviderCredential } from "@open-everywhere/core/agent/adapter-api.js";
+import {
+  getSecretVia,
+  CredentialError,
+  findProviderCredential,
+  guardCredentialFetch,
+  type CredentialEndpointRules,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import { NOTION_CHANNEL_CREDENTIAL, NOTION_PROVIDER } from "./notion-credentials.js";
 import type { NotionParentLink } from "./notion-ancestry-trust.js";
 
@@ -10,11 +16,22 @@ export function notionVersion(): string {
 }
 
 export async function resolveNotionApiKey(credentialId: string = NOTION_CHANNEL_CREDENTIAL): Promise<string | undefined> {
+  return (await resolveNotionCredential(credentialId))?.apiKey;
+}
+
+export interface ResolvedNotionCredential {
+  readonly apiKey: string;
+  readonly endpoints?: CredentialEndpointRules;
+}
+
+export async function resolveNotionCredential(
+  credentialId: string = NOTION_CHANNEL_CREDENTIAL,
+): Promise<ResolvedNotionCredential | undefined> {
   const cred = findProviderCredential(NOTION_PROVIDER, credentialId);
   if (!cred?.secretRef) return undefined;
   try {
     const k = await getSecretVia(cred.broker, cred.secretRef);
-    return k.length > 0 ? k : undefined;
+    return k.length > 0 ? { apiKey: k, endpoints: cred.endpoints } : undefined;
   } catch (err) {
     if (err instanceof CredentialError) return undefined;
     throw err;
@@ -138,6 +155,7 @@ interface NotionCallOpts {
   readonly apiKey: string;
   readonly fetch?: FetchLike;
   readonly version?: string;
+  readonly endpoints?: CredentialEndpointRules;
 }
 
 function notionHeaders(opts: NotionCallOpts): Record<string, string> {
@@ -146,6 +164,11 @@ function notionHeaders(opts: NotionCallOpts): Record<string, string> {
     "notion-version": opts.version ?? notionVersion(),
     "content-type": "application/json",
   };
+}
+
+function notionFetch(url: string, init: RequestInit, opts: NotionCallOpts): Promise<Response> {
+  const base = opts.fetch ?? (globalThis.fetch as FetchLike);
+  return guardCredentialFetch(opts.endpoints, "notion credential", base)(url, init);
 }
 
 export interface NotionComment {
@@ -158,28 +181,25 @@ export interface NotionComment {
 }
 
 export async function retrieveComment(commentId: string, opts: NotionCallOpts): Promise<NotionComment> {
-  const f = opts.fetch ?? (globalThis.fetch as FetchLike);
-  const res = await f(`${NOTION_API_BASE}/v1/comments/${encodeURIComponent(commentId)}`, {
+  const res = await notionFetch(`${NOTION_API_BASE}/v1/comments/${encodeURIComponent(commentId)}`, {
     method: "GET",
     headers: notionHeaders(opts),
-  });
+  }, opts);
   if (!res.ok) throw new Error(`retrieveComment ${commentId} failed: ${res.status} ${await safeText(res)}`);
   return (await res.json()) as NotionComment;
 }
 
 export async function retrieveBotUser(opts: NotionCallOpts): Promise<{ id?: string; type?: string; name?: string }> {
-  const f = opts.fetch ?? (globalThis.fetch as FetchLike);
-  const res = await f(`${NOTION_API_BASE}/v1/users/me`, { method: "GET", headers: notionHeaders(opts) });
+  const res = await notionFetch(`${NOTION_API_BASE}/v1/users/me`, { method: "GET", headers: notionHeaders(opts) }, opts);
   if (!res.ok) throw new Error(`retrieveBotUser failed: ${res.status} ${await safeText(res)}`);
   return (await res.json()) as { id?: string; type?: string; name?: string };
 }
 
 export async function listBlockComments(blockId: string, opts: NotionCallOpts): Promise<NotionComment[]> {
-  const f = opts.fetch ?? (globalThis.fetch as FetchLike);
-  const res = await f(`${NOTION_API_BASE}/v1/comments?block_id=${encodeURIComponent(blockId)}&page_size=100`, {
+  const res = await notionFetch(`${NOTION_API_BASE}/v1/comments?block_id=${encodeURIComponent(blockId)}&page_size=100`, {
     method: "GET",
     headers: notionHeaders(opts),
-  });
+  }, opts);
   if (!res.ok) throw new Error(`listBlockComments ${blockId} failed: ${res.status} ${await safeText(res)}`);
   const body = (await res.json()) as { results?: NotionComment[] };
   return Array.isArray(body.results) ? body.results : [];
@@ -191,8 +211,7 @@ export interface NotionBlockParent {
 }
 
 export async function retrieveBlock(blockId: string, opts: NotionCallOpts): Promise<NotionBlockParent> {
-  const f = opts.fetch ?? (globalThis.fetch as FetchLike);
-  const res = await f(`${NOTION_API_BASE}/v1/blocks/${encodeURIComponent(blockId)}`, { method: "GET", headers: notionHeaders(opts) });
+  const res = await notionFetch(`${NOTION_API_BASE}/v1/blocks/${encodeURIComponent(blockId)}`, { method: "GET", headers: notionHeaders(opts) }, opts);
   if (!res.ok) throw new Error(`retrieveBlock ${blockId} failed: ${res.status} ${await safeText(res)}`);
   return (await res.json()) as NotionBlockParent;
 }
@@ -230,8 +249,7 @@ export interface NotionPageParent {
 }
 
 export async function retrievePage(pageId: string, opts: NotionCallOpts): Promise<NotionPageParent> {
-  const f = opts.fetch ?? (globalThis.fetch as FetchLike);
-  const res = await f(`${NOTION_API_BASE}/v1/pages/${encodeURIComponent(pageId)}`, { method: "GET", headers: notionHeaders(opts) });
+  const res = await notionFetch(`${NOTION_API_BASE}/v1/pages/${encodeURIComponent(pageId)}`, { method: "GET", headers: notionHeaders(opts) }, opts);
   if (!res.ok) throw new Error(`retrievePage ${pageId} failed: ${res.status} ${await safeText(res)}`);
   return (await res.json()) as NotionPageParent;
 }
@@ -354,13 +372,12 @@ export async function getBlockChildren(
   blockId: string,
   opts: NotionCallOpts & { readonly startCursor?: string; readonly pageSize?: number },
 ): Promise<{ readonly blocks: NotionBlock[]; readonly nextCursor?: string }> {
-  const f = opts.fetch ?? (globalThis.fetch as FetchLike);
   const qs = new URLSearchParams({ page_size: String(opts.pageSize ?? 100) });
   if (opts.startCursor) qs.set("start_cursor", opts.startCursor);
-  const res = await f(`${NOTION_API_BASE}/v1/blocks/${encodeURIComponent(blockId)}/children?${qs.toString()}`, {
+  const res = await notionFetch(`${NOTION_API_BASE}/v1/blocks/${encodeURIComponent(blockId)}/children?${qs.toString()}`, {
     method: "GET",
     headers: notionHeaders(opts),
-  });
+  }, opts);
   if (!res.ok) throw new Error(`getBlockChildren ${blockId} failed: ${res.status} ${await safeText(res)}`);
   const body = (await res.json()) as { results?: NotionBlock[]; has_more?: boolean; next_cursor?: string | null };
   return {
@@ -414,12 +431,11 @@ export async function readNotionPage(
 export async function createCommentReply(
   args: { discussionId: string; text: string } & NotionCallOpts,
 ): Promise<string> {
-  const f = args.fetch ?? (globalThis.fetch as FetchLike);
-  const res = await f(`${NOTION_API_BASE}/v1/comments`, {
+  const res = await notionFetch(`${NOTION_API_BASE}/v1/comments`, {
     method: "POST",
     headers: notionHeaders(args),
     body: JSON.stringify({ discussion_id: args.discussionId, rich_text: richTextChunks(args.text) }),
-  });
+  }, args);
   if (!res.ok) throw new Error(`createCommentReply failed: ${res.status} ${await safeText(res)}`);
   const body = (await res.json().catch(() => ({}))) as { id?: unknown };
   return typeof body.id === "string" ? body.id : "";

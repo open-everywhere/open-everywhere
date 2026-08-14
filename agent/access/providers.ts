@@ -15,7 +15,14 @@ const providers: Provider[] = [
     allows: ["api-key", "user-oauth"],
     credentials: [
       { id: "team-key", type: "api-key", secretRef: "db:notion:team-key", broker: "db" },
-      { id: "channel-key", type: "api-key", secretRef: "db:notion:channel-key", broker: "db", intake: false },
+      {
+        id: "channel-key",
+        type: "api-key",
+        secretRef: "db:notion:channel-key",
+        broker: "db",
+        intake: false,
+        endpoints: { hosts: ["api.notion.com"], pathPrefixes: ["/v1/"], methods: ["GET", "POST"] },
+      },
       { id: "memory", type: "api-key", secretRef: "db:notion:memory", broker: "db", intake: false },
       { id: "user-oauth", type: "user-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp") },
     ],

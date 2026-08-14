@@ -1,3 +1,5 @@
+import { credentialEndpointProblems, type CredentialEndpointRules } from "./credential-endpoints.js";
+
 export type ProviderCredentialType = "api-key" | "service-oauth" | "user-oauth";
 
 export function principalOf(type: ProviderCredentialType): "app" | "user" {
@@ -68,6 +70,7 @@ export interface ProviderCredential {
   readonly intake?: boolean;
   readonly home?: CredentialHomeRef;
   readonly dashboardUrl?: string;
+  readonly endpoints?: CredentialEndpointRules;
 }
 
 export interface Provider {
@@ -95,6 +98,7 @@ export interface ResolvedConnectorCredential {
   readonly secretRef?: string;
   readonly broker?: string;
   readonly home?: CredentialHomeRef;
+  readonly endpoints?: CredentialEndpointRules;
 }
 
 export function defineProvider(p: Provider): Provider {
@@ -236,6 +240,9 @@ export function assertProvidersValid(providers: readonly Provider[]): void {
           throw new Error(`${where}: lifecycle.ttlSeconds must be a positive number of seconds (omit it when the credential does not expire, or when the vendor TTL is unverified)`);
         }
       }
+
+      const endpointProblems = credentialEndpointProblems(c.endpoints, where);
+      if (endpointProblems.length > 0) throw new Error(endpointProblems.join("\n"));
     }
   }
 }
@@ -289,6 +296,7 @@ export function expandProviderGrant(
       secretRef: cred.secretRef,
       broker: cred.broker,
       home: cred.home,
+      endpoints: cred.endpoints,
     },
     warnings: [],
   };

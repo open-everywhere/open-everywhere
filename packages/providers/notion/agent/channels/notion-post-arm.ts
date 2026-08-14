@@ -1,4 +1,4 @@
-import { createCommentReply, resolveNotionApiKey } from "./notion-api.js";
+import { createCommentReply, resolveNotionCredential } from "./notion-api.js";
 import { notionChannelCredentialFor } from "./notion-credentials.js";
 import { getConfig, resolvePartition, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
 import type { PostArm, TargetResolveBag, ReplyTarget, UnifiedWakeOrigin, UnifiedReplyDeps } from "@open-everywhere/core/agent/adapter-api.js";
@@ -20,22 +20,22 @@ type NotionOrigin = Extract<UnifiedWakeOrigin, { platform: "notion" }>;
 
 async function dispatchNotionReply(target: NotionTarget, text: string): Promise<string> {
   const credentialId = target.credentialId ?? notionReplyCredential(target.workspaceId, target.pageId);
-  const apiKey = await resolveNotionApiKey(credentialId);
-  if (!apiKey || apiKey.length === 0) {
+  const cred = await resolveNotionCredential(credentialId);
+  if (!cred) {
     throw new Error(`reply couldn't post to Notion — no value stored for notion credential "${credentialId ?? "channel-key"}".`);
   }
-  return createCommentReply({ discussionId: target.discussionId, text, apiKey });
+  return createCommentReply({ discussionId: target.discussionId, text, ...cred });
 }
 
 async function liveNotionPost(origin: NotionOrigin, text: string): Promise<string> {
   const credentialId = origin.credentialId ?? notionReplyCredential(origin.workspaceId, origin.pageId);
-  const apiKey = await resolveNotionApiKey(credentialId);
-  if (!apiKey || apiKey.length === 0) {
+  const cred = await resolveNotionCredential(credentialId);
+  if (!cred) {
     throw new Error(`unified reply couldn't post to Notion — no value stored for notion credential "${credentialId ?? "channel-key"}" (discussion ${origin.discussionId})`);
   }
   let id: string;
   try {
-    id = await createCommentReply({ discussionId: origin.discussionId, text, apiKey });
+    id = await createCommentReply({ discussionId: origin.discussionId, text, ...cred });
   } catch {
     throw new Error(`unified reply couldn't post to Notion — createCommentReply failed on discussion ${origin.discussionId}`);
   }

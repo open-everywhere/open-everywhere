@@ -1,6 +1,16 @@
 export { CredentialError, registerBroker, getSecretVia, getSecretWithLifetimeVia, resetBrokers } from "./access/credentials.js";
 export type { CredentialBroker, BrokeredSecret } from "./access/credentials.js";
 
+export {
+  guardCredentialFetch,
+  assertCredentialEndpointAllowed,
+  credentialEndpointVerdict,
+  credentialEndpointProblems,
+  CredentialEndpointError,
+  CREDENTIAL_HTTP_METHODS,
+} from "./access/credential-endpoints.js";
+export type { CredentialEndpointRules, CredentialEndpointVerdict, GuardableFetch } from "./access/credential-endpoints.js";
+
 export { warmCredential, DEFAULT_REFRESH_MARGIN_MS } from "./credentials/warm.js";
 export type { WarmCredential, WarmCredentialSpec } from "./credentials/warm.js";
 

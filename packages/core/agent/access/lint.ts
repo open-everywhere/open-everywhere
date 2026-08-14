@@ -113,11 +113,71 @@ export function lintMethodNarrowing(bundles: readonly Bundle[]): string[] {
   return problems;
 }
 
+function bindingScopeKey(scope: Binding["scope"]): string {
+  return [scope.level, scope.tenant ?? "", scope.domain ?? "", scope.surface ?? "", scope.group ?? "", scope.principal ?? ""].join("\u0000");
+}
+
+export function lintCredentialCollisions(bundles: readonly Bundle[], bindings: readonly Binding[]): string[] {
+  const problems: string[] = [];
+
+  for (const bundle of bundles) {
+    const byProvider = new Map<string, Set<string>>();
+    for (const grant of bundle.providers ?? []) {
+      const set = byProvider.get(grant.provider) ?? new Set<string>();
+      set.add(grant.credential);
+      byProvider.set(grant.provider, set);
+    }
+    for (const [provider, credentials] of byProvider) {
+      if (credentials.size > 1) {
+        problems.push(
+          `bundle "${bundle.name}" grants provider "${provider}" TWICE with different credentials (${[...credentials].sort().join(", ")}) — ` +
+            `the resolver keys one credential per connection, so the winner is whichever entry is listed last. Declaration order is not a decision: name ONE credential for this provider.`,
+        );
+      }
+    }
+  }
+
+  const byName = new Map(bundles.map((b) => [b.name, b]));
+  const atScope = new Map<string, Map<string, Map<string, Set<string>>>>();
+  for (const binding of bindings) {
+    const bundle = byName.get(binding.bundle);
+    if (!bundle) continue;
+    const scopeKey = bindingScopeKey(binding.scope);
+    const providers = atScope.get(scopeKey) ?? new Map<string, Map<string, Set<string>>>();
+    for (const grant of bundle.providers ?? []) {
+      const credentials = providers.get(grant.provider) ?? new Map<string, Set<string>>();
+      const owners = credentials.get(grant.credential) ?? new Set<string>();
+      owners.add(bundle.name);
+      credentials.set(grant.credential, owners);
+      providers.set(grant.provider, credentials);
+    }
+    atScope.set(scopeKey, providers);
+  }
+  for (const [scopeKey, providers] of atScope) {
+    for (const [provider, credentials] of providers) {
+      const bundleNames = new Set<string>();
+      for (const owners of credentials.values()) for (const b of owners) bundleNames.add(b);
+      if (credentials.size > 1 && bundleNames.size > 1) {
+        problems.push(
+          `bundles ${[...bundleNames].sort().map((b) => `"${b}"`).join(" and ")} are bound at the SAME scope (${scopeKey.replace(/\u0000/g, "/")}) and grant provider "${provider}" with different credentials (${[...credentials.keys()].sort().join(", ")}) — ` +
+            `narrowest-wins cannot separate two grants at one scope, so the surface would authenticate with whichever the config lists last. Bind them at different scopes, or agree on one credential.`,
+        );
+      }
+    }
+  }
+
+  return problems;
+}
+
 export function lintAccessConfig(
   bundles: readonly Bundle[],
   bindings: readonly Binding[],
   domains: readonly Domain[] = [],
   groups: readonly Group[] = [],
 ): string[] {
-  return [...lintBroadGrants(bundles, bindings, domains, groups), ...lintMethodNarrowing(bundles)];
+  return [
+    ...lintBroadGrants(bundles, bindings, domains, groups),
+    ...lintMethodNarrowing(bundles),
+    ...lintCredentialCollisions(bundles, bindings),
+  ];
 }

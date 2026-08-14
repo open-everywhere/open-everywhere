@@ -1,6 +1,6 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { readNotionComments, resolveBlockOwningPage, resolveNotionApiKey, type NotionCommentSummary } from "../channels/notion-api.js";
+import { readNotionComments, resolveBlockOwningPage, resolveNotionCredential, type NotionCommentSummary } from "../channels/notion-api.js";
 import { notionCallerCredential } from "../channels/notion-credentials.js";
 import { assertNotionBlockAllowed, assertNotionPageAllowed } from "../channels/notion-scope.js";
 import {
@@ -78,13 +78,13 @@ export const readNotionCommentsEntry = defineTool({
     if (!page) throw new Error("No Notion page id available for this session — pass `page` explicitly.");
     const domains = getConfig().loadDomains();
     await assertNotionPageAllowed(ctx2 as BindableContext, page, domains);
-    const apiKey = await resolveNotionApiKey(notionCallerCredential(ctx2 as BindableContext, domains));
-    if (!apiKey) throw new Error("no value stored under db:notion:channel-key — cannot read the comments.");
+    const cred = await resolveNotionCredential(notionCallerCredential(ctx2 as BindableContext, domains));
+    if (!cred) throw new Error("no value stored under db:notion:channel-key — cannot read the comments.");
     if (input.block) {
-      await assertNotionBlockAllowed(ctx2 as BindableContext, input.block, domains, (id) => resolveBlockOwningPage(id, { apiKey }));
+      await assertNotionBlockAllowed(ctx2 as BindableContext, input.block, domains, (id) => resolveBlockOwningPage(id, { ...cred }));
     }
     const res = await readNotionComments(page, {
-      apiKey,
+      ...cred,
       block: input.block,
       maxComments: MAX_COMMENTS,
       maxBlockScans: MAX_BLOCK_SCANS,
