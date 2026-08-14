@@ -364,6 +364,21 @@ ok(!isSupervisorSession({ channel: { kind: "slack", continuationToken: "C_TXN:17
   ok(renderSupervisorPersona(slackDmCtx("T1", "D_PARTNER")) === "", "renderSupervisorPersona: renders NOTHING for a DM session");
 }
 
+{
+  const persona = renderSupervisorPersona(slackSupervisorCtx("T1", "C_TXN", 3));
+  ok(persona.includes("### How you write"), "reply-style rubric: the persona carries the `How you write` section");
+  ok(/one sentence/.test(persona) && /Lead with the conclusion/.test(persona), "reply-style rubric: concision-first (many messages need one sentence) + conclusion-first");
+  ok(/BOTH surprising AND something the reader would act on/.test(persona), "reply-style rubric: a detail must be BOTH surprising AND action-relevant, not either");
+  ok(/narrating how you worked/.test(persona) && /Give the finding, not the method/.test(persona), "reply-style rubric: methodology narration is OUT");
+  ok(/\*\*Provenance\*\*/.test(persona) && /the logs say X/.test(persona), "reply-style rubric: …but PROVENANCE stays in — OE surfaces where a fact came from");
+  ok(/why you stayed quiet, why you are blocked/.test(persona) && /is information/.test(persona), "reply-style rubric: …and so does self-explanation + a stated uncertainty");
+  ok(/NAMES A REAL THING/.test(persona) && /`park`/.test(persona) && /`ledger`/.test(persona) && /`arm`/.test(persona), "reply-style rubric: OE's own vocabulary is carved OUT of the banned-word list by name");
+  ok(/overrides every line above/.test(persona), "reply-style rubric: an explicit human request overrides the whole rubric");
+  ok(/reviewer|review round|review_token|review: false|style review/i.test(persona) === false, "🔴 reply-style rubric: the persona teaches NO reviewer gate — prose only (OPE-424 ruling)");
+  ok(/past review/.test(persona), "…fixture sanity: the approval-plane wording IS present, so the check above is narrow, not vacuous");
+  ok(renderSupervisorPersona(slackChannelCtx("T1", "C_TXN")).includes("### How you write") === false, "reply-style rubric: an ordinary channel session gets no rubric (the whole persona is empty there)");
+}
+
 const supDomains: Domain[] = [
   defineDomain({
     name: "org",
