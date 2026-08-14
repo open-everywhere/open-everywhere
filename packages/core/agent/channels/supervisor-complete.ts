@@ -22,7 +22,7 @@ export interface SupervisorCompletionSpec {
   readonly silentAnchor: Record<string, unknown>;
   readonly droppedAnchor: Record<string, unknown>;
   readonly repliedAnchor: Record<string, unknown>;
-  readonly post: (text: string) => Promise<void>;
+  readonly post: (text: string) => Promise<void | number>;
   readonly log: (msg: string) => void;
 }
 
@@ -68,7 +68,7 @@ export async function completeSupervisorTurn(spec: SupervisorCompletionSpec): Pr
   }
 
   try {
-    await spec.post(action.text);
+    const postedChars = await spec.post(action.text);
     await appendAudit({
       org: spec.repliedRow.org,
       platform: spec.repliedRow.platform,
@@ -76,7 +76,7 @@ export async function completeSupervisorTurn(spec: SupervisorCompletionSpec): Pr
       surface: spec.repliedRow.surface,
       principalId: spec.repliedRow.principalId,
       action: spec.repliedAction,
-      detail: { ...spec.repliedAnchor, chars: action.text.length, ...sid },
+      detail: { ...spec.repliedAnchor, chars: typeof postedChars === "number" ? postedChars : action.text.length, ...sid },
     });
   } catch (err) {
     spec.log(`reply delivery failed: ${String(err)}`);

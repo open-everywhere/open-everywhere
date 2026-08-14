@@ -434,6 +434,84 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
 }
 
 {
+  const dir = join(tmpdir(), `open-everywhere-notion-ope521-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+  process.env.NOTION_CHANNEL_API_KEY = "ntn_test_key";
+  setRegisteredProviders([
+    {
+      name: "notion",
+      connection: "notion",
+      allows: ["api-key"],
+      credentials: [{ id: "channel-key", type: "api-key", secretRef: "NOTION_CHANNEL_API_KEY", broker: "env", intake: false }],
+    },
+  ]);
+
+  const nodeRequire = createRequire(import.meta.url);
+  const eveRoot = dirname(nodeRequire.resolve("eve/package.json"));
+  const abs = (rel: string) => pathToFileURL(join(eveRoot, rel)).href;
+  const { ContextContainer, contextStorage } = await import(abs("dist/src/context/container.js"));
+  const { SessionKey } = await import(abs("dist/src/context/keys.js"));
+
+  const inSession = <T>(fn: () => Promise<T>, attributes?: Record<string, string>): Promise<T> => {
+    const c = new ContextContainer();
+    const auth = attributes ? { current: { attributes }, initiator: null } : null;
+    c.set(SessionKey, { sessionId: "notion-ope521-test", auth, turn: 1, parent: undefined });
+    return contextStorage.run(c, fn);
+  };
+
+  const notionChannel = (await import("../agent/channels/notion.js")).default as unknown as {
+    adapter: Record<string, (data: unknown, ctx: unknown) => Promise<void>>;
+  };
+  const turnStarted = (ctx: unknown) => notionChannel.adapter["turn.started"]!({}, ctx);
+  const completed = (message: string | null, ctx: unknown) => notionChannel.adapter["message.completed"]!({ finishReason: "stop", message }, ctx);
+
+  const realFetch = globalThis.fetch;
+  let posts: Array<{ body: { discussion_id?: string; rich_text?: Array<{ text?: { content?: string } }> } }> = [];
+  globalThis.fetch = (async (input: string, init?: RequestInit) => {
+    if ((init?.method ?? "GET").toUpperCase() === "POST" && String(input).endsWith("/v1/comments")) {
+      posts.push({ body: JSON.parse(String(init?.body ?? "{}")) });
+      return new Response(JSON.stringify({ id: "reply-ope521" }), { status: 200 });
+    }
+    return new Response("unexpected", { status: 500 });
+  }) as typeof fetch;
+
+  try {
+    const state = { discussionId: DISCUSSION, pageId: PAGE, workspaceId: WS };
+    const rawText = "the fix is in";
+    const expectedText = "[review PR] " + rawText;
+
+    const workerAttrs = { discussion_id: DISCUSSION, page_id: PAGE, workspace_id: WS, credential_id: "channel-key", oe_grain: "task", oe_task_label: "review PR" };
+    await inSession(async () => {
+      const ctx = { state };
+      await turnStarted(ctx);
+      await completed(rawText, ctx);
+    }, workerAttrs);
+    ok(posts.length === 1, "OPE-521: a task-grain worker's terminal reply posts a Notion comment");
+    ok(posts[0]!.body.rich_text?.[0]?.text?.content === expectedText, "OPE-508: the worker's terminal reply carries the bracket prefix in the posted body");
+    const { readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
+    const replied = (await readAudit({ action: "notion.replied" })).filter((r) => r.detail?.discussionId === DISCUSSION);
+    ok(replied.length === 1, "OPE-521: the worker reply writes exactly one notion.replied audit row");
+    ok(replied[0]!.detail?.chars === expectedText.length, "OPE-521: the audited chars count the PREFIXED text actually posted");
+    ok(replied[0]!.detail?.chars !== rawText.length, "OPE-521 negative control: audited chars must NOT equal the unprefixed raw length — that was the undercount this ticket fixes");
+
+    posts = [];
+    const bareAttrs = { discussion_id: DISCUSSION, page_id: PAGE, workspace_id: WS, credential_id: "channel-key" };
+    await inSession(async () => {
+      const ctx = { state };
+      await turnStarted(ctx);
+      await completed(rawText, ctx);
+    }, bareAttrs);
+    ok(posts.length === 1 && posts[0]!.body.rich_text?.[0]?.text?.content === rawText, "OPE-508 negative control: a non-worker (no oe_grain=task) reply is NOT bracketed");
+    const repliedBareChars = (await readAudit({ action: "notion.replied" })).filter((r) => r.detail?.discussionId === DISCUSSION && r.detail?.chars === rawText.length);
+    ok(repliedBareChars.length >= 1, "OPE-521 negative control: a non-worker reply's audited chars equal the raw (unprefixed) length");
+  } finally {
+    globalThis.fetch = realFetch;
+    resetRegisteredProviders();
+  }
+}
+
+{
   const para: NotionBlock = { id: "b1", type: "paragraph", paragraph: { rich_text: [{ type: "text", plain_text: "hello " }, { type: "text", plain_text: "world" }] } };
   const heading: NotionBlock = { id: "b2", type: "heading_1", heading_1: { rich_text: [{ type: "text", plain_text: "A Title" }] } };
   const divider: NotionBlock = { id: "b3", type: "divider", divider: {} };

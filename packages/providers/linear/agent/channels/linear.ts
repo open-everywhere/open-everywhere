@@ -647,6 +647,8 @@ const native: LinearChannel = linearChannel({
   events: {
     async "turn.started"(data, channel, ctx) {
       if (!isSupervisorLinearState(channel.state)) {
+        const nativeAttrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
+        (channel.state as unknown as Record<string, unknown>).oeReplierLabel = replierLabelFromAuthAttributes(nativeAttrs);
         await defaultEvent("turn.started")?.(data, channel);
         return;
       }
@@ -678,7 +680,12 @@ const native: LinearChannel = linearChannel({
     async "message.completed"(data, channel, ctx) {
       if (!isSupervisorLinearState(channel.state)) {
         if (silentRoutineThisTurn()) return;
-        await defaultEvent("message.completed")?.(data, channel);
+        const nativeLabel = (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined;
+        const forwarded =
+          data.finishReason !== "tool-calls" && data.message !== null && nativeLabel
+            ? { ...data, message: withReplierPrefix(data.message, nativeLabel) }
+            : data;
+        await defaultEvent("message.completed")?.(forwarded, channel);
         return;
       }
       const sessionId = ctx?.session?.id;
@@ -720,6 +727,7 @@ const native: LinearChannel = linearChannel({
                 variables: { input: { issueId: target!.issueId, ...(target!.parentId ? { parentId: target!.parentId } : {}), body: text } },
               }),
           });
+          return text.length;
         },
         log: (m) => slog(m),
       });

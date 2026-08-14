@@ -347,6 +347,34 @@ for (const [label, err] of [
     }
 
     {
+      type AgentActivityCall = { query?: string; variables?: { input?: { agentSessionId?: string; content?: { body?: string; type?: string } } } };
+      const rawText = "the fix is in";
+      const expectedText = "[review PR] " + rawText;
+
+      const workerState = { ...supervisorState(), oeSupervisor: undefined, agentSessionId: "agent-session-520" };
+      await inSession(async () => {
+        await turnStarted({ state: workerState });
+        gql = [];
+        await completed(rawText, { state: workerState });
+      }, { organization_id: "org-1", oe_grain: "task", oe_task_label: "review PR" });
+      ok(gql.length === 1, "OPE-520: a task-grain worker's terminal reply posts exactly one Agent Activity");
+      const workerCall = gql[0] as unknown as AgentActivityCall;
+      ok(workerCall.query?.includes("AgentActivityCreate") === true, "OPE-520: the worker's terminal reply posts via the AgentActivityCreate mutation (eve's default poster)");
+      ok(workerCall.variables?.input?.content?.body === expectedText, "OPE-508/OPE-520: the worker's TERMINAL reply (no explicit reply-tool call) carries the bracket prefix");
+
+      const nativeState = { ...supervisorState(), oeSupervisor: undefined, agentSessionId: "agent-session-520b" };
+      await inSession(async () => {
+        await turnStarted({ state: nativeState });
+        gql = [];
+        await completed(rawText, { state: nativeState });
+      }, { organization_id: "org-1" });
+      ok(gql.length === 1, "OPE-520 negative control: a native (non-worker) session's terminal reply still posts exactly one Agent Activity");
+      const nativeCall = gql[0] as unknown as AgentActivityCall;
+      ok(nativeCall.variables?.input?.content?.body === rawText, "OPE-520 negative control: a native session's terminal reply is NOT bracketed (grain !== task)");
+      ok(nativeCall.variables?.input?.content?.body !== expectedText, "OPE-520 negative control (explicit): the native reply body differs from the bracketed worker body");
+    }
+
+    {
       const state = supervisorState();
       gql = [];
       await inSession(() => linearChannelModule.adapter["turn.failed"]!({ error: "boom" }, { state }));

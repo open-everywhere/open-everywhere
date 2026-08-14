@@ -388,6 +388,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
             }),
             run: () => createCommentReply({ discussionId: discussionId!, text, ...cred }),
           });
+          return text.length;
         },
         log: (m) => log(m),
       });
