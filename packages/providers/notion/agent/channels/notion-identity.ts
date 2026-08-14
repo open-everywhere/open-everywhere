@@ -14,6 +14,7 @@ export interface NotionIdentityInput {
   readonly commentId?: string;
   readonly principalId?: string;
   readonly credentialId?: string;
+  readonly trustRoot?: string;
 }
 
 export function buildNotionAuth(input: NotionIdentityInput): OpenEverywhereNotionAuth {
@@ -23,6 +24,7 @@ export function buildNotionAuth(input: NotionIdentityInput): OpenEverywhereNotio
   if (input.discussionId) attributes.discussion_id = input.discussionId;
   if (input.commentId) attributes.comment_id = input.commentId;
   if (input.credentialId) attributes.credential_id = input.credentialId;
+  if (input.trustRoot) attributes.trust_root = input.trustRoot;
   return {
     authenticator: "notion",
     principalId: input.principalId ?? "",
@@ -74,13 +76,14 @@ export const bindNotion: IdentityMapper = (ctx): RawIdentity => {
   const discussionId = notionAttr(a, ["discussion_id", "discussionId"]);
   const pageId = notionAttr(a, ["page_id", "pageId"]);
   const credentialId = notionAttr(a, ["credential_id", "credentialId"]);
+  const trustRoot = notionAttr(a, ["trust_root", "trustRoot"]);
   const principal = auth?.principalId;
   return {
     workspace: workspaceId,
     surface,
     mode: notionMode(),
     visibility: notionVisibility(),
-    trust: undefined,
+    trust: trustRoot ? ("internal" as const) : undefined,
     principalId: (principal && principal.length > 0 ? principal : undefined) ?? notionAttr(a, ["user_id", "userId"]),
     target: discussionId ? { discussionId, ...(pageId ? { pageId } : {}), ...(credentialId ? { credentialId } : {}) } : undefined,
   };

@@ -105,4 +105,21 @@ registerSurfaces([defineSurface({ key: "notion/some-other-workspace", trust: "in
 ok(dispatch().trust === "external", "an unrelated workspace vouch leaves this surface external (fail-closed)");
 _resetSurfacesForTest();
 
+{
+  const ROOT = "40000000000040008000000000000101";
+  const stamped = buildNotionAuth({ workspaceId: WS, pageId: PAGE, discussionId: DISCUSSION, trustRoot: ROOT });
+  ok(stamped.attributes.trust_root === ROOT, "the matched trust root is stowed as the `trust_root` attribute");
+  ok(bindFrom(ctxFromAuth(stamped)).trust === "internal", "🔴 a page under a declared trust root binds INTERNAL");
+  ok(bindFrom(ctxFromAuth(stamped)).surface === PAGE, "…and the stamp does not disturb the surface");
+
+  const unstamped = buildNotionAuth({ workspaceId: WS, pageId: PAGE, discussionId: DISCUSSION });
+  ok(unstamped.attributes.trust_root === undefined, "an unmatched delivery stows NO trust_root");
+  ok(bindFrom(ctxFromAuth(unstamped)).trust === "external", "🔴 no root, no promotion — the binding stays fail-closed external");
+
+  registerSurfaces([defineSurface({ key: `notion/${WS}/${PAGE}`, trust: "public" })]);
+  ok(bindFrom(ctxFromAuth(stamped)).trust === "external", "🔴 a `public` declaration on the page BEATS the ancestor-walk promotion");
+  _resetSurfacesForTest();
+  ok(bindFrom(ctxFromAuth(stamped)).trust === "internal", "…and with the declaration gone the promotion is back (the demotion was what refused)");
+}
+
 console.log(`\n✓ notion-identity: ${passed} assertions passed`);

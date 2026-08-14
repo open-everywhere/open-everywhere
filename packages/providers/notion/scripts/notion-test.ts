@@ -24,6 +24,11 @@ import {
   type NotionBlock,
 } from "../agent/channels/notion-api.js";
 import { handleNotionDelivery } from "../agent/channels/notion-webhook.js";
+import {
+  _resetNotionTrustRootProbesForTest,
+  clearNotionAncestryCache,
+  prepareNotionTrustRoots,
+} from "../agent/channels/notion-ancestry-trust.js";
 import { setRegisteredProviders, resetRegisteredProviders, OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "@open-everywhere/core/agent/adapter-api.js";
 import type { NotionSupervisorDispatch } from "../agent/channels/notion-supervisor.js";
 import { registerNotionProvider } from "../agent/register.js";
@@ -289,6 +294,63 @@ function baseDeps(
   const raw = commentEvent();
   const out = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerMention }), async () => {}, { credentialFor: async () => undefined }));
   ok(out.action === "no-api-key" && out.status === 200, "missing NOTION_API_KEY -> 200 ack, action no-api-key");
+}
+
+{
+  const TRUST_ROOT = "40000000000040008000000000000101";
+  const withParents = (parents: Record<string, string>, base: FetchLike): FetchLike => {
+    return async (input: string, init?: RequestInit): Promise<Response> => {
+      const m = /\/v1\/pages\/([^/?]+)$/.exec(input);
+      if ((init?.method ?? "GET").toUpperCase() === "GET" && m) {
+        const parent = parents[decodeURIComponent(m[1])];
+        return parent
+          ? new Response(JSON.stringify({ parent: { type: "page_id", page_id: parent } }), { status: 200 })
+          : new Response(JSON.stringify({ parent: { type: "workspace", workspace: true } }), { status: 200 });
+      }
+      return base(input, init);
+    };
+  };
+
+  clearNotionAncestryCache();
+  _resetNotionTrustRootProbesForTest();
+  let captured: NotionSupervisorDispatch | undefined;
+  const raw = commentEvent();
+  const f = withParents({ [PAGE]: TRUST_ROOT }, makeFetch({ comment: triggerMention }));
+  const out = await handleNotionDelivery(
+    raw,
+    sign(raw),
+    baseDeps(f, async (d) => { captured = d; }, { trustRoots: prepareNotionTrustRoots([`notion/${WS}/${TRUST_ROOT}`]) }),
+  );
+  ok(out.action === "dispatched", "trust roots: the delivery still dispatches");
+  ok(captured?.auth.attributes.trust_root === TRUST_ROOT, "🔴 a page under a declared trust root is STAMPED on the dispatched auth");
+  ok(captured?.trust?.trusted === true && captured.trust.reason === "ancestor", "the audit verdict names the ANCESTOR match");
+  ok(captured?.trust?.hops === 1, "…and how many lookups it cost");
+
+  clearNotionAncestryCache();
+  _resetNotionTrustRootProbesForTest();
+  let outside: NotionSupervisorDispatch | undefined;
+  await handleNotionDelivery(
+    raw,
+    sign(raw),
+    baseDeps(withParents({}, makeFetch({ comment: triggerMention })), async (d) => { outside = d; }, {
+      trustRoots: prepareNotionTrustRoots([`notion/${WS}/${TRUST_ROOT}`]),
+    }),
+  );
+  ok(outside?.auth.attributes.trust_root === undefined, "🔴 a page OUTSIDE the declared tree is NOT stamped");
+  ok(outside?.trust?.trusted === false && outside.trust.reason === "workspace-root", "…and the audit verdict names the refusal");
+
+  clearNotionAncestryCache();
+  _resetNotionTrustRootProbesForTest();
+  let pageLookups = 0;
+  let unrooted: NotionSupervisorDispatch | undefined;
+  const counting: FetchLike = async (input, init) => {
+    if (/\/v1\/pages\//.test(input)) pageLookups++;
+    return withParents({ [PAGE]: TRUST_ROOT }, makeFetch({ comment: triggerMention }))(input, init);
+  };
+  await handleNotionDelivery(raw, sign(raw), baseDeps(counting, async (d) => { unrooted = d; }));
+  ok(unrooted?.auth.attributes.trust_root === undefined, "no declared roots ⇒ no stamp");
+  ok(unrooted?.trust === undefined, "no declared roots ⇒ no trust verdict on the audit row (byte-identical to before)");
+  ok(pageLookups === 0, "🔴 no declared roots ⇒ ZERO page lookups — the walk never runs");
 }
 
 {

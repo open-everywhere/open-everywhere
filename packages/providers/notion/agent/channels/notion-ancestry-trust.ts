@@ -67,11 +67,6 @@ export function prepareNotionTrustRoots(entries: Iterable<string>): NotionTrustR
       );
     }
     const page = segs[2] ?? "";
-    if (/^teamspace/i.test(page) || /^ts:/i.test(page)) {
-      throw new NotionTrustConfigError(
-        `notion trust root ${JSON.stringify(entry)} names a TEAMSPACE, which is refused BY NAME: no teamspace field exists anywhere on the Notion webhook surface, so a teamspace root could never be resolved at ingestion. Declare the top PAGE of the teamspace instead — every page underneath it is reached by the ancestor walk.`,
-      );
-    }
     if (page.includes("*")) {
       throw new NotionTrustConfigError(
         `notion trust root ${JSON.stringify(entry)} uses a GLOB, which cannot match anything: a Notion page id is an opaque 32-hex uuid, so a prefix carries no meaning. Name the top page; the ancestor walk is what reaches the pages under it.`,
@@ -94,6 +89,22 @@ export function prepareNotionTrustRoots(entries: Iterable<string>): NotionTrustR
     byWorkspace.set(workspace, set);
   }
   return { byWorkspace };
+}
+
+const NO_TRUST_ROOTS: NotionTrustRoots = { byWorkspace: new Map() };
+
+let registeredRoots: NotionTrustRoots = NO_TRUST_ROOTS;
+
+export function registerNotionTrustRoots(entries: Iterable<string>): void {
+  registeredRoots = prepareNotionTrustRoots(entries);
+}
+
+export function notionTrustRoots(): NotionTrustRoots {
+  return registeredRoots;
+}
+
+export function _resetNotionTrustRootsForTest(): void {
+  registeredRoots = NO_TRUST_ROOTS;
 }
 
 interface CacheEntry {
@@ -171,4 +182,45 @@ export async function resolveNotionAncestorTrust(
     current = next;
   }
   return { trusted: false, reason: "hop-limit", hops: maxHops };
+}
+
+const probedRoots = new Set<string>();
+
+export function _resetNotionTrustRootProbesForTest(): void {
+  probedRoots.clear();
+}
+
+export async function probeUnreachableNotionTrustRoots(
+  workspaceId: string,
+  roots: NotionTrustRoots,
+  deps: NotionAncestryDeps,
+): Promise<readonly string[]> {
+  const declared = roots.byWorkspace.get(workspaceId);
+  if (!declared || declared.size === 0) return [];
+  const unreachable: string[] = [];
+  for (const root of declared) {
+    const memo = `${workspaceId}/${root}`;
+    if (probedRoots.has(memo)) continue;
+    probedRoots.add(memo);
+    const link = await cachedParentOf(root, deps);
+    if (link.kind === "unresolvable") unreachable.push(root);
+  }
+  return unreachable;
+}
+
+export interface NotionDeliveryTrust extends NotionAncestryVerdict {
+  readonly unreachableRoots?: readonly string[];
+}
+
+export async function resolveNotionDeliveryTrust(
+  pageId: string,
+  workspaceId: string,
+  roots: NotionTrustRoots | undefined,
+  deps: NotionAncestryDeps,
+): Promise<NotionDeliveryTrust> {
+  const declared = roots ?? NO_TRUST_ROOTS;
+  const verdict = await resolveNotionAncestorTrust(pageId, workspaceId, declared, deps);
+  if (verdict.trusted || verdict.reason === "no-roots") return verdict;
+  const unreachable = await probeUnreachableNotionTrustRoots(workspaceId, declared, deps);
+  return unreachable.length > 0 ? { ...verdict, unreachableRoots: unreachable } : verdict;
 }

@@ -1,9 +1,15 @@
 import {
   NOTION_ANCESTRY_TTL_MS,
   NotionTrustConfigError,
+  _resetNotionTrustRootProbesForTest,
+  _resetNotionTrustRootsForTest,
   clearNotionAncestryCache,
+  notionTrustRoots,
   prepareNotionTrustRoots,
+  probeUnreachableNotionTrustRoots,
+  registerNotionTrustRoots,
   resolveNotionAncestorTrust,
+  resolveNotionDeliveryTrust,
   type NotionAncestryCache,
   type NotionParentLink,
 } from "../agent/channels/notion-ancestry-trust.js";
@@ -26,6 +32,7 @@ const OUTSIDE = "44444444-4444-4444-8444-444444444444";
 const DB = "55555555-5555-4555-8555-555555555555";
 const ROW = "66666666-6666-4666-8666-666666666666";
 const BLOCK = "77777777-7777-4777-8777-777777777777";
+const TEAMSPACE = "88888888-8888-4888-8888-888888888888";
 
 const ROOTS = prepareNotionTrustRoots([`notion/${WS}/${ROOT}`]);
 
@@ -34,10 +41,12 @@ function treeParentOf(tree: Record<string, NotionParentLink>): {
   calls: () => number;
 } {
   let calls = 0;
+  const bare = (id: string): string => id.replace(/-/g, "");
+  const index = new Map<string, NotionParentLink>(Object.entries(tree).map(([k, v]) => [bare(k), v]));
   return {
     parentOf: async (id: string) => {
       calls++;
-      return tree[id] ?? { kind: "unresolvable" };
+      return index.get(bare(id)) ?? { kind: "unresolvable" };
     },
     calls: () => calls,
   };
@@ -76,8 +85,7 @@ function freshCache(): NotionAncestryCache {
 
   refused(`notion/${WS}/${DB}/rows`, "DATABASE ROW", "a row-grain key");
   refused(`notion/${WS}/${DB}/${ROW}`, "DATABASE ROW", "a four-segment key");
-  refused(`notion/${WS}/teamspace:engineering`, "TEAMSPACE", "a teamspace key");
-  refused(`notion/${WS}/teamspace-eng`, "TEAMSPACE", "a teamspace-prefixed key");
+  refused(`notion/${WS}/teamspace:engineering`, "does not name a page", "a teamspace label");
   refused(`notion/${WS}`, "WHOLE WORKSPACE", "a workspace key");
   refused(`notion/${WS}/1111*`, "GLOB", "a globbed page segment");
   refused(`slack/${WS}/${ROOT}`, "not a Notion surface key", "a non-Notion key");
@@ -98,6 +106,12 @@ function freshCache(): NotionAncestryCache {
   ok(good.byWorkspace.get(WS)?.has(ROOT.replace(/-/g, "")) === true, "a well-formed key is accepted and canonicalised");
   ok(good.byWorkspace.get("ws-2")?.size === 1, "roots are grouped per workspace");
   ok(good.byWorkspace.get(WS)?.size === 1, "a workspace holds only its own roots");
+
+  const teamspaceShaped = prepareNotionTrustRoots([`notion/${WS}/${TEAMSPACE}`]);
+  ok(
+    teamspaceShaped.byWorkspace.get(WS)?.has(TEAMSPACE.replace(/-/g, "")) === true,
+    "🔴 a TEAMSPACE-shaped uuid is ACCEPTED at config time — no string test can tell it from a page id",
+  );
 }
 
 {
@@ -313,6 +327,90 @@ function freshCache(): NotionAncestryCache {
     new Response(JSON.stringify({ parent: { type: "database_id", database_id: DB } }), { status: 200 });
   const row = await notionParentLink(ROW, { apiKey: "k", fetch: pageOk });
   ok(row.kind === "database", "notionParentLink reads a row's database parent from the page endpoint");
+}
+
+{
+  _resetNotionTrustRootsForTest();
+  ok(notionTrustRoots().byWorkspace.size === 0, "before registration NOTHING is a trust root (fail-closed)");
+
+  registerNotionTrustRoots([`notion/${WS}/${ROOT}`]);
+  ok(notionTrustRoots().byWorkspace.get(WS)?.has(ROOT.replace(/-/g, "")) === true, "the register holds what the operator declared");
+
+  registerNotionTrustRoots([`notion/ws-2/${MID}`]);
+  ok(notionTrustRoots().byWorkspace.has(WS) === false, "a second register REPLACES the first (it does not accumulate)");
+
+  let threw = false;
+  try {
+    registerNotionTrustRoots([`notion/${WS}`]);
+  } catch (e) {
+    threw = e instanceof NotionTrustConfigError;
+  }
+  ok(threw, "registerNotionTrustRoots THROWS on a malformed entry (a boot error, not a silent drop)");
+
+  _resetNotionTrustRootsForTest();
+  ok(notionTrustRoots().byWorkspace.size === 0, "the test reset really empties the register");
+}
+
+{
+  _resetNotionTrustRootProbesForTest();
+  const t = treeParentOf(TREE);
+  const none = await resolveNotionDeliveryTrust(MID, WS, undefined, { parentOf: t.parentOf, cache: freshCache() });
+  ok(none.trusted === false && none.reason === "no-roots", "no declared roots ⇒ no-roots");
+  ok(t.calls() === 0, "🔴 no declared roots ⇒ ZERO API calls (the walk AND the probe are skipped)");
+  ok(none.unreachableRoots === undefined, "no declared roots ⇒ nothing to report");
+}
+{
+  _resetNotionTrustRootProbesForTest();
+  const t = treeParentOf(TREE);
+  const v = await resolveNotionDeliveryTrust(MID, WS, ROOTS, { parentOf: t.parentOf, cache: freshCache() });
+  ok(v.trusted === true && v.reason === "ancestor", "a page under the declared root is trusted through the seam");
+  ok(v.matchedRoot === ROOT.replace(/-/g, ""), "the seam carries the matched root out (this is the auth stamp)");
+  ok(v.unreachableRoots === undefined, "a TRUSTED verdict runs no probe");
+  ok(t.calls() === 1, "a trusted verdict costs the walk only — one hop, no probe call");
+}
+{
+  _resetNotionTrustRootProbesForTest();
+  const roots = prepareNotionTrustRoots([`notion/${WS}/${TEAMSPACE}`]);
+  const t = treeParentOf(TREE);
+  const v = await resolveNotionDeliveryTrust(MID, WS, roots, { parentOf: t.parentOf, cache: freshCache() });
+  ok(v.trusted === false, "a teamspace root grants nothing (the walk never sees a teamspace parent)");
+  ok(v.reason === "workspace-root", "…and the walk ends at the workspace, so the reason says so");
+  ok(v.unreachableRoots?.length === 1, "🔴 the probe REPORTS the dead root — the finding is loud, not silent");
+  ok(v.unreachableRoots?.[0] === TEAMSPACE.replace(/-/g, ""), "the report NAMES the root that cannot match");
+
+  const firstCost = t.calls();
+  const again = await resolveNotionDeliveryTrust(MID, WS, roots, { parentOf: t.parentOf, cache: freshCache() });
+  const secondCost = t.calls() - firstCost;
+  ok(again.unreachableRoots === undefined, "the SECOND delivery does not re-report the same root");
+  ok(again.reason === "workspace-root", "…and it still walks — only the probe is skipped");
+  ok(secondCost === firstCost - 1, "the second delivery pays the walk only — the probe is memoised per process");
+}
+{
+  _resetNotionTrustRootProbesForTest();
+  const t = treeParentOf(TREE);
+  const v = await resolveNotionDeliveryTrust(OUTSIDE, WS, ROOTS, { parentOf: t.parentOf, cache: freshCache() });
+  ok(v.trusted === false && v.reason === "workspace-root", "a page outside the declared tree is untrusted");
+  ok(v.unreachableRoots === undefined, "🔴 a REAL page root is NOT reported — only a root Notion will not serve is");
+}
+{
+  _resetNotionTrustRootProbesForTest();
+  const t = treeParentOf({ [MID]: { kind: "page", pageId: ROOT } });
+  const v = await resolveNotionDeliveryTrust(MID, WS, ROOTS, { parentOf: t.parentOf, cache: freshCache() });
+  ok(v.trusted === true && v.reason === "ancestor", "🔴 an UNREADABLE declared root still matches at one hop");
+  const found = await probeUnreachableNotionTrustRoots(WS, ROOTS, { parentOf: t.parentOf, cache: freshCache() });
+  ok(found.length === 1 && found[0] === ROOT.replace(/-/g, ""), "the same root probes as unreachable — the report is a WARNING, not a withdrawal");
+}
+{
+  _resetNotionTrustRootProbesForTest();
+  let call = 0;
+  const parentOf = async (): Promise<NotionParentLink> => {
+    call++;
+    if (call === 1) return { kind: "workspace" };
+    throw new Error("notion is down");
+  };
+  const v = await resolveNotionDeliveryTrust(MID, WS, ROOTS, { parentOf, cache: freshCache() });
+  ok(v.trusted === false && v.reason === "workspace-root", "a throwing probe leaves the walk's verdict intact");
+  ok(v.unreachableRoots?.length === 1, "a throwing probe reports the root once — it never throws at the caller");
 }
 
 console.log(`✓ ${passed} notion ancestry-trust assertions passed`);

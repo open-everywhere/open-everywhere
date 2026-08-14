@@ -8,6 +8,7 @@ import {
   listBlockComments,
   resolveBlockOwningPage,
   richTextToPlainText,
+  notionParentLink,
   type FetchLike,
   type NotionWebhookEvent,
   type NotionComment,
@@ -16,6 +17,7 @@ import {
   type ResolvedNotionCredential,
 } from "./notion-api.js";
 import { buildNotionAuth, notionSurfaceKey } from "./notion-identity.js";
+import { resolveNotionDeliveryTrust, type NotionTrustRoots } from "./notion-ancestry-trust.js";
 import { notionDeliveryScopeVerdict } from "./notion-credentials.js";
 import { notionRosterWorkspace } from "./notion-scope.js";
 import { classifyNotionComment, type NotionSupervisorDispatch, type NotionWakeMessage } from "./notion-supervisor.js";
@@ -42,6 +44,7 @@ export interface HandleNotionDeliveryDeps {
   readonly credentialFor: (credentialId: string) => Promise<ResolvedNotionCredential | undefined>;
   readonly credentialForPage: (workspaceId: string | undefined, pageId: string | undefined) => string | undefined;
   readonly domains: readonly Domain[];
+  readonly trustRoots?: NotionTrustRoots;
   readonly resolveBotUserId: (credentialId: string) => Promise<string | undefined>;
   readonly resolveBotName?: (credentialId: string) => Promise<string | undefined>;
   readonly ambientEnabled: (surfaceKey: string) => boolean;
@@ -165,6 +168,10 @@ async function deliver(
     return { status: 200, body: "ok", action, detail: reason, signed, credentialId };
   }
 
+  const trust = await resolveNotionDeliveryTrust(pageId, workspaceId ?? "", deps.trustRoots, {
+    parentOf: (id) => notionParentLink(id, { ...cred, fetch: deps.fetch, version: deps.version }),
+  });
+
   const triggerText = richTextToPlainText(comment.rich_text);
   const trigger: NotionWakeMessage = {
     from: "human",
@@ -185,6 +192,7 @@ async function deliver(
     commentId,
     principalId: comment.created_by?.id,
     credentialId,
+    ...(trust.trusted && trust.matchedRoot ? { trustRoot: trust.matchedRoot } : {}),
   });
   if (classification.addressing === "direct") {
     auth.attributes[OE_ADDRESSED_ATTR] = "1";
@@ -209,6 +217,7 @@ async function deliver(
     trigger,
     threadComments,
     engagementTier,
+    ...(trust.reason === "no-roots" ? {} : { trust }),
   });
 
   return { status: 200, body: "ok", action: "dispatched", detail: classification.addressing, signed, credentialId };

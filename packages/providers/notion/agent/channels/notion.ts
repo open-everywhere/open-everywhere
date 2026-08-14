@@ -37,6 +37,7 @@ import { notionChannelCredentialFor, notionIntegrations, resolveNotionInboundSec
 import { NOTION_EVENT_SOURCE, notionEventDeliveryId, notionTriggerScopeVerdict } from "./notion-event-normalizer.js";
 import { createCommentReply, resolveNotionCredential, retrieveBotUser, type ResolvedNotionCredential } from "./notion-api.js";
 import { notionWorkspaceKey } from "./notion-identity.js";
+import { notionTrustRoots } from "./notion-ancestry-trust.js";
 import { handleNotionDelivery, type NotionReplyTarget, type NotionSessionState } from "./notion-webhook.js";
 import {
   handleNotionSupervisorDispatch,
@@ -246,6 +247,11 @@ export default defineChannel<NotionState, { state: NotionState }>({
           },
           liveNotionSupervisorDeps(send, d.surfaceKey, to),
         );
+        if (d.trust?.unreachableRoots && d.trust.unreachableRoots.length > 0) {
+          console.warn(
+            `[open-everywhere:notion] declared trust root(s) ${d.trust.unreachableRoots.join(", ")} resolve as neither a page nor a block under integration "${d.credentialId}" — such a root can never match, so it grants nothing. If it is a TEAMSPACE id, declare the top PAGE of the teamspace instead.`,
+          );
+        }
         await appendAudit({
           org: deploymentOrg(),
           platform: "notion",
@@ -253,7 +259,22 @@ export default defineChannel<NotionState, { state: NotionState }>({
           surface: d.pageId || d.discussionId || "unknown",
           principalId: d.auth.principalId || undefined,
           action: "notion.dispatched",
-          detail: { addressing: d.addressing, discussionId: d.discussionId, ...(window ? { singleWindow: true } : {}) },
+          detail: {
+            addressing: d.addressing,
+            discussionId: d.discussionId,
+            ...(window ? { singleWindow: true } : {}),
+            ...(d.trust
+              ? {
+                  trust: {
+                    trusted: d.trust.trusted,
+                    reason: d.trust.reason,
+                    hops: d.trust.hops,
+                    ...(d.trust.matchedRoot ? { matchedRoot: d.trust.matchedRoot } : {}),
+                    ...(d.trust.unreachableRoots ? { unreachableRoots: d.trust.unreachableRoots } : {}),
+                  },
+                }
+              : {}),
+          },
         });
       };
 
@@ -263,6 +284,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
         credentialFor,
         credentialForPage: (workspaceId, pageId) => notionChannelCredentialFor(workspaceId, pageId, notionDomains()),
         domains: notionDomains(),
+        trustRoots: notionTrustRoots(),
         resolveBotUserId: async (credentialId) => (await botUserFor(credentialId)).id,
         resolveBotName: async (credentialId) => (await botUserFor(credentialId)).name,
         ambientEnabled: notionAmbientEnabled,

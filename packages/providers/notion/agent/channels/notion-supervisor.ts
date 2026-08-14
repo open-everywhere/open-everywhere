@@ -20,6 +20,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { mentionsUser, richTextToPlainText, type NotionComment } from "./notion-api.js";
 import type { OpenEverywhereNotionAuth } from "./notion-identity.js";
+import type { NotionDeliveryTrust } from "./notion-ancestry-trust.js";
 import type { NotionSessionState } from "./notion-webhook.js";
 
 export function notionSupervisorSentinel(generation: number): string {
@@ -191,6 +192,7 @@ export interface NotionSupervisorDispatch {
   readonly externalPolicy?: ExternalPolicy;
   readonly unified?: boolean;
   readonly window?: UnifiedWindowWake;
+  readonly trust?: NotionDeliveryTrust;
   readonly directMention?: boolean;
 }
 
