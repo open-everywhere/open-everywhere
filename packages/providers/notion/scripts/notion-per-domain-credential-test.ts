@@ -701,6 +701,93 @@ async function deliverFor(
   ok(crossClaim.dispatched === false, "…and nothing was dispatched (negative control)");
 }
 
+{
+  const WS_M1 = "aaaaaaaa-9999-4999-8999-aaaaaaaaaaaa";
+  const WS_M2 = "bbbbbbbb-9999-4999-8999-bbbbbbbbbbbb";
+  const PAGE_CLAIM_11 = "cccccccc-9999-4999-8999-cccccccccccc";
+  const MULTI_CRED = "multi-claim-channel-key-11";
+  const MULTI_SECRET = "multi-claim-verification-token-11";
+  const MULTI_CLAIM_DOMAINS: readonly Domain[] = [
+    defineDomain({
+      name: "multi-claim-11",
+      containers: [`notion/${WS_M1}`, `notion/${WS_M2}`],
+      ambientSupervisor: true,
+      credentials: [{ provider: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: MULTI_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_MULTI_11" }],
+    }),
+  ];
+
+  interface ClaimRun {
+    readonly action: string;
+    readonly surfaceKey?: string;
+    readonly dispatched: boolean;
+  }
+
+  async function claimRun(workspace: string, page: string, secret: string, credId: string, domains: readonly Domain[]): Promise<ClaimRun> {
+    let surfaceKey: string | undefined;
+    let dispatched = false;
+    const body = JSON.stringify({ type: "comment.created", workspace_id: workspace, entity: { id: "cmt-11", type: "comment" }, data: { page_id: page } });
+    const out = await handleNotionDelivery(body, sign(secret, body), {
+      signingKeys: [
+        { credentialId: NOTION_CHANNEL_CREDENTIAL, secret: ORG_SECRET },
+        { credentialId: credId, secret },
+      ],
+      allowUnverified: false,
+      credentialFor: async () => ({ apiKey: ORG_TOKEN }),
+      credentialForPage: () => undefined,
+      domains,
+      resolveBotUserId: async () => "U_BOT",
+      ambientEnabled: () => true,
+      fetch: recordingFetch([], { type: "page_id", page_id: page }),
+      dispatch: async (d) => {
+        dispatched = true;
+        surfaceKey = d.surfaceKey;
+      },
+    });
+    return { action: out.action, ...(surfaceKey ? { surfaceKey } : {}), dispatched };
+  }
+
+  const viaW1 = await claimRun(WS_M1, PAGE_CLAIM_11, MULTI_SECRET, MULTI_CRED, MULTI_CLAIM_DOMAINS);
+  ok(viaW1.action === "dispatched" && viaW1.dispatched, "an honest delivery naming the domain's FIRST claimed workspace dispatches");
+  ok(viaW1.surfaceKey === `notion/${WS_M1}/${PAGE_CLAIM_11}`, "…on that workspace's own surface key");
+
+  const viaW2 = await claimRun(WS_M2, PAGE_CLAIM_11, MULTI_SECRET, MULTI_CRED, MULTI_CLAIM_DOMAINS);
+  ok(viaW2.action === "dispatched" && viaW2.dispatched, "an honest delivery for the SAME page naming the domain's SECOND claimed workspace ALSO dispatches");
+  ok(viaW2.surfaceKey === `notion/${WS_M2}/${PAGE_CLAIM_11}`, "…but on a DIFFERENT surface key");
+  ok(
+    viaW1.surfaceKey !== viaW2.surfaceKey,
+    "🔴 THE KNOWN GAP (OPE-537): one page's history can still split across a domain's own claimed workspaces, same domain, same signer, no boundary ever crossed. " +
+      "This assertion CHARACTERIZES today's accepted-for-now behaviour — if it goes red because the composition changed, that change moves live `channel_session`/memory " +
+      "keying and needs the same review OPE-536's own fix required, not a silent change.",
+  );
+
+  const WS_S = "dddddddd-9999-4999-8999-dddddddddddd";
+  const PAGE_S_11 = "eeeeeeee-9999-4999-8999-eeeeeeeeeeee";
+  const S_CRED = "single-claim-channel-key-11";
+  const S_SECRET = "single-claim-verification-token-11";
+  const SINGLE_CLAIM_DOMAINS: readonly Domain[] = [
+    defineDomain({
+      name: "single-claim-11",
+      containers: [`notion/${WS_S}`],
+      ambientSupervisor: true,
+      credentials: [{ provider: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: S_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SINGLE_11" }],
+    }),
+  ];
+
+  const honestSingle = await claimRun(WS_S, PAGE_S_11, S_SECRET, S_CRED, SINGLE_CLAIM_DOMAINS);
+  ok(honestSingle.action === "dispatched", "a single-claim domain's own workspace dispatches normally");
+  ok(honestSingle.surfaceKey === `notion/${WS_S}/${PAGE_S_11}`, "…on the expected surface key");
+
+  const OTHER_WS_11 = "ffffffff-9999-4999-8999-ffffffffffff";
+  const mismatchedSingle = await claimRun(OTHER_WS_11, PAGE_S_11, S_SECRET, S_CRED, SINGLE_CLAIM_DOMAINS);
+  ok(mismatchedSingle.action === "dispatched", "a DIFFERENT, unclaimed workspace for the same page still dispatches (an unassigned page is not fenced)");
+  ok(
+    mismatchedSingle.surfaceKey === `notion/${OTHER_WS_11}/${PAGE_S_11}`,
+    "…on the UNCLAIMED workspace's own key, never on the single-claim domain's recorded workspace — the claim leg cannot be forged into a second " +
+      "partition beside a single-claim domain's honest one",
+  );
+  ok(mismatchedSingle.surfaceKey !== honestSingle.surfaceKey, "negative control: the two runs really do land on different keys, so the assertion above is not vacuous");
+}
+
 resetRegisteredProviders();
 resetBrokers();
 console.log(`✓ notion-per-domain-credential: ${passed} assertions passed`);
