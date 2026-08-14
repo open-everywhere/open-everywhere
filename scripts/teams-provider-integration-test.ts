@@ -272,9 +272,11 @@ function seedRoutine(id: string, surfaceKey: string, target: Record<string, unkn
 
   ok(named("ChannelMessage.Read.Group")?.type === "Application", "manifest: the CHANNEL RSC grant is declared (Application context) — ambient team-channel delivery");
   ok(named("ChatMessage.Read.Chat")?.type === "Application", "manifest: the CHAT RSC grant is declared (Application context) — non-mention group-chat delivery");
+  ok(named("ChannelMember.Read.Group")?.type === "Application", "manifest: the CHANNEL-MEMBER RSC grant is declared (Application context) — routine fire-eligibility room checks");
   ok(manifest.webApplicationInfo !== undefined, "manifest: authorization is paired with webApplicationInfo (its absence fails the upload)");
   ok(manifest.bots.some((b) => b.scopes.includes("groupChat")), "manifest: the bot is installable in groupChat scope (what the chat RSC grant applies to)");
   ok(manifest.version !== "1.0.1", "manifest: version was bumped past 1.0.1 — RSC consent is install-time only, so an unbumped package can't re-consent");
+  ok(manifest.version !== "1.0.2", "manifest: version was bumped past 1.0.2 — the ChannelMember.Read.Group grant needs its own install-time re-consent");
 }
 
 {
