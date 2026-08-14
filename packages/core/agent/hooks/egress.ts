@@ -6,6 +6,8 @@ import { resolveAccessFor } from "../access/request.js";
 import { compileNetworkPolicy } from "../access/egress.js";
 import type { EffectiveAccess } from "../access/resolver.js";
 import { resolveHeaders } from "../access/credentials.js";
+import { getConfig } from "../access/config.js";
+import { resolveNetworkAccessLevel } from "../access/network-access.js";
 import { resolvePartition } from "../memory/partition.js";
 import { bindFrom, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { narrowByConnectorOverride } from "../access/connector-scope.js";
@@ -312,7 +314,13 @@ const egressApplied = defineState<{ fingerprint?: string; connectors?: string }>
 function liveDeps(ctx: HookContext): EgressEnforcementDeps {
   return {
     resolve: () => resolveAccessFor(ctx),
-    compile: (access) => compileNetworkPolicy(access, resolveHeaders, (ids) => narrowByConnectorOverride(ctx, ids)),
+    compile: (access) =>
+      compileNetworkPolicy(
+        access,
+        resolveHeaders,
+        (ids) => narrowByConnectorOverride(ctx, ids),
+        resolveNetworkAccessLevel(access, getConfig().loadNetworkAccess?.() ?? []),
+      ),
     apply: async (policy, scopeKey) => {
       if (useSelfHostEgress()) {
         await pushEgressPolicy(policy, { sessionId: scopeKey });

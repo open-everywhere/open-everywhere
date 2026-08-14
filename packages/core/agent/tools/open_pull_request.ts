@@ -19,6 +19,7 @@ import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
 import { getConfig } from "../access/config.js";
+import { resolveNetworkAccessLevel } from "../access/network-access.js";
 import { executePrOpen, type PrOpenArgs } from "../approvals/pr-open.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { proposingSessionId } from "../identity/binding.js";
@@ -118,7 +119,12 @@ export default windowGated("open_pull_request", defineTool({
     const brokerApp = getGitHubApp();
     let brokered: SandboxNetworkPolicy | null = null;
     if (isEnforced() && brokerApp) {
-      const basePolicy = await compileNetworkPolicy(access, resolveHeaders, (ids) => narrowByConnectorOverride(ctx, ids));
+      const basePolicy = await compileNetworkPolicy(
+        access,
+        resolveHeaders,
+        (ids) => narrowByConnectorOverride(ctx, ids),
+        resolveNetworkAccessLevel(access, getConfig().loadNetworkAccess?.() ?? []),
+      );
       const { rulesByOwner } = await mintGitReadBroker(brokerApp, access.repos);
       brokered = mergeGitReadBroker(basePolicy, rulesByOwner);
     }

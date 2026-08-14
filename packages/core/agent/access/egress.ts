@@ -2,6 +2,7 @@ import type { SandboxNetworkPolicy } from "eve/sandbox";
 import type { EffectiveAccess, ReachableHost } from "./resolver.js";
 import type { Connection } from "./bundle.js";
 import { extraEgressHosts } from "./extra-hosts.js";
+import { DEFAULT_NETWORK_ACCESS_LEVEL, TRUSTED_ACCESS_HOSTS, type NetworkAccessLevel } from "./network-access.js";
 
 export type ResolveHeaders = (connection: Connection) => Promise<Record<string, string>>;
 
@@ -39,6 +40,7 @@ export async function compileNetworkPolicy(
   access: EffectiveAccess,
   resolveHeaders: ResolveHeaders,
   narrowConnections: NarrowConnections,
+  networkAccessLevel: NetworkAccessLevel = DEFAULT_NETWORK_ACCESS_LEVEL,
 ): Promise<SandboxNetworkPolicy> {
   const byId = new Map(access.connections.map((c) => [c.id, c]));
   const allow: Record<string, EgressRule[]> = {};
@@ -64,6 +66,12 @@ export async function compileNetworkPolicy(
   }
 
   if (access.repos.length > 0 && !allow["github.com"]) allow["github.com"] = [];
+
+  if (networkAccessLevel === "trusted") {
+    for (const host of TRUSTED_ACCESS_HOSTS) if (!(host in allow)) allow[host] = [];
+  } else if (networkAccessLevel === "full") {
+    if (!("*" in allow)) allow["*"] = [];
+  }
 
   if (Object.keys(allow).length === 0) return "deny-all";
   return { allow };

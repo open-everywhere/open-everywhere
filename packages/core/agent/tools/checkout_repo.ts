@@ -6,6 +6,8 @@ import { compileNetworkPolicy } from "../access/egress.js";
 import { resolveHeaders } from "../access/credentials.js";
 import { isEnforced } from "../access/enforcement.js";
 import { narrowByConnectorOverride } from "../access/connector-scope.js";
+import { getConfig } from "../access/config.js";
+import { resolveNetworkAccessLevel } from "../access/network-access.js";
 import { getGitHubApp, repoAllowed } from "../scm/provider.js";
 import { READ_PERMISSIONS } from "../scm/mint.js";
 import { mintGitReadBroker, mergeGitReadBroker } from "../scm/broker.js";
@@ -63,7 +65,12 @@ export default windowGated("checkout_repo", defineTool({
     let result: Awaited<ReturnType<typeof sandbox.run>>;
 
     if (isEnforced()) {
-      const basePolicy = await compileNetworkPolicy(access, resolveHeaders, (ids) => narrowByConnectorOverride(ctx, ids));
+      const basePolicy = await compileNetworkPolicy(
+        access,
+        resolveHeaders,
+        (ids) => narrowByConnectorOverride(ctx, ids),
+        resolveNetworkAccessLevel(access, getConfig().loadNetworkAccess?.() ?? []),
+      );
       const { rulesByOwner } = await mintGitReadBroker(app, access.repos);
       if (!rulesByOwner.has(owner)) throw noInstallationError();
       const brokered = mergeGitReadBroker(basePolicy, rulesByOwner);

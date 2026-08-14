@@ -7,6 +7,7 @@ import { assertDomainCredentialsResolvable } from "@open-everywhere/core/agent/a
 import { assertWindowSourcesVouched, assertGovernanceDomains, assertComplianceDomains, assertReportChannels } from "@open-everywhere/core/agent/memory/domain.js";
 import { isVouchedInternal } from "@open-everywhere/core/agent/identity/trust.js";
 import { loadBundles, loadBindings } from "../access/bundles.js";
+import { loadNetworkAccess } from "../access/network-access.js";
 import { loadProviders } from "../access/providers.js";
 import { loadAccessRequests } from "../access/access-requests.js";
 import { PLUGIN_REGISTRY } from "../plugins/registry.js";
@@ -28,6 +29,7 @@ registerSettings(SETTINGS_OVERRIDES);
 registerConfig({
   loadBundles,
   loadBindings,
+  loadNetworkAccess,
   loadProviders,
   pluginRegistry: PLUGIN_REGISTRY,
   skillContent: SKILL_CONTENT,
