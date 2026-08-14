@@ -274,6 +274,21 @@ console.log("P0-e — assertWindowSourcesVouched direct unit tests:");
     "[P0-e] all unvouched sources are listed in a single error",
   );
   n++;
+  assert.throws(
+    () => assertWindowSourcesVouched([win(["github/a/x", "notion/b/y"]), orgGate], []),
+    /notion\/b\/y[\s\S]*Notion TRUST ROOT does not satisfy this gate/,
+    "[P0-e] an unvouched NOTION source explains that a trust root cannot satisfy a config-load gate (OPE-540)",
+  );
+  n++;
+  {
+    let message = "";
+    try {
+      assertWindowSourcesVouched([win(["github/a/x", "github/b/y"]), orgGate], []);
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    ok(message.includes("github/a/x") && !message.includes("TRUST ROOT"), "[P0-e] a non-notion offender carries NO trust-root clause (the note is notion-only)");
+  }
   noThrow(() => assertWindowSourcesVouched([win(["github/a/x"], "solo"), orgGate], []), "[P0-e] solo (1-channel) window over an unvouched source does NOT throw");
   noThrow(
     () => assertWindowSourcesVouched([defineDomain({ name: "plain", channels: ["github/a/x", "github/b/y"] }), orgGate], []),

@@ -16,7 +16,7 @@ import {
   getOperationalStore,
   capabilitiesForPlatform,
   consumeRepliedThisTurn,
-  isVouchedInternal,
+  declaredTrustForKeys,
   supervisorGrainFor,
   mintRotationToken,
   grainUsesUnifiedWindow,
@@ -32,6 +32,7 @@ import {
   type Domain,
   type SupervisorGrain,
   type ReplierLabel,
+  type SurfaceTrust,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { notionChannelCredentialFor, notionIntegrations, resolveNotionInboundSecret, NOTION_CHANNEL_CREDENTIAL } from "./notion-credentials.js";
 import { NOTION_EVENT_SOURCE, notionEventDeliveryId, notionTriggerScopeVerdict } from "./notion-event-normalizer.js";
@@ -114,6 +115,25 @@ function notionGrainFor(surfaceKey: string): SupervisorGrain {
   } catch {
     return { unified: false, registryKey: surfaceKey };
   }
+}
+
+export function notionSingleWindowPrivacyOk(
+  input: {
+    readonly workspaceKey: string;
+    readonly surfaceKey: string;
+    readonly trust?: { readonly trusted: boolean };
+  },
+  deps: {
+    readonly declared?: (workspaceKey: string, surfaceKey: string) => SurfaceTrust | undefined;
+    readonly trustEnv?: string | undefined;
+  } = {},
+): boolean {
+  const trustEnv = "trustEnv" in deps ? deps.trustEnv : process.env.OE_TRUST;
+  if (trustEnv === "internal") return true;
+  const declared = (deps.declared ?? declaredTrustForKeys)(input.workspaceKey, input.surfaceKey);
+  if (declared === "public") return false;
+  if (declared === "internal") return true;
+  return input.trust?.trusted === true;
 }
 
 type NotionState = NotionSessionState;
@@ -213,7 +233,11 @@ export default defineChannel<NotionState, { state: NotionState }>({
         const usesWindow = grainUsesUnifiedWindow(grain);
         const privacyOk =
           usesWindow &&
-          (isVouchedInternal(notionWorkspaceKey(d.workspaceId ?? "unknown"), d.surfaceKey) || process.env.OE_TRUST === "internal");
+          notionSingleWindowPrivacyOk({
+            workspaceKey: notionWorkspaceKey(d.workspaceId ?? "unknown"),
+            surfaceKey: d.surfaceKey,
+            trust: d.trust,
+          });
         const window = usesWindow
           ? planNotionSingleWindow(true, d.addressing === "direct", privacyOk, {
               discussionId: d.discussionId,

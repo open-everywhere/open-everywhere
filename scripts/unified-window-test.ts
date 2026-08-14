@@ -616,6 +616,53 @@ const stubResolveParent = async (): Promise<string | undefined> => undefined;
       }
 }
 
+{
+  const { notionSingleWindowPrivacyOk } = await import("@open-everywhere/provider-notion/agent/channels/notion.js");
+  const decl = (table: Record<string, "internal" | "public">) => (w: string, s: string) => table[s] ?? table[w];
+  const N = { workspaceKey: "notion/W1", surfaceKey: "notion/W1/P1" };
+  const none = { declared: decl({}), trustEnv: undefined };
+  ok(!notionSingleWindowPrivacyOk({ ...N }, none), "notion floor: an un-vouched page with NO resolved verdict fails CLOSED");
+  ok(notionSingleWindowPrivacyOk({ ...N }, { declared: decl({ "notion/W1": "internal" }), trustEnv: undefined }), "notion floor: a workspace-level vouch admits the workspace's pages");
+  ok(notionSingleWindowPrivacyOk({ ...N }, { declared: decl({ "notion/W1/P1": "internal" }), trustEnv: undefined }), "notion floor: a page-level vouch admits exactly that page");
+  ok(
+    !notionSingleWindowPrivacyOk({ workspaceKey: "notion/W1", surfaceKey: "notion/W1/P2" }, { declared: decl({ "notion/W1/P1": "internal" }), trustEnv: undefined }),
+    "notion floor: a page-level vouch does NOT leak to a sibling page",
+  );
+  ok(notionSingleWindowPrivacyOk({ ...N }, { declared: decl({}), trustEnv: "internal" }), "notion floor: OE_TRUST=internal (the internal-only-deploy blanket) admits Notion pages");
+  ok(!notionSingleWindowPrivacyOk({ ...N }, { declared: decl({}), trustEnv: "external" }), "notion floor: any OE_TRUST value other than 'internal' grants nothing");
+
+  ok(
+    notionSingleWindowPrivacyOk({ ...N, trust: { trusted: true } }, none),
+    "🔴 notion floor: a resolved INTERNAL trust-root verdict admits the page — the same fact that already binds its memory (OPE-540)",
+  );
+  ok(
+    !notionSingleWindowPrivacyOk({ ...N, trust: { trusted: true } }, { declared: decl({ "notion/W1/P1": "public" }), trustEnv: undefined }),
+    "🔴 notion floor: a `public` page declaration REFUSES a trust-root page — the demotion sits above the walk's verdict, as it does on the memory plane",
+  );
+  ok(
+    !notionSingleWindowPrivacyOk({ ...N, trust: { trusted: true } }, { declared: decl({ "notion/W1": "public" }), trustEnv: undefined }),
+    "notion floor: a workspace-level `public` declaration refuses the trust-root page too",
+  );
+  ok(
+    notionSingleWindowPrivacyOk({ ...N, trust: { trusted: true } }, { declared: decl({ "notion/W1": "public", "notion/W1/P1": "internal" }), trustEnv: undefined }),
+    "notion floor: most-specific-wins — a page vouched `internal` under a `public` workspace is admitted",
+  );
+  ok(notionSingleWindowPrivacyOk({ ...N, trust: { trusted: false } }, none) === false, "notion floor: a REFUSED walk (trusted:false) fails closed — a resolved verdict is not a pass");
+  ok(notionSingleWindowPrivacyOk({ ...N, trust: undefined }, none) === false, "notion floor: an explicitly undefined verdict fails closed");
+  ok(notionSingleWindowPrivacyOk({ ...N }, none) === false, "notion floor: the ABSENT `trust` field (the OPE-492 `no-roots` dispatch) fails closed — never a throw");
+  ok(typeof notionSingleWindowPrivacyOk({ ...N, trust: { trusted: true } }, none) === "boolean", "notion floor: the verdict is a synchronous boolean (no async widening of the gate)");
+
+  const trustRootTarget = { discussionId: "disc-tr-1", pageId: "P1", workspaceId: "W1" };
+  ok(
+    planNotionSingleWindow(true, true, notionSingleWindowPrivacyOk({ ...N, trust: { trusted: true } }, none), trustRootTarget)?.addressing === "direct-mention",
+    "🔴 notion floor → seam: a trust-root page's @mention now mints the ADDRESSED unified window (it planned NO window before OPE-540)",
+  );
+  ok(
+    planNotionSingleWindow(true, true, notionSingleWindowPrivacyOk({ ...N, trust: { trusted: false } }, none), trustRootTarget) === undefined,
+    "notion floor → seam: a REFUSED walk still plans NO window (the native path, fail-closed)",
+  );
+}
+
 const teamsAuth = buildTeamsAuth({
   userId: "29:sam-teams",
   userName: "Sam",
