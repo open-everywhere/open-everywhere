@@ -15,10 +15,6 @@ export function notionVersion(): string {
   return v && v.trim().length > 0 ? v.trim() : "2022-06-28";
 }
 
-export async function resolveNotionApiKey(credentialId: string = NOTION_CHANNEL_CREDENTIAL): Promise<string | undefined> {
-  return (await resolveNotionCredential(credentialId))?.apiKey;
-}
-
 export interface ResolvedNotionCredential {
   readonly apiKey: string;
   readonly endpoints?: CredentialEndpointRules;
@@ -151,7 +147,7 @@ export function mentionsUser(richText: ReadonlyArray<NotionRichText> | undefined
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
-interface NotionCallOpts {
+export interface NotionCallOpts {
   readonly apiKey: string;
   readonly fetch?: FetchLike;
   readonly version?: string;

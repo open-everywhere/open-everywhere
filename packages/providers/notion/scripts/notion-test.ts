@@ -146,7 +146,7 @@ function baseDeps(fetchImpl: FetchLike, dispatch: (d: NotionSupervisorDispatch) 
   return {
     signingKeys: [{ credentialId: "channel-key", secret: SECRET }],
     allowUnverified: false,
-    apiKeyFor: async () => "ntn_key" as string | undefined,
+    credentialFor: async () => ({ apiKey: "ntn_key" }),
     credentialForPage: () => undefined,
     resolveBotUserId: botIdFn,
     ambientEnabled: () => true,
@@ -282,7 +282,7 @@ function baseDeps(fetchImpl: FetchLike, dispatch: (d: NotionSupervisorDispatch) 
 
 {
   const raw = commentEvent();
-  const out = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerMention }), async () => {}, { apiKeyFor: async () => undefined }));
+  const out = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerMention }), async () => {}, { credentialFor: async () => undefined }));
   ok(out.action === "no-api-key" && out.status === 200, "missing NOTION_API_KEY -> 200 ack, action no-api-key");
 }
 

@@ -30,7 +30,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { notionChannelCredentialFor, notionIntegrations, resolveNotionInboundSecret, NOTION_CHANNEL_CREDENTIAL } from "./notion-credentials.js";
 import { NOTION_EVENT_SOURCE, notionEventDeliveryId, notionTriggerScopeVerdict } from "./notion-event-normalizer.js";
-import { createCommentReply, resolveNotionApiKey, retrieveBotUser } from "./notion-api.js";
+import { createCommentReply, resolveNotionCredential, retrieveBotUser, type ResolvedNotionCredential } from "./notion-api.js";
 import { notionWorkspaceKey } from "./notion-identity.js";
 import { handleNotionDelivery, type NotionReplyTarget, type NotionSessionState } from "./notion-webhook.js";
 import {
@@ -50,7 +50,10 @@ function log(msg: string): void {
 }
 
 const botUserCache = new Map<string, Promise<{ id?: string; name?: string }>>();
-function resolveBotUser(credentialId: string, apiKey: () => Promise<string | undefined>): () => Promise<{ id?: string; name?: string }> {
+function resolveBotUser(
+  credentialId: string,
+  credential: () => Promise<ResolvedNotionCredential | undefined>,
+): () => Promise<{ id?: string; name?: string }> {
   return () => {
     const cached = botUserCache.get(credentialId);
     if (cached) return cached;
@@ -60,8 +63,8 @@ function resolveBotUser(credentialId: string, apiKey: () => Promise<string | und
     const resolved =
       overrideId && overrideId.length > 0
         ? Promise.resolve(named({ id: overrideId }))
-        : apiKey()
-            .then((key) => (key ? retrieveBotUser({ apiKey: key }).then(named) : {}))
+        : credential()
+            .then((cred) => (cred ? retrieveBotUser({ ...cred }).then(named) : {}))
             .catch((err) => {
               log(`could not resolve bot user for credential "${credentialId}" (GET /v1/users/me failed): ${String(err)}`);
               return {};
@@ -187,20 +190,20 @@ export default defineChannel<NotionState, { state: NotionState }>({
       const signingKeys = await Promise.all(
         integrations.map(async (i) => ({ credentialId: i.credentialId, secret: await inboundSecretFor(i.inboundSecret) })),
       );
-      const apiKeys = new Map<string, Promise<string | undefined>>();
-      const apiKeyFor = (credentialId: string): Promise<string | undefined> => {
-        const hit = apiKeys.get(credentialId);
+      const credentials = new Map<string, Promise<ResolvedNotionCredential | undefined>>();
+      const credentialFor = (credentialId: string): Promise<ResolvedNotionCredential | undefined> => {
+        const hit = credentials.get(credentialId);
         if (hit) return hit;
-        const resolved = resolveNotionApiKey(credentialId);
-        apiKeys.set(credentialId, resolved);
+        const resolved = resolveNotionCredential(credentialId);
+        credentials.set(credentialId, resolved);
         return resolved;
       };
       const botUserFor = (credentialId: string): Promise<{ id?: string; name?: string }> =>
-        resolveBotUser(credentialId, () => apiKeyFor(credentialId))();
+        resolveBotUser(credentialId, () => credentialFor(credentialId))();
 
       const dispatch = async (d: NotionSupervisorDispatch): Promise<void> => {
         const grain = notionGrainFor(d.surfaceKey);
-        const pageApiKey = (await apiKeyFor(d.credentialId)) ?? "";
+        const pageCredential = await credentialFor(d.credentialId);
         const usesWindow = grainUsesUnifiedWindow(grain);
         const privacyOk =
           usesWindow &&
@@ -221,7 +224,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
           bindable: wakeCtx,
           door: "mention",
           ...(d.auth.principalId ? { principalId: d.auth.principalId } : {}),
-          post: async (text) => { await createCommentReply({ discussionId: d.discussionId, text, apiKey: pageApiKey }); },
+          post: async (text) => { await createCommentReply({ discussionId: d.discussionId, text, apiKey: pageCredential?.apiKey ?? "", endpoints: pageCredential?.endpoints }); },
         })) === "declined") {
           return;
         }
@@ -251,7 +254,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
       const outcome = await handleNotionDelivery(rawBody, signature, {
         signingKeys,
         allowUnverified: process.env.OE_ALLOW_UNVERIFIED_NOTION_WEBHOOK === "1",
-        apiKeyFor,
+        credentialFor,
         credentialForPage: (workspaceId, pageId) => notionChannelCredentialFor(workspaceId, pageId, notionDomains()),
         resolveBotUserId: async (credentialId) => (await botUserFor(credentialId)).id,
         resolveBotName: async (credentialId) => (await botUserFor(credentialId)).name,
@@ -364,8 +367,8 @@ export default defineChannel<NotionState, { state: NotionState }>({
         post: async (text) => {
           const credentialId =
             target?.credentialId ?? notionCredentialForPage(workspace === "unknown" ? undefined : workspace, target?.pageId ?? channel.state.pageId ?? undefined);
-          const apiKey = await resolveNotionApiKey(credentialId);
-          if (!apiKey) throw new Error(`reply couldn't post to Notion — no value stored for notion credential "${credentialId}" (\`oe secret set\` its secretRef; see agent/access/providers.ts).`);
+          const cred = await resolveNotionCredential(credentialId);
+          if (!cred) throw new Error(`reply couldn't post to Notion — no value stored for notion credential "${credentialId}" (\`oe secret set\` its secretRef; see agent/access/providers.ts).`);
           await postOnce({
             org,
             key: outboundKey({
@@ -375,7 +378,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
               action: "notion.supervisor-reply",
               payload: text,
             }),
-            run: () => createCommentReply({ discussionId: discussionId!, text, apiKey }),
+            run: () => createCommentReply({ discussionId: discussionId!, text, ...cred }),
           });
         },
         log: (m) => log(m),

@@ -191,7 +191,7 @@ function normalize(body: string): NormalizedEvent | null {
     const outcome = await handleNotionDelivery(body, sig, {
       signingKeys: [{ credentialId: "channel-key", secret }],
       allowUnverified: false,
-      apiKeyFor: async () => "key",
+      credentialFor: async () => ({ apiKey: "key" }),
       credentialForPage: () => undefined,
       resolveBotUserId: async () => "bot",
       ambientEnabled: () => true,
@@ -380,7 +380,7 @@ function normalize(body: string): NormalizedEvent | null {
   const hatch = await handleNotionDelivery(body, null, {
     signingKeys: [{ credentialId: "channel-key", secret: undefined }],
     allowUnverified: true,
-    apiKeyFor: async () => "key",
+    credentialFor: async () => ({ apiKey: "key" }),
     credentialForPage: () => undefined,
     resolveBotUserId: async () => "bot",
     ambientEnabled: () => true,
@@ -392,7 +392,7 @@ function normalize(body: string): NormalizedEvent | null {
   const rejected = await handleNotionDelivery(body, "sha256=deadbeef", {
     signingKeys: [{ credentialId: "channel-key", secret: "tok" }],
     allowUnverified: false,
-    apiKeyFor: async () => "key",
+    credentialFor: async () => ({ apiKey: "key" }),
     credentialForPage: () => undefined,
     resolveBotUserId: async () => "bot",
     ambientEnabled: () => true,
@@ -403,7 +403,7 @@ function normalize(body: string): NormalizedEvent | null {
   const handshake = await handleNotionDelivery(JSON.stringify({ verification_token: "secret_x" }), null, {
     signingKeys: [{ credentialId: "channel-key", secret: "tok" }],
     allowUnverified: false,
-    apiKeyFor: async () => "key",
+    credentialFor: async () => ({ apiKey: "key" }),
     credentialForPage: () => undefined,
     resolveBotUserId: async () => "bot",
     ambientEnabled: () => true,
@@ -575,7 +575,7 @@ function normalize(body: string): NormalizedEvent | null {
   const ignored = await handleNotionDelivery(body, sig, {
     signingKeys: [{ credentialId: "channel-key", secret: "tok-default" }, { credentialId: PAY_CRED, secret: SECRET }],
     allowUnverified: false,
-    apiKeyFor: async () => "key",
+    credentialFor: async () => ({ apiKey: "key" }),
     credentialForPage: () => undefined,
     resolveBotUserId: async () => "bot",
     ambientEnabled: () => true,
@@ -588,7 +588,7 @@ function normalize(body: string): NormalizedEvent | null {
   const hatched = await handleNotionDelivery(body, null, {
     signingKeys: [{ credentialId: "channel-key", secret: undefined }],
     allowUnverified: true,
-    apiKeyFor: async () => "key",
+    credentialFor: async () => ({ apiKey: "key" }),
     credentialForPage: () => undefined,
     resolveBotUserId: async () => "bot",
     ambientEnabled: () => true,

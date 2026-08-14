@@ -12,6 +12,8 @@ import {
   type NotionWebhookEvent,
   type NotionComment,
   type NotionSigningKey,
+  type NotionCallOpts,
+  type ResolvedNotionCredential,
 } from "./notion-api.js";
 import { buildNotionAuth, notionSurfaceKey } from "./notion-identity.js";
 import { classifyNotionComment, type NotionSupervisorDispatch, type NotionWakeMessage } from "./notion-supervisor.js";
@@ -35,7 +37,7 @@ export interface NotionSessionState {
 export interface HandleNotionDeliveryDeps {
   readonly signingKeys: readonly NotionSigningKey[];
   readonly allowUnverified: boolean;
-  readonly apiKeyFor: (credentialId: string) => Promise<string | undefined>;
+  readonly credentialFor: (credentialId: string) => Promise<ResolvedNotionCredential | undefined>;
   readonly credentialForPage: (workspaceId: string | undefined, pageId: string | undefined) => string | undefined;
   readonly resolveBotUserId: (credentialId: string) => Promise<string | undefined>;
   readonly resolveBotName?: (credentialId: string) => Promise<string | undefined>;
@@ -116,8 +118,8 @@ async function deliver(
   const credentialId = gate.credentialId ?? deps.credentialForPage(ev.workspace_id, eventPageId) ?? deps.signingKeys[0]?.credentialId;
   if (!credentialId) return { status: 200, body: "ok", action: "no-api-key", detail: "no Notion integration is configured", signed };
 
-  const apiKey = await deps.apiKeyFor(credentialId);
-  if (!apiKey) {
+  const cred = await deps.credentialFor(credentialId);
+  if (!cred) {
     return { status: 200, body: "ok", action: "no-api-key", detail: `no value stored for notion credential "${credentialId}"`, signed, credentialId };
   }
 
@@ -126,12 +128,12 @@ async function deliver(
 
   let comment: NotionComment;
   try {
-    comment = await retrieveComment(commentId, { apiKey, fetch: deps.fetch, version: deps.version });
+    comment = await retrieveComment(commentId, { ...cred, fetch: deps.fetch, version: deps.version });
   } catch (err) {
     return { status: 200, body: "ok", action: "error", detail: `retrieveComment: ${String(err)}`, signed, credentialId };
   }
 
-  const resolvedPage = await resolveDeliveryPage(comment, { apiKey, fetch: deps.fetch, version: deps.version });
+  const resolvedPage = await resolveDeliveryPage(comment, { ...cred, fetch: deps.fetch, version: deps.version });
   if (!resolvedPage.pageId) {
     return { status: 200, body: "ok", action: "unresolved-page", detail: resolvedPage.reason, signed, credentialId };
   }
@@ -160,7 +162,7 @@ async function deliver(
     text: triggerText.length > 0 ? triggerText : "(the comment had no additional text)",
   };
   const threadComments = await loadThreadSiblings(comment, pageId, discussionId, botUserId, {
-    apiKey,
+    ...cred,
     fetch: deps.fetch,
     version: deps.version,
   });
@@ -207,7 +209,7 @@ export interface ResolvedDeliveryPage {
 
 export async function resolveDeliveryPage(
   comment: NotionComment,
-  opts: { readonly apiKey: string; readonly fetch?: FetchLike; readonly version?: string },
+  opts: NotionCallOpts,
 ): Promise<ResolvedDeliveryPage> {
   const parent = comment.parent;
   if (parent?.page_id) return { pageId: parent.page_id };
@@ -223,7 +225,7 @@ async function loadThreadSiblings(
   pageId: string,
   discussionId: string,
   botUserId: string | undefined,
-  opts: { apiKey: string; fetch?: FetchLike; version?: string },
+  opts: NotionCallOpts,
 ): Promise<NotionWakeMessage[]> {
   try {
     const all = await listBlockComments(pageId, opts);

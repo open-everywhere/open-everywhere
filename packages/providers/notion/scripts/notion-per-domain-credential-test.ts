@@ -19,7 +19,7 @@ import {
   notionIntegrations,
   resolveNotionInboundSecret,
 } from "../agent/channels/notion-credentials.js";
-import { gateNotionDeliveryAcross, resolveNotionApiKey, type FetchLike } from "../agent/channels/notion-api.js";
+import { gateNotionDeliveryAcross, resolveNotionCredential, type FetchLike } from "../agent/channels/notion-api.js";
 import { handleNotionDelivery, resolveDeliveryPage } from "../agent/channels/notion-webhook.js";
 import { notionPostArm } from "../agent/channels/notion-post-arm.js";
 import { registerNotionProvider } from "../agent/register.js";
@@ -98,10 +98,10 @@ const PAY_TOKEN = "ntn_payments_token";
     },
   ]);
 
-  ok((await resolveNotionApiKey()) === ORG_TOKEN, "the default argument still resolves the ORG credential (byte-identical for every existing call site)");
-  ok((await resolveNotionApiKey(NOTION_CHANNEL_CREDENTIAL)) === ORG_TOKEN, "naming the org credential resolves the org token");
-  ok((await resolveNotionApiKey(PAY_CRED)) === PAY_TOKEN, "naming a SECOND credential resolves a DIFFERENT token — the whole point");
-  ok((await resolveNotionApiKey("no-such-credential")) === undefined, "🔴 a NAMED-BUT-MISSING credential fails CLOSED (undefined) — it never retries under the org default");
+  ok((await resolveNotionCredential())?.apiKey === ORG_TOKEN, "the default argument still resolves the ORG credential (byte-identical for every existing call site)");
+  ok((await resolveNotionCredential(NOTION_CHANNEL_CREDENTIAL))?.apiKey === ORG_TOKEN, "naming the org credential resolves the org token");
+  ok((await resolveNotionCredential(PAY_CRED))?.apiKey === PAY_TOKEN, "naming a SECOND credential resolves a DIFFERENT token — the whole point");
+  ok((await resolveNotionCredential("no-such-credential")) === undefined, "🔴 a NAMED-BUT-MISSING credential fails CLOSED (undefined) — it never retries under the org default");
 }
 
 const ORG_SECRET = "org-verification-token";
@@ -203,7 +203,7 @@ async function deliverFor(
             { credentialId: PAY_CRED, secret: PAY_SECRET },
           ],
     allowUnverified: secret === null,
-    apiKeyFor: (id) => resolveNotionApiKey(id),
+    credentialFor: (id) => resolveNotionCredential(id),
     credentialForPage: (workspaceId, pageId) => notionChannelCredentialFor(workspaceId, pageId, DOMAINS),
     resolveBotUserId: async () => "U_BOT",
     ambientEnabled: (key) => {
@@ -316,8 +316,8 @@ async function deliverFor(
       credentials: [{ id: NOTION_CHANNEL_CREDENTIAL, type: "api-key", secretRef: "db:notion:channel-key", broker: "test", intake: false }],
     },
   ]);
-  ok((await resolveNotionApiKey(PAY_CRED)) === undefined, "a bound domain whose credential is gone resolves NOTHING");
-  ok((await resolveNotionApiKey(NOTION_CHANNEL_CREDENTIAL)) === ORG_TOKEN, "…while the org default still resolves (so this is a refusal, not a broken broker)");
+  ok((await resolveNotionCredential(PAY_CRED)) === undefined, "a bound domain whose credential is gone resolves NOTHING");
+  ok((await resolveNotionCredential(NOTION_CHANNEL_CREDENTIAL))?.apiKey === ORG_TOKEN, "…while the org default still resolves (so this is a refusal, not a broken broker)");
 
   const seen: Seen[] = [];
   const body = commentEvent(PAGE_PAY);
@@ -327,7 +327,7 @@ async function deliverFor(
       { credentialId: PAY_CRED, secret: PAY_SECRET },
     ],
     allowUnverified: false,
-    apiKeyFor: (id) => resolveNotionApiKey(id),
+    credentialFor: (id) => resolveNotionCredential(id),
     credentialForPage: (workspaceId, pageId) => notionChannelCredentialFor(workspaceId, pageId, DOMAINS),
     resolveBotUserId: async () => "U_BOT",
     ambientEnabled: () => true,
