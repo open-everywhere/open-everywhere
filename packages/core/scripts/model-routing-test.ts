@@ -25,7 +25,7 @@ import {
 } from "../agent/channels/window-key.js";
 import { stampModelCall, readModelStamp } from "../agent/model/model-stamp.js";
 import { readStampedUtilityRoute } from "../agent/model/utility-route-stamp.js";
-import { renderSupervisorPersona } from "../agent/instructions/access.js";
+import { renderSupervisorPersona, REPLY_STYLE_RUBRIC } from "../agent/instructions/access.js";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 registerSlackFixtureMapper();
@@ -365,18 +365,18 @@ ok(!isSupervisorSession({ channel: { kind: "slack", continuationToken: "C_TXN:17
 }
 
 {
-  const persona = renderSupervisorPersona(slackSupervisorCtx("T1", "C_TXN", 3));
-  ok(persona.includes("### How you write"), "reply-style rubric: the persona carries the `How you write` section");
-  ok(/one sentence/.test(persona) && /Lead with the conclusion/.test(persona), "reply-style rubric: concision-first (many messages need one sentence) + conclusion-first");
-  ok(/BOTH surprising AND something the reader would act on/.test(persona), "reply-style rubric: a detail must be BOTH surprising AND action-relevant, not either");
-  ok(/narrating how you worked/.test(persona) && /Give the finding, not the method/.test(persona), "reply-style rubric: methodology narration is OUT");
-  ok(/\*\*Provenance\*\*/.test(persona) && /the logs say X/.test(persona), "reply-style rubric: …but PROVENANCE stays in — OE surfaces where a fact came from");
-  ok(/why you stayed quiet, why you are blocked/.test(persona) && /is information/.test(persona), "reply-style rubric: …and so does self-explanation + a stated uncertainty");
-  ok(/NAMES A REAL THING/.test(persona) && /`park`/.test(persona) && /`ledger`/.test(persona) && /`arm`/.test(persona), "reply-style rubric: OE's own vocabulary is carved OUT of the banned-word list by name");
-  ok(/overrides every line above/.test(persona), "reply-style rubric: an explicit human request overrides the whole rubric");
-  ok(/reviewer|review round|review_token|review: false|style review/i.test(persona) === false, "🔴 reply-style rubric: the persona teaches NO reviewer gate — prose only (OPE-424 ruling)");
-  ok(/past review/.test(persona), "…fixture sanity: the approval-plane wording IS present, so the check above is narrow, not vacuous");
-  ok(renderSupervisorPersona(slackChannelCtx("T1", "C_TXN")).includes("### How you write") === false, "reply-style rubric: an ordinary channel session gets no rubric (the whole persona is empty there)");
+  const rubric = REPLY_STYLE_RUBRIC;
+  ok(rubric.startsWith("### How you write"), "reply-style rubric: the exported constant starts with the `How you write` header");
+  ok(/one sentence/.test(rubric) && /Lead with the conclusion/.test(rubric), "reply-style rubric: concision-first (many messages need one sentence) + conclusion-first");
+  ok(/BOTH surprising AND something the reader would act on/.test(rubric), "reply-style rubric: a detail must be BOTH surprising AND action-relevant, not either");
+  ok(/narrating how you worked/.test(rubric) && /Give the finding, not the method/.test(rubric), "reply-style rubric: methodology narration is OUT");
+  ok(/\*\*Provenance\*\*/.test(rubric) && /the logs say X/.test(rubric), "reply-style rubric: …but PROVENANCE stays in — OE surfaces where a fact came from");
+  ok(/why you stayed quiet, why you are blocked/.test(rubric) && /is information/.test(rubric), "reply-style rubric: …and so does self-explanation + a stated uncertainty");
+  ok(/NAMES A REAL THING/.test(rubric) && /`park`/.test(rubric) && /`ledger`/.test(rubric) && /`arm`/.test(rubric), "reply-style rubric: OE's own vocabulary is carved OUT of the banned-word list by name");
+  ok(/overrides every line above/.test(rubric), "reply-style rubric: an explicit human request overrides the whole rubric");
+  ok(/reviewer|review round|review_token|review: false|style review/i.test(rubric) === false, "🔴 reply-style rubric: the constant teaches NO reviewer gate — prose only (OPE-424 ruling)");
+  ok(!renderSupervisorPersona(slackSupervisorCtx("T1", "C_TXN", 3)).includes("### How you write"), "🔴 OPE-542: the supervisor persona no longer carries the reply-style rubric — it moved to the global scope markdown");
+  ok(!renderSupervisorPersona(slackChannelCtx("T1", "C_TXN")).includes("### How you write"), "…and an ordinary channel session's (empty) persona carries it even less");
 }
 
 const supDomains: Domain[] = [

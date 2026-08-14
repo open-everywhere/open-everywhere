@@ -1,12 +1,13 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { assembleAccessInstructions } from "../agent/access/instructions.js";
 import { clearPendingCancelNoteAfter, setPendingCancelNote } from "../agent/channels/cancel-note.js";
-import { renderSurfaceGuide, renderScopeMarkdown } from "../agent/instructions/access.js";
+import { renderSurfaceGuide, renderScopeMarkdown, REPLY_STYLE_RUBRIC } from "../agent/instructions/access.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { defineMemorySilo } from "../agent/memory/silo.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import type { EffectiveAccess } from "../agent/access/resolver.js";
+import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -242,6 +243,51 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     clearPendingCancelNoteAfter("t-2");
     ok((await renderScopeMarkdown(ctx())) === baseline, "once a later turn ends, the block returns byte-identical to the baseline");
   });
+}
+
+{
+  registerSlackFixtureMapper();
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+
+  const dmCtx: BindableContext = {
+    channel: { kind: "slack" },
+    session: {
+      auth: {
+        current: {
+          attributes: { team_id: "T1", channel_id: "D_PARTNER", channel_type: "im", dm_partner_trust: "internal" },
+          principalId: "U1",
+          principalType: "user",
+        },
+      },
+    },
+  } as BindableContext;
+  const dmMd = await renderScopeMarkdown(dmCtx);
+  ok(dmMd.includes("### How you write"), "🔴 OPE-542 acceptance: a plain DM session now reads the reply-style rubric — it got NONE before this move");
+
+  const channelCtx: BindableContext = {
+    channel: { kind: "slack" },
+    session: {
+      auth: {
+        current: {
+          attributes: { team_id: "T1", channel_id: "C_ORD", channel_type: "channel", is_private: "false", trust_checked: "true" },
+          principalId: "U1",
+          principalType: "user",
+        },
+      },
+    },
+  } as BindableContext;
+  const channelMd = await renderScopeMarkdown(channelCtx);
+  ok(channelMd.includes("### How you write"), "OPE-542: an ordinary (non-supervisor) channel session also reads the reply-style rubric now");
+
+  ok(dmMd.includes(REPLY_STYLE_RUBRIC) && channelMd.includes(REPLY_STYLE_RUBRIC), "the rendered rubric is byte-identical to the exported REPLY_STYLE_RUBRIC constant on both shapes");
 }
 
 console.log(`✓ instructions: ${passed} assertions passed`);

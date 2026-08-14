@@ -121,7 +121,7 @@ export function renderRolePrompt(ctx: BindableContext): string {
   }
 }
 
-const REPLY_STYLE_RUBRIC = `### How you write
+export const REPLY_STYLE_RUBRIC = `### How you write
 
 Before you post, picture the specific reader: what they know, and what they need to
 decide. Attention is the scarcest thing they have. Many messages need only one sentence,
@@ -288,8 +288,6 @@ A top-level post interrupts everyone, so make it worth that: reply in the thread
 conversation lives in, and go top-level only when the conversation already is. Mirror how
 the channel writes — its formality, length, and energy, emoji only where the channel uses
 them and none in a serious or incident thread. One message, not a stack.
-
-${REPLY_STYLE_RUBRIC}
 
 ### Trust grades — who's speaking, not whether to answer
 
@@ -468,6 +466,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     renderUnifiedSurfaces(platforms),
     renderUnifiedSurfaceGuides(platforms),
     renderSupervisorPersona(ctx, { messageToolOnly: true }),
+    REPLY_STYLE_RUBRIC,
     roleMd,
     accessMd,
     renderApprovalPreviewFor(windowGrainOf(ctx), recall),
@@ -492,6 +491,7 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
     renderSurface(binding.platform),
     renderSurfaceGuide(binding.platform),
     renderSupervisorPersona(ctx),
+    REPLY_STYLE_RUBRIC,
     renderRolePrompt(ctx),
     assembleAccessInstructions(access) ?? "",
     renderApprovalPreviewFor(windowGrainOf(ctx), recall),
