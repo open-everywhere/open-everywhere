@@ -370,6 +370,17 @@ const rejectingReceive = (() => ({
 }
 
 {
+  const start = new Date("2026-08-02T00:00:00.000Z");
+  let r: Routine = routine({ id: "r-corrupted-stamp", consecutiveFailures: 2, firstFailureAt: "not-a-real-timestamp" });
+  r = applyOutcome(r, "failed", start);
+  ok(
+    r.status === "disabled" && r.consecutiveFailures === 3,
+    "§5b: 🔴 THE CONFIRMED FINDING — a routine whose firstFailureAt is corrupted (unparseable) still disables at the bare 3-strike count, exactly like an absent stamp. Without the finite-parse guard this fold settles NaN >= floor === false and the row stays active FOREVER, however many times it fails",
+  );
+  ok(r.firstFailureAt !== "not-a-real-timestamp" && r.firstFailureAt !== undefined, "§5b: …and the corrupted stamp is self-healed on the way out — the row carries a real instant afterward, not the garbage that got it here");
+}
+
+{
   const bag = routineFireAttributes(
     { id: "r-elig-fence", org: ORG, surfaceKey: SURFACE, trigger: { kind: "cron", expr: "0 9 * * *" }, prompt: "p", createdBy: CREATOR, createdAt: "x", status: "active", consecutiveFailures: 0 } as never,
     { team_id: TEAM, channel_id: CHAN, channel_type: "channel" },

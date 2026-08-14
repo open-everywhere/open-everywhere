@@ -9,7 +9,10 @@ function failureStreak(routine: Pick<Routine, "consecutiveFailures" | "firstFail
     return { firstFailureAt: ranAt.toISOString(), spanSatisfied: false };
   }
   if (routine.firstFailureAt !== undefined) {
-    return { firstFailureAt: routine.firstFailureAt, spanSatisfied: ranAt.getTime() - Date.parse(routine.firstFailureAt) >= MIN_CONSECUTIVE_FAILURE_SPAN_MS };
+    const startedAt = Date.parse(routine.firstFailureAt);
+    if (Number.isFinite(startedAt)) {
+      return { firstFailureAt: routine.firstFailureAt, spanSatisfied: ranAt.getTime() - startedAt >= MIN_CONSECUTIVE_FAILURE_SPAN_MS };
+    }
   }
   return { firstFailureAt: routine.lastRunAt ?? ranAt.toISOString(), spanSatisfied: true };
 }
