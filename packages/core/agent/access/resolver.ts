@@ -1,6 +1,11 @@
 import type { AwsRoleGrant, Binding, Bundle, Connection, ConnectorContentOriginSpec, HttpMethod, Scope } from "./bundle.js";
 import { connectorGrantName, connectorGrantContentOrigin } from "./bundle.js";
 import type { OperatorApprover } from "./approver-chain.js";
+import {
+  assemblePreApprovalRules,
+  PRE_APPROVAL_RULES_MAX_ASSEMBLED,
+  type ResolvedPreApprovalRule,
+} from "./pre-approval-rules.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { isLinkSetRef, parseLinkSetRef } from "../identity/link-set-ref.js";
 import type { PluginRegistry } from "../plugins/types.js";
@@ -49,6 +54,7 @@ export interface EffectiveAccess {
   readonly connectorContentOrigin: Readonly<Record<string, ConnectorContentOriginSpec>>;
   readonly connectorCredentials: Readonly<Record<string, ResolvedConnectorCredential>>;
   readonly instructionStack: readonly InstructionLayer[];
+  readonly preApprovalRules: readonly ResolvedPreApprovalRule[];
   readonly warnings: readonly string[];
 }
 
@@ -277,6 +283,17 @@ export function resolveAccess(
     connectorContentOrigin[name] = [...declared.values()][0]!;
   }
 
+  const preApprovalRules = assemblePreApprovalRules(
+    ordered
+      .filter(({ bundle }) => (bundle.preApprovalRules?.length ?? 0) > 0)
+      .map(({ scope, bundle }) => ({ scope: scopeLabel(scope), rules: bundle.preApprovalRules! })),
+  );
+  if (preApprovalRules.dropped > 0) {
+    warnings.push(
+      `${preApprovalRules.dropped} pre-approval rule(s) exceeded the assembled ceiling of ${PRE_APPROVAL_RULES_MAX_ASSEMBLED} and were dropped (narrowest scope first, so the org's reviewed baseline survives) — reduce the rules bound to this scope.`,
+    );
+  }
+
   const instructionStack: InstructionLayer[] = ordered
     .filter(({ bundle }) => bundle.instructions && bundle.instructions.trim().length > 0)
     .map(({ scope, bundle }) => ({ source: scopeLabel(scope), text: bundle.instructions!.trim() }));
@@ -339,6 +356,7 @@ export function resolveAccess(
     connectorContentOrigin,
     connectorCredentials,
     instructionStack,
+    preApprovalRules: preApprovalRules.rules,
     warnings,
   };
 }

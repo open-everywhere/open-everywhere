@@ -17,6 +17,7 @@ import {
   approvalModeForDomain,
   approversForScopeKey,
   chainAuditDetail,
+  preApprovalRulesForScopeKey,
   resolveApproverChain,
   toolForActionKind,
   type ApprovalChainRequest,
@@ -190,7 +191,11 @@ export async function requestApproval(
       ...(input.domain != null ? { mode: approvalModeForDomain(input.domain) } : {}),
       ...(kindDef.beneficiaryClicker === true ? { beneficiaryClicker: true } : {}),
     };
-    const resolution = await resolveApproverChain(chainReq, { approvers: approversForScopeKey(input.scopeKey, input.domain ?? undefined), judge: true });
+    const resolution = await resolveApproverChain(chainReq, {
+      approvers: approversForScopeKey(input.scopeKey, input.domain ?? undefined),
+      rules: preApprovalRulesForScopeKey(input.scopeKey, input.domain ?? undefined),
+      judge: true,
+    });
     await appendAudit({
       ...whereFromScope(input.org, input.scopeKey),
       principalId: input.requestedBy,
@@ -214,6 +219,8 @@ export async function requestApproval(
           source: resolution.judge.source,
           passes: resolution.judge.passes,
           ...(resolution.judge.pass1 !== undefined ? { pass1: resolution.judge.pass1 } : {}),
+          ...(resolution.judge.ruleId !== undefined ? { ruleId: resolution.judge.ruleId } : {}),
+          ...(resolution.judge.ruleCitation !== undefined ? { ruleCitation: resolution.judge.ruleCitation } : {}),
           reasoning: resolution.judge.reasoning,
           cacheKey: resolution.judge.cacheKey,
           cacheHit: resolution.judge.cacheHit,

@@ -34,6 +34,7 @@ const base: EffectiveAccess = {
   subagents: [],
   connectors: [],
   instructionStack: [],
+  preApprovalRules: [],
   warnings: [],
 };
 

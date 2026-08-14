@@ -37,7 +37,7 @@ function access(hosts: ReachableHost[], connections: Connection[] = []): Effecti
     skills: [],
     subagents: [],
     connectors: [],
-    instructionStack: [],
+    instructionStack: [], preApprovalRules: [],
     warnings: [],
   } as unknown as EffectiveAccess;
 }

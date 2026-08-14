@@ -96,7 +96,7 @@ function accessIn(...domains: string[]): EffectiveAccess {
     connectors: [],
     connectorContentOrigin: {},
     connectorCredentials: {},
-    instructionStack: [],
+    instructionStack: [], preApprovalRules: [],
     warnings: [],
   };
 }

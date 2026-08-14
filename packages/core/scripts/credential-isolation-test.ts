@@ -344,7 +344,7 @@ function access(hosts: ReachableHost[], connections: Connection[]): EffectiveAcc
     skills: [],
     subagents: [],
     connectors: [],
-    instructionStack: [],
+    instructionStack: [], preApprovalRules: [],
     warnings: [],
   } as unknown as EffectiveAccess;
 }

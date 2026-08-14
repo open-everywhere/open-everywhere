@@ -13,6 +13,7 @@ import {
   APPROVAL_JUDGE_BREAKER_WINDOW_DAYS,
   type ApprovalJudgeRun,
 } from "./approval-judge.js";
+import type { ResolvedPreApprovalRule } from "./pre-approval-rules.js";
 import { getConfig } from "./config.js";
 import { resolveAccess } from "./resolver.js";
 
@@ -257,6 +258,7 @@ function clampVerdict(
 export interface ResolveChainOptions {
   readonly approvers?: readonly OperatorApprover[];
   readonly judge?: boolean;
+  readonly rules?: readonly ResolvedPreApprovalRule[];
 }
 
 export async function resolveApproverChain(
@@ -346,7 +348,7 @@ export async function resolveApproverChain(
         passes: 0,
       };
     } else {
-      judgeRun = await runApprovalJudge(judgeContextOf(req, { registryVerdict: registryBaseline }), {
+      judgeRun = await runApprovalJudge(judgeContextOf(req, { registryVerdict: registryBaseline }, opts.rules), {
         enforce: true,
         timeoutMs: JUDGE_ENFORCE_TIMEOUT_MS,
       });
@@ -501,6 +503,23 @@ export function approversForScopeKey(scopeKey: string | undefined, domain: strin
     const cfg = getConfig();
     const domains = domain !== undefined ? [domain] : cfg.domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: channel });
     return resolveAccess({ mode: "channel", platform, workspace, channel, domains }, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry, cfg.loadProviders?.() ?? []).approvers;
+  } catch {
+    return [];
+  }
+}
+
+export function preApprovalRulesForScopeKey(
+  scopeKey: string | undefined,
+  domain: string | undefined,
+): readonly ResolvedPreApprovalRule[] {
+  if (scopeKey === undefined) return [];
+  const parts = scopeKey.split("/");
+  if (parts.length !== 3 || parts.some((p) => p.length === 0)) return [];
+  const [platform, workspace, channel] = parts as [string, string, string];
+  try {
+    const cfg = getConfig();
+    const domains = domain !== undefined ? [domain] : cfg.domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: channel });
+    return resolveAccess({ mode: "channel", platform, workspace, channel, domains }, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry, cfg.loadProviders?.() ?? []).preApprovalRules;
   } catch {
     return [];
   }

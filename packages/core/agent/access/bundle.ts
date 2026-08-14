@@ -1,5 +1,6 @@
 import type { ProviderGrant } from "./providers.js";
 import type { OperatorApprover } from "./approver-chain.js";
+import { preApprovalRuleProblems, type PreApprovalRule } from "./pre-approval-rules.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 import { tenantRungRemedy } from "./tenant-admission.js";
 import { isValidLinkSetRef } from "../identity/link-set-ref.js";
@@ -105,6 +106,7 @@ export interface Bundle {
   readonly awsRoles?: readonly AwsRoleGrant[];
   readonly approvers?: readonly OperatorApprover[];
   readonly instructions?: string;
+  readonly preApprovalRules?: readonly PreApprovalRule[];
 }
 
 export interface Binding {
@@ -204,7 +206,9 @@ function contentOriginProblems(bundleName: string, connector: string, spec: unkn
 export function assertBundlesValid(bundles: readonly Bundle[]): void {
   const bad: string[] = [];
   const seen = new Set<string>();
+  const seenRuleIds = new Set<string>();
   for (const b of bundles) {
+    bad.push(...preApprovalRuleProblems(b.name, b.preApprovalRules, seenRuleIds));
     if (seen.has(b.name)) bad.push(`  bundle name "${b.name}" is defined more than once (bindings reference bundles by name — names must be unique)`);
     seen.add(b.name);
     for (const c of b.connections ?? []) {

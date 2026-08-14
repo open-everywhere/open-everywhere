@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { defineState } from "eve/context";
 import {
   TOOL_CONSEQUENCE,
@@ -7,6 +8,12 @@ import {
 import type { ApprovalChainRequest, ChainResolution } from "./approver-chain.js";
 import { taintKindsThisTurn, untrustedIngestedThisTurn } from "./taint-signal.js";
 import { requesterMessagesThisTurn } from "./requester-messages.js";
+import {
+  PRE_APPROVAL_RULE_ID_PATTERN,
+  renderPreApprovalRulesBlock,
+  resolvePreApprovalRuleCitation,
+  type ResolvedPreApprovalRule,
+} from "./pre-approval-rules.js";
 import { appendAudit, readAudit } from "../audit/audit.js";
 import { getSettings, type ApprovalJudgeMode as SettingsApprovalJudgeMode } from "../settings/settings.js";
 import { processRegistrySlot } from "../lib/process-registry.js";
@@ -41,11 +48,16 @@ export interface ApprovalJudgeContext {
   readonly tainted: boolean;
   readonly taintKinds: readonly string[];
   readonly requesterMessages?: readonly string[];
+  readonly rules?: readonly ResolvedPreApprovalRule[];
 }
 
 const ARGS_JSON_CAP = 4000;
 
-export function judgeContextOf(req: ApprovalChainRequest, res: Pick<ChainResolution, "registryVerdict">): ApprovalJudgeContext {
+export function judgeContextOf(
+  req: ApprovalChainRequest,
+  res: Pick<ChainResolution, "registryVerdict">,
+  rules?: readonly ResolvedPreApprovalRule[],
+): ApprovalJudgeContext {
   let argsJson: string;
   try {
     argsJson = JSON.stringify(req.args ?? null) ?? "null";
@@ -65,10 +77,12 @@ export function judgeContextOf(req: ApprovalChainRequest, res: Pick<ChainResolut
     tainted,
     taintKinds: tainted ? taintKindsThisTurn() : [],
     ...(requesterMessages.length > 0 ? { requesterMessages } : {}),
+    ...(rules !== undefined && rules.length > 0 ? { rules } : {}),
   };
 }
 
 function judgePromptPrefix(ctx: ApprovalJudgeContext): string {
+  const rulesBlock = renderPreApprovalRulesBlock(ctx.rules ?? []);
   const lines = [
     "You are the approval judge inside an org agent's permission chain. A prospective action",
     "reached you because no written rule resolved it. Your verdict is final: allow runs it with",
@@ -87,6 +101,7 @@ function judgePromptPrefix(ctx: ApprovalJudgeContext): string {
       ? ["Requester's visible messages:", ...ctx.requesterMessages.map((m) => `> ${m}`)]
       : []),
     "",
+    ...(rulesBlock === "" ? [] : [rulesBlock]),
   ];
   return lines.join("\n");
 }
@@ -96,9 +111,15 @@ export function judgeScrutinyPrompt(ctx: ApprovalJudgeContext): string {
 }
 
 export function judgeVerdictPrompt(ctx: ApprovalJudgeContext): string {
+  const hasRules = ctx.rules !== undefined && ctx.rules.length > 0;
   return (
     `${judgePromptPrefix(ctx)}Decide. Reply with a line "VERDICT: allow" or "VERDICT: ask" or "VERDICT: deny", ` +
-    `then a line "REASON: <one short sentence>". Prefer ask when uncertain; deny only what standing policy prohibits.`
+    `then a line "REASON: <one short sentence>".` +
+    (hasRules
+      ? ` If an authored rule above permits this action, add a line "RULE: <id>" naming that rule's id exactly as written in brackets. ` +
+        `Cite a rule ONLY when one genuinely covers this action, and never invent an id.`
+      : "") +
+    ` Prefer ask when uncertain; deny only what standing policy prohibits.`
   );
 }
 
@@ -110,11 +131,16 @@ function parseScrutiny(text: string): boolean | undefined {
   return undefined;
 }
 
-function parseVerdict(text: string): { verdict: "allow" | "deny" | "ask"; reason: string } | undefined {
+function parseVerdict(text: string): { verdict: "allow" | "deny" | "ask"; reason: string; citedRuleId?: string } | undefined {
   const m = /VERDICT:\s*(allow|deny|ask)\b/i.exec(text);
   if (m === null) return undefined;
   const r = /REASON:\s*([^\n]+)/i.exec(text);
-  return { verdict: m[1]!.toLowerCase() as "allow" | "deny" | "ask", reason: r?.[1]?.trim() ?? "(no reason given)" };
+  const c = new RegExp(`RULE:\\s*\\[?(${PRE_APPROVAL_RULE_ID_PATTERN})\\]?`, "iu").exec(text);
+  return {
+    verdict: m[1]!.toLowerCase() as "allow" | "deny" | "ask",
+    reason: r?.[1]?.trim() ?? "(no reason given)",
+    ...(c !== null ? { citedRuleId: c[1]! } : {}),
+  };
 }
 
 export interface VendorToolMeta {
@@ -148,7 +174,9 @@ export function judgeVerdictCacheKey(tool: string): string {
 export interface JudgeCacheEntry {
   readonly verdict: "allow";
   readonly taintSig: string;
+  readonly rulesSig: string;
   readonly reasoning: string;
+  readonly ruleId?: string;
   readonly pass: 1 | 2;
 }
 
@@ -227,6 +255,13 @@ function taintSigOf(ctx: ApprovalJudgeContext): string {
   return `${ctx.tainted}|${ctx.taintKinds.join(",")}`;
 }
 
+function rulesSigOf(ctx: ApprovalJudgeContext): string {
+  const rules = ctx.rules ?? [];
+  if (rules.length === 0) return "";
+  const material = JSON.stringify(rules.map((r) => [r.scope, r.id, r.rule]));
+  return createHash("sha256").update(material).digest("hex");
+}
+
 export interface ApprovalJudgeRun {
   readonly verdict: "allow" | "deny" | "ask" | "defer";
   readonly source: "cache" | "pass1" | "pass2" | "unavailable" | "error" | "timeout" | "breaker";
@@ -235,6 +270,8 @@ export interface ApprovalJudgeRun {
   readonly cacheHit: boolean;
   readonly passes: number;
   readonly pass1?: "yes" | "no" | "unparseable";
+  readonly ruleId?: string;
+  readonly ruleCitation?: "matched" | "unmatched";
 }
 
 export interface RunApprovalJudgeOptions {
@@ -246,14 +283,23 @@ export async function runApprovalJudge(ctx: ApprovalJudgeContext, opts: RunAppro
   const enforce = opts.enforce === true;
   const cacheKey = judgeVerdictCacheKey(ctx.tool);
   const sig = taintSigOf(ctx);
+  const rulesSig = rulesSigOf(ctx);
   const store = cacheStoreFor(enforce);
   const cached = store?.get(cacheKey);
   if (cached !== undefined) {
-    if (cached.taintSig !== sig) {
+    if (cached.taintSig !== sig || cached.rulesSig !== rulesSig) {
       store?.delete(cacheKey);
     } else if (enforce && cached.pass !== 2) {
     } else {
-      return { verdict: "allow", source: "cache", reasoning: cached.reasoning, cacheKey, cacheHit: true, passes: 0 };
+      return {
+        verdict: "allow",
+        source: "cache",
+        reasoning: cached.reasoning,
+        cacheKey,
+        cacheHit: true,
+        passes: 0,
+        ...(cached.ruleId !== undefined ? { ruleId: cached.ruleId, ruleCitation: "matched" as const } : {}),
+      };
     }
   }
   const completion = completionSlot.get();
@@ -275,7 +321,7 @@ export async function runApprovalJudge(ctx: ApprovalJudgeContext, opts: RunAppro
         }
         if (!scrutiny) {
           const reasoning = "pass-1: routine — no scrutiny flagged";
-          if (!abandoned) store?.set(cacheKey, { verdict: "allow", taintSig: sig, reasoning, pass: 1 });
+          if (!abandoned) store?.set(cacheKey, { verdict: "allow", taintSig: sig, rulesSig, reasoning, pass: 1 });
           return { verdict: "allow", source: "pass1", reasoning, cacheKey, cacheHit: false, passes: 1, pass1 };
         }
       }
@@ -283,10 +329,37 @@ export async function runApprovalJudge(ctx: ApprovalJudgeContext, opts: RunAppro
       if (parsed === undefined) {
         return { verdict: "defer", source: "pass2", reasoning: "pass-2 verdict unparseable", cacheKey, cacheHit: false, passes: 2, pass1 };
       }
-      if (parsed.verdict === "allow" && !abandoned) {
-        store?.set(cacheKey, { verdict: "allow", taintSig: sig, reasoning: parsed.reason, pass: 2 });
+      const matched = resolvePreApprovalRuleCitation(parsed.citedRuleId, ctx.rules ?? []);
+      const cited = parsed.citedRuleId !== undefined;
+      const citation: { ruleId?: string; ruleCitation?: "matched" | "unmatched" } = !cited
+        ? {}
+        : matched !== undefined
+          ? { ruleId: matched.id, ruleCitation: "matched" }
+          : { ruleCitation: "unmatched" };
+
+      if (parsed.verdict === "allow" && cited && matched === undefined) {
+        return {
+          verdict: "ask",
+          source: "pass2",
+          reasoning: `judge allowed citing pre-approval rule "${parsed.citedRuleId}", which is not in this scope's authored rules — degraded to ask (${parsed.reason})`,
+          cacheKey,
+          cacheHit: false,
+          passes: 2,
+          pass1,
+          ...citation,
+        };
       }
-      return { verdict: parsed.verdict, source: "pass2", reasoning: parsed.reason, cacheKey, cacheHit: false, passes: 2, pass1 };
+      if (parsed.verdict === "allow" && !abandoned) {
+        store?.set(cacheKey, {
+          verdict: "allow",
+          taintSig: sig,
+          rulesSig,
+          reasoning: parsed.reason,
+          pass: 2,
+          ...(matched !== undefined ? { ruleId: matched.id } : {}),
+        });
+      }
+      return { verdict: parsed.verdict, source: "pass2", reasoning: parsed.reason, cacheKey, cacheHit: false, passes: 2, pass1, ...citation };
     } catch (e) {
       return { verdict: "defer", source: "error", reasoning: `judge call failed: ${e instanceof Error ? e.message : String(e)}`, cacheKey, cacheHit: false, passes: 0 };
     }
