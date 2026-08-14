@@ -14,6 +14,8 @@ import {
   type Selector,
   type Tier,
   type MemoryFiles,
+  assertCredentialEndpointAllowed,
+  type CredentialEndpointRules,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { posix } from "node:path";
 import { renderBlocks, pageTitle, PAGE_BLOCK_TYPES, type BlockNode, type LinkResolver, type LinkTarget } from "./blocks.js";
@@ -40,12 +42,25 @@ interface ChildrenResponse {
   next_cursor?: string | null;
 }
 
+function guardHttpFetch(endpoints: CredentialEndpointRules | undefined, base: HttpFetch): HttpFetch {
+  if (endpoints === undefined) return base;
+  return async (url, init) => {
+    assertCredentialEndpointAllowed(endpoints, url, init.method, "notion memory credential");
+    return base(url, init);
+  };
+}
+
 export class NotionClient {
+  private readonly fetchFn: HttpFetch;
+
   constructor(
     private readonly token: string,
-    private readonly fetchFn: HttpFetch = globalThis.fetch as unknown as HttpFetch,
+    fetchFn: HttpFetch = globalThis.fetch as unknown as HttpFetch,
     private readonly apiBase: string = API,
-  ) {}
+    endpoints?: CredentialEndpointRules,
+  ) {
+    this.fetchFn = guardHttpFetch(endpoints, fetchFn);
+  }
 
   async children(blockId: string): Promise<BlockNode[]> {
     const out: BlockNode[] = [];
@@ -182,8 +197,20 @@ export function makeNotionProvider(deps: NotionMemoryDeps): MemoryProvider {
   };
 }
 
-export async function resolveNotionMemoryToken(credentialId: string, broker: string, secretRef: string): Promise<string> {
-  if (credentialId === NOTION_MEMORY_CREDENTIAL) return getSecretVia(broker, secretRef);
+export interface ResolvedNotionMemoryCredential {
+  readonly token: string;
+  readonly endpoints?: CredentialEndpointRules;
+}
+
+export async function resolveNotionMemoryCredential(
+  credentialId: string,
+  broker: string,
+  secretRef: string,
+): Promise<ResolvedNotionMemoryCredential> {
+  if (credentialId === NOTION_MEMORY_CREDENTIAL) {
+    const token = await getSecretVia(broker, secretRef);
+    return { token, endpoints: findProviderCredential(NOTION_PROVIDER, NOTION_MEMORY_CREDENTIAL)?.endpoints };
+  }
   const cred = findProviderCredential(NOTION_PROVIDER, credentialId);
   if (!cred?.secretRef) {
     throw new Error(
@@ -191,13 +218,17 @@ export async function resolveNotionMemoryToken(credentialId: string, broker: str
         `(agent/access/providers.ts). A bound domain never falls back to the org default "${NOTION_MEMORY_CREDENTIAL}" key.`,
     );
   }
-  return getSecretVia(cred.broker, cred.secretRef);
+  const token = await getSecretVia(cred.broker, cred.secretRef);
+  return { token, endpoints: cred.endpoints };
 }
 
 export function notionMemoryDeps(secretRef: string, broker: string, fetchFn?: HttpFetch): NotionMemoryDeps {
   return {
     credentialFor: (access) => domainCredentialId(access?.domain, NOTION_PROVIDER, NOTION_MEMORY_CREDENTIAL),
-    client: async (_silo, credentialId) => new NotionClient(await resolveNotionMemoryToken(credentialId, broker, secretRef), fetchFn),
+    client: async (_silo, credentialId) => {
+      const { token, endpoints } = await resolveNotionMemoryCredential(credentialId, broker, secretRef);
+      return new NotionClient(token, fetchFn, API, endpoints);
+    },
   };
 }
 

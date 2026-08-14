@@ -13,7 +13,7 @@ import {
 import {
   makeNotionProvider,
   notionMemoryDeps,
-  resolveNotionMemoryToken,
+  resolveNotionMemoryCredential,
   NOTION_MEMORY_CREDENTIAL,
   type HttpFetch,
 } from "../agent/memory/memory.js";
@@ -78,11 +78,11 @@ setRegisteredProviders([
 ]);
 
 {
-  ok((await resolveNotionMemoryToken(NOTION_MEMORY_CREDENTIAL, BROKER, ORG_REF)) === ORG_TOKEN, "the org-default role resolves the deployment key through its own broker stamp");
-  ok((await resolveNotionMemoryToken(PAY_CRED, BROKER, ORG_REF)) === PAY_TOKEN, "a BOUND domain's credential resolves a DIFFERENT token — the whole point");
-  ok((await resolveNotionMemoryToken(PAY_CRED, BROKER, ORG_REF)) !== ORG_TOKEN, "negative control: the bound token is genuinely not the org token");
+  ok((await resolveNotionMemoryCredential(NOTION_MEMORY_CREDENTIAL, BROKER, ORG_REF)).token === ORG_TOKEN, "the org-default role resolves the deployment key through its own broker stamp");
+  ok((await resolveNotionMemoryCredential(PAY_CRED, BROKER, ORG_REF)).token === PAY_TOKEN, "a BOUND domain's credential resolves a DIFFERENT token — the whole point");
+  ok((await resolveNotionMemoryCredential(PAY_CRED, BROKER, ORG_REF)).token !== ORG_TOKEN, "negative control: the bound token is genuinely not the org token");
 
-  await throwsAsync(() => resolveNotionMemoryToken("no-such-credential", BROKER, ORG_REF), "a NAMED-BUT-MISSING credential THROWS — it never retries under the org default");
+  await throwsAsync(() => resolveNotionMemoryCredential("no-such-credential", BROKER, ORG_REF), "a NAMED-BUT-MISSING credential THROWS — it never retries under the org default");
 
   ok(domainCredentialId(BOUND.domain, NOTION_PROVIDER, NOTION_MEMORY_CREDENTIAL) === PAY_CRED, "the bound domain resolves its own credential id");
   ok(domainCredentialId(UNBOUND.domain, NOTION_PROVIDER, NOTION_MEMORY_CREDENTIAL) === NOTION_MEMORY_CREDENTIAL, "the unbound domain resolves the org-default role");
