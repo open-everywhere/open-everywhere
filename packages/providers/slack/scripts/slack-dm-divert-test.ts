@@ -92,6 +92,7 @@ async function runFront(
     dedupe?: EventDedupe;
     fifo?: SpyFifo;
     channelFacts?: { internal: boolean; channelType?: string } | null;
+    authorRefuted?: boolean;
   } = {},
 ) {
   const dispatched: Dispatched[] = [];
@@ -133,6 +134,11 @@ async function runFront(
         if (opts.channelFacts) return opts.channelFacts;
         return channelId === MPIM_CHANNEL ? { internal: true, channelType: "mpim" } : { internal: true, channelType: "channel" };
       },
+      authorFactsFor: async (internal: boolean) => {
+        authorFactLookups++;
+        const refuted = opts.authorRefuted === true;
+        return { surfaceInternal: internal && !refuted, refuted };
+      },
       resolveDmSeat: async (_org, dm, _at) => {
         if (opts.seatThrows) throw new Error("registry down");
         seatCalls.push(dm);
@@ -149,9 +155,10 @@ async function runFront(
   const seatCalls: Array<{ surfaceKey: string; channelId?: string; legacyChannelId?: string }> = [];
   const factsLookups: string[] = [];
   let partnerLookups = 0;
+  let authorFactLookups = 0;
   const res = await handler(mkReq(body), fakeArgs as unknown as Parameters<typeof handler>[1]);
   const settled = await Promise.allSettled(waits);
-  return { dispatched, touched, seatCalls, innerCalled, res, fifo, settled, factsLookups, partnerLookups };
+  return { dispatched, touched, seatCalls, innerCalled, res, fifo, settled, factsLookups, partnerLookups, authorFactLookups };
 }
 
 {
@@ -444,6 +451,28 @@ async function runFront(
 
     const unresolved = await runFront(dmEnvelope("Ev14d"));
     eq(unresolved.dispatched.length, 1, "🔴 OPE-525: an UNRESOLVABLE partner probe still wakes (=== 1 dispatch) — absence of evidence is never evidence");
+  } finally {
+    overrideSettingsForTest({ externalPolicy: { authorGrain: "taint" } });
+  }
+}
+
+{
+  const shipped = await runFront(mentionEnvelope("Ev15a", "C_PUBLIC"), { authorRefuted: true });
+  ok(shipped.innerCalled, "🔴 OPE-525 NEGATIVE CONTROL: on the shipped `taint`/`engage` pair a REFUTED author's @mention still forwards to eve's native path");
+  eq(shipped.authorFactLookups, 0, "🔴 OPE-525: …and NO `users.info` probe is made — the inert check runs first, so an un-opted-in deployment pays nothing for this gate");
+
+  try {
+    overrideSettingsForTest({ externalPolicy: { authorGrain: "withhold" } });
+    const withheld = await runFront(mentionEnvelope("Ev15b", "C_PUBLIC"), { authorRefuted: true });
+    ok(!withheld.innerCalled, "🔴 OPE-525: on `withhold` a REFUTED author's @mention is NOT forwarded — the last ungated Slack wake path is closed");
+    eq(withheld.res.status, 200, "OPE-525: …and Slack still gets its 200, so the event is never redelivered");
+    ok(withheld.authorFactLookups > 0, "OPE-525: …the probe DID run, because the policy could suppress");
+
+    const member = await runFront(mentionEnvelope("Ev15c", "C_PUBLIC"), { authorRefuted: false });
+    ok(member.innerCalled, "OPE-525 negative control: an UNREFUTED author's @mention still forwards on `withhold` (=== forwarded)");
+
+    const grouped = await runFront(mentionEnvelope("Ev15d", MPIM_CHANNEL), { authorRefuted: true });
+    ok(!grouped.innerCalled, "OPE-525 negative control: a group-DM mention is still owned by the mpim divert, not by the forward gate");
   } finally {
     overrideSettingsForTest({ externalPolicy: { authorGrain: "taint" } });
   }

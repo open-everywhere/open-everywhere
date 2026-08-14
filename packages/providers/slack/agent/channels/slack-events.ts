@@ -34,6 +34,7 @@ import {
   externalPolicyOverrideFor,
   roomIsSilenced,
   withholdsBody,
+  withholdWakeBodies,
   withheldWakeMessage,
   ingestedAfterWithholding,
   silentRoomNotice,
@@ -693,6 +694,7 @@ export interface NameDropRouteDeps {
   readonly enabledFor: (surfaceKey: string) => boolean;
   readonly confirmInternal: (channelId: string) => Promise<boolean>;
   readonly backscroll?: (input: { channelId: string; ts: string; threadTs?: string }) => Promise<WakeBackscrollLines | null>;
+  readonly authorIsMember?: SlackMemberProbe;
   readonly wake: (input: { channelId: string; threadTs: string; auth: unknown; message: string; context?: readonly string[]; state?: unknown }) => Promise<void>;
   readonly displayName: () => Promise<string | undefined>;
   readonly markEngaged?: (p: Partition, threadTs: string, atIso: string, opts?: { participating?: boolean }) => Promise<void>;
@@ -762,15 +764,20 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
   }
 
   const rendered = renderWake(
-    slackNameDropWake(ev, name!, {
-      trust: wakeTrust,
-      triggerAuthorName: triggerName.authorName,
-      triggerAuthorHandle: triggerName.authorHandle,
-      participants: names.participants,
-      contextLines: gradedLines,
-      contextSource: bs?.source,
-      readMoreHint: bs?.readMoreHint,
-    }),
+    await withholdNameDropContext(
+      slackNameDropWake(ev, name!, {
+        trust: wakeTrust,
+        triggerAuthorName: triggerName.authorName,
+        triggerAuthorHandle: triggerName.authorHandle,
+        participants: names.participants,
+        contextLines: gradedLines,
+        contextSource: bs?.source,
+        readMoreHint: bs?.readMoreHint,
+      }),
+      slackExternalPolicyForRoom(domainKeyOf(p)),
+      ev.teamId,
+      deps.authorIsMember,
+    ),
     deps.now,
   );
 
@@ -779,7 +786,10 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
     threadTs: rootTs,
     auth: stampNonMemberChatAuth(
       authForEvent({ ...ev, threadTs: rootTs }, { isExternal: false, trustChecked: true }),
-      [{ trust: wakeTrust, refuted: authorFacts.refuted }, ...(gradedLines ?? []).map(contextLineIngestion)],
+      ingestedAfterWithholding(
+        [{ trust: wakeTrust, refuted: authorFacts.refuted }, ...(gradedLines ?? []).map(contextLineIngestion)],
+        slackExternalPolicyForRoom(domainKeyOf(p)),
+      ),
       { surfaceKey: domainKeyOf(p) },
     ),
     message: rendered.message,
@@ -960,7 +970,11 @@ export async function slackChannelVendorExternal(channelId: string): Promise<boo
   return meta?.vendorExternal === true;
 }
 
-async function applySlackExternalPolicy(
+export function externalPolicyIsInert(policy: ExternalPolicy): boolean {
+  return policy.authorGrain === "taint" && policy.roomGrain === "engage";
+}
+
+export async function applySlackExternalPolicy(
   ev: ParsedMessageEvent,
   p: Partition,
   facts: { readonly trust: WakeTrust; readonly refuted: boolean },
@@ -989,6 +1003,29 @@ async function applySlackExternalPolicy(
 
 export function externalPolicyDropReason(verdict: SlackExternalVerdict): string {
   return `externalPolicy verdict "${verdict}" — the wake is suppressed`;
+}
+
+export async function withholdNameDropContext(
+  nw: NormalizedWake,
+  policy: ExternalPolicy,
+  teamId: string | undefined,
+  probe: SlackMemberProbe = slackAuthorIsMember,
+): Promise<NormalizedWake> {
+  const isWithheld = (m: WakeMessageInput): boolean => withholdsBody(m, policy);
+  if (policy.authorGrain !== "withhold") return nw;
+  const ids = new Set<string>();
+  for (const l of nw.contextLines ?? []) {
+    if (l.senderType === "user" && l.senderId !== undefined && l.senderId.length > 0) ids.add(l.senderId);
+  }
+  if (ids.size === 0) return withholdWakeBodies(nw, isWithheld);
+  const excluded = new Set<string>();
+  await Promise.all(
+    [...ids].map(async (id) => {
+      const member = await probe(id, teamId).catch(() => undefined);
+      if (member === false) excluded.add(id);
+    }),
+  );
+  return withholdWakeBodies(nw, isWithheld, (senderId) => excluded.has(senderId));
 }
 
 export async function regradeSlackBackscrollTrust(

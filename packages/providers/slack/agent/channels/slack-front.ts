@@ -32,6 +32,7 @@ import {
   touchDmSeat as liveTouchDmSeat,
   dmSeatThresholds,
   resolvePartition,
+  domainKeyOf,
   isThreadEngaged,
   divertInboundToUnifiedWindow,
   divertToUnifiedWindow,
@@ -61,9 +62,10 @@ import {
   distillSlackRotationHandoff,
   slackChannelFactsFor,
   slackAuthorIsMember,
-  slackExternalVerdict,
+  slackWakeAuthorFacts,
   slackExternalPolicyForRoom,
-  postSlackExternalSenderNotice,
+  externalPolicyIsInert,
+  applySlackExternalPolicy,
   _resetAuthorMemberCache,
 } from "./slack-events.js";
 import { buildSlackAuth } from "./slack-identity.js";
@@ -273,6 +275,11 @@ export interface FrontOptions {
   readonly touchDmSeatFn?: (org: string, dmSurfaceKey: string, atIso: string) => Promise<void>;
   readonly dmPartnerTrustFor?: (userId: string, teamId: string | undefined) => Promise<"internal" | "external" | undefined>;
   readonly channelFactsFor?: (channelId: string) => Promise<{ internal: boolean; channelType?: string }>;
+  readonly authorFactsFor?: (
+    channelInternal: boolean,
+    userId: string | undefined,
+    teamId: string | undefined,
+  ) => Promise<{ readonly surfaceInternal: boolean; readonly refuted: boolean }>;
 }
 
 const OK = () => new Response("ok");
@@ -382,6 +389,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const touchDmSeatFn = opts.touchDmSeatFn ?? liveTouchDmSeat;
   const dmPartnerTrustFor = opts.dmPartnerTrustFor ?? liveDmPartnerTrust;
   const channelFactsFor = opts.channelFactsFor ?? slackChannelFactsFor;
+  const authorFactsFor = opts.authorFactsFor ?? ((internal: boolean, userId: string | undefined, teamId: string | undefined) => slackWakeAuthorFacts(internal, userId, teamId));
 
   const singleWindowOwnsMention = async (channelId: string, surfaceKey: string): Promise<boolean> => {
     if (!ambientEnabledFor(surfaceKey)) return false;
@@ -456,29 +464,8 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         channelKey: p.surfaceKey,
       });
       {
-        const roomKey = p.surfaceKey;
-        const verdict = slackExternalVerdict({
-          policy: slackExternalPolicyForRoom(roomKey),
-          author: { trust: wakeTrust, refuted: partnerTrust === "external" },
-          addressed: true,
-          isDm: true,
-          roomKey,
-        });
+        const verdict = await applySlackExternalPolicy(ev, p, { trust: wakeTrust, refuted: partnerTrust === "external" }, "scheduleDmWake");
         if (verdict !== "proceed") {
-          await postSlackExternalSenderNotice(ev.userId, ev.channelId).catch(() => undefined);
-          try {
-            await getOperationalStore().appendAudit({
-              ts: atIso,
-              org: p.org,
-              platform: p.platform,
-              workspace: p.workspace,
-              surface: p.surface,
-              ...(ev.userId ? { principalId: ev.userId } : {}),
-              action: "slack.external_policy_suppressed",
-              detail: { verdict, route: "scheduleDmWake", channelId: ev.channelId },
-            });
-          } catch {
-          }
           console.log(`[open-everywhere:slack-front] dm ${p.surfaceKey}: suppressed — externalPolicy verdict "${verdict}"`);
           return;
         }
@@ -597,6 +584,28 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
           console.log(
             `[open-everywhere:slack-front] app_mention ${mev.channelId}/${mev.ts}: channel type unresolved (conversations.info unavailable; a group-DM mention needs the mpim:read scope) — forwarding to the native mention path`,
           );
+        }
+      }
+      if (mev) {
+        try {
+          const p = resolvePartition(bindableFor(mev));
+          const roomKey = domainKeyOf(p);
+          if (!externalPolicyIsInert(slackExternalPolicyForRoom(roomKey))) {
+            const internal = (await channelFactsFor(mev.channelId).catch(() => ({ internal: false }))).internal;
+            const facts = await authorFactsFor(internal, mev.userId, mev.teamId);
+            const wakeTrust = resolveWakeTrust({
+              authorIsBot: Boolean(mev.botId),
+              authorId: mev.userId,
+              surfaceInternal: facts.surfaceInternal,
+              channelKey: roomKey,
+            });
+            const verdict = await applySlackExternalPolicy(mev, p, { trust: wakeTrust, refuted: facts.refuted }, "native-mention-forward");
+            if (verdict !== "proceed") {
+              console.log(`[open-everywhere:slack-front] app_mention ${mev.channelId}/${mev.ts}: suppressed — externalPolicy verdict "${verdict}" (native forward withheld)`);
+              return OK();
+            }
+          }
+        } catch {
         }
       }
       const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
