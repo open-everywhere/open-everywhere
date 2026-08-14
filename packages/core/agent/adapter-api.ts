@@ -447,7 +447,7 @@ export type { ReactionSinkDeps, ReactionIngestOutcome, ReactionVerb } from "./ch
 export { assertSurfaceAllowed, chatReadIngestion } from "./channels/channel-read.js";
 export type { RenderedLine } from "./channels/channel-read.js";
 
-export { readIngestsNonMember, distinctReadAuthorIds } from "./channels/read-author-trust.js";
+export { refutedReadAuthorIds, distinctReadAuthorIds } from "./channels/read-author-trust.js";
 export type { ReadAuthorProbe } from "./channels/read-author-trust.js";
 
 export { auditChannelReadRefusal } from "./channels/read-scope-audit.js";

@@ -182,20 +182,20 @@ ok(
 
 _resetAuthorTrustForTest();
 ok(
-  (await slackReadAdapter.authoredByNonMember(readCtx, guestPage, PROBE)) === true,
+  (await slackReadAdapter.refutedAuthorIds(readCtx, guestPage, PROBE)).length > 0,
   "🔴 THE READ LEG: a page carrying a GUEST's message marks the turn — the same probe, the same verdict, at the read seam",
 );
 ok(
-  (await slackReadAdapter.authoredByNonMember(readCtx, memberPage, PROBE)) === false,
-  "🔴 negative control: a member-only page does NOT mark (=== false) — no always-mark on a read-heavy turn",
+  (await slackReadAdapter.refutedAuthorIds(readCtx, memberPage, PROBE)).length === 0,
+  "🔴 negative control: a member-only page does NOT mark (=== []) — no always-mark on a read-heavy turn",
 );
 ok(
-  (await slackReadAdapter.authoredByNonMember(readCtx, renderMessages([{ bot_id: "B1", ts: "1", text: "beep" }], { oldestFirst: true }), PROBE)) === false,
-  "🔴 negative control: a BOT-authored page does not mark (=== false) — a machine is below a member but is not a person outside the org",
+  (await slackReadAdapter.refutedAuthorIds(readCtx, renderMessages([{ bot_id: "B1", ts: "1", text: "beep" }], { oldestFirst: true }), PROBE)).length === 0,
+  "🔴 negative control: a BOT-authored page does not mark (=== []) — a machine is below a member but is not a person outside the org",
 );
 ok(
-  (await slackReadAdapter.authoredByNonMember(readCtx, guestPage, fakeProbe({}))) === false,
-  "🔴 negative control: an UNRESOLVABLE probe (no `users:read`) marks nothing (=== false) — the same OPEN fail direction as the wake leg, for the same reason",
+  (await slackReadAdapter.refutedAuthorIds(readCtx, guestPage, fakeProbe({}))).length === 0,
+  "🔴 negative control: an UNRESOLVABLE probe (no `users:read`) marks nothing (=== []) — the same OPEN fail direction as the wake leg, for the same reason",
 );
 
 {
@@ -204,18 +204,18 @@ ok(
     seen.push(teamId);
     return PROBE(userId, teamId);
   };
-  await slackReadAdapter.authoredByNonMember(slackCtx("T-OTHER"), guestPage, recording);
+  await slackReadAdapter.refutedAuthorIds(slackCtx("T-OTHER"), guestPage, recording);
   ok(seen.length === 2 && seen.every((t) => t === "T-OTHER"), "the probe is keyed by the BOUND team id, once per distinct human author (the bot is skipped)");
 }
 
 registerAuthorTrust([defineAuthorTrust({ tenant: "slack/T1", internal: ["slack/T1/U_MEMBER"] })]);
 ok(
-  (await slackReadAdapter.authoredByNonMember(readCtx, guestPage, fakeProbe({}))) === true,
+  (await slackReadAdapter.refutedAuthorIds(readCtx, guestPage, fakeProbe({}))).length > 0,
   "🔴 armed register: an author the surface probe could not resolve is still refuted by the OPERATOR's declaration — the two sources are additive",
 );
 ok(
-  (await slackReadAdapter.authoredByNonMember(readCtx, memberPage, fakeProbe({}))) === false,
-  "negative control: …and a DECLARED author is not (=== false)",
+  (await slackReadAdapter.refutedAuthorIds(readCtx, memberPage, fakeProbe({}))).length === 0,
+  "negative control: …and a DECLARED author is not (=== [])",
 );
 _resetAuthorTrustForTest();
 

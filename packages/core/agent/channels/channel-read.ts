@@ -5,10 +5,11 @@ import {
   type BindableContext,
 } from "../identity/binding.js";
 import type { Domain } from "../memory/domain.js";
-import { domainForChannel } from "../memory/domain.js";
+import { domainForChannel, externalPolicyOverrideFor } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
 import type { IngestionSource } from "../access/taint-tiers.js";
+import { resolveExternalPolicy, shippedExternalPolicy, WITHHELD_BODY_MARKER, type ExternalPolicy } from "../access/external-policy.js";
 
 import { ChannelScopeError } from "./read-scope-error.js";
 import { auditChannelReadRefusal, type ReadScopeAuditDeps } from "./read-scope-audit.js";
@@ -44,15 +45,17 @@ export interface ReadAdapter {
   readonly platform: string;
   readChannel(ctx: BindableContext, channel: string, limit?: number): Promise<readonly RenderedLine[]>;
   readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number): Promise<readonly RenderedLine[]>;
-  authoredByNonMember?(ctx: BindableContext, lines: readonly RenderedLine[]): Promise<boolean>;
+  refutedAuthorIds?(ctx: BindableContext, lines: readonly RenderedLine[]): Promise<readonly string[]>;
 }
 
-async function adapterAuthoredByNonMember(adapter: ReadAdapter, ctx: BindableContext, lines: readonly RenderedLine[]): Promise<boolean> {
-  if (adapter.authoredByNonMember === undefined) return false;
+const EMPTY_REFUTED: ReadonlySet<string> = new Set<string>();
+
+async function adapterRefutedAuthorIds(adapter: ReadAdapter, ctx: BindableContext, lines: readonly RenderedLine[]): Promise<ReadonlySet<string>> {
+  if (adapter.refutedAuthorIds === undefined) return EMPTY_REFUTED;
   try {
-    return await adapter.authoredByNonMember(ctx, lines);
+    return new Set(await adapter.refutedAuthorIds(ctx, lines));
   } catch {
-    return false;
+    return EMPTY_REFUTED;
   }
 }
 
@@ -152,16 +155,26 @@ export interface ThreadReadOutput extends ChannelReadOutput {
   thread_ts: string;
 }
 
+function readAuthorPolicy(ctx: BindableContext): ExternalPolicy {
+  try {
+    return resolveExternalPolicy(externalPolicyOverrideFor(resolvePartition(ctx).surfaceKey, getConfig().loadDomains()));
+  } catch {
+    return shippedExternalPolicy();
+  }
+}
+
 async function gradeAndProject(
   ctx: BindableContext,
   adapter: ReadAdapter,
   lines: readonly RenderedLine[],
 ): Promise<{ count: number; messages: ReadOutputLine[]; authoredByNonMember?: boolean }> {
-  const nonMember = await adapterAuthoredByNonMember(adapter, ctx, lines);
+  const refuted = await adapterRefutedAuthorIds(adapter, ctx, lines);
+  const withholding = refuted.size > 0 && readAuthorPolicy(ctx).authorGrain === "withhold";
+  const withheld = (m: RenderedLine): boolean => withholding && m.bot !== true && m.authorId !== undefined && refuted.has(m.authorId);
   return {
     count: lines.length,
-    messages: lines.map((m) => ({ author: m.author, ts: m.ts, text: m.text })),
-    ...(nonMember ? { authoredByNonMember: true } : {}),
+    messages: lines.map((m) => ({ author: m.author, ts: m.ts, text: withheld(m) ? WITHHELD_BODY_MARKER : m.text })),
+    ...(refuted.size > 0 && !withholding ? { authoredByNonMember: true } : {}),
   };
 }
 

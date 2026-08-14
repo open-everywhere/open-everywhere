@@ -16,20 +16,20 @@ export interface ReadAuthorProbe {
   readonly memberships?: (authorId: string) => Promise<readonly string[] | undefined>;
 }
 
-export async function readIngestsNonMember(
+export async function refutedReadAuthorIds(
   lines: readonly RenderedLine[],
   tenantKey: string,
   probe: ReadAuthorProbe = {},
-): Promise<boolean> {
+): Promise<readonly string[]> {
   try {
     const ids = distinctReadAuthorIds(lines);
-    if (ids.length === 0) return false;
+    if (ids.length === 0) return [];
     const armed = tenantKey.length > 0 && armedAuthorTrustTenants().includes(tenantKey);
-    if (probe.surfaceRefuted === undefined && !armed) return false;
+    if (probe.surfaceRefuted === undefined && !armed) return [];
     const verdicts = await Promise.all(ids.map((id) => refutes(id, tenantKey, armed, probe)));
-    return verdicts.includes(true);
+    return ids.filter((_id, i) => verdicts[i] === true);
   } catch {
-    return false;
+    return [];
   }
 }
 

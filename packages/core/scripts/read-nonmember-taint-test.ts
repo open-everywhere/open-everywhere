@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import { distinctReadAuthorIds, readIngestsNonMember } from "../agent/channels/read-author-trust.js";
+import { distinctReadAuthorIds, refutedReadAuthorIds } from "../agent/channels/read-author-trust.js";
 import {
   readChannelResult,
   readThreadResult,
   chatReadIngestion,
   renderChannelBody,
   type ReadAdapter,
+  type ReadOutputLine,
   type RenderedLine,
 } from "../agent/channels/channel-read.js";
+import { WITHHELD_BODY_MARKER } from "../agent/access/external-policy.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { classifyIngestion } from "../agent/access/taint-tiers.js";
 import { decideIngestion } from "../agent/access/taint-enforcement.js";
 import { untrustedIngestedThisTurn, taintKindsThisTurn } from "../agent/access/taint-signal.js";
@@ -47,42 +50,48 @@ console.log("1. distinct authors:");
   eq(distinctReadAuthorIds(page).length, 3, "distinct: a 200-message page from 3 people yields 3 probe candidates");
 
   let calls = 0;
-  const marked = await readIngestsNonMember(page, "slack/T1", {
+  const marked = await refutedReadAuthorIds(page, "slack/T1", {
     surfaceRefuted: async () => {
       calls++;
       return false;
     },
   });
   eq(calls, 3, "🔴 the join probes ONCE PER DISTINCT AUTHOR over a 200-message page — never once per message");
-  ok(marked === false, "…and a page of three confirmed members does NOT mark");
+  eq(marked, [], "…and a page of three confirmed members refutes NOBODY (=== [])");
 }
 
 console.log("2. the surface leg:");
 {
   const refuting = async (id: string) => id === "GUEST";
-  ok((await readIngestsNonMember([human("U1"), human("GUEST")], "slack/T1", { surfaceRefuted: refuting })) === true, "🔴 a page carrying a POSITIVELY-REFUTED author MARKS");
-  ok((await readIngestsNonMember([human("U1"), human("U2")], "slack/T1", { surfaceRefuted: refuting })) === false, "negative control: a member-only page does NOT mark (=== false)");
+  eq(
+    await refutedReadAuthorIds([human("U1"), human("GUEST"), human("U2")], "slack/T1", { surfaceRefuted: refuting }),
+    ["GUEST"],
+    "🔴 the join names the REFUTED author and only that author — the members on the same page are not in the set",
+  );
+  ok((await refutedReadAuthorIds([human("U1"), human("U2")], "slack/T1", { surfaceRefuted: refuting })).length === 0, "negative control: a member-only page does NOT mark (=== [])");
   ok(
-    (await readIngestsNonMember([machine("GUEST")], "slack/T1", { surfaceRefuted: refuting })) === false,
-    "🔴 negative control: a MACHINE author is skipped even when its id would refute — a bot is below a member but is not a person outside the org (=== false)",
+    (await refutedReadAuthorIds([machine("GUEST")], "slack/T1", { surfaceRefuted: refuting })).length === 0,
+    "🔴 negative control: a MACHINE author is skipped even when its id would refute — a bot is below a member but is not a person outside the org (=== [])",
   );
   ok(
-    (await readIngestsNonMember([anon()], "slack/T1", { surfaceRefuted: refuting })) === false,
-    "negative control: an author with no readable id is not probed and does not mark (=== false)",
+    (await refutedReadAuthorIds([anon()], "slack/T1", { surfaceRefuted: refuting })).length === 0,
+    "negative control: an author with no readable id is not probed and does not mark (=== [])",
   );
   ok(
-    (await readIngestsNonMember([human("U1")], "slack/T1", { surfaceRefuted: async () => undefined })) === false,
-    "🔴 negative control: a probe that CANNOT ANSWER never refutes — absence of evidence is not evidence (=== false)",
+    (await refutedReadAuthorIds([human("U1")], "slack/T1", { surfaceRefuted: async () => undefined })).length === 0,
+    "🔴 negative control: a probe that CANNOT ANSWER never refutes — absence of evidence is not evidence (=== [])",
   );
   ok(
-    (await readIngestsNonMember([human("U1")], "slack/T1", {
-      surfaceRefuted: async () => {
-        throw new Error("users.info exploded");
-      },
-    })) === false,
-    "negative control: a THROWING probe fails OPEN — it loses a mark, never the read (=== false)",
+    (
+      await refutedReadAuthorIds([human("U1")], "slack/T1", {
+        surfaceRefuted: async () => {
+          throw new Error("users.info exploded");
+        },
+      })
+    ).length === 0,
+    "negative control: a THROWING probe fails OPEN — it loses a mark, never the read (=== [])",
   );
-  ok((await readIngestsNonMember([], "slack/T1", { surfaceRefuted: refuting })) === false, "an empty page marks nothing");
+  ok((await refutedReadAuthorIds([], "slack/T1", { surfaceRefuted: refuting })).length === 0, "an empty page marks nothing");
 }
 
 console.log("3. the register leg:");
@@ -94,32 +103,32 @@ console.log("3. the register leg:");
     return id === "MEMBER" ? [`${GUILD}/role:R1`] : [];
   };
   ok(
-    (await readIngestsNonMember([human("STRANGER")], GUILD, { memberships: roles })) === false,
-    "🔴 negative control: an UNARMED tenant contributes NOTHING — silence is never a declaration (=== false)",
+    (await refutedReadAuthorIds([human("STRANGER")], GUILD, { memberships: roles })).length === 0,
+    "🔴 negative control: an UNARMED tenant contributes NOTHING — silence is never a declaration (=== [])",
   );
   eq(roleCalls, 0, "🔴 THE COST GATE: an unarmed tenant runs ZERO membership lookups — the default posture costs nothing");
 
   registerAuthorTrust([defineAuthorTrust({ tenant: GUILD, internal: [{ membership: `${GUILD}/role:R1` }] })]);
   roleCalls = 0;
-  ok((await readIngestsNonMember([human("MEMBER")], GUILD, { memberships: roles })) === false, "armed: an author holding the declared role is INTERNAL and does not mark (=== false)");
-  ok((await readIngestsNonMember([human("STRANGER")], GUILD, { memberships: roles })) === true, "🔴 armed: an author holding NO declared role is refuted and MARKS");
+  ok((await refutedReadAuthorIds([human("MEMBER")], GUILD, { memberships: roles })).length === 0, "armed: an author holding the declared role is INTERNAL and does not mark (=== [])");
+  ok((await refutedReadAuthorIds([human("STRANGER")], GUILD, { memberships: roles })).length > 0, "🔴 armed: an author holding NO declared role is refuted and MARKS");
   eq(roleCalls, 2, "armed: one membership lookup per distinct author, no more");
 
   ok(
-    (await readIngestsNonMember([human("MEMBER")], GUILD, { memberships: async () => ["R1"] })) === true,
+    (await refutedReadAuthorIds([human("MEMBER")], GUILD, { memberships: async () => ["R1"] })).length > 0,
     "🔴 the probe's keys must be FULLY QUALIFIED — a raw role id matches no membership pattern, so an unqualified probe refutes everybody",
   );
 
   ok(
-    (await readIngestsNonMember([human("STRANGER")], GUILD, { memberships: async () => undefined })) === false,
-    "🔴 negative control: a membership probe answering `undefined` SKIPS that author entirely — an unverified `[]` would refute every author on a role-armed guild (=== false)",
+    (await refutedReadAuthorIds([human("STRANGER")], GUILD, { memberships: async () => undefined })).length === 0,
+    "🔴 negative control: a membership probe answering `undefined` SKIPS that author entirely — an unverified `[]` would refute every author on a role-armed guild (=== [])",
   );
 
   _resetAuthorTrustForTest();
   registerAuthorTrust([defineAuthorTrust({ tenant: "teams/TEN1", internal: ["teams/AAD-MEMBER"] })]);
-  ok((await readIngestsNonMember([human("AAD-MEMBER")], "teams/TEN1")) === false, "armed, no membership leg: a listed principal is internal (=== false)");
-  ok((await readIngestsNonMember([human("AAD-GUEST")], "teams/TEN1")) === true, "🔴 armed, no membership leg: an UNLISTED principal is refuted and MARKS");
-  ok((await readIngestsNonMember([human("AAD-GUEST")], "teams/OTHER-TENANT")) === false, "negative control: a DIFFERENT, unarmed tenant marks nothing (=== false)");
+  ok((await refutedReadAuthorIds([human("AAD-MEMBER")], "teams/TEN1")).length === 0, "armed, no membership leg: a listed principal is internal (=== [])");
+  ok((await refutedReadAuthorIds([human("AAD-GUEST")], "teams/TEN1")).length > 0, "🔴 armed, no membership leg: an UNLISTED principal is refuted and MARKS");
+  ok((await refutedReadAuthorIds([human("AAD-GUEST")], "teams/OTHER-TENANT")).length === 0, "negative control: a DIFFERENT, unarmed tenant marks nothing (=== [])");
   _resetAuthorTrustForTest();
 }
 
@@ -156,7 +165,7 @@ function adapter(graded: boolean | "none"): ReadAdapter {
     platform: "slack",
     readChannel: async () => PAGE,
     readThread: async () => PAGE,
-    ...(graded === "none" ? {} : { authoredByNonMember: async () => graded }),
+    ...(graded === "none" ? {} : { refutedAuthorIds: async () => (graded ? ["GUEST"] : []) }),
   };
 }
 
@@ -184,7 +193,7 @@ function adapter(graded: boolean | "none"): ReadAdapter {
     platform: "slack",
     readChannel: async () => PAGE,
     readThread: async () => PAGE,
-    authoredByNonMember: async () => {
+    refutedAuthorIds: async () => {
       throw new Error("probe exploded");
     },
   };
@@ -265,6 +274,76 @@ for (const [verb, build] of [
     await replayedProjection(verb, out);
     ok(untrustedIngestedThisTurn() === false, `${verb}: an UNGRADED read leaves the turn clean (=== false)`);
   });
+}
+
+console.log("7. the author grain on the read path (OPE-534):");
+{
+  const GRAINS = ["taint", "withhold"] as const;
+  const body = (out: { messages: ReadOutputLine[] }, i: number): string => out.messages[i]!.text;
+
+  for (const grain of GRAINS) {
+    overrideSettingsForTest({ externalPolicy: { authorGrain: grain } });
+    const withholding = grain === "withhold";
+
+    const out = await readChannelResult(ctx, "slack", adapter(true), "C1");
+
+    eq(
+      body(out, 1),
+      withholding ? WITHHELD_BODY_MARKER : "hi back",
+      `🔴 ${grain}: the REFUTED author's body is ${withholding ? "the arrived-marker" : "returned verbatim"}`,
+    );
+    eq(body(out, 0), "hello there", `🔴 ${grain}: the MEMBER's body on the same page is untouched — a withhold is per AUTHOR, never per page`);
+    ok(
+      String(renderChannelBody(out)).includes("hi back") === !withholding,
+      `🔴 ${grain}: the RENDERED body ${withholding ? "no longer carries" : "carries"} the excluded author's text — the render is what the model reads`,
+    );
+
+    eq(out.count, 2, `${grain}: count is the fetched length — a withheld line is replaced, never dropped`);
+    eq(out.messages[1]!.author, "GUEST", `${grain}: the withheld line keeps its AUTHOR — the marker is legible as "who and when"`);
+    eq(out.messages[1]!.ts, "1", `${grain}: …and its timestamp`);
+
+    await eveContextStorage().run(new FakeSession(), async () => {
+      const fresh = await readChannelResult(ctx, "slack", adapter(true), "C1");
+      const projected = await replayedProjection("read_channel", fresh);
+      ok(
+        untrustedIngestedThisTurn() === (!withholding),
+        withholding
+          ? "🔴 withhold: a WITHHELD body does NOT mark the turn (=== false) — claiming an exposure that did not happen is the always-on bit"
+          : "🔴 taint (shipped): the refuted page still MARKS the turn — the read-side withhold is off by default and changes nothing",
+      );
+      ok(
+        String(projected.value).includes("hi back") === !withholding,
+        `🔴 ${grain}: the FENCED projection ${withholding ? "does not carry" : "carries"} the excluded author's text — end to end, through eve's replay path`,
+      );
+    });
+  }
+
+  overrideSettingsForTest({ externalPolicy: { authorGrain: "withhold" } });
+  const clean = await readChannelResult(ctx, "slack", adapter(false), "C1");
+  eq(
+    clean.messages.map((m) => m.text),
+    ["hello there", "hi back"],
+    "🔴 negative control: under `withhold`, a page with NO refuted author comes back byte-identical — nothing is blanked on suspicion",
+  );
+  ok(!("authoredByNonMember" in clean), "…and it marks nothing");
+
+  const thr = await readThreadResult(ctx, "slack", adapter(true), "C1", "999.9");
+  eq(thr.messages[1]!.text, WITHHELD_BODY_MARKER, "🔴 read_thread withholds identically to read_channel — one grade-and-project body");
+
+  const botLine: RenderedLine = { author: "GUEST", ts: "2", text: "beep", authorId: "GUEST", bot: true };
+  const botAdapter: ReadAdapter = {
+    platform: "slack",
+    readChannel: async () => [botLine],
+    readThread: async () => [botLine],
+    refutedAuthorIds: async () => ["GUEST"],
+  };
+  eq(
+    (await readChannelResult(ctx, "slack", botAdapter, "C1")).messages[0]!.text,
+    "beep",
+    "🔴 negative control: a MACHINE line is not withheld even when its id is in the refuted set — a bot is below a member but is not a person outside the org",
+  );
+
+  overrideSettingsForTest({ externalPolicy: { authorGrain: "taint" } });
 }
 
 console.log(`✓ ${n} read-nonmember-taint assertions passed`);

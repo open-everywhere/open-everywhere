@@ -420,17 +420,17 @@ const engCtx = teamsCtx({
   );
 
   _resetAuthorTrustForTest();
-  ok((await teamsReadAdapter.authoredByNonMember(engCtx, page)) === false, "🔴 unarmed tenant: a Teams read marks NOTHING (=== false) — the stated limit of the register-only leg");
+  ok((await teamsReadAdapter.refutedAuthorIds(engCtx, page)).length === 0, "🔴 unarmed tenant: a Teams read marks NOTHING (=== []) — the stated limit of the register-only leg");
 
   registerAuthorTrust([defineAuthorTrust({ tenant: "teams/TENANT1", internal: ["teams/29:aad-alice"] })]);
-  ok((await teamsReadAdapter.authoredByNonMember(engCtx, page)) === true, "🔴 armed tenant: the UNLISTED author is refuted and the read MARKS");
+  ok((await teamsReadAdapter.refutedAuthorIds(engCtx, page)).length > 0, "🔴 armed tenant: the UNLISTED author is refuted and the read MARKS");
 
   const memberOnly = page.filter((l) => l.authorId !== "29:aad-guest");
-  ok((await teamsReadAdapter.authoredByNonMember(engCtx, memberOnly)) === false, "🔴 negative control: an armed tenant whose page holds only DECLARED authors does not mark (=== false)");
+  ok((await teamsReadAdapter.refutedAuthorIds(engCtx, memberOnly)).length === 0, "🔴 negative control: an armed tenant whose page holds only DECLARED authors does not mark (=== [])");
 
   ok(
-    (await teamsReadAdapter.authoredByNonMember(engCtx, page.filter((l) => l.bot === true))) === false,
-    "🔴 negative control: an APPLICATION author is not a person outside the org (=== false)",
+    (await teamsReadAdapter.refutedAuthorIds(engCtx, page.filter((l) => l.bot === true))).length === 0,
+    "🔴 negative control: an APPLICATION author is not a person outside the org (=== [])",
   );
   _resetAuthorTrustForTest();
 }

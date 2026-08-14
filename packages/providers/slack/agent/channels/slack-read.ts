@@ -4,7 +4,7 @@ import {
   getConfig,
   domainForChannel,
   resolvePartition,
-  readIngestsNonMember,
+  refutedReadAuthorIds,
   ChannelScopeError,
   type BindableContext,
   type ReadScopeAuditDeps,
@@ -120,9 +120,9 @@ export const slackReadAdapter = {
     const res = await call("conversations.replies", { channel, ts: threadTs, limit: limit ?? SLACK_THREAD_DEFAULT_LIMIT });
     return renderMessages(res.messages, { oldestFirst: true });
   },
-  async authoredByNonMember(ctx: BindableContext, lines: readonly RenderedLine[], probe: SlackMemberProbe = slackAuthorIsMember): Promise<boolean> {
+  async refutedAuthorIds(ctx: BindableContext, lines: readonly RenderedLine[], probe: SlackMemberProbe = slackAuthorIsMember): Promise<readonly string[]> {
     const { teamId, tenantKey } = slackReadTenant(ctx);
-    return await readIngestsNonMember(lines, tenantKey, {
+    return await refutedReadAuthorIds(lines, tenantKey, {
       surfaceRefuted: async (authorId) => {
         const member = await probe(authorId, teamId);
         return member === undefined ? undefined : !member;

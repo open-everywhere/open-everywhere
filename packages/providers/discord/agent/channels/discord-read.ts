@@ -1,7 +1,7 @@
 import {
   assertSurfaceAllowed,
   resolvePartition,
-  readIngestsNonMember,
+  refutedReadAuthorIds,
   type BindableContext,
   type RenderedLine,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -50,11 +50,11 @@ export const discordReadAdapter = {
     await assertSurfaceAllowed(ctx, "discord", threadTs);
     return discordLinesFromRaw(await req(threadTs, limit ?? DISCORD_THREAD_DEFAULT_LIMIT));
   },
-  async authoredByNonMember(ctx: BindableContext, lines: readonly RenderedLine[], roleProbe: DiscordRoleProbe = discordAuthorRoles): Promise<boolean> {
+  async refutedAuthorIds(ctx: BindableContext, lines: readonly RenderedLine[], roleProbe: DiscordRoleProbe = discordAuthorRoles): Promise<readonly string[]> {
     const p = resolvePartition(ctx);
     const tenantKey = p.workspaceKey;
     const guildId = p.workspace;
-    return await readIngestsNonMember(lines, tenantKey, {
+    return await refutedReadAuthorIds(lines, tenantKey, {
       memberships: async (authorId) => {
         const roles = await roleProbe(guildId, authorId);
         return roles === undefined ? undefined : roles.map((r) => `${tenantKey}/role:${r}`);

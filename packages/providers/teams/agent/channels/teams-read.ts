@@ -6,7 +6,7 @@ import {
   domainKeyOf,
   domainForChannel,
   getConfig,
-  readIngestsNonMember,
+  refutedReadAuthorIds,
   ChannelScopeError,
   warmCredential,
   type BindableContext,
@@ -232,7 +232,7 @@ export const teamsReadAdapter = {
     const raw = await fetchGraphPages(req, threadRepliesUrl(teamId, channel, threadTs), n);
     return teamsLinesFromRaw(raw).slice(-n);
   },
-  async authoredByNonMember(ctx: BindableContext, lines: readonly TeamsRenderedLine[]): Promise<boolean> {
-    return await readIngestsNonMember(lines, resolvePartition(ctx).workspaceKey);
+  async refutedAuthorIds(ctx: BindableContext, lines: readonly TeamsRenderedLine[]): Promise<readonly string[]> {
+    return await refutedReadAuthorIds(lines, resolvePartition(ctx).workspaceKey);
   },
 };

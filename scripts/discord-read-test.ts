@@ -273,12 +273,12 @@ const engCtx = discordCtx({ userId: "U-ALICE", guildId: GUILD, channelId: CHAN_E
     probes++;
     return guildId === GUILD && userId === "U-ALICE" ? ["R-ENG"] : [];
   };
-  ok((await discordReadAdapter.authoredByNonMember(engCtx, guestPage, roleProbe)) === false, "🔴 unarmed guild: a read marks NOTHING (=== false) — silence is never a declaration");
+  ok((await discordReadAdapter.refutedAuthorIds(engCtx, guestPage, roleProbe)).length === 0, "🔴 unarmed guild: a read marks NOTHING (=== []) — silence is never a declaration");
   ok(probes === 0, "🔴 unarmed guild: ZERO role lookups — the cost gate, measured rather than read off the code");
 
   registerAuthorTrust([defineAuthorTrust({ tenant: `discord/${GUILD}`, internal: [{ membership: `discord/${GUILD}/role:R-ENG` }] })]);
   probes = 0;
-  ok((await discordReadAdapter.authoredByNonMember(engCtx, guestPage, roleProbe)) === true, "🔴 armed guild: a page carrying an author with no declared role MARKS");
+  ok((await discordReadAdapter.refutedAuthorIds(engCtx, guestPage, roleProbe)).length > 0, "🔴 armed guild: a page carrying an author with no declared role MARKS");
   ok(probes === 2, "armed guild: one role lookup per DISTINCT human author (the bot is skipped) — the guild id came from the binding");
 
   const memberPage = discordLinesFromRaw([
@@ -286,19 +286,19 @@ const engCtx = discordCtx({ userId: "U-ALICE", guildId: GUILD, channelId: CHAN_E
     { type: 0, id: "100", content: "first", author: { id: "U-ALICE" } },
   ]);
   probes = 0;
-  ok((await discordReadAdapter.authoredByNonMember(engCtx, memberPage, roleProbe)) === false, "🔴 negative control: an armed guild's DECLARED member does not mark (=== false)");
+  ok((await discordReadAdapter.refutedAuthorIds(engCtx, memberPage, roleProbe)).length === 0, "🔴 negative control: an armed guild's DECLARED member does not mark (=== [])");
   ok(probes === 1, "…and a repeat author is probed once, not once per message");
 
   ok(
-    (await discordReadAdapter.authoredByNonMember(engCtx, guestPage, async () => undefined)) === false,
-    "🔴 negative control: a role probe answering `undefined` skips the register query — 'cannot check' is not 'checked and empty' (=== false)",
+    (await discordReadAdapter.refutedAuthorIds(engCtx, guestPage, async () => undefined)).length === 0,
+    "🔴 negative control: a role probe answering `undefined` skips the register query — 'cannot check' is not 'checked and empty' (=== [])",
   );
 
   ok(
-    (await discordReadAdapter.authoredByNonMember(engCtx, guestPage, async () => {
+    (await discordReadAdapter.refutedAuthorIds(engCtx, guestPage, async () => {
       throw new Error("role lookup exploded");
-    })) === false,
-    "negative control: a THROWING role probe fails OPEN (=== false)",
+    })).length === 0,
+    "negative control: a THROWING role probe fails OPEN (=== [])",
   );
   _resetAuthorTrustForTest();
 }
