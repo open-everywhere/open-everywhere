@@ -14,6 +14,14 @@ import {
   type NotionParentLink,
 } from "../agent/channels/notion-ancestry-trust.js";
 import { notionParentLink, toNotionParentLink } from "../agent/channels/notion-api.js";
+import {
+  defineSurface,
+  registerSurfaces,
+  registerSubtreePlatform,
+  applySubtreeSurfaceClaims,
+  _resetSurfacesForTest,
+  _resetSubtreePlatformsForTest,
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -349,6 +357,66 @@ function freshCache(): NotionAncestryCache {
 
   _resetNotionTrustRootsForTest();
   ok(notionTrustRoots().byWorkspace.size === 0, "the test reset really empties the register");
+}
+
+{
+  _resetNotionTrustRootsForTest();
+  _resetSurfacesForTest();
+  _resetSubtreePlatformsForTest();
+
+  registerSubtreePlatform("notion", registerNotionTrustRoots);
+
+  registerSurfaces([defineSurface({ key: `notion/${WS}/${ROOT}`, trust: "internal" })]);
+  applySubtreeSurfaceClaims();
+  ok(notionTrustRoots().byWorkspace.size === 0, "🔴 a plain `defineSurface` Notion entry is NOT a trust root (it vouches that ONE page)");
+  {
+    const t = treeParentOf(TREE);
+    const v = await resolveNotionAncestorTrust(MID, WS, notionTrustRoots(), { parentOf: t.parentOf, cache: freshCache() });
+    ok(v.trusted === false && v.reason === "no-roots", "…so a page under it resolves no-roots, with no walk at all");
+    ok(t.calls() === 0, "…and costs ZERO API calls");
+  }
+
+  registerSurfaces([defineSurface({ key: `notion/${WS}/${ROOT}`, trust: "internal", subtree: true })]);
+  applySubtreeSurfaceClaims();
+  ok(
+    notionTrustRoots().byWorkspace.get(WS)?.has(ROOT.replace(/-/g, "")) === true,
+    "a `subtree: true` entry IS a trust root, canonicalised into the register",
+  );
+  {
+    const t = treeParentOf(TREE);
+    const self = await resolveNotionAncestorTrust(ROOT, WS, notionTrustRoots(), { parentOf: t.parentOf, cache: freshCache() });
+    ok(self.trusted === true && self.reason === "self", "the declared page itself is trusted, with no I/O");
+    const child = await resolveNotionAncestorTrust(LEAF, WS, notionTrustRoots(), { parentOf: t.parentOf, cache: freshCache() });
+    ok(child.trusted === true && child.reason === "ancestor", "🔴 a page two levels under it is trusted through the walk — the OPE-492 behaviour, fed from the new source");
+    ok(child.matchedRoot === ROOT.replace(/-/g, ""), "…and the matched root rides out for the auth stamp");
+    const outside = await resolveNotionAncestorTrust(OUTSIDE, WS, notionTrustRoots(), { parentOf: t.parentOf, cache: freshCache() });
+    ok(outside.trusted === false, "NEGATIVE CONTROL: a page under nothing declared is still untrusted");
+  }
+
+  registerSurfaces([]);
+  ok(notionTrustRoots().byWorkspace.size === 0, "removing the entry removes the root (one declaration, one source)");
+
+  let refused = false;
+  registerSurfaces([defineSurface({ key: "slack/T0ACME/C0BOARD", trust: "internal", subtree: true })]);
+  try {
+    applySubtreeSurfaceClaims();
+  } catch (e) {
+    refused = e instanceof Error && e.message.includes("slack");
+  }
+  ok(refused, "🔴 `subtree: true` on a platform no bundle honours is a BOOT ERROR that NAMES the platform");
+
+  let vendorRefused = false;
+  try {
+    registerSurfaces([defineSurface({ key: `notion/${WS}/not-a-page-id`, trust: "internal", subtree: true })]);
+    applySubtreeSurfaceClaims();
+  } catch (e) {
+    vendorRefused = e instanceof NotionTrustConfigError;
+  }
+  ok(vendorRefused, "a subtree key whose last segment is not a PAGE ID throws NotionTrustConfigError at boot");
+
+  _resetSurfacesForTest();
+  _resetSubtreePlatformsForTest();
+  _resetNotionTrustRootsForTest();
 }
 
 {

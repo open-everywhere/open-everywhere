@@ -7,7 +7,9 @@ import {
   registerWebhookVerifier,
   registerEventNormalizer,
   registerEventScopeGrant,
+  registerSubtreePlatform,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { registerNotionTrustRoots } from "./channels/notion-ancestry-trust.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
 import { bindNotion } from "./channels/notion-identity.js";
 import { notionPostArm } from "./channels/notion-post-arm.js";
@@ -24,6 +26,7 @@ export function registerNotionProvider(): void {
   registerWebhookVerifier(notionWebhookVerifier);
   registerEventNormalizer(notionEventNormalizer);
   registerEventScopeGrant(notionEventScopeGrant);
+  registerSubtreePlatform("notion", registerNotionTrustRoots);
   registerNotionMemory();
   registerProviderDocs("notion", PROVIDER_DOCS);
 }

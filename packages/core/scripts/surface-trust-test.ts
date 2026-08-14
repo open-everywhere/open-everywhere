@@ -9,6 +9,10 @@ import {
   declaredWorkspaceTrust,
   isVouchedInternal,
   isVouchedSurface,
+  registerSubtreePlatform,
+  applySubtreeSurfaceClaims,
+  subtreeSurfaceKeys,
+  _resetSubtreePlatformsForTest,
   type Surface,
 } from "../agent/identity/trust.js";
 import { bindFrom, registerIdentityMapper, type BindableContext, type IdentityMapper } from "../agent/identity/binding.js";
@@ -398,6 +402,128 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
     "DM: an `internal` declaration still vouches a DM partner exactly as before (the DM leg is unchanged)",
   );
   _resetSurfacesForTest();
+}
+
+{
+  _resetSurfacesForTest();
+  _resetSubtreePlatformsForTest();
+
+  eq(
+    defineSurface({ key: "notion/W1/P1", trust: "internal", subtree: true }).subtree,
+    true,
+    "defineSurface: an exact internal surface key CARRIES the subtree claim",
+  );
+  eq(defineSurface({ key: "notion/W1/P1", trust: "internal", subtree: false }).subtree, undefined, "defineSurface: `subtree: false` is dropped — it is the same declaration as leaving it out");
+  eq(defineSurface({ key: "notion/W1/P1", trust: "internal" }).subtree, undefined, "defineSurface: an entry without the word carries no claim (the widening is opt-in on the line)");
+
+  throws(
+    () => defineSurface({ key: "notion/W1/P1", trust: "internal", subtree: "yes" as unknown as boolean }),
+    "defineSurface: a non-boolean subtree throws (never coerced)",
+  );
+  throws(
+    () => defineSurface({ key: "notion/W1", trust: "internal", subtree: true }),
+    "defineSurface: subtree on a TENANT key throws — a tenant already covers every surface under it",
+  );
+  throws(
+    () => defineSurface({ key: "notion/W1/P*", trust: "internal", subtree: true }),
+    "defineSurface: subtree on a GLOB throws — a glob names a set nobody enumerated",
+  );
+  throws(
+    () => defineSurface({ key: "teams/W1/team:T9", trust: "internal", subtree: true }),
+    "defineSurface: subtree on a GROUP rung throws",
+  );
+  throws(
+    () => defineSurface({ key: "notion/W1/P1", trust: "public", subtree: true }),
+    "🔴 defineSurface: subtree with `public` throws — only the PROMOTION has a resolver, so a public subtree would be a demotion nothing reads",
+  );
+}
+
+{
+  _resetSurfacesForTest();
+  _resetSubtreePlatformsForTest();
+  registerSurfaces([defineSurface({ key: "notion/W1/P_ROOT", trust: "internal", subtree: true })]);
+  eq(declaredTrustForKeys("notion/W1", "notion/W1/P_ROOT"), "internal", "the subtree entry still declares its OWN key internal");
+  eq(
+    declaredTrustForKeys("notion/W1", "notion/W1/P_CHILD"),
+    undefined,
+    "🔴 the PURE resolver is unchanged: it never widens a subtree entry — resolving a subtree costs an API call per level, and declaredSurfaceTrust is pure and synchronous",
+  );
+  eq(registeredSurfaces()[0]?.subtree, true, "the diagnostic read hands the claim back with the entry");
+}
+
+{
+  _resetSurfacesForTest();
+  _resetSubtreePlatformsForTest();
+  throws(
+    () =>
+      registerSurfaces([
+        defineSurface({ key: "notion/W1/P1", trust: "internal", subtree: true }),
+        defineSurface({ key: "notion/W1/P1", trust: "internal" }),
+      ]),
+    "registerSurfaces: one line says subtree and another does not — a reviewed config must not contradict itself",
+  );
+  registerSurfaces([
+    defineSurface({ key: "notion/W1/P1", trust: "internal", subtree: true }),
+    defineSurface({ key: "notion/W1/P1", trust: "internal", subtree: true }),
+  ]);
+  eq(registeredSurfaces().length, 1, "registerSurfaces: two IDENTICAL subtree lines are idempotent");
+}
+
+{
+  _resetSurfacesForTest();
+  _resetSubtreePlatformsForTest();
+  registerSurfaces([defineSurface({ key: "vendortest/W1/C1", trust: "internal", subtree: true })]);
+  eq(registeredSurfaces()[0]?.subtree, true, "before the boot check the claim is merely RECORDED (the refusal is deferred, not skipped)");
+  throws(
+    () => applySubtreeSurfaceClaims(),
+    "🔴 applySubtreeSurfaceClaims: a subtree claim on a platform NO bundle declared is a BOOT ERROR",
+  );
+
+  const handed: string[][] = [];
+  registerSubtreePlatform("vendortest", (keys) => handed.push([...keys]));
+  applySubtreeSurfaceClaims();
+  eq(handed.at(-1), ["vendortest/W1/C1"], "a declared platform RECEIVES its keys through the handler");
+  ok(handed.length >= 2, "the handler runs at registration AND at the boot check (both orders reach the same state)");
+}
+
+{
+  _resetSurfacesForTest();
+  _resetSubtreePlatformsForTest();
+  let last: readonly string[] = ["never handed"];
+  registerSubtreePlatform("vendortest", (keys) => {
+    last = keys;
+  });
+  eq(last, [], "registering a platform against an EMPTY register hands it the empty list (fail-closed)");
+  registerSurfaces([
+    defineSurface({ key: "vendortest/W1/C_SUB", trust: "internal", subtree: true }),
+    defineSurface({ key: "vendortest/W1/C_ONE", trust: "internal" }),
+    defineSurface({ key: "vendortest/W2/C_SUB2", trust: "internal", subtree: true }),
+    defineSurface({ key: "othervendor/W1/C_X", trust: "internal" }),
+  ]);
+  eq(
+    last,
+    ["vendortest/W1/C_SUB", "vendortest/W2/C_SUB2"],
+    "🔴 registerSurfaces re-hands the platform its keys — an entry WITHOUT `subtree` is NOT one of them (the OPE-492 one-surface semantics)",
+  );
+  eq(subtreeSurfaceKeys("othervendor"), [], "a platform with no subtree entry gets nothing");
+  eq(subtreeSurfaceKeys("vendortest").length, 2, "subtreeSurfaceKeys reads the same set the handler was handed");
+
+  _resetSurfacesForTest();
+  _resetSubtreePlatformsForTest();
+  registerSubtreePlatform("vendortest", (keys) => {
+    if (keys.length > 0) throw new Error("vendor refuses this key");
+  });
+  const badLine = [defineSurface({ key: "vendortest/W1/C_SUB", trust: "internal", subtree: true })];
+  throws(() => registerSurfaces(badLine), "a platform's OWN key validation throws out of registerSurfaces");
+  throws(() => applySubtreeSurfaceClaims(), "…and out of the boot check too");
+
+  _resetSubtreePlatformsForTest();
+  registerSubtreePlatform("vendortest", (keys) => {
+    last = keys;
+  });
+  _resetSurfacesForTest();
+  eq(last, [], "_resetSurfacesForTest re-hands the empty list (a dropped register does not leave stale roots behind)");
+  _resetSubtreePlatformsForTest();
 }
 
 console.log(`\n✓ surface-trust: ${n} assertions passed`);

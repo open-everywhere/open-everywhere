@@ -1,4 +1,5 @@
 import { getSettings } from "../settings/settings.js";
+import { admitProviderRegistration } from "../access/provider-selection.js";
 import {
   parseSurfaceKeyEntry,
   surfaceKeyEntriesIntersect,
@@ -12,12 +13,13 @@ export type SurfaceTrust = "internal" | "public";
 export interface Surface {
   readonly key: string;
   readonly trust: SurfaceTrust;
+  readonly subtree?: boolean;
 }
 
 const KNOWN_TRUST: ReadonlySet<string> = new Set<SurfaceTrust>(["internal", "public"]);
 
 export function defineSurface(input: Surface): Surface {
-  const { key, trust } = input;
+  const { key, trust, subtree } = input;
   const parsed = typeof key === "string" ? parseSurfaceKeyEntry(key) : undefined;
   if (!parsed) {
     throw new Error(
@@ -29,7 +31,23 @@ export function defineSurface(input: Surface): Surface {
       `defineSurface: unknown trust ${JSON.stringify(trust)} for surface "${key}" — known: ${[...KNOWN_TRUST].map((t) => JSON.stringify(t)).join(", ")}. "external" is NOT a value: it is the fail-closed default of an unlisted surface, and "public" is how an operator DECLARES a room external.`,
     );
   }
-  return { key, trust };
+  if (subtree !== undefined && typeof subtree !== "boolean") {
+    throw new Error(
+      `defineSurface: subtree must be a boolean for surface "${key}", not ${JSON.stringify(subtree)}. Write \`subtree: true\` to vouch the whole subtree, or leave it out to vouch that one surface.`,
+    );
+  }
+  if (subtree !== true) return { key, trust };
+  if (parsed.kind !== "surface" || parsed.glob) {
+    throw new Error(
+      `defineSurface: subtree: true needs ONE EXACT surface key, and "${key}" is not one (it is a ${parsed.kind === "tenant" ? "whole tenant" : parsed.kind === "group" ? "group rung" : "same-level glob"}). A tenant already covers every surface under it at any depth, and a glob names a set nobody enumerated — neither leaves a subtree to walk. Name the one surface the subtree hangs from.`,
+    );
+  }
+  if (trust !== "internal") {
+    throw new Error(
+      `defineSurface: subtree: true is only declarable with trust: "internal", not ${JSON.stringify(trust)} (surface "${key}"). The subtree form exists to PROMOTE a set of surfaces the key cannot name, and only the promotion has a resolver — a platform's subtree walk answers "is this under a declared root?". A "public" subtree would be a demotion nothing reads, so it is refused instead of accepted and ignored.`,
+    );
+  }
+  return { key, trust, subtree: true };
 }
 
 interface RegisteredSurface {
@@ -47,6 +65,11 @@ export function registerSurfaces(input: Iterable<Surface>): void {
     if (existing && existing.surface.trust !== raw.trust) {
       throw new Error(
         `registerSurfaces: conflicting trust for surface "${raw.key}" — ${JSON.stringify(existing.surface.trust)} vs ${JSON.stringify(raw.trust)}. A key may be listed once; a reviewed config must not contradict itself.`,
+      );
+    }
+    if (existing && existing.surface.subtree !== (raw.subtree === true ? true : undefined)) {
+      throw new Error(
+        `registerSurfaces: conflicting subtree claim for surface "${raw.key}" — one line declares \`subtree: true\` and another does not. A key may be listed once; a reviewed config must not contradict itself.`,
       );
     }
     const s = defineSurface(raw);
@@ -67,10 +90,41 @@ export function registerSurfaces(input: Iterable<Surface>): void {
     }
   }
   surfaces = next;
+  for (const [platform, handler] of subtreePlatforms) handler(subtreeSurfaceKeys(platform));
 }
 
 export function _resetSurfacesForTest(): void {
   surfaces = [];
+  for (const [platform, handler] of subtreePlatforms) handler(subtreeSurfaceKeys(platform));
+}
+
+export type SubtreeSurfaceHandler = (keys: readonly string[]) => void;
+
+const subtreePlatforms = new Map<string, SubtreeSurfaceHandler>();
+
+export function registerSubtreePlatform(platform: string, handler: SubtreeSurfaceHandler): void {
+  if (!admitProviderRegistration(platform, "subtree-surfaces")) return;
+  subtreePlatforms.set(platform, handler);
+  handler(subtreeSurfaceKeys(platform));
+}
+
+export function _resetSubtreePlatformsForTest(): void {
+  subtreePlatforms.clear();
+}
+
+export function subtreeSurfaceKeys(platform: string): readonly string[] {
+  return surfaces.filter((e) => e.surface.subtree === true && e.parsed.platform === platform).map((e) => e.surface.key);
+}
+
+export function applySubtreeSurfaceClaims(): void {
+  const unowned = surfaces.filter((e) => e.surface.subtree === true && !subtreePlatforms.has(e.parsed.platform));
+  if (unowned.length > 0) {
+    const platforms = [...new Set(unowned.map((e) => e.parsed.platform))].sort();
+    throw new Error(
+      `applySubtreeSurfaceClaims: subtree: true is declared on ${unowned.map((e) => JSON.stringify(e.surface.key)).join(", ")}, but ${platforms.map((p) => JSON.stringify(p)).join(", ")} does not honour it. A surface key on that platform already names a whole room, so there is no subtree to walk and the line would grant nothing. Either the entry means one surface — drop \`subtree\` — or the bundle that honours it is not selected by this deployment (roster.config.ts).`,
+    );
+  }
+  for (const [platform, handler] of subtreePlatforms) handler(subtreeSurfaceKeys(platform));
 }
 
 export interface SurfaceTrustQuery {

@@ -19,6 +19,7 @@ import {
   onVercel,
   declareProviderSelection,
   assertConnectorMemoryGrants,
+  applySubtreeSurfaceClaims,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { SELECTED_PROVIDERS, SELECTED_PROVIDER_IDS } from "./providers.generated.js";
 import { loadDomains, loadSilos } from "../memory/domains.js";
@@ -59,6 +60,8 @@ for (const provider of SELECTED_PROVIDERS) {
 }
 
 assertConnectorMemoryGrants(loadDomains(), loadSilos(), domainMemoryGrants);
+
+applySubtreeSurfaceClaims();
 
 if (
   (process.env.OE_MEMORY_PROVIDER === "postgres" || process.env.OE_OPERATIONAL_PROVIDER === "postgres") &&

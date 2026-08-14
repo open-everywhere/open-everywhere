@@ -234,4 +234,39 @@ await inSession(async () => {
   globalThis.fetch = realFetch;
 }
 
-console.log(`\n✓ notion-provider-integration: ${n} assertions passed (manifest row, reply gate, target, execute + audit, no-anchor throw, forge-signer round-trip, attended-mention spend gate)`);
+{
+  const { defineSurface, registerSurfaces, applySubtreeSurfaceClaims, _resetSurfacesForTest } = await import(
+    "@open-everywhere/core/agent/adapter-api.js"
+  );
+  const { notionTrustRoots } = await import("@open-everywhere/provider-notion/agent/channels/notion-ancestry-trust.js");
+  const WS = "wsub-1";
+  const PAGE = "11111111-1111-4111-8111-111111111111";
+
+  _resetSurfacesForTest();
+  ok(notionTrustRoots().byWorkspace.size === 0, "subtree: nothing declared ⇒ NO trust root (fail-closed)");
+
+  registerSurfaces([defineSurface({ key: `notion/${WS}/${PAGE}`, trust: "internal" })]);
+  applySubtreeSurfaceClaims();
+  ok(notionTrustRoots().byWorkspace.size === 0, "🔴 subtree: a plain Notion entry vouches ONE page and is not a root");
+
+  registerSurfaces([defineSurface({ key: `notion/${WS}/${PAGE}`, trust: "internal", subtree: true })]);
+  applySubtreeSurfaceClaims();
+  ok(
+    notionTrustRoots().byWorkspace.get(WS)?.has(PAGE.replace(/-/g, "")) === true,
+    "🔴 subtree: registerNotionProvider() declared the capability, so a `subtree: true` line reaches the bundle's register",
+  );
+
+  registerSurfaces([defineSurface({ key: "slack/T0ACME/C0BOARD", trust: "internal", subtree: true })]);
+  let refused = false;
+  try {
+    applySubtreeSurfaceClaims();
+  } catch (e) {
+    refused = e instanceof Error && e.message.includes("slack");
+  }
+  ok(refused, "🔴 subtree: a claim on a REGISTERED-but-not-subtree-capable platform is a BOOT ERROR naming it");
+
+  _resetSurfacesForTest();
+  ok(notionTrustRoots().byWorkspace.size === 0, "subtree: dropping the register drops the root with it");
+}
+
+console.log(`\n✓ notion-provider-integration: ${n} assertions passed (manifest row, reply gate, target, execute + audit, no-anchor throw, forge-signer round-trip, attended-mention spend gate, subtree-trust composition)`);
