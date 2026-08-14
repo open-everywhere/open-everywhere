@@ -87,20 +87,22 @@ console.log("5. the self: namespace is refused by the outbound resolver:");
   ok(minted.length > 0, "…even though the value genuinely exists (the refusal is about the NAMESPACE, not a missing row)");
 }
 
-console.log("6. memoisation:");
+console.log("6. memoisation (a vault READ, not a fresh mint, is what gets memoised — OPE-480):");
 {
   resetSelfSecretCache();
   const first = await getOrMintSelfSecret("OE_TEST_MINT_CACHE");
   eq(await vault.read("self:OE_TEST_MINT_CACHE"), first, "precondition: the mint landed in the vault");
+  const primed = await getOrMintSelfSecret("OE_TEST_MINT_CACHE");
+  eq(primed, first, "the priming call converges on the same value the mint just wrote (a READ, now memoised)");
 
   await vault.write("self:OE_TEST_MINT_CACHE", "mutated-behind-the-cache");
 
-  const second = await getOrMintSelfSecret("OE_TEST_MINT_CACHE");
-  eq(second, first, "memoised: a second call returns the CACHED value, not the value now stored in the vault");
+  const third = await getOrMintSelfSecret("OE_TEST_MINT_CACHE");
+  eq(third, first, "memoised: a call after a READ has been cached returns the CACHED value, not the value now stored in the vault");
 
   resetSelfSecretCache();
-  const third = await getOrMintSelfSecret("OE_TEST_MINT_CACHE");
-  eq(third, "mutated-behind-the-cache", "resetSelfSecretCache() clears the cache: the next call reads the vault fresh");
+  const fourth = await getOrMintSelfSecret("OE_TEST_MINT_CACHE");
+  eq(fourth, "mutated-behind-the-cache", "resetSelfSecretCache() clears the cache: the next call reads the vault fresh");
 
   const counting = { calls: 0, inner: vault };
   const countingVault = {
@@ -116,4 +118,23 @@ console.log("6. memoisation:");
   ok(counting.calls > 0, "…and genuinely called the injected vault's read (not a coincidental cache hit)");
 }
 
-console.log(`✓ self-secrets: ${n} assertions passed (resolution order, mint durability + convergence, fail-closed, reserved namespace, memoisation)`);
+console.log("7. mint race self-heals (OPE-480):");
+{
+  resetSelfSecretCache();
+  eq(await vault.read("self:OE_TEST_RACE"), null, "precondition: nothing stored yet under this ref");
+
+  const ownMint = await getOrMintSelfSecret("OE_TEST_RACE");
+  eq(await vault.read("self:OE_TEST_RACE"), ownMint, "the mint landed in the vault as this process's own value");
+
+  await vault.write("self:OE_TEST_RACE", "racer-won-the-last-write");
+
+  const healed = await getOrMintSelfSecret("OE_TEST_RACE");
+  eq(healed, "racer-won-the-last-write", "mint race self-heals: the call after a fresh mint re-reads the vault and converges on the winner, not the stale local mint");
+  ok(healed !== ownMint, "…concretely: the healed value differs from this process's own (now-superseded) mint");
+
+  await vault.write("self:OE_TEST_RACE", "should-not-be-observed-yet");
+  const stillHealed = await getOrMintSelfSecret("OE_TEST_RACE");
+  eq(stillHealed, "racer-won-the-last-write", "the converged value is memoised normally — a READ result IS cached, only a fresh MINT is not");
+}
+
+console.log(`✓ self-secrets: ${n} assertions passed (resolution order, mint durability + convergence, fail-closed, reserved namespace, memoisation, mint-race self-heal)`);

@@ -42,20 +42,34 @@ export async function getOrMintSelfSecret(name: string, deps: SelfSecretDeps = {
   if (!deps.vault) {
     const cached = resolvedCache.get(name);
     if (cached) return cached;
-    const promise = resolveOrMint(name, encryptedKvVault(), deps.env ?? process.env);
+    const resolution = resolveOrMint(name, encryptedKvVault(), deps.env ?? process.env);
+    const promise = resolution.then((result) => result.value);
     resolvedCache.set(name, promise);
-    promise.catch(() => resolvedCache.delete(name));
+    resolution.then(
+      (result) => {
+        if (result.mintedFresh && resolvedCache.get(name) === promise) resolvedCache.delete(name);
+      },
+      () => {
+        if (resolvedCache.get(name) === promise) resolvedCache.delete(name);
+      },
+    );
     return promise;
   }
-  return resolveOrMint(name, deps.vault, deps.env ?? process.env);
+  const result = await resolveOrMint(name, deps.vault, deps.env ?? process.env);
+  return result.value;
 }
 
-async function resolveOrMint(name: string, vault: EncryptedKvVault, env: NodeJS.ProcessEnv): Promise<string> {
+interface ResolvedSelfSecret {
+  readonly value: string;
+  readonly mintedFresh: boolean;
+}
+
+async function resolveOrMint(name: string, vault: EncryptedKvVault, env: NodeJS.ProcessEnv): Promise<ResolvedSelfSecret> {
   const ref = `${SELF_SECRET_REF_NAMESPACE}${name}`;
 
   return vault.withLock(ref, async () => {
     const stored = await vault.read(ref);
-    if (stored !== null) return stored;
+    if (stored !== null) return { value: stored, mintedFresh: false };
 
     const fromEnv = (env[name] ?? "").trim();
     if (fromEnv.length > 0) {
@@ -64,12 +78,12 @@ async function resolveOrMint(name: string, vault: EncryptedKvVault, env: NodeJS.
         `[open-everywhere:credentials] self-shared secret "${name}" resolved from the environment — the encrypted vault is its ` +
           `default home. It will keep reading from the env var until you remove it (nothing here promotes it automatically).`,
       );
-      return fromEnv;
+      return { value: fromEnv, mintedFresh: false };
     }
 
     const minted = randomBytes(32).toString("base64url");
     await vault.write(ref, minted, { createdBy: "host:auto-mint" });
     const confirmed = await vault.read(ref);
-    return confirmed ?? minted;
+    return { value: confirmed ?? minted, mintedFresh: true };
   });
 }
