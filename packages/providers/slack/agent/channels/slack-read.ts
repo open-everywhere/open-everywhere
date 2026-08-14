@@ -4,11 +4,13 @@ import {
   getConfig,
   domainForChannel,
   resolvePartition,
+  readIngestsNonMember,
   ChannelScopeError,
   type BindableContext,
   type ReadScopeAuditDeps,
   type RenderedLine,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { slackAuthorIsMember, type SlackMemberProbe } from "./slack-events.js";
 
 export { ChannelScopeError };
 
@@ -72,6 +74,8 @@ export interface RenderedMessage {
   readonly author: string;
   readonly ts: string;
   readonly text: string;
+  readonly authorId?: string;
+  readonly bot?: boolean;
 }
 
 export function renderMessages(raw: unknown, opts: { oldestFirst?: boolean } = {}): RenderedMessage[] {
@@ -81,7 +85,14 @@ export function renderMessages(raw: unknown, opts: { oldestFirst?: boolean } = {
     if (typeof m.subtype === "string" && m.subtype.length > 0) continue;
     const text = typeof m.text === "string" ? m.text : "";
     if (!text) continue;
-    out.push({ author: (m.user as string) ?? (m.bot_id as string) ?? "(unknown)", ts: (m.ts as string) ?? "", text });
+    const user = typeof m.user === "string" && m.user.length > 0 ? m.user : undefined;
+    const botId = typeof m.bot_id === "string" && m.bot_id.length > 0 ? m.bot_id : undefined;
+    out.push({
+      author: (m.user as string) ?? (m.bot_id as string) ?? "(unknown)",
+      ts: (m.ts as string) ?? "",
+      text,
+      ...(botId !== undefined ? { bot: true } : user !== undefined ? { authorId: user } : {}),
+    });
   }
   if (opts.oldestFirst === false) out.reverse();
   return out;
@@ -91,6 +102,11 @@ const SLACK_CHANNEL_DEFAULT_LIMIT = 50;
 const SLACK_THREAD_DEFAULT_LIMIT = 100;
 
 export type SlackReadCall = typeof callSlackRead;
+
+function slackReadTenant(ctx: BindableContext): { teamId: string; tenantKey: string } {
+  const p = resolvePartition(ctx);
+  return { teamId: p.workspace, tenantKey: p.workspaceKey };
+}
 
 export const slackReadAdapter = {
   platform: "slack" as const,
@@ -103,5 +119,14 @@ export const slackReadAdapter = {
     await assertChannelAllowed(ctx, channel);
     const res = await call("conversations.replies", { channel, ts: threadTs, limit: limit ?? SLACK_THREAD_DEFAULT_LIMIT });
     return renderMessages(res.messages, { oldestFirst: true });
+  },
+  async authoredByNonMember(ctx: BindableContext, lines: readonly RenderedLine[], probe: SlackMemberProbe = slackAuthorIsMember): Promise<boolean> {
+    const { teamId, tenantKey } = slackReadTenant(ctx);
+    return await readIngestsNonMember(lines, tenantKey, {
+      surfaceRefuted: async (authorId) => {
+        const member = await probe(authorId, teamId);
+        return member === undefined ? undefined : !member;
+      },
+    });
   },
 };

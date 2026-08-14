@@ -45,6 +45,13 @@ const tier = (src: IngestionSource) => classifyIngestion(src).tier;
 console.log("1. the tier table, row by row:");
 
 eq(tier({ kind: "chat-message" }), "trusted", "chat: a member-authored chat body never integrity-taints (external surfaces are classified by SURFACE trust one layer up, not here)");
+eq(tier({ kind: "chat-message", authoredByNonMember: true }), "untrusted", "chat: a POSITIVELY-REFUTED non-member's message taints — a person outside the org authored bytes this turn read");
+eq(tier({ kind: "chat-message", authoredByNonMember: false }), "trusted", "chat: …and an explicitly UNREFUTED page does not");
+eq(
+  classifyIngestion({ kind: "chat-message" }).assumed,
+  false,
+  "🔴 chat: an ABSENT refutation is NOT the fail-closed `unknownInstance` arm every other row takes — it is the absence of a POSITIVE refutation, which fails OPEN by ruling (no always-mark)",
+);
 
 for (const kind of ["notion", "linear"] as const) {
   eq(tier({ kind, workspaceTrust: "internal" }), "trusted", `${kind}: an INTERNAL bound workspace is org property — same trust basis as a private channel`);
@@ -265,6 +272,8 @@ registerTaintVerdictSink((r) => rows.push(r));
     { kind: "linear", workspaceTrust: "public" },
     { kind: "connector", grantContentOrigin: "internal" },
     { kind: "connector", grantContentOrigin: "external" },
+    { kind: "chat-message", authoredByNonMember: true },
+    { kind: "chat-message", authoredByNonMember: false },
   ];
   const tightened = shapes.filter((s) => decideIngestion(s, false));
   eq(tightened, [], "🔴 NO SHAPE TIGHTENS: decideIngestion(src, false) is false for every kind and every metadata branch — enforcement can only ever REMOVE a mark the site would have set");

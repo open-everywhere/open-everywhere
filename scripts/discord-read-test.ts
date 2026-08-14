@@ -17,6 +17,7 @@ import { buildDiscordAuth, type DiscordIdentityInput } from "@open-everywhere/pr
 import type { BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
 import { defineDomain } from "@open-everywhere/core/agent/memory/domain.js";
+import { defineAuthorTrust, registerAuthorTrust, _resetAuthorTrustForTest } from "@open-everywhere/core/agent/identity/author-trust.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -253,6 +254,53 @@ const engCtx = discordCtx({ userId: "U-ALICE", guildId: GUILD, channelId: CHAN_E
 
   globalThis.fetch = originalFetch;
   if (savedToken !== undefined) process.env.DISCORD_BOT_TOKEN = savedToken;
+}
+
+{
+  const guestPage = discordLinesFromRaw([
+    { type: 0, id: "300", content: "hello", author: { id: "U-STRANGER" } },
+    { type: 0, id: "200", content: "beep", author: { id: "B-BOT", bot: true } },
+    { type: 0, id: "100", content: "morning", author: { id: "U-ALICE" } },
+  ]);
+  ok(
+    JSON.stringify(guestPage.map((l) => [l.authorId, l.bot === true])) === JSON.stringify([["U-ALICE", false], [undefined, true], ["U-STRANGER", false]]),
+    "grading fields: a `user` line carries its authorId; a `bot` line is marked a machine and carries none",
+  );
+
+  _resetAuthorTrustForTest();
+  let probes = 0;
+  const roleProbe = async (guildId: string, userId: string) => {
+    probes++;
+    return guildId === GUILD && userId === "U-ALICE" ? ["R-ENG"] : [];
+  };
+  ok((await discordReadAdapter.authoredByNonMember(engCtx, guestPage, roleProbe)) === false, "🔴 unarmed guild: a read marks NOTHING (=== false) — silence is never a declaration");
+  ok(probes === 0, "🔴 unarmed guild: ZERO role lookups — the cost gate, measured rather than read off the code");
+
+  registerAuthorTrust([defineAuthorTrust({ tenant: `discord/${GUILD}`, internal: [{ membership: `discord/${GUILD}/role:R-ENG` }] })]);
+  probes = 0;
+  ok((await discordReadAdapter.authoredByNonMember(engCtx, guestPage, roleProbe)) === true, "🔴 armed guild: a page carrying an author with no declared role MARKS");
+  ok(probes === 2, "armed guild: one role lookup per DISTINCT human author (the bot is skipped) — the guild id came from the binding");
+
+  const memberPage = discordLinesFromRaw([
+    { type: 0, id: "200", content: "second", author: { id: "U-ALICE" } },
+    { type: 0, id: "100", content: "first", author: { id: "U-ALICE" } },
+  ]);
+  probes = 0;
+  ok((await discordReadAdapter.authoredByNonMember(engCtx, memberPage, roleProbe)) === false, "🔴 negative control: an armed guild's DECLARED member does not mark (=== false)");
+  ok(probes === 1, "…and a repeat author is probed once, not once per message");
+
+  ok(
+    (await discordReadAdapter.authoredByNonMember(engCtx, guestPage, async () => undefined)) === false,
+    "🔴 negative control: a role probe answering `undefined` skips the register query — 'cannot check' is not 'checked and empty' (=== false)",
+  );
+
+  ok(
+    (await discordReadAdapter.authoredByNonMember(engCtx, guestPage, async () => {
+      throw new Error("role lookup exploded");
+    })) === false,
+    "negative control: a THROWING role probe fails OPEN (=== false)",
+  );
+  _resetAuthorTrustForTest();
 }
 
 console.log(`✓ ${n} discord-read assertions passed`);

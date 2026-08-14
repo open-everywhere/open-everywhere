@@ -132,9 +132,9 @@ registerReadAdapter(fakeSlackAdapter);
   ];
   const lines = discordLinesFromRaw(raw);
   ok(JSON.stringify(lines) === JSON.stringify([
-    { author: "A1", ts: "100", text: "first" },
-    { author: "B1", ts: "150", text: "from-a-bot" },
-    { author: "A3", ts: "300", text: "third" },
+    { author: "A1", ts: "100", text: "first", authorId: "A1" },
+    { author: "B1", ts: "150", text: "from-a-bot", bot: true },
+    { author: "A3", ts: "300", text: "third", authorId: "A3" },
   ]), "discord: normalized oldest-first, system/empty dropped, bot labelled by id");
   ok(discordLinesFromRaw("not-an-array").length === 0, "discord: a non-array response yields no lines (fail-soft parse)");
 

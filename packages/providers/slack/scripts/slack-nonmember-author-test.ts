@@ -1,13 +1,22 @@
 import assert from "node:assert/strict";
 
-import { chatWakeIngestsNonMember, type WakeMessageInput } from "@open-everywhere/core/agent/adapter-api.js";
-import { partnerFactsFromInfo } from "../agent/channels/slack-identity.js";
+import {
+  chatWakeIngestsNonMember,
+  defineAuthorTrust,
+  registerAuthorTrust,
+  _resetAuthorTrustForTest,
+  type BindableContext,
+  type WakeMessageInput,
+} from "@open-everywhere/core/agent/adapter-api.js";
+import { buildSlackAuth, partnerFactsFromInfo } from "../agent/channels/slack-identity.js";
 import {
   slackAuthorIsMember,
   slackWakeAuthorFacts,
   regradeSlackBackscrollTrust,
   type SlackMemberProbe,
 } from "../agent/channels/slack-events.js";
+import { renderMessages, slackReadAdapter } from "../agent/channels/slack-read.js";
+import { registerSlackProvider } from "../agent/register.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -144,5 +153,70 @@ ok(
   chatWakeIngestsNonMember([{ trust: "unauth" }], {}) === false,
   "🔴 AND BARE `unauth` DOES NOT: a sibling that reached `unauth` some OTHER way (no author id, an unconfirmed room) still renders reference-only, but it no longer marks the turn — that third case is the default state of an unconfigured deployment",
 );
+
+console.log("6. the read leg:");
+
+registerSlackProvider();
+
+function slackCtx(teamId: string): BindableContext {
+  const auth = buildSlackAuth({ userId: "U_MEMBER", channelId: "C1", teamId });
+  return { channel: { kind: "slack" }, session: { auth: { current: auth } } } as unknown as BindableContext;
+}
+const readCtx = slackCtx("T1");
+
+const guestPage = renderMessages(
+  [
+    { user: "U_MEMBER", ts: "3", text: "morning" },
+    { bot_id: "B1", ts: "2", text: "build green" },
+    { user: "U_GUEST", ts: "1", text: "hello from outside" },
+  ],
+  { oldestFirst: true },
+);
+const memberPage = renderMessages([{ user: "U_MEMBER", ts: "1", text: "morning" }], { oldestFirst: true });
+
+ok(
+  JSON.stringify(guestPage.map((l) => [l.author, l.authorId, l.bot === true])) ===
+    JSON.stringify([["U_MEMBER", "U_MEMBER", false], ["B1", undefined, true], ["U_GUEST", "U_GUEST", false]]),
+  "🔴 renderMessages carries the author id BESIDE the unchanged display string, and marks a `bot_id` line a machine",
+);
+
+_resetAuthorTrustForTest();
+ok(
+  (await slackReadAdapter.authoredByNonMember(readCtx, guestPage, PROBE)) === true,
+  "🔴 THE READ LEG: a page carrying a GUEST's message marks the turn — the same probe, the same verdict, at the read seam",
+);
+ok(
+  (await slackReadAdapter.authoredByNonMember(readCtx, memberPage, PROBE)) === false,
+  "🔴 negative control: a member-only page does NOT mark (=== false) — no always-mark on a read-heavy turn",
+);
+ok(
+  (await slackReadAdapter.authoredByNonMember(readCtx, renderMessages([{ bot_id: "B1", ts: "1", text: "beep" }], { oldestFirst: true }), PROBE)) === false,
+  "🔴 negative control: a BOT-authored page does not mark (=== false) — a machine is below a member but is not a person outside the org",
+);
+ok(
+  (await slackReadAdapter.authoredByNonMember(readCtx, guestPage, fakeProbe({}))) === false,
+  "🔴 negative control: an UNRESOLVABLE probe (no `users:read`) marks nothing (=== false) — the same OPEN fail direction as the wake leg, for the same reason",
+);
+
+{
+  const seen: Array<string | undefined> = [];
+  const recording: SlackMemberProbe = async (userId, teamId) => {
+    seen.push(teamId);
+    return PROBE(userId, teamId);
+  };
+  await slackReadAdapter.authoredByNonMember(slackCtx("T-OTHER"), guestPage, recording);
+  ok(seen.length === 2 && seen.every((t) => t === "T-OTHER"), "the probe is keyed by the BOUND team id, once per distinct human author (the bot is skipped)");
+}
+
+registerAuthorTrust([defineAuthorTrust({ tenant: "slack/T1", internal: ["slack/T1/U_MEMBER"] })]);
+ok(
+  (await slackReadAdapter.authoredByNonMember(readCtx, guestPage, fakeProbe({}))) === true,
+  "🔴 armed register: an author the surface probe could not resolve is still refuted by the OPERATOR's declaration — the two sources are additive",
+);
+ok(
+  (await slackReadAdapter.authoredByNonMember(readCtx, memberPage, fakeProbe({}))) === false,
+  "negative control: …and a DECLARED author is not (=== false)",
+);
+_resetAuthorTrustForTest();
 
 console.log(`\n✅ slack non-member author: ${passed} assertions passed`);

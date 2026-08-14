@@ -8,6 +8,7 @@ import type { Domain } from "../memory/domain.js";
 import { domainForChannel } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
+import type { IngestionSource } from "../access/taint-tiers.js";
 
 import { ChannelScopeError } from "./read-scope-error.js";
 import { auditChannelReadRefusal, type ReadScopeAuditDeps } from "./read-scope-audit.js";
@@ -18,6 +19,8 @@ export interface RenderedLine {
   readonly author: string;
   readonly ts: string;
   readonly text: string;
+  readonly authorId?: string;
+  readonly bot?: boolean;
 }
 
 export interface ChannelReadResult {
@@ -25,6 +28,7 @@ export interface ChannelReadResult {
   readonly channel: string;
   readonly count: number;
   readonly messages: readonly RenderedLine[];
+  readonly authoredByNonMember?: boolean;
 }
 
 export interface ThreadReadResult {
@@ -33,12 +37,23 @@ export interface ThreadReadResult {
   readonly thread_ts: string;
   readonly count: number;
   readonly messages: readonly RenderedLine[];
+  readonly authoredByNonMember?: boolean;
 }
 
 export interface ReadAdapter {
   readonly platform: string;
   readChannel(ctx: BindableContext, channel: string, limit?: number): Promise<readonly RenderedLine[]>;
   readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number): Promise<readonly RenderedLine[]>;
+  authoredByNonMember?(ctx: BindableContext, lines: readonly RenderedLine[]): Promise<boolean>;
+}
+
+async function adapterAuthoredByNonMember(adapter: ReadAdapter, ctx: BindableContext, lines: readonly RenderedLine[]): Promise<boolean> {
+  if (adapter.authoredByNonMember === undefined) return false;
+  try {
+    return await adapter.authoredByNonMember(ctx, lines);
+  } catch {
+    return false;
+  }
 }
 
 function surfaceIdFromKey(key: string, platform: string): string | null {
@@ -117,6 +132,64 @@ export function resolveReadAdapter(
     throw new Error(`read: reading a ${platform} channel is not supported yet (supported: ${supportedReadPlatforms().join(", ")}).`);
   }
   return { platform, adapter };
+}
+
+export interface ReadOutputLine {
+  author: string;
+  ts: string;
+  text: string;
+}
+
+export interface ChannelReadOutput {
+  platform: string;
+  channel: string;
+  count: number;
+  messages: ReadOutputLine[];
+  authoredByNonMember?: boolean;
+}
+
+export interface ThreadReadOutput extends ChannelReadOutput {
+  thread_ts: string;
+}
+
+async function gradeAndProject(
+  ctx: BindableContext,
+  adapter: ReadAdapter,
+  lines: readonly RenderedLine[],
+): Promise<{ count: number; messages: ReadOutputLine[]; authoredByNonMember?: boolean }> {
+  const nonMember = await adapterAuthoredByNonMember(adapter, ctx, lines);
+  return {
+    count: lines.length,
+    messages: lines.map((m) => ({ author: m.author, ts: m.ts, text: m.text })),
+    ...(nonMember ? { authoredByNonMember: true } : {}),
+  };
+}
+
+export async function readChannelResult(
+  ctx: BindableContext,
+  platform: string,
+  adapter: ReadAdapter,
+  channel: string,
+  limit?: number,
+): Promise<ChannelReadOutput> {
+  const lines = await adapter.readChannel(ctx, channel, limit);
+  return { platform, channel, ...(await gradeAndProject(ctx, adapter, lines)) };
+}
+
+export async function readThreadResult(
+  ctx: BindableContext,
+  platform: string,
+  adapter: ReadAdapter,
+  channel: string,
+  threadTs: string,
+  limit?: number,
+): Promise<ThreadReadOutput> {
+  const lines = await adapter.readThread(ctx, channel, threadTs, limit);
+  return { platform, channel, thread_ts: threadTs, ...(await gradeAndProject(ctx, adapter, lines)) };
+}
+
+export function chatReadIngestion(label: string, out: { readonly authoredByNonMember?: boolean }): IngestionSource {
+  return { kind: "chat-message", label, ...(out.authoredByNonMember === true ? { authoredByNonMember: true } : {}) };
 }
 
 export function renderChannelBody(out: ChannelReadResult): string {

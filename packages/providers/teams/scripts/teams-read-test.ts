@@ -29,6 +29,9 @@ import {
   defineDomain,
   readAudit,
   deploymentOrg,
+  defineAuthorTrust,
+  registerAuthorTrust,
+  _resetAuthorTrustForTest,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { buildTeamsAuth, type TeamsIdentityInput } from "../agent/channels/teams-identity.js";
@@ -60,10 +63,11 @@ const ok = (cond: boolean, label: string) => {
   ];
   const lines = teamsLinesFromRaw(raw);
   ok(JSON.stringify(lines) === JSON.stringify([
-    { author: "Robin", ts: "1", text: "first Jane" },
-    { author: "OtherBot", ts: "2", text: "second" },
-    { author: "Robin", ts: "3", text: "third" },
+    { author: "Robin", ts: "1", text: "first Jane", authorId: "U1" },
+    { author: "OtherBot", ts: "2", text: "second", bot: true },
+    { author: "Robin", ts: "3", text: "third", authorId: "U1" },
   ]), "teamsLinesFromRaw: deleted/system/empty dropped, HTML stripped, sorted oldest-first by createdDateTime (input order ignored)");
+  ok(lines.every((l) => !("createdMs" in l)), "teamsLinesFromRaw: the internal sort key does not leak into the rendered line");
   ok(teamsLinesFromRaw("not-an-array").length === 0, "teamsLinesFromRaw: a non-array response yields no lines (fail-soft parse)");
   ok(teamsLinesFromRaw([]).length === 0, "teamsLinesFromRaw: empty array yields no lines");
 }
@@ -386,6 +390,49 @@ const engCtx = teamsCtx({
   );
   const noTenant = (await teamsBoundaryProbe({ MICROSOFT_APP_ID: "id", MICROSOFT_APP_PASSWORD: "pw" }))[0]!;
   ok(noTenant.status === "info" && noTenant.detail.includes("tenant-scoped"), "…explaining that Graph's client-credential token is tenant-scoped");
+}
+
+{
+  const page = teamsLinesFromRaw([
+    {
+      id: "1",
+      createdDateTime: "2026-08-14T10:00:00Z",
+      from: { user: { id: "29:aad-alice", displayName: "Alice" } },
+      body: { contentType: "html", content: "<p>morning</p>" },
+    },
+    {
+      id: "2",
+      createdDateTime: "2026-08-14T10:01:00Z",
+      from: { user: { id: "29:aad-guest", displayName: "Guest" } },
+      body: { contentType: "html", content: "<p>hello</p>" },
+    },
+    {
+      id: "3",
+      createdDateTime: "2026-08-14T10:02:00Z",
+      from: { application: { id: "app-1", displayName: "Pipeline" } },
+      body: { contentType: "html", content: "<p>build green</p>" },
+    },
+  ]);
+  ok(
+    JSON.stringify(page.map((l) => [l.author, l.authorId, l.bot === true])) ===
+      JSON.stringify([["Alice", "29:aad-alice", false], ["Guest", "29:aad-guest", false], ["Pipeline", undefined, true]]),
+    "grading fields: `author` stays the DISPLAY NAME the model reads, while `authorId` carries the Entra id the probe needs; an application author is marked a machine",
+  );
+
+  _resetAuthorTrustForTest();
+  ok((await teamsReadAdapter.authoredByNonMember(engCtx, page)) === false, "🔴 unarmed tenant: a Teams read marks NOTHING (=== false) — the stated limit of the register-only leg");
+
+  registerAuthorTrust([defineAuthorTrust({ tenant: "teams/TENANT1", internal: ["teams/29:aad-alice"] })]);
+  ok((await teamsReadAdapter.authoredByNonMember(engCtx, page)) === true, "🔴 armed tenant: the UNLISTED author is refuted and the read MARKS");
+
+  const memberOnly = page.filter((l) => l.authorId !== "29:aad-guest");
+  ok((await teamsReadAdapter.authoredByNonMember(engCtx, memberOnly)) === false, "🔴 negative control: an armed tenant whose page holds only DECLARED authors does not mark (=== false)");
+
+  ok(
+    (await teamsReadAdapter.authoredByNonMember(engCtx, page.filter((l) => l.bot === true))) === false,
+    "🔴 negative control: an APPLICATION author is not a person outside the org (=== false)",
+  );
+  _resetAuthorTrustForTest();
 }
 
 console.log(`✓ ${n} teams-read assertions passed`);

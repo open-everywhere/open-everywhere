@@ -5,7 +5,7 @@ import { type BindableContext } from "../identity/binding.js";
 import { resolveWindowSources } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
-import { resolveReadAdapter, renderChannelBody, channelReadSource, supportedReadPlatforms } from "../channels/channel-read.js";
+import { resolveReadAdapter, readChannelResult, chatReadIngestion, renderChannelBody, channelReadSource, supportedReadPlatforms } from "../channels/channel-read.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import type { Domain } from "../memory/domain.js";
 
@@ -49,17 +49,17 @@ const readChannelEntry = defineTool({
     channel: z.string(),
     count: z.number(),
     messages: z.array(z.object({ author: z.string(), ts: z.string(), text: z.string() })),
+    authoredByNonMember: z.boolean().optional(),
   }),
   async execute(input, ctx) {
     const bctx = ctx as unknown as BindableContext;
     const { platform, adapter } = resolveReadAdapter(bctx, input.target.platform, safeDomains());
-    const messages = await adapter.readChannel(bctx, input.target.channel, input.limit);
-    return { platform, channel: input.target.channel, count: messages.length, messages: messages.map((m) => ({ author: m.author, ts: m.ts, text: m.text })) };
+    return await readChannelResult(bctx, platform, adapter, input.target.channel, input.limit);
   },
   toModelOutput(output) {
     return ingestUntrustedModelOutput(renderChannelBody(output), {
       source: channelReadSource(output),
-      ingestion: { kind: "chat-message", label: `read_channel:${output.platform}` },
+      ingestion: chatReadIngestion(`read_channel:${output.platform}`, output),
     });
   },
 });

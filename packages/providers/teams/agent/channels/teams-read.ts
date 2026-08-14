@@ -6,6 +6,7 @@ import {
   domainKeyOf,
   domainForChannel,
   getConfig,
+  readIngestsNonMember,
   ChannelScopeError,
   warmCredential,
   type BindableContext,
@@ -91,6 +92,8 @@ export interface TeamsRenderedLine {
   readonly author: string;
   readonly ts: string;
   readonly text: string;
+  readonly authorId?: string;
+  readonly bot?: boolean;
 }
 
 export function stripHtml(html: string): string {
@@ -123,14 +126,22 @@ function toIntermediate(m: GraphChatMessage): Intermediate | undefined {
   const text = stripHtml(m.body?.content ?? "");
   if (!text) return undefined;
   const parsed = m.createdDateTime ? Date.parse(m.createdDateTime) : Number.NaN;
-  return { author: authorOf(m), ts: m.id ?? "", text, createdMs: Number.isFinite(parsed) ? parsed : 0 };
+  const userId = m.from?.user?.id;
+  const isApp = m.from?.user === undefined && m.from?.application !== undefined;
+  return {
+    author: authorOf(m),
+    ts: m.id ?? "",
+    text,
+    createdMs: Number.isFinite(parsed) ? parsed : 0,
+    ...(isApp ? { bot: true } : typeof userId === "string" && userId.length > 0 ? { authorId: userId } : {}),
+  };
 }
 
 export function teamsLinesFromRaw(raw: unknown): TeamsRenderedLine[] {
   if (!Array.isArray(raw)) return [];
   const lines = (raw as GraphChatMessage[]).map(toIntermediate).filter((l): l is Intermediate => l !== undefined);
   lines.sort((a, b) => a.createdMs - b.createdMs);
-  return lines.map(({ author, ts, text }) => ({ author, ts, text }));
+  return lines.map(({ createdMs: _createdMs, ...line }) => line);
 }
 
 interface GraphPage {
@@ -220,5 +231,8 @@ export const teamsReadAdapter = {
     const n = limit ?? TEAMS_THREAD_DEFAULT_LIMIT;
     const raw = await fetchGraphPages(req, threadRepliesUrl(teamId, channel, threadTs), n);
     return teamsLinesFromRaw(raw).slice(-n);
+  },
+  async authoredByNonMember(ctx: BindableContext, lines: readonly TeamsRenderedLine[]): Promise<boolean> {
+    return await readIngestsNonMember(lines, resolvePartition(ctx).workspaceKey);
   },
 };

@@ -5,7 +5,7 @@ import { type BindableContext } from "../identity/binding.js";
 import { resolveWindowSources } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
-import { resolveReadAdapter, renderThreadBody, threadReadSource, supportedReadPlatforms } from "../channels/channel-read.js";
+import { resolveReadAdapter, readThreadResult, chatReadIngestion, renderThreadBody, threadReadSource, supportedReadPlatforms } from "../channels/channel-read.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import type { Domain } from "../memory/domain.js";
 
@@ -45,23 +45,17 @@ const readThreadEntry = defineTool({
     thread_ts: z.string(),
     count: z.number(),
     messages: z.array(z.object({ author: z.string(), ts: z.string(), text: z.string() })),
+    authoredByNonMember: z.boolean().optional(),
   }),
   async execute(input, ctx) {
     const bctx = ctx as unknown as BindableContext;
     const { platform, adapter } = resolveReadAdapter(bctx, input.target.platform, safeDomains());
-    const messages = await adapter.readThread(bctx, input.target.channel, input.thread_ts, input.limit);
-    return {
-      platform,
-      channel: input.target.channel,
-      thread_ts: input.thread_ts,
-      count: messages.length,
-      messages: messages.map((m) => ({ author: m.author, ts: m.ts, text: m.text })),
-    };
+    return await readThreadResult(bctx, platform, adapter, input.target.channel, input.thread_ts, input.limit);
   },
   toModelOutput(output) {
     return ingestUntrustedModelOutput(renderThreadBody(output), {
       source: threadReadSource(output),
-      ingestion: { kind: "chat-message", label: `read_thread:${output.platform}` },
+      ingestion: chatReadIngestion(`read_thread:${output.platform}`, output),
     });
   },
 });

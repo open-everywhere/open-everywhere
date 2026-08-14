@@ -1,9 +1,12 @@
 import {
   assertSurfaceAllowed,
+  resolvePartition,
+  readIngestsNonMember,
   type BindableContext,
   type RenderedLine,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { linesFromDiscordMessages } from "./discord-backscroll.js";
+import { linesFromDiscordMessages, type DiscordRoleProbe } from "./discord-backscroll.js";
+import { discordAuthorRoles } from "../approvals/discord-admin.js";
 
 const DISCORD_CHANNEL_DEFAULT_LIMIT = 50;
 const DISCORD_THREAD_DEFAULT_LIMIT = 100;
@@ -25,7 +28,16 @@ const liveDiscordRead: DiscordReadRequester = async (channelId, limit) => {
 export function discordLinesFromRaw(raw: unknown): RenderedLine[] {
   if (!Array.isArray(raw)) return [];
   const ordered = [...(raw as Array<Record<string, unknown>>)].reverse();
-  return linesFromDiscordMessages(ordered).map((l) => ({ author: l.senderId ?? "(unknown)", ts: l.ts, text: l.text }));
+  return linesFromDiscordMessages(ordered).map((l) => ({
+    author: l.senderId ?? "(unknown)",
+    ts: l.ts,
+    text: l.text,
+    ...(l.senderType === "bot" || l.senderType === "agent"
+      ? { bot: true }
+      : l.senderType === "user" && l.senderId !== undefined
+        ? { authorId: l.senderId }
+        : {}),
+  }));
 }
 
 export const discordReadAdapter = {
@@ -37,5 +49,16 @@ export const discordReadAdapter = {
   async readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number, req: DiscordReadRequester = liveDiscordRead): Promise<readonly RenderedLine[]> {
     await assertSurfaceAllowed(ctx, "discord", threadTs);
     return discordLinesFromRaw(await req(threadTs, limit ?? DISCORD_THREAD_DEFAULT_LIMIT));
+  },
+  async authoredByNonMember(ctx: BindableContext, lines: readonly RenderedLine[], roleProbe: DiscordRoleProbe = discordAuthorRoles): Promise<boolean> {
+    const p = resolvePartition(ctx);
+    const tenantKey = p.workspaceKey;
+    const guildId = p.workspace;
+    return await readIngestsNonMember(lines, tenantKey, {
+      memberships: async (authorId) => {
+        const roles = await roleProbe(guildId, authorId);
+        return roles === undefined ? undefined : roles.map((r) => `${tenantKey}/role:${r}`);
+      },
+    });
   },
 };

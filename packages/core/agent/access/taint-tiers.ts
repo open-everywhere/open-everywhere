@@ -21,6 +21,7 @@ export interface IngestionSource {
   readonly repoPrivate?: boolean;
   readonly workspaceTrust?: "internal" | "public";
   readonly grantContentOrigin?: "internal" | "external";
+  readonly authoredByNonMember?: boolean;
   readonly label?: string;
 }
 
@@ -40,6 +41,11 @@ function unknownInstance(what: string): IngestionVerdict {
 export function classifyIngestion(src: IngestionSource): IngestionVerdict {
   switch (src.kind) {
     case "chat-message":
+      if (src.authoredByNonMember === true) {
+        return untrusted(
+          "a chat message written by an author POSITIVELY REFUTED as a non-member — the surface's own identity probe or the operator's author-trust register said guest/stranger/unlisted, so a person outside the org authored bytes this turn read",
+        );
+      }
       return trusted("a chat message body on a member-authored surface; external surfaces are classified by surface trust one layer up, not here");
 
     case "notion":
