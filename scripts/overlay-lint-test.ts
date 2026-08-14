@@ -1,10 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const LINT = join(root, "scripts", "overlay-lint.ts");
+
+const FETCH_GUARD = pathToFileURL(join(root, "scripts", "fetch-guard-for-tests.mjs")).href;
+const FETCH_GUARD_MARKER = "OE_FETCH_GUARD_TRIPPED";
 
 const OVERLAYS = [
   "agent/access/grants.generated.ts",
@@ -21,12 +24,15 @@ function ok(cond: boolean, label: string): void {
 }
 
 function lint(args: readonly string[] = []): { code: number; out: string } {
+  const nodeOptions = [process.env.NODE_OPTIONS, `--import ${FETCH_GUARD}`].filter(Boolean).join(" ");
   const r = spawnSync(process.execPath, [join(root, "node_modules", "tsx", "dist", "cli.mjs"), LINT, ...args], {
     cwd: root,
     encoding: "utf8",
-    env: { ...process.env, NODE_NO_WARNINGS: "1" },
+    env: { ...process.env, NODE_NO_WARNINGS: "1", NODE_OPTIONS: nodeOptions },
   });
-  return { code: r.status ?? -1, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+  const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+  ok(!out.includes(FETCH_GUARD_MARKER), `lint(${JSON.stringify(args)}): no real fetch() escaped the run`);
+  return { code: r.status ?? -1, out };
 }
 
 function withPerturbed(rel: string, mutate: (text: string) => string, fn: (original: string) => void): void {
