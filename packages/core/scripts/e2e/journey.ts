@@ -79,7 +79,7 @@ export async function driveDecide(args: {
   args.log(`${clicked.label}: ${decision} ${btn.pendingId} (org "${btn.org}") → ${clicked.status}`);
   gate(clicked.status === 200, `forged ${decision} click acked 200`);
   await awaitDecided(slack, askTs, card.ts, timeoutMs);
-  gate(true, `card DECIDED — buttons removed by the deployment's chat.update (hard gate)`);
+  args.log(`card DECIDED — buttons removed by the deployment's chat.update`);
   return card;
 }
 
