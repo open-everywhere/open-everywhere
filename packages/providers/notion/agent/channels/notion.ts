@@ -25,8 +25,11 @@ import {
   postOnce,
   outboundKey,
   getOperatorSecret,
+  replierLabelFromAuthAttributes,
+  withReplierPrefix,
   type Domain,
   type SupervisorGrain,
+  type ReplierLabel,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { notionChannelCredentialFor, notionIntegrations, resolveNotionInboundSecret, NOTION_CHANNEL_CREDENTIAL } from "./notion-credentials.js";
 import { NOTION_EVENT_SOURCE, notionEventDeliveryId, notionTriggerScopeVerdict } from "./notion-event-normalizer.js";
@@ -341,6 +344,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
             credentialId: s(attrs?.credential_id),
           } satisfies NotionReplyTarget)
         : undefined;
+      (channel.state as unknown as Record<string, unknown>).oeReplierLabel = replierLabelFromAuthAttributes(attrs);
     },
     async "message.completed"(data, channel, ctx) {
       const sessionId = ctx?.session?.id;
@@ -364,7 +368,8 @@ export default defineChannel<NotionState, { state: NotionState }>({
         silentAnchor: { discussionId: discussionId ?? channel.state.discussionId },
         droppedAnchor: { discussionId: discussionId ?? null },
         repliedAnchor: { discussionId },
-        post: async (text) => {
+        post: async (rawText) => {
+          const text = withReplierPrefix(rawText, (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined);
           const credentialId =
             target?.credentialId ?? notionCredentialForPage(workspace === "unknown" ? undefined : workspace, target?.pageId ?? channel.state.pageId ?? undefined);
           const cred = await resolveNotionCredential(credentialId);

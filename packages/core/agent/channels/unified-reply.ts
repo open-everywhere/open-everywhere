@@ -1,5 +1,6 @@
 import type { UnifiedWakeOrigin } from "./unified-window.js";
-import { auditReplyPost, REPLY_DEDUPE_SKIPPED_ID, type ReplyAudit } from "./reply-post.js";
+import { auditReplyPost, REPLY_DEDUPE_SKIPPED_ID, type ReplyAudit, type ReplierLabel } from "./reply-post.js";
+import { withReplierPrefix } from "./turn-delivery.js";
 import { onVercel } from "../access/platform.js";
 import { postArm } from "./post-arms.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
@@ -40,7 +41,16 @@ function unifiedDedupeLocus(origin: UnifiedWakeOrigin): { channel: string; threa
   }
 }
 
-export async function postUnifiedReply(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps = {}, audit?: ReplyAudit): Promise<string> {
+export async function postUnifiedReply(
+  origin: UnifiedWakeOrigin,
+  text: string,
+  deps: UnifiedReplyDeps = {},
+  audit?: ReplyAudit,
+  replier?: ReplierLabel,
+): Promise<string> {
+  const arm = postArm(origin.platform);
+  const nativeReplier = arm?.displayNameCapable ? replier : undefined;
+  const body = replier && !arm?.displayNameCapable ? withReplierPrefix(text, replier) : text;
   const locus = unifiedDedupeLocus(origin);
   const key = outboundKey({
     surface: origin.platform,
@@ -48,14 +58,14 @@ export async function postUnifiedReply(origin: UnifiedWakeOrigin, text: string, 
     threadTs: locus.threadTs,
     action: "reply.dispatch.unified",
     stableId: audit?.wakeId,
-    payload: text,
+    payload: body,
   });
   const id = await postOnce({
     org: audit?.org,
     key,
     run: async () => {
-      const realId = await dispatchUnifiedReply(origin, text, deps);
-      await auditReplyPost(audit, realId, origin.platform, text.length);
+      const realId = await dispatchUnifiedReply(origin, body, deps, nativeReplier);
+      await auditReplyPost(audit, realId, origin.platform, body.length);
       return realId;
     },
     skipped: () => REPLY_DEDUPE_SKIPPED_ID,
@@ -63,7 +73,7 @@ export async function postUnifiedReply(origin: UnifiedWakeOrigin, text: string, 
   return id ?? REPLY_DEDUPE_SKIPPED_ID;
 }
 
-async function dispatchUnifiedReply(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps = {}): Promise<string> {
+async function dispatchUnifiedReply(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps = {}, replier?: ReplierLabel): Promise<string> {
   if (process.env.OE_EGRESS_SPOOF === "1") {
     if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
     console.warn(`[oe] OE_EGRESS_SPOOF: swallowed a unified ${origin.platform} reply (${text.length}c)`);
@@ -73,7 +83,7 @@ async function dispatchUnifiedReply(origin: UnifiedWakeOrigin, text: string, dep
   if (!arm?.dispatchUnified) {
     throw new Error(`unified reply couldn't post — no post arm registered for "${origin.platform}".`);
   }
-  return arm.dispatchUnified(origin, text, deps);
+  return arm.dispatchUnified(origin, text, deps, replier);
 }
 
 export async function completeUnifiedSessionSilently(origin: UnifiedWakeOrigin, deps: UnifiedReplyDeps = {}): Promise<boolean> {

@@ -2,6 +2,7 @@ import { NO_REPLY_SENTINEL } from "./normalized-wake.js";
 import { getSettings } from "../settings/settings.js";
 import { consumeNoReplyThisTurn } from "./no-reply-signal.js";
 import { silentRoutineThisTurn, SILENT_ROUTINE_DROP_REASON } from "../routines/report.js";
+import { OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR } from "./unified-window.js";
 import type { ChannelSessionRow } from "../operational/store.js";
 
 export { NO_REPLY_SENTINEL };
@@ -41,6 +42,30 @@ export function nameDropPattern(name: string): RegExp {
     .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
     .replace(/\s+/g, "\\s+");
   return new RegExp(`(?:^|[^\\p{L}\\p{N}_])${escaped}(?=$|[^\\p{L}\\p{N}_])`, "iu");
+}
+
+export interface ReplierLabel {
+  readonly taskLabel: string;
+}
+
+export function truncateTaskLabel(text: string, max = 60): string {
+  const oneLine = text.trim().replace(/\s+/g, " ");
+  if (oneLine.length <= max) return oneLine;
+  return `${oneLine.slice(0, Math.max(1, max - 1)).trimEnd()}…`;
+}
+
+export function replierLabelFor(grain: string | undefined, taskLabel: string | undefined): ReplierLabel | undefined {
+  if (grain !== "task") return undefined;
+  return { taskLabel: taskLabel && taskLabel.trim().length > 0 ? taskLabel : "task" };
+}
+
+export function replierLabelFromAuthAttributes(attrs: Record<string, unknown> | undefined): ReplierLabel | undefined {
+  const str = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 ? v : undefined);
+  return replierLabelFor(str(attrs?.[OE_GRAIN_ATTR]), str(attrs?.[OE_TASK_LABEL_ATTR]));
+}
+
+export function withReplierPrefix(text: string, replier: ReplierLabel | undefined): string {
+  return replier ? `[${replier.taskLabel}] ${text}` : text;
 }
 
 export function supervisorRotateQuietGapMs(): number {

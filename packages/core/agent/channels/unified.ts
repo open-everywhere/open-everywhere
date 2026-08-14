@@ -2,11 +2,11 @@ import { defineChannel, GET, POST } from "eve/channels";
 import type { Session, RouteHandlerArgs } from "eve/channels";
 import { SELF_DISPATCH_PATH, handleSelfDispatch, postSelfDispatch, selfDispatchConfigured, type UnifiedDispatchPayload } from "./self-dispatch.js";
 import { appendAudit, auditSilencesEnabled } from "../audit/audit.js";
-import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, bindFrom, type BindableContext } from "../identity/binding.js";
+import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, bindFrom, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { windowedSupervisorEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, shouldBridgeAddressedProse, unifiedThreadRef, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
+import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, shouldBridgeAddressedProse, unifiedThreadRef, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "./unified-reply.js";
 import { detectBridgeableInputRequest, bridgeQuestionToSurface } from "./question-bridge.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
@@ -16,7 +16,7 @@ import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { INVOKER_POSTURE_ATTR } from "../access/invoker-posture.js";
 import { currentInvokerPosture } from "../access/invoker-posture-state.js";
 import { sourcesForWindow } from "./window-sources.js";
-import { finalMessageActionForTurn } from "./turn-delivery.js";
+import { finalMessageActionForTurn, replierLabelFor } from "./turn-delivery.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { redriveEnabled, maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
 import { collectTaskResultDelta, markRecoveredDelivered } from "../access/task-result-delta.js";
@@ -216,15 +216,22 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
           return;
         }
         try {
-          const id = await postUnifiedReply(origin, action.text, {}, {
-            org,
-            platform: "unified",
-            workspace,
-            surface,
-            ...(sessionId ? { sessionId } : {}),
-            ...(wakeId ? { wakeId } : {}),
-            route: "bridge",
-          });
+          const replier = replierLabelFor(windowGrainOf(bind), windowTaskLabelOf(bind));
+          const id = await postUnifiedReply(
+            origin,
+            action.text,
+            {},
+            {
+              org,
+              platform: "unified",
+              workspace,
+              surface,
+              ...(sessionId ? { sessionId } : {}),
+              ...(wakeId ? { wakeId } : {}),
+              route: "bridge",
+            },
+            replier,
+          );
           ulog(`addressed-mention bridge: delivered terminal prose (${action.text.length} chars) to ${origin.platform} — id ${id}`);
           if (wakeId) {
             await getOperationalStore()
@@ -483,6 +490,7 @@ export async function dispatchTaskWindow(input: {
   readonly parentAuthAttributes?: Record<string, unknown>;
   readonly tainted: boolean;
   readonly grain?: "task" | "thread";
+  readonly taskLabel?: string;
 }): Promise<void> {
   if (!crossProcessDispatchAvailable()) {
     throw new Error(
@@ -495,6 +503,7 @@ export async function dispatchTaskWindow(input: {
   }
   const attributes: Record<string, unknown> = { ...(input.parentAuthAttributes ?? {}) };
   attributes[OE_GRAIN_ATTR] = input.grain ?? "task";
+  if (input.taskLabel) attributes[OE_TASK_LABEL_ATTR] = input.taskLabel;
   attributes[INVOKER_POSTURE_ATTR] = currentInvokerPosture();
   if (input.tainted) attributes[OE_SPAWN_TAINTED_ATTR] = "true";
   await deliverUnifiedDispatch({

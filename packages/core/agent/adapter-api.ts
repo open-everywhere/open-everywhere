@@ -229,13 +229,13 @@ export type { ReplyTarget } from "./channels/reply-post.js";
 export type { UnifiedReplyDeps } from "./channels/unified-reply.js";
 
 export { postTerminalProse } from "./channels/reply-post.js";
-export type { ReplyAudit } from "./channels/reply-post.js";
+export type { ReplyAudit, ReplierLabel } from "./channels/reply-post.js";
 
 export type { ChatAuditPartition } from "./channels/chat-turn-audit.js";
 
 export { registerWakeOriginCodec, wakeOriginCodec } from "./channels/wake-origin-codec.js";
 export type { WakeOriginCodec } from "./channels/wake-origin-codec.js";
-export { registerUnifiedWakeTarget, mintWakeId, singleWindowMentionPolicy, rootDmGrainAttrs, OE_GRAIN_ATTR } from "./channels/unified-window.js";
+export { registerUnifiedWakeTarget, mintWakeId, singleWindowMentionPolicy, rootDmGrainAttrs, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR } from "./channels/unified-window.js";
 export type { UnifiedWakeOrigin, UnifiedWindowWake, SingleWindowMentionPolicy } from "./channels/unified-window.js";
 
 export { windowGrainOf } from "./identity/binding.js";
@@ -270,6 +270,10 @@ export {
   isSupervisorProseLeak,
   nameDropPattern,
   NO_REPLY_SENTINEL,
+  replierLabelFor,
+  replierLabelFromAuthAttributes,
+  withReplierPrefix,
+  truncateTaskLabel,
 } from "./channels/turn-delivery.js";
 export type { FinalMessageAction, SupervisorTextDelivery } from "./channels/turn-delivery.js";
 

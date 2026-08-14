@@ -14,9 +14,11 @@ import {
   mintWakeId,
   unifiedThreadRef,
   OE_PLATFORM_ATTR,
+  OE_TASK_LABEL_ATTR,
   type UnifiedWakeOrigin,
 } from "../agent/channels/unified-window.js";
 import { divertToUnifiedWindow, dispatchTaskWindow, OE_SPAWN_TAINTED_ATTR, type UnifiedReceiveTarget } from "../agent/channels/unified.js";
+import { truncateTaskLabel } from "../agent/channels/turn-delivery.js";
 import { parseWindowToken, isTaskWindowToken, taskWindowId, formatWindowToken, dmAnchorDomain, dmWindowKey } from "../agent/channels/window-key.js";
 import spawnTask from "../agent/tools/spawn_task.js";
 import { resolveWindowGated } from "../agent/access/window-gated.js";
@@ -120,6 +122,41 @@ await dispatchTaskWindow({
   tainted: false,
 });
 ok(received[0].auth.attributes?.[OE_SPAWN_TAINTED_ATTR] === undefined, "untainted parent ⇒ NO taint stamp on the child auth");
+
+console.log("2b. dispatchTaskWindow taskLabel stamp (OPE-508):");
+received.length = 0;
+await dispatchTaskWindow({
+  token: taskToken,
+  message: "do the thing",
+  wakeId: mintWakeId(),
+  domain: "payments",
+  origin: slackOrigin,
+  parentAuthAttributes: {},
+  tainted: false,
+  taskLabel: "Investigate the deploy failure",
+});
+eq(received[0].auth.attributes?.[OE_TASK_LABEL_ATTR], "Investigate the deploy failure", "a supplied taskLabel is stamped verbatim onto the child's opening auth");
+
+received.length = 0;
+await dispatchTaskWindow({
+  token: taskToken,
+  message: "do the thing",
+  wakeId: mintWakeId(),
+  domain: "payments",
+  origin: slackOrigin,
+  parentAuthAttributes: {},
+  tainted: false,
+});
+ok(!("oe_task_label" in (received[0].auth.attributes ?? {})), "omitting taskLabel leaves the oe_task_label key genuinely ABSENT from the child's auth (not stamped blank)");
+
+{
+  const longBrief = "Investigate why the nightly deploy pipeline\nkeeps failing on the payments-api canary stage and fix the root cause, not just the symptom.";
+  const label = truncateTaskLabel(longBrief);
+  ok(!label.includes("\n"), "truncateTaskLabel collapses a multi-line brief to one line");
+  ok(label.length <= 60, "truncateTaskLabel caps at the default 60 chars");
+  ok(label.endsWith("…"), "an over-length brief's label ends with the ellipsis marker");
+  eq(truncateTaskLabel("short"), "short", "a brief already under the cap passes through unchanged");
+}
 
 console.log("3. spawn_task structural guards:");
 const standingCtx = { channel: { kind: "unified", continuationToken: unifiedSupervisorToken("payments", 1) }, session: { auth: { current: { attributes: {} } } } };

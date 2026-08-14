@@ -209,6 +209,7 @@ export const OE_PLATFORM_ATTR = "oe_platform";
 export const OE_WAKE_ID_ATTR = "oe_wake_id";
 export const OE_ADDRESSING_ATTR = "oe_addressing";
 export const OE_GRAIN_ATTR = "oe_grain";
+export const OE_TASK_LABEL_ATTR = "oe_task_label";
 export const OE_SOURCES_ATTR = "oe_sources";
 export const OE_WINDOW_TOKEN_ATTR = "oe_window_token";
 

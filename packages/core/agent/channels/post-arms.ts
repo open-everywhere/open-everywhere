@@ -1,5 +1,5 @@
 import type { BindableContext } from "../identity/binding.js";
-import type { ReplyTarget } from "./reply-post.js";
+import type { ReplyTarget, ReplierLabel } from "./reply-post.js";
 import type { UnifiedWakeOrigin } from "./unified-window.js";
 import type { UnifiedReplyDeps } from "./unified-reply.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
@@ -49,9 +49,10 @@ export function dmWorkspaceReachableFromConfig(platform: string, targetTenant: s
 export interface PostArm {
   readonly platform: string;
   resolveTarget?(bag: TargetResolveBag): ReplyTarget | null;
-  dispatchReply?(target: ReplyTarget, text: string): Promise<string>;
+  dispatchReply?(target: ReplyTarget, text: string, replier?: ReplierLabel): Promise<string>;
+  readonly displayNameCapable?: boolean;
   splitText?(text: string): readonly string[];
-  dispatchUnified?(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps): Promise<string>;
+  dispatchUnified?(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps, replier?: ReplierLabel): Promise<string>;
   closeUnifiedSilently?(origin: UnifiedWakeOrigin, deps: UnifiedReplyDeps): Promise<void>;
   describeRedriveTarget?(origin: UnifiedWakeOrigin): string;
   redriveContainerId?(origin: UnifiedWakeOrigin): string;

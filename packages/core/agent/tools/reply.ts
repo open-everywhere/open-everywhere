@@ -1,8 +1,9 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { bindFrom, deploymentOrg, isUnifiedWindowContext, currentWakeId, currentTurnId, type BindableContext } from "../identity/binding.js";
+import { bindFrom, deploymentOrg, isUnifiedWindowContext, currentWakeId, currentTurnId, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
 import { capabilitiesFor } from "../identity/capabilities.js";
-import { resolveReplyTarget, postReply, auditReplyRefused, type ReplyAudit } from "../channels/reply-post.js";
+import { resolveReplyTarget, postReply, auditReplyRefused, type ReplyAudit, type ReplierLabel } from "../channels/reply-post.js";
+import { replierLabelFor } from "../channels/turn-delivery.js";
 import { markRepliedThisTurn } from "../channels/reply-signal.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
 import { silentRoutineThisTurn } from "../routines/report.js";
@@ -11,6 +12,10 @@ import { postUnifiedReply } from "../channels/unified-reply.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { resolvePartition } from "../memory/partition.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
+
+function replierFor(ctx: BindableContext): ReplierLabel | undefined {
+  return replierLabelFor(windowGrainOf(ctx), windowTaskLabelOf(ctx));
+}
 
 function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], wakeId?: string): ReplyAudit {
   const p = resolvePartition(ctx);
@@ -62,7 +67,7 @@ const unifiedReplyEntry = defineTool({
       }
       const origin = resolution.origin;
 
-      const id = await postUnifiedReply(origin, input.text, {}, replyAuditFor(ctx as BindableContext, "tool", input.wake));
+      const id = await postUnifiedReply(origin, input.text, {}, replyAuditFor(ctx as BindableContext, "tool", input.wake), replierFor(bind));
       markRepliedThisTurn();
 
       if (input.done !== false) {
@@ -96,7 +101,7 @@ const baseReplyEntry = defineTool({
               "reply couldn't resolve this conversation — try again from a real channel, thread, or discussion, not a synthetic context.",
             );
           }
-          const id = await postReply(target, input.text, replyAuditFor(ctx as BindableContext, "tool"));
+          const id = await postReply(target, input.text, replyAuditFor(ctx as BindableContext, "tool"), replierFor(ctx as BindableContext));
           markRepliedThisTurn();
           return { posted: true, id };
         },

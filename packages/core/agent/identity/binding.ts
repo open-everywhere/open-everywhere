@@ -316,6 +316,10 @@ export function windowGrainOf(ctx: BindableContext): WindowGrain {
   return tokenGrain;
 }
 
+export function windowTaskLabelOf(ctx: BindableContext): string | undefined {
+  return attr(authOf(ctx)?.attributes, ["oe_task_label"]);
+}
+
 export function windowSourcesOf(ctx: BindableContext): readonly string[] | undefined {
   const a = authOf(ctx)?.attributes;
   if (!a) return undefined;

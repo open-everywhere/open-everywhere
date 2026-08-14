@@ -8,7 +8,9 @@ import {
   consumeRepliedThisTurn,
   resolvePartition,
   ingressSpendGate,
+  replierLabelFromAuthAttributes,
   type ChatAuditPartition,
+  type ReplierLabel,
   dmTrustTtlMs,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -107,6 +109,12 @@ const native = teamsChannel({
   turnPolicy: "queue",
   onMessage: teamsOnMessage,
   events: {
+    "turn.started": async (_data, channel, ctx) => {
+      await channel.thread.startTyping();
+      (channel.state as unknown as Record<string, unknown>).oeReplierLabel = replierLabelFromAuthAttributes(
+        ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined,
+      );
+    },
     "message.completed": async (data, channel, ctx) => {
       const sessionId = ctx?.session?.id;
       const action = finalMessageActionForTurn(data.finishReason, data.message);
@@ -129,6 +137,7 @@ const native = teamsChannel({
             { platform: "teams", serviceUrl: channel.state.serviceUrl, conversationId: channel.state.conversationId, ...(channel.state.replyToActivityId ? { replyToActivityId: channel.state.replyToActivityId } : {}) },
             action.text,
             { org: p.org, platform: p.platform, workspace: p.workspace, surface: p.surface, ...(sessionId ? { sessionId } : {}), route: "terminal" },
+            (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined,
           );
         } else {
           for (const part of splitTeamsMessageText(action.text)) {

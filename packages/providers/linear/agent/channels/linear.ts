@@ -51,9 +51,12 @@ import {
   postOnce,
   outboundKey,
   admitTrigger,
+  replierLabelFromAuthAttributes,
+  withReplierPrefix,
   type SupervisorGrain,
   type UnifiedWindowWake,
   type EngagementTier,
+  type ReplierLabel,
   dmTrustTtlMs,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -660,6 +663,7 @@ const native: LinearChannel = linearChannel({
               ...(st.oeUnified === true ? { teamId: str(attrs?.team_id), organizationId: str(attrs?.organization_id) } : {}),
             }
           : undefined;
+      (channel.state as unknown as Record<string, unknown>).oeReplierLabel = replierLabelFromAuthAttributes(attrs);
     },
     async "actions.requested"(data, channel) {
       if (!isSupervisorLinearState(channel.state)) await defaultEvent("actions.requested")?.(data, channel);
@@ -697,7 +701,8 @@ const native: LinearChannel = linearChannel({
         silentAnchor: { issueId: target?.issueId ?? null },
         droppedAnchor: { issueId: target?.issueId },
         repliedAnchor: { issueId: target?.issueId, parentId: target?.parentId ?? null },
-        post: async (text) => {
+        post: async (rawText) => {
+          const text = withReplierPrefix(rawText, (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined);
           await postOnce({
             org,
             key: outboundKey({

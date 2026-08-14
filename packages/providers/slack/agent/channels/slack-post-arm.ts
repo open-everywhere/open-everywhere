@@ -1,8 +1,9 @@
-import { slackForm } from "./slack-events.js";
+import { slackForm, botDisplayName } from "./slack-events.js";
 import type {
   PostArm,
   TargetResolveBag,
   ReplyTarget,
+  ReplierLabel,
   UnifiedWakeOrigin,
   UnifiedReplyDeps,
   DirectMessageRequest,
@@ -12,9 +13,18 @@ import type {
 type SlackTarget = Extract<ReplyTarget, { platform: "slack" }>;
 type SlackOrigin = Extract<UnifiedWakeOrigin, { platform: "slack" }>;
 
-async function dispatchSlackReply(target: SlackTarget, text: string): Promise<string> {
+export function slackReplierParams(agentName: string | undefined, replier: ReplierLabel | undefined): Record<string, string> {
+  if (!replier || !agentName || agentName.trim().length === 0) return {};
+  return { username: `${agentName} [${replier.taskLabel}]` };
+}
+
+async function dispatchSlackReply(target: SlackTarget, text: string, replier?: ReplierLabel): Promise<string> {
   const body = new URLSearchParams({ channel: target.channelId, text });
   if (target.threadTs) body.set("thread_ts", target.threadTs);
+  if (replier) {
+    const name = await botDisplayName().catch(() => undefined);
+    for (const [k, v] of Object.entries(slackReplierParams(name, replier))) body.set(k, v);
+  }
   const res = await slackForm("chat.postMessage", body.toString());
   const ts = typeof res?.ts === "string" ? res.ts : undefined;
   if (res?.ok !== true || !ts) {
@@ -23,10 +33,14 @@ async function dispatchSlackReply(target: SlackTarget, text: string): Promise<st
   return ts;
 }
 
-async function liveSlackPost(origin: SlackOrigin, text: string): Promise<string> {
+async function liveSlackPost(origin: SlackOrigin, text: string, replier?: ReplierLabel): Promise<string> {
   const body = new URLSearchParams({ channel: origin.channelId, text });
   const threadTarget = origin.threadTs ?? origin.replyAnchorTs;
   if (threadTarget) body.set("thread_ts", threadTarget);
+  if (replier) {
+    const name = await botDisplayName().catch(() => undefined);
+    for (const [k, v] of Object.entries(slackReplierParams(name, replier))) body.set(k, v);
+  }
   const res = await slackForm("chat.postMessage", body.toString());
   const ts = typeof res?.ts === "string" ? res.ts : undefined;
   if (res?.ok !== true || !ts) {
@@ -58,8 +72,10 @@ export const slackPostArm: PostArm = {
     const channelId = bag.str("channelId");
     return channelId ? { platform: "slack", channelId, threadTs: bag.threadTs } : null;
   },
-  dispatchReply: (target, text) => dispatchSlackReply(target as SlackTarget, text),
-  dispatchUnified: (origin, text, deps: UnifiedReplyDeps) => (deps.postSlack ?? liveSlackPost)(origin as SlackOrigin, text),
+  displayNameCapable: true,
+  dispatchReply: (target, text, replier) => dispatchSlackReply(target as SlackTarget, text, replier),
+  dispatchUnified: (origin, text, deps: UnifiedReplyDeps, replier) =>
+    deps.postSlack ? deps.postSlack(origin as SlackOrigin, text) : liveSlackPost(origin as SlackOrigin, text, replier),
   describeRedriveTarget: (origin) => {
     const o = origin as SlackOrigin;
     return `slack ${o.threadTs ? `thread in ${o.channelId}` : `channel ${o.channelId}`}`;

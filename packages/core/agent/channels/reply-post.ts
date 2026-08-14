@@ -4,6 +4,9 @@ import { appendAudit } from "../audit/audit.js";
 import { onVercel } from "../access/platform.js";
 import { postArm } from "./post-arms.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
+import { withReplierPrefix, type ReplierLabel } from "./turn-delivery.js";
+
+export type { ReplierLabel };
 
 export type ReplyTarget =
   | { readonly platform: "slack"; readonly channelId: string; readonly threadTs?: string }
@@ -99,7 +102,10 @@ function replyDedupeLocus(target: ReplyTarget): { channel: string; threadTs?: st
 
 export const REPLY_DEDUPE_SKIPPED_ID = "deduped:reply";
 
-export async function postReply(target: ReplyTarget, text: string, audit?: ReplyAudit): Promise<string> {
+export async function postReply(target: ReplyTarget, text: string, audit?: ReplyAudit, replier?: ReplierLabel): Promise<string> {
+  const arm = postArm(target.platform);
+  const nativeReplier = arm?.displayNameCapable ? replier : undefined;
+  const body = replier && !arm?.displayNameCapable ? withReplierPrefix(text, replier) : text;
   const locus = replyDedupeLocus(target);
   const key = outboundKey({
     surface: target.platform,
@@ -107,14 +113,14 @@ export async function postReply(target: ReplyTarget, text: string, audit?: Reply
     threadTs: locus.threadTs,
     action: "reply.dispatch",
     stableId: audit?.wakeId,
-    payload: text,
+    payload: body,
   });
   const id = await postOnce({
     org: audit?.org,
     key,
     run: async () => {
-      const realId = await dispatchReply(target, text);
-      await auditReplyPost(audit, realId, target.platform, text.length);
+      const realId = await dispatchReply(target, body, nativeReplier);
+      await auditReplyPost(audit, realId, target.platform, body.length);
       return realId;
     },
     skipped: () => REPLY_DEDUPE_SKIPPED_ID,
@@ -122,7 +128,7 @@ export async function postReply(target: ReplyTarget, text: string, audit?: Reply
   return id ?? REPLY_DEDUPE_SKIPPED_ID;
 }
 
-async function dispatchReply(target: ReplyTarget, text: string): Promise<string> {
+async function dispatchReply(target: ReplyTarget, text: string, replier?: ReplierLabel): Promise<string> {
   if (process.env.OE_EGRESS_SPOOF === "1") {
     if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
     console.warn(`[oe] OE_EGRESS_SPOOF: swallowed a ${target.platform} reply (${text.length}c)`);
@@ -132,18 +138,21 @@ async function dispatchReply(target: ReplyTarget, text: string): Promise<string>
   if (!arm?.dispatchReply) {
     throw new Error(`reply couldn't post — no mid-turn post arm registered for "${target.platform}".`);
   }
-  return arm.dispatchReply(target, text);
+  return arm.dispatchReply(target, text, replier);
 }
 
-export async function postTerminalProse(target: ReplyTarget, text: string, audit: ReplyAudit): Promise<void> {
-  const chunks = postArm(target.platform)?.splitText?.(text) ?? [text];
+export async function postTerminalProse(target: ReplyTarget, text: string, audit: ReplyAudit, replier?: ReplierLabel): Promise<void> {
+  const arm = postArm(target.platform);
+  const nativeReplier = arm?.displayNameCapable ? replier : undefined;
+  const body = replier && !arm?.displayNameCapable ? withReplierPrefix(text, replier) : text;
+  const chunks = arm?.splitText?.(body) ?? [body];
   let firstId: string | undefined;
   for (const chunk of chunks) {
     if (!chunk.trim()) continue;
-    const id = await dispatchReply(target, chunk);
+    const id = await dispatchReply(target, chunk, nativeReplier);
     firstId ??= id;
   }
   if (firstId === undefined) return;
-  await auditReplyPost(audit, firstId, target.platform, text.length);
+  await auditReplyPost(audit, firstId, target.platform, body.length);
 }
 
