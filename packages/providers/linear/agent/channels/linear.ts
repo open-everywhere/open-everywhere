@@ -45,7 +45,6 @@ import {
   getConfig,
   ambientSupervisorEnabled,
   engagementTierFor,
-  windowTopologyEnabled,
   liveMemoryDeltaDep,
   getOperationalStore,
   postOnce,
@@ -499,6 +498,7 @@ export const LINEAR_MENTION_DIVERT_FAILED_TEXT =
 
 interface MentionRoutingVerdict {
   readonly routing: ReturnType<typeof routeLinearAgentSession>;
+  readonly teamId?: string;
   readonly isPrivate?: boolean;
 }
 
@@ -520,30 +520,32 @@ function agentSessionIssueId(event: LinearAgentSessionEvent): string | undefined
   return str(s.issueId) ?? str(s.issue?.id);
 }
 
-function crossSurfaceWindowPossible(): boolean {
-  try {
-    return windowTopologyEnabled();
-  } catch {
-    return false;
-  }
-}
-
 export async function computeMentionRouting(event: LinearAgentSessionEvent, teamId: string | undefined): Promise<MentionRoutingVerdict> {
   const sig = linearAgentSessionSignal(event, teamId);
   let resolvedTeamId = sig.teamId;
   let enrichedPrivate: boolean | undefined;
-  if (!resolvedTeamId && crossSurfaceWindowPossible()) {
+  let enrichedTeam = false;
+  if (!resolvedTeamId) {
     const t = await enrichIssueTeam(agentSessionIssueId(event));
     resolvedTeamId = t?.teamId;
     enrichedPrivate = t?.isPrivate;
+    enrichedTeam = t !== undefined;
   }
   const routingSig = resolvedTeamId === sig.teamId ? sig : { ...sig, teamId: resolvedTeamId };
   const sk = routingSig.organizationId && resolvedTeamId ? `linear/${routingSig.organizationId}/${resolvedTeamId}` : undefined;
   const singleWindow = sk ? grainUsesUnifiedWindow(linearGrainFor(sk)) : false;
   const vouched = singleWindow && !!routingSig.organizationId && !!resolvedTeamId && linearTeamVouched(routingSig.organizationId, resolvedTeamId);
-  const isPrivate = singleWindow ? (enrichedPrivate ?? (await enrichTeamPrivacy(resolvedTeamId))) : undefined;
+  const isPrivate = enrichedTeam
+    ? enrichedPrivate
+    : singleWindow
+      ? await enrichTeamPrivacy(resolvedTeamId)
+      : undefined;
   if (singleWindow && sk) slog(`agent-session routing ${sk}: singleWindow, vouched=${vouched}, teamPrivate=${isPrivate === true} (signal) → ${vouched ? "may divert" : "native"}`);
-  return { routing: routeLinearAgentSession(routingSig, singleWindow, vouched), isPrivate };
+  return {
+    routing: routeLinearAgentSession(routingSig, singleWindow, vouched),
+    ...(resolvedTeamId === undefined ? {} : { teamId: resolvedTeamId }),
+    isPrivate,
+  };
 }
 
 function mentionRoutingFor(event: LinearAgentSessionEvent, teamId: string | undefined): Promise<MentionRoutingVerdict> {
@@ -575,7 +577,8 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
   const sig = linearAgentSessionSignal(event, teamId);
   const agentSessionId = sig.agentSessionId!;
   const organizationId = sig.organizationId!;
-  const surfaceKey = sig.teamId ? `linear/${organizationId}/${sig.teamId}` : undefined;
+  const roomTeamId = sig.teamId ?? verdict.teamId;
+  const surfaceKey = roomTeamId ? `linear/${organizationId}/${roomTeamId}` : undefined;
   const roomVerdict = await linearExternalSuppressed(surfaceKey, organizationId, undefined);
   if (roomVerdict) {
     await silentlyCloseLinearAgentSession(agentSessionId, roomVerdict);
@@ -689,10 +692,12 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
     const agentSessionId = s.id;
     if (!agentSessionId) return null;
 
-    const teamId = teamIdFromRaw(event.raw);
+    const rawTeamId = teamIdFromRaw(event.raw);
 
-    const verdict = await mentionRoutingFor(event, teamId);
+    const verdict = await mentionRoutingFor(event, rawTeamId);
     if (verdict.routing === "suppress-and-divert") return null;
+
+    const teamId = rawTeamId ?? verdict.teamId;
 
     const nativeOrganizationId = event.organizationId ?? s.organizationId ?? undefined;
     if (typeof nativeOrganizationId === "string" && nativeOrganizationId && teamId) {
@@ -704,7 +709,7 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
       }
     }
 
-    const isPrivate = verdict.isPrivate ?? (await enrichTeamPrivacy(teamId));
+    const isPrivate = verdict.isPrivate ?? (rawTeamId === undefined ? undefined : await enrichTeamPrivacy(rawTeamId));
 
     const creatorId = s.creator?.id ?? s.creatorId ?? event.appUserId ?? undefined;
     const guest = await enrichUserGuest(creatorId);

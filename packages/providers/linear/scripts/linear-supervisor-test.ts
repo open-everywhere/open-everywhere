@@ -393,7 +393,7 @@ for (const [label, err] of [
   const { defineDomain } = await import("@open-everywhere/core/agent/adapter-api.js");
   const { registerSurfaces, defineSurface, _resetSurfacesForTest } = await import("@open-everywhere/core/agent/adapter-api.js");
   const { computeMentionRouting } = (await import("../agent/channels/linear.js")) as unknown as {
-    computeMentionRouting: (event: unknown, teamId: string | undefined) => Promise<{ routing: string; isPrivate?: boolean }>;
+    computeMentionRouting: (event: unknown, teamId: string | undefined) => Promise<{ routing: string; teamId?: string; isPrivate?: boolean }>;
   };
 
   const ORG = "O_WIN";
@@ -468,6 +468,7 @@ for (const [label, err] of [
       const v = await computeMentionRouting(mkEvent("issue-priv"), undefined);
       ok(v.routing === "suppress-and-divert", "FIX: raw parse missed the team → issue→team resolution → VOUCHED single-window mention routes suppress-and-divert (was: native — the dead gate)");
       ok(v.isPrivate === true, "the verdict carries the authoritative team-private SIGNAL (reused by the native binding — enriched at most once)");
+      ok(v.teamId === T_PRIV, "OPE-543: the verdict CARRIES the resolved team, so both legs key the room grain on it without a second hop");
       ok(issueTeamCalls === 1 && teamPrivacyCalls === 0, "team + private signal came from ONE issue→team query (no separate TeamPrivacy call)");
     }
 
@@ -505,7 +506,17 @@ for (const [label, err] of [
     {
       const v = await computeMentionRouting(mkEvent("issue-priv"), undefined);
       ok(v.routing === "native", "window-topology code gate OFF → mention routes native (single-window inert)");
-      ok(issueTeamCalls === 0 && teamPrivacyCalls === 0, "feature OFF ⇒ ZERO Linear API calls (byte-identical: no network added on non-single-window deployments)");
+      ok(v.teamId === T_PRIV, "OPE-543: the team resolves even with the window topology OFF — the ROOM GRAIN needs the key regardless of routing");
+      ok(issueTeamCalls === 1 && teamPrivacyCalls === 0, "OPE-543: ONE issue→team hop, and no separate TeamPrivacy read (the same query answered privacy)");
+    }
+
+    issueTeamCalls = 0; teamPrivacyCalls = 0;
+    {
+      const v = await computeMentionRouting(mkEvent("issue-unknown"), undefined);
+      ok(v.routing === "native", "OPE-543 fail-closed: an unresolvable issue routes native");
+      ok(v.teamId === undefined, "OPE-543 fail-closed: an unresolvable issue carries NO team on the verdict — the room grain stands down with no key");
+      ok(v.isPrivate === undefined, "OPE-543 fail-closed: no privacy is claimed either — the binding fails closed to private");
+      ok(issueTeamCalls === 1, "OPE-543 fail-closed: the hop was ATTEMPTED (the stand-down is the hop's answer, not a skipped call)");
     }
   } finally {
     overrideSettingsForTest({ window: { topology: false } });

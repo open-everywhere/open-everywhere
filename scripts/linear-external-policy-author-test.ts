@@ -28,6 +28,8 @@ interface FetchCall {
 }
 let calls: FetchCall[] = [];
 let guestAnswer: boolean | undefined;
+let issueTeamAnswer: { readonly teamId: string; readonly isPrivate: boolean } | undefined;
+const issueTeamQueries = () => calls.filter((c) => c.body.includes("OeIssueTeam")).length;
 const realFetch = globalThis.fetch;
 const resp = (status: number, body: unknown): Response =>
   ({ ok: status >= 200 && status < 300, status, json: async () => body, text: async () => JSON.stringify(body) }) as unknown as Response;
@@ -38,6 +40,11 @@ globalThis.fetch = (async (url: unknown, init: { body?: unknown }) => {
   if (!u.includes("api.linear.app")) return resp(500, { error: "unexpected host" });
   if (body.includes("OeUserGuest")) {
     return guestAnswer === undefined ? resp(500, { error: "probe unavailable" }) : resp(200, { data: { user: { guest: guestAnswer } } });
+  }
+  if (body.includes("OeIssueTeam")) {
+    return resp(200, {
+      data: { issue: issueTeamAnswer === undefined ? null : { team: { id: issueTeamAnswer.teamId, private: issueTeamAnswer.isPrivate } } },
+    });
   }
   return resp(200, { data: { agentActivityCreate: { success: true, agentActivity: { id: "act-1" } } } });
 }) as typeof fetch;
@@ -212,6 +219,10 @@ ok(
   "OPE-541: under `roomGrain: \"silent\"` ALONE the unparseable-team wake PROCEEDS — the room leg needs a key and never guesses one",
 );
 ok((await roomlessRows()).length === 1, "OPE-541: the room leg writes NO roomless suppression row");
+ok(
+  issueTeamQueries() === 1,
+  "OPE-543: the issue→team resolution WAS attempted on the unparseable-team wake — it stood down because the API resolved no team",
+);
 
 ok(
   linearExternalVerdict({ policy: { authorGrain: "withhold", roomGrain: "silent" }, author: refutedAuthor }) === "withheld-author",
@@ -222,7 +233,55 @@ ok(
   "OPE-541: with NO surfaceKey the SAME refuted author under `silent` proceeds — the room leg cannot fire without a key (negative control)",
 );
 
+const RESOLVED_TEAM = "resolved-team";
+const RESOLVED_SURFACE = `linear/${ORG}/${RESOLVED_TEAM}`;
+const resolvedRows = async () =>
+  (await readAudit({ org: part.org, action: "linear.external_policy_suppressed" })).filter((r) => r.surface === RESOLVED_SURFACE);
+issueTeamAnswer = { teamId: RESOLVED_TEAM, isPrivate: true };
+
+setDomains([{ name: "org", match: "org", externalPolicy: { roomGrain: "silent" } }]);
+const resolvedGuest = await driveNoTeam("as-resolved-room", "guest-1", true);
+ok(
+  resolvedGuest.res === null,
+  "OPE-543: with the team RESOLVED off the issue id, the guest-present room leg fires under `silent` — the wake is dropped (Phase 5 proceeded on the same event)",
+);
+const rows6 = await resolvedRows();
+ok(
+  rows6.length === 1 && rows6[0]!.detail?.verdict === "silent-room",
+  "OPE-543: ONE suppression row records verdict silent-room — a ROOM verdict, not an author one",
+);
+ok(
+  rows6[0]!.surface === RESOLVED_SURFACE,
+  "OPE-543: the row names the room key built from the RESOLVED team, so the grain keyed on the hop's answer",
+);
+ok(
+  (await roomlessRows()).length === 1,
+  "OPE-543: no roomless row was written — this delivery could name its room (negative control against a silent stand-down)",
+);
+ok(
+  issueTeamQueries() === 1,
+  "OPE-543: ONE issue→team hop served the whole wake — the room check, the privacy read and the binding all read the shared verdict",
+);
+
+const resolvedMember = await driveNoTeam("as-resolved-member", "member-1", false);
+ok(
+  resolvedMember.res !== null && (resolvedMember.res as { auth?: unknown }).auth !== undefined,
+  "OPE-543: a full MEMBER on the SAME resolved-team event DISPATCHES (negative control — a room key is not a suppression)",
+);
+ok((await resolvedRows()).length === 1, "OPE-543: the member session writes NO further suppression row");
+
+const resolvedReplay = await driveNoTeam("as-resolved-member", "member-1", false);
+ok(
+  resolvedReplay.res !== null && (resolvedReplay.res as { auth?: unknown }).auth !== undefined,
+  "OPE-543: the replayed delivery still dispatches (the memo returns the same verdict)",
+);
+ok(
+  issueTeamQueries() === 0,
+  "OPE-543: the SECOND read of one delivery makes ZERO issue→team queries — the hop runs at most once per delivery",
+);
+issueTeamAnswer = undefined;
+
 globalThis.fetch = realFetch;
 _resetSurfacesForTest();
 rmSync(dir, { recursive: true, force: true });
-console.log(`\n✓ linear-external-policy-author: ${n} assertions passed (guest exclusion + guest-present room leg + the roomless author grain, with member/unresolved/shipped-default negative controls)`);
+console.log(`\n✓ linear-external-policy-author: ${n} assertions passed (guest exclusion + guest-present room leg + the roomless author grain + the resolved room key, with member/unresolved/shipped-default negative controls)`);
