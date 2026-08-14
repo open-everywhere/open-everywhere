@@ -86,9 +86,9 @@ const MIN = 60_000;
 
   let r: Routine = { ...base };
   for (let i = 1; i <= MAX_CONSECUTIVE_FAILURES; i++) {
-    r = applyOutcome({ ...r, ...declareRunFailed(`api 500 on attempt ${i}`).patch } as Routine, "failed", at);
+    r = applyOutcome({ ...r, ...declareRunFailed(`api 500 on attempt ${i}`).patch } as Routine, "failed", new Date(at.getTime() + (i - 1) * 60 * 60_000));
   }
-  ok(r.status === "disabled" && r.consecutiveFailures === MAX_CONSECUTIVE_FAILURES, `applyOutcome: ${MAX_CONSECUTIVE_FAILURES} DECLARED failures disable the routine, exactly as ${MAX_CONSECUTIVE_FAILURES} session crashes do`);
+  ok(r.status === "disabled" && r.consecutiveFailures === MAX_CONSECUTIVE_FAILURES, `applyOutcome: ${MAX_CONSECUTIVE_FAILURES} DECLARED failures disable the routine, exactly as ${MAX_CONSECUTIVE_FAILURES} session crashes do, once the streak has also spanned an hour (OPE-506)`);
   ok(
     !(r.disabledReason ?? "").includes("api 500"),
     "applyOutcome: `disabledReason` stays HOST-COMPOSED — routines/disable-notice.ts posts it into the room past the silent-routine delivery gate, so model text must never reach it (routine.ts lastFailureReason §quarantine)",
@@ -234,12 +234,12 @@ async function tick(now: Date): Promise<void> {
   await Promise.all(pending);
 }
 
-async function runSession(fire: Fire, declare: string | undefined, sessionId: string): Promise<void> {
+async function runSession(fire: Fire, declare: string | undefined, sessionId: string, at: Date = new Date()): Promise<void> {
   const ctx = { channel: { kind: "slack" }, session: { id: sessionId, auth: { current: { attributes: fire.attrs, principalId: "", principalType: "slack-user" } } } };
   if (declare !== undefined) await reportRunFailedTool.execute({ reason: declare }, ctx as never);
   const marker = routineMarker(fire.attrs as never);
   ok(marker !== undefined && marker !== null, "e2e: the fire carries the routine marker the tool locates itself by");
-  await foldRoutineOutcome({ marker: marker!, sessionOutcome: "ok", at: new Date(), sessionId });
+  await foldRoutineOutcome({ marker: marker!, sessionOutcome: "ok", at, sessionId });
 }
 
 {
@@ -247,8 +247,21 @@ async function runSession(fire: Fire, declare: string | undefined, sessionId: st
   const id = "r-semantic";
   await routineStore.addRoutine({} as never, routine({ id }));
 
-  const ticks = ["2026-07-02T12:05:00.000Z", "2026-07-02T12:20:00.000Z", "2026-07-02T12:40:00.000Z"];
-  const reasons = ["payments API returned 500", "payments API returned 500 again", "payments API still 500"];
+  const ticks = [
+    "2026-07-02T12:05:00.000Z",
+    "2026-07-02T12:20:00.000Z",
+    "2026-07-02T12:40:00.000Z",
+    "2026-07-02T12:50:00.000Z",
+    "2026-07-02T13:05:00.000Z",
+  ];
+  const reasons = [
+    "payments API returned 500",
+    "payments API returned 500 again",
+    "payments API still 500",
+    "payments API still down",
+    "payments API never recovered",
+  ];
+  const DISABLES_AT = 5;
   for (let i = 0; i < ticks.length; i++) {
     fires = [];
     await tick(new Date(ticks[i]!));
@@ -256,32 +269,35 @@ async function runSession(fire: Fire, declare: string | undefined, sessionId: st
     ok(fire !== undefined, `e2e/${i + 1}: the routine fired and the delivery was ACCEPTED (a session started — the case the delivery fold cannot see)`);
     ok(fire!.message.includes(RUN_FAILED_TOOL), `e2e/${i + 1}: the message the model actually receives names the tool — end to end, not just in a renderer unit test`);
 
-    await runSession(fire!, reasons[i]!, `sess-sem-${i + 1}`);
+    await runSession(fire!, reasons[i]!, `sess-sem-${i + 1}`, new Date(ticks[i]!));
     const after = await routineStore.getRoutine(ORG, SURFACE, id);
     ok(
       after?.consecutiveFailures === i + 1,
       `e2e/${i + 1}: the counter is at ${i + 1} even though the SESSION COMPLETED CLEANLY — before this ticket it stayed 0 forever`,
     );
     ok(after?.lastOutcome === "failed", `e2e/${i + 1}: the run is recorded as failed, not ok`);
-    if (i + 1 < MAX_CONSECUTIVE_FAILURES) {
-      ok(after?.status === "active", `e2e/${i + 1}: not disabled yet — the three-strike rule is unchanged`);
+    if (i + 1 < DISABLES_AT) {
+      ok(
+        after?.status === "active",
+        `e2e/${i + 1}: not disabled yet — ${i + 1 >= MAX_CONSECUTIVE_FAILURES ? "🔴 OPE-506: past the bare 3-strike count, but the streak has not yet spanned an hour" : "under the three-strike count"}`,
+      );
       ok(after?.lastFailureReason === reasons[i]!, `e2e/${i + 1}: the declared words are on the row for the next fold to audit`);
     }
   }
 
   const final = await routineStore.getRoutine(ORG, SURFACE, id);
-  ok(final?.status === "disabled", `e2e: THE FIX — ${MAX_CONSECUTIVE_FAILURES} cleanly-completing but SEMANTICALLY FAILED runs disable the routine`);
+  ok(final?.status === "disabled", `e2e: THE FIX — ${DISABLES_AT} cleanly-completing but SEMANTICALLY FAILED runs, spanning an hour, disable the routine`);
   ok(final?.nextRunAt === null, "e2e: and it stops consuming a per-tick concurrency slot");
   ok((final?.disabledReason ?? "").includes("consecutive failures"), "e2e: with the same host-composed reason a session-crash disable gets");
 
   fires = [];
-  await tick(new Date("2026-07-02T13:00:00.000Z"));
+  await tick(new Date("2026-07-02T13:20:00.000Z"));
   ok(!fires.some((f) => (f.attrs[ROUTINE_MARKER.id] as string | undefined) === id), "e2e: once disabled it is never dispatched again");
 
   const rows = await readAudit({ org: ORG, limit: 500 });
   const detail = (r: (typeof rows)[number]) => (r.detail ?? {}) as { routineId?: string; outcome?: string; declaredFailure?: string; consecutiveFailures?: number };
   const fireRows = rows.filter((r) => r.action === ROUTINE_AUDIT.fire && detail(r).routineId === id);
-  ok(fireRows.length === MAX_CONSECUTIVE_FAILURES, `forensics: one routine.fire row per run (${MAX_CONSECUTIVE_FAILURES})`);
+  ok(fireRows.length === DISABLES_AT, `forensics: one routine.fire row per run (${DISABLES_AT})`);
   ok(fireRows.every((r) => detail(r).outcome === "failed"), "forensics: every fire row says `failed`, not `ok` — the join row and the routine row agree");
   ok(
     reasons.every((reason) => fireRows.some((r) => detail(r).declaredFailure === reason)),
@@ -289,8 +305,8 @@ async function runSession(fire: Fire, declare: string | undefined, sessionId: st
   );
   const disabledRows = rows.filter((r) => r.action === ROUTINE_AUDIT.disabled && detail(r).routineId === id);
   ok(disabledRows.length === 1, "forensics: exactly ONE routine.disabled row — written on the transition");
-  ok(detail(disabledRows[0]!).declaredFailure === reasons[MAX_CONSECUTIVE_FAILURES - 1]!, "forensics: the disable row carries the LAST declared reason — the diagnosis an operator reads before deciding whether to enable_routine");
-  ok(detail(disabledRows[0]!).consecutiveFailures === MAX_CONSECUTIVE_FAILURES, "forensics: and the counter a reader will then see on the row");
+  ok(detail(disabledRows[0]!).declaredFailure === reasons[DISABLES_AT - 1]!, "forensics: the disable row carries the LAST declared reason — the diagnosis an operator reads before deciding whether to enable_routine");
+  ok(detail(disabledRows[0]!).consecutiveFailures === DISABLES_AT, "forensics: and the counter a reader will then see on the row — 5, not the bare 3-strike threshold");
 
   await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, id);
 }

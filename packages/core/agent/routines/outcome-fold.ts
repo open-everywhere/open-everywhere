@@ -38,6 +38,7 @@ export async function foldRoutineOutcome(opts: {
     lastOutcome: updated.lastOutcome,
     lastFailureReason: updated.lastFailureReason,
     consecutiveFailures: updated.consecutiveFailures,
+    firstFailureAt: updated.firstFailureAt,
     status: updated.status,
     disabledReason: updated.disabledReason,
     nextRunAt: updated.nextRunAt,
@@ -54,7 +55,7 @@ export async function foldRoutineOutcome(opts: {
       ...(declared !== undefined ? { declaredFailure: declared } : {}),
     });
   }
-  const disabled = updated.status === "disabled" && routine.status !== "disabled";
+  const disabled = updated.status === "disabled" && routine.status !== "disabled" && settled === "failed";
   if (disabled) {
     await auditRoutineDisabled(
       routine,

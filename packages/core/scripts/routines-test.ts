@@ -129,9 +129,17 @@ const base: Routine = {
   prompt: "do x", createdAt: from.toISOString(), status: "active", consecutiveFailures: 0,
 };
 let r = base;
-for (let i = 0; i < MAX_CONSECUTIVE_FAILURES; i++) r = applyOutcome(r, "failed", from);
-ok(r.status === "disabled" && r.consecutiveFailures === MAX_CONSECUTIVE_FAILURES, "self-disables at the failure threshold");
+for (let i = 0; i < MAX_CONSECUTIVE_FAILURES; i++) r = applyOutcome(r, "failed", new Date(from.getTime() + i * 60 * 60_000));
+ok(r.status === "disabled" && r.consecutiveFailures === MAX_CONSECUTIVE_FAILURES, "self-disables at the failure threshold once the streak has also spanned an hour");
 ok(r.disabledReason?.includes("consecutive failures") === true, "disable reason is recorded");
+
+let quick = base;
+for (let i = 0; i < MAX_CONSECUTIVE_FAILURES; i++) quick = applyOutcome(quick, "failed", new Date(from.getTime() + i * 60_000));
+ok(
+  quick.status === "active" && quick.consecutiveFailures === MAX_CONSECUTIVE_FAILURES,
+  "🔴 OPE-506: 3 consecutive failures within a couple of minutes do NOT disable — the streak has not spanned an hour yet",
+);
+ok(quick.firstFailureAt === from.toISOString(), "OPE-506: firstFailureAt pins the start of the streak, unmoved by later failures in the same streak");
 
 const recovered = applyOutcome({ ...base, consecutiveFailures: 2 }, "ok", from);
 ok(recovered.consecutiveFailures === 0 && recovered.status === "active", "an ok run resets the failure counter");

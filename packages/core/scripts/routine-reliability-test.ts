@@ -169,20 +169,30 @@ const okReceive = (() => ({ send: async () => undefined })) as never;
   await tick(new Date("2026-07-02T12:40:00.000Z"), rejectingReceive);
   const after3 = await routineStore.getRoutine(ORG, SURFACE, id);
   ok(after3?.consecutiveFailures === MAX_CONSECUTIVE_FAILURES, `delivery/3: the counter reaches the threshold (${MAX_CONSECUTIVE_FAILURES})`);
-  ok(after3?.status === "disabled", "delivery/3: THE FIX — a routine that can no longer be delivered to SELF-DISABLES instead of retrying on every tick forever");
-  ok((after3?.disabledReason ?? "").includes("consecutive failures"), "delivery/3: the disable carries a legible reason");
-  ok(after3?.nextRunAt === null, "delivery/3: a disabled routine has no next run — it stops consuming a per-tick concurrency slot");
+  ok(after3?.status === "active", "🔴 delivery/3: OPE-506 — 3 failures within 35 minutes do NOT yet disable; the streak has not spanned an hour");
+  ok(after3?.nextRunAt === "2026-07-02T12:45:00.000Z", "delivery/3: still active, so the schedule keeps advancing on the routine's own grid — 12:30 + 15");
 
-  const before4 = (await readAudit({ org: ORG, limit: 500 })).length;
-  await tick(new Date("2026-07-02T13:00:00.000Z"), rejectingReceive);
-  ok((await readAudit({ org: ORG, limit: 500 })).length === before4, "delivery/4: once disabled it is not dispatched again — no further rows of any kind");
+  await tick(new Date("2026-07-02T12:50:00.000Z"), rejectingReceive);
+  const after4 = await routineStore.getRoutine(ORG, SURFACE, id);
+  ok(after4?.consecutiveFailures === 4 && after4?.status === "active", "delivery/4: a fourth failure keeps accumulating — still only 45 minutes since the first, still under the span floor");
+
+  await tick(new Date("2026-07-02T13:05:00.000Z"), rejectingReceive);
+  const after5 = await routineStore.getRoutine(ORG, SURFACE, id);
+  ok(after5?.consecutiveFailures === 5, "delivery/5: the counter keeps counting past the bare threshold — it was never gated on count alone");
+  ok(after5?.status === "disabled", "delivery/5: THE FIX — once the streak ALSO spans an hour, the routine that can no longer be delivered to SELF-DISABLES instead of retrying forever");
+  ok((after5?.disabledReason ?? "").includes("consecutive failures"), "delivery/5: the disable carries a legible reason");
+  ok(after5?.nextRunAt === null, "delivery/5: a disabled routine has no next run — it stops consuming a per-tick concurrency slot");
+
+  const beforeNext = (await readAudit({ org: ORG, limit: 500 })).length;
+  await tick(new Date("2026-07-02T13:20:00.000Z"), rejectingReceive);
+  ok((await readAudit({ org: ORG, limit: 500 })).length === beforeNext, "delivery/6: once disabled it is not dispatched again — no further rows of any kind");
 
   const rows = await readAudit({ org: ORG, limit: 500 });
   const lost = rows.filter((r) => r.action === ROUTINE_AUDIT.fireLost && (r.detail as { routineId?: string } | undefined)?.routineId === id);
   const disabled = rows.filter((r) => r.action === ROUTINE_AUDIT.disabled && (r.detail as { routineId?: string } | undefined)?.routineId === id);
-  ok(lost.length === 3, "forensics: one `routine.fire_lost` row per lost delivery (the OPE-145 trail is unmoved by the fold)");
+  ok(lost.length === 5, "forensics: one `routine.fire_lost` row per lost delivery (the OPE-145 trail is unmoved by the fold)");
   ok(disabled.length === 1, "forensics: exactly ONE `routine.disabled` row — written on the TRANSITION, from the dispatcher ingress that caused it");
-  ok((disabled[0]?.detail as { consecutiveFailures?: number } | undefined)?.consecutiveFailures === MAX_CONSECUTIVE_FAILURES, "forensics: the disable row carries the counter a reader will then see on the row");
+  ok((disabled[0]?.detail as { consecutiveFailures?: number } | undefined)?.consecutiveFailures === 5, "forensics: the disable row carries the counter a reader will then see on the row — 5, not the bare 3-strike threshold, because OPE-506 also gated on the streak's span");
   ok(!("sessionId" in ((disabled[0]?.detail ?? {}) as object)), "forensics: no sessionId is invented for a fire that never started a session");
 
   await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, id);

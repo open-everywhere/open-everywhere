@@ -1,0 +1,88 @@
+import { bridgeSlackForm } from "../channels/slack-bridge.js";
+import { dmTrustTtlMs } from "../identity/trust.js";
+import type { RoutineSkipReason } from "./fire-audit.js";
+
+export type RoomMembershipCheck = (channelId: string, userId: string) => Promise<boolean | undefined>;
+
+export type AccountActiveCheck = (userId: string) => Promise<boolean | undefined>;
+
+const ROOM_MEMBER_MAX_PAGES = 10;
+
+const roomMemberCache = new Map<string, { readonly member: boolean; readonly at: number }>();
+
+export const liveRoomMembership: RoomMembershipCheck = async (channelId, userId) => {
+  if (channelId.length === 0 || userId.length === 0) return undefined;
+  const key = `${channelId}/${userId}`;
+  const hit = roomMemberCache.get(key);
+  if (hit && Date.now() - hit.at < dmTrustTtlMs()) return hit.member;
+  try {
+    let cursor: string | undefined;
+    let member = false;
+    for (let page = 0; page < ROOM_MEMBER_MAX_PAGES; page++) {
+      const qs = new URLSearchParams({ channel: channelId, limit: "1000" });
+      if (cursor) qs.set("cursor", cursor);
+      const info = await bridgeSlackForm("conversations.members", qs.toString());
+      if (!info || info["ok"] !== true) return undefined;
+      if (!Array.isArray(info["members"])) return undefined;
+      const members = info["members"] as unknown[];
+      if (members.includes(userId)) {
+        member = true;
+        break;
+      }
+      const meta = info["response_metadata"] as { next_cursor?: unknown } | undefined;
+      cursor = typeof meta?.next_cursor === "string" && meta.next_cursor.length > 0 ? meta.next_cursor : undefined;
+      if (!cursor) break;
+    }
+    roomMemberCache.set(key, { member, at: Date.now() });
+    return member;
+  } catch {
+    return undefined;
+  }
+};
+
+const accountActiveCache = new Map<string, { readonly active: boolean; readonly at: number }>();
+
+export const liveAccountActive: AccountActiveCheck = async (userId) => {
+  if (userId.length === 0) return undefined;
+  const hit = accountActiveCache.get(userId);
+  if (hit && Date.now() - hit.at < dmTrustTtlMs()) return hit.active;
+  try {
+    const info = await bridgeSlackForm("users.info", new URLSearchParams({ user: userId }).toString());
+    if (!info || info["ok"] !== true) return undefined;
+    const u = info["user"] as Record<string, unknown> | undefined;
+    if (!u || typeof u !== "object") return undefined;
+    const active = !u["deleted"];
+    accountActiveCache.set(userId, { active, at: Date.now() });
+    return active;
+  } catch {
+    return undefined;
+  }
+};
+
+export function _resetFireEligibilityCachesForTest(): void {
+  roomMemberCache.clear();
+  accountActiveCache.clear();
+}
+
+export interface FireEligibilityInput {
+  readonly createdBy: string | undefined;
+  readonly platform: string | undefined;
+  readonly roomId: string | undefined;
+  readonly membershipCheck?: RoomMembershipCheck;
+  readonly activeCheck?: AccountActiveCheck;
+}
+
+export type FireEligibility = { readonly eligible: true } | { readonly eligible: false; readonly reason: RoutineSkipReason };
+
+export async function checkFireEligibility(input: FireEligibilityInput): Promise<FireEligibility> {
+  if (!input.createdBy || input.platform !== "slack" || !input.roomId) return { eligible: true };
+  const membershipCheck = input.membershipCheck ?? liveRoomMembership;
+  const activeCheck = input.activeCheck ?? liveAccountActive;
+  const [member, active] = await Promise.all([
+    membershipCheck(input.roomId, input.createdBy).catch((): boolean | undefined => undefined),
+    activeCheck(input.createdBy).catch((): boolean | undefined => undefined),
+  ]);
+  if (member === false) return { eligible: false, reason: "creator_removed_from_room" };
+  if (active === false) return { eligible: false, reason: "creator_account_inactive" };
+  return { eligible: true };
+}

@@ -2,6 +2,18 @@ import { RUN_FAILURE_REASON_MAX_CHARS, type Routine, type RunOutcome } from "./r
 
 export const MAX_CONSECUTIVE_FAILURES = 3;
 
+export const MIN_CONSECUTIVE_FAILURE_SPAN_MS = 60 * 60_000;
+
+function failureStreak(routine: Pick<Routine, "consecutiveFailures" | "firstFailureAt" | "lastRunAt">, ranAt: Date): { readonly firstFailureAt: string; readonly spanSatisfied: boolean } {
+  if (routine.consecutiveFailures === 0) {
+    return { firstFailureAt: ranAt.toISOString(), spanSatisfied: false };
+  }
+  if (routine.firstFailureAt !== undefined) {
+    return { firstFailureAt: routine.firstFailureAt, spanSatisfied: ranAt.getTime() - Date.parse(routine.firstFailureAt) >= MIN_CONSECUTIVE_FAILURE_SPAN_MS };
+  }
+  return { firstFailureAt: routine.lastRunAt ?? ranAt.toISOString(), spanSatisfied: true };
+}
+
 export function applyOutcome(
   routine: Routine,
   outcome: RunOutcome,
@@ -17,17 +29,26 @@ export function applyOutcome(
       nextRunAt: null,
     };
   }
-  const consecutiveFailures = outcome === "failed" ? routine.consecutiveFailures + 1 : 0;
+  const failed = outcome === "failed";
+  const consecutiveFailures = failed ? routine.consecutiveFailures + 1 : 0;
+  const streak = failed ? failureStreak(routine, ranAt) : undefined;
   const next: Routine = {
     ...routine,
     lastRunAt: ranAt.toISOString(),
     lastOutcome: outcome,
     consecutiveFailures,
-    lastFailureReason: outcome === "failed" ? routine.lastFailureReason : undefined,
+    firstFailureAt: streak?.firstFailureAt,
+    lastFailureReason: failed ? routine.lastFailureReason : undefined,
   };
-  if (outcome === "failed" && consecutiveFailures >= maxFailures) {
+  if (routine.trigger.kind === "once") {
     next.status = "disabled";
-    next.disabledReason = `auto-disabled after ${consecutiveFailures} consecutive failures`;
+    next.nextRunAt = null;
+    next.disabledReason = failed
+      ? `auto-disabled — its one scheduled fire failed${next.lastFailureReason ? `: ${next.lastFailureReason}` : ""}`
+      : `once: fired and ${outcome} at ${ranAt.toISOString()}`;
+  } else if (failed && consecutiveFailures >= maxFailures && streak?.spanSatisfied === true) {
+    next.status = "disabled";
+    next.disabledReason = `auto-disabled after ${consecutiveFailures} consecutive failures spanning over an hour`;
     next.nextRunAt = null;
   }
   return next;

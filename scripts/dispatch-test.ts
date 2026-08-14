@@ -211,9 +211,16 @@ ok(watchAfter?.lastStateHash === undefined, "dispatch never invents a state hash
     "a once fire gets the plain temporal-preamble + prompt (renderScheduledMessage), NOT the watch protocol",
   );
 
+  const onceMidFlight = await store.getRoutine("default", "slack/T1/C1", "r-once");
+  ok(onceMidFlight?.status === "active" && onceMidFlight?.nextRunAt === null, "OPE-506: right after a successful delivery the row is briefly still `active` (with no next run) — not yet terminal, because the outcome is not yet known");
+
+  const { foldRoutineOutcome } = await import("@open-everywhere/core/agent/routines/outcome-fold.js");
+  const folded = await foldRoutineOutcome({ marker: { id: "r-once", surfaceKey: "slack/T1/C1", org: "default" }, sessionOutcome: "ok", at: new Date("2026-07-02T12:00:00.000Z"), sessionId: "sess-once" });
+  ok(folded.folded && folded.outcome === "ok", "the session settles ok, same as any other successful fire");
+
   const onceAfter = await store.getRoutine("default", "slack/T1/C1", "r-once");
-  ok(onceAfter?.status === "disabled", "a fired once routine DISABLES itself (not deleted — kept for list/audit visibility)");
-  ok(onceAfter?.disabledReason?.includes("once: fired at") === true, "the disable reason carries a fired-at marker");
+  ok(onceAfter?.status === "disabled", "OPE-506: a fired once routine goes terminal once its outcome is known (not deleted — kept for list/audit visibility)");
+  ok(onceAfter?.disabledReason?.includes("once: fired and ok at") === true, "OPE-506: the reason names the actual outcome (fired and ok), not a bare fired-at marker a failure could never overwrite");
   ok(onceAfter?.nextRunAt === null, "a fired once routine's nextRunAt goes to null (no next occurrence, ever)");
   ok(onceAfter?.trigger.kind === "once" && (onceAfter.trigger as { at: string }).at === "2026-07-02T11:55:00.000Z", "the once trigger's `at` is untouched by firing");
 

@@ -3,6 +3,12 @@ import { bridgeConfirmChannelInternal, bridgeSlackForm } from "../channels/slack
 import { resolveRoutineTarget } from "./routine-dispatch.js";
 import { routineFireAttributes } from "../routines/fire-auth.js";
 import { recheckFireCreator, type CreatorStandingCheck } from "../routines/fire-creator.js";
+import {
+  checkFireEligibility,
+  type AccountActiveCheck,
+  type FireEligibility,
+  type RoomMembershipCheck,
+} from "../routines/fire-eligibility.js";
 import { divertTriggeredFire, jobFireSeatKey, runFireSeatKey } from "../routines/fire-window.js";
 import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { auditRoutineFireLost, auditRoutineSkip } from "../routines/fire-audit.js";
@@ -55,6 +61,8 @@ export async function dispatchTick(
     readonly confirmInternal?: (channelId: string) => Promise<boolean>;
     readonly postJobKickoff?: (channelId: string, text: string) => Promise<string | undefined>;
     readonly confirmCreatorInternal?: CreatorStandingCheck;
+    readonly confirmRoomMembership?: RoomMembershipCheck;
+    readonly confirmCreatorActive?: AccountActiveCheck;
   },
 ): Promise<void> {
   const { to, waitUntil, appAuth } = args;
@@ -79,6 +87,7 @@ export async function dispatchTick(
   let dryRun = 0;
   let deferred = 0;
   let declined = 0;
+  let ineligible = 0;
   let retired = 0;
   for (const r of due) {
     const bound = checkBound(r, now);
@@ -122,6 +131,26 @@ export async function dispatchTick(
       ...(args.confirmCreatorInternal ? { check: args.confirmCreatorInternal } : {}),
     }).catch(() => undefined);
     const fireTrust: Trust = (mode === "dm" ? creatorInternal === true : internal) ? "internal" : "external";
+    const eligibility = await checkFireEligibility({
+      createdBy: r.createdBy,
+      platform: firePlatform,
+      roomId: slackChannelId,
+      ...(args.confirmRoomMembership ? { membershipCheck: args.confirmRoomMembership } : {}),
+      ...(args.confirmCreatorActive ? { activeCheck: args.confirmCreatorActive } : {}),
+    }).catch((): FireEligibility => ({ eligible: true }));
+    if (!eligibility.eligible) {
+      ineligible++;
+      log(`SKIPPED (${eligibility.reason}): ${r.id} on ${r.surfaceKey} — "${r.prompt.slice(0, 60)}"`);
+      await updateRoutine(r.org, r.surfaceKey, r.id, {
+        lastRunAt: now.toISOString(),
+        nextRunAt: next ? next.toISOString() : null,
+        lastOutcome: "skipped",
+        lastFailureReason: undefined,
+        ...onceDisablePatch(r, now, `skipped (${eligibility.reason})`),
+      });
+      await auditRoutineSkip(r, eligibility.reason, { trigger: r.trigger.kind }).catch(() => false);
+      continue;
+    }
     try {
       const verdict = await scopeOverBudget(partitionOf(r), mode, now.toISOString(), fireTrust, r.createdBy);
       if (verdict.over) {
@@ -148,7 +177,6 @@ export async function dispatchTick(
         lastStallAt: undefined,
         ...(r.manualRunAt !== undefined ? { manualRunAt: undefined } : {}),
         ...(r.bound ? { fireCount: (r.fireCount ?? 0) + 1 } : {}),
-        ...onceDisablePatch(r, now, "fired"),
       });
       let fireTarget = dest.target;
       let jobAnchor = r.jobSessionAnchor;
@@ -222,7 +250,7 @@ export async function dispatchTick(
     }
   }
   log(
-    `tick: ${due.length} due -> ${fired} fired, ${dryRun} dry-run, ${declined} declined, ${deferred} deferred` +
+    `tick: ${due.length} due -> ${fired} fired, ${dryRun} dry-run, ${declined} declined, ${ineligible} ineligible, ${deferred} deferred` +
       `${retired > 0 ? `, ${retired} retired at ceiling` : ""} (cap ${cap})`,
   );
 }

@@ -19,7 +19,9 @@ export type RoutineSkipReason =
   | "filter_invalid"
   | "grant_refused"
   | "grant_drift"
-  | "audience_floor";
+  | "audience_floor"
+  | "creator_removed_from_room"
+  | "creator_account_inactive";
 
 export const SKIP_WINDOW_MS = 60 * 60_000;
 

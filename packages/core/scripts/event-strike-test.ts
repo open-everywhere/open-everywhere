@@ -80,10 +80,14 @@ interface HarnessOpts {
 function harness(opts: HarnessOpts = {}) {
   const fired: Array<{ message: string }> = [];
   const audited: AuditInput[] = [];
+  let clock = NOW;
   return {
     fired,
     audited,
     rows: (action: string) => audited.filter((a) => a.action === action),
+    setNow: (at: Date) => {
+      clock = at;
+    },
     deps: {
       to: (() => ({
         send: (message: string) => {
@@ -96,7 +100,7 @@ function harness(opts: HarnessOpts = {}) {
         audited.push(e);
       },
       grant: { resolve: () => ({ repos: ["me/proj"] }) as never },
-      now: () => NOW,
+      now: () => clock,
       ...(opts.listRoutines ? { listRoutines: opts.listRoutines } : {}),
       ...(opts.hydrate ? { hydrate: { read: async (): Promise<HydrationOutcome> => opts.hydrate! } } : {}),
     },
@@ -135,29 +139,42 @@ const read = (id: string, surfaceKey = SURFACE) => routineStore.getRoutine(ORG, 
   const before = posts.length;
   const h = harness({ reject: "channel_not_found" });
 
+  h.setNow(new Date(NOW.getTime()));
   await fanOutDelivery(PR_BODY, "pull_request", "d-dead-1", h.deps);
+  h.setNow(new Date(NOW.getTime() + 15 * 60_000));
   await fanOutDelivery(PR_BODY, "pull_request", "d-dead-2", h.deps);
   ok((await read("r-dead"))?.consecutiveFailures === 2, "disable: failures ACCUMULATE across deliveries (the store is the counter, not the in-memory match set)");
   ok((await read("r-dead"))?.status === "active", "disable: still active at two");
 
+  h.setNow(new Date(NOW.getTime() + 30 * 60_000));
   await fanOutDelivery(PR_BODY, "pull_request", "d-dead-3", h.deps);
+  const atThree = await read("r-dead");
+  ok(atThree?.consecutiveFailures === MAX_CONSECUTIVE_FAILURES, `disable: the counter reaches the bare threshold (${MAX_CONSECUTIVE_FAILURES})`);
+  ok(atThree?.status === "active", "🔴 disable: OPE-506 — 3 failures within 30 minutes do NOT yet disable; the streak has not spanned an hour");
+
+  h.setNow(new Date(NOW.getTime() + 45 * 60_000));
+  await fanOutDelivery(PR_BODY, "pull_request", "d-dead-4", h.deps);
+  ok((await read("r-dead"))?.consecutiveFailures === 4 && (await read("r-dead"))?.status === "active", "disable: a fourth failure keeps accumulating, still under the span floor (45 minutes since the first)");
+
+  h.setNow(new Date(NOW.getTime() + 65 * 60_000));
+  await fanOutDelivery(PR_BODY, "pull_request", "d-dead-5", h.deps);
   const dead = await read("r-dead");
-  ok(dead?.consecutiveFailures === MAX_CONSECUTIVE_FAILURES, `disable: the counter reaches the threshold (${MAX_CONSECUTIVE_FAILURES})`);
-  ok(dead?.status === "disabled", "🔴 disable: an EVENT routine that can no longer be delivered to SELF-DISABLES — the protection clock routines have had since OPE-146");
+  ok(dead?.consecutiveFailures === 5, "disable: the counter keeps counting past the bare threshold — it was never gated on count alone");
+  ok(dead?.status === "disabled", "🔴 disable: an EVENT routine that can no longer be delivered to SELF-DISABLES — the protection clock routines have had since OPE-146, once the streak ALSO spans an hour (OPE-506)");
   ok((dead?.disabledReason ?? "").includes("consecutive failures"), "disable: the disable carries a legible reason");
 
   const lostBefore = h.rows(ROUTINE_AUDIT.fireLost).length;
-  await fanOutDelivery(PR_BODY, "pull_request", "d-dead-4", h.deps);
-  ok(h.rows(ROUTINE_AUDIT.fireLost).length === lostBefore, "🔴 disable: a FOURTH delivery no longer matches it at all — the forever-retry loop is closed, which is the entire product claim");
-  ok(lostBefore === 3, "disable: exactly one fire_lost row per lost delivery, and none after");
+  await fanOutDelivery(PR_BODY, "pull_request", "d-dead-6", h.deps);
+  ok(h.rows(ROUTINE_AUDIT.fireLost).length === lostBefore, "🔴 disable: a SIXTH delivery no longer matches it at all — the forever-retry loop is closed, which is the entire product claim");
+  ok(lostBefore === 5, "disable: exactly one fire_lost row per lost delivery, and none after");
 
   const disabledRows = (await readAudit({ org: ORG, action: ROUTINE_AUDIT.disabled, limit: 500 })).filter(
     (r) => (r.detail as { routineId?: string } | undefined)?.routineId === "r-dead",
   );
   ok(disabledRows.length === 1, "disable: exactly ONE `routine.disabled` row — written on the TRANSITION, from the event ingress that caused it");
   ok(
-    (disabledRows[0]?.detail as { consecutiveFailures?: number } | undefined)?.consecutiveFailures === MAX_CONSECUTIVE_FAILURES,
-    "disable: the row carries the counter a reader will then see on the routine itself",
+    (disabledRows[0]?.detail as { consecutiveFailures?: number } | undefined)?.consecutiveFailures === 5,
+    "disable: the row carries the counter a reader will then see on the routine itself — 5, not the bare 3-strike threshold",
   );
   ok(!("sessionId" in ((disabledRows[0]?.detail ?? {}) as object)), "disable: no sessionId is invented for a fire that never started a session");
 
@@ -186,7 +203,9 @@ const read = (id: string, surfaceKey = SURFACE) => routineStore.getRoutine(ORG, 
   }
   ok(h.rows(ROUTINE_AUDIT.fireLost).length === 3, "fan-out: three routines, three lost fires, three rows — the strike count tracks the ATTEMPTS, not the surface");
 
+  h.setNow(new Date(NOW.getTime() + 40 * 60_000));
   await fanOutDelivery(PR_BODY, "pull_request", "d-fanout-2", h.deps);
+  h.setNow(new Date(NOW.getTime() + 65 * 60_000));
   await fanOutDelivery(PR_BODY, "pull_request", "d-fanout-3", h.deps);
   for (const id of ["r-n1", "r-n2", "r-n3"]) {
     ok((await read(id))?.status === "disabled", `🔴 fan-out: ${id} disabled ITSELF — every routine on a dead surface converges, not just whichever one the loop reached first`);

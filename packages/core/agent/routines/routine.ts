@@ -65,6 +65,7 @@ export interface Routine {
   lastOutcome?: RunOutcome;
   lastFailureReason?: string;
   consecutiveFailures: number;
+  firstFailureAt?: string;
   lastStateHash?: string;
 
   firstMatchAt?: string;
