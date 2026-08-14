@@ -1,10 +1,10 @@
 import {
   distillRotationHandoff,
-  renderContext,
   sinceLastAgentReply,
   WAKE_BACKSCROLL_MAX,
   clusterBackscroll,
   resolveWakeTrustFromContext,
+  armedAuthorTrustTenants,
   type ContextLine,
   type NormalizedMessage,
   type BackscrollTrustFor,
@@ -12,6 +12,7 @@ import {
   type BindableContext,
   type AuthorTrustQuery,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { discordAuthorRoles } from "../approvals/discord-admin.js";
 
 export interface DiscordBackscrollInput {
   readonly channelId: string;
@@ -65,13 +66,39 @@ export function linesFromDiscordMessages(raw: ReadonlyArray<Record<string, unkno
   return lines;
 }
 
-export function gradeDiscordContextLines(lines: readonly ContextLine[], ctx: BindableContext, guildId: string | undefined): ContextLine[] {
-  return lines.map((l) => {
-    if (l.senderType !== "user") return l;
-    const trust = resolveWakeTrustFromContext(ctx, { id: l.senderId, isBot: false });
-    const authorTrust: AuthorTrustQuery | undefined =
-      guildId !== undefined && l.senderId !== undefined ? { tenantKey: `discord/${guildId}`, authorId: l.senderId, memberships: [] } : undefined;
-    return authorTrust ? { ...l, trust, authorTrust } : { ...l, trust };
+export type DiscordRoleProbe = (guildId: string, userId: string) => Promise<readonly string[] | undefined>;
+
+export async function gradeDiscordContextLines(
+  lines: readonly ContextLine[],
+  ctx: BindableContext,
+  guildId: string | undefined,
+  roleProbe: DiscordRoleProbe = discordAuthorRoles,
+): Promise<ContextLine[]> {
+  const withTrust = lines.map((l): ContextLine =>
+    l.senderType !== "user" ? l : { ...l, trust: resolveWakeTrustFromContext(ctx, { id: l.senderId, isBot: false }) },
+  );
+  const tenantKey = guildId !== undefined ? `discord/${guildId}` : undefined;
+  if (tenantKey === undefined || !armedAuthorTrustTenants().includes(tenantKey)) return withTrust;
+
+  const candidates = new Set<string>();
+  for (const l of withTrust) {
+    if (l.senderType === "user" && l.senderId !== undefined) candidates.add(l.senderId);
+  }
+  if (candidates.size === 0) return withTrust;
+  const ids = [...candidates];
+  const roleResults = await Promise.all(ids.map((id) => roleProbe(guildId!, id)));
+  const rolesById = new Map(ids.map((id, i) => [id, roleResults[i]] as const));
+
+  return withTrust.map((l) => {
+    if (l.senderType !== "user" || l.senderId === undefined) return l;
+    const roles = rolesById.get(l.senderId);
+    if (roles === undefined) return l;
+    const authorTrust: AuthorTrustQuery = {
+      tenantKey,
+      authorId: l.senderId,
+      memberships: roles.map((r) => `${tenantKey}/role:${r}`),
+    };
+    return { ...l, authorTrust };
   });
 }
 
@@ -100,13 +127,6 @@ export async function fetchDiscordBackscrollLines(
   } catch {
     return undefined;
   }
-}
-
-export async function fetchDiscordBackscroll(input: DiscordBackscrollInput, deps: DiscordBackscrollDeps = liveDeps): Promise<string[]> {
-  const res = await fetchDiscordBackscrollLines(input, deps);
-  if (!res) return [];
-  const entry = renderContext(res.lines, res.source);
-  return entry ? [entry] : [];
 }
 
 const ROTATION_TRANSCRIPT_MESSAGES = 50;

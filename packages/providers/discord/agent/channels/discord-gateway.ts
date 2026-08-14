@@ -1121,7 +1121,7 @@ export async function dispatchTurn(
               botId: msg.botId,
             }).catch(() => undefined)
           : undefined;
-      const gradedWindowLines = windowLines ? gradeDiscordContextLines(windowLines.lines, ctxFromAuth(auth), msg.guildId) : undefined;
+      const gradedWindowLines = windowLines ? await gradeDiscordContextLines(windowLines.lines, ctxFromAuth(auth), msg.guildId) : undefined;
       const windowContext = gradedWindowLines ? renderContext(gradedWindowLines, windowLines!.source) : null;
       const addressing = mentionPolicy.addressing ?? (nameDrop && msg.botName ? "name-drop" : "channel-watch");
       await divertDiscordWakeToUnifiedWindow({
@@ -1201,7 +1201,7 @@ export async function dispatchTurn(
           botId: msg.botId,
         }).catch(() => undefined)
       : undefined;
-  const gradedBackscrollLines = backscroll ? gradeDiscordContextLines(backscroll.lines, ctxFromAuth(surface.auth), msg.guildId) : undefined;
+  const gradedBackscrollLines = backscroll ? await gradeDiscordContextLines(backscroll.lines, ctxFromAuth(surface.auth), msg.guildId) : undefined;
 
   const rendered = renderWake(
     discordNativeWake({

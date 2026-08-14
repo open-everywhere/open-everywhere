@@ -35,7 +35,9 @@ const {
 const { postDiscordApprovalCard, parseDiscordComponentClick, discordResponseFor, handleDiscordApprovalInteraction } = await import(
   "@open-everywhere/provider-discord/agent/approvals/discord-flow.js"
 );
-const { guildIdFromScopeKey, isGuildAdminViaRest, isGuildMemberViaRest } = await import("@open-everywhere/provider-discord/agent/approvals/discord-admin.js");
+const { guildIdFromScopeKey, isGuildAdminViaRest, isGuildMemberViaRest, discordAuthorRoles, _resetDiscordAuthorRolesCache } = await import(
+  "@open-everywhere/provider-discord/agent/approvals/discord-admin.js"
+);
 const { clickerFloorRefusalNotice } = await import("@open-everywhere/core/agent/adapter-api.js");
 const {
   PUBLIC_DISCORD_ROUTE,
@@ -701,4 +703,58 @@ const store = getOperationalStore();
   );
 }
 
-console.log(`\n✓ discord-approvals: ${n} assertions passed (card render, custom_id codec, admin bitfield, scope fence, REST admin standing, ed25519 gate, poster, click matrix, decision feedback, front route)\n`);
+{
+  _resetDiscordAuthorRolesCache();
+  const memberRes = (status: number, body: unknown) => (async () => new Response(JSON.stringify(body), { status })) as typeof fetch;
+
+  ok(
+    (await discordAuthorRoles("Ra", "U-roled", { token: "t", fetchFn: memberRes(200, { roles: ["r1", "r2"] }) }))?.join(",") === "r1,r2",
+    "a 200 with a real roles array returns it verbatim",
+  );
+  ok(
+    (await discordAuthorRoles("Rb", "U-none", { token: "t", fetchFn: memberRes(200, { roles: [] }) }))?.length === 0,
+    "a 200 with an EMPTY roles array is a real (verified) empty result, not `undefined`",
+  );
+  ok(
+    (await discordAuthorRoles("Rc", "U-left", { token: "t", fetchFn: memberRes(404, {}) }))?.length === 0,
+    "🔴 a 404 is the platform's own not-a-member answer — VERIFIED evidence of zero roles, not a guess (mirrors isGuildMemberViaRest's own 404 reading)",
+  );
+  ok(
+    (await discordAuthorRoles("Rd", "U-any", { token: "t", fetchFn: memberRes(500, {}) })) === undefined,
+    "🔴 FAIL OPEN: a non-404 error status is `undefined` (cannot check) — NEVER collapsed to an empty array the way isGuildMemberViaRest's fail-CLOSED sibling would",
+  );
+  ok(
+    (await discordAuthorRoles("Re", "U-any", { token: "t", fetchFn: memberRes(200, { notRoles: "garbage" }) })) === undefined,
+    "🔴 FAIL OPEN: a 200 with an unreadable body (no `roles` array) is `undefined` — never guessed as empty",
+  );
+  ok((await discordAuthorRoles("Rf", "U-any", { token: "" })) === undefined, "FAIL OPEN: no bot token is `undefined` (cannot check), not a guess");
+  ok(
+    (await discordAuthorRoles("Rg", "U-any", {
+      token: "t",
+      fetchFn: (async () => {
+        throw new Error("network down");
+      }) as typeof fetch,
+    })) === undefined,
+    "🔴 FAIL OPEN: a thrown fetch is `undefined` (never throws out, never guessed)",
+  );
+  ok(
+    (await discordAuthorRoles("Ra", "U-roled", {
+      token: "t",
+      fetchFn: (async () => {
+        throw new Error("should not be called — cached");
+      }) as typeof fetch,
+    }))?.join(",") === "r1,r2",
+    "role evidence is cached inside the TTL (no second REST round-trip)",
+  );
+  ok(
+    (await isGuildMemberViaRest("Ra", "U-roled", { token: "t", fetchFn: memberRes(404, {}) })) === false,
+    "the role-evidence cache is distinct from the membership cache — a cached role-evidence hit may never satisfy a membership question",
+  );
+  _resetDiscordAuthorRolesCache();
+  ok(
+    (await discordAuthorRoles("Ra", "U-roled", { token: "t", fetchFn: memberRes(200, { roles: ["fresh"] }) }))?.join(",") === "fresh",
+    "the reset hook actually clears the cache — a fresh fetch runs and its answer is used",
+  );
+}
+
+console.log(`\n✓ discord-approvals: ${n} assertions passed (card render, custom_id codec, admin bitfield, scope fence, REST admin standing, ed25519 gate, poster, click matrix, decision feedback, front route, OPE-475 role-evidence probe)\n`);

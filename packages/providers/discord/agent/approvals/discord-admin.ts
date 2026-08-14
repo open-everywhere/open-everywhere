@@ -95,3 +95,40 @@ export async function isGuildMemberViaRest(guildId: string, userId: string, deps
   memberVerdictCache.set(cacheKey, { verdict, at: now });
   return verdict;
 }
+
+const roleEvidenceCache = new Map<string, { roles: readonly string[]; at: number }>();
+
+export async function discordAuthorRoles(guildId: string, userId: string, deps: DiscordAdminDeps = {}): Promise<readonly string[] | undefined> {
+  const token = deps.token ?? process.env.DISCORD_BOT_TOKEN;
+  if (!token || !guildId || !userId) return undefined;
+  const cacheKey = `${guildId}:${userId}`;
+  const now = deps.nowMs ?? Date.now();
+  const hit = roleEvidenceCache.get(cacheKey);
+  if (hit && now - hit.at < VERDICT_TTL_MS) return hit.roles;
+
+  const doFetch = deps.fetchFn ?? fetch;
+  try {
+    const res = await doFetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, { headers: { authorization: `Bot ${token}` } });
+    if (res.status === 404) {
+      roleEvidenceCache.set(cacheKey, { roles: [], at: now });
+      return [];
+    }
+    if (!res.ok) {
+      log(`role lookup failed (${res.status}) for guild ${guildId} — skipping the register query (cannot check is not checked-and-empty)`);
+      return undefined;
+    }
+    const member = (await res.json()) as unknown;
+    const rolesField = isObject(member) ? member["roles"] : undefined;
+    if (!Array.isArray(rolesField)) return undefined;
+    const roles = rolesField.filter((r): r is string => typeof r === "string" && r.length > 0);
+    roleEvidenceCache.set(cacheKey, { roles, at: now });
+    return roles;
+  } catch (err) {
+    log(`role lookup error for guild ${guildId}: ${(err as Error)?.message ?? String(err)}`);
+    return undefined;
+  }
+}
+
+export function _resetDiscordAuthorRolesCache(): void {
+  roleEvidenceCache.clear();
+}

@@ -2,16 +2,17 @@ import assert from "node:assert/strict";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
 __regDiscord();
 import {
-  fetchDiscordBackscroll,
+  fetchDiscordBackscrollLines,
   fetchDiscordBackscrollWindow,
   fetchDiscordWakeEnvelopeBackscroll,
   isDiscordBackscrollVisible,
   linesFromDiscordMessages,
   snowflakeToMs,
+  type DiscordBackscrollInput,
   type DiscordRequester,
   type DiscordBackscrollDeps,
 } from "@open-everywhere/provider-discord/agent/channels/discord-backscroll.js";
-import { WAKE_BACKSCROLL_MAX } from "@open-everywhere/core/agent/channels/context-render.js";
+import { WAKE_BACKSCROLL_MAX, renderContext } from "@open-everywhere/core/agent/channels/context-render.js";
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/access/untrusted.js";
 
 let n = 0;
@@ -40,10 +41,17 @@ function stub(messages: Msg[] | unknown, recorder?: { channelId?: string; query?
 }
 const deps = (request: DiscordRequester): DiscordBackscrollDeps => ({ request });
 
+async function fetchRendered(input: DiscordBackscrollInput, deps: DiscordBackscrollDeps): Promise<string[]> {
+  const res = await fetchDiscordBackscrollLines(input, deps);
+  if (!res) return [];
+  const entry = renderContext(res.lines, res.source);
+  return entry ? [entry] : [];
+}
+
 {
   const rec: { channelId?: string; query?: Record<string, string> } = {};
   const messages = [m("30", "UC", "newest"), m("20", "UB", "middle"), m("10", "UA", "oldest")];
-  const out = await fetchDiscordBackscroll({ channelId: "CH", triggerMessageId: "40", isThread: false, botId: BOT }, deps(stub(messages, rec)));
+  const out = await fetchRendered({ channelId: "CH", triggerMessageId: "40", isThread: false, botId: BOT }, deps(stub(messages, rec)));
   ok(rec.channelId === "CH" && rec.query?.before === "40" && rec.query?.limit === String(WAKE_BACKSCROLL_MAX), "reads the channel with before=<trigger> and the shared limit");
   ok(out.length === 1 && out[0].startsWith(UNTRUSTED_OPEN), "one untrusted-wrapped entry");
   ok(out[0].indexOf("oldest") < out[0].indexOf("middle") && out[0].indexOf("middle") < out[0].indexOf("newest"), "rendered oldest-first (Discord newest-first is reversed)");
@@ -57,7 +65,7 @@ const deps = (request: DiscordRequester): DiscordBackscrollDeps => ({ request })
     m("20", "UB", "a detail"),
     m("10", "UA", "root question"),
   ];
-  const out = await fetchDiscordBackscroll({ channelId: "TH", triggerMessageId: "50", isThread: true, botId: BOT }, deps(stub(messages)));
+  const out = await fetchRendered({ channelId: "TH", triggerMessageId: "50", isThread: true, botId: BOT }, deps(stub(messages)));
   ok(out.length === 1 && out[0].includes("follow-up after agent"), "in-thread keeps the message after the agent's last reply");
   ok(!out[0].includes("root question") && !out[0].includes("a detail") && !out[0].includes("agent answer"), "in-thread excludes everything up to & including the agent's last reply");
   ok(out[0].includes("[sender_type=agent]") === false, "the agent line itself was sliced out (nothing agent-attributed remains)");
@@ -65,24 +73,24 @@ const deps = (request: DiscordRequester): DiscordBackscrollDeps => ({ request })
 
 {
   const messages = [m("30", "UC", "third"), m("20", "UB", "second"), m("10", "UA", "first")];
-  const out = await fetchDiscordBackscroll({ channelId: "TH", triggerMessageId: "40", isThread: true, botId: BOT }, deps(stub(messages)));
+  const out = await fetchRendered({ channelId: "TH", triggerMessageId: "40", isThread: true, botId: BOT }, deps(stub(messages)));
   ok(out.length === 1 && out[0].includes("first") && out[0].includes("second") && out[0].includes("third"), "cold thread (agent never spoke) → all prior messages");
 }
 
 {
   const messages = [m("10", BOT, "my own post", true)];
-  const out = await fetchDiscordBackscroll({ channelId: "CH", triggerMessageId: "99", isThread: false, botId: BOT }, deps(stub(messages)));
+  const out = await fetchRendered({ channelId: "CH", triggerMessageId: "99", isThread: false, botId: BOT }, deps(stub(messages)));
   ok(out[0].includes("[sender_type=agent] my own post") && !out[0].includes(`sender_id=${BOT}`), "own post → sender_type=agent, no foreign sender_id");
 }
 {
   const messages = [m("20", "OTHERBOT", "another bot", true), m("10", "UH", "human hi")];
-  const out = await fetchDiscordBackscroll({ channelId: "CH", triggerMessageId: "99", isThread: false, botId: BOT }, deps(stub(messages)));
+  const out = await fetchRendered({ channelId: "CH", triggerMessageId: "99", isThread: false, botId: BOT }, deps(stub(messages)));
   ok(out[0].includes("[sender_type=bot sender_id=OTHERBOT] another bot"), "other bot → sender_type=bot with id");
   ok(out[0].includes("[sender_type=user sender_id=UH] human hi"), "human → sender_type=user with id");
 }
 {
   const messages = [m("10", BOT, "unlabelled own post", true)];
-  const out = await fetchDiscordBackscroll({ channelId: "CH", triggerMessageId: "99", isThread: false }, deps(stub(messages)));
+  const out = await fetchRendered({ channelId: "CH", triggerMessageId: "99", isThread: false }, deps(stub(messages)));
   ok(out[0].includes(`[sender_type=bot sender_id=${BOT}] unlabelled own post`), "absent botId → own post attributed as bot (best-effort, no boundary)");
 }
 
@@ -94,7 +102,7 @@ const deps = (request: DiscordRequester): DiscordBackscrollDeps => ({ request })
     { id: "20", type: 19, content: "a reply", author: { id: "UB", bot: false } },
     { id: "10", type: 6, content: "pinned", author: { id: "UA", bot: false } },
   ];
-  const out = await fetchDiscordBackscroll({ channelId: "CH", triggerMessageId: "99", isThread: false, botId: BOT }, deps(stub(messages)));
+  const out = await fetchRendered({ channelId: "CH", triggerMessageId: "99", isThread: false, botId: BOT }, deps(stub(messages)));
   ok(out[0].includes("keep me") && out[0].includes("a reply"), "keeps DEFAULT (0) and REPLY (19) messages");
   ok(!out[0].includes("joined") && !out[0].includes("pinned"), "drops system message types (join/pin)");
   const lines = out[0].split("\n").filter((l) => l.includes("sender_type=")).length;
@@ -103,7 +111,7 @@ const deps = (request: DiscordRequester): DiscordBackscrollDeps => ({ request })
 
 {
   const messages = Array.from({ length: 13 }, (_, i) => m(`${13 - i}`, "UA", `msg${12 - i}`));
-  const out = await fetchDiscordBackscroll({ channelId: "CH", triggerMessageId: "99", isThread: false, botId: BOT }, deps(stub(messages)));
+  const out = await fetchRendered({ channelId: "CH", triggerMessageId: "99", isThread: false, botId: BOT }, deps(stub(messages)));
   ok(WAKE_BACKSCROLL_MAX === 10, "the shared cap constant is 10");
   const kept = out[0].split("\n").filter((l) => l.includes("sender_type=")).length;
   ok(kept === WAKE_BACKSCROLL_MAX, `capped at WAKE_BACKSCROLL_MAX lines (${WAKE_BACKSCROLL_MAX})`);
@@ -111,7 +119,7 @@ const deps = (request: DiscordRequester): DiscordBackscrollDeps => ({ request })
 }
 
 {
-  const out = await fetchDiscordBackscroll({ channelId: "CH", triggerMessageId: "99", isThread: false, botId: BOT }, deps(stub([m("10", "UA", "hi")])));
+  const out = await fetchRendered({ channelId: "CH", triggerMessageId: "99", isThread: false, botId: BOT }, deps(stub([m("10", "UA", "hi")])));
   ok(out[0].startsWith(UNTRUSTED_OPEN) && out[0].includes(UNTRUSTED_CLOSE), "the block is untrusted-wrapped (open + close)");
 }
 
@@ -119,10 +127,10 @@ const deps = (request: DiscordRequester): DiscordBackscrollDeps => ({ request })
   const throwing = deps(async () => {
     throw new Error("discord down");
   });
-  ok((await fetchDiscordBackscroll({ channelId: "CH", triggerMessageId: "1", isThread: true, botId: BOT }, throwing)).length === 0, "a throwing requester → empty (never fails the wake)");
-  ok((await fetchDiscordBackscroll({ channelId: "CH", triggerMessageId: "1", isThread: false }, deps(async () => undefined))).length === 0, "undefined response (no token) → empty");
-  ok((await fetchDiscordBackscroll({ channelId: "CH", triggerMessageId: "1", isThread: false }, deps(async () => ({ not: "an array" })))).length === 0, "non-array junk → empty");
-  ok((await fetchDiscordBackscroll({ channelId: "CH", triggerMessageId: "1", isThread: false }, deps(async () => []))).length === 0, "empty history → no context");
+  ok((await fetchRendered({ channelId: "CH", triggerMessageId: "1", isThread: true, botId: BOT }, throwing)).length === 0, "a throwing requester → empty (never fails the wake)");
+  ok((await fetchRendered({ channelId: "CH", triggerMessageId: "1", isThread: false }, deps(async () => undefined))).length === 0, "undefined response (no token) → empty");
+  ok((await fetchRendered({ channelId: "CH", triggerMessageId: "1", isThread: false }, deps(async () => ({ not: "an array" })))).length === 0, "non-array junk → empty");
+  ok((await fetchRendered({ channelId: "CH", triggerMessageId: "1", isThread: false }, deps(async () => []))).length === 0, "empty history → no context");
 }
 
 {
