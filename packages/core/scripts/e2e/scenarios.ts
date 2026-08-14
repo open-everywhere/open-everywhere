@@ -1,4 +1,5 @@
 import { auditSilencesExpected, ENV, type Capability, type SlackUser2Config } from "./env.js";
+import type { SkipKind } from "./skip-summary.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import { dmAnchorDomain, DM_ANCHOR_DOMAIN_PREFIX } from "../../agent/channels/window-key.js";
 import type { OperationalStore } from "../../agent/operational/store.js";
@@ -134,18 +135,29 @@ function factuality(expected: string, criteria: string, fallback: Rubric["fallba
   return { kind: "factuality", expected, criteria, atLeast: 0.6, fallback };
 }
 
+export function skipCategory(
+  scenario: Scenario,
+  available: ReadonlySet<Capability>,
+  includeOptional: boolean,
+): Extract<SkipKind, "missing-capability" | "optional-not-included"> | undefined {
+  if (scenario.requires.some((c) => !available.has(c))) return "missing-capability";
+  if (scenario.optional && !includeOptional) return "optional-not-included";
+  return undefined;
+}
+
 export function skipReason(
   scenario: Scenario,
   available: ReadonlySet<Capability>,
   missing: Readonly<Record<Capability, readonly string[]>>,
   includeOptional: boolean,
 ): string | undefined {
-  const unmet = scenario.requires.filter((c) => !available.has(c));
-  if (unmet.length > 0) {
+  const category = skipCategory(scenario, available, includeOptional);
+  if (category === "missing-capability") {
+    const unmet = scenario.requires.filter((c) => !available.has(c));
     const vars = [...new Set(unmet.flatMap((c) => missing[c]))];
     return `missing ${unmet.join("+")} driver (set ${vars.join(", ")})`;
   }
-  if (scenario.optional && !includeOptional) return "optional/stretch — set E2E_INCLUDE_OPTIONAL=1 to run";
+  if (category === "optional-not-included") return "optional/stretch — set E2E_INCLUDE_OPTIONAL=1 to run";
   return undefined;
 }
 

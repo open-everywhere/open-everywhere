@@ -86,7 +86,8 @@ const {
   createJudgeReporter,
   renderReportedJudgeSummary,
 } = await import("../packages/core/scripts/e2e/judge.js");
-const { SCENARIOS, skipReason, ScenarioSkip } = await import("../packages/core/scripts/e2e/scenarios.js");
+const { SCENARIOS, skipCategory, skipReason, ScenarioSkip } = await import("../packages/core/scripts/e2e/scenarios.js");
+const { emptySkipCounts, renderSkipBreakdown, SKIP_KINDS } = await import("../packages/core/scripts/e2e/skip-summary.js");
 const { verifySlackSignature, classifyEnvelope, buildFrontHandler, PUBLIC_SLACK_ROUTE } = await import("@open-everywhere/provider-slack/agent/channels/slack-front.js");
 const { SLACK_COMMANDS_ROUTE } = await import("@open-everywhere/provider-slack/agent/channels/slack-commands.js");
 const { relayGate, parseRelayPayload, authForRelayMessage } = await import("@open-everywhere/provider-discord/agent/channels/discord-gateway.js");
@@ -483,6 +484,35 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   for (const id of ["J1", "S23"]) {
     ok(skipReason(SCENARIOS.find((s) => s.id === id)!, slackOnly, missing, false) === undefined, `${id} runs with slack alone (no add-on fixture needed)`);
   }
+}
+
+{
+  for (const s of SCENARIOS) {
+    const satisfied = new Set(s.requires);
+    const missingForSatisfied = Object.fromEntries(s.requires.map((c) => [c, [] as string[]])) as Record<(typeof s.requires)[number], string[]>;
+    const catFalse = skipCategory(s, satisfied, false);
+    const reasonFalse = skipReason(s, satisfied, missingForSatisfied, false);
+    ok((catFalse !== undefined) === (reasonFalse !== undefined), `${s.id}: skipCategory and skipReason agree on definedness (capabilities satisfied, includeOptional=false)`);
+    if (s.optional) {
+      ok(catFalse === "optional-not-included", `${s.id}: optional scenario skips as optional-not-included once capabilities are satisfied but includeOptional stays false`);
+    } else {
+      ok(catFalse === undefined, `${s.id}: non-optional scenario with satisfied capabilities does not skip at the roster level`);
+    }
+    ok(skipCategory(s, satisfied, true) === undefined, `${s.id}: runs once its capabilities are satisfied and includeOptional=true, optional or not`);
+    ok(skipCategory(s, new Set(), false) === "missing-capability", `${s.id}: skips as missing-capability with zero capabilities available`);
+  }
+}
+{
+  const counts = emptySkipCounts();
+  ok(SKIP_KINDS.every((k) => counts[k] === 0), "emptySkipCounts starts every bucket at zero");
+  ok(renderSkipBreakdown(counts) === "none", "renderSkipBreakdown reports 'none' when every bucket is zero — the negative control for the non-empty case below");
+  ok(SKIP_KINDS.length === 6, "the skip-reason taxonomy has exactly 6 closed categories");
+  counts["missing-capability"] = 3;
+  counts["filtered-only"] = 1;
+  ok(
+    renderSkipBreakdown(counts) === "1 filtered-only, 3 missing-capability",
+    "renderSkipBreakdown lists only the non-zero buckets, in fixed taxonomy order regardless of assignment order",
+  );
 }
 
 {

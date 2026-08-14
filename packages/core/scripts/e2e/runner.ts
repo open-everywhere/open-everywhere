@@ -32,7 +32,8 @@ import { SyntheticDm, SyntheticSlack } from "./synthetic.js";
 import { SyntheticDiscordDm } from "./discord-synthetic.js";
 import { WebhookDriver } from "./webhook.js";
 import { createJudgeReporter, judge3, judgeBannerTag, renderReportedJudgeSummary, resolveJudge, type Rubric } from "./judge.js";
-import { GateFailure, ScenarioSkip, SCENARIOS, skipReason, type ScenarioContext } from "./scenarios.js";
+import { GateFailure, ScenarioSkip, SCENARIOS, skipCategory, skipReason, type ScenarioContext } from "./scenarios.js";
+import { emptySkipCounts, renderSkipBreakdown } from "./skip-summary.js";
 import { buildCostReport, checkExpectedModels, fetchRunUsage, renderCostReport, resolveExpectedModels } from "./cost.js";
 import { callUnifiedAudit, fetchAudit } from "./audit-read.js";
 import { fetchTranscript, type TranscriptWireEvent } from "./transcript-read.js";
@@ -150,6 +151,7 @@ async function main(): Promise<void> {
   let passed = 0;
   let failed = 0;
   let skipped = 0;
+  const skipCounts = emptySkipCounts();
   const reportedJudgeReds: string[] = [];
   let reportedJudgeTotal = 0;
 
@@ -203,22 +205,27 @@ async function main(): Promise<void> {
   for (const scenario of SCENARIOS) {
     if (only.size > 0 && !only.has(scenario.id.toUpperCase())) {
       skipped++;
+      skipCounts["filtered-only"]++;
       console.log(`– ${scenario.id} ${scenario.title}: skipped (filtered by --only)`);
       continue;
     }
     if (suiteSel === "smoke" && scenario.smoke !== true) {
       skipped++;
+      skipCounts["filtered-suite"]++;
       console.log(`– ${scenario.id} ${scenario.title}: skipped (not in the E2E_SUITE=smoke set)`);
       continue;
     }
     if (surfaceFilter.size > 0 && !surfaceFilter.has(scenario.surface)) {
       skipped++;
+      skipCounts["filtered-surface"]++;
       console.log(`– ${scenario.id} ${scenario.title}: skipped (surface ${scenario.surface} not in E2E_SURFACES)`);
       continue;
     }
-    const reason = skipReason(scenario, report.available, report.missing, effectiveIncludeOptional);
-    if (reason !== undefined) {
+    const category = skipCategory(scenario, report.available, effectiveIncludeOptional);
+    if (category !== undefined) {
       skipped++;
+      skipCounts[category]++;
+      const reason = skipReason(scenario, report.available, report.missing, effectiveIncludeOptional)!;
       console.log(`– ${scenario.id} ${scenario.title}: skipped (${reason})`);
       continue;
     }
@@ -324,6 +331,7 @@ async function main(): Promise<void> {
     } catch (err) {
       if (err instanceof ScenarioSkip) {
         skipped++;
+        skipCounts["scenario-self-skip"]++;
         console.log(`– ${scenario.id} ${scenario.title}: skipped (${err.message})`);
       } else {
         failed++;
@@ -334,6 +342,7 @@ async function main(): Promise<void> {
 
   if (report.available.size === 0) {
     console.log(`✓ e2e driver pack: skipped — no driver tokens (${skipped}/${SCENARIOS.length} scenarios dry-skipped)`);
+    console.log(`  skip breakdown: ${renderSkipBreakdown(skipCounts)}`);
     return;
   }
 
@@ -343,6 +352,7 @@ async function main(): Promise<void> {
         `are configured (${[...report.available].join(", ")}) — check --only / E2E_SUITE / E2E_SURFACES for a filter ` +
         `matching nothing, or a capability gap against what the roster actually requires.`,
     );
+    console.error(`  skip breakdown: ${renderSkipBreakdown(skipCounts)}`);
     process.exit(1);
   }
 
@@ -417,6 +427,7 @@ async function main(): Promise<void> {
   for (const line of judgeSummary.lines) (judgeSummary.stream === "stderr" ? console.error : console.log)(line);
 
   const summary = `${passed} passed, ${failed} failed, ${skipped} skipped of ${SCENARIOS.length}`;
+  if (skipped > 0) console.log(`  skip breakdown: ${renderSkipBreakdown(skipCounts)}`);
   if (failed > 0 || modelRoutingFailed) {
     console.error(`✗ e2e driver pack: ${summary}`);
     process.exit(1);

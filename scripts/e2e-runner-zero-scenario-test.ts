@@ -32,6 +32,8 @@ function run(env: Record<string, string>): { code: number; out: string } {
   const r = run({});
   ok(r.code === 0, `dry mode (no capabilities) exits 0 — got ${r.code}. Output:\n${r.out}`);
   ok(r.out.includes("dry mode"), "dry mode names itself in the summary line");
+  ok(r.out.includes("skip breakdown:"), "the summary carries a skip breakdown line");
+  ok(/skip breakdown: \d+ missing-capability$/m.test(r.out), `the dry-mode breakdown names only missing-capability — got:\n${r.out}`);
 }
 
 {
@@ -44,6 +46,8 @@ function run(env: Record<string, string>): { code: number; out: string } {
   ok(r.code !== 0, `a live capability configured but 0 scenarios ran (filtered to a surface with no capability) exits NON-zero — got ${r.code}. Output:\n${r.out}`);
   ok(!r.out.includes("dry mode"), "this is NOT the dry-mode path — capabilities were configured");
   ok(r.out.includes("0 scenarios ran"), "the red names the zero-scenario condition, not a generic failure");
+  ok(r.out.includes("skip breakdown:"), "the zero-scenario red carries a skip breakdown line");
+  ok(r.out.includes("filtered-surface"), `the breakdown names filtered-surface (E2E_SURFACES=teams filtered every non-teams scenario) — got:\n${r.out}`);
 }
 
 console.log(`✓ e2e-runner-zero-scenario-test: ${n} assertions passed (dry-mode pass preserved, filtered-to-nothing now reds)`);
