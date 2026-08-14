@@ -408,7 +408,7 @@ export { unifiedSupervisorToken } from "./channels/unified-supervisor.js";
 
 export { nameDropWakeEnabled } from "./memory/domain.js";
 
-export { renderContext, sinceLastAgentReply, WAKE_BACKSCROLL_MAX } from "./channels/context-render.js";
+export { renderContext, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, contextLineIngestion } from "./channels/context-render.js";
 export { clusterBackscroll } from "./channels/backscroll-cluster.js";
 export type { NormalizedMessage, BackscrollTrustFor } from "./channels/backscroll-cluster.js";
 

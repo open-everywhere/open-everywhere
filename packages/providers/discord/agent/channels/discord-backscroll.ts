@@ -4,10 +4,13 @@ import {
   sinceLastAgentReply,
   WAKE_BACKSCROLL_MAX,
   clusterBackscroll,
+  resolveWakeTrustFromContext,
   type ContextLine,
   type NormalizedMessage,
   type BackscrollTrustFor,
   type WakeMessageInput,
+  type BindableContext,
+  type AuthorTrustQuery,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface DiscordBackscrollInput {
@@ -60,6 +63,16 @@ export function linesFromDiscordMessages(raw: ReadonlyArray<Record<string, unkno
     else lines.push({ senderType: "unknown", ts: id, text });
   }
   return lines;
+}
+
+export function gradeDiscordContextLines(lines: readonly ContextLine[], ctx: BindableContext, guildId: string | undefined): ContextLine[] {
+  return lines.map((l) => {
+    if (l.senderType !== "user") return l;
+    const trust = resolveWakeTrustFromContext(ctx, { id: l.senderId, isBot: false });
+    const authorTrust: AuthorTrustQuery | undefined =
+      guildId !== undefined && l.senderId !== undefined ? { tenantKey: `discord/${guildId}`, authorId: l.senderId, memberships: [] } : undefined;
+    return authorTrust ? { ...l, trust, authorTrust } : { ...l, trust };
+  });
 }
 
 function extractDiscordMessages(res: unknown): Array<Record<string, unknown>> | undefined {

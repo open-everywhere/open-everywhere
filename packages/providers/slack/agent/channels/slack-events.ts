@@ -9,6 +9,7 @@ import {
   resolveWakeTrust,
   backscrollTrustResolver,
   stampNonMemberChatAuth,
+  contextLineIngestion,
   bindFrom,
   getConfig,
   ingestUntrusted,
@@ -731,6 +732,10 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
     ? await deps.backscroll({ channelId: ev.channelId, ts: ev.ts, threadTs: ev.threadTs }).catch(() => null)
     : null;
 
+  const gradedLines = bs
+    ? await regradeSlackContextLineTrust(bs.lines, internal, domainKeyOf(p), ev.teamId).catch(() => bs.lines)
+    : undefined;
+
   const names = await resolveWakeNames(ev.userId, undefined, deps.resolveProfile);
   const triggerName = displayNameOpts(names.triggerAuthor);
 
@@ -748,7 +753,7 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
       triggerAuthorName: triggerName.authorName,
       triggerAuthorHandle: triggerName.authorHandle,
       participants: names.participants,
-      contextLines: bs?.lines,
+      contextLines: gradedLines,
       contextSource: bs?.source,
       readMoreHint: bs?.readMoreHint,
     }),
@@ -760,7 +765,7 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
     threadTs: rootTs,
     auth: stampNonMemberChatAuth(
       authForEvent({ ...ev, threadTs: rootTs }, { isExternal: false, trustChecked: true }),
-      [{ trust: wakeTrust, refuted: authorFacts.refuted }],
+      [{ trust: wakeTrust, refuted: authorFacts.refuted }, ...(gradedLines ?? []).map(contextLineIngestion)],
       { surfaceKey: domainKeyOf(p) },
     ),
     message: rendered.message,
@@ -880,6 +885,30 @@ export async function regradeSlackBackscrollTrust(
   return messages.map((m) =>
     m.authorId !== undefined && nonMembers.has(m.authorId) ? { ...m, trust: "unauth" as const, refuted: true } : m,
   );
+}
+
+export async function regradeSlackContextLineTrust(
+  lines: readonly ContextLine[],
+  channelConfirmedInternal: boolean,
+  channelKey: string | undefined,
+  teamId: string | undefined,
+  probe: SlackMemberProbe = slackAuthorIsMember,
+): Promise<readonly ContextLine[]> {
+  const graded = lines.map((l): ContextLine =>
+    l.senderType === "user"
+      ? { ...l, trust: resolveWakeTrust({ authorIsBot: false, authorId: l.senderId, surfaceInternal: channelConfirmedInternal, channelKey }) }
+      : l,
+  );
+  const candidates = new Set<string>();
+  for (const l of graded) {
+    if (l.senderType === "user" && (l.trust === "peer" || l.trust === "principal") && l.senderId) candidates.add(l.senderId);
+  }
+  if (candidates.size === 0) return graded;
+  const ids = [...candidates];
+  const verdicts = await Promise.all(ids.map((id) => probe(id, teamId)));
+  const nonMembers = new Set(ids.filter((_, i) => verdicts[i] === false));
+  if (nonMembers.size === 0) return graded;
+  return graded.map((l) => (l.senderId !== undefined && nonMembers.has(l.senderId) ? { ...l, trust: "unauth" as const, refuted: true } : l));
 }
 
 export async function slackSingleWindowMentionPolicy(channelId: string, surfaceKey: string): Promise<SingleWindowMentionPolicy> {

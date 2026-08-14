@@ -31,6 +31,8 @@ import {
   isVouchedInternal,
   resolveWakeTrustFromContext,
   stampNonMemberChatAuth,
+  renderContext,
+  contextLineIngestion,
   resolveExternalPolicy,
   externalPolicyOverrideFor,
   withholdsBody,
@@ -83,7 +85,7 @@ import {
   replierLabelFromAuthAttributes,
   type ReplierLabel,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { fetchDiscordBackscroll, fetchDiscordBackscrollLines, distillDiscordRotationHandoff } from "./discord-backscroll.js";
+import { fetchDiscordBackscrollLines, distillDiscordRotationHandoff, gradeDiscordContextLines } from "./discord-backscroll.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:discord-gateway] ${msg}`);
@@ -897,6 +899,7 @@ async function divertDiscordWakeToUnifiedWindow(input: {
   readonly addressing: "direct-mention" | "channel-watch" | "name-drop";
   readonly receive: UnifiedReceive;
   readonly context: readonly string[];
+  readonly contextIngestion: ReadonlyArray<ReturnType<typeof contextLineIngestion>>;
 }): Promise<void> {
   const { msg, grain } = input;
   const org = deploymentOrg();
@@ -968,7 +971,7 @@ async function divertDiscordWakeToUnifiedWindow(input: {
       surfaceKey: domainKeyOf(input.partition),
       auth: stampNonMemberChatAuth(
         input.auth as unknown as { attributes?: Record<string, unknown> },
-        [{ trust, refuted: msg.memberPending === true, ...authorFacts(msg) }],
+        [{ trust, refuted: msg.memberPending === true, ...authorFacts(msg) }, ...input.contextIngestion],
         { surfaceKey: domainKeyOf(input.partition) },
       ),
     });
@@ -1109,15 +1112,17 @@ export async function dispatchTurn(
       if (msg.mentionsBot) {
         await markThreadEngaged(partition, key, new Date().toISOString(), { participating: true });
       }
-      const windowContext =
+      const windowLines =
         nameDrop || msg.mentionsBot
-          ? await fetchDiscordBackscroll({
+          ? await fetchDiscordBackscrollLines({
               channelId: msg.channelId,
               triggerMessageId: msg.id,
               isThread: isThreadChannelType(msg.channelType),
               botId: msg.botId,
-            }).catch(() => [])
-          : [];
+            }).catch(() => undefined)
+          : undefined;
+      const gradedWindowLines = windowLines ? gradeDiscordContextLines(windowLines.lines, ctxFromAuth(auth), msg.guildId) : undefined;
+      const windowContext = gradedWindowLines ? renderContext(gradedWindowLines, windowLines!.source) : null;
       const addressing = mentionPolicy.addressing ?? (nameDrop && msg.botName ? "name-drop" : "channel-watch");
       await divertDiscordWakeToUnifiedWindow({
         msg,
@@ -1126,7 +1131,8 @@ export async function dispatchTurn(
         grain: windowGrain,
         addressing,
         receive,
-        context: windowContext,
+        context: windowContext ? [windowContext] : [],
+        contextIngestion: (gradedWindowLines ?? []).map(contextLineIngestion),
       });
       await appendAudit({
         org: deploymentOrg(),
@@ -1195,6 +1201,7 @@ export async function dispatchTurn(
           botId: msg.botId,
         }).catch(() => undefined)
       : undefined;
+  const gradedBackscrollLines = backscroll ? gradeDiscordContextLines(backscroll.lines, ctxFromAuth(surface.auth), msg.guildId) : undefined;
 
   const rendered = renderWake(
     discordNativeWake({
@@ -1204,7 +1211,7 @@ export async function dispatchTurn(
       isDm,
       addressing,
       botName: msg.botName,
-      contextLines: backscroll?.lines,
+      contextLines: gradedBackscrollLines,
       contextSource: backscroll?.source,
       trigger: {
         id: msg.id || "unknown",
@@ -1222,7 +1229,7 @@ export async function dispatchTurn(
     {
       auth: stampNonMemberChatAuth(
         surface.auth,
-        [{ trust, refuted: msg.memberPending === true, ...authorFacts(msg) }],
+        [{ trust, refuted: msg.memberPending === true, ...authorFacts(msg) }, ...(gradedBackscrollLines ?? []).map(contextLineIngestion)],
         isDm ? { dm: true } : { surfaceKey: domainKeyOf(dispatchPartition) },
       ),
       continuationToken: surface.continuationToken,
