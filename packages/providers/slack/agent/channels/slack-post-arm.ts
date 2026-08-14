@@ -18,35 +18,57 @@ export function slackReplierParams(agentName: string | undefined, replier: Repli
   return { username: `${agentName} [${replier.taskLabel}]` };
 }
 
+export interface SlackPostResult {
+  readonly ok?: boolean;
+  readonly ts?: unknown;
+  readonly error?: unknown;
+}
+
+export type SlackPostFn = (body: URLSearchParams) => Promise<SlackPostResult | undefined>;
+
+const livePost: SlackPostFn = (body) => slackForm("chat.postMessage", body.toString());
+
+export async function postSlackMessage(
+  base: URLSearchParams,
+  replier: ReplierLabel | undefined,
+  errPrefix: string,
+  post: SlackPostFn = livePost,
+  resolveDisplayName: () => Promise<string | undefined> = botDisplayName,
+): Promise<string> {
+  let usedReplierParams = false;
+  let attempt = base;
+  if (replier) {
+    const name = await resolveDisplayName().catch(() => undefined);
+    const params = slackReplierParams(name, replier);
+    if (Object.keys(params).length > 0) {
+      attempt = new URLSearchParams(base);
+      for (const [k, v] of Object.entries(params)) attempt.set(k, v);
+      usedReplierParams = true;
+    }
+  }
+  const res = await post(attempt);
+  const ts = typeof res?.ts === "string" ? res.ts : undefined;
+  if (res?.ok === true && ts) return ts;
+  if (usedReplierParams) {
+    const retry = await post(base);
+    const retryTs = typeof retry?.ts === "string" ? retry.ts : undefined;
+    if (retry?.ok === true && retryTs) return retryTs;
+    throw new Error(`${errPrefix} — ${(retry?.error as string) ?? (res?.error as string) ?? "no ts returned (check SLACK_BOT_TOKEN)"}`);
+  }
+  throw new Error(`${errPrefix} — ${(res?.error as string) ?? "no ts returned (check SLACK_BOT_TOKEN)"}`);
+}
+
 async function dispatchSlackReply(target: SlackTarget, text: string, replier?: ReplierLabel): Promise<string> {
   const body = new URLSearchParams({ channel: target.channelId, text });
   if (target.threadTs) body.set("thread_ts", target.threadTs);
-  if (replier) {
-    const name = await botDisplayName().catch(() => undefined);
-    for (const [k, v] of Object.entries(slackReplierParams(name, replier))) body.set(k, v);
-  }
-  const res = await slackForm("chat.postMessage", body.toString());
-  const ts = typeof res?.ts === "string" ? res.ts : undefined;
-  if (res?.ok !== true || !ts) {
-    throw new Error(`reply couldn't post to Slack — ${(res?.error as string) ?? "no ts returned (check SLACK_BOT_TOKEN)"}`);
-  }
-  return ts;
+  return postSlackMessage(body, replier, "reply couldn't post to Slack");
 }
 
 async function liveSlackPost(origin: SlackOrigin, text: string, replier?: ReplierLabel): Promise<string> {
   const body = new URLSearchParams({ channel: origin.channelId, text });
   const threadTarget = origin.threadTs ?? origin.replyAnchorTs;
   if (threadTarget) body.set("thread_ts", threadTarget);
-  if (replier) {
-    const name = await botDisplayName().catch(() => undefined);
-    for (const [k, v] of Object.entries(slackReplierParams(name, replier))) body.set(k, v);
-  }
-  const res = await slackForm("chat.postMessage", body.toString());
-  const ts = typeof res?.ts === "string" ? res.ts : undefined;
-  if (res?.ok !== true || !ts) {
-    throw new Error(`unified reply couldn't post to Slack — ${(res?.error as string) ?? "no ts returned (check SLACK_BOT_TOKEN)"}`);
-  }
-  return ts;
+  return postSlackMessage(body, replier, "unified reply couldn't post to Slack");
 }
 
 async function deliverSlackDirectMessage(input: DirectMessageRequest): Promise<DirectMessageDelivery> {

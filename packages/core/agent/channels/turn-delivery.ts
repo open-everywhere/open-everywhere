@@ -49,7 +49,10 @@ export interface ReplierLabel {
 }
 
 export function truncateTaskLabel(text: string, max = 60): string {
-  const oneLine = text.trim().replace(/\s+/g, " ");
+  const oneLine = text
+    .replace(/[[\]]/g, "")
+    .trim()
+    .replace(/\s+/g, " ");
   if (oneLine.length <= max) return oneLine;
   return `${oneLine.slice(0, Math.max(1, max - 1)).trimEnd()}…`;
 }
