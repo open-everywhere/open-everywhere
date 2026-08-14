@@ -1019,6 +1019,7 @@ registerConfig({
           { senderType: "agent", ts: "40.2", text: "AGENT-LINE — on it" },
         ],
         source: "slack channel C_TXN",
+        readMoreHint: "fetch more with read_slack_channel",
       };
       const probed: string[] = [];
       const withMixed = (): NameDropRouteDeps => ({
