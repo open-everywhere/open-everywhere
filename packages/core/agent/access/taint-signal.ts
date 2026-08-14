@@ -3,6 +3,7 @@ import type { IngestionKind } from "./taint-tiers.js";
 import type { WakeTrust } from "../channels/wake-envelope.js";
 import { taintEnabled } from "./taint-enforcement.js";
 import { declaredSurfaceTrust } from "../identity/trust.js";
+import { authorRefutedByRegister, type AuthorTrustQuery } from "../identity/author-trust.js";
 import { getSettings } from "../settings/settings.js";
 
 interface TaintState {
@@ -122,10 +123,16 @@ export function nonMemberChatAttrs(nonMember: boolean): Record<string, string> {
 export interface IngestedChatMessage {
   readonly trust?: WakeTrust;
   readonly refuted?: boolean;
+  readonly authorTrust?: AuthorTrustQuery;
 }
 
+const HUMAN_TIERS: ReadonlySet<WakeTrust> = new Set<WakeTrust>(["principal", "peer", "unauth"]);
+
 export function nonMemberChatTrust(m: IngestedChatMessage): boolean {
-  return m.refuted === true && m.trust !== "relay";
+  if (m.trust === "relay") return false;
+  if (m.refuted === true) return true;
+  if (m.authorTrust === undefined || m.trust === undefined || !HUMAN_TIERS.has(m.trust)) return false;
+  return authorRefutedByRegister(m.authorTrust);
 }
 
 export interface ChatWakeRoom {

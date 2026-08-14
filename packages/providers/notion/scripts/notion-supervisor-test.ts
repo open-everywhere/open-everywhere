@@ -6,6 +6,7 @@ import {
   notionNameDrop,
   buildNotionSupervisorWake,
   handleNotionSupervisorDispatch,
+  notionIngestedMessages,
   planNotionSingleWindow,
   shouldRotate,
   type NotionSupervisorDeps,
@@ -19,6 +20,10 @@ import {
   defineSurface,
   isVouchedInternal,
   _resetSurfacesForTest,
+  registerAuthorTrust,
+  defineAuthorTrust,
+  _resetAuthorTrustForTest,
+  OE_CHAT_NONMEMBER_ATTR,
   renderWake,
   UNTRUSTED_OPEN,
   type UnifiedWindowWake,
@@ -300,6 +305,58 @@ for (const [label, err] of [
     trigger: { from: "human", id: "c9", authorId: "n-user", sentAt: "2026-07-11T00:00:00Z", text: "hm" },
   });
   ok(notionDirectDefault.trigger.kind === "message" && notionDirectDefault.trigger.message.trust === "principal", "wake-trust: unset trust keeps the legacy direct→principal default (pure callers)");
+}
+
+{
+  const GUEST = "notion-guest-999";
+  const WS = "notion/ws-1";
+
+  const graded = notionIngestedMessages({
+    workspaceId: "ws-1",
+    trigger: { from: "human", id: "c1", authorId: AUTHOR, sentAt: "2026-03-24T17:52:00Z", text: "hi", trust: "peer" },
+    threadComments: [{ from: "human", id: "c0", authorId: GUEST, sentAt: "2026-07-10T08:00:00Z", text: "earlier", trust: "peer" }],
+  });
+  ok(graded.length === 2, "the ingested set covers the trigger AND every hydrated sibling — Notion re-sends the whole discussion each wake");
+  ok(graded.every((m) => m.refuted === undefined), "🔴 `refuted` is never set: Notion has no verdict to give, and a hardcoded `false` would read as \"we asked and it was fine\"");
+  ok(graded[0]?.authorTrust?.tenantKey === WS && graded[0]?.authorTrust?.authorId === AUTHOR, "the trigger carries the author-trust query, keyed on the workspace");
+  ok(graded[1]?.authorTrust?.authorId === GUEST, "…and so does the sibling, with ITS OWN author (never the trigger's)");
+  ok(
+    notionIngestedMessages({ workspaceId: null, trigger, threadComments: [] })[0]?.authorTrust === undefined,
+    "🔴 negative control: with NO workspace id there is no tenant key to compose, so no author question is asked — fail OPEN, never a guessed tenant",
+  );
+
+  const session: NotionSupervisorSession = { token: notionSupervisorToken(PAGE, 1), generation: 1, freshGeneration: true, handoffNote: null };
+  const auths: OpenEverywhereNotionAuth[] = [];
+  const deps: NotionSupervisorDeps = {
+    getOrCreateSession: async () => session,
+    wake: async (w) => { auths.push(w.auth); },
+    now: NOW,
+  };
+  const withGuest = dispatch({
+    trigger: { ...trigger, trust: "peer" },
+    threadComments: [{ from: "human", id: "c0", authorId: GUEST, sentAt: "2026-07-10T08:00:00Z", text: "earlier", trust: "peer" }],
+  });
+
+  await handleNotionSupervisorDispatch(withGuest, deps);
+  ok(auths[0] === AUTH, "🔴 UNARMED: the delivered auth is the SAME OBJECT by reference — an undeclared workspace behaves exactly as before OPE-516");
+
+  try {
+    registerAuthorTrust([defineAuthorTrust({ tenant: WS, internal: [`notion/${AUTHOR}`] })]);
+    await handleNotionSupervisorDispatch(withGuest, deps);
+    ok(
+      auths[1]?.attributes[OE_CHAT_NONMEMBER_ATTR] === "true",
+      "🔴 ARMED: a guest's hydrated sibling on a declared workspace stamps the carriage — the author leg Notion could never have had",
+    );
+    ok(auths[1] !== AUTH && (AUTH.attributes as Record<string, unknown>)[OE_CHAT_NONMEMBER_ATTR] === undefined, "…on a NEW object; the caller's auth is never mutated");
+
+    await handleNotionSupervisorDispatch(dispatch({ trigger: { ...trigger, trust: "peer" }, threadComments: [] }), deps);
+    ok(
+      auths[2] === AUTH,
+      "🔴 NEGATIVE CONTROL: with only the DECLARED author ingested, the armed workspace stamps NOTHING — the leg discriminates, it is not an always-on bit",
+    );
+  } finally {
+    _resetAuthorTrustForTest();
+  }
 }
 
 console.log(`\n✓ notion-supervisor: ${passed} assertions passed`);

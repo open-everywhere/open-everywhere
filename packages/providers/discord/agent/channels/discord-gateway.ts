@@ -37,6 +37,7 @@ import {
   type NormalizedWake,
   type WakeEngagementTier,
   type WakeTrust,
+  type AuthorTrustQuery,
   type SupervisorGrain,
   type SingleWindowMentionPolicy,
   type UnifiedWakeOrigin,
@@ -102,6 +103,7 @@ export interface DiscordRelayMessage {
   readonly botName?: string;
   readonly botId?: string;
   readonly memberPending?: boolean;
+  readonly memberRoles?: readonly string[];
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -137,6 +139,9 @@ export function parseRelayPayload(raw: unknown): DiscordRelayMessage | null {
     mentionsBot: m["mentionsBot"] === true,
     referencedMessageId: str(m["referencedMessageId"]),
     memberPending: member && typeof member["pending"] === "boolean" ? (member["pending"] as boolean) : undefined,
+    memberRoles: Array.isArray(member?.["roles"])
+      ? ((member!["roles"] as unknown[]).filter((r): r is string => typeof r === "string" && r.length > 0) as string[])
+      : undefined,
     botName: bot ? str(bot["name"]) : undefined,
     botId: bot ? str(bot["id"]) : undefined,
   };
@@ -267,6 +272,17 @@ export function authForRelayMessage(msg: DiscordRelayMessage): OpenEverywhereDis
     channelType: msg.channelType,
     memberPending: msg.memberPending,
   });
+}
+
+export function authorFacts(msg: DiscordRelayMessage): { readonly authorTrust?: AuthorTrustQuery } {
+  if (!msg.guildId) return {};
+  return {
+    authorTrust: {
+      tenantKey: `discord/${msg.guildId}`,
+      authorId: msg.author.id,
+      memberships: (msg.memberRoles ?? []).map((roleId) => `discord/${msg.guildId}/role:${roleId}`),
+    },
+  };
 }
 
 function ctxFromAuth(auth: OpenEverywhereDiscordAuth): BindableContext {
@@ -886,7 +902,7 @@ async function divertDiscordWakeToUnifiedWindow(input: {
       surfaceKey: domainKeyOf(input.partition),
       auth: stampNonMemberChatAuth(
         input.auth as unknown as { attributes?: Record<string, unknown> },
-        [{ trust, refuted: msg.memberPending === true }],
+        [{ trust, refuted: msg.memberPending === true, ...authorFacts(msg) }],
         { surfaceKey: domainKeyOf(input.partition) },
       ),
     });
@@ -1114,7 +1130,7 @@ export async function dispatchTurn(
     {
       auth: stampNonMemberChatAuth(
         surface.auth,
-        [{ trust, refuted: msg.memberPending === true }],
+        [{ trust, refuted: msg.memberPending === true, ...authorFacts(msg) }],
         isDm ? { dm: true } : { surfaceKey: domainKeyOf(dispatchPartition) },
       ),
       continuationToken: surface.continuationToken,

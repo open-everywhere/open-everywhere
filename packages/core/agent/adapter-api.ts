@@ -209,6 +209,7 @@ export {
   stampNonMemberChatAuth,
   OE_CHAT_NONMEMBER_ATTR,
 } from "./access/taint-signal.js";
+export type { IngestedChatMessage, ChatWakeRoom } from "./access/taint-signal.js";
 
 export { sourceScopedMount } from "./access/source-scoped-mount.js";
 
@@ -285,6 +286,16 @@ export { resolveWakeTrustFromContext } from "./identity/wake-trust.js";
 export { isVouchedInternal, isVouchedSurface, declaredWorkspaceTrust, declaredSurfaceTrust, declaredTrustForKeys } from "./identity/trust.js";
 export type { SurfaceTrustQuery } from "./identity/trust.js";
 export { dmTrustTtlMs } from "./identity/trust.js";
+
+export {
+  declaredAuthorTrust,
+  authorRefutedByRegister,
+  registerAuthorTrust,
+  defineAuthorTrust,
+  armedAuthorTrustTenants,
+  _resetAuthorTrustForTest,
+} from "./identity/author-trust.js";
+export type { AuthorTrust, AuthorTrustEntry, AuthorTrustQuery, AuthorMember } from "./identity/author-trust.js";
 
 export { ambientSupervisorEnabled, engagementTierFor, domainForChannel, resolveDomainForChannel, domainClaimVerdict, ambientSkipFor } from "./memory/domain.js";
 export type { EngagementTier, Domain, DomainVia, DomainRouting, AmbientSkip } from "./memory/domain.js";

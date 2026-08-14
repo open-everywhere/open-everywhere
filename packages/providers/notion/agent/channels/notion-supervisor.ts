@@ -5,6 +5,8 @@ import {
   mintWakeId,
   singleWindowMentionPolicy,
   matchesAgentName,
+  stampNonMemberChatAuth,
+  type IngestedChatMessage,
   type NormalizedWake,
   type WakeEngagementTier,
   type WakeMessageInput,
@@ -186,6 +188,19 @@ export interface NotionSupervisorDispatch {
   readonly directMention?: boolean;
 }
 
+export function notionIngestedMessages(d: {
+  readonly workspaceId: string | null;
+  readonly trigger: NotionWakeMessage;
+  readonly threadComments: readonly NotionWakeMessage[];
+}): readonly IngestedChatMessage[] {
+  const tenantKey = d.workspaceId ? `notion/${d.workspaceId}` : undefined;
+  const grade = (m: NotionWakeMessage): IngestedChatMessage => ({
+    ...(m.trust === undefined ? {} : { trust: m.trust }),
+    ...(tenantKey === undefined ? {} : { authorTrust: { tenantKey, ...(m.authorId === undefined ? {} : { authorId: m.authorId }) } }),
+  });
+  return [grade(d.trigger), ...d.threadComments.map(grade)];
+}
+
 export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch, deps: NotionSupervisorDeps): Promise<void> {
   const atIso = deps.now ? deps.now() : new Date().toISOString();
   const session = await deps.getOrCreateSession(d.surfaceKey, d.pageId, atIso);
@@ -223,7 +238,8 @@ export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch
       ...(memoryDelta ? { memoryDelta } : {}),
     };
     const { message, context } = renderWake(nw, deps.now);
-    await deps.wake({ token, auth: d.auth, message, context: context ?? [], state, window: d.window });
+    const auth = stampNonMemberChatAuth(d.auth, notionIngestedMessages(d), { surfaceKey: d.surfaceKey });
+    await deps.wake({ token, auth, message, context: context ?? [], state, window: d.window });
   };
 
   await doWake(session.token, session.generation, session.freshGeneration ? session.handoffNote : undefined);

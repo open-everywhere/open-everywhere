@@ -22,6 +22,7 @@ import { loadBlobHosting } from "../blob/hosting.js";
 import { loadPrincipals } from "../identity/principals.js";
 import { loadGroups } from "../identity/groups.js";
 import "../identity/surfaces.js";
+import "../identity/authors.js";
 import "./register-docs.js";
 
 registerSettings(SETTINGS_OVERRIDES);

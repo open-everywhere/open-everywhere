@@ -8,7 +8,14 @@ import {
   relayGate,
   parseRelayPayload,
   authForRelayMessage,
+  authorFacts,
 } from "@open-everywhere/provider-discord/agent/channels/discord-gateway.js";
+import {
+  nonMemberChatTrust,
+  registerAuthorTrust,
+  defineAuthorTrust,
+  _resetAuthorTrustForTest,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import { parseDriverAllowlist, isAllowedDriver, isAllowedSlackDriver } from "@open-everywhere/core/agent/testing/driver-allowlist.js";
 import {
   shouldDispatchDiscord,
@@ -653,4 +660,50 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   );
 }
 
-console.log(`✓ discord-gateway: ${passed} assertions passed (HMAC fail-closed, payload→identity, bot drop, wake gate incl. DM + name-drop, reply split, auto-thread decision + toggle + naming + fail-open re-key, status-UX toggle + completion plan + consume-once turn status, thread→parent grain + channel-info cache)`);
+{
+  const GUILD = "1300000000000000100";
+  const TENANT = `discord/${GUILD}`;
+  const STAFF_ROLE = "222222222222222222";
+  const INSIDER = "100000000000000001";
+  const OUTSIDER = "100000000000000002";
+
+  const withRoles = parseRelayPayload(
+    relayEnvelope({ id: "m1", content: "hi", channelId: "C1", guildId: GUILD, author: { id: OUTSIDER, bot: false }, member: { pending: false, roles: [STAFF_ROLE, "333"] } }),
+  );
+  ok(withRoles?.memberRoles?.length === 2 && withRoles.memberRoles[0] === STAFF_ROLE, "parse: relayed member.roles surfaces as memberRoles");
+  const noMember = parseRelayPayload(relayEnvelope({ id: "m1", content: "hi", channelId: "C1", guildId: GUILD, author: { id: OUTSIDER, bot: false } }));
+  ok(noMember !== null && noMember.memberRoles === undefined, "parse: an older relay with NO member object parses with memberRoles undefined (no evidence, never an assumption)");
+  const garbageRoles = parseRelayPayload(
+    relayEnvelope({ id: "m1", content: "hi", channelId: "C1", guildId: GUILD, author: { id: OUTSIDER, bot: false }, member: { roles: [7, "", null, "444"] } }),
+  );
+  ok(garbageRoles?.memberRoles?.length === 1 && garbageRoles.memberRoles[0] === "444", "parse: a garbage roles array degrades to the usable strings (never throws)");
+  const notAnArray = parseRelayPayload(
+    relayEnvelope({ id: "m1", content: "hi", channelId: "C1", guildId: GUILD, author: { id: OUTSIDER, bot: false }, member: { roles: "nope" } }),
+  );
+  ok(notAnArray !== null && notAnArray.memberRoles === undefined, "parse: a non-array roles field degrades to undefined");
+
+  const facts = authorFacts(withRoles!);
+  ok(facts.authorTrust?.tenantKey === TENANT, "the query is keyed on the GUILD — the tenant comes from the surface, never from sniffing the snowflake");
+  ok(facts.authorTrust?.authorId === OUTSIDER, "…carrying the raw author id");
+  ok(facts.authorTrust?.memberships?.[0] === `${TENANT}/role:${STAFF_ROLE}`, "…and the roles as group-rung keys the register's patterns are written in");
+  const dm = parseRelayPayload(relayEnvelope({ id: "m1", content: "hi", channelId: "C1", author: { id: OUTSIDER, bot: false } }));
+  ok(authorFacts(dm!).authorTrust === undefined, "🔴 negative control: a DM (no guild) yields NO author query — there is no tenant to arm, and the DM's trust question is about the PARTNER");
+
+  ok(nonMemberChatTrust({ trust: "peer", ...authorFacts(withRoles!) }) === false, "🔴 UNARMED: an undeclared guild marks nothing — byte-identical to before OPE-516");
+  try {
+    registerAuthorTrust([defineAuthorTrust({ tenant: TENANT, internal: [`discord/${INSIDER}`, { membership: `${TENANT}/role:${STAFF_ROLE}` }] })]);
+    const insiderMsg = parseRelayPayload(relayEnvelope({ id: "m2", content: "hi", channelId: "C1", guildId: GUILD, author: { id: INSIDER, bot: false } }))!;
+    const strangerMsg = parseRelayPayload(relayEnvelope({ id: "m3", content: "hi", channelId: "C1", guildId: GUILD, author: { id: OUTSIDER, bot: false }, member: { roles: [] } }))!;
+
+    ok(nonMemberChatTrust({ trust: "peer", ...authorFacts(strangerMsg) }) === true, "🔴 ARMED: an author the operator did not declare MARKS — the leg Discord never had");
+    ok(nonMemberChatTrust({ trust: "peer", ...authorFacts(insiderMsg) }) === false, "negative control: a DECLARED author does not mark (=== false)");
+    ok(nonMemberChatTrust({ trust: "peer", ...authorFacts(withRoles!) }) === false, "🔴 THE WILDCARD SHAPE END TO END: an UNLISTED author holding the declared ROLE does not mark — nobody had to enumerate them");
+    ok(nonMemberChatTrust({ trust: "relay", ...authorFacts(strangerMsg) }) === false, "negative control: a MACHINE author never marks through the register");
+    ok(nonMemberChatTrust({ trust: "peer", ...authorFacts(dm!) }) === false, "negative control: the DM still marks nothing even with the guild armed");
+  } finally {
+    _resetAuthorTrustForTest();
+  }
+  ok(nonMemberChatTrust({ trust: "peer", ...authorFacts(withRoles!) }) === false, "the register is disarmed again after the reset");
+}
+
+console.log(`✓ discord-gateway: ${passed} assertions passed (HMAC fail-closed, payload→identity, bot drop, wake gate incl. DM + name-drop, reply split, auto-thread decision + toggle + naming + fail-open re-key, status-UX toggle + completion plan + consume-once turn status, thread→parent grain + channel-info cache, author-trust register leg)`);

@@ -12,6 +12,7 @@ import {
 } from "../agent/access/taint-signal.js";
 import { TAINT_SEED_ATTRS, openTaintTurn } from "../agent/hooks/spawn-taint.js";
 import { defineSurface, registerSurfaces, _resetSurfacesForTest } from "../agent/identity/trust.js";
+import { defineAuthorTrust, registerAuthorTrust, _resetAuthorTrustForTest } from "../agent/identity/author-trust.js";
 import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 import { classifyIngestion } from "../agent/access/taint-tiers.js";
 import { decideIngestion } from "../agent/access/taint-enforcement.js";
@@ -55,6 +56,69 @@ eq(
   "with a refutation in hand, every HUMAN tier marks and only the machine tier does not",
 );
 eq(ALL_TIERS.filter((t) => nonMemberChatTrust({ trust: t })), [], "🔴 with NO refutation, NO tier marks on its own");
+
+console.log("1b. the author leg's register source (OPE-516):");
+
+const GUILD = "discord/1300000000000000100";
+const INSIDER = { tenantKey: GUILD, authorId: "100000000000000001" };
+const OUTSIDER = { tenantKey: GUILD, authorId: "100000000000000002" };
+
+ok(
+  nonMemberChatTrust({ trust: "peer", authorTrust: OUTSIDER }) === false,
+  "🔴 with the register UNARMED, an author query changes nothing — silence is not a declaration",
+);
+
+try {
+  registerAuthorTrust([defineAuthorTrust({ tenant: GUILD, internal: [`discord/100000000000000001`] })]);
+
+  ok(
+    nonMemberChatTrust({ trust: "peer", authorTrust: OUTSIDER }) === true,
+    "🔴 an UNDECLARED author on an ARMED guild marks — this is the leg Discord and Notion never had",
+  );
+  ok(
+    nonMemberChatTrust({ trust: "peer", authorTrust: INSIDER }) === false,
+    "negative control: a DECLARED author does NOT mark (=== false)",
+  );
+  ok(
+    nonMemberChatTrust({ trust: "relay", authorTrust: OUTSIDER }) === false,
+    "🔴 negative control: a MACHINE author never marks through the register — every app posting in a busy guild is `relay`, and grading them would rebuild the always-on bit",
+  );
+  ok(
+    nonMemberChatTrust({ authorTrust: OUTSIDER }) === false,
+    "🔴 negative control: an entry the surface never GRADED is not graded here either (=== false) — the leg needs a positively-human tier",
+  );
+  eq(
+    ALL_TIERS.filter((t) => nonMemberChatTrust({ trust: t, authorTrust: OUTSIDER })),
+    ["principal", "peer", "unauth"],
+    "exhaustive: the register leg marks on every HUMAN tier and only on those",
+  );
+  eq(
+    ALL_TIERS.filter((t) => nonMemberChatTrust({ trust: t, authorTrust: INSIDER })),
+    [],
+    "negative control: a declared author marks on NO tier",
+  );
+
+  try {
+    registerSurfaces([defineSurface({ key: `${GUILD}/C_LOUNGE`, trust: "public" })]);
+    ok(
+      chatWakeIngestsNonMember([{ trust: "peer", authorTrust: INSIDER }], { surfaceKey: `${GUILD}/C_LOUNGE` }) === true,
+      "🔴 ADDITIVE, NOT A REPLACEMENT: a TRUSTED author in a room declared `public` STILL marks — the room gates AUDIENCE, the register gates AUTHORITY",
+    );
+  } finally {
+    _resetSurfacesForTest();
+  }
+  ok(
+    chatWakeIngestsNonMember([{ trust: "peer", authorTrust: OUTSIDER }], {}) === true,
+    "…and conversely an UNDECLARED author marks with no room declaration at all — neither leg needs the other",
+  );
+} finally {
+  _resetAuthorTrustForTest();
+}
+
+ok(
+  nonMemberChatTrust({ trust: "peer", authorTrust: OUTSIDER }) === false,
+  "after the reset the register is disarmed again (the register is not sticky across tests)",
+);
 
 console.log("2. the room leg:");
 
