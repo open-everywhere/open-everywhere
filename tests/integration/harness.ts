@@ -1,9 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+
+import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
 
 export { registerScript, type RecordedRequest, type ResolveObservation, type ScriptedHandle, type SeatScript } from "../../agent/model/scripted-model";
 export { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
@@ -60,15 +61,6 @@ async function assertOwnHost(base: string): Promise<void> {
   }
 }
 
-async function portFree(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.once("error", () => resolve(false));
-    srv.once("listening", () => srv.close(() => resolve(true)));
-    srv.listen(port, "127.0.0.1");
-  });
-}
-
 export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string }> {
   const want = JSON.stringify(opts, Object.keys(opts).sort());
   if (booted !== undefined) {
@@ -104,16 +96,15 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   rmSync(join(ROOT, ".eve", ".workflow-data"), { recursive: true, force: true });
   process.env.OE_SANDBOX_BACKEND = "justbash";
 
-  let port = 3100;
-  for (; port <= 3160; port++) if (await portFree(port)) break;
-  if (port > 3160) throw new Error("integration harness: no free TCP port in 3100-3160.");
-  process.env.PORT = String(port);
-  process.env.NITRO_PORT = String(port);
+  const reserved = await reserveEphemeralPort();
+  process.env.PORT = String(reserved.port);
+  process.env.NITRO_PORT = String(reserved.port);
   process.env.HOST = "127.0.0.1";
   process.env.NITRO_HOST = "127.0.0.1";
+  await reserved.release();
 
   await import(pathToFileURL(join(ROOT, ".output", "server", "index.mjs")).href);
-  const base = `http://127.0.0.1:${port}`;
+  const base = `http://127.0.0.1:${reserved.port}`;
   const deadline = Date.now() + 60_000;
   for (;;) {
     try {
