@@ -3472,7 +3472,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S-TAINT-UNATTENDED-DENY",
-    title: "OPE-452: a REAL unattended routine fire proposes a gated action ⇒ the chain denies (ask-unattended), no card, `approval.chain` audit row cites the arrow",
+    title: "OPE-452: a REAL unattended routine fire tries a gated action ⇒ the OPE-273 presence fence refuses it before the approval plane, the fire still reports back, no card is ever minted",
     requires: ["slack"],
     surface: "slack",
     suite: "extended",
@@ -3541,59 +3541,40 @@ export const SCENARIOS: readonly Scenario[] = [
       });
       ctx.log(`routine scheduled — ack: "${ack.text.replace(/\s+/g, " ").trim().slice(0, 160)}"`);
 
-      type ChainDetail = {
-        readonly tool?: unknown;
-        readonly verdict?: unknown;
-        readonly registryVerdict?: unknown;
-        readonly unattended?: unknown;
-        readonly transforms?: readonly { readonly name?: unknown; readonly from?: unknown; readonly to?: unknown; readonly reason?: unknown }[];
-      };
-      const FIRE_AUDIT_WAIT = (3 + DISPATCH_TICK_MINUTES + 4) * 60_000;
-      const rows = await pollOptional(
-        async () => {
-          const r = await auditRead({ sinceIso, actions: ["approval.chain"] });
-          const mine = r.filter((e) => (e.detail as ChainDetail | undefined)?.tool === "set_spend_limit");
-          return mine.length > 0 ? mine : undefined;
-        },
-        { timeoutMs: FIRE_AUDIT_WAIT, what: `an approval.chain row for set_spend_limit (waiting up to one ${DISPATCH_TICK_MINUTES}-minute dispatcher tick)` },
-      );
-      ctx.gate(
-        rows !== undefined,
-        `🔴 (hard): the armed routine's fire reached its set_spend_limit propose within ${FIRE_AUDIT_WAIT / 60_000} minutes (one full ${DISPATCH_TICK_MINUTES}-minute dispatcher tick plus slack). NO approval.chain row for set_spend_limit appeared at all — so the fire never ran, or ran and never reached the tool. This is a DISPATCHER question, not an approver-chain one.`,
-      );
-      ctx.log(`unattended propose row: ${JSON.stringify(rows![0].detail)}`);
-      ctx.gate(
-        (rows![0].detail as ChainDetail).unattended === true,
-        `🔴 (hard): the fire's set_spend_limit propose carries unattended:true (got ${String((rows![0].detail as ChainDetail).unattended)}) — the real dispatcher tick must hand the fired session the SAME attribute unattended-derivation-test.ts constructs by hand. A false here means routineFireAttributes' unconditional FIRE_UNATTENDED_ATTR stamp did not survive into the ctx the tool resolves its approval against, and the whole unattended arrow is dead on the live path.`,
-      );
-      const d = rows![0].detail as ChainDetail;
-      ctx.log(`unattended propose: verdict=${String(d.verdict)} registryVerdict=${String(d.registryVerdict)} transforms=${JSON.stringify(d.transforms)}`);
-      ctx.gate(
-        d.registryVerdict === "ask",
-        `🔴 (hard): the registry baseline for set_spend_limit is "ask" (got ${String(d.registryVerdict)}) — the deny below must be the unattended FLOOR, not some other path resolving deny directly`,
-      );
-      ctx.gate(
-        d.verdict === "deny",
-        `🔴 (hard): the unattended fire's gated propose resolves DENY (got ${String(d.verdict)}) — ask with nobody to ask IS deny (OPE-440's fail-closed default + the unattended arrow), never a card left for an empty room`,
-      );
-      ctx.gate(
-        (d.transforms ?? []).some((t) => t.name === "unattended" && t.from === "ask" && t.to === "deny" && t.reason === "ask-unattended"),
-        `🔴 (hard): the deny is produced by the NAMED \`unattended\` arrow (ask → deny, reason "ask-unattended") — not merely a deny from somewhere else in the chain (got transforms=${JSON.stringify(d.transforms)})`,
-      );
-
+      const FIRE_WAIT = (3 + DISPATCH_TICK_MINUTES + 4) * 60_000;
       const fired = await pollOptional(
         async () => (await slack.history(askTs)).find((m) => slack.isBotReply(m) && m.text.includes(fireWord)),
-        { timeoutMs: REPLY_WAIT, what: `the one-shot routine's fired post quoting "${fireWord}" in channel ${slack.channelId}` },
+        { timeoutMs: FIRE_WAIT, what: `the one-shot routine's fired post quoting "${fireWord}" in channel ${slack.channelId} (waiting up to one ${DISPATCH_TICK_MINUTES}-minute dispatcher tick)` },
       );
       ctx.gate(
         fired !== undefined,
-        "the routine actually FIRED and posted its confirmation word (hard gate) — the fire CONTINUED after the denied propose instead of stalling on a card nobody could click",
+        `🔴 (hard): the armed routine's fire posted its confirmation word within ${FIRE_WAIT / 60_000} minutes (one full ${DISPATCH_TICK_MINUTES}-minute dispatcher tick plus slack) — the fire CONTINUED and reported back instead of stalling. NO post means the fire never ran, or ran and never completed its turn. This is a DISPATCHER question, not a presence-fence one.`,
       );
+
+      type ProposeAuditDetail = { readonly tool?: unknown; readonly kind?: unknown };
+      const rows = await auditRead({ sinceIso, actions: ["approval.chain", "approval.requested"] });
+      const mine = rows.filter((e) => {
+        const detail = e.detail as ProposeAuditDetail | undefined;
+        return detail?.tool === "set_spend_limit" || detail?.kind === "spend.set";
+      });
+      ctx.gate(
+        mine.length === 0,
+        `🔴 (hard): NO approval.chain or approval.requested row exists for set_spend_limit — a correct tree refuses at the OPE-273 presence fence, BEFORE requestApproval ever runs, so neither row is ever written (found ${mine.length}: ${JSON.stringify(mine.map((e) => ({ action: e.action, detail: e.detail })))})`,
+      );
+      if (cardTs !== undefined) {
+        const creationRows = rows.filter((e) => e.action === "approval.requested" && (e.detail as ProposeAuditDetail | undefined)?.kind === "routine.create");
+        ctx.gate(
+          creationRows.length > 0,
+          `NEGATIVE CONTROL (hard): the routine-creation ask's OWN approval.requested row (kind "routine.create") is readable in this same audit window (found ${creationRows.length}) — proves the reader surfaces real rows here, so the set_spend_limit absence above means absence, not a broken or empty read`,
+        );
+      } else {
+        ctx.log("S-TAINT-UNATTENDED-DENY: no routine.create card was posted this run (auto-allow fallback) — skipping the audit-reader negative control, nothing to check it against");
+      }
 
       const laterCards = (await slack.history(askTs)).filter((m) => m.ts !== cardTs && slack.isBotReply(m) && approveButton(m) !== undefined);
       ctx.gate(
         laterCards.length === 0,
-        `🔴 (hard): NO approval card was minted for the denied set_spend_limit propose (found ${laterCards.length}) — a card in an empty room is exactly what OPE-438's unattended arrow exists to prevent`,
+        `🔴 (hard): NO approval card was minted for the refused set_spend_limit propose (found ${laterCards.length}) — a presence-fence refusal must never leave a card in an empty room`,
       );
     },
   },
