@@ -81,6 +81,14 @@ async function rowsFor(action: string): Promise<Row[]> {
   return (await readAudit({})).filter((r) => r.action === action) as Row[];
 }
 
+async function chainRowFor(key: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const matches = (await rowsFor("approval.chain")).filter((r) => Object.entries(key).every(([k, v]) => (r.detail ?? {})[k] === v));
+  if (matches.length !== 1) {
+    throw new Error(`chainRowFor(${JSON.stringify(key)}) matched ${matches.length} rows — the selector must name exactly one call`);
+  }
+  return matches[0]!.detail ?? {};
+}
+
 {
   const res = await requestApproval(
     { ...baseInput, args: argsFor("plain"), scopeKey: "slack/T1/C_PLAIN", domain: "plain" },
@@ -91,7 +99,7 @@ async function rowsFor(action: string): Promise<Row[]> {
   ok(row !== undefined && row.status === "pending", "parity: a pending row awaits the click, exactly as before");
   const chainRows = await rowsFor("approval.chain");
   ok(chainRows.length === 1, "parity: the resolution wrote its approval.chain row");
-  const d = chainRows[0]!.detail ?? {};
+  const d = await chainRowFor({ action: "skill.delete", domain: "plain", unattended: false });
   ok(d.verdict === "ask" && d.registryVerdict === "ask" && d.resolvedBy === "registry", "parity: the row shows ask, resolved by the registry");
   ok(Array.isArray(d.elements) && (d.elements as unknown[]).length >= 5, "parity: every element's verdict is on the row");
 }
@@ -106,8 +114,7 @@ async function rowsFor(action: string): Promise<Row[]> {
   ok(threw.includes("DENIED by the approver chain") && threw.includes("custom:no-frozen-deletes"), "deny: the propose throws, naming the denying element");
   const rows = (await getOperationalStore().listPendingActions("test-org")).filter((r) => r.scopeKey === "slack/T1/C_FROZEN");
   ok(rows.length === 0, "deny: NO pending row was minted (fail fast, nothing to reconcile)");
-  const chainRows = await rowsFor("approval.chain");
-  const d = chainRows[0]!.detail ?? {};
+  const d = await chainRowFor({ action: "skill.delete", domain: "frozen", unattended: false });
   ok(d.verdict === "deny" && d.registryVerdict === "ask" && d.denyAbsolute === true, "deny: the row carries BOTH verdicts + the absolute-deny mark");
 }
 
@@ -139,8 +146,7 @@ const rotateArgs = {
   ok(row !== undefined && row.status === "pending", "floor: a pending row awaits a human's click — the mint has NOT happened");
   const auto = await rowsFor("approval.autoapproved");
   ok(!auto.some((r) => (r.detail ?? {}).kind === "webhook.rotate"), "floor: no approval.autoapproved row was ever written for webhook.rotate — execute() did not run");
-  const chainRows = await rowsFor("approval.chain");
-  const d = (chainRows.find((r) => (r.detail ?? {}).action === "webhook.rotate")?.detail ?? {}) as { verdict?: string; registryVerdict?: string; transforms?: { name: string }[] };
+  const d = (await chainRowFor({ action: "webhook.rotate", unattended: false })) as { verdict?: string; registryVerdict?: string; transforms?: { name: string }[] };
   ok(d.verdict === "ask" && d.registryVerdict === "ask", "floor: the chain row shows ask despite the operator's lowering element existing");
   ok((d.transforms ?? []).some((t) => t.name === "beneficiary-clicker-floor"), "floor: the row names the arrow that refused the lowering — queryable, like every other transform");
 }
@@ -153,8 +159,7 @@ const rotateArgs = {
     threw = String(e);
   }
   ok(threw.includes("DENIED") && threw.includes("ask-unattended"), "floor/unattended: a lowered beneficiary-clicker kind on an unwatched run DENIES rather than minting an unclickable card");
-  const rows = await rowsFor("approval.chain");
-  const d = (rows[0]?.detail ?? {}) as { verdict?: string; transforms?: { name: string }[] };
+  const d = (await chainRowFor({ action: "webhook.rotate", unattended: true })) as { verdict?: string; transforms?: { name: string }[] };
   ok(
     d.verdict === "deny" && (d.transforms ?? []).map((t) => t.name).join(",") === "beneficiary-clicker-floor,unattended",
     "floor/unattended: the row shows the floor raising it to ask and unattended then denying that ask — the stage order, visible",
@@ -178,8 +183,7 @@ const rotateArgs = {
 {
   const res = await requestApproval({ ...baseInput, args: argsFor("bypassed"), scopeKey: "slack/T1/C_BYPASS", domain: "bypassed", channelId: "C_BYPASS" }, { postCard });
   ok(res.autoApproved !== undefined, "mode: BYPASS auto-approves the gated verb (kills the card)");
-  const chainRows = await rowsFor("approval.chain");
-  const d = chainRows[0]!.detail ?? {};
+  const d = await chainRowFor({ action: "skill.delete", domain: "bypassed", unattended: false });
   const transforms = (d.transforms ?? []) as { name: string }[];
   ok(transforms.some((t) => t.name === "mode:DANGEROUSLY_BYPASS"), "mode: recorded as a TRANSFORM on the row, not an element verdict");
 }
@@ -231,14 +235,14 @@ const rotateArgs = {
     channelId: "C_RULE",
     threadTs: null,
   };
-  const ruleChainRows = async (): Promise<Row[]> => (await rowsFor("approval.chain")).filter((r) => (r.detail ?? {}).action === "routine.policy.add");
+  const ruleChainRow = (unattended: boolean, tainted: boolean): Promise<Record<string, unknown>> => chainRowFor({ action: "routine.policy.add", unattended, tainted });
 
   {
     const res = await requestApproval({ ...ruleInput, chain: { unattended: false, tainted: true } }, { postCard });
     ok(res.autoApproved === undefined && typeof res.id === "string", "taint/attended: a tainted turn CARDS instead of being refused — the act reaches a human");
     const row = (await getOperationalStore().listPendingActions("test-org")).find((r) => r.id === res.id);
     ok(row !== undefined && row.status === "pending", "taint/attended: a real pending row awaits the click");
-    const d = ((await ruleChainRows())[0]?.detail ?? {}) as {
+    const d = (await ruleChainRow(false, true)) as {
       verdict?: string;
       registryVerdict?: string;
       tainted?: boolean;
@@ -253,7 +257,6 @@ const rotateArgs = {
   }
 
   {
-    const before = (await ruleChainRows()).length;
     let threw = "";
     try {
       await requestApproval({ ...ruleInput, chain: { unattended: true, tainted: true } }, { postCard });
@@ -269,9 +272,7 @@ const rotateArgs = {
       !threw.includes("arm the permission on the routine's creation card"),
       "taint/unattended: …and it does NOT offer the standing-grant advice, which is false here — no grant lifts a taint floor",
     );
-    const rows = await ruleChainRows();
-    ok(rows.length === before + 1, "taint/unattended: the denied resolution still wrote its approval.chain row");
-    const d = (rows[0]?.detail ?? {}) as { verdict?: string; tainted?: boolean; transforms?: { name: string }[] };
+    const d = (await ruleChainRow(true, true)) as { verdict?: string; tainted?: boolean; transforms?: { name: string }[] };
     ok(d.verdict === "deny" && d.tainted === true, "taint/unattended: the row carries the deny AND the taint that led to it");
     ok(
       (d.transforms ?? []).map((t) => t.name).join(",") === "taint:ask,unattended",
@@ -283,7 +284,7 @@ const rotateArgs = {
     const res = await requestApproval({ ...ruleInput, chain: { unattended: false, tainted: false } }, { postCard });
     ok(res.autoApproved !== undefined, "taint/clean: a CLEAN turn's lowering still auto-approves — the floor is taint-conditional, not a blanket gate");
     ok(res.autoApproved!.resolvedBy === "custom:rulefast-lower", "taint/clean: …resolved by the same element the tainted legs defeated");
-    const d = ((await ruleChainRows())[0]?.detail ?? {}) as { verdict?: string; tainted?: boolean; transforms?: { name: string }[] };
+    const d = (await ruleChainRow(false, false)) as { verdict?: string; tainted?: boolean; transforms?: { name: string }[] };
     ok(d.verdict === "allow" && d.tainted === false, "taint/clean: the row shows allow on an untainted turn");
     ok((d.transforms ?? []).length === 0, "taint/clean: …and NO transform fired at all");
   }
