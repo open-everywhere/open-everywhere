@@ -13,7 +13,13 @@ import { registerTeamsProvider } from "../agent/register.js";
 import { teamsWakeOriginCodec, isTrustedTeamsServiceUrl } from "../agent/channels/teams-origin-codec.js";
 import { teamsPostArm } from "../agent/channels/teams-post-arm.js";
 import { buildTeamsDmWake } from "../agent/channels/teams-supervisor.js";
-import { buildTeamsFrontHandler, type TeamsFrontPlan } from "../agent/channels/teams-front.js";
+import {
+  buildTeamsFrontHandler,
+  teamsAuthorFacts,
+  teamsExternalVerdict,
+  teamsVendorExternal,
+  type TeamsFrontPlan,
+} from "../agent/channels/teams-front.js";
 import {
   bindFrom,
   resolvePartition,
@@ -23,8 +29,12 @@ import {
   defineSurface,
   registerSurfaces,
   _resetSurfacesForTest,
+  defineAuthorTrust,
+  registerAuthorTrust,
+  _resetAuthorTrustForTest,
   OE_GRAIN_ATTR,
   type BindableContext,
+  type ExternalPolicy,
   type MemoryResolveConfig,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -455,4 +465,160 @@ const memCfg: MemoryResolveConfig = {
   }
 }
 
-console.log(`✓ teams: ${passed} assertions passed (activity → REAL bindFrom/partition/memory; fail-closed visibility + trust; the retired DM anchor + the surviving host allowlist; OPE-357 first-class DM window divert, unconditional since OPE-368)`);
+{
+  const TENANT_J = "TENANT_J";
+  const TEAM_J = "TEAM-J";
+  const TENANT_KEY = `teams/${TENANT_J}`;
+  const INSIDER_J = "29:ada";
+  const OUTSIDER_J = "29:vendor-vic";
+  const ROOM_J = `${TENANT_KEY}/19-conv-j`;
+  const TAINT_ENGAGE: ExternalPolicy = { authorGrain: "taint", roomGrain: "engage" };
+  const WITHHOLD: ExternalPolicy = { authorGrain: "withhold", roomGrain: "engage" };
+  const SILENT: ExternalPolicy = { authorGrain: "taint", roomGrain: "silent" };
+
+  const jAuth = (teamId: string | undefined): OpenEverywhereTeamsAuth =>
+    buildTeamsAuth({
+      userId: OUTSIDER_J,
+      tenantId: TENANT_J,
+      conversationId: "19:conv-j@thread.tacv2",
+      ...(teamId ? { teamId } : {}),
+      serviceUrl: "https://smba.trafficmanager.net/uk/",
+      scope: "channel",
+    });
+  const facts = teamsAuthorFacts(jAuth(TEAM_J), OUTSIDER_J);
+  ok(facts.authorTrust?.tenantKey === TENANT_KEY, "J1: the register question is asked at the TENANT key, built from the tenant id and nothing else");
+  ok(facts.authorTrust?.authorId === OUTSIDER_J, "J1: …carrying the author's raw platform id");
+  ok(
+    JSON.stringify(facts.authorTrust?.memberships) === JSON.stringify([`${TENANT_KEY}/team:${TEAM_J}`]),
+    "J1: …and the TEAM as the group rung, in the register's own pattern grammar",
+  );
+  ok(teamsAuthorFacts(jAuth(undefined), OUTSIDER_J).authorTrust?.memberships === undefined, "J1: a chat with no team contributes NO rung (absent, not empty)");
+  ok(teamsAuthorFacts({ attributes: {} }, OUTSIDER_J).authorTrust === undefined, "J1: an unreadable tenant asks NOTHING — no arming key, no question");
+
+  const chanData = (membershipType: string | undefined): Record<string, unknown> => ({
+    channel: { id: "19:chan-j", ...(membershipType ? { membershipType } : {}) },
+    team: { id: TEAM_J },
+  });
+  const act = (channelData: Record<string, unknown> | undefined) => ({ channelData }) as unknown as Parameters<typeof teamsVendorExternal>[0];
+  ok(teamsVendorExternal(act(chanData("shared"))) === true, "J1: a SHARED channel is the vendor-external verdict — it can hold members from other tenants");
+  ok(teamsVendorExternal(act(chanData("standard"))) === false, "J1: negative control: a standard channel is not (=== false)");
+  ok(teamsVendorExternal(act(undefined)) === false, "J1: negative control: NO channelData is 'not reported', not evidence (=== false) — this leg fails OPEN");
+
+  const verdict = (policy: ExternalPolicy, authorId: string, addressed: boolean, opts?: { isDm?: boolean; vendorExternal?: boolean }) =>
+    teamsExternalVerdict({
+      policy,
+      author: { trust: "peer", ...teamsAuthorFacts(jAuth(TEAM_J), authorId) },
+      addressed,
+      isDm: opts?.isDm === true,
+      vendorExternal: opts?.vendorExternal === true,
+      roomKey: ROOM_J,
+    });
+
+  ok(verdict(WITHHOLD, OUTSIDER_J, true) === "proceed", "🔴 J2 UNARMED: `withhold` suppresses NOTHING on an unarmed tenant — silence is never a declaration");
+  ok(verdict(SILENT, OUTSIDER_J, false) === "proceed", "🔴 J2 UNARMED + undeclared room: `silent` suppresses nothing either — there is no classification to act on");
+
+  try {
+    registerAuthorTrust([defineAuthorTrust({ tenant: TENANT_KEY, internal: [`teams/${INSIDER_J}`] })]);
+
+    ok(verdict(TAINT_ENGAGE, OUTSIDER_J, true) === "proceed", "🔴 J2: on the SHIPPED grains an excluded author still proceeds — an upgrade changes nothing");
+    ok(verdict(WITHHOLD, OUTSIDER_J, true) === "withheld-addressed", "J2 BEHAVIOUR 1: an excluded author's @mention or personal chat is owed a PRIVATE notice and nothing else");
+    ok(verdict(WITHHOLD, OUTSIDER_J, false) === "withheld-ambient", "J2 BEHAVIOUR 2: an excluded author's ambient message is owed NOTHING — suppressed in silence");
+    ok(verdict(WITHHOLD, INSIDER_J, true) === "proceed", "J2 negative control: a DECLARED author proceeds even on `withhold` (=== proceed)");
+
+    ok(verdict(SILENT, OUTSIDER_J, false) === "silent-room", "J2 GUEST-PRESENT: on `silent` an excluded author in the room silences the wake");
+    ok(verdict(SILENT, INSIDER_J, false) === "proceed", "J2 negative control: with only declared authors the room is not in the external class (=== proceed)");
+    ok(
+      verdict(SILENT, INSIDER_J, false, { vendorExternal: true }) === "silent-room",
+      "🔴 J2 VENDOR-EXTERNAL: a SHARED CHANNEL silences the room on its own — the leg only Teams and Slack can produce",
+    );
+    ok(
+      verdict(SILENT, INSIDER_J, false, { vendorExternal: true, isDm: true }) === "proceed",
+      "🔴 J2: a DM contributes NO room leg (=== proceed) — on a DM the trust plane asks about the PARTNER, not about the room",
+    );
+    ok(
+      teamsExternalVerdict({
+        policy: { authorGrain: "withhold", roomGrain: "silent" },
+        author: { trust: "peer", ...teamsAuthorFacts(jAuth(TEAM_J), OUTSIDER_J) },
+        addressed: true,
+        isDm: false,
+        vendorExternal: true,
+        roomKey: ROOM_J,
+      }) === "withheld-addressed",
+      "🔴 J2 ORDER: with BOTH grains on, an excluded author gets the AUTHOR verdict — they are owed a notice they can act on, not a room-wide announcement",
+    );
+    ok(
+      verdict(WITHHOLD, OUTSIDER_J, true) === "withheld-addressed" && teamsExternalVerdict({
+        policy: WITHHOLD,
+        author: { trust: "relay", ...teamsAuthorFacts(jAuth(TEAM_J), OUTSIDER_J) },
+        addressed: true,
+        isDm: false,
+        vendorExternal: false,
+        roomKey: ROOM_J,
+      }) === "proceed",
+      "🔴 J2 negative control: a MACHINE author is NEVER excluded (=== proceed) — withholding every app's posts would be an outage",
+    );
+  } finally {
+    _resetAuthorTrustForTest();
+  }
+  ok(verdict(WITHHOLD, OUTSIDER_J, true) === "proceed", "J2: the register is disarmed again after the reset");
+
+  {
+    const body = JSON.stringify({
+      type: "message",
+      id: "act-j",
+      serviceUrl: "https://smba.trafficmanager.net/uk/",
+      from: { id: OUTSIDER_J, name: "Vendor Vic" },
+      recipient: { id: "28:bot" },
+      conversation: { id: "19:conv-j@thread.v2", conversationType: "channel", tenantId: TENANT_J },
+      channelData: { channel: { id: "19:chan-j" }, team: { id: TEAM_J } },
+      text: "hello there",
+    });
+    const run = async (suppress: boolean) => {
+      let dm = 0;
+      let plan = 0;
+      let forward = 0;
+      let gated = 0;
+      const waits: Promise<unknown>[] = [];
+      const handler = buildTeamsFrontHandler(
+        async () => {
+          forward++;
+          return new Response("native");
+        },
+        {
+          verify: async () => body,
+          markEventSeen: async () => true,
+          planFor: (): TeamsFrontPlan | null => {
+            plan++;
+            return null;
+          },
+          dmDivert: async () => {
+            dm++;
+          },
+          externalGate: async () => {
+            gated++;
+            return suppress;
+          },
+        },
+      );
+      const args = { to: {} as never, waitUntil: (p: Promise<unknown>) => waits.push(p) } as unknown as Parameters<typeof handler>[1];
+      const res = await handler(new Request("https://oe.test/eve/v1/teams", { method: "POST", body }), args);
+      await Promise.all(waits);
+      return { dm, plan, forward, gated, status: res.status };
+    };
+
+    const suppressed = await run(true);
+    ok(suppressed.gated === 1, "J3: the gate runs ONCE per message activity, above both branches");
+    ok(suppressed.forward === 0, "🔴 J3: a SUPPRESSED activity is NOT FORWARDED — this is what extends the policy to the native (window-gates-off) path");
+    ok(suppressed.plan === 0, "🔴 J3: …and never reaches planFor, so it costs no partition/grain/floor work");
+    ok(suppressed.dm === 0, "🔴 J3: …and never reaches the DM divert, so it mints no seat and no session");
+    ok(suppressed.status === 200, "J3: it still ACKs 200 — a non-200 would make the Bot Framework redeliver the same activity");
+
+    const proceeded = await run(false);
+    ok(
+      proceeded.gated === 1 && proceeded.plan === 1 && proceeded.forward === 1 && proceeded.dm === 0,
+      "🔴 J3 NEGATIVE CONTROL: a gate that suppresses NOTHING leaves the route byte-identical — planFor runs and the null plan forwards",
+    );
+  }
+}
+
+console.log(`✓ teams: ${passed} assertions passed (activity → REAL bindFrom/partition/memory; fail-closed visibility + trust; the retired DM anchor + the surviving host allowlist; OPE-357 first-class DM window divert, unconditional since OPE-368; OPE-525 external-participant policy)`);

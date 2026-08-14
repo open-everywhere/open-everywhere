@@ -34,6 +34,9 @@ import {
   parseChannelJoinEvent,
   routeChannelJoinEvent,
   announceSilentJoin,
+  announceSlackSilentRoom,
+  postSlackExternalSenderNotice,
+  slackExternalVerdict,
   renderChannelJoinMessage,
   channelJoinMetaFromInfo,
   transcriptFromHistory,
@@ -2024,6 +2027,78 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
   } finally {
     overrideSettingsForTest({ externalPolicy: { roomGrain: "engage" } });
   }
+}
+
+{
+  const ROOM = "slack/T_ENG/C_PAY";
+  const TAINT_ENGAGE = { authorGrain: "taint", roomGrain: "engage" } as const;
+  const WITHHOLD = { authorGrain: "withhold", roomGrain: "engage" } as const;
+  const SILENT = { authorGrain: "taint", roomGrain: "silent" } as const;
+  const verdict = (
+    policy: typeof TAINT_ENGAGE | typeof WITHHOLD | typeof SILENT,
+    refuted: boolean,
+    addressed: boolean,
+    opts?: { isDm?: boolean; vendorExternal?: boolean },
+  ) =>
+    slackExternalVerdict({
+      policy,
+      author: { trust: "unauth", refuted },
+      addressed,
+      isDm: opts?.isDm === true,
+      ...(opts?.vendorExternal === true ? { vendorExternal: true } : {}),
+      roomKey: ROOM,
+    });
+
+  ok(verdict(TAINT_ENGAGE, true, true) === "proceed", "🔴 OPE-525: on the SHIPPED grains a refuted author still proceeds — an upgrade changes nothing");
+  ok(verdict(WITHHOLD, true, true) === "withheld-addressed", "OPE-525 BEHAVIOUR 1: a refuted author's @mention or DM is owed a PRIVATE notice and nothing else");
+  ok(verdict(WITHHOLD, true, false) === "withheld-ambient", "OPE-525 BEHAVIOUR 2: a refuted author's ambient message is owed NOTHING — suppressed in silence");
+  ok(verdict(WITHHOLD, false, true) === "proceed", "OPE-525 negative control: an UNREFUTED author proceeds even on `withhold` (=== proceed) — absence of evidence is never evidence");
+  ok(verdict(SILENT, true, false) === "silent-room", "OPE-525 GUEST-PRESENT: on `silent` a refuted author in the room silences the wake");
+  ok(verdict(SILENT, false, false) === "proceed", "OPE-525 negative control: an undeclared room with no refuted author is NOT in the external class (=== proceed)");
+  ok(verdict(SILENT, false, false, { vendorExternal: true }) === "silent-room", "🔴 OPE-525 VENDOR-EXTERNAL: Slack Connect's `is_ext_shared` silences the room on its own");
+  ok(
+    verdict(SILENT, false, false, { vendorExternal: true, isDm: true }) === "proceed",
+    "🔴 OPE-525: a DM contributes NO room leg (=== proceed) — on a DM the trust plane asks about the PARTNER, not about the room",
+  );
+  ok(
+    slackExternalVerdict({ policy: { authorGrain: "withhold", roomGrain: "silent" }, author: { trust: "unauth", refuted: true }, addressed: true, isDm: false, roomKey: ROOM }) ===
+      "withheld-addressed",
+    "🔴 OPE-525 ORDER: with BOTH grains on, a refuted author gets the AUTHOR verdict — they are owed a notice they can act on, not a room-wide announcement",
+  );
+  ok(
+    slackExternalVerdict({ policy: WITHHOLD, author: { trust: "relay", refuted: true }, addressed: true, isDm: false, roomKey: ROOM }) === "proceed",
+    "🔴 OPE-525 negative control: a MACHINE author is NEVER excluded (=== proceed) — withholding every app's posts would be an outage",
+  );
+
+  const claimed = new Set<string>();
+  const store = { claimNotice: async (org: string, key: string) => (claimed.has(`${org}|${key}`) ? false : (claimed.add(`${org}|${key}`), true)) };
+  const posts: string[] = [];
+  const post = async (_c: string, text: string) => { posts.push(text); };
+
+  await announceSlackSilentRoom("ORG", ROOM, "C_PAY", store, post);
+  ok(posts.length === 1, "OPE-525: the suppressed-wake announcement posts once");
+  ok(posts[0]!.includes("staying quiet"), "…and it says the agent is staying quiet, not the JOIN half's wording");
+  await announceSlackSilentRoom("ORG", ROOM, "C_PAY", store, post);
+  await announceSlackSilentRoom("ORG", ROOM, "C_PAY", store, post);
+  ok(posts.length === 1, "🔴 OPE-525 ONCE PER ROOM, EVER — a cold start or a second suppressed wake never re-announces");
+  await announceSlackSilentRoom("ORG", "slack/T_ENG/C_OTHER", "C_OTHER", store, post);
+  ok(posts.length === 2, "OPE-525: a DIFFERENT room announces on its own claim");
+  await announceSlackSilentRoom("ORG", "slack/T_ENG/C_THIRD", "C_THIRD", { claimNotice: async () => { throw new Error("store down"); } }, post);
+  ok(posts.length === 2, "🔴 OPE-525: a store outage announces NOTHING (fail-CLOSED) — an unprovable claim must not become a repeat");
+  await announceSlackSilentRoom("", ROOM, "C_PAY", store, post);
+  ok(posts.length === 2, "OPE-525 negative control: no org ⇒ no claim and no announcement");
+
+  const dmPosts: { channel: string; text: string }[] = [];
+  const notice = async (channel: string, text: string) => { dmPosts.push({ channel, text }); };
+  await postSlackExternalSenderNotice("U_GUEST", undefined, { open: async () => "D_GUEST", post: notice });
+  ok(dmPosts.length === 1 && dmPosts[0]!.channel === "D_GUEST", "OPE-525: the private notice goes to the sender's own 1:1 DM, opened on demand");
+  ok(dmPosts[0]!.text.includes("outside this organisation"), "…carrying the core-owned notice text");
+  await postSlackExternalSenderNotice("U_GUEST", "D_ALREADY", { open: async () => "D_WRONG", post: notice });
+  ok(dmPosts.length === 2 && dmPosts[1]!.channel === "D_ALREADY", "OPE-525: a message that ARRIVED in a DM posts straight back — no `conversations.open` call");
+  await postSlackExternalSenderNotice("U_GUEST", undefined, { open: async () => undefined, post: notice });
+  ok(dmPosts.length === 2, "🔴 OPE-525: an un-openable DM says NOTHING (=== no post) — there is NO in-channel fallback, because that would disclose the sender's classification to the room");
+  await postSlackExternalSenderNotice(undefined, undefined, { open: async () => "D_X", post: notice });
+  ok(dmPosts.length === 2, "OPE-525 negative control: no author id ⇒ nobody to notify, and nothing is posted");
 }
 
 console.log(`✓ engagement: ${n} assertions passed (registry + warm-on-wake participating/streak + ownership routing (ownerToken/kind) + durable stopped marker + channel supervisor sessions (get/rotate/touch) + migration + stand-down suppression on BOTH routes (the stop regex is deleted) + delivery policy + event parse/route + domain read gate + fronting-route classify/verify/dedupe/FIFO/in-thread-branch + judged-reply sentinel + name-drop wake + channel-join intro + participation-certainty classifier)`);

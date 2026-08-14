@@ -908,19 +908,33 @@ export function slackExternalVerdict(input: {
     : "proceed";
 }
 
-export async function postSlackExternalSenderNotice(userId: string | undefined, dmChannelId?: string): Promise<void> {
+export async function postSlackExternalSenderNotice(
+  userId: string | undefined,
+  dmChannelId?: string,
+  seams: {
+    readonly open?: (userId: string) => Promise<string | undefined>;
+    readonly post?: (channelId: string, text: string) => Promise<void>;
+  } = {},
+): Promise<void> {
+  const open = seams.open ?? liveSlackOpenDm;
+  const post = seams.post ?? liveSlackPostText;
   let channel = dmChannelId;
   if (!channel) {
     if (!userId) return;
-    const opened = await slackForm("conversations.open", `users=${encodeURIComponent(userId)}`).catch(() => undefined);
-    const ch = (opened?.["channel"] as { id?: unknown } | undefined)?.id;
-    channel = typeof ch === "string" && ch.length > 0 ? ch : undefined;
+    channel = await open(userId).catch(() => undefined);
   }
   if (!channel) return;
-  await slackForm(
-    "chat.postMessage",
-    `channel=${encodeURIComponent(channel)}&text=${encodeURIComponent(EXTERNAL_SENDER_NOTICE)}`,
-  ).catch(() => undefined);
+  await post(channel, EXTERNAL_SENDER_NOTICE).catch(() => undefined);
+}
+
+async function liveSlackOpenDm(userId: string): Promise<string | undefined> {
+  const opened = await slackForm("conversations.open", `users=${encodeURIComponent(userId)}`).catch(() => undefined);
+  const ch = (opened?.["channel"] as { id?: unknown } | undefined)?.id;
+  return typeof ch === "string" && ch.length > 0 ? ch : undefined;
+}
+
+async function liveSlackPostText(channelId: string, text: string): Promise<void> {
+  await slackForm("chat.postMessage", `channel=${encodeURIComponent(channelId)}&text=${encodeURIComponent(text)}`).catch(() => undefined);
 }
 
 export async function announceSlackSilentRoom(
@@ -928,6 +942,7 @@ export async function announceSlackSilentRoom(
   surfaceKey: string,
   channelId: string,
   store?: { claimNotice: (org: string, key: string, at: string) => Promise<boolean> },
+  post: (channelId: string, text: string) => Promise<void> = liveSlackPostText,
 ): Promise<void> {
   if (!org) return;
   let won = false;
@@ -937,26 +952,30 @@ export async function announceSlackSilentRoom(
     return;
   }
   if (!won) return;
-  await slackForm(
-    "chat.postMessage",
-    `channel=${encodeURIComponent(channelId)}&text=${encodeURIComponent(silentRoomNotice("suppressed-wake"))}`,
-  ).catch(() => undefined);
+  await post(channelId, silentRoomNotice("suppressed-wake")).catch(() => undefined);
+}
+
+export async function slackChannelVendorExternal(channelId: string): Promise<boolean> {
+  const { meta } = await channelInternalAndMeta(channelId).catch(() => ({ meta: undefined as ChannelJoinMeta | undefined }));
+  return meta?.vendorExternal === true;
 }
 
 async function applySlackExternalPolicy(
   ev: ParsedMessageEvent,
   p: Partition,
-  facts: { readonly trust: WakeTrust; readonly refuted: boolean; readonly vendorExternal?: boolean },
+  facts: { readonly trust: WakeTrust; readonly refuted: boolean },
   route: string,
 ): Promise<SlackExternalVerdict> {
   const isDm = ev.channelType === "im" || ev.channelType === "mpim";
   const roomKey = domainKeyOf(p);
+  const policy = slackExternalPolicyForRoom(roomKey);
+  const vendorExternal = policy.roomGrain === "silent" && !isDm ? await slackChannelVendorExternal(ev.channelId) : false;
   const verdict = slackExternalVerdict({
-    policy: slackExternalPolicyForRoom(roomKey),
+    policy,
     author: { trust: facts.trust, refuted: facts.refuted },
     addressed: isDm || ev.isAppMention === true,
     isDm,
-    ...(facts.vendorExternal === true ? { vendorExternal: true } : {}),
+    ...(vendorExternal ? { vendorExternal: true } : {}),
     roomKey,
   });
   if (verdict === "proceed") return verdict;
