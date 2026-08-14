@@ -130,6 +130,44 @@ const ok = (cond: boolean, label: string) => {
 }
 
 {
+  const captured = (bindings: NetworkAccessBinding[]): string[] => {
+    const messages: string[] = [];
+    assertNetworkAccessValid(bindings, { warn: (m) => messages.push(m) });
+    return messages;
+  };
+
+  const orgFull = captured([defineNetworkAccess({ scope: { level: "org" }, level: "full" })]);
+  ok(orgFull.length === 1, "a \"full\" pin at org scope fires exactly one warning");
+  ok(orgFull[0]!.includes("broad grant") && orgFull[0]!.includes("org"), "the warning names it a broad grant and names the org scope");
+
+  const tenantFull = captured([defineNetworkAccess({ scope: { level: "tenant", tenant: "slack/T1" }, level: "full" })]);
+  ok(tenantFull.length === 1, "a \"full\" pin at tenant scope fires exactly one warning");
+  ok(tenantFull[0]!.includes("broad grant") && tenantFull[0]!.includes("slack/T1"), "the warning names the tenant scope");
+
+  let threw2 = false;
+  try {
+    assertNetworkAccessValid([defineNetworkAccess({ scope: { level: "org" }, level: "full" })]);
+  } catch {
+    threw2 = true;
+  }
+  ok(!threw2, "a \"full\" pin at org scope NEVER refuses boot — warn only (OPE-524)");
+
+  ok(captured([defineNetworkAccess({ scope: { level: "domain", domain: "payments" }, level: "full" })]).length === 0, "…a \"full\" pin at DOMAIN scope stays silent — narrow scope is the whole point");
+  ok(captured([defineNetworkAccess({ scope: { level: "surface", surface: "slack/T1/C1" }, level: "full" })]).length === 0, "…a \"full\" pin at SURFACE scope stays silent");
+  ok(captured([defineNetworkAccess({ scope: { level: "org" }, level: "trusted" })]).length === 0, "…a \"trusted\" pin at org scope stays silent (curated, reviewed host list — lower blast radius)");
+  ok(captured([defineNetworkAccess({ scope: { level: "tenant", tenant: "slack/T1" }, level: "trusted" })]).length === 0, "…a \"trusted\" pin at tenant scope stays silent");
+  ok(captured([defineNetworkAccess({ scope: { level: "org" }, level: "none" })]).length === 0, "…a \"none\" pin at org scope stays silent");
+
+  let threw3 = false;
+  try {
+    assertNetworkAccessValid([defineNetworkAccess({ scope: { level: "org" }, level: "full" })]);
+  } catch {
+    threw3 = true;
+  }
+  ok(!threw3, "omitting deps entirely (the real boot call shape) still doesn't throw — falls back to console.warn");
+}
+
+{
   const conn = (id: string): Connection => ({ id, credentialType: "bearer", secretRef: "X", allowedWebsites: ["api.acme.test"] }) as unknown as Connection;
   const access = (hosts: ReachableHost[], connections: Connection[] = []): EffectiveAccess =>
     ({
@@ -185,4 +223,4 @@ const ok = (cond: boolean, label: string) => {
   ok(allowKeys(reposPlusTrusted).includes("github.com"), "repos + \"trusted\" both want github.com — compiles once, no collision");
 }
 
-console.log(`\n✓ network-access: ${n} assertions passed (resolveNetworkAccessLevel narrowest-wins/org-default + assertNetworkAccessValid config-load checks + compileNetworkPolicy per-level compiled-output differences)\n`);
+console.log(`\n✓ network-access: ${n} assertions passed (resolveNetworkAccessLevel narrowest-wins/org-default + assertNetworkAccessValid config-load checks + broad-grant warn-only OPE-524 + compileNetworkPolicy per-level compiled-output differences)\n`);

@@ -31,7 +31,11 @@ const LEVEL_FIELD: Readonly<Record<string, "tenant" | "domain" | "surface" | und
   surface: "surface",
 };
 
-export function assertNetworkAccessValid(bindings: readonly NetworkAccessBinding[]): void {
+export interface NetworkAccessValidationDeps {
+  readonly warn?: (message: string) => void;
+}
+
+export function assertNetworkAccessValid(bindings: readonly NetworkAccessBinding[], deps: NetworkAccessValidationDeps = {}): void {
   const bad: string[] = [];
   const seen = new Set<string>();
   for (const b of bindings) {
@@ -73,6 +77,16 @@ export function assertNetworkAccessValid(bindings: readonly NetworkAccessBinding
   }
   if (bad.length > 0) {
     throw new Error("open-everywhere: invalid networkAccess binding(s):\n" + bad.join("\n") + "\n(access/network-access.ts / docs/how-it-works/access-and-scoping.md)");
+  }
+  const warn = deps.warn ?? ((m: string) => console.warn(m));
+  for (const b of bindings) {
+    if (b.level !== "full") continue;
+    if (b.scope.level !== "org" && b.scope.level !== "tenant") continue;
+    const where = b.scope.level === "org" ? "org scope" : `tenant scope ("${b.scope.tenant}")`;
+    warn(
+      `[open-everywhere:network-access] broad grant: a "full" networkAccess pin sits at ${where} — every surface under it ` +
+        `(including future ones) gets unrestricted, credential-less egress. Narrow it to a domain or surface scope if possible.`,
+    );
   }
 }
 
