@@ -83,9 +83,16 @@ export interface ConsequenceEntry {
   readonly reason: string;
   readonly judgeDefer?: true;
   readonly taint?: "gate" | "disclose";
+  readonly postTurnSurface?: PostTurnSurface;
 }
 
 type TaintTolerance = "gate" | "disclose";
+
+export type PostTurnSurface = "arms" | "disarms" | "templated" | "none";
+
+export function postTurnSurfaceFloors(surface: PostTurnSurface | undefined): boolean {
+  return surface === "arms" || surface === "disarms";
+}
 
 const open = (reason: string): ConsequenceEntry => ({ tier: "open", via: { kind: "none" }, reason });
 const delegated = (helper: string, module: string, reason: string): ConsequenceEntry => ({
@@ -96,6 +103,7 @@ const delegated = (helper: string, module: string, reason: string): ConsequenceE
 const member = (action: string, taint: TaintTolerance, reason: string): ConsequenceEntry => ({ tier: "gate:member", via: { kind: "action-kind", action }, taint, reason });
 const admin = (action: string, taint: TaintTolerance, reason: string): ConsequenceEntry => ({ tier: "gate:admin", via: { kind: "action-kind", action }, taint, reason });
 const deferToJudge = (entry: ConsequenceEntry): ConsequenceEntry => ({ ...entry, judgeDefer: true });
+const postTurn = (surface: PostTurnSurface, entry: ConsequenceEntry): ConsequenceEntry => ({ ...entry, postTurnSurface: surface });
 
 export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   bash: open("sandbox execution; reach is bounded by the egress plane (L1), not by this table"),
@@ -193,27 +201,31 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
       "the eve-HITL residue by design §7.2 (the artifact URL is org-opt-in and unlisted).",
   },
 
-  cancel_routine: member("routine.cancel", "disclose", "behaviour-persisting removal: silently cancelling a watch/schedule removes a guardrail the surface relies on; reversible by re-creation, but a human confirms"),
-  edit_routine: member("routine.edit", "disclose",
-    "self-modification at instruction granularity (OPE-147): rewrites the TRUSTED text a standing routine hands to unattended future fires — the create_routine rubric applied to the moment that text changes, which is the moment a human must read it. The card renders before AND after, which cancel+create could not. Confirming also bumps the routine's authority generation, revoking every standing grant keyed on the old text, so an edit can never launder approvals onto an instruction nobody read",
-  ),
-  enable_routine: member("routine.enable", "disclose",
-    "re-arming standing autonomy (OPE-147): after the click the routine fires again with no human present, indefinitely — the same property routine.create is gated on, and having been armed once before does not make the second arming unattended-safe (whatever it was failing on may be exactly why it should stay off). The card names the disable reason, so the clicker confirms a diagnosis rather than pressing a button",
-  ),
-  delete_skill: member("skill.delete", "disclose", "behaviour-persisting removal: silently deleting a shared domain skill/runbook removes a guardrail; reversible by re-creation, but a human confirms"),
-  add_routine_rule: member("routine.policy.add", "gate",
-    "self-modification at RULE granularity (OPE-141): arms a standing instruction that is rendered as TRUSTED text into every future unattended fire of one routine, indefinitely — the create_routine/edit_routine rubric axis, scoped to a clause instead of the whole prompt, and with a longer reach than either because it is never re-read by anyone once armed. Deliberately NOT a lighter gate than edit_routine despite touching less text: what makes an instruction consequential here is that an unwatched run obeys it, which is equally true of one sentence. This tool HARD-REFUSES inside a routine fire (the host-set ROUTINE_MARKER stamp), so no run can amend its own doctrine, and it is absent from JOB_WAKE_TOOLS. On a TAINTED turn it declares `taint: \"gate\"` (one of only four rows that do; everywhere else a tainted turn merely DISCLOSES its provenance and the verdict is unchanged — OPE-307): the verdict is floored at a human decision, so no lowering can auto-approve it off fetched content and an unattended tainted run denies (OPE-438). The fire refusal plus that floor are what buy the right to render the block trusted at all",
-  ),
-  remove_routine_rule: member("routine.policy.remove", "gate",
+  cancel_routine: postTurn("disarms", member("routine.cancel", "gate",
+    "behaviour-persisting removal: silently cancelling a watch/schedule removes a guardrail the surface relies on; reversible by re-creation, but a human confirms. `disarms` (OPE-419), so a tainted turn is floored at that human decision: 'cancel the routine that watches for X' is the cheapest sentence a hostile page can plant, and it is the same act remove_routine_rule has been floored for since OPE-438",
+  )),
+  edit_routine: postTurn("arms", member("routine.edit", "gate",
+    "self-modification at instruction granularity (OPE-147): rewrites the TRUSTED text a standing routine hands to unattended future fires — the create_routine rubric applied to the moment that text changes, which is the moment a human must read it. The card renders before AND after, which cancel+create could not. Confirming also bumps the routine's authority generation, revoking every standing grant keyed on the old text, so an edit can never launder approvals onto an instruction nobody read. `arms` (OPE-419): this row's own sentence — trusted text on an unwitnessed future run — IS the vector-1 predicate, so the taint floor that add_routine_rule carried for a CLAUSE now covers the whole prompt too",
+  )),
+  enable_routine: postTurn("arms", member("routine.enable", "gate",
+    "re-arming standing autonomy (OPE-147): after the click the routine fires again with no human present, indefinitely — the same property routine.create is gated on, and having been armed once before does not make the second arming unattended-safe (whatever it was failing on may be exactly why it should stay off). The card names the disable reason, so the clicker confirms a diagnosis rather than pressing a button. `arms` (OPE-419): re-arming an unattended future run off fetched bytes is the act the floor exists for",
+  )),
+  delete_skill: postTurn("disarms", member("skill.delete", "gate",
+    "behaviour-persisting removal: silently deleting a shared domain skill/runbook removes a guardrail; reversible by re-creation, but a human confirms. `disarms` (OPE-419) for cancel_routine's reason — a runbook that says 'never do Y' is exactly what a hostile page wants gone, and deleting it changes every future turn that would have loaded it",
+  )),
+  add_routine_rule: postTurn("arms", member("routine.policy.add", "gate",
+    "self-modification at RULE granularity (OPE-141): arms a standing instruction that is rendered as TRUSTED text into every future unattended fire of one routine, indefinitely — the create_routine/edit_routine rubric axis, scoped to a clause instead of the whole prompt, and with a longer reach than either because it is never re-read by anyone once armed. Deliberately NOT a lighter gate than edit_routine despite touching less text: what makes an instruction consequential here is that an unwatched run obeys it, which is equally true of one sentence. This tool HARD-REFUSES inside a routine fire (the host-set ROUTINE_MARKER stamp), so no run can amend its own doctrine, and it is absent from JOB_WAKE_TOOLS. On a TAINTED turn it declares `taint: \"gate\"` (one of only four rows that do; everywhere else a tainted turn merely DISCLOSES its provenance and the verdict is unchanged — OPE-307): the verdict is floored at a human decision, so no lowering can auto-approve it off fetched content and an unattended tainted run denies (OPE-438). The fire refusal plus that floor are what buy the right to render the block trusted at all. OPE-419 turned the four-name enumeration behind that floor into the DECLARED `postTurnSurface` column this row now carries, so a new tool that arms a future run joins the floor or fails the build",
+  )),
+  remove_routine_rule: postTurn("disarms", member("routine.policy.remove", "gate",
     "behaviour-persisting removal (OPE-141): dropping a standing rule silently takes away a guardrail a human armed after an incident, and every later fire stops following it with no notice — the cancel_routine/delete_skill shape, reversible by re-adding, but a human confirms against the rule's stated reason. It carries add_routine_rule's routine-fire refusal and its tainted-turn floor for a sharper reason than symmetry: stripping the rule written to stop an attack is an easier act than authoring a malicious one. There is deliberately no edit verb — an edit is remove + add, two cards, so each wording is read on its own and no rule's provenance is mutated under a rewrite",
-  ),
+  )),
 
-  declare_webhook: member("webhook.declare", "gate",
+  declare_webhook: postTurn("arms", member("webhook.declare", "gate",
     "proposes an inbound webhook in either shape: FUSED (an ingress bound to a standing instruction and a named channel, which runs unattended with that channel's full existing access on anyone's POST, indefinitely) or EMIT-ONLY (an ingress and nothing else, whose consequences are decided later by separately-approved `event` routines). Which is exactly why this tool arms nothing: approving OPENS A PULL REQUEST, and the privilege gate is the MERGE, behind branch protection + CODEOWNERS on the config repo. An unmerged PR declares nothing, and even a merged one authenticates nobody until the signing secret exists — no secret is minted, seen, or transported by this flow, so there is no disclosure axis and no private-delivery precondition (arming a `broker: \"db\"` hook's value is rotate_webhook's separate, card-gated act). Same tier and same two-step as request_access, whose flow it reuses. Declares `taint: \"gate\"`: a durable external wake path aimed at a named channel may never be auto-approved off fetched content, so a tainted turn is floored at a human decision and an unattended tainted run denies (OPE-438)",
-  ),
-  rotate_webhook: member("webhook.rotate", "gate",
-    "mints and DISCLOSES a signing secret for an ingress a merged PR ALREADY declared — it widens nothing (no new endpoint, no new authority, no new audience), and the DISCLOSURE is the whole reason for the bar. It is also the only way a `broker: \"db\"` hook ever gets a value at all, which is what lets a declared hook go live without a redeploy; refused by name for any other broker, whose value is set outside this deployment. This is likewise the ONLY recovery path, deliberately: there is no re-reveal anywhere in the design, because a re-reveal is indistinguishable in the audit log from exfiltration of a live secret. Whether the superseded key keeps working is the DECLARATION's own choice — a second `secretRef` entry is the overlap, ended by a PR rather than a timer — so the model cannot choose that window either. Declares `taint: \"gate\"`: minting a live signing secret may never be auto-approved off fetched content, so a tainted turn is floored at a human decision and an unattended tainted run denies (OPE-438)",
-  ),
+  )),
+  rotate_webhook: postTurn("arms", member("webhook.rotate", "gate",
+    "mints and DISCLOSES a signing secret for an ingress a merged PR ALREADY declared — it widens nothing (no new endpoint, no new authority, no new audience), and the DISCLOSURE is the whole reason for the bar. It is also the only way a `broker: \"db\"` hook ever gets a value at all, which is what lets a declared hook go live without a redeploy; refused by name for any other broker, whose value is set outside this deployment. This is likewise the ONLY recovery path, deliberately: there is no re-reveal anywhere in the design, because a re-reveal is indistinguishable in the audit log from exfiltration of a live secret. Whether the superseded key keeps working is the DECLARATION's own choice — a second `secretRef` entry is the overlap, ended by a PR rather than a timer — so the model cannot choose that window either. Declares `taint: \"gate\"`: minting a live signing secret may never be auto-approved off fetched content, so a tainted turn is floored at a human decision and an unattended tainted run denies (OPE-438). `arms` (OPE-419): the mint is what makes a DECLARED ingress actually able to wake this deployment, so it creates post-turn execution surface even though it declares no new endpoint",
+  )),
   list_webhooks: open(
     "read of this deployment's OWN declared inbound-webhook inventory: id, scheme, shape (fused vs emit-only), target, posture, read grant. NEVER a secret ref — a pointer straight at the vault row — and tools/list_webhooks.ts projects field-by-field so a new field on the hook type cannot silently join the disclosure. The hook id IS returned and that is not a relaxation: a declared id is a short human-chosen token merged in a reviewed diff and printed in the repo, unlike the deleted chat-created class's ids which were 128 random bits and WERE the endpoint URL. Same tier and same reasoning as list_routines: membership IS the read tier for a surface's own standing behaviour",
   ),
@@ -227,20 +239,20 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     "ARMS a bounded capture window on ONE hook (OPE-211), after which its deliveries' filter documents are retained until the window closes. It reaches no external host, emits nothing, mints and discloses no secret, and DISCLOSES NOTHING AT THE MOMENT IT RUNS — it changes what a later, separately-gated read can show. Gated by the hook's own `readableBy`, the SAME check applied to the read, deliberately: arming is what creates the thing reading discloses, so a weaker gate on the write than on the read would let a room cause retention it cannot itself inspect. `open` rather than gated for the same reason as its two neighbours — `readableBy` is the per-hook confidentiality decision and a tier on top would shadow it — and the retention it starts is bounded IN CODE three independent ways (a row cap, a wall-clock ceiling the caller cannot exceed, and an absolute sweep that runs regardless of both), self-expiring with no operator action. REFUSED BY NAME for `trigger-only` hooks, whose whole posture is that payloads are never retained; that refusal is the reason this tool cannot be used to route around a posture. Re-arming CLEARS the previous window, so it is also the forget action",
   ),
 
-  record_watch_state: open("writes watch bookkeeping onto the calling routine's OWN row, located via the dispatcher-stamped marker"),
-  report_run_failed: open(
+  record_watch_state: postTurn("none", open("writes watch bookkeeping onto the calling routine's OWN row, located via the dispatcher-stamped marker")),
+  report_run_failed: postTurn("none", open(
     "a fire declaring that ITS OWN run did not do its work (OPE-177) — writes `lastOutcome: failed` plus a capped one-line reason onto the calling routine's OWN row (marker-located, never a supplied id), which the three-strike fold then honours. It is the only routine verb whose entire reach is to make the routine do LESS: it cannot post, cannot widen anything, and its worst case is a routine that stops early and announces that it did. Gating it would put a confirmation in front of the honesty mechanism, on a path with no human present to click it. The declared text is model-authored and quarantined to the audit rows, never to the host-composed disable notice",
-  ),
-  record_job_state: open("writes a durable-job's progress ledger onto the calling job's OWN row (OPE-55), located via the dispatcher-stamped marker; cap-bounded, aims at nobody else"),
-  complete_job: open(
+  )),
+  record_job_state: postTurn("none", open("writes a durable-job's progress ledger onto the calling job's OWN row (OPE-55), located via the dispatcher-stamped marker; cap-bounded, aims at nobody else")),
+  complete_job: postTurn("none", open(
     "a durable job declaring ITSELF done and retiring (OPE-55) — flips its OWN row (marker-located, never a supplied id) to the terminal `done` status; reaching a job's intended done-state from inside its own run, not a guardrail removal (cancel_routine is that). Reversible by re-creating the job; audited (routine.complete)",
-  ),
-  subscribe_pr: open(
-    "arms a self-serve check-back whose routine prompt is CODE-templated (subscribePrPrompt) from grant-validated inputs — the model authors no routine text, incl. the re-arm, which loops through this SAME tool, never create_routine; posts stay in the arming surface; READ-scoped credential only; the chain is hard-capped (MAX_CHECKS_PER_SUBSCRIPTION, budget carried on the routine ROW so a prompt rewrite can't reset it) and self-retires on merge/close; cancellable with cancel_routine, which stays the ONLY manual off switch (a `stop` param here would be a second, ungated removal path)",
-  ),
-  run_routine_now: open(
-    "brings a routine's ALREADY-ARMED run forward (OPE-147): sets nextRunAt to now so the ordinary dispatcher tick fires it — no new fire path, no new audience, no new authority, and every consequential thing the fired turn attempts re-gates on its own. The prompt is the one a human already read on the routine.create card, and the schedule is unchanged. Host-rate-limited to one manual run per routine per dispatcher tick, audited (routine.run_now with the real requester; the resulting fire's routine.fire row carries manual:true), and it REFUSES without a verified principal — so a fire, which has none, can never re-trigger itself or another routine",
-  ),
+  )),
+  subscribe_pr: postTurn("templated", open(
+    "arms a self-serve check-back whose routine prompt is CODE-templated (subscribePrPrompt) from grant-validated inputs — the model authors no routine text, incl. the re-arm, which loops through this SAME tool, never create_routine; posts stay in the arming surface; READ-scoped credential only; the chain is hard-capped (MAX_CHECKS_PER_SUBSCRIPTION, budget carried on the routine ROW so a prompt rewrite can't reset it) and self-retires on merge/close; cancellable with cancel_routine, which stays the ONLY manual off switch (a `stop` param here would be a second, ungated removal path). `templated` rather than `arms`: the surface it creates executes after the turn, but its INSTRUCTION is `subscribePrPrompt` in scm/pr-watch's caller — a code literal a tainted turn cannot reach — and its only inputs are a repo the grant already allows and a PR number. Flooring it would card the common flow on every turn that had read a PR body, which is most of them, to protect text the model never writes. That trade is the reason for the value, and it is the row to revisit first if the prompt ever stops being code-templated",
+  )),
+  run_routine_now: postTurn("none", open(
+    "brings a routine's ALREADY-ARMED run forward (OPE-147): sets nextRunAt to now so the ordinary dispatcher tick fires it — no new fire path, no new audience, no new authority, and every consequential thing the fired turn attempts re-gates on its own. The prompt is the one a human already read on the routine.create card, and the schedule is unchanged. Host-rate-limited to one manual run per routine per dispatcher tick, audited (routine.run_now with the real requester; the resulting fire's routine.fire row carries manual:true), and it REFUSES without a verified principal — so a fire, which has none, can never re-trigger itself or another routine. `none` (OPE-419) despite naming a routine by id: it writes only `nextRunAt`, arming no new authority, no new audience and not one word of instruction — the prompt it brings forward is the one a human already read on the routine.create card",
+  )),
   revoke_routine_permissions: open(
     "de-escalation only (OPE-152): withdraws a routine's STANDING permissions so it goes back to drawing an approval card for every gated action, leaving the routine itself running. There is no configuration in which it widens anything — after it runs the routine can do strictly less unattended — so gating it would put a confirmation in front of the brake pedal. It still REFUSES without a verified principal, for attribution (the routine.grants_revoked audit row names who withdrew them), and the grants it deletes were each minted by a human's click in the first place",
   ),
@@ -280,16 +292,20 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     "de-escalation only: removes an account from the CALLER'S OWN link-set, and there is no configuration in which it widens anything — afterwards that account is attributed to strictly fewer things. Gating the off switch for your own identity would mean needing someone else's permission to stop being associated with an account, which is the one direction this must never require. Refuses without an ACTING principal (so a fire cannot detach its creator's accounts) and audited (identity.link.unlinked)",
   ),
 
-  create_skill: member("skill.create", "disclose", "self-modification: a skill is a procedure the agent will load and FOLLOW by name (persistent RCE-of-behaviour)"),
-  create_routine: deferToJudge(member("routine.create", "disclose", "self-modification: a standing scheduled behaviour that outlives the turn")),
+  create_skill: postTurn("arms", member("skill.create", "gate",
+    "self-modification: a skill is a procedure the agent will load and FOLLOW by name (persistent RCE-of-behaviour). `arms` (OPE-419), and the taint floor came with the declaration: the row's own words are the vector-1 predicate, and it sat outside the four-name enumeration only because the enumeration was hand-picked. A skill's text is read on a LATER turn, by a run that has no memory of the page this one fetched, which is the exact deferred-instruction shape the floor exists to stop being auto-approvable",
+  )),
+  create_routine: postTurn("arms", deferToJudge(member("routine.create", "gate",
+    "self-modification: a standing scheduled behaviour that outlives the turn. `arms` (OPE-419) — the strongest case in the table: the model AUTHORS the prompt, and the dispatcher renders it as trusted text to an unattended run, on a schedule, indefinitely. Everything add_routine_rule is floored for is true here of the whole instruction rather than one clause",
+  ))),
   purge_memory: deferToJudge(member("memory.purge", "disclose", "hard-to-reverse: ERASES memory across every writable silo (and the frozen args carry only the bullets' hashes — GDPR redaction)")),
   open_pull_request: deferToJudge(member("pr.open", "disclose",
     "audience-expanding: a PR reaches repo watchers, CI and reviewers beyond the asking room; commits stage on a hidden ref and publish only on the click",
   )),
   request_access: deferToJudge(member("access.request", "disclose", "audience-expanding: sends a grant request (a bot PR + admin-channel note) beyond the asking room; the merge stays the privilege gate")),
-  create_agent: member("agent.create", "disclose",
-    "self-modification + audience: provisions a new channel-resident agent — a domain + memory silo + capability bundle — as one config PR; the card is the injection gate and the merge the privilege gate",
-  ),
+  create_agent: postTurn("arms", member("agent.create", "gate",
+    "self-modification + audience: provisions a new channel-resident agent — a domain + memory silo + capability bundle — as one config PR; the card is the injection gate and the merge the privilege gate. `arms` (OPE-419): a resident agent instructs every future turn in its channel, which is post-turn instruction surface of the widest grain in the table. The merge gate does NOT make the floor redundant — declare_webhook opens a PR too and has carried the floor since OPE-438, because what a reviewer reads is a diff the model wrote off fetched bytes",
+  )),
   set_state: member("ticket.set_state", "disclose", "audience-expanding: a ticket's state change (e.g. close/reopen) is visible to every watcher of the entity (repo/team members, CI, other assignees), not just the asking room"),
   assign: member("ticket.assign", "disclose", "audience-expanding: assignment makes the entity someone's explicit responsibility, visible to the whole team/repo, not just the asking room"),
   create_ticket: member("ticket.create", "disclose",
@@ -493,6 +509,149 @@ export function checkApprovalSites(
       );
     }
   }
+  return problems;
+}
+
+export const POST_TURN_WRITE_PRIMITIVES: readonly string[] = [
+  "addRoutine",
+  "updateRoutine",
+  "removeRoutine",
+  "putDomainSkill",
+  "deleteDomainSkill",
+  "applyAgentSpec",
+  "applyHookDeclaration",
+  "mintSecretFor",
+];
+
+export interface PostTurnWriteSite {
+  readonly file: string;
+  readonly line: number;
+  readonly primitive: string;
+}
+
+export const NON_TOOL_POST_TURN_WRITERS: Readonly<Record<string, string>> = {
+  "packages/core/agent/operational/store.ts": "the operational-store INTERFACE that declares the routine verbs; a type signature, not a call site",
+  "packages/core/agent/schedules/dispatch.ts": "the HOST dispatcher tick. It patches nextRunAt/lastOutcome on rows it is already firing, outside any session — there is no turn here to be tainted",
+  "packages/core/agent/routines/outcome-fold.ts": "the host-side outcome fold (three-strike disable + stall detection). It reads what a fire DID and writes bookkeeping; it never authors instruction text",
+  "packages/core/agent/control/writes.ts": "the control-plane MCP write surface — operator-authenticated over its own transport, not a tool the model can call in a turn",
+  "packages/core/agent/control/server.ts": "the control-plane MCP server that mounts those writes; same plane, same reason",
+};
+
+const WRITE_DECL = (primitive: string): RegExp => new RegExp(`\\b(?:function|async)\\s+${primitive}\\s*\\(`);
+const WRITE_CALL = (primitive: string): RegExp => new RegExp(`(?<![\\w$.])${primitive}\\s*\\(`);
+
+export function findPostTurnWriteSites(file: string, source: string): PostTurnWriteSite[] {
+  const found: PostTurnWriteSite[] = [];
+  source.split("\n").forEach((line, i) => {
+    for (const primitive of POST_TURN_WRITE_PRIMITIVES) {
+      if (WRITE_DECL(primitive).test(line)) continue;
+      if (WRITE_CALL(primitive).test(line)) found.push({ file, line: i + 1, primitive });
+    }
+  });
+  return found;
+}
+
+function toolSlugOf(file: string): string | undefined {
+  const m = /(?:^|[\\/])agent[\\/]tools[\\/]([A-Za-z0-9_]+)\.ts$/.exec(file);
+  return m?.[1];
+}
+
+export function checkPostTurnSurface(
+  tools: readonly ToolSource[],
+  treeWriteSites: readonly PostTurnWriteSite[],
+  registrations: readonly ActionKindRegistration[],
+  registry: Readonly<Record<string, ConsequenceEntry>> = TOOL_CONSEQUENCE,
+  nonToolWriters: Readonly<Record<string, string>> = NON_TOOL_POST_TURN_WRITERS,
+): string[] {
+  const problems: string[] = [];
+
+  const toolsByKind = new Map<string, string[]>();
+  for (const [tool, entry] of Object.entries(registry)) {
+    if (entry.via.kind !== "action-kind") continue;
+    const list = toolsByKind.get(entry.via.action) ?? [];
+    list.push(tool);
+    toolsByKind.set(entry.via.action, list);
+  }
+  const kindsByFile = new Map<string, string[]>();
+  for (const r of registrations) {
+    if (r.kind === undefined) continue;
+    const list = kindsByFile.get(r.file) ?? [];
+    list.push(r.kind);
+    kindsByFile.set(r.file, list);
+  }
+
+  const reachedBy = new Map<string, PostTurnWriteSite[]>();
+  const reach = (tool: string, site: PostTurnWriteSite): void => {
+    const list = reachedBy.get(tool) ?? [];
+    if (!list.some((s) => s.file === site.file && s.line === site.line && s.primitive === site.primitive)) list.push(site);
+    reachedBy.set(tool, list);
+  };
+
+  for (const tool of tools) {
+    for (const site of findPostTurnWriteSites(`${tool.name} (tool source)`, tool.source)) reach(tool.name, site);
+  }
+
+  const attributedFiles = new Set<string>();
+  for (const site of treeWriteSites) {
+    const slug = toolSlugOf(site.file);
+    if (slug !== undefined) {
+      attributedFiles.add(site.file);
+      reach(slug, site);
+      if (registry[slug] === undefined) {
+        problems.push(
+          `${site.file}:${site.line} calls the post-turn write "${site.primitive}" from a tool file with no TOOL_CONSEQUENCE row for "${slug}" — tier it first (checkConsequenceRegistry owns that), then declare its \`postTurnSurface\``,
+        );
+      }
+      continue;
+    }
+    const kinds = kindsByFile.get(site.file) ?? [];
+    const owners = kinds.flatMap((k) => toolsByKind.get(k) ?? []);
+    if (owners.length > 0) {
+      attributedFiles.add(site.file);
+      for (const owner of owners) reach(owner, site);
+      continue;
+    }
+    if (nonToolWriters[site.file] !== undefined) {
+      attributedFiles.add(site.file);
+      continue;
+    }
+    problems.push(
+      `${site.file}:${site.line} calls the post-turn write "${site.primitive}" but nothing attributes it: the file is not an agent/tools/ file, registers no ActionKind a tiered tool proposes, and has no NON_TOOL_POST_TURN_WRITERS row (access/consequence.ts). Route the write through a tiered tool's ActionKind, or account for the file there with what actually drives it — an unattributed write is post-turn surface no \`postTurnSurface\` declaration covers`,
+    );
+  }
+
+  for (const [tool, sites] of [...reachedBy].sort(([a], [b]) => a.localeCompare(b))) {
+    const entry = registry[tool];
+    if (entry === undefined) continue;
+    const where = sites.map((s) => `${s.primitive} at ${s.file}:${s.line}`).join(", ");
+    if (entry.postTurnSurface === undefined) {
+      problems.push(
+        `tool "${tool}" reaches a durable post-turn write (${where}) but declares no \`postTurnSurface\` — answer the vector-1 predicate on its TOOL_CONSEQUENCE row ("arms" | "disarms" | "templated" | "none"; fail-closed, there is deliberately no default, because a hand-kept list of route-creating tools rots fail-open)`,
+      );
+      continue;
+    }
+    if (postTurnSurfaceFloors(entry.postTurnSurface) && entry.taint !== "gate") {
+      problems.push(
+        `tool "${tool}" declares \`postTurnSurface: "${entry.postTurnSurface}"\` but \`taint: ${entry.taint === undefined ? "(none)" : `"${entry.taint}"`}\` — a tool that ${entry.postTurnSurface === "arms" ? "arms" : "removes"} post-turn instruction/execution surface must be floored at a human decision on a tainted turn; set \`taint: "gate"\``,
+      );
+    }
+  }
+
+  for (const [tool, entry] of Object.entries(registry)) {
+    if (entry.postTurnSurface !== undefined && !reachedBy.has(tool)) {
+      problems.push(
+        `tool "${tool}" declares \`postTurnSurface: "${entry.postTurnSurface}"\` but reaches no durable post-turn write that this scan can see — either the write moved somewhere POST_TURN_WRITE_PRIMITIVES does not name (add it), or the row is stale and should drop the column (a claim nobody can trace to code reads as coverage)`,
+      );
+    }
+  }
+  for (const file of Object.keys(nonToolWriters)) {
+    if (!attributedFiles.has(file)) {
+      problems.push(
+        `NON_TOOL_POST_TURN_WRITERS accounts for "${file}" but it contains no post-turn write site — remove the entry (a stale reason reads as coverage of something that is gone)`,
+      );
+    }
+  }
+
   return problems;
 }
 

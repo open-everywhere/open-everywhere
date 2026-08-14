@@ -235,8 +235,8 @@ passed++;
   for (const t of reads) ok(!has(t), `checkpoint guard is NOT wired into the read/reply tool ${t} (reads stay unaffected)`);
   for (const t of slackReads) ok(!hasSlack(t), `checkpoint guard is NOT wired into the bundle read tool ${t} (reads stay unaffected)`);
   const consequenceSrc = readFileSync(join(toolsDir, "..", "access", "consequence.ts"), "utf8");
-  const memberTools = [...consequenceSrc.matchAll(/^\s{2}(\w+):\s*member\(/gmu)].map((m) => m[1]);
-  ok(memberTools.length >= 8, `consequence registry lists the gate:member tools (${memberTools.length})`);
+  const memberTools = [...consequenceSrc.matchAll(/^\s{2}(\w+):.*\bmember\(/gmu)].map((m) => m[1]);
+  ok(memberTools.length >= 17, `consequence registry lists the gate:member tools, wrappers and all (${memberTools.length})`);
   const toolFiles = new Set(readdirSync(toolsDir).filter((f) => f.endsWith(".ts")).map((f) => f.replace(/\.ts$/u, "")));
   for (const t of memberTools) {
     if (!toolFiles.has(t)) continue;

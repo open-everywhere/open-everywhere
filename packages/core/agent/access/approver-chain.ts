@@ -1,4 +1,4 @@
-import { classifyConnectorOp, isConnectorOpTool, judgeDeferredTool, TOOL_CONSEQUENCE, type ConsequenceEntry } from "./consequence.js";
+import { classifyConnectorOp, isConnectorOpTool, judgeDeferredTool, postTurnSurfaceFloors, TOOL_CONSEQUENCE, type ConsequenceEntry } from "./consequence.js";
 import { awsCommandVerdict, type AwsScreenInput } from "./aws-screen.js";
 import { untrustedIngestedThisTurn, taintKindsThisTurn } from "./taint-signal.js";
 import { taintMode, type TaintMode } from "./taint-enforcement.js";
@@ -123,8 +123,12 @@ export function registryVerdictOf(tool: string): "allow" | "ask" {
 
 export function taintToleranceOf(tool: string): "gate" | "disclose" | undefined {
   if (isConnectorOpTool(tool)) return classifyConnectorOp(tool) === "open" ? undefined : "disclose";
-  const row = TOOL_CONSEQUENCE[tool];
+  return taintToleranceOfRow(TOOL_CONSEQUENCE[tool]);
+}
+
+export function taintToleranceOfRow(row: ConsequenceEntry | undefined): "gate" | "disclose" | undefined {
   if (row === undefined) return "gate";
+  if (postTurnSurfaceFloors(row.postTurnSurface)) return "gate";
   if (row.taint !== undefined) return row.taint;
   return row.tier === "open" ? undefined : "gate";
 }

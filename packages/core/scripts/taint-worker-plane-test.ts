@@ -64,7 +64,9 @@ async function inSession<T>(fn: (s: FakeSession) => T | Promise<T>, session = ne
   return eveContextStorage().run(session, () => fn(session));
 }
 
-const OPE_438_GATE_SINKS = ["add_routine_rule", "remove_routine_rule", "declare_webhook", "rotate_webhook"] as const;
+const GATE_SINKS = Object.entries(TOOL_CONSEQUENCE)
+  .filter(([, e]) => e.postTurnSurface === "arms" || e.postTurnSurface === "disarms")
+  .map(([t]) => t);
 
 resetSettingsForTest();
 
@@ -79,9 +81,13 @@ console.log("1 — every gated tool a worker can hold declares a taint tolerance
   const declaresGate = workerGated.filter((t) => TOOL_CONSEQUENCE[t]?.taint === "gate").sort();
   eq(
     declaresGate,
-    [...OPE_438_GATE_SINKS].sort(),
-    "[1] 🔴 EXACTLY the four OPE-438 standing-permission sinks carry the human ask-FLOOR, and a worker can reach all four. A fifth row gaining `gate` — a silent widening of the floor — fails here",
+    GATE_SINKS.filter((t) => workerGated.includes(t)).sort(),
+    "[1] 🔴 EXACTLY the declared standing-permission sinks carry the human ask-FLOOR. A row gaining `gate` WITHOUT answering the vector-1 predicate — a silent widening of the floor — fails here",
   );
+  for (const sink of ["add_routine_rule", "remove_routine_rule", "declare_webhook", "rotate_webhook"]) {
+    ok(declaresGate.includes(sink), `[1] the worker still reaches "${sink}" and it still carries the floor — OPE-419 widened the set, it did not move it`);
+  }
+  ok(declaresGate.length >= 11, `[1] …and OPE-419's route-creating verbs joined it (worker-reachable floored sinks: ${declaresGate.length})`);
 
   const declaresDisclose = workerGated.filter((t) => TOOL_CONSEQUENCE[t]?.taint === "disclose");
   ok(

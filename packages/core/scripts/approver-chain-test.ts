@@ -8,6 +8,7 @@ import {
   resolveApproverChain,
   registryVerdictOf,
   taintToleranceOf,
+  taintToleranceOfRow,
   toolForActionKind,
   type ApprovalChainRequest,
   type ApproverVerdict,
@@ -336,12 +337,67 @@ ok(taintToleranceOf("no_such_tool") === "gate", "taint: an unknown name fails cl
     .filter(([, e]) => e.taint === "gate")
     .map(([t]) => t)
     .sort();
+  const declaredPostTurn = Object.entries(TOOL_CONSEQUENCE)
+    .filter(([, e]) => e.postTurnSurface === "arms" || e.postTurnSurface === "disarms")
+    .map(([t]) => t)
+    .sort();
   ok(
-    JSON.stringify(gating) === JSON.stringify(["add_routine_rule", "declare_webhook", "remove_routine_rule", "rotate_webhook"]),
-    `taint: exactly the four standing-instruction/ingress sinks declare gate (got ${gating.join(", ")})`,
+    JSON.stringify(gating) === JSON.stringify(declaredPostTurn),
+    `taint: the gate-sinks are exactly the declared post-turn arming/disarming verbs (gate: ${gating.join(", ")} | declared: ${declaredPostTurn.join(", ")})`,
+  );
+  for (const sink of [
+    "add_routine_rule",
+    "remove_routine_rule",
+    "declare_webhook",
+    "rotate_webhook",
+    "create_skill",
+    "create_agent",
+    "create_routine",
+    "edit_routine",
+    "enable_routine",
+    "cancel_routine",
+    "delete_skill",
+  ]) {
+    ok(gating.includes(sink), `taint: "${sink}" declares the gate floor`);
+  }
+  for (const free of ["subscribe_pr", "run_routine_now", "record_watch_state", "purge_memory", "reply"]) {
+    ok(!gating.includes(free), `taint: "${free}" is NOT floored — the column tracks the predicate, not every routine verb`);
+  }
+  ok(
+    TOOL_CONSEQUENCE.subscribe_pr?.postTurnSurface === "templated" && taintToleranceOf("subscribe_pr") === undefined,
+    "taint: subscribe_pr ANSWERS the predicate as templated and stays free of the floor — the classification is not a synonym for the gate",
   );
 
-  for (const sink of ["add_routine_rule", "remove_routine_rule", "declare_webhook", "rotate_webhook"] as const) {
+  ok(
+    taintToleranceOfRow({ tier: "gate:member", via: { kind: "action-kind", action: "x" }, taint: "disclose", postTurnSurface: "arms", reason: "" }) === "gate",
+    "taint precedence: an `arms` row is floored EVEN WITH `taint: \"disclose\"` — dropping the column from an arming row does not lift the floor",
+  );
+  ok(
+    taintToleranceOfRow({ tier: "open", via: { kind: "none" }, postTurnSurface: "disarms", reason: "" }) === "gate",
+    "taint precedence: a `disarms` row with NO taint column at all is still floored",
+  );
+  ok(
+    taintToleranceOfRow({ tier: "open", via: { kind: "none" }, postTurnSurface: "templated", reason: "" }) === undefined,
+    "taint precedence: a `templated` open row keeps NO tolerance — the arm reads the value, not the presence of the column",
+  );
+  ok(
+    taintToleranceOfRow({ tier: "gate:member", via: { kind: "action-kind", action: "x" }, taint: "disclose", postTurnSurface: "none", reason: "" }) === "disclose",
+    "taint precedence: a `none` row falls through to its declared `disclose` — the column below still decides when the predicate says no",
+  );
+
+  for (const sink of [
+    "add_routine_rule",
+    "remove_routine_rule",
+    "declare_webhook",
+    "rotate_webhook",
+    "create_skill",
+    "create_agent",
+    "create_routine",
+    "edit_routine",
+    "enable_routine",
+    "cancel_routine",
+    "delete_skill",
+  ] as const) {
     const lower = [approver("domain-lower", "allow")];
 
     const attended = await resolveApproverChain(req(sink, { tainted: true, unattended: false }), { approvers: lower });
