@@ -62,13 +62,31 @@ const DOMAINS: readonly Domain[] = [
   ok(notionChannelCredentialForSurface(`slack/T1/C1`, DOMAINS) === undefined, "a non-Notion surface key resolves nothing");
   ok(notionChannelCredentialForSurface("notion/unknown/unknown", DOMAINS) === undefined, "an under-identified surface resolves nothing ⇒ the org default");
 
-  const ctxFor = (page: string): BindableContext =>
+  const ctxFor = (page: string, credentialId?: string): BindableContext =>
     ({
       channel: { kind: "notion" },
-      session: { auth: { current: { attributes: { workspace_id: WS, page_id: page }, principalId: "U_NOTION", principalType: "notion-user" } } },
+      session: {
+        auth: {
+          current: {
+            attributes: { workspace_id: WS, page_id: page, ...(credentialId ? { credential_id: credentialId } : {}) },
+            principalId: "U_NOTION",
+            principalType: "notion-user",
+          },
+        },
+      },
     }) as BindableContext;
   ok(notionCallerCredential(ctxFor(PAGE_PAY), DOMAINS) === PAY_CRED, "the READ TOOLS' caller-surface form resolves the bound domain's credential");
   ok(notionCallerCredential(ctxFor(PAGE_SUP), DOMAINS) === undefined, "…and an unbound caller resolves the org default");
+
+  ok(
+    notionCallerCredential(ctxFor(PAGE_PAY, NOTION_CHANNEL_CREDENTIAL), DOMAINS) === NOTION_CHANNEL_CREDENTIAL,
+    "🔴 a carried ORG delivery credential wins even on a page the domain binds to PAYMENTS",
+  );
+  ok(
+    notionCallerCredential(ctxFor(PAGE_SUP, PAY_CRED), DOMAINS) === PAY_CRED,
+    "…and a carried PAYMENTS delivery credential wins even on a page in an unbound domain",
+  );
+  ok(notionCallerCredential(ctxFor(PAGE_PAY, ""), DOMAINS) === PAY_CRED, "an EMPTY carried credential_id is absent, not a value — falls back to the domain binding");
 
   const registry = notionIntegrations(DOMAINS);
   ok(registry.length === 2 && registry[0]!.credentialId === NOTION_CHANNEL_CREDENTIAL, "the ingress registry carries the org default FIRST");
@@ -255,6 +273,24 @@ async function deliverFor(
   ok(forgedBody.dispatched === NOTION_CHANNEL_CREDENTIAL, "…and the DISPATCH carries the org credential, so the reply cannot be steered onto payments either");
 
   ok(boundRun.used === PAY_CRED && forgedBody.used === NOTION_CHANNEL_CREDENTIAL, "the SAME page resolves DIFFERENT credentials on the two subscriptions — the sender decides, not the body");
+
+  const forgedSessionCtx: BindableContext = {
+    channel: { kind: "notion" },
+    session: { auth: { current: { attributes: forgedBody.attributes ?? {}, principalId: "U_HUMAN", principalType: "notion-user" } } },
+  } as BindableContext;
+  ok(
+    notionCallerCredential(forgedSessionCtx, DOMAINS) === NOTION_CHANNEL_CREDENTIAL,
+    "🔴 the READ TOOLS on the double-shared page read under the credential that VERIFIED the delivery (org), never the page's payments domain binding",
+  );
+  ok(
+    notionCallerCredential(forgedSessionCtx, DOMAINS) !== PAY_CRED,
+    "…negative control: the escalation this closes — the domain-bound credential is NOT what the reads resolve",
+  );
+  const honestSessionCtx: BindableContext = {
+    channel: { kind: "notion" },
+    session: { auth: { current: { attributes: boundRun.attributes ?? {}, principalId: "U_HUMAN", principalType: "notion-user" } } },
+  } as BindableContext;
+  ok(notionCallerCredential(honestSessionCtx, DOMAINS) === PAY_CRED, "…while an HONEST payments delivery on the same page still reads under payments, unaffected");
 
   const hatched = await deliverFor(PAGE_PAY, null);
   ok(hatched.used === PAY_CRED, "with NO integration identified (the unverified dev hatch) the page's domain binding still decides");

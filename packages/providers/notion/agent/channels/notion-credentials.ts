@@ -33,7 +33,17 @@ export function notionChannelCredentialForSurface(surfaceKey: string, domains: r
   return notionChannelCredentialFor(parts[1] || undefined, parts[2] || undefined, domains);
 }
 
+function notionDeliveryCredential(ctx: BindableContext): string | undefined {
+  const auth = ctx.session?.auth?.current ?? ctx.session?.auth?.initiator;
+  const v = auth?.attributes?.credential_id;
+  if (typeof v === "string" && v.length > 0) return v;
+  if (Array.isArray(v) && typeof v[0] === "string" && v[0].length > 0) return v[0];
+  return undefined;
+}
+
 export function notionCallerCredential(ctx: BindableContext, domains: readonly Domain[]): string | undefined {
+  const delivered = notionDeliveryCredential(ctx);
+  if (delivered) return delivered;
   try {
     return notionChannelCredentialForSurface(resolvePartition(ctx).surfaceKey, domains);
   } catch {
