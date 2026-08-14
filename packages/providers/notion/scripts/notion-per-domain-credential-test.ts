@@ -779,11 +779,10 @@ async function deliverFor(
 
   const OTHER_WS_11 = "ffffffff-9999-4999-8999-ffffffffffff";
   const mismatchedSingle = await claimRun(OTHER_WS_11, PAGE_S_11, S_SECRET, S_CRED, SINGLE_CLAIM_DOMAINS);
-  ok(mismatchedSingle.action === "dispatched", "a DIFFERENT, unclaimed workspace for the same page still dispatches (an unassigned page is not fenced)");
+  ok(mismatchedSingle.action === "dispatched", "a DIFFERENT, unclaimed workspace composes and (under the stubbed gate) dispatches");
   ok(
     mismatchedSingle.surfaceKey === `notion/${OTHER_WS_11}/${PAGE_S_11}`,
-    "…on the UNCLAIMED workspace's own key, never on the single-claim domain's recorded workspace — the claim leg cannot be forged into a second " +
-      "partition beside a single-claim domain's honest one",
+    "…on the UNCLAIMED workspace's own key, never on the single-claim domain's recorded workspace",
   );
   ok(mismatchedSingle.surfaceKey !== honestSingle.surfaceKey, "negative control: the two runs really do land on different keys, so the assertion above is not vacuous");
 }
