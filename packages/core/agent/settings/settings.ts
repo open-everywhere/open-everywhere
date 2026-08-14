@@ -317,7 +317,7 @@ export const SETTINGS = {
       shipped: "engage",
       validate: (v) => (v === "engage" || v === "silent" ? undefined : 'must be "engage" or "silent"'),
       summary:
-        "Whether the agent engages in a room the classification calls EXTERNAL — a room the operator declared `public` in the trust registry, a room the vendor reports as spanning another organisation (Slack Connect, a Teams shared channel), or a room whose ingested set contains a refuted author. `engage` (shipped) is today's behaviour. `silent` stops the agent waking there at all, and it announces that exactly twice per room: once when it joins, and once on the first wake it suppresses. There is deliberately NO periodic re-announcement.",
+        "Whether the agent engages in a room the classification calls EXTERNAL — a room the operator declared `public` in the trust registry, a room the vendor reports as spanning another organisation (Slack Connect, a Teams shared channel), or a room whose ingested set contains a refuted author. `engage` (shipped) is today's behaviour. `silent` announces at most twice per room — once on join, once on the first wake it suppresses — and never repeats; there is deliberately NO periodic re-announcement. ⚠️ PARTIALLY WIRED: `silent` SUPPRESSES A WAKE on the DISCORD gateway only. On Slack it posts the join notice alone, and only in channels `conversations.info` already refused as not-internal — so a Slack channel the operator declared `public` but the vendor reports internal gets neither the suppression nor the notice. Teams, GitHub and Linear do not read this setting at all. Arm it expecting Discord behaviour, not deployment-wide silence.",
     } satisfies SettingSpec<ExternalRoomGrain>,
   },
   governance: {

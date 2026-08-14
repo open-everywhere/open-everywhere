@@ -60,7 +60,7 @@ export function withholdWakeBodies(nw: NormalizedWake, isWithheld: (m: WakeMessa
 }
 
 function withheldMessage(m: WakeMessageInput): WakeMessageInput {
-  const { previousBody: _dropped, ...rest } = m;
+  const { previousBody: _preEdit, attachments: _attachments, ...rest } = m;
   return { ...rest, body: WITHHELD_BODY_MARKER };
 }
 
