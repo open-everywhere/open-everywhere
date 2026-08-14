@@ -12,7 +12,7 @@ import {
   type LinearInboundResult,
 } from "eve/channels/linear";
 import type { HttpRouteDefinition, RouteHandlerArgs } from "eve/channels";
-import { buildLinearAuth, teamFactsFromTeam, userGuestFromUser } from "./linear-identity.js";
+import { buildLinearAuth, linearAuthorFacts, teamFactsFromTeam, userGuestFromUser } from "./linear-identity.js";
 import { linearAppActorCredentials } from "./linear-credentials.js";
 import { LINEAR_EVENT_SOURCE, LINEAR_DELIVERY_ID_HEADER } from "./linear-event-normalizer.js";
 import {
@@ -56,11 +56,13 @@ import {
   resolveExternalPolicy,
   externalPolicyOverrideFor,
   roomIsSilenced,
+  withholdsBody,
   type SupervisorGrain,
   type UnifiedWindowWake,
   type EngagementTier,
   type ReplierLabel,
   type ExternalPolicy,
+  type IngestedChatMessage,
   dmTrustTtlMs,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -280,14 +282,32 @@ function linearTeamVouched(organizationId: string, teamId: string): boolean {
   return isVouchedInternal(`linear/${organizationId}`, `linear/${organizationId}/${teamId}`) || process.env.OE_TRUST === "internal";
 }
 
-async function linearRoomSilenced(surfaceKey: string, organizationId: string, principalId: string | undefined): Promise<boolean> {
+export type LinearExternalVerdict = "proceed" | "withheld-author" | "silent-room";
+
+export function linearExternalVerdict(input: {
+  readonly policy: ExternalPolicy;
+  readonly surfaceKey: string;
+  readonly author?: IngestedChatMessage;
+}): LinearExternalVerdict {
+  if (input.author !== undefined && withholdsBody(input.author, input.policy)) return "withheld-author";
+  const ingested = input.author === undefined ? [] : [input.author];
+  return roomIsSilenced({ room: { surfaceKey: input.surfaceKey }, ingested }, input.policy) ? "silent-room" : "proceed";
+}
+
+async function linearExternalSuppressed(
+  surfaceKey: string,
+  organizationId: string,
+  principalId: string | undefined,
+  author?: IngestedChatMessage,
+): Promise<Exclude<LinearExternalVerdict, "proceed"> | undefined> {
   let policy: ExternalPolicy;
   try {
     policy = resolveExternalPolicy(externalPolicyOverrideFor(surfaceKey, getConfig().loadDomains()));
   } catch {
     policy = resolveExternalPolicy();
   }
-  if (!roomIsSilenced({ room: { surfaceKey } }, policy)) return false;
+  const verdict = linearExternalVerdict({ policy, surfaceKey, ...(author === undefined ? {} : { author }) });
+  if (verdict === "proceed") return undefined;
   await appendAudit({
     org: deploymentOrg(),
     platform: "linear",
@@ -295,19 +315,24 @@ async function linearRoomSilenced(surfaceKey: string, organizationId: string, pr
     surface: surfaceKey,
     ...(principalId ? { principalId } : {}),
     action: "linear.external_policy_suppressed",
-    detail: { verdict: "silent-room" },
+    detail: { verdict },
   }).catch(() => undefined);
-  slog(`suppressed ${surfaceKey}: externalPolicy verdict "silent-room"`);
-  return true;
+  slog(`suppressed ${surfaceKey}: externalPolicy verdict "${verdict}"`);
+  return verdict;
 }
 
-const LINEAR_ROOM_SILENCED_STATUS = "(no reply — this room is set up as an external space)";
+function linearSilentCloseStatus(verdict: Exclude<LinearExternalVerdict, "proceed">): string {
+  return verdict === "silent-room" ? "(no reply — this room is set up as an external space)" : "(no reply)";
+}
 
-async function silentlyCloseLinearAgentSession(agentSessionId: string): Promise<void> {
+async function silentlyCloseLinearAgentSession(
+  agentSessionId: string,
+  verdict: Exclude<LinearExternalVerdict, "proceed">,
+): Promise<void> {
   await createLinearAgentActivity({
     credentials: linearAppActorCredentials,
-    activity: { agentSessionId, content: { type: "thought", body: LINEAR_ROOM_SILENCED_STATUS }, ephemeral: true, signal: "stop" },
-  }).catch((err) => slog(`room-silenced session close failed (session ${agentSessionId}): ${String(err)}`));
+    activity: { agentSessionId, content: { type: "thought", body: linearSilentCloseStatus(verdict) }, ephemeral: true, signal: "stop" },
+  }).catch((err) => slog(`external-policy session close failed (session ${agentSessionId}): ${String(err)}`));
 }
 
 type LinearSend = (
@@ -386,7 +411,7 @@ async function ambientDelivery(body: string, headers: Headers, send: LinearSend,
   const c = await enrichComment(signal.commentId);
   if (!c || !c.teamId || !c.issueId) return;
   const surfaceKey = `linear/${signal.organizationId}/${c.teamId}`;
-  if (await linearRoomSilenced(surfaceKey, signal.organizationId, c.authorId)) return;
+  if (await linearExternalSuppressed(surfaceKey, signal.organizationId, c.authorId, linearAuthorFacts(c.authorGuest))) return;
   if (!linearAmbientEnabled(surfaceKey)) {
     await auditAmbientSkip({ platform: "linear", workspace: signal.organizationId, surfaceKey, log: slog });
     return;
@@ -543,8 +568,9 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
   const agentSessionId = sig.agentSessionId!;
   const organizationId = sig.organizationId!;
   const surfaceKey = `linear/${organizationId}/${sig.teamId}`;
-  if (await linearRoomSilenced(surfaceKey, organizationId, undefined)) {
-    await silentlyCloseLinearAgentSession(agentSessionId);
+  const roomVerdict = await linearExternalSuppressed(surfaceKey, organizationId, undefined);
+  if (roomVerdict) {
+    await silentlyCloseLinearAgentSession(agentSessionId, roomVerdict);
     return;
   }
   const triggerCommentId = sig.action === "prompted" ? sig.promptSourceCommentId : sig.sourceCommentId;
@@ -556,6 +582,16 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
     const viewer = await resolveViewer();
     if (isLinearDirectSelfAuthored(c.authorId, viewer)) {
       slog(`@mention on linear/${organizationId}/${c.teamId} (${c.issueIdentifier ?? c.issueId}) dropped: self-authored comment (our own reply) — session ${agentSessionId}`);
+      return;
+    }
+    const authorVerdict = await linearExternalSuppressed(
+      `linear/${organizationId}/${c.teamId}`,
+      organizationId,
+      c.authorId,
+      linearAuthorFacts(c.authorGuest),
+    );
+    if (authorVerdict) {
+      await silentlyCloseLinearAgentSession(agentSessionId, authorVerdict);
       return;
     }
     const grain = linearGrainFor(`linear/${organizationId}/${c.teamId}`);
@@ -651,8 +687,9 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
     const nativeOrganizationId = event.organizationId ?? s.organizationId ?? undefined;
     if (typeof nativeOrganizationId === "string" && nativeOrganizationId && teamId) {
       const surfaceKey = `linear/${nativeOrganizationId}/${teamId}`;
-      if (await linearRoomSilenced(surfaceKey, nativeOrganizationId, undefined)) {
-        await silentlyCloseLinearAgentSession(agentSessionId);
+      const roomVerdict = await linearExternalSuppressed(surfaceKey, nativeOrganizationId, undefined);
+      if (roomVerdict) {
+        await silentlyCloseLinearAgentSession(agentSessionId, roomVerdict);
         return null;
       }
     }
@@ -661,6 +698,15 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
 
     const creatorId = s.creator?.id ?? s.creatorId ?? event.appUserId ?? undefined;
     const guest = await enrichUserGuest(creatorId);
+
+    if (typeof nativeOrganizationId === "string" && nativeOrganizationId && teamId) {
+      const surfaceKey = `linear/${nativeOrganizationId}/${teamId}`;
+      const authorVerdict = await linearExternalSuppressed(surfaceKey, nativeOrganizationId, creatorId, linearAuthorFacts(guest));
+      if (authorVerdict) {
+        await silentlyCloseLinearAgentSession(agentSessionId, authorVerdict);
+        return null;
+      }
+    }
 
     const auth = buildLinearAuth({
       agentSessionId,

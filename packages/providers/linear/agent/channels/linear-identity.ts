@@ -1,4 +1,4 @@
-import type { BindableContext, IdentityMapper, RawIdentity, Visibility } from "@open-everywhere/core/agent/adapter-api.js";
+import type { BindableContext, IdentityMapper, IngestedChatMessage, RawIdentity, Visibility } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface OpenEverywhereLinearAuth {
   readonly authenticator: string;
@@ -64,6 +64,10 @@ export function linearVisibility(isPrivate: string | undefined): Visibility {
 export function linearTrust(guest: string | undefined): RawIdentity["trust"] {
   if (guest === "true") return "external";
   return undefined;
+}
+
+export function linearAuthorFacts(guest: boolean | undefined): IngestedChatMessage {
+  return guest === true ? { refuted: true } : {};
 }
 
 type AuthAttrs = Readonly<Record<string, string | readonly string[]>> | undefined;

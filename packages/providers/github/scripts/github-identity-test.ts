@@ -1,5 +1,14 @@
 import { bindFrom, resolvePartition, type BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
-import { buildGitHubAuth, githubBotMentioned, githubVisibility, githubTrust } from "../agent/channels/github-identity.js";
+import {
+  buildGitHubAuth,
+  githubAssociationRefutes,
+  githubAuthorFacts,
+  githubBotMentioned,
+  githubVisibility,
+  githubTrust,
+  GITHUB_EXTERNAL_ASSOCIATIONS,
+  GITHUB_INTERNAL_ASSOCIATIONS,
+} from "../agent/channels/github-identity.js";
 import { registerGithubProvider } from "../agent/register.js";
 
 registerGithubProvider();
@@ -74,5 +83,32 @@ const gaBot = buildGitHubAuth({ owner: "acme", repo: "widgets", actorLogin: "dep
 ok(gaBot.principalType === "service", "buildGitHubAuth: Bot actor -> service principal");
 const gaSparse = buildGitHubAuth({ owner: "acme", repo: "widgets", actorLogin: "u" });
 ok(gaSparse.attributes.repo_private === undefined && gaSparse.attributes.issue_number === undefined && gaSparse.attributes.author_association === undefined, "buildGitHubAuth: omits unknown facts (no false claims)");
+
+for (const a of GITHUB_INTERNAL_ASSOCIATIONS) {
+  ok(githubAssociationRefutes(a) === false, `author grain: ${a} holds an access grant -> NOT refuted`);
+  ok(githubAuthorFacts({ authorAssociation: a }).refuted === undefined, `author grain: ${a} carries no refutation to the core`);
+}
+for (const a of GITHUB_EXTERNAL_ASSOCIATIONS) {
+  ok(githubAssociationRefutes(a) === true, `author grain: ${a} holds no access grant -> REFUTED`);
+  ok(githubAuthorFacts({ authorAssociation: a }).refuted === true, `author grain: ${a} carries refuted:true to the core`);
+}
+ok(GITHUB_INTERNAL_ASSOCIATIONS.length === 3 && GITHUB_EXTERNAL_ASSOCIATIONS.length === 5, "author grain: the sets hold 3 internal + 5 external values");
+ok(
+  GITHUB_INTERNAL_ASSOCIATIONS.every((a) => !GITHUB_EXTERNAL_ASSOCIATIONS.includes(a)),
+  "author grain: no value is in both sets",
+);
+ok(GITHUB_INTERNAL_ASSOCIATIONS.includes("COLLABORATOR"), "author grain: COLLABORATOR is INTERNAL (a deliberate access grant)");
+ok(GITHUB_EXTERNAL_ASSOCIATIONS.includes("CONTRIBUTOR"), "author grain: CONTRIBUTOR is EXTERNAL (a past merged PR is not an access grant)");
+ok(GITHUB_EXTERNAL_ASSOCIATIONS.includes("MANNEQUIN"), "author grain: MANNEQUIN is EXTERNAL (an import placeholder with no live person)");
+
+ok(githubAssociationRefutes(undefined) === false, "author grain: an ABSENT association does NOT refute (fail open)");
+ok(githubAssociationRefutes("") === false, "author grain: an EMPTY association does NOT refute");
+ok(githubAssociationRefutes("SOME_FUTURE_VALUE") === false, "author grain: an UNRECOGNISED association does NOT refute (fail open)");
+ok(githubAssociationRefutes("contributor") === false, "author grain: a lower-case variant does NOT refute (the vendor enum has one spelling)");
+
+const botFacts = githubAuthorFacts({ authorAssociation: "NONE", actorType: "Bot" });
+ok(botFacts.trust === "relay" && botFacts.refuted === undefined, "author grain: a Bot actor grades `relay` and carries NO refutation");
+const humanFacts = githubAuthorFacts({ authorAssociation: "NONE", actorType: "User" });
+ok(humanFacts.refuted === true && humanFacts.trust === undefined, "author grain: a User actor with NONE is refuted, with NO invented trust tier");
 
 console.log(`✓ github-identity: ${passed} assertions passed`);

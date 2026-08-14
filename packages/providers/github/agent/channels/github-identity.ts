@@ -1,4 +1,4 @@
-import type { BindableContext, IdentityMapper, RawIdentity } from "@open-everywhere/core/agent/adapter-api.js";
+import type { BindableContext, IdentityMapper, IngestedChatMessage, RawIdentity } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface OpenEverywhereGitHubAuth {
   readonly authenticator: string;
@@ -74,6 +74,28 @@ export function githubTrust(repoPrivate: string | undefined, authorAssociation: 
 
 type Visibility = "public" | "private";
 type Trust = "internal" | "external";
+
+export const GITHUB_INTERNAL_ASSOCIATIONS: readonly string[] = ["OWNER", "MEMBER", "COLLABORATOR"];
+
+export const GITHUB_EXTERNAL_ASSOCIATIONS: readonly string[] = [
+  "CONTRIBUTOR",
+  "FIRST_TIME_CONTRIBUTOR",
+  "FIRST_TIMER",
+  "NONE",
+  "MANNEQUIN",
+];
+
+export function githubAssociationRefutes(authorAssociation: string | undefined): boolean {
+  return authorAssociation !== undefined && GITHUB_EXTERNAL_ASSOCIATIONS.includes(authorAssociation);
+}
+
+export function githubAuthorFacts(input: {
+  readonly authorAssociation?: string;
+  readonly actorType?: string;
+}): IngestedChatMessage {
+  if (input.actorType === "Bot") return { trust: "relay" };
+  return githubAssociationRefutes(input.authorAssociation) ? { refuted: true } : {};
+}
 
 type AuthAttrs = Readonly<Record<string, string | readonly string[]>> | undefined;
 

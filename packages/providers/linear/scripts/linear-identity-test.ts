@@ -2,6 +2,7 @@ import {
   buildLinearAuth,
   teamFactsFromTeam,
   userGuestFromUser,
+  linearAuthorFacts,
   linearVisibility,
   linearTrust,
 } from "../agent/channels/linear-identity.js";
@@ -129,5 +130,16 @@ await (async () => {
   );
   ok((await enrichTeamPrivacy("TEAM5", { api: { fetch: explodingFetch } })) === undefined, "enrichTeamPrivacy: missing token -> undefined (fail closed, no network)");
 })();
+
+ok(linearAuthorFacts(true).refuted === true, "author grain: a workspace GUEST is REFUTED (excluded)");
+ok(linearAuthorFacts(false).refuted === undefined, "author grain: a FULL MEMBER is not refuted (internal)");
+ok(linearAuthorFacts(undefined).refuted === undefined, "author grain: an UNRESOLVED guest flag does NOT refute (fail open)");
+ok(Object.keys(linearAuthorFacts(false)).length === 0, "author grain: a full member carries NO fabricated refutation field");
+ok(Object.keys(linearAuthorFacts(undefined)).length === 0, "author grain: an unresolved probe carries NO fabricated refutation field");
+ok(
+  linearAuthorFacts(userGuestFromUser({ guest: true }).guest).refuted === true &&
+    linearTrust(String(userGuestFromUser({ guest: true }).guest)) === "external",
+  "author grain: the guest flag drives BOTH the author grain and the OPE-60 memory demotion",
+);
 
 console.log(`\n✓ linear-identity: ${passed} assertions passed`);

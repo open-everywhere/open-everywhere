@@ -1,6 +1,6 @@
 import type { HttpRouteDefinition, RouteHandlerArgs } from "eve/channels";
 import { githubChannel, type GitHubChannel, type GitHubChannelState, type GitHubInboundContext, type GitHubComment, type GitHubInboundResult } from "eve/channels/github";
-import { buildGitHubAuth, githubBotMentioned } from "./github-identity.js";
+import { buildGitHubAuth, githubAuthorFacts, githubBotMentioned } from "./github-identity.js";
 import {
   classifyGitHubAmbientComment,
   extractGitHubAmbientEvent,
@@ -42,6 +42,8 @@ import {
   resolveExternalPolicy,
   externalPolicyOverrideFor,
   roomIsSilenced,
+  withholdsBody,
+  type IngestedChatMessage,
   type SupervisorGrain,
   type UnifiedWindowWake,
   type EngagementTier,
@@ -133,14 +135,31 @@ function githubRepoVouched(owner: string, repo: string): boolean {
   return isVouchedInternal(`github/${owner}`, `github/${owner}/${repo}`) || process.env.OE_TRUST === "internal";
 }
 
-async function githubRoomSilenced(surfaceKey: string, owner: string, principalId: string | undefined): Promise<boolean> {
+export type GitHubExternalVerdict = "proceed" | "withheld-author" | "silent-room";
+
+export function githubExternalVerdict(input: {
+  readonly policy: ExternalPolicy;
+  readonly author: IngestedChatMessage;
+  readonly surfaceKey: string;
+}): GitHubExternalVerdict {
+  if (withholdsBody(input.author, input.policy)) return "withheld-author";
+  return roomIsSilenced({ room: { surfaceKey: input.surfaceKey }, ingested: [input.author] }, input.policy) ? "silent-room" : "proceed";
+}
+
+async function githubExternalSuppressed(
+  surfaceKey: string,
+  owner: string,
+  principalId: string | undefined,
+  author: IngestedChatMessage,
+): Promise<boolean> {
   let policy: ExternalPolicy;
   try {
     policy = resolveExternalPolicy(externalPolicyOverrideFor(surfaceKey, getConfig().loadDomains()));
   } catch {
     policy = resolveExternalPolicy();
   }
-  if (!roomIsSilenced({ room: { surfaceKey } }, policy)) return false;
+  const verdict = githubExternalVerdict({ policy, author, surfaceKey });
+  if (verdict === "proceed") return false;
   await appendAudit({
     org: deploymentOrg(),
     platform: "github",
@@ -148,9 +167,9 @@ async function githubRoomSilenced(surfaceKey: string, owner: string, principalId
     surface: surfaceKey,
     ...(principalId ? { principalId } : {}),
     action: "github.external_policy_suppressed",
-    detail: { verdict: "silent-room" },
+    detail: { verdict },
   }).catch(() => undefined);
-  slog(`suppressed ${surfaceKey}: externalPolicy verdict "silent-room"`);
+  slog(`suppressed ${surfaceKey}: externalPolicy verdict "${verdict}"`);
   return true;
 }
 
@@ -219,7 +238,16 @@ async function ambientDelivery(body: string, eventType: string, send: GitHubSend
   const ev = extractGitHubAmbientEvent(eventType, payload);
   if (!ev) return;
   const surfaceKey = `github/${ev.owner}/${ev.repo}`;
-  if (await githubRoomSilenced(surfaceKey, ev.owner, ev.comment.authorLogin)) return;
+  if (
+    await githubExternalSuppressed(
+      surfaceKey,
+      ev.owner,
+      ev.comment.authorLogin,
+      githubAuthorFacts({ authorAssociation: ev.comment.authorAssociation, actorType: ev.comment.authorType }),
+    )
+  ) {
+    return;
+  }
   if (!githubAmbientEnabled(surfaceKey)) {
     await auditAmbientSkip({ platform: "github", workspace: ev.owner, surfaceKey, log: slog });
     return;
@@ -324,7 +352,17 @@ const defaultEvent = (name: string): AdapterEventFn | undefined =>
 export const githubOnComment = async (ctx: GitHubInboundContext, comment: GitHubComment): Promise<GitHubInboundResult> => {
     if (!githubBotMentioned(comment.body, BOT_NAME, comment.author)) return null;
     const surfaceKey = `github/${ctx.repository.owner}/${ctx.repository.name}`;
-    if (await githubRoomSilenced(surfaceKey, ctx.repository.owner, comment.author?.login ?? ctx.sender.login)) {
+    if (
+      await githubExternalSuppressed(
+        surfaceKey,
+        ctx.repository.owner,
+        comment.author?.login ?? ctx.sender.login,
+        githubAuthorFacts({
+          authorAssociation: str(comment.raw["author_association"]),
+          actorType: comment.author?.type ?? ctx.sender.type,
+        }),
+      )
+    ) {
       return null;
     }
     if (shouldSuppressNativeMention(grainUsesUnifiedWindow(githubGrainFor(surfaceKey)), githubRepoVouched(ctx.repository.owner, ctx.repository.name))) {
