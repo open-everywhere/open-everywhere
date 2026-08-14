@@ -4,24 +4,34 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  checkCronDefinitionCount,
+  checkCronDeploymentId,
+  checkCronUpdatedAt,
   chooseRollbackTarget,
   createVercelClient,
   decideAfterProbe,
   DeployConfigError,
+  fetchProjectInfo,
   fileStore,
   parseArgs,
   parseDeploymentList,
   parseInspect,
   parseState,
+  parseVercelAuthToken,
   probeHealth,
   probeUrl,
+  readLocalCronCount,
   readState,
   recordGood,
   resolveControlToken,
   resolveDeployEnv,
+  resolveProjectRef,
+  resolveVercelApiToken,
+  runCronCheck,
   runRecord,
   runRollback,
   writeState,
+  type ApiFetchLike,
   type DeployEntry,
   type DeployState,
   type Exec,
@@ -129,11 +139,12 @@ const INSPECT_FIXTURE = `Fetched deployment "my-agent.vercel.app" in team-slug [
     created\t\t\t2026-08-10T09:00:00.000Z
 `;
 
-check("parseInspect extracts id, url (normalised to https) and status", () => {
+check("parseInspect extracts id, url (normalised to https), status and created", () => {
   const inspected = parseInspect(INSPECT_FIXTURE);
   assert.equal(inspected.id, "dpl_5RkGqXyZ11223344");
   assert.equal(inspected.url, "https://my-agent-9f2h1kq0x.vercel.app");
   assert.equal(inspected.state, "READY");
+  assert.equal(inspected.createdAt, "2026-08-10T09:00:00.000Z");
 });
 
 check("parseInspect returns empty on unrecognised output rather than throwing", () => {
@@ -507,6 +518,330 @@ await check("runRollback reads a real on-disk pointer through fileStore", async 
   assert.equal(result.target, "https://my-agent-good.vercel.app");
 });
 
+check("checkCronDeploymentId: passes when the ids match", () => {
+  const outcome = checkCronDeploymentId({ crons: { deploymentId: "dpl_current" }, resolvedDeploymentId: "dpl_current" });
+  assert.equal(outcome.kind, "pass");
+});
+
+check("checkCronDeploymentId: FAILS LOUD on a deliberately wrong deployment id", () => {
+  const outcome = checkCronDeploymentId({ crons: { deploymentId: "dpl_stale_22_days" }, resolvedDeploymentId: "dpl_current" });
+  assert.equal(outcome.kind, "fail");
+  assert.match(outcome.message, /dpl_stale_22_days/);
+  assert.match(outcome.message, /dpl_current/);
+  assert.match(outcome.message, /vercel deploy --prod/);
+});
+
+check("checkCronDeploymentId: warns (not fails) when the field is missing — fail-soft", () => {
+  const outcome = checkCronDeploymentId({ crons: {}, resolvedDeploymentId: "dpl_current" });
+  assert.equal(outcome.kind, "warn");
+  assert.match(outcome.message, /deploymentId/);
+});
+
+check("checkCronDeploymentId: warns when the field is renamed to a non-string", () => {
+  const outcome = checkCronDeploymentId({ crons: { deploymentId: 12345 }, resolvedDeploymentId: "dpl_current" });
+  assert.equal(outcome.kind, "warn");
+});
+
+check("checkCronDeploymentId: warns when the alias-resolved id itself is unknown", () => {
+  const outcome = checkCronDeploymentId({ crons: { deploymentId: "dpl_x" }, resolvedDeploymentId: undefined });
+  assert.equal(outcome.kind, "warn");
+  assert.match(outcome.message, /vercel inspect/);
+});
+
+check("checkCronDefinitionCount: passes when the counts match", () => {
+  const outcome = checkCronDefinitionCount({
+    crons: { definitions: [{ path: "/a" }, { path: "/b" }] },
+    local: { kind: "count", count: 2 },
+  });
+  assert.equal(outcome.kind, "pass");
+});
+
+check("checkCronDefinitionCount: FAILS LOUD on a real mismatch", () => {
+  const outcome = checkCronDefinitionCount({
+    crons: { definitions: [{ path: "/a" }, { path: "/b" }, { path: "/c" }] },
+    local: { kind: "count", count: 1 },
+  });
+  assert.equal(outcome.kind, "fail");
+  assert.match(outcome.message, /3 registered/);
+  assert.match(outcome.message, /declares 1/);
+});
+
+check("checkCronDefinitionCount: a local build with NO crons key is a real count of zero, not a skip", () => {
+  const outcome = checkCronDefinitionCount({ crons: { definitions: [{ path: "/a" }] }, local: { kind: "count", count: 0 } });
+  assert.equal(outcome.kind, "fail");
+});
+
+check("checkCronDefinitionCount: warns (not fails) when .vercel/output/config.json is absent", () => {
+  const outcome = checkCronDefinitionCount({ crons: { definitions: [] }, local: { kind: "absent" } });
+  assert.equal(outcome.kind, "warn");
+  assert.match(outcome.message, /not found locally/);
+});
+
+check("checkCronDefinitionCount: warns when the local file fails to parse", () => {
+  const outcome = checkCronDefinitionCount({ crons: { definitions: [] }, local: { kind: "malformed", detail: "not json" } });
+  assert.equal(outcome.kind, "warn");
+  assert.match(outcome.message, /not json/);
+});
+
+check("checkCronDefinitionCount: warns when crons.definitions is missing from the API response", () => {
+  const outcome = checkCronDefinitionCount({ crons: {}, local: { kind: "count", count: 2 } });
+  assert.equal(outcome.kind, "warn");
+});
+
+check("checkCronUpdatedAt: passes when the registration is newer than the deployment", () => {
+  const outcome = checkCronUpdatedAt({
+    crons: { updatedAt: Date.parse("2026-08-10T10:00:00.000Z") },
+    deploymentCreatedAt: "2026-08-10T09:00:00.000Z",
+  });
+  assert.equal(outcome.kind, "pass");
+});
+
+check("checkCronUpdatedAt: FAILS LOUD when the registration predates the deployment", () => {
+  const outcome = checkCronUpdatedAt({
+    crons: { updatedAt: Date.parse("2026-07-19T00:00:00.000Z") },
+    deploymentCreatedAt: "2026-08-10T09:00:00.000Z",
+  });
+  assert.equal(outcome.kind, "fail");
+  assert.match(outcome.message, /OLDER/);
+});
+
+check("checkCronUpdatedAt: warns (not fails) when updatedAt is missing", () => {
+  const outcome = checkCronUpdatedAt({ crons: {}, deploymentCreatedAt: "2026-08-10T09:00:00.000Z" });
+  assert.equal(outcome.kind, "warn");
+});
+
+check("checkCronUpdatedAt: warns when updatedAt cannot be parsed as a date", () => {
+  const outcome = checkCronUpdatedAt({ crons: { updatedAt: "not-a-date" }, deploymentCreatedAt: "2026-08-10T09:00:00.000Z" });
+  assert.equal(outcome.kind, "warn");
+});
+
+check("checkCronUpdatedAt: warns when the deployment's created timestamp is unknown", () => {
+  const outcome = checkCronUpdatedAt({ crons: { updatedAt: Date.parse("2026-08-10T10:00:00.000Z") }, deploymentCreatedAt: undefined });
+  assert.equal(outcome.kind, "warn");
+});
+
+check("readLocalCronCount: a missing file is 'absent'", () => {
+  assert.deepEqual(readLocalCronCount("/does/not/exist.json", () => undefined), { kind: "absent" });
+});
+
+check("readLocalCronCount: invalid JSON is 'malformed'", () => {
+  const result = readLocalCronCount("x", () => "{not json");
+  assert.equal(result.kind, "malformed");
+});
+
+check("readLocalCronCount: no crons key is a real count of zero", () => {
+  assert.deepEqual(readLocalCronCount("x", () => JSON.stringify({ version: 3 })), { kind: "count", count: 0 });
+});
+
+check("readLocalCronCount: counts the crons array", () => {
+  assert.deepEqual(readLocalCronCount("x", () => JSON.stringify({ crons: [{ path: "/a", schedule: "*/10 * * * *" }, { path: "/b", schedule: "0 0 * * *" }] })), {
+    kind: "count",
+    count: 2,
+  });
+});
+
+check("readLocalCronCount: a non-array crons field is 'malformed'", () => {
+  const result = readLocalCronCount("x", () => JSON.stringify({ crons: "nope" }));
+  assert.equal(result.kind, "malformed");
+});
+
+check("resolveProjectRef: OE_DEPLOY_PROJECT wins, and never touches the filesystem", () => {
+  let read = false;
+  const ref = resolveProjectRef({
+    envProject: "my-agent",
+    envScope: "team-slug",
+    projectJsonPath: "/repo/.vercel/project.json",
+    readFile: () => {
+      read = true;
+      return undefined;
+    },
+  });
+  assert.deepEqual(ref, { idOrName: "my-agent", teamSlug: "team-slug" });
+  assert.equal(read, false);
+});
+
+check("resolveProjectRef: falls back to .vercel/project.json's projectId", () => {
+  const ref = resolveProjectRef({
+    envScope: "team-slug",
+    projectJsonPath: "/repo/.vercel/project.json",
+    readFile: (p) => (p === "/repo/.vercel/project.json" ? JSON.stringify({ projectId: "prj_abc123", orgId: "team_xyz" }) : undefined),
+  });
+  assert.deepEqual(ref, { idOrName: "prj_abc123", teamSlug: "team-slug" });
+});
+
+check("resolveProjectRef: undefined when neither the env var nor the file resolves anything", () => {
+  const ref = resolveProjectRef({ envScope: "team-slug", projectJsonPath: "/repo/.vercel/project.json", readFile: () => undefined });
+  assert.equal(ref, undefined);
+});
+
+check("parseVercelAuthToken: reads the token field, and is defensive on garbage", () => {
+  assert.equal(parseVercelAuthToken(JSON.stringify({ token: "tok_abc" })), "tok_abc");
+  assert.equal(parseVercelAuthToken("{not json"), undefined);
+  assert.equal(parseVercelAuthToken(JSON.stringify({ noToken: true })), undefined);
+});
+
+check("resolveVercelApiToken: VERCEL_TOKEN wins over the CLI's stored login", () => {
+  const token = resolveVercelApiToken({ env: { VERCEL_TOKEN: "env-token" }, readFile: () => JSON.stringify({ token: "file-token" }) });
+  assert.equal(token, "env-token");
+});
+
+check("resolveVercelApiToken: falls back to the CLI's stored login when unset", () => {
+  const token = resolveVercelApiToken({ env: {}, homeDir: "/home/op", readFile: (p) => (p.endsWith("com.vercel.cli/auth.json") ? JSON.stringify({ token: "cli-token" }) : undefined) });
+  assert.equal(token, "cli-token");
+});
+
+check("resolveVercelApiToken: undefined when nothing is found anywhere", () => {
+  const token = resolveVercelApiToken({ env: {}, homeDir: "/home/op", readFile: () => undefined });
+  assert.equal(token, undefined);
+});
+
+await check("fetchProjectInfo: parses a 200 body", async () => {
+  const fetchImpl: ApiFetchLike = async (url) => {
+    assert.match(url, /\/v9\/projects\/prj_abc/);
+    assert.match(url, /slug=team-slug/);
+    return { status: 200, text: async () => JSON.stringify({ crons: { deploymentId: "dpl_1" } }) };
+  };
+  const result = await fetchProjectInfo({ project: { idOrName: "prj_abc", teamSlug: "team-slug" }, token: "tok", fetchImpl });
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body, { crons: { deploymentId: "dpl_1" } });
+});
+
+await check("fetchProjectInfo: sends the bearer token and reports a non-200 without throwing", async () => {
+  let seenAuth: string | undefined;
+  const fetchImpl: ApiFetchLike = async (_url, init) => {
+    seenAuth = init.headers.authorization;
+    return { status: 404, text: async () => JSON.stringify({ error: "not found" }) };
+  };
+  const result = await fetchProjectInfo({ project: { idOrName: "prj_abc", teamSlug: "team-slug" }, token: "s3cret", fetchImpl });
+  assert.equal(result.status, 404);
+  assert.equal(seenAuth, "Bearer s3cret");
+});
+
+await check("fetchProjectInfo: an unparsable 200 body is reported, not thrown", async () => {
+  const fetchImpl: ApiFetchLike = async () => ({ status: 200, text: async () => "not json" });
+  const result = await fetchProjectInfo({ project: { idOrName: "prj_abc", teamSlug: "team-slug" }, token: "t", fetchImpl });
+  assert.equal(result.status, 200);
+  assert.equal(result.body, undefined);
+  assert.ok(result.parseError);
+});
+
+const matchingProjectBody = () =>
+  JSON.stringify({
+    crons: {
+      deploymentId: "dpl_current",
+      updatedAt: Date.parse("2026-08-10T10:00:00.000Z"),
+      definitions: [{ host: "my-agent-current.vercel.app", path: "/eve/cron/routines", schedule: "*/10 * * * *" }],
+    },
+  });
+
+await check("runCronCheck: a fully matching fixture passes every check", async () => {
+  const lines: string[] = [];
+  const result = await runCronCheck({
+    token: "tok",
+    project: { idOrName: "prj_abc", teamSlug: "team-slug" },
+    resolvedDeploymentId: "dpl_current",
+    deploymentCreatedAt: "2026-08-10T09:00:00.000Z",
+    localCrons: { kind: "count", count: 1 },
+    apiFetch: async () => ({ status: 200, text: async () => matchingProjectBody() }),
+    log: (l) => lines.push(l),
+  });
+  assert.equal(result.ran, true);
+  assert.equal(result.ok, true);
+  assert.ok(result.outcomes.every((o) => o.kind === "pass"));
+  assert.ok(lines.some((l) => l.includes("✓")));
+});
+
+await check("runCronCheck: a deliberately wrong deployment id fails the whole check loudly", async () => {
+  const result = await runCronCheck({
+    token: "tok",
+    project: { idOrName: "prj_abc", teamSlug: "team-slug" },
+    resolvedDeploymentId: "dpl_current",
+    deploymentCreatedAt: "2026-08-10T09:00:00.000Z",
+    localCrons: { kind: "count", count: 1 },
+    apiFetch: async () => ({
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          crons: {
+            deploymentId: "dpl_STALE_INJECTED_FOR_TEST",
+            updatedAt: Date.parse("2026-08-10T10:00:00.000Z"),
+            definitions: [{ host: "x", path: "/eve/cron/routines", schedule: "*/10 * * * *" }],
+          },
+        }),
+    }),
+    log: () => {},
+  });
+  assert.equal(result.ok, false);
+  assert.ok(result.outcomes.some((o) => o.kind === "fail" && /dpl_STALE_INJECTED_FOR_TEST/.test(o.message)));
+});
+
+await check("runCronCheck: a missing field warns per-check but the OVERALL result still passes", async () => {
+  const result = await runCronCheck({
+    token: "tok",
+    project: { idOrName: "prj_abc", teamSlug: "team-slug" },
+    resolvedDeploymentId: "dpl_current",
+    deploymentCreatedAt: "2026-08-10T09:00:00.000Z",
+    localCrons: { kind: "count", count: 1 },
+    apiFetch: async () => ({
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          crons: {
+            updatedAt: Date.parse("2026-08-10T10:00:00.000Z"),
+            definitions: [{ host: "x", path: "/eve/cron/routines", schedule: "*/10 * * * *" }],
+          },
+        }),
+    }),
+    log: () => {},
+  });
+  assert.equal(result.ran, true);
+  assert.equal(result.ok, true);
+  assert.equal(result.outcomes.filter((o) => o.kind === "warn").length, 1);
+  assert.equal(result.outcomes.filter((o) => o.kind === "pass").length, 2);
+});
+
+await check("runCronCheck: no token skips cleanly (ok:true, ran:false), never throws", async () => {
+  const lines: string[] = [];
+  const result = await runCronCheck({
+    token: undefined,
+    project: { idOrName: "prj_abc", teamSlug: "team-slug" },
+    localCrons: { kind: "absent" },
+    apiFetch: async () => {
+      throw new Error("must not be called without a token");
+    },
+    log: (l) => lines.push(l),
+  });
+  assert.equal(result.ran, false);
+  assert.equal(result.ok, true);
+  assert.ok(lines.some((l) => /token/.test(l)));
+});
+
+await check("runCronCheck: no resolvable project skips cleanly", async () => {
+  const result = await runCronCheck({
+    token: "tok",
+    project: undefined,
+    localCrons: { kind: "absent" },
+    apiFetch: async () => {
+      throw new Error("must not be called without a project");
+    },
+    log: () => {},
+  });
+  assert.equal(result.ran, false);
+  assert.equal(result.ok, true);
+});
+
+await check("runCronCheck: a non-200 API response skips cleanly rather than blocking the deploy", async () => {
+  const result = await runCronCheck({
+    token: "tok",
+    project: { idOrName: "prj_abc", teamSlug: "team-slug" },
+    localCrons: { kind: "absent" },
+    apiFetch: async () => ({ status: 500, text: async () => "Internal Server Error" }),
+    log: () => {},
+  });
+  assert.equal(result.ran, false);
+  assert.equal(result.ok, true);
+});
+
 check("parseArgs handles --flag, --key value and --key=value", () => {
   const args = parseArgs(["--dry-run", "--to", "https://x", "--attempts=5", "positional"]);
   assert.equal(args.flags.has("dry-run"), true);
@@ -523,4 +858,4 @@ check("parseArgs treats a trailing flag as a flag, not a value-eater", () => {
 });
 
 rmSync(scratch, { recursive: true, force: true });
-console.log(`✓ deploy: ${checks} check(s) passed (rollback selection, pointer, probe→decision, env validation — all offline)`);
+console.log(`✓ deploy: ${checks} check(s) passed (rollback selection, pointer, probe→decision, cron registration, env validation — all offline)`);

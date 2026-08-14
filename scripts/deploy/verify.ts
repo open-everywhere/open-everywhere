@@ -1,13 +1,20 @@
+import { join } from "node:path";
+
 import {
   createVercelClient,
+  currentAliasTarget,
   currentCommit,
   decideAfterProbe,
   DeployConfigError,
   fileStore,
   parseArgs,
   probeHealth,
+  readLocalCronCount,
   resolveControlToken,
   resolveDeployEnv,
+  resolveProjectRef,
+  resolveVercelApiToken,
+  runCronCheck,
   runRecord,
   runRollback,
 } from "./lib.js";
@@ -38,11 +45,39 @@ try {
   const decision = decideAfterProbe({ outcome, noRollback });
   if (decision.action === "pass") {
     log(`✓ deploy:verify: ${decision.message}`);
+
+    const client = createVercelClient(env);
+    const current = await currentAliasTarget(client, env.alias);
+
+    log("  checking cron registration");
+    const cronResult = await runCronCheck({
+      token: resolveVercelApiToken({ env: process.env }),
+      project: resolveProjectRef({
+        envProject: env.project,
+        envScope: env.scope,
+        projectJsonPath: join(process.cwd(), ".vercel", "project.json"),
+      }),
+      resolvedDeploymentId: current?.id,
+      deploymentCreatedAt: current?.createdAt,
+      localCrons: readLocalCronCount(join(process.cwd(), ".vercel", "output", "config.json")),
+      apiFetch: async (url, init) => {
+        const res = await fetch(url, { headers: init.headers });
+        return { status: res.status, text: () => res.text() };
+      },
+      log,
+    });
+    if (!cronResult.ok) {
+      console.error("✗ deploy:verify: the cron registration check failed — see above. Not rolling back (a rollback would not fix it; redeploy instead).");
+      process.exit(1);
+    }
+
     if (args.flags.has("record")) {
       await runRecord({
         env,
-        client: createVercelClient(env),
+        client,
         store: fileStore(env.stateFile),
+        url: current?.url,
+        id: current?.id,
         commit: args.values.get("commit") ?? (await currentCommit()),
         note: args.values.get("note"),
         log,

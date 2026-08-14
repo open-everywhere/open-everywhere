@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 
 export type ExecResult = { code: number; stdout: string; stderr: string };
@@ -101,7 +102,7 @@ export function normalizeDeploymentUrl(value: string): string {
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
-export type InspectResult = { id?: string; url?: string; state?: string };
+export type InspectResult = { id?: string; url?: string; state?: string; createdAt?: string };
 
 export function parseInspect(output: string): InspectResult {
   const result: InspectResult = {};
@@ -111,6 +112,8 @@ export function parseInspect(output: string): InspectResult {
   if (url) result.url = normalizeDeploymentUrl(url[1]);
   const state = /(?:^|\s)status\s+(\S+)|(?:^|\s)state\s+(\S+)/.exec(output);
   if (state) result.state = (state[1] ?? state[2])?.toUpperCase();
+  const created = /(?:^|\s)created\s+(\S+)/.exec(output);
+  if (created) result.createdAt = created[1];
   return result;
 }
 
@@ -347,6 +350,224 @@ export async function currentCommit(exec: Exec = realExec): Promise<string | und
   } catch {
     return undefined;
   }
+}
+
+export function safeReadFileSync(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+export type ReadFile = (path: string) => string | undefined;
+
+export type RawProjectCrons = { deploymentId?: unknown; updatedAt?: unknown; definitions?: unknown };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export type ApiFetchLike = (url: string, init: { headers: Record<string, string> }) => Promise<{ status: number; text(): Promise<string> }>;
+
+const VERCEL_AUTH_RELATIVE_PATHS = [
+  [".local", "share", "com.vercel.cli", "auth.json"],
+  [".vercel", "auth.json"],
+];
+
+export function parseVercelAuthToken(text: string): string | undefined {
+  try {
+    const parsed = JSON.parse(text) as { token?: unknown };
+    return typeof parsed.token === "string" && parsed.token.length > 0 ? parsed.token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function resolveVercelApiToken(input: { env: Env; homeDir?: string; readFile?: ReadFile }): string | undefined {
+  const fromEnv = input.env.VERCEL_TOKEN?.trim();
+  if (fromEnv) return fromEnv;
+  const homeDir = input.homeDir ?? homedir();
+  const readFile = input.readFile ?? safeReadFileSync;
+  for (const segments of VERCEL_AUTH_RELATIVE_PATHS) {
+    const text = readFile(join(homeDir, ...segments));
+    const token = text ? parseVercelAuthToken(text) : undefined;
+    if (token) return token;
+  }
+  return undefined;
+}
+
+export type VercelProjectRef = { idOrName: string; teamSlug: string };
+
+export function resolveProjectRef(input: { envProject?: string; envScope: string; projectJsonPath: string; readFile?: ReadFile }): VercelProjectRef | undefined {
+  if (input.envProject) return { idOrName: input.envProject, teamSlug: input.envScope };
+  const readFile = input.readFile ?? safeReadFileSync;
+  const text = readFile(input.projectJsonPath);
+  if (!text) return undefined;
+  try {
+    const parsed = JSON.parse(text) as { projectId?: unknown };
+    if (typeof parsed.projectId !== "string" || parsed.projectId.length === 0) return undefined;
+    return { idOrName: parsed.projectId, teamSlug: input.envScope };
+  } catch {
+    return undefined;
+  }
+}
+
+export async function fetchProjectInfo(input: {
+  project: VercelProjectRef;
+  token: string;
+  fetchImpl: ApiFetchLike;
+}): Promise<{ status: number; body?: unknown; parseError?: string }> {
+  const url = `https://api.vercel.com/v9/projects/${encodeURIComponent(input.project.idOrName)}?slug=${encodeURIComponent(input.project.teamSlug)}`;
+  const res = await input.fetchImpl(url, { headers: { authorization: `Bearer ${input.token}` } });
+  const text = await res.text();
+  if (res.status !== 200) {
+    try {
+      return { status: res.status, body: JSON.parse(text) };
+    } catch {
+      return { status: res.status };
+    }
+  }
+  try {
+    return { status: 200, body: JSON.parse(text) };
+  } catch (err) {
+    return { status: 200, parseError: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export type LocalCronCount = { kind: "absent" } | { kind: "malformed"; detail: string } | { kind: "count"; count: number };
+
+export function readLocalCronCount(path: string, readFile: ReadFile = safeReadFileSync): LocalCronCount {
+  const text = readFile(path);
+  if (text === undefined) return { kind: "absent" };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    return { kind: "malformed", detail: err instanceof Error ? err.message : String(err) };
+  }
+  if (!isRecord(parsed)) return { kind: "malformed", detail: "not a JSON object" };
+  const crons = parsed.crons;
+  if (crons === undefined) return { kind: "count", count: 0 };
+  if (!Array.isArray(crons)) return { kind: "malformed", detail: "\"crons\" is present but not an array" };
+  return { kind: "count", count: crons.length };
+}
+
+export type CronCheckOutcome = { kind: "pass" | "warn" | "fail"; message: string };
+
+export function checkCronDeploymentId(input: { crons?: RawProjectCrons; resolvedDeploymentId?: string }): CronCheckOutcome {
+  const deploymentId = input.crons?.deploymentId;
+  if (typeof deploymentId !== "string" || deploymentId.length === 0) {
+    return {
+      kind: "warn",
+      message: "crons.deploymentId is missing (or not a string) from the Vercel API response — cannot check the cron registration. Skipping.",
+    };
+  }
+  if (!input.resolvedDeploymentId) {
+    return { kind: "warn", message: "could not resolve the deployment id the alias currently points at (`vercel inspect` gave no id) — skipping the cron deploymentId check." };
+  }
+  if (deploymentId !== input.resolvedDeploymentId) {
+    return {
+      kind: "fail",
+      message:
+        `crons.deploymentId (${deploymentId}) does not match the deployment the alias resolves to ` +
+        `(${input.resolvedDeploymentId}) — the cron registration points at a stale deployment, so every ` +
+        "scheduled tick runs OLD code. Run a fresh `vercel deploy --prod` to re-register crons — an alias " +
+        "rollback will NOT fix this.",
+    };
+  }
+  return { kind: "pass", message: `crons.deploymentId (${deploymentId}) matches the deployment the alias resolves to.` };
+}
+
+export function checkCronDefinitionCount(input: { crons?: RawProjectCrons; local: LocalCronCount }): CronCheckOutcome {
+  if (input.local.kind === "absent") {
+    return { kind: "warn", message: ".vercel/output/config.json was not found locally — skipping the cron count check. Run `npm run build` first if this check should run." };
+  }
+  if (input.local.kind === "malformed") {
+    return { kind: "warn", message: `.vercel/output/config.json could not be read as a cron list (${input.local.detail}) — skipping the cron count check.` };
+  }
+  const definitions = input.crons?.definitions;
+  if (!Array.isArray(definitions)) {
+    return { kind: "warn", message: "crons.definitions is missing (or not an array) from the Vercel API response — skipping the cron count check." };
+  }
+  if (definitions.length !== input.local.count) {
+    return {
+      kind: "fail",
+      message:
+        `the Vercel project has ${definitions.length} registered cron(s) but the local build declares ` +
+        `${input.local.count} — the registered set is out of date with this build.`,
+    };
+  }
+  return { kind: "pass", message: `registered cron count (${definitions.length}) matches the local build.` };
+}
+
+function toDate(value: unknown): Date | undefined {
+  if (typeof value !== "number" && typeof value !== "string") return undefined;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? undefined : d;
+}
+
+export function checkCronUpdatedAt(input: { crons?: RawProjectCrons; deploymentCreatedAt?: string }): CronCheckOutcome {
+  const updated = toDate(input.crons?.updatedAt);
+  if (!updated) {
+    return { kind: "warn", message: "crons.updatedAt is missing, not a date, or not a string/number in the Vercel API response — skipping the cron staleness check." };
+  }
+  if (!input.deploymentCreatedAt) {
+    return { kind: "warn", message: "the deployment's created timestamp is unknown (`vercel inspect` gave no `created`) — skipping the cron staleness check." };
+  }
+  const created = toDate(input.deploymentCreatedAt);
+  if (!created) {
+    return { kind: "warn", message: `the deployment's created timestamp (${input.deploymentCreatedAt}) could not be parsed as a date — skipping the cron staleness check.` };
+  }
+  if (updated.getTime() < created.getTime()) {
+    return {
+      kind: "fail",
+      message: `crons.updatedAt (${updated.toISOString()}) is OLDER than the deployment's created timestamp (${created.toISOString()}) — the cron registration predates this deploy.`,
+    };
+  }
+  return { kind: "pass", message: `crons.updatedAt (${updated.toISOString()}) is not older than the deployment (${created.toISOString()}).` };
+}
+
+export type CronCheckResult = { ran: boolean; ok: boolean; outcomes: CronCheckOutcome[] };
+
+export async function runCronCheck(input: {
+  token?: string;
+  project?: VercelProjectRef;
+  resolvedDeploymentId?: string;
+  deploymentCreatedAt?: string;
+  localCrons: LocalCronCount;
+  apiFetch: ApiFetchLike;
+  log: Logger;
+}): Promise<CronCheckResult> {
+  const skip = (message: string): CronCheckResult => {
+    input.log(`  ⚠ ${message}`);
+    return { ran: false, ok: true, outcomes: [{ kind: "warn", message }] };
+  };
+
+  if (!input.token) {
+    return skip("no Vercel API token found (checked VERCEL_TOKEN and the CLI's stored login) — skipping the cron registration check.");
+  }
+  if (!input.project) {
+    return skip("could not resolve the Vercel project (set OE_DEPLOY_PROJECT, or run from a directory `vercel link` has linked) — skipping the cron registration check.");
+  }
+
+  const response = await fetchProjectInfo({ project: input.project, token: input.token, fetchImpl: input.apiFetch });
+  if (response.status !== 200 || response.body === undefined) {
+    const detail = response.parseError ? ` (unparsable body: ${response.parseError})` : "";
+    return skip(`GET /v9/projects/${input.project.idOrName} returned HTTP ${response.status}${detail} — skipping the cron registration check.`);
+  }
+
+  const crons = isRecord(response.body) && isRecord(response.body.crons) ? (response.body.crons as RawProjectCrons) : undefined;
+  const outcomes = [
+    checkCronDeploymentId({ crons, resolvedDeploymentId: input.resolvedDeploymentId }),
+    checkCronDefinitionCount({ crons, local: input.localCrons }),
+    checkCronUpdatedAt({ crons, deploymentCreatedAt: input.deploymentCreatedAt }),
+  ];
+  for (const outcome of outcomes) {
+    const prefix = outcome.kind === "pass" ? "✓" : outcome.kind === "warn" ? "⚠" : "✗";
+    input.log(`  ${prefix} ${outcome.message}`);
+  }
+  return { ran: true, ok: !outcomes.some((o) => o.kind === "fail"), outcomes };
 }
 
 export type Logger = (line: string) => void;
