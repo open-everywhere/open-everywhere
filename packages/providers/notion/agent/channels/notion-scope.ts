@@ -58,6 +58,17 @@ export function notionPageDomain(workspace: string | undefined, pageId: string, 
   return { via: "none" };
 }
 
+export function notionRosterWorkspace(pageId: string, domains: readonly Domain[]): string | undefined {
+  const routing = notionPageDomain(undefined, pageId, domains);
+  if (routing.via !== "roster" || !routing.domain) return undefined;
+  const wanted = canonicalNotionId(pageId);
+  for (const key of routing.domain.channels ?? []) {
+    const { workspace, page } = splitNotionKey(key);
+    if (page !== undefined && canonicalNotionId(page) === wanted) return workspace;
+  }
+  return undefined;
+}
+
 function canonicalDomainClaims(d: Domain): Domain {
   const fix = (entry: string): string => {
     const parts = entry.split("/");

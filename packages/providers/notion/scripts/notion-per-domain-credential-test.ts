@@ -22,6 +22,7 @@ import {
   notionSignerServesDomain,
   resolveNotionInboundSecret,
 } from "../agent/channels/notion-credentials.js";
+import { notionRosterWorkspace } from "../agent/channels/notion-scope.js";
 import { gateNotionDeliveryAcross, resolveNotionCredential, type FetchLike } from "../agent/channels/notion-api.js";
 import { handleNotionDelivery, resolveDeliveryPage } from "../agent/channels/notion-webhook.js";
 import { notionPostArm } from "../agent/channels/notion-post-arm.js";
@@ -620,6 +621,84 @@ async function deliverFor(
   ok(notionSignerServesDomain(secDomain, SEC_CRED, integrations).served === true, "the domain's OWN credential serves it");
   const refused = notionSignerServesDomain(secDomain, PAY_CRED, integrations);
   ok(refused.served === false && refused.expected === SEC_CRED, "…and another domain's credential does not, naming the one that would");
+}
+
+{
+  const WS_A = "22222222-1111-4111-8111-222222222222";
+  const WS_B = "33333333-1111-4111-8111-333333333333";
+  const PAGE_A = "44444444-1111-4111-8111-444444444444";
+  const PAGE_B = "55555555-1111-4111-8111-555555555555";
+  const ROSTER_DOMAINS: readonly Domain[] = [
+    defineDomain({ name: "alpha-10", channels: [`notion/${WS_A}/${PAGE_A}`] }),
+    defineDomain({ name: "beta-10", channels: [`notion/${WS_B}/${PAGE_B}`] }),
+  ];
+  ok(notionRosterWorkspace(PAGE_A, ROSTER_DOMAINS) === WS_A, "the roster's OWN recorded workspace comes back for a page it lists");
+  ok(notionRosterWorkspace(PAGE_B, ROSTER_DOMAINS) === WS_B, "…and a DIFFERENT page in a different domain answers with ITS OWN entry, not alpha's");
+  ok(notionRosterWorkspace(PAGE_LOOSE, ROSTER_DOMAINS) === undefined, "a page in NO roster answers undefined");
+  ok(notionRosterWorkspace(PAGE_A, []) === undefined, "an EMPTY registry answers undefined (a config-load failure must not crash the lookup)");
+
+  const eventIn10 = (workspace: string, page: string): string =>
+    JSON.stringify({ type: "comment.created", workspace_id: workspace, entity: { id: "cmt-10", type: "comment" }, data: { page_id: page } });
+
+  interface PartitionRun {
+    readonly action: string;
+    readonly surfaceKey?: string;
+    readonly workspaceId?: string;
+    readonly dispatched: boolean;
+  }
+
+  async function partitionRun(workspace: string, domains: readonly Domain[] = DOMAINS): Promise<PartitionRun> {
+    let surfaceKey: string | undefined;
+    let workspaceId: string | undefined;
+    let dispatched = false;
+    const body = eventIn10(workspace, PAGE_PAY);
+    const out = await handleNotionDelivery(body, sign(PAY_SECRET, body), {
+      signingKeys: [
+        { credentialId: NOTION_CHANNEL_CREDENTIAL, secret: ORG_SECRET },
+        { credentialId: PAY_CRED, secret: PAY_SECRET },
+      ],
+      allowUnverified: false,
+      credentialFor: async () => ({ apiKey: ORG_TOKEN }),
+      credentialForPage: () => undefined,
+      domains,
+      resolveBotUserId: async () => "U_BOT",
+      ambientEnabled: () => true,
+      fetch: recordingFetch([], { type: "page_id", page_id: PAGE_PAY }),
+      dispatch: async (d) => {
+        dispatched = true;
+        surfaceKey = d.surfaceKey;
+        workspaceId = d.auth.attributes.workspace_id;
+      },
+    });
+    return { action: out.action, ...(surfaceKey ? { surfaceKey } : {}), ...(workspaceId ? { workspaceId } : {}), dispatched };
+  }
+
+  const honest = await partitionRun(WS);
+  ok(honest.action === "dispatched" && honest.dispatched, "an honest delivery (payload workspace = the roster's) dispatches");
+  ok(honest.surfaceKey === `notion/${WS}/${PAGE_PAY}`, "…on the expected surface key");
+  ok(honest.workspaceId === WS, "…and the session's own auth attribute carries the same workspace");
+
+  const FORGED_WS = "99999999-1111-4111-8111-999999999999";
+  const forged = await partitionRun(FORGED_WS);
+  ok(forged.action === "dispatched", "🔴 a rostered page under a THIRD, unclaimed workspace still dispatches (prefer, don't refuse — §9(c) untouched)");
+  ok(forged.surfaceKey === `notion/${WS}/${PAGE_PAY}`, "🔴 …and lands on the HONEST surface key, not a second partition");
+  ok(forged.workspaceId === WS, "🔴 …and the auth attribute the session binds from carries the SAME corrected workspace, not the payload's");
+  ok(forged.surfaceKey !== `notion/${FORGED_WS}/${PAGE_PAY}`, "negative control: the forged workspace never appears in the surface key at all");
+
+  const WS_SEC_10 = "88888888-1111-4111-8111-888888888888";
+  const SEC_CRED_10 = "security-channel-key-10";
+  const CLAIM_DOMAINS: readonly Domain[] = [
+    ...DOMAINS,
+    defineDomain({
+      name: "security-10",
+      containers: [`notion/${WS_SEC_10}`],
+      ambientSupervisor: true,
+      credentials: [{ provider: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: SEC_CRED_10, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY_10" }],
+    }),
+  ];
+  const crossClaim = await partitionRun(WS_SEC_10, CLAIM_DOMAINS);
+  ok(crossClaim.action === "scope-refused", "the CLAIM-domain fence still refuses a rostered page's workspace that reaches ANOTHER domain's claim");
+  ok(crossClaim.dispatched === false, "…and nothing was dispatched (negative control)");
 }
 
 resetRegisteredProviders();

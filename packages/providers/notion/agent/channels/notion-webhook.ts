@@ -17,6 +17,7 @@ import {
 } from "./notion-api.js";
 import { buildNotionAuth, notionSurfaceKey } from "./notion-identity.js";
 import { notionDeliveryScopeVerdict } from "./notion-credentials.js";
+import { notionRosterWorkspace } from "./notion-scope.js";
 import { classifyNotionComment, type NotionSupervisorDispatch, type NotionWakeMessage } from "./notion-supervisor.js";
 import { OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -142,12 +143,14 @@ async function deliver(
   }
   const pageId = resolvedPage.pageId;
   const discussionId = comment.discussion_id ?? "";
-  const workspaceId = ev.workspace_id;
+  const payloadWorkspaceId = ev.workspace_id;
 
-  const scope = notionDeliveryScopeVerdict(workspaceId, pageId, gate.credentialId, deps.domains);
+  const scope = notionDeliveryScopeVerdict(payloadWorkspaceId, pageId, gate.credentialId, deps.domains);
   if (!scope.ok) {
     return { status: 200, body: "ok", action: "scope-refused", detail: scope.reason, signed, credentialId };
   }
+
+  const workspaceId = notionRosterWorkspace(pageId, deps.domains) ?? payloadWorkspaceId;
 
   const surfaceKey = notionSurfaceKey(workspaceId, pageId);
 
