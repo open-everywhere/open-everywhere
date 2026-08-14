@@ -61,6 +61,9 @@ import {
   distillSlackRotationHandoff,
   slackChannelFactsFor,
   slackAuthorIsMember,
+  slackExternalVerdict,
+  slackExternalPolicyForRoom,
+  postSlackExternalSenderNotice,
   _resetAuthorMemberCache,
 } from "./slack-events.js";
 import { buildSlackAuth } from "./slack-identity.js";
@@ -444,11 +447,6 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       const p = resolvePartition(bindableFor(ev));
       const atIso = new Date(now()).toISOString();
       const isGroup = dmKind === "mpim";
-      const seat = await resolveDmSeat(
-        p.org,
-        { surfaceKey: p.surfaceKey, channelId: ev.channelId, ...(isGroup ? {} : { legacyChannelId: ev.channelId }) },
-        atIso,
-      );
       const partnerTrust = !isGroup && ev.userId ? await dmPartnerTrustFor(ev.userId, ev.teamId) : undefined;
       const surfaceInternal = isGroup ? (await channelFactsFor(ev.channelId)).internal : partnerTrust === "internal";
       const wakeTrust = resolveWakeTrust({
@@ -457,6 +455,39 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         surfaceInternal,
         channelKey: p.surfaceKey,
       });
+      {
+        const roomKey = p.surfaceKey;
+        const verdict = slackExternalVerdict({
+          policy: slackExternalPolicyForRoom(roomKey),
+          author: { trust: wakeTrust, refuted: partnerTrust === "external" },
+          addressed: true,
+          isDm: true,
+          roomKey,
+        });
+        if (verdict !== "proceed") {
+          await postSlackExternalSenderNotice(ev.userId, ev.channelId).catch(() => undefined);
+          try {
+            await getOperationalStore().appendAudit({
+              ts: atIso,
+              org: p.org,
+              platform: p.platform,
+              workspace: p.workspace,
+              surface: p.surface,
+              ...(ev.userId ? { principalId: ev.userId } : {}),
+              action: "slack.external_policy_suppressed",
+              detail: { verdict, route: "scheduleDmWake", channelId: ev.channelId },
+            });
+          } catch {
+          }
+          console.log(`[open-everywhere:slack-front] dm ${p.surfaceKey}: suppressed — externalPolicy verdict "${verdict}"`);
+          return;
+        }
+      }
+      const seat = await resolveDmSeat(
+        p.org,
+        { surfaceKey: p.surfaceKey, channelId: ev.channelId, ...(isGroup ? {} : { legacyChannelId: ev.channelId }) },
+        atIso,
+      );
       const wakeId = mintWakeId();
       const auth = stampNonMemberChatAuth(
         buildSlackAuth({

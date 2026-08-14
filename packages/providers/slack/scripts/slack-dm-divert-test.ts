@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { registerSlackProvider } from "../agent/register.js";
 import { buildFrontHandler, classifyEnvelope, dmFifoKey, ThreadFifo, EventDedupe } from "../agent/channels/slack-front.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 registerSlackProvider();
 
@@ -425,4 +426,27 @@ async function runFront(
   );
 }
 
-console.log(`✓ slack-dm-divert: ${n} assertions passed (classification, window token + fence, addressing, DM auth attrs, dm envelope, handoff context, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression)`);
+{
+  const shipped = await runFront(dmEnvelope("Ev14a"), { partnerTrust: "external" });
+  eq(shipped.dispatched.length, 1, "🔴 OPE-525 NEGATIVE CONTROL: on the shipped `taint` grain a REFUTED DM partner still wakes — the feature is opt-in");
+  eq(shipped.seatCalls.length, 1, "…and their DM seat is resolved exactly as before");
+
+  try {
+    overrideSettingsForTest({ externalPolicy: { authorGrain: "withhold" } });
+    const withheld = await runFront(dmEnvelope("Ev14b"), { partnerTrust: "external" });
+    eq(withheld.dispatched.length, 0, "🔴 OPE-525: on `withhold` a REFUTED DM partner wakes NOTHING — behaviour 1 owes a private notice and no turn");
+    eq(withheld.seatCalls.length, 0, "🔴 OPE-525: …and NO seat is resolved — the gate sits above the seat, so a suppressed DM rotates no generation and consumes no handoff note");
+    ok(!withheld.innerCalled, "OPE-525: …and it is dropped, never forwarded to eve's native dispatch");
+
+    const member = await runFront(dmEnvelope("Ev14c"), { partnerTrust: "internal" });
+    eq(member.dispatched.length, 1, "OPE-525 negative control: a VOUCHED partner still wakes on `withhold` (=== 1 dispatch)");
+    eq(member.seatCalls.length, 1, "…with their seat resolved as usual");
+
+    const unresolved = await runFront(dmEnvelope("Ev14d"));
+    eq(unresolved.dispatched.length, 1, "🔴 OPE-525: an UNRESOLVABLE partner probe still wakes (=== 1 dispatch) — absence of evidence is never evidence");
+  } finally {
+    overrideSettingsForTest({ externalPolicy: { authorGrain: "taint" } });
+  }
+}
+
+console.log(`✓ slack-dm-divert: ${n} assertions passed (classification, window token + fence, addressing, DM auth attrs, dm envelope, handoff context, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression, OPE-525 external-participant policy)`);
