@@ -57,6 +57,7 @@ import {
   externalPolicyOverrideFor,
   roomIsSilenced,
   withholdsBody,
+  stampNonMemberChatAuth,
   type SupervisorGrain,
   type UnifiedWindowWake,
   type EngagementTier,
@@ -411,7 +412,8 @@ async function ambientDelivery(body: string, headers: Headers, send: LinearSend,
   const c = await enrichComment(signal.commentId);
   if (!c || !c.teamId || !c.issueId) return;
   const surfaceKey = `linear/${signal.organizationId}/${c.teamId}`;
-  if (await linearExternalSuppressed(surfaceKey, signal.organizationId, c.authorId, linearAuthorFacts(c.authorGuest))) return;
+  const authorFacts = linearAuthorFacts(c.authorGuest);
+  if (await linearExternalSuppressed(surfaceKey, signal.organizationId, c.authorId, authorFacts)) return;
   if (!linearAmbientEnabled(surfaceKey)) {
     await auditAmbientSkip({ platform: "linear", workspace: signal.organizationId, surfaceKey, log: slog });
     return;
@@ -457,6 +459,7 @@ async function ambientDelivery(body: string, headers: Headers, send: LinearSend,
       issueIdentifier: c.issueIdentifier,
       issueTitle: c.issueTitle,
       auth,
+      ingested: [authorFacts],
       trigger: {
         id: c.id,
         authorId: c.authorId,
@@ -584,11 +587,12 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
       slog(`@mention on linear/${organizationId}/${c.teamId} (${c.issueIdentifier ?? c.issueId}) dropped: self-authored comment (our own reply) — session ${agentSessionId}`);
       return;
     }
+    const authorFacts = linearAuthorFacts(c.authorGuest);
     const authorVerdict = await linearExternalSuppressed(
       `linear/${organizationId}/${c.teamId}`,
       organizationId,
       c.authorId,
-      linearAuthorFacts(c.authorGuest),
+      authorFacts,
     );
     if (authorVerdict) {
       await silentlyCloseLinearAgentSession(agentSessionId, authorVerdict);
@@ -624,6 +628,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
         issueIdentifier: c.issueIdentifier,
         issueTitle: c.issueTitle,
         auth,
+        ingested: [authorFacts],
         trigger: {
           id: c.id,
           authorId: c.authorId,
@@ -698,26 +703,32 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
 
     const creatorId = s.creator?.id ?? s.creatorId ?? event.appUserId ?? undefined;
     const guest = await enrichUserGuest(creatorId);
+    const authorFacts = linearAuthorFacts(guest);
+    const nativeOrg = typeof nativeOrganizationId === "string" && nativeOrganizationId ? nativeOrganizationId : undefined;
+    const nativeSurfaceKey = nativeOrg !== undefined && teamId ? `linear/${nativeOrg}/${teamId}` : undefined;
 
-    if (typeof nativeOrganizationId === "string" && nativeOrganizationId && teamId) {
-      const surfaceKey = `linear/${nativeOrganizationId}/${teamId}`;
-      const authorVerdict = await linearExternalSuppressed(surfaceKey, nativeOrganizationId, creatorId, linearAuthorFacts(guest));
+    if (nativeOrg !== undefined && nativeSurfaceKey !== undefined) {
+      const authorVerdict = await linearExternalSuppressed(nativeSurfaceKey, nativeOrg, creatorId, authorFacts);
       if (authorVerdict) {
         await silentlyCloseLinearAgentSession(agentSessionId, authorVerdict);
         return null;
       }
     }
 
-    const auth = buildLinearAuth({
-      agentSessionId,
-      organizationId: event.organizationId ?? s.organizationId ?? undefined,
-      teamId,
-      issueId: s.issueId ?? s.issue?.id ?? undefined,
-      issueIdentifier: s.issue?.identifier ?? undefined,
-      principalId: creatorId,
-      guest,
-      isPrivate,
-    });
+    const auth = stampNonMemberChatAuth(
+      buildLinearAuth({
+        agentSessionId,
+        organizationId: event.organizationId ?? s.organizationId ?? undefined,
+        teamId,
+        issueId: s.issueId ?? s.issue?.id ?? undefined,
+        issueIdentifier: s.issue?.identifier ?? undefined,
+        principalId: creatorId,
+        guest,
+        isPrivate,
+      }),
+      [authorFacts],
+      nativeSurfaceKey === undefined ? {} : { surfaceKey: nativeSurfaceKey },
+    );
 
     const refuse = async (text: string): Promise<void> => {
       await createLinearAgentActivity({ credentials: linearAppActorCredentials, activity: { agentSessionId, content: { type: "error", body: text } } });

@@ -43,6 +43,7 @@ import {
   externalPolicyOverrideFor,
   roomIsSilenced,
   withholdsBody,
+  stampNonMemberChatAuth,
   type IngestedChatMessage,
   type SupervisorGrain,
   type UnifiedWindowWake,
@@ -238,14 +239,8 @@ async function ambientDelivery(body: string, eventType: string, send: GitHubSend
   const ev = extractGitHubAmbientEvent(eventType, payload);
   if (!ev) return;
   const surfaceKey = `github/${ev.owner}/${ev.repo}`;
-  if (
-    await githubExternalSuppressed(
-      surfaceKey,
-      ev.owner,
-      ev.comment.authorLogin,
-      githubAuthorFacts({ authorAssociation: ev.comment.authorAssociation, actorType: ev.comment.authorType }),
-    )
-  ) {
+  const authorFacts = githubAuthorFacts({ authorAssociation: ev.comment.authorAssociation, actorType: ev.comment.authorType });
+  if (await githubExternalSuppressed(surfaceKey, ev.owner, ev.comment.authorLogin, authorFacts)) {
     return;
   }
   if (!githubAmbientEnabled(surfaceKey)) {
@@ -289,6 +284,7 @@ async function ambientDelivery(body: string, eventType: string, send: GitHubSend
       issueNumber: ev.issueNumber,
       issueTitle: ev.issueTitle,
       auth,
+      ingested: [authorFacts],
       trigger: {
         id: ev.comment.id ?? "unknown",
         authorLogin: ev.comment.authorLogin,
@@ -352,37 +348,35 @@ const defaultEvent = (name: string): AdapterEventFn | undefined =>
 export const githubOnComment = async (ctx: GitHubInboundContext, comment: GitHubComment): Promise<GitHubInboundResult> => {
     if (!githubBotMentioned(comment.body, BOT_NAME, comment.author)) return null;
     const surfaceKey = `github/${ctx.repository.owner}/${ctx.repository.name}`;
-    if (
-      await githubExternalSuppressed(
-        surfaceKey,
-        ctx.repository.owner,
-        comment.author?.login ?? ctx.sender.login,
-        githubAuthorFacts({
-          authorAssociation: str(comment.raw["author_association"]),
-          actorType: comment.author?.type ?? ctx.sender.type,
-        }),
-      )
-    ) {
+    const authorFacts = githubAuthorFacts({
+      authorAssociation: str(comment.raw["author_association"]),
+      actorType: comment.author?.type ?? ctx.sender.type,
+    });
+    if (await githubExternalSuppressed(surfaceKey, ctx.repository.owner, comment.author?.login ?? ctx.sender.login, authorFacts)) {
       return null;
     }
     if (shouldSuppressNativeMention(grainUsesUnifiedWindow(githubGrainFor(surfaceKey)), githubRepoVouched(ctx.repository.owner, ctx.repository.name))) {
       return null;
     }
-    const auth = buildGitHubAuth({
-      owner: ctx.repository.owner,
-      repo: ctx.repository.name,
-      repositoryFullName: ctx.repository.fullName,
-      repositoryId: ctx.repository.id,
-      isPrivate: ctx.repository.private,
-      conversationKind: ctx.conversation.kind,
-      issueNumber: ctx.conversation.issueNumber ?? undefined,
-      pullRequestNumber: ctx.conversation.pullRequestNumber ?? undefined,
-      installationId: ctx.github.installationId,
-      actorLogin: comment.author?.login ?? ctx.sender.login,
-      actorId: comment.author?.id ?? ctx.sender.id,
-      actorType: comment.author?.type ?? ctx.sender.type,
-      authorAssociation: str(comment.raw["author_association"]),
-    });
+    const auth = stampNonMemberChatAuth(
+      buildGitHubAuth({
+        owner: ctx.repository.owner,
+        repo: ctx.repository.name,
+        repositoryFullName: ctx.repository.fullName,
+        repositoryId: ctx.repository.id,
+        isPrivate: ctx.repository.private,
+        conversationKind: ctx.conversation.kind,
+        issueNumber: ctx.conversation.issueNumber ?? undefined,
+        pullRequestNumber: ctx.conversation.pullRequestNumber ?? undefined,
+        installationId: ctx.github.installationId,
+        actorLogin: comment.author?.login ?? ctx.sender.login,
+        actorId: comment.author?.id ?? ctx.sender.id,
+        actorType: comment.author?.type ?? ctx.sender.type,
+        authorAssociation: str(comment.raw["author_association"]),
+      }),
+      [authorFacts],
+      { surfaceKey },
+    );
 
     if ((await ingressSpendGate({
       bindable: { channel: { kind: "github" as const }, session: { auth: { current: auth as unknown as { attributes?: Readonly<Record<string, string>> } } } },

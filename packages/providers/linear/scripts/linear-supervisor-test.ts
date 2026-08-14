@@ -15,7 +15,7 @@ import {
   type LinearSupervisorDispatch,
   type LinearSupervisorSession,
 } from "../agent/channels/linear-supervisor.js";
-import { renderWake, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
+import { renderWake, UNTRUSTED_OPEN, UNTRUSTED_CLOSE, OE_CHAT_NONMEMBER_ATTR, defineSurface, registerSurfaces, _resetSurfacesForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import type { OpenEverywhereLinearAuth } from "../agent/channels/linear-identity.js";
 import { readLinearIssue } from "../agent/channels/linear-api.js";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
@@ -152,7 +152,7 @@ const AUTH: OpenEverywhereLinearAuth = { authenticator: "linear", principalId: "
 const SURFACE = `linear/org-1/${TEAM}`;
 
 function dispatch(over: Partial<LinearSupervisorDispatch> = {}): LinearSupervisorDispatch {
-  return { surfaceKey: SURFACE, teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", issueTitle: "DB migration rollout", auth: AUTH, trigger, ...over };
+  return { surfaceKey: SURFACE, teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", issueTitle: "DB migration rollout", auth: AUTH, trigger, ingested: [], ...over };
 }
 
 interface WakeCapture { token: string; message: string; context: readonly string[] }
@@ -614,6 +614,43 @@ for (const [label, err] of [
     trigger: { id: "c1", authorId: "u1", sentAt: "2026-07-11T00:00:00Z", text: "hm", trust: "relay" },
   });
   ok(linWake.trigger.kind === "message" && linWake.trigger.message.trust === "relay", "linear builder: a resolved trigger trust rides into the wake");
+}
+
+{
+  const session: LinearSupervisorSession = { token: linearSupervisorToken(TEAM, 1), generation: 1, freshGeneration: true, handoffNote: null };
+  const auths: OpenEverywhereLinearAuth[] = [];
+  const deps: LinearSupervisorDeps = {
+    getOrCreateSession: async () => session,
+    wake: async (w) => { auths.push(w.auth); },
+    now: NOW,
+  };
+  const attrsOf = (a: OpenEverywhereLinearAuth): Record<string, unknown> => (a.attributes ?? {}) as Record<string, unknown>;
+
+  _resetSurfacesForTest();
+
+  await handleLinearSupervisorDispatch(dispatch({ ingested: [{ refuted: true }] }), deps);
+  ok(attrsOf(auths[0]!)[OE_CHAT_NONMEMBER_ATTR] === "true", "taint carriage: a refuted author stamps oe_chat_nonmember on the auth the wake dep receives");
+
+  await handleLinearSupervisorDispatch(dispatch({ ingested: [{}] }), deps);
+  ok(attrsOf(auths[1]!)[OE_CHAT_NONMEMBER_ATTR] === undefined, "taint carriage: an unrefuted author leaves oe_chat_nonmember ABSENT (negative control)");
+  ok(auths[1] === AUTH, "taint carriage: an unmarked wake passes the caller's auth BY REFERENCE — byte-identical to before this existed");
+  ok(attrsOf(AUTH)[OE_CHAT_NONMEMBER_ATTR] === undefined, "taint carriage: the stamp never mutates the caller's auth");
+
+  await handleLinearSupervisorDispatch(dispatch({ ingested: [] }), deps);
+  ok(auths[2] === AUTH, "taint carriage: an empty ingested set marks nothing (negative control)");
+
+  await handleLinearSupervisorDispatch(dispatch({ ingested: [{ trust: "relay", refuted: true }] }), deps);
+  ok(auths[3] === AUTH, "taint carriage: a `relay` author never marks, even when refuted (negative control — the machine floor)");
+
+  registerSurfaces([defineSurface({ key: SURFACE, trust: "public" })]);
+  await handleLinearSupervisorDispatch(dispatch({ ingested: [{}] }), deps);
+  ok(attrsOf(auths[4]!)[OE_CHAT_NONMEMBER_ATTR] === "true", "taint carriage: a team declared `public` marks through the ROOM leg with no refuted author");
+  _resetSurfacesForTest();
+
+  registerSurfaces([defineSurface({ key: SURFACE, trust: "internal" })]);
+  await handleLinearSupervisorDispatch(dispatch({ ingested: [{}] }), deps);
+  ok(auths[5] === AUTH, "taint carriage: a team declared `internal` marks nothing (negative control)");
+  _resetSurfacesForTest();
 }
 
 console.log(`\n✓ linear-supervisor: ${passed} assertions passed`);

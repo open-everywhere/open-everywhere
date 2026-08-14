@@ -3,11 +3,13 @@ import {
   mkMessageTrigger,
   shouldRotate,
   singleWindowMentionPolicy,
+  stampNonMemberChatAuth,
   type NormalizedWake,
   type WakeEngagementTier,
   type ContextLine,
   type UnifiedWindowWake,
   type WakeTrust,
+  type IngestedChatMessage,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { githubBotMentioned, type OpenEverywhereGitHubAuth } from "./github-identity.js";
 
@@ -204,6 +206,7 @@ export interface GitHubSupervisorDispatch {
   readonly issueNumber: number;
   readonly issueTitle?: string;
   readonly auth: OpenEverywhereGitHubAuth;
+  readonly ingested: readonly IngestedChatMessage[];
   readonly trigger: GitHubSupervisorWakeInput["trigger"];
   readonly engagementTier?: WakeEngagementTier;
   readonly unified?: boolean;
@@ -230,7 +233,8 @@ export async function handleGitHubSupervisorDispatch(d: GitHubSupervisorDispatch
       handoffFromGeneration: generation - 1,
     });
     const { message, context } = renderWake(nw, deps.now);
-    await deps.wake({ token, auth: d.auth, message, context: context ?? [], window: d.window });
+    const auth = stampNonMemberChatAuth(d.auth, d.ingested, { surfaceKey: d.surfaceKey });
+    await deps.wake({ token, auth, message, context: context ?? [], window: d.window });
   };
 
   await doWake(session.token, session.generation, session.freshGeneration ? session.handoffNote : undefined);

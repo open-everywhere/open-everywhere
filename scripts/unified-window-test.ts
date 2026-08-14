@@ -356,6 +356,7 @@ await handleGitHubSupervisorDispatch(
     issueNumber: 55,
     issueTitle: "Deploy window",
     auth: ghAuth,
+    ingested: [],
     trigger: { id: "9001", authorLogin: "sam", sentAt: "2026-01-14T02:00:04Z", text: "what was the deploy window token we agreed?" },
     unified: true,
     window: ghWindow,
@@ -411,6 +412,7 @@ await handleLinearSupervisorDispatch(
     issueIdentifier: "ENG-77",
     issueTitle: "Deploy window",
     auth: linAuth,
+    ingested: [],
     trigger: { id: "comment-uuid-1", authorId: "sam", authorName: "Sam", sentAt: "2026-01-14T02:00:06Z", text: "what was the deploy window token we agreed?" },
     unified: true,
     window: linWindow,
@@ -1033,6 +1035,7 @@ overrideSettingsForTest({ window: { topology: false } });
       issueId: "issue-uuid-77",
       issueIdentifier: "ENG-77",
       auth: buildLinearAuth({ organizationId: "O_WIN", teamId: "T_WINX", issueId: "issue-uuid-77", principalId: "sam", commentId: "c2" }),
+      ingested: [],
       trigger: { id: "c2", authorId: "sam", sentAt: "2026-01-14T02:00:08Z", text: "plain per-team wake" },
     },
     {

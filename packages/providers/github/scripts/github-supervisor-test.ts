@@ -13,7 +13,7 @@ import {
   type GitHubSupervisorSession,
   type GitHubAmbientComment,
 } from "../agent/channels/github-supervisor.js";
-import { renderWake, UNTRUSTED_OPEN } from "@open-everywhere/core/agent/adapter-api.js";
+import { renderWake, UNTRUSTED_OPEN, OE_CHAT_NONMEMBER_ATTR, defineSurface, registerSurfaces, _resetSurfacesForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import type { OpenEverywhereGitHubAuth } from "../agent/channels/github-identity.js";
 
 let passed = 0;
@@ -143,7 +143,7 @@ const AUTH: OpenEverywhereGitHubAuth = { authenticator: "github", principalId: "
 const SURFACE = `github/${OWNER}/${REPO}`;
 
 function dispatch(over: Partial<GitHubSupervisorDispatch> = {}): GitHubSupervisorDispatch {
-  return { surfaceKey: SURFACE, owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Flaky retries", auth: AUTH, trigger, engagementTier: "reserved", ...over };
+  return { surfaceKey: SURFACE, owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Flaky retries", auth: AUTH, trigger, engagementTier: "reserved", ingested: [], ...over };
 }
 
 interface WakeCapture { token: string; message: string; context: readonly string[] }
@@ -364,6 +364,43 @@ for (const [label, err] of [
   ok(ghWake.trigger.kind === "message" && ghWake.trigger.message.trust === "principal", "github builder: a resolved trigger trust rides into the wake");
   const ghDefault = buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 7, trigger: { id: "c1", authorLogin: "jo", sentAt: "2026-07-11T00:00:00Z", text: "hm" } });
   ok(ghDefault.trigger.kind === "message" && ghDefault.trigger.message.trust === "peer", "github builder: unset trust keeps the legacy peer (byte-compat for pure callers)");
+}
+
+{
+  const session: GitHubSupervisorSession = { token: githubSupervisorToken(OWNER, REPO, 1), generation: 1, freshGeneration: true, handoffNote: null };
+  const auths: OpenEverywhereGitHubAuth[] = [];
+  const deps: GitHubSupervisorDeps = {
+    getOrCreateSession: async () => session,
+    wake: async (w) => { auths.push(w.auth); },
+    now: NOW,
+  };
+  const attrsOf = (a: OpenEverywhereGitHubAuth): Record<string, unknown> => (a.attributes ?? {}) as Record<string, unknown>;
+
+  _resetSurfacesForTest();
+
+  await handleGitHubSupervisorDispatch(dispatch({ ingested: [{ refuted: true }] }), deps);
+  ok(attrsOf(auths[0]!)[OE_CHAT_NONMEMBER_ATTR] === "true", "taint carriage: a refuted author stamps oe_chat_nonmember on the auth the wake dep receives");
+
+  await handleGitHubSupervisorDispatch(dispatch({ ingested: [{}] }), deps);
+  ok(attrsOf(auths[1]!)[OE_CHAT_NONMEMBER_ATTR] === undefined, "taint carriage: an unrefuted author leaves oe_chat_nonmember ABSENT (negative control)");
+  ok(auths[1] === AUTH, "taint carriage: an unmarked wake passes the caller's auth BY REFERENCE — byte-identical to before this existed");
+  ok(attrsOf(AUTH)[OE_CHAT_NONMEMBER_ATTR] === undefined, "taint carriage: the stamp never mutates the caller's auth");
+
+  await handleGitHubSupervisorDispatch(dispatch({ ingested: [] }), deps);
+  ok(auths[2] === AUTH, "taint carriage: an empty ingested set marks nothing (negative control)");
+
+  await handleGitHubSupervisorDispatch(dispatch({ ingested: [{ trust: "relay", refuted: true }] }), deps);
+  ok(auths[3] === AUTH, "taint carriage: a `relay` author never marks, even when refuted (negative control — the machine floor)");
+
+  registerSurfaces([defineSurface({ key: SURFACE, trust: "public" })]);
+  await handleGitHubSupervisorDispatch(dispatch({ ingested: [{}] }), deps);
+  ok(attrsOf(auths[4]!)[OE_CHAT_NONMEMBER_ATTR] === "true", "taint carriage: a repo declared `public` marks through the ROOM leg with no refuted author");
+  _resetSurfacesForTest();
+
+  registerSurfaces([defineSurface({ key: SURFACE, trust: "internal" })]);
+  await handleGitHubSupervisorDispatch(dispatch({ ingested: [{}] }), deps);
+  ok(auths[5] === AUTH, "taint carriage: a repo declared `internal` marks nothing (negative control)");
+  _resetSurfacesForTest();
 }
 
 console.log(`\n✓ github-supervisor: ${passed} assertions passed`);

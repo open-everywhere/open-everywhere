@@ -2,11 +2,13 @@ import {
   renderWake,
   mkMessageTrigger,
   shouldRotate,
+  stampNonMemberChatAuth,
   type NormalizedWake,
   type WakeEngagementTier,
   type ContextLine,
   type UnifiedWindowWake,
   type WakeTrust,
+  type IngestedChatMessage,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import type { OpenEverywhereLinearAuth } from "./linear-identity.js";
 
@@ -222,6 +224,7 @@ export interface LinearSupervisorDispatch {
   readonly issueIdentifier?: string;
   readonly issueTitle?: string;
   readonly auth: OpenEverywhereLinearAuth;
+  readonly ingested: readonly IngestedChatMessage[];
   readonly trigger: LinearSupervisorWakeInput["trigger"];
   readonly engagementTier?: WakeEngagementTier;
   readonly unified?: boolean;
@@ -260,7 +263,8 @@ export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch
       ...(memoryDelta ? { memoryDelta } : {}),
     };
     const { message, context } = renderWake(nw, deps.now);
-    await deps.wake({ token, auth: d.auth, message, context: context ?? [], window: d.window });
+    const auth = stampNonMemberChatAuth(d.auth, d.ingested, { surfaceKey: d.surfaceKey });
+    await deps.wake({ token, auth, message, context: context ?? [], window: d.window });
   };
 
   await doWake(session.token, session.generation, session.freshGeneration ? session.handoffNote : undefined);
