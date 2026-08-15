@@ -7,7 +7,8 @@ import {
   type TokenResult,
 } from "eve/connections";
 import type { SessionContext } from "eve/context";
-import { once, type Approval, type ApprovalStatus } from "eve/tools/approval";
+import { once, type ApprovalStatus } from "eve/tools/approval";
+import type { ApprovalPolicy } from "eve/tools";
 import {
   assertConnectorGranted,
   boundConnectorCredential,
@@ -290,7 +291,7 @@ export function userAwareProviderToken(
   });
 }
 
-export function connectorOpApproval(): Approval {
+export function connectorOpApproval(): ApprovalPolicy {
   return (ctx): ApprovalStatus => {
     if (!isConnectorOpTool(ctx.toolName)) return "not-applicable";
     const tier = effectiveConnectorOpTier(ctx.toolName);
@@ -301,7 +302,7 @@ export function connectorOpApproval(): Approval {
   };
 }
 
-export function connectorApprovalPolicy(): Approval {
+export function connectorApprovalPolicy(): ApprovalPolicy {
   return withDuplicateApprovalGuard(connectorOpTieringEnabled() ? connectorOpApproval() : once());
 }
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
@@ -503,10 +503,18 @@ function inSession<T>(fn: () => T): T {
       "🔴 D9 TRIPWIRE 2/4c: …and it does not touch `attributes` at all — no freeze, no copy. `Object.freeze` there is shallow today; a deep freeze or a spread would kill the carriage silently",
     );
 
-    const dispatch = dist("execution/dispatch-runtime-actions-step.js");
+    const dispatchCandidates = [
+      "execution/dispatch-runtime-actions-shared.js",
+      "execution/dispatch-runtime-actions-step.js",
+    ];
+    const dispatchCarriers = dispatchCandidates.filter((rel) => {
+      if (!existsSync(join(eveRoot, "dist/src", rel))) return false;
+      const src = dist(rel);
+      return src.includes("deserializeContext(") && src.includes("serializedContext") && src.includes("get(AuthKey)");
+    });
     ok(
-      dispatch.includes("deserializeContext(") && dispatch.includes("serializedContext") && dispatch.includes("get(AuthKey)"),
-      "🔴 D9 TRIPWIRE 3/4: the dispatch step still builds the child's auth from the PARENT's serialized context (`deserializeContext(e.serializedContext)` then `.get(AuthKey)`) — NOT from the tool call, which is why a hook can reach it and a tool cannot",
+      dispatchCarriers.length > 0,
+      `🔴 D9 TRIPWIRE 3/4: the dispatch step still builds the child's auth from the PARENT's serialized context (\`deserializeContext(e.serializedContext)\` then \`.get(AuthKey)\`) — NOT from the tool call, which is why a hook can reach it and a tool cannot. Looked in: ${dispatchCandidates.join(", ")}`,
     );
 
     const subagentTool = dist("execution/subagent-tool.js");

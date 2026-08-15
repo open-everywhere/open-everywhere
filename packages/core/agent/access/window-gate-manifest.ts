@@ -101,6 +101,10 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "todo",
   "load_skill",
   "connection_search",
+  "task_peek",
+  "task_cancel",
+  "task_sleep",
+  "task_update",
   "fresh_eyes_review",
 ]);
 

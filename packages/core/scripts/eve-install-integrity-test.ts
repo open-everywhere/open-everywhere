@@ -128,6 +128,32 @@ const RETIRED = [
   { symbol: "OE_TURN_STEP_CEILING", why: "OPE-407" },
 ] as const;
 
+const CARRIAGE = [
+  {
+    rel: join("dist", "src", "public", "definitions", "channel.js"),
+    test: (s: string): boolean => /return\{__kind:CHANNEL_SENTINEL,(?:[^{}]*,)?turnPolicy:/.test(s),
+    what:
+      "defineChannel() copies `turnPolicy` onto the Channel object it returns. runtime/resolve-channel.js reads it off that object, so without this line EVERY vendor channel resolves `undefined` and falls back to the platform default `steer`",
+  },
+  {
+    rel: join("dist", "src", "public", "definitions", "channel.d.ts"),
+    test: (s: string): boolean => /readonly turnPolicy\?: TurnPolicy;/.test(s),
+    what: "the `Channel` type declares `turnPolicy` again, so a channel's policy is visible to type-checked callers",
+  },
+  {
+    rel: join("dist", "src", "public", "channels", "slack", "slackChannel.js"),
+    test: (s: string): boolean => /turnPolicy:[A-Za-z_$][A-Za-z_$0-9]*\.turnPolicy/.test(s),
+    what:
+      "slackChannel() forwards `turnPolicy` from its config object into defineChannel(). At 0.34.0-0.38.3 the name does not occur anywhere in the Slack tree, so this forward is the restore",
+  },
+  {
+    rel: join("dist", "src", "public", "channels", "slack", "slackChannel.d.ts"),
+    test: (s: string): boolean => /readonly turnPolicy\?: TurnPolicy;/.test(s),
+    what:
+      "SlackChannelConfig declares `turnPolicy` again. Without it packages/providers/slack/agent/channels/slack.ts's `turnPolicy: \"queue\"` is a type error, and a cast would compile into a silent no-op",
+  },
+] as const;
+
 const WHY: Record<string, string> = {
   "OPE-172": "the force-tool-turn nudge was retired in OPE-172 (gated on an env var that was never set anywhere, so it never ran once)",
   "OPE-407":
@@ -154,8 +180,16 @@ for (const eveDir of copies) {
       `absent: ${where} must NOT contain \`${dead.symbol}\` — ${WHY[dead.why]}. A re-roll that ports an old __oe* block wholesale drags it back; port ONLY the __oeProjectToolSet projection helper and its one call site`,
     );
   }
+  for (const hunk of CARRIAGE) {
+    const file = join(eveDir, hunk.rel);
+    ok(existsSync(file), `carriage: ${where}/${hunk.rel} exists (if eve moved the file, the restore hunk and this gate are stale)`);
+    ok(
+      hunk.test(readFileSync(file, "utf8")),
+      `carriage: ${where}/${hunk.rel} carries the turnPolicy restore (OPE-448, upstream vercel/eve#2172) — ${hunk.what}. Re-apply the restore hunks, or drop them deliberately only once upstream has fixed the root`,
+    );
+  }
 }
 
 console.log(
-  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} the OE projection hook and none of the ${RETIRED.length} retired symbols)\n`,
+  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} the OE projection hook and all ${CARRIAGE.length} turnPolicy restore hunks, and none of the ${RETIRED.length} retired symbols)\n`,
 );

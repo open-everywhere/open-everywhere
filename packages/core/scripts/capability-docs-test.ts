@@ -68,16 +68,26 @@ const check = (toolNames: string[], docs: { path: string; spans: string[] }[], e
 {
   const shipped = Object.keys(UNDOCUMENTED_TOOLS).sort();
   ok(
-    shipped.join(",") === "browser_tools,delegation_tools,sandbox_tools",
-    `10a: the shipped exemption table is exactly the three resolver files (found: ${shipped.join(", ") || "none"}). If you are adding a row, justify it here too.`,
+    shipped.join(",") === "browser_tools,delegation_tools,sandbox_tools,task_cancel,task_peek,task_sleep,task_update",
+    `10a: the shipped exemption table is exactly the three resolver files plus the four flag-gated eve task tools (found: ${shipped.join(", ") || "none"}). If you are adding a row, justify it here too.`,
   );
   ok(
     shipped.every((n) => n in TOOL_CONSEQUENCE),
     "10b: every exempt name is a real registered tool (consequence-lint pins TOOL_CONSEQUENCE to the mounted surface)",
   );
+  const SANCTIONED_REASONS = ["resolver file", "not mounted:"] as const;
   ok(
-    shipped.every((n) => (UNDOCUMENTED_TOOLS[n] ?? "").includes("resolver file")),
-    "10c: every exemption states the resolver-file reason — the only reason that currently clears the bar",
+    shipped.every((n) => SANCTIONED_REASONS.some((r) => (UNDOCUMENTED_TOOLS[n] ?? "").includes(r))),
+    "10c: every exemption states one of the TWO sanctioned reasons — a resolver FILE, or a tool eve gates behind a flag OE does not enable. Free-text reasons do not clear the bar",
+  );
+  const flagGated = shipped.filter((n) => (UNDOCUMENTED_TOOLS[n] ?? "").includes("not mounted:"));
+  ok(flagGated.length > 0, "10e (guard): the flag-gated class is non-empty, so the check below is exercising something");
+  ok(
+    flagGated.every((n) => {
+      const reason = UNDOCUMENTED_TOOLS[n] ?? "";
+      return reason.includes("experimental.tasks") && /OPE-\d+/u.test(reason);
+    }),
+    "10e: every flag-gated exemption names the FLAG that would invalidate it and the OPE ticket that owns the flip — the row carries its own expiry, because nothing here can read eve's runtime flag",
   );
   ok(shipped.length * 10 < Object.keys(TOOL_CONSEQUENCE).length, "10d: exemptions stay a rounding error against the tool surface, not the norm");
 }

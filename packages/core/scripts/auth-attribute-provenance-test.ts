@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 
 let passed = 0;
@@ -86,7 +86,13 @@ const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/wor
 }
 
 {
-  ok(/\w+=\w+\.get\(AuthKey\)\?\?null,/.test(read("execution/dispatch-runtime-actions-step.js")), "subagent dispatch still takes the child's auth from the PARENT's AuthKey slot");
+  const authFromContainer = /(?:auth:|\w+=)\w+\.get\(AuthKey\)\?\?null/u;
+  const dispatchFiles = ["execution/dispatch-runtime-actions-shared.js", "execution/dispatch-runtime-actions-step.js"]
+    .filter((rel) => existsSync(join(distSrc, rel)));
+  ok(
+    dispatchFiles.some((rel) => authFromContainer.test(read(rel))),
+    `subagent dispatch still takes the child's auth from the PARENT's AuthKey slot (looked in: ${dispatchFiles.join(", ") || "no dispatch file found at all"})`,
+  );
   const sub = read("execution/subagent-tool.js");
   ok(/\{action:\w+,auth:\w+,batchEvent/.test(sub), "buildSubagentRunInput still takes `auth` as a caller argument, not off the action");
   ok(!/\w+\.input\.auth/.test(sub), "buildSubagentRunInput still never reads `auth` off the model's action input");
@@ -151,8 +157,18 @@ const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/wor
   ok(/createStepInput\((\w+),\w+\)\{return\{[^}]*input:\1[,}]/.test(cursor), "TurnExecutionCursor.createStepInput still passes its first argument straight through as `input` (no hidden delivery source)");
 
   ok(/kind===`driver-delivery`/.test(waitFn), "waitForRuntimeActionResults still recognises a `driver-delivery` while a turn is in flight");
-  ok(/routeDeliverToChildren\(\{auth:\w+\.delivery\.auth/.test(waitFn), "…and routes it to CHILD sessions (their auth, not this turn's)");
-  ok(/\w+\.bufferedDeliveries\.push\(\{\.\.\.\w+\.delivery/.test(waitFn), "…pushing the residue to bufferedDeliveries — never back into the step input");
+  ok(
+    /routeDeliverToChildren\(\{(?:auth:\w+\.delivery\.auth|delivery:\w+\.delivery)[,}]/u.test(waitFn),
+    "…and routes it to CHILD sessions (their auth, not this turn's)",
+  );
+  ok(
+    /auth:\w+\.auth,childContinuationToken:/u.test(read("execution/proxied-deliver-step.js")),
+    "the proxied child delivery still binds the DELIVERY's own auth onto the child's payload",
+  );
+  ok(
+    /\w+\.bufferedDeliveries\.push\((?:\{\.\.\.\w+\.delivery|\w+\.remainder)/u.test(waitFn),
+    "…pushing the residue to bufferedDeliveries — never back into the step input",
+  );
   ok(
     /async finish\(\w+,\w+,(\w+)\)\{[\s\S]{0,320}?bufferedDeliveries:\1\.length===0\?void 0:\[\.\.\.\1\]/.test(cursor),
     "TurnExecutionCursor.finish still hands bufferedDeliveries back in the `turn-result` (they become the NEXT turn, not this one)",

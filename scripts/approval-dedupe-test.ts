@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rmSync } from "node:fs";
-import type { ApprovalContext, ApprovalStatus } from "eve/tools/approval";
+import type { Approval, ApprovalContext, ApprovalStatus } from "eve/tools/approval";
 
 const dir = join(tmpdir(), `open-everywhere-approval-dedupe-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
@@ -25,6 +25,9 @@ const { withDuplicateApprovalGuard, recordApprovalRaised, DUPLICATE_APPROVAL_WIN
   "@open-everywhere/core/agent/access/approval-dedupe.js"
 );
 import type { HasEventSeen, MarkEventSeen } from "@open-everywhere/core/agent/access/approval-dedupe.js";
+
+const requestOf = (approval: Approval): ((ctx: ApprovalContext) => ApprovalStatus | Promise<ApprovalStatus>) =>
+  typeof approval === "function" ? approval : approval.request;
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -307,7 +310,57 @@ ok(DUPLICATE_APPROVAL_KEY_PREFIX.length > 0, "6a. the guard's dedupe key carries
   ok(store.size() === 1, "10e. neither read wrote anything — the ask-time check stays side-effect free");
 }
 
+{
+  const store = makeFakeStore();
+  const bare = async (): Promise<ApprovalStatus> => "user-approval";
+  const wrappedBare = withDuplicateApprovalGuard(bare, { now: store.now, hasEventSeen: store.hasEventSeen });
+  ok(typeof wrappedBare === "function", "11a. a bare policy function is wrapped into a bare policy function (shape preserved)");
+
+  const store2 = makeFakeStore();
+  let responderCalls = 0;
+  let requestCalls = 0;
+  const configuration = {
+    request: async (c: ApprovalContext): Promise<ApprovalStatus> => {
+      requestCalls += 1;
+      return c.toolName === "sentinel__op" ? "not-applicable" : "user-approval";
+    },
+    response: async (): Promise<{ readonly status: "allowed" }> => {
+      responderCalls += 1;
+      return { status: "allowed" };
+    },
+  };
+  const wrapped = withDuplicateApprovalGuard(configuration, { now: store2.now, hasEventSeen: store2.hasEventSeen });
+  ok(typeof wrapped !== "function", "11b. a configuration is wrapped into a configuration, NOT flattened to a function");
+  ok(
+    typeof wrapped === "object" && wrapped !== null && typeof wrapped.request === "function",
+    "11c. the wrapped configuration still exposes a callable `request` policy",
+  );
+
+  ok(
+    typeof wrapped === "object" && wrapped !== null && (wrapped as typeof configuration).response === configuration.response,
+    "11d. the configuration's `response` policy survives the wrap BY IDENTITY — flattening would drop the responder check silently",
+  );
+  ok(responderCalls === 0, "11e. wrapping does not invoke the response policy (negative control: it runs only when eve settles a card)");
+
+  const request = requestOf(wrapped);
+  ok((await request(ctx({ sessionId: "sess-cfg" }))) === "user-approval", "11f. a configuration's FIRST ask prompts, unchanged");
+  ok(requestCalls === 1, "11f2. …and it was THIS configuration's own `request` that ran (call counted), not a substitute policy");
+  await simulateApprovalRaised(ctx({ sessionId: "sess-cfg" }), store2);
+  const secondCfg = await request(ctx({ sessionId: "sess-cfg" }));
+  ok(
+    typeof secondCfg === "object" && secondCfg !== null && secondCfg.type === "denied",
+    "11g. a configuration's SECOND identical ask is DENIED — the guard reaches the request half of both shapes",
+  );
+
+  const other = await request(ctx({ sessionId: "sess-cfg", toolName: "notion__create_page" }));
+  ok(other === "user-approval", "11h. a different action under the configuration shape still prompts (the guard did not become blanket-deny)");
+
+  const sentinel = await request(ctx({ sessionId: "sess-cfg", toolName: "sentinel__op" }));
+  ok(sentinel === "not-applicable", "11i. a non-prompting decision from the configuration's own request passes through untouched");
+  ok(store2.size() === 1, "11j. the non-prompting decision never touched the store (negative control: only a genuine prompt is fingerprinted)");
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(
-  `✓ approval-dedupe — ${passed} assertions (duplicate-card suppression, crash-recovery ordering, OPE-476 residual, no false dedup, fail-open, window expiry, string/object input convergence, live post_file + connector-auth wiring)`,
+  `✓ approval-dedupe — ${passed} assertions (duplicate-card suppression, crash-recovery ordering, OPE-476 residual, no false dedup, fail-open, window expiry, string/object input convergence, live post_file + connector-auth wiring, both approval authoring shapes)`,
 );

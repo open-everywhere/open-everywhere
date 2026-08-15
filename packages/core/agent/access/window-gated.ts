@@ -5,9 +5,12 @@ export interface GatedToolEntry {
   readonly inputSchema: unknown;
   readonly outputSchema?: unknown;
   execute(input: any, ctx: any): any;
-  approval?(ctx: any): any;
+  readonly approval?: LooseApproval;
   toModelOutput?(output: any): any;
 }
+
+export type LooseApproval = ((ctx: any) => any) | { readonly request: (ctx: any) => any };
+
 import { bindFrom, windowGrainOf, currentWakeId, deploymentOrg, FIRE_UNATTENDED_ATTR, type BindableContext, type WindowGrain } from "../identity/binding.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
 import { classifySessionId } from "../channels/window-key.js";
@@ -19,6 +22,13 @@ import { allowedOnLeanSeat, resolveLeanSeatPosture } from "./lean-seat.js";
 import { canDelegateFromSeat } from "./delegation-mount.js";
 export { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, withheldFromGrain, checkWindowGateManifest, FULL_KIT } from "./window-gate-manifest.js";
 export type { WindowToolSource } from "./window-gate-manifest.js";
+
+export function approvalRequestOf(entry: { readonly approval?: LooseApproval }): ((ctx: any) => any) | undefined {
+  const approval = entry.approval;
+  if (approval === undefined) return undefined;
+  if (typeof approval === "function") return approval.bind(entry);
+  return approval.request.bind(approval);
+}
 
 function isNarrowedGrain(grain: WindowGrain): boolean {
   return !FULL_KIT.includes(grain);
@@ -189,7 +199,7 @@ export function replayStepNames(slug: string, entryKey: string): { execute: stri
 
 export interface ReplayableToolEntry {
   execute(input: any, ctx: any): any;
-  approval?(ctx: any): any;
+  readonly approval?: LooseApproval;
   toModelOutput?(output: any): any;
 }
 
@@ -197,7 +207,7 @@ export function preRegisterDynamicEntry(slug: string, entryKey: string, entry: R
   const names = replayStepNames(slug, entryKey);
   const reg = stepRegistry();
   reg.set(names.execute, (_cv: unknown, input: unknown, ctx: unknown) => entry.execute(input, ctx));
-  const approval = entry.approval?.bind(entry);
+  const approval = approvalRequestOf(entry);
   if (approval !== undefined) {
     reg.set(names.approval, (_cv: unknown, actx: unknown) => approval(actx));
   }

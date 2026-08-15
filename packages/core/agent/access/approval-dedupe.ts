@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Approval, ApprovalContext, ApprovalStatus } from "eve/tools/approval";
+import type { ApprovalPolicy } from "eve/tools";
 import { deploymentOrg } from "../identity/binding.js";
 import { getOperationalStore } from "../operational/provider.js";
 
@@ -50,6 +51,14 @@ export interface DuplicateApprovalGuardOptions {
 }
 
 export function withDuplicateApprovalGuard<TInput = Record<string, unknown>>(
+  policy: ApprovalPolicy<TInput>,
+  opts?: DuplicateApprovalGuardOptions,
+): ApprovalPolicy<TInput>;
+export function withDuplicateApprovalGuard<TInput = Record<string, unknown>>(
+  policy: Approval<TInput>,
+  opts?: DuplicateApprovalGuardOptions,
+): Approval<TInput>;
+export function withDuplicateApprovalGuard<TInput = Record<string, unknown>>(
   policy: Approval<TInput>,
   opts: DuplicateApprovalGuardOptions = {},
 ): Approval<TInput> {
@@ -58,8 +67,10 @@ export function withDuplicateApprovalGuard<TInput = Record<string, unknown>>(
   const peek: HasEventSeen =
     opts.hasEventSeen ?? ((org, key, atIso, ttlMs) => getOperationalStore().hasEventSeen(org, key, atIso, ttlMs));
 
-  return async (ctx: ApprovalContext<TInput>): Promise<ApprovalStatus> => {
-    const decision = await policy(ctx);
+  const request = typeof policy === "function" ? policy : policy.request;
+
+  const guarded = async (ctx: ApprovalContext<TInput>): Promise<ApprovalStatus> => {
+    const decision = await request(ctx);
     if (!decisionPrompts(decision)) return decision;
 
     let alreadyOpen = false;
@@ -77,6 +88,8 @@ export function withDuplicateApprovalGuard<TInput = Record<string, unknown>>(
         "(or wait a few minutes and ask again) instead of raising a second, separate one.",
     };
   };
+
+  return typeof policy === "function" ? guarded : { ...policy, request: guarded };
 }
 
 export interface RecordApprovalRaisedOptions {

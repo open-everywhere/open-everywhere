@@ -17,6 +17,10 @@ export const WORKER_INDEX_LIFECYCLE: ReadonlySet<string> = new Set([
   "complete_task",
   "complete_thread",
   "return_result",
+  "task_peek",
+  "task_cancel",
+  "task_sleep",
+  "task_update",
 ]);
 
 export const WORKER_INDEX_SEAT_VERBS: ReadonlySet<string> = new Set([
