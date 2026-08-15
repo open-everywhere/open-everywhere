@@ -11,6 +11,7 @@ import { currentInvokerPosture } from "./invoker-posture-state.js";
 import { nativeSubagentEnabled } from "./delegation-flag.js";
 import { nativeAgentAllowedNow } from "./native-delegation-state.js";
 import { TASK_CHILD_TOOL_NAME, TASK_PARENT_TOOL_NAMES } from "./background-tasks.js";
+import { refuseAgentContinuation } from "./worker-continuation.js";
 
 const AUTH_PENDING_BRAND = "__eveAuthorizationPending";
 
@@ -76,6 +77,8 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
   if (!workerWake && toolset[TASK_CHILD_TOOL_NAME] !== undefined) {
     delete toolset[TASK_CHILD_TOOL_NAME];
   }
+
+  refuseAgentContinuation(toolset);
 
   for (const [name, raw] of Object.entries(toolset)) {
     if (raw === null || typeof raw !== "object") continue;

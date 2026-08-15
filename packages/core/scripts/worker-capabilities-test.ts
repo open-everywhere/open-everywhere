@@ -123,8 +123,13 @@ ok(backgroundBlock.includes("`task_cancel`"), "the stop verb is named — the ot
 ok(!backgroundBlock.includes("`task_update`"), "🔴 `task_update` is the CHILD's verb and is NEVER offered to a seat — naming it would be the dead-affordance class OPE-359 removed");
 ok(!backgroundBlock.includes("`task_sleep`"), "`task_sleep` is not named either — pausing its own delegated work is a worker decision, not a routing one (OPE-583)");
 ok(/which request the result answers/.test(backgroundBlock), "🔴 OPE-555 risk 4: the wrong-thread mitigation is IN the copy — a completion notice carries no thread of its own");
-ok(/`agentId`/.test(backgroundBlock), "🔴 the maintainer's ruling: the worker-continuation affordance is DOCUMENTED, not suppressed — the framework shows the agents listing either way");
-ok(/not a continuation/.test(backgroundBlock), "…and the copy says when NOT to continue, which is the half that makes the affordance usable");
+ok(/`agentId` is refused/.test(backgroundBlock), "🔴 OPE-593: the copy states the refusal — eve's own prompt still teaches `agentId`, so OE must contradict it out loud");
+ok(/A worker does ONE job/.test(backgroundBlock), "…and states the invariant the refusal protects: a delegated worker is single-turn");
+ok(
+  !/call \`agent\` with that worker's/.test(backgroundBlock) && !/with that worker's `agentId`/.test(backgroundBlock),
+  "🔴 OPE-593: the OPE-564 teaching sentence is GONE — a seat told how to continue would try, and a refused call it was taught to make is a retry loop",
+);
+ok(/put everything the new worker needs in its brief/.test(backgroundBlock), "…and the copy names the route that replaces continuation, so the refusal is actionable");
 ok(/shares ONE filesystem/.test(backgroundBlock), "🔴 OPE-584: parent and every sibling worker share one sandbox filesystem, and the copy says so plainly");
 ok(/its own directory or file scope/.test(backgroundBlock), "…with eve's own prescribed mitigation — non-overlapping write scopes, assigned in the brief");
 ok(/Brief it by INTENT, not by tool/.test(backgroundBlock), "the intent-shaped-brief ruling survives the re-aim");
