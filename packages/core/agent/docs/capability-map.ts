@@ -5,10 +5,6 @@ export const UNDOCUMENTED_TOOLS: Readonly<Record<string, string>> = {
     "resolver file, not a capability: re-provides the framework-named `agent` tool per session grain, mounting nothing under this name. `agent` itself is documented.",
   browser_tools:
     "resolver file, not a capability: mounts the flag-gated agent-browser family (access/browser-toolkit.ts) and nothing under this name. The injected `browser_*` tools it mounts are documented in docs/capabilities/browser-qa.md.",
-  task_sleep:
-    "not mounted: eve gates the `task_*` family on `experimental.tasks` (runtime/framework-tools/tasks.js, isTaskToolAvailable) and agent/agent.ts does not enable it, so no org can be granted this. Delete this row when the flag goes on (OPE-562).",
-  task_update:
-    "not mounted: eve gates the `task_*` family on `experimental.tasks` (runtime/framework-tools/tasks.js, isTaskToolAvailable) and agent/agent.ts does not enable it, so no org can be granted this. Delete this row when the flag goes on (OPE-562).",
 };
 
 const FENCE = /^```[\s\S]*?^```$/gmu;

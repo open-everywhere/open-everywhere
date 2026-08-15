@@ -7,3 +7,7 @@ export function oneshotAgentEnabled(): boolean {
 export function nativeSubagentEnabled(): boolean {
   return getSettings().delegation.nativeSubagent;
 }
+
+export function backgroundTasksEnabled(): boolean {
+  return getSettings().delegation.backgroundTasks;
+}

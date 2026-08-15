@@ -43,6 +43,7 @@ export interface AgentSettings {
   readonly delegation: {
     readonly oneshotAgent: boolean;
     readonly nativeSubagent: boolean;
+    readonly backgroundTasks: boolean;
   };
   readonly models: {
     readonly stack: string;
@@ -268,6 +269,12 @@ export const SETTINGS = {
       shipped: true,
       summary:
         "Use eve's BUILT-IN `agent` subagent as the delegation route. ON by default since OPE-396 — the roll-own SYNC delegation leg it replaced has been deleted, so disarming leaves the deployment with async-only roll-own delegation rather than a synchronous fallback. Disarming also takes an `oe build` (it must EMIT the static sentinel that suppresses the built-in), which is why it is code-only. Native children share the parent's sandbox and bind to the parent's identity; delegation is withdrawn entirely on a tainted turn, because eve has no seam to forward taint into a child (opt out with `taint.mode: \"off\"`).",
+    } satisfies SettingSpec<boolean>,
+    backgroundTasks: {
+      path: "delegation.backgroundTasks",
+      shipped: false,
+      summary:
+        "Run this deployment's delegations as durable BACKGROUND tasks (eve `experimental.tasks`). The `agent` call returns a task receipt at once instead of blocking the turn, the worker runs on after the parent's turn ends, and eve delivers the completion as a new message. It mounts four lifecycle tools — `task_peek` and `task_cancel` on a delegating seat, `task_update` on the worker, `task_sleep` — and implies persistent-session children, so a seat can continue an existing worker with `agent({agentId, message})`. Arming it takes an `oe build`: eve decides at COMPILE time which framework tools exist, so this is code-only and a running deployment cannot be flipped. The delegation verb does not change (OPE-445) — only its return shape.",
     } satisfies SettingSpec<boolean>,
   },
   models: {
@@ -715,6 +722,7 @@ export function getSettings(
     delegation: {
       oneshotAgent: resolve(SETTINGS.delegation.oneshotAgent, o.delegation?.oneshotAgent, env),
       nativeSubagent: resolve(SETTINGS.delegation.nativeSubagent, o.delegation?.nativeSubagent, env),
+      backgroundTasks: resolve(SETTINGS.delegation.backgroundTasks, o.delegation?.backgroundTasks, env),
     },
     models: {
       stack: resolve(SETTINGS.models.stack, o.models?.stack, env),
@@ -821,6 +829,10 @@ export function settingDocs(): readonly SettingDoc[] {
 
 export function nativeSubagentAtBuild(overrides: AgentSettingsOverrides): boolean {
   return overrides.delegation?.nativeSubagent ?? SETTINGS.delegation.nativeSubagent.shipped;
+}
+
+export function backgroundTasksAtBuild(overrides: AgentSettingsOverrides): boolean {
+  return overrides.delegation?.backgroundTasks ?? SETTINGS.delegation.backgroundTasks.shipped;
 }
 
 export function settingEnvNames(): readonly string[] {

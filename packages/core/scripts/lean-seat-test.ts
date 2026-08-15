@@ -27,6 +27,18 @@ const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);
   n++;
 };
+const eq = (a: unknown, b: unknown, label: string) => {
+  assert.deepStrictEqual(a, b, label);
+  n++;
+};
+
+function removedBy(before: Record<string, unknown>, after: Record<string, unknown>): readonly string[] {
+  return Object.keys(before)
+    .filter((k) => !(k in after))
+    .sort();
+}
+
+const TASK_FAMILY = ["task_cancel", "task_peek", "task_sleep", "task_update"] as const;
 
 const posture = (grain: "standing" | "thread" | "native" | "task", canDelegate: boolean, unattendedFire = false) =>
   resolveLeanSeatPosture({ grain, canDelegate, unattendedFire });
@@ -193,18 +205,18 @@ inSession(() => {
   setNativeDelegationSeat("allow");
   ok(currentLeanSeatPosture() === "full", "the slot's default is FULL — the fail direction that can never strand a seat");
   const toolset = makeToolset();
-  const beforeCount = Object.keys(toolset).length;
+  const before = { ...toolset };
   projectToolSet(toolset as unknown as Record<string, unknown>);
-  ok(Object.keys(toolset).length === beforeCount, "an unmarked wake's toolset is unchanged by OPE-301");
+  eq(removedBy(before, toolset), ["task_update"], "an unmarked wake's toolset is unchanged by OPE-301 — its only loss is the child-only `task_update` (OPE-564)");
 });
 
 {
   ok(currentLeanSeatPosture() === "full", "outside an eve context the posture read fails soft to full");
   const toolset = makeToolset();
-  const beforeCount = Object.keys(toolset).length;
+  const beforeSet = { ...toolset };
   projectToolSet(toolset as unknown as Record<string, unknown>);
   ok(!("agent" in toolset), "…while the delegation verdict fails CLOSED outside a context (unclassified ⇒ deny)");
-  ok(Object.keys(toolset).length === beforeCount - 1, "a context-less projectToolSet call withholds nothing from the LEAN plane (only the fail-closed `agent`)");
+  eq(removedBy(beforeSet, toolset), ["agent", ...TASK_FAMILY].sort(), "a context-less projectToolSet call withholds nothing from the LEAN plane — only the fail-closed `agent` and the task family that follows it (OPE-564)");
 }
 
 inSession(() => {

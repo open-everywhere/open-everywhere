@@ -37,6 +37,10 @@ const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);
   n++;
 };
+const eq = (a: unknown, b: unknown, label: string) => {
+  assert.deepStrictEqual(a, b, label);
+  n++;
+};
 
 const posture = (jobFire: boolean, jobSession: boolean, humanPrincipal: boolean) =>
   resolveJobWakePosture({ jobFire, jobSession, humanPrincipal });
@@ -152,6 +156,14 @@ function makeToolset(): Record<string, { description: string; execute: () => unk
   return out;
 }
 
+function removedBy(before: Record<string, unknown>, after: Record<string, unknown>): readonly string[] {
+  return Object.keys(before)
+    .filter((k) => !(k in after))
+    .sort();
+}
+
+const TASK_FAMILY = ["task_cancel", "task_peek", "task_sleep", "task_update"] as const;
+
 {
   const toolset = makeToolset();
   const before = { ...toolset };
@@ -198,28 +210,29 @@ inSession(() => {
   setNativeDelegationSeat("allow");
   ok(currentJobWakePosture() === "unrestricted", "an escalated wake on a job session resolves UNRESTRICTED");
   const toolset = makeToolset();
-  const before = Object.keys(toolset).length;
+  const before = { ...toolset };
   projectToolSet(toolset as unknown as Record<string, unknown>);
-  ok(Object.keys(toolset).length === before, "an ESCALATED job wake keeps the full toolset — the restriction exists because nobody is watching, so it lifts when somebody is");
+  eq(removedBy(before, toolset), ["task_update"], "an ESCALATED job wake keeps the full toolset apart from the child-only `task_update` — the OPE-111 restriction exists because nobody is watching, so it lifts when somebody is");
   ok("open_pull_request" in toolset && "purge_memory" in toolset && "agent" in toolset, "the escalated turn holds the human's normal posture");
+  ok("task_peek" in toolset && "task_cancel" in toolset && "task_sleep" in toolset, "…including the PARENT task verbs, because a seat that may delegate may read back and stop its own work");
 });
 
 inSession(() => {
   setNativeDelegationSeat("allow");
   ok(currentJobWakePosture() === "unrestricted", "a session that never took a job fire is out of scope");
   const toolset = makeToolset();
-  const before = Object.keys(toolset).length;
+  const before = { ...toolset };
   projectToolSet(toolset as unknown as Record<string, unknown>);
-  ok(Object.keys(toolset).length === before, "an ordinary session's toolset is unchanged by OPE-111");
+  eq(removedBy(before, toolset), ["task_update"], "an ordinary session's toolset is unchanged by OPE-111 — the one name it loses is the child-only `task_update`, withdrawn by OPE-564 and not by the job filter");
 });
 
 {
   ok(currentJobWakePosture() === "unrestricted", "outside an eve context the posture read fails soft to unrestricted");
   const toolset = makeToolset();
-  const before = Object.keys(toolset).length;
+  const before = { ...toolset };
   projectToolSet(toolset as unknown as Record<string, unknown>);
   ok(!("agent" in toolset), "…while the DELEGATION verdict fails CLOSED outside a context (unclassified ⇒ deny) — the opposite direction, on purpose");
-  ok(Object.keys(toolset).length === before - 1, "a context-less projectToolSet call withholds nothing from the job plane (only the fail-closed `agent`)");
+  eq(removedBy(before, toolset), ["agent", ...TASK_FAMILY].sort(), "a context-less projectToolSet call withholds nothing from the job plane — only the fail-closed delegation verb and the task family that follows it");
 }
 
 inSession(() => {
@@ -232,11 +245,11 @@ inSession(() => {
 
 inSession(() => {
   const toolset = makeToolset();
-  const before = Object.keys(toolset).length;
+  const before = { ...toolset };
   projectToolSet(toolset as unknown as Record<string, unknown>);
   ok(!("agent" in toolset), "OPE-396: on a default (native-armed) deployment an UNCLASSIFIED seat loses `agent` at the projection seam — the delegation verdict fails closed");
   ok("open_pull_request" in toolset && "purge_memory" in toolset, "…and nothing else moves: the job filter is untouched by the delegation one");
-  ok(Object.keys(toolset).length === before - 1, "…exactly one name withdrawn, so the two filters compose without overlap");
+  eq(removedBy(before, toolset), ["agent", ...TASK_FAMILY].sort(), "…exactly the delegation verb and the task family that follows it, so the three filters compose without overlap");
 });
 
 const fireCtx = (stamped: boolean) => ({

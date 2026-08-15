@@ -10,6 +10,7 @@ import { restrictToolsetForInvokerPosture } from "./invoker-posture.js";
 import { currentInvokerPosture } from "./invoker-posture-state.js";
 import { nativeSubagentEnabled } from "./delegation-flag.js";
 import { nativeAgentAllowedNow } from "./native-delegation-state.js";
+import { TASK_CHILD_TOOL_NAME, TASK_PARENT_TOOL_NAMES } from "./background-tasks.js";
 
 const AUTH_PENDING_BRAND = "__eveAuthorizationPending";
 
@@ -61,8 +62,19 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
   if (workerWake) restrictToolsetForWorkerSeat(toolset);
   restrictToolsetForInvokerPosture(toolset, currentInvokerPosture(), workerWake);
 
-  if (nativeSubagentEnabled() && toolset["agent"] !== undefined && !nativeAgentAllowedNow()) {
+  const nativeRegime = nativeSubagentEnabled();
+  const agentAllowed = nativeRegime && nativeAgentAllowedNow();
+  if (nativeRegime && toolset["agent"] !== undefined && !agentAllowed) {
     delete toolset["agent"];
+  }
+
+  if (!agentAllowed) {
+    for (const name of TASK_PARENT_TOOL_NAMES) {
+      if (toolset[name] !== undefined) delete toolset[name];
+    }
+  }
+  if (!workerWake && toolset[TASK_CHILD_TOOL_NAME] !== undefined) {
+    delete toolset[TASK_CHILD_TOOL_NAME];
   }
 
   for (const [name, raw] of Object.entries(toolset)) {

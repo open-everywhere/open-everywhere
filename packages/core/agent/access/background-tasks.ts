@@ -1,5 +1,9 @@
 export const TASK_TOOL_NAMES: readonly string[] = ["task_peek", "task_cancel", "task_sleep", "task_update"];
 
+export const TASK_PARENT_TOOL_NAMES: readonly string[] = ["task_peek", "task_cancel", "task_sleep"];
+
+export const TASK_CHILD_TOOL_NAME = "task_update";
+
 export const TASK_PEEK_TOOL = "task_peek";
 export const TASK_CANCEL_TOOL = "task_cancel";
 const TASK_VIEW_TOOLS: ReadonlySet<string> = new Set([TASK_PEEK_TOOL, TASK_CANCEL_TOOL]);

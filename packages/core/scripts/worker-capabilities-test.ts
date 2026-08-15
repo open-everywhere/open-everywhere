@@ -105,6 +105,40 @@ for (const name of grouped) {
   ok(!standingBlock.includes("`" + name + "`"), `the block does not name "${name}" — it is not worker-only from a standing seat`);
 }
 
+eq(
+  renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent", undefined, "spawn_thread_session", false),
+  standingBlock,
+  "🔴 OPE-564 FLAG OFF: passing `false` renders BYTE-IDENTICALLY to omitting the argument — the shipped default changes no prompt byte",
+);
+
+const backgroundBlock = renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent", undefined, "spawn_thread_session", true);
+ok(backgroundBlock !== standingBlock, "🔴 OPE-564: the background build renders a DIFFERENT delegation paragraph — without this the flag would be cosmetic");
+ok(!/BLOCKS this turn/.test(backgroundBlock), "🔴 OPE-564: the blocking claim is GONE on a background build — it is the sentence that would strand a seat waiting for a result that arrives on a later turn");
+ok(/does NOT block/.test(backgroundBlock), "…and the block says so in as many words, rather than leaving the old claim merely unstated");
+ok(/task receipt/.test(backgroundBlock), "the seat is told what the call hands back — a receipt, not the worker's answer");
+ok(/`done: false`/.test(backgroundBlock), "the acknowledge route is named exactly: `reply` with `done: false` keeps the wake open for the real answer");
+ok(/arrives as a NEW message on a later turn/.test(backgroundBlock), "the seat is told WHERE the result appears — a later turn, not this one");
+ok(backgroundBlock.includes("`task_peek`"), "the read verb is named — eve's own completion notice tells the seat to peek, so the prompt must too (OPE-583/T1)");
+ok(backgroundBlock.includes("`task_cancel`"), "the stop verb is named — the other half of the two lifecycle verbs a seat actually holds");
+ok(!backgroundBlock.includes("`task_update`"), "🔴 `task_update` is the CHILD's verb and is NEVER offered to a seat — naming it would be the dead-affordance class OPE-359 removed");
+ok(!backgroundBlock.includes("`task_sleep`"), "`task_sleep` is not named either — pausing its own delegated work is a worker decision, not a routing one (OPE-583)");
+ok(/which request the result answers/.test(backgroundBlock), "🔴 OPE-555 risk 4: the wrong-thread mitigation is IN the copy — a completion notice carries no thread of its own");
+ok(/`agentId`/.test(backgroundBlock), "🔴 the maintainer's ruling: the worker-continuation affordance is DOCUMENTED, not suppressed — the framework shows the agents listing either way");
+ok(/not a continuation/.test(backgroundBlock), "…and the copy says when NOT to continue, which is the half that makes the affordance usable");
+ok(/shares ONE filesystem/.test(backgroundBlock), "🔴 OPE-584: parent and every sibling worker share one sandbox filesystem, and the copy says so plainly");
+ok(/its own directory or file scope/.test(backgroundBlock), "…with eve's own prescribed mitigation — non-overlapping write scopes, assigned in the brief");
+ok(/Brief it by INTENT, not by tool/.test(backgroundBlock), "the intent-shaped-brief ruling survives the re-aim");
+
+const backgroundThreadBlock = renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_THREAD, "agent", undefined, undefined, true);
+ok(/does NOT block/.test(backgroundThreadBlock), "a thread seat is told the same return shape — the flag is build-wide, not per grain");
+ok(!backgroundThreadBlock.includes("spawn_thread_session"), "…and STILL never hears about the standing-only spawner (no recursive thread trees)");
+
+eq(
+  renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent", undefined, "spawn_thread_session", true),
+  backgroundBlock,
+  "the background render is byte-stable across calls as well — the prompt cache must not churn on either build",
+);
+
 for (const verb of WORKER_INDEX_SEAT_VERBS) {
   ok(!WORKER_ONLY_TOOLS_STANDING.includes(verb), `"${verb}" is the seat's own verb and is never listed as worker-only`);
 }

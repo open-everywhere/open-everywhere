@@ -173,11 +173,34 @@ export function checkWorkerCapabilityGroups(
 
 const code = (names: readonly string[]): string => names.map((n) => "`" + n + "`").join(", ");
 
+function delegationReturnShape(route: "agent" | "spawn_task", asyncVerb: "spawn_thread_session" | undefined, backgroundTasks: boolean): string {
+  if (!backgroundTasks) {
+    return asyncVerb
+      ? `\`${route}\` runs the worker and BLOCKS this turn until it answers — right for short work the person is waiting on, wrong for anything long, because nothing else in this room is delivered while you wait. For work that will take a while, use \`${asyncVerb}\`: it mints a durable seat that runs alongside you and reports back on its own.`
+      : `\`${route}\` runs the worker and BLOCKS this turn until it answers, so keep what you hand it bounded. Nothing else in this room is delivered while you wait.`;
+  }
+  const lines = [
+    `\`${route}\` does NOT block. It starts the worker in the background and hands you a task receipt at once, so this turn ends and this room stays answerable while the work runs.`,
+    `Acknowledge the hand-off in the same turn and pass \`done: false\`, which keeps the wake open for the real answer.`,
+    `When the worker settles, its completion arrives as a NEW message on a later turn. Read the worker's output with \`task_peek\`, using the task id from the receipt, and stop work you no longer need with \`task_cancel\`.`,
+    `Say which request the result answers. Another message can arrive in this room while a worker runs, and an answer posted against the wrong one reads as a non-sequitur.`,
+    `To give a worker you already started more work, call \`${route}\` with that worker's \`agentId\` and a new \`message\`. Start a fresh worker for work that is not a continuation of what it did.`,
+    `Every worker shares ONE filesystem with you and with every other worker you started. Give each one its own directory or file scope in the brief, or two of them will write over each other.`,
+  ];
+  if (asyncVerb !== undefined) {
+    lines.push(
+      `\`${asyncVerb}\` is a different move and still worth knowing: it mints a durable SEAT that joins the room and keeps talking, where a worker does one job and reports back.`,
+    );
+  }
+  return lines.join(" ");
+}
+
 export function renderWorkerCapabilityIndex(
   workerOnly: readonly string[],
   route: MemoryRecallRoute,
   groups: readonly WorkerCapabilityGroup[] = WORKER_CAPABILITY_GROUPS,
   asyncVerb?: "spawn_thread_session",
+  backgroundTasks: boolean = false,
 ): string {
   if (route === "none" || route === "file-tools") return "";
   const present = new Set(workerOnly);
@@ -201,11 +224,7 @@ export function renderWorkerCapabilityIndex(
     "worker can see its own kit and you cannot, so naming a verb for it is a guess at a list that",
     "moves. Give it the context it needs in the brief itself — it does not share your backscroll.",
     "",
-    route === "agent" || route === "spawn_task"
-      ? asyncVerb
-        ? `\`${route}\` runs the worker and BLOCKS this turn until it answers — right for short work the person is waiting on, wrong for anything long, because nothing else in this room is delivered while you wait. For work that will take a while, use \`${asyncVerb}\`: it mints a durable seat that runs alongside you and reports back on its own.`
-        : `\`${route}\` runs the worker and BLOCKS this turn until it answers, so keep what you hand it bounded. Nothing else in this room is delivered while you wait.`
-      : "",
+    route === "agent" || route === "spawn_task" ? delegationReturnShape(route, asyncVerb, backgroundTasks) : "",
     "",
     "And never say you cannot do something that a worker can. Route it, say you have routed it, and",
     "come back with the answer. Routed work is NOT done until the worker reports back: acknowledge",

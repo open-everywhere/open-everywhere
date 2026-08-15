@@ -20,7 +20,8 @@ import {
 import { loadModelPolicy } from "./model/policy.js";
 import { scriptedModelFor } from "./model/scripted-resolve.js";
 import { registerAppInfo } from "@open-everywhere/core/agent/commands/core.js";
-import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
+import { backgroundTasksAtBuild, getSettings } from "@open-everywhere/core/agent/settings/settings.js";
+import { SETTINGS_OVERRIDES } from "./settings/settings.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -34,6 +35,8 @@ const UTILITY_GATEWAY_DEFAULTS = {
 } as const;
 
 const SESSION_INPUT_TOKEN_BUDGET = getSettings().agent.sessionInputTokenBudget;
+
+const BACKGROUND_TASKS = backgroundTasksAtBuild(SETTINGS_OVERRIDES);
 
 const COMPACTION_THRESHOLD_PERCENT = getSettings().agent.compactionThresholdPercent;
 
@@ -100,6 +103,7 @@ export default defineAgent({
   }),
   reasoning: "medium",
   limits: { maxInputTokensPerSession: SESSION_INPUT_TOKEN_BUDGET, sessionTimeoutMs: false },
+  experimental: { tasks: BACKGROUND_TASKS },
   compaction: {
     model: gatewayRoutedCompactionModel({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS }),
     modelContextWindowTokens: UTILITY_MODEL_CONTEXT_WINDOW_TOKENS,

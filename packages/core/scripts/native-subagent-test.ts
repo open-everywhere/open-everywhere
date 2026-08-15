@@ -305,6 +305,71 @@ function inSession<T>(fn: () => T): T {
     eq(Object.keys(toolset).sort(), ["bash", "describe_image", "post_file", "read_file_upload", "return_result"], "🔴 D6 LEAF, WHOLE KIT: the leaf withdrawal removes `agent` and NOTHING ELSE — a native child keeps its vision read, its upload read, its sandbox and its return leg");
   });
 
+  const { setWorkerWake } = await import("../agent/access/worker-seat-state.js");
+  const { TASK_CHILD_TOOL_NAME, TASK_PARENT_TOOL_NAMES } = await import("../agent/access/background-tasks.js");
+  const makeTaskToolset = () => ({
+    agent: { execute: () => undefined },
+    reply: { execute: () => undefined },
+    task_peek: { execute: () => undefined },
+    task_cancel: { execute: () => undefined },
+    task_sleep: { execute: () => undefined },
+    task_update: { execute: () => undefined },
+  });
+
+  eq([...TASK_PARENT_TOOL_NAMES], ["task_peek", "task_cancel", "task_sleep"], "🔴 D6 TASKS: the PARENT list is eve's own root-only set — `shouldHideDelegationTool` reads `name !== task_update && TASK_TOOL_NAMES.has(name)`");
+  eq(TASK_CHILD_TOOL_NAME, "task_update", "🔴 D6 TASKS: `task_update` is the CHILD's own progress verb — measured as the delegated child's ENTIRE roster (OPE-555 T1)");
+
+  inSession(() => {
+    setNativeDelegationSeat("allow");
+    setWorkerWake(false);
+    const toolset = makeTaskToolset();
+    projectToolSet(toolset as unknown as Record<string, unknown>);
+    eq(
+      Object.keys(toolset).sort(),
+      ["agent", "reply", "task_cancel", "task_peek", "task_sleep"],
+      "🔴 D6 TASKS, DELEGATING SEAT: it keeps `agent` and all three parent lifecycle verbs, and LOSES `task_update` — a seat writing progress onto a task row it does not own is writing about nothing",
+    );
+  });
+
+  inSession(() => {
+    setNativeDelegationSeat("no-seat");
+    setWorkerWake(false);
+    const toolset = makeTaskToolset();
+    projectToolSet(toolset as unknown as Record<string, unknown>);
+    eq(
+      Object.keys(toolset).sort(),
+      ["reply"],
+      "🔴 D6 TASKS, NON-DELEGATING SEAT: `agent` and all four `task_*` verbs go — read-back and cancel of work this seat could never have started are dead weight, and dead weight on an unclassified seat is the OPE-421 inversion",
+    );
+  });
+
+  inSession(() => {
+    setWorkerWake(false);
+    const toolset = makeTaskToolset();
+    projectToolSet(toolset as unknown as Record<string, unknown>);
+    eq(Object.keys(toolset).sort(), ["reply"], "🔴 D6 TASKS, FAIL-CLOSED: a wake nothing classified loses the whole family — the clear-first default is DENY here too");
+  });
+
+  inSession(() => {
+    setNativeDelegationSeat("leaf");
+    setWorkerWake(true);
+    const toolset = makeTaskToolset();
+    projectToolSet(toolset as unknown as Record<string, unknown>);
+    eq(
+      Object.keys(toolset).sort(),
+      ["reply", "task_update"],
+      "🔴 D6 TASKS, WORKER: a delegated child keeps ONLY `task_update` out of the family — which is eve's own `shouldHideDelegationTool` answer, reached independently",
+    );
+  });
+
+  inSession(() => {
+    setNativeDelegationSeat("allow");
+    setWorkerWake(false);
+    const toolset = makeToolset();
+    projectToolSet(toolset as unknown as Record<string, unknown>);
+    eq(Object.keys(toolset).sort(), ["agent", "no_reply", "reply"], "🔴 D6 TASKS, FLAG OFF: with no task tool in the set the subtraction is a no-op — the shipped build is byte-identical");
+  });
+
   inSession(() => {
     const toolset = makeToolset();
     projectToolSet(toolset as unknown as Record<string, unknown>);
