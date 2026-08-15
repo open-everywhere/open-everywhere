@@ -10,6 +10,7 @@ import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
 import { ROUTINE_MARKER, routineGrantKeyStamped } from "../routines/routine.js";
 import type { Domain } from "../memory/domain.js";
 import { processRegistryMap } from "../lib/process-registry.js";
+import { taskWakeThisTurn } from "../access/task-wake-signal.js";
 
 export type Visibility = "public" | "private";
 
@@ -214,6 +215,8 @@ export function isUnifiedWindowContext(ctx: BindableContext): boolean {
 
 export function currentWakeId(ctx: BindableContext): string | undefined {
   if (isSubagentChildContext(ctx)) return undefined;
+  const adopted = taskWakeThisTurn(currentTurnId(ctx));
+  if (adopted !== undefined) return adopted;
   return attr(authOf(ctx)?.attributes, ["oe_wake_id", "oeWakeId"]);
 }
 

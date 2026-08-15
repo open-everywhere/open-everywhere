@@ -25,7 +25,10 @@ import { readTaskReceipt, terminalTaskViewsOf, type TaskReceipt, type TaskSummar
 import { JOB_TAINT_ATTR } from "../access/job-posture.js";
 import { beginTaintVerdictTurn, registerTaintVerdictSink, taintEnabled, taintMode, type TaintVerdictRow } from "../access/taint-enforcement.js";
 import { appendAudit } from "../audit/audit.js";
-import { currentTurnId, deploymentOrg, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { currentTurnId, currentWakeId, deploymentOrg, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { resolveOwnWindowToken } from "../access/delegation-mount.js";
+import { installTaskWake, openTaskWake } from "../channels/task-wake.js";
+import { noteTurnBoundary } from "../access/task-wake-signal.js";
 
 export const TAINT_VERDICT_ACTION = "taint.verdict";
 
@@ -413,7 +416,11 @@ export async function adoptTaskTaint(view: TaskSummary, ownSessionId: string): P
 
 export default defineHook({
   events: {
-    "turn.started": (_event, ctx) => openTaintTurn(ctx),
+    "turn.started": (_event, ctx) => {
+      openTaintTurn(ctx);
+      const bind = ctx as unknown as BindableContext;
+      noteTurnBoundary(currentTurnId(bind), currentWakeId(bind));
+    },
 
     "action.result": async (event, ctx) => {
       try {
@@ -425,11 +432,31 @@ export default defineHook({
         const receipt = readTaskReceipt(result);
         if (receipt !== null) {
           await noteTaskReceipt(receipt, ownSessionId);
+          const bind = ctx as unknown as BindableContext;
+          await openTaskWake({
+            org: deploymentOrg(),
+            taskId: receipt.taskId,
+            parentWakeId: currentWakeId(bind),
+            windowToken: resolveOwnWindowToken(bind),
+          });
           return;
         }
 
         const terminal = terminalTaskViewsOf(result);
         if (terminal.length > 0) {
+          const wakeBind = ctx as unknown as BindableContext;
+          const inheritedWakeId = currentWakeId(wakeBind);
+          const wakeTurnId = currentTurnId(wakeBind);
+          for (const view of terminal) {
+            await installTaskWake({
+              org: deploymentOrg(),
+              taskId: view.taskId,
+              status: view.status,
+              sessionId: ownSessionId,
+              turnId: wakeTurnId,
+              inheritedWakeId,
+            });
+          }
           let any = false;
           for (const view of terminal) any = (await adoptTaskTaint(view, ownSessionId)) || any;
           if (any) recordTurnTaintForChildren();
