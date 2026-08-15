@@ -1,12 +1,24 @@
+import { getSettings } from "../settings/settings.js";
+
 export const DEFAULT_AGENT_SHORT_NAME = "oe";
 export const DEFAULT_AGENT_FULL_NAME = "open everywhere";
 
 export const OE_ADDRESSED_ATTR = "oe_addressed";
 export const OE_BOT_NAME_ATTR = "oe_bot_name";
 
+export function configuredAgentName(): string | undefined {
+  try {
+    const name = getSettings().identity.name.trim();
+    return name.length > 0 ? name : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function agentNameTokens(resolved?: string): string[] {
   const raw = [
     resolved,
+    configuredAgentName(),
     process.env.OE_AGENT_NAME ?? DEFAULT_AGENT_FULL_NAME,
     process.env.OE_AGENT_SHORT_NAME ?? DEFAULT_AGENT_SHORT_NAME,
   ];

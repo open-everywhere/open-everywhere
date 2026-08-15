@@ -192,7 +192,7 @@ export { registerSurfaces, defineSurface, _resetSurfacesForTest } from "./identi
 export { registerSubtreePlatform, applySubtreeSurfaceClaims, subtreeSurfaceKeys, _resetSubtreePlatformsForTest } from "./identity/trust.js";
 export type { Surface, SurfaceTrust, SubtreeSurfaceHandler } from "./identity/trust.js";
 
-export { matchesAgentName, agentNameTokens, agentNameTokenPattern, DEFAULT_AGENT_SHORT_NAME, DEFAULT_AGENT_FULL_NAME, OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "./identity/bot-name.js";
+export { matchesAgentName, agentNameTokens, agentNameTokenPattern, configuredAgentName, DEFAULT_AGENT_SHORT_NAME, DEFAULT_AGENT_FULL_NAME, OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "./identity/bot-name.js";
 
 export { setRegisteredProviders, resetRegisteredProviders } from "./access/providers.js";
 

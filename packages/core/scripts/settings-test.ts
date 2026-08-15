@@ -33,6 +33,8 @@ import { jobBoundMaxDays, jobBoundMaxFires, DEFAULT_JOB_MAX_DAYS, DEFAULT_JOB_MA
 import { dreamCandidateCap } from "../agent/schedules/tidy.js";
 import { DEFAULT_CANDIDATE_CAP } from "../agent/memory/dream/candidates.js";
 import { dmTrustTtlMs } from "../agent/identity/trust.js";
+import { agentNameTokens, configuredAgentName, matchesAgentName } from "../agent/identity/bot-name.js";
+import { nameDropPattern } from "../agent/channels/turn-delivery.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -308,7 +310,7 @@ console.log("7 — every setting reaches the generated operator table:");
     "[7] rows are emitted sorted — a deterministic generator, so a re-run rewrites byte-identical output",
   );
   eq(new Set(settingEnvNames()).size, settingEnvNames().length, "[7] no env var name is claimed by two settings");
-  eq(docs.filter((d) => d.env !== undefined).length, 1, "[7] 🔴 exactly ONE row renders an ops override; the other 51 render as code-only");
+  eq(docs.filter((d) => d.env !== undefined).length, 1, "[7] 🔴 exactly ONE row renders an ops override; every other row renders as code-only");
 }
 
 console.log("8 — a setting either has an env path or has none, with nothing in between:");
@@ -333,6 +335,53 @@ console.log("8 — a setting either has an env path or has none, with nothing in
   eq(at({}).taint.mode, "off", "[8] …a REGISTERED override does, which is the reviewed-diff route and the only one");
   eq(at({ OE_TAINT_MODE: "on" }).taint.mode, "off", "[8] …and no environment pulls it back either");
   resetSettingsForTest();
+}
+
+console.log("\n9 — identity.name (OPE-569): the canonical agent name:");
+{
+  const savedFull = process.env.OE_AGENT_NAME;
+  const savedShort = process.env.OE_AGENT_SHORT_NAME;
+  delete process.env.OE_AGENT_NAME;
+  delete process.env.OE_AGENT_SHORT_NAME;
+
+  resetSettingsForTest();
+  eq(at({}).identity.name, "", "[9] the shipped default is UNSET — a self-hoster gets today's behaviour and no invented brand");
+  eq(configuredAgentName(), undefined, "[9] configuredAgentName() reads unset as undefined, so callers have one answer to test");
+
+  eq(agentNameTokens(), ["open everywhere", "oe"], "[9] unset ⇒ the name-drop token set is byte-identical to today (brand + short name)");
+
+  registerSettings(defineSettings({ identity: { name: "  Aria  " } }));
+  eq(configuredAgentName(), "Aria", "[9] a configured name is trimmed");
+  eq(agentNameTokens(), ["Aria", "open everywhere", "oe"], "[9] 🔴 the configured name JOINS the token set, most-specific first — and is ADDITIVE (the brand tokens survive)");
+  ok(matchesAgentName("hey Aria, can you look at this?"), "[9] …so the agent answers to the name it introduces itself by");
+  ok(matchesAgentName("open everywhere: ping"), "[9] …and still answers to the brand token (nothing was displaced)");
+  ok(!matchesAgentName("the arias sang"), "[9] NEGATIVE: still word-boundary matched — a name inside a longer word does not fire");
+
+  ok(nameDropPattern("Test Slack Bot").test("did Test Slack Bot see this?"), "[9] the per-surface name-drop trigger still matches the live display name with a canonical name configured");
+  ok(!nameDropPattern("Test Slack Bot").test("hey Aria, can you look at this?"), "[9] 🔴 …and the canonical name does NOT fire it — the Slack/Discord wake trigger stays keyed on the display name alone");
+
+  eq(agentNameTokens("Notionaut")[0], "Notionaut", "[9] a platform-RESOLVED integration name still leads the set");
+
+  resetSettingsForTest();
+  eq(agentNameTokens(), ["open everywhere", "oe"], "[9] …and clearing the override restores today's set exactly");
+
+  if (savedFull !== undefined) process.env.OE_AGENT_NAME = savedFull;
+  if (savedShort !== undefined) process.env.OE_AGENT_SHORT_NAME = savedShort;
+}
+
+{
+  const refusesName = (value: string, needle: string, label: string): void => {
+    let message = "";
+    try {
+      defineSettings({ identity: { name: value } });
+    } catch (e) {
+      message = e instanceof Error ? e.message : String(e);
+    }
+    ok(message.includes(needle), `${label} (got: ${message.slice(0, 120) || "NO THROW"})`);
+  };
+  refusesName("Ari\na", "line break", "[9/5] a name with a line break is refused — one prompt line, one matcher token");
+  refusesName("x".repeat(65), "at most 64", "[9/5] a pasted paragraph is refused rather than becoming the agent's name");
+  eq(defineSettings({ identity: { name: "x".repeat(64) } }).identity?.name?.length, 64, "[9/5] …and the boundary value itself is accepted");
 }
 
 console.log(`\nsettings: ${n} assertions passed.`);

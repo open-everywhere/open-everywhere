@@ -64,6 +64,7 @@ export interface AgentSettings {
   };
   readonly identity: {
     readonly dmTrustTtlMs: number;
+    readonly name: string;
   };
   readonly memory: {
     readonly dreamCandidateCap: number;
@@ -339,6 +340,15 @@ export const SETTINGS = {
         "Memo TTL for live trust verification on every surface that performs one — the Slack per-author membership probe (which answers both the DM-partner question and a channel author's own standing), the Slack channel-internal cache, the Teams member/guest lookup and the Linear guest lookup. One knob, because it is one question asked four ways; a miss re-verifies against the platform.",
       format: (v) => `${v} ms`,
     } satisfies SettingSpec<number>,
+    name: {
+      path: "identity.name",
+      shipped: "",
+      validate: (v) =>
+        /[\n\r]/u.test(v) ? "must not contain a line break" : v.length > 64 ? "must be at most 64 characters" : undefined,
+      summary:
+        "The deployment's CANONICAL agent name — what the agent calls itself on EVERY surface, and one more name it answers to. Unset (the shipped `\"\"`) is today's behaviour: the agent identifies by the LIVE vendor display name of the surface it speaks through, and core resolves such a name for Slack only. That default is wrong for a CROSS-SURFACE session, which speaks on several surfaces from one standing block: before this setting existed, a Teams delivery introduced the agent by the SLACK workspace display name (OPE-569). Set it and one name answers everywhere, on the per-surface path and the cross-surface path alike. It ALSO joins the name-drop token set (`agent/identity/bot-name.ts`) that the Notion synthetic-mention recogniser and the addressed link-claim hook match on, so the agent answers to the name it introduces itself by. It is ADDITIVE there — the brand and short-name tokens still match. ⚠️ It does NOT reach the SLACK and DISCORD name-drop wake triggers, which stay keyed on those surfaces' own live display names (the names people type in a sidebar). So on those two surfaces a named agent introduces itself by one name and wakes on another; keep the app's display name and this setting the same to avoid that.",
+      format: (v) => (v === "" ? "`` (unset — identify by the surface's own display name)" : v),
+    } satisfies SettingSpec<string>,
   },
   memory: {
     dreamCandidateCap: {
@@ -701,6 +711,7 @@ export function getSettings(
     },
     identity: {
       dmTrustTtlMs: resolve(SETTINGS.identity.dmTrustTtlMs, o.identity?.dmTrustTtlMs, env),
+      name: resolve(SETTINGS.identity.name, o.identity?.name, env),
     },
     memory: {
       dreamCandidateCap: resolve(SETTINGS.memory.dreamCandidateCap, o.memory?.dreamCandidateCap, env),

@@ -7,7 +7,8 @@ import { defineDomain } from "../agent/memory/domain.js";
 import { defineMemorySilo } from "../agent/memory/silo.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import type { EffectiveAccess } from "../agent/access/resolver.js";
-import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+import { registerSlackFixtureMapper, registerSlackTestBridge } from "./_slack-test-stubs.js";
+import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -288,6 +289,92 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   ok(channelMd.includes("### How you write"), "OPE-542: an ordinary (non-supervisor) channel session also reads the reply-style rubric now");
 
   ok(dmMd.includes(REPLY_STYLE_RUBRIC) && channelMd.includes(REPLY_STYLE_RUBRIC), "the rendered rubric is byte-identical to the exported REPLY_STYLE_RUBRIC constant on both shapes");
+}
+
+{
+  registerSlackTestBridge({ botDisplayName: async () => "Test Slack Bot" });
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [
+      defineDomain({
+        name: "xsurf",
+        channels: ["slack/T_X/C_X", "teams/W_X/CH_X"],
+        memory: "xsurf-notes",
+        ambientSupervisor: true,
+        mode: "unified",
+      }),
+      defineDomain({
+        name: "slackonly",
+        channels: ["slack/T_S/C_S"],
+        memory: "xsurf-notes",
+        ambientSupervisor: true,
+        mode: "unified",
+      }),
+      defineDomain({ name: "org", match: "org" }),
+    ],
+    loadSilos: () => [defineMemorySilo({ name: "xsurf-notes", description: "cross-surface notes", provider: "sqlite" })],
+    domainsForSurface: ({ surface }) => (["C_X", "CH_X"].includes(surface) ? ["xsurf"] : surface === "C_S" ? ["slackonly"] : []),
+  });
+
+  const IDENTIFY_GENERIC = "Identify as this team's agent";
+  const md = async (token: string, origin: string): Promise<string> =>
+    renderScopeMarkdown({
+      channel: { kind: "channel:unified", continuationToken: token },
+      session: { auth: { current: { attributes: { oe_platform: origin } } } },
+    } as BindableContext);
+
+  const xsurfTeams = await md("oe-dom:xsurf:oe-sup:g1", "teams");
+  const xsurfSlack = await md("oe-dom:xsurf:oe-sup:g1", "slack");
+  ok(!xsurfTeams.includes("Test Slack Bot"), "🔴 (a) OPE-569 ACCEPTANCE: a cross-surface window's standing block never carries the Slack display name");
+  ok(xsurfTeams.includes(IDENTIFY_GENERIC), "(a) …it renders the surface-neutral identity line instead (the wake's <channel platform> names the delivery)");
+  ok(xsurfTeams === xsurfSlack, "(a) …and the block stays BYTE-IDENTICAL across a Teams and a Slack delivery (the cache pin holds)");
+
+  overrideSettingsForTest({ identity: { name: "Aria" } });
+  const namedTeams = await md("oe-dom:xsurf:oe-sup:g1", "teams");
+  const namedSlack = await md("oe-dom:xsurf:oe-sup:g1", "slack");
+  ok(namedTeams.includes("Your name in this workspace is **Aria**"), "🔴 (b) a configured `identity.name` reaches the assembled persona verbatim");
+  ok(!namedTeams.includes("Test Slack Bot"), "(b) …and displaces the vendor display name entirely");
+  ok(namedTeams === namedSlack, "(b) …still byte-identical across deliveries");
+  resetSettingsForTest();
+
+  const slackOnly = await md("oe-dom:slackonly:oe-sup:g1", "slack");
+  ok(slackOnly.includes("Your name in this workspace is **Test Slack Bot**"), "(c) a SLACK-ONLY unified domain still identifies by the live Slack display name — today's behaviour, preserved");
+
+  ok(!(await md("oe-dom:xsurf:win:teams/W_X/CH_X:oe-sup:g1", "teams")).includes("Test Slack Bot"), "(d) a TEAMS solo window carries no Slack name");
+  ok((await md("oe-dom:xsurf:win:slack/T_X/C_X:oe-sup:g1", "slack")).includes("**Test Slack Bot**"), "(d) …while a SLACK solo window still identifies by the Slack display name");
+}
+
+{
+  registerSlackTestBridge({ botDisplayName: async () => "Test Slack Bot" });
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+  const perSurface = async (kind: string, attributes: Record<string, string>): Promise<string> =>
+    renderScopeMarkdown({
+      channel: { kind },
+      session: { auth: { current: { attributes, principalId: "U1", principalType: "user" } } },
+    } as BindableContext);
+
+  const slackMd = await perSurface("slack", { team_id: "T1", channel_id: "C_ORD", channel_type: "channel", is_private: "false", trust_checked: "true" });
+  ok(slackMd.includes("Your name in this workspace is **Test Slack Bot**"), "per-surface Slack session still identifies by the live Slack display name (unchanged)");
+
+  const teamsMd = await perSurface("teams", { tenant_id: "TEN1", channel_id: "CH1", channel_type: "channel" });
+  ok(!teamsMd.includes("Test Slack Bot"), "NEGATIVE CONTROL: a per-surface TEAMS session never borrowed the Slack name, and still does not");
+  ok(teamsMd.includes("Identify as this team's agent"), "…it renders the generic identity line");
+
+  overrideSettingsForTest({ identity: { name: "Aria" } });
+  ok((await perSurface("teams", { tenant_id: "TEN1", channel_id: "CH1", channel_type: "channel" })).includes("**Aria**"), "🔴 a configured name gives a TEAMS per-surface session a real name — the answer core could not give before");
+  ok((await perSurface("slack", { team_id: "T1", channel_id: "C_ORD", channel_type: "channel", is_private: "false", trust_checked: "true" })).includes("**Aria**"), "…and the SAME name on Slack — one canonical name, every surface");
+  resetSettingsForTest();
 }
 
 console.log(`✓ instructions: ${passed} assertions passed`);
