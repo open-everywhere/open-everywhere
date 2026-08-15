@@ -1,4 +1,4 @@
-import { ingestUntrusted } from "../access/untrusted.js";
+import { ingestUntrusted, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../access/untrusted.js";
 import { capResult } from "../access/result-cap.js";
 import { noteIngestionVerdict } from "../access/taint-enforcement.js";
 import { taintMarkLands } from "../access/taint-signal.js";
@@ -89,6 +89,15 @@ function escapeXml(s: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&apos;");
+}
+
+function unescapeXml(s: string): string {
+  return s
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&amp;", "&");
 }
 
 function attr(name: string, value: string | undefined): string {
@@ -228,4 +237,49 @@ export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
     `</wake>`,
   ];
   return lines.join("\n");
+}
+
+const MESSAGE_ELEMENT_RE = /<message\b([^>]*)>([\s\S]*?)<\/message>/g;
+
+const TRIGGER_ATTR_RE = /\btrigger="true"/;
+
+const BODY_SIBLING_RE = /\n[ ]*<(?:previous-body|attachment)\b/;
+
+export function isWakeEnvelopeShaped(text: string): boolean {
+  if (/<wake\b/i.test(text)) return true;
+  return /\bauthor-id=/i.test(text) || /<message\b/i.test(text);
+}
+
+export function triggerMessageBody(rendered: string): string | undefined {
+  let body: string | undefined;
+  let column = 0;
+  for (const m of rendered.matchAll(MESSAGE_ELEMENT_RE)) {
+    if (!TRIGGER_ATTR_RE.test(m[1] ?? "")) continue;
+    if (body !== undefined) return undefined;
+    body = m[2] ?? "";
+    column = openerColumn(rendered, m.index ?? 0);
+  }
+  if (body === undefined) return undefined;
+
+  const sibling = body.search(BODY_SIBLING_RE);
+  const raw = sibling >= 0 ? body.slice(0, sibling) : body;
+  const pad = column + 2;
+  const lines = raw.split("\n");
+  if (lines[0] === "") lines.shift();
+  while (lines.length > 0 && /^[ ]*$/.test(lines[lines.length - 1] ?? "")) lines.pop();
+  const dedented = lines.map((l) => l.slice(Math.min(pad, l.length - l.trimStart().length)));
+  return unescapeXml(stripUntrustedFence(dedented).join("\n"));
+}
+
+function openerColumn(rendered: string, at: number): number {
+  const lineStart = rendered.lastIndexOf("\n", at) + 1;
+  const prefix = rendered.slice(lineStart, at);
+  return /^[ ]*$/.test(prefix) ? prefix.length : 0;
+}
+
+function stripUntrustedFence(lines: readonly string[]): readonly string[] {
+  if (!(lines[0] ?? "").startsWith(UNTRUSTED_OPEN)) return lines;
+  const close = lines.lastIndexOf(UNTRUSTED_CLOSE);
+  if (close < 1) return lines;
+  return lines.slice(1, close);
 }

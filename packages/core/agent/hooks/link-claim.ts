@@ -9,12 +9,16 @@ import { canDeliverDirectMessage, dispatchDirectMessage } from "../channels/post
 import { postReply, resolveReplyTarget } from "../channels/reply-post.js";
 import { BINDING_TRUSTED_PLATFORMS } from "../memory/domain.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
-import type { WakeTrust } from "../channels/wake-envelope.js";
+import { isWakeEnvelopeShaped, triggerMessageBody, type WakeTrust } from "../channels/wake-envelope.js";
 
-function isEnvelopeShaped(text: string): boolean {
-  if (/<wake\b/i.test(text)) return true;
-  const authorMarkers = text.match(/\bauthor-id=/gi);
-  return (authorMarkers?.length ?? 0) >= 1 || (text.match(/<message\b/gi)?.length ?? 0) >= 1;
+export function claimBodyOf(text: string | undefined): string | undefined {
+  if (text === undefined) return undefined;
+  if (!isWakeEnvelopeShaped(text)) return text;
+  return triggerMessageBody(text);
+}
+
+function detectClaim(body: string | undefined, addressed: boolean, addressTokens: readonly string[]): string | undefined {
+  return addressed ? detectAddressedLinkClaim(body, addressTokens) : detectLinkClaim(body);
 }
 
 function log(line: string): void {
@@ -43,14 +47,13 @@ export async function observeLinkClaim(input: {
   readonly notifyRefusal?: (text: string) => Promise<void> | void;
   readonly now?: Date;
 }): Promise<string | undefined> {
-  const code = input.addressed
-    ? detectAddressedLinkClaim(input.text, input.addressTokens ?? [])
-    : detectLinkClaim(input.text);
-  if (!code) return undefined;
-  if (input.text && isEnvelopeShaped(input.text)) {
-    log("link claim seen in envelope-shaped text (multiple authors) — ignored (a claim's code and its claimant must come from ONE message).");
+  const body = claimBodyOf(input.text);
+  if (input.text !== undefined && body === undefined) {
+    log("link claim text is envelope-shaped but names no single trigger message — ignored (a claim's code and its claimant must come from ONE message).");
     return undefined;
   }
+  const code = detectClaim(body, input.addressed === true, input.addressTokens ?? []);
+  if (!code) return undefined;
   if (!input.authorId) {
     log("link claim seen with no captured author id — ignored (a claim is only ever as good as the author the surface resolved).");
     return undefined;
@@ -112,7 +115,7 @@ export default defineHook({
       if (typeof raw !== "string") return;
       const addressed = currentTurnAddressed(ctx as BindableContext);
       const addressTokens = addressed ? agentNameTokens(currentTurnBotName(ctx as BindableContext)) : [];
-      const preCode = addressed ? detectAddressedLinkClaim(raw, addressTokens) : detectLinkClaim(raw);
+      const preCode = detectClaim(claimBodyOf(raw), addressed, addressTokens);
       if (!preCode) return;
       try {
         const binding = bindFrom(ctx as BindableContext);
