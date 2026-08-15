@@ -5,11 +5,32 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
+import { RedeliveryStormGuard } from "./redelivery-storm-guard";
 
 export { registerScript, type RecordedRequest, type ResolveObservation, type ScriptedHandle, type ScriptedStep, type SeatScript } from "../../agent/model/scripted-model";
 export { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
 
 const ROOT = process.cwd();
+
+const redeliveryGuard = new RedeliveryStormGuard();
+let redeliveryWatchInstalled = false;
+function installRedeliveryStormWatch(): void {
+  if (redeliveryWatchInstalled) return;
+  redeliveryWatchInstalled = true;
+  for (const stream of [process.stdout, process.stderr] as const) {
+    const original = stream.write.bind(stream);
+    stream.write = ((chunk: unknown, ...rest: unknown[]) => {
+      const text = typeof chunk === "string" ? chunk : Buffer.isBuffer(chunk) ? chunk.toString("utf8") : "";
+      if (text.length > 0) redeliveryGuard.observe(text);
+      return (original as (...a: unknown[]) => boolean)(chunk, ...rest);
+    }) as typeof stream.write;
+  }
+}
+installRedeliveryStormWatch();
+
+export function __resetRedeliveryStormGuardForTest(): void {
+  redeliveryGuard.reset();
+}
 
 const RELAY_SECRET = randomBytes(32).toString("hex");
 const READ_TOKEN = randomBytes(32).toString("hex");
@@ -133,6 +154,16 @@ export async function waitFor<T>(probe: () => T | undefined | Promise<T | undefi
   for (;;) {
     const got = await probe();
     if (got !== undefined) return got;
+    const storm = redeliveryGuard.tripped();
+    if (storm !== undefined) {
+      throw new Error(
+        `integration harness: a durable-queue REDELIVERY STORM (OPE-559) tripped while waiting for "${label}" — ` +
+          `eve's local workflow world re-executed an inline step's body ${storm.count}+ times` +
+          (storm.runId !== undefined ? ` (run ${storm.runId}${storm.stepIds !== undefined ? `, steps ${storm.stepIds}` : ""})` : "") +
+          ". This is a HARNESS artifact under load, not a product failure. Do not bisect your diff — " +
+          "check `ps -eo pid,rss,etime,cmd --sort=-rss` and `free -m` for a co-tenant, and re-run on a quiet box.",
+      );
+    }
     if (Date.now() > deadline) throw new Error(`timed out after ${timeoutMs}ms waiting for: ${label}`);
     await sleep(400);
   }
