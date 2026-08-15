@@ -27,10 +27,16 @@ export interface FailureCluster {
 export interface BucketOptions {
   readonly maxClusters?: number;
   readonly maxExamplesPerCluster?: number;
+  readonly surfaceName?: SurfaceNamer;
 }
 
-export function exampleLine(row: AuditEntry): string {
-  const where = row.surface ? `${row.workspace}/${row.surface}` : row.workspace;
+export type SurfaceNamer = (row: AuditEntry) => string | undefined;
+
+export function exampleLine(row: AuditEntry, name?: SurfaceNamer): string {
+  const resolved = name?.(row);
+  const where = resolved
+    ? `${row.platform} ${resolved}${row.surface ? ` (${row.surface})` : ""}`
+    : `${row.platform} ${row.surface ? `${row.workspace}/${row.surface}` : row.workspace}`;
   const d = row.detail ?? {};
   switch (row.action) {
     case "surface.quiet_fail":
@@ -83,7 +89,7 @@ export function bucketFailures(rows: readonly AuditEntry[], opts: BucketOptions 
     .map(([action, entries]) => ({
       action,
       count: entries.length,
-      examples: entries.slice(0, maxExamples).map(exampleLine),
+      examples: entries.slice(0, maxExamples).map((row) => exampleLine(row, opts.surfaceName)),
     }))
     .sort((a, b) => b.count - a.count)
     .slice(0, maxClusters);

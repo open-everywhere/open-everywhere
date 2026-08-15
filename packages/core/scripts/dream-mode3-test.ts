@@ -77,6 +77,11 @@ function row(action: string, ts: string, detail?: Record<string, unknown>): Audi
   );
   const l8 = exampleLine(row("unified.supervisor_session_failed", "t", { message: "session died" }));
   ok(l8.includes("supervisor session failed") && l8.includes("session died") && !l8.includes("[]"), "exampleLine: unified.supervisor_session_failed with no diag fields present renders cleanly (no empty bracket)");
+  ok(l1.startsWith("slack "), "exampleLine: the platform always leads — a bare Slack 'T…' team id reads as Microsoft Teams to a human");
+  const l9 = exampleLine(row("webhook.rejected", "t", { hookId: "h", status: 401, reason: "r" }), () => "#e2e-smoke");
+  ok(l9.includes("slack #e2e-smoke (C1)") && !l9.includes("T1/C1"), "exampleLine: a resolved surface name replaces workspace/surface, keeping the id in parens as the grounding handle");
+  const l10 = exampleLine(row("webhook.rejected", "t", { hookId: "h", status: 401, reason: "r" }), () => undefined);
+  ok(l10.includes("slack T1/C1"), "exampleLine: a namer that abstains falls back to the raw platform-prefixed ids");
 }
 
 {
@@ -241,8 +246,13 @@ function baseConfig(adminChannel: string | undefined) {
   await appendAudit({ org: "widgetco", platform: "slack", workspace: "T1", surface: "C1", action: "memory.write", ts: IN_WINDOW });
 
   const posts: { channel: string; text: string }[] = [];
-  const fakePost = async (_method: string, body: string) => {
+  const infoLookups: string[] = [];
+  const fakePost = async (method: string, body: string) => {
     const params = new URLSearchParams(body);
+    if (method === "conversations.info") {
+      infoLookups.push(params.get("channel") ?? "");
+      return { ok: true, channel: { name: "e2e-smoke" } };
+    }
     posts.push({ channel: params.get("channel") ?? "", text: params.get("text") ?? "" });
     return { ok: true };
   };
@@ -253,6 +263,8 @@ function baseConfig(adminChannel: string | undefined) {
   eq(posts[0].channel, "C0ADMIN", "mode3Tick: posts to the SAME admin channel access-request.ts uses");
   ok(posts[0].text.includes("surface.quiet_fail"), "mode3Tick: post text names the failing action");
   ok(!posts[0].text.includes("stale — must not count"), "mode3Tick: the out-of-window row's example never surfaces");
+  eq(infoLookups, ["C1"], "mode3Tick: the one distinct failure-row channel gets exactly one conversations.info lookup");
+  ok(posts[0].text.includes("slack #e2e-smoke (C1)"), "mode3Tick: a resolved name renders as 'slack #name (Cid)' — ids never stand alone in the digest");
 
   const auditRows = await readAudit({ org: "widgetco", action: "dream.mode3_report" });
   eq(auditRows.length, 1, "mode3Tick: exactly one dream.mode3_report audit row recorded");

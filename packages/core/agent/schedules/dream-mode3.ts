@@ -2,7 +2,8 @@ import { defineSchedule } from "eve/schedules";
 import { getConfig } from "../access/config.js";
 import { readAudit, appendAudit } from "../audit/audit.js";
 import { DREAM_ACTOR } from "../memory/dream/proposal.js";
-import { buildMode3Report, formatMode3Report, type Mode3Report } from "../memory/dream/mode3.js";
+import { buildMode3Report, formatMode3Report, isFailureAction, type Mode3Report } from "../memory/dream/mode3.js";
+import type { AuditEntry } from "../operational/store.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { tidyOrgs } from "./tidy.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
@@ -29,6 +30,28 @@ function adminChannel(): string | undefined {
   }
 }
 
+const MAX_NAME_LOOKUPS = 12;
+
+async function slackSurfaceNames(rows: readonly AuditEntry[], post: Mode3Poster): Promise<Map<string, string>> {
+  const ids = new Set<string>();
+  for (const row of rows) {
+    if (!isFailureAction(row.action)) continue;
+    if (row.platform !== "slack" || !row.surface || !/^[CG]/.test(row.surface)) continue;
+    ids.add(row.surface);
+    if (ids.size >= MAX_NAME_LOOKUPS) break;
+  }
+  const names = new Map<string, string>();
+  for (const id of ids) {
+    try {
+      const json = await post("conversations.info", new URLSearchParams({ channel: id }).toString());
+      const channel = json?.ok === true ? (json.channel as Record<string, unknown> | undefined) : undefined;
+      if (channel && typeof channel.name === "string" && channel.name.length > 0) names.set(id, `#${channel.name}`);
+    } catch {
+    }
+  }
+  return names;
+}
+
 export async function mode3Tick(
   opts: { readonly now?: Date; readonly orgs?: readonly string[]; readonly post?: Mode3Poster } = {},
 ): Promise<Mode3TickReport> {
@@ -52,7 +75,10 @@ export async function mode3Tick(
 
     let report: Mode3Report | null;
     try {
-      report = await buildMode3Report(org, rows, windowStart.toISOString(), now.toISOString());
+      const names = channel ? await slackSurfaceNames(rows, post) : new Map<string, string>();
+      report = await buildMode3Report(org, rows, windowStart.toISOString(), now.toISOString(), {
+        surfaceName: (r) => (r.platform === "slack" && r.surface ? names.get(r.surface) : undefined),
+      });
     } catch (err) {
       log(`skip ${org} — report build failed: ${String(err)}`);
       continue;
