@@ -3395,6 +3395,11 @@ export const SCENARIOS: readonly Scenario[] = [
               if (typeof v === "string" && v.length > 0) sessionIds.add(v);
             }
           }
+          const forwards = await auditRead({ sinceIso: sinceA, actions: ["taint.forward"] });
+          for (const r of forwards) {
+            const v = (r.detail as Record<string, unknown> | undefined)?.["session"];
+            if (typeof v === "string" && v.length > 0) sessionIds.add(v);
+          }
           let sawWebFetchCall = false;
           for (const sessionId of sessionIds) {
             const events = await ctx.transcriptRead(sessionId);
