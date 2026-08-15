@@ -215,7 +215,7 @@ ok(digestValue(longStr, hash) !== digestValue(longStr + "y", hash), "the digest 
   ok(SNAPSHOT_SECTIONS.every((s) => declared.has(s)), "every SNAPSHOT_SECTIONS entry is declared in the snapshot");
   ok(live.rows.every((r) => declared.has(r.section)), "no row belongs to an UNDECLARED section (such a row would be undiffable)");
 
-  for (const s of ["access", "domains", "bundles", "bindings", "providers", "roles", "mounted", "plugins"]) {
+  for (const s of ["access", "domains", "bundles", "bindings", "connector-credentials", "roles", "mounted", "plugins"]) {
     ok(live.rows.some((r) => r.section === s), `section "${s}" carries rows in the live config`);
   }
   ok(

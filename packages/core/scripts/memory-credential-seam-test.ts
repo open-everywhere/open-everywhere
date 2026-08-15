@@ -52,7 +52,7 @@ const cfg: MemoryResolveConfig = {
       channels: ["slack/T/C_PAY"],
       memory: "pay-brain",
       includeOrg: "readonly",
-      credentials: [{ provider: NOTION, credential: MEMORY_ROLE, use: PAY_MEMORY_CRED }],
+      credentials: [{ connector: NOTION, credential: MEMORY_ROLE, use: PAY_MEMORY_CRED }],
     }),
     defineDomain({ name: "support", channels: ["slack/T/C_SUP"], memory: "sup-brain" }),
     defineDomain({ name: "alpha", channels: ["slack/T/C_A"], memory: "shared" }),

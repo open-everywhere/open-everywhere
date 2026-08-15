@@ -54,7 +54,7 @@ export function requestForPartition(p: Partition): ResolveRequest {
 
 export function resolveAccessForPartition(p: Partition): EffectiveAccess {
   const cfg = getConfig();
-  return resolveAccess(requestForPartition(p), cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry, cfg.loadProviders?.() ?? []);
+  return resolveAccess(requestForPartition(p), cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry, cfg.loadConnectorCredentials?.() ?? []);
 }
 
 export function eventGrantPartitions(r: Routine): readonly Partition[] {

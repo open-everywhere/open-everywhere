@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
 import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
-import { setRegisteredProviders, capabilitiesForPlatform, readAudit } from "@open-everywhere/core/agent/adapter-api.js";
+import { setRegisteredConnectorCredentials, capabilitiesForPlatform, readAudit } from "@open-everywhere/core/agent/adapter-api.js";
 
 const dir = join(tmpdir(), `open-everywhere-notion-integration-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
@@ -17,10 +17,9 @@ process.env.NOTION_CHANNEL_API_KEY = "ntn-test-key";
 
 registerNotionProvider();
 registerSlackProvider();
-setRegisteredProviders([
+setRegisteredConnectorCredentials([
   {
-    name: "notion",
-    connection: "notion",
+    connector: "notion",
     allows: ["api-key"],
     credentials: [{ id: "channel-key", type: "api-key", secretRef: "NOTION_CHANNEL_API_KEY", broker: "env", intake: false }],
   },

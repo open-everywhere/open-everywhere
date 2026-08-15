@@ -1,7 +1,7 @@
-import { assertProvidersValid, vercelConnectorHome, vercelConnectorOf, type Provider } from "../agent/access/providers.js";
+import { assertConnectorCredentialsValid, vercelConnectorHome, vercelConnectorOf, type ConnectorCredentials } from "../agent/access/connector-credentials.js";
 import {
   applyBindingOverride,
-  applyOverridesToProviders,
+  applyOverridesToConnectorCredentials,
   emptyCredentialBindingsFile,
   emitCredentialBindingsModule,
   parseCredentialBindingsFile,
@@ -111,9 +111,8 @@ ok(/"provider"[\s\S]*"credential"[\s\S]*"broker"[\s\S]*"secretRef"/.test(s1), "s
   ok(second.changed && second.file.overrides.length === 2, "apply: a different credential adds a second override");
 }
 
-const notion: Provider = {
-  name: "notion",
-  connection: "notion",
+const notion: ConnectorCredentials = {
+  connector: "notion",
   allows: ["api-key", "user-oauth"],
   credentials: [
     { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" },
@@ -122,17 +121,17 @@ const notion: Provider = {
 };
 {
   const base = [notion];
-  const merged = applyOverridesToProviders(base, [OV]);
+  const merged = applyOverridesToConnectorCredentials(base, [OV]);
   const cred = merged[0].credentials.find((c) => c.id === "team-key")!;
   ok(cred.broker === "db" && cred.secretRef === "db:notion:team-key", "overlay: team-key re-stamped env → db");
   ok(base[0].credentials.find((c) => c.id === "team-key")!.broker === "env", "overlay: base set is NOT mutated (pure)");
   ok(vercelConnectorOf(merged[0].credentials.find((c) => c.id === "user-oauth")!) === "mcp.notion.com/notion-mcp", "overlay: untouched credential unchanged");
-  assertProvidersValid(merged);
-  ok(true, "overlay: merged provider set passes assertProvidersValid");
+  assertConnectorCredentialsValid(merged);
+  ok(true, "overlay: merged provider set passes assertConnectorCredentialsValid");
 
-  const stale = applyOverridesToProviders(base, [{ provider: "notion", credential: "ghost", broker: "db", secretRef: "db:notion:ghost" }]);
+  const stale = applyOverridesToConnectorCredentials(base, [{ provider: "notion", credential: "ghost", broker: "db", secretRef: "db:notion:ghost" }]);
   ok(stale[0].credentials.length === 2 && !stale[0].credentials.some((c) => c.id === "ghost"), "overlay: stale override is inert");
-  ok(applyOverridesToProviders(base, []) === base, "overlay: empty overrides returns the base set unchanged");
+  ok(applyOverridesToConnectorCredentials(base, []) === base, "overlay: empty overrides returns the base set unchanged");
 }
 
 

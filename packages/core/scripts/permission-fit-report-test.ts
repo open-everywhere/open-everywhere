@@ -30,7 +30,10 @@ const BUNDLES = Object.freeze([
       { roleArn: ROLE, allow: ["logs:Describe*", "s3:GetObject"] },
       { roleArn: IDLE_ROLE, allow: ["s3"] },
     ],
-    connectors: ["notion", "linear"],
+    connectors: [
+      { name: "notion", credential: "k", contentOrigin: "external" },
+      { name: "linear", credential: "k", contentOrigin: "external" },
+    ],
   }),
 ]);
 const CONFIG_SNAPSHOT = JSON.stringify(BUNDLES);
@@ -44,6 +47,10 @@ const partition = resolvePartition(ctx as never);
 const SURFACE_KEY = `${partition.platform}/${partition.workspace}/${partition.surface}`;
 
 registerConfig({
+  loadConnectorCredentials: () => [
+    { connector: "notion", allows: ["api-key"], credentials: [{ id: "k", type: "api-key", secretRef: "NOTION_K", broker: "env" }] },
+    { connector: "linear", allows: ["api-key"], credentials: [{ id: "k", type: "api-key", secretRef: "LINEAR_K", broker: "env" }] },
+  ] as never,
   loadBundles: () => BUNDLES as never,
   loadBindings: () => [{ bundle: "ops-tools", scope: { level: "domain", domain: "ops" } }],
   pluginRegistry: {},

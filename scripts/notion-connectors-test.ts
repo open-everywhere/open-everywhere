@@ -3,11 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadBindings, loadBundles } from "../agent/access/bundles.js";
-import { loadProviders } from "../agent/access/providers.js";
+import { loadConnectorCredentials } from "../agent/access/connector-credentials.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
 import { SKILL_CONTENT, NOTION_SCRIPT_SOURCE } from "../agent/plugins/skill-content.js";
 import { resolveAccess, type ResolveRequest } from "@open-everywhere/core/agent/access/resolver.js";
 import { bundleConnectorNames } from "@open-everywhere/core/agent/access/bundle.js";
+import { definedConnectors, definedConnectorCredentials, planAccessDelta } from "@open-everywhere/core/agent/access/delta.js";
+import { connectorGrantCredentialProblems } from "@open-everywhere/core/agent/access/lint.js";
 import { compileNetworkPolicy } from "@open-everywhere/core/agent/access/egress.js";
 import { resolveHeaders } from "@open-everywhere/core/agent/access/credentials.js";
 
@@ -22,11 +24,11 @@ function ok(cond: boolean, label: string): void {
 
 const bundles = loadBundles();
 const bindings = loadBindings();
-const providers = loadProviders();
+const catalogues = loadConnectorCredentials();
 
 function resolveFor(workspace: string, channel: string) {
   const req: ResolveRequest = { mode: "channel", platform: "slack", workspace, channel };
-  return resolveAccess(req, bundles, bindings, PLUGIN_REGISTRY, providers);
+  return resolveAccess(req, bundles, bindings, PLUGIN_REGISTRY, catalogues);
 }
 
 const TEST_WORKSPACE = "T0EXAMPLE";
@@ -75,21 +77,78 @@ const dm = resolveAccess(
   bundles,
   bindings,
   PLUGIN_REGISTRY,
-  providers,
+  catalogues,
 );
 ok(!dm.connectors.includes("notion"), "DM: 'notion' connector NOT granted via the caller's own scope (no such binding exists)");
 ok(!dm.reachableHosts.some((h) => h.host === "api.notion.com"), "DM: api.notion.com NOT reachable");
 
-const providersByName = new Map(providers.map((p) => [p.name, p]));
 const grantedConnectorNames = new Set<string>();
 for (const b of bundles) {
   for (const name of bundleConnectorNames(b)) grantedConnectorNames.add(name);
-  for (const g of b.providers ?? []) {
-    const p = providersByName.get(g.provider);
-    if (p) grantedConnectorNames.add(p.connection);
-  }
 }
-ok(grantedConnectorNames.has("notion"), "connections-lint invariant: 'notion' is granted somewhere (providers.ts + bundles.ts agree)");
+ok(grantedConnectorNames.has("notion"), "connections-lint invariant: 'notion' is granted somewhere on the one connectors list");
+ok(
+  catalogues.some((c) => c.connector === "notion" && c.credentials.some((cr) => cr.id === "team-key")),
+  "the shipped notion catalogue configures the 'team-key' credential the e2e-connector-fixture grant names",
+);
+
+{
+  const defined = definedConnectors(bundles);
+  ok(defined.includes("notion"), "OPE-580 FIX: 'notion' is in the grant-connector VOCABULARY (definedConnectors reads the one list)");
+  ok(!defined.includes("linear-mcp"), "…and the defined set is not a wildcard: an ungranted connector name is absent");
+
+  const configured = definedConnectorCredentials(catalogues, "notion");
+  ok(configured.includes("team-key") && configured.includes("user-oauth"), "the notion catalogue's credential ids are the closed set an ask may name");
+  ok(!configured.includes("nope"), "…and an id nobody configured is not in it");
+  ok(definedConnectorCredentials(catalogues, "linear-mcp").length === 0, "a connector with no catalogue configures nothing — fail-closed, not 'anything goes'");
+
+  const ungranted = resolveFor("T_OTHER", "C_OTHER");
+  const planCtx = {
+    scope: { level: "surface" as const, surface: "slack/T_OTHER/C_OTHER" },
+    access: ungranted,
+    bundles,
+    connectorCredentials: catalogues,
+  };
+  const delta = planAccessDelta({ kind: "grant-connector", connector: "notion", credential: "team-key" }, planCtx);
+  ok(
+    delta.kind === "grant-connector" && delta.connector === "notion" && delta.credential === "team-key",
+    "OPE-580 FIX, end to end: a grant-connector ask for 'notion' PLANS against the shipped config",
+  );
+
+  function refuses(ask: Parameters<typeof planAccessDelta>[0], fragment: string, label: string): void {
+    try {
+      planAccessDelta(ask, planCtx);
+    } catch (err) {
+      ok(String(err).includes(fragment), label);
+      return;
+    }
+    ok(false, `${label} (did not throw)`);
+  }
+  refuses({ kind: "grant-connector", connector: "notion", credential: "nope" }, 'no credential "nope" configured', "an unconfigured credential is out of vocabulary");
+  refuses({ kind: "grant-connector", connector: "notion" }, "needs the credential to reach", "an ask with no credential is refused — every grant names its identity");
+  refuses({ kind: "grant-connector", connector: "no-such-connector", credential: "team-key" }, "isn't defined in this deployment's config", "an undefined connector is still out of vocabulary");
+}
+
+{
+  ok(
+    connectorGrantCredentialProblems(bundles, catalogues).length === 0,
+    "lint:connections: every shipped connector grant names a credential its connector configures",
+  );
+  const broken = bundles.map((b) =>
+    b.name === "e2e-connector-fixture" ? { ...b, connectors: [{ name: "notion", credential: "ghost-key", contentOrigin: "external" as const }] } : b,
+  );
+  const problems = connectorGrantCredentialProblems(broken, catalogues);
+  ok(problems.length === 1, "…and a grant naming an unconfigured credential is exactly one problem");
+  ok(
+    problems[0].includes("ghost-key") && problems[0].includes("e2e-connector-fixture") && problems[0].includes("configured: "),
+    "…named: the bundle, the credential, and what IS configured",
+  );
+  const noCatalogue = connectorGrantCredentialProblems(broken, []);
+  ok(
+    noCatalogue.some((p) => p.includes("NO credential catalogue")),
+    "…and a connector with no catalogue at all is a DISTINCT, separately-worded failure",
+  );
+}
 
 const withHeaders = await compileNetworkPolicy(
   bound,
@@ -186,4 +245,4 @@ ok(append.method === "PATCH" && append.path === "/v1/blocks/blk123/children", "b
 const appendBody = append.body as { children: { paragraph: { rich_text: { text: { content: string } }[] } }[] };
 ok(appendBody.children.length === 1 && appendBody.children[0].paragraph.rich_text[0].text.content === "hello from the test", "buildAppendRequest: exactly one paragraph block with the given text");
 
-console.log(`✓ notion-connectors: ${passed} assertions passed (REST + skill route wiring, route ③ removal, scoping, egress policy, skill script)`);
+console.log(`✓ notion-connectors: ${passed} assertions passed (REST + skill route wiring, route ③ removal, scoping, the one grant list, egress policy, skill script)`);

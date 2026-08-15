@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import "../agent/lib/register-config.js";
 import { loadBindings, loadBundles } from "../agent/access/bundles.js";
-import { loadProviders } from "../agent/access/providers.js";
+import { loadConnectorCredentials } from "../agent/access/connector-credentials.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
 import { loadDomains, loadSilos, domainsForSurface } from "../agent/memory/domains.js";
 import { loadRoles } from "../agent/roles/roles.js";
@@ -32,7 +32,7 @@ export const SNAPSHOT_SECTIONS = [
   "mounted",
   "plugins",
   "principals",
-  "providers",
+  "connector-credentials",
   "roles",
   "silos",
   "webhooks",
@@ -164,7 +164,7 @@ function accessRows(): SnapshotRow[] {
   const domains = loadDomains();
   const bundles = loadBundles();
   const bindings = loadBindings();
-  const providers = loadProviders();
+  const catalogues = loadConnectorCredentials();
   const rows: SnapshotRow[] = [];
 
   for (const scope of boundScopes()) {
@@ -176,7 +176,7 @@ function accessRows(): SnapshotRow[] {
       channel: scope.channel,
       domains: domainsForSurface({ workspaceKey: `${scope.platform}/${scope.workspace}`, surface: scope.channel }),
     };
-    const access = resolveAccess(req, bundles, bindings, PLUGIN_REGISTRY, providers);
+    const access = resolveAccess(req, bundles, bindings, PLUGIN_REGISTRY, catalogues);
 
     for (const [facet, items] of Object.entries(describeEffectiveAccess(access))) {
       rows.push({ section: "access", key: `${scopeKey}${ACCESS_KEY_SEP}${facet}`, value: encodeSet(items) });
@@ -215,7 +215,7 @@ export function buildConfigSnapshot(agentDir = "agent"): ConfigSnapshot {
       value,
     })),
     ...entityRows("principals", loadPrincipals(), (p: { name: string }) => p.name),
-    ...entityRows("providers", loadProviders(), (p: { name: string }) => p.name),
+    ...entityRows("connector-credentials", loadConnectorCredentials(), (p: { connector: string }) => p.connector),
     ...entityRows("roles", loadRoles(), (r: { name: string }) => r.name),
     ...entityRows("silos", loadSilos(), (s: { name: string }) => s.name),
     ...entityRows("webhooks", loadWebhooks(), (w: { id: string }) => w.id),

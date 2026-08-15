@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import {
   registerBroker,
   resetBrokers,
-  resetRegisteredProviders,
-  setRegisteredProviders,
+  resetRegisteredConnectorCredentials,
+  setRegisteredConnectorCredentials,
   siloTier,
   type CredentialEndpointRules,
   type Partition,
@@ -29,11 +29,10 @@ const SILO = { name: "fence-brain", provider: "notion", container: ROOT, readOnl
 function armCredential(rules: CredentialEndpointRules | undefined): void {
   resetBrokers();
   registerBroker(BROKER, { async getSecret() { return ORG_TOKEN; } });
-  resetRegisteredProviders();
-  setRegisteredProviders([
+  resetRegisteredConnectorCredentials();
+  setRegisteredConnectorCredentials([
     {
-      name: NOTION_PROVIDER,
-      connection: "notion",
+      connector: NOTION_PROVIDER,
       allows: ["api-key"],
       credentials: [
         { id: NOTION_MEMORY_CREDENTIAL, type: "api-key", secretRef: ORG_REF, broker: BROKER, intake: false, ...(rules ? { endpoints: rules } : {}) },

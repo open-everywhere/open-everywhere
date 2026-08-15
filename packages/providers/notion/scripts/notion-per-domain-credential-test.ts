@@ -6,8 +6,8 @@ import {
   registerBroker,
   registerConfig,
   resetBrokers,
-  resetRegisteredProviders,
-  setRegisteredProviders,
+  resetRegisteredConnectorCredentials,
+  setRegisteredConnectorCredentials,
   type BindableContext,
   type Domain,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -50,7 +50,7 @@ const DOMAINS: readonly Domain[] = [
     name: "payments",
     channels: [`notion/${WS}/${PAGE_PAY}`],
     ambientSupervisor: true,
-    credentials: [{ provider: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
+    credentials: [{ connector: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
   }),
   defineDomain({ name: "support", channels: [`notion/${WS}/${PAGE_SUP}`], ambientSupervisor: true }),
 ];
@@ -108,10 +108,9 @@ const PAY_TOKEN = "ntn_payments_token";
       throw new Error(`no secret for ${ref}`);
     },
   });
-  setRegisteredProviders([
+  setRegisteredConnectorCredentials([
     {
-      name: "notion",
-      connection: "notion",
+      connector: "notion",
       allows: ["api-key"],
       credentials: [
         { id: NOTION_CHANNEL_CREDENTIAL, type: "api-key", secretRef: "db:notion:channel-key", broker: "test", intake: false },
@@ -349,10 +348,9 @@ async function deliverFor(
 }
 
 {
-  setRegisteredProviders([
+  setRegisteredConnectorCredentials([
     {
-      name: "notion",
-      connection: "notion",
+      connector: "notion",
       allows: ["api-key"],
       credentials: [{ id: NOTION_CHANNEL_CREDENTIAL, type: "api-key", secretRef: "db:notion:channel-key", broker: "test", intake: false }],
     },
@@ -412,10 +410,9 @@ async function deliverFor(
 }
 
 {
-  setRegisteredProviders([
+  setRegisteredConnectorCredentials([
     {
-      name: "notion",
-      connection: "notion",
+      connector: "notion",
       allows: ["api-key"],
       credentials: [
         { id: NOTION_CHANNEL_CREDENTIAL, type: "api-key", secretRef: "db:notion:channel-key", broker: "test", intake: false },
@@ -508,14 +505,14 @@ async function deliverFor(
       name: "security",
       containers: [`notion/${WS_SEC}`],
       ambientSupervisor: true,
-      credentials: [{ provider: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: SEC_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY" }],
+      credentials: [{ connector: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: SEC_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY" }],
     }),
     defineDomain({
       name: "payments",
       channels: [`notion/${WS}/${PAGE_PAY}`],
       containers: [`notion/${WS}`],
       ambientSupervisor: true,
-      credentials: [{ provider: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
+      credentials: [{ connector: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
     }),
   ];
 
@@ -597,7 +594,7 @@ async function deliverFor(
       name: "security",
       containers: [`notion/${WS_SEC}`],
       ambientSupervisor: true,
-      credentials: [{ provider: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: SEC_CRED }],
+      credentials: [{ connector: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: SEC_CRED }],
     }),
   ];
   const sharedSecret = await fenceRun(WS_SEC, PAGE_OPEN, ORG_SECRET, SHARED);
@@ -693,7 +690,7 @@ async function deliverFor(
       name: "security-10",
       containers: [`notion/${WS_SEC_10}`],
       ambientSupervisor: true,
-      credentials: [{ provider: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: SEC_CRED_10, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY_10" }],
+      credentials: [{ connector: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: SEC_CRED_10, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY_10" }],
     }),
   ];
   const crossClaim = await partitionRun(WS_SEC_10, CLAIM_DOMAINS);
@@ -712,7 +709,7 @@ async function deliverFor(
       name: "multi-claim-11",
       containers: [`notion/${WS_M1}`, `notion/${WS_M2}`],
       ambientSupervisor: true,
-      credentials: [{ provider: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: MULTI_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_MULTI_11" }],
+      credentials: [{ connector: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: MULTI_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_MULTI_11" }],
     }),
   ];
 
@@ -769,7 +766,7 @@ async function deliverFor(
       name: "single-claim-11",
       containers: [`notion/${WS_S}`],
       ambientSupervisor: true,
-      credentials: [{ provider: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: S_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SINGLE_11" }],
+      credentials: [{ connector: "notion", credential: NOTION_CHANNEL_CREDENTIAL, use: S_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SINGLE_11" }],
     }),
   ];
 
@@ -787,6 +784,6 @@ async function deliverFor(
   ok(mismatchedSingle.surfaceKey !== honestSingle.surfaceKey, "negative control: the two runs really do land on different keys, so the assertion above is not vacuous");
 }
 
-resetRegisteredProviders();
+resetRegisteredConnectorCredentials();
 resetBrokers();
 console.log(`✓ notion-per-domain-credential: ${passed} assertions passed`);

@@ -2,11 +2,11 @@ import {
   domainCredentialId,
   OperatorSecretNotSetError,
   resolveDomainForChannel,
-  providerIntegrations,
+  connectorIntegrations,
   resolvePartition,
   type BindableContext,
   type Domain,
-  type ProviderIntegration,
+  type ConnectorIntegration,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { notionSurfaceKey } from "./notion-identity.js";
 import { notionPageDomain } from "./notion-scope.js";
@@ -53,8 +53,8 @@ export function notionCallerCredential(ctx: BindableContext, domains: readonly D
   }
 }
 
-export function notionIntegrations(domains: readonly Domain[]): readonly ProviderIntegration[] {
-  return providerIntegrations(domains, NOTION_PROVIDER, NOTION_CHANNEL_CREDENTIAL, NOTION_WEBHOOK_SECRET_NAME);
+export function notionIntegrations(domains: readonly Domain[]): readonly ConnectorIntegration[] {
+  return connectorIntegrations(domains, NOTION_PROVIDER, NOTION_CHANNEL_CREDENTIAL, NOTION_WEBHOOK_SECRET_NAME);
 }
 
 export type NotionSignerVerdict =
@@ -64,7 +64,7 @@ export type NotionSignerVerdict =
 export function notionSignerServesDomain(
   owner: Domain,
   signerCredentialId: string,
-  integrations: readonly ProviderIntegration[],
+  integrations: readonly ConnectorIntegration[],
 ): NotionSignerVerdict {
   const expected = domainCredentialId(owner, NOTION_PROVIDER, NOTION_CHANNEL_CREDENTIAL);
   if (expected === signerCredentialId) return { served: true, via: "credential", expected };

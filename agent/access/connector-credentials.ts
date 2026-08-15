@@ -1,17 +1,16 @@
 import {
-  assertProvidersValid,
-  defineProvider,
+  assertConnectorCredentialsValid,
+  defineConnectorCredentials,
   vercelConnectorHome,
-  type Provider,
-} from "@open-everywhere/core/agent/access/providers.js";
-import { applyOverridesToProviders } from "@open-everywhere/core/agent/access/credential-bindings-codemod.js";
+  type ConnectorCredentials,
+} from "@open-everywhere/core/agent/access/connector-credentials.js";
+import { applyOverridesToConnectorCredentials } from "@open-everywhere/core/agent/access/credential-bindings-codemod.js";
 import { loadCredentialBindingsOverlay } from "./credential-bindings.js";
 
-const providers: Provider[] = [
-  defineProvider({
-    name: "notion",
+const catalogues: ConnectorCredentials[] = [
+  defineConnectorCredentials({
     description: "Notion workspace (host-side MCP) — read/write the team knowledge base.",
-    connection: "notion",
+    connector: "notion",
     allows: ["api-key", "user-oauth"],
     credentials: [
       { id: "team-key", type: "api-key", secretRef: "db:notion:team-key", broker: "db" },
@@ -35,10 +34,9 @@ const providers: Provider[] = [
     ],
   }),
 
-  defineProvider({
-    name: "e2e-intake",
+  defineConnectorCredentials({
     description: "E2E-only: isolated credentials the connector intake / org-click legs forge against (inert — never granted).",
-    connection: "notion",
+    connector: "e2e-intake",
     allows: ["api-key", "service-oauth"],
     credentials: [
       { id: "e2e-key", type: "api-key", secretRef: "OE_E2E_INTAKE_KEY", broker: "env" },
@@ -47,15 +45,18 @@ const providers: Provider[] = [
   }),
 ];
 
-assertProvidersValid(providers);
+assertConnectorCredentialsValid(catalogues);
 
-const merged: readonly Provider[] = applyOverridesToProviders(providers, loadCredentialBindingsOverlay().overrides);
-assertProvidersValid(merged);
+const merged: readonly ConnectorCredentials[] = applyOverridesToConnectorCredentials(
+  catalogues,
+  loadCredentialBindingsOverlay().overrides,
+);
+assertConnectorCredentialsValid(merged);
 
-export function loadProviders(): readonly Provider[] {
+export function loadConnectorCredentials(): readonly ConnectorCredentials[] {
   return merged;
 }
 
-export function loadBaseProviders(): readonly Provider[] {
-  return providers;
+export function loadBaseConnectorCredentials(): readonly ConnectorCredentials[] {
+  return catalogues;
 }

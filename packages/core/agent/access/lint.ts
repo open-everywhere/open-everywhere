@@ -1,4 +1,4 @@
-import type { Binding, Bundle } from "./bundle.js";
+import { connectorGrantCredential, connectorGrantName, type Binding, type Bundle } from "./bundle.js";
 import type { Domain } from "../memory/domain.js";
 import { isLinkSetMember, type Group } from "../identity/groups.js";
 
@@ -7,9 +7,8 @@ export const GROUP_BROAD_MEMBERS = 8;
 function credentialedFields(bundle: Bundle): string[] {
   const fields: string[] = [];
   if (bundle.connections?.length) fields.push(`${bundle.connections.length} connection(s)`);
-  if (bundle.providers?.length) fields.push(`${bundle.providers.length} provider credential(s)`);
   if (bundle.repos?.length) fields.push(`${bundle.repos.length} repo(s)`);
-  if (bundle.connectors?.length) fields.push(`${bundle.connectors.length} connector(s)`);
+  if (bundle.connectors?.length) fields.push(`${bundle.connectors.length} connector credential(s)`);
   if (bundle.awsRoles?.length) fields.push(`${bundle.awsRoles.length} AWS role(s)`);
   return fields;
 }
@@ -121,17 +120,20 @@ export function lintCredentialCollisions(bundles: readonly Bundle[], bindings: r
   const problems: string[] = [];
 
   for (const bundle of bundles) {
-    const byProvider = new Map<string, Set<string>>();
-    for (const grant of bundle.providers ?? []) {
-      const set = byProvider.get(grant.provider) ?? new Set<string>();
-      set.add(grant.credential);
-      byProvider.set(grant.provider, set);
+    const byConnector = new Map<string, Set<string>>();
+    for (const grant of bundle.connectors ?? []) {
+      const credential = connectorGrantCredential(grant);
+      if (credential === undefined) continue;
+      const name = connectorGrantName(grant);
+      const set = byConnector.get(name) ?? new Set<string>();
+      set.add(credential);
+      byConnector.set(name, set);
     }
-    for (const [provider, credentials] of byProvider) {
+    for (const [connector, credentials] of byConnector) {
       if (credentials.size > 1) {
         problems.push(
-          `bundle "${bundle.name}" grants provider "${provider}" TWICE with different credentials (${[...credentials].sort().join(", ")}) — ` +
-            `the resolver keys one credential per connection, so the winner is whichever entry is listed last. Declaration order is not a decision: name ONE credential for this provider.`,
+          `bundle "${bundle.name}" grants connector "${connector}" TWICE with different credentials (${[...credentials].sort().join(", ")}) — ` +
+            `the resolver keys one credential per connector, so the winner is whichever entry is listed last. Declaration order is not a decision: name ONE credential for this connector.`,
         );
       }
     }
@@ -143,23 +145,26 @@ export function lintCredentialCollisions(bundles: readonly Bundle[], bindings: r
     const bundle = byName.get(binding.bundle);
     if (!bundle) continue;
     const scopeKey = bindingScopeKey(binding.scope);
-    const providers = atScope.get(scopeKey) ?? new Map<string, Map<string, Set<string>>>();
-    for (const grant of bundle.providers ?? []) {
-      const credentials = providers.get(grant.provider) ?? new Map<string, Set<string>>();
-      const owners = credentials.get(grant.credential) ?? new Set<string>();
+    const connectors = atScope.get(scopeKey) ?? new Map<string, Map<string, Set<string>>>();
+    for (const grant of bundle.connectors ?? []) {
+      const credential = connectorGrantCredential(grant);
+      if (credential === undefined) continue;
+      const name = connectorGrantName(grant);
+      const credentials = connectors.get(name) ?? new Map<string, Set<string>>();
+      const owners = credentials.get(credential) ?? new Set<string>();
       owners.add(bundle.name);
-      credentials.set(grant.credential, owners);
-      providers.set(grant.provider, credentials);
+      credentials.set(credential, owners);
+      connectors.set(name, credentials);
     }
-    atScope.set(scopeKey, providers);
+    atScope.set(scopeKey, connectors);
   }
-  for (const [scopeKey, providers] of atScope) {
-    for (const [provider, credentials] of providers) {
+  for (const [scopeKey, connectors] of atScope) {
+    for (const [connector, credentials] of connectors) {
       const bundleNames = new Set<string>();
       for (const owners of credentials.values()) for (const b of owners) bundleNames.add(b);
       if (credentials.size > 1 && bundleNames.size > 1) {
         problems.push(
-          `bundles ${[...bundleNames].sort().map((b) => `"${b}"`).join(" and ")} are bound at the SAME scope (${scopeKey.replace(/\u0000/g, "/")}) and grant provider "${provider}" with different credentials (${[...credentials.keys()].sort().join(", ")}) — ` +
+          `bundles ${[...bundleNames].sort().map((b) => `"${b}"`).join(" and ")} are bound at the SAME scope (${scopeKey.replace(/\u0000/g, "/")}) and grant connector "${connector}" with different credentials (${[...credentials.keys()].sort().join(", ")}) — ` +
             `narrowest-wins cannot separate two grants at one scope, so the surface would authenticate with whichever the config lists last. Bind them at different scopes, or agree on one credential.`,
         );
       }
@@ -180,4 +185,40 @@ export function lintAccessConfig(
     ...lintMethodNarrowing(bundles),
     ...lintCredentialCollisions(bundles, bindings),
   ];
+}
+
+export function connectorGrantCredentialProblems(
+  bundles: readonly Bundle[],
+  catalogues: readonly { readonly connector: string; readonly credentials: readonly { readonly id: string }[] }[],
+): string[] {
+  const byConnector = new Map(catalogues.map((c) => [c.connector, c]));
+  const problems: string[] = [];
+  for (const bundle of bundles) {
+    for (const grant of bundle.connectors ?? []) {
+      const name = connectorGrantName(grant);
+      const credential = connectorGrantCredential(grant);
+      if (credential === undefined) {
+        problems.push(
+          `  bundle "${bundle.name}" grants connector "${name}" with no credential — a grant names the identity it reaches the connector as`,
+        );
+        continue;
+      }
+      const catalogue = byConnector.get(name);
+      if (!catalogue) {
+        problems.push(
+          `  bundle "${bundle.name}" grants connector "${name}" as credential "${credential}", but "${name}" has NO credential catalogue` +
+            ` — add one to agent/access/connector-credentials.ts`,
+        );
+        continue;
+      }
+      if (!catalogue.credentials.some((c) => c.id === credential)) {
+        const known = catalogue.credentials.map((c) => c.id).join(", ") || "none";
+        problems.push(
+          `  bundle "${bundle.name}" grants connector "${name}" as credential "${credential}", which that connector does not configure` +
+            ` (configured: ${known}) — the grant resolves to nothing`,
+        );
+      }
+    }
+  }
+  return problems;
 }

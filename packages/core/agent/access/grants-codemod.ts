@@ -69,8 +69,21 @@ export function parseGrantsFile(value: unknown): GrantsFile {
         throw new GrantsCodemodError(`grants bundle "${b.name}" has field "${k}" — the overlay carries only connections/connectors (v1 vocabulary); put anything else in a code bundle`);
       }
     }
-    if (b.connectors !== undefined && !isStringArray(b.connectors)) {
-      throw new GrantsCodemodError(`grants bundle "${b.name}" connectors must be a string array (a \`{ name, contentOrigin }\` declaration is an operator assertion — put it in a code bundle, not the machine-written overlay)`);
+    if (b.connectors !== undefined) {
+      if (!Array.isArray(b.connectors)) throw new GrantsCodemodError(`grants bundle "${b.name}" connectors must be an array`);
+      for (const g of b.connectors) {
+        if (!isRecord(g) || typeof g.name !== "string" || !g.name || typeof g.credential !== "string" || !g.credential) {
+          throw new GrantsCodemodError(
+            `grants bundle "${b.name}" has a malformed connector grant — the overlay writes { name, credential } objects (got: ${JSON.stringify(g)})`,
+          );
+        }
+        const extra = Object.keys(g).filter((k) => k !== "name" && k !== "credential");
+        if (extra.length > 0) {
+          throw new GrantsCodemodError(
+            `grants bundle "${b.name}" connector grant "${g.name}" carries field(s) ${extra.join(", ")} — the overlay writes only { name, credential } (a \`contentOrigin\` declaration is an operator assertion; put it in a code bundle)`,
+          );
+        }
+      }
     }
     if (b.connections !== undefined) {
       if (!Array.isArray(b.connections)) throw new GrantsCodemodError(`grants bundle "${b.name}" connections must be an array`);
@@ -119,6 +132,7 @@ export function parseGrantsFile(value: unknown): GrantsFile {
 
 const BUNDLE_KEYS = ["name", "connections", "connectors"];
 const CONNECTION_KEYS = ["id", "credentialType", "secretRef", "allowedWebsites", "pathPrefixes", "customHeaders", "methods", "authorizationDetails"];
+const CONNECTOR_GRANT_KEYS = ["name", "credential", "contentOrigin"];
 const BINDING_KEYS = ["bundle", "scope", "allowBroad"];
 const SCOPE_KEYS = ["level", "tenant", "domain", "surface", "group", "principal"];
 
@@ -143,7 +157,11 @@ function canonicalConnection(c: Connection): Record<string, unknown> {
 function canonicalBundle(b: Bundle): Record<string, unknown> {
   const obj: Record<string, unknown> = { ...b };
   if (b.connections) obj.connections = [...b.connections].sort((x, y) => x.id.localeCompare(y.id)).map(canonicalConnection);
-  if (b.connectors) obj.connectors = [...b.connectors].sort((x, y) => connectorGrantName(x).localeCompare(connectorGrantName(y)));
+  if (b.connectors) {
+    obj.connectors = [...b.connectors]
+      .sort((x, y) => connectorGrantName(x).localeCompare(connectorGrantName(y)))
+      .map((g) => (typeof g === "string" ? g : orderKeys({ ...g }, CONNECTOR_GRANT_KEYS)));
+  }
   return orderKeys(obj, BUNDLE_KEYS);
 }
 
@@ -240,13 +258,22 @@ export function applyDelta(grants: GrantsFile, delta: AccessDelta): ApplyDeltaRe
     if (!delta.connector || delta.connector.includes(" ")) {
       throw new GrantsCodemodError(`invalid connector name "${delta.connector}"`);
     }
-    if (bundlesBoundToScope(grants, delta.scope).some((b) => b.connectors?.includes(delta.connector))) {
+    if (!delta.credential || delta.credential.includes(" ")) {
+      throw new GrantsCodemodError(`invalid credential id "${delta.credential}" for connector "${delta.connector}"`);
+    }
+    if (
+      bundlesBoundToScope(grants, delta.scope).some((b) =>
+        (b.connectors ?? []).some((g) => connectorGrantName(g) === delta.connector),
+      )
+    ) {
       return { grants, changed: false, bundleName: overlayBundleName(delta.scope) };
     }
     const { name, existing } = writeTarget(grants, delta.scope);
     const next: Bundle = {
       ...(existing ?? { name }),
-      connectors: [...new Set([...(existing?.connectors ?? []), delta.connector])].sort(),
+      connectors: [...(existing?.connectors ?? []), { name: delta.connector, credential: delta.credential }].sort((x, y) =>
+        connectorGrantName(x).localeCompare(connectorGrantName(y)),
+      ),
     };
     return { grants: withBundle(grants, name, next, existing !== undefined, delta), changed: true, bundleName: name };
   }

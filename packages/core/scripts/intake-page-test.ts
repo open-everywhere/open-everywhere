@@ -28,7 +28,7 @@ const { dbCredentialRef } = await import("../agent/credentials/ref.js");
 const { encryptedKvVault } = await import("../agent/credentials/kv-vault.js");
 const vault = encryptedKvVault();
 const { resetSelfSecretCache } = await import("../agent/credentials/self-secrets.js");
-type Provider = import("../agent/access/providers.js").Provider;
+type ConnectorCredentials = import("../agent/access/connector-credentials.js").ConnectorCredentials;
 type ConnectorOption = import("../agent/connections/connector-offer.js").ConnectorOption;
 
 dbBroker.registerDbCredentialBroker();
@@ -260,33 +260,32 @@ console.log("4b. slack parity via the shared seam:");
 
 console.log("5. resolver page route:");
 {
-  const NOTION: Provider = {
-    name: "notion",
-    connection: "notion",
+  const NOTION: ConnectorCredentials = {
+    connector: "notion",
     allows: ["api-key"],
     credentials: [{ id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" }],
   };
   const kinds = (opts: readonly ConnectorOption[]): string[] => opts.map((o) => `${optionLabel(o)}:${o.route.kind}`);
 
   eq(
-    kinds(resolveConnectorOptions({ provider: NOTION, platform: "discord", mode: "channel", isAdmin: true, hostWriteBroker: true, intakePageAvailable: true })),
+    kinds(resolveConnectorOptions({ catalogue: NOTION, platform: "discord", mode: "channel", isAdmin: true, hostWriteBroker: true, intakePageAvailable: true })),
     ["Set API key:page"],
     "discord + page armed ⇒ api-key routes to the intake page",
   );
   eq(
-    kinds(resolveConnectorOptions({ provider: NOTION, platform: "discord", mode: "channel", isAdmin: true, hostWriteBroker: true, intakePageAvailable: false })),
+    kinds(resolveConnectorOptions({ catalogue: NOTION, platform: "discord", mode: "channel", isAdmin: true, hostWriteBroker: true, intakePageAvailable: false })),
     ["Set API key:text-degrade"],
     "discord + page NOT armed ⇒ api-key degrades to text (no dead link)",
   );
 
   eq(
-    kinds(resolveConnectorOptions({ provider: NOTION, platform: "slack", mode: "channel", isAdmin: true, hostWriteBroker: true, intakePageAvailable: true })),
+    kinds(resolveConnectorOptions({ catalogue: NOTION, platform: "slack", mode: "channel", isAdmin: true, hostWriteBroker: true, intakePageAvailable: true })),
     ["Set API key:modal"],
     "slack + page armed ⇒ still the native modal (page is the fallback for everyone else)",
   );
 
   eq(
-    kinds(resolveConnectorOptions({ provider: NOTION, platform: "discord", mode: "channel", isAdmin: true, hostWriteBroker: false, intakePageAvailable: true })),
+    kinds(resolveConnectorOptions({ catalogue: NOTION, platform: "discord", mode: "channel", isAdmin: true, hostWriteBroker: false, intakePageAvailable: true })),
     ["Set API key:unavailable"],
     "no host-write broker ⇒ api-key unavailable even with the page armed",
   );

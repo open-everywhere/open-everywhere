@@ -1,5 +1,5 @@
-import type { Provider, ProviderCredential, ProviderCredentialType } from "../access/providers.js";
-import { isHumanActing, principalOf, vercelConnectorOf } from "../access/providers.js";
+import type { ConnectorCredentials, ConnectorCredential, ConnectorCredentialType } from "../access/connector-credentials.js";
+import { isHumanActing, principalOf, vercelConnectorOf } from "../access/connector-credentials.js";
 import { hostWriteHomeAvailable as homesHostWriteAvailable, type CredentialHome } from "../credentials/home.js";
 
 export interface SurfaceIntakeCapability {
@@ -50,7 +50,7 @@ export interface ConnectRoute {
 }
 
 export interface ConnectorOption {
-  readonly credentialType: ProviderCredentialType;
+  readonly credentialType: ConnectorCredentialType;
   readonly principal: "app" | "user";
   readonly credentialId: string;
   readonly secretRef?: string;
@@ -62,7 +62,7 @@ export interface ConnectorOption {
 export type ConnectMode = "dm" | "channel";
 
 export interface ResolveConnectorInput {
-  readonly provider: Provider;
+  readonly catalogue: ConnectorCredentials;
   readonly platform: string;
   readonly mode: ConnectMode;
   readonly isAdmin: boolean;
@@ -71,10 +71,10 @@ export interface ResolveConnectorInput {
   readonly declarations?: SurfaceIntakeDeclarations;
 }
 
-const OFFER_ORDER: readonly ProviderCredentialType[] = ["user-oauth", "service-oauth", "api-key"];
+const OFFER_ORDER: readonly ConnectorCredentialType[] = ["user-oauth", "service-oauth", "api-key"];
 
-export function offerableCredential(provider: Provider, type: ProviderCredentialType): ProviderCredential | undefined {
-  return provider.credentials.find((c) => c.type === type && c.intake !== false && !isHumanActing(c));
+export function offerableCredential(catalogue: ConnectorCredentials, type: ConnectorCredentialType): ConnectorCredential | undefined {
+  return catalogue.credentials.find((c) => c.type === type && c.intake !== false && !isHumanActing(c));
 }
 
 export function resolveConnectorOptions(input: ResolveConnectorInput): readonly ConnectorOption[] {
@@ -83,8 +83,8 @@ export function resolveConnectorOptions(input: ResolveConnectorInput): readonly 
   const options: ConnectorOption[] = [];
 
   for (const type of OFFER_ORDER) {
-    if (!input.provider.allows.includes(type)) continue;
-    const cred = offerableCredential(input.provider, type);
+    if (!input.catalogue.allows.includes(type)) continue;
+    const cred = offerableCredential(input.catalogue, type);
     if (!cred) continue;
     const principal = principalOf(type);
 

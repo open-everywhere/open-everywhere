@@ -35,16 +35,16 @@ export type { RefCodec, CredentialRefDeriveInput, ParsedCredentialRef } from "./
 export { registerCredentialHome, hostWriteHomeAvailable } from "./credentials/home.js";
 export type { CredentialHome, CredentialHomeStoreInput } from "./credentials/home.js";
 
-export { findProviderCredential } from "./access/providers.js";
-export type { ProviderCredential } from "./access/providers.js";
+export { findConnectorCredential } from "./access/connector-credentials.js";
+export type { ConnectorCredential } from "./access/connector-credentials.js";
 export {
   registerExclusiveCredentialHome,
   vercelConnectorHome,
   vercelConnectorOf,
-} from "./access/providers.js";
-export type { ExclusiveCredentialHome, CredentialHomeRef, ProviderCredentialType } from "./access/providers.js";
-export { grantFamilyOf, isHumanActing, principalOfCredential, humanActingSupport } from "./access/providers.js";
-export type { CredentialGrantFamily, CredentialLifecycle, CredentialRefreshPosture, HumanActingSupport } from "./access/providers.js";
+} from "./access/connector-credentials.js";
+export type { ExclusiveCredentialHome, CredentialHomeRef, ConnectorCredentialType } from "./access/connector-credentials.js";
+export { grantFamilyOf, isHumanActing, principalOfCredential, humanActingSupport } from "./access/connector-credentials.js";
+export type { CredentialGrantFamily, CredentialLifecycle, CredentialRefreshPosture, HumanActingSupport } from "./access/connector-credentials.js";
 
 export { registerDbCredentialBroker, CREDENTIAL_KEY_ENV } from "./credentials/db-broker.js";
 
@@ -194,7 +194,7 @@ export type { Surface, SurfaceTrust, SubtreeSurfaceHandler } from "./identity/tr
 
 export { matchesAgentName, agentNameTokens, agentNameTokenPattern, configuredAgentName, DEFAULT_AGENT_SHORT_NAME, DEFAULT_AGENT_FULL_NAME, OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "./identity/bot-name.js";
 
-export { setRegisteredProviders, resetRegisteredProviders } from "./access/providers.js";
+export { setRegisteredConnectorCredentials, resetRegisteredConnectorCredentials } from "./access/connector-credentials.js";
 
 export { ingestUntrustedModelOutput, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "./access/untrusted.js";
 
@@ -336,8 +336,8 @@ export type { EngagementTier, Domain, DomainVia, DomainRouting, AmbientSkip } fr
 export { auditAmbientSkip, resetAmbientSkipSightings } from "./channels/ambient-skip.js";
 export type { AmbientSkipRecord } from "./channels/ambient-skip.js";
 
-export { credentialOverrideFor, domainCredentialId, providerIntegrations } from "./access/domain-credentials.js";
-export type { DomainCredentialOverride, ProviderIntegration } from "./access/domain-credentials.js";
+export { credentialOverrideFor, domainCredentialId, connectorIntegrations } from "./access/domain-credentials.js";
+export type { DomainCredentialOverride, ConnectorIntegration } from "./access/domain-credentials.js";
 export { getOperatorSecret, OperatorSecretNotSetError } from "./credentials/operator-secrets.js";
 
 export { windowTopologyEnabled } from "./access/capabilities.js";

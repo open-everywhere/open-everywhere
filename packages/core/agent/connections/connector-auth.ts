@@ -14,7 +14,7 @@ import {
   boundConnectorCredential,
   surfaceContextFromAuth,
 } from "../access/connector-scope.js";
-import { vercelConnectorOf } from "../access/providers.js";
+import { vercelConnectorOf } from "../access/connector-credentials.js";
 import { isConnectorOpTool } from "../access/consequence.js";
 import { effectiveConnectorOpTier } from "../access/connector-op-gating.js";
 import { sharedVaultSubjectFor } from "../access/group-request.js";
@@ -85,14 +85,15 @@ export function appProviderToken(opts: {
 
 export async function resolveAppTokenFromCred(
   opts: { readonly connector: string; readonly fallbackSecretRef?: string; readonly fallbackBroker?: string },
-  cred: import("../access/providers.js").ResolvedConnectorCredential | null,
+  cred: import("../access/connector-credentials.js").ResolvedConnectorCredential | null,
   o: unknown,
 ): Promise<TokenResult> {
   if (!cred) {
     if (opts.fallbackSecretRef) return { token: await getSecretVia(opts.fallbackBroker, opts.fallbackSecretRef) };
     throw new Error(
-      `connection "${opts.connector}": no provider credential bound for this surface and no ` +
-        `fallback secret — grant it via a provider (bundle.providers) or a raw connection secretRef.`,
+      `connection "${opts.connector}": no credential bound for this surface and no fallback secret — ` +
+        `grant it with connectors: [{ name: "${opts.connector}", credential: "<id>", contentOrigin: … }], ` +
+        `or give the connection its own fallback secretRef.`,
     );
   }
   if (cred.type === "api-key") {

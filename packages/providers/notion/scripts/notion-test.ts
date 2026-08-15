@@ -29,7 +29,7 @@ import {
   clearNotionAncestryCache,
   prepareNotionTrustRoots,
 } from "../agent/channels/notion-ancestry-trust.js";
-import { setRegisteredProviders, resetRegisteredProviders, OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "@open-everywhere/core/agent/adapter-api.js";
+import { setRegisteredConnectorCredentials, resetRegisteredConnectorCredentials, OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "@open-everywhere/core/agent/adapter-api.js";
 import type { NotionSupervisorDispatch } from "../agent/channels/notion-supervisor.js";
 import { registerNotionProvider } from "../agent/register.js";
 
@@ -376,10 +376,9 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
   rmSync(dir, { recursive: true, force: true });
   process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
   process.env.NOTION_CHANNEL_API_KEY = "ntn_test_key";
-  setRegisteredProviders([
+  setRegisteredConnectorCredentials([
     {
-      name: "notion",
-      connection: "notion",
+      connector: "notion",
       allows: ["api-key"],
       credentials: [{ id: "channel-key", type: "api-key", secretRef: "NOTION_CHANNEL_API_KEY", broker: "env", intake: false }],
     },
@@ -496,7 +495,7 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
     ok(posts.length === 1, "per-doc (non-unified) notion turn: terminal text still posts (byte-identical flag-off)");
   } finally {
     globalThis.fetch = realFetch;
-    resetRegisteredProviders();
+    resetRegisteredConnectorCredentials();
   }
 }
 
@@ -505,10 +504,9 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
   rmSync(dir, { recursive: true, force: true });
   process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
   process.env.NOTION_CHANNEL_API_KEY = "ntn_test_key";
-  setRegisteredProviders([
+  setRegisteredConnectorCredentials([
     {
-      name: "notion",
-      connection: "notion",
+      connector: "notion",
       allows: ["api-key"],
       credentials: [{ id: "channel-key", type: "api-key", secretRef: "NOTION_CHANNEL_API_KEY", broker: "env", intake: false }],
     },
@@ -574,7 +572,7 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
     ok(repliedBareChars.length >= 1, "OPE-521 negative control: a non-worker reply's audited chars equal the raw (unprefixed) length");
   } finally {
     globalThis.fetch = realFetch;
-    resetRegisteredProviders();
+    resetRegisteredConnectorCredentials();
   }
 }
 

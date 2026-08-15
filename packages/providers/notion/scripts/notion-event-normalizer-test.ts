@@ -439,12 +439,12 @@ function normalize(body: string): NormalizedEvent | null {
     defineDomain({
       name: "payments",
       channels: [`notion/${WS}/${PAY_PAGE}`],
-      credentials: [{ provider: "notion", credential: "channel-key", use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
+      credentials: [{ connector: "notion", credential: "channel-key", use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
     }),
     defineDomain({
       name: "security",
       channels: [`notion/${WS}/${SEC_PAGE}`],
-      credentials: [{ provider: "notion", credential: "channel-key", use: SEC_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY" }],
+      credentials: [{ connector: "notion", credential: "channel-key", use: SEC_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY" }],
     }),
   ];
 
@@ -479,12 +479,12 @@ function normalize(body: string): NormalizedEvent | null {
     defineDomain({
       name: "payments",
       channels: [`notion/${WS}/${PAY_PAGE}`],
-      credentials: [{ provider: "notion", credential: "channel-key", use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
+      credentials: [{ connector: "notion", credential: "channel-key", use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
     }),
     defineDomain({
       name: "security",
       containers: ["notion/ws-security"],
-      credentials: [{ provider: "notion", credential: "channel-key", use: SEC_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY" }],
+      credentials: [{ connector: "notion", credential: "channel-key", use: SEC_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY" }],
     }),
   ];
   const tenantForge = notionTriggerScopeVerdict(forged("ws-security", PAY_PAGE), PAY_CRED, CLAIMED, surfaces(CLAIMED));
@@ -501,12 +501,12 @@ function normalize(body: string): NormalizedEvent | null {
     defineDomain({
       name: "payments",
       channels: [`notion/${WS}/${PAY_PAGE}`],
-      credentials: [{ provider: "notion", credential: "channel-key", use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
+      credentials: [{ connector: "notion", credential: "channel-key", use: PAY_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_PAYMENTS" }],
     }),
     defineDomain({
       name: "security",
       channels: [`notion/${WS}/${DB}`],
-      credentials: [{ provider: "notion", credential: "channel-key", use: SEC_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY" }],
+      credentials: [{ connector: "notion", credential: "channel-key", use: SEC_CRED, inboundSecret: "NOTION_WEBHOOK_SECRET_SECURITY" }],
     }),
   ];
   const nestedBody = JSON.stringify({
@@ -531,7 +531,7 @@ function normalize(body: string): NormalizedEvent | null {
     defineDomain({
       name: "eng",
       channels: [`notion/${WS}/${PAY_PAGE}`],
-      credentials: [{ provider: "notion", credential: "channel-key", use: "notion-eng" }],
+      credentials: [{ connector: "notion", credential: "channel-key", use: "notion-eng" }],
     }),
   ];
   const shared = notionTriggerScopeVerdict(forged(WS, PAY_PAGE), "channel-key", SHARED, surfaces(SHARED));

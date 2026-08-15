@@ -1,5 +1,5 @@
 import type { AwsRoleGrant, Binding, Bundle, Connection, ConnectorContentOriginSpec, HttpMethod, Scope } from "./bundle.js";
-import { connectorGrantName, connectorGrantContentOrigin } from "./bundle.js";
+import { connectorGrantName, connectorGrantContentOrigin, connectorGrantCredential } from "./bundle.js";
 import type { OperatorApprover } from "./approver-chain.js";
 import {
   assemblePreApprovalRules,
@@ -9,7 +9,7 @@ import {
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { isLinkSetRef, parseLinkSetRef } from "../identity/link-set-ref.js";
 import type { PluginRegistry } from "../plugins/types.js";
-import { expandProviderGrant, type Provider, type ResolvedConnectorCredential } from "./providers.js";
+import { expandConnectorGrant, type ConnectorCredentials, type ResolvedConnectorCredential } from "./connector-credentials.js";
 
 export type SessionMode = "channel" | "dm" | "mpim";
 
@@ -122,7 +122,7 @@ export function resolveAccess(
   bundles: readonly Bundle[],
   bindings: readonly Binding[],
   registry: PluginRegistry = {},
-  providers: readonly Provider[] = [],
+  connectorCredentialsConfig: readonly ConnectorCredentials[] = [],
 ): EffectiveAccess {
   const warnings: string[] = [];
   const byName = new Map(bundles.map((b) => [b.name, b]));
@@ -236,29 +236,31 @@ export function resolveAccess(
   }
   const skills = [...skillSet].sort();
   const subagents = [...subagentSet].sort();
-  const providerByName = new Map(providers.map((p) => [p.name, p]));
+  const catalogueByConnector = new Map(connectorCredentialsConfig.map((c) => [c.connector, c]));
   const connectorCredentials: Record<string, ResolvedConnectorCredential> = {};
-  const providerConnectors = new Set<string>();
+  const grantedConnectors = new Set<string>();
   for (const { bundle } of ordered) {
-    for (const grant of bundle.providers ?? []) {
-      const { resolved, warnings: gw } = expandProviderGrant(grant, providerByName.get(grant.provider), {
+    for (const grant of bundle.connectors ?? []) {
+      const name = connectorGrantName(grant);
+      const credential = connectorGrantCredential(grant);
+      if (credential === undefined) {
+        warnings.push(
+          `bundle "${bundle.name}": connector grant "${name}" names no credential — a grant must name the identity it reaches the connector as; ignored`,
+        );
+        continue;
+      }
+      const { resolved, warnings: gw } = expandConnectorGrant({ name, credential }, catalogueByConnector.get(name), {
         dm: req.mode === "dm",
       });
       for (const w of gw) warnings.push(`bundle "${bundle.name}": ${w}`);
       if (resolved) {
-        providerConnectors.add(resolved.connection);
-        connectorCredentials[resolved.connection] = resolved;
+        grantedConnectors.add(resolved.connector);
+        connectorCredentials[resolved.connector] = resolved;
       }
     }
   }
 
-  const connectors = [
-    ...new Set([
-      ...ordered.flatMap(({ bundle }) => (bundle.connectors ?? []).map(connectorGrantName)),
-      ...pluginConnectors,
-      ...providerConnectors,
-    ]),
-  ].sort();
+  const connectors = [...new Set([...grantedConnectors, ...pluginConnectors])].sort();
 
   const declaredByName = new Map<string, Map<string, ConnectorContentOriginSpec>>();
   for (const { bundle } of ordered) {
@@ -266,6 +268,7 @@ export function resolveAccess(
       const declared = connectorGrantContentOrigin(grant);
       if (declared === undefined) continue;
       const name = connectorGrantName(grant);
+      if (!grantedConnectors.has(name)) continue;
       const byShape = declaredByName.get(name) ?? new Map<string, ConnectorContentOriginSpec>();
       byShape.set(contentOriginKey(declared), declared);
       declaredByName.set(name, byShape);
@@ -313,12 +316,7 @@ export function resolveAccess(
     }
     if ((bundle.connectors?.length ?? 0) > 0) {
       warnings.push(
-        `broad grant: bundle "${bundle.name}" grants ${bundle.connectors!.length} connector(s) at ${where} scope — every surface under it may invoke those host-side connections. Bind connector grants to a domain or specific surface instead.`,
-      );
-    }
-    if ((bundle.providers?.length ?? 0) > 0) {
-      warnings.push(
-        `broad grant: bundle "${bundle.name}" grants ${bundle.providers!.length} provider credential(s) at ${where} scope — every surface under it authenticates to those providers with that credential. Bind provider grants to a domain or specific surface instead.`,
+        `broad grant: bundle "${bundle.name}" grants ${bundle.connectors!.length} connector(s) at ${where} scope — every surface under it may invoke those host-side connections with the credential each grant names. Bind connector grants to a domain or specific surface instead.`,
       );
     }
     if ((bundle.plugins?.length ?? 0) > 0) {

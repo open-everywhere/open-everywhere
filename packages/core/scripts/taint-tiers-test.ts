@@ -26,6 +26,14 @@ import { subscribePrPrompt } from "../agent/tools/subscribe_pr.js";
 import { renderPrFeedbackForModel } from "../agent/scm/pr-feedback.js";
 import { declaredWorkspaceTrust, defineSurface, registerSurfaces, _resetSurfacesForTest } from "../agent/identity/trust.js";
 import { resolveAccess } from "../agent/access/resolver.js";
+
+const CATALOGUES = [
+  { connector: "notion", allows: ["api-key" as const], credentials: [{ id: "k", type: "api-key" as const, secretRef: "NOTION_K", broker: "env" }] },
+  { connector: "linear", allows: ["api-key" as const], credentials: [{ id: "k", type: "api-key" as const, secretRef: "LINEAR_K", broker: "env" }] },
+  { connector: "linear-mcp", allows: ["api-key" as const], credentials: [{ id: "k", type: "api-key" as const, secretRef: "LINEAR_MCP_K", broker: "env" }] },
+  { connector: "acme-forms", allows: ["api-key" as const], credentials: [{ id: "k", type: "api-key" as const, secretRef: "ACME_K", broker: "env" }] },
+];
+
 import type { Binding, Bundle } from "../agent/access/bundle.js";
 import { setConnectorContentOrigin, declaredContentOriginForConnection, declaredContentOriginForToolName } from "../agent/access/connector-content-origin-state.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
@@ -540,9 +548,9 @@ console.log("5. the plumbed metadata:");
 console.log("6. connector grantContentOrigin, end to end:");
 {
   const bundles: Bundle[] = [
-    { name: "vouched", connectors: [{ name: "notion", contentOrigin: "internal" }] },
-    { name: "silent", connectors: ["linear-mcp"] },
-    { name: "declared-external", connectors: [{ name: "acme-forms", contentOrigin: "external" }] },
+    { name: "vouched", connectors: [{ name: "notion", credential: "k", contentOrigin: "internal" }] },
+    { name: "silent", connectors: [{ name: "linear-mcp", credential: "k" }] },
+    { name: "declared-external", connectors: [{ name: "acme-forms", credential: "k", contentOrigin: "external" }] },
   ];
   const bindings: Binding[] = [
     { bundle: "vouched", scope: { level: "domain", domain: "d" } },
@@ -553,6 +561,8 @@ console.log("6. connector grantContentOrigin, end to end:");
     { mode: "channel", platform: "slack", workspace: "T1", channel: "C1", domains: ["d"] },
     bundles,
     bindings,
+    {},
+    CATALOGUES,
   );
 
   eq(declaredContentOriginForConnection("notion"), undefined, "with NOTHING stamped (no eve context) the declaration is undefined — fail-closed, and setConnectorContentOrigin below is what changes that");

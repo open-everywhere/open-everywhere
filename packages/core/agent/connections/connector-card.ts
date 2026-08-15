@@ -5,8 +5,8 @@ import { roleForBinding } from "../access/roles.js";
 import { deploymentOrg, type SurfaceBinding } from "../identity/binding.js";
 import { rawVaultSubject } from "../identity/oauth-vault-share.js";
 import type { Domain } from "../memory/domain.js";
-import type { Provider, ProviderCredentialType } from "../access/providers.js";
-import { vercelConnectorOf } from "../access/providers.js";
+import type { ConnectorCredentials, ConnectorCredentialType } from "../access/connector-credentials.js";
+import { vercelConnectorOf } from "../access/connector-credentials.js";
 import {
   AUTH_URL_TTL_MS,
   defaultConnectorAuthStarter,
@@ -27,19 +27,19 @@ function buttonText(o: ConnectorOption): string {
 }
 
 export function buildConnectCard(
-  providerName: string,
+  connectorName: string,
   options: readonly ConnectorOption[],
   org: string,
 ): { blocks: unknown[]; text: string } {
   const header = {
     type: "section",
-    text: { type: "mrkdwn", text: `🔌 Connect *${providerName}* — choose how to authorize:` },
+    text: { type: "mrkdwn", text: `🔌 Connect *${connectorName}* — choose how to authorize:` },
   };
   const buttons = options
     .filter((o) => o.route.kind === "modal" || o.route.kind === "url")
     .map((o) => ({
       type: "button",
-      action_id: `${OE_CONNECT_ACTION_PREFIX}${providerName}:${o.credentialType}`,
+      action_id: `${OE_CONNECT_ACTION_PREFIX}${connectorName}:${o.credentialType}`,
       value: org,
       ...(o.credentialType === "user-oauth" ? { style: "primary" } : {}),
       text: { type: "plain_text", text: buttonText(o) },
@@ -53,7 +53,7 @@ export function buildConnectCard(
       elements: [{ type: "mrkdwn", text: `*${optionLabel(o)}*: ${o.route.reason ?? "not available on this surface."}` }],
     });
   }
-  return { blocks, text: `Connect ${providerName} — choose how to authorize.` };
+  return { blocks, text: `Connect ${connectorName} — choose how to authorize.` };
 }
 
 async function mintOAuthUrl(
@@ -65,20 +65,20 @@ async function mintOAuthUrl(
 }
 
 export async function renderNonSlackConnect(
-  providerName: string,
+  connectorName: string,
   options: readonly ConnectorOption[],
   ctx: { readonly mode: ConnectMode; readonly principalId?: string; readonly org: string; readonly platform: string; readonly workspace?: string },
   startAuth: ConnectorAuthorizationStarter = defaultConnectorAuthStarter,
   issuePageLink?: (o: ConnectorOption) => Promise<string | undefined>,
 ): Promise<{ text: string; issued: ConnectorOption[] }> {
-  const lines: string[] = [`Connect *${providerName}*:`];
+  const lines: string[] = [`Connect *${connectorName}*:`];
   const issued: ConnectorOption[] = [];
   for (const o of options) {
     if (o.credentialType === "service-oauth") {
       lines.push(
         o.dashboardUrl
           ? `• *${optionLabel(o)}* — a Vercel team member authorizes the org account on the dashboard: ${o.dashboardUrl}`
-          : `• *${optionLabel(o)}* — an operator authorizes the org account on the provider's admin dashboard.`,
+          : `• *${optionLabel(o)}* — an operator authorizes the org account on the vendor's admin dashboard.`,
       );
       continue;
     }
@@ -121,7 +121,7 @@ export interface ConnectorCardDeps {
   readonly post?: PostFn;
   readonly startAuth?: ConnectorAuthorizationStarter;
   readonly requestIntake?: (input: Parameters<typeof requestCredentialIntake>[0], deps?: CredentialIntakeDeps) => Promise<{ id: string }>;
-  readonly loadProviders?: () => readonly Provider[];
+  readonly loadConnectorCredentials?: () => readonly ConnectorCredentials[];
   readonly loadDomains?: () => readonly Domain[];
   readonly now?: () => Date;
 }
@@ -167,22 +167,22 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
   try {
     const rest = actionId.slice(OE_CONNECT_ACTION_PREFIX.length);
     const sep = rest.lastIndexOf(":");
-    const providerName = sep > 0 ? rest.slice(0, sep) : undefined;
-    const type = (sep > 0 ? rest.slice(sep + 1) : undefined) as ProviderCredentialType | undefined;
+    const connectorName = sep > 0 ? rest.slice(0, sep) : undefined;
+    const type = (sep > 0 ? rest.slice(sep + 1) : undefined) as ConnectorCredentialType | undefined;
     const org = typeof action?.value === "string" ? action.value : undefined;
     const clickerId = typeof p?.user?.id === "string" ? p.user.id : undefined;
     const channelId = typeof p?.channel?.id === "string" ? p.channel.id : undefined;
     const teamId = typeof p?.team?.id === "string" ? p.team.id : undefined;
 
-    if (!providerName || !type || !org || !clickerId || !channelId) {
-      console.error(`[open-everywhere:connector] malformed oe_connect click "${actionId}" — missing provider/type/org/user/channel; ignoring`);
+    if (!connectorName || !type || !org || !clickerId || !channelId) {
+      console.error(`[open-everywhere:connector] malformed oe_connect click "${actionId}" — missing connector/type/org/user/channel; ignoring`);
       return true;
     }
 
-    const providers = deps.loadProviders ? deps.loadProviders() : (getConfig().loadProviders?.() ?? []);
-    const provider = providers.find((pr) => pr.name === providerName);
-    const cred = provider ? offerableCredential(provider, type) : undefined;
-    if (!provider || !cred) {
+    const catalogues = deps.loadConnectorCredentials ? deps.loadConnectorCredentials() : (getConfig().loadConnectorCredentials?.() ?? []);
+    const catalogue = catalogues.find((c) => c.connector === connectorName);
+    const cred = catalogue ? offerableCredential(catalogue, type) : undefined;
+    if (!catalogue || !cred) {
       await ephemeral(post, channelId, clickerId, "This connect option is no longer available.");
       return true;
     }
@@ -197,11 +197,11 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
       }
       const userConnector = vercelConnectorOf(cred);
       if (!userConnector) {
-        await ephemeral(post, channelId, clickerId, "This provider isn't configured for personal OAuth (no connector id). Ask an operator.");
+        await ephemeral(post, channelId, clickerId, "This connector isn't configured for personal OAuth (no OAuth connector id). Ask an operator.");
         return true;
       }
       return await mintAndDeliverOAuth(post, startAuth, {
-        org, teamId, channelId, clickerId, providerName, vercelConnector: userConnector,
+        org, teamId, channelId, clickerId, connectorName, vercelConnector: userConnector,
         subject: { type: "user", id: rawVaultSubject(deploymentOrg(), "slack", teamId, clickerId) }, subjectLabel: "user",
       });
     }
@@ -217,14 +217,14 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
         channelId,
         clickerId,
         dash
-          ? `Connecting the *org* ${providerName} account is completed on the Vercel dashboard (needs a Vercel team member): ${dash} — authorize there, then ask me again.`
-          : `Connecting the *org* ${providerName} account is done by an operator on the provider's admin dashboard — no self-serve link is configured for it here.`,
+          ? `Connecting the *org* ${connectorName} account is completed on the Vercel dashboard (needs a Vercel team member): ${dash} — authorize there, then ask me again.`
+          : `Connecting the *org* ${connectorName} account is done by an operator on the vendor's admin dashboard — no self-serve link is configured for it here.`,
       );
       await appendAudit({
         ...connectWhere(org, teamId, channelId),
         principalId: clickerId,
         action: "connector.dashboard_link_issued",
-        detail: { provider: providerName, configured: Boolean(dash) },
+        detail: { connector: connectorName, configured: Boolean(dash) },
       });
       return true;
     }
@@ -236,21 +236,21 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
         return true;
       }
       if (!cred.secretRef) {
-        await ephemeral(post, channelId, clickerId, "This provider's API-key credential has no configured storage ref. Ask an operator.");
+        await ephemeral(post, channelId, clickerId, "This connector's API-key credential has no configured storage ref. Ask an operator.");
         return true;
       }
       const requestIntake = deps.requestIntake ?? requestCredentialIntake;
       const ref = deriveCredentialRef({
-        provider: providerName,
+        provider: connectorName,
         credentialId: cred.id,
       });
       if (!ref) {
-        await ephemeral(post, channelId, clickerId, "This provider's API-key credential has no resolvable storage home. Ask an operator.");
+        await ephemeral(post, channelId, clickerId, "This connector's API-key credential has no resolvable storage home. Ask an operator.");
         return true;
       }
       await requestIntake({
         org,
-        provider: providerName,
+        provider: connectorName,
         ...(role.domain ? { domain: role.domain } : {}),
         ref,
         requestedBy: clickerId,
@@ -276,7 +276,7 @@ async function mintAndDeliverOAuth(
     readonly teamId?: string;
     readonly channelId: string;
     readonly clickerId: string;
-    readonly providerName: string;
+    readonly connectorName: string;
     readonly vercelConnector: string;
     readonly subject: { readonly type: "user"; readonly id: string } | { readonly type: "app" };
     readonly subjectLabel: "user" | "app";
@@ -286,7 +286,7 @@ async function mintAndDeliverOAuth(
   try {
     url = (await startAuth(ctx.vercelConnector, { subject: ctx.subject }, { expiresInMs: AUTH_URL_TTL_MS })).url;
   } catch (err) {
-    console.error(`[open-everywhere:connector] oauth mint failed for ${ctx.providerName} (${ctx.subjectLabel}): ${String(err)}`);
+    console.error(`[open-everywhere:connector] oauth mint failed for ${ctx.connectorName} (${ctx.subjectLabel}): ${String(err)}`);
     await ephemeral(post, ctx.channelId, ctx.clickerId, "Couldn't start the connect flow just now — the connector isn't fully provisioned on this deployment. Ask an operator.");
     return true;
   }
@@ -295,13 +295,13 @@ async function mintAndDeliverOAuth(
     post,
     ctx.channelId,
     ctx.clickerId,
-    `Open this link to connect ${who} *${ctx.providerName}* account (expires soon): ${url}`,
+    `Open this link to connect ${who} *${ctx.connectorName}* account (expires soon): ${url}`,
   );
   await appendAudit({
     ...connectWhere(ctx.org, ctx.teamId, ctx.channelId),
     principalId: ctx.clickerId,
     action: "connector.oauth_url_issued",
-    detail: { provider: ctx.providerName, subject: ctx.subjectLabel },
+    detail: { connector: ctx.connectorName, subject: ctx.subjectLabel },
   });
   return true;
 }

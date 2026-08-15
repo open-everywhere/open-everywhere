@@ -1,8 +1,8 @@
 import { credentialEndpointProblems, type CredentialEndpointRules } from "./credential-endpoints.js";
 
-export type ProviderCredentialType = "api-key" | "service-oauth" | "user-oauth";
+export type ConnectorCredentialType = "api-key" | "service-oauth" | "user-oauth";
 
-export function principalOf(type: ProviderCredentialType): "app" | "user" {
+export function principalOf(type: ConnectorCredentialType): "app" | "user" {
   return type === "user-oauth" ? "user" : "app";
 }
 
@@ -17,7 +17,7 @@ export interface CredentialLifecycle {
 
 export interface HumanActingSupport {
   readonly supported: boolean;
-  readonly credentialTypes?: readonly ProviderCredentialType[];
+  readonly credentialTypes?: readonly ConnectorCredentialType[];
   readonly reason?: string;
 }
 
@@ -30,17 +30,17 @@ export function isHumanActing(cred: { readonly grantFamily?: CredentialGrantFami
 }
 
 export function principalOfCredential(cred: {
-  readonly type: ProviderCredentialType;
+  readonly type: ConnectorCredentialType;
   readonly grantFamily?: CredentialGrantFamily;
 }): "app" | "user" {
   return isHumanActing(cred) ? "user" : principalOf(cred.type);
 }
 
-export function humanActingSupport(provider: {
+export function humanActingSupport(cfg: {
   readonly humanActing?: HumanActingSupport;
 }): "undeclared" | "vendor-incapable" | "supported" {
-  if (!provider.humanActing) return "undeclared";
-  return provider.humanActing.supported ? "supported" : "vendor-incapable";
+  if (!cfg.humanActing) return "undeclared";
+  return cfg.humanActing.supported ? "supported" : "vendor-incapable";
 }
 
 export interface CredentialHomeRef {
@@ -60,9 +60,9 @@ export function vercelConnectorOf(cred: { readonly home?: CredentialHomeRef }): 
   return typeof c === "string" ? c : undefined;
 }
 
-export interface ProviderCredential {
+export interface ConnectorCredential {
   readonly id: string;
-  readonly type: ProviderCredentialType;
+  readonly type: ConnectorCredentialType;
   readonly grantFamily?: CredentialGrantFamily;
   readonly lifecycle?: CredentialLifecycle;
   readonly secretRef?: string;
@@ -73,26 +73,19 @@ export interface ProviderCredential {
   readonly endpoints?: CredentialEndpointRules;
 }
 
-export interface Provider {
-  readonly name: string;
-  readonly connection: string;
-  readonly allows: readonly ProviderCredentialType[];
-  readonly credentials: readonly ProviderCredential[];
+export interface ConnectorCredentials {
+  readonly connector: string;
+  readonly allows: readonly ConnectorCredentialType[];
+  readonly credentials: readonly ConnectorCredential[];
   readonly humanActing?: HumanActingSupport;
   readonly skill?: string;
   readonly description?: string;
 }
 
-export interface ProviderGrant {
-  readonly provider: string;
-  readonly credential: string;
-}
-
 export interface ResolvedConnectorCredential {
-  readonly connection: string;
-  readonly provider: string;
+  readonly connector: string;
   readonly credential: string;
-  readonly type: ProviderCredentialType;
+  readonly type: ConnectorCredentialType;
   readonly grantFamily: CredentialGrantFamily;
   readonly principal: "app" | "user";
   readonly secretRef?: string;
@@ -101,13 +94,13 @@ export interface ResolvedConnectorCredential {
   readonly endpoints?: CredentialEndpointRules;
 }
 
-export function defineProvider(p: Provider): Provider {
-  return p;
+export function defineConnectorCredentials(c: ConnectorCredentials): ConnectorCredentials {
+  return c;
 }
 
 export interface ExclusiveCredentialHome {
   readonly name: string;
-  readonly validFor: readonly ProviderCredentialType[];
+  readonly validFor: readonly ConnectorCredentialType[];
   validateConfig(config: Readonly<Record<string, unknown>>, where: string): void;
 }
 
@@ -139,42 +132,45 @@ function registerCoreExclusiveHomes(): void {
 }
 registerCoreExclusiveHomes();
 
-export function assertProvidersValid(providers: readonly Provider[]): void {
+export function assertConnectorCredentialsValid(catalogues: readonly ConnectorCredentials[]): void {
   const seen = new Set<string>();
-  for (const p of providers) {
-    if (!p.name) throw new Error("provider: missing name");
-    if (seen.has(p.name)) throw new Error(`provider "${p.name}": duplicate name`);
-    seen.add(p.name);
-    if (!p.connection) throw new Error(`provider "${p.name}": missing connection slug`);
-    if (!p.allows.length) throw new Error(`provider "${p.name}": empty credential allowlist`);
+  for (const p of catalogues) {
+    if (!p.connector) throw new Error("connector credentials: missing connector slug");
+    if (seen.has(p.connector)) {
+      throw new Error(
+        `connector "${p.connector}": a second credential catalogue names the same connector — one catalogue per connector, so merge the credential lists`,
+      );
+    }
+    seen.add(p.connector);
+    if (!p.allows.length) throw new Error(`connector "${p.connector}": empty credential allowlist`);
 
     if (p.humanActing) {
       const ha = p.humanActing;
       if (ha.supported) {
         if (!ha.credentialTypes?.length) {
           throw new Error(
-            `provider "${p.name}": humanActing.supported requires a non-empty credentialTypes — name which credential type(s) carry the human-acting grant for this vendor (it is a SEPARATE mint from the install credential, so it has its own type)`,
+            `connector "${p.connector}": humanActing.supported requires a non-empty credentialTypes — name which credential type(s) carry the human-acting grant for this vendor (it is a SEPARATE mint from the install credential, so it has its own type)`,
           );
         }
         for (const t of ha.credentialTypes) {
           if (!p.allows.includes(t)) {
             throw new Error(
-              `provider "${p.name}": humanActing.credentialTypes lists "${t}", which is not in the connection's allowlist (${p.allows.join(", ")}) — a human-acting grant still has to be a type the connection accepts`,
+              `connector "${p.connector}": humanActing.credentialTypes lists "${t}", which is not in the connection's allowlist (${p.allows.join(", ")}) — a human-acting grant still has to be a type the connection accepts`,
             );
           }
         }
         if (new Set(ha.credentialTypes).size !== ha.credentialTypes.length) {
-          throw new Error(`provider "${p.name}": humanActing.credentialTypes has duplicates`);
+          throw new Error(`connector "${p.connector}": humanActing.credentialTypes has duplicates`);
         }
       } else {
         if (!ha.reason) {
           throw new Error(
-            `provider "${p.name}": humanActing.supported:false requires a \`reason\` — record the STRUCTURAL vendor fact (e.g. "no scope combination lets an app post chat as a human"), so "the vendor cannot do this" never reads as "nobody configured it"`,
+            `connector "${p.connector}": humanActing.supported:false requires a \`reason\` — record the STRUCTURAL vendor fact (e.g. "no scope combination lets an app post chat as a human"), so "the vendor cannot do this" never reads as "nobody configured it"`,
           );
         }
         if (ha.credentialTypes) {
           throw new Error(
-            `provider "${p.name}": humanActing.supported:false must NOT list credentialTypes — the vendor cannot issue a human-acting credential of any type`,
+            `connector "${p.connector}": humanActing.supported:false must NOT list credentialTypes — the vendor cannot issue a human-acting credential of any type`,
           );
         }
       }
@@ -182,9 +178,9 @@ export function assertProvidersValid(providers: readonly Provider[]): void {
 
     const credIds = new Set<string>();
     for (const c of p.credentials) {
-      if (credIds.has(c.id)) throw new Error(`provider "${p.name}": duplicate credential id "${c.id}"`);
+      if (credIds.has(c.id)) throw new Error(`connector "${p.connector}": duplicate credential id "${c.id}"`);
       credIds.add(c.id);
-      const where = `provider "${p.name}" credential "${c.id}"`;
+      const where = `connector "${p.connector}" credential "${c.id}"`;
 
       if (c.home) {
         const h = EXCLUSIVE_HOMES.get(c.home.kind);
@@ -215,17 +211,17 @@ export function assertProvidersValid(providers: readonly Provider[]): void {
         const state = humanActingSupport(p);
         if (state === "undeclared") {
           throw new Error(
-            `${where}: grantFamily "human-acting" needs provider "${p.name}" to DECLARE \`humanActing\` support first. It is undeclared — which is not the same as unsupported: research the vendor and declare either { supported: true, credentialTypes: [...] } or { supported: false, reason: "..." }.`,
+            `${where}: grantFamily "human-acting" needs connector "${p.connector}" to DECLARE \`humanActing\` support first. It is undeclared — which is not the same as unsupported: research the vendor and declare either { supported: true, credentialTypes: [...] } or { supported: false, reason: "..." }.`,
           );
         }
         if (state === "vendor-incapable") {
           throw new Error(
-            `${where}: provider "${p.name}" is declared STRUCTURALLY INCAPABLE of a human-acting credential — ${p.humanActing?.reason ?? "no reason recorded"}. This is a VENDOR limitation, not a configuration gap: no credential, scope, or broker change can grant it.`,
+            `${where}: connector "${p.connector}" is declared STRUCTURALLY INCAPABLE of a human-acting credential — ${p.humanActing?.reason ?? "no reason recorded"}. This is a VENDOR limitation, not a configuration gap: no credential, scope, or broker change can grant it.`,
           );
         }
         if (!p.humanActing?.credentialTypes?.includes(c.type)) {
           throw new Error(
-            `${where}: a ${c.type} credential cannot carry provider "${p.name}"'s human-acting grant (declared for: ${p.humanActing?.credentialTypes?.join(", ") ?? "none"}) — "act as a user" is a distinct mint with a distinct token shape, not a mode of any credential you happen to hold`,
+            `${where}: a ${c.type} credential cannot carry connector "${p.connector}"'s human-acting grant (declared for: ${p.humanActing?.credentialTypes?.join(", ") ?? "none"}) — "act as a user" is a distinct mint with a distinct token shape, not a mode of any credential you happen to hold`,
           );
         }
       }
@@ -247,19 +243,24 @@ export function assertProvidersValid(providers: readonly Provider[]): void {
   }
 }
 
-export function expandProviderGrant(
-  grant: ProviderGrant,
-  provider: Provider | undefined,
+export function expandConnectorGrant(
+  grant: { readonly name: string; readonly credential: string },
+  cfg: ConnectorCredentials | undefined,
   opts: { readonly dm: boolean },
 ): { resolved: ResolvedConnectorCredential | null; warnings: readonly string[] } {
-  if (!provider) {
-    return { resolved: null, warnings: [`grant references unknown provider "${grant.provider}" — ignored`] };
+  if (!cfg) {
+    return {
+      resolved: null,
+      warnings: [
+        `grant names connector "${grant.name}", which has no credential catalogue in this deployment's config — ignored`,
+      ],
+    };
   }
-  const cred = provider.credentials.find((c) => c.id === grant.credential);
+  const cred = cfg.credentials.find((c) => c.id === grant.credential);
   if (!cred) {
     return {
       resolved: null,
-      warnings: [`provider "${provider.name}": grant references unknown credential "${grant.credential}" — ignored`],
+      warnings: [`connector "${cfg.connector}": grant references unknown credential "${grant.credential}" — ignored`],
     };
   }
   const principal = principalOfCredential(cred);
@@ -269,26 +270,25 @@ export function expandProviderGrant(
     return {
       resolved: null,
       warnings: [
-        `provider "${provider.name}": credential "${cred.id}" is user-principal (${why}) — ` +
+        `connector "${cfg.connector}": credential "${cred.id}" is user-principal (${why}) — ` +
           `personal credentials resolve only in DMs, never on a channel/domain binding. Ignored.`,
       ],
     };
   }
 
-  if (!provider.allows.includes(cred.type)) {
+  if (!cfg.allows.includes(cred.type)) {
     return {
       resolved: null,
       warnings: [
-        `provider "${provider.name}": credential "${cred.id}" (${cred.type}) is not in the connection's ` +
-          `allowlist (${provider.allows.join(", ")}) — ignored`,
+        `connector "${cfg.connector}": credential "${cred.id}" (${cred.type}) is not in the connection's ` +
+          `allowlist (${cfg.allows.join(", ")}) — ignored`,
       ],
     };
   }
 
   return {
     resolved: {
-      connection: provider.connection,
-      provider: provider.name,
+      connector: cfg.connector,
       credential: cred.id,
       type: cred.type,
       grantFamily: grantFamilyOf(cred),
@@ -302,17 +302,17 @@ export function expandProviderGrant(
   };
 }
 
-let registeredProviders: readonly Provider[] = [];
+let registeredConnectorCredentials: readonly ConnectorCredentials[] = [];
 
-export function setRegisteredProviders(providers: readonly Provider[]): void {
-  registeredProviders = providers;
+export function setRegisteredConnectorCredentials(catalogues: readonly ConnectorCredentials[]): void {
+  registeredConnectorCredentials = catalogues;
 }
 
-export function resetRegisteredProviders(): void {
-  registeredProviders = [];
+export function resetRegisteredConnectorCredentials(): void {
+  registeredConnectorCredentials = [];
 }
 
-export function findProviderCredential(providerName: string, credentialId: string): ProviderCredential | undefined {
-  const provider = registeredProviders.find((p) => p.name === providerName);
-  return provider?.credentials.find((c) => c.id === credentialId);
+export function findConnectorCredential(connector: string, credentialId: string): ConnectorCredential | undefined {
+  const cfg = registeredConnectorCredentials.find((c) => c.connector === connector);
+  return cfg?.credentials.find((c) => c.id === credentialId);
 }

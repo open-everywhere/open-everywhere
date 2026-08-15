@@ -170,7 +170,7 @@ async function grantedForCtx(ctx: BindableContext): Promise<readonly string[] | 
 export async function boundConnectorCredential(
   connection: string,
   auth: SessionAuth,
-): Promise<import("./providers.js").ResolvedConnectorCredential | null> {
+): Promise<import("./connector-credentials.js").ResolvedConnectorCredential | null> {
   const ctx = await surfaceContextFromAuth(auth);
   if (!ctx) return null;
   try {
@@ -218,8 +218,9 @@ export async function assertConnectorGranted(connectionName: string, auth: Sessi
     await auditConnectorGate(ctx, "connector.refused", { connection: connectionName, reason: "ungranted" });
     throw new ConnectorScopeError(
       `connection "${connectionName}" is not granted to this surface. ` +
-        `Grant it with \`connectors: ["${connectionName}"]\` on a bundle bound to this scope ` +
-        `(see agent/access/bundles.ts).`,
+        `Grant it with \`connectors: [{ name: "${connectionName}", credential: "<id>", contentOrigin: "internal" | "external" }]\` ` +
+        `on a bundle bound to this scope — the credential ids come from that connector's catalogue in ` +
+        `agent/access/connector-credentials.ts (see agent/access/bundles.ts).`,
     );
   }
   let mode: string | undefined;

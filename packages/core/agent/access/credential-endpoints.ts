@@ -185,7 +185,7 @@ export function assertCredentialEndpointAllowed(
     `${where}: BLOCKED ${method.toUpperCase()} ${target} — ${verdict.reason}. ` +
       `The credential was NOT attached. This is an endpoint rule on the credential itself ` +
       `(access/credential-endpoints.ts), so it blocks a wrong-credential bug in the calling code rather ` +
-      `than a network policy. Correct the call, or widen the credential's \`endpoints\` in agent/access/providers.ts.`,
+      `than a network policy. Correct the call, or widen the credential's \`endpoints\` in agent/access/connector-credentials.ts.`,
   );
 }
 

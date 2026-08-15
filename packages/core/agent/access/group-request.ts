@@ -59,5 +59,5 @@ export async function resolveAccessForWithGroups(ctx: BindableContext): Promise<
   const cfg = getConfig();
   const acting = actingPrincipalId(bindFrom(ctx));
   const req = acting === undefined ? buildResolveRequest(ctx) : await buildResolveRequestWithGroups(ctx);
-  return resolveAccess(req, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry, cfg.loadProviders?.() ?? []);
+  return resolveAccess(req, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry, cfg.loadConnectorCredentials?.() ?? []);
 }

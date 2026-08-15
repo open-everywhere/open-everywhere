@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { handleNotionDelivery } from "../agent/channels/notion-webhook.js";
 import { resolveNotionCredential, type FetchLike } from "../agent/channels/notion-api.js";
 import { NOTION_CHANNEL_CREDENTIAL } from "../agent/channels/notion-credentials.js";
-import { registerBroker, resetBrokers, setRegisteredProviders, type CredentialEndpointRules } from "@open-everywhere/core/agent/adapter-api.js";
+import { registerBroker, resetBrokers, setRegisteredConnectorCredentials, type CredentialEndpointRules } from "@open-everywhere/core/agent/adapter-api.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -24,10 +24,9 @@ const BODY = JSON.stringify({ type: "comment.created", workspace_id: WS, entity:
 function armCredential(rules: CredentialEndpointRules | undefined): void {
   resetBrokers();
   registerBroker("test", { async getSecret() { return TOKEN; } });
-  setRegisteredProviders([
+  setRegisteredConnectorCredentials([
     {
-      name: "notion",
-      connection: "notion",
+      connector: "notion",
       allows: ["api-key"],
       credentials: [
         {

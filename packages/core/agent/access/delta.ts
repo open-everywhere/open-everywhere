@@ -4,6 +4,7 @@ import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 import { tenantRungRemedy } from "./tenant-admission.js";
 import { groupWidth } from "./lint.js";
 import type { EffectiveAccess } from "./resolver.js";
+import type { ConnectorCredentials as ConnectorCredentialsCatalogue } from "./connector-credentials.js";
 
 export const OUT_OF_VOCABULARY =
   "that isn't something I can request automatically — an admin needs to PR this by hand (edit agent/access/bundles.ts in the config repo).";
@@ -70,6 +71,7 @@ export interface WidenConnectionDelta extends DeltaBase {
 export interface GrantConnectorDelta extends DeltaBase {
   readonly kind: "grant-connector";
   readonly connector: string;
+  readonly credential: string;
 }
 
 export type AccessDelta = WidenConnectionDelta | GrantConnectorDelta;
@@ -80,6 +82,7 @@ export interface AccessAsk {
   readonly addMethods?: readonly string[];
   readonly addPathPrefixes?: readonly string[];
   readonly connector?: string;
+  readonly credential?: string;
   readonly reason?: string;
 }
 
@@ -87,6 +90,7 @@ export interface PlanContext {
   readonly scope: RequestingScope;
   readonly access: EffectiveAccess;
   readonly bundles: readonly Bundle[];
+  readonly connectorCredentials?: readonly ConnectorCredentialsCatalogue[];
   readonly groups?: readonly Group[];
 }
 
@@ -96,6 +100,14 @@ function isHttpMethod(v: string): v is HttpMethod {
 
 export function definedConnectors(bundles: readonly Bundle[]): readonly string[] {
   return [...new Set(bundles.flatMap((b) => bundleConnectorNames(b)))].sort();
+}
+
+export function definedConnectorCredentials(
+  catalogues: readonly ConnectorCredentialsCatalogue[],
+  connector: string,
+): readonly string[] {
+  const cfg = catalogues.find((c) => c.connector === connector);
+  return [...(cfg?.credentials ?? [])].map((c) => c.id).sort();
 }
 
 export function scopeWhere(scope: RequestingScope): string {
@@ -228,7 +240,27 @@ function planGrantConnector(ask: AccessAsk, ctx: PlanContext, allowBroad: string
     );
   }
 
-  return { kind: "grant-connector", scope: ctx.scope, ...(allowBroad ? { allowBroad } : {}), connector: name };
+  const configured = definedConnectorCredentials(ctx.connectorCredentials ?? [], name);
+  const credential = ask.credential?.trim();
+  if (!credential) {
+    throw new Error(
+      `grant-connector needs the credential to reach "${name}" as (configured: ${configured.length ? configured.join(", ") : "none"}) — ` +
+        `every grant names its identity, so ask again naming one of those.`,
+    );
+  }
+  if (!configured.includes(credential)) {
+    throw new Error(
+      `connector "${name}" has no credential "${credential}" configured (configured: ${configured.length ? configured.join(", ") : "none"}) — ${OUT_OF_VOCABULARY}`,
+    );
+  }
+
+  return {
+    kind: "grant-connector",
+    scope: ctx.scope,
+    ...(allowBroad ? { allowBroad } : {}),
+    connector: name,
+    credential,
+  };
 }
 
 export function planAccessDelta(ask: AccessAsk, ctx: PlanContext): AccessDelta {
@@ -250,7 +282,7 @@ export function planAccessDelta(ask: AccessAsk, ctx: PlanContext): AccessDelta {
 export function grantSentence(delta: AccessDelta): string {
   const where = scopeWhere(delta.scope);
   if (delta.kind === "grant-connector") {
-    return `Grant connector "${delta.connector}" to ${where}`;
+    return `Grant connector "${delta.connector}" (as credential "${delta.credential}") to ${where}`;
   }
   const parts: string[] = [];
   if (delta.addMethods.length > 0) parts.push(`method${delta.addMethods.length > 1 ? "s" : ""} ${delta.addMethods.join(", ")}`);
@@ -261,7 +293,7 @@ export function grantSentence(delta: AccessDelta): string {
 export function renderDelta(delta: AccessDelta): string[] {
   const ack = delta.allowBroad ? [`  allowBroad: ${delta.allowBroad}`] : [];
   if (delta.kind === "grant-connector") {
-    return ["```" + [`grant-connector: ${delta.connector} → ${scopeTarget(delta.scope)}`, ...ack].join("\n") + "```"];
+    return ["```" + [`grant-connector: ${delta.connector} (credential ${delta.credential}) → ${scopeTarget(delta.scope)}`, ...ack].join("\n") + "```"];
   }
   const lines = [
     `widen-connection: ${delta.connectionId} → ${scopeTarget(delta.scope)}`,

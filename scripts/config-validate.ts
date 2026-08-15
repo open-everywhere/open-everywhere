@@ -1,6 +1,6 @@
 import "../agent/lib/register-config.js";
 import { loadBindings, loadBundles } from "../agent/access/bundles.js";
-import { loadProviders } from "../agent/access/providers.js";
+import { loadConnectorCredentials } from "../agent/access/connector-credentials.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
 import { loadDomains, domainsForSurface } from "../agent/memory/domains.js";
 import { loadGroups } from "../agent/identity/groups.js";
@@ -26,7 +26,7 @@ for (const scope of boundScopes()) {
     channel: scope.channel,
     domains: domainsForSurface({ workspaceKey: `${scope.platform}/${scope.workspace}`, surface: scope.channel }),
   };
-  const access = resolveAccess(req, loadBundles(), loadBindings(), PLUGIN_REGISTRY, loadProviders());
+  const access = resolveAccess(req, loadBundles(), loadBindings(), PLUGIN_REGISTRY, loadConnectorCredentials());
   try {
     const policy = await compileNetworkPolicy(access, async () => ({ authorization: "<redacted>" }), async (ids) => ids);
     if (access.reachableHosts.length === 0 && policy !== "deny-all") {
@@ -46,14 +46,14 @@ for (const scope of boundScopes()) {
     loadBundles(),
     loadBindings(),
     PLUGIN_REGISTRY,
-    loadProviders(),
+    loadConnectorCredentials(),
   );
   const unbound = resolveAccess(
     { mode: "channel", platform: "slack", workspace: "T__UNBOUND__", channel: "C__UNBOUND__", domains: [] },
     loadBundles(),
     loadBindings(),
     PLUGIN_REGISTRY,
-    loadProviders(),
+    loadConnectorCredentials(),
   );
   const widened =
     unbound.connections.length > orgOnly.connections.length ||

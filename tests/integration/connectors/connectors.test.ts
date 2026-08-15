@@ -180,7 +180,12 @@ test("D — request_access grant-connector for an ungranted connector mints a re
         calls: [
           {
             tool: "request_access",
-            input: { kind: "grant-connector", connector: "notion", reason: "need Notion search for the weekly summary" },
+            input: {
+              kind: "grant-connector",
+              connector: "notion",
+              credential: "team-key",
+              reason: "need Notion search for the weekly summary",
+            },
             id: "d1-request",
           },
         ],

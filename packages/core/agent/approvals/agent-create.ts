@@ -100,7 +100,7 @@ function prBody(args: AgentCreateArgs, decidedBy: string): string {
     "This provisions, as ONE reviewable diff to the agents overlay:",
     `- a memory DOMAIN \`${inlineForReview(s.name)}\` whose roster is this channel;`,
     `- ${agentMemoryClause(s)};`,
-    `- an access BUNDLE \`${inlineForReview(agentBundleName(s))}\`${s.connectors && s.connectors.length ? ` granting connector(s) ${s.connectors.map((c) => `\`${inlineForReview(c)}\``).join(", ")}` : " (no connectors)"}, bound to that domain.`,
+    `- an access BUNDLE \`${inlineForReview(agentBundleName(s))}\`${s.connectors && s.connectors.length ? ` granting connector(s) ${s.connectors.map((c) => `\`${inlineForReview(c.name)}\` (as \`${inlineForReview(c.credential)}\`)`).join(", ")}` : " (no connectors)"}, bound to that domain.`,
     "",
     "```json",
     JSON.stringify(s, null, 2),
@@ -241,7 +241,7 @@ const agentCreate: ActionKind<AgentCreateArgs> = {
     return [
       `Open a PR provisioning a new agent — ${agentSentence(s)}`,
       `Memory: ${agentMemoryClause(s)}.`,
-      `Capabilities: bundle \`${inlineForReview(agentBundleName(s))}\`${s.connectors && s.connectors.length ? ` — connector(s) ${s.connectors.map((c) => `\`${inlineForReview(c)}\``).join(", ")}` : " — no connectors"}.`,
+      `Capabilities: bundle \`${inlineForReview(agentBundleName(s))}\`${s.connectors && s.connectors.length ? ` — connector(s) ${s.connectors.map((c) => `\`${inlineForReview(c.name)}\` (as \`${inlineForReview(c.credential)}\`)`).join(", ")}` : " — no connectors"}.`,
       ...(s.instructions ? [`Standing instructions: "${inlineForReview(s.instructions)}"`] : []),
       ...(s.exposed ? ["⚠ EXPOSED — reachable by a wider, less-trusted audience; it may only read a curated read-only silo."] : []),
       ...(args.reason ? [`Reason: ${inlineForReview(args.reason)}`] : []),

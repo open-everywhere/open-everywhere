@@ -506,7 +506,7 @@ export function approversForScopeKey(scopeKey: string | undefined, domain: strin
   try {
     const cfg = getConfig();
     const domains = domain !== undefined ? [domain] : cfg.domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: channel });
-    return resolveAccess({ mode: "channel", platform, workspace, channel, domains }, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry, cfg.loadProviders?.() ?? []).approvers;
+    return resolveAccess({ mode: "channel", platform, workspace, channel, domains }, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry, cfg.loadConnectorCredentials?.() ?? []).approvers;
   } catch {
     return [];
   }
@@ -523,7 +523,7 @@ export function preApprovalRulesForScopeKey(
   try {
     const cfg = getConfig();
     const domains = domain !== undefined ? [domain] : cfg.domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: channel });
-    return resolveAccess({ mode: "channel", platform, workspace, channel, domains }, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry, cfg.loadProviders?.() ?? []).preApprovalRules;
+    return resolveAccess({ mode: "channel", platform, workspace, channel, domains }, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry, cfg.loadConnectorCredentials?.() ?? []).preApprovalRules;
   } catch {
     return [];
   }

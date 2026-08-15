@@ -1,8 +1,8 @@
 import { getConfig, type AccessRequestsConfig } from "../access/config.js";
-import { assertProvidersValid, type Provider } from "../access/providers.js";
+import { assertConnectorCredentialsValid, type ConnectorCredentials } from "../access/connector-credentials.js";
 import {
   applyBindingOverride,
-  applyOverridesToProviders,
+  applyOverridesToConnectorCredentials,
   emptyCredentialBindingsFile,
   parseCredentialBindingsModule,
   emitCredentialBindingsModule,
@@ -33,7 +33,7 @@ export interface StageCredentialBindingPrArgs {
 
 export interface CredentialBindingPrDeps {
   readonly config?: AccessRequestsConfig | null;
-  readonly baseProviders?: () => readonly Provider[];
+  readonly baseConnectorCredentials?: () => readonly ConnectorCredentials[];
   readonly bindingsPath?: string;
   readonly dryRun?: boolean;
   readonly provider?: ConfigPrProvider;
@@ -78,9 +78,9 @@ export async function stageCredentialBindingPr(
   if (!cfg?.configRepo) {
     return { staged: false, dryRun: true, skipped: "config repo not configured (loadAccessRequests / OE_ACCESS_CONFIG_REPO) — credential-binding PR skipped" };
   }
-  const baseProvidersFn = deps.baseProviders ?? cfg.baseProviders;
-  if (!baseProvidersFn) {
-    return { staged: false, dryRun: true, skipped: "base providers not registered (AccessRequestsConfig.baseProviders) — credential-binding PR skipped" };
+  const baseCataloguesFn = deps.baseConnectorCredentials ?? cfg.baseConnectorCredentials;
+  if (!baseCataloguesFn) {
+    return { staged: false, dryRun: true, skipped: "base catalogues not registered (AccessRequestsConfig.baseConnectorCredentials) — credential-binding PR skipped" };
   }
 
   const repo = cfg.configRepo;
@@ -99,7 +99,7 @@ export async function stageCredentialBindingPr(
 
   const validateMerged = (file: CredentialBindingsFile): ApplyBindingOverrideResult => {
     const applied = applyBindingOverride(file, override);
-    assertProvidersValid(applyOverridesToProviders(baseProvidersFn(), applied.file.overrides));
+    assertConnectorCredentialsValid(applyOverridesToConnectorCredentials(baseCataloguesFn(), applied.file.overrides));
     return applied;
   };
 

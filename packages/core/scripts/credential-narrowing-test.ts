@@ -9,11 +9,11 @@ import {
   type CredentialEndpointRules,
 } from "../agent/access/credential-endpoints.js";
 import {
-  assertProvidersValid,
-  expandProviderGrant,
-  defineProvider,
-  type Provider,
-} from "../agent/access/providers.js";
+  assertConnectorCredentialsValid,
+  expandConnectorGrant,
+  defineConnectorCredentials,
+  type ConnectorCredentials,
+} from "../agent/access/connector-credentials.js";
 import { registerBroker, resetBrokers, type CredentialBroker } from "../agent/access/credentials.js";
 import { resolveAppTokenFromCred } from "../agent/connections/connector-auth.js";
 import { lintCredentialCollisions } from "../agent/access/lint.js";
@@ -165,36 +165,35 @@ function recordingFetch() {
   ok(base.calls.length === 0, "§4 an init-less call is checked as GET — an omitted method is not an unchecked one");
 }
 
-const providerWith = (endpoints?: CredentialEndpointRules): Provider =>
-  defineProvider({
-    name: "notion",
-    connection: "notion",
+const providerWith = (endpoints?: CredentialEndpointRules): ConnectorCredentials =>
+  defineConnectorCredentials({
+    connector: "notion",
     allows: ["api-key"],
     credentials: [{ id: "channel-key", type: "api-key", secretRef: "db:notion:channel-key", broker: "db", ...(endpoints ? { endpoints } : {}) }],
   });
 
-assert.doesNotThrow(() => assertProvidersValid([providerWith(READ_ONLY)]), "a valid endpoint rule must load");
+assert.doesNotThrow(() => assertConnectorCredentialsValid([providerWith(READ_ONLY)]), "a valid endpoint rule must load");
 n++;
-assert.doesNotThrow(() => assertProvidersValid([providerWith()]), "a credential declaring no endpoint rules must load exactly as before");
+assert.doesNotThrow(() => assertConnectorCredentialsValid([providerWith()]), "a credential declaring no endpoint rules must load exactly as before");
 n++;
 assert.throws(
-  () => assertProvidersValid([providerWith({ hosts: ["*.notion.com"] })]),
+  () => assertConnectorCredentialsValid([providerWith({ hosts: ["*.notion.com"] })]),
   /wildcard/,
   "🔴 §5 a WILDCARD host fails at config load — the fence is validated where the operator can still fix it",
 );
 n++;
-assert.throws(() => assertProvidersValid([providerWith({ hosts: [] })]), /non-empty/, "§5 an empty host list fails at config load");
+assert.throws(() => assertConnectorCredentialsValid([providerWith({ hosts: [] })]), /non-empty/, "§5 an empty host list fails at config load");
 n++;
 
 {
-  const { resolved, warnings } = expandProviderGrant({ provider: "notion", credential: "channel-key" }, providerWith(READ_ONLY), { dm: false });
+  const { resolved, warnings } = expandConnectorGrant({ name: "notion", credential: "channel-key" }, providerWith(READ_ONLY), { dm: false });
   ok(warnings.length === 0, "§5 a valid grant expands cleanly");
   ok(resolved?.endpoints !== undefined, "§5 the endpoint rules SURVIVE grant expansion — a host-side path could not fence itself otherwise");
   ok(resolved?.endpoints?.hosts[0] === "api.notion.com", "§5 …carrying the declared host");
   ok(resolved?.endpoints?.methods?.join(",") === "GET,HEAD", "§5 …and the declared methods");
 }
 {
-  const { resolved } = expandProviderGrant({ provider: "notion", credential: "channel-key" }, providerWith(), { dm: false });
+  const { resolved } = expandConnectorGrant({ name: "notion", credential: "channel-key" }, providerWith(), { dm: false });
   ok(resolved !== null && resolved.endpoints === undefined, "§5 a credential with no rules resolves with none — never an invented default");
 }
 
@@ -224,7 +223,7 @@ asked = [];
 asked = [];
 {
   await assert.rejects(
-    () => resolveAppTokenFromCred(conn, { connection: "notion", provider: "notion", credential: "channel-key", type: "api-key", grantFamily: "install", principal: "app", secretRef: BOUND_REF, broker: BROKER }, undefined),
+    () => resolveAppTokenFromCred(conn, { connector: "notion", credential: "channel-key", type: "api-key", grantFamily: "install", principal: "app", secretRef: BOUND_REF, broker: BROKER }, undefined),
     /401/,
     "a bound credential whose read fails must reject",
   );
@@ -237,7 +236,7 @@ asked = [];
 asked = [];
 {
   await assert.rejects(
-    () => resolveAppTokenFromCred(conn, { connection: "notion", provider: "notion", credential: "oauth", type: "service-oauth", grantFamily: "install", principal: "app", home: { kind: "vercel-connect", config: { connector: "oauth/notion" } } }, undefined),
+    () => resolveAppTokenFromCred(conn, { connector: "notion", credential: "oauth", type: "service-oauth", grantFamily: "install", principal: "app", home: { kind: "vercel-connect", config: { connector: "oauth/notion" } } }, undefined),
     "a service-oauth credential whose mint fails must reject",
   );
   n++;
@@ -247,7 +246,7 @@ asked = [];
 asked = [];
 {
   await assert.rejects(
-    () => resolveAppTokenFromCred({ connector: "notion" }, { connection: "notion", provider: "notion", credential: "channel-key", type: "api-key", grantFamily: "install", principal: "app", secretRef: BOUND_REF, broker: BROKER }, undefined),
+    () => resolveAppTokenFromCred({ connector: "notion" }, { connector: "notion", credential: "channel-key", type: "api-key", grantFamily: "install", principal: "app", secretRef: BOUND_REF, broker: BROKER }, undefined),
     /401/,
     "a failing bound credential with no fallback configured rejects",
   );
@@ -258,7 +257,10 @@ asked = [];
 resetBrokers();
 
 const grants = (name: string, ...pairs: Array<[string, string]>): Bundle =>
-  defineBundle({ name, providers: pairs.map(([provider, credential]) => ({ provider, credential })) });
+  defineBundle({
+    name,
+    connectors: pairs.map(([connector, credential]) => ({ name: connector, credential, contentOrigin: "external" as const })),
+  });
 
 const boundAt = (bundle: string, domain: string): Binding => defineBinding({ bundle, scope: { level: "domain", domain } });
 

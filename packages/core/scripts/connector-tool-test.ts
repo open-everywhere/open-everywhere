@@ -22,8 +22,8 @@ const { buildConnectCard, handleConnectClick, OE_CONNECT_ACTION_PREFIX } = await
 const { AUTH_URL_TTL_MS } = await import("../agent/connections/connector-auth.js");
 const { rawVaultSubject } = await import("../agent/identity/oauth-vault-share.js");
 const { readAudit } = await import("../agent/audit/audit.js");
-type Provider = import("../agent/access/providers.js").Provider;
-const { vercelConnectorHome } = await import("../agent/access/providers.js");
+type ConnectorCredentials = import("../agent/access/connector-credentials.js").ConnectorCredentials;
+const { vercelConnectorHome } = await import("../agent/access/connector-credentials.js");
 type ConnectorOption = import("../agent/connections/connector-offer.js").ConnectorOption;
 type Domain = import("../agent/memory/domain.js").Domain;
 
@@ -37,9 +37,8 @@ const eq = (a: unknown, b: unknown, label: string) => {
   n++;
 };
 
-const NOTION: Provider = {
-  name: "notion",
-  connection: "notion",
+const NOTION: ConnectorCredentials = {
+  connector: "notion",
   allows: ["api-key", "service-oauth", "user-oauth"],
   credentials: [
     { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" },
@@ -50,7 +49,7 @@ const NOTION: Provider = {
 
 const kinds = (opts: readonly ConnectorOption[]): string[] => opts.map((o) => `${optionLabel(o)}:${o.route.kind}`);
 const R = (over: Partial<Parameters<typeof resolveConnectorOptions>[0]>) =>
-  resolveConnectorOptions({ provider: NOTION, platform: "slack", mode: "channel", isAdmin: true, hostWriteBroker: true, ...over });
+  resolveConnectorOptions({ catalogue: NOTION, platform: "slack", mode: "channel", isAdmin: true, hostWriteBroker: true, ...over });
 
 console.log("1. resolver matrix:");
 {
@@ -64,22 +63,21 @@ console.log("1. resolver matrix:");
 
   ok(R({ mode: "channel", isAdmin: false, platform: "discord" }).length === 0, "member on discord ⇒ still nothing offerable");
 
-  const NARROW: Provider = { name: "narrow", connection: "n", allows: ["user-oauth"], credentials: NOTION.credentials };
-  eq(kinds(resolveConnectorOptions({ provider: NARROW, platform: "slack", mode: "dm", isAdmin: true, hostWriteBroker: true })), ["Connect my account:url"], "allowlist ⇒ only user-oauth offered though api-key/service-oauth creds exist");
+  const NARROW: ConnectorCredentials = { connector: "narrow", allows: ["user-oauth"], credentials: NOTION.credentials };
+  eq(kinds(resolveConnectorOptions({ catalogue: NARROW, platform: "slack", mode: "dm", isAdmin: true, hostWriteBroker: true })), ["Connect my account:url"], "allowlist ⇒ only user-oauth offered though api-key/service-oauth creds exist");
 
-  const OAUTHLESS: Provider = { name: "k", connection: "k", allows: ["api-key"], credentials: [{ id: "key", type: "api-key", secretRef: "K_KEY", broker: "env" }] };
-  eq(kinds(resolveConnectorOptions({ provider: OAUTHLESS, platform: "slack", mode: "channel", isAdmin: true, hostWriteBroker: true })), ["Set API key:modal"], "api-key-only provider ⇒ just the api-key option");
+  const OAUTHLESS: ConnectorCredentials = { connector: "k", allows: ["api-key"], credentials: [{ id: "key", type: "api-key", secretRef: "K_KEY", broker: "env" }] };
+  eq(kinds(resolveConnectorOptions({ catalogue: OAUTHLESS, platform: "slack", mode: "channel", isAdmin: true, hostWriteBroker: true })), ["Set API key:modal"], "api-key-only provider ⇒ just the api-key option");
 
-  const PLUMBING_FIRST: Provider = {
-    name: "notion",
-    connection: "notion",
+  const PLUMBING_FIRST: ConnectorCredentials = {
+    connector: "notion",
     allows: ["api-key"],
     credentials: [
       { id: "channel-key", type: "api-key", secretRef: "NOTION_CHANNEL_API_KEY", broker: "env", intake: false },
       { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" },
     ],
   };
-  const plumbOpts = resolveConnectorOptions({ provider: PLUMBING_FIRST, platform: "slack", mode: "channel", isAdmin: true, hostWriteBroker: true });
+  const plumbOpts = resolveConnectorOptions({ catalogue: PLUMBING_FIRST, platform: "slack", mode: "channel", isAdmin: true, hostWriteBroker: true });
   eq(kinds(plumbOpts), ["Set API key:modal"], "two api-key creds (plumbing first) ⇒ still exactly one api-key option");
   ok(plumbOpts[0].credentialId === "team-key" && plumbOpts[0].secretRef === "NOTION_API_KEY", "the offered api-key option binds the INTAKE-ABLE team-key, never the intake:false plumbing channel-key");
 
@@ -158,7 +156,7 @@ const click = (type: string, user: string, channelId: string) => ({
 });
 
 const deps = (over: Record<string, unknown> = {}) => ({
-  loadProviders: () => [NOTION],
+  loadConnectorCredentials: () => [NOTION],
   loadDomains: () => DOMAINS,
   ...over,
 });
@@ -225,9 +223,8 @@ ok((await handleConnectClick({ type: "block_actions", actions: [{ action_id: "oe
   await handleConnectClick(click("api-key", "U_MEMBER", "C123"), deps({ post: rec2.post, requestIntake: requestIntake2 }));
   eq(intakeCalls2.length, 0, "api-key by a NON-admin does NOT open the intake (standing re-verified)");
 
-  const NOTION_WITH_PLUMBING: Provider = {
-    name: "notion",
-    connection: "notion",
+  const NOTION_WITH_PLUMBING: ConnectorCredentials = {
+    connector: "notion",
     allows: ["api-key"],
     credentials: [
       { id: "channel-key", type: "api-key", secretRef: "NOTION_CHANNEL_API_KEY", broker: "env", intake: false },
@@ -242,7 +239,7 @@ ok((await handleConnectClick({ type: "block_actions", actions: [{ action_id: "oe
   const rec3 = recorder();
   await handleConnectClick(
     click("api-key", "U_ADMIN", "C123"),
-    deps({ loadProviders: () => [NOTION_WITH_PLUMBING], post: rec3.post, requestIntake: requestIntake3 }),
+    deps({ loadConnectorCredentials: () => [NOTION_WITH_PLUMBING], post: rec3.post, requestIntake: requestIntake3 }),
   );
   eq(intakeCalls3.length, 1, "admin api-key click against the plumbing-carrying provider ⇒ intake invoked");
   ok(intakeCalls3[0].ref === "db:notion:team-key", "the forged api-key click resolves the intake-able team-key (db:notion:team-key), NEVER the intake:false channel-key plumbing");

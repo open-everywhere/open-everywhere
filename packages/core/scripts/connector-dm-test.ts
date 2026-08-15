@@ -17,9 +17,12 @@ process.env.OE_PLATFORM = "slack";
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
 registerConfig({
+  loadConnectorCredentials: () => [
+    { connector: "notion", allows: ["api-key"], credentials: [{ id: "team", type: "api-key", secretRef: "NOTION_TEAM", broker: "env" }] },
+  ],
   loadBundles: () => [
-    defineBundle({ name: "svc", connectors: ["notion"] }),
-    defineBundle({ name: "personal", connectors: ["notion"] }),
+    defineBundle({ name: "svc", connectors: [{ name: "notion", credential: "team", contentOrigin: "external" }] }),
+    defineBundle({ name: "personal", connectors: [{ name: "notion", credential: "team", contentOrigin: "external" }] }),
   ],
   loadBindings: () => [
     defineBinding({ bundle: "svc", scope: { level: "org" } }),

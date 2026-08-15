@@ -1,7 +1,7 @@
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import type { BrokeredSecret } from "../access/credentials.js";
-import type { CredentialRefreshPosture } from "../access/providers.js";
+import type { CredentialRefreshPosture } from "../access/connector-credentials.js";
 
 export const DEFAULT_REFRESH_MARGIN_MS = 5 * 60 * 1000;
 

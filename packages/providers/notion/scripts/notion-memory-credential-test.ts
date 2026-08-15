@@ -3,8 +3,8 @@ import {
   domainCredentialId,
   registerBroker,
   resetBrokers,
-  resetRegisteredProviders,
-  setRegisteredProviders,
+  resetRegisteredConnectorCredentials,
+  setRegisteredConnectorCredentials,
   siloTier,
   type Domain,
   type MemoryAccess,
@@ -49,7 +49,7 @@ const DOMAINS: readonly Domain[] = [
     name: "payments",
     channels: ["slack/T/C_PAY"],
     memory: "pay-brain",
-    credentials: [{ provider: NOTION_PROVIDER, credential: NOTION_MEMORY_CREDENTIAL, use: PAY_CRED }],
+    credentials: [{ connector: NOTION_PROVIDER, credential: NOTION_MEMORY_CREDENTIAL, use: PAY_CRED }],
   }),
   defineDomain({ name: "support", channels: ["slack/T/C_SUP"], memory: "sup-brain" }),
 ];
@@ -64,11 +64,10 @@ registerBroker(BROKER, {
     throw new Error(`no secret for ${ref}`);
   },
 });
-resetRegisteredProviders();
-setRegisteredProviders([
+resetRegisteredConnectorCredentials();
+setRegisteredConnectorCredentials([
   {
-    name: NOTION_PROVIDER,
-    connection: "notion",
+    connector: NOTION_PROVIDER,
     allows: ["api-key"],
     credentials: [
       { id: NOTION_MEMORY_CREDENTIAL, type: "api-key", secretRef: ORG_REF, broker: BROKER, intake: false },
@@ -161,7 +160,7 @@ function recordingFetch(): { fetchFn: HttpFetch; auth: string[] } {
     name: "broken",
     channels: ["slack/T/C_BAD"],
     memory: "bad-brain",
-    credentials: [{ provider: NOTION_PROVIDER, credential: NOTION_MEMORY_CREDENTIAL, use: "never-declared" }],
+    credentials: [{ connector: NOTION_PROVIDER, credential: NOTION_MEMORY_CREDENTIAL, use: "never-declared" }],
   });
   const provider = makeNotionProvider(notionMemoryDeps(ORG_REF, BROKER, fetchFn));
   await throwsAsync(

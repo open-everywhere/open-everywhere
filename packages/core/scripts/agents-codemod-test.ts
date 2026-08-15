@@ -43,7 +43,7 @@ const newReadonlySpec: AgentSpec = {
   title: "Handbook Bot",
   channels: ["slack/T1/C_ASK"],
   memory: { kind: "new-readonly", provider: "notion", container: "root-page", skill: "notion" },
-  connectors: ["notion", "linear"],
+  connectors: [{ name: "notion", credential: "k" }, { name: "linear", credential: "k" }],
   instructions: "Answer from the handbook only; never write.",
   exposed: true,
 };
@@ -52,7 +52,7 @@ const existingSiloSpec: AgentSpec = {
   name: "txn-helper",
   channels: ["slack/T1/C_TXN"],
   memory: { kind: "existing-silo", silo: "transactions-silo" },
-  connectors: ["github"],
+  connectors: [{ name: "github", credential: "k" }],
 };
 
 {
@@ -77,7 +77,7 @@ const existingSiloSpec: AgentSpec = {
 
   const b = r1.file.bundles[0];
   ok(b.name === "agent:handbook-bot" && b.name === agentBundleName(newReadonlySpec), "apply: bundle is agent:-namespaced");
-  ok(JSON.stringify(b.connectors) === JSON.stringify(["linear", "notion"]), "apply: bundle connectors (sorted canonical) present");
+  ok(JSON.stringify(b.connectors) === JSON.stringify([{ name: "linear", credential: "k" }, { name: "notion", credential: "k" }]), "apply: bundle connector grants (sorted canonical, each naming its credential) present");
   ok(b.instructions === "Answer from the handbook only; never write.", "apply: bundle carries instructions");
   ok(b.title === "Handbook Bot", "apply: bundle carries title");
 

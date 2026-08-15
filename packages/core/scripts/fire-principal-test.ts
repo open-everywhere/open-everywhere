@@ -62,7 +62,12 @@ const domains = [
 ];
 const silos = [orgSilo, engSilo];
 const memCfg = { domains, silos };
-const bundles = [{ name: "personal", connectors: ["personal-notion"] }] as never;
+const bundles = [
+  { name: "personal", connectors: [{ name: "personal-notion", credential: "mine", contentOrigin: "external" }] },
+] as never;
+const catalogues = [
+  { connector: "personal-notion", allows: ["user-oauth"], credentials: [{ id: "mine", type: "user-oauth", home: { kind: "vercel-connect", config: { connector: "oauth/notion-user" } } }] },
+] as never;
 const bindings = [{ scope: { level: "principal" as const, principal: principalKey("slack", TEAM, CREATOR) }, bundle: "personal" }] as never;
 let spendBudgets: import("../agent/spend/spend.js").SpendBudgets = {};
 registerConfig({
@@ -246,8 +251,8 @@ const staleBag = delivered[1]!.attributes;
   ok(adminControlRoles(actingPrincipalId(live), domains, "slack", TEAM).join(",") === "admin", "fence: the cross-domain role scan (memory_admin_*, the governance DM arm) sees a live admin");
   ok(adminControlRoles(actingPrincipalId(fire), domains, "slack", TEAM).length === 0, "fence: 🔴 …and sees nothing for a fire — no unattended read of every silo the creator administers");
 
-  const liveAccess = resolveAccess(buildResolveRequest(liveCtx()), bundles, bindings, {});
-  const fireAccess = resolveAccess(buildResolveRequest(fireCtx(vouchedBag)), bundles, bindings, {});
+  const liveAccess = resolveAccess(buildResolveRequest(liveCtx()), bundles, bindings, {}, catalogues);
+  const fireAccess = resolveAccess(buildResolveRequest(fireCtx(vouchedBag)), bundles, bindings, {}, catalogues);
   ok(liveAccess.connectors.includes("personal-notion"), "fence: the creator's own DM resolves their personal connector");
   ok(!fireAccess.connectors.includes("personal-notion"), "fence: 🔴 …and their routine's fire does NOT — trust moved, credentials did not");
   ok(!fireAccess.scopeKey.startsWith("dm:"), `fence: …because the fire never claims a personal scope key at all (got ${fireAccess.scopeKey})`);
@@ -456,7 +461,7 @@ const staleBag = delivered[1]!.attributes;
     { tool: "clear_connector_override", input: { connector: "personal-notion" }, fire: dmFire, live: dmLive, why: "🔴 the ONE widen verb on the runtime connector lane — everything else about access widens only through a reviewed PR" },
     { tool: "declare_webhook", input: { id: "inbound", source: "github", readableBy: ["org"], posture: "trigger-only" }, fire: dmFire, live: dmLive, why: "a declared hook is a STANDING unattended door, landed by a merged PR that outlives the session" },
     { tool: "rotate_webhook", input: { source: "github" }, fire: dmFire, live: dmLive, why: "the tool's entire product is HANDING A SECRET TO SOMEBODY, and a fire has no recipient — only a name to record it under" },
-    { tool: "request_access", input: { kind: "grant-connector", connector: "personal-notion" }, fire: chanFire, live: chanLive, why: "🔴 the worst outcome of the seven — a merged bot-PR widening the channel's PERMANENT grants, naming a person in a diff nobody can un-write" },
+    { tool: "request_access", input: { kind: "grant-connector", connector: "personal-notion", credential: "mine" }, fire: chanFire, live: chanLive, why: "🔴 the worst outcome of the seven — a merged bot-PR widening the channel's PERMANENT grants, naming a person in a diff nobody can un-write" },
   ];
 
   const { getOperationalStore: opStore } = await import("../agent/operational/provider.js");

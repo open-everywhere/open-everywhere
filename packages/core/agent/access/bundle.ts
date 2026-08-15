@@ -1,4 +1,3 @@
-import type { ProviderGrant } from "./providers.js";
 import type { OperatorApprover } from "./approver-chain.js";
 import { preApprovalRuleProblems, type PreApprovalRule } from "./pre-approval-rules.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
@@ -55,7 +54,8 @@ export type ConnectorContentOriginSpec = ConnectorContentOrigin | ConnectorConte
 
 export interface ConnectorGrant {
   readonly name: string;
-  readonly contentOrigin: ConnectorContentOriginSpec;
+  readonly credential: string;
+  readonly contentOrigin?: ConnectorContentOriginSpec;
 }
 
 export type ConnectorGrantSpec = string | ConnectorGrant;
@@ -68,6 +68,10 @@ export function connectorGrantName(grant: ConnectorGrantSpec): string {
 
 export function connectorGrantContentOrigin(grant: ConnectorGrantSpec): ConnectorContentOriginSpec | undefined {
   return typeof grant === "string" ? undefined : grant.contentOrigin;
+}
+
+export function connectorGrantCredential(grant: ConnectorGrantSpec): string | undefined {
+  return typeof grant === "string" ? undefined : grant.credential;
 }
 
 export function contentOriginForTool(spec: ConnectorContentOriginSpec, bareToolName: string): ConnectorContentOrigin {
@@ -99,7 +103,6 @@ export interface Bundle {
   readonly connections?: readonly Connection[];
   readonly connectors?: readonly ConnectorGrantSpec[];
   readonly connectorOps?: readonly ConnectorOpGating[];
-  readonly providers?: readonly ProviderGrant[];
   readonly repos?: readonly string[];
   readonly domains?: readonly string[];
   readonly plugins?: readonly string[];
@@ -221,18 +224,26 @@ export function assertBundlesValid(bundles: readonly Bundle[]): void {
     const connectors = new Set<string>();
     for (const grant of b.connectors ?? []) {
       if (typeof grant === "string") {
-        if (!isMachineWrittenBundleName(b.name)) {
-          bad.push(
-            `  bundle "${b.name}" grants connector "${grant}" with no \`contentOrigin\` — say who authors the bytes it returns: ` +
-              `{ name: "${grant}", contentOrigin: "internal" } (only org members can write what it returns) or "external" (anyone can), ` +
-              `or { name: "${grant}", contentOrigin: { default: "internal", except: { "<bare-tool-name>": "external" } } } when only some of its tools reach outside content`,
-          );
-        }
+        bad.push(
+          `  bundle "${b.name}" grants connector "${grant}" as a bare slug — a grant names the identity it reaches the connector as: ` +
+            `{ name: "${grant}", credential: "<a credential id from the connector's catalogue>", contentOrigin: "internal" | "external" }. ` +
+            `The machine-written overlays write { name, credential } and omit contentOrigin; every other bundle declares all three.`,
+        );
       } else if (grant === null || typeof grant !== "object" || typeof (grant as ConnectorGrant).name !== "string" || (grant as ConnectorGrant).name.trim() === "") {
-        bad.push(`  bundle "${b.name}" has a connector grant that is not a { name, contentOrigin } object — got ${JSON.stringify(grant)}`);
+        bad.push(`  bundle "${b.name}" has a connector grant that is not a { name, credential, contentOrigin } object — got ${JSON.stringify(grant)}`);
         continue;
       } else {
-        bad.push(...contentOriginProblems(b.name, (grant as ConnectorGrant).name, (grant as ConnectorGrant).contentOrigin));
+        const g = grant as ConnectorGrant;
+        if (typeof g.credential !== "string" || g.credential.trim() === "") {
+          bad.push(
+            `  bundle "${b.name}" grants connector "${g.name}" with no \`credential\` — name which configured identity this scope reaches it as, ` +
+              `e.g. { name: "${g.name}", credential: "team-key", contentOrigin: "external" }. The ids come from that connector's credential catalogue ` +
+              `(agent/access/connector-credentials.ts); \`npm run lint:connections\` fails a grant naming one that is not configured.`,
+          );
+        }
+        if (g.contentOrigin !== undefined || !isMachineWrittenBundleName(b.name)) {
+          bad.push(...contentOriginProblems(b.name, g.name, g.contentOrigin));
+        }
       }
       const name = connectorGrantName(grant);
       if (connectors.has(name)) bad.push(`  bundle "${b.name}" grants connector "${name}" more than once — remove the duplicate`);

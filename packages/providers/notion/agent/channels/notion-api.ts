@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import {
   getSecretVia,
   CredentialError,
-  findProviderCredential,
+  findConnectorCredential,
   guardCredentialFetch,
   type CredentialEndpointRules,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -23,7 +23,7 @@ export interface ResolvedNotionCredential {
 export async function resolveNotionCredential(
   credentialId: string = NOTION_CHANNEL_CREDENTIAL,
 ): Promise<ResolvedNotionCredential | undefined> {
-  const cred = findProviderCredential(NOTION_PROVIDER, credentialId);
+  const cred = findConnectorCredential(NOTION_PROVIDER, credentialId);
   if (!cred?.secretRef) return undefined;
   try {
     const k = await getSecretVia(cred.broker, cred.secretRef);

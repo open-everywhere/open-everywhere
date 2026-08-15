@@ -77,9 +77,9 @@ export default defineRoster({
         "USE — no teeth were ever at risk, this is purely a UX/inventory-hygiene rule enforced by " +
         "scripts/connections-lint.ts: \"mount only when a bundle grants it\"). Restored 2026-07-05 " +
         "(backlog item 19, \"link real connectors\") because agent/access/bundles.ts now grants " +
-        "\"notion\" for real (the \"notion-connectors\" bundle's `providers: [{ provider: \"notion\", " +
-        "credential: \"team-key\" }]` grant, bound to the test channel) — so the mount/grant pair " +
-        "is back in sync and connections-lint passes.",
+        "\"notion\" for real (a `connectors: [{ name: \"notion\", credential: \"team-key\", " +
+        "contentOrigin: \"external\" }]` grant) — so the mount/grant pair is back in sync and " +
+        "connections-lint passes.",
     },
   },
 

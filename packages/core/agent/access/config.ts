@@ -1,5 +1,5 @@
 import type { Bundle, Binding } from "./bundle.js";
-import type { Provider } from "./providers.js";
+import type { ConnectorCredentials } from "./connector-credentials.js";
 import type { NetworkAccessBinding } from "./network-access.js";
 import type { AgentsFile } from "../memory/agents-codemod.js";
 import type { PluginRegistry } from "../plugins/types.js";
@@ -31,13 +31,13 @@ export interface AccessRequestsConfig {
   baseBundles(): readonly Bundle[];
   baseBindings(): readonly Binding[];
   groupRegistry?(): readonly Group[];
-  baseProviders?(): readonly Provider[];
+  baseConnectorCredentials?(): readonly ConnectorCredentials[];
 }
 
 export interface AppConfig {
   loadBundles(): readonly Bundle[];
   loadBindings(): readonly Binding[];
-  loadProviders?(): readonly Provider[];
+  loadConnectorCredentials?(): readonly ConnectorCredentials[];
   loadNetworkAccess?(): readonly NetworkAccessBinding[];
   readonly pluginRegistry: PluginRegistry;
   readonly skillContent: Record<string, SkillPackageDefinition>;

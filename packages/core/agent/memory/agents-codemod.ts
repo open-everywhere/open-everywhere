@@ -22,7 +22,7 @@ export interface AgentSpec {
   readonly title?: string;
   readonly channels: readonly string[];
   readonly memory: AgentMemory;
-  readonly connectors?: readonly string[];
+  readonly connectors?: readonly { readonly name: string; readonly credential: string }[];
   readonly instructions?: string;
   readonly exposed?: boolean;
 }
@@ -113,6 +113,21 @@ function isStringArray(v: unknown): v is string[] {
   return Array.isArray(v) && v.every((x) => typeof x === "string");
 }
 
+function assertAgentConnectorGrants(what: string, value: unknown): void {
+  if (!Array.isArray(value)) throw new AgentsCodemodError(`${what} connectors must be an array`);
+  for (const g of value) {
+    if (!isRecord(g) || typeof g.name !== "string" || !g.name || typeof g.credential !== "string" || !g.credential) {
+      throw new AgentsCodemodError(`${what} has a malformed connector grant — the overlay writes { name, credential } objects (got: ${JSON.stringify(g)})`);
+    }
+    const extra = Object.keys(g).filter((k) => k !== "name" && k !== "credential");
+    if (extra.length > 0) {
+      throw new AgentsCodemodError(
+        `${what} connector grant "${g.name}" carries field(s) ${extra.join(", ")} — the overlay writes only { name, credential } (a \`contentOrigin\` declaration is an operator assertion; put it in a code bundle)`,
+      );
+    }
+  }
+}
+
 const DOMAIN_FIELDS = new Set(["name", "title", "channels", "memory"]);
 const SILO_FIELDS = new Set(["name", "description", "provider", "container", "path", "readOnly", "skill", "recursive", "select"]);
 const BUNDLE_FIELDS = new Set(["name", "title", "connectors", "instructions"]);
@@ -164,7 +179,7 @@ export function parseAgentsFile(value: unknown): AgentsFile {
       throw new AgentsCodemodError(`every agents bundle needs an "agent:"-prefixed name (got: ${JSON.stringify(isRecord(b) ? b.name : b)})`);
     }
     refuseUnknownFields(`agents bundle "${b.name}"`, b, BUNDLE_FIELDS);
-    if (b.connectors !== undefined && !isStringArray(b.connectors)) throw new AgentsCodemodError(`agents bundle "${b.name}" connectors must be a string array (a \`{ name, contentOrigin }\` declaration is an operator assertion — put it in a code bundle)`);
+    if (b.connectors !== undefined) assertAgentConnectorGrants(`agents bundle "${b.name}"`, b.connectors);
     if (b.instructions !== undefined && typeof b.instructions !== "string") throw new AgentsCodemodError(`agents bundle "${b.name}" instructions must be a string`);
     bundles.push(b as unknown as Bundle);
   }
@@ -198,7 +213,7 @@ export function parseAgentsFile(value: unknown): AgentsFile {
     if (sp.memory.kind === "new-readonly" && typeof sp.memory.provider !== "string") {
       throw new AgentsCodemodError(`agents spec "${sp.name}" new-readonly memory needs a provider`);
     }
-    if (sp.connectors !== undefined && !isStringArray(sp.connectors)) throw new AgentsCodemodError(`agents spec "${sp.name}" connectors must be a string array`);
+    if (sp.connectors !== undefined) assertAgentConnectorGrants(`agents spec "${sp.name}"`, sp.connectors);
     if (sp.exposed !== undefined && typeof sp.exposed !== "boolean") throw new AgentsCodemodError(`agents spec "${sp.name}" exposed must be a boolean`);
     specs.push(sp as unknown as AgentSpec);
   }
@@ -244,7 +259,11 @@ function canonicalSilo(s: MemorySilo): Record<string, unknown> {
 
 function canonicalBundle(b: Bundle): Record<string, unknown> {
   const obj: Record<string, unknown> = { ...b };
-  if (b.connectors) obj.connectors = [...b.connectors].sort((x, y) => connectorGrantName(x).localeCompare(connectorGrantName(y)));
+  if (b.connectors) {
+    obj.connectors = [...b.connectors]
+      .sort((x, y) => connectorGrantName(x).localeCompare(connectorGrantName(y)))
+      .map((g) => (typeof g === "string" ? g : { name: g.name, credential: g.credential }));
+  }
   return orderKeys(obj, BUNDLE_KEYS);
 }
 
@@ -255,7 +274,7 @@ function canonicalBinding(bd: Binding): Record<string, unknown> {
 function canonicalSpec(sp: AgentSpec): Record<string, unknown> {
   const obj: Record<string, unknown> = { ...sp };
   obj.channels = [...sp.channels].sort();
-  if (sp.connectors) obj.connectors = [...sp.connectors].sort();
+  if (sp.connectors) obj.connectors = [...sp.connectors].sort((x, y) => x.name.localeCompare(y.name)).map((g) => ({ name: g.name, credential: g.credential }));
   const mem: Record<string, unknown> = { ...sp.memory };
   if (sp.memory.kind === "new-readonly" && sp.memory.select) mem.select = canonicalSelection(sp.memory.select);
   obj.memory = orderKeys(mem, MEMORY_KEYS);
@@ -349,7 +368,13 @@ export function applyAgentSpec(file: AgentsFile, spec: AgentSpec): ApplyAgentRes
   const bundle: Bundle = {
     name: bundleName,
     ...(spec.title !== undefined ? { title: spec.title } : {}),
-    ...(spec.connectors !== undefined && spec.connectors.length > 0 ? { connectors: [...new Set(spec.connectors)].sort() } : {}),
+    ...(spec.connectors !== undefined && spec.connectors.length > 0
+      ? {
+          connectors: [...new Map(spec.connectors.map((g) => [g.name, g])).values()]
+            .sort((x, y) => x.name.localeCompare(y.name))
+            .map((g) => ({ name: g.name, credential: g.credential })),
+        }
+      : {}),
     ...(spec.instructions !== undefined ? { instructions: spec.instructions } : {}),
   };
 

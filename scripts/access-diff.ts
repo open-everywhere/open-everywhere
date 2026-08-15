@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import "../agent/lib/register-config.js";
 import { loadBaseBundles, loadBaseBindings } from "../agent/access/bundles.js";
-import { loadProviders } from "../agent/access/providers.js";
+import { loadConnectorCredentials } from "../agent/access/connector-credentials.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
 import { domainsForSurface, loadDomains } from "../agent/memory/domains.js";
 import { loadGroups } from "../agent/identity/groups.js";
@@ -47,7 +47,7 @@ for (const g of [before, after]) {
 function resolveWith(grants: GrantsFile, scope: DiffScope): EffectiveAccess {
   const bundles = [...loadBaseBundles(), ...grants.bundles];
   const bindings = [...loadBaseBindings(), ...grants.bindings];
-  const resolve = (req: Parameters<typeof resolveAccess>[0]): EffectiveAccess => resolveAccess(req, bundles, bindings, PLUGIN_REGISTRY, loadProviders());
+  const resolve = (req: Parameters<typeof resolveAccess>[0]): EffectiveAccess => resolveAccess(req, bundles, bindings, PLUGIN_REGISTRY, loadConnectorCredentials());
   if (scope.level === "surface") {
     const [platform, workspace, ...rest] = scope.address.split("/");
     const channel = rest.join("/");

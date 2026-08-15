@@ -14,8 +14,8 @@ const {
   hostWriteHomeAvailable,
 } = await import("../agent/credentials/home.js");
 type CredentialHome = import("../agent/credentials/home.js").CredentialHome;
-const { assertProvidersValid, registerExclusiveCredentialHome, resetExclusiveCredentialHomes } = await import(
-  "../agent/access/providers.js"
+const { assertConnectorCredentialsValid, registerExclusiveCredentialHome, resetExclusiveCredentialHomes } = await import(
+  "../agent/access/connector-credentials.js"
 );
 
 let n = 0;
@@ -66,7 +66,7 @@ const ok = (cond: boolean, label: string) => {
 
 {
   const provider = (cred: Record<string, unknown>) => [
-    { name: "acme", connection: "acme", allows: ["api-key"] as const, credentials: [cred as never] },
+    { connector: "acme", allows: ["api-key"] as const, credentials: [cred as never] },
   ];
 
   registerExclusiveCredentialHome({
@@ -79,25 +79,25 @@ const ok = (cond: boolean, label: string) => {
     },
   });
 
-  assertProvidersValid(provider({ id: "k", type: "api-key", home: { kind: "vaultx", config: { server: "acme" } } }) as never);
-  ok(true, "exclusive-home registry: a vaultx-homed api-key (no stamps) validates — ZERO edits to ProviderCredential's type or assertProvidersValid");
+  assertConnectorCredentialsValid(provider({ id: "k", type: "api-key", home: { kind: "vaultx", config: { server: "acme" } } }) as never);
+  ok(true, "exclusive-home registry: a vaultx-homed api-key (no stamps) validates — ZERO edits to ConnectorCredential's type or assertConnectorCredentialsValid");
 
   assert.throws(
-    () => assertProvidersValid(provider({ id: "k", type: "api-key", home: { kind: "vaultx", config: { server: "acme" } }, broker: "db" }) as never),
+    () => assertConnectorCredentialsValid(provider({ id: "k", type: "api-key", home: { kind: "vaultx", config: { server: "acme" } }, broker: "db" }) as never),
     /must NOT carry a broker/,
     "exclusive-home registry: vaultx + broker is rejected (mutual exclusivity)",
   );
   n++;
 
   assert.throws(
-    () => assertProvidersValid(provider({ id: "k", type: "api-key", home: { kind: "vaultx", config: { server: "" } } }) as never),
+    () => assertConnectorCredentialsValid(provider({ id: "k", type: "api-key", home: { kind: "vaultx", config: { server: "" } } }) as never),
     /vaultx home needs a server/,
     "exclusive-home registry: a malformed vaultx home is rejected by its validateConfig",
   );
   n++;
 
   assert.throws(
-    () => assertProvidersValid([{ name: "acme", connection: "acme", allows: ["user-oauth"], credentials: [{ id: "k", type: "user-oauth", home: { kind: "vaultx", config: { server: "acme" } } }] }] as never),
+    () => assertConnectorCredentialsValid([{ connector: "acme", allows: ["user-oauth"], credentials: [{ id: "k", type: "user-oauth", home: { kind: "vaultx", config: { server: "acme" } } }] }] as never),
     /cannot be homed at "vaultx"/,
     "exclusive-home registry: a vaultx home on a disallowed type is rejected (validFor)",
   );
@@ -105,7 +105,7 @@ const ok = (cond: boolean, label: string) => {
 
   resetExclusiveCredentialHomes();
   assert.throws(
-    () => assertProvidersValid(provider({ id: "k", type: "api-key", home: { kind: "vaultx", config: { server: "acme" } } }) as never),
+    () => assertConnectorCredentialsValid(provider({ id: "k", type: "api-key", home: { kind: "vaultx", config: { server: "acme" } } }) as never),
     /unknown credential home kind "vaultx"/,
     "resetExclusiveCredentialHomes: the vendor home is forgotten (the core vercel-connect home remains)",
   );

@@ -130,7 +130,7 @@ for (const op of [READ_OP, WRITE_OP, DESTRUCTIVE_OP]) {
 {
   const empty: Bundle[] = [];
   eq(effectiveConnectorOpTier(DESTRUCTIVE_OP, empty), "destructive", "an empty bundle list leaves the fail-closed baseline intact");
-  const noOps = [defineBundle({ name: "b", connectors: ["notion"] })];
+  const noOps = [defineBundle({ name: "b", connectors: [{ name: "notion", credential: "k", contentOrigin: "external" }] })];
   eq(effectiveConnectorOpTier(READ_OP, noOps), "read", "a bundle granting the connector but declaring no ops changes nothing (byte-identical to OPE-11)");
 }
 
@@ -158,7 +158,7 @@ throws(
   "two entries for one connector in one bundle are rejected as ambiguous",
 );
 try {
-  assertBundlesValid([defineBundle({ name: "b", connectors: [{ name: "notion", contentOrigin: "external" }], connectorOps: [{ connector: "notion", destructive: ["delete_page"], gated: ["*"] }] })]);
+  assertBundlesValid([defineBundle({ name: "b", connectors: [{ name: "notion", credential: "k", contentOrigin: "external" }], connectorOps: [{ connector: "notion", destructive: ["delete_page"], gated: ["*"] }] })]);
   ok(true, "a well-formed connectorOps declaration passes config-load validation");
 } catch (e) {
   ok(false, `a well-formed connectorOps declaration must pass validation (threw: ${String(e).slice(0, 200)})`);
@@ -174,7 +174,7 @@ const { registerConfig } = await import("../agent/access/config.js");
 const gatingBundles = [
   defineBundle({
     name: "notion-gated",
-    connectors: ["notion"],
+    connectors: [{ name: "notion", credential: "k", contentOrigin: "external" }],
     connectorOps: [{ connector: "notion", gated: ["search"], destructive: ["create_page"] }],
   }),
 ];

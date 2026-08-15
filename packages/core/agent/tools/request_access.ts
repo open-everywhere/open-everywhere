@@ -44,6 +44,7 @@ export interface RequestAccessInput {
   readonly add_methods?: readonly string[];
   readonly add_path_prefixes?: readonly string[];
   readonly connector?: string;
+  readonly credential?: string;
   readonly reason?: string;
 }
 
@@ -82,7 +83,7 @@ export function groupEffectiveAccess(
     bundles,
     groupBindings,
     getConfig().pluginRegistry,
-    getConfig().loadProviders?.() ?? [],
+    getConfig().loadConnectorCredentials?.() ?? [],
   );
 }
 
@@ -164,6 +165,7 @@ export function planRequestAccess(
       addMethods: input.add_methods,
       addPathPrefixes: input.add_path_prefixes,
       connector: input.connector,
+      credential: input.credential,
       reason: input.reason,
     },
     planCtx,
@@ -187,7 +189,7 @@ export function planRequestAccess(
 
 const requestAccessEntry = defineTool({
         description:
-          "PROPOSE widening access — this grants nothing itself. Use when someone asks for access they don't have. Exactly two request shapes exist: kind=widen-connection (add HTTP methods and/or path prefixes to a connection ALREADY available in the target) and kind=grant-connector (enable a connector this deployment already defines but the target doesn't have). Anything else — a new website/host, a new credential or API key, a new repo, a brand-new integration — is NOT requestable this way: refuse and say an admin needs to PR it by hand. `target` picks the universe: \"channel\" (default, THIS room — must be asked from that channel), \"personal\" (the ASKER's own DM access — only from their DM, and only ever for themselves: never use it to ask on someone else's behalf), or \"group\" (a declared person-group, landing in every member's DM — org admins only, and name the group in `group`). On success a \"Request access\" card is posted in this thread; any member's tap sends the request as a bot-PR that an admin merges in GitHub — nothing changes until that merge. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call. EXCEPT when this surface can't host a card: it then goes to a card-capable channel in the same domain, the `note` field names it, and you MUST relay that.",
+          "PROPOSE widening access — this grants nothing itself. Use when someone asks for access they don't have. Exactly two request shapes exist: kind=widen-connection (add HTTP methods and/or path prefixes to a connection ALREADY available in the target) and kind=grant-connector (enable a connector this deployment already defines but the target doesn't have, naming in `credential` which configured identity it is reached as). Anything else — a new website/host, a new credential or API key, a new repo, a brand-new integration — is NOT requestable this way: refuse and say an admin needs to PR it by hand. `target` picks the universe: \"channel\" (default, THIS room — must be asked from that channel), \"personal\" (the ASKER's own DM access — only from their DM, and only ever for themselves: never use it to ask on someone else's behalf), or \"group\" (a declared person-group, landing in every member's DM — org admins only, and name the group in `group`). On success a \"Request access\" card is posted in this thread; any member's tap sends the request as a bot-PR that an admin merges in GitHub — nothing changes until that merge. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call. EXCEPT when this surface can't host a card: it then goes to a card-capable channel in the same domain, the `note` field names it, and you MUST relay that.",
         inputSchema: z.object({
           kind: z.enum(["widen-connection", "grant-connector"]).describe("Which of the two request shapes this ask maps to."),
           target: z
@@ -201,6 +203,12 @@ const requestAccessEntry = defineTool({
           add_methods: z.array(z.enum(HTTP_METHODS as [string, ...string[]])).optional().describe("widen-connection: HTTP methods to add."),
           add_path_prefixes: z.array(z.string()).optional().describe('widen-connection: path prefixes to add (each starts with "/").'),
           connector: z.string().optional().describe("grant-connector: the connector name to enable for the target."),
+          credential: z
+            .string()
+            .optional()
+            .describe(
+              "grant-connector: which configured credential the target reaches the connector as. REQUIRED for grant-connector — every grant names its identity. Name one this deployment already configures; the refusal lists them.",
+            ),
           reason: z
             .string()
             .optional()
@@ -244,6 +252,7 @@ const requestAccessEntry = defineTool({
                 ? groupEffectiveAccess(scope.group, req.platform, req.workspace, cfg.loadBundles(), cfg.loadBindings())
                 : resolveAccessFor(ctx),
             bundles: cfg.loadBundles(),
+            connectorCredentials: cfg.loadConnectorCredentials?.() ?? [],
             groups,
           };
 

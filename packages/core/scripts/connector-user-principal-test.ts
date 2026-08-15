@@ -12,23 +12,26 @@ process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 delete process.env.OE_ORG;
 process.env.OE_PLATFORM = "slack";
 process.env.NOTION_API_KEY = "STATIC-TEAM-KEY";
+process.env.NOTION_TEAM = "BOUND-TEAM-KEY";
 
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
-const { defineProvider, vercelConnectorHome } = await import("../agent/access/providers.js");
+const { defineConnectorCredentials, vercelConnectorHome } = await import("../agent/access/connector-credentials.js");
 
 registerConfig({
-  loadProviders: () => [
-    defineProvider({
-      name: "notion",
-      connection: "notion",
+  loadConnectorCredentials: () => [
+    defineConnectorCredentials({
+      connector: "notion",
       allows: ["api-key", "service-oauth", "user-oauth"],
-      credentials: [{ id: "mine", type: "user-oauth", home: vercelConnectorHome("oauth/notion-user") }],
+      credentials: [
+        { id: "mine", type: "user-oauth", home: vercelConnectorHome("oauth/notion-user") },
+        { id: "team", type: "api-key", secretRef: "NOTION_TEAM", broker: "env" },
+      ],
     }),
   ],
   loadBundles: () => [
-    defineBundle({ name: "svc", connectors: ["notion"] }),
-    defineBundle({ name: "personal", providers: [{ provider: "notion", credential: "mine" }] }),
+    defineBundle({ name: "svc", connectors: [{ name: "notion", credential: "team", contentOrigin: "external" }] }),
+    defineBundle({ name: "personal", connectors: [{ name: "notion", credential: "mine", contentOrigin: "external" }] }),
   ],
   loadBindings: () => [
     defineBinding({ bundle: "svc", scope: { level: "org" } }),
@@ -209,7 +212,8 @@ await eveContextStorage().run(new FakeSession(), async () => {
   registerSettings({ connectors: { dmOnly: false } });
   const m = makeMinter("ok");
   const r = await getToken(channelAuth, m);
-  ok(r.token === "STATIC-TEAM-KEY", "channel + wall OFF → falls through to the app fallback key (universe gate blocks user-oauth on a channel)");
+  ok(r.token === "BOUND-TEAM-KEY", "channel + wall OFF → resolves the app credential the grant NAMES (the universe gate blocks user-oauth on a channel)");
+  ok(r.token !== "STATIC-TEAM-KEY", "…and not the connection's own fallback: a named credential outranks it");
   ok(m.calls.length === 0, "still no per-user mint on a channel even with the wall disarmed");
   resetSettingsForTest();
 }

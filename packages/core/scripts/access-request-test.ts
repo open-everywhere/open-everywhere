@@ -6,6 +6,7 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import type { Binding, Bundle, Connection } from "../agent/access/bundle.js";
+import type { ConnectorCredentials } from "../agent/access/connector-credentials.js";
 import type { Group } from "../agent/identity/groups.js";
 import type { Domain } from "../agent/memory/domain.js";
 import type { AccessRequestsConfig } from "../agent/access/config.js";
@@ -59,7 +60,7 @@ const notionRest: Connection = {
 
 const codeBundles: Bundle[] = [
   { name: "notion", connections: [notionRest] },
-  { name: "linear-basket", connectors: [{ name: "linear", contentOrigin: "external" }] },
+  { name: "linear-basket", connectors: [{ name: "linear", credential: "k", contentOrigin: "external" }] },
 ];
 const codeBindings: Binding[] = [
   { bundle: "notion", scope: { level: "surface", surface: "slack/T1/C1" } },
@@ -92,6 +93,7 @@ registerConfig({
   loadDomains: () => domains,
   loadSilos: () => [],
   loadGroups: () => groups,
+  loadConnectorCredentials: () => catalogues,
   domainsForSurface: () => [],
   loadAccessRequests: () => arConfig({ dryRun: true }),
 });
@@ -112,11 +114,18 @@ function slackBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding {
   };
 }
 
+const catalogues: readonly ConnectorCredentials[] = ["linear", "asana"].map((connector) => ({
+  connector,
+  allows: ["api-key" as const],
+  credentials: [{ id: "k", type: "api-key" as const, secretRef: `SECRET_${connector}`, broker: "env" }],
+}));
+
 function planCtxFor(channel: string): PlanContext {
   return {
     scope: { level: "surface", surface: `slack/T1/${channel}` },
-    access: resolveAccess({ mode: "channel", platform: "slack", workspace: "T1", channel }, codeBundles, codeBindings),
+    access: resolveAccess({ mode: "channel", platform: "slack", workspace: "T1", channel }, codeBundles, codeBindings, {}, catalogues),
     bundles: codeBundles,
+    connectorCredentials: catalogues,
     groups,
   };
 }
@@ -124,37 +133,79 @@ function planCtxFor(channel: string): PlanContext {
 const extras = { scopeKey: "slack/T1/C1", channelId: "C1", configRepo: "acme/agent-config", domains } as const;
 
 {
-  const teamsArgs = planRequestAccess(slackBinding({ platform: "teams" }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear" }, extras);
+  const teamsArgs = planRequestAccess(slackBinding({ platform: "teams" }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear", credential: "k" }, extras);
   ok(teamsArgs.delta.kind === "grant-connector", "plan: 🔴 PLANS on a card-less surface — the authorization posture is decidable from the inputs, and it was the only thing this layer could honestly answer");
   registerCardPoster("discord", async () => undefined);
-  const args = planRequestAccess(slackBinding({ platform: "discord" }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear" }, extras);
+  const args = planRequestAccess(slackBinding({ platform: "discord" }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear", credential: "k" }, extras);
   ok(typeof args.scopeKey === "string", "plan: a surface that REGISTERS a card poster plans exactly as Slack does");
 }
 await rejectsWith(
-  () => planRequestAccess(slackBinding({ mode: "dm" }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear" }, extras),
+  () => planRequestAccess(slackBinding({ mode: "dm" }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear", credential: "k" }, extras),
   "not a DM",
   "plan: refuses in a DM (grants bind to channel scopes)",
 );
 await rejectsWith(
-  () => planRequestAccess(slackBinding({ trust: "external" }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear" }, extras),
+  () => planRequestAccess(slackBinding({ trust: "external" }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear", credential: "k" }, extras),
   "externally shared",
   "plan: refuses on an external-trust surface",
 );
 await rejectsWith(
-  () => planRequestAccess(slackBinding({ principalId: undefined }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear" }, extras),
+  () => planRequestAccess(slackBinding({ principalId: undefined }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear", credential: "k" }, extras),
   "verified sender",
   "plan: refuses without a verified sender",
 );
 await rejectsWith(
-  () => planRequestAccess(slackBinding(), planCtxFor("C1"), { kind: "grant-connector", connector: "notarealthing" }, extras),
+  () => planRequestAccess(slackBinding(), planCtxFor("C1"), { kind: "grant-connector", connector: "notarealthing", credential: "k" }, extras),
   "an admin needs to PR this by hand",
   "plan: out-of-vocabulary asks carry the human-PR fallback",
 );
 
+await rejectsWith(
+  () => planRequestAccess(slackBinding(), planCtxFor("C1"), { kind: "grant-connector", connector: "linear" }, extras),
+  "needs the credential to reach",
+  "plan: an ask with NO credential is refused — every grant names its identity",
+);
+await rejectsWith(
+  () => planRequestAccess(slackBinding(), planCtxFor("C1"), { kind: "grant-connector", connector: "linear", credential: "  " }, extras),
+  "needs the credential to reach",
+  "plan: a BLANK credential is the same refusal — whitespace is not an identity",
+);
+await rejectsWith(
+  () => planRequestAccess(slackBinding(), planCtxFor("C1"), { kind: "grant-connector", connector: "linear", credential: "not-configured" }, extras),
+  "has no credential \"not-configured\" configured",
+  "plan: a credential this deployment does not configure is OUT OF VOCABULARY — the ask cannot mint one",
+);
+{
+  let message = "";
+  try {
+    await planRequestAccess(slackBinding(), planCtxFor("C1"), { kind: "grant-connector", connector: "linear", credential: "nope" }, extras);
+  } catch (err) {
+    message = String(err);
+  }
+  ok(message.includes("configured: k"), "plan: …and the refusal lists the configured credential ids");
+}
+await rejectsWith(
+  () => planRequestAccess(
+    slackBinding(),
+    { ...planCtxFor("C1"), connectorCredentials: undefined },
+    { kind: "grant-connector", connector: "linear", credential: "k" },
+    extras,
+  ),
+  "configured: none",
+  "plan: 🔴 FAIL-CLOSED — with NO catalogues in the context, every credential is unconfigured; absent never reads as 'anything goes'",
+);
+{
+  const okArgs = planRequestAccess(slackBinding(), planCtxFor("C1"), { kind: "grant-connector", connector: "linear", credential: "k" }, extras);
+  ok(
+    okArgs.delta.kind === "grant-connector" && okArgs.delta.credential === "k",
+    "plan: NEGATIVE CONTROL — a configured credential plans, and the id rides into the frozen delta",
+  );
+}
+
 const args: RequestAccessArgs = planRequestAccess(
   slackBinding(),
   planCtxFor("C1"),
-  { kind: "grant-connector", connector: "linear", reason: "  triage needs Linear  " },
+  { kind: "grant-connector", connector: "linear", credential: "k", reason: "  triage needs Linear  " },
   { ...extras, permalink: "https://acme.slack.com/archives/C1/p1720000000000100" },
 );
 ok(args.delta.kind === "grant-connector" && args.delta.kind === "grant-connector" && args.delta.connector === "linear", "plan: delta planned from the ask");
@@ -178,6 +229,7 @@ function personalCtx(principal = "slack/T1/U_ASK"): PlanContext {
     scope: { level: "principal", principal },
     access: resolveAccess({ mode: "dm", platform: "slack", workspace: "T1", channel: "D_ASK", principalId: "U_ASK" }, codeBundles, codeBindings),
     bundles: codeBundles,
+    connectorCredentials: catalogues,
     groups,
   };
 }
@@ -185,7 +237,7 @@ function personalCtx(principal = "slack/T1/U_ASK"): PlanContext {
 const dmExtras = { ...extras, scopeKey: "slack/T1/D_ASK", channelId: "D_ASK" } as const;
 
 {
-  const personalArgs = planRequestAccess(dmBinding(), personalCtx(), { kind: "grant-connector", target: "personal", connector: "linear" }, dmExtras);
+  const personalArgs = planRequestAccess(dmBinding(), personalCtx(), { kind: "grant-connector", target: "personal", connector: "linear", credential: "k" }, dmExtras);
   ok(
     personalArgs.delta.scope.level === "principal" && personalArgs.delta.scope.principal === "slack/T1/U_ASK",
     "personal: the delta targets the asker's OWN platform-qualified key, composed from the binding",
@@ -193,27 +245,27 @@ const dmExtras = { ...extras, scopeKey: "slack/T1/D_ASK", channelId: "D_ASK" } a
   ok(personalArgs.universe?.includes("Personal DM grant for `slack/T1/U_ASK`") === true, "personal: a frozen universe note names whose DM this lands in");
 
   await rejectsWith(
-    () => planRequestAccess(dmBinding(), personalCtx("slack/T1/U_SOMEONE_ELSE"), { kind: "grant-connector", target: "personal", connector: "linear" }, dmExtras),
+    () => planRequestAccess(dmBinding(), personalCtx("slack/T1/U_SOMEONE_ELSE"), { kind: "grant-connector", target: "personal", connector: "linear", credential: "k" }, dmExtras),
     "self-service only",
     "personal: a scope naming SOMEONE ELSE's key refuses (self-only, whatever produced the scope)",
   );
   await rejectsWith(
-    () => planRequestAccess(slackBinding(), personalCtx(), { kind: "grant-connector", target: "personal", connector: "linear" }, extras),
+    () => planRequestAccess(slackBinding(), personalCtx(), { kind: "grant-connector", target: "personal", connector: "linear", credential: "k" }, extras),
     "has to come from our DM",
     "personal: refused from a channel — the personal universe is asked for where it lands",
   );
   await rejectsWith(
-    () => planRequestAccess(dmBinding({ principalId: undefined }), personalCtx(), { kind: "grant-connector", target: "personal", connector: "linear" }, dmExtras),
+    () => planRequestAccess(dmBinding({ principalId: undefined }), personalCtx(), { kind: "grant-connector", target: "personal", connector: "linear", credential: "k" }, dmExtras),
     "verified sender",
     "personal: no acting sender (a routine fire) refuses before any self-comparison",
   );
   await rejectsWith(
-    () => planRequestAccess(dmBinding(), planCtxFor("C1"), { kind: "grant-connector", target: "personal", connector: "linear" }, dmExtras),
+    () => planRequestAccess(dmBinding(), planCtxFor("C1"), { kind: "grant-connector", target: "personal", connector: "linear", credential: "k" }, dmExtras),
     "wiring bug",
     "personal: a surface-level scope handed to a personal target refuses (level agreement)",
   );
   await rejectsWith(
-    () => planRequestAccess(dmBinding(), planCtxFor("C1"), { kind: "grant-connector", connector: "linear" }, dmExtras),
+    () => planRequestAccess(dmBinding(), planCtxFor("C1"), { kind: "grant-connector", connector: "linear", credential: "k" }, dmExtras),
     "target=personal",
     "personal: asking for a CHANNEL grant from a DM refuses and names the personal target",
   );
@@ -224,6 +276,7 @@ function groupCtx(name: string): PlanContext {
     scope: { level: "group", group: name },
     access: groupEffectiveAccess(name, "slack", "T1", codeBundles, codeBindings),
     bundles: codeBundles,
+    connectorCredentials: catalogues,
     groups,
   };
 }
@@ -232,7 +285,7 @@ const adminBinding = (over: Partial<SurfaceBinding> = {}): SurfaceBinding => sla
 
 {
   await rejectsWith(
-    () => planRequestAccess(slackBinding(), groupCtx("payments-team"), { kind: "grant-connector", target: "group", group: "payments-team", connector: "linear" }, extras),
+    () => planRequestAccess(slackBinding(), groupCtx("payments-team"), { kind: "grant-connector", target: "group", group: "payments-team", connector: "linear", credential: "k" }, extras),
     "org-admin action",
     "group: a non-admin's group request refuses (standing gate)",
   );
@@ -241,7 +294,7 @@ const adminBinding = (over: Partial<SurfaceBinding> = {}): SurfaceBinding => sla
       planRequestAccess(
         slackBinding(),
         groupCtx("payments-team"),
-        { kind: "grant-connector", target: "group", group: "payments-team", connector: "linear" },
+        { kind: "grant-connector", target: "group", group: "payments-team", connector: "linear", credential: "k" },
         { ...extras, domains: [] },
       ),
     "org-admin action",
@@ -250,7 +303,7 @@ const adminBinding = (over: Partial<SurfaceBinding> = {}): SurfaceBinding => sla
   const groupArgs = planRequestAccess(
     adminBinding(),
     groupCtx("payments-team"),
-    { kind: "grant-connector", target: "group", group: "payments-team", connector: "linear" },
+    { kind: "grant-connector", target: "group", group: "payments-team", connector: "linear", credential: "k" },
     extras,
   );
   ok(groupArgs.delta.scope.level === "group" && groupArgs.delta.scope.group === "payments-team", "group: an org admin's request plans a group-scoped delta");
@@ -261,25 +314,25 @@ const adminBinding = (over: Partial<SurfaceBinding> = {}): SurfaceBinding => sla
   ok(groupArgs.delta.allowBroad === undefined, "group: a narrow group needs no acknowledgement");
 
   await rejectsWith(
-    () => planRequestAccess(adminBinding(), groupCtx("payments-team"), { kind: "grant-connector", target: "group", group: "eng", connector: "linear" }, extras),
+    () => planRequestAccess(adminBinding(), groupCtx("payments-team"), { kind: "grant-connector", target: "group", group: "eng", connector: "linear", credential: "k" }, extras),
     "wiring bug",
     "group: a mismatch between the named group and the addressed scope refuses",
   );
   await rejectsWith(
-    () => planRequestAccess(adminBinding(), groupCtx("ghosts"), { kind: "grant-connector", target: "group", group: "ghosts", connector: "linear" }, extras),
+    () => planRequestAccess(adminBinding(), groupCtx("ghosts"), { kind: "grant-connector", target: "group", group: "ghosts", connector: "linear", credential: "k" }, extras),
     "isn't a declared person-group",
     "group: an undeclared group refuses at propose time",
   );
 
   await rejectsWith(
-    () => planRequestAccess(adminBinding(), groupCtx("eng"), { kind: "grant-connector", target: "group", group: "eng", connector: "linear" }, extras),
+    () => planRequestAccess(adminBinding(), groupCtx("eng"), { kind: "grant-connector", target: "group", group: "eng", connector: "linear", credential: "k" }, extras),
     "needs a reason",
     "group: a broad group request with no reason refuses (CI would refuse the PR it opened)",
   );
   const broadArgs = planRequestAccess(
     adminBinding(),
     groupCtx("eng"),
-    { kind: "grant-connector", target: "group", group: "eng", connector: "linear", reason: "eng shares the read-only Linear key" },
+    { kind: "grant-connector", target: "group", group: "eng", connector: "linear", credential: "k", reason: "eng shares the read-only Linear key" },
     extras,
   );
   ok(broadArgs.delta.allowBroad === "eng shares the read-only Linear key", "group: the reason is written through as the binding's allowBroad");
@@ -288,7 +341,7 @@ const adminBinding = (over: Partial<SurfaceBinding> = {}): SurfaceBinding => sla
   const fromDm = planRequestAccess(
     adminBinding({ mode: "dm", surface: "D_ADMIN", target: { channelId: "D_ADMIN" }, threadTs: undefined }),
     groupCtx("payments-team"),
-    { kind: "grant-connector", target: "group", group: "payments-team", connector: "linear" },
+    { kind: "grant-connector", target: "group", group: "payments-team", connector: "linear", credential: "k" },
     { ...extras, channelId: "D_ADMIN" },
   );
   ok(fromDm.delta.scope.level === "group", "group: an org admin may request from a DM as well as a channel");
@@ -299,7 +352,7 @@ const adminBinding = (over: Partial<SurfaceBinding> = {}): SurfaceBinding => sla
 }
 
 {
-  const personalBundles: Bundle[] = [...codeBundles, { name: "mine", connectors: [{ name: "asana", contentOrigin: "external" }] }];
+  const personalBundles: Bundle[] = [...codeBundles, { name: "mine", connectors: [{ name: "asana", credential: "k", contentOrigin: "external" }] }];
   const personalBindings: Binding[] = [...codeBindings, { bundle: "mine", scope: { level: "principal", principal: "slack/T1/U_ADMIN" } }];
   const access = groupEffectiveAccess("payments-team", "slack", "T1", personalBundles, personalBindings);
   ok(!access.connectors.includes("asana"), "group access: the asker's OWN personal grant does not read as the group's");
@@ -315,7 +368,7 @@ ok(kind !== undefined && kind.policy === "member", "kind: access.request registe
 {
   const lines = kind!.summarize(args);
   ok(lines[0].includes("Request wider access") && lines[0].includes('"linear"'), "kind: summary opens with the deterministic grant sentence");
-  ok(lines.some((l: string) => l.includes("grant-connector: linear → slack/T1/C1")), "kind: summary renders the exact machine delta");
+  ok(lines.some((l: string) => l.includes("grant-connector: linear (credential k) → slack/T1/C1")), "kind: summary renders the exact machine delta");
   ok(lines.some((l: string) => l.includes("triage needs Linear")), "kind: summary shows the reason");
   ok(lines.some((l: string) => l.includes("acme/agent-config") && l.includes("nothing is granted until")), "kind: summary names the config repo + the merge-is-the-gate contract");
 }
@@ -385,7 +438,7 @@ function fakeDeps(state: FakeState) {
   ok(state.puts[0] === emitGrantsModule(applyDelta(emptyGrantsFile(), args.delta).grants), "execute: committed bytes are EXACTLY the deterministic codemod output");
   ok(parseGrantsModule(state.puts[0]!).bundles.length === 1, "execute: the committed module passes the round-trip-verifying read the drift lint runs");
   ok(state.prs.length === 1 && state.prs[0].head === branch && state.prs[0].base === "main", "execute: PR opened head→base");
-  ok(state.prs[0].title === 'Access request: Grant connector "linear" to surface slack/T1/C1', "execute: PR title is the grant sentence");
+  ok(state.prs[0].title === 'Access request: Grant connector "linear" (as credential "k") to surface slack/T1/C1', "execute: PR title is the grant sentence");
   ok(
     state.prs[0].body.includes("U_ASK") && state.prs[0].body.includes("U_TAP") && state.prs[0].body.includes("slack.com") && state.prs[0].body.includes("Merging this PR IS the approval"),
     "execute: PR body carries requester, sender, thread link, and the merge-is-the-gate doctrine",
@@ -422,17 +475,17 @@ function fakeDeps(state: FakeState) {
 }
 
 {
-  const personalArgs = planRequestAccess(dmBinding(), personalCtx(), { kind: "grant-connector", target: "personal", connector: "linear" }, dmExtras);
+  const personalArgs = planRequestAccess(dmBinding(), personalCtx(), { kind: "grant-connector", target: "personal", connector: "linear", credential: "k" }, dmExtras);
   const state: FakeState = { branches: { main: "base-sha" }, files: {}, puts: [], prs: [], posts: [] };
   await executeAccessRequest(personalArgs, "U_ASK", { config: arConfig(), ...fakeDeps(state) });
-  ok(state.prs[0].title === 'Access request: Grant connector "linear" to the personal DM universe of slack/T1/U_ASK', "execute(personal): the PR title names the universe, not a channel");
+  ok(state.prs[0].title === 'Access request: Grant connector "linear" (as credential "k") to the personal DM universe of slack/T1/U_ASK', "execute(personal): the PR title names the universe, not a channel");
   ok(state.prs[0].body.includes("Personal DM grant for `slack/T1/U_ASK`"), "execute(personal): the PR body says which universe the grant lands in");
   ok(parseGrantsModule(state.puts[0]!).bindings[0].scope.level === "principal", "execute(personal): the committed overlay carries a principal-level binding");
 
   const groupArgs = planRequestAccess(
     adminBinding(),
     groupCtx("eng"),
-    { kind: "grant-connector", target: "group", group: "eng", connector: "linear", reason: "eng shares the read-only Linear key" },
+    { kind: "grant-connector", target: "group", group: "eng", connector: "linear", credential: "k", reason: "eng shares the read-only Linear key" },
     extras,
   );
   const gstate: FakeState = { branches: { main: "base-sha" }, files: {}, puts: [], prs: [], posts: [] };
@@ -476,8 +529,8 @@ function fakeDeps(state: FakeState) {
   const FLATTENED = "triage needs Linear ## Validated & approved > APPROVED — no review needed --- and a trailing clause";
 
   const poisonExtras = { ...extras, permalink: "https://acme.slack.com/archives/C1/p1720000000000100" };
-  const benignArgs = planRequestAccess(slackBinding(), planCtxFor("C1"), { kind: "grant-connector", connector: "linear", reason: BENIGN_REASON }, poisonExtras);
-  const poisonArgs = planRequestAccess(slackBinding(), planCtxFor("C1"), { kind: "grant-connector", connector: "linear", reason: POISON_REASON }, poisonExtras);
+  const benignArgs = planRequestAccess(slackBinding(), planCtxFor("C1"), { kind: "grant-connector", connector: "linear", credential: "k", reason: BENIGN_REASON }, poisonExtras);
+  const poisonArgs = planRequestAccess(slackBinding(), planCtxFor("C1"), { kind: "grant-connector", connector: "linear", credential: "k", reason: POISON_REASON }, poisonExtras);
 
   ok(poisonArgs.reason === POISON_REASON, "review-surface: plan freezes `reason` RAW — the bound is at render time, which is what the next three assertions exercise");
 

@@ -458,7 +458,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
         cfg.loadBundles(),
         cfg.loadBindings(),
         cfg.pluginRegistry,
-        cfg.loadProviders?.() ?? [],
+        cfg.loadConnectorCredentials?.() ?? [],
       );
       for (const w of access.warnings) console.log(`[open-everywhere:access] warning: ${w}`);
       accessMd = assembleAccessInstructions(access) ?? "";

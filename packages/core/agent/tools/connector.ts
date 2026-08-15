@@ -20,27 +20,27 @@ function connectModeOf(mode: string): ConnectMode {
 
 const connectorEntry = defineTool({
   description:
-    "Post connect options for a provider so a human can authorize it. Call with a provider name when " +
+    "Post connect options for a connector so a human can authorize it. Call with a connector name when " +
     "someone wants to connect/authorize an integration (e.g. \"connect Notion\", \"set the API key\"), or " +
-    "with NO provider to list what can be connected here. This posts buttons/links — it does NOT store " +
+    "with NO connector to list what can be connected here. This posts buttons/links — it does NOT store " +
     "any secret or grant anything itself; a human completes the connect, and personal OAuth only works " +
     "in a DM while org-level setup is admin-only (options a requester can't use are simply not shown). " +
     "NEVER invite anyone to paste a secret/API key into chat — secrets travel only through the posted " +
     "intake UI or an operator, and a pasted key is compromised. " +
     "If the person says they have ALREADY completed a sign-in/authorization, do NOT call this — retry " +
-    "the actual operation instead (the provider's own tools / connection_search); grants land server-side, " +
+    "the actual operation instead (the connector's own tools / connection_search); grants land server-side, " +
     "so only a fresh attempt can see them, and re-posting connect options reads as a runaround. " +
     "The posted card/message IS the reply — do not add a URL, a summary, or confirmation text after this call.",
   inputSchema: z.object({
-    provider: z
+    connector: z
       .string()
       .min(1)
       .optional()
-      .describe("The provider to connect (as listed by calling with no provider). Omit to list connectable providers here."),
+      .describe("The connector to connect (as listed by calling with no connector). Omit to list connectable connectors here."),
   }),
   outputSchema: z.object({
     action: z.enum(["posted", "listed", "none"]),
-    provider: z.string().optional(),
+    connector: z.string().optional(),
     options: z.array(z.string()),
     note: z.string(),
   }),
@@ -51,42 +51,42 @@ const connectorEntry = defineTool({
     const isAdmin = resolveRole(ctx as BindableContext).isDomainAdmin;
     const hostWriteBroker = hostWriteHomeAvailable(registeredCredentialHomes());
     const pageArmed = intakePageAvailable();
-    const providers = getConfig().loadProviders?.() ?? [];
+    const catalogues = getConfig().loadConnectorCredentials?.() ?? [];
 
-    if (!input.provider) {
-      if (providers.length === 0) {
-        return { action: "none" as const, options: [], note: "No providers are configured on this deployment." };
+    if (!input.connector) {
+      if (catalogues.length === 0) {
+        return { action: "none" as const, options: [], note: "No connectors are configured on this deployment." };
       }
-      const lines = providers.map((p) => {
-        const labels = resolveConnectorOptions({ provider: p, platform, mode, isAdmin, hostWriteBroker, intakePageAvailable: pageArmed })
+      const lines = catalogues.map((p) => {
+        const labels = resolveConnectorOptions({ catalogue: p, platform, mode, isAdmin, hostWriteBroker, intakePageAvailable: pageArmed })
           .filter((o) => o.route.kind !== "unavailable")
           .map(optionLabel);
-        return `- ${p.name}: ${labels.length ? labels.join(", ") : "nothing offerable here"}`;
+        return `- ${p.connector}: ${labels.length ? labels.join(", ") : "nothing offerable here"}`;
       });
       return {
         action: "listed" as const,
-        options: providers.map((p) => p.name),
-        note: `Connectable providers here:\n${lines.join("\n")}\nCall connector with a provider name to post its options.`,
+        options: catalogues.map((p) => p.connector),
+        note: `Connectable connectors here:\n${lines.join("\n")}\nCall connector with a connector name to post its options.`,
       };
     }
 
-    const provider = providers.find((p) => p.name === input.provider);
-    if (!provider) {
+    const catalogue = catalogues.find((p) => p.connector === input.connector);
+    if (!catalogue) {
       throw new Error(
-        `no provider "${input.provider}" is configured — known providers: ${providers.map((p) => p.name).join(", ") || "none"}.`,
+        `no connector "${input.connector}" is configured — known connectors: ${catalogues.map((p) => p.connector).join(", ") || "none"}.`,
       );
     }
 
-    const options = resolveConnectorOptions({ provider, platform, mode, isAdmin, hostWriteBroker, intakePageAvailable: pageArmed }).filter(
+    const options = resolveConnectorOptions({ catalogue, platform, mode, isAdmin, hostWriteBroker, intakePageAvailable: pageArmed }).filter(
       (o) => o.route.kind !== "unavailable",
     );
     const labels = options.map(optionLabel);
     if (options.length === 0) {
       return {
         action: "none" as const,
-        provider: provider.name,
+        connector: catalogue.connector,
         options: [],
-        note: `No connect options are offerable for ${provider.name} here — personal OAuth is DM-only, and org-level setup (service OAuth / API key) is admin-only.`,
+        note: `No connect options are offerable for ${catalogue.connector} here — personal OAuth is DM-only, and org-level setup (service OAuth / API key) is admin-only.`,
       };
     }
 
@@ -99,7 +99,7 @@ const connectorEntry = defineTool({
         surface: partition.surface,
         ...(binding.principalId ? { principalId: binding.principalId } : {}),
         action: "connector.card_posted",
-        detail: { provider: provider.name, options: labels },
+        detail: { connector: catalogue.connector, options: labels },
       });
 
     if (platform === "slack") {
@@ -107,7 +107,7 @@ const connectorEntry = defineTool({
       if (!channelId) {
         throw new Error("connector couldn't resolve this Slack channel's id — try again from a real channel or DM.");
       }
-      const { blocks, text } = buildConnectCard(provider.name, options, binding.org);
+      const { blocks, text } = buildConnectCard(catalogue.connector, options, binding.org);
       const body = new URLSearchParams();
       body.set("channel", channelId);
       if (binding.threadTs) body.set("thread_ts", binding.threadTs);
@@ -120,9 +120,9 @@ const connectorEntry = defineTool({
       await cardAudit();
       return {
         action: "posted" as const,
-        provider: provider.name,
+        connector: catalogue.connector,
         options: labels,
-        note: `posted connect options for ${provider.name}: ${labels.join(", ")}`,
+        note: `posted connect options for ${catalogue.connector}: ${labels.join(", ")}`,
       };
     }
 
@@ -132,13 +132,13 @@ const connectorEntry = defineTool({
     }
     const issuePageLink = async (o: ConnectorOption): Promise<string | undefined> => {
       if (!binding.principalId) return undefined;
-      const cred = offerableCredential(provider, o.credentialType);
+      const cred = offerableCredential(catalogue, o.credentialType);
       if (!cred) return undefined;
-      const ref = deriveCredentialRef({ provider: provider.name, credentialId: cred.id });
+      const ref = deriveCredentialRef({ provider: catalogue.connector, credentialId: cred.id });
       if (!ref) return undefined;
       const link = await issueIntakePageLink({
         org: binding.org,
-        provider: provider.name,
+        provider: catalogue.connector,
         ...(partition.workspace ? { teamId: partition.workspace } : {}),
         platform,
         ref,
@@ -148,7 +148,7 @@ const connectorEntry = defineTool({
       return link?.url;
     };
     const { text, issued } = await renderNonSlackConnect(
-      provider.name,
+      catalogue.connector,
       options,
       { mode, principalId: binding.principalId, org: binding.org, platform: binding.platform },
       undefined,
@@ -172,14 +172,14 @@ const connectorEntry = defineTool({
         surface: partition.surface,
         ...(binding.principalId ? { principalId: binding.principalId } : {}),
         action: "connector.oauth_url_issued",
-        detail: { provider: provider.name, subject: o.principal },
+        detail: { connector: catalogue.connector, subject: o.principal },
       });
     }
     return {
       action: "posted" as const,
-      provider: provider.name,
+      connector: catalogue.connector,
       options: labels,
-      note: `posted connect options for ${provider.name}: ${labels.join(", ")}`,
+      note: `posted connect options for ${catalogue.connector}: ${labels.join(", ")}`,
     };
   },
 });

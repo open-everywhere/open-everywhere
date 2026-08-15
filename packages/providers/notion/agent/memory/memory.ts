@@ -4,7 +4,7 @@ import {
   registerProvider,
   registerConnectorMemory,
   domainCredentialId,
-  findProviderCredential,
+  findConnectorCredential,
   getSecretVia,
   safeName,
   type Partition,
@@ -209,9 +209,9 @@ export async function resolveNotionMemoryCredential(
 ): Promise<ResolvedNotionMemoryCredential> {
   if (credentialId === NOTION_MEMORY_CREDENTIAL) {
     const token = await getSecretVia(broker, secretRef);
-    return { token, endpoints: findProviderCredential(NOTION_PROVIDER, NOTION_MEMORY_CREDENTIAL)?.endpoints };
+    return { token, endpoints: findConnectorCredential(NOTION_PROVIDER, NOTION_MEMORY_CREDENTIAL)?.endpoints };
   }
-  const cred = findProviderCredential(NOTION_PROVIDER, credentialId);
+  const cred = findConnectorCredential(NOTION_PROVIDER, credentialId);
   if (!cred?.secretRef) {
     throw new Error(
       `notion memory backing: domain credential "${credentialId}" is not a declared notion credential with a secretRef ` +

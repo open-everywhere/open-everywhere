@@ -45,9 +45,9 @@ ok(
 );
 
 for (const [field, bundle] of [
-  ["providers", defineBundle({ name: "b", providers: [{ provider: "notion", credential: "k" }] })],
+  ["connectors", defineBundle({ name: "b", connectors: [{ name: "notion", credential: "k", contentOrigin: "external" }] })],
   ["repos", defineBundle({ name: "b", repos: ["acme/web"] })],
-  ["connectors", defineBundle({ name: "b", connectors: ["notion"] })],
+  ["awsRoles", defineBundle({ name: "b", awsRoles: [{ roleArn: "arn:aws:iam::123456789012:role/oe", region: "eu-west-2", allow: ["logs:Describe*"] }] })],
 ] as const) {
   ok(lintBroadGrants([bundle], [at("b", "tenant")]).length === 1, `broad ${field} grants FAIL like connections do`);
 }

@@ -85,7 +85,7 @@ const codeDomains: Domain[] = [
   { name: "org", match: "org", memory: "org-brain" },
   { name: "eng", channels: ["slack/T1/C_ENG", "teams/W1/CONV_ENG"], memory: "org-brain" },
 ];
-const codeBundles: Bundle[] = [{ name: "base" }, { name: "has-connector", connectors: [{ name: "notion", contentOrigin: "external" }] }];
+const codeBundles: Bundle[] = [{ name: "base" }, { name: "has-connector", connectors: [{ name: "notion", credential: "k", contentOrigin: "external" }] }];
 const codeBindings: Binding[] = [];
 
 function arConfig(over: Partial<AccessRequestsConfig> = {}): AccessRequestsConfig {
@@ -101,8 +101,13 @@ function arConfig(over: Partial<AccessRequestsConfig> = {}): AccessRequestsConfi
   };
 }
 
+const catalogues = [
+  { connector: "notion", allows: ["api-key" as const], credentials: [{ id: "k", type: "api-key" as const, secretRef: "NOTION_K", broker: "env" }] },
+];
+
 registerConfig({
   loadBundles: () => codeBundles,
+  loadConnectorCredentials: () => catalogues,
   loadBindings: () => codeBindings,
   pluginRegistry: {},
   skillContent: {},
@@ -164,9 +169,14 @@ await rejectsWith(
   "tool: refuses when the asking channel is already in a domain",
 );
 await rejectsWith(
-  () => createAgentTool.execute({ name: "helper", memory: newReadonly, connectors: ["notarealthing"] }, liveCtx("C_NEW")),
+  () => createAgentTool.execute({ name: "helper", memory: newReadonly, connectors: [{ name: "notarealthing", credential: "k" }] }, liveCtx("C_NEW")),
   "aren't defined in this deployment",
   "tool: refuses an undefined connector",
+);
+await rejectsWith(
+  () => createAgentTool.execute({ name: "helper", memory: newReadonly, connectors: [{ name: "notion", credential: "ghost" }] }, liveCtx("C_NEW")),
+  'no credential "ghost" configured',
+  "tool: refuses a credential the connector does not configure",
 );
 await rejectsWith(
   () => createAgentTool.execute({ name: "helper", memory: existing("rw-silo"), exposed: true }, liveCtx("C_NEW")),
@@ -184,7 +194,7 @@ ok(
   `tool: an EXPOSED agent reading a READ-ONLY silo clears the exposure guard — never refused for WRITABLE (got: ${readOnlyExposureRefusal ?? "no throw"})`,
 );
 
-const spec: AgentSpec = { name: "support-desk", title: "Support Desk", channels: ["slack/T1/C_AGENT"], memory: { kind: "new-readonly", provider: "notion", container: "root-page" }, connectors: ["notion"], instructions: "Answer support questions from the handbook." };
+const spec: AgentSpec = { name: "support-desk", title: "Support Desk", channels: ["slack/T1/C_AGENT"], memory: { kind: "new-readonly", provider: "notion", container: "root-page" }, connectors: [{ name: "notion", credential: "k" }], instructions: "Answer support questions from the handbook." };
 
 const kind = actionKind("agent.create");
 ok(kind !== undefined && kind.policy === "member", "kind: agent.create registered with member policy (the card is the injection gate, merge is the privilege gate)");

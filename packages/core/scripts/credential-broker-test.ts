@@ -193,8 +193,8 @@ function recorder() {
 }
 
 {
-  const { expandProviderGrant } = await import("../agent/access/providers.js");
-  type ApiKeyProvider = Parameters<typeof expandProviderGrant>[1] & object;
+  const { expandConnectorGrant } = await import("../agent/access/connector-credentials.js");
+  type ApiKeyProvider = Parameters<typeof expandConnectorGrant>[1] & object;
 
   resetBrokers();
   dbBroker.registerDbCredentialBroker();
@@ -213,11 +213,11 @@ function recorder() {
   assert.throws(() => brokerFor("nope"), (e) => e instanceof CredentialError && /not registered/.test((e as Error).message), "brokerFor('unregistered') throws (fail closed, no fallback)");
   await assert.rejects(() => getSecretVia("nope", ENV_ONLY_REF), (e) => e instanceof CredentialError && /not registered/.test((e as Error).message), "getSecretVia('unregistered', ...) fails closed");
 
-  const providerStamped = { name: "p", connection: "c", allows: ["api-key"], credentials: [{ id: "k", type: "api-key", secretRef: ENV_ONLY_REF, broker: "env" }] } as ApiKeyProvider;
-  const rStamped = expandProviderGrant({ provider: "p", credential: "k" }, providerStamped, { dm: false });
-  ok(rStamped.resolved?.broker === "env" && rStamped.resolved?.secretRef === ENV_ONLY_REF, "expandProviderGrant carries the credential's home broker into the resolved binding");
-  const providerUnstamped = { name: "p2", connection: "c", allows: ["api-key"], credentials: [{ id: "k", type: "api-key", secretRef: ENV_ONLY_REF }] } as ApiKeyProvider;
-  const rUnstamped = expandProviderGrant({ provider: "p2", credential: "k" }, providerUnstamped, { dm: false });
+  const providerStamped = { connector: "p", allows: ["api-key"], credentials: [{ id: "k", type: "api-key", secretRef: ENV_ONLY_REF, broker: "env" }] } as ApiKeyProvider;
+  const rStamped = expandConnectorGrant({ name: "p", credential: "k" }, providerStamped, { dm: false });
+  ok(rStamped.resolved?.broker === "env" && rStamped.resolved?.secretRef === ENV_ONLY_REF, "expandConnectorGrant carries the credential's home broker into the resolved binding");
+  const providerUnstamped = { connector: "p2", allows: ["api-key"], credentials: [{ id: "k", type: "api-key", secretRef: ENV_ONLY_REF }] } as ApiKeyProvider;
+  const rUnstamped = expandConnectorGrant({ name: "p2", credential: "k" }, providerUnstamped, { dm: false });
   ok(rUnstamped.resolved?.broker === undefined, "an unstamped credential resolves with broker: undefined (validation rejects it at definition; runtime resolution would fail closed)");
 
   const stampedHeaders = await resolveHeaders({ id: "notion-rest", credentialType: "bearer", secretRef: ENV_ONLY_REF, broker: "env", allowedWebsites: ["api.notion.com"] });

@@ -2,7 +2,7 @@ import type { Domain } from "@open-everywhere/core/agent/memory/domain.js";
 import type { DomainMemoryGrants } from "@open-everywhere/core/agent/adapter-api.js";
 import { resolveAccess } from "@open-everywhere/core/agent/access/resolver.js";
 import { loadBundles, loadBindings } from "../access/bundles.js";
-import { loadProviders } from "../access/providers.js";
+import { loadConnectorCredentials } from "../access/connector-credentials.js";
 import { PLUGIN_REGISTRY } from "../plugins/registry.js";
 
 function splitSurfaceKey(key: string): { platform: string; workspace: string; channel: string } | null {
@@ -23,7 +23,7 @@ export function domainMemoryGrants(domain: Domain): DomainMemoryGrants | null {
     loadBundles(),
     loadBindings(),
     PLUGIN_REGISTRY,
-    loadProviders(),
+    loadConnectorCredentials(),
   );
   return { connectors: access.connectors, repos: access.repos };
 }

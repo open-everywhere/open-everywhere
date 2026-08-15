@@ -79,7 +79,7 @@ const DOMAINS = [
 const CONNECTIONS = [{ id: "notion-rest", credentialType: "bearer" as const, secretRef: "NOTION_API_KEY", allowedWebsites: ["api.notion.com"], methods: ["GET" as const] }];
 const BUNDLES = [
   { name: "notion", connections: CONNECTIONS },
-  { name: "linear-basket", connectors: ["linear"] },
+  { name: "linear-basket", connectors: [{ name: "linear", credential: "k", contentOrigin: "external" as const }] },
   { name: "coding", repos: ["acme/web"] },
 ];
 const BINDINGS = [
@@ -89,6 +89,9 @@ const BINDINGS = [
 process.env.GITHUB_TOKEN = "test-pat";
 
 registerConfig({
+  loadConnectorCredentials: () => [
+    { connector: "linear", allows: ["api-key" as const], credentials: [{ id: "k", type: "api-key" as const, secretRef: "LINEAR_K", broker: "env" }] },
+  ],
   loadBundles: () => BUNDLES,
   loadBindings: () => BINDINGS,
   pluginRegistry: {},
@@ -274,7 +277,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   );
 
   const ra = (await (await armed(requestAccessTool, teamsCtx("CONV1"), "request_access")).execute(
-    { kind: "grant-connector", connector: "linear", reason: "triage needs Linear" },
+    { kind: "grant-connector", connector: "linear", credential: "k", reason: "triage needs Linear" },
     teamsCtx("CONV1"),
   )) as { requested: boolean; pendingId: string; note: string };
   ok(ra.requested === true, "redirect: 🔴 `request_access` works from a card-less room too");
@@ -354,7 +357,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   );
 
   await refuses(
-    () => (armed(requestAccessTool, teamsCtx("CONV_ORPHAN"), "request_access") as Promise<Entry>).then((e) => e.execute({ kind: "grant-connector", connector: "linear" }, teamsCtx("CONV_ORPHAN"))),
+    () => (armed(requestAccessTool, teamsCtx("CONV_ORPHAN"), "request_access") as Promise<Entry>).then((e) => e.execute({ kind: "grant-connector", connector: "linear", credential: "k" }, teamsCtx("CONV_ORPHAN"))),
     /I can't request that access from here.*isn't in an explicit domain.*domains\.ts/s,
     "refuse: a channel in NO domain refuses with the other reason — the config change is a different one, and naming the wrong one is how a refusal becomes useless",
   );

@@ -158,7 +158,7 @@ function throws(fn: () => unknown, needle: string, label: string): void {
     "preApprovalRules",
     "human-only: the machine-written grants overlay REFUSES a bundle carrying preApprovalRules",
   );
-  const fine = parseGrantsFile({ bundles: [{ name: "grants:x", connectors: ["notion"] }], bindings: [] });
+  const fine = parseGrantsFile({ bundles: [{ name: "grants:x", connectors: [{ name: "notion", credential: "k" }] }], bindings: [] });
   eq(fine.bundles.length, 1, "human-only: the overlay still accepts its own v1 vocabulary (connectors)");
 }
 

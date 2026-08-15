@@ -1,4 +1,4 @@
-import type { Provider, ProviderCredential } from "./providers.js";
+import type { ConnectorCredentials, ConnectorCredential } from "./connector-credentials.js";
 import { overlayModuleHeader, unwrapOverlayModule, wrapOverlayModule, type OverlayModuleGrammar } from "./overlay-module.js";
 
 export interface CredentialBindingOverride {
@@ -27,7 +27,7 @@ export interface OverlayHomeCodec {
   claims(o: CredentialBindingOverride): boolean;
   serialize(o: CredentialBindingOverride): Record<string, unknown>;
   sameHome(a: CredentialBindingOverride, b: CredentialBindingOverride): boolean;
-  apply(cred: ProviderCredential, o: CredentialBindingOverride): ProviderCredential;
+  apply(cred: ConnectorCredential, o: CredentialBindingOverride): ConnectorCredential;
 }
 
 const OVERLAY_HOMES = new Map<string, OverlayHomeCodec>();
@@ -181,18 +181,21 @@ export function applyBindingOverride(file: CredentialBindingsFile, override: Cre
   return { file: { overrides: [...others, { ...override }] }, changed: true };
 }
 
-export function applyOverridesToProviders(providers: readonly Provider[], overrides: readonly CredentialBindingOverride[]): readonly Provider[] {
-  if (overrides.length === 0) return providers;
-  const byProvider = new Map<string, CredentialBindingOverride[]>();
+export function applyOverridesToConnectorCredentials(
+  catalogues: readonly ConnectorCredentials[],
+  overrides: readonly CredentialBindingOverride[],
+): readonly ConnectorCredentials[] {
+  if (overrides.length === 0) return catalogues;
+  const byConnector = new Map<string, CredentialBindingOverride[]>();
   for (const o of overrides) {
-    const list = byProvider.get(o.provider) ?? [];
+    const list = byConnector.get(o.provider) ?? [];
     list.push(o);
-    byProvider.set(o.provider, list);
+    byConnector.set(o.provider, list);
   }
-  return providers.map((p) => {
-    const forThis = byProvider.get(p.name);
+  return catalogues.map((p) => {
+    const forThis = byConnector.get(p.connector);
     if (!forThis) return p;
-    const credentials = p.credentials.map((c): ProviderCredential => {
+    const credentials = p.credentials.map((c): ConnectorCredential => {
       const ov = forThis.find((o) => o.credential === c.id);
       if (!ov) return c;
       return overlayHomeFor(ov)?.apply(c, ov) ?? c;

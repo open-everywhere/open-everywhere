@@ -1,6 +1,6 @@
 import "../agent/lib/register-config.js";
 import { loadBindings, loadBundles } from "../agent/access/bundles.js";
-import { loadProviders } from "../agent/access/providers.js";
+import { loadConnectorCredentials } from "../agent/access/connector-credentials.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
 import { domainsForSurface, loadDomains } from "../agent/memory/domains.js";
 import { resolveDomainForChannel } from "@open-everywhere/core/agent/memory/domain.js";
@@ -26,7 +26,7 @@ const req: ResolveRequest = {
   principalId: arg("principal"),
 };
 
-const access = resolveAccess(req, loadBundles(), loadBindings(), PLUGIN_REGISTRY, loadProviders());
+const access = resolveAccess(req, loadBundles(), loadBindings(), PLUGIN_REGISTRY, loadConnectorCredentials());
 
 console.log(`\nScope: ${access.scopeKey}  (mode: ${access.mode})`);
 const routing = resolveDomainForChannel(`${platform}/${workspace}/${channel}`, loadDomains());
@@ -57,9 +57,9 @@ console.log(`Skills (granted, scoped): ${access.skills.length ? access.skills.jo
 console.log(`Subagents: ${access.subagents.length ? access.subagents.join(", ") : "(none)"}`);
 console.log(`Connectors (host-side, agent/connections/*): ${access.connectors.length ? access.connectors.join(", ") : "(none)"}`);
 const credEntries = Object.entries(access.connectorCredentials);
-console.log(`Connector credentials (from provider grants, secrets hidden): ${credEntries.length ? "" : "(none)"}`);
+console.log(`Connector credentials (narrowest-wins per connector, secrets hidden): ${credEntries.length ? "" : "(none)"}`);
 for (const [slug, cred] of credEntries) {
-  console.log(`  • ${slug}  <- provider "${cred.provider}" credential "${cred.credential}"  type=${cred.type}  principal=${cred.principal}`);
+  console.log(`  • ${slug}  <- credential "${cred.credential}"  type=${cred.type}  principal=${cred.principal}`);
 }
 
 console.log("\nInstruction precedence stack (org → workspace → channel):");

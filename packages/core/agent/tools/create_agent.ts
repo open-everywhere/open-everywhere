@@ -7,7 +7,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { actingPrincipalIdOf, buildResolveRequest, resolveAccessFor, unattendedOf } from "../access/request.js";
 import { surfaceKeyOf } from "../access/resolver.js";
 import { getConfig } from "../access/config.js";
-import { definedConnectors } from "../access/delta.js";
+import { definedConnectors, definedConnectorCredentials } from "../access/delta.js";
 import {
   agentSiloName,
   assertExposedAgentSpec,
@@ -61,7 +61,12 @@ export default defineTool({
         }),
       ])
       .describe('WHERE the agent\'s brain lives: reuse an existing silo ({ kind: "existing-silo", silo }) or materialise a new READ-ONLY one ({ kind: "new-readonly", provider, ... }).'),
-    connectors: z.array(z.string().min(1)).optional().describe("Connector slug(s) this agent may use — each must already be defined in this deployment's config."),
+    connectors: z
+      .array(z.object({ name: z.string().min(1), credential: z.string().min(1) }))
+      .optional()
+      .describe(
+        "Connector grants this agent may use: { name, credential } each. `name` must already be defined in this deployment's config, and `credential` must be one that connector configures — every grant names the identity it is reached as.",
+      ),
     instructions: z.string().optional().describe("Standing instructions the agent follows on every turn — its persona / job. Kept as narrow as the job allows."),
     exposed: z.boolean().optional().default(false).describe("True ONLY if a wider, less-trusted audience reaches this agent. It is then forced curated read-only (read-only silo, no org-brain inheritance)."),
     reason: z.string().optional().describe("Why this agent is wanted — shown on the card and in the PR."),
@@ -129,14 +134,30 @@ export default defineTool({
       );
     }
 
-    const connectors = [...new Set((input.connectors ?? []).map((c) => c.trim()).filter((c) => c.length > 0))];
+    const connectors = [
+      ...new Map(
+        (input.connectors ?? [])
+          .map((c) => ({ name: c.name.trim(), credential: c.credential.trim() }))
+          .filter((c) => c.name.length > 0 && c.credential.length > 0)
+          .map((c) => [c.name, c] as const),
+      ).values(),
+    ];
     if (connectors.length > 0) {
       const defined = definedConnectors(cfg.loadBundles());
-      const unknown = connectors.filter((c) => !defined.includes(c));
+      const unknown = connectors.filter((c) => !defined.includes(c.name));
       if (unknown.length > 0) {
         throw new Error(
-          `connector(s) ${unknown.map((c) => `"${c}"`).join(", ")} aren't defined in this deployment's config (defined: ${defined.length ? defined.join(", ") : "none"}) — an agent can only be granted connectors this deployment already provides.`,
+          `connector(s) ${unknown.map((c) => `"${c.name}"`).join(", ")} aren't defined in this deployment's config (defined: ${defined.length ? defined.join(", ") : "none"}) — an agent can only be granted connectors this deployment already provides.`,
         );
+      }
+      const catalogues = cfg.loadConnectorCredentials?.() ?? [];
+      for (const c of connectors) {
+        const configured = definedConnectorCredentials(catalogues, c.name);
+        if (!configured.includes(c.credential)) {
+          throw new Error(
+            `connector "${c.name}" has no credential "${c.credential}" configured (configured: ${configured.length ? configured.join(", ") : "none"}) — an agent names an identity this deployment already configures; it cannot mint one.`,
+          );
+        }
       }
     }
 

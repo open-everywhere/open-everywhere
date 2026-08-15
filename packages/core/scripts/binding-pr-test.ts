@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import type { AccessRequestsConfig } from "../agent/access/config.js";
-import type { Provider } from "../agent/access/providers.js";
+import type { ConnectorCredentials } from "../agent/access/connector-credentials.js";
 import type { ConfigPrProvider, ConfigPrOutcome, CommitIdentity } from "../agent/credentials/config-pr.js";
 
 const dir = join(tmpdir(), `open-everywhere-binding-pr-${process.pid}`);
@@ -34,16 +34,15 @@ async function rejectsWith(fn: () => Promise<unknown>, fragment: string, label: 
   ok(false, `${label} (did not reject)`);
 }
 
-const validProviders: Provider[] = [
+const validProviders: ConnectorCredentials[] = [
   {
-    name: "acme",
-    connection: "acme",
+    connector: "acme",
     allows: ["api-key"],
     credentials: [{ id: "key", type: "api-key", secretRef: "ACME_API_KEY", broker: "env" }],
   },
 ];
 const loadValid = () => validProviders;
-const loadInvalid = (): readonly Provider[] => [{ name: "acme", connection: "acme", allows: [], credentials: [] }];
+const loadInvalid = (): readonly ConnectorCredentials[] => [{ connector: "acme", allows: [], credentials: [] }];
 
 function cfg(over: Partial<AccessRequestsConfig> = {}): AccessRequestsConfig {
   return {
@@ -51,7 +50,7 @@ function cfg(over: Partial<AccessRequestsConfig> = {}): AccessRequestsConfig {
     configBase: "main",
     baseBundles: () => [],
     baseBindings: () => [],
-    baseProviders: loadValid,
+    baseConnectorCredentials: loadValid,
     ...over,
   };
 }
@@ -77,8 +76,8 @@ async function rowsFor(action: string, credentialAuditId: string) {
   ok(res.staged === false && !!res.skipped && res.skipped.includes("config repo not configured"), "skip: unconfigured config repo → fail-safe skip");
 }
 {
-  const res = await stageCredentialBindingPr(baseArgs, { config: cfg({ baseProviders: undefined }) });
-  ok(res.staged === false && !!res.skipped && res.skipped.includes("base providers not registered"), "skip: absent base providers → fail-safe skip");
+  const res = await stageCredentialBindingPr(baseArgs, { config: cfg({ baseConnectorCredentials: undefined }) });
+  ok(res.staged === false && !!res.skipped && res.skipped.includes("base catalogues not registered"), "skip: absent base catalogues → fail-safe skip");
 }
 
 function tripwireProvider(onTouch: () => void): ConfigPrProvider {
@@ -143,7 +142,7 @@ function tripwireProvider(onTouch: () => void): ConfigPrProvider {
   await rejectsWith(
     () =>
       stageCredentialBindingPr(baseArgs, {
-        config: cfg({ baseProviders: loadInvalid }),
+        config: cfg({ baseConnectorCredentials: loadInvalid }),
         dryRun: false,
         provider,
       }),
@@ -188,7 +187,7 @@ function ghProvider(state: FakeGh): ConfigPrProvider {
   };
 }
 function ghDeps(state: FakeGh) {
-  return { config: cfg(), baseProviders: loadValid, dryRun: false as const, provider: ghProvider(state) };
+  return { config: cfg(), baseConnectorCredentials: loadValid, dryRun: false as const, provider: ghProvider(state) };
 }
 
 {

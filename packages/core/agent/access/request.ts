@@ -53,6 +53,6 @@ export function resolveAccessFor(ctx: BindableContext): EffectiveAccess {
     cfg.loadBundles(),
     cfg.loadBindings(),
     cfg.pluginRegistry,
-    cfg.loadProviders?.() ?? [],
+    cfg.loadConnectorCredentials?.() ?? [],
   );
 }
