@@ -31,7 +31,7 @@ const { registerConfig } = await import("@open-everywhere/core/agent/access/conf
 const { defineBundle, defineBinding } = await import("@open-everywhere/core/agent/access/bundle.js");
 const { setBlobPutter, assertBlobUrl, hostHtmlArtifact } = await import("@open-everywhere/core/agent/blob/hosting.js");
 
-const approvalOf = (postFile as unknown as { approval: (ctx: { toolInput: unknown }) => unknown }).approval;
+const approvalOf = (postFile as unknown as { approval: { request: (ctx: { toolInput: unknown }) => unknown } }).approval.request;
 
 function registerBlobConfig(enabled: boolean, publicPrefix?: string): void {
   registerConfig({

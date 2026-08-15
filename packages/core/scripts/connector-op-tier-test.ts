@@ -48,13 +48,13 @@ ok(approve({ toolName: "notion__delete_page", approvedTools: new Set<string>(["n
 
 resetSettingsForTest();
 {
-  const off = connectorApprovalPolicy();
+  const off = connectorApprovalPolicy().request;
   const read = await off({ toolName: "notion__search", approvedTools: new Set<string>() } as never);
   ok(read !== "not-applicable", "flag OFF → once(): an unapproved READ is not auto-allowed (blanket policy)");
 }
 registerSettings({ connectors: { opTiering: true } });
 {
-  const on = connectorApprovalPolicy();
+  const on = connectorApprovalPolicy().request;
   ok((await on({ toolName: "notion__search", approvedTools: new Set<string>() } as never)) === "not-applicable", "flag ON → tiered: a READ is auto-allowed");
   ok((await on({ toolName: "notion__create_page", approvedTools: new Set<string>() } as never)) === "user-approval", "flag ON → tiered: a WRITE prompts");
 }

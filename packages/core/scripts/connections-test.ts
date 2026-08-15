@@ -11,7 +11,9 @@ function ok(cond: boolean, label: string): void {
 
 ok(typeof notion.url === "string" && notion.url.startsWith("https://"), "notion connection declares an https MCP url");
 ok(typeof notion.description === "string" && notion.description.length > 0, "notion connection has a model-facing description");
-ok(typeof notion.approval === "function", "notion connection carries an approval gate (the live hard lever while per-surface scoping is an Eve gap)");
+ok(typeof notion.approval === "object" && notion.approval !== null, "notion connection carries an approval CONFIGURATION");
+ok(typeof (notion.approval as { request?: unknown }).request === "function", "…whose request half is the connector-op gate");
+ok(typeof (notion.approval as { response?: unknown }).response === "function", "…and whose response half is the who-may-approve check (OPE-575)");
 
 ok(typeof notion.auth === "function", "notion auth is the resolver form (a function of SessionContext), not a static provider");
 const noAuthCtx = { session: { id: "s", auth: { current: null, initiator: null }, turn: { index: 0 } } };

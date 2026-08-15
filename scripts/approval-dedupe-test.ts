@@ -200,12 +200,14 @@ ok(DUPLICATE_APPROVAL_KEY_PREFIX.length > 0, "6a. the guard's dedupe key carries
 {
   const { registerDiscordProvider } = await import("@open-everywhere/provider-discord/agent/register.js");
   registerDiscordProvider();
-  const { resolveWindowGated } = await import("@open-everywhere/core/agent/access/window-gated.js");
+  const { resolveWindowGated, approvalRequestOf } = await import("@open-everywhere/core/agent/access/window-gated.js");
   const postFile = await resolveWindowGated(
     (await import("@open-everywhere/core/agent/tools/post_file.js")).default,
     { channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_grain: "task" } } } } } as never,
   );
-  const approvalOf = (postFile as unknown as { approval: (ctx: ApprovalContext) => Promise<ApprovalStatus> | ApprovalStatus }).approval;
+  const approvalOf = approvalRequestOf(postFile as unknown as { approval?: never }) as unknown as (
+    ctx: ApprovalContext,
+  ) => Promise<ApprovalStatus> | ApprovalStatus;
 
   const htmlOptIn = ctx({
     sessionId: "live-session-post-file",
@@ -232,7 +234,7 @@ ok(DUPLICATE_APPROVAL_KEY_PREFIX.length > 0, "6a. the guard's dedupe key carries
   ok((await approvalOf(image)) === "not-applicable", "8d. an ungated post_file call (image, not HTML) stays not-applicable — the guard never widens a gate");
 
   const { connectorApprovalPolicy } = await import("@open-everywhere/core/agent/connections/connector-auth.js");
-  const policy = connectorApprovalPolicy();
+  const policy = connectorApprovalPolicy().request;
   const writeCtx = ctx({ sessionId: "live-session-notion", toolName: "notion__create_page", toolInput: { title: "hello" } });
   const firstWrite = await policy(writeCtx);
   ok(firstWrite === "user-approval", "8f. connectorApprovalPolicy() (opTiering off → once()) prompts on the first write ask");
@@ -273,7 +275,7 @@ ok(DUPLICATE_APPROVAL_KEY_PREFIX.length > 0, "6a. the guard's dedupe key carries
   };
   await inputRequestedHandler(hookEvent, hookCtx as never);
 
-  const policy = connectorApprovalPolicy();
+  const policy = connectorApprovalPolicy().request;
   const askCtx = ctx({ sessionId, toolName, toolInput: objectForm });
   const decision = await policy(askCtx);
   ok(

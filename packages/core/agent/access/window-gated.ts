@@ -9,7 +9,7 @@ export interface GatedToolEntry {
   toModelOutput?(output: any): any;
 }
 
-export type LooseApproval = ((ctx: any) => any) | { readonly request: (ctx: any) => any };
+export type LooseApproval = ((ctx: any) => any) | { readonly request: (ctx: any) => any; readonly response?: (ctx: any) => any };
 
 import { bindFrom, windowGrainOf, currentWakeId, deploymentOrg, FIRE_UNATTENDED_ATTR, type BindableContext, type WindowGrain } from "../identity/binding.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
@@ -28,6 +28,13 @@ export function approvalRequestOf(entry: { readonly approval?: LooseApproval }):
   if (approval === undefined) return undefined;
   if (typeof approval === "function") return approval.bind(entry);
   return approval.request.bind(approval);
+}
+
+export function approvalResponseOf(entry: { readonly approval?: LooseApproval }): ((ctx: any) => any) | undefined {
+  const approval = entry.approval;
+  if (approval === undefined || typeof approval === "function") return undefined;
+  const response = approval.response;
+  return response === undefined ? undefined : response.bind(approval);
 }
 
 function isNarrowedGrain(grain: WindowGrain): boolean {
@@ -190,10 +197,11 @@ function stepRegistry(): Map<string, unknown> {
   return reg;
 }
 
-export function replayStepNames(slug: string, entryKey: string): { execute: string; approval: string } {
+export function replayStepNames(slug: string, entryKey: string): { execute: string; approval: string; approvalResponse: string } {
   return {
     execute: `eve:framework-dynamic:${slug}:${entryKey}`,
     approval: `eve:dynamic-tool-approval:${slug}:${entryKey}`,
+    approvalResponse: `eve:dynamic-tool-approval-response:${slug}:${entryKey}`,
   };
 }
 
@@ -210,6 +218,10 @@ export function preRegisterDynamicEntry(slug: string, entryKey: string, entry: R
   const approval = approvalRequestOf(entry);
   if (approval !== undefined) {
     reg.set(names.approval, (_cv: unknown, actx: unknown) => approval(actx));
+  }
+  const approvalResponse = approvalResponseOf(entry);
+  if (approvalResponse !== undefined) {
+    reg.set(names.approvalResponse, (_cv: unknown, rctx: unknown) => approvalResponse(rctx));
   }
   (entry as unknown as Record<string, unknown>).__executeStepFn = { stepId: names.execute };
   (entry as unknown as Record<string, unknown>).__closureVars = {};

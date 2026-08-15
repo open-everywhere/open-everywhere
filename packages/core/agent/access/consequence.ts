@@ -211,7 +211,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     reason:
       "posts a file into the asking room (same class as reply). The input-aware eve confirmation on the " +
       "HTML-artifact publish path is a session-private UX confirm, not an authorization gate — blessed as " +
-      "the eve-HITL residue by design §7.2 (the artifact URL is org-opt-in and unlisted).",
+      "the eve-HITL residue by design §7.2 (the artifact URL is org-opt-in and unlisted). Its " +
+      "`approval.response` policy (OPE-575) binds the Approve click to the session initiator; that " +
+      "hardens the confirm, it does not make it a gate — no DENY, and no check on a cancel click.",
   },
 
   cancel_routine: postTurn("disarms", member("routine.cancel", "gate",
@@ -482,11 +484,11 @@ export function checkActionKindCoverage(
 
 export const NON_TOOL_APPROVAL_SITES: Readonly<Record<string, string>> = {
   "packages/core/agent/connections/notion.ts":
-    "REAL, and deliberate: `connectorApprovalPolicy()` on an eve CONNECTION, not a tool. The connector-op plane is explicitly NOT rows in TOOL_CONSEQUENCE (see the scope note at the top of this file) — an op's name is injected at runtime and cannot be enumerated statically — and the eve-native `approval:` callback is the ONLY pre-execution seam eve exposes for an injected connection tool. It is defence in depth over the hard credential gates (grant + DM-only wall), never the gate itself",
+    "REAL, and deliberate: `connectorApprovalPolicy()` on an eve CONNECTION, not a tool. The connector-op plane is explicitly NOT rows in TOOL_CONSEQUENCE (see the scope note at the top of this file) — an op's name is injected at runtime and cannot be enumerated statically — and the eve-native `approval:` callback is the ONLY pre-execution seam eve exposes for an injected connection tool. It is defence in depth over the hard credential gates (grant + DM-only wall), never the gate itself. Since OPE-575 the value is an approval CONFIGURATION: its `response` half binds the Approve click to the session initiator (approvals/eve-response-policy.ts), which is still not approver standing — it cannot deny the request and a cancel click bypasses it",
   "packages/core/agent/plugins/extract.ts":
     "NOT a live policy: the match is inside a TEMPLATE LITERAL — the `approval: once()` line that the plugin extractor GENERATES into a scaffolded `agent/connections/<slug>.ts`. It is reviewed where it lands, by whoever reads the generated file, and the header of that generated file says so",
   "packages/core/agent/access/window-gated.ts":
-    "NOT a policy: `replayStepNames` returns `{ execute, approval }` — eve's deterministic replay STEP NAMES for a dynamic tool entry. The value is a string identifier, and the property is named `approval` because that is what eve calls the step",
+    "NOT a policy: `replayStepNames` returns `{ execute, approval, approvalResponse }` — eve's deterministic replay STEP NAMES for a dynamic tool entry. Each value is a string identifier, and the properties are named after what eve calls the steps",
 };
 
 export interface ApprovalSite {

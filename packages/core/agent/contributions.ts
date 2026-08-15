@@ -88,6 +88,7 @@ export const CONTRIBUTIONS = {
     { kind: "channel", name: "webhooks", module: "agent/channels/webhooks.js", summary: "Generic inbound-webhook surface — the third leg of the trigger triad (manual mention, cron routines, webhooks)." },
 
     { kind: "hook", name: "approval-raised", module: "agent/hooks/approval-raised.js", summary: "APPROVAL-RAISED record hook (OPE-436) — marks a duplicate-approval fingerprint only once eve has DURABLY recorded that it actually raised a \"tool-approval\" input request." },
+    { kind: "hook", name: "approval-settlement", module: "agent/hooks/approval-settlement.js", summary: "EVE APPROVAL SETTLEMENT AUDIT (OPE-575, adopt-part C of the OPE-560 STAY verdict)." },
     { kind: "hook", name: "binding-bridge", module: "agent/hooks/binding-bridge.js", summary: "Binding-bridge hook: stamp the session's platform identity into the per-session state slot so TOOL contexts that arrive identity-less (send()-created sessions — name-drop wake, engaged-thread…" },
     { kind: "hook", name: "connector-audit", module: "agent/hooks/connector-audit.js", summary: "Per-OP connector audit — makes \"every action lands in an append-only audit log\" TRUE for the connector plane." },
     { kind: "hook", name: "egress", module: "agent/hooks/egress.js", summary: "Egress enforcement: compile the resolved access into a sandbox NetworkPolicy and apply it, so the channel can only reach what its bundle grants (two-surface, default-deny) and credentials are…" },

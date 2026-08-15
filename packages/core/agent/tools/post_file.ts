@@ -10,6 +10,7 @@ import { hostHtmlArtifact, resolveBlobHosting } from "../blob/hosting.js";
 import { confineToWorkspacePath } from "./describe_image.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
 import { withDuplicateApprovalGuard } from "../access/approval-dedupe.js";
+import { initiatorBoundResponsePolicy } from "../approvals/eve-response-policy.js";
 
 const EXT_CONTENT_TYPES: Readonly<Record<string, string>> = {
   png: "image/png",
@@ -201,7 +202,7 @@ export default windowGated("post_file", defineTool({
     "`.html` is attached as a downloadable file.",
   inputSchema,
   outputSchema: z.object({ posted: z.boolean(), count: z.number(), platform: z.string(), urls: z.array(z.string()).optional() }),
-  approval: withDuplicateApprovalGuard(approvalPolicy),
+  approval: { request: withDuplicateApprovalGuard(approvalPolicy), response: initiatorBoundResponsePolicy<PostFileInput>() },
   async execute(input, ctx) {
     const platform = bindFrom(ctx as BindableContext).platform;
     if (platform !== "slack" && platform !== "discord") {
