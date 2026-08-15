@@ -6,7 +6,7 @@ export const INPUT_RESPONSE_DENIED_AUDIT_ACTION = "input_response.denied";
 export type InputResponseRefusal = ClickerFloorRefusal | "guest-answerer";
 
 export type InputResponseAdmission =
-  | { readonly ok: true }
+  | { readonly ok: true; readonly floor: string }
   | { readonly ok: false; readonly reason: InputResponseRefusal; readonly notice: string };
 
 export interface InputResponseScope {
@@ -69,5 +69,5 @@ export async function admitInputResponse(
 
   const verdict = await (deps.floor ?? checkClickerFloor)(scope.surfaceKey, { beneficiaryClicker: false });
   if (!verdict.ok) return refuse(verdict.reason, verdict.floor);
-  return { ok: true };
+  return { ok: true, floor: verdict.floor };
 }

@@ -30,7 +30,7 @@ const submission = {
   user: { id: "U_ANSWERER", username: "answerer" },
 } as unknown as Submission;
 
-const allow = async (): Promise<InputResponseAdmission> => ({ ok: true });
+const allow = async (): Promise<InputResponseAdmission> => ({ ok: true, floor: "member" });
 const refuse = async (): Promise<InputResponseAdmission> => ({ ok: false, reason: "audience-floor", notice: "not from here" });
 
 console.log("admitSlackInputResponse:");
@@ -64,7 +64,7 @@ console.log("admitSlackInputResponse:");
   await admitSlackInputResponse(ctx, submission, {
     admit: async (scope) => {
       seen = scope;
-      return { ok: true };
+      return { ok: true, floor: "member" };
     },
   });
   ok(seen?.surfaceKey === "slack/T1/C1", "the admission judges the room the answer was submitted in");

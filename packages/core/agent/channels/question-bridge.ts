@@ -1,6 +1,6 @@
 import { appendAudit, type AuditInput } from "../audit/audit.js";
 import { isSessionLimitContinuationRequest } from "./session-park.js";
-import type { UnifiedWakeOrigin } from "./unified-window.js";
+import { WAKE_TARGET_TTL_MS, type UnifiedWakeOrigin } from "./unified-window.js";
 
 export const QUESTION_BRIDGED_AUDIT_ACTION = "turn.question_bridged";
 export const QUESTION_DROPPED_AUDIT_ACTION = "turn.question_dropped";
@@ -110,4 +110,113 @@ export async function bridgeQuestionToSurface(
     });
     return { status: "dropped", reason: "post-failed" };
   }
+}
+
+export const QUESTION_ANSWERED_AUDIT_ACTION = "input_response.routed";
+export const QUESTION_ANSWER_DROPPED_AUDIT_ACTION = "input_response.dropped";
+
+const BRIDGED_QUESTION_PREFIX = "oe-question-bridge:";
+
+export const BRIDGED_QUESTION_TTL_MS = WAKE_TARGET_TTL_MS;
+
+export function bridgedQuestionKey(bareToken: string): string {
+  return `${BRIDGED_QUESTION_PREFIX}${bareToken}`;
+}
+
+export interface OutstandingQuestion {
+  readonly requestId: string;
+  readonly wakeId?: string;
+  readonly taskId?: string;
+  readonly at: string;
+}
+
+export interface BridgedQuestionStore {
+  putTaskResult(org: string, key: string, resultJson: string, at: string, ttlMs: number, callerToken?: string): Promise<void>;
+  getTaskResult(org: string, key: string): Promise<string | null>;
+  deleteTaskResult(org: string, key: string): Promise<boolean>;
+}
+
+export function taskIdOfBridgedRequestId(requestId: string): string | undefined {
+  const cut = requestId.indexOf(":");
+  if (cut <= 0) return undefined;
+  const head = requestId.slice(0, cut);
+  return head.startsWith("task_") ? head : undefined;
+}
+
+export async function rememberBridgedQuestion(
+  store: BridgedQuestionStore,
+  org: string,
+  bareToken: string,
+  input: { readonly requestId: string; readonly wakeId?: string; readonly at?: string },
+): Promise<boolean> {
+  try {
+    if (bareToken.length === 0 || input.requestId.length === 0) return false;
+    const at = input.at ?? new Date().toISOString();
+    const taskId = taskIdOfBridgedRequestId(input.requestId);
+    const row: OutstandingQuestion = {
+      requestId: input.requestId,
+      ...(input.wakeId !== undefined && input.wakeId.length > 0 ? { wakeId: input.wakeId } : {}),
+      ...(taskId !== undefined ? { taskId } : {}),
+      at,
+    };
+    await store.putTaskResult(org, bridgedQuestionKey(bareToken), JSON.stringify(row), at, BRIDGED_QUESTION_TTL_MS, undefined);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function readBridgedQuestion(store: BridgedQuestionStore, org: string, bareToken: string): Promise<OutstandingQuestion | undefined> {
+  try {
+    if (bareToken.length === 0) return undefined;
+    const raw = await store.getTaskResult(org, bridgedQuestionKey(bareToken));
+    if (raw === null) return undefined;
+    const parsed = JSON.parse(raw) as Partial<OutstandingQuestion> | null;
+    const requestId = parsed?.requestId;
+    if (typeof requestId !== "string" || requestId.length === 0) return undefined;
+    return {
+      requestId,
+      ...(typeof parsed?.wakeId === "string" && parsed.wakeId.length > 0 ? { wakeId: parsed.wakeId } : {}),
+      ...(typeof parsed?.taskId === "string" && parsed.taskId.length > 0 ? { taskId: parsed.taskId } : {}),
+      at: typeof parsed?.at === "string" ? parsed.at : "",
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+export async function forgetBridgedQuestion(store: BridgedQuestionStore, org: string, bareToken: string): Promise<boolean> {
+  try {
+    if (bareToken.length === 0) return false;
+    return await store.deleteTaskResult(org, bridgedQuestionKey(bareToken));
+  } catch {
+    return false;
+  }
+}
+
+export type InboundAnswerRouting =
+  | { readonly kind: "answer"; readonly requestId: string; readonly floor: string; readonly wakeId?: string; readonly taskId?: string }
+  | { readonly kind: "wake"; readonly reason: "internal-dispatch" | "no-question" | "refused" };
+
+export interface InboundAnswerDeps {
+  readonly read: () => Promise<OutstandingQuestion | undefined>;
+  readonly admit: () => Promise<{ readonly ok: true; readonly floor: string } | { readonly ok: false }>;
+}
+
+export async function resolveInboundAnswerRouting(
+  input: { readonly internalDispatch: boolean },
+  deps: InboundAnswerDeps,
+): Promise<InboundAnswerRouting> {
+  if (input.internalDispatch) return { kind: "wake", reason: "internal-dispatch" };
+  const outstanding = await deps.read();
+  if (outstanding === undefined) return { kind: "wake", reason: "no-question" };
+  const verdict = await deps.admit();
+  if (!verdict.ok) return { kind: "wake", reason: "refused" };
+  return {
+    kind: "answer",
+    requestId: outstanding.requestId,
+    floor: verdict.floor,
+    ...(outstanding.wakeId !== undefined ? { wakeId: outstanding.wakeId } : {}),
+    ...(outstanding.taskId !== undefined ? { taskId: outstanding.taskId } : {}),
+  };
 }

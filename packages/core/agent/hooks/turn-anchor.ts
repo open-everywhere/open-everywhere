@@ -9,6 +9,9 @@ import { postSurfaceText } from "../channels/surface-message-ops.js";
 import { clearTurnAnchor, recordTurnAnchor, turnAnchorKey, turnChannelKey } from "../channels/turn-registry.js";
 import { attachCancelNoteRequester, clearPendingCancelNoteAfter, setPendingCancelNote } from "../channels/cancel-note.js";
 import { findCancelRequester } from "../channels/turn-cancel.js";
+import { forgetBridgedQuestion } from "../channels/question-bridge.js";
+import { bareTokenFromEveContext } from "../channels/window-key.js";
+import { getOperationalStore } from "../operational/provider.js";
 
 export const TURN_CANCELLED_ACTION = "turn.cancelled";
 
@@ -133,6 +136,8 @@ async function onTurnCancelled(turnId: string): Promise<void> {
   setPendingCancelNote({ turnId, steps: s.steps, ran: [...s.ran] });
   await removeStopHand(s);
   await clearTurnAnchor(s.org, s.windowKey);
+  const bare = bareTokenFromEveContext(s.windowKey);
+  if (bare !== undefined) await forgetBridgedQuestion(getOperationalStore(), s.org, bare);
 
   const note = renderCancelNote(s.steps, s.ran);
   if (s.platform && s.channelId) {

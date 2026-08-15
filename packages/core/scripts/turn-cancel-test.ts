@@ -387,8 +387,9 @@ const NO_REQUESTER_BASELINE =
   ok(/payload:\{inputResponses:/.test(hitl), "eve still routes a child's answer ONLY through payload.inputResponses");
 }
 {
+  const HITL_CLIENTS = ["agent/channels/unified.ts"];
   const roots = ["agent", "../providers", "../adapters"].map((r) => new URL(`../${r}/`, import.meta.url));
-  const offenders: string[] = [];
+  const found: string[] = [];
   const walk = (dir: URL): void => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       if (e.name === "node_modules" || e.name === "dist" || e.name === "scripts") continue;
@@ -400,13 +401,21 @@ const NO_REQUESTER_BASELINE =
       if (!e.name.endsWith(".ts") || e.name.endsWith(".d.ts")) continue;
       const src = readFileSync(child, "utf8");
       const code = src.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
-      if (/inputResponses\s*:/.test(code) || /\.respond\s*\(/.test(code)) offenders.push(child.pathname);
+      if (/\.respond\s*\(/.test(code)) found.push(child.pathname);
     }
   };
   for (const r of roots) walk(r);
+  const rel = found.map((p) => p.slice(p.indexOf("/packages/core/") + "/packages/core/".length)).sort();
   ok(
-    offenders.length === 0,
-    `🔴 OE still builds NO inputResponses payload and calls no .respond() — no HITL client, so a cleared proxy entry orphans nothing that was not already orphaned. Offenders: ${offenders.join(", ")}`,
+    rel.length === HITL_CLIENTS.length && rel.every((p, i) => p === HITL_CLIENTS[i]),
+    `🔴 OE's HITL client is EXACTLY [${HITL_CLIENTS.join(", ")}] — a second .respond() call site is a second thing a cancel orphans. Found: ${rel.join(", ") || "none"}`,
+  );
+  const client = readFileSync(new URL("../agent/channels/unified.ts", import.meta.url), "utf8");
+  ok(/\.respond\(\[\{ requestId: /.test(client), "…and that client really builds an inputResponses entry keyed on the parent-visible requestId");
+  const anchor = readFileSync(new URL("../agent/hooks/turn-anchor.ts", import.meta.url), "utf8");
+  ok(
+    /forgetBridgedQuestion\(/.test(anchor.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "")),
+    "🔴 …and hooks/turn-anchor.ts's turn.cancelled arm CLEARS OE's outstanding-question row — without it the room's next message would `respond` into a wiped proxy map and be swallowed",
   );
 }
 

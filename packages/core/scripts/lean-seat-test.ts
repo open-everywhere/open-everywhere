@@ -124,14 +124,14 @@ ok(withheldList.includes("purge_memory") && withheldList.includes("aws") && with
 ok(!withheldList.includes("reply") && !withheldList.includes("agent"), "withheldFromLeanSeat excludes the roster");
 ok(withheldList.join(",") === [...withheldList].sort().join(","), "withheldFromLeanSeat is sorted (a stable, diffable audit row)");
 
-ok(!allowedOnWorkerSeat("ask_question"), "🔴 a delegated WORKER does not hold ask_question — the question posts, the answer routes to the PARENT, the delegated work is silently abandoned");
-ok(allowedOnLeanSeat("ask_question"), "…and the INTERACTIVE seat still holds it — the defect is the worker's return leg, not the verb");
+ok(allowedOnWorkerSeat("ask_question"), "🔴 OPE-565: a delegated WORKER holds ask_question again — the question posts AND the room's answer routes back to the child");
+ok(allowedOnLeanSeat("ask_question"), "…and the INTERACTIVE seat still holds it, as it always did");
 for (const name of ["bash", "read_file", "write_file", "post_file", "web_search", "return_result", "complete_task", "reply", "final_output", "notion__search", "some_tool_nobody_declared"]) {
   ok(allowedOnWorkerSeat(name), `the worker keeps ${name} — this set is ALLOW-by-default, an exclusion of BROKEN verbs, never a narrowing of the worker's kit`);
 }
 ok(
-  WORKER_WITHHELD_TOOLS.size === 1 && WORKER_WITHHELD_TOOLS.has("ask_question"),
-  "the withheld set is EXACTLY one name — it grows only for another structurally-unanswerable verb, never for 'tools a worker shouldn't use' (that is the lean roster's question, or the consequence registry's)",
+  WORKER_WITHHELD_TOOLS.size === 0,
+  `the withheld set is EMPTY (got "${[...WORKER_WITHHELD_TOOLS].join(",")}") — it grows only for a structurally-unanswerable verb, never for 'tools a worker shouldn't use' (that is the lean roster's question, or the consequence registry's)`,
 );
 ok(
   WINDOW_UNGATED_TOOLS.has("ask_question"),
@@ -174,9 +174,14 @@ function makeToolset(): Record<string, { description: string; execute: () => unk
   const toolset = makeToolset();
   const before = { ...toolset };
   const removed = restrictToolsetForWorkerSeat(toolset);
-  ok(removed.join(",") === "ask_question", `the worker subtraction removes EXACTLY ask_question (got "${removed.join(",")}")`);
-  ok(Object.keys(toolset).length === Object.keys(before).length - 1, "…and nothing else — a worker's wide hands are the design, not a thing this subtracts from");
+  ok(removed.length === 0, `🔴 OPE-565: the worker subtraction removes NOTHING (got "${removed.join(",")}") — an empty set means a delegated worker's assembled kit passes through untouched`);
+  ok(Object.keys(toolset).length === Object.keys(before).length, "…and the toolset keeps every name it arrived with — a worker's wide hands are the design");
+  ok("ask_question" in toolset, "…including ask_question itself, which is the name that left the set");
   ok(Object.keys(toolset).every((k) => toolset[k] === before[k]), "surviving tool OBJECTS keep their identity — eve keys approvals in a WeakMap on them");
+  const armed = makeToolset();
+  const removedArmed = restrictToolsetForWorkerSeat(armed, new Set(["ask_question", "bash"]));
+  ok(removedArmed.join(",") === "ask_question,bash", `restrictToolsetForWorkerSeat still deletes what it is given, sorted (got "${removedArmed.join(",")}")`);
+  ok(!("ask_question" in armed) && !("bash" in armed), "…and the named tools really leave the toolset");
 }
 
 const require = createRequire(import.meta.url);
@@ -236,7 +241,7 @@ inSession(() => {
   ok(currentWorkerWake(), "a marked wake resolves as a WORKER inside a live session");
   const toolset = makeToolset();
   projectToolSet(toolset as unknown as Record<string, unknown>);
-  ok(!("ask_question" in toolset), "projectToolSet withholds ask_question on a worker wake — absence, not refusal: no refusal text for an injected instruction to argue with, and no retry loop");
+  ok("ask_question" in toolset, "🔴 OPE-565: projectToolSet leaves ask_question ON a worker wake — the room's answer now routes back to the child, so there is nothing to withhold");
   ok("bash" in toolset && "write_file" in toolset && "post_file" in toolset && "web_search" in toolset && "purge_memory" in toolset, "…and the worker keeps everything else — this is NOT a second lean cut");
 });
 
@@ -259,9 +264,14 @@ inSession(() => {
   const workerText = persona("unified:oe-dom:acme:win:t/C1/1721018940.000100:oe-sup:g3");
   const seatText = persona("unified:oe-dom:acme:oe-sup:g3");
   ok(workerText.length > 0 && seatText.length > 0, "fixture sanity: the persona renders for BOTH a task token and a standing one");
-  ok(!workerText.includes("ask_question"), "🔴 a WORKER's escalation valve never names ask_question — it cannot resolve there");
-  ok(workerText.includes("return_result"), "…it names the worker's own report verb instead, so a blocked worker finishes rather than stalling");
-  ok(seatText.includes("ask_question") && !seatText.includes("return_result"), "the interactive seat's valve is unchanged — it still asks the room");
+  ok(
+    !/cannot receive an answer/i.test(workerText),
+    "🔴 OPE-565: a WORKER's valve no longer claims the answer cannot reach it — that sentence is false now, and a prompt must never tell the model something it can disprove",
+  );
+  ok(workerText.includes("return_result"), "…the report verb is still named, because it is still the route that always reaches a person");
+  ok(workerText.indexOf("return_result") < workerText.indexOf("ask_question"), "…and named FIRST — the valve steers on cost, and a question parks the worker while a report does not");
+  ok(workerText.includes("ask_question"), "…while `ask_question` is named as the real second route it now is");
+  ok(seatText.includes("ask_question") && !seatText.includes("return_result"), "the interactive seat's valve is unchanged — it still asks the room, and never names a worker verb");
 }
 
 const windowSeatCtx = () => ({

@@ -33,7 +33,7 @@ const activity = {
   raw: {},
 } as unknown as Activity;
 
-const allow = async (): Promise<InputResponseAdmission> => ({ ok: true });
+const allow = async (): Promise<InputResponseAdmission> => ({ ok: true, floor: "member" });
 const refuse = async (): Promise<InputResponseAdmission> => ({ ok: false, reason: "guest-answerer", notice: "you are a guest" });
 
 console.log("admitTeamsInputResponse:");
@@ -69,7 +69,7 @@ console.log("admitTeamsInputResponse:");
   const seen: (InputResponseScope | undefined)[] = [];
   const capture = async (scope: InputResponseScope): Promise<InputResponseAdmission> => {
     seen.push(scope);
-    return { ok: true };
+    return { ok: true, floor: "member" };
   };
   await admitTeamsInputResponse(ctx, activity, { admit: capture, userType: async () => "guest" });
   await admitTeamsInputResponse(ctx, activity, { admit: capture, userType: async () => "member" });

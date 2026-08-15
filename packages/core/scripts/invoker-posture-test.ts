@@ -27,6 +27,7 @@ import { ROUTINE_MARKER } from "../agent/routines/routine.js";
 import { OE_GRAIN_ATTR } from "../agent/channels/unified-window.js";
 import { formatWindowToken, taskWindowId, threadSeatWindowId } from "../agent/channels/window-key.js";
 import { WORKER_WITHHELD_TOOLS } from "../agent/access/worker-seat.js";
+import { currentWorkerWake } from "../agent/access/worker-seat-state.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -95,15 +96,16 @@ function makeToolset(): Record<string, { description: string; execute: () => unk
   return out;
 }
 
-async function kitForDelivery(ctx: unknown): Promise<{ toolset: Record<string, unknown>; posture: InvokerPosture; lean: string }> {
+async function kitForDelivery(ctx: unknown): Promise<{ toolset: Record<string, unknown>; posture: InvokerPosture; lean: string; worker: boolean }> {
   return await inSession(async () => {
     setNativeDelegationSeat("allow");
     await leanSeatHook.events["turn.started"]!({}, ctx);
     const posture = currentInvokerPosture();
     const lean = currentLeanSeatPosture();
+    const worker = currentWorkerWake();
     const toolset = makeToolset() as unknown as Record<string, unknown>;
     projectToolSet(toolset);
-    return { toolset, posture, lean };
+    return { toolset, posture, lean, worker };
   });
 }
 
@@ -128,8 +130,9 @@ ok(webhookBag[FIRE_UNATTENDED_ATTR] === "true", "fixture provenance: …and the 
 {
   const ctx = deliveryCtx(webhookBag, { authenticator: "webhook", principalId: "webhook:hook-abc", principalType: "service" });
   ok(windowGrainOf(ctx as BindableContext) !== "task", "fixture provenance: a fire's OWN delivery never resolves grain `task` — the worker exemption cannot reach the window it is scoped away from");
-  const { toolset, posture } = await kitForDelivery(ctx);
+  const { toolset, posture, worker } = await kitForDelivery(ctx);
   ok(posture === "untrusted-remote", "a REAL webhook fire delivery classifies `untrusted-remote` through the real hook");
+  ok(worker === false, "…and the fire's own WINDOW is NOT a delegated worker — the per-wake bit is `false`");
   ok(!("bash" in toolset), "⭐ THE PROPERTY: a webhook fire's assembled toolset has NO `bash` — asserted at the model-call seam that decides");
   ok([...UNTRUSTED_REMOTE_WITHHELD_TOOLS].every((k) => !(k in toolset)), "…and no other wide-hands tool either (checkout_repo, write_file, web_fetch, open_pull_request, create_skill, …)");
   ok("reply" in toolset && "final_output" in toolset, "…while the fire keeps the verbs its job consists of — this is a bounded subtraction, not a roster swap");
@@ -147,16 +150,17 @@ const THREAD_SEAT_TOKEN = `unified:${formatWindowToken({ domain: "acme", windowI
 {
   const ctx = deliveryCtx(childBag(webhookBag, "untrusted-remote"), undefined, TASK_TOKEN);
   grainFixtureCheck(ctx, "task", "the dispatchTaskWindow child (task stamp + task token)");
-  const { toolset, posture } = await kitForDelivery(ctx);
+  const { toolset, posture, worker } = await kitForDelivery(ctx);
   ok(posture === "untrusted-remote", "a webhook fire's DELEGATED CHILD still CLASSIFIES `untrusted-remote` — the class survives the hop; what changes is what it withholds");
   ok("bash" in toolset, "⭐⭐ THE SECOND HALF: the `task`-grain child of a webhook fire DOES hold `bash` — a fire reaches a shell by delegating, exactly like every other seat");
   ok(
     [...UNTRUSTED_REMOTE_WITHHELD_TOOLS].every((k) => k in toolset),
     "…and the WHOLE wide-hands family, not just bash (write_file, web_fetch, checkout_repo, open_pull_request, create_skill, …) — the worker kit is the same one any seat's worker gets",
   );
+  ok(worker === true, "…and the wake really WAS classified a delegated worker (the per-wake bit is `true`) — which is what makes the wide-hands exemption above meaningful");
   ok(
-    [...WORKER_WITHHELD_TOOLS].every((k) => !(k in toolset)),
-    "…while the OPE-420 worker subtraction still bites (`ask_question` is gone) — proof the wake really was classified a worker, so the exemption above is not passing by accident",
+    WORKER_WITHHELD_TOOLS.size === 0 && "ask_question" in toolset,
+    "…and the worker holds `ask_question` (OPE-565 emptied the withheld set and built the answer's return leg)",
   );
 }
 

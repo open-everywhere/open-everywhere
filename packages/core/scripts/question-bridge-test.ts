@@ -11,7 +11,14 @@ import {
   EMPTY_QUESTION_FALLBACK,
   QUESTION_BRIDGED_AUDIT_ACTION,
   QUESTION_DROPPED_AUDIT_ACTION,
+  bridgedQuestionKey,
+  forgetBridgedQuestion,
+  readBridgedQuestion,
+  rememberBridgedQuestion,
+  resolveInboundAnswerRouting,
+  taskIdOfBridgedRequestId,
   type BridgeableQuestion,
+  type BridgedQuestionStore,
 } from "../agent/channels/question-bridge.js";
 import { detectSessionLimitPark, isSessionLimitContinuationRequest, SESSION_LIMIT_CONTINUATION_TOOL_NAME } from "../agent/channels/session-park.js";
 
@@ -229,6 +236,125 @@ for (const [label, resolveOrigin] of [
 
   const parkHook = (await import("../agent/hooks/session-park.js")).default as unknown as { events: Record<string, unknown> };
   ok(typeof parkHook.events["input.requested"] === "function", "5: hooks/session-park.ts STILL subscribes to input.requested — the park path is untouched");
+}
+
+{
+  const TASK_REQUEST_ID = "task_abc123:call_child_1";
+  const OWN_REQUEST_ID = "call_window_1";
+  const TOKEN = "oe-dom:acme:oe-sup:g3";
+
+  const makeStore = (): BridgedQuestionStore & { rows: Map<string, string> } => {
+    const rows = new Map<string, string>();
+    return {
+      rows,
+      putTaskResult: async (_org, key, json) => void rows.set(key, json),
+      getTaskResult: async (_org, key) => rows.get(key) ?? null,
+      deleteTaskResult: async (_org, key) => rows.delete(key),
+    };
+  };
+  const throwingStore: BridgedQuestionStore = {
+    putTaskResult: async () => {
+      throw new Error("store down");
+    },
+    getTaskResult: async () => {
+      throw new Error("store down");
+    },
+    deleteTaskResult: async () => {
+      throw new Error("store down");
+    },
+  };
+
+  ok(taskIdOfBridgedRequestId(TASK_REQUEST_ID) === "task_abc123", "6: a task-namespaced request id yields its owning task (eve's `<taskId>:<childRequestId>`)");
+  ok(taskIdOfBridgedRequestId(OWN_REQUEST_ID) === undefined, "6: the window's OWN question has no task — a bare call id yields undefined");
+  ok(taskIdOfBridgedRequestId("agent_x:call_1") === undefined, "6: a colon alone is not enough — the head must be `task_`-prefixed, so this stays a derivation and not a guess");
+  ok(taskIdOfBridgedRequestId(":call_1") === undefined, "6: a leading colon is not a task id");
+
+  {
+    const store = makeStore();
+    ok(await rememberBridgedQuestion(store, "o1", TOKEN, { requestId: TASK_REQUEST_ID, wakeId: "w1" }), "6: a bridged question is remembered");
+    const got = await readBridgedQuestion(store, "o1", TOKEN);
+    ok(got?.requestId === TASK_REQUEST_ID, "6: …and reads back the PARENT-VISIBLE request id, which is the only value that can route");
+    ok(got?.wakeId === "w1" && got?.taskId === "task_abc123", "6: …with the wake it was raised on and the derived task, for the audit join");
+    ok(JSON.stringify(store.rows.get(bridgedQuestionKey(TOKEN))).includes(TASK_REQUEST_ID), "6: the row is keyed by WINDOW TOKEN — that is what the next inbound message is matched on");
+    ok(await readBridgedQuestion(store, "o1", "some-other-token") === undefined, "6: …and a DIFFERENT window has no outstanding question (one row per token, never global)");
+    ok(await forgetBridgedQuestion(store, "o1", TOKEN), "6: forget removes the row");
+    ok(await readBridgedQuestion(store, "o1", TOKEN) === undefined, "6: 🔴 CONSUME-ONCE — after the answer, the window is back to ordinary wakes");
+    ok((await forgetBridgedQuestion(store, "o1", TOKEN)) === false, "6: forgetting twice reports no row, it does not throw");
+  }
+
+  {
+    const store = makeStore();
+    await rememberBridgedQuestion(store, "o1", TOKEN, { requestId: TASK_REQUEST_ID, wakeId: "w1" });
+    ok(!JSON.stringify([...store.rows.values()]).includes(QUESTION_TEXT), "6: 🔴 the model-authored prompt is in no ROW either — the room holds the text, this holds the address");
+  }
+
+  ok((await rememberBridgedQuestion(throwingStore, "o1", TOKEN, { requestId: TASK_REQUEST_ID })) === false, "6: a store that throws on write reports false and does not throw");
+  ok((await readBridgedQuestion(throwingStore, "o1", TOKEN)) === undefined, "6: a store that throws on read is 'no question' — the message stays an ordinary wake");
+  ok((await forgetBridgedQuestion(throwingStore, "o1", TOKEN)) === false, "6: a store that throws on delete reports false and does not throw");
+  ok((await rememberBridgedQuestion(makeStore(), "o1", TOKEN, { requestId: "" })) === false, "6: an empty request id is not remembered — nothing could route it");
+  ok((await rememberBridgedQuestion(makeStore(), "o1", "", { requestId: TASK_REQUEST_ID })) === false, "6: …nor is a question with no window token to key it on");
+  {
+    const store = makeStore();
+    store.rows.set(bridgedQuestionKey(TOKEN), "{not json");
+    ok((await readBridgedQuestion(store, "o1", TOKEN)) === undefined, "6: a corrupt row is 'no question', not a throw");
+    store.rows.set(bridgedQuestionKey(TOKEN), JSON.stringify({ wakeId: "w1" }));
+    ok((await readBridgedQuestion(store, "o1", TOKEN)) === undefined, "6: a row with no request id is 'no question' — half a row can never address an answer");
+  }
+
+  const outstanding = { requestId: TASK_REQUEST_ID, wakeId: "w1", taskId: "task_abc123", at: "2026-08-15T00:00:00.000Z" };
+  const allow = async (): Promise<{ ok: true; floor: string }> => ({ ok: true, floor: "member" });
+  {
+    const routed = await resolveInboundAnswerRouting({ internalDispatch: false }, { read: async () => outstanding, admit: allow });
+    ok(routed.kind === "answer", "6: ⭐ an attended message with an outstanding question is an ANSWER");
+    ok(routed.kind === "answer" && routed.requestId === TASK_REQUEST_ID, "6: …addressed to the exact request id eve's proxy map is keyed on");
+    ok(routed.kind === "answer" && routed.floor === "member" && routed.taskId === "task_abc123", "6: …carrying the resolved floor and the derived task for the routed audit row");
+  }
+  {
+    const routed = await resolveInboundAnswerRouting({ internalDispatch: false }, { read: async () => undefined, admit: allow });
+    ok(routed.kind === "wake" && routed.reason === "no-question", "6: 🔴 a message with NO outstanding question routes as an ordinary WAKE — the window is not permanently in answer mode");
+  }
+  {
+    let reads = 0;
+    const routed = await resolveInboundAnswerRouting(
+      { internalDispatch: true },
+      {
+        read: async () => {
+          reads++;
+          return outstanding;
+        },
+        admit: allow,
+      },
+    );
+    ok(routed.kind === "wake" && routed.reason === "internal-dispatch", "6: 🔴 an INTERNAL dispatch (task spawn, completion wake, redrive) never resolves a question");
+    ok(reads === 0, "6: …and short-circuits before the store read — the outstanding row is untouched, so the human can still answer");
+  }
+  {
+    const routed = await resolveInboundAnswerRouting({ internalDispatch: false }, { read: async () => outstanding, admit: async () => ({ ok: false }) });
+    ok(routed.kind === "wake" && routed.reason === "refused", "6: 🔴 a REFUSED answerer does not answer — the message becomes an ordinary wake and the question stays open");
+  }
+  {
+    let admits = 0;
+    await resolveInboundAnswerRouting(
+      { internalDispatch: false },
+      {
+        read: async () => undefined,
+        admit: async () => {
+          admits++;
+          return { ok: true, floor: "member" };
+        },
+      },
+    );
+    ok(admits === 0, "6: the admission is not called when there is no outstanding question — no roster call on the ordinary path");
+  }
+
+  {
+    const { readFileSync } = await import("node:fs");
+    const unifiedSrc = readFileSync(new URL("../agent/channels/unified.ts", import.meta.url), "utf8").replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+    ok(/admitInputResponse\(\{/.test(unifiedSrc), "6: 🔴 the live decision runs the SAME admission the Slack/Teams widget arms run (approvals/input-response-floor.ts) — the transport is not the control");
+    ok(/\.respond\(\[\{ requestId: /.test(unifiedSrc), "6: …and the channel answers with `respond([{requestId, …}])`, the one shape routeDeliverPayload can route to a child");
+    ok(/rememberBridgedQuestion\(/.test(unifiedSrc), "6: …and the input.requested handler writes the row a later answer is matched on");
+    ok(/forgetBridgedQuestion\(/.test(unifiedSrc), "6: …and consumes it once the answer is delivered");
+  }
 }
 
 console.log(`question-bridge: ${n} assertions passed`);
