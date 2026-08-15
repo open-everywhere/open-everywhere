@@ -343,16 +343,24 @@ export async function noteTaskReceipt(receipt: TaskReceipt, ownSessionId: string
   const org = deploymentOrg();
   let link: TaskCallLink | null = null;
   let continuation = false;
+  let replay = false;
   try {
     if (taintEnabled() && ownSessionId.length > 0) {
-      const pinned = receipt.agentId === null ? undefined : await taskAgentLink(org, ownSessionId, receipt.agentId);
-      continuation = pinned !== undefined;
-      link = pinned ?? { callId: receipt.callId, childToken: `subagent:${ownSessionId}:${receipt.callId}` };
-      if (receipt.agentId !== null && !continuation) await rememberTaskAgent(org, ownSessionId, receipt.agentId, link);
-      await rememberTaskCall(org, receipt.taskId, link);
+      const already = await taskCallLink(org, receipt.taskId);
+      if (already !== undefined) {
+        replay = true;
+        link = already;
+      } else {
+        const pinned = receipt.agentId === null ? undefined : await taskAgentLink(org, ownSessionId, receipt.agentId);
+        continuation = pinned !== undefined && pinned.callId !== receipt.callId;
+        link = pinned ?? { callId: receipt.callId, childToken: `subagent:${ownSessionId}:${receipt.callId}` };
+        if (receipt.agentId !== null && !continuation) await rememberTaskAgent(org, ownSessionId, receipt.agentId, link);
+        await rememberTaskCall(org, receipt.taskId, link);
+      }
     }
   } catch {
   }
+  if (replay) return link;
   void appendAudit({
     org,
     platform: "ingest",

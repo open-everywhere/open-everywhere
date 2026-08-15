@@ -33,6 +33,7 @@ const tasks = await import("../agent/access/background-tasks.js");
 const store = await import("../agent/access/subagent-taint.js");
 const { untrustedIngestedThisTurn, markUntrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
 const { registerSettings, resetSettingsForTest } = await import("../agent/settings/settings.js");
+const { readAudit } = await import("../agent/audit/audit.js");
 
 const PARENT = "sess-seat";
 const ORG = "default";
@@ -233,6 +234,36 @@ await contextStorage.run(new ContextContainer(), async () => {
   spawnTaint.openTaintTurn(parentCtx as never);
   await handler({ data: { result: { kind: "subagent-result", origin: "child", callId: "call_sync_lost", subagentName: "agent", output: "x" } } }, parentCtx);
   eq(untrustedIngestedThisTurn(), true, "🔴 T6 SYNC UNCHANGED, FAIL-CLOSED HALF: OPE-437's fail-closed read still fires for a sync result whose marker was lost — the branch order moved the RECEIPT off this path, and nothing else");
+});
+
+await onParentTurn(async () => {
+  const receipt = { taskId: "task_replay", callId: "call_replay", agentId: "ag_agent:rrrr" };
+  const first = await spawnTaint.noteTaskReceipt(receipt, PARENT);
+  eq(first, { callId: "call_replay", childToken: `subagent:${PARENT}:call_replay` }, "the first pass mints the join exactly as T1 does");
+
+  const replayed = await spawnTaint.noteTaskReceipt(receipt, PARENT);
+  eq(replayed, first, "🔴 OPE-586: the replayed pass resolves to the SAME recorded link, not a fresh one");
+
+  await new Promise((r) => setTimeout(r, 50));
+  const rows = await readAudit({ org: ORG, action: spawnTaint.TASK_STARTED_ACTION });
+  const mine = rows.filter((r) => r.detail?.task === "task_replay");
+  eq(mine.length, 1, "🔴 OPE-586 THE ACCEPTANCE: a replayed dispatch writes EXACTLY ONE `delegation.task_started` row, not two");
+  eq(mine[0]?.detail?.continuation, false, "🔴 OPE-586: and that one row's `continuation` is `false` — a first dispatch, never a continuation, replayed or not");
+});
+
+await onParentTurn(async () => {
+  const halfWritten = { callId: "call_crash", childToken: `subagent:${PARENT}:call_crash` };
+  await store.rememberTaskAgent(ORG, PARENT, "ag_agent:crash", halfWritten);
+  eq(await store.taskCallLink(ORG, "task_crash"), undefined, "precondition: the task-keyed row never landed — the simulated crash window");
+
+  const link = await spawnTaint.noteTaskReceipt({ taskId: "task_crash", callId: "call_crash", agentId: "ag_agent:crash" }, PARENT);
+  eq(link, halfWritten, "the redelivery resolves to the SAME link the crashed pass had already pinned");
+
+  await new Promise((r) => setTimeout(r, 50));
+  const rows = await readAudit({ org: ORG, action: spawnTaint.TASK_STARTED_ACTION });
+  const mine = rows.filter((r) => r.detail?.task === "task_crash");
+  eq(mine.length, 1, "exactly one row for this task — the redelivery is the only pass that ever reached the audit write");
+  eq(mine[0]?.detail?.continuation, false, "🔴 OPE-586 NARROW WINDOW: `continuation` reads `false` — the pinned row's `callId` equals this receipt's own, so it is this dispatch's own surviving write, not a later continuation");
 });
 
 registerSettings({ taint: { mode: "off" } });
