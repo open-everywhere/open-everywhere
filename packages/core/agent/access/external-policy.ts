@@ -30,6 +30,10 @@ export function resolveExternalPolicy(override?: ExternalPolicyOverride): Extern
   };
 }
 
+export function externalPolicyIsInert(policy: ExternalPolicy): boolean {
+  return policy.authorGrain === "taint" && policy.roomGrain === "engage";
+}
+
 export interface ExternalAuthorFacts extends IngestedChatMessage {
   readonly id: string;
 }

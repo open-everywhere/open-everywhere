@@ -310,6 +310,7 @@ export {
   ingestedAfterWithholding,
   suppressesAddressedWake,
   suppressesAmbientWake,
+  externalPolicyIsInert,
   roomIsExternalClass,
   roomIsSilenced,
   silentRoomNotice,

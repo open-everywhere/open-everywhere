@@ -1,6 +1,7 @@
-import { teamsChannel, splitTeamsMessageText, type TeamsHandle, type TeamsInboundMessageContext, type TeamsMessageActivity, type TeamsInboundResult } from "eve/channels/teams";
+import { teamsChannel, splitTeamsMessageText, type TeamsInboundMessageContext, type TeamsMessageActivity, type TeamsInboundResult } from "eve/channels/teams";
 import { frontTeamsChannel, INTERNAL_TEAMS_ROUTE } from "./teams-front.js";
-import { buildTeamsAuth, teamsMembershipType, teamsUserTypeFromMember } from "./teams-identity.js";
+import { buildTeamsAuth, teamsMembershipType } from "./teams-identity.js";
+import { resolveTeamsUserType, teamsHandleRosterProbe } from "./teams-roster.js";
 import {
   finalMessageActionForTurn,
   isBareStop,
@@ -11,7 +12,6 @@ import {
   replierLabelFromAuthAttributes,
   type ChatAuditPartition,
   type ReplierLabel,
-  dmTrustTtlMs,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 function auditPartitionForState(state: {
@@ -43,40 +43,10 @@ function auditPartitionForState(state: {
   }
 }
 
-const teamsUserTypeCache = new Map<string, { userType: "guest" | "member"; at: number }>();
-
-async function resolveTeamsUserType(
-  teams: Pick<TeamsHandle, "request">,
-  conversationId: string | undefined,
-  userId: string | undefined,
-): Promise<"guest" | "member" | undefined> {
-  if (!conversationId || !userId) return undefined;
-  const key = `${conversationId}:${userId}`;
-  const hit = teamsUserTypeCache.get(key);
-  if (hit && Date.now() - hit.at < dmTrustTtlMs()) return hit.userType;
-  try {
-    const res = await teams.request(
-      `v3/conversations/${encodeURIComponent(conversationId)}/members/${encodeURIComponent(userId)}`,
-      {},
-      { method: "GET" },
-    );
-    if (!res.ok) return undefined;
-    const userType = teamsUserTypeFromMember(res.body);
-    if (userType) teamsUserTypeCache.set(key, { userType, at: Date.now() });
-    return userType;
-  } catch {
-    return undefined;
-  }
-}
-
-export function _resetTeamsUserTypeCacheForTest(): void {
-  teamsUserTypeCache.clear();
-}
-
 export const teamsOnMessage = async (ctx: TeamsInboundMessageContext, message: TeamsMessageActivity): Promise<TeamsInboundResult> => {
     if (message.scope !== "personal" && !message.isBotMentioned) return null;
 
-    const userType = await resolveTeamsUserType(ctx.teams, message.conversation.id, message.from.id);
+    const userType = await resolveTeamsUserType(teamsHandleRosterProbe(ctx.teams), message.conversation.id, message.from.id);
 
     const auth = buildTeamsAuth({
       userId: message.from.id,

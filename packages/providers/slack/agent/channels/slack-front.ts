@@ -56,6 +56,7 @@ import {
   type DmSeat,
   type SetKeyViewResult,
   stampNonMemberChatAuth,
+  externalPolicyIsInert,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   renderWakeMessage,
@@ -64,7 +65,6 @@ import {
   slackAuthorIsMember,
   slackWakeAuthorFacts,
   slackExternalPolicyForRoom,
-  externalPolicyIsInert,
   applySlackExternalPolicy,
   _resetAuthorMemberCache,
 } from "./slack-events.js";

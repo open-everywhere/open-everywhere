@@ -970,10 +970,6 @@ export async function slackChannelVendorExternal(channelId: string): Promise<boo
   return meta?.vendorExternal === true;
 }
 
-export function externalPolicyIsInert(policy: ExternalPolicy): boolean {
-  return policy.authorGrain === "taint" && policy.roomGrain === "engage";
-}
-
 export async function applySlackExternalPolicy(
   ev: ParsedMessageEvent,
   p: Partition,

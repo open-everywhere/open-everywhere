@@ -11,8 +11,10 @@ import {
   teamsMembershipType,
   teamsTrustGroup,
   teamsUserTypeFromMember,
+  withTeamsUserType,
   type OpenEverywhereTeamsAuth,
 } from "./teams-identity.js";
+import { resolveTeamsUserType, teamsServiceUrlRosterProbe, type TeamsRosterProbe } from "./teams-roster.js";
 import {
   planTeamsSingleWindow,
   handleTeamsSingleWindowDispatch,
@@ -46,6 +48,7 @@ import {
   mintWakeId,
   resolveExternalPolicy,
   externalPolicyOverrideFor,
+  externalPolicyIsInert,
   withholdsBody,
   roomIsSilenced,
   silentRoomNotice,
@@ -109,6 +112,21 @@ function authForActivity(a: TeamsMessageActivity): OpenEverywhereTeamsAuth {
     scope: a.scope,
     membershipType: teamsMembershipType(a.channelData),
   });
+}
+
+export type TeamsRosterProbeFor = (activity: TeamsMessageActivity) => TeamsRosterProbe | undefined;
+
+export async function teamsAuthWithUserType<A extends OpenEverywhereTeamsAuth>(
+  auth: A,
+  a: TeamsMessageActivity,
+  probeFor?: TeamsRosterProbeFor,
+): Promise<A> {
+  const factory: TeamsRosterProbeFor = probeFor ?? ((activity) => teamsServiceUrlRosterProbe(activity.serviceUrl));
+  try {
+    return withTeamsUserType(auth, await resolveTeamsUserType(factory(a), a.conversation.id, a.from.id));
+  } catch {
+    return auth;
+  }
 }
 
 function teamsExternalPolicyForRoom(roomKey: string): ExternalPolicy {
@@ -181,7 +199,7 @@ async function announceTeamsSilentRoom(a: TeamsMessageActivity, org: string, sur
   await postTeamsNotice(a, silentRoomNotice("suppressed-wake"));
 }
 
-async function liveTeamsExternalGate(a: TeamsMessageActivity): Promise<boolean> {
+export async function liveTeamsExternalGate(a: TeamsMessageActivity, probeFor?: TeamsRosterProbeFor): Promise<boolean> {
   const isDm = a.scope === "personal" || a.scope === "groupChat";
   let auth: OpenEverywhereTeamsAuth;
   let partition: Partition;
@@ -193,13 +211,15 @@ async function liveTeamsExternalGate(a: TeamsMessageActivity): Promise<boolean> 
   } catch {
     return false;
   }
+  const policy = teamsExternalPolicyForRoom(roomKey);
+  if (!externalPolicyIsInert(policy)) auth = await teamsAuthWithUserType(auth, a, probeFor);
   const trust = resolveWakeTrustFromContext(
     { channel: { kind: "teams" }, session: { auth: { current: auth as unknown as { attributes?: Readonly<Record<string, string>> } } } },
     { id: a.from.id, isBot: false },
     { principalFallback: true },
   );
   const verdict = teamsExternalVerdict({
-    policy: teamsExternalPolicyForRoom(roomKey),
+    policy,
     author: { trust, refuted: teamsAuthorRefuted(auth), ...teamsAuthorFacts(auth, a.from.id) },
     addressed: a.isBotMentioned === true || a.scope === "personal",
     isDm,
@@ -322,8 +342,14 @@ function recordTeamsWakeFailure(key: string, err: unknown): void {
   }).catch(() => undefined);
 }
 
-async function liveTeamsDispatch(a: TeamsMessageActivity, plan: TeamsFrontPlan, to: RouteHandlerArgs["to"]): Promise<void> {
-  const wakeCtx: BindableContext = { channel: { kind: "teams" }, session: { auth: { current: plan.auth as unknown as { attributes?: Readonly<Record<string, string>> } } } };
+export async function liveTeamsDispatch(
+  a: TeamsMessageActivity,
+  plan: TeamsFrontPlan,
+  to: RouteHandlerArgs["to"],
+  probeFor?: TeamsRosterProbeFor,
+): Promise<void> {
+  const auth = await teamsAuthWithUserType(plan.auth, a, probeFor);
+  const wakeCtx: BindableContext = { channel: { kind: "teams" }, session: { auth: { current: auth as unknown as { attributes?: Readonly<Record<string, string>> } } } };
   const trust = resolveWakeTrustFromContext(wakeCtx, { id: a.from.id, isBot: false }, { principalFallback: true });
   let engagementTier: ReturnType<typeof engagementTierFor> | undefined;
   try {
@@ -335,9 +361,9 @@ async function liveTeamsDispatch(a: TeamsMessageActivity, plan: TeamsFrontPlan, 
     {
       surfaceKey: plan.surfaceKey,
       channelId: a.teamsChannelId ?? a.conversation.id,
-      auth: stampNonMemberChatAuth(plan.auth, [{ trust, refuted: teamsAuthorRefuted(plan.auth), ...teamsAuthorFacts(plan.auth, a.from.id) }], {
+      auth: stampNonMemberChatAuth(auth, [{ trust, refuted: teamsAuthorRefuted(auth), ...teamsAuthorFacts(auth, a.from.id) }], {
         surfaceKey: plan.surfaceKey,
-        ...teamsRoomGroupKey(plan.auth),
+        ...teamsRoomGroupKey(auth),
       }),
       trigger: {
         id: a.id,
@@ -364,12 +390,14 @@ async function liveTeamsDispatch(a: TeamsMessageActivity, plan: TeamsFrontPlan, 
   }).catch(() => undefined);
 }
 
-async function liveTeamsDmDivert(
+export async function liveTeamsDmDivert(
   a: TeamsMessageActivity,
-  auth: OpenEverywhereTeamsAuth,
+  capturedAuth: OpenEverywhereTeamsAuth,
   partition: Partition,
   to: RouteHandlerArgs["to"],
+  probeFor?: TeamsRosterProbeFor,
 ): Promise<void> {
+  const auth = await teamsAuthWithUserType(capturedAuth, a, probeFor);
   const org = partition.org;
   const atIso = new Date().toISOString();
   const surfaceKey = partition.surfaceKey;

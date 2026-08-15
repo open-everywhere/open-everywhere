@@ -22,6 +22,13 @@ export interface TeamsIdentityInput {
   readonly userType?: string;
 }
 
+const TEAMS_USER_TYPE_ATTR = "user_type";
+
+export function withTeamsUserType<A extends OpenEverywhereTeamsAuth>(auth: A, userType: string | undefined): A {
+  if (!userType) return auth;
+  return { ...auth, attributes: { ...auth.attributes, [TEAMS_USER_TYPE_ATTR]: userType } };
+}
+
 export function buildTeamsAuth(input: TeamsIdentityInput): OpenEverywhereTeamsAuth {
   const attributes: Record<string, string> = {
     conversation_id: input.conversationId,
@@ -35,7 +42,7 @@ export function buildTeamsAuth(input: TeamsIdentityInput): OpenEverywhereTeamsAu
   if (input.serviceUrl) attributes.service_url = input.serviceUrl;
   if (input.scope) attributes.scope = input.scope;
   if (input.membershipType) attributes.membership_type = input.membershipType;
-  if (input.userType) attributes.user_type = input.userType;
+  if (input.userType) attributes[TEAMS_USER_TYPE_ATTR] = input.userType;
   const teamsScopeMode = teamsMode(input.scope);
   Object.assign(attributes, rootDmGrainAttrs(teamsScopeMode === "dm" || teamsScopeMode === "mpim"));
   return { authenticator: "teams", principalId: input.userId, principalType: "teams-user", attributes };
