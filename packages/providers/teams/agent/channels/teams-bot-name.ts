@@ -27,7 +27,11 @@ export const teamsBotDisplayName: BotDisplayNameArm = () => {
   if (!displayNamePromise) {
     displayNamePromise = (async () => {
       try {
-        return await teamsBotDisplayNameViaGraph(await resolveTeamsAppId(), liveTeamsGraphRequest);
+        const timeout = new Promise<undefined>((resolve) => {
+          const t = setTimeout(() => resolve(undefined), 5000);
+          t.unref?.();
+        });
+        return await Promise.race([teamsBotDisplayNameViaGraph(await resolveTeamsAppId(), liveTeamsGraphRequest), timeout]);
       } catch {
         return undefined;
       }
