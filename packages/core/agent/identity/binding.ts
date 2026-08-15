@@ -10,7 +10,7 @@ import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
 import { ROUTINE_MARKER, routineGrantKeyStamped } from "../routines/routine.js";
 import type { Domain } from "../memory/domain.js";
 import { processRegistryMap } from "../lib/process-registry.js";
-import { taskWakeThisTurn } from "../access/task-wake-signal.js";
+import { taskWakeThisTurn, uningressedTurn } from "../access/task-wake-signal.js";
 
 export type Visibility = "public" | "private";
 
@@ -215,9 +215,19 @@ export function isUnifiedWindowContext(ctx: BindableContext): boolean {
 
 export function currentWakeId(ctx: BindableContext): string | undefined {
   if (isSubagentChildContext(ctx)) return undefined;
-  const adopted = taskWakeThisTurn(currentTurnId(ctx));
+  const turnId = currentTurnId(ctx);
+  const adopted = taskWakeThisTurn(turnId);
   if (adopted !== undefined) return adopted;
+  if (uningressedTurn(turnId)) return undefined;
+  return inheritedWakeStampOf(ctx);
+}
+
+export function inheritedWakeStampOf(ctx: BindableContext): string | undefined {
   return attr(authOf(ctx)?.attributes, ["oe_wake_id", "oeWakeId"]);
+}
+
+export function deliveryStampOf(ctx: BindableContext): string | undefined {
+  return attr(authOf(ctx)?.attributes, ["oe_delivery_id", "oeDeliveryId"]) ?? inheritedWakeStampOf(ctx);
 }
 
 export function currentTurnId(ctx: BindableContext): string | undefined {

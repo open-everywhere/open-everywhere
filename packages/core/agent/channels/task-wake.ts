@@ -8,6 +8,17 @@ export const TASK_WAKE_ACTION = "unified.task_wake";
 
 export const TASK_WAKE_RETARGET_ACTION = "unified.task_wake_retarget";
 
+export const TASK_WAKE_UNREAD_REFUSAL_REASON = "task-wake-unread";
+
+export function taskWakeUnreadRefusalMessage(): string {
+  return (
+    "reply: this turn was woken by delegated work finishing, and it has NO reply address yet — nothing was posted. " +
+    "The wake-id from the previous message belongs to a different conversation, so replying under it would answer a room that asked nothing. " +
+    "Call `task_peek` to read the finished task's result first: that gives this turn the task's own address, and `reply` then lands in the conversation that asked for the work. " +
+    "If nothing needs saying, call `no_reply`."
+  );
+}
+
 const TASK_WAKE_PREFIX = "oe-task-wake:";
 
 const TASK_WAKE_TTL_MS = WAKE_TARGET_TTL_MS;

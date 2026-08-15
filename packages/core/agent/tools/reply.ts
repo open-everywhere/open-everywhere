@@ -7,7 +7,8 @@ import { replierLabelFor } from "../channels/turn-delivery.js";
 import { markRepliedThisTurn, markWakeDoneThisTurn, isWakeDoneThisTurn } from "../channels/reply-signal.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
 import { claimTasksForAddressedWake } from "../access/dispatch-origin-signal.js";
-import { retargetTaskWakes } from "../channels/task-wake.js";
+import { retargetTaskWakes, taskWakeUnreadRefusalMessage, TASK_WAKE_UNREAD_REFUSAL_REASON } from "../channels/task-wake.js";
+import { uningressedTurn } from "../access/task-wake-signal.js";
 import { silentRoutineThisTurn } from "../routines/report.js";
 import { resolveOwnWindowToken } from "../access/oneshot-spawn.js";
 import { postUnifiedReply } from "../channels/unified-reply.js";
@@ -67,6 +68,11 @@ const unifiedReplyEntry = defineTool({
       if (isWakeDoneThisTurn(turnId, input.wake)) {
         await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), "answered-this-turn");
         throw new Error(replyRefusalMessage("answered", input.wake));
+      }
+
+      if (turnWake === undefined && uningressedTurn(turnId)) {
+        await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), TASK_WAKE_UNREAD_REFUSAL_REASON);
+        throw new Error(taskWakeUnreadRefusalMessage());
       }
 
       const org = deploymentOrg();

@@ -30,7 +30,7 @@ __slackStubs.registerSlackFixtureCodec();
 
 const { openTaskWake, installTaskWake, taskWakeId, taskWakeKey, TASK_WAKE_ACTION } = await import("../agent/channels/task-wake.js");
 const { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, resolveAnswerableReplyTarget } = await import("../agent/channels/unified-window.js");
-const { currentWakeId, currentTurnId } = await import("../agent/identity/binding.js");
+const { currentWakeId, currentTurnId, deliveryStampOf, inheritedWakeStampOf } = await import("../agent/identity/binding.js");
 const { taskWakeThisTurn, noteTurnBoundary, uningressedTurn } = await import("../agent/access/task-wake-signal.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
@@ -42,7 +42,7 @@ const SESSION = "sess-seat";
 const ASK_THREAD = { platform: "slack", channelId: "C_ASK", threadTs: "111.1" } as const;
 const OTHER_THREAD = { platform: "slack", channelId: "C_OTHER", threadTs: "222.2" } as const;
 
-function seatCtx(wakeId: string | undefined, turnId: string) {
+function seatCtx(wakeId: string | undefined, turnId: string, deliveryId?: string) {
   return {
     channel: { kind: "unified", continuationToken: `unified:${WINDOW}` },
     session: {
@@ -50,7 +50,13 @@ function seatCtx(wakeId: string | undefined, turnId: string) {
       turn: { id: turnId, sequence: 1 },
       auth: {
         current: {
-          attributes: { oe_platform: "slack", oe_grain: "standing", oe_window_token: WINDOW, ...(wakeId === undefined ? {} : { oe_wake_id: wakeId }) },
+          attributes: {
+            oe_platform: "slack",
+            oe_grain: "standing",
+            oe_window_token: WINDOW,
+            ...(wakeId === undefined ? {} : { oe_wake_id: wakeId }),
+            ...(deliveryId === undefined ? {} : { oe_delivery_id: deliveryId }),
+          },
           principalId: "U1",
           principalType: "slack-user",
         },
@@ -96,8 +102,11 @@ await contextStorage.run(new ContextContainer(), async () => {
   eq(currentTurnId(ctx), "turn_settle", "precondition: the turn id is readable — the whole identity is scoped to it");
   eq(uningressedTurn("turn_settle"), true, "🔴 P8 THE DISCRIMINATOR: the stamp is BYTE-IDENTICAL to the previous turn's, so this turn brought no delivery of its own — the structural shape of a task wake, with no text parsed");
 
-  eq(currentWakeId(ctx), W_LAST, "🔴 P4 THE MEASURED DEFECT: before the install, the task-woken turn answers with the PREVIOUS wake's id — a live address into a conversation that asked it nothing");
+  eq(inheritedWakeStampOf(ctx), W_LAST, "🔴 P4 THE MEASURED DEFECT: eve brought no auth, so the task-woken turn's RAW stamp is still the PREVIOUS wake's id");
+  eq(await resolveUnifiedWakeTarget(store, ORG, W_LAST), OTHER_THREAD, "🔴 P4: …and that id RESOLVES — a live address into a conversation that asked it nothing, not a dead string");
   eq(taskWakeThisTurn("turn_settle"), undefined, "…and the turn holds no adopted identity yet — asserted `=== undefined`, so P3's pass cannot come from a slot that was already set");
+
+  eq(currentWakeId(ctx), undefined, "🔴 P11 THE FIX: an uningressed turn that has adopted nothing answers `undefined` — asserted `=== undefined`, so it cannot pass on a falsy stale id");
 
   const settled = await installTaskWake({ org: ORG, taskId: "task_1", status: "completed", sessionId: SESSION, turnId: "turn_settle", inheritedWakeId: W_LAST });
   eq(settled, { outcome: "installed", wakeId: minted }, "🔴 P3: the settlement edge names the turn with the TASK's own wake id");
@@ -120,7 +129,12 @@ await contextStorage.run(new ContextContainer(), async () => {
   noteTurnBoundary("turn_norow", W_LAST);
   const missed = await installTaskWake({ org: ORG, taskId: "task_unknown", status: "completed", sessionId: SESSION, turnId: "turn_norow", inheritedWakeId: W_LAST });
   eq(missed, { outcome: "no-row", wakeId: null }, "🔴 P3 MISS: a settlement whose wake row is gone installs NOTHING and reports it");
-  eq(currentWakeId(ctx), W_LAST, "…and the turn keeps the inherited stamp — the pre-OPE-585 behaviour, degraded honestly rather than silently");
+  eq(inheritedWakeStampOf(ctx), W_LAST, "P11 precondition: the stale stamp is still on the bag, so the next line is a fix and not an empty bag");
+  eq(
+    currentWakeId(ctx),
+    undefined,
+    "🔴 P11: a settlement that could NOT find its identity stays ADDRESSLESS — asserted `=== undefined`. This is the one case `task_peek` cannot repair, so silence is the only honest outcome and the `no-row` audit row is where it is counted",
+  );
 });
 
 await contextStorage.run(new ContextContainer(), async () => {
@@ -288,6 +302,81 @@ await new Promise((r) => setTimeout(r, 60));
     eq(d.task, "task_601a", "the row names the task that moved");
     eq(d.addressedWakeId, W_P, "…the wake the turn addressed, which is where the new origin was copied from");
     eq(d.turnId, "turn_coalesced", "…and the turn, which joins the row to the transcript");
+  }
+}
+
+{
+  const { stampUnifiedWindowAuth, OE_DELIVERY_ID_ATTR } = await import("../agent/channels/unified-window.js");
+  const { taskWakeUnreadRefusalMessage, TASK_WAKE_UNREAD_REFUSAL_REASON } = await import("../agent/channels/task-wake.js");
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    const W_PREV = "wake-prev-0597";
+    await registerUnifiedWakeTarget(store, ORG, W_PREV, OTHER_THREAD, iso(), WINDOW);
+    const minted597 = await openTaskWake({ org: ORG, taskId: "task_597", parentWakeId: W_ASK, windowToken: WINDOW });
+    ok(typeof minted597 === "string" && minted597.length > 0, "P11a: the dispatch minted the task a wake of its own");
+
+    noteTurnBoundary("turn_597_prev", W_PREV);
+    const prevCtx = seatCtx(W_PREV, "turn_597_prev");
+    eq(currentWakeId(prevCtx), W_PREV, "🔴 P11a THE CONTROL: the INGRESSED turn before it keeps its own address — asserted `=== W_PREV`, so the clearing below is scoped to the settlement turn and is not a blanket");
+
+    noteTurnBoundary("turn_597", W_PREV);
+    const ctx = seatCtx(W_PREV, "turn_597");
+    eq(uningressedTurn("turn_597"), true, "P11a: the settlement turn is uningressed");
+    eq(currentWakeId(ctx), undefined, "🔴 P11a: …so it holds no address — asserted `=== undefined`");
+
+    const installed = await installTaskWake({ org: ORG, taskId: "task_597", status: "completed", sessionId: SESSION, turnId: "turn_597", inheritedWakeId: W_PREV });
+    eq(installed.outcome, "installed", "P11a: reading the terminal view installs the task's identity");
+    eq(currentWakeId(ctx), minted597, "🔴 P11a THE RECOVERY: the SAME turn now answers under the task's own wake — the refusal is a steer toward `task_peek`, not a dead end");
+    eq(await resolveUnifiedWakeTarget(store, ORG, minted597!), ASK_THREAD, "🔴 P11a END TO END: …and that address is the thread that ASKED for the work, never the stale one");
+  });
+
+  {
+    const copy = taskWakeUnreadRefusalMessage();
+    ok(copy.includes("task_peek"), "🔴 P11b: the refusal NAMES the one action that restores the address — a bare refusal would end the turn in silence");
+    ok(copy.includes("no_reply"), "P11b: …and names the escape, so silence stays an explicit outcome rather than an accident");
+    ok(!copy.includes(W_LAST) && !copy.includes(W_ASK), "🔴 P11b: it discloses NO wake id — every id this turn can see belongs to another conversation, so naming one would hand it the wrong address");
+    eq(TASK_WAKE_UNREAD_REFUSAL_REASON, "task-wake-unread", "P11b: the `reply.refused` reason is its own string, so this hole is countable apart from every other refusal");
+  }
+
+  const W_DROP = "wake-drop-0597";
+  await registerUnifiedWakeTarget(store, ORG, W_DROP, OTHER_THREAD, iso(), WINDOW);
+  const d1 = "delivery-0597-a";
+  const d2 = "delivery-0597-b";
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    noteTurnBoundary("turn_drop_wakeid", W_DROP);
+    noteTurnBoundary("turn_redrive_wakeid", W_DROP);
+    eq(
+      uningressedTurn("turn_redrive_wakeid"),
+      true,
+      "🔴 P12 THE FALSE POSITIVE THE NONCE CLOSES: on the WAKE ID the redriven turn reads as bringing no delivery, because the redrive re-stamps the ORIGINAL id on purpose",
+    );
+    eq(currentWakeId(seatCtx(W_DROP, "turn_redrive_wakeid")), undefined, "🔴 P12 THE HARM: …so the OPE-597 rule would strip the corrective wake of the very address it was sent to restore");
+  });
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    const first = seatCtx(W_DROP, "turn_drop", d1);
+    eq(deliveryStampOf(first), d1, "P12: the nonce is what `deliveryStampOf` reads when it is present — never the wake id");
+    noteTurnBoundary("turn_drop", deliveryStampOf(first));
+
+    const redriven = seatCtx(W_DROP, "turn_redrive", d2);
+    noteTurnBoundary("turn_redrive", deliveryStampOf(redriven));
+    eq(uningressedTurn("turn_redrive"), false, "🔴 P12 THE FIX: the same wake id with a fresh nonce reads INGRESSED — a real delivery, correctly classified");
+    eq(currentWakeId(redriven), W_DROP, "🔴 P12: …so the corrective wake KEEPS its address — asserted `=== W_DROP`, which is the id the redrive nudge tells the model to answer");
+    eq(await resolveUnifiedWakeTarget(store, ORG, W_DROP), OTHER_THREAD, "P12: …and it resolves to the conversation whose prose was dropped");
+
+    noteTurnBoundary("turn_settle_0597", deliveryStampOf(redriven));
+    eq(uningressedTurn("turn_settle_0597"), true, "🔴 P12 THE CONTROL: a turn carrying the redriven turn's OWN nonce unchanged is still uningressed — the nonce classifies deliveries, it does not switch the detector off");
+  });
+
+  {
+    eq(OE_DELIVERY_ID_ATTR, "oe_delivery_id", "the attribute name is pinned — the boundary reads it by name off a bag eve hands back across deploys");
+    const withId = stampUnifiedWindowAuth({ attributes: {} }, "slack", "w1", undefined, undefined, WINDOW, undefined, "nonce-1");
+    eq(withId.attributes?.[OE_DELIVERY_ID_ATTR], "nonce-1", "the stamp lands when the caller mints one");
+    const without = stampUnifiedWindowAuth({ attributes: {} }, "slack", "w1", undefined, undefined, WINDOW, undefined);
+    eq(Object.hasOwn(without.attributes ?? {}, OE_DELIVERY_ID_ATTR), false, "🔴 an omitted nonce leaves the bag BYTE-IDENTICAL — asserted `=== false` on the key's presence, not on its value");
+    eq(deliveryStampOf({ session: { auth: { current: { attributes: { oe_wake_id: "w-old" } } } } } as never), "w-old", "🔴 an auth bag with NO nonce falls back to the raw wake id — an old deployment's delivery degrades to the pre-OPE-597 comparison, never to none");
+    eq(deliveryStampOf({ session: { auth: { current: { attributes: {} } } } } as never), undefined, "…and a bag with neither answers `undefined`, which the boundary records as INGRESSED");
   }
 }
 
