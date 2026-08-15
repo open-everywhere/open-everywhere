@@ -115,7 +115,11 @@ const banner =
   `//\n` +
   `// A row appearing or disappearing is a read/connector/webhook/… surface gaining or losing its\n` +
   `// ingestion declaration — read the diff as that, the same way a worker-capability-index diff is\n` +
-  `// read as a capability moving on or off the conversational seat.\n`;
+  `// read as a capability moving on or off the conversational seat.\n` +
+  `//\n` +
+  `// ⚠️ A \`form: "noteIngestionVerdict"\` row is an OBSERVER: it reports its kind to the table\n` +
+  `// without governing the route's own \`ingestUntrusted\` call. Do not read such a row as "this\n` +
+  `// route is table-governed" — the route's fence stands on its own and marks unconditionally.\n`;
 
 function renderRow(r: (typeof rows)[number]): string {
   const label = r.label === null ? "null" : JSON.stringify(r.label);

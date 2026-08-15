@@ -61,6 +61,9 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     area: "taint",
     globs: [
       "packages/core/agent/access/taint-*.ts",
+      "packages/core/agent/access/untrusted*.ts",
+      "packages/core/agent/access/ingestion-*.ts",
+      "packages/core/agent/channels/channel-read.ts",
       "packages/core/agent/access/skill-taint-envelope.ts",
       "packages/core/agent/access/subagent-taint.ts",
       "packages/core/agent/approvals/taint-disclosure.ts",

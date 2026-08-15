@@ -15,7 +15,7 @@ const { CHANGED_RELEVANT_MAP, ALWAYS_RELEVANT, UNMAPPED_BY_DESIGN, relevantScena
 );
 
 const rosterIds = new Set(SCENARIOS.map((s) => s.id));
-ok("the scenario roster is non-empty (a change here would make every check below vacuous)", rosterIds.size > 0);
+ok("the scenario roster holds its floor (a collapse here would make every check below vacuous)", rosterIds.size >= 40);
 
 const mappedIds = new Set<string>();
 for (const area of CHANGED_RELEVANT_MAP) for (const id of area.scenarios) mappedIds.add(id);
