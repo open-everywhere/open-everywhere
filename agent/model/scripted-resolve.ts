@@ -2,6 +2,7 @@ import { mockModel } from "eve/evals";
 import { onVercel } from "@open-everywhere/core/agent/access/platform.js";
 import { isSubagentChildContext, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { classifySessionId } from "@open-everywhere/core/agent/channels/window-key.js";
+import { stampModelCall } from "@open-everywhere/core/agent/model/model-stamp.js";
 import { backstopReply, noteTurnStep, reportStepBoundary } from "@open-everywhere/core/agent/model/step-boundary.js";
 import {
   ANY_SESSION,
@@ -41,6 +42,8 @@ export function scriptedModelFor(event: unknown, ctx: unknown): ReturnType<typeo
   }
 
   const bindable = ctx as BindableContext;
+
+  stampModelCall(SCRIPTED_MODEL_ID);
 
   const boundary = noteTurnStep(bindable, event);
   if (boundary.tier === "hard") {

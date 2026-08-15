@@ -273,6 +273,30 @@ export async function readAuditRows(input: { actions: readonly string[]; sinceIs
   return parsed.entries ?? [];
 }
 
+export interface UsageWindowRow {
+  readonly surfaceKey: string;
+  readonly model?: string;
+  readonly calls: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly estimatedUsd?: number;
+}
+
+export async function readUsageWindow(input: {
+  sinceIso: string;
+  workspaceKeys: readonly string[];
+}): Promise<{ rows: UsageWindowRow[]; totalUsd: number; unpricedModels: readonly string[] }> {
+  if (booted === undefined) throw new Error("integration harness: readUsageWindow before bootAgent.");
+  const qs = new URLSearchParams({ since: input.sinceIso, workspaces: input.workspaceKeys.join(",") });
+  const res = await fetch(`${booted.base}/control/v1/usage?${qs.toString()}`, {
+    headers: { authorization: `Bearer ${READ_TOKEN}`, accept: "application/json" },
+  });
+  if (!res.ok) throw new Error(`integration harness: usage-window read failed ${res.status}: ${await res.text()}`);
+  return (await res.json()) as { rows: UsageWindowRow[]; totalUsd: number; unpricedModels: readonly string[] };
+}
+
 function scheduleTaskName(logicalPath: string): string {
   return `eve.schedule.${Buffer.from(logicalPath, "utf8").toString("base64url")}`;
 }
