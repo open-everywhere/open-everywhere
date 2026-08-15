@@ -73,7 +73,8 @@ export async function retargetTaskWakes(input: {
       }).catch(() => undefined);
     }
     return moved;
-  } catch {
+  } catch (err) {
+    console.error(`retargetTaskWakes failed (org=${input.org}, addressedWake=${input.addressedWakeId}): ${err instanceof Error ? err.message : String(err)}`);
     return 0;
   }
 }

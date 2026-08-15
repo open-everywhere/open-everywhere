@@ -379,8 +379,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claimed_at text`,
   `DO $$
    BEGIN
-     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'stored_credential' AND column_name = 'provider')
-        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'stored_credential' AND column_name = 'connector')
+     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'stored_credential' AND column_name = 'provider')
+        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'stored_credential' AND column_name = 'connector')
      THEN
        ALTER TABLE stored_credential RENAME COLUMN provider TO connector;
      END IF;
@@ -388,8 +388,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
    $$`,
   `DO $$
    BEGIN
-     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'credential_intake' AND column_name = 'provider')
-        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'credential_intake' AND column_name = 'connector')
+     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'credential_intake' AND column_name = 'provider')
+        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'credential_intake' AND column_name = 'connector')
      THEN
        ALTER TABLE credential_intake RENAME COLUMN provider TO connector;
      END IF;
