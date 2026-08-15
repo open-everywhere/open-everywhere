@@ -69,7 +69,7 @@ export interface GitHubSupervisorWakeInput {
     readonly authorLogin?: string;
     readonly sentAt: string;
     readonly text: string;
-    readonly trust?: WakeTrust;
+    readonly trust: WakeTrust;
   };
   readonly engagementTier?: WakeEngagementTier;
   readonly handoffNote?: string | null;
@@ -108,7 +108,7 @@ export function buildGitHubSupervisorWake(input: GitHubSupervisorWakeInput): Nor
       authorId: input.trigger.authorLogin,
       id: input.trigger.id,
       sentAt: input.trigger.sentAt,
-      trust: input.trigger.trust ?? (directMention ? "principal" : "peer"),
+      trust: input.trigger.trust,
       mention: directMention ? true : undefined,
       body: input.trigger.text,
     }),

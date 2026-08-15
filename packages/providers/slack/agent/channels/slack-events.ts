@@ -259,15 +259,15 @@ function applyResolvedNames(
 export function renderWakeMessage(
   ev: ParsedMessageEvent,
   now: () => string = () => new Date().toISOString(),
-  opts?: SlackWakeOpts,
+  opts: SlackWakeOpts,
 ): string {
-  const nw = opts?.dm === true ? slackDmWake(ev, opts) : opts?.mode === "supervisor" ? slackChannelWatchWake(ev, opts) : slackThreadFollowWake(ev, opts);
+  const nw = opts.dm === true ? slackDmWake(ev, opts) : opts.mode === "supervisor" ? slackChannelWatchWake(ev, opts) : slackThreadFollowWake(ev, opts);
   return renderWake(nw, now).message;
 }
 
 export interface SlackWakeOpts {
   readonly memberCount?: number;
-  readonly trust?: WakeTrust;
+  readonly trust: WakeTrust;
   readonly backscroll?: readonly WakeMessageInput[];
   readonly handoffNote?: string;
   readonly handoffFromGeneration?: number;
@@ -287,53 +287,53 @@ export interface SlackWakeOpts {
 function slackJudgedWake(
   ev: ParsedMessageEvent,
   addressing: "thread-follow" | "channel-watch" | "direct-mention",
-  opts?: SlackWakeOpts,
+  opts: SlackWakeOpts,
   reasonOverride?: WakeReason,
 ): NormalizedWake {
   const isEdit = ev.subtype === "message_changed";
   const directMention = addressing === "direct-mention";
-  const hasHandoff = typeof opts?.handoffNote === "string" && opts.handoffNote.length > 0;
+  const hasHandoff = typeof opts.handoffNote === "string" && opts.handoffNote.length > 0;
   return {
     platform: "slack",
     reason: isEdit ? "message-edited" : (reasonOverride ?? (directMention ? "mention" : ev.threadTs ? "thread-activity" : "channel-activity")),
     addressing,
-    ...(opts?.groupDm === true ? { groupDm: true as const } : {}),
+    ...(opts.groupDm === true ? { groupDm: true as const } : {}),
     locus: {
       channel: {
         id: ev.channelId,
         type: ev.channelType,
-        memberCount: opts?.memberCount,
-        ...(opts?.unified ? { platform: "slack", ...(opts.platformLabel ? { platformLabel: opts.platformLabel } : {}) } : {}),
+        memberCount: opts.memberCount,
+        ...(opts.unified ? { platform: "slack", ...(opts.platformLabel ? { platformLabel: opts.platformLabel } : {}) } : {}),
       },
       thread: ev.threadTs ? { ts: ev.threadTs } : undefined,
     },
-    participants: opts?.participants,
-    engagementTier: directMention ? undefined : opts?.engagementTier,
-    unifiedDisclosure: opts?.unified === true ? true : undefined,
-    wakeId: opts?.wakeId,
-    handoff: hasHandoff ? { note: opts!.handoffNote!, fromGeneration: opts?.handoffFromGeneration ?? 0 } : undefined,
-    backscroll: opts?.backscroll,
+    participants: opts.participants,
+    engagementTier: directMention ? undefined : opts.engagementTier,
+    unifiedDisclosure: opts.unified === true ? true : undefined,
+    wakeId: opts.wakeId,
+    handoff: hasHandoff ? { note: opts.handoffNote!, fromGeneration: opts.handoffFromGeneration ?? 0 } : undefined,
+    backscroll: opts.backscroll,
     trigger: mkMessageTrigger(
       triggerMessage(ev, {
-        trust: opts?.trust ?? "peer",
+        trust: opts.trust,
         isEdit,
-        authorName: opts?.triggerAuthorName,
-        authorHandle: opts?.triggerAuthorHandle,
+        authorName: opts.triggerAuthorName,
+        authorHandle: opts.triggerAuthorHandle,
         mention: directMention ? true : undefined,
       }),
     ),
   };
 }
 
-export function slackThreadFollowWake(ev: ParsedMessageEvent, opts?: SlackWakeOpts): NormalizedWake {
+export function slackThreadFollowWake(ev: ParsedMessageEvent, opts: SlackWakeOpts): NormalizedWake {
   return slackJudgedWake(ev, "thread-follow", opts);
 }
 
-export function slackChannelWatchWake(ev: ParsedMessageEvent, opts?: SlackWakeOpts): NormalizedWake {
-  return slackJudgedWake(ev, opts?.directMention === true ? "direct-mention" : "channel-watch", opts);
+export function slackChannelWatchWake(ev: ParsedMessageEvent, opts: SlackWakeOpts): NormalizedWake {
+  return slackJudgedWake(ev, opts.directMention === true ? "direct-mention" : "channel-watch", opts);
 }
 
-export function slackDmWake(ev: ParsedMessageEvent, opts?: SlackWakeOpts): NormalizedWake {
+export function slackDmWake(ev: ParsedMessageEvent, opts: SlackWakeOpts): NormalizedWake {
   return slackJudgedWake(ev, "direct-mention", opts, "dm");
 }
 
@@ -657,7 +657,12 @@ export function renderNameDropMessage(
   ev: ParsedMessageEvent,
   name: string,
   now: () => string = () => new Date().toISOString(),
-  opts?: { readonly triggerAuthorName?: string; readonly triggerAuthorHandle?: string; readonly participants?: readonly WakeParticipant[] },
+  opts: {
+    readonly trust: WakeTrust;
+    readonly triggerAuthorName?: string;
+    readonly triggerAuthorHandle?: string;
+    readonly participants?: readonly WakeParticipant[];
+  },
 ): string {
   return renderWake(slackNameDropWake(ev, name, opts), now).message;
 }
@@ -665,14 +670,14 @@ export function renderNameDropMessage(
 export function slackNameDropWake(
   ev: ParsedMessageEvent,
   name: string,
-  opts?: {
+  opts: {
     readonly triggerAuthorName?: string;
     readonly triggerAuthorHandle?: string;
     readonly participants?: readonly WakeParticipant[];
     readonly contextLines?: readonly ContextLine[];
     readonly contextSource?: string;
     readonly readMoreHint?: string;
-    readonly trust?: WakeTrust;
+    readonly trust: WakeTrust;
   },
 ): NormalizedWake {
   return {
@@ -683,13 +688,13 @@ export function slackNameDropWake(
       channel: { id: ev.channelId, type: ev.channelType },
       thread: ev.threadTs ? { ts: ev.threadTs } : undefined,
     },
-    participants: opts?.participants,
+    participants: opts.participants,
     nameDrop: { botName: name, followUp: "follows-on-reply" },
-    contextLines: opts?.contextLines,
-    contextSource: opts?.contextSource,
-    readMoreHint: opts?.readMoreHint,
+    contextLines: opts.contextLines,
+    contextSource: opts.contextSource,
+    readMoreHint: opts.readMoreHint,
     trigger: mkMessageTrigger(
-      triggerMessage(ev, { trust: opts?.trust ?? "peer", isEdit: false, authorName: opts?.triggerAuthorName, authorHandle: opts?.triggerAuthorHandle }),
+      triggerMessage(ev, { trust: opts.trust, isEdit: false, authorName: opts.triggerAuthorName, authorHandle: opts.triggerAuthorHandle }),
     ),
   };
 }

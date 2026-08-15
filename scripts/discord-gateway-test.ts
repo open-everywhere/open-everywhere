@@ -42,9 +42,12 @@ import {
   isThreadChannelType,
   nameDropEligible,
   stripLeadingMention,
+  buildDiscordUnifiedWake,
+  buildDiscordDmWake,
   type DiscordRelayMessage,
 } from "@open-everywhere/provider-discord/agent/channels/discord-gateway.js";
 import { renderWake } from "@open-everywhere/core/agent/channels/normalized-wake.js";
+import type { WakeTrust } from "@open-everywhere/core/agent/channels/wake-envelope.js";
 import { discordPostMessage } from "@open-everywhere/provider-discord/agent/channels/discord-post.js";
 import { threadParentChannelId, clearDiscordInfoCacheForTest } from "@open-everywhere/provider-discord/agent/channels/discord-channel-info.js";
 import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
@@ -188,16 +191,33 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
 }
 
 {
-  const nativeTrig = (text: string, extra: Record<string, unknown> = {}) => ({ id: "m1", author: "u", authorId: "U1", sentAt: "2026-07-10T10:00:00.000Z", text, ...extra });
-  const direct = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "direct", trigger: nativeTrig("do the thing", { trust: "principal" }) })).message;
+  const nativeTrig = (text: string, trust: WakeTrust) => ({ id: "m1", author: "u", authorId: "U1", sentAt: "2026-07-10T10:00:00.000Z", text, trust });
+  const direct = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "direct", trigger: nativeTrig("do the thing", "principal") })).message;
   ok(direct === "do the thing", "render: direct address (mention/DM) passes straight through (trusted user input, W4)");
-  const woke = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "thread-follow", trigger: nativeTrig("chatter", { trust: "unauth" }) })).message;
+  const woke = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "thread-follow", trigger: nativeTrig("chatter", "unauth") })).message;
   ok(woke.includes(NO_REPLY_SENTINEL), "render: non-direct wake carries the NO_REPLY judge preamble");
   ok(woke.includes("<untrusted_external_data") && woke.includes("chatter"), "render: non-direct wake FENCES an UNVOUCHED author's body (P0-3), never raw pass-through");
-  const wokeMember = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "thread-follow", trigger: nativeTrig("chatter", { trust: "peer" }) })).message;
+  const wokeMember = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "thread-follow", trigger: nativeTrig("chatter", "peer") })).message;
   ok(wokeMember.includes(NO_REPLY_SENTINEL), "render: the member arm keeps the same judge preamble (only the fence differs)");
   ok(!wokeMember.includes("<untrusted_external_data") && wokeMember.includes("chatter"), "render: non-direct wake does NOT fence a PEER-authored body — the fence keys on the author (OPE-577)");
   ok(woke.includes("<wake reason=") && woke.startsWith("[thread-follow]"), "render: non-direct wake now carries the FULL wake envelope + canonical preamble (commit 3 convergence)");
+}
+
+{
+  const trig = { id: "m9", author: "u", authorId: "U9", sentAt: "2026-07-10T10:00:00.000Z", text: "hi" };
+  function __ope596DiscordPins(): void {
+    void buildDiscordUnifiedWake({ guildId: "G", channelId: "c1", isThread: false, addressing: "direct-mention", wakeId: "wk_1", trigger: trig });
+    void discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "direct", trigger: trig });
+    void buildDiscordDmWake({ channelId: "c1", wakeId: "wk_1", trigger: trig });
+  }
+  void __ope596DiscordPins;
+
+  const dmUnauth = renderWake(buildDiscordDmWake({ channelId: "c1", wakeId: "wk_1", trigger: { ...trig, trust: "unauth" } }), () => "2026-07-10T10:00:00.000Z").message;
+  ok(dmUnauth.includes('trust="unauth"'), "dm builder: an unvouchable DM partner renders `unauth` — being in a DM is not standing");
+  ok(dmUnauth.includes("<untrusted_external_data"), "dm builder: …and their body is FENCED");
+  const dmMember = renderWake(buildDiscordDmWake({ channelId: "c1", wakeId: "wk_1", trigger: { ...trig, trust: "peer" } }), () => "2026-07-10T10:00:00.000Z").message;
+  ok(dmMember.includes('trust="peer"'), "dm builder: a vouched partner renders their own tier");
+  ok(dmMember.includes("<untrusted_external_data") === false, "dm builder: …and is UNFENCED — the negative control proving the fence tracks the tier");
 }
 
 {

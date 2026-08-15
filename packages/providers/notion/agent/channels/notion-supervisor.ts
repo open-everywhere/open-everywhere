@@ -90,8 +90,10 @@ export interface NotionWakeMessage {
   readonly authorId?: string;
   readonly sentAt: string;
   readonly text: string;
-  readonly trust?: WakeTrust;
+  readonly trust: WakeTrust;
 }
+
+export type NotionUntieredWakeMessage = Omit<NotionWakeMessage, "trust">;
 
 export interface NotionSupervisorWakeInput {
   readonly addressing: Exclude<NotionAddressing, "drop">;
@@ -114,7 +116,7 @@ function toWakeSibling(m: NotionWakeMessage): WakeMessageInput {
     authorId: m.authorId,
     id: m.id,
     sentAt: m.sentAt,
-    trust: m.trust ?? "peer",
+    trust: m.trust,
     body: m.text,
   };
 }
@@ -148,7 +150,7 @@ export function buildNotionSupervisorWake(input: NotionSupervisorWakeInput): Nor
       authorId: input.trigger.authorId,
       id: input.trigger.id,
       sentAt: input.trigger.sentAt,
-      trust: input.trigger.trust ?? (input.addressing === "direct" ? "principal" : "peer"),
+      trust: input.trigger.trust,
       mention: input.addressing === "direct",
       body: input.trigger.text,
     }),
@@ -194,6 +196,11 @@ export interface NotionSupervisorDispatch {
   readonly window?: UnifiedWindowWake;
   readonly trust?: NotionDeliveryTrust;
   readonly directMention?: boolean;
+}
+
+export interface NotionUntieredSupervisorDispatch extends Omit<NotionSupervisorDispatch, "trigger" | "threadComments"> {
+  readonly trigger: NotionUntieredWakeMessage;
+  readonly threadComments: readonly NotionUntieredWakeMessage[];
 }
 
 export function notionIngestedMessages(d: {

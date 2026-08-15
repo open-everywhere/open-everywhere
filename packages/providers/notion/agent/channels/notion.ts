@@ -46,8 +46,8 @@ import {
   planNotionSingleWindow,
   shouldRotate,
   type NotionSupervisorDeps,
-  type NotionSupervisorDispatch,
-  type NotionWakeMessage,
+  type NotionUntieredSupervisorDispatch,
+  type NotionUntieredWakeMessage,
 } from "./notion-supervisor.js";
 
 const ROUTE = "/eve/v1/notion";
@@ -227,7 +227,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
       const botUserFor = (credentialId: string): Promise<{ id?: string; name?: string }> =>
         resolveBotUser(credentialId, () => credentialFor(credentialId))();
 
-      const dispatch = async (d: NotionSupervisorDispatch): Promise<void> => {
+      const dispatch = async (d: NotionUntieredSupervisorDispatch): Promise<void> => {
         const grain = notionGrainFor(d.surfaceKey);
         const pageCredential = await credentialFor(d.credentialId);
         const usesWindow = grainUsesUnifiedWindow(grain);
@@ -247,7 +247,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
             })
           : undefined;
         const wakeCtx = { channel: { kind: "notion" }, session: { auth: { current: d.auth as unknown as { attributes?: Readonly<Record<string, string>> } } } };
-        const trustOf = (m: NotionWakeMessage) =>
+        const trustOf = (m: NotionUntieredWakeMessage) =>
           m.from === "human" && m.authorId ? resolveWakeTrustFromContext(wakeCtx, { id: m.authorId, isBot: false }) : ("relay" as const);
 
         if ((await ingressSpendGate({

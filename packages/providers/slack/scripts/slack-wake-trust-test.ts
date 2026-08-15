@@ -10,7 +10,7 @@ import {
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { bindSlack } from "../agent/channels/slack-identity.js";
-import { slackChannelWatchWake, slackThreadFollowWake, type ParsedMessageEvent } from "../agent/channels/slack-events.js";
+import { slackChannelWatchWake, slackThreadFollowWake, slackNameDropWake, renderNameDropMessage, type ParsedMessageEvent } from "../agent/channels/slack-events.js";
 
 registerIdentityMapper("slack", bindSlack);
 
@@ -53,8 +53,16 @@ const ev: ParsedMessageEvent = {
   isAppMention: false, channelType: "channel", previousText: undefined, attachments: [],
 } as unknown as ParsedMessageEvent;
 ok(slackChannelWatchWake(ev, { trust: "principal" }).trigger.message.trust === "principal", "slack supervisor builder: opts.trust rides into the trigger");
-ok(slackChannelWatchWake(ev).trigger.message.trust === "peer", "slack supervisor builder: unset trust keeps the legacy peer");
+function __ope596SlackPins(): void {
+  void slackChannelWatchWake(ev);
+  void slackChannelWatchWake(ev, { memberCount: 3 });
+  void slackNameDropWake(ev, "Open Everywhere");
+  void renderNameDropMessage(ev, "Open Everywhere");
+}
+void __ope596SlackPins;
+ok(slackChannelWatchWake(ev, { trust: "unauth" }).trigger.message.trust === "unauth", "slack supervisor builder: a fail-closed tier rides in unchanged — nothing talks it up");
 ok(slackThreadFollowWake(ev, { trust: "relay" }).trigger.message.trust === "relay", "slack thread-follow builder: opts.trust rides into the trigger");
+ok(slackNameDropWake(ev, "Open Everywhere", { trust: "unauth" }).trigger.message.trust === "unauth", "slack name-drop builder: a fail-closed tier rides in unchanged");
 
 
 console.log(`slack-wake-trust tests passed (${passed})`);

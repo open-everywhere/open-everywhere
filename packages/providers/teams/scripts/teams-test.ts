@@ -12,7 +12,7 @@ import {
 import { registerTeamsProvider } from "../agent/register.js";
 import { teamsWakeOriginCodec, isTrustedTeamsServiceUrl } from "../agent/channels/teams-origin-codec.js";
 import { teamsPostArm } from "../agent/channels/teams-post-arm.js";
-import { buildTeamsDmWake } from "../agent/channels/teams-supervisor.js";
+import { buildTeamsDmWake, buildTeamsSupervisorWake } from "../agent/channels/teams-supervisor.js";
 import {
   buildTeamsFrontHandler,
   teamsAuthorFacts,
@@ -315,7 +315,7 @@ const memCfg: MemoryResolveConfig = {
   const w = buildTeamsDmWake({
     conversationId: "19:1on1@thread.v2",
     wakeId: "wk-1",
-    trigger: { id: "act-1", author: "Frank", authorId: "29:frank", sentAt: "2026-08-10T00:00:00Z", text: "hello" },
+    trigger: { id: "act-1", author: "Frank", authorId: "29:frank", sentAt: "2026-08-10T00:00:00Z", text: "hello", trust: "principal" as const },
   });
   ok(w.platform === "teams", "H1: platform teams");
   ok(w.reason === "dm", "H1: reason is `dm` (the SURFACE SHAPE, not `mention` — core opens with the DM sentence)");
@@ -326,19 +326,24 @@ const memCfg: MemoryResolveConfig = {
   ok(w.trigger.kind === "message", "H1: message trigger");
   ok(w.trigger.kind === "message" && w.trigger.message.mention === true, "H1: mention:true (the response-obligation flag, as Slack/Discord carry it)");
   ok(w.trigger.kind === "message" && w.trigger.message.from === "human", "H1: from:human (bot/self authors are dropped upstream)");
-  ok(w.trigger.kind === "message" && w.trigger.message.trust === "principal", "H1: trust defaults to `principal` (a DM partner is the seat's principal)");
+  ok(w.trigger.kind === "message" && w.trigger.message.trust === "principal", "H1: the caller's stated tier rides into the trigger");
   const wOverride = buildTeamsDmWake({
     conversationId: "19:1on1@thread.v2",
     wakeId: "wk-2",
     trigger: { id: "act-2", author: "Frank", authorId: "29:frank", sentAt: "2026-08-10T00:00:00Z", text: "hi", trust: "relay" },
   });
-  ok(wOverride.trigger.kind === "message" && wOverride.trigger.message.trust === "relay", "H1: an explicit trust tier overrides the principal default (the live dispatch resolves it)");
+  ok(wOverride.trigger.kind === "message" && wOverride.trigger.message.trust === "relay", "H1: a fail-closed tier rides in unchanged — being in a DM is not standing (OPE-596: there is no `principal` default to override)");
+  function __ope596TeamsPins(): void {
+    void buildTeamsDmWake({ conversationId: "19:1on1@thread.v2", wakeId: "wk-x", trigger: { id: "act-x", author: "Frank", authorId: "29:frank", sentAt: "2026-08-10T00:00:00Z", text: "hi" } });
+    void buildTeamsSupervisorWake({ channelId: "19:chan@thread.v2", directMention: true, wakeId: "wk-y", trigger: { id: "act-y", authorId: "29:frank", sentAt: "2026-08-10T00:00:00Z", text: "hi" } });
+  }
+  void __ope596TeamsPins;
   const wHandoff = buildTeamsDmWake({
     conversationId: "19:1on1@thread.v2",
     wakeId: "wk-3",
     handoffNote: "open ask: ship the report",
     handoffFromGeneration: 4,
-    trigger: { id: "act-3", author: "Frank", authorId: "29:frank", sentAt: "2026-08-10T00:00:00Z", text: "?" },
+    trigger: { id: "act-3", author: "Frank", authorId: "29:frank", sentAt: "2026-08-10T00:00:00Z", text: "?", trust: "principal" as const },
   });
   ok(wHandoff.handoff?.note === "open ask: ship the report" && wHandoff.handoff?.fromGeneration === 4, "H1: a fresh generation carries the rotation handoff note (the ONLY thing it carries — no backscroll)");
 }

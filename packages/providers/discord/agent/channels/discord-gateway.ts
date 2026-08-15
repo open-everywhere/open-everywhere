@@ -720,7 +720,7 @@ export interface DiscordUnifiedWakeInput {
     readonly authorId: string;
     readonly sentAt: string;
     readonly text: string;
-    readonly trust?: WakeTrust;
+    readonly trust: WakeTrust;
   };
 }
 
@@ -752,7 +752,7 @@ export function buildDiscordUnifiedWake(input: DiscordUnifiedWakeInput): Normali
       authorId: input.trigger.authorId,
       id: input.trigger.id,
       sentAt: input.trigger.sentAt,
-      trust: input.trigger.trust ?? (direct ? "principal" : "peer"),
+      trust: input.trigger.trust,
       mention: direct ? true : undefined,
       body: input.trigger.text,
     }),
@@ -774,7 +774,7 @@ export interface DiscordNativeWakeInput {
     readonly authorId: string;
     readonly sentAt: string;
     readonly text: string;
-    readonly trust?: WakeTrust;
+    readonly trust: WakeTrust;
   };
 }
 
@@ -803,7 +803,7 @@ export function discordNativeWake(input: DiscordNativeWakeInput): NormalizedWake
       authorId: input.trigger.authorId,
       id: input.trigger.id,
       sentAt: input.trigger.sentAt,
-      trust: input.trigger.trust ?? (direct ? "principal" : "peer"),
+      trust: input.trigger.trust,
       mention: undefined,
       body: input.trigger.text,
     }),
@@ -821,7 +821,7 @@ export interface DiscordDmWakeInput {
     readonly authorId: string;
     readonly sentAt: string;
     readonly text: string;
-    readonly trust?: WakeTrust;
+    readonly trust: WakeTrust;
   };
 }
 
@@ -839,7 +839,7 @@ export function buildDiscordDmWake(input: DiscordDmWakeInput): NormalizedWake {
       authorId: input.trigger.authorId,
       id: input.trigger.id,
       sentAt: input.trigger.sentAt,
-      trust: input.trigger.trust ?? "principal",
+      trust: input.trigger.trust,
       mention: true,
       body: input.trigger.text,
     }),

@@ -108,10 +108,10 @@ ok(classifyNotionComment({ ...base, created_by: { id: BOT, object: "user", type:
 ok(classifyNotionComment({ ...base, created_by: { id: "other-bot", object: "user", type: "bot" } }, BOT).addressing === "drop", "bot/integration-authored -> DROP (created_by.type != person)");
 ok(classifyNotionComment({ ...base, rich_text: mentionRT }, undefined).addressing === "drop", "@mention with unresolved bot id still DROPs (fail closed)");
 
-const trigger: NotionWakeMessage = { from: "human", id: "c-trig", authorId: AUTHOR, sentAt: "2026-03-24T18:51:00Z", text: "does section 2 still hold?" };
+const trigger: NotionWakeMessage = { from: "human", id: "c-trig", authorId: AUTHOR, sentAt: "2026-03-24T18:51:00Z", text: "does section 2 still hold?", trust: "peer" };
 const siblings: NotionWakeMessage[] = [
-  { from: "human", id: "c-prior", authorId: AUTHOR, sentAt: "2026-03-24T17:52:00Z", text: "an earlier note" },
-  { from: "self", id: "c-mine", sentAt: "2026-07-10T09:30:00Z", text: "my earlier reply" },
+  { from: "human", id: "c-prior", authorId: AUTHOR, sentAt: "2026-03-24T17:52:00Z", text: "an earlier note", trust: "peer" },
+  { from: "self", id: "c-mine", sentAt: "2026-07-10T09:30:00Z", text: "my earlier reply", trust: "relay" },
 ];
 {
   const nw = buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings });
@@ -300,11 +300,21 @@ for (const [label, err] of [
   });
   ok(notionWake.trigger.kind === "message" && notionWake.trigger.message.trust === "relay", "wake-trust: resolved trigger trust rides in (direct-addressing no longer implies principal)");
   ok(notionWake.backscroll?.[0]?.trust === "principal", "wake-trust: resolved sibling trust rides into the backscroll");
-  const notionDirectDefault = buildNotionSupervisorWake({
+  const notionDirect = buildNotionSupervisorWake({
     addressing: "direct", pageId: "P1", discussionId: "D1",
-    trigger: { from: "human", id: "c9", authorId: "n-user", sentAt: "2026-07-11T00:00:00Z", text: "hm" },
+    trigger: { from: "human", id: "c9", authorId: "n-user", sentAt: "2026-07-11T00:00:00Z", text: "hm", trust: "unauth" },
   });
-  ok(notionDirectDefault.trigger.kind === "message" && notionDirectDefault.trigger.message.trust === "principal", "wake-trust: unset trust keeps the legacy direct→principal default (pure callers)");
+  ok(notionDirect.trigger.kind === "message" && notionDirect.trigger.message.trust === "unauth", "wake-trust: a DIRECT wake keeps the caller's fail-closed tier — directness never raises it");
+  ok(notionDirect.trigger.kind === "message" && notionDirect.trigger.message.mention === true, "wake-trust: …and directness rides the `mention` flag instead (the negative control on the line above)");
+  function __ope596NotionPins(): void {
+    void buildNotionSupervisorWake({ addressing: "direct", pageId: "P1", discussionId: "D1", trigger: { from: "human", id: "c9", authorId: "n-user", sentAt: "2026-07-11T00:00:00Z", text: "hm" } });
+    void buildNotionSupervisorWake({
+      addressing: "channel-watch", pageId: "P1", discussionId: "D1",
+      trigger: { from: "human", id: "c9", authorId: "n-user", sentAt: "2026-07-11T00:00:00Z", text: "hm", trust: "peer" },
+      threadComments: [{ from: "human", id: "c8", authorId: "n-other", sentAt: "2026-07-11T00:00:00Z", text: "earlier" }],
+    });
+  }
+  void __ope596NotionPins;
 }
 
 {

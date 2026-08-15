@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
 __regDiscord();
 import { discordNativeWake } from "@open-everywhere/provider-discord/agent/channels/discord-gateway.js";
-import type { WakeMessageInput, WakeParticipant } from "@open-everywhere/core/agent/channels/wake-envelope.js";
+import type { WakeMessageInput, WakeParticipant, WakeTrust } from "@open-everywhere/core/agent/channels/wake-envelope.js";
 import { renderWake, mkMessageTrigger, type NormalizedWake } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/access/untrusted.js";
 
@@ -54,11 +54,11 @@ const G_DISCORD_NAMEDROP_BASE = `[name-drop] A top-level channel message said yo
 </wake>`;
 
 const DISCORD_SENT = "2026-07-10T09:59:00.000Z";
-const discordTrig = (text: string, extra: Record<string, unknown> = {}) => ({ id: "d1", author: "rowan", authorId: "U9", sentAt: DISCORD_SENT, text, ...extra });
-eq(renderWake(discordNativeWake({ channelId: "disc-ch", isThread: false, isDm: false, addressing: "direct", trigger: discordTrig("hey can you summarise this channel?", { trust: "principal" }) }), NOW).message, G_DISCORD_DIRECT, "discord direct (raw pass-through — verbatim body, W4)");
-eq(renderWake(discordNativeWake({ channelId: "disc-ch", isThread: false, isDm: false, addressing: "thread-follow", trigger: discordTrig("anyone know if the build passed?") }), NOW).message, G_DISCORD_JUDGED, "discord judged thread-follow (canonical preamble + full envelope)");
-eq(renderWake(discordNativeWake({ channelId: "disc-thread", parentChannelId: "disc-ch", isThread: true, isDm: false, addressing: "name-drop", botName: "OpenBot", trigger: discordTrig("does OpenBot handle retries?") }), NOW).message, G_DISCORD_NAMEDROP_THREAD, "discord name-drop thread (follows-thread, envelope with <thread>)");
-eq(renderWake(discordNativeWake({ channelId: "disc-ch", isThread: false, isDm: false, addressing: "name-drop", botName: "OpenBot", trigger: discordTrig("does OpenBot handle retries?") }), NOW).message, G_DISCORD_NAMEDROP_BASE, "discord name-drop base-channel (not-following, no <thread>)");
+const discordTrig = (text: string, trust: WakeTrust) => ({ id: "d1", author: "rowan", authorId: "U9", sentAt: DISCORD_SENT, text, trust });
+eq(renderWake(discordNativeWake({ channelId: "disc-ch", isThread: false, isDm: false, addressing: "direct", trigger: discordTrig("hey can you summarise this channel?", "principal") }), NOW).message, G_DISCORD_DIRECT, "discord direct (raw pass-through — verbatim body, W4)");
+eq(renderWake(discordNativeWake({ channelId: "disc-ch", isThread: false, isDm: false, addressing: "thread-follow", trigger: discordTrig("anyone know if the build passed?", "peer") }), NOW).message, G_DISCORD_JUDGED, "discord judged thread-follow (canonical preamble + full envelope)");
+eq(renderWake(discordNativeWake({ channelId: "disc-thread", parentChannelId: "disc-ch", isThread: true, isDm: false, addressing: "name-drop", botName: "OpenBot", trigger: discordTrig("does OpenBot handle retries?", "peer") }), NOW).message, G_DISCORD_NAMEDROP_THREAD, "discord name-drop thread (follows-thread, envelope with <thread>)");
+eq(renderWake(discordNativeWake({ channelId: "disc-ch", isThread: false, isDm: false, addressing: "name-drop", botName: "OpenBot", trigger: discordTrig("does OpenBot handle retries?", "peer") }), NOW).message, G_DISCORD_NAMEDROP_BASE, "discord name-drop base-channel (not-following, no <thread>)");
 
 const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWake["trigger"] =>
   mkMessageTrigger({ from: "human", author: "U1", id: "1.0", sentAt: "2026-03-24T18:52:00Z", trust: "peer", body, ...extra });

@@ -76,7 +76,7 @@ export interface TeamsSupervisorWakeInput {
     readonly authorName?: string;
     readonly sentAt: string;
     readonly text: string;
-    readonly trust?: WakeTrust;
+    readonly trust: WakeTrust;
   };
   readonly threadRootId?: string;
   readonly directMention: boolean;
@@ -106,7 +106,7 @@ export function buildTeamsSupervisorWake(input: TeamsSupervisorWakeInput): Norma
       authorId: input.trigger.authorId,
       id: input.trigger.id,
       sentAt: input.trigger.sentAt,
-      trust: input.trigger.trust ?? "relay",
+      trust: input.trigger.trust,
       mention: input.directMention,
       body: input.trigger.text,
     }),
@@ -171,7 +171,7 @@ export interface TeamsDmWakeInput {
     readonly authorId: string;
     readonly sentAt: string;
     readonly text: string;
-    readonly trust?: WakeTrust;
+    readonly trust: WakeTrust;
   };
 }
 
@@ -189,7 +189,7 @@ export function buildTeamsDmWake(input: TeamsDmWakeInput): NormalizedWake {
       authorId: input.trigger.authorId,
       id: input.trigger.id,
       sentAt: input.trigger.sentAt,
-      trust: input.trigger.trust ?? "principal",
+      trust: input.trigger.trust,
       mention: true,
       body: input.trigger.text,
     }),

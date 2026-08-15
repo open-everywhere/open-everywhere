@@ -367,8 +367,26 @@ for (const [label, err] of [
     trigger: { id: "c1", authorLogin: "jo", sentAt: "2026-07-11T00:00:00Z", text: "hm", trust: "principal" },
   });
   ok(ghWake.trigger.kind === "message" && ghWake.trigger.message.trust === "principal", "github builder: a resolved trigger trust rides into the wake");
-  const ghDefault = buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 7, trigger: { id: "c1", authorLogin: "jo", sentAt: "2026-07-11T00:00:00Z", text: "hm" } });
-  ok(ghDefault.trigger.kind === "message" && ghDefault.trigger.message.trust === "peer", "github builder: unset trust keeps the legacy peer (byte-compat for pure callers)");
+  const ghDirect = buildGitHubSupervisorWake({
+    owner: OWNER, repo: REPO, issueNumber: 7, directMention: true, wakeId: "wk_gh_1",
+    trigger: { id: "c1", authorLogin: "jo", sentAt: "2026-07-11T00:00:00Z", text: "hm", trust: "unauth" },
+  });
+  ok(ghDirect.trigger.kind === "message" && ghDirect.trigger.message.trust === "unauth", "github builder: a DIRECT-MENTION wake keeps the caller's fail-closed tier — directness never raises it");
+  ok(ghDirect.trigger.kind === "message" && ghDirect.trigger.message.mention === true, "github builder: …and directness rides the `mention` flag instead (the negative control on the line above)");
+  const directRender = renderWake(ghDirect, NOW).message;
+  ok(directRender.includes(UNTRUSTED_OPEN), "github builder: an @mention from an UNVOUCHED author is still FENCED — being addressed is not standing");
+  function __ope596GitHubPin(): void {
+    void buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 7, trigger: { id: "c1", authorLogin: "jo", sentAt: "2026-07-11T00:00:00Z", text: "hm" } });
+  }
+  void __ope596GitHubPin;
+  const memberDirect = renderWake(
+    buildGitHubSupervisorWake({
+      owner: OWNER, repo: REPO, issueNumber: 7, directMention: true, wakeId: "wk_gh_1",
+      trigger: { id: "c1", authorLogin: "jo", sentAt: "2026-07-11T00:00:00Z", text: "hm", trust: "peer" },
+    }),
+    NOW,
+  ).message;
+  ok(memberDirect.includes(UNTRUSTED_OPEN) === false, "github builder: …and the SAME wake from a member is unfenced — the negative control that proves the fence tracks the tier");
 }
 
 {

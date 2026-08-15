@@ -30,7 +30,7 @@ import {
   prepareNotionTrustRoots,
 } from "../agent/channels/notion-ancestry-trust.js";
 import { setRegisteredConnectorCredentials, resetRegisteredConnectorCredentials, OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "@open-everywhere/core/agent/adapter-api.js";
-import type { NotionSupervisorDispatch } from "../agent/channels/notion-supervisor.js";
+import type { NotionUntieredSupervisorDispatch } from "../agent/channels/notion-supervisor.js";
 import { registerNotionProvider } from "../agent/register.js";
 
 registerNotionProvider();
@@ -149,7 +149,7 @@ const priorComment: NotionComment = {
 const botIdFn = () => Promise.resolve<string | undefined>(BOT);
 function baseDeps(
   fetchImpl: FetchLike,
-  dispatch: (d: NotionSupervisorDispatch) => Promise<void>,
+  dispatch: (d: NotionUntieredSupervisorDispatch) => Promise<void>,
   extra?: Partial<Parameters<typeof handleNotionDelivery>[2]>,
 ): Parameters<typeof handleNotionDelivery>[2] {
   const merged = {
@@ -190,7 +190,7 @@ function baseDeps(
 
 {
   const raw = commentEvent();
-  let captured: NotionSupervisorDispatch | undefined;
+  let captured: NotionUntieredSupervisorDispatch | undefined;
   const out = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerNoMention, listResults: [priorComment, triggerNoMention] }), async (d) => { captured = d; }));
   ok(out.action === "dispatched" && captured?.addressing === "channel-watch", "plain comment -> dispatched as a JUDGED channel-watch wake (ambient)");
   ok(captured!.surfaceKey === `notion/${WS}/${PAGE}`, "dispatch carries the notion/<ws>/<page> surfaceKey (session + gate key)");
@@ -218,7 +218,7 @@ function baseDeps(
     rich_text: [{ type: "text", plain_text: "an unattributable note", text: { content: "x" } }],
   };
   const raw = commentEvent();
-  let captured: NotionSupervisorDispatch | undefined;
+  let captured: NotionUntieredSupervisorDispatch | undefined;
   await handleNotionDelivery(
     raw,
     sign(raw),
@@ -240,7 +240,7 @@ function baseDeps(
 
 {
   const raw = commentEvent();
-  let captured: NotionSupervisorDispatch | undefined;
+  let captured: NotionUntieredSupervisorDispatch | undefined;
   const out = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerMention, listResults: [priorComment, triggerMention] }), async (d) => { captured = d; }));
   ok(out.action === "dispatched" && captured?.addressing === "direct", "structured bot @mention -> dispatched as direct");
   ok(captured!.trigger.text === "@OE please summarise this page", "direct trigger = the triggering comment text (the request)");
@@ -251,7 +251,7 @@ function baseDeps(
   const nameDropRT = [{ type: "text", plain_text: "hey Aria, can you check this?", text: { content: "hey Aria, can you check this?" } }];
   const triggerNameDrop: NotionComment = { ...triggerMention, rich_text: nameDropRT };
   const raw = commentEvent();
-  let captured: NotionSupervisorDispatch | undefined;
+  let captured: NotionUntieredSupervisorDispatch | undefined;
   const out = await handleNotionDelivery(
     raw,
     sign(raw),
@@ -313,7 +313,7 @@ function baseDeps(
 
   clearNotionAncestryCache();
   _resetNotionTrustRootProbesForTest();
-  let captured: NotionSupervisorDispatch | undefined;
+  let captured: NotionUntieredSupervisorDispatch | undefined;
   const raw = commentEvent();
   const f = withParents({ [PAGE]: TRUST_ROOT }, makeFetch({ comment: triggerMention }));
   const out = await handleNotionDelivery(
@@ -328,7 +328,7 @@ function baseDeps(
 
   clearNotionAncestryCache();
   _resetNotionTrustRootProbesForTest();
-  let outside: NotionSupervisorDispatch | undefined;
+  let outside: NotionUntieredSupervisorDispatch | undefined;
   await handleNotionDelivery(
     raw,
     sign(raw),
@@ -342,7 +342,7 @@ function baseDeps(
   clearNotionAncestryCache();
   _resetNotionTrustRootProbesForTest();
   let pageLookups = 0;
-  let unrooted: NotionSupervisorDispatch | undefined;
+  let unrooted: NotionUntieredSupervisorDispatch | undefined;
   const counting: FetchLike = async (input, init) => {
     if (/\/v1\/pages\//.test(input)) pageLookups++;
     return withParents({ [PAGE]: TRUST_ROOT }, makeFetch({ comment: triggerMention }))(input, init);

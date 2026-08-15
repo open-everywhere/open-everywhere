@@ -20,7 +20,7 @@ import { buildNotionAuth, notionSurfaceKey } from "./notion-identity.js";
 import { resolveNotionDeliveryTrust, type NotionTrustRoots } from "./notion-ancestry-trust.js";
 import { notionDeliveryScopeVerdict } from "./notion-credentials.js";
 import { notionRosterWorkspace } from "./notion-scope.js";
-import { classifyNotionComment, type NotionSupervisorDispatch, type NotionWakeMessage } from "./notion-supervisor.js";
+import { classifyNotionComment, type NotionUntieredSupervisorDispatch, type NotionUntieredWakeMessage } from "./notion-supervisor.js";
 import { OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface NotionReplyTarget {
@@ -51,7 +51,7 @@ export interface HandleNotionDeliveryDeps {
   readonly engagementTier?: (surfaceKey: string) => "aggressive" | "neutral" | "reserved";
   readonly fetch?: FetchLike;
   readonly version?: string;
-  readonly dispatch: (d: NotionSupervisorDispatch) => Promise<void>;
+  readonly dispatch: (d: NotionUntieredSupervisorDispatch) => Promise<void>;
   readonly onHandshakeToken?: (token: string) => void;
 }
 
@@ -173,7 +173,7 @@ async function deliver(
   });
 
   const triggerText = richTextToPlainText(comment.rich_text);
-  const trigger: NotionWakeMessage = {
+  const trigger: NotionUntieredWakeMessage = {
     from: "human",
     id: commentId,
     authorId: comment.created_by?.id,
@@ -247,7 +247,7 @@ async function loadThreadSiblings(
   discussionId: string,
   botUserId: string | undefined,
   opts: NotionCallOpts,
-): Promise<NotionWakeMessage[]> {
+): Promise<NotionUntieredWakeMessage[]> {
   try {
     const all = await listBlockComments(pageId, opts);
     return all

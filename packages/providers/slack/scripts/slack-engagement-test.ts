@@ -731,7 +731,7 @@ registerConfig({
     team_id: "T_ENG",
     event: { type: "message", channel: "C_TXN", ts: "9.9", thread_ts: "1.1", user: "U1", text: "what do you reckon, Dave?" },
   })!;
-  const wakeMsg = renderWakeMessage(ev);
+  const wakeMsg = renderWakeMessage(ev, undefined, { trust: "peer" });
   ok(wakeMsg.includes(NO_REPLY_SENTINEL) && wakeMsg.includes("what do you reckon, Dave?"), "wake message = judge instruction + raw reply");
   ok(wakeMsg.includes("[thread-follow]"), "wake message is marked as a thread-follow dispatch");
   ok(/social\s+chatter/i.test(wakeMsg) && /never re-answer/i.test(wakeMsg), "wake message names social chatter as noise and forbids re-answering");
@@ -740,7 +740,7 @@ registerConfig({
   ok(wakeMsg.includes('trigger="true"'), "wake envelope's sole message carries trigger=true");
   ok(wakeMsg.includes('<thread ts="1.1"'), "wake envelope nests under <thread> for an in-thread wake");
   ok(!wakeMsg.includes('mention="true"'), "wake envelope never sets mention=true — this path is never an @mention");
-  ok(renderWakeMessage(ev, () => "2026-07-11T12:00:00Z").includes('current-time="2026-07-11T12:00:00Z"'), "renderWakeMessage's now() seam controls the envelope's current-time");
+  ok(renderWakeMessage(ev, () => "2026-07-11T12:00:00Z", { trust: "peer" }).includes('current-time="2026-07-11T12:00:00Z"'), "renderWakeMessage's now() seam controls the envelope's current-time");
 
   const woke: string[] = [];
   const deps: MessageRouteDeps = {
@@ -971,7 +971,7 @@ registerConfig({
   ok(latched.length === 1 && latched[0].threadTs === "1.1" && latched[0].participating === false, "in-thread warm-latch roots on the existing thread too");
   ok(calls[0].message.includes('<thread ts="1.1">'), "in-thread name-drop's envelope nests under <thread ts=the existing thread_ts>");
 
-  ok(renderNameDropMessage(topLevel(), "Ada").includes("can Ada check the deploy?"), "dispatch includes the raw message text");
+  ok(renderNameDropMessage(topLevel(), "Ada", undefined, { trust: "peer" }).includes("can Ada check the deploy?"), "dispatch includes the raw message text");
 
   calls.length = 0;
   out = await routeNameDropEvent(topLevel({ text: "Test Slack Bot, what's the ETA?" }), {

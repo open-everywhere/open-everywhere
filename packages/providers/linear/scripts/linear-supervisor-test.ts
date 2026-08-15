@@ -114,9 +114,16 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
   ok(message.includes(UNTRUSTED_OPEN), "an UNVOUCHED author's comment body is still untrusted-wrapped on the ADDRESSED path (W1 keys on the author there too)");
 
   const { trust: _omitted, ...untieredTrigger } = trigger;
-  const defaulted = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", trigger: untieredTrigger, unified: true, directMention: true, wakeId }), NOW).message;
-  ok(defaulted.includes(`trust="principal"`), "a trigger with NO tier still DEFAULTS to principal on a direct mention (fail-open — OPE-596 is the fix)");
-  ok(!defaulted.includes(UNTRUSTED_OPEN), "…and that default now also drops the fence, which is exactly why OPE-596 exists");
+  function __ope596LinearPin(): void {
+    void buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", trigger: untieredTrigger, unified: true, directMention: true, wakeId });
+  }
+  void __ope596LinearPin;
+  const addressedUnauth = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", trigger, unified: true, directMention: true, wakeId }), NOW).message;
+  ok(addressedUnauth.includes(`trust="unauth"`), "an addressed wake renders the caller's fail-closed tier — being @mentioned is not standing");
+  ok(addressedUnauth.includes(UNTRUSTED_OPEN), "…and keeps the fence on the addressed path");
+  const addressedMember = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", trigger: { ...trigger, trust: "peer" }, unified: true, directMention: true, wakeId }), NOW).message;
+  ok(addressedMember.includes(`trust="peer"`), "…the member arm renders its own tier");
+  ok(addressedMember.includes(UNTRUSTED_OPEN) === false, "…and is UNFENCED — the negative control that proves the fence tracks the tier, not the addressing");
 }
 {
   const off = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueTitle: "DB migration rollout", trigger, engagementTier: "reserved", directMention: false }), NOW);

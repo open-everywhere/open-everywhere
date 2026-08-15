@@ -227,7 +227,7 @@ async function run(msg: DiscordRelayMessage, opts: { noReceive?: boolean } = {})
   const nw = buildDiscordDmWake({
     channelId: DM_CHANNEL,
     wakeId: "wk_1",
-    trigger: { id: "m1", author: "alice", authorId: USER, sentAt: "2026-08-09T12:00:00Z", text: "hello" },
+    trigger: { id: "m1", author: "alice", authorId: USER, sentAt: "2026-08-09T12:00:00Z", text: "hello", trust: "principal" as const },
   });
   eq(nw.reason, "dm", "the builder emits reason `dm`");
   eq(nw.addressing, "direct-mention", "…with `direct-mention` addressing (semantically true AND mechanically load-bearing)");
