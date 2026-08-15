@@ -21,7 +21,7 @@ import {
   taskAgentLink,
   type TaskCallLink,
 } from "../access/subagent-taint.js";
-import { readTaskReceipt, terminalTaskViewsOf, type TaskReceipt, type TaskSummary } from "../access/background-tasks.js";
+import { readTaskReceipt, taskViewsOf, terminalTaskViewsOf, type TaskReceipt, type TaskSummary } from "../access/background-tasks.js";
 import { JOB_TAINT_ATTR } from "../access/job-posture.js";
 import { beginTaintVerdictTurn, registerTaintVerdictSink, taintEnabled, taintMode, type TaintVerdictRow } from "../access/taint-enforcement.js";
 import { appendAudit } from "../audit/audit.js";
@@ -29,6 +29,8 @@ import { currentTurnId, currentWakeId, deploymentOrg, isSubagentChildContext, ty
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { installTaskWake, openTaskWake } from "../channels/task-wake.js";
 import { noteTurnBoundary } from "../access/task-wake-signal.js";
+import { flushSettledMemory, noteTaskDispatched, noteTaskViews } from "./settlement-flush.js";
+import type { MemoryPersistContext } from "./memory.js";
 
 export const TAINT_VERDICT_ACTION = "taint.verdict";
 
@@ -439,9 +441,11 @@ export default defineHook({
             parentWakeId: currentWakeId(bind),
             windowToken: resolveOwnWindowToken(bind),
           });
+          noteTaskDispatched(receipt.taskId);
           return;
         }
 
+        noteTaskViews(taskViewsOf(result));
         const terminal = terminalTaskViewsOf(result);
         if (terminal.length > 0) {
           const wakeBind = ctx as unknown as BindableContext;
@@ -460,6 +464,7 @@ export default defineHook({
           let any = false;
           for (const view of terminal) any = (await adoptTaskTaint(view, ownSessionId)) || any;
           if (any) recordTurnTaintForChildren();
+          await flushSettledMemory(ctx as unknown as MemoryPersistContext, "task-settled");
           return;
         }
 
@@ -467,6 +472,7 @@ export default defineHook({
         if (await adoptSubagentTaint(result.callId, ownSessionId)) {
           recordTurnTaintForChildren();
         }
+        await flushSettledMemory(ctx as unknown as MemoryPersistContext, "delegation-returned");
       } catch {
       }
     },

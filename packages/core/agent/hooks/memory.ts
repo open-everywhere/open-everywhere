@@ -220,7 +220,14 @@ function skipAsSubagentChild(ctx: HookContext, phase: string): boolean {
 
 type MemorySandbox = Awaited<ReturnType<HookContext["getSandbox"]>>;
 
-export type MemoryPersistOutcome = "completed" | "failed" | "returned";
+export type MemoryPersistOutcome = "completed" | "failed" | "returned" | "settled";
+
+const PERSIST_WHERE: Record<MemoryPersistOutcome, string> = {
+  completed: "session.completed",
+  failed: "session.failed",
+  returned: "return_result",
+  settled: "delegation settlement",
+};
 
 export type MemoryPersistContext = BindableContext & {
   readonly session?: { readonly id?: string };
@@ -238,7 +245,7 @@ export interface MemoryFlushSummary {
 const NOTHING_PERSISTED: MemoryFlushSummary = { silos: 0, persisted: 0, changed: 0, failed: 0 };
 
 export async function persistMemoryNow(ctx: MemoryPersistContext, outcome: MemoryPersistOutcome): Promise<MemoryFlushSummary> {
-  const where = outcome === "returned" ? "return_result" : `session.${outcome}`;
+  const where = PERSIST_WHERE[outcome] ?? String(outcome);
   if (skipAsSubagentChild(ctx as unknown as HookContext, where)) return NOTHING_PERSISTED;
   const binding = bindFrom(ctx);
   const p = resolvePartition(ctx);

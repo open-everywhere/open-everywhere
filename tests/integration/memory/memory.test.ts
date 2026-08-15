@@ -55,6 +55,7 @@ function frozenSiloFilePath(silo: string, rel: string): string {
 test("session.started seeds the domain's own silo at the expected path and body, never a sibling domain's silo, and a delegated write_file call does not error", async () => {
   await bootAgent({ sharedSqlite: true });
 
+  const sinceIso = new Date(Date.now() - 1_000).toISOString();
   const marker = `IT-MEMORY-FACT-${Date.now()}`;
   const content = `# Notes\n\n- ${marker}: integration coverage sentinel for OPE-551\n`;
 
@@ -77,6 +78,14 @@ test("session.started seeds the domain's own silo at the expected path and body,
   const writeResult = handle.requests.flatMap((r) => r.toolResults).find((t) => t.name === "write_file");
   expect(writeResult).toBeDefined();
   expect(writeResult!.isError).toBe(false);
+
+  const notesPath = siloFilePath("it-memory-brain", "notes.md");
+  await waitFor(() => (existsSync(notesPath) ? true : undefined), "the delegated child's write_file to land on the DURABLE store via the settlement flush");
+  expect(readFileSync(notesPath, "utf-8")).toContain(marker);
+
+  const writeRows = await readAuditRows({ actions: ["memory.write"], sinceIso });
+  const settled = writeRows.filter((r) => (r.detail as { outcome?: string; silo?: string }).outcome === "settled" && (r.detail as { silo?: string }).silo === "it-memory-brain");
+  expect(settled.length).toBeGreaterThan(0);
 
   const seedPath = siloFilePath("it-memory-brain", "MEMORY.md");
   await waitFor(() => (existsSync(seedPath) ? true : undefined), "the it-memory-brain silo's seed to land on the durable store");
