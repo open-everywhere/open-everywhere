@@ -71,6 +71,78 @@ export async function markSubagentCallTainted(org: string, parentSessionId: stri
   }
 }
 
+const TASK_CALL_PREFIX = "oe-task-call:";
+
+const TASK_AGENT_PREFIX = "oe-task-agent:";
+
+export type TaskCallLink = { callId: string; childToken: string };
+
+export function taskCallKey(taskId: string): string {
+  return `${TASK_CALL_PREFIX}${taskId}`;
+}
+
+export function taskAgentKey(parentSessionId: string, agentId: string): string {
+  return `${TASK_AGENT_PREFIX}${parentSessionId}:${agentId}`;
+}
+
+function parseTaskCallLink(raw: string | null): TaskCallLink | undefined {
+  if (raw === null) return undefined;
+  const parsed = JSON.parse(raw) as { callId?: unknown; childToken?: unknown } | null;
+  const callId = parsed?.callId;
+  const childToken = parsed?.childToken;
+  if (typeof callId !== "string" || callId.length === 0) return undefined;
+  if (typeof childToken !== "string" || childToken.length === 0) return undefined;
+  return { callId, childToken };
+}
+
+export async function rememberTaskCall(org: string, taskId: string, link: TaskCallLink): Promise<void> {
+  try {
+    if (taskId.length === 0 || link.callId.length === 0 || link.childToken.length === 0) return;
+    await getOperationalStore().putTaskResult(
+      org,
+      taskCallKey(taskId),
+      JSON.stringify(link),
+      new Date().toISOString(),
+      SUBAGENT_TAINT_TTL_MS,
+      undefined,
+    );
+  } catch {
+  }
+}
+
+export async function taskCallLink(org: string, taskId: string): Promise<TaskCallLink | undefined> {
+  try {
+    if (taskId.length === 0) return undefined;
+    return parseTaskCallLink(await getOperationalStore().getTaskResult(org, taskCallKey(taskId)));
+  } catch {
+    return undefined;
+  }
+}
+
+export async function rememberTaskAgent(org: string, parentSessionId: string, agentId: string, link: TaskCallLink): Promise<void> {
+  try {
+    if (parentSessionId.length === 0 || agentId.length === 0 || link.childToken.length === 0) return;
+    await getOperationalStore().putTaskResultIfAbsent(
+      org,
+      taskAgentKey(parentSessionId, agentId),
+      JSON.stringify(link),
+      new Date().toISOString(),
+      SUBAGENT_TAINT_TTL_MS,
+      undefined,
+    );
+  } catch {
+  }
+}
+
+export async function taskAgentLink(org: string, parentSessionId: string, agentId: string): Promise<TaskCallLink | undefined> {
+  try {
+    if (parentSessionId.length === 0 || agentId.length === 0) return undefined;
+    return parseTaskCallLink(await getOperationalStore().getTaskResult(org, taskAgentKey(parentSessionId, agentId)));
+  } catch {
+    return undefined;
+  }
+}
+
 export async function subagentCallTaintStatus(
   org: string,
   parentSessionId: string,

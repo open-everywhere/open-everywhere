@@ -10,7 +10,18 @@ import {
   OE_RESULT_TAINTED_ATTR,
   OE_CHAT_NONMEMBER_ATTR,
 } from "../access/taint-signal.js";
-import { markSubagentTainted, claimSubagentCallClean, markSubagentCallTainted, subagentCallTaintStatus } from "../access/subagent-taint.js";
+import {
+  markSubagentTainted,
+  claimSubagentCallClean,
+  markSubagentCallTainted,
+  subagentCallTaintStatus,
+  rememberTaskCall,
+  rememberTaskAgent,
+  taskCallLink,
+  taskAgentLink,
+  type TaskCallLink,
+} from "../access/subagent-taint.js";
+import { readTaskReceipt, terminalTaskViewsOf, type TaskReceipt, type TaskSummary } from "../access/background-tasks.js";
 import { JOB_TAINT_ATTR } from "../access/job-posture.js";
 import { beginTaintVerdictTurn, registerTaintVerdictSink, taintEnabled, taintMode, type TaintVerdictRow } from "../access/taint-enforcement.js";
 import { appendAudit } from "../audit/audit.js";
@@ -319,6 +330,79 @@ export async function adoptSubagentTaint(callId: string, ownSessionId: string): 
   }
 }
 
+export const TASK_STARTED_ACTION = "delegation.task_started";
+
+export const TASK_SETTLED_ACTION = "delegation.task_settled";
+
+function parentSessionOfChildToken(childToken: string): string | undefined {
+  const m = /^subagent:([^:]+):([^:]+)$/.exec(childToken);
+  return m === null ? undefined : m[1]!;
+}
+
+export async function noteTaskReceipt(receipt: TaskReceipt, ownSessionId: string): Promise<TaskCallLink | null> {
+  const org = deploymentOrg();
+  let link: TaskCallLink | null = null;
+  let continuation = false;
+  try {
+    if (taintEnabled() && ownSessionId.length > 0) {
+      const pinned = receipt.agentId === null ? undefined : await taskAgentLink(org, ownSessionId, receipt.agentId);
+      continuation = pinned !== undefined;
+      link = pinned ?? { callId: receipt.callId, childToken: `subagent:${ownSessionId}:${receipt.callId}` };
+      if (receipt.agentId !== null && !continuation) await rememberTaskAgent(org, ownSessionId, receipt.agentId, link);
+      await rememberTaskCall(org, receipt.taskId, link);
+    }
+  } catch {
+  }
+  void appendAudit({
+    org,
+    platform: "ingest",
+    workspace: "delegation",
+    action: TASK_STARTED_ACTION,
+    detail: {
+      task: receipt.taskId,
+      call: receipt.callId,
+      agent: receipt.agentId ?? "",
+      ...(ownSessionId.length > 0 ? { session: ownSessionId } : {}),
+      continuation,
+    },
+  }).catch(() => undefined);
+  return link;
+}
+
+export async function adoptTaskTaint(view: TaskSummary, ownSessionId: string): Promise<boolean> {
+  const org = deploymentOrg();
+  let marker: "clean" | "tainted" | "lost" | "off" = "off";
+  let adopted = false;
+  try {
+    if (taintEnabled()) {
+      const link = await taskCallLink(org, view.taskId);
+      if (link === undefined) {
+        marker = "lost";
+      } else {
+        const parentSession = parentSessionOfChildToken(link.childToken) ?? ownSessionId;
+        const status = await subagentCallTaintStatus(org, parentSession, link.callId);
+        marker = status === false ? "clean" : status === true ? "tainted" : "lost";
+      }
+      if (marker !== "clean") {
+        markUntrustedIngestedThisTurn();
+        adopted = true;
+      }
+    }
+  } catch {
+    marker = "lost";
+    markUntrustedIngestedThisTurn();
+    adopted = true;
+  }
+  void appendAudit({
+    org,
+    platform: "ingest",
+    workspace: "delegation",
+    action: TASK_SETTLED_ACTION,
+    detail: { task: view.taskId, status: view.status, ...(ownSessionId.length > 0 ? { session: ownSessionId } : {}), marker, adopted },
+  }).catch(() => undefined);
+  return adopted;
+}
+
 export default defineHook({
   events: {
     "turn.started": (_event, ctx) => openTaintTurn(ctx),
@@ -327,9 +411,24 @@ export default defineHook({
       try {
         if (isSubagentChildContext(ctx as unknown as BindableContext)) return;
         const result = (event.data as { result?: { kind?: unknown; callId?: unknown } } | undefined)?.result;
-        if (result?.kind !== "subagent-result" || typeof result.callId !== "string") return;
         const ownSessionId = (ctx as { session?: { id?: string } }).session?.id;
         if (typeof ownSessionId !== "string" || ownSessionId.length === 0) return;
+
+        const receipt = readTaskReceipt(result);
+        if (receipt !== null) {
+          await noteTaskReceipt(receipt, ownSessionId);
+          return;
+        }
+
+        const terminal = terminalTaskViewsOf(result);
+        if (terminal.length > 0) {
+          let any = false;
+          for (const view of terminal) any = (await adoptTaskTaint(view, ownSessionId)) || any;
+          if (any) recordTurnTaintForChildren();
+          return;
+        }
+
+        if (result?.kind !== "subagent-result" || typeof result.callId !== "string") return;
         if (await adoptSubagentTaint(result.callId, ownSessionId)) {
           recordTurnTaintForChildren();
         }

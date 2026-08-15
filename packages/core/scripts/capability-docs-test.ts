@@ -68,8 +68,8 @@ const check = (toolNames: string[], docs: { path: string; spans: string[] }[], e
 {
   const shipped = Object.keys(UNDOCUMENTED_TOOLS).sort();
   ok(
-    shipped.join(",") === "browser_tools,delegation_tools,sandbox_tools,task_cancel,task_peek,task_sleep,task_update",
-    `10a: the shipped exemption table is exactly the three resolver files plus the four flag-gated eve task tools (found: ${shipped.join(", ") || "none"}). If you are adding a row, justify it here too.`,
+    shipped.join(",") === "browser_tools,delegation_tools,sandbox_tools,task_cancel,task_sleep,task_update",
+    `10a: the shipped exemption table is exactly the three resolver files plus the three still-undocumented flag-gated eve task tools (found: ${shipped.join(", ") || "none"}). If you are adding a row, justify it here too.`,
   );
   ok(
     shipped.every((n) => n in TOOL_CONSEQUENCE),

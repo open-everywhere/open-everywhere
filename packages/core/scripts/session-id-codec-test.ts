@@ -112,6 +112,10 @@ const ADVERSARIAL: readonly unknown[] = [
   "prefix:oe-sup:g5:oe-sup:g9",
   "oe-sup:g5:oe-sup:g9",
   "unified:oe-dom:x:oe-sup:g5:trailing",
+  "subagent:cse_abcdef123456:call_1",
+  "task:task_c5a7cc13ba1b8529a7832190:9f2c1ab4d7e60358",
+  "subagent:oe-dom:payments:oe-sup:g4:call_1",
+  "task:oe-dom:payments:oe-sup:g4",
 ];
 
 const CORPUS: readonly unknown[] = [...REAL, ...UNIFIED_VARIANTS, ...ADVERSARIAL];
