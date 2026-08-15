@@ -8,6 +8,7 @@ import { defineDomain } from "../agent/memory/domain.js";
 import { defineMemorySilo } from "../agent/memory/silo.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import type { EffectiveAccess } from "../agent/access/resolver.js";
+import { classifySessionId, taskWindowId, threadSeatWindowId } from "../agent/channels/window-key.js";
 import { registerSlackFixtureMapper, registerSlackTestBridge } from "./_slack-test-stubs.js";
 import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 
@@ -346,6 +347,19 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
 
   ok(!(await md("oe-dom:xsurf:win:teams/W_X/CH_X:oe-sup:g1", "teams")).includes("Test Slack Bot"), "(d) a TEAMS solo window carries no Slack name");
   ok((await md("oe-dom:xsurf:win:slack/T_X/C_X:oe-sup:g1", "slack")).includes("**Test Slack Bot**"), "(d) …while a SLACK solo window still identifies by the Slack display name");
+
+  const taskSolo = `oe-dom:slackonly:win:${taskWindowId("slack/T_S/C_S", "1700.5")}:oe-sup:g1`;
+  const seatSolo = `oe-dom:slackonly:win:${threadSeatWindowId("slack/T_S/C_S", "1700.5")}:oe-sup:g1`;
+  ok(classifySessionId(taskSolo).kind === "task", "(e) fixture guard: the token really classifies TASK-grain — if this flips, the assertion below stops measuring what it names");
+  ok(classifySessionId(seatSolo).kind === "thread-seat", "(f) fixture guard: the second token really classifies THREAD-SEAT-grain");
+  const taskMd = await md(taskSolo, "slack");
+  ok(taskMd.includes("Your name in this workspace is **Test Slack Bot**"), "🔴 (e) OPE-570: a TASK window on a ONE-surface unified domain still identifies by the live vendor name — the grain marker `t` is never read as a platform");
+  ok(!taskMd.includes(IDENTIFY_GENERIC), "(e) …and it does NOT fall back to the generic identity line");
+  ok((await md(seatSolo, "slack")).includes("Your name in this workspace is **Test Slack Bot**"), "🔴 (f) …and a THREAD-SEAT window (`s/`) resolves the same way, for the same reason");
+
+  const taskXsurf = await md(`oe-dom:xsurf:win:${taskWindowId("slack/T_X/C_X", "1700.5")}:oe-sup:g1`, "slack");
+  ok(!taskXsurf.includes("Test Slack Bot"), "🔴 (g) NEGATIVE CONTROL: a TASK window on a CROSS-SURFACE domain carries NO vendor name");
+  ok(taskXsurf.includes(IDENTIFY_GENERIC), "(g) …it renders the generic identity line instead");
 }
 
 {

@@ -131,6 +131,40 @@ function scriptProbe(answer: { ok: boolean; body: unknown } | (() => never)): { 
 
 {
   _resetTeamsUserTypeCacheForTest();
+  const CHAN = "19:chan-x@thread.tacv2";
+  const first = scriptProbe({ ok: true, body: { userRole: "guest" } });
+  const second = scriptProbe({ ok: true, body: { userRole: "user" } });
+  eq(await resolveTeamsUserType(first.probe, `${CHAN};messageid=100`, "29:u"), "guest", "(a) the first reply chain answers from the connector");
+  eq(
+    await resolveTeamsUserType(second.probe, `${CHAN};messageid=200`, "29:u"),
+    "guest",
+    "🔴 (b) OPE-572: a DIFFERENT reply chain in the SAME channel is served from the cache — keyed on the raw id this was a second connector call, and it would have answered 'member'",
+  );
+  eq(second.paths.length, 0, "(b) …the second probe never reached the connector (=== 0 calls)");
+  eq(first.paths.length, 1, "(b) …so ONE connector call now covers both reply chains (=== 1 call in total)");
+
+  eq(
+    first.paths[0],
+    teamsRosterMemberPath(`${CHAN};messageid=100`, "29:u"),
+    "🔴 (c) NEGATIVE CONTROL: the connector call still carries the UNSTRIPPED reply-chain id — the wire shape did not change",
+  );
+  ok(
+    first.paths[0]!.includes(encodeURIComponent(";messageid=100")),
+    `(c) …and the suffix really is on the wire, so the equality above is not comparing two already-stripped ids. Got: ${first.paths[0]}`,
+  );
+
+  const other = scriptProbe({ ok: true, body: { userRole: "user" } });
+  eq(await resolveTeamsUserType(other.probe, "19:chan-y@thread.tacv2;messageid=100", "29:u"), "member", "🔴 (d) NEGATIVE CONTROL: a DIFFERENT channel is a different cache key and DOES call the connector");
+  eq(other.paths.length, 1, "(d) …(=== 1 call)");
+
+  _resetTeamsUserTypeCacheForTest();
+  const dm = scriptProbe({ ok: true, body: { userRole: "guest" } });
+  eq(await resolveTeamsUserType(dm.probe, "19:1on1-x@thread.v2", "29:u"), "guest", "(e) a suffix-less DM conversation id still resolves");
+  eq(dm.paths[0], teamsRosterMemberPath("19:1on1-x@thread.v2", "29:u"), "(e) …and reaches the connector unchanged");
+}
+
+{
+  _resetTeamsUserTypeCacheForTest();
   const blip = scriptProbe({ ok: false, body: null });
   eq(await resolveTeamsUserType(blip.probe, "19:blip", "29:u"), undefined, "a failed lookup answers nothing");
   const recovered = scriptProbe({ ok: true, body: { userRole: "guest" } });
