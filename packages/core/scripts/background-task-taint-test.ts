@@ -120,7 +120,16 @@ async function runChild(callId: string, sessionId: string, taint: boolean): Prom
       `🔴 \`${status}\` IS terminal — eve's own isTerminalTaskStatus. \`failed\`/\`cancelled\` count because a child that read a hostile page and then died still wrote its marker`,
     );
   }
-  eq(tasks.terminalTaskViewsOf({ kind: "tool-result", toolName: "task_cancel", output: { tasks: [{ taskId: "t", status: "completed" }] } }), [], "…and a view carried by a DIFFERENT task tool is not read — only `task_peek` puts a child's output into the parent's history");
+  eq(
+    tasks.terminalTaskViewsOf({ kind: "tool-result", toolName: "task_cancel", output: { tasks: [{ taskId: "t", status: "completed" }] } }),
+    [{ taskId: "t", status: "completed", agentId: null }],
+    "🔴 a `task_cancel` terminal view IS read — eve returns the full view (lastOutput included) from BOTH view-bearing tools, and a cancel of an already-terminal task delivers the child's prose exactly like a peek (train-#59 review finding 1: reading only the peek left this second output path taint-blind)",
+  );
+  eq(
+    tasks.terminalTaskViewsOf({ kind: "tool-result", toolName: "task_sleep", output: { tasks: [{ taskId: "t", status: "completed" }] } }),
+    [],
+    "…and a view-SHAPED payload under a NON-view-bearing tool name is still ignored — the accept-set is exactly {task_peek, task_cancel}, never a prefix match",
+  );
   eq([...tasks.TASK_TOOL_NAMES].sort(), ["task_cancel", "task_peek", "task_sleep", "task_update"], "the four task tool names are named once, in the isolation module");
 }
 

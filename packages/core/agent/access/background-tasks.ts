@@ -1,6 +1,8 @@
 export const TASK_TOOL_NAMES: readonly string[] = ["task_peek", "task_cancel", "task_sleep", "task_update"];
 
 export const TASK_PEEK_TOOL = "task_peek";
+export const TASK_CANCEL_TOOL = "task_cancel";
+const TASK_VIEW_TOOLS: ReadonlySet<string> = new Set([TASK_PEEK_TOOL, TASK_CANCEL_TOOL]);
 
 export type TaskReceipt = {
   readonly taskId: string;
@@ -36,7 +38,7 @@ export function taskViewsOf(result: unknown): readonly TaskSummary[] {
   try {
     const r = result as { kind?: unknown; toolName?: unknown; output?: { tasks?: unknown } } | null;
     if (r === null || typeof r !== "object") return [];
-    if (r.kind !== "tool-result" || r.toolName !== TASK_PEEK_TOOL) return [];
+    if (r.kind !== "tool-result" || typeof r.toolName !== "string" || !TASK_VIEW_TOOLS.has(r.toolName)) return [];
     const tasks = r.output?.tasks;
     if (!Array.isArray(tasks)) return [];
     const out: TaskSummary[] = [];
