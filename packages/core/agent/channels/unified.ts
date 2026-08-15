@@ -231,12 +231,16 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         floor: t.answer.floor,
         wakeId: t.wakeId,
         chars: answerText?.length ?? 0,
+        surfaceKey: t.surfaceKey,
         ...(t.answer.taskId !== undefined ? { taskId: t.answer.taskId } : {}),
       };
       const { workspace: answerWorkspace, surface: answerSurface } = auditLabels(t.token);
       try {
         if (answerText === undefined) throw new Error("the delivery is structured content, not text — an answer must be text");
-        const session = await from(t.token).respond([{ requestId: t.answer.requestId, text: answerText }], { auth: input.auth });
+        const session = await from(t.token).respond([{ requestId: t.answer.requestId, text: answerText }], {
+          auth: input.auth,
+          ...(t.context && t.context.length > 0 ? { context: [...t.context] } : {}),
+        });
         await forgetBridgedQuestion(getOperationalStore(), org, bare);
         ulog(`answer ${t.answer.requestId} delivered to ${t.token} (floor ${t.answer.floor})`);
         await appendAudit({
