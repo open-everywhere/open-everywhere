@@ -63,7 +63,7 @@ ok(isLinearDirectSelfAuthored(undefined, VIEWER) === false, "author-less trigger
 ok(isLinearDirectSelfAuthored(VIEWER.id, {}) === false, "UNRESOLVED viewer id -> FALSE, never TRUE (fail-closed the same direction as classifyLinearAmbientComment: can't assert self-authorship without a resolved identity, so this guard stays byte-identical to having no check at all rather than dropping a legitimate trigger)");
 ok(isLinearDirectSelfAuthored(VIEWER.id, { name: VIEWER.name }) === false, "viewer id absent (name-only) -> FALSE, same fail-closed reasoning");
 
-const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt: "2026-03-24T18:51:00Z", text: "can we ship the migration tomorrow?" };
+const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt: "2026-03-24T18:51:00Z", text: "can we ship the migration tomorrow?", trust: "unauth" as const };
 {
   const nw = buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", issueTitle: "DB migration rollout", trigger, engagementTier: "reserved" });
   const { message, context } = renderWake(nw, NOW);
@@ -73,8 +73,13 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
   ok(message.includes(`<channel id="${TEAM}">`), "locus.channel = the team (the silo grain)");
   ok(message.includes(`<thread ts="ENG-42">`), "locus.thread = the issue identifier (the conversation)");
   ok(message.includes(`trigger="true"`) && message.includes("can we ship the migration tomorrow?"), "the comment is the trigger message");
-  ok(message.includes(UNTRUSTED_OPEN), "the comment body is untrusted-wrapped by the envelope");
+  ok(message.includes(UNTRUSTED_OPEN), "an UNVOUCHED author's comment body is untrusted-wrapped by the envelope");
   ok(context !== undefined && context.length === 1 && context[0]!.includes("DB migration rollout"), "the issue title rides an untrusted-wrapped context block");
+
+  const member = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", issueTitle: "DB migration rollout", trigger: { ...trigger, trust: "peer" }, engagementTier: "reserved" }), NOW);
+  ok(member.message.includes("can we ship the migration tomorrow?"), "the member's comment still renders verbatim");
+  ok(!member.message.includes(UNTRUSTED_OPEN), "a PEER-authored comment body is NOT untrusted-wrapped (OPE-577 — the fence keys on the author)");
+  ok(member.context![0]!.includes(UNTRUSTED_OPEN), "…and the issue TITLE stays fenced regardless of who commented — it is payload text, not an authored message");
 }
 {
   const nw = buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger });
@@ -106,8 +111,12 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
   ok(message.includes(`mention="true"`), "the trigger is flagged as a @mention (response-obligation signal)");
   ok(message.includes(`<channel platform="linear" id="${TEAM}">`), "the surface address rides the unified addressed wake");
   ok(message.includes("Cross-surface disclosure:"), "the P5 cross-surface disclosure still rides the addressed wake");
-  ok(message.includes(UNTRUSTED_OPEN), "the comment body is still untrusted-wrapped by the envelope (W1 holds on the addressed path)");
-  ok(message.includes(`trust="principal"`), "a direct mention defaults the trigger trust to principal (the live leg passes the real tier)");
+  ok(message.includes(UNTRUSTED_OPEN), "an UNVOUCHED author's comment body is still untrusted-wrapped on the ADDRESSED path (W1 keys on the author there too)");
+
+  const { trust: _omitted, ...untieredTrigger } = trigger;
+  const defaulted = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", trigger: untieredTrigger, unified: true, directMention: true, wakeId }), NOW).message;
+  ok(defaulted.includes(`trust="principal"`), "a trigger with NO tier still DEFAULTS to principal on a direct mention (fail-open — OPE-596 is the fix)");
+  ok(!defaulted.includes(UNTRUSTED_OPEN), "…and that default now also drops the fence, which is exactly why OPE-596 exists");
 }
 {
   const off = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueTitle: "DB migration rollout", trigger, engagementTier: "reserved", directMention: false }), NOW);

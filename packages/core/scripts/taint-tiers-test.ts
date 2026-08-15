@@ -369,10 +369,15 @@ const wakeFixture = {
   sourcePlatform: "slack",
   channel: { id: "C1", type: "channel" },
   messages: [
-    { from: "human", author: "Ada", id: "1", sentAt: "2026-08-08T09:59:00Z", trust: "peer", body: "earlier chatter" },
-    { from: "human", author: "Ada", id: "2", sentAt: "2026-08-08T10:00:00Z", trust: "peer", trigger: true, body: "hey agent" },
+    { from: "human", author: "Ada", id: "1", sentAt: "2026-08-08T09:59:00Z", trust: "unauth", body: "earlier chatter" },
+    { from: "human", author: "Ada", id: "2", sentAt: "2026-08-08T10:00:00Z", trust: "unauth", trigger: true, body: "hey agent" },
   ],
 } as const satisfies Parameters<typeof renderWakeEnvelope>[0];
+
+const memberWakeFixture = {
+  ...wakeFixture,
+  messages: wakeFixture.messages.map((m) => ({ ...m, trust: "peer" as const })),
+} satisfies Parameters<typeof renderWakeEnvelope>[0];
 
 {
   rows.length = 0;
@@ -406,6 +411,18 @@ await eveContextStorage().run(new FakeSession(), async () => {
   eq(rows.length, 1, "…and the declaration REPORTS it rather than restating the comment");
   eq(rows[0].divergence, "over-taint", "…as an over-taint row: the site tainted, the table calls chat-message trusted");
   eq(rows[0].label, "wake-envelope:slack", "…labelled by site");
+});
+
+await eveContextStorage().run(new FakeSession(), async () => {
+  rows.length = 0;
+  const envelope = renderWakeEnvelope(memberWakeFixture);
+  ok(envelope.includes("hey agent"), "the member wake still renders its message bodies");
+  ok(!envelope.includes(UNTRUSTED_OPEN), "…UNFENCED — a vouched member's body carries no wrapper (OPE-577)");
+  ok(
+    untrustedIngestedThisTurn() === false,
+    "🔴 given the SAME session context that made the unauth render taint, the member render does NOT — no ingestUntrusted call means nothing to mark",
+  );
+  eq(rows.length, 0, "…and the declaration writes no row: it reports `false`, which agrees with the trusted chat-message row");
 });
 
 await eveContextStorage().run(new FakeSession(), async () => {

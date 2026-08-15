@@ -57,7 +57,7 @@ ok(classifyGitHubAmbientComment(mention, SLUG, { treatMentionAsDirect: true, vou
 ok(classifyGitHubAmbientComment({ ...mention, repoPrivate: true }, SLUG, { treatMentionAsDirect: true }).addressing === "drop", "single-window @mention, PRIVATE but un-vouched -> DROP (private flag never admits the window — the vouch is the floor)");
 ok(classifyGitHubAmbientComment(base, SLUG, { treatMentionAsDirect: true, vouched: true }).addressing === "channel-watch", "a NON-mention comment is unaffected by treatMentionAsDirect -> channel-watch (judged)");
 
-const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:51:00Z", text: "should we bump the retry budget here?" };
+const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:51:00Z", text: "should we bump the retry budget here?", trust: "unauth" as const };
 {
   const nw = buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Flaky retries on cold start", trigger, engagementTier: "reserved" });
   const { message, context } = renderWake(nw, NOW);
@@ -67,9 +67,14 @@ const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:
   ok(message.includes(`<channel id="${OWNER}/${REPO}">`), "locus.channel = owner/repo (the silo grain)");
   ok(message.includes(`<thread ts="#42">`), "locus.thread = the issue number (the conversation the comment belongs to)");
   ok(message.includes(`trigger="true"`) && message.includes("should we bump the retry budget here?"), "the comment is the trigger message");
-  ok(message.includes(UNTRUSTED_OPEN), "the comment body is untrusted-wrapped by the envelope");
+  ok(message.includes(UNTRUSTED_OPEN), "an UNVOUCHED author's comment body is untrusted-wrapped by the envelope");
   ok(context !== undefined && context.length === 1 && context[0]!.includes("Flaky retries on cold start"), "the issue title rides an untrusted-wrapped context block");
   ok(context![0]!.includes(UNTRUSTED_OPEN), "the title context is untrusted-wrapped too (payload-supplied text)");
+
+  const member = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Flaky retries on cold start", trigger: { ...trigger, trust: "peer" }, engagementTier: "reserved" }), NOW);
+  ok(member.message.includes("should we bump the retry budget here?"), "the member's comment still renders verbatim");
+  ok(!member.message.includes(UNTRUSTED_OPEN), "a PEER-authored comment body is NOT untrusted-wrapped (OPE-577 — the fence keys on the author)");
+  ok(member.context![0]!.includes(UNTRUSTED_OPEN), "…and the issue TITLE stays fenced regardless of who commented — it is payload text, not an authored message");
 }
 {
   const nw = buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 7, trigger });

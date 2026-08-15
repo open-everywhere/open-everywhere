@@ -219,11 +219,12 @@ async function runFront(
 
   ok(d.message.includes('reason="dm"'), "🔴 the envelope's reason is `dm` — this path is the FIRST producer of that vocabulary value");
   ok(!d.message.includes('reason="mention"'), "…not `mention`: telling a 1:1 DM it was @mentioned is a small lie that costs orientation");
+  ok(d.message.includes('trust="peer"'), "the vouched DM partner renders the `peer` tier");
   ok(
-    d.message.includes("<untrusted_external_data source=\"slack-message\">"),
-    "🔴 the DM body is now `wrapUntrusted`-FENCED like every other surface's inbound text — a strict improvement (eve's native DM dispatch delivered it raw)",
+    !d.message.includes("<untrusted_external_data source=\"slack-message\">"),
+    "🔴 a VOUCHED DM partner's body is NOT fenced (OPE-577 — the fence keys on the author, and a DM partner the gate confirmed is a member)",
   );
-  ok(d.message.includes("what&apos;s the refund status?"), "…with the human's text inside the fence (XML-escaped by the renderer, as on every surface)");
+  ok(d.message.includes("what&apos;s the refund status?"), "…with the human's text XML-escaped by the renderer, as on every surface");
   ok(
     d.message.startsWith("[direct] This is a direct message to you"),
     "🔴 the preamble opens as a DM, NOT as \"you were @mentioned by name in this channel\" — `direct-mention` addressing is carried for its MECHANICAL effect (arming the prose bridge), and the orientation prose must not inherit its literal claim",
@@ -260,11 +261,19 @@ async function runFront(
 {
   const vouched = await runFront(dmEnvelope("Ev5b1"), { partnerTrust: "internal" });
   ok(vouched.dispatched[0]!.message.includes('trust="peer"'), "an INTERNAL DM partner renders the `peer` trust tier");
+  ok(
+    !vouched.dispatched[0]!.message.includes("<untrusted_external_data"),
+    "…and OPE-577 renders that vouched partner's body UNFENCED — the DM is a colleague talking to you",
+  );
 
   const unverifiable = await runFront(dmEnvelope("Ev5b2"));
   ok(
     unverifiable.dispatched[0]!.message.includes('trust="unauth"'),
     "🔴 an UNVERIFIABLE partner (the lookup failed / no token) falls to `unauth`, not `peer` — the DM path inherits the same fail-closed trust floor every other surface has",
+  );
+  ok(
+    unverifiable.dispatched[0]!.message.includes("<untrusted_external_data"),
+    "🔴 …so the SAME DM shape from an unverifiable partner KEEPS the fence — the two arms differ only in whether the lookup could vouch for the partner",
   );
   ok(
     unverifiable.dispatched[0]!.message.includes("<system-note>"),
@@ -363,7 +372,7 @@ async function runFront(
   );
   ok(d.message.includes("stay out of the rest"), "…and the opening carries the stay-out clause that makes unconditional WAKING compatible with conditional REPLYING");
   ok(d.message.includes('trust="peer"'), "the author renders `peer` off the SURFACE's confirmed-internal verdict, which is what stands in for the partner check a group DM cannot make");
-  ok(d.message.includes("<untrusted_external_data source=\"slack-message\">"), "the body is fenced like every other surface's");
+  ok(!d.message.includes("<untrusted_external_data source=\"slack-message\">"), "…and that `peer` verdict carries the body OUTSIDE the fence, like every other surface's member-authored message (OPE-577)");
 
   eq(d.target.origin.replyAnchorTs, undefined, "🔴 no replyAnchorTs — one seat, one room, one reply placement; splitting it on whether the human typed `<@bot>` would put two geometries in one conversation");
   eq(d.target.origin.threadTs, undefined, "…so a top-level group-DM answer posts flat");

@@ -191,9 +191,12 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   const nativeTrig = (text: string, extra: Record<string, unknown> = {}) => ({ id: "m1", author: "u", authorId: "U1", sentAt: "2026-07-10T10:00:00.000Z", text, ...extra });
   const direct = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "direct", trigger: nativeTrig("do the thing", { trust: "principal" }) })).message;
   ok(direct === "do the thing", "render: direct address (mention/DM) passes straight through (trusted user input, W4)");
-  const woke = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "thread-follow", trigger: nativeTrig("chatter") })).message;
+  const woke = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "thread-follow", trigger: nativeTrig("chatter", { trust: "unauth" }) })).message;
   ok(woke.includes(NO_REPLY_SENTINEL), "render: non-direct wake carries the NO_REPLY judge preamble");
-  ok(woke.includes("<untrusted_external_data") && woke.includes("chatter"), "render: non-direct wake FENCES the untrusted body (P0-3), never raw pass-through");
+  ok(woke.includes("<untrusted_external_data") && woke.includes("chatter"), "render: non-direct wake FENCES an UNVOUCHED author's body (P0-3), never raw pass-through");
+  const wokeMember = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "thread-follow", trigger: nativeTrig("chatter", { trust: "peer" }) })).message;
+  ok(wokeMember.includes(NO_REPLY_SENTINEL), "render: the member arm keeps the same judge preamble (only the fence differs)");
+  ok(!wokeMember.includes("<untrusted_external_data") && wokeMember.includes("chatter"), "render: non-direct wake does NOT fence a PEER-authored body — the fence keys on the author (OPE-577)");
   ok(woke.includes("<wake reason=") && woke.startsWith("[thread-follow]"), "render: non-direct wake now carries the FULL wake envelope + canonical preamble (commit 3 convergence)");
 }
 
@@ -659,12 +662,14 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
 
   ok(nameDropEligible(base) === true, "[OPE-571] NEGATIVE: unresolved/empty settings ⇒ today's botName-only behaviour");
 
-  const ndTrig = (text: string) => ({ id: "m1", author: "u", authorId: "U1", sentAt: "2026-07-10T10:00:00.000Z", text });
+  const ndTrig = (text: string, trust: "unauth" | "peer" = "unauth") => ({ id: "m1", author: "u", authorId: "U1", sentAt: "2026-07-10T10:00:00.000Z", text, trust });
   const turn = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "name-drop", botName: "Test Slack Bot", trigger: ndTrig("Test Slack Bot help") })).message;
   ok(turn.includes("[name-drop]") && turn.includes('"Test Slack Bot"'), "name-drop turn: preamble names the trigger");
   ok(turn.includes(NO_REPLY_SENTINEL), "name-drop turn: carries the NO_REPLY escape");
   ok(turn.includes("NOT following this channel"), "name-drop turn (base channel): honest that a reply does not engage");
-  ok(turn.includes("Test Slack Bot help") && turn.includes("<untrusted_external_data"), "name-drop turn: the body rides FENCED as untrusted data (P0-3)");
+  ok(turn.includes("Test Slack Bot help") && turn.includes("<untrusted_external_data"), "name-drop turn: an UNVOUCHED author's body rides FENCED as untrusted data (P0-3)");
+  const ndMember = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "name-drop", botName: "Test Slack Bot", trigger: ndTrig("Test Slack Bot help", "peer") })).message;
+  ok(ndMember.includes("Test Slack Bot help") && !ndMember.includes("<untrusted_external_data"), "name-drop turn: a PEER-authored body rides UNFENCED — the name-drop path keys on the author too (OPE-577)");
   const threadTurn = renderWake(discordNativeWake({ channelId: "t1", parentChannelId: "c1", isThread: true, isDm: false, addressing: "name-drop", botName: "Bot", trigger: ndTrig("help") })).message;
   ok(threadTurn.includes("now following this thread"), "name-drop turn (thread): says the thread IS followed (engaged at dispatch)");
   ok(threadTurn.includes("stand_down"), "name-drop turn (thread): names the stand_down VERB as the undo (OPE-418 — the line used to promise a magic word, which is now false)");
