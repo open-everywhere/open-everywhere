@@ -139,6 +139,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
     POST(SELF_DISPATCH_PATH, async (req, { to }) => handleSelfDispatch(req, to, (r, i) => divertToUnifiedWindow(r, { ...i, internalDispatch: true }))),
   ],
   kindHint: "unified",
+  turnPolicy: "queue",
   async receive(input, { from }): Promise<Session> {
     const t = input.target as Partial<UnifiedReceiveTarget> | undefined;
     if (
