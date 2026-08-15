@@ -53,6 +53,17 @@ for (const name of ["ask_question", "todo"]) {
 }
 ok(allowedOnLeanSeat("final_output"), "the lean roster keeps eve's structured-output sink (a lean turn must still be able to return)");
 
+for (const name of ["task_peek", "task_cancel"]) {
+  ok(allowedOnLeanSeat(name), `OPE-583: the lean roster keeps ${name} — the seat can read back and stop work it itself delegated`);
+  ok(LEAN_SEAT_TOOLS.has(name), `${name} is a NAMED LEAN_SEAT_TOOLS member, not merely surviving on a different default`);
+}
+for (const [name, why] of [
+  ["task_sleep", "no measured seat-side need — pausing delegated work is a worker's own decision, not a routing one"],
+  ["task_update", "CHILD-only: eve's isTaskToolAvailable never mounts it on a seat (measured on the T1 probe)"],
+] as const) {
+  ok(!allowedOnLeanSeat(name), `lean seat does NOT hold ${name} — ${why}`);
+}
+
 const mustBeRelocated: readonly [string, string][] = [
   ["describe_image", "worker-side (final ruling, supersedes the plan's §7 'kept'): the seat's only taint ingress becomes the delegation return stamp"],
   ["read_channel", "own-conversation read — the wake envelope already renders the backscroll"],
