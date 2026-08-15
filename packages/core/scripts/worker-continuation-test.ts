@@ -73,6 +73,7 @@ const persistentToolset = () => ({ agent: { inputSchema: persistentSchema() }, b
 
 const armed = persistentToolset();
 const beforeAgentSchema = armed.agent.inputSchema;
+const bashSchemaBeforeRefusal = armed.bash.inputSchema;
 eq(refuseAgentContinuation(armed as Record<string, unknown>), true, "🔴 §2 the `agent` tool IS replaced on a persistent-session build");
 ok(armed.agent.inputSchema !== beforeAgentSchema, "…and the tool now carries a DIFFERENT schema object");
 ok(!("agentId" in advertised(armed.agent.inputSchema)), "🔴 §2 `agentId` is GONE from the advertised schema — the model is not offered the field");
@@ -137,7 +138,6 @@ eq(refuseAgentContinuation({}), false, "§4 an empty toolset ⇒ no-op");
 eq(refuseAgentContinuation({ agent: null } as unknown as Record<string, unknown>), false, "§4 a null entry ⇒ no-op, never a throw");
 eq(refuseAgentContinuation({ agent: {} }), false, "§4 a tool with no input schema ⇒ no-op");
 
-const untouchedBefore = armed.bash.inputSchema;
-ok(armed.bash.inputSchema === untouchedBefore, "§4 no tool but `agent` is inspected or replaced");
+ok(armed.bash.inputSchema === bashSchemaBeforeRefusal, "§4 no tool but `agent` is inspected or replaced");
 
 console.log(`worker-continuation: ${n} assertions passed`);

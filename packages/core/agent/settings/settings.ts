@@ -268,7 +268,7 @@ export const SETTINGS = {
       path: "delegation.nativeSubagent",
       shipped: true,
       summary:
-        "Use eve's BUILT-IN `agent` subagent as the delegation route. ON by default since OPE-396 — the roll-own SYNC delegation leg it replaced has been deleted, so disarming leaves the deployment with async-only roll-own delegation rather than a synchronous fallback. Disarming also takes an `oe build` (it must EMIT the static sentinel that suppresses the built-in), which is why it is code-only. Native children share the parent's sandbox and bind to the parent's identity; delegation is withdrawn entirely on a tainted turn, because eve has no seam to forward taint into a child (opt out with `taint.mode: \"off\"`).",
+        "Use eve's BUILT-IN `agent` subagent as the delegation route. ON by default since OPE-396 — the roll-own SYNC delegation leg it replaced has been deleted, so disarming leaves the deployment with async-only roll-own delegation rather than a synchronous fallback. Disarming also takes an `oe build` (it must EMIT the static sentinel that suppresses the built-in), which is why it is code-only. Native children share the parent's sandbox and bind to the parent's identity. A tainted turn KEEPS its delegation verb (OPE-471): the taint mark rides the child's opening auth instead of withdrawing the tool, and the one accepted residual is the same-step race — a model step that issues an untrusted read and an `agent` call in one response spawns before the mark lands.",
     } satisfies SettingSpec<boolean>,
     backgroundTasks: {
       path: "delegation.backgroundTasks",
