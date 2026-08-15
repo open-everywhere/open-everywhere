@@ -67,6 +67,7 @@ import { loadConversationContext } from "./slack-context.js";
 import { slackSpendGate } from "./slack-spend-gate.js";
 import { slackTenantAdmission } from "./slack-tenant-fence.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
+import { admitSlackInputResponse } from "./slack-input-response.js";
 import { turnEffectsFor, botDisplayName, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, dmWakeThreadOverride, replyThreadTsForState, type SupervisorReplyTarget } from "./slack-events.js";
 
 function teamIdFromDomainConfig(channelId: string | undefined): string | undefined {
@@ -438,6 +439,7 @@ const slackMentionChannel = slackChannel({
   turnPolicy: "queue",
   onAppMention: (ctx, message) => admitInbound(ctx, message, false),
   onDirectMessage: (ctx, message) => admitInbound(ctx, message, true),
+  onInputResponse: (ctx, submission) => admitSlackInputResponse(ctx, submission),
   events: {
     "turn.started": async (_data, channel, ctx) => {
       if (isSupervisorReplyTurn(channel.state)) {

@@ -1231,4 +1231,77 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   ok(rDomain?.detail?.venueChannel === "C_ENG", "OPE-332: …but the channel still lands, because channelId IS the channel the card was posted into whatever the scopeKey says");
 }
 
-console.log(`\n✓ approvals: ${n} assertions passed (card render, OPE-307 taint disclosure, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback, OPE-185 clicker gate, OPE-220 card audience gate, OPE-332 decision venue)\n`);
+{
+  const { admitInputResponse, inputResponseRefusalNotice, INPUT_RESPONSE_DENIED_AUDIT_ACTION } = await import(
+    "../agent/approvals/input-response-floor.js"
+  );
+  type Row = { action: string; principalId?: string; detail?: Record<string, unknown>; org: string };
+  const rows: Row[] = [];
+  const audit = async (e: unknown): Promise<void> => {
+    rows.push(e as Row);
+  };
+  let floorCalls = 0;
+  const allowFloor = async (): Promise<{ ok: true; floor: "member" }> => {
+    floorCalls++;
+    return { ok: true, floor: "member" };
+  };
+  const guestFloor = async (): Promise<{ ok: false; reason: "audience-floor"; floor: "guest" }> => {
+    floorCalls++;
+    return { ok: false, reason: "audience-floor", floor: "guest" };
+  };
+  const scope = {
+    org: "default",
+    platform: "slack",
+    workspace: "T1",
+    surface: "C1",
+    surfaceKey: "slack/T1/C1",
+    principalId: "U_ANSWERER",
+    responses: 2,
+  };
+  type FloorDep = Parameters<typeof admitInputResponse>[1] extends { floor?: infer F } | undefined ? F : never;
+
+  const allowed = await admitInputResponse(scope, { floor: allowFloor as FloorDep, audit });
+  ok(allowed.ok === true, "admitInputResponse: an allowing room floor ADMITS the answer");
+  ok(rows.length === 0, "admitInputResponse: an admitted answer writes no audit row");
+
+  const refusedRoom = await admitInputResponse(scope, { floor: guestFloor as FloorDep, audit });
+  ok(refusedRoom.ok === false, "🔴 admitInputResponse: an OBSERVED guest room REFUSES the answer");
+  ok(refusedRoom.ok === false && refusedRoom.reason === "audience-floor", "admitInputResponse: the room refusal reports the floor's own reason");
+  ok(rows.length === 1 && rows[0]!.action === INPUT_RESPONSE_DENIED_AUDIT_ACTION, "🔴 OPE-574: a refused answer is VISIBLE — exactly one input_response.denied row");
+  ok(rows[0]!.principalId === "U_ANSWERER" && rows[0]!.org === "default", "OPE-574: the refusal row names the answerer and the org");
+  ok(
+    JSON.stringify(Object.keys(rows[0]!.detail ?? {}).sort()) === JSON.stringify(["floor", "reason", "responses"]),
+    "🔴 OPE-574: the refusal detail carries the reason, the floor and a COUNT — and NOTHING else, so no answer text can reach the log",
+  );
+  ok(rows[0]!.detail?.responses === 2, "OPE-574: the row records how many responses the submission carried, never what they said");
+  rows.length = 0;
+  await admitInputResponse({ ...scope, responses: undefined }, { floor: guestFloor as FloorDep, audit });
+  ok(
+    JSON.stringify(Object.keys(rows[0]!.detail ?? {}).sort()) === JSON.stringify(["floor", "reason"]),
+    "🔴 OPE-574: an UNKNOWN response count leaves the field ABSENT — the row never reports a zero it did not measure",
+  );
+
+  rows.length = 0;
+  floorCalls = 0;
+  const refusedGuest = await admitInputResponse({ ...scope, answererIsGuest: true }, { floor: allowFloor as FloorDep, audit });
+  ok(refusedGuest.ok === false && refusedGuest.reason === "guest-answerer", "🔴 admitInputResponse: leg B — an observed GUEST answerer is refused even in a room the floor allows");
+  ok(floorCalls === 0, "admitInputResponse: leg B short-circuits — the room floor is not consulted once the person is refused");
+  ok(rows.length === 1 && rows[0]!.detail?.reason === "guest-answerer", "OPE-574: the guest-answerer refusal writes its own audited reason");
+
+  rows.length = 0;
+  ok((await admitInputResponse({ ...scope, answererIsGuest: false }, { floor: allowFloor as FloorDep, audit })).ok === true, "admitInputResponse: an observed MEMBER answerer passes leg B");
+  ok((await admitInputResponse(scope, { floor: allowFloor as FloorDep, audit })).ok === true, "🔴 admitInputResponse: an ABSENT per-member verdict is INERT — the Slack case must never refuse for lack of a probe");
+  ok(rows.length === 0, "admitInputResponse: neither inert case writes a row");
+
+  const notices = (["audience-floor", "guest-answerer", "unattested-room", "foreign-room"] as const).map((r) => inputResponseRefusalNotice(r));
+  ok(new Set(notices).size === 4, "inputResponseRefusalNotice: each refusal reason gets its own copy");
+  ok(notices.every((t) => t.toLowerCase().includes("still open")), "🔴 inputResponseRefusalNotice: every refusal says the question is STILL OPEN — a rejected answer leaves the request pending");
+
+  const thrownAudit = async (): Promise<void> => {
+    throw new Error("store outage");
+  };
+  const stillRefused = await admitInputResponse(scope, { floor: guestFloor as FloorDep, audit: thrownAudit });
+  ok(stillRefused.ok === false, "admitInputResponse: a failed audit write does not turn a refusal into an allow");
+}
+
+console.log(`\n✓ approvals: ${n} assertions passed (card render, OPE-307 taint disclosure, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback, OPE-185 clicker gate, OPE-220 card audience gate, OPE-332 decision venue, OPE-574 HITL-answer admission)\n`);

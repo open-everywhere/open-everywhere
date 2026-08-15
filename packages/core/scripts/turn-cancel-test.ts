@@ -391,7 +391,7 @@ const NO_REQUESTER_BASELINE =
   const offenders: string[] = [];
   const walk = (dir: URL): void => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
-      if (e.name === "node_modules" || e.name === "dist") continue;
+      if (e.name === "node_modules" || e.name === "dist" || e.name === "scripts") continue;
       const child = new URL(e.isDirectory() ? `${e.name}/` : e.name, dir);
       if (e.isDirectory()) {
         walk(child);

@@ -154,6 +154,40 @@ const CARRIAGE = [
   },
 ] as const;
 
+const SEMANTICS = [
+  {
+    rel: join("dist", "src", "public", "channels", "slack", "slackChannel.js"),
+    test: (s: string): boolean =>
+      /onInputResponse\?\?defaultOnInputResponse/.test(s) &&
+      /function defaultOnInputResponse\([A-Za-z_$][A-Za-z_$0-9]*\)\{return\{auth:[A-Za-z_$][A-Za-z_$0-9]*\.defaultAuth\}\}/.test(s),
+    what:
+      "an OMITTED Slack `onInputResponse` accepts the submitting user unconditionally. This is the hole OPE-574 closes; if eve ever tightens the default, packages/providers/slack/agent/channels/slack-input-response.ts is still the authority but its header stops being true",
+  },
+  {
+    rel: join("dist", "src", "public", "channels", "slack", "interactions.js"),
+    test: (s: string): boolean => /authorizeInputResponse\([^;]*\);if\([A-Za-z_$][A-Za-z_$0-9]*!==null\)\{/.test(s),
+    what:
+      "a `null` result from `onInputResponse` skips the `respond()` that resolves the parked batch, so a refusal leaves the request pending. If this guard goes, a refused answer would resolve the turn anyway",
+  },
+  {
+    rel: join("dist", "src", "public", "channels", "teams", "teamsChannel.js"),
+    test: (s: string): boolean =>
+      /onInputResponse\?\?\([A-Za-z_$][A-Za-z_$0-9]*\.onMessage===void 0\?defaultOnInputResponse:rejectInput\)/.test(s) &&
+      /function rejectInput\(\)\{return null\}/.test(s),
+    what:
+      "on Teams the default is CONDITIONAL: authoring `onMessage` (which OE does) makes an omitted `onInputResponse` reject every answer silently. This is why the Teams arm of OPE-574 opens a path rather than narrowing one",
+  },
+  {
+    rel: join("dist", "src", "public", "channels", "teams", "teamsChannel.js"),
+    test: (s: string): boolean =>
+      /onInputResponse\([A-Za-z_$][A-Za-z_$0-9]*,[A-Za-z_$][A-Za-z_$0-9]*\.activity\)\}catch/.test(s) &&
+      /Teams input response authorization failed/.test(s) &&
+      /if\([A-Za-z_$][A-Za-z_$0-9]*!==null\)try\{await [A-Za-z_$][A-Za-z_$0-9]*\.from\(/.test(s),
+    what:
+      "a THROWN Teams hook is swallowed and the answer dropped, and a `null` result skips `respond()`. Both are why packages/providers/teams/agent/channels/teams-input-response.ts must fail OPEN rather than let an error escape",
+  },
+] as const;
+
 const WHY: Record<string, string> = {
   "OPE-172": "the force-tool-turn nudge was retired in OPE-172 (gated on an env var that was never set anywhere, so it never ran once)",
   "OPE-407":
@@ -188,8 +222,16 @@ for (const eveDir of copies) {
       `carriage: ${where}/${hunk.rel} carries the turnPolicy restore (OPE-448, upstream vercel/eve#2172) — ${hunk.what}. Re-apply the restore hunks, or drop them deliberately only once upstream has fixed the root`,
     );
   }
+  for (const pin of SEMANTICS) {
+    const file = join(eveDir, pin.rel);
+    ok(existsSync(file), `semantics: ${where}/${pin.rel} exists (if eve moved the file, the OPE-574 admission hooks and this gate are stale)`);
+    ok(
+      pin.test(readFileSync(file, "utf8")),
+      `semantics: ${where}/${pin.rel} still behaves as OPE-574 assumed — ${pin.what}. Re-read packages/core/agent/approvals/input-response-floor.ts and both channel hooks against this eve before deploying`,
+    );
+  }
 }
 
 console.log(
-  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} the OE projection hook and all ${CARRIAGE.length} turnPolicy restore hunks, and none of the ${RETIRED.length} retired symbols)\n`,
+  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} the OE projection hook, all ${CARRIAGE.length} turnPolicy restore hunks and all ${SEMANTICS.length} HITL-answer semantics, and none of the ${RETIRED.length} retired symbols)\n`,
 );

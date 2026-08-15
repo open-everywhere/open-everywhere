@@ -2,6 +2,7 @@ import { teamsChannel, splitTeamsMessageText, type TeamsInboundMessageContext, t
 import { frontTeamsChannel, INTERNAL_TEAMS_ROUTE } from "./teams-front.js";
 import { buildTeamsAuth, teamsMembershipType } from "./teams-identity.js";
 import { resolveTeamsUserType, teamsHandleRosterProbe } from "./teams-roster.js";
+import { admitTeamsInputResponse } from "./teams-input-response.js";
 import {
   finalMessageActionForTurn,
   isBareStop,
@@ -78,6 +79,7 @@ const native = teamsChannel({
   route: INTERNAL_TEAMS_ROUTE,
   turnPolicy: "queue",
   onMessage: teamsOnMessage,
+  onInputResponse: (ctx, activity) => admitTeamsInputResponse(ctx, activity),
   events: {
     "turn.started": async (_data, channel, ctx) => {
       await channel.thread.startTyping();
