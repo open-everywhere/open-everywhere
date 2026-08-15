@@ -57,7 +57,7 @@ test("a windowed routine fire whose delegated worker settles never folds a run o
     status: "active",
     nextRunAt: dueAt,
     createdAt: new Date(Date.now() - 120_000).toISOString(),
-    consecutiveFailures: 0,
+    consecutiveFailures: 2,
   });
 
   const handle = disposeLater(
@@ -103,11 +103,11 @@ test("a windowed routine fire whose delegated worker settles never folds a run o
 
   expect(rows.filter((r) => r.action === FIRE_ATTRS_SENT_ACTION).length).toBeGreaterThanOrEqual(1);
 
-  expect(rows.filter((r) => r.action === ROUTINE_FIRE_ACTION)).toEqual([]);
-
   const stored = await getRoutine("default", SURFACE_KEY, id);
   expect(stored).toBeTruthy();
   expect(typeof stored!.lastRunAt).toBe("string");
-  expect(stored!.lastOutcome).toBeUndefined();
-  expect(stored!.consecutiveFailures).toBe(0);
+
+  expect.soft(rows.filter((r) => r.action === ROUTINE_FIRE_ACTION)).toEqual([]);
+  expect.soft(stored!.lastOutcome).toBeUndefined();
+  expect.soft(stored!.consecutiveFailures).toBe(2);
 });

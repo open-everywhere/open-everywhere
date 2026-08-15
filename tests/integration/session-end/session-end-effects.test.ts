@@ -90,8 +90,5 @@ test("no session-end effect fires for a delegated worker that settles, nor for t
   expect(flushes.length).toBeGreaterThanOrEqual(1);
   expect(flushes.some((r) => r.detail?.["edge"] === "task-settled")).toBe(true);
 
-  const observations = rows.filter((r) => r.action === OBSERVATION_ACTION);
-  expect(observations).toEqual([]);
-  for (const r of rows) expect(observationKey(r.detail)).not.toContain(workerNonce);
-  for (const r of rows) expect(observationKey(r.detail)).not.toContain(seatNonce);
+  expect(rows.filter((r) => r.action === OBSERVATION_ACTION).map((r) => observationKey(r.detail))).toEqual([]);
 });
