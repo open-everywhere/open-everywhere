@@ -866,7 +866,7 @@ const native: LinearChannel = linearChannel({
         return;
       }
       const st = channel.state as LinearSupervisorSessionState;
-      slog(`supervisor session failed on team ${st.oeTeamId ?? "unknown"} (audited; next wake force-rotates)`);
+      slog(`supervisor session failed on team ${st.oeTeamId ?? "unknown"} (audited)`);
       await auditSupervisorFailure(
         { org: deploymentOrg(), platform: "linear", workspace: st.organizationId ?? "unknown" },
         "linear.supervisor_session_failed",

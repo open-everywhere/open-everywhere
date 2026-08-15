@@ -482,7 +482,7 @@ const native: GitHubChannel = githubChannel({
         return;
       }
       const st = channel.state as GitHubSupervisorSessionState;
-      slog(`supervisor session failed on ${st.owner}/${st.repo} (audited, no comment posted; next wake force-rotates)`);
+      slog(`supervisor session failed on ${st.owner}/${st.repo} (audited, no comment posted)`);
       await auditSupervisorFailure(
         { org: deploymentOrg(), platform: "github", workspace: st.owner, surface: `github/${st.owner}/${st.repo}` },
         "github.supervisor_session_failed",

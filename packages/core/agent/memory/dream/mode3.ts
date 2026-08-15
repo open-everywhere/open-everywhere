@@ -120,8 +120,9 @@ const STATIC_FACET: Record<FailureAction, FailureFacet> = {
     fixSketch: "Check the example's statusCode/gatewayType/upstreamType — a gateway 4xx/5xx names the failing provider; an EmptyModelResponse has no provider to attribute and may instead need a retry/backoff tweak.",
   },
   "unified.supervisor_session_failed": {
-    label: "Unified-supervisor session failures (force-rotated)",
-    fixSketch: "Same diagnostic fields as a turn failure, but the session is force-rotated on next wake — repeated occurrences on one domain may point to a bad delegated route or a persistently unhealthy provider.",
+    label: "Unified-supervisor session failures",
+    fixSketch:
+      "Same diagnostic fields as a turn failure. Nothing rotates the seat in response — read the row's `unresumable` label first: TRUE names a session the runtime can never resume (rotate the window), FALSE points at a bad delegated route or a persistently unhealthy provider.",
   },
 };
 

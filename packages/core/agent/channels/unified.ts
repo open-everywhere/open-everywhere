@@ -19,6 +19,7 @@ import { sourcesForWindow } from "./window-sources.js";
 import { finalMessageActionForTurn, replierLabelFor } from "./turn-delivery.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { redriveEnabled, maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
+import { unresumableAuditDetail } from "./session-resume.js";
 import { collectTaskResultDelta, markRecoveredDelivered } from "../access/task-result-delta.js";
 import { resultTaintedAttrs } from "../access/taint-signal.js";
 import { admitInboundSurface, providerSelection } from "../access/provider-selection.js";
@@ -319,19 +320,27 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         workspace,
         surface,
         action: "unified.supervisor_turn_failed",
-        detail: { message: String(data.message).slice(0, 500), ...failureDiag(data.code, data.details) },
+        detail: {
+          message: String(data.message).slice(0, 500),
+          ...failureDiag(data.code, data.details),
+          ...unresumableAuditDetail(data.message, data.code),
+        },
       }).catch(() => undefined);
     },
     async "session.failed"(data, channel) {
       const { workspace, surface } = auditLabels(channel.continuation?.token);
-      ulog(`supervisor session failed on domain ${workspace} (audited, nothing posted; next wake force-rotates): ${data.message}`);
+      ulog(`supervisor session failed on domain ${workspace} (audited, nothing posted): ${data.message}`);
       await appendAudit({
         org: deploymentOrg(),
         platform: "unified",
         workspace,
         surface,
         action: "unified.supervisor_session_failed",
-        detail: { message: String(data.message).slice(0, 500), ...failureDiag(data.code, data.details) },
+        detail: {
+          message: String(data.message).slice(0, 500),
+          ...failureDiag(data.code, data.details),
+          ...unresumableAuditDetail(data.message, data.code),
+        },
       }).catch(() => undefined);
     },
   },
