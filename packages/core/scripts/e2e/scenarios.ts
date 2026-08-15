@@ -1528,6 +1528,15 @@ export const SCENARIOS: readonly Scenario[] = [
         reply3.text,
         "re-mention: continuity in the reply chain",
       );
+
+      await sleep(SILENCE_WINDOW);
+      const chain = await teams.replies(driven.id);
+      const answers = chain.filter((m) => teams.isBotReply(m) && m.text.includes(markerT));
+      ctx.gate(
+        answers.length === 1,
+        `re-mention: EXACTLY ONE reply carries the run token "${markerT}" — one question, one answer (OPE-568 double-post gate); saw ${answers.length}`,
+      );
+      ctx.log(`re-mention: ${chain.filter((m) => teams.isBotReply(m)).length} bot post(s) in the chain overall (a completion relay may add one — only the token-carrying count is gated)`);
     },
   },
   {

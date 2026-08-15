@@ -124,7 +124,7 @@ export function replyRefusalMessage(
     return `reply couldn't resolve wake-id "${named}" — the wake's reply target is no longer on record (expired). It can't be answered now.`;
   }
   if (reason === "answered") {
-    return `reply: you already replied to wake-id "${named}" — if that conversation has moved on, the newer message there carries its own wake-id; answer that one. (If you knew a follow-up was coming, \`done:false\` on the first reply keeps a wake answerable.)`;
+    return `reply: you already replied to wake-id "${named}" and marked it done — NOTHING was posted this time. If that conversation has moved on, the newer message there carries its own wake-id; answer that one. (If you knew a follow-up was coming, \`done:false\` on the first reply keeps a wake answerable.)`;
   }
   const steer =
     opts.silent !== true && opts.turnWake !== undefined && opts.turnWake.length > 0 && opts.turnWake !== inputWake

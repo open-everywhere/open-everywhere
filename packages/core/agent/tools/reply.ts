@@ -4,7 +4,7 @@ import { bindFrom, deploymentOrg, isUnifiedWindowContext, currentWakeId, current
 import { capabilitiesFor } from "../identity/capabilities.js";
 import { resolveReplyTarget, postReply, auditReplyRefused, type ReplyAudit, type ReplierLabel } from "../channels/reply-post.js";
 import { replierLabelFor } from "../channels/turn-delivery.js";
-import { markRepliedThisTurn } from "../channels/reply-signal.js";
+import { markRepliedThisTurn, markWakeDoneThisTurn, isWakeDoneThisTurn } from "../channels/reply-signal.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
 import { silentRoutineThisTurn } from "../routines/report.js";
 import { resolveOwnWindowToken } from "../access/oneshot-spawn.js";
@@ -40,7 +40,10 @@ const unifiedReplyEntry = defineTool({
       "wake in this session you have not yet answered, and your reply is posted into exactly " +
       "that conversation (its Slack thread, its GitHub issue, …). You cannot target anywhere " +
       "else. Posting is an action, not turn-completion: reply, keep working, and finish with " +
-      "`no_reply` when you're done — your terminal text is never posted.",
+      "`no_reply` when you're done — your terminal text is never posted. One answer is ONE " +
+      "reply: once you answer a wake with `done: true`, replying to that same wake again in " +
+      "this turn is refused. When you plan a multi-part answer, pass `done: false` on the " +
+      "earlier parts.",
     inputSchema: z.object({
       text: z.string().min(1).describe("The message to post (the target surface's markdown). One curated message, not a stack."),
       wake: z.string().min(1).describe("The `wake-id` from the envelope of the wake you are answering — your reply posts into that wake's conversation."),
@@ -49,7 +52,7 @@ const unifiedReplyEntry = defineTool({
         .optional()
         .default(true)
         .describe(
-          "Leave true (the default) to mark this wake answered. Set false ONLY when you know you will reply to this same wake again later — e.g. you are reporting progress now and the full answer comes after delegated work finishes.",
+          "Leave true (the default) to mark this wake answered. Once you mark a wake done, a further reply to that SAME wake in this same turn is REFUSED and posts nothing. Set false ONLY when you know you will reply to this same wake again later — e.g. you are reporting progress now and the full answer comes after delegated work finishes.",
         ),
     }),
     outputSchema: z.object({ posted: z.boolean(), id: z.string(), note: z.string() }),
@@ -58,6 +61,12 @@ const unifiedReplyEntry = defineTool({
       const turnWake = currentWakeId(bind);
       const windowToken = resolveOwnWindowToken(bind);
       const turnId = currentTurnId(bind);
+
+      if (isWakeDoneThisTurn(turnId, input.wake)) {
+        await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), "answered-this-turn");
+        throw new Error(replyRefusalMessage("answered", input.wake));
+      }
+
       const org = deploymentOrg();
       const store = getOperationalStore();
       const resolution = await resolveAnswerableReplyTarget(store, org, turnWake, windowToken, turnId, input.wake);
@@ -72,11 +81,16 @@ const unifiedReplyEntry = defineTool({
 
       if (input.done !== false) {
         await store.markUnifiedWakeAnswered(org, input.wake, new Date().toISOString(), turnId).catch(() => undefined);
+        markWakeDoneThisTurn(turnId, input.wake);
       }
+      const doneNote =
+        input.done !== false
+          ? " This wake is now ANSWERED — do not reply to it again in this turn; a second call is refused."
+          : " This wake stays OPEN (`done:false`) — reply to it again when the rest of the answer is ready.";
       return {
         posted: true,
         id,
-        note: `Turn reply requirement satisfied — posted to ${origin.platform}. Keep working if needed; your terminal prose is still discarded.`,
+        note: `Turn reply requirement satisfied — posted to ${origin.platform}.${doneNote} Keep working if needed; your terminal prose is still discarded.`,
       };
     },
 });
