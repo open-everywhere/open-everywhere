@@ -44,6 +44,7 @@ import { decodeSources } from "@open-everywhere/core/agent/channels/window-sourc
 import unifiedChannel, { divertToUnifiedWindow, type UnifiedReceiveTarget } from "@open-everywhere/core/agent/channels/unified.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "@open-everywhere/core/agent/channels/unified-reply.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
+import { claimRuntimeRotation } from "@open-everywhere/core/agent/channels/runtime-rotation.js";
 import {
   parseMessageEvent,
   routeSupervisorEvent,
@@ -531,6 +532,7 @@ const stubResolveParent = async (): Promise<string | undefined> => undefined;
     "discord: an UN-VOUCHED guild channel takes the NATIVE path (auto-thread attempted, base send used, NOTHING diverted) — the privacy floor fails closed",
   );
 
+  await claimRuntimeRotation({ org: "default", registryKey: unifiedDomainSessionKey("payments"), surfaceKey: "discord/G_WIN/CH_WIN", atIso: new Date().toISOString() });
   await getOperationalStore().rotateChannelSession("default", unifiedDomainSessionKey("payments"), RAW_TOKEN, new Date().toISOString());
 
   vouch("discord/G_WIN");

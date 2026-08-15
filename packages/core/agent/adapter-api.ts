@@ -261,6 +261,8 @@ export { divertToUnifiedWindow } from "./channels/unified.js";
 export { supervisorGrainFor, grainUsesUnifiedWindow, mintRotationToken } from "./channels/unified-supervisor.js";
 export type { SupervisorGrain } from "./channels/unified-supervisor.js";
 
+export { claimRuntimeRotation } from "./channels/runtime-rotation.js";
+
 export { completeSupervisorTurn, auditSupervisorFailure } from "./channels/supervisor-complete.js";
 export type { SupervisorCompletionSpec } from "./channels/supervisor-complete.js";
 

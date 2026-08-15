@@ -20,6 +20,7 @@ import {
   ambientSupervisorEnabled,
   supervisorGrainFor,
   mintRotationToken,
+  claimRuntimeRotation,
   grainUsesUnifiedWindow,
   mintWakeId,
   singleWindowMentionPolicy,
@@ -1467,13 +1468,14 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
     async getOrCreateSession(org, surfaceKey, channelId, atIso) {
       const store = getOperationalStore();
       const grain = grainFor(surfaceKey);
+      const runtimeChanged = await claimRuntimeRotation({ org, registryKey: grain.registryKey, surfaceKey, atIso });
       const existing = await store.getChannelSession(org, grain.registryKey);
       if (!existing) {
         const token = tokenFor(grain, channelId, 1);
         const row = await store.rotateChannelSession(org, grain.registryKey, token, atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }
-      if (shouldRotate(existing, atIso)) {
+      if (shouldRotate(existing, atIso, { runtimeChanged })) {
         const row = await rotateWithHandoff(org, surfaceKey, channelId, atIso, existing, grain);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }

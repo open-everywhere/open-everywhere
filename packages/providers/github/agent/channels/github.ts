@@ -16,6 +16,7 @@ import {
   forgetGitHubInstallation,
   supervisorGrainFor,
   mintRotationToken,
+  claimRuntimeRotation,
   grainUsesUnifiedWindow,
   mintWakeId,
   singleWindowMentionPolicy,
@@ -194,12 +195,13 @@ function liveGitHubSupervisorDeps(send: GitHubSend, ev: GitHubAmbientEvent, to?:
   return {
     async getOrCreateSession(surfaceKey, owner, repo, atIso) {
       const grain = githubGrainFor(surfaceKey);
+      const runtimeChanged = await claimRuntimeRotation({ org, registryKey: grain.registryKey, surfaceKey, atIso });
       const existing = await store.getChannelSession(org, grain.registryKey);
       if (!existing) {
         const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, 1, () => githubSupervisorToken(owner, repo, 1)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }
-      if (shouldRotate(existing, atIso)) {
+      if (shouldRotate(existing, atIso, { runtimeChanged })) {
         const gen = existing.generation + 1;
         const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, gen, () => githubSupervisorToken(owner, repo, gen)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };

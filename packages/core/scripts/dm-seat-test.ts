@@ -85,6 +85,9 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
         firstWakeAt: row.firstWakeAt ?? at,
       });
     },
+    async claimNotice() {
+      return false;
+    },
     async bumpChannelSessionUsage(org: string, surfaceKey: string, token: string, delta: number) {
       const row = rows.get(`${org}:${surfaceKey}`);
       if (!row || row.token !== token) return 0;
