@@ -194,6 +194,9 @@ export type { Surface, SurfaceTrust, SubtreeSurfaceHandler } from "./identity/tr
 
 export { matchesAgentName, agentNameTokens, agentNameTokenPattern, configuredAgentName, DEFAULT_AGENT_SHORT_NAME, DEFAULT_AGENT_FULL_NAME, OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "./identity/bot-name.js";
 
+export { registerBotDisplayName, botDisplayNameFor, _resetBotDisplayNamesForTest } from "./identity/bot-display-name.js";
+export type { BotDisplayNameArm } from "./identity/bot-display-name.js";
+
 export { setRegisteredConnectorCredentials, resetRegisteredConnectorCredentials } from "./access/connector-credentials.js";
 
 export { ingestUntrustedModelOutput, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "./access/untrusted.js";

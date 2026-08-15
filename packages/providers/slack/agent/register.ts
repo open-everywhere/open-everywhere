@@ -5,6 +5,7 @@ import {
   registerWakeOriginCodec,
   registerReadAdapter,
   registerReactionSurface,
+  registerBotDisplayName,
   registerSlackBridge,
   registerProviderDocs,
   registerWebhookVerifier,
@@ -34,6 +35,7 @@ export function registerSlackProvider(): void {
   registerWakeOriginCodec("slack", slackWakeOriginCodec);
   registerReadAdapter(slackReadAdapter);
   registerReactionSurface("slack");
+  registerBotDisplayName("slack", botDisplayName);
   registerSlackAttachmentResolver();
   registerSlackGovernanceMembers();
   registerSlackBridge({

@@ -240,6 +240,16 @@ export function bareTokenFromEveContext(token: unknown): string | undefined {
   return undefined;
 }
 
+export function windowTokenPlatform(token: unknown): string | undefined {
+  const sid = classifySessionId(token);
+  if (sid.kind === "task" || sid.kind === "thread-seat") {
+    return sid.key.windowId.split("/")[1] || undefined;
+  }
+  if (sid.kind !== "window") return undefined;
+  if (sid.key.windowId !== sid.key.domain) return sid.key.windowId.split("/")[0] || undefined;
+  return dmSurfaceKeyFromAnchorDomain(sid.key.domain)?.split("/")[0] || undefined;
+}
+
 export function isSupervisorShapedToken(token: unknown): boolean {
   const k = classifySessionId(token).kind;
   return k === "window" || k === "task" || k === "thread-seat" || k === "container-supervisor";
