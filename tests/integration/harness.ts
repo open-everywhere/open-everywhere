@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 
 import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
 
-export { registerScript, type RecordedRequest, type ResolveObservation, type ScriptedHandle, type SeatScript } from "../../agent/model/scripted-model";
+export { registerScript, type RecordedRequest, type ResolveObservation, type ScriptedHandle, type ScriptedStep, type SeatScript } from "../../agent/model/scripted-model";
 export { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
 
 const ROOT = process.cwd();

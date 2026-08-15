@@ -522,6 +522,40 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
 }
 
 {
+  const spoofArgs = {
+    org: "default",
+    kind: "spend.set",
+    args: { org: "default", scopeKey: "slack/T7/C7", level: "surface", monthlyTokens: 4242, currentCap: null },
+    scopeKey: "slack/T7/C7",
+    requestedBy: "U_REQUESTER",
+    channelId: "C7",
+    chain: { unattended: false },
+  } as const;
+
+  let posterCalls = 0;
+  const postCard = async () => {
+    posterCalls++;
+    return "vendor-message-id";
+  };
+
+  process.env.OE_EGRESS_SPOOF = "1";
+  const spoofed = await requestApproval(spoofArgs, { postCard });
+  delete process.env.OE_EGRESS_SPOOF;
+  ok(posterCalls === 0, "egress spoof: the registered CardPoster is NEVER called — the vendor REST post is swallowed");
+  const spoofedRow = await getOperationalStore().getPendingAction("default", spoofed.id);
+  ok(spoofedRow?.messageTs?.startsWith("spoof-card-") === true, "egress spoof: the pending row carries the synthetic card ts, so it stays real and clickable-in-principle");
+  ok(spoofedRow?.status === "pending", "egress spoof: the pending is NOT expired — the swallowed post counts as posted");
+  ok(
+    (await readAudit({ org: "default", action: "approval.requested" })).some((e) => e.detail?.id === spoofed.id),
+    "egress spoof: approval.requested still lands, exactly as it would with a live token",
+  );
+
+  const live = await requestApproval({ ...spoofArgs, args: { ...spoofArgs.args, monthlyTokens: 4243 } }, { postCard });
+  ok(posterCalls === 1, "egress spoof control: with the flag OFF the registered CardPoster IS called");
+  ok((await getOperationalStore().getPendingAction("default", live.id))?.messageTs === "vendor-message-id", "egress spoof control: the vendor poster's own message id is stored");
+}
+
+{
   const store = getOperationalStore();
   const calls: { method: string; body: string }[] = [];
   let ts = 700;

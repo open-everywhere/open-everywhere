@@ -361,12 +361,12 @@ export async function requestApproval(
   const summaryLines = withTaintDisclosure(input.summaryLines ? [...input.summaryLines] : kindDef.summarize(input.args), input.args);
 
   let messageTs: string | undefined;
-  if (deps.postCard) {
-    messageTs = await deps.postCard(row, summaryLines);
-  } else if (process.env.OE_EGRESS_SPOOF === "1") {
+  if (process.env.OE_EGRESS_SPOOF === "1") {
     if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
     console.warn(`[oe] OE_EGRESS_SPOOF: swallowed an approval-card post for "${input.kind}" (${input.scopeKey})`);
     messageTs = `spoof-card-${Date.now()}`;
+  } else if (deps.postCard) {
+    messageTs = await deps.postCard(row, summaryLines);
   } else {
     const { blocks, text } = pendingCardBlocks(row, summaryLines);
 
