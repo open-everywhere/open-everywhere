@@ -8,6 +8,7 @@ import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
 import { REDELIVERY_SIGNATURE, REDELIVERY_STORM_THRESHOLD, RedeliveryStormGuard } from "./redelivery-storm-guard";
 
 export { registerScript, type RecordedRequest, type ResolveObservation, type ScriptedHandle, type ScriptedStep, type SeatScript } from "../../agent/model/scripted-model";
+import { registerScript, type RecordedRequest, type ScriptedHandle, type SeatScript } from "../../agent/model/scripted-model";
 export { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
 export { REPLAYED_DELIVERY_CALLER_BODY } from "@open-everywhere/core/agent/webhooks/replay-dedupe.js";
 
@@ -184,6 +185,48 @@ export async function waitFor<T>(probe: () => T | undefined | Promise<T | undefi
     await sleep(400);
   }
 }
+
+export async function waitForChildren(
+  handle: ScriptedHandle,
+  input: { readonly count: number; readonly lastStepIndex: number; readonly label: string },
+): Promise<void> {
+  await waitFor(() => {
+    const done = new Set(
+      handle.requests.filter((r) => r.role === "child" && r.stepIndex === input.lastStepIndex).map((r) => String(r.sessionId)),
+    );
+    return done.size >= input.count ? done.size : undefined;
+  }, input.label);
+}
+
+export function taskIdOfDelegation(handle: ScriptedHandle, callLabel: string): string {
+  const delegation = handle.requests.flatMap((r) => r.toolResults).find((t) => t.name === "agent");
+  const taskId = (delegation?.output as { taskId?: unknown } | undefined)?.taskId;
+  if (typeof taskId !== "string" || taskId.length === 0) {
+    throw new Error(
+      `integration harness: no background-task receipt on the "agent" result for ${callLabel} — ` +
+        `got ${JSON.stringify(delegation?.output)}. Either the delegation never happened, or this build ` +
+        "has `delegation.backgroundTasks` OFF and the delegation returned the child's prose inline.",
+    );
+  }
+  return taskId;
+}
+
+export async function awaitTaskSettlement(input: {
+  readonly dispatched: ScriptedHandle;
+  readonly taskId: string;
+  readonly script: SeatScript;
+  readonly label: string;
+}): Promise<{ readonly handle: ScriptedHandle; readonly notification: RecordedRequest }> {
+  input.dispatched.dispose();
+  const handle = registerScript(input.script);
+  const notification = await waitFor(
+    () => handle.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes(input.taskId))),
+    input.label,
+  );
+  return { handle, notification };
+}
+
+export const SETTLEMENT_DRAIN_SCRIPT: SeatScript = { parent: [{ say: "acknowledged" }] };
 
 type ToolsetTool = { execute?: (...args: unknown[]) => unknown };
 

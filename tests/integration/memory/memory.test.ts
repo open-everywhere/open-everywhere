@@ -2,11 +2,15 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import {
+  awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
   readAuditRows,
   registerScript,
+  SETTLEMENT_DRAIN_SCRIPT,
+  taskIdOfDelegation,
   waitFor,
+  waitForChildren,
   type ScriptedHandle,
 } from "../harness";
 
@@ -72,6 +76,7 @@ test("session.started seeds the domain's own silo at the expected path and body,
 
   await discordMentionWake({ channelId: IT_MEMORY_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> please note this` });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
+  await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: "the delegated worker's own terminal step" });
 
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
@@ -79,6 +84,23 @@ test("session.started seeds the domain's own silo at the expected path and body,
   const writeResult = handle.requests.flatMap((r) => r.toolResults).find((t) => t.name === "write_file");
   expect(writeResult).toBeDefined();
   expect(writeResult!.isError).toBe(false);
+
+  const taskId = taskIdOfDelegation(handle, "the note-taking delegation");
+  const settlement = await awaitTaskSettlement({
+    dispatched: handle,
+    taskId,
+    script: {
+      parent: [{ calls: [{ tool: "task_peek", input: { taskIds: [taskId] }, id: "m1-peek" }] }, { say: "noted" }],
+    },
+    label: "the worker's completion, delivered as a new message naming the task id",
+  });
+  perTest.push(() => settlement.handle.dispose());
+  const peeked = await waitFor(
+    () => settlement.handle.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_peek")),
+    "the parent's step carrying the task_peek result — the edge the settlement flush hangs off",
+  );
+  expect(peeked.toolResults.find((t) => t.name === "task_peek")!.isError).toBe(false);
+  expect(settlement.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
   const notesPath = siloFilePath("it-memory-brain", "notes.md");
   await waitFor(() => (existsSync(notesPath) ? true : undefined), "the delegated child's write_file to land on the DURABLE store via the settlement flush");
@@ -128,6 +150,7 @@ test("purge_memory proposes a card under the egress spoof and redacts the fact o
   const wakeAt = Date.now();
   await discordMentionWake({ channelId: IT_MEMORY_PURGE_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> please erase that test fact` });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
+  await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: "the purging worker's own terminal step" });
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
 
@@ -139,6 +162,15 @@ test("purge_memory proposes a card under the egress spoof and redacts the fact o
   expect(output["autoApproved"]).toBeUndefined();
   const pendingId = output["pendingId"];
   expect(typeof pendingId).toBe("string");
+
+  const drained = await awaitTaskSettlement({
+    dispatched: handle,
+    taskId: taskIdOfDelegation(handle, "the purge delegation"),
+    script: SETTLEMENT_DRAIN_SCRIPT,
+    label: "the purging worker's settlement wake",
+  });
+  expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  drained.handle.dispose();
 
   const sinceIso = new Date(wakeAt - 1_000).toISOString();
 

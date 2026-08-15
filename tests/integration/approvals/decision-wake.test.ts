@@ -2,13 +2,17 @@ import { generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:cryp
 import { afterEach, expect, test } from "vitest";
 
 import {
+  awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
   DISCORD_GUILD_ID,
   DISCORD_LISTED_CHANNEL_ID,
   readAuditRows,
   registerScript,
+  SETTLEMENT_DRAIN_SCRIPT,
+  taskIdOfDelegation,
   waitFor,
+  waitForChildren,
   type AuditRow,
   type ScriptedHandle,
 } from "../harness";
@@ -108,8 +112,17 @@ async function proposeRoutine(ids: string, prompt: string): Promise<{ id: string
   const wakeAt = Date.now();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please set up the routine" });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
+  await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: `the ${ids} worker's own terminal step` });
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
+  const drained = await awaitTaskSettlement({
+    dispatched: handle,
+    taskId: taskIdOfDelegation(handle, `the ${ids} delegation`),
+    script: SETTLEMENT_DRAIN_SCRIPT,
+    label: `the ${ids} worker's settlement wake`,
+  });
+  expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  drained.handle.dispose();
 
   const requested = await waitFor(
     async () => {

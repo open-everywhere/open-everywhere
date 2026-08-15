@@ -1,11 +1,15 @@
 import { afterAll, afterEach, expect, test } from "vitest";
 import {
+  awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
   readAuditRows,
   registerScript,
+  SETTLEMENT_DRAIN_SCRIPT,
+  taskIdOfDelegation,
   waitFor,
+  waitForChildren,
   wrapToolExecute,
   type AuditRow,
   type ScriptedHandle,
@@ -92,8 +96,22 @@ async function driveProposal(input: { ids: string; prompt: string; readUpload?: 
   const wakeAt = Date.now();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please set up the routine" });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
+  await waitForChildren(handle, {
+    count: 1,
+    lastStepIndex: child.length - 1,
+    label: `the ${input.ids} worker's own terminal step`,
+  });
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
+
+  const drained = await awaitTaskSettlement({
+    dispatched: handle,
+    taskId: taskIdOfDelegation(handle, `the ${input.ids} delegation`),
+    script: SETTLEMENT_DRAIN_SCRIPT,
+    label: `the ${input.ids} worker's settlement wake`,
+  });
+  expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  drained.handle.dispose();
   return { handle, wakeAt };
 }
 

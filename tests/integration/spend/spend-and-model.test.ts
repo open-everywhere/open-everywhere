@@ -6,13 +6,17 @@ import { UNKNOWN_MODEL } from "@open-everywhere/core/agent/spend/spend.js";
 import { subagentRunOf } from "@open-everywhere/core/agent/spend/subagent-runs.js";
 import { SCRIPTED_MODEL_ID } from "../../../agent/model/scripted-model";
 import {
+  awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
   DISCORD_GUILD_ID,
   DISCORD_LISTED_CHANNEL_ID,
   readUsageWindow,
   registerScript,
+  SETTLEMENT_DRAIN_SCRIPT,
+  taskIdOfDelegation,
   waitFor,
+  waitForChildren,
   type ScriptedHandle,
 } from "../harness";
 
@@ -35,6 +39,8 @@ interface DrivenSpendTurn {
   readonly childSessionId: string;
   readonly sinceIso: string;
   readonly totalCalls: number;
+  readonly parentCalls: number;
+  readonly childCalls: number;
 }
 
 let driven: DrivenSpendTurn | undefined;
@@ -57,6 +63,21 @@ async function driveTurn(): Promise<DrivenSpendTurn> {
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please delegate" });
 
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
+  await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: "the delegated worker's own model call" });
+  const drained = await awaitTaskSettlement({
+    dispatched: handle,
+    taskId: taskIdOfDelegation(handle, "the spend delegation"),
+    script: SETTLEMENT_DRAIN_SCRIPT,
+    label: "the worker's settlement wake",
+  });
+  await waitFor(
+    () => drained.handle.requests.find((r) => r.role === "parent" && r.stepIndex === 0),
+    "the settlement turn's own model call to be recorded",
+  );
+  expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(drained.handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(drained.handle.resolves.length).toBe(drained.handle.requests.length);
+  drained.handle.dispose();
 
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
@@ -69,7 +90,11 @@ async function driveTurn(): Promise<DrivenSpendTurn> {
   }
   expect(parentSessionId).not.toBe(childSessionId);
 
-  driven = { parentSessionId, childSessionId, sinceIso, totalCalls: handle.resolves.length };
+  const parentCalls =
+    handle.resolves.filter((r) => r.role === "parent").length + drained.handle.resolves.filter((r) => r.role === "parent").length;
+  const childCalls = handle.resolves.filter((r) => r.role === "child").length + drained.handle.resolves.filter((r) => r.role === "child").length;
+  expect(childCalls).toBe(1);
+  driven = { parentSessionId, childSessionId, sinceIso, totalCalls: parentCalls + childCalls, parentCalls, childCalls };
   return driven;
 }
 
@@ -95,20 +120,20 @@ test("a delegated turn's model calls all stamp the scripted model id, not UNKNOW
 });
 
 test("the delegated child's usage rows file under its PARENT's session, never under its own (OPE-263)", async () => {
-  const { parentSessionId, childSessionId, totalCalls } = await driveTurn();
+  const { parentSessionId, childSessionId, totalCalls, parentCalls, childCalls } = await driveTurn();
 
   const parentRows = await waitFor(async () => {
     const got = await getOperationalStore().usageForSession(org(), parentSessionId);
     return got.length >= totalCalls ? got : undefined;
-  }, "the parent session's filed rows (2 own + 1 delegated child)");
+  }, "the parent session's filed rows (the parent seat's own steps + 1 delegated child)");
 
   const byKind = new Map<string, UsageEventEntry[]>();
   for (const r of parentRows) {
     const k = r.kind ?? "(none)";
     byKind.set(k, [...(byKind.get(k) ?? []), r]);
   }
-  expect((byKind.get("supervisor") ?? []).length).toBe(2);
-  expect((byKind.get("subagent") ?? []).length).toBe(1);
+  expect((byKind.get("supervisor") ?? []).length).toBe(parentCalls);
+  expect((byKind.get("subagent") ?? []).length).toBe(childCalls);
 
   const delegatedRow = (byKind.get("subagent") ?? [])[0];
   const stamp = subagentRunOf(delegatedRow);

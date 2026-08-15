@@ -1,11 +1,15 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, afterEach, expect, test } from "vitest";
 import {
+  awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
   registerScript,
+  SETTLEMENT_DRAIN_SCRIPT,
+  taskIdOfDelegation,
   waitFor,
+  waitForChildren,
   type ScriptedHandle,
 } from "../harness";
 
@@ -79,7 +83,17 @@ test("a native child's model-authored brief never reaches the approval judge as 
   });
 
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
+  await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: "the delegated child's own terminal step" });
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+
+  const drained = await awaitTaskSettlement({
+    dispatched: handle,
+    taskId: taskIdOfDelegation(handle, "the capture-fence delegation"),
+    script: SETTLEMENT_DRAIN_SCRIPT,
+    label: "the child's settlement wake on the standing window",
+  });
+  expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  drained.handle.dispose();
 
   const childRequests = handle.requests.filter((r) => r.role === "child");
   expect(childRequests.length).toBeGreaterThanOrEqual(1);
