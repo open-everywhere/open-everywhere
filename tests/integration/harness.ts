@@ -9,6 +9,7 @@ import { RedeliveryStormGuard } from "./redelivery-storm-guard";
 
 export { registerScript, type RecordedRequest, type ResolveObservation, type ScriptedHandle, type ScriptedStep, type SeatScript } from "../../agent/model/scripted-model";
 export { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
+export { REPLAYED_DELIVERY_CALLER_BODY } from "@open-everywhere/core/agent/webhooks/replay-dedupe.js";
 
 const ROOT = process.cwd();
 
@@ -34,6 +35,7 @@ export function __resetRedeliveryStormGuardForTest(): void {
 
 const RELAY_SECRET = randomBytes(32).toString("hex");
 const READ_TOKEN = randomBytes(32).toString("hex");
+const WEBHOOK_E2E_SECRET = randomBytes(32).toString("hex");
 
 let booted: { base: string } | undefined;
 let bootedWith: string | undefined;
@@ -105,6 +107,7 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   process.env.OE_EGRESS_SPOOF = "1";
   process.env.OE_RELAY_SECRET = RELAY_SECRET;
   process.env.OE_CONTROL_READ_TOKENS = `it:${createHash("sha256").update(READ_TOKEN, "utf8").digest("hex")}`;
+  process.env.OE_WEBHOOK_E2E_SECRET = WEBHOOK_E2E_SECRET;
   if (opts.sharedSqlite === true) {
     process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
     process.env.OE_SQLITE_PATH = join(state, "ops.sqlite3");
@@ -244,6 +247,18 @@ export async function rawDiscordRelayPost(
   if (signature !== null) headers["x-oe-relay-signature"] = signature ?? signDiscordRelayRequest(body, RELAY_SECRET);
   const res = await fetch(`${booted.base}/eve/v1/discord-gateway`, { method: "POST", headers, body });
   return { status: res.status, text: await res.text() };
+}
+
+export const WEBHOOK_E2E_HOOK_ID = "e2e-smoke";
+
+export async function webhookDeliveryPost(
+  payload: unknown,
+  opts: { signed?: boolean; staleSeconds?: number; deliveryId?: string } = {},
+): Promise<{ status: number; body: string }> {
+  if (booted === undefined) throw new Error("integration harness: webhookDeliveryPost before bootAgent.");
+  const { WebhookDriver } = await import("../../packages/core/scripts/e2e/webhook");
+  const driver = new WebhookDriver({ hookId: WEBHOOK_E2E_HOOK_ID, secret: WEBHOOK_E2E_SECRET, targetUrl: booted.base });
+  return driver.post(payload, opts);
 }
 
 export const DISCORD_GUILD_ID = "1300000000000000100";
