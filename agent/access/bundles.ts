@@ -71,6 +71,11 @@ const bundles: Bundle[] = [
   }),
 
   defineBundle({
+    name: "e2e-connector-fixture",
+    connectors: [{ name: "notion", contentOrigin: "external" }],
+  }),
+
+  defineBundle({
     name: "e2e-pr-fixture",
     repos: ["example-owner/e2e-scratch"],
     instructions:
@@ -89,6 +94,8 @@ const bindings: Binding[] = [
   defineBinding({ bundle: "e2e-access-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
 
   defineBinding({ bundle: "e2e-pr-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
+
+  defineBinding({ bundle: "e2e-connector-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
 
   defineBinding({
     bundle: "notion-connectors",
