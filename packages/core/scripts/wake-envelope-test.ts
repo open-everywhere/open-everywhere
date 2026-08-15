@@ -586,6 +586,9 @@ const countOccurrences = (haystack: string, needle: string): number =>
   const noTrigger = render([base({ trigger: true, body: "hello" })]).replace(' trigger="true"', "");
   ok(triggerMessageBody(noTrigger) === undefined, "triggerMessageBody: NO trigger element ⇒ undefined (fail-closed)");
   ok(triggerMessageBody(`${render([base({ trigger: true, body: "a" })])}\n${render([base({ trigger: true, body: "b" })])}`) === undefined, "triggerMessageBody: TWO trigger elements ⇒ undefined — the text cannot name ONE author's message");
+  const unauthFirst = `${render([base({ trigger: true, authorId: "U_EXT", author: "Ext", trust: "unauth", id: "5", body: "link WXYZWXYZ" })])}\n\n${render([base({ trigger: true, id: "7", body: "hello again" })])}`;
+  ok(unauthFirst.includes("<system-note>") && /<message>/.test(unauthFirst), "unauth-first fixture: the coalesced text really carries the note's bare literal <message>");
+  ok(triggerMessageBody(unauthFirst) === undefined, "triggerMessageBody: a coalesced delivery whose FIRST envelope is an unauth trigger ⇒ undefined — the note's bare tag cannot swallow the second envelope's trigger and leave one standing");
   ok(triggerMessageBody("just a plain sentence") === undefined, "triggerMessageBody: text with no message element at all ⇒ undefined");
 
   const withSiblings = render([

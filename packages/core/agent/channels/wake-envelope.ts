@@ -239,7 +239,9 @@ export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
   return lines.join("\n");
 }
 
-const MESSAGE_ELEMENT_RE = /<message\b([^>]*)>([\s\S]*?)<\/message>/g;
+const MESSAGE_ELEMENT_RE = /<message(\s[^>]*)>([\s\S]*?)<\/message>/g;
+
+const WAKE_OPENER_RE = /<wake\b/g;
 
 const TRIGGER_ATTR_RE = /\btrigger="true"/;
 
@@ -251,6 +253,7 @@ export function isWakeEnvelopeShaped(text: string): boolean {
 }
 
 export function triggerMessageBody(rendered: string): string | undefined {
+  if ((rendered.match(WAKE_OPENER_RE) ?? []).length > 1) return undefined;
   let body: string | undefined;
   let column = 0;
   for (const m of rendered.matchAll(MESSAGE_ELEMENT_RE)) {
