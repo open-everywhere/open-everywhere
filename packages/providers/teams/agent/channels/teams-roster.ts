@@ -14,7 +14,7 @@ export function teamsRosterMemberPath(conversationId: string, userId: string): s
 }
 
 export function teamsHandleRosterProbe(teams: Pick<TeamsHandle, "request">): TeamsRosterProbe {
-  return (path) => teams.request(path, {}, { method: "GET" });
+  return (path) => teams.request(path, undefined as unknown as Parameters<TeamsHandle["request"]>[1], { method: "GET" });
 }
 
 export function teamsServiceUrlRosterProbe(serviceUrl: string | undefined): TeamsRosterProbe | undefined {

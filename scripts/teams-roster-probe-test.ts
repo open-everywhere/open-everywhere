@@ -12,6 +12,7 @@ import {
   resolveTeamsUserType,
   teamsRosterMemberPath,
   teamsServiceUrlRosterProbe,
+  teamsHandleRosterProbe,
   _resetTeamsUserTypeCacheForTest,
   type TeamsRosterProbe,
 } from "@open-everywhere/provider-teams/agent/channels/teams-roster.js";
@@ -56,6 +57,21 @@ const eq = (a: unknown, b: unknown, label: string): void => {
   );
   eq(teamsServiceUrlRosterProbe(undefined), undefined, "no serviceUrl ⇒ NO probe (there is nothing to address), not a probe that throws later");
   ok(typeof teamsServiceUrlRosterProbe("https://smba.trafficmanager.net/emea/") === "function", "negative control: a serviceUrl DOES yield a probe (=== function)");
+
+  {
+    const calls: { path: string; body: unknown; method: string | undefined }[] = [];
+    const handle = {
+      request: async (path: string, body: unknown, options?: { method?: string }) => {
+        calls.push({ path, body, method: options?.method });
+        return { ok: true, status: 200, body: {} };
+      },
+    };
+    const probe = teamsHandleRosterProbe(handle as Parameters<typeof teamsHandleRosterProbe>[0]);
+    void (await probe("/v3/conversations/c/members/u"));
+    eq(calls.length, 1, "the handle probe issues exactly one request");
+    eq(calls[0].method, "GET", "…as a GET");
+    eq(calls[0].body, undefined, "🔴 …with NO body — a defined body (even {}) makes fetch throw on GET and the probe silently fails open");
+  }
 }
 
 function scriptProbe(answer: { ok: boolean; body: unknown } | (() => never)): { probe: TeamsRosterProbe; paths: string[] } {
