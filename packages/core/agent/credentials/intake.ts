@@ -18,7 +18,7 @@ export const CREDENTIAL_INTAKE_TTL_MS = 15 * 60 * 1000;
 
 export interface RequestCredentialIntakeInput {
   readonly org: string;
-  readonly provider: string;
+  readonly connector: string;
   readonly domain?: string;
   readonly ref: string;
   readonly requestedBy: string;
@@ -57,7 +57,7 @@ export async function createCredentialIntake(
     org: input.org,
     id,
     ref: input.ref,
-    provider: input.provider,
+    connector: input.connector,
     ...(input.domain ? { domain: input.domain } : {}),
     requestedBy: input.requestedBy,
     channelId: input.channelId,
@@ -70,7 +70,7 @@ export async function createCredentialIntake(
     ...intakeWhere(input.org, input.teamId, input.channelId, input.platform),
     principalId: input.requestedBy,
     action: "credential.intake_requested",
-    detail: { id, ref: input.ref, provider: input.provider, ...(input.domain ? { domain: input.domain } : {}) },
+    detail: { id, ref: input.ref, connector: input.connector, ...(input.domain ? { domain: input.domain } : {}) },
   });
 
   return { id, createdAt, expiresAt };
@@ -83,7 +83,7 @@ export async function requestCredentialIntake(
   const post = deps.post ?? bridgeSlackForm;
   const { id } = await createCredentialIntake(input, deps);
 
-  const forWhom = input.domain ? `*${input.provider}* key for *${input.domain}*` : `*${input.provider}* key`;
+  const forWhom = input.domain ? `*${input.connector}* key for *${input.domain}*` : `*${input.connector}* key`;
   const blocks = [
     {
       type: "section",
@@ -165,7 +165,7 @@ export async function handleSetKeyClick(payload: unknown, deps: CredentialIntake
       return true;
     }
 
-    const title = `Set ${intake.provider} key`.slice(0, 24);
+    const title = `Set ${intake.connector} key`.slice(0, 24);
     const view = {
       type: "modal",
       callback_id: OE_SETKEY_MODAL_CALLBACK,
@@ -176,7 +176,7 @@ export async function handleSetKeyClick(payload: unknown, deps: CredentialIntake
       blocks: [
         {
           type: "section",
-          text: { type: "mrkdwn", text: intake.domain ? `*${intake.provider}* key for *${intake.domain}*. Stored encrypted; the agent never sees it.` : `*${intake.provider}* key. Stored encrypted; the agent never sees it.` },
+          text: { type: "mrkdwn", text: intake.domain ? `*${intake.connector}* key for *${intake.domain}*. Stored encrypted; the agent never sees it.` : `*${intake.connector}* key. Stored encrypted; the agent never sees it.` },
         },
         {
           type: "input",
@@ -205,7 +205,7 @@ export type CompleteIntakeFailure = "empty" | "not-found" | "not-owner" | "expir
 export type CompleteIntakeResult =
   | {
       readonly ok: true;
-      readonly provider: string;
+      readonly connector: string;
       readonly domain?: string;
       readonly bindingNote: string;
       readonly originChannelId: string;
@@ -252,7 +252,7 @@ export async function completeCredentialIntake(
       org: input.org,
       ref: intake.ref,
       plaintext: value,
-      provider: intake.provider,
+      connector: intake.connector,
       ...(intake.domain ? { domain: intake.domain } : {}),
       createdBy: input.submittedBy,
       parsed: parsed ?? {},
@@ -266,7 +266,7 @@ export async function completeCredentialIntake(
     ...where,
     principalId: input.submittedBy,
     action: "credential.stored",
-    detail: { id: input.id, ref: intake.ref, provider: intake.provider, ...(intake.domain ? { domain: intake.domain } : {}) },
+    detail: { id: input.id, ref: intake.ref, connector: intake.connector, ...(intake.domain ? { domain: intake.domain } : {}) },
   });
 
   let bindingNote = "";
@@ -274,7 +274,7 @@ export async function completeCredentialIntake(
     const target = parseDbCredentialRef(intake.ref);
     if (target) {
       const res = await stageCredentialBindingPr({
-        provider: target.provider,
+        connector: target.connector,
         credential: target.credentialId,
         storedRef: intake.ref,
         credentialAuditId: input.id,
@@ -287,7 +287,7 @@ export async function completeCredentialIntake(
     console.error(`[open-everywhere:credentials] credential-binding PR staging failed softly for ref "${intake.ref}": ${String(err)}`);
   }
 
-  return { ok: true, provider: intake.provider, ...(intake.domain ? { domain: intake.domain } : {}), bindingNote, originChannelId: intake.channelId };
+  return { ok: true, connector: intake.connector, ...(intake.domain ? { domain: intake.domain } : {}), bindingNote, originChannelId: intake.channelId };
 }
 
 interface SetKeyViewPayload {
@@ -350,7 +350,7 @@ export async function handleSetKeyViewSubmission(payload: unknown, deps: Credent
     }
 
     const confirmChannel = channelId ?? result.originChannelId;
-    const forWhom = result.domain ? `*${result.provider}* key for *${result.domain}*` : `*${result.provider}* key`;
+    const forWhom = result.domain ? `*${result.connector}* key for *${result.domain}*` : `*${result.connector}* key`;
     await ephemeral(post, confirmChannel, clickerId, `✅ Your ${forWhom} was stored securely. The agent never saw the value.${result.bindingNote}`).catch(() => undefined);
 
     return { handled: true };

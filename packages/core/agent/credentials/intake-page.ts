@@ -80,8 +80,8 @@ function invalidPage(): Response {
   );
 }
 
-function formPage(token: string, provider: string, domain: string | undefined, notice?: string): Response {
-  const forWhom = domain ? `${esc(provider)} key for ${esc(domain)}` : `${esc(provider)} key`;
+function formPage(token: string, connector: string, domain: string | undefined, notice?: string): Response {
+  const forWhom = domain ? `${esc(connector)} key for ${esc(domain)}` : `${esc(connector)} key`;
   const noticeHtml = notice ? `<p style="color:#b00020">${esc(notice)}</p>` : "";
   const inner =
     `<p>Enter the <strong>${forWhom}</strong>. It is stored encrypted on this deployment; the agent never sees it, and this link works only once.</p>` +
@@ -114,7 +114,7 @@ export async function handleIntakePageGet(req: Request, deps: IntakePageHandlerD
   if (!intake || intake.usedAt || intake.requestedBy !== claims.rb || Date.parse(intake.expiresAt) <= now) {
     return invalidPage();
   }
-  return formPage(token, intake.provider, intake.domain);
+  return formPage(token, intake.connector, intake.domain);
 }
 
 export async function handleIntakePagePost(req: Request, deps: IntakePageHandlerDeps = {}): Promise<Response> {
@@ -139,7 +139,7 @@ export async function handleIntakePagePost(req: Request, deps: IntakePageHandler
   if (!value.trim()) {
     const intake = await getOperationalStore().getCredentialIntake(claims.org, claims.id);
     if (!intake || intake.usedAt || intake.requestedBy !== claims.rb || Date.parse(intake.expiresAt) <= now) return invalidPage();
-    return formPage(token, intake.provider, intake.domain, "Enter the API key.");
+    return formPage(token, intake.connector, intake.domain, "Enter the API key.");
   }
 
   const result = await completeCredentialIntake(
@@ -149,12 +149,12 @@ export async function handleIntakePagePost(req: Request, deps: IntakePageHandler
   if (!result.ok) {
     if (result.code === "empty") {
       const intake = await getOperationalStore().getCredentialIntake(claims.org, claims.id);
-      if (intake && !intake.usedAt) return formPage(token, intake.provider, intake.domain, "Enter the API key.");
+      if (intake && !intake.usedAt) return formPage(token, intake.connector, intake.domain, "Enter the API key.");
     }
     return invalidPage();
   }
 
-  const forWhom = result.domain ? `${esc(result.provider)} key for ${esc(result.domain)}` : `${esc(result.provider)} key`;
+  const forWhom = result.domain ? `${esc(result.connector)} key for ${esc(result.domain)}` : `${esc(result.connector)} key`;
   return htmlResponse(
     200,
     "API key stored",

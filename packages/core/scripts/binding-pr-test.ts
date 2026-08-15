@@ -58,7 +58,7 @@ function cfg(over: Partial<AccessRequestsConfig> = {}): AccessRequestsConfig {
 const WHERE = { org: "default", platform: "slack", workspace: "T1", surface: "C1" } as const;
 const FAKE_SECRET = "oe-fake-secret-NEVER-IN-A-DIFF-9f3a";
 const baseArgs = {
-  provider: "acme",
+  connector: "acme",
   credential: "key",
   storedRef: "db:acme:key",
   credentialAuditId: "intake-abc123",
@@ -119,7 +119,7 @@ function tripwireProvider(onTouch: () => void): ConfigPrProvider {
   const proposed = await rowsFor("credential.binding_proposed", "intake-dry");
   ok(proposed.length === 1, "dry-run: one binding_proposed audit row");
   const d = proposed[0].detail as Record<string, unknown>;
-  ok(d.dryRun === true && d.provider === "acme" && d.credential === "key" && d.storedRef === "db:acme:key" && d.broker === "db", "dry-run: audit carries references (provider/credential/ref/broker), dryRun:true");
+  ok(d.dryRun === true && d.connector === "acme" && d.credential === "key" && d.storedRef === "db:acme:key" && d.broker === "db", "dry-run: audit carries references (connector/credential/ref/broker), dryRun:true");
   ok((await rowsFor("credential.binding_opened", "intake-dry")).length === 0, "dry-run: NO binding_opened row");
 }
 
@@ -147,7 +147,7 @@ function tripwireProvider(onTouch: () => void): ConfigPrProvider {
         provider,
       }),
     "empty credential allowlist",
-    "ring ②: an invalid merged provider set refuses",
+    "ring ②: an invalid merged connector set refuses",
   );
   ok(state.puts === 0 && state.prPosts === 0, "ring ②: nothing committed, no PR opened when merged validation fails");
 }
@@ -197,7 +197,7 @@ function ghDeps(state: FakeGh) {
   ok(res.staged && !res.dryRun && res.url === "https://github.com/acme/config/pull/11", "live: opened PR, url returned");
   ok(state.branches[branch] === "base-sha", "live: deterministic branch cut from base");
   ok(state.puts.length === 1, "live: exactly one overlay commit");
-  const expectedBytes = emitCredentialBindingsModule(applyBindingOverride(emptyCredentialBindingsFile(), { provider: "acme", credential: "key", broker: "db", secretRef: "db:acme:key" }).file);
+  const expectedBytes = emitCredentialBindingsModule(applyBindingOverride(emptyCredentialBindingsFile(), { connector: "acme", credential: "key", broker: "db", secretRef: "db:acme:key" }).file);
   ok(state.puts[0] === expectedBytes, "live: committed bytes are EXACTLY the deterministic codemod output");
   ok(parseCredentialBindingsModule(state.puts[0]!).overrides.length === 1, "live: the committed module passes the round-trip-verifying read the drift lint runs");
   ok(state.prPost.length === 1 && state.prPost[0].head === branch && state.prPost[0].base === "main", "live: PR opened head→base");
@@ -220,7 +220,7 @@ function ghDeps(state: FakeGh) {
   const branch = "credential-binding/acme-key";
   state.branches[branch] = "base-sha";
   state.files[`${branch}:agent/access/credential-bindings.generated.ts`] = {
-    content: emitCredentialBindingsModule(applyBindingOverride(emptyCredentialBindingsFile(), { provider: "acme", credential: "key", broker: "db", secretRef: "db:acme:key" }).file),
+    content: emitCredentialBindingsModule(applyBindingOverride(emptyCredentialBindingsFile(), { connector: "acme", credential: "key", broker: "db", secretRef: "db:acme:key" }).file),
     sha: "existing",
   };
   const res = await stageCredentialBindingPr({ ...baseArgs, credentialAuditId: "intake-open" }, ghDeps(state));

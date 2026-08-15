@@ -68,10 +68,10 @@ export function makeAwsSsoLinkStore(vault: EncryptedKvVault = encryptedKvVault()
       return vault.read(awsSsoTokenRef(principalSubject));
     },
     async write(principalSubject: string, token: string): Promise<void> {
-      await vault.write(awsSsoTokenRef(principalSubject), token, { provider: "aws-sso" });
+      await vault.write(awsSsoTokenRef(principalSubject), token, { connector: "aws-sso" });
     },
     async clear(principalSubject: string): Promise<void> {
-      await vault.write(awsSsoTokenRef(principalSubject), "", { provider: "aws-sso" });
+      await vault.write(awsSsoTokenRef(principalSubject), "", { connector: "aws-sso" });
     },
   };
 }
@@ -122,7 +122,7 @@ function defaultPendingStore(vault: EncryptedKvVault): AwsSsoPendingStore {
   return {
     read: (state) => vault.read(pendRef(state)),
     write: async (state, value) => {
-      await vault.write(pendRef(state), value, { provider: "aws-sso" });
+      await vault.write(pendRef(state), value, { connector: "aws-sso" });
     },
   };
 }

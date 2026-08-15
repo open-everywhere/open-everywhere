@@ -451,7 +451,7 @@ export interface GitHubInstallationRow {
 export interface StoredCredentialRow {
   readonly ref: string;
   readonly ciphertext: string;
-  readonly provider?: string;
+  readonly connector?: string;
   readonly domain?: string;
   readonly createdBy: string;
   readonly createdAt: string;
@@ -461,7 +461,7 @@ export interface CredentialIntakeRow {
   readonly org: string;
   readonly id: string;
   readonly ref: string;
-  readonly provider: string;
+  readonly connector: string;
   readonly domain?: string;
   readonly requestedBy: string;
   readonly channelId: string;

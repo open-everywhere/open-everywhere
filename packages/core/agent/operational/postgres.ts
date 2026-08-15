@@ -184,7 +184,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      org_id     text NOT NULL,
      ref        text NOT NULL,
      ciphertext text NOT NULL,
-     provider   text,
+     connector  text,
      domain     text,
      created_by text NOT NULL,
      created_at text NOT NULL,
@@ -194,7 +194,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      org_id       text NOT NULL,
      id           text NOT NULL,
      ref          text NOT NULL,
-     provider     text NOT NULL,
+     connector    text NOT NULL,
      domain       text,
      requested_by text NOT NULL,
      channel_id   text NOT NULL,
@@ -377,6 +377,24 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE pending_actions ADD COLUMN IF NOT EXISTS posted_to text`,
   `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claim_id text`,
   `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claimed_at text`,
+  `DO $$
+   BEGIN
+     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'stored_credential' AND column_name = 'provider')
+        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'stored_credential' AND column_name = 'connector')
+     THEN
+       ALTER TABLE stored_credential RENAME COLUMN provider TO connector;
+     END IF;
+   END
+   $$`,
+  `DO $$
+   BEGIN
+     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'credential_intake' AND column_name = 'provider')
+        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'credential_intake' AND column_name = 'connector')
+     THEN
+       ALTER TABLE credential_intake RENAME COLUMN provider TO connector;
+     END IF;
+   END
+   $$`,
   `ALTER TABLE audit_entry ADD COLUMN IF NOT EXISTS prev_sha text`,
   `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS routine_id text`,
   `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS usd_micros_measured bigint`,
@@ -2083,26 +2101,26 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async putStoredCredential(org, rec: StoredCredentialRow) {
       await client.query(
-        `INSERT INTO stored_credential (org_id, ref, ciphertext, provider, domain, created_by, created_at)
+        `INSERT INTO stored_credential (org_id, ref, ciphertext, connector, domain, created_by, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (org_id, ref) DO UPDATE SET
-           ciphertext = EXCLUDED.ciphertext, provider = EXCLUDED.provider,
+           ciphertext = EXCLUDED.ciphertext, connector = EXCLUDED.connector,
            domain = EXCLUDED.domain, created_by = EXCLUDED.created_by, created_at = EXCLUDED.created_at`,
-        [org, rec.ref, rec.ciphertext, rec.provider ?? null, rec.domain ?? null, rec.createdBy, rec.createdAt],
+        [org, rec.ref, rec.ciphertext, rec.connector ?? null, rec.domain ?? null, rec.createdBy, rec.createdAt],
       );
     },
 
     async getStoredCredential(org, ref) {
       const { rows } = await client.query(
-        "SELECT ref, ciphertext, provider, domain, created_by, created_at FROM stored_credential WHERE org_id = $1 AND ref = $2",
+        "SELECT ref, ciphertext, connector, domain, created_by, created_at FROM stored_credential WHERE org_id = $1 AND ref = $2",
         [org, ref],
       );
-      const r = (rows as { ref: string; ciphertext: string; provider: string | null; domain: string | null; created_by: string; created_at: string }[])[0];
+      const r = (rows as { ref: string; ciphertext: string; connector: string | null; domain: string | null; created_by: string; created_at: string }[])[0];
       if (!r) return null;
       return {
         ref: r.ref,
         ciphertext: r.ciphertext,
-        ...(r.provider ? { provider: r.provider } : {}),
+        ...(r.connector ? { connector: r.connector } : {}),
         ...(r.domain ? { domain: r.domain } : {}),
         createdBy: r.created_by,
         createdAt: r.created_at,
@@ -2168,24 +2186,24 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async addCredentialIntake(row: CredentialIntakeRow) {
       await client.query(
-        `INSERT INTO credential_intake (org_id, id, ref, provider, domain, requested_by, channel_id, thread_ts, created_at, expires_at, used_at)
+        `INSERT INTO credential_intake (org_id, id, ref, connector, domain, requested_by, channel_id, thread_ts, created_at, expires_at, used_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-        [row.org, row.id, row.ref, row.provider, row.domain ?? null, row.requestedBy, row.channelId, row.threadTs ?? null, row.createdAt, row.expiresAt, row.usedAt ?? null],
+        [row.org, row.id, row.ref, row.connector, row.domain ?? null, row.requestedBy, row.channelId, row.threadTs ?? null, row.createdAt, row.expiresAt, row.usedAt ?? null],
       );
     },
 
     async getCredentialIntake(org, id) {
       const { rows } = await client.query(
-        "SELECT id, ref, provider, domain, requested_by, channel_id, thread_ts, created_at, expires_at, used_at FROM credential_intake WHERE org_id = $1 AND id = $2",
+        "SELECT id, ref, connector, domain, requested_by, channel_id, thread_ts, created_at, expires_at, used_at FROM credential_intake WHERE org_id = $1 AND id = $2",
         [org, id],
       );
-      const r = (rows as { id: string; ref: string; provider: string; domain: string | null; requested_by: string; channel_id: string; thread_ts: string | null; created_at: string; expires_at: string; used_at: string | null }[])[0];
+      const r = (rows as { id: string; ref: string; connector: string; domain: string | null; requested_by: string; channel_id: string; thread_ts: string | null; created_at: string; expires_at: string; used_at: string | null }[])[0];
       if (!r) return null;
       return {
         org,
         id: r.id,
         ref: r.ref,
-        provider: r.provider,
+        connector: r.connector,
         ...(r.domain ? { domain: r.domain } : {}),
         requestedBy: r.requested_by,
         channelId: r.channel_id,

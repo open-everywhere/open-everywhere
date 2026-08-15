@@ -146,7 +146,7 @@ const armed = await run({});
   const row = await store.getCredentialIntake(ORG, claims.id);
   ok(row !== null, "the grant row exists");
   eq(row!.requestedBy, capture.HANDSHAKE_REVEAL_PRINCIPAL, "🔴 requestedBy is the SENTINEL — there is no clicker, so this is NOT identity binding");
-  eq(row!.provider, reveal.REVEAL_GRANT_PROVIDER, "the row is a REVEAL grant (an intake token can never redeem it)");
+  eq(row!.connector, reveal.REVEAL_GRANT_CONNECTOR, "the row is a REVEAL grant (an intake token can never redeem it)");
   ok(!row!.usedAt, "unredeemed");
   eq(Date.parse(row!.expiresAt) - Date.parse(row!.createdAt), reveal.REVEAL_GRANT_TTL_MS, "bound #1: a 15-minute TTL");
   eq((await reveal.handleRevealPost(revealPost(freshToken))).status, 200, "bound #2: single-use — the first redemption works…");

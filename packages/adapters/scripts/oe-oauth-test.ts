@@ -352,7 +352,7 @@ const tokRef = "oe-oauth:tok:notion:user:U1";
 {
   const rv = encryptedKvVault();
   const CREF = "oe-oauth:tok:realclaim:user:U1";
-  await rv.write(CREF, JSON.stringify({ accessToken: "AT", refreshToken: "RT", obtainedAt: 0 }), { provider: "notion" });
+  await rv.write(CREF, JSON.stringify({ accessToken: "AT", refreshToken: "RT", obtainedAt: 0 }), { connector: "notion" });
   const base = 8_000_000_000;
   ok((await rv.claim(CREF, "R-A", base, CLAIM_LEASE_TTL_MS)) === true, "real-store: first claimant wins the free row");
   ok((await rv.claim(CREF, "R-B", base + 10, CLAIM_LEASE_TTL_MS)) === false, "real-store: a second claimant loses while the lease is held");

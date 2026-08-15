@@ -5,7 +5,7 @@ import type { StoredCredentialRow } from "../operational/store.js";
 
 export interface EncryptedKvVault {
   read(ref: string): Promise<string | null>;
-  write(ref: string, plaintext: string, labels?: { provider?: string; domain?: string; createdBy?: string }): Promise<void>;
+  write(ref: string, plaintext: string, labels?: { connector?: string; domain?: string; createdBy?: string }): Promise<void>;
   delete(ref: string): Promise<boolean>;
   withLock<T>(key: string, fn: () => Promise<T>): Promise<T>;
   claim(ref: string, claimId: string, nowMs: number, leaseTtlMs: number): Promise<boolean>;
@@ -54,7 +54,7 @@ export function encryptedKvVault(deps: EncryptedKvVaultDeps = {}): EncryptedKvVa
       const rec: StoredCredentialRow = {
         ref,
         ciphertext,
-        ...(labels?.provider ? { provider: labels.provider } : {}),
+        ...(labels?.connector ? { connector: labels.connector } : {}),
         ...(labels?.domain ? { domain: labels.domain } : {}),
         createdBy: labels?.createdBy ?? DB_BROKER,
         createdAt: new Date().toISOString(),

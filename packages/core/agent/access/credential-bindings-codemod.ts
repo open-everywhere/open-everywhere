@@ -2,7 +2,7 @@ import type { ConnectorCredentials, ConnectorCredential } from "./connector-cred
 import { overlayModuleHeader, unwrapOverlayModule, wrapOverlayModule, type OverlayModuleGrammar } from "./overlay-module.js";
 
 export interface CredentialBindingOverride {
-  readonly provider: string;
+  readonly connector: string;
   readonly credential: string;
   readonly broker?: string;
   readonly secretRef?: string;
@@ -55,10 +55,10 @@ function registerCoreOverlayHomes(): void {
     claims: (o) => o.broker !== undefined || o.secretRef !== undefined,
     parseRaw: (o, where) => {
       if (typeof o.broker !== "string" || typeof o.secretRef !== "string") {
-        throw new CredentialBindingsCodemodError("every override needs string { provider, credential, broker, secretRef }");
+        throw new CredentialBindingsCodemodError("every override needs string { connector, credential, broker, secretRef }");
       }
       if (!o.broker || !o.secretRef) {
-        throw new CredentialBindingsCodemodError(`override for ${where} has a blank field — provider/credential/broker/secretRef are all required`);
+        throw new CredentialBindingsCodemodError(`override for ${where} has a blank field — connector/credential/broker/secretRef are all required`);
       }
       return { broker: o.broker, secretRef: o.secretRef };
     },
@@ -86,16 +86,16 @@ export function parseCredentialBindingsFile(value: unknown): CredentialBindingsF
   const overrides: CredentialBindingOverride[] = [];
   const seen = new Set<string>();
   for (const o of value.overrides) {
-    if (!isRecord(o) || typeof o.provider !== "string" || typeof o.credential !== "string") {
-      throw new CredentialBindingsCodemodError("every override needs string { provider, credential } and exactly one home (broker+secretRef)");
+    if (!isRecord(o) || typeof o.connector !== "string" || typeof o.credential !== "string") {
+      throw new CredentialBindingsCodemodError("every override needs string { connector, credential } and exactly one home (broker+secretRef)");
     }
-    if (!o.provider || !o.credential) {
-      throw new CredentialBindingsCodemodError(`override for "${o.provider}/${o.credential}" has a blank provider/credential — both are required`);
+    if (!o.connector || !o.credential) {
+      throw new CredentialBindingsCodemodError(`override for "${o.connector}/${o.credential}" has a blank connector/credential — both are required`);
     }
-    if (o.provider.includes(":") || o.credential.includes(":")) {
-      throw new CredentialBindingsCodemodError(`override provider/credential ids must not contain ":" (got "${o.provider}"/"${o.credential}")`);
+    if (o.connector.includes(":") || o.credential.includes(":")) {
+      throw new CredentialBindingsCodemodError(`override connector/credential ids must not contain ":" (got "${o.connector}"/"${o.credential}")`);
     }
-    const where = `"${o.provider}/${o.credential}"`;
+    const where = `"${o.connector}/${o.credential}"`;
     const claimed = [...OVERLAY_HOMES.values()].filter((h) => h.claimsRaw(o));
     if (claimed.length > 1) {
       const phrase =
@@ -109,21 +109,21 @@ export function parseCredentialBindingsFile(value: unknown): CredentialBindingsF
         `override for ${where} has no home — set ${[...OVERLAY_HOMES.values()].map((h) => h.emptyHint).join(" or ")}`,
       );
     }
-    const dupKey = `${o.provider} ${o.credential}`;
-    if (seen.has(dupKey)) throw new CredentialBindingsCodemodError(`credential-bindings file has a duplicate override for "${o.provider}/${o.credential}" — one home per credential`);
+    const dupKey = `${o.connector} ${o.credential}`;
+    if (seen.has(dupKey)) throw new CredentialBindingsCodemodError(`credential-bindings file has a duplicate override for "${o.connector}/${o.credential}" — one home per credential`);
     seen.add(dupKey);
 
-    overrides.push({ provider: o.provider, credential: o.credential, ...claimed[0].parseRaw(o, where) });
+    overrides.push({ connector: o.connector, credential: o.credential, ...claimed[0].parseRaw(o, where) });
   }
   return { overrides };
 }
 
 export function stringifyCredentialBindings(file: CredentialBindingsFile): string {
   const overrides = [...file.overrides]
-    .sort((a, b) => a.provider.localeCompare(b.provider) || a.credential.localeCompare(b.credential))
+    .sort((a, b) => a.connector.localeCompare(b.connector) || a.credential.localeCompare(b.credential))
     .map((o) => {
       const home = overlayHomeFor(o);
-      return { provider: o.provider, credential: o.credential, ...(home ? home.serialize(o) : {}) };
+      return { connector: o.connector, credential: o.credential, ...(home ? home.serialize(o) : {}) };
     });
   return JSON.stringify({ overrides }, null, 2) + "\n";
 }
@@ -170,14 +170,14 @@ export interface ApplyBindingOverrideResult {
 }
 
 export function applyBindingOverride(file: CredentialBindingsFile, override: CredentialBindingOverride): ApplyBindingOverrideResult {
-  if (override.provider.includes(":") || override.credential.includes(":")) {
-    throw new CredentialBindingsCodemodError(`override provider/credential ids must not contain ":" (got "${override.provider}"/"${override.credential}")`);
+  if (override.connector.includes(":") || override.credential.includes(":")) {
+    throw new CredentialBindingsCodemodError(`override connector/credential ids must not contain ":" (got "${override.connector}"/"${override.credential}")`);
   }
-  const existing = file.overrides.find((o) => o.provider === override.provider && o.credential === override.credential);
+  const existing = file.overrides.find((o) => o.connector === override.connector && o.credential === override.credential);
   if (existing && sameHome(existing, override)) {
     return { file, changed: false };
   }
-  const others = file.overrides.filter((o) => !(o.provider === override.provider && o.credential === override.credential));
+  const others = file.overrides.filter((o) => !(o.connector === override.connector && o.credential === override.credential));
   return { file: { overrides: [...others, { ...override }] }, changed: true };
 }
 
@@ -188,9 +188,9 @@ export function applyOverridesToConnectorCredentials(
   if (overrides.length === 0) return catalogues;
   const byConnector = new Map<string, CredentialBindingOverride[]>();
   for (const o of overrides) {
-    const list = byConnector.get(o.provider) ?? [];
+    const list = byConnector.get(o.connector) ?? [];
     list.push(o);
-    byConnector.set(o.provider, list);
+    byConnector.set(o.connector, list);
   }
   return catalogues.map((p) => {
     const forThis = byConnector.get(p.connector);

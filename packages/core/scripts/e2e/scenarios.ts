@@ -3048,13 +3048,13 @@ export const SCENARIOS: readonly Scenario[] = [
         (await pollOptional(
           async () => {
             const r = await auditRead!({ sinceIso: runStart, actions: ["credential.intake_requested"] });
-            const mine = r.filter((e) => e.principalId === admin && (e.detail as { provider?: unknown } | undefined)?.provider === PROVIDER);
+            const mine = r.filter((e) => e.principalId === admin && (e.detail as { connector?: unknown } | undefined)?.connector === PROVIDER);
             return mine.length > 0 ? mine : undefined;
           },
           { timeoutMs: REPLY_WAIT, what: "a credential.intake_requested audit row for the forged admin oe_connect click" },
         )) ??
         ctx.skip(
-          `no credential.intake_requested audit row appeared for provider "${PROVIDER}" — the forged admin clicker (${admin}) may not hold org/domain admin standing here, or the db broker isn't configured (OE_CREDENTIAL_ENCRYPTION_KEY unarmed). Provision E2E_SLACK_ADMIN_USER_ID as an admin and confirm the db broker is configured, then re-run.`,
+          `no credential.intake_requested audit row appeared for connector "${PROVIDER}" — the forged admin clicker (${admin}) may not hold org/domain admin standing here, or the db broker isn't configured (OE_CREDENTIAL_ENCRYPTION_KEY unarmed). Provision E2E_SLACK_ADMIN_USER_ID as an admin and confirm the db broker is configured, then re-run.`,
         );
       const intakeDetail = intakeRows[0].detail as { id?: unknown; ref?: unknown } | undefined;
       const intakeId = typeof intakeDetail?.id === "string" ? intakeDetail.id : undefined;
@@ -3099,11 +3099,11 @@ export const SCENARIOS: readonly Scenario[] = [
           { timeoutMs: REPLY_WAIT, what: "a credential.binding_proposed audit row for the stored credential" },
         );
         if (bindingRows) {
-          const bd = bindingRows[0].detail as { dryRun?: unknown; credentialAuditId?: unknown; storedRef?: unknown; provider?: unknown; credential?: unknown };
+          const bd = bindingRows[0].detail as { dryRun?: unknown; credentialAuditId?: unknown; storedRef?: unknown; connector?: unknown; credential?: unknown };
           ctx.gate(bd.dryRun === true, "binding: the credential-binding PR ran DRY-RUN — nothing opened a real PR against the config repo");
           ctx.gate(
-            bd.credentialAuditId === intakeId && typeof bd.storedRef === "string" && (bd.storedRef as string).startsWith("db:e2e-intake:") && bd.provider === PROVIDER,
-            "binding: binding_proposed cites the intake id + carries references only (provider/credential/storedRef), never a value",
+            bd.credentialAuditId === intakeId && typeof bd.storedRef === "string" && (bd.storedRef as string).startsWith("db:e2e-intake:") && bd.connector === PROVIDER,
+            "binding: binding_proposed cites the intake id + carries references only (connector/credential/storedRef), never a value",
           );
         } else {
           ctx.log("binding: no credential.binding_proposed row — the binding follow-on fail-safe-SKIPPED (OE_ACCESS_CONFIG_REPO unset in prod); the store leg still proved out. Configure the access config repo to exercise the binding PR.");

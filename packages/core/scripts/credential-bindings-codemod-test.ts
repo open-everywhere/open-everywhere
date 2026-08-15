@@ -32,7 +32,7 @@ function throwsWith(fn: () => unknown, fragment: string, label: string): void {
   ok(false, `${label} (did not throw)`);
 }
 
-const OV: CredentialBindingOverride = { provider: "notion", credential: "team-key", broker: "db", secretRef: "db:notion:team-key" };
+const OV: CredentialBindingOverride = { connector: "notion", credential: "team-key", broker: "db", secretRef: "db:notion:team-key" };
 
 ok(parseCredentialBindingsFile({ overrides: [] }).overrides.length === 0, "parse: empty overrides");
 ok(parseCredentialBindingsFile({ overrides: [OV] }).overrides[0].secretRef === "db:notion:team-key", "parse: one override");
@@ -42,29 +42,29 @@ throwsWith(() => parseCredentialBindingsFile(null), "must be a JSON object", "pa
 throwsWith(() => parseCredentialBindingsFile([]), "must be a JSON object", "parse: array refused");
 throwsWith(() => parseCredentialBindingsFile({ overrides: [], extra: 1 }), "unknown top-level key", "parse: unknown key refused");
 throwsWith(() => parseCredentialBindingsFile({ overrides: {} }), "needs an `overrides` array", "parse: non-array overrides refused");
-throwsWith(() => parseCredentialBindingsFile({ overrides: [{ provider: "x", credential: "y", broker: "db" }] }), "string { provider, credential, broker, secretRef }", "parse: missing field refused");
-throwsWith(() => parseCredentialBindingsFile({ overrides: [{ provider: "x", credential: "y", broker: "", secretRef: "z" }] }), "blank field", "parse: blank field refused");
-throwsWith(() => parseCredentialBindingsFile({ overrides: [{ provider: "a:b", credential: "y", broker: "db", secretRef: "z" }] }), 'must not contain ":"', "parse: colon in id refused");
+throwsWith(() => parseCredentialBindingsFile({ overrides: [{ connector: "x", credential: "y", broker: "db" }] }), "string { connector, credential, broker, secretRef }", "parse: missing field refused");
+throwsWith(() => parseCredentialBindingsFile({ overrides: [{ connector: "x", credential: "y", broker: "", secretRef: "z" }] }), "blank field", "parse: blank field refused");
+throwsWith(() => parseCredentialBindingsFile({ overrides: [{ connector: "a:b", credential: "y", broker: "db", secretRef: "z" }] }), 'must not contain ":"', "parse: colon in id refused");
 throwsWith(
   () => parseCredentialBindingsFile({ overrides: [OV, { ...OV, secretRef: "db:notion:team-key2" }] }),
   "duplicate override",
-  "parse: duplicate (provider, credential) refused",
+  "parse: duplicate (connector, credential) refused",
 );
 ok(parseCredentialBindingsFile({ $comment: "hi", overrides: [] }).overrides.length === 0, "parse: $comment tolerated");
 
 const unordered: CredentialBindingsFile = {
   overrides: [
-    { provider: "notion", credential: "team-key", broker: "db", secretRef: "db:notion:team-key" },
-    { provider: "linear", credential: "api", broker: "db", secretRef: "db:linear:api" },
+    { connector: "notion", credential: "team-key", broker: "db", secretRef: "db:notion:team-key" },
+    { connector: "linear", credential: "api", broker: "db", secretRef: "db:linear:api" },
   ],
 };
 const s1 = stringifyCredentialBindings(unordered);
 const s2 = stringifyCredentialBindings({ overrides: [...unordered.overrides].reverse() });
-ok(s1 === s2, "stringify: byte-identical regardless of input order (sorted by provider, credential)");
+ok(s1 === s2, "stringify: byte-identical regardless of input order (sorted by connector, credential)");
 ok(s1.endsWith("\n"), "stringify: trailing newline");
 ok(stringifyCredentialBindings(parseCredentialBindingsModule(emitCredentialBindingsModule(unordered))) === s1, "stringify: parse∘stringify is a fixpoint");
-ok(s1.indexOf('"linear"') < s1.indexOf('"notion"'), "stringify: overrides sorted by provider");
-ok(/"provider"[\s\S]*"credential"[\s\S]*"broker"[\s\S]*"secretRef"/.test(s1), "stringify: canonical key order");
+ok(s1.indexOf('"linear"') < s1.indexOf('"notion"'), "stringify: overrides sorted by connector");
+ok(/"connector"[\s\S]*"credential"[\s\S]*"broker"[\s\S]*"secretRef"/.test(s1), "stringify: canonical key order");
 
 {
   const mod = emitCredentialBindingsModule(unordered);
@@ -84,14 +84,14 @@ ok(/"provider"[\s\S]*"credential"[\s\S]*"broker"[\s\S]*"secretRef"/.test(s1), "s
   const tampered = mod.replace('"db:notion:team-key"', '"db:notion:attacker-key"');
   ok(tampered !== mod, "module: (fixture) the secretRef edit actually changed the bytes");
   ok(parseCredentialBindingsModule(tampered).overrides.length === 2, "module: (fixture) the tampered body is still well-shaped data");
-  const reordered = mod.replace('"provider": "linear"', '"provider": "zzz-linear"');
-  ok(reordered !== mod, "module: (fixture) the provider-reorder edit actually changed the bytes");
+  const reordered = mod.replace('"connector": "linear"', '"connector": "zzz-linear"');
+  ok(reordered !== mod, "module: (fixture) the connector-reorder edit actually changed the bytes");
   throwsWith(
     () => parseCredentialBindingsModule(reordered),
     "not in canonical form",
     "module: a hand-edit that leaves the file non-canonical is REFUSED, not silently rewritten",
   );
-  ok(renormalizeCredentialBindingsModule(reordered) === emitCredentialBindingsModule(parseCredentialBindingsFile({ overrides: [{ ...unordered.overrides[1], provider: "zzz-linear" }, unordered.overrides[0]] })), "module: renormalize produces the canonical form of the edited data");
+  ok(renormalizeCredentialBindingsModule(reordered) === emitCredentialBindingsModule(parseCredentialBindingsFile({ overrides: [{ ...unordered.overrides[1], connector: "zzz-linear" }, unordered.overrides[0]] })), "module: renormalize produces the canonical form of the edited data");
 }
 
 {
@@ -104,10 +104,10 @@ ok(/"provider"[\s\S]*"credential"[\s\S]*"broker"[\s\S]*"secretRef"/.test(s1), "s
   ok(stringifyCredentialBindings(again.file) === stringifyCredentialBindings(first.file), "apply: idempotent re-apply is byte-identical");
 
   const changed = applyBindingOverride(first.file, { ...OV, secretRef: "db:notion:team-key-v2" });
-  ok(changed.changed && changed.file.overrides.length === 1, "apply: same (provider, credential) with a NEW stamp REPLACES (still one entry)");
+  ok(changed.changed && changed.file.overrides.length === 1, "apply: same (connector, credential) with a NEW stamp REPLACES (still one entry)");
   ok(changed.file.overrides[0].secretRef === "db:notion:team-key-v2", "apply: replacement carries the new ref");
 
-  const second = applyBindingOverride(first.file, { provider: "linear", credential: "api", broker: "db", secretRef: "db:linear:api" });
+  const second = applyBindingOverride(first.file, { connector: "linear", credential: "api", broker: "db", secretRef: "db:linear:api" });
   ok(second.changed && second.file.overrides.length === 2, "apply: a different credential adds a second override");
 }
 
@@ -127,9 +127,9 @@ const notion: ConnectorCredentials = {
   ok(base[0].credentials.find((c) => c.id === "team-key")!.broker === "env", "overlay: base set is NOT mutated (pure)");
   ok(vercelConnectorOf(merged[0].credentials.find((c) => c.id === "user-oauth")!) === "mcp.notion.com/notion-mcp", "overlay: untouched credential unchanged");
   assertConnectorCredentialsValid(merged);
-  ok(true, "overlay: merged provider set passes assertConnectorCredentialsValid");
+  ok(true, "overlay: merged connector set passes assertConnectorCredentialsValid");
 
-  const stale = applyOverridesToConnectorCredentials(base, [{ provider: "notion", credential: "ghost", broker: "db", secretRef: "db:notion:ghost" }]);
+  const stale = applyOverridesToConnectorCredentials(base, [{ connector: "notion", credential: "ghost", broker: "db", secretRef: "db:notion:ghost" }]);
   ok(stale[0].credentials.length === 2 && !stale[0].credentials.some((c) => c.id === "ghost"), "overlay: stale override is inert");
   ok(applyOverridesToConnectorCredentials(base, []) === base, "overlay: empty overrides returns the base set unchanged");
 }

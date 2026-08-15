@@ -213,7 +213,7 @@ function getDb(): DatabaseSync {
       org_id     TEXT NOT NULL,
       ref        TEXT NOT NULL,               -- unique lookup key, e.g. "db:notion-<domain>-key"
       ciphertext TEXT NOT NULL,               -- AES-256-GCM envelope (iv‖tag‖ct, base64); NEVER logged
-      provider   TEXT,                        -- label only (audit/admin views), never the value
+      connector  TEXT,                        -- label only (audit/admin views), never the value
       domain     TEXT,                        -- label only
       created_by TEXT NOT NULL,               -- storing principal (the intake requester)
       created_at TEXT NOT NULL,               -- ISO-8601
@@ -226,7 +226,7 @@ function getDb(): DatabaseSync {
       org_id       TEXT NOT NULL,
       id           TEXT NOT NULL,             -- opaque intake id (embedded in the button action_id)
       ref          TEXT NOT NULL,             -- the stored_credential ref the value is written under
-      provider     TEXT NOT NULL,             -- label shown in the modal
+      connector    TEXT NOT NULL,             -- label shown in the modal
       domain       TEXT,                      -- label shown in the modal
       requested_by TEXT NOT NULL,             -- the ONLY principal permitted to open + submit
       channel_id   TEXT NOT NULL,             -- where the button lives (wrong-clicker notice + confirm)
@@ -466,6 +466,9 @@ function getDb(): DatabaseSync {
 
     "ALTER TABLE stored_credential ADD COLUMN claim_id TEXT",
     "ALTER TABLE stored_credential ADD COLUMN claimed_at TEXT",
+
+    "ALTER TABLE stored_credential RENAME COLUMN provider TO connector",
+    "ALTER TABLE credential_intake RENAME COLUMN provider TO connector",
 
     "ALTER TABLE audit_entry ADD COLUMN prev_sha TEXT",
 
@@ -1696,24 +1699,24 @@ export const sqliteOperationalStore: OperationalStore = {
   async putStoredCredential(org, rec) {
     getDb()
       .prepare(
-        `INSERT INTO stored_credential (org_id, ref, ciphertext, provider, domain, created_by, created_at)
+        `INSERT INTO stored_credential (org_id, ref, ciphertext, connector, domain, created_by, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (org_id, ref) DO UPDATE SET
-           ciphertext = excluded.ciphertext, provider = excluded.provider,
+           ciphertext = excluded.ciphertext, connector = excluded.connector,
            domain = excluded.domain, created_by = excluded.created_by, created_at = excluded.created_at`,
       )
-      .run(org, rec.ref, rec.ciphertext, rec.provider ?? null, rec.domain ?? null, rec.createdBy, rec.createdAt);
+      .run(org, rec.ref, rec.ciphertext, rec.connector ?? null, rec.domain ?? null, rec.createdBy, rec.createdAt);
   },
 
   async getStoredCredential(org, ref) {
     const row = getDb()
-      .prepare("SELECT ref, ciphertext, provider, domain, created_by, created_at FROM stored_credential WHERE org_id = ? AND ref = ?")
-      .get(org, ref) as { ref: string; ciphertext: string; provider: string | null; domain: string | null; created_by: string; created_at: string } | undefined;
+      .prepare("SELECT ref, ciphertext, connector, domain, created_by, created_at FROM stored_credential WHERE org_id = ? AND ref = ?")
+      .get(org, ref) as { ref: string; ciphertext: string; connector: string | null; domain: string | null; created_by: string; created_at: string } | undefined;
     if (!row) return null;
     return {
       ref: row.ref,
       ciphertext: row.ciphertext,
-      ...(row.provider ? { provider: row.provider } : {}),
+      ...(row.connector ? { connector: row.connector } : {}),
       ...(row.domain ? { domain: row.domain } : {}),
       createdBy: row.created_by,
       createdAt: row.created_at,
@@ -1778,26 +1781,26 @@ export const sqliteOperationalStore: OperationalStore = {
   async addCredentialIntake(row) {
     getDb()
       .prepare(
-        `INSERT INTO credential_intake (org_id, id, ref, provider, domain, requested_by, channel_id, thread_ts, created_at, expires_at, used_at)
+        `INSERT INTO credential_intake (org_id, id, ref, connector, domain, requested_by, channel_id, thread_ts, created_at, expires_at, used_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(row.org, row.id, row.ref, row.provider, row.domain ?? null, row.requestedBy, row.channelId, row.threadTs ?? null, row.createdAt, row.expiresAt, row.usedAt ?? null);
+      .run(row.org, row.id, row.ref, row.connector, row.domain ?? null, row.requestedBy, row.channelId, row.threadTs ?? null, row.createdAt, row.expiresAt, row.usedAt ?? null);
   },
 
   async getCredentialIntake(org, id) {
     const row = getDb()
       .prepare(
-        "SELECT id, ref, provider, domain, requested_by, channel_id, thread_ts, created_at, expires_at, used_at FROM credential_intake WHERE org_id = ? AND id = ?",
+        "SELECT id, ref, connector, domain, requested_by, channel_id, thread_ts, created_at, expires_at, used_at FROM credential_intake WHERE org_id = ? AND id = ?",
       )
       .get(org, id) as
-      | { id: string; ref: string; provider: string; domain: string | null; requested_by: string; channel_id: string; thread_ts: string | null; created_at: string; expires_at: string; used_at: string | null }
+      | { id: string; ref: string; connector: string; domain: string | null; requested_by: string; channel_id: string; thread_ts: string | null; created_at: string; expires_at: string; used_at: string | null }
       | undefined;
     if (!row) return null;
     return {
       org,
       id: row.id,
       ref: row.ref,
-      provider: row.provider,
+      connector: row.connector,
       ...(row.domain ? { domain: row.domain } : {}),
       requestedBy: row.requested_by,
       channelId: row.channel_id,
