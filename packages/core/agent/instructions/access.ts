@@ -524,7 +524,7 @@ export async function renderScopeMarkdown(ctx: BindableContext): Promise<string>
 }
 
 async function resolve(ctx: BindableContext) {
-  return defineInstructions({ markdown: await renderScopeMarkdown(ctx) });
+  return defineInstructions({ content: await renderScopeMarkdown(ctx), role: "system" });
 }
 
 export default defineDynamic({

@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { readFileSync, readdirSync } from "node:fs";
 import { assembleAccessInstructions } from "../agent/access/instructions.js";
 import { clearPendingCancelNoteAfter, setPendingCancelNote } from "../agent/channels/cancel-note.js";
-import { renderSurfaceGuide, renderScopeMarkdown, REPLY_STYLE_RUBRIC } from "../agent/instructions/access.js";
+import dynamicInstructions, { renderSurfaceGuide, renderScopeMarkdown, REPLY_STYLE_RUBRIC } from "../agent/instructions/access.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { defineMemorySilo } from "../agent/memory/silo.js";
@@ -375,6 +376,49 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   ok((await perSurface("teams", { tenant_id: "TEN1", channel_id: "CH1", channel_type: "channel" })).includes("**Aria**"), "🔴 a configured name gives a TEAMS per-surface session a real name — the answer core could not give before");
   ok((await perSurface("slack", { team_id: "T1", channel_id: "C_ORD", channel_type: "channel", is_private: "false", trust_checked: "true" })).includes("**Aria**"), "…and the SAME name on Slack — one canonical name, every surface");
   resetSettingsForTest();
+}
+
+{
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+  const ctx = {
+    channel: { kind: "teams" },
+    session: { auth: { current: { attributes: { tenant_id: "TEN1", channel_id: "CH1", channel_type: "channel" }, principalId: "U1", principalType: "user" } } },
+  } as BindableContext;
+  type ResolveCtx = Parameters<NonNullable<(typeof dynamicInstructions.events)["session.started"]>>[1];
+
+  for (const event of ["session.started", "turn.started"] as const) {
+    const handler = dynamicInstructions.events[event];
+    ok(handler !== undefined, `${event}: the dynamic instructions resolver is registered`);
+    const def = await handler!(undefined, ctx as unknown as ResolveCtx);
+    ok(def !== null && typeof def === "object", `${event}: the resolver returns an instructions definition`);
+    ok("content" in def!, `${event}: the definition uses the typed \`content\` key`);
+    ok(def!.content === (await renderScopeMarkdown(ctx)), `${event}: \`content\` is byte-identical to renderScopeMarkdown(ctx) — the migration changed no prompt bytes`);
+    ok((def!.content ?? "").length > 0, `${event}: the rendered block is non-empty (the byte assertion above is not comparing two empty strings)`);
+    ok(("markdown" in def!) === false, `${event}: the deprecated \`markdown\` key is absent`);
+    ok(def!.role === "system", `${event}: the role is "system" (ephemeral prompt text), not "user" (durable history)`);
+  }
+
+  const tsSources = (dir: URL): URL[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const child = new URL(`${e.name}${e.isDirectory() ? "/" : ""}`, dir);
+      return e.isDirectory() ? tsSources(child) : e.name.endsWith(".ts") ? [child] : [];
+    });
+  const agentSources = tsSources(new URL("../agent/", import.meta.url)).map((u) => ({ url: u, src: readFileSync(u, "utf8") }));
+  ok(agentSources.length > 100, `the source scan walked the whole agent tree (${agentSources.length} .ts files) — it is not looking at an empty directory`);
+  ok(
+    agentSources.filter((f) => /defineInstructions\(\s*\{\s*content\s*:/.test(f.src)).length === 1,
+    "exactly ONE core agent module calls defineInstructions, and it uses the typed `content` key",
+  );
+  const deprecated = agentSources.filter((f) => /defineInstructions\(\s*\{\s*markdown\b/.test(f.src)).map((f) => f.url.pathname);
+  ok(deprecated.length === 0, `no core agent module calls defineInstructions with the deprecated \`markdown\` key (found: ${deprecated.join(", ")})`);
 }
 
 console.log(`✓ instructions: ${passed} assertions passed`);
