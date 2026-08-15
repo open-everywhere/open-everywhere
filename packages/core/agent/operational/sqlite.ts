@@ -26,7 +26,7 @@ function getDb(): DatabaseSync {
   if (db) return db;
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
   const handle = new DatabaseSync(path);
-  handle.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+  handle.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
   const spendCols = handle.prepare("SELECT name FROM pragma_table_info('spend_ledger')").all() as { name: string }[];
   if (spendCols.length > 0 && !spendCols.some((c) => c.name === "usd_micros_measured")) handle.exec("DROP TABLE spend_ledger");
   const linkedIdCols = handle.prepare("SELECT name FROM pragma_table_info('identity_linked_ids')").all() as { name: string }[];
