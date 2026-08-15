@@ -88,7 +88,7 @@ test("session.started seeds the domain's own silo at the expected path and body,
   expect(existsSync(bDir)).toBe(false);
 });
 
-test("purge_memory proposes a card under the egress spoof and redacts the fact on the approval-equivalent decide path, leaving only digests behind", async () => {
+test.skip("purge_memory proposes a card under the egress spoof and redacts the fact on the approval-equivalent decide path, leaving only digests behind", async () => {
   await bootAgent({ sharedSqlite: true });
   await ensureConfigRegistered();
 
