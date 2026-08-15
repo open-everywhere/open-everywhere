@@ -1,5 +1,5 @@
 import type { SessionMode } from "../access/resolver.js";
-import { readBindingBridge, bridgedContext, type BridgedIdentity } from "./binding-bridge.js";
+import { readBindingBridge, stampBindingBridge, bridgedContext, type BridgedIdentity } from "./binding-bridge.js";
 import { normalizePlatform, platformFromKind } from "./platform.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { declaredSurfaceTrust } from "./trust.js";
@@ -351,20 +351,44 @@ export function bindBridged(bridged: BridgedIdentity): { platform: string; raw: 
   return { platform, raw };
 }
 
+function rawIdentityFrom(ctx: BindableContext): { platform: string; raw: RawIdentity } {
+  const platform = seg(channelPlatform(ctx), "local");
+  return { platform, raw: (MAPPERS.get(platform) ?? bindLocal)(ctx) };
+}
+
+export function carriesPlatformIdentity(ctx: BindableContext): boolean {
+  return namesASurface(rawIdentityFrom(ctx).raw);
+}
+
+function namesASurface(raw: RawIdentity): boolean {
+  return raw.workspace !== undefined || raw.surface !== undefined;
+}
+
+export function refreshBindingStamp(ctx: BindableContext): "stamped" | "kept" {
+  if (!carriesPlatformIdentity(ctx)) {
+    const established = readBindingBridge();
+    if (established !== null && namesASurface(bindBridged(established).raw)) return "kept";
+  }
+  stampBindingBridge(ctx);
+  return "stamped";
+}
+
 export function bindFrom(ctx: BindableContext): SurfaceBinding {
-  let platform = seg(channelPlatform(ctx), "local");
-  let raw = (MAPPERS.get(platform) ?? bindLocal)(ctx);
+  let { platform, raw } = rawIdentityFrom(ctx);
   let fire = attestedFirePrincipal(ctx);
   let unattended = unattendedDelivery(ctx);
-  if (raw.workspace === undefined && raw.surface === undefined) {
+  if (!namesASurface(raw)) {
     const bridged = readBindingBridge();
     if (bridged) {
-      ({ platform, raw } = bindBridged(bridged));
-      fire ??= attestedFirePrincipal(bridgedContext(bridged));
-      unattended ||= unattendedDelivery(bridgedContext(bridged));
-      console.warn(
-        `[open-everywhere:binding-bridge] context carried no platform identity — bound via the session's stamped ${platform} identity`,
-      );
+      const hop = bindBridged(bridged);
+      if (MAPPERS.get(platform) === undefined || hop.platform === platform) {
+        ({ platform, raw } = hop);
+        fire ??= attestedFirePrincipal(bridgedContext(bridged));
+        unattended ||= unattendedDelivery(bridgedContext(bridged));
+        console.warn(
+          `[open-everywhere:binding-bridge] context carried no platform identity — bound via the session's stamped ${platform} identity`,
+        );
+      }
     }
   }
   const local = bindLocal(ctx);

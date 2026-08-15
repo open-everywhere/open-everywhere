@@ -11,7 +11,10 @@ import {
   UNNAMED_TENANT,
 } from "../agent/identity/principal-key.js";
 import { readBindingBridge, stampBindingBridge, bridgedContext } from "../agent/identity/binding-bridge.js";
+import { carriesPlatformIdentity, refreshBindingStamp } from "../agent/identity/binding.js";
+import bindingBridgeHook from "../agent/hooks/binding-bridge.js";
 import { resolvePartition } from "../agent/memory/partition.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -191,6 +194,137 @@ ok(
     principalKeyReplacementHint("slack/U1", undefined).includes(`"slack/<tenant-id>/U1"`),
     "…and the shape plus where to find the segment when it does not — never a guessed workspace",
   );
+}
+
+{
+  for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_TRUST", "OE_MODE"]) delete process.env[k];
+
+  const surfaceMapper: IdentityMapper = (ctx) => {
+    const a = ctx.session?.auth?.current?.attributes;
+    const ws = typeof a?.["ws"] === "string" ? (a["ws"] as string) : undefined;
+    const sfc = typeof a?.["sfc"] === "string" ? (a["sfc"] as string) : undefined;
+    const pid = typeof a?.["pid"] === "string" ? (a["pid"] as string) : undefined;
+    return { workspace: ws, surface: sfc, principalId: pid, mode: "channel", ...(ws !== undefined ? { trust: "internal" as const } : {}) };
+  };
+  registerIdentityMapper("ope603a", surfaceMapper);
+  registerIdentityMapper("ope603b", surfaceMapper);
+
+  const scopeKeyOf = (ctx: BindableContext): string => {
+    const b = bindFrom(ctx);
+    return `${b.platform}/${b.workspace}/${b.domainSurface ?? b.surface}`;
+  };
+
+  const deliveryA: BindableContext = {
+    channel: { kind: "channel:unified" },
+    session: { auth: { current: { attributes: { oe_platform: "ope603a", oe_wake_id: "w-a", oe_grain: "standing", ws: "W_A", sfc: "S_A", pid: "P_A" }, principalId: "U_A", principalType: "user" } } },
+  };
+  const deliveryB: BindableContext = {
+    channel: { kind: "channel:unified" },
+    session: { auth: { current: { attributes: { oe_platform: "ope603b", oe_wake_id: "w-b", oe_grain: "standing", ws: "W_B", sfc: "S_B" }, principalId: "U_B", principalType: "user" } } },
+  };
+  const internalWakeA: BindableContext = {
+    channel: { kind: "channel:unified" },
+    session: { auth: { current: { attributes: { oe_platform: "ope603a", oe_wake_id: "w-decision", oe_grain: "standing", oe_window_token: "oe-domain::d:oe-sup:g1", oe_sources: "ope603a" } } } },
+  };
+  const internalWakeB: BindableContext = {
+    channel: { kind: "channel:unified" },
+    session: { auth: { current: { attributes: { oe_platform: "ope603b", oe_wake_id: "w-decision", oe_grain: "standing", oe_window_token: "oe-domain::d:oe-sup:g1", oe_sources: "ope603b" } } } },
+  };
+  const toolCtx: BindableContext = {};
+
+  ok(carriesPlatformIdentity(deliveryA), "OPE-603: a real surface delivery CARRIES a platform identity");
+  ok(!carriesPlatformIdentity(internalWakeA), "🔴 OPE-603: an internal wake's five oe_* stamps are NOT a platform identity — non-empty, and still nothing to bind");
+  ok(!carriesPlatformIdentity(toolCtx), "OPE-603: an identity-less tool context carries none either");
+
+  class FakeSession {
+    private readonly store = new Map<string, unknown>();
+    get<T>(key: { name: string }): T | undefined {
+      return this.store.get(key.name) as T | undefined;
+    }
+    has(key: { name: string }): boolean {
+      return this.store.has(key.name);
+    }
+    require<T>(key: { name: string }): T {
+      if (!this.has(key)) throw new Error(`missing ${key.name}`);
+      return this.get(key) as T;
+    }
+    set<T>(key: { name: string }, v: T | ((c: T | undefined) => T)): T {
+      const next = typeof v === "function" ? (v as (c: T | undefined) => T)(this.get(key)) : v;
+      this.store.set(key.name, next);
+      return next;
+    }
+    ensure<T>(key: { name: string }, create: () => T): T {
+      return this.has(key) ? this.require(key) : this.set(key, create());
+    }
+    clearVirtualContext(): void {}
+    setVirtualContext(): void {}
+    *entries(): Generator<readonly [unknown, unknown]> {}
+  }
+  const g = globalThis as Record<PropertyKey, unknown>;
+  const storageKey = Symbol.for("eve.context-storage");
+  g[storageKey] ??= new AsyncLocalStorage();
+  const storage = g[storageKey] as AsyncLocalStorage<unknown>;
+  const inSession = <T>(fn: () => T | Promise<T>): Promise<T> => Promise.resolve(storage.run(new FakeSession(), fn));
+
+  const hookEvents = (bindingBridgeHook as { events: Record<string, (e: unknown, ctx: unknown) => Promise<void>> }).events;
+  const sessionStarted = (ctx: BindableContext): Promise<void> => hookEvents["session.started"]!({}, ctx);
+  const turnStarted = (ctx: BindableContext): Promise<void> => hookEvents["turn.started"]!({}, ctx);
+
+  await inSession(async () => {
+    await sessionStarted(deliveryA);
+    ok(scopeKeyOf(deliveryA) === "ope603a/W_A/S_A", "OPE-603 §1: the seat's first delivery binds its own surface");
+    ok(scopeKeyOf(toolCtx) === "ope603a/W_A/S_A", "OPE-603 §1: …and its identity-less tool contexts bridge to the same surface");
+
+    await turnStarted(internalWakeA);
+    ok(scopeKeyOf(internalWakeA) === "ope603a/W_A/S_A", "🔴 OPE-603 §1: an INTERNAL WAKE's turn binds the ORIGIN surface, not the env stand-in");
+    ok(bindFrom(internalWakeA).trust === "internal", "🔴 OPE-603 §1: …so it keeps the surface's trust verdict too");
+    ok(scopeKeyOf(toolCtx) === "ope603a/W_A/S_A", "🔴 OPE-603 §1: …and the tools + delegated workers on that turn still resolve the surface");
+
+    ok(refreshBindingStamp(deliveryB) === "stamped", "OPE-603 §1: a delivery that carries an identity STILL writes the stamp");
+    ok(scopeKeyOf(toolCtx) === "ope603b/W_B/S_B", "OPE-603 §1: …and the seat re-binds to the surface that just spoke");
+    ok(refreshBindingStamp(internalWakeB) === "kept", "OPE-603 §1: an identity-less wake reports `kept` — it wrote nothing");
+    ok(scopeKeyOf(toolCtx) === "ope603b/W_B/S_B", "OPE-603 §1: …and the stamp is unchanged");
+  });
+
+  await inSession(async () => {
+    await sessionStarted(internalWakeA);
+    const stamped = readBindingBridge();
+    ok(stamped !== null && !carriesPlatformIdentity(bridgedContext(stamped)), "🔴 OPE-603 §2 negative control: a session that only ever saw an identity-less delivery holds a stamp that NAMES NO SURFACE");
+    ok(scopeKeyOf(internalWakeA) === "ope603a/dev/default", "🔴 OPE-603 §2: …so it binds the env stand-in, inventing no surface");
+    ok(bindFrom(internalWakeA).trust === "external", "🔴 OPE-603 §2: …and FAILS CLOSED to external");
+    ok(scopeKeyOf(toolCtx) === "ope603a/dev/default", "🔴 OPE-603 §2: …and its tools resolve nothing either — never a borrowed surface");
+  });
+  await inSession(async () => {
+    ok(readBindingBridge() === null, "🔴 OPE-603 §2: a NEIGHBOURING session sees none of §1's stamp — no cross-session bleed");
+    ok(scopeKeyOf(deliveryA) === "ope603a/W_A/S_A", "OPE-603 §2: …its OWN delivery still binds its own surface (the fence costs a real delivery nothing)");
+    ok(bindFrom(internalWakeA).trust === "external", "🔴 OPE-603 §2: …but an identity-less wake here binds fail-closed, never the neighbour's internal surface");
+  });
+
+  await inSession(async () => {
+    await sessionStarted(deliveryA);
+    ok(scopeKeyOf(deliveryA) === "ope603a/W_A/S_A", "OPE-603 §3: the seat establishes surface A");
+    await turnStarted(internalWakeB);
+    ok(scopeKeyOf(internalWakeB) !== "ope603a/W_A/S_A", "🔴 OPE-603 §3: an identity-less wake naming platform B does NOT inherit platform A's surface");
+    ok(scopeKeyOf(internalWakeB) === "ope603b/dev/default", "🔴 OPE-603 §3: …it falls to the env stand-in on its OWN platform");
+    ok(bindFrom(internalWakeB).trust === "external", "🔴 OPE-603 §3: …and fails closed");
+    ok(scopeKeyOf(toolCtx) === "ope603a/W_A/S_A", "🔴 OPE-603 §3: …while the identity-less TOOL context still bridges — the fence tests a named platform, not the absence of one");
+  });
+
+  const wakeP = (pid: string): BindableContext => ({
+    channel: { kind: "channel:unified" },
+    session: { auth: { current: { attributes: { oe_platform: "ope603a", oe_wake_id: `w-${pid}`, oe_grain: "standing", pid } } } },
+  });
+  await inSession(async () => {
+    await sessionStarted(wakeP("P1"));
+    ok(bindFrom(toolCtx).principalId === "P1", "OPE-603 §4: with NO surface established, an identity-less delivery still writes its stamp");
+    await turnStarted(wakeP("P2"));
+    ok(bindFrom(toolCtx).principalId === "P2", "🔴 OPE-603 §4: …and a later one still REFRESHES it — the rule refuses a downgrade, never every identity-less write");
+    await turnStarted(deliveryA);
+    ok(bindFrom(toolCtx).principalId === "P_A", "OPE-603 §4: a real delivery establishes the surface and its own attestation");
+    await turnStarted(wakeP("P3"));
+    ok(bindFrom(toolCtx).principalId === "P_A", "🔴 OPE-603 §4: …and from then on an identity-less delivery overwrites NOTHING");
+    ok(scopeKeyOf(toolCtx) === "ope603a/W_A/S_A", "🔴 OPE-603 §4: …so the surface holds");
+  });
 }
 
 console.log(`✓ identity: ${passed} assertions passed`);
