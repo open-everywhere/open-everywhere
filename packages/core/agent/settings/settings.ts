@@ -139,6 +139,9 @@ const positiveInt = (value: number): string | undefined =>
 const positiveNumber = (value: number): string | undefined =>
   Number.isFinite(value) && value > 0 ? undefined : "must be a positive number";
 
+const stringArray = (value: readonly string[]): string | undefined =>
+  Array.isArray(value) && value.every((t) => typeof t === "string") ? undefined : "must be an array of strings";
+
 export const SETTINGS = {
   agent: {
     sessionInputTokenBudget: {
@@ -572,8 +575,7 @@ export const SETTINGS = {
     nameDropInclude: {
       path: "wake.nameDrop.include",
       shipped: [] as readonly string[],
-      validate: (v) =>
-        Array.isArray(v) && v.every((t) => typeof t === "string") ? undefined : "must be an array of strings",
+      validate: stringArray,
       summary:
         "Extra name tokens the Slack/Discord AMBIENT name-drop wake fires on, beyond the surface's live vendor display name and `identity.name` (OPE-571). Case-insensitive, matched the same word-boundary way as the automatic base — no regex, no predicate. Widening ambient wake is the operator's own choice, made by diff.",
       format: (v) => (v.length > 0 ? v.join(", ") : "(none)"),
@@ -581,8 +583,7 @@ export const SETTINGS = {
     nameDropExclude: {
       path: "wake.nameDrop.exclude",
       shipped: [] as readonly string[],
-      validate: (v) =>
-        Array.isArray(v) && v.every((t) => typeof t === "string") ? undefined : "must be an array of strings",
+      validate: stringArray,
       summary:
         "Name tokens the Slack/Discord name-drop wake NEVER fires on, even when the live display name, `identity.name`, or `wake.nameDrop.include` would otherwise carry them. WINS over both — the narrowing always has the last word.",
       format: (v) => (v.length > 0 ? v.join(", ") : "(none)"),
