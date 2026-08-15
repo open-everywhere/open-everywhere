@@ -127,6 +127,12 @@ export class SlackDriver {
     return this.identityCache;
   }
 
+  async isMember(userId: string): Promise<boolean> {
+    const json = await this.api("conversations.members", { channel: this.cfg.channel, limit: "100" });
+    const members = Array.isArray(json.members) ? (json.members as string[]) : [];
+    return members.includes(userId);
+  }
+
   private async api(method: string, params: Record<string, string>): Promise<Record<string, unknown>> {
     const res = await fetch(`https://slack.com/api/${method}`, {
       method: "POST",

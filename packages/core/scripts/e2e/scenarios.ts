@@ -1024,6 +1024,12 @@ export const SCENARIOS: readonly Scenario[] = [
       const auditRead = ctx.auditRead!;
       const { userId, teamId } = await slack.identity();
       ctx.gate(secondaryId !== userId, "fixture: the secondary identity is a DIFFERENT account from the initiator (a self-claim is refused by design)");
+      if (!(await slack.isMember(secondaryId))) {
+        ctx.skip(
+          `the secondary account (${secondaryId}) is not a member of the shared channel ${slack.channelId} — ` +
+            "invite it in Slack (or have it Join the channel); no driver token carries a join/invite scope.",
+        );
+      }
 
       const mintAsk = "please start linking another one of my accounts to this one — give me the code.";
       const { ts: mintTs } = await dm.post(mintAsk);
@@ -1062,7 +1068,11 @@ export const SCENARIOS: readonly Scenario[] = [
         if (armed) {
           ctx.gate(false, `claim: ${miss} E2E_LINK_IDENTITY=1 declares this deployment carries 68b975d9, so this is a product regression, not a stale deploy.`);
         }
-        ctx.skip(`${miss} DEPLOY FIRST: this needs a build carrying 68b975d9 (prod at 2b970d11 does not). Set E2E_LINK_IDENTITY=1 once it is deployed to make this a hard failure.`);
+        ctx.skip(
+          `${miss} Either the deployment predates the link-claim hook (68b975d9), or the hook cannot read the claim on this path — ` +
+            "found live 2026-08-15 (OPE-615): the unified-window session hands message.received the RENDERED WAKE ENVELOPE, not the raw body, " +
+            "so the recogniser never matches. Set E2E_LINK_IDENTITY=1 on a build that carries the fix to make this a hard failure.",
+        );
       }
       const claimantKey = `slack/${secondaryId}`;
       ctx.gate(
