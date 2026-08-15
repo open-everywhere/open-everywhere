@@ -1,4 +1,5 @@
 import { admitProviderRegistration } from "../access/provider-selection.js";
+import { onVercel } from "../access/platform.js";
 import { bridgeSlackForm } from "./slack-bridge.js";
 
 export interface OutboundFile {
@@ -39,6 +40,11 @@ export async function postSurfaceText(
   platform: string,
   target: { readonly channelId: string; readonly text: string; readonly threadTs?: string | null; readonly replyToMessageId?: string },
 ): Promise<string | undefined> {
+  if (process.env.OE_EGRESS_SPOOF === "1") {
+    if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
+    console.warn(`[oe] OE_EGRESS_SPOOF: swallowed a ${platform} surface-text post`);
+    return `spoof-${platform}-${Date.now()}`;
+  }
   try {
     if (platform === "slack") {
       const body = new URLSearchParams({ channel: target.channelId, text: target.text });
