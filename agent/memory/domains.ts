@@ -33,6 +33,9 @@ const silos: MemorySilo[] = [
     : []),
 
   defineMemorySilo({ name: "e2e-solo-brain", provider: "postgres", description: "solo-window e2e pack scratch brain" }),
+
+  defineMemorySilo({ name: "it-memory-brain", provider: "git", description: "integration-tier memory coverage fixture (OPE-551)" }),
+  defineMemorySilo({ name: "it-memory-b-brain", provider: "git", description: "OPE-551 silo-isolation negative control — must stay empty of it-memory's facts" }),
 ];
 
 const E2E_NOTION_SURFACE = "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000101";
@@ -117,6 +120,25 @@ const rawDomains: Domain[] = [
     name: "e2e-cap",
     channels: ["slack/T0EXAMPLE/C0EXCHAN007"],
     memory: "e2e-brain",
+    engagementTier: "neutral",
+    models: { primary: { id: UTILITY_MODEL } },
+  }),
+
+  defineDomain({
+    name: "it-memory",
+    channels: ["discord/1300000000000000100/1300000001500000001", "discord/1300000000000000100/1300000001500000003"],
+    memory: "it-memory-brain",
+    ambientSupervisor: true,
+    mode: "solo",
+    engagementTier: "neutral",
+    models: { primary: { id: UTILITY_MODEL } },
+  }),
+  defineDomain({
+    name: "it-memory-b",
+    channels: ["discord/1300000000000000100/1300000001500000002"],
+    memory: "it-memory-b-brain",
+    ambientSupervisor: true,
+    mode: "solo",
     engagementTier: "neutral",
     models: { primary: { id: UTILITY_MODEL } },
   }),
