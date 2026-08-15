@@ -6,6 +6,8 @@ import { resolveReplyTarget, postReply, auditReplyRefused, type ReplyAudit, type
 import { replierLabelFor } from "../channels/turn-delivery.js";
 import { markRepliedThisTurn, markWakeDoneThisTurn, isWakeDoneThisTurn } from "../channels/reply-signal.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
+import { claimTasksForAddressedWake } from "../access/dispatch-origin-signal.js";
+import { retargetTaskWakes } from "../channels/task-wake.js";
 import { silentRoutineThisTurn } from "../routines/report.js";
 import { resolveOwnWindowToken } from "../access/oneshot-spawn.js";
 import { postUnifiedReply } from "../channels/unified-reply.js";
@@ -78,6 +80,11 @@ const unifiedReplyEntry = defineTool({
 
       const id = await postUnifiedReply(origin, input.text, {}, replyAuditFor(ctx as BindableContext, "tool", input.wake), replierFor(bind));
       markRepliedThisTurn();
+
+      const claimed = claimTasksForAddressedWake(turnId, input.wake);
+      if (claimed.length > 0) {
+        await retargetTaskWakes({ org, tasks: claimed, addressedWakeId: input.wake, windowToken, turnId });
+      }
 
       if (input.done !== false) {
         await store.markUnifiedWakeAnswered(org, input.wake, new Date().toISOString(), turnId).catch(() => undefined);

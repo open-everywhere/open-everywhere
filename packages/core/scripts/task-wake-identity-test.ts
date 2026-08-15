@@ -178,4 +178,117 @@ await new Promise((r) => setTimeout(r, 60));
   eq(foreign.ok, false, "🔴 P7: a DIFFERENT window cannot answer this task's wake — the minted row carries the dispatching seat's window token, so arm 4's cross-domain fence refuses");
 }
 
+{
+  const spawnTaint = await import("../agent/hooks/spawn-taint.js");
+  const { addressedWakeThisTurn, claimTasksForAddressedWake, noteTaskDispatchedThisTurn } = await import("../agent/access/dispatch-origin-signal.js");
+  const { retargetTaskWakes, TASK_WAKE_RETARGET_ACTION } = await import("../agent/channels/task-wake.js");
+  const handler = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["action.result"]!;
+
+  const receiptResult = (callId: string, taskId: string) => ({
+    backgroundTask: { status: "working", taskId },
+    callId,
+    kind: "subagent-result",
+    origin: "child",
+    outcome: { kind: "parked", result: { kind: "succeeded", output: `Delegated as background task ${taskId} (working).` }, usageDelta: { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0 } },
+    output: { agentId: "ag_agent:6666", status: "working", taskId },
+    subagentName: "agent",
+  });
+
+  const THREAD_P = { platform: "slack", channelId: "C_P", threadTs: "333.3" } as const;
+  const W_P = "wake-p-0601";
+  const W_DECISION = "wake-decision-0601";
+  await registerUnifiedWakeTarget(store, ORG, W_P, THREAD_P, iso(), WINDOW);
+  await registerUnifiedWakeTarget(store, ORG, W_DECISION, OTHER_THREAD, iso(), WINDOW);
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    const ctx = seatCtx(W_DECISION, "turn_coalesced");
+    noteTurnBoundary("turn_coalesced", W_DECISION);
+    eq(currentWakeId(ctx), W_DECISION, "P9 precondition: the coalesced turn's own stamp is the LAST delivery's — the decision wake, whose origin is the OTHER thread");
+    eq(addressedWakeThisTurn("turn_coalesced"), undefined, "P9 precondition: the turn has said nothing yet, so the dispatch edge has no address to prefer — asserted `=== undefined`");
+
+    await handler({ data: { result: receiptResult("call_601a", "task_601a") } }, ctx);
+    const mintedA = await taskWakeId(ORG, "task_601a");
+    ok(typeof mintedA === "string" && mintedA.length > 0, "🔴 P9: the REAL hook handler minted a wake for the dispatched task — without this the assertions below would pass on a branch that never ran");
+    eq(
+      await resolveUnifiedWakeTarget(store, ORG, mintedA!),
+      OTHER_THREAD,
+      "🔴 P9 THE MEASURED DEFECT, ASSERTED FIRST: with nothing addressed yet the task is registered against the COALESCED LAST wake's thread — the conversation that asked nothing. This is the negative control the fix has to move",
+    );
+
+    const claimed = claimTasksForAddressedWake("turn_coalesced", W_P);
+    eq(claimed.length, 1, "P9: the turn's ledger hands back exactly the one task it dispatched before it spoke");
+    eq(claimed[0]?.taskId, "task_601a", "…named by its task id");
+    const moved = await retargetTaskWakes({ org: ORG, tasks: claimed, addressedWakeId: W_P, windowToken: WINDOW, turnId: "turn_coalesced" });
+    eq(moved, 1, "P9: one task moved");
+    eq(
+      await resolveUnifiedWakeTarget(store, ORG, mintedA!),
+      THREAD_P,
+      "🔴 P9 THE FIX: the task's wake now resolves to thread P — the conversation this turn told the reply fence it was answering",
+    );
+
+    const settlementTarget = await resolveAnswerableReplyTarget(store, ORG, mintedA!, WINDOW, "turn_settle_601", mintedA!);
+    ok(settlementTarget.ok, "P9: the moved wake is still answerable — the re-point re-stamps the window token, so the cross-domain fence is not broken by the move");
+    eq(settlementTarget.ok ? settlementTarget.origin : null, THREAD_P, "🔴 P9 END TO END: the settlement reply resolves to thread P. The worker's answer lands where the work was asked for");
+
+    eq(addressedWakeThisTurn("turn_coalesced"), W_P, "P9: the turn's addressed wake is recorded");
+    eq(claimTasksForAddressedWake("turn_coalesced", W_DECISION).length, 0, "🔴 P9: a SECOND reply in the same turn claims NOTHING — otherwise the task's address would depend on the order the model finished talking");
+    eq(await resolveUnifiedWakeTarget(store, ORG, mintedA!), THREAD_P, "…and the wake still points at P, asserted after the second claim rather than merely before it");
+
+    await handler({ data: { result: receiptResult("call_601b", "task_601b") } }, ctx);
+    const mintedB = await taskWakeId(ORG, "task_601b");
+    ok(typeof mintedB === "string" && mintedB.length > 0, "P10: the second dispatch minted its own wake");
+    ok(mintedB !== mintedA, "P10: …a different one — two tasks never share an address");
+    eq(
+      await resolveUnifiedWakeTarget(store, ORG, mintedB!),
+      THREAD_P,
+      "🔴 P10: a task dispatched AFTER the turn addressed P is registered against P AT THE EDGE — `currentWakeId` is still the decision wake, so this can only come from the addressed-wake read in the hook",
+    );
+    eq(claimTasksForAddressedWake("turn_coalesced", W_P).length, 0, "P10: …and it is not in the ledger, so no re-point is owed for it");
+  });
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    const ctx = seatCtx(W_DECISION, "turn_later_601");
+    noteTurnBoundary("turn_later_601", W_DECISION);
+    claimTasksForAddressedWake("turn_first_601", W_P);
+    eq(addressedWakeThisTurn("turn_later_601"), undefined, "🔴 P9: an address recorded for one turn is NOT returned for the next — asserted `=== undefined`");
+    eq(addressedWakeThisTurn(undefined), undefined, "…and an unreadable turn id answers `undefined` too, never a guess");
+    await handler({ data: { result: receiptResult("call_601c", "task_601c") } }, ctx);
+    const mintedC = await taskWakeId(ORG, "task_601c");
+    ok(typeof mintedC === "string" && mintedC.length > 0, "P9: the later turn's dispatch minted a wake");
+    eq(await resolveUnifiedWakeTarget(store, ORG, mintedC!), OTHER_THREAD, "🔴 P9: …registered against ITS OWN turn stamp. The fix adds a preference, it does not hand a stale address forward");
+  });
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    const ctx = seatCtx(W_P, "turn_single_601");
+    noteTurnBoundary("turn_single_601", W_P);
+    await handler({ data: { result: receiptResult("call_601d", "task_601d") } }, ctx);
+    const mintedD = await taskWakeId(ORG, "task_601d");
+    const claimed = claimTasksForAddressedWake("turn_single_601", W_P);
+    eq(claimed.length, 1, "control: the single-wake turn still ledgers its dispatch");
+    eq(
+      await retargetTaskWakes({ org: ORG, tasks: claimed, addressedWakeId: W_P, windowToken: WINDOW, turnId: "turn_single_601" }),
+      0,
+      "🔴 THE NO-OP CONTROL: the task is ALREADY registered against the conversation the turn addressed, so NOTHING is written — every turn woken by one conversation is byte-identical to pre-OPE-601",
+    );
+    eq(await resolveUnifiedWakeTarget(store, ORG, mintedD!), THREAD_P, "…and its address is unchanged");
+  });
+
+  eq(
+    await retargetTaskWakes({ org: ORG, tasks: [{ taskId: "task_601a", wakeId: "wake-not-a-row" }], addressedWakeId: "wake-that-never-existed", windowToken: WINDOW, turnId: "t" }),
+    0,
+    "🔴 the re-point COPIES an origin, never guesses one: an addressed wake that does not resolve moves nothing",
+  );
+
+  await new Promise((r) => setTimeout(r, 60));
+  {
+    const rows = await readAudit({ org: ORG, action: TASK_WAKE_RETARGET_ACTION });
+    eq(TASK_WAKE_RETARGET_ACTION, "unified.task_wake_retarget", "the re-point has its OWN action, apart from `unified.task_wake`");
+    eq(rows.length, 1, "🔴 exactly ONE re-point row — the no-op control above wrote none, so this count is also the proof that a single-wake turn stays silent");
+    const d = rows[0]!.detail as Record<string, unknown>;
+    eq(d.task, "task_601a", "the row names the task that moved");
+    eq(d.addressedWakeId, W_P, "…the wake the turn addressed, which is where the new origin was copied from");
+    eq(d.turnId, "turn_coalesced", "…and the turn, which joins the row to the transcript");
+  }
+}
+
 console.log(`task-wake-identity: ${n} assertions passed`);

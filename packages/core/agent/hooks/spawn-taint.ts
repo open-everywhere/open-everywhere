@@ -29,6 +29,7 @@ import { currentTurnId, currentWakeId, deploymentOrg, isSubagentChildContext, ty
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { installTaskWake, openTaskWake } from "../channels/task-wake.js";
 import { noteTurnBoundary } from "../access/task-wake-signal.js";
+import { addressedWakeThisTurn, noteTaskDispatchedThisTurn } from "../access/dispatch-origin-signal.js";
 import { flushSettledMemory, noteTaskDispatched, noteTaskViews } from "./settlement-flush.js";
 import type { MemoryPersistContext } from "./memory.js";
 
@@ -435,12 +436,14 @@ export default defineHook({
         if (receipt !== null) {
           await noteTaskReceipt(receipt, ownSessionId);
           const bind = ctx as unknown as BindableContext;
-          await openTaskWake({
+          const dispatchTurnId = currentTurnId(bind);
+          const minted = await openTaskWake({
             org: deploymentOrg(),
             taskId: receipt.taskId,
-            parentWakeId: currentWakeId(bind),
+            parentWakeId: addressedWakeThisTurn(dispatchTurnId) ?? currentWakeId(bind),
             windowToken: resolveOwnWindowToken(bind),
           });
+          if (minted !== null) noteTaskDispatchedThisTurn(dispatchTurnId, receipt.taskId, minted);
           noteTaskDispatched(receipt.taskId);
           return;
         }
