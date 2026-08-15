@@ -36,6 +36,7 @@ export function __resetRedeliveryStormGuardForTest(): void {
 const RELAY_SECRET = randomBytes(32).toString("hex");
 const READ_TOKEN = randomBytes(32).toString("hex");
 const WEBHOOK_E2E_SECRET = randomBytes(32).toString("hex");
+const SLACK_SIGNING_SECRET = randomBytes(32).toString("hex");
 
 let booted: { base: string } | undefined;
 let bootedWith: string | undefined;
@@ -108,6 +109,7 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   process.env.OE_RELAY_SECRET = RELAY_SECRET;
   process.env.OE_CONTROL_READ_TOKENS = `it:${createHash("sha256").update(READ_TOKEN, "utf8").digest("hex")}`;
   process.env.OE_WEBHOOK_E2E_SECRET = WEBHOOK_E2E_SECRET;
+  process.env.SLACK_SIGNING_SECRET = SLACK_SIGNING_SECRET;
   if (opts.sharedSqlite === true) {
     process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
     process.env.OE_SQLITE_PATH = join(state, "ops.sqlite3");
@@ -259,6 +261,28 @@ export async function webhookDeliveryPost(
   const { WebhookDriver } = await import("../../packages/core/scripts/e2e/webhook");
   const driver = new WebhookDriver({ hookId: WEBHOOK_E2E_HOOK_ID, secret: WEBHOOK_E2E_SECRET, targetUrl: booted.base });
   return driver.post(payload, opts);
+}
+
+export async function slackInteractivityPost(
+  payload: Record<string, unknown>,
+  opts: { signature?: string | null; staleSeconds?: number; timeoutMs?: number } = {},
+): Promise<{ status: number; body: string }> {
+  if (booted === undefined) throw new Error("integration harness: slackInteractivityPost before bootAgent.");
+  const { SYNTHETIC_SLACK_ROUTE, encodeInteractionBody, signSlackRequest } = await import("../../packages/core/scripts/e2e/synthetic");
+  const rawBody = encodeInteractionBody(payload);
+  const signed = signSlackRequest(rawBody, SLACK_SIGNING_SECRET, Date.now() - (opts.staleSeconds ?? 0) * 1_000);
+  const headers: Record<string, string> = {
+    "content-type": "application/x-www-form-urlencoded",
+    "x-slack-request-timestamp": signed.timestamp,
+  };
+  if (opts.signature !== null) headers["x-slack-signature"] = opts.signature ?? signed.signature;
+  const res = await fetch(`${booted.base}${SYNTHETIC_SLACK_ROUTE}`, {
+    method: "POST",
+    headers,
+    body: rawBody,
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
+  });
+  return { status: res.status, body: await res.text() };
 }
 
 export const DISCORD_GUILD_ID = "1300000000000000100";
