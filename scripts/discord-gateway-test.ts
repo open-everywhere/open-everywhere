@@ -16,6 +16,9 @@ import {
   registerAuthorTrust,
   defineAuthorTrust,
   _resetAuthorTrustForTest,
+  registerSettings,
+  resetSettingsForTest,
+  defineSettings,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { parseDriverAllowlist, isAllowedDriver, isAllowedSlackDriver } from "@open-everywhere/core/agent/testing/driver-allowlist.js";
 import {
@@ -630,6 +633,31 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   ok(nameDropEligible({ ...base, content: "unrelated chatter" }) === false, "name-drop: text without the name is not eligible");
   ok(nameDropEligible({ ...base, content: "test slack bot lowercase works" }) === true, "name-drop: the name match is case-insensitive");
   ok(nameDropEligible({ ...base, content: "ATestSlackBotX" }) === false, "name-drop: the name must be a standalone phrase, not a substring");
+
+  resetSettingsForTest();
+
+  registerSettings(defineSettings({ identity: { name: "Aria" } }));
+  ok(
+    nameDropEligible({ ...base, content: "hey Aria, can you check this?" }) === true,
+    "[OPE-571] identity.name wakes the agent on a Discord name-drop, even though the live botName differs",
+  );
+  resetSettingsForTest();
+
+  registerSettings(defineSettings({ wake: { nameDropInclude: ["Codename Falcon"] } }));
+  ok(
+    nameDropEligible({ ...base, content: "Codename Falcon, status check" }) === true,
+    "[OPE-571] wake.nameDrop.include adds a wake the base set would not fire",
+  );
+  resetSettingsForTest();
+
+  registerSettings(defineSettings({ wake: { nameDropExclude: ["Test Slack Bot"] } }));
+  ok(
+    nameDropEligible(base) === false,
+    "[OPE-571] wake.nameDrop.exclude suppresses a wake the automatic base (botName) would otherwise fire",
+  );
+  resetSettingsForTest();
+
+  ok(nameDropEligible(base) === true, "[OPE-571] NEGATIVE: unresolved/empty settings ⇒ today's botName-only behaviour");
 
   const ndTrig = (text: string) => ({ id: "m1", author: "u", authorId: "U1", sentAt: "2026-07-10T10:00:00.000Z", text });
   const turn = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "name-drop", botName: "Test Slack Bot", trigger: ndTrig("Test Slack Bot help") })).message;

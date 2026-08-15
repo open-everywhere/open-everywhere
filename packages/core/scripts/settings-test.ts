@@ -34,7 +34,7 @@ import { dreamCandidateCap } from "../agent/schedules/tidy.js";
 import { DEFAULT_CANDIDATE_CAP } from "../agent/memory/dream/candidates.js";
 import { dmTrustTtlMs } from "../agent/identity/trust.js";
 import { agentNameTokens, configuredAgentName, matchesAgentName } from "../agent/identity/bot-name.js";
-import { nameDropPattern } from "../agent/channels/turn-delivery.js";
+import { nameDropPattern, wakeNameDropTokens } from "../agent/channels/turn-delivery.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -357,8 +357,7 @@ console.log("\n9 — identity.name (OPE-569): the canonical agent name:");
   ok(matchesAgentName("open everywhere: ping"), "[9] …and still answers to the brand token (nothing was displaced)");
   ok(!matchesAgentName("the arias sang"), "[9] NEGATIVE: still word-boundary matched — a name inside a longer word does not fire");
 
-  ok(nameDropPattern("Test Slack Bot").test("did Test Slack Bot see this?"), "[9] the per-surface name-drop trigger still matches the live display name with a canonical name configured");
-  ok(!nameDropPattern("Test Slack Bot").test("hey Aria, can you look at this?"), "[9] 🔴 …and the canonical name does NOT fire it — the Slack/Discord wake trigger stays keyed on the display name alone");
+  ok(nameDropPattern("Test Slack Bot").test("did Test Slack Bot see this?"), "[9] the per-surface name-drop matcher still matches the live display name with a canonical name configured");
 
   eq(agentNameTokens("Notionaut")[0], "Notionaut", "[9] a platform-RESOLVED integration name still leads the set");
 
@@ -382,6 +381,66 @@ console.log("\n9 — identity.name (OPE-569): the canonical agent name:");
   refusesName("Ari\na", "line break", "[9/5] a name with a line break is refused — one prompt line, one matcher token");
   refusesName("x".repeat(65), "at most 64", "[9/5] a pasted paragraph is refused rather than becoming the agent's name");
   eq(defineSettings({ identity: { name: "x".repeat(64) } }).identity?.name?.length, 64, "[9/5] …and the boundary value itself is accepted");
+}
+
+console.log("\n10 — wake.nameDrop.include / wake.nameDrop.exclude (OPE-571):");
+{
+  resetSettingsForTest();
+  eq(at({}).wake.nameDropInclude, [], "[10] the shipped default for include is empty");
+  eq(at({}).wake.nameDropExclude, [], "[10] the shipped default for exclude is empty");
+
+  eq(
+    wakeNameDropTokens("Test Slack Bot"),
+    ["Test Slack Bot"],
+    "[10] unset settings + no identity.name ⇒ the wake token set is byte-identical to the pre-OPE-571 single-name trigger",
+  );
+  eq(wakeNameDropTokens(undefined), [], "[10] …and an unresolved display name still yields no tokens at all");
+
+  registerSettings(defineSettings({ identity: { name: "Aria" } }));
+  eq(
+    wakeNameDropTokens("Test Slack Bot"),
+    ["Test Slack Bot", "Aria"],
+    "[10] identity.name JOINS the wake token set alongside the live display name",
+  );
+  ok(nameDropPattern("Aria").test("hey Aria, can you look at this?"), "[10] …so the identity.name token itself fires the per-surface matcher");
+  resetSettingsForTest();
+
+  registerSettings(defineSettings({ wake: { nameDropInclude: ["ProjectBot"] } }));
+  eq(
+    wakeNameDropTokens("Test Slack Bot"),
+    ["Test Slack Bot", "ProjectBot"],
+    "[10] wake.nameDrop.include ADDS a token to the base set",
+  );
+  resetSettingsForTest();
+
+  registerSettings(defineSettings({ wake: { nameDropExclude: ["Test Slack Bot"] } }));
+  eq(
+    wakeNameDropTokens("Test Slack Bot"),
+    [],
+    "[10] 🔴 wake.nameDrop.exclude removes even the AUTOMATIC base (the live display name) — the operator's narrowing has the last word",
+  );
+  resetSettingsForTest();
+
+  registerSettings(
+    defineSettings({
+      identity: { name: "Aria" },
+      wake: { nameDropInclude: ["Codename Falcon", "aria"], nameDropExclude: ["ARIA", "test slack bot"] },
+    }),
+  );
+  eq(
+    wakeNameDropTokens("Test Slack Bot"),
+    ["Codename Falcon"],
+    "[10] 🔴 exclude wins over include AND over the automatic base (display name + identity.name), case-insensitively — only the un-excluded include token survives",
+  );
+  resetSettingsForTest();
+
+  registerSettings(defineSettings({ identity: { name: "Test Slack Bot" } }));
+  eq(
+    wakeNameDropTokens("Test Slack Bot"),
+    ["Test Slack Bot"],
+    "[10] NEGATIVE: identity.name equal to the live display name does not duplicate the token",
+  );
+  resetSettingsForTest();
 }
 
 console.log(`\nsettings: ${n} assertions passed.`);

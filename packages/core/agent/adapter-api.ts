@@ -273,6 +273,7 @@ export {
   supervisorTextDelivery,
   isSupervisorProseLeak,
   nameDropPattern,
+  wakeNameDropTokens,
   NO_REPLY_SENTINEL,
   replierLabelFor,
   replierLabelFromAuthAttributes,

@@ -9,6 +9,9 @@ import {
   registerIdentityMapper,
   shouldDeliverReply,
   classifyParticipation,
+  registerSettings,
+  resetSettingsForTest,
+  defineSettings,
   type EngagementRow,
   type ParticipationSignals,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -975,13 +978,49 @@ registerConfig({
     ...deps(true, true),
     displayName: async () => "Test Slack Bot",
   });
-  ok(out.woke && calls.length === 1, "the bot's Slack display name is the needle");
-  ok(calls[0].message.includes('("Test Slack Bot")'), "dispatch names the display name that matched");
+  ok(out.woke && calls.length === 1, "the bot's Slack display name is a needle");
+  ok(calls[0].message.includes('("Test Slack Bot")'), "dispatch names the display name that fired the gate, even when a different token matched the text (see identity.name below)");
   out = await routeNameDropEvent(topLevel(), {
     ...deps(true, true),
     displayName: async () => undefined,
   });
   ok(!out.woke, "display-name lookup failure → no needle → no wake (fail-soft, never a crash)");
+
+  resetSettingsForTest();
+
+  registerSettings(defineSettings({ identity: { name: "Aria" } }));
+  calls.length = 0;
+  out = await routeNameDropEvent(topLevel({ text: "hey Aria, can you check this?" }), {
+    ...deps(true, true),
+    displayName: async () => "Test Slack Bot",
+  });
+  ok(out.woke && calls.length === 1, "[OPE-571] identity.name wakes the agent on a Slack name-drop, even though the live display name differs");
+  resetSettingsForTest();
+
+  registerSettings(defineSettings({ wake: { nameDropInclude: ["Codename Falcon"] } }));
+  calls.length = 0;
+  out = await routeNameDropEvent(topLevel({ text: "Codename Falcon, status check" }), {
+    ...deps(true, true),
+    displayName: async () => "Test Slack Bot",
+  });
+  ok(out.woke && calls.length === 1, "[OPE-571] wake.nameDrop.include adds a wake the base set would not fire");
+  resetSettingsForTest();
+
+  registerSettings(defineSettings({ wake: { nameDropExclude: ["Test Slack Bot"] } }));
+  calls.length = 0;
+  out = await routeNameDropEvent(topLevel({ text: "Test Slack Bot, what's the ETA?" }), {
+    ...deps(true, true),
+    displayName: async () => "Test Slack Bot",
+  });
+  ok(!out.woke && calls.length === 0, "[OPE-571] wake.nameDrop.exclude suppresses a wake the automatic base would otherwise fire");
+  resetSettingsForTest();
+
+  calls.length = 0;
+  out = await routeNameDropEvent(topLevel({ text: "Test Slack Bot, what's the ETA?" }), {
+    ...deps(true, true),
+    displayName: async () => "Test Slack Bot",
+  });
+  ok(out.woke && calls.length === 1, "[OPE-571] NEGATIVE: unresolved/empty settings ⇒ today's display-name-only behaviour, unchanged");
 
   {
     const contextCalls: Array<{ channelId: string; ts: string; threadTs?: string }> = [];

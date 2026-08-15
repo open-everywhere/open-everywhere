@@ -113,6 +113,10 @@ export interface AgentSettings {
     readonly stepBudget: number;
     readonly stepBackstopMultiple: number;
   };
+  readonly wake: {
+    readonly nameDropInclude: readonly string[];
+    readonly nameDropExclude: readonly string[];
+  };
   readonly window: {
     readonly topology: boolean;
     readonly unifiedRedrive: boolean;
@@ -346,7 +350,7 @@ export const SETTINGS = {
       validate: (v) =>
         /[\n\r]/u.test(v) ? "must not contain a line break" : v.length > 64 ? "must be at most 64 characters" : undefined,
       summary:
-        "The deployment's CANONICAL agent name — what the agent calls itself on EVERY surface, and one more name it answers to. Unset (the shipped `\"\"`) is today's behaviour: the agent identifies by the LIVE vendor display name of the surface it speaks through, and core resolves such a name for Slack only. That default is wrong for a CROSS-SURFACE session, which speaks on several surfaces from one standing block: before this setting existed, a Teams delivery introduced the agent by the SLACK workspace display name (OPE-569). Set it and one name answers everywhere, on the per-surface path and the cross-surface path alike. It ALSO joins the name-drop token set (`agent/identity/bot-name.ts`) that the Notion synthetic-mention recogniser and the addressed link-claim hook match on, so the agent answers to the name it introduces itself by. It is ADDITIVE there — the brand and short-name tokens still match. ⚠️ It does NOT reach the SLACK and DISCORD name-drop wake triggers, which stay keyed on those surfaces' own live display names (the names people type in a sidebar). So on those two surfaces a named agent introduces itself by one name and wakes on another; keep the app's display name and this setting the same to avoid that.",
+        "The deployment's CANONICAL agent name — what the agent calls itself on EVERY surface, and one more name it answers to. Unset (the shipped `\"\"`) is today's behaviour: the agent identifies by the LIVE vendor display name of the surface it speaks through, and core resolves such a name for Slack only. That default is wrong for a CROSS-SURFACE session, which speaks on several surfaces from one standing block: before this setting existed, a Teams delivery introduced the agent by the SLACK workspace display name (OPE-569). Set it and one name answers everywhere, on the per-surface path and the cross-surface path alike. It ALSO joins the name-drop token set (`agent/identity/bot-name.ts`) that the Notion synthetic-mention recogniser and the addressed link-claim hook match on, so the agent answers to the name it introduces itself by. It is ADDITIVE there — the brand and short-name tokens still match. It ALSO joins the SLACK and DISCORD ambient name-drop wake trigger set (OPE-571), alongside those surfaces' own live display names — see `wake.nameDrop.include`/`wake.nameDrop.exclude` to extend or narrow that set further.",
       format: (v) => (v === "" ? "`` (unset — identify by the surface's own display name)" : v),
     } satisfies SettingSpec<string>,
   },
@@ -564,6 +568,26 @@ export const SETTINGS = {
       format: (v) => `${v}× the budget`,
     } satisfies SettingSpec<number>,
   },
+  wake: {
+    nameDropInclude: {
+      path: "wake.nameDrop.include",
+      shipped: [] as readonly string[],
+      validate: (v) =>
+        Array.isArray(v) && v.every((t) => typeof t === "string") ? undefined : "must be an array of strings",
+      summary:
+        "Extra name tokens the Slack/Discord AMBIENT name-drop wake fires on, beyond the surface's live vendor display name and `identity.name` (OPE-571). Case-insensitive, matched the same word-boundary way as the automatic base — no regex, no predicate. Widening ambient wake is the operator's own choice, made by diff.",
+      format: (v) => (v.length > 0 ? v.join(", ") : "(none)"),
+    } satisfies SettingSpec<readonly string[]>,
+    nameDropExclude: {
+      path: "wake.nameDrop.exclude",
+      shipped: [] as readonly string[],
+      validate: (v) =>
+        Array.isArray(v) && v.every((t) => typeof t === "string") ? undefined : "must be an array of strings",
+      summary:
+        "Name tokens the Slack/Discord name-drop wake NEVER fires on, even when the live display name, `identity.name`, or `wake.nameDrop.include` would otherwise carry them. WINS over both — the narrowing always has the last word.",
+      format: (v) => (v.length > 0 ? v.join(", ") : "(none)"),
+    } satisfies SettingSpec<readonly string[]>,
+  },
   window: {
     topology: {
       path: "window.topology",
@@ -759,6 +783,10 @@ export function getSettings(
     turn: {
       stepBudget: resolve(SETTINGS.turn.stepBudget, o.turn?.stepBudget, env),
       stepBackstopMultiple: resolve(SETTINGS.turn.stepBackstopMultiple, o.turn?.stepBackstopMultiple, env),
+    },
+    wake: {
+      nameDropInclude: resolve(SETTINGS.wake.nameDropInclude, o.wake?.nameDropInclude, env),
+      nameDropExclude: resolve(SETTINGS.wake.nameDropExclude, o.wake?.nameDropExclude, env),
     },
     window: {
       topology: resolve(SETTINGS.window.topology, o.window?.topology, env),

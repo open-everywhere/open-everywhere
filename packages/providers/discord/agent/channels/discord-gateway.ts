@@ -5,6 +5,7 @@ import { splitForDiscord } from "./discord-post.js";
 import {
   finalMessageAction,
   nameDropPattern,
+  wakeNameDropTokens,
   NO_REPLY_SENTINEL,
   shouldRotate,
   renderWake,
@@ -356,7 +357,7 @@ export function nameDropEligible(input: {
   const t = input.channelType;
   if (t !== "0" && t !== "5" && t !== "10" && t !== "11" && t !== "12") return false;
   if (!input.botName) return false;
-  return nameDropPattern(input.botName).test(input.content);
+  return wakeNameDropTokens(input.botName).some((token) => nameDropPattern(token).test(input.content));
 }
 
 function botAuthHeaders(token: string): Record<string, string> {

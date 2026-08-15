@@ -80,6 +80,7 @@ export { PREFER_NO_REPLY_TOOL };
 import { registerSlackAttachment } from "./slack-attachments.js";
 import {
   nameDropPattern,
+  wakeNameDropTokens,
   shouldRotate,
   buildIngestedReaction,
   ingestReaction,
@@ -615,8 +616,11 @@ export interface WakeTrigger {
   readonly pattern: RegExp;
 }
 
-export function buildWakeTriggers(name: string, extra?: readonly WakeTrigger[]): WakeTrigger[] {
-  return [{ id: "name", pattern: nameDropPattern(name) }, ...(extra ?? [])];
+export function buildWakeTriggers(displayName: string | undefined, extra?: readonly WakeTrigger[]): WakeTrigger[] {
+  return [
+    ...wakeNameDropTokens(displayName).map((token): WakeTrigger => ({ id: "name", pattern: nameDropPattern(token) })),
+    ...(extra ?? []),
+  ];
 }
 
 export function matchWakeTriggers(text: string, triggers: readonly WakeTrigger[]): WakeTrigger | undefined {

@@ -1,5 +1,6 @@
 import { NO_REPLY_SENTINEL } from "./normalized-wake.js";
 import { getSettings } from "../settings/settings.js";
+import { configuredAgentName } from "../identity/bot-name.js";
 import { consumeNoReplyThisTurn } from "./no-reply-signal.js";
 import { silentRoutineThisTurn, SILENT_ROUTINE_DROP_REASON } from "../routines/report.js";
 import { OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR } from "./unified-window.js";
@@ -42,6 +43,25 @@ export function nameDropPattern(name: string): RegExp {
     .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
     .replace(/\s+/g, "\\s+");
   return new RegExp(`(?:^|[^\\p{L}\\p{N}_])${escaped}(?=$|[^\\p{L}\\p{N}_])`, "iu");
+}
+
+export function wakeNameDropTokens(displayName: string | undefined): string[] {
+  const settings = getSettings();
+  const exclude = new Set(
+    settings.wake.nameDropExclude.map((t) => t.trim().toLowerCase()).filter((t) => t.length > 0),
+  );
+  const candidates = [displayName, configuredAgentName(), ...settings.wake.nameDropInclude];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of candidates) {
+    const t = raw?.trim();
+    if (!t) continue;
+    const key = t.toLowerCase();
+    if (seen.has(key) || exclude.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+  }
+  return out;
 }
 
 export interface ReplierLabel {
