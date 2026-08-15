@@ -371,9 +371,9 @@ await new Promise((r) => setTimeout(r, 60));
 
   {
     eq(OE_DELIVERY_ID_ATTR, "oe_delivery_id", "the attribute name is pinned — the boundary reads it by name off a bag eve hands back across deploys");
-    const withId = stampUnifiedWindowAuth({ attributes: {} }, "slack", "w1", undefined, undefined, WINDOW, undefined, "nonce-1");
+    const withId = stampUnifiedWindowAuth({ attributes: {} as Record<string, unknown> }, "slack", "w1", undefined, undefined, WINDOW, undefined, "nonce-1");
     eq(withId.attributes?.[OE_DELIVERY_ID_ATTR], "nonce-1", "the stamp lands when the caller mints one");
-    const without = stampUnifiedWindowAuth({ attributes: {} }, "slack", "w1", undefined, undefined, WINDOW, undefined);
+    const without = stampUnifiedWindowAuth({ attributes: {} as Record<string, unknown> }, "slack", "w1", undefined, undefined, WINDOW, undefined);
     eq(Object.hasOwn(without.attributes ?? {}, OE_DELIVERY_ID_ATTR), false, "🔴 an omitted nonce leaves the bag BYTE-IDENTICAL — asserted `=== false` on the key's presence, not on its value");
     eq(deliveryStampOf({ session: { auth: { current: { attributes: { oe_wake_id: "w-old" } } } } } as never), "w-old", "🔴 an auth bag with NO nonce falls back to the raw wake id — an old deployment's delivery degrades to the pre-OPE-597 comparison, never to none");
     eq(deliveryStampOf({ session: { auth: { current: { attributes: {} } } } } as never), undefined, "…and a bag with neither answers `undefined`, which the boundary records as INGRESSED");
