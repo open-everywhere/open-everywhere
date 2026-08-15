@@ -63,7 +63,7 @@ export async function flushSettledMemory(ctx: MemoryPersistContext, edge: Settle
       result = { outcome: "flushed", live: 0, flush };
     }
   } catch (err) {
-    log(`${edge}: flush failed (the session-end backstop still applies): ${String(err)}`);
+    log(`${edge}: flush failed (the next settlement or a rotation still persists this tree): ${String(err)}`);
     result = { outcome: "skipped", live: -1, flush: null };
   }
   void appendAudit({

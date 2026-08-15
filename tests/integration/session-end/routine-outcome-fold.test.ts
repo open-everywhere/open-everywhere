@@ -1,0 +1,113 @@
+import { randomBytes } from "node:crypto";
+import { afterEach, expect, test } from "vitest";
+import {
+  awaitTaskSettlement,
+  bootAgent,
+  DISCORD_GUILD_ID,
+  DISCORD_LISTED_CHANNEL_ID,
+  readAuditRows,
+  registerScript,
+  runRoutineDispatchTick,
+  taskIdOfDelegation,
+  waitFor,
+  waitForChildren,
+  type ScriptedHandle,
+} from "../harness";
+
+const ROUTINE_FIRE_ACTION = "routine.fire";
+const FIRE_ATTRS_SENT_ACTION = "routine.fire_attrs_sent";
+
+const SURFACE_KEY = `discord/${DISCORD_GUILD_ID}/${DISCORD_LISTED_CHANNEL_ID}`;
+
+const perTest: (() => void)[] = [];
+afterEach(() => {
+  for (const c of perTest.splice(0)) c();
+});
+
+function disposeLater(handle: ScriptedHandle): ScriptedHandle {
+  perTest.push(() => handle.dispose());
+  return handle;
+}
+
+test("a windowed routine fire whose delegated worker settles never folds a run outcome", async () => {
+  await bootAgent({ sharedSqlite: true });
+  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+
+  const { addRoutine, getRoutine } = await import("@open-everywhere/core/agent/routines/store.js");
+  const id = `r-it-581-${randomBytes(4).toString("hex")}`;
+  const dueAt = new Date(Date.now() - 60_000).toISOString();
+  const scope = {
+    org: "default",
+    platform: "discord",
+    workspace: DISCORD_GUILD_ID,
+    surface: DISCORD_LISTED_CHANNEL_ID,
+    workspaceKey: `discord/${DISCORD_GUILD_ID}`,
+    surfaceKey: SURFACE_KEY,
+    domainKey: SURFACE_KEY,
+    key: SURFACE_KEY,
+  };
+  await addRoutine(scope, {
+    id,
+    org: "default",
+    surfaceKey: SURFACE_KEY,
+    target: { channelId: DISCORD_LISTED_CHANNEL_ID, guildId: DISCORD_GUILD_ID, channelType: "0" },
+    trigger: { kind: "once", at: dueAt },
+    prompt: "gather the numbers and report",
+    createdBy: "discord:9000000000000000042",
+    status: "active",
+    nextRunAt: dueAt,
+    createdAt: new Date(Date.now() - 120_000).toISOString(),
+    consecutiveFailures: 0,
+  });
+
+  const handle = disposeLater(
+    registerScript({
+      parent: [
+        { calls: [{ tool: "agent", input: { message: "gather the numbers" }, id: "se-fire-delegate" }] },
+        { say: "the worker reported back" },
+      ],
+      child: [{ say: "gathered" }],
+    }),
+  );
+
+  const sessionIds = await runRoutineDispatchTick();
+  expect(sessionIds.length).toBe(1);
+
+  const fireFirst = await waitFor(() => handle.requests.find((r) => r.role === "parent"), "the fire's first model call");
+  expect(fireFirst.tools).toContain("agent");
+
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the fire's terminal step to be served");
+  await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: "the fire's delegated worker's own terminal step" });
+  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+
+  const taskId = taskIdOfDelegation(handle, "the fire's delegation");
+  const settlement = await awaitTaskSettlement({
+    dispatched: handle,
+    taskId,
+    script: { parent: [{ calls: [{ tool: "task_peek", input: { taskIds: [taskId] }, id: "se-fire-peek" }] }, { say: "acknowledged" }] },
+    label: "the fire worker's completion, delivered as a new message naming the task id",
+  });
+  perTest.push(() => settlement.handle.dispose());
+
+  const peeked = await waitFor(
+    () => settlement.handle.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_peek")),
+    "the parent's step carrying the task_peek result — eve's own terminal view of the fire's worker",
+  );
+  expect(peeked.toolResults.find((t) => t.name === "task_peek")!.isError).toBe(false);
+  expect(settlement.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+
+  const rows = await waitFor(async () => {
+    const found = await readAuditRows({ actions: [FIRE_ATTRS_SENT_ACTION, ROUTINE_FIRE_ACTION], sinceIso, limit: 100 });
+    return found.some((r) => r.action === FIRE_ATTRS_SENT_ACTION) ? found : undefined;
+  }, `a ${FIRE_ATTRS_SENT_ACTION} row for this fire — control (c), that this reader sees rows written in this window`);
+
+  expect(rows.filter((r) => r.action === FIRE_ATTRS_SENT_ACTION).length).toBeGreaterThanOrEqual(1);
+
+  expect(rows.filter((r) => r.action === ROUTINE_FIRE_ACTION)).toEqual([]);
+
+  const stored = await getRoutine("default", SURFACE_KEY, id);
+  expect(stored).toBeTruthy();
+  expect(typeof stored!.lastRunAt).toBe("string");
+  expect(stored!.lastOutcome).toBeUndefined();
+  expect(stored!.consecutiveFailures).toBe(0);
+});
