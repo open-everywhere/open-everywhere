@@ -1,9 +1,12 @@
 import { afterEach, expect, test } from "vitest";
-import { __resetRedeliveryStormGuardForTest, waitFor } from "./harness";
+import { __resetRedeliveryStormGuardForTest, redeliveryRecoveryNote, waitFor } from "./harness";
 import { REDELIVERY_SIGNATURE, REDELIVERY_STORM_THRESHOLD, RedeliveryStormGuard } from "./redelivery-storm-guard";
+
+const SYNTHETIC_MARKER = "[oe-test-fixture redelivery-storm-guard.test.ts] SYNTHETIC — the block below is this test's fixture, NOT eve";
 
 function composedStormLine(runId: string, stepId: string): string {
   return (
+    `${SYNTHETIC_MARKER}\n` +
     `[workflow-sdk] ${REDELIVERY_SIGNATURE} — a previous delivery crashed mid-body and this redelivery is recovering them\n` +
     `  run    ${runId}\n` +
     `  stepIds ["${stepId}"]\n`
@@ -60,9 +63,31 @@ afterEach(() => {
 });
 
 test("a genuine timeout with no storm reports the plain waitFor message", async () => {
-  await expect(waitFor(() => undefined, "a probe that never resolves", 300)).rejects.toThrow(
-    'timed out after 300ms waiting for: a probe that never resolves',
+  expect(redeliveryRecoveryNote()).toBe("");
+  await expect(waitFor(() => undefined, "a probe that never resolves", 300)).rejects.toThrowError(
+    new Error("timed out after 300ms waiting for: a probe that never resolves"),
   );
+});
+
+test("a sub-threshold recovery count does NOT trip the storm verdict but IS named on an ordinary timeout", async () => {
+  const below = 3;
+  expect(below).toBeLessThan(REDELIVERY_STORM_THRESHOLD);
+  for (let i = 0; i < below; i++) process.stderr.write(composedStormLine("wrun_sub", "step_sub"));
+
+  const note = redeliveryRecoveryNote();
+  expect(note).toContain(`${below} inline-step recovery log line(s)`);
+  expect(note).toContain("OPE-465");
+
+  let message: string | undefined;
+  try {
+    await waitFor(() => undefined, "a probe that never resolves", 300);
+  } catch (e) {
+    message = e instanceof Error ? e.message : String(e);
+  }
+  expect(message).toBeDefined();
+  expect(String(message)).toContain("timed out after 300ms");
+  expect(String(message)).not.toContain("REDELIVERY STORM");
+  expect(String(message)).toContain(`${below} inline-step recovery log line(s)`);
 });
 
 test("a synthetic redelivery storm trips waitFor in low seconds, not the full ceiling, with a distinguishing message", async () => {

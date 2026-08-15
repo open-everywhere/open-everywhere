@@ -48,8 +48,9 @@ function siloFilePath(silo: string, rel: string): string {
   return join(dir, ORG, "@silos", silo, rel);
 }
 
-function frozenSiloFilePath(silo: string, rel: string): string {
-  return join(process.cwd(), ".open-everywhere-memory", ORG, "@silos", silo, rel);
+async function frozenSiloFilePath(silo: string, rel: string): Promise<string> {
+  const { storeRoot } = await import("@open-everywhere/core/agent/memory/store.js");
+  return join(storeRoot(), ORG, "@silos", silo, rel);
 }
 
 test("session.started seeds the domain's own silo at the expected path and body, never a sibling domain's silo, and a delegated write_file call does not error", async () => {
@@ -97,11 +98,11 @@ test("session.started seeds the domain's own silo at the expected path and body,
   expect(existsSync(bDir)).toBe(false);
 });
 
-test.skip("purge_memory proposes a card under the egress spoof and redacts the fact on the approval-equivalent decide path, leaving only digests behind", async () => {
+test("purge_memory proposes a card under the egress spoof and redacts the fact on the approval-equivalent decide path, leaving only digests behind", async () => {
   await bootAgent({ sharedSqlite: true });
   await ensureConfigRegistered();
 
-  rmSync(join(process.cwd(), ".open-everywhere-memory"), { recursive: true, force: true });
+  rmSync(await frozenSiloFilePath("it-memory-brain", ""), { recursive: true, force: true });
 
   const bullet = "- PURGE-TARGET-p1: the sentinel fact for OPE-551's redaction proof";
   const fixture = `# Purge fixture\n\n${bullet}\n`;
@@ -110,7 +111,7 @@ test.skip("purge_memory proposes a card under the egress spoof and redacts the f
   mkdirSync(dirname(hostPath), { recursive: true });
   writeFileSync(hostPath, fixture, "utf-8");
 
-  const frozenHostPath = frozenSiloFilePath("it-memory-brain", "purge-fixture.md");
+  const frozenHostPath = await frozenSiloFilePath("it-memory-brain", "purge-fixture.md");
   mkdirSync(dirname(frozenHostPath), { recursive: true });
   writeFileSync(frozenHostPath, fixture, "utf-8");
 

@@ -28,33 +28,50 @@ export default async function globalSetup(): Promise<void> {
 async function prewarmJustBashTemplate(root: string): Promise<void> {
   process.env.OE_SANDBOX_BACKEND = "justbash";
   const state = mkdtempSync(join(tmpdir(), "oe-it-prewarm-"));
-  process.env.OE_PGLITE_DIR ??= join(state, "pglite");
-  process.env.OE_MEMORY_DIR ??= join(state, "memory");
+  const restoreStateEnv = pinStateEnvForPrewarm(state);
   delete process.env.NODE_ENV;
 
   const prewarmPath = join(root, "node_modules", "eve", "dist", "src", "execution", "sandbox", "prewarm.js");
-  let mod: { prewarmBuiltAppSandboxes?: (input: { appRoot: string; log?: (m: string) => void }) => Promise<void> };
   try {
-    mod = (await import(pathToFileURL(prewarmPath).href)) as typeof mod;
-  } catch (err) {
-    throw new Error(
-      `integration global-setup: eve's sandbox prewarm module is gone from ${prewarmPath} — an eve bump moved it. ` +
-        "Find the new home of prewarmBuiltAppSandboxes under eve/dist and update tests/integration/global-setup.ts " +
-        "(and the eve-upgrade-check skill's checklist).",
-      { cause: err },
-    );
+    let mod: { prewarmBuiltAppSandboxes?: (input: { appRoot: string; log?: (m: string) => void }) => Promise<void> };
+    try {
+      mod = (await import(pathToFileURL(prewarmPath).href)) as typeof mod;
+    } catch (err) {
+      throw new Error(
+        `integration global-setup: eve's sandbox prewarm module is gone from ${prewarmPath} — an eve bump moved it. ` +
+          "Find the new home of prewarmBuiltAppSandboxes under eve/dist and update tests/integration/global-setup.ts " +
+          "(and the eve-upgrade-check skill's checklist).",
+        { cause: err },
+      );
+    }
+    if (typeof mod.prewarmBuiltAppSandboxes !== "function") {
+      throw new Error(
+        `integration global-setup: ${prewarmPath} no longer exports prewarmBuiltAppSandboxes — an eve bump renamed it. ` +
+          "Update tests/integration/global-setup.ts to the new export.",
+      );
+    }
+    await mod.prewarmBuiltAppSandboxes({ appRoot: root, log: (m) => console.log(m) });
+  } finally {
+    restoreStateEnv();
   }
-  if (typeof mod.prewarmBuiltAppSandboxes !== "function") {
-    throw new Error(
-      `integration global-setup: ${prewarmPath} no longer exports prewarmBuiltAppSandboxes — an eve bump renamed it. ` +
-        "Update tests/integration/global-setup.ts to the new export.",
-    );
-  }
-  await mod.prewarmBuiltAppSandboxes({ appRoot: root, log: (m) => console.log(m) });
   if (!existsSync(join(root, ".eve", "sandbox-cache", "just-bash", "templates"))) {
     throw new Error(
       "integration global-setup: prewarm completed but .eve/sandbox-cache/just-bash/templates is still absent — " +
         "the backend selection did not land on just-bash. Check OE_SANDBOX_BACKEND handling above.",
     );
   }
+}
+
+export const PREWARM_STATE_ENV = ["OE_PGLITE_DIR", "OE_MEMORY_DIR"] as const;
+
+function pinStateEnvForPrewarm(state: string): () => void {
+  const before = PREWARM_STATE_ENV.map((k) => [k, process.env[k]] as const);
+  process.env.OE_PGLITE_DIR ??= join(state, "pglite");
+  process.env.OE_MEMORY_DIR ??= join(state, "memory");
+  return () => {
+    for (const [k, v] of before) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  };
 }

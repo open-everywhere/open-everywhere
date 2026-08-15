@@ -33,6 +33,10 @@ export class RedeliveryStormGuard {
     if (stepMatch) this.lastStepIds = stepMatch[1];
   }
 
+  observed(): number {
+    return this.count;
+  }
+
   tripped(): RedeliveryStormVerdict | undefined {
     if (this.count < this.threshold) return undefined;
     return { count: this.count, runId: this.lastRunId, stepIds: this.lastStepIds };

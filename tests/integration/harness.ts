@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
-import { RedeliveryStormGuard } from "./redelivery-storm-guard";
+import { REDELIVERY_SIGNATURE, REDELIVERY_STORM_THRESHOLD, RedeliveryStormGuard } from "./redelivery-storm-guard";
 
 export { registerScript, type RecordedRequest, type ResolveObservation, type ScriptedHandle, type ScriptedStep, type SeatScript } from "../../agent/model/scripted-model";
 export { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
@@ -31,6 +31,17 @@ installRedeliveryStormWatch();
 
 export function __resetRedeliveryStormGuardForTest(): void {
   redeliveryGuard.reset();
+}
+
+export function redeliveryRecoveryNote(): string {
+  const seen = redeliveryGuard.observed();
+  if (seen === 0) return "";
+  return (
+    ` — NOTE: ${seen} inline-step recovery log line(s) were seen in this fork (eve's "${REDELIVERY_SIGNATURE}",` +
+    ` the OPE-465 class), below the storm threshold of ${REDELIVERY_STORM_THRESHOLD}. A single mid-body` +
+    " crash-recovery re-runs that step's whole body. Check whether the line came from eve or from a test" +
+    " fixture before treating it as the cause."
+  );
 }
 
 const RELAY_SECRET = randomBytes(32).toString("hex");
@@ -169,7 +180,7 @@ export async function waitFor<T>(probe: () => T | undefined | Promise<T | undefi
           "check `ps -eo pid,rss,etime,cmd --sort=-rss` and `free -m` for a co-tenant, and re-run on a quiet box.",
       );
     }
-    if (Date.now() > deadline) throw new Error(`timed out after ${timeoutMs}ms waiting for: ${label}`);
+    if (Date.now() > deadline) throw new Error(`timed out after ${timeoutMs}ms waiting for: ${label}${redeliveryRecoveryNote()}`);
     await sleep(400);
   }
 }

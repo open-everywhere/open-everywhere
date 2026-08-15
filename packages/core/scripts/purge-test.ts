@@ -365,6 +365,72 @@ function tiersOf(eng: Record<string, string | undefined>, org: Record<string, st
   ok(audit.some((e) => e.principalId === "U_MEMBER_3" && e.detail?.alreadyGone === true), "execute: audits the already-gone outcome too (an erasure decided by a click always leaves a trail)");
 }
 
+{
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [],
+    loadSilos: () => [{ name: "replay-brain", provider: "sqlite" }],
+    domainsForSurface: () => [],
+  });
+
+  const provider = providerById("sqlite");
+  const tier = siloTier("replay-brain");
+  const silo = { name: "replay-brain", provider: "sqlite" };
+  const target = "- 2026-08-15: OPE-582 replay target fact";
+  const keep = "- 2026-08-15: OPE-582 bystander fact that must survive";
+  const seeded = `# Replay fixture\n\n${target}\n${keep}\n`;
+
+  await provider.writeTier(partition, tier, { "MEMORY.md": seeded }, "seed-replay", silo);
+
+  const args = {
+    org: "default",
+    partition,
+    bullets: [{ sha256: bulletSha256(target), chars: target.length }],
+    locations: [{ siloName: "replay-brain", provider: "sqlite", tierId: tierId(tier), file: "MEMORY.md" }],
+  };
+  const kind = actionKind("memory.purge")!;
+
+  const first = await kind.execute(args, "U_REPLAY_1");
+  ok(first.includes("purged 1 line(s)"), "replay: the FIRST execute reports the real redaction");
+  const afterFirst = (await provider.readTier(partition, tier, silo))["MEMORY.md"]!;
+  ok(!afterFirst.includes("OPE-582 replay target fact"), "replay: the FIRST execute removed the targeted line");
+  ok(afterFirst.includes("OPE-582 bystander fact"), "replay: the FIRST execute left the untargeted line alone");
+
+  const second = await kind.execute(args, "U_REPLAY_2");
+  ok(second.toLowerCase().includes("already gone"), "replay: the SECOND execute reports already-gone (the outcome LINE is the one non-idempotent value)");
+  const afterSecond = (await provider.readTier(partition, tier, silo))["MEMORY.md"]!;
+  ok(afterSecond === afterFirst, "replay: 🔴 the tier is BYTE-IDENTICAL after the re-execution — no pre-redaction state is restored and no bystander line is touched");
+  ok(!afterSecond.includes("OPE-582 replay target fact"), "replay: the purged line is still absent after the re-execution");
+
+  const replayAudit = (await readAudit({ org: "default", action: "memory.purge" })).filter((e) => e.principalId === "U_REPLAY_1" || e.principalId === "U_REPLAY_2");
+  ok(replayAudit.length === 2, "replay: each execution audits exactly one memory.purge row");
+  ok(replayAudit.find((e) => e.principalId === "U_REPLAY_1")?.detail?.alreadyGone === undefined, "replay: the FIRST row is NOT flagged already-gone");
+  ok(replayAudit.find((e) => e.principalId === "U_REPLAY_2")?.detail?.alreadyGone === true, "replay: the SECOND row IS flagged already-gone (the re-execution is a recorded no-op, not a second erasure)");
+  ok(replayAudit.find((e) => e.principalId === "U_REPLAY_2")?.detail?.removedLines === 0, "replay: the SECOND row removed ZERO lines");
+
+  const clickBullet = "- 2026-08-15: OPE-582 click-replay target fact";
+  await provider.writeTier(partition, tier, { "click.md": `# Click fixture\n\n${clickBullet}\n` }, "seed-click", silo);
+  const clickArgs = {
+    org: "default",
+    partition,
+    bullets: [{ sha256: bulletSha256(clickBullet), chars: clickBullet.length }],
+    locations: [{ siloName: "replay-brain", provider: "sqlite", tierId: tierId(tier), file: "click.md" }],
+  };
+  const posted = await requestApproval(
+    { org: "default", kind: "memory.purge", args: clickArgs, scopeKey: partition.surfaceKey, domain: null, requestedBy: "U_REQUESTER", channelId: "C1", chain: { unattended: false } },
+    { postCard: async () => "ts-replay-1" },
+  );
+  const click1 = await resolveApprovalClick({ org: "default", id: posted.id, decision: "approve", clickerId: "U_CLICKER_1" });
+  ok(click1.outcome === "decided" && click1.outcomeLine.includes("purged 1 line(s)"), "replay: the first click decides and executes");
+  const click2 = await resolveApprovalClick({ org: "default", id: posted.id, decision: "approve", clickerId: "U_CLICKER_2" });
+  ok(click2.outcome === "not-pending", "replay: 🔴 a SECOND decide on the same pending is refused by the CAS — execute() is never reached twice through the click path");
+  const clickAudit = (await readAudit({ org: "default", action: "memory.purge" })).filter((e) => e.principalId === "U_CLICKER_1" || e.principalId === "U_CLICKER_2");
+  ok(clickAudit.length === 1 && clickAudit[0]!.principalId === "U_CLICKER_1", "replay: exactly ONE memory.purge row exists for the re-clicked card");
+}
+
 assert.ok(n > 0);
-console.log(`\n✓ purge: ${n} assertions passed (planPurge sweep/multi-bullet/refusals, redacted memory.purge execute + audit, capture-seam deletion digests, GDPR round-trip sweep)\n`);
+console.log(`\n✓ purge: ${n} assertions passed (planPurge sweep/multi-bullet/refusals, redacted memory.purge execute + audit, capture-seam deletion digests, GDPR round-trip sweep, OPE-582 re-execution idempotence)\n`);
 rmSync(tmp, { recursive: true, force: true });
