@@ -158,20 +158,6 @@ async function probeDiscordBase(env: Env): Promise<ProbeOutcome> {
   });
 }
 
-async function probeDiscordDm(env: Env): Promise<ProbeOutcome> {
-  const token = env[ENV.discordDriverToken];
-  if (!token) return outcome(false, `no ${ENV.discordDriverToken} available to check the DM fixture`);
-  return safe("discord DM channel + user fetch", async () => {
-    const channel = env[ENV.discordDmChannel]!;
-    const userId = env[ENV.discordDmUserId]!;
-    const chan = await discordApi(token, `/channels/${channel}`);
-    if (chan.status !== 200) return outcome(false, `GET /channels/${channel} → ${chan.status} — DM channel missing or bot lacks access`);
-    const user = await discordApi(token, `/users/${userId}`);
-    if (user.status !== 200) return outcome(false, `GET /users/${userId} → ${user.status} — the fixture human's Discord id no longer resolves`);
-    return outcome(true, `DM channel ${channel} reachable; user ${userId} resolves (${String(user.json.username ?? "?")})`);
-  });
-}
-
 async function probeTeams(env: Env): Promise<ProbeOutcome> {
   return safe("teams token mint + channel fetch", async () => {
     const driver = new TeamsDriver({
@@ -286,8 +272,6 @@ async function probe(classified: ClassifiedFixture, env: Env): Promise<{ probe?:
       return { probe: await probeSlackChannelPair(env, f.channelVars!) };
     case "discord-base":
       return { probe: await probeDiscordBase(env) };
-    case "discord-dm":
-      return { probe: await probeDiscordDm(env) };
     case "teams":
       return { probe: await probeTeams(env) };
     case "github":
