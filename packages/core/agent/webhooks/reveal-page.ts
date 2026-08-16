@@ -10,7 +10,7 @@ import type { CredentialIntakeRow } from "../operational/store.js";
 
 export const REVEAL_PAGE_PATH = "/connect/v1/reveal";
 
-export const REVEAL_GRANT_PROVIDER = "webhook-reveal";
+export const REVEAL_GRANT_CONNECTOR = "webhook-reveal";
 
 export const REVEAL_GRANT_TTL_MS = 15 * 60_000;
 
@@ -47,7 +47,7 @@ export async function issueRevealLink(input: IssueRevealLinkInput, deps: RevealG
     org: input.org,
     id,
     ref: input.ref,
-    provider: REVEAL_GRANT_PROVIDER,
+    connector: REVEAL_GRANT_CONNECTOR,
     domain: input.label,
     requestedBy: input.revealTo,
     channelId: REVEAL_PAGE_PATH,
@@ -118,7 +118,7 @@ function grantOpen(row: CredentialIntakeRow | null, boundTo: string, nowMs: numb
   return (
     row !== null &&
     !row.usedAt &&
-    row.provider === REVEAL_GRANT_PROVIDER &&
+    row.connector === REVEAL_GRANT_CONNECTOR &&
     row.requestedBy === boundTo &&
     Date.parse(row.expiresAt) > nowMs
   );

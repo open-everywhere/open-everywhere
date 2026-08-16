@@ -40,6 +40,9 @@ export interface AgentSettings {
     readonly linkSetVault: boolean;
     readonly opTiering: boolean;
   };
+  readonly identityLinking: {
+    readonly codeBack: boolean;
+  };
   readonly delegation: {
     readonly oneshotAgent: boolean;
     readonly nativeSubagent: boolean;
@@ -257,6 +260,14 @@ export const SETTINGS = {
         "The per-op consequence gate (A2): each `<connection>__<op>` call is classified individually (reads open, writes gated) instead of a blanket `once()`.",
     } satisfies SettingSpec<boolean>,
   },
+  identityLinking: {
+    codeBack: {
+      path: "identityLinking.codeBack",
+      shipped: false,
+      summary:
+        "Code-back on the DIRECTORY transport: after the named account consents in its own DM, it receives a second code the initiator must feed back to finalize. Off by default — a consent given in the target's own DM already proves both account holders agreed. The CODE transport forces the code-back whatever this says, because there the initiator's yes is the reflexable step.",
+    } satisfies SettingSpec<boolean>,
+  },
   delegation: {
     oneshotAgent: {
       path: "delegation.oneshotAgent",
@@ -272,7 +283,7 @@ export const SETTINGS = {
     } satisfies SettingSpec<boolean>,
     backgroundTasks: {
       path: "delegation.backgroundTasks",
-      shipped: false,
+      shipped: true,
       summary:
         "Run this deployment's delegations as durable BACKGROUND tasks (eve `experimental.tasks`). The `agent` call returns a task receipt at once instead of blocking the turn, the worker runs on after the parent's turn ends, and eve delivers the completion as a new message. It mounts four lifecycle tools — `task_peek` and `task_cancel` on a delegating seat, `task_update` on the worker, `task_sleep` — and implies persistent-session children, so a seat can continue an existing worker with `agent({agentId, message})`. Arming it takes an `oe build`: eve decides at COMPILE time which framework tools exist, so this is code-only and a running deployment cannot be flipped. The delegation verb does not change (OPE-445) — only its return shape.",
     } satisfies SettingSpec<boolean>,
@@ -360,7 +371,7 @@ export const SETTINGS = {
       validate: (v) =>
         /[\n\r]/u.test(v) ? "must not contain a line break" : v.length > 64 ? "must be at most 64 characters" : undefined,
       summary:
-        "The deployment's CANONICAL agent name — what the agent calls itself on EVERY surface, and one more name it answers to. Unset (the shipped `\"\"`) is today's behaviour: the agent identifies by the LIVE vendor display name of the surface it speaks through, and core resolves such a name for Slack only. That default is wrong for a CROSS-SURFACE session, which speaks on several surfaces from one standing block: before this setting existed, a Teams delivery introduced the agent by the SLACK workspace display name (OPE-569). Set it and one name answers everywhere, on the per-surface path and the cross-surface path alike. It ALSO joins the name-drop token set (`agent/identity/bot-name.ts`) that the Notion synthetic-mention recogniser and the addressed link-claim hook match on, so the agent answers to the name it introduces itself by. It is ADDITIVE there — the brand and short-name tokens still match. It ALSO joins the SLACK and DISCORD ambient name-drop wake trigger set (OPE-571), alongside those surfaces' own live display names — see `wake.nameDrop.include`/`wake.nameDrop.exclude` to extend or narrow that set further.",
+        "The deployment's CANONICAL agent name — what the agent calls itself on EVERY surface, and one more name it answers to. Unset (the shipped `\"\"`) is today's behaviour: the agent identifies by the LIVE display name its own app carries on the surface it speaks through. Each provider bundle registers that arm (`agent/identity/bot-display-name.ts`); Slack and Microsoft Teams ship one, the other surfaces resolve no name and get the generic identity line. That default is wrong for a CROSS-SURFACE session, which speaks on several surfaces from one standing block: before this setting existed, a Teams delivery introduced the agent by the SLACK workspace display name (OPE-569). Set it and one name answers everywhere, on the per-surface path and the cross-surface path alike. It ALSO joins the name-drop token set (`agent/identity/bot-name.ts`) that the Notion synthetic-mention recogniser and the addressed link-claim hook match on, so the agent answers to the name it introduces itself by. It is ADDITIVE there — the brand and short-name tokens still match. It ALSO joins the SLACK and DISCORD ambient name-drop wake trigger set (OPE-571), alongside those surfaces' own live display names — see `wake.nameDrop.include`/`wake.nameDrop.exclude` to extend or narrow that set further.",
       format: (v) => (v === "" ? "`` (unset — identify by the surface's own display name)" : v),
     } satisfies SettingSpec<string>,
   },
@@ -718,6 +729,9 @@ export function getSettings(
       userPrincipal: resolve(SETTINGS.connectors.userPrincipal, o.connectors?.userPrincipal, env),
       linkSetVault: resolve(SETTINGS.connectors.linkSetVault, o.connectors?.linkSetVault, env),
       opTiering: resolve(SETTINGS.connectors.opTiering, o.connectors?.opTiering, env),
+    },
+    identityLinking: {
+      codeBack: resolve(SETTINGS.identityLinking.codeBack, o.identityLinking?.codeBack, env),
     },
     delegation: {
       oneshotAgent: resolve(SETTINGS.delegation.oneshotAgent, o.delegation?.oneshotAgent, env),

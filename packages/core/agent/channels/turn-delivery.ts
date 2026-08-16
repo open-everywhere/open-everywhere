@@ -120,6 +120,7 @@ export function supervisorRotateTurnBudget(): number {
 }
 
 export type RotationTrigger =
+  | "runtime-changed"
   | "unknown-accumulation"
   | "unparseable-timestamp"
   | "expiry"
@@ -132,6 +133,7 @@ export interface RotationThresholds {
   readonly turnBudget?: number;
   readonly tokenBudget?: number;
   readonly expiryMs?: number;
+  readonly runtimeChanged?: boolean;
 }
 
 export function rotationTrigger(
@@ -139,6 +141,7 @@ export function rotationTrigger(
   now: string,
   opts: RotationThresholds = {},
 ): RotationTrigger | null {
+  if (opts.runtimeChanged === true) return "runtime-changed";
   if (row.inputTokensTotal == null) return "unknown-accumulation";
   const nowMs = Date.parse(now);
   const createdAtMs = Date.parse(row.createdAt);

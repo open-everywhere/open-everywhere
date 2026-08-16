@@ -355,7 +355,7 @@ function makeHook(over: Partial<WebhookHook> = {}): WebhookHook {
 
 async function armSecret(hook: WebhookHook): Promise<void> {
   const ref = typeof hook.secretRef === "string" ? hook.secretRef : hook.secretRef[0]!;
-  await vault.write(ref, SECRET, { provider: "webhook", domain: hook.id, createdBy: "U-DECIDER" });
+  await vault.write(ref, SECRET, { connector: "webhook", domain: hook.id, createdBy: "U-DECIDER" });
 }
 
 async function post(

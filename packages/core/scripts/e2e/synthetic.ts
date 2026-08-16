@@ -287,8 +287,8 @@ export class SyntheticDm {
     return this.cfg.dmChannel;
   }
 
-  async message(input: { text: string; userId: string; teamId: string; ts: string }): Promise<SyntheticResult> {
-    const rawBody = JSON.stringify(buildDmEventEnvelope({ ...input, channelId: this.cfg.dmChannel }));
+  async message(input: { text: string; userId: string; teamId: string; ts: string; channelId?: string }): Promise<SyntheticResult> {
+    const rawBody = JSON.stringify(buildDmEventEnvelope({ ...input, channelId: input.channelId ?? this.cfg.dmChannel }));
     const { timestamp, signature } = signSlackRequest(rawBody, this.cfg.signingSecret);
     const res = await fetch(`${this.cfg.targetUrl}${SYNTHETIC_SLACK_ROUTE}`, {
       method: "POST",

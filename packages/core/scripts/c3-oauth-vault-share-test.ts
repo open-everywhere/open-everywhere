@@ -150,7 +150,7 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
   const ORG = "default";
   const vault = encryptedKvVault();
   const tokRef = (subject: string) => `oe-oauth:tok:notion:user:${subject}`;
-  const seed = (subject: string) => vault.write(tokRef(subject), JSON.stringify({ accessToken: "AT", refreshToken: "RT", obtainedAt: 0 }), { provider: "notion" });
+  const seed = (subject: string) => vault.write(tokRef(subject), JSON.stringify({ accessToken: "AT", refreshToken: "RT", obtainedAt: 0 }), { connector: "notion" });
   const rowOf = (subject: string) => store.getStoredCredential(ORG, tokRef(subject));
   const lastRevokeDetail = async (setId: string): Promise<Record<string, unknown>> => {
     const rows = await store.readAudit({ org: ORG });
@@ -212,7 +212,7 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
     await vault.withLock(tokRef(subject), async () => {
       revoked = revokeLinkSet({ org: ORG, linkSetId: "P3", actor: "admin" });
       for (let i = 0; i < 20; i++) await Promise.resolve();
-      await vault.write(tokRef(subject), JSON.stringify({ accessToken: "AT-rotated", refreshToken: "RT-rotated", obtainedAt: 1 }), { provider: "notion" });
+      await vault.write(tokRef(subject), JSON.stringify({ accessToken: "AT-rotated", refreshToken: "RT-rotated", obtainedAt: 1 }), { connector: "notion" });
       ok((await rowOf(subject)) !== null, "purge race: the holder's rotated row is really there mid-critical-section");
     });
     await revoked;
@@ -255,9 +255,9 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
     const strangerRaw = rawVaultSubject(ORG, "slack", tenantOf("slack"), "PU6");
 
     await seed(shared);
-    await vault.write(ssoRef(rawSlack), "sso-token-blob", { provider: "aws-sso" });
+    await vault.write(ssoRef(rawSlack), "sso-token-blob", { connector: "aws-sso" });
     await seed(rawGithub);
-    await vault.write(ssoRef(strangerRaw), "someone-elses-sso", { provider: "aws-sso" });
+    await vault.write(ssoRef(strangerRaw), "someone-elses-sso", { connector: "aws-sso" });
 
     const res = await revokeLinkSet({ org: ORG, linkSetId: "P5", actor: "admin" });
     ok(res.ok, "G3: the revoke succeeded");
@@ -273,7 +273,7 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
       },
     });
     await mkSet(store, ORG, "P7", [{ platform: "slack", tenant: tenantOf("slack"), nativeId: "PU7" }]);
-    await vault.write(ssoRef(rawVaultSubject(ORG, "slack", tenantOf("slack"), "PU7")), "sso-token-blob", { provider: "aws-sso" });
+    await vault.write(ssoRef(rawVaultSubject(ORG, "slack", tenantOf("slack"), "PU7")), "sso-token-blob", { connector: "aws-sso" });
     const res7 = await revokeLinkSet({ org: ORG, linkSetId: "P7", actor: "admin" });
     ok(res7.ok, "G3: a failing holder still never blocks the offboarding (the one deliberate fail-open, unchanged)");
     ok((await store.getStoredCredential(ORG, ssoRef(rawVaultSubject(ORG, "slack", tenantOf("slack"), "PU7")))) === null, "G3: …and the WORKING holder still destroyed its row (per-holder isolation)");
@@ -287,8 +287,8 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
     ]);
     const keptRaw = rawVaultSubject(ORG, "slack", tenantOf("slack"), "PU8");
     const goneRaw = rawVaultSubject(ORG, "github", tenantOf("github"), "gh-PU8");
-    await vault.write(ssoRef(keptRaw), "kept-sso", { provider: "aws-sso" });
-    await vault.write(ssoRef(goneRaw), "severed-sso", { provider: "aws-sso" });
+    await vault.write(ssoRef(keptRaw), "kept-sso", { connector: "aws-sso" });
+    await vault.write(ssoRef(goneRaw), "severed-sso", { connector: "aws-sso" });
     const unlinked = await unlinkOwnId({ org: ORG, actor: { platform: "slack", tenant: tenantOf("slack"), nativeId: "PU8" }, target: { platform: "github", tenant: tenantOf("github"), nativeId: "gh-PU8" } });
     ok(unlinked.ok, "G3: the unlink succeeded");
     ok((await store.getStoredCredential(ORG, ssoRef(goneRaw))) === null, "🔴 G3: unlinking an account DESTROYS its own stored credentials — a severed account must not keep minting on a token it earned while it had standing");

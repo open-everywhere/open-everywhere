@@ -142,7 +142,7 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
         ...(cfg.scopes ? { scopes: cfg.scopes } : {}),
         registeredAt: now(),
       };
-      await vault.write(dcrRef(providerRef), JSON.stringify(record), { provider: providerRef });
+      await vault.write(dcrRef(providerRef), JSON.stringify(record), { connector: providerRef });
       return record;
     });
   }
@@ -160,7 +160,7 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
       ...(tok.scope ? { scopes: tok.scope.split(/\s+/).filter(Boolean) } : {}),
       obtainedAt: now(),
     };
-    await vault.write(tokRef(providerRef, subject), JSON.stringify(record), { provider: providerRef });
+    await vault.write(tokRef(providerRef, subject), JSON.stringify(record), { connector: providerRef });
     return record;
   }
 
@@ -226,7 +226,7 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
         createdAt: now(),
         expiresAt: now() + (options.expiresInMs ?? pendingTtl),
       };
-      await vault.write(pendRef(state), JSON.stringify(pending), { provider: providerRef });
+      await vault.write(pendRef(state), JSON.stringify(pending), { connector: providerRef });
       const url = buildAuthorizationUrl({
         authorizationEndpoint: client.authorizationEndpoint,
         clientId: client.clientId,
@@ -250,7 +250,7 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
         doFetch,
       );
       await storeToken(pending.providerRef, pending.subject, tok);
-      await vault.write(pendRef(state), JSON.stringify({ ...pending, consumed: true, pkceVerifier: "" }), { provider: pending.providerRef });
+      await vault.write(pendRef(state), JSON.stringify({ ...pending, consumed: true, pkceVerifier: "" }), { connector: pending.providerRef });
       return { providerRef: pending.providerRef };
     },
 

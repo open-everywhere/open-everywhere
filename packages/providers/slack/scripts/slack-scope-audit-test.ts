@@ -18,6 +18,7 @@ const wizard = readFileSync(WIZARD_PATH, "utf8");
 const REQUIRED_SCOPES: Record<string, string[]> = {
   "auth.test": [],
   "users.info": ["users:read"],
+  "users.list": ["users:read"],
   "conversations.info": ["channels:read", "groups:read", "im:read", "mpim:read"],
   "conversations.history": ["channels:history", "groups:history", "im:history", "mpim:history"],
   "conversations.replies": ["channels:history", "groups:history", "im:history", "mpim:history"],

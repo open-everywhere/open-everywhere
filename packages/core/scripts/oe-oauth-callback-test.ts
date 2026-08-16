@@ -25,7 +25,7 @@ const ok = (cond: boolean, label: string) => {
 {
   const vault = encryptedKvVault();
   const value = JSON.stringify({ accessToken: "AT-SECRET-123", refreshToken: "RT-SECRET-456" });
-  await vault.write("oe-oauth:tok:notion:app", value, { provider: "notion" });
+  await vault.write("oe-oauth:tok:notion:app", value, { connector: "notion" });
   ok((await vault.read("oe-oauth:tok:notion:app")) === value, "vault round-trips the JSON value");
   ok((await vault.read("oe-oauth:tok:notion:missing")) === null, "vault read of an unknown ref is null");
 

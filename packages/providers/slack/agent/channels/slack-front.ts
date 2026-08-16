@@ -63,6 +63,7 @@ import {
   distillSlackRotationHandoff,
   slackChannelFactsFor,
   slackAuthorIsMember,
+  slackClickerIsGuest,
   slackWakeAuthorFacts,
   slackExternalPolicyForRoom,
   applySlackExternalPolicy,
@@ -374,7 +375,8 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const now = opts.now ?? (() => Date.now());
   const signingSecret = () => opts.signingSecret ?? process.env.SLACK_SIGNING_SECRET;
   const markEventSeen = opts.markEventSeen ?? liveMarkEventSeen;
-  const handleApproval = opts.handleApprovalPayload ?? liveHandleApprovalPayload;
+  const handleApproval =
+    opts.handleApprovalPayload ?? ((payload: unknown) => liveHandleApprovalPayload(payload, { clickerIsGuest: slackClickerIsGuest }));
   const handleSetKeyClick = opts.handleSetKeyClick ?? liveHandleSetKeyClick;
   const handleSetKeyViewSubmission = opts.handleSetKeyViewSubmission ?? liveHandleSetKeyViewSubmission;
   const handleConnectClick = opts.handleConnectClick ?? liveHandleConnectClick;

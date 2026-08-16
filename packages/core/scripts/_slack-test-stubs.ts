@@ -1,5 +1,6 @@
 import { callSlackApi } from "eve/channels/slack";
-import { registerSlackBridge, slackBridge, type SlackBridge } from "../agent/channels/slack-bridge.js";
+import { registerSlackBridge, bridgeBotDisplayName, slackBridge, type SlackBridge } from "../agent/channels/slack-bridge.js";
+import { registerBotDisplayName } from "../agent/identity/bot-display-name.js";
 import { registerPostArm } from "../agent/channels/post-arms.js";
 import { registerIdentityMapper } from "../agent/identity/binding.js";
 import { registerCapabilityManifest } from "../agent/identity/capabilities.js";
@@ -40,6 +41,7 @@ export async function testSlackReadCall(
 }
 
 export function registerSlackTestBridge(overrides: Partial<SlackBridge> = {}): void {
+  registerBotDisplayName("slack", () => bridgeBotDisplayName());
   registerSlackBridge({
     form: testSlackForm,
     readCall: testSlackReadCall,

@@ -1,9 +1,23 @@
 import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { adoptTaskWakeThisTurn, uningressedTurn } from "../access/task-wake-signal.js";
-import { mintWakeId, registerUnifiedWakeTarget, resolveUnifiedWakeTarget, WAKE_TARGET_TTL_MS } from "./unified-window.js";
+import type { DispatchedTaskWake } from "../access/dispatch-origin-signal.js";
+import { mintWakeId, registerUnifiedWakeTarget, resolveUnifiedWakeTarget, sameUnifiedConversation, WAKE_TARGET_TTL_MS } from "./unified-window.js";
 
 export const TASK_WAKE_ACTION = "unified.task_wake";
+
+export const TASK_WAKE_RETARGET_ACTION = "unified.task_wake_retarget";
+
+export const TASK_WAKE_UNREAD_REFUSAL_REASON = "task-wake-unread";
+
+export function taskWakeUnreadRefusalMessage(): string {
+  return (
+    "reply: this turn was woken by delegated work finishing, and it has NO reply address yet — nothing was posted. " +
+    "The wake-id from the previous message belongs to a different conversation, so replying under it would answer a room that asked nothing. " +
+    "Call `task_peek` to read the finished task's result first: that gives this turn the task's own address, and `reply` then lands in the conversation that asked for the work. " +
+    "If nothing needs saying, call `no_reply`."
+  );
+}
 
 const TASK_WAKE_PREFIX = "oe-task-wake:";
 
@@ -32,6 +46,47 @@ export async function openTaskWake(input: {
     return wakeId;
   } catch {
     return null;
+  }
+}
+
+export async function retargetTaskWakes(input: {
+  readonly org: string;
+  readonly tasks: readonly DispatchedTaskWake[];
+  readonly addressedWakeId: string;
+  readonly windowToken: string | undefined;
+  readonly turnId: string | undefined;
+}): Promise<number> {
+  try {
+    if (input.tasks.length === 0) return 0;
+    if (input.addressedWakeId.length === 0) return 0;
+    const store = getOperationalStore();
+    const origin = await resolveUnifiedWakeTarget(store, input.org, input.addressedWakeId);
+    if (origin === null) return 0;
+    let moved = 0;
+    for (const task of input.tasks) {
+      const current = await resolveUnifiedWakeTarget(store, input.org, task.wakeId);
+      if (current !== null && sameUnifiedConversation(current, origin)) continue;
+      const at = new Date().toISOString();
+      await registerUnifiedWakeTarget(store, input.org, task.wakeId, origin, at, input.windowToken);
+      moved++;
+      void appendAudit({
+        org: input.org,
+        platform: "unified",
+        workspace: "delegation",
+        action: TASK_WAKE_RETARGET_ACTION,
+        detail: {
+          task: task.taskId,
+          wakeId: task.wakeId,
+          addressedWakeId: input.addressedWakeId,
+          originPlatform: origin.platform,
+          ...(input.turnId !== undefined && input.turnId.length > 0 ? { turnId: input.turnId } : {}),
+        },
+      }).catch(() => undefined);
+    }
+    return moved;
+  } catch (err) {
+    console.error(`retargetTaskWakes failed (org=${input.org}, addressedWake=${input.addressedWakeId}): ${err instanceof Error ? err.message : String(err)}`);
+    return 0;
   }
 }
 

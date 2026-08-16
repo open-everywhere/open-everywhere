@@ -37,7 +37,7 @@ function recorder() {
 }
 
 {
-  await dbBroker.storeDbSecret({ org: ORG, ref: "db:notion-eng-key", plaintext: SENTINEL, provider: "notion", domain: "eng", createdBy: "U_OWNER" });
+  await dbBroker.storeDbSecret({ org: ORG, ref: "db:notion-eng-key", plaintext: SENTINEL, connector: "notion", domain: "eng", createdBy: "U_OWNER" });
 
   const broker = dbBroker.makeDbCredentialBroker();
   ok((await broker.getSecret("db:notion-eng-key")) === SENTINEL, "broker: getSecret round-trips the stored plaintext");
@@ -80,7 +80,7 @@ function recorder() {
 
   const rq = recorder();
   const { id } = await intake.requestCredentialIntake(
-    { org: ORG, provider: "notion", domain: "eng", ref: "db:notion-eng-key-2", requestedBy: OWNER, channelId: CH, teamId: "T1" },
+    { org: ORG, connector: "notion", domain: "eng", ref: "db:notion-eng-key-2", requestedBy: OWNER, channelId: CH, teamId: "T1" },
     { post: rq.post, now: () => t0, mintId },
   );
   ok(rq.methods().includes("chat.postMessage"), "intake: requestCredentialIntake posts the Set API key button");
@@ -125,7 +125,7 @@ function recorder() {
 
   const rq = recorder();
   const { id } = await intake.requestCredentialIntake(
-    { org: ORG, provider: "notion", domain: "eng", ref: REF, requestedBy: OWNER, channelId: CH, teamId: "T1" },
+    { org: ORG, connector: "notion", domain: "eng", ref: REF, requestedBy: OWNER, channelId: CH, teamId: "T1" },
     { post: rq.post, now: () => t0, mintId: () => "intake-store" },
   );
 
@@ -160,12 +160,12 @@ function recorder() {
   ok((await getSecretVia("db", REF)) === SENTINEL, "store: the value is retrievable through the broker (end-to-end store worked)");
 
   ok(!logs.some((l) => l.includes(SENTINEL)), "leak-proof: the secret value appears in NO captured console output");
-  ok(!sub.calls.some((c) => c.body.includes(SENTINEL)), "leak-proof: the secret value appears in NO posted Slack body (confirmation names provider/domain only)");
+  ok(!sub.calls.some((c) => c.body.includes(SENTINEL)), "leak-proof: the secret value appears in NO posted Slack body (confirmation names connector/domain only)");
   const auditRows = await readAudit({ org: ORG });
   ok(auditRows.some((r) => r.action === "credential.stored") && auditRows.some((r) => r.action === "credential.intake_requested"), "audit: credential.intake_requested + credential.stored rows exist");
   ok(!JSON.stringify(auditRows).includes(SENTINEL), "leak-proof: the secret value appears in NO audit row (not even its length)");
   const stored = await getOperationalStore().getStoredCredential(ORG, REF);
-  ok(!!stored && !stored.ciphertext.includes(SENTINEL) && stored.provider === "notion" && stored.domain === "eng", "store: only ciphertext + labels are persisted, never the plaintext");
+  ok(!!stored && !stored.ciphertext.includes(SENTINEL) && stored.connector === "notion" && stored.domain === "eng", "store: only ciphertext + labels are persisted, never the plaintext");
 
   const again = await intake.handleSetKeyViewSubmission(submit, { post: recorder().post, now: () => t0 });
   ok(again.handled === true && !!again.response && (again.response as Record<string, unknown>).response_action === "errors", "single-use: a second submit of the same intake is refused (CAS)");

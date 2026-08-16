@@ -1,7 +1,7 @@
 import { appendAudit, readAudit } from "../../audit/audit.js";
 
 export interface RecurrenceLedger {
-  observe(key: string): Promise<number>;
+  observe(key: string, dedupeKey?: string): Promise<number>;
   count(key: string): Promise<number>;
 }
 
@@ -22,8 +22,14 @@ export function workflowSignature(request: string): string {
 
 export function inMemoryLedger(): RecurrenceLedger {
   const counts = new Map<string, number>();
+  const seen = new Set<string>();
   return {
-    async observe(key) {
+    async observe(key, dedupeKey) {
+      if (dedupeKey !== undefined) {
+        const mark = `${dedupeKey}\u0000${key}`;
+        if (seen.has(mark)) return counts.get(key) ?? 0;
+        seen.add(mark);
+      }
       const n = (counts.get(key) ?? 0) + 1;
       counts.set(key, n);
       return n;
@@ -34,14 +40,27 @@ export function inMemoryLedger(): RecurrenceLedger {
   };
 }
 
+const DELIVERY_FIELD = "delivery";
+
 export function auditRecurrenceLedger(org: string): RecurrenceLedger {
-  const matches = async (key: string): Promise<number> => {
+  const rowsFor = async (key: string) => {
     const rows = await readAudit({ org, action: "memory.observation" });
-    return rows.filter((r) => r.detail?.["key"] === key).length;
+    return rows.filter((r) => r.detail?.["key"] === key);
   };
+  const matches = async (key: string): Promise<number> => (await rowsFor(key)).length;
   return {
-    async observe(key) {
-      await appendAudit({ org, platform: "memory", workspace: "@recurrence", action: "memory.observation", detail: { key } });
+    async observe(key, dedupeKey) {
+      if (dedupeKey !== undefined) {
+        const existing = await rowsFor(key);
+        if (existing.some((r) => r.detail?.[DELIVERY_FIELD] === dedupeKey)) return existing.length;
+      }
+      await appendAudit({
+        org,
+        platform: "memory",
+        workspace: "@recurrence",
+        action: "memory.observation",
+        detail: { key, ...(dedupeKey !== undefined ? { [DELIVERY_FIELD]: dedupeKey } : {}) },
+      });
       return matches(key);
     },
     count: matches,

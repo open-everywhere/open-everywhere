@@ -1,5 +1,5 @@
 import type { SessionMode } from "../access/resolver.js";
-import { readBindingBridge, bridgedContext, type BridgedIdentity } from "./binding-bridge.js";
+import { readBindingBridge, stampBindingBridge, bridgedContext, type BridgedIdentity } from "./binding-bridge.js";
 import { normalizePlatform, platformFromKind } from "./platform.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { declaredSurfaceTrust } from "./trust.js";
@@ -10,7 +10,7 @@ import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
 import { ROUTINE_MARKER, routineGrantKeyStamped } from "../routines/routine.js";
 import type { Domain } from "../memory/domain.js";
 import { processRegistryMap } from "../lib/process-registry.js";
-import { taskWakeThisTurn } from "../access/task-wake-signal.js";
+import { taskWakeThisTurn, uningressedTurn } from "../access/task-wake-signal.js";
 
 export type Visibility = "public" | "private";
 
@@ -215,9 +215,19 @@ export function isUnifiedWindowContext(ctx: BindableContext): boolean {
 
 export function currentWakeId(ctx: BindableContext): string | undefined {
   if (isSubagentChildContext(ctx)) return undefined;
-  const adopted = taskWakeThisTurn(currentTurnId(ctx));
+  const turnId = currentTurnId(ctx);
+  const adopted = taskWakeThisTurn(turnId);
   if (adopted !== undefined) return adopted;
+  if (uningressedTurn(turnId)) return undefined;
+  return inheritedWakeStampOf(ctx);
+}
+
+export function inheritedWakeStampOf(ctx: BindableContext): string | undefined {
   return attr(authOf(ctx)?.attributes, ["oe_wake_id", "oeWakeId"]);
+}
+
+export function deliveryStampOf(ctx: BindableContext): string | undefined {
+  return attr(authOf(ctx)?.attributes, ["oe_delivery_id", "oeDeliveryId"]) ?? inheritedWakeStampOf(ctx);
 }
 
 export function currentTurnId(ctx: BindableContext): string | undefined {
@@ -351,20 +361,44 @@ export function bindBridged(bridged: BridgedIdentity): { platform: string; raw: 
   return { platform, raw };
 }
 
+function rawIdentityFrom(ctx: BindableContext): { platform: string; raw: RawIdentity } {
+  const platform = seg(channelPlatform(ctx), "local");
+  return { platform, raw: (MAPPERS.get(platform) ?? bindLocal)(ctx) };
+}
+
+export function carriesPlatformIdentity(ctx: BindableContext): boolean {
+  return namesASurface(rawIdentityFrom(ctx).raw);
+}
+
+function namesASurface(raw: RawIdentity): boolean {
+  return raw.workspace !== undefined || raw.surface !== undefined;
+}
+
+export function refreshBindingStamp(ctx: BindableContext): "stamped" | "kept" {
+  if (!carriesPlatformIdentity(ctx)) {
+    const established = readBindingBridge();
+    if (established !== null && namesASurface(bindBridged(established).raw)) return "kept";
+  }
+  stampBindingBridge(ctx);
+  return "stamped";
+}
+
 export function bindFrom(ctx: BindableContext): SurfaceBinding {
-  let platform = seg(channelPlatform(ctx), "local");
-  let raw = (MAPPERS.get(platform) ?? bindLocal)(ctx);
+  let { platform, raw } = rawIdentityFrom(ctx);
   let fire = attestedFirePrincipal(ctx);
   let unattended = unattendedDelivery(ctx);
-  if (raw.workspace === undefined && raw.surface === undefined) {
+  if (!namesASurface(raw)) {
     const bridged = readBindingBridge();
     if (bridged) {
-      ({ platform, raw } = bindBridged(bridged));
-      fire ??= attestedFirePrincipal(bridgedContext(bridged));
-      unattended ||= unattendedDelivery(bridgedContext(bridged));
-      console.warn(
-        `[open-everywhere:binding-bridge] context carried no platform identity — bound via the session's stamped ${platform} identity`,
-      );
+      const hop = bindBridged(bridged);
+      if (MAPPERS.get(platform) === undefined || hop.platform === platform) {
+        ({ platform, raw } = hop);
+        fire ??= attestedFirePrincipal(bridgedContext(bridged));
+        unattended ||= unattendedDelivery(bridgedContext(bridged));
+        console.warn(
+          `[open-everywhere:binding-bridge] context carried no platform identity — bound via the session's stamped ${platform} identity`,
+        );
+      }
     }
   }
   const local = bindLocal(ctx);

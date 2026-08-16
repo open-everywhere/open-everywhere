@@ -20,6 +20,7 @@ import {
   ambientSupervisorEnabled,
   supervisorGrainFor,
   mintRotationToken,
+  claimRuntimeRotation,
   grainUsesUnifiedWindow,
   mintWakeId,
   singleWindowMentionPolicy,
@@ -870,7 +871,7 @@ export async function slackAuthorIsMember(userId: string, teamId: string | undef
   if (hit && Date.now() - hit.at < dmTrustTtlMs()) return hit.member;
   try {
     const info = await slackForm("users.info", `user=${encodeURIComponent(userId)}`);
-    if (!info) return undefined;
+    if (info?.ok !== true) return undefined;
     const member = partnerFactsFromInfo(info, teamId).dmPartnerTrust === "internal";
     authorMemberCache.set(key, { member, at: Date.now() });
     return member;
@@ -881,6 +882,11 @@ export async function slackAuthorIsMember(userId: string, teamId: string | undef
 
 export function _resetAuthorMemberCache(): void {
   authorMemberCache.clear();
+}
+
+export async function slackClickerIsGuest(userId: string, teamId: string | undefined): Promise<boolean | undefined> {
+  const member = await slackAuthorIsMember(userId, teamId);
+  return member === undefined ? undefined : !member;
 }
 
 export type SlackMemberProbe = (userId: string, teamId: string | undefined) => Promise<boolean | undefined>;
@@ -1170,6 +1176,70 @@ export function fetchUserProfileNames(userId: string): Promise<{ name?: string; 
 }
 
 export const liveResolveProfile: ResolveProfile = (id) => fetchUserProfileNames(id);
+
+const SLACK_ROSTER_PAGE = 200;
+const SLACK_ROSTER_MAX_PAGES = 10;
+const SLACK_ROSTER_TTL_MS = 60_000;
+
+type RosterEntry = { nativeId: string; name?: string; handle?: string };
+let rosterCache: { at: number; rows: readonly RosterEntry[] } | undefined;
+let rosterInFlight: Promise<readonly RosterEntry[]> | undefined;
+
+export function _resetWorkspaceRosterCache(): void {
+  rosterCache = undefined;
+  rosterInFlight = undefined;
+}
+
+type SlackRosterMember = {
+  id?: string;
+  name?: string;
+  deleted?: boolean;
+  is_bot?: boolean;
+  is_app_user?: boolean;
+  profile?: { display_name?: string; real_name?: string };
+  real_name?: string;
+};
+
+export async function fetchWorkspaceRoster(): Promise<readonly RosterEntry[]> {
+  const now = Date.now();
+  if (rosterCache && now - rosterCache.at < SLACK_ROSTER_TTL_MS) return rosterCache.rows;
+  if (rosterInFlight) return await rosterInFlight;
+  rosterInFlight = (async () => {
+    const rows = await walkWorkspaceRoster();
+    if (rows.length > 0) rosterCache = { at: Date.now(), rows };
+    return rows;
+  })();
+  try {
+    return await rosterInFlight;
+  } finally {
+    rosterInFlight = undefined;
+  }
+}
+
+async function walkWorkspaceRoster(): Promise<readonly RosterEntry[]> {
+  const out: RosterEntry[] = [];
+  let cursor = "";
+  for (let page = 0; page < SLACK_ROSTER_MAX_PAGES; page++) {
+    const body = `limit=${SLACK_ROSTER_PAGE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+    const res = await slackForm("users.list", body);
+    if (res?.ok !== true) {
+      console.log(`[open-everywhere:slack] users.list did not answer (${String(res?.error ?? "no response")}) — the account directory is unavailable; linking falls back to the code flow.`);
+      return out;
+    }
+    for (const m of (res.members as SlackRosterMember[] | undefined) ?? []) {
+      const id = typeof m.id === "string" ? m.id.trim() : "";
+      if (!id || m.deleted === true || m.is_bot === true || m.is_app_user === true || m.name === "slackbot") continue;
+      const handle = m.profile?.display_name?.trim() || undefined;
+      const name = m.profile?.real_name?.trim() || m.real_name?.trim() || m.name?.trim() || undefined;
+      out.push({ nativeId: id, ...(name ? { name } : {}), ...(handle ? { handle } : {}) });
+    }
+    const next = (res.response_metadata as { next_cursor?: string } | undefined)?.next_cursor?.trim() ?? "";
+    if (!next) return out;
+    cursor = next;
+  }
+  console.log(`[open-everywhere:slack] users.list stopped at ${SLACK_ROSTER_MAX_PAGES} pages (${out.length} accounts) — a wider search may not see every member.`);
+  return out;
+}
 
 export async function fetchUserDisplayName(userId: string): Promise<string | undefined> {
   const p = await fetchUserProfileNames(userId);
@@ -1467,13 +1537,14 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
     async getOrCreateSession(org, surfaceKey, channelId, atIso) {
       const store = getOperationalStore();
       const grain = grainFor(surfaceKey);
+      const runtimeChanged = await claimRuntimeRotation({ org, registryKey: grain.registryKey, surfaceKey, atIso });
       const existing = await store.getChannelSession(org, grain.registryKey);
       if (!existing) {
         const token = tokenFor(grain, channelId, 1);
         const row = await store.rotateChannelSession(org, grain.registryKey, token, atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }
-      if (shouldRotate(existing, atIso)) {
+      if (shouldRotate(existing, atIso, { runtimeChanged })) {
         const row = await rotateWithHandoff(org, surfaceKey, channelId, atIso, existing, grain);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }

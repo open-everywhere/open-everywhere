@@ -34,7 +34,8 @@ ok(extractPinnedInstructions({ items: "nope" }) === null, "defensive on non-arra
 
 ok(introMessage(false).includes("Open Everywhere") && !introMessage(false).includes("standing instructions"), "intro without adopted instructions falls back to the product name");
 ok(introMessage(true).includes("standing instructions"), "intro notes adopted pinned instructions");
-ok(introMessage(false, "Test Slack Bot").includes("I'm **Test Slack Bot**"), "intro identifies as the bot's live workspace display name when known");
+ok(introMessage(false, "Test Slack Bot").includes("I'm Test Slack Bot"), "intro identifies as the bot's live workspace display name when known");
+ok(!introMessage(false, "Test Slack Bot").includes("**"), "intro carries NO markdown — it is posted verbatim and Slack renders ** literally");
 ok(introMessage(false, "  ").includes("Open Everywhere"), "a blank display name falls back to the product name");
 
 const bullet = instructionBullet("Focus on\n  the   payments   service", "2026-06-24");

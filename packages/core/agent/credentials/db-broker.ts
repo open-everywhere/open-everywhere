@@ -81,7 +81,7 @@ export interface StoreDbSecretInput {
   readonly org: string;
   readonly ref: string;
   readonly plaintext: string;
-  readonly provider?: string;
+  readonly connector?: string;
   readonly domain?: string;
   readonly createdBy: string;
   readonly at?: string;
@@ -92,7 +92,7 @@ export async function storeDbSecret(input: StoreDbSecretInput): Promise<void> {
   await getOperationalStore().putStoredCredential(input.org, {
     ref: input.ref,
     ciphertext,
-    ...(input.provider ? { provider: input.provider } : {}),
+    ...(input.connector ? { connector: input.connector } : {}),
     ...(input.domain ? { domain: input.domain } : {}),
     createdBy: input.createdBy,
     createdAt: input.at ?? new Date().toISOString(),
@@ -125,7 +125,7 @@ registerCredentialHome({
       org: input.org,
       ref: input.ref,
       plaintext: input.plaintext,
-      ...(input.provider ? { provider: input.provider } : {}),
+      ...(input.connector ? { connector: input.connector } : {}),
       ...(input.domain ? { domain: input.domain } : {}),
       createdBy: input.createdBy,
     });

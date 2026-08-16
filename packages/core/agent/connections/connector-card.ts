@@ -241,7 +241,7 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
       }
       const requestIntake = deps.requestIntake ?? requestCredentialIntake;
       const ref = deriveCredentialRef({
-        provider: connectorName,
+        connector: connectorName,
         credentialId: cred.id,
       });
       if (!ref) {
@@ -250,7 +250,7 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
       }
       await requestIntake({
         org,
-        provider: connectorName,
+        connector: connectorName,
         ...(role.domain ? { domain: role.domain } : {}),
         ref,
         requestedBy: clickerId,

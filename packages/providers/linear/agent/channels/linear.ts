@@ -29,6 +29,7 @@ import {
 import {
   supervisorGrainFor,
   mintRotationToken,
+  claimRuntimeRotation,
   grainUsesUnifiedWindow,
   mintWakeId,
   divertToUnifiedWindow,
@@ -365,12 +366,13 @@ function liveLinearSupervisorDeps(
   return {
     async getOrCreateSession(surfaceKey, team, atIso) {
       const grain = linearGrainFor(surfaceKey);
+      const runtimeChanged = await claimRuntimeRotation({ org, registryKey: grain.registryKey, surfaceKey, atIso });
       const existing = await store.getChannelSession(org, grain.registryKey);
       if (!existing) {
         const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, 1, () => linearSupervisorToken(team, 1)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }
-      if (shouldRotate(existing, atIso)) {
+      if (shouldRotate(existing, atIso, { runtimeChanged })) {
         const gen = existing.generation + 1;
         const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, gen, () => linearSupervisorToken(team, gen)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };

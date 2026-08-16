@@ -23,7 +23,7 @@ export interface BindingAuditWhere {
 }
 
 export interface StageCredentialBindingPrArgs {
-  readonly provider: string;
+  readonly connector: string;
   readonly credential: string;
   readonly storedRef: string;
   readonly credentialAuditId: string;
@@ -48,7 +48,7 @@ export interface StageCredentialBindingPrResult {
 
 function bindingPrBody(args: StageCredentialBindingPrArgs, home: string): string {
   return [
-    `Re-stamp credential **${args.provider} / ${args.credential}** custody to ${home}, resolving via ref \`${args.storedRef}\`.`,
+    `Re-stamp credential **${args.connector} / ${args.credential}** custody to ${home}, resolving via ref \`${args.storedRef}\`.`,
     "",
     `This binds the value pasted through the "Set API key" intake (audit \`credential.stored\` id \`${args.credentialAuditId}\`), so`,
     "egress and host paths resolve it from the new custody home instead of an env var. **The pasted secret is NOT in this diff** —",
@@ -89,10 +89,10 @@ export async function stageCredentialBindingPr(
   const liveArmed = process.env.OE_CREDENTIAL_BINDING_LIVE === "1" && cfg.dryRun !== true;
   const dryRun = deps.dryRun ?? !liveArmed;
 
-  const override: CredentialBindingOverride = { provider: args.provider, credential: args.credential, broker: DB_BROKER, secretRef: args.storedRef };
+  const override: CredentialBindingOverride = { connector: args.connector, credential: args.credential, broker: DB_BROKER, secretRef: args.storedRef };
   const home = DB_BROKER;
   const homePrBody = `\`broker: "${DB_BROKER}"\``;
-  const branch = `credential-binding/${args.provider}-${args.credential}`;
+  const branch = `credential-binding/${args.connector}-${args.credential}`;
   if (!isSafeBranchName(branch)) {
     throw new Error(`unsafe credential-binding branch name "${branch}"`);
   }
@@ -105,7 +105,7 @@ export async function stageCredentialBindingPr(
 
   const proposedDetail = (extra: Record<string, unknown>) => ({
     credentialAuditId: args.credentialAuditId,
-    provider: args.provider,
+    connector: args.connector,
     credential: args.credential,
     storedRef: args.storedRef,
     broker: home,
@@ -152,7 +152,7 @@ export async function stageCredentialBindingPr(
       repo,
       path: bindingsPath,
       content: emitCredentialBindingsModule(applied.file),
-      message: `credential binding: ${args.provider}/${args.credential} → ${home}`,
+      message: `credential binding: ${args.connector}/${args.credential} → ${home}`,
       branch,
       token,
       committer: provider.committer(),
@@ -164,7 +164,7 @@ export async function stageCredentialBindingPr(
     repo,
     head: branch,
     base,
-    title: `Bind credential: ${args.provider}/${args.credential} → ${home}`,
+    title: `Bind credential: ${args.connector}/${args.credential} → ${home}`,
     body: bindingPrBody(args, homePrBody),
     token,
   });

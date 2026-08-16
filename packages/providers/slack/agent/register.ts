@@ -5,6 +5,9 @@ import {
   registerWakeOriginCodec,
   registerReadAdapter,
   registerReactionSurface,
+  registerBotDisplayName,
+  registerAccountDisplayName,
+  registerAccountDirectory,
   registerSlackBridge,
   registerProviderDocs,
   registerWebhookVerifier,
@@ -19,6 +22,8 @@ import {
   slackForm,
   fetchUserDisplayName,
   fetchChannelDisplayName,
+  fetchUserProfileNames,
+  fetchWorkspaceRoster,
   botDisplayName,
   confirmChannelInternal,
   registerSlackGovernanceMembers,
@@ -34,6 +39,9 @@ export function registerSlackProvider(): void {
   registerWakeOriginCodec("slack", slackWakeOriginCodec);
   registerReadAdapter(slackReadAdapter);
   registerReactionSurface("slack");
+  registerBotDisplayName("slack", botDisplayName);
+  registerAccountDisplayName("slack", (nativeId) => fetchUserProfileNames(nativeId));
+  registerAccountDirectory("slack", () => fetchWorkspaceRoster());
   registerSlackAttachmentResolver();
   registerSlackGovernanceMembers();
   registerSlackBridge({

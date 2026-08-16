@@ -16,7 +16,13 @@ import { defineDomain } from "../agent/memory/domain.js";
 import { LINK_TENANT_NONE, linkTenantOf, linkTenantUnresolvableMessage, tryLinkTenantOf } from "../agent/identity/link-tenant.js";
 import { backfillLinkTenants, bootBackfillLinkTenants, linkTenantBackfillWarning } from "../agent/identity/link-tenant-backfill.js";
 import { claimLinkChallenge, issueLinkChallenge, ratifyLinkChallenge, resolveLinkSet } from "../agent/identity/link-store.js";
-import type { LinkedIdRow, OperationalStore } from "../agent/operational/store.js";
+import type { LinkChallengeRow, LinkedIdRow, OperationalStore } from "../agent/operational/store.js";
+
+async function issueCode(input: Parameters<typeof issueLinkChallenge>[0]): Promise<{ challenge: LinkChallengeRow; code: string }> {
+  const issued = await issueLinkChallenge(input);
+  assert.ok(issued.code, "the code transport always mints a code");
+  return { challenge: issued.challenge, code: issued.code };
+}
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -243,7 +249,7 @@ const OLD_SQLITE_DDL = OLD_PG_DDL.replace(/text/g, "TEXT");
   resetOperationalStore();
   configWithSlackTenants([WS_A]);
 
-  const issued = await issueLinkChallenge({ org: ORG, platform: "slack", tenant: WS_A, nativeId: "U_TWIN", surfaceKey: `slack/${WS_A}/D1` });
+  const issued = await issueCode({ org: ORG, platform: "slack", tenant: WS_A, nativeId: "U_TWIN", surfaceKey: `slack/${WS_A}/D1` });
   ok((await store.getLinkChallenge(ORG, issued.challenge.id))?.initiatingTenant === WS_A, "property 7: the challenge records the INITIATING workspace, so a ratification days later joins the account this turn named");
 
   const claimed = await claimLinkChallenge({ org: ORG, code: issued.code, claimant: { platform: "slack", tenant: WS_B, nativeId: "U_TWIN" } });
@@ -254,7 +260,7 @@ const OLD_SQLITE_DDL = OLD_PG_DDL.replace(/text/g, "TEXT");
   ok((await resolveLinkSet(ORG, "slack", "U_TWIN", WS_A))?.id === (ratified.ok ? ratified.linkSetId : ""), "property 7: workspace A's account resolves the set");
   ok((await resolveLinkSet(ORG, "slack", "U_TWIN", WS_B))?.id === (ratified.ok ? ratified.linkSetId : ""), "property 7: so does workspace B's — two accounts, ONE person, which is exactly what a link-set is for");
 
-  const own = await issueLinkChallenge({ org: ORG, platform: "slack", tenant: WS_A, nativeId: "U_SELF", surfaceKey: `slack/${WS_A}/D2` });
+  const own = await issueCode({ org: ORG, platform: "slack", tenant: WS_A, nativeId: "U_SELF", surfaceKey: `slack/${WS_A}/D2` });
   ok((await claimLinkChallenge({ org: ORG, code: own.code, claimant: { platform: "slack", tenant: WS_A, nativeId: "U_SELF" } })) === null, "property 7: a TRUE self-claim (same workspace, same id) is still refused — the fence narrowed, it did not open");
 }
 

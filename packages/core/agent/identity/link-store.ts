@@ -1,17 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { tryPrincipalKey } from "./principal-key.js";
 import { surfaceIdsFromAccounts, type PrincipalAccountRef } from "./principals.js";
 import { linkTenantOf } from "./link-tenant.js";
 import { hashLinkCode, mintLinkCode, LINK_CHALLENGE_TTL_MS } from "./link-challenge.js";
+import type { LinkTransport } from "./link-flow.js";
 import { rawVaultSubject, sharedVaultSubject } from "./oauth-vault-share.js";
 import { purgeSubjectCredentials, purgeSubjectsCredentials, type CredentialPurgeOutcome } from "../credentials/purge.js";
 import { directoryLinkSetVaultArmed } from "../connections/connector-flags.js";
-import type { LinkChallengeRow, LinkSetRow, LinkSetStatus, LinkedIdRow, LinkedIdStatus } from "../operational/store.js";
+import type { LinkChallengeRow, LinkChallengeStatus, LinkSetRow, LinkSetStatus, LinkedIdRow, LinkedIdStatus } from "../operational/store.js";
 import type { LinkSetPrincipal } from "./link-resolve.js";
 
-export type { LinkChallengeRow, LinkSetRow, LinkSetStatus, LinkedIdRow, LinkedIdStatus };
+export type { LinkChallengeRow, LinkChallengeStatus, LinkSetRow, LinkSetStatus, LinkedIdRow, LinkedIdStatus };
 
 export type LinkEvidence =
   | { readonly kind: "challenge"; readonly challengeId: string }
@@ -97,12 +99,14 @@ export async function listLinkSetsWithIds(org: string): Promise<readonly { reado
 
 export interface IssuedChallenge {
   readonly challenge: LinkChallengeRow;
-  readonly code: string;
+  readonly code?: string;
 }
 
 export async function issueLinkChallenge(input: {
   readonly org: string;
   readonly platform: string;
+  readonly transport?: LinkTransport;
+  readonly target?: LinkedAccount;
   readonly tenant?: string;
   readonly nativeId: string;
   readonly surfaceKey: string;
@@ -113,15 +117,22 @@ export async function issueLinkChallenge(input: {
   const nowIso = now.toISOString();
   await store.expireLinkChallenges(input.org, nowIso);
 
-  const code = mintLinkCode();
+  const transport: LinkTransport = input.transport ?? "code";
+  if (transport === "directory" && !input.target) throw new Error("issueLinkChallenge: the directory transport must name its target account.");
+  if (transport === "code" && input.target) throw new Error("issueLinkChallenge: the code transport has no target until something claims it.");
+  const code = transport === "code" ? mintLinkCode() : undefined;
   const challenge: LinkChallengeRow = {
     org: input.org,
     id: randomUUID(),
-    nonceHash: hashLinkCode(code),
+    nonceHash: hashLinkCode(code ?? randomUUID()),
     initiatingPlatform: input.platform,
     initiatingTenant: linkTenantOf(input.platform, input.tenant),
     initiatingNativeId: input.nativeId,
     initiatingSurfaceKey: input.surfaceKey,
+    transport,
+    ...(input.target
+      ? { targetPlatform: input.target.platform, targetTenant: input.target.tenant, targetNativeId: input.target.nativeId }
+      : {}),
     status: "pending",
     createdAt: nowIso,
     expiresAt: new Date(now.getTime() + LINK_CHALLENGE_TTL_MS).toISOString(),
@@ -129,20 +140,72 @@ export async function issueLinkChallenge(input: {
   await store.addLinkChallenge(input.org, challenge);
   await auditLink(input.org, input.platform, input.surfaceKey, accountLabel(input.platform, challenge.initiatingTenant, input.nativeId), "identity.link.challenge_issued", {
     challengeId: challenge.id,
+    transport,
+    ...(input.target ? { target: accountLabel(input.target.platform, input.target.tenant, input.target.nativeId) } : {}),
     expiresAt: challenge.expiresAt,
   });
-  return { challenge, code };
+  return { challenge, ...(code ? { code } : {}) };
+}
+
+export async function consentLinkChallenge(input: {
+  readonly org: string;
+  readonly challengeId: string;
+  readonly consenter: LinkedAccount;
+  readonly backCode?: string;
+  readonly now?: Date;
+}): Promise<LinkChallengeRow | null> {
+  const store = getOperationalStore();
+  const nowIso = (input.now ?? new Date()).toISOString();
+  const consented = await store.consentLinkChallenge(
+    input.org,
+    input.challengeId,
+    input.consenter,
+    nowIso,
+    input.backCode ? hashLinkCode(input.backCode) : undefined,
+  );
+  if (!consented) return null;
+  await auditLink(
+    input.org,
+    input.consenter.platform,
+    consented.initiatingSurfaceKey,
+    accountLabel(input.consenter.platform, input.consenter.tenant, input.consenter.nativeId),
+    "identity.link.consented",
+    {
+      challengeId: consented.id,
+      initiator: accountLabel(consented.initiatingPlatform, consented.initiatingTenant, consented.initiatingNativeId),
+      codeBack: input.backCode !== undefined,
+    },
+  );
+  return consented;
+}
+
+export async function auditLinkCodeBackUndeliverable(input: { readonly org: string; readonly challenge: LinkChallengeRow; readonly claimantPlatform: string }): Promise<void> {
+  const c = input.challenge;
+  await auditLink(input.org, c.initiatingPlatform, c.initiatingSurfaceKey, accountLabel(c.initiatingPlatform, c.initiatingTenant, c.initiatingNativeId), "identity.link.code_back_undeliverable", {
+    challengeId: c.id,
+    claimantPlatform: input.claimantPlatform,
+    reason: `no way to post the second code back to "${input.claimantPlatform}" — the finalize degrades to an acknowledged confirm`,
+  });
 }
 
 export async function claimLinkChallenge(input: {
   readonly org: string;
   readonly code: string;
   readonly claimant: LinkedAccount;
+  readonly backCode?: string;
   readonly now?: Date;
 }): Promise<LinkChallengeRow | null> {
   const store = getOperationalStore();
   const nowIso = (input.now ?? new Date()).toISOString();
-  const claimed = await store.claimLinkChallenge(input.org, hashLinkCode(input.code), input.claimant.platform, input.claimant.tenant, input.claimant.nativeId, nowIso);
+  const claimed = await store.claimLinkChallenge(
+    input.org,
+    hashLinkCode(input.code),
+    input.claimant.platform,
+    input.claimant.tenant,
+    input.claimant.nativeId,
+    nowIso,
+    input.backCode ? hashLinkCode(input.backCode) : undefined,
+  );
   if (!claimed) return null;
   await auditLink(input.org, input.claimant.platform, claimed.initiatingSurfaceKey, accountLabel(input.claimant.platform, input.claimant.tenant, input.claimant.nativeId), "identity.link.challenge_claimed", {
     challengeId: claimed.id,
@@ -151,12 +214,26 @@ export async function claimLinkChallenge(input: {
   return claimed;
 }
 
-export async function denyLinkChallenge(input: { readonly org: string; readonly challengeId: string; readonly now?: Date }): Promise<boolean> {
+export async function auditLinkNoticeUndeliverable(input: { readonly org: string; readonly challenge: LinkChallengeRow; readonly error: unknown }): Promise<void> {
+  const c = input.challenge;
+  await auditLink(input.org, c.initiatingPlatform, c.initiatingSurfaceKey, accountLabel(c.initiatingPlatform, c.initiatingTenant, c.initiatingNativeId), "identity.link.notice_undeliverable", {
+    challengeId: c.id,
+    platform: c.initiatingPlatform,
+    ...auditErrorDetail(input.error),
+  });
+}
+
+export async function denyLinkChallenge(input: {
+  readonly org: string;
+  readonly challengeId: string;
+  readonly from?: readonly LinkChallengeStatus[];
+  readonly now?: Date;
+}): Promise<boolean> {
   const store = getOperationalStore();
   const nowIso = (input.now ?? new Date()).toISOString();
   const challenge = await store.getLinkChallenge(input.org, input.challengeId);
   if (!challenge) return false;
-  const decided = await store.decideLinkChallenge(input.org, input.challengeId, ["claimed"], "denied", nowIso);
+  const decided = await store.decideLinkChallenge(input.org, input.challengeId, input.from ?? ["claimed"], "denied", nowIso);
   if (!decided) return false;
   await auditLink(input.org, challenge.initiatingPlatform, challenge.initiatingSurfaceKey, accountLabel(challenge.initiatingPlatform, challenge.initiatingTenant, challenge.initiatingNativeId), "identity.link.denied", {
     challengeId: challenge.id,

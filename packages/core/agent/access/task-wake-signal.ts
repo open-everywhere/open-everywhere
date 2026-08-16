@@ -5,7 +5,7 @@ interface TaskWakeState {
   readonly wakeId?: string;
   readonly taskId?: string;
   readonly seenTurn?: string;
-  readonly seenWake?: string;
+  readonly seenDelivery?: string;
   readonly uningressed?: boolean;
 }
 
@@ -13,26 +13,26 @@ const slot = defineState<TaskWakeState>("open-everywhere.task-wake", () => ({}))
 
 function readState(v: unknown): TaskWakeState {
   if (v === null || typeof v !== "object") return {};
-  const s = v as { turn?: unknown; wakeId?: unknown; taskId?: unknown; seenTurn?: unknown; seenWake?: unknown; uningressed?: unknown };
+  const s = v as { turn?: unknown; wakeId?: unknown; taskId?: unknown; seenTurn?: unknown; seenDelivery?: unknown; uningressed?: unknown };
   const identity =
     typeof s.turn === "string" && s.turn.length > 0 && typeof s.wakeId === "string" && s.wakeId.length > 0
       ? { turn: s.turn, wakeId: s.wakeId, ...(typeof s.taskId === "string" && s.taskId.length > 0 ? { taskId: s.taskId } : {}) }
       : {};
   const boundary =
     typeof s.seenTurn === "string" && s.seenTurn.length > 0
-      ? { seenTurn: s.seenTurn, ...(typeof s.seenWake === "string" && s.seenWake.length > 0 ? { seenWake: s.seenWake } : {}), uningressed: s.uningressed === true }
+      ? { seenTurn: s.seenTurn, ...(typeof s.seenDelivery === "string" && s.seenDelivery.length > 0 ? { seenDelivery: s.seenDelivery } : {}), uningressed: s.uningressed === true }
       : {};
   return { ...identity, ...boundary };
 }
 
-export function noteTurnBoundary(turnId: string | undefined, authWakeId: string | undefined): void {
+export function noteTurnBoundary(turnId: string | undefined, deliveryStamp: string | undefined): void {
   if (turnId === undefined || turnId.length === 0) return;
   try {
     slot.update((cur) => {
       const state = readState(cur);
       if (state.seenTurn === turnId) return state;
-      const uningressed = state.seenTurn !== undefined && authWakeId !== undefined && authWakeId.length > 0 && state.seenWake === authWakeId;
-      return { seenTurn: turnId, ...(authWakeId !== undefined && authWakeId.length > 0 ? { seenWake: authWakeId } : {}), uningressed };
+      const uningressed = state.seenTurn !== undefined && deliveryStamp !== undefined && deliveryStamp.length > 0 && state.seenDelivery === deliveryStamp;
+      return { seenTurn: turnId, ...(deliveryStamp !== undefined && deliveryStamp.length > 0 ? { seenDelivery: deliveryStamp } : {}), uningressed };
     });
   } catch {
   }

@@ -43,6 +43,17 @@ interface StubbedRoom {
 
 const ROOMS: Record<string, StubbedRoom> = {};
 
+interface StubbedUser {
+  readonly isRestricted?: boolean;
+  readonly isUltraRestricted?: boolean;
+  readonly infoRefused?: true;
+}
+const USERS: Record<string, StubbedUser> = {};
+
+function withSlackUser(userId: string, facts: StubbedUser): void {
+  USERS[userId] = facts;
+}
+
 function slackApiAnswer(method: string, params: URLSearchParams): Record<string, unknown> {
   if (method === "auth.test") return { ok: true, user_id: BOT_USER_ID };
   const channel = params.get("channel") ?? "";
@@ -57,6 +68,20 @@ function slackApiAnswer(method: string, params: URLSearchParams): Record<string,
   if (method === "conversations.members") {
     if (!room || room.infoFails === true) return { ok: false, error: "channel_not_found" };
     return { ok: true, members: [HUMAN_ID, BOT_USER_ID] };
+  }
+  if (method === "users.info") {
+    const userId = params.get("user") ?? "";
+    const user = USERS[userId];
+    if (user?.infoRefused === true) return { ok: false, error: "missing_scope" };
+    return {
+      ok: true,
+      user: {
+        id: userId,
+        team_id: TEAM_ID,
+        is_restricted: user?.isRestricted === true,
+        is_ultra_restricted: user?.isUltraRestricted === true,
+      },
+    };
   }
   return { ok: true, ts: `${Math.floor(Date.now() / 1000)}.000100` };
 }
@@ -150,6 +175,7 @@ async function click(input: {
   readonly decision: "approve" | "reject";
   readonly cardChannelId: string;
   readonly clickChannelId?: string;
+  readonly clickerId?: string;
   readonly signature?: string;
   readonly staleSeconds?: number;
 }): Promise<{ status: number; body: string }> {
@@ -161,7 +187,7 @@ async function click(input: {
     buildApprovalClickPayload({
       pendingId: input.pendingId,
       decision: input.decision,
-      userId: CLICKER_ID,
+      userId: input.clickerId ?? CLICKER_ID,
       channelId: input.clickChannelId ?? input.cardChannelId,
       messageTs: row!.messageTs ?? "",
       org,
@@ -192,11 +218,11 @@ async function decideRows(clickAt: number, id: string): Promise<AuditRow[]> {
   );
 }
 
-async function expectFloorRefusal(input: { rows: AuditRow[]; id: string; reason: string }): Promise<void> {
+async function expectFloorRefusal(input: { rows: AuditRow[]; id: string; reason: string; clickerId?: string }): Promise<void> {
   const denied = input.rows.find((r) => r.action === "approval.denied" && r.detail?.id === input.id);
   expect(denied).toBeDefined();
   expect(denied!.detail?.reason).toBe(input.reason);
-  expect(denied!.principalId).toBe(CLICKER_ID);
+  expect(denied!.principalId).toBe(input.clickerId ?? CLICKER_ID);
 
   const s = await getStore();
   const after = await s.getPendingAction(org, input.id);
@@ -314,4 +340,70 @@ test("🔴 Ⓑ' the control: the SAME beneficiary kind in a room that DOES resol
   const s = await getStore();
   expect((await s.getPendingAction(org, id))?.status).toBe("approved");
   expect((await s.getPendingAction(org, id))?.decidedBy).toBe(CLICKER_ID);
+});
+
+test("Ⓓ a member-tier click by a clicker `users.info` POSITIVELY reports as a guest is refused guest-clicker, even in an ordinary internal room", async () => {
+  const ROOM = "C0IT589CLICK";
+  const GUEST_CLICKER = "U0IT589GUEST";
+  withSlackRooms({ [ROOM]: { isPrivate: true, isExternal: false } });
+  withSlackUser(GUEST_CLICKER, { isRestricted: true });
+  const PROMPT = "clicker-floor leg D — never armed";
+  const id = await seedPending({ kind: "routine.create", channelId: ROOM, args: routineArgs(ROOM, PROMPT) });
+
+  const clickAt = Date.now();
+  const res = await click({ pendingId: id, decision: "approve", cardChannelId: ROOM, clickerId: GUEST_CLICKER });
+  expect(res.status).toBe(200);
+
+  await expectFloorRefusal({ rows: await decideRows(clickAt, id), id, reason: "guest-clicker", clickerId: GUEST_CLICKER });
+  expect((await armedRoutines()).some((r) => r.prompt === PROMPT)).toBe(false);
+});
+
+test("🔴 Ⓓ' the control: the SAME clicker with is_restricted/is_ultra_restricted both FALSE passes leg D and the routine really arms", async () => {
+  const ROOM = "C0IT589CLICK2";
+  const MEMBER_CLICKER = "U0IT589MEMBER";
+  withSlackRooms({ [ROOM]: { isPrivate: true, isExternal: false } });
+  withSlackUser(MEMBER_CLICKER, { isRestricted: false, isUltraRestricted: false });
+  const PROMPT = `clicker-floor leg D control — armed ${randomUUID()}`;
+  const id = await seedPending({ kind: "routine.create", channelId: ROOM, args: routineArgs(ROOM, PROMPT) });
+
+  const clickAt = Date.now();
+  const res = await click({ pendingId: id, decision: "approve", cardChannelId: ROOM, clickerId: MEMBER_CLICKER });
+  expect(res.status).toBe(200);
+  const rows = await decideRows(clickAt, id);
+
+  const approved = rows.find((r) => r.action === "approval.approved" && r.detail?.id === id);
+  expect(approved).toBeDefined();
+  expect(approved!.principalId).toBe(MEMBER_CLICKER);
+  expect(rows.filter((r) => r.action === "approval.denied" && r.detail?.id === id).map((r) => r.action)).toEqual([]);
+
+  const s = await getStore();
+  expect((await s.getPendingAction(org, id))?.status).toBe("approved");
+  const armed = (await armedRoutines()).filter((r) => r.prompt === PROMPT);
+  expect(armed.length).toBe(1);
+  expect(armed[0]!.status).toBe("active");
+});
+
+test("🔴 Ⓓ'' the anti-outage control: users.info answering ok:false (missing_scope) leaves leg D INERT, and the click still executes", async () => {
+  const ROOM = "C0IT589CLICK3";
+  const UNSCOPED_CLICKER = "U0IT589UNSCOPED";
+  withSlackRooms({ [ROOM]: { isPrivate: true, isExternal: false } });
+  withSlackUser(UNSCOPED_CLICKER, { infoRefused: true });
+  const PROMPT = `clicker-floor leg D anti-outage control — armed ${randomUUID()}`;
+  const id = await seedPending({ kind: "routine.create", channelId: ROOM, args: routineArgs(ROOM, PROMPT) });
+
+  const clickAt = Date.now();
+  const res = await click({ pendingId: id, decision: "approve", cardChannelId: ROOM, clickerId: UNSCOPED_CLICKER });
+  expect(res.status).toBe(200);
+  const rows = await decideRows(clickAt, id);
+
+  const approved = rows.find((r) => r.action === "approval.approved" && r.detail?.id === id);
+  expect(approved).toBeDefined();
+  expect(approved!.principalId).toBe(UNSCOPED_CLICKER);
+  expect(rows.filter((r) => r.action === "approval.denied" && r.detail?.id === id).map((r) => r.action)).toEqual([]);
+
+  const s = await getStore();
+  expect((await s.getPendingAction(org, id))?.status).toBe("approved");
+  const armed = (await armedRoutines()).filter((r) => r.prompt === PROMPT);
+  expect(armed.length).toBe(1);
+  expect(armed[0]!.status).toBe("active");
 });

@@ -203,7 +203,7 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
     org: ORG,
     id: "intake-row",
     ref: "db:notion-key",
-    provider: "notion",
+    connector: "notion",
     requestedBy: USER,
     channelId: "C1",
     createdAt: new Date().toISOString(),
@@ -361,7 +361,7 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
     intake: {
       mint: async () => {
         const id = `matrix-intake-${seq++}`;
-        await store.addCredentialIntake({ org: ORG, id, ref: "db:matrix-key", provider: "notion", requestedBy: USER, channelId: "C1", createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() });
+        await store.addCredentialIntake({ org: ORG, id, ref: "db:matrix-key", connector: "notion", requestedBy: USER, channelId: "C1", createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() });
         return { token: mintPageToken({ v: 1, aud: "intake", org: ORG, id, rb: USER, exp: Date.now() + 60_000 }, KEY), id };
       },
       get: (t) => intakePage.handleIntakePageGet(new Request(`https://oe.example.test${intakePage.INTAKE_PAGE_PATH}?t=${encodeURIComponent(t)}`)),
@@ -435,7 +435,7 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
   eq(reveal.revealedHookId("hook:hk_abc:prev"), undefined, "a SUPERSEDED ref yields none (it is not a current hook)");
   eq(reveal.revealedHookId("notion-handshake:ws1"), undefined, "a handshake ref names no runtime hook at all");
   eq(reveal.revealedHookId("db:webhook:deploy-status"), "deploy-status", "a config hook's db ref yields its declared id (OPE-224) — public by construction, since it is the path segment of a URL in a merged diff");
-  eq(reveal.revealedHookId("db:notion:key"), undefined, "…and an ordinary stored-credential ref under some other provider names no hook");
+  eq(reveal.revealedHookId("db:notion:key"), undefined, "…and an ordinary stored-credential ref under some other connector names no hook");
 }
 
 

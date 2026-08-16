@@ -89,7 +89,7 @@ console.log("2. issueIntakePageLink:");
   const REF = dbCredentialRef("notion", "team-key");
   const t0 = new Date("2026-07-25T10:00:00Z");
   const res = await page.issueIntakePageLink(
-    { org: ORG, provider: "notion", domain: "eng", ref: REF, requestedBy: OWNER, channelId: "C_DISCORD", platform: "discord" },
+    { org: ORG, connector: "notion", domain: "eng", ref: REF, requestedBy: OWNER, channelId: "C_DISCORD", platform: "discord" },
     { now: () => t0, mintId: () => "intake-link-1" },
   );
   ok(!!res && res.id === "intake-link-1", "issue: creates an intake row and returns its id");
@@ -100,14 +100,14 @@ console.log("2. issueIntakePageLink:");
   ok(!!claims && claims.id === "intake-link-1" && claims.rb === OWNER && claims.org === ORG, "issue: the link's token binds the row id + requester");
 
   const row = await getOperationalStore().getCredentialIntake(ORG, "intake-link-1");
-  ok(!!row && row.usedAt === undefined && row.provider === "notion" && row.domain === "eng" && row.ref === REF, "issue: the intake row is persisted, unconsumed, with the right ref/labels");
+  ok(!!row && row.usedAt === undefined && row.connector === "notion" && row.domain === "eng" && row.ref === REF, "issue: the intake row is persisted, unconsumed, with the right ref/labels");
 
   const aud = await readAudit({ org: ORG });
   ok(aud.some((r) => r.action === "credential.intake_requested" && r.platform === "discord"), "issue: audits credential.intake_requested on the real surface platform");
 
   resetSelfSecretCache();
   const mintedRes = await page.issueIntakePageLink(
-    { org: ORG, provider: "notion", ref: REF, requestedBy: OWNER, channelId: "C_X", platform: "discord" },
+    { org: ORG, connector: "notion", ref: REF, requestedBy: OWNER, channelId: "C_X", platform: "discord" },
     { env: { ...process.env, OE_INTAKE_PAGE_SIGNING_KEY: "" }, now: () => t0, mintId: () => "intake-link-mint" },
   );
   ok(mintedRes !== undefined, "issue: no signing key env var ⇒ STILL issues a link (mints on first use, OPE-408 step 3)");
@@ -119,14 +119,14 @@ console.log("2. issueIntakePageLink:");
   const savedRealKey = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
   delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
   const unarmed = await page.issueIntakePageLink(
-    { org: ORG, provider: "notion", ref: REF, requestedBy: OWNER, channelId: "C_X", platform: "discord" },
+    { org: ORG, connector: "notion", ref: REF, requestedBy: OWNER, channelId: "C_X", platform: "discord" },
     { env: { ...process.env, OE_INTAKE_PAGE_SIGNING_KEY: SIGN_KEY }, now: () => t0 },
   );
   ok(unarmed === undefined, "issue: vault unarmed (no OE_CREDENTIAL_ENCRYPTION_KEY) ⇒ undefined (honest degrade)");
   process.env.OE_CREDENTIAL_ENCRYPTION_KEY = savedRealKey;
 
   const noBase = await page.issueIntakePageLink(
-    { org: ORG, provider: "notion", ref: REF, requestedBy: OWNER, channelId: "C_X", platform: "discord" },
+    { org: ORG, connector: "notion", ref: REF, requestedBy: OWNER, channelId: "C_X", platform: "discord" },
     { env: { OE_INTAKE_PAGE_SIGNING_KEY: SIGN_KEY }, now: () => t0 },
   );
   ok(noBase === undefined, "issue: no resolvable base URL ⇒ undefined");
@@ -138,7 +138,7 @@ console.log("3. GET:");
   const REF = dbCredentialRef("notion", "team-key");
   const t0 = new Date("2026-07-25T11:00:00Z");
   const link = await page.issueIntakePageLink(
-    { org: ORG, provider: "notion", domain: "eng", ref: REF, requestedBy: OWNER, channelId: "C_G", platform: "teams" },
+    { org: ORG, connector: "notion", domain: "eng", ref: REF, requestedBy: OWNER, channelId: "C_G", platform: "teams" },
     { now: () => t0, mintId: () => "intake-get-1" },
   );
   const tok = new URL(link!.url).searchParams.get("t")!;
@@ -147,7 +147,7 @@ console.log("3. GET:");
   ok(good.status === 200, "GET: a valid token renders 200");
   const html = await good.text();
   ok(html.includes("<form") && html.includes('name="t"') && html.includes('type="password"'), "GET: renders the entry form (hidden token + password input)");
-  ok(html.includes("notion") && html.includes("eng"), "GET: shows the provider + domain to the token holder");
+  ok(html.includes("notion") && html.includes("eng"), "GET: shows the connector + domain to the token holder");
   ok(!html.includes(SENTINEL), "GET: renders no secret value (there is none yet)");
 
   const bad = await page.handleIntakePageGet(getReq("garbage.token"), { now: () => t0 });
@@ -175,7 +175,7 @@ console.log("4. POST:");
   const REF = dbCredentialRef("notion", "post-key");
   const t0 = new Date("2026-07-25T12:00:00Z");
   const link = await page.issueIntakePageLink(
-    { org: ORG, provider: "notion", domain: "eng", ref: REF, requestedBy: OWNER, channelId: "C_P", platform: "teams" },
+    { org: ORG, connector: "notion", domain: "eng", ref: REF, requestedBy: OWNER, channelId: "C_P", platform: "teams" },
     { now: () => t0, mintId: () => "intake-post-1" },
   );
   const tok = new URL(link!.url).searchParams.get("t")!;
@@ -210,7 +210,7 @@ console.log("4. POST:");
   ok(!!storedRow, "audit: a credential.stored row exists for the page-stored ref");
   ok(!!storedRow && storedRow.platform === "web" && storedRow.principalId === OWNER, "audit: credential.stored records platform=web + the requester (who), from the token");
   const detail = (storedRow!.detail ?? {}) as Record<string, unknown>;
-  eq({ ref: detail.ref, provider: detail.provider, domain: detail.domain, id: detail.id }, { ref: REF, provider: "notion", domain: "eng", id: "intake-post-1" }, "audit: credential.stored detail = ref/provider/domain/id only");
+  eq({ ref: detail.ref, connector: detail.connector, domain: detail.domain, id: detail.id }, { ref: REF, connector: "notion", domain: "eng", id: "intake-post-1" }, "audit: credential.stored detail = ref/connector/domain/id only");
   ok(!JSON.stringify(aud).includes(SENTINEL), "leak-proof: the secret appears in NO audit row (not even its length)");
   const persisted = await getOperationalStore().getStoredCredential(ORG, REF);
   ok(!!persisted && !persisted.ciphertext.includes(SENTINEL), "store: only ciphertext is persisted, never the plaintext");
@@ -235,7 +235,7 @@ console.log("4b. slack parity via the shared seam:");
   };
 
   await intake.requestCredentialIntake(
-    { org: ORG, provider: "notion", domain: "eng", ref: REF, requestedBy: OWNER, channelId: CH, teamId: "T1" },
+    { org: ORG, connector: "notion", domain: "eng", ref: REF, requestedBy: OWNER, channelId: CH, teamId: "T1" },
     { post, now: () => t0, mintId: () => "intake-parity" },
   );
 

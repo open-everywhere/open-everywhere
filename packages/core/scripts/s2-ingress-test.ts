@@ -9,7 +9,7 @@ delete process.env.OE_ORG;
 import { divertToUnifiedWindow, divertInboundToUnifiedWindow, type UnifiedReceiveTarget } from "../agent/channels/unified.js";
 import { registerSettings } from "../agent/settings/settings.js";
 import { recordThreadOwner, resolveThreadOwner, clearThreadOwner } from "../agent/channels/thread-ownership.js";
-import { unifiedThreadRef, isThreadScopedWakeOrigin, mintWakeId, OE_GRAIN_ATTR, OE_ADDRESSING_ATTR, type UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
+import { unifiedThreadRef, isThreadScopedWakeOrigin, mintWakeId, OE_GRAIN_ATTR, OE_ADDRESSING_ATTR, OE_DELIVERY_ID_ATTR, type UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
 import { formatWindowToken, taskWindowId, threadSeatWindowId } from "../agent/channels/window-key.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { deploymentOrg } from "../agent/identity/binding.js";
@@ -58,6 +58,19 @@ const inbound = (wakeId: string, token = STANDING, origin: UnifiedWakeOrigin = O
 
 const ingressAudit = () => readAudit({ org: ORG, action: "thread.ingress_routed" });
 
+function eqDeliveryModuloNonce(a: ReceivedWake, b: ReceivedWake, label: string): void {
+  const nonceA = a.auth.attributes?.[OE_DELIVERY_ID_ATTR];
+  const nonceB = b.auth.attributes?.[OE_DELIVERY_ID_ATTR];
+  ok(typeof nonceA === "string" && nonceA.length > 0, `${label} — precondition: the first delivery carries an ${OE_DELIVERY_ID_ATTR} nonce`);
+  ok(typeof nonceB === "string" && nonceB.length > 0, `${label} — precondition: the second one does too`);
+  ok(nonceA !== nonceB, `🔴 ${label} — the two nonces DIFFER, which is the whole point of the stamp: it is what proves a delivery arrived`);
+  const strip = (d: ReceivedWake) => {
+    const { [OE_DELIVERY_ID_ATTR]: _drop, ...rest } = d.auth.attributes ?? {};
+    return { ...d, auth: { ...d.auth, attributes: rest } };
+  };
+  eq(strip(a), strip(b), label);
+}
+
 registerSettings({ delegation: { oneshotAgent: false } });
 
 async function withFlag<T>(armed: boolean, fn: () => Promise<T>): Promise<T> {
@@ -76,7 +89,7 @@ console.log("1. flag-off byte-identical passthrough:");
   await divertInboundToUnifiedWindow(captureReceive, inbound(wakeId));
   await divertToUnifiedWindow(captureReceive, inbound(wakeId));
   eq(received.length, 2, "flag off: exactly one delivery per divert (no owner re-dispatch)");
-  eq(received[0], received[1], "flag off: the inbound variant's delivery is BYTE-IDENTICAL to the raw divert's (same target, same stamped auth) despite a live owner row");
+  eqDeliveryModuloNonce(received[0]!, received[1]!, "flag off: the inbound variant's delivery is BYTE-IDENTICAL to the raw divert's (same target, same stamped auth) despite a live owner row");
   eq(received[0].target.token, STANDING, "flag off: delivered to the STANDING token");
   eq((await ingressAudit()).length, 0, "flag off: NO thread.ingress_routed audit row (nothing consulted)");
   received.length = 0;
@@ -88,7 +101,7 @@ await withFlag(true, async () => {
   const wakeId = mintWakeId();
   await divertInboundToUnifiedWindow(captureReceive, inbound(wakeId));
   await divertToUnifiedWindow(captureReceive, inbound(wakeId));
-  eq(received[0], received[1], "no owner: the delivery is byte-identical to the raw divert's (standing token, standing grain)");
+  eqDeliveryModuloNonce(received[0]!, received[1]!, "no owner: the delivery is byte-identical to the raw divert's (standing token, standing grain)");
   eq(received[0].auth.attributes?.[OE_GRAIN_ATTR], "standing", "no owner: the stamped grain is the divert default (standing)");
   eq((await ingressAudit()).length, 0, "no owner: NO audit row (a plain unowned message is not an event — actions-only)");
   received.length = 0;

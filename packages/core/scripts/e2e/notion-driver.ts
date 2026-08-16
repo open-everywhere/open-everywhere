@@ -55,6 +55,9 @@ export class NotionDriver {
   get anchorOffTopic(): string | undefined {
     return this.cfg.anchorOffTopic;
   }
+  get anchorHuman(): string | undefined {
+    return this.cfg.anchorHuman;
+  }
 
   private async api(path: string): Promise<Record<string, unknown>> {
     const res = await fetch(`${NOTION_API}${path}`, {

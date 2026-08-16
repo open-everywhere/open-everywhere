@@ -213,7 +213,7 @@ function getDb(): DatabaseSync {
       org_id     TEXT NOT NULL,
       ref        TEXT NOT NULL,               -- unique lookup key, e.g. "db:notion-<domain>-key"
       ciphertext TEXT NOT NULL,               -- AES-256-GCM envelope (iv‖tag‖ct, base64); NEVER logged
-      provider   TEXT,                        -- label only (audit/admin views), never the value
+      connector  TEXT,                        -- label only (audit/admin views), never the value
       domain     TEXT,                        -- label only
       created_by TEXT NOT NULL,               -- storing principal (the intake requester)
       created_at TEXT NOT NULL,               -- ISO-8601
@@ -226,7 +226,7 @@ function getDb(): DatabaseSync {
       org_id       TEXT NOT NULL,
       id           TEXT NOT NULL,             -- opaque intake id (embedded in the button action_id)
       ref          TEXT NOT NULL,             -- the stored_credential ref the value is written under
-      provider     TEXT NOT NULL,             -- label shown in the modal
+      connector    TEXT NOT NULL,             -- label shown in the modal
       domain       TEXT,                      -- label shown in the modal
       requested_by TEXT NOT NULL,             -- the ONLY principal permitted to open + submit
       channel_id   TEXT NOT NULL,             -- where the button lives (wrong-clicker notice + confirm)
@@ -404,6 +404,11 @@ function getDb(): DatabaseSync {
       claimed_tenant         TEXT,            -- ...in the same CAS, so a claimed row names a whole account
       claimed_native_id      TEXT,
       claimed_at             TEXT,
+      transport              TEXT NOT NULL DEFAULT 'code', -- OPE-617; code | directory
+      target_platform        TEXT,            -- the directory transport's NAMED target ...
+      target_tenant          TEXT,            -- ...matched inside the consent CAS, so a consent
+      target_native_id       TEXT,            -- ...from any other account matches no row
+      back_nonce_hash        TEXT,            -- sha-256 of code-2; its PRESENCE forces the code-back
       status                 TEXT NOT NULL,   -- pending | claimed | ratified | denied | expired
       created_at             TEXT NOT NULL,
       expires_at             TEXT NOT NULL,
@@ -467,6 +472,9 @@ function getDb(): DatabaseSync {
     "ALTER TABLE stored_credential ADD COLUMN claim_id TEXT",
     "ALTER TABLE stored_credential ADD COLUMN claimed_at TEXT",
 
+    "ALTER TABLE stored_credential RENAME COLUMN provider TO connector",
+    "ALTER TABLE credential_intake RENAME COLUMN provider TO connector",
+
     "ALTER TABLE audit_entry ADD COLUMN prev_sha TEXT",
 
     "ALTER TABLE usage_events ADD COLUMN routine_id TEXT",
@@ -478,6 +486,12 @@ function getDb(): DatabaseSync {
 
     "ALTER TABLE identity_link_challenges ADD COLUMN initiating_tenant TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE identity_link_challenges ADD COLUMN claimed_tenant TEXT",
+
+    "ALTER TABLE identity_link_challenges ADD COLUMN transport TEXT NOT NULL DEFAULT 'code'",
+    "ALTER TABLE identity_link_challenges ADD COLUMN target_platform TEXT",
+    "ALTER TABLE identity_link_challenges ADD COLUMN target_tenant TEXT",
+    "ALTER TABLE identity_link_challenges ADD COLUMN target_native_id TEXT",
+    "ALTER TABLE identity_link_challenges ADD COLUMN back_nonce_hash TEXT",
   ]) {
     try {
       handle.exec(ddl);
@@ -689,7 +703,9 @@ function linkedIdFromSqliteRow(org: string, r: LinkedIdSqliteRow): LinkedIdRow {
 
 const LINK_CHALLENGE_SQLITE_SELECT =
   `SELECT id, nonce_hash, initiating_platform, initiating_tenant, initiating_native_id, initiating_surface_key,
-          claimed_platform, claimed_tenant, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at
+          claimed_platform, claimed_tenant, claimed_native_id, claimed_at,
+          transport, target_platform, target_tenant, target_native_id, back_nonce_hash,
+          status, created_at, expires_at, decided_at
    FROM identity_link_challenges`;
 
 type LinkChallengeSqliteRow = {
@@ -703,6 +719,11 @@ type LinkChallengeSqliteRow = {
   claimed_tenant: string | null;
   claimed_native_id: string | null;
   claimed_at: string | null;
+  transport: string | null;
+  target_platform: string | null;
+  target_tenant: string | null;
+  target_native_id: string | null;
+  back_nonce_hash: string | null;
   status: string;
   created_at: string;
   expires_at: string;
@@ -722,6 +743,11 @@ function linkChallengeFromSqliteRow(org: string, r: LinkChallengeSqliteRow): Lin
     ...(r.claimed_tenant === null ? {} : { claimedTenant: r.claimed_tenant }),
     ...(r.claimed_native_id === null ? {} : { claimedNativeId: r.claimed_native_id }),
     ...(r.claimed_at === null ? {} : { claimedAt: r.claimed_at }),
+    transport: r.transport ?? "code",
+    ...(r.target_platform === null || r.target_platform === undefined ? {} : { targetPlatform: r.target_platform }),
+    ...(r.target_tenant === null || r.target_tenant === undefined ? {} : { targetTenant: r.target_tenant }),
+    ...(r.target_native_id === null || r.target_native_id === undefined ? {} : { targetNativeId: r.target_native_id }),
+    ...(r.back_nonce_hash === null || r.back_nonce_hash === undefined ? {} : { backNonceHash: r.back_nonce_hash }),
     status: r.status as LinkChallengeStatus,
     createdAt: r.created_at,
     expiresAt: r.expires_at,
@@ -1696,24 +1722,24 @@ export const sqliteOperationalStore: OperationalStore = {
   async putStoredCredential(org, rec) {
     getDb()
       .prepare(
-        `INSERT INTO stored_credential (org_id, ref, ciphertext, provider, domain, created_by, created_at)
+        `INSERT INTO stored_credential (org_id, ref, ciphertext, connector, domain, created_by, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (org_id, ref) DO UPDATE SET
-           ciphertext = excluded.ciphertext, provider = excluded.provider,
+           ciphertext = excluded.ciphertext, connector = excluded.connector,
            domain = excluded.domain, created_by = excluded.created_by, created_at = excluded.created_at`,
       )
-      .run(org, rec.ref, rec.ciphertext, rec.provider ?? null, rec.domain ?? null, rec.createdBy, rec.createdAt);
+      .run(org, rec.ref, rec.ciphertext, rec.connector ?? null, rec.domain ?? null, rec.createdBy, rec.createdAt);
   },
 
   async getStoredCredential(org, ref) {
     const row = getDb()
-      .prepare("SELECT ref, ciphertext, provider, domain, created_by, created_at FROM stored_credential WHERE org_id = ? AND ref = ?")
-      .get(org, ref) as { ref: string; ciphertext: string; provider: string | null; domain: string | null; created_by: string; created_at: string } | undefined;
+      .prepare("SELECT ref, ciphertext, connector, domain, created_by, created_at FROM stored_credential WHERE org_id = ? AND ref = ?")
+      .get(org, ref) as { ref: string; ciphertext: string; connector: string | null; domain: string | null; created_by: string; created_at: string } | undefined;
     if (!row) return null;
     return {
       ref: row.ref,
       ciphertext: row.ciphertext,
-      ...(row.provider ? { provider: row.provider } : {}),
+      ...(row.connector ? { connector: row.connector } : {}),
       ...(row.domain ? { domain: row.domain } : {}),
       createdBy: row.created_by,
       createdAt: row.created_at,
@@ -1778,26 +1804,26 @@ export const sqliteOperationalStore: OperationalStore = {
   async addCredentialIntake(row) {
     getDb()
       .prepare(
-        `INSERT INTO credential_intake (org_id, id, ref, provider, domain, requested_by, channel_id, thread_ts, created_at, expires_at, used_at)
+        `INSERT INTO credential_intake (org_id, id, ref, connector, domain, requested_by, channel_id, thread_ts, created_at, expires_at, used_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(row.org, row.id, row.ref, row.provider, row.domain ?? null, row.requestedBy, row.channelId, row.threadTs ?? null, row.createdAt, row.expiresAt, row.usedAt ?? null);
+      .run(row.org, row.id, row.ref, row.connector, row.domain ?? null, row.requestedBy, row.channelId, row.threadTs ?? null, row.createdAt, row.expiresAt, row.usedAt ?? null);
   },
 
   async getCredentialIntake(org, id) {
     const row = getDb()
       .prepare(
-        "SELECT id, ref, provider, domain, requested_by, channel_id, thread_ts, created_at, expires_at, used_at FROM credential_intake WHERE org_id = ? AND id = ?",
+        "SELECT id, ref, connector, domain, requested_by, channel_id, thread_ts, created_at, expires_at, used_at FROM credential_intake WHERE org_id = ? AND id = ?",
       )
       .get(org, id) as
-      | { id: string; ref: string; provider: string; domain: string | null; requested_by: string; channel_id: string; thread_ts: string | null; created_at: string; expires_at: string; used_at: string | null }
+      | { id: string; ref: string; connector: string; domain: string | null; requested_by: string; channel_id: string; thread_ts: string | null; created_at: string; expires_at: string; used_at: string | null }
       | undefined;
     if (!row) return null;
     return {
       org,
       id: row.id,
       ref: row.ref,
-      provider: row.provider,
+      connector: row.connector,
       ...(row.domain ? { domain: row.domain } : {}),
       requestedBy: row.requested_by,
       channelId: row.channel_id,
@@ -2016,8 +2042,10 @@ export const sqliteOperationalStore: OperationalStore = {
       .prepare(
         `INSERT INTO identity_link_challenges
            (org_id, id, nonce_hash, initiating_platform, initiating_tenant, initiating_native_id, initiating_surface_key,
-            claimed_platform, claimed_tenant, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            claimed_platform, claimed_tenant, claimed_native_id, claimed_at,
+            transport, target_platform, target_tenant, target_native_id, back_nonce_hash,
+            status, created_at, expires_at, decided_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         org,
@@ -2031,6 +2059,11 @@ export const sqliteOperationalStore: OperationalStore = {
         row.claimedTenant ?? null,
         row.claimedNativeId ?? null,
         row.claimedAt ?? null,
+        row.transport,
+        row.targetPlatform ?? null,
+        row.targetTenant ?? null,
+        row.targetNativeId ?? null,
+        row.backNonceHash ?? null,
         row.status,
         row.createdAt,
         row.expiresAt,
@@ -2058,6 +2091,18 @@ export const sqliteOperationalStore: OperationalStore = {
       conjuncts.push("initiating_native_id = ?");
       params.push(filter.initiatingNativeId);
     }
+    if (filter?.targetPlatform !== undefined) {
+      conjuncts.push("target_platform = ?");
+      params.push(filter.targetPlatform);
+    }
+    if (filter?.targetTenant !== undefined) {
+      conjuncts.push("target_tenant = ?");
+      params.push(filter.targetTenant);
+    }
+    if (filter?.targetNativeId !== undefined) {
+      conjuncts.push("target_native_id = ?");
+      params.push(filter.targetNativeId);
+    }
     if (filter?.status !== undefined) {
       conjuncts.push("status = ?");
       params.push(filter.status);
@@ -2068,17 +2113,31 @@ export const sqliteOperationalStore: OperationalStore = {
     return rows.map((r) => linkChallengeFromSqliteRow(org, r));
   },
 
-  async claimLinkChallenge(org, nonceHash, platform, tenant, nativeId, at) {
+  async claimLinkChallenge(org, nonceHash, platform, tenant, nativeId, at, backNonceHash) {
     const db = getDb();
     const changes = db
       .prepare(
-        `UPDATE identity_link_challenges SET claimed_platform = ?, claimed_tenant = ?, claimed_native_id = ?, claimed_at = ?, status = 'claimed'
+        `UPDATE identity_link_challenges SET claimed_platform = ?, claimed_tenant = ?, claimed_native_id = ?, claimed_at = ?, back_nonce_hash = ?, status = 'claimed'
          WHERE org_id = ? AND nonce_hash = ? AND status = 'pending' AND expires_at > ?
            AND NOT (initiating_platform = ? AND initiating_tenant = ? AND initiating_native_id = ?)`,
       )
-      .run(platform, tenant, nativeId, at, org, nonceHash, at, platform, tenant, nativeId).changes;
+      .run(platform, tenant, nativeId, at, backNonceHash ?? null, org, nonceHash, at, platform, tenant, nativeId).changes;
     if (Number(changes) === 0) return null;
     const row = db.prepare(`${LINK_CHALLENGE_SQLITE_SELECT} WHERE org_id = ? AND nonce_hash = ? AND claimed_at = ?`).get(org, nonceHash, at) as LinkChallengeSqliteRow | undefined;
+    return row ? linkChallengeFromSqliteRow(org, row) : null;
+  },
+
+  async consentLinkChallenge(org, id, consenter, at, backNonceHash) {
+    const db = getDb();
+    const changes = db
+      .prepare(
+        `UPDATE identity_link_challenges SET claimed_platform = ?, claimed_tenant = ?, claimed_native_id = ?, claimed_at = ?, back_nonce_hash = ?, status = 'claimed'
+         WHERE org_id = ? AND id = ? AND status = 'pending' AND expires_at > ?
+           AND target_platform = ? AND target_tenant = ? AND target_native_id = ?`,
+      )
+      .run(consenter.platform, consenter.tenant, consenter.nativeId, at, backNonceHash ?? null, org, id, at, consenter.platform, consenter.tenant, consenter.nativeId).changes;
+    if (Number(changes) === 0) return null;
+    const row = db.prepare(`${LINK_CHALLENGE_SQLITE_SELECT} WHERE org_id = ? AND id = ?`).get(org, id) as LinkChallengeSqliteRow | undefined;
     return row ? linkChallengeFromSqliteRow(org, row) : null;
   },
 

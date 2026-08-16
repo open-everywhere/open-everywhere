@@ -9,6 +9,7 @@ import { defineMemorySilo } from "../agent/memory/silo.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import type { EffectiveAccess } from "../agent/access/resolver.js";
 import { classifySessionId, taskWindowId, threadSeatWindowId } from "../agent/channels/window-key.js";
+import { registerBotDisplayName, _resetBotDisplayNamesForTest } from "../agent/identity/bot-display-name.js";
 import { registerSlackFixtureMapper, registerSlackTestBridge } from "./_slack-test-stubs.js";
 import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 
@@ -294,6 +295,27 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
 }
 
 {
+  registerSlackFixtureMapper();
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [defineDomain({ name: "ope544task", channels: ["slack/T_TASK/C_TASK"], mode: "unified" })],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+  const taskToken = `oe-dom:ope544task:win:${taskWindowId("slack/T_TASK/C_TASK", "1700.5")}:oe-sup:g1`;
+  ok(classifySessionId(taskToken).kind === "task", "fixture guard: the token really classifies TASK-grain — if this flips, the assertion below stops measuring what it names");
+  const taskCtx: BindableContext = {
+    channel: { kind: "channel:unified", continuationToken: taskToken },
+    session: { auth: { current: { attributes: { oe_platform: "slack", oe_grain: "task" } } } },
+  } as BindableContext;
+  const taskMd = await renderScopeMarkdown(taskCtx);
+  ok(taskMd.includes(REPLY_STYLE_RUBRIC), "🔴 OPE-544: a REAL task-grain worker session reads the byte-identical reply-style rubric — the scoping is by opening phrase, never by grain, on an actual worker token");
+}
+
+{
   registerSlackTestBridge({ botDisplayName: async () => "Test Slack Bot" });
   registerConfig({
     loadBundles: () => [],
@@ -353,13 +375,26 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   ok(classifySessionId(taskSolo).kind === "task", "(e) fixture guard: the token really classifies TASK-grain — if this flips, the assertion below stops measuring what it names");
   ok(classifySessionId(seatSolo).kind === "thread-seat", "(f) fixture guard: the second token really classifies THREAD-SEAT-grain");
   const taskMd = await md(taskSolo, "slack");
-  ok(taskMd.includes("Your name in this workspace is **Test Slack Bot**"), "🔴 (e) OPE-570: a TASK window on a ONE-surface unified domain still identifies by the live vendor name — the grain marker `t` is never read as a platform");
+  ok(taskMd.includes("Your name in this workspace is **Test Slack Bot**"), "🔴 (e) a TASK window on a ONE-surface unified domain identifies by the live vendor name — the grain marker `t` is never read as a platform");
   ok(!taskMd.includes(IDENTIFY_GENERIC), "(e) …and it does NOT fall back to the generic identity line");
   ok((await md(seatSolo, "slack")).includes("Your name in this workspace is **Test Slack Bot**"), "🔴 (f) …and a THREAD-SEAT window (`s/`) resolves the same way, for the same reason");
 
   const taskXsurf = await md(`oe-dom:xsurf:win:${taskWindowId("slack/T_X/C_X", "1700.5")}:oe-sup:g1`, "slack");
-  ok(!taskXsurf.includes("Test Slack Bot"), "🔴 (g) NEGATIVE CONTROL: a TASK window on a CROSS-SURFACE domain carries NO vendor name");
-  ok(taskXsurf.includes(IDENTIFY_GENERIC), "(g) …it renders the generic identity line instead");
+  ok(taskXsurf.includes("Your name in this workspace is **Test Slack Bot**"), "🔴 (g) OPE-587: a TASK window on a CROSS-SURFACE domain now names itself by the ONE surface its windowId pins it to");
+  ok(!taskXsurf.includes(IDENTIFY_GENERIC), "(g) …instead of the generic identity line it used to render");
+
+  const taskXsurfTeams = await md(`oe-dom:xsurf:win:${taskWindowId("teams/W_X/CH_X", "1700.5")}:oe-sup:g1`, "teams");
+  ok(!taskXsurfTeams.includes("Test Slack Bot"), "🔴 (h) NEGATIVE CONTROL: a TEAMS-pinned task window never borrows the SLACK name");
+  ok(taskXsurfTeams.includes(IDENTIFY_GENERIC), "(h) …with no teams arm registered it renders the generic identity line");
+
+  registerBotDisplayName("teams", async () => "Contoso Assistant");
+  const taskXsurfTeamsArmed = await md(`oe-dom:xsurf:win:${taskWindowId("teams/W_X/CH_X", "1700.5")}:oe-sup:g1`, "teams");
+  ok(taskXsurfTeamsArmed.includes("Your name in this workspace is **Contoso Assistant**"), "🔴 (i) OPE-587: a registered TEAMS arm gives a Teams-pinned window its own name — the registry answers for a SECOND surface");
+  ok(!taskXsurfTeamsArmed.includes("Test Slack Bot"), "(i) …and the Slack arm is not consulted for it");
+  ok((await md("oe-dom:xsurf:win:teams/W_X/CH_X:oe-sup:g1", "teams")).includes("**Contoso Assistant**"), "(i) …and a SOLO Teams window resolves the same arm");
+  ok((await md("oe-dom:xsurf:oe-sup:g1", "teams")).includes(IDENTIFY_GENERIC), "🔴 (i) NEGATIVE CONTROL: the CROSS-SURFACE domain window still withholds every name — arming a second arm did not widen it");
+  _resetBotDisplayNamesForTest();
+  registerSlackTestBridge({ botDisplayName: async () => "Test Slack Bot" });
 }
 
 {
@@ -385,6 +420,22 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   const teamsMd = await perSurface("teams", { tenant_id: "TEN1", channel_id: "CH1", channel_type: "channel" });
   ok(!teamsMd.includes("Test Slack Bot"), "NEGATIVE CONTROL: a per-surface TEAMS session never borrowed the Slack name, and still does not");
   ok(teamsMd.includes("Identify as this team's agent"), "…it renders the generic identity line");
+
+  registerBotDisplayName("teams", async () => "Contoso Assistant");
+  ok(
+    (await perSurface("teams", { tenant_id: "TEN1", channel_id: "CH1", channel_type: "channel" })).includes("Your name in this workspace is **Contoso Assistant**"),
+    "🔴 OPE-587: a per-surface TEAMS session identifies by the registered TEAMS arm — the answer core had no way to give when vendorDisplayName branched on `platform !== \"slack\"`",
+  );
+  ok(
+    (await perSurface("slack", { team_id: "T1", channel_id: "C_ORD", channel_type: "channel", is_private: "false", trust_checked: "true" })).includes("**Test Slack Bot**"),
+    "…and the Slack session still gets the SLACK arm's name, not the Teams one",
+  );
+  ok(
+    (await perSurface("discord", { guild_id: "G1", channel_id: "D1", channel_type: "channel" })).includes("Identify as this team's agent"),
+    "🔴 NEGATIVE CONTROL: a platform with NO registered arm still renders the generic line — arming Teams did not arm every surface",
+  );
+  _resetBotDisplayNamesForTest();
+  registerSlackTestBridge({ botDisplayName: async () => "Test Slack Bot" });
 
   overrideSettingsForTest({ identity: { name: "Aria" } });
   ok((await perSurface("teams", { tenant_id: "TEN1", channel_id: "CH1", channel_type: "channel" })).includes("**Aria**"), "🔴 a configured name gives a TEAMS per-surface session a real name — the answer core could not give before");

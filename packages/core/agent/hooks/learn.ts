@@ -1,30 +1,63 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { resolvePartition } from "../memory/partition.js";
-import { bindFrom } from "../identity/binding.js";
+import { bindFrom, deliveryStampOf, isSubagentChildContext, isScheduleOriginatedAuth, type BindableContext } from "../identity/binding.js";
 import { planFor } from "../memory/resolve.js";
 import { auditRecurrenceLedger } from "../memory/dream/recurrence.js";
 import { learnFromSession, safeDistill, enrichmentBullets, writeEnrichment } from "../memory/dream/learn.js";
 import { dreamJudge } from "../memory/dream/judge.js";
 import { recordProposal } from "../memory/dream/proposal.js";
 import { appendAudit } from "../audit/audit.js";
+import { triggerMessageBody } from "../channels/wake-envelope.js";
 
 const MAX_MESSAGES = 10;
 const MAX_MESSAGE_CHARS = 300;
 
-const learnLog = defineState<{ messages: string[] }>(
+const learnLog = defineState<{ session: string[]; turn: string[] }>(
   "open-everywhere.learn.sessionLog",
-  () => ({ messages: [] }),
+  () => ({ session: [], turn: [] }),
 );
 
 function log(msg: string): void {
   console.log(`[open-everywhere:dream/learn] ${msg}`);
 }
 
+function consolidatableTurn(ctx: HookContext): boolean {
+  try {
+    if (isSubagentChildContext(ctx as unknown as BindableContext)) return false;
+    const c = ctx as unknown as { session?: { auth?: { current?: unknown; initiator?: unknown } | null } };
+    const auth = (c.session?.auth?.current ?? c.session?.auth?.initiator ?? null) as
+      | { authenticator?: unknown; principalId?: unknown; principalType?: unknown }
+      | null;
+    return !isScheduleOriginatedAuth(auth);
+  } catch {
+    return false;
+  }
+}
+
+function authoredBody(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const body = triggerMessageBody(raw)?.trim();
+  return body !== undefined && body.length > 0 ? body.slice(0, MAX_MESSAGE_CHARS) : undefined;
+}
+
+function consumeTurnRequest(): { request: string; messages: string[] } | null {
+  try {
+    const state = learnLog.get();
+    const request = state.turn[0]?.trim().replace(/\n+/g, " ").slice(0, 300);
+    if (!request) return null;
+    learnLog.update((s) => ({ ...s, turn: [] }));
+    return { request, messages: state.session };
+  } catch {
+    return null;
+  }
+}
+
 async function consolidate(ctx: HookContext): Promise<void> {
-  const messages = learnLog.get().messages;
-  const request = messages[0]?.trim().replace(/\n+/g, " ").slice(0, 300);
-  if (!request) return;
+  if (!consolidatableTurn(ctx)) return;
+  const captured = consumeTurnRequest();
+  if (!captured) return;
+  const { request, messages } = captured;
 
   const p = resolvePartition(ctx);
   const binding = bindFrom(ctx);
@@ -33,7 +66,13 @@ async function consolidate(ctx: HookContext): Promise<void> {
   const scope = target ? target.silo.name : p.surfaceKey;
 
   const ledger = auditRecurrenceLedger(p.org);
-  const result = await learnFromSession(scope, { request, messages }, ledger);
+  let dedupeKey: string | undefined;
+  try {
+    dedupeKey = deliveryStampOf(ctx as unknown as BindableContext);
+  } catch {
+    dedupeKey = undefined;
+  }
+  const result = await learnFromSession(scope, { request, messages, ...(dedupeKey !== undefined ? { dedupeKey } : {}) }, ledger);
   if (!result.signature) return;
 
   if (result.enrich && target) {
@@ -70,18 +109,35 @@ async function consolidate(ctx: HookContext): Promise<void> {
 
 export default defineHook({
   events: {
-    "message.received": (event, _ctx) => {
-      const raw = event.data?.message;
-      if (learnLog.get().messages.length < MAX_MESSAGES && typeof raw === "string") {
-        learnLog.update((s) => ({ ...s, messages: [...s.messages, raw.slice(0, MAX_MESSAGE_CHARS)] }));
+    "turn.started": (_event, _ctx) => {
+      try {
+        learnLog.update((s) => ({ ...s, turn: [] }));
+      } catch {
       }
     },
 
-    "session.completed": async (_event, ctx) => {
+    "message.received": (event, _ctx) => {
+      const text = authoredBody(event.data?.message);
+      if (text === undefined) return;
+      learnLog.update((s) => ({
+        session: s.session.length < MAX_MESSAGES ? [...s.session, text] : s.session,
+        turn: s.turn.length < MAX_MESSAGES ? [...s.turn, text] : s.turn,
+      }));
+    },
+
+    "turn.completed": async (_event, ctx) => {
       try {
         await consolidate(ctx);
       } catch (err) {
-        log(`session.completed learn skipped: ${String(err)}`);
+        log(`turn.completed learn skipped: ${String(err)}`);
+      }
+    },
+
+    "turn.failed": async (_event, ctx) => {
+      try {
+        await consolidate(ctx);
+      } catch (err) {
+        log(`turn.failed learn skipped: ${String(err)}`);
       }
     },
 

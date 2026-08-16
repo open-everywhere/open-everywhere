@@ -138,30 +138,30 @@ export const ROUTINE_MARKER = {
 } as const;
 
 type Attrs = Readonly<Record<string, string | readonly string[]>> | undefined;
-function oneOf(v: string | readonly string[] | undefined): string | undefined {
+export function oneAttrValue(v: string | readonly string[] | undefined): string | undefined {
   if (typeof v === "string") return v;
   if (Array.isArray(v) && typeof v[0] === "string") return v[0];
   return undefined;
 }
 
 export function routineMarker(attributes: Attrs): { id: string; surfaceKey: string; org: string } | null {
-  const id = oneOf(attributes?.[ROUTINE_MARKER.id]);
-  const surfaceKey = oneOf(attributes?.[ROUTINE_MARKER.surface]);
-  const org = oneOf(attributes?.[ROUTINE_MARKER.org]) ?? "default";
+  const id = oneAttrValue(attributes?.[ROUTINE_MARKER.id]);
+  const surfaceKey = oneAttrValue(attributes?.[ROUTINE_MARKER.surface]);
+  const org = oneAttrValue(attributes?.[ROUTINE_MARKER.org]) ?? "default";
   return id && surfaceKey ? { id, surfaceKey, org } : null;
 }
 
 export function routineSilentStamped(attributes: Attrs): boolean {
-  return oneOf(attributes?.[ROUTINE_MARKER.silent]) === "true";
+  return oneAttrValue(attributes?.[ROUTINE_MARKER.silent]) === "true";
 }
 
 export function routineGrantKeyStamped(attributes: Attrs): string | undefined {
-  const key = oneOf(attributes?.[ROUTINE_MARKER.grant]);
+  const key = oneAttrValue(attributes?.[ROUTINE_MARKER.grant]);
   return key !== undefined && key.startsWith(ROUTINE_GRANT_PREFIX) ? key : undefined;
 }
 
 export function routineManualStamped(attributes: Attrs): boolean {
-  return oneOf(attributes?.[ROUTINE_MARKER.manual]) === "true";
+  return oneAttrValue(attributes?.[ROUTINE_MARKER.manual]) === "true";
 }
 
 export function describeTrigger(t: RoutineTrigger, report?: RoutineReport): string {

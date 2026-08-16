@@ -451,7 +451,7 @@ export interface GitHubInstallationRow {
 export interface StoredCredentialRow {
   readonly ref: string;
   readonly ciphertext: string;
-  readonly provider?: string;
+  readonly connector?: string;
   readonly domain?: string;
   readonly createdBy: string;
   readonly createdAt: string;
@@ -461,7 +461,7 @@ export interface CredentialIntakeRow {
   readonly org: string;
   readonly id: string;
   readonly ref: string;
-  readonly provider: string;
+  readonly connector: string;
   readonly domain?: string;
   readonly requestedBy: string;
   readonly channelId: string;
@@ -512,6 +512,11 @@ export interface LinkChallengeRow {
   readonly org: string;
   readonly id: string;
   readonly nonceHash: string;
+  readonly transport: string;
+  readonly targetPlatform?: string;
+  readonly targetTenant?: string;
+  readonly targetNativeId?: string;
+  readonly backNonceHash?: string;
   readonly initiatingPlatform: string;
   readonly initiatingTenant: string;
   readonly initiatingNativeId: string;
@@ -530,6 +535,9 @@ export interface LinkChallengeFilter {
   readonly initiatingPlatform?: string;
   readonly initiatingTenant?: string;
   readonly initiatingNativeId?: string;
+  readonly targetPlatform?: string;
+  readonly targetTenant?: string;
+  readonly targetNativeId?: string;
   readonly status?: LinkChallengeStatus;
 }
 
@@ -698,7 +706,14 @@ export interface OperationalStore {
   addLinkChallenge(org: string, row: LinkChallengeRow): Promise<void>;
   getLinkChallenge(org: string, id: string): Promise<LinkChallengeRow | null>;
   listLinkChallenges(org: string, filter?: LinkChallengeFilter): Promise<readonly LinkChallengeRow[]>;
-  claimLinkChallenge(org: string, nonceHash: string, platform: string, tenant: string, nativeId: string, at: string): Promise<LinkChallengeRow | null>;
+  claimLinkChallenge(org: string, nonceHash: string, platform: string, tenant: string, nativeId: string, at: string, backNonceHash?: string): Promise<LinkChallengeRow | null>;
+  consentLinkChallenge(
+    org: string,
+    id: string,
+    consenter: { readonly platform: string; readonly tenant: string; readonly nativeId: string },
+    at: string,
+    backNonceHash?: string,
+  ): Promise<LinkChallengeRow | null>;
   decideLinkChallenge(org: string, id: string, from: readonly LinkChallengeStatus[], to: LinkChallengeStatus, at: string): Promise<boolean>;
   expireLinkChallenges(org: string, nowIso: string): Promise<number>;
 

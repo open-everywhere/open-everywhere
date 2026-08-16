@@ -134,11 +134,11 @@ const connectorEntry = defineTool({
       if (!binding.principalId) return undefined;
       const cred = offerableCredential(catalogue, o.credentialType);
       if (!cred) return undefined;
-      const ref = deriveCredentialRef({ provider: catalogue.connector, credentialId: cred.id });
+      const ref = deriveCredentialRef({ connector: catalogue.connector, credentialId: cred.id });
       if (!ref) return undefined;
       const link = await issueIntakePageLink({
         org: binding.org,
-        provider: catalogue.connector,
+        connector: catalogue.connector,
         ...(partition.workspace ? { teamId: partition.workspace } : {}),
         platform,
         ref,

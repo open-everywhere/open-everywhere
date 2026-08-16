@@ -6,6 +6,7 @@ import {
   registerReadAdapter,
   registerRoutineDispatch,
   registerTeamsBridge,
+  registerBotDisplayName,
   type DispatchTarget,
   type Routine,
   type UnifiedWakeOrigin,
@@ -19,6 +20,7 @@ import { teamsPostArm } from "./channels/teams-post-arm.js";
 import { teamsWakeOriginCodec } from "./channels/teams-origin-codec.js";
 import { teamsReadAdapter } from "./channels/teams-read.js";
 import { liveTeamsRoomMembership, liveTeamsAccountActive } from "./channels/teams-fire-eligibility.js";
+import { teamsBotDisplayName } from "./channels/teams-bot-name.js";
 
 function storedString(t: Routine["target"], key: string): string | undefined {
   const v = t?.[key];
@@ -68,6 +70,7 @@ export function registerTeamsProvider(): void {
   registerReadAdapter(teamsReadAdapter);
   registerRoutineDispatch("teams", { resolveTarget: resolveTeamsTarget });
   registerTeamsBridge({ roomMembership: liveTeamsRoomMembership, accountActive: liveTeamsAccountActive });
+  registerBotDisplayName("teams", teamsBotDisplayName);
   registerProviderDocs("teams", PROVIDER_DOCS);
   registerTeamsOps();
 }

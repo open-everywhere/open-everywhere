@@ -139,6 +139,42 @@ for (const [name, byVersion] of pins) {
   }
 }
 
+const RUNTIME_ROTATION_MODULE = join("packages", "core", "agent", "channels", "runtime-rotation.ts");
+let runtimeVersionChecked = false;
+{
+  const expected = patchedVersions.get("eve");
+  if (expected === undefined) {
+    reds.push(`NO EVE PATCH: patches/ holds no patch for "eve", so RULE 3 cannot learn the expected version.`);
+  } else {
+    let source: string;
+    try {
+      source = readFileSync(RUNTIME_ROTATION_MODULE, "utf8");
+    } catch {
+      reds.push(`MISSING MODULE: ${RUNTIME_ROTATION_MODULE} does not exist — it carries EVE_RUNTIME_VERSION, which this rule pins.`);
+      source = "";
+    }
+    if (source !== "") {
+      const match = /export const EVE_RUNTIME_VERSION\s*=\s*"([^"]*)"/u.exec(source);
+      if (!match) {
+        reds.push(
+          `UNREADABLE CONSTANT: ${RUNTIME_ROTATION_MODULE} does not export a literal \`EVE_RUNTIME_VERSION = "…"\`. ` +
+            `It must stay a plain string literal — this gate reads the SOURCE, and a computed value would make the ` +
+            `pre-dispatch rotation unverifiable.`,
+        );
+      } else if (match[1] !== expected) {
+        reds.push(
+          `RUNTIME VERSION STALE: ${RUNTIME_ROTATION_MODULE} declares EVE_RUNTIME_VERSION "${match[1]}" but this tree ` +
+            `pins eve at "${expected}". The pre-dispatch rotation (OPE-599) keys on that constant, so a stale value ` +
+            `means the eve bump strands every standing session and NOTHING rotates — silently, with no audit row. ` +
+            `Set it to "${expected}" in the same commit as the pin bump.`,
+        );
+      } else {
+        runtimeVersionChecked = true;
+      }
+    }
+  }
+}
+
 if (reds.length > 0) {
   console.error(`✗ eve-patch: ${reds.length} problem(s):\n`);
   for (const r of reds) console.error(`  • ${r}`);
@@ -147,5 +183,6 @@ if (reds.length > 0) {
 
 console.log(
   `✓ eve-patch: ${patches.length} committed patch(es); ${hookChecks} hook(s) present in the installed bytes; ` +
-    `${pinChecks} pin(s) agree with the patched version; retired __oeForceContinue absent`,
+    `${pinChecks} pin(s) agree with the patched version; retired __oeForceContinue absent; ` +
+    `EVE_RUNTIME_VERSION ${runtimeVersionChecked ? "agrees with the pin" : "UNCHECKED"}`,
 );

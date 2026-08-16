@@ -6,6 +6,7 @@ import { linkTenantOf } from "../identity/link-tenant.js";
 import { actingPrincipalIdOf } from "../access/request.js";
 import { normalizePlatform } from "../identity/platform.js";
 import { principalKey } from "../identity/principal-key.js";
+import { humanAccountLabel } from "../identity/account-display-name.js";
 import { unlinkOwnId } from "../identity/link-store.js";
 import { canDeliverDirectMessage, dispatchDirectMessage, notifyLinkSetMembers } from "../channels/post-arms.js";
 
@@ -43,12 +44,12 @@ export default defineTool({
       ...(target ? { target } : {}),
     });
     if (!result.ok) throw new Error(result.reason);
-    const removed = target
-      ? principalKey(target.platform, target.tenant, target.nativeId)
-      : principalKey(binding.platform, binding.workspace, actor);
+    const removedAccount = target ?? { platform: binding.platform, tenant: linkTenantOf(binding.platform, binding.workspace), nativeId: actor };
+    const removed = principalKey(removedAccount.platform, removedAccount.tenant, removedAccount.nativeId);
+    const removedName = await humanAccountLabel(removedAccount.platform, removedAccount.nativeId, removedAccount.tenant);
     const caller = { platform: binding.platform, tenant: linkTenantOf(binding.platform, binding.workspace), nativeId: actor };
     const notice =
-      `**${removed}** was just removed from your linked identity. It no longer speaks as you, and ` +
+      `${removedName} was just removed from your linked identity. It no longer speaks as you, and ` +
       `it no longer reaches anything this identity reaches.\n\nIf that was you, nothing to do. If ` +
       `it was not, tell whoever runs this workspace — someone with access to one of your accounts ` +
       `changed who you are here.`;

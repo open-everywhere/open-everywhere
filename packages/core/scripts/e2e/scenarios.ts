@@ -1,4 +1,5 @@
 import { auditSilencesExpected, ENV, type Capability, type SlackUser2Config } from "./env.js";
+import { deployedBuildCarries } from "./deployed-build.js";
 import type { SkipKind } from "./skip-summary.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import { dmAnchorDomain, DM_ANCHOR_DOMAIN_PREFIX } from "../../agent/channels/window-key.js";
@@ -114,6 +115,7 @@ const FILE_REPLY_WAIT = 420_000;
 const UNIFIED_REPLY_WAIT = 420_000;
 const BROWSER_QA_WAIT = 420_000;
 const SILENCE_WINDOW = 45_000;
+const LINK_VENUE_PROOF_WINDOW = 20_000;
 
 const isFillerAck = (text: string): boolean =>
   /\b(one sec|a sec|hang on|hold on|let me (?:look|check|see)|looking (?:at|into)|checking (?:now|it)?|on it|give me a (?:sec|moment)|working on|just a (?:sec|moment)|will (?:look|check|report|update)|hand(?:ed|ing) (?:this |it )?off|report back|delegat(?:ed|ing)|spun up a worker|standing by)\b/i.test(
@@ -123,7 +125,9 @@ const isFillerAck = (text: string): boolean =>
 
 const STOOD_DOWN_ACTION = "engagement.stood_down";
 const CAP_REFUSAL = "I'm holding off here";
+const OPE617_V2_SHA = "4944364aa5cf459b43cfaff96218f29e87331e9c";
 const CAP_REFUSAL_MARKER = /holding off/i;
+const LINK_VENUE_REFUSAL_MARKER = /can't take a link code here/i;
 const NON_ADMIN_DENIAL = "only a domain/org admin can decide this request";
 const MEMORY_ADMIN_GATE = "requires an org admin";
 
@@ -1000,12 +1004,13 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S-LINK-SLACK",
-    title: "Identity linking, Slack↔Slack: DM mints a code → a SECOND real account claims it in a channel → the initiator's DM names the claimant → confirm_link commits the link",
+    title:
+      "Identity linking v2, Slack↔Slack: DM mints a code → a channel claim is REFUSED (DM-only venue) → the SECOND account claims it in its OWN DM → the initiator feeds back the code-back → confirm_link commits the link",
     requires: ["slack", "syntheticDm", "slackSecondary"],
     surface: "slack",
     suite: "core",
     optional: false,
-    timeoutMs: 1_200_000,
+    timeoutMs: 1_500_000,
     judged: false,
     run: async (ctx) => {
       const slack = ctx.slack!;
@@ -1013,17 +1018,22 @@ export const SCENARIOS: readonly Scenario[] = [
       const forge = ctx.syntheticDm!;
       const secondaryId = ctx.slackSecondaryUserId!;
       const claimant = ctx.slackSecondary!.withChannel(slack.channelId);
-      const armed = process.env.E2E_LINK_IDENTITY === "1";
       const runStart = new Date(Date.now() - 60_000).toISOString();
       if (!ctx.auditRead) {
         ctx.skip(
           "identity-link outcomes are only assertable over the audit trail (identity.link.* rows) — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN. " +
-            "Without it a lost claim cannot be told from a deployment that predates the link-claim hook (68b975d9).",
+            "Without it a lost claim cannot be told from a deployment that predates the link_identity tool.",
         );
       }
       const auditRead = ctx.auditRead!;
       const { userId, teamId } = await slack.identity();
       ctx.gate(secondaryId !== userId, "fixture: the secondary identity is a DIFFERENT account from the initiator (a self-claim is refused by design)");
+      if (!(await slack.isMember(secondaryId))) {
+        ctx.skip(
+          `the secondary account (${secondaryId}) is not a member of the shared channel ${slack.channelId} — ` +
+            "invite it in Slack (or have it Join the channel); no driver token carries a join/invite scope.",
+        );
+      }
 
       const mintAsk = "please start linking another one of my accounts to this one — give me the code.";
       const { ts: mintTs } = await dm.post(mintAsk);
@@ -1036,7 +1046,7 @@ export const SCENARIOS: readonly Scenario[] = [
         if (issuedRows.length === 0) {
           ctx.skip(
             "no link code in the DM reply and NO identity.link.challenge_issued audit row — this deployment does not have a reachable " +
-              `link_identity tool (deploy 68b975d9 or later). Reply: "${mintReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
+              `link_identity tool. Reply: "${mintReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
           );
         }
         ctx.gate(
@@ -1047,42 +1057,86 @@ export const SCENARIOS: readonly Scenario[] = [
       }
       ctx.log(`mint: parsed link code (${code!.length} symbols) from the DM reply; ${issuedRows.length} challenge_issued row(s) in the window`);
 
-      await claimant.post(claimant.mention(`link ${code!}`));
+      if (!deployedBuildCarries(OPE617_V2_SHA)) {
+        ctx.skip(
+          `the last recorded deploy does not carry OPE-617 v2 (${OPE617_V2_SHA.slice(0, 8)}) — or no deploy record exists in this checkout ` +
+            "(.open-everywhere-deploy/known-good.json, written by `npm run deploy:verify -- --record`). On a pre-v2 build a channel-addressed " +
+            "claim is the correct behaviour, so the venue-refusal / own-DM-claim / code-back legs below do not apply. Deploy a build carrying " +
+            "the v2 fix and record it; the legs arm themselves from the record.",
+        );
+      }
+
+      const { ts: negativeTs } = await claimant.post(claimant.mention(`link ${code!}`));
+      const refusalReply = await claimant.awaitAnyReply(negativeTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(
+        LINK_VENUE_REFUSAL_MARKER.test(refusalReply.text),
+        "venue: a channel-addressed link claim on a DM-capable platform (Slack) is refused with a pointer to DM — " +
+          `got: "${refusalReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
+      );
+      const spuriousClaim = await pollOptional(
+        async () => {
+          const r = await auditRead({ sinceIso: runStart, actions: ["identity.link.challenge_claimed"] });
+          return r.length > 0 ? r : undefined;
+        },
+        {
+          timeoutMs: LINK_VENUE_PROOF_WINDOW,
+          what: "confirmation that the channel-addressed claim did NOT record an identity.link.challenge_claimed row",
+        },
+      );
+      ctx.gate(
+        spuriousClaim === undefined,
+        "venue: NO identity.link.challenge_claimed row appeared after the channel-addressed claim — the DM-only venue rule refused it before " +
+          "the claim CAS ran, so the code stays unspent (identity/link-flow.ts claimVenueRefusal)",
+      );
+
+      async function openSecondaryOwnDm(): Promise<string> {
+        try {
+          return await ctx.slackSecondary!.openDirectMessage(slack.botUserId);
+        } catch (err) {
+          return ctx.skip(
+            `could not open a DM between the secondary account and the bot (conversations.open users=${slack.botUserId}): ${String(err)} — ` +
+              "the secondary token (E2E_SLACK_SECONDARY_TOKEN) needs the im:write scope for OPE-617 v2's own-DM claim leg.",
+          );
+        }
+      }
+      const secondaryDmChannel = await openSecondaryOwnDm();
+      const secondaryDm = ctx.slackSecondary!.withChannel(secondaryDmChannel);
+      const { teamId: secondaryTeamId } = await ctx.slackSecondary!.identity();
+      const claimAsk = `link ${code!}`;
+      const { ts: claimTs } = await secondaryDm.post(claimAsk);
+      const claimSent = await forge.message({ text: claimAsk, userId: secondaryId, teamId: secondaryTeamId, ts: claimTs, channelId: secondaryDmChannel });
+      ctx.gate(claimSent.status === 200, "own-dm claim: the synthetic DM claim acked 200");
+      const claimReply = await secondaryDm.awaitAnyReply(claimTs, { timeoutMs: REPLY_WAIT });
+      const code2 = parseLinkCode(claimReply.text);
+      ctx.gate(
+        code2 !== undefined,
+        "own-dm claim: a second (code-back) code was parsed from the bot's reply in the secondary's own DM — the model may have paraphrased " +
+          `instead of relaying the instructions verbatim. Reply: "${claimReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
+      );
       const claimedRows = await pollOptional(
         async () => {
           const r = await auditRead({ sinceIso: runStart, actions: ["identity.link.challenge_claimed"] });
           return r.length > 0 ? r : undefined;
         },
-        { timeoutMs: REPLY_WAIT, what: "an identity.link.challenge_claimed audit row (the link-claim hook recording the second account's claim)" },
+        { timeoutMs: REPLY_WAIT, what: "an identity.link.challenge_claimed audit row (the own-DM claim being recorded)" },
       );
-      if (!claimedRows) {
-        const miss =
-          `the code was minted but NO identity.link.challenge_claimed row appeared after slack/${secondaryId} posted "@… link <CODE>" ` +
-          "in the shared channel — the link-claim message.received hook did not fire.";
-        if (armed) {
-          ctx.gate(false, `claim: ${miss} E2E_LINK_IDENTITY=1 declares this deployment carries 68b975d9, so this is a product regression, not a stale deploy.`);
-        }
-        ctx.skip(`${miss} DEPLOY FIRST: this needs a build carrying 68b975d9 (prod at 2b970d11 does not). Set E2E_LINK_IDENTITY=1 once it is deployed to make this a hard failure.`);
-      }
-      const claimantKey = `slack/${secondaryId}`;
+      ctx.gate(claimedRows !== undefined, "own-dm claim: an identity.link.challenge_claimed audit row exists after the DM claim");
+      const claimantKey = `slack/…/${secondaryId}`;
       ctx.gate(
-        claimedRows!.some((r) => r.principalId === claimantKey || JSON.stringify(r.detail ?? {}).includes(secondaryId)),
-        `claim: the challenge_claimed row names the CLAIMING account (${claimantKey}) — who claimed comes from the wake's captured author, never from the message text`,
+        claimedRows!.some(
+          (r) =>
+            (r.principalId?.startsWith("slack/") === true && r.principalId.endsWith(`/${secondaryId}`)) ||
+            JSON.stringify(r.detail ?? {}).includes(secondaryId),
+        ),
+        `own-dm claim: the challenge_claimed row names the CLAIMING account (${claimantKey}) — who claimed comes from the wake's captured author, never from the message text`,
       );
 
-      const notice = await pollUntil(
-        async () => (await dm.history(mintTs)).find((m) => dm.isBotReply(m) && m.text.includes(secondaryId)),
-        { timeoutMs: REPLY_WAIT, what: `the initiating DM's claim notice naming ${claimantKey}` },
-      ).catch(() => undefined);
-      if (notice) ctx.gate(notice.text.includes(secondaryId), `notice: the initiating DM is told WHO claimed the code (names ${claimantKey})`);
-      else ctx.log(`notice: no DM notice naming ${claimantKey} within the window — best-effort by design (link-claim.ts); the claim row already proved the hook ran`);
-
-      const confirmAsk = `yes — that's my other account. confirm the link.`;
+      const confirmAsk = `confirm — the code is ${code2!}.`;
       const { ts: confirmTs } = await dm.post(confirmAsk);
       const confirmSent = await forge.message({ text: confirmAsk, userId, teamId, ts: confirmTs });
-      ctx.gate(confirmSent.status === 200, "confirm: the synthetic DM confirmation acked 200");
+      ctx.gate(confirmSent.status === 200, "confirm: the synthetic DM code-back acked 200");
       const confirmReply = await dm.awaitAnyReply(confirmTs, { timeoutMs: REPLY_WAIT });
-      ctx.gate(confirmReply.text.trim().length > 0, "confirm: the agent replied to the confirmation turn");
+      ctx.gate(confirmReply.text.trim().length > 0, "confirm: the agent replied to the code-back turn");
       const confirmedRows = await pollOptional(
         async () => {
           const r = await auditRead({ sinceIso: runStart, actions: ["identity.link.confirmed"] });
@@ -1092,10 +1146,11 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       ctx.gate(
         confirmedRows !== undefined,
-        "confirm: an identity.link.confirmed audit row exists — the ratification COMMITTED the link (the reply text alone is not evidence). " +
+        "confirm: an identity.link.confirmed audit row exists — the ratification COMMITTED the link via the FORCED code-back finalizer " +
+          "(finalizeGate only reaches `commit` with a matching code — the reply text alone is not evidence). " +
           `Reply: "${confirmReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
       );
-      ctx.log(`confirm: link committed — ${confirmedRows!.length} identity.link.confirmed row(s) for the run`);
+      ctx.log(`confirm: link committed via the code-back finalizer — ${confirmedRows!.length} identity.link.confirmed row(s) for the run`);
     },
   },
   {
@@ -3048,13 +3103,13 @@ export const SCENARIOS: readonly Scenario[] = [
         (await pollOptional(
           async () => {
             const r = await auditRead!({ sinceIso: runStart, actions: ["credential.intake_requested"] });
-            const mine = r.filter((e) => e.principalId === admin && (e.detail as { provider?: unknown } | undefined)?.provider === PROVIDER);
+            const mine = r.filter((e) => e.principalId === admin && (e.detail as { connector?: unknown } | undefined)?.connector === PROVIDER);
             return mine.length > 0 ? mine : undefined;
           },
           { timeoutMs: REPLY_WAIT, what: "a credential.intake_requested audit row for the forged admin oe_connect click" },
         )) ??
         ctx.skip(
-          `no credential.intake_requested audit row appeared for provider "${PROVIDER}" — the forged admin clicker (${admin}) may not hold org/domain admin standing here, or the db broker isn't configured (OE_CREDENTIAL_ENCRYPTION_KEY unarmed). Provision E2E_SLACK_ADMIN_USER_ID as an admin and confirm the db broker is configured, then re-run.`,
+          `no credential.intake_requested audit row appeared for connector "${PROVIDER}" — the forged admin clicker (${admin}) may not hold org/domain admin standing here, or the db broker isn't configured (OE_CREDENTIAL_ENCRYPTION_KEY unarmed). Provision E2E_SLACK_ADMIN_USER_ID as an admin and confirm the db broker is configured, then re-run.`,
         );
       const intakeDetail = intakeRows[0].detail as { id?: unknown; ref?: unknown } | undefined;
       const intakeId = typeof intakeDetail?.id === "string" ? intakeDetail.id : undefined;
@@ -3099,11 +3154,11 @@ export const SCENARIOS: readonly Scenario[] = [
           { timeoutMs: REPLY_WAIT, what: "a credential.binding_proposed audit row for the stored credential" },
         );
         if (bindingRows) {
-          const bd = bindingRows[0].detail as { dryRun?: unknown; credentialAuditId?: unknown; storedRef?: unknown; provider?: unknown; credential?: unknown };
+          const bd = bindingRows[0].detail as { dryRun?: unknown; credentialAuditId?: unknown; storedRef?: unknown; connector?: unknown; credential?: unknown };
           ctx.gate(bd.dryRun === true, "binding: the credential-binding PR ran DRY-RUN — nothing opened a real PR against the config repo");
           ctx.gate(
-            bd.credentialAuditId === intakeId && typeof bd.storedRef === "string" && (bd.storedRef as string).startsWith("db:e2e-intake:") && bd.provider === PROVIDER,
-            "binding: binding_proposed cites the intake id + carries references only (provider/credential/storedRef), never a value",
+            bd.credentialAuditId === intakeId && typeof bd.storedRef === "string" && (bd.storedRef as string).startsWith("db:e2e-intake:") && bd.connector === PROVIDER,
+            "binding: binding_proposed cites the intake id + carries references only (connector/credential/storedRef), never a value",
           );
         } else {
           ctx.log("binding: no credential.binding_proposed row — the binding follow-on fail-safe-SKIPPED (OE_ACCESS_CONFIG_REPO unset in prod); the store leg still proved out. Configure the access config repo to exercise the binding PR.");
@@ -3194,22 +3249,27 @@ export const SCENARIOS: readonly Scenario[] = [
 
       if (ctx.notionAmbient) {
         const not = ctx.notionAmbient;
-        const blocks = await not.pageBlocks();
-        if (blocks.length === 0) {
-          ctx.log("arm B: the Notion fixture page has no blocks to comment on — skipped (fixture shape, not a product finding)");
-        } else {
+        if (not.webhookSecret && not.anchorHuman && ctx.targetUrl) {
           const since = new Date().toISOString();
-          const { discussionId } = await not.createBlockDiscussion(blocks[0], "Open Everywhere — please READ this page's content and summarise it in one line right here.");
+          const forge = await not.forgeCommentCreated(ctx.targetUrl, not.anchorHuman, { signed: true });
+          ctx.gate(forge.status === 200, "ARM B: signed forge-replay of the human anchor comment is acked (200)");
           const notionRows = await awaitRows("notion", 'a taint.verdict row with kind "notion" (read_notion_page declaring the bound workspace tier)');
-          ctx.gate(notionRows !== undefined, "ARM B: a Notion page read produced a `taint.verdict` row for kind `notion`");
-          const nd = notionRows![0].detail as { assumed?: unknown; divergence?: unknown };
+          ctx.gate(notionRows !== undefined, "ARM B: the forge-replayed wake produced a real read_notion_page call — a `taint.verdict` row for kind `notion` landed");
+          if (notionRows) {
+            const nd = notionRows[0].detail as { assumed?: unknown; divergence?: unknown };
+            ctx.log(
+              `arm B: notion row divergence=${String(nd.divergence)} assumed=${String(nd.assumed)} — ` +
+                (nd.assumed === true
+                  ? "ASSUMED, which since OPE-331 means this deployment has never VOUCHED the workspace (agent/identity/surfaces.ts), not that the metadata could not reach the seam"
+                  : "a REAL verdict off the vouched workspace tier"),
+            );
+          }
+          const discussionId = await not.discussionOf(not.anchorHuman);
+          if (discussionId) await not.awaitBotReplyIn(discussionId, since, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+        } else {
           ctx.log(
-            `arm B: notion row divergence=${String(nd.divergence)} assumed=${String(nd.assumed)} — ` +
-              (nd.assumed === true
-                ? "ASSUMED, which since OPE-331 means this deployment has never VOUCHED the workspace (agent/identity/surfaces.ts), not that the metadata could not reach the seam"
-                : "a REAL verdict off the vouched workspace tier"),
+            "arm B (notion) SKIPPED — forge-replay needs E2E_NOTION_WEBHOOK_SECRET + E2E_NOTION_ANCHOR_HUMAN + E2E_TARGET_URL; `createBlockDiscussion` cannot wake the classifier (a driver-authored comment is always Notion `type: \"bot\"`, dropped before any read — OPE-576). The `notion` row shape is unpopulated in this run's sample.",
           );
-          await not.awaitBotReplyIn(discussionId, since, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
         }
       } else {
         ctx.log("arm B (notion) SKIPPED — no notionAmbient fixture on this deployment. The `notion` row shape is unpopulated in this run's sample; provision E2E_NOTION_* to cover it.");
@@ -3477,9 +3537,66 @@ export const SCENARIOS: readonly Scenario[] = [
           );
         }
 
-        if (ctx.notionAmbient) {
+        if (ctx.notionAmbient && ctx.notionAmbient.webhookSecret && ctx.notionAmbient.anchorHuman && ctx.targetUrl) {
+          const not = ctx.notionAmbient;
+          const anchorHuman = not.anchorHuman!;
+          const sinceC = new Date().toISOString();
+          const forgeC = await not.forgeCommentCreated(ctx.targetUrl, anchorHuman, { signed: true });
+          ctx.gate(forgeC.status === 200, "ARM C (notion): signed forge-replay of the human anchor comment is acked (200)");
+          const rowC = await pollOptional(
+            async () => {
+              const r = await auditRead({ sinceIso: sinceC, actions: ["taint.verdict"] });
+              const mine = r.filter((e) => (e.detail as { kind?: unknown } | undefined)?.kind === "notion");
+              return mine.length > 0 ? mine : undefined;
+            },
+            { timeoutMs: FILE_REPLY_WAIT, what: "a taint.verdict row for kind notion after the forge-replayed wake" },
+          );
+          ctx.gate(
+            rowC !== undefined,
+            "ARM C (notion, hard): the forge-replayed wake produced a real `read_notion_page` call — a `taint.verdict` row for kind `notion` landed",
+          );
+          if (rowC) {
+            const dC = rowC[0].detail as { divergence?: unknown; applied?: unknown; tableTier?: unknown; assumed?: unknown; taintsToday?: unknown };
+            ctx.log(`ARM C (notion): divergence=${String(dC.divergence)} applied=${String(dC.applied)} tableTier=${String(dC.tableTier)} assumed=${String(dC.assumed)}`);
+            ctx.gate(
+              dC.divergence === "over-taint" && dC.taintsToday === true && dC.tableTier === "trusted" && dC.assumed === false,
+              "🔴 ARM C (notion, hard): the row is an OVER-taint — `read_notion_page`'s site would have tainted (`taintsToday:true`) but the vouched-internal fixture page resolves table tier `trusted` (assumed:false) off real declared metadata — the row names the direction this fixture permanently owes",
+            );
+            ctx.gate(
+              dC.applied === true,
+              "🔴 ARM C (notion, hard): `applied: true` — the table's TRUSTED verdict governed this read, i.e. reading the vouched-internal page did NOT mark the turn as having ingested untrusted content. This is the relaxation side of OPE-324's join, proven live off a real forge-replayed Notion route rather than asserted in a unit test",
+            );
+          }
+          if (ctx.transcriptRead) {
+            const lifecycleRows = await pollOptional(
+              async () => {
+                const r = await auditRead({ sinceIso: sinceC, actions: ["notion.replied", "notion.no_reply"] });
+                return r.length > 0 ? r : undefined;
+              },
+              { timeoutMs: FILE_REPLY_WAIT, what: "a notion.replied|notion.no_reply lifecycle row (best-effort anti-hallucination confirmation)" },
+            );
+            if (lifecycleRows) {
+              const sessionIds = new Set<string>();
+              for (const r of lifecycleRows) {
+                const v = (r.detail as Record<string, unknown> | undefined)?.sessionId;
+                if (typeof v === "string" && v.length > 0) sessionIds.add(v);
+              }
+              let sawReadCall = false;
+              for (const sessionId of sessionIds) {
+                const events = await ctx.transcriptRead(sessionId);
+                for (const e of events) {
+                  if (e.type !== "actions.requested" && e.type !== "action.result") continue;
+                  if (JSON.stringify(e.data).includes('"read_notion_page"')) sawReadCall = true;
+                }
+              }
+              ctx.log(`ARM C (notion): raw eve event stream ${sawReadCall ? "confirms" : "does NOT confirm"} an actual read_notion_page tool call (${sessionIds.size} session(s) inspected) — best-effort, not gated`);
+            } else {
+              ctx.log("ARM C (notion): no notion.replied/no_reply lifecycle row landed within the wait — cannot independently confirm the tool call; the taint.verdict row above is still the hard proof of a real read");
+            }
+          }
+        } else if (ctx.notionAmbient) {
           ctx.log(
-            "ARM C (notion) SKIPPED — ctx.notionAmbient resolves, but a driver-authored comment (createBlockDiscussion) is always Notion `type: \"bot\"` and classifyNotionComment drops every bot-authored trigger before any read; only a forge-replay off a real human anchor comment (E2E_NOTION_WEBHOOK_SECRET + an anchor id, not provisioned here) can wake a session live. The notion route-join stays unproven live on this run; ARM D (linear) is this scenario's live proof for the connector-read pair.",
+            "ARM C (notion) SKIPPED — ctx.notionAmbient resolves, but the forge-replay fixture (E2E_NOTION_WEBHOOK_SECRET + E2E_NOTION_ANCHOR_HUMAN) is not fully provisioned; `createBlockDiscussion` cannot wake the classifier (a driver-authored comment is always Notion `type: \"bot\"`, dropped before any read — OPE-576). The notion route-join stays unproven live on this run; ARM D (linear) is this scenario's live proof for the connector-read pair.",
           );
         } else {
           ctx.log(

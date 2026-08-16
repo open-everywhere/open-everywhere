@@ -928,9 +928,35 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   ok(clickRoomMatches(row({ channelId: "C_A" }), "slack/T99/C_A") === true, "clickRoomMatches: only the CHANNEL segment is compared — a venue-routed card's config-authored workspace segment must never cause a refusal");
   ok(clickRoomMatches(row({ channelId: "C_A" }), "not-a-surface-key") === true, "clickRoomMatches: a key with no channel segment is INERT, never a refusal");
 
-  const notices = (["audience-floor", "unattested-room", "foreign-room"] as const).map((r) => clickerFloorRefusalNotice(r));
-  ok(new Set(notices).size === 3, "clickerFloorRefusalNotice: each refusal reason gets its own copy");
+  const notices = (["audience-floor", "unattested-room", "foreign-room", "guest-clicker"] as const).map((r) => clickerFloorRefusalNotice(r));
+  ok(new Set(notices).size === 4, "clickerFloorRefusalNotice: each refusal reason gets its own copy");
   ok(notices.every((t) => t.toLowerCase().includes("still pending")), "clickerFloorRefusalNotice: every refusal says the request is STILL PENDING (the card is not consumed)");
+
+  const { checkClickerFloor } = await import("../agent/approvals/clicker-floor.js");
+  let floorDepCalls = 0;
+  const guestClickerVerdict = await checkClickerFloor(
+    "slack/T1/C_INTERNAL",
+    { beneficiaryClicker: false, clickerIsGuest: true },
+    { floor: async () => { floorDepCalls++; return { floor: "member", roster: roster() }; } },
+  );
+  ok(guestClickerVerdict.ok === false && guestClickerVerdict.reason === "guest-clicker", "checkClickerFloor: a POSITIVE per-clicker guest verdict refuses guest-clicker, even in an otherwise-clean room");
+  ok(floorDepCalls === 0, "checkClickerFloor: leg D short-circuits — the room roster is never consulted once the clicker is refused");
+
+  const memberClickerVerdict = await checkClickerFloor(
+    "slack/T1/C_INTERNAL",
+    { beneficiaryClicker: false, clickerIsGuest: false },
+    { floor: async () => { floorDepCalls++; return { floor: "member", roster: roster() }; } },
+  );
+  ok(memberClickerVerdict.ok === true, "checkClickerFloor: a POSITIVE per-clicker MEMBER verdict (false) falls through to the room floor and allows");
+  ok(floorDepCalls === 1, "checkClickerFloor: an explicit non-guest verdict still consults the room floor (leg D did not swallow leg A)");
+
+  const noVerdict = await checkClickerFloor(
+    "slack/T1/C_INTERNAL",
+    { beneficiaryClicker: false },
+    { floor: async () => { floorDepCalls++; return { floor: "member", roster: roster() }; } },
+  );
+  ok(noVerdict.ok === true, "checkClickerFloor: an ABSENT per-clicker verdict (the Slack-probe-unavailable case) is inert — falls through to the room floor");
+  ok(floorDepCalls === 2, "checkClickerFloor: the absent-verdict case also consults the room floor");
 
   _resetAudienceFloorCacheForTest();
   const ROSTERS: Record<string, ReturnType<typeof roster>> = {
@@ -1022,6 +1048,35 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   ok(adminExecuted.length === 0, "clicker gate leg C: the room binding is TIER-INDEPENDENT — it is a claim about the click's provenance, not about standing");
 
   ok(supplierCalls > 0, "clicker gate: the member supplier was actually consulted (the wired legs are not silently short-circuiting)");
+
+  memberExecuted = [];
+  const supplierCallsBeforeLegD = supplierCalls;
+  await store.addPendingAction(row({ id: "p-cf-guest-clicker", kind: "test.member", argsJson: "{}", domain: null, channelId: "C_INTERNAL", postedTo: null }));
+  const handledGuestClicker = await handleApprovalPayload(clickPayload("oe_approval:approve:p-cf-guest-clicker", { channel: "C_INTERNAL" }), {
+    post,
+    clickerIsGuest: async () => true,
+  });
+  ok(handledGuestClicker === true, "clicker gate leg D: a refused click still returns true");
+  ok(memberExecuted.length === 0, "clicker gate leg D: a POSITIVE per-clicker guest verdict refuses even a resolved, guest-free ROOM");
+  ok((await store.getPendingAction("default", "p-cf-guest-clicker"))?.status === "pending", "clicker gate leg D: the row stays pending");
+  ok((await deniedAudit("p-cf-guest-clicker"))?.detail?.reason === "guest-clicker", "clicker gate leg D: the refusal audits reason \"guest-clicker\"");
+  ok(supplierCalls === supplierCallsBeforeLegD, "clicker gate leg D: the room member supplier was never consulted — leg D short-circuits before the room roster");
+
+  memberExecuted = [];
+  await store.addPendingAction(row({ id: "p-cf-member-clicker", kind: "test.member", argsJson: "{}", domain: null, channelId: "C_INTERNAL", postedTo: null }));
+  await handleApprovalPayload(clickPayload("oe_approval:approve:p-cf-member-clicker", { channel: "C_INTERNAL" }), {
+    post,
+    clickerIsGuest: async () => false,
+  });
+  ok(memberExecuted.includes("U_RANDOM_MEMBER"), "clicker gate leg D control: a POSITIVE per-clicker MEMBER verdict (false) executes normally");
+
+  memberExecuted = [];
+  await store.addPendingAction(row({ id: "p-cf-clicker-probe-throws", kind: "test.member", argsJson: "{}", domain: null, channelId: "C_INTERNAL", postedTo: null }));
+  await handleApprovalPayload(clickPayload("oe_approval:approve:p-cf-clicker-probe-throws", { channel: "C_INTERNAL" }), {
+    post,
+    clickerIsGuest: async () => { throw new Error("boom"); },
+  });
+  ok(memberExecuted.includes("U_RANDOM_MEMBER"), "clicker gate leg D: a THROWN clickerIsGuest dep degrades to no verdict, never aborts the click");
 
   _resetGovernanceMemberSupplierForTest();
   _resetAudienceFloorCacheForTest();

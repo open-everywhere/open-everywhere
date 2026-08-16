@@ -26,7 +26,7 @@ const ok = (cond: boolean, label: string) => {
 
 {
   const db = parseCredentialRef(dbCredentialRef("notion", "team-key"));
-  ok(db?.home === DB_HOME && db.provider === "notion" && db.credentialId === "team-key", "parseCredentialRef: a db ref → { home:'db', provider, credentialId }");
+  ok(db?.home === DB_HOME && db.connector === "notion" && db.credentialId === "team-key", "parseCredentialRef: a db ref → { home:'db', connector, credentialId }");
 
   ok(parseCredentialRef("NOTION_API_KEY") === null, "parseCredentialRef: a bare env-var-name ref → null (home is the broker:'env' stamp)");
   ok(parseCredentialRef("") === null, "parseCredentialRef: empty string → null");

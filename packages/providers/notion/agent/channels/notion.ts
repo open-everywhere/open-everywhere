@@ -19,6 +19,7 @@ import {
   declaredTrustForKeys,
   supervisorGrainFor,
   mintRotationToken,
+  claimRuntimeRotation,
   grainUsesUnifiedWindow,
   divertToUnifiedWindow,
   captureHandshakeSecret,
@@ -144,12 +145,13 @@ function liveNotionSupervisorDeps(send: SendFn, surfaceKey: string, to?: RouteHa
   return {
     async getOrCreateSession(surfaceKey, pageId, atIso) {
       const grain = notionGrainFor(surfaceKey);
+      const runtimeChanged = await claimRuntimeRotation({ org, registryKey: grain.registryKey, surfaceKey, atIso });
       const existing = await store.getChannelSession(org, grain.registryKey);
       if (!existing) {
         const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, 1, () => notionSupervisorToken(pageId, 1)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }
-      if (shouldRotate(existing, atIso)) {
+      if (shouldRotate(existing, atIso, { runtimeChanged })) {
         const gen = existing.generation + 1;
         const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, gen, () => notionSupervisorToken(pageId, gen)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };

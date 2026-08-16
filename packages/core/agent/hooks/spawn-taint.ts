@@ -25,11 +25,12 @@ import { readTaskReceipt, taskViewsOf, terminalTaskViewsOf, type TaskReceipt, ty
 import { JOB_TAINT_ATTR } from "../access/job-posture.js";
 import { beginTaintVerdictTurn, registerTaintVerdictSink, taintEnabled, taintMode, type TaintVerdictRow } from "../access/taint-enforcement.js";
 import { appendAudit } from "../audit/audit.js";
-import { currentTurnId, currentWakeId, deploymentOrg, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { currentTurnId, currentWakeId, deliveryStampOf, deploymentOrg, inheritedWakeStampOf, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { installTaskWake, openTaskWake } from "../channels/task-wake.js";
 import { noteTurnBoundary } from "../access/task-wake-signal.js";
-import { flushSettledMemory, noteTaskDispatched, noteTaskViews } from "./settlement-flush.js";
+import { addressedWakeThisTurn, noteTaskDispatchedThisTurn } from "../access/dispatch-origin-signal.js";
+import { flushDirtyTreeAtTurnEnd, flushSettledMemory, noteTaskDispatched, noteTaskViews } from "./settlement-flush.js";
 import type { MemoryPersistContext } from "./memory.js";
 
 export const TAINT_VERDICT_ACTION = "taint.verdict";
@@ -411,7 +412,14 @@ export async function adoptTaskTaint(view: TaskSummary, ownSessionId: string): P
     platform: "ingest",
     workspace: "delegation",
     action: TASK_SETTLED_ACTION,
-    detail: { task: view.taskId, status: view.status, ...(ownSessionId.length > 0 ? { session: ownSessionId } : {}), marker, adopted },
+    detail: {
+      task: view.taskId,
+      status: view.status,
+      ...(ownSessionId.length > 0 ? { session: ownSessionId } : {}),
+      agent: view.agentId ?? "",
+      marker,
+      adopted,
+    },
   }).catch(() => undefined);
   return adopted;
 }
@@ -421,7 +429,14 @@ export default defineHook({
     "turn.started": (_event, ctx) => {
       openTaintTurn(ctx);
       const bind = ctx as unknown as BindableContext;
-      noteTurnBoundary(currentTurnId(bind), currentWakeId(bind));
+      noteTurnBoundary(currentTurnId(bind), deliveryStampOf(bind));
+    },
+
+    "turn.completed": async (_event, ctx) => {
+      try {
+        await flushDirtyTreeAtTurnEnd(ctx as unknown as MemoryPersistContext);
+      } catch {
+      }
     },
 
     "action.result": async (event, ctx) => {
@@ -435,12 +450,14 @@ export default defineHook({
         if (receipt !== null) {
           await noteTaskReceipt(receipt, ownSessionId);
           const bind = ctx as unknown as BindableContext;
-          await openTaskWake({
+          const dispatchTurnId = currentTurnId(bind);
+          const minted = await openTaskWake({
             org: deploymentOrg(),
             taskId: receipt.taskId,
-            parentWakeId: currentWakeId(bind),
+            parentWakeId: addressedWakeThisTurn(dispatchTurnId) ?? currentWakeId(bind),
             windowToken: resolveOwnWindowToken(bind),
           });
+          if (minted !== null) noteTaskDispatchedThisTurn(dispatchTurnId, receipt.taskId, minted);
           noteTaskDispatched(receipt.taskId);
           return;
         }
@@ -449,7 +466,7 @@ export default defineHook({
         const terminal = terminalTaskViewsOf(result);
         if (terminal.length > 0) {
           const wakeBind = ctx as unknown as BindableContext;
-          const inheritedWakeId = currentWakeId(wakeBind);
+          const inheritedWakeId = inheritedWakeStampOf(wakeBind);
           const wakeTurnId = currentTurnId(wakeBind);
           for (const view of terminal) {
             await installTaskWake({

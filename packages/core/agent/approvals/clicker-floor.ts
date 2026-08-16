@@ -4,7 +4,8 @@ import type { PendingActionRow } from "./types.js";
 export type ClickerFloorRefusal =
   | "audience-floor"
   | "unattested-room"
-  | "foreign-room";
+  | "foreign-room"
+  | "guest-clicker";
 
 export type ClickerFloorVerdict =
   | { readonly ok: true; readonly floor: AudienceFloor }
@@ -34,9 +35,13 @@ export interface ClickerFloorDeps {
 
 export async function checkClickerFloor(
   surfaceKey: string,
-  opts: { readonly beneficiaryClicker: boolean },
+  opts: {
+    readonly beneficiaryClicker: boolean;
+    readonly clickerIsGuest?: boolean;
+  },
   deps: ClickerFloorDeps = {},
 ): Promise<ClickerFloorVerdict> {
+  if (opts.clickerIsGuest === true) return { ok: false, reason: "guest-clicker", floor: "guest" };
   try {
     const resolution = await (deps.floor ?? resolveAudienceFloor)(surfaceKey, NO_ADMINS);
     return classifyClickerFloor({ ...resolution, beneficiaryClicker: opts.beneficiaryClicker });
@@ -70,5 +75,11 @@ export function clickerFloorRefusalNotice(reason: ClickerFloorRefusal): string {
       );
     case "foreign-room":
       return "I didn't apply that: this click didn't come from the channel the card was posted in. The request is still pending.";
+    case "guest-clicker":
+      return (
+        "I didn't apply that: you could not be confirmed as a member of this workspace, so this decision " +
+        "can't be made on the org's behalf. The request is still pending; a confirmed member of the org " +
+        "can decide it and it will apply."
+      );
   }
 }

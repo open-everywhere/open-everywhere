@@ -26,7 +26,10 @@ const { ROUTINE_AUDIT } = fireAudit;
 const { readAudit, appendAudit } = await import("../agent/audit/audit.js");
 const store = await import("../agent/routines/store.js");
 const usageEvents = await import("../agent/spend/usage-events.js");
+const { FakeEveContext, inEveContext } = await import("./_eve-context-stub.js");
 const { ROUTINE_MARKER } = await import("../agent/routines/routine.js");
+const { OE_WAKE_ID_ATTR } = await import("../agent/channels/unified-window.js");
+const { SCHEDULE_APP_AUTHENTICATOR, SCHEDULE_APP_PRINCIPAL_ID, SCHEDULE_APP_PRINCIPAL_TYPE } = await import("../agent/identity/binding.js");
 const { MAX_CONSECUTIVE_FAILURES } = await import("../agent/routines/lifecycle.js");
 const outcomeHook = (await import("../agent/hooks/routine-outcome.js")).default;
 const spendHook = (await import("../agent/hooks/spend.js")).default;
@@ -58,7 +61,7 @@ function routine(over: Partial<Routine> & Pick<Routine, "id">): Routine {
   };
 }
 
-function firedCtx(r: Routine, sessionId: string): never {
+function firedCtx(r: Routine, sessionId: string, wakeId = `wake-${sessionId}`): never {
   return {
     channel: { kind: "slack" },
     session: {
@@ -69,15 +72,25 @@ function firedCtx(r: Routine, sessionId: string): never {
             team_id: "T1",
             channel_id: "C1",
             channel_type: "channel",
+            [OE_WAKE_ID_ATTR]: wakeId,
             [ROUTINE_MARKER.id]: r.id,
             [ROUTINE_MARKER.surface]: r.surfaceKey,
             [ROUTINE_MARKER.org]: r.org,
           },
-          principalType: "service",
+          authenticator: SCHEDULE_APP_AUTHENTICATOR,
+          principalId: SCHEDULE_APP_PRINCIPAL_ID,
+          principalType: SCHEDULE_APP_PRINCIPAL_TYPE,
         },
       },
     },
   } as never;
+}
+
+async function fireOnce(ctx: never, end: "turn.completed" | "turn.failed" = "turn.completed"): Promise<void> {
+  await inEveContext(new FakeEveContext(), async () => {
+    await outcomeHook.events!["turn.started"]!({} as never, ctx);
+    await outcomeHook.events![end]!({} as never, ctx);
+  });
 }
 
 const rowsFor = async (action: string): Promise<AuditInput[]> => (await readAudit({ org: ORG, action })) as AuditInput[];
@@ -86,7 +99,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 {
   const r = routine({ id: "r-join" });
   await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
-  await outcomeHook.events!["session.completed"]!({} as never, firedCtx(r, "sess-join") as never);
+  await fireOnce(firedCtx(r, "sess-join"));
 
   const fires = await rowsFor(ROUTINE_AUDIT.fire);
   ok(fires.length === 1, "join: a completed fire writes exactly ONE routine.fire row");
@@ -99,17 +112,149 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 
 {
   const before = (await rowsFor(ROUTINE_AUDIT.fire)).length;
-  await outcomeHook.events!["session.completed"]!({} as never, {
+  await fireOnce({
     channel: { kind: "slack" },
     session: { id: "sess-human", auth: { current: { attributes: { team_id: "T1", channel_id: "C1" }, principalId: "U1" } } },
   } as never);
-  ok((await rowsFor(ROUTINE_AUDIT.fire)).length === before, "join: an ordinary (non-routine) session end writes NO fire row");
+  ok((await rowsFor(ROUTINE_AUDIT.fire)).length === before, "join: an ordinary (non-routine) turn writes NO fire row");
+}
+
+{
+  const r = routine({ id: "r-once", consecutiveFailures: 2 });
+  await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
+  const ctx = firedCtx(r, "sess-once");
+
+  const fireSession = new FakeEveContext();
+  await inEveContext(fireSession, async () => {
+    await outcomeHook.events!["turn.started"]!({} as never, ctx);
+    await outcomeHook.events!["turn.completed"]!({} as never, ctx);
+    await outcomeHook.events!["turn.failed"]!({} as never, ctx);
+    await outcomeHook.events!["session.failed"]!({} as never, ctx);
+  });
+  const fires = (await rowsFor(ROUTINE_AUDIT.fire)).filter((e) => detailOf(e, "routineId") === "r-once");
+  ok(fires.length === 1, "idempotence: one armed fire folds exactly ONCE across turn.completed + turn.failed + session.failed");
+  ok(detailOf(fires[0], "outcome") === "ok", "idempotence: the FIRST turn end wins — the trailing failure edges are no-ops, not a re-settle");
+  ok((await store.getRoutine(ORG, SURFACE, "r-once"))?.consecutiveFailures === 0, "idempotence: the single `ok` fold reset the streak, and nothing folded it back up");
+
+  const beforeUnarmed = (await rowsFor(ROUTINE_AUDIT.fire)).length;
+  await inEveContext(fireSession, async () => {
+    await outcomeHook.events!["turn.completed"]!({} as never, ctx);
+  });
+  ok((await rowsFor(ROUTINE_AUDIT.fire)).length === beforeUnarmed, "idempotence: an UNARMED turn end folds nothing");
+
+  await inEveContext(fireSession, async () => {
+    await outcomeHook.events!["turn.started"]!({} as never, ctx);
+    await outcomeHook.events!["turn.completed"]!({} as never, ctx);
+  });
+  ok(
+    (await rowsFor(ROUTINE_AUDIT.fire)).filter((e) => detailOf(e, "routineId") === "r-once").length === 1,
+    "idempotence: the fire's SETTLEMENT turn — a second armed turn on the same session, same wake id — folds nothing",
+  );
+  ok((await store.getRoutine(ORG, SURFACE, "r-once"))?.consecutiveFailures === 0, "idempotence: …and the streak it reset stays reset, rather than being folded a second time");
+}
+
+{
+  const r = routine({ id: "r-cancelled", consecutiveFailures: 2 });
+  await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
+  const seat = new FakeEveContext();
+  const fire = firedCtx(r, "sess-cancel", "wake-cancelled");
+  const before = (await rowsFor(ROUTINE_AUDIT.fire)).length;
+
+  await inEveContext(seat, async () => {
+    await outcomeHook.events!["turn.started"]!({} as never, fire);
+    await outcomeHook.events!["turn.cancelled"]!({} as never, fire);
+  });
+  ok((await rowsFor(ROUTINE_AUDIT.fire)).length === before, "cancelled: a cancelled fire turn writes NO fire row — a run a human stopped settles nothing");
+
+  await inEveContext(seat, async () => {
+    await outcomeHook.events!["turn.started"]!({} as never, fire);
+    await outcomeHook.events!["turn.completed"]!({} as never, fire);
+  });
+  ok((await rowsFor(ROUTINE_AUDIT.fire)).length === before, "cancelled: …and the settlement wake cannot fold it either — the wake is latched, so a cancelled run is never reported as `ok`");
+  ok(
+    (await store.getRoutine(ORG, SURFACE, "r-cancelled"))?.consecutiveFailures === 2,
+    "cancelled: the failure streak survives the cancellation — one strike from disabling, exactly as it was",
+  );
+
+  const humanTurn = {
+    channel: { kind: "slack" },
+    session: { id: "sess-cancel", auth: { current: { attributes: { team_id: "T1", channel_id: "C1" }, principalId: "U1", principalType: "user" } } },
+  } as never;
+  await inEveContext(seat, async () => {
+    await outcomeHook.events!["turn.started"]!({} as never, humanTurn);
+    await outcomeHook.events!["turn.completed"]!({} as never, humanTurn);
+  });
+  ok((await rowsFor(ROUTINE_AUDIT.fire)).length === before, "cancelled: an ordinary human turn after the cancellation folds nothing — no stale arm survived");
+}
+
+{
+  const r = routine({ id: "r-abandoned", consecutiveFailures: 2 });
+  await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
+  const seat = new FakeEveContext();
+  const before = (await rowsFor(ROUTINE_AUDIT.fire)).length;
+
+  await inEveContext(seat, async () => {
+    await outcomeHook.events!["turn.started"]!({} as never, firedCtx(r, "sess-abandoned", "wake-abandoned"));
+    const humanTurn = {
+      channel: { kind: "slack" },
+      session: { id: "sess-abandoned", auth: { current: { attributes: { team_id: "T1", channel_id: "C1" }, principalId: "U1", principalType: "user" } } },
+    } as never;
+    await outcomeHook.events!["turn.started"]!({} as never, humanTurn);
+    await outcomeHook.events!["turn.completed"]!({} as never, humanTurn);
+  });
+
+  ok((await rowsFor(ROUTINE_AUDIT.fire)).length === before, "abandoned: a human turn after an abandoned fire turn folds NOTHING — the unconditional arm write cleared the stale slot");
+  ok(
+    (await store.getRoutine(ORG, SURFACE, "r-abandoned"))?.consecutiveFailures === 2,
+    "abandoned: …and the failure streak survives, one strike from disabling",
+  );
+}
+
+{
+  const r = routine({ id: "r-job-refire", consecutiveFailures: 0 });
+  await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
+  const jobSeat = new FakeEveContext();
+  const fireA = firedCtx(r, "sess-job-seat", "wake-fire-A");
+  const fireB = firedCtx(r, "sess-job-seat", "wake-fire-B");
+
+  await inEveContext(jobSeat, async () => {
+    await outcomeHook.events!["turn.started"]!({} as never, fireA);
+    await outcomeHook.events!["turn.completed"]!({} as never, fireA);
+    await outcomeHook.events!["turn.started"]!({} as never, fireB);
+    await outcomeHook.events!["turn.completed"]!({} as never, fireB);
+  });
+  const fires = (await rowsFor(ROUTINE_AUDIT.fire)).filter((e) => detailOf(e, "routineId") === "r-job-refire");
+  ok(fires.length === 2, "idempotence: a JOB seat folds EVERY fire — two fires on one durable session write two join rows, because the latch keys on the wake id");
+}
+
+{
+  const r = routine({ id: "r-job-human", consecutiveFailures: 2 });
+  await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
+  const humanTurnInJobSeat = {
+    channel: { kind: "slack" },
+    session: {
+      id: "sess-job",
+      auth: {
+        current: { attributes: { team_id: "T1", channel_id: "C1" }, principalId: "U1", principalType: "user" },
+        initiator: {
+          attributes: { team_id: "T1", channel_id: "C1", [ROUTINE_MARKER.id]: r.id, [ROUTINE_MARKER.surface]: r.surfaceKey, [ROUTINE_MARKER.org]: r.org },
+          authenticator: SCHEDULE_APP_AUTHENTICATOR,
+          principalId: SCHEDULE_APP_PRINCIPAL_ID,
+          principalType: SCHEDULE_APP_PRINCIPAL_TYPE,
+        },
+      },
+    },
+  } as never;
+  const before = (await rowsFor(ROUTINE_AUDIT.fire)).length;
+  await fireOnce(humanTurnInJobSeat);
+  ok((await rowsFor(ROUTINE_AUDIT.fire)).length === before, "idempotence: a HUMAN turn in a job seat writes no fire row, though the seat's initiator still carries the marker");
+  ok((await store.getRoutine(ORG, SURFACE, "r-job-human"))?.consecutiveFailures === 2, "idempotence: …and it does not reset the failure streak that was two strikes from disabling the job");
 }
 
 {
   const r = routine({ id: "r-quiet", trigger: { kind: "watch", everyMinutes: 30 }, lastOutcome: "skipped" });
   await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
-  await outcomeHook.events!["session.completed"]!({} as never, firedCtx(r, "sess-quiet") as never);
+  await fireOnce(firedCtx(r, "sess-quiet"));
   const row = (await rowsFor(ROUTINE_AUDIT.fire)).find((e) => detailOf(e, "routineId") === "r-quiet");
   ok(row !== undefined && detailOf(row, "outcome") === "skipped", "join: a watch that saw no change is recorded as a fire with outcome `skipped`, not as silence");
   ok(detailOf(row, "sessionId") === "sess-quiet", "join: even a silent fire carries its session id (the transcript is the 'why quiet' story)");
@@ -118,7 +263,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 {
   const r = routine({ id: "r-broken", consecutiveFailures: MAX_CONSECUTIVE_FAILURES - 1 });
   await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
-  await outcomeHook.events!["session.failed"]!({} as never, firedCtx(r, "sess-strike3") as never);
+  await fireOnce(firedCtx(r, "sess-strike3"), "turn.failed");
 
   const disabled = await rowsFor(ROUTINE_AUDIT.disabled);
   ok(disabled.length === 1, "self-disable: the transition writes exactly one routine.disabled row");
@@ -127,7 +272,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
   ok(detailOf(disabled[0], "sessionId") === "sess-strike3", "self-disable: the row names the session of the fire that tripped it");
   ok((await store.getRoutine(ORG, SURFACE, "r-broken"))?.status === "disabled", "self-disable: the routine really is disabled on the row too");
 
-  await outcomeHook.events!["session.failed"]!({} as never, firedCtx(r, "sess-after") as never);
+  await fireOnce(firedCtx(r, "sess-after"), "turn.failed");
   ok((await rowsFor(ROUTINE_AUDIT.disabled)).length === 1, "self-disable: an already-disabled routine does NOT write a second disabled row");
 }
 

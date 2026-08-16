@@ -19,6 +19,7 @@ import {
   dmWindowKey,
   isDmAnchorWindowToken,
   isDmAnchoredTaskToken,
+  windowTokenPlatform,
   DM_ANCHOR_GENERATION,
   type WindowKey,
 } from "../agent/channels/window-key.js";
@@ -226,6 +227,36 @@ eq(sessionGrantKeyFromToken("1234.5678"), "1234.5678", "a thread-ts native token
   n++;
   assert.throws(() => dmWindowKey("", 1), /non-empty/, "dmWindowKey throws on an empty surface key");
   n++;
+}
+
+{
+  const SURFACE = "slack/T1/C_PAY";
+  eq(windowTokenPlatform(`oe-dom:payments:win:${SURFACE}:oe-sup:g2`), "slack", "a SOLO window token names its one surface's platform");
+  eq(windowTokenPlatform(`unified:oe-dom:payments:win:${SURFACE}:oe-sup:g2`), "slack", "…through eve's `unified:` send prefix");
+  eq(windowTokenPlatform(`oe-dom:payments:win:teams/W1/CH1:oe-sup:g2`), "teams", "…and it reads the platform verbatim, never a hardcoded one");
+
+  const task = `oe-dom:payments:win:${taskWindowId(SURFACE, "1700.5")}:oe-sup:g2`;
+  const seat = `oe-dom:payments:win:${threadSeatWindowId(SURFACE, "1700.5")}:oe-sup:g2`;
+  eq(windowTokenPlatform(task), "slack", "🔴 a TASK window token names the platform of the ONE thread it owns — NOT the grain marker `t`");
+  eq(windowTokenPlatform(seat), "slack", "🔴 a THREAD-SEAT window token does the same — NOT the grain marker `s`");
+  eq(windowTokenPlatform(`oe-dom:payments:win:${taskWindowId(SURFACE, "1700.5", "n7")}:oe-sup:g2`), "slack", "…a NONCE-bearing (one-shot) task windowId reads the same segment");
+  eq(windowTokenPlatform(`oe-dom:payments:win:${taskWindowId("teams/W1/CH1", "1700.5")}:oe-sup:g2`), "teams", "…and a Teams-owned task window names teams");
+  eq(windowTokenPlatform(`oe-dom:payments:win:${taskWindowId("slack/C123", "1700.5")}:oe-sup:g2`), "slack", "🔴 a TWO-segment channelKey (the real slack codec's threadRef shape) answers the same");
+  eq(windowTokenPlatform(`oe-dom:payments:win:${threadSeatWindowId("github/example-owner/e2e-scratch", "42")}:oe-sup:g2`), "github", "…and a three-segment github channelKey names github");
+
+  eq(windowTokenPlatform("oe-dom:payments:oe-sup:g3"), undefined, "🔴 NEGATIVE CONTROL: a DEGENERATE domain window names NO surface (its windowId is a config domain name) — undefined, never the domain name as a platform");
+  eq(windowTokenPlatform("C_PAY:oe-sup:g3"), undefined, "NEGATIVE CONTROL: a per-container supervisor token is not a window token");
+  eq(windowTokenPlatform("cse_abc123"), undefined, "NEGATIVE CONTROL: a native token names no surface");
+  eq(windowTokenPlatform(undefined), undefined, "fail-soft on a non-string");
+  eq(windowTokenPlatform(""), undefined, "fail-soft on a blank token");
+
+  const dmSurface = "slack/T1/D_ALICE";
+  eq(windowTokenPlatform(formatWindowToken(dmWindowKey(dmSurface, 4))), "slack", "a DM WINDOW token recovers its platform from the pseudo-domain's surface key");
+  eq(
+    windowTokenPlatform(`oe-dom:${dmAnchorDomain(dmSurface)}:win:${taskWindowId(dmSurface, "t1", "n1")}:oe-sup:g0`),
+    "slack",
+    "…and a DM-ANCHORED worker reads it off its own task windowId",
+  );
 }
 
 console.log(`window-key-test: ${n} assertions passed`);

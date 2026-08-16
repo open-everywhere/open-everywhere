@@ -2,7 +2,7 @@ export interface CredentialHomeStoreInput {
   readonly org: string;
   readonly ref: string;
   readonly plaintext: string;
-  readonly provider?: string;
+  readonly connector?: string;
   readonly domain?: string;
   readonly createdBy: string;
   readonly parsed: Readonly<Record<string, string>>;

@@ -122,12 +122,12 @@ const webhookRotate: ActionKind<WebhookRotateArgs> = {
     const overlapRef = refs[1];
     let overlapped = false;
     if (outgoing && overlapRef && hooksSharingSecretRef(hooks, hook.id, overlapRef).length === 0) {
-      await vault.write(overlapRef, outgoing, { provider: "webhook", domain: `${hook.id} (superseded)`, createdBy: decidedBy });
+      await vault.write(overlapRef, outgoing, { connector: "webhook", domain: `${hook.id} (superseded)`, createdBy: decidedBy });
       overlapped = true;
     }
 
     const secret = mintSecretFor(hook.source);
-    await vault.write(currentRef, secret, { provider: "webhook", domain: hook.id, createdBy: decidedBy });
+    await vault.write(currentRef, secret, { connector: "webhook", domain: hook.id, createdBy: decidedBy });
 
     const delivered = await deliverReveal(
       { org: args.org, ref: currentRef, source: hook.id, to: decidedBy, platform: args.platform, channelId: args.channelId },

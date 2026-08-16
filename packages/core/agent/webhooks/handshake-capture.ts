@@ -57,7 +57,7 @@ export async function captureHandshakeSecret(
   }
 
   const ref = `${input.refNamespace}${(deps.newId ?? randomUUID)()}`;
-  const write = deps.writeSecret ?? ((r: string, v: string) => encryptedKvVault().write(r, v, { provider: "handshake-capture", domain: input.label }));
+  const write = deps.writeSecret ?? ((r: string, v: string) => encryptedKvVault().write(r, v, { connector: "handshake-capture", domain: input.label }));
   await write(ref, input.value);
 
   const available = (deps.available ?? revealPageAvailable)();

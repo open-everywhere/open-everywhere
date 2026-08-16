@@ -184,7 +184,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      org_id     text NOT NULL,
      ref        text NOT NULL,
      ciphertext text NOT NULL,
-     provider   text,
+     connector  text,
      domain     text,
      created_by text NOT NULL,
      created_at text NOT NULL,
@@ -194,7 +194,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      org_id       text NOT NULL,
      id           text NOT NULL,
      ref          text NOT NULL,
-     provider     text NOT NULL,
+     connector    text NOT NULL,
      domain       text,
      requested_by text NOT NULL,
      channel_id   text NOT NULL,
@@ -338,6 +338,11 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      claimed_tenant         text,            -- …in the same CAS, so a claimed row names a whole account
      claimed_native_id      text,
      claimed_at             text,
+     transport              text NOT NULL DEFAULT 'code',  -- OPE-617; code | directory
+     target_platform        text,            -- the directory transport's NAMED target …
+     target_tenant          text,            -- …matched inside the consent CAS, so a consent
+     target_native_id       text,            -- …from any other account matches no row
+     back_nonce_hash        text,            -- sha-256 of code-2; its PRESENCE forces the code-back
      status                 text NOT NULL,   -- pending | claimed | ratified | denied | expired
      created_at             text NOT NULL,
      expires_at             text NOT NULL,
@@ -377,6 +382,24 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE pending_actions ADD COLUMN IF NOT EXISTS posted_to text`,
   `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claim_id text`,
   `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claimed_at text`,
+  `DO $$
+   BEGIN
+     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'stored_credential' AND column_name = 'provider')
+        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'stored_credential' AND column_name = 'connector')
+     THEN
+       ALTER TABLE stored_credential RENAME COLUMN provider TO connector;
+     END IF;
+   END
+   $$`,
+  `DO $$
+   BEGIN
+     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'credential_intake' AND column_name = 'provider')
+        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'credential_intake' AND column_name = 'connector')
+     THEN
+       ALTER TABLE credential_intake RENAME COLUMN provider TO connector;
+     END IF;
+   END
+   $$`,
   `ALTER TABLE audit_entry ADD COLUMN IF NOT EXISTS prev_sha text`,
   `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS routine_id text`,
   `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS usd_micros_measured bigint`,
@@ -386,6 +409,11 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE identity_linked_ids ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT ''`,
   `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS initiating_tenant text NOT NULL DEFAULT ''`,
   `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS claimed_tenant text`,
+  `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS transport text NOT NULL DEFAULT 'code'`,
+  `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS target_platform text`,
+  `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS target_tenant text`,
+  `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS target_native_id text`,
+  `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS back_nonce_hash text`,
   `DO $$
    BEGIN
      IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'identity_linked_ids' AND relkind = 'r')
@@ -1020,8 +1048,16 @@ function linkedIdFromPgRow(org: string, r: LinkedIdPgRow): LinkedIdRow {
 
 const LINK_CHALLENGE_SELECT =
   `SELECT org_id, id, nonce_hash, initiating_platform, initiating_tenant, initiating_native_id, initiating_surface_key,
-          claimed_platform, claimed_tenant, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at
+          claimed_platform, claimed_tenant, claimed_native_id, claimed_at,
+          transport, target_platform, target_tenant, target_native_id, back_nonce_hash,
+          status, created_at, expires_at, decided_at
    FROM identity_link_challenges`;
+
+const LINK_CHALLENGE_RETURNING =
+  `org_id, id, nonce_hash, initiating_platform, initiating_tenant, initiating_native_id, initiating_surface_key,
+   claimed_platform, claimed_tenant, claimed_native_id, claimed_at,
+   transport, target_platform, target_tenant, target_native_id, back_nonce_hash,
+   status, created_at, expires_at, decided_at`;
 
 type LinkChallengePgRow = {
   id: string;
@@ -1034,6 +1070,11 @@ type LinkChallengePgRow = {
   claimed_tenant: string | null;
   claimed_native_id: string | null;
   claimed_at: string | null;
+  transport: string | null;
+  target_platform: string | null;
+  target_tenant: string | null;
+  target_native_id: string | null;
+  back_nonce_hash: string | null;
   status: string;
   created_at: string;
   expires_at: string;
@@ -1053,6 +1094,11 @@ function linkChallengeFromPgRow(org: string, r: LinkChallengePgRow): LinkChallen
     ...(r.claimed_tenant === null ? {} : { claimedTenant: r.claimed_tenant }),
     ...(r.claimed_native_id === null ? {} : { claimedNativeId: r.claimed_native_id }),
     ...(r.claimed_at === null ? {} : { claimedAt: r.claimed_at }),
+    transport: r.transport ?? "code",
+    ...(r.target_platform === null || r.target_platform === undefined ? {} : { targetPlatform: r.target_platform }),
+    ...(r.target_tenant === null || r.target_tenant === undefined ? {} : { targetTenant: r.target_tenant }),
+    ...(r.target_native_id === null || r.target_native_id === undefined ? {} : { targetNativeId: r.target_native_id }),
+    ...(r.back_nonce_hash === null || r.back_nonce_hash === undefined ? {} : { backNonceHash: r.back_nonce_hash }),
     status: r.status as LinkChallengeStatus,
     createdAt: r.created_at,
     expiresAt: r.expires_at,
@@ -2083,26 +2129,26 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async putStoredCredential(org, rec: StoredCredentialRow) {
       await client.query(
-        `INSERT INTO stored_credential (org_id, ref, ciphertext, provider, domain, created_by, created_at)
+        `INSERT INTO stored_credential (org_id, ref, ciphertext, connector, domain, created_by, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (org_id, ref) DO UPDATE SET
-           ciphertext = EXCLUDED.ciphertext, provider = EXCLUDED.provider,
+           ciphertext = EXCLUDED.ciphertext, connector = EXCLUDED.connector,
            domain = EXCLUDED.domain, created_by = EXCLUDED.created_by, created_at = EXCLUDED.created_at`,
-        [org, rec.ref, rec.ciphertext, rec.provider ?? null, rec.domain ?? null, rec.createdBy, rec.createdAt],
+        [org, rec.ref, rec.ciphertext, rec.connector ?? null, rec.domain ?? null, rec.createdBy, rec.createdAt],
       );
     },
 
     async getStoredCredential(org, ref) {
       const { rows } = await client.query(
-        "SELECT ref, ciphertext, provider, domain, created_by, created_at FROM stored_credential WHERE org_id = $1 AND ref = $2",
+        "SELECT ref, ciphertext, connector, domain, created_by, created_at FROM stored_credential WHERE org_id = $1 AND ref = $2",
         [org, ref],
       );
-      const r = (rows as { ref: string; ciphertext: string; provider: string | null; domain: string | null; created_by: string; created_at: string }[])[0];
+      const r = (rows as { ref: string; ciphertext: string; connector: string | null; domain: string | null; created_by: string; created_at: string }[])[0];
       if (!r) return null;
       return {
         ref: r.ref,
         ciphertext: r.ciphertext,
-        ...(r.provider ? { provider: r.provider } : {}),
+        ...(r.connector ? { connector: r.connector } : {}),
         ...(r.domain ? { domain: r.domain } : {}),
         createdBy: r.created_by,
         createdAt: r.created_at,
@@ -2168,24 +2214,24 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async addCredentialIntake(row: CredentialIntakeRow) {
       await client.query(
-        `INSERT INTO credential_intake (org_id, id, ref, provider, domain, requested_by, channel_id, thread_ts, created_at, expires_at, used_at)
+        `INSERT INTO credential_intake (org_id, id, ref, connector, domain, requested_by, channel_id, thread_ts, created_at, expires_at, used_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-        [row.org, row.id, row.ref, row.provider, row.domain ?? null, row.requestedBy, row.channelId, row.threadTs ?? null, row.createdAt, row.expiresAt, row.usedAt ?? null],
+        [row.org, row.id, row.ref, row.connector, row.domain ?? null, row.requestedBy, row.channelId, row.threadTs ?? null, row.createdAt, row.expiresAt, row.usedAt ?? null],
       );
     },
 
     async getCredentialIntake(org, id) {
       const { rows } = await client.query(
-        "SELECT id, ref, provider, domain, requested_by, channel_id, thread_ts, created_at, expires_at, used_at FROM credential_intake WHERE org_id = $1 AND id = $2",
+        "SELECT id, ref, connector, domain, requested_by, channel_id, thread_ts, created_at, expires_at, used_at FROM credential_intake WHERE org_id = $1 AND id = $2",
         [org, id],
       );
-      const r = (rows as { id: string; ref: string; provider: string; domain: string | null; requested_by: string; channel_id: string; thread_ts: string | null; created_at: string; expires_at: string; used_at: string | null }[])[0];
+      const r = (rows as { id: string; ref: string; connector: string; domain: string | null; requested_by: string; channel_id: string; thread_ts: string | null; created_at: string; expires_at: string; used_at: string | null }[])[0];
       if (!r) return null;
       return {
         org,
         id: r.id,
         ref: r.ref,
-        provider: r.provider,
+        connector: r.connector,
         ...(r.domain ? { domain: r.domain } : {}),
         requestedBy: r.requested_by,
         channelId: r.channel_id,
@@ -2422,8 +2468,10 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       await client.query(
         `INSERT INTO identity_link_challenges
            (org_id, id, nonce_hash, initiating_platform, initiating_tenant, initiating_native_id, initiating_surface_key,
-            claimed_platform, claimed_tenant, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+            claimed_platform, claimed_tenant, claimed_native_id, claimed_at,
+            transport, target_platform, target_tenant, target_native_id, back_nonce_hash,
+            status, created_at, expires_at, decided_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
         [
           org,
           row.id,
@@ -2436,6 +2484,11 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           row.claimedTenant ?? null,
           row.claimedNativeId ?? null,
           row.claimedAt ?? null,
+          row.transport,
+          row.targetPlatform ?? null,
+          row.targetTenant ?? null,
+          row.targetNativeId ?? null,
+          row.backNonceHash ?? null,
           row.status,
           row.createdAt,
           row.expiresAt,
@@ -2465,6 +2518,18 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         params.push(filter.initiatingNativeId);
         conjuncts.push(`initiating_native_id = $${params.length}`);
       }
+      if (filter?.targetPlatform !== undefined) {
+        params.push(filter.targetPlatform);
+        conjuncts.push(`target_platform = $${params.length}`);
+      }
+      if (filter?.targetTenant !== undefined) {
+        params.push(filter.targetTenant);
+        conjuncts.push(`target_tenant = $${params.length}`);
+      }
+      if (filter?.targetNativeId !== undefined) {
+        params.push(filter.targetNativeId);
+        conjuncts.push(`target_native_id = $${params.length}`);
+      }
       if (filter?.status !== undefined) {
         params.push(filter.status);
         conjuncts.push(`status = $${params.length}`);
@@ -2473,15 +2538,27 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return (rows as LinkChallengePgRow[]).map((r) => linkChallengeFromPgRow(org, r));
     },
 
-    async claimLinkChallenge(org, nonceHash, platform, tenant, nativeId, at) {
+    async claimLinkChallenge(org, nonceHash, platform, tenant, nativeId, at, backNonceHash) {
       const { rows } = await client.query(
         `UPDATE identity_link_challenges
-           SET claimed_platform = $1, claimed_tenant = $2, claimed_native_id = $3, claimed_at = $4, status = 'claimed'
+           SET claimed_platform = $1, claimed_tenant = $2, claimed_native_id = $3, claimed_at = $4, back_nonce_hash = $8, status = 'claimed'
          WHERE org_id = $5 AND nonce_hash = $6 AND status = 'pending' AND expires_at > $7
            AND NOT (initiating_platform = $1 AND initiating_tenant = $2 AND initiating_native_id = $3)
-         RETURNING org_id, id, nonce_hash, initiating_platform, initiating_tenant, initiating_native_id, initiating_surface_key,
-                   claimed_platform, claimed_tenant, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at`,
-        [platform, tenant, nativeId, at, org, nonceHash, at],
+         RETURNING ${LINK_CHALLENGE_RETURNING}`,
+        [platform, tenant, nativeId, at, org, nonceHash, at, backNonceHash ?? null],
+      );
+      const r = (rows as LinkChallengePgRow[])[0];
+      return r ? linkChallengeFromPgRow(org, r) : null;
+    },
+
+    async consentLinkChallenge(org, id, consenter, at, backNonceHash) {
+      const { rows } = await client.query(
+        `UPDATE identity_link_challenges
+           SET claimed_platform = $1, claimed_tenant = $2, claimed_native_id = $3, claimed_at = $4, back_nonce_hash = $7, status = 'claimed'
+         WHERE org_id = $5 AND id = $6 AND status = 'pending' AND expires_at > $4
+           AND target_platform = $1 AND target_tenant = $2 AND target_native_id = $3
+         RETURNING ${LINK_CHALLENGE_RETURNING}`,
+        [consenter.platform, consenter.tenant, consenter.nativeId, at, org, id, backNonceHash ?? null],
       );
       const r = (rows as LinkChallengePgRow[])[0];
       return r ? linkChallengeFromPgRow(org, r) : null;

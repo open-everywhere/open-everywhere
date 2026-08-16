@@ -61,6 +61,7 @@ export const ENV = {
   notionAnchorOnTopic: "E2E_NOTION_ANCHOR_ONTOPIC",
   notionAnchorOnTopic2: "E2E_NOTION_ANCHOR_ONTOPIC2",
   notionAnchorOffTopic: "E2E_NOTION_ANCHOR_OFFTOPIC",
+  notionAnchorHuman: "E2E_NOTION_ANCHOR_HUMAN",
 
   slackUnifiedChannelA: "E2E_SLACK_UNIFIED_CHANNEL_A",
   slackUnifiedChannelB: "E2E_SLACK_UNIFIED_CHANNEL_B",
@@ -71,7 +72,6 @@ export const ENV = {
   spendCapFixture: "E2E_SPEND_CAP_FIXTURE",
   spendGateDoor: "E2E_SPEND_GATE_DOOR",
   accessPersonalFixture: "E2E_ACCESS_PERSONAL_FIXTURE",
-  linkIdentityArmed: "E2E_LINK_IDENTITY",
   expectModels: "E2E_EXPECT_MODELS",
   expectModelsRequired: "E2E_EXPECT_MODELS_REQUIRED",
 } as const;
@@ -191,6 +191,7 @@ export interface NotionAmbientConfig {
   readonly anchorOnTopic?: string;
   readonly anchorOnTopic2?: string;
   readonly anchorOffTopic?: string;
+  readonly anchorHuman?: string;
 }
 
 export interface SlackUnifiedConfig {
@@ -365,6 +366,7 @@ export function resolveNotionAmbient(env: Env = process.env): Resolved<NotionAmb
       anchorOnTopic: env[ENV.notionAnchorOnTopic]?.trim() || undefined,
       anchorOnTopic2: env[ENV.notionAnchorOnTopic2]?.trim() || undefined,
       anchorOffTopic: env[ENV.notionAnchorOffTopic]?.trim() || undefined,
+      anchorHuman: env[ENV.notionAnchorHuman]?.trim() || undefined,
     },
   };
 }

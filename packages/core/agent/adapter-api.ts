@@ -194,6 +194,15 @@ export type { Surface, SurfaceTrust, SubtreeSurfaceHandler } from "./identity/tr
 
 export { matchesAgentName, agentNameTokens, agentNameTokenPattern, configuredAgentName, DEFAULT_AGENT_SHORT_NAME, DEFAULT_AGENT_FULL_NAME, OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "./identity/bot-name.js";
 
+export { registerBotDisplayName, botDisplayNameFor, _resetBotDisplayNamesForTest } from "./identity/bot-display-name.js";
+export type { BotDisplayNameArm } from "./identity/bot-display-name.js";
+
+export { registerAccountDisplayName, accountProfileFor, humanAccountLabel, _resetAccountDisplayNamesForTest } from "./identity/account-display-name.js";
+export type { AccountProfile, AccountDisplayNameArm } from "./identity/account-display-name.js";
+
+export { registerAccountDirectory, hasAccountDirectory, lookupAccountDirectory, rankDirectoryCandidates, _resetAccountDirectoriesForTest } from "./identity/account-directory.js";
+export type { DirectoryCandidate, AccountDirectoryArm, DirectoryLookup } from "./identity/account-directory.js";
+
 export { setRegisteredConnectorCredentials, resetRegisteredConnectorCredentials } from "./access/connector-credentials.js";
 
 export { ingestUntrustedModelOutput, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "./access/untrusted.js";
@@ -260,6 +269,8 @@ export { divertToUnifiedWindow } from "./channels/unified.js";
 
 export { supervisorGrainFor, grainUsesUnifiedWindow, mintRotationToken } from "./channels/unified-supervisor.js";
 export type { SupervisorGrain } from "./channels/unified-supervisor.js";
+
+export { claimRuntimeRotation } from "./channels/runtime-rotation.js";
 
 export { completeSupervisorTurn, auditSupervisorFailure } from "./channels/supervisor-complete.js";
 export type { SupervisorCompletionSpec } from "./channels/supervisor-complete.js";
