@@ -282,6 +282,7 @@ const norm = (s: string): string =>
     .replace(/sent-at="[^"]*"/g, 'sent-at="TS"')
     .replace(/current-time="[^"]*"/g, 'current-time="TS"')
     .replace(/wake-id="[^"]*"/g, 'wake-id="WID"')
+    .replace(/\[wake-id: [^\]]*\]/g, "[wake-id: WID]")
     .replace(/id="test-[^"]*"/g, 'id="MID"');
 
 {

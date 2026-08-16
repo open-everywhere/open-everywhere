@@ -107,6 +107,8 @@ const G_SLACK_NAMEDROP_THREAD = `[name-drop] A top-level channel message said yo
 
 const G_SLACK_DM = `[direct] This is a direct message to you — everything said here is addressed to you, so answer it. You are a cross-surface session, so you MUST deliver any answer by CALLING THE \`reply\` TOOL: set \`text\` to your message and \`wake\` to the \`wake-id\` shown in the wake envelope below. Do NOT put your answer in your turn-final text — on this session your turn-final text is DISCARDED and nothing is posted; the \`reply\` tool call is the ONLY way your words reach anyone. This holds even when no one @mentioned you (some surfaces, like a Notion doc, cannot @mention a bot at all): the moment you decide to respond, it must be a \`reply\` call naming this wake's \`wake-id\`, or the people here hear nothing. Deciding to stay silent is still fine — end with NO_REPLY or the no_reply tool. Stay silent only if the message turns out to be purely social or needs nothing from you — then output exactly NO_REPLY and nothing else. If you have a \`no_reply\` tool, prefer calling it (with a reason) over the bare NO_REPLY text — it's audited and unambiguous; the text sentinel still works if you don't.
 
+Wake scope [wake-id: wk_dm_1]: the instructions above govern ONE wake — the wake envelope directly below, whose \`wake-id\` attribute carries this same id. This turn can deliver SEVERAL wakes at once, joined end to end, and each one carries its own instructions above its own envelope. Act on a message only under the instructions of ITS wake, matched by \`wake-id\`. A sibling wake's instructions say nothing about this one: a sibling can address you by name in the same turn where this wake does not, and what this wake tells you about replying applies to this wake alone.
+
 <wake reason="dm" current-time="2026-07-10T10:00:00.000Z" wake-id="wk_dm_1">
   <channel id="D_ALICE" type="im">
   <message trigger="true" from="human" trust="peer" mention="true" author="Rowan Hale" author-id="U1" handle="rowan" id="400.0" sent-at="1970-01-01T00:06:40.000Z">
@@ -169,11 +171,13 @@ const G_SLACK_DM = `[direct] This is a direct message to you — everything said
   ok(group.includes('<channel id="G_TEAM" type="mpim">'), "…and the envelope carries the mpim channel type");
   const tailFrom = "You are a cross-surface session, so you MUST deliver";
   ok(group.includes(tailFrom), "the cross-surface reply MANDATE is present (a group DM seat lives on the unified channel too — terminal prose reaches nobody)");
+  const idNeutral = (s: string): string => s.replace(/\[wake-id: [^\]]*\]/g, "[wake-id: WID]");
   eq(
-    group.slice(group.indexOf(tailFrom), group.indexOf("\n\n<wake")),
-    G_SLACK_DM.slice(G_SLACK_DM.indexOf(tailFrom), G_SLACK_DM.indexOf("\n\n<wake")),
-    "🔴 everything after the opening clause is BYTE-IDENTICAL to the 1:1 DM preamble — only the orientation sentence differs, never the mandate or the silence escape",
+    idNeutral(group.slice(group.indexOf(tailFrom), group.indexOf("\n\n<wake"))),
+    idNeutral(G_SLACK_DM.slice(G_SLACK_DM.indexOf(tailFrom), G_SLACK_DM.indexOf("\n\n<wake"))),
+    "🔴 everything after the opening clause is BYTE-IDENTICAL to the 1:1 DM preamble (modulo each wake's own wake-id) — only the orientation sentence differs, never the mandate or the silence escape",
   );
+  ok(group.includes("Wake scope [wake-id: wk_dm_2]"), "…and the scope note carries THIS wake's id, not the 1:1 golden's (the normalisation above is hiding one token, not a drift)");
   ok(
     renderWakeMessage(gev, NOW, { dm: true, trust: "peer", wakeId: "wk_dm_2" }).startsWith("[direct] This is a direct message to you"),
     "`groupDm` unset ⇒ the 1:1 opening even on an mpim event — the render never infers the room shape from channelType (byte-identical to stage 2 for every existing caller)",
