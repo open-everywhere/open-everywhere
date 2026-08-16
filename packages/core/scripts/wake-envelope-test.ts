@@ -1,6 +1,7 @@
 
 import assert from "node:assert/strict";
 import { authorTrustAdmitsUnfencedBody, isWakeEnvelopeShaped, renderWakeEnvelope, triggerMessageBody, type WakeEnvelopeInput, type WakeMessageInput } from "../agent/channels/wake-envelope.js";
+import { wakeScopeNote } from "../agent/channels/normalized-wake.js";
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 import { maxResultChars } from "../agent/access/result-cap.js";
 
@@ -607,6 +608,10 @@ const countOccurrences = (haystack: string, needle: string): number =>
     base({ trigger: true, id: "2", body: "hello" }),
   ]);
   ok(triggerMessageBody(forged) === "hello", "triggerMessageBody: an escaped fake `<message trigger=\"true\">` in a body forges no second trigger");
+
+  const scoped = `${wakeScopeNote("00000000-0000-4000-8000-000000000006")}\n\n${render([base({ trigger: true, body: "hello from the preamble case" })])}`;
+  ok(!/<wake\b/.test(wakeScopeNote("00000000-0000-4000-8000-000000000006")), "the OPE-650 scope note writes NO `<wake` opener into the trusted prose");
+  ok(triggerMessageBody(scoped) === "hello from the preamble case", "triggerMessageBody: a delivery led by the OPE-650 scope note still yields the trigger's own body");
 
   ok(isWakeEnvelopeShaped(many) === true, "isWakeEnvelopeShaped: a rendered envelope is envelope-shaped");
   ok(isWakeEnvelopeShaped("link WXYZWXYZ") === false, "isWakeEnvelopeShaped: one person's own message body is not");

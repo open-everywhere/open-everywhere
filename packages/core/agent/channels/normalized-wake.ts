@@ -25,6 +25,21 @@ export const SINGLE_WINDOW_REPLY_MANDATE =
   `people here hear nothing. Deciding to stay silent is still fine — end with ${NO_REPLY_SENTINEL} or ` +
   `the no_reply tool.`;
 
+const SAFE_WAKE_ID_RE = /^[A-Za-z0-9._:-]{1,64}$/;
+
+export function wakeScopeNote(wakeId: string): string {
+  const id = SAFE_WAKE_ID_RE.test(wakeId) ? wakeId : undefined;
+  return (
+    `Wake scope${id ? ` [wake-id: ${id}]` : ""}: the instructions above govern ONE wake — the wake ` +
+    `envelope directly below${id ? `, whose \`wake-id\` attribute carries this same id` : ""}. This turn ` +
+    `can deliver SEVERAL wakes at once, joined end to end, and each one carries its own instructions ` +
+    `above its own envelope. Act on a message only under the instructions of ITS wake${id ? `, matched by \`wake-id\`` : ""}. ` +
+    `A sibling wake's instructions say nothing about this one: a sibling can address you by name in ` +
+    `the same turn where this wake does not, and what this wake tells you about replying applies to ` +
+    `this wake alone.`
+  );
+}
+
 export type NormalizedWakeTrigger = {
   readonly kind: "message";
   readonly message: WakeMessageInput;
@@ -244,10 +259,9 @@ function judgedPreamble(nw: NormalizedWake): string {
       }
     }
   })();
-  if (nw.wakeId !== undefined && nw.addressing !== "direct-mention") {
-    return `${base}\n\n${SINGLE_WINDOW_REPLY_MANDATE}`;
-  }
-  return base;
+  if (nw.wakeId === undefined) return base;
+  const mandate = nw.addressing !== "direct-mention" ? `${SINGLE_WINDOW_REPLY_MANDATE}\n\n` : "";
+  return `${base}\n\n${mandate}${wakeScopeNote(nw.wakeId)}`;
 }
 
 export function renderWake(nw: NormalizedWake, now: () => string = () => new Date().toISOString()): RenderedWake {
