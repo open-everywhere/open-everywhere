@@ -11,6 +11,7 @@ import {
   resolvePartition,
   ingressSpendGate,
   replierLabelFromAuthAttributes,
+  authPrincipalId,
   type ChatAuditPartition,
   type ReplierLabel,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -86,6 +87,7 @@ const native = teamsChannel({
       (channel.state as unknown as Record<string, unknown>).oeReplierLabel = replierLabelFromAuthAttributes(
         ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined,
       );
+      (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId(ctx);
     },
     "message.completed": async (data, channel, ctx) => {
       const sessionId = ctx?.session?.id;
@@ -108,7 +110,15 @@ const native = teamsChannel({
           await postTerminalProse(
             { platform: "teams", serviceUrl: channel.state.serviceUrl, conversationId: channel.state.conversationId, ...(channel.state.replyToActivityId ? { replyToActivityId: channel.state.replyToActivityId } : {}) },
             action.text,
-            { org: p.org, platform: p.platform, workspace: p.workspace, surface: p.surface, ...(sessionId ? { sessionId } : {}), route: "terminal" },
+            {
+              org: p.org,
+              platform: p.platform,
+              workspace: p.workspace,
+              surface: p.surface,
+              principalId: (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId as string | undefined,
+              ...(sessionId ? { sessionId } : {}),
+              route: "terminal",
+            },
             (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined,
           );
         } else {

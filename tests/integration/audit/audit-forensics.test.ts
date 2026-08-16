@@ -159,7 +159,7 @@ test("every authenticated control read leaves its OWN receipt in the trail, and 
   expect(after.some((r) => r.detail?.view === "audit")).toBe(true);
 });
 
-test("a chat turn names the human on its firewall row — and its reply row names nobody (OPE-645, pinned)", async () => {
+test("a chat turn names the human on both its firewall row and its reply row (OPE-645, fixed)", async () => {
   await bootAgent();
   const { reply, channelId, sinceIso } = await turnOnce();
 
@@ -172,7 +172,8 @@ test("a chat turn names the human on its firewall row — and its reply row name
   }, `an egress.policy audit row for channel ${channelId}`);
   expect(policy.principalId).toBe(DISCORD_USER_ID);
 
-  expect(reply.principalId).toBeUndefined();
+  expect(reply.principalId).toBe(DISCORD_USER_ID);
+  expect(reply.principalId).toBe(policy.principalId);
   expect(policy.surface).toBe(reply.surface);
   expect(policy.workspace).toBe(reply.workspace);
 

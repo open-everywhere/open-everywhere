@@ -85,6 +85,7 @@ import {
   type ReactionVerb,
   getSettings,
   replierLabelFromAuthAttributes,
+  authPrincipalId,
   type ReplierLabel,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { fetchDiscordBackscrollLines, distillDiscordRotationHandoff, gradeDiscordContextLines } from "./discord-backscroll.js";
@@ -1352,6 +1353,7 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
       (channel.state as unknown as Record<string, unknown>).oeReplierLabel = replierLabelFromAuthAttributes(
         ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined,
       );
+      (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId(ctx);
     },
     "actions.requested": async (_data, channel) => {
       if (statusUxEnabled() && typingGateOpen(channel.channelId) && !peekCardPostedThisTurn()) await triggerDiscordTyping(channel.channelId);
@@ -1404,7 +1406,15 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
           await postTerminalProse(
             { platform: "discord", channelId: channel.channelId },
             text,
-            { org: auditP.org, platform: auditP.platform, workspace: auditP.workspace, surface: auditP.surface, ...(sessionId ? { sessionId } : {}), route: "terminal" },
+            {
+              org: auditP.org,
+              platform: auditP.platform,
+              workspace: auditP.workspace,
+              surface: auditP.surface,
+              principalId: (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId as string | undefined,
+              ...(sessionId ? { sessionId } : {}),
+              route: "terminal",
+            },
             (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined,
           );
         } else {

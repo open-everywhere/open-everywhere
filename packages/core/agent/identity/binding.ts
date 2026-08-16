@@ -74,7 +74,7 @@ function authOf(ctx: BindableContext): AuthPrincipal | null {
   return ctx.session?.auth?.current ?? ctx.session?.auth?.initiator ?? null;
 }
 
-function authPrincipalId(ctx: BindableContext): string | undefined {
+export function authPrincipalId(ctx: BindableContext): string | undefined {
   const pid = authOf(ctx)?.principalId;
   return pid && pid.length > 0 ? pid : undefined;
 }
