@@ -1,4 +1,5 @@
 import { actingPrincipalId, bindFrom, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
+import { adminStandingSubject } from "./admin-standing.js";
 import { rosterHasPrincipal, tryPrincipalKey } from "../identity/principal-key.js";
 import { domainForChannel, criteriaDomain, type Domain } from "../memory/domain.js";
 import { getConfig } from "./config.js";
@@ -8,6 +9,7 @@ export interface Role {
   readonly isOrgAdmin: boolean;
   readonly isDomainAdmin: boolean;
   readonly domain?: string;
+  readonly unverified?: string;
 }
 
 const NO_ROLE: Role = { isOrgAdmin: false, isDomainAdmin: false };
@@ -32,11 +34,14 @@ export function roleForBinding(binding: SurfaceBinding, domains: readonly Domain
 export function resolveRole(ctx: BindableContext): Role {
   const binding = bindFrom(ctx);
   const domains = getConfig().loadDomains();
-  return roleForBinding(binding, domains);
+  const subject = adminStandingSubject(binding, ctx);
+  if (!subject.ok) return { ...NO_ROLE, unverified: subject.message };
+  return roleForBinding({ ...binding, principalId: subject.principalId }, domains);
 }
 
 export function requireOrgAdmin(ctx: BindableContext): Role {
   const role = resolveRole(ctx);
+  if (role.unverified !== undefined) throw new Error(role.unverified);
   if (!role.isOrgAdmin) {
     throw new Error(
       `this action requires an org admin.${
@@ -49,6 +54,7 @@ export function requireOrgAdmin(ctx: BindableContext): Role {
 
 export function requireDomainAdminOrOrg(ctx: BindableContext): Role {
   const role = resolveRole(ctx);
+  if (role.unverified !== undefined) throw new Error(role.unverified);
   if (!role.isDomainAdmin) {
     const hint = role.principalId ? `Your id ("${role.principalId}") isn't listed.` : "No verified sender id on this turn.";
     const fix = role.domain

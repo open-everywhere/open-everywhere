@@ -48,7 +48,13 @@ const connectorEntry = defineTool({
     const binding = bindFrom(ctx as BindableContext);
     const platform = binding.platform;
     const mode = connectModeOf(binding.mode);
-    const isAdmin = resolveRole(ctx as BindableContext).isDomainAdmin;
+    const role = resolveRole(ctx as BindableContext);
+    const isAdmin = role.unverified === undefined && role.isDomainAdmin;
+    const unverifiedNote =
+      role.unverified === undefined
+        ? ""
+        : " (Org-level options are withheld on this turn because the caller could not be verified, not because you lack standing —" +
+          " ask again on its own and they are offered normally.)";
     const hostWriteBroker = hostWriteHomeAvailable(registeredCredentialHomes());
     const pageArmed = intakePageAvailable();
     const catalogues = getConfig().loadConnectorCredentials?.() ?? [];
@@ -66,7 +72,7 @@ const connectorEntry = defineTool({
       return {
         action: "listed" as const,
         options: catalogues.map((p) => p.connector),
-        note: `Connectable connectors here:\n${lines.join("\n")}\nCall connector with a connector name to post its options.`,
+        note: `Connectable connectors here:\n${lines.join("\n")}\nCall connector with a connector name to post its options.${unverifiedNote}`,
       };
     }
 
@@ -86,7 +92,7 @@ const connectorEntry = defineTool({
         action: "none" as const,
         connector: catalogue.connector,
         options: [],
-        note: `No connect options are offerable for ${catalogue.connector} here — personal OAuth is DM-only, and org-level setup (service OAuth / API key) is admin-only.`,
+        note: `No connect options are offerable for ${catalogue.connector} here — personal OAuth is DM-only, and org-level setup (service OAuth / API key) is admin-only.${unverifiedNote}`,
       };
     }
 

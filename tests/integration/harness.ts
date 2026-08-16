@@ -262,7 +262,7 @@ export function wrapToolExecute(toolName: string, stub: (...args: unknown[]) => 
   };
 }
 
-export async function discordMentionWake(input: { channelId: string; text: string; messageId?: string }): Promise<void> {
+export async function discordMentionWake(input: { channelId: string; text: string; messageId?: string; userId?: string }): Promise<void> {
   if (booted === undefined) throw new Error("integration harness: discordMentionWake before bootAgent.");
   const { buildDiscordGuildMentionRelayEnvelope, signDiscordRelayRequest } = await import(
     "../../packages/core/scripts/e2e/discord-synthetic"
@@ -272,7 +272,7 @@ export async function discordMentionWake(input: { channelId: string; text: strin
       text: input.text,
       guildId: DISCORD_GUILD_ID,
       channelId: input.channelId,
-      userId: DISCORD_USER_ID,
+      userId: input.userId ?? DISCORD_USER_ID,
       botId: DISCORD_BOT_ID,
       botName: "open-everywhere",
       messageId: input.messageId ?? `it${Date.now()}`,
