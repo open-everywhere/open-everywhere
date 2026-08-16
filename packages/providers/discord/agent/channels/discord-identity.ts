@@ -26,6 +26,7 @@ export interface DiscordIdentityInput {
   readonly everyoneCanView?: boolean;
   readonly parentChannelId?: string;
   readonly memberPending?: boolean;
+  readonly messageId?: string;
 }
 
 export function buildDiscordAuth(input: DiscordIdentityInput): OpenEverywhereDiscordAuth {
@@ -38,6 +39,7 @@ export function buildDiscordAuth(input: DiscordIdentityInput): OpenEverywhereDis
   if (typeof input.everyoneCanView === "boolean") attributes.everyone_can_view = String(input.everyoneCanView);
   if (input.parentChannelId) attributes.parent_channel_id = input.parentChannelId;
   if (typeof input.memberPending === "boolean") attributes.member_pending = String(input.memberPending);
+  if (input.messageId) attributes.message_id = input.messageId;
   const dmMode = discordMode(input.channelType, input.guildId);
   Object.assign(attributes, rootDmGrainAttrs(dmMode === "dm" || dmMode === "mpim"));
   return { authenticator: "discord", principalId: input.userId, principalType: "discord-user", attributes };
@@ -109,6 +111,7 @@ export const bindDiscord: IdentityMapper = (ctx): RawIdentity => {
   const channelType = discordAttr(a, ["channel_type", "channelType"]);
   const everyoneCanView = discordAttr(a, ["everyone_can_view", "everyoneCanView"]);
   const userId = discordAttr(a, ["user_id", "userId"]);
+  const messageId = discordAttr(a, ["message_id", "messageId"]);
   const mode = discordMode(channelType, guildId);
   return {
     workspace: guildId ?? userId,
@@ -119,6 +122,7 @@ export const bindDiscord: IdentityMapper = (ctx): RawIdentity => {
     trust: discordTrust(discordAttr(a, ["member_pending", "memberPending"])),
     principalId: discordPrincipalId(ctx) ?? userId,
     ...(mode === "channel" && channelId ? { engagementKey: channelId } : {}),
+    ...(messageId ? { anchorMessageId: messageId } : {}),
     target: channelId ? { channelId, ...(guildId ? { guildId } : {}), ...(channelType ? { channelType } : {}) } : undefined,
   };
 };
