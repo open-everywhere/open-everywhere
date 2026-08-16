@@ -39,7 +39,7 @@ export OE_TEST_PG_WS="127.0.0.1:${WS_PORT}"
 echo "-- running the store/migration suites through the real driver --"
 npm run oe:build
 fail=0
-for script in test:operational test:postgres test:migrate-operational; do
+for script in test:operational test:postgres test:migrate-operational test:legacy-schema-migration; do
   echo "---- $script ----"
   if ! npm run "$script" --workspace @open-everywhere/core; then
     fail=1
