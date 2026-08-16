@@ -1,5 +1,8 @@
 
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   stripHtml,
   teamsLinesFromRaw,
@@ -35,6 +38,9 @@ import {
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { buildTeamsAuth, type TeamsIdentityInput } from "../agent/channels/teams-identity.js";
+
+const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-teams-read-"));
+process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 
 registerTeamsProvider();
 
@@ -435,4 +441,5 @@ const engCtx = teamsCtx({
   _resetAuthorTrustForTest();
 }
 
+rmSync(tmp, { recursive: true, force: true });
 console.log(`✓ ${n} teams-read assertions passed`);
