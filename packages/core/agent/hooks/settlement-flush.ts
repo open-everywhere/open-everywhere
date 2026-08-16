@@ -6,9 +6,11 @@ import { TERMINAL_TASK_STATUSES, type TaskSummary } from "../access/background-t
 
 export const SETTLEMENT_FLUSH_ACTION = "memory.settlement_flush";
 
-export type SettlementEdge = "task-settled" | "delegation-returned";
+export type SettlementEdge = "task-settled" | "delegation-returned" | "turn-backstop";
 
 const liveTasks = defineState<Record<string, true>>("open-everywhere.memory.liveTasks", () => ({}));
+
+const treeDirty = defineState<{ dirty: boolean }>("open-everywhere.memory.treeDirty", () => ({ dirty: false }));
 
 function log(msg: string): void {
   console.log(`[open-everywhere:settlement-flush] ${msg}`);
@@ -19,6 +21,22 @@ export function noteTaskDispatched(taskId: string): void {
     if (taskId.length === 0) return;
     liveTasks.update((t) => ({ ...t, [taskId]: true }));
   } catch {
+  }
+  markTreeDirty();
+}
+
+export function markTreeDirty(): void {
+  try {
+    treeDirty.update(() => ({ dirty: true }));
+  } catch {
+  }
+}
+
+export function treeIsDirty(): boolean {
+  try {
+    return treeDirty.get().dirty;
+  } catch {
+    return false;
   }
 }
 
@@ -60,6 +78,10 @@ export async function flushSettledMemory(ctx: MemoryPersistContext, edge: Settle
       result = { outcome: "skipped", live, flush: null };
     } else {
       const flush = await persistMemoryNow(ctx, "settled");
+      try {
+        treeDirty.update(() => ({ dirty: false }));
+      } catch {
+      }
       result = { outcome: "flushed", live: 0, flush };
     }
   } catch (err) {
@@ -79,4 +101,9 @@ export async function flushSettledMemory(ctx: MemoryPersistContext, edge: Settle
     },
   }).catch(() => undefined);
   return result;
+}
+
+export async function flushDirtyTreeAtTurnEnd(ctx: MemoryPersistContext): Promise<SettlementFlushResult | null> {
+  if (!treeIsDirty()) return null;
+  return flushSettledMemory(ctx, "turn-backstop");
 }

@@ -1,44 +1,97 @@
 import { defineHook, type HookContext } from "eve/hooks";
+import { defineState } from "eve/context";
 import { routineManualStamped, routineMarker } from "../routines/routine.js";
-import { foldRoutineOutcome } from "../routines/outcome-fold.js";
+import { foldRoutineOutcome, type RoutineOutcomeMarker } from "../routines/outcome-fold.js";
+import { isScheduleOriginatedAuth } from "../identity/binding.js";
+
+interface AuthSlotContext {
+  readonly session?: {
+    readonly id?: unknown;
+    readonly auth?: { readonly current?: unknown; readonly initiator?: unknown } | null;
+  };
+}
+
+interface ArmedFire {
+  readonly marker: RoutineOutcomeMarker;
+  readonly manual: boolean;
+  readonly sessionId?: string;
+}
+
+const armedFire = defineState<{ fire: ArmedFire | null }>(
+  "open-everywhere.routines.armedFire",
+  () => ({ fire: null }),
+);
 
 function log(msg: string): void {
   console.log(`[open-everywhere:routines] ${msg}`);
 }
 
-async function record(ctx: HookContext, outcome: "ok" | "failed"): Promise<void> {
-  const auth = ctx.session?.auth;
-  const attrs = auth?.current?.attributes ?? auth?.initiator?.attributes;
-  const marker = routineMarker(attrs);
-  if (!marker) return;
+export function armFireFold(ctx: HookContext): ArmedFire | null {
+  const c = ctx as unknown as AuthSlotContext;
+  const auth = (c.session?.auth?.current ?? c.session?.auth?.initiator ?? null) as
+    | { authenticator?: unknown; principalId?: unknown; principalType?: unknown; attributes?: Record<string, string | readonly string[]> }
+    | null;
+  if (!isScheduleOriginatedAuth(auth)) return null;
+  const marker = routineMarker(auth?.attributes);
+  if (!marker) return null;
+  const sessionId = typeof c.session?.id === "string" && c.session.id.length > 0 ? c.session.id : undefined;
+  return {
+    marker,
+    manual: routineManualStamped(auth?.attributes),
+    ...(sessionId !== undefined ? { sessionId } : {}),
+  };
+}
+
+function consumeArmedFire(): ArmedFire | null {
+  try {
+    const armed = armedFire.get().fire;
+    if (armed === null) return null;
+    armedFire.update(() => ({ fire: null }));
+    return armed;
+  } catch {
+    return null;
+  }
+}
+
+async function record(outcome: "ok" | "failed"): Promise<void> {
+  const armed = consumeArmedFire();
+  if (!armed) return;
 
   try {
-    const sessionId = typeof ctx.session?.id === "string" && ctx.session.id.length > 0 ? ctx.session.id : undefined;
-    const manual = routineManualStamped(attrs);
     const folded = await foldRoutineOutcome({
-      marker,
+      marker: armed.marker,
       sessionOutcome: outcome,
       at: new Date(),
-      ...(sessionId !== undefined ? { sessionId } : {}),
-      ...(manual ? { manual: true } : {}),
+      ...(armed.sessionId !== undefined ? { sessionId: armed.sessionId } : {}),
+      ...(armed.manual ? { manual: true } : {}),
     });
     if (!folded.folded) return;
     log(
-      `outcome ${folded.outcome} for ${marker.id} [${marker.surfaceKey}] ` +
+      `outcome ${folded.outcome} for ${armed.marker.id} [${armed.marker.surfaceKey}] ` +
         `(fails=${folded.consecutiveFailures}${folded.disabled ? ", AUTO-DISABLED" : ""})`,
     );
   } catch (err) {
-    log(`outcome record skipped for ${marker.id}: ${String(err)}`);
+    log(`outcome record skipped for ${armed.marker.id}: ${String(err)}`);
   }
 }
 
 export default defineHook({
   events: {
-    "session.completed": async (_event, ctx) => {
-      await record(ctx, "ok");
+    "turn.started": (_event, ctx) => {
+      try {
+        const fire = armFireFold(ctx);
+        if (fire) armedFire.update(() => ({ fire }));
+      } catch {
+      }
     },
-    "session.failed": async (_event, ctx) => {
-      await record(ctx, "failed");
+    "turn.completed": async () => {
+      await record("ok");
+    },
+    "turn.failed": async () => {
+      await record("failed");
+    },
+    "session.failed": async () => {
+      await record("failed");
     },
   },
 });

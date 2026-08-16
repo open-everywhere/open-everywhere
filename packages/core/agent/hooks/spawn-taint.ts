@@ -30,7 +30,7 @@ import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { installTaskWake, openTaskWake } from "../channels/task-wake.js";
 import { noteTurnBoundary } from "../access/task-wake-signal.js";
 import { addressedWakeThisTurn, noteTaskDispatchedThisTurn } from "../access/dispatch-origin-signal.js";
-import { flushSettledMemory, noteTaskDispatched, noteTaskViews } from "./settlement-flush.js";
+import { flushDirtyTreeAtTurnEnd, flushSettledMemory, noteTaskDispatched, noteTaskViews } from "./settlement-flush.js";
 import type { MemoryPersistContext } from "./memory.js";
 
 export const TAINT_VERDICT_ACTION = "taint.verdict";
@@ -423,6 +423,13 @@ export default defineHook({
       openTaintTurn(ctx);
       const bind = ctx as unknown as BindableContext;
       noteTurnBoundary(currentTurnId(bind), deliveryStampOf(bind));
+    },
+
+    "turn.completed": async (_event, ctx) => {
+      try {
+        await flushDirtyTreeAtTurnEnd(ctx as unknown as MemoryPersistContext);
+      } catch {
+      }
     },
 
     "action.result": async (event, ctx) => {

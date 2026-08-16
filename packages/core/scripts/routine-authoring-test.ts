@@ -412,6 +412,8 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
   const r = routine({ id: "r-manual-fold" });
   await store.addRoutine(partition, r);
 
+  const { SCHEDULE_APP_AUTHENTICATOR, SCHEDULE_APP_PRINCIPAL_ID, SCHEDULE_APP_PRINCIPAL_TYPE } = await import("../agent/identity/binding.js");
+
   const firedCtx = (manual: boolean, sessionId: string) =>
     ({
       channel: { kind: "slack" },
@@ -427,17 +429,27 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
               [ROUTINE_MARKER.org]: r.org,
               ...(manual ? { [ROUTINE_MARKER.manual]: "true" } : {}),
             },
-            principalType: "service",
+            authenticator: SCHEDULE_APP_AUTHENTICATOR,
+            principalId: SCHEDULE_APP_PRINCIPAL_ID,
+            principalType: SCHEDULE_APP_PRINCIPAL_TYPE,
           },
         },
       },
     }) as never;
 
-  await outcomeHook.events!["session.completed"]!({} as never, firedCtx(true, "sess-manual"));
+  const { FakeEveContext, inEveContext } = await import("./_eve-context-stub.js");
+  const fireOnce = async (ctx: never): Promise<void> => {
+    await inEveContext(new FakeEveContext(), async () => {
+      await outcomeHook.events!["turn.started"]!({} as never, ctx);
+      await outcomeHook.events!["turn.completed"]!({} as never, ctx);
+    });
+  };
+
+  await fireOnce(firedCtx(true, "sess-manual"));
   const manualRow = (await rowsFor(ROUTINE_AUDIT.fire)).find((e) => detailOf(e, "sessionId") === "sess-manual");
   ok(detailOf(manualRow, "manual") === true, "fold: a MANUAL fire's routine.fire row says so — 'why did this run at 14:07 when it is a 03:00 cron?' is answerable from the audit trail");
 
-  await outcomeHook.events!["session.completed"]!({} as never, firedCtx(false, "sess-clock"));
+  await fireOnce(firedCtx(false, "sess-clock"));
   const clockRow = (await rowsFor(ROUTINE_AUDIT.fire)).find((e) => detailOf(e, "sessionId") === "sess-clock");
   ok(clockRow !== undefined && clockRow!.detail!["manual"] === undefined, "fold: a SCHEDULED fire's row omits the field entirely — positive-only, so no existing reader has to learn a new default");
 }
