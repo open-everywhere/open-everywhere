@@ -269,6 +269,10 @@ function baseConfig(adminChannel: string | undefined) {
   const auditRows = await readAudit({ org: "widgetco", action: "dream.mode3_report" });
   eq(auditRows.length, 1, "mode3Tick: exactly one dream.mode3_report audit row recorded");
   eq(auditRows[0].detail?.["totalFailures"], 2, "mode3Tick: the audit row's totalFailures reflects only the in-window failure rows");
+
+  const heartbeats = await readAudit({ org: "widgetco", action: "dream.mode3_tick" });
+  eq(heartbeats.length, 1, "🔴 OPE-635: mode3Tick writes exactly one dream.mode3_tick heartbeat row per org per tick");
+  eq(heartbeats[0]!.detail?.["outcome"], "reported: posted", "🔴 OPE-635: a reported+posted week's heartbeat names that outcome");
 }
 
 {
@@ -280,6 +284,10 @@ function baseConfig(adminChannel: string | undefined) {
   eq(posts.length, 0, "mode3Tick: the poster is never called without a configured admin channel");
   const auditRows = await readAudit({ org: "noadminco", action: "dream.mode3_report" });
   eq(auditRows.length, 1, "mode3Tick: the digest is still audited even when nothing could be posted");
+
+  const heartbeats = await readAudit({ org: "noadminco", action: "dream.mode3_tick" });
+  eq(heartbeats.length, 1, "OPE-635: a reported-but-not-posted week still writes its heartbeat");
+  eq(heartbeats[0]!.detail?.["outcome"], "reported: no admin channel configured — skipped post", "OPE-635: …naming exactly why nothing posted");
 }
 
 {
@@ -290,6 +298,11 @@ function baseConfig(adminChannel: string | undefined) {
   eq(posts.length, 0, "mode3Tick: empty week never calls the poster");
   const auditRows = await readAudit({ org: "emptyco", action: "dream.mode3_report" });
   eq(auditRows.length, 0, "mode3Tick: empty week never writes a digest audit row");
+
+  const heartbeats = await readAudit({ org: "emptyco", action: "dream.mode3_tick" });
+  eq(heartbeats.length, 1, "🔴 OPE-635: an EMPTY WEEK still writes its heartbeat row — the ticket's exact concrete failure");
+  eq(heartbeats[0]!.detail?.["outcome"], "no-op: empty week", "🔴 OPE-635: …and names the no-op explicitly");
+  ok(heartbeats[0]!.detail?.["totalFailures"] === undefined, "OPE-635: an empty-week heartbeat carries no totalFailures field (nothing to report)");
 }
 
 {
@@ -300,6 +313,13 @@ function baseConfig(adminChannel: string | undefined) {
   };
   const report = await mode3Tick({ now: NOW, orgs: ["flakyco"], post: throwingPost });
   eq(report, { orgs: 1, reports: 1, posted: 0 }, "mode3Tick: a throwing poster is caught — report still counted, posted stays 0, tick doesn't throw");
+
+  const heartbeats = await readAudit({ org: "flakyco", action: "dream.mode3_tick" });
+  eq(heartbeats.length, 1, "OPE-635: a throwing poster's tick still writes its heartbeat");
+  ok(
+    typeof heartbeats[0]!.detail?.["outcome"] === "string" && (heartbeats[0]!.detail!["outcome"] as string).startsWith("reported: post failed") && (heartbeats[0]!.detail!["outcome"] as string).includes("Slack is down"),
+    "OPE-635: …and names the post failure, not just a silent skip",
+  );
 }
 
 {

@@ -273,7 +273,41 @@ const tidySchedule = await import("../agent/schedules/tidy.js");
 
   const proposals = await listProposals("sweepco");
   ok(proposals.some((e) => e.detail?.["kind"] === "stale"), "tidyTick: a stale proposal is recorded + auditable");
-  ok((await import("../agent/audit/audit.js")).readAudit && (await (await import("../agent/audit/audit.js")).readAudit({ org: "sweepco", action: "memory.tidy" })).length === 1, "tidyTick: the safe-apply write is audited (memory.tidy)");
+  const { readAudit } = await import("../agent/audit/audit.js");
+  ok((await readAudit({ org: "sweepco", action: "memory.tidy" })).length === 1, "tidyTick: the safe-apply write is audited (memory.tidy)");
+
+  const heartbeats = await readAudit({ org: "sweepco", action: "memory.tidy_tick" });
+  ok(heartbeats.length === 1, "🔴 OPE-635: tidyTick writes exactly one memory.tidy_tick heartbeat row per org per tick");
+  ok(heartbeats[0]!.detail?.["outcome"] === "changed", "🔴 OPE-635: a tick that changed a silo has a heartbeat outcome of \"changed\"");
+  eq(heartbeats[0]!.detail?.["silos"], 1, "OPE-635: the heartbeat's silo count matches the tick report");
+}
+
+{
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [],
+    loadSilos: () => [{ name: "quiet-brain", provider: "sqlite" }],
+    domainsForSurface: () => [],
+  } as never);
+
+  const { providerById } = await import("../agent/memory/provider.js");
+  const { siloTier } = await import("../agent/memory/store.js");
+  const provider = providerById("sqlite");
+  const p = { org: "quietco", platform: "quietco", workspace: "quietco", surface: "quietco", workspaceKey: "quietco", surfaceKey: "quietco", key: "quietco" };
+  await provider.writeTier(p as never, siloTier("quiet-brain"), { "MEMORY.md": "## Notes\n- a single tidy fact\n" }, "seed", { name: "quiet-brain", provider: "sqlite" });
+
+  const now = new Date("2026-07-01T00:00:00Z");
+  const report = await tidySchedule.tidyTick({ now, orgs: ["quietco"] });
+  ok(report.changed === 0, "tidyTick (no-op scenario): nothing needed changing");
+
+  const { readAudit } = await import("../agent/audit/audit.js");
+  ok((await readAudit({ org: "quietco", action: "memory.tidy" })).length === 0, "tidyTick (no-op scenario): the per-silo memory.tidy row is unchanged — still silent on a no-op, by design");
+  const heartbeats = await readAudit({ org: "quietco", action: "memory.tidy_tick" });
+  ok(heartbeats.length === 1, "🔴 OPE-635: a NO-OP tick still writes its heartbeat row — a quiet day and a dead cron no longer read identically");
+  ok(heartbeats[0]!.detail?.["outcome"] === "no-op: nothing to tidy", "🔴 OPE-635: …and the outcome names the no-op explicitly");
 }
 
 rmSync(tmp, { recursive: true, force: true });
