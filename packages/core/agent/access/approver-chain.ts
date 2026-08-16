@@ -479,10 +479,15 @@ export function renderChainResolution(req: ApprovalChainRequest, res: ChainResol
     lines.push("transforms (in order):");
     for (const t of res.transforms) lines.push(`  ${t.name}: ${t.from} → ${t.to}${t.reason !== undefined ? ` (${t.reason})` : ""}`);
   }
-  const kinds = taintedOf(req) ? chainTaintKinds() : [];
+  const supplied = req.tainted !== undefined;
+  const kinds = !supplied && taintedOf(req) ? chainTaintKinds() : [];
+  const liveTainted = chainTaintSignal();
+  const liveKinds = supplied && liveTainted ? chainTaintKinds() : [];
   const context = [
     `unattended: ${req.unattended}`,
-    `tainted: ${taintedOf(req)}${kinds.length > 0 ? ` (${kinds.join(", ")})` : ""}${taintMode() === "off" ? " — taint.mode: off (the model is not running)" : ""}`,
+    `tainted: ${taintedOf(req)}${kinds.length > 0 ? ` (${kinds.join(", ")})` : ""}` +
+      (supplied ? ` — supplied by the caller, not this turn's own signal (this turn: ${liveTainted}${liveKinds.length > 0 ? ` (${liveKinds.join(", ")})` : ""})` : "") +
+      (taintMode() === "off" ? " — taint.mode: off (the model is not running)" : ""),
     ...(req.mode !== undefined ? [`mode: ${req.mode.mode}`] : []),
   ];
   lines.push(`context: ${context.join(" · ")}`);

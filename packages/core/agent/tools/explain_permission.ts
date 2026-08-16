@@ -3,7 +3,6 @@ import { never } from "eve/tools/approval";
 import { z } from "zod";
 import {
   approvalModeForDomain,
-  chainTaintSignal,
   renderChainResolution,
   resolveApproverChain,
   type ApprovalChainRequest,
@@ -41,7 +40,7 @@ export default defineTool({
       ...(domain !== undefined ? { domain, mode: approvalModeForDomain(domain) } : {}),
       ...(acting !== undefined ? { principalId: acting } : {}),
       unattended: input.unattended ?? unattendedOf(ctx as BindableContext),
-      tainted: input.tainted ?? chainTaintSignal(),
+      ...(input.tainted !== undefined ? { tainted: input.tainted } : {}),
     };
     const resolution = await resolveApproverChain(request, { approvers: access.approvers });
     return {
