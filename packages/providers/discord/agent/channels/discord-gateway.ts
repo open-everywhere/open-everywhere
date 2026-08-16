@@ -285,6 +285,7 @@ export function authForRelayMessage(msg: DiscordRelayMessage): OpenEverywhereDis
     channelId: msg.channelId,
     channelType: msg.channelType,
     memberPending: msg.memberPending,
+    messageId: msg.id,
   });
 }
 
@@ -1012,6 +1013,7 @@ export async function dispatchTurn(
         channelId: msg.channelId,
         channelType: msg.channelType,
         parentChannelId,
+        messageId: msg.id,
       });
     }
   }

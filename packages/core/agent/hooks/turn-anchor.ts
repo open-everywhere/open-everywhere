@@ -70,7 +70,7 @@ async function onTurnStarted(turnId: string, ctx: HookContext): Promise<void> {
   const binding = bindFrom(c);
   const platform = channelPlatform(c) ?? binding.platform;
   const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-  const messageId = binding.threadTs;
+  const messageId = binding.threadTs ?? binding.anchorMessageId;
   const windowKey = ctx.channel?.continuationToken ?? ctx.session.id;
 
   write({
