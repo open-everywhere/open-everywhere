@@ -75,6 +75,8 @@ function goodBody(over: Record<string, unknown> = {}): Record<string, unknown> {
   return { domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, text: "hello team, is anything blocked?", origin: slackOrigin, ...over };
 }
 
+const G_INJECTED_WATCH_PREAMBLE = `[channel-watch] You were not mentioned — this message reached you because you are this channel's standing session: you see its activity so you can watch, remember, and step in only where you add something. Most messages need nothing from you, and the bar to reply is high. Reply only when you clearly add something the people here couldn't easily get themselves: it's addressed to you or names you, it asks something you can answer, you can stop a mistake in motion, or you hold information the conversation is missing. When you're unsure whether a message clears that bar, it doesn't. If the humans are talking among themselves and your reply would be noise, output exactly NO_REPLY and nothing else — nothing will be posted. Social chatter between humans — thanks, greetings, sign-offs ("cheers!", "see you tomorrow") — is noise even when it lands right after your reply, and never re-answer a question you already answered. Judge THIS message on its own merits: a run of NO_REPLY turns above means the earlier messages weren't for you, not that this one isn't. If you have a \`no_reply\` tool, prefer calling it (with a reason) over the bare NO_REPLY text — it's audited and unambiguous; the text sentinel still works if you don't. Cross-surface disclosure: you are one team's standing session across SEVERAL surfaces (each wake names its own via the <channel platform> address). Content you saw on one surface is context for judgment everywhere, but QUOTE it only into surfaces at equal-or-higher privacy — when unsure, paraphrase-and-point ("as discussed in #payments") rather than quoting a private line verbatim into a more public surface. The magic is that you were in the room; it is not licence to move a private sentence to a less-private place.`;
+
 interface Captured { message: string; target: Record<string, unknown>; auth: { attributes?: Record<string, unknown> } }
 const captured: Captured[] = [];
 const captureReceive: any = (_channel: unknown, target: Record<string, unknown>) => ({
@@ -207,6 +209,63 @@ await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(DO
   const c = captured[0];
   ok(c.auth.attributes?.oe_addressing === "direct-mention", "direct-mention stamps oe_addressing (enables the addressed-prose bridge)");
   ok(c.message.includes("[direct]"), "direct-mention renders the addressed preamble");
+}
+
+{
+  captured.length = 0;
+  const res = await post(goodBody({ mention: true }), INJECT_SECRET);
+  ok(res.status === 200, "mention:true with no stated addressing → 200");
+  const jb = (await res.json()) as { addressing: string };
+  ok(jb.addressing === "direct-mention", "mention:true SELECTS direct-mention (not the channel-watch default)");
+  const m = captured[0].message;
+  ok(m.startsWith("[direct]"), "mention:true renders the ADDRESSED preamble");
+  ok(!m.includes("You were not mentioned"), "an addressed wake NEVER carries the 'You were not mentioned' prose");
+  ok(m.includes('mention="true"') && m.includes('reason="mention"'), "the addressed render keeps mention=true AND reason=mention");
+  ok(captured[0].auth.attributes?.oe_addressing === "direct-mention", "mention:true also arms the addressed-prose bridge (oe_addressing stamp)");
+
+  captured.length = 0;
+  ok((await post(goodBody({ reason: "mention" }), INJECT_SECRET)).status === 200, 'reason:"mention" with no stated addressing → 200');
+  ok(captured[0].message.startsWith("[direct]"), 'reason:"mention" SELECTS the addressed preamble too');
+  ok(!captured[0].message.includes("You were not mentioned"), 'reason:"mention" never renders the watch prose');
+
+  captured.length = 0;
+  ok((await post(goodBody({ reason: "dm" }), INJECT_SECRET)).status === 200, 'reason:"dm" with no stated addressing → 200');
+  ok(captured[0].message.startsWith("[direct] This is a direct message to you"), 'reason:"dm" SELECTS the addressed preamble, with the DM opening (renderWake branches the opening on the reason)');
+  ok(!captured[0].message.includes("You were not mentioned"), 'reason:"dm" never renders the watch prose');
+
+  for (const [over, label] of [
+    [{ mention: true, addressing: "channel-watch" }, "mention:true + addressing:channel-watch"],
+    [{ mention: true, addressing: "thread-follow" }, "mention:true + addressing:thread-follow"],
+    [{ mention: true, addressing: "name-drop" }, "mention:true + addressing:name-drop"],
+    [{ reason: "mention", addressing: "channel-watch" }, 'reason:"mention" + addressing:channel-watch'],
+    [{ reason: "dm", addressing: "channel-watch" }, 'reason:"dm" + addressing:channel-watch'],
+  ] as const) {
+    captured.length = 0;
+    const bad = await post(goodBody(over), INJECT_SECRET);
+    ok(bad.status === 400, `${label} → 400 (an addressed attribute may not ride a watch preamble)`);
+    ok((((await bad.json()) as { error: string }).error).includes("You were not mentioned"), `${label} 400 NAMES the contradicting prose`);
+    ok(captured.length === 0, `${label} → no divert`);
+  }
+
+  captured.length = 0;
+  const badAddr = await post(goodBody({ addressing: "supervisor" }), INJECT_SECRET);
+  ok(badAddr.status === 400, "an unknown `addressing` → 400 (never a 500 from the renderer's exhaustive switch)");
+  ok(captured.length === 0, "unknown addressing → no divert");
+
+  captured.length = 0;
+  ok((await post(goodBody({ addressing: "direct", mention: true }), INJECT_SECRET)).status === 200, "addressing:direct + mention:true → 200 (coherent pair)");
+  ok(captured.length === 1, "the coherent addressed pair still diverts");
+}
+
+{
+  captured.length = 0;
+  const res = await post(goodBody(), INJECT_SECRET);
+  ok(res.status === 200, "an unaddressed body still injects → 200");
+  const first = captured[0].message.split("\n\n")[0];
+  ok(first === G_INJECTED_WATCH_PREAMBLE, "an unaddressed wake renders the channel-watch preamble BYTE-IDENTICALLY");
+  ok(!captured[0].message.includes('mention="true"'), "an unaddressed wake carries NO mention flag");
+  ok(captured[0].message.includes('reason="channel-activity"'), "an unaddressed wake keeps the ambient reason");
+  ok(captured[0].auth.attributes?.oe_addressing === undefined, "an unaddressed wake does NOT arm the addressed-prose bridge");
 }
 
 {
