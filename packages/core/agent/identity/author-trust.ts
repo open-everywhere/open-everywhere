@@ -1,6 +1,7 @@
 import { parseSurfaceKeyEntry, surfaceKeyEntryMatches, type SurfaceKeyEntry } from "./surface-key-grammar.js";
 import { isQualifiedPrincipalKey, parsePrincipalKey, tryPrincipalKey } from "./principal-key.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
+import { processRegistrySlot } from "../lib/process-registry.js";
 import type { Group } from "./groups.js";
 
 export interface AuthorGroupMember {
@@ -32,7 +33,10 @@ interface RegisteredTenant {
   readonly memberships: readonly SurfaceKeyEntry[];
 }
 
-let tenants: ReadonlyMap<string, RegisteredTenant> = new Map();
+const tenantsSlot = processRegistrySlot<ReadonlyMap<string, RegisteredTenant>>("author-trust.tenants.v1");
+function tenants(): ReadonlyMap<string, RegisteredTenant> {
+  return tenantsSlot.get() ?? new Map();
+}
 
 export function registerAuthorTrust(entries: Iterable<AuthorTrustEntry>, groups: readonly Group[] = []): void {
   const bad: string[] = [];
@@ -135,15 +139,15 @@ export function registerAuthorTrust(entries: Iterable<AuthorTrustEntry>, groups:
         "\n(identity/author-trust.ts registerAuthorTrust / docs/how-it-works/identity.md#author-trust).",
     );
   }
-  tenants = next;
+  tenantsSlot.set(next);
 }
 
 export function _resetAuthorTrustForTest(): void {
-  tenants = new Map();
+  tenantsSlot.set(new Map());
 }
 
 export function armedAuthorTrustTenants(): readonly string[] {
-  return [...tenants.keys()].sort();
+  return [...tenants().keys()].sort();
 }
 
 export interface AuthorTrustQuery {
@@ -153,7 +157,7 @@ export interface AuthorTrustQuery {
 }
 
 export function declaredAuthorTrust(q: AuthorTrustQuery): AuthorTrust | undefined {
-  const t = tenants.get(q.tenantKey);
+  const t = tenants().get(q.tenantKey);
   if (!t) return undefined;
   if (q.authorId) {
     const key = tryPrincipalKey(t.platform, t.tenant, q.authorId);
