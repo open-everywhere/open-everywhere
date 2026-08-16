@@ -1177,6 +1177,44 @@ export function fetchUserProfileNames(userId: string): Promise<{ name?: string; 
 
 export const liveResolveProfile: ResolveProfile = (id) => fetchUserProfileNames(id);
 
+const SLACK_ROSTER_PAGE = 200;
+const SLACK_ROSTER_MAX_PAGES = 10;
+
+type SlackRosterMember = {
+  id?: string;
+  name?: string;
+  deleted?: boolean;
+  is_bot?: boolean;
+  is_app_user?: boolean;
+  profile?: { display_name?: string; real_name?: string };
+  real_name?: string;
+};
+
+export async function fetchWorkspaceRoster(): Promise<readonly { nativeId: string; name?: string; handle?: string }[]> {
+  const out: { nativeId: string; name?: string; handle?: string }[] = [];
+  let cursor = "";
+  for (let page = 0; page < SLACK_ROSTER_MAX_PAGES; page++) {
+    const body = `limit=${SLACK_ROSTER_PAGE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+    const res = await slackForm("users.list", body);
+    if (res?.ok !== true) {
+      console.log(`[open-everywhere:slack] users.list did not answer (${String(res?.error ?? "no response")}) — the account directory is unavailable; linking falls back to the code flow.`);
+      return out;
+    }
+    for (const m of (res.members as SlackRosterMember[] | undefined) ?? []) {
+      const id = typeof m.id === "string" ? m.id.trim() : "";
+      if (!id || m.deleted === true || m.is_bot === true || m.is_app_user === true || m.name === "slackbot") continue;
+      const handle = m.profile?.display_name?.trim() || undefined;
+      const name = m.profile?.real_name?.trim() || m.real_name?.trim() || m.name?.trim() || undefined;
+      out.push({ nativeId: id, ...(name ? { name } : {}), ...(handle ? { handle } : {}) });
+    }
+    const next = (res.response_metadata as { next_cursor?: string } | undefined)?.next_cursor?.trim() ?? "";
+    if (!next) return out;
+    cursor = next;
+  }
+  console.log(`[open-everywhere:slack] users.list stopped at ${SLACK_ROSTER_MAX_PAGES} pages (${out.length} accounts) — a wider search may not see every member.`);
+  return out;
+}
+
 export async function fetchUserDisplayName(userId: string): Promise<string | undefined> {
   const p = await fetchUserProfileNames(userId);
   return p?.handle || p?.name || undefined;

@@ -40,6 +40,9 @@ export interface AgentSettings {
     readonly linkSetVault: boolean;
     readonly opTiering: boolean;
   };
+  readonly identityLinking: {
+    readonly codeBack: boolean;
+  };
   readonly delegation: {
     readonly oneshotAgent: boolean;
     readonly nativeSubagent: boolean;
@@ -255,6 +258,14 @@ export const SETTINGS = {
       shipped: false,
       summary:
         "The per-op consequence gate (A2): each `<connection>__<op>` call is classified individually (reads open, writes gated) instead of a blanket `once()`.",
+    } satisfies SettingSpec<boolean>,
+  },
+  identityLinking: {
+    codeBack: {
+      path: "identityLinking.codeBack",
+      shipped: false,
+      summary:
+        "Code-back on the DIRECTORY transport: after the named account consents in its own DM, it receives a second code the initiator must feed back to finalize. Off by default — a consent given in the target's own DM already proves both account holders agreed. The CODE transport forces the code-back whatever this says, because there the initiator's yes is the reflexable step.",
     } satisfies SettingSpec<boolean>,
   },
   delegation: {
@@ -718,6 +729,9 @@ export function getSettings(
       userPrincipal: resolve(SETTINGS.connectors.userPrincipal, o.connectors?.userPrincipal, env),
       linkSetVault: resolve(SETTINGS.connectors.linkSetVault, o.connectors?.linkSetVault, env),
       opTiering: resolve(SETTINGS.connectors.opTiering, o.connectors?.opTiering, env),
+    },
+    identityLinking: {
+      codeBack: resolve(SETTINGS.identityLinking.codeBack, o.identityLinking?.codeBack, env),
     },
     delegation: {
       oneshotAgent: resolve(SETTINGS.delegation.oneshotAgent, o.delegation?.oneshotAgent, env),

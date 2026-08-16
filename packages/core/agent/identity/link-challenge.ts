@@ -53,10 +53,13 @@ function stripLeadingAddress(text: string, addressTokens: readonly string[]): st
 export function linkClaimInstructions(code: string, ttlMinutes: number): string {
   return (
     `From your OTHER account, send me a message whose ENTIRE text is exactly this line and nothing ` +
-    `else — @mention me or DM me from that account so the message is addressed to me (a bare, ` +
-    `unaddressed line buried in a busy channel will not count):\n\n    link ${code}\n\n` +
-    `It is single-use and expires in ${ttlMinutes} minutes. When it lands I will come back HERE, ` +
-    `in this DM, and name the account that claimed it — the link is only written once you confirm ` +
-    `that in this conversation. If a name you do not recognise comes back, deny it.`
+    `else:\n\n    link ${code}\n\n` +
+    `DM it to me if that account can DM me — a code is a secret, so I only take it in a one-to-one ` +
+    `conversation where I have one. Where I have no DMs at all (GitHub, Linear, Notion), @mention me ` +
+    `or name-drop me in a comment instead; a bare, unaddressed line will not count.\n\n` +
+    `It is single-use and expires in ${ttlMinutes} minutes. When it lands I will answer that account ` +
+    `with a SECOND code and come back HERE naming the account that claimed the first one. Give me the ` +
+    `second code in this conversation to finish — that is what proves one person reads both. If a ` +
+    `name you do not recognise comes back, deny it.`
   );
 }

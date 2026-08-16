@@ -338,6 +338,11 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      claimed_tenant         text,            -- …in the same CAS, so a claimed row names a whole account
      claimed_native_id      text,
      claimed_at             text,
+     transport              text NOT NULL DEFAULT 'code',  -- OPE-617; code | directory
+     target_platform        text,            -- the directory transport's NAMED target …
+     target_tenant          text,            -- …matched inside the consent CAS, so a consent
+     target_native_id       text,            -- …from any other account matches no row
+     back_nonce_hash        text,            -- sha-256 of code-2; its PRESENCE forces the code-back
      status                 text NOT NULL,   -- pending | claimed | ratified | denied | expired
      created_at             text NOT NULL,
      expires_at             text NOT NULL,
@@ -404,6 +409,11 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE identity_linked_ids ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT ''`,
   `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS initiating_tenant text NOT NULL DEFAULT ''`,
   `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS claimed_tenant text`,
+  `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS transport text NOT NULL DEFAULT 'code'`,
+  `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS target_platform text`,
+  `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS target_tenant text`,
+  `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS target_native_id text`,
+  `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS back_nonce_hash text`,
   `DO $$
    BEGIN
      IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'identity_linked_ids' AND relkind = 'r')
@@ -1038,8 +1048,16 @@ function linkedIdFromPgRow(org: string, r: LinkedIdPgRow): LinkedIdRow {
 
 const LINK_CHALLENGE_SELECT =
   `SELECT org_id, id, nonce_hash, initiating_platform, initiating_tenant, initiating_native_id, initiating_surface_key,
-          claimed_platform, claimed_tenant, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at
+          claimed_platform, claimed_tenant, claimed_native_id, claimed_at,
+          transport, target_platform, target_tenant, target_native_id, back_nonce_hash,
+          status, created_at, expires_at, decided_at
    FROM identity_link_challenges`;
+
+const LINK_CHALLENGE_RETURNING =
+  `org_id, id, nonce_hash, initiating_platform, initiating_tenant, initiating_native_id, initiating_surface_key,
+   claimed_platform, claimed_tenant, claimed_native_id, claimed_at,
+   transport, target_platform, target_tenant, target_native_id, back_nonce_hash,
+   status, created_at, expires_at, decided_at`;
 
 type LinkChallengePgRow = {
   id: string;
@@ -1052,6 +1070,11 @@ type LinkChallengePgRow = {
   claimed_tenant: string | null;
   claimed_native_id: string | null;
   claimed_at: string | null;
+  transport: string | null;
+  target_platform: string | null;
+  target_tenant: string | null;
+  target_native_id: string | null;
+  back_nonce_hash: string | null;
   status: string;
   created_at: string;
   expires_at: string;
@@ -1071,6 +1094,11 @@ function linkChallengeFromPgRow(org: string, r: LinkChallengePgRow): LinkChallen
     ...(r.claimed_tenant === null ? {} : { claimedTenant: r.claimed_tenant }),
     ...(r.claimed_native_id === null ? {} : { claimedNativeId: r.claimed_native_id }),
     ...(r.claimed_at === null ? {} : { claimedAt: r.claimed_at }),
+    transport: r.transport ?? "code",
+    ...(r.target_platform === null || r.target_platform === undefined ? {} : { targetPlatform: r.target_platform }),
+    ...(r.target_tenant === null || r.target_tenant === undefined ? {} : { targetTenant: r.target_tenant }),
+    ...(r.target_native_id === null || r.target_native_id === undefined ? {} : { targetNativeId: r.target_native_id }),
+    ...(r.back_nonce_hash === null || r.back_nonce_hash === undefined ? {} : { backNonceHash: r.back_nonce_hash }),
     status: r.status as LinkChallengeStatus,
     createdAt: r.created_at,
     expiresAt: r.expires_at,
@@ -2440,8 +2468,10 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       await client.query(
         `INSERT INTO identity_link_challenges
            (org_id, id, nonce_hash, initiating_platform, initiating_tenant, initiating_native_id, initiating_surface_key,
-            claimed_platform, claimed_tenant, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+            claimed_platform, claimed_tenant, claimed_native_id, claimed_at,
+            transport, target_platform, target_tenant, target_native_id, back_nonce_hash,
+            status, created_at, expires_at, decided_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
         [
           org,
           row.id,
@@ -2454,6 +2484,11 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           row.claimedTenant ?? null,
           row.claimedNativeId ?? null,
           row.claimedAt ?? null,
+          row.transport,
+          row.targetPlatform ?? null,
+          row.targetTenant ?? null,
+          row.targetNativeId ?? null,
+          row.backNonceHash ?? null,
           row.status,
           row.createdAt,
           row.expiresAt,
@@ -2483,6 +2518,18 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         params.push(filter.initiatingNativeId);
         conjuncts.push(`initiating_native_id = $${params.length}`);
       }
+      if (filter?.targetPlatform !== undefined) {
+        params.push(filter.targetPlatform);
+        conjuncts.push(`target_platform = $${params.length}`);
+      }
+      if (filter?.targetTenant !== undefined) {
+        params.push(filter.targetTenant);
+        conjuncts.push(`target_tenant = $${params.length}`);
+      }
+      if (filter?.targetNativeId !== undefined) {
+        params.push(filter.targetNativeId);
+        conjuncts.push(`target_native_id = $${params.length}`);
+      }
       if (filter?.status !== undefined) {
         params.push(filter.status);
         conjuncts.push(`status = $${params.length}`);
@@ -2491,15 +2538,27 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return (rows as LinkChallengePgRow[]).map((r) => linkChallengeFromPgRow(org, r));
     },
 
-    async claimLinkChallenge(org, nonceHash, platform, tenant, nativeId, at) {
+    async claimLinkChallenge(org, nonceHash, platform, tenant, nativeId, at, backNonceHash) {
       const { rows } = await client.query(
         `UPDATE identity_link_challenges
-           SET claimed_platform = $1, claimed_tenant = $2, claimed_native_id = $3, claimed_at = $4, status = 'claimed'
+           SET claimed_platform = $1, claimed_tenant = $2, claimed_native_id = $3, claimed_at = $4, back_nonce_hash = $8, status = 'claimed'
          WHERE org_id = $5 AND nonce_hash = $6 AND status = 'pending' AND expires_at > $7
            AND NOT (initiating_platform = $1 AND initiating_tenant = $2 AND initiating_native_id = $3)
-         RETURNING org_id, id, nonce_hash, initiating_platform, initiating_tenant, initiating_native_id, initiating_surface_key,
-                   claimed_platform, claimed_tenant, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at`,
-        [platform, tenant, nativeId, at, org, nonceHash, at],
+         RETURNING ${LINK_CHALLENGE_RETURNING}`,
+        [platform, tenant, nativeId, at, org, nonceHash, at, backNonceHash ?? null],
+      );
+      const r = (rows as LinkChallengePgRow[])[0];
+      return r ? linkChallengeFromPgRow(org, r) : null;
+    },
+
+    async consentLinkChallenge(org, id, consenter, at, backNonceHash) {
+      const { rows } = await client.query(
+        `UPDATE identity_link_challenges
+           SET claimed_platform = $1, claimed_tenant = $2, claimed_native_id = $3, claimed_at = $4, back_nonce_hash = $7, status = 'claimed'
+         WHERE org_id = $5 AND id = $6 AND status = 'pending' AND expires_at > $4
+           AND target_platform = $1 AND target_tenant = $2 AND target_native_id = $3
+         RETURNING ${LINK_CHALLENGE_RETURNING}`,
+        [consenter.platform, consenter.tenant, consenter.nativeId, at, org, id, backNonceHash ?? null],
       );
       const r = (rows as LinkChallengePgRow[])[0];
       return r ? linkChallengeFromPgRow(org, r) : null;

@@ -1,9 +1,10 @@
 import { defineHook } from "eve/hooks";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { actingPrincipalId, currentTurnAddressed, currentTurnBotName } from "../identity/binding.js";
-import { detectLinkClaim, detectAddressedLinkClaim } from "../identity/link-challenge.js";
+import { detectLinkClaim, detectAddressedLinkClaim, mintLinkCode } from "../identity/link-challenge.js";
+import { claimCodeBackReply, claimVenueRefusal, codeBackDecision } from "../identity/link-flow.js";
 import { agentNameTokens } from "../identity/bot-name.js";
-import { auditLinkNoticeUndeliverable, claimLinkChallenge } from "../identity/link-store.js";
+import { auditLinkCodeBackUndeliverable, auditLinkNoticeUndeliverable, claimLinkChallenge } from "../identity/link-store.js";
 import { linkTenantOf } from "../identity/link-tenant.js";
 import { canDeliverDirectMessage, dispatchDirectMessage } from "../channels/post-arms.js";
 import { postReply, resolveReplyTarget } from "../channels/reply-post.js";
@@ -44,7 +45,10 @@ export async function observeLinkClaim(input: {
   readonly addressTokens?: readonly string[];
   readonly trust?: WakeTrust;
   readonly trustIsEvidence?: boolean;
-  readonly notifyRefusal?: (text: string) => Promise<void> | void;
+  readonly dmCapable?: boolean;
+  readonly mode?: string;
+  readonly codeBackDeliverable?: boolean;
+  readonly notifyClaimant?: (text: string) => Promise<void> | void;
   readonly now?: Date;
 }): Promise<string | undefined> {
   const body = claimBodyOf(input.text);
@@ -64,7 +68,7 @@ export async function observeLinkClaim(input: {
     log(`link claim from a non-vouched author (trust=${input.trust ?? "unknown"}) — ignored (only an identified internal human may claim on this surface).`);
     if (input.trust === "unauth") {
       await notify(
-        input.notifyRefusal,
+        input.notifyClaimant,
         `I can't accept a link claim from here — I can't confirm this surface is inside your organization, ` +
           `so I can't vouch that you are the person that code was issued to. Try again from a surface I've ` +
           `confirmed, or DM me.`,
@@ -72,16 +76,25 @@ export async function observeLinkClaim(input: {
     }
     return undefined;
   }
+  const venue = claimVenueRefusal({ dmCapable: input.dmCapable === true, mode: input.mode });
+  if (venue) {
+    log(`link claim refused: a DM-capable platform (${input.platform}) only takes claims in a DM (mode=${input.mode ?? "unknown"}).`);
+    await notify(input.notifyClaimant, venue);
+    return undefined;
+  }
+  const backDecision = codeBackDecision({ transport: "code", knobArmed: false, deliverable: input.codeBackDeliverable === true && input.notifyClaimant !== undefined });
+  const backCode = backDecision.mint ? mintLinkCode() : undefined;
   const claimed = await claimLinkChallenge({
     org: input.org,
     code,
     claimant: { platform: input.platform, tenant: linkTenantOf(input.platform, input.tenant), nativeId: input.authorId },
+    ...(backCode ? { backCode } : {}),
     ...(input.now ? { now: input.now } : {}),
   });
   if (!claimed) {
     log("link claim matched a code that could not be claimed (spent, expired, self-claimed or unknown) — ignored.");
     await notify(
-      input.notifyRefusal,
+      input.notifyClaimant,
       `That link code didn't work — it may have expired, already been used, or been sent from the same ` +
         `account that asked for it. Ask me to link again from your other account and I'll issue a fresh one.`,
     );
@@ -89,14 +102,24 @@ export async function observeLinkClaim(input: {
   }
 
   const claimant = await humanAccountLabel(input.platform, input.authorId, claimed.claimedTenant ?? input.tenant);
+  if (backCode) await notify(input.notifyClaimant, claimCodeBackReply(backCode));
+  else if (backDecision.mint === false && backDecision.reason === "undeliverable") {
+    log(`link claim ${claimed.id} recorded, but there is nowhere to post a second code back to "${input.platform}" — the finalize degrades to an acknowledged confirm.`);
+    await auditLinkCodeBackUndeliverable({ org: input.org, challenge: claimed, claimantPlatform: input.platform }).catch(() => undefined);
+  }
   if (canDeliverDirectMessage(claimed.initiatingPlatform)) {
     try {
       await dispatchDirectMessage(claimed.initiatingPlatform, {
         principalId: claimed.initiatingNativeId,
         text:
           `${claimant} just claimed your link code.\n\n` +
-          `If that is you, reply here to confirm and I will link the two accounts. If you do not ` +
-          `recognise it, tell me to deny it — nothing is written until you say so.`,
+          (backCode
+            ?
+              `If that is you, get the second code I posted back to that account and give it to me ` +
+                `here — that is what proves one person reads both. If you do not recognise the ` +
+                `account, tell me to deny it. Nothing is written either way until you answer.`
+            : `If that is you, reply here to confirm and I will link the two accounts. If you do not ` +
+              `recognise it, tell me to deny it — nothing is written until you say so.`),
       });
     } catch (err) {
       log(`link claim ${claimed.id} recorded, but the confirmation notice could not be delivered: ${String(err)}`);
@@ -128,6 +151,7 @@ export default defineHook({
         const authorId = actingPrincipalId(binding);
         const trust: WakeTrust = authorId === undefined ? "relay" : binding.trust === "internal" ? "peer" : "unauth";
         const trustIsEvidence = BINDING_TRUSTED_PLATFORMS.has(binding.platform);
+        const target = resolveReplyTarget(ctx as BindableContext);
         await observeLinkClaim({
           org: binding.org,
           platform: binding.platform,
@@ -138,8 +162,10 @@ export default defineHook({
           addressTokens,
           trust,
           trustIsEvidence,
-          notifyRefusal: async (text) => {
-            const target = resolveReplyTarget(ctx as BindableContext);
+          dmCapable: canDeliverDirectMessage(binding.platform),
+          mode: binding.mode,
+          codeBackDeliverable: target !== null,
+          notifyClaimant: async (text) => {
             if (!target) return;
             await postReply(target, text);
           },
