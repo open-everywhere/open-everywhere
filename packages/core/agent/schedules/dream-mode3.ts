@@ -52,6 +52,79 @@ async function slackSurfaceNames(rows: readonly AuditEntry[], post: Mode3Poster)
   return names;
 }
 
+interface OrgDigestOutcome {
+  readonly outcome: string;
+  readonly totalFailures?: number;
+  readonly reported: boolean;
+  readonly posted: boolean;
+}
+
+async function runOrgDigest(input: {
+  readonly org: string;
+  readonly now: Date;
+  readonly windowStart: Date;
+  readonly post: Mode3Poster;
+  readonly channel: string | undefined;
+}): Promise<OrgDigestOutcome> {
+  const { org, now, windowStart, post, channel } = input;
+
+  let rows;
+  try {
+    rows = await readAudit({ org, since: windowStart.toISOString(), limit: 2000 });
+  } catch (err) {
+    log(`skip ${org} — audit read failed: ${String(err)}`);
+    return { outcome: `failed: audit read — ${String(err)}`, reported: false, posted: false };
+  }
+
+  let report: Mode3Report | null;
+  try {
+    const names = channel ? await slackSurfaceNames(rows, post) : new Map<string, string>();
+    report = await buildMode3Report(org, rows, windowStart.toISOString(), now.toISOString(), {
+      surfaceName: (r) => (r.platform === "slack" && r.surface ? names.get(r.surface) : undefined),
+    });
+  } catch (err) {
+    log(`skip ${org} — report build failed: ${String(err)}`);
+    return { outcome: `failed: report build — ${String(err)}`, reported: false, posted: false };
+  }
+  if (!report) return { outcome: "no-op: empty week", reported: false, posted: false };
+
+  await appendAudit({
+    org,
+    platform: "dream",
+    workspace: "mode3",
+    principalId: DREAM_ACTOR,
+    action: "dream.mode3_report",
+    detail: {
+      totalFailures: report.totalFailures,
+      clusters: report.clusters.map((c) => ({ action: c.action, count: c.count, label: c.label, judged: c.judged })),
+    },
+  });
+
+  if (!channel) {
+    log(`org ${org}: digest built (${report.totalFailures} failure event(s)) but no admin channel configured — skipped post`);
+    return { outcome: "reported: no admin channel configured — skipped post", totalFailures: report.totalFailures, reported: true, posted: false };
+  }
+  try {
+    const text = formatMode3Report(report);
+    const res = await postOnce({
+      org,
+      key: outboundKey({ surface: "dream", channel, action: "dream.mode3-digest", payload: text }),
+      run: async () => {
+        const body = new URLSearchParams();
+        body.set("channel", channel);
+        body.set("text", text);
+        return await post("chat.postMessage", body.toString());
+      },
+    });
+    if (res?.ok === true) return { outcome: "reported: posted", totalFailures: report.totalFailures, reported: true, posted: true };
+    log(`org ${org}: admin-channel post did not confirm ok (${JSON.stringify(res)})`);
+    return { outcome: "reported: post did not confirm ok", totalFailures: report.totalFailures, reported: true, posted: false };
+  } catch (err) {
+    log(`org ${org}: admin-channel post failed — ${String(err)}`);
+    return { outcome: `reported: post failed — ${String(err)}`, totalFailures: report.totalFailures, reported: true, posted: false };
+  }
+}
+
 export async function mode3Tick(
   opts: { readonly now?: Date; readonly orgs?: readonly string[]; readonly post?: Mode3Poster } = {},
 ): Promise<Mode3TickReport> {
@@ -65,60 +138,18 @@ export async function mode3Tick(
   let posted = 0;
 
   for (const org of orgs) {
-    let rows;
-    try {
-      rows = await readAudit({ org, since: windowStart.toISOString(), limit: 2000 });
-    } catch (err) {
-      log(`skip ${org} — audit read failed: ${String(err)}`);
-      continue;
-    }
+    const result = await runOrgDigest({ org, now, windowStart, post, channel });
+    if (result.reported) reports++;
+    if (result.posted) posted++;
 
-    let report: Mode3Report | null;
-    try {
-      const names = channel ? await slackSurfaceNames(rows, post) : new Map<string, string>();
-      report = await buildMode3Report(org, rows, windowStart.toISOString(), now.toISOString(), {
-        surfaceName: (r) => (r.platform === "slack" && r.surface ? names.get(r.surface) : undefined),
-      });
-    } catch (err) {
-      log(`skip ${org} — report build failed: ${String(err)}`);
-      continue;
-    }
-    if (!report) continue;
-
-    reports++;
     await appendAudit({
       org,
       platform: "dream",
       workspace: "mode3",
       principalId: DREAM_ACTOR,
-      action: "dream.mode3_report",
-      detail: {
-        totalFailures: report.totalFailures,
-        clusters: report.clusters.map((c) => ({ action: c.action, count: c.count, label: c.label, judged: c.judged })),
-      },
+      action: "dream.mode3_tick",
+      detail: { outcome: result.outcome, ...(result.totalFailures !== undefined ? { totalFailures: result.totalFailures } : {}) },
     });
-
-    if (!channel) {
-      log(`org ${org}: digest built (${report.totalFailures} failure event(s)) but no admin channel configured — skipped post`);
-      continue;
-    }
-    try {
-      const text = formatMode3Report(report);
-      const res = await postOnce({
-        org,
-        key: outboundKey({ surface: "dream", channel, action: "dream.mode3-digest", payload: text }),
-        run: async () => {
-          const body = new URLSearchParams();
-          body.set("channel", channel);
-          body.set("text", text);
-          return await post("chat.postMessage", body.toString());
-        },
-      });
-      if (res?.ok === true) posted++;
-      else log(`org ${org}: admin-channel post did not confirm ok (${JSON.stringify(res)})`);
-    } catch (err) {
-      log(`org ${org}: admin-channel post failed — ${String(err)}`);
-    }
   }
 
   log(`tick: ${orgs.length} org(s) swept — ${reports} digest(s) built, ${posted} posted`);

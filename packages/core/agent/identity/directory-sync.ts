@@ -428,6 +428,7 @@ export async function syncDirectoryOrg(input: {
     principalId: `${DIRECTORY_SYNC_ACTOR}:${provider.id}`,
     action: DIRECTORY_SYNC_ACTION,
     detail: {
+      outcome: "synced",
       provider: provider.id,
       policy,
       people: plan.people,
@@ -451,11 +452,27 @@ export async function syncDirectoryOrg(input: {
 
 export async function runDirectorySync(opts: { readonly orgs?: readonly string[]; readonly now?: Date } = {}): Promise<readonly DirectorySyncResult[]> {
   const provider = directoryProvider();
+  const orgs = opts.orgs ?? directorySyncOrgs();
+  const ts = new Date(opts.now ?? Date.now()).toISOString();
   if (!provider) {
     log("no directory provider registered — nothing to sync (set OE_DIRECTORY_PROVIDER and wire the adapter to arm it)");
+    for (const org of orgs) {
+      await appendAudit({
+        org,
+        platform: "directory",
+        workspace: "none",
+        principalId: DIRECTORY_SYNC_ACTOR,
+        action: DIRECTORY_SYNC_ACTION,
+        detail: {
+          outcome: "no-op: no provider configured",
+          note: "set OE_DIRECTORY_PROVIDER and wire the adapter to arm it",
+          startedAt: ts,
+          finishedAt: ts,
+        },
+      });
+    }
     return [];
   }
-  const orgs = opts.orgs ?? directorySyncOrgs();
   const out: DirectorySyncResult[] = [];
   for (const org of orgs) {
     try {
@@ -463,6 +480,15 @@ export async function runDirectorySync(opts: { readonly orgs?: readonly string[]
       if (res) out.push(res);
     } catch (err) {
       log(`skip ${org} — ${String(err)}`);
+      const failedAt = new Date(opts.now ?? Date.now()).toISOString();
+      await appendAudit({
+        org,
+        platform: "directory",
+        workspace: provider.id,
+        principalId: `${DIRECTORY_SYNC_ACTOR}:${provider.id}`,
+        action: DIRECTORY_SYNC_ACTION,
+        detail: { outcome: `failed: ${String(err)}`, provider: provider.id, startedAt: failedAt, finishedAt: failedAt },
+      });
     }
   }
   return out;
