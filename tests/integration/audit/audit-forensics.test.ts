@@ -146,6 +146,7 @@ test("every authenticated control read leaves its OWN receipt in the trail, and 
 
   expect(rows.length).toBeGreaterThan(0);
   expect((await readAuditRows({ actions: ["reply.post"], sinceIso })).some((r) => r.detail?.sessionId === sessionId)).toBe(true);
+  expect(rows.length).toBeLessThan(200);
 
   const refusedSince = "1999-01-02T03:04:05.678Z";
   const refused = await controlGet(`/control/v1/audit?since=${encodeURIComponent(refusedSince)}&actions=reply.post`, { token: null });
