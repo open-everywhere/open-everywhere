@@ -28,6 +28,11 @@ export default defineTool({
   async execute(input, ctx) {
     const c = ctx as BindableContext;
     const binding = bindFrom(c);
+    if (binding.mode === "dm" || binding.mode === "mpim") {
+      throw new Error(
+        "stand_down: a direct message cannot be stood down, so nothing was marked — reply that you could NOT stop following here, because a DM has no @mention to bring you back.",
+      );
+    }
     const anchor = binding.engagementKey ?? binding.threadTs;
     if (!anchor) {
       throw new Error(
