@@ -3455,9 +3455,10 @@ export const SCENARIOS: readonly Scenario[] = [
             `Please hand this to ONE worker as a SINGLE task — both steps in the same task, never two. Step 1: fetch https://raw.githubusercontent.com/octocat/Hello-World/master/README — the worker MUST really call the fetch tool, not answer from memory, I may have changed the file. Step 2: straight after that fetch, in the same task, call explain_permission for the tool add_routine_rule with unattended set to false, and return the exact "context:" line it prints. Take as long as you need; when the worker is back, reply to me with that "context:" line verbatim (ref ${refA}).`,
           ),
         );
+        const contextLineRelayed = (text: string): boolean => /context:[^\n]*tainted:\s*(?:true|false)/i.test(text);
         const replyA = await slack.awaitThreadReply(askATs, {
           timeoutMs: FILE_REPLY_WAIT,
-          skip: (m) => isFillerAck(m.text) || !/context:/i.test(m.text),
+          skip: (m) => isFillerAck(m.text) || !contextLineRelayed(m.text),
         });
         ctx.log(`ARM A reply: "${replyA.text.replace(/\s+/g, " ").trim().slice(0, 300)}"`);
         if (ctx.transcriptRead) {
@@ -3678,7 +3679,7 @@ export const SCENARIOS: readonly Scenario[] = [
               `Please hand this to a worker: call explain_permission ONCE for the tool add_routine_rule, with unattended set to false and tainted set to false, and return its full trace. When the worker is back, reply to me with that trace pasted exactly as the tool printed it, and nothing else (ref ${refE1}).`,
             ),
           );
-          const traceRelayed = (text: string): boolean => /resolved by:/i.test(text);
+          const traceRelayed = (text: string): boolean => /resolved by:/i.test(text) && /registry baseline:/i.test(text);
           const replyE1 = await slack
             .awaitThreadReply(askE1Ts, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) || !traceRelayed(m.text) })
             .catch(() => undefined);
