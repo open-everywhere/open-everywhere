@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes, sign as signEd25519 } from "node:crypto";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51,6 +51,12 @@ const READ_TOKEN_NAME = "it";
 export const CONTROL_SERVICE_PRINCIPAL = `svc:${READ_TOKEN_NAME}`;
 const WEBHOOK_E2E_SECRET = randomBytes(32).toString("hex");
 const SLACK_SIGNING_SECRET = randomBytes(32).toString("hex");
+
+const DISCORD_APP_KEYS = (() => {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const spki = publicKey.export({ format: "der", type: "spki" }) as Buffer;
+  return { privateKey, publicKeyHex: spki.subarray(spki.length - 32).toString("hex") };
+})();
 
 let booted: { base: string } | undefined;
 let bootedWith: string | undefined;
@@ -124,6 +130,7 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   process.env.OE_CONTROL_READ_TOKENS = `${READ_TOKEN_NAME}:${createHash("sha256").update(READ_TOKEN, "utf8").digest("hex")}`;
   process.env.OE_WEBHOOK_E2E_SECRET = WEBHOOK_E2E_SECRET;
   process.env.SLACK_SIGNING_SECRET = SLACK_SIGNING_SECRET;
+  process.env.DISCORD_PUBLIC_KEY = DISCORD_APP_KEYS.publicKeyHex;
   if (opts.sharedSqlite === true) {
     process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
     process.env.OE_SQLITE_PATH = join(state, "ops.sqlite3");
@@ -364,6 +371,38 @@ export async function slackInteractivityPost(
     signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
   });
   return { status: res.status, body: await res.text() };
+}
+
+export async function discordOeCommandPost(
+  interaction: Record<string, unknown>,
+  opts: { readonly signature?: string | null; readonly timeoutMs?: number } = {},
+): Promise<{ status: number; body: string }> {
+  if (booted === undefined) throw new Error("integration harness: discordOeCommandPost before bootAgent.");
+  const rawBody = JSON.stringify(interaction);
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const headers: Record<string, string> = { "content-type": "application/json", "x-signature-timestamp": timestamp };
+  if (opts.signature !== null) {
+    headers["x-signature-ed25519"] =
+      opts.signature ?? signEd25519(null, Buffer.from(`${timestamp}${rawBody}`, "utf8"), DISCORD_APP_KEYS.privateKey).toString("hex");
+  }
+  const res = await fetch(`${booted.base}/eve/v1/discord`, {
+    method: "POST",
+    headers,
+    body: rawBody,
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
+  });
+  return { status: res.status, body: await res.text() };
+}
+
+export function discordOeStopInteraction(input: { readonly channelId: string; readonly userId: string }): Record<string, unknown> {
+  return {
+    type: 2,
+    guild_id: DISCORD_GUILD_ID,
+    channel_id: input.channelId,
+    channel: { id: input.channelId, type: 0 },
+    member: { user: { id: input.userId, username: "it-stopper", bot: false } },
+    data: { name: "oe", type: 1, options: [{ name: "stop", type: 1 }] },
+  };
 }
 
 export const DISCORD_GUILD_ID = "1300000000000000100";

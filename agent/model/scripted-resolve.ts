@@ -103,7 +103,7 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation): ReturnTyp
   return mockModel({
     modelId: SCRIPTED_MODEL_ID,
     provider: "open-everywhere-scripted",
-    respond: (request) => {
+    respond: async (request) => {
       const arm = at.role === "child" ? entry.script.child : entry.script.parent;
       const baselineKey = `${at.sessionId ?? "?"}/${at.turnId ?? "?"}/${at.role}`;
       const baseline = (entry.baselines[baselineKey] ??= request.toolResults.length);
@@ -134,11 +134,16 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation): ReturnTyp
         ...(fault !== undefined ? { fault } : {}),
       });
 
+      if (typeof step.delayMs === "number" && step.delayMs > 0) {
+        await new Promise((r) => setTimeout(r, step.delayMs));
+      }
+
       return {
         ...(step.say !== undefined ? { text: step.say } : {}),
         ...(step.calls !== undefined
           ? { toolCalls: step.calls.map((c) => ({ name: c.tool, ...(c.input !== undefined ? { input: c.input } : {}), ...(c.id !== undefined ? { id: c.id } : {}) })) }
           : {}),
+        ...(step.usage !== undefined ? { usage: step.usage } : {}),
       };
     },
   });

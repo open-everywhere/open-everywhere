@@ -14,9 +14,16 @@ export interface ScriptedCall {
   readonly id?: string;
 }
 
+export interface ScriptedUsage {
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+}
+
 export interface ScriptedStep {
   readonly say?: string;
   readonly calls?: readonly ScriptedCall[];
+  readonly usage?: ScriptedUsage;
+  readonly delayMs?: number;
 }
 
 export interface SeatScript {
