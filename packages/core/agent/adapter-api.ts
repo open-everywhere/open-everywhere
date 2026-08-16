@@ -144,7 +144,7 @@ export type { Tier, MemoryFiles } from "./memory/store.js";
 
 export { modelRouteFor, memoryRefs, defineDomain } from "./memory/domain.js";
 export type { ModelRoute } from "./memory/domain.js";
-export { createRoutedCompactionModel, liveIdentity, resolvePrimaryModel } from "./model/routing.js";
+export { liveIdentity, resolvePrimaryModel } from "./model/routing.js";
 export type { ModelBackend, RoutedCallOptions } from "./model/routing.js";
 export { registerImageDescriber } from "./model/vision.js";
 export type { ImageDescribeRequest, ImageDescribeResult, ImageDescribeUsage, ImageDescriber } from "./model/vision.js";

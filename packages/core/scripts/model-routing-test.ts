@@ -5,7 +5,6 @@ import { defineDomain, domainMatchFor, modelRouteFor, statusVerbsFor, type Domai
 import type { BindableContext } from "../agent/identity/binding.js";
 import {
   applyRoute,
-  createRoutedCompactionModel,
   isSupervisorSession,
   makeRoutedModel,
   resolvePrimaryModel,
@@ -24,12 +23,10 @@ import {
   taskWindowId,
 } from "../agent/channels/window-key.js";
 import { stampModelCall, readModelStamp } from "../agent/model/model-stamp.js";
-import { readStampedUtilityRoute } from "../agent/model/utility-route-stamp.js";
 import { renderSupervisorPersona, REPLY_STYLE_RUBRIC } from "../agent/instructions/access.js";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 registerSlackFixtureMapper();
-
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -285,17 +282,17 @@ function slackDmCtx(team: string, dmId: string): BindableContext {
   ok(made.filter((id) => id === "anthropic/claude-sonnet-5").length === 1, "makeRoutedModel: inner model construction memoized per id");
 }
 
-const PRIMARY_UTIL = { primary: { id: DEFAULT_ID }, utility: { id: UTILITY_ID } };
+const PRIMARY_DEFAULTS = { primary: { id: DEFAULT_ID } };
 {
   const calls: FakeCall[] = [];
-  const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_UTIL, fakeDeps(() => domains2, calls));
+  const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_DEFAULTS, fakeDeps(() => domains2, calls));
   ok(m !== null, "resolvePrimaryModel: a routed surface returns a wrapped model (not null → fallback)");
   await m!.doGenerate(turnCall);
   ok(calls[0].id === "anthropic/claude-sonnet-5", "resolvePrimaryModel: routes from ctx.session.auth (no ALS, no surface hint)");
 }
 {
   const calls: FakeCall[] = [];
-  const m = await resolvePrimaryModel(slackDmCtx("T1", "D_PARTNER"), PRIMARY_UTIL, fakeDeps(() => dmDomains, calls));
+  const m = await resolvePrimaryModel(slackDmCtx("T1", "D_PARTNER"), PRIMARY_DEFAULTS, fakeDeps(() => dmDomains, calls));
   ok(m !== null, "resolvePrimaryModel: a DM surface routes via the dm criteria domain");
   await m!.doGenerate(turnCall);
   ok(calls[0].id === "vendor/dm-model", "resolvePrimaryModel: DM/public criteria routing survives via ctx (no surface hint)");
@@ -303,7 +300,7 @@ const PRIMARY_UTIL = { primary: { id: DEFAULT_ID }, utility: { id: UTILITY_ID } 
 {
   const calls: FakeCall[] = [];
   const onlyExec = () => [defineDomain({ name: "exec", channels: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } })];
-  const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_OTHER"), PRIMARY_UTIL, fakeDeps(onlyExec, calls, true));
+  const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_OTHER"), PRIMARY_DEFAULTS, fakeDeps(onlyExec, calls, true));
   ok(m.modelId === DEFAULT_ID, "resolvePrimaryModel: a surface that routes to nothing returns the DEFAULT model concretely — never null (OPE-412)");
   await m.doGenerate(turnCall);
   ok(calls[0].id === DEFAULT_ID, "resolvePrimaryModel: …and the call really lands on the default — exactly the model eve's static fallback would have run");
@@ -312,14 +309,14 @@ const PRIMARY_UTIL = { primary: { id: DEFAULT_ID }, utility: { id: UTILITY_ID } 
 {
   const calls: FakeCall[] = [];
   const onlyExec = () => [defineDomain({ name: "exec", channels: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } })];
-  const m = await resolvePrimaryModel({} as BindableContext, PRIMARY_UTIL, fakeDeps(onlyExec, calls, true));
+  const m = await resolvePrimaryModel({} as BindableContext, PRIMARY_DEFAULTS, fakeDeps(onlyExec, calls, true));
   ok(m.modelId === DEFAULT_ID, "resolvePrimaryModel: an identity-less ctx does not throw (fail-soft → the default model, no matching domain)");
   await m.doGenerate(turnCall);
   ok(calls[0].options["marked"] === undefined, "resolvePrimaryModel: …and the fail-soft return is the bare default, not a wrapper");
 }
 {
   const calls: FakeCall[] = [];
-  const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_UTIL, fakeDeps(() => {
+  const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_DEFAULTS, fakeDeps(() => {
     throw new Error("config exploded");
   }, calls, true));
   ok(m.modelId === DEFAULT_ID, "resolvePrimaryModel: a throwing config → the default model, no throw (fail-soft)");
@@ -389,7 +386,7 @@ const supDomains: Domain[] = [
 ];
 {
   const calls: FakeCall[] = [];
-  const m = await resolvePrimaryModel(slackSupervisorCtx("T1", "C_TXN", 3), PRIMARY_UTIL, fakeDeps(() => supDomains, calls));
+  const m = await resolvePrimaryModel(slackSupervisorCtx("T1", "C_TXN", 3), PRIMARY_DEFAULTS, fakeDeps(() => supDomains, calls));
   ok(m !== null, "supervisor session: returns a wrapped model");
   await m!.doGenerate(turnCall);
   ok(calls[0].id === UTILITY_ID, "supervisor session resolves the `supervisor` ModelRole (deepseek-v4-flash), NOT the channel's primary (glm-5.2)");
@@ -397,7 +394,7 @@ const supDomains: Domain[] = [
 }
 {
   const calls: FakeCall[] = [];
-  const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_UTIL, fakeDeps(() => supDomains, calls));
+  const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_DEFAULTS, fakeDeps(() => supDomains, calls));
   ok(m !== null, "non-supervisor turn in a supervisor-routed channel: returns a wrapped model");
   await m!.doGenerate(turnCall);
   ok(calls[0].id === DEFAULT_ID, "NON-supervisor turn still resolves `primary` (glm-5.2) — supervisor routing does NOT leak onto thread/turn sessions");
@@ -405,7 +402,7 @@ const supDomains: Domain[] = [
 }
 {
   const calls: FakeCall[] = [];
-  const m = await resolvePrimaryModel(slackSupervisorCtx("T1", "C_TXN", 1), PRIMARY_UTIL, fakeDeps(() => domains2, calls));
+  const m = await resolvePrimaryModel(slackSupervisorCtx("T1", "C_TXN", 1), PRIMARY_DEFAULTS, fakeDeps(() => domains2, calls));
   ok(m !== null, "supervisor session, no supervisor route: returns a wrapped model via the primary fallback");
   await m!.doGenerate(turnCall);
   ok(calls[0].id === "anthropic/claude-sonnet-5", "supervisor route UNSET → falls back to the channel's `primary` route (exec → sonnet); the role is inert until configured");
@@ -427,33 +424,21 @@ const supDomains: Domain[] = [
   ok(readModelStamp() === null, "model-stamp: read outside a session context -> null (fail-soft)");
   stampModelCall("should-not-throw");
   ok(readModelStamp() === null, "model-stamp: a stamp attempted outside a session is a no-op");
-  ok(readStampedUtilityRoute() === null, "utility-route: read outside a session context -> null (fail-soft)");
 
   await contextStorage.run(new ContextContainer(), async () => {
     ok(readModelStamp() === null, "model-stamp: a fresh session starts unstamped");
-    ok(readStampedUtilityRoute() === null, "utility-route: a fresh session starts unstamped");
 
     const calls: FakeCall[] = [];
     const m = makeRoutedModel(() => ({ id: "anthropic/claude-sonnet-5" }), { id: DEFAULT_ID }, fakeBackend(calls));
     await m.doGenerate(turnCall);
     ok(readModelStamp() === "anthropic/claude-sonnet-5", "model-stamp: dispatch() stamps THIS call's resolved routed id");
 
-    await resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_UTIL, fakeDeps(() => domains, calls));
-    ok(readStampedUtilityRoute()?.id === "zai/glm-4.5-air", "utility-route: the primary resolver stamps the per-domain utility route from ctx");
-
-    const cUtil: FakeCall[] = [];
-    const compaction = createRoutedCompactionModel({ id: UTILITY_ID }, fakeBackend(cUtil));
-    await compaction.doGenerate(turnCall);
-    ok(cUtil[0].id === "zai/glm-4.5-air", "compaction: the stamped utility route routes the summarizer per-domain");
+    await resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_DEFAULTS, fakeDeps(() => domains, calls));
+    ok(readModelStamp() === DEFAULT_ID, "model-stamp: the primary resolver stamps the route it resolved from ctx, over the prior stamp");
   });
 
   await contextStorage.run(new ContextContainer(), async () => {
     ok(readModelStamp() === null, "model-stamp: a DIFFERENT session is unaffected by a previous session's stamp");
-    ok(readStampedUtilityRoute() === null, "utility-route: a DIFFERENT session starts with no stamp");
-    const cUtil: FakeCall[] = [];
-    const compaction = createRoutedCompactionModel({ id: UTILITY_ID }, fakeBackend(cUtil));
-    await compaction.doGenerate(turnCall);
-    ok(cUtil[0].id === UTILITY_ID, "compaction: no stamp → the static utility default (unrouted, fail-soft)");
   });
 
   {
@@ -465,13 +450,13 @@ const supDomains: Domain[] = [
 
   {
     await contextStorage.run(new ContextContainer(), async () => {
-      const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_UTIL, fakeDeps(() => domains2, []));
+      const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_DEFAULTS, fakeDeps(() => domains2, []));
       ok(m !== null, "regression: a routed surface returns a wrapped model");
       ok(readModelStamp() === "anthropic/claude-sonnet-5", "regression: resolvePrimaryModel stamps the routed id at RESOLVE time — the spend hook sees it without the wrapper's doGenerate running");
     });
     await contextStorage.run(new ContextContainer(), async () => {
       const onlyExec = () => [defineDomain({ name: "exec", channels: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } })];
-      const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_OTHER"), PRIMARY_UTIL, fakeDeps(onlyExec, []));
+      const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_OTHER"), PRIMARY_DEFAULTS, fakeDeps(onlyExec, []));
       ok(m.modelId === DEFAULT_ID, "regression: an unrouted surface returns the default model concretely (OPE-412 — eve 0.33 throws on a null return)");
       ok(readModelStamp() === DEFAULT_ID, "regression: the default/no-op path stamps the default id (row still priced)");
       ok(readModelStamp() === m.modelId, "regression: the stamped id and the RETURNED model agree — the audit row can no longer claim a model the resolver didn't hand back");
@@ -479,7 +464,7 @@ const supDomains: Domain[] = [
     {
       const { resolveRuntimeModelSelection } = await import(abs("dist/src/runtime/agent/resolve-model.js"));
       const wrapper = await contextStorage.run(new ContextContainer(), async () =>
-        resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_UTIL, fakeDeps(() => domains2, [])),
+        resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_DEFAULTS, fakeDeps(() => domains2, [])),
       );
       const selection = { model: wrapper, modelContextWindowTokens: 1_000_000 };
       const resolved = await resolveRuntimeModelSelection({ selection, durability: "step", state: new ContextContainer() });
