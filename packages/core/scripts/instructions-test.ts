@@ -295,6 +295,27 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
 }
 
 {
+  registerSlackFixtureMapper();
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [defineDomain({ name: "ope544task", channels: ["slack/T_TASK/C_TASK"], mode: "unified" })],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+  const taskToken = `oe-dom:ope544task:win:${taskWindowId("slack/T_TASK/C_TASK", "1700.5")}:oe-sup:g1`;
+  ok(classifySessionId(taskToken).kind === "task", "fixture guard: the token really classifies TASK-grain — if this flips, the assertion below stops measuring what it names");
+  const taskCtx: BindableContext = {
+    channel: { kind: "channel:unified", continuationToken: taskToken },
+    session: { auth: { current: { attributes: { oe_platform: "slack", oe_grain: "task" } } } },
+  } as BindableContext;
+  const taskMd = await renderScopeMarkdown(taskCtx);
+  ok(taskMd.includes(REPLY_STYLE_RUBRIC), "🔴 OPE-544: a REAL task-grain worker session reads the byte-identical reply-style rubric — the scoping is by opening phrase, never by grain, on an actual worker token");
+}
+
+{
   registerSlackTestBridge({ botDisplayName: async () => "Test Slack Bot" });
   registerConfig({
     loadBundles: () => [],
