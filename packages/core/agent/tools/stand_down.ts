@@ -14,7 +14,8 @@ export default defineTool({
     "nothing; you simply stop being woken by messages here until somebody @mentions you again. " +
     "Reach for it on a clear ask to stop, not on a lull — silence is already your normal output, " +
     "and `no_reply` is the right ending for a message that merely wasn't for you. After calling " +
-    "this, acknowledge it in ONE short line and end the turn.",
+    "this, send a one-line acknowledgement with the `reply` tool — trailing prose is discarded — " +
+    "then end the turn.",
   inputSchema: z.object({
     reason: z
       .string()
