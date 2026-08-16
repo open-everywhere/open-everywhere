@@ -109,6 +109,30 @@ console.log("admitSlackInputResponse:");
 }
 
 {
+  let seenTeamId: string | undefined = "UNSET";
+  await admitSlackInputResponse(ctx, submission, {
+    admit: async () => ({ ok: true }),
+    guestVerdict: async (_userId, teamId) => {
+      seenTeamId = teamId;
+      return undefined;
+    },
+  });
+  ok(seenTeamId === "T1", "the guestVerdict probe receives the real team_id off the wire attributes");
+
+  const noTeamAuth = { ...defaultAuth, attributes: { channel_id: "C1", user_id: "U_ANSWERER" } };
+  const ctxNoTeam = { defaultAuth: noTeamAuth, thread: {}, slack: {} } as unknown as Ctx;
+  let seenTeamIdNoTeam: string | undefined = "UNSET";
+  await admitSlackInputResponse(ctxNoTeam, submission, {
+    admit: async () => ({ ok: true }),
+    guestVerdict: async (_userId, teamId) => {
+      seenTeamIdNoTeam = teamId;
+      return undefined;
+    },
+  });
+  ok(seenTeamIdNoTeam === undefined, "🔴 with NO team_id attribute, the probe receives undefined — never the \"dev\" UNNAMED_TENANT placeholder");
+}
+
+{
   ok(process.env.SLACK_BOT_TOKEN === undefined, "precondition: no bot token in this unit-test process");
   let seenDefault: InputResponseScope | undefined;
   const res = await admitSlackInputResponse(ctx, submission, {

@@ -46,6 +46,7 @@ const ROOMS: Record<string, StubbedRoom> = {};
 interface StubbedUser {
   readonly isRestricted?: boolean;
   readonly isUltraRestricted?: boolean;
+  readonly infoRefused?: true;
 }
 const USERS: Record<string, StubbedUser> = {};
 
@@ -71,6 +72,7 @@ function slackApiAnswer(method: string, params: URLSearchParams): Record<string,
   if (method === "users.info") {
     const userId = params.get("user") ?? "";
     const user = USERS[userId];
+    if (user?.infoRefused === true) return { ok: false, error: "missing_scope" };
     return {
       ok: true,
       user: {
@@ -372,6 +374,31 @@ test("🔴 Ⓓ' the control: the SAME clicker with is_restricted/is_ultra_restri
   const approved = rows.find((r) => r.action === "approval.approved" && r.detail?.id === id);
   expect(approved).toBeDefined();
   expect(approved!.principalId).toBe(MEMBER_CLICKER);
+  expect(rows.filter((r) => r.action === "approval.denied" && r.detail?.id === id).map((r) => r.action)).toEqual([]);
+
+  const s = await getStore();
+  expect((await s.getPendingAction(org, id))?.status).toBe("approved");
+  const armed = (await armedRoutines()).filter((r) => r.prompt === PROMPT);
+  expect(armed.length).toBe(1);
+  expect(armed[0]!.status).toBe("active");
+});
+
+test("🔴 Ⓓ'' the anti-outage control: users.info answering ok:false (missing_scope) leaves leg D INERT, and the click still executes", async () => {
+  const ROOM = "C0IT589CLICK3";
+  const UNSCOPED_CLICKER = "U0IT589UNSCOPED";
+  withSlackRooms({ [ROOM]: { isPrivate: true, isExternal: false } });
+  withSlackUser(UNSCOPED_CLICKER, { infoRefused: true });
+  const PROMPT = `clicker-floor leg D anti-outage control — armed ${randomUUID()}`;
+  const id = await seedPending({ kind: "routine.create", channelId: ROOM, args: routineArgs(ROOM, PROMPT) });
+
+  const clickAt = Date.now();
+  const res = await click({ pendingId: id, decision: "approve", cardChannelId: ROOM, clickerId: UNSCOPED_CLICKER });
+  expect(res.status).toBe(200);
+  const rows = await decideRows(clickAt, id);
+
+  const approved = rows.find((r) => r.action === "approval.approved" && r.detail?.id === id);
+  expect(approved).toBeDefined();
+  expect(approved!.principalId).toBe(UNSCOPED_CLICKER);
   expect(rows.filter((r) => r.action === "approval.denied" && r.detail?.id === id).map((r) => r.action)).toEqual([]);
 
   const s = await getStore();

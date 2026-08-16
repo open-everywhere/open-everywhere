@@ -35,8 +35,9 @@ export function inputResponseRefusalNotice(reason: InputResponseRefusal): string
       );
     case "guest-answerer":
       return (
-        "I didn't take that answer: this conversation's membership list reports you as a guest, and a guest can't " +
-        "answer on the org's behalf. The question is still open; anyone in the org can answer it and I'll carry on."
+        "I didn't take that answer: you could not be confirmed as a member of this workspace, so this answer " +
+        "can't stand in for the org's. The question is still open; a confirmed member of the org can answer it " +
+        "and I'll carry on."
       );
     case "unattested-room":
       return (
@@ -47,8 +48,9 @@ export function inputResponseRefusalNotice(reason: InputResponseRefusal): string
       return "I didn't take that answer: it didn't come from the room I asked in. The question is still open.";
     case "guest-clicker":
       return (
-        "I didn't take that answer: this workspace's membership list reports you as a guest, and a guest can't " +
-        "answer on the org's behalf. The question is still open; anyone in the org can answer it and I'll carry on."
+        "I didn't take that answer: you could not be confirmed as a member of this workspace, so this answer " +
+        "can't stand in for the org's. The question is still open; a confirmed member of the org can answer it " +
+        "and I'll carry on."
       );
   }
 }

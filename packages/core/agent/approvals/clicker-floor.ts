@@ -77,9 +77,9 @@ export function clickerFloorRefusalNotice(reason: ClickerFloorRefusal): string {
       return "I didn't apply that: this click didn't come from the channel the card was posted in. The request is still pending.";
     case "guest-clicker":
       return (
-        "I didn't apply that: this workspace's membership list reports you as a guest, and a guest can't " +
-        "decide this on the org's behalf. The request is still pending; a member of the org can decide it " +
-        "and it will apply."
+        "I didn't apply that: you could not be confirmed as a member of this workspace, so this decision " +
+        "can't be made on the org's behalf. The request is still pending; a confirmed member of the org " +
+        "can decide it and it will apply."
       );
   }
 }

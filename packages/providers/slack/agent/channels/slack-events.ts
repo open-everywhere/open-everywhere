@@ -871,7 +871,7 @@ export async function slackAuthorIsMember(userId: string, teamId: string | undef
   if (hit && Date.now() - hit.at < dmTrustTtlMs()) return hit.member;
   try {
     const info = await slackForm("users.info", `user=${encodeURIComponent(userId)}`);
-    if (!info) return undefined;
+    if (info?.ok !== true) return undefined;
     const member = partnerFactsFromInfo(info, teamId).dmPartnerTrust === "internal";
     authorMemberCache.set(key, { member, at: Date.now() });
     return member;

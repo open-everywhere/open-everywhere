@@ -6,6 +6,13 @@ import type {
 import { admitInputResponse, resolvePartition, type InputResponseAdmission, type InputResponseScope } from "@open-everywhere/core/agent/adapter-api.js";
 import { slackClickerIsGuest } from "./slack-events.js";
 
+function slackAuthTeamId(auth: SlackInputResponseContext["defaultAuth"]): string | undefined {
+  const v = auth.attributes?.["team_id"];
+  if (typeof v === "string" && v.length > 0) return v;
+  if (Array.isArray(v) && typeof v[0] === "string" && v[0].length > 0) return v[0];
+  return undefined;
+}
+
 export interface SlackInputResponseDeps {
   readonly admit?: (scope: InputResponseScope) => Promise<InputResponseAdmission>;
   readonly notify?: (userId: string, text: string) => Promise<void>;
@@ -24,7 +31,7 @@ export async function admitSlackInputResponse(
       session: { auth: { current: ctx.defaultAuth } },
     } as Parameters<typeof resolvePartition>[0]);
     const guestVerdict = deps.guestVerdict ?? slackClickerIsGuest;
-    const answererIsGuest = await guestVerdict(submission.user.id, p.workspace).catch(() => undefined);
+    const answererIsGuest = await guestVerdict(submission.user.id, slackAuthTeamId(ctx.defaultAuth)).catch(() => undefined);
     const verdict = await (deps.admit ?? admitInputResponse)({
       org: p.org,
       platform: p.platform,
