@@ -2784,18 +2784,30 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       if (ctx.auditRead) {
         const auditRead = ctx.auditRead;
+        const PERSIST_OUTCOMES = ["completed", "failed", "returned", "settled"] as const;
+        type MemoryWriteDetail = { readonly outcome?: unknown; readonly files?: unknown; readonly silo?: unknown };
         const rememberWrites = await pollOptional(
           async () => {
             const rows = await auditRead({ sinceIso: memAskStart, platform: "slack", surface: slack.channelId, actions: ["memory.write"] });
-            const remembered = rows.filter((r) => (r.detail as { outcome?: unknown } | undefined)?.outcome === "remember");
-            return remembered.length > 0 ? remembered : undefined;
+            const written = rows.filter((r) => {
+              const d = r.detail as MemoryWriteDetail | undefined;
+              return typeof d?.silo === "string" && d.silo.length > 0 && typeof d.files === "number" && d.files > 0;
+            });
+            return written.length > 0 ? written : undefined;
           },
-          { timeoutMs: FILE_REPLY_WAIT, what: `a memory.write audit row (outcome:"remember") for this channel's silo since the remember ask` },
+          { timeoutMs: FILE_REPLY_WAIT, what: "a memory.write audit row that wrote at least one file into this channel's silo since the remember ask" },
         );
         ctx.gate(
           rememberWrites !== undefined && rememberWrites.length > 0,
-          `remember: a real memory.write audit row (outcome:"remember") exists for this channel's silo since the ask — the audit row is the gate, not the seat's prose (found ${rememberWrites?.length ?? 0})`,
+          `remember: a real memory.write audit row exists for this channel's silo since the ask, and it wrote at least one FILE — the audit row is the gate, not the seat's prose, and \`files > 0\` is what stops a no-op flush passing (found ${rememberWrites?.length ?? 0})`,
         );
+        if (rememberWrites !== undefined && rememberWrites.length > 0) {
+          const outcomes = rememberWrites.map((r) => (r.detail as MemoryWriteDetail).outcome);
+          ctx.gate(
+            outcomes.every((o) => typeof o === "string" && (PERSIST_OUTCOMES as readonly string[]).includes(o)),
+            `remember: every matched row's \`outcome\` is a member of the shipped persist vocabulary [${PERSIST_OUTCOMES.join(", ")}] (got ${JSON.stringify(outcomes)}) — this is the assertion that would have caught the stale \`outcome:"remember"\` pin this gate carried until 2026-08-16`,
+          );
+        }
       } else {
         ctx.log(
           "remember: audit-row gate SKIPPED — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN so this leg can assert the authoritative memory.write row (OPE-367); falling back to a lenient prose check.",
