@@ -31,7 +31,7 @@ function observationKey(detail: Record<string, unknown> | undefined): string {
   return typeof key === "string" ? key : "";
 }
 
-test("no session-end effect fires for a delegated worker that settles, nor for the seat that dispatched it", async () => {
+test("the dream cycle fingerprints the seat's own request and never the worker's brief", async () => {
   await bootAgent();
   const sinceIso = new Date(Date.now() - 5_000).toISOString();
 
@@ -82,13 +82,12 @@ test("no session-end effect fires for a delegated worker that settles, nor for t
   expect(workerRequests[0].messages.map((m) => m.text).join("\n")).toContain(workerNonce);
 
   const rows = await waitFor(async () => {
-    const found = await readAuditRows({ actions: [SETTLEMENT_FLUSH_ACTION, OBSERVATION_ACTION], sinceIso, limit: 100 });
-    return found.some((r) => r.action === SETTLEMENT_FLUSH_ACTION) ? found : undefined;
-  }, `a ${SETTLEMENT_FLUSH_ACTION} row for the settled task — control (b), that this reader sees rows written in this window`);
+    const found = await readAuditRows({ actions: [SETTLEMENT_FLUSH_ACTION, OBSERVATION_ACTION], sinceIso, limit: 200 });
+    return found.some((r) => r.action === OBSERVATION_ACTION && observationKey(r.detail).includes(seatNonce)) ? found : undefined;
+  }, `a ${OBSERVATION_ACTION} row fingerprinting the SEAT's own request — the cycle running on the turn edge`);
 
-  const flushes = rows.filter((r) => r.action === SETTLEMENT_FLUSH_ACTION);
-  expect(flushes.length).toBeGreaterThanOrEqual(1);
-  expect(flushes.some((r) => r.detail?.["edge"] === "task-settled")).toBe(true);
+  const keys = rows.filter((r) => r.action === OBSERVATION_ACTION).map((r) => observationKey(r.detail));
 
-  expect(rows.filter((r) => r.action === OBSERVATION_ACTION).map((r) => observationKey(r.detail))).toEqual([]);
+  expect(keys.filter((k) => k.includes(seatNonce)).length).toBe(1);
+  expect(keys.filter((k) => k.includes(workerNonce))).toEqual([]);
 });

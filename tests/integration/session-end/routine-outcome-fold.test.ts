@@ -29,7 +29,7 @@ function disposeLater(handle: ScriptedHandle): ScriptedHandle {
   return handle;
 }
 
-test("a windowed routine fire whose delegated worker settles never folds a run outcome", async () => {
+test("a windowed routine fire whose delegated worker settles folds its run outcome", async () => {
   await bootAgent({ sharedSqlite: true });
   const sinceIso = new Date(Date.now() - 5_000).toISOString();
 
@@ -98,8 +98,8 @@ test("a windowed routine fire whose delegated worker settles never folds a run o
 
   const rows = await waitFor(async () => {
     const found = await readAuditRows({ actions: [FIRE_ATTRS_SENT_ACTION, ROUTINE_FIRE_ACTION], sinceIso, limit: 100 });
-    return found.some((r) => r.action === FIRE_ATTRS_SENT_ACTION) ? found : undefined;
-  }, `a ${FIRE_ATTRS_SENT_ACTION} row for this fire — control (c), that this reader sees rows written in this window`);
+    return found.some((r) => r.action === ROUTINE_FIRE_ACTION) ? found : undefined;
+  }, `a ${ROUTINE_FIRE_ACTION} join row for this fire — the fold running on the turn edge`);
 
   expect(rows.filter((r) => r.action === FIRE_ATTRS_SENT_ACTION).length).toBeGreaterThanOrEqual(1);
 
@@ -107,7 +107,11 @@ test("a windowed routine fire whose delegated worker settles never folds a run o
   expect(stored).toBeTruthy();
   expect(typeof stored!.lastRunAt).toBe("string");
 
-  expect.soft(rows.filter((r) => r.action === ROUTINE_FIRE_ACTION)).toEqual([]);
-  expect.soft(stored!.lastOutcome).toBeUndefined();
-  expect.soft(stored!.consecutiveFailures).toBe(2);
+  const fires = rows.filter((r) => r.action === ROUTINE_FIRE_ACTION);
+  expect.soft(fires.length).toBe(1);
+  expect.soft(fires[0]?.detail?.["routineId"]).toBe(id);
+  expect.soft(fires[0]?.detail?.["sessionId"]).toBe(sessionIds[0]);
+  expect.soft(fires[0]?.detail?.["outcome"]).toBe("ok");
+  expect.soft(stored!.lastOutcome).toBe("ok");
+  expect.soft(stored!.consecutiveFailures).toBe(0);
 });

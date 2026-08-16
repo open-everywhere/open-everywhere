@@ -2,7 +2,8 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { routineManualStamped, routineMarker } from "../routines/routine.js";
 import { foldRoutineOutcome, type RoutineOutcomeMarker } from "../routines/outcome-fold.js";
-import { isScheduleOriginatedAuth } from "../identity/binding.js";
+import { isScheduleOriginatedAuth, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { OE_WAKE_ID_ATTR } from "../channels/unified-window.js";
 
 interface AuthSlotContext {
   readonly session?: {
@@ -15,18 +16,28 @@ interface ArmedFire {
   readonly marker: RoutineOutcomeMarker;
   readonly manual: boolean;
   readonly sessionId?: string;
+  readonly wakeKey: string;
 }
 
-const armedFire = defineState<{ fire: ArmedFire | null }>(
-  "open-everywhere.routines.armedFire",
-  () => ({ fire: null }),
+const foldState = defineState<{ armed: ArmedFire | null; folded: Record<string, true> }>(
+  "open-everywhere.routines.foldState",
+  () => ({ armed: null, folded: {} }),
 );
+
+const NO_WAKE_KEY = "\u0000no-wake";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:routines] ${msg}`);
 }
 
-export function armFireFold(ctx: HookContext): ArmedFire | null {
+function oneAttr(v: unknown): string | undefined {
+  if (typeof v === "string" && v.length > 0) return v;
+  if (Array.isArray(v) && typeof v[0] === "string" && v[0].length > 0) return v[0];
+  return undefined;
+}
+
+export function armFireFold(ctx: HookContext, alreadyFolded: Readonly<Record<string, true>>): ArmedFire | null {
+  if (isSubagentChildContext(ctx as unknown as BindableContext)) return null;
   const c = ctx as unknown as AuthSlotContext;
   const auth = (c.session?.auth?.current ?? c.session?.auth?.initiator ?? null) as
     | { authenticator?: unknown; principalId?: unknown; principalType?: unknown; attributes?: Record<string, string | readonly string[]> }
@@ -34,19 +45,22 @@ export function armFireFold(ctx: HookContext): ArmedFire | null {
   if (!isScheduleOriginatedAuth(auth)) return null;
   const marker = routineMarker(auth?.attributes);
   if (!marker) return null;
+  const wakeKey = oneAttr(auth?.attributes?.[OE_WAKE_ID_ATTR]) ?? NO_WAKE_KEY;
+  if (alreadyFolded[wakeKey] === true) return null;
   const sessionId = typeof c.session?.id === "string" && c.session.id.length > 0 ? c.session.id : undefined;
   return {
     marker,
     manual: routineManualStamped(auth?.attributes),
+    wakeKey,
     ...(sessionId !== undefined ? { sessionId } : {}),
   };
 }
 
 function consumeArmedFire(): ArmedFire | null {
   try {
-    const armed = armedFire.get().fire;
+    const armed = foldState.get().armed;
     if (armed === null) return null;
-    armedFire.update(() => ({ fire: null }));
+    foldState.update((s) => ({ armed: null, folded: { ...s.folded, [armed.wakeKey]: true } }));
     return armed;
   } catch {
     return null;
@@ -79,8 +93,8 @@ export default defineHook({
   events: {
     "turn.started": (_event, ctx) => {
       try {
-        const fire = armFireFold(ctx);
-        if (fire) armedFire.update(() => ({ fire }));
+        const fire = armFireFold(ctx, foldState.get().folded);
+        if (fire) foldState.update((s) => ({ ...s, armed: fire }));
       } catch {
       }
     },

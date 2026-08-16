@@ -8,6 +8,7 @@ import { learnFromSession, safeDistill, enrichmentBullets, writeEnrichment } fro
 import { dreamJudge } from "../memory/dream/judge.js";
 import { recordProposal } from "../memory/dream/proposal.js";
 import { appendAudit } from "../audit/audit.js";
+import { triggerMessageBody } from "../channels/wake-envelope.js";
 
 const MAX_MESSAGES = 10;
 const MAX_MESSAGE_CHARS = 300;
@@ -32,6 +33,12 @@ export function consolidatableTurn(ctx: HookContext): boolean {
   } catch {
     return false;
   }
+}
+
+export function authoredBody(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const body = triggerMessageBody(raw)?.trim();
+  return body !== undefined && body.length > 0 ? body.slice(0, MAX_MESSAGE_CHARS) : undefined;
 }
 
 function consumeTurnRequest(): { request: string; messages: string[] } | null {
@@ -104,9 +111,8 @@ export default defineHook({
     },
 
     "message.received": (event, _ctx) => {
-      const raw = event.data?.message;
-      if (typeof raw !== "string") return;
-      const text = raw.slice(0, MAX_MESSAGE_CHARS);
+      const text = authoredBody(event.data?.message);
+      if (text === undefined) return;
       learnLog.update((s) => ({
         session: s.session.length < MAX_MESSAGES ? [...s.session, text] : s.session,
         turn: s.turn.length < MAX_MESSAGES ? [...s.turn, text] : s.turn,
