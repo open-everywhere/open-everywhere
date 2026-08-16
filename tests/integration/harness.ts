@@ -47,6 +47,8 @@ export function redeliveryRecoveryNote(): string {
 
 const RELAY_SECRET = randomBytes(32).toString("hex");
 const READ_TOKEN = randomBytes(32).toString("hex");
+const READ_TOKEN_NAME = "it";
+export const CONTROL_SERVICE_PRINCIPAL = `svc:${READ_TOKEN_NAME}`;
 const WEBHOOK_E2E_SECRET = randomBytes(32).toString("hex");
 const SLACK_SIGNING_SECRET = randomBytes(32).toString("hex");
 
@@ -119,7 +121,7 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   process.env.OE_SCRIPTED_MODEL = "1";
   process.env.OE_EGRESS_SPOOF = "1";
   process.env.OE_RELAY_SECRET = RELAY_SECRET;
-  process.env.OE_CONTROL_READ_TOKENS = `it:${createHash("sha256").update(READ_TOKEN, "utf8").digest("hex")}`;
+  process.env.OE_CONTROL_READ_TOKENS = `${READ_TOKEN_NAME}:${createHash("sha256").update(READ_TOKEN, "utf8").digest("hex")}`;
   process.env.OE_WEBHOOK_E2E_SECRET = WEBHOOK_E2E_SECRET;
   process.env.SLACK_SIGNING_SECRET = SLACK_SIGNING_SECRET;
   if (opts.sharedSqlite === true) {
@@ -341,7 +343,7 @@ export async function slackInteractivityPost(
 
 export const DISCORD_GUILD_ID = "1300000000000000100";
 export const DISCORD_LISTED_CHANNEL_ID = "1300000000000000101";
-const DISCORD_USER_ID = "9000000000000000042";
+export const DISCORD_USER_ID = "9000000000000000042";
 const DISCORD_BOT_ID = "9000000000000000001";
 
 export interface AuditRow {
@@ -364,6 +366,16 @@ export async function readAuditRows(input: { actions: readonly string[]; sinceIs
   if (!res.ok) throw new Error(`integration harness: audit read failed ${res.status}`);
   const parsed = (await res.json()) as { entries?: AuditRow[] };
   return parsed.entries ?? [];
+}
+
+export async function controlGet(path: string, opts: { readonly token?: string | null } = {}): Promise<{ status: number; body: string }> {
+  if (booted === undefined) throw new Error("integration harness: controlGet before bootAgent.");
+  const token = opts.token === undefined ? READ_TOKEN : opts.token;
+  const res = await fetch(`${booted.base}${path}`, {
+    headers: { accept: "application/json", ...(token === null ? {} : { authorization: `Bearer ${token}` }) },
+    signal: AbortSignal.timeout(60_000),
+  });
+  return { status: res.status, body: await res.text() };
 }
 
 export interface UsageWindowRow {
