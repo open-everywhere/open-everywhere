@@ -28,22 +28,21 @@ export default defineTool({
   async execute(input, ctx) {
     const c = ctx as BindableContext;
     const binding = bindFrom(c);
-    const threadTs = binding.threadTs;
-    if (!threadTs) {
+    const anchor = binding.engagementKey ?? binding.threadTs;
+    if (!anchor) {
       throw new Error(
-        "stand_down: couldn't tell which conversation to stop following — this turn carries no thread anchor. " +
-          "If you were asked to stop, say so in a reply instead.",
+        "stand_down: this turn carries no conversation anchor, so nothing was marked — reply that you could NOT stop following here, and that someone must ask again in the conversation or ask an admin.",
       );
     }
     const partition = resolvePartition(c);
-    const marked = await markThreadStopped(partition, threadTs);
+    const marked = await markThreadStopped(partition, anchor);
     await appendAudit({
       org: partition.org,
       platform: partition.platform,
       workspace: partition.workspace,
       surface: partition.surfaceKey,
       action: STAND_DOWN_ACTION,
-      detail: { surfaceKey: partition.surfaceKey, threadTs, marked, reason: input.reason ?? null },
+      detail: { surfaceKey: partition.surfaceKey, anchor, marked, reason: input.reason ?? null },
     }).catch(() => undefined);
     return {
       standingDown: true,

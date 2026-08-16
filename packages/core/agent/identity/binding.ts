@@ -29,6 +29,7 @@ export interface SurfaceBinding {
   readonly principalAttested?: true;
   readonly target?: Readonly<Record<string, unknown>>;
   readonly threadTs?: string;
+  readonly engagementKey?: string;
 }
 
 interface AuthPrincipal {
@@ -150,6 +151,7 @@ export interface RawIdentity {
   readonly principalId?: string;
   readonly target?: Readonly<Record<string, unknown>>;
   readonly threadTs?: string;
+  readonly engagementKey?: string;
 }
 
 export type IdentityMapper = (ctx: BindableContext) => RawIdentity;
@@ -441,5 +443,6 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
     ...(fire || unattended ? { principalAttested: true as const } : {}),
     target: raw.target,
     threadTs: raw.threadTs,
+    engagementKey: raw.engagementKey,
   };
 }
