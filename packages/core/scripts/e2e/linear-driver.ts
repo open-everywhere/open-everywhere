@@ -118,10 +118,14 @@ export class LinearDriver {
     return c.userId === this.cfg.appUserId;
   }
 
-  async awaitAppReply(issueId: string, beforeIds: ReadonlySet<string>, opts: { timeoutMs: number }): Promise<LinearComment> {
+  async awaitAppReply(
+    issueId: string,
+    beforeIds: ReadonlySet<string>,
+    opts: { timeoutMs: number; skip?: (c: LinearComment) => boolean },
+  ): Promise<LinearComment> {
     return pollUntil(
-      async () => (await this.comments(issueId)).find((c) => this.isAppComment(c) && !beforeIds.has(c.id)),
-      { timeoutMs: opts.timeoutMs, what: `an app-authored (user.id=${this.cfg.appUserId}) reply comment on issue ${issueId}` },
+      async () => (await this.comments(issueId)).find((c) => this.isAppComment(c) && !beforeIds.has(c.id) && !(opts.skip?.(c) ?? false)),
+      { timeoutMs: opts.timeoutMs, what: `an app-authored (user.id=${this.cfg.appUserId}) reply comment on issue ${issueId}${opts.skip !== undefined ? " that is not skipped as an interim ack" : ""}` },
     );
   }
 
