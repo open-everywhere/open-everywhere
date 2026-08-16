@@ -135,6 +135,7 @@ export const ROUTINE_MARKER = {
   silent: "open_everywhere_routine_silent",
   manual: "open_everywhere_routine_manual",
   grant: "open_everywhere_routine_grant_key",
+  fire: "open_everywhere_routine_fire_id",
 } as const;
 
 type Attrs = Readonly<Record<string, string | readonly string[]>> | undefined;
@@ -162,6 +163,11 @@ export function routineGrantKeyStamped(attributes: Attrs): string | undefined {
 
 export function routineManualStamped(attributes: Attrs): boolean {
   return oneAttrValue(attributes?.[ROUTINE_MARKER.manual]) === "true";
+}
+
+export function routineFireIdStamped(attributes: Attrs): string | undefined {
+  const id = oneAttrValue(attributes?.[ROUTINE_MARKER.fire]);
+  return id !== undefined && id.length > 0 ? id : undefined;
 }
 
 export function describeTrigger(t: RoutineTrigger, report?: RoutineReport): string {

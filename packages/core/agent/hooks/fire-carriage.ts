@@ -1,7 +1,7 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { resolvePartition } from "../memory/partition.js";
 import { auditFireAttrsSeen } from "../routines/fire-carriage.js";
-import { isScheduleOriginatedAuth, type BindableContext } from "../identity/binding.js";
+import { isScheduleOriginatedAuth, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 
 interface AuthSlotContext {
   readonly session?: {
@@ -12,6 +12,7 @@ interface AuthSlotContext {
 
 async function auditCarriage(ctx: HookContext): Promise<void> {
   try {
+    if (isSubagentChildContext(ctx as unknown as BindableContext)) return;
     const c = ctx as unknown as AuthSlotContext;
     const auth = (c.session?.auth?.current ?? c.session?.auth?.initiator ?? null) as
       | { authenticator?: unknown; principalId?: unknown; principalType?: unknown; attributes?: Record<string, unknown> }

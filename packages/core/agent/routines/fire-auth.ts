@@ -10,6 +10,7 @@ export function routineFireAttributes(
   mode: SessionMode,
   internal: boolean,
   creatorInternal?: boolean,
+  fireId?: string,
 ): Record<string, string> {
   return {
     ...destAttributes,
@@ -27,6 +28,7 @@ export function routineFireAttributes(
     [ROUTINE_MARKER.grant]: routineGrantKey(r),
     ...(isSilentRoutine(r) ? { [ROUTINE_MARKER.silent]: "true" } : {}),
     ...(r.manualRunAt !== undefined ? { [ROUTINE_MARKER.manual]: "true" } : {}),
+    ...(fireId !== undefined && fireId.length > 0 ? { [ROUTINE_MARKER.fire]: fireId } : {}),
   };
 }
 

@@ -207,18 +207,18 @@ export async function dispatchTick(
           log(`job ${r.id} on ${r.surfaceKey}: durable-job session-join is Slack-only in v1 — firing with ledger continuity only`);
         }
       }
+      const fireWakeId = mintWakeId();
       const markedAuth = {
         ...appAuth,
         attributes: {
           ...appAuth.attributes,
-          ...routineFireAttributes(r, dest.attributes, mode, internal, creatorInternal),
+          ...routineFireAttributes(r, dest.attributes, mode, internal, creatorInternal, fireWakeId),
         },
       };
       const fireOrigin: UnifiedWakeOrigin | undefined =
         dest.origin && dest.origin.platform === "slack" && isJobRoutine(r) && jobAnchor
           ? { ...dest.origin, threadTs: jobAnchor }
           : dest.origin;
-      const fireWakeId = mintWakeId();
       const seatKey = isJobRoutine(r) ? jobFireSeatKey(r.id, routineGrantGeneration(r)) : runFireSeatKey(fireWakeId);
       const message = renderFireMessage(r);
       const deliver = async (): Promise<void> => {

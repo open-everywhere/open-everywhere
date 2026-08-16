@@ -1,6 +1,6 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
-import { oneAttrValue, routineManualStamped, routineMarker } from "../routines/routine.js";
+import { oneAttrValue, routineFireIdStamped, routineManualStamped, routineMarker } from "../routines/routine.js";
 import { foldRoutineOutcome, type RoutineOutcomeMarker } from "../routines/outcome-fold.js";
 import { isScheduleOriginatedAuth, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { OE_WAKE_ID_ATTR } from "../channels/unified-window.js";
@@ -39,7 +39,8 @@ function armFireFold(ctx: HookContext, alreadyFolded: Readonly<Record<string, tr
   if (!isScheduleOriginatedAuth(auth)) return null;
   const marker = routineMarker(auth?.attributes);
   if (!marker) return null;
-  const wakeKey = oneAttrValue(auth?.attributes?.[OE_WAKE_ID_ATTR]) ?? NO_WAKE_KEY;
+  const wakeKey =
+    routineFireIdStamped(auth?.attributes) ?? oneAttrValue(auth?.attributes?.[OE_WAKE_ID_ATTR]) ?? NO_WAKE_KEY;
   if (alreadyFolded[wakeKey] === true) return null;
   const sessionId = typeof c.session?.id === "string" && c.session.id.length > 0 ? c.session.id : undefined;
   return {
