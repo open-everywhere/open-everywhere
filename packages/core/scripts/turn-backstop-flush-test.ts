@@ -142,6 +142,22 @@ const settle = async (): Promise<void> => {
     ok(held!.live === 1, "asked: …and the skip records the parked worker as the reason");
   });
 
+  {
+    const resumed = new FakeEveContext();
+    await inEveContext(resumed, async () => {
+      ok(liveTaskCount() === 0, "resumed: a session that never saw the dispatch starts with an empty live set");
+      noteTaskViews([{ taskId: "task-asked", status: "input_required" }] as never);
+      ok(liveTaskCount() === 1, "🔴 resumed: a parked view ARMS the guard on its own — a non-terminal sighting is first-hand proof the worker still holds the tree");
+      const held = await flushSettledMemory(seatCtx, "task-settled");
+      ok(held.outcome === "skipped" && held.live === 1, "🔴 resumed: so the settlement edge is HELD by the parked worker, with no dispatch of its own to lean on");
+    });
+    await inEveContext(resumed, async () => {
+      noteTaskViews([{ taskId: "task-asked", status: TERMINAL_TASK_STATUSES[0]! }] as never);
+      const ran = await flushSettledMemory(seatCtx, "task-settled");
+      ok(ran.outcome === "flushed", "resumed control: the same edge flushes once the task settles — the skip above was the parked status, not a dead path");
+    });
+  }
+
   await inEveContext(container, async () => {
     noteTaskViews([{ taskId: "task-asked", status: "input_required" }] as never);
     const stillHeld = await flushDirtyTreeAtTurnEnd(seatCtx);
