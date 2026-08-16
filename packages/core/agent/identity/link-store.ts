@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { tryPrincipalKey } from "./principal-key.js";
 import { surfaceIdsFromAccounts, type PrincipalAccountRef } from "./principals.js";
 import { linkTenantOf } from "./link-tenant.js";
@@ -149,6 +150,15 @@ export async function claimLinkChallenge(input: {
     initiator: accountLabel(claimed.initiatingPlatform, claimed.initiatingTenant, claimed.initiatingNativeId),
   });
   return claimed;
+}
+
+export async function auditLinkNoticeUndeliverable(input: { readonly org: string; readonly challenge: LinkChallengeRow; readonly error: unknown }): Promise<void> {
+  const c = input.challenge;
+  await auditLink(input.org, c.initiatingPlatform, c.initiatingSurfaceKey, accountLabel(c.initiatingPlatform, c.initiatingTenant, c.initiatingNativeId), "identity.link.notice_undeliverable", {
+    challengeId: c.id,
+    platform: c.initiatingPlatform,
+    ...auditErrorDetail(input.error),
+  });
 }
 
 export async function denyLinkChallenge(input: { readonly org: string; readonly challengeId: string; readonly now?: Date }): Promise<boolean> {

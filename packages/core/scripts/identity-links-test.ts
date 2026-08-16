@@ -581,9 +581,38 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   await refuses(() => confirmLink.execute({ decision: "deny", challengeId: out.challengeId }, dmU2), "nothing of yours is waiting", "confirm_link refuses a different person's DENY too — a stranger cannot cancel your link either");
   ok((await pg.getLinkChallenge(ORG, out.challengeId))?.status === "claimed", "confirm_link: the refused attempts changed nothing — the claim still awaits its initiator");
 
-  const confirmed = (await confirmLink.execute({ decision: "confirm" }, dmU1)) as { decided: string; claimant: string; linkSetId: string };
-  ok(confirmed.decided === "confirmed" && confirmed.claimant === "github/u1-github", "confirm_link: the initiator commits the link and the claimant is named back");
+  type Decision = { decided: string; claimant?: string; claimantAccount?: { platform: string; tenant: string; nativeId: string }; claimedAt?: string; challengeId?: string; linkSetId?: string; note: string };
+  const confirmedRowsFor = async (challengeId: string): Promise<number> =>
+    (await pg.readAudit({ org: ORG })).filter((r) => r.action === "identity.link.confirmed" && (r.detail as { challengeId?: string }).challengeId === challengeId).length;
+
+  const peek = (await confirmLink.execute({ decision: "confirm" }, dmU1)) as Decision;
+  ok(peek.decided === "awaiting_acknowledgement", "🔴 OPE-618: a `confirm` with no acknowledgement DECIDES NOTHING — it answers with the waiting claim");
+  ok(peek.claimant === "github/u1-github", "OPE-618: the peek NAMES the claimant as a full principal key — the sentence the model puts in front of the person");
+  ok(peek.claimantAccount?.platform === "github" && peek.claimantAccount?.nativeId === "u1-github" && peek.claimantAccount?.tenant === "", "OPE-618: …and in parts, so the raw native id is readable without splitting a label a native id may itself contain a slash in");
+  ok(typeof peek.claimedAt === "string" && !Number.isNaN(Date.parse(peek.claimedAt!)), "OPE-618: the peek carries WHEN the claim arrived — the person weighs 'just now' differently from 'yesterday'");
+  ok(peek.challengeId === out.challengeId, "OPE-618: the peek names the challenge it is about, so a second waiting claim can be picked by id");
+  ok(peek.linkSetId === undefined, "OPE-618: the peek returns no link-set — there is nothing to return, because nothing was written");
+  ok((await pg.getLinkChallenge(ORG, out.challengeId))?.status === "claimed", "🔴 OPE-618: the peek WROTE NOTHING — the challenge is still `claimed`, not `ratified`");
+  ok((await resolveLinkSet(ORG, "github", "u1-github", "")) === null, "🔴 OPE-618: the claimed account still resolves to NOTHING after the peek");
+  ok((await confirmedRowsFor(out.challengeId)) === 0, "OPE-618: the peek appended no identity.link.confirmed row (negative control for the assertion below)");
+  ok(((await confirmLink.execute({ decision: "confirm", acknowledge: false }, dmU1)) as Decision).decided === "awaiting_acknowledgement", "OPE-618: an explicit `acknowledge: false` is not an acknowledgement");
+  ok(((await confirmLink.execute({ decision: "confirm" }, dmU1)) as Decision).decided === "awaiting_acknowledgement" && (await pg.getLinkChallenge(ORG, out.challengeId))?.status === "claimed", "OPE-618: peeking twice is still a peek — the challenge survives it");
+  await refuses(() => confirmLink.execute({ decision: "confirm", acknowledge: true, challengeId: out.challengeId }, dmU2), "nothing of yours is waiting", "🔴 OPE-618: `acknowledge: true` is not a bypass — a stranger naming the challenge id is refused exactly as before");
+  ok((await pg.getLinkChallenge(ORG, out.challengeId))?.status === "claimed", "OPE-618: the stranger's acknowledged attempt changed nothing either");
+
+  const confirmed = (await confirmLink.execute({ decision: "confirm", acknowledge: true }, dmU1)) as Decision;
+  ok(confirmed.decided === "confirmed" && confirmed.claimant === "github/u1-github", "confirm_link: the ACKNOWLEDGED call commits the link and the claimant is named back");
+  ok(confirmed.claimantAccount?.nativeId === "u1-github" && typeof confirmed.claimedAt === "string", "OPE-618: the committing call carries the same claimant parts, so the answer names what it linked");
+  ok((await confirmedRowsFor(out.challengeId)) === 1, "🔴 OPE-618: the acknowledged call is the one that wrote identity.link.confirmed");
   ok((await resolveLinkSet(ORG, "github", "u1-github", ""))?.id === confirmed.linkSetId, "confirm_link: the link resolves afterwards");
+
+  const denyOut = (await linkIdentity.execute({}, dmU2)) as { challengeId: string; instructions: string };
+  const denyCode = denyOut.instructions.match(new RegExp(String.raw`link (${"[" + LINK_CODE_ALPHABET + "]"}{${LINK_CODE_LENGTH}})`))![1]!;
+  await observeLinkClaim({ org: ORG, platform: "github", authorId: "u2-github", text: `link ${denyCode}`, trust: "peer" });
+  const denied = (await confirmLink.execute({ decision: "deny" }, dmU2)) as Decision;
+  ok(denied.decided === "denied" && denied.claimant === "github/u2-github" && denied.claimantAccount?.nativeId === "u2-github", "OPE-618: a DENY takes ONE call and still names the account it refused");
+  ok((await pg.getLinkChallenge(ORG, denyOut.challengeId))?.status === "denied", "deny: the challenge is terminal after one call");
+  ok((await resolveLinkSet(ORG, "github", "u2-github", "")) === null, "deny: nothing was linked");
 
   await refuses(() => unlinkIdentity.execute({ platform: "github" }, dmU1), "BOTH platform and nativeId", "unlink_identity refuses a half-specified target");
   await refuses(() => unlinkIdentity.execute({ platform: "linear", tenant: "", nativeId: "lin-uuid-1" }, dmU1), "not on your link-set", "unlink_identity refuses an account that is not on the caller's set");
@@ -621,7 +650,7 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   ok(typeof dcOut.challengeId === "string" && dcOut.instructions.includes("link "), "🔴 OPE-289 scoping: an `external` DISCORD DM (platform NOT in BINDING_TRUSTED_PLATFORMS) STILL LINKS — absence of a membership check is not evidence of an outsider");
   const dcCode = dcOut.instructions.match(new RegExp(String.raw`link (${"[" + LINK_CODE_ALPHABET + "]"}{${LINK_CODE_LENGTH}})`))![1]!;
   await observeLinkClaim({ org: ORG, platform: "github", authorId: "dc-gh", text: `link ${dcCode}`, trust: "unauth", trustIsEvidence: false });
-  const dcConfirmed = (await confirmLink.execute({ decision: "confirm" }, dmDiscord)) as { decided: string; claimant: string };
+  const dcConfirmed = (await confirmLink.execute({ decision: "confirm", acknowledge: true }, dmDiscord)) as { decided: string; claimant: string };
   ok(dcConfirmed.decided === "confirmed" && dcConfirmed.claimant === "github/dc-gh", "🔴 OPE-289 scoping: confirm_link admits the same Discord DM — the gate is scoped identically at both ends");
 
   const fireCtx = {
@@ -665,7 +694,7 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
     const code = out.instructions.match(new RegExp(String.raw`link (${"[" + LINK_CODE_ALPHABET + "]"}{${LINK_CODE_LENGTH}})`))![1]!;
     await observeLinkClaim({ org: ORG, platform: claimant.platform, tenant: claimant.tenant, authorId: claimant.nativeId, text: `link ${code}`, trust: "peer" });
     notices.length = 0;
-    const res = (await confirmLink.execute({ decision: "confirm" }, ctx)) as { linkSetId: string };
+    const res = (await confirmLink.execute({ decision: "confirm", acknowledge: true }, ctx)) as { linkSetId: string };
     return res.linkSetId;
   }
 
@@ -720,6 +749,39 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   registerPostArm({ platform: "slack" });
   registerPostArm({ platform: "discord" });
   ok(!canDeliverDirectMessage("slack") && !canDeliverDirectMessage("discord"), "OPE-288 teardown: the recorder arms are gone");
+}
+
+{
+  const { registerPostArm } = await import("../agent/channels/post-arms.js");
+  const TOKENISH = "xoxb-9999999999-abcdefghijkl";
+  registerPostArm({
+    platform: "slack",
+    deliverDirectMessage: async () => {
+      throw new Error(`slack conversations.open failed: missing_scope (im:write) [auth: ${TOKENISH}]`);
+    },
+  });
+  ok(canDeliverDirectMessage("slack"), "OPE-618 setup: the notice path really does reach a THROWING slack DM arm — the assertions below are not passing on an absent arm");
+
+  const nd = await issueLinkChallenge({ org: ORG, platform: "slack", tenant: T1, nativeId: "U_ND", surfaceKey: "slack/T1/D_ND" });
+  const ndId = await observeLinkClaim({ org: ORG, platform: "github", authorId: "gh-nd", text: `link ${nd.code}`, trust: "unauth", trustIsEvidence: false });
+  ok(ndId === nd.challenge.id, "OPE-618: the claim is RECORDED even though its notice could not be delivered — a dead notice is not a dead claim");
+  ok((await pg.getLinkChallenge(ORG, nd.challenge.id))?.status === "claimed", "OPE-618: …and the challenge is waiting for the initiator, exactly as if the notice had arrived");
+
+  const ndRows = (await pg.readAudit({ org: ORG })).filter((r) => r.action === "identity.link.notice_undeliverable");
+  ok(ndRows.length === 1, "🔴 OPE-618: an undeliverable notice appends ONE audit row — before this the failure existed only in a console line");
+  const row = ndRows[0]!;
+  const detail = row.detail as { challengeId?: string; platform?: string; error?: string };
+  ok(detail.challengeId === nd.challenge.id, "OPE-618: the row names the challenge whose notice was lost");
+  ok(detail.platform === "slack", "OPE-618: …and the platform whose DM arm refused it — the INITIATOR's, which is where the notice was aimed");
+  ok(typeof detail.error === "string" && /missing_scope/.test(detail.error), "🔴 OPE-618: the row carries the provider's own diagnosis — a reason code classifies, it does not diagnose (this is the sentence that named `im:write` live)");
+  ok(!/xoxb-/.test(detail.error!) && /\[redacted\]/.test(detail.error!), "🔴 OPE-618: a credential shape the provider echoed is REDACTED — our own audit store is not a place a token lands");
+  ok(!JSON.stringify(row).includes(TOKENISH), "🔴 OPE-618: the token is on NO field of the row, not merely absent from `error`");
+  ok(row.org === ORG && row.platform === "slack" && row.workspace === T1 && row.surface === "slack/T1/D_ND", "OPE-618: the row lands in the initiator's own partition and on the initiating DM's surface key");
+  ok(row.principalId === "slack/T1/U_ND", "OPE-618: WHO did not hear is the initiator, named as a principal key");
+
+  await denyLinkChallenge({ org: ORG, challengeId: nd.challenge.id });
+  registerPostArm({ platform: "slack" });
+  ok(!canDeliverDirectMessage("slack"), "OPE-618 teardown: the throwing arm is gone");
 }
 
 {

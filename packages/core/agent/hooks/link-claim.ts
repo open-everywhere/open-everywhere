@@ -3,7 +3,7 @@ import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { actingPrincipalId, currentTurnAddressed, currentTurnBotName } from "../identity/binding.js";
 import { detectLinkClaim, detectAddressedLinkClaim } from "../identity/link-challenge.js";
 import { agentNameTokens } from "../identity/bot-name.js";
-import { claimLinkChallenge } from "../identity/link-store.js";
+import { auditLinkNoticeUndeliverable, claimLinkChallenge } from "../identity/link-store.js";
 import { linkTenantOf } from "../identity/link-tenant.js";
 import { canDeliverDirectMessage, dispatchDirectMessage } from "../channels/post-arms.js";
 import { postReply, resolveReplyTarget } from "../channels/reply-post.js";
@@ -102,6 +102,7 @@ export async function observeLinkClaim(input: {
       });
     } catch (err) {
       log(`link claim ${claimed.id} recorded, but the confirmation notice could not be delivered: ${String(err)}`);
+      await auditLinkNoticeUndeliverable({ org: input.org, challenge: claimed, error: err }).catch(() => undefined);
     }
   }
   log(`link claim recorded: ${claimant} claimed challenge ${claimed.id} — awaiting the initiator's confirmation.`);

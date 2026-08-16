@@ -4,6 +4,7 @@ import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
 import { linkTenantOf } from "../identity/link-tenant.js";
 import type { LinkedAccount } from "../identity/link-store.js";
+import type { LinkChallengeRow } from "../operational/store.js";
 import { actingPrincipalIdOf } from "../access/request.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { principalKey, tryPrincipalKey } from "../identity/principal-key.js";
@@ -17,11 +18,25 @@ import { linkInitiatorRefusal } from "../identity/link-initiator.js";
 import { notifyLinkSetMembers } from "../channels/post-arms.js";
 import { pendingDirectorySuggestionsFor } from "../identity/directory-sync.js";
 
+function claimantParts(challenge: LinkChallengeRow): { claimantAccount?: { platform: string; tenant: string; nativeId: string }; claimedAt?: string } {
+  const parts =
+    challenge.claimedPlatform && challenge.claimedNativeId
+      ? { claimantAccount: { platform: challenge.claimedPlatform, tenant: challenge.claimedTenant ?? "", nativeId: challenge.claimedNativeId } }
+      : {};
+  return { ...parts, ...(challenge.claimedAt ? { claimedAt: challenge.claimedAt } : {}) };
+}
+
 export default defineTool({
   description:
-    "Confirm (or deny) an account that belongs to this person — the second half of link_identity, and the one-tap confirmation for accounts an identity-directory sync (Okta) suggested for them. DM only, and only that person may call it. Confirming writes the link; denying writes nothing at all. ALWAYS show the account(s) to the person and let THEM decide before calling this — if they do not recognise one, deny.",
+    "Confirm (or deny) an account that belongs to this person — the second half of link_identity, and the one-tap confirmation for accounts an identity-directory sync (Okta) suggested for them. DM only, and only that person may call it. NEVER ask which account claimed their link code — they cannot see it and this tool holds it: a `confirm` with no `acknowledge` writes nothing and NAMES the waiting account. Show them that account, then call again with `acknowledge:true` to commit — both calls may happen in one turn when they have already said yes. Denying writes nothing at all and takes one call. Always name an account to the person before you commit it; if they do not recognise one, deny.",
   inputSchema: z.object({
     decision: z.enum(["confirm", "deny"]).describe("`confirm` links the account(s) to this person; `deny` discards the proposal and writes nothing."),
+    acknowledge: z
+      .boolean()
+      .optional()
+      .describe(
+        "Set true ONLY after you have the account that claimed the link code in front of you and the person has said it is theirs. Omitted, a `confirm` over a waiting claim writes nothing and returns the claimant instead. Ignored for directory-suggested accounts and for `deny`.",
+      ),
     challengeId: z
       .string()
       .optional()
@@ -36,6 +51,9 @@ export default defineTool({
   outputSchema: z.object({
     decided: z.string(),
     claimant: z.string().optional(),
+    claimantAccount: z.object({ platform: z.string(), tenant: z.string(), nativeId: z.string() }).optional(),
+    claimedAt: z.string().optional(),
+    challengeId: z.string().optional(),
     accounts: z.array(z.string()).optional(),
     linkSetId: z.string().optional(),
     note: z.string(),
@@ -84,7 +102,22 @@ export default defineTool({
     if (input.decision === "deny") {
       const denied = await denyLinkChallenge({ org: binding.org, challengeId: challenge.id });
       if (!denied) throw new Error("that link request was already decided.");
-      return { decided: "denied", claimant, note: `Denied — nothing was linked. ${claimant} does not get your standing.` };
+      return { decided: "denied", claimant, ...claimantParts(challenge), note: `Denied — nothing was linked. ${claimant} does not get your standing.` };
+    }
+
+    if (input.acknowledge !== true) {
+      return {
+        decided: "awaiting_acknowledgement",
+        claimant,
+        ...claimantParts(challenge),
+        challengeId: challenge.id,
+        note:
+          `NOTHING IS LINKED YET. ${claimant} claimed your link code` +
+          (challenge.claimedAt ? ` at ${challenge.claimedAt}` : "") +
+          `. Tell the person exactly which account that is and ask whether it is theirs. If they have ` +
+          `already said it is, call confirm_link again with acknowledge: true to commit the link. If they ` +
+          `do not recognise it, call confirm_link with decision: "deny" — that writes nothing.`,
+      };
     }
 
     const result = await ratifyLinkChallenge({
@@ -94,7 +127,7 @@ export default defineTool({
     });
     if (!result.ok) throw new Error(result.reason);
     await announceLinkSetGrowth(binding.org, result.linkSetId, claimant, { platform: binding.platform, tenant, nativeId: actor });
-    return { decided: "confirmed", claimant, linkSetId: result.linkSetId, note: result.note };
+    return { decided: "confirmed", claimant, ...claimantParts(challenge), linkSetId: result.linkSetId, note: result.note };
   },
 });
 
