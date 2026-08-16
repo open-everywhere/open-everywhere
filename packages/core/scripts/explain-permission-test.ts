@@ -73,6 +73,16 @@ const ctx = {
 }
 
 {
+  const res = await tool.execute({ tool: "open_pull_request", tainted: true }, ctx);
+  ok(res.trace.includes("tainted: true — supplied by the caller"), "simulate: a SUPPLIED tainted names itself supplied in the trace");
+  ok(res.trace.includes("this turn: false"), "simulate: …and the trace discloses this turn's own signal beside it");
+}
+{
+  const res = await tool.execute({ tool: "open_pull_request" }, ctx);
+  ok(res.trace.includes("tainted: false") && !res.trace.includes("supplied by the caller"), "simulate: an UNSUPPLIED tainted is a live read and is NOT marked supplied (=== absent)");
+}
+
+{
   const res = await tool.execute({ tool: "reply" }, ctx);
   ok(res.verdict === "allow" && res.transforms.length === 0, "simulate: an open verb reads allow, untransformed");
 }

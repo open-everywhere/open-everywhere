@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { beginTaintTurn, markUntrustedIngestedThisTurn, untrustedIngestedThisTurn, taintKindsThisTurn } from "../agent/access/taint-signal.js";
 import { openTaintTurn, TAINT_SEED_ATTRS } from "../agent/hooks/spawn-taint.js";
+import { renderChainResolution, resolveApproverChain, type ApprovalChainRequest } from "../agent/access/approver-chain.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -122,5 +123,45 @@ await inSession(async () => {
   markUntrustedIngestedThisTurn();
   ok(untrustedIngestedThisTurn() === true && taintKindsThisTurn().length === 0, "kinds: a kindless mark taints with an EMPTY breakdown — empty ≠ clean");
 });
+
+{
+  const trace = async (req: ApprovalChainRequest): Promise<string> => {
+    const res = await resolveApproverChain(req);
+    return renderChainResolution(req, res).find((l) => l.startsWith("context: ")) ?? "";
+  };
+  const base = { tool: "add_routine_rule", unattended: false, principalId: "U1" } as const;
+
+  await inSession(async () => {
+    boundary("turn-render-live");
+    markUntrustedIngestedThisTurn("web");
+    const line = await trace({ ...base });
+    ok(line.includes("tainted: true (web)"), "render/live: an UNSUPPLIED bit is read from this turn and carries this turn's kinds");
+    ok(!line.includes("supplied"), "render/live: …and is NOT marked supplied (=== absent) — the marker names a real distinction, not every line");
+  });
+
+  await inSession(async () => {
+    boundary("turn-render-sim-clean");
+    ok(untrustedIngestedThisTurn() === false, "render/simulated-true: the turn under test is genuinely clean");
+    const line = await trace({ ...base, tainted: true });
+    ok(line.includes("tainted: true — supplied by the caller"), "🔴 render/simulated-true: a SUPPLIED bit names itself supplied — the line OPE-656 read as a seed now says it is an argument");
+    ok(line.includes("this turn: false"), "🔴 render/simulated-true: …and discloses the live signal beside it, which is the fact the investigation actually wanted");
+  });
+
+  await inSession(async () => {
+    boundary("turn-render-sim-tainted");
+    markUntrustedIngestedThisTurn("linear");
+    const line = await trace({ ...base, tainted: false });
+    ok(line.includes("tainted: false — supplied by the caller"), "render/simulated-false: the simulated bit is still the one the chain used, and still says it is supplied");
+    ok(line.includes("this turn: true (linear)"), "🔴 render/simulated-false: …and the LIVE ingestion is disclosed with its kind rather than hidden behind the simulation");
+  });
+
+  await inSession(async () => {
+    boundary("turn-render-sim-both");
+    markUntrustedIngestedThisTurn("web");
+    const line = await trace({ ...base, tainted: true });
+    ok(!line.includes("tainted: true (web)"), "🔴 render/attachment: the SUPPLIED bit wears no kind (=== absent) — the breakdown describes the live signal, never the argument");
+    ok(line.includes("this turn: true (web)"), "render/attachment: …and the same kind rides the live half, so nothing is lost by moving it");
+  });
+}
 
 console.log(`✓ taint-signal: ${n} assertions passed`);
