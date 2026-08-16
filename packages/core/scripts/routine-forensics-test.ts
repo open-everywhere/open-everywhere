@@ -32,6 +32,8 @@ const { OE_WAKE_ID_ATTR } = await import("../agent/channels/unified-window.js");
 const { SCHEDULE_APP_AUTHENTICATOR, SCHEDULE_APP_PRINCIPAL_ID, SCHEDULE_APP_PRINCIPAL_TYPE } = await import("../agent/identity/binding.js");
 const { MAX_CONSECUTIVE_FAILURES } = await import("../agent/routines/lifecycle.js");
 const outcomeHook = (await import("../agent/hooks/routine-outcome.js")).default;
+const carriageHook = (await import("../agent/hooks/fire-carriage.js")).default;
+const { FIRE_ATTRS_SEEN_ACTION } = await import("../agent/routines/fire-carriage.js");
 const spendHook = (await import("../agent/hooks/spend.js")).default;
 const { routineIdOf } = await import("../agent/hooks/spend.js");
 const listRoutinesTool = (await import("../agent/tools/list_routines.js")).default;
@@ -84,6 +86,27 @@ function firedCtx(r: Routine, sessionId: string, wakeId = `wake-${sessionId}`): 
       },
     },
   } as never;
+}
+
+function nativeFiredCtx(r: Routine, sessionId: string, fireId?: string): never {
+  const base = firedCtx(r, sessionId) as unknown as AttrView;
+  const { [OE_WAKE_ID_ATTR]: _windowed, ...rest } = base.session.auth.current.attributes;
+  return {
+    channel: { kind: "slack" },
+    session: {
+      id: sessionId,
+      auth: {
+        current: {
+          ...base.session.auth.current,
+          attributes: { ...rest, ...(fireId !== undefined ? { [ROUTINE_MARKER.fire]: fireId } : {}) },
+        },
+      },
+    },
+  } as never;
+}
+
+interface AttrView {
+  readonly session: { readonly auth: { readonly current: { readonly attributes: Record<string, string> } } };
 }
 
 async function fireOnce(ctx: never, end: "turn.completed" | "turn.failed" = "turn.completed"): Promise<void> {
@@ -249,6 +272,90 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
   await fireOnce(humanTurnInJobSeat);
   ok((await rowsFor(ROUTINE_AUDIT.fire)).length === before, "idempotence: a HUMAN turn in a job seat writes no fire row, though the seat's initiator still carries the marker");
   ok((await store.getRoutine(ORG, SURFACE, "r-job-human"))?.consecutiveFailures === 2, "idempotence: …and it does not reset the failure streak that was two strikes from disabling the job");
+}
+
+{
+  const r = routine({ id: "r-native-job", consecutiveFailures: 0 });
+  await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
+  const seat = new FakeEveContext();
+  const fireA = nativeFiredCtx(r, "sess-native-job", "fire-native-A");
+  const fireB = nativeFiredCtx(r, "sess-native-job", "fire-native-B");
+  ok(
+    (fireA as unknown as AttrView).session.auth.current.attributes[OE_WAKE_ID_ATTR] === undefined,
+    "native job: the control — this bag carries NO `oe_wake_id`, so it is genuinely the native shape and not a windowed fire in disguise",
+  );
+
+  await inEveContext(seat, async () => {
+    await outcomeHook.events!["turn.started"]!({} as never, fireA);
+    await outcomeHook.events!["turn.completed"]!({} as never, fireA);
+    await outcomeHook.events!["turn.started"]!({} as never, fireB);
+    await outcomeHook.events!["turn.completed"]!({} as never, fireB);
+  });
+  ok(
+    (await rowsFor(ROUTINE_AUDIT.fire)).filter((e) => detailOf(e, "routineId") === "r-native-job").length === 2,
+    "native job: a NATIVE-path job seat folds EVERY fire — two fires on one durable session write two join rows, keyed on the dispatcher's per-fire stamp",
+  );
+
+  await inEveContext(seat, async () => {
+    await outcomeHook.events!["turn.started"]!({} as never, fireB);
+    await outcomeHook.events!["turn.completed"]!({} as never, fireB);
+  });
+  ok(
+    (await rowsFor(ROUTINE_AUDIT.fire)).filter((e) => detailOf(e, "routineId") === "r-native-job").length === 2,
+    "native job: …and a SECOND turn of the same native fire still folds nothing — the latch is per fire, not per turn",
+  );
+}
+
+{
+  const r = routine({ id: "r-keyless", consecutiveFailures: 0 });
+  await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
+  const seat = new FakeEveContext();
+  const first = nativeFiredCtx(r, "sess-keyless");
+  const second = nativeFiredCtx(r, "sess-keyless");
+  ok(
+    (first as unknown as AttrView).session.auth.current.attributes[ROUTINE_MARKER.fire] === undefined,
+    "keyless: the control — this bag carries neither per-fire stamp, so the sentinel is the only key left",
+  );
+  await inEveContext(seat, async () => {
+    await outcomeHook.events!["turn.started"]!({} as never, first);
+    await outcomeHook.events!["turn.completed"]!({} as never, first);
+    await outcomeHook.events!["turn.started"]!({} as never, second);
+    await outcomeHook.events!["turn.completed"]!({} as never, second);
+  });
+  ok(
+    (await rowsFor(ROUTINE_AUDIT.fire)).filter((e) => detailOf(e, "routineId") === "r-keyless").length === 1,
+    "keyless: a bag with no per-fire key folds AT MOST ONCE per session — the fail-closed sentinel is unchanged",
+  );
+}
+
+{
+  const r = routine({ id: "r-carriage" });
+  const seen = async (): Promise<number> => (await rowsFor(FIRE_ATTRS_SEEN_ACTION)).length;
+  const before = await seen();
+  const fire = firedCtx(r, "sess-carriage");
+
+  await inEveContext(new FakeEveContext(), async () => {
+    await carriageHook.events!["turn.started"]!({} as never, fire);
+  });
+  ok((await seen()) === before + 1, "carriage: the fire's own turn writes one routine.fire_attrs_seen row");
+
+  await inEveContext(new FakeEveContext(), async () => {
+    await carriageHook.events!["turn.started"]!({} as never, fire);
+  });
+  ok((await seen()) === before + 2, "carriage: a SECOND turn of the same fire writes a SECOND row — the volume is per schedule-authed TURN, never per fire");
+
+  const child = {
+    channel: { kind: "slack" },
+    session: {
+      ...(fire as unknown as { session: Record<string, unknown> }).session,
+      id: "sess-carriage-child",
+      parent: { sessionId: "sess-carriage" },
+    },
+  } as never;
+  await inEveContext(new FakeEveContext(), async () => {
+    await carriageHook.events!["turn.started"]!({} as never, child);
+  });
+  ok((await seen()) === before + 2, "carriage: a DELEGATED CHILD's turn writes NO row, though it inherits the fire's whole auth bag");
 }
 
 {

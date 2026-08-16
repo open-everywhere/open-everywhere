@@ -139,9 +139,14 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
   const dest = resolveRoutineTarget(r)!;
   const h = harness([r]);
   await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
-  const shared = routineFireAttributes(r, dest.attributes, dest.mode, true);
   const actual = h.fired[0]!.auth.attributes as Record<string, string>;
   const { [OE_TAINTED_FIRE_ATTR]: taint, ...rest } = actual;
+  const fireId = actual[ROUTINE_MARKER.fire];
+  ok(
+    typeof fireId === "string" && fireId.length > 0,
+    "OPE-626: an event fire stamps a per-fire id, so the outcome fold has a latch key on the native path as well as the windowed one",
+  );
+  const shared = routineFireAttributes(r, dest.attributes, dest.mode, true, undefined, fireId);
   ok(
     JSON.stringify(rest) === JSON.stringify(shared),
     "OPE-143: the fan-out's attribute bag is EXACTLY routineFireAttributes plus the declared delta — not a parallel shape that can drift",

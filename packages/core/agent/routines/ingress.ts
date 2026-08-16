@@ -292,18 +292,18 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
         entityBlock = renderHydratedEntity(h.entity);
       }
     }
+    const fireWakeId = mintWakeId();
     const auth = {
       authenticator: ev.source,
       principalType: "service",
       principalId: `${ev.source}:webhook`,
-      attributes: { ...routineFireAttributes(r, dest.attributes, dest.mode, internal, creatorInternal), ...taintedFireAttrs(!ev.redacted) },
+      attributes: { ...routineFireAttributes(r, dest.attributes, dest.mode, internal, creatorInternal, fireWakeId), ...taintedFireAttrs(!ev.redacted) },
     };
     const message = eventPrompt(r, {
       summary: ev.summary,
       ...(ev.fields["url"] ? { url: ev.fields["url"] } : {}),
       ...(entityBlock ? { entity: entityBlock } : {}),
     });
-    const fireWakeId = mintWakeId();
     const deliver = async (): Promise<void> => {
       if (dest.origin) {
         const diverted = await divertTriggeredFire(
