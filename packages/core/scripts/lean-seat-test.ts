@@ -271,6 +271,15 @@ inSession(() => {
   ok(workerText.includes("return_result"), "…the report verb is still named, because it is still the route that always reaches a person");
   ok(workerText.indexOf("return_result") < workerText.indexOf("ask_question"), "…and named FIRST — the valve steers on cost, and a question parks the worker while a report does not");
   ok(workerText.includes("ask_question"), "…while `ask_question` is named as the real second route it now is");
+  ok(workerText.includes("PARKS you there"), "…and the COST is stated plainly: a question parks the worker");
+  ok(
+    !/PARKS you there until\s+somebody answers/i.test(workerText) && !/until somebody answers/i.test(workerText),
+    "🔴 the valve does NOT promise an answer — this string is emitted for the roll-own worker too, whose return leg is undriven, so 'parks you until somebody answers' would be a false promise",
+  );
+  ok(
+    /an answer might not/i.test(workerText),
+    "🔴 …it says so positively rather than by omission: the worker is told the answer may never arrive, which is what makes the report the steer",
+  );
   ok(seatText.includes("ask_question") && !seatText.includes("return_result"), "the interactive seat's valve is unchanged — it still asks the room, and never names a worker verb");
 }
 

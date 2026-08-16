@@ -189,8 +189,9 @@ never say you can't produce one. Hand it off.`;
 (\`return_result\`, with \`error\` set if it blocked the task) — quote what you read, say what it
 asked for, and say what you need decided. Whoever delegated this is the one who can answer, and
 your report always reaches them. Use \`ask_question\` only when you genuinely cannot finish
-without the decision: it posts into the delegating conversation and PARKS you there until
-somebody answers, which may be a long wait.`
+without the decision: it posts into the delegating conversation and PARKS you there. Your report
+always gets through; an answer might not, so a question can leave you waiting a long time or for
+good.`
       : `use \`ask_question\` to check with the channel before continuing.`;
   const reporting = opts?.messageToolOnly
     ? `### Reporting

@@ -301,22 +301,43 @@ for (const [label, resolveOrigin] of [
     ok((await readBridgedQuestion(store, "o1", TOKEN)) === undefined, "6: a row with no request id is 'no question' — half a row can never address an answer");
   }
 
-  const outstanding = { requestId: TASK_REQUEST_ID, wakeId: "w1", taskId: "task_abc123", at: "2026-08-15T00:00:00.000Z" };
+  const ROOM_A = "slack:C_ASKED";
+  const ROOM_B = "slack:C_ELSEWHERE";
+  const outstanding = { requestId: TASK_REQUEST_ID, containerKey: ROOM_A, wakeId: "w1", taskId: "task_abc123", at: "2026-08-15T00:00:00.000Z" };
   const allow = async (): Promise<{ ok: true; floor: string }> => ({ ok: true, floor: "member" });
   {
-    const routed = await resolveInboundAnswerRouting({ internalDispatch: false }, { read: async () => outstanding, admit: allow });
-    ok(routed.kind === "answer", "6: ⭐ an attended message with an outstanding question is an ANSWER");
+    const routed = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM_A }, { read: async () => outstanding, admit: allow });
+    ok(routed.kind === "answer", "6: ⭐ an attended message IN THE ASKING ROOM with an outstanding question is an ANSWER");
     ok(routed.kind === "answer" && routed.requestId === TASK_REQUEST_ID, "6: …addressed to the exact request id eve's proxy map is keyed on");
     ok(routed.kind === "answer" && routed.floor === "member" && routed.taskId === "task_abc123", "6: …carrying the resolved floor and the derived task for the routed audit row");
   }
   {
-    const routed = await resolveInboundAnswerRouting({ internalDispatch: false }, { read: async () => undefined, admit: allow });
+    let admits = 0;
+    const countingAllow = async (): Promise<{ ok: true; floor: string }> => {
+      admits++;
+      return { ok: true, floor: "member" };
+    };
+    const routed = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM_B }, { read: async () => outstanding, admit: countingAllow });
+    ok(routed.kind === "wake" && routed.reason === "foreign-room", "6: 🔴 a message from ANOTHER ROOM on the same window token is an ordinary WAKE — it is not eaten as the answer");
+    ok(admits === 0, "6: 🔴 …and no admission runs for it: that person was not answering anything, so no refusal row is written against them");
+  }
+  {
+    const noStored = { requestId: TASK_REQUEST_ID, wakeId: "w1", at: "2026-08-15T00:00:00.000Z" };
+    const a = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM_A }, { read: async () => noStored, admit: allow });
+    ok(a.kind === "wake" && a.reason === "foreign-room", "6: 🔴 a row with NO stored room never answers — a pre-fix row on disk fails soft, it does not fail open");
+    const b = await resolveInboundAnswerRouting({ internalDispatch: false }, { read: async () => outstanding, admit: allow });
+    ok(b.kind === "wake" && b.reason === "foreign-room", "6: 🔴 an inbound wake whose room could not be derived never answers either");
+    const c = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: "" }, { read: async () => ({ ...outstanding, containerKey: "" }), admit: allow });
+    ok(c.kind === "wake" && c.reason === "foreign-room", "6: 🔴 two EMPTY room keys are not a match — an absent value never equals itself into an answer");
+  }
+  {
+    const routed = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM_A }, { read: async () => undefined, admit: allow });
     ok(routed.kind === "wake" && routed.reason === "no-question", "6: 🔴 a message with NO outstanding question routes as an ordinary WAKE — the window is not permanently in answer mode");
   }
   {
     let reads = 0;
     const routed = await resolveInboundAnswerRouting(
-      { internalDispatch: true },
+      { internalDispatch: true, containerKey: ROOM_A },
       {
         read: async () => {
           reads++;
@@ -329,13 +350,13 @@ for (const [label, resolveOrigin] of [
     ok(reads === 0, "6: …and short-circuits before the store read — the outstanding row is untouched, so the human can still answer");
   }
   {
-    const routed = await resolveInboundAnswerRouting({ internalDispatch: false }, { read: async () => outstanding, admit: async () => ({ ok: false }) });
+    const routed = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM_A }, { read: async () => outstanding, admit: async () => ({ ok: false }) });
     ok(routed.kind === "wake" && routed.reason === "refused", "6: 🔴 a REFUSED answerer does not answer — the message becomes an ordinary wake and the question stays open");
   }
   {
     let admits = 0;
     await resolveInboundAnswerRouting(
-      { internalDispatch: false },
+      { internalDispatch: false, containerKey: ROOM_A },
       {
         read: async () => undefined,
         admit: async () => {
@@ -345,6 +366,19 @@ for (const [label, resolveOrigin] of [
       },
     );
     ok(admits === 0, "6: the admission is not called when there is no outstanding question — no roster call on the ordinary path");
+  }
+  {
+    const store = makeStore();
+    ok(
+      (await rememberBridgedQuestion(store, "o1", TOKEN, { requestId: TASK_REQUEST_ID, containerKey: ROOM_A, wakeId: "w1" })) === true,
+      "6: a question records the room it was posted into",
+    );
+    const back = await readBridgedQuestion(store, "o1", TOKEN);
+    ok(back?.containerKey === ROOM_A, "6: 🔴 …and the room survives the store round trip — the fence compares a real value, not undefined");
+    const roundTripped = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM_A }, { read: async () => back, admit: allow });
+    ok(roundTripped.kind === "answer", "6: …so the SAME room answers off the stored row");
+    const elsewhere = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM_B }, { read: async () => back, admit: allow });
+    ok(elsewhere.kind === "wake" && elsewhere.reason === "foreign-room", "6: …and another room still does not, off that same stored row");
   }
 
   {

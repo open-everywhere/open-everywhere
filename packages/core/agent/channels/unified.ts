@@ -160,8 +160,14 @@ async function resolveInboundAnswer(
 ): Promise<UnifiedReceiveTarget["answer"] | undefined> {
   try {
     const org = deploymentOrg();
+    let containerKey: string | undefined;
+    try {
+      containerKey = unifiedThreadRef(input.window.origin).channelKey;
+    } catch {
+      containerKey = undefined;
+    }
     const routing = await resolveInboundAnswerRouting(
-      { internalDispatch: input.internalDispatch === true },
+      { internalDispatch: input.internalDispatch === true, ...(containerKey ? { containerKey } : {}) },
       {
         read: () => readBridgedQuestion(getOperationalStore(), org, bareToken),
         admit: async () => {
@@ -185,6 +191,8 @@ async function resolveInboundAnswer(
     if (routing.kind === "wake") {
       if (routing.reason === "refused") {
         ulog(`REFUSED an answer to the outstanding question on ${bareToken} — delivering it as an ordinary wake, the question stays open`);
+      } else if (routing.reason === "foreign-room") {
+        ulog(`the outstanding question on ${bareToken} is showing in another room — this message is an ordinary wake, the question stays open`);
       }
       return undefined;
     }
@@ -407,13 +415,25 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         );
         if (outcome.status === "bridged") {
           const bare = bareTokenFromEveContext(channel.continuation?.token);
+          let containerKey: string | undefined;
+          try {
+            containerKey = unifiedThreadRef(outcome.origin).channelKey;
+          } catch {
+            containerKey = undefined;
+          }
           const remembered =
             bare === undefined
               ? false
-              : await rememberBridgedQuestion(getOperationalStore(), org, bare, { requestId: question.requestId, ...(wakeId ? { wakeId } : {}) });
+              : await rememberBridgedQuestion(getOperationalStore(), org, bare, {
+                  requestId: question.requestId,
+                  ...(containerKey ? { containerKey } : {}),
+                  ...(wakeId ? { wakeId } : {}),
+                });
           ulog(
             `question bridge: posted ${question.toolName} (${question.kind}) to ${outcome.platform} for wake ${wakeId ?? "none"} — id ${outcome.id}` +
-              (remembered ? ` (answerable: ${question.requestId})` : " (NOT answerable — no outstanding-question row was written)"),
+              (remembered && containerKey
+                ? ` (answerable from ${containerKey}: ${question.requestId})`
+                : " (NOT answerable — no outstanding-question row, or no room to bind it to)"),
           );
         } else {
           console.warn(

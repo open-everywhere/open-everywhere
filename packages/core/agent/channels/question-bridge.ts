@@ -48,7 +48,7 @@ export function renderQuestionForSurface(question: BridgeableQuestion): string {
 export type QuestionDropReason = "unresolved-origin" | "post-failed";
 
 export type QuestionBridgeOutcome =
-  | { readonly status: "bridged"; readonly platform: string; readonly id: string }
+  | { readonly status: "bridged"; readonly platform: string; readonly id: string; readonly origin: UnifiedWakeOrigin }
   | { readonly status: "dropped"; readonly reason: QuestionDropReason };
 
 export interface QuestionBridgeScope {
@@ -100,7 +100,7 @@ export async function bridgeQuestionToSurface(
   try {
     const id = await deps.post(origin, text);
     await row(QUESTION_BRIDGED_AUDIT_ACTION, { ...base, platform: origin.platform, id });
-    return { status: "bridged", platform: origin.platform, id };
+    return { status: "bridged", platform: origin.platform, id, origin };
   } catch (err) {
     await row(QUESTION_DROPPED_AUDIT_ACTION, {
       ...base,
@@ -125,6 +125,7 @@ export function bridgedQuestionKey(bareToken: string): string {
 
 export interface OutstandingQuestion {
   readonly requestId: string;
+  readonly containerKey?: string;
   readonly wakeId?: string;
   readonly taskId?: string;
   readonly at: string;
@@ -147,7 +148,7 @@ export async function rememberBridgedQuestion(
   store: BridgedQuestionStore,
   org: string,
   bareToken: string,
-  input: { readonly requestId: string; readonly wakeId?: string; readonly at?: string },
+  input: { readonly requestId: string; readonly containerKey?: string; readonly wakeId?: string; readonly at?: string },
 ): Promise<boolean> {
   try {
     if (bareToken.length === 0 || input.requestId.length === 0) return false;
@@ -155,6 +156,7 @@ export async function rememberBridgedQuestion(
     const taskId = taskIdOfBridgedRequestId(input.requestId);
     const row: OutstandingQuestion = {
       requestId: input.requestId,
+      ...(input.containerKey !== undefined && input.containerKey.length > 0 ? { containerKey: input.containerKey } : {}),
       ...(input.wakeId !== undefined && input.wakeId.length > 0 ? { wakeId: input.wakeId } : {}),
       ...(taskId !== undefined ? { taskId } : {}),
       at,
@@ -176,6 +178,7 @@ export async function readBridgedQuestion(store: BridgedQuestionStore, org: stri
     if (typeof requestId !== "string" || requestId.length === 0) return undefined;
     return {
       requestId,
+      ...(typeof parsed?.containerKey === "string" && parsed.containerKey.length > 0 ? { containerKey: parsed.containerKey } : {}),
       ...(typeof parsed?.wakeId === "string" && parsed.wakeId.length > 0 ? { wakeId: parsed.wakeId } : {}),
       ...(typeof parsed?.taskId === "string" && parsed.taskId.length > 0 ? { taskId: parsed.taskId } : {}),
       at: typeof parsed?.at === "string" ? parsed.at : "",
@@ -196,7 +199,7 @@ export async function forgetBridgedQuestion(store: BridgedQuestionStore, org: st
 
 export type InboundAnswerRouting =
   | { readonly kind: "answer"; readonly requestId: string; readonly floor: string; readonly wakeId?: string; readonly taskId?: string }
-  | { readonly kind: "wake"; readonly reason: "internal-dispatch" | "no-question" | "refused" };
+  | { readonly kind: "wake"; readonly reason: "internal-dispatch" | "no-question" | "foreign-room" | "refused" };
 
 export interface InboundAnswerDeps {
   readonly read: () => Promise<OutstandingQuestion | undefined>;
@@ -204,12 +207,20 @@ export interface InboundAnswerDeps {
 }
 
 export async function resolveInboundAnswerRouting(
-  input: { readonly internalDispatch: boolean },
+  input: {
+    readonly internalDispatch: boolean;
+    readonly containerKey?: string;
+  },
   deps: InboundAnswerDeps,
 ): Promise<InboundAnswerRouting> {
   if (input.internalDispatch) return { kind: "wake", reason: "internal-dispatch" };
   const outstanding = await deps.read();
   if (outstanding === undefined) return { kind: "wake", reason: "no-question" };
+  const asked = outstanding.containerKey;
+  const here = input.containerKey;
+  if (asked === undefined || asked.length === 0 || here === undefined || here.length === 0 || asked !== here) {
+    return { kind: "wake", reason: "foreign-room" };
+  }
   const verdict = await deps.admit();
   if (!verdict.ok) return { kind: "wake", reason: "refused" };
   return {
