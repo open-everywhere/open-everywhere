@@ -9,6 +9,7 @@ import {
   planRequiredEndpoints,
   proveKeyOpensRow,
   renderCensusReport,
+  runtimeSignalFinding,
   type MountedRoute,
 } from "../packages/core/agent/ops/census.js";
 import type { Bundle } from "../packages/core/agent/access/bundle.js";
@@ -414,9 +415,49 @@ check("censusResult: no `heartbeats` passed at all is byte-identical to today �
   assert.doesNotMatch(renderCensusReport(result).join("\n"), /CRON HEARTBEATS/u);
 });
 
+check("runtimeSignalFinding: hasDeploymentId true is green and names the SIGNAL, not the consequence", () => {
+  const f = runtimeSignalFinding({ hasDeploymentId: true });
+  assert.equal(f.ok, true);
+  assert.match(f.detail, /non-empty VERCEL_DEPLOYMENT_ID/u);
+  assert.match(f.detail, /SIGNAL only/u, "the finding itself disclaims the consequence it does not prove");
+});
+
+check("runtimeSignalFinding: hasDeploymentId false is red — the incident this half exists to catch", () => {
+  const f = runtimeSignalFinding({ hasDeploymentId: false });
+  assert.equal(f.ok, false);
+  assert.match(f.detail, /EMPTY/u);
+});
+
+check("runtimeSignalFinding: 🔴 ANTI-VACUITY — an UNREACHABLE route (undefined) is ALSO red, never a silent pass", () => {
+  const f = runtimeSignalFinding(undefined);
+  assert.equal(f.ok, false, "an unproven signal must never read as green by omission");
+  assert.match(f.detail, /did not answer/u);
+});
+
+check("censusResult: a red runtimeSignal alone fails the whole census, even with every credential and route clean", () => {
+  const result = clean({ runtimeSignal: runtimeSignalFinding({ hasDeploymentId: false }) });
+  assert.equal(result.ok, false, "an empty VERCEL_DEPLOYMENT_ID fails the census on its own");
+  const report = renderCensusReport(result).join("\n");
+  assert.match(report, /RUNTIME-REVISION SIGNAL \(OPE-658\)/u);
+  assert.match(report, /runtime-revision signal: .*EMPTY/u, "the red summary names the finding, not just a generic failure");
+});
+
+check("censusResult: a green runtimeSignal alongside a clean credential/route census is still a clean census", () => {
+  const result = clean({ runtimeSignal: runtimeSignalFinding({ hasDeploymentId: true }) });
+  assert.equal(result.ok, true);
+  assert.match(renderCensusReport(result).join("\n"), /✓ .*non-empty VERCEL_DEPLOYMENT_ID/u);
+});
+
+check("censusResult: no `runtimeSignal` passed at all is byte-identical to today — the half is additive, never a silent new gate", () => {
+  const result = clean();
+  assert.equal(result.runtimeSignal, undefined);
+  assert.equal(result.ok, true);
+  assert.doesNotMatch(renderCensusReport(result).join("\n"), /RUNTIME-REVISION SIGNAL/u);
+});
+
 if (failures.length > 0) {
   console.error(`✗ deploy-census: ${failures.length} of ${checks} check(s) FAILED`);
   for (const f of failures) console.error(`  ✗ ${f}`);
   process.exit(1);
 }
-console.log(`✓ deploy-census: ${checks} check(s) passed (required-set derivation, endpoint plan, the four reds, the anti-vacuity control, the OPE-635 cron heartbeat half — all offline)`);
+console.log(`✓ deploy-census: ${checks} check(s) passed (required-set derivation, endpoint plan, the four reds, the anti-vacuity control, the OPE-635 cron heartbeat half, the OPE-658 runtime-revision signal half — all offline)`);

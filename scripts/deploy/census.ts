@@ -10,6 +10,7 @@ import {
   planRequiredEndpoints,
   proveKeyOpensRow,
   renderCensusReport,
+  runtimeSignalFinding,
   type EndpointObservation,
   type HeartbeatFinding,
   type HeartbeatObservation,
@@ -17,11 +18,13 @@ import {
   type MountedRoute,
   type PlumbingCredential,
   type RequiredHeartbeat,
+  type RuntimeSignalFinding,
 } from "../../packages/core/agent/ops/census.js";
 import { readAudit } from "../../packages/core/agent/audit/audit.js";
 import { decryptCredential } from "../../packages/core/agent/credentials/db-broker.js";
 import { deploymentOrg } from "../../packages/core/agent/identity/binding.js";
 import { getOperationalStore } from "../../packages/core/agent/operational/provider.js";
+import { CONTROL_READ_RUNTIME_SIGNAL_PATH } from "../../packages/core/agent/control/read-route.js";
 import { connectOperatorStore } from "../../packages/core/scripts/operator-store-connect.js";
 
 import { loadBundles } from "../../agent/access/bundles.js";
@@ -159,6 +162,24 @@ async function probe(target: string, path: string, timeoutMs: number): Promise<E
   }
 }
 
+async function fetchRuntimeSignal(target: string, token: string, timeoutMs: number): Promise<{ hasDeploymentId: boolean } | undefined> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${target}${CONTROL_READ_RUNTIME_SIGNAL_PATH}`, {
+      headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+      signal: controller.signal,
+    });
+    if (!res.ok) return undefined;
+    const body = (await res.json()) as { hasDeploymentId?: unknown };
+    return typeof body.hasDeploymentId === "boolean" ? { hasDeploymentId: body.hasDeploymentId } : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 try {
   const target = resolveTarget();
   const timeoutMs = Number(args.values.get("timeout-ms") ?? "20000") || 20_000;
@@ -224,6 +245,22 @@ try {
     heartbeatLimits.push("the cron-heartbeat check DID NOT RUN (--no-heartbeat-check) — nothing here proves directory-sync, tidy or dream-mode3 are still firing");
   }
 
+  let runtimeSignal: RuntimeSignalFinding | undefined;
+  const runtimeSignalLimits: string[] = [];
+  if (!args.flags.has("no-runtime-signal-check")) {
+    const runtimeToken = (process.env.OE_DEPLOY_CONTROL_TOKEN?.trim() || process.env.E2E_CONTROL_READ_TOKEN?.trim()) ?? "";
+    if (!runtimeToken) {
+      runtimeSignalLimits.push(
+        "the runtime-revision signal check DID NOT RUN — no OE_DEPLOY_CONTROL_TOKEN / E2E_CONTROL_READ_TOKEN set, so nothing here proves VERCEL_DEPLOYMENT_ID is non-empty on the deployed function",
+      );
+    } else {
+      const observed = await fetchRuntimeSignal(target, runtimeToken, timeoutMs);
+      runtimeSignal = runtimeSignalFinding(observed);
+    }
+  } else {
+    runtimeSignalLimits.push("the runtime-revision signal check DID NOT RUN (--no-runtime-signal-check)");
+  }
+
   const result = censusResult({
     target,
     storeLabel: `${store.label}, org "${org}"`,
@@ -233,7 +270,8 @@ try {
     observations,
     ...(keyProof ? { keyProof } : {}),
     heartbeats,
-    limits: [...limits, ...keyCheckLimits, ...heartbeatLimits, ...STANDING_LIMITS],
+    ...(runtimeSignal ? { runtimeSignal } : {}),
+    limits: [...limits, ...keyCheckLimits, ...heartbeatLimits, ...runtimeSignalLimits, ...STANDING_LIMITS],
   });
 
   if (json) console.log(JSON.stringify(result, null, 2));

@@ -314,6 +314,35 @@ export function heartbeatFindings(input: {
   return [...gated, ...reported];
 }
 
+export interface RuntimeSignalFinding {
+  readonly ok: boolean;
+  readonly detail: string;
+}
+
+export function runtimeSignalFinding(observed: { readonly hasDeploymentId: boolean } | undefined): RuntimeSignalFinding {
+  if (observed === undefined) {
+    return {
+      ok: false,
+      detail:
+        "GET /control/v1/runtime-signal did not answer — no E2E_CONTROL_READ_TOKEN/OE_DEPLOY_CONTROL_TOKEN set, the route is unmounted " +
+        "(OE_CONTROL_READ_TOKENS unset on the deployment), or the call failed. This census cannot see whether the deployed function's env carries VERCEL_DEPLOYMENT_ID.",
+    };
+  }
+  return observed.hasDeploymentId
+    ? {
+        ok: true,
+        detail:
+          "the deployed function's process env carries a non-empty VERCEL_DEPLOYMENT_ID — the fact eve's dynamic-tool-roster refresh keys off " +
+          "(window-gated-test.ts §6). This proves the SIGNAL only, not that any standing session has consumed it.",
+      }
+    : {
+        ok: false,
+        detail:
+          "VERCEL_DEPLOYMENT_ID is EMPTY on the deployed function. Eve falls back to a compiled-artifacts cache key for the refresh revision — " +
+          "a standing seat's roster may not re-derive the way this deployment intends.",
+      };
+}
+
 export interface CredentialFinding {
   readonly ref: string;
   readonly reason: string;
@@ -342,6 +371,7 @@ export interface CensusResult {
   readonly problems: readonly string[];
   readonly keyProof?: KeyProof;
   readonly heartbeats: readonly HeartbeatFinding[];
+  readonly runtimeSignal?: RuntimeSignalFinding;
   readonly limits: readonly string[];
 }
 
@@ -359,6 +389,7 @@ export function censusResult(input: {
   readonly observations: readonly EndpointObservation[];
   readonly keyProof?: KeyProof;
   readonly heartbeats?: readonly HeartbeatFinding[];
+  readonly runtimeSignal?: RuntimeSignalFinding;
   readonly limits?: readonly string[];
 }): CensusResult {
   const present = new Set(input.presentRefs);
@@ -378,7 +409,8 @@ export function censusResult(input: {
     credentials.every((c) => c.present) &&
     endpoints.every((e) => e.ok) &&
     (input.keyProof?.ok ?? true) &&
-    heartbeats.every((h) => h.ok);
+    heartbeats.every((h) => h.ok) &&
+    (input.runtimeSignal?.ok ?? true);
   return {
     ok,
     target: input.target,
@@ -390,6 +422,7 @@ export function censusResult(input: {
     problems: input.plan.problems,
     ...(input.keyProof ? { keyProof: input.keyProof } : {}),
     heartbeats,
+    ...(input.runtimeSignal ? { runtimeSignal: input.runtimeSignal } : {}),
     limits: input.limits ?? [],
   };
 }
@@ -448,6 +481,12 @@ export function renderCensusReport(result: CensusResult): string[] {
     }
   }
 
+  if (result.runtimeSignal) {
+    lines.push("");
+    lines.push("  RUNTIME-REVISION SIGNAL (OPE-658)");
+    lines.push(`    ${result.runtimeSignal.ok ? "✓" : "✗"} ${result.runtimeSignal.detail}`);
+  }
+
   if (result.problems.length > 0) {
     lines.push("");
     lines.push(`  CONFIG PROBLEMS (${result.problems.length})`);
@@ -472,6 +511,7 @@ export function renderCensusReport(result: CensusResult): string[] {
     if (dead.length > 0) lines.push(`  route(s) that did not answer as required: ${dead.join(", ")}`);
     if (stale.length > 0) lines.push(`  cron(s) with no fresh heartbeat: ${stale.join(", ")}`);
     if (result.keyProof && !result.keyProof.ok) lines.push(`  encryption key: ${result.keyProof.detail}`);
+    if (result.runtimeSignal && !result.runtimeSignal.ok) lines.push(`  runtime-revision signal: ${result.runtimeSignal.detail}`);
     if (result.problems.length > 0) lines.push(`  config problem(s): ${result.problems.length} — see above`);
     lines.push("  A missing row fails CLOSED at first use, with no audit trace. Store it before trusting this deploy.");
   }

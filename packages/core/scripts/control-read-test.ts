@@ -23,7 +23,16 @@ delete process.env.OE_CONTROL_READ_TOKENS;
 const prevPricing = process.env.OE_MODEL_PRICING;
 process.env.OE_MODEL_PRICING = JSON.stringify({ "test/model-a": { inPerMtok: 1, outPerMtok: 2 } });
 
-const { handleUsageWindowRead, handleAuditWindowRead, handleSessionTranscriptRead, CONTROL_READ_USAGE_PATH, CONTROL_READ_AUDIT_PATH, CONTROL_READ_TRANSCRIPT_PATH } = await import("../agent/control/read-route.js");
+const {
+  handleUsageWindowRead,
+  handleAuditWindowRead,
+  handleSessionTranscriptRead,
+  handleRuntimeSignalRead,
+  CONTROL_READ_USAGE_PATH,
+  CONTROL_READ_AUDIT_PATH,
+  CONTROL_READ_TRANSCRIPT_PATH,
+  CONTROL_READ_RUNTIME_SIGNAL_PATH,
+} = await import("../agent/control/read-route.js");
 const { appendUsageEvent } = await import("../agent/spend/usage-events.js");
 const { readAudit, appendAudit } = await import("../agent/audit/audit.js");
 const { _resetPricingCacheForTest } = await import("../agent/spend/pricing.js");
@@ -411,14 +420,63 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
 }
 
 {
+  const prevDeploymentId = process.env.VERCEL_DEPLOYMENT_ID;
+  function getSignal(token?: string): Promise<Response> {
+    return handleRuntimeSignalRead(
+      new Request(`https://oe.example${CONTROL_READ_RUNTIME_SIGNAL_PATH}`, {
+        headers: token ? { authorization: `Bearer ${token}` } : {},
+      }),
+    );
+  }
+
+  ok((await getSignal()).status === 401, "runtime-signal: configured + no bearer → 401");
+  ok((await getSignal("not-the-token")).status === 401, "runtime-signal: configured + wrong token → 401");
+
+  delete process.env.VERCEL_DEPLOYMENT_ID;
+  {
+    const res = await getSignal(SECRET);
+    ok(res.status === 200, "runtime-signal: good token → 200");
+    ok((res.headers.get("content-type") ?? "").includes("application/json"), "runtime-signal 200 is JSON");
+    const body = (await res.json()) as { hasDeploymentId: boolean };
+    ok(body.hasDeploymentId === false, "runtime-signal: an EMPTY VERCEL_DEPLOYMENT_ID reports hasDeploymentId: false — the incident this route exists to catch");
+  }
+
+  process.env.VERCEL_DEPLOYMENT_ID = "   ";
+  {
+    const body = (await (await getSignal(SECRET)).json()) as { hasDeploymentId: boolean };
+    ok(body.hasDeploymentId === false, "runtime-signal: a whitespace-only VERCEL_DEPLOYMENT_ID also reports false (trimmed, not just falsy-checked)");
+  }
+
+  process.env.VERCEL_DEPLOYMENT_ID = "dpl_test_only_never_a_real_id";
+  {
+    const res = await getSignal(SECRET);
+    const raw = await res.text();
+    const body = JSON.parse(raw) as { hasDeploymentId: boolean };
+    ok(body.hasDeploymentId === true, "runtime-signal: a non-empty VERCEL_DEPLOYMENT_ID reports hasDeploymentId: true — the positive control");
+    ok(!raw.includes("dpl_test_only_never_a_real_id"), "🔴 PRESENCE, NEVER VALUE — the raw deployment id never leaves the response body");
+    ok(Object.keys(body).length === 1, "the body carries exactly one field — nothing else about the runtime rides along");
+  }
+
+  const svc = await readAudit({ org: "acme", action: "control.service_call", principalId: "svc:e2e-harness" });
+  ok(
+    svc.some((e) => (e.detail as { view?: string }).view === "runtime_signal"),
+    "runtime-signal: authenticated read is self-audited as control.service_call view=runtime_signal",
+  );
+
+  if (prevDeploymentId === undefined) delete process.env.VERCEL_DEPLOYMENT_ID;
+  else process.env.VERCEL_DEPLOYMENT_ID = prevDeploymentId;
+}
+
+{
   const channel = (await import("../agent/channels/control-read.js")).default as unknown as {
     routes: { method: string; path: string }[];
   };
-  ok(channel.routes.length === 4 && channel.routes.every((r) => r.method === "GET"), "the channel mounts exactly four GET routes (usage + audit + unified-audit + transcript)");
+  ok(channel.routes.length === 5 && channel.routes.every((r) => r.method === "GET"), "the channel mounts exactly five GET routes (usage + audit + unified-audit + transcript + runtime-signal)");
   ok(channel.routes.some((r) => r.path === CONTROL_READ_USAGE_PATH), "…one at /control/v1/usage");
   ok(channel.routes.some((r) => r.path === CONTROL_READ_AUDIT_PATH), "…one at /control/v1/audit");
   ok(channel.routes.some((r) => r.path === "/control/v1/unified-audit"), "…one at /control/v1/unified-audit");
   ok(channel.routes.some((r) => r.path === CONTROL_READ_TRANSCRIPT_PATH), "…one at /control/v1/session/:sessionId/transcript");
+  ok(channel.routes.some((r) => r.path === CONTROL_READ_RUNTIME_SIGNAL_PATH), "…one at /control/v1/runtime-signal (OPE-658)");
 
   const agentDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "agent");
   for (const file of ["control/read-route.ts", "channels/control-read.ts"]) {
@@ -435,4 +493,4 @@ if (prevPricing === undefined) delete process.env.OE_MODEL_PRICING;
 else process.env.OE_MODEL_PRICING = prevPricing;
 
 rmSync(dir, { recursive: true, force: true });
-console.log(`✓ control-read route: ${passed} assertions passed (fail-closed 404 / 401 / 400 / priced 200 / audited / structurally read-only)`);
+console.log(`✓ control-read route: ${passed} assertions passed (fail-closed 404 / 401 / 400 / priced 200 / runtime-signal presence-never-value / audited / structurally read-only)`);

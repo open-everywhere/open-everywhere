@@ -10,6 +10,7 @@ export const CONTROL_READ_USAGE_PATH = "/control/v1/usage";
 export const CONTROL_READ_AUDIT_PATH = "/control/v1/audit";
 export const CONTROL_READ_UNIFIED_AUDIT_PATH = "/control/v1/unified-audit";
 export const CONTROL_READ_TRANSCRIPT_PATH = "/control/v1/session/:sessionId/transcript";
+export const CONTROL_READ_RUNTIME_SIGNAL_PATH = "/control/v1/runtime-signal";
 const AUDIT_MAX_LIMIT = 1000;
 const AUDIT_DEFAULT_LIMIT = 200;
 const TRANSCRIPT_DEFAULT_LIMIT = 2000;
@@ -152,6 +153,28 @@ export async function handleUnifiedAuditRead(req: Request): Promise<Response> {
   } catch (err) {
     return json(400, { error: err instanceof Error ? err.message : String(err) });
   }
+}
+
+export async function handleRuntimeSignalRead(req: Request): Promise<Response> {
+  const entries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
+  if (entries.length === 0) return new Response("not found", { status: 404 });
+
+  const match = /^Bearer\s+(.+)$/i.exec((req.headers.get("authorization") ?? "").trim());
+  const identity = match ? verifyServiceToken(match[1], entries) : null;
+  if (!identity) return json(401, { error: "unauthorized: missing or invalid bearer token" });
+
+  const hasDeploymentId = (process.env.VERCEL_DEPLOYMENT_ID ?? "").trim().length > 0;
+
+  await appendAudit({
+    org: deploymentOrg(),
+    platform: "control",
+    workspace: "control",
+    principalId: identity.subject,
+    action: "control.service_call",
+    detail: { service: identity.subject, view: "runtime_signal", hasDeploymentId },
+  });
+
+  return json(200, { hasDeploymentId });
 }
 
 export interface TranscriptEvent {
