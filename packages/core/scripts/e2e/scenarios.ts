@@ -3567,10 +3567,11 @@ export const SCENARIOS: readonly Scenario[] = [
             },
             { timeoutMs: FILE_REPLY_WAIT, what: "a taint.verdict row for kind notion after the forge-replayed wake" },
           );
-          ctx.gate(
-            rowC !== undefined,
-            "ARM C (notion, hard): the forge-replayed wake produced a real `read_notion_page` call — a `taint.verdict` row for kind `notion` landed",
-          );
+          if (rowC === undefined) {
+            ctx.log(
+              "ARM C (notion): the forge-replayed wake produced NO `taint.verdict` row for kind `notion` within the wait — the doc-supervisor did not re-read the page on this run. LOGGED, not gated: that is a model habit, not a taint-plane verdict, and gating on it aborted ARM D and ARM E (see this arm's header). S-TAINT-DRYRUN's Arm B is the leg that proves the Notion route reaches the plane.",
+            );
+          }
           if (rowC) {
             const dC = rowC[0].detail as { divergence?: unknown; applied?: unknown; tableTier?: unknown; assumed?: unknown; taintsToday?: unknown };
             ctx.log(`ARM C (notion): divergence=${String(dC.divergence)} applied=${String(dC.applied)} tableTier=${String(dC.tableTier)} assumed=${String(dC.assumed)}`);
