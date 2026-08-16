@@ -4,15 +4,21 @@ import { fileURLToPath } from "node:url";
 
 import {
   censusResult,
+  cronCeilingHours,
+  heartbeatFindings,
   planRequiredCredentials,
   planRequiredEndpoints,
   proveKeyOpensRow,
   renderCensusReport,
   type EndpointObservation,
+  type HeartbeatFinding,
+  type HeartbeatObservation,
   type KeyProof,
   type MountedRoute,
   type PlumbingCredential,
+  type RequiredHeartbeat,
 } from "../../packages/core/agent/ops/census.js";
+import { readAudit } from "../../packages/core/agent/audit/audit.js";
 import { decryptCredential } from "../../packages/core/agent/credentials/db-broker.js";
 import { deploymentOrg } from "../../packages/core/agent/identity/binding.js";
 import { getOperationalStore } from "../../packages/core/agent/operational/provider.js";
@@ -51,7 +57,47 @@ const STANDING_LIMITS: readonly string[] = [
   "the AES key tested here is THIS process's key. It proves the stored rows are openable; nothing observable from outside proves the deployment's own environment still carries OE_CREDENTIAL_ENCRYPTION_KEY (OPE-641).",
   "env-brokered secrets (an env var NAME as the ref) are not store rows, so the census cannot see whether the deployment holds them.",
   "the store censused is the one THIS process's DATABASE_URL opens. Nothing joins it to the deployment at --target, so pointing the two at different environments reports a clean census of the wrong pair.",
+  "the cron heartbeats (OPE-635) read the audit trail through THIS process's DATABASE_URL, same as the credential rows above — the same wrong-store caveat applies to them.",
 ];
+
+const GATED_SCHEDULES: readonly { readonly file: string; readonly action: string; readonly reason: string }[] = [
+  {
+    file: "directory-sync.ts",
+    action: "identity.directory.sync",
+    reason:
+      "the daily directory-sync cron (agent/schedules/directory-sync.ts) writes this row on EVERY run since OPE-635, armed or not — a stale one means the cron itself stopped, not merely that the directory had nothing to report.",
+  },
+  {
+    file: "tidy.ts",
+    action: "memory.tidy_tick",
+    reason:
+      "the daily tidy cron (agent/schedules/tidy.ts) writes this heartbeat on EVERY run since OPE-635, whether or not anything needed tidying — a stale one means the cron itself stopped.",
+  },
+  {
+    file: "dream-mode3.ts",
+    action: "dream.mode3_tick",
+    reason:
+      "the weekly dream-mode3 cron (agent/schedules/dream-mode3.ts) writes this heartbeat on EVERY run since OPE-635, including an empty week — a stale one means the cron itself stopped.",
+  },
+];
+
+const REPORTED_HEARTBEATS: readonly { readonly action: string; readonly reason: string }[] = [
+  { action: "routine.fire", reason: "fires only when a routine is due — total absence is a legitimate state on a deployment with none configured, so this is reported, never gated." },
+];
+
+async function planHeartbeats(): Promise<readonly RequiredHeartbeat[]> {
+  const dir = join(REPO_ROOT, "agent", "schedules");
+  const out: RequiredHeartbeat[] = [];
+  for (const s of GATED_SCHEDULES) {
+    const mod = (await import(join(dir, s.file))) as { default?: { cron?: string } };
+    const cron = mod.default?.cron;
+    if (typeof cron !== "string" || cron.length === 0) {
+      throw new DeployConfigError(`agent/schedules/${s.file} has no default-exported \`cron\` string — cannot derive its heartbeat bound.`);
+    }
+    out.push({ action: s.action, reason: s.reason, maxAgeHours: cronCeilingHours(cron) });
+  }
+  return out;
+}
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -162,6 +208,21 @@ try {
     }
   }
 
+  let heartbeats: readonly HeartbeatFinding[] = [];
+  const heartbeatLimits: string[] = [];
+  if (!args.flags.has("no-heartbeat-check")) {
+    const gatedPlan = await planHeartbeats();
+    const actions = [...gatedPlan.map((h) => h.action), ...REPORTED_HEARTBEATS.map((h) => h.action)];
+    const heartbeatObservations: HeartbeatObservation[] = [];
+    for (const action of actions) {
+      const rows = await readAudit({ org, action, limit: 1 });
+      heartbeatObservations.push({ action, ...(rows[0] ? { lastSeenIso: rows[0].ts } : {}) });
+    }
+    heartbeats = heartbeatFindings({ gated: gatedPlan, reported: REPORTED_HEARTBEATS, observations: heartbeatObservations, now: new Date() });
+  } else {
+    heartbeatLimits.push("the cron-heartbeat check DID NOT RUN (--no-heartbeat-check) — nothing here proves directory-sync, tidy or dream-mode3 are still firing");
+  }
+
   const result = censusResult({
     target,
     storeLabel: `${store.label}, org "${org}"`,
@@ -170,7 +231,8 @@ try {
     presentRefs,
     observations,
     ...(keyProof ? { keyProof } : {}),
-    limits: [...limits, ...keyCheckLimits, ...STANDING_LIMITS],
+    heartbeats,
+    limits: [...limits, ...keyCheckLimits, ...heartbeatLimits, ...STANDING_LIMITS],
   });
 
   if (json) console.log(JSON.stringify(result, null, 2));
