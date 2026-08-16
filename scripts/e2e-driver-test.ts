@@ -772,7 +772,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
     [ENV.notionBotUserId]: "bot-user-uuid",
     [ENV.notionWorkspaceId]: "ws-uuid",
   });
-  ok(notCore.ok && notCore.cfg.webhookSecret === undefined && notCore.cfg.anchorOnTopic === undefined, "notionAmbient resolves on the four core vars alone; forge secret + anchors stay undefined");
+  ok(notCore.ok && notCore.cfg.webhookSecret === undefined && notCore.cfg.anchorOnTopic === undefined && notCore.cfg.anchorHuman === undefined, "notionAmbient resolves on the four core vars alone; forge secret + anchors (incl. the OPE-576 human anchor) stay undefined");
   const notFull = resolveNotionAmbient({
     [ENV.notionDriverKey]: "secret_x",
     [ENV.notionAmbientPageId]: "page-uuid",
@@ -782,8 +782,9 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
     [ENV.notionAnchorOnTopic]: "c-ontopic-1",
     [ENV.notionAnchorOnTopic2]: "c-ontopic-2",
     [ENV.notionAnchorOffTopic]: "c-offtopic",
+    [ENV.notionAnchorHuman]: "c-human-1",
   });
-  ok(notFull.ok && notFull.cfg.webhookSecret === "verif-token" && notFull.cfg.anchorOnTopic === "c-ontopic-1" && notFull.cfg.anchorOnTopic2 === "c-ontopic-2" && notFull.cfg.anchorOffTopic === "c-offtopic", "notionAmbient cfg carries the forge secret + the three anchor ids when they're set");
+  ok(notFull.ok && notFull.cfg.webhookSecret === "verif-token" && notFull.cfg.anchorOnTopic === "c-ontopic-1" && notFull.cfg.anchorOnTopic2 === "c-ontopic-2" && notFull.cfg.anchorOffTopic === "c-offtopic" && notFull.cfg.anchorHuman === "c-human-1", "notionAmbient cfg carries the forge secret + the three anchor ids + the OPE-576 human anchor when they're set");
   ok(notFull.ok && notFull.cfg.botUserId === "bot-user-uuid" && notFull.cfg.workspaceId === "ws-uuid", "notionAmbient cfg carries bot user id (self-loop) + workspace id (envelope)");
 
   const { buildBlockCommentBody } = await import("../packages/core/scripts/e2e/notion-driver.js");

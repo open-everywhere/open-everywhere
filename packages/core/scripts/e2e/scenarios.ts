@@ -3249,22 +3249,27 @@ export const SCENARIOS: readonly Scenario[] = [
 
       if (ctx.notionAmbient) {
         const not = ctx.notionAmbient;
-        const blocks = await not.pageBlocks();
-        if (blocks.length === 0) {
-          ctx.log("arm B: the Notion fixture page has no blocks to comment on — skipped (fixture shape, not a product finding)");
-        } else {
+        if (not.webhookSecret && not.anchorHuman && ctx.targetUrl) {
           const since = new Date().toISOString();
-          const { discussionId } = await not.createBlockDiscussion(blocks[0], "Open Everywhere — please READ this page's content and summarise it in one line right here.");
+          const forge = await not.forgeCommentCreated(ctx.targetUrl, not.anchorHuman, { signed: true });
+          ctx.gate(forge.status === 200, "ARM B: signed forge-replay of the human anchor comment is acked (200)");
           const notionRows = await awaitRows("notion", 'a taint.verdict row with kind "notion" (read_notion_page declaring the bound workspace tier)');
-          ctx.gate(notionRows !== undefined, "ARM B: a Notion page read produced a `taint.verdict` row for kind `notion`");
-          const nd = notionRows![0].detail as { assumed?: unknown; divergence?: unknown };
+          ctx.gate(notionRows !== undefined, "ARM B: the forge-replayed wake produced a real read_notion_page call — a `taint.verdict` row for kind `notion` landed");
+          if (notionRows) {
+            const nd = notionRows[0].detail as { assumed?: unknown; divergence?: unknown };
+            ctx.log(
+              `arm B: notion row divergence=${String(nd.divergence)} assumed=${String(nd.assumed)} — ` +
+                (nd.assumed === true
+                  ? "ASSUMED, which since OPE-331 means this deployment has never VOUCHED the workspace (agent/identity/surfaces.ts), not that the metadata could not reach the seam"
+                  : "a REAL verdict off the vouched workspace tier"),
+            );
+          }
+          const discussionId = await not.discussionOf(not.anchorHuman);
+          if (discussionId) await not.awaitBotReplyIn(discussionId, since, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+        } else {
           ctx.log(
-            `arm B: notion row divergence=${String(nd.divergence)} assumed=${String(nd.assumed)} — ` +
-              (nd.assumed === true
-                ? "ASSUMED, which since OPE-331 means this deployment has never VOUCHED the workspace (agent/identity/surfaces.ts), not that the metadata could not reach the seam"
-                : "a REAL verdict off the vouched workspace tier"),
+            "arm B (notion) SKIPPED — forge-replay needs E2E_NOTION_WEBHOOK_SECRET + E2E_NOTION_ANCHOR_HUMAN + E2E_TARGET_URL; `createBlockDiscussion` cannot wake the classifier (a driver-authored comment is always Notion `type: \"bot\"`, dropped before any read — OPE-576). The `notion` row shape is unpopulated in this run's sample.",
           );
-          await not.awaitBotReplyIn(discussionId, since, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
         }
       } else {
         ctx.log("arm B (notion) SKIPPED — no notionAmbient fixture on this deployment. The `notion` row shape is unpopulated in this run's sample; provision E2E_NOTION_* to cover it.");
@@ -3532,9 +3537,66 @@ export const SCENARIOS: readonly Scenario[] = [
           );
         }
 
-        if (ctx.notionAmbient) {
+        if (ctx.notionAmbient && ctx.notionAmbient.webhookSecret && ctx.notionAmbient.anchorHuman && ctx.targetUrl) {
+          const not = ctx.notionAmbient;
+          const anchorHuman = not.anchorHuman!;
+          const sinceC = new Date().toISOString();
+          const forgeC = await not.forgeCommentCreated(ctx.targetUrl, anchorHuman, { signed: true });
+          ctx.gate(forgeC.status === 200, "ARM C (notion): signed forge-replay of the human anchor comment is acked (200)");
+          const rowC = await pollOptional(
+            async () => {
+              const r = await auditRead({ sinceIso: sinceC, actions: ["taint.verdict"] });
+              const mine = r.filter((e) => (e.detail as { kind?: unknown } | undefined)?.kind === "notion");
+              return mine.length > 0 ? mine : undefined;
+            },
+            { timeoutMs: FILE_REPLY_WAIT, what: "a taint.verdict row for kind notion after the forge-replayed wake" },
+          );
+          ctx.gate(
+            rowC !== undefined,
+            "ARM C (notion, hard): the forge-replayed wake produced a real `read_notion_page` call — a `taint.verdict` row for kind `notion` landed",
+          );
+          if (rowC) {
+            const dC = rowC[0].detail as { divergence?: unknown; applied?: unknown; tableTier?: unknown; assumed?: unknown; taintsToday?: unknown };
+            ctx.log(`ARM C (notion): divergence=${String(dC.divergence)} applied=${String(dC.applied)} tableTier=${String(dC.tableTier)} assumed=${String(dC.assumed)}`);
+            ctx.gate(
+              dC.divergence === "over-taint" && dC.taintsToday === true && dC.tableTier === "trusted" && dC.assumed === false,
+              "🔴 ARM C (notion, hard): the row is an OVER-taint — `read_notion_page`'s site would have tainted (`taintsToday:true`) but the vouched-internal fixture page resolves table tier `trusted` (assumed:false) off real declared metadata — the row names the direction this fixture permanently owes",
+            );
+            ctx.gate(
+              dC.applied === true,
+              "🔴 ARM C (notion, hard): `applied: true` — the table's TRUSTED verdict governed this read, i.e. reading the vouched-internal page did NOT mark the turn as having ingested untrusted content. This is the relaxation side of OPE-324's join, proven live off a real forge-replayed Notion route rather than asserted in a unit test",
+            );
+          }
+          if (ctx.transcriptRead) {
+            const lifecycleRows = await pollOptional(
+              async () => {
+                const r = await auditRead({ sinceIso: sinceC, actions: ["notion.replied", "notion.no_reply"] });
+                return r.length > 0 ? r : undefined;
+              },
+              { timeoutMs: FILE_REPLY_WAIT, what: "a notion.replied|notion.no_reply lifecycle row (best-effort anti-hallucination confirmation)" },
+            );
+            if (lifecycleRows) {
+              const sessionIds = new Set<string>();
+              for (const r of lifecycleRows) {
+                const v = (r.detail as Record<string, unknown> | undefined)?.sessionId;
+                if (typeof v === "string" && v.length > 0) sessionIds.add(v);
+              }
+              let sawReadCall = false;
+              for (const sessionId of sessionIds) {
+                const events = await ctx.transcriptRead(sessionId);
+                for (const e of events) {
+                  if (e.type !== "actions.requested" && e.type !== "action.result") continue;
+                  if (JSON.stringify(e.data).includes('"read_notion_page"')) sawReadCall = true;
+                }
+              }
+              ctx.log(`ARM C (notion): raw eve event stream ${sawReadCall ? "confirms" : "does NOT confirm"} an actual read_notion_page tool call (${sessionIds.size} session(s) inspected) — best-effort, not gated`);
+            } else {
+              ctx.log("ARM C (notion): no notion.replied/no_reply lifecycle row landed within the wait — cannot independently confirm the tool call; the taint.verdict row above is still the hard proof of a real read");
+            }
+          }
+        } else if (ctx.notionAmbient) {
           ctx.log(
-            "ARM C (notion) SKIPPED — ctx.notionAmbient resolves, but a driver-authored comment (createBlockDiscussion) is always Notion `type: \"bot\"` and classifyNotionComment drops every bot-authored trigger before any read; only a forge-replay off a real human anchor comment (E2E_NOTION_WEBHOOK_SECRET + an anchor id, not provisioned here) can wake a session live. The notion route-join stays unproven live on this run; ARM D (linear) is this scenario's live proof for the connector-read pair.",
+            "ARM C (notion) SKIPPED — ctx.notionAmbient resolves, but the forge-replay fixture (E2E_NOTION_WEBHOOK_SECRET + E2E_NOTION_ANCHOR_HUMAN) is not fully provisioned; `createBlockDiscussion` cannot wake the classifier (a driver-authored comment is always Notion `type: \"bot\"`, dropped before any read — OPE-576). The notion route-join stays unproven live on this run; ARM D (linear) is this scenario's live proof for the connector-read pair.",
           );
         } else {
           ctx.log(
