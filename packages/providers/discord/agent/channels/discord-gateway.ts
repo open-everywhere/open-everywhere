@@ -74,6 +74,7 @@ import {
   consumeRepliedThisTurn,
   postTerminalProse,
   isAllowedDriver,
+  parseDriverAllowlist,
   getOrCreateDmSeat,
   touchDmSeat,
   buildIngestedReaction,
@@ -286,6 +287,19 @@ export function authForRelayMessage(msg: DiscordRelayMessage): OpenEverywhereDis
     channelType: msg.channelType,
     memberPending: msg.memberPending,
   });
+}
+
+export function isMisplacedDriver(
+  guildId: string | undefined,
+  botUserId: string,
+  allowlist: ReadonlySet<string> = parseDriverAllowlist(process.env.OE_TEST_DRIVER_IDS),
+): boolean {
+  if (!botUserId) return false;
+  if (guildId !== undefined && allowlist.has(`${guildId}:${botUserId}`)) return false;
+  for (const entry of allowlist) {
+    if (entry.endsWith(`:${botUserId}`)) return true;
+  }
+  return false;
 }
 
 export function authorFacts(msg: DiscordRelayMessage): { readonly authorTrust?: AuthorTrustQuery } {
@@ -1336,7 +1350,20 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
       if (!msg) return new Response("unrecognized relay payload", { status: 400 });
 
       const auth = authForRelayMessage(msg);
-      if (!auth) return new Response("ignored (bot author)", { status: 200 });
+      if (!auth) {
+        if (msg.author.bot && isMisplacedDriver(msg.guildId, msg.author.id)) {
+          await appendAudit({
+            org: deploymentOrg(),
+            platform: "discord",
+            workspace: msg.guildId ?? "unknown",
+            surface: msg.channelId,
+            principalId: msg.author.id,
+            action: "discord.relay_admission_refused",
+            detail: { reason: "e2e-driver credential is pinned to a different guild; this guild is not vouched for it" },
+          }).catch(() => undefined);
+        }
+        return new Response("ignored (bot author)", { status: 200 });
+      }
       if (msg.content.trim().length === 0) return new Response("ignored (empty content)", { status: 200 });
 
       waitUntil(
