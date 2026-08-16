@@ -19,16 +19,19 @@ import { notifyLinkSetMembers } from "../channels/post-arms.js";
 import { pendingDirectorySuggestionsFor } from "../identity/directory-sync.js";
 
 function claimantParts(challenge: LinkChallengeRow): { claimantAccount?: { platform: string; tenant: string; nativeId: string }; claimedAt?: string } {
-  const parts =
-    challenge.claimedPlatform && challenge.claimedNativeId
-      ? { claimantAccount: { platform: challenge.claimedPlatform, tenant: challenge.claimedTenant ?? "", nativeId: challenge.claimedNativeId } }
-      : {};
+  const composes =
+    challenge.claimedPlatform &&
+    challenge.claimedNativeId &&
+    tryPrincipalKey(challenge.claimedPlatform, challenge.claimedTenant, challenge.claimedNativeId) !== undefined;
+  const parts = composes
+    ? { claimantAccount: { platform: challenge.claimedPlatform!, tenant: challenge.claimedTenant ?? "", nativeId: challenge.claimedNativeId! } }
+    : {};
   return { ...parts, ...(challenge.claimedAt ? { claimedAt: challenge.claimedAt } : {}) };
 }
 
 export default defineTool({
   description:
-    "Confirm (or deny) an account that belongs to this person — the second half of link_identity, and the one-tap confirmation for accounts an identity-directory sync (Okta) suggested for them. DM only, and only that person may call it. NEVER ask which account claimed their link code — they cannot see it and this tool holds it: a `confirm` with no `acknowledge` writes nothing and NAMES the waiting account. Show them that account, then call again with `acknowledge:true` to commit — both calls may happen in one turn when they have already said yes. Denying writes nothing at all and takes one call. Always name an account to the person before you commit it; if they do not recognise one, deny.",
+    "Confirm (or deny) an account that belongs to this person — the second half of link_identity, and the one-tap confirmation for accounts an identity-directory sync (Okta) suggested for them. DM only, and only that person may call it. NEVER ask which account claimed their link code — they cannot see it and this tool holds it: a `confirm` with no `acknowledge` writes nothing and NAMES the waiting account (returning its challengeId). Show them that account, then call again with `acknowledge:true` AND that challengeId to commit — both calls in one turn when they have already said yes. Denying writes nothing at all and takes one call. Always name an account to the person before you commit it; if they do not recognise one, deny.",
   inputSchema: z.object({
     decision: z.enum(["confirm", "deny"]).describe("`confirm` links the account(s) to this person; `deny` discards the proposal and writes nothing."),
     acknowledge: z
@@ -40,7 +43,9 @@ export default defineTool({
     challengeId: z
       .string()
       .optional()
-      .describe("Which link request to decide. Only needed when this person has more than one claim waiting — the tool names them if so."),
+      .describe(
+        "Which link request to decide. REQUIRED with `acknowledge: true` — pass back the challengeId the naming call returned, so the commit names the exact claim the person was shown. Also disambiguates when several claims wait (the tool lists them).",
+      ),
     accounts: z
       .array(z.string())
       .optional()
@@ -105,6 +110,13 @@ export default defineTool({
       return { decided: "denied", claimant, ...claimantParts(challenge), note: `Denied — nothing was linked. ${claimant} does not get your standing.` };
     }
 
+    if (input.acknowledge === true && input.challengeId === undefined) {
+      throw new Error(
+        "an acknowledged confirm must pass back the challengeId of the claim it acknowledges — " +
+          "call confirm_link without `acknowledge` first: it names the waiting claimant and returns the challengeId.",
+      );
+    }
+
     if (input.acknowledge !== true) {
       return {
         decided: "awaiting_acknowledgement",
@@ -114,9 +126,10 @@ export default defineTool({
         note:
           `NOTHING IS LINKED YET. ${claimant} claimed your link code` +
           (challenge.claimedAt ? ` at ${challenge.claimedAt}` : "") +
-          `. Tell the person exactly which account that is and ask whether it is theirs. If they have ` +
-          `already said it is, call confirm_link again with acknowledge: true to commit the link. If they ` +
-          `do not recognise it, call confirm_link with decision: "deny" — that writes nothing.`,
+          `. If the person has ALREADY said this account is theirs, call confirm_link again NOW with ` +
+          `acknowledge: true and this challengeId — both calls belong in one turn. Otherwise tell them ` +
+          `exactly which account this is and ask whether it is theirs. If they do not recognise it, ` +
+          `call confirm_link with decision: "deny" — that writes nothing.`,
       };
     }
 

@@ -104,6 +104,13 @@ export async function observeLinkClaim(input: {
       log(`link claim ${claimed.id} recorded, but the confirmation notice could not be delivered: ${String(err)}`);
       await auditLinkNoticeUndeliverable({ org: input.org, challenge: claimed, error: err }).catch(() => undefined);
     }
+  } else {
+    log(`link claim ${claimed.id} recorded — no DM-delivery arm for "${claimed.initiatingPlatform}", notice not attempted.`);
+    await auditLinkNoticeUndeliverable({
+      org: input.org,
+      challenge: claimed,
+      error: new Error(`no DM-delivery arm for "${claimed.initiatingPlatform}" — notice not attempted`),
+    }).catch(() => undefined);
   }
   log(`link claim recorded: ${claimant} claimed challenge ${claimed.id} — awaiting the initiator's confirmation.`);
   return claimed.id;

@@ -279,7 +279,8 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
     text: `link ${/link ([A-Z0-9]{8})/u.exec(String(issued.instructions))![1]}`,
     trust: "peer",
   });
-  const ratified = await confirmLink.execute({ decision: "confirm", acknowledge: true }, dmAda);
+  const adaPeek = (await confirmLink.execute({ decision: "confirm" }, dmAda)) as { challengeId?: string };
+  const ratified = await confirmLink.execute({ decision: "confirm", acknowledge: true, challengeId: adaPeek.challengeId }, dmAda);
   ok(ratified.decided === "confirmed", "challenge path: a second person links slack/U-ADA ↔ github/gh-ada by proof of control");
   const adaSet = ratified.linkSetId as string;
 
@@ -541,7 +542,8 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
 
   const peeked = await confirmLink.execute({ decision: "confirm" }, dmDan);
   ok(peeked.decided === "awaiting_acknowledgement" && peeked.claimant === "github/gh-dan" && peeked.accounts === undefined, "OPE-618: the PEEK also takes the challenge path over the standing directory suggestions");
-  const decided = await confirmLink.execute({ decision: "confirm", acknowledge: true }, dmDan);
+  const danPeek = (await confirmLink.execute({ decision: "confirm" }, dmDan)) as { challengeId?: string };
+  const decided = await confirmLink.execute({ decision: "confirm", acknowledge: true, challengeId: danPeek.challengeId }, dmDan);
   ok(
     decided.claimant === "github/gh-dan",
     "🔴 with BOTH a claimed code and directory suggestions waiting, the CHALLENGE wins — a time-boxed claim must never be shadowed by a standing proposal",
