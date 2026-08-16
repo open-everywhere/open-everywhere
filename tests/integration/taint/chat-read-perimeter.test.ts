@@ -115,11 +115,13 @@ async function rowsOfThisArm(wakeAt: number, actions: readonly string[]): Promis
   return got.filter((r) => new Date(r.ts).getTime() >= wakeAt);
 }
 
-async function armRows(wakeAt: number): Promise<AuditRow[]> {
+async function armRows(wakeAt: number, wantVerdictRow: boolean): Promise<AuditRow[]> {
   return waitFor(async () => {
     const got = await rowsOfThisArm(wakeAt, ["approval.chain", "taint.verdict"]);
-    return got.some((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine") ? got : undefined;
-  }, "this arm's approval.chain row to land");
+    if (!got.some((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine")) return undefined;
+    if (wantVerdictRow && readerVerdictRows(got).length === 0) return undefined;
+    return got;
+  }, `this arm's approval.chain row${wantVerdictRow ? " and its taint.verdict row" : ""} to land`);
 }
 
 function chainRow(rows: readonly AuditRow[]): AuditRow {
@@ -164,7 +166,7 @@ test("a member-authored chat read is FENCED but does NOT mark: an over-taint tai
 
   expectBodyFenced(handle);
 
-  const rows = await armRows(wakeAt);
+  const rows = await armRows(wakeAt, true);
 
   const verdicts = readerVerdictRows(rows);
   expect(verdicts.length).toBe(1);
@@ -200,7 +202,7 @@ test("the same read returning a REFUTED non-member's message marks the turn: tai
 
   expectBodyFenced(handle);
 
-  const rows = await armRows(wakeAt);
+  const rows = await armRows(wakeAt, false);
 
   const chain = chainRow(rows);
   expect(chain.detail?.tainted).toBe(true);
