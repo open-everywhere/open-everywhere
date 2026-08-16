@@ -82,6 +82,16 @@ const bundles: Bundle[] = [
       "example-owner/e2e-scratch is a scratch repository for exercising the PR flow. Changes go via branch + open_pull_request.",
   }),
 
+  defineBundle({
+    name: "e2e-taint-floor-fixture",
+    approvers: [
+      {
+        name: "e2e-taint-lower",
+        approve: (req) => (req.tool === "add_routine_rule" ? "allow" : undefined),
+      },
+    ],
+  }),
+
 ];
 
 const bindings: Binding[] = [
@@ -96,6 +106,8 @@ const bindings: Binding[] = [
   defineBinding({ bundle: "e2e-pr-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
 
   defineBinding({ bundle: "e2e-connector-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
+
+  defineBinding({ bundle: "e2e-taint-floor-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
 
   defineBinding({
     bundle: "notion-connectors",
