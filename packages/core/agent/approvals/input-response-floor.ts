@@ -45,6 +45,11 @@ export function inputResponseRefusalNotice(reason: InputResponseRefusal): string
       );
     case "foreign-room":
       return "I didn't take that answer: it didn't come from the room I asked in. The question is still open.";
+    case "guest-clicker":
+      return (
+        "I didn't take that answer: this workspace's membership list reports you as a guest, and a guest can't " +
+        "answer on the org's behalf. The question is still open; anyone in the org can answer it and I'll carry on."
+      );
   }
 }
 

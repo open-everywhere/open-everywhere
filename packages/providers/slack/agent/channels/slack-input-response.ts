@@ -4,10 +4,12 @@ import type {
   SlackInputResponseSubmission,
 } from "eve/channels/slack";
 import { admitInputResponse, resolvePartition, type InputResponseAdmission, type InputResponseScope } from "@open-everywhere/core/agent/adapter-api.js";
+import { slackClickerIsGuest } from "./slack-events.js";
 
 export interface SlackInputResponseDeps {
   readonly admit?: (scope: InputResponseScope) => Promise<InputResponseAdmission>;
   readonly notify?: (userId: string, text: string) => Promise<void>;
+  readonly guestVerdict?: (userId: string, teamId: string | undefined) => Promise<boolean | undefined>;
 }
 
 export async function admitSlackInputResponse(
@@ -21,6 +23,8 @@ export async function admitSlackInputResponse(
       channel: { kind: "slack" },
       session: { auth: { current: ctx.defaultAuth } },
     } as Parameters<typeof resolvePartition>[0]);
+    const guestVerdict = deps.guestVerdict ?? slackClickerIsGuest;
+    const answererIsGuest = await guestVerdict(submission.user.id, p.workspace).catch(() => undefined);
     const verdict = await (deps.admit ?? admitInputResponse)({
       org: p.org,
       platform: p.platform,
@@ -29,6 +33,7 @@ export async function admitSlackInputResponse(
       surfaceKey: p.surfaceKey,
       principalId: submission.user.id,
       responses: submission.inputResponses.length,
+      ...(answererIsGuest === undefined ? {} : { answererIsGuest }),
     });
     if (verdict.ok) return allow;
     const notify =

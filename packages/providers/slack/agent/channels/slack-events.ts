@@ -884,6 +884,11 @@ export function _resetAuthorMemberCache(): void {
   authorMemberCache.clear();
 }
 
+export async function slackClickerIsGuest(userId: string, teamId: string | undefined): Promise<boolean | undefined> {
+  const member = await slackAuthorIsMember(userId, teamId);
+  return member === undefined ? undefined : !member;
+}
+
 export type SlackMemberProbe = (userId: string, teamId: string | undefined) => Promise<boolean | undefined>;
 
 export async function slackWakeAuthorFacts(

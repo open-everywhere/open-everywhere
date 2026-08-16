@@ -449,6 +449,7 @@ interface BlockActionsPayload {
 export interface HandleApprovalDeps {
   readonly post?: PostFn;
   readonly decisionWake?: DecisionWakeDeps;
+  readonly clickerIsGuest?: (userId: string, teamId: string | undefined) => Promise<boolean | undefined>;
 }
 
 async function updateCard(post: PostFn, channelId: string, ts: string | undefined, card: RenderedCard): Promise<void> {
@@ -517,6 +518,7 @@ export interface ResolveApprovalClickInput {
   readonly clickContext?: { readonly surfaceKey: string };
   readonly clickerPlatform?: string;
   readonly clickerTenant?: string;
+  readonly clickerIsGuest?: boolean;
 }
 
 async function auditClickerDenial(
@@ -569,7 +571,10 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
       return { outcome: "clicker-denied", row, reason: "foreign-room" };
     }
     if (kindDef.policy === "member") {
-      const verdict = await checkClickerFloor(surfaceKey, { beneficiaryClicker: kindDef.beneficiaryClicker === true });
+      const verdict = await checkClickerFloor(surfaceKey, {
+        beneficiaryClicker: kindDef.beneficiaryClicker === true,
+        clickerIsGuest: input.clickerIsGuest,
+      });
       if (!verdict.ok) {
         await auditClickerDenial(input.org, row, input.clickerId, verdict.reason, surfaceKey);
         return { outcome: "clicker-denied", row, reason: verdict.reason };
@@ -810,6 +815,8 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
       return true;
     }
 
+    const clickerIsGuest = deps.clickerIsGuest ? await deps.clickerIsGuest(clickerId, teamId).catch(() => undefined) : undefined;
+
     const res = await resolveApprovalClick({
       org,
       id: parsed.id,
@@ -817,6 +824,7 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
       clickerId,
       clickerPlatform: "slack",
       ...(teamId ? { clickContext: { surfaceKey: `slack/${teamId}/${channelId}` } } : {}),
+      ...(clickerIsGuest === undefined ? {} : { clickerIsGuest }),
     });
     switch (res.outcome) {
       case "unknown":

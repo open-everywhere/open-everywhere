@@ -66,11 +66,59 @@ console.log("admitSlackInputResponse:");
       seen = scope;
       return { ok: true };
     },
+    guestVerdict: async () => false,
   });
   ok(seen?.surfaceKey === "slack/T1/C1", "the admission judges the room the answer was submitted in");
   ok(seen?.principalId === "U_ANSWERER", "the admission judges the submitting user");
   ok(seen?.responses === 2, "the admission is told HOW MANY responses the submission carried");
-  ok(seen !== undefined && !("answererIsGuest" in seen), "🔴 Slack supplies NO per-member guest verdict — leg B stays inert rather than guessing");
+  ok(seen?.answererIsGuest === false, "a positive per-answerer MEMBER verdict (false) reaches the core as answererIsGuest: false");
+}
+
+{
+  let seenGuest: InputResponseScope | undefined;
+  await admitSlackInputResponse(ctx, submission, {
+    admit: async (scope) => {
+      seenGuest = scope;
+      return { ok: true };
+    },
+    guestVerdict: async () => true,
+  });
+  ok(seenGuest?.answererIsGuest === true, "🔴 a positive per-answerer GUEST verdict reaches the core as answererIsGuest: true");
+
+  let seenUnresolved: InputResponseScope | undefined;
+  await admitSlackInputResponse(ctx, submission, {
+    admit: async (scope) => {
+      seenUnresolved = scope;
+      return { ok: true };
+    },
+    guestVerdict: async () => undefined,
+  });
+  ok(seenUnresolved !== undefined && !("answererIsGuest" in seenUnresolved), "an UNRESOLVABLE probe leaves the key ABSENT — inert, never a fabricated verdict either way");
+
+  let seenThrown: InputResponseScope | undefined;
+  await admitSlackInputResponse(ctx, submission, {
+    admit: async (scope) => {
+      seenThrown = scope;
+      return { ok: true };
+    },
+    guestVerdict: async () => {
+      throw new Error("users.info down");
+    },
+  });
+  ok(seenThrown !== undefined && !("answererIsGuest" in seenThrown), "a THROWN guestVerdict degrades to no verdict rather than aborting the admission");
+}
+
+{
+  ok(process.env.SLACK_BOT_TOKEN === undefined, "precondition: no bot token in this unit-test process");
+  let seenDefault: InputResponseScope | undefined;
+  const res = await admitSlackInputResponse(ctx, submission, {
+    admit: async (scope) => {
+      seenDefault = scope;
+      return { ok: true };
+    },
+  });
+  ok(res !== null, "the live default guestVerdict wiring does not throw or hang with no token configured");
+  ok(seenDefault !== undefined && !("answererIsGuest" in seenDefault), "with no token, the live default degrades to no verdict — the same absence as before OPE-589");
 }
 
 {
@@ -100,4 +148,12 @@ console.log("admitSlackInputResponse:");
   );
 }
 
-console.log(`\n✓ slack-input-response: ${n} assertions passed (allow parity, null-refusal, judged facts, fail-open, notice failure, wiring pin)\n`);
+{
+  const src = readFileSync(fileURLToPath(new URL("../agent/channels/slack-input-response.ts", import.meta.url)), "utf8");
+  ok(
+    /deps\.guestVerdict\s*\?\?\s*slackClickerIsGuest/.test(src),
+    "🔴 admitSlackInputResponse's live default guestVerdict is slackClickerIsGuest — reverting to a stub that never calls it would otherwise pass a naive `slackClickerIsGuest`-appears-somewhere source scan",
+  );
+}
+
+console.log(`\n✓ slack-input-response: ${n} assertions passed (allow parity, null-refusal, judged facts, leg B guest/member/unresolved/throw, live-default degrade, fail-open, notice failure, wiring pins)\n`);
