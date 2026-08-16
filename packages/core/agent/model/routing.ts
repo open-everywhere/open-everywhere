@@ -4,7 +4,6 @@ import { getConfig } from "../access/config.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { stampModelCall } from "./model-stamp.js";
-import { stampUtilityRoute, readStampedUtilityRoute } from "./utility-route-stamp.js";
 import { noteTurnStep, reportStepBoundary, withWrapUpNotice, turnBackstopModel, wrapUpNotice, backstopReply } from "./step-boundary.js";
 import type { ModelPolicy } from "./policy.js";
 import { applyModelPolicyToRoute } from "./policy.js";
@@ -233,7 +232,7 @@ export function makeRoutedModel<TModel extends RoutableModel>(
 
 async function resolveRoutedPrimaryModel<TModel extends RoutableModel>(
   ctx: BindableContext,
-  defaults: { readonly primary: { readonly id: string }; readonly utility: { readonly id: string } },
+  defaults: { readonly primary: { readonly id: string } },
   deps: RoutingDeps<TModel>,
 ): Promise<TModel> {
   let surfaceKey: string;
@@ -244,15 +243,8 @@ async function resolveRoutedPrimaryModel<TModel extends RoutableModel>(
     surfaceMatch = id.surfaceMatch;
   } catch (err) {
     logOnce("warn", `primary: surface unbindable from ctx (${String(err)}) — default model, routing inactive`);
-    stampUtilityRoute(null);
     stampModelCall(defaults.primary.id);
     return deps.backend.model(defaults.primary.id);
-  }
-
-  try {
-    stampUtilityRoute(await resolveRoute("utility", surfaceKey, surfaceMatch, defaults.utility.id, deps));
-  } catch {
-    stampUtilityRoute(null);
   }
 
   const supervisor = isSupervisorSession(ctx);
@@ -273,7 +265,7 @@ async function resolveRoutedPrimaryModel<TModel extends RoutableModel>(
 
 export async function resolvePrimaryModel<TModel extends RoutableModel>(
   ctx: BindableContext,
-  defaults: { readonly primary: { readonly id: string }; readonly utility: { readonly id: string } },
+  defaults: { readonly primary: { readonly id: string } },
   deps: RoutingDeps<TModel>,
   event?: unknown,
 ): Promise<TModel> {
@@ -290,9 +282,3 @@ export async function resolvePrimaryModel<TModel extends RoutableModel>(
   return withWrapUpNotice(routed, wrapUpNotice(boundary));
 }
 
-export function createRoutedCompactionModel<TModel extends RoutableModel>(
-  defaults: { readonly id: string },
-  backend: ModelBackend<TModel>,
-): TModel {
-  return makeRoutedModel(() => readStampedUtilityRoute() ?? {}, defaults, backend);
-}

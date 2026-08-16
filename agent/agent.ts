@@ -2,7 +2,7 @@ import { defineAgent } from "eve";
 import { defineDynamic } from "eve/tools";
 import "./lib/register-config.js";
 import "./lib/register-adapters.js";
-import { gatewayModelResolver, gatewayRoutedCompactionModel } from "@open-everywhere/adapters/agent/model/gateway.js";
+import { gatewayModelResolver } from "@open-everywhere/adapters/agent/model/gateway.js";
 import { registerGatewayDreamJudge, registerGatewayFailureFacetJudge, registerGatewayHandoffCompletion } from "@open-everywhere/adapters/agent/model/dream-judge.js";
 import { registerGatewayApprovalJudge } from "@open-everywhere/adapters/agent/model/approval-judge.js";
 import { registerGatewayImageDescriber } from "@open-everywhere/adapters/agent/model/gateway-vision.js";
@@ -14,7 +14,6 @@ import {
   PRIMARY_MODEL,
   PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS,
   UTILITY_MODEL,
-  UTILITY_MODEL_CONTEXT_WINDOW_TOKENS,
   VISION_MODEL,
 } from "./model/models.js";
 import { loadModelPolicy } from "./model/policy.js";
@@ -93,10 +92,7 @@ export default defineAgent({
   model: defineDynamic({
     events: {
       "step.started": (() => {
-        const gatewayResolve = gatewayModelResolver(
-          { id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS },
-          { id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS },
-        );
+        const gatewayResolve = gatewayModelResolver({ id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS });
         return selectingResolver(async (event, ctx) => scriptedModelFor(event, ctx) ?? (await gatewayResolve(event, ctx)));
       })(),
     },
@@ -105,8 +101,6 @@ export default defineAgent({
   limits: { maxInputTokensPerSession: SESSION_INPUT_TOKEN_BUDGET, sessionTimeoutMs: false },
   experimental: { tasks: BACKGROUND_TASKS },
   compaction: {
-    model: gatewayRoutedCompactionModel({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS }),
-    modelContextWindowTokens: UTILITY_MODEL_CONTEXT_WINDOW_TOKENS,
     thresholdPercent: COMPACTION_THRESHOLD_PERCENT,
   },
 });

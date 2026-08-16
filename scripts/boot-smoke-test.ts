@@ -1,6 +1,7 @@
 import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, sep } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, join, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const ROOT = process.cwd();
@@ -203,15 +204,6 @@ for (const [rel, mod] of loaded) {
     );
   }
 
-  if (typeof agent?.compaction?.modelContextWindowTokens !== "number") {
-    problems.push(
-      "MODEL SELECTION: agent/agent.ts's `compaction.modelContextWindowTokens` is missing. It is NOT the " +
-        "field the 0.33 union constrains (that is the AGENT-LEVEL one) and it is not optional in practice — " +
-        "the compaction slot is authored as a model INSTANCE, so without it `eve build` fails with " +
-        '"does not have known AI Gateway context window metadata".',
-    );
-  }
-
   const resolver = agent?.model?.events?.["step.started"];
   if (typeof resolver !== "function") {
     problems.push("MODEL SELECTION: agent/agent.ts exposes no step.started model resolver to check.");
@@ -251,6 +243,106 @@ for (const [rel, mod] of loaded) {
   }
 }
 
+{
+  const eveRoot = dirname(createRequire(import.meta.url).resolve("eve/package.json"));
+  const eveAbs = (rel: string) => pathToFileURL(join(eveRoot, rel)).href;
+  const { resolveCompactionModel } = (await import(eveAbs("dist/src/harness/compaction.js"))) as {
+    resolveCompactionModel: (input: {
+      compactionModelReference?: unknown;
+      model: unknown;
+      modelReference: unknown;
+      resolveModel: (ref: unknown) => Promise<unknown>;
+    }) => Promise<{ model: unknown; providerOptions: unknown }>;
+  };
+  const { isDynamicModelDefinition } = (await import(eveAbs("dist/src/shared/agent-definition.js"))) as {
+    isDynamicModelDefinition: (model: unknown) => boolean;
+  };
+
+  const agent = loaded.get("agent/agent.ts")?.default as
+    | { model?: unknown; compaction?: { model?: unknown; modelContextWindowTokens?: unknown; thresholdPercent?: unknown } }
+    | undefined;
+
+  if (!isDynamicModelDefinition(agent?.model)) {
+    problems.push(
+      "COMPACTION: agent/agent.ts's agent-level `model` is no longer a dynamic definition (eve's own " +
+        "isDynamicModelDefinition says no). The OPE-670 argument below assumes it IS dynamic — re-read " +
+        "eve's loadSourceBackedRuntimeModelReference before relaxing anything here.",
+    );
+  }
+
+  if (agent?.compaction?.model !== undefined) {
+    problems.push(
+      "COMPACTION: agent/agent.ts authors a `compaction.model`. eve 0.38.3 resolves that slot's reference " +
+        'through the AGENT-LEVEL `model` field and throws "…to provide a static runtime model" while that ' +
+        "field is dynamic — the turn dies after 3 retries on the first compaction of any session (OPE-670). " +
+        "Leave the slot without a model: eve then summarises with the live turn model.",
+    );
+  }
+  if (agent?.compaction?.modelContextWindowTokens !== undefined) {
+    problems.push(
+      "COMPACTION: agent/agent.ts sets `compaction.modelContextWindowTokens`. eve consumes that field ONLY " +
+        "as the compaction reference's own window, and there is no compaction reference — so it is inert " +
+        "config that implies a compaction model exists.",
+    );
+  }
+
+  const pct = agent?.compaction?.thresholdPercent;
+  if (typeof pct !== "number" || !(pct > 0) || !(pct <= 1)) {
+    problems.push(
+      `COMPACTION: agent/agent.ts's \`compaction.thresholdPercent\` is ${String(pct)}, expected a fraction in (0, 1]. ` +
+        "It is the only thing that decides WHEN compaction fires; eve's own default (0.9) is not this deployment's choice.",
+    );
+  }
+
+  const liveModel = { marker: "the-live-turn-model" };
+  const sessionRef = { id: "gateway/primary", providerOptions: { gateway: { caching: "auto" } } };
+  let resolveModelCalls = 0;
+  const spyResolve = async (): Promise<unknown> => {
+    resolveModelCalls += 1;
+    return { marker: "resolved-from-a-reference" };
+  };
+  const shipped = await resolveCompactionModel({
+    compactionModelReference: undefined,
+    model: liveModel,
+    modelReference: sessionRef,
+    resolveModel: spyResolve,
+  });
+  if (shipped.model !== liveModel) {
+    problems.push(
+      "COMPACTION: with no compaction reference, eve's resolveCompactionModel did not return the live turn " +
+        "model by identity. The absence of `compaction.model` is the whole fix for OPE-670 — if this arm " +
+        "changed, the fix no longer holds and compaction needs re-deriving against the pinned eve.",
+    );
+  }
+  if (resolveModelCalls !== 0) {
+    problems.push(
+      `COMPACTION: eve resolved a model reference ${resolveModelCalls} time(s) with no compaction reference set. ` +
+        "That resolution is the throwing path (loadSourceBackedRuntimeModelReference) — it must not be reached.",
+    );
+  }
+  if ((shipped.providerOptions as { gateway?: unknown } | undefined)?.gateway === undefined) {
+    problems.push(
+      "COMPACTION: the summary call lost the session model reference's gateway providerOptions. eve reads them " +
+        "off whichever reference it used, so the turn model's options are what the compaction call carries.",
+    );
+  }
+
+  const distinctRef = { id: "gateway/utility", providerOptions: undefined };
+  const authored = await resolveCompactionModel({
+    compactionModelReference: distinctRef,
+    model: liveModel,
+    modelReference: sessionRef,
+    resolveModel: spyResolve,
+  });
+  if (resolveModelCalls !== 1 || authored.model === liveModel) {
+    problems.push(
+      `COMPACTION (negative control): a DISTINCT compaction reference did not reach eve's resolveModel ` +
+        `(calls=${resolveModelCalls}). The "no authored compaction model" gate above only means something ` +
+        "while this arm is live — if eve stopped resolving compaction references, re-read the chain.",
+    );
+  }
+}
+
 rmSync(scratch, { recursive: true, force: true });
 
 if (problems.length > 0) {
@@ -262,6 +354,6 @@ if (problems.length > 0) {
 console.log(
   `✓ boot-smoke: ${modules.length} agent module(s) load clean; ${routeCount} channel route(s), no collisions; ` +
     `${scheduleCount} schedule cron(s) valid; dynamic model bound at step.started; scripted model inert; ` +
-    `turn-model selection carries the primary window + gateway options`,
+    `turn-model selection carries the primary window + gateway options; compaction resolves without a reference`,
 );
 process.exit(0);
