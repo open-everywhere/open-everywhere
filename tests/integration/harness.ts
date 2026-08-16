@@ -282,6 +282,31 @@ export async function discordMentionWake(input: { channelId: string; text: strin
   }
 }
 
+export async function discordAmbientWake(input: { channelId: string; text: string; messageId?: string }): Promise<void> {
+  if (booted === undefined) throw new Error("integration harness: discordAmbientWake before bootAgent.");
+  const { buildDiscordGuildAmbientRelayEnvelope, signDiscordRelayRequest } = await import(
+    "../../packages/core/scripts/e2e/discord-synthetic"
+  );
+  const body = JSON.stringify(
+    buildDiscordGuildAmbientRelayEnvelope({
+      text: input.text,
+      guildId: DISCORD_GUILD_ID,
+      channelId: input.channelId,
+      userId: DISCORD_USER_ID,
+      messageId: input.messageId ?? `it${Date.now()}`,
+    }),
+  );
+  const res = await fetch(`${booted.base}/eve/v1/discord-gateway`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-oe-relay-signature": signDiscordRelayRequest(body, RELAY_SECRET) },
+    body,
+  });
+  const ack = await res.text();
+  if (res.status !== 200 || ack.trim() !== "ok") {
+    throw new Error(`integration harness: relay ambient wake refused — ${res.status}: ${ack.slice(0, 200)}`);
+  }
+}
+
 export async function rawDiscordRelayPost(
   input: { channelId: string; text: string; messageId?: string },
   signature?: string | null,

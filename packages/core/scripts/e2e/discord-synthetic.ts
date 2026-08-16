@@ -52,6 +52,27 @@ export function buildDiscordGuildMentionRelayEnvelope(input: {
   };
 }
 
+export function buildDiscordGuildAmbientRelayEnvelope(input: {
+  readonly text: string;
+  readonly guildId: string;
+  readonly channelId: string;
+  readonly userId: string;
+  readonly messageId?: string;
+}): Record<string, unknown> {
+  return {
+    source: "discord-gateway-relay",
+    message: {
+      id: input.messageId ?? `e2eambient${Date.now()}`,
+      content: input.text,
+      channelId: input.channelId,
+      channelType: "0",
+      guildId: input.guildId,
+      author: { id: input.userId, username: "e2e-wake-fixture", bot: false },
+      mentionsBot: false,
+    },
+  };
+}
+
 export class SyntheticDiscordDm {
   constructor(private readonly cfg: SyntheticDiscordDmConfig) {}
 
