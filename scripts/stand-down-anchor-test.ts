@@ -163,4 +163,70 @@ const discordCtx = windowCtx("discord", discordAttrs, "U1");
   ok((message.match(/\./g) ?? []).length === 1 && message.trimEnd().endsWith("."), "the anchorless error stays ONE sentence (tool-instruction brevity)");
 }
 
-console.log(`✓ stand-down-anchor: ${n} assertions passed (discord key chain + real wake-gate round trip + re-invitation + slack regression pin + anchorless copy)`);
+{
+  const dmCtx = windowCtx("slack", { team_id: "T_S", channel_id: "D1", channel_type: "im", user_id: "US" }, "US");
+  ok(bindFrom(dmCtx).mode === "dm", "a Slack im channel_type binds to SessionMode 'dm'");
+
+  let message = "";
+  try {
+    await runStandDown(dmCtx);
+    ok(false, "stand_down must refuse a Slack DM turn");
+  } catch (err) {
+    message = (err as Error).message;
+  }
+  ok(message.includes("direct message cannot be stood down"), "🔴 the DM refusal names the reason as the surface, not a missing anchor");
+  ok(message.includes("could NOT stop following"), "the DM refusal still tells the model to say it COULD NOT stop following");
+  ok(message.includes("nothing was marked"), "the DM refusal still states that nothing was marked");
+}
+
+{
+  const threadedDmCtx = windowCtx(
+    "slack",
+    { team_id: "T_S", channel_id: "D2", channel_type: "im", thread_ts: "1800.9", user_id: "US" },
+    "US",
+  );
+  const b = bindFrom(threadedDmCtx);
+  ok(b.mode === "dm", "precondition: still a DM by mode");
+  ok(b.threadTs === "1800.9", "🔴 precondition: an ANCHOR EXISTS — the case an anchor-presence check alone would miss");
+
+  const p = resolvePartition(threadedDmCtx);
+  await store.markEngaged(p.org, p.surfaceKey, "1800.9", "2026-08-16T10:00:00Z", { participating: true });
+
+  let succeeded = false;
+  try {
+    const res = await runStandDown(threadedDmCtx);
+    succeeded = res.standingDown === true;
+  } catch {
+    succeeded = false;
+  }
+  ok(succeeded === false, "🔴 stand_down refuses even though an anchor is present — mode wins over anchor");
+
+  const row = await store.getEngagement(p.org, p.surfaceKey, "1800.9");
+  ok(row !== null && row.stopped === false, "🔴 NEGATIVE CONTROL: the pre-existing row is still NOT stopped — pre-OPE-665 this same seed left it `stopped:true`, a mark scheduleDmWake never reads");
+}
+
+{
+  const mpimCtx = windowCtx("slack", { team_id: "T_S", channel_id: "G_DM", channel_type: "mpim", thread_ts: "1900.1", user_id: "US" }, "US");
+  ok(bindFrom(mpimCtx).mode === "mpim", "a Slack mpim channel_type binds to SessionMode 'mpim'");
+  let message = "";
+  try {
+    await runStandDown(mpimCtx);
+    ok(false, "stand_down must refuse a Slack group-DM turn");
+  } catch (err) {
+    message = (err as Error).message;
+  }
+  ok(message.includes("direct message cannot be stood down"), "the group-DM refusal reads the same as the 1:1 DM refusal");
+}
+
+{
+  const channelCtx = windowCtx("slack", { team_id: "T_S", channel_id: "C_G", thread_ts: "1950.1", channel_type: "channel", user_id: "US" }, "US");
+  ok(bindFrom(channelCtx).mode === "channel", "precondition: a Slack channel binds to SessionMode 'channel', never 'dm'");
+  const p = resolvePartition(channelCtx);
+  await store.markEngaged(p.org, p.surfaceKey, "1950.1", "2026-08-16T10:00:00Z", { participating: true });
+  const res = await runStandDown(channelCtx, "asked me to stop following");
+  ok(res.standingDown === true, "🔴 NEGATIVE CONTROL: a channel-surface stand_down still succeeds — the DM guard never fires here");
+  const row = await store.getEngagement(p.org, p.surfaceKey, "1950.1");
+  ok(row !== null && row.stopped === true, "…and the channel row is still marked, exactly as LEG 6 already proved");
+}
+
+console.log(`✓ stand-down-anchor: ${n} assertions passed (discord key chain + real wake-gate round trip + re-invitation + slack regression pin + anchorless copy + DM refusal)`);
