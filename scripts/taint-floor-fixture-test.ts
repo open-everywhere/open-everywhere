@@ -43,6 +43,10 @@ ok(
   fixtureBindings.every((b) => b.scope.level === "surface"),
   `…at SURFACE scope only (got ${fixtureBindings.map((b) => b.scope.level).join(", ")}) — an org/tenant/domain binding would lower a gate-tier sink across every channel beneath it`,
 );
+ok(
+  fixtureBindings.every((b) => b.scope.surface === "slack/T0EXAMPLE/C0EXCHAN003"),
+  `…and to the ONE e2e channel (got ${fixtureBindings.map((b) => b.scope.surface).join(", ")}) — level+count alone would stay green if the binding were repointed at a real room, and the lowering would follow it`,
+);
 
 ok(taintToleranceOf(LOWERED_TOOL) === "gate", `\`${LOWERED_TOOL}\` is a \`taint: "gate"\` sink — the arrow's \`fires\` predicate reads exactly this, so a registry change that dropped the column would make the fixture inert`);
 

@@ -3700,8 +3700,8 @@ export const SCENARIOS: readonly Scenario[] = [
               );
             } else {
               ctx.gate(
-                /\ballow\b/i.test(cleanText) && !/taint:ask/i.test(cleanText),
-                `🔴 ARM E NEGATIVE CONTROL (hard): on a CLEAN turn the operator lowering resolves ALLOW and NO taint transform fires — the floor is taint-conditional, not a blanket gate, and the lowering it refuses below is real. Trace: "${cleanText.replace(/\s+/g, " ").trim().slice(0, 400)}"`,
+                /add_routine_rule[^\n]*→\s*ALLOW/i.test(cleanText) && !/taint:ask/i.test(cleanText),
+                `🔴 ARM E NEGATIVE CONTROL (hard): on a CLEAN turn the operator lowering RESOLVES allow (the → ALLOW line, not an element echo) and NO taint transform fires — the floor is taint-conditional, not a blanket gate, and the lowering it refuses below is real. Trace: "${cleanText.replace(/\s+/g, " ").trim().slice(0, 400)}"`,
               );
 
               const refE2 = factToken("taintfloorgate");

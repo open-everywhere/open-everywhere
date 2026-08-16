@@ -151,11 +151,14 @@ try {
   for (const endpoint of endpoints.endpoints) observations.push(await probe(target, endpoint.path, timeoutMs));
 
   let keyProof: KeyProof | undefined;
+  const keyCheckLimits: string[] = [];
   if (!args.flags.has("no-key-check")) {
     const testRef = required.find((r) => presentRefs.includes(r.ref))?.ref ?? presentRefs[0];
-    if (testRef) {
-      const row = await getOperationalStore().getStoredCredential(org, testRef);
-      if (row) keyProof = proveKeyOpensRow({ ref: testRef, ciphertext: row.ciphertext, decrypt: decryptCredential });
+    const row = testRef ? await getOperationalStore().getStoredCredential(org, testRef) : undefined;
+    if (row && testRef) {
+      keyProof = proveKeyOpensRow({ ref: testRef, ciphertext: row.ciphertext, decrypt: decryptCredential });
+    } else {
+      keyCheckLimits.push("the encryption-key check DID NOT RUN — no stored credential row was available to open, so the key is untested this run");
     }
   }
 
@@ -167,7 +170,7 @@ try {
     presentRefs,
     observations,
     ...(keyProof ? { keyProof } : {}),
-    limits: [...limits, ...STANDING_LIMITS],
+    limits: [...limits, ...keyCheckLimits, ...STANDING_LIMITS],
   });
 
   if (json) console.log(JSON.stringify(result, null, 2));
