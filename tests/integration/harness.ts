@@ -130,7 +130,7 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   process.env.OE_CONTROL_READ_TOKENS = `${READ_TOKEN_NAME}:${createHash("sha256").update(READ_TOKEN, "utf8").digest("hex")}`;
   process.env.OE_WEBHOOK_E2E_SECRET = WEBHOOK_E2E_SECRET;
   process.env.SLACK_SIGNING_SECRET = SLACK_SIGNING_SECRET;
-  process.env.DISCORD_PUBLIC_KEY = DISCORD_APP_KEYS.publicKeyHex;
+  if (process.env.DISCORD_PUBLIC_KEY === undefined) process.env.DISCORD_PUBLIC_KEY = DISCORD_APP_KEYS.publicKeyHex;
   if (opts.sharedSqlite === true) {
     process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
     process.env.OE_SQLITE_PATH = join(state, "ops.sqlite3");
