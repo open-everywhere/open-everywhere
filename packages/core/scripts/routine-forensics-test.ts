@@ -28,6 +28,7 @@ const store = await import("../agent/routines/store.js");
 const usageEvents = await import("../agent/spend/usage-events.js");
 const { FakeEveContext, inEveContext } = await import("./_eve-context-stub.js");
 const { ROUTINE_MARKER } = await import("../agent/routines/routine.js");
+const { OE_WAKE_ID_ATTR } = await import("../agent/channels/unified-window.js");
 const { SCHEDULE_APP_AUTHENTICATOR, SCHEDULE_APP_PRINCIPAL_ID, SCHEDULE_APP_PRINCIPAL_TYPE } = await import("../agent/identity/binding.js");
 const { MAX_CONSECUTIVE_FAILURES } = await import("../agent/routines/lifecycle.js");
 const outcomeHook = (await import("../agent/hooks/routine-outcome.js")).default;
@@ -60,7 +61,7 @@ function routine(over: Partial<Routine> & Pick<Routine, "id">): Routine {
   };
 }
 
-function firedCtx(r: Routine, sessionId: string): never {
+function firedCtx(r: Routine, sessionId: string, wakeId = `wake-${sessionId}`): never {
   return {
     channel: { kind: "slack" },
     session: {
@@ -71,6 +72,7 @@ function firedCtx(r: Routine, sessionId: string): never {
             team_id: "T1",
             channel_id: "C1",
             channel_type: "channel",
+            [OE_WAKE_ID_ATTR]: wakeId,
             [ROUTINE_MARKER.id]: r.id,
             [ROUTINE_MARKER.surface]: r.surfaceKey,
             [ROUTINE_MARKER.org]: r.org,
@@ -138,7 +140,34 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
   await inEveContext(fireSession, async () => {
     await outcomeHook.events!["turn.completed"]!({} as never, ctx);
   });
-  ok((await rowsFor(ROUTINE_AUDIT.fire)).length === beforeUnarmed, "idempotence: an UNARMED turn end folds nothing — a job seat's later turns cannot re-fold its last fire");
+  ok((await rowsFor(ROUTINE_AUDIT.fire)).length === beforeUnarmed, "idempotence: an UNARMED turn end folds nothing");
+
+  await inEveContext(fireSession, async () => {
+    await outcomeHook.events!["turn.started"]!({} as never, ctx);
+    await outcomeHook.events!["turn.completed"]!({} as never, ctx);
+  });
+  ok(
+    (await rowsFor(ROUTINE_AUDIT.fire)).filter((e) => detailOf(e, "routineId") === "r-once").length === 1,
+    "idempotence: the fire's SETTLEMENT turn — a second armed turn on the same session, same wake id — folds nothing",
+  );
+  ok((await store.getRoutine(ORG, SURFACE, "r-once"))?.consecutiveFailures === 0, "idempotence: …and the streak it reset stays reset, rather than being folded a second time");
+}
+
+{
+  const r = routine({ id: "r-job-refire", consecutiveFailures: 0 });
+  await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
+  const jobSeat = new FakeEveContext();
+  const fireA = firedCtx(r, "sess-job-seat", "wake-fire-A");
+  const fireB = firedCtx(r, "sess-job-seat", "wake-fire-B");
+
+  await inEveContext(jobSeat, async () => {
+    await outcomeHook.events!["turn.started"]!({} as never, fireA);
+    await outcomeHook.events!["turn.completed"]!({} as never, fireA);
+    await outcomeHook.events!["turn.started"]!({} as never, fireB);
+    await outcomeHook.events!["turn.completed"]!({} as never, fireB);
+  });
+  const fires = (await rowsFor(ROUTINE_AUDIT.fire)).filter((e) => detailOf(e, "routineId") === "r-job-refire");
+  ok(fires.length === 2, "idempotence: a JOB seat folds EVERY fire — two fires on one durable session write two join rows, because the latch keys on the wake id");
 }
 
 {
