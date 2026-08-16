@@ -788,5 +788,44 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   else process.env[OE_DIRECTORY_AUTOCONFIRM_ENV] = priorPolicy;
 }
 
+{
+  const { runDirectorySync } = await import("../agent/identity/directory-sync.js");
+  const HEARTBEAT_ORG = "heartbeatco";
+
+  resetDirectoryProvider();
+  ok(directoryProvider() === undefined, "heartbeat: starting unarmed — no provider registered");
+  ok((await readAudit({ org: HEARTBEAT_ORG, action: DIRECTORY_SYNC_ACTION })).length === 0, "heartbeat: no row yet for this org");
+
+  await runDirectorySync({ orgs: [HEARTBEAT_ORG] });
+  const noopRows = await readAudit({ org: HEARTBEAT_ORG, action: DIRECTORY_SYNC_ACTION });
+  ok(noopRows.length === 1, "🔴 OPE-635: an UNARMED runDirectorySync() still writes exactly one row — the cron's silence is now a row, not nothing");
+  ok(noopRows[0]!.detail?.["outcome"] === "no-op: no provider configured", "🔴 OPE-635: …and the row names the outcome exactly, so a reader never has to infer 'never armed' from an absent row");
+
+  const noopStatus = await lastDirectorySync(HEARTBEAT_ORG);
+  ok(noopStatus?.detail["outcome"] === "no-op: no provider configured", "heartbeat: lastDirectorySync (the same read directory_sync_status and a future census use) sees the no-op outcome");
+
+  const armedPeople: readonly DirectoryPerson[] = [rowan({ externalId: "00u-heartbeat", accounts: [{ platform: "slack", nativeId: "U-HEARTBEAT", grade: "attested" }] })];
+  registerDirectoryProvider(fakeDirectory(() => armedPeople));
+  await runDirectorySync({ orgs: [HEARTBEAT_ORG] });
+  const armedRows = await readAudit({ org: HEARTBEAT_ORG, action: DIRECTORY_SYNC_ACTION });
+  ok(armedRows.length === 2, "heartbeat: arming and re-running adds a SECOND row (one per run) rather than replacing the first");
+  ok(armedRows[0]!.detail?.["outcome"] === "synced", "🔴 OPE-635: an ARMED run's row carries outcome:\"synced\" — the positive control for the no-op assertion above");
+
+  registerDirectoryProvider(
+    fakeDirectory(() => {
+      throw new Error("okta unreachable");
+    }),
+  );
+  await runDirectorySync({ orgs: [HEARTBEAT_ORG] });
+  const failedRows = await readAudit({ org: HEARTBEAT_ORG, action: DIRECTORY_SYNC_ACTION });
+  ok(failedRows.length === 3, "heartbeat: a throwing provider still leaves a row behind");
+  ok(
+    typeof failedRows[0]!.detail?.["outcome"] === "string" && (failedRows[0]!.detail!["outcome"] as string).startsWith("failed:") && (failedRows[0]!.detail!["outcome"] as string).includes("okta unreachable"),
+    "🔴 OPE-635: a per-org sync failure is named in the row (\"failed: …\"), not swallowed into a log line only",
+  );
+
+  resetDirectoryProvider();
+}
+
 resetDirectoryProvider();
 console.log(`✓ directory-sync-test: ${n} assertions passed`);

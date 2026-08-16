@@ -74,6 +74,7 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
   let expiredApprovals = 0;
 
   for (const org of orgs) {
+    const orgStart = { siloCount, applied, proposed, changed, expiredApprovals };
     const p = partitionForOrg(org);
     for (const silo of silos) {
       if (silo.readOnly) continue;
@@ -139,6 +140,27 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
     } catch (err) {
       log(`skip approval-sweep ${org} — ${String(err)}`);
     }
+
+    const orgSilos = siloCount - orgStart.siloCount;
+    const orgApplied = applied - orgStart.applied;
+    const orgProposed = proposed - orgStart.proposed;
+    const orgChanged = changed - orgStart.changed;
+    const orgExpired = expiredApprovals - orgStart.expiredApprovals;
+    await appendAudit({
+      org,
+      platform: "memory",
+      workspace: "tidy",
+      principalId: DREAM_ACTOR,
+      action: "memory.tidy_tick",
+      detail: {
+        outcome: orgChanged > 0 ? "changed" : "no-op: nothing to tidy",
+        silos: orgSilos,
+        applied: orgApplied,
+        proposed: orgProposed,
+        changed: orgChanged,
+        expiredApprovals: orgExpired,
+      },
+    });
   }
 
   const judgeNote = judge

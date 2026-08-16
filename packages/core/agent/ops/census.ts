@@ -257,6 +257,63 @@ export function proveKeyOpensRow(input: { readonly ref: string; readonly ciphert
   }
 }
 
+export interface RequiredHeartbeat {
+  readonly action: string;
+  readonly reason: string;
+  readonly maxAgeHours: number;
+}
+
+export interface ReportedHeartbeat {
+  readonly action: string;
+  readonly reason: string;
+}
+
+export interface HeartbeatObservation {
+  readonly action: string;
+  readonly lastSeenIso?: string;
+}
+
+export interface HeartbeatFinding {
+  readonly action: string;
+  readonly reason: string;
+  readonly lastSeenIso?: string;
+  readonly ageHours?: number;
+  readonly maxAgeHours?: number;
+  readonly ok: boolean;
+}
+
+export function cronCeilingHours(cron: string): number {
+  const trimmed = cron.trim();
+  if (/^\d+\s+\d+\s+\*\s+\*\s+\*$/u.test(trimmed)) return 24 + 2;
+  if (/^\d+\s+\d+\s+\*\s+\*\s+[0-6]$/u.test(trimmed)) return 24 * 7 + 4;
+  throw new Error(`census: cron "${cron}" is neither a daily nor a weekly pattern cronCeilingHours() understands — extend it rather than guessing a bound.`);
+}
+
+export function heartbeatFindings(input: {
+  readonly gated: readonly RequiredHeartbeat[];
+  readonly reported: readonly ReportedHeartbeat[];
+  readonly observations: readonly HeartbeatObservation[];
+  readonly now: Date;
+}): readonly HeartbeatFinding[] {
+  const observed = (action: string): HeartbeatObservation | undefined => input.observations.find((o) => o.action === action);
+  const ageHoursOf = (iso: string): number => (input.now.getTime() - new Date(iso).getTime()) / 3_600_000;
+
+  const gated = input.gated.map((h): HeartbeatFinding => {
+    const lastSeenIso = observed(h.action)?.lastSeenIso;
+    if (!lastSeenIso) return { action: h.action, reason: h.reason, maxAgeHours: h.maxAgeHours, ok: false };
+    const ageHours = ageHoursOf(lastSeenIso);
+    return { action: h.action, reason: h.reason, lastSeenIso, ageHours, maxAgeHours: h.maxAgeHours, ok: ageHours <= h.maxAgeHours };
+  });
+
+  const reported = input.reported.map((h): HeartbeatFinding => {
+    const lastSeenIso = observed(h.action)?.lastSeenIso;
+    if (!lastSeenIso) return { action: h.action, reason: h.reason, ok: true };
+    return { action: h.action, reason: h.reason, lastSeenIso, ageHours: ageHoursOf(lastSeenIso), ok: true };
+  });
+
+  return [...gated, ...reported];
+}
+
 export interface CredentialFinding {
   readonly ref: string;
   readonly reason: string;
@@ -284,6 +341,7 @@ export interface CensusResult {
   readonly skipped: readonly SkippedRoute[];
   readonly problems: readonly string[];
   readonly keyProof?: KeyProof;
+  readonly heartbeats: readonly HeartbeatFinding[];
   readonly limits: readonly string[];
 }
 
@@ -300,6 +358,7 @@ export function censusResult(input: {
   readonly presentRefs: readonly string[];
   readonly observations: readonly EndpointObservation[];
   readonly keyProof?: KeyProof;
+  readonly heartbeats?: readonly HeartbeatFinding[];
   readonly limits?: readonly string[];
 }): CensusResult {
   const present = new Set(input.presentRefs);
@@ -313,11 +372,13 @@ export function censusResult(input: {
     return { ...e, ...(status === undefined ? {} : { status }), state, ok: state === e.expect };
   });
 
+  const heartbeats = input.heartbeats ?? [];
   const ok =
     input.plan.problems.length === 0 &&
     credentials.every((c) => c.present) &&
     endpoints.every((e) => e.ok) &&
-    (input.keyProof?.ok ?? true);
+    (input.keyProof?.ok ?? true) &&
+    heartbeats.every((h) => h.ok);
   return {
     ok,
     target: input.target,
@@ -328,6 +389,7 @@ export function censusResult(input: {
     skipped: input.endpoints.skipped,
     problems: input.plan.problems,
     ...(input.keyProof ? { keyProof: input.keyProof } : {}),
+    heartbeats,
     limits: input.limits ?? [],
   };
 }
@@ -375,6 +437,17 @@ export function renderCensusReport(result: CensusResult): string[] {
     for (const s of result.skipped) lines.push(`    - ${s.method} ${s.path} [${s.channel}] — ${s.reason}`);
   }
 
+  if (result.heartbeats.length > 0) {
+    lines.push("");
+    lines.push(`  CRON HEARTBEATS (${result.heartbeats.filter((h) => h.ok).length}/${result.heartbeats.length} as expected) — OPE-635`);
+    for (const h of result.heartbeats) {
+      const age = h.ageHours === undefined ? "never seen" : `${h.ageHours.toFixed(1)}h old`;
+      const bound = h.maxAgeHours === undefined ? "report-only, not gated" : `bound ${h.maxAgeHours}h`;
+      lines.push(`    ${h.ok ? "✓" : "✗"} ${h.action} — ${age} (${bound})`);
+      if (!h.ok) lines.push(`        ${h.reason}`);
+    }
+  }
+
   if (result.problems.length > 0) {
     lines.push("");
     lines.push(`  CONFIG PROBLEMS (${result.problems.length})`);
@@ -393,9 +466,11 @@ export function renderCensusReport(result: CensusResult): string[] {
   } else {
     const missing = result.credentials.filter((c) => !c.present).map((c) => c.ref);
     const dead = result.endpoints.filter((e) => !e.ok).map((e) => `${e.method} ${e.path}`);
+    const stale = result.heartbeats.filter((h) => !h.ok).map((h) => h.action);
     lines.push("✗ deploy:census: the deployment is MISSING required state.");
     if (missing.length > 0) lines.push(`  missing credential row(s): ${missing.join(", ")}`);
     if (dead.length > 0) lines.push(`  route(s) that did not answer as required: ${dead.join(", ")}`);
+    if (stale.length > 0) lines.push(`  cron(s) with no fresh heartbeat: ${stale.join(", ")}`);
     if (result.keyProof && !result.keyProof.ok) lines.push(`  encryption key: ${result.keyProof.detail}`);
     if (result.problems.length > 0) lines.push(`  config problem(s): ${result.problems.length} — see above`);
     lines.push("  A missing row fails CLOSED at first use, with no audit trace. Store it before trusting this deploy.");
