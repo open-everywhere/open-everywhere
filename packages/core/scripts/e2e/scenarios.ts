@@ -1,4 +1,5 @@
 import { auditSilencesExpected, ENV, type Capability, type SlackUser2Config } from "./env.js";
+import { deployedBuildCarries } from "./deployed-build.js";
 import type { SkipKind } from "./skip-summary.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import { dmAnchorDomain, DM_ANCHOR_DOMAIN_PREFIX } from "../../agent/channels/window-key.js";
@@ -123,6 +124,7 @@ const isFillerAck = (text: string): boolean =>
 
 const STOOD_DOWN_ACTION = "engagement.stood_down";
 const CAP_REFUSAL = "I'm holding off here";
+const OPE615_CLAIM_FIX_SHA = "8d2d995fac247dab6bc968754c154cc951bb2453";
 const CAP_REFUSAL_MARKER = /holding off/i;
 const NON_ADMIN_DENIAL = "only a domain/org admin can decide this request";
 const MEMORY_ADMIN_GATE = "requires an org admin";
@@ -1013,7 +1015,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const forge = ctx.syntheticDm!;
       const secondaryId = ctx.slackSecondaryUserId!;
       const claimant = ctx.slackSecondary!.withChannel(slack.channelId);
-      const armed = process.env.E2E_LINK_IDENTITY === "1";
+      const armed = deployedBuildCarries(OPE615_CLAIM_FIX_SHA);
       const runStart = new Date(Date.now() - 60_000).toISOString();
       if (!ctx.auditRead) {
         ctx.skip(
@@ -1066,12 +1068,17 @@ export const SCENARIOS: readonly Scenario[] = [
           `the code was minted but NO identity.link.challenge_claimed row appeared after slack/${secondaryId} posted "@… link <CODE>" ` +
           "in the shared channel — the link-claim message.received hook did not fire.";
         if (armed) {
-          ctx.gate(false, `claim: ${miss} E2E_LINK_IDENTITY=1 declares this deployment carries 68b975d9, so this is a product regression, not a stale deploy.`);
+          ctx.gate(
+            false,
+            `claim: ${miss} The last recorded deploy (.open-everywhere-deploy/known-good.json) carries the OPE-615 claim fix ` +
+              `(${OPE615_CLAIM_FIX_SHA.slice(0, 8)}), so this is a product regression, not a stale deploy — unless the alias was ` +
+              "rolled back after that record was written.",
+          );
         }
         ctx.skip(
-          `${miss} Either the deployment predates the link-claim hook (68b975d9), or the hook cannot read the claim on this path — ` +
-            "found live 2026-08-15 (OPE-615): the unified-window session hands message.received the RENDERED WAKE ENVELOPE, not the raw body, " +
-            "so the recogniser never matches. Set E2E_LINK_IDENTITY=1 on a build that carries the fix to make this a hard failure.",
+          `${miss} The last recorded deploy does not carry the OPE-615 claim fix (${OPE615_CLAIM_FIX_SHA.slice(0, 8)}) — or no ` +
+            "deploy record exists in this checkout (.open-everywhere-deploy/known-good.json, written by `npm run deploy:verify -- --record`). " +
+            "Deploy a build with the fix and record it; the hard gate arms itself from the record.",
         );
       }
       const claimantKey = `slack/…/${secondaryId}`;
