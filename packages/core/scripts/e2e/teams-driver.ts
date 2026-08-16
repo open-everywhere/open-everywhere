@@ -153,6 +153,14 @@ export class TeamsDriver {
     return res.json();
   }
 
+  async channelInfo(): Promise<{ id: string; displayName: string }> {
+    const json = (await this.graph("GET", `/teams/${this.cfg.teamId}/channels/${this.cfg.channelId}`)) as {
+      id?: string;
+      displayName?: string;
+    };
+    return { id: json.id ?? "", displayName: json.displayName ?? "" };
+  }
+
   async postMention(text: string): Promise<TeamsMessage> {
     const json = (await this.graph("POST", `/teams/${this.cfg.teamId}/channels/${this.cfg.channelId}/messages`, {
       body: { contentType: "html", content: `<at id="0">Open Everywhere</at> ${htmlEscape(text)}` },
