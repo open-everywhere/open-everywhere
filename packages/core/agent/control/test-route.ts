@@ -76,6 +76,39 @@ function defaultReason(addressing: WakeAddressing): WakeReason {
   return "channel-activity";
 }
 
+const WAKE_ADDRESSINGS: readonly WakeAddressing[] = ["direct", "direct-mention", "thread-follow", "channel-watch", "name-drop"];
+
+const ADDRESSED_ADDRESSINGS: readonly WakeAddressing[] = ["direct", "direct-mention"];
+
+export type InjectedAddressing =
+  | { readonly ok: true; readonly addressing: WakeAddressing }
+  | { readonly ok: false; readonly error: string };
+
+export function resolveInjectedAddressing(body: {
+  readonly addressing?: unknown;
+  readonly reason?: unknown;
+  readonly mention?: unknown;
+}): InjectedAddressing {
+  if (body.addressing !== undefined && !WAKE_ADDRESSINGS.includes(body.addressing as WakeAddressing)) {
+    return { ok: false, error: `invalid \`addressing\` "${String(body.addressing)}" (expected one of ${WAKE_ADDRESSINGS.join(", ")})` };
+  }
+  const stated = body.addressing as WakeAddressing | undefined;
+  const addressedAttr =
+    body.mention === true ? "mention: true" : body.reason === "mention" ? 'reason: "mention"' : body.reason === "dm" ? 'reason: "dm"' : undefined;
+  if (addressedAttr === undefined) return { ok: true, addressing: stated ?? "channel-watch" };
+  if (stated === undefined) return { ok: true, addressing: "direct-mention" };
+  if (!ADDRESSED_ADDRESSINGS.includes(stated)) {
+    return {
+      ok: false,
+      error:
+        `\`${addressedAttr}\` contradicts \`addressing: "${stated}"\` — that addressing renders the ` +
+        `"You were not mentioned" preamble, which no addressed wake may carry. Use addressing ` +
+        `"direct-mention" (judged envelope + wake-id) or "direct" (raw body), or drop the addressed attribute.`,
+    };
+  }
+  return { ok: true, addressing: stated };
+}
+
 function defaultContainerNoun(platform: string): string | undefined {
   switch (platform) {
     case "notion": return "doc";
@@ -141,6 +174,10 @@ export async function handleTestWakeInjection(req: Request, to: RouteHandlerArgs
     return json(400, { error: `origin.platform "${origin.platform}" != platform "${platform}"` });
   }
 
+  const resolvedAddressing = resolveInjectedAddressing(body);
+  if (!resolvedAddressing.ok) return json(400, { error: resolvedAddressing.error });
+  const addressing: WakeAddressing = resolvedAddressing.addressing;
+
   let grain: SupervisorGrain | undefined;
   try {
     const domains = getConfig().loadDomains();
@@ -192,7 +229,6 @@ export async function handleTestWakeInjection(req: Request, to: RouteHandlerArgs
     }
   }
 
-  const addressing: WakeAddressing = body.addressing ?? "channel-watch";
   const reason: WakeReason = body.reason ?? defaultReason(addressing);
   const containerId = surfaceKey.split("/").slice(2).join("/") || surfaceKey;
   const containerNoun = body.containerNoun ?? defaultContainerNoun(platform);

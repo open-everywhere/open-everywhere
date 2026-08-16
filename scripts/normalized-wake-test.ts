@@ -96,6 +96,7 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
   ok(m.includes("turn-final text is DISCARDED"), "direct-mention states the hard consequence: turn-final text is discarded — counters the dual-mode 'end with your answer' habit");
   ok(m.includes(`<wake reason="mention"`) && m.includes(`wake-id="wk-9"`), "direct-mention keeps the envelope AND the wake-id (unlike raw 'direct', which emits neither)");
   ok(m.includes(`mention="true"`), "the trigger renders the @mention flag");
+  ok(!m.includes("You were not mentioned"), "an addressed render NEVER carries the 'You were not mentioned' prose (it would contradict reason=mention + mention=true)");
   ok(m.includes("Cross-surface disclosure:"), "the unified disclosure rides the addressed preamble");
   ok(count(m, UNTRUSTED_OPEN) === 0, "a PEER-authored addressed body is NOT untrusted-wrapped (W1 keys on the author on the addressed path too)");
   const strangerMention = renderWake({ ...nw, trigger: trig("does this match Slack?", { mention: true, trust: "unauth" }) }, NOW).message;
@@ -108,6 +109,7 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
   const ambient: NormalizedWake = { platform: "notion", reason: "channel-activity", addressing: "channel-watch", containerNoun: "doc", unifiedDisclosure: true, wakeId: "wk-amb", locus: { channel: { id: "page-1", platform: "notion" }, thread: { ts: "disc-1" } }, trigger: trig("does this section still hold?") };
   const m = renderWake(ambient, NOW).message;
   ok(m.startsWith("[channel-watch]"), "ambient single-window wake KEEPS the silence-biased watch preamble (the bar to speak is unchanged — message-tool-only is not weakened)");
+  ok(m.includes("You were not mentioned") && !m.includes(`mention="true"`), "the unaddressed wake DOES carry the watch prose, and no mention flag to contradict it");
   ok(m.includes("`reply`") && m.includes("`wake`") && m.includes("`text`"), "ambient single-window wake ALSO names the reply tool + wake/text args (so a decision to answer routes through the tool, not dropped prose)");
   ok(m.includes("turn-final text is DISCARDED"), "ambient single-window wake states the hard consequence: turn-final prose is discarded on this session");
   ok(m.includes("cannot @mention a bot at all"), "ambient mandate calls out the no-mention surface (Notion) case explicitly — the reason the addressed-prose bridge can never fire here");
