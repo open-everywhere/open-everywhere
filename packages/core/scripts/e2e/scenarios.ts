@@ -1074,9 +1074,13 @@ export const SCENARIOS: readonly Scenario[] = [
             "so the recogniser never matches. Set E2E_LINK_IDENTITY=1 on a build that carries the fix to make this a hard failure.",
         );
       }
-      const claimantKey = `slack/${secondaryId}`;
+      const claimantKey = `slack/…/${secondaryId}`;
       ctx.gate(
-        claimedRows!.some((r) => r.principalId === claimantKey || JSON.stringify(r.detail ?? {}).includes(secondaryId)),
+        claimedRows!.some(
+          (r) =>
+            (r.principalId?.startsWith("slack/") === true && r.principalId.endsWith(`/${secondaryId}`)) ||
+            JSON.stringify(r.detail ?? {}).includes(secondaryId),
+        ),
         `claim: the challenge_claimed row names the CLAIMING account (${claimantKey}) — who claimed comes from the wake's captured author, never from the message text`,
       );
 
