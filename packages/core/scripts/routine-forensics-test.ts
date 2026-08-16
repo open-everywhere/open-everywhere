@@ -188,6 +188,29 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 }
 
 {
+  const r = routine({ id: "r-abandoned", consecutiveFailures: 2 });
+  await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
+  const seat = new FakeEveContext();
+  const before = (await rowsFor(ROUTINE_AUDIT.fire)).length;
+
+  await inEveContext(seat, async () => {
+    await outcomeHook.events!["turn.started"]!({} as never, firedCtx(r, "sess-abandoned", "wake-abandoned"));
+    const humanTurn = {
+      channel: { kind: "slack" },
+      session: { id: "sess-abandoned", auth: { current: { attributes: { team_id: "T1", channel_id: "C1" }, principalId: "U1", principalType: "user" } } },
+    } as never;
+    await outcomeHook.events!["turn.started"]!({} as never, humanTurn);
+    await outcomeHook.events!["turn.completed"]!({} as never, humanTurn);
+  });
+
+  ok((await rowsFor(ROUTINE_AUDIT.fire)).length === before, "abandoned: a human turn after an abandoned fire turn folds NOTHING — the unconditional arm write cleared the stale slot");
+  ok(
+    (await store.getRoutine(ORG, SURFACE, "r-abandoned"))?.consecutiveFailures === 2,
+    "abandoned: …and the failure streak survives, one strike from disabling",
+  );
+}
+
+{
   const r = routine({ id: "r-job-refire", consecutiveFailures: 0 });
   await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
   const jobSeat = new FakeEveContext();
