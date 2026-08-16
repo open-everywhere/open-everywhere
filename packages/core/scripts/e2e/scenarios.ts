@@ -1488,7 +1488,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: askTs } = await notion.post(
         notion.mention(`search Notion for "${query}" and tell me what you find — a page title plus a short summary is enough. If nothing matches, just say so plainly; don't guess.`),
       );
-      const reply = await notion.awaitThreadReply(askTs, { timeoutMs: REPLY_WAIT });
+      const reply = await notion.awaitThreadReply(askTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       await ctx.judgePass(
         closedQA(
           "Is the reply a sane response to a Notion search request — either naming a real-sounding page/summary, " +
