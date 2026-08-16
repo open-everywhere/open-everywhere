@@ -154,6 +154,40 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 }
 
 {
+  const r = routine({ id: "r-cancelled", consecutiveFailures: 2 });
+  await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
+  const seat = new FakeEveContext();
+  const fire = firedCtx(r, "sess-cancel", "wake-cancelled");
+  const before = (await rowsFor(ROUTINE_AUDIT.fire)).length;
+
+  await inEveContext(seat, async () => {
+    await outcomeHook.events!["turn.started"]!({} as never, fire);
+    await outcomeHook.events!["turn.cancelled"]!({} as never, fire);
+  });
+  ok((await rowsFor(ROUTINE_AUDIT.fire)).length === before, "cancelled: a cancelled fire turn writes NO fire row — a run a human stopped settles nothing");
+
+  await inEveContext(seat, async () => {
+    await outcomeHook.events!["turn.started"]!({} as never, fire);
+    await outcomeHook.events!["turn.completed"]!({} as never, fire);
+  });
+  ok((await rowsFor(ROUTINE_AUDIT.fire)).length === before, "cancelled: …and the settlement wake cannot fold it either — the wake is latched, so a cancelled run is never reported as `ok`");
+  ok(
+    (await store.getRoutine(ORG, SURFACE, "r-cancelled"))?.consecutiveFailures === 2,
+    "cancelled: the failure streak survives the cancellation — one strike from disabling, exactly as it was",
+  );
+
+  const humanTurn = {
+    channel: { kind: "slack" },
+    session: { id: "sess-cancel", auth: { current: { attributes: { team_id: "T1", channel_id: "C1" }, principalId: "U1", principalType: "user" } } },
+  } as never;
+  await inEveContext(seat, async () => {
+    await outcomeHook.events!["turn.started"]!({} as never, humanTurn);
+    await outcomeHook.events!["turn.completed"]!({} as never, humanTurn);
+  });
+  ok((await rowsFor(ROUTINE_AUDIT.fire)).length === before, "cancelled: an ordinary human turn after the cancellation folds nothing — no stale arm survived");
+}
+
+{
   const r = routine({ id: "r-job-refire", consecutiveFailures: 0 });
   await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
   const jobSeat = new FakeEveContext();

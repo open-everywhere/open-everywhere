@@ -87,13 +87,21 @@ export default defineHook({
   events: {
     "turn.started": (_event, ctx) => {
       try {
-        const fire = armFireFold(ctx, foldState.get().folded);
-        if (fire) foldState.update((s) => ({ ...s, armed: fire }));
+        foldState.update((s) => ({ ...s, armed: armFireFold(ctx, s.folded) }));
       } catch {
       }
     },
     "turn.completed": async () => {
       await record("ok");
+    },
+    "turn.cancelled": () => {
+      try {
+        const armed = foldState.get().armed;
+        if (armed === null) return;
+        foldState.update((s) => ({ armed: null, folded: { ...s.folded, [armed.wakeKey]: true } }));
+        log(`fire cancelled for ${armed.marker.id} [${armed.marker.surfaceKey}] — no outcome recorded`);
+      } catch {
+      }
     },
     "turn.failed": async () => {
       await record("failed");
