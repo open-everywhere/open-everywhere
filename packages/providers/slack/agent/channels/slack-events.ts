@@ -1179,6 +1179,16 @@ export const liveResolveProfile: ResolveProfile = (id) => fetchUserProfileNames(
 
 const SLACK_ROSTER_PAGE = 200;
 const SLACK_ROSTER_MAX_PAGES = 10;
+const SLACK_ROSTER_TTL_MS = 60_000;
+
+type RosterEntry = { nativeId: string; name?: string; handle?: string };
+let rosterCache: { at: number; rows: readonly RosterEntry[] } | undefined;
+let rosterInFlight: Promise<readonly RosterEntry[]> | undefined;
+
+export function _resetWorkspaceRosterCache(): void {
+  rosterCache = undefined;
+  rosterInFlight = undefined;
+}
 
 type SlackRosterMember = {
   id?: string;
@@ -1190,8 +1200,24 @@ type SlackRosterMember = {
   real_name?: string;
 };
 
-export async function fetchWorkspaceRoster(): Promise<readonly { nativeId: string; name?: string; handle?: string }[]> {
-  const out: { nativeId: string; name?: string; handle?: string }[] = [];
+export async function fetchWorkspaceRoster(): Promise<readonly RosterEntry[]> {
+  const now = Date.now();
+  if (rosterCache && now - rosterCache.at < SLACK_ROSTER_TTL_MS) return rosterCache.rows;
+  if (rosterInFlight) return await rosterInFlight;
+  rosterInFlight = (async () => {
+    const rows = await walkWorkspaceRoster();
+    if (rows.length > 0) rosterCache = { at: Date.now(), rows };
+    return rows;
+  })();
+  try {
+    return await rosterInFlight;
+  } finally {
+    rosterInFlight = undefined;
+  }
+}
+
+async function walkWorkspaceRoster(): Promise<readonly RosterEntry[]> {
+  const out: RosterEntry[] = [];
   let cursor = "";
   for (let page = 0; page < SLACK_ROSTER_MAX_PAGES; page++) {
     const body = `limit=${SLACK_ROSTER_PAGE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;

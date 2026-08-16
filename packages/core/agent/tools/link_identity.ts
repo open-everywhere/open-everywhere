@@ -10,7 +10,8 @@ import { linkInitiatorRefusal } from "../identity/link-initiator.js";
 import { linkClaimInstructions, LINK_CHALLENGE_TTL_MS } from "../identity/link-challenge.js";
 import { linkConsentAsk, linkConsentPendingInstructions } from "../identity/link-flow.js";
 import { hasAccountDirectory, lookupAccountDirectory, accountDirectoryPlatforms, DIRECTORY_MAX_CANDIDATES } from "../identity/account-directory.js";
-import { humanAccountLabel } from "../identity/account-display-name.js";
+import { accountProfileFor, humanAccountLabel } from "../identity/account-display-name.js";
+import { tryPrincipalKey } from "../identity/principal-key.js";
 import { canDeliverDirectMessage, dispatchDirectMessage } from "../channels/post-arms.js";
 import { linkTenantOf, tryLinkTenantOf } from "../identity/link-tenant.js";
 import { ingestUntrusted } from "../access/untrusted.js";
@@ -127,9 +128,19 @@ export default defineTool({
       transport: "directory",
       target: { platform, tenant: targetTenant, nativeId },
     });
-    const initiatorName = await humanAccountLabel(binding.platform, actor, binding.workspace);
+    const initiatorAnchor = accountAnchor(binding.platform, binding.workspace, actor);
+    const initiatorProfile = await accountProfileFor(binding.platform, actor, binding.workspace);
+    const initiatorName = profileName(initiatorProfile);
     try {
-      await dispatchDirectMessage(platform, { principalId: nativeId, text: linkConsentAsk(initiatorName, targetName, TTL_MINUTES) });
+      await dispatchDirectMessage(platform, {
+        principalId: nativeId,
+        text: linkConsentAsk({
+          initiatorAnchor,
+          ...(initiatorName ? { initiatorName } : {}),
+          targetAnchor: accountAnchor(platform, targetTenant, nativeId),
+          ttlMinutes: TTL_MINUTES,
+        }),
+      });
     } catch (err) {
       console.log(`[open-everywhere:identity] link request ${issued.challenge.id}: the consent ask could not be delivered: ${String(err)}`);
       throw new Error(
@@ -146,6 +157,16 @@ export default defineTool({
     };
   },
 });
+
+function accountAnchor(platform: string, tenant: string | undefined, nativeId: string): string {
+  return tryPrincipalKey(platform, tenant, nativeId) ?? `the ${platform} account "${nativeId}"`;
+}
+
+function profileName(profile: { readonly name?: string; readonly handle?: string } | undefined): string | undefined {
+  if (!profile) return undefined;
+  if (profile.name && profile.handle && profile.name !== profile.handle) return `${profile.name} (@${profile.handle})`;
+  return profile.name ?? (profile.handle ? `@${profile.handle}` : undefined);
+}
 
 function directoryShortfall(platform: string): string | undefined {
   if (!hasAccountDirectory(platform)) {

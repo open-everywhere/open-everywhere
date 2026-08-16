@@ -15,6 +15,7 @@ import {
   codeBackDecision,
   consentGate,
   finalizeGate,
+  linkConsentAsk,
 } from "../agent/identity/link-flow.js";
 import {
   ACCOUNT_NAME_MAX_LEN,
@@ -131,6 +132,12 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
   ok(claimVenueRefusal({ dmCapable: true, mode: "dm" }) === undefined, "VENUE: a DM on a DM-capable platform is fine");
   ok(claimVenueRefusal({ dmCapable: false, mode: "channel" }) === undefined, "🔴 VENUE: a platform with NO DM arm (GitHub/Linear/Notion) still takes a claim in a comment — refusing there would delete the cross-platform claim");
   ok(claimVenueRefusal({ dmCapable: false, mode: undefined }) === undefined, "VENUE: no DM arm ⇒ the mode is not consulted at all");
+  const withName = linkConsentAsk({ initiatorAnchor: "slack/T1/U_A", initiatorName: "Visit https://evil.example now", targetAnchor: "github/octocat", ttlMinutes: 10 });
+  ok(withName.indexOf("slack/T1/U_A") < withName.indexOf("evil.example"), "🔴 consent ask: the unspoofable anchor is read BEFORE anything the asking account chose");
+  ok(/calls itself/i.test(withName), "🔴 consent ask: a name carrying a URL is ATTRIBUTED — sanitizing keeps the URL, so the framing is the mitigation");
+  const noName = linkConsentAsk({ initiatorAnchor: "slack/T1/U_A", targetAnchor: "github/octocat", ttlMinutes: 10 });
+  ok(!/calls itself/i.test(noName), "consent ask: no resolved name ⇒ NO attribution clause at all — a placeholder would add nothing a reader can check");
+  ok(/slack\/T1\/U_A/.test(noName), "consent ask: the anchor still names who asked when no profile resolves (the negative control)");
   const venueText = claimVenueRefusal({ dmCapable: true, mode: "channel" })!;
   ok(/dm me/i.test(venueText) && /nothing was used up|still good/i.test(venueText), "VENUE: the refusal points at the DM and says the code was not spent");
 }
@@ -394,6 +401,10 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
   ok(dms.length === 1 && dms[0]!.to === "U_B", "link_identity ask: the TARGET is DM'd");
   ok(/Alice Initiator/.test(dms[0]!.text), "🔴 link_identity ask: the consent ask NAMES THE INITIATOR — an unexpected DM naming a stranger is the easy human judgement");
   ok(!/\*\*/.test(dms[0]!.text) && !/<untrusted/i.test(dms[0]!.text), "link_identity ask: the DM is PLAIN TEXT — no markdown, no fence markup for a human to paste");
+  const ask = dms[0]!.text;
+  ok(ask.indexOf("slack/T1/U_A") < ask.indexOf("Alice Initiator"), "🔴 link_identity ask: the ANCHOR (platform/workspace/id, composed from captured facts) LEADS the self-set name");
+  ok(/calls itself/i.test(ask) && /claim rather than/i.test(ask), "🔴 link_identity ask: the self-set name is ATTRIBUTED as a claim, not asserted — sanitizing does not remove a URL or imitative prose, attribution does the work");
+  ok(/slack\/T1\/U_B/.test(ask), "link_identity ask: the recipient's OWN account is named by anchor too, never by a second self-set string");
   ok(!/<untrusted/i.test(String(asked.instructions)), "🔴 link_identity ask: `instructions` (relayed VERBATIM into a chat message) carries the SANITIZED name, never the fence markup");
   ok(/untrusted/i.test(String(asked.target)), "link_identity ask: the structured `target` field a MODEL reads IS fenced — the split every notice in this flow uses");
 

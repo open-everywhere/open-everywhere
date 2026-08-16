@@ -85,13 +85,26 @@ export function linkConsentPendingInstructions(targetName: string, ttlMinutes: n
   );
 }
 
-export function linkConsentAsk(initiatorName: string, targetName: string, ttlMinutes: number): string {
+export function linkConsentAsk(input: {
+  readonly initiatorAnchor: string;
+  readonly initiatorName?: string;
+  readonly targetAnchor: string;
+  readonly ttlMinutes: number;
+}): string {
+  const attributed = input.initiatorName
+    ? `\n\nThat account calls itself "${input.initiatorName}". That is a name the account sets for ` +
+      `itself, so read it as a claim rather than as something I checked — the account id above is the ` +
+      `part nobody can change.`
+    : "";
   return (
-    `${initiatorName} says ${targetName} is their own account, and asked me to link the two so their ` +
-    `work is attributed to one person across every surface I can see.\n\n` +
-    `If that is you, tell me here and I will record your consent. If you do not recognise that person, ` +
-    `tell me to deny it — nothing is written unless you agree, and the request expires in ` +
-    `${ttlMinutes} minutes on its own.`
+    `Somebody asked me to link your account to theirs, and I need your say-so first.\n\n` +
+    `Who asked: ${input.initiatorAnchor}\n` +
+    `Your account: ${input.targetAnchor}${attributed}\n\n` +
+    `Linking means the two accounts count as ONE PERSON everywhere I can see, so their work and yours ` +
+    `are attributed together.\n\n` +
+    `If that account is yours, tell me here and I will record your consent. If you do not recognise it, ` +
+    `tell me to deny it. Nothing is written unless you agree, and the request expires on its own in ` +
+    `${input.ttlMinutes} minutes if you ignore it.`
   );
 }
 
