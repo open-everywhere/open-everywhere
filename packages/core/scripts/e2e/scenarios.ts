@@ -115,6 +115,7 @@ const FILE_REPLY_WAIT = 420_000;
 const UNIFIED_REPLY_WAIT = 420_000;
 const BROWSER_QA_WAIT = 420_000;
 const SILENCE_WINDOW = 45_000;
+const LINK_VENUE_PROOF_WINDOW = 20_000;
 
 const isFillerAck = (text: string): boolean =>
   /\b(one sec|a sec|hang on|hold on|let me (?:look|check|see)|looking (?:at|into)|checking (?:now|it)?|on it|give me a (?:sec|moment)|working on|just a (?:sec|moment)|will (?:look|check|report|update)|hand(?:ed|ing) (?:this |it )?off|report back|delegat(?:ed|ing)|spun up a worker|standing by)\b/i.test(
@@ -124,8 +125,9 @@ const isFillerAck = (text: string): boolean =>
 
 const STOOD_DOWN_ACTION = "engagement.stood_down";
 const CAP_REFUSAL = "I'm holding off here";
-const OPE615_CLAIM_FIX_SHA = "8d2d995fac247dab6bc968754c154cc951bb2453";
+const OPE617_V2_SHA = "4944364aa5cf459b43cfaff96218f29e87331e9c";
 const CAP_REFUSAL_MARKER = /holding off/i;
+const LINK_VENUE_REFUSAL_MARKER = /can't take a link code here/i;
 const NON_ADMIN_DENIAL = "only a domain/org admin can decide this request";
 const MEMORY_ADMIN_GATE = "requires an org admin";
 
@@ -1002,12 +1004,13 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S-LINK-SLACK",
-    title: "Identity linking, Slack↔Slack: DM mints a code → a SECOND real account claims it in a channel → the initiator's DM names the claimant → confirm_link commits the link",
+    title:
+      "Identity linking v2, Slack↔Slack: DM mints a code → a channel claim is REFUSED (DM-only venue) → the SECOND account claims it in its OWN DM → the initiator feeds back the code-back → confirm_link commits the link",
     requires: ["slack", "syntheticDm", "slackSecondary"],
     surface: "slack",
     suite: "core",
     optional: false,
-    timeoutMs: 1_200_000,
+    timeoutMs: 1_500_000,
     judged: false,
     run: async (ctx) => {
       const slack = ctx.slack!;
@@ -1015,12 +1018,11 @@ export const SCENARIOS: readonly Scenario[] = [
       const forge = ctx.syntheticDm!;
       const secondaryId = ctx.slackSecondaryUserId!;
       const claimant = ctx.slackSecondary!.withChannel(slack.channelId);
-      const armed = deployedBuildCarries(OPE615_CLAIM_FIX_SHA);
       const runStart = new Date(Date.now() - 60_000).toISOString();
       if (!ctx.auditRead) {
         ctx.skip(
           "identity-link outcomes are only assertable over the audit trail (identity.link.* rows) — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN. " +
-            "Without it a lost claim cannot be told from a deployment that predates the link-claim hook (68b975d9).",
+            "Without it a lost claim cannot be told from a deployment that predates the link_identity tool.",
         );
       }
       const auditRead = ctx.auditRead!;
@@ -1044,7 +1046,7 @@ export const SCENARIOS: readonly Scenario[] = [
         if (issuedRows.length === 0) {
           ctx.skip(
             "no link code in the DM reply and NO identity.link.challenge_issued audit row — this deployment does not have a reachable " +
-              `link_identity tool (deploy 68b975d9 or later). Reply: "${mintReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
+              `link_identity tool. Reply: "${mintReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
           );
         }
         ctx.gate(
@@ -1055,32 +1057,70 @@ export const SCENARIOS: readonly Scenario[] = [
       }
       ctx.log(`mint: parsed link code (${code!.length} symbols) from the DM reply; ${issuedRows.length} challenge_issued row(s) in the window`);
 
-      await claimant.post(claimant.mention(`link ${code!}`));
+      if (!deployedBuildCarries(OPE617_V2_SHA)) {
+        ctx.skip(
+          `the last recorded deploy does not carry OPE-617 v2 (${OPE617_V2_SHA.slice(0, 8)}) — or no deploy record exists in this checkout ` +
+            "(.open-everywhere-deploy/known-good.json, written by `npm run deploy:verify -- --record`). On a pre-v2 build a channel-addressed " +
+            "claim is the correct behaviour, so the venue-refusal / own-DM-claim / code-back legs below do not apply. Deploy a build carrying " +
+            "the v2 fix and record it; the legs arm themselves from the record.",
+        );
+      }
+
+      const { ts: negativeTs } = await claimant.post(claimant.mention(`link ${code!}`));
+      const refusalReply = await claimant.awaitAnyReply(negativeTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(
+        LINK_VENUE_REFUSAL_MARKER.test(refusalReply.text),
+        "venue: a channel-addressed link claim on a DM-capable platform (Slack) is refused with a pointer to DM — " +
+          `got: "${refusalReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
+      );
+      const spuriousClaim = await pollOptional(
+        async () => {
+          const r = await auditRead({ sinceIso: runStart, actions: ["identity.link.challenge_claimed"] });
+          return r.length > 0 ? r : undefined;
+        },
+        {
+          timeoutMs: LINK_VENUE_PROOF_WINDOW,
+          what: "confirmation that the channel-addressed claim did NOT record an identity.link.challenge_claimed row",
+        },
+      );
+      ctx.gate(
+        spuriousClaim === undefined,
+        "venue: NO identity.link.challenge_claimed row appeared after the channel-addressed claim — the DM-only venue rule refused it before " +
+          "the claim CAS ran, so the code stays unspent (identity/link-flow.ts claimVenueRefusal)",
+      );
+
+      async function openSecondaryOwnDm(): Promise<string> {
+        try {
+          return await ctx.slackSecondary!.openDirectMessage(slack.botUserId);
+        } catch (err) {
+          return ctx.skip(
+            `could not open a DM between the secondary account and the bot (conversations.open users=${slack.botUserId}): ${String(err)} — ` +
+              "the secondary token (E2E_SLACK_SECONDARY_TOKEN) needs the im:write scope for OPE-617 v2's own-DM claim leg.",
+          );
+        }
+      }
+      const secondaryDmChannel = await openSecondaryOwnDm();
+      const secondaryDm = ctx.slackSecondary!.withChannel(secondaryDmChannel);
+      const { teamId: secondaryTeamId } = await ctx.slackSecondary!.identity();
+      const claimAsk = `link ${code!}`;
+      const { ts: claimTs } = await secondaryDm.post(claimAsk);
+      const claimSent = await forge.message({ text: claimAsk, userId: secondaryId, teamId: secondaryTeamId, ts: claimTs, channelId: secondaryDmChannel });
+      ctx.gate(claimSent.status === 200, "own-dm claim: the synthetic DM claim acked 200");
+      const claimReply = await secondaryDm.awaitAnyReply(claimTs, { timeoutMs: REPLY_WAIT });
+      const code2 = parseLinkCode(claimReply.text);
+      ctx.gate(
+        code2 !== undefined,
+        "own-dm claim: a second (code-back) code was parsed from the bot's reply in the secondary's own DM — the model may have paraphrased " +
+          `instead of relaying the instructions verbatim. Reply: "${claimReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
+      );
       const claimedRows = await pollOptional(
         async () => {
           const r = await auditRead({ sinceIso: runStart, actions: ["identity.link.challenge_claimed"] });
           return r.length > 0 ? r : undefined;
         },
-        { timeoutMs: REPLY_WAIT, what: "an identity.link.challenge_claimed audit row (the link-claim hook recording the second account's claim)" },
+        { timeoutMs: REPLY_WAIT, what: "an identity.link.challenge_claimed audit row (the own-DM claim being recorded)" },
       );
-      if (!claimedRows) {
-        const miss =
-          `the code was minted but NO identity.link.challenge_claimed row appeared after slack/${secondaryId} posted "@… link <CODE>" ` +
-          "in the shared channel — the link-claim message.received hook did not fire.";
-        if (armed) {
-          ctx.gate(
-            false,
-            `claim: ${miss} The last recorded deploy (.open-everywhere-deploy/known-good.json) carries the OPE-615 claim fix ` +
-              `(${OPE615_CLAIM_FIX_SHA.slice(0, 8)}), so this is a product regression, not a stale deploy — unless the alias was ` +
-              "rolled back after that record was written.",
-          );
-        }
-        ctx.skip(
-          `${miss} The last recorded deploy does not carry the OPE-615 claim fix (${OPE615_CLAIM_FIX_SHA.slice(0, 8)}) — or no ` +
-            "deploy record exists in this checkout (.open-everywhere-deploy/known-good.json, written by `npm run deploy:verify -- --record`). " +
-            "Deploy a build with the fix and record it; the hard gate arms itself from the record.",
-        );
-      }
+      ctx.gate(claimedRows !== undefined, "own-dm claim: an identity.link.challenge_claimed audit row exists after the DM claim");
       const claimantKey = `slack/…/${secondaryId}`;
       ctx.gate(
         claimedRows!.some(
@@ -1088,22 +1128,15 @@ export const SCENARIOS: readonly Scenario[] = [
             (r.principalId?.startsWith("slack/") === true && r.principalId.endsWith(`/${secondaryId}`)) ||
             JSON.stringify(r.detail ?? {}).includes(secondaryId),
         ),
-        `claim: the challenge_claimed row names the CLAIMING account (${claimantKey}) — who claimed comes from the wake's captured author, never from the message text`,
+        `own-dm claim: the challenge_claimed row names the CLAIMING account (${claimantKey}) — who claimed comes from the wake's captured author, never from the message text`,
       );
 
-      const notice = await pollUntil(
-        async () => (await dm.history(mintTs)).find((m) => dm.isBotReply(m) && m.text.includes(secondaryId)),
-        { timeoutMs: REPLY_WAIT, what: `the initiating DM's claim notice naming ${claimantKey}` },
-      ).catch(() => undefined);
-      if (notice) ctx.gate(notice.text.includes(secondaryId), `notice: the initiating DM is told WHO claimed the code (names ${claimantKey})`);
-      else ctx.log(`notice: no DM notice naming ${claimantKey} within the window — best-effort by design (link-claim.ts); the claim row already proved the hook ran`);
-
-      const confirmAsk = `yes — that's my other account. confirm the link.`;
+      const confirmAsk = `confirm — the code is ${code2!}.`;
       const { ts: confirmTs } = await dm.post(confirmAsk);
       const confirmSent = await forge.message({ text: confirmAsk, userId, teamId, ts: confirmTs });
-      ctx.gate(confirmSent.status === 200, "confirm: the synthetic DM confirmation acked 200");
+      ctx.gate(confirmSent.status === 200, "confirm: the synthetic DM code-back acked 200");
       const confirmReply = await dm.awaitAnyReply(confirmTs, { timeoutMs: REPLY_WAIT });
-      ctx.gate(confirmReply.text.trim().length > 0, "confirm: the agent replied to the confirmation turn");
+      ctx.gate(confirmReply.text.trim().length > 0, "confirm: the agent replied to the code-back turn");
       const confirmedRows = await pollOptional(
         async () => {
           const r = await auditRead({ sinceIso: runStart, actions: ["identity.link.confirmed"] });
@@ -1113,10 +1146,11 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       ctx.gate(
         confirmedRows !== undefined,
-        "confirm: an identity.link.confirmed audit row exists — the ratification COMMITTED the link (the reply text alone is not evidence). " +
+        "confirm: an identity.link.confirmed audit row exists — the ratification COMMITTED the link via the FORCED code-back finalizer " +
+          "(finalizeGate only reaches `commit` with a matching code — the reply text alone is not evidence). " +
           `Reply: "${confirmReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
       );
-      ctx.log(`confirm: link committed — ${confirmedRows!.length} identity.link.confirmed row(s) for the run`);
+      ctx.log(`confirm: link committed via the code-back finalizer — ${confirmedRows!.length} identity.link.confirmed row(s) for the run`);
     },
   },
   {

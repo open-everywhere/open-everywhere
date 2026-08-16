@@ -112,6 +112,10 @@ export class SlackDriver {
     return this.cfg.channel;
   }
 
+  get botUserId(): string {
+    return this.cfg.botUserId;
+  }
+
   withChannel(channel: string): SlackDriver {
     return new SlackDriver({ ...this.cfg, channel });
   }
@@ -131,6 +135,14 @@ export class SlackDriver {
     const json = await this.api("conversations.members", { channel: this.cfg.channel, limit: "100" });
     const members = Array.isArray(json.members) ? (json.members as string[]) : [];
     return members.includes(userId);
+  }
+
+  async openDirectMessage(userId: string): Promise<string> {
+    const json = await this.api("conversations.open", { users: userId });
+    const channel = json.channel as { id?: string } | undefined;
+    const id = typeof channel?.id === "string" ? channel.id : undefined;
+    if (!id) throw new Error("slack conversations.open returned no channel.id");
+    return id;
   }
 
   private async api(method: string, params: Record<string, string>): Promise<Record<string, unknown>> {
