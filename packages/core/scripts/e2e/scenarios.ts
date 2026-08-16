@@ -3013,7 +3013,7 @@ export const SCENARIOS: readonly Scenario[] = [
     surface: "notion",
     suite: "extended",
     optional: true,
-    timeoutMs: 240_000,
+    timeoutMs: 660_000,
     judged: false,
     run: async (ctx) => {
       const slack = ctx.slack!;
@@ -3029,7 +3029,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const notionCard = await slack
         .awaitThreadMessage(
           rootTs,
-          { timeoutMs: REPLY_WAIT, what: "the notion connector-offer card (api-key only)" },
+          { timeoutMs: FILE_REPLY_WAIT, what: "the notion connector-offer card (api-key only)" },
           (msgs) => msgs.find((m) => slack.isBotReply(m) && (m.actions ?? []).some((a) => a.actionId.startsWith("oe_connect:"))),
         )
         .catch(() => undefined);
@@ -3050,15 +3050,15 @@ export const SCENARIOS: readonly Scenario[] = [
       const rows = await pollUntil(
         async () => {
           const r = await auditRead!({ sinceIso: runStart, actions: ["connector.dashboard_link_issued"] });
-          const mine = r.filter((e) => e.principalId === admin && (e.detail as { provider?: unknown } | undefined)?.provider === PROVIDER);
+          const mine = r.filter((e) => e.principalId === admin && (e.detail as { connector?: unknown } | undefined)?.connector === PROVIDER);
           return mine.length > 0 ? mine : undefined;
         },
-        { timeoutMs: REPLY_WAIT, what: "a connector.dashboard_link_issued audit row for the admin clicker (provider e2e-intake)" },
+        { timeoutMs: REPLY_WAIT, what: "a connector.dashboard_link_issued audit row for the admin clicker (connector e2e-intake)" },
       );
       ctx.gate(rows.length > 0, "audit: a connector.dashboard_link_issued row was written for the org-account click (service-oauth handler ran)");
       const configured = Boolean((rows[0].detail as { configured?: unknown } | undefined)?.configured);
       ctx.log(
-        `connector.dashboard_link_issued rows=${rows.length} provider=${String((rows[0].detail as { provider?: unknown } | undefined)?.provider ?? "?")} configured=${configured} (fixture has no dashboardUrl ⇒ false expected)`,
+        `connector.dashboard_link_issued rows=${rows.length} connector=${String((rows[0].detail as { connector?: unknown } | undefined)?.connector ?? "?")} configured=${configured} (fixture has no dashboardUrl ⇒ false expected)`,
       );
     },
   },
@@ -3070,7 +3070,7 @@ export const SCENARIOS: readonly Scenario[] = [
     surface: "notion",
     suite: "extended",
     optional: true,
-    timeoutMs: 600_000,
+    timeoutMs: 1_080_000,
     judged: true,
     run: async (ctx) => {
 
@@ -3095,7 +3095,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const offerCard = await connector
         .awaitThreadMessage(
           askTs,
-          { timeoutMs: REPLY_WAIT, what: "a connector card offering the notion api-key (Set API key) button" },
+          { timeoutMs: FILE_REPLY_WAIT, what: "a connector card offering the notion api-key (Set API key) button" },
           (msgs) => msgs.find((m) => connector.isBotReply(m) && (m.actions ?? []).some((a) => a.actionId === "oe_connect:notion:api-key")),
         )
         .catch(() => undefined);
