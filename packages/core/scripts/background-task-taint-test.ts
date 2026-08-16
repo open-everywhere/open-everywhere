@@ -278,4 +278,28 @@ await contextStorage.run(new ContextContainer(), async () => {
 });
 resetSettingsForTest();
 
+await onParentTurn(async () => {
+  await spawnTaint.adoptTaskTaint({ taskId: "task_census", status: "completed", agentId: "ag_agent:cccc" }, PARENT);
+});
+await new Promise((r) => setTimeout(r, 50));
+{
+  const settled = await readAudit({ org: ORG, action: spawnTaint.TASK_SETTLED_ACTION });
+  const mine = settled.filter((r) => r.detail?.task === "task_census");
+  eq(mine.length, 1, "one settled row for the settled task");
+  eq(mine[0]?.detail?.agent, "ag_agent:cccc", "🔴 OPE-566 THE CENSUS: the settled row names the parked worker's agent handle — remove it and the parked population becomes uncountable");
+}
+
+await contextStorage.run(new ContextContainer(), async () => {
+  spawnTaint.openTaintTurn(parentCtx as never);
+  await handler({ data: { result: receiptResult("call_live", "task_live", "ag_agent:live") } }, parentCtx);
+  await handler({ data: { result: peekResult([{ taskId: "task_live", status: "working", agentId: "ag_agent:live" }]) } }, parentCtx);
+});
+await new Promise((r) => setTimeout(r, 50));
+{
+  const settled = await readAudit({ org: ORG, action: spawnTaint.TASK_SETTLED_ACTION });
+  eq(settled.filter((r) => r.detail?.task === "task_live").length, 0, "🔴 OPE-566 NEGATIVE CONTROL: a WORKING view writes NO settled row — the census counts parked workers, never peeks");
+  const started = await readAudit({ org: ORG, action: spawnTaint.TASK_STARTED_ACTION });
+  eq(started.filter((r) => r.detail?.task === "task_live" && r.detail?.agent === "ag_agent:live").length, 1, "…and the dispatch row carries the SAME `agent` key, which is what joins the two halves of the census");
+}
+
 console.log(`background-task-taint-test: ${n} assertions passed`);

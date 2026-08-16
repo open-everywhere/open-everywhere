@@ -412,7 +412,14 @@ export async function adoptTaskTaint(view: TaskSummary, ownSessionId: string): P
     platform: "ingest",
     workspace: "delegation",
     action: TASK_SETTLED_ACTION,
-    detail: { task: view.taskId, status: view.status, ...(ownSessionId.length > 0 ? { session: ownSessionId } : {}), marker, adopted },
+    detail: {
+      task: view.taskId,
+      status: view.status,
+      ...(ownSessionId.length > 0 ? { session: ownSessionId } : {}),
+      agent: view.agentId ?? "",
+      marker,
+      adopted,
+    },
   }).catch(() => undefined);
   return adopted;
 }
