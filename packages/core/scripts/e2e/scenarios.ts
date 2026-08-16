@@ -581,7 +581,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-DISC",
-    title: "Discord journey: mention → auto-thread → continuity → stop → post_file → card-shape (absorbs S7; ⛔ creds never provisioned)",
+    title: "Discord journey: mention → auto-thread → continuity → stop → post_file → card-shape (absorbs S7)",
     requires: ["discord"],
     surface: "discord",
     suite: "core",
@@ -1475,7 +1475,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S24",
-    title: "Notion connector: search/read via the bound connector (optional — not provisioned on any deployment yet)",
+    title: "Notion connector: search/read via the bound connector (optional — needs E2E_NOTION_CHANNEL bound to a live Notion credential)",
     requires: ["slack", "notion"],
     surface: "slack",
     suite: "extended",
