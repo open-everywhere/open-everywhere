@@ -75,16 +75,82 @@ console.log(`parked-child-lifecycle: pinning against installed eve ${eveVersion}
 }
 
 {
+  const entry = read("execution/workflow-entry.js");
+  ok(
+    /function finalizeExpiredSession\([A-Za-z_$]+\)\{return await terminateChildSessionsStep\([^)]*\),await emitTerminalSessionCompletionStep\(/.test(entry),
+    "PIN 6 🔴: session expiry still reaps AND emits a terminal completion — the event OPE-281 refuses to re-arm",
+  );
+  ok(
+    entry.split("emitTerminalSessionCompletionStep(").length - 1 === 1,
+    "PIN 6 🔴: the terminal-completion emit still has exactly ONE call site — so expiry is the only exit that fires it",
+  );
+}
+
+{
+  const entry = read("execution/workflow-entry.js");
+  ok(
+    /`reset`\)return await terminateChildSessionsStep\(\{serializedContext:[^)]*\}\),\{kind:`result`,result:\{output:``\}\}/.test(entry),
+    "PIN 7 🔴: the `reset` arm is still exactly `terminateChildSessionsStep` then an EMPTY result — the reaper with no terminal-completion emit",
+  );
+}
+
+{
+  const receiver = read("execution/turn-control-receiver.js");
+  ok(
+    /kind===`reset`\)\{await forwardTurnCancellationStep\(\{payload:\{\},token:turnCancellationHookToken\(/.test(receiver),
+    "PIN 8 🔴: a mid-turn `reset` still forwards a turn CANCELLATION before it retires — retirement is destructive, never a soft handoff",
+  );
+  ok(
+    /this\.bufferedSessionControls\.push\(`reset`\)/.test(receiver),
+    "PIN 8: …and the retirement itself is then buffered, so it lands at the next park rather than being dropped",
+  );
+  const parked = read("execution/parked-delivery-wait.js");
+  ok(
+    /`reset`\)return\{kind:[A-Za-z_$]+\.value\.kind\}/.test(parked),
+    "PIN 8: a PARKED session still surfaces `reset` from its wait — a retired generation does not need a live turn to hear it",
+  );
+}
+
+{
+  const runtime = read("execution/workflow-runtime.js");
+  ok(
+    /dispatchSession\([A-Za-z_$]+\)\{return await dispatchWorkflowCommand\(sessionCommandHookToken\([A-Za-z_$]+\.sessionId\)/.test(runtime),
+    "PIN 9a 🔴: `Session.reset()` still dispatches on the STABLE session hook — the one channel-AGNOSTIC retirement door",
+  );
+  ok(
+    /dispatchContinuation\([A-Za-z_$]+\)\{return await dispatchWorkflowCommand\([A-Za-z_$]+\.continuationToken/.test(runtime),
+    "PIN 9c: …while the continuation door still dispatches on the channel ALIAS — a different address space",
+  );
+
   const session = read("channel/session.d.ts");
-  ok(session.includes("Terminally retires this exact session ID"), "PIN 6: `Session.reset()` still exists and still means terminal retirement");
+  ok(session.includes("Terminally retires this exact session ID"), "PIN 9a: `Session.reset()` still exists and still means terminal retirement");
 
   const routes = read("channel/routes.d.ts");
-  ok(/^\s*attachSession: AttachSessionFn;/m.test(routes), "PIN 6: `attachSession` is still a member of `RouteHandlerArgs`");
+  ok(/^\s*attachSession: AttachSessionFn;/m.test(routes), "PIN 9a: `attachSession` is still a member of `RouteHandlerArgs`");
 
   const ops = read("channel/channel-operations.d.ts");
+  ok(!ops.includes("attachSession"), "PIN 9a: a channel `receive` context still gets NO `attachSession` — the session-id door stays route-only");
   ok(
-    !ops.includes("attachSession"),
-    "PIN 6 🔴: a channel `receive` context still gets NO `attachSession` — the retirement door stays route-only",
+    /reset\(options\?: \{\s*readonly reason\?: string;\s*\}\): Promise<ResetSessionResult>;/.test(ops),
+    "PIN 9b 🔴: `ChannelSource` — what `from(address)` returns — still carries `reset`",
+  );
+  ok(
+    /interface ChannelReceiveContext<TState = undefined> \{\s*readonly from: ChannelFrom<TState>;/.test(ops),
+    "PIN 9b 🔴: an authored channel's `receive` context still gets `from` — so a `receive` CAN retire, contrary to the pre-OPE-627 reading",
+  );
+  ok(
+    /export type ChannelFrom<TState = undefined> = \(address: string\) => ChannelSource<TState>;/.test(ops),
+    "PIN 9b: …and `from` still returns exactly that `ChannelSource`, so the two facts above join up",
+  );
+
+  const address = read("channel/channel-address.js");
+  ok(
+    /`\$\{[A-Za-z_$]+\.channelName\}:\$\{[A-Za-z_$]+\.continuationToken\}`/.test(address),
+    "PIN 9c 🔴: the dispatched address is still `${channelName}:${continuationToken}` — the continuation door is CHANNEL-LOCAL",
+  );
+  ok(
+    /reset\([A-Za-z_$]+\)\{return await [A-Za-z_$]+\.runtime\.dispatchContinuation\(\{command:\{kind:`reset`/.test(address),
+    "PIN 9c: …and `from(address).reset()` still dispatches through that namespaced address, never through a session id",
   );
 }
 
@@ -116,6 +182,17 @@ console.log(`parked-child-lifecycle: pinning against installed eve ${eveVersion}
   ok(TERMINAL_TASK_STATUSES.includes("cancelled"), "…and `cancelled` is terminal too — a cancelled task's worker parks exactly the same way");
   ok(!TERMINAL_TASK_STATUSES.includes("working"), "negative control: `working` is not terminal");
   ok(!TERMINAL_TASK_STATUSES.includes("input_required"), "negative control: `input_required` is not terminal");
+}
+
+{
+  const turnCancel = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "agent", "channels", "turn-cancel.ts"), "utf8");
+  const shape = /export type AttachSessionForCancel = \(sessionId: string\) => \{([\s\S]*?)\n\};/.exec(turnCancel)?.[1];
+  ok(shape !== undefined, "OE still narrows eve's session handle through `AttachSessionForCancel` — the one place a route's `attachSession` enters core");
+  ok(shape!.includes("cancel("), "…and that narrowed handle still carries `cancel`");
+  ok(
+    !shape!.includes("reset("),
+    "🔴 OE's session handle now carries `reset` — the seat retirement is being built, so re-read OPE-627 and rewrite this file's ruling",
+  );
 }
 
 console.log(`parked-child-lifecycle: ${String(n)} assertions passed (eve ${eveVersion})`);
