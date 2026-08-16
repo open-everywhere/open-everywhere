@@ -1,6 +1,6 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
-import { routineManualStamped, routineMarker } from "../routines/routine.js";
+import { oneAttrValue, routineManualStamped, routineMarker } from "../routines/routine.js";
 import { foldRoutineOutcome, type RoutineOutcomeMarker } from "../routines/outcome-fold.js";
 import { isScheduleOriginatedAuth, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { OE_WAKE_ID_ATTR } from "../channels/unified-window.js";
@@ -24,19 +24,13 @@ const foldState = defineState<{ armed: ArmedFire | null; folded: Record<string, 
   () => ({ armed: null, folded: {} }),
 );
 
-const NO_WAKE_KEY = "\u0000no-wake";
+const NO_WAKE_KEY = "no-wake";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:routines] ${msg}`);
 }
 
-function oneAttr(v: unknown): string | undefined {
-  if (typeof v === "string" && v.length > 0) return v;
-  if (Array.isArray(v) && typeof v[0] === "string" && v[0].length > 0) return v[0];
-  return undefined;
-}
-
-export function armFireFold(ctx: HookContext, alreadyFolded: Readonly<Record<string, true>>): ArmedFire | null {
+function armFireFold(ctx: HookContext, alreadyFolded: Readonly<Record<string, true>>): ArmedFire | null {
   if (isSubagentChildContext(ctx as unknown as BindableContext)) return null;
   const c = ctx as unknown as AuthSlotContext;
   const auth = (c.session?.auth?.current ?? c.session?.auth?.initiator ?? null) as
@@ -45,7 +39,7 @@ export function armFireFold(ctx: HookContext, alreadyFolded: Readonly<Record<str
   if (!isScheduleOriginatedAuth(auth)) return null;
   const marker = routineMarker(auth?.attributes);
   if (!marker) return null;
-  const wakeKey = oneAttr(auth?.attributes?.[OE_WAKE_ID_ATTR]) ?? NO_WAKE_KEY;
+  const wakeKey = oneAttrValue(auth?.attributes?.[OE_WAKE_ID_ATTR]) ?? NO_WAKE_KEY;
   if (alreadyFolded[wakeKey] === true) return null;
   const sessionId = typeof c.session?.id === "string" && c.session.id.length > 0 ? c.session.id : undefined;
   return {

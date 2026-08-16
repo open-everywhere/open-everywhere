@@ -22,7 +22,7 @@ function log(msg: string): void {
   console.log(`[open-everywhere:dream/learn] ${msg}`);
 }
 
-export function consolidatableTurn(ctx: HookContext): boolean {
+function consolidatableTurn(ctx: HookContext): boolean {
   try {
     if (isSubagentChildContext(ctx as unknown as BindableContext)) return false;
     const c = ctx as unknown as { session?: { auth?: { current?: unknown; initiator?: unknown } | null } };
@@ -35,7 +35,7 @@ export function consolidatableTurn(ctx: HookContext): boolean {
   }
 }
 
-export function authoredBody(raw: unknown): string | undefined {
+function authoredBody(raw: unknown): string | undefined {
   if (typeof raw !== "string") return undefined;
   const body = triggerMessageBody(raw)?.trim();
   return body !== undefined && body.length > 0 ? body.slice(0, MAX_MESSAGE_CHARS) : undefined;

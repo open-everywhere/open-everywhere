@@ -25,7 +25,7 @@ export function noteTaskDispatched(taskId: string): void {
   markTreeDirty();
 }
 
-export function markTreeDirty(): void {
+function markTreeDirty(): void {
   try {
     treeDirty.update(() => ({ dirty: true }));
   } catch {
