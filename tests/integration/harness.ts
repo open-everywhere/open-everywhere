@@ -471,3 +471,20 @@ export async function runRoutineDispatchTick(): Promise<readonly string[]> {
       "removed, or eve changed its task-name derivation — fix scheduleTaskName() rather than skipping.",
   );
 }
+
+export async function runScheduleTask(logicalPath: string): Promise<unknown> {
+  if (booted === undefined) throw new Error("integration harness: runScheduleTask before bootAgent.");
+  const taskName = scheduleTaskName(logicalPath);
+  const dir = join(ROOT, ".output", "server", "_virtual");
+  const candidates = readdirSync(dir).filter((f) => f.endsWith(".schedule.mjs"));
+  for (const file of candidates) {
+    if (!readFileSync(join(dir, file), "utf8").includes(taskName)) continue;
+    const mod = (await import(pathToFileURL(join(dir, file)).href)) as { default: { run(e: { name: string }): Promise<unknown> } };
+    return await mod.default.run({ name: taskName });
+  }
+  throw new Error(
+    `integration harness: no compiled virtual handler in ${dir} dispatches "${taskName}" ` +
+      `(found: ${candidates.join(", ") || "none"}). "${logicalPath}" was renamed, removed, or eve ` +
+      "changed its task-name derivation — fix scheduleTaskName() rather than skipping.",
+  );
+}

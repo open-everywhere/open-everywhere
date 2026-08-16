@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   censusResult,
   classifyEndpoint,
+  cronCeilingHours,
+  heartbeatFindings,
   planRequiredCredentials,
   planRequiredEndpoints,
   proveKeyOpensRow,
@@ -328,9 +330,93 @@ check("the report states what it did NOT prove, so a green is never read as wide
   assert.match(report, /relay that feeds/u);
 });
 
+check("cronCeilingHours: a daily cron gets a ~26h ceiling", () => {
+  assert.equal(cronCeilingHours("0 3 * * *"), 26);
+});
+
+check("cronCeilingHours: a weekly cron gets a ~172h ceiling", () => {
+  assert.equal(cronCeilingHours("0 5 * * 1"), 172);
+});
+
+check("cronCeilingHours: an unrecognised shape FAILS LOUD rather than guessing a bound", () => {
+  assert.throws(() => cronCeilingHours("*/10 * * * *"), /neither a daily nor a weekly pattern/u);
+});
+
+const NOW = new Date("2026-08-16T12:00:00Z");
+const GATED = [
+  { action: "identity.directory.sync", reason: "the daily directory-sync cron always heartbeats now (OPE-635)", maxAgeHours: 26 },
+  { action: "memory.tidy_tick", reason: "the daily tidy cron always heartbeats now (OPE-635)", maxAgeHours: 26 },
+];
+const REPORTED = [{ action: "routine.fire", reason: "only fires when a routine is due — absence is legitimate" }];
+
+check("heartbeatFindings: 🔴 THE INCIDENT IN MINIATURE — a gated action with NO row goes red", () => {
+  const findings = heartbeatFindings({ gated: GATED, reported: [], observations: [], now: NOW });
+  assert.equal(findings.every((h) => h.ok === false), true, "both gated actions read back false with no row at all");
+  assert.equal(findings[0]?.ageHours, undefined, "no row ⇒ no age to report");
+});
+
+check("heartbeatFindings: a gated action with a row OLDER than its ceiling goes red, and names the age", () => {
+  const stale = new Date(NOW.getTime() - 30 * 3_600_000).toISOString();
+  const findings = heartbeatFindings({ gated: GATED, reported: [], observations: [{ action: "identity.directory.sync", lastSeenIso: stale }], now: NOW });
+  const row = findings.find((h) => h.action === "identity.directory.sync")!;
+  assert.equal(row.ok, false, "30h old is past the 26h ceiling");
+  assert.ok(row.ageHours !== undefined && row.ageHours > 29.9 && row.ageHours < 30.1, "the age is reported, not just the verdict");
+});
+
+check("heartbeatFindings: a gated action with a FRESH row is green — the positive control", () => {
+  const fresh = new Date(NOW.getTime() - 3 * 3_600_000).toISOString();
+  const findings = heartbeatFindings({ gated: GATED, reported: [], observations: [{ action: "identity.directory.sync", lastSeenIso: fresh }], now: NOW });
+  assert.equal(findings.find((h) => h.action === "identity.directory.sync")?.ok, true);
+});
+
+check("heartbeatFindings: a REPORTED action with NO row is still green — absence is a legitimate state, not a dead cron", () => {
+  const findings = heartbeatFindings({ gated: [], reported: REPORTED, observations: [], now: NOW });
+  assert.equal(findings[0]?.ok, true, "routine.fire never gates on absence");
+  assert.equal(findings[0]?.maxAgeHours, undefined, "…and carries no bound, so the report never implies one");
+});
+
+check("heartbeatFindings: a REPORTED action WITH a row still reports its age (never gates, but the number is there)", () => {
+  const seen = new Date(NOW.getTime() - 40 * 3_600_000).toISOString();
+  const findings = heartbeatFindings({ gated: [], reported: REPORTED, observations: [{ action: "routine.fire", lastSeenIso: seen }], now: NOW });
+  assert.equal(findings[0]?.ok, true, "still never gates, however old");
+  assert.ok(findings[0]?.ageHours !== undefined && findings[0].ageHours > 39.9, "…but the age is there for an operator to read");
+});
+
+check("censusResult: a stale GATED heartbeat alone fails the whole census, even with every credential and route clean", () => {
+  const staleFindings = heartbeatFindings({ gated: GATED, reported: [], observations: [], now: NOW });
+  const result = clean({ heartbeats: staleFindings });
+  assert.equal(result.ok, false, "a dead cron fails the census on its own");
+  const report = renderCensusReport(result).join("\n");
+  assert.match(report, /CRON HEARTBEATS \(0\/2 as expected\)/u);
+  assert.match(report, /cron\(s\) with no fresh heartbeat: identity\.directory\.sync, memory\.tidy_tick/u);
+});
+
+check("censusResult: fresh GATED heartbeats + a REPORTED one with no row is still a clean census", () => {
+  const fresh = new Date(NOW.getTime() - 1 * 3_600_000).toISOString();
+  const okFindings = heartbeatFindings({
+    gated: GATED,
+    reported: REPORTED,
+    observations: [
+      { action: "identity.directory.sync", lastSeenIso: fresh },
+      { action: "memory.tidy_tick", lastSeenIso: fresh },
+    ],
+    now: NOW,
+  });
+  const result = clean({ heartbeats: okFindings });
+  assert.equal(result.ok, true, "every gate passes, and the report-only action's absence never counts against it");
+  assert.match(renderCensusReport(result).join("\n"), /CRON HEARTBEATS \(3\/3 as expected\)/u);
+});
+
+check("censusResult: no `heartbeats` passed at all is byte-identical to today — the half is additive, never a silent new gate", () => {
+  const result = clean();
+  assert.equal(result.heartbeats.length, 0);
+  assert.equal(result.ok, true);
+  assert.doesNotMatch(renderCensusReport(result).join("\n"), /CRON HEARTBEATS/u);
+});
+
 if (failures.length > 0) {
   console.error(`✗ deploy-census: ${failures.length} of ${checks} check(s) FAILED`);
   for (const f of failures) console.error(`  ✗ ${f}`);
   process.exit(1);
 }
-console.log(`✓ deploy-census: ${checks} check(s) passed (required-set derivation, endpoint plan, the four reds, the anti-vacuity control — all offline)`);
+console.log(`✓ deploy-census: ${checks} check(s) passed (required-set derivation, endpoint plan, the four reds, the anti-vacuity control, the OPE-635 cron heartbeat half — all offline)`);
