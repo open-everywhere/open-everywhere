@@ -11,6 +11,7 @@ import { upsertUnderSection } from "../markdown.js";
 export interface LearnSignals {
   readonly request?: string;
   readonly messages?: readonly string[];
+  readonly dedupeKey?: string;
 }
 
 export interface LearnOptions {
@@ -63,7 +64,7 @@ export async function learnFromSession(
   if (!signature) return empty;
 
   const key = `${scope}::${signature}`;
-  const count = await ledger.observe(key);
+  const count = await ledger.observe(key, signals.dedupeKey);
 
   const skillProposal: Proposal | null =
     count === skillThreshold

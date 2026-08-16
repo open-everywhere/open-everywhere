@@ -50,12 +50,12 @@ async function observed(request: string): Promise<boolean> {
   return (await observedKeys()).some((k) => k.endsWith(`::${sig}`));
 }
 
-function seatCtx(sessionId: string): never {
+function seatCtx(sessionId: string, deliveryId = `delivery-${sessionId}`): never {
   return {
     channel: { kind: "slack", continuationToken: `slack:${sessionId}` },
     session: {
       id: sessionId,
-      auth: { current: { principalId: "U7", principalType: "slack-user", attributes: { ...SLACK_ATTRS } } },
+      auth: { current: { principalId: "U7", principalType: "slack-user", attributes: { ...SLACK_ATTRS, oe_delivery_id: deliveryId } } },
     },
   } as never;
 }
@@ -144,6 +144,23 @@ async function deliver(container: InstanceType<typeof FakeEveContext>, ctx: neve
   const sig = workflowSignature(cronPrompt);
   ok(sig.length > 0, "fixture: the cron prompt produces a non-empty signature");
   ok(!(await observedKeys()).some((k) => k.endsWith(`::${sig}`)), "skip: a routine FIRE's prompt is NOT fingerprinted, even after three fires — a cron is not a recurring human workflow");
+}
+
+{
+  const container = new FakeEveContext();
+  const request = "escalate the stuck settlement batch to the payments desk";
+  const ctx = seatCtx("sess-replay", "delivery-replay-1");
+
+  for (let i = 0; i < 5; i++) await deliver(container, ctx, request);
+
+  const sig = workflowSignature(request);
+  ok(sig.length > 0, "fixture: the request produces a non-empty signature");
+  const counted = (await observedKeys()).filter((k) => k.endsWith(`::${sig}`)).length;
+  ok(counted === 1, `replay: five re-executions of ONE delivery record ONE observation (got ${counted}) — a single message can never cross the recurrence threshold by itself`);
+
+  await deliver(container, seatCtx("sess-replay", "delivery-replay-2"), request);
+  const after = (await observedKeys()).filter((k) => k.endsWith(`::${sig}`)).length;
+  ok(after === 2, `replay: the SAME words on a NEW delivery DO count (got ${after}) — the dedupe separates requests, it does not silence the ledger`);
 }
 
 {

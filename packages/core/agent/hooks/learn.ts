@@ -1,7 +1,7 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { resolvePartition } from "../memory/partition.js";
-import { bindFrom, isSubagentChildContext, isScheduleOriginatedAuth, type BindableContext } from "../identity/binding.js";
+import { bindFrom, deliveryStampOf, isSubagentChildContext, isScheduleOriginatedAuth, type BindableContext } from "../identity/binding.js";
 import { planFor } from "../memory/resolve.js";
 import { auditRecurrenceLedger } from "../memory/dream/recurrence.js";
 import { learnFromSession, safeDistill, enrichmentBullets, writeEnrichment } from "../memory/dream/learn.js";
@@ -66,7 +66,13 @@ async function consolidate(ctx: HookContext): Promise<void> {
   const scope = target ? target.silo.name : p.surfaceKey;
 
   const ledger = auditRecurrenceLedger(p.org);
-  const result = await learnFromSession(scope, { request, messages }, ledger);
+  let dedupeKey: string | undefined;
+  try {
+    dedupeKey = deliveryStampOf(ctx as unknown as BindableContext);
+  } catch {
+    dedupeKey = undefined;
+  }
+  const result = await learnFromSession(scope, { request, messages, ...(dedupeKey !== undefined ? { dedupeKey } : {}) }, ledger);
   if (!result.signature) return;
 
   if (result.enrich && target) {
