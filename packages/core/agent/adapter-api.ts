@@ -197,6 +197,9 @@ export { matchesAgentName, agentNameTokens, agentNameTokenPattern, configuredAge
 export { registerBotDisplayName, botDisplayNameFor, _resetBotDisplayNamesForTest } from "./identity/bot-display-name.js";
 export type { BotDisplayNameArm } from "./identity/bot-display-name.js";
 
+export { registerAccountDisplayName, accountProfileFor, humanAccountLabel, _resetAccountDisplayNamesForTest } from "./identity/account-display-name.js";
+export type { AccountProfile, AccountDisplayNameArm } from "./identity/account-display-name.js";
+
 export { setRegisteredConnectorCredentials, resetRegisteredConnectorCredentials } from "./access/connector-credentials.js";
 
 export { ingestUntrustedModelOutput, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "./access/untrusted.js";

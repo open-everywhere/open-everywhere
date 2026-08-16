@@ -8,10 +8,16 @@ import type { LinkChallengeRow } from "../operational/store.js";
 import { actingPrincipalIdOf } from "../access/request.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { principalKey, tryPrincipalKey } from "../identity/principal-key.js";
+import { humanAccountLabel } from "../identity/account-display-name.js";
 
 function claimantLabel(platform: string | undefined, tenant: string | undefined, nativeId: string | undefined): string {
   if (!platform || !nativeId) return "an account this request never recorded";
   return tryPrincipalKey(platform, tenant, nativeId) ?? `the ${platform} account "${nativeId}" (workspace unrecorded)`;
+}
+
+async function claimantName(platform: string | undefined, tenant: string | undefined, nativeId: string | undefined): Promise<string> {
+  if (!platform || !nativeId) return "an account this request never recorded";
+  return humanAccountLabel(platform, nativeId, tenant);
 }
 import { confirmLinkedId, denyLinkChallenge, ratifyLinkChallenge } from "../identity/link-store.js";
 import { linkInitiatorRefusal } from "../identity/link-initiator.js";
@@ -31,7 +37,7 @@ function claimantParts(challenge: LinkChallengeRow): { claimantAccount?: { platf
 
 export default defineTool({
   description:
-    "Confirm (or deny) an account that belongs to this person — the second half of link_identity, and the one-tap confirmation for accounts an identity-directory sync (Okta) suggested for them. DM only, and only that person may call it. NEVER ask which account claimed their link code — they cannot see it and this tool holds it: a `confirm` with no `acknowledge` writes nothing and NAMES the waiting account (returning its challengeId). Show them that account, then call again with `acknowledge:true` AND that challengeId to commit — both calls in one turn when they have already said yes. Denying writes nothing at all and takes one call. Always name an account to the person before you commit it; if they do not recognise one, deny.",
+    "Confirm (or deny) an account that belongs to this person — the second half of link_identity, and the one-tap confirmation for accounts an identity-directory sync (Okta) suggested for them. DM only, and only that person may call it. NEVER ask which account claimed their link code — they cannot see it and this tool holds it: a `confirm` with no `acknowledge` writes nothing and NAMES the waiting account (returning its challengeId). Show them `claimantName` (a display name + handle, resolved where possible) rather than `claimant` (a bare principal key nobody can eyeball), then call again with `acknowledge:true` AND that challengeId to commit — both calls in one turn when they have already said yes. Denying writes nothing at all and takes one call. Always name an account to the person before you commit it; if they do not recognise one, deny.",
   inputSchema: z.object({
     decision: z.enum(["confirm", "deny"]).describe("`confirm` links the account(s) to this person; `deny` discards the proposal and writes nothing."),
     acknowledge: z
@@ -56,6 +62,7 @@ export default defineTool({
   outputSchema: z.object({
     decided: z.string(),
     claimant: z.string().optional(),
+    claimantName: z.string().optional(),
     claimantAccount: z.object({ platform: z.string(), tenant: z.string(), nativeId: z.string() }).optional(),
     claimedAt: z.string().optional(),
     challengeId: z.string().optional(),
@@ -95,19 +102,22 @@ export default defineTool({
       if (!picked) throw new Error(`link request "${input.challengeId}" is not one of yours awaiting a decision.`);
       challenge = picked;
     } else if (waiting.length > 1) {
-      const list = waiting.map((c) => `  • ${c.id} — claimed by ${claimantLabel(c.claimedPlatform, c.claimedTenant, c.claimedNativeId)}`).join("\n");
-      throw new Error(`you have ${waiting.length} link requests awaiting a decision — say which one (challengeId):\n${list}`);
+      const lines = await Promise.all(
+        waiting.map(async (c) => `  • ${c.id} — claimed by ${await claimantName(c.claimedPlatform, c.claimedTenant, c.claimedNativeId)}`),
+      );
+      throw new Error(`you have ${waiting.length} link requests awaiting a decision — say which one (challengeId):\n${lines.join("\n")}`);
     }
 
     if (challenge.initiatingPlatform !== binding.platform || challenge.initiatingTenant !== tenant || challenge.initiatingNativeId !== actor) {
       throw new Error("that link request was not started by you — only its initiator can decide it.");
     }
     const claimant = claimantLabel(challenge.claimedPlatform, challenge.claimedTenant, challenge.claimedNativeId);
+    const name = await claimantName(challenge.claimedPlatform, challenge.claimedTenant, challenge.claimedNativeId);
 
     if (input.decision === "deny") {
       const denied = await denyLinkChallenge({ org: binding.org, challengeId: challenge.id });
       if (!denied) throw new Error("that link request was already decided.");
-      return { decided: "denied", claimant, ...claimantParts(challenge), note: `Denied — nothing was linked. ${claimant} does not get your standing.` };
+      return { decided: "denied", claimant, claimantName: name, ...claimantParts(challenge), note: `Denied — nothing was linked. ${name} does not get your standing.` };
     }
 
     if (input.acknowledge === true && input.challengeId === undefined) {
@@ -121,15 +131,16 @@ export default defineTool({
       return {
         decided: "awaiting_acknowledgement",
         claimant,
+        claimantName: name,
         ...claimantParts(challenge),
         challengeId: challenge.id,
         note:
-          `NOTHING IS LINKED YET. ${claimant} claimed your link code` +
+          `NOTHING IS LINKED YET. ${name} claimed your link code` +
           (challenge.claimedAt ? ` at ${challenge.claimedAt}` : "") +
           `. If the person has ALREADY said this account is theirs, call confirm_link again NOW with ` +
           `acknowledge: true and this challengeId — both calls belong in one turn. Otherwise tell them ` +
-          `exactly which account this is and ask whether it is theirs. If they do not recognise it, ` +
-          `call confirm_link with decision: "deny" — that writes nothing.`,
+          `exactly which account this is (${name}) and ask whether it is theirs. If they do not recognise ` +
+          `it, call confirm_link with decision: "deny" — that writes nothing.`,
       };
     }
 
@@ -139,16 +150,16 @@ export default defineTool({
       handle: principalKey(binding.platform, tenant, actor),
     });
     if (!result.ok) throw new Error(result.reason);
-    await announceLinkSetGrowth(binding.org, result.linkSetId, claimant, { platform: binding.platform, tenant, nativeId: actor });
-    return { decided: "confirmed", claimant, ...claimantParts(challenge), linkSetId: result.linkSetId, note: result.note };
+    await announceLinkSetGrowth(binding.org, result.linkSetId, claimant, name, { platform: binding.platform, tenant, nativeId: actor });
+    return { decided: "confirmed", claimant, claimantName: name, ...claimantParts(challenge), linkSetId: result.linkSetId, note: result.note };
   },
 });
 
-async function announceLinkSetGrowth(org: string, linkSetId: string, joined: string, initiator: LinkedAccount): Promise<void> {
+async function announceLinkSetGrowth(org: string, linkSetId: string, joined: string, joinedName: string, initiator: LinkedAccount): Promise<void> {
   const n = await notifyLinkSetMembers(
     org,
     linkSetId,
-    `**${joined}** was just linked to your identity, so it now speaks as you across the surfaces I ` +
+    `${joinedName} was just linked to your identity, so it now speaks as you across the surfaces I ` +
       `can see.\n\nIf that was you, nothing to do. If it was not, remove it now — ask me to unlink ` +
       `${joined} — and tell whoever runs this workspace.`,
     { except: [initiator] },
@@ -196,6 +207,7 @@ async function decideDirectorySuggestions(input: {
   }
 
   const confirmed: string[] = [];
+  const confirmedNames: string[] = [];
   const failed: string[] = [];
   for (const p of chosen) {
     const res = await confirmLinkedId({
@@ -203,13 +215,15 @@ async function decideDirectorySuggestions(input: {
       account: { platform: p.platform, tenant: p.tenant, nativeId: p.nativeId },
       evidence: { kind: "challenge", challengeId: `dm-confirm:${principalKey(input.platform, input.tenant, input.actor)}` },
     });
-    if (res.ok) confirmed.push(p.principal);
-    else failed.push(`${p.principal} (${res.reason})`);
+    if (res.ok) {
+      confirmed.push(p.principal);
+      confirmedNames.push(await humanAccountLabel(p.platform, p.nativeId, p.tenant));
+    } else failed.push(`${p.principal} (${res.reason})`);
   }
   if (confirmed.length === 0) {
     throw new Error(`could not confirm ${failed.join("; ")}`);
   }
-  await announceLinkSetGrowth(input.org, chosen[0]!.linkSetId, confirmed.join(", "), { platform: input.platform, tenant: input.tenant, nativeId: input.actor });
+  await announceLinkSetGrowth(input.org, chosen[0]!.linkSetId, confirmed.join(", "), confirmedNames.join(", "), { platform: input.platform, tenant: input.tenant, nativeId: input.actor });
   return {
     decided: "confirmed",
     accounts: confirmed,

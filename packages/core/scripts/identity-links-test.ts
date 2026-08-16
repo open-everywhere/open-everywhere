@@ -31,7 +31,16 @@ import { canDeliverDirectMessage } from "../agent/channels/post-arms.js";
 import { directoryLinkSetVaultArmed } from "../agent/connections/connector-flags.js";
 import { currentTurnAddressed, currentTurnBotName } from "../agent/identity/binding.js";
 
-type Decision = { decided: string; claimant?: string; claimantAccount?: { platform: string; tenant: string; nativeId: string }; claimedAt?: string; challengeId?: string; linkSetId?: string; note: string };
+type Decision = {
+  decided: string;
+  claimant?: string;
+  claimantName?: string;
+  claimantAccount?: { platform: string; tenant: string; nativeId: string };
+  claimedAt?: string;
+  challengeId?: string;
+  linkSetId?: string;
+  note: string;
+};
 import { OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "../agent/identity/bot-name.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import type { Principal } from "../agent/identity/principals.js";
@@ -736,7 +745,7 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   notices.length = 0;
   await unlinkIdentity.execute({ platform: "github", tenant: "", nativeId: "gh-n3" }, dmDc);
   ok(notices.length === 1 && notices[0]!.platform === "slack" && notices[0]!.to === "U_N1", "OPE-288: a sever of an unreachable account still tells the REMAINING DM-capable members");
-  ok(/github\/gh-n3/.test(notices[0]!.text), "OPE-288: the sever notice names the account that was removed");
+  ok(/gh-n3/.test(notices[0]!.text) && !/\bgithub\/gh-n3\b/.test(notices[0]!.text), "OPE-288/OPE-616: the sever notice names the account that was removed, as platform-named prose — never a bare principal key");
 
   const rows = await pg.readAudit({ org: ORG });
   const conf = rows.filter((r) => r.action === "identity.link.confirmed" && (r.detail as { linkSetId?: string })?.linkSetId === setId);
@@ -799,6 +808,159 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   ok(naRows.length === 1, "🔴 OPE-618 (finding 2): a notice that was never ATTEMPTED (no DM arm) still lands exactly one audit row");
   ok(/no DM-delivery arm/.test(String((naRows[0]!.detail as { error?: string }).error)), "OPE-618 (finding 2): the row's error names the distinct class — never attempted, not refused");
   await denyLinkChallenge({ org: ORG, challengeId: na.challenge.id });
+}
+
+{
+  const {
+    registerAccountDisplayName,
+    accountProfileFor,
+    humanAccountLabel,
+    _resetAccountDisplayNamesForTest,
+    ACCOUNT_NAME_CACHE_CAP,
+  } = await import("../agent/identity/account-display-name.js");
+
+  _resetAccountDisplayNamesForTest();
+  ok((await accountProfileFor("github", "nobody")) === undefined, "account-display-name: no arm registered ⇒ undefined, never a throw");
+  ok((await humanAccountLabel("github", "nobody")) === 'the github account "nobody"', "🔴 account-display-name: with no name resolved, the label is platform-named prose — NEVER a bare principal key");
+
+  let calls = 0;
+  registerAccountDisplayName("github", async (nativeId) => {
+    calls++;
+    if (nativeId === "throws") throw new Error("boom");
+    if (nativeId === "blank") return { name: "   ", handle: "" };
+    if (nativeId === "octocat") return { name: "The Octocat", handle: "octocat" };
+    if (nativeId === "handle-only") return { handle: "justhandle" };
+    if (nativeId === "name-only") return { name: "Just A Name" };
+    return undefined;
+  });
+
+  ok((await accountProfileFor("github", "throws")) === undefined, "🔴 account-display-name: an arm that THROWS resolves undefined — a name lookup must never fail the caller");
+  ok((await humanAccountLabel("github", "throws")) === 'the github account "throws"', "account-display-name: …and the label still falls back to prose");
+  ok((await accountProfileFor("github", "blank")) === undefined, "account-display-name: an arm returning only whitespace resolves undefined, not a blank-string profile");
+  ok((await accountProfileFor("github", "missing")) === undefined, "account-display-name: an arm returning undefined resolves undefined");
+
+  assert.deepEqual(await accountProfileFor("github", "octocat"), { name: "The Octocat", handle: "octocat" }, "account-display-name: a resolved profile carries both fields, trimmed");
+  n++;
+  ok(
+    (await humanAccountLabel("github", "octocat")) === "The Octocat (@octocat) (octocat) on github",
+    "account-display-name: NAME + HANDLE compose into one label with the raw id kept in parens as the grounding handle — names collide, ids don't (memory/dream/mode3.ts's exampleLine precedent)",
+  );
+  ok((await humanAccountLabel("github", "handle-only")) === "@justhandle (handle-only) on github", "account-display-name: a handle-only profile still names the person, never falling to a key");
+  ok((await humanAccountLabel("github", "name-only")) === "Just A Name (name-only) on github", "account-display-name: a name-only profile renders without handle parens");
+  ok(calls === 6, `account-display-name: octocat's SECOND lookup (inside the two humanAccountLabel calls above never re-fetches it) — 6 distinct ids looked up, not more (got ${calls})`);
+
+  let slackCalls = 0;
+  registerAccountDisplayName("slack", async (nativeId, tenant) => {
+    slackCalls++;
+    return { name: `Name-${tenant}-${nativeId}` };
+  });
+  ok((await humanAccountLabel("slack", "U1", "T1")) === "Name-T1-U1 (U1) on slack/T1", "account-display-name: a TENANT-SCOPED platform's label names the workspace, not just the platform");
+  ok((await humanAccountLabel("slack", "U1", "T2")) === "Name-T2-U1 (U1) on slack/T2", "account-display-name: …and a DIFFERENT tenant is a DIFFERENT cache key — the same native id in another workspace is not the same account");
+  ok(slackCalls === 2, "account-display-name: two distinct tenants ⇒ two arm calls, not a tenant-blind cache hit");
+  await humanAccountLabel("slack", "U1", "T1");
+  ok(slackCalls === 2, "account-display-name: repeating the FIRST (platform,tenant,id) is a cache hit — no third call");
+
+  _resetAccountDisplayNamesForTest();
+  let capCalls = 0;
+  registerAccountDisplayName("github", async (nativeId) => {
+    capCalls++;
+    return { name: `Name ${nativeId}` };
+  });
+  for (let i = 0; i < ACCOUNT_NAME_CACHE_CAP; i++) await accountProfileFor("github", `u${i}`);
+  ok(capCalls === ACCOUNT_NAME_CACHE_CAP, "account-display-name cap: filled the cache to its cap with distinct keys, one arm call each");
+  await accountProfileFor("github", `u${ACCOUNT_NAME_CACHE_CAP}`);
+  ok(capCalls === ACCOUNT_NAME_CACHE_CAP + 1, "account-display-name cap: the (cap+1)th distinct key still resolves — the cache does not refuse, it evicts");
+  await accountProfileFor("github", "u0");
+  ok(capCalls === ACCOUNT_NAME_CACHE_CAP + 2, "🔴 account-display-name cap: 'u0' (the oldest entry) was EVICTED — re-requesting it is a fresh arm call, not a stale hit");
+  await accountProfileFor("github", `u${ACCOUNT_NAME_CACHE_CAP}`);
+  ok(capCalls === ACCOUNT_NAME_CACHE_CAP + 2, "account-display-name cap: the most-recently-added key is still cached after the eviction above");
+
+  _resetAccountDisplayNamesForTest();
+  registerAccountDisplayName("github", async (nativeId) => (nativeId === "octocat2" ? { name: "Second Octocat", handle: "octocat2" } : undefined));
+
+  const { registerPostArm } = await import("../agent/channels/post-arms.js");
+  const dmNotices: { text: string }[] = [];
+  registerPostArm({
+    platform: "slack",
+    deliverDirectMessage: async (dmInput) => {
+      dmNotices.push({ text: dmInput.text });
+      return { surfaceId: `D-${dmInput.principalId}`, messageId: "m1" };
+    },
+  });
+  const codeOf = (instructions: string): string => instructions.match(new RegExp(String.raw`link (${"[" + LINK_CODE_ALPHABET + "]"}{${LINK_CODE_LENGTH}})`))![1]!;
+
+  const dmNamed = ctxFor({ channelId: "D_NAMED", channelType: "im", principalId: "U_NAMED", dmPartnerTrust: "internal" });
+  const namedOut = (await linkIdentity.execute({}, dmNamed)) as { instructions: string };
+  dmNotices.length = 0;
+  await observeLinkClaim({ org: ORG, platform: "github", authorId: "octocat2", text: `link ${codeOf(namedOut.instructions)}`, trust: "peer" });
+  ok(dmNotices.length === 1, "OPE-616 setup: the claim notice was delivered");
+  ok(/Second Octocat \(@octocat2\)/.test(dmNotices[0]!.text), "🔴 OPE-616: the claim notice NAMES the claimant with the resolved display name + handle");
+  ok(!/github\/octocat2/.test(dmNotices[0]!.text), "🔴 OPE-616: …and does NOT render the bare principal key anywhere in the notice");
+
+  const namedPeek = (await confirmLink.execute({ decision: "confirm" }, dmNamed)) as Decision;
+  ok(namedPeek.claimant === "github/octocat2", "OPE-616: `claimant` is UNCHANGED — still the exact principal key (kept per the ticket's scope, for a model that must match or record it)");
+  ok(namedPeek.claimantName === "Second Octocat (@octocat2) (octocat2) on github", "🔴 OPE-616: `claimantName` is the NEW field — the human-readable label, additive to the kept fields");
+  ok(/Second Octocat/.test(namedPeek.note) && !/github\/octocat2/.test(namedPeek.note), "🔴 OPE-616: the peek's `note` — the sentence a model reads aloud to the person — carries the resolved name, not the key");
+
+  const namedConfirmed = (await confirmLink.execute({ decision: "confirm", acknowledge: true, challengeId: namedPeek.challengeId }, dmNamed)) as Decision;
+  ok(namedConfirmed.decided === "confirmed" && namedConfirmed.claimantName === namedPeek.claimantName, "OPE-616: the committing call names the same account it acknowledged");
+
+  const dmFallback = ctxFor({ channelId: "D_FALLBACK", channelType: "im", principalId: "U_FALLBACK", dmPartnerTrust: "internal" });
+  const fallbackOut = (await linkIdentity.execute({}, dmFallback)) as { instructions: string };
+  dmNotices.length = 0;
+  await observeLinkClaim({ org: ORG, platform: "github", authorId: "unresolved-account", text: `link ${codeOf(fallbackOut.instructions)}`, trust: "peer" });
+  ok(/the github account "unresolved-account"/.test(dmNotices[0]!.text), "🔴 OPE-616: an account with no resolvable name still gets PLATFORM-NAMED PROSE in the notice — never a bare key");
+  const fallbackPeek = (await confirmLink.execute({ decision: "confirm" }, dmFallback)) as Decision;
+  ok(fallbackPeek.claimantName === 'the github account "unresolved-account"', "OPE-616: …and confirm_link's claimantName matches the same fallback wording");
+  await confirmLink.execute({ decision: "deny" }, dmFallback);
+
+  const dmSeveral = ctxFor({ channelId: "D_SEVERAL", channelType: "im", principalId: "U_SEVERAL", dmPartnerTrust: "internal" });
+  const c1 = (await linkIdentity.execute({}, dmSeveral)) as { instructions: string };
+  await observeLinkClaim({ org: ORG, platform: "github", authorId: "octocat2", text: `link ${codeOf(c1.instructions)}`, trust: "peer" });
+  const c2 = (await linkIdentity.execute({}, dmSeveral)) as { instructions: string };
+  await observeLinkClaim({ org: ORG, platform: "github", authorId: "unresolved-account", text: `link ${codeOf(c2.instructions)}`, trust: "peer" });
+  let severalMsg = "";
+  try {
+    await confirmLink.execute({ decision: "confirm" }, dmSeveral);
+  } catch (e) {
+    severalMsg = e instanceof Error ? e.message : String(e);
+  }
+  ok(/Second Octocat/.test(severalMsg), "🔴 OPE-616: the several-waiting-claims refusal names a RESOLVED claimant for a human to pick from");
+  ok(/the github account "unresolved-account"/.test(severalMsg), "OPE-616: …and the unresolved one still gets platform-named prose, not a bare key");
+  ok(!/github\/octocat2/.test(severalMsg) && !/github\/unresolved-account/.test(severalMsg), "🔴 OPE-616: the listing carries NO bare principal key at all — a human reading it cannot eyeball one");
+  const stillWaiting = await getOperationalStore().listLinkChallenges(ORG, { initiatingPlatform: "slack", initiatingTenant: T1, initiatingNativeId: "U_SEVERAL", status: "claimed" });
+  for (const c of stillWaiting) await denyLinkChallenge({ org: ORG, challengeId: c.id });
+
+  registerAccountDisplayName("discord", async (nativeId) => (nativeId === "dc-octo" ? { name: "Discord Octo", handle: "dc_octo" } : undefined));
+  const discordNotices: { text: string }[] = [];
+  registerPostArm({
+    platform: "discord",
+    deliverDirectMessage: async (dmInput) => {
+      discordNotices.push({ text: dmInput.text });
+      return { surfaceId: `DD-${dmInput.principalId}`, messageId: "m1" };
+    },
+  });
+  const dmGrowth = ctxFor({ channelId: "D_GROWTH", channelType: "im", principalId: "U_GROWTH", dmPartnerTrust: "internal" });
+  const growthOut = (await linkIdentity.execute({}, dmGrowth)) as { instructions: string };
+  await observeLinkClaim({ org: ORG, platform: "discord", tenant: "", authorId: "dc-octo", text: `link ${codeOf(growthOut.instructions)}`, trust: "peer" });
+  const growthPeek = (await confirmLink.execute({ decision: "confirm" }, dmGrowth)) as Decision;
+  discordNotices.length = 0;
+  await confirmLink.execute({ decision: "confirm", acknowledge: true, challengeId: growthPeek.challengeId }, dmGrowth);
+  ok(discordNotices.length === 1, "OPE-616 setup: the newly-joined discord member received the growth (post-commit) notice");
+  ok(/Discord Octo \(@dc_octo\)/.test(discordNotices[0]!.text), "🔴 OPE-616: the growth (post-commit) notice NAMES the joining account with its resolved display name + handle — the live defect");
+  ok(!/\*\*/.test(discordNotices[0]!.text), "🔴 OPE-616: the growth notice carries NO markdown — Slack (and most DM-delivery platforms) render `**bold**` literally, which is exactly what Rowan saw live");
+  ok(/discord\/dc-octo/.test(discordNotices[0]!.text), "OPE-616: …and the exact principal key still rides the actionable 'ask me to unlink' clause — a stable, unspoofable anchor alongside the name");
+
+  discordNotices.length = 0;
+  await unlinkIdentity.execute({ platform: "discord", tenant: "", nativeId: "dc-octo" }, dmGrowth);
+  ok(discordNotices.length === 1, "OPE-616 setup: the severed discord account was notified on its own surface");
+  ok(/Discord Octo \(@dc_octo\)/.test(discordNotices[0]!.text), "🔴 OPE-616: the sever notice NAMES the removed account with its resolved display name + handle too");
+  ok(!/\*\*/.test(discordNotices[0]!.text), "🔴 OPE-616: the sever notice carries NO markdown either");
+
+  registerPostArm({ platform: "slack" });
+  registerPostArm({ platform: "discord" });
+  _resetAccountDisplayNamesForTest();
+  ok(!canDeliverDirectMessage("slack"), "OPE-616 teardown: the notice-capturing arm is gone");
 }
 
 {

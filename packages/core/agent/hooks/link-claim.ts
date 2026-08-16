@@ -8,7 +8,7 @@ import { linkTenantOf } from "../identity/link-tenant.js";
 import { canDeliverDirectMessage, dispatchDirectMessage } from "../channels/post-arms.js";
 import { postReply, resolveReplyTarget } from "../channels/reply-post.js";
 import { BINDING_TRUSTED_PLATFORMS } from "../memory/domain.js";
-import { tryPrincipalKey } from "../identity/principal-key.js";
+import { humanAccountLabel } from "../identity/account-display-name.js";
 import { isWakeEnvelopeShaped, triggerMessageBody, type WakeTrust } from "../channels/wake-envelope.js";
 
 export function claimBodyOf(text: string | undefined): string | undefined {
@@ -88,15 +88,13 @@ export async function observeLinkClaim(input: {
     return undefined;
   }
 
-  const claimant =
-    tryPrincipalKey(input.platform, claimed.claimedTenant ?? input.tenant, input.authorId) ??
-    `the ${input.platform} account "${input.authorId}"`;
+  const claimant = await humanAccountLabel(input.platform, input.authorId, claimed.claimedTenant ?? input.tenant);
   if (canDeliverDirectMessage(claimed.initiatingPlatform)) {
     try {
       await dispatchDirectMessage(claimed.initiatingPlatform, {
         principalId: claimed.initiatingNativeId,
         text:
-          `**${claimant}** just claimed your link code.\n\n` +
+          `${claimant} just claimed your link code.\n\n` +
           `If that is you, reply here to confirm and I will link the two accounts. If you do not ` +
           `recognise it, tell me to deny it — nothing is written until you say so.`,
       });
