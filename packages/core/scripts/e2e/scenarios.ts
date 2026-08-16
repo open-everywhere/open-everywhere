@@ -476,7 +476,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const { teamId } = await slack.identity();
 
       const capDollars = 21 + (Math.floor(Date.now() / 1000) % 9_000);
-      const capAsk = `raise this channel's spend cap to $${capDollars}/day`;
+      const capAsk = `raise this channel's spend cap to $${capDollars}/month`;
       const { ts: ask1Ts } = await slack.post(slack.mention(capAsk));
       const card1 = await awaitCard(slack, ask1Ts, FILE_REPLY_WAIT);
       const btn1 = approveButton(card1)!;
@@ -622,7 +622,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const fileReply = await discord.awaitReplyMatching(threadId, fileAsk.id, (m) => m.attachments.length > 0, { timeoutMs: FILE_REPLY_WAIT, what: "a bot reply carrying a file attachment" });
       ctx.gate(fileReply.attachments.length > 0, "post_file: the reply carries a file attachment");
 
-      const cardAsk = await discord.post(discord.mention(`raise this channel's spend cap to $${21 + (Math.floor(Date.now() / 1000) % 9_000)}/day`), threadId);
+      const cardAsk = await discord.post(discord.mention(`raise this channel's spend cap to $${21 + (Math.floor(Date.now() / 1000) % 9_000)}/month`), threadId);
       const cardReply = await discord.awaitReplyMatching(threadId, cardAsk.id, (m) => m.components.length > 0, { timeoutMs: FILE_REPLY_WAIT, what: "an approval card (a reply with components/buttons)" });
       ctx.gate(cardReply.components.length > 0, "approval card: renders with components (buttons) — SHAPE only, decide stays on Slack (bots can't click Discord buttons)");
     },
@@ -3503,7 +3503,7 @@ export const SCENARIOS: readonly Scenario[] = [
         const refN = factToken("taintclean");
         const sinceN = new Date(Date.now() - 5_000).toISOString();
         const { ts: askNTs } = await slack.post(
-          slack.mention(`raise this channel's spend cap to $${base + 2}/day (reason: e2e taint route-proof clean control, ref ${refN}).`),
+          slack.mention(`raise this channel's spend cap to $${base + 2}/month (reason: e2e taint route-proof clean control, ref ${refN}).`),
         );
         const cardN = await awaitCard(slack, askNTs, FILE_REPLY_WAIT);
         const btnN = approveButton(cardN)!;
