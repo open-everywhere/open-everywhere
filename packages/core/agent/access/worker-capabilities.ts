@@ -173,11 +173,15 @@ export function checkWorkerCapabilityGroups(
 
 const code = (names: readonly string[]): string => names.map((n) => "`" + n + "`").join(", ");
 
+const SHARED_FILESYSTEM_LINE =
+  "Every worker shares ONE filesystem with you and with every other worker running beside it. Give each one its own directory or file scope in the brief, or two of them will write over each other.";
+
 function delegationReturnShape(route: "agent" | "spawn_task", asyncVerb: "spawn_thread_session" | undefined, backgroundTasks: boolean): string {
   if (!backgroundTasks) {
-    return asyncVerb
+    const blocking = asyncVerb
       ? `\`${route}\` runs the worker and BLOCKS this turn until it answers — right for short work the person is waiting on, wrong for anything long, because nothing else in this room is delivered while you wait. For work that will take a while, use \`${asyncVerb}\`: it mints a durable seat that runs alongside you and reports back on its own.`
       : `\`${route}\` runs the worker and BLOCKS this turn until it answers, so keep what you hand it bounded. Nothing else in this room is delivered while you wait.`;
+    return `${blocking} ${SHARED_FILESYSTEM_LINE}`;
   }
   const lines = [
     `\`${route}\` does NOT block. It starts the worker in the background and hands you a task receipt at once, so this turn ends and this room stays answerable while the work runs.`,
@@ -185,7 +189,7 @@ function delegationReturnShape(route: "agent" | "spawn_task", asyncVerb: "spawn_
     `When the worker settles, its completion arrives as a NEW message on a later turn. Read the worker's output with \`task_peek\`, using the task id from the receipt, and stop work you no longer need with \`task_cancel\`.`,
     `Say which request the result answers. Another message can arrive in this room while a worker runs, and an answer posted against the wrong one reads as a non-sequitur.`,
     `A worker does ONE job. You cannot send more work to a worker that has already run: \`agentId\` is refused. Start a fresh \`${route}\` call and put everything the new worker needs in its brief, including whatever the last one found.`,
-    `Every worker shares ONE filesystem with you and with every other worker you started. Give each one its own directory or file scope in the brief, or two of them will write over each other.`,
+    SHARED_FILESYSTEM_LINE,
   ];
   if (asyncVerb !== undefined) {
     lines.push(

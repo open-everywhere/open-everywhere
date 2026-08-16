@@ -108,7 +108,7 @@ for (const name of grouped) {
 eq(
   renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent", undefined, "spawn_thread_session", false),
   standingBlock,
-  "🔴 OPE-564 FLAG OFF: passing `false` renders BYTE-IDENTICALLY to omitting the argument — the shipped default changes no prompt byte",
+  "🔴 the flag DEFAULTS to false: passing `false` renders BYTE-IDENTICALLY to omitting the argument",
 );
 
 const backgroundBlock = renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent", undefined, "spawn_thread_session", true);
@@ -130,13 +130,37 @@ ok(
   "🔴 OPE-593: the OPE-564 teaching sentence is GONE — a seat told how to continue would try, and a refused call it was taught to make is a retry loop",
 );
 ok(/put everything the new worker needs in its brief/.test(backgroundBlock), "…and the copy names the route that replaces continuation, so the refusal is actionable");
-ok(/shares ONE filesystem/.test(backgroundBlock), "🔴 OPE-584: parent and every sibling worker share one sandbox filesystem, and the copy says so plainly");
-ok(/its own directory or file scope/.test(backgroundBlock), "…with eve's own prescribed mitigation — non-overlapping write scopes, assigned in the brief");
 ok(/Brief it by INTENT, not by tool/.test(backgroundBlock), "the intent-shaped-brief ruling survives the re-aim");
 
 const backgroundThreadBlock = renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_THREAD, "agent", undefined, undefined, true);
 ok(/does NOT block/.test(backgroundThreadBlock), "a thread seat is told the same return shape — the flag is build-wide, not per grain");
 ok(!backgroundThreadBlock.includes("spawn_thread_session"), "…and STILL never hears about the standing-only spawner (no recursive thread trees)");
+
+const SHARED_FS_SENTENCE =
+  "Every worker shares ONE filesystem with you and with every other worker running beside it. " +
+  "Give each one its own directory or file scope in the brief, or two of them will write over each other.";
+
+for (const [label, block] of [
+  ["the SYNC standing prompt", standingBlock],
+  ["the SYNC thread prompt", threadBlock],
+  ["the SYNC standing prompt with no async verb", renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent")],
+  ["the BACKGROUND standing prompt", backgroundBlock],
+  ["the BACKGROUND thread prompt", backgroundThreadBlock],
+] as const) {
+  ok(block.includes(SHARED_FS_SENTENCE), `🔴 OPE-584: ${label} carries the shared-filesystem sentence VERBATIM — one mechanism, one sentence, every delegating prompt`);
+}
+
+ok(/BLOCKS this turn/.test(standingBlock), "🔴 the sync prompt still states the BLOCKING return shape — the shared-filesystem line is an addition, never a replacement");
+ok(/does NOT block/.test(backgroundBlock), "…and the background prompt still states the non-blocking one");
+
+ok(!/does NOT block/.test(standingBlock) && !/BLOCKS this turn/.test(backgroundBlock), "🔴 the two return-shape claims stay mutually exclusive — a prompt carrying both would be unreadable advice");
+
+for (const route of ["none", "file-tools"] as const) {
+  ok(
+    !renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, route, undefined, "spawn_thread_session", true).includes("shares ONE filesystem"),
+    `a seat on route "${route}" is told nothing about a shared filesystem — it starts no workers`,
+  );
+}
 
 eq(
   renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent", undefined, "spawn_thread_session", true),

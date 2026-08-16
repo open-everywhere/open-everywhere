@@ -213,6 +213,28 @@ async function inSession<T>(s: Seat, fn: () => Promise<T>): Promise<T> {
   return await eveContextStorage().run(s.als, fn);
 }
 
+function makeChild(parent: Seat, index: number): Seat {
+  const sessionId = `${parent.sessionId}-child-${index}`;
+  const ctx = {
+    agent: { name: "test" },
+    channel: { kind: "subagent", continuationToken: `subagent:${parent.sessionId}:call_${index}` },
+    getSandbox: async () => parent.sandbox,
+    session: {
+      id: sessionId,
+      parent: { sessionId: parent.sessionId, callId: `call_${index}`, rootSessionId: parent.sessionId, turn: { id: `${parent.sessionId}-turn-1`, sequence: 1 } },
+      turn: { id: `${sessionId}-turn-1`, sequence: 1 },
+      auth: {
+        current: {
+          principalId: "U7",
+          principalType: "slack-user",
+          attributes: { ...SLACK_ATTRS, oe_platform: "slack", oe_grain: "standing", oe_window_token: WINDOW },
+        },
+      },
+    },
+  } as unknown as HookContext;
+  return { sessionId, sandbox: parent.sandbox, als: new FakeEveContext(), ctx };
+}
+
 async function fireMemory(s: Seat, event: string): Promise<void> {
   await inSession(s, async () => {
     await memory.events[event]({ type: event }, s.ctx);
@@ -401,4 +423,57 @@ console.log("6. a dispatch receipt flushes nothing:");
   eq(stored()["MEMORY.md"], BEFORE, "…and the dispatched task counts LIVE: a later sync return is held closed by the guard");
 }
 
-console.log(`\n✓ settlement-flush: ${n} assertions passed (a terminal task view and a sync delegation return each persist the parent's tree with outcome:"settled"; the fan-out guard skips — and audits the skip — while any delegated task is non-terminal, including one seen only as a working/input_required view; a dispatch receipt flushes nothing; the session-end backstop stays a silent, conflict-free no-op)\n`);
+console.log("7. N concurrent children hold ONE tree and the parent stays its only writer:");
+{
+  const s = makeSeat("seat-fanout-n");
+  await fireMemory(s, "session.started");
+  const BEFORE = stored()["MEMORY.md"] as string;
+
+  const children = [1, 2, 3].map((i) => makeChild(s, i));
+  eq(new Set(children.map((c) => c.sessionId)).size, 3, "harness: three DISTINCT child sessions");
+  ok(
+    children.every((c) => c.sandbox === s.sandbox),
+    "harness: all three children hold the PARENT's sandbox object — one inherited key, one filesystem",
+  );
+
+  const CHILD_1 = `${BEFORE}- child 1 wrote this\n`;
+  const CHILD_2 = `${BEFORE}- child 2 wrote this, over child 1\n`;
+  const CHILD_3 = "child 3 kept to its own file\n";
+  s.sandbox.childEdit("MEMORY.md", CHILD_1);
+  s.sandbox.childEdit("MEMORY.md", CHILD_2);
+  s.sandbox.childEdit("notes/child-3.md", CHILD_3);
+  eq(s.sandbox.read("MEMORY.md"), CHILD_2, "the contested path holds the LAST writer's bytes — child 1's write is already lost inside the shared tree");
+
+  for (const c of children) {
+    await inSession(c, async () => {
+      await memory.events["session.started"]({ type: "session.started" }, c.ctx);
+    });
+  }
+  eq(
+    s.sandbox.read("MEMORY.md"),
+    CHILD_2,
+    "🔴 THREE children each ran session.started and NONE re-pulled the silo — a re-pull writes the store's OLDER bytes over the parent's live working copy, mid-turn, once per child",
+  );
+  eq(s.sandbox.read("notes/child-3.md"), CHILD_3, "…and the scoped file survives every one of them too");
+
+  for (const c of children) {
+    await inSession(c, async () => {
+      await memory.events["session.completed"]({ type: "session.completed" }, c.ctx);
+    });
+  }
+  eq(stored()["MEMORY.md"], BEFORE, "🔴 THE SINGLE-WRITER RULE AT N: three children ran BOTH hook halves and the store is untouched");
+  ok(stored()["notes/child-3.md"] === undefined, "…and no child's new file reached the store either");
+  for (const c of children) {
+    eq((await memoryWrites(c.sessionId)).length, 0, `…and child ${c.sessionId} emitted NO memory.write row of its own`);
+  }
+  eq(conflictSiblings(), [], "…so no child minted a .conflict- sibling of the parent's in-flight edits");
+
+  await fireResult(s, syncResult("call_H"));
+  eq(stored()["MEMORY.md"], CHILD_2, "🔴 the PARENT's flush is what carries the children's work to the store");
+  eq(stored()["notes/child-3.md"], CHILD_3, "…including the child that kept to its own file scope — nothing it wrote was lost");
+  eq(stored()["MEMORY.md"]?.includes("child 1 wrote this"), false, "🔴 AND CHILD 1's WRITE IS GONE. Nothing recovers it: the loss happened in the shared filesystem, before any flush could see it. This is why the mitigation is a non-overlapping write scope in the brief and not machinery here");
+  const writes = await memoryWrites(s.sessionId);
+  eq(writes.length, 1, "exactly ONE memory.write row for the whole fan-out — one owner, one write");
+}
+
+console.log(`\n✓ settlement-flush: ${n} assertions passed (a terminal task view and a sync delegation return each persist the parent's tree with outcome:"settled"; the fan-out guard skips — and audits the skip — while any delegated task is non-terminal, including one seen only as a working/input_required view; a dispatch receipt flushes nothing; the session-end backstop stays a silent, conflict-free no-op; and N concurrent children share ONE tree with the parent as its only writer)\n`);
