@@ -118,6 +118,7 @@ export const bindDiscord: IdentityMapper = (ctx): RawIdentity => {
     visibility: discordVisibility(everyoneCanView, mode),
     trust: discordTrust(discordAttr(a, ["member_pending", "memberPending"])),
     principalId: discordPrincipalId(ctx) ?? userId,
+    ...(mode === "channel" && channelId ? { engagementKey: channelId } : {}),
     target: channelId ? { channelId, ...(guildId ? { guildId } : {}), ...(channelType ? { channelType } : {}) } : undefined,
   };
 };
