@@ -219,6 +219,7 @@ try {
       heartbeatObservations.push({ action, ...(rows[0] ? { lastSeenIso: rows[0].ts } : {}) });
     }
     heartbeats = heartbeatFindings({ gated: gatedPlan, reported: REPORTED_HEARTBEATS, observations: heartbeatObservations, now: new Date() });
+    heartbeatLimits.push("the heartbeat check reads ONE org — crons sweep OE_TIDY_ORGS, so on a multi-org deployment run one census per swept org");
   } else {
     heartbeatLimits.push("the cron-heartbeat check DID NOT RUN (--no-heartbeat-check) — nothing here proves directory-sync, tidy or dream-mode3 are still firing");
   }

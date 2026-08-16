@@ -487,7 +487,7 @@ export async function runDirectorySync(opts: { readonly orgs?: readonly string[]
         workspace: provider.id,
         principalId: `${DIRECTORY_SYNC_ACTOR}:${provider.id}`,
         action: DIRECTORY_SYNC_ACTION,
-        detail: { outcome: `failed: ${String(err)}`, provider: provider.id, startedAt: failedAt, finishedAt: failedAt },
+        detail: { outcome: `failed: ${String(err instanceof Error ? err.message : err).split("\n")[0].slice(0, 160)}`, provider: provider.id, startedAt: failedAt, finishedAt: failedAt },
       });
     }
   }

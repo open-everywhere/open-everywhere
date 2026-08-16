@@ -63,8 +63,8 @@ const discordInteractionChannel = discordChannel({
   },
   events: {
     "turn.started": async (_data, channel, ctx) => {
-      await channel.discord.startTyping();
       (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId(ctx);
+      await channel.discord.startTyping();
     },
     "message.completed": async (data, channel, ctx) => {
       const sessionId = ctx?.session?.id;

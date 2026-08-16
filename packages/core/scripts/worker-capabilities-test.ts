@@ -181,7 +181,7 @@ eq(
 const PERMISSION_STEER =
   "Permission works the same way. Do not refuse an ask because you judge the person is not allowed it, " +
   "or because the answer looks internal. You do not hold these verbs, so you do not hold their gates: " +
-  "each verb checks the caller's own standing when the worker runs it, and refuses with a reason the " +
+  "a verb that needs standing checks it when the worker runs it, and refuses with a reason the " +
   "person can act on. A refusal you write instead never reaches that gate, so the person gets your " +
   "guess in place of the real reason. Route the ask, let the verb answer, and relay what it says — " +
   "its refusal included.";

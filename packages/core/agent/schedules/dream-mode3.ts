@@ -52,6 +52,10 @@ async function slackSurfaceNames(rows: readonly AuditEntry[], post: Mode3Poster)
   return names;
 }
 
+function errBrief(err: unknown): string {
+  return String(err instanceof Error ? err.message : err).split("\n")[0].slice(0, 160);
+}
+
 interface OrgDigestOutcome {
   readonly outcome: string;
   readonly totalFailures?: number;
@@ -73,7 +77,7 @@ async function runOrgDigest(input: {
     rows = await readAudit({ org, since: windowStart.toISOString(), limit: 2000 });
   } catch (err) {
     log(`skip ${org} — audit read failed: ${String(err)}`);
-    return { outcome: `failed: audit read — ${String(err)}`, reported: false, posted: false };
+    return { outcome: `failed: audit read — ${errBrief(err)}`, reported: false, posted: false };
   }
 
   let report: Mode3Report | null;
@@ -84,7 +88,7 @@ async function runOrgDigest(input: {
     });
   } catch (err) {
     log(`skip ${org} — report build failed: ${String(err)}`);
-    return { outcome: `failed: report build — ${String(err)}`, reported: false, posted: false };
+    return { outcome: `failed: report build — ${errBrief(err)}`, reported: false, posted: false };
   }
   if (!report) return { outcome: "no-op: empty week", reported: false, posted: false };
 
@@ -121,7 +125,7 @@ async function runOrgDigest(input: {
     return { outcome: "reported: post did not confirm ok", totalFailures: report.totalFailures, reported: true, posted: false };
   } catch (err) {
     log(`org ${org}: admin-channel post failed — ${String(err)}`);
-    return { outcome: `reported: post failed — ${String(err)}`, totalFailures: report.totalFailures, reported: true, posted: false };
+    return { outcome: `reported: post failed — ${errBrief(err)}`, totalFailures: report.totalFailures, reported: true, posted: false };
   }
 }
 
