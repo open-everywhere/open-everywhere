@@ -178,6 +178,42 @@ eq(
   "the background render is byte-stable across calls as well — the prompt cache must not churn on either build",
 );
 
+const PERMISSION_STEER =
+  "Permission works the same way. Do not refuse an ask because you judge the person is not allowed it, " +
+  "or because the answer looks internal. You do not hold these verbs, so you do not hold their gates: " +
+  "each verb checks the caller's own standing when the worker runs it, and refuses with a reason the " +
+  "person can act on. A refusal you write instead never reaches that gate, so the person gets your " +
+  "guess in place of the real reason. Route the ask, let the verb answer, and relay what it says — " +
+  "its refusal included.";
+
+ok(
+  !/audit/i.test(PERMISSION_STEER),
+  "🔴 the permission steer makes NO audit claim — `memory_admin_list` is unaudited by design, so 'leaves no audit row' would be false on the leg that motivated the line",
+);
+
+for (const [label, block] of [
+  ["the SYNC standing prompt", standingBlock],
+  ["the SYNC thread prompt", threadBlock],
+  ["the SYNC standing prompt with no async verb", renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent")],
+  ["the BACKGROUND standing prompt", backgroundBlock],
+  ["the BACKGROUND thread prompt", backgroundThreadBlock],
+  ["the SYNC `spawn_task` prompt (delegation.oneshotAgent disarmed)", renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "spawn_task")],
+  ["the BACKGROUND `spawn_task` prompt", renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "spawn_task", undefined, undefined, true)],
+] as const) {
+  ok(block.includes(PERMISSION_STEER), `🔴 OPE-651: ${label} carries the permission steer VERBATIM — a seat must not pre-empt a gate it does not hold`);
+}
+
+ok(
+  /never say you cannot do something that a worker can/.test(standingBlock),
+  "🔴 the CAPABILITY refusal rule survives the permission addition — the two forbid different moves and the block needs both",
+);
+
+for (const route of ["none", "file-tools"] as const) {
+  const block = renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, route, undefined, "spawn_thread_session", true);
+  eq(block, "", `a seat on route "${route}" renders no block at all, so it never receives the permission steer either`);
+  ok(!block.includes("Permission works the same way"), `…asserted directly on route "${route}" as well, so a later non-empty render on that route cannot smuggle the steer in`);
+}
+
 for (const verb of WORKER_INDEX_SEAT_VERBS) {
   ok(!WORKER_ONLY_TOOLS_STANDING.includes(verb), `"${verb}" is the seat's own verb and is never listed as worker-only`);
 }
