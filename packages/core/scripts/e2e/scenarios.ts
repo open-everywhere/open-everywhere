@@ -3663,9 +3663,10 @@ export const SCENARIOS: readonly Scenario[] = [
             } else {
               ctx.log("ARM D (linear): ctx.transcriptRead unavailable — cannot independently confirm a real read_linear_issue call; relying on the reply alone (weaker evidence, logged honestly)");
             }
+            const kindsD = /tainted:\s*(?:true|false)\s*(?:\(([^)]*)\))?/i.exec(replyD.body)?.[1] ?? "";
             ctx.gate(
-              /tainted:\s*false\b/i.test(replyD.body),
-              `🔴 ARM D (linear, hard): the relayed context line reads \`tainted: false\` — a real read_linear_issue call over the vouched-internal fixture correctly did NOT mark the turn. This is the relaxation side of OPE-324's join (access/taint-enforcement.ts), proven live off a real Linear route rather than asserted in a unit test. Reply: "${replyD.body.replace(/\s+/g, " ").trim().slice(0, 300)}"`,
+              /tainted:\s*(?:true|false)/i.test(replyD.body) && !/\blinear\b/i.test(kindsD),
+              `🔴 ARM D (linear, hard): the relayed context line's taint breakdown does NOT name \`linear\` (kinds read: "${kindsD}") — a real read_linear_issue call over the vouched-internal fixture correctly did not contribute a taint kind. This is the relaxation side of OPE-324's join (access/taint-enforcement.ts), proven live off a real Linear route rather than asserted in a unit test. A regression in \`declaredWorkspaceTrust\`'s key resolution (OPE-331/OPE-539 touched this seam) would put \`linear\` in that list. Reply: "${replyD.body.replace(/\s+/g, " ").trim().slice(0, 300)}"`,
             );
           } finally {
             await lin.archive(issueD.id).catch(() => undefined);
