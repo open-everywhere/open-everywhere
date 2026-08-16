@@ -41,6 +41,7 @@ import {
   providerById,
   upsertUnderSection,
   bindFrom,
+  authPrincipalId,
   isAllowedSlackDriver,
   planFor,
   extractPinnedInstructions,
@@ -453,6 +454,7 @@ const slackMentionChannel = slackChannel({
       (channel.state as unknown as Record<string, unknown>).oeReplierLabel = replierLabelFromAuthAttributes(
         ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined,
       );
+      (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId(ctx);
       {
         const attrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
         if (attrs?.channel_type === "im") {
@@ -621,7 +623,15 @@ const slackMentionChannel = slackChannel({
           await postTerminalProse(
             { platform: "slack", channelId, ...(replyThreadTs ? { threadTs: replyThreadTs } : {}) },
             action.text,
-            { org: p.org, platform: p.platform, workspace: p.workspace, surface: p.surface, ...(sessionId ? { sessionId } : {}), route: "terminal" },
+            {
+              org: p.org,
+              platform: p.platform,
+              workspace: p.workspace,
+              surface: p.surface,
+              principalId: (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId as string | undefined,
+              ...(sessionId ? { sessionId } : {}),
+              route: "terminal",
+            },
             (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined,
           );
         } else {

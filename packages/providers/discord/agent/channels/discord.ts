@@ -10,6 +10,7 @@ import {
   consumeRepliedThisTurn,
   postTerminalProse,
   resolvePartition,
+  authPrincipalId,
   type ChatAuditPartition,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { frontDiscordChannel, INTERNAL_DISCORD_ROUTE } from "./discord-front.js";
@@ -61,6 +62,10 @@ const discordInteractionChannel = discordChannel({
     return { auth };
   },
   events: {
+    "turn.started": async (_data, channel, ctx) => {
+      await channel.discord.startTyping();
+      (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId(ctx);
+    },
     "message.completed": async (data, channel, ctx) => {
       const sessionId = ctx?.session?.id;
       const action = finalMessageActionForTurn(data.finishReason, data.message);
@@ -83,7 +88,15 @@ const discordInteractionChannel = discordChannel({
           await postTerminalProse(
             { platform: "discord", channelId: channel.state.channelId },
             action.text,
-            { org: p.org, platform: p.platform, workspace: p.workspace, surface: p.surface, ...(sessionId ? { sessionId } : {}), route: "terminal" },
+            {
+              org: p.org,
+              platform: p.platform,
+              workspace: p.workspace,
+              surface: p.surface,
+              principalId: (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId as string | undefined,
+              ...(sessionId ? { sessionId } : {}),
+              route: "terminal",
+            },
           );
         } else {
           await channel.discord.post(action.text);
