@@ -274,6 +274,28 @@ export function triggerMessageBody(rendered: string): string | undefined {
   return unescapeXml(stripUntrustedFence(dedented).join("\n"));
 }
 
+const FROM_ATTR_RE = /\bfrom="([^"]*)"/;
+const AUTHOR_ID_ATTR_RE = /\bauthor-id="([^"]*)"/;
+
+export interface TriggerAuthor {
+  readonly from: string;
+  readonly authorId?: string;
+}
+
+export function triggerAuthors(rendered: string): readonly TriggerAuthor[] {
+  const out: TriggerAuthor[] = [];
+  for (const m of rendered.matchAll(MESSAGE_ELEMENT_RE)) {
+    const attrs = m[1] ?? "";
+    if (!TRIGGER_ATTR_RE.test(attrs)) continue;
+    const id = AUTHOR_ID_ATTR_RE.exec(attrs)?.[1];
+    out.push({
+      from: unescapeXml(FROM_ATTR_RE.exec(attrs)?.[1] ?? ""),
+      ...(id !== undefined && id.length > 0 ? { authorId: unescapeXml(id) } : {}),
+    });
+  }
+  return out;
+}
+
 function openerColumn(rendered: string, at: number): number {
   const lineStart = rendered.lastIndexOf("\n", at) + 1;
   const prefix = rendered.slice(lineStart, at);

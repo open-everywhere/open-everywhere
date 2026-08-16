@@ -1,7 +1,8 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
-import { actingPrincipalId, bindFrom } from "../identity/binding.js";
+import { bindFrom } from "../identity/binding.js";
+import { adminStandingSubject } from "../access/admin-standing.js";
 import { getConfig } from "../access/config.js";
 import { adminControlRoles } from "../access/roles.js";
 import { memoryReadView } from "../control/views.js";
@@ -26,12 +27,9 @@ export default defineTool({
   approval: never(),
   async execute(input, ctx) {
     const binding = bindFrom(ctx);
-    const caller = actingPrincipalId(binding);
-    if (!caller) {
-      throw new Error(
-        "memory_admin_read needs a verified sender on this turn — no principal id resolved, so there's no caller to check admin standing for.",
-      );
-    }
+    const subject = adminStandingSubject(binding, ctx);
+    if (!subject.ok) throw new Error(`memory_admin_read: ${subject.message}`);
+    const caller = subject.principalId;
     const domains = getConfig().loadDomains();
     const roles = adminControlRoles(caller, domains, binding.platform, binding.workspace);
     if (roles.length === 0) {
