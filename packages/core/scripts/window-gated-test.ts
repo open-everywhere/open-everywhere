@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
@@ -298,6 +298,95 @@ console.log("5. replay pre-registration (eve step registry):");
   eq(replayedCustom.length, 1, "eve replays a custom-entryKey pre-registered entry (no skip)");
   const armedBash = (await resolveWindowGated(windowGated("bash", stubEntry("bash")), grainCtx.task())) as unknown as Record<string, { stepId?: string }>;
   eq(armedBash.__executeStepFn?.stepId, replayStepNames("bash", "_single").execute, "windowGated entries are stamped with the same deterministic stepId");
+}
+
+console.log("6. mount refresh on a deployment change (OPE-632):");
+{
+  const require3 = createRequire(import.meta.url);
+  const eveRoot3 = dirname(require3.resolve("eve/package.json"));
+  const abs3 = (rel: string) => pathToFileURL(join(eveRoot3, rel)).href;
+
+  type Container = { get(k: unknown): unknown; set(k: unknown, v: unknown): unknown };
+  const { ContextContainer } = (await import(abs3("dist/src/context/container.js"))) as { ContextContainer: new () => Container };
+  const keys = (await import(abs3("dist/src/context/keys.js"))) as Record<string, unknown>;
+  const life = (await import(abs3("dist/src/context/dynamic-tool-lifecycle.js"))) as {
+    dispatchDynamicToolEvent(i: unknown): Promise<void>;
+    refreshDynamicSessionToolsForRuntimeRevision(i: unknown): Promise<void>;
+  };
+  for (const k of ["SessionIdKey", "ContinuationTokenKey", "AuthKey", "SessionDynamicToolMetadataKey", "SessionDynamicToolRuntimeRevisionKey"]) {
+    ok(keys[k] !== undefined, `eve still exports ${k} from context/keys.js (the refresh reads and writes these)`);
+  }
+  ok(typeof life.refreshDynamicSessionToolsForRuntimeRevision === "function", "eve still exports refreshDynamicSessionToolsForRuntimeRevision — the ONLY thing that re-derives a live seat's roster");
+
+  const armsOf = (gated: unknown) => Object.keys((gated as { events: Record<string, unknown> }).events);
+  eq(armsOf(windowGated("bash", stubEntry("bash"))), ["session.started"], "windowGated declares exactly the `session.started` arm — the one eve's revision refresh re-invokes");
+
+  const kitV1 = windowGatedKit("refresh_kit", { bash: stubEntry("bash"), web_fetch: stubEntry("web_fetch") });
+  eq(armsOf(kitV1), ["session.started"], "…and so does windowGatedKit");
+  const bashV2 = defineTool({
+    description: "stub bash — REWORDED BY THE NEXT DEPLOY",
+    inputSchema: z.object({ v: z.string().optional() }),
+    outputSchema: z.object({ ran: z.string() }),
+    async execute() {
+      return { ran: "bash" };
+    },
+  }) as unknown as GatedToolEntry;
+  const kitV2 = windowGatedKit("refresh_kit", { bash: bashV2, web_fetch: stubEntry("web_fetch") }, { web_fetch: () => false });
+  const kitV3 = windowGatedKit("refresh_kit", { bash: bashV2, web_fetch: stubEntry("web_fetch"), glob: stubEntry("glob") }, { web_fetch: () => false });
+  const resolverOf = (kit: unknown) => ({
+    slug: "refresh_kit",
+    logicalPath: "agent/tools/refresh_kit.ts",
+    eventNames: ["session.started"],
+    events: (kit as { events: Record<string, unknown> }).events,
+  });
+
+  const ctx6 = new ContextContainer();
+  ctx6.set(keys.SessionIdKey, "sess-refresh");
+  ctx6.set(keys.ContinuationTokenKey, TASK_TOKEN);
+  ctx6.set(keys.AuthKey, { attributes: { oe_grain: "task" } });
+  const event6 = { type: "session.started", data: {} };
+  const meta = () => (ctx6.get(keys.SessionDynamicToolMetadataKey) as { name: string; description?: string }[] | undefined) ?? [];
+  const names = () => meta().map((m) => m.name).sort();
+  const descOf = (name: string) => meta().find((m) => m.name === name)?.description;
+  const refresh = (kit: unknown, revision: string) =>
+    life.refreshDynamicSessionToolsForRuntimeRevision({ ctx: ctx6, resolvers: [resolverOf(kit)], event: event6, messages: [], runtimeRevision: revision });
+
+  await life.dispatchDynamicToolEvent({ ctx: ctx6, resolvers: [resolverOf(kitV1)], event: event6, messages: [] });
+  ctx6.set(keys.SessionDynamicToolRuntimeRevisionKey, "deployment:dep_A");
+  eq(names(), ["bash", "web_fetch"], "turn 1 under deployment A mounts the V1 roster");
+  eq(descOf("bash"), "stub bash", "…with the V1 description");
+
+  await refresh(kitV2, "deployment:dep_A");
+  eq(names(), ["bash", "web_fetch"], "NEGATIVE CONTROL: the same deployment id re-derives NOTHING — the roster is untouched");
+  eq(descOf("bash"), "stub bash", "…and the description is untouched too");
+  eq(ctx6.get(keys.SessionDynamicToolRuntimeRevisionKey), "deployment:dep_A", "…and the recorded revision is unchanged");
+
+  await refresh(kitV2, "deployment:dep_B");
+  eq(names(), ["bash"], "a new deployment id re-derives the roster: a tool the new build NARROWS away is gone from a live seat (no window rotation involved)");
+  eq(descOf("bash"), "stub bash — REWORDED BY THE NEXT DEPLOY", "…and a surviving tool carries the NEW build's description, not the one the session started with");
+  eq(ctx6.get(keys.SessionDynamicToolRuntimeRevisionKey), "deployment:dep_B", "…and the session now records the deployment its roster was derived under");
+
+  await refresh(kitV3, "deployment:dep_C");
+  eq(names(), ["bash", "glob"], "a deploy that ADDS a gated tool reaches a live seat on its next turn");
+
+  const steps6 = readFileSync(join(eveRoot3, "dist", "src", "execution", "workflow-steps.js"), "utf8");
+  ok(
+    /let (\w+)=process\.env\.VERCEL_DEPLOYMENT_ID\?\.trim\(\),(\w+)=\1\?`deployment:\$\{\1\}`:await resolveRuntimeCompiledArtifactsVersionedCacheKey\(/.test(steps6),
+    "the runtime revision is the VERCEL DEPLOYMENT ID (falling back to the compiled-artifacts cache key) — this is what ties the refresh to a DEPLOY",
+  );
+  ok(
+    /if\(!(\w+)\.sessionStarted\)(\w+)\.set\(SessionDynamicSubagentRuntimeRevisionKey,(\w+)\),\2\.set\(SessionDynamicToolRuntimeRevisionKey,\3\);else\{/.test(steps6),
+    "a session's FIRST turn seeds the revision key; every later turn takes the refresh branch",
+  );
+  ok(
+    /refreshDynamicSessionToolsForRuntimeRevision\(\{ctx:(\w+),resolvers:(\w+),event:(\w+),messages:(\w+)\.history,runtimeRevision:(\w+)\}\)/.test(steps6),
+    "…and that branch calls the tool refresh on the durable turn path (the reachability fact — a refresh nothing calls is no refresh at all)",
+  );
+  const life6 = readFileSync(join(eveRoot3, "dist", "src", "context", "dynamic-tool-lifecycle.js"), "utf8");
+  ok(
+    /\{description:(\w+)\.description,execute:createToolExecuteWithAuth\([\s\S]{0,160}?inputSchema:toInputSchema\(\1\.inputSchema\),name:\1\.name/.test(life6),
+    "replay serves the DESCRIPTION and INPUT SCHEMA from the durable metadata — which is exactly why the refresh is load-bearing and not a nicety",
+  );
 }
 
 console.log(`\nwindow-gated: ${n} assertions passed.`);
