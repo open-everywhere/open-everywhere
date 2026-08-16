@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import type { NotionAmbientConfig } from "./env.js";
 import { pollUntil } from "./poll.js";
 
@@ -22,6 +22,8 @@ export interface CommentCreatedForgeInput {
   readonly workspaceId: string;
   readonly commentId: string;
   readonly pageId: string;
+  readonly deliveryId?: string;
+  readonly timestamp?: string;
 }
 
 export function buildCommentCreatedEvent(input: CommentCreatedForgeInput): Record<string, unknown> {
@@ -30,6 +32,8 @@ export function buildCommentCreatedEvent(input: CommentCreatedForgeInput): Recor
     workspace_id: input.workspaceId,
     entity: { id: input.commentId, type: "comment" },
     data: { page_id: input.pageId },
+    ...(input.deliveryId !== undefined ? { id: input.deliveryId } : {}),
+    ...(input.timestamp !== undefined ? { timestamp: input.timestamp } : {}),
   };
 }
 
@@ -186,7 +190,15 @@ export class NotionDriver {
   }
 
   async forgeCommentCreated(targetUrl: string, commentId: string, opts: { signed?: boolean } = {}): Promise<{ status: number }> {
-    const rawBody = JSON.stringify(buildCommentCreatedEvent({ workspaceId: this.cfg.workspaceId, commentId, pageId: this.cfg.pageId }));
+    const rawBody = JSON.stringify(
+      buildCommentCreatedEvent({
+        workspaceId: this.cfg.workspaceId,
+        commentId,
+        pageId: this.cfg.pageId,
+        deliveryId: randomUUID(),
+        timestamp: new Date().toISOString(),
+      }),
+    );
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (opts.signed !== false) {
       if (!this.cfg.webhookSecret) throw new Error("forgeCommentCreated(signed) requires E2E_NOTION_WEBHOOK_SECRET — the forge legs must gate on it");
