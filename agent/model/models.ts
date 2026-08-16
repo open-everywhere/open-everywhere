@@ -32,7 +32,6 @@ export const SUPERVISOR_MODEL = MODELS.supervisor.id;
 export const JUDGE_MODEL = MODELS.judge.id;
 
 export const PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS = MODELS.primary.contextWindowTokens;
-export const UTILITY_MODEL_CONTEXT_WINDOW_TOKENS = MODELS.utility.contextWindowTokens;
 
 export function allowListForStack(stack: ModelStack, extra: readonly ModelPolicyAllowEntry[] = []): ModelPolicyAllowEntry[] {
   const out: ModelPolicyAllowEntry[] = [];

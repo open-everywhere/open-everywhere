@@ -113,7 +113,6 @@ for (const role of [
   "SUPERVISOR_MODEL",
   "JUDGE_MODEL",
   "PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS",
-  "UTILITY_MODEL_CONTEXT_WINDOW_TOKENS",
 ]) {
   if (!new RegExp(`export const ${role}\\b`).test(resolverSrc)) {
     reds.push(`MISSING ROLE EXPORT: ${RESOLVER} no longer exports ${role}, which app config imports.`);
