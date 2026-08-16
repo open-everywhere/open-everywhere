@@ -1,6 +1,6 @@
 
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -441,4 +441,5 @@ const engCtx = teamsCtx({
   _resetAuthorTrustForTest();
 }
 
+rmSync(tmp, { recursive: true, force: true });
 console.log(`✓ ${n} teams-read assertions passed`);
