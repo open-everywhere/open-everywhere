@@ -9,6 +9,7 @@ import { actingPrincipalIdOf } from "../access/request.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { principalKey, tryPrincipalKey } from "../identity/principal-key.js";
 import { humanAccountLabel } from "../identity/account-display-name.js";
+import { ingestUntrusted } from "../access/untrusted.js";
 
 function claimantLabel(platform: string | undefined, tenant: string | undefined, nativeId: string | undefined): string {
   if (!platform || !nativeId) return "an account this request never recorded";
@@ -18,6 +19,10 @@ function claimantLabel(platform: string | undefined, tenant: string | undefined,
 async function claimantName(platform: string | undefined, tenant: string | undefined, nativeId: string | undefined): Promise<string> {
   if (!platform || !nativeId) return "an account this request never recorded";
   return humanAccountLabel(platform, nativeId, tenant);
+}
+
+function fencedClaimantName(name: string): string {
+  return ingestUntrusted(name, { source: "account-display-name" });
 }
 import { confirmLinkedId, denyLinkChallenge, ratifyLinkChallenge } from "../identity/link-store.js";
 import { linkInitiatorRefusal } from "../identity/link-initiator.js";
@@ -103,7 +108,7 @@ export default defineTool({
       challenge = picked;
     } else if (waiting.length > 1) {
       const lines = await Promise.all(
-        waiting.map(async (c) => `  • ${c.id} — claimed by ${await claimantName(c.claimedPlatform, c.claimedTenant, c.claimedNativeId)}`),
+        waiting.map(async (c) => `  • ${c.id} — claimed by ${fencedClaimantName(await claimantName(c.claimedPlatform, c.claimedTenant, c.claimedNativeId))}`),
       );
       throw new Error(`you have ${waiting.length} link requests awaiting a decision — say which one (challengeId):\n${lines.join("\n")}`);
     }
@@ -113,11 +118,12 @@ export default defineTool({
     }
     const claimant = claimantLabel(challenge.claimedPlatform, challenge.claimedTenant, challenge.claimedNativeId);
     const name = await claimantName(challenge.claimedPlatform, challenge.claimedTenant, challenge.claimedNativeId);
+    const fencedName = fencedClaimantName(name);
 
     if (input.decision === "deny") {
       const denied = await denyLinkChallenge({ org: binding.org, challengeId: challenge.id });
       if (!denied) throw new Error("that link request was already decided.");
-      return { decided: "denied", claimant, claimantName: name, ...claimantParts(challenge), note: `Denied — nothing was linked. ${name} does not get your standing.` };
+      return { decided: "denied", claimant, claimantName: fencedName, ...claimantParts(challenge), note: `Denied — nothing was linked. ${fencedName} does not get your standing.` };
     }
 
     if (input.acknowledge === true && input.challengeId === undefined) {
@@ -131,16 +137,16 @@ export default defineTool({
       return {
         decided: "awaiting_acknowledgement",
         claimant,
-        claimantName: name,
+        claimantName: fencedName,
         ...claimantParts(challenge),
         challengeId: challenge.id,
         note:
-          `NOTHING IS LINKED YET. ${name} claimed your link code` +
+          `NOTHING IS LINKED YET. ${fencedName} claimed your link code` +
           (challenge.claimedAt ? ` at ${challenge.claimedAt}` : "") +
           `. If the person has ALREADY said this account is theirs, call confirm_link again NOW with ` +
           `acknowledge: true and this challengeId — both calls belong in one turn. Otherwise tell them ` +
-          `exactly which account this is (${name}) and ask whether it is theirs. If they do not recognise ` +
-          `it, call confirm_link with decision: "deny" — that writes nothing.`,
+          `exactly which account this is and ask whether it is theirs. If they do not recognise it, ` +
+          `call confirm_link with decision: "deny" — that writes nothing.`,
       };
     }
 
@@ -151,7 +157,7 @@ export default defineTool({
     });
     if (!result.ok) throw new Error(result.reason);
     await announceLinkSetGrowth(binding.org, result.linkSetId, claimant, name, { platform: binding.platform, tenant, nativeId: actor });
-    return { decided: "confirmed", claimant, claimantName: name, ...claimantParts(challenge), linkSetId: result.linkSetId, note: result.note };
+    return { decided: "confirmed", claimant, claimantName: fencedName, ...claimantParts(challenge), linkSetId: result.linkSetId, note: result.note };
   },
 });
 
