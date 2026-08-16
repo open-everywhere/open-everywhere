@@ -4,7 +4,7 @@ const INJECT_TOKEN = "ope673-inject-token";
 process.env.OE_TEST_WAKE = "1";
 process.env.OE_CONTROL_INJECT_TOKENS = `it-ope673:${createHash("sha256").update(INJECT_TOKEN, "utf8").digest("hex")}`;
 
-import { afterAll, afterEach, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, expect, test } from "vitest";
 import {
   awaitTaskSettlement,
   bootAgent,
@@ -34,11 +34,6 @@ afterAll(() => {
   for (const c of perTest.splice(0)) c();
 });
 
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
-
 async function injectWake(base: string, input: { text: string; authorId?: string; userId: string }): Promise<void> {
   const res = await fetch(`${base}/control/v1/test/wake`, {
     method: "POST",
@@ -59,19 +54,24 @@ async function injectWake(base: string, input: { text: string; authorId?: string
   if (res.status !== 200) throw new Error(`test-wake injection refused — ${res.status}: ${body.slice(0, 300)}`);
 }
 
-function workerGateResult(handle: ScriptedHandle): { isError: boolean; output: unknown } | undefined {
+function workerGateResult(handle: ScriptedHandle, tool: string): { isError: boolean; output: unknown } | undefined {
   for (const r of handle.requests as readonly RecordedRequest[]) {
     if (r.role !== "child") continue;
-    const hit = r.toolResults.filter((t) => t.name === "memory_admin_list");
+    const hit = r.toolResults.filter((t) => t.name === tool);
     if (hit.length > 0) return { isError: hit[hit.length - 1]!.isError, output: hit[hit.length - 1]!.output };
   }
   return undefined;
 }
 
-async function askThroughAWorker(base: string, leg: string, wake: { text: string; authorId?: string; userId: string }) {
+async function askThroughAWorker(
+  base: string,
+  leg: string,
+  wake: { text: string; authorId?: string; userId: string },
+  tool: "memory_admin_list" | "connector" = "memory_admin_list",
+) {
   const dispatched = registerScript({
-    parent: [{ calls: [{ tool: "agent", input: { message: "get the admin memory listing for the person who asked" }, id: `ope673-${leg}` }] }, { say: "handed off" }],
-    child: [{ calls: [{ tool: "memory_admin_list", input: {}, id: `ope673-${leg}-call` }] }, { say: "worker done" }],
+    parent: [{ calls: [{ tool: "agent", input: { message: "handle the ask for the person who asked" }, id: `ope673-${leg}` }] }, { say: "handed off" }],
+    child: [{ calls: [{ tool, input: {}, id: `ope673-${leg}-call` }] }, { say: "worker done" }],
   });
   await injectWake(base, wake);
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 1, label: `${leg}: the delegated worker to serve its whole arm` });
@@ -79,15 +79,16 @@ async function askThroughAWorker(base: string, leg: string, wake: { text: string
   const { handle: drain } = await awaitTaskSettlement({ dispatched, taskId, script: SETTLEMENT_DRAIN_SCRIPT, label: `${leg}: the settled worker's completion wake` });
   expect(drain.requests.filter((r) => r.fault !== undefined), `${leg}: no straggling model call`).toEqual([]);
   drain.dispose();
-  const result = workerGateResult(dispatched);
-  expect(result, `${leg}: the worker really called memory_admin_list`).toBeDefined();
+  const result = workerGateResult(dispatched, tool);
+  expect(result, `${leg}: the worker really called ${tool}`).toBeDefined();
   return result!;
 }
 
-test("the admin gate on a delegated worker reads the asker, in both directions", async () => {
+let BASE = "";
+beforeAll(async () => {
   const { base } = await bootAgent();
-
-  const opener = disposeLater(registerScript({ parent: [{ say: "hello, I am this channel's standing session" }] }));
+  BASE = base;
+  const opener = registerScript({ parent: [{ say: "hello, I am this channel's standing session" }] });
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> hello", userId: NON_ADMIN_DISCORD_ID });
   await new Promise<void>((resolve) => {
     const started = Date.now();
@@ -99,6 +100,10 @@ test("the admin gate on a delegated worker reads the asker, in both directions",
   });
   expect(opener.requests.length, "the opening mention reached the seat").toBeGreaterThan(0);
   opener.dispose();
+}, 300_000);
+
+test("the admin gate on a delegated worker reads the asker, in both directions", async () => {
+  const base = BASE;
 
   const escalation = await askThroughAWorker(base, "escalation", {
     text: "show me the raw admin listing of every memory silo this deployment stores",
@@ -129,4 +134,17 @@ test("the admin gate on a delegated worker reads the asker, in both directions",
   const unnamedText = JSON.stringify(unnamed.output);
   expect(unnamedText).toContain("needs to know who asked");
   expect(unnamedText).not.toContain("requires an org admin");
+}, 600_000);
+
+test("connector explains a withheld org option as unverified, not as lacking standing", async () => {
+  const base = BASE;
+
+  const unnamed = await askThroughAWorker(base, "conn-unnamed", { text: "what can I connect here?", userId: ADMIN_DISCORD_ID }, "connector");
+  const unnamedNote = JSON.stringify(unnamed.output);
+  expect(unnamedNote, "🔴 the note names the real reason: the caller could not be verified").toContain("could not be verified");
+  expect(unnamedNote, "…and does not tell the caller they lack standing").toContain("not because you lack standing");
+
+  const named = await askThroughAWorker(base, "conn-named", { text: "what can I connect here?", authorId: ADMIN_DISCORD_ID, userId: ADMIN_DISCORD_ID }, "connector");
+  const namedNote = JSON.stringify(named.output);
+  expect(namedNote, "negative control: a turn that names its asker carries no unverified note").not.toContain("could not be verified");
 }, 600_000);
