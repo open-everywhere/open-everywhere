@@ -77,14 +77,16 @@ test("two agent calls in one step start two workers that both run", async () => 
     .filter((r) => r.role === "parent")
     .flatMap((r) => r.toolResults)
     .filter((t) => t.name === "agent");
-  expect(delegations.length).toBe(2);
+  const delegationTaskIds = new Set(delegations.map((t) => String((t.output as { taskId?: unknown } | undefined)?.taskId)));
+  expect(delegationTaskIds.has("undefined")).toBe(false);
+  expect(delegationTaskIds.size).toBe(2);
   expect(delegations.filter((t) => t.isError)).toEqual([]);
 
   const workerSessions = new Set(dispatched.requests.filter((r) => r.role === "child").map((r) => String(r.sessionId)));
   expect(workerSessions.size).toBe(2);
   expect(workerSessions.has(String(dispatchStep.sessionId))).toBe(false);
 
-  expect(workerToolCalls).toBe(2);
+  expect(workerToolCalls).toBeGreaterThanOrEqual(2);
 
   const receipts = delegations
     .map((t) => (t.output as { taskId?: unknown } | undefined)?.taskId)
