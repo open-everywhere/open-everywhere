@@ -37,6 +37,7 @@ interface Cli {
   fillWakes: number; fillMsgs: number; dumpSeed?: string; seed?: string;
   domain: string; org: string; plan: boolean; rotate: boolean; restore: boolean;
   rescore?: string; since?: string; until?: string; replyTimeoutMs: number;
+  series?: readonly ScenarioId[];
 }
 function parseCli(argv: readonly string[]): Cli {
   const get = (f: string): string | undefined => { const i = argv.indexOf(f); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : undefined; };
@@ -61,10 +62,11 @@ function parseCli(argv: readonly string[]): Cli {
     since: get("--since"),
     until: get("--until"),
     replyTimeoutMs: Math.max(1, Number.parseInt(get("--reply-timeout-ms") ?? String(REPLY_TIMEOUT_MS), 10)),
+    series: parseSeries(get("--series")),
   };
 }
 
-export type ScenarioId = "S1" | "S2" | "S3" | "S4" | "S5";
+export type ScenarioId = "S1" | "S2" | "S3" | "S4" | "S5" | "S6";
 export type Expected = "LANDED" | "SILENT_OK";
 export type Outcome =
   | "LANDED_VIA_REPLY_TOOL"
@@ -89,9 +91,20 @@ export const SCENARIOS: Record<ScenarioId, ScenarioSpec> = {
   S3: { id: "S3", label: "silence (Slack human↔human chatter, not addressed)", expected: "SILENT_OK", needs: ["slack"] },
   S4: { id: "S4", label: "cross-surface recall (fact on Notion → recalled on Slack @mention)", expected: "LANDED", needs: ["slack", "notion"] },
   S5: { id: "S5", label: "TRUE ambient step-in (Notion channel-watch, no namedrop; reply helpful, silence defensible)", expected: "LANDED", soft: true, needs: ["slack", "notion"] },
+  S6: { id: "S6", label: "coalesced-turn correctness (Slack direct-mention + channel-watch injected as ONE coalesced turn)", expected: "LANDED", needs: ["slack"] },
 };
 export const SERIES_PATTERN: readonly ScenarioId[] = ["S4", "S2", "S3", "S2", "S1", "S5", "S2", "S3", "S2", "S5"];
 const seriesOf = (n: number): ScenarioId[] => Array.from({ length: n }, (_, i) => SERIES_PATTERN[i % SERIES_PATTERN.length]);
+
+function parseSeries(raw: string | undefined): ScenarioId[] | undefined {
+  if (raw === undefined) return undefined;
+  const ids = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  const bad = ids.filter((id) => !(id in SCENARIOS));
+  if (bad.length > 0) {
+    throw new Error(`--series: unknown scenario id(s) ${bad.join(",")} — valid: ${Object.keys(SCENARIOS).join(",")}`);
+  }
+  return ids as ScenarioId[];
+}
 
 const ADJ = ["SCARLET", "COBALT", "AMBER", "JADE", "CRIMSON", "AZURE", "IVORY", "ONYX", "SABLE", "TOPAZ"];
 const ANIMAL = ["WEASEL", "HERON", "LYNX", "OTTER", "FALCON", "MARTEN", "BADGER", "STOAT", "RAVEN", "IBEX"];
@@ -419,6 +432,43 @@ export function outcomeFor(
   }
 }
 
+export interface CoalescedTurnScore {
+  readonly addressedAnswered: boolean;
+  readonly ambientSilent: boolean;
+  readonly noCrossBinding: boolean;
+  readonly correct: boolean;
+  readonly addressedWakeId: string;
+  readonly ambientWakeId: string;
+  readonly notes: readonly string[];
+}
+
+export function scoreCoalescedTurn(
+  addressedWakeId: string,
+  ambientWakeId: string,
+  attribution: Attribution,
+  addressedReplyText?: string | null,
+): CoalescedTurnScore {
+  const addressedPosts = attribution.replyPostsOf.get(addressedWakeId) ?? [];
+  const ambientPosts = attribution.replyPostsOf.get(ambientWakeId) ?? [];
+  const addressedAnswered = addressedPosts.length > 0;
+  const ambientSilent = ambientPosts.length === 0;
+  const textLeak = addressedReplyText != null && addressedReplyText.includes(ambientWakeId);
+  const noCrossBinding = ambientSilent && !textLeak;
+  const notes: string[] = [];
+  if (!addressedAnswered) notes.push(`addressed wake ${addressedWakeId} got NO reply.post — the message it was owed went unanswered`);
+  if (!ambientSilent) notes.push(`ambient wake ${ambientWakeId} got ${ambientPosts.length} reply.post(s) — it should never have been answered (mis-binding or over-reply, indistinguishable from outside the model)`);
+  if (textLeak) notes.push(`the addressed reply's TEXT names the ambient wake's id ${ambientWakeId} — a raw id leaked into a delivered message`);
+  return {
+    addressedAnswered,
+    ambientSilent,
+    noCrossBinding,
+    correct: addressedAnswered && ambientSilent && noCrossBinding,
+    addressedWakeId,
+    ambientWakeId,
+    notes,
+  };
+}
+
 export interface TurnResult {
   turn: number;
   scenario: ScenarioId;
@@ -436,6 +486,7 @@ export interface TurnResult {
   failureRationale?: string;
   droppedProse?: string | null;
   reasoningSlice?: string | null;
+  coalesced?: CoalescedTurnScore;
 }
 
 export function summarize(turns: readonly TurnResult[], allRows: readonly AuditWireEntry[], sessionId: string | null) {
@@ -457,6 +508,8 @@ export function summarize(turns: readonly TurnResult[], allRows: readonly AuditW
   const nonLanded = rExp.filter((t) => t.outcome === "DROP" || t.outcome === "JUDGED_SILENT" || t.outcome === "NO_ACTION");
   const fcCount = (c: FailureClass): number => nonLanded.filter((t) => t.failureClass === c).length;
   const softLanded = softTurns.filter((t) => t.outcome === "LANDED_VIA_REPLY_TOOL" || t.outcome === "LANDED_VIA_REDRIVE" || t.outcome === "LANDED_VIA_BRIDGE");
+  const coalescedTurns = turns.filter((t): t is TurnResult & { coalesced: CoalescedTurnScore } => t.coalesced !== undefined);
+  const coalescedCorrect = coalescedTurns.filter((t) => t.coalesced.correct);
   return {
     soft_reply_rate: {
       landed: softLanded.length,
@@ -485,6 +538,14 @@ export function summarize(turns: readonly TurnResult[], allRows: readonly AuditW
     },
     silence_precision: { silent: silent.length, of: sExp.length, rate: rate(silent.length, sExp.length) },
     recall_accuracy: { full: full.length, ofLandedRead: lRec.length, rate: rate(full.length, lRec.length) },
+    coalesced_turn_correctness: {
+      correct: coalescedCorrect.length,
+      of: coalescedTurns.length,
+      rate: rate(coalescedCorrect.length, coalescedTurns.length),
+      addressed_answered: coalescedTurns.filter((t) => t.coalesced.addressedAnswered).length,
+      ambient_silent: coalescedTurns.filter((t) => t.coalesced.ambientSilent).length,
+      no_cross_binding: coalescedTurns.filter((t) => t.coalesced.noCrossBinding).length,
+    },
   };
 }
 
@@ -529,6 +590,18 @@ async function injectTurn(id: ScenarioId, turn: number, fact: { code: string; da
       "chatter", turn, id,
     );
     return { probe, state: null };
+  }
+
+  if (id === "S6") {
+    const ambient = await injectWake(
+      { domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "channel-watch", author: "alex", origin: slackOrigin, text: `heads up, moving the 3pm sync to 3:30 — clashes with something else, sorry for the churn.` },
+      "chatter", turn, id,
+    );
+    const addressed = await injectWake(
+      { domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "direct-mention", mention: true, author: "sam", origin: slackOrigin, text: `quick one — what is 17 plus 25? reply here with the number.` },
+      "probe", turn, id,
+    );
+    return { probe: addressed, state: ambient };
   }
 
   const stateOn = id === "S4" ? "notion" : "slack";
@@ -824,6 +897,10 @@ function printReport(turns: readonly TurnResult[], summary: ReturnType<typeof su
   console.log(`prose_drop_count      : ${s.prose_drop_count.total} window-wide (replied=false ${s.prose_drop_count.repliedFalse} ← real, replied=true ${s.prose_drop_count.repliedTrue})`);
   console.log(`silence_precision     : ${s.silence_precision.silent}/${s.silence_precision.of} = ${s.silence_precision.rate ?? "n/a"}`);
   console.log(`recall_accuracy       : ${s.recall_accuracy.full}/${s.recall_accuracy.ofLandedRead} = ${s.recall_accuracy.rate ?? "n/a"} (best-effort read-back)`);
+  if (s.coalesced_turn_correctness.of > 0) {
+    const c = s.coalesced_turn_correctness;
+    console.log(`coalesced_turn_correctness (S6, OPE-684 A3): ${c.correct}/${c.of} = ${c.rate ?? "n/a"}  (addressed_answered ${c.addressed_answered} · ambient_silent ${c.ambient_silent} · no_cross_binding ${c.no_cross_binding})`);
+  }
 }
 
 const slug = (m: string): string => m.replace(/[^a-z0-9]+/gi, "-");
@@ -962,7 +1039,14 @@ async function runOneSeries(
         if (body) recall = recallHit(body, p.fact);
       }
     }
-    turns.push({ turn: p.turn, scenario: p.scenario, label: spec.label, expected: spec.expected, outcome: o.outcome, probe: p.probe, state: p.state, latencyMs: o.latencyMs, delegations: (finalAttribution.delegationsOf.get(p.probe.wakeId) ?? []).length, recall, matchedRows: o.matched, notes: o.notes });
+    let coalesced: TurnResult["coalesced"];
+    if (p.scenario === "S6" && p.state) {
+      let addressedText: string | null = null;
+      const addressedPost = o.matched.find((r) => r.action === A_REPLY_POST && dS(r, "platform") === "slack");
+      if (addressedPost) addressedText = await readSlackReplyBody(p.probe.injectedAt, dS(addressedPost, "id"));
+      coalesced = scoreCoalescedTurn(p.probe.wakeId, p.state.wakeId, finalAttribution, addressedText);
+    }
+    turns.push({ turn: p.turn, scenario: p.scenario, label: spec.label, expected: spec.expected, outcome: o.outcome, probe: p.probe, state: p.state, latencyMs: o.latencyMs, delegations: (finalAttribution.delegationsOf.get(p.probe.wakeId) ?? []).length, recall, matchedRows: o.matched, notes: o.notes, ...(coalesced ? { coalesced } : {}) });
   }
 
   const fc = await classifyFailures(turns, finalAttribution);
@@ -1016,6 +1100,7 @@ function writeAggregate(
     recall_accuracy: s((x) => x.summary.recall_accuracy.rate),
     prose_drops_replied_false: s((x) => x.summary.prose_drop_count.repliedFalse),
     judged_silent_count: s((x) => x.summary.judged_silent_count),
+    coalesced_turn_correctness: s((x) => x.summary.coalesced_turn_correctness.rate),
   };
   const perScenario: Record<string, Record<string, number>> = {};
   for (const r of ok) {
@@ -1057,7 +1142,7 @@ async function main() {
     return;
   }
 
-  const series = seriesOf(cli.turns);
+  const series = cli.series ?? seriesOf(cli.turns);
   const effort = clampReasoning(cli.effort, DOMAIN_CEILING) ?? cli.effort;
   if (effort !== cli.effort) console.warn(`⚠ --effort "${cli.effort}" > ceiling "${DOMAIN_CEILING}" — clamped to "${effort}".`);
   if (!isModelUsable(cli.model, ALLOW_POLICY)) {
@@ -1069,7 +1154,7 @@ async function main() {
   console.log(`\n=== ambient-eval (spoofed-wake injection) ===`);
   console.log(`model:   ${cli.model} @ ${effort}`);
   console.log(`domain:  ${cli.domain}   org: ${cli.org}`);
-  console.log(`turns:   ${cli.turns}   fill: ${cli.fill}   repeats: ${cli.repeats}   rotate: ${cli.rotate}   plan-only: ${cli.plan}`);
+  console.log(`turns:   ${series.length}${cli.series ? ` (--series override)` : ""}   fill: ${cli.fill}   repeats: ${cli.repeats}   rotate: ${cli.rotate}   plan-only: ${cli.plan}`);
   console.log(`fill:    legacy=${cli.fill}   coalesced fill-wakes=${cli.fillWakes} × fill-msgs=${cli.fillMsgs}   seed=${cli.seed ?? "none"}   dump-seed=${cli.dumpSeed ?? "none"}`);
   console.log(`surfaces: slack=${surf.slack}${surf.slack ? ` (${SLACK_SURFACE})` : ""}  notion=${surf.notion}${surf.notion ? ` (${NOTION_SURFACE})` : ""}`);
   console.log(`waits:   fact=${FACT_WAIT_MS}ms reply-timeout=${REPLY_TIMEOUT_MS}ms poll=${POLL_MS}ms`);

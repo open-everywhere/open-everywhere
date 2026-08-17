@@ -3,6 +3,7 @@ import {
   attributeOutcomes,
   outcomeFor,
   summarize,
+  scoreCoalescedTurn,
   type Injection,
   type Attribution,
   type TurnResult,
@@ -199,6 +200,62 @@ const SILENT: Expected = "SILENT_OK";
   ok(s.prose_drop_count.repliedFalse === 1 && s.prose_drop_count.repliedTrue === 1, "prose_drop_count splits replied=false (real leak) vs replied=true (benign wrap-up)");
   ok(s.recall_accuracy.full === 1 && s.recall_accuracy.ofLandedRead === 1, "recall_accuracy = 1/1 (S1 recalled all three needles)");
   ok(s.judged_silent_count === 1, "judged_silent_count counts the S4 reply-warranted turn that chose silence");
+  ok(s.coalesced_turn_correctness.of === 0 && s.coalesced_turn_correctness.rate === null, "coalesced_turn_correctness on a run with no S6 turns: of=0, rate=null — honest 'not measured', never a false zero");
 }
 
-console.log(`\n✓ ambient-eval scoring: ${n} assertions passed (FIFO pairing + session filter + redrive/bridge pull-out + outcome mapping + soft-bucket summary)\n`);
+{
+  const mkTurn = (over: Partial<TurnResult> & Pick<TurnResult, "turn" | "scenario" | "expected" | "outcome">): TurnResult => ({
+    label: "", probe: null, state: null, latencyMs: null, delegations: 0, recall: null, matchedRows: [], notes: "", ...over,
+  });
+  clock = Date.UTC(2026, 6, 24, 12, 0, 0);
+  const t1 = mkTurn({ turn: 1, scenario: "S6", expected: "LANDED", outcome: "LANDED_VIA_REPLY_TOOL", coalesced: scoreCoalescedTurn("ADDR-1", "AMB-1", attr({ replyPostsOf: new Map([["ADDR-1", [replyPost("ADDR-1")]]]) })) });
+  const t2 = mkTurn({ turn: 2, scenario: "S6", expected: "LANDED", outcome: "DROP", coalesced: scoreCoalescedTurn("ADDR-2", "AMB-2", attr({ replyPostsOf: new Map([["AMB-2", [replyPost("AMB-2")]]]) })) });
+  const s = summarize([t1, t2], [], "SESS");
+  ok(s.coalesced_turn_correctness.of === 2, "coalesced_turn_correctness.of counts both S6 turns");
+  ok(s.coalesced_turn_correctness.correct === 1 && s.coalesced_turn_correctness.rate === 0.5, "coalesced_turn_correctness = 1/2 = 0.5 (T1 correct, T2 mis-bound)");
+  ok(s.coalesced_turn_correctness.addressed_answered === 1 && s.coalesced_turn_correctness.ambient_silent === 1, "coalesced_turn_correctness sub-counts split T1 (both hold) from T2 (neither holds)");
+  ok(s.reply_landed_rate.of === 2 && s.reply_landed_rate.landed === 1, "S6 turns ALSO count in reply_landed_rate (expected:\"LANDED\", not soft) — the addressed half is a real reply-warranted probe like S1/S2/S4");
+}
+
+{
+  clock = Date.UTC(2026, 6, 24, 12, 0, 0);
+  const a1 = attr({ replyPostsOf: new Map([["ADDR-1", [replyPost("ADDR-1")]]]) });
+  const s1 = scoreCoalescedTurn("ADDR-1", "AMB-1", a1);
+  ok(s1.addressedAnswered === true, "correct case: addressedAnswered = true (reply.post joined by the addressed wake's OWN id)");
+  ok(s1.ambientSilent === true, "correct case: ambientSilent = true (no reply.post under the ambient wake's id)");
+  ok(s1.noCrossBinding === true, "correct case: noCrossBinding = true (no read-back text, degrades to ambientSilent alone)");
+  ok(s1.correct === true, "correct case: correct = true — all three criteria hold");
+  ok(s1.notes.length === 0, "correct case: no failure notes recorded");
+
+  clock = Date.UTC(2026, 6, 24, 12, 0, 0);
+  const a2 = attr();
+  const s2 = scoreCoalescedTurn("ADDR-2", "AMB-2", a2);
+  ok(s2.addressedAnswered === false, "dropped case: addressedAnswered = false (no reply.post at all)");
+  ok(s2.ambientSilent === true, "dropped case: ambientSilent is STILL true — the ambient half is fine");
+  ok(s2.correct === false, "dropped case: correct = false — one failing criterion is enough to fail the whole turn");
+  ok(s2.notes.some((m) => m.includes("got NO reply.post")), "dropped case: the note names WHICH criterion failed");
+
+  clock = Date.UTC(2026, 6, 24, 12, 0, 0);
+  const a3 = attr({ replyPostsOf: new Map([["AMB-3", [replyPost("AMB-3")]]]) });
+  const s3 = scoreCoalescedTurn("ADDR-3", "AMB-3", a3);
+  ok(s3.addressedAnswered === false, "mis-binding case: addressedAnswered = false — the addressed wake's OWN id never got a post");
+  ok(s3.ambientSilent === false, "mis-binding case: ambientSilent = false — a post landed on the wrong wake-id");
+  ok(s3.noCrossBinding === false, "mis-binding case: noCrossBinding = false too — same underlying bug, both criteria correctly flag it");
+  ok(s3.correct === false, "mis-binding case: correct = false");
+  ok(s3.notes.some((m) => m.includes("should never have been answered")), "mis-binding case: the note names the ambient wake as the one that was wrongly answered");
+
+  clock = Date.UTC(2026, 6, 24, 12, 0, 0);
+  const a4 = attr({ replyPostsOf: new Map([["ADDR-4", [replyPost("ADDR-4")]]]) });
+  const s4 = scoreCoalescedTurn("ADDR-4", "AMB-4", a4, "the answer is 42 (wake AMB-4)");
+  ok(s4.addressedAnswered === true && s4.ambientSilent === true, "text-leak case: (a) and (b) both hold — the wakeId routing itself was correct");
+  ok(s4.noCrossBinding === false, "text-leak case: noCrossBinding = false — the ambient wake's raw id leaked into the delivered text");
+  ok(s4.correct === false, "text-leak case: correct = false — a hygiene failure fails the turn even with correct routing");
+  ok(s4.notes.some((m) => m.includes("leaked into a delivered message")), "text-leak case: the note names the leak specifically, distinct from the routing notes above");
+
+  clock = Date.UTC(2026, 6, 24, 12, 0, 0);
+  const a5 = attr({ replyPostsOf: new Map([["ADDR-5", [replyPost("ADDR-5")]]]) });
+  const s5 = scoreCoalescedTurn("ADDR-5", "AMB-5", a5, "the answer is 42");
+  ok(s5.noCrossBinding === true && s5.correct === true, "negative control: ordinary reply text with no ambient-id substring does not trip the leak check");
+}
+
+console.log(`\n✓ ambient-eval scoring: ${n} assertions passed (FIFO pairing + session filter + redrive/bridge pull-out + outcome mapping + soft-bucket summary + OPE-684 S4 coalesced-turn correctness: correct/dropped/mis-bound/text-leak/negative-control)\n`);
