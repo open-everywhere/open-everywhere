@@ -27,8 +27,8 @@ export const SINGLE_WINDOW_REPLY_MANDATE =
 
 const SAFE_WAKE_ID_RE = /^[A-Za-z0-9._:-]{1,64}$/;
 
-export function wakeScopeNote(wakeId: string): string {
-  const id = SAFE_WAKE_ID_RE.test(wakeId) ? wakeId : undefined;
+export function wakeScopeNote(wakeId: string | undefined): string {
+  const id = wakeId !== undefined && SAFE_WAKE_ID_RE.test(wakeId) ? wakeId : undefined;
   return (
     `Wake scope${id ? ` [wake-id: ${id}]` : ""}: the instructions above govern ONE wake — the wake ` +
     `envelope directly below${id ? `, whose \`wake-id\` attribute carries this same id` : ""}. This turn ` +
@@ -259,8 +259,8 @@ function judgedPreamble(nw: NormalizedWake): string {
       }
     }
   })();
-  if (nw.wakeId === undefined) return base;
-  const mandate = nw.addressing !== "direct-mention" ? `${SINGLE_WINDOW_REPLY_MANDATE}\n\n` : "";
+  const mandate =
+    nw.wakeId !== undefined && nw.addressing !== "direct-mention" ? `${SINGLE_WINDOW_REPLY_MANDATE}\n\n` : "";
   return `${base}\n\n${mandate}${wakeScopeNote(nw.wakeId)}`;
 }
 

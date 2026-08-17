@@ -21,7 +21,11 @@ const NOW = () => "2026-02-18T14:05:00.000Z";
 
 const G_DISCORD_DIRECT = `hey can you summarise this channel?`;
 
+const G_DISCORD_SCOPE_NOTE = `Wake scope: the instructions above govern ONE wake — the wake envelope directly below. This turn can deliver SEVERAL wakes at once, joined end to end, and each one carries its own instructions above its own envelope. Act on a message only under the instructions of ITS wake. A sibling wake's instructions say nothing about this one: a sibling can address you by name in the same turn where this wake does not, and what this wake tells you about replying applies to this wake alone.`;
+
 const G_DISCORD_JUDGED = `[thread-follow] You were not mentioned — this reply reached you because you follow this thread. Reply only if it warrants a response from you: it's addressed to you, asks you something, or moves the task you're working on. If the humans are talking among themselves and your reply would be noise, output exactly NO_REPLY and nothing else — nothing will be posted. Social chatter between humans — thanks, greetings, sign-offs ("cheers!", "see you tomorrow") — is noise even when it lands right after your reply, and never re-answer a question you already answered. Judge THIS message on its own merits: a run of NO_REPLY turns above means the earlier messages weren't for you, not that this one isn't. If you have a \`no_reply\` tool, prefer calling it (with a reason) over the bare NO_REPLY text — it's audited and unambiguous; the text sentinel still works if you don't.
+
+${G_DISCORD_SCOPE_NOTE}
 
 <wake reason="channel-activity" current-time="2026-07-10T10:00:00.000Z">
   <channel id="disc-ch">
@@ -32,6 +36,8 @@ const G_DISCORD_JUDGED = `[thread-follow] You were not mentioned — this reply 
 </wake>`;
 
 const G_DISCORD_NAMEDROP_THREAD = `[name-drop] A top-level channel message said your name ("OpenBot") without @mentioning you. You were NOT invited into this conversation — reply only if the message is clearly asking for you or requesting something you can directly do. When in doubt, stay out: output exactly NO_REPLY and nothing else — nothing will be posted. If you have a \`no_reply\` tool, prefer calling it (with a reason) over the bare NO_REPLY text — it's audited and unambiguous; the text sentinel still works if you don't. You are now following this thread — later messages here will reach you for the same judged treatment. If they ask you to stop, call \`stand_down\`.
+
+${G_DISCORD_SCOPE_NOTE}
 
 <wake reason="thread-activity" current-time="2026-07-10T10:00:00.000Z">
   <channel id="disc-ch">
@@ -44,6 +50,8 @@ const G_DISCORD_NAMEDROP_THREAD = `[name-drop] A top-level channel message said 
 </wake>`;
 
 const G_DISCORD_NAMEDROP_BASE = `[name-drop] A top-level channel message said your name ("OpenBot") without @mentioning you. You were NOT invited into this conversation — reply only if the message is clearly asking for you or requesting something you can directly do. When in doubt, stay out: output exactly NO_REPLY and nothing else — nothing will be posted. If you have a \`no_reply\` tool, prefer calling it (with a reason) over the bare NO_REPLY text — it's audited and unambiguous; the text sentinel still works if you don't. If you do reply, note that you are NOT following this channel: tell the humans to @mention you (or say your name again) for follow-ups.
+
+${G_DISCORD_SCOPE_NOTE}
 
 <wake reason="channel-activity" current-time="2026-07-10T10:00:00.000Z">
   <channel id="disc-ch">
@@ -115,7 +123,8 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
   ok(m.includes("cannot @mention a bot at all"), "ambient mandate calls out the no-mention surface (Notion) case explicitly — the reason the addressed-prose bridge can never fire here");
   ok(m.includes(`wake-id="wk-amb"`), "the wake-id the model must pass to `reply` is present in the envelope");
   const noWindow = renderWake({ ...ambient, wakeId: undefined, unifiedDisclosure: undefined }, NOW).message;
-  ok(!noWindow.includes("`reply`") && !noWindow.includes("turn-final text is DISCARDED"), "no wakeId (non-single-window) → NO reply-tool mandate appended (byte-identical to the per-surface channel-watch render)");
+  ok(!noWindow.includes("`reply`") && !noWindow.includes("turn-final text is DISCARDED"), "no wakeId (non-single-window) → NO reply-tool mandate appended (there is no id to route a reply through)");
+  ok(noWindow.includes("Wake scope: the instructions above govern ONE wake"), "OPE-664: no wakeId (non-single-window) STILL binds via the positional scope note, reusing the same mechanism");
 }
 
 {
@@ -170,8 +179,16 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
     w(undefined, "channel-watch", "dispatch", "a pending approval you were waiting on has been decided"),
     w(undefined, "channel-watch", "channel-activity", "posting the anchor for the run"),
   ].join("\n\n");
-  ok(count(untagged, "Wake scope") === 0, "no wakeId (non-single-window) ⇒ NO scope note appended ⇒ byte-identical to the per-surface render");
-  ok(count(untagged, "You were not mentioned") === 2 && count(untagged, "wake-id=") === 0, "negative control: without a minted id there is NOTHING binding either preamble to an envelope");
+  ok(count(untagged, "Wake scope: the instructions above govern ONE wake") === 2, "OPE-664: no wakeId (non-single-window) ⇒ EACH block still carries the positional scope note (the same mechanism, degraded to no id)");
+  ok(count(untagged, "You were not mentioned") === 2 && count(untagged, "[wake-id:") === 0 && count(untagged, "wake-id=") === 0, "OPE-664: no id is fabricated or routable — the note names no wake-id and the envelope carries none, exactly as designed");
+  ok(untagged.indexOf("Wake scope") < untagged.indexOf("<wake"), "OPE-664: the first block's note sits before the first envelope (adjacency, not guesswork)");
+  const untaggedSecondNoteAt = untagged.indexOf("Wake scope", untagged.indexOf("Wake scope") + 1);
+  const untaggedFirstWakeCloseAt = untagged.indexOf("</wake>");
+  ok(untaggedSecondNoteAt > untaggedFirstWakeCloseAt, "OPE-664: the second block's note sits AFTER the first envelope closes — each note pairs with the envelope directly below it, not the one above");
+
+  const loneNoSupervisor = w(undefined, "channel-watch", "channel-activity", "posting the anchor for the run");
+  ok(count(loneNoSupervisor, "Wake scope") === 1 && count(loneNoSupervisor, "<wake") === 1, "negative control: a single non-coalesced no-supervisor render carries exactly one note and one envelope, unchanged in shape");
+  ok(!renderWake({ platform: "slack", reason: "mention", addressing: "direct", locus: { channel: { id: "C1" } }, trigger: trig("plain body") }, NOW).message.includes("Wake scope"), "negative control: a raw 'direct' render (no envelope at all) never gains a scope note");
 
   for (const [label, msg] of [["dispatch", dispatchWake], ["mention", mentionWake], ["watch", watchWake]] as const) {
     ok(count(msg, "<wake") === 1, `single ${label} wake: exactly ONE <wake opener (the scope note adds none)`);

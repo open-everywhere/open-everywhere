@@ -377,7 +377,7 @@ ok(
   "trust: the unconfirmed fire still resolves its real surface (spend attribution unaffected by the trust gate)",
 );
 
-const discordChannel = (await import("../agent/channels/discord.js")).default;
+const discordChannel = (await import("@open-everywhere/provider-discord/agent/channels/discord.js")).default;
 
 interface CapturedFire {
   readonly channel: unknown;
