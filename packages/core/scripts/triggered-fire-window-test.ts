@@ -28,6 +28,7 @@ const { standingSeatRegistryKey, unifiedWindowFromToken } = await import("../age
 const { windowGrainOf } = await import("../agent/identity/binding.js");
 const { FULL_KIT, WINDOW_GATED_TOOLS, memoryRecallRouteFor } = await import("../agent/access/window-gate-manifest.js");
 const { OE_GRAIN_ATTR, OE_ADDRESSING_ATTR, resolveAnswerableReplyTarget, mintWakeId } = await import("../agent/channels/unified-window.js");
+const { OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED } = await import("../agent/access/requester-identity.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { ROUTINE_MARKER, routineMarker } = await import("../agent/routines/routine.js");
@@ -278,6 +279,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
   ok(routineMarker(d.attrs as never)?.id === "r-clock", "clock: the ROUTINE MARKER still rides the fire (the OPE-145 outcome/forensics join is unmoved)");
   ok(d.attrs["channel_id"] === CHAN && d.attrs["team_id"] === TEAM, "clock: the platform identity attributes still ride (partition/spend binding unmoved)");
   ok(d.attrs["trust_checked"] === "true", "clock: the LIVE per-fire trust recheck still rides");
+  ok(d.attrs[OE_REQUESTER_ATTR] === REQUESTER_UNVERIFIED, "clock: the fire stamps `oe_requester: oe/unverified` — a fire names no asker, out loud");
 
   const origin = await store.getUnifiedWakeTarget(ORG, target.wakeId);
   ok(origin !== null, "clock/ANSWERABLE: a durable `wakeId → origin` row exists (pre-fix this write never happened at all)");
@@ -295,6 +297,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
   ok(seen.length === 1 && !seen[0].unified, "flag-off: the fire lands NATIVE — delegation disarmed means a thread seat would have no delegator, so the divert must not apply");
   ok(seen[0].target["channelId"] === CHAN && seen[0].target["threadTs"] === undefined, "flag-off: the native target is unchanged");
   ok(seen[0].attrs[OE_GRAIN_ATTR] === undefined, "flag-off: no window stamps are added — byte-identical to the pre-OPE-144 fire");
+  ok(seen[0].attrs[OE_REQUESTER_ATTR] === undefined, "flag-off: the who-asked stamp is absent too — the native fire is byte-identical, and its seat classifies `open` where `none` is the honest answer");
   await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-off");
 
   overrideSettingsForTest({ delegation: { oneshotAgent: true } });

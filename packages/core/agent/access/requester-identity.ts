@@ -1,10 +1,16 @@
 import { defineState } from "eve/context";
-import { isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { isSubagentChildContext, isUnifiedWindowContext, windowGrainOf, type BindableContext } from "../identity/binding.js";
 import { isWakeEnvelopeShaped, triggerAuthors } from "../channels/wake-envelope.js";
 
 export const OE_REQUESTER_ATTR = "oe_requester";
 
 export const REQUESTER_UNVERIFIED = "oe/unverified";
+
+export type RequesterSeat =
+  | "child"
+  | "worker"
+  | "room"
+  | "open";
 
 export type RequesterVerdict =
   | { readonly kind: "requester"; readonly principalId: string }
@@ -41,22 +47,18 @@ function readState(v: unknown): RequesterIdentityState {
   return {};
 }
 
-export function requesterVerdictFor(input: {
-  readonly text: string | undefined;
-  readonly isChild: boolean;
-  readonly inherited: string | undefined;
-}): RequesterVerdict {
-  if (input.isChild) {
-    if (input.inherited === undefined || input.inherited.length === 0) {
-      return { kind: "unverified", reason: "the turn that delegated this work carried no verified asker, so this worker has no caller to check standing for" };
-    }
-    if (input.inherited === REQUESTER_UNVERIFIED) {
-      return { kind: "unverified", reason: "the turn that delegated this work was woken by more than one person, so it could not say whose ask this is" };
-    }
-    return { kind: "requester", principalId: input.inherited };
+const NO_CARRIAGE = "the turn that delegated this work carried no verified asker, so this worker has no caller to check standing for";
+
+function verdictFromStamp(inherited: string | undefined): RequesterVerdict | undefined {
+  if (inherited === undefined || inherited.length === 0) return undefined;
+  if (inherited === REQUESTER_UNVERIFIED) {
+    return { kind: "unverified", reason: "the turn that delegated this work could not say whose ask it was serving — it was woken by more than one person, or by no person at all" };
   }
-  const text = input.text;
-  if (typeof text !== "string" || !isWakeEnvelopeShaped(text)) return NONE;
+  return { kind: "requester", principalId: inherited };
+}
+
+function verdictFromEnvelope(text: string | undefined): RequesterVerdict | undefined {
+  if (typeof text !== "string" || !isWakeEnvelopeShaped(text)) return undefined;
   const humans = new Set(
     triggerAuthors(text)
       .filter((a) => a.from === "human" && a.authorId !== undefined)
@@ -69,15 +71,52 @@ export function requesterVerdictFor(input: {
   return { kind: "unverified", reason: `this turn was woken by ${humans.size} different people at once, so it cannot say whose ask this is` };
 }
 
+export function requesterVerdictFor(input: {
+  readonly text: string | undefined;
+  readonly seat: RequesterSeat;
+  readonly inherited: string | undefined;
+}): RequesterVerdict {
+  const stamped = verdictFromStamp(input.inherited);
+  if (input.seat === "child") {
+    return stamped ?? { kind: "unverified", reason: NO_CARRIAGE };
+  }
+  if (input.seat === "worker") {
+    return stamped ?? verdictFromEnvelope(input.text) ?? { kind: "unverified", reason: NO_CARRIAGE };
+  }
+  const fromText = verdictFromEnvelope(input.text);
+  if (fromText !== undefined) return fromText;
+  if (input.seat === "room") {
+    return { kind: "unverified", reason: "this turn carried no wake envelope, and this seat can be woken by more than one person, so it cannot say whose ask this is" };
+  }
+  return NONE;
+}
+
+export function requesterSeatOf(ctx: BindableContext): RequesterSeat {
+  try {
+    if (isSubagentChildContext(ctx)) return "child";
+    if (!isUnifiedWindowContext(ctx)) return "open";
+    const grain = windowGrainOf(ctx);
+    return grain === "task" || grain === "thread" ? "worker" : "room";
+  } catch {
+    return "open";
+  }
+}
+
+export function requesterStampForDispatch(turnId?: string): string {
+  const verdict = requesterThisTurn(turnId);
+  return verdict.kind === "requester" ? verdict.principalId : REQUESTER_UNVERIFIED;
+}
+
 export function recordRequesterIdentity(ctx: BindableContext, turnId: string | undefined, text: string | undefined): RequesterVerdict {
   try {
     const attrs = writableAuthAttrs(ctx);
     const inherited = readAttr(attrs?.[OE_REQUESTER_ATTR]);
-    const verdict = requesterVerdictFor({ text, isChild: isSubagentChildContext(ctx), inherited });
+    const seat = requesterSeatOf(ctx);
+    const verdict = requesterVerdictFor({ text, seat, inherited });
     slot.update(() => (turnId !== undefined ? { turn: turnId, verdict } : { verdict }));
     if (attrs !== null) {
       if (verdict.kind === "none") {
-        if (!isSubagentChildContext(ctx)) delete attrs[OE_REQUESTER_ATTR];
+        if (seat !== "child") delete attrs[OE_REQUESTER_ATTR];
       } else {
         attrs[OE_REQUESTER_ATTR] = verdict.kind === "requester" ? verdict.principalId : REQUESTER_UNVERIFIED;
       }
