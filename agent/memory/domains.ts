@@ -143,6 +143,19 @@ const rawDomains: Domain[] = [
     models: { primary: { id: UTILITY_MODEL } },
   }),
 
+  defineDomain({
+    name: "it-notion-withhold",
+    channels: [
+      "notion/6f7ea678-0000-4000-8000-000000000001/6f7ea678-0000-4000-8000-000000000002",
+      "notion/6f7ea678-0000-4000-8000-000000000001/6f7ea678-0000-4000-8000-000000000003",
+      "discord/1300000000000000100/1300000001500000004",
+    ],
+    reportChannel: "discord/1300000000000000100/1300000001500000004",
+    ambientSupervisor: true,
+    engagementTier: "neutral",
+    models: { primary: { id: UTILITY_MODEL } },
+  }),
+
 ];
 
 const agentsOverlay = loadAgentsOverlay();

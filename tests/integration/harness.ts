@@ -1,4 +1,4 @@
-import { createHash, generateKeyPairSync, randomBytes, sign as signEd25519 } from "node:crypto";
+import { createHash, createHmac, generateKeyPairSync, randomBytes, sign as signEd25519 } from "node:crypto";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,7 @@ export { registerScript, type RecordedRequest, type ResolveObservation, type Scr
 export { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
 export { REPLAYED_DELIVERY_CALLER_BODY } from "@open-everywhere/core/agent/webhooks/replay-dedupe.js";
 export { installSlackWebApiStub, type SlackApiCall, type SlackApiResponder, type SlackWebApiStub } from "./slack-web-api";
+export { installNotionApiStub, type NotionApiCall, type NotionApiResponder, type NotionApiStub } from "./notion-web-api";
 
 const ROOT = process.cwd();
 
@@ -52,6 +53,10 @@ const READ_TOKEN_NAME = "it";
 export const CONTROL_SERVICE_PRINCIPAL = `svc:${READ_TOKEN_NAME}`;
 const WEBHOOK_E2E_SECRET = randomBytes(32).toString("hex");
 const SLACK_SIGNING_SECRET = randomBytes(32).toString("hex");
+
+const NOTION_WEBHOOK_SECRET = randomBytes(32).toString("hex");
+
+const CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 
 const DISCORD_APP_KEYS = (() => {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
@@ -131,6 +136,8 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   process.env.OE_CONTROL_READ_TOKENS = `${READ_TOKEN_NAME}:${createHash("sha256").update(READ_TOKEN, "utf8").digest("hex")}`;
   process.env.OE_WEBHOOK_E2E_SECRET = WEBHOOK_E2E_SECRET;
   process.env.SLACK_SIGNING_SECRET = SLACK_SIGNING_SECRET;
+  process.env.NOTION_WEBHOOK_SECRET = NOTION_WEBHOOK_SECRET;
+  process.env.OE_CREDENTIAL_ENCRYPTION_KEY ??= CREDENTIAL_ENCRYPTION_KEY;
   if (process.env.DISCORD_PUBLIC_KEY === undefined) process.env.DISCORD_PUBLIC_KEY = DISCORD_APP_KEYS.publicKeyHex;
   if (opts.sharedSqlite === true) {
     process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
@@ -460,6 +467,44 @@ export const DISCORD_GUILD_ID = "1300000000000000100";
 export const DISCORD_LISTED_CHANNEL_ID = "1300000000000000101";
 export const DISCORD_USER_ID = "9000000000000000042";
 const DISCORD_BOT_ID = "9000000000000000001";
+
+export const NOTION_WORKSPACE_ID = "6f7ea678-0000-4000-8000-000000000001";
+export const NOTION_PAGE_ID = "6f7ea678-0000-4000-8000-000000000002";
+export const NOTION_PAGE_ID_2 = "6f7ea678-0000-4000-8000-000000000003";
+
+export async function notionCommentEventPost(input: {
+  readonly workspaceId: string;
+  readonly commentId: string;
+  readonly eventId?: string;
+  readonly timeoutMs?: number;
+}): Promise<{ status: number; body: string }> {
+  if (booted === undefined) throw new Error("integration harness: notionCommentEventPost before bootAgent.");
+  const rawBody = JSON.stringify({
+    type: "comment.created",
+    workspace_id: input.workspaceId,
+    id: input.eventId ?? `ev-it-${randomBytes(8).toString("hex")}`,
+    timestamp: new Date().toISOString(),
+    entity: { id: input.commentId, type: "comment" },
+  });
+  const signature = "sha256=" + createHmac("sha256", NOTION_WEBHOOK_SECRET).update(rawBody, "utf8").digest("hex");
+  const res = await fetch(`${booted.base}/eve/v1/notion`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-notion-signature": signature },
+    body: rawBody,
+    signal: AbortSignal.timeout(input.timeoutMs ?? 120_000),
+  });
+  return { status: res.status, body: await res.text() };
+}
+
+export async function seedNotionChannelKey(apiKey = "it-notion-stub-key"): Promise<void> {
+  if (booted === undefined) throw new Error("integration harness: seedNotionChannelKey before bootAgent.");
+  if (process.env.OE_OPERATIONAL_PROVIDER !== "sqlite") {
+    throw new Error("integration harness: seedNotionChannelKey needs bootAgent({ sharedSqlite: true }) — PGlite is single-writer.");
+  }
+  const { storeDbSecret } = await import("@open-everywhere/core/agent/credentials/db-broker.js");
+  const { deploymentOrg } = await import("@open-everywhere/core/agent/identity/binding.js");
+  await storeDbSecret({ org: deploymentOrg(), ref: "db:notion:channel-key", plaintext: apiKey, createdBy: "it-harness" });
+}
 
 export interface AuditRow {
   readonly ts: string;
