@@ -26,7 +26,17 @@ function open(handle: ScriptedHandle): ScriptedHandle {
 
 const SESSION_INPUT_TOKEN_BUDGET = 30_000_000;
 
-const REPORTED_INPUT_TOKENS_PER_STEP = 450_000;
+const COMPACTION_THRESHOLD_TOKENS = 0.2 * 1_000_000;
+
+const REPORTED_INPUT_TOKENS_PER_STEP = 180_000;
+
+if (REPORTED_INPUT_TOKENS_PER_STEP >= COMPACTION_THRESHOLD_TOKENS) {
+  throw new Error(
+    `session-park fixture: each step reports ${REPORTED_INPUT_TOKENS_PER_STEP} input tokens, at or above the ` +
+      `${COMPACTION_THRESHOLD_TOKENS} per-prompt compaction threshold. Every step would trip compaction and this ` +
+      `file would measure compaction, not the park. Lower the per-step report, or raise the threshold deliberately.`,
+  );
+}
 
 const STEPS_TO_BOUND = Math.ceil(SESSION_INPUT_TOKEN_BUDGET / REPORTED_INPUT_TOKENS_PER_STEP);
 

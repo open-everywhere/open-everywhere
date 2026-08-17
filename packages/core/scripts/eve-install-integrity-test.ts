@@ -109,6 +109,7 @@ ok(
 );
 
 const TOOL_LOOP = join("dist", "src", "harness", "tool-loop.js");
+const COMPACTION = join("dist", "src", "harness", "compaction.js");
 
 const RETIRED = [
   { symbol: "__oeCfg", why: "OPE-172" },
@@ -208,6 +209,20 @@ for (const eveDir of copies) {
     src.includes("__oeProjectToolSet"),
     `copies: ${where} carries the __oeProjectToolSet hook (OPE-73) — an unpatched copy means authored toModelOutput is dropped on session-mounted dynamic tools, so untrusted-content envelopes never reach the model (prompt-injection containment regression)`,
   );
+  const compactionFile = join(eveDir, COMPACTION);
+  ok(
+    existsSync(compactionFile),
+    `anchor: ${where}/${COMPACTION} exists (if eve moved the harness file, the OPE-689 hunk and eve-compaction-anchor-test.ts are both stale)`,
+  );
+  const compactionSrc = existsSync(compactionFile) ? readFileSync(compactionFile, "utf8") : "";
+  ok(
+    compactionSrc.includes("__oeAnchoredConfig("),
+    `anchor: ${where} carries __oeAnchoredConfig (OPE-689) — without it the work step re-decides with JSON.stringify/4 while the trigger counted the provider's real token figure, so a dense session emits compaction.completed having compacted NOTHING and the generation wedges`,
+  );
+  ok(
+    compactionSrc.includes("__oeNoteNoOpCompaction("),
+    `anchor: ${where} carries __oeNoteNoOpCompaction (OPE-689) — the event-contract backstop. Without it a compaction that changes nothing after the trigger fired passes silently as compaction.completed, which is how the defect stayed invisible for weeks`,
+  );
   for (const dead of RETIRED) {
     ok(
       !src.includes(dead.symbol),
@@ -233,5 +248,5 @@ for (const eveDir of copies) {
 }
 
 console.log(
-  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} the OE projection hook, all ${CARRIAGE.length} turnPolicy restore hunks and all ${SEMANTICS.length} HITL-answer semantics, and none of the ${RETIRED.length} retired symbols)\n`,
+  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} the OE projection hook, the compaction trigger anchor and its no-op backstop, all ${CARRIAGE.length} turnPolicy restore hunks and all ${SEMANTICS.length} HITL-answer semantics, and none of the ${RETIRED.length} retired symbols)\n`,
 );
