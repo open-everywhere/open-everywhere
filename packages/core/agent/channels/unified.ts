@@ -32,6 +32,8 @@ import {
   requesterCandidatesStampForDispatch,
   requesterStampForDispatch,
 } from "../access/requester-identity.js";
+import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
+import { pendingDelegationOwing, BRIDGE_WAKE_HELD_AUDIT_ACTION } from "../access/pending-delegation-signal.js";
 import { sourcesForWindow } from "./window-sources.js";
 import { finalMessageActionForTurn, replierLabelFor } from "./turn-delivery.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
@@ -359,9 +361,23 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
           );
           ulog(`addressed-mention bridge: delivered terminal prose (${action.text.length} chars) to ${origin.platform} — id ${id}`);
           if (wakeId) {
-            await getOperationalStore()
-              .markUnifiedWakeAnswered(org, wakeId, new Date().toISOString(), currentTurnId(bind))
-              .catch(() => undefined);
+            const turnId = currentTurnId(bind);
+            const owingTask = pendingDelegationOwing(turnId, wakeId, addressedWakeThisTurn(turnId));
+            if (owingTask === undefined) {
+              await getOperationalStore()
+                .markUnifiedWakeAnswered(org, wakeId, new Date().toISOString(), turnId)
+                .catch(() => undefined);
+            } else {
+              ulog(`addressed-mention bridge: wake ${wakeId} left ANSWERABLE — a background task this turn dispatched still owes it (OPE-701)`);
+              await appendAudit({
+                org,
+                platform: "unified",
+                workspace,
+                surface,
+                action: BRIDGE_WAKE_HELD_AUDIT_ACTION,
+                detail: { wakeId, chars: action.text.length, ...(sessionId ? { sessionId } : {}) },
+              }).catch(() => undefined);
+            }
           }
           return;
         } catch (err) {

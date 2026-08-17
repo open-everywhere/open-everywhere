@@ -28,7 +28,9 @@ const { unifiedSupervisorToken } = await import("../agent/channels/unified-super
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { taskWakeId } = await import("../agent/channels/task-wake.js");
-const { DELEGATION_PENDING_REFUSAL_REASON, delegationPendingRefusalMessage } = await import("../agent/access/pending-delegation-signal.js");
+const { DELEGATION_PENDING_REFUSAL_REASON, delegationPendingRefusalMessage, BRIDGE_WAKE_HELD_AUDIT_ACTION } = await import(
+  "../agent/access/pending-delegation-signal.js"
+);
 const spawnTaint = await import("../agent/hooks/spawn-taint.js");
 
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
@@ -299,6 +301,100 @@ const roomHas = (needle: string): boolean => posted.some((m) => m.text.includes(
   ok(copy.includes("done:false"), "🔴 §8: …and names the legitimate move, which is the whole reason the refusal is not silent");
   ok(copy.includes("fabrication"), "🔴 §8: …and names the mistake in the words the model needs, so the steer is about honesty and not only about a flag");
   ok(!copy.includes("task_"), "§8: it discloses no task id — a task id is not an address the model can act on");
+}
+
+{
+  const unifiedAdapter = ((await import("../agent/channels/unified.js")).default as unknown as {
+    adapter: Record<string, (data: unknown, ctx: unknown) => Promise<void>>;
+  }).adapter;
+  ok(typeof unifiedAdapter["message.completed"] === "function", "🔴 §9 REACHABILITY: the unified channel really does register message.completed — the bridge lives inside it");
+
+  const adapterCtx = { session: { continuation: { token: `unified:${TOKEN}` } } };
+  const bridgeComplete = (text: string): Promise<void> =>
+    unifiedAdapter["message.completed"]!({ finishReason: "stop", message: text }, adapterCtx);
+
+  function bridgeSession(turnWake: string, turnId: string): <T>(fn: () => Promise<T>) => Promise<T> {
+    const c = new ContextContainer();
+    c.set(SessionKey, {
+      sessionId: "reply-delegation-pending-test",
+      auth: {
+        current: {
+          attributes: {
+            oe_platform: "slack",
+            oe_grain: "standing",
+            oe_addressing: "direct-mention",
+            oe_wake_id: turnWake,
+            oe_window_token: TOKEN,
+            channel_id: CHAN,
+            team_id: "T1",
+          },
+          principalId: "U1",
+          principalType: "slack-user",
+        },
+      },
+      turn: { id: turnId, sequence: 1 },
+      parent: undefined,
+    });
+    return <T>(fn: () => Promise<T>): Promise<T> => contextStorage.run(c, fn);
+  }
+
+  const answeredAt = async (wakeId: string): Promise<string | undefined> => (await store.getUnifiedWakeRecord(ORG, wakeId))?.answeredAt;
+  const heldRows = async (): Promise<Record<string, unknown>[]> =>
+    (await readAudit({ org: ORG, action: BRIDGE_WAKE_HELD_AUDIT_ACTION })).map((r) => (r.detail ?? {}) as Record<string, unknown>);
+
+  {
+    const wBridge = await wake("C_BRIDGE", "901.1");
+    const before = posted.length;
+    const inTurn = bridgeSession(wBridge, "turn_701");
+
+    await inTurn(async () => {
+      await hook({ data: { result: receiptResult("call_701a", "task_701a") } }, ctxFor(wBridge, "turn_701"));
+
+      const refused = await callReply(wBridge, "turn_701", wBridge, FABRICATION, true);
+      ok(typeof refused.error === "string", "§9a precondition: the reply tool refuses the fabricated `done:true`");
+      ok(posted.length === before, "§9a precondition: nothing posted through the tool");
+
+      await bridgeComplete(FABRICATION);
+    });
+
+    ok(
+      posted.length === before + 1,
+      "🔴 §9a/ROOM: the bridge still POSTS the model's terminal prose. The guard must never delete the model's text — a swallowed bridge leaves the room with silence, which is a worse failure than a bad answer that can still be corrected",
+    );
+    ok(
+      (await answeredAt(wBridge)) === undefined,
+      "🔴 §9a THE FIX: the wake is NOT marked answered while the dispatched worker still owes it. This is the assertion OPE-701 exists for — pre-fix the bridge closed the wake the reply tool had just been stopped from closing",
+    );
+
+    const held = await heldRows();
+    ok(held.length === 1, `🔴 §9a/AUDIT: the held wake is a ROW, not an absence (expected 1, saw ${held.length})`);
+    ok(held[0]?.["wakeId"] === wBridge, "§9a/AUDIT: the row names the wake it held open");
+    ok(!JSON.stringify(held).includes("RECURRING.md"), "🔴 §9a/AUDIT: the prose never reaches the audit detail — the row records the decision, not the text");
+
+    const wLater = await wake("C_LATER", "902.2");
+    const landed = await bridgeSession(wLater, "turn_701_later")(() => callReply(wLater, "turn_701_later", wBridge, REAL_REFUSAL, true));
+    ok(
+      landed.posted === true,
+      "🔴 §9a THE POINT: on a later turn the worker's real answer LANDS on the held wake through the fence's pending arm — the arm that refuses an answered wake. Without the fix this reply is refused as `answered` and the fabrication stands as the final word",
+    );
+    ok(posted.length === before + 2, "§9a/ROOM: the correction reached the room");
+    ok(typeof (await answeredAt(wBridge)) === "string", "§9a: …and THAT reply closes the wake normally, so the hold is a wait and not a leak");
+  }
+
+  {
+    const wPlain = await wake("C_BRIDGE_PLAIN", "903.3");
+    const before = posted.length;
+    const heldBefore = (await heldRows()).length;
+
+    await bridgeSession(wPlain, "turn_701_plain")(() => bridgeComplete("Here is the answer, retrieved and checked."));
+
+    ok(posted.length === before + 1, "§9b/ROOM: the ordinary bridged prose reached the room");
+    ok(
+      typeof (await answeredAt(wPlain)) === "string",
+      "🔴 §9b NEGATIVE CONTROL: with no pending dispatch the bridge marks the wake ANSWERED exactly as before. The guard is one condition on the mark, not the removal of it",
+    );
+    ok((await heldRows()).length === heldBefore, "§9b/AUDIT: …and it writes no held-wake row, so the row counts only the turns the guard acted on");
+  }
 }
 
 console.log(`✓ reply-delegation-pending: ${passed} assertions passed`);

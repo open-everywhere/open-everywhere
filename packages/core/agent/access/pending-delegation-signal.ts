@@ -16,6 +16,8 @@ const MAX_PENDING = 16;
 
 export const DELEGATION_PENDING_REFUSAL_REASON = "delegation-pending";
 
+export const BRIDGE_WAKE_HELD_AUDIT_ACTION = "turn.direct_mention_bridge_wake_held";
+
 export function delegationPendingRefusalMessage(): string {
   return (
     "reply: NOTHING was posted. You started a background worker for this conversation in this turn, " +
