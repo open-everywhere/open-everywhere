@@ -8,6 +8,7 @@ export default defineConfig({
     sequence: { concurrent: false },
     env: { NODE_NO_WARNINGS: "1" },
     setupFiles: ["./scripts/chain/_setup.ts"],
+    server: { deps: { inline: [/@open-everywhere\//] } },
     maxWorkers: 4,
     minWorkers: 1,
     silent: "passed-only",
