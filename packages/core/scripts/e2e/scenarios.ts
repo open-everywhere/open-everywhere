@@ -106,6 +106,8 @@ export interface Scenario {
   readonly suite: Suite;
   readonly smoke?: boolean;
   readonly optional: boolean;
+  readonly expensive?: boolean;
+  readonly costReason?: string;
   readonly timeoutMs: number;
   readonly judged: boolean;
   readonly run: (ctx: ScenarioContext) => Promise<void>;
@@ -144,9 +146,12 @@ export function skipCategory(
   scenario: Scenario,
   available: ReadonlySet<Capability>,
   includeOptional: boolean,
-): Extract<SkipKind, "missing-capability" | "optional-not-included"> | undefined {
+  explicitlyNamed = false,
+  includeExpensive = false,
+): Extract<SkipKind, "missing-capability" | "optional-not-included" | "expensive-not-included"> | undefined {
   if (scenario.requires.some((c) => !available.has(c))) return "missing-capability";
   if (scenario.optional && !includeOptional) return "optional-not-included";
+  if (scenario.expensive && !explicitlyNamed && !includeExpensive) return "expensive-not-included";
   return undefined;
 }
 
@@ -155,14 +160,26 @@ export function skipReason(
   available: ReadonlySet<Capability>,
   missing: Readonly<Record<Capability, readonly string[]>>,
   includeOptional: boolean,
+  explicitlyNamed = false,
+  includeExpensive = false,
 ): string | undefined {
-  const category = skipCategory(scenario, available, includeOptional);
+  const category = skipCategory(scenario, available, includeOptional, explicitlyNamed, includeExpensive);
   if (category === "missing-capability") {
     const unmet = scenario.requires.filter((c) => !available.has(c));
     const vars = [...new Set(unmet.flatMap((c) => missing[c]))];
     return `missing ${unmet.join("+")} driver (set ${vars.join(", ")})`;
   }
   if (category === "optional-not-included") return "optional/stretch — set E2E_INCLUDE_OPTIONAL=1 to run";
+  if (category === "expensive-not-included")
+    return `expensive — ${scenario.costReason} (name it directly or set --include-expensive / E2E_INCLUDE_EXPENSIVE=1 to run)`;
+  return undefined;
+}
+
+export function expensiveReasonError(scenario: Pick<Scenario, "id" | "expensive" | "costReason">): string | undefined {
+  if (!scenario.expensive) return undefined;
+  if ((scenario.costReason ?? "").trim().length === 0) {
+    return `${scenario.id} is flagged expensive but carries no costReason — state why it is expensive`;
+  }
   return undefined;
 }
 
@@ -3868,3 +3885,10 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
 ];
+
+{
+  const expensiveErrors = SCENARIOS.map(expensiveReasonError).filter((e): e is string => e !== undefined);
+  if (expensiveErrors.length > 0) {
+    throw new Error(`e2e scenario roster: ${expensiveErrors.join("; ")}`);
+  }
+}

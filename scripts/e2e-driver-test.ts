@@ -86,7 +86,7 @@ const {
   createJudgeReporter,
   renderReportedJudgeSummary,
 } = await import("../packages/core/scripts/e2e/judge.js");
-const { SCENARIOS, skipCategory, skipReason, ScenarioSkip, isFillerAck } = await import("../packages/core/scripts/e2e/scenarios.js");
+const { SCENARIOS, skipCategory, skipReason, ScenarioSkip, isFillerAck, expensiveReasonError } = await import("../packages/core/scripts/e2e/scenarios.js");
 const { emptySkipCounts, renderSkipBreakdown, SKIP_KINDS } = await import("../packages/core/scripts/e2e/skip-summary.js");
 const { verifySlackSignature, classifyEnvelope, buildFrontHandler, PUBLIC_SLACK_ROUTE } = await import("@open-everywhere/provider-slack/agent/channels/slack-front.js");
 const { SLACK_COMMANDS_ROUTE } = await import("@open-everywhere/provider-slack/agent/channels/slack-commands.js");
@@ -506,12 +506,111 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   const counts = emptySkipCounts();
   ok(SKIP_KINDS.every((k) => counts[k] === 0), "emptySkipCounts starts every bucket at zero");
   ok(renderSkipBreakdown(counts) === "none", "renderSkipBreakdown reports 'none' when every bucket is zero — the negative control for the non-empty case below");
-  ok(SKIP_KINDS.length === 6, "the skip-reason taxonomy has exactly 6 closed categories");
+  ok(SKIP_KINDS.length === 7, "the skip-reason taxonomy has exactly 7 closed categories");
   counts["missing-capability"] = 3;
   counts["filtered-only"] = 1;
   ok(
     renderSkipBreakdown(counts) === "1 filtered-only, 3 missing-capability",
     "renderSkipBreakdown lists only the non-zero buckets, in fixed taxonomy order regardless of assignment order",
+  );
+}
+
+{
+  ok(
+    expensiveReasonError({ id: "FAKE-OK", expensive: true, costReason: "burns ~5M tokens per run" }) === undefined,
+    "expensive:true + a non-empty costReason validates (no error)",
+  );
+  ok(
+    expensiveReasonError({ id: "FAKE-NONE", expensive: true, costReason: undefined }) !== undefined,
+    "expensive:true with costReason UNSET refuses — the reason is the point of the flag",
+  );
+  ok(
+    expensiveReasonError({ id: "FAKE-EMPTY", expensive: true, costReason: "" }) !== undefined,
+    "expensive:true with costReason === '' refuses",
+  );
+  ok(
+    expensiveReasonError({ id: "FAKE-WS", expensive: true, costReason: "   " }) !== undefined,
+    "expensive:true with a whitespace-only costReason refuses (trimmed before the emptiness check)",
+  );
+  ok(
+    expensiveReasonError({ id: "FAKE-WS", expensive: true, costReason: "   " })?.includes("FAKE-WS") === true,
+    "the refusal names the offending scenario id",
+  );
+  ok(
+    expensiveReasonError({ id: "FAKE-CHEAP", expensive: false, costReason: undefined }) === undefined,
+    "expensive:false never refuses regardless of costReason (negative control)",
+  );
+  ok(
+    expensiveReasonError({ id: "FAKE-CHEAP2" }) === undefined,
+    "a scenario with expensive entirely absent never refuses (the common-case default)",
+  );
+  ok(
+    SCENARIOS.every((s) => expensiveReasonError(s) === undefined),
+    "no roster scenario is currently flagged expensive without a reason (module-load validation shape)",
+  );
+  const badRoster = [
+    { id: "BAD1", expensive: true, costReason: "" },
+    { id: "BAD2", expensive: true, costReason: "   " },
+    { id: "BAD3", expensive: false },
+  ];
+  let threw = false;
+  let thrownMessage = "";
+  try {
+    const errors = badRoster.map((s) => expensiveReasonError(s)).filter((e) => e !== undefined);
+    if (errors.length > 0) throw new Error(`e2e scenario roster: ${errors.join("; ")}`);
+  } catch (err) {
+    threw = true;
+    thrownMessage = String(err instanceof Error ? err.message : err);
+  }
+  ok(threw, "a roster carrying an expensive-but-reasonless entry trips the module-load validation shape");
+  ok(
+    thrownMessage.includes("BAD1") && thrownMessage.includes("BAD2") && !thrownMessage.includes("BAD3"),
+    "the thrown message names exactly the two offending ids, not the clean BAD3 entry",
+  );
+
+  const fakeExpensive = {
+    id: "FAKE-EXP",
+    requires: ["slack"],
+    optional: false,
+    expensive: true,
+    costReason: "burns ~5M tokens/run (compaction repro shape)",
+  } as any;
+  const satisfied = new Set(["slack"]) as any;
+  const missingNone = { slack: [] as string[] } as any;
+  ok(
+    skipCategory(fakeExpensive, satisfied, false) === "expensive-not-included",
+    "an expensive scenario with satisfied capabilities skips by default (not named, no --include-expensive)",
+  );
+  const defaultReason = skipReason(fakeExpensive, satisfied, missingNone, false);
+  ok(defaultReason !== undefined, "the default skip carries a printed reason");
+  ok(
+    defaultReason?.includes(fakeExpensive.costReason) === true,
+    "the printed default-skip reason names the scenario's own costReason verbatim — a silent absence is a defect",
+  );
+  ok(
+    skipCategory(fakeExpensive, satisfied, false, true, false) === undefined,
+    "naming the scenario id directly (explicitlyNamed=true) always runs it, even expensive and with no --include-expensive flag",
+  );
+  ok(
+    skipReason(fakeExpensive, satisfied, missingNone, false, true, false) === undefined,
+    "skipReason agrees: a directly-named expensive scenario has no skip reason (it runs)",
+  );
+  ok(
+    skipCategory(fakeExpensive, satisfied, false, false, true) === undefined,
+    "--include-expensive / E2E_INCLUDE_EXPENSIVE=1 (includeExpensive=true) runs an expensive scenario even when not named directly",
+  );
+  ok(
+    skipReason(fakeExpensive, satisfied, missingNone, false, false, true) === undefined,
+    "skipReason agrees: includeExpensive=true clears the skip reason",
+  );
+  ok(
+    skipCategory(fakeExpensive, new Set(), false, true, true) === "missing-capability",
+    "missing-capability still wins over the expensive gate, even with BOTH explicitlyNamed and includeExpensive set",
+  );
+  const fakeCheap = { id: "FAKE-CHEAP", requires: ["slack"], optional: false } as any;
+  ok(
+    skipCategory(fakeCheap, satisfied, false) === undefined,
+    "a non-expensive scenario is unaffected by the expensive gate (negative control)",
   );
 }
 
