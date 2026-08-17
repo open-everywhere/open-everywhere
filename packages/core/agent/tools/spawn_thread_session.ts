@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { windowGated } from "../access/window-gated.js";
 import { oneshotAgentEnabled } from "../access/delegation-flag.js";
-import { currentWakeId, deploymentOrg, type BindableContext } from "../identity/binding.js";
+import { currentTurnId, currentWakeId, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { resolveUnifiedWakeTarget, mintWakeId, unifiedThreadRef, isThreadScopedWakeOrigin } from "../channels/unified-window.js";
 import { dispatchTaskWindow } from "../channels/unified.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -113,6 +113,7 @@ export default windowGated("spawn_thread_session", defineTool({
         parentAuthAttributes: c.session?.auth?.current?.attributes as Record<string, unknown> | undefined,
         tainted,
         grain: "thread",
+        turnId: currentTurnId(c),
       });
     if (callId) {
       await postOnce({

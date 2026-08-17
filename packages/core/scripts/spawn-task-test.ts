@@ -13,6 +13,7 @@ import { unifiedSupervisorToken } from "../agent/channels/unified-supervisor.js"
 import {
   mintWakeId,
   unifiedThreadRef,
+  OE_GRAIN_ATTR,
   OE_PLATFORM_ATTR,
   OE_TASK_LABEL_ATTR,
   type UnifiedWakeOrigin,
@@ -156,6 +157,45 @@ ok(!("oe_task_label" in (received[0].auth.attributes ?? {})), "omitting taskLabe
   ok(label.length <= 60, "truncateTaskLabel caps at the default 60 chars");
   ok(label.endsWith("…"), "an over-length brief's label ends with the ellipsis marker");
   eq(truncateTaskLabel("short"), "short", "a brief already under the cap passes through unchanged");
+}
+
+console.log("2c. dispatchTaskWindow who-asked stamp (OPE-675):");
+{
+  const { OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED } = await import("../agent/access/requester-identity.js");
+
+  received.length = 0;
+  await dispatchTaskWindow({
+    token: taskToken,
+    message: "do the thing",
+    wakeId: mintWakeId(),
+    domain: "payments",
+    origin: slackOrigin,
+    parentAuthAttributes: {},
+    tainted: false,
+  });
+  eq(
+    received[0].auth.attributes?.[OE_REQUESTER_ATTR],
+    REQUESTER_UNVERIFIED,
+    "🔴 a dispatch from a turn with no verified asker still STAMPS `oe/unverified` — an absent stamp is what would let the worker parse its own brief",
+  );
+
+  received.length = 0;
+  await dispatchTaskWindow({
+    token: taskToken,
+    message: "do the thing",
+    wakeId: mintWakeId(),
+    domain: "payments",
+    origin: slackOrigin,
+    parentAuthAttributes: { [OE_REQUESTER_ATTR]: "U_PREVIOUS_ASKER" },
+    tainted: false,
+  });
+  ok(
+    received[0].auth.attributes?.[OE_REQUESTER_ATTR] !== "U_PREVIOUS_ASKER",
+    "🔴 a stale asker forwarded in the parent's bag does NOT survive the dispatch — the stamp is re-derived, never inherited",
+  );
+  eq(received[0].auth.attributes?.[OE_REQUESTER_ATTR], REQUESTER_UNVERIFIED, "…and what replaces it is the honest `oe/unverified`, not a blank");
+
+  ok(received[0].auth.attributes?.[OE_GRAIN_ATTR] === "task", "negative control: the fixture does carry a stamped attribute through, so the overwrite assertions are not vacuous");
 }
 
 console.log("3. spawn_task structural guards:");

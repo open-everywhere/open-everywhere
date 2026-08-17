@@ -16,6 +16,7 @@ import {
 } from "../channels/unified-window.js";
 import { formatWindowToken, threadSeatWindowId } from "../channels/window-key.js";
 import { NO_REPLY_SENTINEL } from "../channels/normalized-wake.js";
+import { OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED } from "../access/requester-identity.js";
 import { ROUTINE_MARKER } from "./routine.js";
 
 export const TRIGGERED_FIRE_GRAIN = "thread" as const;
@@ -171,7 +172,11 @@ export async function divertTriggeredFire(
       await adoptJobFireSeat(org, registryKey, plan.token, now(), deps.jobSeatStore ?? getOperationalStore());
     }
   }
-  const attributes: Record<string, unknown> = { ...(input.auth.attributes ?? {}), [OE_GRAIN_ATTR]: TRIGGERED_FIRE_GRAIN };
+  const attributes: Record<string, unknown> = {
+    ...(input.auth.attributes ?? {}),
+    [OE_GRAIN_ATTR]: TRIGGERED_FIRE_GRAIN,
+    [OE_REQUESTER_ATTR]: REQUESTER_UNVERIFIED,
+  };
   const wakeId = input.wakeId ?? mintWakeId();
   await (deps.divert ?? divertToUnifiedWindow)(to, {
     message: renderFireWindowMessage(input.message, wakeId, input.auth.attributes ?? {}),

@@ -26,6 +26,7 @@ import { resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "./thre
 import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { INVOKER_POSTURE_ATTR } from "../access/invoker-posture.js";
 import { currentInvokerPosture } from "../access/invoker-posture-state.js";
+import { OE_REQUESTER_ATTR, requesterStampForDispatch } from "../access/requester-identity.js";
 import { sourcesForWindow } from "./window-sources.js";
 import { finalMessageActionForTurn, replierLabelFor } from "./turn-delivery.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
@@ -638,6 +639,7 @@ export async function dispatchTaskWindow(input: {
   readonly tainted: boolean;
   readonly grain?: "task" | "thread";
   readonly taskLabel?: string;
+  readonly turnId?: string;
 }): Promise<void> {
   if (!crossProcessDispatchAvailable()) {
     throw new Error(
@@ -652,6 +654,7 @@ export async function dispatchTaskWindow(input: {
   attributes[OE_GRAIN_ATTR] = input.grain ?? "task";
   if (input.taskLabel) attributes[OE_TASK_LABEL_ATTR] = input.taskLabel;
   attributes[INVOKER_POSTURE_ATTR] = currentInvokerPosture();
+  attributes[OE_REQUESTER_ATTR] = requesterStampForDispatch(input.turnId);
   if (input.tainted) attributes[OE_SPAWN_TAINTED_ATTR] = "true";
   await deliverUnifiedDispatch({
     message: input.message,
