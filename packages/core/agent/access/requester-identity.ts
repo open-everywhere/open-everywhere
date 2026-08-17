@@ -75,8 +75,12 @@ export function recordRequesterIdentity(ctx: BindableContext, turnId: string | u
     const inherited = readAttr(attrs?.[OE_REQUESTER_ATTR]);
     const verdict = requesterVerdictFor({ text, isChild: isSubagentChildContext(ctx), inherited });
     slot.update(() => (turnId !== undefined ? { turn: turnId, verdict } : { verdict }));
-    if (verdict.kind !== "none" && attrs !== null) {
-      attrs[OE_REQUESTER_ATTR] = verdict.kind === "requester" ? verdict.principalId : REQUESTER_UNVERIFIED;
+    if (attrs !== null) {
+      if (verdict.kind === "none") {
+        if (!isSubagentChildContext(ctx)) delete attrs[OE_REQUESTER_ATTR];
+      } else {
+        attrs[OE_REQUESTER_ATTR] = verdict.kind === "requester" ? verdict.principalId : REQUESTER_UNVERIFIED;
+      }
     }
     return verdict;
   } catch {
