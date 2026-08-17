@@ -6,8 +6,13 @@ import {
   type WakeThreadMeta,
   type WakeParticipant,
   type WakeHandoff,
+  type WakeAddressing,
+  type WakeEngagementTier,
+  type WakeFollowUp,
 } from "./wake-envelope.js";
 import { renderContext, type ContextLine } from "./context-render.js";
+
+export type { WakeAddressing, WakeEngagementTier } from "./wake-envelope.js";
 
 export const NO_REPLY_SENTINEL = "NO_REPLY";
 
@@ -45,10 +50,6 @@ export type NormalizedWakeTrigger = {
   readonly message: WakeMessageInput;
 };
 
-export type WakeAddressing = "direct" | "direct-mention" | "thread-follow" | "channel-watch" | "name-drop";
-
-export type WakeEngagementTier = "aggressive" | "neutral" | "reserved";
-
 export interface WakeLocus {
   readonly channel: WakeChannelMeta;
   readonly thread?: WakeThreadMeta;
@@ -72,7 +73,7 @@ export interface NormalizedWake {
   readonly readMoreHint?: string;
   readonly nameDrop?: {
     readonly botName: string;
-    readonly followUp: "follows-on-reply" | "thread-engaged" | "channel-not-following";
+    readonly followUp: WakeFollowUp;
   };
   readonly memoryDelta?: string;
   readonly trigger: NormalizedWakeTrigger;
@@ -278,8 +279,11 @@ export function renderWake(nw: NormalizedWake, now: () => string = () => new Dat
             reason: nw.reason,
             currentTime: now(),
             wakeId: nw.wakeId,
+            addressing: nw.addressing,
+            engagement: nw.engagementTier,
+            followUp: nw.nameDrop?.followUp,
             sourcePlatform: nw.platform,
-            channel: nw.locus.channel,
+            channel: { ...nw.locus.channel, container: nw.locus.channel.container ?? nw.containerNoun ?? "channel" },
             participants: nw.participants,
             thread: nw.locus.thread,
             handoff: nw.handoff,

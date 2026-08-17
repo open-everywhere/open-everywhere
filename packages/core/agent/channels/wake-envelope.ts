@@ -15,6 +15,12 @@ export type WakeReason =
 
 export type WakeTrust = "principal" | "peer" | "relay" | "unauth";
 
+export type WakeAddressing = "direct" | "direct-mention" | "thread-follow" | "channel-watch" | "name-drop";
+
+export type WakeEngagementTier = "aggressive" | "neutral" | "reserved";
+
+export type WakeFollowUp = "follows-on-reply" | "thread-engaged" | "channel-not-following";
+
 export type WakeMessageSender = "human" | "agent" | "self" | "system" | "bot";
 
 export interface WakeChannelMeta {
@@ -23,6 +29,7 @@ export interface WakeChannelMeta {
   readonly memberCount?: number;
   readonly platform?: string;
   readonly platformLabel?: string;
+  readonly container?: string;
 }
 
 export interface WakeThreadMeta {
@@ -75,6 +82,9 @@ export interface WakeEnvelopeInput {
   readonly currentTime: string;
   readonly sourcePlatform?: string;
   readonly wakeId?: string;
+  readonly addressing?: WakeAddressing;
+  readonly engagement?: WakeEngagementTier;
+  readonly followUp?: WakeFollowUp;
   readonly channel: WakeChannelMeta;
   readonly participants?: readonly WakeParticipant[];
   readonly thread?: WakeThreadMeta;
@@ -192,7 +202,7 @@ function renderParticipants(ps: readonly WakeParticipant[]): string {
 
 function renderChannelOpen(c: WakeChannelMeta): string {
   const memberCount = c.memberCount === undefined ? undefined : String(c.memberCount);
-  return `<channel${attr("platform", c.platform)}${attr("id", c.id)}${attr("label", c.platformLabel)}${attr("type", c.type)}${attr("member-count", memberCount)}>`;
+  return `<channel${attr("platform", c.platform)}${attr("id", c.id)}${attr("label", c.platformLabel)}${attr("type", c.type)}${attr("container", c.container)}${attr("member-count", memberCount)}>`;
 }
 
 function renderThreadOpen(t: WakeThreadMeta): string {
@@ -229,7 +239,7 @@ export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
   const unauthNote = input.messages.some((m) => m.trust === "unauth") ? [indent(UNAUTH_SYSTEM_NOTE, 2)] : [];
 
   const lines = [
-    `<wake${attr("reason", input.reason)}${attr("current-time", input.currentTime)}${attr("wake-id", input.wakeId)}>`,
+    `<wake${attr("reason", input.reason)}${attr("addressing", input.addressing)}${attr("engagement", input.engagement)}${attr("follow-up", input.followUp)}${attr("current-time", input.currentTime)}${attr("wake-id", input.wakeId)}>`,
     indent(channelOpen, 2),
     channelBody,
     indent("</channel>", 2),

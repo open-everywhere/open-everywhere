@@ -27,8 +27,8 @@ const G_DISCORD_JUDGED = `[thread-follow] You were not mentioned — this reply 
 
 ${G_DISCORD_SCOPE_NOTE}
 
-<wake reason="channel-activity" current-time="2026-07-10T10:00:00.000Z">
-  <channel id="disc-ch">
+<wake reason="channel-activity" addressing="thread-follow" current-time="2026-07-10T10:00:00.000Z">
+  <channel id="disc-ch" container="channel">
   <message trigger="true" from="human" trust="peer" author="rowan" author-id="U9" id="d1" sent-at="2026-07-10T09:59:00.000Z">
     anyone know if the build passed?
   </message>
@@ -39,8 +39,8 @@ const G_DISCORD_NAMEDROP_THREAD = `[name-drop] A top-level channel message said 
 
 ${G_DISCORD_SCOPE_NOTE}
 
-<wake reason="thread-activity" current-time="2026-07-10T10:00:00.000Z">
-  <channel id="disc-ch">
+<wake reason="thread-activity" addressing="name-drop" follow-up="thread-engaged" current-time="2026-07-10T10:00:00.000Z">
+  <channel id="disc-ch" container="channel">
   <thread ts="disc-thread">
     <message trigger="true" from="human" trust="peer" author="rowan" author-id="U9" id="d1" sent-at="2026-07-10T09:59:00.000Z">
       does OpenBot handle retries?
@@ -53,8 +53,8 @@ const G_DISCORD_NAMEDROP_BASE = `[name-drop] A top-level channel message said yo
 
 ${G_DISCORD_SCOPE_NOTE}
 
-<wake reason="channel-activity" current-time="2026-07-10T10:00:00.000Z">
-  <channel id="disc-ch">
+<wake reason="channel-activity" addressing="name-drop" follow-up="channel-not-following" current-time="2026-07-10T10:00:00.000Z">
+  <channel id="disc-ch" container="channel">
   <message trigger="true" from="human" trust="peer" author="rowan" author-id="U9" id="d1" sent-at="2026-07-10T09:59:00.000Z">
     does OpenBot handle retries?
   </message>
@@ -262,7 +262,15 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
   ok(docMsg.includes("you are this doc's standing session"), "channel-watch containerNoun='doc' renders the doc noun");
   ok(!docMsg.includes("this channel's standing session"), "channel-watch 'doc' does NOT say channel");
   ok(chMsg.includes("you are this channel's standing session"), "channel-watch default (unset) still renders 'channel' (byte-identical)");
-  ok(docMsg.replace("this doc's standing session", "this channel's standing session").replaceAll("notion-message", "slack-message") === chMsg, "the noun is the ONLY preamble delta between 'doc' and the default render (the platform-derived body source label aside)");
+  ok(docMsg.includes('container="doc"'), "channel-watch containerNoun='doc' also renders <channel container=\"doc\"> (S1 attribute)");
+  ok(chMsg.includes('container="channel"'), "channel-watch default (unset) renders <channel container=\"channel\"> (S1 attribute, same default as the preamble noun)");
+  ok(
+    docMsg
+      .replace("this doc's standing session", "this channel's standing session")
+      .replace('container="doc"', 'container="channel"')
+      .replaceAll("notion-message", "slack-message") === chMsg,
+    "the container noun/attribute is the ONLY preamble+envelope delta between 'doc' and the default render (the platform-derived body source label aside)",
+  );
 }
 
 {
@@ -271,16 +279,23 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
   const neutral = renderWake({ ...base, engagementTier: "neutral" }, NOW).message;
   const reserved = renderWake({ ...base, engagementTier: "reserved" }, NOW).message;
   const aggressive = renderWake({ ...base, engagementTier: "aggressive" }, NOW).message;
-  eq(neutral, unset, "engagementTier neutral renders byte-identical to unset (the pre-tier preamble)");
+  ok(!unset.includes('engagement='), "unset engagementTier: no <wake engagement> attribute at all (never resolved, not merely neutral)");
+  ok(neutral.includes('engagement="neutral"'), "engagementTier neutral: the <wake engagement=\"neutral\"> attribute DOES render (S1) — the resolved fact, even though the prose below is unchanged");
+  eq(neutral.replace(' engagement="neutral"', ""), unset, "engagementTier neutral: the PROSE (and everything else) is still byte-identical to unset once the S1 attribute is normalised out");
   ok(reserved.includes("Calibration for this channel: RESERVED"), "reserved appends the higher-bar calibration sentence");
   ok(aggressive.includes("Calibration for this channel: FORWARD"), "aggressive appends the forward-presence calibration sentence");
+  ok(reserved.includes('engagement="reserved"'), "reserved: the <wake engagement=\"reserved\"> attribute matches the prose's tier");
+  ok(aggressive.includes('engagement="aggressive"'), "aggressive: the <wake engagement=\"aggressive\"> attribute matches the prose's tier");
   ok(reserved.startsWith(unset.split("\n")[0]!.slice(0, 20)), "the tier APPENDS — the shared bar text stays verbatim before it");
   ok(reserved.includes("output exactly NO_REPLY") && aggressive.includes("output exactly NO_REPLY"), "the NO_REPLY contract survives both tiers (tune, never replace)");
   const repoReserved = renderWake({ ...base, containerNoun: "repo", engagementTier: "reserved" }, NOW).message;
   ok(repoReserved.includes("Calibration for this repo: RESERVED"), "the calibration sentence names the container noun");
+  ok(repoReserved.includes('engagement="reserved"') && repoReserved.includes('container="repo"'), "the repo-noun render carries BOTH S1 attributes together — engagement and container");
   const tf = renderWake({ ...base, addressing: "thread-follow", locus: { channel: { id: "C1" }, thread: { ts: "1.2" } } }, NOW).message;
   const tfTiered = renderWake({ ...base, addressing: "thread-follow", locus: { channel: { id: "C1" }, thread: { ts: "1.2" } }, engagementTier: "reserved" }, NOW).message;
-  eq(tfTiered, tf, "thread-follow ignores engagementTier (supervisor-only calibration)");
+  ok(!tfTiered.includes("Calibration for this"), "thread-follow's PROSE still ignores engagementTier (no calibration sentence appended)");
+  ok(tfTiered.includes('engagement="reserved"'), "…but the S1 attribute still mirrors the resolved tier mechanically — it is a schema fact, not a prose decision");
+  eq(tfTiered.replace(' engagement="reserved"', ""), tf, "everything else (prose + envelope) is byte-identical to the untiered thread-follow render once the S1 attribute is normalised out");
 }
 
 console.log(`\n✓ normalized-wake: ${passed} assertions passed (byte-identity goldens: discord ×4; + renderWake coverage: per-addressing renders, W1–W4 security through the new entry point, no-platform-branch, structural trigger invariants, channel-watch containerNoun doc/channel; the slack ×5 + name-drop contextLines goldens moved to @open-everywhere/provider-slack — OPE-114 stage 4)`);

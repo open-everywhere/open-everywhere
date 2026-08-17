@@ -119,7 +119,7 @@ const siblings: NotionWakeMessage[] = [
   ok(message.startsWith("[channel-watch]"), "channel-watch wake leads with the judged preamble");
   ok(message.includes("you are this doc's standing session"), "channel-watch wake uses the DOC container noun");
   ok(message.includes(`<wake reason="channel-activity"`), "channel-watch wake carries the envelope");
-  ok(message.includes(`<channel id="${PAGE}">`), "locus.channel = the page id");
+  ok(message.includes(`<channel id="${PAGE}" container="doc">`), "locus.channel = the page id; the S1 <channel container> attribute mirrors the DOC noun (OPE-684)");
   ok(message.includes(`<thread ts="${DISCUSSION}">`), "locus.thread = the discussion id (reply anchor)");
   ok(message.includes("an earlier note") && message.includes("my earlier reply"), "discussion siblings render as backscroll");
   ok(message.includes(`trigger="true"`) && message.includes("does section 2 still hold?"), "the triggering comment is the trigger message");
@@ -137,7 +137,7 @@ const siblings: NotionWakeMessage[] = [
   const mk = (unified?: boolean) => renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings, unified }), NOW);
   const plain = mk();
   const unified = mk(true);
-  ok(unified.message.includes(`<channel platform="notion" id="${PAGE}">`), "unified wake stamps the <channel platform=\"notion\"> surface address");
+  ok(unified.message.includes(`<channel platform="notion" id="${PAGE}" container="doc">`), "unified wake stamps the <channel platform=\"notion\"> surface address");
   ok(unified.message.includes("Cross-surface disclosure:"), "unified wake appends the P5 advisory disclosure to the judged preamble");
   ok(!plain.message.includes("platform=") && !plain.message.includes("Cross-surface disclosure"), "per-doc wake carries NO platform attr / disclosure");
   ok(mk(false).message === plain.message, "unified:false renders BYTE-IDENTICAL to the unset per-doc wake (flag-off invariant)");
@@ -200,7 +200,7 @@ const siblings: NotionWakeMessage[] = [
   ok(dm.message.startsWith("[direct]"), "direct-mention wake leads with the ADDRESSED preamble (not the silence-biased watch one)");
   ok(dm.message.includes(`wake-id="wake-notion-1"`), "direct-mention wake keeps the ENVELOPE with the wake-id (the reply tool's routing key)");
   ok(dm.message.includes(`reason="mention"`) && dm.message.includes(`mention="true"`), "direct-mention wake is an honest mention (reason + response-obligation flag)");
-  ok(dm.message.includes(`<channel platform="notion" id="${PAGE}">`), "direct-mention wake carries the unified surface address");
+  ok(dm.message.includes(`<channel platform="notion" id="${PAGE}" container="doc">`), "direct-mention wake carries the unified surface address");
   ok(dm.message.includes("an earlier note"), "direct-mention wake keeps the discussion backscroll (context the shared window lacks)");
   ok(mk().message === "@OE what did we decide?", "plain direct wake (no window) stays the body VERBATIM — byte-identical off");
   const watch = renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings, directMention: true }), NOW);
@@ -247,7 +247,7 @@ function captureDeps(session: NotionSupervisorSession, over: Partial<NotionSuper
   ok(touched.length === 1 && touched[0] === SURFACE, "touchSession records the wake on the current generation");
   ok(!("oeUnified" in (wakes[0].state as Record<string, unknown>)), "a per-doc dispatch seeds NO oeUnified marker (byte-identical off)");
   await handleNotionSupervisorDispatch(dispatch({ unified: true }), deps);
-  ok(wakes[1].message.includes(`<channel platform="notion" id="${PAGE}">`), "a unified dispatch stamps the surface address on the delivered wake");
+  ok(wakes[1].message.includes(`<channel platform="notion" id="${PAGE}" container="doc">`), "a unified dispatch stamps the surface address on the delivered wake");
   ok((wakes[1].state as Record<string, unknown>).oeUnified === true, "a unified dispatch seeds state.oeUnified = true (the silence gate's key)");
   ok(wakes[0].window === undefined && wakes[1].window === undefined, "no single-window plan → the dispatch threads NO window to the wake dep (byte-identical base path)");
   const win = planNotionSingleWindow(true, true, true, { discussionId: DISCUSSION, pageId: PAGE, workspaceId: "ws-1" })!;

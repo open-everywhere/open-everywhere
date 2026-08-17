@@ -70,7 +70,7 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
   ok(message.startsWith("[channel-watch]"), "wake leads with the judged preamble");
   ok(message.includes("you are this team's standing session"), "wake uses the TEAM container noun");
   ok(message.includes("Calibration for this team: RESERVED"), "an explicit reserved tier rides the preamble");
-  ok(message.includes(`<channel id="${TEAM}">`), "locus.channel = the team (the silo grain)");
+  ok(message.includes(`<channel id="${TEAM}" container="team">`), "locus.channel = the team (the silo grain); the S1 <channel container> attribute mirrors the TEAM noun (OPE-684)");
   ok(message.includes(`<thread ts="ENG-42">`), "locus.thread = the issue identifier (the conversation)");
   ok(message.includes(`trigger="true"`) && message.includes("can we ship the migration tomorrow?"), "the comment is the trigger message");
   ok(message.includes(UNTRUSTED_OPEN), "an UNVOUCHED author's comment body is untrusted-wrapped by the envelope");
@@ -91,7 +91,7 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
 {
   const plain = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger }), NOW);
   const unified = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger, unified: true }), NOW);
-  ok(unified.message.includes(`<channel platform="linear" id="${TEAM}">`), "unified wake stamps the <channel platform=\"linear\"> surface address");
+  ok(unified.message.includes(`<channel platform="linear" id="${TEAM}" container="team">`), "unified wake stamps the <channel platform=\"linear\"> surface address");
   ok(unified.message.includes("Cross-surface disclosure:"), "unified wake appends the P5 advisory disclosure to the judged preamble");
   ok(!plain.message.includes("platform=") && !plain.message.includes("Cross-surface disclosure"), "per-team wake carries NO platform attr / disclosure");
   const explicitOff = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger, unified: false }), NOW);
@@ -109,7 +109,7 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
   ok(message.includes(`<wake reason="mention"`), "direct-mention keeps the full judged envelope (reason=\"mention\")");
   ok(message.includes(`wake-id="${wakeId}"`), "the wake-id survives in the envelope — the reply tool echoes it (the only reply route on the unified channel)");
   ok(message.includes(`mention="true"`), "the trigger is flagged as a @mention (response-obligation signal)");
-  ok(message.includes(`<channel platform="linear" id="${TEAM}">`), "the surface address rides the unified addressed wake");
+  ok(message.includes(`<channel platform="linear" id="${TEAM}" container="team">`), "the surface address rides the unified addressed wake");
   ok(message.includes("Cross-surface disclosure:"), "the P5 cross-surface disclosure still rides the addressed wake");
   ok(message.includes(UNTRUSTED_OPEN), "an UNVOUCHED author's comment body is still untrusted-wrapped on the ADDRESSED path (W1 keys on the author there too)");
 

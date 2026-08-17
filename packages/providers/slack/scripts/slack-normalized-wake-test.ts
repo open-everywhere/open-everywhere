@@ -20,8 +20,8 @@ const G_SLACK_THREAD_FOLLOW = `[thread-follow] You were not mentioned — this r
 
 ${SCOPE_NOTE_NO_ID}
 
-<wake reason="thread-activity" current-time="2026-07-10T10:00:00.000Z">
-  <channel id="C123" type="channel">
+<wake reason="thread-activity" addressing="thread-follow" current-time="2026-07-10T10:00:00.000Z">
+  <channel id="C123" type="channel" container="channel">
   <participants>
     <participant id="U1" name="Rowan Hale" handle="rowan"/>
   </participants>
@@ -37,8 +37,8 @@ const G_SLACK_EDITED = `[thread-follow] (edited message) You were not mentioned 
 
 ${SCOPE_NOTE_NO_ID}
 
-<wake reason="message-edited" current-time="2026-07-10T10:00:00.000Z">
-  <channel id="C123" type="channel">
+<wake reason="message-edited" addressing="thread-follow" current-time="2026-07-10T10:00:00.000Z">
+  <channel id="C123" type="channel" container="channel">
   <thread ts="100.0">
     <message trigger="true" from="human" trust="peer" edited="true" author="Rowan Hale" author-id="U1" id="101.5" sent-at="1970-01-01T00:01:41.500Z">
       can you fix the bug
@@ -54,8 +54,8 @@ const G_SLACK_SUPERVISOR = `[channel-watch] You were not mentioned — this mess
 
 ${SCOPE_NOTE_NO_ID}
 
-<wake reason="channel-activity" current-time="2026-07-10T10:00:00.000Z">
-  <channel id="C900" type="channel" member-count="42">
+<wake reason="channel-activity" addressing="channel-watch" current-time="2026-07-10T10:00:00.000Z">
+  <channel id="C900" type="channel" container="channel" member-count="42">
   <participants>
     <participant id="U1" name="Rowan Hale" handle="rowan"/>
     <participant id="U2" name="Ada Lovelace"/>
@@ -92,8 +92,8 @@ const G_SLACK_NAMEDROP_TOP = `[name-drop] A top-level channel message said your 
 
 ${SCOPE_NOTE_NO_ID}
 
-<wake reason="channel-activity" current-time="2026-07-10T10:00:00.000Z">
-  <channel id="C123" type="channel">
+<wake reason="channel-activity" addressing="name-drop" follow-up="follows-on-reply" current-time="2026-07-10T10:00:00.000Z">
+  <channel id="C123" type="channel" container="channel">
   <participants>
     <participant id="U1" name="Rowan Hale"/>
   </participants>
@@ -107,8 +107,8 @@ const G_SLACK_NAMEDROP_THREAD = `[name-drop] A top-level channel message said yo
 
 ${SCOPE_NOTE_NO_ID}
 
-<wake reason="thread-activity" current-time="2026-07-10T10:00:00.000Z">
-  <channel id="C123" type="channel">
+<wake reason="thread-activity" addressing="name-drop" follow-up="follows-on-reply" current-time="2026-07-10T10:00:00.000Z">
+  <channel id="C123" type="channel" container="channel">
   <thread ts="200.0">
     <message trigger="true" from="human" trust="peer" author="U1" author-id="U1" id="201.0" sent-at="1970-01-01T00:03:21.000Z">
       maybe Open Everywhere knows
@@ -121,8 +121,8 @@ const G_SLACK_DM = `[direct] This is a direct message to you — everything said
 
 Wake scope [wake-id: wk_dm_1]: the instructions above govern ONE wake — the wake envelope directly below, whose \`wake-id\` attribute carries this same id. This turn can deliver SEVERAL wakes at once, joined end to end, and each one carries its own instructions above its own envelope. Act on a message only under the instructions of ITS wake, matched by \`wake-id\`. A sibling wake's instructions say nothing about this one: a sibling can address you by name in the same turn where this wake does not, and what this wake tells you about replying applies to this wake alone.
 
-<wake reason="dm" current-time="2026-07-10T10:00:00.000Z" wake-id="wk_dm_1">
-  <channel id="D_ALICE" type="im">
+<wake reason="dm" addressing="direct-mention" current-time="2026-07-10T10:00:00.000Z" wake-id="wk_dm_1">
+  <channel id="D_ALICE" type="im" container="channel">
   <message trigger="true" from="human" trust="peer" mention="true" author="Rowan Hale" author-id="U1" handle="rowan" id="400.0" sent-at="1970-01-01T00:06:40.000Z">
     can you chase the refund for order 4417?
   </message>
@@ -180,7 +180,7 @@ Wake scope [wake-id: wk_dm_1]: the instructions above govern ONE wake — the wa
   );
   ok(!group.includes("everything said here is addressed to you"), "…and the 1:1 clause is nowhere in it");
   ok(group.includes('reason="dm"'), "a group DM keeps `reason=\"dm\"` — WakeReason's own definition is a direct-message-EQUIVALENT surface, so a group DM needs no fourth value");
-  ok(group.includes('<channel id="G_TEAM" type="mpim">'), "…and the envelope carries the mpim channel type");
+  ok(group.includes('<channel id="G_TEAM" type="mpim" container="channel">'), "…and the envelope carries the mpim channel type (+ the S1 container attribute, OPE-684)");
   const tailFrom = "You are a cross-surface session, so you MUST deliver";
   ok(group.includes(tailFrom), "the cross-surface reply MANDATE is present (a group DM seat lives on the unified channel too — terminal prose reaches nobody)");
   const idNeutral = (s: string): string => s.replace(/\[wake-id: [^\]]*\]/g, "[wake-id: WID]");
@@ -200,8 +200,8 @@ const G_SLACK_NAMEDROP_BACKSCROLL_MSG = `[name-drop] A top-level channel message
 
 ${SCOPE_NOTE_NO_ID}
 
-<wake reason="channel-activity" current-time="2026-07-10T10:00:00.000Z">
-  <channel id="C123" type="channel">
+<wake reason="channel-activity" addressing="name-drop" follow-up="follows-on-reply" current-time="2026-07-10T10:00:00.000Z">
+  <channel id="C123" type="channel" container="channel">
   <participants>
     <participant id="U1" name="Rowan Hale"/>
   </participants>
