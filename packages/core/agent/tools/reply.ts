@@ -6,7 +6,8 @@ import { resolveReplyTarget, postReply, auditReplyRefused, type ReplyAudit, type
 import { replierLabelFor } from "../channels/turn-delivery.js";
 import { markRepliedThisTurn, markWakeDoneThisTurn, isWakeDoneThisTurn } from "../channels/reply-signal.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
-import { claimTasksForAddressedWake } from "../access/dispatch-origin-signal.js";
+import { addressedWakeThisTurn, claimTasksForAddressedWake } from "../access/dispatch-origin-signal.js";
+import { DELEGATION_PENDING_REFUSAL_REASON, delegationPendingRefusalMessage, pendingDelegationOwing } from "../access/pending-delegation-signal.js";
 import { retargetTaskWakes, taskWakeUnreadRefusalMessage, TASK_WAKE_UNREAD_REFUSAL_REASON } from "../channels/task-wake.js";
 import { uningressedTurn } from "../access/task-wake-signal.js";
 import { silentRoutineThisTurn } from "../routines/report.js";
@@ -55,7 +56,7 @@ const unifiedReplyEntry = defineTool({
         .optional()
         .default(true)
         .describe(
-          "Leave true (the default) to mark this wake answered. Once you mark a wake done, a further reply to that SAME wake in this same turn is REFUSED and posts nothing. Set false ONLY when you know you will reply to this same wake again later — e.g. you are reporting progress now and the full answer comes after delegated work finishes.",
+          "Leave true (the default) to mark this wake answered. Once you mark a wake done, a further reply to that SAME wake in this same turn is REFUSED and posts nothing. Set false ONLY when you know you will reply to this same wake again later — e.g. you are reporting progress now and the full answer comes after delegated work finishes. While a background worker you started this turn has not reported, `done: true` is REFUSED: you do not have its answer yet, so post a hand-off note with `done: false` and answer when the report arrives.",
         ),
     }),
     outputSchema: z.object({ posted: z.boolean(), id: z.string(), note: z.string() }),
@@ -84,6 +85,12 @@ const unifiedReplyEntry = defineTool({
       }
       const origin = resolution.origin;
 
+      const owingTask = pendingDelegationOwing(turnId, input.wake, addressedWakeThisTurn(turnId));
+      if (owingTask !== undefined && input.done !== false) {
+        await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), DELEGATION_PENDING_REFUSAL_REASON);
+        throw new Error(delegationPendingRefusalMessage());
+      }
+
       const id = await postUnifiedReply(origin, input.text, {}, replyAuditFor(ctx as BindableContext, "tool", input.wake), replierFor(bind));
       markRepliedThisTurn();
 
@@ -100,10 +107,14 @@ const unifiedReplyEntry = defineTool({
         input.done !== false
           ? " This wake is now ANSWERED — do not reply to it again in this turn; a second call is refused."
           : " This wake stays OPEN (`done:false`) — reply to it again when the rest of the answer is ready.";
+      const pendingNote =
+        owingTask !== undefined
+          ? " Your background worker for this conversation has NOT reported yet, so you do not have the answer it was asked for — never write that answer out yourself; report what the worker returns."
+          : "";
       return {
         posted: true,
         id,
-        note: `Turn reply requirement satisfied — posted to ${origin.platform}.${doneNote} Keep working if needed; your terminal prose is still discarded.`,
+        note: `Turn reply requirement satisfied — posted to ${origin.platform}.${doneNote}${pendingNote} Keep working if needed; your terminal prose is still discarded.`,
       };
     },
 });
