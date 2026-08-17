@@ -5,16 +5,19 @@ import { bindFrom } from "../identity/binding.js";
 import { adminStandingSubject } from "../access/admin-standing.js";
 import { getConfig } from "../access/config.js";
 import { adminControlRoles } from "../access/roles.js";
+import { requireAdminReadVenue } from "../access/admin-read-venue.js";
 import { memoryListView } from "../control/views.js";
 
 export default defineTool({
   description:
-    'ADMIN ONLY: enumerate every memory silo you are allowed to inspect — org -> domains -> silos -> files, with sizes — from ANY channel or DM, not just the one you\'re speaking in right now (unlike the memory index the base instruction reads, which only ever shows THIS channel\'s armed silo(s)). Org admins see every eligible silo; domain admins see only the silos an explicit domain of theirs references. DM/personal memory and any silo referenced only by the org/public/dm pseudo-domains stay excluded, even for an org admin — same fail-closed privacy rule as the out-of-band control plane. Read-only; pass "silo" to see one silo\'s files, omit it to see everything you cover.',
+    'ADMIN ONLY: enumerate every memory silo you are allowed to inspect — org -> domains -> silos -> files, with sizes. Two fences apply. ROLE: org admins cover every eligible silo, domain admins only the silos an explicit domain of theirs references. VENUE: the ORG-WIDE listing answers only in the governance channel or in a DM with the asker; in any other channel it is narrowed to that channel\'s own domain, or redirected. DM/personal memory and any silo referenced only by the org/public/dm pseudo-domains stay excluded, even for an org admin — same fail-closed privacy rule as the out-of-band control plane. Read-only; pass "silo" to see one silo\'s files, omit it to see everything you cover.',
   inputSchema: z.object({
     silo: z.string().optional().describe("Narrow to one silo's files (a name from a prior call). Omit to list every silo you cover."),
   }),
   outputSchema: z.object({
     org: z.string(),
+    scope: z.enum(["org-wide", "domain-scoped"]),
+    note: z.string().optional(),
     tiers: z.array(
       z.object({
         silo: z.string(),
@@ -42,13 +45,18 @@ export default defineTool({
       );
     }
 
-    const result = await memoryListView(binding.org, roles);
-    if (!input.silo) return result;
+    const venue = await requireAdminReadVenue(ctx, { roles, principalId: caller, kind: "memory.admin_list" });
+    const effective = venue.roles;
+    const scope = venue.decision.placement === "org-wide" ? ("org-wide" as const) : ("domain-scoped" as const);
+    const framing = { scope, ...(venue.note ? { note: venue.note } : {}) };
+
+    const result = await memoryListView(binding.org, effective);
+    if (!input.silo) return { ...result, ...framing };
 
     const tiers = result.tiers.filter((t) => t.silo === input.silo);
     if (tiers.length === 0) {
-      throw new Error(`no memory silo named "${input.silo}" among the ones your roles cover (call memory_admin_list with no "silo" to see what you can reach).`);
+      throw new Error(`no memory silo named "${input.silo}" among the ones your roles cover in this room (call memory_admin_list with no "silo" to see what you can reach here).`);
     }
-    return { org: result.org, tiers };
+    return { org: result.org, tiers, ...framing };
   },
 });

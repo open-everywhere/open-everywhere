@@ -198,6 +198,50 @@ console.log("2c. dispatchTaskWindow who-asked stamp (OPE-675):");
   ok(received[0].auth.attributes?.[OE_GRAIN_ATTR] === "task", "negative control: the fixture does carry a stamped attribute through, so the overwrite assertions are not vacuous");
 }
 
+console.log("2d. dispatchTaskWindow candidate-set stamp (OPE-683):");
+{
+  const { OE_REQUESTER_ATTR, OE_REQUESTER_CANDIDATES_ATTR, REQUESTER_UNVERIFIED } = await import("../agent/access/requester-identity.js");
+
+  received.length = 0;
+  await dispatchTaskWindow({
+    token: taskToken,
+    message: "do the thing",
+    wakeId: mintWakeId(),
+    domain: "payments",
+    origin: slackOrigin,
+    parentAuthAttributes: { [OE_REQUESTER_CANDIDATES_ATTR]: JSON.stringify(["U_ORG_A", "U_ORG_B"]) },
+    tainted: false,
+  });
+  ok(
+    received[0].auth.attributes?.[OE_REQUESTER_CANDIDATES_ATTR] === undefined,
+    "🔴 a stale candidate list forwarded in the parent's bag is DELETED, never forwarded — the all-candidates rule must not read another turn's askers",
+  );
+  eq(
+    received[0].auth.attributes?.[OE_REQUESTER_ATTR],
+    REQUESTER_UNVERIFIED,
+    "…while the who-asked stamp beside it is still written, so the worker refuses rather than reading its own brief",
+  );
+
+  received.length = 0;
+  await dispatchTaskWindow({
+    token: taskToken,
+    message: "do the thing",
+    wakeId: mintWakeId(),
+    domain: "payments",
+    origin: slackOrigin,
+    parentAuthAttributes: { [OE_REQUESTER_CANDIDATES_ATTR]: JSON.stringify(["U_ORG_A", "U_ORG_B"]), oe_unrelated_probe: "kept" },
+    tainted: false,
+  });
+  ok(
+    received[0].auth.attributes?.["oe_unrelated_probe"] === "kept",
+    "negative control: an unrelated forwarded attribute DOES survive the dispatch, so the delete above is targeted rather than vacuous",
+  );
+  ok(
+    received[0].auth.attributes?.[OE_REQUESTER_CANDIDATES_ATTR] === undefined,
+    "…and the candidate list is still gone in the same delivery — the delete is specific to the permissive key",
+  );
+}
+
 console.log("3. spawn_task structural guards:");
 const standingCtx = { channel: { kind: "unified", continuationToken: unifiedSupervisorToken("payments", 1) }, session: { auth: { current: { attributes: {} } } } };
 const tool = (await resolveWindowGated(spawnTask, standingCtx as never)) as { execute: (input: { brief: string; thread?: string }, ctx: unknown) => Promise<unknown> };

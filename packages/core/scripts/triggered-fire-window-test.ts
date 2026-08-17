@@ -28,7 +28,7 @@ const { standingSeatRegistryKey, unifiedWindowFromToken } = await import("../age
 const { windowGrainOf } = await import("../agent/identity/binding.js");
 const { FULL_KIT, WINDOW_GATED_TOOLS, memoryRecallRouteFor } = await import("../agent/access/window-gate-manifest.js");
 const { OE_GRAIN_ATTR, OE_ADDRESSING_ATTR, resolveAnswerableReplyTarget, mintWakeId } = await import("../agent/channels/unified-window.js");
-const { OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED } = await import("../agent/access/requester-identity.js");
+const { OE_REQUESTER_ATTR, OE_REQUESTER_CANDIDATES_ATTR, REQUESTER_UNVERIFIED } = await import("../agent/access/requester-identity.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { ROUTINE_MARKER, routineMarker } = await import("../agent/routines/routine.js");
@@ -249,13 +249,13 @@ function routine(over: Partial<Routine> & Pick<Routine, "id">): Routine {
   };
 }
 
-async function tick(now: Date, to: unknown): Promise<void> {
+async function tick(now: Date, to: unknown, appAttrs: Record<string, unknown> = {}): Promise<void> {
   const pending: Promise<unknown>[] = [];
   await dispatch.dispatchTick({
     now,
     to,
     waitUntil: (p: Promise<unknown>) => void pending.push(p),
-    appAuth: { attributes: {} },
+    appAuth: { attributes: appAttrs },
     postJobKickoff: async () => "1700000000.0001",
   } as never);
   await Promise.all(pending);
@@ -280,6 +280,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
   ok(d.attrs["channel_id"] === CHAN && d.attrs["team_id"] === TEAM, "clock: the platform identity attributes still ride (partition/spend binding unmoved)");
   ok(d.attrs["trust_checked"] === "true", "clock: the LIVE per-fire trust recheck still rides");
   ok(d.attrs[OE_REQUESTER_ATTR] === REQUESTER_UNVERIFIED, "clock: the fire stamps `oe_requester: oe/unverified` — a fire names no asker, out loud");
+  ok(d.attrs[OE_REQUESTER_CANDIDATES_ATTR] === undefined, "clock: the fire carries NO candidate set — it names nobody, so the all-candidates rule must refuse it");
 
   const origin = await store.getUnifiedWakeTarget(ORG, target.wakeId);
   ok(origin !== null, "clock/ANSWERABLE: a durable `wakeId → origin` row exists (pre-fix this write never happened at all)");
@@ -287,6 +288,27 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
   ok(resolved.ok && resolved.origin.platform === "slack", "clock/ANSWERABLE: the unified `reply` fence RESOLVES the fire's own wake to its origin");
   ok(resolved.ok && (resolved.origin as { channelId: string }).channelId === CHAN, "clock/ANSWERABLE: it resolves to the channel the routine posts in");
   await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-clock");
+}
+
+{
+  overrideSettingsForTest({ delegation: { oneshotAgent: true } });
+  await routineStore.addRoutine({} as never, routine({ id: "r-stale-candidates" }));
+  const { seen, to } = captureReceive();
+  await tick(NOW, to, { [OE_REQUESTER_CANDIDATES_ATTR]: JSON.stringify(["U_ORG_A", "U_ORG_B"]), oe_unrelated_probe: "kept" });
+  ok(seen.length === 1 && seen[0].unified, "stale-candidates: the fire still diverts into the window (the leg is exercising the divert path)");
+  ok(
+    seen[0].attrs[OE_REQUESTER_CANDIDATES_ATTR] === undefined,
+    "🔴 stale-candidates: a candidate list already in the forwarded app bag is DELETED — a fire may never be served on another turn's askers",
+  );
+  ok(
+    seen[0].attrs[OE_REQUESTER_ATTR] === REQUESTER_UNVERIFIED,
+    "…while the who-asked stamp beside it is still written, so the refusal stays honest rather than silent",
+  );
+  ok(
+    seen[0].attrs["oe_unrelated_probe"] === "kept",
+    "negative control: an unrelated forwarded attribute DOES survive the fire, so the delete above is targeted rather than a bag that drops everything",
+  );
+  await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-stale-candidates");
 }
 
 {

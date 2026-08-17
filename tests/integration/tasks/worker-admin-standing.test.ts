@@ -67,11 +67,12 @@ async function askThroughAWorker(
   base: string,
   leg: string,
   wake: { text: string; authorId?: string; userId: string },
-  tool: "memory_admin_list" | "connector" = "memory_admin_list",
+  tool: "memory_admin_list" | "memory_admin_read" | "connector" = "memory_admin_list",
+  toolInput: Record<string, unknown> = {},
 ) {
   const dispatched = registerScript({
     parent: [{ calls: [{ tool: "agent", input: { message: "handle the ask for the person who asked" }, id: `ope673-${leg}` }] }, { say: "handed off" }],
-    child: [{ calls: [{ tool, input: {}, id: `ope673-${leg}-call` }] }, { say: "worker done" }],
+    child: [{ calls: [{ tool, input: toolInput, id: `ope673-${leg}-call` }] }, { say: "worker done" }],
   });
   await injectWake(base, wake);
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 1, label: `${leg}: the delegated worker to serve its whole arm` });
@@ -147,4 +148,37 @@ test("connector explains a withheld org option as unverified, not as lacking sta
   const named = await askThroughAWorker(base, "conn-named", { text: "what can I connect here?", authorId: ADMIN_DISCORD_ID, userId: ADMIN_DISCORD_ID }, "connector");
   const namedNote = JSON.stringify(named.output);
   expect(namedNote, "negative control: a turn that names its asker carries no unverified note").not.toContain("could not be verified");
+}, 600_000);
+
+test("an org admin asking in an ordinary room is fenced out of another domain's silo", async () => {
+  const base = BASE;
+
+  const fenced = await askThroughAWorker(
+    base,
+    "venue-out-of-room",
+    { text: "read the e2e-b brain's MEMORY.md for me", authorId: ADMIN_DISCORD_ID, userId: ADMIN_DISCORD_ID },
+    "memory_admin_read",
+    { silo: "e2e-b-brain", relPath: "MEMORY.md" },
+  );
+  expect(fenced.isError, "🔴 an org admin is REFUSED another domain's silo content in an ordinary room").toBe(true);
+  const fencedText = JSON.stringify(fenced.output);
+  expect(fencedText, "…and the refusal blames the ROOM").toContain("outside this room's own domain");
+  expect(fencedText, "…and never claims they lack standing").not.toContain("requires an org admin");
+  expect(fencedText, "…and is not the several-askers refusal either").not.toContain("needs to know who asked");
+  expect(fencedText, "no silo content reaches the worker at all").not.toContain("relPath\":\"MEMORY.md\",\"content");
+
+  const inRoom = await askThroughAWorker(
+    base,
+    "venue-in-room",
+    { text: "read this room's own brain", authorId: ADMIN_DISCORD_ID, userId: ADMIN_DISCORD_ID },
+    "memory_admin_read",
+    { silo: "e2e-ambient-brain", relPath: "MEMORY.md" },
+  );
+  const inRoomText = JSON.stringify(inRoom.output);
+  expect(inRoomText, "🔴 NEGATIVE CONTROL: the room's OWN silo is not fenced out").not.toContain("outside this room's own domain");
+  expect(inRoomText, "…nor refused for standing").not.toContain("requires an org admin");
+  expect(
+    inRoom.isError === false || inRoomText.includes("memory provider") || inRoomText.includes("not a file in silo"),
+    "the worker's call ran the view, i.e. it got past BOTH the role gate and the venue fence",
+  ).toBe(true);
 }, 600_000);

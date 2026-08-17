@@ -26,7 +26,12 @@ import { resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "./thre
 import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { INVOKER_POSTURE_ATTR } from "../access/invoker-posture.js";
 import { currentInvokerPosture } from "../access/invoker-posture-state.js";
-import { OE_REQUESTER_ATTR, requesterStampForDispatch } from "../access/requester-identity.js";
+import {
+  OE_REQUESTER_ATTR,
+  OE_REQUESTER_CANDIDATES_ATTR,
+  requesterCandidatesStampForDispatch,
+  requesterStampForDispatch,
+} from "../access/requester-identity.js";
 import { sourcesForWindow } from "./window-sources.js";
 import { finalMessageActionForTurn, replierLabelFor } from "./turn-delivery.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
@@ -657,6 +662,9 @@ export async function dispatchTaskWindow(input: {
   if (input.taskLabel) attributes[OE_TASK_LABEL_ATTR] = input.taskLabel;
   attributes[INVOKER_POSTURE_ATTR] = currentInvokerPosture();
   attributes[OE_REQUESTER_ATTR] = requesterStampForDispatch(input.turnId);
+  const requesterCandidates = requesterCandidatesStampForDispatch(input.turnId);
+  if (requesterCandidates !== undefined) attributes[OE_REQUESTER_CANDIDATES_ATTR] = requesterCandidates;
+  else delete attributes[OE_REQUESTER_CANDIDATES_ATTR];
   if (input.tainted) attributes[OE_SPAWN_TAINTED_ATTR] = "true";
   await deliverUnifiedDispatch({
     message: input.message,
