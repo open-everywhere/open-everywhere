@@ -8,7 +8,7 @@ import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
 import { REDELIVERY_SIGNATURE, REDELIVERY_STORM_THRESHOLD, RedeliveryStormGuard } from "./redelivery-storm-guard";
 
 import { registerScript, type RecordedRequest, type ScriptedHandle, type SeatScript } from "../../agent/model/scripted-model";
-export { registerScript, type RecordedRequest, type ResolveObservation, type ScriptedHandle, type ScriptedStep, type SeatScript } from "../../agent/model/scripted-model";
+export { registerScript, type RecordedRequest, type ResolveObservation, type ScriptedHandle, type ScriptedStep, type SeatScript, type ToolDefinitionRecord } from "../../agent/model/scripted-model";
 export { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
 export { REPLAYED_DELIVERY_CALLER_BODY } from "@open-everywhere/core/agent/webhooks/replay-dedupe.js";
 export { installSlackWebApiStub, type SlackApiCall, type SlackApiResponder, type SlackWebApiStub } from "./slack-web-api";

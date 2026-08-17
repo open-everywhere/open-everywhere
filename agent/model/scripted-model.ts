@@ -39,6 +39,12 @@ export interface RecordedToolResult {
   readonly output: unknown;
 }
 
+export interface ToolDefinitionRecord {
+  readonly name: string;
+  readonly description?: string;
+  readonly inputSchema?: unknown;
+}
+
 export interface RecordedRequest {
   readonly role: ScriptedRole;
   readonly sessionId: string | undefined;
@@ -46,6 +52,7 @@ export interface RecordedRequest {
   readonly stepIndex: number;
   readonly pid: number;
   readonly tools: readonly string[];
+  readonly toolDefinitions: readonly ToolDefinitionRecord[];
   readonly toolResults: readonly RecordedToolResult[];
   readonly messages: readonly { readonly role: string; readonly text: string }[];
   readonly fault?: string;

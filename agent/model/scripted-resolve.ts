@@ -89,6 +89,14 @@ export function scriptedModelFor(event: unknown, ctx: unknown): ReturnType<typeo
   return buildStepModel(entry, observation);
 }
 
+function snapshotSchema(schema: unknown): unknown {
+  try {
+    return JSON.parse(JSON.stringify(schema)) as unknown;
+  } catch {
+    return schema;
+  }
+}
+
 function stepIndexFor(arm: readonly ScriptedStep[], answered: number): number | string {
   let before = 0;
   for (let i = 0; i < arm.length; i++) {
@@ -129,6 +137,11 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation): ReturnTyp
         stepIndex: served,
         pid: process.pid,
         tools: request.tools.map((t) => t.name),
+        toolDefinitions: request.tools.map((t) => ({
+          name: t.name,
+          ...(t.description !== undefined ? { description: t.description } : {}),
+          ...(t.inputSchema !== undefined ? { inputSchema: snapshotSchema(t.inputSchema) } : {}),
+        })),
         toolResults: request.toolResults.map((r) => ({ name: r.name, isError: r.isError, output: r.output })),
         messages: request.messages.map((m) => ({ role: m.role, text: m.text })),
         ...(fault !== undefined ? { fault } : {}),
