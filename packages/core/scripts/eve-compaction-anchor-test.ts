@@ -308,7 +308,191 @@ function mockModel(): { model: MockLanguageModelV4; calls: () => number } {
     console.warn = realWarn;
   }
 }
+const toolLoopPath = join(eveRoot, "dist/src/harness/tool-loop.js");
+const toolLoopSrc = readFileSync(toolLoopPath, "utf8");
+
+const REDUCED_DEF =
+  "function __oeCompactionReduced(e,t){return t!==e&&(t.length!==e.length||JSON.stringify(t)!==JSON.stringify(e))}";
+const WITH_REDUCED_DEF = "function __oeWithReduced(e,t){return{...e,data:{...e.data,reduced:t}}}";
+
+ok(toolLoopSrc.includes(REDUCED_DEF), "event-wiring: __oeCompactionReduced is byte-exact in the installed tool loop");
+ok(toolLoopSrc.includes(WITH_REDUCED_DEF), "event-wiring: __oeWithReduced is byte-exact in the installed tool loop");
+ok(
+  toolLoopSrc.indexOf(REDUCED_DEF) < toolLoopSrc.indexOf(END),
+  "event-wiring: the OPE-697 helpers live inside the OE helper block, not loose in eve's bytes",
+);
+ok(
+  toolLoopSrc.includes(
+    'function __oeProjectToolSet(ts){const h=globalThis.__oeToolResultProjection;if(typeof h==="function")h(ts);return ts}',
+  ),
+  "event-wiring: the OPE-73 untrusted-projection hook is still byte-exact beside the OPE-697 helpers",
+);
+ok(
+  /__oeRed=__oeCompactionReduced\([A-Za-z_$]{1,2}\.messages,[A-Za-z_$]{1,2}=await compactMessages\(/.test(toolLoopSrc),
+  "event-wiring: the flag is computed from the INPUT list at the compactMessages call site",
+);
+ok(
+  /await [A-Za-z_$]{1,2}\(__oeWithReduced\(createCompactionCompletedEvent\(/.test(toolLoopSrc),
+  "event-wiring: the emitted compaction.completed event is the stamped one",
+);
+ok(
+  (toolLoopSrc.match(/createCompactionCompletedEvent\(/g) ?? []).length === 1,
+  "event-wiring: there is exactly one compaction.completed emission, so no path can emit an unstamped event",
+);
+ok((toolLoopSrc.match(/__oeWithReduced\(/g) ?? []).length === 2, "event-wiring: one __oeWithReduced definition and one call site");
+
+const isReduced = new Function(`${REDUCED_DEF}\nreturn __oeCompactionReduced;`)() as (
+  before: readonly Msg[],
+  after: readonly Msg[],
+) => boolean;
+{
+  const list: Msg[] = [{ role: "user", content: "a" }];
+  ok(isReduced(list, list) === false, "reduced-drive: the same array instance is NOT a reduction");
+  ok(isReduced(list, [{ role: "user", content: "a" }]) === false, "reduced-drive: an equal-by-value copy is NOT a reduction");
+  ok(isReduced(list, []) === true, "reduced-drive: a shorter list IS a reduction");
+  ok(isReduced(list, [{ role: "user", content: "b" }]) === true, "reduced-drive: a same-length list with changed content IS a reduction");
+}
+
+const MC_START = "async function maybeCompact(";
+const MC_END = "function resolveApprovalKeyFromTools(";
+const mcStart = toolLoopSrc.indexOf(MC_START);
+const mcEnd = toolLoopSrc.indexOf(MC_END);
+ok(mcStart !== -1 && mcEnd > mcStart, "event-honesty: maybeCompact is extractable from the installed bytes by its unminified name");
+const maybeCompactSrc = toolLoopSrc.slice(mcStart, mcEnd);
+ok(
+  (maybeCompactSrc.match(/async function maybeCompact\(/g) ?? []).length === 1,
+  "event-honesty: the extracted slice holds exactly one maybeCompact definition",
+);
+
+const { createCompactionCompletedEvent, createCompactionRequestedEvent } = (await import(
+  pathToFileURL(join(eveRoot, "dist/src/protocol/message.js")).href
+)) as unknown as {
+  createCompactionCompletedEvent(input: { modelId: string; sequence: number; sessionId: string; turnId: string }): {
+    data: Record<string, unknown>;
+    type: string;
+  };
+  createCompactionRequestedEvent(input: Record<string, unknown>): { data: Record<string, unknown>; type: string };
+};
+
+const withReduced = new Function(`${WITH_REDUCED_DEF}\nreturn __oeWithReduced;`)() as (
+  event: { data: Record<string, unknown>; type: string },
+  reduced: boolean,
+) => { data: Record<string, unknown>; type: string };
+
+interface Emitted {
+  data: Record<string, unknown>;
+  type: string;
+}
+type WorkStep = (messages: Msg[]) => Msg[];
+
+function driveMaybeCompact(work: WorkStep, onCompaction?: () => Msg[]): Promise<Emitted[]> {
+  const events: Emitted[] = [];
+  const factory = new Function(
+    "shouldCompact",
+    "resolveCompactionModel",
+    "requireSessionModelReference",
+    "createCompactionRequestedEvent",
+    "createCompactionCompletedEvent",
+    "formatLanguageModelGatewayId",
+    "getInputTokenCount",
+    "compactMessages",
+    "buildGatewayAttributionHeaders",
+    "__oeCompactionReduced",
+    "__oeWithReduced",
+    `${maybeCompactSrc}\nreturn maybeCompact;`,
+  ) as (...deps: unknown[]) => (input: Record<string, unknown>) => Promise<{ messages: Msg[] }>;
+
+  const maybeCompact = factory(
+    () => true,
+    async () => ({ model: { modelId: "stub" }, providerOptions: undefined }),
+    () => ({ modelId: "stub" }),
+    createCompactionRequestedEvent,
+    createCompactionCompletedEvent,
+    () => "stub/model",
+    () => 999,
+    async (messages: Msg[]) => work(messages),
+    () => undefined,
+    isReduced,
+    withReduced,
+  );
+
+  return maybeCompact({
+    emissionState: { sequence: 1, turnId: "turn-1" },
+    emit: (event: Emitted) => {
+      events.push(event);
+    },
+    messages: [
+      { role: "user", content: "one" },
+      { role: "assistant", content: "two" },
+      { role: "user", content: "three" },
+    ],
+    model: { modelId: "stub" },
+    onCompaction,
+    resolveModel: async () => ({ modelId: "stub" }),
+    session: {
+      agent: {},
+      compaction: { recentWindowSize: 2, threshold: THRESHOLD },
+      sessionId: "s-1",
+    },
+  }).then(() => events);
+}
+
+function completedEvent(events: Emitted[]): Emitted {
+  const found = events.find((e) => e.type === "compaction.completed");
+  assert.ok(found, "no compaction.completed event was emitted at all");
+  return found;
+}
+
+{
+  const events = await driveMaybeCompact(() => [{ role: "user", content: "SUMMARY" }]);
+  ok(events.some((e) => e.type === "compaction.requested"), "event-honesty: the requested event still fires (contract unchanged)");
+  const completed = completedEvent(events);
+  ok("reduced" in completed.data, "event-honesty: a real compaction carries the reduced field at all");
+  ok(completed.data.reduced === true, "event-honesty: a real compaction reports reduced === true");
+  ok(completed.data.sessionId === "s-1" && completed.data.turnId === "turn-1", "event-honesty: the stamp preserves the original payload");
+  ok(completed.type === "compaction.completed", "event-honesty: the stamp does not change the event kind");
+}
+{
+  const events = await driveMaybeCompact((messages) => messages);
+  ok(events.some((e) => e.type === "compaction.requested"), "event-honesty: a no-op still emits requested — no suppression");
+  ok(events.some((e) => e.type === "compaction.completed"), "event-honesty: a no-op still emits completed — no consumer can hang");
+  const completed = completedEvent(events);
+  ok("reduced" in completed.data, "event-honesty: a no-op carries the reduced field rather than omitting it");
+  ok(completed.data.reduced === false, "event-honesty: a no-op reports reduced === false");
+}
+{
+  const events = await driveMaybeCompact((messages) => messages.map((m) => ({ ...m })));
+  ok(completedEvent(events).data.reduced === false, "event-honesty: an equal-by-value copy reports reduced === false");
+}
+{
+  const events = await driveMaybeCompact(
+    (messages) => messages.map((m) => ({ ...m })),
+    () => [{ role: "assistant", content: "appended after compaction" }],
+  );
+  ok(
+    completedEvent(events).data.reduced === false,
+    "event-honesty: an equal-by-value no-op whose onCompaction() appended a message STILL reports reduced === false",
+  );
+}
+{
+  const events = await driveMaybeCompact(
+    (messages) => messages,
+    () => [{ role: "assistant", content: "appended after compaction" }],
+  );
+  ok(
+    completedEvent(events).data.reduced === false,
+    "event-honesty: an identity no-op whose onCompaction() appended a message STILL reports reduced === false",
+  );
+}
+{
+  const events = await driveMaybeCompact(
+    () => [{ role: "user", content: "SUMMARY" }],
+    () => [{ role: "assistant", content: "appended after compaction" }],
+  );
+  ok(completedEvent(events).data.reduced === true, "event-honesty: a real reduction with an appended message still reports true");
+}
 
 console.log(
-  `\n✓ eve-compaction-anchor: ${n} assertions passed (presence, wiring, premise, reduces, fast-path, tool-cap, no-usage, anchor-drive, guard-drive)\n`,
+  `\n✓ eve-compaction-anchor: ${n} assertions passed (presence, wiring, premise, reduces, fast-path, tool-cap, no-usage, ` +
+    `anchor-drive, guard-drive, event-wiring, reduced-drive, event-honesty)\n`,
 );

@@ -209,6 +209,10 @@ for (const eveDir of copies) {
     src.includes("__oeProjectToolSet"),
     `copies: ${where} carries the __oeProjectToolSet hook (OPE-73) — an unpatched copy means authored toModelOutput is dropped on session-mounted dynamic tools, so untrusted-content envelopes never reach the model (prompt-injection containment regression)`,
   );
+  ok(
+    src.includes("__oeCompactionReduced(") && src.includes("__oeWithReduced("),
+    `copies: ${where} carries the compaction event-contract stamp (OPE-697, __oeCompactionReduced + __oeWithReduced) — without it maybeCompact emits compaction.completed with no \`reduced\` field, so a pass that returned the history unchanged is indistinguishable from a real summary`,
+  );
   const compactionFile = join(eveDir, COMPACTION);
   ok(
     existsSync(compactionFile),
@@ -248,5 +252,5 @@ for (const eveDir of copies) {
 }
 
 console.log(
-  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} the OE projection hook, the compaction trigger anchor and its no-op backstop, all ${CARRIAGE.length} turnPolicy restore hunks and all ${SEMANTICS.length} HITL-answer semantics, and none of the ${RETIRED.length} retired symbols)\n`,
+  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} the OE projection hook, the compaction trigger anchor, its no-op backstop, the compaction event-contract stamp, all ${CARRIAGE.length} turnPolicy restore hunks and all ${SEMANTICS.length} HITL-answer semantics, and none of the ${RETIRED.length} retired symbols)\n`,
 );
