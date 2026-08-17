@@ -202,6 +202,9 @@ async function main(): Promise<void> {
     console.log(`suite=${suiteSel}${surfaceFilter.size > 0 ? `; surfaces=${[...surfaceFilter].join(",")}` : ""}`);
   }
 
+  const includeExpensive = process.argv.includes("--include-expensive") || (process.env.E2E_INCLUDE_EXPENSIVE ?? "").trim() === "1";
+  if (includeExpensive) console.log("expensive legs: included (--include-expensive / E2E_INCLUDE_EXPENSIVE=1)");
+
   for (const scenario of SCENARIOS) {
     if (only.size > 0 && !only.has(scenario.id.toUpperCase())) {
       skipped++;
@@ -221,11 +224,12 @@ async function main(): Promise<void> {
       console.log(`– ${scenario.id} ${scenario.title}: skipped (surface ${scenario.surface} not in E2E_SURFACES)`);
       continue;
     }
-    const category = skipCategory(scenario, report.available, effectiveIncludeOptional);
+    const explicitlyNamed = only.has(scenario.id.toUpperCase());
+    const category = skipCategory(scenario, report.available, effectiveIncludeOptional, explicitlyNamed, includeExpensive);
     if (category !== undefined) {
       skipped++;
       skipCounts[category]++;
-      const reason = skipReason(scenario, report.available, report.missing, effectiveIncludeOptional)!;
+      const reason = skipReason(scenario, report.available, report.missing, effectiveIncludeOptional, explicitlyNamed, includeExpensive)!;
       console.log(`– ${scenario.id} ${scenario.title}: skipped (${reason})`);
       continue;
     }

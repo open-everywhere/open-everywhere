@@ -4,6 +4,7 @@ export type SkipKind =
   | "filtered-surface"
   | "missing-capability"
   | "optional-not-included"
+  | "expensive-not-included"
   | "scenario-self-skip";
 
 export const SKIP_KINDS: readonly SkipKind[] = [
@@ -12,6 +13,7 @@ export const SKIP_KINDS: readonly SkipKind[] = [
   "filtered-surface",
   "missing-capability",
   "optional-not-included",
+  "expensive-not-included",
   "scenario-self-skip",
 ];
 
