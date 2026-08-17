@@ -56,7 +56,7 @@ const SLACK_SIGNING_SECRET = randomBytes(32).toString("hex");
 
 const NOTION_WEBHOOK_SECRET = randomBytes(32).toString("hex");
 
-process.env.OE_CREDENTIAL_ENCRYPTION_KEY ??= randomBytes(32).toString("base64");
+const CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 
 const DISCORD_APP_KEYS = (() => {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
@@ -137,6 +137,7 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   process.env.OE_WEBHOOK_E2E_SECRET = WEBHOOK_E2E_SECRET;
   process.env.SLACK_SIGNING_SECRET = SLACK_SIGNING_SECRET;
   process.env.NOTION_WEBHOOK_SECRET = NOTION_WEBHOOK_SECRET;
+  process.env.OE_CREDENTIAL_ENCRYPTION_KEY ??= CREDENTIAL_ENCRYPTION_KEY;
   if (process.env.DISCORD_PUBLIC_KEY === undefined) process.env.DISCORD_PUBLIC_KEY = DISCORD_APP_KEYS.publicKeyHex;
   if (opts.sharedSqlite === true) {
     process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
