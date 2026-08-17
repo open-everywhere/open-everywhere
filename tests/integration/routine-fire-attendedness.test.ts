@@ -26,6 +26,11 @@ const CREATOR = "U0FIRECREATOR";
 const TEAM = "T0ITFIRE";
 const CHANNEL = "C0ITFIRE";
 const DISCORD_UNLISTED = "9000000000000000777";
+const BRIDGE_CHANNEL = "C0EXCHAN003";
+
+function isBridgeSurfaceFor(surface: string | undefined, channel: string): boolean {
+  return typeof surface === "string" && surface.includes(channel);
+}
 
 function proposeSpendLimit(): SeatScript {
   return {
@@ -111,7 +116,7 @@ test("a routine fire's reply.post row keeps the schedule app as AUTHOR and adds 
 
   const reply = await waitFor(async () => {
     const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
-    return rows.find((r) => r.detail?.chars === sayText.length);
+    return rows.find((r) => r.detail?.chars === sayText.length && r.surface === CHANNEL);
   }, "the routine fire's reply.post row (terminal route)", 150_000);
 
   expect(reply.detail?.route).toBe("terminal");
@@ -126,8 +131,8 @@ test("a routine fire's reply.post row keeps the schedule app as AUTHOR and adds 
   const sinceIso = new Date(Date.now() - 5_000).toISOString();
 
   await seedDueRoutine({
-    surfaceKey: "slack/T0EXAMPLE/C0EXCHAN003",
-    channelId: "C0EXCHAN003",
+    surfaceKey: `slack/T0EXAMPLE/${BRIDGE_CHANNEL}`,
+    channelId: BRIDGE_CHANNEL,
     prompt: "say something short",
     createdBy: CREATOR,
   });
@@ -135,12 +140,57 @@ test("a routine fire's reply.post row keeps the schedule app as AUTHOR and adds 
 
   const reply = await waitFor(async () => {
     const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
-    return rows.find((r) => r.detail?.chars === sayText.length);
+    return rows.find((r) => r.detail?.chars === sayText.length && isBridgeSurfaceFor(r.surface, BRIDGE_CHANNEL));
   }, "the routine fire's reply.post row (bridge route)", 150_000);
 
   expect(reply.detail?.route).toBe("bridge");
   expect(reply.principalId).toBe("eve:app");
   expect(reply.detail?.creatorId).toBe(CREATOR);
+});
+
+test("OPE-702 — a chars-only reply.post match is ambiguous across channels; surface scoping resolves it", async () => {
+  await bootAgent({ sharedSqlite: true });
+  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+
+  const decoyCore = "oe-702 decoy (terminal route, fired first)";
+  const realCore = "oe-702 real reply (bridge route, fired second)";
+  const padLen = Math.max(decoyCore.length, realCore.length) + 3;
+  const decoyText = decoyCore.padEnd(padLen, ".");
+  const realText = realCore.padEnd(padLen, ".");
+  expect(decoyText.length).toBe(realText.length);
+
+  const decoyHandle = registerScript({ parent: [{ say: decoyText }] });
+  await seedDueRoutine({ surfaceKey: `slack/${TEAM}/${CHANNEL}`, channelId: CHANNEL, prompt: "say something", createdBy: CREATOR });
+  expect((await runRoutineDispatchTick()).length).toBeGreaterThan(0);
+  const decoyRow = await waitFor(async () => {
+    const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+    return rows.find((r) => r.surface === CHANNEL && r.detail?.chars === decoyText.length);
+  }, "the decoy terminal-route reply.post row", 150_000);
+  expect(decoyRow.detail?.route).toBe("terminal");
+  decoyHandle.dispose();
+
+  disposeLater(registerScript({ parent: [{ say: realText }] }));
+  await seedDueRoutine({
+    surfaceKey: `slack/T0EXAMPLE/${BRIDGE_CHANNEL}`,
+    channelId: BRIDGE_CHANNEL,
+    prompt: "say something",
+    createdBy: CREATOR,
+  });
+  expect((await runRoutineDispatchTick()).length).toBeGreaterThan(0);
+  const realRow = await waitFor(async () => {
+    const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+    return rows.find((r) => isBridgeSurfaceFor(r.surface, BRIDGE_CHANNEL) && r.detail?.chars === realText.length);
+  }, "the real bridge-route reply.post row", 150_000);
+  expect(realRow.detail?.route).toBe("bridge");
+
+  const allRows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+  const chansOnlyMatches = allRows.filter((r) => r.detail?.chars === realText.length);
+  expect(chansOnlyMatches.length).toBeGreaterThanOrEqual(2);
+  expect(chansOnlyMatches.some((r) => r.surface === CHANNEL && r.detail?.route === "terminal")).toBe(true);
+  expect(chansOnlyMatches.some((r) => isBridgeSurfaceFor(r.surface, BRIDGE_CHANNEL) && r.detail?.route === "bridge")).toBe(true);
+
+  const scoped = allRows.find((r) => isBridgeSurfaceFor(r.surface, BRIDGE_CHANNEL) && r.detail?.chars === realText.length);
+  expect(scoped?.detail?.route).toBe("bridge");
 });
 
 test("NEGATIVE CONTROL — an ATTENDED wake proposing the same verb passes the fence and cards, unattended:false", async () => {
