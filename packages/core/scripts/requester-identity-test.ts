@@ -93,4 +93,74 @@ const envelope = (author: { from: "human" | "system"; authorId?: string; text?: 
   ok(requesterThisTurn("turn_3").kind === "none", "…and the turn-keyed read answers the same");
 }
 
+{
+  const { registerConfig } = await import("../agent/access/config.js");
+  const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
+  const { registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
+  const { resolveAccessFor } = await import("../agent/access/request.js");
+  const { compileNetworkPolicy } = await import("../agent/access/egress.js");
+  const { egressPolicyFingerprint } = await import("../agent/hooks/egress.js");
+  const { OE_REQUESTER_ATTR } = await import("../agent/access/requester-identity.js");
+  type BindableContext = import("../agent/identity/binding.js").BindableContext;
+
+  registerSlackFixtureMapper();
+  registerConfig({
+    loadBundles: () => [
+      defineBundle({ name: "org-default", domains: ["raw.githubusercontent.com"] }),
+      defineBundle({ name: "ops-extra", domains: ["ops.example.com"] }),
+    ],
+    loadBindings: () => [
+      defineBinding({ bundle: "org-default", scope: { level: "org" } }),
+      defineBinding({ bundle: "ops-extra", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
+    ],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+
+  const ctxWith = (extra: Record<string, string>, channelId = "C0EXCHAN003"): BindableContext =>
+    ({
+      channel: { kind: "slack" },
+      session: {
+        auth: {
+          current: {
+            principalId: "U0EXUSER003",
+            principalType: "user",
+            attributes: {
+              team_id: "T0EXAMPLE",
+              channel_id: channelId,
+              channel_type: "channel",
+              user_id: "U0EXUSER003",
+              oe_platform: "slack",
+              oe_wake_id: "w1",
+              oe_grain: "standing",
+              oe_window_token: "tok",
+              ...extra,
+            },
+          },
+        },
+      },
+    }) as unknown as BindableContext;
+
+  const fingerprintOf = async (ctx: BindableContext): Promise<string> =>
+    egressPolicyFingerprint(
+      await compileNetworkPolicy(
+        resolveAccessFor(ctx),
+        async () => ({}),
+        async (ids) => ids,
+      ),
+    );
+
+  const unstamped = await fingerprintOf(ctxWith({}));
+  const stamped = await fingerprintOf(ctxWith({ [OE_REQUESTER_ATTR]: "U0EXUSER003" }));
+  const stampedUnverified = await fingerprintOf(ctxWith({ [OE_REQUESTER_ATTR]: REQUESTER_UNVERIFIED }));
+  const otherSurface = await fingerprintOf(ctxWith({}, "C_OTHER"));
+
+  ok(stamped === unstamped, "🔴 OPE-680: a turn carrying the `oe_requester` stamp compiles a BYTE-IDENTICAL egress policy to the same turn without it — the stamp is turn-scoped identity metadata and must never move the firewall");
+  ok(stampedUnverified === unstamped, "…and the `oe/unverified` value compiles identically too, so a turn the gate could not attribute is not a policy change either");
+  ok(otherSurface !== unstamped, "🔴 POSITIVE CONTROL: a DIFFERENT surface does compile a different fingerprint — without this the two assertions above would pass on a fixture that cannot see a policy change at all");
+}
+
 console.log(`✓ requester-identity: ${n} assertions passed`);

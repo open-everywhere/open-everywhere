@@ -158,10 +158,10 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
     if (parentFingerprint !== undefined && parentFingerprint !== fingerprint) {
       const failure = new Error(
         `egress identical-binding invariant VIOLATED: this subagent child compiled policy ${fingerprint} ` +
-          `while its parent published ${parentFingerprint} into the sandbox they share. A native child binds to ` +
-          `its parent's identity (identity/binding.ts channelPlatform's subagent origin-hop), so the two policies ` +
-          `must be byte-identical; a divergence means the child would REPLACE its parent's live firewall. Failing ` +
-          `the child rather than applying.`,
+          `(${summary}, bound to ${scopeKey}) while its parent published ${parentFingerprint} into the sandbox ` +
+          `they share. A native child binds to its parent's identity (identity/binding.ts channelPlatform's ` +
+          `subagent origin-hop), so the two policies must be byte-identical; a divergence means the child would ` +
+          `REPLACE its parent's live firewall. Failing the child rather than applying.`,
       );
       log(failure.message);
       try {
@@ -173,7 +173,16 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
           surface: s.surface,
           principalId: s.principalId,
           action: "egress.policy",
-          detail: { phase, reason: "subagent-binding-divergence", policyFingerprint: fingerprint, parentPolicyFingerprint: parentFingerprint, aborted: true },
+          detail: {
+            phase,
+            reason: "subagent-binding-divergence",
+            policyFingerprint: fingerprint,
+            parentPolicyFingerprint: parentFingerprint,
+            scopeKey,
+            hosts: hostCount,
+            summary,
+            aborted: true,
+          },
         });
       } catch (err) {
         log(`subagent divergence audit skipped (the child is still being failed): ${String(err)}`);
