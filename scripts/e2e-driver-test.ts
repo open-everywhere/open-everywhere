@@ -657,6 +657,13 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
     ),
     "isFillerAck: the real OPE-673 unverified refusal is NOT filler either — same reasoning",
   );
+  ok(
+    !isFillerAck(
+      "The raw admin listing was refused: `memory_admin_list` couldn\u2019t identify a single requesting person because the delegating turn included messages from more than one person. Admin standing is checked against the person who asked, so the listing was not returned rather than guessed.",
+    ),
+    'isFillerAck: a refusal that mentions "the delegating turn" is NOT filler — `delegat\u2026` needs its object (measured live 2026-08-17: the bare verb skipped the real S16 answer forever)',
+  );
+  ok(isFillerAck("I've delegated this to a worker and will report back."), "isFillerAck: the object form (delegated this to\u2026) is still filler");
 }
 
 {
