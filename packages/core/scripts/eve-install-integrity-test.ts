@@ -109,6 +109,7 @@ ok(
 );
 
 const TOOL_LOOP = join("dist", "src", "harness", "tool-loop.js");
+const COMPACTION = join("dist", "src", "harness", "compaction.js");
 
 const RETIRED = [
   { symbol: "__oeCfg", why: "OPE-172" },
@@ -208,6 +209,15 @@ for (const eveDir of copies) {
     src.includes("__oeProjectToolSet"),
     `copies: ${where} carries the __oeProjectToolSet hook (OPE-73) — an unpatched copy means authored toModelOutput is dropped on session-mounted dynamic tools, so untrusted-content envelopes never reach the model (prompt-injection containment regression)`,
   );
+  const compactionFile = join(eveDir, COMPACTION);
+  ok(
+    existsSync(compactionFile),
+    `density: ${where}/${COMPACTION} exists (if eve moved the harness file, the OPE-689 hunk and eve-compaction-density-test.ts are both stale)`,
+  );
+  ok(
+    readFileSync(compactionFile, "utf8").includes("__oeCompactionDensityConfig("),
+    `density: ${where} carries the __oeCompactionDensityConfig correction (OPE-689) — without it compactMessages re-checks size with JSON.stringify/4 while shouldCompact counts the provider's real token figure, so a dense session emits compaction.completed having compacted NOTHING and the generation wedges`,
+  );
   for (const dead of RETIRED) {
     ok(
       !src.includes(dead.symbol),
@@ -233,5 +243,5 @@ for (const eveDir of copies) {
 }
 
 console.log(
-  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} the OE projection hook, all ${CARRIAGE.length} turnPolicy restore hunks and all ${SEMANTICS.length} HITL-answer semantics, and none of the ${RETIRED.length} retired symbols)\n`,
+  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} the OE projection hook, the compaction density correction, all ${CARRIAGE.length} turnPolicy restore hunks and all ${SEMANTICS.length} HITL-answer semantics, and none of the ${RETIRED.length} retired symbols)\n`,
 );
