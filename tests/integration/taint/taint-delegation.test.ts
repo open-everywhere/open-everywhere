@@ -4,6 +4,7 @@ import {
   bootAgent,
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
+  pendingFramedChars,
   readAuditRows,
   registerScript,
   SETTLEMENT_DRAIN_SCRIPT,
@@ -213,7 +214,7 @@ test("a delegated child taints itself: marking, injected judge verdict, refuse-t
     expect(String(r.detail?.id)).toMatch(/^spoof-/);
     expect(r.detail?.platform).toBe("discord");
   }
-  expect(replies.some((r) => r.detail?.chars === DISPATCH_SAY.length)).toBe(true);
+  expect(replies.some((r) => r.detail?.chars === pendingFramedChars(DISPATCH_SAY))).toBe(true);
   expect(replies.some((r) => r.detail?.chars === SETTLEMENT_SAY.length)).toBe(true);
 });
 

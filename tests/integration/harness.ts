@@ -11,6 +11,14 @@ import { registerScript, type RecordedRequest, type ScriptedHandle, type SeatScr
 export { registerScript, type RecordedRequest, type ResolveObservation, type ScriptedHandle, type ScriptedStep, type SeatScript, type ToolDefinitionRecord } from "../../agent/model/scripted-model";
 export { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
 export { REPLAYED_DELIVERY_CALLER_BODY } from "@open-everywhere/core/agent/webhooks/replay-dedupe.js";
+export { PENDING_WORK_FRAME } from "@open-everywhere/core/agent/channels/turn-delivery.js";
+import { PENDING_WORK_FRAME as OE_PENDING_WORK_FRAME, withPendingWorkFrame } from "@open-everywhere/core/agent/channels/turn-delivery.js";
+
+export function pendingFramedChars(text: string): number {
+  return withPendingWorkFrame(text, true).length;
+}
+
+if (OE_PENDING_WORK_FRAME.length === 0) throw new Error("harness: PENDING_WORK_FRAME is empty — pendingFramedChars cannot distinguish a framed row");
 export { installSlackWebApiStub, type SlackApiCall, type SlackApiResponder, type SlackWebApiStub } from "./slack-web-api";
 export { installNotionApiStub, type NotionApiCall, type NotionApiResponder, type NotionApiStub } from "./notion-web-api";
 
