@@ -11,7 +11,7 @@ import {
   UNNAMED_TENANT,
 } from "../agent/identity/principal-key.js";
 import { readBindingBridge, stampBindingBridge, bridgedContext } from "../agent/identity/binding-bridge.js";
-import { carriesPlatformIdentity, refreshBindingStamp } from "../agent/identity/binding.js";
+import { carriesPlatformIdentity, healDeliveryIdentity, refreshBindingStamp, subagentBindingLost } from "../agent/identity/binding.js";
 import bindingBridgeHook from "../agent/hooks/binding-bridge.js";
 import { resolvePartition } from "../agent/memory/partition.js";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -214,22 +214,26 @@ ok(
     return `${b.platform}/${b.workspace}/${b.domainSurface ?? b.surface}`;
   };
 
-  const deliveryA: BindableContext = {
+  const makeDeliveryA = (): BindableContext => ({
     channel: { kind: "channel:unified" },
     session: { auth: { current: { attributes: { oe_platform: "ope603a", oe_wake_id: "w-a", oe_grain: "standing", ws: "W_A", sfc: "S_A", pid: "P_A" }, principalId: "U_A", principalType: "user" } } },
-  };
-  const deliveryB: BindableContext = {
+  });
+  const makeDeliveryB = (): BindableContext => ({
     channel: { kind: "channel:unified" },
     session: { auth: { current: { attributes: { oe_platform: "ope603b", oe_wake_id: "w-b", oe_grain: "standing", ws: "W_B", sfc: "S_B" }, principalId: "U_B", principalType: "user" } } },
-  };
-  const internalWakeA: BindableContext = {
+  });
+  const makeInternalWakeA = (): BindableContext => ({
     channel: { kind: "channel:unified" },
     session: { auth: { current: { attributes: { oe_platform: "ope603a", oe_wake_id: "w-decision", oe_grain: "standing", oe_window_token: "oe-domain::d:oe-sup:g1", oe_sources: "ope603a" } } } },
-  };
-  const internalWakeB: BindableContext = {
+  });
+  const makeInternalWakeB = (): BindableContext => ({
     channel: { kind: "channel:unified" },
     session: { auth: { current: { attributes: { oe_platform: "ope603b", oe_wake_id: "w-decision", oe_grain: "standing", oe_window_token: "oe-domain::d:oe-sup:g1", oe_sources: "ope603b" } } } },
-  };
+  });
+  const deliveryA = makeDeliveryA();
+  const deliveryB = makeDeliveryB();
+  const internalWakeA = makeInternalWakeA();
+  const internalWakeB = makeInternalWakeB();
   const toolCtx: BindableContext = {};
 
   ok(carriesPlatformIdentity(deliveryA), "OPE-603: a real surface delivery CARRIES a platform identity");
@@ -271,6 +275,10 @@ ok(
   const turnStarted = (ctx: BindableContext): Promise<void> => hookEvents["turn.started"]!({}, ctx);
 
   await inSession(async () => {
+    const deliveryA = makeDeliveryA();
+    const deliveryB = makeDeliveryB();
+    const internalWakeA = makeInternalWakeA();
+    const internalWakeB = makeInternalWakeB();
     await sessionStarted(deliveryA);
     ok(scopeKeyOf(deliveryA) === "ope603a/W_A/S_A", "OPE-603 §1: the seat's first delivery binds its own surface");
     ok(scopeKeyOf(toolCtx) === "ope603a/W_A/S_A", "OPE-603 §1: …and its identity-less tool contexts bridge to the same surface");
@@ -287,6 +295,7 @@ ok(
   });
 
   await inSession(async () => {
+    const internalWakeA = makeInternalWakeA();
     await sessionStarted(internalWakeA);
     const stamped = readBindingBridge();
     ok(stamped !== null && !carriesPlatformIdentity(bridgedContext(stamped)), "🔴 OPE-603 §2 negative control: a session that only ever saw an identity-less delivery holds a stamp that NAMES NO SURFACE");
@@ -295,12 +304,16 @@ ok(
     ok(scopeKeyOf(toolCtx) === "ope603a/dev/default", "🔴 OPE-603 §2: …and its tools resolve nothing either — never a borrowed surface");
   });
   await inSession(async () => {
+    const deliveryA = makeDeliveryA();
+    const internalWakeA = makeInternalWakeA();
     ok(readBindingBridge() === null, "🔴 OPE-603 §2: a NEIGHBOURING session sees none of §1's stamp — no cross-session bleed");
     ok(scopeKeyOf(deliveryA) === "ope603a/W_A/S_A", "OPE-603 §2: …its OWN delivery still binds its own surface (the fence costs a real delivery nothing)");
     ok(bindFrom(internalWakeA).trust === "external", "🔴 OPE-603 §2: …but an identity-less wake here binds fail-closed, never the neighbour's internal surface");
   });
 
   await inSession(async () => {
+    const deliveryA = makeDeliveryA();
+    const internalWakeB = makeInternalWakeB();
     await sessionStarted(deliveryA);
     ok(scopeKeyOf(deliveryA) === "ope603a/W_A/S_A", "OPE-603 §3: the seat establishes surface A");
     await turnStarted(internalWakeB);
@@ -315,6 +328,7 @@ ok(
     session: { auth: { current: { attributes: { oe_platform: "ope603a", oe_wake_id: `w-${pid}`, oe_grain: "standing", pid } } } },
   });
   await inSession(async () => {
+    const deliveryA = makeDeliveryA();
     await sessionStarted(wakeP("P1"));
     ok(bindFrom(toolCtx).principalId === "P1", "OPE-603 §4: with NO surface established, an identity-less delivery still writes its stamp");
     await turnStarted(wakeP("P2"));
@@ -324,6 +338,106 @@ ok(
     await turnStarted(wakeP("P3"));
     ok(bindFrom(toolCtx).principalId === "P_A", "🔴 OPE-603 §4: …and from then on an identity-less delivery overwrites NOTHING");
     ok(scopeKeyOf(toolCtx) === "ope603a/W_A/S_A", "🔴 OPE-603 §4: …so the surface holds");
+  });
+
+  const makeChild = (attributes: Record<string, string>): BindableContext => ({
+    channel: { kind: "subagent" },
+    session: { parent: { sessionId: "wrun_PARENT" }, auth: { current: { attributes } } },
+  });
+  const copyOfBag = (ctx: BindableContext): Record<string, string> =>
+    Object.fromEntries(Object.entries(ctx.session?.auth?.current?.attributes ?? {}).map(([k, v]) => [k, String(v)]));
+
+  let healedBagOut: Record<string, string> = {};
+  await inSession(async () => {
+    const deliveryA = makeDeliveryA();
+    const internalWakeA = makeInternalWakeA();
+    await sessionStarted(deliveryA);
+    ok(!carriesPlatformIdentity(internalWakeA), "OPE-681 §5: the internal wake arrives with NO platform identity");
+
+    await turnStarted(internalWakeA);
+    ok(carriesPlatformIdentity(internalWakeA), "🔴 OPE-681 §5: after the hook its OWN bag names the seat's surface");
+    const healedBag = copyOfBag(internalWakeA);
+    ok(healedBag["ws"] === "W_A" && healedBag["sfc"] === "S_A", "🔴 OPE-681 §5: …with the platform's own attribute keys, not a core-derived summary");
+    ok(healedBag["pid"] === "P_A", "🔴 OPE-681 §5: …including the ACTING PRINCIPAL, which the child also loses without it");
+
+    ok(healedBag["oe_wake_id"] === "w-decision", "🔴 OPE-681 §5: the delivery's OWN oe_wake_id survives — the stamp is never overwritten");
+    ok(healedBag["oe_window_token"] === "oe-domain::d:oe-sup:g1", "🔴 OPE-681 §5: …and its own window token too");
+
+    healedBagOut = healedBag;
+  });
+
+  await inSession(() => {
+    ok(readBindingBridge() === null, "OPE-681 §5: the child's own session starts with an EMPTY stamp slot — the bag is all it has");
+    const child = makeChild(healedBagOut);
+    ok(scopeKeyOf(child) === "ope603a/W_A/S_A", "🔴 OPE-681 §5: a native child inheriting the HEALED bag binds the PARENT'S surface");
+    ok(bindFrom(child).principalId === "P_A", "🔴 OPE-681 §5: …with the parent's acting principal");
+    ok(bindFrom(child).mode === "channel", "🔴 OPE-681 §5: …and the parent's MODE, which a surface-only carriage would still get wrong");
+    ok(subagentBindingLost(child) === false, "🔴 OPE-681 §5 negative control: …and the fail-closed backstop reads FALSE for it");
+
+    const lost = makeChild(copyOfBag(makeInternalWakeA()));
+    ok(scopeKeyOf(lost) === "ope603a/dev/default", "🔴 OPE-681 §5: a child inheriting the UNHEALED bag binds the env stand-in");
+    ok(subagentBindingLost(lost) === true, "🔴 OPE-681 §5: …and the backstop refuses it");
+  });
+
+  let crossBagOut: Record<string, string> = {};
+  await inSession(async () => {
+    const deliveryA = makeDeliveryA();
+    const deliveryB = makeDeliveryB();
+    const internalWakeB = makeInternalWakeB();
+    await sessionStarted(deliveryA);
+
+    ok(healDeliveryIdentity(internalWakeB) === "cross-platform", "🔴 OPE-681 §6①: a wake on ANOTHER platform is refused the heal");
+    ok(!carriesPlatformIdentity(internalWakeB), "🔴 OPE-681 §6①: …and its bag is left exactly as it arrived");
+    crossBagOut = copyOfBag(internalWakeB);
+
+    ok(healDeliveryIdentity(deliveryB) === "not-needed", "🔴 OPE-681 §6②: a delivery that names a surface is not healed");
+    ok(copyOfBag(deliveryB)["ws"] === "W_B", "🔴 OPE-681 §6②: …and keeps its own workspace, never the established one");
+  });
+  await inSession(() => {
+    ok(scopeKeyOf(makeChild(crossBagOut)) === "ope603b/dev/default", "🔴 OPE-681 §6①: …so its child fails closed rather than binding the neighbour's surface");
+  });
+
+  let lostBagOut: Record<string, string> = {};
+  await inSession(async () => {
+    const internalWakeA = makeInternalWakeA();
+    await sessionStarted(internalWakeA);
+    ok(healDeliveryIdentity(internalWakeA) === "no-stamp", "🔴 OPE-681 §7: a seat that never established a surface heals nothing");
+    ok(!carriesPlatformIdentity(internalWakeA), "🔴 OPE-681 §7: …the bag is unchanged");
+    lostBagOut = copyOfBag(internalWakeA);
+  });
+  await inSession(() => {
+    ok(subagentBindingLost(makeChild(lostBagOut)) === true, "🔴 OPE-681 §7: …and its child, in its own fresh session, is refused rather than run on the org default");
+  });
+
+  ok(subagentBindingLost(makeDeliveryA()) === false, "🔴 OPE-681 §8: a ROOT session is never refused, whatever it binds");
+  ok(subagentBindingLost(makeInternalWakeA()) === false, "🔴 OPE-681 §8: an identity-less ROOT turn is never refused either — the seat's own bridge answers for it");
+  ok(
+    subagentBindingLost({ channel: { kind: "subagent" }, session: { parent: { sessionId: "wrun_P" }, auth: { current: { attributes: {} } } } }) === false,
+    "🔴 OPE-681 §8: a child with NO platform stamp resolves no mapper — the local stand-in stays reachable for `eve dev` and evals",
+  );
+  ok(
+    subagentBindingLost(makeChild({ oe_platform: "ope603a", oe_wake_id: "w", oe_grain: "task" })) === true,
+    "🔴 OPE-681 §8: …but a child that DOES name a registered platform and no surface is refused",
+  );
+
+  await inSession(async () => {
+    let threw: string | undefined;
+    try {
+      await sessionStarted(makeChild({ oe_platform: "ope603a", oe_wake_id: "w", oe_grain: "task" }));
+    } catch (err) {
+      threw = err instanceof Error ? err.message : String(err);
+    }
+    ok(threw !== undefined && threw.includes("subagent child binding LOST"), "🔴 OPE-681 §9: the binding-bridge hook FAILS a lost child at session.started");
+    ok(threw !== undefined && threw.includes("ope603a/dev/default"), "🔴 OPE-681 §9: …and the message names the stand-in scope key it refused to run on");
+  });
+  await inSession(async () => {
+    let threw: string | undefined;
+    try {
+      await sessionStarted(makeChild(healedBagOut));
+    } catch (err) {
+      threw = err instanceof Error ? err.message : String(err);
+    }
+    ok(threw === undefined, "🔴 OPE-681 §9 negative control: a child of a HEALED turn is NOT refused — the hook lets correct work through");
   });
 }
 

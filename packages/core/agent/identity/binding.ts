@@ -387,6 +387,46 @@ export function refreshBindingStamp(ctx: BindableContext): "stamped" | "kept" {
   return "stamped";
 }
 
+const HOST_STAMP_PREFIXES: readonly string[] = ["oe_", "open_everywhere_"];
+
+export type DeliveryHealOutcome = "not-needed" | "healed" | "no-stamp" | "cross-platform" | "no-delivery" | "unwritable";
+
+export function healDeliveryIdentity(ctx: BindableContext): DeliveryHealOutcome {
+  try {
+    if (carriesPlatformIdentity(ctx)) return "not-needed";
+    const bridged = readBindingBridge();
+    if (bridged === null) return "no-stamp";
+    const hop = bindBridged(bridged);
+    if (!namesASurface(hop.raw)) return "no-stamp";
+    const platform = seg(channelPlatform(ctx), "local");
+    if (MAPPERS.get(platform) !== undefined && hop.platform !== platform) return "cross-platform";
+    const auth = authOf(ctx) as { attributes?: Record<string, string | readonly string[]> } | null;
+    if (auth === null) return "no-delivery";
+    if (auth.attributes === undefined) auth.attributes = {};
+    const bag = auth.attributes;
+    for (const [key, value] of Object.entries(bridged.attributes)) {
+      if (HOST_STAMP_PREFIXES.some((p) => key.startsWith(p))) continue;
+      if (bag[key] !== undefined) continue;
+      bag[key] = value;
+    }
+    return carriesPlatformIdentity(ctx) ? "healed" : "unwritable";
+  } catch {
+    return "unwritable";
+  }
+}
+
+export function subagentBindingLost(ctx: BindableContext): boolean {
+  try {
+    if (!isSubagentChildContext(ctx)) return false;
+    if (MAPPERS.get(seg(channelPlatform(ctx), "local")) === undefined) return false;
+    if (carriesPlatformIdentity(ctx)) return false;
+    const bridged = readBindingBridge();
+    return bridged === null || !namesASurface(bindBridged(bridged).raw);
+  } catch {
+    return false;
+  }
+}
+
 export function bindFrom(ctx: BindableContext): SurfaceBinding {
   let { platform, raw } = rawIdentityFrom(ctx);
   let fire = attestedFirePrincipal(ctx);
