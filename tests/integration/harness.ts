@@ -11,6 +11,7 @@ import { registerScript, type RecordedRequest, type ScriptedHandle, type SeatScr
 export { registerScript, type RecordedRequest, type ResolveObservation, type ScriptedHandle, type ScriptedStep, type SeatScript } from "../../agent/model/scripted-model";
 export { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
 export { REPLAYED_DELIVERY_CALLER_BODY } from "@open-everywhere/core/agent/webhooks/replay-dedupe.js";
+export { installSlackWebApiStub, type SlackApiCall, type SlackApiResponder, type SlackWebApiStub } from "./slack-web-api";
 
 const ROOT = process.cwd();
 
@@ -404,6 +405,56 @@ export function discordOeStopInteraction(input: { readonly channelId: string; re
     data: { name: "oe", type: 1, options: [{ name: "stop", type: 1 }] },
   };
 }
+
+export async function slackMessageEventPost(input: {
+  readonly channelId: string;
+  readonly userId: string;
+  readonly text: string;
+  readonly ts: string;
+  readonly teamId?: string;
+  readonly eventId?: string;
+  readonly timeoutMs?: number;
+}): Promise<{ status: number; body: string }> {
+  if (booted === undefined) throw new Error("integration harness: slackMessageEventPost before bootAgent.");
+  const { SYNTHETIC_SLACK_ROUTE, signSlackRequest } = await import("../../packages/core/scripts/e2e/synthetic");
+  const teamId = input.teamId ?? SLACK_TEAM_ID;
+  const rawBody = JSON.stringify({
+    type: "event_callback",
+    team_id: teamId,
+    event_id: input.eventId ?? `EvIT${input.ts.replace(".", "")}`,
+    event_time: Math.floor(Number.parseFloat(input.ts)),
+    event: {
+      type: "message",
+      channel: input.channelId,
+      channel_type: "channel",
+      user: input.userId,
+      text: input.text,
+      ts: input.ts,
+      event_ts: input.ts,
+      team: teamId,
+    },
+  });
+  const signed = signSlackRequest(rawBody, SLACK_SIGNING_SECRET);
+  const res = await fetch(`${booted.base}${SYNTHETIC_SLACK_ROUTE}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-slack-request-timestamp": signed.timestamp,
+      "x-slack-signature": signed.signature,
+    },
+    body: rawBody,
+    signal: AbortSignal.timeout(input.timeoutMs ?? 120_000),
+  });
+  return { status: res.status, body: await res.text() };
+}
+
+export function slackTs(atMs: number, micros: number): string {
+  return `${Math.floor(atMs / 1_000)}.${String(micros % 1_000_000).padStart(6, "0")}`;
+}
+
+export const SLACK_TEAM_ID = "T0EXAMPLE";
+
+export const SLACK_NAME_DROP_CHANNEL_ID = "C0EXCHAN013";
 
 export const DISCORD_GUILD_ID = "1300000000000000100";
 export const DISCORD_LISTED_CHANNEL_ID = "1300000000000000101";
