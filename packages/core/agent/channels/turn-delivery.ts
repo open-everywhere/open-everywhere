@@ -91,6 +91,12 @@ export function withReplierPrefix(text: string, replier: ReplierLabel | undefine
   return replier ? `[${replier.taskLabel}] ${text}` : text;
 }
 
+export const PENDING_WORK_FRAME = "A delegated worker is still running — this message is not its result.";
+
+export function withPendingWorkFrame(text: string, pendingWork: boolean): string {
+  return pendingWork ? `${PENDING_WORK_FRAME}\n\n${text}` : text;
+}
+
 export function supervisorRotateQuietGapMs(): number {
   return getSettings().rotation.quietGapHours * 3_600_000;
 }

@@ -7,6 +7,7 @@ import {
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
   DISCORD_USER_ID,
+  pendingFramedChars,
   readAuditRows,
   registerScript,
   taskIdOfDelegation,
@@ -104,7 +105,7 @@ test("a HOST-WOKEN settlement reply names the human whose seat it is — the aut
     120_000,
   );
 
-  const delegator = rows.find((r) => r.detail?.chars === DELEGATOR_SAY.length);
+  const delegator = rows.find((r) => r.detail?.chars === pendingFramedChars(DELEGATOR_SAY));
   const settled = rows.find((r) => r.detail?.chars === SETTLEMENT_SAY.length);
   expect(delegator).toBeDefined();
   expect(settled).toBeDefined();

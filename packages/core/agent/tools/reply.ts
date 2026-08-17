@@ -3,7 +3,7 @@ import { z } from "zod";
 import { bindFrom, deploymentOrg, isUnifiedWindowContext, currentWakeId, currentTurnId, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
 import { capabilitiesFor } from "../identity/capabilities.js";
 import { resolveReplyTarget, postReply, auditReplyRefused, type ReplyAudit, type ReplierLabel } from "../channels/reply-post.js";
-import { replierLabelFor } from "../channels/turn-delivery.js";
+import { replierLabelFor, withPendingWorkFrame } from "../channels/turn-delivery.js";
 import { markRepliedThisTurn, markWakeDoneThisTurn, isWakeDoneThisTurn } from "../channels/reply-signal.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
 import { addressedWakeThisTurn, claimTasksForAddressedWake } from "../access/dispatch-origin-signal.js";
@@ -91,7 +91,9 @@ const unifiedReplyEntry = defineTool({
         throw new Error(delegationPendingRefusalMessage());
       }
 
-      const id = await postUnifiedReply(origin, input.text, {}, replyAuditFor(ctx as BindableContext, "tool", input.wake), replierFor(bind));
+      const framed = withPendingWorkFrame(input.text, owingTask !== undefined);
+
+      const id = await postUnifiedReply(origin, framed, {}, replyAuditFor(ctx as BindableContext, "tool", input.wake), replierFor(bind));
       markRepliedThisTurn();
 
       const claimed = claimTasksForAddressedWake(turnId, input.wake);
@@ -109,7 +111,8 @@ const unifiedReplyEntry = defineTool({
           : " This wake stays OPEN (`done:false`) — reply to it again when the rest of the answer is ready.";
       const pendingNote =
         owingTask !== undefined
-          ? " Your background worker for this conversation has NOT reported yet, so you do not have the answer it was asked for — never write that answer out yourself; report what the worker returns."
+          ? " Your background worker for this conversation has NOT reported yet, so you do not have the answer it was asked for — never write that answer out yourself; report what the worker returns." +
+            " This post was delivered under a host line saying a delegated worker is still running and this message is not its result, so do not add that caveat yourself."
           : "";
       return {
         posted: true,
