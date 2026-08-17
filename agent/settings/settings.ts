@@ -12,5 +12,7 @@ export const SETTINGS_OVERRIDES = defineSettings({
 
   tools: { sourceScopedMount: true, genericReadVerbs: true },
 
+  agent: { compactionThresholdPercent: 0.2 },
+
   identity: { name: "Open Everywhere" },
 });
