@@ -96,7 +96,7 @@ export const SCENARIOS: Record<ScenarioId, ScenarioSpec> = {
 export const SERIES_PATTERN: readonly ScenarioId[] = ["S4", "S2", "S3", "S2", "S1", "S5", "S2", "S3", "S2", "S5"];
 const seriesOf = (n: number): ScenarioId[] => Array.from({ length: n }, (_, i) => SERIES_PATTERN[i % SERIES_PATTERN.length]);
 
-function parseSeries(raw: string | undefined): ScenarioId[] | undefined {
+export function parseSeries(raw: string | undefined): ScenarioId[] | undefined {
   if (raw === undefined) return undefined;
   const ids = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
   const bad = ids.filter((id) => !(id in SCENARIOS));
