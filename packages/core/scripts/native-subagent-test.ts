@@ -152,12 +152,18 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
 
   const policy = { allow: { "api.example.com": [{ match: { method: ["GET"] } }] } } as never;
   const scope = () => ({ org: "default", platform: "slack", workspace: "T0EXAMPLE", surface: "C0EXCHAN003", principalId: "UPROBE393" });
-  const baseDeps = (parentFingerprint: string | undefined | (() => Promise<string | undefined>)) => {
+  const STAND_IN_SCOPE_KEY = "slack/dev/default";
+  const baseDeps = (
+    parentFingerprint: string | undefined | (() => Promise<string | undefined>),
+    scopeKey = "slack/T0EXAMPLE/C0EXCHAN003",
+  ) => {
     const applied: unknown[] = [];
+    const audited: { action: string; detail: Record<string, unknown> }[] = [];
     return {
       applied,
+      audited,
       deps: {
-        resolve: () => ({}) as never,
+        resolve: () => ({ scopeKey, connectors: [], connectorContentOrigin: {} }) as never,
         compile: async () => policy,
         apply: async (p: unknown) => void applied.push(p),
         lastApplied: () => undefined,
@@ -165,7 +171,9 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
         lastConnectors: () => undefined,
         rememberConnectors: () => undefined,
         scope,
-        audit: async () => undefined,
+        audit: async (entry: { action: string; detail?: Record<string, unknown> }) => {
+          audited.push({ action: entry.action, detail: entry.detail ?? {} });
+        },
         stamp: () => undefined,
         stampConnectorContentOrigin: () => undefined,
         parentPublishedFingerprint:
@@ -180,11 +188,20 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
   const matched = await enforceEgress("session.started", match.deps as never);
   ok(matched.abortError === undefined && match.applied.length === 1, "🔴 D5: a child whose compiled policy MATCHES what its parent published applies normally — post-hop the two bindings are identical, so the re-apply is idempotent rather than destructive");
 
-  const diverge = baseDeps("d228cd75deadbeef");
+  const diverge = baseDeps("d228cd75deadbeef", STAND_IN_SCOPE_KEY);
   const diverged = await enforceEgress("session.started", diverge.deps as never);
   ok(diverged.abortError !== undefined, "🔴 D5: a DIVERGENT fingerprint FAILS the child (fail-closed) — the measured clobber was a mis-bound child replacing its parent's published firewall state mid-turn in the sandbox they share");
   ok(diverge.applied.length === 0, "…and NOTHING was applied: the check runs before the apply, the publish and the stamp, so a violating child touches the shared sandbox not at all");
   ok(diverged.abortError!.message.includes("identical-binding invariant VIOLATED"), "…with the message the turn.started edge keys its one re-throw on");
+
+  const divergeRow = diverge.audited.find((r) => r.action === "egress.policy" && r.detail["reason"] === "subagent-binding-divergence");
+  ok(divergeRow !== undefined, "🔴 D5/OPE-680: a divergence writes an `egress.policy` row before the child is failed");
+  ok(divergeRow!.detail["scopeKey"] === STAND_IN_SCOPE_KEY, "🔴 D5/OPE-680: the abort row names the CHILD's own scope key — `slack/dev/default` here, the env stand-in the prod rows carried, which is what identifies a mis-bound child rather than a moved policy");
+  ok(divergeRow!.detail["hosts"] === 1, "…and the child's host count, so a reader sees WHAT the child compiled without holding a byte of it");
+  ok(typeof divergeRow!.detail["summary"] === "string" && (divergeRow!.detail["summary"] as string).includes("default-deny"), "…and the same one-line summary an ordinary row carries");
+  ok(diverged.abortError!.message.includes(STAND_IN_SCOPE_KEY), "🔴 D5/OPE-680: the THROWN message names it too — the message is what a transcript reader sees, and it is where the OPE-680 investigation started");
+
+  ok(match.audited.every((r) => r.detail["reason"] !== "subagent-binding-divergence"), "…and a child whose fingerprint MATCHES writes no divergence row — the row is the abort's own, not a field every pass carries");
 
   const unreadable = baseDeps(undefined);
   const unread = await enforceEgress("session.started", unreadable.deps as never);
