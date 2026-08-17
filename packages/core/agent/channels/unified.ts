@@ -35,7 +35,7 @@ import {
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
 import { pendingDelegationOwing, BRIDGE_WAKE_HELD_AUDIT_ACTION } from "../access/pending-delegation-signal.js";
 import { sourcesForWindow } from "./window-sources.js";
-import { finalMessageActionForTurn, replierLabelFor } from "./turn-delivery.js";
+import { finalMessageActionForTurn, replierLabelFor, withPendingWorkFrame } from "./turn-delivery.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { redriveEnabled, maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
 import { unresumableAuditDetail } from "./session-resume.js";
@@ -342,9 +342,11 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
           const replier = replierLabelFor(windowGrainOf(bind), windowTaskLabelOf(bind));
           const principalId = authPrincipalId(bind);
           const creatorId = attestedFireCreatorId(bind);
+          const turnId = currentTurnId(bind);
+          const owingTask = wakeId ? pendingDelegationOwing(turnId, wakeId, addressedWakeThisTurn(turnId)) : undefined;
           const id = await postUnifiedReply(
             origin,
-            action.text,
+            withPendingWorkFrame(action.text, owingTask !== undefined),
             {},
             {
               org,
@@ -361,8 +363,6 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
           );
           ulog(`addressed-mention bridge: delivered terminal prose (${action.text.length} chars) to ${origin.platform} — id ${id}`);
           if (wakeId) {
-            const turnId = currentTurnId(bind);
-            const owingTask = pendingDelegationOwing(turnId, wakeId, addressedWakeThisTurn(turnId));
             if (owingTask === undefined) {
               await getOperationalStore()
                 .markUnifiedWakeAnswered(org, wakeId, new Date().toISOString(), turnId)

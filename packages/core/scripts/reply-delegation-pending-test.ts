@@ -31,6 +31,7 @@ const { taskWakeId } = await import("../agent/channels/task-wake.js");
 const { DELEGATION_PENDING_REFUSAL_REASON, delegationPendingRefusalMessage, BRIDGE_WAKE_HELD_AUDIT_ACTION } = await import(
   "../agent/access/pending-delegation-signal.js"
 );
+const { PENDING_WORK_FRAME, withPendingWorkFrame, withReplierPrefix } = await import("../agent/channels/turn-delivery.js");
 const spawnTaint = await import("../agent/hooks/spawn-taint.js");
 
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
@@ -303,45 +304,45 @@ const roomHas = (needle: string): boolean => posted.some((m) => m.text.includes(
   ok(!copy.includes("task_"), "§8: it discloses no task id — a task id is not an address the model can act on");
 }
 
-{
-  const unifiedAdapter = ((await import("../agent/channels/unified.js")).default as unknown as {
-    adapter: Record<string, (data: unknown, ctx: unknown) => Promise<void>>;
-  }).adapter;
-  ok(typeof unifiedAdapter["message.completed"] === "function", "🔴 §9 REACHABILITY: the unified channel really does register message.completed — the bridge lives inside it");
+const unifiedAdapter = ((await import("../agent/channels/unified.js")).default as unknown as {
+  adapter: Record<string, (data: unknown, ctx: unknown) => Promise<void>>;
+}).adapter;
+ok(typeof unifiedAdapter["message.completed"] === "function", "🔴 §9 REACHABILITY: the unified channel really does register message.completed — the bridge lives inside it");
 
-  const adapterCtx = { session: { continuation: { token: `unified:${TOKEN}` } } };
-  const bridgeComplete = (text: string): Promise<void> =>
-    unifiedAdapter["message.completed"]!({ finishReason: "stop", message: text }, adapterCtx);
+const adapterCtx = { session: { continuation: { token: `unified:${TOKEN}` } } };
+const bridgeComplete = (text: string): Promise<void> =>
+  unifiedAdapter["message.completed"]!({ finishReason: "stop", message: text }, adapterCtx);
 
-  function bridgeSession(turnWake: string, turnId: string): <T>(fn: () => Promise<T>) => Promise<T> {
-    const c = new ContextContainer();
-    c.set(SessionKey, {
-      sessionId: "reply-delegation-pending-test",
-      auth: {
-        current: {
-          attributes: {
-            oe_platform: "slack",
-            oe_grain: "standing",
-            oe_addressing: "direct-mention",
-            oe_wake_id: turnWake,
-            oe_window_token: TOKEN,
-            channel_id: CHAN,
-            team_id: "T1",
-          },
-          principalId: "U1",
-          principalType: "slack-user",
+function bridgeSession(turnWake: string, turnId: string): <T>(fn: () => Promise<T>) => Promise<T> {
+  const c = new ContextContainer();
+  c.set(SessionKey, {
+    sessionId: "reply-delegation-pending-test",
+    auth: {
+      current: {
+        attributes: {
+          oe_platform: "slack",
+          oe_grain: "standing",
+          oe_addressing: "direct-mention",
+          oe_wake_id: turnWake,
+          oe_window_token: TOKEN,
+          channel_id: CHAN,
+          team_id: "T1",
         },
+        principalId: "U1",
+        principalType: "slack-user",
       },
-      turn: { id: turnId, sequence: 1 },
-      parent: undefined,
-    });
-    return <T>(fn: () => Promise<T>): Promise<T> => contextStorage.run(c, fn);
-  }
+    },
+    turn: { id: turnId, sequence: 1 },
+    parent: undefined,
+  });
+  return <T>(fn: () => Promise<T>): Promise<T> => contextStorage.run(c, fn);
+}
 
-  const answeredAt = async (wakeId: string): Promise<string | undefined> => (await store.getUnifiedWakeRecord(ORG, wakeId))?.answeredAt;
-  const heldRows = async (): Promise<Record<string, unknown>[]> =>
-    (await readAudit({ org: ORG, action: BRIDGE_WAKE_HELD_AUDIT_ACTION })).map((r) => (r.detail ?? {}) as Record<string, unknown>);
+const answeredAt = async (wakeId: string): Promise<string | undefined> => (await store.getUnifiedWakeRecord(ORG, wakeId))?.answeredAt;
+const heldRows = async (): Promise<Record<string, unknown>[]> =>
+  (await readAudit({ org: ORG, action: BRIDGE_WAKE_HELD_AUDIT_ACTION })).map((r) => (r.detail ?? {}) as Record<string, unknown>);
 
+{
   {
     const wBridge = await wake("C_BRIDGE", "901.1");
     const before = posted.length;
@@ -394,6 +395,123 @@ const roomHas = (needle: string): boolean => posted.some((m) => m.text.includes(
       "🔴 §9b NEGATIVE CONTROL: with no pending dispatch the bridge marks the wake ANSWERED exactly as before. The guard is one condition on the mark, not the removal of it",
     );
     ok((await heldRows()).length === heldBefore, "§9b/AUDIT: …and it writes no held-wake row, so the row counts only the turns the guard acted on");
+  }
+}
+
+{
+  const lastPosted = (): string => posted[posted.length - 1]?.text ?? "";
+  const HANDOFF = "I've handed this to a worker and will report back.";
+
+  {
+    const inTurn = newSession();
+    const w = await wake("C_FRAME_TOOL", "1001.1");
+    const before = posted.length;
+
+    await inTurn(async () => {
+      await hook({ data: { result: receiptResult("call_699a", "task_699a") } }, ctxFor(w, "turn_699a"));
+      const ack = await callReply(w, "turn_699a", w, HANDOFF, false);
+      ok(ack.posted === true, "§10a precondition: the `done:false` hand-off posts");
+      ok(
+        typeof ack.note === "string" && ack.note.includes("not its result"),
+        "🔴 §10a/NOTE: the tool result tells the model the host framed this post, in the frame's own words — an in-band claim about the frame must not be able to drift from the frame",
+      );
+    });
+
+    ok(posted.length === before + 1, "§10a/ROOM: exactly one message reached the room");
+    ok(
+      lastPosted().startsWith(PENDING_WORK_FRAME),
+      `🔴 §10a: the posted body OPENS with the host frame while the dispatched worker still owes this wake. A frame after the text arrives after the reader has already believed it (saw: ${JSON.stringify(lastPosted().slice(0, 120))})`,
+    );
+    ok(lastPosted().includes(HANDOFF), "🔴 §10a: …and the model's own text is still delivered in full — the frame adds a line, it never replaces or truncates the message");
+    ok(lastPosted() !== HANDOFF, "§10a: …so the room genuinely received something the model did not author");
+  }
+
+  {
+    const inTurn = newSession();
+    const w = await wake("C_FRAME_PLAIN", "1002.2");
+    const before = posted.length;
+    const TEXT = "Here is the answer, retrieved and checked.";
+
+    const plain = await inTurn(() => callReply(w, "turn_699b", w, TEXT, true));
+    ok(plain.posted === true, "§10b precondition: the ordinary answer posts");
+    ok(posted.length === before + 1, "§10b/ROOM: one message reached the room");
+    ok(
+      lastPosted() === TEXT,
+      `🔴 §10b NEGATIVE CONTROL: an ordinary reply is delivered BYTE-IDENTICAL to what the model wrote. The frame is a condition, not a decoration on every post (saw: ${JSON.stringify(lastPosted().slice(0, 120))})`,
+    );
+    ok(!lastPosted().includes(PENDING_WORK_FRAME), "🔴 §10b: …asserted on the frame's own text and not only on equality, so a reworded frame cannot slip past this leg");
+  }
+
+  {
+    const inTurn = newSession();
+    const w = await wake("C_FRAME_SETTLE", "1003.3");
+    const REAL = "The worker reports: memory_admin_list requires an org admin.";
+
+    await inTurn(async () => {
+      await hook({ data: { result: receiptResult("call_699c", "task_699c") } }, ctxFor(w, "turn_699c"));
+
+      const pending = await callReply(w, "turn_699c", w, HANDOFF, false);
+      ok(pending.posted === true, "§10c precondition: the hand-off posts while the worker runs");
+      ok(lastPosted().startsWith(PENDING_WORK_FRAME), "§10c precondition: …and it is framed");
+
+      await hook({ data: { result: peekResult("task_699c", "completed") } }, ctxFor(w, "turn_699c"));
+
+      const real = await callReply(w, "turn_699c", w, REAL, true);
+      ok(real.posted === true, "§10c precondition: the settled answer posts");
+    });
+
+    ok(
+      lastPosted() === REAL,
+      `🔴 §10c THE CONDITION, ISOLATED: once the worker has reported, the SAME wake in the SAME turn posts UNFRAMED. The frame tracks the ledger, not the conversation — a frame that stuck to the wake would still be here (saw: ${JSON.stringify(lastPosted().slice(0, 120))})`,
+    );
+  }
+
+  {
+    const wB = await wake("C_FRAME_BRIDGE", "1004.4");
+    const before = posted.length;
+
+    await bridgeSession(wB, "turn_699d")(async () => {
+      await hook({ data: { result: receiptResult("call_699d", "task_699d") } }, ctxFor(wB, "turn_699d"));
+      const refused = await callReply(wB, "turn_699d", wB, FABRICATION, true);
+      ok(typeof refused.error === "string", "§10d precondition: the reply tool refuses the fabricated `done:true`");
+      await bridgeComplete(FABRICATION);
+    });
+
+    ok(posted.length === before + 1, "§10d/ROOM: the bridge posted the model's prose, as OPE-701 requires");
+    ok(
+      lastPosted().startsWith(PENDING_WORK_FRAME),
+      `🔴 §10d: the BRIDGED prose carries the same frame. This is the path the refusal itself opens, so a frame on the tool path alone would leave the defect's own escape route unframed (saw: ${JSON.stringify(lastPosted().slice(0, 120))})`,
+    );
+    ok(lastPosted().includes("RECURRING.md"), "🔴 §10d: …and the model's text still posts in full. The host frames the answer; it never deletes it");
+    ok((await answeredAt(wB)) === undefined, "§10d: …and OPE-701's hold is intact — framing the prose did not start closing the wake");
+  }
+
+  {
+    const wP = await wake("C_FRAME_BRIDGE_PLAIN", "1005.5");
+    const before = posted.length;
+    const TEXT = "Here is the bridged answer, retrieved and checked.";
+
+    await bridgeSession(wP, "turn_699e")(() => bridgeComplete(TEXT));
+
+    ok(posted.length === before + 1, "§10e/ROOM: the ordinary bridged prose reached the room");
+    ok(
+      lastPosted() === TEXT,
+      `🔴 §10e NEGATIVE CONTROL: with no pending dispatch the bridge delivers the prose BYTE-IDENTICAL. Both enforcing paths need their own negative control, because each reads the ledger at its own call site (saw: ${JSON.stringify(lastPosted().slice(0, 120))})`,
+    );
+    ok(typeof (await answeredAt(wP)) === "string", "§10e: …and it still marks the wake answered, so this leg also re-pins that OPE-699 changed nothing about the mark");
+  }
+
+  {
+    ok(withPendingWorkFrame("body", false) === "body", "🔴 §10f: unframed is the IDENTITY function — the fail-soft direction costs a frame, never a message");
+    ok(withPendingWorkFrame("body", true) === `${PENDING_WORK_FRAME}\n\nbody`, "🔴 §10f: framed is the constant, a BLANK line, then the body — a single newline joins into one paragraph under markdown");
+    ok(
+      !/[*_`~[\]]/.test(PENDING_WORK_FRAME),
+      "🔴 §10f: the frame carries NO markdown. Slack's emphasis dialect is not GitHub's, and one constant crosses six surfaces — a frame that renders as literal punctuation on five of them is worse than plain prose",
+    );
+    ok(PENDING_WORK_FRAME.includes("not its result"), "§10f: …and it says the one honest thing the host actually knows — that this message is not the worker's answer");
+    const both = withReplierPrefix(withPendingWorkFrame("body", true), { taskLabel: "audit the ledger" });
+    ok(both.startsWith("[audit the ledger] "), "🔴 §10f: the replier tier label stays OUTERMOST — the frame must never displace the signal a reader uses to tell a worker from the seat");
+    ok(both.includes(PENDING_WORK_FRAME) && both.endsWith("body"), "§10f: …and both signals survive together, in that order");
   }
 }
 
