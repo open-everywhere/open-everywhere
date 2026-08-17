@@ -30,6 +30,7 @@ import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { installTaskWake, openTaskWake } from "../channels/task-wake.js";
 import { noteTurnBoundary } from "../access/task-wake-signal.js";
 import { addressedWakeThisTurn, noteTaskDispatchedThisTurn } from "../access/dispatch-origin-signal.js";
+import { notePendingDelegation, noteDelegationSettled } from "../access/pending-delegation-signal.js";
 import { flushDirtyTreeAtTurnEnd, flushSettledMemory, noteTaskDispatched, noteTaskViews } from "./settlement-flush.js";
 import type { MemoryPersistContext } from "./memory.js";
 
@@ -451,13 +452,15 @@ export default defineHook({
           await noteTaskReceipt(receipt, ownSessionId);
           const bind = ctx as unknown as BindableContext;
           const dispatchTurnId = currentTurnId(bind);
+          const dispatchWakeId = addressedWakeThisTurn(dispatchTurnId) ?? currentWakeId(bind);
           const minted = await openTaskWake({
             org: deploymentOrg(),
             taskId: receipt.taskId,
-            parentWakeId: addressedWakeThisTurn(dispatchTurnId) ?? currentWakeId(bind),
+            parentWakeId: dispatchWakeId,
             windowToken: resolveOwnWindowToken(bind),
           });
           if (minted !== null) noteTaskDispatchedThisTurn(dispatchTurnId, receipt.taskId, minted);
+          notePendingDelegation(dispatchTurnId, receipt.taskId, dispatchWakeId);
           noteTaskDispatched(receipt.taskId);
           return;
         }
@@ -468,6 +471,7 @@ export default defineHook({
           const wakeBind = ctx as unknown as BindableContext;
           const inheritedWakeId = inheritedWakeStampOf(wakeBind);
           const wakeTurnId = currentTurnId(wakeBind);
+          for (const view of terminal) noteDelegationSettled(wakeTurnId, view.taskId);
           for (const view of terminal) {
             await installTaskWake({
               org: deploymentOrg(),
