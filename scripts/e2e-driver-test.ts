@@ -86,7 +86,7 @@ const {
   createJudgeReporter,
   renderReportedJudgeSummary,
 } = await import("../packages/core/scripts/e2e/judge.js");
-const { SCENARIOS, skipCategory, skipReason, ScenarioSkip } = await import("../packages/core/scripts/e2e/scenarios.js");
+const { SCENARIOS, skipCategory, skipReason, ScenarioSkip, isFillerAck } = await import("../packages/core/scripts/e2e/scenarios.js");
 const { emptySkipCounts, renderSkipBreakdown, SKIP_KINDS } = await import("../packages/core/scripts/e2e/skip-summary.js");
 const { verifySlackSignature, classifyEnvelope, buildFrontHandler, PUBLIC_SLACK_ROUTE } = await import("@open-everywhere/provider-slack/agent/channels/slack-front.js");
 const { SLACK_COMMANDS_ROUTE } = await import("@open-everywhere/provider-slack/agent/channels/slack-commands.js");
@@ -641,6 +641,22 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   ok(JSON.stringify(prOpenRowNumbers(prRows, "acme/e2e-scratch")) === JSON.stringify([18]), "prOpenRowNumbers: narrowing to the fixture repo drops another repo's publish from the same window");
   ok(prOpenRowNumbers([row("pr.open", { repo: "acme/e2e-scratch" })]).length === 0, "prOpenRowNumbers: a pr.open row with no `number` yields nothing (never guess a PR number — the teardown closes whatever it is handed)");
   ok(JUDGE_ARM_PROBE_MS > 0 && JUDGE_ARM_PROBE_MS <= 120_000, `the judge-arm probe budget stays small (${JUDGE_ARM_PROBE_MS}ms) — its rows are written BEFORE the reply the drive already awaited, so it covers audit propagation, not a race`);
+}
+
+{
+  ok(isFillerAck("the listing is still in progress"), 'isFillerAck: "the listing is still in progress" (S16\'s own delegation ack) is filler');
+  ok(isFillerAck("still in progress"), 'isFillerAck: bare "still in progress" is filler');
+  ok(isFillerAck("this is currently in progress, one moment"), 'isFillerAck: "currently in progress" is filler');
+  ok(
+    !isFillerAck("memory_admin_list requires an org admin, or a domain admin for at least one memory domain."),
+    "isFillerAck: the real not-admin refusal is NOT filler — a genuine refusal must never be skipped past",
+  );
+  ok(
+    !isFillerAck(
+      "this action needs to know who asked, and this turn cannot say: this turn was woken by 2 different people at once, so it cannot say whose ask this is.",
+    ),
+    "isFillerAck: the real OPE-673 unverified refusal is NOT filler either — same reasoning",
+  );
 }
 
 {
