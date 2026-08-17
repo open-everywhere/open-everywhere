@@ -1,10 +1,23 @@
 import { defineDynamic, defineSkill } from "eve/skills";
-import { resolveAccessFor } from "../access/request.js";
+import { resolveAccessFor, unattendedOf } from "../access/request.js";
 import { getConfig } from "../access/config.js";
 import { repoSkillPackages } from "../scm/repo-skills.js";
 import { resolveDomainSkillRows, skillPackageFromRow } from "./domain-skills.js";
-import type { BindableContext } from "../identity/binding.js";
+import { resolveLeanSeatPosture } from "../access/lean-seat.js";
+import { canDelegateFromSeat } from "../access/delegation-mount.js";
+import { windowGrainOf, type BindableContext } from "../identity/binding.js";
 import type { SkillPackageDefinition } from "eve/skills";
+
+function seatMayLoadSkills(ctx: BindableContext): boolean {
+  try {
+    const grain = windowGrainOf(ctx);
+    const canDelegate = canDelegateFromSeat(ctx);
+    const unattendedFire = unattendedOf(ctx);
+    return resolveLeanSeatPosture({ grain, canDelegate, unattendedFire }) !== "lean";
+  } catch {
+    return true;
+  }
+}
 
 export interface ResolvedSkillEntry {
   readonly name: string;
@@ -15,6 +28,7 @@ export interface ResolvedSkillEntry {
 }
 
 export async function resolveSkillEntries(ctx: BindableContext): Promise<ResolvedSkillEntry[]> {
+  if (!seatMayLoadSkills(ctx)) return [];
   const access = resolveAccessFor(ctx);
   const skillContent = getConfig().skillContent;
   const grantedNames = new Set(access.skills);
