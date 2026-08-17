@@ -51,6 +51,9 @@ test("a signed delivery is accepted (200), fires, and its webhook.fired row join
   expect(String(reply.detail?.id)).toMatch(/^spoof-/);
   expect(reply.detail?.platform).toBe("slack");
   expect(reply.detail?.chars).toBe(replyText.length);
+
+  expect(reply.detail?.route).toBe("bridge");
+  expect(reply.detail).not.toHaveProperty("creatorId");
 });
 
 test("an unsigned delivery is refused 401, and writes NO webhook.fired row", async () => {

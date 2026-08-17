@@ -102,6 +102,10 @@ function attestedFirePrincipal(ctx: BindableContext): { readonly id: string; rea
   return { id, internal: attr(a, [FIRE_PRINCIPAL_TRUST_ATTR, "oeFirePrincipalTrust"]) === "internal" };
 }
 
+export function attestedFireCreatorId(ctx: BindableContext): string | undefined {
+  return attestedFirePrincipal(ctx)?.id;
+}
+
 function unattendedOrigin(ctx: BindableContext): boolean {
   return attr(authOf(ctx)?.attributes, [FIRE_UNATTENDED_ATTR, "oeFireUnattended"]) === "true";
 }

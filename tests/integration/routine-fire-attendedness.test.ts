@@ -95,6 +95,54 @@ test("the fired session binds as its routine's ATTESTED creator", async () => {
   expect(started.principalId).not.toBe("eve:app");
 });
 
+test("a routine fire's reply.post row keeps the schedule app as AUTHOR and adds the creator to DETAIL — terminal route", async () => {
+  await bootAgent({ sharedSqlite: true });
+  const sayText = "oe-660 terminal route fire reply";
+  disposeLater(registerScript({ parent: [{ say: sayText }] }));
+  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+
+  await seedDueRoutine({
+    surfaceKey: `slack/${TEAM}/${CHANNEL}`,
+    channelId: CHANNEL,
+    prompt: "say something short",
+    createdBy: CREATOR,
+  });
+  expect((await runRoutineDispatchTick()).length).toBeGreaterThan(0);
+
+  const reply = await waitFor(async () => {
+    const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+    return rows.find((r) => r.detail?.chars === sayText.length);
+  }, "the routine fire's reply.post row (terminal route)", 150_000);
+
+  expect(reply.detail?.route).toBe("terminal");
+  expect(reply.principalId).toBe("eve:app");
+  expect(reply.detail?.creatorId).toBe(CREATOR);
+});
+
+test("a routine fire's reply.post row keeps the schedule app as AUTHOR and adds the creator to DETAIL — bridge route", async () => {
+  await bootAgent({ sharedSqlite: true });
+  const sayText = "oe-660 bridge route fire reply, deliberately longer";
+  disposeLater(registerScript({ parent: [{ say: sayText }] }));
+  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+
+  await seedDueRoutine({
+    surfaceKey: "slack/T0EXAMPLE/C0EXCHAN003",
+    channelId: "C0EXCHAN003",
+    prompt: "say something short",
+    createdBy: CREATOR,
+  });
+  expect((await runRoutineDispatchTick()).length).toBeGreaterThan(0);
+
+  const reply = await waitFor(async () => {
+    const rows = await readAuditRows({ actions: ["reply.post"], sinceIso });
+    return rows.find((r) => r.detail?.chars === sayText.length);
+  }, "the routine fire's reply.post row (bridge route)", 150_000);
+
+  expect(reply.detail?.route).toBe("bridge");
+  expect(reply.principalId).toBe("eve:app");
+  expect(reply.detail?.creatorId).toBe(CREATOR);
+});
+
 test("NEGATIVE CONTROL — an ATTENDED wake proposing the same verb passes the fence and cards, unattended:false", async () => {
   await bootAgent({ sharedSqlite: true });
   disposeLater(registerScript(proposeSpendLimit()));
