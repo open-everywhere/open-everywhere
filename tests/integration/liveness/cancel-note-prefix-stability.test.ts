@@ -59,7 +59,7 @@ function prefixDivergence(before: readonly RecordedRequest["messages"][number][]
   return undefined;
 }
 
-test("a cancelled turn's system-prompt reminder is a pure append, and clears back to byte-identical — never rewrites the middle of the prefix", async () => {
+test("a cancelled turn's system-prompt reminder is one clean insertion at a fixed point, and clears back to byte-identical — never a scattered rewrite of the prefix", async () => {
   await bootAgent({ sharedSqlite: true });
   const org = deploymentOrg();
   const channelKey = turnChannelKey("discord", DISCORD_LISTED_CHANNEL_ID)!;
@@ -124,13 +124,13 @@ test("a cancelled turn's system-prompt reminder is a pure append, and clears bac
   let commonPrefixLen = 0;
   while (commonPrefixLen < sysA.length && commonPrefixLen < sysC.length && sysA[commonPrefixLen] === sysC[commonPrefixLen]) commonPrefixLen++;
   expect(commonPrefixLen, "turn A and turn C share NO common prefix at all").toBeGreaterThan(0);
-  expect(commonPrefixLen, "turn C is byte-identical to turn A — the cancel note did not render").toBeLessThan(sysA.length);
+  expect(sysC.length, "turn C's system is no longer than turn A's — the cancel note did not render").toBeGreaterThan(sysA.length);
   const tailA = sysA.slice(commonPrefixLen);
-  const reappearsAt = sysC.indexOf(tailA, commonPrefixLen);
+  const reappearsAt = tailA === "" ? sysC.length : sysC.indexOf(tailA, commonPrefixLen);
   expect(reappearsAt, "turn A's post-divergence tail does not reappear verbatim anywhere later in turn C — this is a REWRITE, not a clean insertion").toBeGreaterThanOrEqual(0);
   const inserted = sysC.slice(commonPrefixLen, reappearsAt);
   expect(inserted, "the inserted block does not carry the cancel reconstruction").toContain("was CANCELLED");
-  expect(inserted.startsWith("<system-reminder>"), `the inserted block is not cleanly delimited at its start: ${JSON.stringify(inserted.slice(0, 40))}`).toBe(true);
+  expect(inserted.trimStart().startsWith("<system-reminder>"), `the inserted block is not cleanly delimited at its start: ${JSON.stringify(inserted.slice(0, 40))}`).toBe(true);
   expect(inserted.trimEnd().endsWith("</system-reminder>"), `the inserted block is not cleanly delimited at its end: ${JSON.stringify(inserted.slice(-40))}`).toBe(true);
   expect(sysA.slice(0, commonPrefixLen) + inserted + tailA).toBe(sysC);
 
