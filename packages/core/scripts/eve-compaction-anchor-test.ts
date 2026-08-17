@@ -55,19 +55,33 @@ const OVERHEAD = estimateTokens([
   { content: promptModule.COMPACTION_PROMPT_ENVELOPE.prompt, role: "user" },
 ]);
 
+const ANCHORED_CONFIG_DEF =
+  "function __oeAnchoredConfig(e,t){let n=getInputTokenCount(e,t)-estimateTokens(e);return n>0?{...t,threshold:t.threshold-n}:t}";
+const NOOP_GUARD_DEF =
+  'function __oeNoteNoOpCompaction(e,t,n,r){if(t!==e&&(t.length!==e.length||JSON.stringify(t)!==JSON.stringify(e)))return t;if(r!==!0&&!shouldCompact(e,n))return t;console.warn("[oe][OPE-689] compaction returned the input unchanged after the trigger fired ("+e.length+" messages, threshold "+n.threshold+"). The harness will emit compaction.completed for a no-op and the session will not shrink.");return t}';
+
 const src = readFileSync(compactionPath, "utf8");
 ok(src.includes("=== OE PATCH HELPERS (OPE-689) ==="), "presence: the OPE-689 marker comment is in the installed bytes");
-ok(src.includes("function __oeCompactionDensity("), "presence: the __oeCompactionDensity helper is in the installed bytes");
-ok(src.includes("function __oeCompactionDensityConfig("), "presence: the __oeCompactionDensityConfig helper is in the installed bytes");
+ok(src.includes(ANCHORED_CONFIG_DEF), "presence: the __oeAnchoredConfig helper is byte-exact in the installed bytes");
+ok(src.includes(NOOP_GUARD_DEF), "presence: the __oeNoteNoOpCompaction backstop is byte-exact in the installed bytes");
+const END = "// === END OE PATCH HELPERS ===";
+ok(src.indexOf(ANCHORED_CONFIG_DEF) < src.indexOf(END), "presence: the helpers live inside the OE helper block");
+
 ok(
-  src.indexOf("function __oeCompactionDensity(") < src.indexOf("// === END OE PATCH HELPERS ==="),
-  "presence: the helpers live inside the OE helper block",
+  /\{config:__oeA,conversation:[A-Za-z_$]{1,2},older:/.test(src),
+  "wiring: the anchored config is the one the compaction heuristics receive",
+);
+ok((src.match(/__oeAnchoredConfig\(/g) ?? []).length === 2, "wiring: exactly one call site (helper definition plus one invocation)");
+ok((src.match(/__oeA[,)]/g) ?? []).length === 1, "wiring: the anchored config is read exactly once — nothing else re-budgets on it");
+ok(
+  /selectRecentWindowSize\([A-Za-z_$]{1,2},[A-Za-z_$]{1,2}\?\{\.\.\.i,recentWindowSize:1\}:i\)/.test(src),
+  "wiring: selectRecentWindowSize still reads the original config — per-message budgeting keeps the estimator",
 );
 ok(
-  /async function compactMessages\([^)]*\)\{[A-Za-z_$]{1,2}=__oeCompactionDensityConfig\(/.test(src),
-  "wiring: the corrected config is installed as the first statement of compactMessages",
+  src.includes("async function compactMessages(t,r,i,a,o,c,l,d=!1){return __oeNoteNoOpCompaction(t,await __oeCompactMessagesInner(t,r,i,a,o,c,l,d),i,d)}"),
+  "wiring: the exported compactMessages delegates to the inner function through the no-op backstop",
 );
-ok((src.match(/__oeCompactionDensityConfig\(/g) ?? []).length === 2, "wiring: exactly one call site (helper definition plus one invocation)");
+ok(src.includes("export{compactMessages,"), "wiring: `compactMessages` is still the exported name, so every eve caller gets the wrapper");
 
 const DENSE = "eJyVk1tv2jAUx7/KUZ42qUlIQmhJpUmoTNM0abtIm/YwTZUJDrhN7Mx2oKzqd99xEijQru";
 
@@ -109,12 +123,12 @@ function mockModel(): { model: MockLanguageModelV4; calls: () => number } {
     threshold: THRESHOLD,
   };
 
-  ok(estimated + OVERHEAD <= THRESHOLD, "premise: the JSON.stringify/4 heuristic reads the fixture as WITHIN the threshold");
+  ok(estimated + OVERHEAD <= THRESHOLD, "premise: the JSON.stringify/4 estimate reads the fixture as WITHIN the threshold");
   ok(
     compaction.getInputTokenCount(messages, config) + OVERHEAD > THRESHOLD,
     "premise: the reported input-token count reads the same fixture as OVER the threshold",
   );
-  ok(compaction.shouldCompact(messages, config), "premise: eve therefore decides to compact");
+  ok(compaction.shouldCompact(messages, config), "premise: the trigger therefore fires");
 }
 
 {
@@ -166,7 +180,7 @@ function mockModel(): { model: MockLanguageModelV4; calls: () => number } {
     recentWindowSize: 4,
     threshold: THRESHOLD,
   };
-  ok(!compaction.shouldCompact(messages, config), "fast-path: eve would not compact this session at all");
+  ok(!compaction.shouldCompact(messages, config), "fast-path: the trigger would not fire on this session at all");
 
   const { model, calls } = mockModel();
   const after = await compaction.compactMessages(messages, model, config);
@@ -199,8 +213,8 @@ function mockModel(): { model: MockLanguageModelV4; calls: () => number } {
     recentWindowSize: 2,
     threshold: 20_000,
   };
-  ok(estimated > config.threshold, "tool-cap: the raw transcript is over the threshold on the heuristic alone");
-  ok(compaction.shouldCompact(messages, config), "tool-cap: eve decides to compact");
+  ok(estimated > config.threshold, "tool-cap: the raw transcript is over the threshold on the estimate alone");
+  ok(compaction.shouldCompact(messages, config), "tool-cap: the trigger fires");
 
   const before = JSON.stringify(messages);
   const { model, calls } = mockModel();
@@ -218,9 +232,83 @@ function mockModel(): { model: MockLanguageModelV4; calls: () => number } {
   const config: CompactionConfig = { recentWindowSize: 4, threshold: THRESHOLD };
   ok(
     compaction.shouldCompact(messages, config) === false,
-    "no-usage: with no reported input-token count eve cannot see the overrun at all — the hunk keys on the " +
-      "provider's figure and can only correct a session that has already reported one",
+    "no-usage: with no reported input-token count the trigger cannot see the overrun at all — the hunk anchors on " +
+      "the provider's figure and can only correct a session that has already reported one",
   );
 }
 
-console.log(`\n✓ eve-compaction-density: ${n} assertions passed (presence, wiring, premise, reduces, fast-path, tool-cap, no-usage)\n`);
+{
+  const anchoredConfig = new Function(
+    "getInputTokenCount",
+    "estimateTokens",
+    `${ANCHORED_CONFIG_DEF}\nreturn __oeAnchoredConfig;`,
+  )(compaction.getInputTokenCount, estimateTokens) as (messages: readonly Msg[], config: CompactionConfig) => CompactionConfig;
+
+  const messages = denseSession();
+  const estimated = estimateTokens(messages);
+  const over: CompactionConfig = {
+    lastKnownInputTokens: 30_000,
+    lastKnownPromptMessageCount: messages.length,
+    recentWindowSize: 4,
+    threshold: THRESHOLD,
+  };
+  const anchored = anchoredConfig(messages, over);
+  const gap = compaction.getInputTokenCount(messages, over) - estimated;
+  ok(gap > 0, `anchor-drive: the fixture really has a real-minus-estimate gap (${gap} tokens)`);
+  ok(
+    anchored.threshold === THRESHOLD - gap,
+    `anchor-drive: the threshold drops by exactly that gap (${THRESHOLD} → ${anchored.threshold})`,
+  );
+  ok(anchored.recentWindowSize === over.recentWindowSize, "anchor-drive: every other field is carried through unchanged");
+  ok(anchored !== over, "anchor-drive: a COPY is returned — the session's own compaction config is never mutated");
+
+  const none: CompactionConfig = { recentWindowSize: 4, threshold: THRESHOLD };
+  ok(anchoredConfig(messages, none) === none, "anchor-drive: with no reported usage the config passes through untouched");
+  const under: CompactionConfig = { ...over, lastKnownInputTokens: Math.round(estimated / 2) };
+  ok(anchoredConfig(messages, under) === under, "anchor-drive: a reported count below the estimate never LOOSENS the budget");
+}
+
+{
+  let triggerFires = true;
+  const guard = new Function("shouldCompact", `${NOOP_GUARD_DEF}\nreturn __oeNoteNoOpCompaction;`)(
+    () => triggerFires,
+  ) as (before: Msg[], after: Msg[], config: CompactionConfig, force?: boolean) => Msg[];
+
+  const warned: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]): void => {
+    warned.push(args.map(String).join(" "));
+  };
+  try {
+    const config: CompactionConfig = { recentWindowSize: 4, threshold: THRESHOLD };
+    const list: Msg[] = [{ role: "user", content: "a" }];
+
+    warned.length = 0;
+    ok(guard(list, list, config) === list, "guard-drive: the result is passed through unchanged (the backstop only observes)");
+    ok(warned.length === 1, "guard-drive: an unchanged list after the trigger fired logs exactly one line");
+    ok(warned[0].includes("OPE-689"), "guard-drive: the line names the defect, so a log search finds it");
+
+    warned.length = 0;
+    guard(list, [{ role: "user", content: "a" }], config);
+    ok(warned.length === 1, "guard-drive: an equal-by-value copy counts as a no-op, not as work");
+
+    warned.length = 0;
+    guard(list, [], config);
+    ok(warned.length === 0, "guard-drive: a list that really changed is silent");
+
+    triggerFires = false;
+    warned.length = 0;
+    guard(list, list, config);
+    ok(warned.length === 0, "guard-drive: an unchanged list is silent when the trigger would not have fired");
+
+    warned.length = 0;
+    guard(list, list, config, true);
+    ok(warned.length === 1, "guard-drive: a FORCED compaction that changed nothing still logs");
+  } finally {
+    console.warn = realWarn;
+  }
+}
+
+console.log(
+  `\n✓ eve-compaction-anchor: ${n} assertions passed (presence, wiring, premise, reduces, fast-path, tool-cap, no-usage, anchor-drive, guard-drive)\n`,
+);
