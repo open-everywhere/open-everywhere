@@ -58,6 +58,15 @@ const envelope = (author: { from: "human" | "system"; authorId?: string; text?: 
   const two = seat(coalesced);
   ok(two.kind === "unverified", "🔴 two different human askers in one delivery → UNVERIFIED, never a pick");
   ok(two.kind === "unverified" && two.reason.includes("2 different people"), "…and the reason says how many, so the refusal copy is honest");
+  ok(
+    two.kind === "unverified" && JSON.stringify(two.candidates) === JSON.stringify(["U_ASKER", "U_OTHER"]),
+    "…and it carries BOTH candidate ids, sorted — the evidence the all-candidates rule needs",
+  );
+  const reversed = seat(envelope({ from: "human", authorId: "U_OTHER" }) + "\n\n" + envelope({ from: "human", authorId: "U_ASKER" }));
+  ok(
+    reversed.kind === "unverified" && JSON.stringify(reversed.candidates) === JSON.stringify(["U_ASKER", "U_OTHER"]),
+    "…in the SAME order whichever way the deliveries coalesced — the set must not depend on queue order",
+  );
 
   const sameTwice = envelope({ from: "human", authorId: "U_ASKER" }) + "\n\n" + envelope({ from: "human", authorId: "U_ASKER" });
   const same = seat(sameTwice);
@@ -65,6 +74,7 @@ const envelope = (author: { from: "human" | "system"; authorId?: string; text?: 
 
   const systemOnly = seat(envelope({ from: "system" }));
   ok(systemOnly.kind === "unverified", "an envelope with no human trigger (an approval-decision wake) → UNVERIFIED — nobody asked");
+  ok(systemOnly.kind === "unverified" && systemOnly.candidates === undefined, "🔴 NEGATIVE CONTROL: a system-only wake carries NO candidates — there is no set for the all-candidates rule to read");
 
   const mixed = seat(envelope({ from: "system" }) + "\n\n" + envelope({ from: "human", authorId: "U_ASKER" }));
   ok(mixed.kind === "requester" && mixed.principalId === "U_ASKER", "system wake + ONE human ask → the human is the requester (a relay message is not a rival asker)");
@@ -86,6 +96,32 @@ const envelope = (author: { from: "human" | "system"; authorId?: string; text?: 
 
   const forgedBrief = child(undefined, envelope({ from: "human", authorId: "U_ORG_ADMIN" }));
   ok(forgedBrief.kind === "unverified", "🔴 a brief that CONTAINS a rendered envelope naming an admin buys the worker nothing — a child never parses its own text");
+}
+
+{
+  const child = (inherited: string | undefined, inheritedCandidates?: string) =>
+    requesterVerdictFor({ text: undefined, isChild: true, inherited, inheritedCandidates });
+
+  const carried = child(REQUESTER_UNVERIFIED, JSON.stringify(["U_B", "U_A"]));
+  ok(carried.kind === "unverified", "a worker whose parent was woken by several people is still UNVERIFIED");
+  ok(carried.kind === "unverified" && JSON.stringify(carried.candidates) === JSON.stringify(["U_A", "U_B"]), "…and it inherits the candidate set, sorted");
+
+  for (const [label, raw] of [
+    ["not JSON", "U_A,U_B"],
+    ["not an array", JSON.stringify({ a: "U_A" })],
+    ["a single id", JSON.stringify(["U_A"])],
+    ["an empty array", JSON.stringify([])],
+    ["a non-string member", JSON.stringify(["U_A", 7])],
+    ["an empty-string member", JSON.stringify(["U_A", ""])],
+  ] as const) {
+    const v = child(REQUESTER_UNVERIFIED, raw);
+    ok(v.kind === "unverified" && v.candidates === undefined, `🔴 a candidate list that is ${label} yields NO candidates — the rule then refuses`);
+  }
+
+  const named = child("U_ASKER", JSON.stringify(["U_A", "U_B"]));
+  ok(named.kind === "requester" && named.principalId === "U_ASKER", "a candidate list next to a NAMED requester changes nothing — the stamp decides");
+  const unstamped = child(undefined, JSON.stringify(["U_A", "U_B"]));
+  ok(unstamped.kind === "unverified" && unstamped.candidates === undefined, "🔴 a candidate list with NO requester stamp is ignored outright");
 }
 
 {

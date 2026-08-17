@@ -557,9 +557,12 @@ export const SCENARIOS: readonly Scenario[] = [
         `S19: an admin caller is NOT refused by memory_admin_list's admin gate (hard gate: "${MEMORY_ADMIN_GATE}" is absent)`,
       );
       await ctx.judgePass(
-        closedQA("Does the reply actually enumerate memory silos/domains (not a refusal, not an admin-only error)?", { mustMatch: [/silo|domain|brain/i] }),
+        closedQA(
+          "Does the reply actually enumerate memory silos/domains (not a refusal, not an admin-only error)? A listing that says it is narrowed to this channel's own domain, and points at a governance channel or a DM for the org-wide view, is a PASS — that is the venue fence working. Only a bare refusal, or an admin-standing error, fails.",
+          { mustMatch: [/silo|domain|brain/i] },
+        ),
         reply19.text,
-        "S19: admin memory_admin_list listing quality",
+        "S19: admin memory_admin_list listing quality (narrowed to this room's domain — the org-wide venue is a DM, OPE-687)",
       );
     },
   },

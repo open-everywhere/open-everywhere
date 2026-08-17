@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { registerConfig } from "../agent/access/config.js";
 import { assertDomainsValid, defineDomain, type Domain } from "../agent/memory/domain.js";
 import { roleForBinding, resolveRole, requireOrgAdmin, requireDomainAdminOrOrg, adminControlRoles } from "../agent/access/roles.js";
+import { sharedOrgAdminSubject } from "../agent/access/admin-standing.js";
 import type { SurfaceBinding } from "../agent/identity/binding.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
@@ -169,4 +170,47 @@ function ctxFor(principalId: string | undefined, channelId: string): BindableCon
   ok(adminControlRoles("U_EXACT_TXN", exactDomains, "slack", "T1").join(",") === "domain:txn", "adminControlRoles: an exact domain admin → [\"domain:txn\"], regardless of channel");
 }
 
-console.log(`\n✓ roles: ${n} assertions passed (config-as-code RBAC: org/domain admin matrix + exact-id-only admin rosters + throw-message wording)\n`);
+{
+  const twoAdminDomains: Domain[] = [
+    defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/T1/U_ORG_A", "slack/T1/U_ORG_B"] }),
+    defineDomain({ name: "txn", channels: ["slack/T1/C_TXN"], admins: ["slack/T1/U_TXN_ADMIN"] }),
+  ];
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => twoAdminDomains,
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  } as never);
+  const b = bind({ principalId: "U_ORG_A", surface: "C_TXN" });
+
+  const served = sharedOrgAdminSubject(b, "U_ORG_A", ["U_ORG_A", "U_ORG_B"]);
+  ok(served === "U_ORG_A", "two ORG admins woke the turn → SERVED, under the acting principal (one of the equals)");
+  ok(sharedOrgAdminSubject(b, "U_ORG_B", ["U_ORG_A", "U_ORG_B"]) === "U_ORG_B", "…and under whichever of them the delivery's auth carried");
+  ok(sharedOrgAdminSubject(b, "U_SOMEONE_ELSE", ["U_ORG_B", "U_ORG_A"]) === "U_ORG_A", "…falling back to the FIRST SORTED id when the acting principal is not a candidate — deterministic, never queue order");
+
+  ok(sharedOrgAdminSubject(b, "U_ORG_A", ["U_ORG_A", "U_RANDOM"]) === undefined, "🔴 ONE non-admin among the candidates refuses the WHOLE turn");
+  ok(sharedOrgAdminSubject(b, "U_ORG_A", ["U_ORG_A", "U_TXN_ADMIN"]) === undefined, "🔴 a DOMAIN admin is not org-admin standing — the set is not identical, so it refuses");
+  ok(sharedOrgAdminSubject(b, "U_TXN_ADMIN", ["U_TXN_ADMIN", "U_TXN_ADMIN2"]) === undefined, "🔴 two DOMAIN admins of the same domain still refuse — the rule is ORG admin only");
+  ok(sharedOrgAdminSubject(b, "U_ORG_A", undefined) === undefined, "🔴 an unverified turn with NO candidate set refuses — the rule needs the WHOLE set");
+  ok(sharedOrgAdminSubject(b, "U_ORG_A", ["U_ORG_A"]) === undefined, "🔴 a single candidate is not a several-askers turn — it refuses rather than rubber-stamping");
+  ok(sharedOrgAdminSubject(b, "U_ORG_A", []) === undefined, "🔴 an empty candidate set refuses");
+
+  ok(sharedOrgAdminSubject(bind({ principalId: "U_ORG_A", workspace: "T_OTHER" }), "U_ORG_A", ["U_ORG_A", "U_ORG_B"]) === undefined, "🔴 the same ids in ANOTHER workspace hold nothing — the roster names slack/T1/…");
+  ok(sharedOrgAdminSubject(bind({ principalId: "U_ORG_A", platform: "discord" }), "U_ORG_A", ["U_ORG_A", "U_ORG_B"]) === undefined, "🔴 the same ids on ANOTHER platform hold nothing");
+
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [defineDomain({ name: "org", match: "org", memory: "org-brain" })],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  } as never);
+  ok(sharedOrgAdminSubject(b, "U_ORG_A", ["U_ORG_A", "U_ORG_B"]) === undefined, "🔴 an org pseudo-domain with no admins roster refuses every candidate set");
+}
+
+console.log(`\n✓ roles: ${n} assertions passed (config-as-code RBAC: org/domain admin matrix + exact-id-only admin rosters + the all-candidates serve rule + throw-message wording)\n`);
