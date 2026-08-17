@@ -37,7 +37,7 @@ registerSlackTestBridge({ channel: slackChannel as never });
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineDomain } = await import("../agent/memory/domain.js");
 const { defineMemorySilo } = await import("../agent/memory/silo.js");
-const { actingPrincipalId, bindFrom, FIRE_PRINCIPAL_ATTR, FIRE_PRINCIPAL_TRUST_ATTR, FIRE_UNATTENDED_ATTR } = await import("../agent/identity/binding.js");
+const { actingPrincipalId, attestedFireCreatorId, bindFrom, FIRE_PRINCIPAL_ATTR, FIRE_PRINCIPAL_TRUST_ATTR, FIRE_UNATTENDED_ATTR } = await import("../agent/identity/binding.js");
 const { bridgedContext } = await import("../agent/identity/binding-bridge.js");
 const { actingPrincipalIdOf, buildResolveRequest, principalIdOf } = await import("../agent/access/request.js");
 const { adminControlRoles, roleForBinding } = await import("../agent/access/roles.js");
@@ -609,6 +609,27 @@ const staleBag = delivered[1]!.attributes;
   const carried = bridgedContext({ platform: "slack", principalId: "webhook:inbound", principalType: "service", attributes: hookBag });
   ok(bindFrom(carried).principalAttested === true && actingPrincipalIdOf(carried) === undefined, "vehicle: 🔴 the marker survives the bridge's verbatim bag carriage — an identity-less tool context of a webhook fire reconstitutes attributed, never fail-open");
   ok(principalIdOf(carried) === "webhook:inbound", "vehicle: …with the hook's service id intact for audit on the far side of the bridge too");
+}
+
+{
+  ok(attestedFireCreatorId(fireCtx(vouchedBag)) === CREATOR, "audit: a routine fire WITH a stored creator answers that creator's id");
+  ok(attestedFireCreatorId(liveCtx()) === undefined, "audit: 🔴 NEGATIVE CONTROL — an ordinary live human turn (no fire stamp) answers undefined, never the human's own id mistaken for a fire creator");
+
+  const { webhookFireAttributes } = await import("../agent/routines/fire-auth.js");
+  const hookBag = webhookFireAttributes("inbound", TEAM, "C_ENG", false, true);
+  const hookCtx = {
+    channel: { kind: "slack" },
+    session: { auth: { current: { authenticator: "webhook", principalType: "service", principalId: "webhook:inbound", attributes: hookBag } } },
+  } as never;
+  ok(attestedFireCreatorId(hookCtx) === undefined, "audit: a WEBHOOK fire has no creator field to attest — answers undefined, never invents one from the hook's own service id");
+
+  const creatorlessBag = routineFireAttributes(
+    { id: "r-anon2", org: ORG, surfaceKey: `slack/${TEAM}/C_ENG`, trigger: { kind: "cron", expr: "0 9 * * *" }, prompt: "p", createdAt: "x", status: "active", consecutiveFailures: 0 } as never,
+    { team_id: TEAM, channel_id: "C_ENG", channel_type: "channel" },
+    "channel",
+    true,
+  );
+  ok(attestedFireCreatorId(fireCtx(creatorlessBag)) === undefined, "audit: a creator-less routine row (no `createdBy`) also answers undefined — genuinely nobody to name");
 }
 
 console.log(`✓ fire-principal: ${passed} assertions passed`);

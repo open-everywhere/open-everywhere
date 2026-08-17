@@ -87,6 +87,7 @@ import {
   getSettings,
   replierLabelFromAuthAttributes,
   authPrincipalId,
+  attestedFireCreatorId,
   type ReplierLabel,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { fetchDiscordBackscrollLines, distillDiscordRotationHandoff, gradeDiscordContextLines } from "./discord-backscroll.js";
@@ -1383,6 +1384,7 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
         ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined,
       );
       (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId(ctx);
+      (channel.state as unknown as Record<string, unknown>).oeFireCreatorId = attestedFireCreatorId(ctx);
     },
     "actions.requested": async (_data, channel) => {
       if (statusUxEnabled() && typingGateOpen(channel.channelId) && !peekCardPostedThisTurn()) await triggerDiscordTyping(channel.channelId);
@@ -1441,6 +1443,7 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
               workspace: auditP.workspace,
               surface: auditP.surface,
               principalId: (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId as string | undefined,
+              creatorId: (channel.state as unknown as Record<string, unknown>).oeFireCreatorId as string | undefined,
               ...(sessionId ? { sessionId } : {}),
               route: "terminal",
             },

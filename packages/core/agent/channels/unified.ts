@@ -2,7 +2,7 @@ import { defineChannel, GET, POST } from "eve/channels";
 import type { Session, RouteHandlerArgs } from "eve/channels";
 import { SELF_DISPATCH_PATH, handleSelfDispatch, postSelfDispatch, selfDispatchConfigured, type UnifiedDispatchPayload } from "./self-dispatch.js";
 import { appendAudit, auditSilencesEnabled } from "../audit/audit.js";
-import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, authPrincipalId, bindFrom, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
+import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, authPrincipalId, attestedFireCreatorId, bindFrom, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { windowedSupervisorEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -334,6 +334,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         try {
           const replier = replierLabelFor(windowGrainOf(bind), windowTaskLabelOf(bind));
           const principalId = authPrincipalId(bind);
+          const creatorId = attestedFireCreatorId(bind);
           const id = await postUnifiedReply(
             origin,
             action.text,
@@ -344,6 +345,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
               workspace,
               surface,
               ...(principalId ? { principalId } : {}),
+              ...(creatorId ? { creatorId } : {}),
               ...(sessionId ? { sessionId } : {}),
               ...(wakeId ? { wakeId } : {}),
               route: "bridge",

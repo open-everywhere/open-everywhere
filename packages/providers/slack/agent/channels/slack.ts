@@ -42,6 +42,7 @@ import {
   upsertUnderSection,
   bindFrom,
   authPrincipalId,
+  attestedFireCreatorId,
   isAllowedSlackDriver,
   planFor,
   extractPinnedInstructions,
@@ -455,6 +456,7 @@ const slackMentionChannel = slackChannel({
         ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined,
       );
       (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId(ctx);
+      (channel.state as unknown as Record<string, unknown>).oeFireCreatorId = attestedFireCreatorId(ctx);
       {
         const attrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
         if (attrs?.channel_type === "im") {
@@ -629,6 +631,7 @@ const slackMentionChannel = slackChannel({
               workspace: p.workspace,
               surface: p.surface,
               principalId: (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId as string | undefined,
+              creatorId: (channel.state as unknown as Record<string, unknown>).oeFireCreatorId as string | undefined,
               ...(sessionId ? { sessionId } : {}),
               route: "terminal",
             },

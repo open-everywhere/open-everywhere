@@ -11,6 +11,7 @@ import {
   postTerminalProse,
   resolvePartition,
   authPrincipalId,
+  attestedFireCreatorId,
   type ChatAuditPartition,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { frontDiscordChannel, INTERNAL_DISCORD_ROUTE } from "./discord-front.js";
@@ -64,6 +65,7 @@ const discordInteractionChannel = discordChannel({
   events: {
     "turn.started": async (_data, channel, ctx) => {
       (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId(ctx);
+      (channel.state as unknown as Record<string, unknown>).oeFireCreatorId = attestedFireCreatorId(ctx);
       await channel.discord.startTyping();
     },
     "message.completed": async (data, channel, ctx) => {
@@ -94,6 +96,7 @@ const discordInteractionChannel = discordChannel({
               workspace: p.workspace,
               surface: p.surface,
               principalId: (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId as string | undefined,
+              creatorId: (channel.state as unknown as Record<string, unknown>).oeFireCreatorId as string | undefined,
               ...(sessionId ? { sessionId } : {}),
               route: "terminal",
             },

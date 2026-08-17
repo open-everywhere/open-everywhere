@@ -12,6 +12,7 @@ import {
   ingressSpendGate,
   replierLabelFromAuthAttributes,
   authPrincipalId,
+  attestedFireCreatorId,
   type ChatAuditPartition,
   type ReplierLabel,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -88,6 +89,7 @@ const native = teamsChannel({
         ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined,
       );
       (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId(ctx);
+      (channel.state as unknown as Record<string, unknown>).oeFireCreatorId = attestedFireCreatorId(ctx);
     },
     "message.completed": async (data, channel, ctx) => {
       const sessionId = ctx?.session?.id;
@@ -116,6 +118,7 @@ const native = teamsChannel({
               workspace: p.workspace,
               surface: p.surface,
               principalId: (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId as string | undefined,
+              creatorId: (channel.state as unknown as Record<string, unknown>).oeFireCreatorId as string | undefined,
               ...(sessionId ? { sessionId } : {}),
               route: "terminal",
             },

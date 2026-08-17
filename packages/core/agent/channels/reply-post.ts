@@ -38,6 +38,7 @@ export interface ReplyAudit {
   readonly workspace: string;
   readonly surface?: string;
   readonly principalId?: string;
+  readonly creatorId?: string;
   readonly sessionId?: string;
   readonly wakeId?: string;
   readonly route: "tool" | "terminal" | "bridge";
@@ -57,6 +58,7 @@ export async function auditReplyPost(audit: ReplyAudit | undefined, id: string, 
       platform,
       chars,
       route: audit.route,
+      ...(audit.creatorId ? { creatorId: audit.creatorId } : {}),
       ...(audit.wakeId ? { wakeId: audit.wakeId } : {}),
       ...(audit.sessionId ? { sessionId: audit.sessionId } : {}),
     },
