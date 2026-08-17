@@ -751,18 +751,36 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
     "isFillerAck: the real not-admin refusal is NOT filler — a genuine refusal must never be skipped past",
   );
   ok(
-    !isFillerAck(
-      "this action needs to know who asked, and this turn cannot say: this turn was woken by 2 different people at once, so it cannot say whose ask this is.",
-    ),
-    "isFillerAck: the real OPE-673 unverified refusal is NOT filler either — same reasoning",
+    !isFillerAck("this turn was woken by 2 different people at once, so it cannot say whose ask this is."),
+    "isFillerAck: verdictFromEnvelope's several-humans reason (no `delegat…`) is NOT filler",
+  );
+  ok(
+    !isFillerAck("this turn was woken by a system or relay message, not by a person asking"),
+    "isFillerAck: verdictFromEnvelope's system-wake reason is NOT filler",
+  );
+  ok(
+    !isFillerAck("the turn that delegated this work was woken by more than one person, so it could not say whose ask this is"),
+    "isFillerAck: OPE-704 — the OPE-673 several-askers refusal (WITH candidates) is NOT filler despite containing 'delegated this work'",
+  );
+  ok(
+    !isFillerAck("the turn that delegated this work could not say whose ask it was serving — it was woken by more than one person, or by no person at all"),
+    "isFillerAck: OPE-704 — the no-candidates unverified reason is NOT filler either",
+  );
+  ok(
+    !isFillerAck("the turn that delegated this work carried no verified asker, so this worker has no caller to check standing for"),
+    "isFillerAck: OPE-704 — the child-seat NO_CARRIAGE reason is NOT filler (pinned by 'no verified asker')",
   );
   ok(
     !isFillerAck(
-      "The raw admin listing was refused: `memory_admin_list` couldn\u2019t identify a single requesting person because the delegating turn included messages from more than one person. Admin standing is checked against the person who asked, so the listing was not returned rather than guessed.",
+      "I can't share that listing — the turn that delegated this to me was woken by more than one person at once, so it could not say whose ask this is.",
     ),
-    'isFillerAck: a refusal that mentions "the delegating turn" is NOT filler — `delegat\u2026` needs its object (measured live 2026-08-17: the bare verb skipped the real S16 answer forever)',
+    "isFillerAck: OPE-704 — a model paraphrase of the refusal (still says 'delegated this') stays substantive via the 'could not say' marker",
   );
-  ok(isFillerAck("I've delegated this to a worker and will report back."), "isFillerAck: the object form (delegated this to\u2026) is still filler");
+  ok(isFillerAck("I've delegated this to a worker and will report back."), "isFillerAck: the object form (delegated this to…) is still filler");
+  ok(
+    isFillerAck("I'm checking the raw memory-silo admin listing under your requester identity. I'll return the raw result once it's done."),
+    "isFillerAck: OPE-704 negative control — the genuine delegation ack still classifies AS filler",
+  );
 }
 
 {

@@ -120,11 +120,16 @@ const BROWSER_QA_WAIT = 420_000;
 const SILENCE_WINDOW = 45_000;
 const LINK_VENUE_PROOF_WINDOW = 20_000;
 
-export const isFillerAck = (text: string): boolean =>
-  /\b(one sec|a sec|hang on|hold on|let me (?:look|check|see)|looking (?:at|into)|checking (?:now|it)?|on it|give me a (?:sec|moment)|working on|just a (?:sec|moment)|will (?:look|check|report|update|retrieve|return|fetch|get|run)|hand(?:ed|ing) (?:this |it )?off|report back|delegat(?:ed|ing)\s+(?:this|it|that|to)\b|spun up a worker|(?:still|currently) in progress|in progress|standing by)\b/i.test(
-    text.trim(),
-  ) ||
-  /^(?:done|ok|okay|sorted|sure|got it|will do|no problem)[.!]?\s*(?::[a-z_+-]+:|✅|👍)?$/i.test(text.trim());
+export const isFillerAck = (text: string): boolean => {
+  const trimmed = text.trim();
+  if (/\b(could not say|cannot say|no verified asker|access denied)\b/i.test(trimmed)) return false;
+  return (
+    /\b(one sec|a sec|hang on|hold on|let me (?:look|check|see)|looking (?:at|into)|checking (?:now|it)?|on it|give me a (?:sec|moment)|working on|just a (?:sec|moment)|will (?:look|check|report|update|retrieve|return|fetch|get|run)|hand(?:ed|ing) (?:this |it )?off|report back|delegat(?:ed|ing)\s+(?:this|it|that|to)\b|spun up a worker|(?:still|currently) in progress|in progress|standing by)\b/i.test(
+      trimmed,
+    ) ||
+    /^(?:done|ok|okay|sorted|sure|got it|will do|no problem)[.!]?\s*(?::[a-z_+-]+:|✅|👍)?$/i.test(trimmed)
+  );
+};
 
 const STOOD_DOWN_ACTION = "engagement.stood_down";
 const CAP_REFUSAL = "I'm holding off here";
