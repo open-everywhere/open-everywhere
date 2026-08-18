@@ -1,11 +1,12 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { ingestUntrustedModelOutput } from "../access/untrusted.js";
-import { type BindableContext } from "../identity/binding.js";
+import { type BindableContext, TurnOriginFenceError } from "../identity/binding.js";
 import { resolveWindowSources } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
-import { resolveReadAdapter, readChannelResult, chatReadIngestion, renderChannelBody, channelReadSource, supportedReadPlatforms } from "../channels/channel-read.js";
+import { resolveReadAdapter, readChannelResult, chatReadIngestion, renderChannelBody, channelReadSource, supportedReadPlatforms, WindowSourcesRefusalError } from "../channels/channel-read.js";
+import { auditSourcesGateRefusal, auditOriginFenceRefusal } from "../channels/read-scope-audit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import type { Domain } from "../memory/domain.js";
 
@@ -53,7 +54,15 @@ const readChannelEntry = defineTool({
   }),
   async execute(input, ctx) {
     const bctx = ctx as unknown as BindableContext;
-    const { platform, adapter } = resolveReadAdapter(bctx, input.target.platform, safeDomains());
+    let resolved: ReturnType<typeof resolveReadAdapter>;
+    try {
+      resolved = resolveReadAdapter(bctx, input.target.platform, safeDomains());
+    } catch (err) {
+      if (err instanceof WindowSourcesRefusalError) await auditSourcesGateRefusal(bctx, err.platform);
+      else if (err instanceof TurnOriginFenceError) await auditOriginFenceRefusal(bctx, err.surface);
+      throw err;
+    }
+    const { platform, adapter } = resolved;
     return await readChannelResult(bctx, platform, adapter, input.target.channel, input.limit);
   },
   toModelOutput(output) {
