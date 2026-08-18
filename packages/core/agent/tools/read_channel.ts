@@ -5,7 +5,7 @@ import { type BindableContext, TurnOriginFenceError } from "../identity/binding.
 import { resolveWindowSources } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
-import { resolveReadAdapter, readChannelResult, chatReadIngestion, renderChannelBody, channelReadSource, supportedReadPlatforms, WindowSourcesRefusalError } from "../channels/channel-read.js";
+import { resolveReadTarget, readChannelResult, chatReadIngestion, renderChannelBody, channelReadSource, keyedReadResult, WindowSourcesRefusalError } from "../channels/channel-read.js";
 import { auditSourcesGateRefusal, auditOriginFenceRefusal } from "../channels/read-scope-audit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import type { Domain } from "../memory/domain.js";
@@ -22,21 +22,14 @@ function safeDomains(): readonly Domain[] {
 
 const readChannelEntry = defineTool({
   description:
-    "Read recent messages from a channel this window's memory domain grants — on any of the window's " +
-    `source surfaces (${supportedReadPlatforms().join(", ")}). Set target.platform (defaults to the ` +
-    "surface this turn came from) and target.channel. You can only read channels your domain grants; others are refused.",
+    "Read recent messages from a channel this window's memory domain grants. Pass the channel key " +
+    "you were given — the `id` on the `<channel>` element of your wake, or an entry from your " +
+    "readable-channel list. You can only read channels your domain grants; others are refused.",
   inputSchema: z.object({
-    target: z.object({
-      platform: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(`Which surface to read (${supportedReadPlatforms().join(", ")}). Defaults to the surface this turn came from.`),
-      channel: z
-        .string()
-        .min(1)
-        .describe("The channel/conversation id to read (e.g. a Slack C0123ABCD or a Discord channel id). Must be in your domain's channel set."),
-    }),
+    channel: z
+      .string()
+      .min(1)
+      .describe("The channel key to read (the `id` from your wake's `<channel>` element, or an entry from your readable-channel list)."),
     limit: z
       .number()
       .int()
@@ -55,20 +48,21 @@ const readChannelEntry = defineTool({
   }),
   async execute(input, ctx) {
     const bctx = ctx as unknown as BindableContext;
-    let resolved: ReturnType<typeof resolveReadAdapter>;
+    let resolved: ReturnType<typeof resolveReadTarget>;
     try {
-      resolved = resolveReadAdapter(bctx, input.target.platform, safeDomains());
+      resolved = resolveReadTarget(bctx, input.channel, safeDomains());
     } catch (err) {
       if (err instanceof WindowSourcesRefusalError) await auditSourcesGateRefusal(bctx, err.platform);
       else if (err instanceof TurnOriginFenceError) await auditOriginFenceRefusal(bctx, err.surface);
       throw err;
     }
-    const { platform, adapter } = resolved;
-    return await readChannelResult(bctx, platform, adapter, input.target.channel, input.limit);
+    const { platform, adapter, container } = resolved;
+    return await readChannelResult(bctx, platform, adapter, container, input.limit);
   },
   toModelOutput(output) {
-    return ingestUntrustedModelOutput(renderChannelBody(output), {
-      source: channelReadSource(output),
+    const keyed = keyedReadResult(output);
+    return ingestUntrustedModelOutput(renderChannelBody(keyed), {
+      source: channelReadSource(keyed),
       ingestion: chatReadIngestion(`read_channel:${output.platform}`, output),
     });
   },

@@ -1,5 +1,6 @@
-import { afterAll, afterEach, expect, test } from "vitest";
+import { afterAll, expect, test } from "vitest";
 import {
+  disposeLater,
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
@@ -23,11 +24,6 @@ const TRIGGER = { kind: "scheduled", cron: "0 9 * * 1-5", postPolicy: "every-run
 const cleanups: (() => void)[] = [];
 afterAll(() => {
   for (const c of cleanups.splice(0)) c();
-});
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
 });
 
 const reasons: string[] = [];
@@ -65,11 +61,6 @@ async function armEnforce(): Promise<void> {
   settings.overrideSettingsForTest({ taint: { mode: "on" }, approvals: { judgeMode: "enforce" } });
   expect(settings.getSettings().approvals.judgeMode).toBe("enforce");
   expect(settings.getSettings().taint.mode).toBe("on");
-}
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
 }
 
 interface Driven {

@@ -78,11 +78,73 @@ export interface ScriptedEntry {
   readonly baselines: Record<string, number>;
   readonly firstCallTurnByRole: Partial<Record<ScriptedRole, string>>;
   readonly registeredAt: string;
+  readonly epoch: number;
 }
 
 export const ANY_SESSION = "*";
 
+function epochCell(): Map<string, number> {
+  return processRegistryMap<number>("scripted-model-epoch.v1");
+}
+
+export function scriptedEpoch(): number {
+  return epochCell().get("n") ?? 0;
+}
+
+export function beginScriptedEpoch(): void {
+  epochCell().set("n", scriptedEpoch() + 1);
+}
+
 export const STALE_TURN_PARK_MS = 30_000;
+
+export function staleTurnParkMs(): number {
+  return processRegistryMap<number>("scripted-model-park.v1").get("ms") ?? STALE_TURN_PARK_MS;
+}
+
+export function __setStaleTurnParkMsForTest(ms: number | undefined): void {
+  const cell = processRegistryMap<number>("scripted-model-park.v1");
+  if (ms === undefined) cell.delete("ms");
+  else cell.set("ms", ms);
+}
+
+interface StaleHoldExpiry {
+  readonly sessionId: string;
+  readonly heldTurnId: string;
+  readonly scriptTurnId: string;
+  readonly registeredAt: string;
+  readonly parkMs: number;
+}
+
+function staleHoldExpiries(): Map<string, StaleHoldExpiry> {
+  return processRegistryMap<StaleHoldExpiry>("scripted-model-stale-expiry.v1");
+}
+
+export function noteStaleHoldExpiry(expiry: StaleHoldExpiry): void {
+  staleHoldExpiries().set(`${expiry.sessionId}/${expiry.heldTurnId}`, expiry);
+}
+
+export function __resetStaleHoldExpiriesForTest(): void {
+  staleHoldExpiries().clear();
+}
+
+export function staleHoldExpiryNote(): string {
+  const all = [...staleHoldExpiries().values()];
+  if (all.length === 0) return "";
+  const each = all
+    .map(
+      (e) =>
+        `session ${e.sessionId}, held turn "${e.heldTurnId}", waited ${e.parkMs}ms against the script ` +
+        `registered by ${e.registeredAt} for turn "${e.scriptTurnId}"`,
+    )
+    .join("; ");
+  return (
+    ` — 🔴 CAUSE: ${all.length} STALE-TURN HOLD(S) EXPIRED in this fork (OPE-750/OPE-777): ${each}. ` +
+    "A settlement turn reached a script its test had not yet replaced, waited for the replacement, and " +
+    "gave up — so its reply was DROPPED and the wait above could never resolve. This is a TEST-HARNESS " +
+    "ordering defect, not a product hang. Fix the test: call `armSettlement` BEFORE the long wait that " +
+    "precedes the swap (harness.ts), or swap scripts inside the same test rather than after it."
+  );
+}
 
 export function scriptedStore(): Map<string, ScriptedEntry> {
   return processRegistryMap<ScriptedEntry>("scripted-model.v1");
@@ -127,6 +189,7 @@ export function registerScript(script: SeatScript, sessionId: string = ANY_SESSI
     baselines: {},
     firstCallTurnByRole: {},
     registeredAt: callerFrame(),
+    epoch: scriptedEpoch(),
   };
   store.set(sessionId, entry);
   return {

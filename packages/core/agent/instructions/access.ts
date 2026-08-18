@@ -18,6 +18,7 @@ import { renderApprovalPreviewFor } from "../access/approval-preview.js";
 import { renderWorkerCapabilityIndex } from "../access/worker-capabilities.js";
 import { WORKER_ONLY_TOOLS_STANDING, WORKER_ONLY_TOOLS_THREAD } from "../access/worker-capability-index.generated.js";
 import { bridgeReadableChannelList } from "../channels/slack-bridge.js";
+import { encodeChannelKey } from "../channels/channel-key.js";
 import { renderPendingCancelNote } from "../channels/cancel-note.js";
 import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
 import { isSupervisorSession } from "../model/routing.js";
@@ -39,11 +40,11 @@ function renderChannelScope(ctx: BindableContext): string {
   if (channels.length < 2) return "";
   const tools = genericReadVerbsEnabled() ? "`read_channel` / `read_thread`" : "`read_slack_channel` / `read_slack_thread`";
   return (
-    "## Slack channels you can read\n" +
+    "## Channels you can read\n" +
     "Your memory domain spans these channels — you may read any of them with " +
     tools +
     ", and no others:\n" +
-    channels.map((c) => `- ${c}`).join("\n")
+    channels.map((c) => `- ${encodeChannelKey("slack", c)}`).join("\n")
   );
 }
 

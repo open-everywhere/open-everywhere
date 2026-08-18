@@ -150,6 +150,44 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   ok(platformWorkspaceForWindowDomain("oe-dm/slack") === "oe-dm/slack", "…same for an anchor with no workspace segment");
 }
 
+{
+  const { ambientProseDropDetail } = await import("../agent/channels/unified.js");
+
+  ok(
+    JSON.stringify(ambientProseDropDetail(undefined, false, false)) === JSON.stringify({ addressing: "ambient", reason: "no-reply-call" }),
+    "unaddressed + no reply-tool call → addressing:ambient, reason:no-reply-call",
+  );
+
+  const nameDrop = ambientProseDropDetail(undefined, true, false);
+  ok(nameDrop.addressing === "addressed-other", "addressed (name-drop/mention) but not direct-mention → addressing:addressed-other, NOT ambient");
+  ok(nameDrop.reason === "no-reply-call", "same reason as the ambient case — the drop mechanism doesn't care why it was addressed");
+  ok(nameDrop.addressing !== ambientProseDropDetail(undefined, false, false).addressing, "NEGATIVE CONTROL — addressed and unaddressed drops must NOT read as the same kind");
+
+  ok(
+    ambientProseDropDetail(undefined, false, true).reason === "narration-after-reply",
+    "a reply already posted this turn → reason:narration-after-reply (NOT no-reply-call)",
+  );
+  ok(
+    ambientProseDropDetail(undefined, false, true).reason !== ambientProseDropDetail(undefined, false, false).reason,
+    "NEGATIVE CONTROL — replied vs not-replied must not collapse to the same reason",
+  );
+
+  ok(
+    ambientProseDropDetail("direct-mention", true, false).addressing === "direct-mention",
+    "a present raw addressing value is reported verbatim, never overridden by the addressed/ambient fallback",
+  );
+}
+
+{
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../agent/channels/unified.ts", import.meta.url), "utf8");
+  const rowStart = src.indexOf('action: "turn.supervisor_prose_dropped"');
+  ok(rowStart !== -1, "the drop row's action name is present in the source (sanity check for the slice below)");
+  const detailSlice = src.slice(rowStart, src.indexOf("}).catch(() => undefined);", rowStart));
+  ok(detailSlice.includes("action.text.length"), "the row reads the prose's LENGTH…");
+  ok(!/action\.text[^.]/.test(detailSlice), "…and never a bare `action.text` (the prose itself) anywhere in the detail object");
+}
+
 void appendAudit;
 
-console.log(`✓ unified-audit: ${passed} assertions passed (composition view: containers/reach-union/wideners/humans-read-across/controllers/notes + route: 404/401/400/200/self-audit)`);
+console.log(`✓ unified-audit: ${passed} assertions passed (composition view: containers/reach-union/wideners/humans-read-across/controllers/notes + route: 404/401/400/200/self-audit + OPE-779 drop-detail classification)`);

@@ -42,7 +42,6 @@ export interface ApprovalChainRequest {
   readonly mode?: ApprovalModeConfig;
   readonly aws?: AwsScreenInput;
   readonly connectorOpRaise?: "write" | "destructive";
-  readonly grant?: { readonly kind: string; readonly grantedBy: string };
   readonly beneficiaryClicker?: boolean;
 }
 
@@ -202,13 +201,6 @@ interface BuiltInElement {
   evaluate(req: ApprovalChainRequest): ApproverVerdict | Promise<ApproverVerdict>;
 }
 
-const SESSION_GRANT_ELEMENT: BuiltInElement = {
-  name: "session-grant",
-  level: "surface",
-  clazz: "surface",
-  evaluate: (req) => (req.grant !== undefined ? "allow" : undefined),
-};
-
 const AWS_SURFACE_ELEMENT: BuiltInElement = {
   name: "aws-allow-list",
   level: "surface",
@@ -283,7 +275,7 @@ export async function resolveApproverChain(
       mayAllow: a.mayAllow,
       run: a.approve,
     })),
-    ...[SESSION_GRANT_ELEMENT, AWS_SURFACE_ELEMENT, CONNECTOR_OPS_RAISE_ELEMENT, VERB_CLASSIFIER_ELEMENT, REGISTRY_ELEMENT].map((e) => ({
+    ...[AWS_SURFACE_ELEMENT, CONNECTOR_OPS_RAISE_ELEMENT, VERB_CLASSIFIER_ELEMENT, REGISTRY_ELEMENT].map((e) => ({
       name: e.name,
       level: e.level,
       clazz: e.clazz,

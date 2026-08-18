@@ -1,14 +1,5 @@
-import { afterEach, expect, test } from "vitest";
-import { bootAgent, readAuditRows, registerScript, runRoutineDispatchTick, waitFor, type ScriptedHandle } from "../harness";
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
+import { expect, test } from "vitest";
+import { disposeLater, bootAgent, readAuditRows, registerScript, runRoutineDispatchTick, waitFor } from "../harness";
 
 async function seedRoutine(input: {
   readonly surfaceKey: string;

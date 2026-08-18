@@ -1,10 +1,5 @@
-import { afterEach, expect, test } from "vitest";
-import { bootAgent, registerScript, runRoutineDispatchTick, waitFor, type ScriptedHandle, type SeatScript } from "./harness";
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
+import { expect, test } from "vitest";
+import { disposeLater, bootAgent, registerScript, runRoutineDispatchTick, waitFor, type ScriptedHandle, type SeatScript } from "./harness";
 
 const TEAM = "T0FCFIRE";
 const CHANNEL = "C0FCFIRE";
@@ -44,11 +39,6 @@ async function seedCreatorlessDueRoutine(surfaceKey: string, channelId: string, 
     },
   );
   return id;
-}
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
 }
 
 function proposeSpendLimit(): SeatScript {

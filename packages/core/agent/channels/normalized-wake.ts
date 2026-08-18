@@ -11,6 +11,7 @@ import {
   type WakeFollowUp,
 } from "./wake-envelope.js";
 import { renderContext, type ContextLine } from "./context-render.js";
+import { encodeChannelKey } from "./channel-key.js";
 
 export type { WakeAddressing, WakeEngagementTier } from "./wake-envelope.js";
 
@@ -82,7 +83,11 @@ export function renderWake(nw: NormalizedWake, now: () => string = () => new Dat
             engagement: nw.engagementTier,
             followUp: nw.nameDrop?.followUp,
             sourcePlatform: nw.platform,
-            channel: { ...nw.locus.channel, container: nw.locus.channel.container ?? nw.containerNoun ?? "channel" },
+            channel: {
+              ...nw.locus.channel,
+              id: encodeChannelKey(nw.platform, nw.locus.channel.id),
+              container: nw.locus.channel.container ?? nw.containerNoun ?? "channel",
+            },
             participants: nw.participants,
             thread: nw.locus.thread,
             handoff: nw.handoff,

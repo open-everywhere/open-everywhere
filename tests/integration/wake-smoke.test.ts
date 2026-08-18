@@ -1,16 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { afterEach, expect, test } from "vitest";
-import { bootAgent, discordMentionWake, DISCORD_GUILD_ID, rawDiscordRelayPost, readAuditRows, registerScript, waitFor, type ScriptedHandle } from "./harness";
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
+import { expect, test } from "vitest";
+import { disposeLater, bootAgent, discordMentionWake, DISCORD_GUILD_ID, rawDiscordRelayPost, readAuditRows, registerScript, waitFor } from "./harness";
 
 function freshUnlistedChannelId(): string {
   return `9${randomBytes(8).readBigUInt64BE().toString().padStart(18, "0").slice(0, 18)}`;

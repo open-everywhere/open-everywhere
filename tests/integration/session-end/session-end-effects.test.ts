@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { afterEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import {
+  afterThisTest,
+  disposeLater,
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
@@ -10,21 +12,10 @@ import {
   taskIdOfDelegation,
   waitFor,
   waitForChildren,
-  type ScriptedHandle,
 } from "../harness";
 
 const OBSERVATION_ACTION = "memory.observation";
 const SETTLEMENT_FLUSH_ACTION = "memory.settlement_flush";
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
 
 function observationKey(detail: Record<string, unknown> | undefined): string {
   const key = detail?.["key"];
@@ -64,7 +55,7 @@ test("the dream cycle fingerprints the seat's own request and never the worker's
     script: { parent: [{ calls: [{ tool: "task_peek", input: { taskIds: [taskId] }, id: "se-peek" }] }, { say: "acknowledged" }] },
     label: "the worker's completion, delivered as a new message naming the task id",
   });
-  perTest.push(() => settlement.handle.dispose());
+  afterThisTest(() => settlement.handle.dispose());
 
   const peeked = await waitFor(
     () => settlement.handle.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_peek")),

@@ -58,6 +58,32 @@ function recorder() {
 }
 
 {
+  const unresolvedRows = async (ref: string) =>
+    (await readAudit({ org: ORG, action: dbBroker.CREDENTIAL_UNRESOLVED })).filter(
+      (r) => (r.detail as { ref?: unknown } | undefined)?.ref === ref,
+    );
+
+  ok((await getSecretVia("db", "db:notion-eng-key")) === SENTINEL, "OPE-639 control: the seeded ref still resolves");
+  ok((await unresolvedRows("db:notion-eng-key")).length === 0, "OPE-639 control: a ref that RESOLVES writes no credential.unresolved row");
+
+  await assert.rejects(() => getSecretVia("db", "db:notion:channel-key"), (e) => e instanceof CredentialError, "OPE-639: an absent row still refuses, exactly as before");
+  const absent = await unresolvedRows("db:notion:channel-key");
+  ok(absent.length === 1, "OPE-639: an ABSENT db row writes exactly one credential.unresolved audit row");
+  ok((absent[0]!.detail as { reason?: unknown }).reason === "no-stored-row", "OPE-639: …classified `no-stored-row`, so an operator knows to store one");
+  ok((absent[0]!.detail as { broker?: unknown }).broker === "db" && absent[0]!.platform === "credential", "OPE-639: …stamped to the db broker on the `credential` plane");
+
+  await assert.rejects(() => getSecretVia("db", "hook:e2e-smoke"), (e) => e instanceof CredentialError, "OPE-639: a reserved-namespace ref still refuses");
+  const reserved = await unresolvedRows("hook:e2e-smoke");
+  ok(reserved.length === 1 && (reserved[0]!.detail as { reason?: unknown }).reason === "reserved-namespace", "OPE-639: a reserved ref audits under its OWN reason, distinguishable from a missing row");
+
+  const everyRow = JSON.stringify(await readAudit({ org: ORG, action: dbBroker.CREDENTIAL_UNRESOLVED }));
+  ok(!everyRow.includes(SENTINEL) && !everyRow.includes(SENTINEL.slice(0, 8)), "OPE-639: no credential.unresolved row contains the secret value or any prefix of it");
+
+  await assert.rejects(() => getSecretVia("db", "db:notion:channel-key"), (e) => e instanceof CredentialError, "OPE-639: the second attempt refuses too");
+  ok((await unresolvedRows("db:notion:channel-key")).length === 2, "OPE-639: a repeated unresolvable ref writes a row per attempt (rate is the signal)");
+}
+
+{
   const saved = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
 
   delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;

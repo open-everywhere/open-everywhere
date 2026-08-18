@@ -44,6 +44,7 @@ function ok(cond: boolean, label: string): void {
 const BOT = "bot-user-id-999";
 const AUTHOR = "author-user-id-111";
 const PAGE = "page-456";
+const PAGE_KEY = "ch_bm90aW9uOnBhZ2UtNDU2";
 const DISCUSSION = "disc-789";
 const NOW = () => "2026-02-18T14:05:00.000Z";
 
@@ -120,7 +121,7 @@ const siblings: NotionWakeMessage[] = [
   ok(message.includes('addressing="channel-watch"'), "channel-watch wake carries the ambient addressing the standing block keys the high silence bar to");
   ok(message.includes('container="doc"'), "channel-watch wake uses the DOC container noun");
   ok(message.includes(`<wake reason="channel-activity"`), "channel-watch wake carries the envelope");
-  ok(message.includes(`<channel id="${PAGE}" container="doc">`), "locus.channel = the page id; the S1 <channel container> attribute mirrors the DOC noun (OPE-684)");
+  ok(message.includes(`<channel id="${PAGE_KEY}" container="doc">`), "locus.channel = the page id; the S1 <channel container> attribute mirrors the DOC noun (OPE-684)");
   ok(message.includes(`<thread ts="${DISCUSSION}">`), "locus.thread = the discussion id (reply anchor)");
   ok(message.includes("an earlier note") && message.includes("my earlier reply"), "discussion siblings render as backscroll");
   ok(message.includes(`trigger="true"`) && message.includes("does section 2 still hold?"), "the triggering comment is the trigger message");
@@ -139,7 +140,7 @@ const siblings: NotionWakeMessage[] = [
   const plain = mk();
   const unified = mk(true);
   ok(unified.message === plain.message, "🔴 unified:true is BYTE-IDENTICAL to the per-doc wake — no surface address, no disclosure sentence");
-  ok(unified.message.includes(`<channel id="${PAGE}" container="doc">`), "the channel still carries its opaque id — that is what the host routes on");
+  ok(unified.message.includes(`<channel id="${PAGE_KEY}" container="doc">`), "the channel still carries its opaque id — that is what the host routes on");
   ok(!plain.message.includes("platform=") && !plain.message.includes("Cross-surface disclosure"), "neither wake carries a platform attr or a disclosure sentence");
   ok(mk(false).message === plain.message, "unified:false renders BYTE-IDENTICAL to the unset per-doc wake (flag-off invariant)");
   const direct = renderWake(buildNotionSupervisorWake({ addressing: "direct", pageId: PAGE, discussionId: DISCUSSION, trigger: { ...trigger, text: "@OE summarise this page" }, threadComments: siblings, unified: true }), NOW);
@@ -201,7 +202,7 @@ const siblings: NotionWakeMessage[] = [
   ok(dm.message.includes('addressing="direct-mention"') && !dm.message.includes('addressing="channel-watch"'), "direct-mention wake carries the ADDRESSED addressing (not the silence-biased watch one)");
   ok(dm.message.includes(`wake-id="wake-notion-1"`), "direct-mention wake keeps the ENVELOPE with the wake-id (the reply tool's routing key)");
   ok(dm.message.includes(`reason="channel-activity"`) && dm.message.includes(`mention="true"`), "direct-mention wake is an honest mention (feed class + response-obligation flag)");
-  ok(dm.message.includes(`<channel id="${PAGE}" container="doc">`), "direct-mention wake carries the opaque channel id and no platform");
+  ok(dm.message.includes(`<channel id="${PAGE_KEY}" container="doc">`), "direct-mention wake carries the opaque channel id and no platform");
   ok(dm.message.includes("an earlier note"), "direct-mention wake keeps the discussion backscroll (context the shared window lacks)");
   ok(mk().message === "@OE what did we decide?", "plain direct wake (no window) stays the body VERBATIM — byte-identical off");
   const watch = renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings, directMention: true }), NOW);

@@ -1,5 +1,7 @@
-import { afterAll, afterEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import {
+  afterThisTest,
+  disposeLater,
   bootAgent,
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
@@ -8,35 +10,21 @@ import {
   taskIdOfDelegation,
   waitFor,
   wrapToolExecute,
-  type ScriptedHandle,
 } from "../harness";
 
 const READER = "read_channel";
 const FIXED_MESSAGE_TEXT = "nothing new in the channel";
 const NUDGE_MARKER = "LOOP BREAKER";
 
-const cleanups: (() => void)[] = [];
-afterAll(() => {
-  for (const c of cleanups.splice(0)) c();
-});
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
-
 function readChannelCall(id: string): { tool: string; input: unknown; id: string } {
-  return { tool: READER, input: { target: { platform: "discord", channel: "C0LOOPFIXTURE" }, limit: 10 }, id };
+  return { tool: READER, input: { channel: "ch_ZGlzY29yZDpDMExPT1BGSVhUVVJF", limit: 10 }, id };
 }
 
 test("a worker's identical read repeats trip the loop breaker within a turn, and a RESUMED turn starts fresh", async () => {
   await bootAgent();
   const sinceIso = new Date(Date.now() - 10_000).toISOString();
 
-  cleanups.push(
+  afterThisTest(
     wrapToolExecute(READER, async () => ({
       platform: "discord",
       channel: "C0LOOPFIXTURE",

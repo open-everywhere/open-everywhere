@@ -1,5 +1,6 @@
-import { afterAll, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import {
+  disposeLater,
   bootAgent,
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
@@ -10,15 +11,6 @@ import {
 } from "../harness";
 
 const BOT_MENTION = "<@9000000000000000001>";
-
-const cleanups: (() => void)[] = [];
-afterAll(() => {
-  for (const c of cleanups.splice(0)) c();
-});
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  cleanups.push(() => handle.dispose());
-  return handle;
-}
 
 async function driveTurn(marker: string): Promise<RecordedRequest> {
   const handle = disposeLater(registerScript({ parent: [{ say: `ack ${marker}` }] }));

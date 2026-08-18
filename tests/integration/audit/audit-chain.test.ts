@@ -1,21 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import { auditRowSha, findChainBreak } from "@open-everywhere/core/agent/audit/chain.js";
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
 import type { AuditChainRow } from "@open-everywhere/core/agent/operational/store.js";
-import { bootAgent, discordMentionWake, readAuditRows, registerScript, waitFor, type ScriptedHandle } from "../harness";
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
+import { disposeLater, bootAgent, discordMentionWake, readAuditRows, registerScript, waitFor } from "../harness";
 
 function freshUnlistedChannelId(): string {
   return `9${randomBytes(8).readBigUInt64BE().toString().padStart(18, "0").slice(0, 18)}`;

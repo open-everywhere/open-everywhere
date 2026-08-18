@@ -1,10 +1,11 @@
 import { generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:crypto";
-import { afterAll, afterEach, expect, test } from "vitest";
+import { afterAll, expect, test } from "vitest";
 
 import {
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
+  disposeLater,
   DISCORD_GUILD_ID,
   DISCORD_LISTED_CHANNEL_ID,
   readAuditRows,
@@ -32,10 +33,6 @@ const CLICKER_ID = "9000000000000000079";
 const cleanups: (() => void)[] = [];
 afterAll(() => {
   for (const c of cleanups.splice(0)) c();
-});
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
 });
 
 interface SeenBinding {
@@ -119,16 +116,18 @@ async function rowsSince(since: number, actions: readonly string[]): Promise<Aud
 const TRIGGER = { kind: "scheduled", cron: "0 9 * * 1-5", postPolicy: "every-run" } as const;
 
 async function proposeRoutine(ids: string): Promise<{ id: string; handle: ScriptedHandle }> {
-  const handle: ScriptedHandle = registerScript({
-    parent: [
-      { calls: [{ tool: "agent", input: { message: "set up the routine I asked for" }, id: `${ids}-delegate` }] },
-      { say: "the worker reported back" },
-    ],
-    child: [
-      { calls: [{ tool: "create_routine", input: { prompt: `ope681 ${ids} ${randomUUID()}`, trigger: TRIGGER }, id: `${ids}-routine` }] },
-      { say: "proposed" },
-    ],
-  });
+  const handle: ScriptedHandle = disposeLater(
+    registerScript({
+      parent: [
+        { calls: [{ tool: "agent", input: { message: "set up the routine I asked for" }, id: `${ids}-delegate` }] },
+        { say: "the worker reported back" },
+      ],
+      child: [
+        { calls: [{ tool: "create_routine", input: { prompt: `ope681 ${ids} ${randomUUID()}`, trigger: TRIGGER }, id: `${ids}-routine` }] },
+        { say: "proposed" },
+      ],
+    }),
+  );
 
   const wakeAt = Date.now();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please set up the routine" });
@@ -141,6 +140,7 @@ async function proposeRoutine(ids: string): Promise<{ id: string; handle: Script
     script: SETTLEMENT_DRAIN_SCRIPT,
     label: `the ${ids} worker's settlement wake`,
   });
+  disposeLater(drained.handle);
   expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   drained.handle.dispose();
 
@@ -165,7 +165,7 @@ function expectBoundToTheDispatchingRoom(worker: SeenBinding): void {
 test("a worker dispatched from an INTERNAL-DISPATCH-woken turn binds the seat's real surface", async () => {
   await armAgent();
   const { id, handle: proposal } = await proposeRoutine("s1");
-  perTest.push(() => proposal.dispose());
+  disposeLater(proposal);
   const customId = await customIdFor(id);
 
   expect(proposal.requests.filter((r) => r.fault !== undefined)).toEqual([]);
@@ -189,7 +189,7 @@ test("a worker dispatched from an INTERNAL-DISPATCH-woken turn binds the seat's 
       { say: "posted the file" },
     ],
   });
-  perTest.push(() => wake.dispose());
+  disposeLater(wake);
 
   seen.length = 0;
   const clickAt = Date.now();
@@ -204,7 +204,7 @@ test("a worker dispatched from an INTERNAL-DISPATCH-woken turn binds the seat's 
     script: SETTLEMENT_DRAIN_SCRIPT,
     label: "the decision-wake worker's settlement wake",
   });
-  perTest.push(() => drain.handle.dispose());
+  disposeLater(drain.handle);
 
   const diverged = (await rowsSince(clickAt, ["egress.policy"])).filter((r) => r.detail?.reason === "subagent-binding-divergence");
   expect(diverged.map((r) => `${r.platform}/${r.workspace}/${r.surface}`)).toEqual([]);
@@ -236,7 +236,7 @@ test("🔴 the control: a worker dispatched from an ordinary MENTION-woken turn 
       { say: "posted the file" },
     ],
   });
-  perTest.push(() => dispatched.dispose());
+  disposeLater(dispatched);
 
   seen.length = 0;
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> write a file and post it" });
@@ -247,7 +247,7 @@ test("🔴 the control: a worker dispatched from an ordinary MENTION-woken turn 
     script: SETTLEMENT_DRAIN_SCRIPT,
     label: "the mention delegation's settlement wake",
   });
-  perTest.push(() => drain.handle.dispose());
+  disposeLater(drain.handle);
   expect(drain.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
   expect(seen.length).toBe(1);

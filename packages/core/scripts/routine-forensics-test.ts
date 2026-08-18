@@ -251,6 +251,119 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 }
 
 {
+  const reportRunFailedTool = (await import("../agent/tools/report_run_failed.js")).default;
+  type ToolAnswer = { readonly recorded: boolean; readonly consecutiveFailures: number; readonly note: string };
+  const declare = async (ctx: never, reason: string): Promise<ToolAnswer> =>
+    (await reportRunFailedTool.execute({ reason }, ctx as never)) as ToolAnswer;
+  const firesOf = async (id: string): Promise<AuditInput[]> => (await rowsFor(ROUTINE_AUDIT.fire)).filter((e) => detailOf(e, "routineId") === id);
+
+  {
+    const r = routine({ id: "r-late", consecutiveFailures: 0 });
+    await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
+    const seat = new FakeEveContext();
+    const fire = firedCtx(r, "sess-late", "wake-late");
+
+    await inEveContext(seat, async () => {
+      await outcomeHook.events!["turn.started"]!({} as never, fire);
+      await outcomeHook.events!["turn.completed"]!({} as never, fire);
+    });
+    ok((await store.getRoutine(ORG, SURFACE, "r-late"))?.consecutiveFailures === 0, "late/A: the fire's own turn folded `ok` — the streak is 0, which is the state a late strike has to move");
+    ok((await firesOf("r-late")).length === 1, "late/A: and it left exactly one fire row");
+
+    let answer: ToolAnswer | undefined;
+    let midTurnFailures: number | undefined;
+    await inEveContext(seat, async () => {
+      await outcomeHook.events!["turn.started"]!({} as never, fire);
+      answer = await declare(fire, "the delegated worker could not reach the payments API");
+      midTurnFailures = (await store.getRoutine(ORG, SURFACE, "r-late"))?.consecutiveFailures;
+      await outcomeHook.events!["turn.completed"]!({} as never, fire);
+    });
+    ok(midTurnFailures === 0, "late/A: negative control — mid-turn the counter is still 0, so the strike below comes from the FOLD and not from the tool's own row patch");
+    ok(answer?.recorded === true, "late/A: the tool reports the declaration as recorded — it reopened the fire for one late fold");
+    ok(answer?.consecutiveFailures === 1, "late/A: …and the number it promised the model is 1");
+
+    const after = await store.getRoutine(ORG, SURFACE, "r-late");
+    ok(after?.consecutiveFailures === 1, "late/A: THE FIX — a declaration made AFTER the fire folded still reaches the three-strike counter (before this ticket it stayed 0 forever)");
+    ok(after?.lastOutcome === "failed", "late/A: and the row records the run as failed, not as the clean `ok` its first turn settled");
+    ok(after?.lastFailureReason === "the delegated worker could not reach the payments API", "late/A: with the declared words on the row");
+
+    const rows = await firesOf("r-late");
+    const ownRow = rows.find((e) => detailOf(e, "outcome") === "ok");
+    const lateRow = rows.find((e) => detailOf(e, "outcome") === "failed");
+    ok(rows.length === 2, "late/A: the fire leaves a SECOND join row — the late settlement is auditable, not a silent row rewrite");
+    ok(ownRow !== undefined && detailOf(ownRow, "late") === undefined, "late/A: the fire's OWN settlement row is unstamped");
+    ok(lateRow !== undefined, "late/A: the second row carries the settled failure");
+    ok(detailOf(lateRow, "late") === true, "late/A: …stamped `late`, so a reader counting FIRES from these rows can subtract it");
+    ok(detailOf(lateRow, "declaredFailure") === "the delegated worker could not reach the payments API", "late/A: …and carries the declared words, so 'why did a clean run disable this?' is answerable from the trail");
+    ok(detailOf(lateRow, "sessionId") === "sess-late", "late/A: …on the FIRE's own session, not a worker's — the transcript handle stays right");
+
+    let second: ToolAnswer | undefined;
+    await inEveContext(seat, async () => {
+      await outcomeHook.events!["turn.started"]!({} as never, fire);
+      second = await declare(fire, "and it is still down");
+      await outcomeHook.events!["turn.completed"]!({} as never, fire);
+    });
+    ok(second?.recorded === false, "late/B: a SECOND declaration on the same fire is reported as NOT counted — the fire spent its one late fold");
+    ok(second?.consecutiveFailures === 1, "late/B: …and the tool reports the real streak (1), not an invented 2");
+    ok((await store.getRoutine(ORG, SURFACE, "r-late"))?.consecutiveFailures === 1, "late/B: one fire is one strike — the counter does not move");
+    ok((await firesOf("r-late")).length === 2, "late/B: and no third join row is written");
+
+    await inEveContext(seat, async () => {
+      await outcomeHook.events!["turn.started"]!({} as never, fire);
+      await outcomeHook.events!["turn.completed"]!({} as never, fire);
+    });
+    ok((await firesOf("r-late")).length === 2, "late/E: a later turn that declares NOTHING folds nothing — the latch is unchanged for every fire that stays quiet");
+  }
+
+  {
+    const r = routine({ id: "r-late-cancelled", consecutiveFailures: 2 });
+    await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
+    const seat = new FakeEveContext();
+    const fire = firedCtx(r, "sess-late-cancel", "wake-late-cancel");
+
+    await inEveContext(seat, async () => {
+      await outcomeHook.events!["turn.started"]!({} as never, fire);
+      await outcomeHook.events!["turn.cancelled"]!({} as never, fire);
+    });
+    let answer: ToolAnswer | undefined;
+    await inEveContext(seat, async () => {
+      await outcomeHook.events!["turn.started"]!({} as never, fire);
+      answer = await declare(fire, "the worker died after the cancel");
+      await outcomeHook.events!["turn.completed"]!({} as never, fire);
+    });
+    ok(answer?.recorded === false, "late/C: a declaration after a CANCELLED fire is reported as NOT counted");
+    ok((await firesOf("r-late-cancelled")).length === 0, "late/C: …and writes no join row — a cancelled fire never becomes late-open, because only a fold that RAN opens one");
+    ok((await store.getRoutine(ORG, SURFACE, "r-late-cancelled"))?.consecutiveFailures === 2, "late/C: the streak the cancellation preserved is still 2 — one strike from disabling, exactly as it was");
+  }
+
+  {
+    const r = routine({ id: "r-late-twice", consecutiveFailures: 0 });
+    await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
+    const seat = new FakeEveContext();
+    const fire = firedCtx(r, "sess-late-twice", "wake-late-twice");
+
+    await inEveContext(seat, async () => {
+      await outcomeHook.events!["turn.started"]!({} as never, fire);
+      await declare(fire, "the API was down");
+      await outcomeHook.events!["turn.completed"]!({} as never, fire);
+    });
+    ok((await store.getRoutine(ORG, SURFACE, "r-late-twice"))?.consecutiveFailures === 1, "late/D: a declaration in the fire's OWN turn counts once, unchanged by this ticket");
+    const first = await firesOf("r-late-twice");
+    ok(first.length === 1 && detailOf(first[0], "late") === undefined, "late/D: on ONE unstamped join row");
+
+    let answer: ToolAnswer | undefined;
+    await inEveContext(seat, async () => {
+      await outcomeHook.events!["turn.started"]!({} as never, fire);
+      answer = await declare(fire, "and the retry failed too");
+      await outcomeHook.events!["turn.completed"]!({} as never, fire);
+    });
+    ok(answer?.recorded === false, "late/D: a later declaration on a fire that already settled `failed` is reported as NOT counted");
+    ok((await store.getRoutine(ORG, SURFACE, "r-late-twice"))?.consecutiveFailures === 1, "late/D: …and it does not — one fire is one strike, whichever turn says so");
+    ok((await firesOf("r-late-twice")).length === 1, "late/D: and no second join row is written");
+  }
+}
+
+{
   const r = routine({ id: "r-job-human", consecutiveFailures: 2 });
   await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
   const humanTurnInJobSeat = {

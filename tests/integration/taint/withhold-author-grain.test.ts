@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { afterAll, afterEach, expect, test } from "vitest";
+import { afterAll, expect, test } from "vitest";
 import {
+  disposeLater,
   bootAgent,
   DISCORD_GUILD_ID,
   discordAmbientWake,
@@ -10,7 +11,6 @@ import {
   readAuditRows,
   registerScript,
   waitFor,
-  type ScriptedHandle,
 } from "../harness";
 
 const SOME_OTHER_MEMBER = "discord/1111111111111111199";
@@ -23,16 +23,6 @@ afterAll(async () => {
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.resetSettingsForTest();
 });
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
 
 let armed = false;
 

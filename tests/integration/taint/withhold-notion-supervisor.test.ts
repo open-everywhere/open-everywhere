@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { afterAll, afterEach, expect, test } from "vitest";
+import { afterAll, expect, test } from "vitest";
 import {
+  disposeLater,
   bootAgent,
   installNotionApiStub,
   NOTION_PAGE_ID,
@@ -42,16 +43,6 @@ afterAll(async () => {
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.resetSettingsForTest();
 });
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
 
 interface StubComment {
   readonly id: string;

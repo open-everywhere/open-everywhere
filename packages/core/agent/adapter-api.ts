@@ -465,6 +465,9 @@ export type { ReactionSinkDeps, ReactionIngestOutcome, ReactionVerb } from "./ch
 export { assertSurfaceAllowed, chatReadIngestion, readChannelResult, readThreadResult } from "./channels/channel-read.js";
 export type { RenderedLine } from "./channels/channel-read.js";
 
+export { encodeChannelKey, decodeChannelKey, isChannelKey, containerIdForPlatform, CHANNEL_KEY_PREFIX } from "./channels/channel-key.js";
+export type { ChannelAddress } from "./channels/channel-key.js";
+
 export { refutedReadAuthorIds, distinctReadAuthorIds } from "./channels/read-author-trust.js";
 export type { ReadAuthorProbe } from "./channels/read-author-trust.js";
 
