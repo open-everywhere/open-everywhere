@@ -320,6 +320,7 @@ const NO_REQUESTER_BASELINE =
   };
   const anchorState = {
     turnId: "t-1",
+    sessionId: "s-hook",
     org: "org-a",
     windowKey: "w-hook",
     workspace: "T1",
@@ -429,6 +430,80 @@ const NO_REQUESTER_BASELINE =
     });
     ok((await countRows()) === noCtx, "🔴 no slot AND no ctx ⇒ NO row (the arm never invents a partition it cannot read)");
   }
+
+  {
+    const { registerSurfaceMessageOps, surfaceMessageOps } = await import("../agent/channels/surface-message-ops.js");
+    const { STOP_HAND_UNICODE } = await import("../agent/status/status.js");
+    const { resetTurnTalliesForTest } = await import("../agent/hooks/turn-tally.js");
+    resetTurnTalliesForTest();
+
+    const reactions: { channelId: string; messageId: string; emoji: string; on: boolean }[] = [];
+    registerSurfaceMessageOps({
+      platform: "discord",
+      postText: async () => "posted-1",
+      editMessage: async () => {},
+      postFiles: async () => {},
+      setReaction: async (channelId, messageId, emoji, on) => {
+        reactions.push({ channelId, messageId, emoji, on });
+      },
+    });
+    ok(surfaceMessageOps("discord")?.setReaction !== undefined, "(precondition) the recording surface ops are registered — without them every ✋ assertion below is vacuous");
+
+    const CHANNEL = "C-764";
+    const ROOT = "m-764-root";
+    const addressed = { platform: "discord", channelId: CHANNEL, messageId: ROOT };
+
+    const drive = async (input: {
+      readonly turnId: string;
+      readonly session: string;
+      readonly window: string;
+      readonly delegates: boolean;
+    }): Promise<void> => {
+      const ctx = { channel: { continuationToken: input.window }, session: { id: input.session } };
+      const container = new SeededSession();
+      await storage.run(container, async () => {
+        await hook.events["turn.started"]({ type: "turn.started", data: { turnId: input.turnId } }, ctx);
+        container.set({ name: ANCHOR_KEY }, { ...(container.get({ name: ANCHOR_KEY }) as Record<string, unknown>), ...addressed });
+        await hook.events["action.result"]({ type: "action.result", data: { status: "completed", result: { kind: "tool-result", toolName: "read_thread" } } });
+        await hook.events["step.completed"]({ type: "step.completed", data: {} });
+        const committed = JSON.parse(JSON.stringify(container.get({ name: ANCHOR_KEY }))) as Record<string, unknown>;
+
+        if (input.delegates) {
+          await hook.events["actions.requested"]({ type: "actions.requested", data: { actions: [{ kind: "tool-call", toolName: "agent" }] } });
+        }
+        await hook.events["action.result"]({ type: "action.result", data: { status: "completed", result: { kind: "tool-result", toolName: "create_ticket" } } });
+
+        container.set({ name: ANCHOR_KEY }, committed);
+        await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: input.turnId } }, ctx);
+      });
+    };
+
+    const before = (await readAudit({ action: TURN_CANCELLED_ACTION })).length;
+    await drive({ turnId: "t-764", session: "s-764", window: "w-764", delegates: true });
+    const row = (await readAudit({ action: TURN_CANCELLED_ACTION, limit: 1 }))[0]!;
+    ok((await readAudit({ action: TURN_CANCELLED_ACTION })).length === before + 1, "(precondition) the cancelled arm wrote exactly one new row to read");
+    ok(row.detail?.["accounted"] === true, "a cancel whose turn this process started is ACCOUNTED — the tally saw the whole turn");
+    ok(
+      JSON.stringify(row.detail?.["ran"]) === JSON.stringify(["read_thread", "create_ticket"]),
+      `🔴 the row names the ABORTED step's own tool call too — got ${JSON.stringify(row.detail?.["ran"])}`,
+    );
+    ok(row.detail?.["steps"] === 1, "…and the step count is the COMMITTED one — the aborted step never completed");
+
+    const placed = reactions.filter((r) => r.emoji === STOP_HAND_UNICODE && r.on);
+    const removed = reactions.filter((r) => r.emoji === STOP_HAND_UNICODE && !r.on);
+    ok(placed.length === 1, `(precondition) the delegation really placed one ✋ — got ${placed.length}`);
+    ok(removed.length === 1, `🔴 the cancelled arm REMOVES the ✋ it placed inside the aborted step — got ${removed.length}`);
+    ok(removed[0]!.channelId === CHANNEL && removed[0]!.messageId === ROOT, "…off the SAME message it was placed on");
+
+    reactions.length = 0;
+    await drive({ turnId: "t-765-nodel", session: "s-765-nodel", window: "w-765-nodel", delegates: false });
+    ok(reactions.filter((r) => r.emoji === STOP_HAND_UNICODE).length === 0, `🔴 a turn that placed no ✋ removes none — got ${JSON.stringify(reactions)}`);
+    const second = (await readAudit({ action: TURN_CANCELLED_ACTION, limit: 1 }))[0]!;
+    ok(second.detail?.["accounted"] === true, "…and that turn's row is still accounted for");
+    ok(JSON.stringify(second.detail?.["ran"]) === JSON.stringify(["read_thread", "create_ticket"]), "…with the aborted step's tool named there too");
+
+    resetTurnTalliesForTest();
+  }
 }
 
 {
@@ -498,6 +573,51 @@ ok(renderHelp().includes("/oe stop"), "…and help ADVERTISES stop — an afford
   ok(wired.length > 0, "…and answers the invoker with a user-facing sentence");
 }
 
+{
+  const { openTurnTally, recordTallyAction, recordTallyStep, recordTallyHand, readTurnTally, closeTurnTally, liveTurnTallyCount, resetTurnTalliesForTest } =
+    await import("../agent/hooks/turn-tally.js");
+  resetTurnTalliesForTest();
+
+  recordTallyAction("s-unopened", "turn_0", "todo");
+  recordTallyStep("s-unopened", "turn_0");
+  recordTallyHand("s-unopened", "turn_0", true);
+  ok(readTurnTally("s-unopened", "turn_0") === null, "🔴 a turn this process never opened stays a MISS — a partial tally must never read as a complete one");
+  ok(liveTurnTallyCount() === 0, "…and the stray writes created no entry at all");
+
+  openTurnTally("s-seat", "turn_0");
+  recordTallyAction("s-seat", "turn_0", "agent");
+  recordTallyAction("s-seat", "turn_0", "todo");
+  recordTallyStep("s-seat", "turn_0");
+  const seat = readTurnTally("s-seat", "turn_0");
+  ok(seat !== null && seat.ran.join(",") === "agent,todo", "a tallied turn names the tools that finished, oldest first");
+  ok(seat !== null && seat.steps === 1, "…and counts the model calls that completed");
+  ok(seat !== null && seat.handPlaced === false, "…and a turn that placed no ✋ says so — the negative control the remover branches on");
+
+  openTurnTally("s-worker", "turn_0");
+  recordTallyAction("s-worker", "turn_0", "return_result");
+  ok(readTurnTally("s-seat", "turn_0")!.ran.join(",") === "agent,todo", "🔴 a second session's turn_0 does NOT merge into the first's tally");
+  ok(readTurnTally("s-worker", "turn_0")!.ran.join(",") === "return_result", "…and each session reads back its own");
+
+  recordTallyHand("s-seat", "turn_0", true);
+  ok(readTurnTally("s-seat", "turn_0")!.handPlaced === true, "a placed ✋ is owned by the turn that placed it");
+  recordTallyHand("s-seat", "turn_0", false);
+  ok(readTurnTally("s-seat", "turn_0")!.handPlaced === false, "…and an UN-marked ✋ (the surface refused the reaction) reads as not ours");
+
+  recordTallyHand("s-seat", "turn_0", true);
+  const snapshot = readTurnTally("s-seat", "turn_0")!;
+  (snapshot.ran as string[]).push("intruder");
+  ok(readTurnTally("s-seat", "turn_0")!.ran.join(",") === "agent,todo", "the tally hands out a copy — a caller cannot edit a live turn's record");
+
+  closeTurnTally("s-seat", "turn_0");
+  ok(readTurnTally("s-seat", "turn_0") === null, "a closed turn is a MISS again");
+  ok(readTurnTally("s-worker", "turn_0") !== null, "…and closing one turn leaves the other session's alone");
+
+  resetTurnTalliesForTest();
+  for (let i = 0; i < 200; i++) openTurnTally("s-leak", `turn_${i}`);
+  ok(liveTurnTallyCount() <= 64, `the live map is bounded (${liveTurnTallyCount()} entries after 200 unclosed turns)`);
+  ok(readTurnTally("s-leak", "turn_199") !== null, "…and the NEWEST turn survives the eviction — the oldest is what goes");
+  resetTurnTalliesForTest();
+}
 
 {
   const { LEAN_SEAT_TOOLS } = await import("../agent/access/lean-seat.js");

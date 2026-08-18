@@ -2,7 +2,15 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { bindFrom, deploymentOrg, isUnifiedWindowContext, currentWakeId, currentTurnId, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
 import { capabilitiesFor } from "../identity/capabilities.js";
-import { resolveReplyTarget, postReply, auditReplyRefused, type ReplyAudit, type ReplierLabel } from "../channels/reply-post.js";
+import { resolveReplyTarget, postReply, auditReplyRefused, auditReplyForced, type ReplyAudit, type ReplierLabel } from "../channels/reply-post.js";
+import {
+  replyFreshness,
+  staleReplyRefusalMessage,
+  markStaleRefusedThisTurn,
+  wasStaleRefusedThisTurn,
+  REPLY_STALE_REFUSAL_REASON,
+  REPLY_FORCED_AUDIT_REASON,
+} from "../channels/reply-freshness.js";
 import { replierLabelFor, withPendingWorkFrame } from "../channels/turn-delivery.js";
 import { markRepliedThisTurn, markWakeDoneThisTurn, isWakeDoneThisTurn, isWakeDeclinedThisTurn, WAKE_DECLINED_REFUSAL_REASON, wakeDeclinedRefusalMessage } from "../channels/reply-signal.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
@@ -58,6 +66,13 @@ export const unifiedReplyEntry = defineTool({
         .describe(
           "Leave true (the default) to mark this wake answered. Once you mark a wake done, a further reply to that SAME wake in this same turn is REFUSED and posts nothing. Set false ONLY when you know you will reply to this same wake again later — e.g. you are reporting progress now and the full answer comes after delegated work finishes. While a background worker you started this turn has not reported, `done: true` is REFUSED: you do not have its answer yet, so post a hand-off note with `done: false` and answer when the report arrives.",
         ),
+      force: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "Leave false. Set true ONLY to override a refusal that says this conversation has moved on: it posts your reply even though newer messages you have not read are already on their way to you. Use it when posting NOW matters more than reflecting those messages — a time-critical alert, or a hand-off note. It is recorded.",
+        ),
     }),
     outputSchema: z.object({ posted: z.boolean(), id: z.string(), note: z.string() }),
     async execute(input, ctx) {
@@ -94,6 +109,16 @@ export const unifiedReplyEntry = defineTool({
       if (owingTask !== undefined && input.done !== false) {
         await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), DELEGATION_PENDING_REFUSAL_REASON);
         throw new Error(delegationPendingRefusalMessage());
+      }
+
+      if (!wasStaleRefusedThisTurn(turnId, input.wake)) {
+        const freshness = await replyFreshness(store, org, { target: origin, windowToken, inputWake: input.wake, turnWake });
+        if (freshness.stale && input.force !== true) {
+          markStaleRefusedThisTurn(turnId, input.wake);
+          await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), REPLY_STALE_REFUSAL_REASON);
+          throw new Error(staleReplyRefusalMessage(freshness));
+        }
+        if (freshness.stale) await auditReplyForced(replyAuditFor(bind, "tool", input.wake), REPLY_FORCED_AUDIT_REASON);
       }
 
       const framed = withPendingWorkFrame(input.text, owingTask !== undefined);

@@ -5,7 +5,14 @@ import { deploymentOrg } from "../identity/binding.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { OperationalStore } from "../operational/store.js";
 import type { Domain } from "../memory/domain.js";
-import { grainUsesUnifiedWindow, standingSeatRegistryKey, supervisorGrainFor } from "../channels/unified-supervisor.js";
+import {
+  grainUsesUnifiedWindow,
+  mintRotationToken,
+  standingSeatRegistryKey,
+  supervisorGrainFor,
+  type SupervisorGrain,
+} from "../channels/unified-supervisor.js";
+import { claimRuntimeRotation } from "../channels/runtime-rotation.js";
 import { divertToUnifiedWindow } from "../channels/unified.js";
 import {
   isUnifiedWakeOrigin,
@@ -97,7 +104,8 @@ export interface FireWindowDeps {
   readonly org?: string;
   readonly armed?: boolean;
   readonly divert?: typeof divertToUnifiedWindow;
-  readonly jobSeatStore?: Pick<OperationalStore, "getChannelSession" | "rotateChannelSession" | "touchChannelSession">;
+  readonly registryStore?: Pick<OperationalStore, "getChannelSession" | "rotateChannelSession" | "touchChannelSession">;
+  readonly claimRuntimeRotation?: typeof claimRuntimeRotation;
   readonly now?: () => string;
 }
 
@@ -116,6 +124,28 @@ async function liveGeneration(org: string, registryKey: string): Promise<number>
   } catch {
     return 1;
   }
+}
+
+export async function healFireParentGeneration(
+  org: string,
+  grain: SupervisorGrain,
+  atIso: string,
+  store: Pick<OperationalStore, "getChannelSession" | "rotateChannelSession">,
+): Promise<number | undefined> {
+  if (!grain.unified || grain.domainName === undefined) return undefined;
+  const existing = await store.getChannelSession(org, grain.registryKey);
+  if (existing === null) return undefined;
+  const current = Number.isInteger(existing.generation) && existing.generation > 0 ? existing.generation : 0;
+  const next = current + 1;
+  const row = await store.rotateChannelSession(
+    org,
+    grain.registryKey,
+    mintRotationToken(grain, next, () => {
+      throw new Error("healFireParentGeneration: a per-container token is unreachable behind the unified grain guard");
+    }),
+    atIso,
+  );
+  return row.generation;
 }
 
 export async function adoptJobFireSeat(
@@ -155,21 +185,26 @@ export async function divertTriggeredFire(
   const domains = (deps.loadDomains ?? liveDomains)();
   const grain = supervisorGrainFor(input.surfaceKey, domains);
   if (!grain.unified || grain.domainName === undefined || !grainUsesUnifiedWindow(grain)) return false;
-  const generation = await (deps.generationFor ?? liveGeneration)(org, grain.registryKey);
-  const plan = planFireWindow({
+  const now = deps.now ?? (() => new Date().toISOString());
+  const registryStore = () => deps.registryStore ?? getOperationalStore();
+  const current = await (deps.generationFor ?? liveGeneration)(org, grain.registryKey);
+  const planFor = (generation: number): FireWindowPlan | null =>
+    planFireWindow({ surfaceKey: input.surfaceKey, origin: input.origin, seatKey: input.seatKey, domains, generation, armed });
+  if (planFor(current) === null) return false;
+  const atIso = now();
+  const runtimeChanged = await (deps.claimRuntimeRotation ?? claimRuntimeRotation)({
+    org,
+    registryKey: grain.registryKey,
     surfaceKey: input.surfaceKey,
-    origin: input.origin,
-    seatKey: input.seatKey,
-    domains,
-    generation,
-    armed,
+    atIso,
   });
+  const healed = runtimeChanged ? await healFireParentGeneration(org, grain, atIso, registryStore()) : undefined;
+  const plan = planFor(healed ?? current);
   if (!plan) return false;
   if (isJobFireSeat(input.seatKey)) {
     const registryKey = standingSeatRegistryKey(plan.token, grain.registryKey);
     if (registryKey !== undefined) {
-      const now = deps.now ?? (() => new Date().toISOString());
-      await adoptJobFireSeat(org, registryKey, plan.token, now(), deps.jobSeatStore ?? getOperationalStore());
+      await adoptJobFireSeat(org, registryKey, plan.token, atIso, registryStore());
     }
   }
   const attributes: Record<string, unknown> = {

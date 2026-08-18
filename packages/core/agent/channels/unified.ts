@@ -88,6 +88,7 @@ export interface UnifiedReceiveTarget {
     readonly floor: string;
     readonly taskId?: string;
   };
+  readonly inbound?: boolean;
 }
 
 export function windowEnabledFor(surfaceKey: string, token: string): boolean {
@@ -237,7 +238,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       throw new Error(`unified receive: no standing window is enabled for ${t.surfaceKey} — refusing the wake (fail-closed)`);
     }
     const org = deploymentOrg();
-    await registerUnifiedWakeTarget(getOperationalStore(), org, t.wakeId, t.origin, new Date().toISOString(), t.token);
+    await registerUnifiedWakeTarget(getOperationalStore(), org, t.wakeId, t.origin, new Date().toISOString(), t.token, t.inbound === true);
     ulog(`wake ${t.wakeId} from ${t.surfaceKey} → ${t.token} (origin ${t.origin.platform})`);
     const answerText = typeof input.message === "string" ? input.message : undefined;
     if (t.answer) {
@@ -548,6 +549,7 @@ export async function divertToUnifiedWindow(
     origin: input.window.origin,
     ...(answer ? { answer } : {}),
     surfaceKey: input.surfaceKey,
+    inbound: input.internalDispatch !== true,
     ...(input.context && input.context.length > 0 ? { context: input.context } : {}),
   };
   let recovered: { taskIds: readonly string[]; overflow: number } | null = null;

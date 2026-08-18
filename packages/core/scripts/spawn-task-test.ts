@@ -21,7 +21,8 @@ import {
 import { divertToUnifiedWindow, dispatchTaskWindow, OE_SPAWN_TAINTED_ATTR, type UnifiedReceiveTarget } from "../agent/channels/unified.js";
 import { truncateTaskLabel } from "../agent/channels/turn-delivery.js";
 import { parseWindowToken, isTaskWindowToken, taskWindowId, formatWindowToken, dmAnchorDomain, dmWindowKey } from "../agent/channels/window-key.js";
-import spawnTask from "../agent/tools/spawn_task.js";
+import spawnTask, { renderTaskBrief } from "../agent/tools/spawn_task.js";
+import { COVERAGE_DISCLOSURE_NOTE } from "../agent/access/oneshot-spawn.js";
 import { resolveWindowGated } from "../agent/access/window-gated.js";
 import type { RouteHandlerArgs } from "eve/channels";
 
@@ -323,5 +324,12 @@ await assert.rejects(
   "a task worker identified ONLY by its oe_window_token stamp is still refused by the recursion guard (the fallback narrows, never widens)",
 );
 n++;
+
+console.log("5. spawn_task worker brief — coverage disclosure (OPE-761):");
+{
+  const brief = renderTaskBrief("investigate the deploy failure");
+  ok(brief.includes(COVERAGE_DISCLOSURE_NOTE), "the thread-owning worker's brief carries the OPE-761 coverage-disclosure note");
+  ok(brief.endsWith("investigate the deploy failure"), "the caller's brief is still appended verbatim, after the note");
+}
 
 console.log(`spawn-task-test: ${n} assertions passed`);

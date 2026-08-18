@@ -184,9 +184,21 @@ const ORG = "acme";
 }
 
 {
+  const rel = "packages/core/agent/routines/fire-window.ts";
+  const src = readFileSync(join(REPO_ROOT, rel), "utf8");
+  const claimAt = src.indexOf("const runtimeChanged");
+  const healAt = src.indexOf("const healed");
+  const planAt = src.indexOf("const plan = planFor(");
+  ok(src.includes("claimRuntimeRotation"), `🔴 ${rel} claims the runtime rotation — without it a cron fire after an eve bump dies in a stranded session, silently`);
+  ok(claimAt >= 0 && healAt > claimAt, `🔴 ${rel} resolves the verdict into a \`runtimeChanged\` binding and consumes it (a claim whose boolean is dropped heals nothing)`);
+  ok(planAt > healAt, `🔴 ${rel} heals BEFORE it mints the fire's token — a heal after that mint cannot change the session the fire is dispatched into`);
+  ok(/planFor\(healed \?\?/.test(src), `🔴 ${rel} builds the token from the HEALED generation, so the fire cannot ride back onto the generation it is healing away from`);
+}
+
+{
   const lint = readFileSync(join(REPO_ROOT, "scripts/eve-patch-lint.ts"), "utf8");
   ok(lint.includes("EVE_RUNTIME_VERSION"), "🔴 lint:eve-patch still pins EVE_RUNTIME_VERSION — it is the only gate that catches a stale constant");
   ok(lint.includes("runtime-rotation.ts"), "…and still names the module the constant lives in");
 }
 
-console.log(`✓ runtime-rotation: ${n} assertions passed (OPE-599 pre-dispatch heal: claim, permanence, chain rung, seven live call sites)`);
+console.log(`✓ runtime-rotation: ${n} assertions passed (OPE-599 pre-dispatch heal: claim, permanence, chain rung, eight live call sites)`);

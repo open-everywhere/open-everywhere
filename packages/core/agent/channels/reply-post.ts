@@ -86,6 +86,24 @@ export async function auditReplyRefused(audit: ReplyAudit | undefined, reason: s
   }).catch(() => undefined);
 }
 
+export async function auditReplyForced(audit: ReplyAudit | undefined, reason: string): Promise<void> {
+  if (!audit) return;
+  await appendAudit({
+    org: audit.org,
+    platform: audit.platform,
+    workspace: audit.workspace,
+    surface: audit.surface,
+    principalId: audit.principalId,
+    action: "reply.forced",
+    detail: {
+      reason,
+      route: audit.route,
+      ...(audit.wakeId ? { wakeId: audit.wakeId.slice(0, REFUSED_WAKE_MAX) } : {}),
+      ...(audit.sessionId ? { sessionId: audit.sessionId } : {}),
+    },
+  }).catch(() => undefined);
+}
+
 function replyDedupeLocus(target: ReplyTarget): { channel: string; threadTs?: string } {
   switch (target.platform) {
     case "slack":

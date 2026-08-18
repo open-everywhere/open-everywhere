@@ -782,7 +782,6 @@ const store = getOperationalStore();
   ok(mapVisibleAtSend, "receive: the wakeId→origin map entry is durably registered BEFORE the send");
   const origin = await resolveUnifiedWakeTarget(store, "default", received[0].target.wakeId);
   ok(origin !== null && origin.platform === "slack", "receive: the registered origin round-trips from the real store");
-
   await withGate(true, async () => {
     await unifiedChannel.receive!({ message: received[1].message, target: received[1].target, auth: received[1].auth as never }, { from: fakeFrom, resolveSession: (async () => undefined) as never });
   });
@@ -809,6 +808,31 @@ const store = getOperationalStore();
   ok(sent.length === 5 && sent[4].opts.continuationToken === RAW_TOKEN, "receive: the Discord wake delivers under the SAME raw token (same session)");
   const disRegistered = await resolveUnifiedWakeTarget(store, "default", received[4].target.wakeId);
   ok(disRegistered !== null && disRegistered.platform === "discord", "receive: the Discord origin round-trips from the real store");
+
+  {
+    const since = new Date(Date.now() - 60_000).toISOString();
+    const listed = await store.listPendingUnifiedWakes("default", RAW_TOKEN, since, 50);
+    ok(
+      listed.some((r) => r.wakeId === received[0].target.wakeId),
+      "🔴 receive: an ATTENDED wake is listed as INBOUND from the real store — the freshness gate can see a message from the room",
+    );
+
+    const internalWake = mintWakeId();
+    await withGate(true, async () => {
+      await unifiedChannel.receive!(
+        { message: "an internal dispatch", target: { ...received[0].target, wakeId: internalWake, inbound: false }, auth: received[0].auth as never },
+        { from: fakeFrom, resolveSession: (async () => undefined) as never },
+      );
+    });
+    ok(
+      (await resolveUnifiedWakeTarget(store, "default", internalWake)) !== null,
+      "receive/CONTROL: the internal wake IS registered — so the assertion below is about `inbound`, not about a missing row",
+    );
+    ok(
+      !(await store.listPendingUnifiedWakes("default", RAW_TOKEN, since, 50)).some((r) => r.wakeId === internalWake),
+      "🔴 receive: an INTERNAL wake is NOT listed — counting one would refuse the hand-off note of every delegating turn",
+    );
+  }
 
   await assert.rejects(
     unifiedChannel.receive!(
@@ -1435,6 +1459,17 @@ overrideSettingsForTest({ window: { topology: false } });
     refusals.length = 0;
     await divert(surfaces[1]);
     ok(received.length === before + 1 && refusals.length === 0, "spend gate: with the cap removed the SAME wake is delivered, un-refused (the gate admits under budget — it is not a one-way door)");
+  }
+
+  {
+    await divert(surfaces[0]);
+    ok(received[received.length - 1]!.target.inbound === true, "🔴 inbound decision: an ATTENDED divert marks the wake INBOUND — the freshness gate can see a message from the room");
+
+    await divert(surfaces[0], { internalDispatch: true });
+    ok(
+      received[received.length - 1]!.target.inbound === false,
+      "🔴 inbound decision: an INTERNAL dispatch (task spawn / completion wake / approval decision / redrive) is NOT inbound — counting one would refuse the hand-off note of every delegating turn",
+    );
   }
 
   for (const arm of liveArms) registerPostArm(arm);

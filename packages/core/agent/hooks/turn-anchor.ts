@@ -12,6 +12,7 @@ import { findCancelRequester } from "../channels/turn-cancel.js";
 import { forgetBridgedQuestion } from "../channels/question-bridge.js";
 import { bareTokenFromEveContext } from "../channels/window-key.js";
 import { getOperationalStore } from "../operational/provider.js";
+import { closeTurnTally, openTurnTally, readTurnTally, recordTallyAction, recordTallyHand, recordTallyStep } from "./turn-tally.js";
 
 export const TURN_CANCELLED_ACTION = "turn.cancelled";
 
@@ -19,6 +20,7 @@ const MAX_NAMED_ACTIONS = 3;
 
 interface TurnAnchorState {
   readonly turnId: string;
+  readonly sessionId: string;
   readonly org: string;
   readonly windowKey: string;
   readonly platform?: string;
@@ -75,6 +77,7 @@ async function onTurnStarted(turnId: string, ctx: HookContext): Promise<void> {
 
   write({
     turnId,
+    sessionId: ctx.session.id,
     org: partition.org,
     windowKey,
     ...(platform ? { platform } : {}),
@@ -86,6 +89,8 @@ async function onTurnStarted(turnId: string, ctx: HookContext): Promise<void> {
     ran: [],
     steps: 0,
   });
+
+  if (read()?.turnId === turnId) openTurnTally(ctx.session.id, turnId);
 
   await recordTurnAnchor(
     partition.org,
@@ -107,11 +112,13 @@ async function placeStopHand(): Promise<void> {
   mutate((st) => {
     st.handPlaced = true;
   });
+  recordTallyHand(s.sessionId, s.turnId, true);
   const landed = await setSurfaceReaction(s.platform, { channelId: s.channelId, messageId: s.messageId }, STOP_HAND, true);
   if (!landed) {
     mutate((st) => {
       st.handPlaced = false;
     });
+    recordTallyHand(s.sessionId, s.turnId, false);
   }
 }
 
@@ -135,7 +142,7 @@ interface CancelledTurnFacts extends TurnAnchorState {
   readonly accounted: boolean;
 }
 
-function reconstructCancelledTurn(turnId: string, ctx: HookContext | undefined): CancelledTurnFacts | null {
+function reconstructCancelledTurn(turnId: string, ctx: HookContext | undefined): TurnAnchorState | null {
   if (ctx === undefined) return null;
   try {
     const c = ctx as unknown as BindableContext;
@@ -147,6 +154,7 @@ function reconstructCancelledTurn(turnId: string, ctx: HookContext | undefined):
     const windowKey = ctx.channel?.continuationToken ?? ctx.session.id;
     return {
       turnId,
+      sessionId: ctx.session.id,
       org: partition.org,
       windowKey,
       ...(platform ? { platform } : {}),
@@ -157,7 +165,6 @@ function reconstructCancelledTurn(turnId: string, ctx: HookContext | undefined):
       handPlaced: false,
       ran: [],
       steps: 0,
-      accounted: false,
     };
   } catch {
     return null;
@@ -166,9 +173,17 @@ function reconstructCancelledTurn(turnId: string, ctx: HookContext | undefined):
 
 async function onTurnCancelled(turnId: string, ctx?: HookContext): Promise<void> {
   const live = read();
-  if (live && live.turnId !== turnId) return;
-  const s: CancelledTurnFacts | null = live ? { ...live, accounted: true } : reconstructCancelledTurn(turnId, ctx);
-  if (!s) return;
+  if (live && live.turnId !== turnId) {
+    closeTurnTally(live.sessionId, turnId);
+    return;
+  }
+  const addressing = live ?? reconstructCancelledTurn(turnId, ctx);
+  if (!addressing) return;
+  const tally = readTurnTally(addressing.sessionId, turnId);
+  const s: CancelledTurnFacts = tally
+    ? { ...addressing, handPlaced: tally.handPlaced, ran: [...tally.ran], steps: tally.steps, accounted: true }
+    : { ...addressing, accounted: live !== null };
+  closeTurnTally(addressing.sessionId, turnId);
   setPendingCancelNote({ turnId, steps: s.steps, ran: [...s.ran], accounted: s.accounted });
   await removeStopHand(s);
   await clearTurnAnchor(s.org, s.windowKey);
@@ -198,11 +213,14 @@ async function onTurnCancelled(turnId: string, ctx?: HookContext): Promise<void>
   write(null);
 }
 
-async function onTurnEnded(turnId: string): Promise<void> {
+async function onTurnEnded(turnId: string, ctx?: HookContext): Promise<void> {
   clearPendingCancelNoteAfter(turnId);
   const s = read();
+  const sessionId = s?.sessionId ?? ctx?.session.id;
+  const tally = sessionId === undefined ? null : readTurnTally(sessionId, turnId);
+  if (sessionId !== undefined) closeTurnTally(sessionId, turnId);
   if (!s || s.turnId !== turnId) return;
-  await removeStopHand(s);
+  await removeStopHand(tally ? { ...s, handPlaced: tally.handPlaced } : s);
   await clearTurnAnchor(s.org, s.windowKey);
   write(null);
 }
@@ -228,6 +246,8 @@ export default defineHook({
         const result = event.data.result as { kind?: string; toolName?: string };
         if (result?.kind === "tool-result" && event.data.status !== "rejected" && typeof result.toolName === "string") {
           const name = result.toolName;
+          const s = read();
+          if (s) recordTallyAction(s.sessionId, s.turnId, name);
           mutate((st) => {
             st.ran.push(name);
           });
@@ -237,22 +257,24 @@ export default defineHook({
     },
     "step.completed": async () => {
       try {
+        const s = read();
+        if (s) recordTallyStep(s.sessionId, s.turnId);
         mutate((st) => {
           st.steps += 1;
         });
       } catch {
       }
     },
-    "turn.completed": async (event) => {
+    "turn.completed": async (event, ctx: HookContext) => {
       try {
-        await onTurnEnded(event.data.turnId);
+        await onTurnEnded(event.data.turnId, ctx);
       } catch (err) {
         console.warn(`[open-everywhere:turn-anchor] turn.completed failed: ${String(err)}`);
       }
     },
-    "turn.failed": async (event) => {
+    "turn.failed": async (event, ctx: HookContext) => {
       try {
-        await onTurnEnded(event.data.turnId);
+        await onTurnEnded(event.data.turnId, ctx);
       } catch (err) {
         console.warn(`[open-everywhere:turn-anchor] turn.failed failed: ${String(err)}`);
       }
