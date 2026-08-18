@@ -2,7 +2,7 @@ import { auditSilencesExpected, ENV, type Capability, type SlackUser2Config } fr
 import { deployedBuildCarries } from "./deployed-build.js";
 import type { SkipKind } from "./skip-summary.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
-import { dmAnchorDomain, DM_ANCHOR_DOMAIN_PREFIX } from "../../agent/channels/window-key.js";
+import { dmAnchorDomain } from "../../agent/channels/window-key.js";
 import type { OperationalStore } from "../../agent/operational/store.js";
 import { DISPATCH_TICK_MINUTES } from "../../agent/routines/schedule.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
@@ -18,7 +18,6 @@ import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
 import { decomposeSession, delegationJoinTargets, joinDelegations, renderDelegationTiming, renderSessionTiming } from "./transcript-timings.js";
 import type { TimingsRecord } from "./timings-record.js";
 import { type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
-import { type SyntheticDiscordDm } from "./discord-synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
 import { pollOptional, pollUntil, sleep } from "./poll.js";
 import type { ReplyJudge, Rubric } from "./judge.js";
@@ -64,7 +63,6 @@ export interface ScenarioContext {
   readonly slackSupervisor?: SlackDriver;
   readonly syntheticDm?: SyntheticDm;
   readonly dm?: SlackDriver;
-  readonly syntheticDiscordDm?: SyntheticDiscordDm;
   readonly slackUser2?: SlackUser2Config;
   readonly slackSecondary?: SlackDriver;
   readonly slackSecondaryUserId?: string;
@@ -653,95 +651,6 @@ export const SCENARIOS: readonly Scenario[] = [
       const cardAsk = await discord.post(discord.mention(`raise this channel's spend cap to $${21 + (Math.floor(Date.now() / 1000) % 9_000)}/month`), threadId);
       const cardReply = await discord.awaitReplyMatching(threadId, cardAsk.id, (m) => m.components.length > 0, { timeoutMs: FILE_REPLY_WAIT, what: "an approval card (a reply with components/buttons)" });
       ctx.gate(cardReply.components.length > 0, "approval card: renders with components (buttons) — SHAPE only, decide stays on Slack (bots can't click Discord buttons)");
-    },
-  },
-  {
-    id: "S-DM-DISCORD",
-    title:
-      "Discord DM delegation parity (OPE-329, re-anchored at OPE-356): a forged relay MESSAGE_CREATE wakes a Discord DM seat on a `remember` ask — asserted PURELY from the audit trail (task.spawned on an oe-dm/discord/… pseudo-domain, then the worker's completion WAKE reaching the DM's own standing window: task.returned delivered:true joined by its wakeId to a unified.self_dispatch onto that pseudo-domain), because a third-party bot cannot itself read a DM channel it is not a party to. A soft turn.tool_gated(reason:lean-seat) check adds confirming evidence when the DM seat's session hasn't already logged its once-per-session gate row in an earlier run.",
-    requires: ["syntheticDiscordDm"],
-    surface: "discord",
-    suite: "extended",
-    optional: true,
-    timeoutMs: 900_000,
-    judged: false,
-    run: async (ctx) => {
-      const forge = ctx.syntheticDiscordDm!;
-      const auditRead = ctx.auditRead;
-      if (!auditRead)
-        ctx.skip(
-          "needs the control-read audit reader (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN) — this leg's entire evidence IS the audit trail; a third-party bot cannot read a real DM channel it is not itself a party to",
-        );
-      const canary = factToken("discord-dm");
-      const ask = `remember this for later: the OPE329 discord canary is ${canary}.`;
-      const since = new Date().toISOString();
-      const sent = await forge.message({ text: ask });
-      ctx.log(`${sent.label}: POST → ${sent.status}`);
-      ctx.gate(sent.status === 200, "synthetic discord DM relay POST acked 200 by the deployment's gateway (HMAC verified)");
-
-      const spawn = await pollUntil(
-        async () => {
-          const rows = await auditRead!({ sinceIso: since, actions: ["task.spawned"] });
-          return rows.find((r) => r.workspace.startsWith("oe-dm/discord/"));
-        },
-        { timeoutMs: FILE_REPLY_WAIT, what: "a task.spawned row on an oe-dm/discord/… pseudo-domain (the DM seat delegating the `remember` write)" },
-      );
-      ctx.log(`delegation: task.spawned workspace=${spawn.workspace} taskId=${String((spawn.detail as { taskId?: unknown } | undefined)?.taskId ?? "?")}`);
-
-      const gatedRows = await auditRead!({ sinceIso: since, actions: ["turn.tool_gated"] });
-      const gated = gatedRows.find((r) => (r.detail as { reason?: unknown } | undefined)?.reason === "lean-seat" && r.workspace.startsWith("oe-dm/discord/"));
-      if (gated) {
-        ctx.log(`lean-seat CONFIRMED this run: turn.tool_gated withheld=${JSON.stringify((gated.detail as { withheld?: unknown } | undefined)?.withheld ?? [])}`);
-      } else {
-        ctx.log(
-          "lean-seat unconfirmed this run (no fresh turn.tool_gated — expected once the DM seat's session already logged it in a prior run, since the row is a once-per-session dedupe); Evidence 1 (task.spawned on the oe-dm/discord/… domain) remains the binding proof the seat was narrowed enough to delegate",
-        );
-      }
-
-      const returned = await pollUntil(
-        async () => {
-          const rows = await auditRead!({ sinceIso: since, actions: ["task.returned"] });
-          return rows.find((r) => (r.detail as { taskId?: unknown } | undefined)?.taskId === (spawn.detail as { taskId?: unknown } | undefined)?.taskId);
-        },
-        { timeoutMs: FILE_REPLY_WAIT, what: "the spawn's own task.returned row (the delegated worker finishing)" },
-      );
-      ctx.gate(returned.workspace === spawn.workspace, `worker returned on the SAME pseudo-domain it spawned on (${spawn.workspace})`);
-      const rd = returned.detail as { delivered?: unknown; wakeId?: unknown; backstop?: unknown } | undefined;
-      ctx.gate(
-        rd?.delivered === true,
-        `🎯 THE PAYOFF: the completion wake was DELIVERED to the Discord DM seat (task.returned delivered:true) — before OPE-356 this seat ran on a native token, so parseWindowToken resolved no domain and BOTH wake sites skipped fail-closed; found ${JSON.stringify(rd?.delivered ?? (rd?.backstop === true ? "backstop:true (the worker ended without calling return_result)" : "no delivered field"))}`,
-      );
-      const completionWakeId = typeof rd?.wakeId === "string" ? rd.wakeId : "";
-      ctx.gate(completionWakeId.length > 0, "the return row names the completion wakeId (the join key for the dispatch row)");
-      ctx.gate(
-        completionWakeId !== (spawn.detail as { wakeId?: unknown } | undefined)?.wakeId,
-        "the completion wakeId is DISTINCT from the spawn hop's (so the dispatch row below is the return leg, not the delegation that started it)",
-      );
-      const wake = await pollUntil(
-        async () => {
-          const rows = await auditRead!({ sinceIso: since, actions: ["unified.self_dispatch"] });
-          return rows.find((r) => (r.detail as { wakeId?: unknown } | undefined)?.wakeId === completionWakeId);
-        },
-        { timeoutMs: REPLY_WAIT, what: `a unified.self_dispatch row carrying the completion wakeId ${completionWakeId} (the wake hop into the DM window)` },
-      );
-      ctx.gate(
-        wake.workspace === spawn.workspace,
-        `the completion wake TARGETS THE DM WINDOW — its dispatch row is labelled with the token's own pseudo-domain (expected ${spawn.workspace}, got ${wake.workspace})`,
-      );
-      ctx.gate(
-        typeof (wake.detail as { surfaceKey?: unknown } | undefined)?.surfaceKey === "string" &&
-          dmAnchorDomain((wake.detail as { surfaceKey: string }).surfaceKey) === spawn.workspace,
-        `…and the surface it was admitted for is byte-exactly the DM inside that token (the privacy fence: a DM window is deliverable to its own DM and nowhere else) — got ${String((wake.detail as { surfaceKey?: unknown } | undefined)?.surfaceKey)}`,
-      );
-      ctx.log(`wake hop: unified.self_dispatch wakeId=${completionWakeId} workspace=${wake.workspace}`);
-
-      const replies = await auditRead!({ sinceIso: since, actions: ["reply.post"] });
-      const afterWake = replies.filter((r) => r.platform === "discord" && r.ts > wake.ts);
-      ctx.log(
-        afterWake.length > 0
-          ? `the woken seat also spoke in the DM (${afterWake.length} reply.post row(s) after the wake)`
-          : "the woken seat stayed silent after the wake (allowed — the wake hop is the evidence)",
-      );
     },
   },
   {

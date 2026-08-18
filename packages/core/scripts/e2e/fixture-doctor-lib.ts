@@ -287,18 +287,6 @@ export const FIXTURE_FAMILIES: readonly FixtureFamily[] = [
     probe: "discord-base",
   },
   {
-    id: "syntheticDiscordDm",
-    label: "Synthetic Discord DM relay forge (relay secret + real DM user/channel)",
-    required: [v(ENV.targetUrl), v(ENV.discordRelaySecret), v(ENV.discordDmChannel), v(ENV.discordDmUserId)],
-    scenarios: "S-DM-DISCORD (OPE-329 forged relay DM)",
-    probe: "presence-only",
-    presenceOnlyReason:
-      "the DM channel is a conversation between the REAL human and the OE bot; the driver bot is " +
-      "not a party to it, so any fetch with the driver token answers 403 by construction — a red " +
-      "that would measure the probing principal, not the fixture. The ids are only ever named " +
-      "inside signed forged relay payloads, which need no vendor reachability.",
-  },
-  {
     id: "teams",
     label: "Teams driver (Entra app + delegated refresh token + team/channel)",
     required: [

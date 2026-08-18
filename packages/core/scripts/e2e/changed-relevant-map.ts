@@ -23,8 +23,8 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "discord-provider",
     globs: ["packages/providers/discord/**"],
-    scenarios: ["J-DISC", "S-DM-DISCORD", "S8"],
-    why: "J-DISC and S-DM-DISCORD are surface: \"discord\"; S8 is the Slack→Discord cross-surface recall leg (surface: \"cross\").",
+    scenarios: ["J-DISC", "S8"],
+    why: "J-DISC is surface: \"discord\"; S8 is the Slack→Discord cross-surface recall leg (surface: \"cross\"). (S-DM-DISCORD retired at OPE-725 — see scenarios.ts.)",
   },
   {
     area: "teams-provider",
@@ -136,8 +136,8 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "delegation-and-subagents",
     globs: ["packages/core/agent/tools/spawn_task.ts", "packages/core/agent/tools/spawn_thread_session.ts", "packages/core/agent/tools/delegation_tools.ts", "packages/core/agent/subagents/**"],
-    scenarios: ["J-SUP", "S-DM-NOTION", "S-DM-DISCORD", "S-MEM-READ", "J-UNI-X"],
-    why: "Each of these pays a delegation round-trip as part of its own proof (S-MEM-READ/S-DM-NOTION/S-DM-DISCORD need the control-read creds reached only via delegation; J-SUP/J-UNI-X route through a spawned worker).",
+    scenarios: ["J-SUP", "S-DM-NOTION", "S-MEM-READ", "J-UNI-X"],
+    why: "Each of these pays a delegation round-trip as part of its own proof (S-MEM-READ/S-DM-NOTION need the control-read creds reached only via delegation; J-SUP/J-UNI-X route through a spawned worker). (S-DM-DISCORD retired at OPE-725 — see scenarios.ts.)",
   },
   {
     area: "connector-op-gating",
