@@ -2,7 +2,7 @@ import { defineChannel, GET, POST } from "eve/channels";
 import type { Session, RouteHandlerArgs } from "eve/channels";
 import { SELF_DISPATCH_PATH, handleSelfDispatch, postSelfDispatch, selfDispatchConfigured, type UnifiedDispatchPayload } from "./self-dispatch.js";
 import { appendAudit, auditSilencesEnabled } from "../audit/audit.js";
-import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, authPrincipalId, attestedFireCreatorId, bindFrom, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
+import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, currentTurnAddressed, authPrincipalId, attestedFireCreatorId, bindFrom, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { windowedSupervisorEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -114,6 +114,17 @@ export function platformWorkspaceForWindowDomain(domain: string): string {
   const surfaceKey = dmSurfaceKeyFromAnchorDomain(domain);
   if (surfaceKey === undefined) return domain;
   return surfaceKey.split("/")[1] || domain;
+}
+
+export function ambientProseDropDetail(
+  rawAddressing: string | undefined,
+  addressed: boolean,
+  replied: boolean,
+): { readonly addressing: string; readonly reason: string } {
+  return {
+    addressing: rawAddressing ?? (addressed ? "addressed-other" : "ambient"),
+    reason: replied ? "narration-after-reply" : "no-reply-call",
+  };
 }
 
 function failureDiag(code: string | undefined, details: Record<string, unknown> | undefined): Record<string, string> {
@@ -395,14 +406,26 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
           return;
         }
       }
-      ulog(`message-tool-only: DROPPED terminal prose (${action.text.length} chars; replied=${replied}) — replies must come from the reply tool`);
+      const { addressing: addressingKind, reason: dropReason } = ambientProseDropDetail(
+        currentTurnAddressing(bind),
+        currentTurnAddressed(bind),
+        replied,
+      );
+      ulog(`message-tool-only: DROPPED terminal prose (${action.text.length} chars; replied=${replied}; addressing=${addressingKind}) — replies must come from the reply tool`);
       await appendAudit({
         org,
         platform: "unified",
         workspace,
         surface,
         action: "turn.supervisor_prose_dropped",
-        detail: { chars: action.text.length, replied, wakeId: currentWakeId(bind) ?? null, ...(sessionId ? { sessionId } : {}) },
+        detail: {
+          chars: action.text.length,
+          replied,
+          addressing: addressingKind,
+          reason: dropReason,
+          wakeId: currentWakeId(bind) ?? null,
+          ...(sessionId ? { sessionId } : {}),
+        },
       }).catch(() => undefined);
 
       if (redriveEnabled() && !replied && channel.continuation?.token !== undefined) {
