@@ -1,5 +1,7 @@
 import { Sandbox } from "@vercel/sandbox";
 import { stopSessionSandboxes } from "../agent/sandbox/vercel-lifecycle.js";
+import { vercelStopper } from "../agent/sandbox/backend-stop.js";
+import { recordCreatedSandbox } from "../agent/sandbox/created-sandbox-registry.js";
 
 if (!process.env.VERCEL_OIDC_TOKEN && !process.env.VERCEL_TOKEN) {
   console.error("sandbox-live: SKIPPED — no VERCEL_OIDC_TOKEN/VERCEL_TOKEN in env (run `vercel env pull` and source .env.local).");
@@ -101,12 +103,16 @@ async function scenarioHook(): Promise<void> {
   const sessionId = `oe-live-hook-${runId}`;
   const name = mk("hook");
   await Sandbox.create({ name, timeout: 240_000, resources: { vcpus: 2 }, tags: { sessionId } });
-  const stopped = await stopSessionSandboxes(sessionId);
-  ok(stopped.length === 1 && stopped[0].name === name, "D: hook's real SDK path found the tagged sandbox and stopped it");
+  let rawTagCount = 0;
+  for await (const _s of await Sandbox.list({ tags: { sessionId } })) rawTagCount++;
+  console.log(`[${el()}] D: informational — Sandbox.list({tags}) alone saw ${rawTagCount} sandbox(es) immediately after create`);
+  recordCreatedSandbox(sessionId, name);
+  const stopped = await stopSessionSandboxes(sessionId, vercelStopper);
+  ok(stopped.length === 1 && stopped[0].name === name, "D: the id-record path stopped the just-created sandbox regardless of tag-index freshness (OPE-722)");
   ok(stopped[0].sandboxSeconds >= 0, "D: sandboxSeconds is a real non-negative window from the SDK's createdAt");
   const meta = await Sandbox.get({ name });
   ok(meta.status === "stopped" || meta.status === "snapshotting" || meta.status === "stopping", `D: sandbox is stopping/stopped after the hook (status=${meta.status})`);
-  const again = await stopSessionSandboxes(sessionId);
+  const again = await stopSessionSandboxes(sessionId, vercelStopper);
   ok(again.length === 0, "D: idempotent — second sweep finds nothing left to stop");
 }
 

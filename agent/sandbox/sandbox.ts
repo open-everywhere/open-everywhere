@@ -8,6 +8,7 @@ import { sandboxPresetFor } from "@open-everywhere/core/agent/roles/role.js";
 import { getConfig } from "@open-everywhere/core/agent/access/config.js";
 import { onVercel } from "@open-everywhere/core/agent/access/platform.js";
 import { agentBrowserSandboxHooks } from "@open-everywhere/adapters/agent/browser/sandbox.js";
+import { recordCreatedSandbox } from "@open-everywhere/adapters/agent/sandbox/created-sandbox-registry.js";
 import { resolveSelfHostBackendKind, selfHostBackendBootLog } from "./backend-select.js";
 import { selfHostEgressBootLog } from "@open-everywhere/core/agent/access/self-host-egress.js";
 import { startEgressDenialPoller } from "@open-everywhere/core/agent/access/egress-denial-poller.js";
@@ -50,7 +51,7 @@ export default defineSandbox({
       await use();
       return;
     }
-    const useSized = use as unknown as (options?: { resources: { vcpus: number } }) => Promise<unknown>;
+    const useSized = use as unknown as (options?: { resources: { vcpus: number } }) => Promise<{ id: string }>;
     let options: { resources: { vcpus: number } } | undefined;
     try {
       const bindable = ctx as BindableContext;
@@ -62,12 +63,13 @@ export default defineSandbox({
     } catch (err) {
       console.warn(`[open-everywhere:sandbox] vcpus preset resolution failed — using default size (${String(err)})`);
     }
+    const record = (session: { id: string }): void => recordCreatedSandbox(ctx.session.id, session.id);
     try {
-      await useSized(options);
+      record(await useSized(options));
     } catch (err) {
       if (options === undefined) throw err;
       console.warn(`[open-everywhere:sandbox] applying vcpus=${options.resources.vcpus} failed — retrying default size (${String(err)})`);
-      await useSized();
+      record(await useSized());
     }
   },
 });

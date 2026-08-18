@@ -13,6 +13,7 @@ import lifecycleHook, {
 } from "../agent/sandbox/vercel-lifecycle.js";
 import {
   createDockerStopper,
+  createVercelList,
   dockerStatusToSandboxStatus,
   justBashStopper,
   resolveSandboxStopper,
@@ -20,7 +21,9 @@ import {
   vercelStopper,
   DOCKER_SESSION_LABEL,
   type SandboxStopper,
+  type VercelListSdk,
 } from "../agent/sandbox/backend-stop.js";
+import { recordCreatedSandbox, clearRecordedSandboxesForTest } from "../agent/sandbox/created-sandbox-registry.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -305,6 +308,87 @@ function testStopper(parts: Partial<SandboxStopper>): SandboxStopper {
 }
 
 {
+  {
+    clearRecordedSandboxesForTest();
+    const getByNameCalls: string[] = [];
+    const sdk: VercelListSdk = {
+      listByTag: async () => [],
+      getByName: async (name) => {
+        getByNameCalls.push(name);
+        return { name, status: "running", createdAt: 5_000 };
+      },
+    };
+    recordCreatedSandbox("sess-722-fresh", "eve-sbx-ses-vercel-abc-sess-722-fresh");
+    const listed = await createVercelList(sdk)("sess-722-fresh");
+    ok(
+      listed.length === 1 && listed[0].name === "eve-sbx-ses-vercel-abc-sess-722-fresh" && listed[0].status === "running",
+      "🔴 OPE-722: a stale (empty) Sandbox.list is augmented by a direct Sandbox.get for the id THIS process recorded",
+    );
+    ok(getByNameCalls.length === 1, "…via exactly one direct-by-name lookup, not a retry loop against the tag index");
+
+    const unrecorded = await createVercelList(sdk)("sess-722-never-recorded");
+    ok(unrecorded.length === 0, "negative control: a session nothing recorded a name for gets NO augmentation — list() stays exactly what the tag index reported");
+  }
+
+  {
+    clearRecordedSandboxesForTest();
+    let getByNameCalls = 0;
+    const sdk: VercelListSdk = {
+      listByTag: async () => [{ name: "sbx-already-listed", status: "running", createdAt: 1_000 }],
+      getByName: async (name) => {
+        getByNameCalls++;
+        return { name, status: "running", createdAt: 1_000 };
+      },
+    };
+    recordCreatedSandbox("sess-722-already-listed", "sbx-already-listed");
+    const listed = await createVercelList(sdk)("sess-722-already-listed");
+    ok(listed.length === 1, "when the recorded name is ALREADY in the tag-list result, it is not duplicated");
+    ok(getByNameCalls === 0, "…and the direct lookup is skipped entirely — the tag index was already fresh, no extra vendor call is spent");
+  }
+
+  {
+    clearRecordedSandboxesForTest();
+    const sdk: VercelListSdk = {
+      listByTag: async () => [],
+      getByName: async () => undefined,
+    };
+    recordCreatedSandbox("sess-722-vanished", "sbx-vanished");
+    const listed = await createVercelList(sdk)("sess-722-vanished");
+    ok(listed.length === 0, "a recorded name the vendor no longer has does not produce a phantom listing");
+  }
+
+  {
+    clearRecordedSandboxesForTest();
+    let getByNameCalls = 0;
+    const sdk: VercelListSdk = {
+      listByTag: async () => [],
+      getByName: async (name) => {
+        getByNameCalls++;
+        return { name, status: "running", createdAt: 1_000 };
+      },
+    };
+    recordCreatedSandbox("sess-722-other", "sbx-other-session");
+    const listed = await createVercelList(sdk)("sess-722-unrelated");
+    ok(listed.length === 0 && getByNameCalls === 0, "🔴 a name recorded for a DIFFERENT session id is never consulted for this one — the registry is keyed per session, not global");
+  }
+
+  {
+    clearRecordedSandboxesForTest();
+    const stops: string[] = [];
+    const sdk: VercelListSdk = {
+      listByTag: async () => [],
+      getByName: async (name) => ({ name, status: "running", createdAt: 2_000 }),
+    };
+    const stopper: SandboxStopper = { ...vercelStopper, list: createVercelList(sdk), stop: async (name) => { stops.push(name); } };
+    recordCreatedSandbox("sess-722-e2e", "sbx-e2e");
+    const stopped = await stopSessionSandboxes("sess-722-e2e", stopper, () => 2_000 + 30_000);
+    ok(stopped.length === 1 && stopped[0].name === "sbx-e2e", "🔴 OPE-722: stopSessionSandboxes stops a sandbox a stale tag list missed, purely via the id-record");
+    ok(stops.includes("sbx-e2e"), "…the stop() call is actually issued, not merely reported");
+    ok(stopped[0].sandboxSeconds === 30, "…and the runtime window is still honestly computed from the merged listing's createdAt");
+  }
+}
+
+{
   const platform = process.env.OE_PLATFORM;
   const backend = process.env.OE_SANDBOX_BACKEND;
 
@@ -494,4 +578,4 @@ const parentCtx = {
   delete process.env.OE_SQLITE_PATH;
 }
 
-console.log(`\n✓ sandbox-lifecycle: ${n} assertions passed (hook shape, stop decisions, fail-soft, enable flag, runtime-seconds, spend-ledger $ record + principal/routine attribution + delta billing, write-ordering safety, duplicate-name dedupe, backend selection + docker stop + the subagent-child guard)\n`);
+console.log(`\n✓ sandbox-lifecycle: ${n} assertions passed (hook shape, stop decisions, fail-soft, enable flag, runtime-seconds, spend-ledger $ record + principal/routine attribution + delta billing, write-ordering safety, duplicate-name dedupe, backend selection + docker stop + the subagent-child guard, OPE-722 id-record augmentation of Sandbox.list)\n`);

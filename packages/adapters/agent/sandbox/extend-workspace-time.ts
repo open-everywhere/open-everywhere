@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Sandbox } from "@vercel/sandbox";
 import { auditToolAction, getSettings } from "@open-everywhere/core/agent/adapter-api.js";
 import { shouldStop } from "./vercel-lifecycle.js";
+import { vercelStopper } from "./backend-stop.js";
 
 export function maxExtendMinutes(): number {
   return getSettings().sandbox.extendMaxMinutes;
@@ -14,12 +15,7 @@ export interface ExtendDeps {
 }
 
 const sdkDeps: ExtendDeps = {
-  async list(sessionId) {
-    const result = await Sandbox.list({ tags: { sessionId } });
-    const out: Array<{ name: string; status: string }> = [];
-    for await (const s of result) out.push({ name: s.name, status: s.status });
-    return out;
-  },
+  list: vercelStopper.list,
   async extend(name, ms) {
     await (await Sandbox.get({ name })).extendTimeout(ms);
   },

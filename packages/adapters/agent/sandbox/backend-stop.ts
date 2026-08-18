@@ -1,6 +1,7 @@
 import { Sandbox } from "@vercel/sandbox";
 import { execFile } from "node:child_process";
 import { onVercel, resolveSelfHostBackendKind } from "@open-everywhere/core/agent/adapter-api.js";
+import { getRecordedSandboxName } from "./created-sandbox-registry.js";
 
 export interface SandboxListing {
   readonly name: string;
@@ -21,17 +22,46 @@ export function shouldStop(status: string): boolean {
   return status === "running" || status === "pending";
 }
 
-export const vercelStopper: SandboxStopper = {
-  backend: "vercel",
-  metered: true,
-  ownership:
-    "stop owner = vercel — @vercel/sandbox stops the session VM at turn end, and its runtime seconds are priced into the spend ledger",
-  async list(sessionId) {
+export interface VercelListSdk {
+  listByTag(sessionId: string): Promise<SandboxListing[]>;
+  getByName(name: string): Promise<SandboxListing | undefined>;
+}
+
+const defaultVercelListSdk: VercelListSdk = {
+  async listByTag(sessionId) {
     const result = await Sandbox.list({ tags: { sessionId } });
     const out: SandboxListing[] = [];
     for await (const s of result) out.push({ name: s.name, status: s.status, createdAt: s.createdAt });
     return out;
   },
+  async getByName(name) {
+    try {
+      const s = await Sandbox.get({ name, resume: false });
+      return { name: s.name, status: s.status, createdAt: s.createdAt.getTime() };
+    } catch {
+      return undefined;
+    }
+  },
+};
+
+export function createVercelList(sdk: VercelListSdk = defaultVercelListSdk): SandboxStopper["list"] {
+  return async (sessionId) => {
+    const out = await sdk.listByTag(sessionId);
+    const recordedName = getRecordedSandboxName(sessionId);
+    if (recordedName !== undefined && !out.some((s) => s.name === recordedName)) {
+      const direct = await sdk.getByName(recordedName);
+      if (direct !== undefined) out.push(direct);
+    }
+    return out;
+  };
+}
+
+export const vercelStopper: SandboxStopper = {
+  backend: "vercel",
+  metered: true,
+  ownership:
+    "stop owner = vercel — @vercel/sandbox stops the session VM at turn end, and its runtime seconds are priced into the spend ledger",
+  list: createVercelList(),
   async stop(name) {
     await (await Sandbox.get({ name, resume: false })).stop();
   },
