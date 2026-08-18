@@ -218,6 +218,17 @@ function renderHandoff(h: WakeHandoff): string {
   return `<handoff-note${attr("from-generation", String(h.fromGeneration))}>\n${indent(escapeXml(h.note), 2)}\n</handoff-note>`;
 }
 
+function tagTrust(messages: readonly WakeMessageInput[], addressing: WakeAddressing | undefined): readonly WakeMessageInput[] {
+  if (!wakeShapeIsSchema()) return messages;
+  const addressedWake = addressing === "direct" || addressing === "direct-mention";
+  return messages.map((m) => {
+    if (m.trust !== "peer" && m.trust !== "principal") return m;
+    const addressed = m.mention === true || (m.trigger === true && addressedWake);
+    const trust: WakeTrust = addressed ? "principal" : "peer";
+    return trust === m.trust ? m : { ...m, trust };
+  });
+}
+
 export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
   if (input.messages.length === 0) {
     throw new Error("renderWakeEnvelope: at least one message is required");
@@ -230,7 +241,7 @@ export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
     throw new Error("renderWakeEnvelope: the trigger message must be last (backscroll ends at the trigger)");
   }
 
-  const messagesXml = renderMessages(input.messages, input.sourcePlatform ?? "slack");
+  const messagesXml = renderMessages(tagTrust(input.messages, input.addressing), input.sourcePlatform ?? "slack");
   const channelOpen = renderChannelOpen(input.channel);
 
   const participantsXml =

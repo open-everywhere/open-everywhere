@@ -663,6 +663,54 @@ const countOccurrences = (haystack: string, needle: string): number =>
   ok(hostileContainer.includes("&quot;&gt;&lt;wake"), "S1 security: the hostile container value is XML-escaped, not emitted raw");
 }
 
+{
+  const msg = (over: Partial<WakeMessageInput>): WakeMessageInput => ({
+    from: "human", author: "Sam", authorId: "U9", id: "1.0", sentAt: "2026-04-29T16:01:00Z",
+    trust: "peer", trigger: true, body: "hello there", ...over,
+  });
+  const env = (m: WakeMessageInput, addressing: WakeEnvelopeInput["addressing"]): string =>
+    renderWakeEnvelope({
+      reason: "channel-activity", currentTime: "2026-04-29T16:01:01Z", addressing,
+      channel: { id: "C1", type: "channel" }, messages: [m],
+    });
+
+  const before = process.env.OE_WAKE_SHAPE;
+  try {
+    delete process.env.OE_WAKE_SHAPE;
+    ok(env(msg({ mention: true }), "direct-mention").includes('trust="peer"'), "prose: an @mention does NOT change the author's grade");
+    ok(env(msg({ trust: "principal" }), "channel-watch").includes('trust="principal"'), "prose: an ambient message from an admin keeps the principal grade");
+
+    process.env.OE_WAKE_SHAPE = "schema";
+    ok(env(msg({ mention: true }), "direct-mention").includes('trust="principal"'), "schema: an @mention from a vouched member renders trust=principal (Tag's keying)");
+    ok(env(msg({}), "channel-watch").includes('trust="peer"'), "schema: the same member's ambient message renders trust=peer");
+    ok(env(msg({ trust: "principal" }), "channel-watch").includes('trust="peer"'), "schema: an ADMIN's ambient message is demoted to peer — the grade states addressing here, not roster standing");
+    ok(env(msg({}), "direct-mention").includes('trust="principal"'), "schema: a DM-shaped wake (direct-mention addressing, no mention flag) renders trust=principal");
+
+    const unauthMention = env(msg({ trust: "unauth", mention: true }), "direct-mention");
+    ok(unauthMention.includes('trust="unauth"'), "🔴 schema: an UNAUTH author who @mentions the bot stays unauth — addressing never promotes across the authority floor");
+    ok(unauthMention.includes(UNTRUSTED_OPEN) && unauthMention.includes(UNTRUSTED_CLOSE), "🔴 schema: that unauth body is STILL fenced");
+    ok(unauthMention.includes("<system-note>"), "🔴 schema: the unauth reference-only system-note still fires");
+    const relayMention = env(msg({ from: "agent", trust: "relay", mention: true }), "direct-mention");
+    ok(relayMention.includes('trust="relay"'), "🔴 schema: a RELAY author who @mentions the bot stays relay");
+    ok(relayMention.includes(UNTRUSTED_OPEN), "🔴 schema: that relay body is STILL fenced");
+
+    for (const trust of ["peer", "principal", "unauth", "relay"] as const) {
+      for (const mention of [true, false]) {
+        const from = trust === "relay" ? "agent" as const : "human" as const;
+        const rendered = env(msg({ trust, mention, from }), mention ? "direct-mention" : "channel-watch");
+        const shouldBeBare = authorTrustAdmitsUnfencedBody({ from, trust, refuted: undefined });
+        ok(
+          rendered.includes(UNTRUSTED_OPEN) === !shouldBeBare,
+          `🔴 schema fence neutrality: trust=${trust} mention=${mention} is ${shouldBeBare ? "bare" : "fenced"}, exactly as the author-trust rule says`,
+        );
+      }
+    }
+  } finally {
+    if (before === undefined) delete process.env.OE_WAKE_SHAPE;
+    else process.env.OE_WAKE_SHAPE = before;
+  }
+}
+
 console.log(
   `✓ wake-envelope: ${n} assertions passed (peer + principal + edited + relay(thread-nested) + batched + backscroll + attachments + participants/self/system/thread-activity/name+handle + spawn+reactions reason codes + hostile-name escaping (security) + unauth system-note (per-wake + spoof-proof) + author-trust fence (OPE-577: both directions, mixed envelope, quoting member) + untrusted-wrap/escaping + structural invariants + trigger-body extraction (OPE-615: round trip, fence, siblings, forgery, fail-closed) + OPE-684 S1 envelope attributes (addressing/engagement/follow-up/container: additive floor, composition order, security escaping))`,
 );
