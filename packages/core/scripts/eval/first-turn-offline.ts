@@ -24,6 +24,7 @@ const SHAPE = flag("--shape") ?? "schema";
 const MODEL = flag("--model") ?? "openai/gpt-5.6-luna";
 const EFFORT = flag("--effort") ?? "high";
 const MODE = flag("--mode") ?? "coalesced";
+const PAIR = flag("--pair") === undefined ? undefined : Math.max(0, Number.parseInt(flag("--pair")!, 10));
 
 if (SHAPE === "schema") process.env.OE_WAKE_SHAPE = "schema";
 else delete process.env.OE_WAKE_SHAPE;
@@ -68,7 +69,7 @@ const COALESCE_JOIN = "\n\n";
 interface Probe { readonly ambientWakeId: string; readonly addressedWakeId: string; readonly userMessage: string; readonly ambientText: string; readonly addressedText: string; }
 
 function buildProbe(i: number): Probe {
-  const pair = S6_PROBES[i % S6_PROBES.length];
+  const pair = S6_PROBES[(PAIR ?? i) % S6_PROBES.length];
   const ambientWakeId = `a0000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
   const addressedWakeId = `b0000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
   const now = () => new Date().toISOString();
@@ -158,7 +159,7 @@ async function main(): Promise<void> {
   if (!key) throw new Error("AI_GATEWAY_API_KEY is unset — source .env.e2e and set it from ROWAN_VERCEL_AI_GATEWAY_KEY (never the shell key, which is the shell key)");
   const gateway = createGateway({ apiKey: key });
 
-  console.log(`first-turn-offline: n=${N} mode=${MODE} shape=${SHAPE} model=${MODEL} effort=${EFFORT}`);
+  console.log(`first-turn-offline: n=${N} mode=${MODE} shape=${SHAPE} pair=${PAIR ?? "rotating"} model=${MODEL} effort=${EFFORT}`);
   console.log(`system prompt: ${system.length} chars`);
 
   const results: unknown[] = [];
@@ -227,7 +228,7 @@ async function main(): Promise<void> {
   const out = flag("--out") ?? join(outDir, `first-turn-offline-${MODE}-${SHAPE}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, JSON.stringify({
-    config: { n: N, mode: MODE, shape: SHAPE, model: MODEL, effort: EFFORT, systemPromptChars: system.length },
+    config: { n: N, mode: MODE, pair: PAIR ?? null, shape: SHAPE, model: MODEL, effort: EFFORT, systemPromptChars: system.length },
     summary: { correct, of: N, rate: correct / N, addressedAnswered, ambientSilent, noCrossBinding },
     usage: usageLog,
     system,

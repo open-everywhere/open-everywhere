@@ -12,7 +12,6 @@ import {
 } from "./wake-envelope.js";
 import { renderContext, type ContextLine } from "./context-render.js";
 import { wakeShapeIsSchema } from "./wake-shape.js";
-export { wakeShapeIsSchema } from "./wake-shape.js";
 
 export type { WakeAddressing, WakeEngagementTier } from "./wake-envelope.js";
 
@@ -275,10 +274,8 @@ export function renderWake(nw: NormalizedWake, now: () => string = () => new Dat
       if (nw.addressing === "direct") {
         message = nw.trigger.message.body;
       } else {
-        message = [
-          judgedPreamble(nw),
-          "",
-          renderWakeEnvelope({
+        const preamble = judgedPreamble(nw);
+        const envelope = renderWakeEnvelope({
             reason: nw.reason,
             currentTime: now(),
             wakeId: nw.wakeId,
@@ -291,10 +288,8 @@ export function renderWake(nw: NormalizedWake, now: () => string = () => new Dat
             thread: nw.locus.thread,
             handoff: nw.handoff,
             messages: [...(nw.backscroll ?? []), nw.trigger.message],
-          }),
-        ]
-          .filter((part, i, all) => !(i < 2 && all[0] === ""))
-          .join("\n");
+        });
+        message = preamble === "" ? envelope : `${preamble}\n\n${envelope}`;
       }
       break;
     }
