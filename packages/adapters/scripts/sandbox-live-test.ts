@@ -37,7 +37,7 @@ async function scenarioFuse(): Promise<void> {
   let died = false;
   let completed = false;
   const long = sb
-    .runCommand("bash", ["-c", "for i in $(seq 1 180); do echo $i >> /vercel/sandbox/ticks.txt; sleep 1; done"])
+    .runCommand("bash", ["-c", "for i in $(seq 1 180); do echo $i >> ticks.txt; sleep 1; done"])
     .then(() => {
       completed = true;
     })
@@ -49,7 +49,7 @@ async function scenarioFuse(): Promise<void> {
   ok(died && !completed, "A: command in flight at fuse expiry DIED (fixed window; activity did not extend)");
   const meta = await Sandbox.get({ name });
   ok(meta.status === "stopped" || meta.status === "snapshotting", `A: session auto-stopped at the fuse (status=${meta.status})`);
-  const r = await (await Sandbox.get({ name })).runCommand("bash", ["-c", "wc -l < /vercel/sandbox/ticks.txt"]);
+  const r = await (await Sandbox.get({ name })).runCommand("bash", ["-c", "wc -l < ticks.txt"]);
   const ticks = Number((await r.stdout()).trim());
   ok(ticks >= 60 && ticks <= 110, `A: fuse-triggered auto-stop SNAPSHOTTED — partial work survived resume (${ticks} ticks ≈ fuse length)`);
   const meta2 = await Sandbox.get({ name });
@@ -60,12 +60,12 @@ async function scenarioFuse(): Promise<void> {
 async function scenarioStopResume(): Promise<void> {
   const name = mk("stop");
   const sb = await Sandbox.create({ name, timeout: 240_000, resources: { vcpus: 2 } });
-  await sb.runCommand("bash", ["-c", "echo from-session-1 > /vercel/sandbox/marker.txt"]);
+  await sb.runCommand("bash", ["-c", "echo from-session-1 > marker.txt"]);
   await sb.stop();
   const meta = await Sandbox.get({ name });
   ok(meta.status === "stopped", "B: manual .stop() → stopped");
   const t = Date.now();
-  const r = await (await Sandbox.get({ name })).runCommand("cat", ["/vercel/sandbox/marker.txt"]);
+  const r = await (await Sandbox.get({ name })).runCommand("cat", ["marker.txt"]);
   const resumeMs = Date.now() - t;
   ok((await r.stdout()).trim() === "from-session-1", "B: auto-resume restored the filesystem (marker intact)");
   ok(resumeMs < 15_000, `B: resume→result under 15s (took ${resumeMs}ms; typically 0.5–3s)`);
@@ -83,7 +83,7 @@ async function scenarioExtend(): Promise<void> {
   ok(sb.timeout === 90_000, "E: .timeout reports the CONFIGURED value at boot");
   let completed = false;
   const long = sb
-    .runCommand("bash", ["-c", "sleep 130 && echo SURVIVED > /vercel/sandbox/survived.txt"])
+    .runCommand("bash", ["-c", "sleep 130 && echo SURVIVED > survived.txt"])
     .then(() => {
       completed = true;
     })
