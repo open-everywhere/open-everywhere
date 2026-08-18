@@ -12,15 +12,33 @@ const { WORKSPACE, SURFACE, siloTier } = await import("../agent/memory/store.js"
 import type { Partition } from "../agent/memory/partition.js";
 import type { MemoryProvider } from "../agent/memory/provider.js";
 
+function isToleratedCleanupError(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === "ENOTEMPTY";
+}
+
+function cleanupTmp(): void {
+  try {
+    rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  } catch (error) {
+    if (!isToleratedCleanupError(error)) throw error;
+    console.warn(`provider-test: left residue at ${tmp} after retries (${(error as Error).message})`);
+  }
+}
+
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {
     console.error(`✗ ${label}`);
-    rmSync(tmp, { recursive: true, force: true });
+    cleanupTmp();
     process.exit(1);
   }
   passed++;
 }
+
+ok(isToleratedCleanupError(Object.assign(new Error("dir not empty"), { code: "ENOTEMPTY" })) === true,
+  "cleanupTmp: ENOTEMPTY is tolerated after retries exhaust");
+ok(isToleratedCleanupError(Object.assign(new Error("permission denied"), { code: "EACCES" })) === false,
+  "cleanupTmp: a non-ENOTEMPTY cleanup error is NOT swallowed (negative control)");
 
 function partition(workspace: string, surface: string, org = "default"): Partition {
   const workspaceKey = `slack/${workspace}`;
@@ -112,5 +130,5 @@ for (const provider of [gitProvider, sqliteProvider]) {
 }
 
 _resetDbForTest();
-rmSync(tmp, { recursive: true, force: true });
+cleanupTmp();
 console.log(`✓ provider — ${passed} assertions (git + sqlite contract, org isolation, erasure, versioning)`);
