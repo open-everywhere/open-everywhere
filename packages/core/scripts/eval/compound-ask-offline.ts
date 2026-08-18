@@ -1,16 +1,10 @@
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
-import { generateText, tool, stepCountIs, type ModelMessage, type ToolSet } from "ai";
-import type { z } from "zod";
+import { generateText, stepCountIs, type ModelMessage } from "ai";
 import { createGateway } from "@ai-sdk/gateway";
 import { renderWake, type NormalizedWake } from "../../agent/channels/normalized-wake.js";
-import replyDynamic from "../../agent/tools/reply.js";
-import noReplyTool, { NO_REPLY_NOTE } from "../../agent/tools/no_reply.js";
-import updateStatusTool from "../../agent/tools/update_status.js";
-import standDownTool from "../../agent/tools/stand_down.js";
-import reactDynamic from "../../agent/tools/react.js";
-import spawnThreadSessionDynamic from "../../agent/tools/spawn_thread_session.js";
+import { NO_REPLY_NOTE } from "../../agent/tools/no_reply.js";
 import {
   SLACK_CHANNEL,
   registerSyntheticConfig,
@@ -19,6 +13,9 @@ import {
   readBaseInstructions,
   markdownSection,
   swapMarkdownSection,
+  buildLeanSeatToolset,
+  type ToolCall,
+  type ResultFor,
 } from "./_offline-seat.js";
 
 const argv = process.argv.slice(2);
@@ -160,61 +157,12 @@ function buildProbe(i: number): Probe {
   return { id: `probe-${i}`, askId: ask.id, userMessage: renderWake(wake, now).message };
 }
 
-interface ToolCall { readonly name: string; readonly input: Record<string, unknown> }
-interface MountableEntry { readonly description: string; readonly inputSchema: unknown }
-const realSchema = (entry: { readonly inputSchema: unknown }): z.ZodType => entry.inputSchema as z.ZodType;
-
-function recorder(name: string, entry: MountableEntry, calls: ToolCall[]): ToolSet[string] {
-  return tool({
-    description: entry.description,
-    inputSchema: realSchema(entry),
-    execute: async (input: unknown) => {
-      calls.push({ name, input: input as Record<string, unknown> });
-      if (name === "reply") return { posted: true, id: `probe-${calls.length}` };
-      if (name === "no_reply") return { acknowledged: true, reason: String((input as { reason?: unknown }).reason ?? ""), note: NO_REPLY_NOTE };
-      if (name === "agent") return { started: true, note: "The worker is running. Its report arrives later; this turn does not have it." };
-      return { ok: true };
-    },
-  });
-}
-
-async function resolveDynamicEntry(mod: unknown): Promise<MountableEntry | null> {
-  const started = (mod as { events?: Record<string, (e: unknown, c: unknown) => unknown> }).events?.["session.started"];
-  if (started === undefined) return null;
-  const resolved = await started({}, unifiedCtx);
-  return resolved === null || resolved === undefined ? null : (resolved as MountableEntry);
-}
-
-async function eveFrameworkTool(file: string): Promise<Record<string, unknown>> {
-  const base = import.meta.resolve("eve/tools").replace(/\/src\/.*$/, "/src/runtime/framework-tools/");
-  return (await import(base + file)) as Record<string, unknown>;
-}
-
-async function buildLeanSeatTools(calls: ToolCall[]): Promise<ToolSet> {
-  const replyEntry = await resolveDynamicEntry(replyDynamic);
-  if (replyEntry === null) throw new Error("the reply dynamic mounts NOTHING on this seat — every criterion here reads reply text, so the run would score zeros that mean nothing");
-  const set: Record<string, ToolSet[string]> = {
-    reply: recorder("reply", replyEntry, calls),
-    no_reply: recorder("no_reply", noReplyTool as MountableEntry, calls),
-    update_status: recorder("update_status", updateStatusTool as MountableEntry, calls),
-    stand_down: recorder("stand_down", standDownTool as MountableEntry, calls),
-  };
-  for (const [name, mod] of [["react", reactDynamic], ["spawn_thread_session", spawnThreadSessionDynamic]] as const) {
-    const entry = await resolveDynamicEntry(mod);
-    if (entry !== null) set[name] = recorder(name, entry, calls);
-  }
-  const agentMod = await eveFrameworkTool("agent.js");
-  set.agent = recorder("agent", agentMod.AGENT_TOOL_DEFINITION as MountableEntry, calls);
-  const askMod = await eveFrameworkTool("ask-question.js");
-  set.ask_question = recorder("ask_question", askMod.ASK_QUESTION_TOOL_DEFINITION as MountableEntry, calls);
-  const todoMod = await eveFrameworkTool("todo.js");
-  set.todo = recorder("todo", todoMod.TODO_TOOL_DEFINITION as MountableEntry, calls);
-  const taskMod = await eveFrameworkTool("tasks.js");
-  for (const def of taskMod.TASK_TOOL_DEFINITIONS as readonly (MountableEntry & { readonly name: string })[]) {
-    if (def.name === "task_peek" || def.name === "task_cancel") set[def.name] = recorder(def.name, def, calls);
-  }
-  return set as ToolSet;
-}
+const resultFor: ResultFor = (name, input, callIndex) => {
+  if (name === "reply") return { posted: true, id: `probe-${callIndex}` };
+  if (name === "no_reply") return { acknowledged: true, reason: String(input.reason ?? ""), note: NO_REPLY_NOTE };
+  if (name === "agent") return { started: true, note: "The worker is running. Its report arrives later; this turn does not have it." };
+  return { ok: true };
+};
 
 export function normalizeForScoring(text: string): string {
   return text.replace(/[\u2018\u2019\u02bc]/g, "'").replace(/[\u201c\u201d]/g, '"');
@@ -339,7 +287,7 @@ async function main(): Promise<void> {
     try {
       const res = await generateText({
         model: gateway(MODEL), system, messages,
-        tools: await buildLeanSeatTools(calls),
+        tools: await buildLeanSeatToolset({ ctx: unifiedCtx, calls, resultFor }),
         stopWhen: stepCountIs(6),
         providerOptions: { openai: { reasoningEffort: EFFORT } },
       });
