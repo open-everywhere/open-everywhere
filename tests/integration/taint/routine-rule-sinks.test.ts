@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { afterAll, afterEach, beforeAll, expect, test } from "vitest";
+import { afterAll, beforeAll, expect, test } from "vitest";
 import {
+  disposeLater,
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
@@ -25,11 +26,6 @@ afterAll(() => {
   for (const c of cleanups.splice(0)) c();
 });
 
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-
 let armed = false;
 
 async function armSeams(): Promise<void> {
@@ -44,11 +40,6 @@ async function armSeams(): Promise<void> {
       mimeType: "text/plain",
     })),
   );
-}
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
 }
 
 interface Driven {

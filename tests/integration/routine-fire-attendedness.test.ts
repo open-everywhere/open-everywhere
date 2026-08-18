@@ -1,5 +1,6 @@
-import { afterEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import {
+  disposeLater,
   bootAgent,
   discordMentionWake,
   readAuditRows,
@@ -11,16 +12,6 @@ import {
   type ScriptedHandle,
   type SeatScript,
 } from "./harness";
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
 
 const CREATOR = "U0FIRECREATOR";
 const TEAM = "T0ITFIRE";

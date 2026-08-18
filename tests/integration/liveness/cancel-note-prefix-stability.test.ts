@@ -1,7 +1,8 @@
-import { afterAll, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolveTurnAnchor, turnChannelKey } from "@open-everywhere/core/agent/channels/turn-registry.js";
 import {
+  disposeLater,
   bootAgent,
   discordMentionWake,
   discordOeCommandPost,
@@ -10,21 +11,11 @@ import {
   registerScript,
   waitFor,
   type RecordedRequest,
-  type ScriptedHandle,
 } from "../harness";
 
 const BOT_MENTION = "<@9000000000000000001>";
 const HOLD_MS = 90_000;
 const STOPPER_ID = "9000000000000000078";
-
-const cleanups: (() => void)[] = [];
-afterAll(() => {
-  for (const c of cleanups.splice(0)) c();
-});
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  cleanups.push(() => handle.dispose());
-  return handle;
-}
 
 function systemBlock(request: RecordedRequest): string {
   return request.messages

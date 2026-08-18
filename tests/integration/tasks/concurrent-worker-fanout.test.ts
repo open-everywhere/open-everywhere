@@ -1,6 +1,8 @@
-import { afterAll, afterEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 
 import {
+  afterThisTest,
+  disposeLater,
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
@@ -11,29 +13,13 @@ import {
   waitFor,
   waitForChildren,
   wrapToolExecute,
-  type ScriptedHandle,
 } from "../harness";
-
-const cleanups: (() => void)[] = [];
-afterAll(() => {
-  for (const c of cleanups.splice(0)) c();
-});
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
 
 test("two agent calls in one step start two workers that both run", async () => {
   await bootAgent();
 
   let workerToolCalls = 0;
-  cleanups.push(
+  afterThisTest(
     wrapToolExecute("post_file", async () => {
       workerToolCalls += 1;
       return { posted: true, count: 1 };
@@ -117,7 +103,7 @@ test("two agent calls in one step start two workers that both run", async () => 
       script: SETTLEMENT_DRAIN_SCRIPT,
       label: `the settled worker's completion wake for ${receipts[0]}`,
     });
-    perTest.push(() => drain.dispose());
+    afterThisTest(() => drain.dispose());
     for (const taskId of receipts.slice(1)) {
       await waitFor(
         () => drain.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes(taskId))),

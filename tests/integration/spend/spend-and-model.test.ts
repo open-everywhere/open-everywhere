@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
 import type { UsageEventEntry } from "@open-everywhere/core/agent/operational/store.js";
@@ -6,6 +6,7 @@ import { UNKNOWN_MODEL } from "@open-everywhere/core/agent/spend/spend.js";
 import { subagentRunOf } from "@open-everywhere/core/agent/spend/subagent-runs.js";
 import { SCRIPTED_MODEL_ID } from "../../../agent/model/scripted-model";
 import {
+  disposeLater,
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
@@ -17,18 +18,7 @@ import {
   taskIdOfDelegation,
   waitFor,
   waitForChildren,
-  type ScriptedHandle,
 } from "../harness";
-
-const cleanups: (() => void)[] = [];
-afterAll(() => {
-  for (const c of cleanups.splice(0)) c();
-});
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  cleanups.push(() => handle.dispose());
-  return handle;
-}
 
 function org(): string {
   return deploymentOrg();
