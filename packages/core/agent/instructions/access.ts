@@ -6,6 +6,7 @@ import { resolveAccess } from "../access/resolver.js";
 import { getConfig } from "../access/config.js";
 import { resolvePartition, type Partition } from "../memory/partition.js";
 import { bindFrom } from "../identity/binding.js";
+import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { configuredAgentName } from "../identity/bot-name.js";
 import { botDisplayNameFor } from "../identity/bot-display-name.js";
 import { planFor, resolveMemoryPlan } from "../memory/resolve.js";
@@ -171,7 +172,8 @@ version, the full list, or your working, give it to them.`;
 
 export function renderSupervisorPersona(ctx: BindableContext, opts?: { readonly messageToolOnly?: boolean }): string {
   if (!isSupervisorSession(ctx)) return "";
-  const grain = classifySessionId(ctx.channel?.continuationToken).grain;
+  const sid = classifySessionId(ctx.channel?.continuationToken);
+  const grain = sid.grain;
   const fileRouting =
     grain === "task"
       ? `Asked for a **file** — a chart, CSV, image, spreadsheet, document, any attachment? YOU
@@ -194,6 +196,15 @@ without the decision: it posts into the delegating conversation and PARKS you th
 always gets through; an answer might not, so a question can leave you waiting a long time or for
 good.`
       : `use \`ask_question\` to check with the channel before continuing.`;
+  const proseDropped =
+    sid.kind === "container-supervisor" &&
+    ((): boolean => {
+      try {
+        return capabilitiesForPlatform(bindFrom(ctx).platform).supervisorProseDropped === true;
+      } catch {
+        return false;
+      }
+    })();
   const reporting = opts?.messageToolOnly
     ? `### Reporting
 
@@ -212,7 +223,26 @@ That states REACH, not duty. It tells you where a reply CAN land, never that one
 a wake has earned a reply is a separate judgement, and on a wake that did not address you the
 answer is usually no. When a turn carries several wakes and more than one has earned an answer,
 each answer names the \`wake-id\` of the wake it answers.`
-    : `### Reporting
+    : proseDropped
+      ? `### Reporting
+
+Your turn-final text is DISCARDED — nothing you write as the turn's closing prose reaches anyone.
+The \`reply\` tool is the ONLY way your own words leave this turn: set its \`text\` and it posts
+into the conversation that woke you. It takes no address and there is nothing to name — one call,
+one message. Every answer goes out that way, however short it is: a one-line answer written as
+closing text instead of a \`reply\` call is the same as saying nothing at all.
+
+Never conclude that a reply "isn't possible here". Once you decide to answer, \`reply\` is how you
+deliver it.
+
+Posting is an action, not the end of your turn: you can \`reply\`, keep working, and finish
+with \`no_reply\` — a silent finish after useful work is a normal shape, not an unfinished
+one. A \`reply\` notifies the channel, so keep those for a result, a question, or a blocker —
+never a mere progress tick. Posts are final: prefer one curated message over a stack of new ones.
+
+That states REACH, not duty. It says how an answer gets out, never that one is owed. Most of what
+wakes you still ends in \`no_reply\`, and deciding to stay silent is correct and common.`
+      : `### Reporting
 
 Posting is an action, not the end of your turn: \`reply\` posts into the channel mid-turn,
 so you can answer, keep working, and still finish with \`no_reply\` — a silent finish after

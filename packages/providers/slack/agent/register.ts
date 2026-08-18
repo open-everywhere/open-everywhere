@@ -34,7 +34,7 @@ import { registerSlackOps } from "./ops.js";
 
 export function registerSlackProvider(): void {
   registerIdentityMapper("slack", bindSlack);
-  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true });
+  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
   registerPostArm(slackPostArm);
   registerWakeOriginCodec("slack", slackWakeOriginCodec);
   registerReadAdapter(slackReadAdapter);
