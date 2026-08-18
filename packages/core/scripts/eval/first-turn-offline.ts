@@ -23,6 +23,7 @@ const N = Math.max(1, Number.parseInt(flag("--n") ?? "5", 10));
 const SHAPE = flag("--shape") ?? "schema";
 const MODEL = flag("--model") ?? "openai/gpt-5.6-luna";
 const EFFORT = flag("--effort") ?? "high";
+const MODE = flag("--mode") ?? "coalesced";
 
 if (SHAPE === "schema") process.env.OE_WAKE_SHAPE = "schema";
 else delete process.env.OE_WAKE_SHAPE;
@@ -85,7 +86,9 @@ function buildProbe(i: number): Probe {
     participants: [{ id: "U_ALEX", name: "Alex" }, { id: "U_SAM", name: "Sam" }],
     trigger: { kind: "message", message: { id: "1768476133.510000", sentAt: now(), from: "human", trust: "peer", trigger: true, mention: true, author: "Sam", authorId: "U_SAM", body: pair.addressed } },
   };
-  const userMessage = [renderWake(ambient, now).message, renderWake(addressed, now).message].join(COALESCE_JOIN);
+  const userMessage = MODE === "ambient-only"
+    ? renderWake(ambient, now).message
+    : [renderWake(ambient, now).message, renderWake(addressed, now).message].join(COALESCE_JOIN);
   return { ambientWakeId, addressedWakeId, userMessage, ambientText: pair.ambient, addressedText: pair.addressed };
 }
 
@@ -124,7 +127,7 @@ export function scoreProbe(p: Pick<Probe, "ambientWakeId" | "addressedWakeId">, 
   const replies = calls.filter((c) => c.name === "reply");
   const wakeOf = (c: ToolCall): string => String(c.input.wake ?? "");
   const textOf = (c: ToolCall): string => String(c.input.text ?? "");
-  const addressedAnswered = replies.some((c) => wakeOf(c) === p.addressedWakeId);
+  const addressedAnswered = MODE === "ambient-only" || replies.some((c) => wakeOf(c) === p.addressedWakeId);
   const ambientSilent = !replies.some((c) => wakeOf(c) === p.ambientWakeId);
   const textLeak = replies.some((c) => textOf(c).includes(p.ambientWakeId));
   const noCrossBinding = ambientSilent && !textLeak;
@@ -155,10 +158,11 @@ async function main(): Promise<void> {
   if (!key) throw new Error("AI_GATEWAY_API_KEY is unset — source .env.e2e and set it from ROWAN_VERCEL_AI_GATEWAY_KEY (never the shell key, which is the shell key)");
   const gateway = createGateway({ apiKey: key });
 
-  console.log(`first-turn-offline: n=${N} shape=${SHAPE} model=${MODEL} effort=${EFFORT}`);
+  console.log(`first-turn-offline: n=${N} mode=${MODE} shape=${SHAPE} model=${MODEL} effort=${EFFORT}`);
   console.log(`system prompt: ${system.length} chars`);
 
   const results: unknown[] = [];
+  const usageLog: { probe: number; usage: Record<string, unknown> | null }[] = [];
   let correct = 0;
   let addressedAnswered = 0;
   let ambientSilent = 0;
@@ -170,6 +174,7 @@ async function main(): Promise<void> {
     const messages: ModelMessage[] = [{ role: "user", content: p.userMessage }];
     const started = Date.now();
     let text = "";
+    let usage: Record<string, unknown> | undefined;
     let error: string | undefined;
     try {
       const r = await generateText({
@@ -181,6 +186,7 @@ async function main(): Promise<void> {
         providerOptions: { openai: { reasoningEffort: EFFORT } },
       });
       text = r.text;
+      usage = { ...(r.usage as Record<string, unknown>), ...(r.providerMetadata?.gateway as Record<string, unknown> ?? {}) };
     } catch (e) {
       error = (e as Error).message;
     }
@@ -197,21 +203,33 @@ async function main(): Promise<void> {
     if (calls.length === 0) console.log(`   → (no tool calls) terminal text: ${JSON.stringify(text.slice(0, 240))}`);
     for (const n of score.notes) console.log(`   ! ${n}`);
     if (error) console.log(`   ! model call failed: ${error}`);
-    results.push({ probe: i + 1, ...p, calls, terminalText: text, score, error: error ?? null });
+    if (usage) console.log(`   $ tokens ${JSON.stringify(usage)}`);
+    usageLog.push({ probe: i + 1, usage: usage ?? null });
+    results.push({ probe: i + 1, ...p, calls, terminalText: text, score, usage: usage ?? null, error: error ?? null });
   }
 
-  console.log(`\n════ first-turn coalesced correctness (offline, ${SHAPE}) ════`);
+  console.log(`\n════ first-turn correctness (offline, mode=${MODE}, shape=${SHAPE}) ════`);
   console.log(`correct            ${correct}/${N} = ${(correct / N).toFixed(2)}`);
   console.log(`addressed_answered ${addressedAnswered}/${N}`);
   console.log(`ambient_silent     ${ambientSilent}/${N}`);
   console.log(`no_cross_binding   ${noCrossBinding}/${N}`);
+  const cachedOf = (u: Record<string, unknown> | null): number => {
+    const details = (u?.inputTokenDetails ?? {}) as Record<string, unknown>;
+    return Number((details.cacheReadTokens ?? u?.cachedInputTokens ?? 0) as number);
+  };
+  const inputOf = (u: Record<string, unknown> | null): number => Number((u?.inputTokens ?? 0) as number);
+  const totalIn = usageLog.reduce((a, r) => a + inputOf(r.usage), 0);
+  const totalCached = usageLog.reduce((a, r) => a + cachedOf(r.usage), 0);
+  console.log(`\ninput tokens ${totalIn} · cached ${totalCached} (${totalIn > 0 ? Math.round((totalCached / totalIn) * 100) : 0}%) across ${N} probes`);
+  console.log(`per probe: ${usageLog.map((r) => `${inputOf(r.usage)}/${cachedOf(r.usage)}`).join(" ")}  (input/cached)`);
 
   const outDir = join(process.cwd(), "scripts/eval/results");
-  const out = flag("--out") ?? join(outDir, `first-turn-offline-${SHAPE}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+  const out = flag("--out") ?? join(outDir, `first-turn-offline-${MODE}-${SHAPE}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, JSON.stringify({
-    config: { n: N, shape: SHAPE, model: MODEL, effort: EFFORT, systemPromptChars: system.length },
+    config: { n: N, mode: MODE, shape: SHAPE, model: MODEL, effort: EFFORT, systemPromptChars: system.length },
     summary: { correct, of: N, rate: correct / N, addressedAnswered, ambientSilent, noCrossBinding },
+    usage: usageLog,
     system,
     probes: results,
   }, null, 2));
