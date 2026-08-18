@@ -120,7 +120,8 @@ async function removeStopHand(s: TurnAnchorState): Promise<void> {
   await setSurfaceReaction(s.platform, { channelId: s.channelId, messageId: s.messageId }, STOP_HAND, false);
 }
 
-export function renderCancelNote(steps: number, ran: readonly string[]): string {
+export function renderCancelNote(steps: number, ran: readonly string[], accounted = true): string {
+  if (!accounted) return "Stood down. I cannot say how far in it was — the cancel discarded that record. Anything already done is NOT undone.";
   const where = steps === 1 ? "one step in" : `${steps} steps in`;
   if (ran.length === 0) return `Stood down — ${where}, nothing had run yet.`;
   const named = ran.slice(-MAX_NAMED_ACTIONS);
@@ -130,16 +131,51 @@ export function renderCancelNote(steps: number, ran: readonly string[]): string 
   return `Stood down — ${where}. Already done, and NOT undone: ${list}${tail}.`;
 }
 
-async function onTurnCancelled(turnId: string): Promise<void> {
-  const s = read();
-  if (!s || s.turnId !== turnId) return;
-  setPendingCancelNote({ turnId, steps: s.steps, ran: [...s.ran] });
+interface CancelledTurnFacts extends TurnAnchorState {
+  readonly accounted: boolean;
+}
+
+function reconstructCancelledTurn(turnId: string, ctx: HookContext | undefined): CancelledTurnFacts | null {
+  if (ctx === undefined) return null;
+  try {
+    const c = ctx as unknown as BindableContext;
+    const partition = resolvePartition(c);
+    const binding = bindFrom(c);
+    const platform = channelPlatform(c) ?? binding.platform;
+    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
+    const messageId = binding.threadTs ?? binding.anchorMessageId;
+    const windowKey = ctx.channel?.continuationToken ?? ctx.session.id;
+    return {
+      turnId,
+      org: partition.org,
+      windowKey,
+      ...(platform ? { platform } : {}),
+      ...(channelId ? { channelId } : {}),
+      ...(messageId ? { messageId } : {}),
+      workspace: partition.workspace,
+      surfaceKey: partition.surfaceKey,
+      handPlaced: false,
+      ran: [],
+      steps: 0,
+      accounted: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function onTurnCancelled(turnId: string, ctx?: HookContext): Promise<void> {
+  const live = read();
+  if (live && live.turnId !== turnId) return;
+  const s: CancelledTurnFacts | null = live ? { ...live, accounted: true } : reconstructCancelledTurn(turnId, ctx);
+  if (!s) return;
+  setPendingCancelNote({ turnId, steps: s.steps, ran: [...s.ran], accounted: s.accounted });
   await removeStopHand(s);
   await clearTurnAnchor(s.org, s.windowKey);
   const bare = bareTokenFromEveContext(s.windowKey);
   if (bare !== undefined) await forgetBridgedQuestion(getOperationalStore(), s.org, bare);
 
-  const note = renderCancelNote(s.steps, s.ran);
+  const note = renderCancelNote(s.steps, s.ran, s.accounted);
   if (s.platform && s.channelId) {
     await postSurfaceText(s.platform, { channelId: s.channelId, text: note, threadTs: s.messageId ?? null });
   }
@@ -153,7 +189,9 @@ async function onTurnCancelled(turnId: string): Promise<void> {
       platform: s.platform ?? "unknown",
       workspace: s.workspace,
       action: TURN_CANCELLED_ACTION,
-      detail: { surfaceKey: s.surfaceKey, steps: s.steps, ran: s.ran },
+      detail: s.accounted
+        ? { surfaceKey: s.surfaceKey, steps: s.steps, ran: s.ran, accounted: true }
+        : { surfaceKey: s.surfaceKey, accounted: false },
     });
   } catch {
   }
@@ -219,9 +257,9 @@ export default defineHook({
         console.warn(`[open-everywhere:turn-anchor] turn.failed failed: ${String(err)}`);
       }
     },
-    "turn.cancelled": async (event) => {
+    "turn.cancelled": async (event, ctx: HookContext) => {
       try {
-        await onTurnCancelled(event.data.turnId);
+        await onTurnCancelled(event.data.turnId, ctx);
       } catch (err) {
         console.warn(`[open-everywhere:turn-anchor] turn.cancelled failed: ${String(err)}`);
       }
