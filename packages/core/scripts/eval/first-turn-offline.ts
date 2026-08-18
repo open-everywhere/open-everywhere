@@ -6,11 +6,12 @@ import type { z } from "zod";
 import { createGateway } from "@ai-sdk/gateway";
 import { renderWake, type NormalizedWake } from "../../agent/channels/normalized-wake.js";
 import { turnHasTerminalAction } from "../../agent/channels/turn-terminal-actions.js";
-import { renderScopeMarkdown } from "../../agent/instructions/access.js";
+import { renderScopeMarkdown, renderReadingAWake } from "../../agent/instructions/access.js";
 import { registerConfig } from "../../agent/access/config.js";
 import { defineDomain } from "../../agent/memory/domain.js";
 import { defineMemorySilo } from "../../agent/memory/silo.js";
-import { unifiedReplyEntry } from "../../agent/tools/reply.js";
+import replyDynamic, { unifiedReplyEntry } from "../../agent/tools/reply.js";
+import { registerSlackFixtureMapper, registerSlackFixtureManifest } from "../_slack-test-stubs.js";
 import noReplyTool, { NO_REPLY_NOTE } from "../../agent/tools/no_reply.js";
 import updateStatusTool from "../../agent/tools/update_status.js";
 import standDownTool from "../../agent/tools/stand_down.js";
@@ -37,7 +38,14 @@ const TOOLSET = flag("--toolset") ?? "minimal";
 const REISSUE = has("--reissue");
 const STOCK_REISSUE = has("--stock-reissue");
 const ARM = (flag("--arm") ?? "a").toLowerCase();
-if (ARM !== "a" && ARM !== "c") throw new Error(`--arm must be 'a' (shipped) or 'c' (say-something); got '${ARM}'`);
+if (ARM !== "a" && ARM !== "c" && ARM !== "w") throw new Error(`--arm must be 'a' (shipped), 'c' (say-something) or 'w' (reading-a-wake); got '${ARM}'`);
+const PATH = (flag("--path") ?? "unified").toLowerCase();
+if (PATH !== "unified" && PATH !== "per-surface") throw new Error(`--path must be 'unified' or 'per-surface'; got '${PATH}'`);
+const PER_SURFACE = PATH === "per-surface";
+if (PER_SURFACE && MODE === "coalesced") {
+  throw new Error("--path per-surface does not support --mode coalesced: a per-surface seat has no wake-id, so 'which wake did the reply name' has no answer to score. Use ambient-only, addressed-only or warranted-ambient.");
+}
+if (ARM === "w" && !PER_SURFACE) throw new Error("--arm w needs --path per-surface: the unified prompt already carries the 'Reading a wake' block, so appending it there measures a duplicate");
 
 const ARM_C_INSTRUCTION = `
 ## Ending the turn
@@ -53,6 +61,8 @@ That closing line is not how you talk to the people here. Anything they are owed
 const DOMAIN = "payments";
 const SLACK_CHANNEL = "C_PAY";
 
+const SLACK_TEAM = "T_PAY";
+
 function registerSyntheticConfig(): void {
   registerConfig({
     loadBundles: () => [],
@@ -62,16 +72,18 @@ function registerSyntheticConfig(): void {
     loadDomains: () => [
       defineDomain({
         name: DOMAIN,
-        channels: [`slack/T_PAY/${SLACK_CHANNEL}`, "notion/W_PAY/P_PAY", "github/acme/payments-api"],
+        channels: [`slack/${SLACK_TEAM}/${SLACK_CHANNEL}`, "notion/W_PAY/P_PAY", "github/acme/payments-api"],
         memory: "payments-notes",
         ambientSupervisor: true,
-        mode: "unified",
+        ...(PER_SURFACE ? {} : { mode: "unified" as const }),
       }),
       defineDomain({ name: "org", match: "org" }),
     ],
     loadSilos: () => [defineMemorySilo({ name: "payments-notes", description: "payments-domain decisions", provider: "sqlite" })],
     domainsForSurface: ({ surface }: { surface: string }) => ([SLACK_CHANNEL, "P_PAY", "payments-api"].includes(surface) ? [DOMAIN] : []),
   } as never);
+  registerSlackFixtureMapper();
+  registerSlackFixtureManifest();
 }
 
 const unifiedCtx: BindableContext = {
@@ -79,11 +91,28 @@ const unifiedCtx: BindableContext = {
   session: { auth: { current: { attributes: { oe_platform: "slack" } } } },
 } as BindableContext;
 
+const perSurfaceCtx: BindableContext = {
+  channel: { kind: "slack", continuationToken: `${SLACK_CHANNEL}:oe-sup:g1` },
+  session: {
+    auth: {
+      current: {
+        attributes: { team_id: SLACK_TEAM, channel_id: SLACK_CHANNEL, channel_type: "channel", is_private: "false", trust_checked: "true" },
+        principalId: "U_ALEX",
+        principalType: "user",
+      },
+    },
+  },
+} as BindableContext;
+
+const activeCtx: BindableContext = PER_SURFACE ? perSurfaceCtx : unifiedCtx;
+
 async function buildSystemPrompt(): Promise<string> {
   const base = readFileSync(new URL("../../../../agent/instructions.md", import.meta.url), "utf8");
-  const dynamic = await renderScopeMarkdown(unifiedCtx);
+  const dynamic = await renderScopeMarkdown(activeCtx);
   const shipped = `${base}\n\n${dynamic}`;
-  return ARM === "c" ? `${shipped}\n\n${ARM_C_INSTRUCTION}\n` : shipped;
+  if (ARM === "c") return `${shipped}\n\n${ARM_C_INSTRUCTION}\n`;
+  if (ARM === "w") return `${shipped}\n\n${renderReadingAWake()}\n`;
+  return shipped;
 }
 
 const COALESCE_JOIN = "\n\n";
@@ -139,6 +168,8 @@ interface Probe {
   readonly why: string;
 }
 
+const envelopeWakeId = (id: string): string | undefined => (PER_SURFACE ? undefined : id);
+
 function buildProbe(i: number): Probe {
   const pair = S6_PROBES[(PAIR ?? i) % S6_PROBES.length];
   const ambientWakeId = `a0000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
@@ -154,7 +185,7 @@ function buildProbe(i: number): Probe {
       platform: "slack",
       reason: "channel-activity",
       addressing: nameDropped ? "name-drop" : "channel-watch",
-      locus: { channel }, wakeId: ambientWakeId,
+      locus: { channel }, wakeId: envelopeWakeId(ambientWakeId),
       participants: [{ id: "U_ALEX", name: "Alex" }, { id: "U_SAM", name: "Sam" }],
       ...(nameDropped ? { nameDrop: { botName: "the agent", followUp: "channel-not-following" as const } } : {}),
       ...(w.selfPrior !== undefined
@@ -171,13 +202,13 @@ function buildProbe(i: number): Probe {
 
   const ambient: NormalizedWake = {
     platform: "slack", reason: "channel-activity", addressing: "channel-watch",
-    locus: { channel }, wakeId: ambientWakeId,
+    locus: { channel }, wakeId: envelopeWakeId(ambientWakeId),
     participants: [{ id: "U_ALEX", name: "Alex" }, { id: "U_SAM", name: "Sam" }],
     trigger: { kind: "message", message: { id: "1768476128.893000", sentAt: now(), from: "human", trust: "peer", trigger: true, author: "Alex", authorId: "U_ALEX", body: pair.ambient } },
   };
   const addressed: NormalizedWake = {
     platform: "slack", reason: "mention", addressing: "direct-mention",
-    locus: { channel }, wakeId: addressedWakeId,
+    locus: { channel }, wakeId: envelopeWakeId(addressedWakeId),
     participants: [{ id: "U_ALEX", name: "Alex" }, { id: "U_SAM", name: "Sam" }],
     trigger: { kind: "message", message: { id: "1768476133.510000", sentAt: now(), from: "human", trust: "peer", trigger: true, mention: true, author: "Sam", authorId: "U_SAM", body: pair.addressed } },
   };
@@ -220,9 +251,19 @@ async function resolveDynamicEntry(mod: unknown): Promise<MountableEntry | null>
   const events = (mod as { events?: Record<string, (e: unknown, c: unknown) => unknown> }).events;
   const started = events?.["session.started"];
   if (started === undefined) return null;
-  const resolved = await started({}, unifiedCtx);
+  const resolved = await started({}, activeCtx);
   if (resolved === null || resolved === undefined) return null;
   return resolved as MountableEntry;
+}
+
+let replyEntryCache: MountableEntry | undefined;
+async function replyEntryForSeat(): Promise<MountableEntry> {
+  if (replyEntryCache === undefined) {
+    const entry = await resolveDynamicEntry(replyDynamic);
+    if (entry === null) throw new Error(`the reply dynamic mounts NOTHING on the ${PATH} seat (no mid-turn post primitive) — every criterion here reads reply calls, so this run would score zeros that mean nothing`);
+    replyEntryCache = entry;
+  }
+  return replyEntryCache;
 }
 
 async function eveFrameworkTool(file: string): Promise<Record<string, unknown>> {
@@ -232,7 +273,7 @@ async function eveFrameworkTool(file: string): Promise<Record<string, unknown>> 
 
 async function buildLeanSeatTools(calls: ToolCall[]): Promise<ToolSet> {
   const set: Record<string, ToolSet[string]> = {
-    reply: recorder("reply", unifiedReplyEntry as MountableEntry, calls),
+    reply: recorder("reply", await replyEntryForSeat(), calls),
     no_reply: recorder("no_reply", noReplyTool as MountableEntry, calls),
     update_status: recorder("update_status", updateStatusTool as MountableEntry, calls),
     stand_down: recorder("stand_down", standDownTool as MountableEntry, calls),
@@ -261,7 +302,7 @@ async function buildLeanSeatTools(calls: ToolCall[]): Promise<ToolSet> {
 async function buildTools(calls: ToolCall[]): Promise<ToolSet> {
   if (TOOLSET === "lean") return await buildLeanSeatTools(calls);
   return {
-    reply: recorder("reply", unifiedReplyEntry as MountableEntry, calls),
+    reply: recorder("reply", await replyEntryForSeat(), calls),
     no_reply: recorder("no_reply", noReplyTool as MountableEntry, calls),
   } as ToolSet;
 }
@@ -368,19 +409,20 @@ export function scoreProbe(
   const replies = calls.filter((c) => c.name === "reply");
   const wakeOf = (c: ToolCall): string => String(c.input.wake ?? "");
   const textOf = (c: ToolCall): string => String(c.input.text ?? "");
+  const namesWake = (c: ToolCall, id: string): boolean => (PER_SURFACE ? true : wakeOf(c) === id);
   const singleWake = MODE !== "coalesced";
-  const addressedAnswered = (singleWake && MODE !== "addressed-only") || replies.some((c) => wakeOf(c) === p.addressedWakeId);
-  const ambientSilent = !replies.some((c) => wakeOf(c) === p.ambientWakeId);
+  const addressedAnswered = (singleWake && MODE !== "addressed-only") || replies.some((c) => namesWake(c, p.addressedWakeId));
+  const ambientSilent = !replies.some((c) => namesWake(c, p.ambientWakeId));
   const textLeak = replies.some((c) => textOf(c).includes(p.ambientWakeId));
   const noCrossBinding = !textLeak && (p.expect === "silence" ? ambientSilent : true);
-  const targetReplied = replies.some((c) => wakeOf(c) === p.targetWakeId);
+  const targetReplied = replies.some((c) => namesWake(c, p.targetWakeId));
   const borderline = p.expect === "either";
   const notes: string[] = [];
   if (!addressedAnswered) notes.push(`the addressed wake ${p.addressedWakeId} got no reply — the message it was owed went unanswered`);
   if (p.expect === "silence" && !ambientSilent) notes.push(`the ambient wake ${p.ambientWakeId} got a reply — it should never have been answered`);
   if (p.expect === "reply" && !targetReplied) notes.push(`FALSE SILENCE — the wake ${p.targetWakeId} warranted a reply and got none`);
   if (textLeak) notes.push(`a reply's TEXT names the ambient wake's id — a raw id leaked into a delivered message`);
-  const unknownWake = replies.filter((c) => wakeOf(c) !== p.addressedWakeId && wakeOf(c) !== p.ambientWakeId);
+  const unknownWake = PER_SURFACE ? [] : replies.filter((c) => wakeOf(c) !== p.addressedWakeId && wakeOf(c) !== p.ambientWakeId);
   for (const c of unknownWake) notes.push(`a reply named an id belonging to NEITHER wake: ${wakeOf(c)}`);
   const meetsExpectation = p.expect === "either" ? true : p.expect === "reply" ? targetReplied : ambientSilent;
   return {
@@ -391,13 +433,32 @@ export function scoreProbe(
 }
 
 export function classifyDelivery(targetWakeId: string, calls: readonly ToolCall[], terminalText: string): Delivery {
-  if (calls.some((c) => c.name === "reply" && String(c.input.wake ?? "") === targetWakeId)) return "tool";
+  if (calls.some((c) => c.name === "reply" && (PER_SURFACE || String(c.input.wake ?? "") === targetWakeId))) return "tool";
   return terminalText.trim() === "" ? "none" : "terminal";
+}
+
+async function assertSeatShape(system: string): Promise<void> {
+  const replyEntry = await replyEntryForSeat();
+  const replyArgs = Object.keys((replyEntry.inputSchema as { shape?: Record<string, unknown> }).shape ?? {});
+  const hasWakeArg = replyArgs.includes("wake");
+  const block = renderReadingAWake();
+  const carriesBlock = system.includes(block);
+  if (PER_SURFACE) {
+    if (replyEntry === (unifiedReplyEntry as unknown)) throw new Error("fixture guard: the per-surface seat resolved the UNIFIED reply entry — the ctx is not the per-container shape this run claims to measure");
+    if (hasWakeArg) throw new Error("fixture guard: the per-surface `reply` carries a `wake` argument — the scoring rule for this path assumes it does not");
+    if (ARM === "a" && carriesBlock) throw new Error("fixture guard: the per-surface prompt already carries the 'Reading a wake' block — the OPE-771 gap this run measures is closed, so re-read the ticket before quoting these numbers");
+    if (ARM === "w" && !carriesBlock) throw new Error("fixture guard: arm w did not append the 'Reading a wake' block");
+  } else {
+    if (replyEntry !== (unifiedReplyEntry as unknown)) throw new Error("fixture guard: the unified seat did not resolve `unifiedReplyEntry` — every earlier arm's numbers assume it did");
+    if (!carriesBlock) throw new Error("fixture guard: the unified prompt is missing the 'Reading a wake' block");
+  }
+  console.log(`seat: path=${PATH} reply=${PER_SURFACE ? "base (no wake arg)" : "unified (map-addressed)"} reading-a-wake=${carriesBlock ? "PRESENT" : "ABSENT"}${ARM === "w" ? " (appended by arm w)" : ""}`);
 }
 
 async function main(): Promise<void> {
   registerSyntheticConfig();
   const system = await buildSystemPrompt();
+  await assertSeatShape(system);
   const mounted = Object.keys(await buildTools([]));
   console.log(`toolset (${mounted.length}): ${mounted.join(", ")}`);
 
@@ -415,7 +476,7 @@ async function main(): Promise<void> {
   if (!key) throw new Error("AI_GATEWAY_API_KEY is unset — source .env.e2e and set it from ROWAN_VERCEL_AI_GATEWAY_KEY (never the shell key, which is the shell key)");
   const gateway = createGateway({ apiKey: key });
 
-  console.log(`first-turn-offline: n=${N} mode=${MODE} arm=${ARM}${ARM === "c" ? " (say-something)" : " (shipped)"} toolset=${TOOLSET} reissue=${REISSUE ? (STOCK_REISSUE ? "stock (pre-OPE-762)" : "guarded (OPE-762)") : "off"} pair=${PAIR ?? "rotating"} model=${MODEL} effort=${EFFORT}`);
+  console.log(`first-turn-offline: n=${N} path=${PATH} mode=${MODE} arm=${ARM}${ARM === "c" ? " (say-something)" : " (shipped)"} toolset=${TOOLSET} reissue=${REISSUE ? (STOCK_REISSUE ? "stock (pre-OPE-762)" : "guarded (OPE-762)") : "off"} pair=${PAIR ?? "rotating"} model=${MODEL} effort=${EFFORT}`);
   console.log(`system prompt: ${system.length} chars`);
 
   const results: unknown[] = [];
@@ -517,7 +578,7 @@ async function main(): Promise<void> {
     results.push({ probe: i + 1, ...p, calls, terminalText, delivery: del, score, stages: stages ?? null, usage: usage ?? null, error: error ?? null });
   }
 
-  console.log(`\n════ first-turn correctness (offline, mode=${MODE}, arm=${ARM}) ════`);
+  console.log(`\n════ first-turn correctness (offline, path=${PATH}, mode=${MODE}, arm=${ARM}) ════`);
   console.log(`correct            ${correct}/${N} = ${(correct / N).toFixed(2)}`);
   console.log(`addressed_answered ${addressedAnswered}/${N}`);
   console.log(`ambient_silent     ${ambientSilent}/${N}`);
@@ -546,10 +607,10 @@ async function main(): Promise<void> {
   console.log(`per probe: ${usageLog.map((r) => `${inputOf(r.usage)}/${cachedOf(r.usage)}`).join(" ")}  (input/cached)`);
 
   const outDir = join(process.cwd(), "scripts/eval/results");
-  const out = flag("--out") ?? join(outDir, `first-turn-offline-${MODE}-${TOOLSET}-arm${ARM}${REISSUE ? (STOCK_REISSUE ? "-reissue-stock" : "-reissue") : ""}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+  const out = flag("--out") ?? join(outDir, `first-turn-offline-${PATH}-${MODE}-${TOOLSET}-arm${ARM}${REISSUE ? (STOCK_REISSUE ? "-reissue-stock" : "-reissue") : ""}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, JSON.stringify({
-    config: { n: N, mode: MODE, arm: ARM, pair: PAIR ?? null, toolset: TOOLSET, reissue: REISSUE, stockReissue: STOCK_REISSUE, mountedTools: mounted, model: MODEL, effort: EFFORT, systemPromptChars: system.length },
+    config: { n: N, path: PATH, mode: MODE, arm: ARM, pair: PAIR ?? null, toolset: TOOLSET, reissue: REISSUE, stockReissue: STOCK_REISSUE, mountedTools: mounted, model: MODEL, effort: EFFORT, systemPromptChars: system.length },
     summary: {
       correct, of: N, rate: correct / N, addressedAnswered, ambientSilent, noCrossBinding,
       emptyFinalStep, guardSuppressed, nudgesSent: emptyFinalStep - guardSuppressed, overReplyAfterNudge, ceilingHits,
