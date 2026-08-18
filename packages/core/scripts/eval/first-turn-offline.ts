@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { generateText, tool, stepCountIs, type ModelMessage } from "ai";
+import { generateText, tool, stepCountIs, type ModelMessage, type ToolSet } from "ai";
+import type { z } from "zod";
 import { createGateway } from "@ai-sdk/gateway";
 import { renderWake, type NormalizedWake } from "../../agent/channels/normalized-wake.js";
 import { renderScopeMarkdown } from "../../agent/instructions/access.js";
@@ -95,25 +96,27 @@ function buildProbe(i: number): Probe {
 
 interface ToolCall { readonly name: string; readonly input: Record<string, unknown>; }
 
-function buildTools(calls: ToolCall[]) {
+const realSchema = (entry: { readonly inputSchema: unknown }): z.ZodType => entry.inputSchema as z.ZodType;
+
+function buildTools(calls: ToolCall[]): ToolSet {
   return {
     reply: tool({
       description: unifiedReplyEntry.description,
-      inputSchema: unifiedReplyEntry.inputSchema,
-      execute: async (input: Record<string, unknown>) => {
-        calls.push({ name: "reply", input });
+      inputSchema: realSchema(unifiedReplyEntry),
+      execute: async (input: unknown) => {
+        calls.push({ name: "reply", input: input as Record<string, unknown> });
         return { posted: true, id: `probe-${calls.length}` };
       },
     }),
     no_reply: tool({
       description: noReplyTool.description,
-      inputSchema: noReplyTool.inputSchema,
-      execute: async (input: Record<string, unknown>) => {
-        calls.push({ name: "no_reply", input });
+      inputSchema: realSchema(noReplyTool),
+      execute: async (input: unknown) => {
+        calls.push({ name: "no_reply", input: input as Record<string, unknown> });
         return { ok: true };
       },
     }),
-  } as never;
+  };
 }
 
 interface Score {
