@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { slackReplierParams, postSlackMessage, type SlackPostResult } from "../agent/channels/slack-post-arm.js";
+import { slackReplierParams, postSlackMessage, slackThreadTarget, type SlackPostResult } from "../agent/channels/slack-post-arm.js";
 import type { ReplierLabel } from "@open-everywhere/core/agent/adapter-api.js";
 
 let n = 0;
@@ -92,6 +92,22 @@ function scopeRejectingBridge(): { post: (body: URLSearchParams) => Promise<Slac
   const ts = await postSlackMessage(new URLSearchParams({ channel: "C1", text: "Done." }), worker, "reply couldn't post to Slack", alwaysOk, resolveName);
   eq(ts, "ts-happy", "a successful first attempt returns its own ts");
   eq(calls, 1, "…with exactly ONE call — no retry fires when the scope IS granted and the first post lands");
+}
+
+{
+  eq(slackThreadTarget({ threadTs: "1720009900.111111" }), "1720009900.111111", "a THREADED trigger answers inside its own thread");
+  eq(
+    slackThreadTarget({ replyAnchorTs: "1720009900.222222" }),
+    "1720009900.222222",
+    "🔴 a TOP-LEVEL channel trigger answers in a thread opened on it (the OPE-759 steal) — never as a fresh top-level post",
+  );
+  eq(slackThreadTarget({}), undefined, "an origin with NO trigger (a routine fire) posts TOP-LEVEL — the placement stays available");
+  eq(slackThreadTarget({ replyAnchorTs: "" }), undefined, "an EMPTY anchor is not an anchor (a blank thread_ts would be refused by Slack)");
+  eq(
+    slackThreadTarget({ threadTs: "1720009900.111111", replyAnchorTs: "1720009900.222222" }),
+    "1720009900.111111",
+    "threadTs WINS over replyAnchorTs — an answer inside a thread never re-anchors on the trigger message",
+  );
 }
 
 console.log(`slack-replier-label-test: ${n} assertions passed`);

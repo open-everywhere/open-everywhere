@@ -64,9 +64,14 @@ async function dispatchSlackReply(target: SlackTarget, text: string, replier?: R
   return postSlackMessage(body, replier, "reply couldn't post to Slack");
 }
 
+export function slackThreadTarget(origin: Pick<SlackOrigin, "threadTs" | "replyAnchorTs">): string | undefined {
+  const anchor = origin.threadTs ?? origin.replyAnchorTs;
+  return anchor && anchor.length > 0 ? anchor : undefined;
+}
+
 async function liveSlackPost(origin: SlackOrigin, text: string, replier?: ReplierLabel): Promise<string> {
   const body = new URLSearchParams({ channel: origin.channelId, text });
-  const threadTarget = origin.threadTs ?? origin.replyAnchorTs;
+  const threadTarget = slackThreadTarget(origin);
   if (threadTarget) body.set("thread_ts", threadTarget);
   return postSlackMessage(body, replier, "unified reply couldn't post to Slack");
 }

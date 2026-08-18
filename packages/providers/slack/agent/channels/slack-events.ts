@@ -1462,11 +1462,7 @@ export async function routeSupervisorEvent(
           origin: {
             platform: "slack",
             channelId: ev.channelId,
-            ...(ev.threadTs
-              ? { threadTs: ev.threadTs }
-              : mentionPolicy.addressing !== undefined
-                ? { replyAnchorTs: ev.ts }
-                : {}),
+            ...(ev.threadTs ? { threadTs: ev.threadTs } : ev.ts ? { replyAnchorTs: ev.ts } : {}),
           },
           ...(mentionPolicy.addressing !== undefined ? { addressing: mentionPolicy.addressing } : {}),
         }
