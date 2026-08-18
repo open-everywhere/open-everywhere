@@ -5,6 +5,7 @@ import { generateText, tool, stepCountIs, type ModelMessage, type ToolSet } from
 import type { z } from "zod";
 import { createGateway } from "@ai-sdk/gateway";
 import { renderWake, type NormalizedWake } from "../../agent/channels/normalized-wake.js";
+import { turnHasTerminalAction } from "../../agent/channels/turn-terminal-actions.js";
 import { renderScopeMarkdown } from "../../agent/instructions/access.js";
 import { registerConfig } from "../../agent/access/config.js";
 import { defineDomain } from "../../agent/memory/domain.js";
@@ -33,9 +34,7 @@ const MODE = flag("--mode") ?? "coalesced";
 const PAIR = flag("--pair") === undefined ? undefined : Math.max(0, Number.parseInt(flag("--pair")!, 10));
 const TOOLSET = flag("--toolset") ?? "minimal";
 const REISSUE = has("--reissue");
-
-if (SHAPE === "schema") process.env.OE_WAKE_SHAPE = "schema";
-else delete process.env.OE_WAKE_SHAPE;
+const STOCK_REISSUE = has("--stock-reissue");
 
 const DOMAIN = "payments";
 const SLACK_CHANNEL = "C_PAY";
@@ -180,10 +179,21 @@ function eveEmptyResponseNudge(): string {
   return m[1];
 }
 
+export function eveWouldReissue(
+  secondCallEmpty: boolean,
+  messagesAtEmptyStep: readonly unknown[],
+  stock = false,
+): boolean {
+  if (!secondCallEmpty) return false;
+  if (stock) return true;
+  return !turnHasTerminalAction(messagesAtEmptyStep);
+}
+
 interface ReissueStages {
   readonly step1: readonly ToolCall[];
   readonly secondCallEmpty: boolean;
   readonly secondCallText: string;
+  readonly suppressedByTerminalGuard: boolean;
   readonly reissued: boolean;
   readonly afterNudge: readonly ToolCall[];
   readonly afterNudgeText: string;
@@ -206,9 +216,14 @@ async function runReissueProbe(
   const second = await generateText({ ...opts, messages: afterFirst, tools: await buildTools(calls) });
   const secondCallEmpty = second.text.trim() === "" && second.toolCalls.length === 0;
 
-  if (!secondCallEmpty) {
+  const reissue = eveWouldReissue(secondCallEmpty, afterFirst, STOCK_REISSUE);
+  const suppressedByTerminalGuard = secondCallEmpty && !reissue;
+  if (!reissue) {
     const usage = { ...(second.usage as Record<string, unknown>), ...((second.providerMetadata?.gateway as Record<string, unknown>) ?? {}) };
-    return { stages: { step1, secondCallEmpty, secondCallText: second.text, reissued: false, afterNudge: [], afterNudgeText: "" }, usage };
+    return {
+      stages: { step1, secondCallEmpty, secondCallText: second.text, suppressedByTerminalGuard, reissued: false, afterNudge: [], afterNudgeText: "" },
+      usage,
+    };
   }
 
   const before = calls.length;
@@ -218,7 +233,7 @@ async function runReissueProbe(
 
   const usage = { ...(third.usage as Record<string, unknown>), ...((third.providerMetadata?.gateway as Record<string, unknown>) ?? {}) };
   return {
-    stages: { step1, secondCallEmpty, secondCallText: second.text, reissued: true, afterNudge, afterNudgeText: third.text },
+    stages: { step1, secondCallEmpty, secondCallText: second.text, suppressedByTerminalGuard, reissued: true, afterNudge, afterNudgeText: third.text },
     usage,
   };
 }
@@ -249,6 +264,9 @@ export function scoreProbe(p: Pick<Probe, "ambientWakeId" | "addressedWakeId">, 
 }
 
 async function main(): Promise<void> {
+  if (SHAPE === "schema") process.env.OE_WAKE_SHAPE = "schema";
+  else delete process.env.OE_WAKE_SHAPE;
+
   registerSyntheticConfig();
   const system = await buildSystemPrompt();
   const mounted = Object.keys(await buildTools([]));
@@ -268,7 +286,7 @@ async function main(): Promise<void> {
   if (!key) throw new Error("AI_GATEWAY_API_KEY is unset — source .env.e2e and set it from ROWAN_VERCEL_AI_GATEWAY_KEY (never the shell key, which is the shell key)");
   const gateway = createGateway({ apiKey: key });
 
-  console.log(`first-turn-offline: n=${N} mode=${MODE} shape=${SHAPE} toolset=${TOOLSET} reissue=${REISSUE} pair=${PAIR ?? "rotating"} model=${MODEL} effort=${EFFORT}`);
+  console.log(`first-turn-offline: n=${N} mode=${MODE} shape=${SHAPE} toolset=${TOOLSET} reissue=${REISSUE ? (STOCK_REISSUE ? "stock (pre-OPE-762)" : "guarded (OPE-762)") : "off"} pair=${PAIR ?? "rotating"} model=${MODEL} effort=${EFFORT}`);
   console.log(`system prompt: ${system.length} chars`);
 
   const results: unknown[] = [];
@@ -279,6 +297,7 @@ async function main(): Promise<void> {
   let noCrossBinding = 0;
   let emptySecondStep = 0;
   let overReplyAfterNudge = 0;
+  let guardSuppressed = 0;
 
   for (let i = 0; i < N; i++) {
     const p = buildProbe(i);
@@ -311,6 +330,7 @@ async function main(): Promise<void> {
       error = (e as Error).message;
     }
     if (stages?.secondCallEmpty) emptySecondStep++;
+    if (stages?.suppressedByTerminalGuard) guardSuppressed++;
     if (stages?.reissued && stages.afterNudge.some((c) => c.name === "reply")) overReplyAfterNudge++;
     const score = scoreProbe(p, calls);
     if (score.correct) correct++;
@@ -323,7 +343,12 @@ async function main(): Promise<void> {
     console.log(`   addressed: ${p.addressedText}`);
     if (stages) {
       for (const c of stages.step1) console.log(`   step1 → ${c.name}(${JSON.stringify(c.input).slice(0, 200)})`);
-      console.log(`   step2 → ${stages.secondCallEmpty ? "EMPTY (eve reissues here)" : `text ${JSON.stringify(stages.secondCallText.slice(0, 160))} — no reissue`}`);
+      const step2 = stages.secondCallEmpty
+        ? stages.suppressedByTerminalGuard
+          ? "EMPTY — suppressed by the OPE-762 terminal guard (no reissue)"
+          : "EMPTY (eve reissues here)"
+        : `text ${JSON.stringify(stages.secondCallText.slice(0, 160))} — no reissue`;
+      console.log(`   step2 → ${step2}`);
       if (stages.reissued) {
         for (const c of stages.afterNudge) console.log(`   nudged → ${c.name}(${JSON.stringify(c.input).slice(0, 200)})`);
         if (stages.afterNudge.length === 0) console.log(`   nudged → (no tool call) text: ${JSON.stringify(stages.afterNudgeText.slice(0, 200))}`);
@@ -345,7 +370,9 @@ async function main(): Promise<void> {
   console.log(`ambient_silent     ${ambientSilent}/${N}`);
   console.log(`no_cross_binding   ${noCrossBinding}/${N}`);
   if (REISSUE) {
-    console.log(`empty_second_step  ${emptySecondStep}/${N}  (how often eve would reissue)`);
+    console.log(`empty_second_step  ${emptySecondStep}/${N}  (the step eve reads as a failure)`);
+    console.log(`guard_suppressed   ${guardSuppressed}/${N}  (OPE-762 stopped the nudge; ${STOCK_REISSUE ? "STOCK arm — guard off" : "guarded arm"})`);
+    console.log(`nudges_sent        ${emptySecondStep - guardSuppressed}/${N}  (reissues the stack actually sends)`);
     console.log(`over_reply_nudged  ${overReplyAfterNudge}/${N}  (reissue turned silence into a reply)`);
   }
   const cachedOf = (u: Record<string, unknown> | null): number => {
@@ -359,11 +386,11 @@ async function main(): Promise<void> {
   console.log(`per probe: ${usageLog.map((r) => `${inputOf(r.usage)}/${cachedOf(r.usage)}`).join(" ")}  (input/cached)`);
 
   const outDir = join(process.cwd(), "scripts/eval/results");
-  const out = flag("--out") ?? join(outDir, `first-turn-offline-${MODE}-${SHAPE}-${TOOLSET}${REISSUE ? "-reissue" : ""}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+  const out = flag("--out") ?? join(outDir, `first-turn-offline-${MODE}-${SHAPE}-${TOOLSET}${REISSUE ? (STOCK_REISSUE ? "-reissue-stock" : "-reissue") : ""}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, JSON.stringify({
-    config: { n: N, mode: MODE, pair: PAIR ?? null, shape: SHAPE, toolset: TOOLSET, reissue: REISSUE, mountedTools: mounted, model: MODEL, effort: EFFORT, systemPromptChars: system.length },
-    summary: { correct, of: N, rate: correct / N, addressedAnswered, ambientSilent, noCrossBinding, emptySecondStep, overReplyAfterNudge },
+    config: { n: N, mode: MODE, pair: PAIR ?? null, shape: SHAPE, toolset: TOOLSET, reissue: REISSUE, stockReissue: STOCK_REISSUE, mountedTools: mounted, model: MODEL, effort: EFFORT, systemPromptChars: system.length },
+    summary: { correct, of: N, rate: correct / N, addressedAnswered, ambientSilent, noCrossBinding, emptySecondStep, guardSuppressed, nudgesSent: emptySecondStep - guardSuppressed, overReplyAfterNudge },
     usage: usageLog,
     system,
     probes: results,
