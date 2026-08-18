@@ -17,7 +17,7 @@ const FIXED_MESSAGE_TEXT = "nothing new in the channel";
 const NUDGE_MARKER = "LOOP BREAKER";
 
 function readChannelCall(id: string): { tool: string; input: unknown; id: string } {
-  return { tool: READER, input: { target: { platform: "discord", channel: "C0LOOPFIXTURE" }, limit: 10 }, id };
+  return { tool: READER, input: { channel: "ch_ZGlzY29yZDpDMExPT1BGSVhUVVJF", limit: 10 }, id };
 }
 
 test("a worker's identical read repeats trip the loop breaker within a turn, and a RESUMED turn starts fresh", async () => {

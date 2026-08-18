@@ -29,8 +29,9 @@ function gatesOnSources(source: string, platform: string): boolean {
 }
 
 function gatesPerPlatformInExecute(source: string): boolean {
-  const routesSources = /resolveWindowSources\s*\(/u.test(source) || /resolveReadAdapter\s*\(/u.test(source);
-  const fencesTurn = /assertTurnSurface\s*\(/u.test(source) || /resolveReadAdapter\s*\(/u.test(source);
+  const viaChain = /resolveReadAdapter\s*\(/u.test(source) || /resolveReadTarget\s*\(/u.test(source);
+  const routesSources = /resolveWindowSources\s*\(/u.test(source) || viaChain;
+  const fencesTurn = /assertTurnSurface\s*\(/u.test(source) || viaChain;
   return routesSources && fencesTurn;
 }
 

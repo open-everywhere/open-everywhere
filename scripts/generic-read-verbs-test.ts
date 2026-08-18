@@ -4,6 +4,9 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   resolveReadAdapter,
+  resolveReadTarget,
+  keyedReadResult,
+  ChannelKeyError,
   renderChannelBody,
   channelReadSource,
   renderThreadBody,
@@ -26,6 +29,7 @@ import { ingestUntrusted } from "@open-everywhere/core/agent/access/untrusted.js
 import { defineDomain } from "@open-everywhere/core/agent/memory/domain.js";
 import type { BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { auditSourcesGateRefusal, auditOriginFenceRefusal } from "@open-everywhere/core/agent/channels/read-scope-audit.js";
+import { encodeChannelKey, decodeChannelKey, isChannelKey, containerIdForPlatform, CHANNEL_KEY_PREFIX } from "@open-everywhere/core/agent/channels/channel-key.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -83,7 +87,7 @@ registerReadAdapter(fakeSlackAdapter);
 {
   const uniSlack = mk("unified", { oe_platform: "slack", oe_sources: "slack,discord" });
   const r1 = resolveReadAdapter(uniSlack, undefined, []);
-  ok(r1.platform === "slack" && r1.adapter === fakeSlackAdapter, "gate: target.platform omitted ⇒ defaults to the turn origin (slack) → Slack adapter");
+  ok(r1.platform === "slack" && r1.adapter === fakeSlackAdapter, "gate: no targetPlatform argument ⇒ defaults to the turn origin (slack) → Slack adapter");
 
   const uniDiscord = mk("unified", { oe_platform: "discord", oe_sources: "slack,discord" });
   const r2 = resolveReadAdapter(uniDiscord, "discord", []);
@@ -172,7 +176,7 @@ registerReadAdapter(fakeSlackAdapter);
   const readThreadSrc = readFileSync(join(toolsDir, "read_thread.ts"), "utf8");
   for (const [name, src] of [["read_channel", readChanSrc], ["read_thread", readThreadSrc]] as const) {
     ok(/if \(!genericReadVerbsEnabled\(\)\) return null;/u.test(src), `wiring: ${name} is ABSENT when the flag is OFF`);
-    ok(src.includes("resolveReadAdapter("), `wiring: ${name} routes through the neutral execute chain (resolveReadAdapter)`);
+    ok(src.includes("resolveReadTarget("), `wiring: ${name} routes through the neutral execute chain (resolveReadTarget → resolveReadAdapter)`);
     ok(src.includes("resolveWindowSources("), `wiring: ${name} gates its mount on sources non-empty`);
   }
 }
@@ -230,6 +234,58 @@ registerReadAdapter(fakeSlackAdapter);
     sourcesThrew = true;
   }
   ok(sourcesThrew === false, "a failing audit sink does not throw out of auditSourcesGateRefusal (best-effort, never control flow)");
+}
+
+{
+  ok(encodeChannelKey("slack", "C0ABC") === "ch_c2xhY2s6QzBBQkM", "codec: a slack container mints its literal key");
+  ok(encodeChannelKey("discord", "C0ABC") === "ch_ZGlzY29yZDpDMEFCQw", "codec: the SAME container id on another platform mints a DIFFERENT key (the platform is IN the key)");
+  ok(JSON.stringify(decodeChannelKey("ch_c2xhY2s6QzBBQkM")) === JSON.stringify({ platform: "slack", container: "C0ABC" }), "codec: a key decodes back to its exact (platform, container) pair");
+  ok(isChannelKey(encodeChannelKey("teams", "19:abc@thread.tacv2")), "codec: a container id holding its own colons round-trips (the FIRST colon separates)");
+  ok(decodeChannelKey(encodeChannelKey("teams", "19:abc@thread.tacv2"))?.container === "19:abc@thread.tacv2", "codec: …and the whole container id comes back, colons included");
+
+  for (const bad of ["C0ABC", "", "ch_", "ch_!!!!", "ch_c2xhY2s6QzBBQkM=", "ZGlzY29yZDpDMEFCQw", "ch_bm9zZXA", "ch_OkMwQUJD"]) {
+    ok(decodeChannelKey(bad) === null, `codec: "${bad}" is NOT a channel key (rejected, never guessed)`);
+  }
+  ok(CHANNEL_KEY_PREFIX === "ch_", "codec: the prefix is stable — a stored/rendered key stays readable across releases");
+  ok(encodeChannelKey("", "C0ABC") === "C0ABC", "codec: a locus with NO platform passes its container id through rather than minting a key that decodes to nothing");
+  ok(encodeChannelKey("slack", "") === "", "codec: a locus with NO container id mints nothing");
+
+  const uniSlack = mk("unified", { oe_platform: "slack", oe_sources: "slack,discord" });
+  const t = resolveReadTarget(uniSlack, "ch_c2xhY2s6QzBBQkM", []);
+  ok(t.platform === "slack" && t.adapter === fakeSlackAdapter && t.container === "C0ABC", "read target: the key alone resolves the platform, the adapter AND the container id — no `platform` argument exists any more");
+
+  assert.throws(() => resolveReadTarget(uniSlack, "C0ABC", []), ChannelKeyError, "read target: a RAW container id is refused — it is not an address");
+  n++;
+  assert.throws(() => resolveReadTarget(uniSlack, "C0ABC", []), /is not a channel key/u, "read target: …and the refusal tells the model where to find a real one");
+  n++;
+
+  assert.throws(() => resolveReadTarget(uniSlack, encodeChannelKey("discord", "D1"), []), /the message that woke this turn came from slack/u, "read target: the origin fence fires on the platform the KEY names (the key is an address, never a grant)");
+  n++;
+  const soloSlack = mk("unified", { oe_platform: "slack", oe_sources: "slack" });
+  assert.throws(() => resolveReadTarget(soloSlack, encodeChannelKey("discord", "D1"), []), /is not one of this window's sources/u, "read target: the topology gate fires on the platform the KEY names");
+  n++;
+
+  const chan: ChannelReadResult = { platform: "slack", channel: "C0ABC", count: 2, messages: MSGS };
+  const keyed = keyedReadResult(chan);
+  ok(keyed.channel === "ch_c2xhY2s6QzBBQkM", "render: keyedReadResult swaps the fetched container id for the key");
+  ok(renderChannelBody(keyed).startsWith("Recent messages in ch_c2xhY2s6QzBBQkM (oldest first):"), "render: the read BODY names the key, not the raw container id");
+  ok(!renderChannelBody(keyed).includes("C0ABC"), "🔴 render: the raw container id does NOT reach the model in the body");
+  ok(channelReadSource(keyed) === "slack channel ch_c2xhY2s6QzBBQkM", "render: the provenance label still names the SURFACE (provenance is not addressing) but addresses by key");
+  const thr: ThreadReadResult = { platform: "slack", channel: "C0ABC", thread_ts: "999.9", count: 2, messages: MSGS };
+  ok(renderThreadBody(keyedReadResult(thr)).startsWith("Thread 999.9 in ch_c2xhY2s6QzBBQkM (oldest first):"), "render: the thread body names the key, and thread_ts stays a raw message id (a message is not a place)");
+
+  ok(containerIdForPlatform("ch_c2xhY2s6QzBBQkM", "slack") === "C0ABC", "stage-1: read_slack_* decodes a slack key to the raw id it fetches with");
+  ok(containerIdForPlatform("C0ABC", "slack") === "C0ABC", "stage-1: …and a raw Slack id still passes through unchanged (the flag-off contract)");
+  assert.throws(() => containerIdForPlatform(encodeChannelKey("discord", "D1"), "slack"), /names a discord channel/u, "stage-1: a key naming ANOTHER platform is refused, never mis-addressed as a slack read");
+  n++;
+
+  const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "../packages/core/agent/tools");
+  for (const name of ["read_channel", "read_thread"] as const) {
+    const src = readFileSync(join(toolsDir, `${name}.ts`), "utf8");
+    ok(src.includes("resolveReadTarget("), `wiring: ${name} resolves its target from the channel key`);
+    ok(!src.includes("input.target"), `wiring: ${name} takes NO platform argument — one key is the whole address`);
+    ok(src.includes("keyedReadResult("), `wiring: ${name} re-addresses its model-facing output in the key`);
+  }
 }
 
 console.log(`✓ ${n} generic-read-verbs assertions passed`);

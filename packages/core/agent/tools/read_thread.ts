@@ -5,7 +5,7 @@ import { type BindableContext, TurnOriginFenceError } from "../identity/binding.
 import { resolveWindowSources } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
-import { resolveReadAdapter, readThreadResult, chatReadIngestion, renderThreadBody, threadReadSource, supportedReadPlatforms, WindowSourcesRefusalError } from "../channels/channel-read.js";
+import { resolveReadTarget, readThreadResult, chatReadIngestion, renderThreadBody, threadReadSource, keyedReadResult, WindowSourcesRefusalError } from "../channels/channel-read.js";
 import { auditSourcesGateRefusal, auditOriginFenceRefusal } from "../channels/read-scope-audit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import type { Domain } from "../memory/domain.js";
@@ -22,22 +22,17 @@ function safeDomains(): readonly Domain[] {
 
 const readThreadEntry = defineTool({
   description:
-    "Read all replies in a thread this window's memory domain grants — on any of the window's source " +
-    `surfaces (${supportedReadPlatforms().join(", ")}). Set target.platform (defaults to the surface this ` +
-    "turn came from), target.channel, and thread_ts (the thread root; for Discord, the thread's own channel id).",
+    "Read all replies in a thread this window's memory domain grants. Pass the channel key you were " +
+    "given — the `id` on the `<channel>` element of your wake — plus thread_ts, the thread root.",
   inputSchema: z.object({
-    target: z.object({
-      platform: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(`Which surface to read (${supportedReadPlatforms().join(", ")}). Defaults to the surface this turn came from.`),
-      channel: z.string().min(1).describe("The channel/conversation id containing the thread (must be in your domain)."),
-    }),
+    channel: z
+      .string()
+      .min(1)
+      .describe("The channel key holding the thread (the `id` from your wake's `<channel>` element)."),
     thread_ts: z
       .string()
       .min(1)
-      .describe("The thread root (Slack: the root message ts; Discord: the thread's own channel id)."),
+      .describe("The thread root, as shown on your wake's `<thread ts>` (Slack: the root message ts; Discord: the thread's own channel id)."),
     limit: z.number().int().min(1).max(MAX_LIMIT).optional().describe(`Max replies to fetch (default 100, max ${MAX_LIMIT}).`),
   }),
   outputSchema: z.object({
@@ -51,20 +46,21 @@ const readThreadEntry = defineTool({
   }),
   async execute(input, ctx) {
     const bctx = ctx as unknown as BindableContext;
-    let resolved: ReturnType<typeof resolveReadAdapter>;
+    let resolved: ReturnType<typeof resolveReadTarget>;
     try {
-      resolved = resolveReadAdapter(bctx, input.target.platform, safeDomains());
+      resolved = resolveReadTarget(bctx, input.channel, safeDomains());
     } catch (err) {
       if (err instanceof WindowSourcesRefusalError) await auditSourcesGateRefusal(bctx, err.platform);
       else if (err instanceof TurnOriginFenceError) await auditOriginFenceRefusal(bctx, err.surface);
       throw err;
     }
-    const { platform, adapter } = resolved;
-    return await readThreadResult(bctx, platform, adapter, input.target.channel, input.thread_ts, input.limit);
+    const { platform, adapter, container } = resolved;
+    return await readThreadResult(bctx, platform, adapter, container, input.thread_ts, input.limit);
   },
   toModelOutput(output) {
-    return ingestUntrustedModelOutput(renderThreadBody(output), {
-      source: threadReadSource(output),
+    const keyed = keyedReadResult(output);
+    return ingestUntrustedModelOutput(renderThreadBody(keyed), {
+      source: threadReadSource(keyed),
       ingestion: chatReadIngestion(`read_thread:${output.platform}`, output),
     });
   },

@@ -12,6 +12,7 @@ import type { IngestionSource } from "../access/taint-tiers.js";
 import { resolveExternalPolicy, shippedExternalPolicy, WITHHELD_BODY_MARKER, type ExternalPolicy } from "../access/external-policy.js";
 
 import { ChannelScopeError } from "./read-scope-error.js";
+import { decodeChannelKey, encodeChannelKey } from "./channel-key.js";
 import { auditChannelReadRefusal, type ReadScopeAuditDeps } from "./read-scope-audit.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 export { ChannelScopeError };
@@ -146,6 +147,24 @@ export function resolveReadAdapter(
   return { platform, adapter };
 }
 
+export class ChannelKeyError extends Error {}
+
+export function resolveReadTarget(
+  ctx: BindableContext,
+  channelKey: string,
+  domains: readonly Domain[],
+): { platform: string; adapter: ReadAdapter; container: string } {
+  const address = decodeChannelKey(channelKey);
+  if (!address) {
+    throw new ChannelKeyError(
+      `read: "${channelKey}" is not a channel key. Use the \`id\` from the \`<channel>\` element of your ` +
+        "wake (or from your readable-channel list) — a raw platform channel id is not an address here.",
+    );
+  }
+  const { platform, adapter } = resolveReadAdapter(ctx, address.platform, domains);
+  return { platform, adapter, container: address.container };
+}
+
 export interface ReadOutputLine {
   author: string;
   ts: string;
@@ -222,6 +241,10 @@ export function chatReadIngestion(label: string, out: { readonly authoredByNonMe
 
 function coverageNote(kind: "channel" | "thread", count: number): string {
   return `\n\n[coverage: showing the ${count} most recent ${kind === "channel" ? "messages" : "replies"} this fetch could return — older ${kind === "channel" ? "history" : "replies"} may exist beyond this page]`;
+}
+
+export function keyedReadResult<T extends { readonly platform: string; readonly channel: string }>(out: T): T {
+  return { ...out, channel: encodeChannelKey(out.platform, out.channel) };
 }
 
 export function renderChannelBody(out: ChannelReadResult): string {
