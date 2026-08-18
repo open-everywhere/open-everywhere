@@ -10,6 +10,7 @@ import {
   type WakeBackscrollDeps,
 } from "../agent/channels/slack-wake-backscroll.js";
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
+import { overrideSettingsForTest, resetSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -96,15 +97,29 @@ const deps = (request: SlackRequester): WakeBackscrollDeps => ({ request, identi
 }
 
 {
-  const messages: Msg[] = Array.from({ length: 13 }, (_, i) => ({ ts: `${13 - i}.0`, user: "UA", text: `m${12 - i}` }));
-  const out = await fetchWakeBackscroll({ channelId: "C", ts: "99.0" }, deps(stub("conversations.history", messages)));
-  ok(WAKE_BACKSCROLL_MAX === 10, "the cap constant is 10");
-  const kept = out[0].split("\n").filter((l) => l.includes("sender_type=")).length;
-  ok(kept === WAKE_BACKSCROLL_MAX, `capped at WAKE_BACKSCROLL_MAX lines (${WAKE_BACKSCROLL_MAX})`);
-  ok(out[0].includes("m12") && out[0].includes("m3") && !out[0].includes("m2") && !out[0].includes("m0"), "cap keeps the most-recent N, drops the oldest");
-  const untrustedEnd = out[0].indexOf(UNTRUSTED_CLOSE);
-  ok(out[0].includes("read_slack_channel") && out[0].includes("read_slack_thread"), "hitting the cap names both read tools");
-  ok(untrustedEnd > -1 && out[0].indexOf("read_slack_channel") > untrustedEnd, "the hint is appended AFTER the untrusted-wrapped block");
+  const capMessages = (): Msg[] => Array.from({ length: 13 }, (_, i) => ({ ts: `${13 - i}.0`, user: "UA", text: `m${12 - i}` }));
+
+  resetSettingsForTest();
+  {
+    const out = await fetchWakeBackscroll({ channelId: "C", ts: "99.0" }, deps(stub("conversations.history", capMessages())));
+    ok(WAKE_BACKSCROLL_MAX === 10, "the cap constant is 10");
+    const kept = out[0].split("\n").filter((l) => l.includes("sender_type=")).length;
+    ok(kept === WAKE_BACKSCROLL_MAX, `capped at WAKE_BACKSCROLL_MAX lines (${WAKE_BACKSCROLL_MAX})`);
+    ok(out[0].includes("m12") && out[0].includes("m3") && !out[0].includes("m2") && !out[0].includes("m0"), "cap keeps the most-recent N, drops the oldest");
+    const untrustedEnd = out[0].indexOf(UNTRUSTED_CLOSE);
+    ok(out[0].includes("read_slack_channel") && out[0].includes("read_slack_thread"), "flag OFF: hitting the cap names the read_slack_* pair (the shipped default's live tools)");
+    ok(untrustedEnd > -1 && out[0].indexOf("read_slack_channel") > untrustedEnd, "flag OFF: the hint is appended AFTER the untrusted-wrapped block");
+  }
+
+  overrideSettingsForTest({ tools: { genericReadVerbs: true } });
+  {
+    const out = await fetchWakeBackscroll({ channelId: "C", ts: "99.0" }, deps(stub("conversations.history", capMessages())));
+    const untrustedEnd = out[0].indexOf(UNTRUSTED_CLOSE);
+    ok(out[0].includes("read_channel") && out[0].includes("read_thread"), "flag ON: hitting the cap names the generic read_channel/read_thread pair that actually mounts");
+    ok(!out[0].includes("read_slack_channel") && !out[0].includes("read_slack_thread"), "🔴 flag ON: the hint does NOT still name the retired read_slack_* pair — this was the OPE-780 bug");
+    ok(untrustedEnd > -1 && out[0].indexOf("read_channel") > untrustedEnd, "flag ON: the hint is appended AFTER the untrusted-wrapped block");
+  }
+  resetSettingsForTest();
 }
 
 {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { loadConversationContext, _resetBotIdentityCache } from "../agent/channels/slack-context.js";
+import { loadConversationContext, _resetBotIdentityCache, readMoreHint } from "../agent/channels/slack-context.js";
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
+import { overrideSettingsForTest, resetSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -64,19 +65,48 @@ const msg = (ts: string, threadTs: string) => ({ ts, threadTs, channelId: "C_TXN
 }
 
 {
-  const history = Array.from({ length: 10 }, (_, i) => ({
-    type: "message",
-    user: "UA",
-    ts: `${10 - i}.0`,
-    text: `m${9 - i}`,
-  }));
-  const out = await loadConversationContext(fakeCtx({ history }), msg("11.0", "11.0"));
-  ok(out.length === 1, "cap test: one context entry");
-  const untrustedEnd = out[0].indexOf(UNTRUSTED_CLOSE);
-  ok(untrustedEnd > -1, "cap test: untrusted block is present");
-  ok(out[0].includes("read_slack_channel") && out[0].includes("read_slack_thread"), "hitting the cap names both read tools");
-  const hintIdx = out[0].indexOf("read_slack_channel");
-  ok(hintIdx > untrustedEnd, "the hint is placed AFTER the untrusted-wrapped block, not inside it");
+  const capHistory = () =>
+    Array.from({ length: 10 }, (_, i) => ({
+      type: "message",
+      user: "UA",
+      ts: `${10 - i}.0`,
+      text: `m${9 - i}`,
+    }));
+
+  resetSettingsForTest();
+  {
+    const out = await loadConversationContext(fakeCtx({ history: capHistory() }), msg("11.0", "11.0"));
+    ok(out.length === 1, "cap test (flag OFF): one context entry");
+    const untrustedEnd = out[0].indexOf(UNTRUSTED_CLOSE);
+    ok(untrustedEnd > -1, "cap test (flag OFF): untrusted block is present");
+    ok(out[0].includes("read_slack_channel") && out[0].includes("read_slack_thread"), "flag OFF: hitting the cap names the read_slack_* pair (the shipped default's live tools)");
+    ok(!out[0].includes("`read_channel`") && !/\bread_channel\b/u.test(out[0]) && !/\bread_thread\b/u.test(out[0]), "flag OFF: the hint does NOT name the generic verbs (not mounted on this deployment)");
+    const hintIdx = out[0].indexOf("read_slack_channel");
+    ok(hintIdx > untrustedEnd, "flag OFF: the hint is placed AFTER the untrusted-wrapped block, not inside it");
+  }
+
+  overrideSettingsForTest({ tools: { genericReadVerbs: true } });
+  {
+    const out = await loadConversationContext(fakeCtx({ history: capHistory() }), msg("11.0", "11.0"));
+    ok(out.length === 1, "cap test (flag ON): one context entry");
+    const untrustedEnd = out[0].indexOf(UNTRUSTED_CLOSE);
+    ok(untrustedEnd > -1, "cap test (flag ON): untrusted block is present");
+    ok(out[0].includes("read_channel") && out[0].includes("read_thread"), "flag ON: hitting the cap names the generic read_channel/read_thread pair that actually mounts");
+    ok(!out[0].includes("read_slack_channel") && !out[0].includes("read_slack_thread"), "🔴 flag ON: the hint does NOT still name the retired read_slack_* pair — this was the OPE-780 bug");
+    const hintIdx = out[0].indexOf("read_channel");
+    ok(hintIdx > untrustedEnd, "flag ON: the hint is placed AFTER the untrusted-wrapped block, not inside it");
+  }
+  resetSettingsForTest();
+}
+
+{
+  resetSettingsForTest();
+  ok(readMoreHint().includes("read_slack_channel") && readMoreHint().includes("read_slack_thread"), "readMoreHint(): flag OFF names read_slack_channel/read_slack_thread");
+  ok(!readMoreHint().includes("read_channel or read_thread"), "readMoreHint(): flag OFF does not name the generic pair");
+  overrideSettingsForTest({ tools: { genericReadVerbs: true } });
+  ok(readMoreHint().includes("read_channel or read_thread"), "readMoreHint(): flag ON names read_channel/read_thread");
+  ok(!readMoreHint().includes("read_slack_channel") && !readMoreHint().includes("read_slack_thread"), "readMoreHint(): flag ON does not name the retired read_slack_* pair");
+  resetSettingsForTest();
 }
 
 {
