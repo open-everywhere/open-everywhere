@@ -76,6 +76,7 @@ export interface ScriptedEntry {
   readonly requests: RecordedRequest[];
   readonly resolves: ResolveObservation[];
   readonly baselines: Record<string, number>;
+  readonly firstCallTurnByRole: Partial<Record<ScriptedRole, string>>;
 }
 
 export const ANY_SESSION = "*";
@@ -104,7 +105,7 @@ export function registerScript(script: SeatScript, sessionId: string = ANY_SESSI
         "Dispose the previous handle first — two live scripts for one key means a test leaked.",
     );
   }
-  const entry: ScriptedEntry = { script, requests: [], resolves: [], baselines: {} };
+  const entry: ScriptedEntry = { script, requests: [], resolves: [], baselines: {}, firstCallTurnByRole: {} };
   store.set(sessionId, entry);
   return {
     requests: entry.requests,

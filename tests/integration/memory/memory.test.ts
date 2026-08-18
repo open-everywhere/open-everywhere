@@ -5,6 +5,7 @@ import {
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
+  DISCORD_LISTED_CHANNEL_ID,
   readAuditRows,
   registerScript,
   SETTLEMENT_DRAIN_SCRIPT,
@@ -118,6 +119,8 @@ test("session.started seeds the domain's own silo at the expected path and body,
 
   const bDir = siloFilePath("it-memory-b-brain", "");
   expect(existsSync(bDir)).toBe(false);
+
+  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 });
 
 test("purge_memory proposes a card under the egress spoof and redacts the fact on the approval-equivalent decide path, leaving only digests behind", async () => {
@@ -213,4 +216,73 @@ test("purge_memory proposes a card under the egress spoof and redacts the fact o
       expect(typeof bullets?.[0]?.sha256).toBe("string");
     }
   }
+});
+
+test("OPE-727 — a dispatch handle left registered past its own turn FAULTS a second, different turn's call, never mints a phantom dispatch", async () => {
+  await bootAgent({ sharedSqlite: true });
+
+  const handle = registerScript({
+    parent: [{ calls: [{ tool: "agent", input: { message: "do the thing" }, id: "stale-delegate" }] }, { say: "dispatched" }],
+    child: [{ say: "done" }],
+  });
+
+  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> please do the thing` });
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the dispatch turn's own terminal step to be served");
+  await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: "the delegated worker's own (single) step" });
+
+  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+
+  const dispatchTurnId = handle.requests[0]?.turnId;
+  const taskId = taskIdOfDelegation(handle, "the dispatch");
+
+  const phantom = await waitFor(
+    () => handle.requests.find((r) => r.role === "parent" && r.turnId !== dispatchTurnId && r.messages.some((m) => m.text.includes(taskId))),
+    "a settlement-turn request to land on the still-registered dispatch handle",
+    90_000,
+  );
+
+  expect(phantom.fault).toBeDefined();
+  expect(phantom.fault).toContain("stale script");
+  expect(phantom.fault).toContain(`turn "${dispatchTurnId}"`);
+  expect(phantom.fault).toContain(`turn "${phantom.turnId}"`);
+  expect(phantom.stepIndex).toBe(-1);
+
+  const agentTaskIds = new Set(
+    handle.requests
+      .flatMap((r) => r.toolResults)
+      .filter((t) => t.name === "agent")
+      .map((t) => (t.output as { taskId?: unknown } | undefined)?.taskId),
+  );
+  expect(agentTaskIds).toEqual(new Set([taskId]));
+  expect(handle.requests.filter((r) => r.turnId === phantom.turnId)).toHaveLength(1);
+
+  handle.dispose();
+});
+
+test("OPE-727 negative control — the documented dispose-and-re-register pattern (awaitTaskSettlement's own shape) is unaffected by the guard", async () => {
+  await bootAgent({ sharedSqlite: true });
+
+  const dispatched = registerScript({
+    parent: [{ calls: [{ tool: "agent", input: { message: "do the thing" }, id: "proper-delegate" }] }, { say: "dispatched" }],
+    child: [{ say: "done" }],
+  });
+
+  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> please do the thing, properly this time` });
+  await waitFor(() => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the dispatch turn's own terminal step to be served");
+  await waitForChildren(dispatched, { count: 1, lastStepIndex: 0, label: "the delegated worker's own (single) step" });
+  expect(dispatched.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+
+  const taskId = taskIdOfDelegation(dispatched, "the dispatch");
+
+  dispatched.dispose();
+  const settlement = registerScript({ parent: [{ calls: [{ tool: "task_peek", input: { taskIds: [taskId] }, id: "proper-peek" }] }, { say: "noted" }] });
+  const settled = await waitFor(
+    () => settlement.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes(taskId))),
+    "the settlement notification to be served by the freshly-registered entry",
+  );
+  expect(settled.fault).toBeUndefined();
+  expect(settled.stepIndex).toBe(0);
+  expect(settlement.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+
+  settlement.dispose();
 });
