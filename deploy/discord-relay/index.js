@@ -22,6 +22,8 @@ const TEST_DRIVER_IDS = new Set(
 const isDriverAllowlisted = (message) =>
   Boolean(message.guildId) && TEST_DRIVER_IDS.has(`${message.guildId}:${message.author.id}`);
 
+const HEARTBEAT_MS = Number(process.env.OE_RELAY_HEARTBEAT_MS) >= 0 ? Number(process.env.OE_RELAY_HEARTBEAT_MS) : 300_000;
+
 const LOG_SHIP_URL = process.env.OE_LOG_SHIP_URL;
 const LOG_SHIP_TOKEN = process.env.OE_LOG_SHIP_TOKEN;
 const LOG_SHIP_TOKEN_HEADER = process.env.OE_LOG_SHIP_TOKEN_HEADER || "authorization";
@@ -168,13 +170,13 @@ async function handleReaction(verb, reaction, user) {
       console.log(`[oe-discord-relay] reaction ${verb} ${where} @${user.username}: ${reaction.emoji?.name ?? "?"}`);
       return;
     }
-    await forward(toReactionPayload(verb, reaction, user, message));
+    await forward(toReactionPayload(verb, reaction, user, message), `reaction on ${message?.id ?? reaction.message?.id ?? "?"}`);
   } catch (err) {
     console.warn(`[oe-discord-relay] reaction ${verb} handling error:`, err?.message ?? err);
   }
 }
 
-async function forward(payload) {
+async function forward(payload, label = payload.message?.id ?? "item") {
   const body = JSON.stringify(payload);
   const signature = "sha256=" + createHmac("sha256", RELAY_SECRET).update(body).digest("hex");
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -189,7 +191,7 @@ async function forward(payload) {
       });
       if (res.ok) return;
       if (res.status !== 429 && res.status < 500) {
-        console.error(`[oe-discord-relay] ingest rejected ${res.status} — dropping message ${payload.message.id}`);
+        console.error(`[oe-discord-relay] ingest rejected ${res.status} — dropping ${label}`);
         return;
       }
       console.warn(`[oe-discord-relay] ingest ${res.status} (attempt ${attempt}/3)`);
@@ -198,7 +200,15 @@ async function forward(payload) {
     }
     await new Promise((r) => setTimeout(r, 500 * attempt));
   }
-  console.error(`[oe-discord-relay] gave up forwarding message ${payload.message.id} after 3 attempts`);
+  console.error(`[oe-discord-relay] gave up forwarding ${label} after 3 attempts`);
+}
+
+function toHeartbeatPayload() {
+  return {
+    source: "discord-gateway-relay",
+    event: "HEARTBEAT",
+    heartbeat: { relayId: client.user.id, ts: Date.now() },
+  };
 }
 
 client.once(Events.ClientReady, (c) => {
@@ -209,6 +219,14 @@ client.once(Events.ClientReady, (c) => {
   if (GUILD_ALLOWLIST.length) console.log(`[oe-discord-relay] guild allowlist active: ${GUILD_ALLOWLIST.join(", ")}`);
   if (TEST_DRIVER_IDS.size)
     console.log(`[oe-discord-relay] e2e driver seam ARMED for ${TEST_DRIVER_IDS.size} pair(s) — bot messages from these ids are forwarded`);
+
+  if (INGEST_URL && HEARTBEAT_MS > 0) {
+    console.log(`[oe-discord-relay] heartbeat armed: every ${HEARTBEAT_MS}ms to ${INGEST_URL}`);
+    const beat = () => void forward(toHeartbeatPayload(), "heartbeat").catch(() => undefined);
+    beat();
+    const timer = setInterval(beat, HEARTBEAT_MS);
+    timer.unref?.();
+  }
 });
 
 client.on(Events.MessageCreate, async (message) => {
