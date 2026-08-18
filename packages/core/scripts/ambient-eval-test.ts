@@ -4,13 +4,16 @@ import {
   outcomeFor,
   summarize,
   scoreCoalescedTurn,
+  proveSiblingWakes,
   parseSeries,
   type Injection,
   type Attribution,
   type TurnResult,
   type Expected,
+  type CoalescedDeliveryProof,
 } from "./eval/ambient-eval.js";
 import type { AuditWireEntry } from "./e2e/audit-read.js";
+import type { TranscriptWireEvent } from "./e2e/transcript-read.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => { assert.ok(cond, label); n++; };
@@ -23,6 +26,10 @@ const BRIDGE_UNRESOLVED = "turn.direct_mention_bridge_unresolved";
 const REDRIVE = "unified.turn.redrive";
 
 let clock = Date.UTC(2026, 6, 24, 12, 0, 0);
+
+const mkTurn = (over: Partial<TurnResult> & Pick<TurnResult, "turn" | "scenario" | "expected" | "outcome">): TurnResult => ({
+  label: "", probe: null, state: null, latencyMs: null, delegations: 0, recall: null, matchedRows: [], notes: "", ...over,
+});
 const nextTs = (): string => { clock += 1000; return new Date(clock).toISOString(); };
 
 function inj(over: Partial<Injection> & Pick<Injection, "wakeId">): Injection {
@@ -180,9 +187,6 @@ const SILENT: Expected = "SILENT_OK";
 }
 
 {
-  const mkTurn = (over: Partial<TurnResult> & Pick<TurnResult, "turn" | "scenario" | "expected" | "outcome">): TurnResult => ({
-    label: "", probe: null, state: null, latencyMs: null, delegations: 0, recall: null, matchedRows: [], notes: "", ...over,
-  });
   const turns: TurnResult[] = [
     mkTurn({ turn: 1, scenario: "S1", expected: "LANDED", outcome: "LANDED_VIA_REPLY_TOOL", recall: { code: true, date: true, ref: true } }),
     mkTurn({ turn: 2, scenario: "S2", expected: "LANDED", outcome: "DROP" }),
@@ -206,21 +210,80 @@ const SILENT: Expected = "SILENT_OK";
   ok(s.prose_drop_count.repliedFalse === 1 && s.prose_drop_count.repliedTrue === 1, "prose_drop_count splits replied=false (real leak) vs replied=true (benign wrap-up)");
   ok(s.recall_accuracy.full === 1 && s.recall_accuracy.ofLandedRead === 1, "recall_accuracy = 1/1 (S1 recalled all three needles)");
   ok(s.judged_silent_count === 1, "judged_silent_count counts the S4 reply-warranted turn that chose silence");
-  ok(s.coalesced_turn_correctness.of === 0 && s.coalesced_turn_correctness.rate === null, "coalesced_turn_correctness on a run with no S6 turns: of=0, rate=null — honest 'not measured', never a false zero");
+  ok(s.sequential_pair_correctness.of === 0 && s.sequential_pair_correctness.rate === null, "sequential_pair_correctness on a run with no S6 turns: of=0, rate=null — honest 'not measured', never a false zero");
+  ok(s.coalesced_turn_correctness.of === 0 && s.coalesced_turn_correctness.rate === null && s.coalesced_turn_correctness.unproven === 0, "coalesced_turn_correctness on a run with no S7 turns: of=0, rate=null, unproven=0 — honest 'not measured', never a false zero");
 }
 
 {
-  const mkTurn = (over: Partial<TurnResult> & Pick<TurnResult, "turn" | "scenario" | "expected" | "outcome">): TurnResult => ({
-    label: "", probe: null, state: null, latencyMs: null, delegations: 0, recall: null, matchedRows: [], notes: "", ...over,
-  });
   clock = Date.UTC(2026, 6, 24, 12, 0, 0);
   const t1 = mkTurn({ turn: 1, scenario: "S6", expected: "LANDED", outcome: "LANDED_VIA_REPLY_TOOL", coalesced: scoreCoalescedTurn("ADDR-1", "AMB-1", attr({ replyPostsOf: new Map([["ADDR-1", [replyPost("ADDR-1")]]]) })) });
   const t2 = mkTurn({ turn: 2, scenario: "S6", expected: "LANDED", outcome: "DROP", coalesced: scoreCoalescedTurn("ADDR-2", "AMB-2", attr({ replyPostsOf: new Map([["AMB-2", [replyPost("AMB-2")]]]) })) });
   const s = summarize([t1, t2], [], "SESS");
-  ok(s.coalesced_turn_correctness.of === 2, "coalesced_turn_correctness.of counts both S6 turns");
-  ok(s.coalesced_turn_correctness.correct === 1 && s.coalesced_turn_correctness.rate === 0.5, "coalesced_turn_correctness = 1/2 = 0.5 (T1 correct, T2 mis-bound)");
-  ok(s.coalesced_turn_correctness.addressed_answered === 1 && s.coalesced_turn_correctness.ambient_silent === 1, "coalesced_turn_correctness sub-counts split T1 (both hold) from T2 (neither holds)");
+  ok(s.sequential_pair_correctness.of === 2, "sequential_pair_correctness.of counts both S6 turns (no coalescing proof stamped ⇒ the SEQUENTIAL axis)");
+  ok(s.sequential_pair_correctness.correct === 1 && s.sequential_pair_correctness.rate === 0.5, "sequential_pair_correctness = 1/2 = 0.5 (T1 correct, T2 mis-bound)");
+  ok(s.sequential_pair_correctness.addressed_answered === 1 && s.sequential_pair_correctness.ambient_silent === 1, "sequential_pair_correctness sub-counts split T1 (both hold) from T2 (neither holds)");
+  ok(s.coalesced_turn_correctness.of === 0 && s.coalesced_turn_correctness.rate === null && s.coalesced_turn_correctness.unproven === 0, "S6 verdicts do NOT leak into coalesced_turn_correctness: of=0, rate=null, unproven=0 — that axis counts PROVEN coalesced turns only");
   ok(s.reply_landed_rate.of === 2 && s.reply_landed_rate.landed === 1, "S6 turns ALSO count in reply_landed_rate (expected:\"LANDED\", not soft) — the addressed half is a real reply-warranted probe like S1/S2/S4");
+}
+
+{
+  clock = Date.UTC(2026, 6, 24, 12, 0, 0);
+  const proof = (over: Partial<CoalescedDeliveryProof>): CoalescedDeliveryProof => ({
+    proven: true, turnId: "turn-1", turnsSpanned: 1, receivedInTurn: 2, note: "", ...over,
+  });
+  const t1 = mkTurn({ turn: 1, scenario: "S7", expected: "LANDED", outcome: "LANDED_VIA_REPLY_TOOL", coalescedProof: proof({}), coalesced: scoreCoalescedTurn("ADDR-1", "AMB-1", attr({ replyPostsOf: new Map([["ADDR-1", [replyPost("ADDR-1")]]]) })) });
+  const t2 = mkTurn({ turn: 2, scenario: "S7", expected: "LANDED", outcome: "DROP", coalescedProof: proof({ turnId: "turn-2" }), coalesced: scoreCoalescedTurn("ADDR-2", "AMB-2", attr({ replyPostsOf: new Map([["AMB-2", [replyPost("AMB-2")]]]) })) });
+  const t3 = mkTurn({ turn: 3, scenario: "S7", expected: "LANDED", outcome: "LANDED_VIA_REPLY_TOOL", coalescedProof: proof({ proven: false, turnId: null, turnsSpanned: 2, receivedInTurn: 0 }), coalesced: scoreCoalescedTurn("ADDR-3", "AMB-3", attr({ replyPostsOf: new Map([["ADDR-3", [replyPost("ADDR-3")]]]) })) });
+  const s = summarize([t1, t2, t3], [], "SESS");
+  ok(s.coalesced_turn_correctness.of === 2, "coalesced_turn_correctness.of counts ONLY the two PROVEN turns — the unproven T3 is not in the denominator");
+  ok(s.coalesced_turn_correctness.correct === 1 && s.coalesced_turn_correctness.rate === 0.5, "coalesced_turn_correctness = 1/2 = 0.5 — the unproven T3's 'correct' verdict does NOT inflate it to 2/3");
+  ok(s.coalesced_turn_correctness.unproven === 1, "coalesced_turn_correctness.unproven = 1 — the harness fault is REPORTED, never silently dropped");
+  ok(s.coalesced_turn_correctness.addressed_answered === 1 && s.coalesced_turn_correctness.ambient_silent === 1, "coalesced_turn_correctness sub-counts read the proven turns only");
+  ok(s.sequential_pair_correctness.of === 0, "an S7 turn (proof stamped, proven or not) never counts on the S6 sequential axis");
+  ok(s.reply_landed_rate.of === 3 && s.reply_landed_rate.landed === 2, "all three S7 turns still count in reply_landed_rate — the addressed half is a real reply-warranted probe whatever the delivery shape");
+}
+
+{
+  const received = (turnId: string, message: string, index: number): TranscriptWireEvent => ({
+    index, at: new Date(clock += 1000).toISOString(), type: "message.received", data: { message, sequence: index, turnId },
+  });
+  const envelope = (wakeId: string): string => `<wake wake-id="${wakeId}" addressing="direct-mention">hello</wake>`;
+
+  const p1 = proveSiblingWakes([
+    received("turn-A", envelope("AMB-1"), 0),
+    received("turn-A", envelope("ADDR-1"), 1),
+  ], "ADDR-1", "AMB-1");
+  ok(p1.proven === true, "proveSiblingWakes: both wake ids on ONE turnId ⇒ PROVEN");
+  ok(p1.turnId === "turn-A" && p1.turnsSpanned === 1 && p1.receivedInTurn === 2, "proveSiblingWakes: the proof names the shared turnId, spans 1 turn, and counts the 2 received messages");
+
+  const p2 = proveSiblingWakes([
+    received("turn-A", envelope("AMB-2"), 0),
+    received("turn-B", envelope("ADDR-2"), 1),
+  ], "ADDR-2", "AMB-2");
+  ok(p2.proven === false, "proveSiblingWakes: one wake id per turn ⇒ NOT proven (the OPE-744 back-to-back shape)");
+  ok(p2.turnsSpanned === 2 && p2.turnId === null, "proveSiblingWakes: a refuted pair reports the 2 distinct turns it spanned and names no turnId");
+  ok(p2.note.includes("HARNESS FAULT") && p2.note.includes("AMBIENT_OCCUPY_WAIT_MS"), "proveSiblingWakes: the refusal note calls the split a HARNESS FAULT and names the knob that fixes it");
+
+  const p3 = proveSiblingWakes([
+    received("turn-A", envelope("OCC-3"), 0),
+    received("turn-A", envelope("AMB-3"), 1),
+    received("turn-A", envelope("ADDR-3"), 2),
+  ], "ADDR-3", "AMB-3");
+  ok(p3.proven === true && p3.receivedInTurn === 3, "proveSiblingWakes: a third payload in the same turn (the occupier coalescing in) still PROVES the pair, and the count says 3");
+
+  const p4 = proveSiblingWakes([received("turn-A", envelope("AMB-4"), 0)], "ADDR-4", "AMB-4");
+  ok(p4.proven === false && p4.turnsSpanned === 1, "proveSiblingWakes: an addressed wake absent from every message.received ⇒ NOT proven");
+  ok(p4.note.includes("ADDR-4") && !p4.note.includes("ambient AMB-4"), "proveSiblingWakes: the note names the MISSING half (addressed ADDR-4) and not the half that was found");
+
+  const p5 = proveSiblingWakes([], "ADDR-5", "AMB-5");
+  ok(p5.proven === false && p5.turnsSpanned === 0, "proveSiblingWakes: an empty event list ⇒ NOT proven (0 turns spanned) — an unreadable transcript never promotes a turn into the metric");
+
+  const p6 = proveSiblingWakes([
+    received("turn-A", envelope("ADDR-6"), 0),
+    { index: 1, at: null, type: "message.completed", data: { message: `replying to ${envelope("AMB-6")}`, turnId: "turn-A" } },
+    { index: 2, at: null, type: "message.received", data: { message: envelope("AMB-6") } },
+  ], "ADDR-6", "AMB-6");
+  ok(p6.proven === false, "proveSiblingWakes: a wake id appearing only in a message.completed (model output) or in a turnId-less event does NOT prove coalescing");
 }
 
 {
@@ -267,9 +330,10 @@ const SILENT: Expected = "SILENT_OK";
 {
   ok(parseSeries(undefined) === undefined, "parseSeries(undefined): no --series flag ⇒ undefined ⇒ main() falls back to seriesOf(cli.turns) unchanged");
   ok(JSON.stringify(parseSeries("S6,S6,S6")) === JSON.stringify(["S6", "S6", "S6"]), "parseSeries: a comma-list of valid ids parses in order, duplicates kept (repeats are the point for a screening run)");
+  ok(JSON.stringify(parseSeries("S7,S7,S7,S7,S7")) === JSON.stringify(["S7", "S7", "S7", "S7", "S7"]), "parseSeries: S7 (the OPE-747 coalesced-turn probe) is a valid id — the n=5 screening run parses");
   ok(JSON.stringify(parseSeries(" S1, S6 ")) === JSON.stringify(["S1", "S6"]), "parseSeries: surrounding whitespace around each id is trimmed");
   ok(JSON.stringify(parseSeries("")) === JSON.stringify([]), "parseSeries: an empty string parses to an empty (but DEFINED, not undefined) series — a caller that explicitly passed --series \"\" gets an explicit empty run, not the default fallback");
   assert.throws(() => parseSeries("S1,S9,S2"), /unknown scenario id\(s\) S9/, "parseSeries: an unknown scenario id FAILS LOUD (throws), naming the bad id — never silently dropped, which would run a shorter series than asked");
 }
 
-console.log(`\n✓ ambient-eval scoring: ${n} assertions passed (FIFO pairing + session filter + redrive/bridge pull-out + outcome mapping + soft-bucket summary + OPE-684 S4 coalesced-turn correctness: correct/dropped/mis-bound/text-leak/negative-control + --series parsing)\n`);
+console.log(`\n✓ ambient-eval scoring: ${n} assertions passed (FIFO pairing + session filter + redrive/bridge pull-out + outcome mapping + soft-bucket summary + pair binding: correct/dropped/mis-bound/text-leak/negative-control + OPE-747 coalescing proof + the S6/S7 axis split + --series parsing)\n`);

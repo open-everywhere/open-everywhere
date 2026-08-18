@@ -66,7 +66,7 @@ function parseCli(argv: readonly string[]): Cli {
   };
 }
 
-export type ScenarioId = "S1" | "S2" | "S3" | "S4" | "S5" | "S6";
+export type ScenarioId = "S1" | "S2" | "S3" | "S4" | "S5" | "S6" | "S7";
 export type Expected = "LANDED" | "SILENT_OK";
 export type Outcome =
   | "LANDED_VIA_REPLY_TOOL"
@@ -91,7 +91,8 @@ export const SCENARIOS: Record<ScenarioId, ScenarioSpec> = {
   S3: { id: "S3", label: "silence (Slack human↔human chatter, not addressed)", expected: "SILENT_OK", needs: ["slack"] },
   S4: { id: "S4", label: "cross-surface recall (fact on Notion → recalled on Slack @mention)", expected: "LANDED", needs: ["slack", "notion"] },
   S5: { id: "S5", label: "TRUE ambient step-in (Notion channel-watch, no namedrop; reply helpful, silence defensible)", expected: "LANDED", soft: true, needs: ["slack", "notion"] },
-  S6: { id: "S6", label: "coalesced-turn correctness (Slack direct-mention + channel-watch injected as ONE coalesced turn)", expected: "LANDED", needs: ["slack"] },
+  S6: { id: "S6", label: "sequential pair correctness (Slack direct-mention + channel-watch injected back to back into an IDLE session — TWO turns)", expected: "LANDED", needs: ["slack"] },
+  S7: { id: "S7", label: "coalesced-turn correctness (ambient+addressed pair buffered behind a running turn — sibling wakes PROVEN from the transcript)", expected: "LANDED", needs: ["slack"] },
 };
 export const SERIES_PATTERN: readonly ScenarioId[] = ["S4", "S2", "S3", "S2", "S1", "S5", "S2", "S3", "S2", "S5"];
 const seriesOf = (n: number): ScenarioId[] => Array.from({ length: n }, (_, i) => SERIES_PATTERN[i % SERIES_PATTERN.length]);
@@ -117,7 +118,7 @@ function recallHit(body: string, m: { code: string; date: string; ref: string })
   return { code: b.includes(m.code.toLowerCase()), date: b.includes(m.date), ref: b.includes(m.ref.toLowerCase()) };
 }
 
-export type InjectionKind = "state" | "probe" | "chatter" | "filler";
+export type InjectionKind = "state" | "probe" | "chatter" | "filler" | "occupier";
 export interface Injection {
   readonly wakeId: string;
   readonly injectedAt: string;
@@ -474,6 +475,59 @@ export function scoreCoalescedTurn(
   };
 }
 
+export interface CoalescedDeliveryProof {
+  readonly proven: boolean;
+  readonly turnId: string | null;
+  readonly turnsSpanned: number;
+  readonly receivedInTurn: number;
+  readonly note: string;
+}
+
+export function proveSiblingWakes(
+  events: readonly TranscriptWireEvent[],
+  addressedWakeId: string,
+  ambientWakeId: string,
+): CoalescedDeliveryProof {
+  const byTurn = new Map<string, string[]>();
+  for (const e of events) {
+    if (e.type !== "message.received") continue;
+    const d = e.data as { message?: unknown; turnId?: unknown } | null | undefined;
+    const turnId = typeof d?.turnId === "string" && d.turnId.length > 0 ? d.turnId : null;
+    if (turnId === null) continue;
+    const message = typeof d?.message === "string" ? d.message : "";
+    const slot = byTurn.get(turnId);
+    if (slot) slot.push(message); else byTurn.set(turnId, [message]);
+  }
+  const turnsWith = (wakeId: string): string[] =>
+    [...byTurn.entries()].filter(([, msgs]) => msgs.some((m) => m.includes(wakeId))).map(([id]) => id);
+  const addressedTurns = turnsWith(addressedWakeId);
+  const ambientTurns = turnsWith(ambientWakeId);
+  const spanned = new Set([...addressedTurns, ...ambientTurns]).size;
+  if (addressedTurns.length === 0 || ambientTurns.length === 0) {
+    const missing = [
+      ...(addressedTurns.length === 0 ? [`addressed ${addressedWakeId}`] : []),
+      ...(ambientTurns.length === 0 ? [`ambient ${ambientWakeId}`] : []),
+    ].join(" + ");
+    return {
+      proven: false, turnId: null, turnsSpanned: spanned, receivedInTurn: 0,
+      note: `HARNESS FAULT: no message.received event in the transcript carries ${missing} — the wake never reached the model, or the transcript pull missed it (${byTurn.size} turn(s) seen)`,
+    };
+  }
+  const shared = addressedTurns.filter((id) => ambientTurns.includes(id));
+  if (shared.length === 0) {
+    return {
+      proven: false, turnId: null, turnsSpanned: spanned, receivedInTurn: 0,
+      note: `HARNESS FAULT: the pair did NOT coalesce — addressed ${addressedWakeId} landed in turn(s) ${addressedTurns.join(",")} and ambient ${ambientWakeId} in turn(s) ${ambientTurns.join(",")}, ${spanned} distinct turn(s). Raise AMBIENT_OCCUPY_WAIT_MS so the occupier turn is still running when the pair lands.`,
+    };
+  }
+  const turnId = shared[0]!;
+  const received = byTurn.get(turnId)?.length ?? 0;
+  return {
+    proven: true, turnId, turnsSpanned: 1, receivedInTurn: received,
+    note: `coalescing PROVEN: both wake ids in eve turn ${turnId}, which received ${received} message(s)${received > 2 ? " (the occupier wake coalesced in too)" : ""}`,
+  };
+}
+
 export interface TurnResult {
   turn: number;
   scenario: ScenarioId;
@@ -492,6 +546,8 @@ export interface TurnResult {
   droppedProse?: string | null;
   reasoningSlice?: string | null;
   coalesced?: CoalescedTurnScore;
+  coalescedProof?: CoalescedDeliveryProof;
+  occupier?: Injection | null;
 }
 
 export function summarize(turns: readonly TurnResult[], allRows: readonly AuditWireEntry[], sessionId: string | null) {
@@ -513,8 +569,12 @@ export function summarize(turns: readonly TurnResult[], allRows: readonly AuditW
   const nonLanded = rExp.filter((t) => t.outcome === "DROP" || t.outcome === "JUDGED_SILENT" || t.outcome === "NO_ACTION");
   const fcCount = (c: FailureClass): number => nonLanded.filter((t) => t.failureClass === c).length;
   const softLanded = softTurns.filter((t) => t.outcome === "LANDED_VIA_REPLY_TOOL" || t.outcome === "LANDED_VIA_REDRIVE" || t.outcome === "LANDED_VIA_BRIDGE");
-  const coalescedTurns = turns.filter((t): t is TurnResult & { coalesced: CoalescedTurnScore } => t.coalesced !== undefined);
-  const coalescedCorrect = coalescedTurns.filter((t) => t.coalesced.correct);
+  const withVerdict = turns.filter((t): t is TurnResult & { coalesced: CoalescedTurnScore } => t.coalesced !== undefined);
+  const sequentialTurns = withVerdict.filter((t) => t.coalescedProof === undefined);
+  const sequentialCorrect = sequentialTurns.filter((t) => t.coalesced.correct);
+  const provenTurns = withVerdict.filter((t) => t.coalescedProof?.proven === true);
+  const unprovenTurns = withVerdict.filter((t) => t.coalescedProof !== undefined && !t.coalescedProof.proven);
+  const coalescedCorrect = provenTurns.filter((t) => t.coalesced.correct);
   return {
     soft_reply_rate: {
       landed: softLanded.length,
@@ -543,13 +603,22 @@ export function summarize(turns: readonly TurnResult[], allRows: readonly AuditW
     },
     silence_precision: { silent: silent.length, of: sExp.length, rate: rate(silent.length, sExp.length) },
     recall_accuracy: { full: full.length, ofLandedRead: lRec.length, rate: rate(full.length, lRec.length) },
+    sequential_pair_correctness: {
+      correct: sequentialCorrect.length,
+      of: sequentialTurns.length,
+      rate: rate(sequentialCorrect.length, sequentialTurns.length),
+      addressed_answered: sequentialTurns.filter((t) => t.coalesced.addressedAnswered).length,
+      ambient_silent: sequentialTurns.filter((t) => t.coalesced.ambientSilent).length,
+      no_cross_binding: sequentialTurns.filter((t) => t.coalesced.noCrossBinding).length,
+    },
     coalesced_turn_correctness: {
       correct: coalescedCorrect.length,
-      of: coalescedTurns.length,
-      rate: rate(coalescedCorrect.length, coalescedTurns.length),
-      addressed_answered: coalescedTurns.filter((t) => t.coalesced.addressedAnswered).length,
-      ambient_silent: coalescedTurns.filter((t) => t.coalesced.ambientSilent).length,
-      no_cross_binding: coalescedTurns.filter((t) => t.coalesced.noCrossBinding).length,
+      of: provenTurns.length,
+      rate: rate(coalescedCorrect.length, provenTurns.length),
+      unproven: unprovenTurns.length,
+      addressed_answered: provenTurns.filter((t) => t.coalesced.addressedAnswered).length,
+      ambient_silent: provenTurns.filter((t) => t.coalesced.ambientSilent).length,
+      no_cross_binding: provenTurns.filter((t) => t.coalesced.noCrossBinding).length,
     },
   };
 }
@@ -579,7 +648,9 @@ async function readSlackReplyBody(sinceIso: string, replyTs?: string | null): Pr
 
 interface Surfaces { slack: boolean; notion: boolean; }
 
-async function injectTurn(id: ScenarioId, turn: number, fact: { code: string; date: string; ref: string }, surf: Surfaces): Promise<{ probe: Injection | null; state: Injection | null; skip?: string }> {
+const OCCUPY_WAIT_MS = Number.parseInt(process.env.AMBIENT_OCCUPY_WAIT_MS ?? "12000", 10);
+
+async function injectTurn(id: ScenarioId, turn: number, fact: { code: string; date: string; ref: string }, surf: Surfaces): Promise<{ probe: Injection | null; state: Injection | null; occupier?: Injection | null; skip?: string }> {
   const spec = SCENARIOS[id];
   const missing = spec.needs.filter((n) => !surf[n]);
   if (missing.length > 0) return { probe: null, state: null, skip: `missing surface(s): ${missing.join(",")}` };
@@ -607,6 +678,23 @@ async function injectTurn(id: ScenarioId, turn: number, fact: { code: string; da
       "probe", turn, id,
     );
     return { probe: addressed, state: ambient };
+  }
+
+  if (id === "S7") {
+    const occupier = await injectWake(
+      { domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "direct-mention", mention: true, author: "priya", origin: slackOrigin, text: `before I forget — please list the seven days of the week in order, one per line, and reply here with the list.` },
+      "occupier", turn, id,
+    );
+    await sleep(OCCUPY_WAIT_MS);
+    const ambient = await injectWake(
+      { domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "channel-watch", author: "alex", origin: slackOrigin, text: `heads up, moving the 3pm sync to 3:30 — clashes with something else, sorry for the churn.` },
+      "chatter", turn, id,
+    );
+    const addressed = await injectWake(
+      { domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "direct-mention", mention: true, author: "sam", origin: slackOrigin, text: `quick one — what is 17 plus 25? reply here with the number.` },
+      "probe", turn, id,
+    );
+    return { probe: addressed, state: ambient, occupier };
   }
 
   const stateOn = id === "S4" ? "notion" : "slack";
@@ -877,6 +965,33 @@ async function classifyFailures(turns: TurnResult[], attribution: Attribution): 
   return { judged: !!process.env.AI_GATEWAY_API_KEY, note };
 }
 
+async function proveCoalescedTurns(turns: TurnResult[], sessionId: string | null): Promise<void> {
+  const targets = turns.filter((t) => t.scenario === "S7" && t.probe && t.state);
+  if (targets.length === 0) return;
+  const fail = (note: string): void => {
+    for (const t of targets) t.coalescedProof = { proven: false, turnId: null, turnsSpanned: 0, receivedInTurn: 0, note };
+    console.warn(`  [coalescing] ${note}`);
+  };
+  if (!sessionId) {
+    fail("HARNESS FAULT: attribution resolved no sessionId — no transcript to prove coalescing from; every S7 turn is UNPROVEN and excluded from coalesced_turn_correctness");
+    return;
+  }
+  let events: readonly TranscriptWireEvent[];
+  try {
+    events = (await fetchTranscript(TARGET, READ, sessionId, { limit: 100000, idleMs: 1000 })).events;
+  } catch (e) {
+    fail(`HARNESS FAULT: transcript fetch failed (${(e as Error).message}) — every S7 turn is UNPROVEN and excluded from coalesced_turn_correctness`);
+    return;
+  }
+  for (const t of targets) {
+    const proof = proveSiblingWakes(events, t.probe!.wakeId, t.state!.wakeId);
+    t.coalescedProof = proof;
+    const line = `T${t.turn} S7 ${proof.proven ? "COALESCED" : "NOT COALESCED"} — ${proof.note}`;
+    if (proof.proven) console.log(`  [coalescing] ${line}`);
+    else console.warn(`  [coalescing] ${line}`);
+  }
+}
+
 function extractCodeFromFact(factText: string | null): string | null {
   if (!factText) return null;
   const m = /codename\s+([A-Z]+ [A-Z]+-[a-z0-9]+)/i.exec(factText);
@@ -902,9 +1017,14 @@ function printReport(turns: readonly TurnResult[], summary: ReturnType<typeof su
   console.log(`prose_drop_count      : ${s.prose_drop_count.total} window-wide (replied=false ${s.prose_drop_count.repliedFalse} ← real, replied=true ${s.prose_drop_count.repliedTrue})`);
   console.log(`silence_precision     : ${s.silence_precision.silent}/${s.silence_precision.of} = ${s.silence_precision.rate ?? "n/a"}`);
   console.log(`recall_accuracy       : ${s.recall_accuracy.full}/${s.recall_accuracy.ofLandedRead} = ${s.recall_accuracy.rate ?? "n/a"} (best-effort read-back)`);
-  if (s.coalesced_turn_correctness.of > 0) {
-    const c = s.coalesced_turn_correctness;
-    console.log(`coalesced_turn_correctness (S6, OPE-684 A3): ${c.correct}/${c.of} = ${c.rate ?? "n/a"}  (addressed_answered ${c.addressed_answered} · ambient_silent ${c.ambient_silent} · no_cross_binding ${c.no_cross_binding})`);
+  if (s.sequential_pair_correctness.of > 0) {
+    const q = s.sequential_pair_correctness;
+    console.log(`sequential_pair_correctness (S6): ${q.correct}/${q.of} = ${q.rate ?? "n/a"}  (addressed_answered ${q.addressed_answered} · ambient_silent ${q.ambient_silent} · no_cross_binding ${q.no_cross_binding}) — TWO turns, an ambient-over-reply rate, NOT coalescing evidence`);
+  }
+  const c = s.coalesced_turn_correctness;
+  if (c.of > 0 || c.unproven > 0) {
+    console.log(`coalesced_turn_correctness (S7, OPE-684 A3): ${c.correct}/${c.of} = ${c.rate ?? "n/a"}  (addressed_answered ${c.addressed_answered} · ambient_silent ${c.ambient_silent} · no_cross_binding ${c.no_cross_binding}) — PROVEN sibling wakes only`);
+    if (c.unproven > 0) console.log(`  ⚠ ${c.unproven} S7 turn(s) UNPROVEN (the pair did not coalesce, or the transcript was unreadable) — HARNESS FAULT, excluded from the rate above`);
   }
 }
 
@@ -930,7 +1050,7 @@ async function runOneSeries(
   injections.length = 0;
   const run = Date.now().toString().slice(-5);
   const seriesStartedAt = new Date().toISOString();
-  const pending: { turn: number; scenario: ScenarioId; probe: Injection | null; state: Injection | null; skip?: string; fact: ReturnType<typeof freshFact> }[] = [];
+  const pending: { turn: number; scenario: ScenarioId; probe: Injection | null; state: Injection | null; occupier?: Injection | null; skip?: string; fact: ReturnType<typeof freshFact> }[] = [];
 
   if (cli.rotate) {
     const r = await rotateUnifiedWindow(store, cli.org, cli.domain);
@@ -1045,14 +1165,16 @@ async function runOneSeries(
       }
     }
     let coalesced: TurnResult["coalesced"];
-    if (p.scenario === "S6" && p.state) {
+    if ((p.scenario === "S6" || p.scenario === "S7") && p.state) {
       let addressedText: string | null = null;
       const addressedPost = o.matched.find((r) => r.action === A_REPLY_POST && dS(r, "platform") === "slack");
       if (addressedPost) addressedText = await readSlackReplyBody(p.probe.injectedAt, dS(addressedPost, "id"));
       coalesced = scoreCoalescedTurn(p.probe.wakeId, p.state.wakeId, finalAttribution, addressedText);
     }
-    turns.push({ turn: p.turn, scenario: p.scenario, label: spec.label, expected: spec.expected, outcome: o.outcome, probe: p.probe, state: p.state, latencyMs: o.latencyMs, delegations: (finalAttribution.delegationsOf.get(p.probe.wakeId) ?? []).length, recall, matchedRows: o.matched, notes: o.notes, ...(coalesced ? { coalesced } : {}) });
+    turns.push({ turn: p.turn, scenario: p.scenario, label: spec.label, expected: spec.expected, outcome: o.outcome, probe: p.probe, state: p.state, latencyMs: o.latencyMs, delegations: (finalAttribution.delegationsOf.get(p.probe.wakeId) ?? []).length, recall, matchedRows: o.matched, notes: o.notes, ...(coalesced ? { coalesced } : {}), ...(p.occupier !== undefined ? { occupier: p.occupier } : {}) });
   }
+
+  await proveCoalescedTurns(turns, finalAttribution.sessionId);
 
   const fc = await classifyFailures(turns, finalAttribution);
   console.log(`  [failure-class] ${fc.note}`);
@@ -1105,7 +1227,9 @@ function writeAggregate(
     recall_accuracy: s((x) => x.summary.recall_accuracy.rate),
     prose_drops_replied_false: s((x) => x.summary.prose_drop_count.repliedFalse),
     judged_silent_count: s((x) => x.summary.judged_silent_count),
+    sequential_pair_correctness: s((x) => x.summary.sequential_pair_correctness.rate),
     coalesced_turn_correctness: s((x) => x.summary.coalesced_turn_correctness.rate),
+    coalesced_unproven: s((x) => x.summary.coalesced_turn_correctness.unproven),
   };
   const perScenario: Record<string, Record<string, number>> = {};
   for (const r of ok) {
