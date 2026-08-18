@@ -687,7 +687,7 @@ export async function unifiedDomainAudit(q: UnifiedDomainAuditQuery): Promise<Un
     "Pure-read: this view restricts the agent by nothing — it is only answerable because the domain unifies the surfaces.",
     "Per-container INTERNAL/EXTERNAL trust and per-account membership are confirmed FAIL-CLOSED at delivery time (each surface's confirmInternal); a container that fails is dropped and audited (*.trust_demotion). This read reflects config-declared membership, not a live trust probe.",
     "Unmapped accounts (present in a surface but not in the principals map) stay DISTINCT per-surface identities — never merged on name similarity; enumerate them from the live surface, not here.",
-    "Surface-privacy ORDINAL (P5 enforced form) is not yet built — TODO(unified-audit-privacy-ordinal); quote-across-surfaces is advisory (the disclosure preamble) until it lands.",
+    "Surface-privacy ORDINAL (P5 enforced form) is not yet built — TODO(unified-audit-privacy-ordinal); quote-across-surfaces is advisory (one sentence in the standing prompt) until it lands.",
   ];
   if (!unified) notes.unshift(`NOTE: domain "${q.domain}" is not currently windowed (WINDOW_TOPOLOGY_ENABLED off and/or the domain is not an ambient supervisor) — this shows what unification WOULD expose.`);
   for (const w of principalUnion.warnings) notes.unshift(`⚠ ${w.message}`);

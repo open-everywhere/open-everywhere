@@ -291,12 +291,7 @@ await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(DO
   ok(c.auth.attributes?.team_id === "T1", "un-overridden derived attrs remain");
 }
 
-const norm = (s: string): string =>
-  s
-    .replace(/sent-at="[^"]*"/g, 'sent-at="TS"')
-    .replace(/current-time="[^"]*"/g, 'current-time="TS"')
-    .replace(/wake-id="[^"]*"/g, 'wake-id="WID"')
-    .replace(/id="test-[^"]*"/g, 'id="MID"');
+const norm = normFrame;
 
 {
   captured.length = 0;
