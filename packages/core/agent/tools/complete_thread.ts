@@ -5,13 +5,12 @@ import { currentWakeId, deploymentOrg, type BindableContext } from "../identity/
 import { resolveUnifiedWakeTarget, unifiedThreadRef } from "../channels/unified-window.js";
 import { clearThreadOwner } from "../channels/thread-ownership.js";
 import { getOperationalStore } from "../operational/provider.js";
+import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { isThreadSeatWindowToken } from "../channels/window-key.js";
 import { appendAudit } from "../audit/audit.js";
 
-function isOwnTokenThreadSeat(ctx: BindableContext): boolean {
-  const raw = ctx.channel?.continuationToken;
-  if (typeof raw !== "string") return false;
-  return isThreadSeatWindowToken(raw.startsWith("unified:") ? raw.slice("unified:".length) : raw);
+export function isOwnTokenThreadSeat(ctx: BindableContext): boolean {
+  return isThreadSeatWindowToken(resolveOwnWindowToken(ctx));
 }
 
 export default windowGated("complete_thread", defineTool({

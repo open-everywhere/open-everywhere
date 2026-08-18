@@ -7,8 +7,9 @@ import {
   THREAD_OWNER_TTL_MS,
   type ThreadOwnershipStore,
 } from "../agent/channels/thread-ownership.js";
-import { taskWindowId, formatWindowToken } from "../agent/channels/window-key.js";
-import completeTask from "../agent/tools/complete_task.js";
+import { taskWindowId, threadSeatWindowId, formatWindowToken } from "../agent/channels/window-key.js";
+import completeTask, { isOwnTokenTask } from "../agent/tools/complete_task.js";
+import completeThread, { isOwnTokenThreadSeat } from "../agent/tools/complete_thread.js";
 import { resolveWindowGated } from "../agent/access/window-gated.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
@@ -99,6 +100,51 @@ await assert.rejects(
   () => tool.execute({}, { channel: { kind: "unified", continuationToken: "unified:oe-dom:payments:oe-sup:g3" }, session: { auth: { current: { attributes: { oe_grain: "task" } } } } }),
   /not held by this conversational seat/,
   "a `task` stamp on a standing token still refuses (stamp spoof fails closed to narrow; the lean arm answers on the narrowed seat)",
+);
+n++;
+
+console.log("4. OPE-738 completer own-token guards (channel-less tool-execute contexts):");
+const seatToken = formatWindowToken({ domain: "payments", windowId: threadSeatWindowId("slack/C9", "171.5"), generation: 3 });
+const taskToken = taskTokenFor("slack/C9", "171.5", 3);
+const standingToken = "oe-dom:payments:oe-sup:g3";
+const execCtx = (windowToken: string | undefined, grain: string) =>
+  ({
+    session: { auth: { current: { attributes: { ...(windowToken === undefined ? {} : { oe_window_token: windowToken }), oe_grain: grain } } } },
+  }) as never;
+
+ok(isOwnTokenThreadSeat(execCtx(seatToken, "thread")), "complete_thread's guard says YES to a thread seat that carries only the host stamp (the live shape)");
+ok(!isOwnTokenThreadSeat(execCtx(taskToken, "task")), "…and NO to a TASK worker's stamp (negative control — the guard is not answering yes to everything)");
+ok(!isOwnTokenThreadSeat(execCtx(standingToken, "standing")), "…and NO to a STANDING window seat's stamp");
+ok(!isOwnTokenThreadSeat(execCtx(undefined, "thread")), "…and NO when neither identity channel yields a token (fail-closed)");
+ok(isOwnTokenTask(execCtx(taskToken, "task")), "complete_task's guard says YES to a task worker that carries only the host stamp");
+ok(!isOwnTokenTask(execCtx(seatToken, "thread")), "…and NO to a THREAD SEAT's stamp (negative control)");
+ok(!isOwnTokenTask(execCtx(standingToken, "standing")), "…and NO to a STANDING window seat's stamp");
+ok(!isOwnTokenTask(execCtx(undefined, "task")), "…and NO when neither identity channel yields a token (fail-closed)");
+
+const taskEntry = (await resolveWindowGated(completeTask, execCtx(taskToken, "task"))) as {
+  execute: (input: { summary?: string }, ctx: unknown) => Promise<unknown>;
+};
+ok(taskEntry !== null && typeof taskEntry?.execute === "function", "complete_task RESOLVES on a channel-less task-grain context");
+await assert.rejects(
+  () => taskEntry.execute({}, execCtx(taskToken, "task")),
+  /couldn't resolve this task's thread to release/,
+  "complete_task gets PAST its own-token guard on a real task worker's context (it fails later, on the absent wake id)",
+);
+n++;
+const threadEntry = (await resolveWindowGated(completeThread, execCtx(seatToken, "thread"))) as {
+  execute: (input: { summary?: string }, ctx: unknown) => Promise<unknown>;
+};
+ok(threadEntry !== null && typeof threadEntry?.execute === "function", "complete_thread RESOLVES on a channel-less thread-grain context");
+await assert.rejects(
+  () => threadEntry.execute({}, execCtx(seatToken, "thread")),
+  /couldn't resolve this thread to release/,
+  "complete_thread gets PAST its own-token guard on a real thread seat's context (it fails later, on the absent wake id)",
+);
+n++;
+await assert.rejects(
+  () => threadEntry.execute({}, execCtx(taskToken, "thread")),
+  /only a thread seat can complete its thread/,
+  "complete_thread still REFUSES a `thread` stamp sitting on a task token (the token, not the stamp, decides)",
 );
 n++;
 
