@@ -293,6 +293,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   agent: open(
     "delegation (reshape): both modes spawn a full-hands ONE-SHOT worker on a credential-correct new session (same rationale as spawn_task — re-gates every L2 consequence INSIDE the child, forwards taint, widens hands not consequence). async returns at once and the worker wakes the caller with its result; sync HOLDS FOCUS and block-polls the durable result row, returning it inline (degrading to async on MAX_WAIT). Escapes nothing this table doesn't re-gate in the worker; audited via task.spawned",
   ),
+  stop_task: open(
+    "the seat standing DOWN a worker it delegated with `agent` (OPE-730) — de-escalation only, the same posture as stand_down and revoke_routine_permissions. After it runs the agent can do strictly LESS, so a card here would put a confirmation in front of the brake pedal, and the one person most likely to need it is the one watching the worker go wrong. It reaches no task outside the CALLER'S OWN DOMAIN: control/task-cancel.ts checks the named task token was minted from the caller's own domain and carries the `t/` task grain, over an HMAC-signed hop whose caller token is host-derived. It writes nothing but the shared turn.cancel_requested audit row, and the worker's own ending still reports back through the ordinary completion wake",
+  ),
   delegation_tools: open(
     "the resolver FILE that re-provides the disabled framework-named `agent` per session grain (access/window-gated.ts windowGatedKit — the sandbox_tools shape); mounts nothing beyond the `agent` name above, at its own open tier",
   ),

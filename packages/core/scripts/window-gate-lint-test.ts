@@ -245,14 +245,15 @@ ok(JSON.stringify([...WINDOW_GATED_TOOLS.spawn_thread_session]) === JSON.stringi
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.complete_task]) === JSON.stringify(["task"]), "complete_task is task-only");
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.complete_thread]) === JSON.stringify(["thread"]), "complete_thread is thread-only");
 ok(JSON.stringify([...(WINDOW_GATED_TOOLS.agent ?? [])]) === JSON.stringify(["standing", "thread"]) && !WINDOW_UNGATED_TOOLS.has("agent"), "agent is grain-gated to standing+thread (a gated row again since #96; the disableTool() sentinel removes eve's built-in and delegation_tools.ts re-provides it per grain)");
+ok(JSON.stringify([...(WINDOW_GATED_TOOLS.stop_task ?? [])]) === JSON.stringify(["standing", "thread"]) && !WINDOW_UNGATED_TOOLS.has("stop_task"), "stop_task (OPE-730) carries agent's own matrix — only a seat that can delegate can un-delegate, and a task worker leaf never reaches the cancel door");
 ok([...FULL_KIT].sort().join(",") === "task", "FULL_KIT = task-only — the ARMED shipped default since OPE-370 (default==prod); the flag-OFF Stage-C widening to task+native is pinned by the injected crafted case above");
 ok(
   withheldFromGrain("standing").includes("bash") && withheldFromGrain("standing").includes("complete_task") && withheldFromGrain("standing").includes("complete_thread"),
   "a standing seat withholds the wide-hands set + complete_task + complete_thread",
 );
 ok(
-  withheldFromGrain("native").length === 17,
-  "under the ARMED shipped default (OPE-370) a native seat withholds the delegation/lifecycle set (agent/spawn_task/spawn_thread_session/complete_task/complete_thread/return_result) AND the 11 wide-hands tools — the T2 narrowing is now the default posture (flag-off, native regains wide hands: the Stage-C byte-identical state, exercised via the injected crafted case above).",
+  withheldFromGrain("native").length === 18,
+  "under the ARMED shipped default (OPE-370) a native seat withholds the delegation/lifecycle set (agent/stop_task/spawn_task/spawn_thread_session/complete_task/complete_thread/return_result) AND the 11 wide-hands tools — the T2 narrowing is now the default posture (flag-off, native regains wide hands: the Stage-C byte-identical state, exercised via the injected crafted case above).",
 );
 
 firesWith(

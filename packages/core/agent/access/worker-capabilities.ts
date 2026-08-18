@@ -12,6 +12,7 @@ export const WORKER_INDEX_MACHINERY: ReadonlySet<string> = new Set(["sandbox_too
 
 export const WORKER_INDEX_LIFECYCLE: ReadonlySet<string> = new Set([
   "agent",
+  "stop_task",
   "spawn_task",
   "spawn_thread_session",
   "complete_task",

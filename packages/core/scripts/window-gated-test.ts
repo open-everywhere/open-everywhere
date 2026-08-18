@@ -84,8 +84,9 @@ eq(WINDOW_GATED_TOOLS.complete_task, ["task"], "complete_task is task-only (only
 eq(WINDOW_GATED_TOOLS.complete_thread, ["thread"], "complete_thread is thread-only (only a thread seat owns a thread)");
 eq(WINDOW_GATED_TOOLS.return_result, ["task"], "return_result is task-only (only a one-shot task returns a result)");
 eq(WINDOW_GATED_TOOLS.agent, ["standing", "thread"], "agent is grain-gated to the conversational-root seats (standing+thread) — absent on native, and NEVER on a task worker leaf");
-eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 6, "the gated table is EXACTLY the 11 wide-hands tools + the 6 delegation/lifecycle tools (agent/spawn_task/spawn_thread_session/complete_task/complete_thread/return_result) — nothing else narrows");
-eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_task", "complete_thread", "return_result"].sort(), "standing withholds the 11 wide-hands tools + complete_task + complete_thread + return_result (it KEEPS agent + the spawners — a standing seat is what delegates)");
+eq(WINDOW_GATED_TOOLS.stop_task, ["standing", "thread"], "stop_task is grain-gated to the conversational-root seats (standing+thread) — the seats that have a worker to stand down");
+eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 7, "the gated table is EXACTLY the 11 wide-hands tools + the 7 delegation/lifecycle tools (agent/stop_task/spawn_task/spawn_thread_session/complete_task/complete_thread/return_result) — nothing else narrows");
+eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_task", "complete_thread", "return_result"].sort(), "standing withholds the 11 wide-hands tools + complete_task + complete_thread + return_result (it KEEPS agent, stop_task and the spawners — a standing seat is what delegates)");
 
 {
   const OFF = { wide: ["task", "native"] as const, armed: false };
@@ -116,8 +117,16 @@ eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_task", "
   const bomb = { channel: { kind: "unified", get continuationToken(): string { throw new Error("boom"); } }, session: { auth: { current: { attributes: {} } } } } as unknown as BindableContext;
   ok(can(bomb), "seat: an identity read that THROWS ⇒ fail-OPEN as well (never fewer signals than the wall behind it)");
 }
-eq([...withheldFromGrain("task")].sort(), ["agent", "complete_thread", "spawn_task", "spawn_thread_session"].sort(), "task (the worker) withholds agent + the standing-only spawners + complete_thread (it has its own wide hands + complete_task + return_result; a worker leaf must not delegate recursively — since #96 that is ABSENCE, not an execute refusal)");
-eq([...withheldFromGrain("native")].sort(), [...WIDE_HANDS, "agent", "complete_task", "complete_thread", "return_result", "spawn_task", "spawn_thread_session"].sort(), "native withholds agent + the delegation/lifecycle set AND the wide hands — the T2 narrowing, which since OPE-370 is the shipped default (disarm delegation and native keeps its wide hands again, the byte-identical Stage-C state)");
+eq(
+  [...withheldFromGrain("task")].sort(),
+  ["agent", "stop_task", "complete_thread", "spawn_task", "spawn_thread_session"].sort(),
+  "task (the worker) withholds agent, stop_task and the standing-only spawners + complete_thread (it has its own wide hands + complete_task + return_result; a worker leaf must not delegate recursively — since #96 that is ABSENCE, not an execute refusal — and it never stands a sibling down)",
+);
+eq(
+  [...withheldFromGrain("native")].sort(),
+  [...WIDE_HANDS, "agent", "stop_task", "complete_task", "complete_thread", "return_result", "spawn_task", "spawn_thread_session"].sort(),
+  "native withholds agent, stop_task and the rest of the delegation/lifecycle set AND the wide hands — the T2 narrowing, which since OPE-370 is the shipped default (disarm delegation and native keeps its wide hands again, the byte-identical Stage-C state)",
+);
 eq([...withheldFromGrain("thread")].sort(), [...WIDE_HANDS, "complete_task", "return_result", "spawn_task", "spawn_thread_session"].sort(), "a thread seat withholds the wide hands + complete_task + return_result + the spawners (it keeps the conversational kit + agent + complete_thread)");
 
 console.log("1. presence/absence matrix (windowGated):");
