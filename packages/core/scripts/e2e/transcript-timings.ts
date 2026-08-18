@@ -24,6 +24,10 @@ function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
+function bool(v: unknown): boolean | null {
+  return typeof v === "boolean" ? v : null;
+}
+
 function sumKnown(values: readonly (number | null)[]): number | null {
   const known = values.filter((v): v is number => v !== null);
   return known.length === 0 ? null : known.reduce((a, b) => a + b, 0);
@@ -54,6 +58,14 @@ export interface StepTiming {
   readonly failed: boolean;
 }
 
+export interface CompactionTiming {
+  readonly requested: number;
+  readonly completed: number;
+  readonly reduced: number;
+  readonly noOp: number;
+  readonly unstamped: number;
+}
+
 export type TurnOutcome = "completed" | "failed" | "cancelled" | "open";
 
 export interface TurnTiming {
@@ -76,6 +88,7 @@ export interface SessionTiming {
   readonly wallMs: number | null;
   readonly bootMs: number | null;
   readonly turns: readonly TurnTiming[];
+  readonly compaction: CompactionTiming;
   readonly totals: {
     readonly turns: number;
     readonly steps: number;
@@ -156,6 +169,11 @@ export function decomposeSession(events: readonly TranscriptWireEvent[]): Sessio
   let firstAt: string | null = null;
   let lastAt: string | null = null;
   let withAt = 0;
+  let compactionRequested = 0;
+  let compactionCompleted = 0;
+  let compactionReduced = 0;
+  let compactionNoOp = 0;
+  let compactionUnstamped = 0;
 
   const turnOf = (turnId: string | null): TurnAccum | null => {
     if (!turnId) return null;
@@ -198,9 +216,18 @@ export function decomposeSession(events: readonly TranscriptWireEvent[]): Sessio
         sessionId = sessionId ?? str(field(e, "sessionId"));
         break;
       case "compaction.requested":
-      case "compaction.completed":
         sessionId = sessionId ?? str(field(e, "sessionId"));
+        compactionRequested++;
         break;
+      case "compaction.completed": {
+        sessionId = sessionId ?? str(field(e, "sessionId"));
+        compactionCompleted++;
+        const reduced = bool(field(e, "reduced"));
+        if (reduced === true) compactionReduced++;
+        else if (reduced === false) compactionNoOp++;
+        else compactionUnstamped++;
+        break;
+      }
       case "turn.started": {
         const t = turnOf(turnId);
         if (t) t.startedAt = t.startedAt ?? e.at;
@@ -343,6 +370,13 @@ export function decomposeSession(events: readonly TranscriptWireEvent[]): Sessio
     wallMs: delta(ms(firstAt), ms(lastAt)),
     bootMs: delta(ms(sessionStartedAt), ms(firstTurnStartedAt)),
     turns: turnTimings,
+    compaction: {
+      requested: compactionRequested,
+      completed: compactionCompleted,
+      reduced: compactionReduced,
+      noOp: compactionNoOp,
+      unstamped: compactionUnstamped,
+    },
     totals: {
       turns: turnTimings.length,
       steps: allSteps.length,
@@ -596,6 +630,15 @@ export function fmtMs(v: number | null): string {
   return v >= 10_000 ? `${(v / 1000).toFixed(1)}s` : `${Math.round(v)}ms`;
 }
 
+export function renderCompaction(c: CompactionTiming): string | null {
+  if (c.requested === 0 && c.completed === 0) return null;
+  const parts = [c.requested === c.completed ? `${c.completed} pass(es)` : `${c.completed} pass(es) of ${c.requested} requested`];
+  if (c.reduced > 0) parts.push(`${c.reduced} reduced the history`);
+  if (c.noOp > 0) parts.push(`${c.noOp} NO-OP — returned the history UNCHANGED (the OPE-689 shape: the trigger fired and the session did not shrink)`);
+  if (c.unstamped > 0) parts.push(`${c.unstamped} with no \`reduced\` stamp — UNDECIDABLE (pre-OPE-697 transcript, or eve's event factory rather than maybeCompact)`);
+  return `${c.noOp > 0 ? "⚠ " : ""}compaction: ${parts.join(", ")}`;
+}
+
 export function renderDelegationTiming(d: DelegationTiming): string[] {
   const lines = [
     `delegation ${d.taskId.slice(-24)} — wall ≥${fmtMs(d.wallMs)}` +
@@ -612,6 +655,8 @@ export function renderDelegationTiming(d: DelegationTiming): string[] {
       .sort((a, b) => (b.wallMs ?? 0) - (a.wallMs ?? 0))
       .slice(0, 3);
     if (slowest.length > 0) lines.push(`  slowest calls: ${slowest.map((c) => `${c.name ?? c.kind} ${fmtMs(c.wallMs)}`).join(", ")}`);
+    const compaction = renderCompaction(d.worker.compaction);
+    if (compaction) lines.push(`  ${compaction}`);
   }
   for (const g of d.gaps) lines.push(`  ⚠ gap: ${g}`);
   return lines;
@@ -645,6 +690,8 @@ export function renderSessionTiming(s: SessionTiming, label: string): string[] {
     const ttft = t.steps[0]?.ttftMs ?? null;
     lines.push(`  turn ${t.turnId.slice(-12)} ${t.outcome}: wall ${fmtMs(t.wallMs)}, preflight ${fmtMs(t.preflightMs)}, ttft ${fmtMs(ttft)}, ${t.steps.length} step(s)`);
   }
+  const compaction = renderCompaction(s.compaction);
+  if (compaction) lines.push(`  ${compaction}`);
   if (s.coverage.withAt < s.coverage.events) {
     lines.push(`  ⚠ ${s.coverage.events - s.coverage.withAt}/${s.coverage.events} event(s) carry no timestamp`);
   }

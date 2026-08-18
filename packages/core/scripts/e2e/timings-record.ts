@@ -17,6 +17,12 @@ export interface TimingsSummary {
   readonly delegationWallMs: { readonly p50: number | null; readonly min: number | null; readonly max: number | null };
   readonly bootMsP50: number | null;
   readonly ttftMsP50: number | null;
+  readonly compaction: {
+    readonly passes: number;
+    readonly reduced: number;
+    readonly noOp: number;
+    readonly unstamped: number;
+  };
 }
 
 function median(values: readonly number[]): number | null {
@@ -30,9 +36,30 @@ function known(values: readonly (number | null)[]): number[] {
   return values.filter((v): v is number => v !== null);
 }
 
+function distinctSessions(records: readonly TimingsRecord[]): SessionTiming[] {
+  const seen = new Set<string>();
+  const out: SessionTiming[] = [];
+  const take = (id: string | null, timing: SessionTiming | null): void => {
+    if (!timing) return;
+    if (id !== null) {
+      if (seen.has(id)) return;
+      seen.add(id);
+    }
+    out.push(timing);
+  };
+  for (const r of records) {
+    for (const s of r.sessions) take(s.sessionId, s.timing);
+    for (const d of r.delegations) take(d.workerSessionId, d.worker);
+  }
+  return out;
+}
+
 export function summariseTimings(records: readonly TimingsRecord[]): TimingsSummary {
   const delegations = records.flatMap((r) => r.delegations);
   const walls = known(delegations.map((d) => d.wallMs));
+  const sessions = distinctSessions(records);
+  const sumBy = (pick: (c: SessionTiming["compaction"]) => number): number =>
+    sessions.reduce((n, s) => n + pick(s.compaction), 0);
   return {
     records: records.length,
     delegations: delegations.length,
@@ -44,6 +71,12 @@ export function summariseTimings(records: readonly TimingsRecord[]): TimingsSumm
     },
     bootMsP50: median(known(delegations.map((d) => d.bootMs))),
     ttftMsP50: median(known(delegations.map((d) => d.ttftMs))),
+    compaction: {
+      passes: sumBy((c) => c.completed),
+      reduced: sumBy((c) => c.reduced),
+      noOp: sumBy((c) => c.noOp),
+      unstamped: sumBy((c) => c.unstamped),
+    },
   };
 }
 
