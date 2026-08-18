@@ -53,6 +53,14 @@ ok(JSON.stringify(APPROVER_LEVEL_ORDER) === JSON.stringify(["custom", "surface",
   ok(ordered.resolvedBy === "custom:second", "pin2: within L1 the band is config-ordered, defer passes down");
 }
 
+{
+  const res = await resolveApproverChain(req("create_ticket"));
+  ok(
+    res.elements.map((e) => e.element).join(",") === "aws-allow-list,connector-ops-raise,verb-classifier,registry",
+    "OPE-642: the built-in element roster is exactly the four elements a product call site feeds",
+  );
+}
+
 for (const [tool, entry] of Object.entries(TOOL_CONSEQUENCE)) {
   const res = await resolveApproverChain(req(tool));
   const expected = entry.tier === "open" ? "allow" : "ask";
@@ -106,7 +114,6 @@ for (const [tool, entry] of Object.entries(TOOL_CONSEQUENCE)) {
       mode: pick(modes),
       unattended: rand() < 0.3,
       tainted: rand() < 0.3,
-      ...(rand() < 0.2 ? { grant: { kind: "pr.open", grantedBy: "U9" } } : {}),
       ...(rand() < 0.15 ? { connectorOpRaise: pick(["write", "destructive"] as const) } : {}),
       ...(rand() < 0.15 ? { aws: { argv: pick([["logs", "describe-log-groups"], ["configure", "export-credentials"], ["s3", "cp", "a", "b"]]), allow: pick([["*"], ["logs"], undefined]) } } : {}),
     });
@@ -438,12 +445,6 @@ ok(taintToleranceOf("no_such_tool") === "gate", "taint: an unknown name fails cl
   const clean = await resolveApproverChain(req("purge_memory", { tainted: false }), { approvers: [approver("domain-lower", "allow")] });
   ok(clean.verdict === "allow" && clean.transforms.length === 0, "taint: the untainted control resolves the same way");
 
-  const grantedFire = await resolveApproverChain(
-    req("open_pull_request", { tainted: true, unattended: true, principalId: undefined, grant: { kind: "pr.open", grantedBy: "U7" } }),
-  );
-  ok(grantedFire.verdict === "allow", "taint: a GRANTED action on a tainted unattended fire proceeds — no card is minted into an empty room");
-  ok(grantedFire.transforms.length === 0, "taint: …and the fire's resolution applies no transform at all");
-
   const gatedFire = await resolveApproverChain(
     req("add_routine_rule", { tainted: true, unattended: true, principalId: undefined }),
     { approvers: [approver("domain-lower", "allow")] },
@@ -462,8 +463,14 @@ ok(registryVerdictOf("session.checkpoint") === "ask", "kind map: the fallback na
 {
   const ordinaryFire = await resolveApproverChain(req("open_pull_request", { unattended: true, principalId: undefined }));
   ok(ordinaryFire.verdict === "deny" && ordinaryFire.transforms[0]!.reason === "ask-unattended", "P3: an ORDINARY fire (thread grain) takes ask → deny");
-  const granted = await resolveApproverChain(req("open_pull_request", { unattended: true, principalId: undefined, grant: { kind: "pr.open", grantedBy: "U7" } }));
-  ok(granted.verdict === "allow" && granted.resolvedBy === "session-grant", "P3: a standing grant lets the unattended fire proceed (no ask arises)");
+  const strayGrant = await resolveApproverChain(
+    { ...req("open_pull_request", { unattended: true, principalId: undefined }), grant: { kind: "pr.open", grantedBy: "U7" } } as unknown as ApprovalChainRequest,
+  );
+  ok(strayGrant.verdict === "deny", "OPE-642: a grant-shaped field on the request buys NOTHING — the unattended fire still denies");
+  ok(
+    strayGrant.elements.every((e) => e.element !== "session-grant"),
+    "OPE-642: …and no `session-grant` element appears on the row",
+  );
   const attended = await resolveApproverChain(req("open_pull_request"));
   ok(attended.verdict === "ask", "P3: attended ask is untouched");
 }
