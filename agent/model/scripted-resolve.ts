@@ -9,6 +9,7 @@ import {
   ANY_SESSION,
   SCRIPTED_MODEL_ENV,
   SCRIPTED_MODEL_ID,
+  STALE_TURN_PARK_MS,
   scriptedModelArmed,
   scriptedStore,
   type ResolveObservation,
@@ -107,46 +108,84 @@ function stepIndexFor(arm: readonly ScriptedStep[], answered: number): number | 
   return `unmappable tool-result count ${answered} (script emits ${before} call(s) in total)`;
 }
 
+interface StepVerdict {
+  readonly fault?: string;
+  readonly served: number;
+  readonly step: ScriptedStep;
+  readonly stale: boolean;
+}
+
+function serveStep(entry: ScriptedEntry, at: ResolveObservation, toolResultCount: number): StepVerdict {
+  const arm = at.role === "child" ? entry.script.child : entry.script.parent;
+  const baselineKey = `${at.sessionId ?? "?"}/${at.turnId ?? "?"}/${at.role}`;
+  const baseline = (entry.baselines[baselineKey] ??= toolResultCount);
+  const nothing: ScriptedStep = { say: "scripted-model fault: see the record" };
+
+  if (arm === undefined) return { fault: "no child script registered", served: -1, step: nothing, stale: false };
+  const index = stepIndexFor(arm, toolResultCount - baseline);
+  if (typeof index === "string") return { fault: index, served: -1, step: nothing, stale: false };
+
+  const candidate = arm[index];
+  const turnKey = at.turnId ?? "?";
+  const firstCallTurn = entry.firstCallTurnByRole[at.role];
+  if (candidate.calls !== undefined && firstCallTurn !== undefined && firstCallTurn !== turnKey) {
+    return {
+      fault:
+        `stale script: role "${at.role}" already served a call-bearing step for turn "${firstCallTurn}"; ` +
+        `turn "${turnKey}" is a DIFFERENT turn hitting the same still-registered entry — dispose and ` +
+        "re-register a fresh script per turn (see harness.ts's awaitTaskSettlement doc).",
+      served: -1,
+      step: nothing,
+      stale: true,
+    };
+  }
+  if (candidate.calls !== undefined && firstCallTurn === undefined) entry.firstCallTurnByRole[at.role] = turnKey;
+  return { served: index, step: candidate, stale: false };
+}
+
+async function awaitSessionKeyedSwap(current: ScriptedEntry, sessionId: string | undefined): Promise<ScriptedEntry | undefined> {
+  if (sessionId === undefined || sessionId === ANY_SESSION) return undefined;
+  const store = scriptedStore();
+  const deadline = Date.now() + STALE_TURN_PARK_MS;
+  for (;;) {
+    const keyed = store.get(sessionId);
+    if (keyed !== undefined && keyed !== current) return keyed;
+    let stillRegistered = false;
+    for (const live of store.values()) if (live === current) stillRegistered = true;
+    if (!stillRegistered) return undefined;
+    if (Date.now() >= deadline) return undefined;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
 function buildStepModel(entry: ScriptedEntry, at: ResolveObservation): ReturnType<typeof mockModel> {
   return mockModel({
     modelId: SCRIPTED_MODEL_ID,
     provider: "open-everywhere-scripted",
     respond: async (request) => {
-      const arm = at.role === "child" ? entry.script.child : entry.script.parent;
-      const baselineKey = `${at.sessionId ?? "?"}/${at.turnId ?? "?"}/${at.role}`;
-      const baseline = (entry.baselines[baselineKey] ??= request.toolResults.length);
+      let target = entry;
+      let observation = at;
+      let verdict = serveStep(target, observation, request.toolResults.length);
 
-      let fault: string | undefined;
-      let served = -1;
-      let step: ScriptedStep = { say: "scripted-model fault: see the record" };
-      if (arm === undefined) {
-        fault = "no child script registered";
-      } else {
-        const index = stepIndexFor(arm, request.toolResults.length - baseline);
-        if (typeof index === "string") fault = index;
-        else {
-          const candidate = arm[index];
-          const turnKey = at.turnId ?? "?";
-          const firstCallTurn = entry.firstCallTurnByRole[at.role];
-          if (candidate.calls !== undefined && firstCallTurn !== undefined && firstCallTurn !== turnKey) {
-            fault =
-              `stale script: role "${at.role}" already served a call-bearing step for turn "${firstCallTurn}"; ` +
-              `turn "${turnKey}" is a DIFFERENT turn hitting the same still-registered entry — dispose and ` +
-              "re-register a fresh script per turn (see harness.ts's awaitTaskSettlement doc).";
-          } else {
-            served = index;
-            step = candidate;
-            if (candidate.calls !== undefined && firstCallTurn === undefined) entry.firstCallTurnByRole[at.role] = turnKey;
-          }
+      if (verdict.stale) {
+        const next = await awaitSessionKeyedSwap(target, observation.sessionId);
+        if (next !== undefined) {
+          const pushed = target.resolves.indexOf(observation);
+          if (pushed !== -1) target.resolves.splice(pushed, 1);
+          observation = { ...observation };
+          next.resolves.push(observation);
+          target = next;
+          verdict = serveStep(target, observation, request.toolResults.length);
         }
       }
+      const { fault, served, step } = verdict;
 
-      at.fault = fault;
+      observation.fault = fault;
 
-      entry.requests.push({
-        role: at.role,
-        sessionId: at.sessionId,
-        turnId: at.turnId,
+      target.requests.push({
+        role: observation.role,
+        sessionId: observation.sessionId,
+        turnId: observation.turnId,
         stepIndex: served,
         pid: process.pid,
         tools: request.tools.map((t) => t.name),

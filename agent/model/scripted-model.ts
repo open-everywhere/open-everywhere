@@ -81,6 +81,8 @@ export interface ScriptedEntry {
 
 export const ANY_SESSION = "*";
 
+export const STALE_TURN_PARK_MS = 30_000;
+
 export function scriptedStore(): Map<string, ScriptedEntry> {
   return processRegistryMap<ScriptedEntry>("scripted-model.v1");
 }
