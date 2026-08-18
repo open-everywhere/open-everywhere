@@ -30,10 +30,25 @@ const N = Math.max(1, Number.parseInt(flag("--n") ?? "5", 10));
 const MODEL = flag("--model") ?? "openai/gpt-5.6-luna";
 const EFFORT = flag("--effort") ?? "high";
 const MODE = flag("--mode") ?? "coalesced";
+const MODES = ["coalesced", "ambient-only", "warranted-ambient", "addressed-only"] as const;
+if (!(MODES as readonly string[]).includes(MODE)) throw new Error(`--mode must be one of ${MODES.join(", ")}; got '${MODE}'`);
 const PAIR = flag("--pair") === undefined ? undefined : Math.max(0, Number.parseInt(flag("--pair")!, 10));
 const TOOLSET = flag("--toolset") ?? "minimal";
 const REISSUE = has("--reissue");
 const STOCK_REISSUE = has("--stock-reissue");
+const ARM = (flag("--arm") ?? "a").toLowerCase();
+if (ARM !== "a" && ARM !== "c") throw new Error(`--arm must be 'a' (shipped) or 'c' (say-something); got '${ARM}'`);
+
+const ARM_C_INSTRUCTION = `
+## Ending the turn
+
+Do not end a turn with nothing at all. Finish every turn with one short line, in your own words,
+that says what you just did or decided — a sentence is plenty. There is no set phrase and no format
+to follow, so write it the way you would tell a colleague in passing.
+
+That closing line is not how you talk to the people here. Anything they are owed goes through
+\`reply\` first; the closing line only notes that you sent it, or that nothing was needed.
+`.trim();
 
 const DOMAIN = "payments";
 const SLACK_CHANNEL = "C_PAY";
@@ -67,12 +82,62 @@ const unifiedCtx: BindableContext = {
 async function buildSystemPrompt(): Promise<string> {
   const base = readFileSync(new URL("../../../../agent/instructions.md", import.meta.url), "utf8");
   const dynamic = await renderScopeMarkdown(unifiedCtx);
-  return `${base}\n\n${dynamic}`;
+  const shipped = `${base}\n\n${dynamic}`;
+  return ARM === "c" ? `${shipped}\n\n${ARM_C_INSTRUCTION}\n` : shipped;
 }
 
 const COALESCE_JOIN = "\n\n";
 
-interface Probe { readonly ambientWakeId: string; readonly addressedWakeId: string; readonly userMessage: string; readonly ambientText: string; readonly addressedText: string; }
+const WARRANTED_PROBES: readonly {
+  readonly shape: "room-question" | "name-drop" | "self-follow-up";
+  readonly body: string;
+  readonly selfPrior?: string;
+  readonly expect: "reply" | "either";
+  readonly why: string;
+}[] = [
+  { shape: "room-question", expect: "reply",
+    body: `does anyone know what the ISO currency code for the Swiss franc is? need it for the payout mapping.`,
+    why: `"a question you can answer — asked of the room" and the agent holds it outright` },
+  { shape: "room-question", expect: "reply",
+    body: `quick one for whoever is about — which HTTP status code means "too many requests"? I want to match on it.`,
+    why: `same clause: a question to the room the agent answers without a lookup` },
+  { shape: "room-question", expect: "reply",
+    body: `does anyone remember how many minutes there are in a full day? I keep second-guessing the cron interval.`,
+    why: `same clause; the ask is trivial so the measurement is WHETHER it speaks, not whether it can` },
+  { shape: "name-drop", expect: "reply",
+    body: `someone ask the agent what 250 divided by 4 is, we're arguing about how to split the invoice.`,
+    why: `"you're addressed or named — a direct question, or your name in a request"` },
+  { shape: "name-drop", expect: "reply",
+    body: `the agent should know this one — is a leap year 365 or 366 days? need it for the accrual window.`,
+    why: `same clause: the request names the agent as the holder, without an @mention` },
+  { shape: "name-drop", expect: "either",
+    body: `the agent has been quiet today. anyway, standup notes are in the doc if anyone missed it.`,
+    why: `BORDERLINE ON PURPOSE — the name appears but nothing is asked, so silence is defensible` },
+  { shape: "self-follow-up", expect: "reply",
+    selfPrior: `Payout cutoff is 16:00 on weekdays — anything after that settles the next working day.`,
+    body: `sorry, 16:00 UTC or 16:00 local? which one did you mean?`,
+    why: `"a missing fact only you hold" — the ambiguity is in the agent's OWN post, so only it can resolve it` },
+  { shape: "self-follow-up", expect: "reply",
+    selfPrior: `I've moved the retry ceiling from 3 to 5 on the sandbox connector.`,
+    body: `wait, is that 5 retries or 5 attempts in total? want to get the runbook right.`,
+    why: `same clause: a direct clarifying question about a change the agent itself announced` },
+  { shape: "self-follow-up", expect: "either",
+    selfPrior: `Payout cutoff is 16:00 on weekdays — anything after that settles the next working day.`,
+    body: `nice one, thanks — that's what I thought.`,
+    why: `BORDERLINE ON PURPOSE — the prompt names social chatter "even right after you posted" as a silence case` },
+];
+
+interface Probe {
+  readonly ambientWakeId: string;
+  readonly addressedWakeId: string;
+  readonly userMessage: string;
+  readonly ambientText: string;
+  readonly addressedText: string;
+  readonly targetWakeId: string;
+  readonly expect: "reply" | "silence" | "either";
+  readonly shape: string;
+  readonly why: string;
+}
 
 function buildProbe(i: number): Probe {
   const pair = S6_PROBES[(PAIR ?? i) % S6_PROBES.length];
@@ -81,6 +146,29 @@ function buildProbe(i: number): Probe {
   const now = () => new Date().toISOString();
 
   const channel = { id: SLACK_CHANNEL, type: "channel", platform: "slack", platformLabel: "Slack" };
+
+  if (MODE === "warranted-ambient") {
+    const w = WARRANTED_PROBES[(PAIR ?? i) % WARRANTED_PROBES.length];
+    const nameDropped = w.shape === "name-drop";
+    const wake: NormalizedWake = {
+      platform: "slack",
+      reason: "channel-activity",
+      addressing: nameDropped ? "name-drop" : "channel-watch",
+      locus: { channel }, wakeId: ambientWakeId,
+      participants: [{ id: "U_ALEX", name: "Alex" }, { id: "U_SAM", name: "Sam" }],
+      ...(nameDropped ? { nameDrop: { botName: "the agent", followUp: "channel-not-following" as const } } : {}),
+      ...(w.selfPrior !== undefined
+        ? { backscroll: [{ id: "1768476120.000100", sentAt: now(), from: "self" as const, trust: "peer" as const, author: "the agent", body: w.selfPrior }] }
+        : {}),
+      trigger: { kind: "message", message: { id: "1768476128.893000", sentAt: now(), from: "human", trust: "peer", trigger: true, author: "Alex", authorId: "U_ALEX", body: w.body } },
+    };
+    return {
+      ambientWakeId, addressedWakeId, userMessage: renderWake(wake, now).message,
+      ambientText: w.body, addressedText: "", targetWakeId: ambientWakeId,
+      expect: w.expect, shape: w.shape, why: w.why,
+    };
+  }
+
   const ambient: NormalizedWake = {
     platform: "slack", reason: "channel-activity", addressing: "channel-watch",
     locus: { channel }, wakeId: ambientWakeId,
@@ -95,8 +183,18 @@ function buildProbe(i: number): Probe {
   };
   const userMessage = MODE === "ambient-only"
     ? renderWake(ambient, now).message
-    : [renderWake(ambient, now).message, renderWake(addressed, now).message].join(COALESCE_JOIN);
-  return { ambientWakeId, addressedWakeId, userMessage, ambientText: pair.ambient, addressedText: pair.addressed };
+    : MODE === "addressed-only"
+      ? renderWake(addressed, now).message
+      : [renderWake(ambient, now).message, renderWake(addressed, now).message].join(COALESCE_JOIN);
+  return {
+    ambientWakeId, addressedWakeId, userMessage, ambientText: pair.ambient, addressedText: pair.addressed,
+    targetWakeId: MODE === "addressed-only" ? addressedWakeId : ambientWakeId,
+    expect: MODE === "addressed-only" ? "reply" : "silence",
+    shape: MODE === "addressed-only" ? "direct-mention" : "unwarranted-ambient",
+    why: MODE === "addressed-only"
+      ? `an @mention with a trivially-answerable ask — a reply is owed`
+      : `ordinary channel chatter nothing about the agent is needed for`,
+  };
 }
 
 interface ToolCall { readonly name: string; readonly input: Record<string, unknown>; }
@@ -179,24 +277,31 @@ function eveEmptyResponseNudge(): string {
 }
 
 export function eveWouldReissue(
-  secondCallEmpty: boolean,
+  finalCallEmpty: boolean,
   messagesAtEmptyStep: readonly unknown[],
   stock = false,
 ): boolean {
-  if (!secondCallEmpty) return false;
+  if (!finalCallEmpty) return false;
   if (stock) return true;
   return !turnHasTerminalAction(messagesAtEmptyStep);
 }
 
+interface ReplayCall { readonly calls: readonly ToolCall[]; readonly text: string }
+
 interface ReissueStages {
   readonly step1: readonly ToolCall[];
-  readonly secondCallEmpty: boolean;
-  readonly secondCallText: string;
+  readonly step1Text: string;
+  readonly perCall: readonly ReplayCall[];
+  readonly finalCallEmpty: boolean;
+  readonly finalCallText: string;
   readonly suppressedByTerminalGuard: boolean;
+  readonly hitCallCeiling: boolean;
   readonly reissued: boolean;
   readonly afterNudge: readonly ToolCall[];
   readonly afterNudgeText: string;
 }
+
+const MAX_REPLAY_CALLS = 6;
 
 async function runReissueProbe(
   gateway: ReturnType<typeof createGateway>,
@@ -206,35 +311,42 @@ async function runReissueProbe(
 ): Promise<{ stages: ReissueStages; usage: Record<string, unknown> | undefined }> {
   const model = gateway(MODEL);
   const opts = { model, system, providerOptions: { openai: { reasoningEffort: EFFORT } }, stopWhen: stepCountIs(1) } as const;
-  const base: ModelMessage[] = [{ role: "user", content: p.userMessage }];
+  let messages: ModelMessage[] = [{ role: "user", content: p.userMessage }];
 
-  const first = await generateText({ ...opts, messages: base, tools: await buildTools(calls) });
-  const step1 = [...calls];
-  const afterFirst: ModelMessage[] = [...base, ...first.response.messages];
+  const perCall: ReplayCall[] = [];
+  let messagesAtFinalCall: ModelMessage[] = messages;
+  let last = await generateText({ ...opts, messages, tools: await buildTools(calls) });
+  let hitCallCeiling = false;
+  perCall.push({ calls: [...calls], text: last.text });
+  for (let k = 1; last.toolCalls.length > 0; k++) {
+    if (k >= MAX_REPLAY_CALLS) { hitCallCeiling = true; break; }
+    messages = [...messages, ...last.response.messages];
+    messagesAtFinalCall = messages;
+    const before = calls.length;
+    last = await generateText({ ...opts, messages, tools: await buildTools(calls) });
+    perCall.push({ calls: calls.slice(before), text: last.text });
+  }
+  const step1 = [...perCall[0].calls];
+  const finalCallEmpty = !hitCallCeiling && last.text.trim() === "" && last.toolCalls.length === 0;
 
-  const second = await generateText({ ...opts, messages: afterFirst, tools: await buildTools(calls) });
-  const secondCallEmpty = second.text.trim() === "" && second.toolCalls.length === 0;
-
-  const reissue = eveWouldReissue(secondCallEmpty, afterFirst, STOCK_REISSUE);
-  const suppressedByTerminalGuard = secondCallEmpty && !reissue;
+  const reissue = eveWouldReissue(finalCallEmpty, messagesAtFinalCall, STOCK_REISSUE);
+  const suppressedByTerminalGuard = finalCallEmpty && !reissue;
+  const stagesBase = {
+    step1, step1Text: perCall[0].text, perCall, finalCallEmpty, finalCallText: last.text,
+    suppressedByTerminalGuard, hitCallCeiling,
+  };
   if (!reissue) {
-    const usage = { ...(second.usage as Record<string, unknown>), ...((second.providerMetadata?.gateway as Record<string, unknown>) ?? {}) };
-    return {
-      stages: { step1, secondCallEmpty, secondCallText: second.text, suppressedByTerminalGuard, reissued: false, afterNudge: [], afterNudgeText: "" },
-      usage,
-    };
+    const usage = { ...(last.usage as Record<string, unknown>), ...((last.providerMetadata?.gateway as Record<string, unknown>) ?? {}) };
+    return { stages: { ...stagesBase, reissued: false, afterNudge: [], afterNudgeText: "" }, usage };
   }
 
   const before = calls.length;
-  const nudged: ModelMessage[] = [...afterFirst, { role: "user", content: eveEmptyResponseNudge() }];
+  const nudged: ModelMessage[] = [...messagesAtFinalCall, { role: "user", content: eveEmptyResponseNudge() }];
   const third = await generateText({ ...opts, messages: nudged, tools: await buildTools(calls) });
   const afterNudge = calls.slice(before);
 
   const usage = { ...(third.usage as Record<string, unknown>), ...((third.providerMetadata?.gateway as Record<string, unknown>) ?? {}) };
-  return {
-    stages: { step1, secondCallEmpty, secondCallText: second.text, suppressedByTerminalGuard, reissued: true, afterNudge, afterNudgeText: third.text },
-    usage,
-  };
+  return { stages: { ...stagesBase, reissued: true, afterNudge, afterNudgeText: third.text }, usage };
 }
 
 interface Score {
@@ -242,24 +354,45 @@ interface Score {
   readonly ambientSilent: boolean;
   readonly noCrossBinding: boolean;
   readonly correct: boolean;
+  readonly targetReplied: boolean;
+  readonly borderline: boolean;
   readonly notes: readonly string[];
 }
 
-export function scoreProbe(p: Pick<Probe, "ambientWakeId" | "addressedWakeId">, calls: readonly ToolCall[]): Score {
+type Delivery = "tool" | "terminal" | "none";
+
+export function scoreProbe(
+  p: Pick<Probe, "ambientWakeId" | "addressedWakeId" | "targetWakeId" | "expect">,
+  calls: readonly ToolCall[],
+): Score {
   const replies = calls.filter((c) => c.name === "reply");
   const wakeOf = (c: ToolCall): string => String(c.input.wake ?? "");
   const textOf = (c: ToolCall): string => String(c.input.text ?? "");
-  const addressedAnswered = MODE === "ambient-only" || replies.some((c) => wakeOf(c) === p.addressedWakeId);
+  const singleWake = MODE !== "coalesced";
+  const addressedAnswered = (singleWake && MODE !== "addressed-only") || replies.some((c) => wakeOf(c) === p.addressedWakeId);
   const ambientSilent = !replies.some((c) => wakeOf(c) === p.ambientWakeId);
   const textLeak = replies.some((c) => textOf(c).includes(p.ambientWakeId));
-  const noCrossBinding = ambientSilent && !textLeak;
+  const noCrossBinding = !textLeak && (p.expect === "silence" ? ambientSilent : true);
+  const targetReplied = replies.some((c) => wakeOf(c) === p.targetWakeId);
+  const borderline = p.expect === "either";
   const notes: string[] = [];
   if (!addressedAnswered) notes.push(`the addressed wake ${p.addressedWakeId} got no reply — the message it was owed went unanswered`);
-  if (!ambientSilent) notes.push(`the ambient wake ${p.ambientWakeId} got a reply — it should never have been answered`);
+  if (p.expect === "silence" && !ambientSilent) notes.push(`the ambient wake ${p.ambientWakeId} got a reply — it should never have been answered`);
+  if (p.expect === "reply" && !targetReplied) notes.push(`FALSE SILENCE — the wake ${p.targetWakeId} warranted a reply and got none`);
   if (textLeak) notes.push(`a reply's TEXT names the ambient wake's id — a raw id leaked into a delivered message`);
   const unknownWake = replies.filter((c) => wakeOf(c) !== p.addressedWakeId && wakeOf(c) !== p.ambientWakeId);
   for (const c of unknownWake) notes.push(`a reply named an id belonging to NEITHER wake: ${wakeOf(c)}`);
-  return { addressedAnswered, ambientSilent, noCrossBinding, correct: addressedAnswered && ambientSilent && noCrossBinding, notes };
+  const meetsExpectation = p.expect === "either" ? true : p.expect === "reply" ? targetReplied : ambientSilent;
+  return {
+    addressedAnswered, ambientSilent, noCrossBinding, targetReplied, borderline,
+    correct: addressedAnswered && noCrossBinding && meetsExpectation,
+    notes,
+  };
+}
+
+export function classifyDelivery(targetWakeId: string, calls: readonly ToolCall[], terminalText: string): Delivery {
+  if (calls.some((c) => c.name === "reply" && String(c.input.wake ?? "") === targetWakeId)) return "tool";
+  return terminalText.trim() === "" ? "none" : "terminal";
 }
 
 async function main(): Promise<void> {
@@ -282,7 +415,7 @@ async function main(): Promise<void> {
   if (!key) throw new Error("AI_GATEWAY_API_KEY is unset — source .env.e2e and set it from ROWAN_VERCEL_AI_GATEWAY_KEY (never the shell key, which is the shell key)");
   const gateway = createGateway({ apiKey: key });
 
-  console.log(`first-turn-offline: n=${N} mode=${MODE} toolset=${TOOLSET} reissue=${REISSUE ? (STOCK_REISSUE ? "stock (pre-OPE-762)" : "guarded (OPE-762)") : "off"} pair=${PAIR ?? "rotating"} model=${MODEL} effort=${EFFORT}`);
+  console.log(`first-turn-offline: n=${N} mode=${MODE} arm=${ARM}${ARM === "c" ? " (say-something)" : " (shipped)"} toolset=${TOOLSET} reissue=${REISSUE ? (STOCK_REISSUE ? "stock (pre-OPE-762)" : "guarded (OPE-762)") : "off"} pair=${PAIR ?? "rotating"} model=${MODEL} effort=${EFFORT}`);
   console.log(`system prompt: ${system.length} chars`);
 
   const results: unknown[] = [];
@@ -291,9 +424,15 @@ async function main(): Promise<void> {
   let addressedAnswered = 0;
   let ambientSilent = 0;
   let noCrossBinding = 0;
-  let emptySecondStep = 0;
+  let emptyFinalStep = 0;
   let overReplyAfterNudge = 0;
+  let ceilingHits = 0;
   let guardSuppressed = 0;
+  const delivery: Record<Delivery, number> = { tool: 0, terminal: 0, none: 0 };
+  let falseSilence = 0;
+  let borderlineCount = 0;
+  let expectedReply = 0;
+  let erroredProbes = 0;
 
   for (let i = 0; i < N; i++) {
     const p = buildProbe(i);
@@ -325,26 +464,44 @@ async function main(): Promise<void> {
     } catch (e) {
       error = (e as Error).message;
     }
-    if (stages?.secondCallEmpty) emptySecondStep++;
+    if (stages?.finalCallEmpty) emptyFinalStep++;
+    if (stages?.hitCallCeiling) ceilingHits++;
+    if (error !== undefined) erroredProbes++;
     if (stages?.suppressedByTerminalGuard) guardSuppressed++;
     if (stages?.reissued && stages.afterNudge.some((c) => c.name === "reply")) overReplyAfterNudge++;
     const score = scoreProbe(p, calls);
+    const terminalText = stages
+      ? [stages.afterNudgeText, ...[...stages.perCall].reverse().map((c) => c.text)].find((t) => t.trim() !== "") ?? ""
+      : text;
+    const del = classifyDelivery(p.targetWakeId, calls, terminalText);
+    delivery[del]++;
+    if (score.borderline) borderlineCount++;
+    if (p.expect === "reply" && error === undefined) {
+      expectedReply++;
+      if (!score.targetReplied) falseSilence++;
+    }
     if (score.correct) correct++;
     if (score.addressedAnswered) addressedAnswered++;
     if (score.ambientSilent) ambientSilent++;
     if (score.noCrossBinding) noCrossBinding++;
-    const verdict = error ? "ERROR" : score.correct ? "CORRECT" : "WRONG";
-    console.log(`\n── probe ${i + 1}/${N} ${verdict} (${Math.round((Date.now() - started) / 1000)}s)`);
+    const verdict = error ? "ERROR" : !score.correct ? "WRONG" : score.borderline ? "EITHER-OK" : "CORRECT";
+    console.log(`\n── probe ${i + 1}/${N} ${verdict} (${Math.round((Date.now() - started) / 1000)}s) shape=${p.shape} expect=${p.expect} delivery=${del}`);
+    if (MODE === "warranted-ambient") console.log(`   warrant : ${p.why}`);
     console.log(`   ambient : ${p.ambientText}`);
-    console.log(`   addressed: ${p.addressedText}`);
+    if (p.addressedText !== "") console.log(`   addressed: ${p.addressedText}`);
     if (stages) {
-      for (const c of stages.step1) console.log(`   step1 → ${c.name}(${JSON.stringify(c.input).slice(0, 200)})`);
-      const step2 = stages.secondCallEmpty
-        ? stages.suppressedByTerminalGuard
-          ? "EMPTY — suppressed by the OPE-762 terminal guard (no reissue)"
-          : "EMPTY (eve reissues here)"
-        : `text ${JSON.stringify(stages.secondCallText.slice(0, 160))} — no reissue`;
-      console.log(`   step2 → ${step2}`);
+      stages.perCall.forEach((c, k) => {
+        for (const call of c.calls) console.log(`   step${k + 1} → ${call.name}(${JSON.stringify(call.input).slice(0, 200)})`);
+        if (c.calls.length === 0) {
+          const why = k + 1 === stages.perCall.length && stages.finalCallEmpty
+            ? stages.suppressedByTerminalGuard
+              ? "EMPTY — suppressed by the OPE-762 terminal guard (no reissue)"
+              : "EMPTY (eve reissues here)"
+            : `text ${JSON.stringify(c.text.slice(0, 160))} — no reissue`;
+          console.log(`   step${k + 1} → ${why}`);
+        }
+      });
+      if (stages.hitCallCeiling) console.log(`   ! the replay hit its ${MAX_REPLAY_CALLS}-call ceiling — this turn's ending is UNKNOWN, not empty`);
       if (stages.reissued) {
         for (const c of stages.afterNudge) console.log(`   nudged → ${c.name}(${JSON.stringify(c.input).slice(0, 200)})`);
         if (stages.afterNudge.length === 0) console.log(`   nudged → (no tool call) text: ${JSON.stringify(stages.afterNudgeText.slice(0, 200))}`);
@@ -357,19 +514,26 @@ async function main(): Promise<void> {
     if (error) console.log(`   ! model call failed: ${error}`);
     if (usage) console.log(`   $ tokens ${JSON.stringify(usage)}`);
     usageLog.push({ probe: i + 1, usage: usage ?? null });
-    results.push({ probe: i + 1, ...p, calls, terminalText: text, score, stages: stages ?? null, usage: usage ?? null, error: error ?? null });
+    results.push({ probe: i + 1, ...p, calls, terminalText, delivery: del, score, stages: stages ?? null, usage: usage ?? null, error: error ?? null });
   }
 
-  console.log(`\n════ first-turn correctness (offline, mode=${MODE}) ════`);
+  console.log(`\n════ first-turn correctness (offline, mode=${MODE}, arm=${ARM}) ════`);
   console.log(`correct            ${correct}/${N} = ${(correct / N).toFixed(2)}`);
   console.log(`addressed_answered ${addressedAnswered}/${N}`);
   console.log(`ambient_silent     ${ambientSilent}/${N}`);
   console.log(`no_cross_binding   ${noCrossBinding}/${N}`);
+  console.log(`delivery           tool ${delivery.tool}/${N} · terminal ${delivery.terminal}/${N} · none ${delivery.none}/${N}`);
+  if (expectedReply > 0) {
+    console.log(`false_silence      ${falseSilence}/${expectedReply} = ${(falseSilence / expectedReply).toFixed(2)}  (probes that OWED a reply and made none)`);
+  }
+  if (borderlineCount > 0) console.log(`borderline         ${borderlineCount}/${N}  (expect="either" — reported, never scored against the agent)`);
+  if (erroredProbes > 0) console.log(`errored            ${erroredProbes}/${N}  (the call threw — excluded from false_silence, never counted as a silence)`);
   if (REISSUE) {
-    console.log(`empty_second_step  ${emptySecondStep}/${N}  (the step eve reads as a failure)`);
+    console.log(`empty_final_step   ${emptyFinalStep}/${N}  (the step eve reads as a failure)`);
     console.log(`guard_suppressed   ${guardSuppressed}/${N}  (OPE-762 stopped the nudge; ${STOCK_REISSUE ? "STOCK arm — guard off" : "guarded arm"})`);
-    console.log(`nudges_sent        ${emptySecondStep - guardSuppressed}/${N}  (reissues the stack actually sends)`);
+    console.log(`nudges_sent        ${emptyFinalStep - guardSuppressed}/${N}  (reissues the stack actually sends)`);
     console.log(`over_reply_nudged  ${overReplyAfterNudge}/${N}  (reissue turned silence into a reply)`);
+    if (ceilingHits > 0) console.log(`call_ceiling_hits  ${ceilingHits}/${N}  (replay ran out of calls — those turns' endings are UNKNOWN)`);
   }
   const cachedOf = (u: Record<string, unknown> | null): number => {
     const details = (u?.inputTokenDetails ?? {}) as Record<string, unknown>;
@@ -382,11 +546,15 @@ async function main(): Promise<void> {
   console.log(`per probe: ${usageLog.map((r) => `${inputOf(r.usage)}/${cachedOf(r.usage)}`).join(" ")}  (input/cached)`);
 
   const outDir = join(process.cwd(), "scripts/eval/results");
-  const out = flag("--out") ?? join(outDir, `first-turn-offline-${MODE}-${TOOLSET}${REISSUE ? (STOCK_REISSUE ? "-reissue-stock" : "-reissue") : ""}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+  const out = flag("--out") ?? join(outDir, `first-turn-offline-${MODE}-${TOOLSET}-arm${ARM}${REISSUE ? (STOCK_REISSUE ? "-reissue-stock" : "-reissue") : ""}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, JSON.stringify({
-    config: { n: N, mode: MODE, pair: PAIR ?? null, toolset: TOOLSET, reissue: REISSUE, stockReissue: STOCK_REISSUE, mountedTools: mounted, model: MODEL, effort: EFFORT, systemPromptChars: system.length },
-    summary: { correct, of: N, rate: correct / N, addressedAnswered, ambientSilent, noCrossBinding, emptySecondStep, guardSuppressed, nudgesSent: emptySecondStep - guardSuppressed, overReplyAfterNudge },
+    config: { n: N, mode: MODE, arm: ARM, pair: PAIR ?? null, toolset: TOOLSET, reissue: REISSUE, stockReissue: STOCK_REISSUE, mountedTools: mounted, model: MODEL, effort: EFFORT, systemPromptChars: system.length },
+    summary: {
+      correct, of: N, rate: correct / N, addressedAnswered, ambientSilent, noCrossBinding,
+      emptyFinalStep, guardSuppressed, nudgesSent: emptyFinalStep - guardSuppressed, overReplyAfterNudge, ceilingHits,
+      delivery, falseSilence, expectedReply, borderline: borderlineCount, erroredProbes,
+    },
     usage: usageLog,
     system,
     probes: results,
