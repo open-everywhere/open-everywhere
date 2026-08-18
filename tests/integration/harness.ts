@@ -10,12 +10,24 @@ import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
 import { REDELIVERY_SIGNATURE, REDELIVERY_STORM_THRESHOLD, RedeliveryStormGuard } from "./redelivery-storm-guard";
 import { ROLLOWN_OUTPUT_DIR, rollOwnMissingMessage, rollOwnTargetExists } from "./rollown-target";
 
-import { ANY_SESSION, registerScript, scriptedStore, type RecordedRequest, type ScriptedHandle, type SeatScript } from "../../agent/model/scripted-model";
+import {
+  ANY_SESSION,
+  beginScriptedEpoch,
+  registerScript,
+  scriptedStore,
+  staleHoldExpiryNote,
+  __resetStaleHoldExpiriesForTest,
+  type RecordedRequest,
+  type ScriptedHandle,
+  type SeatScript,
+} from "../../agent/model/scripted-model";
 export { registerScript, type RecordedRequest, type ResolveObservation, type ScriptedHandle, type ScriptedStep, type SeatScript, type ToolDefinitionRecord } from "../../agent/model/scripted-model";
 
 const oePerTestCleanups: (() => void)[] = [];
 afterEach(() => {
   for (const cleanup of oePerTestCleanups.splice(0)) cleanup();
+  beginScriptedEpoch();
+  __resetStaleHoldExpiriesForTest();
 });
 export function afterThisTest(cleanup: () => void): void {
   oePerTestCleanups.push(cleanup);
@@ -237,7 +249,9 @@ export async function waitFor<T>(probe: () => T | undefined | Promise<T | undefi
           "check `ps -eo pid,rss,etime,cmd --sort=-rss` and `free -m` for a co-tenant, and re-run on a quiet box.",
       );
     }
-    if (Date.now() > deadline) throw new Error(`timed out after ${timeoutMs}ms waiting for: ${label}${redeliveryRecoveryNote()}`);
+    if (Date.now() > deadline) {
+      throw new Error(`timed out after ${timeoutMs}ms waiting for: ${label}${staleHoldExpiryNote()}${redeliveryRecoveryNote()}`);
+    }
     await sleep(400);
   }
 }
