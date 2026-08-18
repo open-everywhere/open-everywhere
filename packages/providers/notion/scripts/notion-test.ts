@@ -441,6 +441,11 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
       await completed("this must not post", ctx);
     });
     ok(posts.length === 0, "notion reply-targeting: no auth target ⇒ posts NOTHING (fail safe, stale seed ignored)");
+    const { readAudit: readNoTarget } = await import("@open-everywhere/core/agent/adapter-api.js");
+    const noTargets = await readNoTarget({ action: "notion.no_target" });
+    ok(noTargets.length === 1, "OPE-720: the fail-safe branch writes ONE notion.no_target row — the dispatched row is closed, not left open");
+    ok(noTargets[0]!.detail?.reason === "no-per-turn-target" && noTargets[0]!.detail?.chars === "this must not post".length, "OPE-720: the row states the reason and the suppressed length (a count, never the text)");
+    ok(!JSON.stringify(noTargets[0]!.detail).includes("this must not post"), "OPE-720: taint-clean — the suppressed answer's text is not in the row");
 
     posts = [];
     await inSession(async () => {
