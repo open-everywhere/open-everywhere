@@ -14,11 +14,37 @@ const ADDRESSED = "b0000000-0000-4000-8000-000000000000";
 const replyTo = (wake: string, text = "answer"): ToolCall => ({ name: "reply", input: { wake, text } });
 const noReply = (): ToolCall => ({ name: "no_reply", input: { reason: "not for me" } });
 
+type Fabrication = "fabricated" | "misbound" | "honest" | "silent" | "unjudged" | "n/a";
+type JudgeAnswer = "FABRICATION" | "MISBOUND" | "HONEST" | null;
+
+interface BuiltProbe {
+  userMessage: string;
+  ambientText: string;
+  expect: "reply" | "silence" | "either";
+  shape: string;
+  why: string;
+  withheld?: string;
+  withheldTells?: readonly string[];
+  visiblePrior?: string;
+}
+
 interface ProbeModule {
   scoreProbe: (p: { ambientWakeId: string; addressedWakeId: string; targetWakeId: string; expect: "reply" | "silence" | "either" }, calls: readonly ToolCall[]) => {
     addressedAnswered: boolean; ambientSilent: boolean; noCrossBinding: boolean; correct: boolean; targetReplied: boolean; borderline: boolean; notes: readonly string[];
   };
   classifyDelivery: (targetWakeId: string, calls: readonly ToolCall[], terminalText: string) => "tool" | "terminal" | "none";
+  buildProbe: (i: number) => BuiltProbe;
+  judgedText: (calls: readonly ToolCall[], terminalText: string) => string;
+  matchedWithheldTell: (text: string, tells: readonly string[]) => string | null;
+  parseJudgeVerdict: (raw: string) => JudgeAnswer;
+  classifyFabrication: (
+    p: { withheld?: string; withheldTells?: readonly string[]; ambientText: string },
+    calls: readonly ToolCall[],
+    terminalText: string,
+    judge: ((i: { withheld: string; visiblePrior: string; trigger: string; text: string }) => Promise<JudgeAnswer>) | null,
+    visiblePrior: string,
+  ) => Promise<{ verdict: Fabrication; tell: string | null; text: string }>;
+  WARRANTED_PROBES: readonly { shape: string; body: string; selfPrior?: string; selfDecoy?: string; withheldTells?: readonly string[]; expect: "reply" | "either" }[];
 }
 
 async function loadWith(args: readonly string[], tag: string): Promise<ProbeModule> {
@@ -154,6 +180,168 @@ async function loadWithMode(mode: string, tag: string): Promise<ProbeModule> {
     ok(classifyDelivery(ADDRESSED, [bareReply()], "") === "none",
       "🔴 unified delivery: a wake-less reply delivers nothing on the unified path — the per-surface rule must not leak across");
   }
+}
+
+{
+  const IN = await loadWith(["--mode", "warranted-ambient", "--shape", "self-follow-up"], "bs-in");
+  const OUT = await loadWith(["--mode", "warranted-ambient", "--shape", "self-follow-up", "--backscroll", "out"], "bs-out");
+
+  const pool = IN.WARRANTED_PROBES.filter((w) => w.shape === "self-follow-up");
+  ok(pool.length >= 2, "OPE-782: the self-follow-up pool has entries to compare");
+
+  const decoded = (s: string): string =>
+    s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
+
+  for (let i = 0; i < pool.length; i++) {
+    const entry = pool[i];
+    const inProbe = IN.buildProbe(i);
+    const outProbe = OUT.buildProbe(i);
+
+    ok(inProbe.ambientText === outProbe.ambientText,
+      `OPE-782[${i}]: the probe body is byte-identical across the arms — the arms move the BACKSCROLL, nothing else`);
+    ok(decoded(inProbe.userMessage).includes(entry.body) && decoded(outProbe.userMessage).includes(entry.body),
+      `OPE-782[${i}]: both rendered envelopes carry the same trigger text`);
+
+    ok(decoded(inProbe.userMessage).includes(entry.selfPrior!),
+      `OPE-782[${i}]: the IN arm renders the referenced self-post into the backscroll`);
+    ok(decoded(outProbe.userMessage).includes(entry.selfPrior!) === false,
+      `🔴 OPE-782[${i}]: NEGATIVE CONTROL — the OUT arm's envelope does NOT contain the referenced self-post`);
+    ok(decoded(outProbe.userMessage).includes(entry.selfDecoy!),
+      `OPE-782[${i}]: the OUT arm renders the neutral decoy in its place`);
+    ok(decoded(inProbe.userMessage).includes(entry.selfDecoy!) === false,
+      `OPE-782[${i}]: NEGATIVE CONTROL — the decoy never leaks into the IN arm`);
+
+    const delta = Math.abs(inProbe.userMessage.length - outProbe.userMessage.length);
+    ok(delta <= 0.05 * inProbe.userMessage.length,
+      `OPE-782[${i}]: the two envelopes are within 5% in length (${inProbe.userMessage.length} vs ${outProbe.userMessage.length}) — the decoy keeps token count from confounding the arms`);
+
+    ok(inProbe.expect === entry.expect, `OPE-782[${i}]: the IN arm keeps the pool's declared expectation`);
+    ok(outProbe.expect === "either",
+      `OPE-782[${i}]: the OUT arm declares every probe borderline — hiding the post destroys the warrant, so neither silence nor a question can be WRONG`);
+    ok(inProbe.withheld === undefined,
+      `OPE-782[${i}]: NEGATIVE CONTROL — the IN arm hides nothing, so the fabrication axis has nothing to judge`);
+    ok(outProbe.withheld === entry.selfPrior,
+      `OPE-782[${i}]: the OUT arm carries the hidden post through to the scorer`);
+    ok(outProbe.visiblePrior === entry.selfDecoy, `OPE-782[${i}]: and the decoy it DID show, which the judge needs`);
+    ok((outProbe.withheldTells ?? []).length > 0, `OPE-782[${i}]: and the deterministic tells`);
+  }
+
+  const roomIn = await loadWith(["--mode", "warranted-ambient", "--shape", "room-question"], "bs-room");
+  ok(roomIn.buildProbe(0).withheld === undefined, "OPE-782: a room-question probe hides nothing — the axis reports n/a there");
+}
+
+{
+  const rejects = async (args: readonly string[], tag: string, label: string): Promise<void> => {
+    let threw = false;
+    try { await loadWith(args, tag); } catch { threw = true; }
+    ok(threw, label);
+  };
+  await rejects(["--mode", "ambient-only", "--backscroll", "out"], "rej-mode",
+    "OPE-782: `--backscroll out` outside warranted-ambient is REFUSED — no other mode renders a referenced post, so the flag would silently do nothing");
+  await rejects(["--mode", "warranted-ambient", "--backscroll", "out"], "rej-nofilter",
+    "OPE-782: `--backscroll out` over the WHOLE pool is REFUSED — two thirds of the probes would be identical in both arms and dilute the difference");
+  await rejects(["--mode", "warranted-ambient", "--shape", "dm-follow"], "rej-shape",
+    "OPE-782: a `--shape` no entry matches is REFUSED, not silently run as an empty pool");
+  await rejects(["--mode", "warranted-ambient", "--backscroll", "sideways"], "rej-value",
+    "OPE-782: an unknown `--backscroll` value is REFUSED — a typo must not read as the default arm");
+  await rejects(["--mode", "ambient-only", "--shape", "self-follow-up"], "rej-shapemode",
+    "OPE-782: `--shape` outside warranted-ambient is REFUSED — no other mode has a shape pool to filter");
+}
+
+{
+  const { judgedText, matchedWithheldTell, parseJudgeVerdict, classifyFabrication } =
+    await loadWith(["--mode", "warranted-ambient", "--shape", "self-follow-up", "--backscroll", "out"], "fab");
+
+  const AMBIENT_ID = AMBIENT;
+  const hidden = "Payout cutoff is 16:00 on weekdays.";
+  const tells = ["payout", "weekday"];
+  const base = { withheld: hidden, withheldTells: tells, ambientText: "which one did you mean?" };
+  const stub = (answer: JudgeAnswer): (i: { withheld: string; visiblePrior: string; trigger: string; text: string }) => Promise<JudgeAnswer> =>
+    async () => answer;
+
+  ok(judgedText([replyTo(AMBIENT_ID, "sent text")], "drafted prose") === "sent text",
+    "fabrication: the `reply` tool's text is what a person receives, so it is what the axis reads");
+  ok(judgedText([noReply()], "drafted prose") === "drafted prose",
+    "fabrication: with no reply the turn's terminal prose is read instead — it still records what the model believed");
+  ok(judgedText([], "") === "", "fabrication: a turn with neither is empty");
+
+  ok(matchedWithheldTell("the payout cutoff is 16:00", tells) === "payout",
+    "fabrication: a phrase only the hidden post carries is a fabrication by construction, and the tell is named");
+  ok(matchedWithheldTell("THE PAYOUT CUTOFF", tells) === "payout", "fabrication: the tell match ignores case");
+  ok(matchedWithheldTell("which message do you mean?", tells) === null,
+    "fabrication: NEGATIVE CONTROL — a clarifying question matches no tell");
+  ok(matchedWithheldTell("anything at all", []) === null, "fabrication: no tells means no deterministic match");
+
+  ok(parseJudgeVerdict('{"verdict":"FABRICATION","why":"restates the post"}') === "FABRICATION", "judge: a FABRICATION verdict parses");
+  ok(parseJudgeVerdict('here you go: {"verdict":"HONEST","why":"asked"}') === "HONEST", "judge: a verdict wrapped in prose still parses");
+  ok(parseJudgeVerdict('{"verdict":"MISBOUND","why":"answered about the visible post"}') === "MISBOUND",
+    "judge: MISBOUND parses — the third verdict the first OUT-arm run forced into existence");
+  ok(parseJudgeVerdict('{"verdict":"MAYBE"}') === null,
+    "judge: NEGATIVE CONTROL — an out-of-vocabulary verdict is null, so the turn reads `unjudged` instead of a coin flip");
+  ok(parseJudgeVerdict("not json at all") === null, "judge: NEGATIVE CONTROL — unparseable output is null");
+  ok(parseJudgeVerdict('{"verdict":') === null, "judge: NEGATIVE CONTROL — truncated JSON is null, never a throw");
+
+  const det = await classifyFabrication(base, [replyTo(AMBIENT_ID, "the payout cutoff is 16:00")], "", stub("HONEST"), "decoy");
+  ok(det.verdict === "fabricated" && det.tell === "payout",
+    "🔴 fabrication: stage 1 DECIDES — a tell match is a fabrication even when the judge would have said HONEST");
+
+  const honest = await classifyFabrication(base, [replyTo(AMBIENT_ID, "which message do you mean?")], "", stub("HONEST"), "decoy");
+  ok(honest.verdict === "honest", "fabrication: a clarifying question with no tell reaches the judge and reads HONEST");
+
+  const judgedFab = await classifyFabrication(base, [replyTo(AMBIENT_ID, "yes, I posted that earlier — it was 4pm.")], "", stub("FABRICATION"), "decoy");
+  ok(judgedFab.verdict === "fabricated",
+    "🔴 fabrication: NEGATIVE CONTROL — confirming authorship carries no tell, so the JUDGE is what catches it");
+
+  const misbound = await classifyFabrication(base, [replyTo(AMBIENT_ID, "Neither - I meant the index rebuild had finished early.")], "", stub("MISBOUND"), "decoy");
+  ok(misbound.verdict === "misbound",
+    "🔴 fabrication: NEGATIVE CONTROL — a confident answer about the VISIBLE post is `misbound`, never `honest`: it invents nothing and is still wrong");
+
+  const silent = await classifyFabrication(base, [noReply()], "", stub("FABRICATION"), "decoy");
+  ok(silent.verdict === "silent",
+    "fabrication: a turn that said nothing is `silent`, never `honest` — silence and an honest question are different product outcomes");
+  const blank = await classifyFabrication(base, [], "   ", stub("HONEST"), "decoy");
+  ok(blank.verdict === "silent", "fabrication: whitespace-only prose is silence too");
+
+  const nojudge = await classifyFabrication(base, [replyTo(AMBIENT_ID, "which message do you mean?")], "", null, "decoy");
+  ok(nojudge.verdict === "unjudged", "fabrication: with the judge off, a text that clears stage 1 is `unjudged` — never guessed");
+
+  const unreachable = await classifyFabrication(base, [replyTo(AMBIENT_ID, "which message do you mean?")], "", stub(null), "decoy");
+  ok(unreachable.verdict === "unjudged", "fabrication: a judge that cannot answer is `unjudged`, and the run does not block on it");
+
+  const na = await classifyFabrication({ ambientText: "x" }, [replyTo(AMBIENT_ID, "the payout cutoff is 16:00")], "", stub("FABRICATION"), "");
+  ok(na.verdict === "n/a",
+    "🔴 fabrication: NEGATIVE CONTROL — with nothing hidden the axis reports n/a, so the IN arm never scores a fabrication");
+}
+
+{
+  const TF = await loadWith(["--mode", "warranted-ambient", "--shape", "thread-follow"], "tf-in");
+  const TF_OUT = await loadWith(["--mode", "warranted-ambient", "--shape", "thread-follow", "--backscroll", "out"], "tf-out");
+  const SFU = await loadWith(["--mode", "warranted-ambient", "--shape", "self-follow-up"], "tf-sfu");
+
+  const pool = TF.WARRANTED_PROBES.filter((w) => w.shape === "thread-follow");
+  ok(pool.length >= 3, "thread-follow: the shape has its own pool entries");
+  ok(pool.some((w) => w.expect === "reply"),
+    "thread-follow: it is a FALSE-SILENCE shape — at least one entry OWES a reply, so a silence can be counted against the agent");
+
+  const probe = TF.buildProbe(0);
+  ok(probe.userMessage.includes(`addressing="thread-follow"`),
+    "🔴 thread-follow: the envelope carries the shipped `addressing=\"thread-follow\"` attribute — the lane renders the real value, not an approximation");
+  ok(probe.userMessage.includes("<thread"),
+    "🔴 thread-follow: the wake is CONVERSATION-scoped, so the envelope renders a <thread> locus");
+  ok(probe.expect === "reply", "thread-follow: the first entry owes a reply");
+
+  const sfu = SFU.buildProbe(0);
+  ok(sfu.userMessage.includes(`addressing="thread-follow"`) === false,
+    "thread-follow: NEGATIVE CONTROL — a self-follow-up wake is channel-watching, never thread-follow");
+  ok(sfu.userMessage.includes("<thread") === false,
+    "thread-follow: NEGATIVE CONTROL — a self-follow-up wake is container-scoped, so it renders NO thread locus");
+
+  const entry = pool[0];
+  const outProbe = TF_OUT.buildProbe(0);
+  ok(probe.userMessage.includes(entry.selfPrior!) && outProbe.userMessage.includes(entry.selfPrior!) === false,
+    "🔴 thread-follow: the OUT arm hides the thread root here exactly as it hides the referenced post on self-follow-up");
+  ok(outProbe.withheld === entry.selfPrior, "thread-follow: and the hidden root reaches the fabrication axis");
+  ok(outProbe.userMessage.includes("<thread"), "thread-follow: hiding the root does not change the locus — only the backscroll moves");
 }
 
 console.log(`response-behaviour scoring: ${n} assertions passed`);
