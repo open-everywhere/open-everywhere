@@ -307,6 +307,7 @@ console.log("1. a terminal task view flushes the parent's tree to the host store
   ok(rows.length >= 1, "the settlement flush writes its own audit row");
   eq((rows[rows.length - 1].detail as { outcome?: string }).outcome, "flushed", "…recording that the flush RAN (not that the guard held it)");
   eq((rows[rows.length - 1].detail as { flush?: { changed?: number } }).flush?.changed, 1, "…and carrying the persist COUNTS — one silo genuinely changed");
+  eq((rows[rows.length - 1].detail as { liveTaskIds?: string[] }).liveTaskIds, undefined, "…and NO liveTaskIds — nothing held the tree, so there is nothing to name");
 }
 
 console.log("2. the fan-out guard skips the flush while another delegated task still holds the tree:");
@@ -328,6 +329,9 @@ console.log("2. the fan-out guard skips the flush while another delegated task s
   const skips = (await flushRows()).filter((r) => (r.detail as { outcome?: string }).outcome === "skipped");
   ok(skips.length >= 1, "the SKIP is audited — the store staying stale on purpose must be visible, never silent");
   eq((skips[skips.length - 1].detail as { liveTasks?: number }).liveTasks, 1, "…naming how many tasks still held the tree");
+  const skipIds = (skips[skips.length - 1].detail as { liveTaskIds?: string[] }).liveTaskIds;
+  eq(JSON.stringify(skipIds), JSON.stringify(["task_B2"]), "…and NAMING it — the still-writing sibling is the one holding the tree");
+  eq((skipIds ?? []).includes("task_B1"), false, "…while the task this peek settled is GONE from the list");
 
   const WHOLE = `${HOST_BEFORE}- a line child B2 finished writing\n`;
   s.sandbox.childEdit("MEMORY.md", WHOLE);

@@ -55,38 +55,44 @@ export function noteTaskViews(views: readonly TaskSummary[]): void {
   }
 }
 
-export function liveTaskCount(): number {
+export function liveTaskIds(): readonly string[] {
   try {
-    return Object.keys(liveTasks.get()).length;
+    return Object.keys(liveTasks.get());
   } catch {
-    return 0;
+    return [];
   }
+}
+
+export function liveTaskCount(): number {
+  return liveTaskIds().length;
 }
 
 export interface SettlementFlushResult {
   readonly outcome: "flushed" | "skipped";
   readonly live: number;
+  readonly liveIds: readonly string[];
   readonly flush: MemoryFlushSummary | null;
 }
 
 export async function flushSettledMemory(ctx: MemoryPersistContext, edge: SettlementEdge): Promise<SettlementFlushResult> {
-  let result: SettlementFlushResult = { outcome: "skipped", live: 0, flush: null };
+  let result: SettlementFlushResult = { outcome: "skipped", live: 0, liveIds: [], flush: null };
   try {
-    const live = liveTaskCount();
+    const liveIds = liveTaskIds();
+    const live = liveIds.length;
     if (live > 0) {
-      log(`${edge}: SKIPPED — ${live} delegated task(s) still hold this session's memory tree`);
-      result = { outcome: "skipped", live, flush: null };
+      log(`${edge}: SKIPPED — ${live} delegated task(s) still hold this session's memory tree [${liveIds.join(", ")}]`);
+      result = { outcome: "skipped", live, liveIds, flush: null };
     } else {
       const flush = await persistMemoryNow(ctx, "settled");
       try {
         treeDirty.update(() => ({ dirty: false }));
       } catch {
       }
-      result = { outcome: "flushed", live: 0, flush };
+      result = { outcome: "flushed", live: 0, liveIds: [], flush };
     }
   } catch (err) {
     log(`${edge}: flush failed (the next settlement or return flush still persists this tree): ${String(err)}`);
-    result = { outcome: "skipped", live: -1, flush: null };
+    result = { outcome: "skipped", live: -1, liveIds: [], flush: null };
   }
   void appendAudit({
     org: deploymentOrg(),
@@ -97,6 +103,7 @@ export async function flushSettledMemory(ctx: MemoryPersistContext, edge: Settle
       edge,
       outcome: result.outcome,
       liveTasks: result.live,
+      ...(result.liveIds.length === 0 ? {} : { liveTaskIds: result.liveIds }),
       ...(result.flush === null ? {} : { flush: result.flush }),
     },
   }).catch(() => undefined);
