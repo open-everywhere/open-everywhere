@@ -247,6 +247,10 @@ test("OPE-727 — a dispatch handle left registered past its own turn FAULTS a s
   expect(phantom.fault).toContain(`turn "${phantom.turnId}"`);
   expect(phantom.stepIndex).toBe(-1);
 
+  const phantomResolve = handle.resolves.find((r) => r.role === "parent" && r.turnId === phantom.turnId);
+  expect(phantomResolve?.fault).toBeDefined();
+  expect(phantomResolve?.fault).toContain("stale script");
+
   const agentTaskIds = new Set(
     handle.requests
       .flatMap((r) => r.toolResults)

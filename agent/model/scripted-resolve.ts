@@ -141,6 +141,8 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation): ReturnTyp
         }
       }
 
+      at.fault = fault;
+
       entry.requests.push({
         role: at.role,
         sessionId: at.sessionId,
