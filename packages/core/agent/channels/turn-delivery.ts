@@ -1,3 +1,4 @@
+import "./turn-terminal-actions.js";
 import { NO_REPLY_SENTINEL } from "./normalized-wake.js";
 import { getSettings } from "../settings/settings.js";
 import { configuredAgentName } from "../identity/bot-name.js";

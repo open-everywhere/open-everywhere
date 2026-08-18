@@ -213,6 +213,10 @@ for (const eveDir of copies) {
     src.includes("__oeCompactionReduced(") && src.includes("__oeWithReduced("),
     `copies: ${where} carries the compaction event-contract stamp (OPE-697, __oeCompactionReduced + __oeWithReduced) — without it maybeCompact emits compaction.completed with no \`reduced\` field, so a pass that returned the history unchanged is indistinguishable from a real summary`,
   );
+  ok(
+    src.includes("__oeThrowEmptyResponseUnlessTerminal(") && !src.includes("throw new EmptyModelResponseError;"),
+    `copies: ${where} carries the empty-step terminal guard (OPE-762, __oeThrowEmptyResponseUnlessTerminal) on BOTH throw sites — an unpatched copy reissues the model call with "Your previous reply was empty and was not delivered" after every correctly-silent turn, so the seat replies to the wake it just declined`,
+  );
   const compactionFile = join(eveDir, COMPACTION);
   ok(
     existsSync(compactionFile),

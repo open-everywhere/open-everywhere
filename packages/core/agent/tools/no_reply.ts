@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
+import "../channels/turn-terminal-actions.js";
 import { markNoReplyThisTurn, peekNoReplyThisTurn, type NoReplyReason } from "../channels/no-reply-signal.js";
 import { END_TURN_WITH_SENTINEL_INSTRUCTION, NO_REPLY_SENTINEL } from "../channels/normalized-wake.js";
 import { markWakeDeclinedThisTurn } from "../channels/reply-signal.js";
