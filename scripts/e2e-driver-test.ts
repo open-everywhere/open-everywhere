@@ -976,7 +976,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
 }
 
 {
-  const { decomposeSession, joinDelegations, delegationJoinTargets, fmtMs } = await import(
+  const { decomposeSession, joinDelegations, delegationJoinTargets, fmtMs, renderSessionTiming, renderDelegationTiming } = await import(
     "../packages/core/scripts/e2e/transcript-timings.js"
   );
   const { summariseTimings } = await import("../packages/core/scripts/e2e/timings-record.js");
@@ -1080,10 +1080,66 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   const emptyPlan = attributeBoot(s, [{ ...syncRow, detail: { sessionId: "wrun_worker", hookMs: 2, siloCount: 0, silos: [] } }], "wrun_worker")!;
   ok(emptyPlan.sandboxMs === null && emptyPlan.gaps.some((g) => g.includes("ZERO silos")), "an EMPTY memory plan is a NAMED gap: that session's hook returns before getSandbox(), so its bootMs is not comparable to a memory-bearing session's");
 
+  const { renderCompaction } = await import("../packages/core/scripts/e2e/transcript-timings.js");
+
+  const compacting = [
+    { index: 0, at: "2026-04-22T08:30:00.000Z", type: "session.started", data: {} },
+    { index: 1, at: "2026-04-22T08:30:01.000Z", type: "turn.started", data: { turnId: "t1" } },
+    { index: 2, at: "2026-04-22T08:30:02.000Z", type: "compaction.requested", data: { sessionId: "wrun_dense", turnId: "t1" } },
+    { index: 3, at: "2026-04-22T08:30:03.000Z", type: "compaction.completed", data: { sessionId: "wrun_dense", turnId: "t1", modelId: "m", reduced: true } },
+    { index: 4, at: "2026-04-22T08:30:04.000Z", type: "compaction.requested", data: { sessionId: "wrun_dense", turnId: "t1" } },
+    { index: 5, at: "2026-04-22T08:30:05.000Z", type: "compaction.completed", data: { sessionId: "wrun_dense", turnId: "t1", modelId: "m", reduced: false } },
+    { index: 6, at: "2026-04-22T08:30:06.000Z", type: "compaction.completed", data: { sessionId: "wrun_dense", turnId: "t1", modelId: "m" } },
+    { index: 7, at: "2026-04-22T08:30:07.000Z", type: "turn.completed", data: { turnId: "t1" } },
+  ];
+  const c = decomposeSession(compacting);
+  ok(c.compaction.requested === 2 && c.compaction.completed === 3, `compaction passes are counted off the transcript; got ${c.compaction.requested} requested / ${c.compaction.completed} completed`);
+  ok(c.compaction.reduced === 1, `a pass stamped reduced:true counts as REAL work; got ${c.compaction.reduced}`);
+  ok(c.compaction.noOp === 1, `a pass stamped reduced:false counts as a NO-OP; got ${c.compaction.noOp}`);
+  ok(c.compaction.unstamped === 1, `a pass with NO reduced field is UNDECIDABLE and gets its own bucket — folding it into either side would hide a real defect or invent one; got ${c.compaction.unstamped}`);
+  ok(c.compaction.reduced + c.compaction.noOp + c.compaction.unstamped === c.compaction.completed, "the three buckets partition the completed passes exactly — no pass is dropped and none is double-counted");
+  ok(c.sessionId === "wrun_dense", "…and the compaction events still harvest the sessionId, the behaviour that existed before the split");
+
+  const noOpLine = renderCompaction(c.compaction)!;
+  ok(noOpLine.includes("NO-OP"), `a no-op pass is NAMED in the rendered line, not buried in a count; got ${JSON.stringify(noOpLine)}`);
+  ok(noOpLine.startsWith("⚠"), `…and carries the ⚠ marker this file uses for a broken measurement, so it reads as a fault; got ${JSON.stringify(noOpLine)}`);
+  ok(noOpLine.includes("OPE-689"), "…and names the defect shape, so a reader can act on it without archaeology");
+  ok(noOpLine.includes("UNDECIDABLE"), "…and reports the unstamped pass as undecidable rather than silently as a pass or a no-op");
+  ok(renderSessionTiming(c, "session wrun_dense").some((l) => l.includes("NO-OP")), "the no-op reaches renderSessionTiming — the render scenarios.ts actually logs, not an internal field");
+
+  const healthy = decomposeSession([
+    { index: 0, at: "2026-04-22T08:30:00.000Z", type: "session.started", data: {} },
+    { index: 1, at: "2026-04-22T08:30:01.000Z", type: "compaction.requested", data: { sessionId: "wrun_ok" } },
+    { index: 2, at: "2026-04-22T08:30:02.000Z", type: "compaction.completed", data: { sessionId: "wrun_ok", modelId: "m", reduced: true } },
+  ]);
+  ok(healthy.compaction.reduced === 1 && healthy.compaction.noOp === 0 && healthy.compaction.unstamped === 0, `a reduced:true pass is EXPLICITLY not a no-op (noOp === 0, not merely absent); got ${JSON.stringify(healthy.compaction)}`);
+  const healthyLine = renderCompaction(healthy.compaction)!;
+  ok(!healthyLine.includes("NO-OP") && !healthyLine.startsWith("⚠"), `…and real work is never flagged: no NO-OP text, no ⚠ marker; got ${JSON.stringify(healthyLine)}`);
+  ok(healthyLine.includes("1 reduced the history"), `…the healthy line still REPORTS the pass, so "how many compactions ran" is answerable; got ${JSON.stringify(healthyLine)}`);
+
+  ok(s.compaction.completed === 0 && s.compaction.requested === 0, "a session with no compaction events counts zero, not null");
+  ok(renderCompaction(s.compaction) === null, "…and renders NO line at all, so the line's presence is itself the signal");
+  ok(!renderSessionTiming(s, "session wrun_worker").some((l) => l.includes("compaction")), "…confirmed through renderSessionTiming: no compaction, no compaction line");
+
   const sum = summariseTimings([{ scenarioId: "X", label: "l", capturedAt: "2026-03-29T01:11:00.000Z", sessions: [{ sessionId: "wrun_worker", timing: s }], delegations: [d] }]);
   ok(sum.delegations === 1 && sum.delegationsFullyJoined === 1, "the run summary counts delegations and how many decomposed end-to-end");
   ok(sum.delegationWallMs.p50 === 19500 && sum.bootMsP50 === 2226 && sum.ttftMsP50 === 6033, "the run summary carries p50 wall / boot / ttft — the recorded series, never a threshold");
+  ok(sum.compaction.passes === 0 && sum.compaction.noOp === 0, "a run whose sessions never compacted rolls up to zero passes");
   ok(summariseTimings([]).delegationWallMs.p50 === null, "an empty run summarises to nulls, not zeros");
+
+  const [dupeDelegation] = joinDelegations(
+    [{ ...returned, detail: { ...returned.detail, sessionId: "wrun_dense" } }, spawned],
+    new Map([["wrun_dense", compacting]]),
+  );
+  const dupeSum = summariseTimings([{
+    scenarioId: "C", label: "a session recorded twice — once whole, once as a delegation worker",
+    capturedAt: "2026-04-22T08:31:00.000Z",
+    sessions: [{ sessionId: "wrun_dense", timing: c }],
+    delegations: [dupeDelegation],
+  }]);
+  ok(dupeSum.compaction.passes === 3, `the run rollup counts each session ONCE, by session id; got ${dupeSum.compaction.passes} (6 would mean the overlap is double-counted)`);
+  ok(dupeSum.compaction.noOp === 1 && dupeSum.compaction.reduced === 1 && dupeSum.compaction.unstamped === 1, `…and the no-op survives to the run summary, which is the line that always prints; got ${JSON.stringify(dupeSum.compaction)}`);
+  ok(renderDelegationTiming(dupeDelegation).some((l) => l.includes("NO-OP")), "a delegated WORKER's no-op is named in the delegation render too — a worker is where a dense session actually compacts");
 }
 
 {

@@ -419,6 +419,13 @@ async function main(): Promise<void> {
         ` — delegation wall p50 ${fmtMs(s.delegationWallMs.p50)} (min ${fmtMs(s.delegationWallMs.min)}, max ${fmtMs(s.delegationWallMs.max)}),` +
         ` boot(session.started chain) p50 ${fmtMs(s.bootMsP50)}, ttft p50 ${fmtMs(s.ttftMsP50)}`,
     );
+    if (s.compaction.passes > 0) {
+      console.log(
+        `e2e compaction: ${s.compaction.passes} pass(es) — ${s.compaction.reduced} reduced the history,` +
+          ` ${s.compaction.noOp} NO-OP, ${s.compaction.unstamped} unstamped` +
+          `${s.compaction.noOp > 0 ? " ⚠ a NO-OP pass means the trigger fired and the session did not shrink (OPE-689)" : ""}`,
+      );
+    }
     try {
       const path = writeTimingsRecords(timingRecords, { startedAt: runStartedIso, ...(costTarget ? { target: costTarget } : {}) });
       if (path) console.log(`e2e timings: written to ${path}`);
