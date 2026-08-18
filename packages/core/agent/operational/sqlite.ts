@@ -167,6 +167,7 @@ function getDb(): DatabaseSync {
       window_token     TEXT,                  -- OPE-161: the BARE window token dispatched to; NULL = legacy row (never answerable via the pending arm)
       answered_at      TEXT,                  -- OPE-161: ISO-8601 when a reply answered this wake; NULL = still pending
       answered_turn_id TEXT,                  -- OPE-161: the turn that answered it (the same-turn re-accept key)
+      inbound          INTEGER,               -- OPE-767: 1 = this wake carries a real message from the room; NULL/0 = a wake the deployment minted for itself
       PRIMARY KEY (org_id, wake_id)
     );
     CREATE TABLE IF NOT EXISTS thread_ownership (
@@ -466,6 +467,7 @@ function getDb(): DatabaseSync {
     "ALTER TABLE unified_wake_target ADD COLUMN window_token TEXT",
     "ALTER TABLE unified_wake_target ADD COLUMN answered_at TEXT",
     "ALTER TABLE unified_wake_target ADD COLUMN answered_turn_id TEXT",
+    "ALTER TABLE unified_wake_target ADD COLUMN inbound INTEGER",
 
     "ALTER TABLE pending_actions ADD COLUMN posted_to TEXT",
 
@@ -1539,16 +1541,17 @@ export const sqliteOperationalStore: OperationalStore = {
     getDb().prepare("DELETE FROM webhook_capture WHERE org_id = ? AND source = ?").run(org, source);
   },
 
-  async putUnifiedWakeTarget(org, wakeId, targetJson, at, ttlMs, windowToken) {
+  async putUnifiedWakeTarget(org, wakeId, targetJson, at, ttlMs, windowToken, inbound) {
     const handle = getDb();
     const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
     handle.prepare("DELETE FROM unified_wake_target WHERE created_at < ? AND org_id = ?").run(cutoff, org);
     handle
       .prepare(
-        `INSERT INTO unified_wake_target (org_id, wake_id, target_json, created_at, window_token) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT (org_id, wake_id) DO UPDATE SET target_json = excluded.target_json, created_at = excluded.created_at, window_token = excluded.window_token`,
+        `INSERT INTO unified_wake_target (org_id, wake_id, target_json, created_at, window_token, inbound) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (org_id, wake_id) DO UPDATE SET target_json = excluded.target_json, created_at = excluded.created_at, window_token = excluded.window_token,
+           inbound = MAX(COALESCE(excluded.inbound, 0), COALESCE(unified_wake_target.inbound, 0))`,
       )
-      .run(org, wakeId, targetJson, at, windowToken ?? null);
+      .run(org, wakeId, targetJson, at, windowToken ?? null, inbound === true ? 1 : 0);
   },
 
   async getUnifiedWakeTarget(org, wakeId) {
@@ -1572,6 +1575,17 @@ export const sqliteOperationalStore: OperationalStore = {
       ...(row.answered_at !== null ? { answeredAt: row.answered_at } : {}),
       ...(row.answered_turn_id !== null ? { answeredTurnId: row.answered_turn_id } : {}),
     };
+  },
+
+  async listPendingUnifiedWakes(org, windowToken, afterIso, limit) {
+    const rows = getDb()
+      .prepare(
+        `SELECT wake_id, target_json, created_at FROM unified_wake_target
+         WHERE org_id = ? AND window_token = ? AND answered_at IS NULL AND inbound = 1 AND created_at > ?
+         ORDER BY created_at ASC LIMIT ?`,
+      )
+      .all(org, windowToken, afterIso, limit) as { wake_id: string; target_json: string; created_at: string }[];
+    return rows.map((r) => ({ wakeId: r.wake_id, targetJson: r.target_json, createdAt: r.created_at }));
   },
 
   async markUnifiedWakeAnswered(org, wakeId, at, turnId) {

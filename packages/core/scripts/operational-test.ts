@@ -451,6 +451,42 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
+  const TTL = 6 * 60 * 60 * 1000;
+  const ORIGIN = JSON.stringify({ platform: "slack", channelId: "C_PEND" });
+  const WIN = "oe-dom:payments:oe-sup:gPEND";
+  const OTHERWIN = "oe-dom:treasury:oe-sup:gPEND";
+  const ids = async (rows: readonly { readonly wakeId: string }[]): Promise<string[]> => rows.map((r) => r.wakeId);
+
+  await store.putUnifiedWakeTarget("acme", "p-old", ORIGIN, "2026-07-26T10:00:00Z", TTL, WIN, true);
+  await store.putUnifiedWakeTarget("acme", "p-mid", ORIGIN, "2026-07-26T10:05:00Z", TTL, WIN, true);
+  await store.putUnifiedWakeTarget("acme", "p-new", ORIGIN, "2026-07-26T10:09:00Z", TTL, WIN, true);
+  await store.putUnifiedWakeTarget("acme", "p-answered", ORIGIN, "2026-07-26T10:07:00Z", TTL, WIN, true);
+  await store.markUnifiedWakeAnswered("acme", "p-answered", "2026-07-26T10:08:00Z", "turn-X");
+  await store.putUnifiedWakeTarget("acme", "p-foreign", ORIGIN, "2026-07-26T10:06:00Z", TTL, OTHERWIN, true);
+  await store.putUnifiedWakeTarget("globex", "p-otherorg", ORIGIN, "2026-07-26T10:06:00Z", TTL, WIN, true);
+  await store.putUnifiedWakeTarget("acme", "p-internal", ORIGIN, "2026-07-26T10:06:00Z", TTL, WIN);
+  await store.putUnifiedWakeTarget("acme", "p-legacy", ORIGIN, "2026-07-26T10:06:30Z", TTL, WIN, undefined);
+
+  const after = await store.listPendingUnifiedWakes("acme", WIN, "2026-07-26T10:00:00Z", 50);
+  ok((await ids(after)).join(",") === "p-mid,p-new", "pg: listPendingUnifiedWakes returns only rows AFTER the anchor, oldest-first");
+  ok(after[0].targetJson === ORIGIN && after[0].createdAt === "2026-07-26T10:05:00Z", "pg: …carrying the opaque origin JSON and the stamp the caller's TTL bound needs");
+  ok(!(await ids(after)).includes("p-answered"), "pg: an ANSWERED row is not pending — the room already heard about it");
+  ok(!(await ids(after)).includes("p-foreign"), "pg: a row on ANOTHER window token never appears (the same cross-domain fence the answerable-reply arm applies)");
+  ok(!(await ids(after)).includes("p-otherorg"), "pg: the listing never crosses the org boundary");
+  ok(!(await ids(after)).includes("p-old"), "pg: the anchor bound is STRICT — a row stamped AT the anchor is one the model was shown");
+  ok(!(await ids(after)).includes("p-internal"), "🔴 pg: a NON-INBOUND wake (one the deployment minted for itself) never appears — counting one would refuse every delegating turn's hand-off note");
+  ok(!(await ids(after)).includes("p-legacy"), "pg: a pre-migration row reads as NOT inbound and never appears (a missed refusal, never a false one)");
+
+  await store.putUnifiedWakeTarget("acme", "p-mid", ORIGIN, "2026-07-26T10:05:00Z", TTL, WIN, false);
+  ok((await ids(await store.listPendingUnifiedWakes("acme", WIN, "2026-07-26T10:00:00Z", 50))).includes("p-mid"), "🔴 pg: an INTERNAL re-register does NOT clear `inbound` (sticky-true) — the redrive cannot silence the freshness gate");
+
+  const capped = await store.listPendingUnifiedWakes("acme", WIN, "2026-07-26T10:00:00Z", 1);
+  ok((await ids(capped)).join(",") === "p-mid", "pg: the limit caps the read, keeping the oldest — a burst can never load an unbounded set onto the reply path");
+  const none = await store.listPendingUnifiedWakes("acme", WIN, "2026-07-26T23:00:00Z", 50);
+  ok(none.length === 0, "pg: an anchor past every row lists nothing (the fast path costs one empty read)");
+}
+
+{
   const REC = { urlPrivate: "https://files.slack.com/files-pri/T/F_UP/data.csv", mimeType: "text/csv", name: "data.csv", teamId: "T_UP" };
   ok((await store.getSlackAttachment("acme", "F_UP")) === null, "pg: a fresh file id has no attachment row");
   await store.putSlackAttachment("acme", "F_UP", REC, "2026-07-19T10:00:00Z", 24 * 60 * 60 * 1000);

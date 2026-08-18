@@ -1,7 +1,7 @@
 import { routineGrantGeneration, type Routine } from "../routines/routine.js";
 import type { PendingActionRow } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
-import type { UnifiedWakeRecord } from "../channels/unified-window.js";
+import type { PendingUnifiedWake, UnifiedWakeRecord } from "../channels/unified-window.js";
 
 export const OPERATIONAL_TABLES = [
   "spend_ledger",
@@ -622,10 +622,11 @@ export interface OperationalStore {
   listCapturedDeliveries(org: string, source: string, limit: number): Promise<readonly CapturedDeliveryRow[]>;
   clearCapturedDeliveries(org: string, source: string): Promise<void>;
 
-  putUnifiedWakeTarget(org: string, wakeId: string, targetJson: string, at: string, ttlMs: number, windowToken?: string): Promise<void>;
+  putUnifiedWakeTarget(org: string, wakeId: string, targetJson: string, at: string, ttlMs: number, windowToken?: string, inbound?: boolean): Promise<void>;
   getUnifiedWakeTarget(org: string, wakeId: string): Promise<string | null>;
   getUnifiedWakeRecord(org: string, wakeId: string): Promise<UnifiedWakeRecord | null>;
   markUnifiedWakeAnswered(org: string, wakeId: string, at: string, turnId?: string): Promise<void>;
+  listPendingUnifiedWakes(org: string, windowToken: string, afterIso: string, limit: number): Promise<readonly PendingUnifiedWake[]>;
 
   putThreadOwner(org: string, channelKey: string, threadKey: string, taskToken: string, at: string, ttlMs: number): Promise<void>;
   getThreadOwner(org: string, channelKey: string, threadKey: string): Promise<string | null>;
