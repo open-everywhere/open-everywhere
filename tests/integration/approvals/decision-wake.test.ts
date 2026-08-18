@@ -124,6 +124,8 @@ async function proposeRoutine(ids: string, prompt: string): Promise<{ id: string
   expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   drained.handle.dispose();
 
+  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+
   const requested = await waitFor(
     async () => {
       const rows = await rowsSince(wakeAt, ["approval.requested"]);

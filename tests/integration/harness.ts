@@ -85,6 +85,7 @@ function bootedBuildDir(): string {
 export interface BootOptions {
   readonly sharedSqlite?: boolean;
   readonly target?: "rollOwn";
+  readonly selfBaseUrl?: boolean;
 }
 
 function guardProcess(): void {
@@ -172,6 +173,8 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   process.env.NITRO_PORT = String(reserved.port);
   process.env.HOST = "127.0.0.1";
   process.env.NITRO_HOST = "127.0.0.1";
+  if (opts.selfBaseUrl === true) process.env.OE_PUBLIC_BASE_URL = `http://127.0.0.1:${reserved.port}`;
+  else delete process.env.OE_PUBLIC_BASE_URL;
   await reserved.release();
 
   if (opts.target === "rollOwn" && !rollOwnTargetExists(ROOT)) {

@@ -18,6 +18,7 @@ export const WINDOW_GATED_TOOLS: Readonly<Record<string, readonly WindowGrain[]>
   create_skill: FULL_KIT,
   delete_skill: FULL_KIT,
   agent: ["standing", "thread"],
+  stop_task: ["standing", "thread"],
   spawn_task: ["standing"],
   spawn_thread_session: ["standing"],
   complete_task: ["task"],
@@ -255,6 +256,12 @@ export function checkWindowGateManifest(
     } else if (name === "agent") {
       if (grainKey(grains) !== grainKey(["standing", "thread"])) {
         problems.push(`WINDOW_GATED_TOOLS["agent"] must be exactly ["standing", "thread"] (the conversational-root seats delegate; NEVER task — a worker leaf holds the wide hands already and must not spawn recursively) — got [${grains.join(", ")}]`);
+      }
+    } else if (name === "stop_task") {
+      if (grainKey(grains) !== grainKey(["standing", "thread"])) {
+        problems.push(
+          `WINDOW_GATED_TOOLS["stop_task"] must be exactly ["standing", "thread"] (the conversational-root seats that delegate are the only ones with a worker to stand down; NEVER task — a worker leaf delegated nothing and must not reach the cancel door for a sibling) — got [${grains.join(", ")}]`,
+        );
       }
     } else if (name === "complete_task") {
       if (grainKey(grains) !== "task") {
