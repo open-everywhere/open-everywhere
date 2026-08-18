@@ -10,7 +10,10 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import memoryHook from "../agent/hooks/memory.js";
 import spawnTaintHook from "../agent/hooks/spawn-taint.js";
 import { conflictName } from "../agent/hooks/memory.js";
-import { SETTLEMENT_FLUSH_ACTION } from "../agent/hooks/settlement-flush.js";
+import { MAX_FLUSH_HOLDS, SETTLEMENT_FLUSH_ACTION, liveTaskIds, noteTaskDispatched, noteTaskViews } from "../agent/hooks/settlement-flush.js";
+import { adoptTaskTaint } from "../agent/hooks/spawn-taint.js";
+import { installTaskWake } from "../agent/channels/task-wake.js";
+import { pendingDelegationOwing } from "../agent/access/pending-delegation-signal.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { registerProvider, type MemoryProvider } from "../agent/memory/provider.js";
@@ -247,6 +250,12 @@ async function fireResult(s: Seat, result: unknown): Promise<void> {
   });
 }
 
+async function fireTurnEnd(s: Seat): Promise<void> {
+  await inSession(s, async () => {
+    await taint.events["turn.completed"]({ type: "turn.completed" } as unknown as Parameters<(typeof taint.events)["turn.completed"]>[0], s.ctx);
+  });
+}
+
 function receipt(taskId: string, callId: string): unknown {
   return {
     kind: "subagent-result",
@@ -276,6 +285,7 @@ async function memoryWrites(sessionId: string): Promise<AuditEntry[]> {
   return rows.filter((r) => (r.detail as { sessionId?: string } | undefined)?.sessionId === sessionId);
 }
 async function flushRows(): Promise<AuditEntry[]> {
+  await new Promise((r) => setTimeout(r, 20));
   return await readAudit({ action: SETTLEMENT_FLUSH_ACTION });
 }
 
@@ -480,4 +490,132 @@ console.log("7. N concurrent children hold ONE tree and the parent stays its onl
   eq(writes.length, 1, "exactly ONE memory.write row for the whole fan-out — one owner, one write");
 }
 
-console.log(`\n✓ settlement-flush: ${n} assertions passed (a terminal task view and a sync delegation return each persist the parent's tree with outcome:"settled"; the fan-out guard skips — and audits the skip — while any delegated task is non-terminal, including one seen only as a working/input_required view; a dispatch receipt flushes nothing; the session-end backstop stays a silent, conflict-free no-op; and N concurrent children share ONE tree with the parent as its only writer)\n`);
+console.log("8. a dispatched task the seat never peeks releases the tree after a bounded number of held attempts:");
+{
+  const s = makeSeat("seat-wedge");
+  await fireMemory(s, "session.started");
+  const BEFORE = stored()["MEMORY.md"] as string;
+
+  await fireResult(s, receipt("task_W1", "call_W1"));
+  await fireResult(s, receipt("task_W2", "call_W2"));
+  const EDIT = `${BEFORE}- the worker's note, which must reach the store\n`;
+  s.sandbox.childEdit("MEMORY.md", EDIT);
+
+  await fireResult(s, peek([{ taskId: "task_W1", status: "completed" }]));
+  eq(stored()["MEMORY.md"], BEFORE, "attempt 1: the un-peeked sibling holds the flush closed — this much is the guard working as designed");
+  const first = (await flushRows()).filter((r) => (r.detail as { outcome?: string }).outcome === "skipped");
+  eq(
+    JSON.stringify((first[0].detail as { liveTaskIds?: string[] }).liveTaskIds),
+    JSON.stringify(["task_W2"]),
+    "…and the skip names the task the peek did not carry",
+  );
+
+  for (let attempt = 2; attempt <= MAX_FLUSH_HOLDS; attempt++) {
+    await fireTurnEnd(s);
+    eq(stored()["MEMORY.md"], BEFORE, `attempt ${attempt}: still held — the bound is not spent yet`);
+  }
+
+  await fireTurnEnd(s);
+  eq(stored()["MEMORY.md"], EDIT, "🔴 OPE-724: the parent's tree REACHES THE STORE even though the seat never peeked the second task");
+  const writes = await memoryWrites(s.sessionId);
+  eq(writes.length, 1, "…in exactly one memory.write row");
+  eq((writes[0].detail as { outcome?: string }).outcome, "settled", "…stamped settled, like every other flush on this edge");
+
+  const retiring = (await flushRows()).filter((r) => Array.isArray((r.detail as { retiredTaskIds?: string[] }).retiredTaskIds));
+  eq(retiring.length, 1, "exactly ONE audit row records a retirement — the moment the guard stopped protecting that task");
+  eq(
+    JSON.stringify((retiring[0].detail as { retiredTaskIds?: string[] }).retiredTaskIds),
+    JSON.stringify(["task_W2"]),
+    "…naming the retired id, so a reader can tell WHICH child the next flush ran without",
+  );
+
+  await inSession(s, async () => {
+    eq((liveTaskIds() as string[]).includes("task_W2"), false, "NEGATIVE CONTROL: the retired id no longer holds the tree");
+  });
+
+  const AFTER = `${EDIT}- a second note\n`;
+  s.sandbox.childEdit("MEMORY.md", AFTER);
+  await fireResult(s, receipt("task_W3", "call_W3"));
+  await fireTurnEnd(s);
+  eq(stored()["MEMORY.md"], EDIT, "🔴 NEGATIVE CONTROL: a fresh dispatch closes the guard again — the bound retires evidence, it does not remove the guard");
+}
+
+console.log("9. the OPE-719 discriminator — the delete survives the awaits, and a second dispatch reproduces the wedge:");
+{
+  const s = makeSeat("seat-lost-delete");
+  await inSession(s, async () => {
+    noteTaskDispatched("task_R");
+    eq(liveTaskIds() as string[], ["task_R"], "harness: the dispatch armed the guard");
+
+    noteTaskViews([{ taskId: "task_R", status: "completed", agentId: "ag_task_R" }]);
+    eq(liveTaskIds() as string[], [], "the terminal view deleted the id");
+
+    const installed = await installTaskWake({
+      org: ORG,
+      taskId: "task_R",
+      status: "completed",
+      sessionId: s.sessionId,
+      turnId: (s.ctx as unknown as { session: { turn: { id: string } } }).session.turn.id,
+      inheritedWakeId: undefined,
+    });
+    ok(installed.outcome.length > 0, "harness: installTaskWake really ran between the delete and the read");
+    await adoptTaskTaint({ taskId: "task_R", status: "completed", agentId: "ag_task_R" }, s.sessionId);
+
+    eq(liveTaskIds() as string[], [], "🔴 (b) REFUTED: the delete SURVIVES both awaits — one container, mutated in place, read back by the same handler");
+  });
+
+  const s2 = makeSeat("seat-lost-delete-control");
+  await inSession(s2, async () => {
+    noteTaskDispatched("task_S");
+    noteTaskViews([{ taskId: "task_S", status: "working", agentId: "ag_task_S" }]);
+    await installTaskWake({
+      org: ORG,
+      taskId: "task_S",
+      status: "working",
+      sessionId: s2.sessionId,
+      turnId: (s2.ctx as unknown as { session: { turn: { id: string } } }).session.turn.id,
+      inheritedWakeId: undefined,
+    });
+    await adoptTaskTaint({ taskId: "task_S", status: "working", agentId: "ag_task_S" }, s2.sessionId);
+    eq(liveTaskIds() as string[], ["task_S"], "NEGATIVE CONTROL: a working view is STILL there after the same two awaits");
+  });
+
+  const s3 = makeSeat("seat-second-dispatch");
+  await fireMemory(s3, "session.started");
+  const BEFORE3 = stored()["MEMORY.md"] as string;
+  const TURN3 = (s3.ctx as unknown as { session: { turn: { id: string } } }).session.turn.id;
+  s3.sandbox.childEdit("MEMORY.md", `${BEFORE3}- an edit the wedge would strand\n`);
+
+  await fireResult(s3, receipt("task_T1", "call_T1"));
+  await inSession(s3, async () => {
+    eq(pendingDelegationOwing(TURN3, "wake-x", undefined), "task_T1", "harness: the first dispatch is on the ledger for this turn");
+  });
+
+  await fireResult(s3, receipt("task_T2", "call_T2"));
+  await fireResult(s3, peek([{ taskId: "task_T1", status: "completed" }]));
+
+  eq(stored()["MEMORY.md"], BEFORE3, "the settlement SKIPPED — the store is untouched, as the red run's was");
+  const skips3 = (await flushRows()).filter((r) => (r.detail as { outcome?: string }).outcome === "skipped");
+  const last3 = skips3[0].detail as { liveTasks?: number; liveTaskIds?: string[] };
+  eq(last3.liveTasks, 1, "🔴 SIGNAL 1 REPRODUCED: `SKIPPED — 1` on a settlement whose peek carried the only task the seat had peeked");
+  eq(JSON.stringify(last3.liveTaskIds), JSON.stringify(["task_T2"]), "…and the id is the SECOND dispatch, not the peeked one — which is the whole diagnosis");
+  eq((last3.liveTaskIds ?? []).includes("task_T1"), false, "…the peeked id is absent, so the delete ran");
+  await inSession(s3, async () => {
+    eq(pendingDelegationOwing(TURN3, "wake-x", undefined), "task_T2", "🔴 SIGNAL 2 REPRODUCED: the OPE-701 ledger still owes on the SETTLEMENT turn — only a dispatch on that turn can stamp it");
+  });
+
+  const s4 = makeSeat("seat-single-dispatch");
+  await fireMemory(s4, "session.started");
+  const BEFORE4 = stored()["MEMORY.md"] as string;
+  const TURN4 = (s4.ctx as unknown as { session: { turn: { id: string } } }).session.turn.id;
+  const EDIT4 = `${BEFORE4}- the single worker's note\n`;
+  s4.sandbox.childEdit("MEMORY.md", EDIT4);
+  await fireResult(s4, receipt("task_U1", "call_U1"));
+  await fireResult(s4, peek([{ taskId: "task_U1", status: "completed" }]));
+  eq(stored()["MEMORY.md"], EDIT4, "CONTROL: with ONE dispatch the settlement FLUSHES — the wedge needs the second id");
+  await inSession(s4, async () => {
+    eq(pendingDelegationOwing(TURN4, "wake-x", undefined), undefined, "CONTROL: …and the ledger owes NOTHING, so the red run's second signal is not a property of every settlement");
+  });
+}
+
+console.log(`\n✓ settlement-flush: ${n} assertions passed (a terminal task view and a sync delegation return each persist the parent's tree with outcome:"settled"; the fan-out guard skips — and audits the skip — while any delegated task is non-terminal, including one seen only as a working/input_required view; a dispatch receipt flushes nothing; the session-end backstop stays a silent, conflict-free no-op; N concurrent children share ONE tree with the parent as its only writer; a task the seat never peeks releases the tree after a bounded number of held attempts; and the OPE-719 second live id is a SECOND DISPATCH, not a lost delete)\n`);
