@@ -1,7 +1,6 @@
 
 import assert from "node:assert/strict";
 import { authorTrustAdmitsUnfencedBody, isWakeEnvelopeShaped, renderWakeEnvelope, triggerMessageBody, type WakeEnvelopeInput, type WakeMessageInput } from "../agent/channels/wake-envelope.js";
-import { wakeScopeNote } from "../agent/channels/normalized-wake.js";
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 import { maxResultChars } from "../agent/access/result-cap.js";
 
@@ -609,9 +608,10 @@ const countOccurrences = (haystack: string, needle: string): number =>
   ]);
   ok(triggerMessageBody(forged) === "hello", "triggerMessageBody: an escaped fake `<message trigger=\"true\">` in a body forges no second trigger");
 
-  const scoped = `${wakeScopeNote("00000000-0000-4000-8000-000000000006")}\n\n${render([base({ trigger: true, body: "hello from the preamble case" })])}`;
-  ok(!/<wake\b/.test(wakeScopeNote("00000000-0000-4000-8000-000000000006")), "the OPE-650 scope note writes NO `<wake` opener into the trusted prose");
-  ok(triggerMessageBody(scoped) === "hello from the preamble case", "triggerMessageBody: a delivery led by the OPE-650 scope note still yields the trigger's own body");
+  const delta = "<system-reminder>\nShared memory changed since your last wake — these are POINTERS, not content:\n- memory/acme-eng\n</system-reminder>";
+  const delivered = `${render([base({ trigger: true, body: "hello from the delivered case" })])}\n\n${delta}`;
+  ok(!/<wake\b/.test(delta), "the memory-delta block writes NO `<wake` opener into the trusted frame");
+  ok(triggerMessageBody(delivered) === "hello from the delivered case", "triggerMessageBody: an envelope-only delivery with a trailing memory-delta still yields the trigger's own body");
 
   ok(isWakeEnvelopeShaped(many) === true, "isWakeEnvelopeShaped: a rendered envelope is envelope-shaped");
   ok(isWakeEnvelopeShaped("link WXYZWXYZ") === false, "isWakeEnvelopeShaped: one person's own message body is not");
@@ -674,41 +674,31 @@ const countOccurrences = (haystack: string, needle: string): number =>
       channel: { id: "C1", type: "channel" }, messages: [m],
     });
 
-  const before = process.env.OE_WAKE_SHAPE;
-  try {
-    delete process.env.OE_WAKE_SHAPE;
-    ok(env(msg({ mention: true }), "direct-mention").includes('trust="peer"'), "prose: an @mention does NOT change the author's grade");
-    ok(env(msg({ trust: "principal" }), "channel-watch").includes('trust="principal"'), "prose: an ambient message from an admin keeps the principal grade");
-    ok(
-      renderWakeEnvelope({ reason: "mention", currentTime: "2026-04-29T16:01:01Z", addressing: "direct-mention", channel: { id: "C1", type: "channel" }, messages: [msg({ mention: true })] }).includes('reason="mention"'),
-      "prose: an @mention wake still renders reason=mention — the shipped vocabulary is untouched",
-    );
-
-    process.env.OE_WAKE_SHAPE = "schema";
-    ok(env(msg({ mention: true }), "direct-mention").includes('trust="principal"'), "schema: an @mention from a vouched member renders trust=principal (Tag's keying)");
-    ok(env(msg({}), "channel-watch").includes('trust="peer"'), "schema: the same member's ambient message renders trust=peer");
-    ok(env(msg({ trust: "principal" }), "channel-watch").includes('trust="peer"'), "schema: an ADMIN's ambient message is demoted to peer — the grade states addressing here, not roster standing");
-    ok(env(msg({}), "direct-mention").includes('trust="principal"'), "schema: a DM-shaped wake (direct-mention addressing, no mention flag) renders trust=principal");
+  {
+    ok(env(msg({ mention: true }), "direct-mention").includes('trust="principal"'), "an @mention from a vouched member renders trust=principal (keyed on addressing)");
+    ok(env(msg({}), "channel-watch").includes('trust="peer"') && !env(msg({}), "channel-watch").includes('trust="principal"'), "the same member's ambient message renders trust=peer, never principal");
+    ok(env(msg({ trust: "principal" }), "channel-watch").includes('trust="peer"'), "an ADMIN's ambient message is demoted to peer — the grade states addressing here, not roster standing");
+    ok(env(msg({}), "direct-mention").includes('trust="principal"'), "a DM-shaped wake (direct-mention addressing, no mention flag) renders trust=principal");
 
     const mentionWake = renderWakeEnvelope({
       reason: "mention", currentTime: "2026-04-29T16:01:01Z", addressing: "direct-mention",
       channel: { id: "C1", type: "channel" }, messages: [msg({ mention: true })],
     });
-    ok(mentionWake.includes('reason="channel-activity"'), "🔴 schema: an @mention wake renders reason=channel-activity — reason is the feed class");
-    ok(!mentionWake.includes('reason="mention"'), "🔴 schema: `mention` is gone from the reason attribute");
-    ok(mentionWake.includes('mention="true"'), "schema: directness rides the message's mention flag instead");
+    ok(mentionWake.includes('reason="channel-activity"'), "🔴 an @mention wake renders reason=channel-activity — reason is the feed class");
+    ok(!mentionWake.includes('reason="mention"'), "🔴 `mention` is gone from the reason attribute");
+    ok(mentionWake.includes('mention="true"'), "directness rides the message's mention flag instead");
     ok(
       renderWakeEnvelope({ reason: "dm", currentTime: "2026-04-29T16:01:01Z", addressing: "direct-mention", channel: { id: "D1", type: "im" }, messages: [msg({})] }).includes('reason="dm"'),
-      "schema: `dm` survives — it names the surface kind, which nothing else in the envelope states",
+      "`dm` survives the collapse — it names the surface kind, which nothing else in the envelope states",
     );
 
     const unauthMention = env(msg({ trust: "unauth", mention: true }), "direct-mention");
-    ok(unauthMention.includes('trust="unauth"'), "🔴 schema: an UNAUTH author who @mentions the bot stays unauth — addressing never promotes across the authority floor");
-    ok(unauthMention.includes(UNTRUSTED_OPEN) && unauthMention.includes(UNTRUSTED_CLOSE), "🔴 schema: that unauth body is STILL fenced");
-    ok(unauthMention.includes("<system-note>"), "🔴 schema: the unauth reference-only system-note still fires");
+    ok(unauthMention.includes('trust="unauth"'), "🔴 an UNAUTH author who @mentions the bot stays unauth — addressing never promotes across the authority floor");
+    ok(unauthMention.includes(UNTRUSTED_OPEN) && unauthMention.includes(UNTRUSTED_CLOSE), "🔴 that unauth body is STILL fenced");
+    ok(unauthMention.includes("<system-note>"), "🔴 the unauth reference-only system-note still fires");
     const relayMention = env(msg({ from: "agent", trust: "relay", mention: true }), "direct-mention");
-    ok(relayMention.includes('trust="relay"'), "🔴 schema: a RELAY author who @mentions the bot stays relay");
-    ok(relayMention.includes(UNTRUSTED_OPEN), "🔴 schema: that relay body is STILL fenced");
+    ok(relayMention.includes('trust="relay"'), "🔴 a RELAY author who @mentions the bot stays relay");
+    ok(relayMention.includes(UNTRUSTED_OPEN), "🔴 that relay body is STILL fenced");
 
     for (const trust of ["peer", "principal", "unauth", "relay"] as const) {
       for (const mention of [true, false]) {
@@ -717,14 +707,12 @@ const countOccurrences = (haystack: string, needle: string): number =>
         const shouldBeBare = authorTrustAdmitsUnfencedBody({ from, trust, refuted: undefined });
         ok(
           rendered.includes(UNTRUSTED_OPEN) === !shouldBeBare,
-          `🔴 schema fence neutrality: trust=${trust} mention=${mention} is ${shouldBeBare ? "bare" : "fenced"}, exactly as the author-trust rule says`,
+          `🔴 fence neutrality: trust=${trust} mention=${mention} is ${shouldBeBare ? "bare" : "fenced"}, exactly as the author-trust rule says`,
         );
       }
     }
-  } finally {
-    if (before === undefined) delete process.env.OE_WAKE_SHAPE;
-    else process.env.OE_WAKE_SHAPE = before;
   }
+
 }
 
 console.log(

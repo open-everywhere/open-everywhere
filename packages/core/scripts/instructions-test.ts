@@ -496,20 +496,13 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
 
   const flat = (s: string): string => s.replace(/\s+/g, " ");
 
-  const before = process.env.OE_WAKE_SHAPE;
-  try {
-    delete process.env.OE_WAKE_SHAPE;
-    ok(renderReadingAWake() === "", "default (no OE_WAKE_SHAPE): the standing 'Reading a wake' block renders NOTHING — the shipped prose shape is untouched");
-    process.env.OE_WAKE_SHAPE = "prose";
-    ok(renderReadingAWake() === "", "OE_WAKE_SHAPE=prose renders nothing either — only the exact value 'schema' arms the block");
-
-    process.env.OE_WAKE_SHAPE = "schema";
+  {
     const block = flat(renderReadingAWake());
-    ok(renderReadingAWake().startsWith("### Reading a wake"), "OE_WAKE_SHAPE=schema renders the standing 'Reading a wake' block");
+    ok(renderReadingAWake().startsWith("### Reading a wake"), "the standing 'Reading a wake' block renders unconditionally — there is no flag and no empty arm");
     for (const section of ["**What you see.**", "**How to read one.**", "**Your posture.**"]) {
-      ok(block.includes(section), `the schema block keeps Tag's section: ${section}`);
+      ok(block.includes(section), `the standing block keeps its section: ${section}`);
     }
-    ok(block.includes('Only the message marked `trigger="true"` is the new event.'), "🔴 the schema block says only the trigger message is the new event");
+    ok(block.includes('Only the message marked `trigger="true"` is the new event.'), "🔴 the standing block says only the trigger message is the new event");
     ok(block.includes("is history for context, not things to answer"), "🔴 the rest of an envelope reads as history, not as a queue");
     ok(
       block.includes("call\n`reply` with `wake` set to the id on THAT envelope") || block.includes("`reply` with `wake` set to the id on THAT envelope"),
@@ -522,19 +515,25 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
       ok(block.includes(recipientCase), `the posture sentence names the intended-recipient case: ${recipientCase}`);
     }
     ok(block.includes("An addressed wake beside an ambient one changes nothing about the ambient one."), "🔴 a coalesced addressed sibling does not lower the ambient bar");
-    ok(block.includes("`principal` addressed you, `peer` did not"), "🔴 the schema block glosses trust the way the schema render keys it: principal addressed you, peer did not");
-    ok(block.includes("`relay` is a machine"), "the schema block glosses the authority floor");
-    ok(block.includes("`from` says what kind of author wrote it"), "the schema block glosses `from`");
-    ok(block.includes("`reason` says"), "the schema block glosses `reason`");
-    ok(block.split(/\s+/).length < 400, `the schema block stays short — Tag states its whole posture in a few sentences (${block.split(/\s+/).length} words)`);
-    ok(!block.includes("`channel-watch` —"), "the schema block does NOT enumerate a bar per addressing value — that is the prose shape it replaced");
-    ok(!block.includes("turn-final"), "the schema block does NOT restate the delivery rule — the reporting arm owns it");
-  } finally {
-    if (before === undefined) delete process.env.OE_WAKE_SHAPE;
-    else process.env.OE_WAKE_SHAPE = before;
+    ok(block.includes("`principal` addressed you, `peer` did not"), "🔴 the standing block glosses trust the way the render keys it: principal addressed you, peer did not");
+    ok(block.includes("`relay` is a machine"), "the standing block glosses the authority floor");
+    ok(block.includes("`from` says what kind of author wrote it"), "the standing block glosses `from`");
+    ok(block.includes("`reason` says"), "the standing block glosses `reason`");
+    ok(block.split(/\s+/).length < 400, `the standing block stays short — Tag states its whole posture in a few sentences (${block.split(/\s+/).length} words)`);
+    ok(!block.includes("`channel-watch` —"), "the standing block does NOT enumerate a bar per addressing value — that is the deleted prose shape");
+    ok(!block.includes("turn-final"), "the standing block does NOT restate the delivery rule — the reporting arm owns it");
   }
 
   const reporting = flat(renderSupervisorPersona(supervisorCtx, { messageToolOnly: true }));
+  ok(reporting.includes("your turn-final text is DISCARDED"), "🔴 the reporting arm states the hard consequence: on a cross-surface session turn-final text is discarded");
+  ok(reporting.includes("The `reply` tool is the ONLY way your words leave this session"), "🔴 …and names the reply tool as the only delivery route");
+  ok(reporting.includes("name the wake's `wake-id` from the envelope"), "🔴 …and tells the model where to read the routing id — the envelope the wake now renders alone");
+  const perSurface = flat(renderSupervisorPersona(supervisorCtx, {}));
+  ok(!perSurface.includes("turn-final text is DISCARDED"), "🔴 the per-surface arm does NOT claim turn-final text is discarded — dual-mode is real there");
+  const channelPersona = flat(renderSupervisorPersona(supervisorCtx, {}));
+  ok(channelPersona.includes("when it's social chatter"), "🔴 the standing persona names social chatter (thanks, greetings, sign-offs) as noise");
+  ok(channelPersona.includes("even right after you posted"), "🔴 …including right after the agent's own post — the exact measured failure");
+  ok(channelPersona.includes("when your answer would just repeat what's been said"), "🔴 …and forbids re-answering what is already answered");
   ok(reporting.includes("That states REACH, not duty."), "the cross-surface reporting arm frames multi-wake delivery as reach, not duty");
   ok(
     reporting.includes("on a wake that did not address you the answer is usually no"),

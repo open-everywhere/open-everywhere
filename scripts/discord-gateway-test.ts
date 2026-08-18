@@ -195,12 +195,13 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   const direct = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "direct", trigger: nativeTrig("do the thing", "principal") })).message;
   ok(direct === "do the thing", "render: direct address (mention/DM) passes straight through (trusted user input, W4)");
   const woke = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "thread-follow", trigger: nativeTrig("chatter", "unauth") })).message;
-  ok(woke.includes(NO_REPLY_SENTINEL), "render: non-direct wake carries the NO_REPLY judge preamble");
+  ok(woke.includes('addressing="thread-follow"'), "render: a non-direct wake is a JUDGED envelope — the addressing attribute is what states the bar (OPE-753)");
   ok(woke.includes("<untrusted_external_data") && woke.includes("chatter"), "render: non-direct wake FENCES an UNVOUCHED author's body (P0-3), never raw pass-through");
   const wokeMember = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "thread-follow", trigger: nativeTrig("chatter", "peer") })).message;
-  ok(wokeMember.includes(NO_REPLY_SENTINEL), "render: the member arm keeps the same judge preamble (only the fence differs)");
+  ok(wokeMember.includes('addressing="thread-follow"'), "render: the member arm is the same judged envelope (only the fence differs)");
   ok(!wokeMember.includes("<untrusted_external_data") && wokeMember.includes("chatter"), "render: non-direct wake does NOT fence a PEER-authored body — the fence keys on the author (OPE-577)");
-  ok(woke.includes("<wake reason=") && woke.startsWith("[thread-follow]"), "render: non-direct wake now carries the FULL wake envelope + canonical preamble (commit 3 convergence)");
+  ok(woke.startsWith("<wake reason=") && woke.endsWith("</wake>"), "render: a non-direct wake is the FULL wake envelope and nothing else — no preamble above it (OPE-753)");
+  ok(!woke.includes(NO_REPLY_SENTINEL), "render: the judge prose is GONE from the wake — the standing 'Reading a wake' block carries the bar now");
 }
 
 {
@@ -216,7 +217,8 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   ok(dmUnauth.includes('trust="unauth"'), "dm builder: an unvouchable DM partner renders `unauth` — being in a DM is not standing");
   ok(dmUnauth.includes("<untrusted_external_data"), "dm builder: …and their body is FENCED");
   const dmMember = renderWake(buildDiscordDmWake({ channelId: "c1", wakeId: "wk_1", trigger: { ...trig, trust: "peer" } }), () => "2026-07-10T10:00:00.000Z").message;
-  ok(dmMember.includes('trust="peer"'), "dm builder: a vouched partner renders their own tier");
+  ok(dmMember.includes('trust="principal"'), "dm builder: a vouched DM partner renders `principal` — addressing first, authority second");
+  ok(!dmMember.includes("<untrusted_external_data"), "dm builder: …and the vouched arm carries no fence, so the two arms differ on the author and nothing else");
   ok(dmMember.includes("<untrusted_external_data") === false, "dm builder: …and is UNFENCED — the negative control proving the fence tracks the tier");
 }
 
@@ -684,16 +686,15 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
 
   const ndTrig = (text: string, trust: "unauth" | "peer" = "unauth") => ({ id: "m1", author: "u", authorId: "U1", sentAt: "2026-07-10T10:00:00.000Z", text, trust });
   const turn = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "name-drop", botName: "Test Slack Bot", trigger: ndTrig("Test Slack Bot help") })).message;
-  ok(turn.includes("[name-drop]") && turn.includes('"Test Slack Bot"'), "name-drop turn: preamble names the trigger");
-  ok(turn.includes(NO_REPLY_SENTINEL), "name-drop turn: carries the NO_REPLY escape");
-  ok(turn.includes("NOT following this channel"), "name-drop turn (base channel): honest that a reply does not engage");
+  ok(turn.startsWith('<wake reason="channel-activity" addressing="name-drop"'), "name-drop turn: the envelope leads, and its addressing states the uninvited case");
+  ok(!turn.includes('"Test Slack Bot"'), "name-drop turn: the matched bot name reaches NO rendered byte");
+  ok(turn.includes('follow-up="channel-not-following"'), "name-drop turn (base channel): the follow-up attribute is honest that a reply does not engage");
   ok(turn.includes("Test Slack Bot help") && turn.includes("<untrusted_external_data"), "name-drop turn: an UNVOUCHED author's body rides FENCED as untrusted data (P0-3)");
   const ndMember = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "name-drop", botName: "Test Slack Bot", trigger: ndTrig("Test Slack Bot help", "peer") })).message;
   ok(ndMember.includes("Test Slack Bot help") && !ndMember.includes("<untrusted_external_data"), "name-drop turn: a PEER-authored body rides UNFENCED — the name-drop path keys on the author too (OPE-577)");
   const threadTurn = renderWake(discordNativeWake({ channelId: "t1", parentChannelId: "c1", isThread: true, isDm: false, addressing: "name-drop", botName: "Bot", trigger: ndTrig("help") })).message;
-  ok(threadTurn.includes("now following this thread"), "name-drop turn (thread): says the thread IS followed (engaged at dispatch)");
-  ok(threadTurn.includes("stand_down"), "name-drop turn (thread): names the stand_down VERB as the undo (OPE-418 — the line used to promise a magic word, which is now false)");
-  ok(!threadTurn.includes("NOT following"), "name-drop turn (thread): no contradictory not-following note");
+  ok(threadTurn.includes('follow-up="thread-engaged"'), "name-drop turn (thread): the follow-up attribute says the thread IS followed (engaged at dispatch)");
+  ok(!threadTurn.includes('follow-up="channel-not-following"'), "name-drop turn (thread): no contradictory not-following contract");
 
   ok(stripLeadingMention("<@123> stop") === "stop", "stripLeadingMention: bare mention prefix removed");
   ok(stripLeadingMention("<@!99>  stop following") === "stop following", "stripLeadingMention: nickname-form mention + extra space removed");

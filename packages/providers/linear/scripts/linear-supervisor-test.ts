@@ -67,9 +67,10 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
 {
   const nw = buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", issueTitle: "DB migration rollout", trigger, engagementTier: "reserved" });
   const { message, context } = renderWake(nw, NOW);
-  ok(message.startsWith("[channel-watch]"), "wake leads with the judged preamble");
-  ok(message.includes("you are this team's standing session"), "wake uses the TEAM container noun");
-  ok(message.includes("Calibration for this team: RESERVED"), "an explicit reserved tier rides the preamble");
+  ok(message.startsWith("<wake ") && message.endsWith("</wake>"), "the wake is its envelope and nothing else (OPE-753)");
+  ok(message.includes('addressing="channel-watch"'), "wake carries the ambient addressing the standing block keys the high silence bar to");
+  ok(message.includes('container="team"'), "wake uses the TEAM container noun");
+  ok(message.includes('engagement="reserved"'), "an explicit reserved tier rides the envelope");
   ok(message.includes(`<channel id="${TEAM}" container="team">`), "locus.channel = the team (the silo grain); the S1 <channel container> attribute mirrors the TEAM noun (OPE-684)");
   ok(message.includes(`<thread ts="ENG-42">`), "locus.thread = the issue identifier (the conversation)");
   ok(message.includes(`trigger="true"`) && message.includes("can we ship the migration tomorrow?"), "the comment is the trigger message");
@@ -85,15 +86,15 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
   const nw = buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger });
   const { message, context } = renderWake(nw, NOW);
   ok(context === undefined, "no issue title -> no context block");
-  ok(!message.includes("Calibration for this"), "no tier -> neutral -> no calibration sentence (Linear's platform default)");
+  ok(!message.includes("engagement="), "no tier resolved -> NO engagement attribute at all (Linear's platform default)");
   ok(message.includes(`<thread ts="${ISSUE}">`), "no identifier -> the issue id labels the thread");
 }
 {
   const plain = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger }), NOW);
   const unified = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger, unified: true }), NOW);
-  ok(unified.message.includes(`<channel platform="linear" id="${TEAM}" container="team">`), "unified wake stamps the <channel platform=\"linear\"> surface address");
-  ok(unified.message.includes("Cross-surface disclosure:"), "unified wake appends the P5 advisory disclosure to the judged preamble");
-  ok(!plain.message.includes("platform=") && !plain.message.includes("Cross-surface disclosure"), "per-team wake carries NO platform attr / disclosure");
+  ok(unified.message === plain.message, "🔴 unified:true is BYTE-IDENTICAL to the per-team wake — no surface address, no disclosure sentence");
+  ok(unified.message.includes(`<channel id="${TEAM}" container="team">`), "the channel still carries its opaque id — that is what the host routes on");
+  ok(!plain.message.includes("platform=") && !plain.message.includes("Cross-surface disclosure"), "neither wake carries a platform attr or a disclosure sentence");
   const explicitOff = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger, unified: false }), NOW);
   ok(explicitOff.message === plain.message, "unified:false renders BYTE-IDENTICAL to the unset per-team wake (flag-off invariant)");
 }
@@ -102,15 +103,13 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
   const wakeId = "wk-lin-123";
   const nw = buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", issueTitle: "DB migration rollout", trigger, unified: true, directMention: true, wakeId, engagementTier: "reserved" });
   const { message } = renderWake(nw, NOW);
-  ok(message.startsWith("[direct]"), "direct-mention leads with the ADDRESSED preamble, not [channel-watch]");
-  ok(!message.includes("[channel-watch]"), "direct-mention does NOT use the silence-biased watch preamble");
-  ok(message.includes("addressed to you and is asking for a response"), "direct-mention tells the supervisor it is addressed and owes a reply");
-  ok(!message.includes("Calibration for this team"), "the ambient calibration tier NEVER rides an addressed mention (an answer is owed)");
-  ok(message.includes(`<wake reason="mention"`), "direct-mention keeps the full judged envelope (reason=\"mention\")");
+  ok(message.includes('addressing="direct-mention"'), "direct-mention renders the ADDRESSED addressing, not channel-watch");
+  ok(!message.includes('addressing="channel-watch"'), "direct-mention does NOT carry the ambient addressing");
+  ok(!message.includes("engagement="), "the ambient calibration tier NEVER rides an addressed mention (an answer is owed)");
+  ok(message.includes(`<wake reason="channel-activity"`), "direct-mention keeps the full judged envelope, with reason collapsed to channel-activity");
   ok(message.includes(`wake-id="${wakeId}"`), "the wake-id survives in the envelope — the reply tool echoes it (the only reply route on the unified channel)");
   ok(message.includes(`mention="true"`), "the trigger is flagged as a @mention (response-obligation signal)");
-  ok(message.includes(`<channel platform="linear" id="${TEAM}" container="team">`), "the surface address rides the unified addressed wake");
-  ok(message.includes("Cross-surface disclosure:"), "the P5 cross-surface disclosure still rides the addressed wake");
+  ok(message.includes(`<channel id="${TEAM}" container="team">`), "the addressed wake carries the opaque channel id and no platform");
   ok(message.includes(UNTRUSTED_OPEN), "an UNVOUCHED author's comment body is still untrusted-wrapped on the ADDRESSED path (W1 keys on the author there too)");
 
   const { trust: _omitted, ...untieredTrigger } = trigger;
@@ -122,7 +121,8 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
   ok(addressedUnauth.includes(`trust="unauth"`), "an addressed wake renders the caller's fail-closed tier — being @mentioned is not standing");
   ok(addressedUnauth.includes(UNTRUSTED_OPEN), "…and keeps the fence on the addressed path");
   const addressedMember = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", trigger: { ...trigger, trust: "peer" }, unified: true, directMention: true, wakeId }), NOW).message;
-  ok(addressedMember.includes(`trust="peer"`), "…the member arm renders its own tier");
+  ok(addressedMember.includes(`trust="principal"`), "…while a VOUCHED addressed author renders principal — the swap the authority floor refuses");
+  ok(!addressedMember.includes(UNTRUSTED_OPEN), "…and the vouched arm carries no fence, so the two arms differ on the author and nothing else");
   ok(addressedMember.includes(UNTRUSTED_OPEN) === false, "…and is UNFENCED — the negative control that proves the fence tracks the tier, not the addressing");
 }
 {
@@ -130,7 +130,7 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
   const plain = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueTitle: "DB migration rollout", trigger, engagementTier: "reserved" }), NOW);
   ok(off.message === plain.message, "directMention:false renders BYTE-IDENTICAL to the unset channel-watch wake (flag-off invariant)");
   ok(JSON.stringify(off.context) === JSON.stringify(plain.context), "directMention:false context is byte-identical too");
-  ok(off.message.startsWith("[channel-watch]"), "the flag-off wake is still the silence-biased channel-watch ambient wake");
+  ok(off.message.includes('addressing="channel-watch"'), "the flag-off wake is still the silence-biased channel-watch ambient wake");
 }
 
 {
@@ -185,7 +185,7 @@ interface WakeCapture { token: string; message: string; context: readonly string
   };
   await handleLinearSupervisorDispatch(dispatch(), deps);
   ok(wakes.length === 1 && wakes[0]!.token === linearSupervisorToken(TEAM, 1), "dispatch wakes once under the supervisor token");
-  ok(wakes[0]!.message.includes("you are this team's standing session"), "the delivered message is the team-supervisor wake");
+  ok(wakes[0]!.message.includes('container="team"') && wakes[0]!.message.includes('addressing="channel-watch"'), "the delivered message is the team-supervisor wake");
   ok(touched.length === 1 && touched[0] === SURFACE, "touchSession records the wake");
 }
 
@@ -202,7 +202,7 @@ interface WakeCapture { token: string; message: string; context: readonly string
   };
   await handleLinearSupervisorDispatch(dispatch({ unified: true, directMention: true, window }), deps);
   ok(captured !== undefined, "the single-window direct @mention dispatches a wake");
-  ok(captured!.message.startsWith("[direct]"), "the delivered wake is the ADDRESSED direct-mention wake (not a silence-biased watch)");
+  ok(captured!.message.includes('addressing="direct-mention"'), "the delivered wake is the ADDRESSED direct-mention wake (not a silence-biased watch)");
   ok(captured!.message.includes(`wake-id="${wakeId}"`), "the delivered wake renders the wake-id (the reply tool's routing key)");
   ok(JSON.stringify(captured!.window) === JSON.stringify(window), "deps.wake receives the window WITH addressing (its wiring stamps oe_addressing for the prose-delivery bridge)");
 }

@@ -365,7 +365,8 @@ registerConfig({
     woke.length = 0;
     out = await routeMessageEvent(editEv, deps(true));
     ok(out.woke && woke.length === 1, "message_changed edit in an engaged thread wakes it");
-    ok(/\(edited message\)/.test(woke[0]) && /EDIT of an earlier message/.test(woke[0]), "the wake message is framed as an edit");
+    ok(/reason="message-edited"/.test(woke[0]) && /edited="true"/.test(woke[0]), "the wake message is framed as an edit");
+    ok(/<previous-body>/.test(woke[0]), "…and it carries the pre-edit text the deleted prose only described");
     ok(/actually, more please/.test(woke[0]), "the wake message carries the post-edit text");
     ok(woke[0].includes('reason="message-edited"'), "the envelope's reason is message-edited on an edit wake");
     ok(woke[0].includes('trust="unauth"'), "the envelope's HUMAN trigger fail-closes to trust=unauth when the channel isn't confirmed internal (F3)");
@@ -732,9 +733,10 @@ registerConfig({
     event: { type: "message", channel: "C_TXN", ts: "9.9", thread_ts: "1.1", user: "U1", text: "what do you reckon, Dave?" },
   })!;
   const wakeMsg = renderWakeMessage(ev, undefined, { trust: "peer" });
-  ok(wakeMsg.includes(NO_REPLY_SENTINEL) && wakeMsg.includes("what do you reckon, Dave?"), "wake message = judge instruction + raw reply");
-  ok(wakeMsg.includes("[thread-follow]"), "wake message is marked as a thread-follow dispatch");
-  ok(/social\s+chatter/i.test(wakeMsg) && /never re-answer/i.test(wakeMsg), "wake message names social chatter as noise and forbids re-answering");
+  ok(wakeMsg.includes("what do you reckon, Dave?"), "wake message carries the raw reply");
+  ok(wakeMsg.includes('addressing="thread-follow"'), "wake message is marked as a thread-follow dispatch");
+  ok(wakeMsg.startsWith("<wake ") && !wakeMsg.includes(NO_REPLY_SENTINEL), "the judge instruction is NOT in the wake — the standing 'Reading a wake' block carries the bar (OPE-753)");
+  ok(!/social\s+chatter/i.test(wakeMsg) && !/re-answer/i.test(wakeMsg), "the chatter doctrine is NOT in the wake — the standing channel persona carries it (OPE-753)");
   ok(wakeMsg.includes('<wake reason="thread-activity"'), "wake message body is the envelope, reason=thread-activity for an engaged-thread (non-edit) wake");
   ok(wakeMsg.includes('trust="peer"'), "wake envelope's trigger message is trust=peer");
   ok(wakeMsg.includes('trigger="true"'), "wake envelope's sole message carries trigger=true");
@@ -750,7 +752,7 @@ registerConfig({
     },
   };
   const out = await routeMessageEvent(ev, deps);
-  ok(out.woke && woke[0].includes(NO_REPLY_SENTINEL), "wake delivery carries the judge instruction");
+  ok(out.woke && woke[0].startsWith("<wake ") && woke[0].includes('addressing="thread-follow"'), "wake delivery is the judged envelope (OPE-753 — the judge instruction lives in the standing prompt)");
 
   ok(isNoReply("NO_REPLY"), "bare sentinel → silent");
   ok(isNoReply("  NO_REPLY."), "whitespace + trailing punctuation → silent");
@@ -945,7 +947,7 @@ registerConfig({
     const a = (calls[0].auth as { attributes: Record<string, string> }).attributes;
     ok(a.is_ext_shared === "false" && a.trust_checked === "true", "name-drop wake auth carries the gate's own internal verdict (session arms trusted)");
   }
-  ok(calls[0].message.includes("[name-drop]") && calls[0].message.includes(NO_REPLY_SENTINEL), "name-drop dispatch carries the judge instruction + sentinel");
+  ok(calls[0].message.includes('addressing="name-drop"'), "name-drop dispatch renders the name-drop addressing");
   ok((calls[0].state as { channelId?: string }).channelId === "C_TXN", "wake passes channel state (new session must know where to post)");
   ok((calls[0].state as { oeUninvited?: boolean }).oeUninvited === true, "name-drop wake state carries oeUninvited → failures stay quiet until a reply posts");
   ok(calls[0].message.includes('<wake reason="channel-activity"'), "name-drop envelope reason is channel-activity");
@@ -979,7 +981,8 @@ registerConfig({
     displayName: async () => "Test Slack Bot",
   });
   ok(out.woke && calls.length === 1, "the bot's Slack display name is a needle");
-  ok(calls[0].message.includes('("Test Slack Bot")'), "dispatch names the display name that fired the gate, even when a different token matched the text (see identity.name below)");
+  ok(!calls[0].message.includes('("Test Slack Bot")'), "the matched display name reaches NO rendered byte");
+  ok(calls[0].message.includes('addressing="name-drop"') && calls[0].message.includes("Test Slack Bot, what&apos;s the ETA?"), "the wake states the name-drop case on its addressing, and the trigger body carries the words that fired the gate");
   out = await routeNameDropEvent(topLevel(), {
     ...deps(true, true),
     displayName: async () => undefined,
@@ -1180,12 +1183,12 @@ registerConfig({
     ok(a.is_ext_shared === "false" && a.trust_checked === "true", "wake auth STAMPED with the internal verdict (unstamped = external downgrade — the live-bitten bug)");
   }
   ok(wakes[0].message.includes('<wake reason="channel-activity"'), "envelope reason is channel-activity");
-  ok(wakes[0].message.includes("[channel-watch]"), "supervisor wake uses the [channel-watch] framing");
-  ok(!wakes[0].message.includes("[thread-follow]"), "supervisor wake does NOT reuse the [thread-follow] framing");
-  ok(wakes[0].message.includes("you are this channel's standing session"), "supervisor preamble states the true standing-session identity");
+  ok(wakes[0].message.includes('addressing="channel-watch"'), "supervisor wake uses the channel-watch addressing");
+  ok(!wakes[0].message.includes('addressing="thread-follow"'), "supervisor wake does NOT reuse the thread-follow addressing");
+  ok(wakes[0].message.includes('container="channel"'), "…and the container attribute states the standing session's container");
   ok(
-    wakes[0].message.includes("never re-answer a question you already answered"),
-    "the byte-identical live-tuned failure-mode sentences carry over to the supervisor preamble",
+    !wakes[0].message.includes("never re-answer a question you already answered"),
+    "the failure-mode sentences are NOT repeated above the envelope — the standing persona owns them",
   );
   ok(wakes[0].message.includes('trust="peer"'), "envelope trigger message is trust=peer (default-observe)");
   ok(wakes[0].message.includes('member-count="12"'), "member count threaded into the envelope's <channel member-count>");
@@ -1205,9 +1208,9 @@ registerConfig({
       }),
     );
     ok(out2.woke && uw.length === 1, "unified path: supervisor wake still fires");
-    ok(uw[0].message.includes('<channel platform="slack" id="C_SUP"'), "unified wake stamps the <channel platform> surface address");
-    ok(uw[0].message.includes("Cross-surface disclosure:"), "unified wake appends the P5 advisory disclosure preamble");
-    ok(uw[0].message.includes("[channel-watch]"), "unified wake still leads with the [channel-watch] framing (disclosure never replaces it)");
+    ok(uw[0].message.includes('<channel id="C_SUP"'), "unified wake carries the opaque channel id — that is what the host routes on");
+    ok(!uw[0].message.includes("platform=") && !uw[0].message.includes("Cross-surface disclosure"), "🔴 the unified wake names NO platform and carries no disclosure sentence");
+    ok(uw[0].message === wakes[0].message, "🔴 the unified wake is BYTE-IDENTICAL to the default supervisor wake — the flag changes nothing in the render");
   }
 
   wakes.length = 0;
@@ -1741,9 +1744,9 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
 
     let out = await routeSupervisorEvent(mentionSupEv(), deps(), { directMention: true });
     ok(out.woke && wakes.length === 1 && wakes[0].window?.addressing === "direct-mention", "directMention + singleWindow on an app_mention → WAKES (disqualifiers lifted) + window stamped addressing:direct-mention (the reply-bridge arm)");
-    ok(wakes[0].message.includes("[direct]") && !wakes[0].message.includes("[channel-watch]"), "directMention wake renders the ADDRESSED [direct] preamble, not the silence-biased watch framing");
+    ok(wakes[0].message.includes('addressing="direct-mention"') && !wakes[0].message.includes('addressing="channel-watch"'), "directMention wake renders the ADDRESSED addressing, not the silence-biased watch value");
     ok(wakes[0].message.includes(`wake-id="${wakes[0].window!.wakeId}"`), "the envelope's wake-id matches the minted window wakeId (the reply tool's routing key survives)");
-    ok(wakes[0].message.includes('reason="mention"') && wakes[0].message.includes('mention="true"'), "directMention wake carries reason=mention + the trigger's mention=true response-obligation flag");
+    ok(wakes[0].message.includes('reason="channel-activity"') && wakes[0].message.includes('mention="true"'), "directMention wake collapses reason to channel-activity and keeps the trigger's mention=true response-obligation flag");
 
     wakes.length = 0;
     out = await routeSupervisorEvent(mentionSupEv(), deps());
@@ -1752,12 +1755,12 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
     wakes.length = 0;
     out = await routeSupervisorEvent(ambientSupEv(), deps());
     ok(out.woke && wakes[0].window !== undefined && !("addressing" in wakes[0].window!), "ambient singleWindow wake's window carries NO addressing key (prose-drop guarantee intact)");
-    ok(wakes[0].message.includes("[channel-watch]") && !wakes[0].message.includes("[direct]") && !wakes[0].message.includes('mention="true"'), "ambient singleWindow wake renders channel-watch, byte-identical");
+    ok(wakes[0].message.includes('addressing="channel-watch"') && !wakes[0].message.includes('mention="true"'), "ambient singleWindow wake renders channel-watch, byte-identical");
 
     wakes.length = 0;
     out = await routeSupervisorEvent(mentionSupEv(), deps({ unifiedMeta: () => ({ unified: true }) }), { directMention: true });
     ok(
-      out.woke && wakes[0].window === undefined && wakes[0].message.includes("[channel-watch]") && !wakes[0].message.includes('mention="true"'),
+      out.woke && wakes[0].window === undefined && wakes[0].message.includes('addressing="channel-watch"') && !wakes[0].message.includes('mention="true"'),
       "directMention without singleWindow → the seam gates the addressing off (no window, plain channel-watch wake)",
     );
   }

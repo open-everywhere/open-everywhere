@@ -19,7 +19,7 @@ delete process.env.OE_SPAWN_DISPATCH_SECRET;
 
 const { registerUnifiedWakeTarget } = await import("../agent/channels/unified-window.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
-const { SINGLE_WINDOW_REPLY_MANDATE, renderWake } = await import("../agent/channels/normalized-wake.js");
+const { renderWake } = await import("../agent/channels/normalized-wake.js");
 const {
   redriveEnabled,
   redriveGuardKey,
@@ -63,10 +63,10 @@ function makeAudit(sink: Record<string, unknown>[]): (e: Record<string, unknown>
 {
   const W = "wake-original-1";
   const msg = renderWake(buildRedriveWake(W, SLACK_ORIGIN, 137, "2026-07-13T00:00:00Z")).message;
-  ok(msg.startsWith("[channel-watch]"), "wake: AMBIENT channel-watch preamble (its own prose is hard-dropped, never bridged)");
-  ok(!msg.includes("[direct]"), "wake: NOT an addressed direct-mention (so the bridge can never fire on the corrective turn)");
+  ok(msg.startsWith("<wake "), "wake: the corrective delivery is the envelope alone (OPE-753 — nothing renders above it)");
+  ok(msg.includes('addressing="channel-watch"'), "wake: AMBIENT channel-watch addressing (its own prose is hard-dropped, never bridged)");
+  ok(!msg.includes('addressing="direct-mention"') && !msg.includes('mention="true"'), "wake: NOT an addressed direct-mention (so the bridge can never fire on the corrective turn)");
   ok(msg.includes(`wake-id="${W}"`), "wake: the envelope RE-STAMPS the ORIGINAL wake-id (the reply fence + reply tool target it)");
-  ok(msg.includes(SINGLE_WINDOW_REPLY_MANDATE), "wake: the single-window reply mandate is present (judged wake + wakeId ⇒ appended)");
   ok(msg.includes('from="system"'), "wake: sender is system (a machine-authored notice, not a fake human)");
   ok(msg.includes('trust="relay"'), "wake: trust tier is relay (machine/self echo — the tier for the agent's own output)");
   ok(msg.includes("137 chars") && msg.includes(W), "wake: the corrective body names the dropped char count + the original wake-id");

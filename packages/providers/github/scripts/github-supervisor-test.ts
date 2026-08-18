@@ -61,9 +61,10 @@ const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:
 {
   const nw = buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Flaky retries on cold start", trigger, engagementTier: "reserved" });
   const { message, context } = renderWake(nw, NOW);
-  ok(message.startsWith("[channel-watch]"), "wake leads with the judged preamble");
-  ok(message.includes("you are this repo's standing session"), "wake uses the REPO container noun");
-  ok(message.includes("Calibration for this repo: RESERVED"), "the reserved calibration sentence rides the preamble (GitHub's platform default tier)");
+  ok(message.startsWith("<wake ") && message.endsWith("</wake>"), "the wake is its envelope and nothing else (OPE-753)");
+  ok(message.includes('addressing="channel-watch"'), "wake carries the ambient addressing the standing block keys the high silence bar to");
+  ok(message.includes('container="repo"'), "wake uses the REPO container noun");
+  ok(message.includes('engagement="reserved"'), "the reserved tier rides the envelope (GitHub's platform default tier)");
   ok(message.includes(`<channel id="${OWNER}/${REPO}" container="repo">`), "locus.channel = owner/repo (the silo grain); the S1 <channel container> attribute mirrors the REPO noun (OPE-684)");
   ok(message.includes(`<thread ts="#42">`), "locus.thread = the issue number (the conversation the comment belongs to)");
   ok(message.includes(`trigger="true"`) && message.includes("should we bump the retry budget here?"), "the comment is the trigger message");
@@ -80,7 +81,7 @@ const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:
   const nw = buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 7, trigger });
   const { message, context } = renderWake(nw, NOW);
   ok(context === undefined, "no issue title -> no context block");
-  ok(!message.includes("Calibration for this"), "no tier -> neutral -> no calibration sentence (byte-identical preamble)");
+  ok(!message.includes("engagement="), "no tier resolved -> NO engagement attribute at all (distinct from a resolved neutral)");
 }
 {
   const nw = buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 7, trigger, handoffNote: "Open asks: the retry-budget question in #42.", handoffFromGeneration: 1 });
@@ -91,10 +92,10 @@ const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:
 {
   const plain = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, trigger }), NOW);
   const unified = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, trigger, unified: true }), NOW);
-  ok(unified.message.includes(`<channel platform="github" id="${OWNER}/${REPO}" container="repo">`), "unified wake stamps the <channel platform=\"github\"> surface address");
-  ok(unified.message.includes("Cross-surface disclosure:"), "unified wake appends the P5 advisory disclosure to the judged preamble");
-  ok(!plain.message.includes("platform="), "per-repo wake carries NO platform attribute");
-  ok(!plain.message.includes("Cross-surface disclosure"), "per-repo wake carries NO disclosure sentence");
+  ok(unified.message === plain.message, "🔴 unified:true is BYTE-IDENTICAL to the per-repo wake — no surface address, no disclosure sentence");
+  ok(!unified.message.includes("platform="), "the unified wake names NO platform (the host routes on the opaque id)");
+  ok(!unified.message.includes("Cross-surface disclosure"), "…and carries no disclosure sentence");
+  ok(unified.message.includes(`<channel id="${OWNER}/${REPO}" container="repo">`), "the channel still carries its opaque id — that is what the host routes on");
   const explicitOff = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, trigger, unified: false }), NOW);
   ok(explicitOff.message === plain.message, "unified:false renders BYTE-IDENTICAL to the unset per-repo wake (flag-off invariant)");
 }
@@ -103,15 +104,12 @@ const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:
   const wakeId = "wk-abc-123";
   const nw = buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Retry budget", trigger, unified: true, directMention: true, wakeId });
   const { message } = renderWake(nw, NOW);
-  ok(message.startsWith("[direct]"), "direct-mention leads with the ADDRESSED preamble, not [channel-watch]");
-  ok(!message.includes("[channel-watch]"), "direct-mention does NOT use the silence-biased watch preamble");
-  ok(message.includes("addressed to you and is asking for a response"), "direct-mention tells the supervisor it is addressed and owes a reply");
-  ok(!message.includes("the bar to reply is high"), "direct-mention drops the watch preamble's high-bar silence framing");
-  ok(message.includes(`<wake reason="mention"`), "direct-mention keeps the full judged envelope (reason=\"mention\")");
+  ok(message.includes('addressing="direct-mention"'), "direct-mention renders the ADDRESSED addressing, not channel-watch");
+  ok(!message.includes('addressing="channel-watch"'), "direct-mention does NOT carry the ambient addressing");
+  ok(message.includes(`<wake reason="channel-activity"`), "direct-mention keeps the full judged envelope, with reason collapsed to channel-activity");
   ok(message.includes(`wake-id="${wakeId}"`), "the wake-id survives in the envelope — the reply tool echoes it (the only reply route on the unified channel)");
   ok(message.includes(`mention="true"`), "the trigger is flagged as a @mention (response-obligation signal)");
-  ok(message.includes(`<channel platform="github" id="${OWNER}/${REPO}" container="repo">`), "the surface address rides the unified addressed wake");
-  ok(message.includes("Cross-surface disclosure:"), "the P5 cross-surface disclosure still rides the addressed wake");
+  ok(message.includes(`<channel id="${OWNER}/${REPO}" container="repo">`), "the addressed wake carries the opaque channel id and no platform");
   ok(message.includes(UNTRUSTED_OPEN), "the comment body is still untrusted-wrapped by the envelope (W1 holds on the addressed path)");
 }
 {
@@ -119,7 +117,7 @@ const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:
   const plain = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Retry budget", trigger, engagementTier: "reserved" }), NOW);
   ok(off.message === plain.message, "directMention:false renders BYTE-IDENTICAL to the unset channel-watch wake (flag-off invariant)");
   ok(JSON.stringify(off.context) === JSON.stringify(plain.context), "directMention:false context is byte-identical too");
-  ok(off.message.startsWith("[channel-watch]"), "the flag-off wake is still the silence-biased channel-watch ambient wake");
+  ok(off.message.includes('addressing="channel-watch"'), "the flag-off wake is still the silence-biased channel-watch ambient wake");
 }
 
 {
@@ -166,11 +164,11 @@ interface WakeCapture { token: string; message: string; context: readonly string
   await handleGitHubSupervisorDispatch(dispatch(), deps);
   ok(wakes.length === 1, "dispatch wakes once");
   ok(wakes[0]!.token === githubSupervisorToken(OWNER, REPO, 1), "wake uses the supervisor continuation token (the :oe-sup:g infix)");
-  ok(wakes[0]!.message.includes("you are this repo's standing session"), "the delivered message is the repo-supervisor wake");
+  ok(wakes[0]!.message.includes('container="repo"') && wakes[0]!.message.includes('addressing="channel-watch"'), "the delivered message is the repo-supervisor wake");
   ok(touched.length === 1 && touched[0] === SURFACE, "touchSession records the wake on the current generation");
   await handleGitHubSupervisorDispatch(dispatch({ unified: true }), deps);
-  ok(wakes[1]!.message.includes(`<channel platform="github" id="${OWNER}/${REPO}" container="repo">`), "a unified dispatch stamps the surface address on the delivered wake");
-  ok(!wakes[0]!.message.includes("platform="), "the non-unified dispatch's wake stays unstamped (byte-identical off)");
+  ok(wakes[1]!.message === wakes[0]!.message, "🔴 a unified dispatch delivers a BYTE-IDENTICAL wake — the platform-blind render names no surface either way");
+  ok(!wakes[0]!.message.includes("platform="), "and neither wake carries a platform attribute");
 }
 
 {
@@ -186,7 +184,7 @@ interface WakeCapture { token: string; message: string; context: readonly string
   };
   await handleGitHubSupervisorDispatch(dispatch({ unified: true, directMention: true, window }), deps);
   ok(captured !== undefined, "the single-window direct @mention dispatches a wake");
-  ok(captured!.message.startsWith("[direct]"), "the delivered wake is the ADDRESSED direct-mention wake (not a silence-biased watch)");
+  ok(captured!.message.includes('addressing="direct-mention"'), "the delivered wake is the ADDRESSED direct-mention wake (not a silence-biased watch)");
   ok(captured!.message.includes(`wake-id="${wakeId}"`), "the delivered wake renders the wake-id (the reply tool's routing key)");
   ok(JSON.stringify(captured!.window) === JSON.stringify(window), "deps.wake receives the window (its wiring diverts into the unified channel + registers the reply-target map)");
 }

@@ -102,8 +102,9 @@ export function resolveInjectedAddressing(body: {
       ok: false,
       error:
         `\`${addressedAttr}\` contradicts \`addressing: "${stated}"\` — that addressing renders the ` +
-        `"You were not mentioned" preamble, which no addressed wake may carry. Use addressing ` +
-        `"direct-mention" (judged envelope + wake-id) or "direct" (raw body), or drop the addressed attribute.`,
+        `ambient wake the standing prompt holds to its highest silence bar, which no addressed wake ` +
+        `may claim. Use addressing "direct-mention" (judged envelope + wake-id) or "direct" (raw ` +
+        `body), or drop the addressed attribute.`,
     };
   }
   return { ok: true, addressing: stated };

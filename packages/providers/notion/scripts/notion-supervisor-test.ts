@@ -116,8 +116,9 @@ const siblings: NotionWakeMessage[] = [
 {
   const nw = buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings });
   const { message, context } = renderWake(nw, NOW);
-  ok(message.startsWith("[channel-watch]"), "channel-watch wake leads with the judged preamble");
-  ok(message.includes("you are this doc's standing session"), "channel-watch wake uses the DOC container noun");
+  ok(message.startsWith("<wake ") && message.endsWith("</wake>"), "the wake is its envelope and nothing else (OPE-753)");
+  ok(message.includes('addressing="channel-watch"'), "channel-watch wake carries the ambient addressing the standing block keys the high silence bar to");
+  ok(message.includes('container="doc"'), "channel-watch wake uses the DOC container noun");
   ok(message.includes(`<wake reason="channel-activity"`), "channel-watch wake carries the envelope");
   ok(message.includes(`<channel id="${PAGE}" container="doc">`), "locus.channel = the page id; the S1 <channel container> attribute mirrors the DOC noun (OPE-684)");
   ok(message.includes(`<thread ts="${DISCUSSION}">`), "locus.thread = the discussion id (reply anchor)");
@@ -137,9 +138,9 @@ const siblings: NotionWakeMessage[] = [
   const mk = (unified?: boolean) => renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings, unified }), NOW);
   const plain = mk();
   const unified = mk(true);
-  ok(unified.message.includes(`<channel platform="notion" id="${PAGE}" container="doc">`), "unified wake stamps the <channel platform=\"notion\"> surface address");
-  ok(unified.message.includes("Cross-surface disclosure:"), "unified wake appends the P5 advisory disclosure to the judged preamble");
-  ok(!plain.message.includes("platform=") && !plain.message.includes("Cross-surface disclosure"), "per-doc wake carries NO platform attr / disclosure");
+  ok(unified.message === plain.message, "🔴 unified:true is BYTE-IDENTICAL to the per-doc wake — no surface address, no disclosure sentence");
+  ok(unified.message.includes(`<channel id="${PAGE}" container="doc">`), "the channel still carries its opaque id — that is what the host routes on");
+  ok(!plain.message.includes("platform=") && !plain.message.includes("Cross-surface disclosure"), "neither wake carries a platform attr or a disclosure sentence");
   ok(mk(false).message === plain.message, "unified:false renders BYTE-IDENTICAL to the unset per-doc wake (flag-off invariant)");
   const direct = renderWake(buildNotionSupervisorWake({ addressing: "direct", pageId: PAGE, discussionId: DISCUSSION, trigger: { ...trigger, text: "@OE summarise this page" }, threadComments: siblings, unified: true }), NOW);
   ok(direct.message === "@OE summarise this page", "a unified DIRECT wake is still the body verbatim (stamp is judged-path-only by construction)");
@@ -197,21 +198,20 @@ const siblings: NotionWakeMessage[] = [
       NOW,
     );
   const dm = mk({ wakeId: "wake-notion-1", directMention: true, unified: true });
-  ok(dm.message.startsWith("[direct]"), "direct-mention wake leads with the ADDRESSED preamble (not the silence-biased watch one)");
+  ok(dm.message.includes('addressing="direct-mention"') && !dm.message.includes('addressing="channel-watch"'), "direct-mention wake carries the ADDRESSED addressing (not the silence-biased watch one)");
   ok(dm.message.includes(`wake-id="wake-notion-1"`), "direct-mention wake keeps the ENVELOPE with the wake-id (the reply tool's routing key)");
-  ok(dm.message.includes(`reason="mention"`) && dm.message.includes(`mention="true"`), "direct-mention wake is an honest mention (reason + response-obligation flag)");
-  ok(dm.message.includes(`<channel platform="notion" id="${PAGE}" container="doc">`), "direct-mention wake carries the unified surface address");
+  ok(dm.message.includes(`reason="channel-activity"`) && dm.message.includes(`mention="true"`), "direct-mention wake is an honest mention (feed class + response-obligation flag)");
+  ok(dm.message.includes(`<channel id="${PAGE}" container="doc">`), "direct-mention wake carries the opaque channel id and no platform");
   ok(dm.message.includes("an earlier note"), "direct-mention wake keeps the discussion backscroll (context the shared window lacks)");
   ok(mk().message === "@OE what did we decide?", "plain direct wake (no window) stays the body VERBATIM — byte-identical off");
   const watch = renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings, directMention: true }), NOW);
-  ok(watch.message.startsWith("[channel-watch]"), "directMention alongside channel-watch addressing is ignored (guarded on `direct`)");
+  ok(watch.message.includes('addressing="channel-watch"') && !watch.message.includes('mention="true"'), "directMention alongside channel-watch addressing is ignored (guarded on `direct`)");
   const watchId = renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings, wakeId: "wake-notion-2" }), NOW);
   ok(watchId.message.includes(`wake-id="wake-notion-2"`), "a Leg-A judged wake carries its wake-id in the envelope");
-  ok(watchId.message.includes("must be a `reply` call"), "ambient single-window Leg-A wake carries the reply-tool delivery mandate (the model must call `reply`, not answer in dropped prose)");
-  ok(watchId.message.includes("turn-final text is DISCARDED"), "ambient single-window Leg-A wake states the hard consequence: turn-final text is discarded on this session");
+  ok(!watchId.message.includes("must be a `reply` call") && !watchId.message.includes("turn-final text is DISCARDED"), "the wake carries NO delivery prose — the standing Reporting arm owns that rule now");
   const watchNoWindow = renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings }), NOW);
-  ok(!watchNoWindow.message.includes("wake-id"), "no window → the envelope carries NO wake-id attribute (byte-identical render)");
-  ok(!watchNoWindow.message.includes("must be a `reply` call") && !watchNoWindow.message.includes("turn-final text is DISCARDED"), "no window → the reply-tool mandate is NOT appended (byte-identical to the per-surface path — turn-final prose still posts there)");
+  ok(!watchNoWindow.message.includes("wake-id"), "no window → the envelope carries NO wake-id attribute (no id is ever fabricated)");
+  ok(watchNoWindow.message === watchId.message.replace(' wake-id="wake-notion-2"', ""), "the wake-id attribute is the ONLY delta between the windowed and non-windowed Leg-A render");
 }
 
 const AUTH: OpenEverywhereNotionAuth = { authenticator: "notion", principalId: AUTHOR, principalType: "notion-user", attributes: { page_id: PAGE, discussion_id: DISCUSSION } };
@@ -243,18 +243,18 @@ function captureDeps(session: NotionSupervisorSession, over: Partial<NotionSuper
   ok(wakes.length === 1, "dispatch wakes once");
   ok(wakes[0].token === notionSupervisorToken(PAGE, 1), "wake uses the supervisor continuation token (the :oe-sup:g infix)");
   ok(wakes[0].state.discussionId === DISCUSSION && wakes[0].state.pageId === PAGE && wakes[0].state.workspaceId === "ws-1", "session state carries discussion+page+workspace for the reply");
-  ok(wakes[0].message.includes("you are this doc's standing session"), "the delivered message is the doc-supervisor wake");
+  ok(wakes[0].message.includes('container="doc"') && wakes[0].message.includes('addressing="channel-watch"'), "the delivered message is the doc-supervisor wake");
   ok(touched.length === 1 && touched[0] === SURFACE, "touchSession records the wake on the current generation");
   ok(!("oeUnified" in (wakes[0].state as Record<string, unknown>)), "a per-doc dispatch seeds NO oeUnified marker (byte-identical off)");
   await handleNotionSupervisorDispatch(dispatch({ unified: true }), deps);
-  ok(wakes[1].message.includes(`<channel platform="notion" id="${PAGE}" container="doc">`), "a unified dispatch stamps the surface address on the delivered wake");
+  ok(wakes[1].message === wakes[0].message, "🔴 a unified dispatch delivers a BYTE-IDENTICAL wake — the platform-blind render names no surface either way");
   ok((wakes[1].state as Record<string, unknown>).oeUnified === true, "a unified dispatch seeds state.oeUnified = true (the silence gate's key)");
   ok(wakes[0].window === undefined && wakes[1].window === undefined, "no single-window plan → the dispatch threads NO window to the wake dep (byte-identical base path)");
   const win = planNotionSingleWindow(true, true, true, { discussionId: DISCUSSION, pageId: PAGE, workspaceId: "ws-1" })!;
   await handleNotionSupervisorDispatch(dispatch({ addressing: "direct", unified: true, window: win, directMention: true, trigger: { ...trigger, text: "@OE what did we decide?" } }), deps);
   ok(wakes[2].window === win, "a single-window dispatch threads the window through to the wake dep (the wiring's divert key)");
   ok(wakes[2].message.includes(`wake-id="${win.wakeId}"`), "the delivered direct-mention wake carries the window's wake-id in its envelope");
-  ok(wakes[2].message.startsWith("[direct]"), "the delivered wake is the ADDRESSED direct-mention render");
+  ok(wakes[2].message.includes('addressing="direct-mention"'), "the delivered wake is the ADDRESSED direct-mention render");
 }
 
 {

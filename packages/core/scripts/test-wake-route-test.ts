@@ -75,7 +75,15 @@ function goodBody(over: Record<string, unknown> = {}): Record<string, unknown> {
   return { domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, text: "hello team, is anything blocked?", origin: slackOrigin, ...over };
 }
 
-const G_INJECTED_WATCH_PREAMBLE = `[channel-watch] You were not mentioned — this message reached you because you are this channel's standing session: you see its activity so you can watch, remember, and step in only where you add something. Most messages need nothing from you, and the bar to reply is high. Reply only when you clearly add something the people here couldn't easily get themselves: it's addressed to you or names you, it asks something you can answer, you can stop a mistake in motion, or you hold information the conversation is missing. When you're unsure whether a message clears that bar, it doesn't. If the humans are talking among themselves and your reply would be noise, output exactly NO_REPLY and nothing else — nothing will be posted. Social chatter between humans — thanks, greetings, sign-offs ("cheers!", "see you tomorrow") — is noise even when it lands right after your reply, and never re-answer a question you already answered. Judge THIS message on its own merits: a run of NO_REPLY turns above means the earlier messages weren't for you, not that this one isn't. If you have a \`no_reply\` tool, prefer calling it (with a reason) over the bare NO_REPLY text — it's audited and unambiguous; the text sentinel still works if you don't. Cross-surface disclosure: you are one team's standing session across SEVERAL surfaces (each wake names its own via the <channel platform> address). Content you saw on one surface is context for judgment everywhere, but QUOTE it only into surfaces at equal-or-higher privacy — when unsure, paraphrase-and-point ("as discussed in #payments") rather than quoting a private line verbatim into a more public surface. The magic is that you were in the room; it is not licence to move a private sentence to a less-private place.`;
+const G_INJECTED_WATCH_OPENER = `<wake reason="channel-activity" addressing="channel-watch" current-time="TIME" wake-id="WID">
+  <channel id="C1" container="channel">`;
+
+const normFrame = (m: string): string =>
+  m
+    .replace(/wake-id="[^"]*"/g, 'wake-id="WID"')
+    .replace(/current-time="[^"]*"/g, 'current-time="TIME"')
+    .replace(/sent-at="[^"]*"/g, 'sent-at="TIME"')
+    .replace(/ id="test-[^"]*"/g, ' id="MID"');
 
 interface Captured { message: string; target: Record<string, unknown>; auth: { attributes?: Record<string, unknown> } }
 const captured: Captured[] = [];
@@ -177,16 +185,19 @@ await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(DO
   ok(c.auth.attributes?.oe_platform === "slack", "auth stamped oe_platform=slack (channelPlatform's unified hop reads it)");
   ok(c.auth.attributes?.oe_wake_id === jb.wakeId, "auth stamped oe_wake_id = the minted wake id");
   ok(c.auth.attributes?.team_id === "T1" && c.auth.attributes?.channel_id === "C1", "auth carries partition attrs derived from surfaceKey");
-  ok(c.message.includes("[channel-watch]"), "rendered message is the judged channel-watch envelope (byte-identical to a real ambient wake)");
+  ok(c.message.includes('addressing="channel-watch"'), "rendered message is the judged channel-watch envelope (byte-identical to a real ambient wake)");
   ok(c.message.includes("hello team, is anything blocked?"), "rendered message contains the trigger body");
-  ok(c.message.includes("Cross-surface disclosure:"), "unifiedDisclosure defaults TRUE (matches every real unified dispatch)");
-  ok(c.message.includes("this channel's standing session"), "slack containerNoun stays 'channel' (renderWake default)");
+  ok(c.message.includes('container="channel"'), "slack containerNoun stays 'channel' (renderWake default)");
 }
 
 {
   captured.length = 0;
+  await post(goodBody(), INJECT_SECRET);
+  const withDisclosure = normFrame(captured[0].message);
+  captured.length = 0;
   await post(goodBody({ unifiedDisclosure: false }), INJECT_SECRET);
-  ok(!captured[0].message.includes("Cross-surface disclosure:"), "unifiedDisclosure:false renders without the disclosure sentence");
+  ok(normFrame(captured[0].message) === withDisclosure, "unifiedDisclosure:false is byte-identical to the default — the field feeds no attribute");
+  ok(!captured[0].message.includes("Cross-surface disclosure:"), "…and the deleted disclosure sentence appears in neither render");
 }
 
 {
@@ -199,7 +210,7 @@ await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(DO
   });
   const res = await post({ domain: DOMAIN, platform: "notion", surfaceKey: notionSurface, text: "note for the doc", origin: { platform: "notion", discussionId: "D1" } }, INJECT_SECRET);
   ok(res.status === 200, "notion injection → 200");
-  ok(captured[0].message.includes("this doc's standing session"), "notion containerNoun defaults to 'doc' (matches notion-supervisor)");
+  ok(captured[0].message.includes('container="doc"'), "notion containerNoun defaults to 'doc' (matches notion-supervisor)");
 }
 
 {
@@ -208,7 +219,8 @@ await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(DO
   ok(res.status === 200, "direct-mention injection → 200");
   const c = captured[0];
   ok(c.auth.attributes?.oe_addressing === "direct-mention", "direct-mention stamps oe_addressing (enables the addressed-prose bridge)");
-  ok(c.message.includes("[direct]"), "direct-mention renders the addressed preamble");
+  ok(c.message.includes('addressing="direct-mention"'), "direct-mention renders the addressed envelope");
+  ok(c.message.startsWith("<wake "), "…and it renders the envelope alone, like every other judged wake (OPE-753)");
 }
 
 {
@@ -218,20 +230,20 @@ await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(DO
   const jb = (await res.json()) as { addressing: string };
   ok(jb.addressing === "direct-mention", "mention:true SELECTS direct-mention (not the channel-watch default)");
   const m = captured[0].message;
-  ok(m.startsWith("[direct]"), "mention:true renders the ADDRESSED preamble");
-  ok(!m.includes("You were not mentioned"), "an addressed wake NEVER carries the 'You were not mentioned' prose");
-  ok(m.includes('mention="true"') && m.includes('reason="mention"'), "the addressed render keeps mention=true AND reason=mention");
+  ok(m.includes('addressing="direct-mention"'), "mention:true renders the ADDRESSED envelope");
+  ok(!m.includes('addressing="channel-watch"'), "an addressed wake NEVER carries the ambient addressing");
+  ok(m.includes('mention="true"') && m.includes('reason="channel-activity"'), "the addressed render keeps mention=true, and reason collapses to channel-activity");
   ok(captured[0].auth.attributes?.oe_addressing === "direct-mention", "mention:true also arms the addressed-prose bridge (oe_addressing stamp)");
 
   captured.length = 0;
   ok((await post(goodBody({ reason: "mention" }), INJECT_SECRET)).status === 200, 'reason:"mention" with no stated addressing → 200');
-  ok(captured[0].message.startsWith("[direct]"), 'reason:"mention" SELECTS the addressed preamble too');
-  ok(!captured[0].message.includes("You were not mentioned"), 'reason:"mention" never renders the watch prose');
+  ok(captured[0].message.includes('addressing="direct-mention"'), 'reason:"mention" SELECTS the addressed envelope too');
+  ok(!captured[0].message.includes('addressing="channel-watch"'), 'reason:"mention" never renders the ambient addressing');
 
   captured.length = 0;
   ok((await post(goodBody({ reason: "dm" }), INJECT_SECRET)).status === 200, 'reason:"dm" with no stated addressing → 200');
-  ok(captured[0].message.startsWith("[direct] This is a direct message to you"), 'reason:"dm" SELECTS the addressed preamble, with the DM opening (renderWake branches the opening on the reason)');
-  ok(!captured[0].message.includes("You were not mentioned"), 'reason:"dm" never renders the watch prose');
+  ok(captured[0].message.includes('addressing="direct-mention"') && captured[0].message.includes('reason="dm"'), 'reason:"dm" SELECTS the addressed envelope, and `dm` survives the reason collapse (it names the surface kind)');
+  ok(!captured[0].message.includes('addressing="channel-watch"'), 'reason:"dm" never renders the ambient addressing');
 
   for (const [over, label] of [
     [{ mention: true, addressing: "channel-watch" }, "mention:true + addressing:channel-watch"],
@@ -242,8 +254,8 @@ await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(DO
   ] as const) {
     captured.length = 0;
     const bad = await post(goodBody(over), INJECT_SECRET);
-    ok(bad.status === 400, `${label} → 400 (an addressed attribute may not ride a watch preamble)`);
-    ok((((await bad.json()) as { error: string }).error).includes("You were not mentioned"), `${label} 400 NAMES the contradicting prose`);
+    ok(bad.status === 400, `${label} → 400 (an addressed attribute may not ride an ambient addressing)`);
+    ok((((await bad.json()) as { error: string }).error).includes("contradicts"), `${label} 400 NAMES the contradiction`);
     ok(captured.length === 0, `${label} → no divert`);
   }
 
@@ -261,10 +273,12 @@ await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(DO
   captured.length = 0;
   const res = await post(goodBody(), INJECT_SECRET);
   ok(res.status === 200, "an unaddressed body still injects → 200");
-  const first = captured[0].message.split("\n\n")[0];
-  ok(first === G_INJECTED_WATCH_PREAMBLE, "an unaddressed wake renders the channel-watch preamble BYTE-IDENTICALLY");
+  const frame = normFrame(captured[0].message).split("\n").slice(0, 2).join("\n");
+  ok(frame === G_INJECTED_WATCH_OPENER, "an unaddressed wake renders the ambient envelope frame BYTE-IDENTICALLY");
+  ok(captured[0].message.startsWith("<wake "), "an unaddressed wake renders the envelope alone — nothing above it (OPE-753)");
   ok(!captured[0].message.includes('mention="true"'), "an unaddressed wake carries NO mention flag");
   ok(captured[0].message.includes('reason="channel-activity"'), "an unaddressed wake keeps the ambient reason");
+  ok(captured[0].message.includes('trust="peer"') && !captured[0].message.includes('trust="principal"'), "an unaddressed vouched author renders peer, never principal (the tag-keyed swap needs addressing)");
   ok(captured[0].auth.attributes?.oe_addressing === undefined, "an unaddressed wake does NOT arm the addressed-prose bridge");
 }
 
@@ -282,7 +296,6 @@ const norm = (s: string): string =>
     .replace(/sent-at="[^"]*"/g, 'sent-at="TS"')
     .replace(/current-time="[^"]*"/g, 'current-time="TS"')
     .replace(/wake-id="[^"]*"/g, 'wake-id="WID"')
-    .replace(/\[wake-id: [^\]]*\]/g, "[wake-id: WID]")
     .replace(/id="test-[^"]*"/g, 'id="MID"');
 
 {
@@ -336,7 +349,7 @@ const norm = (s: string): string =>
   await post(goodBody({ messages: [{ text: "one line only", author: "sam" }], text: undefined }), INJECT_SECRET);
   const oneEntry = norm(captured[0].message);
   ok(single === oneEntry, "single-text render == single-entry coalesced render (byte-identical, single path untouched)");
-  ok(single.includes("[channel-watch]"), "the frozen single-text render is still the judged channel-watch envelope");
+  ok(single.includes('addressing="channel-watch"'), "the frozen single-text render is still the judged channel-watch envelope");
 }
 
 const SOLO_DOMAIN = "e2e-solo";
