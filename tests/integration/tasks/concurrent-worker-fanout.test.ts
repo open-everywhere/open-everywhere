@@ -125,5 +125,7 @@ test("two agent calls in one step start two workers that both run", async () => 
       );
     }
     expect(drain.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+
+    expect(dispatched.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   }
 });

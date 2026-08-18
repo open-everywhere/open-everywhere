@@ -25,6 +25,7 @@ import { overrideSettingsForTest, resetSettingsForTest } from "@open-everywhere/
 import { ingestUntrusted } from "@open-everywhere/core/agent/access/untrusted.js";
 import { defineDomain } from "@open-everywhere/core/agent/memory/domain.js";
 import type { BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
+import { auditSourcesGateRefusal, auditOriginFenceRefusal } from "@open-everywhere/core/agent/channels/read-scope-audit.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -174,6 +175,61 @@ registerReadAdapter(fakeSlackAdapter);
     ok(src.includes("resolveReadAdapter("), `wiring: ${name} routes through the neutral execute chain (resolveReadAdapter)`);
     ok(src.includes("resolveWindowSources("), `wiring: ${name} gates its mount on sources non-empty`);
   }
+}
+
+{
+  const rows: Array<Record<string, unknown>> = [];
+  const audit = async (e: Record<string, unknown>) => {
+    rows.push(e);
+  };
+
+  const uniSlack = mk("unified", { oe_platform: "slack", oe_sources: "slack" });
+  await auditOriginFenceRefusal(uniSlack, "notion", { audit });
+  n++;
+  ok(rows.length === 1, "auditOriginFenceRefusal: exactly one row written");
+  {
+    const row = rows[0] as { action?: string; platform?: string; detail?: Record<string, unknown> };
+    ok(row.action === "notion.origin_refused", "…action name is `<target>.origin_refused`");
+    ok(row.platform === "notion", "…platform field equals the target (queryable by platform)");
+    ok(row.detail?.target === "notion" && row.detail?.origin === "slack" && "sessionId" in (row.detail ?? {}), "…detail carries target, this turn's origin, and a sessionId key");
+  }
+  rows.length = 0;
+
+  await auditSourcesGateRefusal(uniSlack, "linear", { audit });
+  n++;
+  ok(rows.length === 1, "auditSourcesGateRefusal: exactly one row written");
+  {
+    const row = rows[0] as { action?: string; platform?: string; detail?: Record<string, unknown> };
+    ok(row.action === "linear.sources_refused", "…action name is `<target>.sources_refused`");
+    ok(row.platform === "linear", "…platform field equals the target");
+    ok(row.detail?.target === "linear" && row.detail?.origin === "slack", "…detail names the refused target and this turn's origin");
+  }
+  rows.length = 0;
+
+  const unplaceable = { session: { auth: { current: { attributes: {} } } } } as unknown as BindableContext;
+  await auditOriginFenceRefusal(unplaceable, "notion", { audit });
+  n++;
+  ok((rows[0] as { detail?: Record<string, unknown> }).detail?.origin === null, "an unplaceable turn's origin is audited as `null`, not omitted or guessed");
+  ok(!("principalId" in rows[0]), "no principal on this context ⇒ no principalId field (never a fabricated one)");
+  rows.length = 0;
+
+  const exploding = async () => {
+    throw new Error("audit store is down");
+  };
+  let originThrew = false;
+  try {
+    await auditOriginFenceRefusal(uniSlack, "notion", { audit: exploding });
+  } catch {
+    originThrew = true;
+  }
+  ok(originThrew === false, "a failing audit sink does not throw out of auditOriginFenceRefusal (best-effort, never control flow)");
+  let sourcesThrew = false;
+  try {
+    await auditSourcesGateRefusal(uniSlack, "notion", { audit: exploding });
+  } catch {
+    sourcesThrew = true;
+  }
+  ok(sourcesThrew === false, "a failing audit sink does not throw out of auditSourcesGateRefusal (best-effort, never control flow)");
 }
 
 console.log(`✓ ${n} generic-read-verbs assertions passed`);

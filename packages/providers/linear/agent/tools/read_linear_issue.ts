@@ -6,6 +6,8 @@ import { assertLinearIssueAllowed } from "../channels/linear-scope.js";
 import {
   ingestUntrustedModelOutput,
   assertTurnSurface,
+  TurnOriginFenceError,
+  auditOriginFenceRefusal,
   currentTurnIssue,
   sourceScopedMount,
   getConfig,
@@ -53,7 +55,12 @@ export const readLinearIssueEntry = defineTool({
     workspaceTrust: z.enum(["internal", "public"]).optional(),
   }),
   async execute(input, ctx2) {
-    assertTurnSurface(ctx2 as BindableContext, "linear");
+    try {
+      assertTurnSurface(ctx2 as BindableContext, "linear");
+    } catch (err) {
+      if (err instanceof TurnOriginFenceError) await auditOriginFenceRefusal(ctx2 as BindableContext, "linear");
+      throw err;
+    }
     const issue = input.issue ?? currentTurnIssue(ctx2 as BindableContext);
     if (!issue) throw new Error("No Linear issue available for this turn — pass `issue` explicitly (its UUID or identifier, e.g. ENG-42).");
     await assertLinearIssueAllowed(ctx2 as BindableContext, issue, getConfig().loadDomains(), async (ref) => (await enrichIssueTeam(ref))?.teamId);

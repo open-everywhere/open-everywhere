@@ -11,7 +11,7 @@ export interface GatedToolEntry {
 
 export type LooseApproval = ((ctx: any) => any) | { readonly request: (ctx: any) => any; readonly response?: (ctx: any) => any };
 
-import { bindFrom, windowGrainOf, currentWakeId, deploymentOrg, FIRE_UNATTENDED_ATTR, type BindableContext, type WindowGrain } from "../identity/binding.js";
+import { bindFrom, windowGrainOf, currentWakeId, currentWindowToken, deploymentOrg, FIRE_UNATTENDED_ATTR, type BindableContext, type WindowGrain } from "../identity/binding.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
 import { classifySessionId } from "../channels/window-key.js";
 import { registerReplayModelProjection } from "./untrusted-projection.js";
@@ -51,7 +51,7 @@ function grainOf(ctx: BindableContext): WindowGrain {
 
 export function domainLabelOf(ctx: BindableContext): string {
   try {
-    const raw = ctx.channel?.continuationToken;
+    const raw = ctx.channel?.continuationToken ?? currentWindowToken(ctx);
     const sid = classifySessionId(raw);
     if (sid.kind === "window" || sid.kind === "task" || sid.kind === "thread-seat") return sid.key.domain;
     if (sid.kind === "container-supervisor") return sid.containerKey.length > 0 ? sid.containerKey : "unknown";
