@@ -429,6 +429,7 @@ export async function slackMessageEventPost(input: {
   readonly teamId?: string;
   readonly eventId?: string;
   readonly timeoutMs?: number;
+  readonly threadTs?: string;
 }): Promise<{ status: number; body: string }> {
   if (booted === undefined) throw new Error("integration harness: slackMessageEventPost before bootAgent.");
   const { SYNTHETIC_SLACK_ROUTE, signSlackRequest } = await import("../../packages/core/scripts/e2e/synthetic");
@@ -447,6 +448,48 @@ export async function slackMessageEventPost(input: {
       ts: input.ts,
       event_ts: input.ts,
       team: teamId,
+      ...(input.threadTs === undefined ? {} : { thread_ts: input.threadTs }),
+    },
+  });
+  const signed = signSlackRequest(rawBody, SLACK_SIGNING_SECRET);
+  const res = await fetch(`${booted.base}${SYNTHETIC_SLACK_ROUTE}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-slack-request-timestamp": signed.timestamp,
+      "x-slack-signature": signed.signature,
+    },
+    body: rawBody,
+    signal: AbortSignal.timeout(input.timeoutMs ?? 120_000),
+  });
+  return { status: res.status, body: await res.text() };
+}
+
+export async function slackChannelJoinEventPost(input: {
+  readonly channelId: string;
+  readonly userId: string;
+  readonly inviterId?: string;
+  readonly ts: string;
+  readonly teamId?: string;
+  readonly eventId?: string;
+  readonly timeoutMs?: number;
+}): Promise<{ status: number; body: string }> {
+  if (booted === undefined) throw new Error("integration harness: slackChannelJoinEventPost before bootAgent.");
+  const { SYNTHETIC_SLACK_ROUTE, signSlackRequest } = await import("../../packages/core/scripts/e2e/synthetic");
+  const teamId = input.teamId ?? SLACK_TEAM_ID;
+  const rawBody = JSON.stringify({
+    type: "event_callback",
+    team_id: teamId,
+    event_id: input.eventId ?? `EvJoinIT${input.ts.replace(".", "")}`,
+    event_time: Math.floor(Number.parseFloat(input.ts)),
+    event: {
+      type: "member_joined_channel",
+      channel: input.channelId,
+      channel_type: "C",
+      user: input.userId,
+      ...(input.inviterId === undefined ? {} : { inviter: input.inviterId }),
+      team: teamId,
+      event_ts: input.ts,
     },
   });
   const signed = signSlackRequest(rawBody, SLACK_SIGNING_SECRET);
