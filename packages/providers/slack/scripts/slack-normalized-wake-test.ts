@@ -151,15 +151,10 @@ const G_SLACK_GROUP_DM = `<wake reason="dm" addressing="direct-mention" current-
 }
 {
   const gev: ParsedMessageEvent = { channelId: "G_TEAM", ts: "500.0", teamId: "T1", userId: "U1", channelType: "mpim", text: "can one of you chase order 4417?", isAppMention: false };
-  const group = renderWakeMessage(gev, NOW, { dm: true, groupDm: true, trust: "peer", wakeId: "wk_dm_2", triggerAuthorName: "Rowan Hale", triggerAuthorHandle: "rowan" });
+  const group = renderWakeMessage(gev, NOW, { dm: true, trust: "peer", wakeId: "wk_dm_2", triggerAuthorName: "Rowan Hale", triggerAuthorHandle: "rowan" });
   eq(group, G_SLACK_GROUP_DM, "slack group-DM wake (mpim channel type, same addressed envelope)");
   ok(group.includes('type="mpim"'), "🔴 the room shape reaches the model on the channel type — a group DM is `mpim`, a 1:1 is `im`");
   ok(group.includes('reason="dm"'), "a group DM keeps `reason=\"dm\"` — WakeReason's own definition is a direct-message-EQUIVALENT surface, so a group DM needs no fourth value");
-  eq(
-    renderWakeMessage(gev, NOW, { dm: true, trust: "peer", wakeId: "wk_dm_2", triggerAuthorName: "Rowan Hale", triggerAuthorHandle: "rowan" }),
-    group,
-    "🔴 `groupDm` reaches NO rendered byte — the deleted prose was its only consumer, and `type=\"mpim\"` is what states the room shape now",
-  );
   eq(
     group.replace('id="ch_c2xhY2s6R19URUFN" type="mpim"', 'id="ch_c2xhY2s6RF9BTElDRQ" type="im"').replace('wake-id="wk_dm_2"', 'wake-id="wk_dm_1"').replace('id="500.0" sent-at="1970-01-01T00:08:20.000Z"', 'id="400.0" sent-at="1970-01-01T00:06:40.000Z"').replace("can one of you chase order 4417?", "can you chase the refund for order 4417?"),
     G_SLACK_DM,

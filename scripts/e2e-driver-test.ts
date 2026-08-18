@@ -1779,7 +1779,7 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   const envelope = renderWakeEnvelope({
     reason: "channel-activity",
     currentTime: "2026-03-15T09:30:00.000Z",
-    channel: { id: "C0UNIA", type: "channel", platform: "slack", platformLabel: "#uni-a" },
+    channel: { id: "C0UNIA", type: "channel" },
     messages: [
       ...flattenMultiBackscroll(rendered),
       { from: "human", author: "Asker", id: "t1", sentAt: "2026-03-15T09:29:00.000Z", trust: "peer", trigger: true, body: "what did we decide?" },

@@ -320,9 +320,8 @@ const memCfg: MemoryResolveConfig = {
   ok(w.platform === "teams", "H1: platform teams");
   ok(w.reason === "dm", "H1: reason is `dm` (the SURFACE SHAPE, not `mention` — core opens with the DM sentence)");
   ok(w.addressing === "direct-mention", "H1: addressing is `direct-mention` ALWAYS (a DM is always answered; arms the addressed-prose bridge)");
-  ok(w.unifiedDisclosure === undefined, "H1: NO unifiedDisclosure (a DM window sees exactly one surface — no cross-surface fan-in to disclose)");
   ok(w.engagementTier === undefined, "H1: NO engagementTier (the ambient dial does not apply to an always-answered DM)");
-  ok(w.locus?.channel?.id === "19:1on1@thread.v2" && w.locus?.channel?.platform === undefined, "H1: locus is the DM conversation, with NO platform address stamp (one surface)");
+  ok(w.locus?.channel?.id === "19:1on1@thread.v2", "H1: locus is the DM conversation");
   ok(w.trigger.kind === "message", "H1: message trigger");
   ok(w.trigger.kind === "message" && w.trigger.message.mention === true, "H1: mention:true (the response-obligation flag, as Slack/Discord carry it)");
   ok(w.trigger.kind === "message" && w.trigger.message.from === "human", "H1: from:human (bot/self authors are dropped upstream)");

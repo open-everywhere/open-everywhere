@@ -6,6 +6,8 @@ export {
   assertCredentialEndpointAllowed,
   credentialEndpointVerdict,
   credentialEndpointProblems,
+  assertCredentialEndpointHostAllowed,
+  credentialEndpointHostVerdict,
   CredentialEndpointError,
   CREDENTIAL_HTTP_METHODS,
 } from "./access/credential-endpoints.js";

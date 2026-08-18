@@ -167,6 +167,45 @@ export function credentialEndpointVerdict(
   return ALLOWED;
 }
 
+export function credentialEndpointHostVerdict(
+  rules: CredentialEndpointRules | undefined,
+  url: string,
+): CredentialEndpointVerdict {
+  if (rules === undefined) return ALLOWED;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { allowed: false, reason: `refusing to bind a scoped credential to an unparseable URL` };
+  }
+
+  const host = normalizeHost(parsed.hostname);
+  const allowedHosts = rules.hosts.map(normalizeHost);
+  if (!allowedHosts.includes(host)) {
+    return {
+      allowed: false,
+      reason:
+        `host "${host}" is not in this credential's allowed hosts (${allowedHosts.join(", ")}) — ` +
+        `hosts match exactly, with no subdomain or wildcard widening`,
+    };
+  }
+
+  return ALLOWED;
+}
+
+export function assertCredentialEndpointHostAllowed(rules: CredentialEndpointRules | undefined, url: string, where: string): void {
+  const verdict = credentialEndpointHostVerdict(rules, url);
+  if (verdict.allowed) return;
+  throw new CredentialEndpointError(
+    `${where}: BLOCKED MCP transport to ${url} — ${verdict.reason}. ` +
+      `The credential was NOT returned. This is the connector plane's boot-time transport check ` +
+      `(access/credential-endpoints.ts), so it blocks a wrong-credential/wrong-connection bug before ` +
+      `eve's MCP client ever dials out. Correct the connection's directUrl, or widen the credential's ` +
+      `\`endpoints.hosts\` in agent/access/connector-credentials.ts.`,
+  );
+}
+
 export function assertCredentialEndpointAllowed(
   rules: CredentialEndpointRules | undefined,
   url: string,

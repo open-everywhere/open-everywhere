@@ -9,9 +9,10 @@ import {
   ANY_SESSION,
   SCRIPTED_MODEL_ENV,
   SCRIPTED_MODEL_ID,
-  STALE_TURN_PARK_MS,
+  noteStaleHoldExpiry,
   scriptedModelArmed,
   scriptedStore,
+  staleTurnParkMs,
   type ResolveObservation,
   type ScriptedEntry,
   type ScriptedRole,
@@ -143,17 +144,22 @@ function serveStep(entry: ScriptedEntry, at: ResolveObservation, toolResultCount
   return { served: index, step: candidate, stale: false };
 }
 
-async function awaitSessionKeyedSwap(current: ScriptedEntry, sessionId: string | undefined): Promise<ScriptedEntry | undefined> {
-  if (sessionId === undefined || sessionId === ANY_SESSION) return undefined;
+async function awaitScriptSwap(
+  current: ScriptedEntry,
+  sessionId: string | undefined,
+): Promise<{ readonly entry?: ScriptedEntry; readonly expired: boolean }> {
+  if (sessionId === undefined || sessionId === ANY_SESSION) return { expired: false };
   const store = scriptedStore();
-  const deadline = Date.now() + STALE_TURN_PARK_MS;
+  const deadline = Date.now() + staleTurnParkMs();
   for (;;) {
     const keyed = store.get(sessionId);
-    if (keyed !== undefined && keyed !== current) return keyed;
+    if (keyed !== undefined && keyed !== current) return { entry: keyed, expired: false };
+    const wildcard = store.get(ANY_SESSION);
+    if (wildcard !== undefined && wildcard !== current && wildcard.epoch === current.epoch) return { entry: wildcard, expired: false };
     let stillRegistered = false;
     for (const live of store.values()) if (live === current) stillRegistered = true;
-    if (!stillRegistered) return undefined;
-    if (Date.now() >= deadline) return undefined;
+    if (!stillRegistered) return { expired: false };
+    if (Date.now() >= deadline) return { expired: true };
     await new Promise((r) => setTimeout(r, 100));
   }
 }
@@ -168,7 +174,17 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation): ReturnTyp
       let verdict = serveStep(target, observation, request.toolResults.length);
 
       if (verdict.stale) {
-        const next = await awaitSessionKeyedSwap(target, observation.sessionId);
+        const swap = await awaitScriptSwap(target, observation.sessionId);
+        if (swap.expired) {
+          noteStaleHoldExpiry({
+            sessionId: String(observation.sessionId),
+            heldTurnId: String(observation.turnId),
+            scriptTurnId: String(target.firstCallTurnByRole[observation.role]),
+            registeredAt: target.registeredAt,
+            parkMs: staleTurnParkMs(),
+          });
+        }
+        const next = swap.entry;
         if (next !== undefined) {
           const pushed = target.resolves.indexOf(observation);
           if (pushed !== -1) target.resolves.splice(pushed, 1);

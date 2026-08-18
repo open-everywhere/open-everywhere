@@ -92,10 +92,9 @@ export function buildTeamsSupervisorWake(input: TeamsSupervisorWakeInput): Norma
     reason: input.directMention ? "mention" : "channel-activity",
     addressing: input.directMention ? "direct-mention" : "channel-watch",
     engagementTier: input.directMention ? undefined : input.engagementTier,
-    unifiedDisclosure: true,
     wakeId: input.wakeId,
     locus: {
-      channel: { id: input.channelId, platform: "teams" },
+      channel: { id: input.channelId },
       ...(input.threadRootId ? { thread: { ts: input.threadRootId } } : {}),
     },
     ...(input.trigger.authorName ? { participants: [{ id: input.trigger.authorId, name: input.trigger.authorName }] } : {}),

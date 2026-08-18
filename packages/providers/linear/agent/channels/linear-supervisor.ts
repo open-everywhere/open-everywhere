@@ -104,7 +104,6 @@ export interface LinearSupervisorWakeInput {
   readonly engagementTier?: WakeEngagementTier;
   readonly handoffNote?: string | null;
   readonly handoffFromGeneration?: number;
-  readonly unified?: boolean;
   readonly wakeId?: string;
   readonly directMention?: boolean;
 }
@@ -124,10 +123,9 @@ export function buildLinearSupervisorWake(input: LinearSupervisorWakeInput): Nor
     addressing: directMention ? "direct-mention" : "channel-watch",
     containerNoun: "team",
     engagementTier: directMention ? undefined : input.engagementTier,
-    unifiedDisclosure: input.unified === true ? true : undefined,
     wakeId: input.wakeId,
     locus: {
-      channel: { id: input.teamId, ...(input.unified ? { platform: "linear" } : {}) },
+      channel: { id: input.teamId },
       thread: { ts: issueLabel },
     },
     contextLines,
@@ -254,7 +252,6 @@ export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch
         issueTitle: d.issueTitle,
         trigger: d.trigger,
         engagementTier: d.engagementTier,
-        unified: d.unified,
         wakeId: d.window?.wakeId,
         directMention: d.directMention,
         handoffNote: handoffNote ?? undefined,

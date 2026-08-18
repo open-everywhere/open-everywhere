@@ -92,18 +92,14 @@ const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:
 }
 {
   const plain = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, trigger }), NOW);
-  const unified = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, trigger, unified: true }), NOW);
-  ok(unified.message === plain.message, "🔴 unified:true is BYTE-IDENTICAL to the per-repo wake — no surface address, no disclosure sentence");
-  ok(!unified.message.includes("platform="), "the unified wake names NO platform (the host routes on the opaque id)");
-  ok(!unified.message.includes("Cross-surface disclosure"), "…and carries no disclosure sentence");
-  ok(unified.message.includes(`<channel id="${REPO_KEY}" container="repo">`), "the channel still carries its opaque id — that is what the host routes on");
-  const explicitOff = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, trigger, unified: false }), NOW);
-  ok(explicitOff.message === plain.message, "unified:false renders BYTE-IDENTICAL to the unset per-repo wake (flag-off invariant)");
+  ok(!plain.message.includes("platform="), "the wake names NO platform (the host routes on the opaque key)");
+  ok(!plain.message.includes("Cross-surface disclosure"), "…and carries no disclosure sentence");
+  ok(plain.message.includes(`<channel id="${REPO_KEY}" container="repo">`), "the channel carries its opaque key — that is what the host routes on");
 }
 
 {
   const wakeId = "wk-abc-123";
-  const nw = buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Retry budget", trigger, unified: true, directMention: true, wakeId });
+  const nw = buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Retry budget", trigger, directMention: true, wakeId });
   const { message } = renderWake(nw, NOW);
   ok(message.includes('addressing="direct-mention"'), "direct-mention renders the ADDRESSED addressing, not channel-watch");
   ok(!message.includes('addressing="channel-watch"'), "direct-mention does NOT carry the ambient addressing");

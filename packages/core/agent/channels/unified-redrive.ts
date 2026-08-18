@@ -55,7 +55,7 @@ export function buildRedriveWake(originalWakeId: string, origin: UnifiedWakeOrig
     reason: "channel-activity",
     addressing: "channel-watch",
     wakeId: originalWakeId,
-    locus: { channel: { id: originContainerId(origin), platform: origin.platform } },
+    locus: { channel: { id: originContainerId(origin) } },
     trigger: mkMessageTrigger({
       from: "system",
       author: "open-everywhere",

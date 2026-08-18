@@ -136,15 +136,11 @@ const siblings: NotionWakeMessage[] = [
 }
 
 {
-  const mk = (unified?: boolean) => renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings, unified }), NOW);
-  const plain = mk();
-  const unified = mk(true);
-  ok(unified.message === plain.message, "🔴 unified:true is BYTE-IDENTICAL to the per-doc wake — no surface address, no disclosure sentence");
-  ok(unified.message.includes(`<channel id="${PAGE_KEY}" container="doc">`), "the channel still carries its opaque id — that is what the host routes on");
-  ok(!plain.message.includes("platform=") && !plain.message.includes("Cross-surface disclosure"), "neither wake carries a platform attr or a disclosure sentence");
-  ok(mk(false).message === plain.message, "unified:false renders BYTE-IDENTICAL to the unset per-doc wake (flag-off invariant)");
-  const direct = renderWake(buildNotionSupervisorWake({ addressing: "direct", pageId: PAGE, discussionId: DISCUSSION, trigger: { ...trigger, text: "@OE summarise this page" }, threadComments: siblings, unified: true }), NOW);
-  ok(direct.message === "@OE summarise this page", "a unified DIRECT wake is still the body verbatim (stamp is judged-path-only by construction)");
+  const plain = renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings }), NOW);
+  ok(plain.message.includes(`<channel id="${PAGE_KEY}" container="doc">`), "the channel carries its opaque key — that is what the host routes on");
+  ok(!plain.message.includes("platform=") && !plain.message.includes("Cross-surface disclosure"), "the wake carries no platform attr and no disclosure sentence");
+  const direct = renderWake(buildNotionSupervisorWake({ addressing: "direct", pageId: PAGE, discussionId: DISCUSSION, trigger: { ...trigger, text: "@OE summarise this page" }, threadComments: siblings }), NOW);
+  ok(direct.message === "@OE summarise this page", "a DIRECT wake is still the body verbatim");
 }
 
 {

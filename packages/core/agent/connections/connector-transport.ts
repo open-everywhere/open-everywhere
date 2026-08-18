@@ -57,6 +57,7 @@ function registerCoreConnectorTransports(): void {
     resolve: (spec) => {
       const opts = {
         connector: spec.connector,
+        directUrl: spec.directUrl,
         ...(spec.fallbackSecretRef !== undefined ? { fallbackSecretRef: spec.fallbackSecretRef } : {}),
         ...(spec.fallbackBroker !== undefined ? { fallbackBroker: spec.fallbackBroker } : {}),
       };

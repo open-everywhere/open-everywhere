@@ -1,14 +1,17 @@
 import type { SlackContext } from "eve/channels/slack";
 import { loadThreadContextMessages } from "eve/channels/slack";
 import type { SlackMessage } from "eve/channels/slack";
-import { MAX_MESSAGES, renderContext, type ContextLine } from "@open-everywhere/core/agent/adapter-api.js";
+import { MAX_MESSAGES, renderContext, genericReadVerbsEnabled, type ContextLine } from "@open-everywhere/core/agent/adapter-api.js";
 
 export { renderContext, type ContextLine };
 
-export const READ_MORE_HINT =
-  "Note: the block above is the most recent messages only, capped for context size — there may " +
-  "be older history not shown. If you need it, fetch more with the read_slack_channel or " +
-  "read_slack_thread tool.";
+export function readMoreHint(): string {
+  const tools = genericReadVerbsEnabled() ? "read_channel or read_thread" : "read_slack_channel or read_slack_thread";
+  return (
+    "Note: the block above is the most recent messages only, capped for context size — there may " +
+    `be older history not shown. If you need it, fetch more with the ${tools} tool.`
+  );
+}
 
 export function linesFromMessages(
   raw: ReadonlyArray<Record<string, unknown>>,
@@ -67,7 +70,7 @@ async function threadContext(ctx: SlackContext, message: SlackMessage): Promise<
       if (m.user) return { senderType: "user" as const, senderId: m.user, ts: m.ts, text: m.markdown || m.text };
       return { senderType: "unknown" as const, ts: m.ts, text: m.markdown || m.text };
     });
-    const entry = renderContext(lines, `slack thread ${message.channelId}/${message.threadTs}`, { readMoreHint: READ_MORE_HINT });
+    const entry = renderContext(lines, `slack thread ${message.channelId}/${message.threadTs}`, { readMoreHint: readMoreHint() });
     return entry ? [entry] : [];
   } catch {
     return [];
@@ -87,7 +90,7 @@ async function channelBackscroll(ctx: SlackContext, message: SlackMessage): Prom
     const { userId: meUser, botId: meBot } = await botIdentity(ctx);
     const lines = linesFromMessages(raw, { userId: meUser, botId: meBot });
     lines.reverse();
-    const entry = renderContext(lines, `slack channel ${message.channelId}`, { readMoreHint: READ_MORE_HINT });
+    const entry = renderContext(lines, `slack channel ${message.channelId}`, { readMoreHint: readMoreHint() });
     return entry ? [entry] : [];
   } catch {
     return [];

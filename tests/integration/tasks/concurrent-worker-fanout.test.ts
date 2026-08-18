@@ -2,8 +2,9 @@ import { expect, test } from "vitest";
 
 import {
   afterThisTest,
+  armSettlement,
+  consumeSettlement,
   disposeLater,
-  awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
@@ -54,6 +55,16 @@ test("two agent calls in one step start two workers that both run", async () => 
 
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> run two jobs at once" });
 
+  const terminalStep = await waitFor(
+    () => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 1),
+    "the dispatch turn's own terminal step — the earliest point the seat's session id is known",
+  );
+  const receipts = terminalStep.toolResults
+    .filter((t) => t.name === "agent")
+    .map((t) => (t.output as { taskId?: unknown } | undefined)?.taskId)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+  const drain = receipts.length > 0 ? disposeLater(armSettlement(dispatched, SETTLEMENT_DRAIN_SCRIPT)) : undefined;
+
   await waitForChildren(dispatched, { count: 2, lastStepIndex: 1, label: "both delegated workers to serve their whole arm" });
 
   expect(dispatched.requests.filter((r) => r.fault !== undefined)).toEqual([]);
@@ -93,17 +104,13 @@ test("two agent calls in one step start two workers that both run", async () => 
 
   expect(workerToolCalls).toBeGreaterThanOrEqual(2);
 
-  const receipts = delegations
-    .map((t) => (t.output as { taskId?: unknown } | undefined)?.taskId)
-    .filter((id): id is string => typeof id === "string" && id.length > 0);
-  if (receipts.length > 0) {
-    const { handle: drain } = await awaitTaskSettlement({
+  if (drain !== undefined) {
+    await consumeSettlement({
+      armed: drain,
       dispatched,
       taskId: receipts[0]!,
-      script: SETTLEMENT_DRAIN_SCRIPT,
       label: `the settled worker's completion wake for ${receipts[0]}`,
     });
-    afterThisTest(() => drain.dispose());
     for (const taskId of receipts.slice(1)) {
       await waitFor(
         () => drain.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes(taskId))),
@@ -111,6 +118,9 @@ test("two agent calls in one step start two workers that both run", async () => 
       );
     }
     expect(drain.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+
+    const foreignTurns = dispatched.requests.filter((r) => r.role === "parent" && r.turnId !== terminalStep.turnId);
+    expect(foreignTurns.map((r) => String(r.turnId))).toEqual([]);
 
     expect(dispatched.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   }
