@@ -43,7 +43,7 @@ export function installLinearApiStub(respond: LinearApiResponder): LinearApiStub
     const answer = respond(call);
     if (!answer) {
       return new Response(JSON.stringify({ errors: [{ message: `oe_integration_stub_unhandled ${call.operation || "(unnamed operation)"}` }] }), {
-        status: answer === undefined ? 501 : (answer as { status?: number }).status ?? 200,
+        status: 501,
         headers: { "content-type": "application/json" },
       });
     }
