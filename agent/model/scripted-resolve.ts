@@ -125,8 +125,19 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation): ReturnTyp
         const index = stepIndexFor(arm, request.toolResults.length - baseline);
         if (typeof index === "string") fault = index;
         else {
-          served = index;
-          step = arm[index];
+          const candidate = arm[index];
+          const turnKey = at.turnId ?? "?";
+          const firstCallTurn = entry.firstCallTurnByRole[at.role];
+          if (candidate.calls !== undefined && firstCallTurn !== undefined && firstCallTurn !== turnKey) {
+            fault =
+              `stale script: role "${at.role}" already served a call-bearing step for turn "${firstCallTurn}"; ` +
+              `turn "${turnKey}" is a DIFFERENT turn hitting the same still-registered entry — dispose and ` +
+              "re-register a fresh script per turn (see harness.ts's awaitTaskSettlement doc).";
+          } else {
+            served = index;
+            step = candidate;
+            if (candidate.calls !== undefined && firstCallTurn === undefined) entry.firstCallTurnByRole[at.role] = turnKey;
+          }
         }
       }
 
