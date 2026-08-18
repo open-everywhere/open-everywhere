@@ -263,8 +263,8 @@ async function runChannel(probe: TeamsRosterProbe | undefined): Promise<Received
   const sa = silent.auth.attributes ?? {};
   eq(sa["user_type"], undefined, "🔴 NEGATIVE CONTROL: a probe that cannot answer leaves user_type ABSENT — fail-open, byte-identical to a deployment with no probe");
   ok(
-    silent.message.includes('trust="peer"'),
-    `🔴 …and the same author on the same channel is a PEER without the refutation — so the assertion above measures the ROSTER, not the fixture. Got: ${silent.message.slice(0, 400)}`,
+    silent.message.includes('trust="principal"') && !silent.message.includes('trust="unauth"'),
+    `🔴 …and the same author on the same channel is VOUCHED without the refutation — so the assertion above measures the ROSTER, not the fixture. Got: ${silent.message.slice(0, 400)}`,
   );
   eq(sa[OE_CHAT_NONMEMBER_ATTR], undefined, "…and the author leg contributes NO non-member mark (=== absent)");
 

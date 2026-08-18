@@ -489,7 +489,7 @@ await handleNotionSupervisorDispatch(
     effectiveEveToken(UNIFIED_CHANNEL_NAME, received[0].target.token) === effectiveEveToken(UNIFIED_CHANNEL_NAME, received[3].target.token),
     "💥 SINGLE CONTEXT: the Slack wake and the Notion wake resolve ONE identical effective eve token — the fourth-surface proof",
   );
-  ok(received[3].message.startsWith("[direct]") && received[3].message.includes(`wake-id="${notWindow.wakeId}"`), "notion: the delivered wake is the ADDRESSED direct-mention render with the wake-id envelope");
+  ok(received[3].message.includes('addressing="direct-mention"') && received[3].message.includes(`wake-id="${notWindow.wakeId}"`), "notion: the delivered wake is the ADDRESSED direct-mention render with the wake-id envelope");
   const a = received[3].auth.attributes ?? {};
   ok(a[OE_PLATFORM_ATTR] === "notion" && a[OE_WAKE_ID_ATTR] === notWindow.wakeId, "notion: the forwarded auth is stamped with oe_platform + oe_wake_id");
   ok(a[OE_ADDRESSING_ATTR] === "direct-mention", "notion: the forwarded auth carries oe_addressing='direct-mention' (the terminal-prose delivery bridge's arm)");
@@ -552,7 +552,7 @@ const stubResolveParent = async (): Promise<string | undefined> => undefined;
     dOrigin.platform === "discord" && dOrigin.channelId === "CH_WIN" && dOrigin.guildId === "G_WIN" && dOrigin.messageId === "5002",
     "discord: the frozen origin names the triggering channel + guild + message (the reply target + its message_reference anchor)",
   );
-  ok(received[4].message.startsWith("[direct]") && received[4].message.includes(`wake-id="${received[4].target.wakeId}"`), "discord: the delivered wake is the ADDRESSED direct-mention render with the wake-id envelope");
+  ok(received[4].message.includes('addressing="direct-mention"') && received[4].message.includes(`wake-id="${received[4].target.wakeId}"`), "discord: the delivered wake is the ADDRESSED direct-mention render with the wake-id envelope");
   const da = received[4].auth.attributes ?? {};
   ok(da[OE_PLATFORM_ATTR] === "discord" && da[OE_WAKE_ID_ATTR] === received[4].target.wakeId, "discord: the forwarded auth is stamped with oe_platform + oe_wake_id");
   ok(da[OE_ADDRESSING_ATTR] === "direct-mention", "discord: the forwarded auth carries oe_addressing='direct-mention' (the terminal-prose delivery bridge's arm)");
@@ -562,7 +562,7 @@ const stubResolveParent = async (): Promise<string | undefined> => undefined;
   await dispatchTurn(m3, authForRelayMessage(m3)!, discordSend, stubCreateThread, stubResolveParent, captureReceive);
   ok(discordBaseSends.length === 0 && received.length === 6, "discord: an ENGAGED non-mention follow-up ALSO diverts (Leg A ambient — one shared brain, not just mentions)");
   ok(received[5].auth.attributes?.[OE_ADDRESSING_ATTR] === undefined, "discord: the ambient wake carries NO oe_addressing — every watch turn's terminal prose stays hard-dropped");
-  ok(!received[5].message.startsWith("[direct]") && received[5].message.includes(`wake-id="${received[5].target.wakeId}"`), "discord: the ambient wake is the judged watch render, wake-id kept for the reply tool");
+  ok(received[5].message.includes('addressing="channel-watch"') && received[5].message.includes(`wake-id="${received[5].target.wakeId}"`), "discord: the ambient wake is the judged watch render, wake-id kept for the reply tool");
   const dOrigin3 = received[5].target.origin as { platform: string; guildId?: string };
   ok(dOrigin3.platform === "discord" && dOrigin3.guildId === "G_WIN", "discord: the ambient wake's origin is discord-shaped too (guild carried)");
 
@@ -716,7 +716,7 @@ await handleTeamsSingleWindowDispatch(
     effectiveEveToken(UNIFIED_CHANNEL_NAME, received[0].target.token) === effectiveEveToken(UNIFIED_CHANNEL_NAME, received[teamsIdx].target.token),
     "💥 SINGLE CONTEXT: the Slack wake and the Teams wake resolve ONE identical effective eve token — the sixth-surface proof",
   );
-  ok(received[teamsIdx].message.startsWith("[direct]") && received[teamsIdx].message.includes(`wake-id="${teamsWindow.wakeId}"`), "teams: the delivered wake is the ADDRESSED direct-mention render with the wake-id envelope");
+  ok(received[teamsIdx].message.includes('addressing="direct-mention"') && received[teamsIdx].message.includes(`wake-id="${teamsWindow.wakeId}"`), "teams: the delivered wake is the ADDRESSED direct-mention render with the wake-id envelope");
   const a = received[teamsIdx].auth.attributes ?? {};
   ok(a[OE_PLATFORM_ATTR] === "teams" && a[OE_WAKE_ID_ATTR] === teamsWindow.wakeId, "teams: the forwarded auth is stamped with oe_platform + oe_wake_id");
   ok(a[OE_ADDRESSING_ATTR] === "direct-mention", "teams: the forwarded auth carries oe_addressing='direct-mention' (the terminal-prose delivery bridge's arm)");

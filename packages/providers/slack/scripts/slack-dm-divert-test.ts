@@ -219,17 +219,15 @@ async function runFront(
 
   ok(d.message.includes('reason="dm"'), "🔴 the envelope's reason is `dm` — this path is the FIRST producer of that vocabulary value");
   ok(!d.message.includes('reason="mention"'), "…not `mention`: telling a 1:1 DM it was @mentioned is a small lie that costs orientation");
-  ok(d.message.includes('trust="peer"'), "the vouched DM partner renders the `peer` tier");
+  ok(d.message.includes('trust="principal"'), "the vouched DM partner renders `principal` — a DM is addressed by the shape of the room");
   ok(
     !d.message.includes("<untrusted_external_data source=\"slack-message\">"),
     "🔴 a VOUCHED DM partner's body is NOT fenced (OPE-577 — the fence keys on the author, and a DM partner the gate confirmed is a member)",
   );
   ok(d.message.includes("what&apos;s the refund status?"), "…with the human's text XML-escaped by the renderer, as on every surface");
-  ok(
-    d.message.startsWith("[direct] This is a direct message to you"),
-    "🔴 the preamble opens as a DM, NOT as \"you were @mentioned by name in this channel\" — `direct-mention` addressing is carried for its MECHANICAL effect (arming the prose bridge), and the orientation prose must not inherit its literal claim",
-  );
-  ok(d.message.includes("the ONLY way your words reach anyone"), "…while the reply MANDATE is byte-identical to the mention path's (a DM answer must still come from the `reply` tool)");
+  ok(d.message.startsWith("<wake ") && d.message.endsWith("</wake>"), "🔴 the delivery is the envelope alone — no orientation prose to inherit a literal claim from");
+  ok(d.message.includes('addressing="direct-mention"'), "…and `direct-mention` addressing is carried for its MECHANICAL effect (arming the prose bridge)");
+  ok(!d.message.includes("the ONLY way your words reach anyone"), "…while the reply MANDATE lives once in the standing Reporting arm, not above every envelope");
 
   eq(r.seatCalls[0]?.surfaceKey, SURFACE, "the seat is resolved by SURFACE KEY (what the window token and its row are both keyed on)");
   eq(r.seatCalls[0]?.legacyChannelId, DM_CHANNEL, "…and carries the raw channel id, so the one-time adopt-from-OPE-90 probe can find the legacy row");
@@ -260,7 +258,7 @@ async function runFront(
 
 {
   const vouched = await runFront(dmEnvelope("Ev5b1"), { partnerTrust: "internal" });
-  ok(vouched.dispatched[0]!.message.includes('trust="peer"'), "an INTERNAL DM partner renders the `peer` trust tier");
+  ok(vouched.dispatched[0]!.message.includes('trust="principal"'), "an INTERNAL DM partner renders the `principal` trust tier — addressed and vouched");
   ok(
     !vouched.dispatched[0]!.message.includes("<untrusted_external_data"),
     "…and OPE-577 renders that vouched partner's body UNFENCED — the DM is a colleague talking to you",
@@ -366,12 +364,10 @@ async function runFront(
   eq(a["oe_addressing"], "direct-mention", "addressing is still `direct-mention` — the MECHANICAL half (the addressed-prose bridge, the wake-id reply mandate) is identical to a 1:1's");
 
   ok(d.message.includes('reason="dm"'), "a group DM is a direct-message-EQUIVALENT surface, so it keeps `reason=\"dm\"` rather than minting a new vocabulary value");
-  ok(
-    d.message.startsWith("[direct] This is a group direct message you are part of"),
-    "🔴 the GROUP opening — the 1:1's 'everything said here is addressed to you' is false in a room with other people in it, and would instruct the seat to answer their chatter on every turn",
-  );
-  ok(d.message.includes("stay out of the rest"), "…and the opening carries the stay-out clause that makes unconditional WAKING compatible with conditional REPLYING");
-  ok(d.message.includes('trust="peer"'), "the author renders `peer` off the SURFACE's confirmed-internal verdict, which is what stands in for the partner check a group DM cannot make");
+  ok(d.message.startsWith("<wake ") && d.message.endsWith("</wake>"), "the delivery is the envelope alone");
+  ok(!d.message.includes("everything said here is addressed to you"), "🔴 the 1:1's false-in-a-group claim is nowhere in a group-DM render — the render makes no addressing claim in prose at all");
+  ok(d.message.includes('type="mpim"'), "🔴 the room shape reaches the model on the channel type — a group DM is `mpim`, a 1:1 is `im`");
+  ok(d.message.includes('trust="principal"'), "the author renders vouched off the SURFACE's confirmed-internal verdict (tag-keyed to `principal` because a DM is addressed), which is what stands in for the partner check a group DM cannot make");
   ok(!d.message.includes("<untrusted_external_data source=\"slack-message\">"), "…and that `peer` verdict carries the body OUTSIDE the fence, like every other surface's member-authored message (OPE-577)");
 
   eq(d.target.origin.replyAnchorTs, undefined, "🔴 no replyAnchorTs — one seat, one room, one reply placement; splitting it on whether the human typed `<@bot>` would put two geometries in one conversation");
@@ -395,7 +391,7 @@ async function runFront(
   eq((r.dispatched[0]!.auth.attributes ?? {})["channel_type"], "mpim", "🔴 the divert is TOLD it is an mpim — an app_mention envelope carries no channel_type, so re-reading the field would have bound mode `channel` and quietly lost every mpim carve-out");
   eq(r.factsLookups[0], MPIM_CHANNEL, "…the channel-type read that made the decision happened, on this channel");
   eq(r.fifo.keys, [dmFifoKey(MPIM_CHANNEL)], "🔴 the mention leg enqueues on the SAME FIFO key as the message leg — a group DM's two entrances can never run concurrently on one seat");
-  ok(r.dispatched[0]!.message.startsWith("[direct] This is a group direct message you are part of"), "…and it renders the group opening, like every other wake in that room");
+  ok(r.dispatched[0]!.message.includes('type="mpim"') && r.dispatched[0]!.message.includes('reason="dm"'), "…and it renders the same mpim room shape as every other wake in that room");
 }
 
 {

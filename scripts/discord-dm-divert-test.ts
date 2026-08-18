@@ -135,11 +135,9 @@ async function run(msg: DiscordRelayMessage, opts: { noReceive?: boolean } = {})
 
   ok(d.message.includes('reason="dm"'), "🔴 the envelope's reason is `dm` — the surface shape, not `mention`");
   ok(!d.message.includes('reason="mention"'), "…telling a DM it was @mentioned in a channel is a small lie that costs orientation");
-  ok(
-    d.message.startsWith("[direct] This is a direct message to you"),
-    "🔴 the preamble opens as a DM — `direct-mention` addressing is carried for its MECHANICAL effect, and the orientation prose must not inherit its literal claim",
-  );
-  ok(d.message.includes("the ONLY way your words reach anyone"), "…while the reply MANDATE is the mention path's, byte-identical (the answer must come from `reply`)");
+  ok(d.message.startsWith("<wake ") && d.message.endsWith("</wake>"), "🔴 the delivery is the envelope alone — no orientation prose to inherit a literal claim from");
+  ok(d.message.includes('addressing="direct-mention"'), "…and `direct-mention` addressing is carried for its MECHANICAL effect (arming the prose bridge)");
+  ok(!d.message.includes("the ONLY way your words reach anyone"), "…while the reply MANDATE lives once in the standing Reporting arm, not above every envelope");
   ok(d.message.includes("<untrusted_external_data"), "🔴 the DM body is `wrapUntrusted`-FENCED like every other surface's inbound text");
   ok(d.message.includes("refund status"), "…with the human's text inside the fence");
   eq((d.message.match(/<message /g) ?? []).length, 1, "🔴 exactly ONE message in the envelope — a DM wake carries NO backscroll (the seat's own session IS the history)");
