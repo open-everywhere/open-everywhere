@@ -14,19 +14,25 @@ const ADDRESSED = "b0000000-0000-4000-8000-000000000000";
 const replyTo = (wake: string, text = "answer"): ToolCall => ({ name: "reply", input: { wake, text } });
 const noReply = (): ToolCall => ({ name: "no_reply", input: { reason: "not for me" } });
 
-async function loadWithMode(mode: string, tag: string): Promise<{
+interface ProbeModule {
   scoreProbe: (p: { ambientWakeId: string; addressedWakeId: string; targetWakeId: string; expect: "reply" | "silence" | "either" }, calls: readonly ToolCall[]) => {
     addressedAnswered: boolean; ambientSilent: boolean; noCrossBinding: boolean; correct: boolean; targetReplied: boolean; borderline: boolean; notes: readonly string[];
   };
   classifyDelivery: (targetWakeId: string, calls: readonly ToolCall[], terminalText: string) => "tool" | "terminal" | "none";
-}> {
+}
+
+async function loadWith(args: readonly string[], tag: string): Promise<ProbeModule> {
   const saved = process.argv;
-  process.argv = [saved[0], saved[1], "--mode", mode];
+  process.argv = [saved[0], saved[1], ...args];
   try {
     return (await import(`./eval/first-turn-offline.js?mode=${tag}`)) as never;
   } finally {
     process.argv = saved;
   }
+}
+
+async function loadWithMode(mode: string, tag: string): Promise<ProbeModule> {
+  return await loadWith(["--mode", mode], tag);
 }
 
 {
@@ -98,6 +104,56 @@ async function loadWithMode(mode: string, tag: string): Promise<{
   ok(classifyDelivery(ADDRESSED, [replyTo(AMBIENT)], "") === "none",
     "delivery: a `reply` naming a DIFFERENT wake delivers nothing to the target");
   ok(classifyDelivery(ADDRESSED, [], "   ") === "none", "delivery: whitespace-only prose is not a delivery");
+}
+
+{
+  const bareReply = (text = "answer"): ToolCall => ({ name: "reply", input: { text } });
+
+  {
+    const { scoreProbe } = await loadWith(["--mode", "ambient-only", "--path", "per-surface"], "ps-ambient");
+    const p = { ambientWakeId: AMBIENT, addressedWakeId: ADDRESSED, targetWakeId: AMBIENT, expect: "silence" as const };
+
+    const quiet = scoreProbe(p, [noReply()]);
+    ok(quiet.correct, "per-surface ambient-only: staying quiet on unwarranted chatter is CORRECT");
+    ok(quiet.ambientSilent, "per-surface ambient-only: ambient_silent is TRUE when no reply was posted");
+
+    const spoke = scoreProbe(p, [bareReply()]);
+    ok(spoke.correct === false, "per-surface ambient-only: NEGATIVE CONTROL — a wake-less reply IS the over-reply on this path");
+    ok(spoke.ambientSilent === false, "per-surface ambient-only: ambient_silent is FALSE once any reply is posted");
+    ok(spoke.notes.every((x) => !x.includes("NEITHER wake")), "per-surface: a wake-less reply is never reported as naming a wrong id — the verb carries no id to be wrong");
+  }
+
+  {
+    const { scoreProbe } = await loadWith(["--mode", "warranted-ambient", "--path", "per-surface"], "ps-warranted");
+    const p = { ambientWakeId: AMBIENT, addressedWakeId: ADDRESSED, targetWakeId: AMBIENT, expect: "reply" as const };
+
+    ok(scoreProbe(p, [bareReply()]).correct, "per-surface warranted-ambient: a wake-less reply answers the warranted wake");
+    const silent = scoreProbe(p, [noReply()]);
+    ok(silent.correct === false, "per-surface warranted-ambient: NEGATIVE CONTROL — `no_reply` on a warranted wake is still a FALSE SILENCE");
+    ok(silent.notes.some((x) => x.includes("FALSE SILENCE")), "per-surface warranted-ambient: the failure names itself");
+  }
+
+  {
+    const { scoreProbe, classifyDelivery } = await loadWith(["--mode", "addressed-only", "--path", "per-surface"], "ps-addressed");
+    const p = { ambientWakeId: AMBIENT, addressedWakeId: ADDRESSED, targetWakeId: ADDRESSED, expect: "reply" as const };
+
+    const answered = scoreProbe(p, [bareReply()]);
+    ok(answered.correct, "per-surface addressed-only: a wake-less reply answers the @mention");
+    ok(answered.addressedAnswered, "per-surface addressed-only: addressed_answered reads the reply even with no id on it");
+    ok(scoreProbe(p, []).correct === false, "per-surface addressed-only: NEGATIVE CONTROL — an unanswered @mention is WRONG");
+
+    ok(classifyDelivery(ADDRESSED, [bareReply()], "") === "tool", "per-surface delivery: a wake-less `reply` is the TOOL route");
+    ok(classifyDelivery(ADDRESSED, [], "The answer is 42.") === "terminal", "per-surface delivery: NEGATIVE CONTROL — prose with no reply is still TERMINAL");
+  }
+
+  {
+    const { scoreProbe, classifyDelivery } = await loadWithMode("addressed-only", "unified-bare");
+    const p = { ambientWakeId: AMBIENT, addressedWakeId: ADDRESSED, targetWakeId: ADDRESSED, expect: "reply" as const };
+    ok(scoreProbe(p, [bareReply()]).correct === false,
+      "🔴 unified addressed-only: the SAME wake-less reply answers NOTHING — the unified verb must name the wake it posts to");
+    ok(classifyDelivery(ADDRESSED, [bareReply()], "") === "none",
+      "🔴 unified delivery: a wake-less reply delivers nothing on the unified path — the per-surface rule must not leak across");
+  }
 }
 
 console.log(`response-behaviour scoring: ${n} assertions passed`);
