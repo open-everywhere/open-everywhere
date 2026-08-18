@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 const WORKSPACE_BASES = ["packages", join("packages", "providers")] as const;
 
@@ -11,6 +11,7 @@ export interface ChainLeg {
   readonly dir: string;
   readonly script: string;
   readonly file: string;
+  readonly args?: readonly string[];
 }
 
 interface Pkg {
@@ -44,7 +45,7 @@ export function chainLegNames(chain: string): string[] {
   return names;
 }
 
-export function chainLegs(packages: Pkg[] = workspacePackages()): ChainLeg[] {
+export function chainLegs(packages: Pkg[] = workspacePackages(), includeRoot = true): ChainLeg[] {
   const legs: ChainLeg[] = [];
   for (const pkg of packages) {
     const chain = pkg.scripts["test:chain"];
@@ -65,6 +66,77 @@ export function chainLegs(packages: Pkg[] = workspacePackages()): ChainLeg[] {
       legs.push({ pkg: pkg.name, dir: pkg.dir, script, file: join(pkg.dir, m[1]!) });
     }
   }
+  if (includeRoot) legs.push(...rootLegs());
+  return legs;
+}
+
+export const ROOT_PKG_LABEL = "<root>";
+
+export const ROOT_CHAIN_EXEMPT: ReadonlyMap<string, string> = new Map([
+  [
+    "lint:script-chain",
+    "the fail-fast gate that resolves every leg by NAME before any of them runs; it must go first " +
+      "and serial, before the batched pool it is there to protect even exists. Run directly by the " +
+      "root `test` script, ahead of `test:chain`.",
+  ],
+  [
+    "test --workspace @open-everywhere/provider-discord",
+    "an `echo` pointing at the app-tier suites (see chainLegs' doc comment above) — not a suite, " +
+      "and the `--workspace` flag targets provider-discord's OWN `test` script, not the root one, " +
+      "so it cannot be resolved by name against the root package the way every chain leg here is. " +
+      "Run directly by the root `test` script, alongside `test:chain`.",
+  ],
+]);
+
+function resolveRootScript(name: string, scripts: Record<string, string>, out: ChainLeg[], seen: Set<string>): void {
+  if (seen.has(name)) {
+    throw new Error(`root test chain: "${name}" is reached more than once — chained directly and via a nested chain.`);
+  }
+  seen.add(name);
+  const command = scripts[name];
+  if (!command) {
+    throw new Error(`root test chain: \`npm run ${name}\` is named, but the root package defines no such script.`);
+  }
+  if (command.includes("&&")) {
+    for (const part of command.split("&&").map((s) => s.trim())) {
+      const mm = /^npm\s+run\s+([A-Za-z0-9:_-]+)$/.exec(part);
+      if (!mm) {
+        throw new Error(
+          `root test chain: "${name}" runs \`${command}\`, whose segment "${part}" is not a plain \`npm run <name>\`. ` +
+            `Give the segment its own named script first (the pattern \`lint:docs\`/\`test:egress-proxy\` use), so ` +
+            `every leg has an \`npm run <name>\` that reproduces it alone.`,
+        );
+      }
+      resolveRootScript(mm[1]!, scripts, out, seen);
+    }
+    return;
+  }
+  const m = /(?:^|\s)tsx\s+(\S+\.ts)((?:\s+\S+)*)\s*$/.exec(command);
+  if (!m) {
+    throw new Error(
+      `root test chain: "${name}" runs \`${command}\`, which is not a plain \`tsx <file>.ts [args...]\` command. ` +
+        `The batched runner imports the file directly, so it cannot run this leg. Either make it a plain tsx ` +
+        `invocation, or move it off root \`test:chain\` onto its own gate in the root \`test\` script.`,
+    );
+  }
+  const args = m[2]!.trim();
+  out.push({
+    pkg: ROOT_PKG_LABEL,
+    dir: REPO_ROOT,
+    script: name,
+    file: join(REPO_ROOT, m[1]!),
+    ...(args.length > 0 ? { args: args.split(/\s+/) } : {}),
+  });
+}
+
+export function rootLegs(): ChainLeg[] {
+  const file = join(REPO_ROOT, "package.json");
+  const scripts = (JSON.parse(readFileSync(file, "utf8")) as { scripts?: Record<string, string> }).scripts ?? {};
+  const chain = scripts["test:chain"];
+  if (!chain) throw new Error("root test chain: the root package.json defines no `test:chain` script.");
+  const legs: ChainLeg[] = [];
+  const seen = new Set<string>();
+  for (const name of chainLegNames(chain)) resolveRootScript(name, scripts, legs, seen);
   return legs;
 }
 
@@ -74,7 +146,18 @@ export function legLabel(leg: ChainLeg): string {
 
 const VARIABLE_DYNAMIC_IMPORT = /\bimport\(\s*`[^`]*\$\{/u;
 
+export const ROOT_SUBPROCESS_LEGS: ReadonlyMap<string, string> = new Map([
+  [
+    "test:memory-eval-fixture",
+    "spawns itself via `process.execArgv` to reload agent/memory/domains.ts under each " +
+      "OE_MEMORY_EVAL state. execArgv only carries tsx's loader flags when the leg itself was " +
+      "launched by `npx tsx` — vitest's own worker process does not have them, so the self-respawn " +
+      "cannot resolve a bare `.ts`-mapped import in-process.",
+  ],
+]);
+
 export function needsSubprocess(leg: ChainLeg): boolean {
+  if (leg.pkg === ROOT_PKG_LABEL && ROOT_SUBPROCESS_LEGS.has(leg.script)) return true;
   return VARIABLE_DYNAMIC_IMPORT.test(readFileSync(leg.file, "utf8"));
 }
 

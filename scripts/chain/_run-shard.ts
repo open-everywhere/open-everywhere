@@ -8,10 +8,16 @@ import { resetProcessGlobals } from "./_process-state.js";
 const execFileAsync = promisify(execFile);
 
 class SuiteCalledProcessExit extends Error {
+  readonly code: number | string | null | undefined;
   constructor(code: number | string | null | undefined) {
     super(`the suite called process.exit(${String(code)}) — under the batched runner that is a failure signal`);
     this.name = "SuiteCalledProcessExit";
+    this.code = code;
   }
+}
+
+function isSuccessExit(code: number | string | null | undefined): boolean {
+  return code === undefined || code === null || code === 0 || code === "0";
 }
 
 async function runLegInSubprocess(leg: ChainLeg): Promise<void> {
@@ -23,11 +29,12 @@ async function runLegInSubprocess(leg: ChainLeg): Promise<void> {
   }
 }
 
-async function runLegInProcess(leg: ChainLeg): Promise<void> {
+export async function runLegInProcess(leg: ChainLeg): Promise<void> {
   const envBefore = { ...process.env };
   const cwdBefore = process.cwd();
   const exitBefore = process.exit;
   const exitCodeBefore = process.exitCode;
+  const argvBefore = process.argv;
   process.exitCode = undefined;
   (process as { exit: unknown }).exit = (code?: number | string | null) => {
     throw new SuiteCalledProcessExit(code);
@@ -35,8 +42,13 @@ async function runLegInProcess(leg: ChainLeg): Promise<void> {
   vi.resetModules();
   resetProcessGlobals();
   process.chdir(leg.dir);
+  process.argv = [process.execPath, leg.file, ...(leg.args ?? [])];
   try {
-    await import(pathToFileURL(leg.file).href);
+    try {
+      await import(pathToFileURL(leg.file).href);
+    } catch (error) {
+      if (!(error instanceof SuiteCalledProcessExit) || !isSuccessExit(error.code)) throw error;
+    }
     if (process.exitCode !== undefined && process.exitCode !== 0) {
       throw new Error(`the suite set process.exitCode=${String(process.exitCode)} — it failed without throwing`);
     }
@@ -44,6 +56,7 @@ async function runLegInProcess(leg: ChainLeg): Promise<void> {
     process.chdir(cwdBefore);
     (process as { exit: unknown }).exit = exitBefore;
     process.exitCode = exitCodeBefore;
+    process.argv = argvBefore;
     for (const key of Object.keys(process.env)) if (!(key in envBefore)) delete process.env[key];
     Object.assign(process.env, envBefore);
   }
