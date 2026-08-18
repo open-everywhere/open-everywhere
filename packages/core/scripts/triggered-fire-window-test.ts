@@ -24,7 +24,8 @@ const { registerConfig } = await import("../agent/access/config.js");
 const { defineDomain } = await import("../agent/memory/domain.js");
 const fireWindow = await import("../agent/routines/fire-window.js");
 const { classifySessionId, isThreadSeatWindowToken, parseWindowToken } = await import("../agent/channels/window-key.js");
-const { standingSeatRegistryKey, unifiedWindowFromToken } = await import("../agent/channels/unified-supervisor.js");
+const { standingSeatRegistryKey, unifiedDomainSessionKey, unifiedWindowFromToken } = await import("../agent/channels/unified-supervisor.js");
+const { claimRuntimeRotation, RUNTIME_ROTATION_AUDIT_ACTION } = await import("../agent/channels/runtime-rotation.js");
 const { windowGrainOf } = await import("../agent/identity/binding.js");
 const { FULL_KIT, WINDOW_GATED_TOOLS, memoryRecallRouteFor } = await import("../agent/access/window-gate-manifest.js");
 const { OE_GRAIN_ATTR, OE_ADDRESSING_ATTR, resolveAnswerableReplyTarget, mintWakeId } = await import("../agent/channels/unified-window.js");
@@ -48,6 +49,9 @@ const TEAM = "T_FIRE";
 const CHAN = "C_FIRE";
 const SURFACE = `slack/${TEAM}/${CHAN}`;
 const LONELY_SURFACE = "slack/T_FIRE/C_LONELY";
+const HEAL_DOMAIN = "treasury";
+const HEAL_CHAN = "C_HEAL";
+const HEAL_SURFACE = `slack/${TEAM}/${HEAL_CHAN}`;
 
 const SLACK_CHANNEL = { __fixture: "slack" } as never;
 registerSlackTestBridge({ channel: SLACK_CHANNEL, confirmChannelInternal: async () => true });
@@ -55,14 +59,15 @@ registerSlackFixtureCodec();
 registerSlackFixtureMapper();
 
 const winDomain = defineDomain({ name: DOMAIN, channels: [SURFACE], ambientSupervisor: true, mode: "unified" });
+const healDomain = defineDomain({ name: HEAL_DOMAIN, channels: [HEAL_SURFACE], ambientSupervisor: true, mode: "unified" });
 registerConfig({
   loadBundles: () => [],
   loadBindings: () => [],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [winDomain],
+  loadDomains: () => [winDomain, healDomain],
   loadSilos: () => [],
-  domainsForSurface: ({ surface }) => (surface === CHAN ? [DOMAIN] : []),
+  domainsForSurface: ({ surface }) => (surface === CHAN ? [DOMAIN] : surface === HEAL_CHAN ? [HEAL_DOMAIN] : []),
 });
 const DOMAINS: readonly Domain[] = [winDomain];
 
@@ -580,6 +585,112 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
   ok(seen.length === 1 && !seen[0].unified, "native: flag-off still fires natively");
   ok(!seen[0].message.includes("wake-id"), "native: a non-diverted fire is told NO wake-id — there is no unified window to reply into, so the mandate would be a lie");
   await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-native");
+}
+
+{
+  overrideSettingsForTest({ delegation: { oneshotAgent: true } });
+  const parentKey = unifiedDomainSessionKey(HEAL_DOMAIN);
+  await store.rotateChannelSession(ORG, parentKey, "oe-dom:treasury:oe-sup:g1-old", "2026-07-01T00:00:00.000Z");
+  const stale = await store.rotateChannelSession(ORG, parentKey, "oe-dom:treasury:oe-sup:g2-old", "2026-07-01T00:00:00.000Z");
+  ok(stale.generation === 2, "heal/setup: the parent window sits at generation 2, minted under the old build");
+
+  await routineStore.addRoutine(
+    {} as never,
+    routine({ id: "r-heal", sessionMode: "job", surfaceKey: HEAL_SURFACE, target: { channelId: HEAL_CHAN }, trigger: { kind: "interval", everyMinutes: 1 } }),
+  );
+  const a = captureReceive();
+  await tick(NOW, a.to);
+  ok(a.seen.length === 1 && a.seen[0].unified, "heal: the fire diverts into the window (this leg exercises the divert path)");
+  const t1 = a.seen[0].target as unknown as UnifiedReceiveTarget;
+  ok(
+    parseWindowToken(t1.token)?.generation === 3,
+    "🔴 heal: the fire's seat token carries a FRESH generation — without the heal it rides the stranded generation 2 and dies with no audit row",
+  );
+
+  const parentAfter = await store.getChannelSession(ORG, parentKey);
+  ok(parentAfter?.generation === 3, "heal: the PARENT window's row rotated — a fire seat has no rotate verb, so healing the parent is the whole fix");
+  ok(parentAfter?.token !== stale.token, "heal: the parent's token is a fresh mint, not the stranded one the next human wake would otherwise have resumed");
+  ok(
+    parentAfter?.token.startsWith("oe-dom:treasury:oe-sup:g3") === true,
+    "heal: and it is the shape a human wake's own rotate leg mints (mintRotationToken over the grain), so that wake resumes a token it recognises",
+  );
+
+  const auditRows = await readAudit({ org: ORG, action: RUNTIME_ROTATION_AUDIT_ACTION });
+  ok(
+    auditRows.some((r) => (r.detail as { registryKey?: string } | undefined)?.registryKey === parentKey),
+    "heal: the SHARED claim path did it — a `session.runtime_rotation` row names the parent window, the same row a human wake's heal writes",
+  );
+
+  const b = captureReceive();
+  await tick(new Date(NOW.getTime() + 10 * 60_000), b.to);
+  const t2 = b.seen[0].target as unknown as UnifiedReceiveTarget;
+  ok(t2.token === t1.token, "heal/once: the NEXT fire RESUMES the healed seat — the claim is one-shot, so no generation is retired on every tick");
+  ok((await store.getChannelSession(ORG, parentKey))?.generation === 3, "heal/once: and the parent window stays at the healed generation");
+
+  ok(
+    (await claimRuntimeRotation({ org: ORG, registryKey: parentKey, surfaceKey: HEAL_SURFACE, atIso: NOW.toISOString() })) === false,
+    "🔴 heal/shared: a human wake arriving after the fire LOSES the claim — one rotation per window per eve bump, whoever reaches it first",
+  );
+
+  const jobKey = standingSeatRegistryKey(t1.token, HEAL_DOMAIN)!;
+  ok((await store.getChannelSession(ORG, jobKey))?.token === t1.token, "heal: the job seat's registry row re-adopted onto the healed token");
+
+  await routineStore.removeRoutine({ org: ORG, surfaceKey: HEAL_SURFACE } as never, "r-heal");
+}
+
+{
+  const noRowCalls: string[] = [];
+  const noRowStore = {
+    async getChannelSession() {
+      noRowCalls.push("read");
+      return null;
+    },
+    async rotateChannelSession() {
+      noRowCalls.push("rotate");
+      throw new Error("a window with no row must never be minted one by a cron");
+    },
+  } as never;
+  const unifiedGrain = { unified: true, registryKey: unifiedDomainSessionKey(HEAL_DOMAIN), domainName: HEAL_DOMAIN, singleWindow: true } as never;
+  ok(
+    (await fireWindow.healFireParentGeneration(ORG, unifiedGrain, NOW.toISOString(), noRowStore)) === undefined,
+    "heal/no-row: a window that never opened a session has nothing eve could have stranded ⇒ no heal",
+  );
+  ok(!noRowCalls.includes("rotate"), "heal/no-row: and NO row is minted for it — a channel nobody has woken must not get a registry row from a cron tick");
+
+  const nativeCalls: string[] = [];
+  const nativeStore = {
+    async getChannelSession() {
+      nativeCalls.push("read");
+      return null;
+    },
+    async rotateChannelSession() {
+      nativeCalls.push("rotate");
+      return null;
+    },
+  } as never;
+  ok(
+    (await fireWindow.healFireParentGeneration(ORG, { unified: false, registryKey: LONELY_SURFACE } as never, NOW.toISOString(), nativeStore)) === undefined,
+    "heal/native: a NATIVE grain is REFUSED — this module cannot know a per-container token's shape, and a native fire joins no window",
+  );
+  ok(nativeCalls.length === 0, "heal/native: it refuses before it touches the store at all");
+
+  let claims = 0;
+  const diverted = await fireWindow.divertTriggeredFire((() => ({ send: async () => ({}) })) as never, {
+    message: "digest",
+    surfaceKey: HEAL_SURFACE,
+    origin: { platform: "teams", serviceUrl: "https://smba.trafficmanager.net/", conversationId: "c1" } as never,
+    seatKey: "job/r-nocodec",
+    auth: {},
+  }, {
+    armed: true,
+    org: ORG,
+    claimRuntimeRotation: async () => {
+      claims++;
+      return true;
+    },
+  });
+  ok(diverted === false, "heal/no-divert: a fire whose origin has no wake-origin codec still keeps the native path");
+  ok(claims === 0, "🔴 heal/no-divert: and it never claims — a native fire that spent the window's one-shot claim would strand that window for the whole eve build");
 }
 
 overrideSettingsForTest({ delegation: { oneshotAgent: false } });
