@@ -159,7 +159,12 @@ const SILENT: Expected = "SILENT_OK";
 
   ok(outcomeFor(i, SILENT, attr({ replyPostsOf: new Map([["P1", [replyPost("P1")]]]) })).outcome === "OVER_REPLY", "reply.post + SILENT_OK → OVER_REPLY (it spoke when it should have stayed quiet)");
 
-  ok(outcomeFor(i, LANDED, attr()).outcome === "NO_ACTION", "no post + no completion → NO_ACTION");
+  ok(outcomeFor(i, LANDED, attr()).outcome === "NO_ACTION", "no post + no completion + LANDED → NO_ACTION");
+
+  ok(outcomeFor(i, SILENT, attr()).outcome === "SILENT_OK", "no post + no completion + SILENT_OK → SILENT_OK (OPE-723: absence of a reply.post already proves silence held)");
+  ok(/inferred/i.test(outcomeFor(i, SILENT, attr()).notes), "OPE-723: the inferred case is labelled distinctly in `notes` from an AUDITED no_reply SILENT_OK, so a human reading results can tell them apart");
+
+  ok(outcomeFor(i, SILENT, attr({ replyPostsOf: new Map([["P1", [replyPost("P1")]]]) })).outcome === "OVER_REPLY", "OPE-723 negative control: a real reply.post on a silence-warranted probe still scores OVER_REPLY, never SILENT_OK");
 
   ok(outcomeFor(i, LANDED, attr({ completionOf: new Map([["P1", completion(NO_REPLY, { reason: "judged" })]]) })).outcome === "JUDGED_SILENT", "no_reply + LANDED → JUDGED_SILENT");
 

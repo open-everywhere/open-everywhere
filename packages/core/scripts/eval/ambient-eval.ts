@@ -404,7 +404,12 @@ export function outcomeFor(
     }
     return { outcome: "LANDED_VIA_REPLY_TOOL", latencyMs: lat(posts[0]), notes: `reply.post wakeId-joined → ${dS(posts[0], "platform") ?? "?"}`, matched };
   }
-  if (!c) return { outcome: "NO_ACTION", latencyMs: null, notes: "no completion attributable (pending or timed out)", matched };
+  if (!c) {
+    if (expected === "SILENT_OK") {
+      return { outcome: "SILENT_OK", latencyMs: null, notes: "inferred: no completion row and no reply.post for this wakeId — the exact wakeId join already proves nothing posted (OPE-723)", matched };
+    }
+    return { outcome: "NO_ACTION", latencyMs: null, notes: "no completion attributable (pending or timed out)", matched };
+  }
 
   switch (c.action) {
     case A_PROSE_DELIVERED:
