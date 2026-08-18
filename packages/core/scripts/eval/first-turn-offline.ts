@@ -1,22 +1,26 @@
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
-import { generateText, tool, stepCountIs, type ModelMessage, type ToolSet } from "ai";
-import type { z } from "zod";
+import { generateText, stepCountIs, type ModelMessage, type ToolSet } from "ai";
 import { createGateway } from "@ai-sdk/gateway";
 import { renderWake, type NormalizedWake } from "../../agent/channels/normalized-wake.js";
 import { turnHasTerminalAction } from "../../agent/channels/turn-terminal-actions.js";
 import { renderScopeMarkdown, renderReadingAWake, renderSupervisorPersona } from "../../agent/instructions/access.js";
-import { registerConfig } from "../../agent/access/config.js";
-import { defineDomain } from "../../agent/memory/domain.js";
-import { defineMemorySilo } from "../../agent/memory/silo.js";
-import replyDynamic, { unifiedReplyEntry } from "../../agent/tools/reply.js";
-import { registerSlackFixtureMapper, registerSlackFixtureManifest } from "../_slack-test-stubs.js";
+import { unifiedReplyEntry } from "../../agent/tools/reply.js";
+import {
+  SLACK_CHANNEL,
+  registerSyntheticConfig,
+  unifiedCtx,
+  perSurfaceCtx,
+  readBaseInstructions,
+  buildLeanSeatToolset,
+  createRecorder,
+  replyEntryForSeat,
+  type ToolCall,
+  type MountableEntry,
+  type ResultFor,
+} from "./_offline-seat.js";
 import noReplyTool, { NO_REPLY_NOTE } from "../../agent/tools/no_reply.js";
-import updateStatusTool from "../../agent/tools/update_status.js";
-import standDownTool from "../../agent/tools/stand_down.js";
-import reactDynamic from "../../agent/tools/react.js";
-import spawnThreadSessionDynamic from "../../agent/tools/spawn_thread_session.js";
 import { S6_PROBES } from "./ambient-eval.js";
 import type { BindableContext } from "../../agent/identity/binding.js";
 
@@ -67,52 +71,6 @@ That closing line is not how you talk to the people here. Anything they are owed
 \`reply\` first; the closing line only notes that you sent it, or that nothing was needed.
 `.trim();
 
-const DOMAIN = "payments";
-const SLACK_CHANNEL = "C_PAY";
-
-const SLACK_TEAM = "T_PAY";
-
-function registerSyntheticConfig(): void {
-  registerConfig({
-    loadBundles: () => [],
-    loadBindings: () => [],
-    pluginRegistry: {},
-    skillContent: {},
-    loadDomains: () => [
-      defineDomain({
-        name: DOMAIN,
-        channels: [`slack/${SLACK_TEAM}/${SLACK_CHANNEL}`, "notion/W_PAY/P_PAY", "github/acme/payments-api"],
-        memory: "payments-notes",
-        ambientSupervisor: true,
-        ...(PER_SURFACE ? {} : { mode: "unified" as const }),
-      }),
-      defineDomain({ name: "org", match: "org" }),
-    ],
-    loadSilos: () => [defineMemorySilo({ name: "payments-notes", description: "payments-domain decisions", provider: "sqlite" })],
-    domainsForSurface: ({ surface }: { surface: string }) => ([SLACK_CHANNEL, "P_PAY", "payments-api"].includes(surface) ? [DOMAIN] : []),
-  } as never);
-  registerSlackFixtureMapper();
-  registerSlackFixtureManifest();
-}
-
-const unifiedCtx: BindableContext = {
-  channel: { kind: "channel:unified", continuationToken: `oe-dom:${DOMAIN}:oe-sup:g1` },
-  session: { auth: { current: { attributes: { oe_platform: "slack" } } } },
-} as BindableContext;
-
-const perSurfaceCtx: BindableContext = {
-  channel: { kind: "slack", continuationToken: `${SLACK_CHANNEL}:oe-sup:g1` },
-  session: {
-    auth: {
-      current: {
-        attributes: { team_id: SLACK_TEAM, channel_id: SLACK_CHANNEL, channel_type: "channel", is_private: "false", trust_checked: "true" },
-        principalId: "U_ALEX",
-        principalType: "user",
-      },
-    },
-  },
-} as BindableContext;
-
 const activeCtx: BindableContext = PER_SURFACE ? perSurfaceCtx : unifiedCtx;
 
 function section(md: string, heading: string): string {
@@ -133,7 +91,7 @@ function applyArmR(scope: string): string {
 }
 
 async function buildSystemPrompt(): Promise<string> {
-  const base = readFileSync(new URL("../../../../agent/instructions.md", import.meta.url), "utf8");
+  const base = readBaseInstructions();
   const dynamic = ARM === "r" ? applyArmR(await renderScopeMarkdown(activeCtx)) : await renderScopeMarkdown(activeCtx);
   const shipped = `${base}\n\n${dynamic}`;
   if (ARM === "c") return `${shipped}\n\n${ARM_C_INSTRUCTION}\n`;
@@ -330,82 +288,23 @@ export function buildProbe(i: number): Probe {
   };
 }
 
-interface ToolCall { readonly name: string; readonly input: Record<string, unknown>; }
-
-const realSchema = (entry: { readonly inputSchema: unknown }): z.ZodType => entry.inputSchema as z.ZodType;
-
-interface MountableEntry { readonly description: string; readonly inputSchema: unknown }
-
-function recorder(name: string, entry: MountableEntry, calls: ToolCall[]): ToolSet[string] {
-  return tool({
-    description: entry.description,
-    inputSchema: realSchema(entry),
-    execute: async (input: unknown) => {
-      calls.push({ name, input: input as Record<string, unknown> });
-      if (name === "reply") return { posted: true, id: `probe-${calls.length}` };
-      if (name === "no_reply") return { acknowledged: true, reason: String((input as { reason?: unknown }).reason ?? ""), note: NO_REPLY_NOTE };
-      return { ok: true };
-    },
-  });
-}
-
-async function resolveDynamicEntry(mod: unknown): Promise<MountableEntry | null> {
-  const events = (mod as { events?: Record<string, (e: unknown, c: unknown) => unknown> }).events;
-  const started = events?.["session.started"];
-  if (started === undefined) return null;
-  const resolved = await started({}, activeCtx);
-  if (resolved === null || resolved === undefined) return null;
-  return resolved as MountableEntry;
-}
-
-let replyEntryCache: MountableEntry | undefined;
-async function replyEntryForSeat(): Promise<MountableEntry> {
-  if (replyEntryCache === undefined) {
-    const entry = await resolveDynamicEntry(replyDynamic);
-    if (entry === null) throw new Error(`the reply dynamic mounts NOTHING on the ${PATH} seat (no mid-turn post primitive) — every criterion here reads reply calls, so this run would score zeros that mean nothing`);
-    replyEntryCache = entry;
-  }
-  return replyEntryCache;
-}
-
-async function eveFrameworkTool(file: string): Promise<Record<string, unknown>> {
-  const base = import.meta.resolve("eve/tools").replace(/\/src\/.*$/, "/src/runtime/framework-tools/");
-  return (await import(base + file)) as Record<string, unknown>;
-}
-
-async function buildLeanSeatTools(calls: ToolCall[]): Promise<ToolSet> {
-  const set: Record<string, ToolSet[string]> = {
-    reply: recorder("reply", await replyEntryForSeat(), calls),
-    no_reply: recorder("no_reply", noReplyTool as MountableEntry, calls),
-    update_status: recorder("update_status", updateStatusTool as MountableEntry, calls),
-    stand_down: recorder("stand_down", standDownTool as MountableEntry, calls),
-  };
-
-  for (const [name, mod] of [["react", reactDynamic], ["spawn_thread_session", spawnThreadSessionDynamic]] as const) {
-    const entry = await resolveDynamicEntry(mod);
-    if (entry !== null) set[name] = recorder(name, entry, calls);
-    else console.log(`   (lean toolset: ${name} does not mount on this seat — skipped)`);
-  }
-
-  const agentMod = await eveFrameworkTool("agent.js");
-  set.agent = recorder("agent", agentMod.AGENT_TOOL_DEFINITION as MountableEntry, calls);
-  const askMod = await eveFrameworkTool("ask-question.js");
-  set.ask_question = recorder("ask_question", askMod.ASK_QUESTION_TOOL_DEFINITION as MountableEntry, calls);
-  const todoMod = await eveFrameworkTool("todo.js");
-  set.todo = recorder("todo", todoMod.TODO_TOOL_DEFINITION as MountableEntry, calls);
-  const taskMod = await eveFrameworkTool("tasks.js");
-  const taskDefs = taskMod.TASK_TOOL_DEFINITIONS as readonly (MountableEntry & { readonly name: string })[];
-  for (const def of taskDefs) {
-    if (def.name === "task_peek" || def.name === "task_cancel") set[def.name] = recorder(def.name, def, calls);
-  }
-  return set as ToolSet;
-}
+const resultFor: ResultFor = (name, input, callIndex) => {
+  if (name === "reply") return { posted: true, id: `probe-${callIndex}` };
+  if (name === "no_reply") return { acknowledged: true, reason: String(input.reason ?? ""), note: NO_REPLY_NOTE };
+  return { ok: true };
+};
 
 async function buildTools(calls: ToolCall[]): Promise<ToolSet> {
-  if (TOOLSET === "lean") return await buildLeanSeatTools(calls);
+  if (TOOLSET === "lean") {
+    return await buildLeanSeatToolset({
+      ctx: activeCtx, calls, resultFor,
+      onSkip: (name) => console.log(`   (lean toolset: ${name} does not mount on this seat — skipped)`),
+    });
+  }
+  const rec = createRecorder(calls, resultFor);
   return {
-    reply: recorder("reply", await replyEntryForSeat(), calls),
-    no_reply: recorder("no_reply", noReplyTool as MountableEntry, calls),
+    reply: rec("reply", await replyEntryForSeat(activeCtx)),
+    no_reply: rec("no_reply", noReplyTool as MountableEntry),
   } as ToolSet;
 }
 
@@ -641,7 +540,7 @@ function makeFabricationJudge(gateway: ReturnType<typeof createGateway>): Fabric
 }
 
 async function assertSeatShape(system: string): Promise<void> {
-  const replyEntry = await replyEntryForSeat();
+  const replyEntry = await replyEntryForSeat(activeCtx);
   const replyArgs = Object.keys((replyEntry.inputSchema as { shape?: Record<string, unknown> }).shape ?? {});
   const hasWakeArg = replyArgs.includes("wake");
   const block = renderReadingAWake();
@@ -663,7 +562,7 @@ async function assertSeatShape(system: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  registerSyntheticConfig();
+  registerSyntheticConfig({ unified: !PER_SURFACE });
   const system = await buildSystemPrompt();
   await assertSeatShape(system);
   const mounted = Object.keys(await buildTools([]));
