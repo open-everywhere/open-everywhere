@@ -77,6 +77,7 @@ export interface ScriptedEntry {
   readonly resolves: ResolveObservation[];
   readonly baselines: Record<string, number>;
   readonly firstCallTurnByRole: Partial<Record<ScriptedRole, string>>;
+  readonly registeredAt: string;
 }
 
 export const ANY_SESSION = "*";
@@ -93,6 +94,17 @@ export interface ScriptedHandle {
   dispose(): void;
 }
 
+function callerFrame(): string {
+  const stack = new Error().stack;
+  if (stack === undefined) return "an unknown caller (no stack)";
+  for (const line of stack.split("\n").slice(1)) {
+    if (line.includes("scripted-model")) continue;
+    const at = line.trim();
+    if (at.startsWith("at ")) return at.slice(3);
+  }
+  return "an unknown caller (no frame outside scripted-model.ts)";
+}
+
 export function registerScript(script: SeatScript, sessionId: string = ANY_SESSION): ScriptedHandle {
   if (!scriptedModelArmed()) {
     throw new Error(
@@ -101,13 +113,21 @@ export function registerScript(script: SeatScript, sessionId: string = ANY_SESSI
     );
   }
   const store = scriptedStore();
-  if (store.has(sessionId)) {
+  const held = store.get(sessionId);
+  if (held !== undefined) {
     throw new Error(
-      `open-everywhere: a script is already registered for "${sessionId}". ` +
+      `open-everywhere: a script is already registered for "${sessionId}", by ${held.registeredAt}. ` +
         "Dispose the previous handle first — two live scripts for one key means a test leaked.",
     );
   }
-  const entry: ScriptedEntry = { script, requests: [], resolves: [], baselines: {}, firstCallTurnByRole: {} };
+  const entry: ScriptedEntry = {
+    script,
+    requests: [],
+    resolves: [],
+    baselines: {},
+    firstCallTurnByRole: {},
+    registeredAt: callerFrame(),
+  };
   store.set(sessionId, entry);
   return {
     requests: entry.requests,
