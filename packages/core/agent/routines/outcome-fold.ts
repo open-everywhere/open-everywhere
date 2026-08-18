@@ -25,6 +25,7 @@ export async function foldRoutineOutcome(opts: {
   readonly at?: Date;
   readonly sessionId?: string;
   readonly manual?: boolean;
+  readonly late?: boolean;
 }): Promise<RoutineOutcomeFold> {
   const { marker, sessionOutcome } = opts;
   const at = opts.at ?? new Date();
@@ -42,7 +43,7 @@ export async function foldRoutineOutcome(opts: {
     status: updated.status,
     disabledReason: updated.disabledReason,
     nextRunAt: updated.nextRunAt,
-    ...stallFoldPatch(routine),
+    ...(opts.late === true ? {} : stallFoldPatch(routine)),
   });
 
   const declared = updated.lastFailureReason;
@@ -53,6 +54,7 @@ export async function foldRoutineOutcome(opts: {
       ...(updated.disabledReason ? { disabledReason: updated.disabledReason } : {}),
       ...(opts.manual === true ? { manual: true } : {}),
       ...(declared !== undefined ? { declaredFailure: declared } : {}),
+      ...(opts.late === true ? { late: true } : {}),
     });
   }
   const disabled = updated.status === "disabled" && routine.status !== "disabled" && settled === "failed";
