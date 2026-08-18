@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 
 import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
 import { REDELIVERY_SIGNATURE, REDELIVERY_STORM_THRESHOLD, RedeliveryStormGuard } from "./redelivery-storm-guard";
+import { rollOwnEntryPath, rollOwnMissingMessage, rollOwnTargetExists } from "./rollown-target";
 
 import { registerScript, type RecordedRequest, type ScriptedHandle, type SeatScript } from "../../agent/model/scripted-model";
 export { registerScript, type RecordedRequest, type ResolveObservation, type ScriptedHandle, type ScriptedStep, type SeatScript, type ToolDefinitionRecord } from "../../agent/model/scripted-model";
@@ -77,6 +78,7 @@ let bootedWith: string | undefined;
 
 export interface BootOptions {
   readonly sharedSqlite?: boolean;
+  readonly target?: "rollOwn";
 }
 
 function guardProcess(): void {
@@ -166,7 +168,11 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   process.env.NITRO_HOST = "127.0.0.1";
   await reserved.release();
 
-  await import(pathToFileURL(join(ROOT, ".output", "server", "index.mjs")).href);
+  if (opts.target === "rollOwn" && !rollOwnTargetExists(ROOT)) {
+    throw new Error(`integration harness: ${rollOwnMissingMessage(ROOT)}`);
+  }
+  const entry = opts.target === "rollOwn" ? rollOwnEntryPath(ROOT) : join(ROOT, ".output", "server", "index.mjs");
+  await import(pathToFileURL(entry).href);
   const base = `http://127.0.0.1:${reserved.port}`;
   const deadline = Date.now() + 60_000;
   for (;;) {
@@ -182,6 +188,7 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
 
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.overrideSettingsForTest({ egress: { allowUnenforced: true } });
+  if (opts.target === "rollOwn") settings.overrideSettingsForTest({ delegation: { nativeSubagent: false } });
 
   booted = { base };
   return booted;
