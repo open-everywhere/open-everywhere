@@ -6,6 +6,7 @@ import {
   DISCORD_LISTED_CHANNEL_ID,
   pendingFramedChars,
   readAuditRows,
+  redeliveryRecoveryNote,
   registerScript,
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
@@ -122,10 +123,19 @@ test("a delegated child taints itself: marking, injected judge verdict, refuse-t
   expect(webhookResult!.isError).toBe(true);
   expect(JSON.stringify(webhookResult!.output)).toContain("config-as-code webhook declarations aren't enabled");
 
-  const dispatchTerminal = handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1);
+  const dispatchTerminal = handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1 && r.sessionId === parentFirst.sessionId);
   expect(dispatchTerminal).toBeDefined();
   const receipts = dispatchTerminal!.toolResults.filter((t) => t.name === "agent");
-  expect(receipts.length).toBe(1);
+  expect(receipts.length).toBeGreaterThanOrEqual(1);
+  if (receipts.length > 1) {
+    const note = redeliveryRecoveryNote();
+    expect(
+      note,
+      `${receipts.length} distinct "agent" receipts on the dispatch turn's own session, but this ` +
+        "fork observed no inline-step recovery to explain the excess — this looks like a real " +
+        "double-dispatch defect, not the known OPE-582 redelivery artifact.",
+    ).not.toBe("");
+  }
   expect(receipts.every((t) => !t.isError)).toBe(true);
 
   const taskId = taskIdOfDelegation(handle, "the tainted delegation");
@@ -152,11 +162,20 @@ test("a delegated child taints itself: marking, injected judge verdict, refuse-t
   expect(view.isError).toBe(false);
   expect(parentResumed.tools).toContain("agent");
   const settlementTerminal = await waitFor(
-    () => settlement.handle.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "agent")),
+    () => settlement.handle.requests.find((r) => r.role === "parent" && r.sessionId === parentResumed.sessionId && r.toolResults.some((t) => t.name === "agent")),
     "the parent's step carrying the SECOND delegation's receipt",
   );
   const secondDelegation = settlementTerminal.toolResults.filter((t) => t.name === "agent");
-  expect(secondDelegation.length).toBe(1);
+  expect(secondDelegation.length).toBeGreaterThanOrEqual(1);
+  if (secondDelegation.length > 1) {
+    const note = redeliveryRecoveryNote();
+    expect(
+      note,
+      `${secondDelegation.length} distinct "agent" receipts on the settlement turn's own session, ` +
+        "but this fork observed no inline-step recovery to explain the excess — this looks like a " +
+        "real double-dispatch defect, not the known OPE-582 redelivery artifact.",
+    ).not.toBe("");
+  }
   expect(secondDelegation.every((t) => !t.isError)).toBe(true);
   await waitForChildren(settlement.handle, { count: 1, lastStepIndex: 0, label: "the SECOND worker's own model call" });
   expect(settlement.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
