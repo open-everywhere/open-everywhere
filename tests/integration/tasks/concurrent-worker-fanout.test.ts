@@ -5,6 +5,7 @@ import {
   bootAgent,
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
+  redeliveryRecoveryNote,
   registerScript,
   SETTLEMENT_DRAIN_SCRIPT,
   waitFor,
@@ -74,16 +75,34 @@ test("two agent calls in one step start two workers that both run", async () => 
   const dispatchStep = dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 0)!;
   expect(dispatchStep.tools).toContain("agent");
   const delegations = dispatched.requests
-    .filter((r) => r.role === "parent")
+    .filter((r) => r.role === "parent" && r.sessionId === dispatchStep.sessionId)
     .flatMap((r) => r.toolResults)
     .filter((t) => t.name === "agent");
   const delegationTaskIds = new Set(delegations.map((t) => String((t.output as { taskId?: unknown } | undefined)?.taskId)));
   expect(delegationTaskIds.has("undefined")).toBe(false);
-  expect(delegationTaskIds.size).toBe(2);
+  expect(delegationTaskIds.size).toBeGreaterThanOrEqual(2);
+  if (delegationTaskIds.size > 2) {
+    const note = redeliveryRecoveryNote();
+    expect(
+      note,
+      `${delegationTaskIds.size} distinct delegation receipts on the seat's own session, but this ` +
+        "fork observed no inline-step recovery to explain the excess — this looks like a real " +
+        "double-dispatch defect, not the known OPE-582 redelivery artifact.",
+    ).not.toBe("");
+  }
   expect(delegations.filter((t) => t.isError)).toEqual([]);
 
   const workerSessions = new Set(dispatched.requests.filter((r) => r.role === "child").map((r) => String(r.sessionId)));
-  expect(workerSessions.size).toBe(2);
+  expect(workerSessions.size).toBeGreaterThanOrEqual(2);
+  if (workerSessions.size > 2) {
+    const note = redeliveryRecoveryNote();
+    expect(
+      note,
+      `${workerSessions.size} distinct worker sessions, but this fork observed no inline-step ` +
+        "recovery to explain the excess — this looks like a real double-dispatch defect, not the " +
+        "known OPE-582 redelivery artifact.",
+    ).not.toBe("");
+  }
   expect(workerSessions.has(String(dispatchStep.sessionId))).toBe(false);
 
   expect(workerToolCalls).toBeGreaterThanOrEqual(2);
