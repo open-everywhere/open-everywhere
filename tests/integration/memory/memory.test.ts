@@ -175,6 +175,8 @@ test("purge_memory proposes a card under the egress spoof and redacts the fact o
   expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   drained.handle.dispose();
 
+  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+
   const sinceIso = new Date(wakeAt - 1_000).toISOString();
 
   const requested = await waitFor(async () => {

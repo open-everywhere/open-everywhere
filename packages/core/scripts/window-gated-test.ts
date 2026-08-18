@@ -20,6 +20,7 @@ import {
   replayStepNames,
   preRegisterDynamicEntry,
   resolveWindowGated,
+  domainLabelOf,
   _resetWindowGateAuditForTest,
   type GatedToolEntry,
 } from "../agent/access/window-gated.js";
@@ -217,6 +218,39 @@ _resetWindowGateAuditForTest();
   const ct = (await resolveWindowGated(windowGated("complete_task", stubEntry("complete_task")), grainCtx.task())) as GatedToolEntry;
   await assert.rejects(() => Promise.resolve(ct.execute({}, grainCtx.native())), /not available on a native session/, "complete_task's backstop refuses a native-grain execute");
   n++;
+}
+
+console.log("4b. channel-less domain fallback (OPE-740):");
+{
+  const channelLess = {
+    session: { id: "sess-channel-less", auth: { current: { attributes: { oe_window_token: STANDING_TOKEN } } } },
+  } as unknown as BindableContext;
+  eq(domainLabelOf(channelLess), "payments", "a channel-less execute context labels from the oe_window_token stamp, not \"unknown\"");
+
+  const channelLessNoStamp = {
+    session: { id: "sess-channel-less-bare", auth: { current: { attributes: {} } } },
+  } as unknown as BindableContext;
+  eq(domainLabelOf(channelLessNoStamp), "unknown", "a channel-less context with no window-token stamp still labels \"unknown\" (negative control)");
+
+  const withChannel = ctxOf(PER_CONTAINER_TOKEN, {});
+  (withChannel as { session: { auth: { current: { attributes: Record<string, unknown> } } } }).session.auth.current.attributes.oe_window_token = STANDING_TOKEN;
+  eq(domainLabelOf(withChannel), "slack/T1/C_PAY", "a resolver context with BOTH a channel token and a window-token stamp still labels from the channel token — byte-identical to pre-OPE-740");
+
+  _resetWindowGateAuditForTest();
+  const gated = windowGated("bash", stubEntry("bash"));
+  const entry = (await resolveWindowGated(gated, grainCtx.task())) as GatedToolEntry;
+  const execCtx = {
+    session: {
+      id: "sess-backstop-channel-less",
+      auth: { current: { attributes: { oe_grain: "standing", oe_window_token: STANDING_TOKEN, oe_wake_id: "wake-backstop-cl" } } },
+    },
+  } as unknown as BindableContext;
+  await assert.rejects(() => Promise.resolve(entry.execute({ v: "x" }, execCtx)), /not held by this conversational seat/, "backstop still refuses a channel-less delegating standing-seat execute fail-closed");
+  n++;
+  const rows = await readAudit({ action: "turn.tool_gated" });
+  const attemptRow = rows.find((r) => (r.detail as Record<string, unknown>).wakeId === "wake-backstop-cl");
+  ok(attemptRow !== undefined, "the channel-less attempt row is wakeId-locatable");
+  eq(attemptRow!.workspace, "payments", "the per-attempt row from a channel-less execute context records the REAL domain, not \"unknown\" (the OPE-740 fix)");
 }
 
 console.log("5. replay pre-registration (eve step registry):");
