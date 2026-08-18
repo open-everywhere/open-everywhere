@@ -10,7 +10,11 @@ import { registerConfig } from "../../agent/access/config.js";
 import { defineDomain } from "../../agent/memory/domain.js";
 import { defineMemorySilo } from "../../agent/memory/silo.js";
 import { unifiedReplyEntry } from "../../agent/tools/reply.js";
-import noReplyTool from "../../agent/tools/no_reply.js";
+import noReplyTool, { NO_REPLY_NOTE } from "../../agent/tools/no_reply.js";
+import updateStatusTool from "../../agent/tools/update_status.js";
+import standDownTool from "../../agent/tools/stand_down.js";
+import reactDynamic from "../../agent/tools/react.js";
+import spawnThreadSessionDynamic from "../../agent/tools/spawn_thread_session.js";
 import { S6_PROBES } from "./ambient-eval.js";
 import type { BindableContext } from "../../agent/identity/binding.js";
 
@@ -27,6 +31,8 @@ const MODEL = flag("--model") ?? "openai/gpt-5.6-luna";
 const EFFORT = flag("--effort") ?? "high";
 const MODE = flag("--mode") ?? "coalesced";
 const PAIR = flag("--pair") === undefined ? undefined : Math.max(0, Number.parseInt(flag("--pair")!, 10));
+const TOOLSET = flag("--toolset") ?? "minimal";
+const REISSUE = has("--reissue");
 
 if (SHAPE === "schema") process.env.OE_WAKE_SHAPE = "schema";
 else delete process.env.OE_WAKE_SHAPE;
@@ -99,24 +105,121 @@ interface ToolCall { readonly name: string; readonly input: Record<string, unkno
 
 const realSchema = (entry: { readonly inputSchema: unknown }): z.ZodType => entry.inputSchema as z.ZodType;
 
-function buildTools(calls: ToolCall[]): ToolSet {
+interface MountableEntry { readonly description: string; readonly inputSchema: unknown }
+
+function recorder(name: string, entry: MountableEntry, calls: ToolCall[]): ToolSet[string] {
+  return tool({
+    description: entry.description,
+    inputSchema: realSchema(entry),
+    execute: async (input: unknown) => {
+      calls.push({ name, input: input as Record<string, unknown> });
+      if (name === "reply") return { posted: true, id: `probe-${calls.length}` };
+      if (name === "no_reply") return { acknowledged: true, reason: String((input as { reason?: unknown }).reason ?? ""), note: NO_REPLY_NOTE };
+      return { ok: true };
+    },
+  });
+}
+
+async function resolveDynamicEntry(mod: unknown): Promise<MountableEntry | null> {
+  const events = (mod as { events?: Record<string, (e: unknown, c: unknown) => unknown> }).events;
+  const started = events?.["session.started"];
+  if (started === undefined) return null;
+  const resolved = await started({}, unifiedCtx);
+  if (resolved === null || resolved === undefined) return null;
+  return resolved as MountableEntry;
+}
+
+async function eveFrameworkTool(file: string): Promise<Record<string, unknown>> {
+  const base = import.meta.resolve("eve/tools").replace(/\/src\/.*$/, "/src/runtime/framework-tools/");
+  return (await import(base + file)) as Record<string, unknown>;
+}
+
+async function buildLeanSeatTools(calls: ToolCall[]): Promise<ToolSet> {
+  const set: Record<string, ToolSet[string]> = {
+    reply: recorder("reply", unifiedReplyEntry as MountableEntry, calls),
+    no_reply: recorder("no_reply", noReplyTool as MountableEntry, calls),
+    update_status: recorder("update_status", updateStatusTool as MountableEntry, calls),
+    stand_down: recorder("stand_down", standDownTool as MountableEntry, calls),
+  };
+
+  for (const [name, mod] of [["react", reactDynamic], ["spawn_thread_session", spawnThreadSessionDynamic]] as const) {
+    const entry = await resolveDynamicEntry(mod);
+    if (entry !== null) set[name] = recorder(name, entry, calls);
+    else console.log(`   (lean toolset: ${name} does not mount on this seat — skipped)`);
+  }
+
+  const agentMod = await eveFrameworkTool("agent.js");
+  set.agent = recorder("agent", agentMod.AGENT_TOOL_DEFINITION as MountableEntry, calls);
+  const askMod = await eveFrameworkTool("ask-question.js");
+  set.ask_question = recorder("ask_question", askMod.ASK_QUESTION_TOOL_DEFINITION as MountableEntry, calls);
+  const todoMod = await eveFrameworkTool("todo.js");
+  set.todo = recorder("todo", todoMod.TODO_TOOL_DEFINITION as MountableEntry, calls);
+  const taskMod = await eveFrameworkTool("tasks.js");
+  const taskDefs = taskMod.TASK_TOOL_DEFINITIONS as readonly (MountableEntry & { readonly name: string })[];
+  for (const def of taskDefs) {
+    if (def.name === "task_peek" || def.name === "task_cancel") set[def.name] = recorder(def.name, def, calls);
+  }
+  return set as ToolSet;
+}
+
+async function buildTools(calls: ToolCall[]): Promise<ToolSet> {
+  if (TOOLSET === "lean") return await buildLeanSeatTools(calls);
   return {
-    reply: tool({
-      description: unifiedReplyEntry.description,
-      inputSchema: realSchema(unifiedReplyEntry),
-      execute: async (input: unknown) => {
-        calls.push({ name: "reply", input: input as Record<string, unknown> });
-        return { posted: true, id: `probe-${calls.length}` };
-      },
-    }),
-    no_reply: tool({
-      description: noReplyTool.description,
-      inputSchema: realSchema(noReplyTool),
-      execute: async (input: unknown) => {
-        calls.push({ name: "no_reply", input: input as Record<string, unknown> });
-        return { ok: true };
-      },
-    }),
+    reply: recorder("reply", unifiedReplyEntry as MountableEntry, calls),
+    no_reply: recorder("no_reply", noReplyTool as MountableEntry, calls),
+  } as ToolSet;
+}
+
+function eveEmptyResponseNudge(): string {
+  const url = import.meta.resolve("eve/tools").replace(/\/src\/.*$/, "/src/harness/tool-loop.js");
+  const src = readFileSync(new URL(url), "utf8");
+  const m = /EMPTY_RESPONSE_NUDGE\s*=\s*`([^`]+)`/.exec(src);
+  if (m === null) {
+    throw new Error("EMPTY_RESPONSE_NUDGE not found in the installed eve harness/tool-loop.js — the reissue contract moved; re-read the dist before trusting this arm");
+  }
+  return m[1];
+}
+
+interface ReissueStages {
+  readonly step1: readonly ToolCall[];
+  readonly secondCallEmpty: boolean;
+  readonly secondCallText: string;
+  readonly reissued: boolean;
+  readonly afterNudge: readonly ToolCall[];
+  readonly afterNudgeText: string;
+}
+
+async function runReissueProbe(
+  gateway: ReturnType<typeof createGateway>,
+  system: string,
+  p: Probe,
+  calls: ToolCall[],
+): Promise<{ stages: ReissueStages; usage: Record<string, unknown> | undefined }> {
+  const model = gateway(MODEL);
+  const opts = { model, system, providerOptions: { openai: { reasoningEffort: EFFORT } }, stopWhen: stepCountIs(1) } as const;
+  const base: ModelMessage[] = [{ role: "user", content: p.userMessage }];
+
+  const first = await generateText({ ...opts, messages: base, tools: await buildTools(calls) });
+  const step1 = [...calls];
+  const afterFirst: ModelMessage[] = [...base, ...first.response.messages];
+
+  const second = await generateText({ ...opts, messages: afterFirst, tools: await buildTools(calls) });
+  const secondCallEmpty = second.text.trim() === "" && second.toolCalls.length === 0;
+
+  if (!secondCallEmpty) {
+    const usage = { ...(second.usage as Record<string, unknown>), ...((second.providerMetadata?.gateway as Record<string, unknown>) ?? {}) };
+    return { stages: { step1, secondCallEmpty, secondCallText: second.text, reissued: false, afterNudge: [], afterNudgeText: "" }, usage };
+  }
+
+  const before = calls.length;
+  const nudged: ModelMessage[] = [...afterFirst, { role: "user", content: eveEmptyResponseNudge() }];
+  const third = await generateText({ ...opts, messages: nudged, tools: await buildTools(calls) });
+  const afterNudge = calls.slice(before);
+
+  const usage = { ...(third.usage as Record<string, unknown>), ...((third.providerMetadata?.gateway as Record<string, unknown>) ?? {}) };
+  return {
+    stages: { step1, secondCallEmpty, secondCallText: second.text, reissued: true, afterNudge, afterNudgeText: third.text },
+    usage,
   };
 }
 
@@ -148,6 +251,8 @@ export function scoreProbe(p: Pick<Probe, "ambientWakeId" | "addressedWakeId">, 
 async function main(): Promise<void> {
   registerSyntheticConfig();
   const system = await buildSystemPrompt();
+  const mounted = Object.keys(await buildTools([]));
+  console.log(`toolset (${mounted.length}): ${mounted.join(", ")}`);
 
   if (has("--dump-body")) {
     const p = buildProbe(0);
@@ -163,7 +268,7 @@ async function main(): Promise<void> {
   if (!key) throw new Error("AI_GATEWAY_API_KEY is unset — source .env.e2e and set it from ROWAN_VERCEL_AI_GATEWAY_KEY (never the shell key, which is the shell key)");
   const gateway = createGateway({ apiKey: key });
 
-  console.log(`first-turn-offline: n=${N} mode=${MODE} shape=${SHAPE} pair=${PAIR ?? "rotating"} model=${MODEL} effort=${EFFORT}`);
+  console.log(`first-turn-offline: n=${N} mode=${MODE} shape=${SHAPE} toolset=${TOOLSET} reissue=${REISSUE} pair=${PAIR ?? "rotating"} model=${MODEL} effort=${EFFORT}`);
   console.log(`system prompt: ${system.length} chars`);
 
   const results: unknown[] = [];
@@ -172,6 +277,8 @@ async function main(): Promise<void> {
   let addressedAnswered = 0;
   let ambientSilent = 0;
   let noCrossBinding = 0;
+  let emptySecondStep = 0;
+  let overReplyAfterNudge = 0;
 
   for (let i = 0; i < N; i++) {
     const p = buildProbe(i);
@@ -181,20 +288,30 @@ async function main(): Promise<void> {
     let text = "";
     let usage: Record<string, unknown> | undefined;
     let error: string | undefined;
+    let stages: ReissueStages | undefined;
     try {
-      const r = await generateText({
-        model: gateway(MODEL),
-        system,
-        messages,
-        tools: buildTools(calls),
-        stopWhen: stepCountIs(6),
-        providerOptions: { openai: { reasoningEffort: EFFORT } },
-      });
-      text = r.text;
-      usage = { ...(r.usage as Record<string, unknown>), ...(r.providerMetadata?.gateway as Record<string, unknown> ?? {}) };
+      if (REISSUE) {
+        const r = await runReissueProbe(gateway, system, p, calls);
+        stages = r.stages;
+        usage = r.usage;
+        text = r.stages.afterNudgeText;
+      } else {
+        const r = await generateText({
+          model: gateway(MODEL),
+          system,
+          messages,
+          tools: await buildTools(calls),
+          stopWhen: stepCountIs(6),
+          providerOptions: { openai: { reasoningEffort: EFFORT } },
+        });
+        text = r.text;
+        usage = { ...(r.usage as Record<string, unknown>), ...(r.providerMetadata?.gateway as Record<string, unknown> ?? {}) };
+      }
     } catch (e) {
       error = (e as Error).message;
     }
+    if (stages?.secondCallEmpty) emptySecondStep++;
+    if (stages?.reissued && stages.afterNudge.some((c) => c.name === "reply")) overReplyAfterNudge++;
     const score = scoreProbe(p, calls);
     if (score.correct) correct++;
     if (score.addressedAnswered) addressedAnswered++;
@@ -204,13 +321,22 @@ async function main(): Promise<void> {
     console.log(`\n── probe ${i + 1}/${N} ${verdict} (${Math.round((Date.now() - started) / 1000)}s)`);
     console.log(`   ambient : ${p.ambientText}`);
     console.log(`   addressed: ${p.addressedText}`);
-    for (const c of calls) console.log(`   → ${c.name}(${JSON.stringify(c.input).slice(0, 240)})`);
-    if (calls.length === 0) console.log(`   → (no tool calls) terminal text: ${JSON.stringify(text.slice(0, 240))}`);
+    if (stages) {
+      for (const c of stages.step1) console.log(`   step1 → ${c.name}(${JSON.stringify(c.input).slice(0, 200)})`);
+      console.log(`   step2 → ${stages.secondCallEmpty ? "EMPTY (eve reissues here)" : `text ${JSON.stringify(stages.secondCallText.slice(0, 160))} — no reissue`}`);
+      if (stages.reissued) {
+        for (const c of stages.afterNudge) console.log(`   nudged → ${c.name}(${JSON.stringify(c.input).slice(0, 200)})`);
+        if (stages.afterNudge.length === 0) console.log(`   nudged → (no tool call) text: ${JSON.stringify(stages.afterNudgeText.slice(0, 200))}`);
+      }
+    } else {
+      for (const c of calls) console.log(`   → ${c.name}(${JSON.stringify(c.input).slice(0, 240)})`);
+      if (calls.length === 0) console.log(`   → (no tool calls) terminal text: ${JSON.stringify(text.slice(0, 240))}`);
+    }
     for (const n of score.notes) console.log(`   ! ${n}`);
     if (error) console.log(`   ! model call failed: ${error}`);
     if (usage) console.log(`   $ tokens ${JSON.stringify(usage)}`);
     usageLog.push({ probe: i + 1, usage: usage ?? null });
-    results.push({ probe: i + 1, ...p, calls, terminalText: text, score, usage: usage ?? null, error: error ?? null });
+    results.push({ probe: i + 1, ...p, calls, terminalText: text, score, stages: stages ?? null, usage: usage ?? null, error: error ?? null });
   }
 
   console.log(`\n════ first-turn correctness (offline, mode=${MODE}, shape=${SHAPE}) ════`);
@@ -218,6 +344,10 @@ async function main(): Promise<void> {
   console.log(`addressed_answered ${addressedAnswered}/${N}`);
   console.log(`ambient_silent     ${ambientSilent}/${N}`);
   console.log(`no_cross_binding   ${noCrossBinding}/${N}`);
+  if (REISSUE) {
+    console.log(`empty_second_step  ${emptySecondStep}/${N}  (how often eve would reissue)`);
+    console.log(`over_reply_nudged  ${overReplyAfterNudge}/${N}  (reissue turned silence into a reply)`);
+  }
   const cachedOf = (u: Record<string, unknown> | null): number => {
     const details = (u?.inputTokenDetails ?? {}) as Record<string, unknown>;
     return Number((details.cacheReadTokens ?? u?.cachedInputTokens ?? 0) as number);
@@ -229,11 +359,11 @@ async function main(): Promise<void> {
   console.log(`per probe: ${usageLog.map((r) => `${inputOf(r.usage)}/${cachedOf(r.usage)}`).join(" ")}  (input/cached)`);
 
   const outDir = join(process.cwd(), "scripts/eval/results");
-  const out = flag("--out") ?? join(outDir, `first-turn-offline-${MODE}-${SHAPE}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+  const out = flag("--out") ?? join(outDir, `first-turn-offline-${MODE}-${SHAPE}-${TOOLSET}${REISSUE ? "-reissue" : ""}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, JSON.stringify({
-    config: { n: N, mode: MODE, pair: PAIR ?? null, shape: SHAPE, model: MODEL, effort: EFFORT, systemPromptChars: system.length },
-    summary: { correct, of: N, rate: correct / N, addressedAnswered, ambientSilent, noCrossBinding },
+    config: { n: N, mode: MODE, pair: PAIR ?? null, shape: SHAPE, toolset: TOOLSET, reissue: REISSUE, mountedTools: mounted, model: MODEL, effort: EFFORT, systemPromptChars: system.length },
+    summary: { correct, of: N, rate: correct / N, addressedAnswered, ambientSilent, noCrossBinding, emptySecondStep, overReplyAfterNudge },
     usage: usageLog,
     system,
     probes: results,
