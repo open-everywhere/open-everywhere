@@ -160,7 +160,7 @@ export const SETTINGS = {
       shipped: 0.5,
       validate: (v) => (Number.isFinite(v) && v > 0 && v < 1 ? undefined : "must be a fraction strictly between 0 and 1"),
       summary:
-        "eve's `compaction.thresholdPercent` — the fraction of the model context window at which compaction fires. COMPACTION OWNS SIZE for every window type (rotation is context-motivated and time-triggered), so this is the in-generation size lever. Per-type thresholds are not reachable on the pinned eve. Read at BOOT.",
+        "eve's `compaction.thresholdPercent` — the fraction of the model context window at which compaction fires. COMPACTION OWNS SIZE for every window type (rotation is context-motivated and time-triggered), so this is the in-generation size lever. A FRACTION IS THE ONLY THING AUTHORED: the absolute token count is this value times the active model stack's primary context window, so pointing `models.stack` at a smaller-window stack compacts proportionally lower with no edit here. `/oe status` prints the count this deploy resolved. Per-type thresholds are not reachable on the pinned eve. Read at BOOT.",
       format: (v) => `${v} (${Math.round(v * 100)}% of the window)`,
     } satisfies SettingSpec<number>,
   },

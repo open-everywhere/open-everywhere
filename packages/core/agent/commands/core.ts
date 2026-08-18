@@ -28,6 +28,8 @@ export interface AppInfo {
   readonly version: string;
   readonly primaryModel: string;
   readonly utilityModel: string;
+  readonly contextWindowTokens?: number;
+  readonly compactionThresholdTokens?: number;
 }
 
 const UNKNOWN_APP_INFO: AppInfo = { version: "unknown", primaryModel: "unknown", utilityModel: "unknown" };
@@ -101,11 +103,22 @@ export function renderHelp(): string {
   ].join("\n");
 }
 
+function fmtTokenCount(n: number): string {
+  return String(Math.trunc(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
 export function renderStatus(info: AppInfo, memoryProviderId: string, telemetryStatus = "unknown"): string {
+  const { contextWindowTokens: windowTokens, compactionThresholdTokens: thresholdTokens } = info;
   return [
     `*Open Everywhere* v${info.version}`,
     `• primary model: \`${info.primaryModel}\``,
     `• utility model: \`${info.utilityModel}\``,
+    ...(windowTokens !== undefined && thresholdTokens !== undefined && windowTokens > 0
+      ? [
+          `• context window: \`${fmtTokenCount(windowTokens)}\` tokens — compaction fires at ` +
+            `\`${fmtTokenCount(thresholdTokens)}\` (${Math.round((thresholdTokens / windowTokens) * 100)}%)`,
+        ]
+      : []),
     `• memory provider: \`${memoryProviderId}\``,
     `• telemetry: \`${telemetryStatus}\``,
   ].join("\n");
@@ -113,7 +126,7 @@ export function renderStatus(info: AppInfo, memoryProviderId: string, telemetryS
 
 function fmtCap(n: number | null | undefined, unit: "tokens" | "usd"): string {
   if (n == null) return "uncapped";
-  return unit === "usd" ? `$${n.toFixed(2)}` : n.toLocaleString();
+  return unit === "usd" ? `$${n.toFixed(2)}` : fmtTokenCount(n);
 }
 
 export interface BudgetStatusFacts {
