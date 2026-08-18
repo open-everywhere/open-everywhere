@@ -4,7 +4,7 @@ import { bindFrom, deploymentOrg, isUnifiedWindowContext, currentWakeId, current
 import { capabilitiesFor } from "../identity/capabilities.js";
 import { resolveReplyTarget, postReply, auditReplyRefused, type ReplyAudit, type ReplierLabel } from "../channels/reply-post.js";
 import { replierLabelFor, withPendingWorkFrame } from "../channels/turn-delivery.js";
-import { markRepliedThisTurn, markWakeDoneThisTurn, isWakeDoneThisTurn } from "../channels/reply-signal.js";
+import { markRepliedThisTurn, markWakeDoneThisTurn, isWakeDoneThisTurn, isWakeDeclinedThisTurn, WAKE_DECLINED_REFUSAL_REASON, wakeDeclinedRefusalMessage } from "../channels/reply-signal.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
 import { addressedWakeThisTurn, claimTasksForAddressedWake } from "../access/dispatch-origin-signal.js";
 import { DELEGATION_PENDING_REFUSAL_REASON, delegationPendingRefusalMessage, pendingDelegationOwing } from "../access/pending-delegation-signal.js";
@@ -69,6 +69,11 @@ export const unifiedReplyEntry = defineTool({
       if (isWakeDoneThisTurn(turnId, input.wake)) {
         await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), "answered-this-turn");
         throw new Error(replyRefusalMessage("answered", input.wake));
+      }
+
+      if (isWakeDeclinedThisTurn(turnId, input.wake)) {
+        await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), WAKE_DECLINED_REFUSAL_REASON);
+        throw new Error(wakeDeclinedRefusalMessage());
       }
 
       if (turnWake === undefined && uningressedTurn(turnId)) {
