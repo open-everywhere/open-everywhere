@@ -1321,6 +1321,47 @@ registerConfig({
     ok(o.woke && engagedThreads.length === 0, "an ambient (non-directMention) in-thread wake does NOT engage the thread");
   }
 
+  {
+    type WindowWake = { readonly wakeId: string; readonly origin: Record<string, unknown>; readonly addressing?: string };
+    const seen: Array<WindowWake | undefined> = [];
+    const originDeps = (over: Partial<SupervisorRouteDeps> = {}) =>
+      supDeps(true, 12, {
+        unifiedMeta: () => ({ unified: true, singleWindow: true }),
+        wake: async (input) => {
+          seen.push(input.window as WindowWake | undefined);
+        },
+        ...over,
+      });
+
+    seen.length = 0;
+    let o = await routeSupervisorEvent(supEv(), originDeps());
+    ok(o.woke && seen.length === 1 && seen[0] !== undefined, "single-window ambient wake mints a window origin");
+    ok(seen[0]!.origin.replyAnchorTs === "77.7", "🔴 an AMBIENT top-level wake anchors its reply on the trigger's own ts — the answer opens a thread there, not a fresh top-level post");
+    ok(seen[0]!.origin.threadTs === undefined, "…and threadTs stays ABSENT, so the wake still reads TOP-LEVEL to §S2 ownership (isThreadScoped keys on threadTs alone)");
+    ok(seen[0]!.addressing === undefined, "NEGATIVE CONTROL: the anchored ambient wake is still NOT addressed — the placement change never arms the prose bridge");
+
+    seen.length = 0;
+    o = await routeSupervisorEvent(supEv({ thread_ts: "70.0" }), originDeps({ getEngagement: async () => null }));
+    ok(o.woke && seen.length === 1, "single-window threaded ambient wake fires");
+    ok(seen[0]!.origin.threadTs === "70.0", "a THREADED trigger keeps its own thread as the reply target");
+    ok(seen[0]!.origin.replyAnchorTs === undefined, "…and mints NO reply anchor (threadTs already places the answer)");
+
+    seen.length = 0;
+    const mentionEv = parseMessageEvent({
+      type: "event_callback",
+      team_id: "T_ENG",
+      event: { type: "app_mention", channel: "C_SUP", ts: "92.5", user: "U1", text: "<@UBOT> what is the deploy state" },
+    })!;
+    o = await routeSupervisorEvent(mentionEv, originDeps(), { directMention: true });
+    ok(o.woke && seen.length === 1, "single-window addressed mention fires");
+    ok(seen[0]!.origin.replyAnchorTs === "92.5", "an ADDRESSED top-level mention keeps its reply anchor (unchanged by OPE-759)");
+    ok(seen[0]!.addressing === "direct-mention", "…and is still stamped addressed (the prose bridge stays armed for a mention)");
+
+    seen.length = 0;
+    o = await routeSupervisorEvent(supEv(), supDeps(true, 12, { wake: async (input) => { seen.push(input.window as WindowWake | undefined); } }));
+    ok(o.woke && seen.length === 1 && seen[0] === undefined, "a NON-single-window supervisor wake mints no window origin (flag-off is untouched)");
+  }
+
   wakes.length = 0;
   {
     const bs = [
