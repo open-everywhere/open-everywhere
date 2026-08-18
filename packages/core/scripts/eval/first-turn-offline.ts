@@ -7,11 +7,14 @@ import { createGateway } from "@ai-sdk/gateway";
 import { renderWake, type NormalizedWake } from "../../agent/channels/normalized-wake.js";
 import { turnHasTerminalAction } from "../../agent/channels/turn-terminal-actions.js";
 import { renderScopeMarkdown, renderReadingAWake, renderSupervisorPersona } from "../../agent/instructions/access.js";
-import { registerConfig } from "../../agent/access/config.js";
-import { defineDomain } from "../../agent/memory/domain.js";
-import { defineMemorySilo } from "../../agent/memory/silo.js";
 import replyDynamic, { unifiedReplyEntry } from "../../agent/tools/reply.js";
-import { registerSlackFixtureMapper, registerSlackFixtureManifest } from "../_slack-test-stubs.js";
+import {
+  SLACK_CHANNEL,
+  registerSyntheticConfig,
+  unifiedCtx,
+  perSurfaceCtx,
+  readBaseInstructions,
+} from "./_offline-seat.js";
 import noReplyTool, { NO_REPLY_NOTE } from "../../agent/tools/no_reply.js";
 import updateStatusTool from "../../agent/tools/update_status.js";
 import standDownTool from "../../agent/tools/stand_down.js";
@@ -59,52 +62,6 @@ That closing line is not how you talk to the people here. Anything they are owed
 \`reply\` first; the closing line only notes that you sent it, or that nothing was needed.
 `.trim();
 
-const DOMAIN = "payments";
-const SLACK_CHANNEL = "C_PAY";
-
-const SLACK_TEAM = "T_PAY";
-
-function registerSyntheticConfig(): void {
-  registerConfig({
-    loadBundles: () => [],
-    loadBindings: () => [],
-    pluginRegistry: {},
-    skillContent: {},
-    loadDomains: () => [
-      defineDomain({
-        name: DOMAIN,
-        channels: [`slack/${SLACK_TEAM}/${SLACK_CHANNEL}`, "notion/W_PAY/P_PAY", "github/acme/payments-api"],
-        memory: "payments-notes",
-        ambientSupervisor: true,
-        ...(PER_SURFACE ? {} : { mode: "unified" as const }),
-      }),
-      defineDomain({ name: "org", match: "org" }),
-    ],
-    loadSilos: () => [defineMemorySilo({ name: "payments-notes", description: "payments-domain decisions", provider: "sqlite" })],
-    domainsForSurface: ({ surface }: { surface: string }) => ([SLACK_CHANNEL, "P_PAY", "payments-api"].includes(surface) ? [DOMAIN] : []),
-  } as never);
-  registerSlackFixtureMapper();
-  registerSlackFixtureManifest();
-}
-
-const unifiedCtx: BindableContext = {
-  channel: { kind: "channel:unified", continuationToken: `oe-dom:${DOMAIN}:oe-sup:g1` },
-  session: { auth: { current: { attributes: { oe_platform: "slack" } } } },
-} as BindableContext;
-
-const perSurfaceCtx: BindableContext = {
-  channel: { kind: "slack", continuationToken: `${SLACK_CHANNEL}:oe-sup:g1` },
-  session: {
-    auth: {
-      current: {
-        attributes: { team_id: SLACK_TEAM, channel_id: SLACK_CHANNEL, channel_type: "channel", is_private: "false", trust_checked: "true" },
-        principalId: "U_ALEX",
-        principalType: "user",
-      },
-    },
-  },
-} as BindableContext;
-
 const activeCtx: BindableContext = PER_SURFACE ? perSurfaceCtx : unifiedCtx;
 
 function section(md: string, heading: string): string {
@@ -125,7 +82,7 @@ function applyArmR(scope: string): string {
 }
 
 async function buildSystemPrompt(): Promise<string> {
-  const base = readFileSync(new URL("../../../../agent/instructions.md", import.meta.url), "utf8");
+  const base = readBaseInstructions();
   const dynamic = ARM === "r" ? applyArmR(await renderScopeMarkdown(activeCtx)) : await renderScopeMarkdown(activeCtx);
   const shipped = `${base}\n\n${dynamic}`;
   if (ARM === "c") return `${shipped}\n\n${ARM_C_INSTRUCTION}\n`;
@@ -478,7 +435,7 @@ async function assertSeatShape(system: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  registerSyntheticConfig();
+  registerSyntheticConfig({ unified: !PER_SURFACE });
   const system = await buildSystemPrompt();
   await assertSeatShape(system);
   const mounted = Object.keys(await buildTools([]));
