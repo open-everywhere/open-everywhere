@@ -8,7 +8,7 @@ import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
 import { REDELIVERY_SIGNATURE, REDELIVERY_STORM_THRESHOLD, RedeliveryStormGuard } from "./redelivery-storm-guard";
 import { ROLLOWN_OUTPUT_DIR, rollOwnMissingMessage, rollOwnTargetExists } from "./rollown-target";
 
-import { registerScript, type RecordedRequest, type ScriptedHandle, type SeatScript } from "../../agent/model/scripted-model";
+import { ANY_SESSION, registerScript, scriptedStore, type RecordedRequest, type ScriptedHandle, type SeatScript } from "../../agent/model/scripted-model";
 export { registerScript, type RecordedRequest, type ResolveObservation, type ScriptedHandle, type ScriptedStep, type SeatScript, type ToolDefinitionRecord } from "../../agent/model/scripted-model";
 export { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
 export { REPLAYED_DELIVERY_CALLER_BODY } from "@open-everywhere/core/agent/webhooks/replay-dedupe.js";
@@ -249,18 +249,55 @@ export function taskIdOfDelegation(handle: ScriptedHandle, callLabel: string): s
   return taskId;
 }
 
+export function armSettlement(dispatched: ScriptedHandle, script: SeatScript): ScriptedHandle {
+  const sessionId = dispatched.requests.find((r) => r.role === "parent")?.sessionId;
+  if (sessionId === undefined) {
+    throw new Error(
+      "integration harness: armSettlement could not read the dispatch turn's own session id off its " +
+        "parent request — wait for the dispatch turn's own terminal step before calling this.",
+    );
+  }
+  if (scriptedStore().get(sessionId)?.requests === dispatched.requests) dispatched.dispose();
+  const primary = registerScript(script, sessionId);
+  return {
+    requests: primary.requests,
+    resolves: primary.resolves,
+    dispose: () => {
+      const store = scriptedStore();
+      const mine = store.get(sessionId);
+      if (mine !== undefined && store.get(ANY_SESSION) === mine) store.delete(ANY_SESSION);
+      primary.dispose();
+    },
+  };
+}
+
+export async function consumeSettlement(input: {
+  readonly armed: ScriptedHandle;
+  readonly dispatched: ScriptedHandle;
+  readonly taskId: string;
+  readonly label: string;
+}): Promise<RecordedRequest> {
+  const sessionId = input.dispatched.requests.find((r) => r.role === "parent")?.sessionId;
+  input.dispatched.dispose();
+  if (sessionId !== undefined) {
+    const store = scriptedStore();
+    const entry = store.get(sessionId);
+    if (entry !== undefined && !store.has(ANY_SESSION)) store.set(ANY_SESSION, entry);
+  }
+  return await waitFor(
+    () => input.armed.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes(input.taskId))),
+    input.label,
+  );
+}
+
 export async function awaitTaskSettlement(input: {
   readonly dispatched: ScriptedHandle;
   readonly taskId: string;
   readonly script: SeatScript;
   readonly label: string;
 }): Promise<{ readonly handle: ScriptedHandle; readonly notification: RecordedRequest }> {
-  input.dispatched.dispose();
-  const handle = registerScript(input.script);
-  const notification = await waitFor(
-    () => handle.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes(input.taskId))),
-    input.label,
-  );
+  const handle = armSettlement(input.dispatched, input.script);
+  const notification = await consumeSettlement({ armed: handle, dispatched: input.dispatched, taskId: input.taskId, label: input.label });
   return { handle, notification };
 }
 
