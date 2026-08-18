@@ -6,7 +6,7 @@ import type { z } from "zod";
 import { createGateway } from "@ai-sdk/gateway";
 import { renderWake, type NormalizedWake } from "../../agent/channels/normalized-wake.js";
 import { turnHasTerminalAction } from "../../agent/channels/turn-terminal-actions.js";
-import { renderScopeMarkdown, renderReadingAWake } from "../../agent/instructions/access.js";
+import { renderScopeMarkdown, renderReadingAWake, renderSupervisorPersona } from "../../agent/instructions/access.js";
 import { registerConfig } from "../../agent/access/config.js";
 import { defineDomain } from "../../agent/memory/domain.js";
 import { defineMemorySilo } from "../../agent/memory/silo.js";
@@ -38,14 +38,15 @@ const TOOLSET = flag("--toolset") ?? "minimal";
 const REISSUE = has("--reissue");
 const STOCK_REISSUE = has("--stock-reissue");
 const ARM = (flag("--arm") ?? "a").toLowerCase();
-if (ARM !== "a" && ARM !== "c" && ARM !== "w") throw new Error(`--arm must be 'a' (shipped), 'c' (say-something) or 'w' (reading-a-wake); got '${ARM}'`);
+const ARMS = ["a", "c", "w", "r"] as const;
+if (!(ARMS as readonly string[]).includes(ARM)) throw new Error(`--arm must be one of ${ARMS.join(", ")} (a=shipped, c=say-something, w=reading-a-wake, r=message-tool-only reporting); got '${ARM}'`);
 const PATH = (flag("--path") ?? "unified").toLowerCase();
 if (PATH !== "unified" && PATH !== "per-surface") throw new Error(`--path must be 'unified' or 'per-surface'; got '${PATH}'`);
 const PER_SURFACE = PATH === "per-surface";
 if (PER_SURFACE && MODE === "coalesced") {
   throw new Error("--path per-surface does not support --mode coalesced: a per-surface seat has no wake-id, so 'which wake did the reply name' has no answer to score. Use ambient-only, addressed-only or warranted-ambient.");
 }
-if (ARM === "w" && !PER_SURFACE) throw new Error("--arm w needs --path per-surface: the unified prompt already carries the 'Reading a wake' block, so appending it there measures a duplicate");
+if ((ARM === "w" || ARM === "r") && !PER_SURFACE) throw new Error(`--arm ${ARM} needs --path per-surface: the unified prompt already carries that text, so applying it there measures a duplicate`);
 
 const ARM_C_INSTRUCTION = `
 ## Ending the turn
@@ -106,9 +107,26 @@ const perSurfaceCtx: BindableContext = {
 
 const activeCtx: BindableContext = PER_SURFACE ? perSurfaceCtx : unifiedCtx;
 
+function section(md: string, heading: string): string {
+  const i = md.indexOf(heading);
+  if (i < 0) throw new Error(`the '${heading}' section is not in the rendered block — the persona moved, so the arm cannot be built from it`);
+  const j = md.indexOf("\n### ", i + 1);
+  return j < 0 ? md.slice(i) : md.slice(i, j + 1);
+}
+
+function applyArmR(scope: string): string {
+  const shippedReporting = section(renderSupervisorPersona(activeCtx), "### Reporting");
+  const toolOnlyReporting = section(renderSupervisorPersona(activeCtx, { messageToolOnly: true }), "### Reporting");
+  if (shippedReporting === toolOnlyReporting) throw new Error("arm r: both persona arms rendered the SAME reporting text — there is nothing to swap, so the arm would measure the shipped prompt under another name");
+  const at = scope.indexOf(shippedReporting);
+  if (at < 0) throw new Error("arm r: the shipped reporting section is not in the rendered scope — the swap would be a no-op");
+  if (scope.indexOf(shippedReporting, at + 1) >= 0) throw new Error("arm r: the reporting section appears twice in the scope — refusing an ambiguous swap");
+  return scope.slice(0, at) + toolOnlyReporting + scope.slice(at + shippedReporting.length);
+}
+
 async function buildSystemPrompt(): Promise<string> {
   const base = readFileSync(new URL("../../../../agent/instructions.md", import.meta.url), "utf8");
-  const dynamic = await renderScopeMarkdown(activeCtx);
+  const dynamic = ARM === "r" ? applyArmR(await renderScopeMarkdown(activeCtx)) : await renderScopeMarkdown(activeCtx);
   const shipped = `${base}\n\n${dynamic}`;
   if (ARM === "c") return `${shipped}\n\n${ARM_C_INSTRUCTION}\n`;
   if (ARM === "w") return `${shipped}\n\n${renderReadingAWake()}\n`;
