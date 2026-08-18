@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { pathToFileURL } from "node:url";
 import { generateText, tool, stepCountIs, type ModelMessage, type ToolSet } from "ai";
 import type { z } from "zod";
 import { createGateway } from "@ai-sdk/gateway";
@@ -240,6 +241,5 @@ async function main(): Promise<void> {
   console.log(`\nwrote ${out}`);
 }
 
-if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].split("/").pop() ?? " ")) {
-  await main();
-}
+const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) await main();
