@@ -679,12 +679,28 @@ const countOccurrences = (haystack: string, needle: string): number =>
     delete process.env.OE_WAKE_SHAPE;
     ok(env(msg({ mention: true }), "direct-mention").includes('trust="peer"'), "prose: an @mention does NOT change the author's grade");
     ok(env(msg({ trust: "principal" }), "channel-watch").includes('trust="principal"'), "prose: an ambient message from an admin keeps the principal grade");
+    ok(
+      renderWakeEnvelope({ reason: "mention", currentTime: "2026-04-29T16:01:01Z", addressing: "direct-mention", channel: { id: "C1", type: "channel" }, messages: [msg({ mention: true })] }).includes('reason="mention"'),
+      "prose: an @mention wake still renders reason=mention — the shipped vocabulary is untouched",
+    );
 
     process.env.OE_WAKE_SHAPE = "schema";
     ok(env(msg({ mention: true }), "direct-mention").includes('trust="principal"'), "schema: an @mention from a vouched member renders trust=principal (Tag's keying)");
     ok(env(msg({}), "channel-watch").includes('trust="peer"'), "schema: the same member's ambient message renders trust=peer");
     ok(env(msg({ trust: "principal" }), "channel-watch").includes('trust="peer"'), "schema: an ADMIN's ambient message is demoted to peer — the grade states addressing here, not roster standing");
     ok(env(msg({}), "direct-mention").includes('trust="principal"'), "schema: a DM-shaped wake (direct-mention addressing, no mention flag) renders trust=principal");
+
+    const mentionWake = renderWakeEnvelope({
+      reason: "mention", currentTime: "2026-04-29T16:01:01Z", addressing: "direct-mention",
+      channel: { id: "C1", type: "channel" }, messages: [msg({ mention: true })],
+    });
+    ok(mentionWake.includes('reason="channel-activity"'), "🔴 schema: an @mention wake renders reason=channel-activity — reason is the feed class");
+    ok(!mentionWake.includes('reason="mention"'), "🔴 schema: `mention` is gone from the reason attribute");
+    ok(mentionWake.includes('mention="true"'), "schema: directness rides the message's mention flag instead");
+    ok(
+      renderWakeEnvelope({ reason: "dm", currentTime: "2026-04-29T16:01:01Z", addressing: "direct-mention", channel: { id: "D1", type: "im" }, messages: [msg({})] }).includes('reason="dm"'),
+      "schema: `dm` survives — it names the surface kind, which nothing else in the envelope states",
+    );
 
     const unauthMention = env(msg({ trust: "unauth", mention: true }), "direct-mention");
     ok(unauthMention.includes('trust="unauth"'), "🔴 schema: an UNAUTH author who @mentions the bot stays unauth — addressing never promotes across the authority floor");

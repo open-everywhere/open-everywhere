@@ -218,6 +218,10 @@ function renderHandoff(h: WakeHandoff): string {
   return `<handoff-note${attr("from-generation", String(h.fromGeneration))}>\n${indent(escapeXml(h.note), 2)}\n</handoff-note>`;
 }
 
+function tagReason(reason: WakeReason): WakeReason {
+  return wakeShapeIsSchema() && reason === "mention" ? "channel-activity" : reason;
+}
+
 function tagTrust(messages: readonly WakeMessageInput[], addressing: WakeAddressing | undefined): readonly WakeMessageInput[] {
   if (!wakeShapeIsSchema()) return messages;
   const addressedWake = addressing === "direct" || addressing === "direct-mention";
@@ -254,7 +258,7 @@ export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
   const unauthNote = input.messages.some((m) => m.trust === "unauth") ? [indent(UNAUTH_SYSTEM_NOTE, 2)] : [];
 
   const lines = [
-    `<wake${attr("reason", input.reason)}${attr("addressing", input.addressing)}${attr("engagement", input.engagement)}${attr("follow-up", input.followUp)}${attr("current-time", input.currentTime)}${attr("wake-id", input.wakeId)}>`,
+    `<wake${attr("reason", tagReason(input.reason))}${attr("addressing", input.addressing)}${attr("engagement", input.engagement)}${attr("follow-up", input.followUp)}${attr("current-time", input.currentTime)}${attr("wake-id", input.wakeId)}>`,
     indent(channelOpen, 2),
     channelBody,
     indent("</channel>", 2),
