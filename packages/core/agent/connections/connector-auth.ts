@@ -15,6 +15,7 @@ import {
   surfaceContextFromAuth,
 } from "../access/connector-scope.js";
 import { vercelConnectorOf } from "../access/connector-credentials.js";
+import { assertCredentialEndpointHostAllowed } from "../access/credential-endpoints.js";
 import { isConnectorOpTool } from "../access/consequence.js";
 import { effectiveConnectorOpTier } from "../access/connector-op-gating.js";
 import { sharedVaultSubjectFor } from "../access/group-request.js";
@@ -71,6 +72,7 @@ export function appProviderToken(opts: {
   readonly connector: string;
   readonly fallbackSecretRef?: string;
   readonly fallbackBroker?: string;
+  readonly directUrl?: string;
 }): ConnectionAuthResolver {
   return async (ctx: SessionContext): Promise<ConnectionAuthProvider> => ({
     principalType: "app",
@@ -84,7 +86,7 @@ export function appProviderToken(opts: {
 }
 
 export async function resolveAppTokenFromCred(
-  opts: { readonly connector: string; readonly fallbackSecretRef?: string; readonly fallbackBroker?: string },
+  opts: { readonly connector: string; readonly fallbackSecretRef?: string; readonly fallbackBroker?: string; readonly directUrl?: string },
   cred: import("../access/connector-credentials.js").ResolvedConnectorCredential | null,
   o: unknown,
 ): Promise<TokenResult> {
@@ -95,6 +97,9 @@ export async function resolveAppTokenFromCred(
         `grant it with connectors: [{ name: "${opts.connector}", credential: "<id>", contentOrigin: … }], ` +
         `or give the connection its own fallback secretRef.`,
     );
+  }
+  if (opts.directUrl !== undefined) {
+    assertCredentialEndpointHostAllowed(cred.endpoints, opts.directUrl, `connection "${opts.connector}" credential "${cred.credential}"`);
   }
   if (cred.type === "api-key") {
     if (!cred.secretRef) throw new Error(`connection "${opts.connector}": api-key credential has no secretRef`);
@@ -224,7 +229,7 @@ async function memoSelfHealsUserGrant(
 }
 
 export function userAwareProviderToken(
-  opts: { readonly connector: string; readonly fallbackSecretRef?: string; readonly fallbackBroker?: string },
+  opts: { readonly connector: string; readonly fallbackSecretRef?: string; readonly fallbackBroker?: string; readonly directUrl?: string },
   deps: { readonly mintUser?: ConnectUserTokenMinter; readonly startAuth?: ConnectAuthorizationStarter } = {},
 ): ConnectionAuthResolver {
   const mintUser = deps.mintUser ?? ((ref, params) => requireUserAuthFlow(opts.connector).mintUserToken(ref, params));
@@ -239,6 +244,9 @@ export function userAwareProviderToken(
       const cred = await boundConnectorCredential(opts.connector, ctx.session.auth);
 
       if (cred?.type === "user-oauth") {
+        if (opts.directUrl !== undefined) {
+          assertCredentialEndpointHostAllowed(cred.endpoints, opts.directUrl, `connection "${opts.connector}" credential "${cred.credential}"`);
+        }
         const { mode, principalId, platform, workspace, org } = await resolveDmPrincipal(ctx.session.auth);
         if (mode !== "dm") {
           throw new Error(
