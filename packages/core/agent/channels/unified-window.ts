@@ -58,7 +58,7 @@ export function mintWakeId(): string {
 }
 
 export interface UnifiedWakeTargetStore {
-  putUnifiedWakeTarget(org: string, wakeId: string, targetJson: string, at: string, ttlMs: number, windowToken?: string): Promise<void>;
+  putUnifiedWakeTarget(org: string, wakeId: string, targetJson: string, at: string, ttlMs: number, windowToken?: string, inbound?: boolean): Promise<void>;
   getUnifiedWakeTarget(org: string, wakeId: string): Promise<string | null>;
 }
 
@@ -68,6 +68,12 @@ export interface UnifiedWakeRecord {
   readonly windowToken?: string;
   readonly answeredAt?: string;
   readonly answeredTurnId?: string;
+}
+
+export interface PendingUnifiedWake {
+  readonly wakeId: string;
+  readonly targetJson: string;
+  readonly createdAt: string;
 }
 
 export interface AnswerableWakeStore extends UnifiedWakeTargetStore {
@@ -82,8 +88,9 @@ export async function registerUnifiedWakeTarget(
   origin: UnifiedWakeOrigin,
   atIso: string,
   windowToken?: string,
+  inbound?: boolean,
 ): Promise<void> {
-  await store.putUnifiedWakeTarget(org, wakeId, JSON.stringify(origin), atIso, WAKE_TARGET_TTL_MS, windowToken);
+  await store.putUnifiedWakeTarget(org, wakeId, JSON.stringify(origin), atIso, WAKE_TARGET_TTL_MS, windowToken, inbound);
 }
 
 export async function resolveUnifiedWakeTarget(store: UnifiedWakeTargetStore, org: string, wakeId: string): Promise<UnifiedWakeOrigin | null> {
