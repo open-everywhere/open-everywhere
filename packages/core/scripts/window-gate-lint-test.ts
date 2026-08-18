@@ -5,11 +5,13 @@ import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   checkWindowGateManifest,
+  classifyFrameworkTools,
   WINDOW_GATED_TOOLS,
   WINDOW_UNGATED_TOOLS,
   FULL_KIT,
   JOB_WAKE_TOOLS,
   withheldFromGrain,
+  type FrameworkToolMount,
   type WindowToolSource,
 } from "../agent/access/window-gate-manifest.js";
 import type { WindowGrain } from "../agent/identity/binding.js";
@@ -17,10 +19,17 @@ import { nativeSubagentAtBuild } from "../agent/settings/settings.js";
 
 const require = createRequire(import.meta.url);
 const eveRoot = dirname(require.resolve("eve/package.json"));
-const { getAllFrameworkToolNames } = (await import(
-  pathToFileURL(join(eveRoot, "dist/src/runtime/framework-tools/index.js")).href
-)) as { getAllFrameworkToolNames(): ReadonlySet<string> };
-const FRAMEWORK_TOOL_NAMES = [...getAllFrameworkToolNames(), "connection_search"];
+const eveFrameworkTools = (await import(pathToFileURL(join(eveRoot, "dist/src/runtime/framework-tools/index.js")).href)) as {
+  getAllFrameworkToolNames(): ReadonlySet<string>;
+  getFrameworkToolDefinitions?: (config?: unknown) => readonly { readonly name: string }[];
+  getOptInFrameworkToolNames?: () => ReadonlySet<string>;
+};
+const FRAMEWORK_TOOL_NAMES = [...eveFrameworkTools.getAllFrameworkToolNames(), "connection_search"];
+const FRAMEWORK_TOOLS = classifyFrameworkTools(
+  FRAMEWORK_TOOL_NAMES,
+  eveFrameworkTools.getFrameworkToolDefinitions?.().map((d) => d.name),
+  eveFrameworkTools.getOptInFrameworkToolNames?.(),
+);
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -153,6 +162,65 @@ firesWith(
     u("delegation_tools"),
   );
   ok(problems.length === 0, `a framework-named tool re-provided by a NON-sandbox kit (delegation_tools → agent) is clean (got: ${JSON.stringify(problems)})`);
+}
+
+const OPTIN_KIT = [{ name: "sandbox_tools", source: 'export default windowGatedKit("sandbox_tools", {\n  bash: defineTool(x),\n  glob: defineTool(y),\n});' }];
+const KIT_SHIM = 'export { default } from "@open-everywhere/core/agent/tools/sandbox_tools.js";';
+const AUTHORED = "export default defineTool({});";
+const fw = (entries: Record<string, FrameworkToolMount>): ReadonlyMap<string, FrameworkToolMount> => new Map(Object.entries(entries));
+
+firesWith(
+  checkWindowGateManifest(OPTIN_KIT, new Map([["sandbox_tools", KIT_SHIM]]), fw({ bash: "default" }), g({ bash: FULL_KIT }), u("sandbox_tools")),
+  "is not a `disableTool()` sentinel",
+  "a DEFAULT-MOUNTED framework tool with NO app shim FAILS — the A6 guard is untouched for the class it was written for",
+);
+firesWith(
+  checkWindowGateManifest(OPTIN_KIT, new Map([["bash", AUTHORED], ["sandbox_tools", KIT_SHIM]]), fw({ bash: "default" }), g({ bash: FULL_KIT }), u("sandbox_tools")),
+  "is not a `disableTool()` sentinel",
+  "a DEFAULT-MOUNTED framework tool whose shim is an authored tool FAILS",
+);
+
+firesWith(
+  checkWindowGateManifest(OPTIN_KIT, new Map([["glob", AUTHORED], ["sandbox_tools", KIT_SHIM]]), fw({ glob: "opt-in" }), g({ glob: FULL_KIT }), u("sandbox_tools")),
+  "which IS opting in",
+  "an OPT-IN framework tool the app OPTS INTO (authored shim, not a sentinel) FAILS — the guard's purpose survives the loosening",
+);
+
+for (const [shims, label] of [
+  [new Map([["sandbox_tools", KIT_SHIM]]), "NO app shim at all"],
+  [new Map([["glob", SENTINEL], ["sandbox_tools", KIT_SHIM]]), "the (inert) disableTool() sentinel the tree ships today"],
+] as const) {
+  const problems = checkWindowGateManifest(OPTIN_KIT, shims, fw({ glob: "opt-in" }), g({ glob: FULL_KIT }), u("sandbox_tools"));
+  ok(problems.length === 0, `an OPT-IN framework tool with ${label} is clean — eve mounts nothing under the name, so there is nothing to disable (got: ${JSON.stringify(problems)})`);
+}
+
+for (const [surfaceSpelling, label] of [
+  [fw({ glob: "unknown" }), 'an UNCLASSIFIED ("unknown") framework tool'],
+  [["glob"], "the plain-ARRAY surface spelling (no classification at all)"],
+] as const) {
+  firesWith(
+    checkWindowGateManifest(OPTIN_KIT, new Map([["sandbox_tools", KIT_SHIM]]), surfaceSpelling, g({ glob: FULL_KIT }), u("sandbox_tools")),
+    "is not a `disableTool()` sentinel",
+    `${label} with no sentinel FAILS — the check fails CLOSED on every name it cannot prove is opt-in`,
+  );
+}
+
+{
+  const m = classifyFrameworkTools(["bash", "glob", "agent"], ["bash"], ["glob"]);
+  ok(m.get("bash") === "default", 'classifyFrameworkTools: a name eve mounts by default classifies "default"');
+  ok(m.get("glob") === "opt-in", 'classifyFrameworkTools: a name in eve\'s opt-in set classifies "opt-in"');
+  ok(m.get("agent") === "unknown", 'classifyFrameworkTools: a name in NEITHER eve set classifies "unknown" (fail closed)');
+  const noDefaults = classifyFrameworkTools(["bash", "glob"], undefined, ["glob"]);
+  ok(
+    noDefaults.get("glob") === "unknown" && noDefaults.get("bash") === "unknown",
+    "classifyFrameworkTools: an eve that exports no getFrameworkToolDefinitions classifies EVERY name unknown (fail closed)",
+  );
+  const noOptIn = classifyFrameworkTools(["bash", "glob"], ["bash"], undefined);
+  ok(
+    noOptIn.get("glob") === "unknown" && noOptIn.get("bash") === "unknown",
+    "classifyFrameworkTools: an eve that exports no getOptInFrameworkToolNames classifies EVERY name unknown (fail closed)",
+  );
+  ok(classifyFrameworkTools(["x"], ["x"], ["x"]).get("x") === "default", 'classifyFrameworkTools: a name in BOTH eve sets classifies "default" — the stricter answer');
 }
 
 firesWith(
@@ -300,16 +368,53 @@ for (const name of Object.keys(WINDOW_GATED_TOOLS)) {
     pathToFileURL(join(here, "../../../agent/settings/settings.ts")).href
   )) as { SETTINGS_OVERRIDES: Parameters<typeof nativeSubagentAtBuild>[0] };
   const realArmed = nativeSubagentAtBuild(appOverrides);
-  const problems = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOL_NAMES, undefined, undefined, undefined, subagentNames, undefined, realArmed);
+  const problems = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOLS, undefined, undefined, undefined, subagentNames, undefined, realArmed);
   ok(problems.length === 0, `the REAL tool surface carries a clean, total window-gate manifest (problems: ${JSON.stringify(problems)})`);
   ok(coreTools.length >= 37, `the real scan actually covered the core tools dir (saw ${coreTools.length})`);
   ok(appShims.size >= 40, `the real scan covered the deploy shims (saw ${appShims.size})`);
   ok(FRAMEWORK_TOOL_NAMES.length >= 10, `the eve framework enumeration is populated (saw ${FRAMEWORK_TOOL_NAMES.length})`);
 
+  for (const name of ["glob", "grep"]) {
+    ok(
+      FRAMEWORK_TOOLS.get(name) === "opt-in",
+      `installed eve: \`${name}\` is OPT-IN (got "${FRAMEWORK_TOOLS.get(name)}") — eve mounts nothing under the name, so its roster sentinel is inert. If this fails, eve moved it back into the default set: its sentinel is load-bearing again and roster.config.ts must keep it.`,
+    );
+  }
+  for (const name of ["bash", "read_file", "write_file", "web_fetch"]) {
+    ok(
+      FRAMEWORK_TOOLS.get(name) === "default",
+      `installed eve: \`${name}\` is DEFAULT-MOUNTED (got "${FRAMEWORK_TOOLS.get(name)}") — its disableTool() sentinel is load-bearing`,
+    );
+  }
+  ok(
+    FRAMEWORK_TOOLS.get("agent") === "unknown",
+    `installed eve: \`agent\` is in NEITHER eve mount set (got "${FRAMEWORK_TOOLS.get("agent")}") — the harness injects it on its own path, so the check fails closed and keeps demanding its sentinel`,
+  );
+
+  const shimsWithout = (...names: string[]) => new Map([...appShims].filter(([slug]) => !names.includes(slug)));
+  const realArgs = [undefined, undefined, undefined, subagentNames, undefined, realArmed] as const;
+  const droppedOptIn = checkWindowGateManifest(coreTools, shimsWithout("glob", "grep"), FRAMEWORK_TOOLS, ...realArgs);
+  ok(
+    droppedOptIn.length === 0,
+    `REAL surface: dropping the glob + grep sentinels raises NO problem — eve mounts neither by default, so those sentinels guard nothing (got: ${JSON.stringify(droppedOptIn)})`,
+  );
+  for (const name of ["bash", "read_file", "write_file", "web_fetch"]) {
+    firesWith(
+      checkWindowGateManifest(coreTools, shimsWithout(name), FRAMEWORK_TOOLS, ...realArgs),
+      `framework tool "${name}" is grain-gated`,
+      `REAL surface: dropping the ${name} sentinel still FAILS — it is default-mounted, so its built-in would re-mount on every standing seat`,
+    );
+  }
+  firesWith(
+    checkWindowGateManifest(coreTools, new Map([...appShims, ["glob", "export default defineTool({});"]]), FRAMEWORK_TOOLS, ...realArgs),
+    "which IS opting in",
+    "REAL surface: replacing the glob sentinel with an authored tool FAILS — that IS the opt-in, and an authored tool of a framework name mounts on every grain",
+  );
+
   const stale = checkWindowGateManifest(
     coreTools,
     appShims,
-    FRAMEWORK_TOOL_NAMES,
+    FRAMEWORK_TOOLS,
     WINDOW_GATED_TOOLS,
     WINDOW_UNGATED_TOOLS,
     FULL_KIT,
@@ -318,7 +423,7 @@ for (const name of Object.keys(WINDOW_GATED_TOOLS)) {
     realArmed,
   );
   firesWith(stale, 'JOB_WAKE_TOOLS names "ghost_job_verb"', "a stale JOB_WAKE_TOOLS row FAILS (rule 6)");
-  const cleanKit = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOL_NAMES, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, FULL_KIT, subagentNames, JOB_WAKE_TOOLS, realArmed);
+  const cleanKit = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOLS, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, FULL_KIT, subagentNames, JOB_WAKE_TOOLS, realArmed);
   ok(cleanKit.length === 0, `the REAL job kit is clean against the real surface (problems: ${JSON.stringify(cleanKit)})`);
 }
 

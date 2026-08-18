@@ -172,13 +172,33 @@ export interface WindowToolSource {
   readonly source: string;
 }
 
+export type FrameworkToolMount = "default" | "opt-in" | "unknown";
+
+export function classifyFrameworkTools(
+  allNames: Iterable<string>,
+  defaultMountedNames: Iterable<string> | undefined,
+  optInNames: Iterable<string> | undefined,
+): Map<string, FrameworkToolMount> {
+  const out = new Map<string, FrameworkToolMount>();
+  if (defaultMountedNames === undefined || optInNames === undefined) {
+    for (const name of allNames) out.set(name, "unknown");
+    return out;
+  }
+  const mountedByDefault = new Set(defaultMountedNames);
+  const optIn = new Set(optInNames);
+  for (const name of allNames) {
+    out.set(name, mountedByDefault.has(name) ? "default" : optIn.has(name) ? "opt-in" : "unknown");
+  }
+  return out;
+}
+
 const grainKey = (grains: readonly WindowGrain[]): string => [...grains].sort().join(",");
 const grainList = (grains: readonly WindowGrain[]): string => grains.map((g) => `"${g}"`).join(",");
 
 export function checkWindowGateManifest(
   coreTools: readonly WindowToolSource[],
   appShims: ReadonlyMap<string, string>,
-  frameworkToolNames: readonly string[],
+  frameworkTools: readonly string[] | ReadonlyMap<string, FrameworkToolMount>,
   gated: Readonly<Record<string, readonly WindowGrain[]>> = WINDOW_GATED_TOOLS,
   ungated: ReadonlySet<string> = WINDOW_UNGATED_TOOLS,
   wideHandsGrains: readonly WindowGrain[] = FULL_KIT,
@@ -189,6 +209,9 @@ export function checkWindowGateManifest(
   const WIDE_HANDS_KEY = grainKey(wideHandsGrains);
   const problems: string[] = [];
   const coreByName = new Map(coreTools.map((t) => [t.name, t.source] as const));
+  const frameworkMount = frameworkTools instanceof Map ? (frameworkTools as ReadonlyMap<string, FrameworkToolMount>) : undefined;
+  const frameworkToolNames: readonly string[] = frameworkMount ? [...frameworkMount.keys()] : (frameworkTools as readonly string[]);
+  const mountOf = (name: string): FrameworkToolMount => frameworkMount?.get(name) ?? "unknown";
   const surface = new Set<string>([...coreByName.keys(), ...appShims.keys(), ...frameworkToolNames, ...subagentNames]);
 
   const kitKeyProviders = new Map<string, string>();
@@ -263,13 +286,20 @@ export function checkWindowGateManifest(
         );
       }
       const shim = appShims.get(name);
+      const isSentinel = shim !== undefined && /\bdisableTool\s*\(\s*\)/.test(shim);
       if (name === "agent" && nativeSubagentArmed) {
-        if (shim !== undefined && /\bdisableTool\s*\(\s*\)/.test(shim)) {
+        if (isSentinel) {
           problems.push(
             `delegation.nativeSubagent is armed at build but agent/tools/agent.ts is still a disableTool() sentinel — roster artefacts are stale against the settings state; run \`oe build --accept\``,
           );
         }
-      } else if (shim === undefined || !/\bdisableTool\s*\(\s*\)/.test(shim)) {
+      } else if (mountOf(name) === "opt-in") {
+        if (shim !== undefined && !isSentinel) {
+          problems.push(
+            `framework tool "${name}" is grain-gated, and the installed eve mounts it only when the app OPTS IN — but its app shim agent/tools/${name}.ts is an authored tool rather than a \`disableTool()\` sentinel, which IS opting in. An authored tool of a framework name mounts on EVERY session incl. standing seats, silently bypassing the grain gate; make the shim a \`disableTool()\` sentinel and let the windowGatedKit(...) resolver provide it per grain.`,
+          );
+        }
+      } else if (!isSentinel) {
         problems.push(
           `framework tool "${name}" is grain-gated but its app shim agent/tools/${name}.ts is not a \`disableTool()\` sentinel — without it eve's built-in of that name stays mounted on EVERY session incl. standing seats, silently bypassing the grain gate (for \`agent\` specifically: eve's harness injects its built-in recursive subagent unless disabledFrameworkTools carries the name, and that built-in — pre-OPE-393-hop — was the credential-broken path live-hit on 2026-07-16; under the armed native regime this arm is bypassed for \`agent\` above)`,
         );
