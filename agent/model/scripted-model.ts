@@ -111,7 +111,7 @@ export function registerScript(script: SeatScript, sessionId: string = ANY_SESSI
     requests: entry.requests,
     resolves: entry.resolves,
     dispose: () => {
-      store.delete(sessionId);
+      if (store.get(sessionId) === entry) store.delete(sessionId);
     },
   };
 }
