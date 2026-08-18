@@ -343,6 +343,38 @@ export function runtimeSignalFinding(observed: { readonly hasDeploymentId: boole
       };
 }
 
+export interface CredentialBrokerArmedFinding {
+  readonly ok: boolean;
+  readonly detail: string;
+}
+
+export function credentialBrokerArmedFinding(observed: { readonly credentialBrokerArmed: boolean } | undefined): CredentialBrokerArmedFinding {
+  if (observed === undefined) {
+    return {
+      ok: false,
+      detail:
+        "GET /control/v1/runtime-signal did not answer (or its response carried no credentialBrokerArmed field) — no " +
+        "E2E_CONTROL_READ_TOKEN/OE_DEPLOY_CONTROL_TOKEN set, the route is unmounted (OE_CONTROL_READ_TOKENS unset on " +
+        "the deployment), the call failed, or the deployment predates OPE-641. This census cannot see whether the " +
+        "deployed function's env carries a valid OE_CREDENTIAL_ENCRYPTION_KEY.",
+    };
+  }
+  return observed.credentialBrokerArmed
+    ? {
+        ok: true,
+        detail:
+          "the deployed function's process env carries a valid OE_CREDENTIAL_ENCRYPTION_KEY — the db credential " +
+          "broker registers and every broker:\"db\" credential is reachable.",
+      }
+    : {
+        ok: false,
+        detail:
+          "OE_CREDENTIAL_ENCRYPTION_KEY is absent or malformed on the deployed function. The db credential broker " +
+          "never registers, and every broker:\"db\" credential fails closed at once, behind 200 responses, with no " +
+          "audit trace.",
+      };
+}
+
 export interface CredentialFinding {
   readonly ref: string;
   readonly reason: string;
@@ -372,6 +404,7 @@ export interface CensusResult {
   readonly keyProof?: KeyProof;
   readonly heartbeats: readonly HeartbeatFinding[];
   readonly runtimeSignal?: RuntimeSignalFinding;
+  readonly credentialBrokerArmed?: CredentialBrokerArmedFinding;
   readonly limits: readonly string[];
 }
 
@@ -390,6 +423,7 @@ export function censusResult(input: {
   readonly keyProof?: KeyProof;
   readonly heartbeats?: readonly HeartbeatFinding[];
   readonly runtimeSignal?: RuntimeSignalFinding;
+  readonly credentialBrokerArmed?: CredentialBrokerArmedFinding;
   readonly limits?: readonly string[];
 }): CensusResult {
   const present = new Set(input.presentRefs);
@@ -410,7 +444,8 @@ export function censusResult(input: {
     endpoints.every((e) => e.ok) &&
     (input.keyProof?.ok ?? true) &&
     heartbeats.every((h) => h.ok) &&
-    (input.runtimeSignal?.ok ?? true);
+    (input.runtimeSignal?.ok ?? true) &&
+    (input.credentialBrokerArmed?.ok ?? true);
   return {
     ok,
     target: input.target,
@@ -423,6 +458,7 @@ export function censusResult(input: {
     ...(input.keyProof ? { keyProof: input.keyProof } : {}),
     heartbeats,
     ...(input.runtimeSignal ? { runtimeSignal: input.runtimeSignal } : {}),
+    ...(input.credentialBrokerArmed ? { credentialBrokerArmed: input.credentialBrokerArmed } : {}),
     limits: input.limits ?? [],
   };
 }
@@ -487,6 +523,12 @@ export function renderCensusReport(result: CensusResult): string[] {
     lines.push(`    ${result.runtimeSignal.ok ? "✓" : "✗"} ${result.runtimeSignal.detail}`);
   }
 
+  if (result.credentialBrokerArmed) {
+    lines.push("");
+    lines.push("  CREDENTIAL BROKER KEY, DEPLOYMENT'S OWN (OPE-641)");
+    lines.push(`    ${result.credentialBrokerArmed.ok ? "✓" : "✗"} ${result.credentialBrokerArmed.detail}`);
+  }
+
   if (result.problems.length > 0) {
     lines.push("");
     lines.push(`  CONFIG PROBLEMS (${result.problems.length})`);
@@ -512,6 +554,7 @@ export function renderCensusReport(result: CensusResult): string[] {
     if (stale.length > 0) lines.push(`  cron(s) with no fresh heartbeat: ${stale.join(", ")}`);
     if (result.keyProof && !result.keyProof.ok) lines.push(`  encryption key: ${result.keyProof.detail}`);
     if (result.runtimeSignal && !result.runtimeSignal.ok) lines.push(`  runtime-revision signal: ${result.runtimeSignal.detail}`);
+    if (result.credentialBrokerArmed && !result.credentialBrokerArmed.ok) lines.push(`  credential broker key (deployment): ${result.credentialBrokerArmed.detail}`);
     if (result.problems.length > 0) lines.push(`  config problem(s): ${result.problems.length} — see above`);
     lines.push("  A missing row fails CLOSED at first use, with no audit trace. Store it before trusting this deploy.");
   }
