@@ -229,11 +229,11 @@ const SILENT: Expected = "SILENT_OK";
 {
   clock = Date.UTC(2026, 6, 24, 12, 0, 0);
   const proof = (over: Partial<CoalescedDeliveryProof>): CoalescedDeliveryProof => ({
-    proven: true, turnId: "turn-1", turnsSpanned: 1, receivedInTurn: 2, note: "", ...over,
+    proven: true, turnId: "turn-1", turnsSpanned: 1, wakeEnvelopesInTurn: 2, note: "", ...over,
   });
   const t1 = mkTurn({ turn: 1, scenario: "S7", expected: "LANDED", outcome: "LANDED_VIA_REPLY_TOOL", coalescedProof: proof({}), coalesced: scoreCoalescedTurn("ADDR-1", "AMB-1", attr({ replyPostsOf: new Map([["ADDR-1", [replyPost("ADDR-1")]]]) })) });
   const t2 = mkTurn({ turn: 2, scenario: "S7", expected: "LANDED", outcome: "DROP", coalescedProof: proof({ turnId: "turn-2" }), coalesced: scoreCoalescedTurn("ADDR-2", "AMB-2", attr({ replyPostsOf: new Map([["AMB-2", [replyPost("AMB-2")]]]) })) });
-  const t3 = mkTurn({ turn: 3, scenario: "S7", expected: "LANDED", outcome: "LANDED_VIA_REPLY_TOOL", coalescedProof: proof({ proven: false, turnId: null, turnsSpanned: 2, receivedInTurn: 0 }), coalesced: scoreCoalescedTurn("ADDR-3", "AMB-3", attr({ replyPostsOf: new Map([["ADDR-3", [replyPost("ADDR-3")]]]) })) });
+  const t3 = mkTurn({ turn: 3, scenario: "S7", expected: "LANDED", outcome: "LANDED_VIA_REPLY_TOOL", coalescedProof: proof({ proven: false, turnId: null, turnsSpanned: 2, wakeEnvelopesInTurn: 0 }), coalesced: scoreCoalescedTurn("ADDR-3", "AMB-3", attr({ replyPostsOf: new Map([["ADDR-3", [replyPost("ADDR-3")]]]) })) });
   const s = summarize([t1, t2, t3], [], "SESS");
   ok(s.coalesced_turn_correctness.of === 2, "coalesced_turn_correctness.of counts ONLY the two PROVEN turns — the unproven T3 is not in the denominator");
   ok(s.coalesced_turn_correctness.correct === 1 && s.coalesced_turn_correctness.rate === 0.5, "coalesced_turn_correctness = 1/2 = 0.5 — the unproven T3's 'correct' verdict does NOT inflate it to 2/3");
@@ -247,14 +247,13 @@ const SILENT: Expected = "SILENT_OK";
   const received = (turnId: string, message: string, index: number): TranscriptWireEvent => ({
     index, at: new Date(clock += 1000).toISOString(), type: "message.received", data: { message, sequence: index, turnId },
   });
-  const envelope = (wakeId: string): string => `<wake wake-id="${wakeId}" addressing="direct-mention">hello</wake>`;
+  const envelope = (wakeId: string): string => `<${"wake"} wake-id="${wakeId}" addressing="direct-mention">hello</${"wake"}>`;
 
   const p1 = proveSiblingWakes([
-    received("turn-A", envelope("AMB-1"), 0),
-    received("turn-A", envelope("ADDR-1"), 1),
+    received("turn-A", `${envelope("AMB-1")}\n\n${envelope("ADDR-1")}`, 0),
   ], "ADDR-1", "AMB-1");
-  ok(p1.proven === true, "proveSiblingWakes: both wake ids on ONE turnId ⇒ PROVEN");
-  ok(p1.turnId === "turn-A" && p1.turnsSpanned === 1 && p1.receivedInTurn === 2, "proveSiblingWakes: the proof names the shared turnId, spans 1 turn, and counts the 2 received messages");
+  ok(p1.proven === true, "proveSiblingWakes: both wake ids in ONE received message on ONE turnId ⇒ PROVEN (the measured live shape)");
+  ok(p1.turnId === "turn-A" && p1.turnsSpanned === 1 && p1.wakeEnvelopesInTurn === 2, "proveSiblingWakes: the proof names the shared turnId, spans 1 turn, and counts the 2 SIBLING WAKE ENVELOPES");
 
   const p2 = proveSiblingWakes([
     received("turn-A", envelope("AMB-2"), 0),
@@ -269,7 +268,7 @@ const SILENT: Expected = "SILENT_OK";
     received("turn-A", envelope("AMB-3"), 1),
     received("turn-A", envelope("ADDR-3"), 2),
   ], "ADDR-3", "AMB-3");
-  ok(p3.proven === true && p3.receivedInTurn === 3, "proveSiblingWakes: a third payload in the same turn (the occupier coalescing in) still PROVES the pair, and the count says 3");
+  ok(p3.proven === true && p3.wakeEnvelopesInTurn === 3, "proveSiblingWakes: a third envelope in the same turn (the occupier coalescing in) still PROVES the pair, and the count says 3");
 
   const p4 = proveSiblingWakes([received("turn-A", envelope("AMB-4"), 0)], "ADDR-4", "AMB-4");
   ok(p4.proven === false && p4.turnsSpanned === 1, "proveSiblingWakes: an addressed wake absent from every message.received ⇒ NOT proven");
@@ -284,6 +283,11 @@ const SILENT: Expected = "SILENT_OK";
     { index: 2, at: null, type: "message.received", data: { message: envelope("AMB-6") } },
   ], "ADDR-6", "AMB-6");
   ok(p6.proven === false, "proveSiblingWakes: a wake id appearing only in a message.completed (model output) or in a turnId-less event does NOT prove coalescing");
+
+  const p7 = proveSiblingWakes([
+    received("turn-A", `<${"wake"} wake-id="ADDR-7">both ids here: AMB-7</${"wake"}>`, 0),
+  ], "ADDR-7", "AMB-7");
+  ok(p7.proven === false && p7.wakeEnvelopesInTurn === 1, "proveSiblingWakes: one envelope naming both ids ⇒ NOT proven — the shape must be ≥2 SIBLING wake envelopes, not one turn mentioning two ids");
 }
 
 {

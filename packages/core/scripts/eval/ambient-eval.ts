@@ -479,9 +479,11 @@ export interface CoalescedDeliveryProof {
   readonly proven: boolean;
   readonly turnId: string | null;
   readonly turnsSpanned: number;
-  readonly receivedInTurn: number;
+  readonly wakeEnvelopesInTurn: number;
   readonly note: string;
 }
+
+const WAKE_OPENER = `<${"wake"} `;
 
 export function proveSiblingWakes(
   events: readonly TranscriptWireEvent[],
@@ -509,22 +511,28 @@ export function proveSiblingWakes(
       ...(ambientTurns.length === 0 ? [`ambient ${ambientWakeId}`] : []),
     ].join(" + ");
     return {
-      proven: false, turnId: null, turnsSpanned: spanned, receivedInTurn: 0,
+      proven: false, turnId: null, turnsSpanned: spanned, wakeEnvelopesInTurn: 0,
       note: `HARNESS FAULT: no message.received event in the transcript carries ${missing} — the wake never reached the model, or the transcript pull missed it (${byTurn.size} turn(s) seen)`,
     };
   }
   const shared = addressedTurns.filter((id) => ambientTurns.includes(id));
   if (shared.length === 0) {
     return {
-      proven: false, turnId: null, turnsSpanned: spanned, receivedInTurn: 0,
-      note: `HARNESS FAULT: the pair did NOT coalesce — addressed ${addressedWakeId} landed in turn(s) ${addressedTurns.join(",")} and ambient ${ambientWakeId} in turn(s) ${ambientTurns.join(",")}, ${spanned} distinct turn(s). Raise AMBIENT_OCCUPY_WAIT_MS so the occupier turn is still running when the pair lands.`,
+      proven: false, turnId: null, turnsSpanned: spanned, wakeEnvelopesInTurn: 0,
+      note: `HARNESS FAULT: the pair did NOT coalesce — addressed ${addressedWakeId} landed in turn(s) ${addressedTurns.join(",")} and ambient ${ambientWakeId} in turn(s) ${ambientTurns.join(",")}, ${spanned} distinct turn(s). Lower AMBIENT_OCCUPY_WAIT_MS if the occupier turn had already finished, raise it if the occupier had not started.`,
     };
   }
   const turnId = shared[0]!;
-  const received = byTurn.get(turnId)?.length ?? 0;
+  const envelopes = (byTurn.get(turnId) ?? []).reduce((n, m) => n + m.split(WAKE_OPENER).length - 1, 0);
+  if (envelopes < 2) {
+    return {
+      proven: false, turnId, turnsSpanned: 1, wakeEnvelopesInTurn: envelopes,
+      note: `HARNESS FAULT: both wake ids share eve turn ${turnId} but its delivered text carries ${envelopes} wake envelope(s), not the ≥2 sibling wakes this probe measures`,
+    };
+  }
   return {
-    proven: true, turnId, turnsSpanned: 1, receivedInTurn: received,
-    note: `coalescing PROVEN: both wake ids in eve turn ${turnId}, which received ${received} message(s)${received > 2 ? " (the occupier wake coalesced in too)" : ""}`,
+    proven: true, turnId, turnsSpanned: 1, wakeEnvelopesInTurn: envelopes,
+    note: `coalescing PROVEN: both wake ids in eve turn ${turnId}, delivered as ${envelopes} sibling wake envelope(s)${envelopes > 2 ? " (the occupier wake coalesced in too)" : ""}`,
   };
 }
 
@@ -648,7 +656,7 @@ async function readSlackReplyBody(sinceIso: string, replyTs?: string | null): Pr
 
 interface Surfaces { slack: boolean; notion: boolean; }
 
-const OCCUPY_WAIT_MS = Number.parseInt(process.env.AMBIENT_OCCUPY_WAIT_MS ?? "12000", 10);
+const OCCUPY_WAIT_MS = Number.parseInt(process.env.AMBIENT_OCCUPY_WAIT_MS ?? "6000", 10);
 
 async function injectTurn(id: ScenarioId, turn: number, fact: { code: string; date: string; ref: string }, surf: Surfaces): Promise<{ probe: Injection | null; state: Injection | null; occupier?: Injection | null; skip?: string }> {
   const spec = SCENARIOS[id];
@@ -969,16 +977,19 @@ async function proveCoalescedTurns(turns: TurnResult[], sessionId: string | null
   const targets = turns.filter((t) => t.scenario === "S7" && t.probe && t.state);
   if (targets.length === 0) return;
   const fail = (note: string): void => {
-    for (const t of targets) t.coalescedProof = { proven: false, turnId: null, turnsSpanned: 0, receivedInTurn: 0, note };
+    for (const t of targets) t.coalescedProof = { proven: false, turnId: null, turnsSpanned: 0, wakeEnvelopesInTurn: 0, note };
     console.warn(`  [coalescing] ${note}`);
   };
-  if (!sessionId) {
-    fail("HARNESS FAULT: attribution resolved no sessionId — no transcript to prove coalescing from; every S7 turn is UNPROVEN and excluded from coalesced_turn_correctness");
+  const fromRows = targets.flatMap((t) => t.matchedRows.map((r) => dS(r, "sessionId"))).find((v): v is string => typeof v === "string" && v.length > 0);
+  const resolved = sessionId ?? fromRows ?? null;
+  if (!resolved) {
+    fail("HARNESS FAULT: no sessionId from the completion vote and none stamped on any matched row — no transcript to prove coalescing from; every S7 turn is UNPROVEN and excluded from coalesced_turn_correctness");
     return;
   }
+  if (!sessionId) console.log(`  [coalescing] attribution resolved no sessionId; using ${resolved} from a matched reply.post row`);
   let events: readonly TranscriptWireEvent[];
   try {
-    events = (await fetchTranscript(TARGET, READ, sessionId, { limit: 100000, idleMs: 1000 })).events;
+    events = (await fetchTranscript(TARGET, READ, resolved, { limit: 100000, idleMs: 1000 })).events;
   } catch (e) {
     fail(`HARNESS FAULT: transcript fetch failed (${(e as Error).message}) — every S7 turn is UNPROVEN and excluded from coalesced_turn_correctness`);
     return;
