@@ -36,7 +36,7 @@ function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], wakeId?
   };
 }
 
-const unifiedReplyEntry = defineTool({
+export const unifiedReplyEntry = defineTool({
     description:
       "Post a reply into the conversation a specific wake came from, without ending your turn. " +
       "You are a cross-surface session: each wake envelope carries a `wake-id` naming where it " +

@@ -11,6 +11,7 @@ import {
   type WakeFollowUp,
 } from "./wake-envelope.js";
 import { renderContext, type ContextLine } from "./context-render.js";
+import { wakeShapeIsSchema } from "./wake-shape.js";
 
 export type { WakeAddressing, WakeEngagementTier } from "./wake-envelope.js";
 
@@ -233,6 +234,7 @@ function nameDropPreamble(botName: string, followUp: NonNullable<NormalizedWake[
 }
 
 function judgedPreamble(nw: NormalizedWake): string {
+  if (wakeShapeIsSchema()) return "";
   const isEdit = Boolean(nw.trigger.message.edited);
   const hasHandoff = nw.handoff !== undefined;
   const base = ((): string => {
@@ -272,10 +274,8 @@ export function renderWake(nw: NormalizedWake, now: () => string = () => new Dat
       if (nw.addressing === "direct") {
         message = nw.trigger.message.body;
       } else {
-        message = [
-          judgedPreamble(nw),
-          "",
-          renderWakeEnvelope({
+        const preamble = judgedPreamble(nw);
+        const envelope = renderWakeEnvelope({
             reason: nw.reason,
             currentTime: now(),
             wakeId: nw.wakeId,
@@ -288,8 +288,8 @@ export function renderWake(nw: NormalizedWake, now: () => string = () => new Dat
             thread: nw.locus.thread,
             handoff: nw.handoff,
             messages: [...(nw.backscroll ?? []), nw.trigger.message],
-          }),
-        ].join("\n");
+        });
+        message = preamble === "" ? envelope : `${preamble}\n\n${envelope}`;
       }
       break;
     }

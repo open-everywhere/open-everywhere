@@ -2,6 +2,7 @@ import { ingestUntrusted, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../access/untr
 import { capResult } from "../access/result-cap.js";
 import { noteIngestionVerdict } from "../access/taint-enforcement.js";
 import { taintMarkLands } from "../access/taint-signal.js";
+import { wakeShapeIsSchema } from "./wake-shape.js";
 
 export type WakeReason =
   | "channel-activity"
@@ -202,7 +203,10 @@ function renderParticipants(ps: readonly WakeParticipant[]): string {
 
 function renderChannelOpen(c: WakeChannelMeta): string {
   const memberCount = c.memberCount === undefined ? undefined : String(c.memberCount);
-  return `<channel${attr("platform", c.platform)}${attr("id", c.id)}${attr("label", c.platformLabel)}${attr("type", c.type)}${attr("container", c.container)}${attr("member-count", memberCount)}>`;
+  const platformBlind = wakeShapeIsSchema();
+  const platform = platformBlind ? undefined : c.platform;
+  const label = platformBlind ? undefined : c.platformLabel;
+  return `<channel${attr("platform", platform)}${attr("id", c.id)}${attr("label", label)}${attr("type", c.type)}${attr("container", c.container)}${attr("member-count", memberCount)}>`;
 }
 
 function renderThreadOpen(t: WakeThreadMeta): string {
@@ -212,6 +216,21 @@ function renderThreadOpen(t: WakeThreadMeta): string {
 function renderHandoff(h: WakeHandoff): string {
   noteIngestionVerdict({ kind: "handoff", label: "wake-envelope:handoff" }, false);
   return `<handoff-note${attr("from-generation", String(h.fromGeneration))}>\n${indent(escapeXml(h.note), 2)}\n</handoff-note>`;
+}
+
+function tagReason(reason: WakeReason): WakeReason {
+  return wakeShapeIsSchema() && reason === "mention" ? "channel-activity" : reason;
+}
+
+function tagTrust(messages: readonly WakeMessageInput[], addressing: WakeAddressing | undefined): readonly WakeMessageInput[] {
+  if (!wakeShapeIsSchema()) return messages;
+  const addressedWake = addressing === "direct" || addressing === "direct-mention";
+  return messages.map((m) => {
+    if (m.trust !== "peer" && m.trust !== "principal") return m;
+    const addressed = m.mention === true || (m.trigger === true && addressedWake);
+    const trust: WakeTrust = addressed ? "principal" : "peer";
+    return trust === m.trust ? m : { ...m, trust };
+  });
 }
 
 export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
@@ -226,7 +245,7 @@ export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
     throw new Error("renderWakeEnvelope: the trigger message must be last (backscroll ends at the trigger)");
   }
 
-  const messagesXml = renderMessages(input.messages, input.sourcePlatform ?? "slack");
+  const messagesXml = renderMessages(tagTrust(input.messages, input.addressing), input.sourcePlatform ?? "slack");
   const channelOpen = renderChannelOpen(input.channel);
 
   const participantsXml =
@@ -239,7 +258,7 @@ export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
   const unauthNote = input.messages.some((m) => m.trust === "unauth") ? [indent(UNAUTH_SYSTEM_NOTE, 2)] : [];
 
   const lines = [
-    `<wake${attr("reason", input.reason)}${attr("addressing", input.addressing)}${attr("engagement", input.engagement)}${attr("follow-up", input.followUp)}${attr("current-time", input.currentTime)}${attr("wake-id", input.wakeId)}>`,
+    `<wake${attr("reason", tagReason(input.reason))}${attr("addressing", input.addressing)}${attr("engagement", input.engagement)}${attr("follow-up", input.followUp)}${attr("current-time", input.currentTime)}${attr("wake-id", input.wakeId)}>`,
     indent(channelOpen, 2),
     channelBody,
     indent("</channel>", 2),

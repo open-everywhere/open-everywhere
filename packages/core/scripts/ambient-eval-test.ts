@@ -5,6 +5,7 @@ import {
   summarize,
   scoreCoalescedTurn,
   parseSeries,
+  S6_PROBES,
   type Injection,
   type Attribution,
   type TurnResult,
@@ -270,6 +271,17 @@ const SILENT: Expected = "SILENT_OK";
   ok(JSON.stringify(parseSeries(" S1, S6 ")) === JSON.stringify(["S1", "S6"]), "parseSeries: surrounding whitespace around each id is trimmed");
   ok(JSON.stringify(parseSeries("")) === JSON.stringify([]), "parseSeries: an empty string parses to an empty (but DEFINED, not undefined) series — a caller that explicitly passed --series \"\" gets an explicit empty run, not the default fallback");
   assert.throws(() => parseSeries("S1,S9,S2"), /unknown scenario id\(s\) S9/, "parseSeries: an unknown scenario id FAILS LOUD (throws), naming the bad id — never silently dropped, which would run a shorter series than asked");
+}
+
+{
+  ok(S6_PROBES.length >= 8, `the S6 pool holds enough pairs for a first-turn run without wrapping (${S6_PROBES.length})`);
+  const ambients = S6_PROBES.map((p) => p.ambient);
+  const addressed = S6_PROBES.map((p) => p.addressed);
+  ok(new Set(ambients).size === ambients.length, "🔴 every AMBIENT text in the pool is distinct — no probe repeats a text the session already judged");
+  ok(new Set(addressed).size === addressed.length, "🔴 every ADDRESSED text in the pool is distinct");
+  ok(S6_PROBES.every((p) => p.ambient.trim().length > 0 && p.addressed.trim().length > 0), "no pool entry is empty");
+  ok(S6_PROBES.every((p) => /reply here with/i.test(p.addressed)), "every addressed probe asks for a reply in the channel — S6 measures binding, not whether the ask was legible");
+  ok(S6_PROBES.every((p) => !/reply here with/i.test(p.ambient)), "🔴 no ambient probe asks the agent for anything — a reply landing on its wake is unambiguously wrong");
 }
 
 console.log(`\n✓ ambient-eval scoring: ${n} assertions passed (FIFO pairing + session filter + redrive/bridge pull-out + outcome mapping + soft-bucket summary + OPE-684 S4 coalesced-turn correctness: correct/dropped/mis-bound/text-leak/negative-control + --series parsing)\n`);

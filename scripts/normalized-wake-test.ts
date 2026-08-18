@@ -298,4 +298,45 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
   eq(tfTiered.replace(' engagement="reserved"', ""), tf, "everything else (prose + envelope) is byte-identical to the untiered thread-follow render once the S1 attribute is normalised out");
 }
 
+{
+  const nw: NormalizedWake = {
+    platform: "slack", reason: "channel-activity", addressing: "channel-watch",
+    locus: { channel: { id: "C1", type: "channel", platform: "slack", platformLabel: "Slack" } },
+    wakeId: "11111111-2222-3333-4444-555555555555",
+    trigger: trig("moving the 3pm sync to 3:30"),
+  };
+  const before = process.env.OE_WAKE_SHAPE;
+  try {
+    delete process.env.OE_WAKE_SHAPE;
+    const prose = renderWake(nw, NOW).message;
+    ok(prose.startsWith("[channel-watch]"), "default: a judged wake still opens with its prose preamble");
+    ok(prose.includes("Wake scope [wake-id: 11111111-2222-3333-4444-555555555555]"), "default: the coalesced-turn scope note is still rendered");
+    ok(prose.includes("you MUST deliver any answer by CALLING THE `reply` TOOL"), "default: the single-window delivery mandate is still rendered");
+    ok(prose.includes('platform="slack"') && prose.includes('label="Slack"'), "default: the <channel> element still names its platform and label");
+
+    process.env.OE_WAKE_SHAPE = "prose";
+    eq(renderWake(nw, NOW).message, prose, "OE_WAKE_SHAPE=prose is byte-identical to the default render — only the exact value \"schema\" changes anything");
+
+    process.env.OE_WAKE_SHAPE = "schema";
+    const schema = renderWake(nw, NOW).message;
+    ok(schema.startsWith("<wake "), "schema: the render opens straight at the envelope — no preamble, and no stray blank lines, above it");
+    ok(!schema.includes("[channel-watch]"), "schema: the addressing preamble is gone");
+    ok(!schema.includes("Wake scope"), "schema: the prose scope note is gone (the standing block carries the binding rule)");
+    ok(!schema.includes("CALLING THE `reply` TOOL"), "schema: the prose delivery mandate is gone (the standing reporting arm carries it)");
+    ok(schema.includes('addressing="channel-watch"'), "schema: the addressing attribute survives — it is the whole discriminator now");
+    ok(schema.includes('wake-id="11111111-2222-3333-4444-555555555555"'), "schema: the wake-id attribute survives — a reply still has an id to name");
+    ok(!schema.includes('platform="slack"'), "🔴 schema: the <channel> element names NO platform");
+    ok(!schema.includes('label="Slack"'), "🔴 schema: the <channel> element carries no human platform label either");
+    ok(schema.includes('<channel id="C1"'), "schema: the channel still carries its opaque id — that is what the host routes on");
+    eq(
+      schema,
+      prose.slice(prose.indexOf("<wake ")).replace(' platform="slack"', "").replace(' label="Slack"', ""),
+      "schema: the envelope is byte-identical to the prose arm's envelope once the two platform attributes are normalised out — nothing ELSE about the envelope moves",
+    );
+  } finally {
+    if (before === undefined) delete process.env.OE_WAKE_SHAPE;
+    else process.env.OE_WAKE_SHAPE = before;
+  }
+}
+
 console.log(`\n✓ normalized-wake: ${passed} assertions passed (byte-identity goldens: discord ×4; + renderWake coverage: per-addressing renders, W1–W4 security through the new entry point, no-platform-branch, structural trigger invariants, channel-watch containerNoun doc/channel; the slack ×5 + name-drop contextLines goldens moved to @open-everywhere/provider-slack — OPE-114 stage 4)`);

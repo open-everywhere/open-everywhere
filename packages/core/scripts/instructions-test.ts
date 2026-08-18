@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync, readdirSync } from "node:fs";
 import { assembleAccessInstructions } from "../agent/access/instructions.js";
 import { clearPendingCancelNoteAfter, setPendingCancelNote } from "../agent/channels/cancel-note.js";
-import dynamicInstructions, { renderSurfaceGuide, renderScopeMarkdown, REPLY_STYLE_RUBRIC } from "../agent/instructions/access.js";
+import dynamicInstructions, { renderSurfaceGuide, renderScopeMarkdown, renderReadingAWake, renderSupervisorPersona, REPLY_STYLE_RUBRIC } from "../agent/instructions/access.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { defineMemorySilo } from "../agent/memory/silo.js";
@@ -145,8 +145,11 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
 
   ok(slackMd.includes("works on EVERY surface"), "unified persona keeps the reply-works-everywhere affirmation");
   ok(!slackMd.includes("Only the extras vary by surface"), "unified persona no longer hedges react availability in prose (per-turn runtime fence instead)");
-  ok(slackMd.includes("every wake you have not yet answered"), "unified persona scopes the reply affirmation to UNANSWERED wakes (what the fence actually admits)");
-  ok(slackMd.includes("answer each with its OWN `wake-id`"), "unified persona teaches per-wake answering on a coalesced multi-message turn");
+  ok(slackMd.includes("any wake you have not yet answered"), "unified persona scopes the reply affirmation to UNANSWERED wakes (what the fence actually admits)");
+  ok(
+    slackMd.includes("each answer names the `wake-id` of the wake it answers"),
+    "unified persona teaches per-wake ROUTING on a coalesced multi-message turn (each answer names its own wake's id)",
+  );
   ok(!slackMd.includes("every wake, without exception"), "unified persona drops the old unqualified 'without exception' claim");
 
   ok(slackMd.includes("payments-notes"), "unified block carries the domain-anchored memory index (frozen snapshot)");
@@ -484,6 +487,64 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   );
   const deprecated = agentSources.filter((f) => /defineInstructions\(\s*\{\s*markdown\b/.test(f.src)).map((f) => f.url.pathname);
   ok(deprecated.length === 0, `no core agent module calls defineInstructions with the deprecated \`markdown\` key (found: ${deprecated.join(", ")})`);
+}
+
+{
+  const supervisorCtx: BindableContext = {
+    channel: { kind: "channel:unified", continuationToken: "oe-dom:payments:oe-sup:g1" },
+  } as BindableContext;
+
+  const flat = (s: string): string => s.replace(/\s+/g, " ");
+
+  const before = process.env.OE_WAKE_SHAPE;
+  try {
+    delete process.env.OE_WAKE_SHAPE;
+    ok(renderReadingAWake() === "", "default (no OE_WAKE_SHAPE): the standing 'Reading a wake' block renders NOTHING — the shipped prose shape is untouched");
+    process.env.OE_WAKE_SHAPE = "prose";
+    ok(renderReadingAWake() === "", "OE_WAKE_SHAPE=prose renders nothing either — only the exact value 'schema' arms the block");
+
+    process.env.OE_WAKE_SHAPE = "schema";
+    const block = flat(renderReadingAWake());
+    ok(renderReadingAWake().startsWith("### Reading a wake"), "OE_WAKE_SHAPE=schema renders the standing 'Reading a wake' block");
+    for (const section of ["**What you see.**", "**How to read one.**", "**Your posture.**"]) {
+      ok(block.includes(section), `the schema block keeps Tag's section: ${section}`);
+    }
+    ok(block.includes('Only the message marked `trigger="true"` is the new event.'), "🔴 the schema block says only the trigger message is the new event");
+    ok(block.includes("is history for context, not things to answer"), "🔴 the rest of an envelope reads as history, not as a queue");
+    ok(
+      block.includes("call\n`reply` with `wake` set to the id on THAT envelope") || block.includes("`reply` with `wake` set to the id on THAT envelope"),
+      "🔴 the binding rule is present: answer a wake with THAT wake's own id",
+    );
+    ok(block.includes("any\nother id reaches the wrong people") || block.includes("any other id reaches the wrong people"), "🔴 the binding rule states the consequence of naming another id");
+    ok(block.includes("your default is silence"), "🔴 the posture sentence is silence-biased");
+    ok(block.includes("clearly the intended recipient"), "🔴 the posture sentence keys engagement on being the intended recipient");
+    for (const recipientCase of ["mentioned", "sent a direct message", "following on from your own message", "channel memory says otherwise"]) {
+      ok(block.includes(recipientCase), `the posture sentence names the intended-recipient case: ${recipientCase}`);
+    }
+    ok(block.includes("An addressed wake beside an ambient one changes nothing about the ambient one."), "🔴 a coalesced addressed sibling does not lower the ambient bar");
+    ok(block.includes("`principal` addressed you, `peer` did not"), "🔴 the schema block glosses trust the way the schema render keys it: principal addressed you, peer did not");
+    ok(block.includes("`relay` is a machine"), "the schema block glosses the authority floor");
+    ok(block.includes("`from` says what kind of author wrote it"), "the schema block glosses `from`");
+    ok(block.includes("`reason` says"), "the schema block glosses `reason`");
+    ok(block.split(/\s+/).length < 400, `the schema block stays short — Tag states its whole posture in a few sentences (${block.split(/\s+/).length} words)`);
+    ok(!block.includes("`channel-watch` —"), "the schema block does NOT enumerate a bar per addressing value — that is the prose shape it replaced");
+    ok(!block.includes("turn-final"), "the schema block does NOT restate the delivery rule — the reporting arm owns it");
+  } finally {
+    if (before === undefined) delete process.env.OE_WAKE_SHAPE;
+    else process.env.OE_WAKE_SHAPE = before;
+  }
+
+  const reporting = flat(renderSupervisorPersona(supervisorCtx, { messageToolOnly: true }));
+  ok(reporting.includes("That states REACH, not duty."), "the cross-surface reporting arm frames multi-wake delivery as reach, not duty");
+  ok(
+    reporting.includes("on a wake that did not address you the answer is usually no"),
+    "the cross-surface reporting arm scopes the reply mandate: an unaddressed wake is usually a silent one",
+  );
+  ok(
+    !reporting.includes("answer each with its OWN"),
+    "🔴 the blanket per-wake reply mandate ('answer each with its OWN wake-id') is GONE from the reporting arm",
+  );
+  ok(reporting.includes('Never conclude that a reply "isn\'t possible here"'), "the reach half survives: a wake with a wake-id is always deliverable");
 }
 
 console.log(`✓ instructions: ${passed} assertions passed`);

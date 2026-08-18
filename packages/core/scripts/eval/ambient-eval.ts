@@ -577,9 +577,28 @@ async function readSlackReplyBody(sinceIso: string, replyTs?: string | null): Pr
   } catch { return null; }
 }
 
+export const S6_PROBES: readonly { readonly ambient: string; readonly addressed: string }[] = [
+  { ambient: `heads up, moving the 3pm sync to 3:30 — clashes with something else, sorry for the churn.`,
+    addressed: `quick one — what is 17 plus 25? reply here with the number.` },
+  { ambient: `the coffee machine on the second floor is broken again, using the one downstairs today.`,
+    addressed: `quick one — how many days are there in a leap year? reply here with the number.` },
+  { ambient: `whoever left the blue umbrella in the meeting room, it's at reception now.`,
+    addressed: `quick one — what is 9 times 6? reply here with the number.` },
+  { ambient: `parking is a mess this morning, roadworks on the main entrance side. allow extra time.`,
+    addressed: `quick one — spell the word "rhythm" backwards for me. reply here with just the letters.` },
+  { ambient: `lunch order is going in at 12, shout if you want anything from the place on the corner.`,
+    addressed: `quick one — what is 144 divided by 12? reply here with the number.` },
+  { ambient: `fire alarm test is scheduled for tomorrow at 11, no action needed, it's just a test.`,
+    addressed: `quick one — how many letters are in the word "envelope"? reply here with the number.` },
+  { ambient: `my train is delayed, I'll be about 20 minutes late to the standup — carry on without me.`,
+    addressed: `quick one — what is 100 minus 37? reply here with the number.` },
+  { ambient: `the office plants got watered, before anyone asks. they were looking rough.`,
+    addressed: `quick one — what is the third letter of the alphabet? reply here with just the letter.` },
+];
+
 interface Surfaces { slack: boolean; notion: boolean; }
 
-async function injectTurn(id: ScenarioId, turn: number, fact: { code: string; date: string; ref: string }, surf: Surfaces): Promise<{ probe: Injection | null; state: Injection | null; skip?: string }> {
+async function injectTurn(id: ScenarioId, turn: number, fact: { code: string; date: string; ref: string }, surf: Surfaces, variant = 0): Promise<{ probe: Injection | null; state: Injection | null; skip?: string }> {
   const spec = SCENARIOS[id];
   const missing = spec.needs.filter((n) => !surf[n]);
   if (missing.length > 0) return { probe: null, state: null, skip: `missing surface(s): ${missing.join(",")}` };
@@ -598,12 +617,13 @@ async function injectTurn(id: ScenarioId, turn: number, fact: { code: string; da
   }
 
   if (id === "S6") {
+    const pair = S6_PROBES[variant % S6_PROBES.length];
     const ambient = await injectWake(
-      { domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "channel-watch", author: "alex", origin: slackOrigin, text: `heads up, moving the 3pm sync to 3:30 — clashes with something else, sorry for the churn.` },
+      { domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "channel-watch", author: "alex", origin: slackOrigin, text: pair.ambient },
       "chatter", turn, id,
     );
     const addressed = await injectWake(
-      { domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "direct-mention", mention: true, author: "sam", origin: slackOrigin, text: `quick one — what is 17 plus 25? reply here with the number.` },
+      { domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "direct-mention", mention: true, author: "sam", origin: slackOrigin, text: pair.addressed },
       "probe", turn, id,
     );
     return { probe: addressed, state: ambient };
@@ -992,7 +1012,7 @@ async function runOneSeries(
     const fact = freshFact(run, i + 1);
     console.log(`\n── [r${repeat}] T${i + 1}/${series.length} ${series[i]} ${SCENARIOS[series[i]].label} ─ fact ${fact.code}`);
     try {
-      const t = await injectTurn(series[i], i + 1, fact, surf);
+      const t = await injectTurn(series[i], i + 1, fact, surf, (repeat - 1) * series.length + i);
       pending.push({ turn: i + 1, scenario: series[i], ...t, fact });
       if (t.skip) { console.log(`   → SKIP  ${t.skip}`); continue; }
       const deadline = Date.now() + REPLY_TIMEOUT_MS;
