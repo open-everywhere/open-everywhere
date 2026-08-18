@@ -32,18 +32,6 @@ export default defineRoster({
         "don't (window-tool-gating Stage C). The sentinel is what makes the per-grain provision " +
         "authoritative — a dynamic tool can only SHADOW a static built-in when it resolves, never " +
         "REMOVE it.",
-      glob:
-        "the eve built-in is DISABLED as a static tool. It is re-provided per session GRAIN " +
-        "(stall-guarded) by tools/sandbox_tools.ts: task/native sessions mount it, standing seats " +
-        "don't (window-tool-gating Stage C). The sentinel is what makes the per-grain provision " +
-        "authoritative — a dynamic tool can only SHADOW a static built-in when it resolves, never " +
-        "REMOVE it.",
-      grep:
-        "the eve built-in is DISABLED as a static tool. It is re-provided per session GRAIN " +
-        "(stall-guarded) by tools/sandbox_tools.ts: task/native sessions mount it, standing seats " +
-        "don't (window-tool-gating Stage C). The sentinel is what makes the per-grain provision " +
-        "authoritative — a dynamic tool can only SHADOW a static built-in when it resolves, never " +
-        "REMOVE it.",
       read_file:
         "the eve built-in is DISABLED as a static tool. It is re-provided per session GRAIN " +
         "(stall-guarded) by tools/sandbox_tools.ts: task/native sessions mount it, standing seats " +

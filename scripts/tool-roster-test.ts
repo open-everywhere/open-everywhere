@@ -201,11 +201,15 @@ try {
     pathToFileURL(join(repoRoot, "agent", "settings", "settings.ts")).href
   )) as { SETTINGS_OVERRIDES: Parameters<typeof nativeSubagentAtBuild>[0] };
   const expectAgentSentinel = !nativeSubagentAtBuild(appOverrides);
-  for (const name of ["bash", "glob", "grep", "read_file", "web_fetch", "write_file", ...(expectAgentSentinel ? ["agent"] : [])]) {
+  for (const name of ["bash", "read_file", "web_fetch", "write_file", ...(expectAgentSentinel ? ["agent"] : [])]) {
     ok(declined.includes(name), `the real roster DECLINES the framework tool "${name}" by sentinel`);
   }
   if (!expectAgentSentinel) {
     ok(!declined.includes("agent"), "armed native regime: the real roster does NOT decline `agent` (the built-in is the delegation path)");
+  }
+  for (const name of ["glob", "grep"]) {
+    ok(!declined.includes(name), `"${name}" is no longer declined by sentinel — eve never default-mounts it, so nothing needs disabling`);
+    ok(!drift.mountedFromCore.some((e) => e.name === name), `"${name}" is not a core tool export`);
   }
   ok(
     drift.mountedFromCore.every((e) => !declined.includes(e.name)),
