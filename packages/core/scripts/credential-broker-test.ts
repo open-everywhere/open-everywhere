@@ -15,7 +15,7 @@ process.env.OE_CREDENTIAL_ENCRYPTION_KEY = KEY;
 const SENTINEL = "sk-SUPER-SECRET-VALUE-9f8e7d6c5b4a-DO-NOT-LEAK";
 
 const { getOperationalStore } = await import("../agent/operational/provider.js");
-const { getSecretVia, brokerFor, resolveHeaders, registerBroker, resetBrokers, CredentialError } = await import("../agent/access/credentials.js");
+const { getSecretVia, brokerFor, resolveHeaders, registerBroker, registeredBrokerNames, resetBrokers, CredentialError } = await import("../agent/access/credentials.js");
 const dbBroker = await import("../agent/credentials/db-broker.js");
 const intake = await import("../agent/credentials/intake.js");
 const { readAudit } = await import("../agent/audit/audit.js");
@@ -81,6 +81,55 @@ function recorder() {
 
   await assert.rejects(() => getSecretVia("db", "db:notion:channel-key"), (e) => e instanceof CredentialError, "OPE-639: the second attempt refuses too");
   ok((await unresolvedRows("db:notion:channel-key")).length === 2, "OPE-639: a repeated unresolvable ref writes a row per attempt (rate is the signal)");
+}
+
+{
+  const rowsFor = async (ref: string) =>
+    (await readAudit({ org: ORG, action: dbBroker.CREDENTIAL_UNRESOLVED })).filter(
+      (r) => (r.detail as { ref?: unknown } | undefined)?.ref === ref,
+    );
+
+  const CONTROL_REF = "OE_TEST_OPE776_CONTROL";
+  process.env[CONTROL_REF] = "control-value";
+  ok((await getSecretVia("env", CONTROL_REF)) === "control-value", "OPE-776 control: a registered broker still resolves");
+  ok((await rowsFor(CONTROL_REF)).length === 0, "OPE-776 control: a resolution through a REGISTERED broker writes NO credential.unresolved row");
+  delete process.env[CONTROL_REF];
+
+  const UNSTAMPED_REF = "OE_TEST_OPE776_UNSTAMPED";
+  await assert.rejects(() => getSecretVia(undefined, UNSTAMPED_REF), (e) => e instanceof CredentialError && /no credential broker/.test((e as Error).message), "OPE-776: an unstamped credential still refuses with the SAME error (verdict unchanged)");
+  const unstamped = await rowsFor(UNSTAMPED_REF);
+  ok(unstamped.length === 1, "OPE-776: an UNSTAMPED credential writes exactly one credential.unresolved row");
+  ok((unstamped[0]!.detail as { reason?: unknown }).reason === "broker-unstamped", "OPE-776: …classified `broker-unstamped`, so an operator knows to stamp the credential");
+  ok((unstamped[0]!.detail as { broker?: unknown }).broker === "(unstamped)" && unstamped[0]!.platform === "credential", "OPE-776: …recorded under the `(unstamped)` broker on the `credential` plane (no name to report, and a blank would read as one)");
+
+  const UNREG_REF = "db:notion:channel-key";
+  ok(!registeredBrokerNames().includes("vault"), "OPE-776 precondition: the `vault` broker is NOT registered in this process");
+  await assert.rejects(() => getSecretVia("vault", UNREG_REF), (e) => e instanceof CredentialError && /not registered/.test((e as Error).message), "OPE-776: an unregistered home broker still fails closed with the SAME error (no fallback, verdict unchanged)");
+  const unreg = (await rowsFor(UNREG_REF)).filter((r) => (r.detail as { reason?: unknown }).reason === "broker-not-registered");
+  ok(unreg.length === 1, "OPE-776: an UNREGISTERED home broker writes exactly one credential.unresolved row");
+  ok((unreg[0]!.detail as { broker?: unknown }).broker === "vault", "OPE-776: …naming the broker the credential asked for, which is the thing an operator must go register");
+  ok(unreg[0]!.workspace === "vault" && unreg[0]!.platform === "credential", "OPE-776: …stamped platform `credential`, workspace = the broker (whereFromScope shape)");
+
+  const bothCauses = new Set((await rowsFor(UNREG_REF)).map((r) => (r.detail as { reason?: unknown }).reason));
+  ok(bothCauses.has("no-stored-row") && bothCauses.has("broker-not-registered"), "OPE-776: one ref can carry BOTH reasons across attempts, and they stay distinguishable");
+
+  await assert.rejects(() => getSecretVia("vault", UNREG_REF), (e) => e instanceof CredentialError, "OPE-776: the second attempt refuses too");
+  ok((await rowsFor(UNREG_REF)).filter((r) => (r.detail as { reason?: unknown }).reason === "broker-not-registered").length === 2, "OPE-776: a repeated broker-level refusal writes a row per attempt (rate is the signal)");
+
+  const everyRow = JSON.stringify(await readAudit({ org: ORG, action: dbBroker.CREDENTIAL_UNRESOLVED }));
+  ok(!everyRow.includes(SENTINEL) && !everyRow.includes(SENTINEL.slice(0, 8)), "OPE-776: no credential.unresolved row contains the secret value or any prefix of it");
+
+  const seam = await import("../agent/access/credentials.js");
+  ok(seam.CREDENTIAL_UNRESOLVED === dbBroker.CREDENTIAL_UNRESOLVED, "OPE-776: the seam and the db broker publish the SAME credential.unresolved action name");
+  ok(seam.UNSTAMPED_BROKER === "(unstamped)", "OPE-776: the exported UNSTAMPED_BROKER constant is the same label the row carries");
+
+  for (const inherited of ["constructor", "toString", "hasOwnProperty"]) {
+    ok(!registeredBrokerNames().includes(inherited), `prototype: "${inherited}" is not a registered broker name`);
+    assert.throws(() => brokerFor(inherited), (e) => e instanceof CredentialError && /not registered/.test((e as Error).message), `prototype: brokerFor("${inherited}") fails closed with a CredentialError, not an inherited member`);
+    await assert.rejects(() => getSecretVia(inherited, "OE_TEST_OPE776_PROTO"), (e) => e instanceof CredentialError, `prototype: getSecretVia("${inherited}", ref) rejects with a CredentialError — the type every consumer degrades on`);
+    const protoRows = (await rowsFor("OE_TEST_OPE776_PROTO")).filter((r) => (r.detail as { broker?: unknown }).broker === inherited);
+    ok(protoRows.length === 1 && (protoRows[0]!.detail as { reason?: unknown }).reason === "broker-not-registered", `prototype: "${inherited}" also writes the broker-not-registered row (the registry no longer claims it is registered)`);
+  }
 }
 
 {
