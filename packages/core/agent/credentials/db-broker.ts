@@ -1,5 +1,12 @@
 import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
-import { CredentialError, registerBroker, registeredBrokerNames, type CredentialBroker } from "../access/credentials.js";
+import {
+  CredentialError,
+  registerBroker,
+  registeredBrokerNames,
+  CREDENTIAL_UNRESOLVED,
+  type CredentialBroker,
+  type UnresolvedReason,
+} from "../access/credentials.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
@@ -118,9 +125,8 @@ export function makeDbCredentialBroker(): CredentialBroker {
   };
 }
 
-export const CREDENTIAL_UNRESOLVED = "credential.unresolved";
-
-export type UnresolvedReason = "no-stored-row" | "reserved-namespace";
+export { CREDENTIAL_UNRESOLVED };
+export type { UnresolvedReason };
 
 async function auditUnresolved(ref: string, reason: UnresolvedReason): Promise<void> {
   await appendAudit({

@@ -497,14 +497,16 @@ check("censusResult: no `credentialBrokerArmed` passed at all is byte-identical 
   assert.doesNotMatch(renderCensusReport(result).join("\n"), /CREDENTIAL BROKER KEY/u);
 });
 
-check("channelCensusContributions: the mounted Discord gateway contributes its caveat AND the reported relay heartbeat", () => {
+check("channelCensusContributions: the mounted Discord gateway contributes its caveat AND both reported relay heartbeats", () => {
   const got = channelCensusContributions(["discord-gateway.ts", "slack.ts", "notion.ts"]);
-  assert.equal(got.reportedHeartbeats.length, 1, "one reported heartbeat, from the gateway");
-  assert.equal(got.reportedHeartbeats[0]?.action, "discord.dispatched", "…the action the gateway channel actually writes");
+  assert.equal(got.reportedHeartbeats.length, 2, "two reported heartbeats, both from the gateway");
+  const actions = got.reportedHeartbeats.map((h) => h.action).sort();
+  assert.deepEqual(actions, ["discord.dispatched", "discord.heartbeat"], "…the two actions the gateway channel actually writes");
   assert.equal(got.limits.length, 1, "one caveat, from the same channel");
-  assert.match(got.limits[0] ?? "", /discord-relay/u, "…and it names the always-on relay it cannot see");
-  assert.match(got.limits[0] ?? "", /discord\.dispatched/u, "the caveat names the heartbeat that softens it");
-  assert.match(got.limits[0] ?? "", /QUIET guild/u, "…and states the one thing the age cannot separate");
+  assert.match(got.limits[0] ?? "", /discord-relay/u, "…and it names the always-on relay it cannot see directly");
+  assert.match(got.limits[0] ?? "", /discord\.dispatched/u, "the caveat names the weak signal");
+  assert.match(got.limits[0] ?? "", /discord\.heartbeat/u, "…and the strong OPE-775 signal");
+  assert.match(got.limits[0] ?? "", /OPE-775/u, "…and points at this ticket for the rollout order");
 });
 
 check("channelCensusContributions: a DESELECTED gateway contributes NOTHING — no caveat, no heartbeat", () => {
@@ -520,7 +522,7 @@ check("channelCensusContributions: an unknown channel module contributes nothing
 });
 
 check("OPE-640 anti-vacuity: the relay heartbeat is REPORTED — a quiet guild never fails the census", () => {
-  const reported = [...channelCensusContributions(["discord-gateway.ts"]).reportedHeartbeats];
+  const reported = channelCensusContributions(["discord-gateway.ts"]).reportedHeartbeats.filter((h) => h.action === "discord.dispatched");
   const silent = heartbeatFindings({ gated: [], reported, observations: [], now: NOW });
   assert.equal(silent.length, 1);
   assert.equal(silent[0]?.ok, true, "absence never fails — gating here would red every quiet weekend");
@@ -532,9 +534,43 @@ check("OPE-640 anti-vacuity: the relay heartbeat is REPORTED — a quiet guild n
   assert.equal(aged[0]?.ok, true, "…and it still never gates, however old it is");
 });
 
+check("OPE-775: discord.heartbeat is present, REPORTED (not yet gated), and joins independently of discord.dispatched", () => {
+  const reported = channelCensusContributions(["discord-gateway.ts"]).reportedHeartbeats;
+  const heartbeatPlan = reported.find((h) => h.action === "discord.heartbeat");
+  assert.ok(heartbeatPlan, "the gateway contributes a discord.heartbeat plan entry");
+
+  const staleDispatch = new Date(NOW.getTime() - 96 * 3_600_000).toISOString();
+  const freshHeartbeat = new Date(NOW.getTime() - 0.1 * 3_600_000).toISOString();
+  const findings = heartbeatFindings({
+    gated: [],
+    reported,
+    observations: [
+      { action: "discord.dispatched", lastSeenIso: staleDispatch },
+      { action: "discord.heartbeat", lastSeenIso: freshHeartbeat },
+    ],
+    now: NOW,
+  });
+  const dispatched = findings.find((f) => f.action === "discord.dispatched");
+  const heartbeat = findings.find((f) => f.action === "discord.heartbeat");
+  assert.ok(dispatched?.ageHours !== undefined && dispatched.ageHours > 95, "dispatched reads its OWN stale age");
+  assert.ok(heartbeat?.ageHours !== undefined && heartbeat.ageHours < 1, "heartbeat reads its OWN fresh age — a quiet guild does not stale it");
+  assert.equal(heartbeat?.ok, true, "a heartbeat finding never fails the census this side of the OPE-775 promotion");
+  assert.equal(clean({ heartbeats: findings }).ok, true, "…so the overall census verdict is unaffected either way");
+
+  const deadRelay = heartbeatFindings({
+    gated: [],
+    reported,
+    observations: [{ action: "discord.dispatched", lastSeenIso: staleDispatch }],
+    now: NOW,
+  });
+  const deadHeartbeat = deadRelay.find((f) => f.action === "discord.heartbeat");
+  assert.equal(deadHeartbeat?.lastSeenIso, undefined, "no heartbeat row at all — the dead-relay case");
+  assert.equal(deadHeartbeat?.ok, true, "…still does not gate today, but an operator reading the census sees the absence");
+});
+
 if (failures.length > 0) {
   console.error(`✗ deploy-census: ${failures.length} of ${checks} check(s) FAILED`);
   for (const f of failures) console.error(`  ✗ ${f}`);
   process.exit(1);
 }
-console.log(`✓ deploy-census: ${checks} check(s) passed (required-set derivation, endpoint plan, the four reds, the anti-vacuity control, the OPE-635 cron heartbeat half, the OPE-658 runtime-revision signal half, the OPE-641 credential-broker-armed half, the OPE-640 channel contributions — all offline)`);
+console.log(`✓ deploy-census: ${checks} check(s) passed (required-set derivation, endpoint plan, the four reds, the anti-vacuity control, the OPE-635 cron heartbeat half, the OPE-658 runtime-revision signal half, the OPE-641 credential-broker-armed half, the OPE-640 channel contributions, the OPE-775 relay heartbeat half — all offline)`);

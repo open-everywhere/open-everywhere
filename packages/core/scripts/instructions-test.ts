@@ -546,4 +546,45 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   ok(reporting.includes('Never conclude that a reply "isn\'t possible here"'), "the reach half survives: a wake with a wake-id is always deliverable");
 }
 
+{
+  registerSlackFixtureMapper();
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [defineDomain({ name: "ope771", channels: ["slack/T_771/C_771"], ambientSupervisor: true })],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+
+  const unifiedSeat: BindableContext = {
+    channel: { kind: "channel:unified", continuationToken: "oe-dom:ope771:oe-sup:g1" },
+    session: { auth: { current: { attributes: { oe_platform: "slack" } } } },
+  } as BindableContext;
+  const containerSeat: BindableContext = {
+    channel: { kind: "slack", continuationToken: "C_771:oe-sup:g1" },
+    session: {
+      auth: {
+        current: {
+          attributes: { team_id: "T_771", channel_id: "C_771", channel_type: "channel", is_private: "false", trust_checked: "true" },
+          principalId: "U1",
+          principalType: "user",
+        },
+      },
+    },
+  } as BindableContext;
+
+  ok(classifySessionId("C_771:oe-sup:g1").kind === "container-supervisor", "fixture guard: `${channelId}:oe-sup:g<gen>` classifies as the per-container supervisor");
+  ok(renderSupervisorPersona(containerSeat) !== "", "fixture guard: the per-container seat IS a supervisor session — it reads the standing persona");
+
+  const unifiedMd = await renderScopeMarkdown(unifiedSeat);
+  const containerMd = await renderScopeMarkdown(containerSeat);
+  const block = renderReadingAWake();
+  ok(unifiedMd.includes(block), "the UNIFIED scope splices the 'Reading a wake' block verbatim");
+  ok(!containerMd.includes("### Reading a wake"), "🔴 OPE-771 — the PER-CONTAINER supervisor scope does NOT carry it; that seat reads judged envelopes with no attribute key");
+  ok(containerMd.includes("### When to speak"), "the per-container seat still reads the reply bar — the loss is the attribute key, not the posture");
+  ok(containerMd.includes("### Trust grades"), "the per-container seat still reads the trust grades, which gloss `trust` and `mention`");
+}
+
 console.log(`✓ instructions: ${passed} assertions passed`);

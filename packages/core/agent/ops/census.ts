@@ -271,9 +271,11 @@ export interface ReportedHeartbeat {
 const CHANNEL_LIMITS: Readonly<Record<string, string>> = {
   "discord-gateway.ts":
     "/eve/v1/discord-gateway answers, but it only RECEIVES traffic while the always-on relay (deploy/discord-relay/) holds " +
-    "the Discord WebSocket. Nothing here can see that process. The reported `discord.dispatched` age below is the closest " +
-    "available signal — it dates the last message the relay actually delivered — but it cannot separate a DEAD relay from a " +
-    "QUIET guild, because both produce no rows. Only a relay-written heartbeat could (OPE-640).",
+    "the Discord WebSocket. Nothing here can see that process directly. Two reported ages soften that: `discord.dispatched` " +
+    "dates the last message the relay actually delivered (silent on a quiet guild too, so absence alone proves nothing), and " +
+    "`discord.heartbeat` (OPE-775) dates the relay's OWN timer-driven liveness write, which fires whether or not a guild is " +
+    "talking. Both are REPORTED, never gated — the heartbeat needs a redeploy and a live confirmation window before it can " +
+    "safely GATE the census (see OPE-775 for the rollout order).",
 };
 
 const CHANNEL_REPORTED_HEARTBEATS: Readonly<Record<string, readonly ReportedHeartbeat[]>> = {
@@ -282,6 +284,11 @@ const CHANNEL_REPORTED_HEARTBEATS: Readonly<Record<string, readonly ReportedHear
       action: "discord.dispatched",
       reason:
         "dates the last message the always-on Discord relay (deploy/discord-relay/) actually delivered. Reported, never gated: a quiet guild writes no rows either, so absence does NOT prove the relay is dead, and an age does not prove it is alive right now.",
+    },
+    {
+      action: "discord.heartbeat",
+      reason:
+        "written by the always-on Discord relay (deploy/discord-relay/) itself, on a fixed timer, whether or not any guild is talking. A stale or missing row means the relay process is not writing — unlike discord.dispatched, this signal does not depend on guild traffic, so it CAN separate a dead relay from a quiet one. Reported, not yet gated (OPE-775): promoting it to gate the census needs a redeploy and a live confirmation window first.",
     },
   ],
 };

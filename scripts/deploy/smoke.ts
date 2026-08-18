@@ -1,5 +1,5 @@
 import { resolveWebhook } from "../../packages/core/scripts/e2e/env.js";
-import { renderSmokeReport, runWebhookSmoke } from "./smoke-lib.js";
+import { renderSmokeReport, runGithubInstallationSmoke, runWebhookSmoke } from "./smoke-lib.js";
 import { DeployConfigError, parseArgs } from "./lib.js";
 
 const args = parseArgs(process.argv.slice(2));
@@ -57,7 +57,29 @@ try {
   });
 
   for (const line of renderSmokeReport(result)) console.log(line);
-  process.exit(result.ok ? 0 : 1);
+  let ok = result.ok;
+
+  const githubSecret = process.env.E2E_GITHUB_WEBHOOK_SECRET?.trim() || process.env.GITHUB_WEBHOOK_SECRET?.trim();
+  if (githubSecret) {
+    console.log(`\n  github installation rung against ${target} — no judge involved`);
+    const githubResult = await runGithubInstallationSmoke({
+      targetUrl: target,
+      webhookSecret: githubSecret,
+      controlToken,
+      fetchImpl: (url, init) => fetch(url, init.method === "GET" ? { method: "GET", headers: init.headers } : init),
+      now: () => Date.now(),
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      log,
+      firedTimeoutMs: num("fired-timeout-ms", 60_000),
+      unsignedGraceMs: num("unsigned-grace-ms", 15_000),
+    });
+    for (const line of renderSmokeReport(githubResult)) console.log(line);
+    ok = ok && githubResult.ok;
+  } else {
+    console.log("\n  skipping the github installation rung — no E2E_GITHUB_WEBHOOK_SECRET/GITHUB_WEBHOOK_SECRET configured for this runner");
+  }
+
+  process.exit(ok ? 0 : 1);
 } catch (err) {
   if (err instanceof DeployConfigError) {
     console.error(`✗ deploy:smoke: ${err.message}`);

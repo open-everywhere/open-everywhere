@@ -9,6 +9,7 @@ import { afterEach } from "vitest";
 import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
 import { REDELIVERY_SIGNATURE, REDELIVERY_STORM_THRESHOLD, RedeliveryStormGuard } from "./redelivery-storm-guard";
 import { ROLLOWN_OUTPUT_DIR, rollOwnMissingMessage, rollOwnTargetExists } from "./rollown-target";
+import { installHostFetchStub } from "./fetch-stub";
 
 import {
   ANY_SESSION,
@@ -49,6 +50,7 @@ export function pendingFramedChars(text: string): number {
 if (OE_PENDING_WORK_FRAME.length === 0) throw new Error("harness: PENDING_WORK_FRAME is empty — pendingFramedChars cannot distinguish a framed row");
 export { installSlackWebApiStub, type SlackApiCall, type SlackApiResponder, type SlackWebApiStub } from "./slack-web-api";
 export { installNotionApiStub, type NotionApiCall, type NotionApiResponder, type NotionApiStub } from "./notion-web-api";
+export { installLinearApiStub, type LinearApiCall, type LinearApiResponder, type LinearApiStub } from "./linear-web-api";
 
 const ROOT = process.cwd();
 
@@ -98,6 +100,20 @@ const DISCORD_APP_KEYS = (() => {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   const spki = publicKey.export({ format: "der", type: "spki" }) as Buffer;
   return { privateKey, publicKeyHex: spki.subarray(spki.length - 32).toString("hex") };
+})();
+
+const GITHUB_WEBHOOK_SECRET = randomBytes(32).toString("hex");
+
+const LINEAR_WEBHOOK_SECRET = randomBytes(32).toString("hex");
+
+const LINEAR_ACCESS_TOKEN = `it-linear-token-${randomBytes(8).toString("hex")}`;
+
+const MICROSOFT_APP_ID = `it-teams-app-${randomBytes(8).toString("hex")}`;
+
+const TEAMS_JWT_KEYS = (() => {
+  const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const jwk = publicKey.export({ format: "jwk" }) as Record<string, unknown>;
+  return { privateKey, kid: "it-teams-key-1", jwk: { ...jwk, kid: "it-teams-key-1", use: "sig", alg: "RS256" } };
 })();
 
 let booted: { base: string } | undefined;
@@ -182,6 +198,12 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   process.env.SLACK_SIGNING_SECRET = SLACK_SIGNING_SECRET;
   process.env.NOTION_WEBHOOK_SECRET = NOTION_WEBHOOK_SECRET;
   process.env.OE_CREDENTIAL_ENCRYPTION_KEY ??= CREDENTIAL_ENCRYPTION_KEY;
+  process.env.GITHUB_WEBHOOK_SECRET = GITHUB_WEBHOOK_SECRET;
+  process.env.LINEAR_WEBHOOK_SECRET = LINEAR_WEBHOOK_SECRET;
+  process.env.LINEAR_ACCESS_TOKEN = LINEAR_ACCESS_TOKEN;
+  process.env.MICROSOFT_APP_ID = MICROSOFT_APP_ID;
+  delete process.env.MICROSOFT_APP_PASSWORD;
+  delete process.env.TEAMS_APP_PASSWORD;
   if (process.env.DISCORD_PUBLIC_KEY === undefined) process.env.DISCORD_PUBLIC_KEY = DISCORD_APP_KEYS.publicKeyHex;
   if (opts.sharedSqlite === true) {
     process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
@@ -437,6 +459,19 @@ export async function rawDiscordRelayPost(
   return { status: res.status, text: await res.text() };
 }
 
+export async function rawDiscordRelayHeartbeatPost(
+  input: { readonly relayId: string; readonly ts?: number },
+  signature?: string | null,
+): Promise<{ status: number; text: string }> {
+  if (booted === undefined) throw new Error("integration harness: rawDiscordRelayHeartbeatPost before bootAgent.");
+  const { buildDiscordRelayHeartbeatEnvelope, signDiscordRelayRequest } = await import("../../packages/core/scripts/e2e/discord-synthetic");
+  const body = JSON.stringify(buildDiscordRelayHeartbeatEnvelope(input));
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (signature !== null) headers["x-oe-relay-signature"] = signature ?? signDiscordRelayRequest(body, RELAY_SECRET);
+  const res = await fetch(`${booted.base}/eve/v1/discord-gateway`, { method: "POST", headers, body });
+  return { status: res.status, text: await res.text() };
+}
+
 export const WEBHOOK_E2E_HOOK_ID = "e2e-smoke";
 
 export async function webhookDeliveryPost(
@@ -642,6 +677,9 @@ export const NOTION_WORKSPACE_ID = "6f7ea678-0000-4000-8000-000000000001";
 export const NOTION_PAGE_ID = "6f7ea678-0000-4000-8000-000000000002";
 export const NOTION_PAGE_ID_2 = "6f7ea678-0000-4000-8000-000000000003";
 
+export const LINEAR_UNIFIED_ORG_ID = "1a000000-0000-4000-8000-000000000001";
+export const LINEAR_UNIFIED_TEAM_ID = "1a000000-0000-4000-8000-000000000011";
+
 export async function notionCommentEventPost(input: {
   readonly workspaceId: string;
   readonly commentId: string;
@@ -674,6 +712,121 @@ export async function seedNotionChannelKey(apiKey = "it-notion-stub-key"): Promi
   const { storeDbSecret } = await import("@open-everywhere/core/agent/credentials/db-broker.js");
   const { deploymentOrg } = await import("@open-everywhere/core/agent/identity/binding.js");
   await storeDbSecret({ org: deploymentOrg(), ref: "db:notion:channel-key", plaintext: apiKey, createdBy: "it-harness" });
+}
+
+export async function githubInstallationPost(input: {
+  readonly action: "created" | "deleted" | "suspend" | "unsuspend";
+  readonly owner: string;
+  readonly installationId: number;
+  readonly accountType?: string;
+  readonly signed?: boolean;
+  readonly signature?: string;
+  readonly timeoutMs?: number;
+}): Promise<{ status: number; body: string }> {
+  if (booted === undefined) throw new Error("integration harness: githubInstallationPost before bootAgent.");
+  const rawBody = JSON.stringify({
+    action: input.action,
+    installation: { id: input.installationId, account: { login: input.owner, type: input.accountType ?? "Organization" } },
+  });
+  const headers: Record<string, string> = { "content-type": "application/json", "x-github-event": "installation" };
+  if (input.signed !== false) {
+    headers["x-hub-signature-256"] = input.signature ?? "sha256=" + createHmac("sha256", GITHUB_WEBHOOK_SECRET).update(rawBody, "utf8").digest("hex");
+  }
+  const res = await fetch(`${booted.base}/eve/v1/github`, {
+    method: "POST",
+    headers,
+    body: rawBody,
+    signal: AbortSignal.timeout(input.timeoutMs ?? 120_000),
+  });
+  return { status: res.status, body: await res.text() };
+}
+
+export async function linearAgentSessionPost(input: {
+  readonly agentSessionId: string;
+  readonly organizationId: string;
+  readonly teamId?: string;
+  readonly issueId: string;
+  readonly commentId: string;
+  readonly action?: "created" | "prompted";
+  readonly signed?: boolean;
+  readonly signature?: string;
+  readonly timeoutMs?: number;
+}): Promise<{ status: number; body: string }> {
+  if (booted === undefined) throw new Error("integration harness: linearAgentSessionPost before bootAgent.");
+  const rawBody = JSON.stringify({
+    type: "AgentSessionEvent",
+    action: input.action ?? "created",
+    webhookTimestamp: Date.now(),
+    organizationId: input.organizationId,
+    agentSession: {
+      id: input.agentSessionId,
+      sourceCommentId: input.commentId,
+      ...(input.teamId ? { issue: { id: input.issueId, team: { id: input.teamId } } } : { issue: { id: input.issueId } }),
+    },
+  });
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (input.signed !== false) {
+    headers["linear-signature"] = input.signature ?? createHmac("sha256", LINEAR_WEBHOOK_SECRET).update(rawBody, "utf8").digest("hex");
+  }
+  const res = await fetch(`${booted.base}/eve/v1/linear`, {
+    method: "POST",
+    headers,
+    body: rawBody,
+    signal: AbortSignal.timeout(input.timeoutMs ?? 120_000),
+  });
+  return { status: res.status, body: await res.text() };
+}
+
+export function installTeamsJwksStub(): { uninstall(): void } {
+  const stub = installHostFetchStub("https://login.botframework.com", (url) => {
+    if (url.pathname === "/v1/.well-known/openidconfiguration") {
+      return new Response(JSON.stringify({ jwks_uri: "https://login.botframework.com/v1/.well-known/keys" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.pathname === "/v1/.well-known/keys") {
+      return new Response(JSON.stringify({ keys: [TEAMS_JWT_KEYS.jwk] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return undefined;
+  });
+  return { uninstall: () => stub.uninstall() };
+}
+
+function base64url(input: Buffer | string): string {
+  return (Buffer.isBuffer(input) ? input : Buffer.from(input, "utf8")).toString("base64url");
+}
+
+export function signTeamsJwt(overrides: { readonly aud?: string; readonly iss?: string; readonly expiresInSec?: number } = {}): string {
+  const header = { alg: "RS256", typ: "JWT", kid: TEAMS_JWT_KEYS.kid };
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    iss: overrides.iss ?? "https://api.botframework.com",
+    aud: overrides.aud ?? MICROSOFT_APP_ID,
+    iat: now - 5,
+    nbf: now - 5,
+    exp: now + (overrides.expiresInSec ?? 300),
+  };
+  const signingInput = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(payload))}`;
+  const signature = signEd25519("RSA-SHA256", Buffer.from(signingInput, "utf8"), TEAMS_JWT_KEYS.privateKey);
+  return `${signingInput}.${base64url(signature)}`;
+}
+
+export async function teamsActivityPost(input: {
+  readonly activity: Record<string, unknown>;
+  readonly bearer?: string | null;
+  readonly timeoutMs?: number;
+}): Promise<{ status: number; body: string }> {
+  if (booted === undefined) throw new Error("integration harness: teamsActivityPost before bootAgent.");
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (input.bearer !== null) headers.authorization = `Bearer ${input.bearer ?? signTeamsJwt()}`;
+  const res = await fetch(`${booted.base}/eve/v1/teams`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(input.activity),
+    signal: AbortSignal.timeout(input.timeoutMs ?? 120_000),
+  });
+  return { status: res.status, body: await res.text() };
 }
 
 export interface AuditRow {

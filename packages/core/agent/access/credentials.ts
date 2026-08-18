@@ -1,6 +1,24 @@
 import type { Connection, CredentialAuthorizationDetail, CredentialType, CustomHeader } from "./bundle.js";
+import { appendAudit } from "../audit/audit.js";
+import { deploymentOrg } from "../identity/binding.js";
 
 export class CredentialError extends Error {}
+
+export const CREDENTIAL_UNRESOLVED = "credential.unresolved";
+
+export type UnresolvedReason = "no-stored-row" | "reserved-namespace" | "broker-unstamped" | "broker-not-registered";
+
+export const UNSTAMPED_BROKER = "(unstamped)";
+
+async function auditUnresolved(broker: string, ref: string, reason: UnresolvedReason): Promise<void> {
+  await appendAudit({
+    org: deploymentOrg(),
+    platform: "credential",
+    workspace: broker,
+    action: CREDENTIAL_UNRESOLVED,
+    detail: { broker, ref, reason },
+  }).catch(() => undefined);
+}
 
 export interface BrokeredSecret {
   readonly value: string;
@@ -22,7 +40,7 @@ export const envBroker: CredentialBroker = {
 
 export const ENV_BROKER = "env";
 
-const BROKERS: Record<string, CredentialBroker> = {};
+const BROKERS: Record<string, CredentialBroker> = Object.create(null) as Record<string, CredentialBroker>;
 
 export function registerBroker(name: string, broker: CredentialBroker): void {
   BROKERS[name] = broker;
@@ -65,11 +83,13 @@ export async function getSecretWithLifetimeVia(
   authorizationDetails?: readonly CredentialAuthorizationDetail[],
 ): Promise<BrokeredSecret> {
   if (broker === undefined) {
+    await auditUnresolved(UNSTAMPED_BROKER, ref, "broker-unstamped");
     throw new CredentialError(
       `no credential broker for ref "${ref}" — every credential must name its home broker ` +
         `(\`broker: "env" | "db" | ...\`); there is no selected default. Stamp the credential's broker.`,
     );
   }
+  if (BROKERS[broker] === undefined) await auditUnresolved(broker, ref, "broker-not-registered");
   const resolved = brokerFor(broker);
   if (resolved.getSecretWithLifetime) return resolved.getSecretWithLifetime(ref, authorizationDetails);
   return { value: await resolved.getSecret(ref, authorizationDetails) };

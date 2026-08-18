@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { renderSmokeReport, runWebhookSmoke, rowDeliveryId, rowWakeId, type SmokeResult } from "./deploy/smoke-lib.js";
+import { renderSmokeReport, runGithubInstallationSmoke, runWebhookSmoke, rowDeliveryId, rowWakeId, type SmokeResult } from "./deploy/smoke-lib.js";
 import { WEBHOOK_ID_HEADER, WEBHOOK_SIGNATURE_HEADER, WEBHOOK_TIMESTAMP_HEADER, WebhookDriver } from "../packages/core/scripts/e2e/webhook.js";
 import type { AuditWireEntry } from "../packages/core/scripts/e2e/audit-read.js";
 
@@ -306,9 +306,130 @@ await check("WebhookDriver still sends NO headers when unsigned with no delivery
   assert.deepEqual(Object.keys(seen ?? {}), ["content-type"], "an unsigned POST with no deliveryId carries only content-type");
 });
 
+const GH_SECRET = "it-gh-smoke-secret";
+
+interface GithubStubOpts {
+  readonly signedStatus?: number;
+  readonly unsignedStatus?: number;
+  readonly writeRow?: boolean;
+  readonly writeRowForUnsigned?: boolean;
+  readonly auditStatus?: number;
+}
+
+interface GithubStub {
+  readonly fetchImpl: Parameters<typeof runGithubInstallationSmoke>[0]["fetchImpl"];
+  readonly signedHeaders: Record<string, string>[];
+  readonly unsignedHeaders: Record<string, string>[];
+}
+
+function makeGithubStub(opts: GithubStubOpts = {}): GithubStub {
+  const rows: AuditWireEntry[] = [];
+  const signedHeaders: Record<string, string>[] = [];
+  const unsignedHeaders: Record<string, string>[] = [];
+  const fetchImpl: GithubStub["fetchImpl"] = async (url, init) => {
+    if (url.startsWith(`${TARGET}/eve/v1/github`)) {
+      const headers = init.headers;
+      const isSigned = headers["x-hub-signature-256"] !== undefined;
+      const body = JSON.parse(init.body ?? "{}") as { installation?: { account?: { login?: string } } };
+      const owner = body.installation?.account?.login;
+      if (isSigned) {
+        signedHeaders.push(headers);
+        if ((opts.writeRow ?? true) && owner) rows.push({ ts: new Date().toISOString(), org: "default", platform: "github", workspace: owner, action: "surface.app_installed" });
+        return { status: opts.signedStatus ?? 200, text: async () => "ok" };
+      }
+      unsignedHeaders.push(headers);
+      if (opts.writeRowForUnsigned && owner) rows.push({ ts: new Date().toISOString(), org: "default", platform: "github", workspace: owner, action: "surface.app_installed" });
+      return { status: opts.unsignedStatus ?? 401, text: async () => "unauthorized" };
+    }
+    if (url.startsWith(`${TARGET}/control/v1/audit`)) {
+      const status = opts.auditStatus ?? 200;
+      if (status !== 200) return { status, text: async () => "forbidden" };
+      return { status: 200, text: async () => JSON.stringify({ entries: rows }) };
+    }
+    throw new Error(`github stub deployment got an unexpected request: ${url}`);
+  };
+  return { fetchImpl, signedHeaders, unsignedHeaders };
+}
+
+async function githubSmoke(opts: GithubStubOpts = {}, stub: GithubStub = makeGithubStub(opts)): Promise<SmokeResult> {
+  let clock = Date.parse("2026-08-18T12:00:00.000Z");
+  return runGithubInstallationSmoke({
+    targetUrl: TARGET,
+    webhookSecret: GH_SECRET,
+    controlToken: "tok-read",
+    fetchImpl: stub.fetchImpl,
+    now: () => clock,
+    sleep: async (ms) => {
+      clock += ms;
+    },
+    log: () => {},
+    firedTimeoutMs: 10_000,
+    unsignedGraceMs: 1_000,
+    pollIntervalMs: 1_000,
+  });
+}
+
+await check("a healthy deployment passes both github installation gates", async () => {
+  const result = await githubSmoke();
+  assert.equal(result.ok, true, `expected ok; gates: ${JSON.stringify(result.gates)}`);
+  assert.equal(gate(result, "signed GitHub installation delivery is accepted").pass, true);
+  assert.equal(gate(result, "audits OUR delivery").pass, true);
+  assert.equal(gate(result, "unsigned GitHub installation delivery is refused").pass, true);
+  assert.equal(gate(result, "leaves NO audit trace").pass, true);
+  assert.equal(result.gates.length, 4);
+});
+
+await check("the signed POST carries x-hub-signature-256; the unsigned one carries none", async () => {
+  const stub = makeGithubStub();
+  await githubSmoke({}, stub);
+  assert.ok(stub.signedHeaders[0]?.["x-hub-signature-256"], "signed delivery carries x-hub-signature-256");
+  assert.match(stub.signedHeaders[0]!["x-hub-signature-256"]!, /^sha256=[0-9a-f]{64}$/);
+  assert.equal(stub.unsignedHeaders[0]?.["x-hub-signature-256"], undefined, "the unsigned delivery carries no signature header");
+});
+
+await check("RED — no 200 on the signed leg fails the FIRST gate and stops there (no false audit-row gate)", async () => {
+  const result = await githubSmoke({ signedStatus: 500 });
+  assert.equal(result.ok, false);
+  assert.equal(gate(result, "signed GitHub installation delivery is accepted").pass, false);
+  assert.ok(!result.gates.some((g) => g.label.includes("audits OUR delivery")), "the audit-row gate must not even be ATTEMPTED once the 200 gate is red");
+});
+
+await check("RED — 200 with no surface.app_installed row fails the audit-row gate", async () => {
+  const result = await githubSmoke({ writeRow: false });
+  assert.equal(result.ok, false);
+  assert.equal(gate(result, "signed GitHub installation delivery is accepted").pass, true, "the 200 gate itself is still green");
+  assert.equal(gate(result, "audits OUR delivery").pass, false);
+});
+
+await check("RED — an unsigned delivery accepted (200) AND leaving a row behind fails BOTH negative gates", async () => {
+  const result = await githubSmoke({ unsignedStatus: 200, writeRowForUnsigned: true });
+  assert.equal(result.ok, false);
+  assert.equal(gate(result, "unsigned GitHub installation delivery is refused").pass, false);
+  assert.equal(gate(result, "leaves NO audit trace").pass, false);
+});
+
+await check("RED — a 401 with a row behind it (the worst outcome) is still caught: the status-only gate would have missed it", async () => {
+  const result = await githubSmoke({ writeRowForUnsigned: true });
+  assert.equal(gate(result, "unsigned GitHub installation delivery is refused").pass, true, "the status code alone looks fine");
+  assert.equal(gate(result, "leaves NO audit trace").pass, false, "…but the trace gate catches what the status code could not");
+  assert.equal(result.ok, false);
+});
+
+await check("a surface.app_installed row for a DIFFERENT owner does not satisfy the join", async () => {
+  const stub = makeGithubStub({ writeRow: false });
+  const decoyFetch: typeof stub.fetchImpl = async (url, init) => {
+    if (url.startsWith(`${TARGET}/control/v1/audit`)) {
+      return { status: 200, text: async () => JSON.stringify({ entries: [{ ts: new Date().toISOString(), org: "default", platform: "github", workspace: "some-other-owner", action: "surface.app_installed" }] }) };
+    }
+    return stub.fetchImpl(url, init);
+  };
+  const result = await githubSmoke({}, { ...stub, fetchImpl: decoyFetch });
+  assert.equal(gate(result, "audits OUR delivery").pass, false, "a decoy owner's row must not satisfy the join");
+});
+
 if (failures.length > 0) {
   console.error(`✗ deploy-smoke: ${failures.length} of ${checks} check(s) FAILED`);
   for (const f of failures) console.error(`  ✗ ${f}`);
   process.exit(1);
 }
-console.log(`✓ deploy-smoke: ${checks} check(s) passed (gate ladder, three reds, the exact delivery-id join — all offline)`);
+console.log(`✓ deploy-smoke: ${checks} check(s) passed (gate ladder, three reds, the exact delivery-id join, the github installation rung — all offline)`);

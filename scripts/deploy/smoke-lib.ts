@@ -1,6 +1,7 @@
 import { buildAuditQuery, type AuditWireEntry } from "../../packages/core/scripts/e2e/audit-read.js";
 import { WebhookDriver, webhookDeliveryId, type WebhookFetch } from "../../packages/core/scripts/e2e/webhook.js";
 import type { WebhookConfig } from "../../packages/core/scripts/e2e/env.js";
+import { signGithubBody } from "../../packages/core/scripts/e2e/github-forge.js";
 
 const FIRE_ACTIONS = ["webhook.fired", "webhook.declined"] as const;
 
@@ -171,6 +172,114 @@ export async function runWebhookSmoke(deps: SmokeDeps): Promise<SmokeResult> {
       ? `no webhook.fired/webhook.declined row carries deliveryId ${unsignedId} after a ${unsignedGraceMs}ms grace window`
       : `${stray.length} row(s) carry the REFUSED delivery id: ${stray.map((r) => `${r.action}@${r.ts}`).join(", ")}`,
   );
+
+  return { ok: positiveOk && refused && noTrace, gates };
+}
+
+export interface GithubInstallationSmokeDeps {
+  readonly targetUrl: string;
+  readonly webhookSecret: string;
+  readonly controlToken: string;
+  readonly fetchImpl: WebhookFetch;
+  readonly now: () => number;
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly log: (line: string) => void;
+  readonly firedTimeoutMs?: number;
+  readonly unsignedGraceMs?: number;
+  readonly pollIntervalMs?: number;
+}
+
+function githubInstallationBody(action: string, owner: string, installationId: number): string {
+  return JSON.stringify({ action, installation: { id: installationId, account: { login: owner, type: "Organization" } } });
+}
+
+async function readGithubAudit(deps: GithubInstallationSmokeDeps, sinceIso: string): Promise<readonly AuditWireEntry[]> {
+  const base = deps.targetUrl.replace(/\/+$/, "");
+  const query = buildAuditQuery({ sinceIso, actions: ["surface.app_installed"], limit: 100 });
+  const res = await deps.fetchImpl(`${base}/control/v1/audit?${query}`, {
+    method: "GET",
+    headers: { authorization: `Bearer ${deps.controlToken}`, accept: "application/json" },
+    body: "",
+  });
+  const text = await res.text();
+  if (res.status !== 200) throw new Error(`GET /control/v1/audit -> ${res.status} (${text.slice(0, 160)})`);
+  const parsed = JSON.parse(text) as { entries?: AuditWireEntry[] };
+  if (!Array.isArray(parsed.entries)) throw new Error("GET /control/v1/audit returned no entries array (malformed response)");
+  return parsed.entries;
+}
+
+export async function runGithubInstallationSmoke(deps: GithubInstallationSmokeDeps): Promise<SmokeResult> {
+  const firedTimeoutMs = deps.firedTimeoutMs ?? DEFAULTS.firedTimeoutMs;
+  const unsignedGraceMs = deps.unsignedGraceMs ?? DEFAULTS.unsignedGraceMs;
+  const pollIntervalMs = deps.pollIntervalMs ?? DEFAULTS.pollIntervalMs;
+  const base = deps.targetUrl.replace(/\/+$/, "");
+  const gates: SmokeGate[] = [];
+  const gate = (label: string, pass: boolean, detail: string): boolean => {
+    gates.push({ label, pass, detail });
+    deps.log(`${pass ? "✓" : "✗"} ${label} — ${detail}`);
+    return pass;
+  };
+
+  const owner = `oe-deploy-smoke-${deps.now().toString(36)}`;
+  const installationId = deps.now() % 1_000_000_000;
+  const sinceIso = new Date(deps.now() - 30_000).toISOString();
+  const body = githubInstallationBody("created", owner, installationId);
+  deps.log(`signed POST /eve/v1/github (installation created, owner ${owner})`);
+  const signed = await deps.fetchImpl(`${base}/eve/v1/github`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-github-event": "installation", "x-hub-signature-256": signGithubBody(deps.webhookSecret, body) },
+    body,
+  });
+  let positiveOk = gate(
+    "a signed GitHub installation delivery is accepted (200)",
+    signed.status === 200,
+    `POST /eve/v1/github -> ${signed.status}`,
+  );
+
+  if (positiveOk) {
+    const deadline = deps.now() + firedTimeoutMs;
+    let found: AuditWireEntry | undefined;
+    for (;;) {
+      found = (await readGithubAudit(deps, sinceIso)).find((r) => r.workspace === owner);
+      if (found || deps.now() >= deadline) break;
+      await deps.sleep(pollIntervalMs);
+    }
+    positiveOk = gate(
+      "the deployment audits OUR delivery (surface.app_installed carries our owner)",
+      found !== undefined,
+      found ? `${found.action} row at ${found.ts}` : `no surface.app_installed row carrying workspace ${owner} within ${firedTimeoutMs}ms`,
+    );
+  }
+
+  const unsignedOwner = `oe-deploy-smoke-unsigned-${deps.now().toString(36)}`;
+  const unsignedInstallationId = deps.now() % 1_000_000_000;
+  const unsignedSince = new Date(deps.now() - 30_000).toISOString();
+  const unsignedBody = githubInstallationBody("created", unsignedOwner, unsignedInstallationId);
+  deps.log(`unsigned POST /eve/v1/github (installation created, owner ${unsignedOwner})`);
+  const unsigned = await deps.fetchImpl(`${base}/eve/v1/github`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-github-event": "installation" },
+    body: unsignedBody,
+  });
+  const refused = gate("an unsigned GitHub installation delivery is refused (401)", unsigned.status === 401, `POST /eve/v1/github (no signature) -> ${unsigned.status}`);
+
+  await deps.sleep(unsignedGraceMs);
+  const strayRows = (await readGithubAudit(deps, unsignedSince)).filter((r) => r.workspace === unsignedOwner);
+  const noTrace = gate(
+    "the refused delivery leaves NO audit trace",
+    strayRows.length === 0,
+    strayRows.length === 0 ? `no surface.app_installed row carries workspace ${unsignedOwner}` : `${strayRows.length} row(s) carry the REFUSED owner`,
+  );
+
+  try {
+    const cleanupBody = githubInstallationBody("deleted", owner, installationId);
+    await deps.fetchImpl(`${base}/eve/v1/github`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-github-event": "installation", "x-hub-signature-256": signGithubBody(deps.webhookSecret, cleanupBody) },
+      body: cleanupBody,
+    });
+  } catch {
+  }
 
   return { ok: positiveOk && refused && noTrace, gates };
 }
