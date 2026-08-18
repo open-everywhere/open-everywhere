@@ -46,6 +46,7 @@ import {
   type ExternalPolicy,
   getOperationalStore,
   appendAudit,
+  type AuditInput,
   type FinalMessageAction,
   type NormalizedWake,
   type WakeEngagementTier,
@@ -197,6 +198,35 @@ export function parseRelayReaction(raw: unknown): DiscordRelayReaction | null {
     reactorId,
     messageAuthorId: str(r["messageAuthorId"]),
     botId: str(r["botId"]),
+  };
+}
+
+export interface DiscordRelayHeartbeat {
+  readonly relayId: string;
+  readonly ts: number;
+}
+
+export function parseRelayHeartbeat(raw: unknown): DiscordRelayHeartbeat | null {
+  if (!isObject(raw)) return null;
+  if (raw["source"] !== "discord-gateway-relay") return null;
+  if (raw["event"] !== "HEARTBEAT") return null;
+  const hb = raw["heartbeat"];
+  if (!isObject(hb)) return null;
+  const relayId = str(hb["relayId"]);
+  const ts = typeof hb["ts"] === "number" && Number.isFinite(hb["ts"]) ? (hb["ts"] as number) : undefined;
+  if (!relayId || ts === undefined) return null;
+  return { relayId, ts };
+}
+
+export function discordHeartbeatAuditRow(heartbeat: DiscordRelayHeartbeat, org: string): AuditInput {
+  return {
+    org,
+    platform: "discord",
+    workspace: "relay",
+    surface: "heartbeat",
+    principalId: heartbeat.relayId,
+    action: "discord.heartbeat",
+    detail: { relayId: heartbeat.relayId, sentAtIso: new Date(heartbeat.ts).toISOString() },
   };
 }
 
@@ -1336,6 +1366,12 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
       } catch {
         return new Response("invalid json", { status: 400 });
       }
+      const heartbeat = parseRelayHeartbeat(json);
+      if (heartbeat) {
+        waitUntil(appendAudit(discordHeartbeatAuditRow(heartbeat, deploymentOrg())).catch(() => undefined));
+        return new Response("ok", { status: 200 });
+      }
+
       const reaction = parseRelayReaction(json);
       if (reaction) {
         waitUntil(

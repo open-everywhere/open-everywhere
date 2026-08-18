@@ -66,3 +66,11 @@ export function buildDiscordGuildAmbientRelayEnvelope(input: {
   };
 }
 
+export function buildDiscordRelayHeartbeatEnvelope(input: { readonly relayId: string; readonly ts?: number }): Record<string, unknown> {
+  return {
+    source: "discord-gateway-relay",
+    event: "HEARTBEAT",
+    heartbeat: { relayId: input.relayId, ts: input.ts ?? Date.now() },
+  };
+}
+
