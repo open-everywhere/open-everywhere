@@ -1,5 +1,15 @@
-import { STACKS, resolveStack, type ModelRole, type ModelStack, type StackAlias } from "../agent/model/stacks.js";
-import { allowListForStack } from "../agent/model/models.js";
+import {
+  SHIPPED_STACK,
+  STACKS,
+  compactionThresholdTokens,
+  resolveStack,
+  type ModelRole,
+  type ModelStack,
+  type StackAlias,
+} from "../agent/model/stacks.js";
+import { MODEL_STACK, PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS, allowListForStack } from "../agent/model/models.js";
+import { SETTINGS_OVERRIDES } from "../agent/settings/settings.js";
+import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
 import {
   assertModelPolicyValid,
   defineModelPolicy,
@@ -107,6 +117,80 @@ for (const alias of Object.keys(STACKS) as StackAlias[]) {
   }
 }
 
+{
+  const percent = getSettings(process.env, SETTINGS_OVERRIDES).agent.compactionThresholdPercent;
+  const shippedPercent = getSettings(process.env, {}).agent.compactionThresholdPercent;
+
+  const resolvedPrimaryWindow = resolveStack(MODEL_STACK).primary.contextWindowTokens;
+  ok(
+    PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS === resolvedPrimaryWindow,
+    `PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS is ${PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS}, but the resolved stack ` +
+      `"${MODEL_STACK}" declares a primary window of ${resolvedPrimaryWindow}. The window eve takes the compaction ` +
+      `fraction of MUST come from the registry entry for the active stack's primary (agent/model/models.ts), never ` +
+      `from a literal — a literal is right for today's stacks and wrong for the first small-window one.`,
+  );
+
+  ok(
+    shippedPercent === 0.5,
+    `the schema's shipped compactionThresholdPercent is ${shippedPercent}, expected 0.5 — the negative control for (b) ` +
+      `only works while the shipped value and this deployment's override differ.`,
+  );
+  ok(
+    percent === 0.2 && percent !== shippedPercent,
+    `this deployment resolves compactionThresholdPercent to ${percent}, expected its own override 0.2 ` +
+      `(agent/settings/settings.ts, OPE-672) to beat the shipped ${shippedPercent}.`,
+  );
+
+  ok(SHIPPED_STACK === "american-closed", `SHIPPED_STACK is "${SHIPPED_STACK}", expected "american-closed" — pin (c) below names it.`);
+  const luna = resolveStack("american-closed");
+  ok(
+    luna.primary.contextWindowTokens === 1_050_000,
+    `the american-closed primary declares a ${luna.primary.contextWindowTokens}-token window, expected 1050000.`,
+  );
+  const lunaThreshold = compactionThresholdTokens(luna.primary.contextWindowTokens, percent);
+  ok(
+    lunaThreshold === 210_000,
+    `american-closed compacts at ${lunaThreshold} tokens, expected 210000 (1050000 × 0.2). OPE-715 required this ` +
+      `number to be UNCHANGED: deriving the threshold must be zero-behaviour-change for the deployed configuration.`,
+  );
+
+  const SMALL_WINDOW = 272_000;
+  const small = resolveStack("american-closed", { primary: { contextWindowTokens: SMALL_WINDOW } });
+  const smallThreshold = compactionThresholdTokens(small.primary.contextWindowTokens, percent);
+  ok(
+    smallThreshold === 54_400,
+    `a ${SMALL_WINDOW}-token primary compacts at ${smallThreshold}, expected 54400 (${SMALL_WINDOW} × ${percent}).`,
+  );
+  ok(
+    smallThreshold < lunaThreshold,
+    `a ${SMALL_WINDOW}-token primary compacts at ${smallThreshold}, which is NOT below the 1050000-token primary's ` +
+      `${lunaThreshold}. The threshold must track the window, or a small-window stack overruns its context.`,
+  );
+  ok(
+    Math.abs(smallThreshold / SMALL_WINDOW - lunaThreshold / 1_050_000) < 1e-9,
+    `the two stacks compact at different FRACTIONS of their windows (${smallThreshold / SMALL_WINDOW} vs ` +
+      `${lunaThreshold / 1_050_000}). One ratio governs every stack; an absolute per family is what OPE-715 refused.`,
+  );
+  ok(
+    compactionThresholdTokens(1_000_000, percent) !== smallThreshold,
+    `a hard-coded 1M window and the ${SMALL_WINDOW}-token stack yield the SAME threshold, so (d) cannot tell a ` +
+      `derived window from a fixed one.`,
+  );
+
+  for (const alias of Object.keys(STACKS) as StackAlias[]) {
+    const stack = resolveStack(alias);
+    const w = stack.primary.contextWindowTokens;
+    const t = compactionThresholdTokens(w, percent);
+    ok(
+      t > 0 && t < w,
+      `[${alias}] compacts at ${t} tokens against a ${w}-token primary window — a threshold must be strictly ` +
+        `between 0 and the window.`,
+    );
+  }
+
+  ok(compactionThresholdTokens(1, 0.2) === 1, `a 1-token window must floor to a threshold of 1, got ${compactionThresholdTokens(1, 0.2)}.`);
+}
+
 if (reds.length > 0) {
   console.error(`✗ model-stacks: ${reds.length} failure(s) across ${Object.keys(STACKS).length} stack(s):\n`);
   for (const r of reds) console.error(`  • ${r}`);
@@ -116,5 +200,6 @@ if (reds.length > 0) {
 console.log(
   `✓ model-stacks: ${passed} assertions passed across ${Object.keys(STACKS).length} shipped stack(s) ` +
     `(${Object.keys(STACKS).join(", ")}) — role-default fallback, no tier selects the describer, every role usable, ` +
-    `and a stale domain pick fails soft onto the role's own model.`,
+    `a stale domain pick fails soft onto the role's own model, and the compaction threshold is derived from each ` +
+    `stack's primary window.`,
 );

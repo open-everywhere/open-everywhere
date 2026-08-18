@@ -133,6 +133,20 @@ function discordBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding
   const statusWithTelemetry = renderStatus({ version: "1.2.3", primaryModel: "zai/glm-5.2", utilityModel: "deepseek/deepseek-v4-flash" }, "sqlite", "on (default collector)");
   ok(statusWithTelemetry.includes("telemetry: `on (default collector)`"), "renderStatus includes an explicit telemetry status");
 
+  ok(!status.includes("compaction fires at"), "renderStatus omits the compaction line when the app registered no window");
+  ok(!status.includes("context window:"), "renderStatus omits the context-window line when the app registered no window");
+  const statusWithWindow = renderStatus(
+    { version: "1.2.3", primaryModel: "zai/glm-5.2", utilityModel: "deepseek/deepseek-v4-flash", contextWindowTokens: 1_050_000, compactionThresholdTokens: 210_000 },
+    "sqlite",
+  );
+  ok(statusWithWindow.includes("context window: `1,050,000` tokens"), "renderStatus groups the context window with commas");
+  ok(statusWithWindow.includes("compaction fires at `210,000` (20%)"), "renderStatus states the absolute compaction threshold and its percent");
+  const statusHalf = renderStatus(
+    { version: "1.2.3", primaryModel: "zai/glm-5.2", utilityModel: "deepseek/deepseek-v4-flash", contextWindowTokens: 1_050_000 },
+    "sqlite",
+  );
+  ok(!statusHalf.includes("context window:"), "renderStatus omits the line when only the window is registered");
+
   const uncapped = renderBudgetStatus({
     surfaceKey: "discord/G1/C1",
     workspaceKey: "discord/G1",

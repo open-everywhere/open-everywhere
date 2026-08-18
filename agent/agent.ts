@@ -17,6 +17,7 @@ import {
   VISION_MODEL,
 } from "./model/models.js";
 import { loadModelPolicy } from "./model/policy.js";
+import { compactionThresholdTokens } from "./model/stacks.js";
 import { scriptedModelFor } from "./model/scripted-resolve.js";
 import { registerAppInfo } from "@open-everywhere/core/agent/commands/core.js";
 import { backgroundTasksAtBuild, getSettings } from "@open-everywhere/core/agent/settings/settings.js";
@@ -38,6 +39,8 @@ const SESSION_INPUT_TOKEN_BUDGET = getSettings().agent.sessionInputTokenBudget;
 const BACKGROUND_TASKS = backgroundTasksAtBuild(SETTINGS_OVERRIDES);
 
 const COMPACTION_THRESHOLD_PERCENT = getSettings().agent.compactionThresholdPercent;
+
+const COMPACTION_THRESHOLD_TOKENS = compactionThresholdTokens(PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS, COMPACTION_THRESHOLD_PERCENT);
 
 registerGatewayDreamJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
 
@@ -66,7 +69,13 @@ function readAppVersion(): string {
     return "unknown";
   }
 }
-registerAppInfo({ version: readAppVersion(), primaryModel: DEFAULT_MODEL, utilityModel: UTILITY_MODEL });
+registerAppInfo({
+  version: readAppVersion(),
+  primaryModel: DEFAULT_MODEL,
+  utilityModel: UTILITY_MODEL,
+  contextWindowTokens: PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS,
+  compactionThresholdTokens: COMPACTION_THRESHOLD_TOKENS,
+});
 
 function primaryModelSelection<TModel>(model: TModel): {
   readonly model: TModel;
