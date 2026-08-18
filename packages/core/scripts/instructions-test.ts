@@ -506,25 +506,28 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     process.env.OE_WAKE_SHAPE = "schema";
     const block = flat(renderReadingAWake());
     ok(renderReadingAWake().startsWith("### Reading a wake"), "OE_WAKE_SHAPE=schema renders the standing 'Reading a wake' block");
+    for (const section of ["**What you see.**", "**How to read one.**", "**Your posture.**"]) {
+      ok(block.includes(section), `the schema block keeps Tag's section: ${section}`);
+    }
+    ok(block.includes('Only the message marked `trigger="true"` is the new event.'), "🔴 the schema block says only the trigger message is the new event");
+    ok(block.includes("is history for context, not things to answer"), "🔴 the rest of an envelope reads as history, not as a queue");
     ok(
-      block.includes("Answer a wake by calling `reply` with `wake` set to the `wake-id` on THAT envelope."),
+      block.includes("call\n`reply` with `wake` set to the id on THAT envelope") || block.includes("`reply` with `wake` set to the id on THAT envelope"),
       "🔴 the binding rule is present: answer a wake with THAT wake's own id",
     );
-    ok(
-      block.includes("never let one wake's attributes decide another's"),
-      "🔴 the sibling-independence rule is present: one wake's attributes never govern another's",
-    );
-    ok(
-      block.includes('`mention="true"` on the message is the addressing signal'),
-      "🔴 the addressing discriminator is the per-message mention flag",
-    );
-    ok(block.includes("the wake is context, not a queue to answer"), "🔴 the ambient rule is present: an unaddressed wake is context, not a queue to answer");
-    ok(block.includes("silence is the normal outcome"), "🔴 the ambient rule is silence-biased, not merely descriptive");
-    ok(block.includes("An addressed wake beside it changes nothing about that."), "🔴 a coalesced addressed sibling does not lower the ambient bar");
-    ok(block.split(/\s+/).length < 400, `the schema block stays short — Tag states its whole posture in a few sentences (${block.split(/\s+/).length} words)`);
-    for (const addressing of ["direct-mention", "channel-watch", "thread-follow", "name-drop"]) {
-      ok(block.includes(`\`${addressing}\` —`), `the schema block states a reply bar for addressing="${addressing}"`);
+    ok(block.includes("any\nother id reaches the wrong people") || block.includes("any other id reaches the wrong people"), "🔴 the binding rule states the consequence of naming another id");
+    ok(block.includes("your default is silence"), "🔴 the posture sentence is silence-biased");
+    ok(block.includes("clearly the intended recipient"), "🔴 the posture sentence keys engagement on being the intended recipient");
+    for (const recipientCase of ["mentioned", "sent a direct message", "following on from your own message", "channel memory says otherwise"]) {
+      ok(block.includes(recipientCase), `the posture sentence names the intended-recipient case: ${recipientCase}`);
     }
+    ok(block.includes("An addressed wake beside an ambient one changes nothing about the ambient one."), "🔴 a coalesced addressed sibling does not lower the ambient bar");
+    ok(block.includes("`principal` addressed you, `peer` did not"), "🔴 the schema block glosses trust the way the schema render keys it: principal addressed you, peer did not");
+    ok(block.includes("`relay` is a machine"), "the schema block glosses the authority floor");
+    ok(block.includes("`from` says what kind of author wrote it"), "the schema block glosses `from`");
+    ok(block.includes("`reason` says"), "the schema block glosses `reason`");
+    ok(block.split(/\s+/).length < 400, `the schema block stays short — Tag states its whole posture in a few sentences (${block.split(/\s+/).length} words)`);
+    ok(!block.includes("`channel-watch` —"), "the schema block does NOT enumerate a bar per addressing value — that is the prose shape it replaced");
     ok(!block.includes("turn-final"), "the schema block does NOT restate the delivery rule — the reporting arm owns it");
   } finally {
     if (before === undefined) delete process.env.OE_WAKE_SHAPE;
