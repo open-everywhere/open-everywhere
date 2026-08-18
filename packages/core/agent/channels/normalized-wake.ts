@@ -11,12 +11,10 @@ import {
   type WakeFollowUp,
 } from "./wake-envelope.js";
 import { renderContext, type ContextLine } from "./context-render.js";
+import { wakeShapeIsSchema } from "./wake-shape.js";
+export { wakeShapeIsSchema } from "./wake-shape.js";
 
 export type { WakeAddressing, WakeEngagementTier } from "./wake-envelope.js";
-
-export function wakeShapeIsSchema(): boolean {
-  return process.env.OE_WAKE_SHAPE === "schema";
-}
 
 export const NO_REPLY_SENTINEL = "NO_REPLY";
 

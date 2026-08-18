@@ -2,6 +2,7 @@ import { ingestUntrusted, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../access/untr
 import { capResult } from "../access/result-cap.js";
 import { noteIngestionVerdict } from "../access/taint-enforcement.js";
 import { taintMarkLands } from "../access/taint-signal.js";
+import { wakeShapeIsSchema } from "./wake-shape.js";
 
 export type WakeReason =
   | "channel-activity"
@@ -202,7 +203,10 @@ function renderParticipants(ps: readonly WakeParticipant[]): string {
 
 function renderChannelOpen(c: WakeChannelMeta): string {
   const memberCount = c.memberCount === undefined ? undefined : String(c.memberCount);
-  return `<channel${attr("platform", c.platform)}${attr("id", c.id)}${attr("label", c.platformLabel)}${attr("type", c.type)}${attr("container", c.container)}${attr("member-count", memberCount)}>`;
+  const platformBlind = wakeShapeIsSchema();
+  const platform = platformBlind ? undefined : c.platform;
+  const label = platformBlind ? undefined : c.platformLabel;
+  return `<channel${attr("platform", platform)}${attr("id", c.id)}${attr("label", label)}${attr("type", c.type)}${attr("container", c.container)}${attr("member-count", memberCount)}>`;
 }
 
 function renderThreadOpen(t: WakeThreadMeta): string {

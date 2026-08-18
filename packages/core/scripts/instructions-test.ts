@@ -507,15 +507,21 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     const block = flat(renderReadingAWake());
     ok(renderReadingAWake().startsWith("### Reading a wake"), "OE_WAKE_SHAPE=schema renders the standing 'Reading a wake' block");
     ok(
-      block.includes("To answer a block, call `reply` with `wake` set to the `wake-id` attribute of THAT block."),
-      "🔴 the binding rule is present: answer a block with THAT block's wake-id",
+      block.includes("Answer a wake by calling `reply` with `wake` set to the `wake-id` on THAT envelope."),
+      "🔴 the binding rule is present: answer a wake with THAT wake's own id",
     );
     ok(
-      block.includes("a neighbour's `addressing` says nothing about this one"),
-      "🔴 the sibling-independence rule is present: a neighbour's addressing does not govern this block",
+      block.includes("never let one wake's attributes decide another's"),
+      "🔴 the sibling-independence rule is present: one wake's attributes never govern another's",
     );
-    ok(block.includes("This is context, not a queue to answer."), "🔴 the ambient rule is present: a channel-watch wake is context, not a queue to answer");
-    ok(block.includes("Silence is the normal outcome"), "🔴 the ambient rule is silence-biased, not merely descriptive");
+    ok(
+      block.includes('`mention="true"` on the message is the addressing signal'),
+      "🔴 the addressing discriminator is the per-message mention flag",
+    );
+    ok(block.includes("the wake is context, not a queue to answer"), "🔴 the ambient rule is present: an unaddressed wake is context, not a queue to answer");
+    ok(block.includes("silence is the normal outcome"), "🔴 the ambient rule is silence-biased, not merely descriptive");
+    ok(block.includes("An addressed wake beside it changes nothing about that."), "🔴 a coalesced addressed sibling does not lower the ambient bar");
+    ok(block.split(/\s+/).length < 400, `the schema block stays short — Tag states its whole posture in a few sentences (${block.split(/\s+/).length} words)`);
     for (const addressing of ["direct-mention", "channel-watch", "thread-follow", "name-drop"]) {
       ok(block.includes(`\`${addressing}\` —`), `the schema block states a reply bar for addressing="${addressing}"`);
     }

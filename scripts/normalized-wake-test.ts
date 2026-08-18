@@ -301,7 +301,7 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
 {
   const nw: NormalizedWake = {
     platform: "slack", reason: "channel-activity", addressing: "channel-watch",
-    locus: { channel: { id: "C1", type: "channel" } },
+    locus: { channel: { id: "C1", type: "channel", platform: "slack", platformLabel: "Slack" } },
     wakeId: "11111111-2222-3333-4444-555555555555",
     trigger: trig("moving the 3pm sync to 3:30"),
   };
@@ -312,6 +312,7 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
     ok(prose.startsWith("[channel-watch]"), "default: a judged wake still opens with its prose preamble");
     ok(prose.includes("Wake scope [wake-id: 11111111-2222-3333-4444-555555555555]"), "default: the coalesced-turn scope note is still rendered");
     ok(prose.includes("you MUST deliver any answer by CALLING THE `reply` TOOL"), "default: the single-window delivery mandate is still rendered");
+    ok(prose.includes('platform="slack"') && prose.includes('label="Slack"'), "default: the <channel> element still names its platform and label");
 
     process.env.OE_WAKE_SHAPE = "prose";
     eq(renderWake(nw, NOW).message, prose, "OE_WAKE_SHAPE=prose is byte-identical to the default render — only the exact value \"schema\" changes anything");
@@ -324,7 +325,14 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
     ok(!schema.includes("CALLING THE `reply` TOOL"), "schema: the prose delivery mandate is gone (the standing reporting arm carries it)");
     ok(schema.includes('addressing="channel-watch"'), "schema: the addressing attribute survives — it is the whole discriminator now");
     ok(schema.includes('wake-id="11111111-2222-3333-4444-555555555555"'), "schema: the wake-id attribute survives — a reply still has an id to name");
-    eq(schema, prose.slice(prose.indexOf("<wake ")), "schema: the envelope itself is byte-identical to the prose arm's envelope");
+    ok(!schema.includes('platform="slack"'), "🔴 schema: the <channel> element names NO platform");
+    ok(!schema.includes('label="Slack"'), "🔴 schema: the <channel> element carries no human platform label either");
+    ok(schema.includes('<channel id="C1"'), "schema: the channel still carries its opaque id — that is what the host routes on");
+    eq(
+      schema,
+      prose.slice(prose.indexOf("<wake ")).replace(' platform="slack"', "").replace(' label="Slack"', ""),
+      "schema: the envelope is byte-identical to the prose arm's envelope once the two platform attributes are normalised out — nothing ELSE about the envelope moves",
+    );
   } finally {
     if (before === undefined) delete process.env.OE_WAKE_SHAPE;
     else process.env.OE_WAKE_SHAPE = before;
