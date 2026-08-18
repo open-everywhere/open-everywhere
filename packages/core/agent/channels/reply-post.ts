@@ -1,4 +1,4 @@
-import { bindFrom, channelPlatform, type BindableContext } from "../identity/binding.js";
+import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
 import { onVercel } from "../access/platform.js";
@@ -22,14 +22,15 @@ export type ReplyTarget =
   | { readonly platform: "linear"; readonly agentSessionId: string };
 
 export function resolveReplyTarget(ctx: BindableContext): ReplyTarget | null {
-  const platform = channelPlatform(ctx);
+  const binding = bindFrom(ctx);
+  const platform = binding.platform;
   if (!capabilitiesForPlatform(platform).midTurnPost) return null;
   const arm = postArm(platform);
   if (!arm?.resolveTarget) return null;
-  const t = bindFrom(ctx).target;
+  const t = binding.target;
   const str = (k: string): string | undefined => (typeof t?.[k] === "string" && (t[k] as string).length > 0 ? (t[k] as string) : undefined);
   const num = (k: string): number | undefined => (typeof t?.[k] === "number" ? (t[k] as number) : undefined);
-  return arm.resolveTarget({ str, num, threadTs: bindFrom(ctx).threadTs, ctx });
+  return arm.resolveTarget({ str, num, threadTs: binding.threadTs, ctx });
 }
 
 export interface ReplyAudit {
