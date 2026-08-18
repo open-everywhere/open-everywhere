@@ -106,6 +106,9 @@ async function driveArm(input: { ids: string; prompt: string }): Promise<Driven>
   });
   expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   drained.handle.dispose();
+
+  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
   return { handle, wakeAt };
 }
 
