@@ -33,6 +33,14 @@ export interface TurnAnchorQuery {
   readonly channelKey?: string;
 }
 
+const UNIFIED_TOKEN_PREFIX = "unified:";
+
+function windowKeySpellings(windowKey: string): readonly string[] {
+  return windowKey.startsWith(UNIFIED_TOKEN_PREFIX)
+    ? [windowKey, windowKey.slice(UNIFIED_TOKEN_PREFIX.length)]
+    : [windowKey, `${UNIFIED_TOKEN_PREFIX}${windowKey}`];
+}
+
 export async function resolveTurnAnchor(org: string, q: TurnAnchorQuery): Promise<TurnAnchorRow | null> {
   const store = getOperationalStore();
   try {
@@ -41,8 +49,10 @@ export async function resolveTurnAnchor(org: string, q: TurnAnchorQuery): Promis
       if (byAnchor) return byAnchor;
     }
     if (q.windowKey) {
-      const byWindow = await store.getTurnAnchorByWindow(org, q.windowKey);
-      if (byWindow) return byWindow;
+      for (const key of windowKeySpellings(q.windowKey)) {
+        const byWindow = await store.getTurnAnchorByWindow(org, key);
+        if (byWindow) return byWindow;
+      }
     }
     if (q.channelKey) {
       const byChannel = await store.getLatestTurnAnchorForChannel(org, q.channelKey);
