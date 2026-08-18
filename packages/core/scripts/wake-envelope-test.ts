@@ -561,7 +561,7 @@ const countOccurrences = (haystack: string, needle: string): number =>
     renderWakeEnvelope({
       reason: "mention",
       currentTime: "2026-04-27T04:01:01Z",
-      channel: { platform: "slack", id: "C1", memberCount: 3 },
+      channel: { id: "C1", memberCount: 3 },
       messages,
       ...over,
     });

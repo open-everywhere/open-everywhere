@@ -491,7 +491,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         [{ trust: wakeTrust, refuted: partnerTrust === "external" }],
         { dm: true },
       );
-      const message = renderWakeMessage(ev, () => atIso, { dm: true, trust: wakeTrust, wakeId, ...(isGroup ? { groupDm: true } : {}) });
+      const message = renderWakeMessage(ev, () => atIso, { dm: true, trust: wakeTrust, wakeId });
       const handoff =
         seat.freshGeneration && seat.handoffNote && seat.handoffNote.length > 0
           ? [`<handoff-from-previous-session>\n${seat.handoffNote}\n</handoff-from-previous-session>`]

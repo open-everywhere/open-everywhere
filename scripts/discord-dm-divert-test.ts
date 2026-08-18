@@ -229,10 +229,8 @@ async function run(msg: DiscordRelayMessage, opts: { noReceive?: boolean } = {})
   });
   eq(nw.reason, "dm", "the builder emits reason `dm`");
   eq(nw.addressing, "direct-mention", "…with `direct-mention` addressing (semantically true AND mechanically load-bearing)");
-  eq(nw.unifiedDisclosure, undefined, "🔴 NO cross-surface disclosure: a DM window is degenerate — there is no fan-in to disclose, and claiming one would be false");
   eq(nw.engagementTier, undefined, "…and no engagement tier (that dial calibrates AMBIENT watching; a DM is always answered)");
   eq(nw.locus.thread, undefined, "…and no thread locus");
-  eq(nw.locus.channel.platform, undefined, "…and no platform address stamp (this window sees exactly one surface)");
   const rendered = renderWake(nw, () => "2026-08-09T12:00:00Z");
   ok(rendered.message.includes('wake-id="wk_1"'), "the rendered envelope carries the wake-id — the only reply route on the unified channel");
 }

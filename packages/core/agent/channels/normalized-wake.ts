@@ -38,9 +38,7 @@ export interface NormalizedWake {
   readonly reason: WakeReason;
   readonly addressing: WakeAddressing;
   readonly containerNoun?: string;
-  readonly groupDm?: boolean;
   readonly engagementTier?: WakeEngagementTier;
-  readonly unifiedDisclosure?: boolean;
   readonly wakeId?: string;
   readonly locus: WakeLocus;
   readonly participants?: readonly WakeParticipant[];
@@ -50,7 +48,6 @@ export interface NormalizedWake {
   readonly contextSource?: string;
   readonly readMoreHint?: string;
   readonly nameDrop?: {
-    readonly botName: string;
     readonly followUp: WakeFollowUp;
   };
   readonly memoryDelta?: string;

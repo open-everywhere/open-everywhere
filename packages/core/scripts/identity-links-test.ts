@@ -420,7 +420,7 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
         currentTime: "2026-01-28T09:44:46.568Z",
         wakeId: "eab60e37-0000-1111-2222-333344445555",
         sourcePlatform: platform,
-        channel: { platform, id: "C0EXCHAN003", memberCount: 3 },
+        channel: { id: "C0EXCHAN003", memberCount: 3 },
         participants: [{ id: "U_CLAIMANT", name: "Rowan 2", handle: "Rowan 2" }],
         messages,
       }),
