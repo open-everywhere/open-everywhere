@@ -5,6 +5,7 @@ import { auditView, usageWindowView, unifiedDomainAudit } from "./views.js";
 import { appendAudit } from "../audit/audit.js";
 import type { AuditFilter } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
+import { credentialKeyArmed } from "../credentials/db-broker.js";
 
 export const CONTROL_READ_USAGE_PATH = "/control/v1/usage";
 export const CONTROL_READ_AUDIT_PATH = "/control/v1/audit";
@@ -164,6 +165,7 @@ export async function handleRuntimeSignalRead(req: Request): Promise<Response> {
   if (!identity) return json(401, { error: "unauthorized: missing or invalid bearer token" });
 
   const hasDeploymentId = (process.env.VERCEL_DEPLOYMENT_ID ?? "").trim().length > 0;
+  const credentialBrokerArmed = credentialKeyArmed();
 
   await appendAudit({
     org: deploymentOrg(),
@@ -171,10 +173,10 @@ export async function handleRuntimeSignalRead(req: Request): Promise<Response> {
     workspace: "control",
     principalId: identity.subject,
     action: "control.service_call",
-    detail: { service: identity.subject, view: "runtime_signal", hasDeploymentId },
+    detail: { service: identity.subject, view: "runtime_signal", hasDeploymentId, credentialBrokerArmed },
   });
 
-  return json(200, { hasDeploymentId });
+  return json(200, { hasDeploymentId, credentialBrokerArmed });
 }
 
 export interface TranscriptEvent {
