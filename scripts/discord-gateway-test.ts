@@ -7,6 +7,9 @@ __regDiscord();
 import {
   relayGate,
   parseRelayPayload,
+  parseRelayReaction,
+  parseRelayHeartbeat,
+  discordHeartbeatAuditRow,
   authForRelayMessage,
   authorFacts,
   discordExternalVerdict,
@@ -174,6 +177,64 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   ok(parseRelayPayload(relayEnvelope({ id: "x", content: "c", author: { id: "U", bot: false } })) === null, "parse: missing channelId -> null");
   ok(parseRelayPayload(relayEnvelope({ id: "x", content: "c", channelId: "C1" })) === null, "parse: missing author -> null");
   ok(parseRelayPayload(relayEnvelope({ id: "x", content: "c", channelId: "C1", author: { bot: false } })) === null, "parse: missing author id -> null");
+}
+
+{
+  const validHeartbeat = { source: "discord-gateway-relay", event: "HEARTBEAT", heartbeat: { relayId: "R_bot1", ts: 1_755_000_000_000 } };
+
+  const parsed = parseRelayHeartbeat(validHeartbeat);
+  ok(parsed !== null && parsed!.relayId === "R_bot1" && parsed!.ts === 1_755_000_000_000, "heartbeat parse: valid envelope round-trips relayId + ts");
+
+  ok(parseRelayHeartbeat(null) === null, "heartbeat parse: null -> null");
+  ok(parseRelayHeartbeat("nope") === null, "heartbeat parse: non-object -> null");
+  ok(parseRelayHeartbeat({ source: "somethingelse", event: "HEARTBEAT", heartbeat: { relayId: "R1", ts: 1 } }) === null, "heartbeat parse: wrong source -> null");
+  ok(parseRelayHeartbeat({ source: "discord-gateway-relay", event: "MESSAGE_CREATE", heartbeat: { relayId: "R1", ts: 1 } }) === null, "heartbeat parse: wrong event -> null");
+  ok(parseRelayHeartbeat({ source: "discord-gateway-relay", event: "HEARTBEAT" }) === null, "heartbeat parse: missing heartbeat object -> null");
+  ok(parseRelayHeartbeat({ source: "discord-gateway-relay", event: "HEARTBEAT", heartbeat: { ts: 1 } }) === null, "heartbeat parse: missing relayId -> null");
+  ok(parseRelayHeartbeat({ source: "discord-gateway-relay", event: "HEARTBEAT", heartbeat: { relayId: "R1" } }) === null, "heartbeat parse: missing ts -> null");
+  ok(
+    parseRelayHeartbeat({ source: "discord-gateway-relay", event: "HEARTBEAT", heartbeat: { relayId: "R1", ts: "not-a-number" } }) === null,
+    "heartbeat parse: non-numeric ts -> null",
+  );
+
+  ok(parseRelayPayload(validHeartbeat) === null, "heartbeat parse: a heartbeat envelope is NOT a message (no `message` object)");
+  ok(parseRelayReaction(validHeartbeat) === null, "heartbeat parse: a heartbeat envelope is NOT a reaction (no `reaction` object)");
+  const msgEnvelope = relayEnvelope({ id: "M1", content: "hi", channelId: "C1", author: { id: "U1", bot: false } });
+  ok(parseRelayHeartbeat(msgEnvelope) === null, "heartbeat parse: an ordinary MESSAGE_CREATE envelope is NOT a heartbeat");
+
+  const row = discordHeartbeatAuditRow(parsed!, "acme-org");
+  ok(row.org === "acme-org" && row.platform === "discord" && row.action === "discord.heartbeat", "heartbeat audit row: org/platform/action");
+  ok(row.principalId === "R_bot1", "heartbeat audit row: principalId carries the relayId, never a guild/user fact");
+  ok(row.workspace === "relay" && row.surface === "heartbeat", "heartbeat audit row: workspace/surface name the RELAY, not a guild");
+  ok(
+    row.detail?.["relayId"] === "R_bot1" && row.detail?.["sentAtIso"] === new Date(1_755_000_000_000).toISOString(),
+    "heartbeat audit row: detail carries relayId + the relay's own send time, and nothing else (no guild content)",
+  );
+  ok(Object.keys(row.detail ?? {}).length === 2, "heartbeat audit row: detail carries EXACTLY relayId + sentAtIso — no guild content ever rides along");
+}
+
+{
+  const src = readFileSync(fileURLToPath(new URL("../packages/providers/discord/agent/channels/discord-gateway.ts", import.meta.url)), "utf8");
+  const heartbeatAt = src.indexOf("const heartbeat = parseRelayHeartbeat(json);");
+  const reactionAt = src.indexOf("const reaction = parseRelayReaction(json);");
+  const dispatchAt = src.indexOf("dispatchTurn(msg, auth, gatewaySend");
+  ok(heartbeatAt > 0, "heartbeat order: the route classifies a heartbeat off the parsed body");
+  ok(reactionAt > 0 && dispatchAt > 0, "heartbeat order: the route still has a reaction leg and a dispatch call to order against");
+  ok(heartbeatAt < reactionAt, "heartbeat order: heartbeat is classified BEFORE the reaction leg");
+  ok(heartbeatAt < dispatchAt, "heartbeat order: heartbeat is classified BEFORE any turn dispatch");
+  const heartbeatBranch = src.slice(heartbeatAt, reactionAt);
+  ok(/if \(heartbeat\) \{[\s\S]*?return new Response\("ok", \{ status: 200 \}\);[\s\S]*?\}/.test(heartbeatBranch), "heartbeat order: a classified heartbeat RETURNS 200 rather than falling through");
+}
+
+{
+  const relaySrc = readFileSync(fileURLToPath(new URL("../deploy/discord-relay/index.js", import.meta.url)), "utf8");
+  ok(/source:\s*"discord-gateway-relay"/.test(relaySrc), "relay contract: emits the same `source` discriminator parseRelayHeartbeat checks");
+  ok(/event:\s*"HEARTBEAT"/.test(relaySrc), "relay contract: emits the `HEARTBEAT` event discriminator parseRelayHeartbeat expects");
+  ok(/heartbeat:\s*\{\s*relayId:\s*client\.user\.id,\s*ts:\s*Date\.now\(\)\s*\}/.test(relaySrc), "relay contract: heartbeat body carries exactly relayId + ts — no guild content, matching the ticket's security note");
+  ok(/createHmac\("sha256", RELAY_SECRET\)/.test(relaySrc), "relay contract: signing uses OE_RELAY_SECRET — the SAME key a forwarded message signs with");
+  ok(/forward\(toHeartbeatPayload\(\), "heartbeat"\)/.test(relaySrc), "relay contract: the heartbeat rides the SAME forward() that HMAC-signs + retries every other payload");
+  ok(/if \(INGEST_URL && HEARTBEAT_MS > 0\)/.test(relaySrc), "relay contract: the heartbeat timer only arms in FORWARD mode (nowhere to send one in PROOF mode) with a positive interval");
+  ok(/OE_RELAY_HEARTBEAT_MS/.test(relaySrc), "relay contract: the interval is operator-configurable, not hardcoded");
 }
 
 {

@@ -437,6 +437,19 @@ export async function rawDiscordRelayPost(
   return { status: res.status, text: await res.text() };
 }
 
+export async function rawDiscordRelayHeartbeatPost(
+  input: { readonly relayId: string; readonly ts?: number },
+  signature?: string | null,
+): Promise<{ status: number; text: string }> {
+  if (booted === undefined) throw new Error("integration harness: rawDiscordRelayHeartbeatPost before bootAgent.");
+  const { buildDiscordRelayHeartbeatEnvelope, signDiscordRelayRequest } = await import("../../packages/core/scripts/e2e/discord-synthetic");
+  const body = JSON.stringify(buildDiscordRelayHeartbeatEnvelope(input));
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (signature !== null) headers["x-oe-relay-signature"] = signature ?? signDiscordRelayRequest(body, RELAY_SECRET);
+  const res = await fetch(`${booted.base}/eve/v1/discord-gateway`, { method: "POST", headers, body });
+  return { status: res.status, text: await res.text() };
+}
+
 export const WEBHOOK_E2E_HOOK_ID = "e2e-smoke";
 
 export async function webhookDeliveryPost(
