@@ -7,6 +7,7 @@ import {
   readThreadResult,
   chatReadIngestion,
   renderChannelBody,
+  renderThreadBody,
   type ReadAdapter,
   type ReadOutputLine,
   type RenderedLine,
@@ -204,6 +205,35 @@ function adapter(graded: boolean | "none"): ReadAdapter {
   const thr = await readThreadResult(ctx, "slack", adapter(true), "C1", "999.9");
   eq(thr.thread_ts, "999.9", "thread: the thread id rides through");
   eq(thr.authoredByNonMember, true, "🔴 thread: read_thread grades identically to read_channel — one body, so they cannot drift");
+}
+
+console.log("5b. coverage disclosure (OPE-761):");
+{
+  const cappedAdapter: ReadAdapter = {
+    platform: "slack",
+    readChannel: async (_c, _ch, limit) => Array.from({ length: limit ?? 50 }, (_v, i) => human(`U${i}`, `msg ${i}`)),
+    readThread: async (_c, _ch, _ts, limit) => Array.from({ length: limit ?? 100 }, (_v, i) => human(`U${i}`, `reply ${i}`)),
+  };
+  const capped = await readChannelResult(ctx, "slack", cappedAdapter, "C1", 5);
+  eq(capped.possiblyIncomplete, true, "🔴 a fetch that lands exactly on its requested limit is flagged possiblyIncomplete");
+  ok(renderChannelBody(capped).includes("[coverage:"), "…and the rendered body carries a coverage note the model actually sees (not just a schema field)");
+
+  const cappedThread = await readThreadResult(ctx, "slack", cappedAdapter, "C1", "999.9", 5);
+  eq(cappedThread.possiblyIncomplete, true, "read_thread: the same signal, from the same shared body");
+  ok(renderThreadBody(cappedThread).includes("[coverage:"), "…and the thread render carries the note too");
+
+  const shortAdapter: ReadAdapter = {
+    platform: "slack",
+    readChannel: async () => [human("U1", "only message")],
+    readThread: async () => [human("U1", "only reply")],
+  };
+  const short = await readChannelResult(ctx, "slack", shortAdapter, "C1", 5);
+  ok(!("possiblyIncomplete" in short), "negative control: a page shorter than the limit carries NO field — POSITIVE-ONLY, byte-identical to before OPE-761");
+  ok(!renderChannelBody(short).includes("[coverage:"), "…and the render carries no coverage note either");
+
+  const defaultCapped = await readChannelResult(ctx, "slack", cappedAdapter, "C1");
+  eq(defaultCapped.count, 50, "no explicit limit ⇒ the channel default (50) is what the fetch actually asked for");
+  eq(defaultCapped.possiblyIncomplete, true, "…and hitting the default ceiling is flagged too, not just an explicit limit");
 }
 
 console.log("6. end to end — execute → the replayed toModelOutput → the turn mark:");

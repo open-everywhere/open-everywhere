@@ -30,6 +30,7 @@ export interface ChannelReadResult {
   readonly count: number;
   readonly messages: readonly RenderedLine[];
   readonly authoredByNonMember?: boolean;
+  readonly possiblyIncomplete?: boolean;
 }
 
 export interface ThreadReadResult {
@@ -39,6 +40,7 @@ export interface ThreadReadResult {
   readonly count: number;
   readonly messages: readonly RenderedLine[];
   readonly authoredByNonMember?: boolean;
+  readonly possiblyIncomplete?: boolean;
 }
 
 export interface ReadAdapter {
@@ -156,6 +158,7 @@ export interface ChannelReadOutput {
   count: number;
   messages: ReadOutputLine[];
   authoredByNonMember?: boolean;
+  possiblyIncomplete?: boolean;
 }
 
 export interface ThreadReadOutput extends ChannelReadOutput {
@@ -174,7 +177,8 @@ async function gradeAndProject(
   ctx: BindableContext,
   adapter: ReadAdapter,
   lines: readonly RenderedLine[],
-): Promise<{ count: number; messages: ReadOutputLine[]; authoredByNonMember?: boolean }> {
+  effectiveLimit: number,
+): Promise<{ count: number; messages: ReadOutputLine[]; authoredByNonMember?: boolean; possiblyIncomplete?: boolean }> {
   const refuted = await adapterRefutedAuthorIds(adapter, ctx, lines);
   const withholding = refuted.size > 0 && readAuthorPolicy(ctx).authorGrain === "withhold";
   const withheld = (m: RenderedLine): boolean => withholding && m.bot !== true && m.authorId !== undefined && refuted.has(m.authorId);
@@ -182,8 +186,12 @@ async function gradeAndProject(
     count: lines.length,
     messages: lines.map((m) => ({ author: m.author, ts: m.ts, text: withheld(m) ? WITHHELD_BODY_MARKER : m.text })),
     ...(refuted.size > 0 && !withholding ? { authoredByNonMember: true } : {}),
+    ...(lines.length >= effectiveLimit ? { possiblyIncomplete: true } : {}),
   };
 }
+
+const DEFAULT_CHANNEL_LIMIT_ESTIMATE = 50;
+const DEFAULT_THREAD_LIMIT_ESTIMATE = 100;
 
 export async function readChannelResult(
   ctx: BindableContext,
@@ -193,7 +201,7 @@ export async function readChannelResult(
   limit?: number,
 ): Promise<ChannelReadOutput> {
   const lines = await adapter.readChannel(ctx, channel, limit);
-  return { platform, channel, ...(await gradeAndProject(ctx, adapter, lines)) };
+  return { platform, channel, ...(await gradeAndProject(ctx, adapter, lines, limit ?? DEFAULT_CHANNEL_LIMIT_ESTIMATE)) };
 }
 
 export async function readThreadResult(
@@ -205,17 +213,21 @@ export async function readThreadResult(
   limit?: number,
 ): Promise<ThreadReadOutput> {
   const lines = await adapter.readThread(ctx, channel, threadTs, limit);
-  return { platform, channel, thread_ts: threadTs, ...(await gradeAndProject(ctx, adapter, lines)) };
+  return { platform, channel, thread_ts: threadTs, ...(await gradeAndProject(ctx, adapter, lines, limit ?? DEFAULT_THREAD_LIMIT_ESTIMATE)) };
 }
 
 export function chatReadIngestion(label: string, out: { readonly authoredByNonMember?: boolean }): IngestionSource {
   return { kind: "chat-message", label, ...(out.authoredByNonMember === true ? { authoredByNonMember: true } : {}) };
 }
 
+function coverageNote(kind: "channel" | "thread", count: number): string {
+  return `\n\n[coverage: showing the ${count} most recent ${kind === "channel" ? "messages" : "replies"} this fetch could return — older ${kind === "channel" ? "history" : "replies"} may exist beyond this page]`;
+}
+
 export function renderChannelBody(out: ChannelReadResult): string {
-  return out.count === 0
-    ? `No readable messages in ${out.channel}.`
-    : `Recent messages in ${out.channel} (oldest first):\n` + out.messages.map((m) => `[${m.author}] ${m.text}`).join("\n");
+  if (out.count === 0) return `No readable messages in ${out.channel}.`;
+  const body = `Recent messages in ${out.channel} (oldest first):\n` + out.messages.map((m) => `[${m.author}] ${m.text}`).join("\n");
+  return out.possiblyIncomplete ? body + coverageNote("channel", out.count) : body;
 }
 
 export function channelReadSource(out: ChannelReadResult): string {
@@ -223,9 +235,9 @@ export function channelReadSource(out: ChannelReadResult): string {
 }
 
 export function renderThreadBody(out: ThreadReadResult): string {
-  return out.count === 0
-    ? `No readable replies in thread ${out.thread_ts}.`
-    : `Thread ${out.thread_ts} in ${out.channel} (oldest first):\n` + out.messages.map((m) => `[${m.author}] ${m.text}`).join("\n");
+  if (out.count === 0) return `No readable replies in thread ${out.thread_ts}.`;
+  const body = `Thread ${out.thread_ts} in ${out.channel} (oldest first):\n` + out.messages.map((m) => `[${m.author}] ${m.text}`).join("\n");
+  return out.possiblyIncomplete ? body + coverageNote("thread", out.count) : body;
 }
 
 export function threadReadSource(out: ThreadReadResult): string {
