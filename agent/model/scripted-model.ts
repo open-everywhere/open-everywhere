@@ -67,7 +67,7 @@ export interface ResolveObservation {
   readonly channelKind: string | undefined;
   readonly classifiedKind: string;
   readonly hasSessionParent: boolean;
-  readonly fault?: string;
+  fault?: string;
   readonly eventEcho?: unknown;
 }
 
