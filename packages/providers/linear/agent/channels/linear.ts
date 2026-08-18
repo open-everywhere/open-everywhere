@@ -820,6 +820,7 @@ const native: LinearChannel = linearChannel({
         midTurnPost: false,
         noReplyAction: "linear.no_reply",
         repliedAction: "linear.replied",
+        noTargetAction: "linear.no_target",
         contextRow: row,
         repliedRow: row,
         silentAnchor: { issueId: target?.issueId ?? null },

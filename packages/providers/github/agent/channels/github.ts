@@ -439,6 +439,7 @@ const native: GitHubChannel = githubChannel({
         midTurnPost: capabilitiesForPlatform("github").midTurnPost,
         noReplyAction: "github.no_reply",
         repliedAction: "github.replied",
+        noTargetAction: "github.no_target",
         contextRow: { org, platform: "github", workspace: auditOwner, surface: `github/${auditOwner}/${auditRepo}` },
         repliedRow: { org, platform: "github", workspace: postOwner ?? auditOwner, surface: `github/${postOwner ?? auditOwner}/${postRepo ?? auditRepo}` },
         silentAnchor: { issueNumber: target?.issueNumber ?? null },

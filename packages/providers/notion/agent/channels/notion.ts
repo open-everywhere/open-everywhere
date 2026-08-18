@@ -426,6 +426,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
         proseLeak: { repliedThisTurn },
         noReplyAction: "notion.no_reply",
         repliedAction: "notion.replied",
+        noTargetAction: "notion.no_target",
         contextRow: { org, platform: "notion", workspace, surface: target?.pageId ?? channel.state.pageId ?? discussionId ?? "unknown" },
         repliedRow: { org, platform: "notion", workspace, surface: target?.pageId ?? channel.state.pageId ?? discussionId },
         silentAnchor: { discussionId: discussionId ?? channel.state.discussionId },

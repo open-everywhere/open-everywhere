@@ -17,6 +17,7 @@ export interface SupervisorCompletionSpec {
   readonly proseLeak?: { readonly repliedThisTurn: boolean };
   readonly noReplyAction: string;
   readonly repliedAction: string;
+  readonly noTargetAction: string;
   readonly contextRow: SupervisorAuditRow;
   readonly repliedRow: SupervisorAuditRow;
   readonly silentAnchor: Record<string, unknown>;
@@ -64,6 +65,15 @@ export async function completeSupervisorTurn(spec: SupervisorCompletionSpec): Pr
 
   if (!spec.hasTarget) {
     spec.log("reply not posted — no per-turn target (turn.started snapshot empty); FAIL SAFE");
+    await appendAudit({
+      org: spec.contextRow.org,
+      platform: spec.contextRow.platform,
+      workspace: spec.contextRow.workspace,
+      surface: spec.contextRow.surface,
+      principalId: spec.contextRow.principalId,
+      action: spec.noTargetAction,
+      detail: { ...spec.silentAnchor, reason: "no-per-turn-target", chars: action.text.length, ...sid },
+    });
     return;
   }
 
