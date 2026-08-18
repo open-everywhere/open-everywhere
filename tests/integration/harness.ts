@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 
 import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
 import { REDELIVERY_SIGNATURE, REDELIVERY_STORM_THRESHOLD, RedeliveryStormGuard } from "./redelivery-storm-guard";
-import { rollOwnEntryPath, rollOwnMissingMessage, rollOwnTargetExists } from "./rollown-target";
+import { ROLLOWN_OUTPUT_DIR, rollOwnMissingMessage, rollOwnTargetExists } from "./rollown-target";
 
 import { registerScript, type RecordedRequest, type ScriptedHandle, type SeatScript } from "../../agent/model/scripted-model";
 export { registerScript, type RecordedRequest, type ResolveObservation, type ScriptedHandle, type ScriptedStep, type SeatScript, type ToolDefinitionRecord } from "../../agent/model/scripted-model";
@@ -75,6 +75,12 @@ const DISCORD_APP_KEYS = (() => {
 
 let booted: { base: string } | undefined;
 let bootedWith: string | undefined;
+let bootedOutputDir: string | undefined;
+
+function bootedBuildDir(): string {
+  if (bootedOutputDir === undefined) throw new Error("integration harness: the built tree was read before bootAgent.");
+  return bootedOutputDir;
+}
 
 export interface BootOptions {
   readonly sharedSqlite?: boolean;
@@ -171,8 +177,8 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   if (opts.target === "rollOwn" && !rollOwnTargetExists(ROOT)) {
     throw new Error(`integration harness: ${rollOwnMissingMessage(ROOT)}`);
   }
-  const entry = opts.target === "rollOwn" ? rollOwnEntryPath(ROOT) : join(ROOT, ".output", "server", "index.mjs");
-  await import(pathToFileURL(entry).href);
+  bootedOutputDir = join(ROOT, opts.target === "rollOwn" ? ROLLOWN_OUTPUT_DIR : ".output");
+  await import(pathToFileURL(join(bootedOutputDir, "server", "index.mjs")).href);
   const base = `http://127.0.0.1:${reserved.port}`;
   const deadline = Date.now() + 60_000;
   for (;;) {
@@ -630,7 +636,7 @@ export async function seedDueRoutine(input: {
 export async function runRoutineDispatchTick(): Promise<readonly string[]> {
   if (booted === undefined) throw new Error("integration harness: runRoutineDispatchTick before bootAgent.");
   const taskName = scheduleTaskName("schedules/dispatch.ts");
-  const dir = join(ROOT, ".output", "server", "_virtual");
+  const dir = join(bootedBuildDir(), "server", "_virtual");
   const candidates = readdirSync(dir).filter((f) => f.endsWith(".schedule.mjs"));
   for (const file of candidates) {
     if (!readFileSync(join(dir, file), "utf8").includes(taskName)) continue;
@@ -650,7 +656,7 @@ export async function runRoutineDispatchTick(): Promise<readonly string[]> {
 export async function runScheduleTask(logicalPath: string): Promise<unknown> {
   if (booted === undefined) throw new Error("integration harness: runScheduleTask before bootAgent.");
   const taskName = scheduleTaskName(logicalPath);
-  const dir = join(ROOT, ".output", "server", "_virtual");
+  const dir = join(bootedBuildDir(), "server", "_virtual");
   const candidates = readdirSync(dir).filter((f) => f.endsWith(".schedule.mjs"));
   for (const file of candidates) {
     if (!readFileSync(join(dir, file), "utf8").includes(taskName)) continue;
