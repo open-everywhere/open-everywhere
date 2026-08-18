@@ -1,10 +1,11 @@
 import { generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:crypto";
-import { afterEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 
 import {
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
+  disposeLater,
   DISCORD_GUILD_ID,
   DISCORD_LISTED_CHANNEL_ID,
   readAuditRows,
@@ -30,11 +31,6 @@ const DISCORD_INTERACTIONS_ROUTE = "/eve/v1/discord";
 const CLICKER_ID = "9000000000000000079";
 
 const WINDOW_DOMAIN = "e2e-unified";
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
 
 let base = "";
 let org = "";
@@ -98,16 +94,18 @@ async function customIdFor(rowId: string, decision: "approve" | "reject"): Promi
 const TRIGGER = { kind: "scheduled", cron: "0 9 * * 1-5", postPolicy: "every-run" } as const;
 
 async function proposeRoutine(ids: string, prompt: string): Promise<{ id: string; handle: ScriptedHandle }> {
-  const handle: ScriptedHandle = registerScript({
-    parent: [
-      { calls: [{ tool: "agent", input: { message: "set up the routine I asked for" }, id: `${ids}-delegate` }] },
-      { say: "the worker reported back" },
-    ],
-    child: [
-      { calls: [{ tool: "create_routine", input: { prompt, trigger: TRIGGER }, id: `${ids}-routine` }] },
-      { say: "proposed" },
-    ],
-  });
+  const handle: ScriptedHandle = disposeLater(
+    registerScript({
+      parent: [
+        { calls: [{ tool: "agent", input: { message: "set up the routine I asked for" }, id: `${ids}-delegate` }] },
+        { say: "the worker reported back" },
+      ],
+      child: [
+        { calls: [{ tool: "create_routine", input: { prompt, trigger: TRIGGER }, id: `${ids}-routine` }] },
+        { say: "proposed" },
+      ],
+    }),
+  );
 
   const wakeAt = Date.now();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please set up the routine" });
@@ -121,6 +119,7 @@ async function proposeRoutine(ids: string, prompt: string): Promise<{ id: string
     script: SETTLEMENT_DRAIN_SCRIPT,
     label: `the ${ids} worker's settlement wake`,
   });
+  disposeLater(drained.handle);
   expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   drained.handle.dispose();
 
@@ -158,7 +157,7 @@ async function waitForDecided(clickAt: number, id: string): Promise<void> {
 test("🔴 the control: a click with NO guild_id decides the card and writes NO approval.decision_wake row", async () => {
   await armAgent();
   const { id, handle } = await proposeRoutine("w1", `decision wake control (w1) ${randomUUID()}`);
-  perTest.push(() => handle.dispose());
+  disposeLater(handle);
 
   const clickAt = Date.now();
   const res = await postClick({ customId: await customIdFor(id, "approve") });
@@ -176,7 +175,7 @@ test("🔴 the control: a click with NO guild_id decides the card and writes NO 
 test("a guild-context click wakes the proposing window session with the decision, and audits the delivery", async () => {
   await armAgent();
   const { id, handle: proposal } = await proposeRoutine("w2", `decision wake subject (w2) ${randomUUID()}`);
-  perTest.push(() => proposal.dispose());
+  disposeLater(proposal);
   const customId = await customIdFor(id, "approve");
 
   expect(proposal.requests.filter((r) => r.fault !== undefined)).toEqual([]);
@@ -188,7 +187,7 @@ test("a guild-context click wakes the proposing window session with the decision
       { say: "belief updated" },
     ],
   });
-  perTest.push(() => wake.dispose());
+  disposeLater(wake);
 
   const clickAt = Date.now();
   const res = await postClick({ customId, guildId: DISCORD_GUILD_ID });

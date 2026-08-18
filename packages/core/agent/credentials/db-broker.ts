@@ -1,6 +1,7 @@
 import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
 import { CredentialError, registerBroker, registeredBrokerNames, type CredentialBroker } from "../access/credentials.js";
 import { getOperationalStore } from "../operational/provider.js";
+import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { registerCredentialHome } from "./home.js";
 import { reservedRefNamespace, reservedRefRefusal } from "./reserved-refs.js";
@@ -103,14 +104,32 @@ export function makeDbCredentialBroker(): CredentialBroker {
   return {
     async getSecret(ref) {
       const reserved = reservedRefNamespace(ref);
-      if (reserved) throw new CredentialError(reservedRefRefusal(ref, reserved));
+      if (reserved) {
+        await auditUnresolved(ref, "reserved-namespace");
+        throw new CredentialError(reservedRefRefusal(ref, reserved));
+      }
       const row = await getOperationalStore().getStoredCredential(deploymentOrg(), ref);
       if (!row) {
+        await auditUnresolved(ref, "no-stored-row");
         throw new CredentialError(`secret not found for ref "${ref}" (no stored credential — store one via the "Set API key" flow)`);
       }
       return decryptCredential(row.ciphertext);
     },
   };
+}
+
+export const CREDENTIAL_UNRESOLVED = "credential.unresolved";
+
+export type UnresolvedReason = "no-stored-row" | "reserved-namespace";
+
+async function auditUnresolved(ref: string, reason: UnresolvedReason): Promise<void> {
+  await appendAudit({
+    org: deploymentOrg(),
+    platform: "credential",
+    workspace: DB_BROKER,
+    action: CREDENTIAL_UNRESOLVED,
+    detail: { broker: DB_BROKER, ref, reason },
+  }).catch(() => undefined);
 }
 
 export function registerDbCredentialBroker(): void {

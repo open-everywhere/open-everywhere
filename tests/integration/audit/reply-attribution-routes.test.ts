@@ -1,11 +1,12 @@
 import { randomBytes } from "node:crypto";
-import { afterEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 
 import {
   armSettlement,
   bootAgent,
   consumeSettlement,
   discordMentionWake,
+  disposeLater,
   DISCORD_LISTED_CHANNEL_ID,
   DISCORD_USER_ID,
   pendingFramedChars,
@@ -16,11 +17,6 @@ import {
   waitForChildren,
   type AuditRow,
 } from "../harness";
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
 
 function freshUnlistedChannelId(): string {
   return `9${randomBytes(8).readBigUInt64BE().toString().padStart(18, "0").slice(0, 18)}`;
@@ -78,20 +74,22 @@ test("a HOST-WOKEN settlement reply names the human whose seat it is — the aut
   await bootAgent();
   const sinceIso = new Date(Date.now() - 10_000).toISOString();
 
-  const handle = registerScript({
-    parent: [{ calls: [{ tool: "agent", input: { message: "look something up" }, id: "oe659-delegate" }] }, { say: DELEGATOR_SAY }],
-    child: [{ say: "the worker's own prose, which never leaves the parent's session" }],
-  });
-  perTest.push(() => handle.dispose());
+  const handle = disposeLater(
+    registerScript({
+      parent: [{ calls: [{ tool: "agent", input: { message: "look something up" }, id: "oe659-delegate" }] }, { say: DELEGATOR_SAY }],
+      child: [{ say: "the worker's own prose, which never leaves the parent's session" }],
+    }),
+  );
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> please delegate this` });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the delegating turn's terminal step");
 
   const taskId = taskIdOfDelegation(handle, "the OPE-659 delegation");
 
-  const settlementHandle = armSettlement(handle, {
-    parent: [{ calls: [{ tool: "task_peek", input: { taskIds: [taskId] }, id: "oe659-peek" }] }, { say: SETTLEMENT_SAY }],
-  });
-  perTest.push(() => settlementHandle.dispose());
+  const settlementHandle = disposeLater(
+    armSettlement(handle, {
+      parent: [{ calls: [{ tool: "task_peek", input: { taskIds: [taskId] }, id: "oe659-peek" }] }, { say: SETTLEMENT_SAY }],
+    }),
+  );
   await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: "the worker's own model call" });
 
   const notification = await consumeSettlement({
@@ -127,20 +125,22 @@ test("OPE-734 — arming the settlement script under the dispatch turn's session
   await bootAgent();
   const sinceIso = new Date(Date.now() - 10_000).toISOString();
 
-  const handle = registerScript({
-    parent: [{ calls: [{ tool: "agent", input: { message: "look something up" }, id: "ope734-delegate" }] }, { say: DELEGATOR_SAY }],
-    child: [{ say: "the worker's own prose, which never leaves the parent's session" }],
-  });
+  const handle = disposeLater(
+    registerScript({
+      parent: [{ calls: [{ tool: "agent", input: { message: "look something up" }, id: "ope734-delegate" }] }, { say: DELEGATOR_SAY }],
+      child: [{ say: "the worker's own prose, which never leaves the parent's session" }],
+    }),
+  );
   const say = "oe-734 regression settlement reply, a third distinct length";
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> please delegate this too` });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the delegating turn's terminal step");
   const taskId = taskIdOfDelegation(handle, "the OPE-734 delegation");
 
-  const settlementHandle = armSettlement(handle, {
-    parent: [{ calls: [{ tool: "task_peek", input: { taskIds: [taskId] }, id: "ope734-peek" }] }, { say }],
-  });
-  perTest.push(() => settlementHandle.dispose());
-  perTest.push(() => handle.dispose());
+  const settlementHandle = disposeLater(
+    armSettlement(handle, {
+      parent: [{ calls: [{ tool: "task_peek", input: { taskIds: [taskId] }, id: "ope734-peek" }] }, { say }],
+    }),
+  );
 
   await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: "the worker's own model call" });
   const notification = await waitFor(

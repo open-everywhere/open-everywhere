@@ -1,16 +1,7 @@
-import { afterAll, expect, test } from "vitest";
-import { bootAgent, discordMentionWake, DISCORD_LISTED_CHANNEL_ID, registerScript, waitFor, type ScriptedHandle } from "../harness";
+import { expect, test } from "vitest";
+import { disposeLater, bootAgent, discordMentionWake, DISCORD_LISTED_CHANNEL_ID, registerScript, waitFor, type ScriptedHandle } from "../harness";
 
 const TARGET_TOOL = "spawn_thread_session";
-
-const cleanups: (() => void)[] = [];
-afterAll(() => {
-  for (const c of cleanups.splice(0)) c();
-});
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  cleanups.push(() => handle.dispose());
-  return handle;
-}
 
 async function driveTurn(text: string, messageId: string) {
   const handle = disposeLater(registerScript({ parent: [{ say: text }] }));

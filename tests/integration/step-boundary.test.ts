@@ -1,16 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { afterEach, expect, test } from "vitest";
-import { bootAgent, discordMentionWake, readAuditRows, registerScript, waitFor, wrapToolExecute, type ScriptedHandle } from "./harness";
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
+import { expect, test } from "vitest";
+import { afterThisTest,
+  disposeLater, bootAgent, discordMentionWake, readAuditRows, registerScript, waitFor, wrapToolExecute } from "./harness";
 
 function freshUnlistedChannelId(): string {
   return `9${randomBytes(8).readBigUInt64BE().toString().padStart(18, "0").slice(0, 18)}`;
@@ -23,10 +14,10 @@ test("a turn that runs past its step budget trips the soft and then the hard bou
   settings.overrideSettingsForTest({ turn: { stepBudget: 2, stepBackstopMultiple: 2 } });
   expect(settings.getSettings().turn.stepBudget).toBe(2);
   expect(settings.getSettings().turn.stepBackstopMultiple).toBe(2);
-  perTest.push(() => settings.overrideSettingsForTest({ turn: { stepBudget: 120, stepBackstopMultiple: 3 } }));
+  afterThisTest(() => settings.overrideSettingsForTest({ turn: { stepBudget: 120, stepBackstopMultiple: 3 } }));
 
   const restoreTool = wrapToolExecute("list_routines", async () => ({ routines: [] }));
-  perTest.push(restoreTool);
+  afterThisTest(restoreTool);
 
   const handle = disposeLater(
     registerScript({
@@ -75,10 +66,10 @@ test("a turn that stays within budget never writes a turn.step_boundary row", as
 
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.overrideSettingsForTest({ turn: { stepBudget: 50, stepBackstopMultiple: 3 } });
-  perTest.push(() => settings.overrideSettingsForTest({ turn: { stepBudget: 120, stepBackstopMultiple: 3 } }));
+  afterThisTest(() => settings.overrideSettingsForTest({ turn: { stepBudget: 120, stepBackstopMultiple: 3 } }));
 
   const restoreTool = wrapToolExecute("list_routines", async () => ({ routines: [] }));
-  perTest.push(restoreTool);
+  afterThisTest(restoreTool);
 
   const handle = disposeLater(
     registerScript({

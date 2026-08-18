@@ -1,9 +1,10 @@
-import { afterAll, expect, test } from "vitest";
+import { expect, test } from "vitest";
 
 import {
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
+  disposeLater,
   DISCORD_LISTED_CHANNEL_ID,
   readAuditRows,
   registerScript,
@@ -12,18 +13,7 @@ import {
   waitFor,
   waitForChildren,
   type RecordedRequest,
-  type ScriptedHandle,
 } from "../harness";
-
-const live = new Set<ScriptedHandle>();
-afterAll(() => {
-  for (const h of live) h.dispose();
-  live.clear();
-});
-function open(handle: ScriptedHandle): ScriptedHandle {
-  live.add(handle);
-  return handle;
-}
 
 const CHILD_ANSWER = "the worker finished the addressed job";
 
@@ -45,7 +35,7 @@ function disclosedTurnWake(text: string): string | undefined {
 test("a settlement turn holds no address until it reads the task view, and task_peek gives it one", async () => {
   await bootAgent();
 
-  const dispatched = open(
+  const dispatched = disposeLater(
     registerScript({
       parent: [
         { calls: [{ tool: "agent", input: { message: "do the long job" }, id: "t597-delegate" }] },
@@ -92,7 +82,6 @@ test("a settlement turn holds no address until it reads the task view, and task_
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 0, label: "the delegated child's last step" });
   const taskId = taskIdOfDelegation(dispatched, "t597-delegate");
   const dispatchedRequests: readonly RecordedRequest[] = [...dispatched.requests];
-  live.delete(dispatched);
 
   const { handle: settlement } = await awaitTaskSettlement({
     dispatched,
@@ -107,7 +96,7 @@ test("a settlement turn holds no address until it reads the task view, and task_
     },
     label: "the settled worker's completion, delivered as a new message naming the task id",
   });
-  open(settlement);
+  disposeLater(settlement);
 
   const early = await waitFor(
     () => replyResultOf(settlement.requests.find((r) => r.role === "parent" && r.stepIndex === 1)),

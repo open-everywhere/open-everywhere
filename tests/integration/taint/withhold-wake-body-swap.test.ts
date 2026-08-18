@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { afterAll, afterEach, expect, test } from "vitest";
+import { afterAll, expect, test } from "vitest";
 import {
+  disposeLater,
   bootAgent,
   installSlackWebApiStub,
   readAuditRows,
@@ -39,16 +40,6 @@ afterAll(async () => {
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.resetSettingsForTest();
 });
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
 
 let stub: SlackWebApiStub | undefined;
 

@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import {
+  afterThisTest,
+  disposeLater,
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
@@ -12,7 +14,6 @@ import {
   taskIdOfDelegation,
   waitFor,
   waitForChildren,
-  type ScriptedHandle,
 } from "../harness";
 
 async function resolveApprovalClickDynamic(input: {
@@ -34,16 +35,6 @@ async function ensureConfigRegistered(): Promise<void> {
 const IT_MEMORY_CHANNEL_ID = "1300000001500000001";
 const IT_MEMORY_PURGE_CHANNEL_ID = "1300000001500000003";
 const DISCORD_BOT_ID = "9000000000000000001";
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
 
 const ORG = "default";
 
@@ -95,7 +86,7 @@ test("session.started seeds the domain's own silo at the expected path and body,
     },
     label: "the worker's completion, delivered as a new message naming the task id",
   });
-  perTest.push(() => settlement.handle.dispose());
+  afterThisTest(() => settlement.handle.dispose());
   const peeked = await waitFor(
     () => settlement.handle.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_peek")),
     "the parent's step carrying the task_peek result — the edge the settlement flush hangs off",

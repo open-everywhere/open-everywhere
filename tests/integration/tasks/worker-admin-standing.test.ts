@@ -4,11 +4,12 @@ const INJECT_TOKEN = "ope673-inject-token";
 process.env.OE_TEST_WAKE = "1";
 process.env.OE_CONTROL_INJECT_TOKENS = `it-ope673:${createHash("sha256").update(INJECT_TOKEN, "utf8").digest("hex")}`;
 
-import { afterAll, afterEach, beforeAll, expect, test } from "vitest";
+import { beforeAll, expect, test } from "vitest";
 import {
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
+  disposeLater,
   DISCORD_GUILD_ID,
   DISCORD_LISTED_CHANNEL_ID,
   DISCORD_USER_ID,
@@ -25,14 +26,6 @@ const NON_ADMIN_DISCORD_ID = DISCORD_USER_ID;
 
 const DOMAIN = "e2e-unified";
 const SURFACE_KEY = `discord/${DISCORD_GUILD_ID}/${DISCORD_LISTED_CHANNEL_ID}`;
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-afterAll(() => {
-  for (const c of perTest.splice(0)) c();
-});
 
 async function injectWake(base: string, input: { text: string; authorId?: string; userId: string }): Promise<void> {
   const res = await fetch(`${base}/control/v1/test/wake`, {
@@ -70,14 +63,17 @@ async function askThroughAWorker(
   tool: "memory_admin_list" | "memory_admin_read" | "connector" = "memory_admin_list",
   toolInput: Record<string, unknown> = {},
 ) {
-  const dispatched = registerScript({
-    parent: [{ calls: [{ tool: "agent", input: { message: "handle the ask for the person who asked" }, id: `ope673-${leg}` }] }, { say: "handed off" }],
-    child: [{ calls: [{ tool, input: toolInput, id: `ope673-${leg}-call` }] }, { say: "worker done" }],
-  });
+  const dispatched = disposeLater(
+    registerScript({
+      parent: [{ calls: [{ tool: "agent", input: { message: "handle the ask for the person who asked" }, id: `ope673-${leg}` }] }, { say: "handed off" }],
+      child: [{ calls: [{ tool, input: toolInput, id: `ope673-${leg}-call` }] }, { say: "worker done" }],
+    }),
+  );
   await injectWake(base, wake);
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 1, label: `${leg}: the delegated worker to serve its whole arm` });
   const taskId = taskIdOfDelegation(dispatched, `the ${leg} delegation`);
   const { handle: drain } = await awaitTaskSettlement({ dispatched, taskId, script: SETTLEMENT_DRAIN_SCRIPT, label: `${leg}: the settled worker's completion wake` });
+  disposeLater(drain);
   expect(drain.requests.filter((r) => r.fault !== undefined), `${leg}: no straggling model call`).toEqual([]);
   drain.dispose();
   const result = workerGateResult(dispatched, tool);

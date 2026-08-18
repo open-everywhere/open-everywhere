@@ -1,10 +1,11 @@
 import { generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:crypto";
-import { afterAll, afterEach, expect, test } from "vitest";
+import { afterAll, expect, test } from "vitest";
 
 import {
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
+  disposeLater,
   DISCORD_GUILD_ID,
   DISCORD_LISTED_CHANNEL_ID,
   readAuditRows,
@@ -43,10 +44,6 @@ const DISCORD_INTERACTIONS_ROUTE = "/eve/v1/discord";
 const CLICKER_ID = "9000000000000000077";
 const SCOPE_KEY = `discord/${DISCORD_GUILD_ID}/${DISCORD_LISTED_CHANNEL_ID}`;
 
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
 const cleanups: (() => void)[] = [];
 afterAll(() => {
   for (const c of cleanups.splice(0)) c();
@@ -134,7 +131,7 @@ async function proposeRoutine(ids: string, prompt: string): Promise<string> {
       { say: "proposed" },
     ],
   });
-  perTest.push(() => handle.dispose());
+  disposeLater(handle);
 
   const wakeAt = Date.now();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please set up the routine" });
@@ -148,6 +145,7 @@ async function proposeRoutine(ids: string, prompt: string): Promise<string> {
     script: SETTLEMENT_DRAIN_SCRIPT,
     label: `the ${ids} worker's settlement wake`,
   });
+  disposeLater(drained.handle);
   expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   drained.handle.dispose();
 

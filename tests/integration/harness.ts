@@ -4,12 +4,27 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { afterEach } from "vitest";
+
 import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
 import { REDELIVERY_SIGNATURE, REDELIVERY_STORM_THRESHOLD, RedeliveryStormGuard } from "./redelivery-storm-guard";
 import { ROLLOWN_OUTPUT_DIR, rollOwnMissingMessage, rollOwnTargetExists } from "./rollown-target";
 
 import { ANY_SESSION, registerScript, scriptedStore, type RecordedRequest, type ScriptedHandle, type SeatScript } from "../../agent/model/scripted-model";
 export { registerScript, type RecordedRequest, type ResolveObservation, type ScriptedHandle, type ScriptedStep, type SeatScript, type ToolDefinitionRecord } from "../../agent/model/scripted-model";
+
+const oePerTestCleanups: (() => void)[] = [];
+afterEach(() => {
+  for (const cleanup of oePerTestCleanups.splice(0)) cleanup();
+});
+export function afterThisTest(cleanup: () => void): void {
+  oePerTestCleanups.push(cleanup);
+}
+export function disposeLater<T extends { dispose(): void }>(handle: T): T {
+  afterThisTest(() => handle.dispose());
+  return handle;
+}
+
 export { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
 export { REPLAYED_DELIVERY_CALLER_BODY } from "@open-everywhere/core/agent/webhooks/replay-dedupe.js";
 export { PENDING_WORK_FRAME } from "@open-everywhere/core/agent/channels/turn-delivery.js";

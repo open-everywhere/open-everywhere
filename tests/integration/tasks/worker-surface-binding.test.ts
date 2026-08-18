@@ -1,5 +1,7 @@
-import { afterAll, afterEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import {
+  afterThisTest,
+  disposeLater,
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
@@ -10,23 +12,7 @@ import {
   taskIdOfDelegation,
   waitForChildren,
   wrapToolExecute,
-  type ScriptedHandle,
 } from "../harness";
-
-const cleanups: (() => void)[] = [];
-afterAll(() => {
-  for (const c of cleanups.splice(0)) c();
-});
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
 
 interface SeenBinding {
   readonly platform: string;
@@ -40,7 +26,7 @@ test("a delegated worker's post_file resolves the dispatching conversation's cha
 
   const seen: SeenBinding[] = [];
   const { bindFrom } = await import("@open-everywhere/core/agent/identity/binding.js");
-  cleanups.push(
+  afterThisTest(
     wrapToolExecute("post_file", async (_input: unknown, ctx: unknown) => {
       const b = bindFrom(ctx as Parameters<typeof bindFrom>[0]);
       seen.push({ platform: b.platform, workspace: b.workspace, surface: b.surface, channelId: b.target?.["channelId"] });
@@ -79,7 +65,7 @@ test("a delegated worker's post_file resolves the dispatching conversation's cha
     script: SETTLEMENT_DRAIN_SCRIPT,
     label: "the settled worker's completion wake",
   });
-  perTest.push(() => drain.dispose());
+  afterThisTest(() => drain.dispose());
   expect(drain.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
   expect(seen.length).toBe(1);

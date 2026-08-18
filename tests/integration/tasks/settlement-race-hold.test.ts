@@ -1,5 +1,7 @@
-import { afterAll, afterEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import {
+  afterThisTest,
+  disposeLater,
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
@@ -10,27 +12,11 @@ import {
   waitFor,
   waitForChildren,
   wrapToolExecute,
-  type ScriptedHandle,
 } from "../harness";
-
-const cleanups: (() => void)[] = [];
-afterAll(() => {
-  for (const c of cleanups.splice(0)) c();
-});
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
 
 test("a settlement turn that arrives before the script swap is held, then served by the swapped-in script", async () => {
   await bootAgent();
-  cleanups.push(wrapToolExecute("post_file", async () => ({ posted: true, count: 1 })));
+  afterThisTest(wrapToolExecute("post_file", async () => ({ posted: true, count: 1 })));
 
   const dispatched = disposeLater(
     registerScript({
@@ -73,7 +59,7 @@ test("a settlement turn that arrives before the script swap is held, then served
     script: SETTLEMENT_DRAIN_SCRIPT,
     label: "the settled worker's completion wake",
   });
-  perTest.push(() => drain.dispose());
+  afterThisTest(() => drain.dispose());
 
   expect(dispatched.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
   expect(dispatched.requests.filter((r) => r.fault !== undefined)).toEqual([]);

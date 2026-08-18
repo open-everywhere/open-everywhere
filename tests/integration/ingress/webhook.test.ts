@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { afterEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import {
+  disposeLater,
   bootAgent,
   readAuditRows,
   registerScript,
@@ -9,18 +10,7 @@ import {
   UNTRUSTED_OPEN,
   waitFor,
   webhookDeliveryPost,
-  type ScriptedHandle,
 } from "../harness";
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
 
 test("a signed delivery is accepted (200), fires, and its webhook.fired row joins to the reply.post row it caused", async () => {
   await bootAgent();

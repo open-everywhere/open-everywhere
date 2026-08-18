@@ -6,6 +6,7 @@ import {
   censusResult,
   credentialBrokerArmedFinding,
   cronCeilingHours,
+  channelCensusContributions,
   heartbeatFindings,
   planRequiredCredentials,
   planRequiredEndpoints,
@@ -19,6 +20,7 @@ import {
   type KeyProof,
   type MountedRoute,
   type PlumbingCredential,
+  type ReportedHeartbeat,
   type RequiredHeartbeat,
   type RuntimeSignalFinding,
 } from "../../packages/core/agent/ops/census.js";
@@ -50,12 +52,6 @@ const PLUMBING: Record<string, () => Promise<readonly PlumbingCredential[]>> = {
 };
 
 const CONTROL_HOOK_ID = "oe-census-control-no-such-hook";
-
-const CHANNEL_LIMITS: Record<string, string> = {
-  "discord-gateway.ts":
-    "/eve/v1/discord-gateway answers, but it only RECEIVES traffic while the always-on relay (deploy/discord-relay/) holds " +
-    "the Discord WebSocket. Nothing here can see that process, so a dead relay looks exactly like a quiet guild (OPE-640).",
-};
 
 const STANDING_LIMITS: readonly string[] = [
   "a refused probe proves the ingress SERVES and refuses. It does not prove a correctly SIGNED delivery is accepted or reaches a session — `npm run deploy:smoke` proves that, for one declared hook only (OPE-640).",
@@ -118,10 +114,16 @@ function resolveTarget(): string {
   return url.replace(/\/+$/u, "");
 }
 
-async function mountedRoutes(): Promise<{ routes: MountedRoute[]; plumbing: PlumbingCredential[]; limits: string[] }> {
+async function mountedRoutes(): Promise<{
+  routes: MountedRoute[];
+  plumbing: PlumbingCredential[];
+  limits: string[];
+  reportedHeartbeats: ReportedHeartbeat[];
+}> {
   const routes: MountedRoute[] = [];
   const plumbing: PlumbingCredential[] = [];
   const limits: string[] = [];
+  const reportedHeartbeats: ReportedHeartbeat[] = [];
   let files: string[] = [];
   try {
     files = readdirSync(CHANNELS_DIR).filter((f) => f.endsWith(".ts")).sort();
@@ -139,10 +141,11 @@ async function mountedRoutes(): Promise<{ routes: MountedRoute[]; plumbing: Plum
     }
     const supplier = PLUMBING[file];
     if (supplier) plumbing.push(...(await supplier()));
-    const limit = CHANNEL_LIMITS[file];
-    if (limit) limits.push(limit);
   }
-  return { routes, plumbing, limits };
+  const contributions = channelCensusContributions(files);
+  limits.push(...contributions.limits);
+  reportedHeartbeats.push(...contributions.reportedHeartbeats);
+  return { routes, plumbing, limits, reportedHeartbeats };
 }
 
 async function probe(target: string, path: string, timeoutMs: number): Promise<EndpointObservation> {
@@ -204,7 +207,7 @@ try {
     );
   }
 
-  const { routes, plumbing, limits } = await mountedRoutes();
+  const { routes, plumbing, limits, reportedHeartbeats } = await mountedRoutes();
   const plan = planRequiredCredentials({
     bundles: loadBundles(),
     catalogues: loadConnectorCredentials(),
@@ -243,13 +246,14 @@ try {
   const heartbeatLimits: string[] = [];
   if (!args.flags.has("no-heartbeat-check")) {
     const gatedPlan = await planHeartbeats();
-    const actions = [...gatedPlan.map((h) => h.action), ...REPORTED_HEARTBEATS.map((h) => h.action)];
+    const reported: readonly ReportedHeartbeat[] = [...REPORTED_HEARTBEATS, ...reportedHeartbeats];
+    const actions = [...gatedPlan.map((h) => h.action), ...reported.map((h) => h.action)];
     const heartbeatObservations: HeartbeatObservation[] = [];
     for (const action of actions) {
       const rows = await readAudit({ org, action, limit: 1 });
       heartbeatObservations.push({ action, ...(rows[0] ? { lastSeenIso: rows[0].ts } : {}) });
     }
-    heartbeats = heartbeatFindings({ gated: gatedPlan, reported: REPORTED_HEARTBEATS, observations: heartbeatObservations, now: new Date() });
+    heartbeats = heartbeatFindings({ gated: gatedPlan, reported, observations: heartbeatObservations, now: new Date() });
     heartbeatLimits.push("the heartbeat check reads ONE org — crons sweep OE_TIDY_ORGS, so on a multi-org deployment run one census per swept org");
   } else {
     heartbeatLimits.push("the cron-heartbeat check DID NOT RUN (--no-heartbeat-check) — nothing here proves directory-sync, tidy or dream-mode3 are still firing");
