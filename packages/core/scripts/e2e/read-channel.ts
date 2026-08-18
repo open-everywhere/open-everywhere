@@ -1,7 +1,10 @@
 import { fetchAudit, type AuditWireEntry } from "./audit-read.js";
 import { fetchTranscript } from "./transcript-read.js";
-import { genericReadVerbsEnabled } from "../../agent/access/source-scoped-mount.js";
+import { deployedBuildCarries } from "./deployed-build.js";
 import { isWindowToken } from "../../agent/channels/window-key.js";
+import { GENERIC_READ_VERBS_SHA, dS, classifyDelegatedReadEvidence } from "./read-channel-lib.js";
+
+export { GENERIC_READ_VERBS_SHA };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
@@ -27,7 +30,6 @@ const record = (id: string, status: Status, detail: string) => {
   console.log(`\n${status === "PASS" ? "✅" : status === "SKIP" ? "⏭ " : "❌"} ${id}: ${status} — ${detail}`);
 };
 
-const dS = (e: AuditWireEntry, k: string): string | undefined => (typeof e.detail?.[k] === "string" ? (e.detail![k] as string) : undefined);
 const rowsSince = async (sinceIso: string): Promise<readonly AuditWireEntry[]> =>
   fetchAudit(TARGET, READ, { sinceIso, limit: 600 });
 
@@ -109,7 +111,11 @@ async function g1(): Promise<void> {
   if (calls === null) return record("G1", "SKIP", `transcript fetch failed for session ${sid} — the mount cannot be observed this run. Render byte-identity + gate pinned offline (generic-read-verbs-test.ts).`);
   if (calls.includes("read_channel")) return record("G1", "PASS", `session ${sid} invoked the GENERIC read_channel for slack (the behaviour-preserving successor to read_slack_channel) and replied.`);
   if (calls.includes("read_slack_channel")) return record("G1", "FAIL", `session ${sid} invoked read_slack_channel — the target was NOT started with tools.genericReadVerbs: true (the Slack-specific reader should have retired).`);
-  record("G1", "SKIP", `session ${sid} replied but did not invoke read_channel (tools=[${[...new Set(calls)].join(",") || "none"}]) — the model chose not to read (mount presence can't be proven passively). Binding proof: the offline unit test.`);
+  const rows = await rowsSince(since);
+  const verdict = classifyDelegatedReadEvidence(rows, sid, "slack");
+  if (verdict.kind === "delegated-completed") return record("G1", "PASS", `session ${sid} replied (tools=[${[...new Set(calls)].join(",") || "none"}]) — ${verdict.detail}`);
+  if (verdict.kind === "delegated-failed" || verdict.kind === "delegated-unsettled" || verdict.kind === "refused") return record("G1", "FAIL", verdict.detail);
+  record("G1", "SKIP", `session ${sid} replied but did not invoke read_channel and no delegation evidence was found (tools=[${[...new Set(calls)].join(",") || "none"}]; ${verdict.detail}) — the model chose not to read. Binding proof: the offline unit test.`);
 }
 
 async function g2(): Promise<void> {
@@ -123,18 +129,32 @@ async function g2(): Promise<void> {
   const calls = await toolNamesOf(sid, since);
   if (calls === null) return record("G2", "SKIP", `transcript fetch failed for session ${sid} — the mount cannot be observed this run. The Discord adapter render/normalize is pinned offline (generic-read-verbs-test.ts).`);
   if (calls.includes("read_channel")) return record("G2", "PASS", `session ${sid} invoked read_channel for DISCORD — the additive cross-surface read works through ONE generic tool.`);
-  record("G2", "SKIP", `session ${sid} replied but did not invoke read_channel (tools=[${[...new Set(calls)].join(",") || "none"}]) — model-dependent; the adapter is pinned offline.`);
+  const rows = await rowsSince(since);
+  const verdict = classifyDelegatedReadEvidence(rows, sid, "discord");
+  if (verdict.kind === "delegated-completed") return record("G2", "PASS", `session ${sid} replied (tools=[${[...new Set(calls)].join(",") || "none"}]) — ${verdict.detail}`);
+  if (verdict.kind === "delegated-failed" || verdict.kind === "delegated-unsettled" || verdict.kind === "refused") return record("G2", "FAIL", verdict.detail);
+  record("G2", "SKIP", `session ${sid} replied but did not invoke read_channel and no delegation evidence was found (tools=[${[...new Set(calls)].join(",") || "none"}]; ${verdict.detail}) — model-dependent; the adapter is pinned offline.`);
 }
 
 async function main(): Promise<void> {
   console.log(`=== GENERIC READ VERBS · Stage 2 per-route e2e · run ${RUN} · ${new Date().toISOString()} ===`);
   console.log(`target=${TARGET || "(unset)"} domain=${DOMAIN} slack=${SLACK_SURFACE} discord=${DISCORD_SURFACE || "(unset)"}`);
-  if (!genericReadVerbsEnabled()) {
-    for (const id of ["G1", "G2"]) if (want(id)) record(id, "SKIP", "tools.genericReadVerbs is not set in THIS process — flag-OFF the generic verbs are absent (read_slack_* is the reader). Re-run with the flag on AND a target deployed with `tools.genericReadVerbs` armed");
-    return summary();
-  }
   if (!TARGET || !READ || !INJECT) {
     for (const id of ["G1", "G2"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN / E2E_CONTROL_INJECT_TOKEN — cannot drive a live window.");
+    return summary();
+  }
+  if (!deployedBuildCarries(GENERIC_READ_VERBS_SHA)) {
+    for (const id of ["G1", "G2"]) {
+      if (want(id)) {
+        record(
+          id,
+          "SKIP",
+          `no recorded deploy carries ${GENERIC_READ_VERBS_SHA.slice(0, 8)} (agent/settings/settings.ts's tools.genericReadVerbs: true, OPE-434) — or no deploy record exists in this checkout ` +
+            "(.open-everywhere-deploy/known-good.json, written by `npm run deploy:verify -- --record`). On a pre-flag build read_slack_* is the correct reader, so there is nothing for read_channel to exercise. " +
+            "Deploy a build carrying the flag and record it; the legs arm themselves from the record.",
+        );
+      }
+    }
     return summary();
   }
   for (const [id, fn] of [["G1", g1], ["G2", g2]] as [string, () => Promise<void>][]) {
