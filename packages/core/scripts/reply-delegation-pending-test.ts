@@ -23,11 +23,13 @@ const { registerSlackTestBridge, registerSlackFixtureCodec, registerSlackFixture
   await import("./_slack-test-stubs.js");
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineDomain } = await import("../agent/memory/domain.js");
-const { registerUnifiedWakeTarget, mintWakeId } = await import("../agent/channels/unified-window.js");
+const { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, mintWakeId, shouldBridgeAddressedProse } = await import("../agent/channels/unified-window.js");
 const { unifiedSupervisorToken } = await import("../agent/channels/unified-supervisor.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
-const { taskWakeId } = await import("../agent/channels/task-wake.js");
+const { taskWakeId, TASK_WAKE_RETARGET_ACTION } = await import("../agent/channels/task-wake.js");
+const { addressedWakeThisTurn } = await import("../agent/access/dispatch-origin-signal.js");
+const { consumeRepliedThisTurn } = await import("../agent/channels/reply-signal.js");
 const { DELEGATION_PENDING_REFUSAL_REASON, delegationPendingRefusalMessage, BRIDGE_WAKE_HELD_AUDIT_ACTION } = await import(
   "../agent/access/pending-delegation-signal.js"
 );
@@ -512,6 +514,101 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     const both = withReplierPrefix(withPendingWorkFrame("body", true), { taskLabel: "audit the ledger" });
     ok(both.startsWith("[audit the ledger] "), "🔴 §10f: the replier tier label stays OUTERMOST — the frame must never displace the signal a reader uses to tell a worker from the seat");
     ok(both.includes(PENDING_WORK_FRAME) && both.endsWith("body"), "§10f: …and both signals survive together, in that order");
+  }
+}
+
+{
+  const taskChannel = async (taskId: string): Promise<string | undefined> => {
+    const w = await taskWakeId(ORG, taskId);
+    if (w === undefined) return undefined;
+    const origin = await resolveUnifiedWakeTarget(store, ORG, w);
+    return origin === null ? undefined : (origin as { channelId?: string }).channelId;
+  };
+  const lastChannel = (): string => posted[posted.length - 1]?.channel ?? "";
+
+  {
+    const wTurn = await wake("C_706_TURN", "1101.1");
+    const wSib = await wake("C_706_SIB", "1102.2");
+    const before = posted.length;
+    const addressedAtBridge: (string | undefined)[] = [];
+
+    await bridgeSession(wTurn, "turn_706a")(async () => {
+      await hook({ data: { result: receiptResult("call_706a", "task_706a") } }, ctxFor(wTurn, "turn_706a"));
+      const refused = await callReply(wTurn, "turn_706a", wTurn, FABRICATION, true);
+      ok(typeof refused.error === "string", "§11a precondition: the reply tool refuses the fabricated `done:true` — the refusal is what leaves `replied` false and opens the bridge");
+      addressedAtBridge.push(addressedWakeThisTurn("turn_706a"));
+      await bridgeComplete(FABRICATION);
+    });
+
+    ok(addressedAtBridge.length === 1, "§11a: the turn body ran and took its reading");
+    ok(
+      addressedAtBridge[0] === undefined,
+      `🔴 §11a THE STRUCTURAL PRECONDITION: a turn that reaches the bridge has addressed NOTHING, so the dispatch edge read \`currentWakeId\` and not an addressed wake (saw: ${JSON.stringify(addressedAtBridge[0])})`,
+    );
+    ok(posted.length === before + 1, "§11a/ROOM: the bridge posted the prose, as OPE-701 requires");
+    ok(
+      (await resolveUnifiedWakeTarget(store, ORG, wSib)) !== null,
+      "§11a: the sibling wake is a LIVE registered wake on this same window — the task could have been pointed there, so the check below is not a strawman",
+    );
+    const reportsInto = await taskChannel("task_706a");
+    ok(
+      reportsInto === lastChannel(),
+      `🔴 §11a THE HANDOFF: the worker will report into the SAME conversation the bridge just answered. There is no sibling to re-point, which is why the bridge needs no \`retargetTaskWakes\` call. If a change ever lets a bridge turn answer a different wake, this assertion is what goes red (task reports into ${JSON.stringify(reportsInto)}, bridge answered ${JSON.stringify(lastChannel())})`,
+    );
+    ok(reportsInto === "C_706_TURN", "§11a: …and that conversation is the turn's own, never the sibling");
+    ok((await answeredAt(wTurn)) === undefined, "§11a: …and OPE-701's hold is intact — the wake stays answerable for the worker's real report");
+  }
+
+  {
+    ok(
+      shouldBridgeAddressedProse("direct-mention", true) === false,
+      "🔴 §11b: a turn whose reply tool POSTED can never reach the bridge — the gate reads `replied`",
+    );
+    ok(shouldBridgeAddressedProse("direct-mention", false) === true, "§11b: …and a turn whose reply tool posted nothing can, which is the state §11a runs in");
+
+    const w = await wake("C_706_ADDRESSED", "1103.3");
+    const before = posted.length;
+    const addressed: (string | undefined)[] = [];
+    const replied: boolean[] = [];
+
+    await newSession()(async () => {
+      const post = await callReply(w, "turn_706b", w, "An ordinary answer, retrieved and checked.", true);
+      ok(post.posted === true, "§11b precondition: the reply posts");
+      addressed.push(addressedWakeThisTurn("turn_706b"));
+      replied.push(consumeRepliedThisTurn());
+    });
+
+    ok(posted.length === before + 1, "§11b/ROOM: the answer reached the room");
+    ok(addressed[0] === w, "🔴 §11b: a successful reply RECORDS the wake it addressed…");
+    ok(replied[0] === true, "🔴 §11b: …and the SAME post marks `replied`, so the two signals can never disagree…");
+    ok(
+      shouldBridgeAddressedProse("direct-mention", replied[0] ?? false) === false,
+      "🔴 §11b: …so the bridge cannot fire on a turn that has addressed a wake. §11a's `undefined` is therefore structural, not a property of its fixture",
+    );
+  }
+
+  {
+    const wAsk = await wake("C_706_ASK", "1104.4");
+    const wOther = await wake("C_706_OTHER", "1105.5");
+    const before = posted.length;
+    const retargetsBefore = (await readAudit({ org: ORG, action: TASK_WAKE_RETARGET_ACTION })).length;
+
+    await newSession()(async () => {
+      await hook({ data: { result: receiptResult("call_706c", "task_706c") } }, ctxFor(wAsk, "turn_706c"));
+      ok((await taskChannel("task_706c")) === "C_706_ASK", "§11c precondition: the dispatch edge registered the task against the turn's own wake");
+      const sib = await callReply(wAsk, "turn_706c", wOther, "The sibling's answer, part one.", false);
+      ok(sib.posted === true, "§11c precondition: the sibling's `done:false` answer posts");
+    });
+
+    ok(posted.length === before + 1, "§11c/ROOM: the sibling got its answer");
+    ok(
+      (await taskChannel("task_706c")) === "C_706_OTHER",
+      "🔴 §11c THE CONTRAST: on the REPLY path the pending task really does move to the conversation the turn answered. That is what §11a's read is capable of seeing, so §11a's unchanged answer is an observation and not a dead read",
+    );
+    ok(
+      (await readAudit({ org: ORG, action: TASK_WAKE_RETARGET_ACTION })).length === retargetsBefore + 1,
+      "§11c/AUDIT: the move wrote exactly one `unified.task_wake_retarget` row, so a re-point stays countable in production",
+    );
   }
 }
 
