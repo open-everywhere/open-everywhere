@@ -519,6 +519,43 @@ export async function slackChannelJoinEventPost(input: {
   return { status: res.status, body: await res.text() };
 }
 
+export async function slackMentionWake(input: {
+  readonly channelId: string;
+  readonly userId: string;
+  readonly text: string;
+  readonly ts: string;
+  readonly threadTs?: string;
+  readonly teamId?: string;
+  readonly eventId?: string;
+  readonly timeoutMs?: number;
+}): Promise<{ status: number; body: string }> {
+  if (booted === undefined) throw new Error("integration harness: slackMentionWake before bootAgent.");
+  const { buildChannelMentionEnvelope, SYNTHETIC_SLACK_ROUTE, signSlackRequest } = await import("../../packages/core/scripts/e2e/synthetic");
+  const teamId = input.teamId ?? SLACK_TEAM_ID;
+  const env = buildChannelMentionEnvelope({
+    text: input.text,
+    channelId: input.channelId,
+    userId: input.userId,
+    teamId,
+    ts: input.ts,
+    eventId: input.eventId ?? `EvMentIT${input.ts.replace(".", "")}`,
+  }) as { event: Record<string, unknown> };
+  if (input.threadTs !== undefined) env.event.thread_ts = input.threadTs;
+  const rawBody = JSON.stringify(env);
+  const signed = signSlackRequest(rawBody, SLACK_SIGNING_SECRET);
+  const res = await fetch(`${booted.base}${SYNTHETIC_SLACK_ROUTE}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-slack-request-timestamp": signed.timestamp,
+      "x-slack-signature": signed.signature,
+    },
+    body: rawBody,
+    signal: AbortSignal.timeout(input.timeoutMs ?? 120_000),
+  });
+  return { status: res.status, body: await res.text() };
+}
+
 export function slackTs(atMs: number, micros: number): string {
   return `${Math.floor(atMs / 1_000)}.${String(micros % 1_000_000).padStart(6, "0")}`;
 }
