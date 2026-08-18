@@ -298,4 +298,37 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
   eq(tfTiered.replace(' engagement="reserved"', ""), tf, "everything else (prose + envelope) is byte-identical to the untiered thread-follow render once the S1 attribute is normalised out");
 }
 
+{
+  const nw: NormalizedWake = {
+    platform: "slack", reason: "channel-activity", addressing: "channel-watch",
+    locus: { channel: { id: "C1", type: "channel" } },
+    wakeId: "11111111-2222-3333-4444-555555555555",
+    trigger: trig("moving the 3pm sync to 3:30"),
+  };
+  const before = process.env.OE_WAKE_SHAPE;
+  try {
+    delete process.env.OE_WAKE_SHAPE;
+    const prose = renderWake(nw, NOW).message;
+    ok(prose.startsWith("[channel-watch]"), "default: a judged wake still opens with its prose preamble");
+    ok(prose.includes("Wake scope [wake-id: 11111111-2222-3333-4444-555555555555]"), "default: the coalesced-turn scope note is still rendered");
+    ok(prose.includes("you MUST deliver any answer by CALLING THE `reply` TOOL"), "default: the single-window delivery mandate is still rendered");
+
+    process.env.OE_WAKE_SHAPE = "prose";
+    eq(renderWake(nw, NOW).message, prose, "OE_WAKE_SHAPE=prose is byte-identical to the default render — only the exact value \"schema\" changes anything");
+
+    process.env.OE_WAKE_SHAPE = "schema";
+    const schema = renderWake(nw, NOW).message;
+    ok(schema.startsWith("<wake "), "schema: the render opens straight at the envelope — no preamble, and no stray blank lines, above it");
+    ok(!schema.includes("[channel-watch]"), "schema: the addressing preamble is gone");
+    ok(!schema.includes("Wake scope"), "schema: the prose scope note is gone (the standing block carries the binding rule)");
+    ok(!schema.includes("CALLING THE `reply` TOOL"), "schema: the prose delivery mandate is gone (the standing reporting arm carries it)");
+    ok(schema.includes('addressing="channel-watch"'), "schema: the addressing attribute survives — it is the whole discriminator now");
+    ok(schema.includes('wake-id="11111111-2222-3333-4444-555555555555"'), "schema: the wake-id attribute survives — a reply still has an id to name");
+    eq(schema, prose.slice(prose.indexOf("<wake ")), "schema: the envelope itself is byte-identical to the prose arm's envelope");
+  } finally {
+    if (before === undefined) delete process.env.OE_WAKE_SHAPE;
+    else process.env.OE_WAKE_SHAPE = before;
+  }
+}
+
 console.log(`\n✓ normalized-wake: ${passed} assertions passed (byte-identity goldens: discord ×4; + renderWake coverage: per-addressing renders, W1–W4 security through the new entry point, no-platform-branch, structural trigger invariants, channel-watch containerNoun doc/channel; the slack ×5 + name-drop contextLines goldens moved to @open-everywhere/provider-slack — OPE-114 stage 4)`);

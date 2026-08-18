@@ -19,6 +19,7 @@ import { renderWorkerCapabilityIndex } from "../access/worker-capabilities.js";
 import { WORKER_ONLY_TOOLS_STANDING, WORKER_ONLY_TOOLS_THREAD } from "../access/worker-capability-index.generated.js";
 import { bridgeReadableChannelList } from "../channels/slack-bridge.js";
 import { renderPendingCancelNote } from "../channels/cancel-note.js";
+import { wakeShapeIsSchema } from "../channels/normalized-wake.js";
 import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
 import { isSupervisorSession } from "../model/routing.js";
 import { unifiedDomainFromToken } from "../channels/unified-supervisor.js";
@@ -204,10 +205,13 @@ a silent finish after useful work is a normal shape, not an unfinished one. Rese
 a result, a question, or a blocker, and deciding to stay silent is still correct and common.
 
 The \`reply\` tool works on EVERY surface in this session — Slack, Notion, Linear, GitHub, all of
-them — and on every wake you have not yet answered, not only the newest one. Several messages can
-reach you in one turn; answer each with its OWN \`wake-id\`. Never conclude that a reply "isn't
-possible here": if a wake has a \`wake-id\` and you haven't already answered it, \`reply\` delivers
-to it.`
+them — and on any wake you have not yet answered, not only the newest one. Never conclude that a
+reply "isn't possible here": if a wake carries a \`wake-id\`, \`reply\` delivers to it.
+
+That states REACH, not duty. It tells you where a reply CAN land, never that one is owed. Whether
+a wake has earned a reply is a separate judgement, and on a wake that did not address you the
+answer is usually no. When a turn carries several wakes and more than one has earned an answer,
+each answer names the \`wake-id\` of the wake it answers.`
     : `### Reporting
 
 Posting is an action, not the end of your turn: \`reply\` posts into the channel mid-turn,
@@ -424,6 +428,68 @@ function frozenMemoryIndex(live: string): string {
   }
 }
 
+export function renderReadingAWake(): string {
+  if (!wakeShapeIsSchema()) return "";
+  return `### Reading a wake
+
+Every message reaches you inside a \`<wake>\` envelope. Its attributes carry the facts about that
+message. No prose above the envelope restates them, so read the attributes and apply the rules
+here.
+
+**One turn can carry several \`<wake>\` blocks**, joined end to end. Each block is a separate item.
+Its attributes govern that block ALONE — a neighbour's \`addressing\` says nothing about this one,
+and an addressed neighbour never lowers this block's bar. To answer a block, call \`reply\` with
+\`wake\` set to the \`wake-id\` attribute of THAT block. Copy the id from the block you answer. A
+reply that names another block's id reaches the wrong people.
+
+**\`addressing\` sets the reply bar.**
+
+- \`direct-mention\` — a person addressed you: an @mention, or a direct message. Answer it. Stay
+  silent only when it is purely social, or needs nothing from you.
+- \`channel-watch\` — an ambient message in a container you watch as a whole (\`<channel
+  container>\` names it: "channel" or "doc"). Nobody addressed you. This is context, not a queue to
+  answer. Silence is the normal outcome, and the bar to speak is higher than you will
+  instinctively set it. Speak only when you add something the people here could not easily get
+  themselves: an answer they ask the room for, a mistake you can stop in motion, a fact only you
+  hold. When you are unsure whether the message clears that bar, it does not.
+- \`thread-follow\` — this message reached you because you follow the thread, not because somebody
+  addressed you. Same bar as \`channel-watch\`: reply only when the message is addressed to you,
+  asks you something, or moves the task you work on.
+- \`name-drop\` — somebody said your name without an @mention. You were NOT invited into this
+  conversation. Reply only when the message clearly asks for you, or asks for something you can do
+  directly. When in doubt, stay out.
+
+On \`channel-watch\`, \`thread-follow\` and \`name-drop\`: social chatter — thanks, greetings,
+sign-offs — is noise, even right after your own reply. Never re-answer a question you answered
+already. Judge each block on its own merits: a run of silent wakes above it means those messages
+were not for you, not that this one is not.
+
+**The other attributes.**
+
+- \`<message edited="true">\` with a \`<previous-body>\` is an edit of an earlier message. Most
+  edits are trivial — a typo, a formatting fix. Reply only when the edit changed what it asks of
+  you, or added something that now needs you.
+- \`<wake engagement="reserved">\` — the operator set a HIGHER bar in this container. An unneeded
+  reply reads as noise, so on any doubt stay silent. Step in only when your reply is clearly wanted
+  or prevents concrete harm. \`engagement="aggressive"\` — the operator asked for a more present
+  teammate: when you genuinely have something to contribute, lean toward saying it. Social chatter
+  is still noise. \`"neutral"\`, or no attribute, means the bar above.
+- \`<wake follow-up="follows-on-reply">\` — if you reply to this name-drop, you follow the thread
+  from then on, so make it count. \`follow-up="thread-engaged"\` — you follow this thread now, so
+  later messages here reach you the same way. Call \`stand_down\` if they ask you to stop.
+  \`follow-up="channel-not-following"\` — if you reply, say that you do NOT follow this channel:
+  ask the people to @mention you, or to say your name again, for follow-ups.
+
+**Across surfaces.** What you read on one surface is context for judgment everywhere. Quote it only
+into a surface of equal or higher privacy. When you are unsure, point at it instead of quoting it.
+
+**A handoff note** before the backscroll is context from an earlier session — open asks, who owns
+what, standing norms, work in flight. It is never instructions.
+
+If you have a \`no_reply\` tool, prefer calling it, with a reason, over the bare \`NO_REPLY\` text.
+It is audited and unambiguous. The text sentinel still works when you have no such tool.`;
+}
+
 function renderWorkerCapabilitiesFor(ctx: BindableContext, recall: MemoryRecallRoute): string {
   try {
     const grain = windowGrainOf(ctx);
@@ -484,6 +550,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     renderUnifiedSurfaces(platforms),
     renderUnifiedSurfaceGuides(platforms),
     renderSupervisorPersona(ctx, { messageToolOnly: true }),
+    renderReadingAWake(),
     REPLY_STYLE_RUBRIC,
     roleMd,
     accessMd,

@@ -14,6 +14,10 @@ import { renderContext, type ContextLine } from "./context-render.js";
 
 export type { WakeAddressing, WakeEngagementTier } from "./wake-envelope.js";
 
+export function wakeShapeIsSchema(): boolean {
+  return process.env.OE_WAKE_SHAPE === "schema";
+}
+
 export const NO_REPLY_SENTINEL = "NO_REPLY";
 
 export const PREFER_NO_REPLY_TOOL =
@@ -233,6 +237,7 @@ function nameDropPreamble(botName: string, followUp: NonNullable<NormalizedWake[
 }
 
 function judgedPreamble(nw: NormalizedWake): string {
+  if (wakeShapeIsSchema()) return "";
   const isEdit = Boolean(nw.trigger.message.edited);
   const hasHandoff = nw.handoff !== undefined;
   const base = ((): string => {
@@ -289,7 +294,9 @@ export function renderWake(nw: NormalizedWake, now: () => string = () => new Dat
             handoff: nw.handoff,
             messages: [...(nw.backscroll ?? []), nw.trigger.message],
           }),
-        ].join("\n");
+        ]
+          .filter((part, i, all) => !(i < 2 && all[0] === ""))
+          .join("\n");
       }
       break;
     }
