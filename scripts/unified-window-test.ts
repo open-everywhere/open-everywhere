@@ -86,7 +86,7 @@ import {
 import { buildTeamsAuth } from "@open-everywhere/provider-teams/agent/channels/teams-identity.js";
 import { isTrustedTeamsServiceUrl } from "@open-everywhere/provider-teams/agent/channels/teams-origin-codec.js";
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
-import { channelPlatform, isUnifiedWindowContext, currentWakeId, currentTurnAddressing, assertTurnSurface, bindFrom, deploymentOrg, windowSourcesOf, resolveWindowSources, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
+import { channelPlatform, isUnifiedWindowContext, turnOriginPlatform, currentWakeId, currentTurnAddressing, assertTurnSurface, bindFrom, deploymentOrg, windowSourcesOf, resolveWindowSources, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { registerPostArm, postArm, type PostArm } from "@open-everywhere/core/agent/channels/post-arms.js";
 import { resolvePartition, domainKeyOf } from "@open-everywhere/core/agent/memory/partition.js";
 import { recordSpend } from "@open-everywhere/core/agent/spend/store.js";
@@ -1265,7 +1265,18 @@ overrideSettingsForTest({ window: { topology: false } });
 
   noThrow(() => assertTurnSurface(unifiedCtx("slack"), "slack"), "assertTurnSurface: a slack-origin unified turn MAY read slack");
   throws(() => assertTurnSurface(unifiedCtx("github"), "slack"), "assertTurnSurface: a GITHUB-origin unified turn may NOT read slack (finding 1b)");
-  noThrow(() => assertTurnSurface({ channel: { kind: "slack" }, session: { auth: { current: { attributes: {}, principalId: "U", principalType: "slack-user" } } } }, "slack"), "assertTurnSurface: a NORMAL slack session is a no-op (session.started gate is authoritative)");
+  noThrow(() => assertTurnSurface({ channel: { kind: "slack" }, session: { auth: { current: { attributes: {}, principalId: "U", principalType: "slack-user" } } } }, "slack"), "assertTurnSurface: a slack session reading slack passes (the mount gate's own case)");
+
+  const toolCtx = (attrs: Record<string, string>): BindableContext => ({
+    session: { auth: { current: { attributes: attrs, principalId: "U1", principalType: "slack-user" } } },
+  });
+  ok(turnOriginPlatform(toolCtx({ oe_platform: "github" })) === "github", "turnOriginPlatform: a channel-less (tool) context reads the delivery's own oe_platform stamp");
+  ok(turnOriginPlatform(toolCtx({})) === undefined, "turnOriginPlatform: an unplaceable context names NO origin (never the `local` stand-in)");
+  ok(!isUnifiedWindowContext(toolCtx({ oe_platform: "github", oe_window_token: "oe-dom:d:win:slack_T_C:oe-sup:g1" })), "isUnifiedWindowContext stays FALSE on a tool context — the reason the fence used to return early");
+  throws(() => assertTurnSurface(toolCtx({ oe_platform: "github" }), "slack"), "assertTurnSurface FIRES on a tool-shaped GitHub-origin turn (OPE-729 — this silently passed before)");
+  noThrow(() => assertTurnSurface(toolCtx({ oe_platform: "slack" }), "slack"), "assertTurnSurface: a tool-shaped slack-origin turn MAY read slack (the negative control)");
+  throws(() => assertTurnSurface(toolCtx({}), "slack"), "assertTurnSurface FAILS CLOSED on a context whose origin it cannot name");
+  throws(() => assertTurnSurface({ channel: { kind: "subagent" }, session: { auth: { current: { attributes: { oe_platform: "github" } } } } }, "slack"), "assertTurnSurface FIRES on a delegated worker of a github-origin turn (kind `subagent`, never `unified`)");
 
   ok(arm(readSlackChannel, unifiedCtx("slack")) !== null, "read_slack_channel arms on a unified session (regardless of the current origin)");
   ok(arm(readSlackChannel, { channel: { kind: "channel:github" }, session: { auth: { current: { attributes: {}, principalId: "U", principalType: "github-user" } } } }) === null, "read_slack_channel stays HIDDEN on a normal github session (byte-identical to today)");
@@ -1303,6 +1314,19 @@ overrideSettingsForTest({ window: { topology: false } });
     session: { auth: { current: { attributes: { oe_platform: "github" }, principalId: "U", principalType: "github-user" } } },
   };
   ok(JSON.stringify(resolveWindowSources(unresolvable, [winDomain, org])) === JSON.stringify(["github"]), "resolveWindowSources fails closed to the SINGLE origin platform when neither stamp nor token resolves");
+
+  const toolStampless: BindableContext = {
+    session: { auth: { current: { attributes: { oe_platform: "slack", oe_window_token: "oe-dom:payments:oe-sup:g1" }, principalId: "U", principalType: "slack-user" } } },
+  };
+  ok(
+    JSON.stringify([...resolveWindowSources(toolStampless, [winDomain, org])].sort()) === JSON.stringify(["discord", "github", "linear", "notion", "slack", "teams"]),
+    "resolveWindowSources recomputes from the oe_window_token stamp when there is no channel (the tool-execute shape)",
+  );
+  const toolNative: BindableContext = {
+    session: { auth: { current: { attributes: { oe_platform: "slack" }, principalId: "U", principalType: "slack-user" } } },
+  };
+  ok(JSON.stringify(resolveWindowSources(toolNative, [winDomain, org])) === JSON.stringify(["slack"]), "resolveWindowSources fails closed to the turn's ORIGIN on a channel-less context (was: the empty vector)");
+  ok(JSON.stringify(resolveWindowSources({ session: {} }, [winDomain, org])) === JSON.stringify([]), "resolveWindowSources still answers EMPTY for a context that names nothing at all (fail-closed, unchanged)");
 }
 
 {
