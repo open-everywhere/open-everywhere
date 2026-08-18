@@ -47,6 +47,7 @@ const readThreadEntry = defineTool({
     count: z.number(),
     messages: z.array(z.object({ author: z.string(), ts: z.string(), text: z.string() })),
     authoredByNonMember: z.boolean().optional(),
+    possiblyIncomplete: z.boolean().optional(),
   }),
   async execute(input, ctx) {
     const bctx = ctx as unknown as BindableContext;
