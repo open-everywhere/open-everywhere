@@ -421,6 +421,8 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
 
 {
   const prevDeploymentId = process.env.VERCEL_DEPLOYMENT_ID;
+  const prevCredentialKey = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  const VALID_KEY = createHash("sha256").update("control-read-test-key").digest("base64");
   function getSignal(token?: string): Promise<Response> {
     return handleRuntimeSignalRead(
       new Request(`https://oe.example${CONTROL_READ_RUNTIME_SIGNAL_PATH}`, {
@@ -433,38 +435,52 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   ok((await getSignal("not-the-token")).status === 401, "runtime-signal: configured + wrong token → 401");
 
   delete process.env.VERCEL_DEPLOYMENT_ID;
+  delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
   {
     const res = await getSignal(SECRET);
     ok(res.status === 200, "runtime-signal: good token → 200");
     ok((res.headers.get("content-type") ?? "").includes("application/json"), "runtime-signal 200 is JSON");
-    const body = (await res.json()) as { hasDeploymentId: boolean };
+    const body = (await res.json()) as { hasDeploymentId: boolean; credentialBrokerArmed: boolean };
     ok(body.hasDeploymentId === false, "runtime-signal: an EMPTY VERCEL_DEPLOYMENT_ID reports hasDeploymentId: false — the incident this route exists to catch");
+    ok(
+      body.credentialBrokerArmed === false,
+      "runtime-signal: an ABSENT OE_CREDENTIAL_ENCRYPTION_KEY reports credentialBrokerArmed: false — the OPE-641 incident this field exists to catch",
+    );
   }
 
   process.env.VERCEL_DEPLOYMENT_ID = "   ";
+  process.env.OE_CREDENTIAL_ENCRYPTION_KEY = "not-valid-base64-32-bytes";
   {
-    const body = (await (await getSignal(SECRET)).json()) as { hasDeploymentId: boolean };
+    const body = (await (await getSignal(SECRET)).json()) as { hasDeploymentId: boolean; credentialBrokerArmed: boolean };
     ok(body.hasDeploymentId === false, "runtime-signal: a whitespace-only VERCEL_DEPLOYMENT_ID also reports false (trimmed, not just falsy-checked)");
+    ok(body.credentialBrokerArmed === false, "runtime-signal: a malformed (wrong-length) key also reports credentialBrokerArmed: false");
   }
 
   process.env.VERCEL_DEPLOYMENT_ID = "dpl_test_only_never_a_real_id";
+  process.env.OE_CREDENTIAL_ENCRYPTION_KEY = VALID_KEY;
   {
     const res = await getSignal(SECRET);
     const raw = await res.text();
-    const body = JSON.parse(raw) as { hasDeploymentId: boolean };
+    const body = JSON.parse(raw) as { hasDeploymentId: boolean; credentialBrokerArmed: boolean };
     ok(body.hasDeploymentId === true, "runtime-signal: a non-empty VERCEL_DEPLOYMENT_ID reports hasDeploymentId: true — the positive control");
+    ok(body.credentialBrokerArmed === true, "runtime-signal: a well-formed 32-byte base64 key reports credentialBrokerArmed: true — the positive control");
     ok(!raw.includes("dpl_test_only_never_a_real_id"), "🔴 PRESENCE, NEVER VALUE — the raw deployment id never leaves the response body");
-    ok(Object.keys(body).length === 1, "the body carries exactly one field — nothing else about the runtime rides along");
+    ok(!raw.includes(VALID_KEY), "🔴 PRESENCE, NEVER VALUE — the raw key material never leaves the response body");
+    ok(Object.keys(body).length === 2, "the body carries exactly two fields — nothing else about the runtime rides along");
   }
 
   const svc = await readAudit({ org: "acme", action: "control.service_call", principalId: "svc:e2e-harness" });
+  const runtimeSignalRows = svc.filter((e) => (e.detail as { view?: string }).view === "runtime_signal");
+  ok(runtimeSignalRows.length > 0, "runtime-signal: authenticated read is self-audited as control.service_call view=runtime_signal");
   ok(
-    svc.some((e) => (e.detail as { view?: string }).view === "runtime_signal"),
-    "runtime-signal: authenticated read is self-audited as control.service_call view=runtime_signal",
+    runtimeSignalRows.some((e) => (e.detail as { credentialBrokerArmed?: boolean }).credentialBrokerArmed === true),
+    "runtime-signal: the audit row carries credentialBrokerArmed alongside hasDeploymentId (OPE-641)",
   );
 
   if (prevDeploymentId === undefined) delete process.env.VERCEL_DEPLOYMENT_ID;
   else process.env.VERCEL_DEPLOYMENT_ID = prevDeploymentId;
+  if (prevCredentialKey === undefined) delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  else process.env.OE_CREDENTIAL_ENCRYPTION_KEY = prevCredentialKey;
 }
 
 {

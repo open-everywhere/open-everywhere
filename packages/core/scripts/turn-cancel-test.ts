@@ -4,7 +4,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { registerOperationalStore } from "../agent/operational/provider.js";
-import { renderCancelNote } from "../agent/hooks/turn-anchor.js";
+import { renderCancelNote, TURN_CANCELLED_ACTION } from "../agent/hooks/turn-anchor.js";
+import { resolvePartition } from "../agent/memory/partition.js";
 import {
   clearPendingCancelNoteAfter,
   formatCancelNoteReminder,
@@ -15,7 +16,7 @@ import {
 import { parseOeCommandTokens, parseSlackCommandText, renderHelp, runStop } from "../agent/commands/core.js";
 import { resolveTurnAnchor, recordTurnAnchor, clearTurnAnchor, turnAnchorKey, turnChannelKey, TURN_ANCHOR_TTL_MS } from "../agent/channels/turn-registry.js";
 import { cancelAnchoredTurn, TURN_CANCEL_ACTION, type AttachSessionForCancel } from "../agent/channels/turn-cancel.js";
-import { appendAudit } from "../agent/audit/audit.js";
+import { appendAudit, readAudit } from "../agent/audit/audit.js";
 import type { SurfaceBinding } from "../agent/identity/binding.js";
 
 process.env.OE_SQLITE_PATH = ":memory:";
@@ -165,6 +166,13 @@ ok(renderCancelNote(1, []).includes("one step in"), "one step reads as prose, no
   ok(note.includes("and 2 earlier"), "a long turn summarises the tail rather than listing everything");
   ok(note.includes("`e`"), "…keeping the MOST RECENT actions, which are the ones a human is looking at");
 }
+{
+  const note = renderCancelNote(0, [], false);
+  ok(note.includes("NOT undone"), "🔴 the unaccounted note still states plainly that what ran was NOT undone");
+  ok(!note.includes("nothing had run yet"), "🔴 …and NEVER claims nothing ran — that is the invented fact this arm exists to prevent");
+  ok(!note.includes("0 steps in"), "…nor invents a step count it does not have");
+  ok(renderCancelNote(0, []) !== note, "the accounted and unaccounted notes are different sentences (the flag is load-bearing)");
+}
 
 {
   const empty = formatCancelNoteReminder({ turnId: "t-1", steps: 1, ran: [] });
@@ -204,6 +212,23 @@ const NO_REQUESTER_BASELINE =
     "🔴 no requester ⇒ the reminder is BYTE-IDENTICAL to the anonymous wording (nothing invented, nothing hedged)",
   );
   ok(NO_REQUESTER_BASELINE.includes("by a person"), "…which is the anonymous wording, still present when nobody is named");
+}
+
+{
+  const blind = formatCancelNoteReminder({ turnId: "t-u1", steps: 0, ran: [], accounted: false });
+  ok(blind !== null && blind.startsWith("<system-reminder>"), "the unaccounted reminder is still a ready-to-emit block");
+  ok(blind!.includes("CANCELLED"), "🔴 it still tells the model it was CANCELLED");
+  ok(blind!.includes("effects are REAL"), "🔴 …and still says the invisible work REALLY HAPPENED — the anti-double-execution clause survives the degradation");
+  ok(!blind!.includes("nothing was left half-done"), "🔴 …and NEVER says nothing ran: that sentence on an unknown accumulator is the double-execution this module exists to prevent");
+  ok(!blind!.includes("0 steps in") && !blind!.includes("stopped 0"), "…nor invents a step count");
+  ok(blind!.includes("Ask what was already done"), "…it asks, because it has no list to give");
+
+  ok(
+    formatCancelNoteReminder({ turnId: "t-b2", steps: 4, ran: ["read_thread", "create_ticket"], accounted: true }) === NO_REQUESTER_BASELINE,
+    "🔴 accounted:true renders the FULL reconstruction, byte-identical to the flagless form",
+  );
+  const named = formatCancelNoteReminder({ turnId: "t-u2", steps: 0, ran: [], accounted: false, by: "U-STOPPER" });
+  ok(named!.includes("CANCELLED by `U-STOPPER`"), "…and the unaccounted arm still names the requester when one is known");
 }
 
 {
@@ -366,6 +391,44 @@ const NO_REQUESTER_BASELINE =
     ok(!renderPendingCancelNote()!.includes("developer mode"), "🔴 …so no forged instruction text reaches the trusted standing block");
     ok(renderPendingCancelNote() === NO_REQUESTER_BASELINE, "…and the note falls back to the anonymous wording exactly");
   });
+
+  {
+    const WINDOW = "w-745-recovered";
+    const TURN = "t-745";
+    const ctx = { channel: { continuationToken: WINDOW }, session: { id: "s-745" } };
+    const org = resolvePartition(ctx as never).org;
+    const countRows = async (): Promise<number> => (await readAudit({ action: TURN_CANCELLED_ACTION })).length;
+
+    await recordTurnAnchor(org, { windowKey: WINDOW, sessionId: "s-745", turnId: TURN, surfaceKey: "slack/T1/C1" }, new Date().toISOString());
+    ok((await resolveTurnAnchor(org, { windowKey: WINDOW })) !== null, "(precondition) the anchor row is there before the cancel");
+
+    const before = await countRows();
+    const blind = new SeededSession();
+    await storage.run(blind, async () => {
+      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: TURN } }, ctx);
+
+      ok((await countRows()) === before + 1, "🔴 a cancel with NO surviving accumulator still writes the turn.cancelled audit row");
+      const row = (await readAudit({ action: TURN_CANCELLED_ACTION, limit: 1 }))[0]!;
+      ok(row.detail?.["accounted"] === false, "🔴 …and the row SAYS the accumulator was lost");
+      ok(!("steps" in (row.detail ?? {})) && !("ran" in (row.detail ?? {})), "🔴 …and OMITS steps/ran rather than writing a fabricated 0 and []");
+
+      ok((await resolveTurnAnchor(org, { windowKey: WINDOW })) === null, "🔴 …and the anchor row is CLEARED, not left to its TTL");
+
+      const pending = readPendingCancelNote();
+      ok(pending !== null, "🔴 …and the model still gets a reconstruction");
+      ok(pending!.accounted === false, "…marked unaccounted, so the reminder cannot claim nothing ran");
+      ok(renderPendingCancelNote()!.includes("effects are REAL"), "🔴 …whose reminder still carries the anti-double-execution clause");
+      ok(!renderPendingCancelNote()!.includes("nothing was left half-done"), "🔴 …and never tells the model nothing ran");
+    });
+
+    const noCtx = await countRows();
+    const blind2 = new SeededSession();
+    await storage.run(blind2, async () => {
+      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-745-noctx" } });
+      ok(readPendingCancelNote() === null, "…and no reconstruction either");
+    });
+    ok((await countRows()) === noCtx, "🔴 no slot AND no ctx ⇒ NO row (the arm never invents a partition it cannot read)");
+  }
 }
 
 {

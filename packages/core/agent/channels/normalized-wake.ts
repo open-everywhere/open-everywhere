@@ -17,6 +17,8 @@ export type { WakeAddressing, WakeEngagementTier } from "./wake-envelope.js";
 
 export const NO_REPLY_SENTINEL = "NO_REPLY";
 
+export const END_TURN_WITH_SENTINEL_INSTRUCTION = `Now end the turn: output exactly ${NO_REPLY_SENTINEL} and nothing else.`;
+
 export const PREFER_NO_REPLY_TOOL =
   `If you have a \`no_reply\` tool, prefer calling it (with a reason) over the bare ` +
   `${NO_REPLY_SENTINEL} text — it's audited and unambiguous; the text sentinel still works if you don't.`;

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   censusResult,
   classifyEndpoint,
+  credentialBrokerArmedFinding,
   cronCeilingHours,
   heartbeatFindings,
   planRequiredCredentials,
@@ -455,9 +456,49 @@ check("censusResult: no `runtimeSignal` passed at all is byte-identical to today
   assert.doesNotMatch(renderCensusReport(result).join("\n"), /RUNTIME-REVISION SIGNAL/u);
 });
 
+check("credentialBrokerArmedFinding: credentialBrokerArmed true is green and names what registers", () => {
+  const f = credentialBrokerArmedFinding({ credentialBrokerArmed: true });
+  assert.equal(f.ok, true);
+  assert.match(f.detail, /valid OE_CREDENTIAL_ENCRYPTION_KEY/u);
+});
+
+check("credentialBrokerArmedFinding: credentialBrokerArmed false is red — the OPE-641 incident this half exists to catch", () => {
+  const f = credentialBrokerArmedFinding({ credentialBrokerArmed: false });
+  assert.equal(f.ok, false);
+  assert.match(f.detail, /absent or malformed/u);
+  assert.match(f.detail, /fails closed at once/u);
+});
+
+check("credentialBrokerArmedFinding: 🔴 ANTI-VACUITY — an UNREACHABLE route (undefined) is ALSO red, never a silent pass", () => {
+  const f = credentialBrokerArmedFinding(undefined);
+  assert.equal(f.ok, false, "an unproven signal must never read as green by omission");
+  assert.match(f.detail, /did not answer/u);
+});
+
+check("censusResult: a red credentialBrokerArmed alone fails the whole census, even with every credential and route clean", () => {
+  const result = clean({ credentialBrokerArmed: credentialBrokerArmedFinding({ credentialBrokerArmed: false }) });
+  assert.equal(result.ok, false, "an unarmed deployment key fails the census on its own");
+  const report = renderCensusReport(result).join("\n");
+  assert.match(report, /CREDENTIAL BROKER KEY, DEPLOYMENT'S OWN \(OPE-641\)/u);
+  assert.match(report, /credential broker key \(deployment\): .*fails closed/u, "the red summary names the finding, not just a generic failure");
+});
+
+check("censusResult: a green credentialBrokerArmed alongside a clean credential/route census is still a clean census", () => {
+  const result = clean({ credentialBrokerArmed: credentialBrokerArmedFinding({ credentialBrokerArmed: true }) });
+  assert.equal(result.ok, true);
+  assert.match(renderCensusReport(result).join("\n"), /✓ .*valid OE_CREDENTIAL_ENCRYPTION_KEY/u);
+});
+
+check("censusResult: no `credentialBrokerArmed` passed at all is byte-identical to today — the half is additive, never a silent new gate", () => {
+  const result = clean();
+  assert.equal(result.credentialBrokerArmed, undefined);
+  assert.equal(result.ok, true);
+  assert.doesNotMatch(renderCensusReport(result).join("\n"), /CREDENTIAL BROKER KEY/u);
+});
+
 if (failures.length > 0) {
   console.error(`✗ deploy-census: ${failures.length} of ${checks} check(s) FAILED`);
   for (const f of failures) console.error(`  ✗ ${f}`);
   process.exit(1);
 }
-console.log(`✓ deploy-census: ${checks} check(s) passed (required-set derivation, endpoint plan, the four reds, the anti-vacuity control, the OPE-635 cron heartbeat half, the OPE-658 runtime-revision signal half — all offline)`);
+console.log(`✓ deploy-census: ${checks} check(s) passed (required-set derivation, endpoint plan, the four reds, the anti-vacuity control, the OPE-635 cron heartbeat half, the OPE-658 runtime-revision signal half, the OPE-641 credential-broker-armed half — all offline)`);

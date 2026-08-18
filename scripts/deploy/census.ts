@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   censusResult,
+  credentialBrokerArmedFinding,
   cronCeilingHours,
   heartbeatFindings,
   planRequiredCredentials,
@@ -11,6 +12,7 @@ import {
   proveKeyOpensRow,
   renderCensusReport,
   runtimeSignalFinding,
+  type CredentialBrokerArmedFinding,
   type EndpointObservation,
   type HeartbeatFinding,
   type HeartbeatObservation,
@@ -57,7 +59,7 @@ const CHANNEL_LIMITS: Record<string, string> = {
 
 const STANDING_LIMITS: readonly string[] = [
   "a refused probe proves the ingress SERVES and refuses. It does not prove a correctly SIGNED delivery is accepted or reaches a session — `npm run deploy:smoke` proves that, for one declared hook only (OPE-640).",
-  "the AES key tested here is THIS process's key. It proves the stored rows are openable; nothing observable from outside proves the deployment's own environment still carries OE_CREDENTIAL_ENCRYPTION_KEY (OPE-641).",
+  "the AES key tested here is THIS process's key. It proves the stored rows are openable; the CREDENTIAL BROKER KEY finding below (OPE-641) is the observable proof of the deployment's own OE_CREDENTIAL_ENCRYPTION_KEY, when that check runs.",
   "env-brokered secrets (an env var NAME as the ref) are not store rows, so the census cannot see whether the deployment holds them.",
   "the store censused is the one THIS process's DATABASE_URL opens. Nothing joins it to the deployment at --target, so pointing the two at different environments reports a clean census of the wrong pair.",
   "the cron heartbeats (OPE-635) read the audit trail through THIS process's DATABASE_URL, same as the credential rows above — the same wrong-store caveat applies to them.",
@@ -162,7 +164,11 @@ async function probe(target: string, path: string, timeoutMs: number): Promise<E
   }
 }
 
-async function fetchRuntimeSignal(target: string, token: string, timeoutMs: number): Promise<{ hasDeploymentId: boolean } | undefined> {
+async function fetchRuntimeSignal(
+  target: string,
+  token: string,
+  timeoutMs: number,
+): Promise<{ hasDeploymentId: boolean; credentialBrokerArmed?: boolean } | undefined> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -171,8 +177,12 @@ async function fetchRuntimeSignal(target: string, token: string, timeoutMs: numb
       signal: controller.signal,
     });
     if (!res.ok) return undefined;
-    const body = (await res.json()) as { hasDeploymentId?: unknown };
-    return typeof body.hasDeploymentId === "boolean" ? { hasDeploymentId: body.hasDeploymentId } : undefined;
+    const body = (await res.json()) as { hasDeploymentId?: unknown; credentialBrokerArmed?: unknown };
+    if (typeof body.hasDeploymentId !== "boolean") return undefined;
+    return {
+      hasDeploymentId: body.hasDeploymentId,
+      ...(typeof body.credentialBrokerArmed === "boolean" ? { credentialBrokerArmed: body.credentialBrokerArmed } : {}),
+    };
   } catch {
     return undefined;
   } finally {
@@ -245,20 +255,36 @@ try {
     heartbeatLimits.push("the cron-heartbeat check DID NOT RUN (--no-heartbeat-check) — nothing here proves directory-sync, tidy or dream-mode3 are still firing");
   }
 
+  const wantRuntimeSignal = !args.flags.has("no-runtime-signal-check");
+  const wantCredentialBrokerArmed = !args.flags.has("no-credential-key-armed-check");
   let runtimeSignal: RuntimeSignalFinding | undefined;
+  let credentialBrokerArmed: CredentialBrokerArmedFinding | undefined;
   const runtimeSignalLimits: string[] = [];
-  if (!args.flags.has("no-runtime-signal-check")) {
+  const credentialBrokerArmedLimits: string[] = [];
+  if (!wantRuntimeSignal) runtimeSignalLimits.push("the runtime-revision signal check DID NOT RUN (--no-runtime-signal-check)");
+  if (!wantCredentialBrokerArmed) credentialBrokerArmedLimits.push("the credential-broker-armed check DID NOT RUN (--no-credential-key-armed-check)");
+  if (wantRuntimeSignal || wantCredentialBrokerArmed) {
     const runtimeToken = (process.env.OE_DEPLOY_CONTROL_TOKEN?.trim() || process.env.E2E_CONTROL_READ_TOKEN?.trim()) ?? "";
     if (!runtimeToken) {
-      runtimeSignalLimits.push(
-        "the runtime-revision signal check DID NOT RUN — no OE_DEPLOY_CONTROL_TOKEN / E2E_CONTROL_READ_TOKEN set, so nothing here proves VERCEL_DEPLOYMENT_ID is non-empty on the deployed function",
-      );
+      if (wantRuntimeSignal) {
+        runtimeSignalLimits.push(
+          "the runtime-revision signal check DID NOT RUN — no OE_DEPLOY_CONTROL_TOKEN / E2E_CONTROL_READ_TOKEN set, so nothing here proves VERCEL_DEPLOYMENT_ID is non-empty on the deployed function",
+        );
+      }
+      if (wantCredentialBrokerArmed) {
+        credentialBrokerArmedLimits.push(
+          "the credential-broker-armed check DID NOT RUN — no OE_DEPLOY_CONTROL_TOKEN / E2E_CONTROL_READ_TOKEN set, so nothing here proves the deployment's OE_CREDENTIAL_ENCRYPTION_KEY is armed",
+        );
+      }
     } else {
       const observed = await fetchRuntimeSignal(target, runtimeToken, timeoutMs);
-      runtimeSignal = runtimeSignalFinding(observed);
+      if (wantRuntimeSignal) runtimeSignal = runtimeSignalFinding(observed ? { hasDeploymentId: observed.hasDeploymentId } : undefined);
+      if (wantCredentialBrokerArmed) {
+        credentialBrokerArmed = credentialBrokerArmedFinding(
+          observed && typeof observed.credentialBrokerArmed === "boolean" ? { credentialBrokerArmed: observed.credentialBrokerArmed } : undefined,
+        );
+      }
     }
-  } else {
-    runtimeSignalLimits.push("the runtime-revision signal check DID NOT RUN (--no-runtime-signal-check)");
   }
 
   const result = censusResult({
@@ -271,7 +297,8 @@ try {
     ...(keyProof ? { keyProof } : {}),
     heartbeats,
     ...(runtimeSignal ? { runtimeSignal } : {}),
-    limits: [...limits, ...keyCheckLimits, ...heartbeatLimits, ...runtimeSignalLimits, ...STANDING_LIMITS],
+    ...(credentialBrokerArmed ? { credentialBrokerArmed } : {}),
+    limits: [...limits, ...keyCheckLimits, ...heartbeatLimits, ...runtimeSignalLimits, ...credentialBrokerArmedLimits, ...STANDING_LIMITS],
   });
 
   if (json) console.log(JSON.stringify(result, null, 2));

@@ -5,6 +5,7 @@ export interface PendingCancelNote {
   readonly steps: number;
   readonly ran: readonly string[];
   readonly by?: string;
+  readonly accounted?: boolean;
 }
 
 const MAX_NAMED_ACTIONS = 6;
@@ -44,6 +45,16 @@ export function formatCancelNoteReminder(note: PendingCancelNote | null): string
   if (!note) return null;
   const where = note.steps === 1 ? "one step in" : `${note.steps} steps in`;
   const who = note.by ? `by \`${note.by}\`` : "by a person";
+  if (note.accounted === false) {
+    return (
+      `<system-reminder>\nYour PREVIOUS turn in this session was CANCELLED ${who} — you did not finish, ` +
+      `and your final message (if you had started one) was never recorded.\n` +
+      `The cancel also discarded the record of what you had already done. Any tool you called in that ` +
+      `turn is missing from your history above, and its effects are REAL.\n` +
+      `Do not silently start again from the beginning. Ask what was already done before you redo it.` +
+      `\n</system-reminder>`
+    );
+  }
   const head =
     `<system-reminder>\nYour PREVIOUS turn in this session was CANCELLED ${who} — you were stopped ` +
     `${where}, you did not finish, and your final message (if you had started one) was never recorded.`;

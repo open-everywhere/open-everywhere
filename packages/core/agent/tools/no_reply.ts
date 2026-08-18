@@ -2,9 +2,11 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { markNoReplyThisTurn, peekNoReplyThisTurn, type NoReplyReason } from "../channels/no-reply-signal.js";
+import { END_TURN_WITH_SENTINEL_INSTRUCTION, NO_REPLY_SENTINEL } from "../channels/normalized-wake.js";
+import { markWakeDeclinedThisTurn } from "../channels/reply-signal.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { auditSilencesEnabled } from "../audit/audit.js";
-import { currentWakeId, type BindableContext } from "../identity/binding.js";
+import { currentTurnId, currentWakeId, type BindableContext } from "../identity/binding.js";
 
 export const NO_REPLY_REASONS = [
   "addressed_to_other",
@@ -16,6 +18,10 @@ export const NO_REPLY_REASONS = [
   "awaiting_context",
   "other",
 ] as const;
+
+export const NO_REPLY_NOTE =
+  `Turn reply requirement satisfied — silence recorded as this turn's answer. ` +
+  `${END_TURN_WITH_SENTINEL_INSTRUCTION} Do not call another tool.`;
 
 export default defineTool({
   description:
@@ -71,11 +77,12 @@ export default defineTool({
       return {
         acknowledged: true,
         reason: input.reason,
-        note: "Silence already recorded this turn; no second no_reply logged.",
+        note: `Silence already recorded this turn; no second no_reply logged. ${END_TURN_WITH_SENTINEL_INSTRUCTION}`,
       };
     }
     markNoReplyThisTurn(input.reason as NoReplyReason);
     const wakeId = currentWakeId(ctx as BindableContext);
+    markWakeDeclinedThisTurn(currentTurnId(ctx as BindableContext), wakeId);
     if (auditSilencesEnabled()) {
       await auditToolAction(ctx, "reply.no_reply", {
         reason: input.reason,
@@ -86,7 +93,7 @@ export default defineTool({
     return {
       acknowledged: true,
       reason: input.reason,
-      note: "Turn reply requirement satisfied — silence recorded as this turn's answer.",
+      note: NO_REPLY_NOTE,
     };
   },
 });
