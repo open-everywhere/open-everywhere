@@ -28,6 +28,7 @@ function ok(cond: boolean, label: string): void {
 const SLUG = "open-everywhere";
 const OWNER = "acme";
 const REPO = "widgets";
+const REPO_KEY = "ch_Z2l0aHViOmFjbWUvd2lkZ2V0cw";
 const NOW = () => "2026-02-18T14:05:00.000Z";
 
 ok(githubSupervisorSentinel(3) === "oe-sup:g3", "sentinel is oe-sup:g<gen>");
@@ -65,7 +66,7 @@ const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:
   ok(message.includes('addressing="channel-watch"'), "wake carries the ambient addressing the standing block keys the high silence bar to");
   ok(message.includes('container="repo"'), "wake uses the REPO container noun");
   ok(message.includes('engagement="reserved"'), "the reserved tier rides the envelope (GitHub's platform default tier)");
-  ok(message.includes(`<channel id="${OWNER}/${REPO}" container="repo">`), "locus.channel = owner/repo (the silo grain); the S1 <channel container> attribute mirrors the REPO noun (OPE-684)");
+  ok(message.includes(`<channel id="${REPO_KEY}" container="repo">`), "locus.channel = owner/repo (the silo grain); the S1 <channel container> attribute mirrors the REPO noun (OPE-684)");
   ok(message.includes(`<thread ts="#42">`), "locus.thread = the issue number (the conversation the comment belongs to)");
   ok(message.includes(`trigger="true"`) && message.includes("should we bump the retry budget here?"), "the comment is the trigger message");
   ok(message.includes(UNTRUSTED_OPEN), "an UNVOUCHED author's comment body is untrusted-wrapped by the envelope");
@@ -95,7 +96,7 @@ const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:
   ok(unified.message === plain.message, "🔴 unified:true is BYTE-IDENTICAL to the per-repo wake — no surface address, no disclosure sentence");
   ok(!unified.message.includes("platform="), "the unified wake names NO platform (the host routes on the opaque id)");
   ok(!unified.message.includes("Cross-surface disclosure"), "…and carries no disclosure sentence");
-  ok(unified.message.includes(`<channel id="${OWNER}/${REPO}" container="repo">`), "the channel still carries its opaque id — that is what the host routes on");
+  ok(unified.message.includes(`<channel id="${REPO_KEY}" container="repo">`), "the channel still carries its opaque id — that is what the host routes on");
   const explicitOff = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, trigger, unified: false }), NOW);
   ok(explicitOff.message === plain.message, "unified:false renders BYTE-IDENTICAL to the unset per-repo wake (flag-off invariant)");
 }
@@ -109,7 +110,7 @@ const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:
   ok(message.includes(`<wake reason="channel-activity"`), "direct-mention keeps the full judged envelope, with reason collapsed to channel-activity");
   ok(message.includes(`wake-id="${wakeId}"`), "the wake-id survives in the envelope — the reply tool echoes it (the only reply route on the unified channel)");
   ok(message.includes(`mention="true"`), "the trigger is flagged as a @mention (response-obligation signal)");
-  ok(message.includes(`<channel id="${OWNER}/${REPO}" container="repo">`), "the addressed wake carries the opaque channel id and no platform");
+  ok(message.includes(`<channel id="${REPO_KEY}" container="repo">`), "the addressed wake carries the opaque channel id and no platform");
   ok(message.includes(UNTRUSTED_OPEN), "the comment body is still untrusted-wrapped by the envelope (W1 holds on the addressed path)");
 }
 {

@@ -24,7 +24,7 @@ const NOW = () => "2026-02-18T14:05:00.000Z";
 const G_DISCORD_DIRECT = `hey can you summarise this channel?`;
 
 const G_DISCORD_JUDGED = `<wake reason="channel-activity" addressing="thread-follow" current-time="2026-07-10T10:00:00.000Z">
-  <channel id="disc-ch" container="channel">
+  <channel id="ch_ZGlzY29yZDpkaXNjLWNo" container="channel">
   <message trigger="true" from="human" trust="peer" author="rowan" author-id="U9" id="d1" sent-at="2026-07-10T09:59:00.000Z">
     anyone know if the build passed?
   </message>
@@ -32,7 +32,7 @@ const G_DISCORD_JUDGED = `<wake reason="channel-activity" addressing="thread-fol
 </wake>`;
 
 const G_DISCORD_NAMEDROP_THREAD = `<wake reason="thread-activity" addressing="name-drop" follow-up="thread-engaged" current-time="2026-07-10T10:00:00.000Z">
-  <channel id="disc-ch" container="channel">
+  <channel id="ch_ZGlzY29yZDpkaXNjLWNo" container="channel">
   <thread ts="disc-thread">
     <message trigger="true" from="human" trust="peer" author="rowan" author-id="U9" id="d1" sent-at="2026-07-10T09:59:00.000Z">
       does OpenBot handle retries?
@@ -42,7 +42,7 @@ const G_DISCORD_NAMEDROP_THREAD = `<wake reason="thread-activity" addressing="na
 </wake>`;
 
 const G_DISCORD_NAMEDROP_BASE = `<wake reason="channel-activity" addressing="name-drop" follow-up="channel-not-following" current-time="2026-07-10T10:00:00.000Z">
-  <channel id="disc-ch" container="channel">
+  <channel id="ch_ZGlzY29yZDpkaXNjLWNo" container="channel">
   <message trigger="true" from="human" trust="peer" author="rowan" author-id="U9" id="d1" sent-at="2026-07-10T09:59:00.000Z">
     does OpenBot handle retries?
   </message>
@@ -204,7 +204,9 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
   const b = renderWake(base("discord"), NOW);
   ok(a.message.includes(`source="slack-message"`), "slack wake labels its body source=slack-message (true-platform provenance)");
   ok(b.message.includes(`source="discord-message"`) && !b.message.includes(`source="slack-message"`), "discord wake labels its body source=discord-message, NOT slack-message (the J-DISC provenance-label fix)");
-  ok(b.message.replaceAll("discord-message", "slack-message") === a.message && JSON.stringify(a.context) === JSON.stringify(b.context), "renderWake never branches on platform beyond the provenance label (message identical once the label is normalised; context identical outright)");
+  ok(a.message.includes('id="ch_c2xhY2s6QzE"') && b.message.includes('id="ch_ZGlzY29yZDpDMQ"'), "OPE-746: each wake's <channel id> is its own platform's channel key");
+  const bNormalised = b.message.replaceAll("discord-message", "slack-message").replaceAll("ch_ZGlzY29yZDpDMQ", "ch_c2xhY2s6QzE");
+  ok(bNormalised === a.message && JSON.stringify(a.context) === JSON.stringify(b.context), "renderWake never branches on platform beyond the provenance label and the channel key (message identical once both are normalised; context identical outright)");
   ok(a.context !== undefined && a.context.length === 1 && a.context[0].includes(UNTRUSTED_OPEN), "contextLines render into ONE untrusted-wrapped context block (W3)");
   ok(renderWake({ ...base("slack"), contextLines: undefined, contextSource: undefined }, NOW).context === undefined, "no contextLines → context omitted (message-only payload)");
 }
@@ -218,8 +220,11 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
   const m = renderWake(nw, NOW).message;
   ok(!m.includes('platform="slack"'), "🔴 platform-blind: the <channel> element names NO platform, even when one is supplied");
   ok(!m.includes('label="Slack"'), "🔴 platform-blind: the <channel> element carries no human platform label either");
-  ok(m.includes('<channel id="C1"'), "platform-blind: the channel still carries its opaque id — that is what the host routes on");
+  ok(m.includes('<channel id="ch_c2xhY2s6QzE"'), "OPE-746: <channel id> carries the OPAQUE CHANNEL KEY — the one address the read verbs take");
+  ok(!m.includes('id="C1"'), "🔴 OPE-746: the RAW container id never reaches the model as an address");
   eq(renderWake({ ...nw, locus: { channel: { id: "C1", type: "channel" } } }, NOW).message, m, "platform-blind: supplying platform + label is byte-identical to omitting them");
+  const onDiscord = renderWake({ ...nw, platform: "discord" }, NOW).message;
+  ok(onDiscord.includes('<channel id="ch_ZGlzY29yZDpDMQ"'), "OPE-746: one container id on two platforms mints two keys — the platform is IN the key");
 }
 
 {
@@ -251,9 +256,12 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
   ok(docMsg.includes('container="doc"'), "containerNoun='doc' renders <channel container=\"doc\">");
   ok(chMsg.includes('container="channel"'), "containerNoun unset renders the 'channel' default");
   eq(
-    docMsg.replace('container="doc"', 'container="channel"').replaceAll("notion-message", "slack-message"),
+    docMsg
+      .replace('container="doc"', 'container="channel"')
+      .replaceAll("notion-message", "slack-message")
+      .replaceAll("ch_bm90aW9uOnBhZ2UtMQ", "ch_c2xhY2s6cGFnZS0x"),
     chMsg,
-    "the container attribute is the ONLY delta between 'doc' and the default render (the platform-derived body source label aside)",
+    "the container attribute is the ONLY delta between 'doc' and the default render (the platform-derived body source label and channel key aside)",
   );
 }
 

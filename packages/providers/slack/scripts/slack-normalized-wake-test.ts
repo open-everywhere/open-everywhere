@@ -15,7 +15,7 @@ function ok(cond: boolean, label: string): void {
 const NOW = () => "2026-02-18T14:05:00.000Z";
 
 const G_SLACK_THREAD_FOLLOW = `<wake reason="thread-activity" addressing="thread-follow" current-time="2026-02-18T14:05:00.000Z">
-  <channel id="C123" type="channel" container="channel">
+  <channel id="ch_c2xhY2s6QzEyMw" type="channel" container="channel">
   <participants>
     <participant id="U1" name="Rowan Hale" handle="rowan"/>
   </participants>
@@ -28,7 +28,7 @@ const G_SLACK_THREAD_FOLLOW = `<wake reason="thread-activity" addressing="thread
 </wake>`;
 
 const G_SLACK_EDITED = `<wake reason="message-edited" addressing="thread-follow" current-time="2026-02-18T14:05:00.000Z">
-  <channel id="C123" type="channel" container="channel">
+  <channel id="ch_c2xhY2s6QzEyMw" type="channel" container="channel">
   <thread ts="100.0">
     <message trigger="true" from="human" trust="peer" edited="true" author="Rowan Hale" author-id="U1" id="101.5" sent-at="1970-01-01T00:01:41.500Z">
       can you fix the bug
@@ -41,7 +41,7 @@ const G_SLACK_EDITED = `<wake reason="message-edited" addressing="thread-follow"
 </wake>`;
 
 const G_SLACK_SUPERVISOR = `<wake reason="channel-activity" addressing="channel-watch" current-time="2026-02-18T14:05:00.000Z">
-  <channel id="C900" type="channel" container="channel" member-count="42">
+  <channel id="ch_c2xhY2s6QzkwMA" type="channel" container="channel" member-count="42">
   <participants>
     <participant id="U1" name="Rowan Hale" handle="rowan"/>
     <participant id="U2" name="Ada Lovelace"/>
@@ -75,7 +75,7 @@ const G_SLACK_SUPERVISOR = `<wake reason="channel-activity" addressing="channel-
 </wake>`;
 
 const G_SLACK_NAMEDROP_TOP = `<wake reason="channel-activity" addressing="name-drop" follow-up="follows-on-reply" current-time="2026-02-18T14:05:00.000Z">
-  <channel id="C123" type="channel" container="channel">
+  <channel id="ch_c2xhY2s6QzEyMw" type="channel" container="channel">
   <participants>
     <participant id="U1" name="Rowan Hale"/>
   </participants>
@@ -86,7 +86,7 @@ const G_SLACK_NAMEDROP_TOP = `<wake reason="channel-activity" addressing="name-d
 </wake>`;
 
 const G_SLACK_NAMEDROP_THREAD = `<wake reason="thread-activity" addressing="name-drop" follow-up="follows-on-reply" current-time="2026-02-18T14:05:00.000Z">
-  <channel id="C123" type="channel" container="channel">
+  <channel id="ch_c2xhY2s6QzEyMw" type="channel" container="channel">
   <thread ts="200.0">
     <message trigger="true" from="human" trust="peer" author="U1" author-id="U1" id="201.0" sent-at="1970-01-01T00:03:21.000Z">
       maybe Open Everywhere knows
@@ -96,7 +96,7 @@ const G_SLACK_NAMEDROP_THREAD = `<wake reason="thread-activity" addressing="name
 </wake>`;
 
 const G_SLACK_DM = `<wake reason="dm" addressing="direct-mention" current-time="2026-02-18T14:05:00.000Z" wake-id="wk_dm_1">
-  <channel id="D_ALICE" type="im" container="channel">
+  <channel id="ch_c2xhY2s6RF9BTElDRQ" type="im" container="channel">
   <message trigger="true" from="human" trust="principal" mention="true" author="Rowan Hale" author-id="U1" handle="rowan" id="400.0" sent-at="1970-01-01T00:06:40.000Z">
     can you chase the refund for order 4417?
   </message>
@@ -104,7 +104,7 @@ const G_SLACK_DM = `<wake reason="dm" addressing="direct-mention" current-time="
 </wake>`;
 
 const G_SLACK_GROUP_DM = `<wake reason="dm" addressing="direct-mention" current-time="2026-02-18T14:05:00.000Z" wake-id="wk_dm_2">
-  <channel id="G_TEAM" type="mpim" container="channel">
+  <channel id="ch_c2xhY2s6R19URUFN" type="mpim" container="channel">
   <message trigger="true" from="human" trust="principal" mention="true" author="Rowan Hale" author-id="U1" handle="rowan" id="500.0" sent-at="1970-01-01T00:08:20.000Z">
     can one of you chase order 4417?
   </message>
@@ -161,7 +161,7 @@ const G_SLACK_GROUP_DM = `<wake reason="dm" addressing="direct-mention" current-
     "🔴 `groupDm` reaches NO rendered byte — the deleted prose was its only consumer, and `type=\"mpim\"` is what states the room shape now",
   );
   eq(
-    group.replace('id="G_TEAM" type="mpim"', 'id="D_ALICE" type="im"').replace('wake-id="wk_dm_2"', 'wake-id="wk_dm_1"').replace('id="500.0" sent-at="1970-01-01T00:08:20.000Z"', 'id="400.0" sent-at="1970-01-01T00:06:40.000Z"').replace("can one of you chase order 4417?", "can you chase the refund for order 4417?"),
+    group.replace('id="ch_c2xhY2s6R19URUFN" type="mpim"', 'id="ch_c2xhY2s6RF9BTElDRQ" type="im"').replace('wake-id="wk_dm_2"', 'wake-id="wk_dm_1"').replace('id="500.0" sent-at="1970-01-01T00:08:20.000Z"', 'id="400.0" sent-at="1970-01-01T00:06:40.000Z"').replace("can one of you chase order 4417?", "can you chase the refund for order 4417?"),
     G_SLACK_DM,
     "🔴 the group DM and the 1:1 DM are byte-identical once the channel address, the wake-id and the message itself are normalised out",
   );

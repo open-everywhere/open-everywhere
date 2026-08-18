@@ -30,6 +30,7 @@ function ok(cond: boolean, label: string): void {
 }
 
 const TEAM = "team-uuid-1";
+const TEAM_KEY = "ch_bGluZWFyOnRlYW0tdXVpZC0x";
 const ISSUE = "issue-uuid-9";
 const VIEWER = { id: "app-user-1", name: "Open Everywhere" };
 const NOW = () => "2026-02-18T14:05:00.000Z";
@@ -71,7 +72,7 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
   ok(message.includes('addressing="channel-watch"'), "wake carries the ambient addressing the standing block keys the high silence bar to");
   ok(message.includes('container="team"'), "wake uses the TEAM container noun");
   ok(message.includes('engagement="reserved"'), "an explicit reserved tier rides the envelope");
-  ok(message.includes(`<channel id="${TEAM}" container="team">`), "locus.channel = the team (the silo grain); the S1 <channel container> attribute mirrors the TEAM noun (OPE-684)");
+  ok(message.includes(`<channel id="${TEAM_KEY}" container="team">`), "locus.channel = the team (the silo grain); the S1 <channel container> attribute mirrors the TEAM noun (OPE-684)");
   ok(message.includes(`<thread ts="ENG-42">`), "locus.thread = the issue identifier (the conversation)");
   ok(message.includes(`trigger="true"`) && message.includes("can we ship the migration tomorrow?"), "the comment is the trigger message");
   ok(message.includes(UNTRUSTED_OPEN), "an UNVOUCHED author's comment body is untrusted-wrapped by the envelope");
@@ -93,7 +94,7 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
   const plain = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger }), NOW);
   const unified = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger, unified: true }), NOW);
   ok(unified.message === plain.message, "🔴 unified:true is BYTE-IDENTICAL to the per-team wake — no surface address, no disclosure sentence");
-  ok(unified.message.includes(`<channel id="${TEAM}" container="team">`), "the channel still carries its opaque id — that is what the host routes on");
+  ok(unified.message.includes(`<channel id="${TEAM_KEY}" container="team">`), "the channel still carries its opaque id — that is what the host routes on");
   ok(!plain.message.includes("platform=") && !plain.message.includes("Cross-surface disclosure"), "neither wake carries a platform attr or a disclosure sentence");
   const explicitOff = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger, unified: false }), NOW);
   ok(explicitOff.message === plain.message, "unified:false renders BYTE-IDENTICAL to the unset per-team wake (flag-off invariant)");
@@ -109,7 +110,7 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
   ok(message.includes(`<wake reason="channel-activity"`), "direct-mention keeps the full judged envelope, with reason collapsed to channel-activity");
   ok(message.includes(`wake-id="${wakeId}"`), "the wake-id survives in the envelope — the reply tool echoes it (the only reply route on the unified channel)");
   ok(message.includes(`mention="true"`), "the trigger is flagged as a @mention (response-obligation signal)");
-  ok(message.includes(`<channel id="${TEAM}" container="team">`), "the addressed wake carries the opaque channel id and no platform");
+  ok(message.includes(`<channel id="${TEAM_KEY}" container="team">`), "the addressed wake carries the opaque channel id and no platform");
   ok(message.includes(UNTRUSTED_OPEN), "an UNVOUCHED author's comment body is still untrusted-wrapped on the ADDRESSED path (W1 keys on the author there too)");
 
   const { trust: _omitted, ...untieredTrigger } = trigger;

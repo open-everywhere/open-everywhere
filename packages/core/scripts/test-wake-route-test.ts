@@ -76,7 +76,7 @@ function goodBody(over: Record<string, unknown> = {}): Record<string, unknown> {
 }
 
 const G_INJECTED_WATCH_OPENER = `<wake reason="channel-activity" addressing="channel-watch" current-time="TIME" wake-id="WID">
-  <channel id="C1" container="channel">`;
+  <channel id="ch_c2xhY2s6QzE" container="channel">`;
 
 const normFrame = (m: string): string =>
   m

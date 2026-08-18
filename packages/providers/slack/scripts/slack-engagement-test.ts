@@ -1208,7 +1208,8 @@ registerConfig({
       }),
     );
     ok(out2.woke && uw.length === 1, "unified path: supervisor wake still fires");
-    ok(uw[0].message.includes('<channel id="C_SUP"'), "unified wake carries the opaque channel id — that is what the host routes on");
+    ok(uw[0].message.includes('<channel id="ch_c2xhY2s6Q19TVVA"'), "unified wake addresses the channel by its opaque KEY — the same address the read verbs take");
+    ok(!uw[0].message.includes('id="C_SUP"'), "🔴 OPE-746: the raw Slack channel id never reaches the model as an address");
     ok(!uw[0].message.includes("platform=") && !uw[0].message.includes("Cross-surface disclosure"), "🔴 the unified wake names NO platform and carries no disclosure sentence");
     ok(uw[0].message === wakes[0].message, "🔴 the unified wake is BYTE-IDENTICAL to the default supervisor wake — the flag changes nothing in the render");
   }
