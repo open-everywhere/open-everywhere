@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { afterEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import {
+  disposeLater,
   bootAgent,
   controlGet,
   CONTROL_SERVICE_PRINCIPAL,
@@ -11,18 +12,7 @@ import {
   registerScript,
   waitFor,
   type AuditRow,
-  type ScriptedHandle,
 } from "../harness";
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
 
 function freshUnlistedChannelId(): string {
   return `9${randomBytes(8).readBigUInt64BE().toString().padStart(18, "0").slice(0, 18)}`;

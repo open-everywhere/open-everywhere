@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { afterEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import {
+  afterThisTest,
+  disposeLater,
   awaitTaskSettlement,
   bootAgent,
   discordMentionWake,
@@ -17,16 +19,6 @@ import {
   type AuditRow,
   type ScriptedHandle,
 } from "../harness";
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
 
 function freshUnlistedChannelId(): string {
   return `9${randomBytes(8).readBigUInt64BE().toString().padStart(18, "0").slice(0, 18)}`;
@@ -89,7 +81,7 @@ async function driveConnectionSearchThenPropose(input: {
   readonly ids: string;
   readonly searchResult: unknown;
 }): Promise<{ handle: ScriptedHandle; wakeAt: number }> {
-  perTest.push(wrapToolExecute("connection_search", async () => input.searchResult));
+  afterThisTest(wrapToolExecute("connection_search", async () => input.searchResult));
 
   const handle = disposeLater(
     registerScript({
@@ -186,7 +178,7 @@ test("C — negative control: an eve-authored STATUS row (needsAuthorization) fe
 test("D — request_access grant-connector for an ungranted connector mints a real access.request card under the egress spoof, no network", async () => {
   process.env.OE_ACCESS_ADMIN_CHANNEL = "C_IT_ADMIN_FAKE";
   process.env.OE_ACCESS_CONFIG_REPO = "example-owner/open-everywhere-it-fixture";
-  perTest.push(() => {
+  afterThisTest(() => {
     delete process.env.OE_ACCESS_ADMIN_CHANNEL;
     delete process.env.OE_ACCESS_CONFIG_REPO;
   });

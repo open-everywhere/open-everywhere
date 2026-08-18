@@ -1,15 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { afterEach, expect, test } from "vitest";
-import { bootAgent, DISCORD_GUILD_ID, DISCORD_LISTED_CHANNEL_ID, readAuditRows, registerScript, runRoutineDispatchTick, waitFor, type ScriptedHandle } from "../harness";
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
+import { expect, test } from "vitest";
+import { disposeLater, bootAgent, DISCORD_GUILD_ID, DISCORD_LISTED_CHANNEL_ID, readAuditRows, registerScript, runRoutineDispatchTick, waitFor } from "../harness";
 
 const DISCORD_UNLISTED = "9000000000000000778";
 

@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { afterEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import {
+  afterThisTest,
+  disposeLater,
   awaitTaskSettlement,
   bootAgent,
   DISCORD_GUILD_ID,
@@ -11,23 +13,12 @@ import {
   taskIdOfDelegation,
   waitFor,
   waitForChildren,
-  type ScriptedHandle,
 } from "../harness";
 
 const ROUTINE_FIRE_ACTION = "routine.fire";
 const FIRE_ATTRS_SENT_ACTION = "routine.fire_attrs_sent";
 
 const SURFACE_KEY = `discord/${DISCORD_GUILD_ID}/${DISCORD_LISTED_CHANNEL_ID}`;
-
-const perTest: (() => void)[] = [];
-afterEach(() => {
-  for (const c of perTest.splice(0)) c();
-});
-
-function disposeLater(handle: ScriptedHandle): ScriptedHandle {
-  perTest.push(() => handle.dispose());
-  return handle;
-}
 
 test("a windowed routine fire whose delegated worker settles folds its run outcome", async () => {
   await bootAgent({ sharedSqlite: true });
@@ -87,7 +78,7 @@ test("a windowed routine fire whose delegated worker settles folds its run outco
     script: { parent: [{ calls: [{ tool: "task_peek", input: { taskIds: [taskId] }, id: "se-fire-peek" }] }, { say: "acknowledged" }] },
     label: "the fire worker's completion, delivered as a new message naming the task id",
   });
-  perTest.push(() => settlement.handle.dispose());
+  afterThisTest(() => settlement.handle.dispose());
 
   const peeked = await waitFor(
     () => settlement.handle.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_peek")),
