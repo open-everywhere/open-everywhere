@@ -27,7 +27,6 @@ const flag = (name: string): string | undefined => {
 const has = (name: string): boolean => argv.includes(name);
 
 const N = Math.max(1, Number.parseInt(flag("--n") ?? "5", 10));
-const SHAPE = flag("--shape") ?? "schema";
 const MODEL = flag("--model") ?? "openai/gpt-5.6-luna";
 const EFFORT = flag("--effort") ?? "high";
 const MODE = flag("--mode") ?? "coalesced";
@@ -264,9 +263,6 @@ export function scoreProbe(p: Pick<Probe, "ambientWakeId" | "addressedWakeId">, 
 }
 
 async function main(): Promise<void> {
-  if (SHAPE === "schema") process.env.OE_WAKE_SHAPE = "schema";
-  else delete process.env.OE_WAKE_SHAPE;
-
   registerSyntheticConfig();
   const system = await buildSystemPrompt();
   const mounted = Object.keys(await buildTools([]));
@@ -286,7 +282,7 @@ async function main(): Promise<void> {
   if (!key) throw new Error("AI_GATEWAY_API_KEY is unset — source .env.e2e and set it from ROWAN_VERCEL_AI_GATEWAY_KEY (never the shell key, which is the shell key)");
   const gateway = createGateway({ apiKey: key });
 
-  console.log(`first-turn-offline: n=${N} mode=${MODE} shape=${SHAPE} toolset=${TOOLSET} reissue=${REISSUE ? (STOCK_REISSUE ? "stock (pre-OPE-762)" : "guarded (OPE-762)") : "off"} pair=${PAIR ?? "rotating"} model=${MODEL} effort=${EFFORT}`);
+  console.log(`first-turn-offline: n=${N} mode=${MODE} toolset=${TOOLSET} reissue=${REISSUE ? (STOCK_REISSUE ? "stock (pre-OPE-762)" : "guarded (OPE-762)") : "off"} pair=${PAIR ?? "rotating"} model=${MODEL} effort=${EFFORT}`);
   console.log(`system prompt: ${system.length} chars`);
 
   const results: unknown[] = [];
@@ -364,7 +360,7 @@ async function main(): Promise<void> {
     results.push({ probe: i + 1, ...p, calls, terminalText: text, score, stages: stages ?? null, usage: usage ?? null, error: error ?? null });
   }
 
-  console.log(`\n════ first-turn correctness (offline, mode=${MODE}, shape=${SHAPE}) ════`);
+  console.log(`\n════ first-turn correctness (offline, mode=${MODE}) ════`);
   console.log(`correct            ${correct}/${N} = ${(correct / N).toFixed(2)}`);
   console.log(`addressed_answered ${addressedAnswered}/${N}`);
   console.log(`ambient_silent     ${ambientSilent}/${N}`);
@@ -386,10 +382,10 @@ async function main(): Promise<void> {
   console.log(`per probe: ${usageLog.map((r) => `${inputOf(r.usage)}/${cachedOf(r.usage)}`).join(" ")}  (input/cached)`);
 
   const outDir = join(process.cwd(), "scripts/eval/results");
-  const out = flag("--out") ?? join(outDir, `first-turn-offline-${MODE}-${SHAPE}-${TOOLSET}${REISSUE ? (STOCK_REISSUE ? "-reissue-stock" : "-reissue") : ""}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+  const out = flag("--out") ?? join(outDir, `first-turn-offline-${MODE}-${TOOLSET}${REISSUE ? (STOCK_REISSUE ? "-reissue-stock" : "-reissue") : ""}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, JSON.stringify({
-    config: { n: N, mode: MODE, pair: PAIR ?? null, shape: SHAPE, toolset: TOOLSET, reissue: REISSUE, stockReissue: STOCK_REISSUE, mountedTools: mounted, model: MODEL, effort: EFFORT, systemPromptChars: system.length },
+    config: { n: N, mode: MODE, pair: PAIR ?? null, toolset: TOOLSET, reissue: REISSUE, stockReissue: STOCK_REISSUE, mountedTools: mounted, model: MODEL, effort: EFFORT, systemPromptChars: system.length },
     summary: { correct, of: N, rate: correct / N, addressedAnswered, ambientSilent, noCrossBinding, emptySecondStep, guardSuppressed, nudgesSent: emptySecondStep - guardSuppressed, overReplyAfterNudge },
     usage: usageLog,
     system,
