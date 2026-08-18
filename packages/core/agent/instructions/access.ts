@@ -76,8 +76,11 @@ const SURFACE_NAMES: Record<string, string> = {
   linear: "Linear",
 };
 
-async function surfaceHandleFor(ctx: BindableContext): Promise<string | undefined> {
-  return botDisplayNameFor(channelPlatform(ctx));
+async function surfaceHandleFor(ctx: BindableContext): Promise<{ platform: string; handle: string } | undefined> {
+  const platform = channelPlatform(ctx);
+  if (platform === undefined) return undefined;
+  const handle = await botDisplayNameFor(platform);
+  return handle ? { platform, handle } : undefined;
 }
 
 function renderHandle(platform: string | undefined, handle: string | undefined): string {
@@ -587,10 +590,10 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
   const plan = planFor(binding, resolvePartition(ctx));
   const recall = memoryRecallRouteFor(windowGrainOf(ctx), undefined, undefined, canDelegateFromSeat(ctx));
   const memoryMd = plan.reads.length > 0 ? renderMemoryIndex(plan.reads, [], recall) : "";
-  const handle = await surfaceHandleFor(ctx);
+  const handleInfo = await surfaceHandleFor(ctx);
   return [
     renderIdentity(agentIdentityName()),
-    renderHandle(binding.platform, handle),
+    handleInfo ? renderHandle(handleInfo.platform, handleInfo.handle) : "",
     renderSurface(binding.platform),
     renderSurfaceGuide(binding.platform),
     renderSupervisorPersona(ctx),
