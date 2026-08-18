@@ -1,6 +1,6 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { bindFrom, isUnifiedWindowContext, channelPlatform, type BindableContext } from "../identity/binding.js";
+import { bindFrom, isUnifiedWindowContext, turnOriginPlatform, type BindableContext } from "../identity/binding.js";
 import { capabilitiesFor, capabilitiesForPlatform } from "../identity/capabilities.js";
 import { bridgeSlackReadCall } from "../channels/slack-bridge.js";
 import { auditToolAction } from "../audit/tool-action.js";
@@ -42,11 +42,11 @@ const reactEntry = defineTool({
         }),
         outputSchema: z.object({ reacted: z.boolean(), emoji: z.string(), ts: z.string(), note: z.string() }),
         async execute(input, ctx) {
-          if (isUnifiedWindowContext(ctx as BindableContext)) {
-            const origin = channelPlatform(ctx as BindableContext);
-            if (!capabilitiesForPlatform(origin).reactions) {
+          {
+            const origin = turnOriginPlatform(ctx as BindableContext);
+            if (origin !== undefined && !capabilitiesForPlatform(origin).reactions) {
               throw new Error(
-                `this wake came from ${origin ?? "another surface"}, which has no reaction primitive — if acknowledgement is needed, use \`reply\`, otherwise \`no_reply\`.`,
+                `this wake came from ${origin}, which has no reaction primitive — if acknowledgement is needed, use \`reply\`, otherwise \`no_reply\`.`,
               );
             }
           }

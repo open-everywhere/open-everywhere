@@ -1,5 +1,5 @@
 import {
-  channelPlatform,
+  turnOriginPlatform,
   assertTurnSurface,
   resolveWindowSources,
   type BindableContext,
@@ -118,7 +118,7 @@ export function resolveReadAdapter(
   targetPlatform: string | undefined,
   domains: readonly Domain[],
 ): { platform: string; adapter: ReadAdapter } {
-  const platform = targetPlatform ?? channelPlatform(ctx);
+  const platform = targetPlatform ?? turnOriginPlatform(ctx);
   if (!platform) {
     throw new Error("read: couldn't resolve which surface to read — pass `target.platform` (e.g. \"slack\").");
   }

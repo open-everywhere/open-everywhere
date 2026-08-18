@@ -221,6 +221,15 @@ export function isUnifiedWindowContext(ctx: BindableContext): boolean {
   return platformFromKind(ctx.channel?.kind) === "unified";
 }
 
+export function turnOriginPlatform(ctx: BindableContext): string | undefined {
+  const live = channelPlatform(ctx);
+  if (live !== undefined) return live;
+  const stamped = attr(authOf(ctx)?.attributes, ["oe_platform", "oePlatform"]);
+  if (stamped) return normalizePlatform(stamped);
+  const bound = bindFrom(ctx).platform;
+  return bound === "local" ? undefined : bound;
+}
+
 export function currentWakeId(ctx: BindableContext): string | undefined {
   if (isSubagentChildContext(ctx)) return undefined;
   const turnId = currentTurnId(ctx);
@@ -306,14 +315,14 @@ export function currentTurnGithubTarget(ctx: BindableContext): { owner: string; 
 }
 
 export function assertTurnSurface(ctx: BindableContext, surface: string): void {
-  if (!isUnifiedWindowContext(ctx)) return;
-  const origin = channelPlatform(ctx);
-  if (origin !== surface) {
-    throw new Error(
-      `this tool reads ${surface}, but the message that woke this turn came from ${origin ?? "another surface"} — ` +
+  const origin = turnOriginPlatform(ctx);
+  if (origin === surface) return;
+  throw new Error(
+    origin === undefined
+      ? `this tool reads ${surface}, but this turn's origin surface could not be resolved — a per-surface read only runs on a turn this deployment can place on ${surface}.`
+      : `this tool reads ${surface}, but the message that woke this turn came from ${origin} — ` +
         `on a cross-surface session a per-surface read tool only runs on a turn from its OWN surface (what you can recall across surfaces is the shared context, not another surface's live reads).`,
-    );
-  }
+  );
 }
 
 export type WindowGrain = "standing" | "task" | "native" | "thread";
@@ -351,14 +360,14 @@ export function windowSourcesOf(ctx: BindableContext): readonly string[] | undef
 export function resolveWindowSources(ctx: BindableContext, domains: readonly Domain[]): readonly string[] {
   const stamped = windowSourcesOf(ctx);
   if (stamped) return stamped;
-  const tok = ctx.channel?.continuationToken;
+  const tok = ctx.channel?.continuationToken ?? currentWindowToken(ctx);
   const raw = typeof tok === "string" && tok.startsWith("unified:") ? tok.slice("unified:".length) : tok;
   const key = parseWindowToken(raw);
   if (key) {
     const recomputed = sourcesForWindow(key.windowId, key.domain, domains);
     if (recomputed.length > 0) return recomputed;
   }
-  const origin = channelPlatform(ctx);
+  const origin = turnOriginPlatform(ctx);
   return origin ? [origin] : [];
 }
 
