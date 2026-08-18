@@ -268,6 +268,38 @@ export interface ReportedHeartbeat {
   readonly reason: string;
 }
 
+const CHANNEL_LIMITS: Readonly<Record<string, string>> = {
+  "discord-gateway.ts":
+    "/eve/v1/discord-gateway answers, but it only RECEIVES traffic while the always-on relay (deploy/discord-relay/) holds " +
+    "the Discord WebSocket. Nothing here can see that process. The reported `discord.dispatched` age below is the closest " +
+    "available signal — it dates the last message the relay actually delivered — but it cannot separate a DEAD relay from a " +
+    "QUIET guild, because both produce no rows. Only a relay-written heartbeat could (OPE-640).",
+};
+
+const CHANNEL_REPORTED_HEARTBEATS: Readonly<Record<string, readonly ReportedHeartbeat[]>> = {
+  "discord-gateway.ts": [
+    {
+      action: "discord.dispatched",
+      reason:
+        "dates the last message the always-on Discord relay (deploy/discord-relay/) actually delivered. Reported, never gated: a quiet guild writes no rows either, so absence does NOT prove the relay is dead, and an age does not prove it is alive right now.",
+    },
+  ],
+};
+
+export function channelCensusContributions(files: readonly string[]): {
+  readonly limits: readonly string[];
+  readonly reportedHeartbeats: readonly ReportedHeartbeat[];
+} {
+  const limits: string[] = [];
+  const reportedHeartbeats: ReportedHeartbeat[] = [];
+  for (const file of files) {
+    const limit = CHANNEL_LIMITS[file];
+    if (limit !== undefined) limits.push(limit);
+    reportedHeartbeats.push(...(CHANNEL_REPORTED_HEARTBEATS[file] ?? []));
+  }
+  return { limits, reportedHeartbeats };
+}
+
 export interface HeartbeatObservation {
   readonly action: string;
   readonly lastSeenIso?: string;
