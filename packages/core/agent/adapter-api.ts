@@ -184,7 +184,7 @@ export type { ProviderRegistrationRefusal } from "./access/provider-selection.js
 export { registerDocs, registerProviderDocs, clearDocs, visibleDocs, docIndex, readDoc, normalizeDocPath } from "./docs/registry.js";
 export type { DocEntry, RegisteredDoc, DocLookup } from "./docs/registry.js";
 
-export { registerIdentityMapper, deploymentOrg, bindFrom, assertTurnSurface, currentTurnIssue, authPrincipalId, attestedFireCreatorId } from "./identity/binding.js";
+export { registerIdentityMapper, deploymentOrg, bindFrom, assertTurnSurface, TurnOriginFenceError, currentTurnIssue, authPrincipalId, attestedFireCreatorId } from "./identity/binding.js";
 export type { IdentityMapper, RawIdentity, Visibility, SurfaceBinding } from "./identity/binding.js";
 export type { SessionMode } from "./access/resolver.js";
 
@@ -466,7 +466,7 @@ export type { RenderedLine } from "./channels/channel-read.js";
 export { refutedReadAuthorIds, distinctReadAuthorIds } from "./channels/read-author-trust.js";
 export type { ReadAuthorProbe } from "./channels/read-author-trust.js";
 
-export { auditChannelReadRefusal } from "./channels/read-scope-audit.js";
+export { auditChannelReadRefusal, auditOriginFenceRefusal, auditSourcesGateRefusal } from "./channels/read-scope-audit.js";
 export type { ReadScopeAuditDeps, ReadScopeReason, ReadScopeRefusal } from "./channels/read-scope-audit.js";
 
 export type { Trust } from "./identity/binding.js";

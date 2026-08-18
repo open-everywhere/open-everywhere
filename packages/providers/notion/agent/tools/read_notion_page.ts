@@ -6,6 +6,8 @@ import { assertNotionPageAllowed, assertNotionPageAllowedOrResolveBlock } from "
 import {
   ingestUntrustedModelOutput,
   assertTurnSurface,
+  TurnOriginFenceError,
+  auditOriginFenceRefusal,
   bindFrom,
   sourceScopedMount,
   getConfig,
@@ -40,7 +42,12 @@ export const readNotionPageEntry = defineTool({
           workspaceTrust: z.enum(["internal", "public"]).optional(),
         }),
         async execute(input, ctx2) {
-          assertTurnSurface(ctx2 as BindableContext, "notion");
+          try {
+            assertTurnSurface(ctx2 as BindableContext, "notion");
+          } catch (err) {
+            if (err instanceof TurnOriginFenceError) await auditOriginFenceRefusal(ctx2 as BindableContext, "notion");
+            throw err;
+          }
           const requestedPage = input.page ?? bindFrom(ctx2 as BindableContext).surface;
           if (!requestedPage) throw new Error("No Notion page id available for this session — pass `page` explicitly.");
           const domains = getConfig().loadDomains();

@@ -1,5 +1,5 @@
 import { appendAudit } from "../audit/audit.js";
-import { bindFrom, type BindableContext } from "../identity/binding.js";
+import { bindFrom, turnOriginPlatform, currentSessionId, type BindableContext } from "../identity/binding.js";
 import { domainForChannel, type Domain } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 
@@ -51,4 +51,36 @@ export async function auditChannelReadRefusal(
   } catch (err) {
     console.warn(`[open-everywhere:audit] read.refused row for ${refusal.platform} was not written: ${String(err)}`);
   }
+}
+
+async function auditFenceRefusal(
+  ctx: BindableContext,
+  verb: "sources_refused" | "origin_refused",
+  target: string,
+  deps?: ReadScopeAuditDeps,
+): Promise<void> {
+  const action = `${target}.${verb}`;
+  try {
+    const partition = resolvePartition(ctx);
+    const principalId = bindFrom(ctx).principalId;
+    await (deps?.audit ?? appendAudit)({
+      org: partition.org,
+      platform: target,
+      workspace: partition.workspace,
+      surface: partition.surface,
+      ...(principalId ? { principalId } : {}),
+      action,
+      detail: { target, origin: turnOriginPlatform(ctx) ?? null, sessionId: currentSessionId(ctx) ?? null },
+    });
+  } catch (err) {
+    console.warn(`[open-everywhere:audit] ${action} row for ${target} was not written: ${String(err)}`);
+  }
+}
+
+export async function auditSourcesGateRefusal(ctx: BindableContext, target: string, deps?: ReadScopeAuditDeps): Promise<void> {
+  await auditFenceRefusal(ctx, "sources_refused", target, deps);
+}
+
+export async function auditOriginFenceRefusal(ctx: BindableContext, target: string, deps?: ReadScopeAuditDeps): Promise<void> {
+  await auditFenceRefusal(ctx, "origin_refused", target, deps);
 }

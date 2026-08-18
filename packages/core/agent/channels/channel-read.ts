@@ -113,6 +113,12 @@ export function supportedReadPlatforms(): readonly string[] {
   return Object.keys(READ_ADAPTER_REGISTRY);
 }
 
+export class WindowSourcesRefusalError extends Error {
+  constructor(message: string, readonly platform: string) {
+    super(message);
+  }
+}
+
 export function resolveReadAdapter(
   ctx: BindableContext,
   targetPlatform: string | undefined,
@@ -124,9 +130,10 @@ export function resolveReadAdapter(
   }
   const sources = resolveWindowSources(ctx, domains);
   if (!sources.includes(platform)) {
-    throw new Error(
+    throw new WindowSourcesRefusalError(
       `read: "${platform}" is not one of this window's sources (${sources.join(", ") || "none"}) — ` +
         "you can only read a surface whose messages fan into this window.",
+      platform,
     );
   }
   assertTurnSurface(ctx, platform);

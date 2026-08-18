@@ -314,14 +314,21 @@ export function currentTurnGithubTarget(ctx: BindableContext): { owner: string; 
   return undefined;
 }
 
+export class TurnOriginFenceError extends Error {
+  constructor(message: string, readonly surface: string) {
+    super(message);
+  }
+}
+
 export function assertTurnSurface(ctx: BindableContext, surface: string): void {
   const origin = turnOriginPlatform(ctx);
   if (origin === surface) return;
-  throw new Error(
+  throw new TurnOriginFenceError(
     origin === undefined
       ? `this tool reads ${surface}, but this turn's origin surface could not be resolved — a per-surface read only runs on a turn this deployment can place on ${surface}.`
       : `this tool reads ${surface}, but the message that woke this turn came from ${origin} — ` +
         `on a cross-surface session a per-surface read tool only runs on a turn from its OWN surface (what you can recall across surfaces is the shared context, not another surface's live reads).`,
+    surface,
   );
 }
 
