@@ -63,7 +63,7 @@ export function buildApprovalDecisionWake(input: ApprovalDecisionWakeInput, nowI
     reason: "dispatch",
     addressing: "channel-watch",
     wakeId: input.wakeId,
-    locus: { channel: { id: originContainerId(input.origin), platform: input.origin.platform } },
+    locus: { channel: { id: originContainerId(input.origin) } },
     trigger: mkMessageTrigger({
       from: "system",
       author: "open-everywhere",

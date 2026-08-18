@@ -180,7 +180,7 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
 
 {
   const nd = (followUp: NonNullable<NormalizedWake["nameDrop"]>["followUp"]): string =>
-    renderWake({ platform: "x", reason: "channel-activity", addressing: "name-drop", locus: { channel: { id: "C1" } }, nameDrop: { botName: "Bot", followUp }, trigger: trig("hi") }, NOW).message;
+    renderWake({ platform: "x", reason: "channel-activity", addressing: "name-drop", locus: { channel: { id: "C1" } }, nameDrop: { followUp }, trigger: trig("hi") }, NOW).message;
   ok(nd("follows-on-reply").includes(`follow-up="follows-on-reply"`), "name-drop: follows-on-reply renders as the follow-up attribute");
   ok(nd("thread-engaged").includes(`follow-up="thread-engaged"`), "name-drop: thread-engaged renders as the follow-up attribute");
   ok(nd("channel-not-following").includes(`follow-up="channel-not-following"`), "name-drop: channel-not-following renders as the follow-up attribute");
@@ -214,15 +214,14 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
 {
   const nw: NormalizedWake = {
     platform: "slack", reason: "channel-activity", addressing: "channel-watch",
-    locus: { channel: { id: "C1", type: "channel", platform: "slack", platformLabel: "Slack" } },
+    locus: { channel: { id: "C1", type: "channel" } },
     trigger: trig("moving the 3pm sync to 3:30"),
   };
   const m = renderWake(nw, NOW).message;
-  ok(!m.includes('platform="slack"'), "🔴 platform-blind: the <channel> element names NO platform, even when one is supplied");
-  ok(!m.includes('label="Slack"'), "🔴 platform-blind: the <channel> element carries no human platform label either");
+  ok(!m.includes('platform="slack"'), "🔴 platform-blind: the <channel> element names NO platform, though the wake carries one");
+  ok(!m.includes(" label="), "🔴 platform-blind: the <channel> element carries no human platform label either");
   ok(m.includes('<channel id="ch_c2xhY2s6QzE"'), "OPE-746: <channel id> carries the OPAQUE CHANNEL KEY — the one address the read verbs take");
   ok(!m.includes('id="C1"'), "🔴 OPE-746: the RAW container id never reaches the model as an address");
-  eq(renderWake({ ...nw, locus: { channel: { id: "C1", type: "channel" } } }, NOW).message, m, "platform-blind: supplying platform + label is byte-identical to omitting them");
   const onDiscord = renderWake({ ...nw, platform: "discord" }, NOW).message;
   ok(onDiscord.includes('<channel id="ch_ZGlzY29yZDpDMQ"'), "OPE-746: one container id on two platforms mints two keys — the platform is IN the key");
 }
@@ -284,7 +283,7 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
 {
   const nw: NormalizedWake = {
     platform: "slack", reason: "channel-activity", addressing: "channel-watch",
-    locus: { channel: { id: "C1", type: "channel", platform: "slack", platformLabel: "Slack" } },
+    locus: { channel: { id: "C1", type: "channel" } },
     wakeId: "11111111-2222-3333-4444-555555555555",
     trigger: trig("moving the 3pm sync to 3:30"),
   };

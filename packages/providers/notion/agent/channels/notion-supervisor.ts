@@ -104,7 +104,6 @@ export interface NotionSupervisorWakeInput {
   readonly handoffNote?: string | null;
   readonly handoffFromGeneration?: number;
   readonly engagementTier?: WakeEngagementTier;
-  readonly unified?: boolean;
   readonly wakeId?: string;
   readonly directMention?: boolean;
 }
@@ -136,10 +135,9 @@ export function buildNotionSupervisorWake(input: NotionSupervisorWakeInput): Nor
     addressing: directMention ? "direct-mention" : input.addressing,
     containerNoun: "doc",
     engagementTier: judged ? input.engagementTier : undefined,
-    unifiedDisclosure: enveloped && input.unified === true ? true : undefined,
     wakeId: input.wakeId,
     locus: {
-      channel: { id: input.pageId, ...(input.unified ? { platform: "notion" } : {}) },
+      channel: { id: input.pageId },
       thread: { ts: input.discussionId },
     },
     backscroll,
@@ -266,7 +264,6 @@ export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch
         trigger: d.trigger,
         threadComments: d.threadComments,
         engagementTier: d.engagementTier,
-        unified: d.unified,
         wakeId: d.window?.wakeId,
         directMention: d.directMention,
         handoffNote: handoffNote ?? undefined,

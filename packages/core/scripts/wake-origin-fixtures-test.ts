@@ -369,7 +369,7 @@ for (const f of FIXTURES) {
   eq(isThreadScopedWakeOrigin(f.origin), f.threadScoped, `${f.name}: isThreadScopedWakeOrigin`);
   const wake = buildOneshotCompletionWake({ taskId: "task-1", summary: "done", origin: f.origin, wakeId: "wk-c" }, NOW);
   eq(wake.locus.channel?.id, f.containerId, `${f.name}: oneshot originContainerId (completion-wake locus id)`);
-  eq(wake.locus.channel?.platform, f.origin.platform, `${f.name}: completion-wake locus platform is the origin's`);
+  eq(wake.platform, f.origin.platform, `${f.name}: the completion wake carries the origin's platform`);
 }
 
 console.log("(c2) the DM threadRef namespace never collides with a guild one:");

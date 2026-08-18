@@ -27,8 +27,6 @@ export interface WakeChannelMeta {
   readonly id: string;
   readonly type?: string;
   readonly memberCount?: number;
-  readonly platform?: string;
-  readonly platformLabel?: string;
   readonly container?: string;
 }
 

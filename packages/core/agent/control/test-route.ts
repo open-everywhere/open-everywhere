@@ -40,7 +40,6 @@ export interface TestWakeRequest {
   readonly authAttributes?: Readonly<Record<string, string>>;
   readonly containerNoun?: string;
   readonly engagementTier?: "aggressive" | "neutral" | "reserved";
-  readonly unifiedDisclosure?: boolean;
   readonly participants?: readonly WakeParticipant[];
   readonly channelType?: string;
   readonly threadTs?: string;
@@ -233,7 +232,6 @@ export async function handleTestWakeInjection(req: Request, to: RouteHandlerArgs
   const reason: WakeReason = body.reason ?? defaultReason(addressing);
   const containerId = surfaceKey.split("/").slice(2).join("/") || surfaceKey;
   const containerNoun = body.containerNoun ?? defaultContainerNoun(platform);
-  const unifiedDisclosure = body.unifiedDisclosure ?? true;
   const trust = (body.trust ?? "peer") as WakeTrust;
 
   let trigger: ReturnType<typeof mkMessageTrigger>;
@@ -283,11 +281,10 @@ export async function handleTestWakeInjection(req: Request, to: RouteHandlerArgs
     wakeId,
     ...(containerNoun !== undefined ? { containerNoun } : {}),
     ...(body.engagementTier !== undefined ? { engagementTier: body.engagementTier } : {}),
-    unifiedDisclosure,
     ...(body.participants !== undefined ? { participants: body.participants } : {}),
     ...(backscroll !== undefined ? { backscroll } : {}),
     locus: {
-      channel: { id: containerId, platform, ...(body.channelType !== undefined ? { type: body.channelType } : {}) },
+      channel: { id: containerId, ...(body.channelType !== undefined ? { type: body.channelType } : {}) },
       ...(body.threadTs !== undefined ? { thread: { ts: body.threadTs } } : {}),
     },
     trigger,

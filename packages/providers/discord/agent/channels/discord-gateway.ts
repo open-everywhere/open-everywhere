@@ -749,16 +749,14 @@ export function buildDiscordUnifiedWake(input: DiscordUnifiedWakeInput): Normali
     reason: direct ? "mention" : "channel-activity",
     addressing: input.addressing,
     engagementTier: input.addressing === "channel-watch" ? input.engagementTier : undefined,
-    unifiedDisclosure: true,
     wakeId: input.wakeId,
     locus: {
-      channel: { id: input.parentChannelId ?? input.channelId, platform: "discord" },
+      channel: { id: input.parentChannelId ?? input.channelId },
       ...(input.isThread ? { thread: { ts: input.channelId } } : {}),
     },
     ...(input.addressing === "name-drop" && input.botName
       ? {
           nameDrop: {
-            botName: input.botName,
             followUp: input.isThread ? ("thread-engaged" as const) : ("channel-not-following" as const),
           },
         }
@@ -809,7 +807,6 @@ export function discordNativeWake(input: DiscordNativeWakeInput): NormalizedWake
     ...(input.addressing === "name-drop" && input.botName
       ? {
           nameDrop: {
-            botName: input.botName,
             followUp: input.isThread ? ("thread-engaged" as const) : ("channel-not-following" as const),
           },
         }

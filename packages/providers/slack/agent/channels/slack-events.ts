@@ -277,12 +277,9 @@ export interface SlackWakeOpts {
   readonly participants?: readonly WakeParticipant[];
   readonly mode?: "supervisor";
   readonly engagementTier?: WakeEngagementTier;
-  readonly unified?: boolean;
-  readonly platformLabel?: string;
   readonly wakeId?: string;
   readonly directMention?: boolean;
   readonly dm?: boolean;
-  readonly groupDm?: boolean;
 }
 
 function slackJudgedWake(
@@ -298,19 +295,16 @@ function slackJudgedWake(
     platform: "slack",
     reason: isEdit ? "message-edited" : (reasonOverride ?? (directMention ? "mention" : ev.threadTs ? "thread-activity" : "channel-activity")),
     addressing,
-    ...(opts.groupDm === true ? { groupDm: true as const } : {}),
     locus: {
       channel: {
         id: ev.channelId,
         type: ev.channelType,
         memberCount: opts.memberCount,
-        ...(opts.unified ? { platform: "slack", ...(opts.platformLabel ? { platformLabel: opts.platformLabel } : {}) } : {}),
       },
       thread: ev.threadTs ? { ts: ev.threadTs } : undefined,
     },
     participants: opts.participants,
     engagementTier: directMention ? undefined : opts.engagementTier,
-    unifiedDisclosure: opts.unified === true ? true : undefined,
     wakeId: opts.wakeId,
     handoff: hasHandoff ? { note: opts.handoffNote!, fromGeneration: opts.handoffFromGeneration ?? 0 } : undefined,
     backscroll: opts.backscroll,
@@ -690,7 +684,7 @@ export function slackNameDropWake(
       thread: ev.threadTs ? { ts: ev.threadTs } : undefined,
     },
     participants: opts.participants,
-    nameDrop: { botName: name, followUp: "follows-on-reply" },
+    nameDrop: { followUp: "follows-on-reply" },
     contextLines: opts.contextLines,
     contextSource: opts.contextSource,
     readMoreHint: opts.readMoreHint,
@@ -1477,8 +1471,6 @@ export async function routeSupervisorEvent(
         mode: "supervisor",
         trust: wakeTrust,
         engagementTier,
-        unified: unifiedMeta?.unified === true,
-        platformLabel: unifiedMeta?.label,
         wakeId: window?.wakeId,
         directMention: mentionPolicy.addressing === "direct-mention",
         memberCount,

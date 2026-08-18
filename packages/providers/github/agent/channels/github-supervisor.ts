@@ -74,7 +74,6 @@ export interface GitHubSupervisorWakeInput {
   readonly engagementTier?: WakeEngagementTier;
   readonly handoffNote?: string | null;
   readonly handoffFromGeneration?: number;
-  readonly unified?: boolean;
   readonly wakeId?: string;
   readonly directMention?: boolean;
 }
@@ -93,10 +92,9 @@ export function buildGitHubSupervisorWake(input: GitHubSupervisorWakeInput): Nor
     addressing: directMention ? "direct-mention" : "channel-watch",
     containerNoun: "repo",
     engagementTier: directMention ? undefined : input.engagementTier,
-    unifiedDisclosure: input.unified === true ? true : undefined,
     wakeId: input.wakeId,
     locus: {
-      channel: { id: `${input.owner}/${input.repo}`, ...(input.unified ? { platform: "github" } : {}) },
+      channel: { id: `${input.owner}/${input.repo}` },
       thread: { ts: `#${input.issueNumber}` },
     },
     contextLines,
@@ -226,7 +224,6 @@ export async function handleGitHubSupervisorDispatch(d: GitHubSupervisorDispatch
       issueTitle: d.issueTitle,
       trigger: d.trigger,
       engagementTier: d.engagementTier,
-      unified: d.unified,
       wakeId: d.window?.wakeId,
       directMention: d.directMention,
       handoffNote: handoffNote ?? undefined,

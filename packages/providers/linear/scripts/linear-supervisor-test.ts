@@ -92,17 +92,13 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
 }
 {
   const plain = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger }), NOW);
-  const unified = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger, unified: true }), NOW);
-  ok(unified.message === plain.message, "🔴 unified:true is BYTE-IDENTICAL to the per-team wake — no surface address, no disclosure sentence");
-  ok(unified.message.includes(`<channel id="${TEAM_KEY}" container="team">`), "the channel still carries its opaque id — that is what the host routes on");
-  ok(!plain.message.includes("platform=") && !plain.message.includes("Cross-surface disclosure"), "neither wake carries a platform attr or a disclosure sentence");
-  const explicitOff = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger, unified: false }), NOW);
-  ok(explicitOff.message === plain.message, "unified:false renders BYTE-IDENTICAL to the unset per-team wake (flag-off invariant)");
+  ok(plain.message.includes(`<channel id="${TEAM_KEY}" container="team">`), "the channel carries its opaque key — that is what the host routes on");
+  ok(!plain.message.includes("platform=") && !plain.message.includes("Cross-surface disclosure"), "the wake carries no platform attr and no disclosure sentence");
 }
 
 {
   const wakeId = "wk-lin-123";
-  const nw = buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", issueTitle: "DB migration rollout", trigger, unified: true, directMention: true, wakeId, engagementTier: "reserved" });
+  const nw = buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", issueTitle: "DB migration rollout", trigger, directMention: true, wakeId, engagementTier: "reserved" });
   const { message } = renderWake(nw, NOW);
   ok(message.includes('addressing="direct-mention"'), "direct-mention renders the ADDRESSED addressing, not channel-watch");
   ok(!message.includes('addressing="channel-watch"'), "direct-mention does NOT carry the ambient addressing");
@@ -115,13 +111,13 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
 
   const { trust: _omitted, ...untieredTrigger } = trigger;
   function __ope596LinearPin(): void {
-    void buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", trigger: untieredTrigger, unified: true, directMention: true, wakeId });
+    void buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", trigger: untieredTrigger, directMention: true, wakeId });
   }
   void __ope596LinearPin;
-  const addressedUnauth = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", trigger, unified: true, directMention: true, wakeId }), NOW).message;
+  const addressedUnauth = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", trigger, directMention: true, wakeId }), NOW).message;
   ok(addressedUnauth.includes(`trust="unauth"`), "an addressed wake renders the caller's fail-closed tier — being @mentioned is not standing");
   ok(addressedUnauth.includes(UNTRUSTED_OPEN), "…and keeps the fence on the addressed path");
-  const addressedMember = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", trigger: { ...trigger, trust: "peer" }, unified: true, directMention: true, wakeId }), NOW).message;
+  const addressedMember = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", trigger: { ...trigger, trust: "peer" }, directMention: true, wakeId }), NOW).message;
   ok(addressedMember.includes(`trust="principal"`), "…while a VOUCHED addressed author renders principal — the swap the authority floor refuses");
   ok(!addressedMember.includes(UNTRUSTED_OPEN), "…and the vouched arm carries no fence, so the two arms differ on the author and nothing else");
   ok(addressedMember.includes(UNTRUSTED_OPEN) === false, "…and is UNFENCED — the negative control that proves the fence tracks the tier, not the addressing");

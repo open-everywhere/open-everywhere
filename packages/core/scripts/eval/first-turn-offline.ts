@@ -145,7 +145,7 @@ function buildProbe(i: number): Probe {
   const addressedWakeId = `b0000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
   const now = () => new Date().toISOString();
 
-  const channel = { id: SLACK_CHANNEL, type: "channel", platform: "slack", platformLabel: "Slack" };
+  const channel = { id: SLACK_CHANNEL, type: "channel" };
 
   if (MODE === "warranted-ambient") {
     const w = WARRANTED_PROBES[(PAIR ?? i) % WARRANTED_PROBES.length];
@@ -156,7 +156,7 @@ function buildProbe(i: number): Probe {
       addressing: nameDropped ? "name-drop" : "channel-watch",
       locus: { channel }, wakeId: ambientWakeId,
       participants: [{ id: "U_ALEX", name: "Alex" }, { id: "U_SAM", name: "Sam" }],
-      ...(nameDropped ? { nameDrop: { botName: "the agent", followUp: "channel-not-following" as const } } : {}),
+      ...(nameDropped ? { nameDrop: { followUp: "channel-not-following" as const } } : {}),
       ...(w.selfPrior !== undefined
         ? { backscroll: [{ id: "1768476120.000100", sentAt: now(), from: "self" as const, trust: "peer" as const, author: "the agent", body: w.selfPrior }] }
         : {}),

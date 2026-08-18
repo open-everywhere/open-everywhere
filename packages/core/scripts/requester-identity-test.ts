@@ -19,7 +19,7 @@ const envelope = (author: { from: "human" | "system"; authorId?: string; text?: 
   renderWakeEnvelope({
     reason: "mention",
     currentTime: "2026-02-08T13:44:13.680Z",
-    channel: { platform: "slack", id: "C1" },
+    channel: { id: "C1" },
     messages: [
       {
         trigger: true,
