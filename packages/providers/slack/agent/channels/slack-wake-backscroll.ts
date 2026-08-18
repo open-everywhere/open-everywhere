@@ -1,5 +1,5 @@
 import { callSlackApi } from "eve/channels/slack";
-import { linesFromMessages, READ_MORE_HINT } from "./slack-context.js";
+import { linesFromMessages, readMoreHint } from "./slack-context.js";
 import {
   renderContext,
   sinceLastAgentReply,
@@ -114,7 +114,7 @@ function extractMessages(res: Record<string, unknown> | undefined): Array<Record
 function cappedEntry(lines: readonly ContextLine[], source: string): WakeBackscrollLines | null {
   const capped = lines.slice(-WAKE_BACKSCROLL_MAX);
   if (capped.length === 0) return null;
-  return { lines: capped, source, readMoreHint: READ_MORE_HINT };
+  return { lines: capped, source, readMoreHint: readMoreHint() };
 }
 
 export const RAW_FETCH_REACHBACK_HOURS = Number(process.env.OE_SUPERVISOR_BACKSCROLL_REACHBACK_HOURS) || 168;
