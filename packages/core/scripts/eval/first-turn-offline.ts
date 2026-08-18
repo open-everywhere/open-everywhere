@@ -466,6 +466,10 @@ async function assertSeatShape(system: string): Promise<void> {
     if (hasWakeArg) throw new Error("fixture guard: the per-surface `reply` carries a `wake` argument — the scoring rule for this path assumes it does not");
     if (ARM === "a" && carriesBlock) throw new Error("fixture guard: the per-surface prompt already carries the 'Reading a wake' block — the OPE-771 gap this run measures is closed, so re-read the ticket before quoting these numbers");
     if (ARM === "w" && !carriesBlock) throw new Error("fixture guard: arm w did not append the 'Reading a wake' block");
+    if (ARM !== "r" && !system.includes("Your turn-final text is DISCARDED"))
+      throw new Error("fixture guard: the per-surface prompt does not carry the per-container delivery rule (OPE-784) — the manifest fact `supervisorProseDropped` is unregistered or the arm moved, so these numbers describe a prompt nobody ships");
+    if (ARM !== "r" && system.includes("This is a cross-surface session"))
+      throw new Error("fixture guard: the per-surface prompt carries the UNIFIED arm's cross-surface claim — that sentence is false on this seat");
   } else {
     if (replyEntry !== (unifiedReplyEntry as unknown)) throw new Error("fixture guard: the unified seat did not resolve `unifiedReplyEntry` — every earlier arm's numbers assume it did");
     if (!carriesBlock) throw new Error("fixture guard: the unified prompt is missing the 'Reading a wake' block");

@@ -10,7 +10,8 @@ import type { BindableContext } from "../agent/identity/binding.js";
 import type { EffectiveAccess } from "../agent/access/resolver.js";
 import { classifySessionId, taskWindowId, threadSeatWindowId } from "../agent/channels/window-key.js";
 import { registerBotDisplayName, _resetBotDisplayNamesForTest } from "../agent/identity/bot-display-name.js";
-import { registerSlackFixtureMapper, registerSlackTestBridge } from "./_slack-test-stubs.js";
+import { registerSlackFixtureMapper, registerSlackFixtureManifest, registerSlackTestBridge } from "./_slack-test-stubs.js";
+import { capabilitiesForPlatform, registerCapabilityManifest } from "../agent/identity/capabilities.js";
 import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
@@ -585,6 +586,64 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   ok(!containerMd.includes("### Reading a wake"), "🔴 OPE-771 — the PER-CONTAINER supervisor scope does NOT carry it; that seat reads judged envelopes with no attribute key");
   ok(containerMd.includes("### When to speak"), "the per-container seat still reads the reply bar — the loss is the attribute key, not the posture");
   ok(containerMd.includes("### Trust grades"), "the per-container seat still reads the trust grades, which gloss `trust` and `mention`");
+}
+
+{
+  registerSlackFixtureMapper();
+  registerSlackFixtureManifest();
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [defineDomain({ name: "ope784", channels: ["slack/T_784/C_784"], ambientSupervisor: true })],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+
+  const flatten = (s: string): string => s.replace(/\s+/g, " ");
+  const slackAuth = {
+    auth: {
+      current: {
+        attributes: { team_id: "T_784", channel_id: "C_784", channel_type: "channel", is_private: "false", trust_checked: "true" },
+        principalId: "U1",
+        principalType: "user",
+      },
+    },
+  };
+  const seatFor = (token: string): BindableContext => ({ channel: { kind: "slack", continuationToken: token }, session: slackAuth }) as BindableContext;
+  const containerSeat = seatFor("C_784:oe-sup:g1");
+  const threadSeat = seatFor(`oe-dom:ope784:win:${threadSeatWindowId("slack/T_784/C_784", "1700.5")}:oe-sup:g1`);
+
+  ok(classifySessionId("C_784:oe-sup:g1").kind === "container-supervisor", "fixture guard: the per-container token classifies as container-supervisor");
+  ok(classifySessionId(`oe-dom:ope784:win:${threadSeatWindowId("slack/T_784/C_784", "1700.5")}:oe-sup:g1`).kind === "thread-seat", "fixture guard: the thread token classifies as thread-seat");
+  ok(capabilitiesForPlatform("slack").supervisorProseDropped === true, "fixture guard: slack's manifest carries supervisorProseDropped — the fact the arm keys on");
+
+  const containerReporting = flatten(renderSupervisorPersona(containerSeat));
+  ok(containerReporting.includes("Your turn-final text is DISCARDED"), "🔴 OPE-784 — the per-container supervisor arm states the drop");
+  ok(
+    containerReporting.includes("The `reply` tool is the ONLY way your own words leave this turn"),
+    "🔴 …and names `reply` as the only route out",
+  );
+  ok(containerReporting.includes("It takes no address and there is nothing to name"), "🔴 …and says the verb carries no address, which is what this seat's `reply` really is");
+  ok(!containerReporting.includes("This is a cross-surface session"), "🔴 the per-container arm does NOT open with the unified arm's cross-surface claim — false on this seat");
+  ok(!containerReporting.includes("wake-id"), "🔴 the per-container arm never tells the seat to name a `wake-id` — its `reply` takes only `text`");
+  ok(!containerReporting.includes("reply` posts into the channel mid-turn"), "🔴 the per-container arm drops the dual-mode wording that caused the measured prose loss");
+  ok(containerReporting.includes("That states REACH, not duty"), "the per-container arm frames delivery as reach, not duty");
+  ok(containerReporting.includes("Most of what wakes you still ends in `no_reply`"), "…and keeps silence as the normal ending");
+
+  const threadReporting = flatten(renderSupervisorPersona(threadSeat));
+  ok(threadReporting.includes("reply` posts into the channel mid-turn"), "negative control: a THREAD seat reads the dual-mode arm — its closing text really does post");
+  ok(threadReporting.includes("Your turn-final text is DISCARDED") === false, "negative control: a thread seat is NOT told its closing text is discarded");
+
+  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: false });
+  const withoutFact = flatten(renderSupervisorPersona(containerSeat));
+  ok(withoutFact.includes("Your turn-final text is DISCARDED") === false, "🔴 negative control: with supervisorProseDropped FALSE the per-container seat reads the dual-mode arm");
+  ok(withoutFact.includes("reply` posts into the channel mid-turn"), "…and reads it in full, not an empty arm");
+  registerSlackFixtureManifest();
+
+  const containerScope = await renderScopeMarkdown(containerSeat);
+  ok(containerScope.includes("Your turn-final text is DISCARDED"), "the per-container SCOPE carries the arm — the session reads it, not only the persona renderer");
 }
 
 console.log(`✓ instructions: ${passed} assertions passed`);
