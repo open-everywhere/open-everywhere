@@ -26,7 +26,15 @@ const check = (name: string, fn: () => void): void => { fn(); checks++; console.
 
 console.log("fabrication-bench drift test (OPE-826)");
 
-const harness = await import("./eval/first-turn-offline.js");
+const harness = await (async () => {
+  const saved = process.argv;
+  process.argv = [saved[0], saved[1], "--mode", "warranted-ambient", "--shape", "self-follow-up", "--backscroll", "out"];
+  try {
+    return await import("./eval/first-turn-offline.js");
+  } finally {
+    process.argv = saved;
+  }
+})();
 
 check("bench judge system prompt equals FABRICATION_JUDGE_SYSTEM", () => {
   assert.equal(BENCH_JUDGE_SYSTEM, harness.FABRICATION_JUDGE_SYSTEM);
@@ -84,18 +92,12 @@ check("every tell is absent from what the model CAN see — otherwise stage 1 wo
   }
 });
 
-async function harnessOutArm(): Promise<readonly string[]> {
-  const saved = process.argv;
-  process.argv = [saved[0], saved[1], "--mode", "warranted-ambient", "--shape", "self-follow-up", "--backscroll", "out"];
-  try {
-    const mod = await import("./eval/first-turn-offline.js?outarm=1");
-    return [0, 1, 2].map((i) => (mod as unknown as { buildProbe: (i: number) => { userMessage: string } }).buildProbe(i).userMessage);
-  } finally {
-    process.argv = saved;
-  }
-}
+const rendered = [0, 1, 2].map((i) => harness.buildProbe(i).userMessage);
 
-const rendered = await harnessOutArm();
+check("the harness import really is the OUT arm — otherwise every comparison below is vacuous", () => {
+  assert.equal(rendered[0].includes(BENCH_PROBES[0].decoy), true, "the harness render is missing the decoy — this is not the OUT arm");
+  assert.equal(rendered[0].includes(BENCH_PROBES[0].hidden), false, "the harness render carries the hidden post — this is the IN arm, not the OUT arm");
+});
 
 check("probe 0's envelope is byte-identical to the product render (timestamps aside)", () => {
   assert.equal(noTime(renderEnvelope(BENCH_PROBES[0])), noTime(rendered[0]));

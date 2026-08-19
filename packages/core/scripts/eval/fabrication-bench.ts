@@ -284,6 +284,7 @@ async function main(): Promise<void> {
   const EFFORT = flag("--effort") ?? "high";
   const N = Math.max(1, Number.parseInt(flag("--n") ?? "6", 10));
   const NO_JUDGE = has("--no-judge");
+  const CONCURRENCY = Math.max(1, Number.parseInt(flag("--concurrency") ?? "4", 10));
 
   if (!["neutral", "minimal", "tag", "file"].includes(SYSTEM_KIND)) throw new Error(`--system must be neutral, minimal, tag or file; got '${SYSTEM_KIND}'`);
   if (!["plain", "envelope"].includes(RENDER)) throw new Error(`--render must be plain or envelope; got '${RENDER}'`);
@@ -317,65 +318,67 @@ async function main(): Promise<void> {
   const key = process.env.AI_GATEWAY_API_KEY;
   if (!key) throw new Error("AI_GATEWAY_API_KEY is unset — source the repo-root .env.e2e (never the shell key, which is the shell key)");
 
-  console.log(`fabrication-bench: layer=${layer ?? "custom"} system=${SYSTEM_KIND} render=${RENDER} tools=${TOOLS} model=${MODEL} judge=${NO_JUDGE ? "off" : JUDGE_MODEL} n=${N}`);
+  console.log(`fabrication-bench: layer=${layer ?? "custom"} system=${SYSTEM_KIND} render=${RENDER} tools=${TOOLS} model=${MODEL} judge=${NO_JUDGE ? "off" : JUDGE_MODEL} n=${N} concurrency=${CONCURRENCY}`);
   console.log(`system prompt: ${system.length} chars · out: ${outDir}`);
 
   const counts = { fabricated: 0, misbound: 0, honest: 0, silent: 0, unjudged: 0, errored: 0 };
   const routes = { reply: 0, prose: 0, none: 0 };
   let byTell = 0;
-  const rows: unknown[] = [];
 
-  for (let i = 0; i < N; i++) {
+  async function runOne(i: number): Promise<Record<string, unknown>> {
     const p = BENCH_PROBES[i % BENCH_PROBES.length];
     const user = renderOf(p);
     const body = buildRequest({ model: MODEL, system, user, withTools: TOOLS === "reply", effort: EFFORT });
     const nn = String(i).padStart(2, "0");
     writeFileSync(join(outDir, `probe-${nn}.request.json`), JSON.stringify(body, null, 2));
 
-    const { status, json } = await post(key, body);
+    const { status, json } = await post(key!, body);
     writeFileSync(join(outDir, `probe-${nn}.response.json`), JSON.stringify(json, null, 2));
+    if (status !== 200) return { probe: i + 1, label: p.label, status, route: "none", verdict: "errored", tell: null, text: "", note: JSON.stringify(json).slice(0, 300) };
 
-    if (status !== 200) {
-      counts.errored++;
-      console.log(`#${i + 1} ${p.label}  HTTP ${status} — ${JSON.stringify(json).slice(0, 160)}`);
-      rows.push({ probe: i + 1, label: p.label, status, verdict: "errored" });
-      continue;
-    }
     const message = ((json.choices as { message?: Record<string, unknown> }[])?.[0]?.message ?? {}) as Record<string, unknown>;
     const { text, route } = answerOf(message);
-    routes[route]++;
+    if (text.trim() === "") return { probe: i + 1, label: p.label, route, verdict: "silent", tell: null, text };
 
-    let verdict: string;
-    let tell: string | null = null;
-    if (text.trim() === "") {
-      verdict = "silent";
-    } else {
-      tell = benchMatchedTell(text, p.tells);
-      if (tell !== null) { verdict = "fabricated"; byTell++; }
-      else if (NO_JUDGE) verdict = "unjudged";
-      else {
-        const judgeBody = {
-          model: JUDGE_MODEL,
-          messages: [
-            { role: "system", content: BENCH_JUDGE_SYSTEM },
-            { role: "user", content: benchJudgePrompt({ hidden: p.hidden, visible: p.decoy, trigger: p.trigger, text }) },
-          ],
-          temperature: 0,
-          top_p: 1,
-          ...(JUDGE_MODEL.startsWith("openai/") ? { reasoning_effort: "low" } : {}),
-        };
-        writeFileSync(join(outDir, `probe-${nn}.judge-request.json`), JSON.stringify(judgeBody, null, 2));
-        const jr = await post(key, judgeBody);
-        writeFileSync(join(outDir, `probe-${nn}.judge-response.json`), JSON.stringify(jr.json, null, 2));
-        const jtext = String(((jr.json.choices as { message?: { content?: unknown } }[])?.[0]?.message?.content ?? ""));
-        const v = jr.status === 200 ? benchParseVerdict(jtext) : null;
-        verdict = v === null ? "unjudged" : v === "FABRICATION" ? "fabricated" : v === "MISBOUND" ? "misbound" : "honest";
-      }
+    const tell = benchMatchedTell(text, p.tells);
+    if (tell !== null) return { probe: i + 1, label: p.label, route, verdict: "fabricated", tell, text };
+    if (NO_JUDGE) return { probe: i + 1, label: p.label, route, verdict: "unjudged", tell: null, text };
+
+    const judgeBody = {
+      model: JUDGE_MODEL,
+      messages: [
+        { role: "system", content: BENCH_JUDGE_SYSTEM },
+        { role: "user", content: benchJudgePrompt({ hidden: p.hidden, visible: p.decoy, trigger: p.trigger, text }) },
+      ],
+      temperature: 0,
+      top_p: 1,
+      ...(JUDGE_MODEL.startsWith("openai/") ? { reasoning_effort: "low" } : {}),
+    };
+    writeFileSync(join(outDir, `probe-${nn}.judge-request.json`), JSON.stringify(judgeBody, null, 2));
+    const jr = await post(key!, judgeBody);
+    writeFileSync(join(outDir, `probe-${nn}.judge-response.json`), JSON.stringify(jr.json, null, 2));
+    const jtext = String(((jr.json.choices as { message?: { content?: unknown } }[])?.[0]?.message?.content ?? ""));
+    const v = jr.status === 200 ? benchParseVerdict(jtext) : null;
+    const verdict = v === null ? "unjudged" : v === "FABRICATION" ? "fabricated" : v === "MISBOUND" ? "misbound" : "honest";
+    return { probe: i + 1, label: p.label, route, verdict, tell: null, text };
+  }
+
+  const rows: Record<string, unknown>[] = new Array(N);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, N) }, async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= N) return;
+      rows[i] = await runOne(i);
     }
-    counts[verdict as keyof typeof counts]++;
-    console.log(`#${i + 1} ${p.label}  route=${route}  ${verdict}${tell !== null ? ` (tell "${tell}")` : ""}`);
-    console.log(`    ${text.replace(/\n/g, " ").slice(0, 220)}`);
-    rows.push({ probe: i + 1, label: p.label, route, verdict, tell, text });
+  }));
+
+  for (const r of rows) {
+    counts[r.verdict as keyof typeof counts]++;
+    if (r.verdict === "fabricated" && r.tell !== null) byTell++;
+    routes[r.route as keyof typeof routes]++;
+    console.log(`#${r.probe} ${r.label}  route=${r.route}  ${r.verdict}${r.tell !== null ? ` (tell "${String(r.tell)}")` : ""}`);
+    console.log(`    ${String(r.text ?? "").replace(/\n/g, " ").slice(0, 220)}`);
   }
 
   const judged = counts.fabricated + counts.misbound + counts.honest;
@@ -390,7 +393,7 @@ async function main(): Promise<void> {
 
   const summaryAt = join(outDir, "summary.json");
   writeFileSync(summaryAt, JSON.stringify({
-    config: { layer: layer ?? null, system: SYSTEM_KIND, render: RENDER, tools: TOOLS, model: MODEL, judgeModel: NO_JUDGE ? null : JUDGE_MODEL, effort: EFFORT, n: N, systemChars: system.length },
+    config: { layer: layer ?? null, system: SYSTEM_KIND, render: RENDER, tools: TOOLS, model: MODEL, judgeModel: NO_JUDGE ? null : JUDGE_MODEL, effort: EFFORT, n: N, concurrency: CONCURRENCY, systemChars: system.length },
     counts, byTell, routes, judged, fabricationRate: judged > 0 ? counts.fabricated / judged : null,
     probes: rows,
   }, null, 2));
