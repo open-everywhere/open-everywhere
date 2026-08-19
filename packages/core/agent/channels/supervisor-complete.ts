@@ -2,6 +2,8 @@ import { supervisorTextDelivery, isSupervisorProseLeak, type FinalMessageAction 
 import { appendAudit } from "../audit/audit.js";
 import { recordPostTail } from "./session-tail-record.js";
 
+export const SUPERVISOR_POST_SUPPRESSED = "suppressed:supervisor-repost";
+
 export interface SupervisorAuditRow {
   readonly org: string;
   readonly platform: string;
@@ -19,12 +21,13 @@ export interface SupervisorCompletionSpec {
   readonly noReplyAction: string;
   readonly repliedAction: string;
   readonly noTargetAction: string;
+  readonly replySuppressedAction: string;
   readonly contextRow: SupervisorAuditRow;
   readonly repliedRow: SupervisorAuditRow;
   readonly silentAnchor: Record<string, unknown>;
   readonly droppedAnchor: Record<string, unknown>;
   readonly repliedAnchor: Record<string, unknown>;
-  readonly post: (text: string) => Promise<void | number>;
+  readonly post: (text: string) => Promise<void | number | typeof SUPERVISOR_POST_SUPPRESSED>;
   readonly log: (msg: string) => void;
 }
 
@@ -80,6 +83,21 @@ export async function completeSupervisorTurn(spec: SupervisorCompletionSpec): Pr
 
   try {
     const postedChars = await spec.post(action.text);
+
+    if (postedChars === SUPERVISOR_POST_SUPPRESSED) {
+      spec.log(`reply suppressed as a duplicate repost (${action.text.length}c) — no second post, no second ring row`);
+      await appendAudit({
+        org: spec.repliedRow.org,
+        platform: spec.repliedRow.platform,
+        workspace: spec.repliedRow.workspace,
+        surface: spec.repliedRow.surface,
+        principalId: spec.repliedRow.principalId,
+        action: spec.replySuppressedAction,
+        detail: { ...spec.repliedAnchor, chars: action.text.length, ...sid },
+      });
+      return;
+    }
+
     await recordPostTail(action.text, new Date().toISOString(), spec.repliedRow.platform);
     await appendAudit({
       org: spec.repliedRow.org,

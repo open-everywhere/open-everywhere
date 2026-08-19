@@ -25,6 +25,7 @@ import {
   finalMessageActionForTurn,
   silentRoutineThisTurn,
   completeSupervisorTurn,
+  SUPERVISOR_POST_SUPPRESSED,
   auditSupervisorFailure,
   capabilitiesForPlatform,
   appendAudit,
@@ -445,13 +446,14 @@ const native: GitHubChannel = githubChannel({
         noReplyAction: "github.no_reply",
         repliedAction: "github.replied",
         noTargetAction: "github.no_target",
+        replySuppressedAction: "github.reply_suppressed_duplicate",
         contextRow: { org, platform: "github", workspace: auditOwner, surface: `github/${auditOwner}/${auditRepo}` },
         repliedRow: { org, platform: "github", workspace: postOwner ?? auditOwner, surface: `github/${postOwner ?? auditOwner}/${postRepo ?? auditRepo}` },
         silentAnchor: { issueNumber: target?.issueNumber ?? null },
         droppedAnchor: { issueNumber: target?.issueNumber },
         repliedAnchor: { issueNumber: target?.issueNumber },
         post: async (text) => {
-          await postOnce({
+          const result = await postOnce({
             org,
             key: outboundKey({
               surface: "github",
@@ -460,13 +462,17 @@ const native: GitHubChannel = githubChannel({
               action: "github.supervisor-reply",
               payload: text,
             }),
-            run: () =>
-              channel.github.request({
+            run: async () => {
+              await channel.github.request({
                 method: "POST",
                 path: `/repos/${postOwner}/${postRepo}/issues/${target!.issueNumber}/comments`,
                 body: { body: text },
-              }),
+              });
+              return undefined;
+            },
+            skipped: () => SUPERVISOR_POST_SUPPRESSED,
           });
+          return result === SUPERVISOR_POST_SUPPRESSED ? SUPERVISOR_POST_SUPPRESSED : undefined;
         },
         log: (m) => slog(m),
       });

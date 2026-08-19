@@ -20,6 +20,7 @@ import {
 
 const DISCUSSION_ID = "it-ope-807-discussion";
 const DISCUSSION_ID_2 = "it-ope-807-discussion-2";
+const DISCUSSION_ID_3 = "it-ope-808-discussion";
 
 const TRIGGER_AUTHOR_ID = "it-ope-807-member";
 
@@ -182,4 +183,57 @@ test("🔴 negative control: terminal prose the arm DROPS reaches neither the ro
 
   expect(rows.length, "this arm's wake was never recorded — the ring is not live, so ② is vacuous").toBeGreaterThan(before);
   expect(rows.filter((r) => r.entry.kind === "wake" && r.entry.text.includes(question)).length).toBeGreaterThan(0);
+});
+
+test("🔴 OPE-808: a dedupe-suppressed repost writes no second tail-ring row and no second replied row", async () => {
+  await armSeams(false);
+  const sinceIso = new Date(Date.now() - 5_000).toISOString();
+  const marker = randomBytes(4).toString("hex");
+  const answer = `duplicate-safe answer ${marker}`;
+  const wireCallsBefore = stub!.calls.filter((c) => c.method === "POST" && c.path === "/v1/comments").length;
+
+  disposeLater(registerScript({ parent: [{ say: answer }, { say: answer }] }));
+
+  const trigger1 = `it-ope-808-trigger-1-${marker}`;
+  triggerComments.set(trigger1, {
+    id: trigger1,
+    discussion_id: DISCUSSION_ID_3,
+    parent: { page_id: NOTION_PAGE_ID },
+    rich_text: [{ plain_text: `first question ${marker}` }],
+    created_by: { id: TRIGGER_AUTHOR_ID, type: "person" },
+    created_time: new Date().toISOString(),
+  });
+  const res1 = await notionCommentEventPost({ workspaceId: NOTION_WORKSPACE_ID, commentId: trigger1 });
+  expect(res1.status, `the Notion front refused the first delivery: ${res1.body.slice(0, 300)}`).toBe(200);
+
+  await waitFor(
+    async () => (await readAuditRows({ actions: ["notion.replied"], sinceIso, limit: 200 })).find((r) => (r.detail as { chars?: unknown } | undefined)?.chars === answer.length),
+    "a notion.replied audit row for the first turn's scripted say",
+  );
+  await sleep(1_000);
+  expect(readTailRows().filter((r) => r.entry.kind === "post" && r.entry.text === answer).length, "the first turn's post did not reach the ring").toBe(1);
+
+  const trigger2 = `it-ope-808-trigger-2-${marker}`;
+  triggerComments.set(trigger2, {
+    id: trigger2,
+    discussion_id: DISCUSSION_ID_3,
+    parent: { page_id: NOTION_PAGE_ID },
+    rich_text: [{ plain_text: `second question ${marker}` }],
+    created_by: { id: TRIGGER_AUTHOR_ID, type: "person" },
+    created_time: new Date().toISOString(),
+  });
+  const res2 = await notionCommentEventPost({ workspaceId: NOTION_WORKSPACE_ID, commentId: trigger2 });
+  expect(res2.status, `the Notion front refused the second delivery: ${res2.body.slice(0, 300)}`).toBe(200);
+
+  await waitFor(
+    async () => (await readAuditRows({ actions: ["notion.reply_suppressed_duplicate"], sinceIso, limit: 200 })).find((r) => (r.detail as { chars?: unknown } | undefined)?.chars === answer.length),
+    "a notion.reply_suppressed_duplicate audit row for the second turn's dedupe-suppressed repost",
+  );
+  await sleep(1_000);
+
+  expect((await readAuditRows({ actions: ["notion.replied"], sinceIso, limit: 200 })).filter((r) => (r.detail as { chars?: unknown } | undefined)?.chars === answer.length).length).toBe(1);
+  expect(readTailRows().filter((r) => r.entry.kind === "post" && r.entry.text === answer).length, "a suppressed repost must not double-file the ring").toBe(1);
+
+  const wireCallsAfter = stub!.calls.filter((c) => c.method === "POST" && c.path === "/v1/comments").length;
+  expect(wireCallsAfter - wireCallsBefore, "the wire saw more than one createCommentReply for this arm's two turns").toBe(1);
 });

@@ -36,6 +36,7 @@ import {
   finalMessageActionForTurn,
   silentRoutineThisTurn,
   completeSupervisorTurn,
+  SUPERVISOR_POST_SUPPRESSED,
   auditSupervisorFailure,
   appendAudit,
   ingressSpendGate,
@@ -826,6 +827,7 @@ const native: LinearChannel = linearChannel({
         noReplyAction: "linear.no_reply",
         repliedAction: "linear.replied",
         noTargetAction: "linear.no_target",
+        replySuppressedAction: "linear.reply_suppressed_duplicate",
         contextRow: row,
         repliedRow: row,
         silentAnchor: { issueId: target?.issueId ?? null },
@@ -833,7 +835,7 @@ const native: LinearChannel = linearChannel({
         repliedAnchor: { issueId: target?.issueId, parentId: target?.parentId ?? null },
         post: async (rawText) => {
           const text = withReplierPrefix(rawText, (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined);
-          await postOnce({
+          const result = await postOnce({
             org,
             key: outboundKey({
               surface: "linear",
@@ -842,15 +844,18 @@ const native: LinearChannel = linearChannel({
               action: "linear.supervisor-reply",
               payload: text,
             }),
-            run: () =>
-              callLinearGraphQL<{ commentCreate?: { success?: boolean } }>({
+            run: async () => {
+              await callLinearGraphQL<{ commentCreate?: { success?: boolean } }>({
                 credentials: linearAppActorCredentials,
                 query: "mutation OeAmbientReply($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
                 queryName: "OeAmbientReply",
                 variables: { input: { issueId: target!.issueId, ...(target!.parentId ? { parentId: target!.parentId } : {}), body: text } },
-              }),
+              });
+              return undefined;
+            },
+            skipped: () => SUPERVISOR_POST_SUPPRESSED,
           });
-          return text.length;
+          return result === SUPERVISOR_POST_SUPPRESSED ? SUPERVISOR_POST_SUPPRESSED : text.length;
         },
         log: (m) => slog(m),
       });
