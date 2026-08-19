@@ -1,4 +1,5 @@
 import { wireNeonOperationalStore, markAllSeatsForRotation } from "./rotate-window-lib.js";
+import { guardStoreIdentityBeforeWrite } from "../store-identity-guard.js";
 
 async function main() {
   const argv = process.argv.slice(2);
@@ -21,6 +22,9 @@ async function main() {
   }
 
   const store = await wireNeonOperationalStore(dbUrl);
+
+  await guardStoreIdentityBeforeWrite(store, org);
+
   const atIso = new Date().toISOString();
   const { marked, vanished } = await markAllSeatsForRotation(store, org, atIso, prefix);
 

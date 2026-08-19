@@ -14,6 +14,7 @@ import { resolveExternalPolicy, shippedExternalPolicy, WITHHELD_BODY_MARKER, typ
 import { ChannelScopeError } from "./read-scope-error.js";
 import { decodeChannelKey, encodeChannelKey } from "./channel-key.js";
 import { auditChannelReadRefusal, type ReadScopeAuditDeps } from "./read-scope-audit.js";
+import { spoolNote, type ReadSpool } from "./read-spool.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 export { ChannelScopeError };
 
@@ -32,6 +33,7 @@ export interface ChannelReadResult {
   readonly messages: readonly RenderedLine[];
   readonly authoredByNonMember?: boolean;
   readonly possiblyIncomplete?: boolean;
+  readonly spool?: ReadSpool;
 }
 
 export interface ThreadReadResult {
@@ -42,6 +44,7 @@ export interface ThreadReadResult {
   readonly messages: readonly RenderedLine[];
   readonly authoredByNonMember?: boolean;
   readonly possiblyIncomplete?: boolean;
+  readonly spool?: ReadSpool;
 }
 
 export interface ReadAdapter {
@@ -178,6 +181,7 @@ export interface ChannelReadOutput {
   messages: ReadOutputLine[];
   authoredByNonMember?: boolean;
   possiblyIncomplete?: boolean;
+  spool?: ReadSpool;
 }
 
 export interface ThreadReadOutput extends ChannelReadOutput {
@@ -250,7 +254,8 @@ export function keyedReadResult<T extends { readonly platform: string; readonly 
 export function renderChannelBody(out: ChannelReadResult): string {
   if (out.count === 0) return `No readable messages in ${out.channel}.`;
   const body = `Recent messages in ${out.channel} (oldest first):\n` + out.messages.map((m) => `[${m.author}] ${m.text}`).join("\n");
-  return out.possiblyIncomplete ? body + coverageNote("channel", out.count) : body;
+  const covered = out.possiblyIncomplete ? body + coverageNote("channel", out.count) : body;
+  return out.spool ? covered + spoolNote("channel", out.spool) : covered;
 }
 
 export function channelReadSource(out: ChannelReadResult): string {
@@ -260,7 +265,8 @@ export function channelReadSource(out: ChannelReadResult): string {
 export function renderThreadBody(out: ThreadReadResult): string {
   if (out.count === 0) return `No readable replies in thread ${out.thread_ts}.`;
   const body = `Thread ${out.thread_ts} in ${out.channel} (oldest first):\n` + out.messages.map((m) => `[${m.author}] ${m.text}`).join("\n");
-  return out.possiblyIncomplete ? body + coverageNote("thread", out.count) : body;
+  const covered = out.possiblyIncomplete ? body + coverageNote("thread", out.count) : body;
+  return out.spool ? covered + spoolNote("thread", out.spool) : covered;
 }
 
 export function threadReadSource(out: ThreadReadResult): string {
