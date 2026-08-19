@@ -152,6 +152,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      answered_at      text,
      answered_turn_id text,
      inbound          boolean,
+     audited_at       text,
      PRIMARY KEY (org_id, wake_id)
    )`,
   `CREATE TABLE IF NOT EXISTS thread_ownership (
@@ -393,6 +394,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE unified_wake_target ADD COLUMN IF NOT EXISTS answered_at text`,
   `ALTER TABLE unified_wake_target ADD COLUMN IF NOT EXISTS answered_turn_id text`,
   `ALTER TABLE unified_wake_target ADD COLUMN IF NOT EXISTS inbound boolean`,
+  `ALTER TABLE unified_wake_target ADD COLUMN IF NOT EXISTS audited_at text`,
   `ALTER TABLE pending_actions ADD COLUMN IF NOT EXISTS posted_to text`,
   `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claim_id text`,
   `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claimed_at text`,
@@ -2084,10 +2086,19 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async getUnifiedWakeRecord(org, wakeId) {
       const { rows } = await client.query(
-        "SELECT target_json, created_at, window_token, answered_at, answered_turn_id FROM unified_wake_target WHERE org_id = $1 AND wake_id = $2",
+        "SELECT target_json, created_at, window_token, answered_at, answered_turn_id, audited_at FROM unified_wake_target WHERE org_id = $1 AND wake_id = $2",
         [org, wakeId],
       );
-      const r = (rows as { target_json: string; created_at: string; window_token: string | null; answered_at: string | null; answered_turn_id: string | null }[])[0];
+      const r = (
+        rows as {
+          target_json: string;
+          created_at: string;
+          window_token: string | null;
+          answered_at: string | null;
+          answered_turn_id: string | null;
+          audited_at: string | null;
+        }[]
+      )[0];
       if (!r) return null;
       return {
         targetJson: r.target_json,
@@ -2095,6 +2106,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         ...(r.window_token !== null ? { windowToken: r.window_token } : {}),
         ...(r.answered_at !== null ? { answeredAt: r.answered_at } : {}),
         ...(r.answered_turn_id !== null ? { answeredTurnId: r.answered_turn_id } : {}),
+        ...(r.audited_at !== null ? { auditedAt: r.audited_at } : {}),
       };
     },
 
@@ -2110,6 +2122,29 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         targetJson: r.target_json,
         createdAt: r.created_at,
       }));
+    },
+
+    async listUnauditedUnifiedWakes(org, windowToken, limit) {
+      const { rows } = await client.query(
+        `SELECT wake_id, target_json, created_at FROM unified_wake_target
+         WHERE org_id = $1 AND window_token = $2 AND answered_at IS NULL AND inbound IS TRUE AND audited_at IS NULL
+         ORDER BY created_at ASC LIMIT $3`,
+        [org, windowToken, limit],
+      );
+      return (rows as { wake_id: string; target_json: string; created_at: string }[]).map((r) => ({
+        wakeId: r.wake_id,
+        targetJson: r.target_json,
+        createdAt: r.created_at,
+      }));
+    },
+
+    async markUnifiedWakesAudited(org, wakeIds, at) {
+      if (wakeIds.length === 0) return;
+      await client.query("UPDATE unified_wake_target SET audited_at = $1 WHERE org_id = $2 AND wake_id = ANY($3::text[]) AND audited_at IS NULL", [
+        at,
+        org,
+        [...wakeIds],
+      ]);
     },
 
     async markUnifiedWakeAnswered(org, wakeId, at, turnId) {

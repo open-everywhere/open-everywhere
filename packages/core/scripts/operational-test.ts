@@ -484,6 +484,30 @@ const store = makeOperationalPostgresStore(client);
   ok((await ids(capped)).join(",") === "p-mid", "pg: the limit caps the read, keeping the oldest — a burst can never load an unbounded set onto the reply path");
   const none = await store.listPendingUnifiedWakes("acme", WIN, "2026-07-26T23:00:00Z", 50);
   ok(none.length === 0, "pg: an anchor past every row lists nothing (the fast path costs one empty read)");
+
+  const stampOf = async (id: string): Promise<string | undefined> => (await store.getUnifiedWakeRecord("acme", id))?.auditedAt;
+  const unaudited = async (): Promise<string[]> => ids(await store.listUnauditedUnifiedWakes("acme", WIN, 50));
+
+  ok((await stampOf("p-mid")) === undefined, "pg: a wake row carries NO audited stamp until the accounting audit considers it");
+  ok((await unaudited()).join(",") === "p-old,p-mid,p-new", "pg: listUnauditedUnifiedWakes returns every pending, inbound, unaudited row oldest-first — and NO time bound below");
+  ok(!(await unaudited()).includes("p-answered"), "pg: an ANSWERED row is not in the accounting listing either");
+  ok(!(await unaudited()).includes("p-foreign") && !(await unaudited()).includes("p-internal"), "pg: the accounting listing keeps the window fence and the inbound-only rule");
+
+  await store.markUnifiedWakesAudited("acme", ["p-mid"], "2026-07-26T10:30:00Z");
+  ok((await stampOf("p-mid")) === "2026-07-26T10:30:00Z", "pg: markUnifiedWakesAudited stamps audited_at and getUnifiedWakeRecord reads it back");
+  ok((await unaudited()).join(",") === "p-old,p-new", "🔴 pg: the audited row LEAVES the accounting listing — the cap bounds only wakes still to consider");
+  await store.markUnifiedWakesAudited("acme", ["p-mid"], "2026-07-26T10:45:00Z");
+  ok((await stampOf("p-mid")) === "2026-07-26T10:30:00Z", "pg: FIRST STAMP WINS — a re-run cannot move the horizon");
+  ok((await ids(await store.listPendingUnifiedWakes("acme", WIN, "2026-07-26T10:00:00Z", 50))).includes("p-mid"),
+    "🔴 pg: an AUDITED row is STILL PENDING in the freshness gate's own listing — the horizon never changes what that gate counts");
+  await store.markUnifiedWakesAudited("globex", ["p-new"], "2026-07-26T10:50:00Z");
+  ok((await stampOf("p-new")) === undefined, "🔴 pg: the audited mark never crosses the org boundary");
+  await store.markUnifiedWakesAudited("acme", ["p-ghost-audit"], "2026-07-26T10:55:00Z");
+  ok((await store.getUnifiedWakeRecord("acme", "p-ghost-audit")) === null, "pg: marking an ABSENT wake audited inserts nothing (UPDATE-only)");
+  await store.markUnifiedWakesAudited("acme", [], "2026-07-26T10:56:00Z");
+  ok((await stampOf("p-new")) === undefined, "pg: an EMPTY batch writes nothing");
+  const cappedAudit = await store.listUnauditedUnifiedWakes("acme", WIN, 1);
+  ok((await ids(cappedAudit)).join(",") === "p-old", "pg: the limit caps the accounting listing, keeping the oldest");
 }
 
 {

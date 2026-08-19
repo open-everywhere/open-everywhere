@@ -38,7 +38,7 @@ import { sourcesForWindow } from "./window-sources.js";
 import { finalMessageActionForTurn, replierLabelFor, withPendingWorkFrame } from "./turn-delivery.js";
 import { consumeRepliedThisTurn, repliedWakesThisTurn, declinedWakesThisTurn } from "./reply-signal.js";
 import { consumeReactedThisTurn } from "./react-signal.js";
-import { auditableUnaccountedWakes, UNACCOUNTED_WAKES_AUDIT_ACTION, MAX_ACCOUNTING_WAKES } from "./wake-accounting.js";
+import { settleWakeAccounting, UNACCOUNTED_WAKES_AUDIT_ACTION, MAX_ACCOUNTING_WAKES } from "./wake-accounting.js";
 import { redriveEnabled, maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
 import { unresumableAuditDetail } from "./session-resume.js";
 import { collectTaskResultDelta, markRecoveredDelivered } from "../access/task-result-delta.js";
@@ -142,7 +142,7 @@ async function auditUnaccountedWakesForTurn(
   try {
     const accounted = new Set<string>([...repliedWakesThisTurn(turnId), ...declinedWakesThisTurn(turnId)]);
     if (consumeReactedThisTurn()) accounted.add(turnWake);
-    const unaccounted = await auditableUnaccountedWakes(getOperationalStore(), org, { windowToken, turnWake }, accounted);
+    const unaccounted = await settleWakeAccounting(getOperationalStore(), org, { windowToken, turnWake }, accounted);
     if (unaccounted.length === 0) return;
     const addressedCount = unaccounted.filter((w) => w.addressing === "addressed").length;
     await appendAudit({

@@ -185,6 +185,7 @@ function getDb(): DatabaseSync {
       answered_at      TEXT,                  -- OPE-161: ISO-8601 when a reply answered this wake; NULL = still pending
       answered_turn_id TEXT,                  -- OPE-161: the turn that answered it (the same-turn re-accept key)
       inbound          INTEGER,               -- OPE-767: 1 = this wake carries a real message from the room; NULL/0 = a wake the deployment minted for itself
+      audited_at       TEXT,                  -- OPE-836: ISO-8601 when the turn-end wake-accounting audit considered this wake; NULL = not yet audited. Read ONLY by listUnauditedUnifiedWakes.
       PRIMARY KEY (org_id, wake_id)
     );
     CREATE TABLE IF NOT EXISTS thread_ownership (
@@ -486,6 +487,7 @@ function getDb(): DatabaseSync {
     "ALTER TABLE unified_wake_target ADD COLUMN answered_at TEXT",
     "ALTER TABLE unified_wake_target ADD COLUMN answered_turn_id TEXT",
     "ALTER TABLE unified_wake_target ADD COLUMN inbound INTEGER",
+    "ALTER TABLE unified_wake_target ADD COLUMN audited_at TEXT",
 
     "ALTER TABLE pending_actions ADD COLUMN posted_to TEXT",
 
@@ -1672,9 +1674,9 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async getUnifiedWakeRecord(org, wakeId) {
     const row = getDb()
-      .prepare("SELECT target_json, created_at, window_token, answered_at, answered_turn_id FROM unified_wake_target WHERE org_id = ? AND wake_id = ?")
+      .prepare("SELECT target_json, created_at, window_token, answered_at, answered_turn_id, audited_at FROM unified_wake_target WHERE org_id = ? AND wake_id = ?")
       .get(org, wakeId) as
-      | { target_json: string; created_at: string; window_token: string | null; answered_at: string | null; answered_turn_id: string | null }
+      | { target_json: string; created_at: string; window_token: string | null; answered_at: string | null; answered_turn_id: string | null; audited_at: string | null }
       | undefined;
     if (!row) return null;
     return {
@@ -1683,6 +1685,7 @@ export const sqliteOperationalStore: OperationalStore = {
       ...(row.window_token !== null ? { windowToken: row.window_token } : {}),
       ...(row.answered_at !== null ? { answeredAt: row.answered_at } : {}),
       ...(row.answered_turn_id !== null ? { answeredTurnId: row.answered_turn_id } : {}),
+      ...(row.audited_at !== null ? { auditedAt: row.audited_at } : {}),
     };
   },
 
@@ -1695,6 +1698,23 @@ export const sqliteOperationalStore: OperationalStore = {
       )
       .all(org, windowToken, afterIso, limit) as { wake_id: string; target_json: string; created_at: string }[];
     return rows.map((r) => ({ wakeId: r.wake_id, targetJson: r.target_json, createdAt: r.created_at }));
+  },
+
+  async listUnauditedUnifiedWakes(org, windowToken, limit) {
+    const rows = getDb()
+      .prepare(
+        `SELECT wake_id, target_json, created_at FROM unified_wake_target
+         WHERE org_id = ? AND window_token = ? AND answered_at IS NULL AND inbound = 1 AND audited_at IS NULL
+         ORDER BY created_at ASC LIMIT ?`,
+      )
+      .all(org, windowToken, limit) as { wake_id: string; target_json: string; created_at: string }[];
+    return rows.map((r) => ({ wakeId: r.wake_id, targetJson: r.target_json, createdAt: r.created_at }));
+  },
+
+  async markUnifiedWakesAudited(org, wakeIds, at) {
+    if (wakeIds.length === 0) return;
+    const stmt = getDb().prepare("UPDATE unified_wake_target SET audited_at = ? WHERE org_id = ? AND wake_id = ? AND audited_at IS NULL");
+    for (const wakeId of wakeIds) stmt.run(at, org, wakeId);
   },
 
   async markUnifiedWakeAnswered(org, wakeId, at, turnId) {
