@@ -36,7 +36,9 @@ import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
 import { pendingDelegationOwing, BRIDGE_WAKE_HELD_AUDIT_ACTION } from "../access/pending-delegation-signal.js";
 import { sourcesForWindow } from "./window-sources.js";
 import { finalMessageActionForTurn, replierLabelFor, withPendingWorkFrame } from "./turn-delivery.js";
-import { consumeRepliedThisTurn } from "./reply-signal.js";
+import { consumeRepliedThisTurn, repliedWakesThisTurn, declinedWakesThisTurn } from "./reply-signal.js";
+import { consumeReactedThisTurn } from "./react-signal.js";
+import { auditableUnaccountedWakes, UNACCOUNTED_WAKES_AUDIT_ACTION, MAX_ACCOUNTING_WAKES } from "./wake-accounting.js";
 import { redriveEnabled, maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
 import { unresumableAuditDetail } from "./session-resume.js";
 import { collectTaskResultDelta, markRecoveredDelivered } from "../access/task-result-delta.js";
@@ -89,6 +91,7 @@ export interface UnifiedReceiveTarget {
     readonly taskId?: string;
   };
   readonly inbound?: boolean;
+  readonly addressing?: string;
 }
 
 export function windowEnabledFor(surfaceKey: string, token: string): boolean {
@@ -125,6 +128,41 @@ export function ambientProseDropDetail(
     addressing: rawAddressing ?? (addressed ? "addressed-other" : "ambient"),
     reason: replied ? "narration-after-reply" : "no-reply-call",
   };
+}
+
+async function auditUnaccountedWakesForTurn(
+  org: string,
+  workspace: string,
+  surface: string | undefined,
+  windowToken: string | undefined,
+  turnId: string | undefined,
+  turnWake: string | undefined,
+): Promise<void> {
+  if (!windowToken || !turnId || !turnWake) return;
+  try {
+    const accounted = new Set<string>([...repliedWakesThisTurn(turnId), ...declinedWakesThisTurn(turnId)]);
+    if (consumeReactedThisTurn()) accounted.add(turnWake);
+    const unaccounted = await auditableUnaccountedWakes(getOperationalStore(), org, { windowToken, turnWake }, accounted);
+    if (unaccounted.length === 0) return;
+    const addressedCount = unaccounted.filter((w) => w.addressing === "addressed").length;
+    await appendAudit({
+      org,
+      platform: "unified",
+      workspace,
+      surface,
+      action: UNACCOUNTED_WAKES_AUDIT_ACTION,
+      detail: {
+        turnId,
+        turnWake,
+        unaccounted: unaccounted.map((w) => ({ wakeId: w.wakeId, addressing: w.addressing })),
+        count: unaccounted.length,
+        addressedCount,
+        ambientCount: unaccounted.length - addressedCount,
+        capped: unaccounted.length >= MAX_ACCOUNTING_WAKES,
+      },
+    }).catch(() => undefined);
+  } catch {
+  }
 }
 
 function failureDiag(code: string | undefined, details: Record<string, unknown> | undefined): Record<string, string> {
@@ -249,7 +287,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       throw new Error(`unified receive: no standing window is enabled for ${t.surfaceKey} — refusing the wake (fail-closed)`);
     }
     const org = deploymentOrg();
-    await registerUnifiedWakeTarget(getOperationalStore(), org, t.wakeId, t.origin, new Date().toISOString(), t.token, t.inbound === true);
+    await registerUnifiedWakeTarget(getOperationalStore(), org, t.wakeId, t.origin, new Date().toISOString(), t.token, t.inbound === true, t.addressing);
     ulog(`wake ${t.wakeId} from ${t.surfaceKey} → ${t.token} (origin ${t.origin.platform})`);
     const answerText = typeof input.message === "string" ? input.message : undefined;
     if (t.answer) {
@@ -306,6 +344,15 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       const replied = consumeRepliedThisTurn(currentTurnId({ session: ctx.session } as unknown as BindableContext));
       const org = deploymentOrg();
       const { workspace, surface } = auditLabels(channel.continuation?.token);
+      const accountingBind = { session: ctx.session } as unknown as BindableContext;
+      await auditUnaccountedWakesForTurn(
+        org,
+        workspace,
+        surface,
+        bareTokenFromEveContext(channel.continuation?.token),
+        currentTurnId(accountingBind),
+        currentWakeId(accountingBind),
+      ).catch(() => undefined);
       if (action.kind === "silent") {
         const bind = { session: ctx.session } as unknown as BindableContext;
         const wakeId = currentWakeId(bind);
@@ -573,6 +620,7 @@ export async function divertToUnifiedWindow(
     ...(answer ? { answer } : {}),
     surfaceKey: input.surfaceKey,
     inbound: input.internalDispatch !== true,
+    ...(input.window.addressing ? { addressing: input.window.addressing } : {}),
     ...(input.context && input.context.length > 0 ? { context: input.context } : {}),
   };
   let recovered: { taskIds: readonly string[]; overflow: number } | null = null;

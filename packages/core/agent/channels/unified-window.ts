@@ -89,8 +89,22 @@ export async function registerUnifiedWakeTarget(
   atIso: string,
   windowToken?: string,
   inbound?: boolean,
+  addressing?: string,
 ): Promise<void> {
-  await store.putUnifiedWakeTarget(org, wakeId, JSON.stringify(origin), atIso, WAKE_TARGET_TTL_MS, windowToken, inbound);
+  const targetJson = JSON.stringify(addressing ? { ...origin, addressing } : origin);
+  await store.putUnifiedWakeTarget(org, wakeId, targetJson, atIso, WAKE_TARGET_TTL_MS, windowToken, inbound);
+}
+
+export function wakeAddressingFromTargetJson(targetJson: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(targetJson);
+    if (parsed && typeof parsed === "object") {
+      const addressing = (parsed as Record<string, unknown>).addressing;
+      if (typeof addressing === "string" && addressing.length > 0) return addressing;
+    }
+  } catch {
+  }
+  return undefined;
 }
 
 export async function resolveUnifiedWakeTarget(store: UnifiedWakeTargetStore, org: string, wakeId: string): Promise<UnifiedWakeOrigin | null> {

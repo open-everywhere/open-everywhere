@@ -98,3 +98,43 @@ export function isWakeDeclinedThisTurn(turnId: string | undefined, wake: string)
     return false;
   }
 }
+
+export function declinedWakesThisTurn(turnId: string | undefined): readonly string[] {
+  if (turnId === undefined || turnId.length === 0) return [];
+  try {
+    const cur = declinedSlot.get();
+    return cur !== null && cur.turnId === turnId ? cur.wakes : [];
+  } catch {
+    return [];
+  }
+}
+
+interface RepliedWakes {
+  readonly turnId: string;
+  readonly wakes: readonly string[];
+}
+
+const repliedSlot = defineState<RepliedWakes | null>("open-everywhere.reply-replied-wakes", () => null);
+
+export function markWakeRepliedThisTurn(turnId: string | undefined, wake: string | undefined): void {
+  if (turnId === undefined || turnId.length === 0) return;
+  if (typeof wake !== "string" || wake.length === 0) return;
+  try {
+    repliedSlot.update((prev) => {
+      const wakes = prev !== null && prev.turnId === turnId ? prev.wakes : [];
+      if (wakes.includes(wake) || wakes.length >= MAX_DONE_WAKES) return { turnId, wakes };
+      return { turnId, wakes: [...wakes, wake] };
+    });
+  } catch {
+  }
+}
+
+export function repliedWakesThisTurn(turnId: string | undefined): readonly string[] {
+  if (turnId === undefined || turnId.length === 0) return [];
+  try {
+    const cur = repliedSlot.get();
+    return cur !== null && cur.turnId === turnId ? cur.wakes : [];
+  } catch {
+    return [];
+  }
+}
