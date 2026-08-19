@@ -12,10 +12,15 @@ import {
   registerSyntheticConfig,
   unifiedCtx,
   perSurfaceCtx,
+  ticketingCtx,
+  registerTicketingFixtureManifests,
+  GITHUB_REPO,
+  LINEAR_TEAM,
   readBaseInstructions,
   buildLeanSeatToolset,
   createRecorder,
   replyEntryForSeat,
+  tryReplyEntryForSeat,
   type ToolCall,
   type MountableEntry,
   type ResultFor,
@@ -45,12 +50,20 @@ const ARM = (flag("--arm") ?? "a").toLowerCase();
 const ARMS = ["a", "c", "w", "r"] as const;
 if (!(ARMS as readonly string[]).includes(ARM)) throw new Error(`--arm must be one of ${ARMS.join(", ")} (a=shipped, c=say-something, w=reading-a-wake, r=message-tool-only reporting); got '${ARM}'`);
 const PATH = (flag("--path") ?? "unified").toLowerCase();
-if (PATH !== "unified" && PATH !== "per-surface") throw new Error(`--path must be 'unified' or 'per-surface'; got '${PATH}'`);
+if (PATH !== "unified" && PATH !== "per-surface" && PATH !== "ticketing") throw new Error(`--path must be 'unified', 'per-surface' or 'ticketing'; got '${PATH}'`);
 const PER_SURFACE = PATH === "per-surface";
-if (PER_SURFACE && MODE === "coalesced") {
-  throw new Error("--path per-surface does not support --mode coalesced: a per-surface seat has no wake-id, so 'which wake did the reply name' has no answer to score. Use ambient-only, addressed-only or warranted-ambient.");
+const TICKETING = PATH === "ticketing";
+const PLATFORM = (flag("--platform") ?? "github").toLowerCase();
+if (PLATFORM !== "github" && PLATFORM !== "linear") throw new Error(`--platform must be 'github' or 'linear'; got '${PLATFORM}'`);
+if (!TICKETING && flag("--platform") !== undefined) throw new Error("--platform only applies to --path ticketing: the unified and per-surface seats are Slack-shaped, and naming a platform there would silently do nothing");
+const BASE_REPLY = PER_SURFACE || TICKETING;
+if (BASE_REPLY && MODE === "coalesced") {
+  throw new Error(`--path ${PATH} does not support --mode coalesced: this seat's reply has no wake-id, so 'which wake did the reply name' has no answer to score. Use ambient-only, addressed-only or warranted-ambient.`);
 }
-if ((ARM === "w" || ARM === "r") && !PER_SURFACE) throw new Error(`--arm ${ARM} needs --path per-surface: the unified prompt already carries that text, so applying it there measures a duplicate`);
+if (TICKETING && MODE === "addressed-only") {
+  throw new Error("--path ticketing does not support --mode addressed-only: both GitHub's and Linear's ambient supervisor classifiers drop every @mention to the platform's own native mention leg, so this seat never receives the direct-mention wake the mode needs.");
+}
+if ((ARM === "w" || ARM === "r") && !PER_SURFACE) throw new Error(`--arm ${ARM} needs --path per-surface: it isolates what the Slack per-surface prompt is missing relative to the dual-mode default, which is not the question on '${PATH}'`);
 const BACKSCROLL = (flag("--backscroll") ?? "in").toLowerCase();
 const BACKSCROLLS = ["in", "out", "out-hinted"] as const;
 if (!(BACKSCROLLS as readonly string[]).includes(BACKSCROLL)) throw new Error(`--backscroll must be one of ${BACKSCROLLS.join(", ")}; got '${BACKSCROLL}'`);
@@ -81,7 +94,7 @@ That closing line is not how you talk to the people here. Anything they are owed
 \`reply\` first; the closing line only notes that you sent it, or that nothing was needed.
 `.trim();
 
-const activeCtx: BindableContext = PER_SURFACE ? perSurfaceCtx : unifiedCtx;
+const activeCtx: BindableContext = TICKETING ? ticketingCtx(PLATFORM as "github" | "linear") : PER_SURFACE ? perSurfaceCtx : unifiedCtx;
 
 function section(md: string, heading: string): string {
   const i = md.indexOf(heading);
@@ -222,7 +235,14 @@ for (const w of WARRANTED_PROBES) {
   }
 }
 
-const ACTIVE_WARRANTED = SHAPE === undefined ? WARRANTED_PROBES : WARRANTED_PROBES.filter((w) => w.shape === SHAPE);
+if (TICKETING && SHAPE !== undefined && SHAPE_ADDRESSING[SHAPE as WarrantedShape] !== "channel-watch") {
+  throw new Error(`--path ticketing only reaches channel-watch shapes (room-question, self-follow-up) — a GitHub/Linear ambient wake is never name-dropped or thread-followed (both classifiers drop every @mention to the native leg); got --shape ${SHAPE}`);
+}
+const ACTIVE_WARRANTED = (SHAPE === undefined
+  ? TICKETING
+    ? WARRANTED_PROBES.filter((w) => SHAPE_ADDRESSING[w.shape] === "channel-watch")
+    : WARRANTED_PROBES
+  : WARRANTED_PROBES.filter((w) => w.shape === SHAPE));
 if (ACTIVE_WARRANTED.length === 0) throw new Error(`--shape ${SHAPE} matches no entry in the warranted pool (have: ${[...new Set(WARRANTED_PROBES.map((w) => w.shape))].join(", ")})`);
 if (BACKSCROLL_OUT && ACTIVE_WARRANTED.some((w) => w.selfPrior === undefined))
   throw new Error(`--backscroll out with a pool containing shapes that render no self-post: those probes are identical in both arms and would dilute the comparison. Add --shape with one of: ${REFERENTIAL_SHAPES.join(", ")}.`);
@@ -247,9 +267,14 @@ interface Probe {
   readonly recallTells?: readonly string[];
 }
 
-const envelopeWakeId = (id: string): string | undefined => (PER_SURFACE ? undefined : id);
+const envelopeWakeId = (id: string): string | undefined => (BASE_REPLY ? undefined : id);
 
-const PROBE_CHANNEL = { id: SLACK_CHANNEL, type: "channel" };
+const PROBE_CHANNEL = TICKETING
+  ? { id: PLATFORM === "github" ? GITHUB_REPO : LINEAR_TEAM }
+  : { id: SLACK_CHANNEL, type: "channel" };
+
+const WAKE_PLATFORM = TICKETING ? PLATFORM : "slack";
+const WAKE_CONTAINER_NOUN: string | undefined = TICKETING ? (PLATFORM === "github" ? "repo" : "team") : undefined;
 
 export const replyPostedResult = (id: string): { readonly posted: true; readonly id: string } => ({ posted: true, id });
 
@@ -257,7 +282,8 @@ function warmPrefix(i: number, w: (typeof WARRANTED_PROBES)[number]): readonly M
   const now = (): string => new Date().toISOString();
   const priorWakeId = `c0000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
   const priorWake: NormalizedWake = {
-    platform: "slack",
+    platform: WAKE_PLATFORM,
+    containerNoun: WAKE_CONTAINER_NOUN,
     reason: "channel-activity",
     addressing: "channel-watch",
     locus: { channel: PROBE_CHANNEL },
@@ -274,7 +300,7 @@ function warmPrefix(i: number, w: (typeof WARRANTED_PROBES)[number]): readonly M
         type: "tool-call",
         toolCallId,
         toolName: "reply",
-        input: { ...(PER_SURFACE ? {} : { wake: priorWakeId }), text: w.selfPrior! },
+        input: { ...(BASE_REPLY ? {} : { wake: priorWakeId }), text: w.selfPrior! },
       }],
     },
     {
@@ -308,7 +334,8 @@ export function buildProbe(i: number): Probe {
         : []),
     ];
     const wake: NormalizedWake = {
-      platform: "slack",
+      platform: WAKE_PLATFORM,
+      containerNoun: WAKE_CONTAINER_NOUN,
       reason: "channel-activity",
       addressing: SHAPE_ADDRESSING[w.shape],
       locus: w.shape === "thread-follow" ? { channel, thread: { ts: "1768476120.000100" } } : { channel },
@@ -341,13 +368,13 @@ export function buildProbe(i: number): Probe {
   }
 
   const ambient: NormalizedWake = {
-    platform: "slack", reason: "channel-activity", addressing: "channel-watch",
+    platform: WAKE_PLATFORM, containerNoun: WAKE_CONTAINER_NOUN, reason: "channel-activity", addressing: "channel-watch",
     locus: { channel }, wakeId: envelopeWakeId(ambientWakeId),
     participants: [{ id: "U_ALEX", name: "Alex" }, { id: "U_SAM", name: "Sam" }],
     trigger: { kind: "message", message: { id: "1768476128.893000", sentAt: now(), from: "human", trust: "peer", trigger: true, author: "Alex", authorId: "U_ALEX", body: pair.ambient } },
   };
   const addressed: NormalizedWake = {
-    platform: "slack", reason: "mention", addressing: "direct-mention",
+    platform: WAKE_PLATFORM, containerNoun: WAKE_CONTAINER_NOUN, reason: "mention", addressing: "direct-mention",
     locus: { channel }, wakeId: envelopeWakeId(addressedWakeId),
     participants: [{ id: "U_ALEX", name: "Alex" }, { id: "U_SAM", name: "Sam" }],
     trigger: { kind: "message", message: { id: "1768476133.510000", sentAt: now(), from: "human", trust: "peer", trigger: true, mention: true, author: "Sam", authorId: "U_SAM", body: pair.addressed } },
@@ -377,11 +404,18 @@ export const resultFor: ResultFor = (name, input, callIndex) => {
 async function buildTools(calls: ToolCall[]): Promise<ToolSet> {
   if (TOOLSET === "lean") {
     return await buildLeanSeatToolset({
-      ctx: activeCtx, calls, resultFor,
+      ctx: activeCtx, calls, resultFor, allowNoReply: TICKETING,
       onSkip: (name) => console.log(`   (lean toolset: ${name} does not mount on this seat — skipped)`),
     });
   }
   const rec = createRecorder(calls, resultFor);
+  if (TICKETING) {
+    const entry = await tryReplyEntryForSeat(activeCtx);
+    return {
+      ...(entry !== null ? { reply: rec("reply", entry) } : {}),
+      no_reply: rec("no_reply", noReplyTool as MountableEntry),
+    } as ToolSet;
+  }
   return {
     reply: rec("reply", await replyEntryForSeat(activeCtx)),
     no_reply: rec("no_reply", noReplyTool as MountableEntry),
@@ -490,7 +524,7 @@ export function scoreProbe(
   const replies = calls.filter((c) => c.name === "reply");
   const wakeOf = (c: ToolCall): string => String(c.input.wake ?? "");
   const textOf = (c: ToolCall): string => String(c.input.text ?? "");
-  const namesWake = (c: ToolCall, id: string): boolean => (PER_SURFACE ? true : wakeOf(c) === id);
+  const namesWake = (c: ToolCall, id: string): boolean => (BASE_REPLY ? true : wakeOf(c) === id);
   const singleWake = MODE !== "coalesced";
   const addressedAnswered = (singleWake && MODE !== "addressed-only") || replies.some((c) => namesWake(c, p.addressedWakeId));
   const ambientSilent = !replies.some((c) => namesWake(c, p.ambientWakeId));
@@ -503,7 +537,7 @@ export function scoreProbe(
   if (p.expect === "silence" && !ambientSilent) notes.push(`the ambient wake ${p.ambientWakeId} got a reply — it should never have been answered`);
   if (p.expect === "reply" && !targetReplied) notes.push(`FALSE SILENCE — the wake ${p.targetWakeId} warranted a reply and got none`);
   if (textLeak) notes.push(`a reply's TEXT names the ambient wake's id — a raw id leaked into a delivered message`);
-  const unknownWake = PER_SURFACE ? [] : replies.filter((c) => wakeOf(c) !== p.addressedWakeId && wakeOf(c) !== p.ambientWakeId);
+  const unknownWake = BASE_REPLY ? [] : replies.filter((c) => wakeOf(c) !== p.addressedWakeId && wakeOf(c) !== p.ambientWakeId);
   for (const c of unknownWake) notes.push(`a reply named an id belonging to NEITHER wake: ${wakeOf(c)}`);
   const meetsExpectation = p.expect === "either" ? true : p.expect === "reply" ? targetReplied : ambientSilent;
   return {
@@ -514,7 +548,7 @@ export function scoreProbe(
 }
 
 export function classifyDelivery(targetWakeId: string, calls: readonly ToolCall[], terminalText: string): Delivery {
-  if (calls.some((c) => c.name === "reply" && (PER_SURFACE || String(c.input.wake ?? "") === targetWakeId))) return "tool";
+  if (calls.some((c) => c.name === "reply" && (BASE_REPLY || String(c.input.wake ?? "") === targetWakeId))) return "tool";
   return terminalText.trim() === "" ? "none" : "terminal";
 }
 
@@ -760,11 +794,27 @@ function makeBindingJudge(gateway: ReturnType<typeof createGateway>): BindingJud
 }
 
 async function assertSeatShape(system: string): Promise<void> {
+  const block = renderReadingAWake();
+  const carriesBlock = system.includes(block);
+  if (TICKETING) {
+    const replyEntry = await tryReplyEntryForSeat(activeCtx);
+    if (PLATFORM === "github" && replyEntry !== null) throw new Error("fixture guard: the GitHub ticketing seat resolved a `reply` entry — the manifest's `midTurnPost: false` should mount none at all; registerTicketingFixtureManifests() may be unregistered or overwritten");
+    if (PLATFORM === "linear" && replyEntry === null) throw new Error("fixture guard: the Linear ticketing seat resolved NO `reply` entry — its manifest's `midTurnPost: true` should still mount one (the tool is broken at EXECUTE time, not at mount time)");
+    if (replyEntry !== null) {
+      const replyArgs = Object.keys((replyEntry.inputSchema as { shape?: Record<string, unknown> }).shape ?? {});
+      if (replyArgs.includes("wake")) throw new Error("fixture guard: the ticketing seat's `reply` carries a `wake` argument — the scoring rule for this path assumes it does not");
+    }
+    if (!carriesBlock) throw new Error("fixture guard: the ticketing prompt is missing the 'Reading a wake' block — canReceiveJudgedWake regressed for the container-supervisor grain (OPE-771)");
+    if (system.includes("reply` posts into the channel mid-turn")) throw new Error("fixture guard: the ticketing prompt carries the dual-mode arm 4 text (OPE-786 regressed) — `reply` is not a working mid-turn route on this seat");
+    if (system.includes("Your turn-final text is DISCARDED")) throw new Error("fixture guard: the ticketing prompt carries arm 2's Slack prose-dropped text — that arm names a `reply` verb this seat cannot use the way it describes");
+    if (system.includes("This is a cross-surface session")) throw new Error("fixture guard: the ticketing prompt carries the UNIFIED arm's cross-surface claim — that sentence is false on this seat");
+    if (!system.includes("mounts no working `reply` tool")) throw new Error("fixture guard: the ticketing prompt does not state plainly that no working `reply` tool exists (OPE-786 arm 3) — `supervisorReplyBroken`/`midTurnPost` may be unregistered or the arm moved");
+    console.log(`seat: path=${PATH} platform=${PLATFORM} reply=${replyEntry === null ? "ABSENT (no mid-turn post primitive)" : "base, MOUNTED but the persona forbids calling it"} reading-a-wake=${carriesBlock ? "PRESENT" : "ABSENT"}`);
+    return;
+  }
   const replyEntry = await replyEntryForSeat(activeCtx);
   const replyArgs = Object.keys((replyEntry.inputSchema as { shape?: Record<string, unknown> }).shape ?? {});
   const hasWakeArg = replyArgs.includes("wake");
-  const block = renderReadingAWake();
-  const carriesBlock = system.includes(block);
   if (PER_SURFACE) {
     if (replyEntry === (unifiedReplyEntry as unknown)) throw new Error("fixture guard: the per-surface seat resolved the UNIFIED reply entry — the ctx is not the per-container shape this run claims to measure");
     if (hasWakeArg) throw new Error("fixture guard: the per-surface `reply` carries a `wake` argument — the scoring rule for this path assumes it does not");
@@ -782,7 +832,8 @@ async function assertSeatShape(system: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  registerSyntheticConfig({ unified: !PER_SURFACE });
+  registerSyntheticConfig({ unified: !PER_SURFACE && !TICKETING });
+  if (TICKETING) registerTicketingFixtureManifests();
   const system = await buildSystemPrompt();
   await assertSeatShape(system);
   const mounted = Object.keys(await buildTools([]));
@@ -806,7 +857,7 @@ async function main(): Promise<void> {
   if (!key) throw new Error("AI_GATEWAY_API_KEY is unset — source .env.e2e and set it from ROWAN_VERCEL_AI_GATEWAY_KEY (never the shell key, which is the shell key)");
   const gateway = createGateway({ apiKey: key });
 
-  console.log(`first-turn-offline: n=${N} path=${PATH} mode=${MODE} arm=${ARM}${ARM === "c" ? " (say-something)" : " (shipped)"} toolset=${TOOLSET} reissue=${REISSUE ? (STOCK_REISSUE ? "stock (pre-OPE-762)" : "guarded (OPE-762)") : "off"} pair=${PAIR ?? "rotating"} model=${MODEL} effort=${EFFORT}`);
+  console.log(`first-turn-offline: n=${N} path=${PATH}${TICKETING ? ` platform=${PLATFORM}` : ""} mode=${MODE} arm=${ARM}${ARM === "c" ? " (say-something)" : " (shipped)"} toolset=${TOOLSET} reissue=${REISSUE ? (STOCK_REISSUE ? "stock (pre-OPE-762)" : "guarded (OPE-762)") : "off"} pair=${PAIR ?? "rotating"} model=${MODEL} effort=${EFFORT}`);
   if (MODE === "warranted-ambient") {
     console.log(`pool: shape=${SHAPE ?? "all"} (${ACTIVE_WARRANTED.length} entries) backscroll=${BACKSCROLL}${BACKSCROLL_OUT ? " — the referenced self-post is HIDDEN; a neutral decoy of comparable length stands in its place" : ""}${BACKSCROLL_HINTED ? `; the trigger carries prev-id=${HIDDEN_POST_ID}, which names no message in view` : ""} judge=${NO_JUDGE ? "off" : JUDGE_MODEL}`);
     console.log(`prior: ${PRIOR} — ${PRIOR_WARM
@@ -1006,10 +1057,10 @@ async function main(): Promise<void> {
   console.log(`per probe: ${usageLog.map((r) => `${inputOf(r.usage)}/${cachedOf(r.usage)}`).join(" ")}  (input/cached)`);
 
   const outDir = join(process.cwd(), "scripts/eval/results");
-  const out = flag("--out") ?? join(outDir, `first-turn-offline-${PATH}-${MODE}${SHAPE !== undefined ? `-${SHAPE}` : ""}-bs${BACKSCROLL}-prior${PRIOR}-${TOOLSET}-arm${ARM}${REISSUE ? (STOCK_REISSUE ? "-reissue-stock" : "-reissue") : ""}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+  const out = flag("--out") ?? join(outDir, `first-turn-offline-${PATH}${TICKETING ? `-${PLATFORM}` : ""}-${MODE}${SHAPE !== undefined ? `-${SHAPE}` : ""}-bs${BACKSCROLL}-prior${PRIOR}-${TOOLSET}-arm${ARM}${REISSUE ? (STOCK_REISSUE ? "-reissue-stock" : "-reissue") : ""}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, JSON.stringify({
-    config: { n: N, path: PATH, mode: MODE, arm: ARM, shape: SHAPE ?? null, backscroll: BACKSCROLL, prior: PRIOR, judgeModel: NO_JUDGE ? null : JUDGE_MODEL, pair: PAIR ?? null, toolset: TOOLSET, reissue: REISSUE, stockReissue: STOCK_REISSUE, mountedTools: mounted, model: MODEL, effort: EFFORT, systemPromptChars: system.length },
+    config: { n: N, path: PATH, platform: TICKETING ? PLATFORM : null, mode: MODE, arm: ARM, shape: SHAPE ?? null, backscroll: BACKSCROLL, prior: PRIOR, judgeModel: NO_JUDGE ? null : JUDGE_MODEL, pair: PAIR ?? null, toolset: TOOLSET, reissue: REISSUE, stockReissue: STOCK_REISSUE, mountedTools: mounted, model: MODEL, effort: EFFORT, systemPromptChars: system.length },
     summary: {
       correct, of: N, rate: correct / N, addressedAnswered, ambientSilent, noCrossBinding,
       emptyFinalStep, guardSuppressed, nudgesSent: emptyFinalStep - guardSuppressed, overReplyAfterNudge, ceilingHits,

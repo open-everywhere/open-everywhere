@@ -621,4 +621,48 @@ async function loadWithMode(mode: string, tag: string): Promise<ProbeModule> {
     "judge prompt: NEGATIVE CONTROL — an absent visible post renders `(none)`, never an empty section the judge could read as missing input");
 }
 
+{
+  const gh = await loadWith(["--path", "ticketing", "--platform", "github", "--mode", "warranted-ambient", "--shape", "room-question"], "ticketing-gh-wake");
+  const ghMsg = gh.buildProbe(0).userMessage;
+  ok(!ghMsg.includes("wake-id="), "🔴 OPE-813 — a GitHub ticketing wake carries NO wake-id (base reply, matches the shipped per-container shape)");
+  ok(ghMsg.includes('container="repo"'), "OPE-813 — a GitHub ticketing wake's envelope names the container 'repo' (buildGitHubSupervisorWake's containerNoun)");
+
+  const li = await loadWith(["--path", "ticketing", "--platform", "linear", "--mode", "warranted-ambient", "--shape", "self-follow-up"], "ticketing-li-wake");
+  const liMsg = li.buildProbe(0).userMessage;
+  ok(!liMsg.includes("wake-id="), "OPE-813 — a Linear ticketing wake carries NO wake-id either");
+  ok(liMsg.includes('container="team"'), "OPE-813 — a Linear ticketing wake's envelope names the container 'team' (buildLinearSupervisorWake's containerNoun)");
+  ok(liMsg.includes("linear-message"), "OPE-813 — the backscrolled self-post is fenced with the Linear-labelled source, not the Slack default");
+
+  const target = AMBIENT;
+  ok(gh.classifyDelivery(target, [], "16:00 UTC — that's the cutoff.") === "terminal",
+    "🔴 OPE-813/786 — closing text with NO tool call scores as `terminal` delivery: the fixed seat's correct answer shape");
+  ok(gh.classifyDelivery(target, [], "") === "none",
+    "OPE-813 — empty closing text and no call still scores `none`: the pre-fix failure shape (fumbling/silence) is still caught");
+  ok(gh.classifyDelivery(target, [{ name: "reply", input: { text: "16:00 UTC" } }], "") === "tool",
+    "OPE-813 — a base `reply` call (no `wake` argument) still scores `tool` delivery on the ticketing path, same rule as per-surface");
+  const scored = gh.scoreProbe(
+    { ambientWakeId: AMBIENT, addressedWakeId: ADDRESSED, targetWakeId: AMBIENT, expect: "reply" },
+    [{ name: "reply", input: { text: "answer" } }],
+  );
+  ok(scored.targetReplied, "OPE-813 — scoreProbe's BASE_REPLY rule also treats an id-less ticketing reply as answering the target wake");
+
+  const refuses = async (args: readonly string[], tag: string, textIncludes: string): Promise<void> => {
+    try {
+      await loadWith(args, tag);
+      ok(false, `expected --path ticketing with [${args.join(" ")}] to throw`);
+    } catch (e) {
+      ok((e as Error).message.includes(textIncludes), `refusal for [${args.join(" ")}] names the reason: "${textIncludes}"`);
+    }
+  };
+  await refuses(["--path", "ticketing", "--mode", "coalesced"], "ticketing-coalesced", "does not support --mode coalesced");
+  await refuses(["--path", "ticketing", "--mode", "addressed-only"], "ticketing-addressed", "does not support --mode addressed-only");
+  await refuses(["--path", "unified", "--platform", "github"], "platform-off-ticketing", "--platform only applies to --path ticketing");
+  await refuses(["--path", "ticketing", "--mode", "warranted-ambient", "--shape", "name-drop"], "ticketing-name-drop", "only reaches channel-watch shapes");
+  await refuses(["--path", "ticketing", "--platform", "notion"], "ticketing-bad-platform", "--platform must be 'github' or 'linear'");
+
+  await loadWith(["--path", "ticketing", "--mode", "ambient-only"], "ticketing-ambient-ok");
+  await loadWith(["--path", "ticketing", "--mode", "warranted-ambient", "--shape", "room-question"], "ticketing-shape-ok");
+  ok(true, "negative control: --path ticketing with a reachable mode/shape loads without throwing");
+}
+
 console.log(`response-behaviour scoring: ${n} assertions passed`);

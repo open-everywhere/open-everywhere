@@ -12,6 +12,7 @@ import { registerConfig } from "../../agent/access/config.js";
 import { defineDomain } from "../../agent/memory/domain.js";
 import { defineMemorySilo } from "../../agent/memory/silo.js";
 import { registerSlackFixtureMapper, registerSlackFixtureManifest } from "../_slack-test-stubs.js";
+import { registerCapabilityManifest } from "../../agent/identity/capabilities.js";
 import type { BindableContext } from "../../agent/identity/binding.js";
 
 export const DOMAIN = "payments";
@@ -58,6 +59,22 @@ export const perSurfaceCtx: BindableContext = {
     },
   },
 } as BindableContext;
+
+export const GITHUB_REPO = "acme/payments-api";
+export const LINEAR_TEAM = "T_PAY";
+
+export function ticketingCtx(platform: "github" | "linear"): BindableContext {
+  const token = platform === "github" ? `github:${GITHUB_REPO}:oe-sup:g1` : `linear:${LINEAR_TEAM}:oe-sup:g1`;
+  return {
+    channel: { kind: platform, continuationToken: token },
+    session: { auth: { current: { attributes: {} } } },
+  } as BindableContext;
+}
+
+export function registerTicketingFixtureManifests(): void {
+  registerCapabilityManifest("github", { midTurnPost: false, reactions: false });
+  registerCapabilityManifest("linear", { midTurnPost: true, reactions: false, supervisorReplyBroken: true });
+}
 
 export function readBaseInstructions(): string {
   return readFileSync(new URL("../../../../agent/instructions.md", import.meta.url), "utf8");
@@ -125,19 +142,30 @@ export async function replyEntryForSeat(ctx: BindableContext): Promise<Mountable
   return entry;
 }
 
+export async function tryReplyEntryForSeat(ctx: BindableContext): Promise<MountableEntry | null> {
+  return await resolveDynamicEntry(replyDynamic, ctx);
+}
+
 export async function buildLeanSeatToolset(opts: {
   readonly ctx: BindableContext;
   readonly calls: ToolCall[];
   readonly resultFor: ResultFor;
   readonly onSkip?: (name: string) => void;
+  readonly allowNoReply?: boolean;
 }): Promise<ToolSet> {
   const rec = createRecorder(opts.calls, opts.resultFor);
   const set: Record<string, ToolSet[string]> = {
-    reply: rec("reply", await replyEntryForSeat(opts.ctx)),
     no_reply: rec("no_reply", noReplyTool as MountableEntry),
     update_status: rec("update_status", updateStatusTool as MountableEntry),
     stand_down: rec("stand_down", standDownTool as MountableEntry),
   };
+  if (opts.allowNoReply) {
+    const entry = await tryReplyEntryForSeat(opts.ctx);
+    if (entry !== null) set.reply = rec("reply", entry);
+    else opts.onSkip?.("reply");
+  } else {
+    set.reply = rec("reply", await replyEntryForSeat(opts.ctx));
+  }
   for (const [name, mod] of [["react", reactDynamic], ["spawn_thread_session", spawnThreadSessionDynamic]] as const) {
     const entry = await resolveDynamicEntry(mod, opts.ctx);
     if (entry !== null) set[name] = rec(name, entry);

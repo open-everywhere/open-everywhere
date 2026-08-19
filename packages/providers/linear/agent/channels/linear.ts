@@ -51,6 +51,8 @@ import {
   getOperationalStore,
   postOnce,
   outboundKey,
+  markNotApplied,
+  platformFailureClass,
   admitTrigger,
   replierLabelFromAuthAttributes,
   withReplierPrefix,
@@ -845,15 +847,19 @@ const native: LinearChannel = linearChannel({
               payload: text,
             }),
             run: async () => {
-              await callLinearGraphQL<{ commentCreate?: { success?: boolean } }>({
+              const data = await callLinearGraphQL<{ commentCreate?: { success?: boolean } }>({
                 credentials: linearAppActorCredentials,
                 query: "mutation OeAmbientReply($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
                 queryName: "OeAmbientReply",
                 variables: { input: { issueId: target!.issueId, ...(target!.parentId ? { parentId: target!.parentId } : {}), body: text } },
               });
+              if (data.commentCreate?.success !== true) {
+                throw markNotApplied(new Error(`supervisor reply couldn't post to Linear — ambient commentCreate returned no success on issue ${target!.issueId}`));
+              }
               return undefined;
             },
             skipped: () => SUPERVISOR_POST_SUPPRESSED,
+            releaseKeyOnFailure: (err) => platformFailureClass(err) === "definitive",
           });
           return result === SUPERVISOR_POST_SUPPRESSED ? SUPERVISOR_POST_SUPPRESSED : text.length;
         },
