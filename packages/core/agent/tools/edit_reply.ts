@@ -2,7 +2,7 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { deploymentOrg, isUnifiedWindowContext, currentWakeId, currentTurnId, type BindableContext } from "../identity/binding.js";
 import { resolveReplyTarget, replyEditLocus, replyAuditFor } from "../channels/reply-post.js";
-import { unifiedEditLocus } from "../channels/unified-reply.js";
+import { resolveUnifiedEditLocus } from "../channels/unified-reply.js";
 import { editPostedMessage, auditReplyEditRefused, editRefusalMessage, EDIT_NO_ARM_REFUSAL_REASON } from "../channels/reply-edit.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
 import { withPendingWorkFrame } from "../channels/turn-delivery.js";
@@ -56,7 +56,7 @@ export const unifiedEditReplyEntry = defineTool({
       throw new Error(replyRefusalMessage(resolution.reason, input.wake, { turnWake, silent: silentRoutineThisTurn() }));
     }
     const origin = resolution.origin;
-    const locus = unifiedEditLocus(origin);
+    const locus = await resolveUnifiedEditLocus(origin);
     if (!locus) {
       await auditReplyEditRefused(replyAuditFor(bind, "tool", input.wake), EDIT_NO_ARM_REFUSAL_REASON);
       throw new Error(editRefusalMessage(EDIT_NO_ARM_REFUSAL_REASON, origin.platform));

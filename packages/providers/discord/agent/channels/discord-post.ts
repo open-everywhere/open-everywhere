@@ -115,7 +115,24 @@ export async function discordEditMessage(channelId: string, messageId: string, c
     headers: botHeaders(botToken()),
     body: JSON.stringify({ content }),
   });
-  if (!res.ok) throw new Error(`edit_reply couldn't update the Discord message (${res.status}) in channel ${channelId}`);
+  if (!res.ok) {
+    throw Object.assign(new Error(`edit_reply couldn't update the Discord message (${res.status}) in channel ${channelId}`), {
+      status: res.status,
+    });
+  }
+}
+
+export async function discordExistingThreadForMessage(channelId: string, messageId: string): Promise<string | null> {
+  try {
+    const msgRes = await fetch(`${API}/channels/${channelId}/messages/${messageId}`, {
+      headers: botHeaders(botToken()),
+    });
+    if (!msgRes.ok) return null;
+    const msg = (await msgRes.json()) as { thread?: { id?: unknown } };
+    return typeof msg?.thread?.id === "string" ? msg.thread.id : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function discordThreadForMessage(channelId: string, messageId: string, name: string): Promise<string | null> {
@@ -129,12 +146,7 @@ export async function discordThreadForMessage(channelId: string, messageId: stri
       const body = (await res.json()) as { id?: unknown };
       return typeof body?.id === "string" ? body.id : null;
     }
-    const msgRes = await fetch(`${API}/channels/${channelId}/messages/${messageId}`, {
-      headers: botHeaders(botToken()),
-    });
-    if (!msgRes.ok) return null;
-    const msg = (await msgRes.json()) as { thread?: { id?: unknown } };
-    return typeof msg?.thread?.id === "string" ? msg.thread.id : null;
+    return await discordExistingThreadForMessage(channelId, messageId);
   } catch {
     return null;
   }

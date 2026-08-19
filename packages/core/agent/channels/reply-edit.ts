@@ -14,6 +14,13 @@ export const EDIT_NOT_OWN_REFUSAL_REASON = "not-own-post";
 
 export const EDIT_NO_ARM_REFUSAL_REASON = "no-edit-arm";
 
+export const EDIT_PLATFORM_ERROR_REASON = "platform-error";
+
+export function editPlatformStatus(err: unknown): number | undefined {
+  const status = (err as { status?: unknown } | null | undefined)?.status;
+  return typeof status === "number" && Number.isFinite(status) ? status : undefined;
+}
+
 export function editRefusalMessage(reason: string, platform?: string): string {
   if (reason === EDIT_NO_ARM_REFUSAL_REASON) {
     const where = platform && platform.length > 0 ? platform : "this surface";
@@ -26,7 +33,7 @@ export function editRefusalMessage(reason: string, platform?: string): string {
   );
 }
 
-export async function auditReplyEditRefused(audit: ReplyAudit | undefined, reason: string): Promise<void> {
+export async function auditReplyEditRefused(audit: ReplyAudit | undefined, reason: string, status?: number): Promise<void> {
   if (!audit) return;
   await appendAudit({
     org: audit.org,
@@ -38,6 +45,7 @@ export async function auditReplyEditRefused(audit: ReplyAudit | undefined, reaso
     detail: {
       reason,
       route: audit.route,
+      ...(status !== undefined ? { status } : {}),
       ...(audit.wakeId ? { wakeId: audit.wakeId.slice(0, 200) } : {}),
       ...(audit.sessionId ? { sessionId: audit.sessionId } : {}),
     },
@@ -87,6 +95,11 @@ export async function editPostedMessage(
     await auditReplyEdit(audit, messageId, locus.platform, text.length);
     return;
   }
-  await arm.editMessage(locus, messageId, text);
+  try {
+    await arm.editMessage(locus, messageId, text);
+  } catch (err) {
+    await auditReplyEditRefused(audit, EDIT_PLATFORM_ERROR_REASON, editPlatformStatus(err));
+    throw err;
+  }
   await auditReplyEdit(audit, messageId, locus.platform, text.length);
 }

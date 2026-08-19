@@ -1,4 +1,10 @@
-import { discordEditMessage, discordPostMessage, discordThreadForMessage, splitForDiscord } from "./discord-post.js";
+import {
+  discordEditMessage,
+  discordExistingThreadForMessage,
+  discordPostMessage,
+  discordThreadForMessage,
+  splitForDiscord,
+} from "./discord-post.js";
 import {
   markThreadEngaged,
   deploymentOrg,
@@ -55,6 +61,13 @@ async function editDiscordMessage(locus: EditLocus, messageId: string, text: str
   await discordEditMessage(locus.channelId, messageId, text);
 }
 
+async function retargetDiscordEditLocus(origin: UnifiedWakeOrigin, locus: EditLocus): Promise<EditLocus> {
+  const o = origin as DiscordOrigin;
+  if ("dm" in o || !o.autoThreadName || !o.messageId) return locus;
+  const threadId = await discordExistingThreadForMessage(o.channelId, o.messageId);
+  return threadId ? { ...locus, channelId: threadId } : locus;
+}
+
 export const discordPostArm: PostArm = {
   platform: "discord",
   resolveTarget: (bag: TargetResolveBag): ReplyTarget | null => {
@@ -67,4 +80,5 @@ export const discordPostArm: PostArm = {
   describeRedriveTarget: (origin) => `discord channel ${(origin as DiscordOrigin).channelId}`,
   redriveContainerId: (origin) => (origin as DiscordOrigin).channelId,
   editMessage: editDiscordMessage,
+  retargetEditLocus: retargetDiscordEditLocus,
 };

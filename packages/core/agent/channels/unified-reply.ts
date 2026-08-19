@@ -90,6 +90,14 @@ export function unifiedEditLocus(origin: UnifiedWakeOrigin): EditLocus | null {
   }
 }
 
+export async function resolveUnifiedEditLocus(origin: UnifiedWakeOrigin): Promise<EditLocus | null> {
+  const locus = unifiedEditLocus(origin);
+  if (!locus) return null;
+  const retarget = postArm(origin.platform)?.retargetEditLocus;
+  if (!retarget) return locus;
+  return (await retarget(origin, locus).catch(() => locus)) ?? locus;
+}
+
 async function dispatchUnifiedReply(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps = {}, replier?: ReplierLabel): Promise<string> {
   if (process.env.OE_EGRESS_SPOOF === "1") {
     if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
