@@ -1,4 +1,4 @@
-import { wireNeonOperationalStore, rotateUnifiedWindow, parseRotateArgs, checkOrgAllowed } from "./rotate-window-lib.js";
+import { wireNeonOperationalStore, rotateUnifiedWindow, parseRotateArgs, checkOrgAllowed, WindowTargetRefused } from "./rotate-window-lib.js";
 import { dmAnchorDomain } from "../../agent/channels/window-key.js";
 import { guardStoreIdentityBeforeWrite } from "../store-identity-guard.js";
 
@@ -26,7 +26,7 @@ async function main() {
   }
 
   if (target.kind === "dm") {
-    const r = await rotateUnifiedWindow(store, target.org, dmAnchorDomain(target.dmSurfaceKey));
+    const r = await rotateUnifiedWindow(store, target.org, dmAnchorDomain(target.dmSurfaceKey), undefined, { force: target.force });
     console.log("=== rotate-window (DM seat) ===");
     console.log(`org:            ${target.org}`);
     console.log(`dm surface:     ${target.dmSurfaceKey}`);
@@ -38,7 +38,7 @@ async function main() {
     return;
   }
 
-  const r = await rotateUnifiedWindow(store, target.org, target.domain, target.windowId);
+  const r = await rotateUnifiedWindow(store, target.org, target.domain, target.windowId, { force: target.force });
 
   console.log("=== rotate-window ===");
   console.log(`org:            ${target.org}`);
@@ -55,6 +55,7 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error("ROTATE FAILED:", e);
+  if (e instanceof WindowTargetRefused) console.error(e.message);
+  else console.error("ROTATE FAILED:", e);
   process.exit(1);
 });

@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { initOperationalSchema, makeOperationalPostgresStore, type PgClient } from "../agent/operational/postgres.js";
-import { saltSupervisorGeneration, formatWindowToken } from "../agent/channels/window-key.js";
-import { checkOrgAllowed, orgHasAnySeat, parseRotateArgs } from "./e2e/rotate-window-lib.js";
+import { saltSupervisorGeneration, formatWindowToken, parseWindowToken } from "../agent/channels/window-key.js";
+import { unifiedDomainSessionKey } from "../agent/channels/unified-supervisor.js";
+import {
+  assertTokenRoundTrips,
+  checkOrgAllowed,
+  checkWindowTargetResumable,
+  orgHasAnySeat,
+  WindowTargetRefused,
+  parseRotateArgs,
+  rotateUnifiedWindow,
+} from "./e2e/rotate-window-lib.js";
 import { openTestPg, closeAllTestPg } from "./test-pg-driver.js";
 
 let passed = 0;
@@ -114,6 +123,22 @@ await store.rotateChannelSession(KNOWN_ORG, "oe-domain::slack/T1/C1", mintToken(
     const r = parseRotateArgs(["--dm", "slack/T1/D1", "--new-org"], {});
     ok(r.ok && r.target.kind === "dm" && r.target.allowNewOrg === true, "--new-org parses to allowNewOrg=true in the --dm branch too");
   }
+  {
+    const r = parseRotateArgs(["e2e-solo", "--window", "slack/T1/C9"], {});
+    ok(r.ok && r.target.kind === "domain" && r.target.force === false, "--force defaults to false in the domain branch");
+  }
+  {
+    const r = parseRotateArgs(["e2e-solo", "--force", "--window", "slack/T1/C9"], {});
+    ok(r.ok && r.target.kind === "domain" && r.target.force === true && r.target.windowId === "slack/T1/C9", "--force parses in the domain branch and leaves --window alone");
+  }
+  {
+    const r = parseRotateArgs(["e2e-solo", "myorg", "--force"], {});
+    ok(r.ok && r.target.kind === "domain" && r.target.org === "myorg" && r.target.domain === "e2e-solo", "🔴 --force does NOT shift the domain branch's positional org — the OPE-827 asymmetry is not reintroduced");
+  }
+  {
+    const r = parseRotateArgs(["--dm", "slack/T1/D1", "--force", "myorg"], {});
+    ok(r.ok && r.target.kind === "dm" && r.target.force === true && r.target.org === "myorg", "--force parses in the --dm branch and does not shift ITS positional org either");
+  }
 }
 
 {
@@ -122,6 +147,109 @@ await store.rotateChannelSession(KNOWN_ORG, "oe-domain::slack/T1/C1", mintToken(
   eq(await orgHasAnySeat(store, "oe-dom"), false, "…and its existence does not make an UNRELATED unknown org known — org is a real partition, not a global flag");
 }
 
+{
+  const GUARD_ORG = "guard-org";
+  const SOLO_DOMAIN = "e2e-solo";
+  const SOLO_SURFACE = "slack/T0EXAMPLE/C0EXCHAN003";
+  const SOLO_KEY = unifiedDomainSessionKey(SOLO_SURFACE);
+  const liveSoloToken = saltSupervisorGeneration(formatWindowToken({ domain: SOLO_DOMAIN, windowId: SOLO_SURFACE, generation: 3 }));
+  await store.rotateChannelSession(GUARD_ORG, SOLO_KEY, liveSoloToken, AT);
+
+  const threw = async (fn: () => Promise<unknown>): Promise<{ message: string; refusal: boolean } | null> => {
+    try {
+      await fn();
+      return null;
+    } catch (e) {
+      return { message: e instanceof Error ? e.message : String(e), refusal: e instanceof WindowTargetRefused };
+    }
+  };
+
+  {
+    const verdict = checkWindowTargetResumable("slack", SOLO_SURFACE, await store.getChannelSession(GUARD_ORG, SOLO_KEY));
+    eq(verdict.ok, false, "🔴 THE FIX: a <domain>/--window pair that disagrees with the row's live token is REFUSED (ok is exactly false, not merely falsy)");
+    if (!verdict.ok) {
+      ok(verdict.error.includes(SOLO_DOMAIN), "…the refusal names the domain the live token actually addresses");
+      ok(verdict.error.includes(`rotate-window.ts ${SOLO_DOMAIN} --window ${SOLO_SURFACE}`), "…and prints the invocation the row's own token says is right");
+      ok(verdict.error.includes("--force"), "…and names the override");
+    }
+
+    const msg = await threw(() => rotateUnifiedWindow(store, GUARD_ORG, "slack", SOLO_SURFACE));
+    ok(msg !== null && msg.message.includes("refusing to rotate"), "🔴 rotateUnifiedWindow THROWS the refusal rather than writing — the end-to-end teeth");
+    eq(msg?.refusal, true, "…and throws it as WindowTargetRefused, which is what lets the CLI print a refusal with no stack trace");
+    const after = await store.getChannelSession(GUARD_ORG, SOLO_KEY);
+    eq(after?.token, liveSoloToken, "🔴 NEGATIVE CONTROL: the row still holds the LIVE token — the refused rotation wrote nothing");
+    eq(after?.generation, 1, "…and the row's generation counter did not advance either");
+  }
+
+  {
+    const r = await rotateUnifiedWindow(store, GUARD_ORG, SOLO_DOMAIN, SOLO_SURFACE);
+    eq(r.registryKey, SOLO_KEY, "the correct solo invocation keys the SAME registry row the live path reads");
+    ok(r.newRow.token !== liveSoloToken, "…and mints a token the row did not hold before (a never-seen token is what opens a fresh eve session)");
+    const back = parseWindowToken(r.newRow.token);
+    eq(back?.domain, SOLO_DOMAIN, "…the written token parses back to the domain it was minted for");
+    eq(back?.windowId, SOLO_SURFACE, "…and to the windowId it was minted for");
+    eq(back?.generation, r.mintedGeneration, "…and to the generation the tool reported");
+    const again = checkWindowTargetResumable(SOLO_DOMAIN, SOLO_SURFACE, await store.getChannelSession(GUARD_ORG, SOLO_KEY));
+    eq(again.ok, true, "…and a second identical rotation is still allowed (the guard is stable under its own mint)");
+  }
+
+  {
+    const UNIFIED_DOMAIN = "e2e-unified";
+    const NEVER_MINTED = "slack/T0EXAMPLE/C0EXRANDM";
+    await store.rotateChannelSession(GUARD_ORG, unifiedDomainSessionKey(UNIFIED_DOMAIN), saltSupervisorGeneration(formatWindowToken({ domain: UNIFIED_DOMAIN, windowId: UNIFIED_DOMAIN, generation: 9 })), AT);
+
+    const verdict = checkWindowTargetResumable(UNIFIED_DOMAIN, NEVER_MINTED, null);
+    eq(verdict.ok, false, "🔴 --window against a window the live path has NEVER minted is refused (ok exactly false)");
+    if (!verdict.ok) {
+      ok(verdict.error.includes(`rotate-window.ts ${UNIFIED_DOMAIN}`), "…and points at the domain's own degenerate window, which is what a \"unified\" domain actually has");
+    }
+    const msg = await threw(() => rotateUnifiedWindow(store, GUARD_ORG, UNIFIED_DOMAIN, NEVER_MINTED));
+    eq(msg?.refusal, true, "…rotateUnifiedWindow throws it too, as a refusal");
+    eq(await store.getChannelSession(GUARD_ORG, unifiedDomainSessionKey(NEVER_MINTED)), null, "🔴 NEGATIVE CONTROL: no phantom row was created — the residue class stays closed");
+  }
+
+  {
+    const before = await store.getChannelSession(GUARD_ORG, SOLO_KEY);
+    const r = await rotateUnifiedWindow(store, GUARD_ORG, "slack", SOLO_SURFACE, { force: true });
+    ok(r.newRow.token !== before?.token, "--force mints the mismatching pair anyway (the domain-rename escape hatch)");
+    eq(parseWindowToken(r.newRow.token)?.domain, "slack", "…and writes exactly the domain the operator asked for");
+  }
+
+  {
+    const FRESH = "domain-never-seen";
+    const r = await rotateUnifiedWindow(store, GUARD_ORG, FRESH);
+    eq(r.registryKey, unifiedDomainSessionKey(FRESH), "a degenerate rotate on a domain with NO row is still allowed — this tool's original behaviour");
+    eq(parseWindowToken(r.newRow.token)?.windowId, FRESH, "…and mints the degenerate id-equals-domain token");
+    const second = await rotateUnifiedWindow(store, GUARD_ORG, FRESH);
+    ok(second.newRow.token !== r.newRow.token, "…and a repeat degenerate rotate on the row it just wrote is allowed too");
+  }
+
+  {
+    const good = formatWindowToken({ domain: SOLO_DOMAIN, windowId: SOLO_SURFACE, generation: 7 });
+    assertTokenRoundTrips(good, SOLO_DOMAIN, SOLO_SURFACE, 7);
+    passed++;
+
+    const salted = saltSupervisorGeneration(good);
+    assertTokenRoundTrips(salted, SOLO_DOMAIN, SOLO_SURFACE, 7);
+    passed++;
+
+    const misparsing = "p:win:q";
+    const bad = formatWindowToken({ domain: misparsing, windowId: misparsing, generation: 4 });
+    let caught: string | null = null;
+    try {
+      assertTokenRoundTrips(bad, misparsing, misparsing, 4);
+    } catch (e) {
+      caught = e instanceof Error ? e.message : String(e);
+    }
+    ok(caught !== null && caught.includes("does not round-trip"), "🔴 a token that parses back to a DIFFERENT (domain, window) pair is refused, not written");
+
+    const msg = await threw(() => rotateUnifiedWindow(store, GUARD_ORG, misparsing));
+    ok(msg !== null && msg.message.includes("does not round-trip"), "…and rotateUnifiedWindow refuses it before the store write");
+    eq(msg?.refusal, false, "🔴 NEGATIVE CONTROL: an unaddressable mint is NOT a WindowTargetRefused — it is a defect, so the CLI keeps its stack");
+    eq(await store.getChannelSession(GUARD_ORG, unifiedDomainSessionKey(misparsing)), null, "🔴 NEGATIVE CONTROL: the unaddressable mint left no row behind");
+  }
+}
+
 assert.ok(passed > 0, "at least one assertion ran");
-console.log(`✓ rotate-window-org-validate: ${passed} assertions passed (unknown org refused, known org allowed, --new-org escape hatch works, --dm/--org grammar pinned including the exact positional asymmetry)`);
+console.log(`✓ rotate-window-org-validate: ${passed} assertions passed (unknown org refused, known org allowed, --new-org escape hatch works, --dm/--org grammar pinned including the exact positional asymmetry, OPE-854 resumability guard refuses an unresumable target and writes nothing)`);
 await closeAllTestPg();
