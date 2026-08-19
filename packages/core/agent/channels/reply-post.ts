@@ -86,6 +86,8 @@ export async function auditReplyPost(audit: ReplyAudit | undefined, id: string, 
   }).catch(() => undefined);
 }
 
+const REFUSED_WAKE_MAX = 200;
+
 export const POST_PLATFORM_ERROR_REASON = "platform-error";
 
 export async function auditReplyPostFailed(
@@ -114,15 +116,11 @@ export async function auditReplyPostFailed(
   }).catch(() => undefined);
 }
 
-export async function notePostFailure(audit: ReplyAudit | undefined, err: unknown, platform: string): Promise<PlatformFailureClass> {
-  const failure = platformFailureClass(err);
-  await auditReplyPostFailed(audit, platform, failure, platformFailureStatus(err));
-  return failure;
+export async function notePostFailure(audit: ReplyAudit | undefined, err: unknown, platform: string): Promise<void> {
+  await auditReplyPostFailed(audit, platform, platformFailureClass(err), platformFailureStatus(err));
 }
 
 export const releasePostKeyOnFailure = (err: unknown): boolean => platformFailureClass(err) === "definitive";
-
-const REFUSED_WAKE_MAX = 200;
 
 export async function auditReplyRefused(audit: ReplyAudit | undefined, reason: string): Promise<void> {
   if (!audit) return;
@@ -256,10 +254,15 @@ export async function postTerminalProse(target: ReplyTarget, text: string, audit
   const body = replier && !arm?.displayNameCapable ? withReplierPrefix(text, replier) : text;
   const chunks = arm?.splitText?.(body) ?? [body];
   let firstId: string | undefined;
-  for (const chunk of chunks) {
-    if (!chunk.trim()) continue;
-    const id = await dispatchReply(target, chunk, nativeReplier);
-    firstId ??= id;
+  try {
+    for (const chunk of chunks) {
+      if (!chunk.trim()) continue;
+      const id = await dispatchReply(target, chunk, nativeReplier);
+      firstId ??= id;
+    }
+  } catch (err) {
+    await notePostFailure(audit, err, target.platform);
+    throw err;
   }
   if (firstId === undefined) return;
   await auditReplyPost(audit, firstId, target.platform, body.length);

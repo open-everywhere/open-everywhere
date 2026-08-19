@@ -70,10 +70,11 @@ const reactEntry = defineTool({
           } catch (err) {
             const msg = String(err instanceof Error ? err.message : err);
             if (!msg.includes("already_reacted")) {
+              const status = platformFailureStatus(err);
               await auditToolAction(ctx, "slack.react.failed", {
                 ts,
                 failure: platformFailureClass(err),
-                ...(platformFailureStatus(err) !== undefined ? { status: platformFailureStatus(err) } : {}),
+                ...(status !== undefined ? { status } : {}),
               });
               throw carryFailureSignals(err, new Error(`react failed — ${msg}`));
             }
