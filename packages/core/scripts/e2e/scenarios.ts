@@ -4,6 +4,7 @@ import type { SkipKind } from "./skip-summary.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import { dmAnchorDomain } from "../../agent/channels/window-key.js";
 import type { OperationalStore } from "../../agent/operational/store.js";
+import { PENDING_WORK_FRAME } from "../../agent/channels/turn-delivery.js";
 import { DISPATCH_TICK_MINUTES } from "../../agent/routines/schedule.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import type { DiscordDriver } from "./discord-driver.js";
@@ -120,9 +121,10 @@ const LINK_VENUE_PROOF_WINDOW = 20_000;
 
 export const isFillerAck = (text: string): boolean => {
   const trimmed = text.trim();
+  if (trimmed.includes(PENDING_WORK_FRAME)) return true;
   if (/\b(could not say|cannot say|no verified asker|access denied)\b/i.test(trimmed)) return false;
   return (
-    /\b(one sec|a sec|hang on|hold on|let me (?:look|check|see)|looking (?:at|into)|checking (?:now|it)?|on it|give me a (?:sec|moment)|working on|just a (?:sec|moment)|will (?:look|check|report|update|retrieve|return|fetch|get|run)|hand(?:ed|ing) (?:this |it )?off|report back|delegat(?:ed|ing)\s+(?:this|it|that|to)\b|spun up a worker|(?:still|currently) in progress|in progress|standing by)\b/i.test(
+    /\b(one sec|a sec|hang on|hold on|let me (?:look|check|see)|looking (?:at|into)|checking (?:now|it)?|on it|give me a (?:sec|moment)|working on|just a (?:sec|moment)|(?:will|i'?ll) (?:look|check|report|update|retrieve|return|fetch|get|run)|hand(?:ed|ing) (?:this |it )?off|report back|delegat(?:ed|ing)\s+(?:this|it|that|to)\b|spun up a worker|(?:still|currently) in progress|in progress|standing by)\b/i.test(
       trimmed,
     ) ||
     /^(?:done|ok|okay|sorted|sure|got it|will do|no problem)[.!]?\s*(?::[a-z_+-]+:|✅|👍)?$/i.test(trimmed)

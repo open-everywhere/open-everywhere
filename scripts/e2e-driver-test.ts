@@ -86,6 +86,7 @@ const {
   renderReportedJudgeSummary,
 } = await import("../packages/core/scripts/e2e/judge.js");
 const { SCENARIOS, skipCategory, skipReason, ScenarioSkip, isFillerAck, expensiveReasonError } = await import("../packages/core/scripts/e2e/scenarios.js");
+const { PENDING_WORK_FRAME } = await import("../packages/core/agent/channels/turn-delivery.js");
 const { emptySkipCounts, renderSkipBreakdown, SKIP_KINDS } = await import("../packages/core/scripts/e2e/skip-summary.js");
 const { verifySlackSignature, classifyEnvelope, buildFrontHandler, PUBLIC_SLACK_ROUTE } = await import("@open-everywhere/provider-slack/agent/channels/slack-front.js");
 const { SLACK_COMMANDS_ROUTE } = await import("@open-everywhere/provider-slack/agent/channels/slack-commands.js");
@@ -769,6 +770,23 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   ok(
     isFillerAck("I'm checking the raw memory-silo admin listing under your requester identity. I'll return the raw result once it's done."),
     "isFillerAck: OPE-704 negative control — the genuine delegation ack still classifies AS filler",
+  );
+
+  ok(
+    isFillerAck(
+      `${PENDING_WORK_FRAME}\n\nI'm retrieving the admin listing and domain references now; I'll return the exact output or any access refusal.`,
+    ),
+    "isFillerAck: OPE-834 — a PENDING_WORK_FRAME-prefixed reply is filler even when the model tail matches no prose branch (the deploy #95 red)",
+  );
+  ok(isFillerAck(PENDING_WORK_FRAME), "isFillerAck: OPE-834 — the bare PENDING_WORK_FRAME line alone is filler");
+  ok(isFillerAck("I'll fetch that for you shortly."), "isFillerAck: OPE-834 — widened will-branch matches the contraction \"I'll fetch\" alone, no frame present");
+  ok(
+    !isFillerAck("I'll be honest, the balance is £42.10."),
+    "isFillerAck: OPE-834 negative control — \"I'll\" followed by a verb outside the listed set stays substantive",
+  );
+  ok(
+    !isFillerAck("A worker finished the admin listing. Domains: e2e-unified, e2e-secondary. Silos: 4 total."),
+    "isFillerAck: OPE-834 negative control — text that mentions a worker but carries no PENDING_WORK_FRAME stays substantive",
   );
 }
 
