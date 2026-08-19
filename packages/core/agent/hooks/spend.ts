@@ -2,6 +2,7 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { recordSpend } from "../spend/store.js";
 import { appendUsageEvent, GENERATION_ID_DETAIL_KEY } from "../spend/usage-events.js";
+import { noteCompletedModelStep } from "../model/call-capture.js";
 import { periodOf, UNKNOWN_MODEL, type Usage } from "../spend/spend.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { routineMarker } from "../routines/routine.js";
@@ -148,6 +149,7 @@ export async function recordModelCall(ctx: SpendAttributionContext, call: Attrib
 export default defineHook({
   events: {
     "step.completed": async (event, ctx: HookContext) => {
+      noteCompletedModelStep(ctx.session?.id, (event.data as { turnId?: string } | undefined)?.turnId, ctx);
       const usage = event.data?.usage as Usage | undefined;
       if (!usage || (usage.inputTokens == null && usage.outputTokens == null && usage.costUsd == null)) return;
       const token = turnWindowToken(ctx);

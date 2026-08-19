@@ -6,12 +6,14 @@ import { appendAudit } from "../audit/audit.js";
 import type { AuditFilter } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { credentialKeyArmed } from "../credentials/db-broker.js";
+import { getOperationalStore } from "../operational/provider.js";
 
 export const CONTROL_READ_USAGE_PATH = "/control/v1/usage";
 export const CONTROL_READ_AUDIT_PATH = "/control/v1/audit";
 export const CONTROL_READ_UNIFIED_AUDIT_PATH = "/control/v1/unified-audit";
 export const CONTROL_READ_TRANSCRIPT_PATH = "/control/v1/session/:sessionId/transcript";
 export const CONTROL_READ_RUNTIME_SIGNAL_PATH = "/control/v1/runtime-signal";
+export const CONTROL_READ_MODEL_CALLS_PATH = "/control/v1/session/:sessionId/model-calls";
 const AUDIT_MAX_LIMIT = 1000;
 const AUDIT_DEFAULT_LIMIT = 200;
 const TRANSCRIPT_DEFAULT_LIMIT = 2000;
@@ -20,6 +22,9 @@ const TRANSCRIPT_DEFAULT_IDLE_MS = 1500;
 const TRANSCRIPT_MAX_IDLE_MS = 10000;
 const TRANSCRIPT_WALL_MS = 30000;
 const TRANSCRIPT_PROBE_MS = 3000;
+const MODEL_CALLS_DEFAULT_LIMIT = 200;
+const MODEL_CALLS_MAX_LIMIT = 1000;
+const MODEL_CALLS_MAX_LIMIT_WITH_BODY = 25;
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -329,6 +334,42 @@ export async function handleSessionTranscriptRead(
     const { events, complete } = await drainSessionStream(stream, startIndex, limit, idleMs);
     if (existence === "unknown" && events.length === 0 && startIndex === 0) return transcriptNotFound(sessionId);
     return json(200, { sessionId, found: true, startIndex, nextIndex: startIndex + events.length, complete, count: events.length, events });
+  } catch (err) {
+    return json(400, { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export async function handleSessionModelCallsRead(req: Request, params: Readonly<Record<string, string>>): Promise<Response> {
+  const entries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
+  if (entries.length === 0) return new Response("not found", { status: 404 });
+
+  const match = /^Bearer\s+(.+)$/i.exec((req.headers.get("authorization") ?? "").trim());
+  const identity = match ? verifyServiceToken(match[1], entries) : null;
+  if (!identity) return json(401, { error: "unauthorized: missing or invalid bearer token" });
+
+  const sessionId = (params["sessionId"] ?? "").trim();
+  if (!sessionId) return json(400, { error: "expected path param: sessionId" });
+
+  const url = new URL(req.url);
+  const rawBody = (url.searchParams.get("body") ?? "").trim();
+  const includeBody = rawBody === "" ? true : rawBody === "1" || rawBody.toLowerCase() === "true";
+  const cap = includeBody ? MODEL_CALLS_MAX_LIMIT_WITH_BODY : MODEL_CALLS_MAX_LIMIT;
+  const limit = posIntCappedParam(url.searchParams.get("limit"), Math.min(MODEL_CALLS_DEFAULT_LIMIT, cap), cap);
+  if (limit === null) return json(400, { error: `limit must be a positive integer (≤ ${cap} for this body mode)` });
+  const turnId = (url.searchParams.get("turnId") ?? "").trim() || undefined;
+
+  await appendAudit({
+    org: deploymentOrg(),
+    platform: "control",
+    workspace: "control",
+    principalId: identity.subject,
+    action: "control.service_call",
+    detail: { service: identity.subject, view: "model_calls", sessionId, limit, includeBody, ...(turnId ? { turnId } : {}) },
+  });
+
+  try {
+    const captures = await getOperationalStore().modelCallCapturesForSession(deploymentOrg(), sessionId, { includeBody, limit, ...(turnId ? { turnId } : {}) });
+    return json(200, { sessionId, count: captures.length, includeBody, captures });
   } catch (err) {
     return json(400, { error: err instanceof Error ? err.message : String(err) });
   }

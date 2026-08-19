@@ -10,6 +10,7 @@ import { applyModelPolicyToRoute } from "./policy.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { isDmAnchorWindowToken, isSupervisorShapedToken } from "../channels/window-key.js";
 import { suppressAgentsListing } from "../access/worker-continuation.js";
+import { captureArmed, captureSiteFrom, noteUncalledModelStep, withCapture } from "./call-capture.js";
 
 const loggedOnce = new Set<string>();
 function logOnce(kind: "warn" | "log", reason: string): void {
@@ -271,12 +272,15 @@ export async function resolvePrimaryModel<TModel extends RoutableModel>(
 ): Promise<TModel> {
   suppressAgentsListing((ctx as { messages?: unknown }).messages);
   const boundary = noteTurnStep(ctx, event);
+  const captureSite = captureArmed() ? captureSiteFrom(ctx, event) : undefined;
+  const capturingDeps = withCapture(deps, captureSite);
   if (boundary.tier === "hard") {
     reportStepBoundary(ctx, boundary);
+    noteUncalledModelStep(captureSite);
     stampModelCall(defaults.primary.id);
     return turnBackstopModel(deps.backend.model(defaults.primary.id), backstopReply(boundary));
   }
-  const routed = await resolveRoutedPrimaryModel(ctx, defaults, deps);
+  const routed = await resolveRoutedPrimaryModel(ctx, defaults, capturingDeps);
   if (boundary.tier !== "soft") return routed;
   reportStepBoundary(ctx, boundary);
   return withWrapUpNotice(routed, wrapUpNotice(boundary));

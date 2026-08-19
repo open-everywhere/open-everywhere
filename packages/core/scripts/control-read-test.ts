@@ -487,12 +487,16 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   const channel = (await import("../agent/channels/control-read.js")).default as unknown as {
     routes: { method: string; path: string }[];
   };
-  ok(channel.routes.length === 5 && channel.routes.every((r) => r.method === "GET"), "the channel mounts exactly five GET routes (usage + audit + unified-audit + transcript + runtime-signal)");
+  ok(
+    channel.routes.length === 6 && channel.routes.every((r) => r.method === "GET"),
+    "the channel mounts exactly six GET routes (usage + audit + unified-audit + transcript + runtime-signal + model-calls)",
+  );
   ok(channel.routes.some((r) => r.path === CONTROL_READ_USAGE_PATH), "…one at /control/v1/usage");
   ok(channel.routes.some((r) => r.path === CONTROL_READ_AUDIT_PATH), "…one at /control/v1/audit");
   ok(channel.routes.some((r) => r.path === "/control/v1/unified-audit"), "…one at /control/v1/unified-audit");
   ok(channel.routes.some((r) => r.path === CONTROL_READ_TRANSCRIPT_PATH), "…one at /control/v1/session/:sessionId/transcript");
   ok(channel.routes.some((r) => r.path === CONTROL_READ_RUNTIME_SIGNAL_PATH), "…one at /control/v1/runtime-signal (OPE-658)");
+  ok(channel.routes.some((r) => r.path === "/control/v1/session/:sessionId/model-calls"), "…one at /control/v1/session/:sessionId/model-calls (OPE-846 capture harvest)");
 
   const agentDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "agent");
   for (const file of ["control/read-route.ts", "channels/control-read.ts"]) {
