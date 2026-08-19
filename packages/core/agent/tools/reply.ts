@@ -13,7 +13,7 @@ import {
 } from "../channels/reply-freshness.js";
 import { replierLabelFor, withPendingWorkFrame } from "../channels/turn-delivery.js";
 import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
-import { markRepliedThisTurn, markWakeDoneThisTurn, isWakeDoneThisTurn, isWakeDeclinedThisTurn, WAKE_DECLINED_REFUSAL_REASON, wakeDeclinedRefusalMessage } from "../channels/reply-signal.js";
+import { markRepliedThisTurn, markWakeDoneThisTurn, markWakeRepliedThisTurn, isWakeDoneThisTurn, isWakeDeclinedThisTurn, WAKE_DECLINED_REFUSAL_REASON, wakeDeclinedRefusalMessage } from "../channels/reply-signal.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
 import { addressedWakeThisTurn, claimTasksForAddressedWake } from "../access/dispatch-origin-signal.js";
 import { DELEGATION_PENDING_REFUSAL_REASON, delegationPendingRefusalMessage, pendingDelegationOwing } from "../access/pending-delegation-signal.js";
@@ -110,6 +110,7 @@ export const unifiedReplyEntry = defineTool({
 
       const id = await postUnifiedReply(origin, framed, {}, replyAuditFor(ctx as BindableContext, "tool", input.wake), replierFor(bind));
       markRepliedThisTurn(turnId);
+      markWakeRepliedThisTurn(turnId, input.wake);
       noteTerminalCallGrain(bind);
 
       const claimed = claimTasksForAddressedWake(turnId, input.wake);
