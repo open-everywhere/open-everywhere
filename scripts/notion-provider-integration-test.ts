@@ -62,7 +62,7 @@ function restoreHttp(): void {
   globalThis.fetch = realFetch;
 }
 
-function notionCtx(discussionId: string | undefined, credentialId?: string) {
+function notionCtx(discussionId: string | undefined, credentialId?: string, worker?: { readonly taskLabel: string }) {
   return {
     channel: { kind: "notion" },
     session: {
@@ -73,6 +73,7 @@ function notionCtx(discussionId: string | undefined, credentialId?: string) {
             page_id: "P1",
             ...(discussionId ? { discussion_id: discussionId } : {}),
             ...(credentialId ? { credential_id: credentialId } : {}),
+            ...(worker ? { oe_grain: "task", oe_task_label: worker.taskLabel } : {}),
           },
           principalId: "U3",
           principalType: "notion-user",
@@ -128,6 +129,46 @@ await inSession(async () => {
   ok(audit.some((r) => r.detail?.platform === "notion" && r.detail?.id === "notion-comment-42"), "reply: audits a reply.post row stamped platform=notion");
 });
 restoreHttp();
+
+{
+  const rawText = "the fix is in";
+  const expectedText = "[review PR] " + rawText;
+
+  calls = [];
+  notionResponse = { status: 200, body: { id: "notion-comment-508" } };
+  fakeHttp();
+  await inSession(async () => {
+    const ctx = notionCtx("disc-508", undefined, { taskLabel: "review PR" });
+    const armed = armReply(reply, ctx)!;
+    await armed.execute({ text: rawText }, ctx);
+  });
+  restoreHttp();
+  {
+    const payload = JSON.parse(calls[0]!.body) as { rich_text?: Array<{ text?: { content?: string } }> };
+    ok(payload.rich_text?.[0]?.text?.content === expectedText, "🔴 OPE-508: a task-grain worker's reply carries the bracket prefix in the posted body");
+    const audit = await readAudit({ org: "default", action: "reply.post" });
+    const row = audit.find((r) => r.detail?.id === "notion-comment-508");
+    ok(row?.detail?.chars === expectedText.length, "🔴 OPE-521: the audited chars count the PREFIXED text actually posted");
+    ok(row?.detail?.chars !== rawText.length, "OPE-521 negative control: audited chars must NOT equal the unprefixed raw length — that was the undercount this ticket fixes");
+    ok(row?.detail?.route === "tool", "OPE-811: and the row's route names the reply TOOL — the only delivery channel on this surface");
+  }
+
+  calls = [];
+  notionResponse = { status: 200, body: { id: "notion-comment-508-bare" } };
+  fakeHttp();
+  await inSession(async () => {
+    const ctx = notionCtx("disc-508-bare");
+    const armed = armReply(reply, ctx)!;
+    await armed.execute({ text: rawText }, ctx);
+  });
+  restoreHttp();
+  {
+    const payload = JSON.parse(calls[0]!.body) as { rich_text?: Array<{ text?: { content?: string } }> };
+    ok(payload.rich_text?.[0]?.text?.content === rawText, "OPE-508 negative control: a non-worker (no oe_grain=task) reply is NOT bracketed");
+    const audit = await readAudit({ org: "default", action: "reply.post" });
+    ok(audit.find((r) => r.detail?.id === "notion-comment-508-bare")?.detail?.chars === rawText.length, "OPE-521 negative control: a non-worker reply's audited chars equal the raw (unprefixed) length");
+  }
+}
 
 await inSession(async () => {
   const armed = armReply(reply, notionCtx(undefined))!;
