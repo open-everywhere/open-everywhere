@@ -46,6 +46,7 @@ interface ProbeModule {
   };
   classifyDelivery: (targetWakeId: string, calls: readonly ToolCall[], terminalText: string) => "tool" | "terminal" | "none";
   buildProbe: (i: number) => BuiltProbe;
+  HIDDEN_POST_ID: string;
   judgedText: (calls: readonly ToolCall[], terminalText: string) => string;
   matchedTell: (text: string, tells: readonly string[]) => string | null;
   parseJudgeVerdict: (raw: string) => JudgeAnswer;
@@ -255,6 +256,50 @@ async function loadWithMode(mode: string, tag: string): Promise<ProbeModule> {
 }
 
 {
+  const OUT = await loadWith(["--mode", "warranted-ambient", "--shape", "self-follow-up", "--backscroll", "out"], "hint-plain");
+  const HINTED = await loadWith(["--mode", "warranted-ambient", "--shape", "self-follow-up", "--backscroll", "out-hinted"], "hint-on");
+
+  const hiddenId = HINTED.HIDDEN_POST_ID;
+  ok(typeof hiddenId === "string" && hiddenId.length > 0, "OPE-801: the arm exports the id it renders");
+  const hintAttr = ` prev-id="${hiddenId}"`;
+  const flat = (s: string): string =>
+    s.replace(/sent-at="[^"]*"/g, `sent-at="T"`).replace(/current-time="[^"]*"/g, `current-time="T"`);
+  const decoded = (s: string): string =>
+    s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
+
+  const pool = OUT.WARRANTED_PROBES.filter((w) => w.shape === "self-follow-up");
+  ok(pool.length >= 2, "OPE-801: the self-follow-up pool has entries to compare");
+
+  for (let i = 0; i < pool.length; i++) {
+    const plain = OUT.buildProbe(i).userMessage;
+    const hinted = HINTED.buildProbe(i).userMessage;
+
+    ok(hinted.includes(hintAttr),
+      `OPE-801[${i}]: the hinted arm renders prev-id on the trigger`);
+    ok(plain.includes("prev-id") === false,
+      `🔴 OPE-801[${i}]: NEGATIVE CONTROL — the plain OUT arm renders NO prev-id at all, so the arms differ by the hint and not by its value`);
+
+    ok(flat(hinted).replace(hintAttr, "") === flat(plain),
+      `🔴 OPE-801[${i}]: the hinted envelope MINUS the prev-id attribute is byte-identical to the plain OUT envelope`);
+
+    ok(hinted.includes(` id="${hiddenId}"`) === false,
+      `🔴 OPE-801[${i}]: NEGATIVE CONTROL — the hinted id names NO message in the envelope, so the gap it points at is real`);
+    ok(hinted.split(hiddenId).length - 1 === 1,
+      `OPE-801[${i}]: the hidden id appears exactly once — as the hint`);
+
+    const hintedProbe = HINTED.buildProbe(i);
+    ok(hintedProbe.withheld === pool[i].selfPrior,
+      `OPE-801[${i}]: the hinted arm still carries the hidden post through to the scorer`);
+    ok(decoded(hinted).includes(pool[i].selfPrior!) === false,
+      `🔴 OPE-801[${i}]: NEGATIVE CONTROL — the hint does not leak the post it points at`);
+    ok(decoded(hinted).includes(pool[i].selfDecoy!),
+      `OPE-801[${i}]: the hinted arm still renders the decoy — proof the absence check above is not vacuous`);
+    ok(hintedProbe.expect === "either",
+      `OPE-801[${i}]: the hinted arm keeps the OUT arm's borderline expectation`);
+  }
+}
+
+{
   const rejects = async (args: readonly string[], tag: string, label: string): Promise<void> => {
     let threw = false;
     try { await loadWith(args, tag); } catch { threw = true; }
@@ -270,6 +315,12 @@ async function loadWithMode(mode: string, tag: string): Promise<ProbeModule> {
     "OPE-782: an unknown `--backscroll` value is REFUSED — a typo must not read as the default arm");
   await rejects(["--mode", "ambient-only", "--shape", "self-follow-up"], "rej-shapemode",
     "OPE-782: `--shape` outside warranted-ambient is REFUSED — no other mode has a shape pool to filter");
+  await rejects(["--mode", "ambient-only", "--backscroll", "out-hinted"], "rej-hint-mode",
+    "OPE-801: `--backscroll out-hinted` outside warranted-ambient is REFUSED, exactly as the plain OUT arm is");
+  await rejects(["--mode", "warranted-ambient", "--backscroll", "out-hinted"], "rej-hint-nofilter",
+    "OPE-801: `--backscroll out-hinted` over the WHOLE pool is REFUSED — the hint only means anything on the shape that references a self-post");
+  await rejects(["--mode", "warranted-ambient", "--shape", "self-follow-up", "--prior", "warm", "--backscroll", "out-hinted"], "rej-hint-prior",
+    "🔴 OPE-801: `--prior warm` with `--backscroll out-hinted` is REFUSED — one arm seeds the post the other points at as missing");
 }
 
 {
