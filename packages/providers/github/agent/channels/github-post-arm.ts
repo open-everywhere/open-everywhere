@@ -5,6 +5,7 @@ import {
   loadGitHubAppConfig,
   resolveGitHubInstallationId,
   warmCredential,
+  markNotApplied,
   type BrokeredSecret,
   type PostArm,
   type UnifiedWakeOrigin,
@@ -51,13 +52,13 @@ function githubAppCreds(): { appId: string; privateKeyPem: string; installations
 async function installationTokenFor(origin: GitHubOrigin): Promise<string> {
   const creds = githubAppCreds();
   if (!creds) {
-    throw new Error("unified reply couldn't post to GitHub — no App credentials (set OE_GITHUB_APP_* or GITHUB_APP_ID/GITHUB_APP_PRIVATE_KEY).");
+    throw markNotApplied(new Error("unified reply couldn't post to GitHub — no App credentials (set OE_GITHUB_APP_* or GITHUB_APP_ID/GITHUB_APP_PRIVATE_KEY)."));
   }
   const installationId = origin.installationId !== undefined ? String(origin.installationId) : await resolveGitHubInstallationId(origin.owner, creds.installations);
   if (!installationId) {
-    throw new Error(
+    throw markNotApplied(new Error(
       `unified reply couldn't post to GitHub — no installation id for owner "${origin.owner}" (the wake carried none, OE_GITHUB_INSTALLATIONS has no entry, and no installation webhook has registered one).`,
-    );
+    ));
   }
   return installationToken.get({ appId: creds.appId, privateKeyPem: creds.privateKeyPem, installationId, repo: origin.repo });
 }
@@ -75,7 +76,7 @@ async function liveGitHubPost(origin: GitHubOrigin, text: string): Promise<strin
     body: JSON.stringify({ body: text }),
   });
   if (!res.ok) {
-    throw new Error(`unified reply couldn't post to GitHub — ${res.status} on ${origin.owner}/${origin.repo}#${origin.issueNumber}`);
+    throw Object.assign(new Error(`unified reply couldn't post to GitHub — ${res.status} on ${origin.owner}/${origin.repo}#${origin.issueNumber}`), { status: res.status });
   }
   const json = (await res.json().catch(() => ({}))) as { id?: number };
   return json.id !== undefined ? String(json.id) : "unknown";

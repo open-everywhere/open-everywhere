@@ -288,6 +288,40 @@ for (const [label, err] of [
 
   {
     const state = supervisorState();
+    let calls = 0;
+    const github = {
+      request: async () => {
+        calls++;
+        if (calls === 1) throw Object.assign(new Error("Resource not accessible by integration"), { status: 403 });
+        return { ok: true, status: 201, body: { id: 1 } };
+      },
+    };
+    await inSession(async () => {
+      await turnStarted({ state, github });
+      await completed("identical retry text", { state, github });
+      await completed("identical retry text", { state, github });
+    }, { owner: OWNER, repo: REPO, issue_number: "91" });
+    ok(calls === 2, "OPE-825: a DEFINITIVE (403) completion-post failure releases the dedupe claim — the identical re-run reaches the platform a second time");
+  }
+  {
+    const state = supervisorState();
+    let calls = 0;
+    const github = {
+      request: async () => {
+        calls++;
+        throw new Error("socket hang up");
+      },
+    };
+    await inSession(async () => {
+      await turnStarted({ state, github });
+      await completed("identical retry text 2", { state, github });
+      await completed("identical retry text 2", { state, github });
+    }, { owner: OWNER, repo: REPO, issue_number: "92" });
+    ok(calls === 1, "OPE-825: an AMBIGUOUS (no-status) completion-post failure keeps the dedupe claim — the identical re-run is suppressed, never reaching the platform again");
+  }
+
+  {
+    const state = supervisorState();
     const posts: unknown[] = [];
     const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
     await inSession(async () => {

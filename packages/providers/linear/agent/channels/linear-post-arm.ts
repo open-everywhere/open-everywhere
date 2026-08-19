@@ -1,5 +1,6 @@
 import { createLinearAgentActivity, callLinearGraphQL, LinearApiError } from "eve/channels/linear";
 import { linearAppActorCredentials } from "./linear-credentials.js";
+import { markNotApplied, carryFailureSignals } from "@open-everywhere/core/agent/adapter-api.js";
 import type { PostArm, TargetResolveBag, ReplyTarget, UnifiedWakeOrigin, UnifiedReplyDeps } from "@open-everywhere/core/agent/adapter-api.js";
 
 type LinearTarget = Extract<ReplyTarget, { platform: "linear" }>;
@@ -10,6 +11,9 @@ async function dispatchLinearReply(target: LinearTarget, text: string): Promise<
     credentials: linearAppActorCredentials,
     activity: { agentSessionId: target.agentSessionId, content: { body: text, type: "response" } },
   });
+  if (res.success !== true) {
+    throw markNotApplied(new Error(`reply couldn't post to Linear — the response activity returned no success on session ${target.agentSessionId}`));
+  }
   return res.id;
 }
 
@@ -35,10 +39,10 @@ async function liveLinearPost(origin: LinearOrigin, text: string): Promise<strin
         variables: { input: { issueId: origin.issueId, ...(origin.parentId ? { parentId: origin.parentId } : {}), body: text } },
       });
     } catch (err) {
-      throw new Error(`unified reply couldn't post to Linear — ambient commentCreate failed on issue ${origin.issueId} (${describeLinearError(err)})`);
+      throw carryFailureSignals(err, new Error(`unified reply couldn't post to Linear — ambient commentCreate failed on issue ${origin.issueId} (${describeLinearError(err)})`));
     }
     if (data.commentCreate?.success !== true) {
-      throw new Error(`unified reply couldn't post to Linear — ambient commentCreate returned no success on issue ${origin.issueId}`);
+      throw markNotApplied(new Error(`unified reply couldn't post to Linear — ambient commentCreate returned no success on issue ${origin.issueId}`));
     }
     return "comment";
   }
@@ -50,12 +54,15 @@ async function liveLinearPost(origin: LinearOrigin, text: string): Promise<strin
       activity: { agentSessionId: origin.agentSessionId, content: { type: "response", body: text } },
     });
   } catch (err) {
-    throw new Error(
-      `unified reply couldn't post to Linear — createLinearAgentActivity(response) failed on issue ${origin.issueId} (session ${origin.agentSessionId}) (${describeLinearError(err)})`,
+    throw carryFailureSignals(
+      err,
+      new Error(
+        `unified reply couldn't post to Linear — createLinearAgentActivity(response) failed on issue ${origin.issueId} (session ${origin.agentSessionId}) (${describeLinearError(err)})`,
+      ),
     );
   }
   if (res.success !== true) {
-    throw new Error(`unified reply couldn't post to Linear — the response activity returned no success on issue ${origin.issueId} (session ${origin.agentSessionId})`);
+    throw markNotApplied(new Error(`unified reply couldn't post to Linear — the response activity returned no success on issue ${origin.issueId} (session ${origin.agentSessionId})`));
   }
   return res.id || "unknown";
 }

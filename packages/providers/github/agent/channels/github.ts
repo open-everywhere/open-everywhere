@@ -39,6 +39,7 @@ import {
   getOperationalStore,
   postOnce,
   outboundKey,
+  platformFailureClass,
   gateGithubDelivery,
   fanOutGitHubDelivery,
   resolveExternalPolicy,
@@ -471,6 +472,7 @@ const native: GitHubChannel = githubChannel({
               return undefined;
             },
             skipped: () => SUPERVISOR_POST_SUPPRESSED,
+            releaseKeyOnFailure: (err) => platformFailureClass(err) === "definitive",
           });
           return result === SUPERVISOR_POST_SUPPRESSED ? SUPERVISOR_POST_SUPPRESSED : undefined;
         },

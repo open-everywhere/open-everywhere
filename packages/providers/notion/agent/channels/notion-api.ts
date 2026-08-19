@@ -432,7 +432,9 @@ export async function createCommentReply(
     headers: notionHeaders(args),
     body: JSON.stringify({ discussion_id: args.discussionId, rich_text: richTextChunks(args.text) }),
   }, args);
-  if (!res.ok) throw new Error(`createCommentReply failed: ${res.status} ${await safeText(res)}`);
+  if (!res.ok) {
+    throw Object.assign(new Error(`createCommentReply failed: ${res.status} ${await safeText(res)}`), { status: res.status });
+  }
   const body = (await res.json().catch(() => ({}))) as { id?: unknown };
   return typeof body.id === "string" ? body.id : "";
 }
