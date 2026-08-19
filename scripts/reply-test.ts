@@ -284,4 +284,28 @@ restoreHttp();
   ok(threw, "post-arms: an UNREGISTERED platform refuses (throws) — never a silent/mis-routed post");
 }
 
-console.log(`\n✓ reply: ${n} assertions passed (gate, target, signal, reply on all wired surfaces, dual-mode, persona, post-arm registry)\n`);
+{
+  const { registerCapabilityManifest, capabilitiesForPlatform } = await import("@open-everywhere/core/agent/identity/capabilities.js");
+  const { classifySessionId, threadSeatWindowId } = await import("@open-everywhere/core/agent/channels/window-key.js");
+
+  registerCapabilityManifest("linear", { midTurnPost: true, reactions: false, supervisorReplyBroken: true });
+
+  const supervisorToken = "T_812:oe-sup:g1";
+  const threadToken = `oe-dom:ope812:win:${threadSeatWindowId("linear/T_812", "issue-1")}:oe-sup:g1`;
+
+  ok(classifySessionId(supervisorToken).kind === "container-supervisor", "fixture guard: the linear supervisor token classifies as container-supervisor");
+  ok(classifySessionId(threadToken).kind === "thread-seat", "fixture guard: the linear thread token classifies as thread-seat");
+  ok(capabilitiesForPlatform("linear").supervisorReplyBroken === true, "fixture guard: linear's manifest carries supervisorReplyBroken");
+
+  const supervisorCtx = { channel: { kind: "linear", continuationToken: supervisorToken } };
+  const threadCtx = { channel: { kind: "linear", continuationToken: threadToken } };
+
+  ok(armReply(reply, supervisorCtx) === null, "🔴 OPE-812: reply does NOT mount on a Linear container-supervisor turn (supervisorReplyBroken) — the mounted tool would throw when called");
+  ok(armReply(reply, threadCtx) !== null, "negative control: a Linear THREAD seat with the same broken-manifest fact still mounts reply (a real agent session backs it)");
+
+  registerCapabilityManifest("linear", { midTurnPost: true, reactions: false });
+  ok(armReply(reply, supervisorCtx) !== null, "negative control: with supervisorReplyBroken absent, the same container-supervisor token mounts reply");
+  registerCapabilityManifest("linear", { midTurnPost: true, reactions: false, supervisorReplyBroken: true });
+}
+
+console.log(`\n✓ reply: ${n} assertions passed (gate, target, signal, reply on all wired surfaces, dual-mode, persona, post-arm registry, OPE-812 supervisor-grain mount gate)\n`);
