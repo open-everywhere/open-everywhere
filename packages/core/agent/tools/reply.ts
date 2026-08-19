@@ -2,6 +2,7 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { deploymentOrg, isUnifiedWindowContext, currentWakeId, currentTurnId, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
 import { capabilitiesFor } from "../identity/capabilities.js";
+import { classifySessionId } from "../channels/window-key.js";
 import { resolveReplyTarget, replyEditLocus, postReply, auditReplyRefused, auditReplyForced, replyAuditFor, type ReplierLabel } from "../channels/reply-post.js";
 import {
   replyFreshness,
@@ -195,8 +196,13 @@ preRegisterDynamicEntry("reply", "_base", baseReplyEntry);
 export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
-      if (isUnifiedWindowContext(ctx as BindableContext)) return unifiedReplyEntry;
-      if (!capabilitiesFor(ctx as BindableContext).midTurnPost) return null;
+      const bind = ctx as BindableContext;
+      if (isUnifiedWindowContext(bind)) return unifiedReplyEntry;
+      const manifest = capabilitiesFor(bind);
+      if (!manifest.midTurnPost) return null;
+      if (manifest.supervisorReplyBroken === true && classifySessionId(bind.channel?.continuationToken).kind === "container-supervisor") {
+        return null;
+      }
       return baseReplyEntry;
     },
   },
