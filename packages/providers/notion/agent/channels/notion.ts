@@ -28,6 +28,7 @@ import {
   NOTION_HANDSHAKE_REF_NAMESPACE,
   postOnce,
   outboundKey,
+  platformFailureClass,
   getOperatorSecret,
   replierLabelFromAuthAttributes,
   withReplierPrefix,
@@ -456,6 +457,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
             }),
             run: () => createCommentReply({ discussionId: discussionId!, text, ...cred }),
             skipped: () => SUPERVISOR_POST_SUPPRESSED,
+            releaseKeyOnFailure: (err) => platformFailureClass(err) === "definitive",
           });
           return result === SUPERVISOR_POST_SUPPRESSED ? SUPERVISOR_POST_SUPPRESSED : text.length;
         },
