@@ -18,7 +18,7 @@ function close(a: number, b: number): boolean {
   return Math.abs(a - b) < 1e-9;
 }
 
-const SHIPPED_STACK_IDS = ["openai/gpt-5.6-luna", "alibaba/qwen3-vl-instruct", "deepseek/deepseek-v4-flash-0731"];
+const SHIPPED_STACK_IDS = ["openai/gpt-5.6-luna", "alibaba/qwen3-vl-instruct", "deepseek/deepseek-v4-flash-0731", "google/gemini-3.7-flash"];
 for (const id of SHIPPED_STACK_IDS) {
   ok(stackModelRateBand(id) !== undefined, `coverage: "${id}" (named by a shipped stack) has a measured rate band`);
 }
@@ -29,6 +29,9 @@ ok(luna !== undefined && luna.in.minPerMtok === luna.in.maxPerMtok && luna.in.mi
 ok(luna !== undefined && luna.out.minPerMtok === luna.out.maxPerMtok && luna.out.minPerMtok === 1.2, "point band: luna's OUT rate is a degenerate band at the measured $1.20/Mtok");
 const qwen = stackModelRateBand("alibaba/qwen3-vl-instruct");
 ok(qwen !== undefined && qwen.in.minPerMtok === qwen.in.maxPerMtok && qwen.in.minPerMtok === 0.2, "point band: qwen3-vl-instruct's IN rate is a degenerate band at $0.20/Mtok");
+const gemini = stackModelRateBand("google/gemini-3.7-flash");
+ok(gemini !== undefined && gemini.in.minPerMtok === gemini.in.maxPerMtok && gemini.in.minPerMtok === 0.75, "point band: gemini-3.7-flash's IN rate is a degenerate band at the measured $0.75/Mtok (re-probe after 2027-01-01 — announced doubling)");
+ok(gemini !== undefined && gemini.out.minPerMtok === gemini.out.maxPerMtok && gemini.out.minPerMtok === 3.75, "point band: gemini-3.7-flash's OUT rate is a degenerate band at the measured $3.75/Mtok");
 
 const deepseek = stackModelRateBand("deepseek/deepseek-v4-flash-0731");
 ok(deepseek !== undefined && deepseek.in.minPerMtok === 0.09 && deepseek.in.maxPerMtok === 0.14, "real band: deepseek IN spans the measured $0.09-$0.14/Mtok, not a single point");

@@ -1695,7 +1695,8 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   ok(JSON.stringify(resolveExpectedModels("")) === JSON.stringify(shippedIds), "resolveExpectedModels('') — blank E2E_EXPECT_MODELS — same fallback as unset");
   ok(JSON.stringify(resolveExpectedModels("  ,  ")) === JSON.stringify(shippedIds), "resolveExpectedModels ignores a whitespace/empty-entries-only override and falls back");
   ok(JSON.stringify(resolveExpectedModels("deepseek/deepseek-v4-flash-0731, alibaba/qwen3-vl-instruct")) === JSON.stringify(["deepseek/deepseek-v4-flash-0731", "alibaba/qwen3-vl-instruct"]), "resolveExpectedModels honours an explicit operator override over the shipped default, trimmed (order preserved, same as the CSV it replaces)");
-  ok(shippedIds.length === 1, "the shipped default stack (american-closed) collapses to a single model id across all five roles — the case that most needs dedup to be real");
+  ok(shippedIds.length === 2, "the shipped default stack (american-closed) collapses five roles to exactly two ids (luna text + gemini vision) — dedup is real");
+  ok(shippedIds.includes("google/gemini-3.7-flash"), "the shipped set carries the vision id — an F-ART run's describer rows are expected models, not a red");
 }
 
 {
