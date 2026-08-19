@@ -423,8 +423,11 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
       await turnStarted(ctx);
       await completed("here is your answer", ctx);
     }, attrs);
-    ok(posts.length === 1, "notion message.completed: an ordinary completion posts the reply");
-    ok(posts[0]!.body.discussion_id === DISCUSSION, "notion message.completed: posts into the triggering discussion");
+    ok(posts.length === 0, "🔴 OPE-811: a per-doc notion completion posts NOTHING — completion text is not a delivery channel");
+    const { readAudit: readDropped0 } = await import("@open-everywhere/core/agent/adapter-api.js");
+    const dropped0 = (await readDropped0({ action: "turn.supervisor_prose_dropped" })).filter((r) => r.detail?.chars === "here is your answer".length);
+    ok(dropped0.length === 1, "OPE-811: the dropped prose is audited on the per-doc path too");
+    ok((await readDropped0({ action: "notion.replied" })).length === 0, "OPE-811 negative control: a turn that never called `reply` writes NO notion.replied row");
 
     posts = [];
     await inSession(async () => {
@@ -432,7 +435,11 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
       await turnStarted(ctx);
       await completed("answering the second discussion", ctx);
     }, { ...attrs, discussion_id: "fresh-second-discussion" });
-    ok(posts.length === 1 && posts[0]!.body.discussion_id === "fresh-second-discussion", "notion reply-targeting: the per-turn auth snapshot beats the stale seeded state (resume bug)");
+    const secondDrop = (await readDropped0({ action: "turn.supervisor_prose_dropped" })).filter((r) => r.detail?.chars === "answering the second discussion".length);
+    ok(
+      secondDrop.length === 1 && secondDrop[0]!.detail?.discussionId === "fresh-second-discussion",
+      "notion reply-targeting: the per-turn auth snapshot beats the stale seeded state (the terminal row names the FRESH discussion)",
+    );
 
     posts = [];
     await inSession(async () => {
@@ -440,12 +447,12 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
       await turnStarted(ctx);
       await completed("this must not post", ctx);
     });
-    ok(posts.length === 0, "notion reply-targeting: no auth target ⇒ posts NOTHING (fail safe, stale seed ignored)");
+    ok(posts.length === 0, "notion reply-targeting: no auth target ⇒ posts NOTHING (stale seed ignored)");
     const { readAudit: readNoTarget } = await import("@open-everywhere/core/agent/adapter-api.js");
-    const noTargets = await readNoTarget({ action: "notion.no_target" });
-    ok(noTargets.length === 1, "OPE-720: the fail-safe branch writes ONE notion.no_target row — the dispatched row is closed, not left open");
-    ok(noTargets[0]!.detail?.reason === "no-per-turn-target" && noTargets[0]!.detail?.chars === "this must not post".length, "OPE-720: the row states the reason and the suppressed length (a count, never the text)");
-    ok(!JSON.stringify(noTargets[0]!.detail).includes("this must not post"), "OPE-720: taint-clean — the suppressed answer's text is not in the row");
+    ok((await readNoTarget({ action: "notion.no_target" })).length === 0, "OPE-811: the notion.no_target row is retired with the poster that needed it");
+    const droppedNoTarget = (await readNoTarget({ action: "turn.supervisor_prose_dropped" })).filter((r) => r.detail?.chars === "this must not post".length);
+    ok(droppedNoTarget.length === 1, "OPE-811: the undelivered completion is recorded as a dropped-prose row instead");
+    ok(droppedNoTarget[0]!.detail?.discussionId === null, "OPE-811: and its anchor states the CLEARED target as an explicit null");
 
     posts = [];
     await inSession(async () => {
@@ -492,12 +499,14 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
     ok((await readAudit2({ action: "turn.supervisor_prose_dropped" })).length === droppedBefore, "…but a tool-replied turn's dropped narration is NOT audited as a leak");
 
     posts = [];
+    const droppedBeforePerDoc = (await readAudit2({ action: "turn.supervisor_prose_dropped" })).length;
     await inSession(async () => {
       const ctx = { state: { ...state } };
       await turnStarted(ctx);
-      await completed("per-doc sessions keep posting terminal text", ctx);
+      await completed("per-doc sessions drop terminal text too", ctx);
     }, attrs);
-    ok(posts.length === 1, "per-doc (non-unified) notion turn: terminal text still posts (byte-identical flag-off)");
+    ok(posts.length === 0, "🔴 OPE-811: a per-doc (non-unified) notion turn drops its terminal text exactly like a windowed one");
+    ok((await readAudit2({ action: "turn.supervisor_prose_dropped" })).length === droppedBeforePerDoc + 1, "OPE-811: and audits the drop — one seat, one delivery contract, whatever the topology");
   } finally {
     globalThis.fetch = realFetch;
     resetRegisteredConnectorCredentials();
@@ -530,11 +539,9 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
     return contextStorage.run(c, fn);
   };
 
-  const notionChannel = (await import("../agent/channels/notion.js")).default as unknown as {
-    adapter: Record<string, (data: unknown, ctx: unknown) => Promise<void>>;
+  const replyTool = (await import("@open-everywhere/core/agent/tools/reply.js")).default as unknown as {
+    events: { "session.started": (e: unknown, ctx: unknown) => { execute: (input: { text: string }, ctx: unknown) => Promise<unknown> } | null };
   };
-  const turnStarted = (ctx: unknown) => notionChannel.adapter["turn.started"]!({}, ctx);
-  const completed = (message: string | null, ctx: unknown) => notionChannel.adapter["message.completed"]!({ finishReason: "stop", message }, ctx);
 
   const realFetch = globalThis.fetch;
   let posts: Array<{ body: { discussion_id?: string; rich_text?: Array<{ text?: { content?: string } }> } }> = [];
@@ -547,33 +554,33 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
   }) as typeof fetch;
 
   try {
-    const state = { discussionId: DISCUSSION, pageId: PAGE, workspaceId: WS };
     const rawText = "the fix is in";
     const expectedText = "[review PR] " + rawText;
+    const toolCtx = (attributes: Record<string, string>) => ({ channel: { kind: "notion" }, session: { id: "s-ope521", auth: { current: { attributes } } } });
 
     const workerAttrs = { discussion_id: DISCUSSION, page_id: PAGE, workspace_id: WS, credential_id: "channel-key", oe_grain: "task", oe_task_label: "review PR" };
     await inSession(async () => {
-      const ctx = { state };
-      await turnStarted(ctx);
-      await completed(rawText, ctx);
+      const armed = replyTool.events["session.started"]({}, toolCtx(workerAttrs));
+      ok(armed !== null, "🔴 OPE-811: `reply` MOUNTS on a Notion session — the uniform delivery verb");
+      await armed!.execute({ text: rawText }, toolCtx(workerAttrs));
     }, workerAttrs);
-    ok(posts.length === 1, "OPE-521: a task-grain worker's terminal reply posts a Notion comment");
-    ok(posts[0]!.body.rich_text?.[0]?.text?.content === expectedText, "OPE-508: the worker's terminal reply carries the bracket prefix in the posted body");
+    ok(posts.length === 1, "OPE-521: a task-grain worker's `reply` posts a Notion comment");
+    ok(posts[0]!.body.rich_text?.[0]?.text?.content === expectedText, "OPE-508: the worker's reply carries the bracket prefix in the posted body");
     const { readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
-    const replied = (await readAudit({ action: "notion.replied" })).filter((r) => r.detail?.discussionId === DISCUSSION);
-    ok(replied.length === 1, "OPE-521: the worker reply writes exactly one notion.replied audit row");
+    const replied = (await readAudit({ action: "reply.post" })).filter((r) => r.detail?.platform === "notion");
+    ok(replied.length === 1, "OPE-521: the worker reply writes exactly one canonical reply.post audit row");
     ok(replied[0]!.detail?.chars === expectedText.length, "OPE-521: the audited chars count the PREFIXED text actually posted");
     ok(replied[0]!.detail?.chars !== rawText.length, "OPE-521 negative control: audited chars must NOT equal the unprefixed raw length — that was the undercount this ticket fixes");
+    ok(replied[0]!.detail?.route === "tool", "OPE-811: and the row's route names the reply TOOL — the only delivery channel on this surface");
 
     posts = [];
     const bareAttrs = { discussion_id: DISCUSSION, page_id: PAGE, workspace_id: WS, credential_id: "channel-key" };
     await inSession(async () => {
-      const ctx = { state };
-      await turnStarted(ctx);
-      await completed(rawText, ctx);
+      const armed = replyTool.events["session.started"]({}, toolCtx(bareAttrs));
+      await armed!.execute({ text: rawText }, toolCtx(bareAttrs));
     }, bareAttrs);
     ok(posts.length === 1 && posts[0]!.body.rich_text?.[0]?.text?.content === rawText, "OPE-508 negative control: a non-worker (no oe_grain=task) reply is NOT bracketed");
-    const repliedBareChars = (await readAudit({ action: "notion.replied" })).filter((r) => r.detail?.discussionId === DISCUSSION && r.detail?.chars === rawText.length);
+    const repliedBareChars = (await readAudit({ action: "reply.post" })).filter((r) => r.detail?.platform === "notion" && r.detail?.chars === rawText.length);
     ok(repliedBareChars.length >= 1, "OPE-521 negative control: a non-worker reply's audited chars equal the raw (unprefixed) length");
   } finally {
     globalThis.fetch = realFetch;

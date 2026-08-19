@@ -231,6 +231,8 @@ for (const [label, err] of [
   process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
   process.env.GITHUB_APP_SLUG = SLUG;
 
+  (await import("../agent/register.js")).registerGithubProvider();
+
   const nodeRequire = createRequire(import.meta.url);
   const eveRoot = dirname(nodeRequire.resolve("eve/package.json"));
   const abs = (rel: string) => pathToFileURL(join(eveRoot, rel)).href;
@@ -283,42 +285,14 @@ for (const [label, err] of [
       await turnStarted({ state, github });
       await completed("the retry budget is fine — the flake is the cold-start race", { state, github });
     }, { owner: OWNER, repo: REPO, issue_number: "42" });
-    ok(posts.length === 1 && posts[0]!.method === "POST" && posts[0]!.path === `/repos/${OWNER}/${REPO}/issues/42/comments`, "the supervisor reply posts to the snapshot issue via installation-auth REST");
-    ok((posts[0]!.body as { body?: string }).body?.includes("cold-start race") === true, "the reply body is the turn's final text");
-  }
-
-  {
-    const state = supervisorState();
-    let calls = 0;
-    const github = {
-      request: async () => {
-        calls++;
-        if (calls === 1) throw Object.assign(new Error("Resource not accessible by integration"), { status: 403 });
-        return { ok: true, status: 201, body: { id: 1 } };
-      },
-    };
-    await inSession(async () => {
-      await turnStarted({ state, github });
-      await completed("identical retry text", { state, github });
-      await completed("identical retry text", { state, github });
-    }, { owner: OWNER, repo: REPO, issue_number: "91" });
-    ok(calls === 2, "OPE-825: a DEFINITIVE (403) completion-post failure releases the dedupe claim — the identical re-run reaches the platform a second time");
-  }
-  {
-    const state = supervisorState();
-    let calls = 0;
-    const github = {
-      request: async () => {
-        calls++;
-        throw new Error("socket hang up");
-      },
-    };
-    await inSession(async () => {
-      await turnStarted({ state, github });
-      await completed("identical retry text 2", { state, github });
-      await completed("identical retry text 2", { state, github });
-    }, { owner: OWNER, repo: REPO, issue_number: "92" });
-    ok(calls === 1, "OPE-825: an AMBIGUOUS (no-status) completion-post failure keeps the dedupe claim — the identical re-run is suppressed, never reaching the platform again");
+    ok(posts.length === 0, "🔴 OPE-811: the supervisor's turn-final text posts NOTHING — completion text is not a delivery channel");
+    const { readAudit: readDropped } = await import("@open-everywhere/core/agent/adapter-api.js");
+    const dropped = (await readDropped({ action: "turn.supervisor_prose_dropped" })).filter((r) => r.platform === "github");
+    ok(dropped.length === 1, "OPE-811: the dropped prose is audited — one turn.supervisor_prose_dropped row on the github partition");
+    ok(dropped[0]!.detail?.chars === "the retry budget is fine — the flake is the cold-start race".length, "OPE-811: the row counts the lost completion (a COUNT, never the text)");
+    ok(!JSON.stringify(dropped[0]!.detail).includes("cold-start race"), "OPE-811: taint-clean — the dropped answer's text is not in the row");
+    const replied = (await readDropped({ action: "github.replied" }));
+    ok(replied.length === 0, "OPE-811 negative control: a turn that never called `reply` writes NO github.replied row");
   }
 
   {
@@ -329,12 +303,11 @@ for (const [label, err] of [
       await turnStarted({ state, github });
       await completed("this must not post", { state, github });
     });
-    ok(posts.length === 0, "no per-turn target ⇒ the supervisor posts NOTHING (fail safe)");
+    ok(posts.length === 0, "no per-turn target ⇒ the supervisor posts NOTHING");
     const { readAudit: readNoTarget } = await import("@open-everywhere/core/agent/adapter-api.js");
-    const noTargets = await readNoTarget({ action: "github.no_target" });
-    ok(noTargets.length === 1, "OPE-720: the fail-safe branch writes ONE github.no_target row — the dispatched row is closed, not left open");
-    ok(noTargets[0]!.detail?.reason === "no-per-turn-target" && noTargets[0]!.detail?.chars === "this must not post".length, "OPE-720: the row states the reason and the suppressed length (a count, never the text)");
-    ok(!JSON.stringify(noTargets[0]!.detail).includes("this must not post"), "OPE-720: taint-clean — the suppressed answer's text is not in the row");
+    ok((await readNoTarget({ action: "github.no_target" })).length === 0, "OPE-811: the github.no_target row is retired with the poster that needed it");
+    const dropped = (await readNoTarget({ action: "turn.supervisor_prose_dropped" })).filter((r) => r.detail?.chars === "this must not post".length);
+    ok(dropped.length === 1, "OPE-811: the undelivered completion is recorded as a dropped-prose row instead");
   }
 
   {
@@ -346,7 +319,7 @@ for (const [label, err] of [
       await completed("cross-repo answer", { state, github });
     }, { owner: "acme", repo: "payments-api", issue_number: "9" });
     ok(state.oeReplyTarget?.owner === "acme" && state.oeReplyTarget?.repo === "payments-api", "unified turn.started snapshots THIS wake's owner/repo off the delivery auth");
-    ok(posts.length === 1 && posts[0]!.path === "/repos/acme/payments-api/issues/9/comments", "the unified reply posts into the repo that woke it, NOT the session's seed repo");
+    ok(posts.length === 0, "OPE-811: the unified completion posts nothing either — the snapshot feeds the audit partition, not a poster");
     posts.length = 0;
     await inSession(async () => {
       await turnStarted({ state, github });

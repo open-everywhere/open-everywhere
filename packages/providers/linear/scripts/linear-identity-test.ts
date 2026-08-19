@@ -45,7 +45,17 @@ ok(lin.platform === "linear" && lin.workspace === "ORG1" && lin.surface === "TEA
 ok(lin.mode === "channel", "linear: agent sessions are channel-mode (no DM analog)");
 ok(lin.visibility === "private", "linear: no privacy signal -> fail-closed private");
 ok(lin.principalId === "LU3", "linear: principalId from creator_id");
-ok(JSON.stringify(lin.target) === JSON.stringify({ agentSessionId: "AS1" }), "linear: post-back target is the agent session (NOT the surface key)");
+ok(lin.target?.agentSessionId === "AS1", "linear: post-back target carries the agent session (NOT the surface key)");
+ok(lin.target?.issueId === "ISS9", "🔴 OPE-811: it ALSO carries the issue anchor — the ambient reply route's target");
+{
+  const ambient = bindFrom(linearCtx({ organization_id: "ORG1", team_id: "TEAM5", issue_id: "ISS9", comment_id: "C1" }));
+  ok(ambient.target?.agentSessionId === undefined, "OPE-811: a supervisor delivery binds NO agent session (there is none)");
+  ok(ambient.target?.issueId === "ISS9" && ambient.target?.parentId === "C1", "🔴 OPE-811: …and still binds a postable ambient target — issue + the trigger's own thread root");
+  const threaded = bindFrom(linearCtx({ organization_id: "ORG1", team_id: "TEAM5", issue_id: "ISS9", comment_id: "C2", parent_comment_id: "C_ROOT" }));
+  ok(threaded.target?.parentId === "C_ROOT", "OPE-811: a THREADED trigger anchors on the SAME thread root, not the reply comment");
+  const anchorless = bindFrom(linearCtx({ organization_id: "ORG1", team_id: "TEAM5" }));
+  ok(anchorless.target === undefined, "OPE-811 negative control: no session AND no issue ⇒ NO target — `reply` refuses rather than guessing a place");
+}
 
 const linIssA = bindFrom(linearCtx({ organization_id: "ORG1", team_id: "TEAM5", issue_id: "ISS_A", agent_session_id: "AS_A" }));
 const linIssB = bindFrom(linearCtx({ organization_id: "ORG1", team_id: "TEAM5", issue_id: "ISS_B", agent_session_id: "AS_B" }));
