@@ -527,6 +527,20 @@ everywhere, but quote it only into a place of equal or higher privacy. Prefer th
 with a reason, to the bare \`NO_REPLY\` text.`;
 }
 
+export function canReceiveJudgedWake(ctx: BindableContext): boolean {
+  if (isUnifiedWindowContext(ctx)) return true;
+  const sid = classifySessionId(ctx.channel?.continuationToken);
+  if (sid.kind === "task" || sid.kind === "subagent") return false;
+  if (sid.kind === "container-supervisor" || sid.kind === "dm-seat") return true;
+  const platform = channelPlatform(ctx);
+  if (platform === "slack") return true;
+  if (platform === "discord") {
+    const mode = bindFrom(ctx).mode;
+    return mode !== "dm" && mode !== "mpim";
+  }
+  return false;
+}
+
 function renderWorkerCapabilitiesFor(ctx: BindableContext, recall: MemoryRecallRoute): string {
   try {
     const grain = windowGrainOf(ctx);
@@ -588,7 +602,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     renderUnifiedSurfaces(platforms),
     renderUnifiedSurfaceGuides(platforms),
     renderSupervisorPersona(ctx, { messageToolOnly: true }),
-    renderReadingAWake(),
+    canReceiveJudgedWake(ctx) ? renderReadingAWake() : "",
     REPLY_STYLE_RUBRIC,
     roleMd,
     accessMd,
@@ -615,6 +629,7 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
     renderSurface(binding.platform),
     renderSurfaceGuide(binding.platform),
     renderSupervisorPersona(ctx),
+    canReceiveJudgedWake(ctx) ? renderReadingAWake() : "",
     REPLY_STYLE_RUBRIC,
     renderRolePrompt(ctx),
     assembleAccessInstructions(access) ?? "",

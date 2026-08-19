@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync, readdirSync } from "node:fs";
 import { assembleAccessInstructions } from "../agent/access/instructions.js";
 import { clearPendingCancelNoteAfter, setPendingCancelNote } from "../agent/channels/cancel-note.js";
-import dynamicInstructions, { renderSurfaceGuide, renderScopeMarkdown, renderReadingAWake, renderSupervisorPersona, REPLY_STYLE_RUBRIC } from "../agent/instructions/access.js";
+import dynamicInstructions, { renderSurfaceGuide, renderScopeMarkdown, renderReadingAWake, renderSupervisorPersona, REPLY_STYLE_RUBRIC, canReceiveJudgedWake } from "../agent/instructions/access.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { defineMemorySilo } from "../agent/memory/silo.js";
@@ -577,16 +577,49 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
       },
     },
   } as BindableContext;
+  const nativeSlackSeat: BindableContext = {
+    channel: { kind: "slack", continuationToken: "cse_native_771" },
+    session: {
+      auth: {
+        current: {
+          attributes: { team_id: "T_771", channel_id: "C_771", channel_type: "channel", is_private: "false", trust_checked: "true" },
+          principalId: "U1",
+          principalType: "user",
+        },
+      },
+    },
+  } as BindableContext;
 
   ok(classifySessionId("C_771:oe-sup:g1").kind === "container-supervisor", "fixture guard: `${channelId}:oe-sup:g<gen>` classifies as the per-container supervisor");
+  ok(classifySessionId("cse_native_771").kind === "native", "fixture guard: a blank/foreign token classifies as native");
   ok(renderSupervisorPersona(containerSeat) !== "", "fixture guard: the per-container seat IS a supervisor session — it reads the standing persona");
+
+  ok(canReceiveJudgedWake(unifiedSeat), "predicate: the UNIFIED path is unconditionally true (an @mention there is always the judged `direct-mention` addressing, never the raw `direct` body)");
+  ok(canReceiveJudgedWake(containerSeat), "predicate: a per-container SUPERVISOR (channel-watch/name-drop capable) is true on every wired platform");
+  const dmSeat: BindableContext = { channel: { kind: "slack", continuationToken: "D_771:oe-dm:g1" } } as BindableContext;
+  ok(classifySessionId("D_771:oe-dm:g1").kind === "dm-seat", "fixture guard: a `<channelId>:oe-dm:g<gen>` token classifies as a Slack DM seat");
+  ok(canReceiveJudgedWake(dmSeat), "predicate: a Slack DM seat is true — buildDmWake always renders `direct-mention`, never a raw `direct` body");
+  ok(canReceiveJudgedWake(nativeSlackSeat), "predicate: a plain native SLACK session is true — Slack never emits a raw `direct` wake at all");
+  const taskOffUnified: BindableContext = { channel: { kind: "slack", continuationToken: "oe-dom:ope771tk:win:t/slack/T_771/C_771/1700.5:oe-sup:g1" } } as BindableContext;
+  ok(classifySessionId("oe-dom:ope771tk:win:t/slack/T_771/C_771/1700.5:oe-sup:g1").kind === "task", "fixture guard: the `t/…` windowId classifies as task");
+  ok(!canReceiveJudgedWake(taskOffUnified), "🔴 predicate: a task (worker) session is false — a worker never sees a wake envelope, even off the unified channel");
+  const subagentSeat: BindableContext = { channel: { kind: "slack", continuationToken: "subagent:parent-sess:call-1" } } as BindableContext;
+  ok(classifySessionId("subagent:parent-sess:call-1").kind === "subagent", "fixture guard: eve's own `subagent:<parent>:<call>` token classifies as subagent");
+  ok(!canReceiveJudgedWake(subagentSeat), "🔴 predicate: a delegated subagent child is false — it never sees a wake envelope either");
+  const nativeGithubSeat: BindableContext = { channel: { kind: "github", continuationToken: "cse_native_gh" } } as BindableContext;
+  ok(!canReceiveJudgedWake(nativeGithubSeat), "predicate: a native GitHub session is false — its ordinary @mention flow never renders a `<wake>` envelope at all");
+  const githubSupervisorSeat: BindableContext = { channel: { kind: "github", continuationToken: "github:acme/repo:oe-sup:g1" } } as BindableContext;
+  ok(classifySessionId("github:acme/repo:oe-sup:g1").kind === "container-supervisor", "fixture guard: a GitHub `<owner>/<repo>:oe-sup:g<gen>` token classifies as the per-container supervisor too");
+  ok(canReceiveJudgedWake(githubSupervisorSeat), "🔴 predicate: a GitHub per-repo supervisor is true independent of the Slack platform fallthrough — channel-watch judges it too");
 
   const unifiedMd = await renderScopeMarkdown(unifiedSeat);
   const containerMd = await renderScopeMarkdown(containerSeat);
+  const nativeMd = await renderScopeMarkdown(nativeSlackSeat);
   const block = renderReadingAWake();
   ok(unifiedMd.includes(block), "the UNIFIED scope splices the 'Reading a wake' block verbatim");
-  ok(!containerMd.includes("### Reading a wake"), "🔴 OPE-771 — the PER-CONTAINER supervisor scope does NOT carry it; that seat reads judged envelopes with no attribute key");
-  ok(containerMd.includes("### When to speak"), "the per-container seat still reads the reply bar — the loss is the attribute key, not the posture");
+  ok(containerMd.includes(block), "the PER-CONTAINER supervisor scope now carries it (OPE-771) — that seat reads judged envelopes with a key to their attributes");
+  ok(nativeMd.includes(block), "a plain native Slack scope carries it too — the same predicate, the same reasoning");
+  ok(containerMd.includes("### When to speak"), "the per-container seat still reads the reply bar");
   ok(containerMd.includes("### Trust grades"), "the per-container seat still reads the trust grades, which gloss `trust` and `mention`");
 }
 
