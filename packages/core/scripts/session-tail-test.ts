@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { approxEntryTokens, buildTail, selectTail, tailEntryToWakeMessage, type SessionTailEntry } from "../agent/channels/session-tail.js";
-import { carryTailForward, recordPostTail, tailWindowFor, type TailWindow } from "../agent/channels/session-tail-record.js";
+import { carryTailForward, editPostTail, recordPostTail, seedTailWindow, tailWindowFor, type TailWindow } from "../agent/channels/session-tail-record.js";
 import { unifiedDomainSessionKey } from "../agent/channels/unified-supervisor.js";
 import { formatWindowToken, taskWindowId, threadSeatWindowId } from "../agent/channels/window-key.js";
 import type { OperationalStore } from "../agent/operational/store.js";
+
+const nodeRequire = createRequire(import.meta.url);
+const eveRoot = dirname(nodeRequire.resolve("eve/package.json"));
+const abs = (rel: string): string => pathToFileURL(join(eveRoot, rel)).href;
+const { ContextContainer, contextStorage } = await import(abs("dist/src/context/container.js"));
+const { SessionKey } = await import(abs("dist/src/context/keys.js"));
 
 let n = 0;
 function ok(cond: boolean, msg: string): void {
@@ -216,8 +225,63 @@ function post(secs: number, text: string, over: Partial<SessionTailEntry> = {}):
     },
   } as unknown as OperationalStore;
 
-  await recordPostTail("something the seat said", new Date().toISOString(), "slack", store);
+  await recordPostTail("something the seat said", new Date().toISOString(), "slack", undefined, store);
   eq(writes, 0, "🔴 no seeded window ⇒ NO store write — a worker, a task session or a routine fire posting through the choke point records nothing");
 }
 
-console.log(`✓ session-tail: ${n} assertions passed (cap + most-recent-first, time order, the recursive-inheritance guard, bot posts, self provenance, the cross-surface container guard, carry-forward, the standing-grain window guard, the unseeded no-write floor)`);
+{
+  const ORG = "acme";
+  const REG = "oe-domain::eng";
+  const TOK = "oe-dom:eng:oe-sup:g1";
+  const rows: SessionTailEntry[] = [];
+  const store = {
+    async appendSessionTail(org: string, key: string, token: string, entry: SessionTailEntry) {
+      eq([org, key, token], [ORG, REG, TOK], "…the write targets the seeded window");
+      rows.push(entry);
+    },
+    async editSessionTailPost(org: string, key: string, token: string, messageId: string, text: string) {
+      eq([org, key, token], [ORG, REG, TOK], "…the edit targets the seeded window");
+      const row = rows.find((r) => r.kind === "post" && r.id === messageId);
+      if (!row) return false;
+      (row as { text: string }).text = text;
+      return true;
+    },
+  } as unknown as OperationalStore;
+
+  const c = new ContextContainer();
+  c.set(SessionKey, { sessionId: "session-tail-record-test", auth: null, turn: 1, parent: undefined });
+  const inTurn = <T>(fn: () => Promise<T>): Promise<T> => contextStorage.run(c, fn);
+
+  await inTurn(async () => {
+    seedTailWindow({ org: ORG, registryKey: REG, token: TOK, platform: "slack" });
+    await recordPostTail("Three items: a, b, c.", at(0), "slack", "1755776340.000100", store);
+  });
+  eq(rows.length, 1, "the post row was recorded");
+  eq(rows[0]!.id, "1755776340.000100", "🔴 the platform message id THREADS THROUGH onto the ring row — the precondition an edit needs to find it later");
+
+  const edited = await inTurn(() => editPostTail("1755776340.000100", "Four items: a, b, c, d.", store));
+  ok(edited === true, "editPostTail reports the row it found and rewrote");
+  eq(rows[0]!.text, "Four items: a, b, c, d.", "…and the row's text is REWRITTEN in place");
+  eq(rows[0]!.kind, "post", "…the kind is untouched");
+  eq(rows[0]!.id, "1755776340.000100", "…the id is untouched");
+
+  const miss = await inTurn(() => editPostTail("some-id-never-recorded", "won't land anywhere", store));
+  ok(miss === false, "🔴 a miss — no ring row carries this id — is silent: editPostTail answers false, never throws");
+  eq(rows[0]!.text, "Four items: a, b, c, d.", "…and the existing row is untouched by the miss");
+
+  let calls = 0;
+  const failingStore = {
+    async appendSessionTail() {
+      calls++;
+    },
+    async editSessionTailPost() {
+      calls++;
+      return true;
+    },
+  } as unknown as OperationalStore;
+  await recordPostTail("outside any turn", at(1), "slack", "should-not-record", failingStore);
+  ok((await editPostTail("should-not-record", "should not rewrite", failingStore)) === false, "no seeded window ⇒ editPostTail answers false too");
+  eq(calls, 0, "🔴 neither function touches the store with no seeded window — a worker/task/routine post is recorded (and edited) nowhere, same as §8");
+}
+
+console.log(`✓ session-tail: ${n} assertions passed (cap + most-recent-first, time order, the recursive-inheritance guard, bot posts, self provenance, the cross-surface container guard, carry-forward, the standing-grain window guard, the unseeded no-write floor, the OPE-815 id thread + ring rewrite)`);

@@ -903,7 +903,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   thread_engagement: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   channel_session: ["SELECT", "INSERT", "UPDATE"],
   event_dedupe: ["SELECT", "INSERT", "DELETE"],
-  session_tail: ["SELECT", "INSERT", "DELETE"],
+  session_tail: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   pending_actions: ["SELECT", "INSERT", "UPDATE"],
   domain_skill: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   domain_model: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -1748,6 +1748,32 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async clearSessionTail(org, surfaceKey, token) {
       await client.query("DELETE FROM session_tail WHERE org_id = $1 AND surface_key = $2 AND token = $3", [org, surfaceKey, token]);
+    },
+
+    async editSessionTailPost(org, surfaceKey, token, messageId, text) {
+      const { rows } = await client.query(
+        "SELECT seq, entry_json FROM session_tail WHERE org_id = $1 AND surface_key = $2 AND token = $3 ORDER BY seq DESC",
+        [org, surfaceKey, token],
+      );
+      for (const r of rows as { seq: number | string; entry_json: string }[]) {
+        let entry: SessionTailEntry;
+        try {
+          entry = JSON.parse(r.entry_json) as SessionTailEntry;
+        } catch {
+          continue;
+        }
+        if (entry.kind !== "post" || entry.id !== messageId) continue;
+        const updated: SessionTailEntry = { ...entry, text };
+        await client.query("UPDATE session_tail SET entry_json = $1 WHERE org_id = $2 AND surface_key = $3 AND token = $4 AND seq = $5", [
+          JSON.stringify(updated),
+          org,
+          surfaceKey,
+          token,
+          r.seq,
+        ]);
+        return true;
+      }
+      return false;
     },
 
     async listDomainSkills(org, domain) {

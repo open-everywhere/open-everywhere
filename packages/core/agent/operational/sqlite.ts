@@ -1393,6 +1393,27 @@ export const sqliteOperationalStore: OperationalStore = {
     getDb().prepare("DELETE FROM session_tail WHERE org_id = ? AND surface_key = ? AND token = ?").run(org, surfaceKey, token);
   },
 
+  async editSessionTailPost(org, surfaceKey, token, messageId, text) {
+    const rows = getDb()
+      .prepare("SELECT seq, entry_json FROM session_tail WHERE org_id = ? AND surface_key = ? AND token = ? ORDER BY seq DESC")
+      .all(org, surfaceKey, token) as { seq: number; entry_json: string }[];
+    for (const r of rows) {
+      let entry: SessionTailEntry;
+      try {
+        entry = JSON.parse(r.entry_json) as SessionTailEntry;
+      } catch {
+        continue;
+      }
+      if (entry.kind !== "post" || entry.id !== messageId) continue;
+      const updated: SessionTailEntry = { ...entry, text };
+      getDb()
+        .prepare("UPDATE session_tail SET entry_json = ? WHERE org_id = ? AND surface_key = ? AND token = ? AND seq = ?")
+        .run(JSON.stringify(updated), org, surfaceKey, token, r.seq);
+      return true;
+    }
+    return false;
+  },
+
   async listDomainSkills(org, domain) {
     const rows = getDb()
       .prepare("SELECT name, content, updated_by, updated_at FROM domain_skill WHERE org_id = ? AND domain = ? ORDER BY name")

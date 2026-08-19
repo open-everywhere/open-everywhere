@@ -29,6 +29,7 @@ const { readAudit } = await import("../agent/audit/audit.js");
 const { EDIT_NOT_OWN_REFUSAL_REASON } = await import("../agent/channels/reply-edit.js");
 const { recordOwnPost, isOwnPost, ownPostKey, OWN_POST_TTL_MS } = await import("../agent/channels/own-post-ledger.js");
 const { REPLY_DEDUPE_SKIPPED_ID } = await import("../agent/channels/reply-post.js");
+const { seedTailWindow, tailWindowFor } = await import("../agent/channels/session-tail-record.js");
 
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
 type UnifiedWakeOrigin = import("../agent/channels/unified-window.js").UnifiedWakeOrigin;
@@ -38,6 +39,9 @@ const DOMAIN = "payments";
 const CHAN = "C1";
 const SURFACE = `slack/T1/${CHAN}`;
 const TOKEN = unifiedSupervisorToken(DOMAIN, 1);
+const rawTailWindow = tailWindowFor({ org: ORG, domainKey: DOMAIN, surfaceKey: SURFACE, rawToken: `unified:${TOKEN}`, platform: "slack" });
+ok(rawTailWindow !== null, "fixture sanity: the domain window token classifies as a standing generation — every §15-§17 assertion rests on this");
+const TAIL_WINDOW = rawTailWindow as NonNullable<typeof rawTailWindow>;
 
 const posted: { channel: string; text: string }[] = [];
 const edited: { channel: string; ts: string; text: string }[] = [];
@@ -375,6 +379,61 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
   ok(
     platformFailureClass(carryFailureSignals(undefined, new Error("wrapped"))) === "ambiguous",
     "§14/CARRY: and a non-error source does not throw here either",
+  );
+}
+
+{
+  const inTurn = newSession();
+  await inTurn(async () => seedTailWindow(TAIL_WINDOW));
+  const w = await wakeAt(CHAN, t(-1000));
+
+  const r = await inTurn(() => callReply(w, "turn_15", w, "Three items: a, b, c."));
+  ok(typeof r.id === "string" && r.id.length > 0, "§15: the reply posted");
+
+  const ring = await store.readSessionTail(TAIL_WINDOW.org, TAIL_WINDOW.registryKey, TAIL_WINDOW.token);
+  const row = ring.find((e) => e.kind === "post" && e.text === "Three items: a, b, c.");
+  ok(row !== undefined, "§15: the landed post is recorded on the ring");
+  ok(row?.id === r.id, "🔴 §15: …and it carries the SAME platform message id `reply` returned — the precondition edit_reply's ring rewrite needs");
+}
+
+{
+  const inTurn = newSession();
+  await inTurn(async () => seedTailWindow(TAIL_WINDOW));
+  const w = await wakeAt(CHAN, t(-1000));
+
+  const r = await inTurn(() => callReply(w, "turn_16", w, "Three items: a, b, c."));
+  const e = await inTurn(() => callEdit(w, "turn_16", w, r.id as string, "Four items: a, b, c, d."));
+  ok(e.edited === true, "§16: the edit was confirmed");
+
+  const ring = await store.readSessionTail(TAIL_WINDOW.org, TAIL_WINDOW.registryKey, TAIL_WINDOW.token);
+  const row = ring.find((entry) => entry.id === r.id);
+  ok(row !== undefined, "§16: the ring row is still there, under the same id");
+  ok(row?.text === "Four items: a, b, c, d.", "🔴 §16: …and its TEXT is REWRITTEN to the corrected message — the ring shows what the room now shows");
+}
+
+{
+  const inTurn = newSession();
+  await inTurn(async () => seedTailWindow(TAIL_WINDOW));
+  const w = await wakeAt(CHAN, t(-1000));
+  const r = await inTurn(() => callReply(w, "turn_17", w, "Original text, unedited."));
+
+  updateOutcome = "definitive";
+  const eDef = await inTurn(() => callEdit(w, "turn_17", w, r.id as string, "This must not land on the ring."));
+  updateOutcome = "ok";
+  ok(eDef.edited !== true, "§17/DEFINITIVE: the edit was refused, as §12 already proves");
+  let ring = await store.readSessionTail(TAIL_WINDOW.org, TAIL_WINDOW.registryKey, TAIL_WINDOW.token);
+  let row = ring.find((entry) => entry.id === r.id);
+  ok(row?.text === "Original text, unedited.", "🔴 §17/DEFINITIVE: the ring row is UNTOUCHED — a definitive failure proves nothing changed at the platform");
+
+  updateOutcome = "ambiguous";
+  const eAmb = (await inTurn(() => callEdit(w, "turn_17", w, r.id as string, "This must not land on the ring either."))) as { edited?: boolean };
+  updateOutcome = "ok";
+  ok(eAmb.edited === false, "§17/AMBIGUOUS: the edit was reported unconfirmed, as §13 already proves");
+  ring = await store.readSessionTail(TAIL_WINDOW.org, TAIL_WINDOW.registryKey, TAIL_WINDOW.token);
+  row = ring.find((entry) => entry.id === r.id);
+  ok(
+    row?.text === "Original text, unedited.",
+    "🔴 §17/AMBIGUOUS: the ring row is STILL UNTOUCHED — an unconfirmed outcome must not claim the room changed, the same reasoning the ambiguous NOTE itself states to the model",
   );
 }
 

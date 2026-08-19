@@ -185,7 +185,7 @@ export async function recordLandedPost(input: {
   readonly platform: string;
 }): Promise<void> {
   if (input.editLocus) await recordOwnPost(input.org, input.editLocus, input.messageId);
-  await recordPostTail(input.body, new Date().toISOString(), input.platform);
+  await recordPostTail(input.body, new Date().toISOString(), input.platform, input.messageId);
 }
 
 export async function postReply(target: ReplyTarget, text: string, audit?: ReplyAudit, replier?: ReplierLabel): Promise<string> {

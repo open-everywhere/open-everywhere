@@ -636,6 +636,39 @@ const store = makeOperationalPostgresStore(client);
   await store.clearSessionTail("acme", sk, "T:oe-sup:1");
   ok((await store.readSessionTail("acme", sk, "T:oe-sup:1")).length === 0, "pg: clearSessionTail drops the ring");
 
+  const TOK3 = "T:oe-sup:3";
+  await store.appendSessionTail("acme", sk, TOK3, {
+    kind: "post",
+    at: "2026-07-09T10:02:00Z",
+    from: "self",
+    trust: "relay",
+    author: "self",
+    id: "msg-1",
+    text: "Three items: a, b, c.",
+  });
+  await store.appendSessionTail("acme", sk, TOK3, {
+    kind: "wake",
+    at: "2026-07-09T10:02:05Z",
+    from: "human",
+    trust: "peer",
+    author: "alice",
+    id: "msg-1",
+    text: "a wake sharing the same id",
+  });
+
+  ok((await store.editSessionTailPost("acme", sk, TOK3, "msg-1", "Four items: a, b, c, d.")) === true, "pg: editSessionTailPost finds and rewrites the matching POST row");
+  let ring3 = await store.readSessionTail("acme", sk, TOK3);
+  ok(ring3.find((r) => r.kind === "post")!.text === "Four items: a, b, c, d.", "pg: …the post row's text is REWRITTEN");
+  ok(ring3.find((r) => r.kind === "wake")!.text === "a wake sharing the same id", "🔴 pg: …and a WAKE row carrying the SAME id is untouched — the match is on kind AND id, never id alone");
+
+  ok((await store.editSessionTailPost("acme", sk, TOK3, "no-such-id", "should not land anywhere")) === false, "pg: a miss — no post row carries this id — returns false, silently");
+  ring3 = await store.readSessionTail("acme", sk, TOK3);
+  ok(ring3.find((r) => r.kind === "post")!.text === "Four items: a, b, c, d.", "pg: …and the row is UNCHANGED by the miss — never throws, never touches an unrelated row");
+
+  ok((await store.editSessionTailPost("globex", sk, TOK3, "msg-1", "cross-org write")) === false, "pg: org isolation — the same (surfaceKey, token, id) under a DIFFERENT org finds nothing");
+  ring3 = await store.readSessionTail("acme", sk, TOK3);
+  ok(ring3.find((r) => r.kind === "post")!.text === "Four items: a, b, c, d.", "pg: …confirmed: this org's row was not touched by the cross-org attempt");
+
   ok((await store.getChannelSession("globex", sk)) === null, "pg: channel session is org-isolated");
   await store.rotateChannelSession("globex", sk, "T:oe-sup:1", "2026-07-11T12:00:00Z");
   ok((await store.getChannelSession("acme", sk))!.generation === 2, "pg: another org's rotation doesn't disturb this org's row");
