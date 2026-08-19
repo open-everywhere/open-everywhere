@@ -1677,6 +1677,31 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return rows.length;
     },
 
+    async listChannelSessions(org, keyPrefix) {
+      const { rows } =
+        keyPrefix === undefined
+          ? await client.query(
+              "SELECT surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens FROM channel_session WHERE org_id = $1",
+              [org],
+            )
+          : await client.query(
+              "SELECT surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens FROM channel_session WHERE org_id = $1 AND surface_key LIKE $2",
+              [org, `${keyPrefix}%`],
+            );
+      return (
+        rows as {
+          surface_key: string; token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number;
+          input_tokens_total: string | number | null; first_wake_at: string | null; last_input_tokens: string | number | null;
+        }[]
+      ).map((r) => ({
+        org, surfaceKey: r.surface_key, token: r.token, generation: Number(r.generation), createdAt: r.created_at,
+        lastWakeAt: r.last_wake_at, turnCount: Number(r.turn_count),
+        inputTokensTotal: r.input_tokens_total == null ? null : Number(r.input_tokens_total),
+        firstWakeAt: r.first_wake_at ?? null,
+        lastInputTokens: r.last_input_tokens == null ? null : Number(r.last_input_tokens),
+      }));
+    },
+
     async appendSessionTail(org, surfaceKey, token, entry) {
       const { rows } = await client.query(
         `INSERT INTO session_tail (org_id, surface_key, token, seq, at, entry_json)

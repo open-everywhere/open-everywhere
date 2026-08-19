@@ -589,6 +589,7 @@ export interface OperationalStore {
   rotateChannelSession(org: string, surfaceKey: string, newToken: string, at: string): Promise<ChannelSessionRow>;
   touchChannelSession(org: string, surfaceKey: string, at: string): Promise<void>;
   bumpChannelSessionUsage(org: string, surfaceKey: string, token: string, delta: number): Promise<number>;
+  listChannelSessions(org: string, keyPrefix?: string): Promise<ChannelSessionRow[]>;
 
   appendSessionTail(org: string, surfaceKey: string, token: string, entry: SessionTailEntry): Promise<void>;
   readSessionTail(org: string, surfaceKey: string, token: string): Promise<SessionTailEntry[]>;
