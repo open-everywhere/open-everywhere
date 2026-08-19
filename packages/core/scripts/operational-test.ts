@@ -617,6 +617,16 @@ const store = makeOperationalPostgresStore(client);
   row = await store.getChannelSession("acme", sk);
   ok(row !== null && row.generation === 2 && row.turnCount === 0 && row.inputTokensTotal === 0 && row.createdAt === "2026-07-09T11:00:00Z" && row.lastInputTokens === null, "pg: getChannelSession reflects the rotated generation (no stale gen-1 fields)");
 
+  ok((await store.getChannelSession("acme", sk))!.rotateMarkedAt === null, "pg: a live generation starts unmarked");
+  ok((await store.markChannelSessionRotation("acme", sk, "2026-07-09T11:30:00Z")) === true, "pg: markChannelSessionRotation returns true when it marked a row");
+  ok((await store.getChannelSession("acme", sk))!.rotateMarkedAt === "2026-07-09T11:30:00Z", "pg: …and the stamp reads back on the row");
+  await store.markChannelSessionRotation("acme", sk, "2026-07-09T23:00:00Z");
+  ok((await store.getChannelSession("acme", sk))!.rotateMarkedAt === "2026-07-09T11:30:00Z", "pg: a second mark keeps the FIRST stamp (COALESCE) — a re-run of the sweep is idempotent");
+  ok((await store.markChannelSessionRotation("acme", "slack/T/CNEVER", "2026-07-09T11:30:00Z")) === false, "pg: marking a surface with no row returns false");
+  ok((await store.getChannelSession("acme", "slack/T/CNEVER")) === null, "pg: …and creates nothing — the mark is an UPDATE, never an upsert");
+  await store.touchChannelSession("acme", sk, "2026-07-09T11:35:00Z");
+  ok((await store.getChannelSession("acme", sk))!.rotateMarkedAt === "2026-07-09T11:30:00Z", "🔴 pg: a WAKE does not clear the mark — only a rotation spends it");
+
   await store.appendSessionTail("acme", sk, "T:oe-sup:1", { kind: "wake", at: "2026-07-09T10:01:00Z", from: "human", trust: "peer", author: "alice", text: "first" });
   await store.appendSessionTail("acme", sk, "T:oe-sup:1", { kind: "post", at: "2026-07-09T10:01:30Z", from: "self", trust: "relay", author: "self", text: "second" });
   const ring = await store.readSessionTail("acme", sk, "T:oe-sup:1");

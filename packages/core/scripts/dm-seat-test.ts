@@ -54,6 +54,7 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
       inputTokensTotal: seed.inputTokensTotal ?? 0,
       firstWakeAt: seed.firstWakeAt ?? null,
       lastInputTokens: seed.lastInputTokens ?? null,
+      rotateMarkedAt: seed.rotateMarkedAt ?? null,
     });
   }
   const store = {
@@ -74,6 +75,7 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
         inputTokensTotal: 0,
         firstWakeAt: null,
         lastInputTokens: null,
+        rotateMarkedAt: null,
       };
       rows.set(`${org}:${surfaceKey}`, row);
       return row;

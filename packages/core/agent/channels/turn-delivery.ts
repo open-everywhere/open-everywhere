@@ -132,6 +132,7 @@ export function supervisorRotateContextSize(): number {
 
 export type RotationTrigger =
   | "runtime-changed"
+  | "operator-marked"
   | "unknown-accumulation"
   | "unparseable-timestamp"
   | "expiry"
@@ -150,11 +151,12 @@ export interface RotationThresholds {
 }
 
 export function rotationTrigger(
-  row: Pick<ChannelSessionRow, "createdAt" | "lastWakeAt" | "turnCount" | "inputTokensTotal"> & Partial<Pick<ChannelSessionRow, "lastInputTokens">>,
+  row: Pick<ChannelSessionRow, "createdAt" | "lastWakeAt" | "turnCount" | "inputTokensTotal"> & Partial<Pick<ChannelSessionRow, "lastInputTokens" | "rotateMarkedAt">>,
   now: string,
   opts: RotationThresholds = {},
 ): RotationTrigger | null {
   if (opts.runtimeChanged === true) return "runtime-changed";
+  if (row.rotateMarkedAt != null) return "operator-marked";
   if (row.inputTokensTotal == null) return "unknown-accumulation";
   const nowMs = Date.parse(now);
   const createdAtMs = Date.parse(row.createdAt);
@@ -169,7 +171,7 @@ export function rotationTrigger(
 }
 
 export function shouldRotate(
-  row: Pick<ChannelSessionRow, "createdAt" | "lastWakeAt" | "turnCount" | "inputTokensTotal"> & Partial<Pick<ChannelSessionRow, "lastInputTokens">>,
+  row: Pick<ChannelSessionRow, "createdAt" | "lastWakeAt" | "turnCount" | "inputTokensTotal"> & Partial<Pick<ChannelSessionRow, "lastInputTokens" | "rotateMarkedAt">>,
   now: string,
   opts: RotationThresholds = {},
 ): boolean {

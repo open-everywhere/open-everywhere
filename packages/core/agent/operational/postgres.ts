@@ -117,6 +117,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      input_tokens_total bigint,               -- measured cumulative input+cacheRead for this generation (§2 #551); NULL = unknown ⇒ rotate
      first_wake_at      text,                 -- ISO-8601 of the first delivered wake (H7c); NULL = none yet ⇒ still fresh
      last_input_tokens  bigint,               -- OPE-794: measured input+cacheRead of the LATEST request (SET, not summed); NULL = none yet ⇒ rung skipped
+     rotate_marked_at   text,                 -- OPE-820: ISO-8601 an operator marked this generation for retirement; NULL = unmarked. Set ONLY by the ops sweep; cleared by every rotation
      PRIMARY KEY (org_id, surface_key)
    )`,
   `CREATE TABLE IF NOT EXISTS session_tail (
@@ -385,6 +386,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS input_tokens_total bigint`,
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS first_wake_at text`,
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS last_input_tokens bigint`,
+  `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS rotate_marked_at text`,
   `ALTER TABLE task_result ADD COLUMN IF NOT EXISTS caller_token text`,
   `ALTER TABLE task_result ADD COLUMN IF NOT EXISTS delivered_at text`,
   `ALTER TABLE unified_wake_target ADD COLUMN IF NOT EXISTS window_token text`,
@@ -1624,12 +1626,12 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async getChannelSession(org, surfaceKey) {
       const { rows } = await client.query(
-        "SELECT token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens FROM channel_session WHERE org_id = $1 AND surface_key = $2",
+        "SELECT token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at FROM channel_session WHERE org_id = $1 AND surface_key = $2",
         [org, surfaceKey],
       );
       const r = (rows as {
         token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number;
-        input_tokens_total: string | number | null; first_wake_at: string | null; last_input_tokens: string | number | null;
+        input_tokens_total: string | number | null; first_wake_at: string | null; last_input_tokens: string | number | null; rotate_marked_at: string | null;
       }[])[0];
       return r
         ? {
@@ -1638,14 +1640,15 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
             inputTokensTotal: r.input_tokens_total == null ? null : Number(r.input_tokens_total),
             firstWakeAt: r.first_wake_at ?? null,
             lastInputTokens: r.last_input_tokens == null ? null : Number(r.last_input_tokens),
+            rotateMarkedAt: r.rotate_marked_at ?? null,
           }
         : null;
     },
 
     async rotateChannelSession(org, surfaceKey, newToken, at) {
       const { rows } = await client.query(
-        `INSERT INTO channel_session (org_id, surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens)
-         VALUES ($1, $2, $3, 1, $4, $5, 0, 0, NULL, NULL)
+        `INSERT INTO channel_session (org_id, surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at)
+         VALUES ($1, $2, $3, 1, $4, $5, 0, 0, NULL, NULL, NULL)
          ON CONFLICT (org_id, surface_key) DO UPDATE SET
            token              = excluded.token,
            generation         = channel_session.generation + 1,
@@ -1654,12 +1657,21 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
            turn_count         = 0,
            input_tokens_total = 0,
            first_wake_at      = NULL,
-           last_input_tokens  = NULL
+           last_input_tokens  = NULL,
+           rotate_marked_at   = NULL
          RETURNING generation`,
         [org, surfaceKey, newToken, at, at],
       );
       const generation = Number((rows as { generation: number | string }[])[0].generation);
-      return { org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0, inputTokensTotal: 0, firstWakeAt: null, lastInputTokens: null };
+      return { org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0, inputTokensTotal: 0, firstWakeAt: null, lastInputTokens: null, rotateMarkedAt: null };
+    },
+
+    async markChannelSessionRotation(org, surfaceKey, at) {
+      const { rows } = await client.query(
+        "UPDATE channel_session SET rotate_marked_at = COALESCE(rotate_marked_at, $3) WHERE org_id = $1 AND surface_key = $2 RETURNING surface_key",
+        [org, surfaceKey, at],
+      );
+      return rows.length > 0;
     },
 
     async touchChannelSession(org, surfaceKey, at) {
@@ -1681,17 +1693,17 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       const { rows } =
         keyPrefix === undefined
           ? await client.query(
-              "SELECT surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens FROM channel_session WHERE org_id = $1",
+              "SELECT surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at FROM channel_session WHERE org_id = $1",
               [org],
             )
           : await client.query(
-              "SELECT surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens FROM channel_session WHERE org_id = $1 AND surface_key LIKE $2",
+              "SELECT surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at FROM channel_session WHERE org_id = $1 AND surface_key LIKE $2",
               [org, `${keyPrefix}%`],
             );
       return (
         rows as {
           surface_key: string; token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number;
-          input_tokens_total: string | number | null; first_wake_at: string | null; last_input_tokens: string | number | null;
+          input_tokens_total: string | number | null; first_wake_at: string | null; last_input_tokens: string | number | null; rotate_marked_at: string | null;
         }[]
       ).map((r) => ({
         org, surfaceKey: r.surface_key, token: r.token, generation: Number(r.generation), createdAt: r.created_at,
@@ -1699,6 +1711,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         inputTokensTotal: r.input_tokens_total == null ? null : Number(r.input_tokens_total),
         firstWakeAt: r.first_wake_at ?? null,
         lastInputTokens: r.last_input_tokens == null ? null : Number(r.last_input_tokens),
+        rotateMarkedAt: r.rotate_marked_at ?? null,
       }));
     },
 
