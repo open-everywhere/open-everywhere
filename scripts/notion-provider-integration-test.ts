@@ -117,6 +117,7 @@ ok(slackArmed !== null && slackArmed.description === notionArmed!.description, "
 calls = [];
 notionResponse = { status: 200, body: { id: "notion-comment-42" } };
 fakeHttp();
+try {
 await inSession(async () => {
   const armed = armReply(reply, notionCtx("disc-1"))!;
   const res = await armed.execute({ text: "notion answer" }, notionCtx("disc-1"));
@@ -128,7 +129,9 @@ await inSession(async () => {
   const audit = await readAudit({ org: "default", action: "reply.post" });
   ok(audit.some((r) => r.detail?.platform === "notion" && r.detail?.id === "notion-comment-42"), "reply: audits a reply.post row stamped platform=notion");
 });
-restoreHttp();
+} finally {
+  restoreHttp();
+}
 
 {
   const rawText = "the fix is in";
@@ -137,12 +140,15 @@ restoreHttp();
   calls = [];
   notionResponse = { status: 200, body: { id: "notion-comment-508" } };
   fakeHttp();
-  await inSession(async () => {
-    const ctx = notionCtx("disc-508", undefined, { taskLabel: "review PR" });
-    const armed = armReply(reply, ctx)!;
-    await armed.execute({ text: rawText }, ctx);
-  });
-  restoreHttp();
+  try {
+    await inSession(async () => {
+      const ctx = notionCtx("disc-508", undefined, { taskLabel: "review PR" });
+      const armed = armReply(reply, ctx)!;
+      await armed.execute({ text: rawText }, ctx);
+    });
+  } finally {
+    restoreHttp();
+  }
   {
     const payload = JSON.parse(calls[0]!.body) as { rich_text?: Array<{ text?: { content?: string } }> };
     ok(payload.rich_text?.[0]?.text?.content === expectedText, "🔴 OPE-508: a task-grain worker's reply carries the bracket prefix in the posted body");
@@ -156,12 +162,15 @@ restoreHttp();
   calls = [];
   notionResponse = { status: 200, body: { id: "notion-comment-508-bare" } };
   fakeHttp();
-  await inSession(async () => {
-    const ctx = notionCtx("disc-508-bare");
-    const armed = armReply(reply, ctx)!;
-    await armed.execute({ text: rawText }, ctx);
-  });
-  restoreHttp();
+  try {
+    await inSession(async () => {
+      const ctx = notionCtx("disc-508-bare");
+      const armed = armReply(reply, ctx)!;
+      await armed.execute({ text: rawText }, ctx);
+    });
+  } finally {
+    restoreHttp();
+  }
   {
     const payload = JSON.parse(calls[0]!.body) as { rich_text?: Array<{ text?: { content?: string } }> };
     ok(payload.rich_text?.[0]?.text?.content === rawText, "OPE-508 negative control: a non-worker (no oe_grain=task) reply is NOT bracketed");
@@ -225,6 +234,7 @@ await inSession(async () => {
     if (method === "POST" && url.endsWith("/v1/comments")) { posts.push(String(init.body ?? "")); return R({ id: "reply-1" }); }
     return R({ error: "unexpected host" }, 500);
   }) as typeof fetch;
+  try {
 
   let sendCalled = false;
   const args = () => ({
@@ -271,7 +281,9 @@ await inSession(async () => {
   provider.registerOperationalStore(live);
   provider.resetOperationalStore();
 
-  globalThis.fetch = realFetch;
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 }
 
 {

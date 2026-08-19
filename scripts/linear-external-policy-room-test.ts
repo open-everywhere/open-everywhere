@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
 import { readAudit, resolvePartition, defineSurface, registerSurfaces, _resetSurfacesForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import type { Domain } from "@open-everywhere/core/agent/memory/domain.js";
 
@@ -27,20 +28,14 @@ interface FetchCall {
   readonly body: string;
 }
 let calls: FetchCall[] = [];
-const realFetch = globalThis.fetch;
 const resp = (status: number, body: unknown): Response =>
   ({ ok: status >= 200 && status < 300, status, json: async () => body, text: async () => JSON.stringify(body) }) as unknown as Response;
-function fakeHttp(): void {
-  globalThis.fetch = (async (url: unknown, init: { body?: unknown }) => {
-    const u = String(url);
-    calls.push({ url: u, body: String(init?.body ?? "") });
-    if (u.includes("api.linear.app")) return resp(200, { data: { agentActivityCreate: { success: true, agentActivity: { id: "act-1" } } } });
-    return resp(500, { error: "unexpected host" });
-  }) as typeof fetch;
-}
-function restoreHttp(): void {
-  globalThis.fetch = realFetch;
-}
+const fakeLinearHttp = (async (url: unknown, init: { body?: unknown }) => {
+  const u = String(url);
+  calls.push({ url: u, body: String(init?.body ?? "") });
+  if (u.includes("api.linear.app")) return resp(200, { data: { agentActivityCreate: { success: true, agentActivity: { id: "act-1" } } } });
+  return resp(500, { error: "unexpected host" });
+}) as typeof fetch;
 
 const ORG = "orglin";
 const bindableOf = (teamId: string) => ({
@@ -74,7 +69,7 @@ registerConfig({
   loadDomains: () => SILENT_DOMAINS, loadSilos: () => [], domainsForSurface: () => [],
 });
 
-fakeHttp();
+await withPatchedFetch(fakeLinearHttp, async () => {
 const silenced = await drive("public-team", "as-silenced");
 ok(silenced.res === null, "room grain: a declared-public team under `silent` SILENTLY DROPS the native mention (returns null)");
 ok(
@@ -107,7 +102,7 @@ ok(
   "room grain: the SAME declared-public team DISPATCHES under the shipped `engage` default (negative control — an upgrade changes nothing)",
 );
 
-restoreHttp();
+});
 _resetSurfacesForTest();
 rmSync(dir, { recursive: true, force: true });
 console.log(`\n✓ linear-external-policy-room: ${n} assertions passed (silent close + audit on a declared-public team, undeclared-team and shipped-default negative controls)`);

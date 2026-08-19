@@ -273,6 +273,7 @@ const routineCtx = (): BindableContext =>
       json: async () => ({ html_url: "https://github.com/acme/web/pull/42", title: "Add widget", state: "open", merged: false, draft: false, updated_at: "2026-07-08T10:00:00Z" }),
     };
   }) as typeof fetch;
+  try {
 
   const res = (await checkPrStatusTool.execute({ repo: "acme/web", number: 42 }, ctx() as never)) as { state: string; summary: string };
   ok(res.state === "open" && res.summary.startsWith("OPEN"), "check_pr_status: returns the live status via the GITHUB_TOKEN PAT fallback");
@@ -284,7 +285,9 @@ const routineCtx = (): BindableContext =>
   );
   n++;
 
-  globalThis.fetch = originalFetch;
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 {
@@ -298,6 +301,7 @@ const routineCtx = (): BindableContext =>
     updated_at: "2026-07-08T10:00:00Z",
   };
   globalThis.fetch = (async () => ({ ok: true, status: 200, text: async () => "", json: async () => prJson })) as unknown as typeof fetch;
+  try {
 
   const p = resolvePartition(ctx());
   ok((await listRoutines(p)).length === 0, "subscribe_pr: no routines exist yet on this surface");
@@ -347,7 +351,9 @@ const routineCtx = (): BindableContext =>
   ok(res3.status.includes("settled, nothing left to watch") && res3.stopReason === "settled", "subscribe_pr: reports why nothing was created");
   ok((await listRoutines(p)).length === 2, "subscribe_pr: the settled-PR call added no new routine");
 
-  globalThis.fetch = originalFetch;
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 {
@@ -361,6 +367,7 @@ const routineCtx = (): BindableContext =>
     updated_at: "2026-07-09T09:00:00Z",
   };
   globalThis.fetch = (async () => ({ ok: true, status: 200, text: async () => "", json: async () => prJson })) as unknown as typeof fetch;
+  try {
 
   const rctx = routineCtx();
   ok(principalIdOf(rctx) === undefined, "regression: a routine-fired ctx resolves NO principal (matches dispatch.ts)");
@@ -385,7 +392,9 @@ const routineCtx = (): BindableContext =>
   ok(res2.subscribed === false && res2.routineId === undefined, "regression: a settled PR arms nothing on a fired turn (chain self-terminates)");
   ok((await listRoutines(p)).length === settledBefore, "regression: no routine added for a settled PR");
 
-  globalThis.fetch = originalFetch;
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 {
@@ -400,6 +409,7 @@ const routineCtx = (): BindableContext =>
     comments: 0,
   };
   globalThis.fetch = (async () => ({ ok: true, status: 200, text: async () => "", json: async () => prJson })) as unknown as typeof fetch;
+  try {
 
   const p = resolvePartition(ctx());
   const firedCtx = async (remaining: number, repo = "acme/web", number = 91): Promise<BindableContext> => {
@@ -472,7 +482,9 @@ const routineCtx = (): BindableContext =>
   const detail = creates[0].detail as { prSubscription?: string; checksRemaining?: number; id?: string };
   ok(detail.prSubscription === "acme/web#91" && typeof detail.checksRemaining === "number" && typeof detail.id === "string", "routine.create audits the subscription ref + remaining budget, ids/refs only");
 
-  globalThis.fetch = originalFetch;
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 console.log(`\n✓ pr-subscribe: ${n} assertions passed (status + activity fetch, fingerprint diff, re-arm prompt fencing, check_pr_status + subscribe_pr tools, once-routine persistence, settled + cap short-circuits, audit rows)\n`);

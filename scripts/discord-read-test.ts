@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
 import {
   READ_ADAPTERS,
   supportedReadPlatforms,
@@ -179,81 +180,79 @@ const engCtx = discordCtx({ userId: "U-ALICE", guildId: GUILD, channelId: CHAN_E
 {
   const savedToken = process.env.DISCORD_BOT_TOKEN;
   process.env.DISCORD_BOT_TOKEN = "test-bot-token";
-  const originalFetch = globalThis.fetch;
-  const calls: Array<{ url: string; headers: Record<string, string> }> = [];
-  globalThis.fetch = (async (url: string, init?: RequestInit) => {
-    calls.push({ url, headers: (init?.headers ?? {}) as Record<string, string> });
-    return { ok: true, status: 200, json: async () => [] } as unknown as Response;
-  }) as unknown as typeof fetch;
+  try {
+    const calls: Array<{ url: string; headers: Record<string, string> }> = [];
+    await withPatchedFetch((async (url: string, init?: RequestInit) => {
+      calls.push({ url, headers: (init?.headers ?? {}) as Record<string, string> });
+      return { ok: true, status: 200, json: async () => [] } as unknown as Response;
+    }) as unknown as typeof fetch, async () => {
+      await discordReadAdapter.readChannel(engCtx, CHAN_ENG, 500);
+    });
 
-  await discordReadAdapter.readChannel(engCtx, CHAN_ENG, 500);
-
-  ok(calls.length === 1, "live requester: exactly one fetch call");
-  ok(calls[0].url === `https://discord.com/api/v10/channels/${CHAN_ENG}/messages?limit=100`, "live requester: builds the exact Discord REST URL, limit CLAMPED to DISCORD_MAX_PAGE (100)");
-  ok(calls[0].headers.authorization === "Bot test-bot-token", "live requester: sends `Bot <token>` on the SAME DISCORD_BOT_TOKEN the reply-post path uses");
-
-  globalThis.fetch = originalFetch;
-  if (savedToken !== undefined) process.env.DISCORD_BOT_TOKEN = savedToken;
-  else delete process.env.DISCORD_BOT_TOKEN;
+    ok(calls.length === 1, "live requester: exactly one fetch call");
+    ok(calls[0].url === `https://discord.com/api/v10/channels/${CHAN_ENG}/messages?limit=100`, "live requester: builds the exact Discord REST URL, limit CLAMPED to DISCORD_MAX_PAGE (100)");
+    ok(calls[0].headers.authorization === "Bot test-bot-token", "live requester: sends `Bot <token>` on the SAME DISCORD_BOT_TOKEN the reply-post path uses");
+  } finally {
+    if (savedToken !== undefined) process.env.DISCORD_BOT_TOKEN = savedToken;
+    else delete process.env.DISCORD_BOT_TOKEN;
+  }
 }
 
 {
   const savedToken = process.env.DISCORD_BOT_TOKEN;
   process.env.DISCORD_BOT_TOKEN = "test-bot-token";
-  const originalFetch = globalThis.fetch;
-  const calls: string[] = [];
-  globalThis.fetch = (async (url: string) => {
-    calls.push(url);
-    return { ok: true, status: 200, json: async () => [] } as unknown as Response;
-  }) as unknown as typeof fetch;
+  try {
+    const calls: string[] = [];
+    await withPatchedFetch((async (url: string) => {
+      calls.push(url);
+      return { ok: true, status: 200, json: async () => [] } as unknown as Response;
+    }) as unknown as typeof fetch, () => discordReadAdapter.readThread(engCtx, CHAN_ENG, THREAD_ENG, 30));
 
-  await discordReadAdapter.readThread(engCtx, CHAN_ENG, THREAD_ENG, 30);
-
-  ok(calls[0] === `https://discord.com/api/v10/channels/${THREAD_ENG}/messages?limit=30`, "live requester (thread): URL targets the thread's own channel id, not `channel`");
-
-  globalThis.fetch = originalFetch;
-  if (savedToken !== undefined) process.env.DISCORD_BOT_TOKEN = savedToken;
-  else delete process.env.DISCORD_BOT_TOKEN;
+    ok(calls[0] === `https://discord.com/api/v10/channels/${THREAD_ENG}/messages?limit=30`, "live requester (thread): URL targets the thread's own channel id, not `channel`");
+  } finally {
+    if (savedToken !== undefined) process.env.DISCORD_BOT_TOKEN = savedToken;
+    else delete process.env.DISCORD_BOT_TOKEN;
+  }
 }
 
 {
   const savedToken = process.env.DISCORD_BOT_TOKEN;
   process.env.DISCORD_BOT_TOKEN = "test-bot-token";
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async () => ({ ok: false, status: 403, json: async () => ({}) })) as unknown as typeof fetch;
-
-  await assert.rejects(
-    () => discordReadAdapter.readChannel(engCtx, CHAN_ENG, 50),
-    /read: Discord GET messages failed \(HTTP 403\) for channel C-ENG\./u,
-    "readChannel: a Discord HTTP error propagates (fail loud, matching teamsReadAdapter's posture)",
-  );
-  n++;
-
-  globalThis.fetch = originalFetch;
-  if (savedToken !== undefined) process.env.DISCORD_BOT_TOKEN = savedToken;
-  else delete process.env.DISCORD_BOT_TOKEN;
+  try {
+    await withPatchedFetch((async () => ({ ok: false, status: 403, json: async () => ({}) })) as unknown as typeof fetch, async () => {
+      await assert.rejects(
+        () => discordReadAdapter.readChannel(engCtx, CHAN_ENG, 50),
+        /read: Discord GET messages failed \(HTTP 403\) for channel C-ENG\./u,
+        "readChannel: a Discord HTTP error propagates (fail loud, matching teamsReadAdapter's posture)",
+      );
+    });
+    n++;
+  } finally {
+    if (savedToken !== undefined) process.env.DISCORD_BOT_TOKEN = savedToken;
+    else delete process.env.DISCORD_BOT_TOKEN;
+  }
 }
 
 {
   const savedToken = process.env.DISCORD_BOT_TOKEN;
   delete process.env.DISCORD_BOT_TOKEN;
-  const originalFetch = globalThis.fetch;
-  let fetchCalled = false;
-  globalThis.fetch = (async () => {
-    fetchCalled = true;
-    return { ok: true, status: 200, json: async () => [] } as unknown as Response;
-  }) as unknown as typeof fetch;
-
-  await assert.rejects(
-    () => discordReadAdapter.readChannel(engCtx, CHAN_ENG, 50),
-    /DISCORD_BOT_TOKEN is not set — the Discord read tools need the bot token\./u,
-    "readChannel: the DEFAULT (live) requester fails loud on a missing bot token before any network call",
-  );
-  n++;
-  ok(!fetchCalled, "readChannel: no fetch call was made when the token is missing");
-
-  globalThis.fetch = originalFetch;
-  if (savedToken !== undefined) process.env.DISCORD_BOT_TOKEN = savedToken;
+  try {
+    let fetchCalled = false;
+    await withPatchedFetch((async () => {
+      fetchCalled = true;
+      return { ok: true, status: 200, json: async () => [] } as unknown as Response;
+    }) as unknown as typeof fetch, async () => {
+      await assert.rejects(
+        () => discordReadAdapter.readChannel(engCtx, CHAN_ENG, 50),
+        /DISCORD_BOT_TOKEN is not set — the Discord read tools need the bot token\./u,
+        "readChannel: the DEFAULT (live) requester fails loud on a missing bot token before any network call",
+      );
+    });
+    n++;
+    ok(!fetchCalled, "readChannel: no fetch call was made when the token is missing");
+  } finally {
+    if (savedToken !== undefined) process.env.DISCORD_BOT_TOKEN = savedToken;
+  }
 }
 
 {

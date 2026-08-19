@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { fetchWorkspaceRoster, _resetWorkspaceRosterCache } from "../agent/channels/slack-events.js";
+import { withPatchedFetch } from "./_fetch-test-utils.js";
 
 process.env["SLACK_BOT_TOKEN"] = "xoxb-test-roster";
 
@@ -15,8 +16,7 @@ let calls = 0;
 let pages: { members: Member[]; next?: string }[] = [];
 let failWith: string | undefined;
 
-const realFetch = globalThis.fetch;
-globalThis.fetch = (async (input: unknown, init?: { body?: unknown }) => {
+const fakeUsersList = (async (input: unknown, init?: { body?: unknown }) => {
   const url = input instanceof URL ? input : new URL(String(input));
   const op = url.pathname.split("/").pop() ?? "";
   const respond = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
@@ -28,6 +28,8 @@ globalThis.fetch = (async (input: unknown, init?: { body?: unknown }) => {
   const page = pages[index] ?? { members: [] };
   return respond({ ok: true, members: page.members, response_metadata: { next_cursor: page.next ?? "" } });
 }) as typeof fetch;
+
+await withPatchedFetch(fakeUsersList, async () => {
 
 function fresh(next: { pages?: typeof pages; failWith?: string }): void {
   _resetWorkspaceRosterCache();
@@ -108,5 +110,5 @@ function fresh(next: { pages?: typeof pages; failWith?: string }): void {
   ok(calls === 2, "failure: a successful-but-empty roster is not cached either — only a non-empty answer is a fact worth holding");
 }
 
-globalThis.fetch = realFetch;
+});
 console.log(`✓ slack-workspace-roster: ${n} assertions (paged walk + non-human filtering, the TTL memo and its concurrency collapse, failure never cached)`);

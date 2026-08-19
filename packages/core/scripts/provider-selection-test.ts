@@ -63,6 +63,7 @@ ok(isProviderSelected("alpha") === false, "empty declaration selects nothing");
 
 declareProviderSelection(["alpha"]);
 muteWarnings();
+try {
 
 const armFor = (platform: string): PostArm => ({ platform, resolveTarget: () => undefined, dispatchReply: async () => false } as unknown as PostArm);
 const readerFor = (platform: string): ReadAdapter => ({ platform, read: async () => [] } as unknown as ReadAdapter);
@@ -80,7 +81,9 @@ registerRoutineDispatch("delta", { resolveTarget: () => undefined } as never);
 registerNativeAdminCheck("alpha", async () => true);
 registerNativeAdminCheck("delta", async () => true);
 
-restoreWarnings();
+} finally {
+  restoreWarnings();
+}
 
 ok(capabilitiesForPlatform("alpha").midTurnPost === true, "selected: the capability manifest took");
 ok(capabilitiesForPlatform("delta").midTurnPost === false, "UNSELECTED: no manifest row ⇒ the all-false fail-closed default");
@@ -110,10 +113,13 @@ ok(
 );
 
 muteWarnings();
+try {
 ok(admitInboundSurface("alpha") === true, "inbound: a selected surface is admitted");
 ok(admitInboundSurface("delta") === false, "inbound: an UNSELECTED surface is refused");
 ok(admitInboundSurface("delta") === false, "inbound: still refused on a repeat");
-restoreWarnings();
+} finally {
+  restoreWarnings();
+}
 ok(
   warnings.filter((w) => w.includes("REFUSED an inbound wake")).length === 1,
   "inbound: the warning is deduped per provider (one loud line, not one per event)",
@@ -122,8 +128,11 @@ ok(
 clearProviderSelection();
 admitProviderRegistration("early", "entity-action-adapter");
 muteWarnings();
+try {
 declareProviderSelection(["alpha"]);
-restoreWarnings();
+} finally {
+  restoreWarnings();
+}
 ok(
   warnings.some((w) => w.includes('"early"') && w.includes("BEFORE the selection was declared")),
   "ordering: a pre-declaration row for an unselected provider is reported as unretractable",
@@ -131,8 +140,11 @@ ok(
 clearProviderSelection();
 admitProviderRegistration("alpha", "entity-action-adapter");
 muteWarnings();
+try {
 declareProviderSelection(["alpha"]);
-restoreWarnings();
+} finally {
+  restoreWarnings();
+}
 ok(warnings.length === 0, "ordering: a pre-declaration row for a SELECTED provider is normal ESM order, and silent");
 
 clearProviderSelection();

@@ -209,6 +209,7 @@ ok(armReply(reply, { channel: { kind: "local" } }) === null, "reply is hidden on
 calls = [];
 slackResponse = { ok: true, ts: "222.333" };
 fakeHttp();
+try {
 await inSession(async () => {
   const armed = armReply(reply, slackCtx("C1", "111.222"))!;
   const res = await armed.execute({ text: "here's the answer" }, slackCtx("C1", "111.222"));
@@ -225,7 +226,9 @@ await inSession(async () => {
   ok(audit.length === 1 && audit[0]?.detail?.id === "222.333" && audit[0]?.detail?.platform === "slack", "reply: audits one reply.post row with id + platform");
   ok(audit[0]?.detail?.route === "tool" && audit[0]?.detail?.chars === 17, "reply: the choke-point reply.post row carries route:\"tool\" + chars (single owner, no tool-layer duplicate)");
 });
-restoreHttp();
+} finally {
+  restoreHttp();
+}
 
 ok(isBareStop({ kind: "silent", reason: "empty final message" }, false) === true, "isBareStop: an empty completion with no action IS a bare stop");
 {
@@ -236,6 +239,7 @@ ok(isBareStop({ kind: "silent", reason: "empty final message" }, false) === true
 calls = [];
 discordResponse = { status: 200, body: { id: "d-42" } };
 fakeHttp();
+try {
 await inSession(async () => {
   const armed = armReply(reply, discordCtx("D1"))!;
   const res = await armed.execute({ text: "discord answer" }, discordCtx("D1"));
@@ -243,18 +247,23 @@ await inSession(async () => {
   ok(calls.length === 1 && calls[0].method === "POST" && calls[0].url.includes("/channels/D1/messages"), "reply: on Discord POSTs to /channels/{id}/messages");
   ok(calls[0].body.includes("discord answer"), "reply: Discord body carries the content");
 });
-restoreHttp();
+} finally {
+  restoreHttp();
+}
 
 calls = [];
 slackResponse = { ok: false, error: "channel_not_found" };
 fakeHttp();
+try {
 await inSession(async () => {
   const armed = armReply(reply, slackCtx("C1", "111.222"))!;
   await assert.rejects(() => armed.execute({ text: "x" }, slackCtx("C1", "111.222")), /channel_not_found/, "reply: a Slack API error surfaces as a real tool error");
   n++;
   ok(consumeRepliedThisTurn("t1") === false, "reply: a failed post never marks the signal");
 });
-restoreHttp();
+} finally {
+  restoreHttp();
+}
 
 {
   const supervisorCtx = { channel: { kind: "slack", continuationToken: "oe-sup:g3" } };

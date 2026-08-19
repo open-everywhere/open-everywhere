@@ -2,6 +2,7 @@ import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
 import { loadBindings, loadBundles } from "../agent/access/bundles.js";
 import { loadConnectorCredentials } from "../agent/access/connector-credentials.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
@@ -191,22 +192,22 @@ const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-notion-skill-"));
 const scriptPath = join(tmp, "notion.mjs");
 writeFileSync(scriptPath, NOTION_SCRIPT_SOURCE, "utf-8");
 
-const originalFetch = globalThis.fetch;
 let fetchCalls = 0;
-globalThis.fetch = async (...args: unknown[]) => {
-  fetchCalls++;
-  throw new Error(`unexpected network call during import: ${JSON.stringify(args)}`);
-};
-
-const mod = (await import(pathToFileURL(scriptPath).href)) as {
-  titleOf(pageOrDb: unknown): string;
-  formatSearchResults(json: unknown): string;
-  formatBlocks(json: unknown): string;
-  buildAppendRequest(blockId: string, text: string): { method: string; path: string; body: unknown };
-};
+const mod = await withPatchedFetch(
+  async (...args: unknown[]) => {
+    fetchCalls++;
+    throw new Error(`unexpected network call during import: ${JSON.stringify(args)}`);
+  },
+  () =>
+    import(pathToFileURL(scriptPath).href) as Promise<{
+      titleOf(pageOrDb: unknown): string;
+      formatSearchResults(json: unknown): string;
+      formatBlocks(json: unknown): string;
+      buildAppendRequest(blockId: string, text: string): { method: string; path: string; body: unknown };
+    }>,
+);
 ok(fetchCalls === 0, "importing the skill script does not fire a network call (isMain guard holds)");
 
-globalThis.fetch = originalFetch;
 rmSync(tmp, { recursive: true, force: true });
 
 ok(

@@ -216,6 +216,7 @@ setBlobPutter(undefined);
 
 calls = [];
 fakeNet();
+try {
 await inSession(async () => {
   const res = await postFile.execute(
     { files: [{ source: { path: "shot.png" }, filename: "shot.png", caption: "the screenshot" }], comment: "here you go" },
@@ -240,10 +241,13 @@ await inSession(async () => {
   ok(audit.length === 1, "post_file(slack): audits exactly one slack.post_file row");
   ok(audit[0]?.detail?.count === 1 && Array.isArray(audit[0]?.detail?.filenames), "post_file(slack): audit row carries count + filenames");
 });
-restoreFetch();
+} finally {
+  restoreFetch();
+}
 
 calls = [];
 fakeNet();
+try {
 await inSession(async () => {
   const res = await postFile.execute(
     { files: [{ source: { path: "shot.png" }, filename: "shot.png" }], comment: "look" },
@@ -260,7 +264,9 @@ await inSession(async () => {
   const audit = await readAudit({ org: "default", action: "discord.post_file" });
   ok(audit.length === 1, "post_file(discord): audits exactly one discord.post_file row");
 });
-restoreFetch();
+} finally {
+  restoreFetch();
+}
 
 calls = [];
 registerBlobConfig(false);
@@ -268,6 +274,7 @@ setBlobPutter(async () => {
   throw new Error("blob putter must NOT be called when the org has not opted in");
 });
 fakeNet();
+try {
 await inSession(async () => {
   const res = await postFile.execute(
     { files: [{ source: { path: "page.html" }, filename: "page.html" }], comment: "the page" },
@@ -280,7 +287,9 @@ await inSession(async () => {
   ok(!calls.some((c) => c.url.endsWith("/api/chat.postMessage")), "post_file(html, opt-out): no link message posted (nothing hosted)");
   ok((await approvalOf({ toolInput: { files: [{ source: { path: "page.html" }, filename: "page.html" }] } })) === "not-applicable", "approval(html, opt-out): not-applicable (attach path is ungated)");
 });
-restoreFetch();
+} finally {
+  restoreFetch();
+}
 setBlobPutter(undefined);
 
 calls = [];
@@ -292,6 +301,7 @@ setBlobPutter(async (args: { pathname: string; body: Uint8Array; contentType: st
   return { url: BLOB_URL };
 });
 fakeNet();
+try {
 await inSession(async () => {
   const res = await postFile.execute(
     { files: [{ source: { path: "page.html" }, filename: "page.html" }], comment: "rendered page" },
@@ -310,7 +320,9 @@ await inSession(async () => {
   const newest = (await readAudit({ org: "default", action: "slack.post_file" }))[0];
   ok(newest?.detail?.hosted === 1 && newest?.detail?.attached === 0, "post_file(html, opt-in): audit row records hosted=1, attached=0");
 });
-restoreFetch();
+} finally {
+  restoreFetch();
+}
 setBlobPutter(undefined);
 
 calls = [];
@@ -319,6 +331,7 @@ setBlobPutter(async () => {
   throw new Error("blob store exploded");
 });
 fakeNet();
+try {
 await inSession(async () => {
   await assert.rejects(
     () => postFile.execute({ files: [{ source: { path: "page.html" }, filename: "page.html" }] }, slackCtx("111.222")),
@@ -327,7 +340,9 @@ await inSession(async () => {
   );
   ok(!calls.some((c) => c.url.endsWith("/api/files.getUploadURLExternal")), "post_file(html, opt-in, write fails): did not silently fall back to a raw upload");
 });
-restoreFetch();
+} finally {
+  restoreFetch();
+}
 setBlobPutter(undefined);
 registerBlobConfig(false);
 

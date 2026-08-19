@@ -71,6 +71,7 @@ globalThis.fetch = (async () => {
   cardPosts++;
   return { ok: true, status: 200, json: async () => ({ ok: true, ts: "1700000000.0001" }) };
 }) as unknown as typeof fetch;
+try {
 
 {
   const res = await createSkill.execute({ name: "fast-runbook", content: "# Fast\nDo it." }, ctxFast);
@@ -140,4 +141,6 @@ globalThis.fetch = (async () => {
 
 console.log(`✓ auto-approved-reply: ${passed} assertions — two real tools replying under a config-lowered verb (named element, no card claim, the kind's own outcome, the mutation actually applied), the unchanged ask-path control, the helper's shape, and the all-propose-tools sweep`);
 rmSync(tmp, { recursive: true, force: true });
-globalThis.fetch = realFetch;
+} finally {
+  globalThis.fetch = realFetch;
+}

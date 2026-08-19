@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -36,7 +37,7 @@ let messageGetCalls = 0;
 type StubRes = { ok: boolean; status: number; json: () => Promise<unknown> };
 const res = (status: number, body: unknown): StubRes => ({ ok: status >= 200 && status < 300, status, json: async () => body });
 
-globalThis.fetch = (async (input: unknown, init?: { method?: string; body?: string }): Promise<unknown> => {
+const fakeDiscordFetch = (async (input: unknown, init?: { method?: string; body?: string }): Promise<unknown> => {
   const url = new URL(String(input));
   const method = (init?.method ?? "GET").toUpperCase();
   const path = url.pathname.replace(/^\/api\/v\d+/, "");
@@ -71,6 +72,8 @@ globalThis.fetch = (async (input: unknown, init?: { method?: string; body?: stri
   }
   return res(404, {});
 }) as unknown as typeof fetch;
+
+await withPatchedFetch(fakeDiscordFetch, async () => {
 
 messageHome.set(TRIGGER_MESSAGE, BASE_CHANNEL);
 
@@ -247,4 +250,5 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
   ok((await rowsFor("reply.edit", w)).length === 0, "§4/AUDIT: and NO `reply.edit` row — nothing changed");
 }
 
+});
 console.log(`✓ discord edit locus (OPE-798): ${passed} assertions`);

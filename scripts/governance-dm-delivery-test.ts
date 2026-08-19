@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
 import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
 registerSlackProvider();
 
@@ -22,9 +23,8 @@ interface Call {
 const calls: Call[] = [];
 let openResponse: Record<string, unknown> = { ok: true, channel: { id: "D_ROWAN" } };
 let postResponse: Record<string, unknown> = { ok: true, ts: "1712.5000" };
-const realFetch = globalThis.fetch;
 const resp = (body: unknown): Response => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }) as unknown as Response;
-globalThis.fetch = (async (url: unknown, init: { body?: unknown }) => {
+const fakeSlackHttp = (async (url: unknown, init: { body?: unknown }) => {
   const u = String(url);
   const body = init?.body instanceof URLSearchParams ? init.body.toString() : String(init?.body ?? "");
   const method = u.split("/api/")[1] ?? u;
@@ -33,6 +33,8 @@ globalThis.fetch = (async (url: unknown, init: { body?: unknown }) => {
   if (method === "chat.postMessage") return resp(postResponse);
   return resp({ ok: false, error: "unexpected_method" });
 }) as typeof fetch;
+
+await withPatchedFetch(fakeSlackHttp, async () => {
 
 ok(canDeliverDirectMessage("slack"), "the slack post arm declares DM-delivery support");
 ok(directMessageCapablePlatforms().includes("slack"), "slack is listed among the DM-capable platforms");
@@ -87,5 +89,5 @@ await assert.rejects(
 );
 n++;
 
-globalThis.fetch = realFetch;
+});
 console.log(`\n✓ governance DM delivery: ${n} assertions passed (OPE-44 slack conversations.open + chat.postMessage arm)\n`);

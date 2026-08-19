@@ -122,6 +122,7 @@ ok(slackArmed !== null && slackArmed.description === teamsArmed!.description, "r
 calls = [];
 teamsResponse = { status: 200, body: { id: "teams-activity-1" } };
 fakeHttp();
+try {
 await inSession(async () => {
   const armed = armReply(reply, teamsCtx("conv-1"))!;
   const res = await armed.execute({ text: "teams answer" }, teamsCtx("conv-1"));
@@ -146,7 +147,9 @@ await inSession(async () => {
   ok(!refusal.includes("evil.example"), "reply/T4: …with a host-free error (never echo the attacker-supplied endpoint)");
   ok(calls.length === before, "reply/T4: …and NOTHING was sent — not even the token mint (the check runs before the transport)");
 });
-restoreHttp();
+} finally {
+  restoreHttp();
+}
 
 {
   process.env.OE_EGRESS_SPOOF = "1";

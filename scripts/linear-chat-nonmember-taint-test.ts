@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
 import {
   OE_CHAT_NONMEMBER_ATTR,
   defineSurface,
@@ -28,10 +29,9 @@ const ok = (cond: boolean, label: string) => {
 };
 
 let guestAnswer: boolean | undefined;
-const realFetch = globalThis.fetch;
 const resp = (status: number, body: unknown): Response =>
   ({ ok: status >= 200 && status < 300, status, json: async () => body, text: async () => JSON.stringify(body) }) as unknown as Response;
-globalThis.fetch = (async (url: unknown, init: { body?: unknown }) => {
+const fakeLinearGraphQL = (async (url: unknown, init: { body?: unknown }) => {
   const u = String(url);
   const body = String(init?.body ?? "");
   if (!u.includes("api.linear.app")) return resp(500, { error: "unexpected host" });
@@ -40,6 +40,8 @@ globalThis.fetch = (async (url: unknown, init: { body?: unknown }) => {
   }
   return resp(200, { data: { agentActivityCreate: { success: true, agentActivity: { id: "act-1" } } } });
 }) as typeof fetch;
+
+await withPatchedFetch(fakeLinearGraphQL, async () => {
 
 const ORG = "taintorg";
 const TEAM = "taint-team";
@@ -114,7 +116,7 @@ ok(
   "room leg: an `internal` declaration does NOT cancel the author leg — a GUEST on an internal team still marks",
 );
 
-globalThis.fetch = realFetch;
+});
 _resetSurfacesForTest();
 rmSync(dir, { recursive: true, force: true });
 console.log(`\n✓ linear-chat-nonmember-taint: ${n} assertions passed (author leg + room leg on the REAL ingress handler, with member/unresolved/internal-room negative controls)`);

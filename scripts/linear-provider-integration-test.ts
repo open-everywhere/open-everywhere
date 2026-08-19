@@ -147,6 +147,7 @@ ok(slackArmed !== null && slackArmed.description === linearArmed!.description, "
 calls = [];
 linearResponse = { status: 200, body: { data: { agentActivityCreate: { success: true, agentActivity: { id: "linear-act-42" } } } } };
 fakeHttp();
+try {
 await inSession(async () => {
   const armed = armReply(reply, linearCtx("as-1"))!;
   const res = await armed.execute({ text: "linear answer" }, linearCtx("as-1"));
@@ -159,7 +160,9 @@ await inSession(async () => {
   const audit = await readAudit({ org: "default", action: "reply.post" });
   ok(audit.some((r) => r.detail?.platform === "linear" && r.detail?.id === "linear-act-42"), "reply: audits a reply.post row stamped platform=linear");
 });
-restoreHttp();
+} finally {
+  restoreHttp();
+}
 
 await inSession(async () => {
   const armed = armReply(reply, linearCtx(undefined))!;
@@ -204,6 +207,7 @@ await inSession(async () => {
   await recordSpend(overPart as never, { period: periodOf(new Date().toISOString()), usage: { inputTokens: 100, outputTokens: 100 } });
 
   fakeHttp();
+  try {
   const over = await drive("TEAMCAP", "as-cap");
   ok(over.res === null, "spend-gate: an over-budget linear mention DECLINES the turn (returns null)");
   ok(over.posted.some((b) => b.includes(overPart.surfaceKey) && b.includes("\"error\"")), "spend-gate: the decline posts a VISIBLE terminal error activity naming the surface scope key");
@@ -223,7 +227,9 @@ await inSession(async () => {
   ok(failOpen.res !== null && (failOpen.res as { auth?: unknown }).auth !== undefined, "spend-gate: a THROWN linear budget check fails OPEN (over-budget scope still dispatches)");
   provider.registerOperationalStore(live);
   provider.resetOperationalStore();
-  restoreHttp();
+  } finally {
+    restoreHttp();
+  }
 }
 
 console.log(`\n✓ linear-provider-integration: ${n} assertions passed (manifest row, entity-action totality + refusal, reply gate, target, execute + audit, no-anchor throw, attended-mention spend gate)`);

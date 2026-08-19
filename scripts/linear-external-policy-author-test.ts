@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
 import { readAudit, resolvePartition, _resetSurfacesForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import type { Domain } from "@open-everywhere/core/agent/memory/domain.js";
 
@@ -30,10 +31,9 @@ let calls: FetchCall[] = [];
 let guestAnswer: boolean | undefined;
 let issueTeamAnswer: { readonly teamId: string; readonly isPrivate: boolean } | undefined;
 const issueTeamQueries = () => calls.filter((c) => c.body.includes("OeIssueTeam")).length;
-const realFetch = globalThis.fetch;
 const resp = (status: number, body: unknown): Response =>
   ({ ok: status >= 200 && status < 300, status, json: async () => body, text: async () => JSON.stringify(body) }) as unknown as Response;
-globalThis.fetch = (async (url: unknown, init: { body?: unknown }) => {
+const fakeLinearGraphQL = (async (url: unknown, init: { body?: unknown }) => {
   const u = String(url);
   const body = String(init?.body ?? "");
   calls.push({ url: u, body });
@@ -48,6 +48,8 @@ globalThis.fetch = (async (url: unknown, init: { body?: unknown }) => {
   }
   return resp(200, { data: { agentActivityCreate: { success: true, agentActivity: { id: "act-1" } } } });
 }) as typeof fetch;
+
+await withPatchedFetch(fakeLinearGraphQL, async () => {
 
 const ORG = "orglin";
 const TEAM = "plain-team";
@@ -281,7 +283,7 @@ ok(
 );
 issueTeamAnswer = undefined;
 
-globalThis.fetch = realFetch;
+});
 _resetSurfacesForTest();
 rmSync(dir, { recursive: true, force: true });
 console.log(`\n✓ linear-external-policy-author: ${n} assertions passed (guest exclusion + guest-present room leg + the roomless author grain + the resolved room key, with member/unresolved/shipped-default negative controls)`);

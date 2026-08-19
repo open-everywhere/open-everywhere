@@ -147,6 +147,7 @@ await inSession(async () => {
 calls = [];
 nextResponse = { ok: true };
 fakeSlack();
+try {
 await inSession(async () => {
   ok(consumeReactedThisTurn() === false, "react-signal: a fresh session starts unreacted");
   const res = await armed.execute({ emoji: "eyes" }, slackCtx("C1", "111.222"));
@@ -162,11 +163,14 @@ await inSession(async () => {
   ok(audit[0]?.detail?.emoji === "eyes" && audit[0]?.detail?.ts === "111.222", "react: audit row carries the emoji + ts");
   ok(audit[0]?.detail?.reason === "ack", "react: audit row carries the decision reason, defaulting to ack when omitted (OPE-40)");
 });
-restoreFetch();
+} finally {
+  restoreFetch();
+}
 
 calls = [];
 nextResponse = { ok: true };
 fakeSlack();
+try {
 await inSession(async () => {
   const before = (await readAudit({ org: "default", action: "slack.react" })).length;
   await armed.execute({ emoji: "eyes", reason: "noise" }, slackCtx("C1", "111.222"));
@@ -174,32 +178,41 @@ await inSession(async () => {
   ok(audit.length === before + 1, "react: an explicit-reason react audits one new row");
   ok(audit.some((r) => r?.detail?.reason === "noise"), "react: an explicit reason=noise is carried into the audit detail");
 });
-restoreFetch();
+} finally {
+  restoreFetch();
+}
 
 calls = [];
 nextResponse = { ok: true };
 fakeSlack();
+try {
 await inSession(async () => {
   const res = await armed.execute({ emoji: "thumbsup", ts: "999.888" }, slackCtx("C1", "111.222"));
   ok(res.ts === "999.888", "react: an explicit ts overrides the triggering message's ts");
   const params = new URLSearchParams(calls[0].body);
   ok(params.get("timestamp") === "999.888", "react: posts the OVERRIDE ts, not the thread root");
 });
-restoreFetch();
+} finally {
+  restoreFetch();
+}
 
 calls = [];
 nextResponse = { ok: false, error: "already_reacted" };
 fakeSlack();
+try {
 await inSession(async () => {
   const res = await armed.execute({ emoji: "eyes" }, slackCtx("C1", "111.222"));
   ok(res.reacted === true, "react: already_reacted resolves as a successful no-op, not a thrown error");
   ok(consumeReactedThisTurn() === true, "react-signal: already_reacted still marks the signal — the model DID choose to react");
 });
-restoreFetch();
+} finally {
+  restoreFetch();
+}
 
 calls = [];
 nextResponse = { ok: false, error: "invalid_name" };
 fakeSlack();
+try {
 await inSession(async () => {
   const before = (await readAudit({ org: "default", action: "slack.react" })).length;
   await assert.rejects(
@@ -212,7 +225,9 @@ await inSession(async () => {
   const after = (await readAudit({ org: "default", action: "slack.react" })).length;
   ok(after === before, "react: a failed react is never audited (row count unchanged)");
 });
-restoreFetch();
+} finally {
+  restoreFetch();
+}
 
 function unifiedCtx(originPlatform: string, extra: Record<string, string> = {}) {
   return {
@@ -248,6 +263,7 @@ await inSession(async () => {
 calls = [];
 nextResponse = { ok: true };
 fakeSlack();
+try {
 await inSession(async () => {
   const res = await unifiedArmed.execute({ emoji: "eyes" }, unifiedCtx("slack", { team_id: "T1", channel_id: "C9", thread_ts: "333.444", channel_type: "channel" }));
   ok(res.reacted === true && res.ts === "333.444", "react: a unified slack-origin turn reacts (origin capability satisfied)");
@@ -255,6 +271,8 @@ await inSession(async () => {
   const params = new URLSearchParams(calls[0].body);
   ok(params.get("channel") === "C9" && params.get("timestamp") === "333.444", "react: the unified turn targets the ORIGIN delivery's channel + ts (per-delivery binding)");
 });
-restoreFetch();
+} finally {
+  restoreFetch();
+}
 
 console.log(`\n✓ react: ${n} assertions passed (gate, validation, execute, react-signal, audit, unified fence)\n`);

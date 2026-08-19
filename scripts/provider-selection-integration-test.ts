@@ -36,9 +36,12 @@ const warnings: string[] = [];
 console.warn = (...args: unknown[]) => {
   warnings.push(args.map(String).join(" "));
 };
-registerNotionProvider();
-registerSlackProvider();
-console.warn = realWarn;
+try {
+  registerNotionProvider();
+  registerSlackProvider();
+} finally {
+  console.warn = realWarn;
+}
 
 ok(capabilitiesForPlatform("notion").midTurnPost === true, "selected notion: its capability manifest row took");
 ok(postArm("notion") !== undefined, "selected notion: its post arm took");

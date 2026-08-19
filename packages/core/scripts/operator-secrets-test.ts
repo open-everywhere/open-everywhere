@@ -133,8 +133,12 @@ function cli(stdin = "") {
   const warned: string[] = [];
   const realWarn = console.warn;
   console.warn = (m?: unknown) => void warned.push(String(m));
-  const fromEnv = await secrets.getOperatorSecret("OE_ONRAMP_PROBE");
-  console.warn = realWarn;
+  let fromEnv: Awaited<ReturnType<typeof secrets.getOperatorSecret>>;
+  try {
+    fromEnv = await secrets.getOperatorSecret("OE_ONRAMP_PROBE");
+  } finally {
+    console.warn = realWarn;
+  }
   ok(fromEnv.source === "env" && fromEnv.value === "on-ramp-value", "resolve: with no stored row, the env var is the migration on-ramp");
   ok(warned.some((w) => w.includes("oe secret set")), "resolve: the env arm says ONCE how to move it into the store");
   ok(!warned.join("\n").includes("on-ramp-value"), "resolve: the notice names the secret, never its value");

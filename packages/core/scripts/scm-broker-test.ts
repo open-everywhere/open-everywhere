@@ -167,6 +167,7 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
       json: async () => ({ token: `tok_${mintCalls.length}`, expires_at: "2026-07-05T00:00:00Z", repositories: [] }),
     };
   }) as typeof fetch;
+  try {
 
   const ctxFor = (getSandbox: () => Promise<unknown>) =>
     ({
@@ -219,12 +220,14 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
   ok(runCallsB.length === 1 && runCallsB[0].includes("http.extraheader"), "checkout_repo (fallback): the clone command carries the in-sandbox token, exactly as before this change");
   ok(mintCalls.length === 1 && mintCalls[0].repositories.length === 1 && mintCalls[0].repositories[0] === "web", "checkout_repo (fallback): mints only the ONE repo being checked out (today's behavior), not the session's union");
 
-  globalThis.fetch = originalFetch;
-  delete process.env.OE_GITHUB_APP_ID;
-  delete process.env.OE_GITHUB_APP_PRIVATE_KEY;
-  delete process.env.OE_GITHUB_APP_SLUG;
-  delete process.env.OE_GITHUB_INSTALLATIONS;
-  resetGitHubApp();
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.OE_GITHUB_APP_ID;
+    delete process.env.OE_GITHUB_APP_PRIVATE_KEY;
+    delete process.env.OE_GITHUB_APP_SLUG;
+    delete process.env.OE_GITHUB_INSTALLATIONS;
+    resetGitHubApp();
+  }
 }
 
 console.log(`\n✓ scm-broker: ${n} assertions passed (union-mint per owner, 500-cap, merge-no-duplicate-github-rule, withBareAllowHost push-window swap, checkoutCommandBrokered, enforcement-state seam, checkout_repo enforced-vs-fallback)\n`);

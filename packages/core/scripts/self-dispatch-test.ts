@@ -375,6 +375,7 @@ globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
 }) as typeof fetch;
 process.env.OE_SPAWN_DISPATCH_SECRET = SECRET;
 process.env.OE_PUBLIC_BASE_URL = "https://self.test";
+try {
 {
   await dispatchTaskWindow({
     token: taskToken,
@@ -490,8 +491,9 @@ process.env.OE_PUBLIC_BASE_URL = "https://self.test";
   ok(buildRedriveReinject(DOMAIN, standingToken, {}) !== null, "warm reinject available with no self-dispatch config");
 
 }
-
-globalThis.fetch = realFetch;
+} finally {
+  globalThis.fetch = realFetch;
+}
 
 console.log("9. hop idempotency: identical re-delivery deduped, wakeId-reusing redrive NOT suppressed:");
 {
