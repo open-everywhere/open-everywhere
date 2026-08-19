@@ -2,7 +2,7 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { deploymentOrg, isUnifiedWindowContext, currentWakeId, currentTurnId, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
 import { capabilitiesFor } from "../identity/capabilities.js";
-import { resolveReplyTarget, postReply, auditReplyRefused, auditReplyForced, replyAuditFor, type ReplierLabel } from "../channels/reply-post.js";
+import { resolveReplyTarget, replyEditLocus, postReply, auditReplyRefused, auditReplyForced, replyAuditFor, type ReplierLabel } from "../channels/reply-post.js";
 import {
   replyFreshness,
   staleReplyRefusalMessage,
@@ -11,6 +11,8 @@ import {
   REPLY_STALE_REFUSAL_REASON,
   REPLY_FORCED_AUDIT_REASON,
 } from "../channels/reply-freshness.js";
+import { refuseIfShouldFold } from "../channels/reply-fold.js";
+import { tailWindow } from "../channels/session-tail-record.js";
 import { replierLabelFor, withPendingWorkFrame } from "../channels/turn-delivery.js";
 import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
 import { markRepliedThisTurn, markWakeDoneThisTurn, markWakeRepliedThisTurn, isWakeDoneThisTurn, isWakeDeclinedThisTurn, WAKE_DECLINED_REFUSAL_REASON, wakeDeclinedRefusalMessage } from "../channels/reply-signal.js";
@@ -21,7 +23,7 @@ import { retargetTaskWakes, taskWakeUnreadRefusalMessage, TASK_WAKE_UNREAD_REFUS
 import { uningressedTurn } from "../access/task-wake-signal.js";
 import { silentRoutineThisTurn } from "../routines/report.js";
 import { resolveOwnWindowToken } from "../access/oneshot-spawn.js";
-import { postUnifiedReply } from "../channels/unified-reply.js";
+import { postUnifiedReply, unifiedEditLocus } from "../channels/unified-reply.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
@@ -56,7 +58,7 @@ export const unifiedReplyEntry = defineTool({
         .optional()
         .default(false)
         .describe(
-          "Leave false. Set true ONLY to override a refusal that says this conversation has moved on: it posts your reply even though newer messages you have not read are already on their way to you. Use it when posting NOW matters more than reflecting those messages — a time-critical alert, or a hand-off note. It is recorded.",
+          "Leave false. Set true ONLY to override a host refusal about the state of the room: that this conversation has moved on (newer messages you have not read are on their way to you), or that your own last message here is still the newest one and this should be an edit. It posts your reply anyway. Use it when posting NOW as a separate message matters more — a time-critical alert, a hand-off note, or something that genuinely has to notify the room again. It is recorded.",
         ),
     }),
     outputSchema: z.object({ posted: z.boolean(), id: z.string(), note: z.string() }),
@@ -105,6 +107,16 @@ export const unifiedReplyEntry = defineTool({
         }
         if (freshness.stale) await auditReplyForced(replyAuditFor(bind, "tool", input.wake), REPLY_FORCED_AUDIT_REASON);
       }
+
+      await refuseIfShouldFold({
+        store,
+        window: tailWindow(),
+        platform: origin.platform,
+        locus: unifiedEditLocus(origin),
+        turnId,
+        audit: replyAuditFor(bind, "tool", input.wake),
+        force: input.force === true,
+      });
 
       const framed = withPendingWorkFrame(input.text, owingTask !== undefined);
 
@@ -159,9 +171,22 @@ const baseReplyEntry = defineTool({
               "reply couldn't resolve this conversation — try again from a real channel, thread, or discussion, not a synthetic context.",
             );
           }
-          const id = await postReply(target, input.text, replyAuditFor(ctx as BindableContext, "tool"), replierFor(ctx as BindableContext));
-          markRepliedThisTurn(currentTurnId(ctx as BindableContext));
-          noteTerminalCallGrain(ctx as BindableContext);
+          const bindBase = ctx as BindableContext;
+          const baseTurnId = currentTurnId(bindBase);
+          const foldWindow = tailWindow();
+          if (foldWindow) {
+            await refuseIfShouldFold({
+              store: getOperationalStore(),
+              window: foldWindow,
+              platform: target.platform,
+              locus: replyEditLocus(target),
+              turnId: baseTurnId,
+              audit: replyAuditFor(bindBase, "tool"),
+            });
+          }
+          const id = await postReply(target, input.text, replyAuditFor(bindBase, "tool"), replierFor(bindBase));
+          markRepliedThisTurn(baseTurnId);
+          noteTerminalCallGrain(bindBase);
           return { posted: true, id };
         },
 });
