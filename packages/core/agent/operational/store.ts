@@ -427,6 +427,7 @@ export interface ChannelSessionRow {
   readonly inputTokensTotal: number | null;
   readonly firstWakeAt: string | null;
   readonly lastInputTokens: number | null;
+  readonly rotateMarkedAt: string | null;
 }
 
 export interface TaskResultRow {
@@ -587,6 +588,7 @@ export interface OperationalStore {
 
   getChannelSession(org: string, surfaceKey: string): Promise<ChannelSessionRow | null>;
   rotateChannelSession(org: string, surfaceKey: string, newToken: string, at: string): Promise<ChannelSessionRow>;
+  markChannelSessionRotation(org: string, surfaceKey: string, at: string): Promise<boolean>;
   touchChannelSession(org: string, surfaceKey: string, at: string): Promise<void>;
   bumpChannelSessionUsage(org: string, surfaceKey: string, token: string, delta: number): Promise<number>;
   listChannelSessions(org: string, keyPrefix?: string): Promise<ChannelSessionRow[]>;

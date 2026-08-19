@@ -1,10 +1,9 @@
 import { unifiedDomainSessionKey } from "../../agent/channels/unified-supervisor.js";
-import { carryTailForward } from "../../agent/channels/session-tail-record.js";
-import { formatWindowToken, parseWindowToken, saltSupervisorGeneration } from "../../agent/channels/window-key.js";
+import { buildTail } from "../../agent/channels/session-tail.js";
+import { formatWindowToken, saltSupervisorGeneration } from "../../agent/channels/window-key.js";
 import { registerOperationalPostgres, getOperationalStore } from "../../agent/operational/provider.js";
 import type { PgClient } from "../../agent/operational/postgres.js";
 import type { OperationalStore, ChannelSessionRow } from "../../agent/operational/store.js";
-import type { WakeMessageInput } from "../../agent/channels/wake-envelope.js";
 
 export async function wireNeonOperationalStore(dbUrl: string): Promise<OperationalStore> {
   const pkg = "@neondatabase/serverless";
@@ -49,42 +48,39 @@ export async function rotateUnifiedWindow(
   };
 }
 
-export interface CarryRotateResult {
+export interface MarkRotateResult {
   readonly registryKey: string;
-  readonly oldGeneration: number;
-  readonly oldToken: string;
-  readonly newToken: string;
-  readonly newRow: ChannelSessionRow;
-  readonly tail: readonly WakeMessageInput[];
-  readonly tailCarried: number;
+  readonly generation: number;
+  readonly token: string;
+  readonly markedAt: string;
+  readonly tailPending: number;
 }
 
-export async function rotateSeatCarryingTail(store: OperationalStore, org: string, registryKey: string, atIso: string): Promise<CarryRotateResult | null> {
+export async function markSeatForRotation(store: OperationalStore, org: string, registryKey: string, atIso: string): Promise<MarkRotateResult | null> {
   const existing = await store.getChannelSession(org, registryKey);
   if (!existing) return null;
-  const parsed = parseWindowToken(existing.token);
-  if (!parsed) {
-    throw new Error(`rotateSeatCarryingTail: ${registryKey}'s current token is not a window token (got "${existing.token}") — refusing to guess a shape`);
+  await store.markChannelSessionRotation(org, registryKey, atIso);
+  const after = await store.getChannelSession(org, registryKey);
+  if (!after || after.rotateMarkedAt == null) {
+    throw new Error(`markSeatForRotation: ${registryKey} read back UNMARKED after the write — the sweep is not doing what it reports`);
   }
-  const tail = await carryTailForward(org, registryKey, existing.token, store);
-  const newToken = saltSupervisorGeneration(formatWindowToken({ domain: parsed.domain, windowId: parsed.windowId, generation: existing.generation + 1 }));
-  const newRow = await store.rotateChannelSession(org, registryKey, newToken, atIso);
-  return { registryKey, oldGeneration: existing.generation, oldToken: existing.token, newToken: newRow.token, newRow, tail, tailCarried: tail.length };
+  const ring = await store.readSessionTail(org, registryKey, after.token);
+  return { registryKey, generation: after.generation, token: after.token, markedAt: after.rotateMarkedAt, tailPending: buildTail(ring).length };
 }
 
-export interface SweepCarryRotateResult {
-  readonly rotated: readonly CarryRotateResult[];
+export interface SweepMarkResult {
+  readonly marked: readonly MarkRotateResult[];
   readonly vanished: readonly string[];
 }
 
-export async function rotateAllSeatsCarryingTail(store: OperationalStore, org: string, atIso: string, keyPrefix = "oe-domain::"): Promise<SweepCarryRotateResult> {
+export async function markAllSeatsForRotation(store: OperationalStore, org: string, atIso: string, keyPrefix = "oe-domain::"): Promise<SweepMarkResult> {
   const rows = await store.listChannelSessions(org, keyPrefix);
-  const rotated: CarryRotateResult[] = [];
+  const marked: MarkRotateResult[] = [];
   const vanished: string[] = [];
   for (const row of rows) {
-    const r = await rotateSeatCarryingTail(store, org, row.surfaceKey, atIso);
-    if (r) rotated.push(r);
+    const r = await markSeatForRotation(store, org, row.surfaceKey, atIso);
+    if (r) marked.push(r);
     else vanished.push(row.surfaceKey);
   }
-  return { rotated, vanished };
+  return { marked, vanished };
 }

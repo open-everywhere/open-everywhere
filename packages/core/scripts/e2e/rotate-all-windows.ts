@@ -1,4 +1,4 @@
-import { wireNeonOperationalStore, rotateAllSeatsCarryingTail } from "./rotate-window-lib.js";
+import { wireNeonOperationalStore, markAllSeatsForRotation } from "./rotate-window-lib.js";
 
 async function main() {
   const argv = process.argv.slice(2);
@@ -22,17 +22,17 @@ async function main() {
 
   const store = await wireNeonOperationalStore(dbUrl);
   const atIso = new Date().toISOString();
-  const { rotated, vanished } = await rotateAllSeatsCarryingTail(store, org, atIso, prefix);
+  const { marked, vanished } = await markAllSeatsForRotation(store, org, atIso, prefix);
 
   console.log(`=== rotate-all-windows (org=${org}, prefix="${prefix}") ===`);
-  for (const r of rotated) {
-    console.log(`  ${r.registryKey}: g${r.oldGeneration} -> g${r.newRow.generation}  tailCarried=${r.tailCarried}`);
+  for (const m of marked) {
+    console.log(`  ${m.registryKey}: g${m.generation} marked, rotates on its next wake  tailPending=${m.tailPending}`);
   }
   if (vanished.length > 0) {
-    console.log(`  (skipped — vanished between list and rotate: ${vanished.join(", ")})`);
+    console.log(`  (skipped — vanished between list and mark: ${vanished.join(", ")})`);
   }
-  const totalTail = rotated.reduce((sum, r) => sum + r.tailCarried, 0);
-  console.log(`✓ rotated ${rotated.length} row(s), carried ${totalTail} tail entr${totalTail === 1 ? "y" : "ies"} total.`);
+  const totalTail = marked.reduce((sum, m) => sum + m.tailPending, 0);
+  console.log(`✓ marked ${marked.length} seat(s). ${totalTail} recorded tail entr${totalTail === 1 ? "y is" : "ies are"} still in the store and ride across at each seat's next wake.`);
 }
 
 main().catch((e) => {

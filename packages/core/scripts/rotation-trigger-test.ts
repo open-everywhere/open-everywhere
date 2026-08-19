@@ -49,6 +49,26 @@ const OFF = {
     "a NULL token counter fails safe to rotate, and reports THAT even when the row would also have expired",
   );
 
+  eq(
+    rotationTrigger({ ...quiet, rotateMarkedAt: "2026-08-19T00:05:00.000Z" }, NOW, OFF),
+    "operator-marked" satisfies RotationTrigger,
+    "🔴 a marked row rotates, with every clock and counter disabled — the mark alone fires the rung (OPE-820)",
+  );
+  eq(
+    rotationTrigger({ ...quiet, rotateMarkedAt: "2026-08-19T00:05:00.000Z", inputTokensTotal: null, createdAt: iso(999 * DAY) }, NOW),
+    "operator-marked" satisfies RotationTrigger,
+    "…and it reports THAT even on a row that would also fail safe on its NULL counter and its age",
+  );
+  eq(
+    rotationTrigger({ ...quiet, rotateMarkedAt: "2026-08-19T00:05:00.000Z" }, NOW, { ...OFF, runtimeChanged: true }),
+    "runtime-changed" satisfies RotationTrigger,
+    "…but the runtime fail-safe still leads it — a session OE cannot prove resumable is the stronger fact",
+  );
+  eq(rotationTrigger({ ...quiet, rotateMarkedAt: null }, NOW, OFF), null, "🔴 an explicitly NULL mark does NOT rotate — asserted as null, not merely falsy");
+  eq(rotationTrigger(quiet, NOW, OFF), null, "🔴 an ABSENT rotateMarkedAt reads as unmarked, so every pre-OPE-820 caller keeps its exact chain");
+  ok(!shouldRotate({ ...quiet, rotateMarkedAt: null }, NOW, OFF), "…and shouldRotate agrees on the unmarked row");
+  ok(shouldRotate({ ...quiet, rotateMarkedAt: "2026-08-19T00:05:00.000Z" }, NOW, OFF), "…and on the marked one");
+
   for (const [field, row] of [
     ["now", quiet],
     ["createdAt", { ...quiet, createdAt: "not-a-timestamp" }],

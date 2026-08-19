@@ -138,6 +138,7 @@ function getDb(): DatabaseSync {
       input_tokens_total INTEGER,                    -- measured cumulative input+cacheRead this generation (§2 #551); NULL = unknown ⇒ rotate
       first_wake_at      TEXT,                        -- ISO-8601 of the first delivered wake (H7c); NULL = none yet ⇒ still fresh
       last_input_tokens  INTEGER,                     -- OPE-794: measured input+cacheRead of the LATEST request (SET, not summed); NULL = none yet ⇒ rung skipped
+      rotate_marked_at   TEXT,                        -- OPE-820: ISO-8601 an operator marked this generation for retirement; NULL = unmarked. Set ONLY by the ops sweep; cleared by every rotation
       PRIMARY KEY (org_id, surface_key)
     );
     -- session_tail (OPE-794): the standing-seat TAIL ring. One row per recorded conversational
@@ -476,6 +477,7 @@ function getDb(): DatabaseSync {
     "ALTER TABLE channel_session ADD COLUMN input_tokens_total INTEGER",
     "ALTER TABLE channel_session ADD COLUMN first_wake_at TEXT",
     "ALTER TABLE channel_session ADD COLUMN last_input_tokens INTEGER",
+    "ALTER TABLE channel_session ADD COLUMN rotate_marked_at TEXT",
 
     "ALTER TABLE task_result ADD COLUMN caller_token TEXT",
     "ALTER TABLE task_result ADD COLUMN delivered_at TEXT",
@@ -1274,9 +1276,9 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async getChannelSession(org, surfaceKey) {
     const row = getDb()
-      .prepare("SELECT token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens FROM channel_session WHERE org_id = ? AND surface_key = ?")
+      .prepare("SELECT token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at FROM channel_session WHERE org_id = ? AND surface_key = ?")
       .get(org, surfaceKey) as
-      | { token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number; input_tokens_total: number | null; first_wake_at: string | null; last_input_tokens: number | null }
+      | { token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number; input_tokens_total: number | null; first_wake_at: string | null; last_input_tokens: number | null; rotate_marked_at: string | null }
       | undefined;
     return row
       ? {
@@ -1285,6 +1287,7 @@ export const sqliteOperationalStore: OperationalStore = {
           inputTokensTotal: row.input_tokens_total == null ? null : Number(row.input_tokens_total),
           firstWakeAt: row.first_wake_at ?? null,
           lastInputTokens: row.last_input_tokens == null ? null : Number(row.last_input_tokens),
+          rotateMarkedAt: row.rotate_marked_at ?? null,
         }
       : null;
   },
@@ -1293,8 +1296,8 @@ export const sqliteOperationalStore: OperationalStore = {
     const handle = getDb();
     const row = handle
       .prepare(
-        `INSERT INTO channel_session (org_id, surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens)
-         VALUES (?, ?, ?, 1, ?, ?, 0, 0, NULL, NULL)
+        `INSERT INTO channel_session (org_id, surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at)
+         VALUES (?, ?, ?, 1, ?, ?, 0, 0, NULL, NULL, NULL)
          ON CONFLICT(org_id, surface_key) DO UPDATE SET
            token              = excluded.token,
            generation         = generation + 1,
@@ -1303,12 +1306,20 @@ export const sqliteOperationalStore: OperationalStore = {
            turn_count         = 0,
            input_tokens_total = 0,
            first_wake_at      = NULL,
-           last_input_tokens  = NULL
+           last_input_tokens  = NULL,
+           rotate_marked_at   = NULL
          RETURNING generation`,
       )
       .get(org, surfaceKey, newToken, at, at) as { generation: number };
     const generation = row.generation;
-    return { org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0, inputTokensTotal: 0, firstWakeAt: null, lastInputTokens: null };
+    return { org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0, inputTokensTotal: 0, firstWakeAt: null, lastInputTokens: null, rotateMarkedAt: null };
+  },
+
+  async markChannelSessionRotation(org, surfaceKey, at) {
+    const res = getDb()
+      .prepare("UPDATE channel_session SET rotate_marked_at = COALESCE(rotate_marked_at, ?) WHERE org_id = ? AND surface_key = ?")
+      .run(at, org, surfaceKey);
+    return Number(res.changes ?? 0) > 0;
   },
 
   async touchChannelSession(org, surfaceKey, at) {
@@ -1328,14 +1339,14 @@ export const sqliteOperationalStore: OperationalStore = {
     const rows = (
       keyPrefix === undefined
         ? getDb()
-            .prepare("SELECT surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens FROM channel_session WHERE org_id = ?")
+            .prepare("SELECT surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at FROM channel_session WHERE org_id = ?")
             .all(org)
         : getDb()
-            .prepare("SELECT surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens FROM channel_session WHERE org_id = ? AND surface_key LIKE ?")
+            .prepare("SELECT surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens, rotate_marked_at FROM channel_session WHERE org_id = ? AND surface_key LIKE ?")
             .all(org, `${keyPrefix}%`)
     ) as {
       surface_key: string; token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number;
-      input_tokens_total: number | null; first_wake_at: string | null; last_input_tokens: number | null;
+      input_tokens_total: number | null; first_wake_at: string | null; last_input_tokens: number | null; rotate_marked_at: string | null;
     }[];
     return rows.map((r) => ({
       org, surfaceKey: r.surface_key, token: r.token, generation: r.generation, createdAt: r.created_at,
@@ -1343,6 +1354,7 @@ export const sqliteOperationalStore: OperationalStore = {
       inputTokensTotal: r.input_tokens_total == null ? null : Number(r.input_tokens_total),
       firstWakeAt: r.first_wake_at ?? null,
       lastInputTokens: r.last_input_tokens == null ? null : Number(r.last_input_tokens),
+      rotateMarkedAt: r.rotate_marked_at ?? null,
     }));
   },
 
