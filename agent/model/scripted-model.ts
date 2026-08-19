@@ -79,6 +79,7 @@ export interface ScriptedEntry {
   readonly firstCallTurnByRole: Partial<Record<ScriptedRole, string>>;
   readonly registeredAt: string;
   readonly epoch: number;
+  readonly seq: number;
 }
 
 export const ANY_SESSION = "*";
@@ -93,6 +94,20 @@ export function scriptedEpoch(): number {
 
 export function beginScriptedEpoch(): void {
   epochCell().set("n", scriptedEpoch() + 1);
+}
+
+function seqCell(): Map<string, number> {
+  return processRegistryMap<number>("scripted-model-seq.v1");
+}
+
+export function scriptedRegistrationSeq(): number {
+  return seqCell().get("n") ?? 0;
+}
+
+function nextRegistrationSeq(): number {
+  const next = scriptedRegistrationSeq() + 1;
+  seqCell().set("n", next);
+  return next;
 }
 
 export const STALE_TURN_PARK_MS = 30_000;
@@ -190,6 +205,7 @@ export function registerScript(script: SeatScript, sessionId: string = ANY_SESSI
     firstCallTurnByRole: {},
     registeredAt: callerFrame(),
     epoch: scriptedEpoch(),
+    seq: nextRegistrationSeq(),
   };
   store.set(sessionId, entry);
   return {

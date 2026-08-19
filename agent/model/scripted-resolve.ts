@@ -11,6 +11,7 @@ import {
   SCRIPTED_MODEL_ID,
   noteStaleHoldExpiry,
   scriptedModelArmed,
+  scriptedRegistrationSeq,
   scriptedStore,
   staleTurnParkMs,
   type ResolveObservation,
@@ -71,6 +72,7 @@ export function scriptedModelFor(event: unknown, ctx: unknown): ReturnType<typeo
         "gateway — an armed process is a test process and must never buy inference.",
     );
   }
+  const seqAtResolve = scriptedRegistrationSeq();
 
   const { turnId, stepIndex } = eventData(event);
   const role: ScriptedRole = isSubagentChildContext(bindable) ? "child" : "parent";
@@ -88,7 +90,7 @@ export function scriptedModelFor(event: unknown, ctx: unknown): ReturnType<typeo
   };
   entry.resolves.push(observation);
 
-  return buildStepModel(entry, observation);
+  return buildStepModel(entry, observation, seqAtResolve);
 }
 
 function snapshotSchema(schema: unknown): unknown {
@@ -147,6 +149,7 @@ function serveStep(entry: ScriptedEntry, at: ResolveObservation, toolResultCount
 async function awaitScriptSwap(
   current: ScriptedEntry,
   sessionId: string | undefined,
+  seqAtResolve: number,
 ): Promise<{ readonly entry?: ScriptedEntry; readonly expired: boolean }> {
   if (sessionId === undefined || sessionId === ANY_SESSION) return { expired: false };
   const store = scriptedStore();
@@ -155,7 +158,9 @@ async function awaitScriptSwap(
     const keyed = store.get(sessionId);
     if (keyed !== undefined && keyed !== current) return { entry: keyed, expired: false };
     const wildcard = store.get(ANY_SESSION);
-    if (wildcard !== undefined && wildcard !== current && wildcard.epoch === current.epoch) return { entry: wildcard, expired: false };
+    if (wildcard !== undefined && wildcard !== current && wildcard.epoch === current.epoch && wildcard.seq > seqAtResolve) {
+      return { entry: wildcard, expired: false };
+    }
     let stillRegistered = false;
     for (const live of store.values()) if (live === current) stillRegistered = true;
     if (!stillRegistered) return { expired: false };
@@ -164,7 +169,7 @@ async function awaitScriptSwap(
   }
 }
 
-function buildStepModel(entry: ScriptedEntry, at: ResolveObservation): ReturnType<typeof mockModel> {
+function buildStepModel(entry: ScriptedEntry, at: ResolveObservation, seqAtResolve: number): ReturnType<typeof mockModel> {
   return mockModel({
     modelId: SCRIPTED_MODEL_ID,
     provider: "open-everywhere-scripted",
@@ -174,7 +179,7 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation): ReturnTyp
       let verdict = serveStep(target, observation, request.toolResults.length);
 
       if (verdict.stale) {
-        const swap = await awaitScriptSwap(target, observation.sessionId);
+        const swap = await awaitScriptSwap(target, observation.sessionId, seqAtResolve);
         if (swap.expired) {
           noteStaleHoldExpiry({
             sessionId: String(observation.sessionId),
