@@ -1,10 +1,9 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { channelPlatform, deploymentOrg, isUnifiedWindowContext, currentWakeId, currentTurnId, type BindableContext } from "../identity/binding.js";
+import { deploymentOrg, isUnifiedWindowContext, currentWakeId, currentTurnId, type BindableContext } from "../identity/binding.js";
 import { resolveReplyTarget, replyEditLocus, replyAuditFor } from "../channels/reply-post.js";
 import { unifiedEditLocus } from "../channels/unified-reply.js";
 import { editPostedMessage, auditReplyEditRefused, editRefusalMessage, EDIT_NO_ARM_REFUSAL_REASON } from "../channels/reply-edit.js";
-import { postArm } from "../channels/post-arms.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
 import { withPendingWorkFrame } from "../channels/turn-delivery.js";
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
@@ -13,10 +12,6 @@ import { silentRoutineThisTurn } from "../routines/report.js";
 import { resolveOwnWindowToken } from "../access/oneshot-spawn.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
-
-export function editArmed(platform: string | undefined): boolean {
-  return typeof postArm(platform)?.editMessage === "function";
-}
 
 const editedNote = (platform: string): string =>
   `Message updated on ${platform}. Nobody was notified — an edit changes what is already there, so anything NEW to say still needs a \`reply\`.`;
@@ -38,8 +33,9 @@ export const unifiedEditReplyEntry = defineTool({
     "cosmetic fix to something you already said — a typo, or a list or summary that has moved on. " +
     "Pass the `wake-id` of the conversation the message is in and the message id `reply` gave you, " +
     "and `text` REPLACES that message outright. It edits only your own posts, it adds no new message " +
-    "and notifies nobody, and the surface marks the message as edited. For anything NEW to say, and " +
-    "for withdrawing something you got wrong, post a `reply` instead.",
+    "and notifies nobody, and the surface marks the message as edited. Not every surface can edit — " +
+    "where the platform has no edit API the call is refused and says so, and you post a `reply` " +
+    "instead. For anything NEW to say, and for withdrawing something you got wrong, post a `reply`.",
   inputSchema: z.object({
     text: EDIT_TEXT,
     wake: z.string().min(1).describe("The `wake-id` of the conversation holding the message — the same id you replied under."),
@@ -63,7 +59,7 @@ export const unifiedEditReplyEntry = defineTool({
     const locus = unifiedEditLocus(origin);
     if (!locus) {
       await auditReplyEditRefused(replyAuditFor(bind, "tool", input.wake), EDIT_NO_ARM_REFUSAL_REASON);
-      throw new Error(editRefusalMessage(EDIT_NO_ARM_REFUSAL_REASON));
+      throw new Error(editRefusalMessage(EDIT_NO_ARM_REFUSAL_REASON, origin.platform));
     }
 
     const owingTask = pendingDelegationOwing(turnId, input.wake, addressedWakeThisTurn(turnId));
@@ -81,8 +77,9 @@ const baseEditReplyEntry = defineTool({
     "follow-up. Use it for a cosmetic fix to something you already said — a typo, or a list or " +
     "summary that has moved on. Pass the message id `reply` gave you; `text` REPLACES that message " +
     "outright. It edits only your own posts, it adds no new message and notifies nobody, and the " +
-    "surface marks the message as edited. For anything NEW to say, and for withdrawing something you " +
-    "got wrong, post a `reply` instead.",
+    "surface marks the message as edited. Not every surface can edit — where the platform has no " +
+    "edit API the call is refused and says so, and you post a `reply` instead. For anything NEW to " +
+    "say, and for withdrawing something you got wrong, post a `reply`.",
   inputSchema: z.object({ text: EDIT_TEXT, message_id: MESSAGE_ID }),
   outputSchema: z.object({ edited: z.boolean(), id: z.string(), note: z.string() }),
   async execute(input, ctx) {
@@ -96,7 +93,7 @@ const baseEditReplyEntry = defineTool({
     const locus = replyEditLocus(target);
     if (!locus) {
       await auditReplyEditRefused(replyAuditFor(bind, "tool"), EDIT_NO_ARM_REFUSAL_REASON);
-      throw new Error(editRefusalMessage(EDIT_NO_ARM_REFUSAL_REASON));
+      throw new Error(editRefusalMessage(EDIT_NO_ARM_REFUSAL_REASON, target.platform));
     }
     await editPostedMessage(locus, input.message_id, input.text, replyAuditFor(bind, "tool"));
     return { edited: true, id: input.message_id, note: editedNote(locus.platform) };
@@ -108,9 +105,7 @@ export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
       const c = ctx as BindableContext;
-      if (isUnifiedWindowContext(c)) return unifiedEditReplyEntry;
-      if (!editArmed(channelPlatform(c))) return null;
-      return baseEditReplyEntry;
+      return isUnifiedWindowContext(c) ? unifiedEditReplyEntry : baseEditReplyEntry;
     },
   },
 });

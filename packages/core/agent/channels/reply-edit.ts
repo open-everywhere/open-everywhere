@@ -14,9 +14,10 @@ export const EDIT_NOT_OWN_REFUSAL_REASON = "not-own-post";
 
 export const EDIT_NO_ARM_REFUSAL_REASON = "no-edit-arm";
 
-export function editRefusalMessage(reason: string): string {
+export function editRefusalMessage(reason: string, platform?: string): string {
   if (reason === EDIT_NO_ARM_REFUSAL_REASON) {
-    return "edit_reply can't edit a message on this surface — no edit primitive is wired here. Post a new `reply` with the correction instead.";
+    const where = platform && platform.length > 0 ? platform : "this surface";
+    return `edit_reply can't edit a message on ${where} — that surface has no API for editing the agent's own posts, so nothing here can be edited. Post a new \`reply\` with the correction instead.`;
   }
   return (
     "edit_reply refused: that message id is not one of your own recent posts in this conversation. " +
@@ -74,7 +75,7 @@ export async function editPostedMessage(
   const arm = postArm(locus.platform);
   if (!arm?.editMessage) {
     await auditReplyEditRefused(audit, EDIT_NO_ARM_REFUSAL_REASON);
-    throw new Error(editRefusalMessage(EDIT_NO_ARM_REFUSAL_REASON));
+    throw new Error(editRefusalMessage(EDIT_NO_ARM_REFUSAL_REASON, locus.platform));
   }
   if (!(await isOwnPost(audit.org, locus, messageId, ledgerDeps))) {
     await auditReplyEditRefused(audit, EDIT_NOT_OWN_REFUSAL_REASON);

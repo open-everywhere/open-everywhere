@@ -277,5 +277,24 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
   ok(a === ownPostKey({ platform: "slack", channelId: "C1" }, "m1"), "§10: the key is stable for the same three parts");
 }
 
+{
+  const armed = armOf(editTool, { session: { id: "edit-reply-test" } } as unknown as BindableContext);
+  ok(armed !== null, "§11: the tool MOUNTS even where an edit primitive cannot be resolved — an absent verb teaches the model nothing");
+
+  const { editPostedMessage, EDIT_NO_ARM_REFUSAL_REASON } = await import("../agent/channels/reply-edit.js");
+  const audit = { org: ORG, platform: "notion", workspace: "W1", route: "tool" as const, wakeId: "wake-notion-probe" };
+  let refusal: string | undefined;
+  await editPostedMessage({ platform: "notion", channelId: "D1" }, "comment-1", "corrected", audit)
+    .then(() => undefined)
+    .catch((e: unknown) => {
+      refusal = String(e);
+    });
+  ok(refusal !== undefined, "§11: a surface with no edit arm ERRORS — never a silent no-op");
+  ok(refusal?.includes("notion") === true, "§11/COPY: the error NAMES the surface, so the model knows the limit is the platform's");
+  ok(refusal?.includes("reply") === true, "§11/RECOVERY: it steers to posting a new `reply` instead");
+  const rows = await rowsFor("reply.edit.refused", "wake-notion-probe");
+  ok(rows.length === 1 && rows[0]?.["reason"] === EDIT_NO_ARM_REFUSAL_REASON, "§11/AUDIT: the refusal is recorded as `no-edit-arm`");
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ edit_reply own-post fence: ${passed} assertions passed`);

@@ -242,7 +242,9 @@ each answer names the \`wake-id\` of the wake it answers.
 
 To fix something you already posted — a typo, or a list that has moved on — use \`edit_reply\`
 with that message's id and the same \`wake-id\`, rather than posting again. An edit changes what
-is already there and notifies nobody, so anything NEW to say is still a \`reply\`.`
+is already there and notifies nobody, so anything NEW to say is still a \`reply\`. Editing works
+where the platform supports it; where it does not, the call is refused and says so, and you post
+a \`reply\` instead.`
     : proseDropped
       ? `### Reporting
 
@@ -262,7 +264,8 @@ never a mere progress tick. Prefer one curated message over a stack of new ones.
 
 To fix something you already posted — a typo, or a list that has moved on — use \`edit_reply\`
 with that message's id rather than posting again. An edit changes what is already there and
-notifies nobody, so anything NEW to say is still a \`reply\`.
+notifies nobody, so anything NEW to say is still a \`reply\`. Editing works where the platform
+supports it; where it does not, the call is refused and says so, and you post a \`reply\` instead.
 
 That states REACH, not duty. It says how an answer gets out, never that one is owed. Most of what
 wakes you still ends in \`no_reply\`, and deciding to stay silent is correct and common.`
@@ -276,7 +279,8 @@ curated message over a stack of new ones.
 
 To fix something you already posted — a typo, or a list that has moved on — use \`edit_reply\`
 with that message's id rather than posting again. An edit changes what is already there and
-notifies nobody, so anything NEW to say is still a \`reply\`.`;
+notifies nobody, so anything NEW to say is still a \`reply\`. Editing works where the platform
+supports it; where it does not, the call is refused and says so, and you post a \`reply\` instead.`;
   const fenceParagraph = `THE GRADE IS ALSO WHY A MESSAGE ARRIVES FENCED OR BARE, and you can read it directly. In
 a wake envelope, a \`principal\` or \`peer\` \`<message>\` is your colleague speaking to
 you: it arrives as plain text with no fence, and what it asks for IS the task — including
