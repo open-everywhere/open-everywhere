@@ -20,7 +20,7 @@ import { registerNotionMemory } from "./memory/memory.js";
 
 export function registerNotionProvider(): void {
   registerIdentityMapper("notion", bindNotion);
-  registerCapabilityManifest("notion", { midTurnPost: true, reactions: false });
+  registerCapabilityManifest("notion", { midTurnPost: true, reactions: false, supervisorProseDropped: true });
   registerPostArm(notionPostArm);
   registerWakeOriginCodec("notion", notionWakeOriginCodec);
   registerWebhookVerifier(notionWebhookVerifier);

@@ -126,6 +126,7 @@ export const bindGitHub: IdentityMapper = (ctx): RawIdentity => {
   const conversationKind = githubAttr(a, ["conversation_kind", "conversationKind"]);
   const issueNumber = githubAttr(a, ["issue_number", "issueNumber"]);
   const pullRequestNumber = githubAttr(a, ["pull_request_number", "pullRequestNumber"]);
+  const installationId = githubAttr(a, ["installation_id", "installationId"]);
   const isPr = conversationKind === "pull_request" || conversationKind === "review_thread";
   const anchor =
     isPr && pullRequestNumber
@@ -142,6 +143,6 @@ export const bindGitHub: IdentityMapper = (ctx): RawIdentity => {
     visibility: githubVisibility(repoPrivate),
     trust: githubTrust(repoPrivate, githubAttr(a, ["author_association", "authorAssociation"])),
     principalId: githubAuthPrincipalId(ctx) ?? githubAttr(a, ["user_login", "userLogin", "user_id", "userId"]),
-    target: owner && repo && anchor ? { owner, repo, ...anchor } : undefined,
+    target: owner && repo && anchor ? { owner, repo, ...anchor, ...(installationId ? { installationId: Number(installationId) } : {}) } : undefined,
   };
 };

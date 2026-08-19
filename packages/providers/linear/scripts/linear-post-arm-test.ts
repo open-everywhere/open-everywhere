@@ -144,6 +144,42 @@ try {
     ok((err as { status?: unknown } | undefined)?.status === 200, "a top-level GraphQL errors[] at HTTP 200 still carries status=200 on the thrown error");
     ok(platformFailureClass(err) === "ambiguous", "OPE-825 scope boundary: a 200+errors[] GraphQL response classifies AMBIGUOUS, not DEFINITIVE — deliberate, see comment above");
   }
+  {
+    type Bag = Parameters<NonNullable<typeof linearPostArm.resolveTarget>>[0];
+    const bag = (fields: Record<string, string>): Bag =>
+      ({ str: (k: string) => fields[k], num: () => undefined, ctx: {} as never }) as Bag;
+
+    const both = linearPostArm.resolveTarget!(bag({ agentSessionId: "sess-9", issueId: "ISS9", parentId: "C1" }));
+    assert.deepStrictEqual(both, { platform: "linear", agentSessionId: "sess-9" }, "route selection: an agent session wins where both routes resolve");
+    const ambient = linearPostArm.resolveTarget!(bag({ issueId: "ISS9", parentId: "C1" }));
+    assert.deepStrictEqual(ambient, { platform: "linear", issueId: "ISS9", parentId: "C1" }, "🔴 OPE-811: no agent session ⇒ the AMBIENT issue/thread target (the supervisor turn's route)");
+    const rootless = linearPostArm.resolveTarget!(bag({ issueId: "ISS9" }));
+    assert.deepStrictEqual(rootless, { platform: "linear", issueId: "ISS9" }, "an issue with no thread root resolves too — the comment lands top-level on the issue");
+    ok(linearPostArm.resolveTarget!(bag({})) === null, "negative control: neither an agent session nor an issue ⇒ NO target — `reply` refuses rather than guessing");
+
+    let sentQuery: string | undefined;
+    let sentInput: { issueId?: string; parentId?: string; body?: string } | undefined;
+    globalThis.fetch = (async (_input: string | URL, init?: RequestInit) => {
+      const parsed = JSON.parse(String(init?.body ?? "{}")) as { query?: string; variables?: { input?: typeof sentInput } };
+      sentQuery = parsed.query;
+      sentInput = parsed.variables?.input;
+      return new Response(JSON.stringify({ data: { commentCreate: { success: true } } }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const ambientId = await linearPostArm.dispatchReply!({ platform: "linear", issueId: "ISS9", parentId: "C1" } as ReplyTarget, "the mid-turn answer");
+    ok(sentQuery?.includes("commentCreate") === true, "🔴 OPE-811: the ambient target dispatches commentCreate, NOT an agent activity");
+    ok(sentInput?.issueId === "ISS9" && sentInput?.parentId === "C1" && sentInput?.body === "the mid-turn answer", "OPE-811: it posts the text into the resolved issue + thread root");
+    ok(typeof ambientId === "string" && ambientId.length > 0, "OPE-811: it returns a non-empty id — commentCreate selects only {success}, so the spine gets the fixed sentinel");
+
+    globalThis.fetch = stubGraphQL(200, { commentCreate: { success: false } });
+    let refused: unknown;
+    try {
+      await linearPostArm.dispatchReply!({ platform: "linear", issueId: "ISS9" } as ReplyTarget, "hi");
+    } catch (err) {
+      refused = err;
+    }
+    ok(refused instanceof Error, "negative control: a decided commentCreate refusal (success:false) THROWS rather than reporting a landed post");
+    ok(platformFailureClass(refused) === "definitive", "OPE-825 parity: the ambient route's decided refusal classifies DEFINITIVE too");
+  }
 } finally {
   globalThis.fetch = savedFetch;
   if (SAVED_TOKEN === undefined) delete process.env.LINEAR_AGENT_ACCESS_TOKEN; else process.env.LINEAR_AGENT_ACCESS_TOKEN = SAVED_TOKEN;

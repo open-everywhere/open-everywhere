@@ -277,7 +277,7 @@ export type { SupervisorGrain } from "./channels/unified-supervisor.js";
 
 export { claimRuntimeRotation } from "./channels/runtime-rotation.js";
 
-export { completeSupervisorTurn, auditSupervisorFailure, SUPERVISOR_POST_SUPPRESSED } from "./channels/supervisor-complete.js";
+export { completeSupervisorTurn, auditSupervisorFailure, consumeSupervisorReplyMark } from "./channels/supervisor-complete.js";
 export type { SupervisorCompletionSpec } from "./channels/supervisor-complete.js";
 
 export {

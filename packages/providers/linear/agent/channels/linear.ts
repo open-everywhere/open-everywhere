@@ -36,7 +36,8 @@ import {
   finalMessageActionForTurn,
   silentRoutineThisTurn,
   completeSupervisorTurn,
-  SUPERVISOR_POST_SUPPRESSED,
+  consumeSupervisorReplyMark,
+  capabilitiesForPlatform,
   auditSupervisorFailure,
   appendAudit,
   ingressSpendGate,
@@ -49,10 +50,6 @@ import {
   engagementTierFor,
   liveMemoryDeltaDep,
   getOperationalStore,
-  postOnce,
-  outboundKey,
-  markNotApplied,
-  platformFailureClass,
   admitTrigger,
   replierLabelFromAuthAttributes,
   withReplierPrefix,
@@ -790,7 +787,6 @@ const native: LinearChannel = linearChannel({
               ...(st.oeUnified === true ? { teamId: str(attrs?.team_id), organizationId: str(attrs?.organization_id) } : {}),
             }
           : undefined;
-      (channel.state as unknown as Record<string, unknown>).oeReplierLabel = replierLabelFromAuthAttributes(attrs);
     },
     async "actions.requested"(data, channel) {
       if (!isSupervisorLinearState(channel.state)) await defaultEvent("actions.requested")?.(data, channel);
@@ -814,55 +810,28 @@ const native: LinearChannel = linearChannel({
         return;
       }
       const sessionId = ctx?.session?.id;
+      const action = finalMessageActionForTurn(data.finishReason, data.message);
+      if (action.kind === "buffer-tool-status") return;
       const st = channel.state as LinearSupervisorSessionState;
       const target = st.oeReplyTarget;
       const org = deploymentOrg();
+      const repliedViaTool = consumeSupervisorReplyMark(ctx);
       const auditTeamId = (st.oeUnified === true ? target?.teamId : undefined) ?? st.oeTeamId;
       const auditOrgId = (st.oeUnified === true ? target?.organizationId : undefined) ?? st.organizationId;
       const surface = auditTeamId ? `linear/${auditOrgId ?? "unknown"}/${auditTeamId}` : undefined;
       const row = { org, platform: "linear", workspace: auditOrgId ?? "unknown", surface };
       await completeSupervisorTurn({
-        action: finalMessageActionForTurn(data.finishReason, data.message),
+        action,
         ...(sessionId ? { sessionId } : {}),
-        hasTarget: !!target,
-        midTurnPost: false,
+        repliedViaTool,
+        midTurnPost: capabilitiesForPlatform("linear").midTurnPost,
         noReplyAction: "linear.no_reply",
         repliedAction: "linear.replied",
-        noTargetAction: "linear.no_target",
-        replySuppressedAction: "linear.reply_suppressed_duplicate",
         contextRow: row,
         repliedRow: row,
         silentAnchor: { issueId: target?.issueId ?? null },
         droppedAnchor: { issueId: target?.issueId },
         repliedAnchor: { issueId: target?.issueId, parentId: target?.parentId ?? null },
-        post: async (rawText) => {
-          const text = withReplierPrefix(rawText, (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined);
-          const result = await postOnce({
-            org,
-            key: outboundKey({
-              surface: "linear",
-              channel: auditTeamId ?? "",
-              threadTs: target!.parentId ?? target!.issueId,
-              action: "linear.supervisor-reply",
-              payload: text,
-            }),
-            run: async () => {
-              const data = await callLinearGraphQL<{ commentCreate?: { success?: boolean } }>({
-                credentials: linearAppActorCredentials,
-                query: "mutation OeAmbientReply($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
-                queryName: "OeAmbientReply",
-                variables: { input: { issueId: target!.issueId, ...(target!.parentId ? { parentId: target!.parentId } : {}), body: text } },
-              });
-              if (data.commentCreate?.success !== true) {
-                throw markNotApplied(new Error(`supervisor reply couldn't post to Linear — ambient commentCreate returned no success on issue ${target!.issueId}`));
-              }
-              return undefined;
-            },
-            skipped: () => SUPERVISOR_POST_SUPPRESSED,
-            releaseKeyOnFailure: (err) => platformFailureClass(err) === "definitive",
-          });
-          return result === SUPERVISOR_POST_SUPPRESSED ? SUPERVISOR_POST_SUPPRESSED : text.length;
-        },
         log: (m) => slog(m),
       });
     },

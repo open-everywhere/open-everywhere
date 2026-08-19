@@ -130,4 +130,53 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
   }
 }
 
+{
+  type Bag = Parameters<NonNullable<typeof githubPostArm.resolveTarget>>[0];
+  const bag = (fields: Record<string, string | number>): Bag =>
+    ({
+      str: (k: string) => (typeof fields[k] === "string" ? (fields[k] as string) : undefined),
+      num: (k: string) => (typeof fields[k] === "number" ? (fields[k] as number) : undefined),
+      ctx: {} as never,
+    }) as Bag;
+
+  ok(githubPostArm.resolveTarget !== undefined && githubPostArm.dispatchReply !== undefined, "🔴 OPE-811: the github arm implements the MID-TURN pair (resolveTarget + dispatchReply)");
+
+  const issue = githubPostArm.resolveTarget!(bag({ owner: "acme", repo: "payments-api", issueNumber: 55, installationId: 4242 }));
+  assert.deepStrictEqual(issue, { platform: "github", owner: "acme", repo: "payments-api", issueNumber: 55, installationId: 4242 }, "resolveTarget builds the issue target from the binding, installation id included");
+
+  const pr = githubPostArm.resolveTarget!(bag({ owner: "acme", repo: "payments-api", pullRequestNumber: 7 }));
+  ok(pr !== null && (pr as { issueNumber: number }).issueNumber === 7, "a PR timeline comment anchors the SAME /issues/{n}/comments endpoint");
+  ok(pr !== null && !("installationId" in (pr as Record<string, unknown>)), "an absent installation id is OMITTED, never guessed — the arm falls back to the owner→installation map");
+
+  ok(githubPostArm.resolveTarget!(bag({ repo: "payments-api", issueNumber: 55 })) === null, "negative control: no owner ⇒ NO target");
+  ok(githubPostArm.resolveTarget!(bag({ owner: "acme", issueNumber: 55 })) === null, "negative control: no repo ⇒ NO target");
+  ok(githubPostArm.resolveTarget!(bag({ owner: "acme", repo: "payments-api" })) === null, "negative control: no issue/PR anchor ⇒ NO target");
+  ok(githubPostArm.resolveTarget!(bag({ owner: "acme", repo: "payments-api", issueNumber: 0 })) === null, "negative control: a zero anchor is not an issue number ⇒ NO target");
+
+  const savedEnv = { id: process.env.GITHUB_APP_ID, pem: process.env.GITHUB_APP_PRIVATE_KEY };
+  const savedFetch = globalThis.fetch;
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
+  process.env.GITHUB_APP_ID = "app-811";
+  process.env.GITHUB_APP_PRIVATE_KEY = privateKey as string;
+  _resetGitHubInstallationTokenCache();
+  const seen: string[] = [];
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    const url = String(input);
+    seen.push(url);
+    if (url.includes("/access_tokens")) return new Response(JSON.stringify({ token: "ghs_811", expires_at: new Date(Date.now() + 3_600_000).toISOString() }), { status: 201 });
+    if (url.endsWith("/comments")) return new Response(JSON.stringify({ id: 987 }), { status: 201, headers: { "content-type": "application/json" } });
+    return new Response("unexpected", { status: 500 });
+  }) as typeof fetch;
+  try {
+    const id = await githubPostArm.dispatchReply!({ platform: "github", owner: "acme", repo: "payments-api", issueNumber: 55, installationId: 4242 } as never, "the mid-turn answer");
+    ok(id === "987", "🔴 OPE-811: dispatchReply posts the comment and returns the platform message id");
+    ok(seen.some((u) => u === "https://api.github.com/repos/acme/payments-api/issues/55/comments"), "OPE-811: it posts to the resolved issue's comments endpoint, never a guessed one");
+  } finally {
+    globalThis.fetch = savedFetch;
+    if (savedEnv.id === undefined) delete process.env.GITHUB_APP_ID; else process.env.GITHUB_APP_ID = savedEnv.id;
+    if (savedEnv.pem === undefined) delete process.env.GITHUB_APP_PRIVATE_KEY; else process.env.GITHUB_APP_PRIVATE_KEY = savedEnv.pem;
+    _resetGitHubInstallationTokenCache();
+  }
+}
+
 console.log(`✓ github-post-arm: ${passed} assertions passed`);

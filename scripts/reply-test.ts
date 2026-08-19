@@ -285,27 +285,52 @@ restoreHttp();
 }
 
 {
-  const { registerCapabilityManifest, capabilitiesForPlatform } = await import("@open-everywhere/core/agent/identity/capabilities.js");
+  const { registerCapabilityManifest } = await import("@open-everywhere/core/agent/identity/capabilities.js");
   const { classifySessionId, threadSeatWindowId } = await import("@open-everywhere/core/agent/channels/window-key.js");
 
-  registerCapabilityManifest("linear", { midTurnPost: true, reactions: false, supervisorReplyBroken: true });
+  registerCapabilityManifest("linear", { midTurnPost: true, reactions: false, supervisorProseDropped: true });
 
-  const supervisorToken = "T_812:oe-sup:g1";
-  const threadToken = `oe-dom:ope812:win:${threadSeatWindowId("linear/T_812", "issue-1")}:oe-sup:g1`;
+  const supervisorToken = "T_811:oe-sup:g1";
+  const threadToken = `oe-dom:ope811:win:${threadSeatWindowId("linear/T_811", "issue-1")}:oe-sup:g1`;
 
   ok(classifySessionId(supervisorToken).kind === "container-supervisor", "fixture guard: the linear supervisor token classifies as container-supervisor");
   ok(classifySessionId(threadToken).kind === "thread-seat", "fixture guard: the linear thread token classifies as thread-seat");
-  ok(capabilitiesForPlatform("linear").supervisorReplyBroken === true, "fixture guard: linear's manifest carries supervisorReplyBroken");
 
   const supervisorCtx = { channel: { kind: "linear", continuationToken: supervisorToken } };
   const threadCtx = { channel: { kind: "linear", continuationToken: threadToken } };
 
-  ok(armReply(reply, supervisorCtx) === null, "🔴 OPE-812: reply does NOT mount on a Linear container-supervisor turn (supervisorReplyBroken) — the mounted tool would throw when called");
-  ok(armReply(reply, threadCtx) !== null, "negative control: a Linear THREAD seat with the same broken-manifest fact still mounts reply (a real agent session backs it)");
+  ok(armReply(reply, supervisorCtx) !== null, "🔴 OPE-811: reply MOUNTS on a Linear container-supervisor turn — the ambient commentCreate route makes the verb honest there");
+  ok(armReply(reply, threadCtx) !== null, "reply mounts on a Linear THREAD seat too — the two grains hold the identical delivery verb");
 
-  registerCapabilityManifest("linear", { midTurnPost: true, reactions: false });
-  ok(armReply(reply, supervisorCtx) !== null, "negative control: with supervisorReplyBroken absent, the same container-supervisor token mounts reply");
-  registerCapabilityManifest("linear", { midTurnPost: true, reactions: false, supervisorReplyBroken: true });
+  registerCapabilityManifest("linear", { midTurnPost: false, reactions: false });
+  ok(armReply(reply, supervisorCtx) === null, "negative control: with midTurnPost false the container-supervisor token mounts NO reply");
+  ok(armReply(reply, threadCtx) === null, "negative control: with midTurnPost false the thread token mounts NO reply either");
+  registerCapabilityManifest("linear", { midTurnPost: true, reactions: false, supervisorProseDropped: true });
 }
 
-console.log(`\n✓ reply: ${n} assertions passed (gate, target, signal, reply on all wired surfaces, dual-mode, persona, post-arm registry, OPE-812 supervisor-grain mount gate)\n`);
+{
+  const { registerCapabilityManifest } = await import("@open-everywhere/core/agent/identity/capabilities.js");
+  for (const platform of ["github", "linear", "notion"] as const) {
+    registerCapabilityManifest(platform, { midTurnPost: true, reactions: false, supervisorProseDropped: true });
+  }
+  const slack = renderSupervisorPersona({ channel: { kind: "slack", continuationToken: "C_811:oe-sup:g1" } } as never);
+  for (const platform of ["github", "linear", "notion"] as const) {
+    const persona = renderSupervisorPersona({ channel: { kind: platform, continuationToken: `X_811:oe-sup:g1` } } as never);
+    ok(
+      persona.includes("Your turn-final text is DISCARDED") && persona.includes("The `reply` tool is the ONLY way"),
+      `🔴 OPE-811 persona (${platform}): the container supervisor reads the prose-dropped delivery arm`,
+    );
+    ok(
+      !persona.includes("mounts no working `reply` tool"),
+      `🔴 OPE-811 persona (${platform}): the OPE-786 no-working-reply arm is NEVER rendered`,
+    );
+    ok(persona === slack, `OPE-811 persona (${platform}): byte-identical to the Slack supervisor's — one delivery section, every surface`);
+  }
+  registerCapabilityManifest("github", { midTurnPost: false, reactions: false });
+  const unwired = renderSupervisorPersona({ channel: { kind: "github", continuationToken: "X_811:oe-sup:g1" } } as never);
+  ok(unwired.includes("mounts no working `reply` tool"), "negative control: a surface declaring NO midTurnPost still reads the no-working-reply arm");
+  ok(!unwired.includes("Your turn-final text is DISCARDED"), "negative control: and it never claims a drop it cannot honour");
+  registerCapabilityManifest("github", { midTurnPost: true, reactions: false, supervisorProseDropped: true });
+}
+
+console.log(`\n✓ reply: ${n} assertions passed (gate, target, signal, reply on all wired surfaces, dual-mode, persona, post-arm registry, OPE-811 uniform supervisor mount + one delivery arm)\n`);

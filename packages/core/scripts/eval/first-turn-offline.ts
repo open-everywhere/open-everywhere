@@ -849,18 +849,15 @@ async function assertSeatShape(system: string): Promise<void> {
   const carriesBlock = system.includes(block);
   if (TICKETING) {
     const replyEntry = await tryReplyEntryForSeat(activeCtx);
-    if (PLATFORM === "github" && replyEntry !== null) throw new Error("fixture guard: the GitHub ticketing seat resolved a `reply` entry — the manifest's `midTurnPost: false` should mount none at all; registerTicketingFixtureManifests() may be unregistered or overwritten");
-    if (PLATFORM === "linear" && replyEntry === null) throw new Error("fixture guard: the Linear ticketing seat resolved NO `reply` entry — its manifest's `midTurnPost: true` should still mount one (the tool is broken at EXECUTE time, not at mount time)");
-    if (replyEntry !== null) {
-      const replyArgs = Object.keys((replyEntry.inputSchema as { shape?: Record<string, unknown> }).shape ?? {});
-      if (replyArgs.includes("wake")) throw new Error("fixture guard: the ticketing seat's `reply` carries a `wake` argument — the scoring rule for this path assumes it does not");
-    }
+    if (replyEntry === null) throw new Error(`fixture guard: the ${PLATFORM} ticketing seat resolved NO \`reply\` entry — since OPE-811 both platforms declare midTurnPost and must mount one; registerTicketingFixtureManifests() may be unregistered or overwritten`);
+    const replyArgs = Object.keys((replyEntry.inputSchema as { shape?: Record<string, unknown> }).shape ?? {});
+    if (replyArgs.includes("wake")) throw new Error("fixture guard: the ticketing seat's `reply` carries a `wake` argument — the scoring rule for this path assumes it does not");
     if (!carriesBlock) throw new Error("fixture guard: the ticketing prompt is missing the 'Reading a wake' block — canReceiveJudgedWake regressed for the container-supervisor grain (OPE-771)");
-    if (system.includes("reply` posts into the channel mid-turn")) throw new Error("fixture guard: the ticketing prompt carries the dual-mode arm 4 text (OPE-786 regressed) — `reply` is not a working mid-turn route on this seat");
-    if (system.includes("Your turn-final text is DISCARDED")) throw new Error("fixture guard: the ticketing prompt carries arm 2's Slack prose-dropped text — that arm names a `reply` verb this seat cannot use the way it describes");
+    if (system.includes("reply` posts into the channel mid-turn")) throw new Error("fixture guard: the ticketing prompt carries the dual-mode arm 4 text — this seat's turn-final prose is DROPPED, so that arm is false here");
     if (system.includes("This is a cross-surface session")) throw new Error("fixture guard: the ticketing prompt carries the UNIFIED arm's cross-surface claim — that sentence is false on this seat");
-    if (!system.includes("mounts no working `reply` tool")) throw new Error("fixture guard: the ticketing prompt does not state plainly that no working `reply` tool exists (OPE-786 arm 3) — `supervisorReplyBroken`/`midTurnPost` may be unregistered or the arm moved");
-    console.log(`seat: path=${PATH} platform=${PLATFORM} reply=${replyEntry === null ? "ABSENT (no mid-turn post primitive)" : "base, MOUNTED but the persona forbids calling it"} reading-a-wake=${carriesBlock ? "PRESENT" : "ABSENT"}`);
+    if (system.includes("mounts no working `reply` tool")) throw new Error("fixture guard: the ticketing prompt carries the RETIRED OPE-786 arm (OPE-811) — `reply` works on this seat, and that copy teaches the one habit whose prose is dropped");
+    if (!system.includes("Your turn-final text is DISCARDED")) throw new Error("fixture guard: the ticketing prompt does not state the DROP (OPE-811 arm 2) — `supervisorProseDropped` may be unregistered or the arm moved");
+    console.log(`seat: path=${PATH} platform=${PLATFORM} reply=base (no wake arg), the only delivery route reading-a-wake=${carriesBlock ? "PRESENT" : "ABSENT"}`);
     return;
   }
   const replyEntry = await replyEntryForSeat(activeCtx);

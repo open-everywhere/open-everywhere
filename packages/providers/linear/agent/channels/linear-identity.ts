@@ -99,6 +99,8 @@ export const bindLinear: IdentityMapper = (ctx): RawIdentity => {
     linearAttr(a, ["issue_identifier", "issueIdentifier"]) ??
     linearAttr(a, ["agent_session_id", "agentSessionId"]);
   const agentSessionId = linearAttr(a, ["agent_session_id", "agentSessionId"]);
+  const issueId = linearAttr(a, ["issue_id", "issueId"]);
+  const threadRoot = linearAttr(a, ["parent_comment_id", "parentCommentId"]) ?? linearAttr(a, ["comment_id", "commentId"]);
   return {
     workspace: linearAttr(a, ["organization_id", "organizationId"]),
     surface,
@@ -106,6 +108,13 @@ export const bindLinear: IdentityMapper = (ctx): RawIdentity => {
     visibility: linearVisibility(linearAttr(a, ["is_private", "isPrivate"])),
     trust: linearTrust(linearAttr(a, ["guest"])),
     principalId: linearAuthPrincipalId(ctx) ?? linearAttr(a, ["creator_id", "creatorId", "user_id", "userId"]),
-    target: agentSessionId ? { agentSessionId } : undefined,
+    target:
+      agentSessionId || issueId
+        ? {
+            ...(agentSessionId ? { agentSessionId } : {}),
+            ...(issueId ? { issueId } : {}),
+            ...(issueId && threadRoot ? { parentId: threadRoot } : {}),
+          }
+        : undefined,
   };
 };

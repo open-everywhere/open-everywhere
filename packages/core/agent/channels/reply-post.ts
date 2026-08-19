@@ -24,7 +24,9 @@ export type ReplyTarget =
       readonly credentialId?: string;
     }
   | { readonly platform: "teams"; readonly serviceUrl: string; readonly conversationId: string; readonly replyToActivityId?: string }
-  | { readonly platform: "linear"; readonly agentSessionId: string };
+  | { readonly platform: "linear"; readonly agentSessionId: string }
+  | { readonly platform: "linear"; readonly issueId: string; readonly parentId?: string }
+  | { readonly platform: "github"; readonly owner: string; readonly repo: string; readonly issueNumber: number; readonly installationId?: number };
 
 export function resolveReplyTarget(ctx: BindableContext): ReplyTarget | null {
   const binding = bindFrom(ctx);
@@ -169,7 +171,9 @@ function replyDedupeLocus(target: ReplyTarget): { channel: string; threadTs?: st
     case "teams":
       return { channel: `${target.serviceUrl}::${target.conversationId}`, threadTs: target.replyToActivityId };
     case "linear":
-      return { channel: target.agentSessionId };
+      return "agentSessionId" in target ? { channel: target.agentSessionId } : { channel: target.issueId, threadTs: target.parentId };
+    case "github":
+      return { channel: `${target.owner}/${target.repo}`, threadTs: `#${target.issueNumber}` };
     default:
       return { channel: JSON.stringify(target) };
   }
