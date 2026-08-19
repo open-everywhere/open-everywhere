@@ -66,6 +66,7 @@ const ctxEng = ctxFor("C_ENG");
 
 process.env.SLACK_BOT_TOKEN = "xoxb-test";
 let cardPosts = 0;
+const realFetch = globalThis.fetch;
 globalThis.fetch = (async () => {
   cardPosts++;
   return { ok: true, status: 200, json: async () => ({ ok: true, ts: "1700000000.0001" }) };
@@ -139,3 +140,4 @@ globalThis.fetch = (async () => {
 
 console.log(`✓ auto-approved-reply: ${passed} assertions — two real tools replying under a config-lowered verb (named element, no card claim, the kind's own outcome, the mutation actually applied), the unchanged ask-path control, the helper's shape, and the all-propose-tools sweep`);
 rmSync(tmp, { recursive: true, force: true });
+globalThis.fetch = realFetch;
