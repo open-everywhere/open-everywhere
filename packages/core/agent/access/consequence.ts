@@ -198,6 +198,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   no_reply: open("ends the turn silently; posts nothing"),
   react: open("an emoji in the asking room"),
   reply: open("a visible, ordinary reply in the asking room — same class as the terminal text it replaces; audited"),
+  edit_reply: open(
+    "rewrites the text of a message THIS agent already posted in the asking room, in place (OPE-793). It reaches nothing outside that conversation, adds no message and notifies nobody, and every surface that has the verb renders an edited marker, so the room sees the change. WHICH message it may touch is not a consequence question and is not decided here: the locus is host-resolved from the binding or the frozen wake origin, and the id must be in the own-post ledger (channels/own-post-ledger.ts) — a miss is refused and audited. Same class as `reply` above it; audited as `reply.edit`",
+  ),
   update_status: open("ephemeral status line in the asking room"),
   connector: open(
     "posts connect OPTIONS (a Block Kit card on Slack, links on other surfaces) for a provider — same class as a reply. It stores no secret and grants nothing itself; the CONSEQUENTIAL acts (minting an org-level OAuth URL, opening the api-key intake) happen host-side at the CLICK, where standing is re-verified (connections/connector-card.ts) — the model is never in that loop, and org-level/personal options a requester can't use are OMITTED from the card, not shown-and-refused. resolveRole is read only to omit, never to refuse, so no in-tool gate",

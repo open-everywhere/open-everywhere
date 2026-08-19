@@ -242,6 +242,8 @@ export { registerPostArm } from "./channels/post-arms.js";
 export type { PostArm, TargetResolveBag, DirectMessageRequest, DirectMessageDelivery } from "./channels/post-arms.js";
 export type { ReplyTarget } from "./channels/reply-post.js";
 export type { UnifiedReplyDeps } from "./channels/unified-reply.js";
+export type { EditLocus } from "./channels/reply-edit.js";
+export { recordOwnPost } from "./channels/own-post-ledger.js";
 
 export { postTerminalProse } from "./channels/reply-post.js";
 export type { ReplyAudit, ReplierLabel } from "./channels/reply-post.js";

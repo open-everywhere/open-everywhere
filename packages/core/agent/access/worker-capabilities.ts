@@ -26,6 +26,7 @@ export const WORKER_INDEX_LIFECYCLE: ReadonlySet<string> = new Set([
 
 export const WORKER_INDEX_SEAT_VERBS: ReadonlySet<string> = new Set([
   "reply",
+  "edit_reply",
   "no_reply",
   "react",
   "update_status",

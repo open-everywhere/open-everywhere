@@ -4,6 +4,8 @@ import { withReplierPrefix } from "./turn-delivery.js";
 import { onVercel } from "../access/platform.js";
 import { postArm } from "./post-arms.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
+import { recordOwnPost } from "./own-post-ledger.js";
+import type { EditLocus } from "./reply-edit.js";
 
 type SlackOrigin = Extract<UnifiedWakeOrigin, { platform: "slack" }>;
 type GitHubOrigin = Extract<UnifiedWakeOrigin, { platform: "github" }>;
@@ -66,11 +68,26 @@ export async function postUnifiedReply(
     run: async () => {
       const realId = await dispatchUnifiedReply(origin, body, deps, nativeReplier);
       await auditReplyPost(audit, realId, origin.platform, body.length);
+      const editLocus = unifiedEditLocus(origin);
+      if (editLocus) await recordOwnPost(audit?.org, editLocus, realId);
       return realId;
     },
     skipped: () => REPLY_DEDUPE_SKIPPED_ID,
   });
   return id ?? REPLY_DEDUPE_SKIPPED_ID;
+}
+
+export function unifiedEditLocus(origin: UnifiedWakeOrigin): EditLocus | null {
+  switch (origin.platform) {
+    case "slack":
+      return { platform: "slack", channelId: origin.channelId };
+    case "discord":
+      return { platform: "discord", channelId: origin.channelId };
+    case "teams":
+      return { platform: "teams", channelId: origin.conversationId, serviceUrl: origin.serviceUrl };
+    default:
+      return null;
+  }
 }
 
 async function dispatchUnifiedReply(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps = {}, replier?: ReplierLabel): Promise<string> {

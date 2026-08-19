@@ -3,6 +3,7 @@ import { HARNESS_INTERNAL_TOOLS } from "./job-posture.js";
 
 export const LEAN_SEAT_TOOLS: ReadonlySet<string> = new Set([
   "reply",
+  "edit_reply",
   "no_reply",
   "react",
   "update_status",
