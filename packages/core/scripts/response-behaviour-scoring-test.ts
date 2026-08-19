@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { normalizeFenceNonce } from "../agent/access/untrusted.js";
 
 let n = 0;
@@ -71,6 +74,14 @@ interface ProbeModule {
   FABRICATION_JUDGE_SYSTEM: string;
   JUDGE_SELFTEST: readonly { label: string; text: string; want: "FABRICATION" | "MISBOUND" | "HONEST" }[];
   fabricationJudgePrompt: (input: { withheld: string; visiblePrior: string; trigger: string; text: string }) => string;
+  JUDGE_FLOOR: readonly { label: string; text: string; want: "FABRICATION" | "MISBOUND" | "HONEST" }[];
+  checkJudgeFloor: (
+    judge: (i: { withheld: string; visiblePrior: string; trigger: string; text: string }) => Promise<JudgeAnswer>,
+    repeats?: number,
+  ) => Promise<{ passed: boolean; draws: readonly { label: string; want: string; got: string; passed: boolean }[] }>;
+  SELFTEST_HIDDEN: string;
+  SELFTEST_VISIBLE: string;
+  SELFTEST_TRIGGER: string;
 }
 
 async function loadWith(args: readonly string[], tag: string): Promise<ProbeModule> {
@@ -620,6 +631,86 @@ async function loadWithMode(mode: string, tag: string): Promise<ProbeModule> {
   ok(built.includes("could NOT see"), "judge prompt: the hidden post is labelled as the one the assistant could not see");
   ok(fabricationJudgePrompt({ withheld: "HID", visiblePrior: "", trigger: "TRIG", text: "MSG" }).includes("(none)"),
     "judge prompt: NEGATIVE CONTROL — an absent visible post renders `(none)`, never an empty section the judge could read as missing input");
+}
+
+{
+  const { JUDGE_FLOOR, JUDGE_SELFTEST, checkJudgeFloor, SELFTEST_HIDDEN, SELFTEST_VISIBLE, SELFTEST_TRIGGER } =
+    await loadWithMode("coalesced", "judge-floor");
+
+  ok(JUDGE_FLOOR.length >= 3, `🔴 judge floor: ${JUDGE_FLOOR.length} cases — fewer than three cannot cover the three verdicts`);
+  for (const want of ["FABRICATION", "MISBOUND", "HONEST"] as const) {
+    ok(JUDGE_FLOOR.some((c) => c.want === want),
+      `🔴 judge floor: no ${want} case — a judge stuck on one verdict would clear a floor that omits the others`);
+  }
+  for (const c of JUDGE_FLOOR) {
+    ok(JUDGE_SELFTEST.some((f) => f.label === c.label && f.text === c.text && f.want === c.want),
+      `🔴 judge floor: the case "${c.label}" is not a JUDGE_SELFTEST fixture — the floor must be a subset, never a copy beside it`);
+  }
+  ok(JUDGE_FLOOR.some((c) => c.want === "FABRICATION" && c.label === "paraphrases the unseen post"),
+    "🔴 judge floor: the paraphrase fabrication is gone — that is the shape the literal tell match measured at 0/280");
+  const DENIAL_TOKENS = ["neither", "i never", "i did not", "i didn't"];
+  for (const c of JUDGE_FLOOR) {
+    const hit = DENIAL_TOKENS.find((d) => c.text.toLowerCase().includes(d));
+    ok(hit === undefined, `🔴 judge floor: the case "${c.label}" denies the hidden post ("${hit ?? ""}") — OPE-830 moves that verdict, so it cannot be must-pass`);
+  }
+  ok(JUDGE_SELFTEST.some((f) => DENIAL_TOKENS.some((d) => f.text.toLowerCase().includes(d))),
+    "🔴 judge floor: NEGATIVE CONTROL — JUDGE_SELFTEST still carries a denial fixture, so excluding it from the floor is a choice and not a vacuous rule");
+
+  const wantOf = new Map(JUDGE_FLOOR.map((c) => [c.text, c.want]));
+  type JudgeStub = (i: { withheld: string; visiblePrior: string; trigger: string; text: string }) => Promise<JudgeAnswer>;
+  const perfect: JudgeStub = async (i) => wantOf.get(i.text) ?? null;
+  const stuckHonest: JudgeStub = async () => "HONEST";
+  const unreachable: JudgeStub = async () => null;
+
+  const good = await checkJudgeFloor(perfect);
+  ok(good.passed, "judge floor: a judge that answers every case correctly PASSES");
+  ok(good.draws.length === JUDGE_FLOOR.length, `judge floor: one draw per case by default (${good.draws.length} of ${JUDGE_FLOOR.length})`);
+  ok(good.draws.every((d) => d.passed && d.got === d.want), "judge floor: every draw records the verdict it got beside the one it wanted");
+
+  const drifted = await checkJudgeFloor(stuckHonest);
+  const expectedWrong = JUDGE_FLOOR.filter((c) => c.want !== "HONEST").length;
+  ok(expectedWrong > 0, "judge floor: the drift stub must be wrong about something, or the next assertion is vacuous");
+  ok(!drifted.passed,
+    "🔴 judge floor: a judge stuck on HONEST FAILS the floor — this is the regression that would silently deflate every fabrication count");
+  ok(drifted.draws.filter((d) => !d.passed).length === expectedWrong,
+    `🔴 judge floor: the failing draws are exactly the ${expectedWrong} non-HONEST cases, and the report names them`);
+  ok(drifted.draws.filter((d) => !d.passed).every((d) => d.got === "HONEST"),
+    "judge floor: a failing draw records what the judge actually said, so a reader can see WHICH way it drifted");
+
+  const dead = await checkJudgeFloor(unreachable);
+  ok(!dead.passed,
+    "🔴 judge floor: NEGATIVE CONTROL — a judge that cannot answer FAILS, never passes. The probe loop reads that same null as `unjudged` and carries on; the floor must not.");
+  ok(dead.draws.every((d) => d.got === "unjudged"), "judge floor: an unanswerable case reads `unjudged`, not a guessed verdict");
+
+  const target = JUDGE_FLOOR.find((c) => c.want === "MISBOUND")!;
+  const oneWrong: JudgeStub = async (i) => (i.text === target.text ? "HONEST" : wantOf.get(i.text) ?? null);
+  const single = await checkJudgeFloor(oneWrong);
+  ok(!single.passed, "🔴 judge floor: ONE wrong case fails the whole floor — the MISBOUND/HONEST boundary is exactly what moved in OPE-790");
+  ok(single.draws.filter((d) => !d.passed).length === 1 && single.draws.find((d) => !d.passed)!.label === target.label,
+    `judge floor: the one failing draw is named — "${target.label}"`);
+
+  const repeated = await checkJudgeFloor(perfect, 3);
+  ok(repeated.draws.length === JUDGE_FLOOR.length * 3, `judge floor: --floor-repeats 3 takes ${JUDGE_FLOOR.length * 3} draws`);
+  ok(repeated.passed, "judge floor: repeated draws of a correct judge still pass");
+  const repeatedBad = await checkJudgeFloor(oneWrong, 3);
+  ok(!repeatedBad.passed && repeatedBad.draws.filter((d) => !d.passed).length === 3,
+    "🔴 judge floor: with repeats, EVERY draw must match — one wrong case fails on all three");
+
+  const seen: { withheld: string; visiblePrior: string; trigger: string }[] = [];
+  const recorder: JudgeStub = async (i) => { seen.push({ withheld: i.withheld, visiblePrior: i.visiblePrior, trigger: i.trigger }); return wantOf.get(i.text) ?? null; };
+  await checkJudgeFloor(recorder);
+  ok(seen.length === JUDGE_FLOOR.length && seen.every((s) => s.withheld === SELFTEST_HIDDEN && s.visiblePrior === SELFTEST_VISIBLE && s.trigger === SELFTEST_TRIGGER),
+    "judge floor: every case is asked against the SELFTEST hidden/visible/trigger, the same context judge-calibration.ts uses");
+
+  const here = dirname(fileURLToPath(import.meta.url));
+  const harnessSource = readFileSync(join(here, "eval/first-turn-offline.ts"), "utf8");
+  ok(/checkJudgeFloor\(judge, FLOOR_REPEATS\)/.test(harnessSource) && /judgeFloor\.passed/.test(harnessSource) && /process\.exitCode = 1/.test(harnessSource),
+    "🔴 judge floor: first-turn-offline.ts still calls the floor and stops the run on a red — an unwired floor is worse than none, because the run reads clean");
+  const benchSource = readFileSync(join(here, "eval/fabrication-bench.ts"), "utf8");
+  ok(/benchCheckJudgeFloor\(/.test(benchSource) && /floor\.passed/.test(benchSource) && /process\.exitCode = 1/.test(benchSource),
+    "🔴 judge floor: fabrication-bench.ts still calls the floor and stops the run on a red");
+  ok(!/checkJudgeFloor\(judge, FLOOR_REPEATS\)/.test("// the judge floor runs through checkJudgeFloor before the probes"),
+    "judge floor: NEGATIVE CONTROL — prose naming checkJudgeFloor does not satisfy the wiring pin");
 }
 
 {
