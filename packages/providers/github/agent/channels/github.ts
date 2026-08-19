@@ -25,7 +25,7 @@ import {
   finalMessageActionForTurn,
   silentRoutineThisTurn,
   completeSupervisorTurn,
-  consumeRepliedThisTurn,
+  consumeSupervisorReplyMark,
   auditSupervisorFailure,
   capabilitiesForPlatform,
   appendAudit,
@@ -435,7 +435,7 @@ const native: GitHubChannel = githubChannel({
       const st = channel.state as GitHubSupervisorSessionState;
       const target = st.oeReplyTarget;
       const org = deploymentOrg();
-      const repliedViaTool = consumeRepliedThisTurn((ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
+      const repliedViaTool = consumeSupervisorReplyMark(ctx);
       const postOwner = st.oeUnified === true ? target?.owner : st.owner;
       const postRepo = st.oeUnified === true ? target?.repo : st.repo;
       const auditOwner = (st.oeUnified === true ? target?.owner : undefined) ?? st.owner;

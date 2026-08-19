@@ -36,7 +36,7 @@ import {
   finalMessageActionForTurn,
   silentRoutineThisTurn,
   completeSupervisorTurn,
-  consumeRepliedThisTurn,
+  consumeSupervisorReplyMark,
   capabilitiesForPlatform,
   auditSupervisorFailure,
   appendAudit,
@@ -815,7 +815,7 @@ const native: LinearChannel = linearChannel({
       const st = channel.state as LinearSupervisorSessionState;
       const target = st.oeReplyTarget;
       const org = deploymentOrg();
-      const repliedViaTool = consumeRepliedThisTurn((ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
+      const repliedViaTool = consumeSupervisorReplyMark(ctx);
       const auditTeamId = (st.oeUnified === true ? target?.teamId : undefined) ?? st.oeTeamId;
       const auditOrgId = (st.oeUnified === true ? target?.organizationId : undefined) ?? st.organizationId;
       const surface = auditTeamId ? `linear/${auditOrgId ?? "unknown"}/${auditTeamId}` : undefined;

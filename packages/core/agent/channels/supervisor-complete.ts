@@ -1,5 +1,10 @@
 import { supervisorTextDelivery, type FinalMessageAction } from "./turn-delivery.js";
 import { appendAudit } from "../audit/audit.js";
+import { consumeRepliedThisTurn } from "./reply-signal.js";
+
+export function consumeSupervisorReplyMark(ctx: unknown): boolean {
+  return consumeRepliedThisTurn((ctx as { session?: { turn?: { id?: string } } } | undefined)?.session?.turn?.id);
+}
 
 export interface SupervisorAuditRow {
   readonly org: string;

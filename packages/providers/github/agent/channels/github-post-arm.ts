@@ -93,7 +93,7 @@ function originForTarget(target: GitHubReplyTarget): GitHubOrigin {
     repo: target.repo,
     issueNumber: target.issueNumber,
     ...(target.installationId !== undefined ? { installationId: target.installationId } : {}),
-  } as GitHubOrigin;
+  };
 }
 
 export const githubPostArm: PostArm = {

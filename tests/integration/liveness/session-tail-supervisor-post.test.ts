@@ -75,11 +75,11 @@ afterAll(async () => {
   settings.resetSettingsForTest();
 });
 
-async function armSeams(topology: boolean): Promise<void> {
+async function armSeams(): Promise<void> {
   await bootAgent({ sharedSqlite: true });
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
-  settings.overrideSettingsForTest({ approvals: { judgeMode: "off" }, window: { topology } });
-  expect(settings.getSettings().window.topology).toBe(topology);
+  settings.overrideSettingsForTest({ approvals: { judgeMode: "off" }, window: { topology: false } });
+  expect(settings.getSettings().window.topology).toBe(false);
   if (stub) return;
   await seedNotionChannelKey();
   const installed = installNotionApiStub((call) => {
@@ -98,7 +98,7 @@ async function armSeams(topology: boolean): Promise<void> {
 }
 
 test("a ticketing supervisor's `reply` reaches the room and its generation's tail ring", async () => {
-  await armSeams(false);
+  await armSeams();
   const sinceIso = new Date(Date.now() - 5_000).toISOString();
   const marker = randomBytes(4).toString("hex");
   const question = `supervisor tail probe ${marker}`;
@@ -158,7 +158,7 @@ test("a ticketing supervisor's `reply` reaches the room and its generation's tai
 });
 
 test("🔴 OPE-811: a supervisor turn's closing prose reaches neither the room nor the ring", async () => {
-  await armSeams(false);
+  await armSeams();
   const sinceIso = new Date(Date.now() - 5_000).toISOString();
   const marker = randomBytes(4).toString("hex");
   const question = `dropped-prose probe ${marker}`;
@@ -197,7 +197,7 @@ test("🔴 OPE-811: a supervisor turn's closing prose reaches neither the room n
 });
 
 test("🔴 a dedupe-suppressed repost writes no second tail-ring row and no second reply.post row", async () => {
-  await armSeams(false);
+  await armSeams();
   const sinceIso = new Date(Date.now() - 5_000).toISOString();
   const marker = randomBytes(4).toString("hex");
   const answer = `duplicate-safe answer ${marker}`;
