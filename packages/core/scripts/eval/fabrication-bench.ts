@@ -422,7 +422,11 @@ async function main(): Promise<void> {
     for (;;) {
       const i = next++;
       if (i >= N) return;
-      rows[i] = await runOne(i);
+      try {
+        rows[i] = await runOne(i);
+      } catch (e) {
+        rows[i] = { probe: i + 1, label: BENCH_PROBES[i % BENCH_PROBES.length].label, route: "none", verdict: "errored", tell: null, text: "", fetched: false, note: (e as Error).message.slice(0, 300) };
+      }
     }
   }));
 
