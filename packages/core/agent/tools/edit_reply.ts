@@ -16,6 +16,7 @@ import type { ReplyAudit } from "../channels/reply-post.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
 import { withPendingWorkFrame } from "../channels/turn-delivery.js";
 import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
+import { editPostTail } from "../channels/session-tail-record.js";
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
 import { pendingDelegationOwing } from "../access/pending-delegation-signal.js";
 import { silentRoutineThisTurn } from "../routines/report.js";
@@ -40,6 +41,7 @@ async function editOrReportAmbiguous(
     if (editFailureClass(err) !== "ambiguous") throw err;
     return { edited: false, id: messageId, note: ambiguousEditNote(locus.platform) };
   }
+  await editPostTail(messageId, text);
   return { edited: true, id: messageId, note: editedNote(locus.platform) };
 }
 

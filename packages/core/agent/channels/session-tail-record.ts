@@ -63,7 +63,13 @@ export async function recordWakeTail(
   }
 }
 
-export async function recordPostTail(text: string, at: string, platform?: string, store: OperationalStore = getOperationalStore()): Promise<void> {
+export async function recordPostTail(
+  text: string,
+  at: string,
+  platform?: string,
+  id?: string,
+  store: OperationalStore = getOperationalStore(),
+): Promise<void> {
   const w = tailWindow();
   if (!w) return;
   try {
@@ -75,10 +81,22 @@ export async function recordPostTail(text: string, at: string, platform?: string
       author: "self",
       ...(platform ?? w.platform ? { platform: platform ?? w.platform } : {}),
       ...(w.container ? { container: w.container } : {}),
+      ...(id ? { id } : {}),
       text,
     });
   } catch (err) {
     console.warn(`[open-everywhere:session-tail] post entry not recorded (${w.registryKey}): ${String(err)}`);
+  }
+}
+
+export async function editPostTail(messageId: string, text: string, store: OperationalStore = getOperationalStore()): Promise<boolean> {
+  const w = tailWindow();
+  if (!w) return false;
+  try {
+    return await store.editSessionTailPost(w.org, w.registryKey, w.token, messageId, text);
+  } catch (err) {
+    console.warn(`[open-everywhere:session-tail] post entry not edited (${w.registryKey}): ${String(err)}`);
+    return false;
   }
 }
 

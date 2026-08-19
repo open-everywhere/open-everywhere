@@ -596,6 +596,7 @@ export interface OperationalStore {
   appendSessionTail(org: string, surfaceKey: string, token: string, entry: SessionTailEntry): Promise<void>;
   readSessionTail(org: string, surfaceKey: string, token: string): Promise<SessionTailEntry[]>;
   clearSessionTail(org: string, surfaceKey: string, token: string): Promise<void>;
+  editSessionTailPost(org: string, surfaceKey: string, token: string, messageId: string, text: string): Promise<boolean>;
 
   listDomainSkills(org: string, domain: string): Promise<DomainSkillRow[]>;
   putDomainSkill(
