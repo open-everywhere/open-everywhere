@@ -858,6 +858,9 @@ async function main(): Promise<void> {
   const gateway = createGateway({ apiKey: key });
 
   console.log(`first-turn-offline: n=${N} path=${PATH}${TICKETING ? ` platform=${PLATFORM}` : ""} mode=${MODE} arm=${ARM}${ARM === "c" ? " (say-something)" : " (shipped)"} toolset=${TOOLSET} reissue=${REISSUE ? (STOCK_REISSUE ? "stock (pre-OPE-762)" : "guarded (OPE-762)") : "off"} pair=${PAIR ?? "rotating"} model=${MODEL} effort=${EFFORT}`);
+  if (TICKETING && TOOLSET === "minimal") {
+    console.log("⚠ toolset=minimal — NOT the live seat's roster. Add --toolset lean for a live-representative false-silence number (OPE-828).");
+  }
   if (MODE === "warranted-ambient") {
     console.log(`pool: shape=${SHAPE ?? "all"} (${ACTIVE_WARRANTED.length} entries) backscroll=${BACKSCROLL}${BACKSCROLL_OUT ? " — the referenced self-post is HIDDEN; a neutral decoy of comparable length stands in its place" : ""}${BACKSCROLL_HINTED ? `; the trigger carries prev-id=${HIDDEN_POST_ID}, which names no message in view` : ""} judge=${NO_JUDGE ? "off" : JUDGE_MODEL}`);
     console.log(`prior: ${PRIOR} — ${PRIOR_WARM
