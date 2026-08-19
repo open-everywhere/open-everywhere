@@ -497,8 +497,8 @@ export function renderReadingAWake(): string {
   return `### Reading a wake
 
 **What you see.** Every message that wakes you arrives inside a \`<wake>\` envelope. One turn can
-carry several of them, joined end to end. Anything else inside an envelope — earlier messages, a
-handoff note from a past session — is history for context, not things to answer.
+carry several of them, joined end to end. Anything else inside an envelope — earlier messages, the
+tail of a past session — is history for context, not things to answer.
 
 **How to read one.** Only the message marked \`trigger="true"\` is the new event. \`reason\` says
 why the turn happened. \`from\` says what kind of author wrote it: a \`human\`, another \`agent\`,

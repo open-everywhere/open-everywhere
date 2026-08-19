@@ -131,14 +131,14 @@ for (const alias of Object.keys(STACKS) as StackAlias[]) {
   );
 
   ok(
-    shippedPercent === 0.5,
-    `the schema's shipped compactionThresholdPercent is ${shippedPercent}, expected 0.5 — the negative control for (b) ` +
-      `only works while the shipped value and this deployment's override differ.`,
+    shippedPercent === 0.5 && percent === shippedPercent,
+    `this deployment resolves compactionThresholdPercent to ${percent} against a shipped ${shippedPercent}; both must be ` +
+      `0.5 — the OPE-672 exercise override was retired by OPE-794 and nothing should re-introduce one here.`,
   );
   ok(
-    percent === 0.2 && percent !== shippedPercent,
-    `this deployment resolves compactionThresholdPercent to ${percent}, expected its own override 0.2 ` +
-      `(agent/settings/settings.ts, OPE-672) to beat the shipped ${shippedPercent}.`,
+    getSettings(process.env, {}).window.topology === false && getSettings(process.env, SETTINGS_OVERRIDES).window.topology === true,
+    `the override-is-respected control needs a row this deployment genuinely overrides: window.topology resolves ` +
+      `${getSettings(process.env, SETTINGS_OVERRIDES).window.topology} against a shipped ${getSettings(process.env, {}).window.topology}, expected true against false.`,
   );
 
   ok(SHIPPED_STACK === "american-closed", `SHIPPED_STACK is "${SHIPPED_STACK}", expected "american-closed" — pin (c) below names it.`);
@@ -149,17 +149,23 @@ for (const alias of Object.keys(STACKS) as StackAlias[]) {
   );
   const lunaThreshold = compactionThresholdTokens(luna.primary.contextWindowTokens, percent);
   ok(
-    lunaThreshold === 210_000,
-    `american-closed compacts at ${lunaThreshold} tokens, expected 210000 (1050000 × 0.2). OPE-715 required this ` +
-      `number to be UNCHANGED: deriving the threshold must be zero-behaviour-change for the deployed configuration.`,
+    lunaThreshold === 525_000,
+    `american-closed compacts at ${lunaThreshold} tokens, expected 525000 (1050000 × 0.5).`,
+  );
+
+  const contextSizeTrigger = getSettings(process.env, SETTINGS_OVERRIDES).rotation.contextSizeTokens;
+  ok(
+    contextSizeTrigger < lunaThreshold,
+    `the context-size rotation trigger is ${contextSizeTrigger} tokens and compaction fires at ${lunaThreshold} — the trigger ` +
+      `MUST be lower, or a standing seat compacts before it rotates and never re-mints with a tail (OPE-794).`,
   );
 
   const SMALL_WINDOW = 272_000;
   const small = resolveStack("american-closed", { primary: { contextWindowTokens: SMALL_WINDOW } });
   const smallThreshold = compactionThresholdTokens(small.primary.contextWindowTokens, percent);
   ok(
-    smallThreshold === 54_400,
-    `a ${SMALL_WINDOW}-token primary compacts at ${smallThreshold}, expected 54400 (${SMALL_WINDOW} × ${percent}).`,
+    smallThreshold === 136_000,
+    `a ${SMALL_WINDOW}-token primary compacts at ${smallThreshold}, expected 136000 (${SMALL_WINDOW} × ${percent}).`,
   );
   ok(
     smallThreshold < lunaThreshold,

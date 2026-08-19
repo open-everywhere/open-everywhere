@@ -126,12 +126,17 @@ export function supervisorRotateTurnBudget(): number {
   return getSettings().rotation.turnBudget;
 }
 
+export function supervisorRotateContextSize(): number {
+  return getSettings().rotation.contextSizeTokens;
+}
+
 export type RotationTrigger =
   | "runtime-changed"
   | "unknown-accumulation"
   | "unparseable-timestamp"
   | "expiry"
   | "quiet-gap"
+  | "context-size"
   | "turn-backstop"
   | "token-backstop";
 
@@ -139,12 +144,13 @@ export interface RotationThresholds {
   readonly quietGapMs?: number;
   readonly turnBudget?: number;
   readonly tokenBudget?: number;
+  readonly contextSizeTokens?: number;
   readonly expiryMs?: number;
   readonly runtimeChanged?: boolean;
 }
 
 export function rotationTrigger(
-  row: Pick<ChannelSessionRow, "createdAt" | "lastWakeAt" | "turnCount" | "inputTokensTotal">,
+  row: Pick<ChannelSessionRow, "createdAt" | "lastWakeAt" | "turnCount" | "inputTokensTotal"> & Partial<Pick<ChannelSessionRow, "lastInputTokens">>,
   now: string,
   opts: RotationThresholds = {},
 ): RotationTrigger | null {
@@ -156,13 +162,14 @@ export function rotationTrigger(
   if (!Number.isFinite(nowMs) || !Number.isFinite(createdAtMs) || !Number.isFinite(lastWakeAtMs)) return "unparseable-timestamp";
   if (nowMs - createdAtMs > (opts.expiryMs ?? supervisorRotateExpiryMs())) return "expiry";
   if (nowMs - lastWakeAtMs > (opts.quietGapMs ?? supervisorRotateQuietGapMs())) return "quiet-gap";
+  if (row.lastInputTokens != null && row.lastInputTokens >= (opts.contextSizeTokens ?? supervisorRotateContextSize())) return "context-size";
   if (row.turnCount > (opts.turnBudget ?? supervisorRotateTurnBudget())) return "turn-backstop";
   if (row.inputTokensTotal >= (opts.tokenBudget ?? supervisorRotateTokenBudget())) return "token-backstop";
   return null;
 }
 
 export function shouldRotate(
-  row: Pick<ChannelSessionRow, "createdAt" | "lastWakeAt" | "turnCount" | "inputTokensTotal">,
+  row: Pick<ChannelSessionRow, "createdAt" | "lastWakeAt" | "turnCount" | "inputTokensTotal"> & Partial<Pick<ChannelSessionRow, "lastInputTokens">>,
   now: string,
   opts: RotationThresholds = {},
 ): boolean {

@@ -9,6 +9,7 @@ import {
   supervisorRotateQuietGapMs,
   supervisorRotateTurnBudget,
   supervisorRotateTokenBudget,
+  supervisorRotateContextSize,
   type RotationTrigger,
 } from "../agent/channels/turn-delivery.js";
 import { DM_SEAT_ROTATE_EXPIRY_MS, dmSeatThresholds } from "../agent/channels/dm-seat.js";
@@ -35,6 +36,7 @@ const OFF = {
   quietGapMs: Number.POSITIVE_INFINITY,
   turnBudget: Number.MAX_SAFE_INTEGER,
   tokenBudget: Number.MAX_SAFE_INTEGER,
+  contextSizeTokens: Number.MAX_SAFE_INTEGER,
 };
 
 {
@@ -56,7 +58,7 @@ const OFF = {
     eq(rotationTrigger(row, at), "unparseable-timestamp" satisfies RotationTrigger, `an unparseable ${field} fails safe to rotate`);
   }
 
-  const everything = { createdAt: iso(400 * DAY), lastWakeAt: iso(400 * DAY), turnCount: 10_000, inputTokensTotal: 99_000_000 };
+  const everything = { createdAt: iso(400 * DAY), lastWakeAt: iso(400 * DAY), turnCount: 10_000, inputTokensTotal: 99_000_000, lastInputTokens: 999_000 };
   eq(rotationTrigger(everything, NOW), "expiry" satisfies RotationTrigger, "🔴 a row that trips every rung reports EXPIRY — the primary is the time trigger, not a counter");
   eq(
     rotationTrigger(everything, NOW, { expiryMs: Number.POSITIVE_INFINITY }),
@@ -65,11 +67,16 @@ const OFF = {
   );
   eq(
     rotationTrigger(everything, NOW, { expiryMs: Number.POSITIVE_INFINITY, quietGapMs: Number.POSITIVE_INFINITY }),
+    "context-size" satisfies RotationTrigger,
+    "🔴 …then CONTEXT SIZE, leading the backstops (OPE-794) — it is the only rung racing another mechanism, because past the compaction threshold a generation is summarised instead of re-minted and there is no way back",
+  );
+  eq(
+    rotationTrigger(everything, NOW, { expiryMs: Number.POSITIVE_INFINITY, quietGapMs: Number.POSITIVE_INFINITY, contextSizeTokens: Number.MAX_SAFE_INTEGER }),
     "turn-backstop" satisfies RotationTrigger,
     "…then the turn backstop",
   );
   eq(
-    rotationTrigger(everything, NOW, { expiryMs: Number.POSITIVE_INFINITY, quietGapMs: Number.POSITIVE_INFINITY, turnBudget: Number.MAX_SAFE_INTEGER }),
+    rotationTrigger(everything, NOW, { expiryMs: Number.POSITIVE_INFINITY, quietGapMs: Number.POSITIVE_INFINITY, contextSizeTokens: Number.MAX_SAFE_INTEGER, turnBudget: Number.MAX_SAFE_INTEGER }),
     "token-backstop" satisfies RotationTrigger,
     "…and the token counter LAST — the rung OPE-345 demoted it to",
   );
@@ -96,7 +103,8 @@ const OFF = {
 {
   eq(supervisorRotateTurnBudget(), 60, "the unified turn BACKSTOP is 60 (OPE-345; was 150)");
   eq(supervisorRotateTokenBudget(), 4_000_000, "the token BACKSTOP is unchanged at 4M — OPE-345 demoted it, it did not re-value it");
-  eq(supervisorRotateQuietGapMs(), 24 * 3_600_000, "the quiet gap is unchanged at 24h (backscroll-cluster.ts derives its cluster boundary from this exact value)");
+  eq(supervisorRotateQuietGapMs(), 1 * 3_600_000, "🔴 the quiet gap is 1h since OPE-794, down from 24h — affordable only because a rotation now rebuilds from a ~5k-token recorded tail instead of a re-fetched ~16k backscroll bundle");
+  eq(supervisorRotateContextSize(), 120_000, "the context-size backstop is 120k last-request input tokens (OPE-794)");
 
   eq(rotationTrigger({ ...quiet, turnCount: supervisorRotateTurnBudget() + 1 }, NOW), "turn-backstop" satisfies RotationTrigger, "one turn over the backstop rotates");
   ok(!shouldRotate({ ...quiet, turnCount: supervisorRotateTurnBudget() }, NOW), "…exactly AT it does not (strict >)");
@@ -122,6 +130,35 @@ const OFF = {
 
   ok(dmSeatThresholds().turnBudget < wallTurns, `the DM turn backstop (${dmSeatThresholds().turnBudget}) is under the event wall too`);
   ok(dmSeatThresholds().turnBudget !== supervisorRotateTurnBudget(), "🔴 DM and unified turn backstops are DIFFERENT numbers — the policies are deliberately not the same, and a re-point to one number must fail a test");
+}
+
+{
+  const cap = supervisorRotateContextSize();
+  eq(
+    rotationTrigger({ ...quiet, lastInputTokens: cap }, NOW, { ...OFF, contextSizeTokens: cap }),
+    "context-size" satisfies RotationTrigger,
+    "at the context-size threshold the generation re-mints (inclusive, >=)",
+  );
+  ok(
+    !shouldRotate({ ...quiet, lastInputTokens: cap - 1 }, NOW, { ...OFF, contextSizeTokens: cap }),
+    "…one token under it does NOT — the negative control for the rung",
+  );
+
+  eq(
+    rotationTrigger({ ...quiet, lastInputTokens: null }, NOW, { ...OFF, contextSizeTokens: 1 }),
+    null,
+    "🔴 a NULL last-request value SKIPS the rung — it means 'no request has run yet', not 'an unreadable row', and rotating on it would loop every fresh generation",
+  );
+  eq(
+    rotationTrigger({ ...quiet }, NOW, { ...OFF, contextSizeTokens: 1 }),
+    null,
+    "…and an ABSENT field reads the same way (a pre-migration row is not a reason to rotate on this rung)",
+  );
+  eq(
+    rotationTrigger({ ...quiet, inputTokensTotal: null }, NOW, OFF),
+    "unknown-accumulation" satisfies RotationTrigger,
+    "…while a NULL CUMULATIVE counter still fails safe to rotate — the two nulls mean different things and the chain treats them differently",
+  );
 }
 
 {
@@ -163,4 +200,4 @@ const OFF = {
   }
 }
 
-console.log(`✓ rotation-trigger: ${n} assertions passed (OPE-345 chain: expiry primary, counters demoted to backstops)`);
+console.log(`✓ rotation-trigger: ${n} assertions passed (OPE-345 chain: expiry primary, counters demoted to backstops; OPE-794 context-size rung leads them)`);

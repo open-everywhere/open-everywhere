@@ -17,6 +17,7 @@ import {
   type WakeMessageInput,
   type WakeTrust,
   type UnifiedWindowWake,
+  type SessionTailEntry,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { mentionsUser, richTextToPlainText, type NotionComment } from "./notion-api.js";
 import type { OpenEverywhereNotionAuth } from "./notion-identity.js";
@@ -101,8 +102,7 @@ export interface NotionSupervisorWakeInput {
   readonly discussionId: string;
   readonly trigger: NotionWakeMessage;
   readonly threadComments?: readonly NotionWakeMessage[];
-  readonly handoffNote?: string | null;
-  readonly handoffFromGeneration?: number;
+  readonly tail?: readonly WakeMessageInput[];
   readonly engagementTier?: WakeEngagementTier;
   readonly wakeId?: string;
   readonly directMention?: boolean;
@@ -124,11 +124,7 @@ export function buildNotionSupervisorWake(input: NotionSupervisorWakeInput): Nor
   const directMention = input.directMention === true && input.addressing === "direct";
   const judged = input.addressing === "channel-watch";
   const enveloped = judged || directMention;
-  const backscroll = enveloped ? (input.threadComments ?? []).map(toWakeSibling) : undefined;
-  const handoff =
-    enveloped && input.handoffNote
-      ? { note: input.handoffNote, fromGeneration: input.handoffFromGeneration ?? 0 }
-      : undefined;
+  const backscroll = enveloped ? [...(input.tail ?? []), ...(input.threadComments ?? []).map(toWakeSibling)] : undefined;
   return {
     platform: "notion",
     reason: input.addressing === "direct" ? "mention" : "channel-activity",
@@ -141,7 +137,6 @@ export function buildNotionSupervisorWake(input: NotionSupervisorWakeInput): Nor
       thread: { ts: input.discussionId },
     },
     backscroll,
-    handoff,
     trigger: mkMessageTrigger({
       from: input.trigger.from,
       author: input.trigger.authorId ?? "unknown",
@@ -159,13 +154,15 @@ export interface NotionSupervisorSession {
   readonly token: string;
   readonly generation: number;
   readonly freshGeneration: boolean;
-  readonly handoffNote?: string | null;
+  readonly tail: readonly WakeMessageInput[];
   readonly lastWakeAt?: string | null;
 }
 
 export interface NotionSupervisorDeps {
   readonly getOrCreateSession: (surfaceKey: string, pageId: string, atIso: string) => Promise<NotionSupervisorSession>;
   readonly touchSession?: (surfaceKey: string, atIso: string) => Promise<void>;
+  readonly recordWake?: (entry: SessionTailEntry, token: string, surfaceKey: string) => Promise<void>;
+
   readonly wake: (input: {
     token: string;
     auth: OpenEverywhereNotionAuth;
@@ -255,7 +252,7 @@ export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch
     }
   }
 
-  const doWake = async (token: string, generation: number, handoffNote: string | null | undefined) => {
+  const doWake = async (token: string, generation: number, tail: readonly WakeMessageInput[]) => {
     const built: NormalizedWake = {
       ...buildNotionSupervisorWake({
         addressing: d.addressing,
@@ -266,8 +263,7 @@ export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch
         engagementTier: d.engagementTier,
         wakeId: d.window?.wakeId,
         directMention: d.directMention,
-        handoffNote: handoffNote ?? undefined,
-        handoffFromGeneration: generation - 1,
+        tail,
       }),
       ...(memoryDelta ? { memoryDelta } : {}),
     };
@@ -277,8 +273,27 @@ export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch
     await deps.wake({ token, auth, message, context: context ?? [], state, window: d.window });
   };
 
-  await doWake(session.token, session.generation, session.freshGeneration ? session.handoffNote : undefined);
+  await doWake(session.token, session.generation, session.freshGeneration ? session.tail : []);
   if (deps.touchSession) await deps.touchSession(d.surfaceKey, atIso);
+  if (deps.recordWake) {
+    await deps.recordWake(
+      {
+        kind: "wake",
+        at: atIso,
+        from: d.trigger.from,
+        trust: d.trigger.trust,
+        author: d.trigger.authorId ?? "unknown",
+        ...(d.trigger.authorId ? { authorId: d.trigger.authorId } : {}),
+        id: d.trigger.id,
+        platform: "notion",
+        container: d.surfaceKey,
+        threadRoot: d.discussionId,
+        text: d.trigger.text,
+      },
+      session.token,
+      d.surfaceKey,
+    );
+  }
 }
 
 export { shouldRotate };

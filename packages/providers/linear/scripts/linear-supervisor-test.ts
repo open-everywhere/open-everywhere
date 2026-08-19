@@ -171,7 +171,7 @@ function dispatch(over: Partial<LinearSupervisorDispatch> = {}): LinearSuperviso
 interface WakeCapture { token: string; message: string; context: readonly string[] }
 
 {
-  const session: LinearSupervisorSession = { token: linearSupervisorToken(TEAM, 1), generation: 1, freshGeneration: true, handoffNote: null };
+  const session: LinearSupervisorSession = { token: linearSupervisorToken(TEAM, 1), generation: 1, freshGeneration: true, tail: [], };
   const wakes: WakeCapture[] = [];
   const touched: string[] = [];
   const deps: LinearSupervisorDeps = {
@@ -188,7 +188,7 @@ interface WakeCapture { token: string; message: string; context: readonly string
 
 {
   const token = "oe-dom:acme-eng:oe-sup:g1";
-  const session: LinearSupervisorSession = { token, generation: 1, freshGeneration: false, handoffNote: null };
+  const session: LinearSupervisorSession = { token, generation: 1, freshGeneration: false, tail: [], };
   const wakeId = "wk-lin-dispatch-1";
   const window = { wakeId, origin: { platform: "linear" as const, agentSessionId: "as-dispatch-1", issueId: ISSUE, parentId: "c-root" }, addressing: "direct-mention" as const };
   let captured: { message: string; window: unknown } | undefined;
@@ -211,7 +211,7 @@ for (const [label, err] of [
   ["a gateway blip", new Error("transient network blip")],
   ["an eve session-limit-shaped error", new Error("SESSION_TOKEN_LIMIT_REACHED")],
 ] as const) {
-  const session: LinearSupervisorSession = { token: linearSupervisorToken(TEAM, 1), generation: 1, freshGeneration: false, handoffNote: null };
+  const session: LinearSupervisorSession = { token: linearSupervisorToken(TEAM, 1), generation: 1, freshGeneration: false, tail: [], };
   let touched = false;
   const wakes: WakeCapture[] = [];
   const deps: LinearSupervisorDeps = {
@@ -646,7 +646,7 @@ for (const [label, err] of [
 }
 
 {
-  const session: LinearSupervisorSession = { token: linearSupervisorToken(TEAM, 1), generation: 1, freshGeneration: true, handoffNote: null };
+  const session: LinearSupervisorSession = { token: linearSupervisorToken(TEAM, 1), generation: 1, freshGeneration: true, tail: [], };
   const auths: OpenEverywhereLinearAuth[] = [];
   const deps: LinearSupervisorDeps = {
     getOrCreateSession: async () => session,

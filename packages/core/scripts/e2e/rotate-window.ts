@@ -71,7 +71,7 @@ async function main() {
   console.log(`NEW token:      ${r.newRow.token}   <- eve session key (never seen before ⇒ fresh window)`);
   console.log(`row int counter: ${r.newRow.generation}   (separate bookkeeping, not the eve key)`);
   console.log(`createdAt:      ${r.newRow.createdAt}`);
-  console.log(`handoffNote:    ${r.newRow.handoffNote ?? "null (empty window ✓)"}`);
+  console.log(`lastInputTokens: ${r.newRow.lastInputTokens ?? "null (no request on this generation yet ✓)"}`);
 }
 
 main().catch((e) => {

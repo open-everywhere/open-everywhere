@@ -58,15 +58,13 @@ export interface WakeMessageInput {
   readonly previousBody?: string;
   readonly ownerToken?: string;
   readonly type?: "channel" | "thread";
+  readonly container?: string;
   readonly threadRoot?: string;
+  readonly threadPosition?: number;
+  readonly prevMessageId?: string;
   readonly sessionId?: string;
   readonly attachments?: readonly WakeAttachment[];
   readonly body: string;
-}
-
-export interface WakeHandoff {
-  readonly note: string;
-  readonly fromGeneration: number;
 }
 
 export interface WakeParticipant {
@@ -86,7 +84,6 @@ export interface WakeEnvelopeInput {
   readonly channel: WakeChannelMeta;
   readonly participants?: readonly WakeParticipant[];
   readonly thread?: WakeThreadMeta;
-  readonly handoff?: WakeHandoff;
   readonly messages: readonly WakeMessageInput[];
 }
 
@@ -147,7 +144,10 @@ function renderMessage(m: WakeMessageInput, sourcePlatform: string): string {
     attr("id", m.id) +
     attr("sent-at", m.sentAt) +
     attr("type", m.type) +
+    attr("container", m.container) +
     attr("thread", m.threadRoot) +
+    attr("thread-position", m.threadPosition === undefined ? undefined : String(m.threadPosition)) +
+    attr("prev-id", m.prevMessageId) +
     attr("thread-session-id", m.ownerToken);
 
   const unfenced = authorTrustAdmitsUnfencedBody(m);
@@ -207,11 +207,6 @@ function renderThreadOpen(t: WakeThreadMeta): string {
   return `<thread${attr("ts", t.ts)}${attr("session-owner", t.sessionOwner)}>`;
 }
 
-function renderHandoff(h: WakeHandoff): string {
-  noteIngestionVerdict({ kind: "handoff", label: "wake-envelope:handoff" }, false);
-  return `<handoff-note${attr("from-generation", String(h.fromGeneration))}>\n${indent(escapeXml(h.note), 2)}\n</handoff-note>`;
-}
-
 function tagReason(reason: WakeReason): WakeReason {
   return reason === "mention" ? "channel-activity" : reason;
 }
@@ -243,10 +238,9 @@ export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
 
   const participantsXml =
     input.participants && input.participants.length > 0 ? indent(renderParticipants(input.participants), 2) + "\n" : "";
-  const handoffXml = input.handoff ? indent(renderHandoff(input.handoff), 2) + "\n" : "";
   const channelBody = input.thread
-    ? `${participantsXml}${handoffXml}${indent(renderThreadOpen(input.thread), 2)}\n${indent(messagesXml, 4)}\n${indent("</thread>", 2)}`
-    : `${participantsXml}${handoffXml}${indent(messagesXml, 2)}`;
+    ? `${participantsXml}${indent(renderThreadOpen(input.thread), 2)}\n${indent(messagesXml, 4)}\n${indent("</thread>", 2)}`
+    : `${participantsXml}${indent(messagesXml, 2)}`;
 
   const unauthNote = input.messages.some((m) => m.trust === "unauth") ? [indent(UNAUTH_SYSTEM_NOTE, 2)] : [];
 

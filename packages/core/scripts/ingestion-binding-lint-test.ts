@@ -138,13 +138,13 @@ function tsFilesUnder(dir: string): string[] {
   ok(at("review/pr-walkthrough.ts").some((s) => s.form === "noteIngestionVerdict" && s.kindLiteral === "github"), "real: review/pr-walkthrough.ts's noteIngestionVerdict — the multi-line paren-then-brace shape — is SEEN and resolves kind: github");
   ok(at("tools/read_channel.ts").some((s) => s.form === "chatReadIngestion" && s.kindLiteral === "chat-message"), "real: tools/read_channel.ts's chatReadIngestion call is SEEN, kind bound through the factory");
   const wakeEnvelope = at("channels/wake-envelope.ts");
-  ok(wakeEnvelope.length === 2, `real: channels/wake-envelope.ts carries exactly its two known sites (chat-message body, handoff note) — saw ${wakeEnvelope.length}`);
-  ok(wakeEnvelope.some((s) => s.kindLiteral === "handoff"), "real: …one of which is the handoff-note site (OPE-340)");
+  ok(wakeEnvelope.length === 1, `real: channels/wake-envelope.ts carries exactly its ONE known site (the chat-message body) — saw ${wakeEnvelope.length}`);
+  ok(wakeEnvelope.every((s) => s.kindLiteral === "chat-message"), "real: …and it is the chat-message site — the handoff-note site went with the note it declared (OPE-794)");
   ok(at("webhooks/dispatch.ts").length === 2, "real: webhooks/dispatch.ts carries both its webhook-body and webhook-summary sites");
   ok(at("access/untrusted-projection.ts").some((s) => s.kindLiteral === "connector" && s.labelText === "name"), "real: access/untrusted-projection.ts's connector site is SEEN with its bound-identifier label (`label: name`)");
   ok(at("tools/sandbox_tools.ts").some((s) => s.kindLiteral === "skill-declared" && s.hasLabel && s.labelText === undefined), "real: tools/sandbox_tools.ts's skill-declared site is SEEN with its bare shorthand `label` property");
 
-  ok(sites.length >= 28, `real: the inventory is at least the ~28 sites re-derived for OPE-545 (saw ${sites.length}) — a collapse here means the detector stopped seeing, not that routes went away`);
+  ok(sites.length >= 27, `real: the inventory is at least the 27 sites standing after OPE-794 (saw ${sites.length}) — a collapse here means the detector stopped seeing, not that routes went away`);
 
   const channelRead = readFileSync(join(root, "agent", "channels", "channel-read.ts"), "utf8");
   ok(/export function chatReadIngestion\(/.test(channelRead), "real: channels/channel-read.ts still exports chatReadIngestion — the factory this lint's shape-4 trust depends on");

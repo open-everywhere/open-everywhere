@@ -153,7 +153,6 @@ export type { ImageDescribeRequest, ImageDescribeResult, ImageDescribeUsage, Ima
 export { judgeFromCompletion, registerDreamJudge, dreamJudge } from "./memory/dream/judge.js";
 export type { DreamCompletion, DreamJudge } from "./memory/dream/judge.js";
 export { facetJudgeFromCompletion, registerFailureFacetJudge } from "./memory/dream/mode3.js";
-export { registerHandoffCompletion } from "./model/rotation-handoff.js";
 export { registerApprovalJudgeCompletion } from "./access/approval-judge.js";
 export type { ApprovalJudgeCompletion, JudgePass } from "./access/approval-judge.js";
 export { stampModelCall, readModelStamp, swapModelStamp, withModelStampScope } from "./model/model-stamp.js";
@@ -427,13 +426,17 @@ export { evaluateJqFilter, filterDocument } from "./routines/jq-filter.js";
 export type { EventFilterDocument } from "./routines/jq-filter.js";
 export type { SubscriptionFilter, FilterClause, ScopeSelector } from "./routines/event-model.js";
 
-export { unifiedSupervisorToken } from "./channels/unified-supervisor.js";
+export { unifiedSupervisorToken, standingSeatRegistryKey, dmWindowRegistryKey } from "./channels/unified-supervisor.js";
 
 export { nameDropWakeEnabled } from "./memory/domain.js";
 
 export { renderContext, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, contextLineIngestion } from "./channels/context-render.js";
-export { clusterBackscroll } from "./channels/backscroll-cluster.js";
-export type { NormalizedMessage, BackscrollTrustFor } from "./channels/backscroll-cluster.js";
+export { fetchedBackscroll, approxMessageTokens } from "./channels/backscroll-window.js";
+export type { NormalizedMessage, BackscrollTrustFor } from "./channels/backscroll-window.js";
+
+export { buildTail, selectTail, tailEntryToWakeMessage, approxEntryTokens, tailTokenCap, SESSION_TAIL_MAX_ENTRIES } from "./channels/session-tail.js";
+export type { SessionTailEntry } from "./channels/session-tail.js";
+export { recordWakeTail, recordPostTail, carryTailForward, seedTailWindow } from "./channels/session-tail-record.js";
 
 export {
   bumpThreadSilentStreak,
@@ -509,20 +512,6 @@ export { consumeNoReplyThisTurn } from "./channels/no-reply-signal.js";
 export { consumeReactedThisTurn } from "./channels/react-signal.js";
 
 export { MAX_MESSAGES } from "./channels/context-render.js";
-
-export {
-  generateHandoffNote,
-  distillRotationHandoff,
-  handoffPrompt,
-  clampHandoffNote,
-  HANDOFF_NOTE_MAX_CHARS,
-  recordHandoffNoteLoss,
-  missingHandoffHeadings,
-  HANDOFF_NOTE_HEADINGS,
-  HANDOFF_NOTE_LOSS_AUDIT_ACTION,
-  HANDOFF_NOTE_DEGRADED_AUDIT_ACTION,
-  type HandoffNoteLossReason,
-} from "./model/rotation-handoff.js";
 
 export type { WakeAttachment, WakeParticipant } from "./channels/wake-envelope.js";
 export { PREFER_NO_REPLY_TOOL } from "./channels/normalized-wake.js";

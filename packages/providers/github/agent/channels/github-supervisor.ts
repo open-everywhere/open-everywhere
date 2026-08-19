@@ -10,6 +10,8 @@ import {
   type UnifiedWindowWake,
   type WakeTrust,
   type IngestedChatMessage,
+  type WakeMessageInput,
+  type SessionTailEntry,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { githubBotMentioned, type OpenEverywhereGitHubAuth } from "./github-identity.js";
 
@@ -72,8 +74,7 @@ export interface GitHubSupervisorWakeInput {
     readonly trust: WakeTrust;
   };
   readonly engagementTier?: WakeEngagementTier;
-  readonly handoffNote?: string | null;
-  readonly handoffFromGeneration?: number;
+  readonly tail?: readonly WakeMessageInput[];
   readonly wakeId?: string;
   readonly directMention?: boolean;
 }
@@ -83,9 +84,7 @@ export function buildGitHubSupervisorWake(input: GitHubSupervisorWakeInput): Nor
   const contextLines: ContextLine[] | undefined = input.issueTitle
     ? [{ senderType: "user", ts: `#${input.issueNumber}`, text: `issue/PR #${input.issueNumber}: ${input.issueTitle}` }]
     : undefined;
-  const handoff = input.handoffNote
-    ? { note: input.handoffNote, fromGeneration: input.handoffFromGeneration ?? 0 }
-    : undefined;
+
   return {
     platform: "github",
     reason: directMention ? "mention" : "channel-activity",
@@ -99,7 +98,7 @@ export function buildGitHubSupervisorWake(input: GitHubSupervisorWakeInput): Nor
     },
     contextLines,
     contextSource: contextLines ? "the issue/PR this comment is on" : undefined,
-    handoff,
+    backscroll: input.tail && input.tail.length > 0 ? input.tail : undefined,
     trigger: mkMessageTrigger({
       from: "human",
       author: input.trigger.authorLogin ?? "unknown",
@@ -181,12 +180,14 @@ export interface GitHubSupervisorSession {
   readonly token: string;
   readonly generation: number;
   readonly freshGeneration: boolean;
-  readonly handoffNote?: string | null;
+  readonly tail: readonly WakeMessageInput[];
 }
 
 export interface GitHubSupervisorDeps {
   readonly getOrCreateSession: (surfaceKey: string, owner: string, repo: string, atIso: string) => Promise<GitHubSupervisorSession>;
   readonly touchSession?: (surfaceKey: string, atIso: string) => Promise<void>;
+  readonly recordWake?: (entry: SessionTailEntry, token: string, surfaceKey: string) => Promise<void>;
+
   readonly wake: (input: {
     token: string;
     auth: OpenEverywhereGitHubAuth;
@@ -216,7 +217,7 @@ export async function handleGitHubSupervisorDispatch(d: GitHubSupervisorDispatch
   const atIso = deps.now ? deps.now() : new Date().toISOString();
   const session = await deps.getOrCreateSession(d.surfaceKey, d.owner, d.repo, atIso);
 
-  const doWake = async (token: string, generation: number, handoffNote: string | null | undefined) => {
+  const doWake = async (token: string, generation: number, tail: readonly WakeMessageInput[]) => {
     const nw = buildGitHubSupervisorWake({
       owner: d.owner,
       repo: d.repo,
@@ -226,16 +227,34 @@ export async function handleGitHubSupervisorDispatch(d: GitHubSupervisorDispatch
       engagementTier: d.engagementTier,
       wakeId: d.window?.wakeId,
       directMention: d.directMention,
-      handoffNote: handoffNote ?? undefined,
-      handoffFromGeneration: generation - 1,
+      tail,
     });
     const { message, context } = renderWake(nw, deps.now);
     const auth = stampNonMemberChatAuth(d.auth, d.ingested, { surfaceKey: d.surfaceKey });
     await deps.wake({ token, auth, message, context: context ?? [], window: d.window });
   };
 
-  await doWake(session.token, session.generation, session.freshGeneration ? session.handoffNote : undefined);
+  await doWake(session.token, session.generation, session.freshGeneration ? session.tail : []);
   if (deps.touchSession) await deps.touchSession(d.surfaceKey, atIso);
+  if (deps.recordWake) {
+    await deps.recordWake(
+      {
+        kind: "wake",
+        at: atIso,
+        from: "human",
+        trust: d.trigger.trust,
+        author: d.trigger.authorLogin ?? "unknown",
+        ...(d.trigger.authorLogin ? { authorId: d.trigger.authorLogin } : {}),
+        id: d.trigger.id,
+        platform: "github",
+        container: d.surfaceKey,
+        threadRoot: `#${d.issueNumber}`,
+        text: d.trigger.text,
+      },
+      session.token,
+      d.surfaceKey,
+    );
+  }
 }
 
 export { shouldRotate };

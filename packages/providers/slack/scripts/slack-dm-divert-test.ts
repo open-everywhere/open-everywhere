@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { registerSlackProvider } from "../agent/register.js";
 import { buildFrontHandler, classifyEnvelope, dmFifoKey, ThreadFifo, EventDedupe } from "../agent/channels/slack-front.js";
-import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { overrideSettingsForTest, type WakeMessageInput } from "@open-everywhere/core/agent/adapter-api.js";
 
 registerSlackProvider();
 
@@ -86,7 +86,7 @@ class SpyFifo extends ThreadFifo {
 async function runFront(
   body: string,
   opts: {
-    seat?: { token: string; generation: number; freshGeneration: boolean; handoffNote: string | null };
+    seat?: { token: string; generation: number; freshGeneration: boolean; tail: readonly WakeMessageInput[] };
     seatThrows?: boolean;
     partnerTrust?: "internal" | "external";
     dedupe?: EventDedupe;
@@ -143,8 +143,8 @@ async function runFront(
         if (opts.seatThrows) throw new Error("registry down");
         seatCalls.push(dm);
         const fallback = dm.surfaceKey === MPIM_SURFACE
-          ? { token: MPIM_SEAT_TOKEN, generation: 2, freshGeneration: false, handoffNote: null }
-          : { token: SEAT_TOKEN, generation: 3, freshGeneration: false, handoffNote: null };
+          ? { token: MPIM_SEAT_TOKEN, generation: 2, freshGeneration: false, tail: [] }
+          : { token: SEAT_TOKEN, generation: 3, freshGeneration: false, tail: [] };
         return (opts.seat ?? fallback) as never;
       },
       touchDmSeatFn: async (org, surfaceKey) => {
@@ -281,19 +281,23 @@ async function runFront(
 }
 
 {
+  const CARRIED = "alice was mid-refund on order 4417";
+  const tail = [{ from: "human" as const, author: "U_ALICE", authorId: "U_ALICE", id: "m-prev", sentAt: "2026-02-09T21:34:00Z", trust: "principal" as const, body: CARRIED }];
   const fresh = await runFront(dmEnvelope("Ev6a"), {
-    seat: { token: SEAT_TOKEN, generation: 4, freshGeneration: true, handoffNote: "alice was mid-refund" },
+    seat: { token: SEAT_TOKEN, generation: 4, freshGeneration: true, tail },
   });
-  eq(
-    fresh.dispatched[0]!.target.context,
-    ["<handoff-from-previous-session>\nalice was mid-refund\n</handoff-from-previous-session>"],
-    "a FRESH generation carries the distilled handoff as fenced `context` — the continuity affordance the deleted wrapper provided, now riding the divert",
-  );
+  ok(fresh.dispatched[0]!.message.includes(CARRIED), "a FRESH DM generation carries the recorded tail in its wake envelope");
+  ok(fresh.dispatched[0]!.target.context === undefined, "…and NOT as a side-channel `context` string: the tail is rendered as messages, like everything else in a wake");
 
   const resumed = await runFront(dmEnvelope("Ev6b"), {
-    seat: { token: SEAT_TOKEN, generation: 4, freshGeneration: false, handoffNote: "alice was mid-refund" },
+    seat: { token: SEAT_TOKEN, generation: 4, freshGeneration: false, tail },
   });
-  eq(resumed.dispatched[0]!.target.context, undefined, "…a RESUMED generation carries none (the note is a fresh-generation affordance only)");
+  ok(!resumed.dispatched[0]!.message.includes(CARRIED), "…a RESUMED generation carries none of it (the tail is a fresh-generation affordance only)");
+
+  const coldFresh = await runFront(dmEnvelope("Ev6c"), {
+    seat: { token: SEAT_TOKEN, generation: 4, freshGeneration: true, tail: [] },
+  });
+  ok(!coldFresh.dispatched[0]!.message.includes(CARRIED), "…and a FRESH generation with an EMPTY tail carries none either — the negative control for the fresh arm");
 }
 
 {
@@ -483,4 +487,4 @@ async function runFront(
   }
 }
 
-console.log(`✓ slack-dm-divert: ${n} assertions passed (classification, window token + fence, addressing, DM auth attrs, dm envelope, handoff context, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression, OPE-525 external-participant policy)`);
+console.log(`✓ slack-dm-divert: ${n} assertions passed (classification, window token + fence, addressing, DM auth attrs, dm envelope, carried tail, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression, OPE-525 external-participant policy)`);

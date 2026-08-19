@@ -51,7 +51,7 @@ export async function claimRuntimeRotation(scope: RuntimeRotationScope, deps: Ru
       note:
         "the eve build changed since this seat's session was minted, so OE cannot prove the session is resumable — " +
         "the generation was retired and this wake goes to a fresh one. The retired generation's in-context state " +
-        "(backscroll, working memory) is gone; durable memory and the stored handoff note are not.",
+        "(working memory) is gone; the recorded conversation tail and durable memory are not.",
     },
   }).catch(() => undefined);
 

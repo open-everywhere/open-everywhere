@@ -5,7 +5,6 @@ import {
   type WakeChannelMeta,
   type WakeThreadMeta,
   type WakeParticipant,
-  type WakeHandoff,
   type WakeAddressing,
   type WakeEngagementTier,
   type WakeFollowUp,
@@ -42,7 +41,6 @@ export interface NormalizedWake {
   readonly wakeId?: string;
   readonly locus: WakeLocus;
   readonly participants?: readonly WakeParticipant[];
-  readonly handoff?: WakeHandoff;
   readonly backscroll?: readonly WakeMessageInput[];
   readonly contextLines?: readonly ContextLine[];
   readonly contextSource?: string;
@@ -87,7 +85,6 @@ export function renderWake(nw: NormalizedWake, now: () => string = () => new Dat
             },
             participants: nw.participants,
             thread: nw.locus.thread,
-            handoff: nw.handoff,
             messages: [...(nw.backscroll ?? []), nw.trigger.message],
         });
       }

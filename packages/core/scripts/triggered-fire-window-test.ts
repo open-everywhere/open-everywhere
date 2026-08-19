@@ -134,7 +134,7 @@ const store = getOperationalStore();
       row: () => row,
       store: {
         async getChannelSession() {
-          return row ? { org: "o", surfaceKey: "k", createdAt: "t", lastWakeAt: "t", inputTokensTotal: 0, firstWakeAt: null, handoffNote: null, ...row } : null;
+          return row ? { org: "o", surfaceKey: "k", createdAt: "t", lastWakeAt: "t", inputTokensTotal: 0, firstWakeAt: null, lastInputTokens: null, ...row } : null;
         },
         async rotateChannelSession(_org: string, _key: string, newToken: string) {
           calls.push("rotate");

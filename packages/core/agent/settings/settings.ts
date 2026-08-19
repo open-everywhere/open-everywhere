@@ -84,6 +84,8 @@ export interface AgentSettings {
     readonly expiryDays: number;
     readonly tokenBudget: number;
     readonly turnBudget: number;
+    readonly contextSizeTokens: number;
+    readonly tailTokenCap: number;
   };
   readonly sandbox: {
     readonly stopAfterTurn: boolean;
@@ -415,10 +417,10 @@ export const SETTINGS = {
   rotation: {
     quietGapHours: {
       path: "rotation.quietGapHours",
-      shipped: 24,
+      shipped: 1,
       validate: positiveNumber,
       summary:
-        "Idleness threshold, in hours: a standing generation not woken for this long rotates fresh on its NEXT wake rather than resuming a stale session. The first-wake backscroll DERIVES its cluster boundary from the same value, so a gap long enough to rotate is treated as a session boundary.",
+        "Idleness threshold, in hours: a standing generation not woken for this long rotates fresh on its NEXT wake rather than resuming a stale session. 1 hour is affordable because a rotation now rebuilds from a recorded tail capped by `rotation.tailTokenCap`, not from a re-fetched multi-cluster backscroll bundle.",
       format: (v) => `${v} h`,
     } satisfies SettingSpec<number>,
     expiryDays: {
@@ -442,6 +444,20 @@ export const SETTINGS = {
       validate: positiveNumber,
       summary:
         "Turn BACKSTOP: turn count on one generation. 60 is derived from the substrate — a workflow run caps at 25,000 events and OE measures ~295 events/turn, so the wall binds near ~85 turns and this sits ~30% under it. It must ALSO satisfy the older invariant it was first derived against, C(budget) < 40M cumulative input on its own (C(60)≈4.9M ✓; the pre-OPE-345 150 was ✓ at 25.65M, 300 is ✗ at ~96M) — both bounds are pinned in `scripts/rotation-trigger-test.ts`. RE-DERIVE it (do not nudge it) if the events-per-turn measurement moves.",
+    } satisfies SettingSpec<number>,
+    contextSizeTokens: {
+      path: "rotation.contextSizeTokens",
+      shipped: 120_000,
+      validate: positiveNumber,
+      summary:
+        "Context-size BACKSTOP: the LAST request's measured `inputTokens + cacheReadTokens` — the same measure compaction reads, not the cumulative counter `rotation.tokenBudget` meters. It sits BELOW the compaction fire point on purpose, so a standing seat re-mints a fresh generation with a recorded tail instead of compacting into a summary. Compaction still owns delegated and worker runs, which never reach the rotation chain.",
+    } satisfies SettingSpec<number>,
+    tailTokenCap: {
+      path: "rotation.tailTokenCap",
+      shipped: 5_000,
+      validate: positiveNumber,
+      summary:
+        "Token cap on the last-generation TAIL a fresh generation's first wake carries — the recorded wake messages and the seat's own posts, selected most-recent-first. Tight on purpose: the tail makes the seat conversational, and its read tools and memory cover everything older.",
     } satisfies SettingSpec<number>,
   },
   sandbox: {
@@ -774,6 +790,8 @@ export function getSettings(
       expiryDays: resolve(SETTINGS.rotation.expiryDays, o.rotation?.expiryDays, env),
       tokenBudget: resolve(SETTINGS.rotation.tokenBudget, o.rotation?.tokenBudget, env),
       turnBudget: resolve(SETTINGS.rotation.turnBudget, o.rotation?.turnBudget, env),
+      contextSizeTokens: resolve(SETTINGS.rotation.contextSizeTokens, o.rotation?.contextSizeTokens, env),
+      tailTokenCap: resolve(SETTINGS.rotation.tailTokenCap, o.rotation?.tailTokenCap, env),
     },
     sandbox: {
       stopAfterTurn: resolve(SETTINGS.sandbox.stopAfterTurn, o.sandbox?.stopAfterTurn, env),

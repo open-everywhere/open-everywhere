@@ -8,6 +8,7 @@ import { withReplierPrefix, type ReplierLabel } from "./turn-delivery.js";
 import { recordOwnPost } from "./own-post-ledger.js";
 import { resolvePartition } from "../memory/partition.js";
 import type { EditLocus } from "./reply-edit.js";
+import { recordPostTail } from "./session-tail-record.js";
 
 export type { ReplierLabel };
 
@@ -162,6 +163,7 @@ export async function postReply(target: ReplyTarget, text: string, audit?: Reply
       await auditReplyPost(audit, realId, target.platform, body.length);
       const editLocus = replyEditLocus(target);
       if (editLocus) await recordOwnPost(audit?.org, editLocus, realId);
+      await recordPostTail(body, new Date().toISOString(), target.platform);
       return realId;
     },
     skipped: () => REPLY_DEDUPE_SKIPPED_ID,

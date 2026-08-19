@@ -2,6 +2,7 @@ import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
 import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
+import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { auditRowSha } from "../audit/chain.js";
 import { assembleAnalyticsSql } from "../analytics/compile.js";
@@ -115,8 +116,17 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      turn_count         integer NOT NULL DEFAULT 0,
      input_tokens_total bigint,               -- measured cumulative input+cacheRead for this generation (§2 #551); NULL = unknown ⇒ rotate
      first_wake_at      text,                 -- ISO-8601 of the first delivered wake (H7c); NULL = none yet ⇒ still fresh
-     handoff_note       text,                 -- rolling distilled channel state for the next generation (§5); NULL = none
+     last_input_tokens  bigint,               -- OPE-794: measured input+cacheRead of the LATEST request (SET, not summed); NULL = none yet ⇒ rung skipped
      PRIMARY KEY (org_id, surface_key)
+   )`,
+  `CREATE TABLE IF NOT EXISTS session_tail (
+     org_id      text    NOT NULL,
+     surface_key text    NOT NULL,
+     token       text    NOT NULL,
+     seq         bigint  NOT NULL,
+     at          text    NOT NULL,
+     entry_json  text    NOT NULL,
+     PRIMARY KEY (org_id, surface_key, token, seq)
    )`,
   `CREATE TABLE IF NOT EXISTS event_dedupe (
      org_id  text NOT NULL,
@@ -374,7 +384,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE thread_engagement ADD COLUMN IF NOT EXISTS stopped boolean NOT NULL DEFAULT false`,
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS input_tokens_total bigint`,
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS first_wake_at text`,
-  `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS handoff_note text`,
+  `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS last_input_tokens bigint`,
   `ALTER TABLE task_result ADD COLUMN IF NOT EXISTS caller_token text`,
   `ALTER TABLE task_result ADD COLUMN IF NOT EXISTS delivered_at text`,
   `ALTER TABLE unified_wake_target ADD COLUMN IF NOT EXISTS window_token text`,
@@ -440,6 +450,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE thread_engagement ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE channel_session ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE event_dedupe ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE session_tail ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE webhook_capture ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE unified_wake_target ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE thread_ownership ENABLE ROW LEVEL SECURITY`,
@@ -474,6 +485,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS thread_engagement_org_isolation ON thread_engagement`,
   `DROP POLICY IF EXISTS channel_session_org_isolation ON channel_session`,
   `DROP POLICY IF EXISTS event_dedupe_org_isolation ON event_dedupe`,
+  `DROP POLICY IF EXISTS session_tail_org_isolation ON session_tail`,
   `DROP POLICY IF EXISTS webhook_capture_org_isolation ON webhook_capture`,
   `DROP POLICY IF EXISTS unified_wake_target_org_isolation ON unified_wake_target`,
   `DROP POLICY IF EXISTS thread_ownership_org_isolation ON thread_ownership`,
@@ -519,6 +531,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY event_dedupe_org_isolation ON event_dedupe
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY session_tail_org_isolation ON session_tail
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY webhook_capture_org_isolation ON webhook_capture
@@ -886,6 +901,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   thread_engagement: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   channel_session: ["SELECT", "INSERT", "UPDATE"],
   event_dedupe: ["SELECT", "INSERT", "DELETE"],
+  session_tail: ["SELECT", "INSERT", "DELETE"],
   pending_actions: ["SELECT", "INSERT", "UPDATE"],
   domain_skill: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   domain_model: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -1608,12 +1624,12 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async getChannelSession(org, surfaceKey) {
       const { rows } = await client.query(
-        "SELECT token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, handoff_note FROM channel_session WHERE org_id = $1 AND surface_key = $2",
+        "SELECT token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens FROM channel_session WHERE org_id = $1 AND surface_key = $2",
         [org, surfaceKey],
       );
       const r = (rows as {
         token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number;
-        input_tokens_total: string | number | null; first_wake_at: string | null; handoff_note: string | null;
+        input_tokens_total: string | number | null; first_wake_at: string | null; last_input_tokens: string | number | null;
       }[])[0];
       return r
         ? {
@@ -1621,16 +1637,15 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
             lastWakeAt: r.last_wake_at, turnCount: Number(r.turn_count),
             inputTokensTotal: r.input_tokens_total == null ? null : Number(r.input_tokens_total),
             firstWakeAt: r.first_wake_at ?? null,
-            handoffNote: r.handoff_note ?? null,
+            lastInputTokens: r.last_input_tokens == null ? null : Number(r.last_input_tokens),
           }
         : null;
     },
 
-    async rotateChannelSession(org, surfaceKey, newToken, at, handoffNote) {
-      const note = handoffNote ?? null;
+    async rotateChannelSession(org, surfaceKey, newToken, at) {
       const { rows } = await client.query(
-        `INSERT INTO channel_session (org_id, surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, handoff_note)
-         VALUES ($1, $2, $3, 1, $4, $5, 0, 0, NULL, $6)
+        `INSERT INTO channel_session (org_id, surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens)
+         VALUES ($1, $2, $3, 1, $4, $5, 0, 0, NULL, NULL)
          ON CONFLICT (org_id, surface_key) DO UPDATE SET
            token              = excluded.token,
            generation         = channel_session.generation + 1,
@@ -1639,12 +1654,12 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
            turn_count         = 0,
            input_tokens_total = 0,
            first_wake_at      = NULL,
-           handoff_note       = excluded.handoff_note
+           last_input_tokens  = NULL
          RETURNING generation`,
-        [org, surfaceKey, newToken, at, at, note],
+        [org, surfaceKey, newToken, at, at],
       );
       const generation = Number((rows as { generation: number | string }[])[0].generation);
-      return { org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0, inputTokensTotal: 0, firstWakeAt: null, handoffNote: note };
+      return { org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0, inputTokensTotal: 0, firstWakeAt: null, lastInputTokens: null };
     },
 
     async touchChannelSession(org, surfaceKey, at) {
@@ -1656,10 +1671,45 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async bumpChannelSessionUsage(org, surfaceKey, token, delta) {
       const { rows } = await client.query(
-        "UPDATE channel_session SET input_tokens_total = COALESCE(input_tokens_total, 0) + $4 WHERE org_id = $1 AND surface_key = $2 AND token = $3 RETURNING surface_key",
+        "UPDATE channel_session SET input_tokens_total = COALESCE(input_tokens_total, 0) + $4, last_input_tokens = $4 WHERE org_id = $1 AND surface_key = $2 AND token = $3 RETURNING surface_key",
         [org, surfaceKey, token, delta],
       );
       return rows.length;
+    },
+
+    async appendSessionTail(org, surfaceKey, token, entry) {
+      const { rows } = await client.query(
+        `INSERT INTO session_tail (org_id, surface_key, token, seq, at, entry_json)
+         SELECT $1, $2, $3, COALESCE(MAX(seq), 0) + 1, $4, $5 FROM session_tail WHERE org_id = $1 AND surface_key = $2 AND token = $3
+         RETURNING seq`,
+        [org, surfaceKey, token, entry.at, JSON.stringify(entry)],
+      );
+      const seq = Number((rows as { seq: number | string }[])[0].seq);
+      await client.query("DELETE FROM session_tail WHERE org_id = $1 AND surface_key = $2 AND token = $3 AND seq <= $4", [
+        org,
+        surfaceKey,
+        token,
+        seq - SESSION_TAIL_MAX_ENTRIES,
+      ]);
+    },
+
+    async readSessionTail(org, surfaceKey, token) {
+      const { rows } = await client.query(
+        "SELECT entry_json FROM session_tail WHERE org_id = $1 AND surface_key = $2 AND token = $3 ORDER BY seq ASC",
+        [org, surfaceKey, token],
+      );
+      const out: SessionTailEntry[] = [];
+      for (const r of rows as { entry_json: string }[]) {
+        try {
+          out.push(JSON.parse(r.entry_json) as SessionTailEntry);
+        } catch {
+        }
+      }
+      return out;
+    },
+
+    async clearSessionTail(org, surfaceKey, token) {
+      await client.query("DELETE FROM session_tail WHERE org_id = $1 AND surface_key = $2 AND token = $3", [org, surfaceKey, token]);
     },
 
     async listDomainSkills(org, domain) {

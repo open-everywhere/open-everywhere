@@ -143,7 +143,7 @@ const ORG = "acme";
   const healed = await getOrCreateDmSeat(ORG, { surfaceKey: SURFACE }, at);
   eq(healed.generation, 2, "🔴 THE FIX: the first wake after the eve build changed ROTATES the seat, so the wake lands in a session the runtime can read");
   ok(healed.token !== "seed-token-g1", "…on a genuinely new continuation token (a new eve session), not the stranded one");
-  eq(healed.freshGeneration, true, "…flagged fresh, so the wake re-carries backscroll and the handoff note");
+  eq(healed.freshGeneration, true, "…flagged fresh, so the wake re-carries context");
 
   const resumed = await getOrCreateDmSeat(ORG, { surfaceKey: SURFACE }, "2026-08-15T12:00:02.000Z");
   eq(resumed.generation, 2, "🔴 NEGATIVE CONTROL: the SECOND wake RESUMES — the heal is one-shot, not a rotation on every wake");

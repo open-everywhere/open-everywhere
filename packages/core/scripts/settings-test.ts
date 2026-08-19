@@ -246,8 +246,8 @@ console.log("5 — a bad override fails the boot, not a turn:");
   }
   eq(at({}).rotation.turnBudget, 60, "[5] the shipped turn backstop is 60 — DERIVED from the ~85-turn workflow event wall, not nudged (see the spec's summary before changing it)");
   ok(
-    settingDocs().filter((d) => d.path.startsWith("rotation.")).length === 4,
-    "[5] all four rotation clocks reach the generated operator table",
+    settingDocs().filter((d) => d.path.startsWith("rotation.")).length === 6,
+    "[5] all six rotation rows reach the generated operator table (OPE-794 added contextSizeTokens + tailTokenCap)",
   );
 }
 

@@ -34,6 +34,9 @@ import {
   type SupervisorGrain,
   type ReplierLabel,
   type SurfaceTrust,
+  carryTailForward,
+  type WakeMessageInput,
+  recordWakeTail,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { notionChannelCredentialFor, notionIntegrations, resolveNotionInboundSecret, NOTION_CHANNEL_CREDENTIAL } from "./notion-credentials.js";
 import { NOTION_EVENT_SOURCE, notionEventDeliveryId, notionTriggerScopeVerdict } from "./notion-event-normalizer.js";
@@ -149,17 +152,19 @@ function liveNotionSupervisorDeps(send: SendFn, surfaceKey: string, to?: RouteHa
       const existing = await store.getChannelSession(org, grain.registryKey);
       if (!existing) {
         const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, 1, () => notionSupervisorToken(pageId, 1)), atIso);
-        return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
+        return { token: row.token, generation: row.generation, freshGeneration: true, tail: [] as readonly WakeMessageInput[] };
       }
       if (shouldRotate(existing, atIso, { runtimeChanged })) {
         const gen = existing.generation + 1;
+        const tail = await carryTailForward(org, grain.registryKey, existing.token);
         const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, gen, () => notionSupervisorToken(pageId, gen)), atIso);
-        return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
+        return { token: row.token, generation: row.generation, freshGeneration: true, tail };
       }
       const fresh = existing.firstWakeAt == null;
-      return { token: existing.token, generation: existing.generation, freshGeneration: fresh, handoffNote: existing.handoffNote, ...(fresh ? {} : { lastWakeAt: existing.lastWakeAt }) };
+      return { token: existing.token, generation: existing.generation, freshGeneration: fresh, tail: [] as readonly WakeMessageInput[], ...(fresh ? {} : { lastWakeAt: existing.lastWakeAt }) };
     },
     touchSession: (surfaceKey, atIso) => store.touchChannelSession(org, notionGrainFor(surfaceKey).registryKey, atIso),
+    recordWake: (entry, token, surfaceKey) => recordWakeTail(org, notionGrainFor(surfaceKey).registryKey, token, entry),
     memoryDelta: liveMemoryDeltaDep(org, surfaceKey),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, state, window }) {

@@ -1754,40 +1754,43 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
     "principals: a double-claimed (platform, id) fails LOUD at config load (an account is exactly one person)",
   );
 
-  const { clusterBackscrollMulti, flattenMultiBackscroll } = await import("@open-everywhere/core/agent/channels/backscroll-cluster.js");
+  const { buildTail } = await import("@open-everywhere/core/agent/channels/session-tail.js");
   const { renderWakeEnvelope } = await import("@open-everywhere/core/agent/channels/wake-envelope.js");
-  type NormalizedMessage = import("@open-everywhere/core/agent/channels/backscroll-cluster.js").NormalizedMessage;
-  const NOW_MS = 1_000 * 3_600_000;
-  const bmsg = (id: string, hoursAgo: number): NormalizedMessage => ({
-    id,
-    ms: NOW_MS - hoursAgo * 3_600_000,
+  type SessionTailEntry = import("@open-everywhere/core/agent/channels/session-tail.js").SessionTailEntry;
+  const tmsg = (id: string, container: string, minsAgo: number): SessionTailEntry => ({
+    kind: "wake",
+    at: new Date(Date.parse("2026-03-15T09:30:00.000Z") - minsAgo * 60_000).toISOString(),
+    from: "human",
+    trust: "peer",
+    author: "U1",
     authorId: "U1",
-    sender: "human",
-    type: "channel",
+    id,
+    container,
     text: `backscroll ${id}`,
   });
-  const rendered = clusterBackscrollMulti(
-    [
-      { containerId: A, platform: "slack", label: "#uni-a", messages: [bmsg("a1", 2), bmsg("a2", 1.9)] },
-      { containerId: B, platform: "slack", label: "#uni-b", messages: [bmsg("b1", 1.5), bmsg("b2", 1.4)] },
-    ],
-    NOW_MS,
-  );
-  const sidsA = new Set(rendered[0].messages.map((m) => m.sessionId));
-  const sidsB = new Set(rendered[1].messages.map((m) => m.sessionId));
-  ok([...sidsA].every((s) => s !== undefined && !sidsB.has(s)), "multi-backscroll: no sessionId is shared across the two fixture containers (container-namespaced)");
+  const tail = buildTail([tmsg("a1", A, 40), tmsg("b1", B, 30), tmsg("a2", A, 20), tmsg("b2", B, 10)], 100_000);
+  ok(tail.map((m) => m.id).join(",") === "a1,b1,a2,b2", "multi-container tail: the two rooms interleave in TRUE time order, not one room after the other");
   const envelope = renderWakeEnvelope({
     reason: "channel-activity",
     currentTime: "2026-03-15T09:30:00.000Z",
     channel: { id: "C0UNIA", type: "channel" },
     messages: [
-      ...flattenMultiBackscroll(rendered),
+      ...tail,
       { from: "human", author: "Asker", id: "t1", sentAt: "2026-03-15T09:29:00.000Z", trust: "peer", trigger: true, body: "what did we decide?" },
     ],
   });
-  const sessionOpens = envelope.match(/<session /g) ?? [];
-  ok(sessionOpens.length === 2, "the rendered first-wake envelope carries exactly TWO <session> groups — one per container, NEVER merged");
-  ok((envelope.match(/<session [^>]*messages="2"/g) ?? []).length === 2, "each container's <session> group carries its OWN message count (2 + 2, not one merged 4)");
+  ok((envelope.match(new RegExp(`container="${A}"`, "g")) ?? []).length === 2, "each of container A's two messages names A in the render");
+  ok((envelope.match(new RegExp(`container="${B}"`, "g")) ?? []).length === 2, "…and each of container B's names B");
+  const unlabelled = renderWakeEnvelope({
+    reason: "channel-activity",
+    currentTime: "2026-03-15T09:30:00.000Z",
+    channel: { id: "C0UNIA", type: "channel" },
+    messages: [
+      ...tail.map(({ container: _drop, ...rest }) => rest),
+      { from: "human" as const, author: "Asker", id: "t1", sentAt: "2026-03-15T09:29:00.000Z", trust: "peer" as const, trigger: true, body: "what did we decide?" },
+    ],
+  });
+  ok(!unlabelled.includes("container="), "🔴 the negative control: strip the attribute and the render carries NO room label at all — two surfaces' messages become one undifferentiated stream");
 }
 
 rmSync(dir, { recursive: true, force: true });

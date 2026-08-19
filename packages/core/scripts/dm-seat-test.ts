@@ -1,8 +1,9 @@
+
 process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";
 import { readAudit } from "../agent/audit/audit.js";
-import { HANDOFF_NOTE_LOSS_AUDIT_ACTION } from "../agent/model/rotation-handoff.js";
+import type { SessionTailEntry } from "../agent/channels/session-tail.js";
 import { getOrCreateDmSeat, touchDmSeat, dmSeatThresholds, DM_SEAT_ROTATE_TURN_BUDGET, DM_SEAT_ROTATE_TOKEN_BUDGET, DM_SEAT_ROTATE_EXPIRY_MS } from "../agent/channels/dm-seat.js";
 import { supervisorRotateQuietGapMs, supervisorRotateTokenBudget, supervisorRotateTurnBudget, supervisorRotateExpiryMs } from "../agent/channels/turn-delivery.js";
 import {
@@ -30,15 +31,17 @@ const eq = (a: unknown, b: unknown, label: string) => {
 const ORG = "acme";
 const SURFACE = "slack/T1/D0EXDMCH001";
 const DM_CHANNEL = "D0EXDMCH001";
-const DM = { surfaceKey: SURFACE, legacyChannelId: DM_CHANNEL };
+const DM = { surfaceKey: SURFACE };
 
 const REG = "oe-domain::oe-dm/slack/T1/D0EXDMCH001";
 const LEGACY_REG = "oe-dm-seat::D0EXDMCH001";
 
 function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string })[]): OperationalStore & {
   rows: Map<string, ChannelSessionRow>;
+  tail: Map<string, SessionTailEntry[]>;
 } {
   const rows = new Map<string, ChannelSessionRow>();
+  const tailRing = new Map<string, SessionTailEntry[]>();
   for (const seed of seeds) {
     rows.set(`${ORG}:${seed.surfaceKey}`, {
       org: ORG,
@@ -50,7 +53,7 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
       turnCount: seed.turnCount ?? 0,
       inputTokensTotal: seed.inputTokensTotal ?? 0,
       firstWakeAt: seed.firstWakeAt ?? null,
-      handoffNote: seed.handoffNote ?? null,
+      lastInputTokens: seed.lastInputTokens ?? null,
     });
   }
   const store = {
@@ -58,7 +61,7 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
     async getChannelSession(org: string, surfaceKey: string) {
       return rows.get(`${org}:${surfaceKey}`) ?? null;
     },
-    async rotateChannelSession(org: string, surfaceKey: string, token: string, at: string, handoffNote?: string) {
+    async rotateChannelSession(org: string, surfaceKey: string, token: string, at: string) {
       const prev = rows.get(`${org}:${surfaceKey}`);
       const row: ChannelSessionRow = {
         org,
@@ -70,7 +73,7 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
         turnCount: 0,
         inputTokensTotal: 0,
         firstWakeAt: null,
-        handoffNote: handoffNote ?? null,
+        lastInputTokens: null,
       };
       rows.set(`${org}:${surfaceKey}`, row);
       return row;
@@ -91,11 +94,22 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
     async bumpChannelSessionUsage(org: string, surfaceKey: string, token: string, delta: number) {
       const row = rows.get(`${org}:${surfaceKey}`);
       if (!row || row.token !== token) return 0;
-      rows.set(`${org}:${surfaceKey}`, { ...row, inputTokensTotal: (row.inputTokensTotal ?? 0) + delta });
+      rows.set(`${org}:${surfaceKey}`, { ...row, inputTokensTotal: (row.inputTokensTotal ?? 0) + delta, lastInputTokens: delta });
       return 1;
     },
+    tail: tailRing,
+    async appendSessionTail(org: string, surfaceKey: string, token: string, entry: SessionTailEntry) {
+      const key = `${org}:${surfaceKey}:${token}`;
+      tailRing.set(key, [...(tailRing.get(key) ?? []), entry]);
+    },
+    async readSessionTail(org: string, surfaceKey: string, token: string) {
+      return [...(tailRing.get(`${org}:${surfaceKey}:${token}`) ?? [])];
+    },
+    async clearSessionTail(org: string, surfaceKey: string, token: string) {
+      tailRing.delete(`${org}:${surfaceKey}:${token}`);
+    },
   };
-  return store as unknown as OperationalStore & { rows: Map<string, ChannelSessionRow> };
+  return store as unknown as OperationalStore & { rows: Map<string, ChannelSessionRow>; tail: Map<string, SessionTailEntry[]> };
 }
 
 {
@@ -117,67 +131,22 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
   eq(dmWindowRegistryKey(SURFACE), REG, "…which is what dmWindowRegistryKey derives from the surface key");
   ok(isSupervisorToken(seat.token), "the token is supervisor-SHAPED, so hooks/spend.ts's supervisor branch owns its counter…");
   eq(standingSeatRegistryKey(seat.token, SURFACE), REG, "…and that branch's token-side key derivation lands on the SAME row (producer/consumer agree)");
-  ok(!store.rows.has(`${ORG}:${LEGACY_REG}`), "no OPE-90 `oe-dm-seat::` row is written — the legacy row is read at adopt, never maintained");
+  ok(!store.rows.has(`${ORG}:${LEGACY_REG}`), "no OPE-90 `oe-dm-seat::` row is written — the seat lives in the window registry only");
 
   ok(/:oe-sup:g1-[0-9a-f]{6}$/.test(seat.token), "the mint carries an OPE-58 rotation SALT — a re-used generation integer can never re-mint the same token");
 
   eq(seat.generation, 1, "adoption generation is 1");
   eq(seat.freshGeneration, true, "adoption is a fresh generation (first wake carries continuity)");
-  eq(seat.handoffNote, null, "adoption with NO legacy row has NO handoff note (no outgoing generation to carry)");
+  eq(seat.tail.length, 0, "adoption carries NO tail — there is no outgoing generation to inherit from");
 }
 
 {
-  const store = makeStore({
-    surfaceKey: LEGACY_REG,
-    token: "D0EXDMCH001:oe-dm:g9",
-    generation: 9,
-    turnCount: 12,
-    handoffNote: "alice was mid-refund on order 4417; she prefers terse answers",
-    firstWakeAt: "2026-07-21T00:00:00.000Z",
-  });
+  const store = makeStore({ surfaceKey: LEGACY_REG, token: "D0EXDMCH001:oe-dm:g9", generation: 9 });
   const seat = await getOrCreateDmSeat(ORG, DM, "2026-07-22T10:00:00.000Z", { store });
-
-  eq(
-    seat.handoffNote,
-    "alice was mid-refund on order 4417; she prefers terse answers",
-    "🔴 THE MIGRATION PROPERTY: the legacy row's handoff note is CARRIED FORWARD onto the window seat — the forced re-seat is a rotation, not an amnesia event",
-  );
-  eq(seat.freshGeneration, true, "…and the seat is FRESH, so the front route renders that note as the first wake's context");
-  ok(isDmAnchorWindowToken(seat.token), "the adopted seat is a window seat (the legacy token shape is not carried forward — only its continuity)");
-  eq(store.rows.get(`${ORG}:${REG}`)!.handoffNote, seat.handoffNote, "the note is persisted on the NEW window row, so a re-read of an un-woken generation re-carries it (H7c)");
-
-  eq(seat.generation, 1, "the window row starts at generation 1 — the store owns the counter, and the token agrees with the row it is stored in");
-  eq(parseWindowToken(seat.token)!.generation, 1, "…token and row agree (the durable copy invariant)");
-
-  eq(store.rows.get(`${ORG}:${LEGACY_REG}`)!.token, "D0EXDMCH001:oe-dm:g9", "the legacy row is untouched — the adopt READS it and never writes it, so a rollback finds its seat intact");
-}
-
-{
-  const store = makeStore({ surfaceKey: LEGACY_REG, token: "D0EXDMCH001:oe-dm:g9", generation: 9, handoffNote: "carried?" });
-  const seat = await getOrCreateDmSeat(ORG, { surfaceKey: SURFACE }, "2026-07-22T10:00:00.000Z", { store });
-  eq(seat.handoffNote, null, "no `legacyChannelId` ⇒ no legacy probe ⇒ no note: the migration read is an explicit affordance, never inferred from the surface key");
-}
-
-{
-  const MPIM_SURFACE = "slack/T1/G7Q2MPIM";
-  const MPIM_REG = "oe-domain::oe-dm/slack/T1/G7Q2MPIM";
-  const store = makeStore(
-    { surfaceKey: LEGACY_REG, token: "D0EXDMCH001:oe-dm:g9", generation: 9, handoffNote: "alice's 1:1 continuity" },
-    { surfaceKey: "oe-dm-seat::G7Q2MPIM", token: "G7Q2MPIM:oe-dm:g4", generation: 4, handoffNote: "a row that must never exist" },
-  );
-  const seat = await getOrCreateDmSeat(ORG, { surfaceKey: MPIM_SURFACE, channelId: "G7Q2MPIM" }, "2026-07-22T10:00:00.000Z", { store });
-
-  ok(isDmAnchorWindowToken(seat.token), "a GROUP DM mints the same first-class standing window — no new arm, the mint is surface-keyed");
-  eq(
-    dmAnchorSurfaceForToken(seat.token),
-    MPIM_SURFACE,
-    "🔴 the admission seam recovers EXACTLY the group DM's own surface key — the byte-exact privacy fence holds on an mpim, which is the surface where a leak would expose several people's conversation at once",
-  );
-  ok(dmAnchorSurfaceForToken(seat.token) !== SURFACE, "…and it is NOT the 1:1's surface, whose seat lives in the same workspace under the same pseudo-domain prefix");
-  ok(store.rows.has(`${ORG}:${MPIM_REG}`), "the seat is held in the group DM's OWN window row");
-  eq(seat.handoffNote, null, "🔴 NO legacy adopt for a group DM: it passes no `legacyChannelId`, so neither the 1:1's row nor a same-id row is read — a group DM's first generation is honestly note-less");
-  ok(store.rows.get(`${ORG}:${LEGACY_REG}`)!.handoffNote === "alice's 1:1 continuity", "…and the 1:1's legacy row is untouched (nothing crossed between the two seats)");
-  eq(classifySessionId(seat.token).grain, "standing", "the group-DM seat is standing grain, like every other seat");
+  eq(seat.generation, 1, "adoption mints generation 1 on the WINDOW row, whatever a legacy row says");
+  eq(seat.tail.length, 0, "…with an EMPTY tail: there is no outgoing generation, so the caller falls back to its own history fetch");
+  ok(store.rows.has(`${ORG}:${REG}`), "the seat is held in the window registry row");
+  eq(store.rows.get(`${ORG}:${LEGACY_REG}`)!.token, "D0EXDMCH001:oe-dm:g9", "the legacy row is not read and not written");
 }
 
 {
@@ -199,31 +168,33 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
 }
 
 {
+  const OUT_TOKEN = "oe-dom:oe-dm/slack/T1/D0EXDMCH001:oe-sup:g3-abc123";
   const store = makeStore({
     surfaceKey: REG,
-    token: "oe-dom:oe-dm/slack/T1/D0EXDMCH001:oe-sup:g3-abc123",
+    token: OUT_TOKEN,
     generation: 3,
     turnCount: DM_SEAT_ROTATE_TURN_BUDGET + 1,
     inputTokensTotal: 1_000,
     firstWakeAt: "2026-07-21T00:00:00.000Z",
     lastWakeAt: "2026-07-21T00:00:00.000Z",
-    handoffNote: "prior rolling note",
   });
-  let distillArgs: { scope: string; outgoing: ChannelSessionRow } | undefined;
-  const seat = await getOrCreateDmSeat(ORG, DM, "2026-07-22T10:00:00.000Z", {
-    store,
-    distillHandoff: async (scope, outgoing) => {
-      distillArgs = { scope, outgoing };
-      return "distilled DM continuity";
-    },
+  await store.appendSessionTail(ORG, REG, OUT_TOKEN, {
+    kind: "wake", at: "2026-07-21T09:00:00.000Z", from: "human", trust: "principal", author: "alice", authorId: "U_ALICE", text: "any word on the 4417 refund?",
   });
+  await store.appendSessionTail(ORG, REG, OUT_TOKEN, {
+    kind: "post", at: "2026-07-21T09:00:05.000Z", from: "self", trust: "relay", author: "self", text: "chasing it with payments now",
+  });
+
+  const seat = await getOrCreateDmSeat(ORG, DM, "2026-07-22T10:00:00.000Z", { store });
   eq(seat.generation, 4, "over-budget seat ROTATES to generation 4");
   eq(parseWindowToken(seat.token)!.generation, 4, "…and the new token carries that generation");
-  eq(seat.freshGeneration, true, "a rotated generation is fresh (first wake carries the handoff)");
-  eq(seat.handoffNote, "distilled DM continuity", "rotation carries the distilled handoff note");
-  eq(distillArgs?.scope, SURFACE, "🔴 the distiller is scoped by the SURFACE KEY (which resolves a utility-model route), not the bare channel id (which resolves none)");
-  ok(distillArgs?.outgoing.generation === 3, "distiller saw the outgoing (gen-3) row");
-  ok(seat.token !== "oe-dom:oe-dm/slack/T1/D0EXDMCH001:oe-sup:g3-abc123", "generation bump ⇒ DIFFERENT continuation token (eve forks the session)");
+  eq(seat.freshGeneration, true, "a rotated generation is fresh (its first wake carries the tail)");
+  eq(seat.tail.length, 2, "🔴 THE CONTINUITY PROPERTY: the outgoing generation's recorded tail is CARRIED FORWARD");
+  eq(seat.tail[0]!.body, "any word on the 4417 refund?", "…oldest-first, so it reads as a conversation");
+  eq(seat.tail[0]!.from, "human", "…the human's message renders as a human's");
+  eq(seat.tail[1]!.from, "self", "🔴 …and the seat's OWN post renders `from=self` — it owns its words rather than reading them as channel documentation (OPE-795)");
+  eq(store.tail.get(`${ORG}:${REG}:${OUT_TOKEN}`), undefined, "the outgoing ring is CLEARED once carried — it has served its only purpose");
+  ok(seat.token !== OUT_TOKEN, "generation bump ⇒ DIFFERENT continuation token (eve forks the session)");
   eq(dmAnchorSurfaceForToken(seat.token), SURFACE, "a ROTATED token still admits to exactly its own DM surface — the fence survives rotation");
 }
 
@@ -237,14 +208,15 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
     firstWakeAt: "2026-07-21T00:00:00.000Z",
     lastWakeAt: "2026-07-21T00:00:00.000Z",
   });
-  const seat = await getOrCreateDmSeat(ORG, DM, "2026-07-22T10:00:00.000Z", {
-    store,
-    distillHandoff: async () => {
-      throw new Error("model down");
+  const failingRead = {
+    ...store,
+    readSessionTail: async () => {
+      throw new Error("store blip");
     },
-  });
-  eq(seat.generation, 2, "still rotates when the distiller throws");
-  eq(seat.handoffNote, null, "fail-quiet ⇒ rotates note-less");
+  } as unknown as OperationalStore;
+  const seat = await getOrCreateDmSeat(ORG, DM, "2026-07-22T10:00:00.000Z", { store: failingRead });
+  eq(seat.generation, 2, "still rotates when the tail read throws");
+  eq(seat.tail.length, 0, "fail-soft ⇒ rotates tail-less, and the caller falls back to a platform fetch");
 }
 
 {
@@ -330,47 +302,7 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
 
   const rotated = await getOrCreateDmSeat(ORG, DM, "2026-07-02T00:00:00.000Z", { store: makeStore(seed) });
   eq(rotated.generation, 3, "…and at 31 days the DM's OWN clock retires it, with no turn or token pressure whatsoever");
-  ok(rotated.freshGeneration, "an expiry rotation is a fresh generation like any other (its first wake carries the handoff)");
-}
-
-{
-  const before = (await readAudit({ org: ORG, action: HANDOFF_NOTE_LOSS_AUDIT_ACTION })).length;
-
-  const rotating = makeStore({
-    surfaceKey: REG,
-    token: "oe-dom:oe-dm/slack/T1/D0EXDMCH001:oe-sup:g4-fff666",
-    generation: 4,
-    turnCount: DM_SEAT_ROTATE_TURN_BUDGET + 1,
-    firstWakeAt: "2026-07-21T00:00:00.000Z",
-    lastWakeAt: "2026-07-21T00:00:00.000Z",
-  });
-  const rotated = await getOrCreateDmSeat(ORG, DM, "2026-07-22T10:00:00.000Z", {
-    store: rotating,
-    distillHandoff: async () => {
-      throw new Error("utility model down");
-    },
-  });
-  eq(rotated.generation, 5, "a distiller throw still rotates (fail-quiet is unchanged)");
-  eq(rotated.handoffNote, null, "…note-less");
-  let rows = await readAudit({ org: ORG, action: HANDOFF_NOTE_LOSS_AUDIT_ACTION });
-  eq(rows.length, before + 1, "…and leaves ONE loss row behind");
-  eq(rows[0]!.detail?.reason, "distiller-error", "…naming the seam");
-  eq(rows[0]!.detail?.outgoingGeneration, 4, "…and the generation whose continuity was lost");
-
-  const adopting = makeStore();
-  const failingProbe = {
-    ...adopting,
-    getChannelSession: async (org: string, surfaceKey: string) => {
-      if (surfaceKey === LEGACY_REG) throw new Error("store blip");
-      return adopting.rows.get(`${org}:${surfaceKey}`) ?? null;
-    },
-  } as unknown as OperationalStore;
-  const adopted = await getOrCreateDmSeat(ORG, DM, "2026-07-22T10:00:00.000Z", { store: failingProbe });
-  eq(adopted.generation, 1, "🔴 a failing legacy probe still MINTS the seat — the migration read is best-effort, and a store blip must cost the note, never the seat");
-  eq(adopted.handoffNote, null, "…note-less");
-  rows = await readAudit({ org: ORG, action: HANDOFF_NOTE_LOSS_AUDIT_ACTION });
-  eq(rows.length, before + 2, "…and the dropped continuity is now on the record");
-  eq(rows[0]!.detail?.reason, "legacy-note-read-error", "…under its own reason, distinct from a distiller failure");
+  ok(rotated.freshGeneration, "an expiry rotation is a fresh generation like any other (its first wake carries the tail)");
 }
 
 console.log(`dm-seat-test: ${n} assertions passed`);

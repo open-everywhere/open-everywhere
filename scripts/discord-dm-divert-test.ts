@@ -18,7 +18,6 @@ import { getOperationalStore } from "@open-everywhere/core/agent/operational/pro
 import { dmWindowRegistryKey } from "@open-everywhere/core/agent/channels/unified-supervisor.js";
 import { dmAnchorSurfaceForToken, dmAnchorDomain } from "@open-everywhere/core/agent/channels/window-key.js";
 import { wakeOriginCodec } from "@open-everywhere/core/agent/channels/wake-origin-codec.js";
-import { registerHandoffCompletion } from "@open-everywhere/core/agent/model/rotation-handoff.js";
 import { renderWake } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import type { UnifiedReceiveTarget } from "@open-everywhere/core/agent/channels/unified.js";
 import type { RouteHandlerArgs } from "eve/channels";
@@ -161,25 +160,36 @@ async function run(msg: DiscordRelayMessage, opts: { noReceive?: boolean } = {})
   const key = dmWindowRegistryKey(DM_SURFACE);
   const before = await getOperationalStore().getChannelSession("default", key);
   const ancient = new Date(Date.now() - 60 * 24 * 3_600_000).toISOString();
-  await getOperationalStore().rotateChannelSession("default", key, before!.token, ancient, "alice was mid-refund");
+  await getOperationalStore().rotateChannelSession("default", key, before!.token, ancient);
   const aged = await getOperationalStore().getChannelSession("default", key);
 
-  registerHandoffCompletion(async () => "Open asks: the refund. Owners: alice. Norms: (none). In flight: (none).");
-  try {
-    const r = await run(dmMsg({ id: "5004", content: "still waiting" }));
-    const d = r.received[0]!;
-    ok(d.target.token !== aged!.token, "🔴 an EXPIRED DM seat ROTATES on its next wake — the DM thresholds ride (expiry is the primary trigger since OPE-345)");
-    const rotated = await getOperationalStore().getChannelSession("default", key);
-    eq(rotated!.generation, aged!.generation + 1, "…to generation+1, computed by the store's own atomic upsert");
-    eq(d.target.token, rotated!.token, "…and the wake is dispatched to the newly-minted token");
-    ok(
-      d.message.includes(`<handoff-note from-generation="${aged!.generation}">`) && d.message.includes("Open asks: the refund. Owners: alice."),
-      "🔴 the FRESH generation carries the DISTILLED handoff, IN THE ENVELOPE — a Discord DM rotation is a rotation, not amnesia (the whole reason the distiller exists on this surface)",
-    );
-    eq(d.target.context, undefined, "…and NOT as a side-channel context string — the envelope's own `<handoff-note>` is the labelled home for it");
-  } finally {
-    registerHandoffCompletion(null);
-  }
+  const CARRIED_WAKE = "any word on the refund?";
+  const CARRIED_POST = "chasing payments now";
+  await getOperationalStore().appendSessionTail("default", key, aged!.token, {
+    kind: "wake", at: new Date(Date.now() - 3_600_000).toISOString(), from: "human", trust: "principal", author: "alice", authorId: "U_ALICE", text: CARRIED_WAKE,
+  });
+  await getOperationalStore().appendSessionTail("default", key, aged!.token, {
+    kind: "post", at: new Date(Date.now() - 3_500_000).toISOString(), from: "self", trust: "relay", author: "self", text: CARRIED_POST,
+  });
+
+  const r = await run(dmMsg({ id: "5004", content: "still waiting" }));
+  const d = r.received[0]!;
+  ok(d.target.token !== aged!.token, "🔴 an EXPIRED DM seat ROTATES on its next wake — the DM thresholds ride (expiry is the primary trigger since OPE-345)");
+  const rotated = await getOperationalStore().getChannelSession("default", key);
+  eq(rotated!.generation, aged!.generation + 1, "…to generation+1, computed by the store's own atomic upsert");
+  eq(d.target.token, rotated!.token, "…and the wake is dispatched to the newly-minted token");
+  ok(
+    d.message.includes(CARRIED_WAKE) && d.message.includes(CARRIED_POST),
+    "🔴 the FRESH generation carries the OUTGOING generation's recorded tail — BOTH what the room said and what the seat replied — so a Discord DM rotation is a rotation, not amnesia",
+  );
+  ok(d.message.indexOf(CARRIED_WAKE) < d.message.indexOf(CARRIED_POST), "…in true order, so it reads as the conversation it was");
+  ok(d.message.indexOf(CARRIED_POST) < d.message.indexOf("still waiting"), "…and both BEFORE the live trigger that woke this generation");
+  eq(d.target.context, undefined, "…in the wake ENVELOPE, not as a side-channel context string: the tail renders as messages, like everything else in a wake");
+  eq(
+    (await getOperationalStore().readSessionTail("default", key, aged!.token)).length,
+    0,
+    "…and the retired generation's ring is CLEARED once carried",
+  );
 }
 
 {
@@ -235,4 +245,4 @@ async function run(msg: DiscordRelayMessage, opts: { noReceive?: boolean } = {})
   ok(rendered.message.includes('wake-id="wk_1"'), "the rendered envelope carries the wake-id — the only reply route on the unified channel");
 }
 
-console.log(`✓ discord-dm-divert: ${n} assertions passed (divert + fence, DM origin/codec, auth attrs, dm envelope, resume, rotation handoff, group DM, escape hatches, guild untouched, builder)`);
+console.log(`✓ discord-dm-divert: ${n} assertions passed (divert + fence, DM origin/codec, auth attrs, dm envelope, resume, rotation tail carry-forward, group DM, escape hatches, guild untouched, builder)`);

@@ -234,7 +234,7 @@ function captureDeps(session: NotionSupervisorSession, over: Partial<NotionSuper
 }
 
 {
-  const session: NotionSupervisorSession = { token: notionSupervisorToken(PAGE, 1), generation: 1, freshGeneration: true, handoffNote: null };
+  const session: NotionSupervisorSession = { token: notionSupervisorToken(PAGE, 1), generation: 1, freshGeneration: true, tail: [], };
   const { deps, wakes, touched } = captureDeps(session);
   await handleNotionSupervisorDispatch(dispatch(), deps);
   ok(wakes.length === 1, "dispatch wakes once");
@@ -255,11 +255,24 @@ function captureDeps(session: NotionSupervisorSession, over: Partial<NotionSuper
 }
 
 {
-  const session: NotionSupervisorSession = { token: notionSupervisorToken(PAGE, 2), generation: 2, freshGeneration: true, handoffNote: "Open asks: the API rename is mid-flight." };
+  const session: NotionSupervisorSession = {
+    token: notionSupervisorToken(PAGE, 2),
+    generation: 2,
+    freshGeneration: true,
+    tail: [{ from: "human", author: "U_ADA", authorId: "U_ADA", id: "c-prev", sentAt: "2026-02-09T21:34:00Z", trust: "peer", body: "the API rename is mid-flight" }],
+  };
   const { deps, wakes } = captureDeps(session);
   await handleNotionSupervisorDispatch(dispatch(), deps);
-  ok(wakes[0].message.includes("Open asks: the API rename is mid-flight."), "a fresh generation's first wake carries the handoff note");
-  ok(wakes[0].message.includes(`from-generation="1"`), "handoff note is attributed to the outgoing generation");
+  ok(wakes[0].message.includes("the API rename is mid-flight"), "a fresh generation's first wake carries the inherited tail");
+  ok(
+    wakes[0].message.indexOf("the API rename is mid-flight") < wakes[0].message.indexOf(trigger.text),
+    "…rendered BEFORE this wake's own trigger, so the envelope reads oldest-first straight across the rotation",
+  );
+
+  const cold: NotionSupervisorSession = { token: notionSupervisorToken(PAGE, 2), generation: 2, freshGeneration: true, tail: [] };
+  const coldCapture = captureDeps(cold);
+  await handleNotionSupervisorDispatch(dispatch(), coldCapture.deps);
+  ok(!coldCapture.wakes[0].message.includes("the API rename is mid-flight"), "…and a generation with an EMPTY tail carries none of it");
 }
 
 ok(shouldRotate({ createdAt: NOW(), lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW()) === false, "shouldRotate: a young, low-token generation is NOT rotated");
@@ -271,7 +284,7 @@ for (const [label, err] of [
   ["a gateway blip", new Error("transient network blip")],
   ["an eve session-limit-shaped error", new Error("SESSION_TOKEN_LIMIT_REACHED")],
 ] as const) {
-  const session: NotionSupervisorSession = { token: notionSupervisorToken(PAGE, 1), generation: 1, freshGeneration: false, handoffNote: null };
+  const session: NotionSupervisorSession = { token: notionSupervisorToken(PAGE, 1), generation: 1, freshGeneration: false, tail: [], };
   let touched = false;
   const wakes: WakeCapture[] = [];
   const deps: NotionSupervisorDeps = {
@@ -332,7 +345,7 @@ for (const [label, err] of [
     "🔴 negative control: with NO workspace id there is no tenant key to compose, so no author question is asked — fail OPEN, never a guessed tenant",
   );
 
-  const session: NotionSupervisorSession = { token: notionSupervisorToken(PAGE, 1), generation: 1, freshGeneration: true, handoffNote: null };
+  const session: NotionSupervisorSession = { token: notionSupervisorToken(PAGE, 1), generation: 1, freshGeneration: true, tail: [], };
   const auths: OpenEverywhereNotionAuth[] = [];
   const deps: NotionSupervisorDeps = {
     getOrCreateSession: async () => session,
@@ -372,7 +385,7 @@ for (const [label, err] of [
   const SECRET = "SECRET-GUEST-TEXT-do-not-deliver";
   const guestComment: NotionWakeMessage = { from: "human", id: "c-guest", authorId: GUEST, sentAt: "2026-07-10T08:00:00Z", text: SECRET, trust: "peer" };
 
-  const session: NotionSupervisorSession = { token: notionSupervisorToken(PAGE, 1), generation: 1, freshGeneration: true, handoffNote: null };
+  const session: NotionSupervisorSession = { token: notionSupervisorToken(PAGE, 1), generation: 1, freshGeneration: true, tail: [], };
 
   function run(over: Partial<NotionSupervisorDispatch>): Promise<{ messages: string[]; auths: OpenEverywhereNotionAuth[] }> {
     const messages: string[] = [];

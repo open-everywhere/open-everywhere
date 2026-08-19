@@ -3,7 +3,7 @@ import { defineDynamic } from "eve/tools";
 import "./lib/register-config.js";
 import "./lib/register-adapters.js";
 import { gatewayModelResolver } from "@open-everywhere/adapters/agent/model/gateway.js";
-import { registerGatewayDreamJudge, registerGatewayFailureFacetJudge, registerGatewayHandoffCompletion } from "@open-everywhere/adapters/agent/model/dream-judge.js";
+import { registerGatewayDreamJudge, registerGatewayFailureFacetJudge } from "@open-everywhere/adapters/agent/model/dream-judge.js";
 import { registerGatewayApprovalJudge } from "@open-everywhere/adapters/agent/model/approval-judge.js";
 import { registerGatewayImageDescriber } from "@open-everywhere/adapters/agent/model/gateway-vision.js";
 import { gatewayCatalogPricingSource } from "@open-everywhere/adapters/agent/spend/gateway-pricing.js";
@@ -45,8 +45,6 @@ const COMPACTION_THRESHOLD_TOKENS = compactionThresholdTokens(PRIMARY_MODEL_CONT
 registerGatewayDreamJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
 
 registerGatewayFailureFacetJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
-
-registerGatewayHandoffCompletion({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
 
 registerGatewayApprovalJudge({ id: JUDGE_MODEL, gateway: { caching: "auto" } });
 

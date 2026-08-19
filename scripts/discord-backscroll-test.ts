@@ -229,9 +229,9 @@ function pagingStub(pages: Msg[][], rec?: { calls: number }): DiscordRequester {
     { channelId: "CH", triggerMessageId: sf(T + HOUR), isThread: false, botId: BOT },
     deps(pagingStub([messages])),
   );
-  ok(out.length === 4, "multi-cluster: all 4 messages selected (spine + one bolted cluster)");
+  ok(out.length === 4, "all 4 in-window messages are selected — the cap, not a reachback rule, is the only bound");
   const ids = new Set(out.map((m) => m.sessionId));
-  ok(!ids.has(undefined) && ids.size === 2, "an idle gap produced TWO distinct <session> ids (none undefined)");
+  ok(ids.size === 1 && ids.has(undefined), "the fetched bootstrap backscroll is FLAT — no message carries a cluster sessionId, because there is no clustering left to produce one");
   ok(out[0].body === "older-1" && out[3].body === "recent-2", "oldest cluster renders first, newest last");
 }
 
@@ -269,4 +269,4 @@ function pagingStub(pages: Msg[][], rec?: { calls: number }): DiscordRequester {
   ok((await fetchDiscordWakeEnvelopeBackscroll({ channelId: "CH", triggerMessageId: sf(T), isThread: false }, deps(pagingStub([[]])))).length === 0, "envelope backscroll: empty history → []");
 }
 
-console.log(`✓ discord-backscroll: ${n} assertions passed (flat name-drop path + neutral-core window/envelope adapter: snowflake time + visibility gate + sender mapping + thread tagging + single/multi cluster <session> + pagination + reachback floor + fail-soft)`);
+console.log(`✓ discord-backscroll: ${n} assertions passed (flat name-drop path + neutral-core window/envelope adapter: snowflake time + visibility gate + sender mapping + thread tagging + flat capped output + pagination + reachback floor + fail-soft)`);
