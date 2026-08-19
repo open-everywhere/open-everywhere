@@ -25,7 +25,7 @@ import { teamsReadAdapter } from "@open-everywhere/provider-teams/agent/channels
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
 import { genericReadVerbsEnabled } from "@open-everywhere/core/agent/access/source-scoped-mount.js";
 import { overrideSettingsForTest, resetSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
-import { ingestUntrusted } from "@open-everywhere/core/agent/access/untrusted.js";
+import { ingestUntrusted, normalizeFenceNonce } from "@open-everywhere/core/agent/access/untrusted.js";
 import { defineDomain } from "@open-everywhere/core/agent/memory/domain.js";
 import type { BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { auditSourcesGateRefusal, auditOriginFenceRefusal } from "@open-everywhere/core/agent/channels/read-scope-audit.js";
@@ -72,7 +72,8 @@ registerReadAdapter(fakeSlackAdapter);
   ok(channelReadSource(chan) === oldChannelSource, "golden: channel untrusted-wrap source is byte-identical (`slack channel <ch>`)");
   const oldWrapped = { type: "text" as const, value: ingestUntrusted(oldChannelBody, { source: oldChannelSource }) };
   const newWrapped = { type: "text" as const, value: ingestUntrusted(renderChannelBody(chan), { source: channelReadSource(chan) }) };
-  ok(JSON.stringify(oldWrapped) === JSON.stringify(newWrapped), "golden: the full untrusted-wrapped channel output is byte-identical");
+  ok(normalizeFenceNonce(JSON.stringify(oldWrapped)) === normalizeFenceNonce(JSON.stringify(newWrapped)), "golden: the full untrusted-wrapped channel output is byte-identical");
+  ok(oldWrapped.value !== newWrapped.value, "golden: …and the two renders carry DIFFERENT fence nonces (per-render, not a constant)");
 
   const empty: ChannelReadResult = { platform: "slack", channel: "C0ABC", count: 0, messages: [] };
   ok(renderChannelBody(empty) === "No readable messages in C0ABC.", "golden: empty-channel body byte-identical");

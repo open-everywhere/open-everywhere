@@ -1,4 +1,4 @@
-import { ingestUntrusted, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../access/untrusted.js";
+import { ingestUntrusted, untrustedCloseTag, UNTRUSTED_OPEN } from "../access/untrusted.js";
 import { capResult } from "../access/result-cap.js";
 import { noteIngestionVerdict } from "../access/taint-enforcement.js";
 import { taintMarkLands } from "../access/taint-signal.js";
@@ -318,9 +318,12 @@ function openerColumn(rendered: string, at: number): number {
   return /^[ ]*$/.test(prefix) ? prefix.length : 0;
 }
 
+const FENCE_NONCE_RE = new RegExp(`^${UNTRUSTED_OPEN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} nonce="([0-9a-f]+)"`);
+
 function stripUntrustedFence(lines: readonly string[]): readonly string[] {
-  if (!(lines[0] ?? "").startsWith(UNTRUSTED_OPEN)) return lines;
-  const close = lines.lastIndexOf(UNTRUSTED_CLOSE);
+  const nonce = FENCE_NONCE_RE.exec(lines[0] ?? "")?.[1];
+  if (nonce === undefined) return lines;
+  const close = lines.lastIndexOf(untrustedCloseTag(nonce));
   if (close < 1) return lines;
   return lines.slice(1, close);
 }

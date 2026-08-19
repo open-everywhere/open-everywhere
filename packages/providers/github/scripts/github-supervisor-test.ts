@@ -13,7 +13,7 @@ import {
   type GitHubSupervisorSession,
   type GitHubAmbientComment,
 } from "../agent/channels/github-supervisor.js";
-import { renderWake, UNTRUSTED_OPEN, OE_CHAT_NONMEMBER_ATTR, defineSurface, registerSurfaces, _resetSurfacesForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { renderWake, normalizeFenceNonce, UNTRUSTED_OPEN, OE_CHAT_NONMEMBER_ATTR, defineSurface, registerSurfaces, _resetSurfacesForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import type { OpenEverywhereGitHubAuth } from "../agent/channels/github-identity.js";
 
 let passed = 0;
@@ -121,8 +121,9 @@ const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:
 {
   const off = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Retry budget", trigger, engagementTier: "reserved", directMention: false }), NOW);
   const plain = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Retry budget", trigger, engagementTier: "reserved" }), NOW);
-  ok(off.message === plain.message, "directMention:false renders BYTE-IDENTICAL to the unset channel-watch wake (flag-off invariant)");
-  ok(JSON.stringify(off.context) === JSON.stringify(plain.context), "directMention:false context is byte-identical too");
+  ok(normalizeFenceNonce(off.message) === normalizeFenceNonce(plain.message), "directMention:false renders BYTE-IDENTICAL to the unset channel-watch wake (flag-off invariant)");
+  ok(off.message !== plain.message, "…and the two renders carry DIFFERENT fence nonces (per-render, not a constant)");
+  ok(normalizeFenceNonce(JSON.stringify(off.context)) === normalizeFenceNonce(JSON.stringify(plain.context)), "directMention:false context is byte-identical too");
   ok(off.message.includes('addressing="channel-watch"'), "the flag-off wake is still the silence-biased channel-watch ambient wake");
 }
 
@@ -173,7 +174,7 @@ interface WakeCapture { token: string; message: string; context: readonly string
   ok(wakes[0]!.message.includes('container="repo"') && wakes[0]!.message.includes('addressing="channel-watch"'), "the delivered message is the repo-supervisor wake");
   ok(touched.length === 1 && touched[0] === SURFACE, "touchSession records the wake on the current generation");
   await handleGitHubSupervisorDispatch(dispatch({ unified: true }), deps);
-  ok(wakes[1]!.message === wakes[0]!.message, "🔴 a unified dispatch delivers a BYTE-IDENTICAL wake — the platform-blind render names no surface either way");
+  ok(normalizeFenceNonce(wakes[1]!.message) === normalizeFenceNonce(wakes[0]!.message), "🔴 a unified dispatch delivers a BYTE-IDENTICAL wake — the platform-blind render names no surface either way");
   ok(!wakes[0]!.message.includes("platform="), "and neither wake carries a platform attribute");
 }
 

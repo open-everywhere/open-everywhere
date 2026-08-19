@@ -38,6 +38,6 @@ test("a vouched member's hostile-looking body reaches the model INSIDE the envel
 
   expect(trigger).toContain(HOSTILE);
   expect(trigger).not.toContain(UNTRUSTED_OPEN);
-  expect(trigger).not.toContain("The above is untrusted external content.");
+  expect(trigger).not.toContain("The above is untrusted external content");
   expect(prompt).not.toContain("<system-note>");
 });

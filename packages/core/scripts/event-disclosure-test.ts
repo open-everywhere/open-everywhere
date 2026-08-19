@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { normalizeFenceNonce } from "../agent/access/untrusted.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -210,7 +211,7 @@ function harness(routines: Routine[], rosters: Record<string, RoomRoster>, hydra
   const baseline = harness([routine({ id: "r-unobs-b" })], {});
   const { disclosure: _dropped, ...withoutDisclosure } = baseline.deps;
   await fanOutDelivery(ISSUE_BODY, "issues", undefined, withoutDisclosure as typeof baseline.deps);
-  ok(baseline.fired.length === 1 && baseline.fired[0]!.message === h.fired[0]!.message, "inert: the fire's message is BYTE-IDENTICAL with and without the disclosure leg");
+  ok(baseline.fired.length === 1 && normalizeFenceNonce(baseline.fired[0]!.message) === normalizeFenceNonce(h.fired[0]!.message), "inert: the fire's message is BYTE-IDENTICAL with and without the disclosure leg");
 }
 
 {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { chatWakeIngestsNonMember, contextLineIngestion, renderContext, type ContextLine } from "@open-everywhere/core/agent/adapter-api.js";
+import { chatWakeIngestsNonMember, contextLineIngestion, renderContext, normalizeFenceNonce, type ContextLine } from "@open-everywhere/core/agent/adapter-api.js";
 import { regradeSlackContextLineTrust, type SlackMemberProbe } from "../agent/channels/slack-events.js";
 
 let passed = 0;
@@ -57,7 +57,8 @@ ok(!memberRender.includes("trust=unauth"), "a member-only render carries no `tru
 ok(!memberRender.includes("<system-note>"), "🔴 BYTE-IDENTITY: a member-only render carries NO reference-only note — the acceptance bar for existing (still-member) backscroll");
 
 const untaggedRender = renderContext(memberOnly, "slack channel C1")!;
-ok(memberRender === untaggedRender, "🔴 an UNGRADED (trust never set) render and a GRADED-but-all-member render are byte-identical — grading a member-only bundle changes nothing");
+ok(normalizeFenceNonce(memberRender) === normalizeFenceNonce(untaggedRender), "🔴 an UNGRADED (trust never set) render and a GRADED-but-all-member render are byte-identical — grading a member-only bundle changes nothing");
+ok(memberRender !== untaggedRender, "…and the two renders carry DIFFERENT fence nonces (per-render, not a constant)");
 
 const guestRender = renderContext(graded, "slack channel C1")!;
 ok(guestRender.includes("sender_id=U_GUEST trust=unauth"), "the demoted GUEST line's attribution carries `trust=unauth`");

@@ -49,6 +49,7 @@ import confirmLinkTool from "../agent/tools/confirm_link.js";
 import unlinkIdentityTool from "../agent/tools/unlink_identity.js";
 import { renderWakeEnvelope, type WakeMessageInput } from "../agent/channels/wake-envelope.js";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+import { normalizeFenceNonce } from "../agent/access/untrusted.js";
 
 registerSlackFixtureMapper();
 
@@ -490,7 +491,7 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
 
   const e7 = await issueCode({ org: ORG, platform: "slack", tenant: T1, nativeId: "U_E7", surfaceKey: "slack/T1/DE615G" });
   const e7Text = directDelivery([msg({ trigger: true, mention: true, trust: "unauth", authorId: "gh-claimant", body: `${BOT} link ${e7.code}` })], "github");
-  ok(e7Text.includes("<untrusted_external_data source=\"github-message\">"), "fenced fixture: an unauth author's body really is rendered inside the untrusted fence");
+  ok(/<untrusted_external_data nonce="[0-9a-f]+" source="github-message">/.test(e7Text), "fenced fixture: an unauth author's body really is rendered inside the untrusted fence, under a nonce-closed open tag (OPE-838)");
   ok((await observeLinkClaim({ org: ORG, platform: "github", authorId: "gh-claimant", text: e7Text, addressed: true, addressTokens: NAME_TOKENS, trust: "unauth", trustIsEvidence: false })) === e7.challenge.id, "OPE-615: a FENCED trigger body still claims on a platform whose trust verdict is not evidence (the GitHub headline flow, through an envelope)");
 
   for (const id of [e2.challenge.id, e3.challenge.id, e5.challenge.id]) {
@@ -950,7 +951,7 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   ok(/Second Octocat/.test(namedPeek.note) && !/github\/octocat2/.test(namedPeek.note), "🔴 OPE-616: the peek's `note` — the sentence a model reads aloud to the person — carries the resolved name, not the key");
 
   const namedConfirmed = (await confirmLink.execute({ decision: "confirm", acknowledge: true, challengeId: namedPeek.challengeId }, dmNamed)) as Decision;
-  ok(namedConfirmed.decided === "confirmed" && namedConfirmed.claimantName === namedPeek.claimantName, "OPE-616: the committing call names the same account it acknowledged");
+  ok(namedConfirmed.decided === "confirmed" && normalizeFenceNonce(namedConfirmed.claimantName!) === normalizeFenceNonce(namedPeek.claimantName!), "OPE-616: the committing call names the same account it acknowledged");
 
   const dmFallback = ctxFor({ channelId: "D_FALLBACK", channelType: "im", principalId: "U_FALLBACK", dmPartnerTrust: "internal" });
   const fallbackOut = (await linkIdentity.execute({}, dmFallback)) as { instructions: string };

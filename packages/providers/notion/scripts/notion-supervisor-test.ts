@@ -25,6 +25,7 @@ import {
   _resetAuthorTrustForTest,
   OE_CHAT_NONMEMBER_ATTR,
   renderWake,
+  normalizeFenceNonce,
   UNTRUSTED_OPEN,
   type UnifiedWindowWake,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -208,7 +209,7 @@ const siblings: NotionWakeMessage[] = [
   ok(!watchId.message.includes("must be a `reply` call") && !watchId.message.includes("turn-final text is DISCARDED"), "the wake carries NO delivery prose — the standing Reporting arm owns that rule now");
   const watchNoWindow = renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings }), NOW);
   ok(!watchNoWindow.message.includes("wake-id"), "no window → the envelope carries NO wake-id attribute (no id is ever fabricated)");
-  ok(watchNoWindow.message === watchId.message.replace(' wake-id="wake-notion-2"', ""), "the wake-id attribute is the ONLY delta between the windowed and non-windowed Leg-A render");
+  ok(normalizeFenceNonce(watchNoWindow.message) === normalizeFenceNonce(watchId.message.replace(' wake-id="wake-notion-2"', "")), "the wake-id attribute is the ONLY delta between the windowed and non-windowed Leg-A render");
 }
 
 const AUTH: OpenEverywhereNotionAuth = { authenticator: "notion", principalId: AUTHOR, principalType: "notion-user", attributes: { page_id: PAGE, discussion_id: DISCUSSION } };
@@ -244,7 +245,7 @@ function captureDeps(session: NotionSupervisorSession, over: Partial<NotionSuper
   ok(touched.length === 1 && touched[0] === SURFACE, "touchSession records the wake on the current generation");
   ok(!("oeUnified" in (wakes[0].state as Record<string, unknown>)), "a per-doc dispatch seeds NO oeUnified marker (byte-identical off)");
   await handleNotionSupervisorDispatch(dispatch({ unified: true }), deps);
-  ok(wakes[1].message === wakes[0].message, "🔴 a unified dispatch delivers a BYTE-IDENTICAL wake — the platform-blind render names no surface either way");
+  ok(normalizeFenceNonce(wakes[1].message) === normalizeFenceNonce(wakes[0].message), "🔴 a unified dispatch delivers a BYTE-IDENTICAL wake — the platform-blind render names no surface either way");
   ok((wakes[1].state as Record<string, unknown>).oeUnified === true, "a unified dispatch seeds state.oeUnified = true (the silence gate's key)");
   ok(wakes[0].window === undefined && wakes[1].window === undefined, "no single-window plan → the dispatch threads NO window to the wake dep (byte-identical base path)");
   const win = planNotionSingleWindow(true, true, true, { discussionId: DISCUSSION, pageId: PAGE, workspaceId: "ws-1" })!;

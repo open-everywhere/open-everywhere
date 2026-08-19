@@ -6,7 +6,7 @@ __regDiscord();
 import { discordNativeWake } from "@open-everywhere/provider-discord/agent/channels/discord-gateway.js";
 import { triggerMessageBody, type WakeMessageInput, type WakeTrust } from "@open-everywhere/core/agent/channels/wake-envelope.js";
 import { renderWake, mkMessageTrigger, type NormalizedWake } from "@open-everywhere/core/agent/channels/normalized-wake.js";
-import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/access/untrusted.js";
+import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE, normalizeFenceNonce } from "@open-everywhere/core/agent/access/untrusted.js";
 
 let passed = 0;
 function eq(actual: string, expected: string, label: string): void {
@@ -206,7 +206,9 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
   ok(b.message.includes(`source="discord-message"`) && !b.message.includes(`source="slack-message"`), "discord wake labels its body source=discord-message, NOT slack-message (the J-DISC provenance-label fix)");
   ok(a.message.includes('id="ch_c2xhY2s6QzE"') && b.message.includes('id="ch_ZGlzY29yZDpDMQ"'), "OPE-746: each wake's <channel id> is its own platform's channel key");
   const bNormalised = b.message.replaceAll("discord-message", "slack-message").replaceAll("ch_ZGlzY29yZDpDMQ", "ch_c2xhY2s6QzE");
-  ok(bNormalised === a.message && JSON.stringify(a.context) === JSON.stringify(b.context), "renderWake never branches on platform beyond the provenance label and the channel key (message identical once both are normalised; context identical outright)");
+  const ctxN = (c: readonly string[] | undefined): string => JSON.stringify((c ?? []).map((s) => normalizeFenceNonce(s)));
+  ok(normalizeFenceNonce(bNormalised) === normalizeFenceNonce(a.message) && ctxN(a.context) === ctxN(b.context), "renderWake never branches on platform beyond the provenance label and the channel key (message identical once both are normalised; context identical outright)");
+  ok(bNormalised !== a.message, "…and the two renders carry DIFFERENT fence nonces (per-render, not a constant)");
   ok(a.context !== undefined && a.context.length === 1 && a.context[0].includes(UNTRUSTED_OPEN), "contextLines render into ONE untrusted-wrapped context block (W3)");
   ok(renderWake({ ...base("slack"), contextLines: undefined, contextSource: undefined }, NOW).context === undefined, "no contextLines → context omitted (message-only payload)");
 }

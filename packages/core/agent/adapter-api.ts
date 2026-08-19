@@ -206,7 +206,7 @@ export type { DirectoryCandidate, AccountDirectoryArm, DirectoryLookup } from ".
 
 export { setRegisteredConnectorCredentials, resetRegisteredConnectorCredentials } from "./access/connector-credentials.js";
 
-export { ingestUntrustedModelOutput, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "./access/untrusted.js";
+export { ingestUntrustedModelOutput, untrustedCloseTag, normalizeFenceNonce, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "./access/untrusted.js";
 
 export type { IngestionSource, IngestionKind, IngestionTier, IngestionVerdict } from "./access/taint-tiers.js";
 export { classifyIngestion, INGESTION_KINDS } from "./access/taint-tiers.js";

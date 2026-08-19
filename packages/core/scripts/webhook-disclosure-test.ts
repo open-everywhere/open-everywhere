@@ -2,6 +2,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
+import { normalizeFenceNonce } from "../agent/access/untrusted.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -124,7 +125,7 @@ async function fire(h: FusedWebhookHook, facts: SlackFacts | "no-supplier" | "th
     const r = await fire(hook, facts);
     ok(r.fired === true, `fire: ${label} still fires`);
     ok(r.calls.length === 1, `fire: ${label} calls receive exactly once`);
-    ok(r.calls[0]!.message === expected, `🔴 fire: ${label} hands the room the BYTE-IDENTICAL rendered message — the outcome reaches the room, not just a passing check`);
+    ok(normalizeFenceNonce(r.calls[0]!.message) === normalizeFenceNonce(expected), `🔴 fire: ${label} hands the room the BYTE-IDENTICAL rendered message — the outcome reaches the room, not just a passing check`);
     ok(r.calls[0]!.target?.channelId === "C1", `fire: ${label} still targets the hook's configured channel`);
   }
 }

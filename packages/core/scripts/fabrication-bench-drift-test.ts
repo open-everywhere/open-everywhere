@@ -21,6 +21,7 @@ import {
 
 const noTime = (s: string): string => s.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g, "<TIME>");
 const noWakeId = (s: string): string => s.replace(/[0-9a-f]{8}-0000-4000-8000-\d{12}/g, "<WAKE>");
+const noNonce = (s: string): string => s.replace(/nonce="[0-9a-f]+"/g, 'nonce="<NONCE>"');
 
 let checks = 0;
 const check = (name: string, fn: () => void): void => { fn(); checks++; console.log(`  ok  ${name}`); };
@@ -101,12 +102,12 @@ check("the harness import really is the OUT arm — otherwise every comparison b
 });
 
 check("probe 0's envelope is byte-identical to the product render (timestamps aside)", () => {
-  assert.equal(noTime(renderEnvelope(BENCH_PROBES[0])), noTime(rendered[0]));
+  assert.equal(noNonce(noTime(renderEnvelope(BENCH_PROBES[0]))), noNonce(noTime(rendered[0])));
 });
 
 check("probes 1 and 2 match too, once the index-derived wake id is normalised", () => {
   for (const i of [1, 2]) {
-    assert.equal(noWakeId(noTime(renderEnvelope(BENCH_PROBES[i]))), noWakeId(noTime(rendered[i])), `probe ${i} envelope differs`);
+    assert.equal(noNonce(noWakeId(noTime(renderEnvelope(BENCH_PROBES[i])))), noNonce(noWakeId(noTime(rendered[i]))), `probe ${i} envelope differs`);
   }
 });
 

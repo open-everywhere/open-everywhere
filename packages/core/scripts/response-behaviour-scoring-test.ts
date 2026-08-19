@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { normalizeFenceNonce } from "../agent/access/untrusted.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -279,7 +280,7 @@ async function loadWithMode(mode: string, tag: string): Promise<ProbeModule> {
     ok(plain.includes("prev-id") === false,
       `🔴 OPE-801[${i}]: NEGATIVE CONTROL — the plain OUT arm renders NO prev-id at all, so the arms differ by the hint and not by its value`);
 
-    ok(flat(hinted).replace(hintAttr, "") === flat(plain),
+    ok(normalizeFenceNonce(flat(hinted).replace(hintAttr, "")) === normalizeFenceNonce(flat(plain)),
       `🔴 OPE-801[${i}]: the hinted envelope MINUS the prev-id attribute is byte-identical to the plain OUT envelope`);
 
     ok(hinted.includes(` id="${hiddenId}"`) === false,

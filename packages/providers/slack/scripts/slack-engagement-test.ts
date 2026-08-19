@@ -12,6 +12,7 @@ import {
   registerSettings,
   resetSettingsForTest,
   defineSettings,
+  normalizeFenceNonce,
   type EngagementRow,
   type ParticipationSignals,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -1047,7 +1048,8 @@ registerConfig({
     ok(contextCalls.length === 1 && contextCalls[0].channelId === "C_TXN" && contextCalls[0].ts === "42.1" && contextCalls[0].threadTs === undefined, "backscroll fetched for the triggering message (top-level → no threadTs)");
     ok(
       Array.isArray((calls[0] as { context?: readonly string[] }).context) &&
-        (calls[0] as { context?: readonly string[] }).context![0] === renderContext(priorLines.lines, priorLines.source, { readMoreHint: priorLines.readMoreHint }),
+        normalizeFenceNonce((calls[0] as { context?: readonly string[] }).context![0]!) ===
+          normalizeFenceNonce(renderContext(priorLines.lines, priorLines.source, { readMoreHint: priorLines.readMoreHint })!),
       "the fetched backscroll reaches the wake as a renderContext-wrapped context block (W3: wrapping happens inside renderWake, not in the plumbing)",
     );
 
