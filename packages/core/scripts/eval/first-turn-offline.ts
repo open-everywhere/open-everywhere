@@ -357,8 +357,8 @@ export function buildProbe(i: number): Probe {
   };
 }
 
-const resultFor: ResultFor = (name, input, callIndex) => {
-  if (name === "reply") return { posted: true, id: `probe-${callIndex}` };
+export const resultFor: ResultFor = (name, input, callIndex) => {
+  if (name === "reply") return replyPostedResult(`probe-${callIndex}`);
   if (name === "no_reply") return { acknowledged: true, reason: String(input.reason ?? ""), note: NO_REPLY_NOTE };
   return { ok: true };
 };

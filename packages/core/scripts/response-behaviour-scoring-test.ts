@@ -51,6 +51,7 @@ interface ProbeModule {
   parseJudgeVerdict: (raw: string) => JudgeAnswer;
   parseBindingVerdict: (raw: string) => BindingAnswer;
   replyPostedResult: (id: string) => { posted: true; id: string };
+  resultFor: (name: string, input: Record<string, unknown>, callIndex: number) => unknown;
   classifyBinding: (
     p: { referencedPost?: string; recallTells?: readonly string[]; ambientText: string },
     calls: readonly ToolCall[],
@@ -426,8 +427,11 @@ async function loadWithMode(mode: string, tag: string): Promise<ProbeModule> {
     ok(resultPart.type === "tool-result" && resultPart.toolCallId === callPart.toolCallId,
       `OPE-795[${i}]: the tool result is matched to that call by id`);
     const resultValue = (resultPart.output as { value?: unknown }).value;
+    const recorded = WARM.resultFor("reply", {}, 0) as { id: string };
+    ok(JSON.stringify(recorded) === JSON.stringify(WARM.replyPostedResult(recorded.id)),
+      `🔴 OPE-795[${i}]: the probe's live reply recorder returns exactly replyPostedResult — one implementation, not two literals`);
     ok(JSON.stringify(resultValue) === JSON.stringify(WARM.replyPostedResult((resultValue as { id: string }).id)),
-      `🔴 OPE-795[${i}]: the seeded tool result is the SAME value the probe's own recorder returns — a seed that differed would show the model a result its tools never produce`);
+      `🔴 OPE-795[${i}]: and the seeded tool result is that same value`);
 
     for (const [name, p] of [["backcrawl", cold], ["pair", pair], ["warm", warm]] as const) {
       ok(p.referencedPost === entry.selfPrior, `OPE-795[${i}]: the ${name} arm hands the binding axis the post the agent could see`);
