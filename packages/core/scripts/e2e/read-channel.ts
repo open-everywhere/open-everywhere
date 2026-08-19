@@ -2,11 +2,11 @@ import { fetchAudit, type AuditWireEntry } from "./audit-read.js";
 import { fetchTranscript } from "./transcript-read.js";
 import { deployedBuildCarries } from "./deployed-build.js";
 import { isWindowToken } from "../../agent/channels/window-key.js";
-import { GENERIC_READ_VERBS_SHA, dS, classifyDelegatedReadEvidence } from "./read-channel-lib.js";
+import { GENERIC_READ_VERBS_SHA, dS, classifyDelegatedReadEvidence, pollForDelegationSettlement } from "./read-channel-lib.js";
 
 export { GENERIC_READ_VERBS_SHA };
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
 const INJECT = process.env.E2E_CONTROL_INJECT_TOKEN ?? "";
@@ -17,6 +17,7 @@ const SLACK_CHANNEL_ID = SLACK_SURFACE.split("/").slice(2).join("/");
 const DISCORD_CHANNEL_ID = DISCORD_SURFACE.split("/").slice(2).join("/");
 const DISCORD_GUILD_ID = DISCORD_SURFACE.split("/")[1] ?? "";
 const REPLY_TIMEOUT_MS = Number.parseInt(process.env.GRV_REPLY_TIMEOUT_MS ?? "120000", 10);
+const SETTLE_TIMEOUT_MS = Number.parseInt(process.env.GRV_SETTLE_TIMEOUT_MS ?? "120000", 10);
 const POLL_MS = 4000;
 const RUN = Date.now().toString().slice(-7);
 const ONLY = (process.env.GRV_ONLY ?? "").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
@@ -112,7 +113,10 @@ async function g1(): Promise<void> {
   if (calls.includes("read_channel")) return record("G1", "PASS", `session ${sid} invoked the GENERIC read_channel for slack (the behaviour-preserving successor to read_slack_channel) and replied.`);
   if (calls.includes("read_slack_channel")) return record("G1", "FAIL", `session ${sid} invoked read_slack_channel — the target was NOT started with tools.genericReadVerbs: true (the Slack-specific reader should have retired).`);
   const rows = await rowsSince(since);
-  const verdict = classifyDelegatedReadEvidence(rows, sid, "slack");
+  let verdict = classifyDelegatedReadEvidence(rows, sid, "slack");
+  if (verdict.kind === "delegated-unsettled") {
+    verdict = await pollForDelegationSettlement({ sleep, now: () => Date.now(), fetchRows: () => rowsSince(since) }, sid, "slack", SETTLE_TIMEOUT_MS, POLL_MS, verdict);
+  }
   if (verdict.kind === "delegated-completed") return record("G1", "PASS", `session ${sid} replied (tools=[${[...new Set(calls)].join(",") || "none"}]) — ${verdict.detail}`);
   if (verdict.kind === "delegated-failed" || verdict.kind === "delegated-unsettled" || verdict.kind === "refused") return record("G1", "FAIL", verdict.detail);
   record("G1", "SKIP", `session ${sid} replied but did not invoke read_channel and no delegation evidence was found (tools=[${[...new Set(calls)].join(",") || "none"}]; ${verdict.detail}) — the model chose not to read. Binding proof: the offline unit test.`);
@@ -130,7 +134,10 @@ async function g2(): Promise<void> {
   if (calls === null) return record("G2", "SKIP", `transcript fetch failed for session ${sid} — the mount cannot be observed this run. The Discord adapter render/normalize is pinned offline (generic-read-verbs-test.ts).`);
   if (calls.includes("read_channel")) return record("G2", "PASS", `session ${sid} invoked read_channel for DISCORD — the additive cross-surface read works through ONE generic tool.`);
   const rows = await rowsSince(since);
-  const verdict = classifyDelegatedReadEvidence(rows, sid, "discord");
+  let verdict = classifyDelegatedReadEvidence(rows, sid, "discord");
+  if (verdict.kind === "delegated-unsettled") {
+    verdict = await pollForDelegationSettlement({ sleep, now: () => Date.now(), fetchRows: () => rowsSince(since) }, sid, "discord", SETTLE_TIMEOUT_MS, POLL_MS, verdict);
+  }
   if (verdict.kind === "delegated-completed") return record("G2", "PASS", `session ${sid} replied (tools=[${[...new Set(calls)].join(",") || "none"}]) — ${verdict.detail}`);
   if (verdict.kind === "delegated-failed" || verdict.kind === "delegated-unsettled" || verdict.kind === "refused") return record("G2", "FAIL", verdict.detail);
   record("G2", "SKIP", `session ${sid} replied but did not invoke read_channel and no delegation evidence was found (tools=[${[...new Set(calls)].join(",") || "none"}]; ${verdict.detail}) — model-dependent; the adapter is pinned offline.`);
