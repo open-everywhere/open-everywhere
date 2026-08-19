@@ -5,6 +5,8 @@ import { resolveMessagePermalink } from "@open-everywhere/core/agent/channels/su
 import { nativeMemberCheck } from "@open-everywhere/core/agent/access/native-admin.js";
 import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import reply from "@open-everywhere/core/agent/tools/reply.js";
+import { canReceiveJudgedWake } from "@open-everywhere/core/agent/instructions/access.js";
+import { classifySessionId } from "@open-everywhere/core/agent/channels/window-key.js";
 
 registerDiscordProvider();
 
@@ -50,4 +52,24 @@ ok((await resolveMessagePermalink("teams", { channelId: "C7", messageId: "M9", w
 
 ok(nativeMemberCheck("discord") !== undefined, "native member check: the bundle registers one into core's registry, so a standing question on discord is answerable at all (no core caller today — see access/native-admin.ts)");
 
-console.log(`✓ discord-provider-integration: ${n} assertions passed (capability manifest + namespace/alias resolution + reply arming + message permalink + native member check, composed core + bundle)`);
+const nativeDmCtx: BindableContext = {
+  channel: { kind: "discord-gateway", continuationToken: "cse_dm_1" },
+  session: { auth: { current: { authenticator: "discord", principalId: "U_dm", principalType: "discord-user", attributes: { channel_id: "DM1", channel_type: "1", user_id: "U_dm" } } } },
+} as unknown as BindableContext;
+const nativeGroupDmCtx: BindableContext = {
+  channel: { kind: "discord-gateway", continuationToken: "cse_gdm_1" },
+  session: { auth: { current: { authenticator: "discord", principalId: "U_gdm", principalType: "discord-user", attributes: { channel_id: "GDM1", channel_type: "3", user_id: "U_gdm" } } } },
+} as unknown as BindableContext;
+const nativeChannelCtx: BindableContext = {
+  channel: { kind: "discord-gateway", continuationToken: "cse_ch_1" },
+  session: { auth: { current: { authenticator: "discord", principalId: "U_ch", principalType: "discord-user", attributes: { guild_id: "G7", channel_id: "C7", channel_type: "0" } } } },
+} as unknown as BindableContext;
+ok(classifySessionId("cse_dm_1").kind === "native" && classifySessionId("cse_ch_1").kind === "native", "fixture guard: both a Discord DM and a Discord channel bind off the same blank/native token — only `mode` tells them apart");
+ok(bindFrom(nativeDmCtx).mode === "dm", "fixture guard: the registered discord mapper resolves channel_type 1 to mode 'dm'");
+ok(bindFrom(nativeGroupDmCtx).mode === "mpim", "fixture guard: the registered discord mapper resolves channel_type 3 to mode 'mpim'");
+ok(bindFrom(nativeChannelCtx).mode === "channel", "fixture guard: a guild channel resolves mode 'channel'");
+ok(!canReceiveJudgedWake(nativeDmCtx), "🔴 OPE-771: a Discord DM session is false — discord-gateway.ts renders `direct` (raw, no envelope) for every DM message, never a judged wake");
+ok(!canReceiveJudgedWake(nativeGroupDmCtx), "🔴 OPE-771: a Discord group-DM session is false for the same reason — `isDm` covers channel_type 3 too");
+ok(canReceiveJudgedWake(nativeChannelCtx), "OPE-771: a Discord guild channel/thread session is true — it mixes raw `direct` (on @mention) with judged `thread-follow`/`name-drop`, so it is not 'only ever direct'");
+
+console.log(`✓ discord-provider-integration: ${n} assertions passed (capability manifest + namespace/alias resolution + reply arming + message permalink + native member check + canReceiveJudgedWake DM/channel split, composed core + bundle)`);
