@@ -1,10 +1,9 @@
 import type { UnifiedWakeOrigin } from "./unified-window.js";
-import { auditReplyPost, REPLY_DEDUPE_SKIPPED_ID, type ReplyAudit, type ReplierLabel } from "./reply-post.js";
+import { auditReplyPost, recordLandedPost, REPLY_DEDUPE_SKIPPED_ID, type ReplyAudit, type ReplierLabel } from "./reply-post.js";
 import { withReplierPrefix } from "./turn-delivery.js";
 import { onVercel } from "../access/platform.js";
 import { postArm } from "./post-arms.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
-import { recordOwnPost } from "./own-post-ledger.js";
 import type { EditLocus } from "./reply-edit.js";
 
 type SlackOrigin = Extract<UnifiedWakeOrigin, { platform: "slack" }>;
@@ -68,8 +67,7 @@ export async function postUnifiedReply(
     run: async () => {
       const realId = await dispatchUnifiedReply(origin, body, deps, nativeReplier);
       await auditReplyPost(audit, realId, origin.platform, body.length);
-      const editLocus = unifiedEditLocus(origin);
-      if (editLocus) await recordOwnPost(audit?.org, editLocus, realId);
+      await recordLandedPost({ org: audit?.org, editLocus: unifiedEditLocus(origin), messageId: realId, body, platform: origin.platform });
       return realId;
     },
     skipped: () => REPLY_DEDUPE_SKIPPED_ID,

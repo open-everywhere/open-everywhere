@@ -142,6 +142,17 @@ function replyDedupeLocus(target: ReplyTarget): { channel: string; threadTs?: st
 
 export const REPLY_DEDUPE_SKIPPED_ID = "deduped:reply";
 
+export async function recordLandedPost(input: {
+  readonly org: string | undefined;
+  readonly editLocus: EditLocus | null;
+  readonly messageId: string;
+  readonly body: string;
+  readonly platform: string;
+}): Promise<void> {
+  if (input.editLocus) await recordOwnPost(input.org, input.editLocus, input.messageId);
+  await recordPostTail(input.body, new Date().toISOString(), input.platform);
+}
+
 export async function postReply(target: ReplyTarget, text: string, audit?: ReplyAudit, replier?: ReplierLabel): Promise<string> {
   const arm = postArm(target.platform);
   const nativeReplier = arm?.displayNameCapable ? replier : undefined;
@@ -161,9 +172,7 @@ export async function postReply(target: ReplyTarget, text: string, audit?: Reply
     run: async () => {
       const realId = await dispatchReply(target, body, nativeReplier);
       await auditReplyPost(audit, realId, target.platform, body.length);
-      const editLocus = replyEditLocus(target);
-      if (editLocus) await recordOwnPost(audit?.org, editLocus, realId);
-      await recordPostTail(body, new Date().toISOString(), target.platform);
+      await recordLandedPost({ org: audit?.org, editLocus: replyEditLocus(target), messageId: realId, body, platform: target.platform });
       return realId;
     },
     skipped: () => REPLY_DEDUPE_SKIPPED_ID,

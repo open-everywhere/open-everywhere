@@ -11,8 +11,7 @@ import { attachCancelNoteRequester, clearPendingCancelNoteAfter, setPendingCance
 import { findCancelRequester } from "../channels/turn-cancel.js";
 import { forgetBridgedQuestion } from "../channels/question-bridge.js";
 import { bareTokenFromEveContext } from "../channels/window-key.js";
-import { isSupervisorToken, standingSeatRegistryKey } from "../channels/unified-supervisor.js";
-import { seedTailWindow } from "../channels/session-tail-record.js";
+import { seedTailWindow, tailWindowFor } from "../channels/session-tail-record.js";
 import { domainKeyOf } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { closeTurnTally, openTurnTally, readTurnTally, recordTallyAction, recordTallyHand, recordTallyStep } from "./turn-tally.js";
@@ -95,17 +94,14 @@ async function onTurnStarted(turnId: string, ctx: HookContext): Promise<void> {
 
   if (read()?.turnId === turnId) openTurnTally(ctx.session.id, turnId);
 
-  const tailToken = bareTokenFromEveContext(ctx.channel?.continuationToken);
   seedTailWindow(
-    tailToken !== undefined && isSupervisorToken(tailToken)
-      ? {
-          org: partition.org,
-          registryKey: standingSeatRegistryKey(tailToken, domainKeyOf(partition)) ?? domainKeyOf(partition),
-          token: tailToken,
-          ...(platform ? { platform } : {}),
-          container: partition.surfaceKey,
-        }
-      : null,
+    tailWindowFor({
+      org: partition.org,
+      domainKey: domainKeyOf(partition),
+      surfaceKey: partition.surfaceKey,
+      rawToken: ctx.channel?.continuationToken,
+      ...(platform ? { platform } : {}),
+    }),
   );
 
   await recordTurnAnchor(

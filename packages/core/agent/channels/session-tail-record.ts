@@ -2,9 +2,11 @@ import { defineState } from "eve/context";
 import { getOperationalStore } from "../operational/provider.js";
 import type { OperationalStore } from "../operational/store.js";
 import { buildTail, type SessionTailEntry } from "./session-tail.js";
+import { standingSeatRegistryKey } from "./unified-supervisor.js";
+import { bareTokenFromEveContext, classifySessionId } from "./window-key.js";
 import type { WakeMessageInput, WakeTrust } from "./wake-envelope.js";
 
-interface TailWindow {
+export interface TailWindow {
   readonly org: string;
   readonly registryKey: string;
   readonly token: string;
@@ -13,6 +15,24 @@ interface TailWindow {
 }
 
 const windowSlot = defineState<TailWindow | null>("open-everywhere.session-tail-window", () => null);
+
+export function tailWindowFor(input: {
+  readonly org: string;
+  readonly domainKey: string;
+  readonly surfaceKey: string;
+  readonly rawToken: unknown;
+  readonly platform?: string;
+}): TailWindow | null {
+  const token = bareTokenFromEveContext(input.rawToken);
+  if (token === undefined || classifySessionId(token).grain !== "standing") return null;
+  return {
+    org: input.org,
+    registryKey: standingSeatRegistryKey(token, input.domainKey) ?? input.domainKey,
+    token,
+    ...(input.platform ? { platform: input.platform } : {}),
+    container: input.surfaceKey,
+  };
+}
 
 export function seedTailWindow(w: TailWindow | null): void {
   try {

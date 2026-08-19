@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { approxEntryTokens, buildTail, selectTail, tailEntryToWakeMessage, type SessionTailEntry } from "../agent/channels/session-tail.js";
-import { carryTailForward } from "../agent/channels/session-tail-record.js";
+import { carryTailForward, recordPostTail, tailWindowFor, type TailWindow } from "../agent/channels/session-tail-record.js";
+import { unifiedDomainSessionKey } from "../agent/channels/unified-supervisor.js";
+import { formatWindowToken, taskWindowId, threadSeatWindowId } from "../agent/channels/window-key.js";
 import type { OperationalStore } from "../agent/operational/store.js";
 
 let n = 0;
@@ -160,4 +162,51 @@ function post(secs: number, text: string, over: Partial<SessionTailEntry> = {}):
   eq((await carryTailForward(ORG, KEY, OUT, failing)).length, 0, "🔴 a store failure fail-SOFTS to an empty tail — a rotation never waits on continuity and never fails for want of it");
 }
 
-console.log(`✓ session-tail: ${n} assertions passed (cap + most-recent-first, time order, the recursive-inheritance guard, bot posts, self provenance, the cross-surface container guard, carry-forward)`);
+{
+  const ORG = "acme";
+  const DOMAIN = "eng";
+  const SURFACE = "slack/T1/C_ENG";
+  const call = (rawToken: unknown): TailWindow | null =>
+    tailWindowFor({ org: ORG, domainKey: DOMAIN, surfaceKey: SURFACE, rawToken, platform: "slack" });
+
+  const standing = formatWindowToken({ domain: DOMAIN, windowId: DOMAIN, generation: 11 });
+  const w = call(`unified:${standing}`);
+  ok(w !== null, "a standing WINDOW seat gets a tail window — this is the case OPE-804 found recording nothing");
+  eq(w!.token, standing, "…filed under the BARE token, with eve's channel namespace stripped");
+  eq(w!.registryKey, unifiedDomainSessionKey(DOMAIN), "…on the SYNTHETIC window row, the same key the rotation read and the spend counter use");
+  eq(w!.container, SURFACE, "…carrying the PER-CONTAINER surface key, so a cross-surface window's rooms stay apart");
+  eq(w!.platform, "slack", "…and the platform the post will name");
+  eq(call(standing)?.token, standing, "a BARE token needs no strip and resolves identically");
+
+  const workerToken = formatWindowToken({ domain: DOMAIN, windowId: taskWindowId("slack-T1-C_ENG", "1755776340.000100"), generation: 3 });
+  ok(workerToken.includes(":oe-sup:g"), "the task window token really does carry the supervisor infix — without this the control below proves nothing");
+  eq(call(workerToken), null, "🔴 a DELEGATED WORKER files no post: a task-grain session is not a generation anything rotates");
+  eq(call(`unified:${workerToken}`), null, "…namespaced too — the strip must not smuggle a worker past the grain test");
+
+  eq(call(formatWindowToken({ domain: DOMAIN, windowId: threadSeatWindowId("slack-T1-C_ENG", "1755776340.000200"), generation: 2 })), null, "a THREAD SEAT files no post either — nothing carries its ring forward");
+
+  eq(call(undefined), null, "no token at all ⇒ no window (a sessionless schedule, an eval)");
+  eq(call(""), null, "an empty token ⇒ no window");
+  eq(call("cse_01ABCDEF"), null, "a NATIVE eve session id ⇒ no window");
+  eq(call("subagent:cse_01ABCDEF:call_1"), null, "eve's own declared-subagent child ⇒ no window");
+  eq(call("D0123456:oe-dm:g4"), null, "the legacy per-user DM-seat token ⇒ no window (its grain is native)");
+  eq(call({ token: standing }), null, "a non-string ⇒ no window, never a throw");
+
+  const container = "C0EXCHAN001:oe-sup:g7";
+  eq(call(`slack:${container}`)?.registryKey, DOMAIN, "a per-container supervisor files on the caller's domain key — no synthetic window row exists for it");
+  eq(call(`slack:${container}`)?.token, container, "…under its own bare token, so its ring is that generation's and no other's");
+}
+
+{
+  let writes = 0;
+  const store = {
+    async appendSessionTail() {
+      writes++;
+    },
+  } as unknown as OperationalStore;
+
+  await recordPostTail("something the seat said", new Date().toISOString(), "slack", store);
+  eq(writes, 0, "🔴 no seeded window ⇒ NO store write — a worker, a task session or a routine fire posting through the choke point records nothing");
+}
+
+console.log(`✓ session-tail: ${n} assertions passed (cap + most-recent-first, time order, the recursive-inheritance guard, bot posts, self provenance, the cross-surface container guard, carry-forward, the standing-grain window guard, the unseeded no-write floor)`);
