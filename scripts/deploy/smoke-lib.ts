@@ -300,6 +300,14 @@ export interface LinearSignedDeliverySmokeDeps {
 
 export const LINEAR_SMOKE_ORG = "oe-deploy-smoke-linear-org";
 
+export function linearSmokeTeamId(nowMs: number): string {
+  return `oe-deploy-smoke-${nowMs.toString(36)}`;
+}
+
+export function linearSmokeSurfaceKey(teamId: string): string {
+  return `linear/${LINEAR_SMOKE_ORG}/${teamId}`;
+}
+
 function linearSmokeAgentSessionBody(input: { readonly sessionId: string; readonly teamId: string; readonly issueId: string; readonly commentId: string; readonly nowMs: number }): string {
   return JSON.stringify({
     type: "AgentSessionEvent",
@@ -341,8 +349,8 @@ export async function runLinearSignedDeliverySmoke(deps: LinearSignedDeliverySmo
     return pass;
   };
 
-  const teamId = `oe-deploy-smoke-${deps.now().toString(36)}`;
-  const surfaceKey = `linear/${LINEAR_SMOKE_ORG}/${teamId}`;
+  const teamId = linearSmokeTeamId(deps.now());
+  const surfaceKey = linearSmokeSurfaceKey(teamId);
   const sinceIso = new Date(deps.now() - 30_000).toISOString();
   const body = linearSmokeAgentSessionBody({
     sessionId: `oe-smoke-session-${teamId}`,
@@ -385,8 +393,8 @@ export async function runLinearSignedDeliverySmoke(deps: LinearSignedDeliverySmo
     }
   }
 
-  const unsignedTeamId = `oe-deploy-smoke-${deps.now().toString(36)}-u`;
-  const unsignedSurfaceKey = `linear/${LINEAR_SMOKE_ORG}/${unsignedTeamId}`;
+  const unsignedTeamId = `${linearSmokeTeamId(deps.now())}-u`;
+  const unsignedSurfaceKey = linearSmokeSurfaceKey(unsignedTeamId);
   const unsignedSince = new Date(deps.now() - 30_000).toISOString();
   const unsignedBody = linearSmokeAgentSessionBody({
     sessionId: `oe-smoke-session-${unsignedTeamId}`,
