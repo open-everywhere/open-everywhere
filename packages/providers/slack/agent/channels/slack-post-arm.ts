@@ -1,4 +1,5 @@
 import { slackForm, botDisplayName } from "./slack-events.js";
+import { markEditNotApplied } from "@open-everywhere/core/agent/adapter-api.js";
 import type {
   PostArm,
   TargetResolveBag,
@@ -98,7 +99,9 @@ async function editSlackMessage(locus: EditLocus, messageId: string, text: strin
   const body = new URLSearchParams({ channel: locus.channelId, ts: messageId, text });
   const res = await slackForm("chat.update", body.toString());
   if (res?.ok !== true) {
-    throw new Error(`edit_reply couldn't update the Slack message — ${(res?.error as string) ?? "chat.update returned no ok (check SLACK_BOT_TOKEN)"}`);
+    throw markEditNotApplied(
+      new Error(`edit_reply couldn't update the Slack message — ${(res?.error as string) ?? "chat.update returned no ok (check SLACK_BOT_TOKEN)"}`),
+    );
   }
 }
 

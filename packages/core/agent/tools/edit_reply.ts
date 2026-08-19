@@ -3,7 +3,16 @@ import { z } from "zod";
 import { deploymentOrg, isUnifiedWindowContext, currentWakeId, currentTurnId, type BindableContext } from "../identity/binding.js";
 import { resolveReplyTarget, replyEditLocus, replyAuditFor } from "../channels/reply-post.js";
 import { resolveUnifiedEditLocus } from "../channels/unified-reply.js";
-import { editPostedMessage, auditReplyEditRefused, editRefusalMessage, EDIT_NO_ARM_REFUSAL_REASON } from "../channels/reply-edit.js";
+import {
+  editPostedMessage,
+  auditReplyEditRefused,
+  editRefusalMessage,
+  editFailureClass,
+  ambiguousEditNote,
+  EDIT_NO_ARM_REFUSAL_REASON,
+  type EditLocus,
+} from "../channels/reply-edit.js";
+import type { ReplyAudit } from "../channels/reply-post.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
 import { withPendingWorkFrame } from "../channels/turn-delivery.js";
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
@@ -15,6 +24,21 @@ import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
 const editedNote = (platform: string): string =>
   `Message updated on ${platform}. Nobody was notified — an edit changes what is already there, so anything NEW to say still needs a \`reply\`.`;
+
+async function editOrReportAmbiguous(
+  locus: EditLocus,
+  messageId: string,
+  text: string,
+  audit: ReplyAudit,
+): Promise<{ edited: boolean; id: string; note: string }> {
+  try {
+    await editPostedMessage(locus, messageId, text, audit);
+  } catch (err) {
+    if (editFailureClass(err) !== "ambiguous") throw err;
+    return { edited: false, id: messageId, note: ambiguousEditNote(locus.platform) };
+  }
+  return { edited: true, id: messageId, note: editedNote(locus.platform) };
+}
 
 const MESSAGE_ID = z
   .string()
@@ -65,8 +89,7 @@ export const unifiedEditReplyEntry = defineTool({
     const owingTask = pendingDelegationOwing(turnId, input.wake, addressedWakeThisTurn(turnId));
     const framed = withPendingWorkFrame(input.text, owingTask !== undefined);
 
-    await editPostedMessage(locus, input.message_id, framed, replyAuditFor(bind, "tool", input.wake));
-    return { edited: true, id: input.message_id, note: editedNote(origin.platform) };
+    return await editOrReportAmbiguous(locus, input.message_id, framed, replyAuditFor(bind, "tool", input.wake));
   },
 });
 preRegisterDynamicEntry("edit_reply", "_single", unifiedEditReplyEntry);
@@ -95,8 +118,7 @@ const baseEditReplyEntry = defineTool({
       await auditReplyEditRefused(replyAuditFor(bind, "tool"), EDIT_NO_ARM_REFUSAL_REASON);
       throw new Error(editRefusalMessage(EDIT_NO_ARM_REFUSAL_REASON, target.platform));
     }
-    await editPostedMessage(locus, input.message_id, input.text, replyAuditFor(bind, "tool"));
-    return { edited: true, id: input.message_id, note: editedNote(locus.platform) };
+    return await editOrReportAmbiguous(locus, input.message_id, input.text, replyAuditFor(bind, "tool"));
   },
 });
 preRegisterDynamicEntry("edit_reply", "_base", baseEditReplyEntry);

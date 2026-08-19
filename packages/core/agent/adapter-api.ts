@@ -242,6 +242,7 @@ export type { PostArm, TargetResolveBag, DirectMessageRequest, DirectMessageDeli
 export type { ReplyTarget } from "./channels/reply-post.js";
 export type { UnifiedReplyDeps } from "./channels/unified-reply.js";
 export type { EditLocus } from "./channels/reply-edit.js";
+export { markEditNotApplied } from "./channels/reply-edit.js";
 export { recordOwnPost } from "./channels/own-post-ledger.js";
 
 export { postTerminalProse } from "./channels/reply-post.js";
