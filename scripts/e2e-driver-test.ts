@@ -368,6 +368,9 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
     slackUnified: [ENV.slackUnifiedChannelA, ENV.slackUnifiedChannelB],
     pr: [ENV.prRepo, ENV.githubDriverToken],
     connectorWrite: [ENV.notionChannel, ENV.connectorWrite],
+    soakSlack: [ENV.slackSoakChannelDev, ENV.slackSoakChannelOps],
+    soakNotion: [ENV.notionSoakPage1, ENV.notionSoakPage2],
+    soakLinear: [ENV.linearSoakLabelId],
   } as const;
   for (const s of SCENARIOS) {
     const reason = skipReason(s, none, missing, false);
@@ -395,6 +398,9 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
     slackUnified: [],
     pr: [],
     connectorWrite: [],
+    soakSlack: [],
+    soakNotion: [],
+    soakLinear: [],
   } as const;
   ok(skipReason(SCENARIOS[0], all, noneMissing, false) === undefined, "the first scenario (J1) runs when its capability is live");
   ok(
@@ -868,6 +874,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
     slack: [], discord: [], synthetic: [], slackPrivate: [], slackChannelB: [], slackCapFixture: [], slackSupervisor: [],
     syntheticDm: [], slackUser2: [], slackSecondary: [], webhook: [], notion: [], teams: [], github: [], linear: [],
     notionAmbient: [], slackUnified: [], pr: [], connectorWrite: [ENV.notionChannel, ENV.connectorWrite],
+    soakSlack: [], soakNotion: [], soakLinear: [],
   } as const;
   for (const id of ["S-NOTION-WRITE", "S-CONNECTOR-TIER"]) {
     const r = skipReason(SCENARIOS.find((s) => s.id === id)!, baseOnly, cwMissing, true);

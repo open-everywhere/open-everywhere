@@ -173,6 +173,8 @@ function finding(overrides: Partial<FixtureFinding["classified"]> & { probe?: Fi
     if (f.probe === "slack-channel" || f.probe === "slack-dm-channel")
       ok(typeof f.channelVar === "string" && f.channelVar.length > 0, `${f.probe} family "${f.id}" declares channelVar`);
     if (f.probe === "slack-channel-pair") ok(Array.isArray(f.channelVars) && f.channelVars.length === 2, `slack-channel-pair family "${f.id}" declares two channelVars`);
+    if (f.probe === "notion-page-pair") ok(Array.isArray(f.pageVars) && f.pageVars.length === 2, `notion-page-pair family "${f.id}" declares two pageVars`);
+    if (f.probe === "linear-label") ok(typeof f.labelVar === "string" && f.labelVar.length > 0, `linear-label family "${f.id}" declares labelVar`);
     if (f.probe === "presence-only") ok(typeof f.presenceOnlyReason === "string" && f.presenceOnlyReason.length > 0, `presence-only family "${f.id}" states why`);
     ok(f.required.length > 0, `family "${f.id}" declares at least one required var`);
     ok(f.scenarios.length > 0, `family "${f.id}" names what it gates`);
@@ -185,6 +187,30 @@ function finding(overrides: Partial<FixtureFinding["classified"]> & { probe?: Fi
   const findings: FixtureFinding[] = classified.map((c) => ({ classified: c }));
   const result = fixtureDoctorResult(findings);
   ok(result.ok === true, "an empty env (fresh checkout, no .env.e2e) is a green fixture doctor run");
+}
+
+{
+  const soakSlack = FIXTURE_FAMILIES.find((f) => f.id === "soakSlack")!;
+  const soakNotion = FIXTURE_FAMILIES.find((f) => f.id === "soakNotion")!;
+  const soakLinear = FIXTURE_FAMILIES.find((f) => f.id === "soakLinear")!;
+  ok(soakSlack !== undefined && soakNotion !== undefined && soakLinear !== undefined, "the three OPE-845 soak families are declared in FIXTURE_FAMILIES");
+
+  const fullEnv = { E2E_SLACK_SOAK_CHANNEL_DEV: "C1", E2E_SLACK_SOAK_CHANNEL_OPS: "C2", E2E_NOTION_SOAK_PAGE_1: "P1", E2E_NOTION_SOAK_PAGE_2: "P2", E2E_SOAK_LINEAR_LABEL_ID: "L1" };
+  const fullClassified = classifyAll(fullEnv, [soakSlack, soakNotion, soakLinear]);
+  ok(fullClassified.every((c) => c.classification === "set"), "all three vars present on each soak family → classification set");
+
+  const halfEnv = { E2E_SLACK_SOAK_CHANNEL_DEV: "C1", E2E_NOTION_SOAK_PAGE_1: "P1" };
+  const halfClassified = classifyAll(halfEnv, [soakSlack, soakNotion, soakLinear]);
+  const soakSlackHalf = halfClassified.find((c) => c.family.id === "soakSlack")!;
+  const soakNotionHalf = halfClassified.find((c) => c.family.id === "soakNotion")!;
+  const soakLinearHalf = halfClassified.find((c) => c.family.id === "soakLinear")!;
+  ok(soakSlackHalf.classification === "partial", "one of two Slack channel vars set → partial, not set or absent");
+  ok(soakNotionHalf.classification === "partial", "one of two Notion page vars set → partial");
+  ok(soakLinearHalf.classification === "absent", "no linear label var at all → absent (an honest gap, not a broken half)");
+
+  const halfFindings: FixtureFinding[] = halfClassified.map((c) => ({ classified: c }));
+  const halfResult = fixtureDoctorResult(halfFindings);
+  ok(halfResult.ok === false, "a half-provisioned soak Slack/Notion pair flips the doctor RED — this is the assertion that goes false if the partial branch is ever dropped");
 }
 
 console.log(`✓ fixture-doctor-lib: ${passed} assertions passed`);

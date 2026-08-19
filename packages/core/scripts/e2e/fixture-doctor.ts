@@ -253,6 +253,43 @@ async function probeNotionAmbient(env: Env): Promise<ProbeOutcome> {
   });
 }
 
+async function probeNotionPagePair(env: Env, pageVars: readonly [string, string]): Promise<ProbeOutcome> {
+  const driverKey = env[ENV.notionDriverKey];
+  if (!driverKey) return outcome(false, `no ${ENV.notionDriverKey} available to read page blocks`);
+  return safe("notion soak page-block reads (pair)", async () => {
+    const results = await Promise.all(
+      pageVars.map(async (name) => {
+        const pageId = env[name]!;
+        const res = await fetch(`https://api.notion.com/v1/blocks/${pageId}/children?page_size=1`, {
+          headers: { authorization: `Bearer ${driverKey}`, "notion-version": "2022-06-28" },
+        });
+        const json = (await res.json().catch(() => ({}))) as { object?: string; message?: string };
+        return { name, pageId, ok: res.ok && json.object !== "error", error: json.message };
+      }),
+    );
+    const bad = results.filter((r) => !r.ok);
+    if (bad.length > 0) return outcome(false, `page-block read failed for: ${bad.map((b) => `${b.name}=${b.pageId} (${b.error ?? "unreachable"})`).join("; ")}`);
+    return outcome(true, `page-block reads ok on both: ${results.map((r) => `${r.name}=${r.pageId}`).join(", ")}`);
+  });
+}
+
+async function probeLinearLabel(env: Env, labelVar: string): Promise<ProbeOutcome> {
+  const apiKey = env[ENV.linearApiKey];
+  if (!apiKey) return outcome(false, `no ${ENV.linearApiKey} available to resolve the soak label`);
+  return safe("linear soak label resolve", async () => {
+    const labelId = env[labelVar]!;
+    const res = await fetch("https://api.linear.app/graphql", {
+      method: "POST",
+      headers: { authorization: apiKey, "content-type": "application/json" },
+      body: JSON.stringify({ query: `query($id:String!){ issueLabel(id:$id) { id name team { id name } } }`, variables: { id: labelId } }),
+    });
+    const json = (await res.json().catch(() => ({}))) as { data?: { issueLabel?: { id?: string; name?: string; team?: { name?: string } } }; errors?: { message?: string }[] };
+    if (!res.ok || json.errors) return outcome(false, `linear graphql failed: ${json.errors?.map((e) => e.message).join("; ") ?? `http ${res.status}`}`);
+    if (!json.data?.issueLabel?.id) return outcome(false, `linear graphql — label ${labelId} did not resolve (deleted?)`);
+    return outcome(true, `label "${json.data.issueLabel.name ?? labelId}" resolves on team "${json.data.issueLabel.team?.name ?? "?"}"`);
+  });
+}
+
 async function probe(classified: ClassifiedFixture, env: Env): Promise<{ probe?: ProbeOutcome; notProbed?: string }> {
   const f = classified.family;
   switch (f.probe) {
@@ -282,6 +319,10 @@ async function probe(classified: ClassifiedFixture, env: Env): Promise<{ probe?:
       return { probe: await probeLinear(env) };
     case "notion-ambient":
       return { probe: await probeNotionAmbient(env) };
+    case "notion-page-pair":
+      return { probe: await probeNotionPagePair(env, f.pageVars!) };
+    case "linear-label":
+      return { probe: await probeLinearLabel(env, f.labelVar!) };
   }
 }
 

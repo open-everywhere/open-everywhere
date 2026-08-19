@@ -19,7 +19,9 @@ export type ProbeKind =
   | "github"
   | "github-pr"
   | "linear"
+  | "linear-label"
   | "notion-ambient"
+  | "notion-page-pair"
   | "presence-only";
 
 export interface FixtureFamily {
@@ -32,6 +34,8 @@ export interface FixtureFamily {
   readonly presenceOnlyReason?: string;
   readonly channelVar?: string;
   readonly channelVars?: readonly [string, string];
+  readonly pageVars?: readonly [string, string];
+  readonly labelVar?: string;
 }
 
 export type FixtureClassification = "absent" | "partial" | "set";
@@ -332,6 +336,30 @@ export const FIXTURE_FAMILIES: readonly FixtureFamily[] = [
     optional: [ENV.notionAmbientWebhookSecret, ENV.notionAnchorOnTopic, ENV.notionAnchorOnTopic2, ENV.notionAnchorOffTopic, ENV.notionAnchorHuman],
     scenarios: "J-NOT (Notion ambient comment surface) + S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE's human anchor (OPE-576)",
     probe: "notion-ambient",
+  },
+  {
+    id: "soakSlack",
+    label: "Soak lane's dedicated Slack channel pair (#oe-soak-dev / #oe-soak-ops)",
+    required: [v(ENV.slackSoakChannelDev), v(ENV.slackSoakChannelOps)],
+    scenarios: "the soak scenario's narrative skeleton (OPE-845 §1) — a DEDICATED pair, never the e2e-unified fixture",
+    probe: "slack-channel-pair",
+    channelVars: [ENV.slackSoakChannelDev, ENV.slackSoakChannelOps],
+  },
+  {
+    id: "soakNotion",
+    label: "Soak lane's dedicated Notion page pair",
+    required: [v(ENV.notionSoakPage1), v(ENV.notionSoakPage2)],
+    scenarios: "the soak scenario's narrative skeleton — phase 2 (spec work) + phase 11 (late recall)",
+    probe: "notion-page-pair",
+    pageVars: [ENV.notionSoakPage1, ENV.notionSoakPage2],
+  },
+  {
+    id: "soakLinear",
+    label: "Soak lane's dedicated Linear label (on the e2e fixture team, never a real-work team)",
+    required: [v(ENV.linearSoakLabelId)],
+    scenarios: "the soak scenario's narrative skeleton — phase 3 (ticket triage)",
+    probe: "linear-label",
+    labelVar: ENV.linearSoakLabelId,
   },
 ];
 

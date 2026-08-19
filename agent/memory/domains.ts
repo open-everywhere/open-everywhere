@@ -23,6 +23,8 @@ const silos: MemorySilo[] = [
 
   defineMemorySilo({ name: "e2e-ambient-brain", provider: "postgres" }),
 
+  defineMemorySilo({ name: "soak-brain", provider: "postgres" }),
+
   ...(process.env.OE_MEMORY_EVAL === "1"
     ? [
         defineMemorySilo({ name: "payments-brain", provider: "postgres", description: "payments-domain decisions — refunds, chargebacks, settlement, KYC" }),
@@ -68,6 +70,19 @@ const rawDomains: Domain[] = [
     mode: "unified",
     engagementTier: "neutral",
     reasoningCeiling: "high",
+    models: { primary: { id: UTILITY_MODEL }, supervisor: { id: SUPERVISOR_MODEL, reasoning: "medium" } },
+  }),
+
+  defineDomain({
+    name: "soak",
+    channels: [
+      "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000102",
+      "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000103",
+    ],
+    memory: "soak-brain",
+    ambientSupervisor: true,
+    mode: "unified",
+    engagementTier: "neutral",
     models: { primary: { id: UTILITY_MODEL }, supervisor: { id: SUPERVISOR_MODEL, reasoning: "medium" } },
   }),
 
