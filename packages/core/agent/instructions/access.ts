@@ -1,6 +1,6 @@
 import { defineDynamic, defineInstructions } from "eve/instructions";
 import { defineState } from "eve/context";
-import { resolveAccessFor } from "../access/request.js";
+import { resolveAccessFor, unattendedOf } from "../access/request.js";
 import { assembleAccessInstructions } from "../access/instructions.js";
 import { resolveAccess } from "../access/resolver.js";
 import { getConfig } from "../access/config.js";
@@ -16,6 +16,8 @@ import { memoryRecallRouteFor, type MemoryRecallRoute } from "../access/window-g
 import { canDelegateFromSeat } from "../access/delegation-mount.js";
 import { backgroundTasksEnabled } from "../access/delegation-flag.js";
 import { renderApprovalPreviewFor } from "../access/approval-preview.js";
+import { resolveLeanSeatPosture } from "../access/lean-seat.js";
+import { SEAT_RECOVERY_READ_BUDGET } from "../access/seat-read-budget.js";
 import { renderWorkerCapabilityIndex } from "../access/worker-capabilities.js";
 import { WORKER_ONLY_TOOLS_STANDING, WORKER_ONLY_TOOLS_THREAD } from "../access/worker-capability-index.generated.js";
 import { bridgeReadableChannelList } from "../channels/slack-bridge.js";
@@ -47,6 +49,39 @@ function renderChannelScope(ctx: BindableContext): string {
     ", and no others:\n" +
     channels.map((c) => `- ${encodeChannelKey("slack", c)}`).join("\n")
   );
+}
+
+export function renderRecoveryReadDoctrine(lean: boolean): string {
+  if (!lean || !genericReadVerbsEnabled()) return "";
+  return [
+    "## When somebody refers to something you cannot see",
+    "",
+    "Your wake carries recent backscroll. It does not carry all of it. So a person can refer to a",
+    "message that is not in front of you — theirs or your own.",
+    "",
+    "When that happens, GO AND LOOK. `read_channel` reads a channel; `read_thread` reads a thread.",
+    "Read first, then reply from what you read.",
+    "",
+    "Two things you must not do instead. Do not state the content you cannot see — you would be",
+    "inventing it. And do not say the message does not exist, or that you never said it: you cannot",
+    "see far enough back to know that either, and it reads as a flat contradiction of the person.",
+    "",
+    `These are RECOVERY verbs, not a way to work through a room. You get ${SEAT_RECOVERY_READ_BUDGET} reads per turn and the next one`,
+    "is refused. Read, then answer. If a page comes back too large it is trimmed and the rest is",
+    "written to a file — ask for a smaller `limit`, or delegate a worker to digest it.",
+    "",
+    'If you looked and still cannot find it, say exactly that. "I checked the last 50 messages here',
+    'and I cannot find a 16:00 reference — which message do you mean?" is a good answer, because you',
+    "checked. The same sentence without the checking is a guess.",
+  ].join("\n");
+}
+
+function isLeanSeat(ctx: BindableContext): boolean {
+  try {
+    return resolveLeanSeatPosture({ grain: windowGrainOf(ctx), canDelegate: canDelegateFromSeat(ctx), unattendedFire: unattendedOf(ctx) }) === "lean";
+  } catch {
+    return false;
+  }
 }
 
 export function renderNoiseDoctrine(ctx: BindableContext): string {
@@ -643,6 +678,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     accessMd,
     renderApprovalPreviewFor(windowGrainOf(ctx), recall),
     renderWorkerCapabilitiesFor(ctx, recall),
+    renderRecoveryReadDoctrine(isLeanSeat(ctx)),
     memoryMd,
     ...(soloMode ? [renderChannelScope(ctx), renderNoiseDoctrine(ctx)] : []),
   ]
@@ -670,6 +706,7 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
     assembleAccessInstructions(access) ?? "",
     renderApprovalPreviewFor(windowGrainOf(ctx), recall),
     renderWorkerCapabilitiesFor(ctx, recall),
+    renderRecoveryReadDoctrine(isLeanSeat(ctx)),
     memoryMd,
     renderChannelScope(ctx),
     renderNoiseDoctrine(ctx),

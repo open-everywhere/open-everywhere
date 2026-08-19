@@ -8,6 +8,8 @@ import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
 import { resolveReadTarget, readChannelResult, chatReadIngestion, renderChannelBody, channelReadSource, keyedReadResult, WindowSourcesRefusalError } from "../channels/channel-read.js";
 import { auditSourcesGateRefusal, auditOriginFenceRefusal } from "../channels/read-scope-audit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { assertSeatReadBudget } from "../access/seat-read-budget.js";
+import { capReadForInline } from "../channels/read-spool.js";
 import type { Domain } from "../memory/domain.js";
 
 const MAX_LIMIT = 100;
@@ -45,9 +47,11 @@ const readChannelEntry = defineTool({
     messages: z.array(z.object({ author: z.string(), ts: z.string(), text: z.string() })),
     authoredByNonMember: z.boolean().optional(),
     possiblyIncomplete: z.boolean().optional(),
+    spool: z.object({ path: z.string().optional(), shown: z.number(), total: z.number() }).optional(),
   }),
   async execute(input, ctx) {
     const bctx = ctx as unknown as BindableContext;
+    assertSeatReadBudget("read_channel");
     let resolved: ReturnType<typeof resolveReadTarget>;
     try {
       resolved = resolveReadTarget(bctx, input.channel, safeDomains());
@@ -57,7 +61,8 @@ const readChannelEntry = defineTool({
       throw err;
     }
     const { platform, adapter, container } = resolved;
-    return await readChannelResult(bctx, platform, adapter, container, input.limit);
+    const out = await readChannelResult(bctx, platform, adapter, container, input.limit);
+    return await capReadForInline(bctx, out, "channel", input.channel, () => renderChannelBody(keyedReadResult(out)));
   },
   toModelOutput(output) {
     const keyed = keyedReadResult(output);
