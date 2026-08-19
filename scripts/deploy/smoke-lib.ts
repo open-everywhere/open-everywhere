@@ -298,15 +298,8 @@ export interface LinearSignedDeliverySmokeDeps {
   readonly pollIntervalMs?: number;
 }
 
-export const LINEAR_SMOKE_ORG = "oe-deploy-smoke-linear-org";
-
-export function linearSmokeTeamId(nowMs: number): string {
-  return `oe-deploy-smoke-${nowMs.toString(36)}`;
-}
-
-export function linearSmokeSurfaceKey(teamId: string): string {
-  return `linear/${LINEAR_SMOKE_ORG}/${teamId}`;
-}
+export { LINEAR_SMOKE_ORG, linearSmokeSurfaceKey, linearSmokeTeamId } from "./linear-smoke-keys.js";
+import { LINEAR_SMOKE_ORG, linearSmokeSurfaceKey, linearSmokeTeamId } from "./linear-smoke-keys.js";
 
 function linearSmokeAgentSessionBody(input: { readonly sessionId: string; readonly teamId: string; readonly issueId: string; readonly commentId: string; readonly nowMs: number }): string {
   return JSON.stringify({

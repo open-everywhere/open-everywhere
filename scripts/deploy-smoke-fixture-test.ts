@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { linearSmokeSurfaceKey, linearSmokeTeamId, LINEAR_SMOKE_ORG } from "./deploy/smoke-lib.js";
+import { linearSmokeSurfaceKey, linearSmokeTeamId, LINEAR_SMOKE_ORG } from "./deploy/linear-smoke-keys.js";
 
 process.env.LINEAR_API_KEY ??= "linear-test-key";
 
