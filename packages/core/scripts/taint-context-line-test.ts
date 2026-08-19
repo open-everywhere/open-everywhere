@@ -123,4 +123,21 @@ const suppliedFalse = "context: unattended: false · tainted: false — supplied
   );
 }
 
-console.log(`✓ taint-context-line: ${passed} assertions — isLiveTaintLine discriminates a live explain_permission read from a model-supplied simulation, the old bare-regex gates are shown forgeable where the new ones refuse, and OPE-789's liveTaintGateDecision demotes only the non-live path while a genuine live plane failure still dispatches HARD`);
+{
+  const armDGateResult = (text: string): "soft" | boolean => {
+    const line = taintContextLine(text);
+    const decision = liveTaintGateDecision(line);
+    if (!decision.hard) return "soft";
+    const kinds = /tainted:\s*(?:true|false)\s*(?:\(([^)]*)\))?/i.exec(decision.line)?.[1] ?? "";
+    return /tainted:\s*(?:true|false)/i.test(decision.line) && !/\blinear\b/i.test(kinds);
+  };
+
+  ok(armDGateResult(suppliedFalse) === "soft", "OPE-799: ARM D's composed gate dispatches SOFT on a supplied (simulated) line with no kind breakdown — logged, not gated");
+  ok(armDGateResult(suppliedTrueWithWebAside) === "soft", "OPE-799: ARM D's composed gate also dispatches SOFT when the supplied line's own aside mentions web — a worker habit unrelated to the linear kind check");
+
+  ok(armDGateResult(liveClean) === true, "OPE-799: ARM D's composed gate stays HARD and PASSES on a genuine live untainted read");
+
+  ok(armDGateResult(liveLinearTainted) === false, "OPE-799 NEGATIVE CONTROL: a genuine live LINEAR-tainted line still fails ARM D's composed gate — dispatch stayed HARD, the assertion correctly evaluates false");
+}
+
+console.log(`✓ taint-context-line: ${passed} assertions — isLiveTaintLine discriminates a live explain_permission read from a model-supplied simulation, the old bare-regex gates are shown forgeable where the new ones refuse, and OPE-789/OPE-799's liveTaintGateDecision demotes only the non-live path on ARM A and ARM D while a genuine live plane failure still dispatches HARD on either arm`);

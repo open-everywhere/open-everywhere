@@ -21,7 +21,7 @@ import { type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
 import { pollOptional, pollUntil, sleep } from "./poll.js";
 import type { ReplyJudge, Rubric } from "./judge.js";
-import { isLiveTaintLine, liveTaintGateDecision, taintContextLine } from "./taint-context-line.js";
+import { liveTaintGateDecision, taintContextLine } from "./taint-context-line.js";
 import {
   approveButton,
   awaitCard,
@@ -3609,11 +3609,18 @@ export const SCENARIOS: readonly Scenario[] = [
               ctx.log("ARM D (linear): ctx.transcriptRead unavailable — cannot independently confirm a real read_linear_issue call; relying on the reply alone (weaker evidence, logged honestly)");
             }
             const contextLineD = taintContextLine(replyD.body);
-            const kindsD = /tainted:\s*(?:true|false)\s*(?:\(([^)]*)\))?/i.exec(contextLineD)?.[1] ?? "";
-            ctx.gate(
-              isLiveTaintLine(contextLineD) && /tainted:\s*(?:true|false)/i.test(contextLineD) && !/\blinear\b/i.test(kindsD),
-              `🔴 ARM D (linear, hard): the relayed context line is a LIVE measurement (no "supplied by the caller" label) whose taint breakdown does NOT name \`linear\` (kinds read: "${kindsD}") — a real read_linear_issue call over the vouched-internal fixture correctly did not contribute a taint kind, and this is not a model-supplied simulation whose empty breakdown would pass vacuously (OPE-662). This is the relaxation side of OPE-324's join (access/taint-enforcement.ts), proven live off a real Linear route rather than asserted in a unit test. A regression in \`declaredWorkspaceTrust\`'s key resolution (OPE-331/OPE-539 touched this seam) would put \`linear\` in that list. Reply: "${replyD.body.replace(/\s+/g, " ").trim().slice(0, 300)}"`,
-            );
+            const decisionD = liveTaintGateDecision(contextLineD);
+            if (!decisionD.hard) {
+              ctx.log(
+                `ARM D (linear): the relayed context line is NOT a live measurement — "${contextLineD || "(no context: line found in the reply)"}". LOGGED, not gated (OPE-799): the worker supplied its own \`tainted\` argument (or the reply carried no parseable line), which is a model-instruction-following miss, not a taint-plane defect — see this arm's header. Reply: "${replyD.body.replace(/\s+/g, " ").trim().slice(0, 300)}"`,
+              );
+            } else {
+              const kindsD = /tainted:\s*(?:true|false)\s*(?:\(([^)]*)\))?/i.exec(decisionD.line)?.[1] ?? "";
+              ctx.gate(
+                /tainted:\s*(?:true|false)/i.test(decisionD.line) && !/\blinear\b/i.test(kindsD),
+                `🔴 ARM D (linear, hard): the relayed context line is a LIVE measurement (no "supplied by the caller" label) whose taint breakdown does NOT name \`linear\` (kinds read: "${kindsD}") — a real read_linear_issue call over the vouched-internal fixture correctly did not contribute a taint kind, and this is not a model-supplied simulation whose empty breakdown would pass vacuously (OPE-662). This is the relaxation side of OPE-324's join (access/taint-enforcement.ts), proven live off a real Linear route rather than asserted in a unit test. A regression in \`declaredWorkspaceTrust\`'s key resolution (OPE-331/OPE-539 touched this seam) would put \`linear\` in that list. Reply: "${replyD.body.replace(/\s+/g, " ").trim().slice(0, 300)}"`,
+              );
+            }
           } finally {
             await lin.archive(issueD.id).catch(() => undefined);
           }
