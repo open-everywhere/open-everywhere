@@ -195,6 +195,17 @@ function post(secs: number, text: string, over: Partial<SessionTailEntry> = {}):
   const container = "C0EXCHAN001:oe-sup:g7";
   eq(call(`slack:${container}`)?.registryKey, DOMAIN, "a per-container supervisor files on the caller's domain key — no synthetic window row exists for it");
   eq(call(`slack:${container}`)?.token, container, "…under its own bare token, so its ring is that generation's and no other's");
+
+  const ticketing: ReadonlyArray<readonly [string, string]> = [
+    ["notion:notion:6f7ea678-0000-4000-8000-000000000002:oe-sup:g3", "notion:6f7ea678-0000-4000-8000-000000000002:oe-sup:g3"],
+    ["github:github:acme/oe-repo:oe-sup:g12", "github:acme/oe-repo:oe-sup:g12"],
+    ["linear:linear:team_9f2:oe-sup:g1", "linear:team_9f2:oe-sup:g1"],
+  ];
+  for (const [raw, bare] of ticketing) {
+    ok(call(raw) !== null, `a per-container TICKETING supervisor token gets a tail window (${raw})`);
+    eq(call(raw)!.token, bare, `…filed under the BARE token the surface minted (${raw})`);
+    eq(call(raw)!.registryKey, DOMAIN, `…on the caller's domain row (${raw})`);
+  }
 }
 
 {
