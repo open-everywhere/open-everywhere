@@ -1,5 +1,7 @@
 const API = "https://discord.com/api/v10";
 
+export const DISCORD_MESSAGE_MAX = 2000;
+
 function botHeaders(token: string): Record<string, string> {
   return { authorization: `Bot ${token}`, "content-type": "application/json" };
 }
@@ -12,7 +14,7 @@ function botToken(): string {
   return token;
 }
 
-export function splitForDiscord(text: string, max = 2000): string[] {
+export function splitForDiscord(text: string, max = DISCORD_MESSAGE_MAX): string[] {
   if (text.length <= max) return [text];
   const bare = splitRespectingFences(text, max);
   if (bare.length <= 2) return bare;
@@ -100,6 +102,20 @@ async function discordPostOne(channelId: string, content: string, replyToMessage
   const id = typeof body?.id === "string" ? body.id : undefined;
   if (!id) throw new Error(`Discord create-message returned no message id for channel ${channelId}`);
   return id;
+}
+
+export async function discordEditMessage(channelId: string, messageId: string, content: string): Promise<void> {
+  if (content.length > DISCORD_MESSAGE_MAX) {
+    throw new Error(
+      `edit_reply couldn't update the Discord message — the new text is ${content.length} characters and Discord caps one message at ${DISCORD_MESSAGE_MAX}. A message cannot be split by an edit; shorten it, or post a new reply.`,
+    );
+  }
+  const res = await fetch(`${API}/channels/${channelId}/messages/${messageId}`, {
+    method: "PATCH",
+    headers: botHeaders(botToken()),
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) throw new Error(`edit_reply couldn't update the Discord message (${res.status}) in channel ${channelId}`);
 }
 
 export async function discordThreadForMessage(channelId: string, messageId: string, name: string): Promise<string | null> {

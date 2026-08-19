@@ -120,6 +120,15 @@ export function registerSlackFixturePostArm(): void {
       return `slack ${o.threadTs ? `thread in ${o.channelId}` : `channel ${o.channelId}`}`;
     },
     redriveContainerId: (origin) => (origin as unknown as SlackOriginLike).channelId,
+    editMessage: async (locus, messageId, text) => {
+      const bridge = slackBridge();
+      const res = bridge
+        ? await bridge.form("chat.update", new URLSearchParams({ channel: locus.channelId, ts: messageId, text }).toString())
+        : undefined;
+      if (res?.ok !== true) {
+        throw new Error(`edit_reply couldn't update the Slack message — ${(res?.error as string) ?? "chat.update returned no ok"}`);
+      }
+    },
   });
 }
 

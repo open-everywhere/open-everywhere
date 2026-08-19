@@ -1,5 +1,6 @@
 import type { BindableContext } from "../identity/binding.js";
 import type { ReplyTarget, ReplierLabel } from "./reply-post.js";
+import type { EditLocus } from "./reply-edit.js";
 import type { UnifiedWakeOrigin } from "./unified-window.js";
 import type { UnifiedReplyDeps } from "./unified-reply.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
@@ -54,6 +55,7 @@ export interface PostArm {
   splitText?(text: string): readonly string[];
   dispatchUnified?(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps, replier?: ReplierLabel): Promise<string>;
   closeUnifiedSilently?(origin: UnifiedWakeOrigin, deps: UnifiedReplyDeps): Promise<void>;
+  editMessage?(locus: EditLocus, messageId: string, text: string): Promise<void>;
   describeRedriveTarget?(origin: UnifiedWakeOrigin): string;
   redriveContainerId?(origin: UnifiedWakeOrigin): string;
   deliverDirectMessage?(input: DirectMessageRequest): Promise<DirectMessageDelivery>;

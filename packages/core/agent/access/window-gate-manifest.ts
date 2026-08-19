@@ -28,6 +28,7 @@ export const WINDOW_GATED_TOOLS: Readonly<Record<string, readonly WindowGrain[]>
 
 export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "reply",
+  "edit_reply",
   "no_reply",
   "react",
   "update_status",
@@ -129,6 +130,7 @@ export function memoryRecallRouteFor(
 
 export const JOB_WAKE_TOOLS: ReadonlySet<string> = new Set([
   "reply",
+  "edit_reply",
   "no_reply",
   "react",
   "update_status",

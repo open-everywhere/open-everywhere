@@ -4,6 +4,7 @@ import type {
   TargetResolveBag,
   ReplyTarget,
   ReplierLabel,
+  EditLocus,
   UnifiedWakeOrigin,
   UnifiedReplyDeps,
   DirectMessageRequest,
@@ -93,6 +94,14 @@ async function deliverSlackDirectMessage(input: DirectMessageRequest): Promise<D
   return { surfaceId: dmChannelId, messageId: ts };
 }
 
+async function editSlackMessage(locus: EditLocus, messageId: string, text: string): Promise<void> {
+  const body = new URLSearchParams({ channel: locus.channelId, ts: messageId, text });
+  const res = await slackForm("chat.update", body.toString());
+  if (res?.ok !== true) {
+    throw new Error(`edit_reply couldn't update the Slack message — ${(res?.error as string) ?? "chat.update returned no ok (check SLACK_BOT_TOKEN)"}`);
+  }
+}
+
 export const slackPostArm: PostArm = {
   platform: "slack",
   resolveTarget: (bag: TargetResolveBag): ReplyTarget | null => {
@@ -109,4 +118,5 @@ export const slackPostArm: PostArm = {
   },
   redriveContainerId: (origin) => (origin as SlackOrigin).channelId,
   deliverDirectMessage: deliverSlackDirectMessage,
+  editMessage: editSlackMessage,
 };

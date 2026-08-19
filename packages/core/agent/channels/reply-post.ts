@@ -5,6 +5,9 @@ import { onVercel } from "../access/platform.js";
 import { postArm } from "./post-arms.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
 import { withReplierPrefix, type ReplierLabel } from "./turn-delivery.js";
+import { recordOwnPost } from "./own-post-ledger.js";
+import { resolvePartition } from "../memory/partition.js";
+import type { EditLocus } from "./reply-edit.js";
 
 export type { ReplierLabel };
 
@@ -43,6 +46,21 @@ export interface ReplyAudit {
   readonly sessionId?: string;
   readonly wakeId?: string;
   readonly route: "tool" | "terminal" | "bridge";
+}
+
+export function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], wakeId?: string): ReplyAudit {
+  const p = resolvePartition(ctx);
+  const sessionId = (ctx as { session?: { id?: string } }).session?.id;
+  return {
+    org: p.org,
+    platform: p.platform,
+    workspace: p.workspace,
+    surface: p.surface,
+    principalId: bindFrom(ctx).principalId,
+    ...(sessionId ? { sessionId } : {}),
+    ...(wakeId ? { wakeId } : {}),
+    route,
+  };
 }
 
 export async function auditReplyPost(audit: ReplyAudit | undefined, id: string, platform: string, chars: number): Promise<void> {
@@ -142,11 +160,26 @@ export async function postReply(target: ReplyTarget, text: string, audit?: Reply
     run: async () => {
       const realId = await dispatchReply(target, body, nativeReplier);
       await auditReplyPost(audit, realId, target.platform, body.length);
+      const editLocus = replyEditLocus(target);
+      if (editLocus) await recordOwnPost(audit?.org, editLocus, realId);
       return realId;
     },
     skipped: () => REPLY_DEDUPE_SKIPPED_ID,
   });
   return id ?? REPLY_DEDUPE_SKIPPED_ID;
+}
+
+export function replyEditLocus(target: ReplyTarget): EditLocus | null {
+  switch (target.platform) {
+    case "slack":
+      return { platform: "slack", channelId: target.channelId };
+    case "discord":
+      return { platform: "discord", channelId: target.channelId };
+    case "teams":
+      return { platform: "teams", channelId: target.conversationId, serviceUrl: target.serviceUrl };
+    default:
+      return null;
+  }
 }
 
 async function dispatchReply(target: ReplyTarget, text: string, replier?: ReplierLabel): Promise<string> {

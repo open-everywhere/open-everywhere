@@ -1,12 +1,14 @@
-import { discordPostMessage, discordThreadForMessage, splitForDiscord } from "./discord-post.js";
+import { discordEditMessage, discordPostMessage, discordThreadForMessage, splitForDiscord } from "./discord-post.js";
 import {
   markThreadEngaged,
   deploymentOrg,
+  recordOwnPost,
   type PostArm,
   type TargetResolveBag,
   type ReplyTarget,
   type UnifiedWakeOrigin,
   type UnifiedReplyDeps,
+  type EditLocus,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 type DiscordTarget = Extract<ReplyTarget, { platform: "discord" }>;
@@ -43,7 +45,14 @@ async function liveDiscordPost(origin: DiscordOrigin, text: string): Promise<str
   if (first === undefined) {
     throw new Error(`unified reply couldn't post to Discord — nothing to post (empty reply) for channel ${origin.channelId}`);
   }
+  if (targetChannelId !== origin.channelId) {
+    await recordOwnPost(deploymentOrg(), { platform: "discord", channelId: targetChannelId }, first);
+  }
   return first;
+}
+
+async function editDiscordMessage(locus: EditLocus, messageId: string, text: string): Promise<void> {
+  await discordEditMessage(locus.channelId, messageId, text);
 }
 
 export const discordPostArm: PostArm = {
@@ -57,4 +66,5 @@ export const discordPostArm: PostArm = {
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps) => (deps.postDiscord ?? liveDiscordPost)(origin as DiscordOrigin, text),
   describeRedriveTarget: (origin) => `discord channel ${(origin as DiscordOrigin).channelId}`,
   redriveContainerId: (origin) => (origin as DiscordOrigin).channelId,
+  editMessage: editDiscordMessage,
 };

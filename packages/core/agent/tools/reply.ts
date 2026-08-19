@@ -1,8 +1,8 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { bindFrom, deploymentOrg, isUnifiedWindowContext, currentWakeId, currentTurnId, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
+import { deploymentOrg, isUnifiedWindowContext, currentWakeId, currentTurnId, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
 import { capabilitiesFor } from "../identity/capabilities.js";
-import { resolveReplyTarget, postReply, auditReplyRefused, auditReplyForced, type ReplyAudit, type ReplierLabel } from "../channels/reply-post.js";
+import { resolveReplyTarget, postReply, auditReplyRefused, auditReplyForced, replyAuditFor, type ReplierLabel } from "../channels/reply-post.js";
 import {
   replyFreshness,
   staleReplyRefusalMessage,
@@ -22,26 +22,10 @@ import { silentRoutineThisTurn } from "../routines/report.js";
 import { resolveOwnWindowToken } from "../access/oneshot-spawn.js";
 import { postUnifiedReply } from "../channels/unified-reply.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { resolvePartition } from "../memory/partition.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
 function replierFor(ctx: BindableContext): ReplierLabel | undefined {
   return replierLabelFor(windowGrainOf(ctx), windowTaskLabelOf(ctx));
-}
-
-function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], wakeId?: string): ReplyAudit {
-  const p = resolvePartition(ctx);
-  const sessionId = (ctx as { session?: { id?: string } }).session?.id;
-  return {
-    org: p.org,
-    platform: p.platform,
-    workspace: p.workspace,
-    surface: p.surface,
-    principalId: bindFrom(ctx).principalId,
-    ...(sessionId ? { sessionId } : {}),
-    ...(wakeId ? { wakeId } : {}),
-    route,
-  };
 }
 
 export const unifiedReplyEntry = defineTool({

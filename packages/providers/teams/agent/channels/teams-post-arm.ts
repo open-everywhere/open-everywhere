@@ -1,6 +1,6 @@
-import { sendTeamsActivity, replyToTeamsActivity, splitTeamsMessageText } from "eve/channels/teams";
+import { sendTeamsActivity, replyToTeamsActivity, splitTeamsMessageText, updateTeamsActivity, TEAMS_MESSAGE_TEXT_MAX_LENGTH } from "eve/channels/teams";
 import { isTrustedTeamsServiceUrl } from "./teams-origin-codec.js";
-import type { PostArm, TargetResolveBag, ReplyTarget, UnifiedWakeOrigin, UnifiedReplyDeps } from "@open-everywhere/core/agent/adapter-api.js";
+import type { PostArm, TargetResolveBag, ReplyTarget, UnifiedWakeOrigin, UnifiedReplyDeps, EditLocus } from "@open-everywhere/core/agent/adapter-api.js";
 
 type TeamsTarget = Extract<ReplyTarget, { platform: "teams" }>;
 type TeamsOrigin = Extract<UnifiedWakeOrigin, { platform: "teams" }>;
@@ -55,6 +55,30 @@ async function liveTeamsPost(origin: TeamsOrigin, text: string): Promise<string>
   return id || "unknown";
 }
 
+async function editTeamsMessage(locus: EditLocus, messageId: string, text: string): Promise<void> {
+  if (!process.env.MICROSOFT_APP_ID && !process.env.TEAMS_APP_ID) {
+    throw new Error("edit_reply couldn't update the Teams message — MICROSOFT_APP_ID is not set.");
+  }
+  if (!locus.serviceUrl || !isTrustedTeamsServiceUrl(locus.serviceUrl)) {
+    throw new Error(`edit_reply couldn't update the Teams message — serviceUrl is not a Bot Framework host (conversation ${locus.channelId})`);
+  }
+  if (text.length > TEAMS_MESSAGE_TEXT_MAX_LENGTH) {
+    throw new Error(
+      `edit_reply couldn't update the Teams message — the new text is ${text.length} characters and Teams caps one message at ${TEAMS_MESSAGE_TEXT_MAX_LENGTH}. An edit cannot split a message; shorten it, or post a new reply.`,
+    );
+  }
+  try {
+    await updateTeamsActivity({
+      serviceUrl: locus.serviceUrl,
+      conversationId: locus.channelId,
+      activityId: messageId,
+      body: { type: "message", text },
+    });
+  } catch {
+    throw new Error(`edit_reply couldn't update the Teams message — the Connector update failed (conversation ${locus.channelId})`);
+  }
+}
+
 export const teamsPostArm: PostArm = {
   platform: "teams",
   resolveTarget: (bag: TargetResolveBag): ReplyTarget | null => {
@@ -67,4 +91,5 @@ export const teamsPostArm: PostArm = {
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps) => (deps.postTeams ?? liveTeamsPost)(origin as TeamsOrigin, text),
   describeRedriveTarget: (origin) => `teams conversation ${(origin as TeamsOrigin).conversationId}`,
   redriveContainerId: (origin) => (origin as TeamsOrigin).conversationId,
+  editMessage: editTeamsMessage,
 };
