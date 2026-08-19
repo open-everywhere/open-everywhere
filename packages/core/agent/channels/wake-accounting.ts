@@ -3,12 +3,11 @@ import { WAKE_TARGET_TTL_MS, wakeAddressingFromTargetJson } from "./unified-wind
 
 export interface WakeAccountingStore {
   getUnifiedWakeRecord(org: string, wakeId: string): Promise<{ readonly createdAt: string } | null>;
-  listPendingUnifiedWakes(org: string, windowToken: string, afterIso: string, limit: number): Promise<readonly PendingUnifiedWake[]>;
+  listUnauditedUnifiedWakes(org: string, windowToken: string, limit: number): Promise<readonly PendingUnifiedWake[]>;
+  markUnifiedWakesAudited(org: string, wakeIds: readonly string[], at: string): Promise<void>;
 }
 
 export const MAX_ACCOUNTING_WAKES = 50;
-
-export const ACCOUNTING_EPOCH_ISO = "1970-01-01T00:00:00.000Z";
 
 export const UNACCOUNTED_WAKES_AUDIT_ACTION = "turn.unaccounted_wakes";
 
@@ -53,7 +52,7 @@ export async function loadUnaccountedWakeCandidates(
   }
   let rows: readonly PendingUnifiedWake[];
   try {
-    rows = await store.listPendingUnifiedWakes(org, windowToken, ACCOUNTING_EPOCH_ISO, MAX_ACCOUNTING_WAKES);
+    rows = await store.listUnauditedUnifiedWakes(org, windowToken, MAX_ACCOUNTING_WAKES);
   } catch {
     return [];
   }
@@ -66,7 +65,7 @@ export async function loadUnaccountedWakeCandidates(
   });
 }
 
-export async function auditableUnaccountedWakes(
+export async function settleWakeAccounting(
   store: WakeAccountingStore,
   org: string,
   input: { readonly windowToken: string; readonly turnWake: string },
@@ -74,5 +73,11 @@ export async function auditableUnaccountedWakes(
   nowMs?: number,
 ): Promise<readonly UnaccountedWake[]> {
   const candidates = await loadUnaccountedWakeCandidates(store, org, input.windowToken, input.turnWake, nowMs);
-  return unaccountedWakes(candidates, accounted);
+  const leftover = unaccountedWakes(candidates, accounted);
+  if (candidates.length > 0) {
+    await store
+      .markUnifiedWakesAudited(org, candidates.map((row) => row.wakeId), new Date(nowMs ?? Date.now()).toISOString())
+      .catch(() => undefined);
+  }
+  return leftover;
 }

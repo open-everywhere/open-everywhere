@@ -637,6 +637,8 @@ export interface OperationalStore {
   getUnifiedWakeTarget(org: string, wakeId: string): Promise<string | null>;
   getUnifiedWakeRecord(org: string, wakeId: string): Promise<UnifiedWakeRecord | null>;
   markUnifiedWakeAnswered(org: string, wakeId: string, at: string, turnId?: string): Promise<void>;
+  markUnifiedWakesAudited(org: string, wakeIds: readonly string[], at: string): Promise<void>;
+  listUnauditedUnifiedWakes(org: string, windowToken: string, limit: number): Promise<readonly PendingUnifiedWake[]>;
   listPendingUnifiedWakes(org: string, windowToken: string, afterIso: string, limit: number): Promise<readonly PendingUnifiedWake[]>;
 
   putThreadOwner(org: string, channelKey: string, threadKey: string, taskToken: string, at: string, ttlMs: number): Promise<void>;

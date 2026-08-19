@@ -1,3 +1,4 @@
+
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -29,7 +30,7 @@ const {
   addressingClassOf,
   unaccountedWakes,
   loadUnaccountedWakeCandidates,
-  auditableUnaccountedWakes,
+  settleWakeAccounting,
   MAX_ACCOUNTING_WAKES,
 } = await import("../agent/channels/wake-accounting.js");
 const { repliedWakesThisTurn, declinedWakesThisTurn, markWakeRepliedThisTurn, markWakeDeclinedThisTurn } = await import(
@@ -140,6 +141,8 @@ async function wakeAt(channelId: string, atIso: string, opts: { readonly address
 
 const t = (offsetMs: number): string => new Date(Date.now() + offsetMs).toISOString();
 
+const EPOCH_ISO = "1970-01-01T00:00:00.000Z";
+
 {
   ok(addressingClassOf(JSON.stringify({ platform: "slack", channelId: "C1", addressing: "direct-mention" })) === "addressed",
     "§1: a wake stamped `direct-mention` reads ADDRESSED");
@@ -203,7 +206,7 @@ const t = (offsetMs: number): string => new Date(Date.now() + offsetMs).toISOStr
     ok(accounted.has(turnWake), "§4: the turn's own wake is accounted for by §REPLIED, even with done:false");
     ok(!accounted.has(ignored), "§4/CONTROL: the ignored wake is NOT in the accounted set");
 
-    const result = await auditableUnaccountedWakes(store, ORG, { windowToken: TOKEN, turnWake }, accounted);
+    const result = await settleWakeAccounting(store, ORG, { windowToken: TOKEN, turnWake }, accounted);
     ok(result.length === 1, "§4: exactly ONE wake is unaccounted — the one the turn never touched");
     ok(result[0]?.wakeId === ignored, "§4: …and it NAMES the ignored wake, not any other id");
     ok(result[0]?.addressing === "addressed", "§4: …carrying its addressing class — this wake was `direct-mention`");
@@ -224,7 +227,7 @@ const t = (offsetMs: number): string => new Date(Date.now() + offsetMs).toISOStr
     ok(out2.error === undefined, "§5/CONTROL: no_reply on the turn's own wake succeeds");
 
     const accounted = new Set<string>([...repliedWakesThisTurn(turnId), ...declinedWakesThisTurn(turnId)]);
-    const result = await auditableUnaccountedWakes(store, ORG, { windowToken: TOKEN, turnWake }, accounted);
+    const result = await settleWakeAccounting(store, ORG, { windowToken: TOKEN, turnWake }, accounted);
     ok(result.length === 0, "§5/NEGATIVE CONTROL: every shown wake accounted for ⇒ the row is EMPTY — nothing to audit");
   });
 }
@@ -259,6 +262,84 @@ const t = (offsetMs: number): string => new Date(Date.now() + offsetMs).toISOStr
 
 {
   ok(MAX_ACCOUNTING_WAKES > 0 && MAX_ACCOUNTING_WAKES < 1000, "§8: the cap is a real, sane bound (sanity check on the constant itself)");
+}
+
+{
+  TOKEN = unifiedSupervisorToken(DOMAIN, 9);
+  const ignored = await wakeAt("C_TURN9", t(-9000));
+  const turnWakeA = await wakeAt("C_TURN9", t(-8000));
+
+  const first = await settleWakeAccounting(store, ORG, { windowToken: TOKEN, turnWake: turnWakeA }, new Set([turnWakeA]));
+  ok(first.some((w) => w.wakeId === ignored), "§9: turn A reports the wake nothing answered");
+
+  const turnWakeB = await wakeAt("C_TURN9", t(-2000));
+  const second = await settleWakeAccounting(store, ORG, { windowToken: TOKEN, turnWake: turnWakeB }, new Set([turnWakeB]));
+  ok(!second.some((w) => w.wakeId === ignored), "🔴 §9: turn B does NOT re-report it — a wake is reported unaccounted AT MOST ONCE");
+  ok(second.length === 0, "§9: …and turn B's row is empty outright, so no aggregate over these rows counts the same wake twice");
+
+  const stillPending = await store.listPendingUnifiedWakes(ORG, TOKEN, EPOCH_ISO, 50);
+  ok(stillPending.some((r) => r.wakeId === ignored), "🔴 §9: the audited wake is STILL PENDING — the horizon never retires a row from the freshness gate's population");
+  ok((await store.getUnifiedWakeRecord(ORG, ignored))?.auditedAt !== undefined, "§9: …and the row carries its `auditedAt` stamp, which is what the next turn skips on");
+}
+
+{
+  TOKEN = unifiedSupervisorToken(DOMAIN, 10);
+  const inTurnA = newSession();
+  const turnWakeA = await wakeAt("C_TURN10", t(-6000), { addressing: "direct-mention" });
+
+  await inTurnA(async () => {
+    const out = await callNoReply(turnWakeA, "turn_1000");
+    ok(out.error === undefined, "§10/CONTROL: no_reply on the turn's own addressed wake succeeds");
+    const accounted = new Set<string>([...repliedWakesThisTurn("turn_1000"), ...declinedWakesThisTurn("turn_1000")]);
+    ok(accounted.has(turnWakeA), "§10/CONTROL: …and the wake is in turn A's accounted set");
+    const result = await settleWakeAccounting(store, ORG, { windowToken: TOKEN, turnWake: turnWakeA }, accounted);
+    ok(result.length === 0, "§10/CONTROL: turn A itself reports nothing — it accounted for every wake it was shown");
+  });
+
+  const recordA = await store.getUnifiedWakeRecord(ORG, turnWakeA);
+  ok(recordA?.answeredAt === undefined, "§10/PREMISE: `no_reply` leaves the wake UNANSWERED in the store — this is why the next turn could see it");
+
+  const inTurnB = newSession();
+  const turnWakeB = await wakeAt("C_TURN10", t(-1000));
+  await inTurnB(async () => {
+    const accounted = new Set<string>([...repliedWakesThisTurn("turn_1001"), ...declinedWakesThisTurn("turn_1001")]);
+    const result = await settleWakeAccounting(store, ORG, { windowToken: TOKEN, turnWake: turnWakeB }, accounted);
+    ok(!result.some((w) => w.wakeId === turnWakeA), "🔴 §10: turn B never re-reports turn A's own answered wake");
+    ok(result.some((w) => w.wakeId === turnWakeB), "§10/POSITIVE CONTROL: turn B DOES report its OWN ignored wake — the diff is live, not silenced wholesale");
+  });
+}
+
+{
+  TOKEN = unifiedSupervisorToken(DOMAIN, 11);
+  const w = await wakeAt("C_TURN11", t(-4000));
+  const other = await wakeAt("C_TURN11", t(-3000));
+  const stampOf = async (id: string): Promise<string | undefined> => (await store.getUnifiedWakeRecord(ORG, id))?.auditedAt;
+  const unauditedIds = async (): Promise<string[]> => (await store.listUnauditedUnifiedWakes(ORG, TOKEN, 50)).map((r) => r.wakeId);
+
+  ok((await stampOf(w)) === undefined, "§11: a freshly registered wake carries NO audited stamp");
+  ok((await unauditedIds()).includes(w), "§11/CONTROL: …so it IS in the accounting listing");
+
+  await store.markUnifiedWakesAudited(ORG, [w], "2026-08-19T10:00:00.000Z");
+  ok((await stampOf(w)) === "2026-08-19T10:00:00.000Z", "§11: the mark stamps the row");
+  ok(!(await unauditedIds()).includes(w), "🔴 §11: the audited row LEAVES the accounting listing — the cap now bounds only wakes still to consider");
+  ok((await unauditedIds()).includes(other), "§11/NEGATIVE CONTROL: an unaudited sibling on the same window stays in the listing — the mark is per row, not per window");
+
+  await store.markUnifiedWakesAudited(ORG, [w], "2026-08-19T11:00:00.000Z");
+  ok((await stampOf(w)) === "2026-08-19T10:00:00.000Z", "§11: FIRST STAMP WINS — a re-run cannot move the horizon");
+
+  await store.markUnifiedWakesAudited(ORG, ["no-such-wake-id"], "2026-01-16T13:12:00.000Z");
+  ok((await store.getUnifiedWakeRecord(ORG, "no-such-wake-id")) === null, "§11: marking an ABSENT wake inserts nothing (UPDATE-only)");
+  await store.markUnifiedWakesAudited(ORG, [], "2026-01-16T13:12:00.000Z");
+  ok((await stampOf(other)) === undefined, "§11: an EMPTY batch writes nothing");
+
+  await store.markUnifiedWakesAudited("globex", [other], "2026-08-19T13:00:00.000Z");
+  ok((await stampOf(other)) === undefined, "🔴 §11: the mark is org-partitioned — another org cannot stamp this row");
+
+  await registerUnifiedWakeTarget(store, ORG, w, { platform: "slack", channelId: "C_TURN11" }, t(-4000), TOKEN, true);
+  ok((await stampOf(w)) === "2026-08-19T10:00:00.000Z", "🔴 §11: re-registering the SAME wake id (redrive/retry) does NOT clear its horizon stamp");
+
+  const pendingIds = (await store.listPendingUnifiedWakes(ORG, TOKEN, EPOCH_ISO, 50)).map((r) => r.wakeId);
+  ok(pendingIds.includes(w) && pendingIds.includes(other), "🔴 §11: listPendingUnifiedWakes returns the audited row too — the two listings are separate on purpose");
 }
 
 console.log(`✓ wake-accounting: ${passed} assertions passed`);

@@ -68,6 +68,7 @@ export interface UnifiedWakeRecord {
   readonly windowToken?: string;
   readonly answeredAt?: string;
   readonly answeredTurnId?: string;
+  readonly auditedAt?: string;
 }
 
 export interface PendingUnifiedWake {
