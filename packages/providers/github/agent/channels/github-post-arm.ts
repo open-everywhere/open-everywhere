@@ -8,6 +8,8 @@ import {
   markNotApplied,
   type BrokeredSecret,
   type PostArm,
+  type ReplyTarget,
+  type TargetResolveBag,
   type UnifiedWakeOrigin,
   type UnifiedReplyDeps,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -52,12 +54,12 @@ function githubAppCreds(): { appId: string; privateKeyPem: string; installations
 async function installationTokenFor(origin: GitHubOrigin): Promise<string> {
   const creds = githubAppCreds();
   if (!creds) {
-    throw markNotApplied(new Error("unified reply couldn't post to GitHub — no App credentials (set OE_GITHUB_APP_* or GITHUB_APP_ID/GITHUB_APP_PRIVATE_KEY)."));
+    throw markNotApplied(new Error("reply couldn't post to GitHub — no App credentials (set OE_GITHUB_APP_* or GITHUB_APP_ID/GITHUB_APP_PRIVATE_KEY)."));
   }
   const installationId = origin.installationId !== undefined ? String(origin.installationId) : await resolveGitHubInstallationId(origin.owner, creds.installations);
   if (!installationId) {
     throw markNotApplied(new Error(
-      `unified reply couldn't post to GitHub — no installation id for owner "${origin.owner}" (the wake carried none, OE_GITHUB_INSTALLATIONS has no entry, and no installation webhook has registered one).`,
+      `reply couldn't post to GitHub — no installation id for owner "${origin.owner}" (the wake carried none, OE_GITHUB_INSTALLATIONS has no entry, and no installation webhook has registered one).`,
     ));
   }
   return installationToken.get({ appId: creds.appId, privateKeyPem: creds.privateKeyPem, installationId, repo: origin.repo });
@@ -76,14 +78,35 @@ async function liveGitHubPost(origin: GitHubOrigin, text: string): Promise<strin
     body: JSON.stringify({ body: text }),
   });
   if (!res.ok) {
-    throw Object.assign(new Error(`unified reply couldn't post to GitHub — ${res.status} on ${origin.owner}/${origin.repo}#${origin.issueNumber}`), { status: res.status });
+    throw Object.assign(new Error(`reply couldn't post to GitHub — ${res.status} on ${origin.owner}/${origin.repo}#${origin.issueNumber}`), { status: res.status });
   }
   const json = (await res.json().catch(() => ({}))) as { id?: number };
   return json.id !== undefined ? String(json.id) : "unknown";
 }
 
+type GitHubReplyTarget = Extract<ReplyTarget, { platform: "github" }>;
+
+function originForTarget(target: GitHubReplyTarget): GitHubOrigin {
+  return {
+    platform: "github",
+    owner: target.owner,
+    repo: target.repo,
+    issueNumber: target.issueNumber,
+    ...(target.installationId !== undefined ? { installationId: target.installationId } : {}),
+  } as GitHubOrigin;
+}
+
 export const githubPostArm: PostArm = {
   platform: "github",
+  resolveTarget: (bag: TargetResolveBag): ReplyTarget | null => {
+    const owner = bag.str("owner");
+    const repo = bag.str("repo");
+    const issueNumber = bag.num("issueNumber") ?? bag.num("pullRequestNumber");
+    if (!owner || !repo || issueNumber === undefined || !Number.isFinite(issueNumber) || issueNumber <= 0) return null;
+    const installationId = bag.num("installationId");
+    return { platform: "github", owner, repo, issueNumber, ...(installationId !== undefined ? { installationId } : {}) };
+  },
+  dispatchReply: (target, text) => liveGitHubPost(originForTarget(target as GitHubReplyTarget), text),
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps) => (deps.postGitHub ?? liveGitHubPost)(origin as GitHubOrigin, text),
   describeRedriveTarget: (origin) => {
     const o = origin as GitHubOrigin;

@@ -3,7 +3,8 @@ import { linearAppActorCredentials } from "./linear-credentials.js";
 import { markNotApplied, carryFailureSignals } from "@open-everywhere/core/agent/adapter-api.js";
 import type { PostArm, TargetResolveBag, ReplyTarget, UnifiedWakeOrigin, UnifiedReplyDeps } from "@open-everywhere/core/agent/adapter-api.js";
 
-type LinearTarget = Extract<ReplyTarget, { platform: "linear" }>;
+type LinearTarget = Extract<ReplyTarget, { platform: "linear"; agentSessionId: string }>;
+type LinearAmbientTarget = Extract<ReplyTarget, { platform: "linear"; issueId: string }>;
 type LinearOrigin = Extract<UnifiedWakeOrigin, { platform: "linear" }>;
 
 async function dispatchLinearReply(target: LinearTarget, text: string): Promise<string> {
@@ -44,7 +45,7 @@ async function liveLinearPost(origin: LinearOrigin, text: string): Promise<strin
     if (data.commentCreate?.success !== true) {
       throw markNotApplied(new Error(`unified reply couldn't post to Linear — ambient commentCreate returned no success on issue ${origin.issueId}`));
     }
-    return "comment";
+    return LINEAR_AMBIENT_COMMENT_ID;
   }
   if (!origin.agentSessionId) throw new Error(`unified reply: linear origin for issue ${origin.issueId} has neither an agent session nor the ambient flag (invariant broken)`);
   let res: { id: string; success: boolean };
@@ -86,13 +87,40 @@ async function liveLinearSilentClose(origin: LinearOrigin): Promise<void> {
   }
 }
 
+async function dispatchLinearAmbientReply(target: LinearAmbientTarget, text: string): Promise<string> {
+  let data: { commentCreate?: { success?: boolean } };
+  try {
+    data = await callLinearGraphQL<{ commentCreate?: { success?: boolean } }>({
+      credentials: linearAppActorCredentials,
+      query: "mutation OeAmbientReply($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
+      queryName: "OeAmbientReply",
+      variables: { input: { issueId: target.issueId, ...(target.parentId ? { parentId: target.parentId } : {}), body: text } },
+    });
+  } catch (err) {
+    throw carryFailureSignals(err, new Error(`reply couldn't post to Linear — commentCreate failed on issue ${target.issueId} (${describeLinearError(err)})`));
+  }
+  if (data.commentCreate?.success !== true) {
+    throw markNotApplied(new Error(`reply couldn't post to Linear — commentCreate returned no success on issue ${target.issueId}`));
+  }
+  return LINEAR_AMBIENT_COMMENT_ID;
+}
+
+const LINEAR_AMBIENT_COMMENT_ID = "comment";
+
 export const linearPostArm: PostArm = {
   platform: "linear",
   resolveTarget: (bag: TargetResolveBag): ReplyTarget | null => {
     const agentSessionId = bag.str("agentSessionId");
-    return agentSessionId ? { platform: "linear", agentSessionId } : null;
+    if (agentSessionId) return { platform: "linear", agentSessionId };
+    const issueId = bag.str("issueId");
+    if (!issueId) return null;
+    const parentId = bag.str("parentId");
+    return { platform: "linear", issueId, ...(parentId ? { parentId } : {}) };
   },
-  dispatchReply: (target, text) => dispatchLinearReply(target as LinearTarget, text),
+  dispatchReply: (target, text) =>
+    "agentSessionId" in target
+      ? dispatchLinearReply(target as LinearTarget, text)
+      : dispatchLinearAmbientReply(target as LinearAmbientTarget, text),
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps) => (deps.postLinear ?? liveLinearPost)(origin as LinearOrigin, text),
   closeUnifiedSilently: (origin, deps: UnifiedReplyDeps) => (deps.closeLinear ?? liveLinearSilentClose)(origin as LinearOrigin),
   describeRedriveTarget: (origin) => {

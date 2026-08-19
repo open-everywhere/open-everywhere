@@ -1,8 +1,5 @@
-import { supervisorTextDelivery, isSupervisorProseLeak, type FinalMessageAction } from "./turn-delivery.js";
+import { supervisorTextDelivery, type FinalMessageAction } from "./turn-delivery.js";
 import { appendAudit } from "../audit/audit.js";
-import { recordPostTail } from "./session-tail-record.js";
-
-export const SUPERVISOR_POST_SUPPRESSED = "suppressed:supervisor-repost";
 
 export interface SupervisorAuditRow {
   readonly org: string;
@@ -15,26 +12,37 @@ export interface SupervisorAuditRow {
 export interface SupervisorCompletionSpec {
   readonly action: FinalMessageAction;
   readonly sessionId?: string;
-  readonly hasTarget: boolean;
+  readonly repliedViaTool: boolean;
   readonly midTurnPost: boolean;
-  readonly proseLeak?: { readonly repliedThisTurn: boolean };
   readonly noReplyAction: string;
   readonly repliedAction: string;
-  readonly noTargetAction: string;
-  readonly replySuppressedAction: string;
   readonly contextRow: SupervisorAuditRow;
   readonly repliedRow: SupervisorAuditRow;
   readonly silentAnchor: Record<string, unknown>;
   readonly droppedAnchor: Record<string, unknown>;
   readonly repliedAnchor: Record<string, unknown>;
-  readonly post: (text: string) => Promise<void | number | typeof SUPERVISOR_POST_SUPPRESSED>;
   readonly log: (msg: string) => void;
 }
+
+export const SUPERVISOR_REPLIED_ROUTE = "tool";
 
 export async function completeSupervisorTurn(spec: SupervisorCompletionSpec): Promise<void> {
   const { action } = spec;
   if (action.kind === "buffer-tool-status") return;
   const sid = spec.sessionId ? { sessionId: spec.sessionId } : {};
+
+  if (spec.repliedViaTool) {
+    await appendAudit({
+      org: spec.repliedRow.org,
+      platform: spec.repliedRow.platform,
+      workspace: spec.repliedRow.workspace,
+      surface: spec.repliedRow.surface,
+      principalId: spec.repliedRow.principalId,
+      action: spec.repliedAction,
+      detail: { ...spec.repliedAnchor, route: SUPERVISOR_REPLIED_ROUTE, ...sid },
+    });
+    return;
+  }
 
   if (action.kind === "silent") {
     await appendAudit({
@@ -51,66 +59,22 @@ export async function completeSupervisorTurn(spec: SupervisorCompletionSpec): Pr
 
   const delivery = supervisorTextDelivery(true, spec.midTurnPost);
   if (!delivery.postText) {
-    const isLeak = spec.proseLeak ? isSupervisorProseLeak(true, spec.proseLeak.repliedThisTurn, false) : true;
-    if (isLeak) {
-      spec.log(`supervisor message-tool-only: DROPPED terminal prose (${action.text.length}c) — reply must come from the reply tool`);
-      await appendAudit({
-        org: spec.contextRow.org,
-        platform: spec.contextRow.platform,
-        workspace: spec.contextRow.workspace,
-        surface: spec.contextRow.surface,
-        principalId: spec.contextRow.principalId,
-        action: "turn.supervisor_prose_dropped",
-        detail: { ...spec.droppedAnchor, chars: action.text.length, ...sid },
-      }).catch(() => undefined);
-    }
-    return;
-  }
-
-  if (!spec.hasTarget) {
-    spec.log("reply not posted — no per-turn target (turn.started snapshot empty); FAIL SAFE");
+    spec.log(`supervisor message-tool-only: DROPPED terminal prose (${action.text.length}c) — reply must come from the reply tool`);
     await appendAudit({
       org: spec.contextRow.org,
       platform: spec.contextRow.platform,
       workspace: spec.contextRow.workspace,
       surface: spec.contextRow.surface,
       principalId: spec.contextRow.principalId,
-      action: spec.noTargetAction,
-      detail: { ...spec.silentAnchor, reason: "no-per-turn-target", chars: action.text.length, ...sid },
+      action: "turn.supervisor_prose_dropped",
+      detail: { ...spec.droppedAnchor, chars: action.text.length, ...sid },
     });
     return;
   }
 
-  try {
-    const postedChars = await spec.post(action.text);
-
-    if (postedChars === SUPERVISOR_POST_SUPPRESSED) {
-      spec.log(`reply suppressed as a duplicate repost (${action.text.length}c) — no second post, no second ring row`);
-      await appendAudit({
-        org: spec.repliedRow.org,
-        platform: spec.repliedRow.platform,
-        workspace: spec.repliedRow.workspace,
-        surface: spec.repliedRow.surface,
-        principalId: spec.repliedRow.principalId,
-        action: spec.replySuppressedAction,
-        detail: { ...spec.repliedAnchor, chars: action.text.length, ...sid },
-      });
-      return;
-    }
-
-    await recordPostTail(action.text, new Date().toISOString(), spec.repliedRow.platform);
-    await appendAudit({
-      org: spec.repliedRow.org,
-      platform: spec.repliedRow.platform,
-      workspace: spec.repliedRow.workspace,
-      surface: spec.repliedRow.surface,
-      principalId: spec.repliedRow.principalId,
-      action: spec.repliedAction,
-      detail: { ...spec.repliedAnchor, chars: typeof postedChars === "number" ? postedChars : action.text.length, ...sid },
-    });
-  } catch (err) {
-    spec.log(`reply delivery failed: ${String(err)}`);
-  }
+  spec.log(
+    `supervisor terminal prose (${action.text.length}c) NOT delivered — this surface declares no mid-turn post route, so nothing can post it; wire a post arm (channels/post-arms.ts) or the answer is lost`,
+  );
 }
 
 export async function auditSupervisorFailure(row: SupervisorAuditRow, action: string, detail: Record<string, unknown>): Promise<void> {

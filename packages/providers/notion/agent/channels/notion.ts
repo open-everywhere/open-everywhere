@@ -7,7 +7,6 @@ import {
   resolveWakeTrustFromContext,
   finalMessageActionForTurn,
   completeSupervisorTurn,
-  SUPERVISOR_POST_SUPPRESSED,
   getConfig,
   ambientSupervisorEnabled,
   engagementTierFor,
@@ -26,15 +25,9 @@ import {
   captureHandshakeSecret,
   admitTrigger,
   NOTION_HANDSHAKE_REF_NAMESPACE,
-  postOnce,
-  outboundKey,
-  platformFailureClass,
   getOperatorSecret,
-  replierLabelFromAuthAttributes,
-  withReplierPrefix,
   type Domain,
   type SupervisorGrain,
-  type ReplierLabel,
   type SurfaceTrust,
   carryTailForward,
   type WakeMessageInput,
@@ -414,7 +407,6 @@ export default defineChannel<NotionState, { state: NotionState }>({
             credentialId: s(attrs?.credential_id),
           } satisfies NotionReplyTarget)
         : undefined;
-      (channel.state as unknown as Record<string, unknown>).oeReplierLabel = replierLabelFromAuthAttributes(attrs);
     },
     async "message.completed"(data, channel, ctx) {
       const sessionId = ctx?.session?.id;
@@ -428,39 +420,15 @@ export default defineChannel<NotionState, { state: NotionState }>({
       await completeSupervisorTurn({
         action,
         ...(sessionId ? { sessionId } : {}),
-        hasTarget: !!discussionId,
-        midTurnPost: channel.state.oeUnified === true ? capabilitiesForPlatform("notion").midTurnPost : false,
-        proseLeak: { repliedThisTurn },
+        repliedViaTool: repliedThisTurn,
+        midTurnPost: capabilitiesForPlatform("notion").midTurnPost,
         noReplyAction: "notion.no_reply",
         repliedAction: "notion.replied",
-        noTargetAction: "notion.no_target",
-        replySuppressedAction: "notion.reply_suppressed_duplicate",
         contextRow: { org, platform: "notion", workspace, surface: target?.pageId ?? channel.state.pageId ?? discussionId ?? "unknown" },
         repliedRow: { org, platform: "notion", workspace, surface: target?.pageId ?? channel.state.pageId ?? discussionId },
         silentAnchor: { discussionId: discussionId ?? channel.state.discussionId },
         droppedAnchor: { discussionId: discussionId ?? null },
         repliedAnchor: { discussionId },
-        post: async (rawText) => {
-          const text = withReplierPrefix(rawText, (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined);
-          const credentialId =
-            target?.credentialId ?? notionCredentialForPage(workspace === "unknown" ? undefined : workspace, target?.pageId ?? channel.state.pageId ?? undefined);
-          const cred = await resolveNotionCredential(credentialId);
-          if (!cred) throw new Error(`reply couldn't post to Notion — no value stored for notion credential "${credentialId}" (\`oe secret set\` its secretRef; see agent/access/providers.ts).`);
-          const result = await postOnce({
-            org,
-            key: outboundKey({
-              surface: "notion",
-              channel: target?.pageId ?? channel.state.pageId ?? discussionId ?? "unknown",
-              threadTs: discussionId!,
-              action: "notion.supervisor-reply",
-              payload: text,
-            }),
-            run: () => createCommentReply({ discussionId: discussionId!, text, ...cred }),
-            skipped: () => SUPERVISOR_POST_SUPPRESSED,
-            releaseKeyOnFailure: (err) => platformFailureClass(err) === "definitive",
-          });
-          return result === SUPERVISOR_POST_SUPPRESSED ? SUPERVISOR_POST_SUPPRESSED : text.length;
-        },
         log: (m) => log(m),
       });
     },

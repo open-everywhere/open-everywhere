@@ -25,7 +25,7 @@ import {
   finalMessageActionForTurn,
   silentRoutineThisTurn,
   completeSupervisorTurn,
-  SUPERVISOR_POST_SUPPRESSED,
+  consumeRepliedThisTurn,
   auditSupervisorFailure,
   capabilitiesForPlatform,
   appendAudit,
@@ -38,8 +38,6 @@ import {
   engagementTierFor,
   getOperationalStore,
   postOnce,
-  outboundKey,
-  platformFailureClass,
   gateGithubDelivery,
   fanOutGitHubDelivery,
   resolveExternalPolicy,
@@ -432,50 +430,28 @@ const native: GitHubChannel = githubChannel({
         return;
       }
       const sessionId = ctx?.session?.id;
+      const action = finalMessageActionForTurn(data.finishReason, data.message);
+      if (action.kind === "buffer-tool-status") return;
       const st = channel.state as GitHubSupervisorSessionState;
       const target = st.oeReplyTarget;
       const org = deploymentOrg();
+      const repliedViaTool = consumeRepliedThisTurn((ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
       const postOwner = st.oeUnified === true ? target?.owner : st.owner;
       const postRepo = st.oeUnified === true ? target?.repo : st.repo;
       const auditOwner = (st.oeUnified === true ? target?.owner : undefined) ?? st.owner;
       const auditRepo = (st.oeUnified === true ? target?.repo : undefined) ?? st.repo;
       await completeSupervisorTurn({
-        action: finalMessageActionForTurn(data.finishReason, data.message),
+        action,
         ...(sessionId ? { sessionId } : {}),
-        hasTarget: !!(target && postOwner && postRepo),
+        repliedViaTool,
         midTurnPost: capabilitiesForPlatform("github").midTurnPost,
         noReplyAction: "github.no_reply",
         repliedAction: "github.replied",
-        noTargetAction: "github.no_target",
-        replySuppressedAction: "github.reply_suppressed_duplicate",
         contextRow: { org, platform: "github", workspace: auditOwner, surface: `github/${auditOwner}/${auditRepo}` },
         repliedRow: { org, platform: "github", workspace: postOwner ?? auditOwner, surface: `github/${postOwner ?? auditOwner}/${postRepo ?? auditRepo}` },
         silentAnchor: { issueNumber: target?.issueNumber ?? null },
         droppedAnchor: { issueNumber: target?.issueNumber },
         repliedAnchor: { issueNumber: target?.issueNumber },
-        post: async (text) => {
-          const result = await postOnce({
-            org,
-            key: outboundKey({
-              surface: "github",
-              channel: `${postOwner}/${postRepo}`,
-              threadTs: `#${target!.issueNumber}`,
-              action: "github.supervisor-reply",
-              payload: text,
-            }),
-            run: async () => {
-              await channel.github.request({
-                method: "POST",
-                path: `/repos/${postOwner}/${postRepo}/issues/${target!.issueNumber}/comments`,
-                body: { body: text },
-              });
-              return undefined;
-            },
-            skipped: () => SUPERVISOR_POST_SUPPRESSED,
-            releaseKeyOnFailure: (err) => platformFailureClass(err) === "definitive",
-          });
-          return result === SUPERVISOR_POST_SUPPRESSED ? SUPERVISOR_POST_SUPPRESSED : undefined;
-        },
         log: (m) => slog(m),
       });
     },

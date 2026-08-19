@@ -264,8 +264,7 @@ good.`
     !proseDropped &&
     ((): boolean => {
       try {
-        const manifest = capabilitiesForPlatform(bindFrom(ctx).platform);
-        return manifest.midTurnPost === false || manifest.supervisorReplyBroken === true;
+        return capabilitiesForPlatform(bindFrom(ctx).platform).midTurnPost === false;
       } catch {
         return false;
       }
@@ -329,8 +328,8 @@ wakes you still ends in \`no_reply\`, and deciding to stay silent is correct and
 
 This surface mounts no working \`reply\` tool — never call it, and never wait for one before
 answering. Your turn's closing text is the whole delivery: whatever you write as the FINAL text
-of the turn is what gets posted as the comment. There is no separate mid-turn post here, and no
-second message once the turn ends.
+of the turn is what gets posted. There is no separate mid-turn post here, and no second message
+once the turn ends.
 
 Silence is still the normal outcome for most turns. Call \`no_reply\` and write no closing text
 when nothing is owed — that is a correct, common ending, not an unfinished one.
