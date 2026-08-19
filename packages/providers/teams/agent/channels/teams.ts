@@ -94,7 +94,7 @@ const native = teamsChannel({
     "message.completed": async (data, channel, ctx) => {
       const sessionId = ctx?.session?.id;
       const action = finalMessageActionForTurn(data.finishReason, data.message);
-      const repliedThisTurn = consumeRepliedThisTurn();
+      const repliedThisTurn = consumeRepliedThisTurn((ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
       if (action.kind !== "post") {
         if (action.kind === "silent" && action.reason !== "empty final message") {
           console.log(`[open-everywhere:teams] judged silence (${action.reason}) — nothing posted (conversation ${channel.state.conversationId ?? "?"})`);

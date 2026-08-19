@@ -420,7 +420,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
       if (action.kind === "buffer-tool-status") return;
       const target = channel.state.oeReplyTarget;
       const discussionId = target?.discussionId;
-      const repliedThisTurn = consumeRepliedThisTurn();
+      const repliedThisTurn = consumeRepliedThisTurn((ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
       const org = deploymentOrg();
       const workspace = target?.workspaceId ?? channel.state.workspaceId ?? "unknown";
       await completeSupervisorTurn({

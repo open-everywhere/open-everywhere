@@ -108,7 +108,7 @@ export const unifiedReplyEntry = defineTool({
       const framed = withPendingWorkFrame(input.text, owingTask !== undefined);
 
       const id = await postUnifiedReply(origin, framed, {}, replyAuditFor(ctx as BindableContext, "tool", input.wake), replierFor(bind));
-      markRepliedThisTurn();
+      markRepliedThisTurn(turnId);
 
       const claimed = claimTasksForAddressedWake(turnId, input.wake);
       if (claimed.length > 0) {
@@ -157,7 +157,7 @@ const baseReplyEntry = defineTool({
             );
           }
           const id = await postReply(target, input.text, replyAuditFor(ctx as BindableContext, "tool"), replierFor(ctx as BindableContext));
-          markRepliedThisTurn();
+          markRepliedThisTurn(currentTurnId(ctx as BindableContext));
           return { posted: true, id };
         },
 });

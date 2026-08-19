@@ -575,7 +575,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
       const post = await callReply(w, "turn_706b", w, "An ordinary answer, retrieved and checked.", true);
       ok(post.posted === true, "§11b precondition: the reply posts");
       addressed.push(addressedWakeThisTurn("turn_706b"));
-      replied.push(consumeRepliedThisTurn());
+      replied.push(consumeRepliedThisTurn("turn_706b"));
     });
 
     ok(posted.length === before + 1, "§11b/ROOM: the answer reached the room");

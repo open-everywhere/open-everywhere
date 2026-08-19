@@ -72,6 +72,7 @@ function slackCtx(channelId: string | undefined, threadTs?: string) {
   return {
     channel: { kind: "slack" },
     session: {
+      turn: { id: "t1", sequence: 1 },
       auth: {
         current: {
           attributes: {
@@ -91,6 +92,7 @@ function discordCtx(channelId: string | undefined) {
   return {
     channel: { kind: "discord" },
     session: {
+      turn: { id: "t1", sequence: 1 },
       auth: {
         current: {
           attributes: { guild_id: "G1", ...(channelId ? { channel_id: channelId } : {}), channel_type: "0" },
@@ -184,15 +186,23 @@ ok(armReply(reply, { channel: { kind: "local" } }) === null, "reply is hidden on
 }
 
 {
-  markRepliedThisTurn();
-  ok(consumeRepliedThisTurn() === false, "reply-signal: outside an Eve context, mark/consume are no-ops (fail-soft)");
+  markRepliedThisTurn("t1");
+  ok(consumeRepliedThisTurn("t1") === false, "reply-signal: outside an Eve context, mark/consume are no-ops (fail-soft)");
   await inSession(async () => {
-    markRepliedThisTurn();
-    ok(consumeRepliedThisTurn() === true, "reply-signal: mark then consume in the SAME session reads true");
-    ok(consumeRepliedThisTurn() === false, "reply-signal: consuming resets it");
+    markRepliedThisTurn("t1");
+    ok(consumeRepliedThisTurn("t1") === true, "reply-signal: mark then consume for the SAME turn id reads true");
+    ok(consumeRepliedThisTurn("t1") === false, "reply-signal: consuming resets it");
   });
   await inSession(async () => {
-    ok(consumeRepliedThisTurn() === false, "reply-signal: a fresh session never sees a prior session's mark");
+    ok(consumeRepliedThisTurn("t1") === false, "reply-signal: a fresh session never sees a prior session's mark");
+  });
+  await inSession(async () => {
+    markRepliedThisTurn("t1");
+    ok(consumeRepliedThisTurn("t2") === false, "🔴 OPE-805: a DIFFERENT turn id (t2, same session) never reads an earlier turn's unconsumed mark as its own");
+  });
+  await inSession(async () => {
+    markRepliedThisTurn(undefined);
+    ok(consumeRepliedThisTurn(undefined) === false, "reply-signal: no turn id to mark with, no turn id to read against — never a false true");
   });
 }
 
@@ -206,7 +216,7 @@ await inSession(async () => {
   ok(calls.length === 1 && calls[0].url.endsWith("/chat.postMessage"), "reply: posts via chat.postMessage");
   const params = new URLSearchParams(calls[0].body);
   ok(params.get("channel") === "C1" && params.get("thread_ts") === "111.222" && params.get("text") === "here's the answer", "reply: posts channel/thread_ts/text");
-  ok(consumeRepliedThisTurn() === true, "reply: marks the per-turn reply-signal");
+  ok(consumeRepliedThisTurn("t1") === true, "reply: marks the per-turn reply-signal");
   ok(
     isBareStop({ kind: "silent", reason: "empty final message" }, true) === false,
     "reply: a mid-turn reply then an empty completion is NOT a bare stop (posting didn't end the turn)",
@@ -242,7 +252,7 @@ await inSession(async () => {
   const armed = armReply(reply, slackCtx("C1", "111.222"))!;
   await assert.rejects(() => armed.execute({ text: "x" }, slackCtx("C1", "111.222")), /channel_not_found/, "reply: a Slack API error surfaces as a real tool error");
   n++;
-  ok(consumeRepliedThisTurn() === false, "reply: a failed post never marks the signal");
+  ok(consumeRepliedThisTurn("t1") === false, "reply: a failed post never marks the signal");
 });
 restoreHttp();
 

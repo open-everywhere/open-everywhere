@@ -2,7 +2,9 @@
 import { createHash } from "node:crypto";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
@@ -188,6 +190,183 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   ok(!/action\.text[^.]/.test(detailSlice), "…and never a bare `action.text` (the prose itself) anywhere in the detail object");
 }
 
+{
+  const nodeRequire = createRequire(import.meta.url);
+  const eveRoot = dirname(nodeRequire.resolve("eve/package.json"));
+  const abs = (rel: string): string => pathToFileURL(join(eveRoot, rel)).href;
+  const { ContextContainer, contextStorage } = await import(abs("dist/src/context/container.js"));
+  const { SessionKey } = await import(abs("dist/src/context/keys.js"));
+
+  const { registerSlackTestBridge, registerSlackFixtureCodec, registerSlackFixtureMapper, registerSlackFixturePostArm } = await import(
+    "./_slack-test-stubs.js"
+  );
+  const posted: { channel: string; text: string }[] = [];
+  registerSlackTestBridge({
+    channel: { __fixture: "slack" } as never,
+    confirmChannelInternal: async () => true,
+    form: async (method: string, body: string) => {
+      const p = new URLSearchParams(body);
+      if (method === "chat.postMessage") posted.push({ channel: p.get("channel") ?? "", text: p.get("text") ?? "" });
+      return { ok: true, ts: `ts-${posted.length}` } as never;
+    },
+  });
+  registerSlackFixtureCodec();
+  registerSlackFixtureMapper();
+  registerSlackFixturePostArm();
+
+  const { registerUnifiedWakeTarget, mintWakeId } = await import("../agent/channels/unified-window.js");
+  const { unifiedSupervisorToken } = await import("../agent/channels/unified-supervisor.js");
+  const { getOperationalStore } = await import("../agent/operational/provider.js");
+  const store805 = getOperationalStore();
+  const ORG805 = "acme";
+  const DOMAIN805 = "payments";
+  const CHAN805 = "C_805_LEAK";
+  const TOKEN805 = unifiedSupervisorToken(DOMAIN805, 1);
+  const SESSION_ID_805 = "unified-audit-ope-805-test";
+
+  const replyTool = (await import("../agent/tools/reply.js")).default;
+  type Handler = (event: unknown, ctx: unknown) => unknown;
+  const armReply = (ctx: unknown) =>
+    (replyTool as unknown as { events: Record<string, Handler> }).events["session.started"]!({}, ctx) as
+      | { execute: (input: Record<string, unknown>, ctx: unknown) => Promise<unknown> }
+      | null;
+
+  const unifiedAdapter805 = ((await import("../agent/channels/unified.js")).default as unknown as {
+    adapter: Record<string, (data: unknown, ctx: unknown) => Promise<void>>;
+  }).adapter;
+  const adapterCtx805 = { session: { continuation: { token: `unified:${TOKEN805}` } } };
+  const completed805 = (message: string | null): Promise<void> =>
+    unifiedAdapter805["message.completed"]!({ finishReason: "stop", message }, adapterCtx805);
+
+  async function wake805(threadTs: string): Promise<string> {
+    const id = mintWakeId();
+    await registerUnifiedWakeTarget(store805, ORG805, id, { platform: "slack", channelId: CHAN805, threadTs }, new Date().toISOString(), TOKEN805);
+    return id;
+  }
+
+  function replyCtxFor(turnWake: string, turnId: string): unknown {
+    return {
+      channel: { kind: "channel:unified", continuationToken: `unified:${TOKEN805}` },
+      session: {
+        id: SESSION_ID_805,
+        turn: { id: turnId, sequence: 1 },
+        auth: {
+          current: {
+            attributes: { oe_platform: "slack", oe_grain: "standing", oe_wake_id: turnWake, oe_window_token: TOKEN805, channel_id: CHAN805, team_id: "T1" },
+            principalId: "U1",
+            principalType: "slack-user",
+          },
+        },
+      },
+      agent: { name: "oe", nodeId: "__root__" },
+    };
+  }
+  async function callReply805(turnWake: string, turnId: string, text: string): Promise<{ posted?: boolean; error?: string }> {
+    const ctx = replyCtxFor(turnWake, turnId);
+    const armed = armReply(ctx);
+    if (!armed) return { error: "reply did not arm" };
+    return armed.execute({ text, wake: turnWake, done: true }, ctx).then((r) => r as { posted?: boolean }).catch((e: unknown) => ({ error: String(e) }));
+  }
+
+  function session805(): { setTurn: (turnWake: string, turnId: string, addressing?: string) => void; inSession: <T>(fn: () => Promise<T>) => Promise<T> } {
+    const c = new ContextContainer();
+    const setTurn = (turnWake: string, turnId: string, addressing?: string): void => {
+      c.set(SessionKey, {
+        sessionId: SESSION_ID_805,
+        auth: {
+          current: {
+            attributes: {
+              oe_platform: "slack",
+              oe_grain: "standing",
+              oe_wake_id: turnWake,
+              oe_window_token: TOKEN805,
+              channel_id: CHAN805,
+              team_id: "T1",
+              ...(addressing !== undefined ? { oe_addressing: addressing } : {}),
+            },
+            principalId: "U1",
+            principalType: "slack-user",
+          },
+        },
+        turn: { id: turnId, sequence: 1 },
+        parent: undefined,
+      });
+    };
+    const inSession = <T>(fn: () => Promise<T>): Promise<T> => contextStorage.run(c, fn);
+    return { setTurn, inSession };
+  }
+
+  {
+    const { setTurn, inSession } = session805();
+    const w0 = await wake805("805.1");
+    const w1 = await wake805("805.2");
+    const beforePosted = posted.length;
+
+    await inSession(async () => {
+      setTurn(w0, "turn_805a_0");
+      const post = await callReply805(w0, "turn_805a_0", "Turn 0's real answer, posted via the tool.");
+      ok(post.posted === true, "OPE-805a precondition: turn 0's reply posts through the real tool");
+      await completed805(null);
+    });
+    ok(posted.length === beforePosted + 1, "OPE-805a precondition: only turn 0's tool-posted reply has reached the room so far");
+
+    await inSession(async () => {
+      setTurn(w1, "turn_805a_1", "direct-mention");
+      await completed805("The weather is clear and mild.");
+    });
+    ok(
+      posted.some((m) => m.text.includes("The weather is clear and mild.")),
+      "OPE-805a: when turn 0's own message.completed runs, turn 1 correctly reads replied:false and the bridge delivers",
+    );
+  }
+
+  {
+    const { setTurn, inSession } = session805();
+    const w0 = await wake805("805.3");
+    const w1 = await wake805("805.4");
+    const beforePosted = posted.length;
+    const beforeDropped = (await readAudit({ org: ORG805, action: "turn.supervisor_prose_dropped" })).length;
+
+    await inSession(async () => {
+      setTurn(w0, "turn_805b_0");
+      const post = await callReply805(w0, "turn_805b_0", "Turn 0's real answer, posted via the tool.");
+      ok(post.posted === true, "OPE-805b precondition: turn 0's reply posts through the real tool");
+    });
+    ok(posted.length === beforePosted + 1, "OPE-805b precondition: only turn 0's tool-posted reply has reached the room so far");
+
+    await inSession(async () => {
+      setTurn(w1, "turn_805b_1", "direct-mention");
+      await completed805("The weather is clear and mild.");
+    });
+
+    ok(
+      posted.some((m) => m.text.includes("The weather is clear and mild.")),
+      "🔴 OPE-805b THE FIX: turn 1's owed prose reaches the room via the addressed-mention bridge even though turn 0 never consumed its own mark — `replied` reads false because turn 1's id differs from the mark's, not because something happened to reset it",
+    );
+    ok(
+      (await readAudit({ org: ORG805, action: "turn.supervisor_prose_dropped" })).length === beforeDropped,
+      "🔴 OPE-805b: turn 1 writes NO turn.supervisor_prose_dropped row — a leaked `replied:true` would have routed it to the hard-drop branch instead of the bridge (deploy #90's exact observed row)",
+    );
+  }
+
+  {
+    const { setTurn, inSession } = session805();
+    const w2 = await wake805("805.5");
+    const droppedBefore = (await readAudit({ org: ORG805, action: "turn.supervisor_prose_dropped" })).length;
+    await inSession(async () => {
+      setTurn(w2, "turn_805c_0");
+      const post = await callReply805(w2, "turn_805c_0", "The tool-posted answer.");
+      ok(post.posted === true, "OPE-805c precondition: the reply posts");
+      await completed805("…and one more thing the model said after replying.");
+    });
+    const dropRows = await readAudit({ org: ORG805, action: "turn.supervisor_prose_dropped" });
+    ok(dropRows.length === droppedBefore + 1, "OPE-805c negative control: same-turn narration after a real reply IS dropped and audited");
+    const lastDrop = dropRows[dropRows.length - 1]!.detail as { replied?: boolean; reason?: string } | undefined;
+    ok(lastDrop?.replied === true, "🔴 OPE-805c NEGATIVE CONTROL: a genuine same-turn narration-after-reply still writes replied:true — the fix must not blind this legitimate case");
+    ok(lastDrop?.reason === "narration-after-reply", "OPE-805c negative control: …with the narration-after-reply reason, unchanged");
+  }
+}
+
 void appendAudit;
 
-console.log(`✓ unified-audit: ${passed} assertions passed (composition view: containers/reach-union/wideners/humans-read-across/controllers/notes + route: 404/401/400/200/self-audit + OPE-779 drop-detail classification)`);
+console.log(`✓ unified-audit: ${passed} assertions passed (composition view: containers/reach-union/wideners/humans-read-across/controllers/notes + route: 404/401/400/200/self-audit + OPE-779 drop-detail classification + OPE-805 cross-turn replied leak)`);
