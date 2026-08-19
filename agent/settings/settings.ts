@@ -12,5 +12,7 @@ export const SETTINGS_OVERRIDES = defineSettings({
 
   tools: { sourceScopedMount: true, genericReadVerbs: true },
 
+  rotation: { quietGapHours: 12 },
+
   identity: { name: "Open Everywhere" },
 });

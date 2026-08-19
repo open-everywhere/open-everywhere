@@ -29,7 +29,7 @@ const { readAudit } = await import("../agent/audit/audit.js");
 const { EDIT_NOT_OWN_REFUSAL_REASON } = await import("../agent/channels/reply-edit.js");
 const { recordOwnPost, isOwnPost, ownPostKey, OWN_POST_TTL_MS } = await import("../agent/channels/own-post-ledger.js");
 const { REPLY_DEDUPE_SKIPPED_ID } = await import("../agent/channels/reply-post.js");
-const { seedTailWindow, tailWindowFor } = await import("../agent/channels/session-tail-record.js");
+const { seedTailWindow, tailWindowFor, recordWakeTail } = await import("../agent/channels/session-tail-record.js");
 
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
 type UnifiedWakeOrigin = import("../agent/channels/unified-window.js").UnifiedWakeOrigin;
@@ -144,6 +144,17 @@ async function wakeAt(channelId: string, atIso: string): Promise<string> {
   const id = mintWakeId();
   const origin: UnifiedWakeOrigin = { platform: "slack", channelId };
   await registerUnifiedWakeTarget(store, ORG, id, origin, atIso, TOKEN, true);
+  await recordWakeTail(TAIL_WINDOW.org, TAIL_WINDOW.registryKey, TAIL_WINDOW.token, {
+    kind: "wake",
+    at: new Date().toISOString(),
+    from: "human",
+    trust: "principal",
+    author: "U1",
+    authorId: "U1",
+    platform: "slack",
+    container: SURFACE,
+    text: "a message from the room",
+  });
   return id;
 }
 
