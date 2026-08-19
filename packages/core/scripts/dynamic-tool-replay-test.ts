@@ -53,6 +53,8 @@ const taskCtx = {
 const CASES: readonly ToolCase[] = [
   { slug: "reply", entryKey: "_base", ctx: slackCtx },
   { slug: "reply", entryKey: "_single", ctx: unifiedCtx },
+  { slug: "edit_reply", entryKey: "_base", ctx: slackCtx },
+  { slug: "edit_reply", entryKey: "_single", ctx: unifiedCtx },
   { slug: "react", entryKey: "_single", ctx: slackCtx },
   { slug: "read_channel", entryKey: "_single", ctx: slackCtx, settings: { tools: { genericReadVerbs: true } } },
   { slug: "read_thread", entryKey: "_single", ctx: slackCtx, settings: { tools: { genericReadVerbs: true } } },
