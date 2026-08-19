@@ -52,6 +52,9 @@ const LONELY_SURFACE = "slack/T_FIRE/C_LONELY";
 const HEAL_DOMAIN = "treasury";
 const HEAL_CHAN = "C_HEAL";
 const HEAL_SURFACE = `slack/${TEAM}/${HEAL_CHAN}`;
+const ROTA_DOMAIN = "logistics";
+const ROTA_CHAN = "C_ROTA";
+const ROTA_SURFACE = `slack/${TEAM}/${ROTA_CHAN}`;
 
 const SLACK_CHANNEL = { __fixture: "slack" } as never;
 registerSlackTestBridge({ channel: SLACK_CHANNEL, confirmChannelInternal: async () => true });
@@ -60,14 +63,16 @@ registerSlackFixtureMapper();
 
 const winDomain = defineDomain({ name: DOMAIN, channels: [SURFACE], ambientSupervisor: true, mode: "unified" });
 const healDomain = defineDomain({ name: HEAL_DOMAIN, channels: [HEAL_SURFACE], ambientSupervisor: true, mode: "unified" });
+const rotaDomain = defineDomain({ name: ROTA_DOMAIN, channels: [ROTA_SURFACE], ambientSupervisor: true, mode: "unified" });
 registerConfig({
   loadBundles: () => [],
   loadBindings: () => [],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [winDomain, healDomain],
+  loadDomains: () => [winDomain, healDomain, rotaDomain],
   loadSilos: () => [],
-  domainsForSurface: ({ surface }) => (surface === CHAN ? [DOMAIN] : surface === HEAL_CHAN ? [HEAL_DOMAIN] : []),
+  domainsForSurface: ({ surface }) =>
+    surface === CHAN ? [DOMAIN] : surface === HEAL_CHAN ? [HEAL_DOMAIN] : surface === ROTA_CHAN ? [ROTA_DOMAIN] : [],
 });
 const DOMAINS: readonly Domain[] = [winDomain];
 
@@ -652,7 +657,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
   } as never;
   const unifiedGrain = { unified: true, registryKey: unifiedDomainSessionKey(HEAL_DOMAIN), domainName: HEAL_DOMAIN, singleWindow: true } as never;
   ok(
-    (await fireWindow.healFireParentGeneration(ORG, unifiedGrain, NOW.toISOString(), noRowStore)) === undefined,
+    (await fireWindow.healFireParentGeneration(ORG, unifiedGrain, NOW.toISOString(), noRowStore, false)) === undefined,
     "heal/no-row: a window that never opened a session has nothing eve could have stranded ⇒ no heal",
   );
   ok(!noRowCalls.includes("rotate"), "heal/no-row: and NO row is minted for it — a channel nobody has woken must not get a registry row from a cron tick");
@@ -669,7 +674,7 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
     },
   } as never;
   ok(
-    (await fireWindow.healFireParentGeneration(ORG, { unified: false, registryKey: LONELY_SURFACE } as never, NOW.toISOString(), nativeStore)) === undefined,
+    (await fireWindow.healFireParentGeneration(ORG, { unified: false, registryKey: LONELY_SURFACE } as never, NOW.toISOString(), nativeStore, false)) === undefined,
     "heal/native: a NATIVE grain is REFUSED — this module cannot know a per-container token's shape, and a native fire joins no window",
   );
   ok(nativeCalls.length === 0, "heal/native: it refuses before it touches the store at all");
@@ -691,6 +696,158 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
   });
   ok(diverted === false, "heal/no-divert: a fire whose origin has no wake-origin codec still keeps the native path");
   ok(claims === 0, "🔴 heal/no-divert: and it never claims — a native fire that spent the window's one-shot claim would strand that window for the whole eve build");
+}
+
+{
+  overrideSettingsForTest({ delegation: { oneshotAgent: true } });
+  const rotaKey = unifiedDomainSessionKey(ROTA_DOMAIN);
+  ok(
+    (await claimRuntimeRotation({ org: ORG, registryKey: rotaKey, surfaceKey: ROTA_SURFACE, atIso: NOW.toISOString() })) === true,
+    "chain/setup: burn ROTA_DOMAIN's runtime-change claim up front — every subtest below fires under runtimeChanged=false",
+  );
+
+  const realNow = Date.now();
+  const minutesAgo = (n: number) => new Date(realNow - n * 60_000).toISOString();
+  const hoursAgo = (n: number) => new Date(realNow - n * 3_600_000).toISOString();
+  const daysAgo = (n: number) => new Date(realNow - n * 86_400_000).toISOString();
+
+  {
+    const seeded = await store.rotateChannelSession(ORG, rotaKey, "oe-dom:logistics:oe-sup:tokA1", minutesAgo(1));
+    ok((await store.markChannelSessionRotation(ORG, rotaKey, minutesAgo(1))) === true, "chain/mark/setup: the mark lands on the seeded generation");
+    const markedRow = await store.getChannelSession(ORG, rotaKey);
+    ok(markedRow?.rotateMarkedAt != null, "chain/mark/setup: the row reads back marked before the fire");
+
+    await routineStore.addRoutine(
+      {} as never,
+      routine({ id: "r-chain-a", sessionMode: "job", surfaceKey: ROTA_SURFACE, target: { channelId: ROTA_CHAN }, trigger: { kind: "interval", everyMinutes: 1 } }),
+    );
+    const a = captureReceive();
+    await tick(NOW, a.to);
+    ok(a.seen.length === 1 && a.seen[0].unified, "chain/mark: the fire diverts into the window");
+    const t = a.seen[0].target as unknown as UnifiedReceiveTarget;
+    ok(
+      parseWindowToken(t.token)?.generation === seeded.generation + 1,
+      "🔴 chain/mark: a routine fire ALONE rotates a marked parent — the fire seat's token carries the FRESH generation",
+    );
+    const parentAfter = await store.getChannelSession(ORG, rotaKey);
+    ok(parentAfter?.generation === seeded.generation + 1, "chain/mark: the parent row rotated one generation");
+    ok(parentAfter?.rotateMarkedAt === null, "chain/mark: and the mark is SPENT — any rotation clears it, whichever rung fired");
+    await routineStore.removeRoutine({ org: ORG, surfaceKey: ROTA_SURFACE } as never, "r-chain-a");
+  }
+
+  {
+    const seeded = await store.rotateChannelSession(ORG, rotaKey, "oe-dom:logistics:oe-sup:tokB1", daysAgo(8));
+    await store.touchChannelSession(ORG, rotaKey, minutesAgo(5));
+    const preFire = await store.getChannelSession(ORG, rotaKey);
+    ok(preFire?.rotateMarkedAt == null, "chain/expiry/setup: unmarked — this subtest isolates expiry, not the mark");
+
+    await routineStore.addRoutine(
+      {} as never,
+      routine({ id: "r-chain-b", sessionMode: "job", surfaceKey: ROTA_SURFACE, target: { channelId: ROTA_CHAN }, trigger: { kind: "interval", everyMinutes: 1 } }),
+    );
+    const b = captureReceive();
+    await tick(NOW, b.to);
+    ok(b.seen.length === 1 && b.seen[0].unified, "chain/expiry: the fire diverts into the window");
+    const t = b.seen[0].target as unknown as UnifiedReceiveTarget;
+    ok(
+      parseWindowToken(t.token)?.generation === seeded.generation + 1,
+      "🔴 chain/expiry: a routine fire rotates a parent whose generation aged past `rotation.expiryDays` — invisible to a fire before this fix",
+    );
+    ok((await store.getChannelSession(ORG, rotaKey))?.generation === seeded.generation + 1, "chain/expiry: the parent row rotated");
+    await routineStore.removeRoutine({ org: ORG, surfaceKey: ROTA_SURFACE } as never, "r-chain-b");
+  }
+
+  {
+    const seeded = await store.rotateChannelSession(ORG, rotaKey, "oe-dom:logistics:oe-sup:tokC1", hoursAgo(2));
+    await routineStore.addRoutine(
+      {} as never,
+      routine({ id: "r-chain-c", sessionMode: "job", surfaceKey: ROTA_SURFACE, target: { channelId: ROTA_CHAN }, trigger: { kind: "interval", everyMinutes: 1 } }),
+    );
+    const c = captureReceive();
+    await tick(NOW, c.to);
+    ok(c.seen.length === 1 && c.seen[0].unified, "chain/quiet-gap: the fire diverts into the window");
+    const t = c.seen[0].target as unknown as UnifiedReceiveTarget;
+    ok(
+      parseWindowToken(t.token)?.generation === seeded.generation + 1,
+      "🔴 chain/quiet-gap: a routine fire rotates a parent idle past the quiet-gap threshold — invisible to a fire before this fix",
+    );
+    ok((await store.getChannelSession(ORG, rotaKey))?.generation === seeded.generation + 1, "chain/quiet-gap: the parent row rotated");
+    await routineStore.removeRoutine({ org: ORG, surfaceKey: ROTA_SURFACE } as never, "r-chain-c");
+  }
+
+  {
+    const seeded = await store.rotateChannelSession(ORG, rotaKey, "oe-dom:logistics:oe-sup:tokD1", minutesAgo(1));
+    await routineStore.addRoutine(
+      {} as never,
+      routine({ id: "r-chain-d", sessionMode: "job", surfaceKey: ROTA_SURFACE, target: { channelId: ROTA_CHAN }, trigger: { kind: "interval", everyMinutes: 1 } }),
+    );
+    const d = captureReceive();
+    await tick(NOW, d.to);
+    ok(d.seen.length === 1 && d.seen[0].unified, "chain/healthy: the fire diverts into the window");
+    const t = d.seen[0].target as unknown as UnifiedReceiveTarget;
+    ok(parseWindowToken(t.token)?.generation === seeded.generation, "chain/healthy: a routine fire on a HEALTHY parent does NOT rotate it — the fire seat resumes the same generation");
+    ok((await store.getChannelSession(ORG, rotaKey))?.generation === seeded.generation, "chain/healthy: the parent row is unchanged");
+    await routineStore.removeRoutine({ org: ORG, surfaceKey: ROTA_SURFACE } as never, "r-chain-d");
+  }
+}
+
+{
+  const rotaKey2 = unifiedDomainSessionKey(ROTA_DOMAIN);
+  const rotaGrain = { unified: true, registryKey: rotaKey2, domainName: ROTA_DOMAIN, singleWindow: true } as never;
+  const rowAt = (over: Record<string, unknown>) => ({
+    token: "t1",
+    generation: 5,
+    createdAt: NOW.toISOString(),
+    lastWakeAt: NOW.toISOString(),
+    turnCount: 0,
+    inputTokensTotal: 0,
+    firstWakeAt: null,
+    lastInputTokens: null,
+    rotateMarkedAt: null,
+    ...over,
+  });
+
+  {
+    const angryStore = { async getChannelSession() { return rowAt({}); }, async rotateChannelSession() { throw new Error("store down"); } } as never;
+    let threw = false;
+    try {
+      await fireWindow.healFireParentGeneration(ORG, rotaGrain, NOW.toISOString(), angryStore, true);
+    } catch {
+      threw = true;
+    }
+    ok(threw, "chain/throw: the runtime-changed rung throws on a store failure — it is a one-shot claim, not a re-derivable rung");
+  }
+
+  {
+    const angryStore = {
+      async getChannelSession() {
+        return rowAt({ rotateMarkedAt: NOW.toISOString() });
+      },
+      async rotateChannelSession() {
+        throw new Error("store down");
+      },
+    } as never;
+    const result = await fireWindow.healFireParentGeneration(ORG, rotaGrain, NOW.toISOString(), angryStore, false);
+    ok(result === undefined, "chain/fail-soft: the operator-marked rung fails SOFT on a store error — the fire is never lost over registry bookkeeping");
+  }
+
+  {
+    let rotateCalls = 0;
+    const quietStore = {
+      async getChannelSession() {
+        return rowAt({});
+      },
+      async rotateChannelSession() {
+        rotateCalls++;
+        throw new Error("must not be called — no rung fired");
+      },
+    } as never;
+    ok(
+      (await fireWindow.healFireParentGeneration(ORG, rotaGrain, NOW.toISOString(), quietStore, false)) === undefined,
+      "chain/no-trigger: a healthy row with runtimeChanged=false triggers no rung",
+    );
+    ok(rotateCalls === 0, "chain/no-trigger: and rotateChannelSession is never called — no over-rotation on a fire that has nothing to heal");
+  }
 }
 
 overrideSettingsForTest({ delegation: { oneshotAgent: false } });

@@ -13,6 +13,7 @@ import {
   type SupervisorGrain,
 } from "../channels/unified-supervisor.js";
 import { claimRuntimeRotation } from "../channels/runtime-rotation.js";
+import { rotationTrigger } from "../channels/turn-delivery.js";
 import { divertToUnifiedWindow } from "../channels/unified.js";
 import {
   isUnifiedWakeOrigin,
@@ -131,21 +132,29 @@ export async function healFireParentGeneration(
   grain: SupervisorGrain,
   atIso: string,
   store: Pick<OperationalStore, "getChannelSession" | "rotateChannelSession">,
+  runtimeChanged: boolean,
 ): Promise<number | undefined> {
   if (!grain.unified || grain.domainName === undefined) return undefined;
   const existing = await store.getChannelSession(org, grain.registryKey);
   if (existing === null) return undefined;
+  const trigger = rotationTrigger(existing, atIso, { runtimeChanged });
+  if (trigger === null) return undefined;
   const current = Number.isInteger(existing.generation) && existing.generation > 0 ? existing.generation : 0;
   const next = current + 1;
-  const row = await store.rotateChannelSession(
-    org,
-    grain.registryKey,
+  const mintToken = () =>
     mintRotationToken(grain, next, () => {
       throw new Error("healFireParentGeneration: a per-container token is unreachable behind the unified grain guard");
-    }),
-    atIso,
-  );
-  return row.generation;
+    });
+  if (trigger === "runtime-changed") {
+    const row = await store.rotateChannelSession(org, grain.registryKey, mintToken(), atIso);
+    return row.generation;
+  }
+  try {
+    const row = await store.rotateChannelSession(org, grain.registryKey, mintToken(), atIso);
+    return row.generation;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function adoptJobFireSeat(
@@ -198,7 +207,7 @@ export async function divertTriggeredFire(
     surfaceKey: input.surfaceKey,
     atIso,
   });
-  const healed = runtimeChanged ? await healFireParentGeneration(org, grain, atIso, registryStore()) : undefined;
+  const healed = await healFireParentGeneration(org, grain, atIso, registryStore(), runtimeChanged);
   const plan = planFor(healed ?? current);
   if (!plan) return false;
   if (isJobFireSeat(input.seatKey)) {
