@@ -8,7 +8,7 @@ import { defineDomain } from "../agent/memory/domain.js";
 import { defineMemorySilo } from "../agent/memory/silo.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import type { EffectiveAccess } from "../agent/access/resolver.js";
-import { classifySessionId, taskWindowId, threadSeatWindowId } from "../agent/channels/window-key.js";
+import { classifySessionId, taskWindowId, threadSeatWindowId, formatWindowToken, windowTokenPlatform } from "../agent/channels/window-key.js";
 import { registerBotDisplayName, _resetBotDisplayNamesForTest } from "../agent/identity/bot-display-name.js";
 import { registerSlackFixtureMapper, registerSlackFixtureManifest, registerSlackTestBridge } from "./_slack-test-stubs.js";
 import { capabilitiesForPlatform, registerCapabilityManifest } from "../agent/identity/capabilities.js";
@@ -188,7 +188,23 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     session: { auth: { current: { attributes: { oe_platform: "slack" } } } },
   } as BindableContext);
   ok(soloMd.includes(NOISE), "(b) solo-MODE window (windowId !== domain) renders the sole source's per-surface scope (noise doctrine)");
-  ok(soloMd.startsWith(crossMd), "solo output is the unified block PLUS the appended per-surface scope (purely additive — no rewrite of the shared block)");
+  const crossMdWithSoloFraming = crossMd
+    .replace(
+      "This is a cross-surface session, so your turn-final text is DISCARDED — nothing you write as the\nturn's closing prose reaches anyone.",
+      "Your turn-final text is DISCARDED — nothing you write as the\nturn's closing prose reaches anyone.",
+    )
+    .replace(
+      "The `reply` tool works on EVERY surface in this session — Slack, Notion, Linear, GitHub, all of\nthem — and on any wake you have not yet answered, not only the newest one.",
+      "The `reply` tool works on any wake you have not yet answered, not only the newest one.",
+    );
+  ok(
+    crossMdWithSoloFraming !== crossMd,
+    "fixture guard: the framing swap actually matched something in crossMd — otherwise the assertion below proves nothing",
+  );
+  ok(
+    soloMd.startsWith(crossMdWithSoloFraming),
+    "solo output is the unified block, framed for its one pinned surface (OPE-787), PLUS the appended per-surface scope — still purely additive beyond that framing swap",
+  );
 
   const soloGh = await renderScopeMarkdown({
     channel: { kind: "channel:unified", continuationToken: "oe-dom:solo-dom:win:github/acme/x:oe-sup:g1" },
@@ -646,6 +662,47 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
 
   const containerScope = await renderScopeMarkdown(containerSeat);
   ok(containerScope.includes("Your turn-final text is DISCARDED"), "the per-container SCOPE carries the arm — the session reads it, not only the persona renderer");
+}
+
+{
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [defineDomain({ name: "ope787", channels: ["notion/ws1/page1"], ambientSupervisor: true })],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+
+  const flatten = (s: string): string => s.replace(/\s+/g, " ");
+  const soloToken = formatWindowToken({ domain: "ope787", windowId: "notion/ws1/page1", generation: 1 });
+  const soloCtx: BindableContext = {
+    channel: { kind: "channel:unified", continuationToken: soloToken },
+    session: { auth: { current: { attributes: { oe_platform: "notion" } } } },
+  } as BindableContext;
+
+  const sid = classifySessionId(soloToken);
+  ok(sid.kind === "window" && sid.grain === "standing", "fixture guard: the solo token classifies as a standing window");
+  ok(sid.kind === "window" && sid.key.windowId !== sid.key.domain, "fixture guard: the token is the EXPLICIT solo form, windowId !== domain");
+  ok(windowTokenPlatform(soloToken) === "notion", "fixture guard: windowTokenPlatform reads the one pinned surface off a solo token");
+
+  const soloReporting = flatten(renderSupervisorPersona(soloCtx, { messageToolOnly: true, pinnedPlatform: "notion" }));
+  ok(soloReporting.includes("turn-final text is DISCARDED"), "the solo-window arm still states the drop");
+  ok(soloReporting.includes("The `reply` tool is the ONLY way your words leave this"), "…and still names the reply tool as the only route out");
+  ok(soloReporting.includes("name the wake's `wake-id` from the envelope"), "…and still requires the wake-id — the reply mechanism is unchanged, only the framing is");
+  ok(!soloReporting.includes("This is a cross-surface session"), "🔴 OPE-787 — a solo (single-surface) window is NOT told it is cross-surface");
+  ok(!soloReporting.includes("EVERY surface in this session"), "🔴 …and is NOT told its reply reaches every surface — it reaches one");
+  ok(!soloReporting.includes("Slack, Notion, Linear, GitHub"), "🔴 …the multi-platform enumeration is gone on a one-surface window");
+
+  const crossReporting = flatten(renderSupervisorPersona(soloCtx, { messageToolOnly: true }));
+  ok(crossReporting.includes("This is a cross-surface session"), "negative control: with no pinnedPlatform the arm keeps the cross-surface claim");
+  ok(crossReporting.includes("Slack, Notion, Linear, GitHub"), "negative control: …and the multi-platform reply-reach line");
+
+  const soloScope = await renderScopeMarkdown(soloCtx);
+  ok(soloScope.includes("turn-final text is DISCARDED"), "the solo-window SCOPE reads the drop (it is windowed)");
+  ok(!soloScope.includes("This is a cross-surface session"), "🔴 the solo-window SCOPE does not claim cross-surface — the wiring reaches the fix, not only the direct call");
+  ok(!soloScope.includes("Slack, Notion, Linear, GitHub"), "🔴 …nor lists platforms this one-surface window does not span");
 }
 
 console.log(`✓ instructions: ${passed} assertions passed`);

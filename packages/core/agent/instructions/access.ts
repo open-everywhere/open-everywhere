@@ -186,7 +186,10 @@ names for the team's own parts, unchanged — just don't invent new metaphors of
 Someone asking you for something overrides every line above. If a person asks for the long
 version, the full list, or your working, give it to them.`;
 
-export function renderSupervisorPersona(ctx: BindableContext, opts?: { readonly messageToolOnly?: boolean }): string {
+export function renderSupervisorPersona(
+  ctx: BindableContext,
+  opts?: { readonly messageToolOnly?: boolean; readonly pinnedPlatform?: string },
+): string {
   if (!isSupervisorSession(ctx)) return "";
   const sid = classifySessionId(ctx.channel?.continuationToken);
   const grain = sid.grain;
@@ -221,18 +224,24 @@ good.`
         return false;
       }
     })();
+  const crossSurfaceOpening = opts?.pinnedPlatform
+    ? `Your turn-final text is DISCARDED — nothing you write as the`
+    : `This is a cross-surface session, so your turn-final text is DISCARDED — nothing you write as the`;
+  const replyReachLine = opts?.pinnedPlatform
+    ? `The \`reply\` tool works on any wake you have not yet answered, not only the newest one.`
+    : `The \`reply\` tool works on EVERY surface in this session — Slack, Notion, Linear, GitHub, all of
+them — and on any wake you have not yet answered, not only the newest one.`;
   const reporting = opts?.messageToolOnly
     ? `### Reporting
 
-This is a cross-surface session, so your turn-final text is DISCARDED — nothing you write as the
+${crossSurfaceOpening}
 turn's closing prose reaches anyone. The \`reply\` tool is the ONLY way your words leave this
 session: set its \`text\` and name the wake's \`wake-id\` from the envelope. Posting is still an
 action, not the end of your turn — you can \`reply\`, keep working, and finish with \`no_reply\`;
 a silent finish after useful work is a normal shape, not an unfinished one. Reserve a \`reply\` for
 a result, a question, or a blocker, and deciding to stay silent is still correct and common.
 
-The \`reply\` tool works on EVERY surface in this session — Slack, Notion, Linear, GitHub, all of
-them — and on any wake you have not yet answered, not only the newest one. Never conclude that a
+${replyReachLine} Never conclude that a
 reply "isn't possible here": if a wake carries a \`wake-id\`, \`reply\` delivers to it.
 
 That states REACH, not duty. It tells you where a reply CAN land, never that one is owed. Whether
@@ -581,13 +590,14 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
   const sid = classifySessionId(ctx.channel?.continuationToken);
   const soloWindowId = sid.kind === "window" && sid.key.windowId !== sid.key.domain ? sid.key.windowId : undefined;
   const soloMode = soloWindowId !== undefined;
-  const handleInfo = await unifiedSurfaceHandle(platforms, windowTokenPlatform(ctx.channel?.continuationToken));
+  const pinnedPlatform = windowTokenPlatform(ctx.channel?.continuationToken);
+  const handleInfo = await unifiedSurfaceHandle(platforms, pinnedPlatform);
   return [
     renderIdentity(agentIdentityName()),
     handleInfo ? renderHandle(handleInfo.platform, handleInfo.handle) : "",
     renderUnifiedSurfaces(platforms),
     renderUnifiedSurfaceGuides(platforms),
-    renderSupervisorPersona(ctx, { messageToolOnly: true }),
+    renderSupervisorPersona(ctx, { messageToolOnly: true, ...(pinnedPlatform ? { pinnedPlatform } : {}) }),
     renderReadingAWake(),
     REPLY_STYLE_RUBRIC,
     roleMd,
