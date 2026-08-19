@@ -17,6 +17,7 @@ import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/u
 import { withPendingWorkFrame } from "../channels/turn-delivery.js";
 import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
 import { editPostTail } from "../channels/session-tail-record.js";
+import { markWakeRepliedThisTurn } from "../channels/reply-signal.js";
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
 import { pendingDelegationOwing } from "../access/pending-delegation-signal.js";
 import { silentRoutineThisTurn } from "../routines/report.js";
@@ -94,7 +95,9 @@ export const unifiedEditReplyEntry = defineTool({
     const owingTask = pendingDelegationOwing(turnId, input.wake, addressedWakeThisTurn(turnId));
     const framed = withPendingWorkFrame(input.text, owingTask !== undefined);
 
-    return await editOrReportAmbiguous(locus, input.message_id, framed, replyAuditFor(bind, "tool", input.wake), bind);
+    const result = await editOrReportAmbiguous(locus, input.message_id, framed, replyAuditFor(bind, "tool", input.wake), bind);
+    markWakeRepliedThisTurn(turnId, input.wake);
+    return result;
   },
 });
 preRegisterDynamicEntry("edit_reply", "_single", unifiedEditReplyEntry);
