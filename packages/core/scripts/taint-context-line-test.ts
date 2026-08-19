@@ -140,4 +140,24 @@ const suppliedFalse = "context: unattended: false · tainted: false — supplied
   ok(armDGateResult(liveLinearTainted) === false, "OPE-799 NEGATIVE CONTROL: a genuine live LINEAR-tainted line still fails ARM D's composed gate — dispatch stayed HARD, the assertion correctly evaluates false");
 }
 
-console.log(`✓ taint-context-line: ${passed} assertions — isLiveTaintLine discriminates a live explain_permission read from a model-supplied simulation, the old bare-regex gates are shown forgeable where the new ones refuse, and OPE-789/OPE-799's liveTaintGateDecision demotes only the non-live path on ARM A and ARM D while a genuine live plane failure still dispatches HARD on either arm`);
+{
+  const liveGithubTainted = "context: unattended: false · tainted: true (github)";
+
+  const armBGateResult = (text: string, expectTaint: boolean): "soft" | boolean => {
+    const decision = liveTaintGateDecision(taintContextLine(text));
+    if (!decision.hard) return "soft";
+    return expectTaint ? /tainted:\s*true/i.test(decision.line) && /\bgithub\b/i.test(decision.line) : !/\bgithub\b/i.test(decision.line);
+  };
+
+  ok(armBGateResult(liveClean, false) === true, "OPE-844: ARM B's composed gate PASSES a genuine live untainted read on a PRIVATE-repo fixture (relaxation, correct)");
+  ok(armBGateResult(liveGithubTainted, true) === true, "OPE-844: ARM B's composed gate PASSES a genuine live github-tainted read on a PUBLIC-repo fixture (tainting, correct)");
+
+  ok(armBGateResult(liveGithubTainted, false) === false, "OPE-844 REGRESSION CHECK: a PRIVATE-repo fixture that DOES mark github FAILS the gate — over-marking a trusted source is the exact defect the relaxation-only ruling forbids");
+  ok(armBGateResult(liveClean, true) === false, "OPE-844 REGRESSION CHECK: a PUBLIC-repo fixture whose read stays clean FAILS the gate — this is precisely \"no leg proves the github route reaches the mark\", caught rather than silently passed");
+
+  ok(armBGateResult(liveWebTainted, false) === true, "OPE-844: a live line naming \"web\" (not github) still passes the PRIVATE-repo (absent) direction — github specifically is what's asserted, not taintedness in general");
+
+  ok(armBGateResult(suppliedTrueOverClean, true) === "soft", "OPE-844: a model-supplied (simulated) line dispatches SOFT on ARM B too — never gated as a plane defect");
+}
+
+console.log(`✓ taint-context-line: ${passed} assertions — isLiveTaintLine discriminates a live explain_permission read from a model-supplied simulation, the old bare-regex gates are shown forgeable where the new ones refuse, OPE-789/OPE-799's liveTaintGateDecision demotes only the non-live path on ARM A and ARM D while a genuine live plane failure still dispatches HARD on either arm, and OPE-844's ARM B direction gate is proven to catch both a private-repo over-mark and a public-repo under-mark`);
