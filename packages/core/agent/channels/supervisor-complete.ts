@@ -1,5 +1,6 @@
 import { supervisorTextDelivery, isSupervisorProseLeak, type FinalMessageAction } from "./turn-delivery.js";
 import { appendAudit } from "../audit/audit.js";
+import { recordPostTail } from "./session-tail-record.js";
 
 export interface SupervisorAuditRow {
   readonly org: string;
@@ -79,6 +80,7 @@ export async function completeSupervisorTurn(spec: SupervisorCompletionSpec): Pr
 
   try {
     const postedChars = await spec.post(action.text);
+    await recordPostTail(action.text, new Date().toISOString(), spec.repliedRow.platform);
     await appendAudit({
       org: spec.repliedRow.org,
       platform: spec.repliedRow.platform,
