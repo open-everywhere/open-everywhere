@@ -1,6 +1,6 @@
 import { createCommentReply, resolveNotionCredential } from "./notion-api.js";
 import { notionChannelCredentialFor } from "./notion-credentials.js";
-import { getConfig, resolvePartition, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
+import { getConfig, resolvePartition, markNotApplied, carryFailureSignals, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
 import type { PostArm, TargetResolveBag, ReplyTarget, UnifiedWakeOrigin, UnifiedReplyDeps } from "@open-everywhere/core/agent/adapter-api.js";
 
 function notionDomains(): readonly Domain[] {
@@ -22,7 +22,7 @@ async function dispatchNotionReply(target: NotionTarget, text: string): Promise<
   const credentialId = target.credentialId ?? notionReplyCredential(target.workspaceId, target.pageId);
   const cred = await resolveNotionCredential(credentialId);
   if (!cred) {
-    throw new Error(`reply couldn't post to Notion — no value stored for notion credential "${credentialId ?? "channel-key"}".`);
+    throw markNotApplied(new Error(`reply couldn't post to Notion — no value stored for notion credential "${credentialId ?? "channel-key"}".`));
   }
   return createCommentReply({ discussionId: target.discussionId, text, ...cred });
 }
@@ -31,13 +31,13 @@ async function liveNotionPost(origin: NotionOrigin, text: string): Promise<strin
   const credentialId = origin.credentialId ?? notionReplyCredential(origin.workspaceId, origin.pageId);
   const cred = await resolveNotionCredential(credentialId);
   if (!cred) {
-    throw new Error(`unified reply couldn't post to Notion — no value stored for notion credential "${credentialId ?? "channel-key"}" (discussion ${origin.discussionId})`);
+    throw markNotApplied(new Error(`unified reply couldn't post to Notion — no value stored for notion credential "${credentialId ?? "channel-key"}" (discussion ${origin.discussionId})`));
   }
   let id: string;
   try {
     id = await createCommentReply({ discussionId: origin.discussionId, text, ...cred });
-  } catch {
-    throw new Error(`unified reply couldn't post to Notion — createCommentReply failed on discussion ${origin.discussionId}`);
+  } catch (err) {
+    throw carryFailureSignals(err, new Error(`unified reply couldn't post to Notion — createCommentReply failed on discussion ${origin.discussionId}`));
   }
   return id || "unknown";
 }
