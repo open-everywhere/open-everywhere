@@ -138,7 +138,7 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   ok(slackMd === notionMd && slackMd === githubMd, "unified block is BYTE-IDENTICAL across slack/notion/github origin deliveries (surface-neutral)");
   ok(slackMd === (await renderScopeMarkdown(unifiedCtx("slack"))), "unified block is byte-stable across consecutive resolves (no per-turn churn)");
 
-  ok(slackMd.includes("Slack") && slackMd.includes("Notion") && slackMd.includes("Github"), "unified block names the domain's wired surfaces (Slack, Notion, Github)");
+  ok(slackMd.includes("Slack") && slackMd.includes("Notion") && slackMd.includes("GitHub"), "unified block names the domain's wired surfaces (Slack, Notion, GitHub)");
   ok(slackMd.includes("across SEVERAL surfaces") && !slackMd.includes("reaching this team through **Notion**"), "unified block uses the cross-surface line, not a single-surface 'reaching through X' line");
 
   ok(slackMd.includes("turn-final text is DISCARDED"), "unified persona Reporting section is message-tool-only");
