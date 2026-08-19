@@ -221,6 +221,17 @@ good.`
         return false;
       }
     })();
+  const replyBroken =
+    sid.kind === "container-supervisor" &&
+    !proseDropped &&
+    ((): boolean => {
+      try {
+        const manifest = capabilitiesForPlatform(bindFrom(ctx).platform);
+        return manifest.midTurnPost === false || manifest.supervisorReplyBroken === true;
+      } catch {
+        return false;
+      }
+    })();
   const reporting = opts?.messageToolOnly
     ? `### Reporting
 
@@ -269,7 +280,21 @@ supports it; where it does not, the call is refused and says so, and you post a 
 
 That states REACH, not duty. It says how an answer gets out, never that one is owed. Most of what
 wakes you still ends in \`no_reply\`, and deciding to stay silent is correct and common.`
-      : `### Reporting
+      : replyBroken
+        ? `### Reporting
+
+This surface mounts no working \`reply\` tool — never call it, and never wait for one before
+answering. Your turn's closing text is the whole delivery: whatever you write as the FINAL text
+of the turn is what gets posted as the comment. There is no separate mid-turn post here, and no
+second message once the turn ends.
+
+Silence is still the normal outcome for most turns. Call \`no_reply\` and write no closing text
+when nothing is owed — that is a correct, common ending, not an unfinished one.
+
+When an answer IS owed, do the rest of your work first — read, check, delegate — then write the
+finished answer as your LAST step. You get one shot at the message: there is no "post now, refine
+later" on this surface.`
+        : `### Reporting
 
 Posting is an action, not the end of your turn: \`reply\` posts into the channel mid-turn,
 so you can answer, keep working, and still finish with \`no_reply\` — a silent finish after

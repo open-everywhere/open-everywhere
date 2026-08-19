@@ -6,6 +6,7 @@ export interface CapabilityManifest {
   readonly midTurnPost: boolean;
   readonly reactions: boolean;
   readonly supervisorProseDropped?: boolean;
+  readonly supervisorReplyBroken?: boolean;
 }
 
 const NONE: CapabilityManifest = { midTurnPost: false, reactions: false };
