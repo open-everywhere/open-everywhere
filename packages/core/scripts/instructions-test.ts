@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync, readdirSync } from "node:fs";
 import { assembleAccessInstructions } from "../agent/access/instructions.js";
 import { clearPendingCancelNoteAfter, setPendingCancelNote } from "../agent/channels/cancel-note.js";
-import dynamicInstructions, { renderSurfaceGuide, renderScopeMarkdown, renderReadingAWake, renderSupervisorPersona, REPLY_STYLE_RUBRIC } from "../agent/instructions/access.js";
+import dynamicInstructions, { renderSurfaceGuide, renderScopeMarkdown, renderReadingAWake, renderSupervisorPersona, REPLY_STYLE_RUBRIC, canReceiveJudgedWake } from "../agent/instructions/access.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { defineMemorySilo } from "../agent/memory/silo.js";
@@ -593,16 +593,49 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
       },
     },
   } as BindableContext;
+  const nativeSlackSeat: BindableContext = {
+    channel: { kind: "slack", continuationToken: "cse_native_771" },
+    session: {
+      auth: {
+        current: {
+          attributes: { team_id: "T_771", channel_id: "C_771", channel_type: "channel", is_private: "false", trust_checked: "true" },
+          principalId: "U1",
+          principalType: "user",
+        },
+      },
+    },
+  } as BindableContext;
 
   ok(classifySessionId("C_771:oe-sup:g1").kind === "container-supervisor", "fixture guard: `${channelId}:oe-sup:g<gen>` classifies as the per-container supervisor");
+  ok(classifySessionId("cse_native_771").kind === "native", "fixture guard: a blank/foreign token classifies as native");
   ok(renderSupervisorPersona(containerSeat) !== "", "fixture guard: the per-container seat IS a supervisor session — it reads the standing persona");
+
+  ok(canReceiveJudgedWake(unifiedSeat), "predicate: the UNIFIED path is unconditionally true (an @mention there is always the judged `direct-mention` addressing, never the raw `direct` body)");
+  ok(canReceiveJudgedWake(containerSeat), "predicate: a per-container SUPERVISOR (channel-watch/name-drop capable) is true on every wired platform");
+  const dmSeat: BindableContext = { channel: { kind: "slack", continuationToken: "D_771:oe-dm:g1" } } as BindableContext;
+  ok(classifySessionId("D_771:oe-dm:g1").kind === "dm-seat", "fixture guard: a `<channelId>:oe-dm:g<gen>` token classifies as a Slack DM seat");
+  ok(canReceiveJudgedWake(dmSeat), "predicate: a Slack DM seat is true — buildDmWake always renders `direct-mention`, never a raw `direct` body");
+  ok(canReceiveJudgedWake(nativeSlackSeat), "predicate: a plain native SLACK session is true — Slack never emits a raw `direct` wake at all");
+  const taskOffUnified: BindableContext = { channel: { kind: "slack", continuationToken: "oe-dom:ope771tk:win:t/slack/T_771/C_771/1700.5:oe-sup:g1" } } as BindableContext;
+  ok(classifySessionId("oe-dom:ope771tk:win:t/slack/T_771/C_771/1700.5:oe-sup:g1").kind === "task", "fixture guard: the `t/…` windowId classifies as task");
+  ok(!canReceiveJudgedWake(taskOffUnified), "🔴 predicate: a task (worker) session is false — a worker never sees a wake envelope, even off the unified channel");
+  const subagentSeat: BindableContext = { channel: { kind: "slack", continuationToken: "subagent:parent-sess:call-1" } } as BindableContext;
+  ok(classifySessionId("subagent:parent-sess:call-1").kind === "subagent", "fixture guard: eve's own `subagent:<parent>:<call>` token classifies as subagent");
+  ok(!canReceiveJudgedWake(subagentSeat), "🔴 predicate: a delegated subagent child is false — it never sees a wake envelope either");
+  const nativeGithubSeat: BindableContext = { channel: { kind: "github", continuationToken: "cse_native_gh" } } as BindableContext;
+  ok(!canReceiveJudgedWake(nativeGithubSeat), "predicate: a native GitHub session is false — its ordinary @mention flow never renders a `<wake>` envelope at all");
+  const githubSupervisorSeat: BindableContext = { channel: { kind: "github", continuationToken: "github:acme/repo:oe-sup:g1" } } as BindableContext;
+  ok(classifySessionId("github:acme/repo:oe-sup:g1").kind === "container-supervisor", "fixture guard: a GitHub `<owner>/<repo>:oe-sup:g<gen>` token classifies as the per-container supervisor too");
+  ok(canReceiveJudgedWake(githubSupervisorSeat), "🔴 predicate: a GitHub per-repo supervisor is true independent of the Slack platform fallthrough — channel-watch judges it too");
 
   const unifiedMd = await renderScopeMarkdown(unifiedSeat);
   const containerMd = await renderScopeMarkdown(containerSeat);
+  const nativeMd = await renderScopeMarkdown(nativeSlackSeat);
   const block = renderReadingAWake();
   ok(unifiedMd.includes(block), "the UNIFIED scope splices the 'Reading a wake' block verbatim");
-  ok(!containerMd.includes("### Reading a wake"), "🔴 OPE-771 — the PER-CONTAINER supervisor scope does NOT carry it; that seat reads judged envelopes with no attribute key");
-  ok(containerMd.includes("### When to speak"), "the per-container seat still reads the reply bar — the loss is the attribute key, not the posture");
+  ok(containerMd.includes(block), "the PER-CONTAINER supervisor scope now carries it (OPE-771) — that seat reads judged envelopes with a key to their attributes");
+  ok(nativeMd.includes(block), "a plain native Slack scope carries it too — the same predicate, the same reasoning");
+  ok(containerMd.includes("### When to speak"), "the per-container seat still reads the reply bar");
   ok(containerMd.includes("### Trust grades"), "the per-container seat still reads the trust grades, which gloss `trust` and `mention`");
 }
 
@@ -703,6 +736,55 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   ok(soloScope.includes("turn-final text is DISCARDED"), "the solo-window SCOPE reads the drop (it is windowed)");
   ok(!soloScope.includes("This is a cross-surface session"), "🔴 the solo-window SCOPE does not claim cross-surface — the wiring reaches the fix, not only the direct call");
   ok(!soloScope.includes("Slack, Notion, Linear, GitHub"), "🔴 …nor lists platforms this one-surface window does not span");
+}
+
+{
+  const flatten = (s: string): string => s.replace(/\s+/g, " ");
+  const bareCtx = (kind: string, token: string): BindableContext =>
+    ({ channel: { kind, continuationToken: token }, session: { auth: { current: { attributes: {} } } } }) as BindableContext;
+
+  const githubSeat = bareCtx("github", "acme/repo:oe-sup:g1");
+  const linearSeat = bareCtx("linear", "T_786:oe-sup:g1");
+  const linearThreadSeat = bareCtx("linear", `oe-dom:ope786:win:${threadSeatWindowId("linear/T_786", "issue-1")}:oe-sup:g1`);
+
+  registerCapabilityManifest("github", { midTurnPost: false, reactions: false });
+  registerCapabilityManifest("linear", { midTurnPost: true, reactions: false, supervisorReplyBroken: true });
+
+  ok(classifySessionId("acme/repo:oe-sup:g1").kind === "container-supervisor", "fixture guard: the github container token classifies as container-supervisor");
+  ok(classifySessionId("T_786:oe-sup:g1").kind === "container-supervisor", "fixture guard: the linear container token classifies as container-supervisor");
+  ok(
+    classifySessionId(`oe-dom:ope786:win:${threadSeatWindowId("linear/T_786", "issue-1")}:oe-sup:g1`).kind === "thread-seat",
+    "fixture guard: the linear thread token classifies as thread-seat",
+  );
+  ok(capabilitiesForPlatform("github").midTurnPost === false, "fixture guard: github's manifest never mounts `reply`");
+  ok(capabilitiesForPlatform("linear").supervisorReplyBroken === true, "fixture guard: linear's manifest carries supervisorReplyBroken — the fact the arm keys on");
+
+  const githubReporting = flatten(renderSupervisorPersona(githubSeat));
+  const linearReporting = flatten(renderSupervisorPersona(linearSeat));
+  ok(!githubReporting.includes("reply` posts into the channel mid-turn"), "🔴 OPE-786 — the GitHub supervisor arm drops the false `reply` mid-turn claim");
+  ok(!linearReporting.includes("reply` posts into the channel mid-turn"), "🔴 OPE-786 — the Linear supervisor arm drops the false `reply` mid-turn claim");
+  for (const [label, reporting] of [
+    ["github", githubReporting],
+    ["linear", linearReporting],
+  ] as const) {
+    ok(reporting.includes("mounts no working `reply` tool"), `🔴 …and the ${label} arm states plainly that no working \`reply\` tool exists`);
+    ok(
+      reporting.includes("whatever you write as the FINAL text of the turn is what gets posted as the comment"),
+      `🔴 …and tells the ${label} seat its closing text IS the delivery`,
+    );
+    ok(!reporting.includes("`reply`,"), `the ${label} arm never instructs a \`reply\` call (no "you can \`reply\`, keep working" phrasing)`);
+    ok(reporting.includes("Call `no_reply`"), `the ${label} arm still teaches silence via \`no_reply\``);
+  }
+
+  const linearThreadReporting = flatten(renderSupervisorPersona(linearThreadSeat));
+  ok(linearThreadReporting.includes("reply` posts into the channel mid-turn"), "negative control: a Linear THREAD seat reads the dual-mode arm — supervisorReplyBroken does not apply off the supervisor grain");
+  ok(linearThreadReporting.includes("mounts no working `reply` tool") === false, "negative control: a Linear thread seat is NOT told `reply` is unmounted");
+
+  registerCapabilityManifest("linear", { midTurnPost: true, reactions: false });
+  const linearWithoutFact = flatten(renderSupervisorPersona(linearSeat));
+  ok(linearWithoutFact.includes("mounts no working `reply` tool") === false, "🔴 negative control: with supervisorReplyBroken absent the Linear container seat reads the dual-mode arm");
+  ok(linearWithoutFact.includes("reply` posts into the channel mid-turn"), "…and reads it in full, not an empty arm");
+  registerCapabilityManifest("linear", { midTurnPost: true, reactions: false, supervisorReplyBroken: true });
 }
 
 console.log(`✓ instructions: ${passed} assertions passed`);

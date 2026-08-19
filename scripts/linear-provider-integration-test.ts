@@ -95,8 +95,8 @@ const armReply = (tool: unknown, c: unknown): ArmedTool | null =>
 
 assert.deepStrictEqual(
   capabilitiesForPlatform("linear"),
-  { midTurnPost: true, reactions: false },
-  "registerLinearProvider registers linear's manifest (midTurnPost via the `response` Agent Activity, no reactions)",
+  { midTurnPost: true, reactions: false, supervisorReplyBroken: true },
+  "registerLinearProvider registers linear's manifest (midTurnPost via the `response` Agent Activity, no reactions, supervisorReplyBroken on the container-supervisor turn)",
 );
 n++;
 

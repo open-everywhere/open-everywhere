@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
+import { linearSmokeSurfaceKey, linearSmokeTeamId, LINEAR_SMOKE_ORG } from "../../../scripts/deploy/linear-smoke-keys.js";
 import {
   afterThisTest,
   bootAgent,
@@ -102,6 +103,47 @@ test("an unsigned Linear agent-session delivery is refused (401) and writes NO l
   const rows = await readAuditRows({ actions: ["linear.external_policy_suppressed"], sinceIso });
   expect(rows.find((r) => r.principalId === authorId)).toBeUndefined();
   expect(calls.length).toBe(0);
+});
+
+test("a signed delivery on the deploy:smoke SCRATCH surface is suppressed by the ROOM grain — the row deploy:smoke joins on, written by the real host with no model turn", async () => {
+  await bootAgent();
+  process.env.LINEAR_APP_USER_ID = "it-linear-app-actor";
+  process.env.LINEAR_APP_NAME = "OE Bot";
+
+  const settings = await import("@open-everywhere/core/agent/settings/settings.js");
+  settings.resetSettingsForTest();
+
+  const stub = installLinearApiStub((call) =>
+    call.operation === "AgentActivityCreate" ? { data: { agentActivityCreate: { success: true, agentActivity: { id: "it-linear-room-close" } } } } : undefined,
+  );
+  afterThisTest(() => stub.uninstall());
+
+  const teamId = linearSmokeTeamId(Date.now());
+  const surfaceKey = linearSmokeSurfaceKey(teamId);
+  const sinceIso = new Date(Date.now() - 10_000).toISOString();
+
+  const res = await linearAgentSessionPost({
+    agentSessionId: `oe-smoke-session-${teamId}`,
+    organizationId: LINEAR_SMOKE_ORG,
+    teamId,
+    issueId: `oe-smoke-issue-${teamId}`,
+    commentId: `oe-smoke-comment-${teamId}`,
+  });
+  expect(res.status, `the Linear front refused the signed delivery: ${res.body.slice(0, 300)}`).toBe(200);
+
+  const row = await waitFor(async () => {
+    const rows = await readAuditRows({ actions: ["linear.external_policy_suppressed"], sinceIso });
+    return rows.find((r) => r.surface === surfaceKey);
+  }, `the linear.external_policy_suppressed row for scratch surface ${surfaceKey}`);
+
+  expect(row.platform).toBe("linear");
+  expect(row.workspace).toBe(LINEAR_SMOKE_ORG);
+  expect(row.detail?.verdict).toBe("silent-room");
+
+  const dispatched = await readAuditRows({ actions: ["linear.dispatched"], sinceIso });
+  expect(dispatched.find((r) => r.surface === surfaceKey)).toBeUndefined();
+
+  expect(stub.calls.some((c) => c.operation === "AgentActivityCreate")).toBe(true);
 });
 
 test("a TAMPERED Linear agent-session delivery (a wrong-but-well-formed signature) is refused (401) and writes NO row", async () => {

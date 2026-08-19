@@ -224,6 +224,17 @@ good.`
         return false;
       }
     })();
+  const replyBroken =
+    sid.kind === "container-supervisor" &&
+    !proseDropped &&
+    ((): boolean => {
+      try {
+        const manifest = capabilitiesForPlatform(bindFrom(ctx).platform);
+        return manifest.midTurnPost === false || manifest.supervisorReplyBroken === true;
+      } catch {
+        return false;
+      }
+    })();
   const crossSurfaceOpening = opts?.pinnedPlatform
     ? `Your turn-final text is DISCARDED — nothing you write as the`
     : `This is a cross-surface session, so your turn-final text is DISCARDED — nothing you write as the`;
@@ -278,7 +289,21 @@ supports it; where it does not, the call is refused and says so, and you post a 
 
 That states REACH, not duty. It says how an answer gets out, never that one is owed. Most of what
 wakes you still ends in \`no_reply\`, and deciding to stay silent is correct and common.`
-      : `### Reporting
+      : replyBroken
+        ? `### Reporting
+
+This surface mounts no working \`reply\` tool — never call it, and never wait for one before
+answering. Your turn's closing text is the whole delivery: whatever you write as the FINAL text
+of the turn is what gets posted as the comment. There is no separate mid-turn post here, and no
+second message once the turn ends.
+
+Silence is still the normal outcome for most turns. Call \`no_reply\` and write no closing text
+when nothing is owed — that is a correct, common ending, not an unfinished one.
+
+When an answer IS owed, do the rest of your work first — read, check, delegate — then write the
+finished answer as your LAST step. You get one shot at the message: there is no "post now, refine
+later" on this surface.`
+        : `### Reporting
 
 Posting is an action, not the end of your turn: \`reply\` posts into the channel mid-turn,
 so you can answer, keep working, and still finish with \`no_reply\` — a silent finish after
@@ -536,6 +561,20 @@ everywhere, but quote it only into a place of equal or higher privacy. Prefer th
 with a reason, to the bare \`NO_REPLY\` text.`;
 }
 
+export function canReceiveJudgedWake(ctx: BindableContext): boolean {
+  if (isUnifiedWindowContext(ctx)) return true;
+  const sid = classifySessionId(ctx.channel?.continuationToken);
+  if (sid.kind === "task" || sid.kind === "subagent") return false;
+  if (sid.kind === "container-supervisor" || sid.kind === "dm-seat") return true;
+  const platform = channelPlatform(ctx);
+  if (platform === "slack") return true;
+  if (platform === "discord") {
+    const mode = bindFrom(ctx).mode;
+    return mode !== "dm" && mode !== "mpim";
+  }
+  return false;
+}
+
 function renderWorkerCapabilitiesFor(ctx: BindableContext, recall: MemoryRecallRoute): string {
   try {
     const grain = windowGrainOf(ctx);
@@ -598,7 +637,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     renderUnifiedSurfaces(platforms),
     renderUnifiedSurfaceGuides(platforms),
     renderSupervisorPersona(ctx, { messageToolOnly: true, ...(pinnedPlatform ? { pinnedPlatform } : {}) }),
-    renderReadingAWake(),
+    canReceiveJudgedWake(ctx) ? renderReadingAWake() : "",
     REPLY_STYLE_RUBRIC,
     roleMd,
     accessMd,
@@ -625,6 +664,7 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
     renderSurface(binding.platform),
     renderSurfaceGuide(binding.platform),
     renderSupervisorPersona(ctx),
+    canReceiveJudgedWake(ctx) ? renderReadingAWake() : "",
     REPLY_STYLE_RUBRIC,
     renderRolePrompt(ctx),
     assembleAccessInstructions(access) ?? "",
