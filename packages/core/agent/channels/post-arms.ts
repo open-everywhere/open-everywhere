@@ -56,6 +56,7 @@ export interface PostArm {
   dispatchUnified?(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps, replier?: ReplierLabel): Promise<string>;
   closeUnifiedSilently?(origin: UnifiedWakeOrigin, deps: UnifiedReplyDeps): Promise<void>;
   editMessage?(locus: EditLocus, messageId: string, text: string): Promise<void>;
+  retargetEditLocus?(origin: UnifiedWakeOrigin, locus: EditLocus): Promise<EditLocus>;
   describeRedriveTarget?(origin: UnifiedWakeOrigin): string;
   redriveContainerId?(origin: UnifiedWakeOrigin): string;
   deliverDirectMessage?(input: DirectMessageRequest): Promise<DirectMessageDelivery>;
