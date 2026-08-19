@@ -21,7 +21,7 @@ import { type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
 import { pollOptional, pollUntil, sleep } from "./poll.js";
 import type { ReplyJudge, Rubric } from "./judge.js";
-import { isLiveTaintLine, taintContextLine } from "./taint-context-line.js";
+import { isLiveTaintLine, liveTaintGateDecision, taintContextLine } from "./taint-context-line.js";
 import {
   approveButton,
   awaitCard,
@@ -3429,14 +3429,21 @@ export const SCENARIOS: readonly Scenario[] = [
           ctx.log("ARM A: ctx.transcriptRead unavailable — cannot independently confirm a real web_fetch call happened; relying on the reply alone (weaker evidence, logged honestly)");
         }
         const contextLineA = taintContextLine(replyA.text);
-        ctx.gate(
-          isLiveTaintLine(contextLineA) && /tainted:\s*true/i.test(contextLineA),
-          `🔴 ARM A (hard): the relayed context line reads \`tainted: true\` as a LIVE measurement (no "supplied by the caller" label) — the REAL web_fetch call, inside the same turn as the simulation, marked the turn as having ingested external content, not a model-authored simulation argument (OPE-662). This is the OPE-439 join, proven live rather than asserted with a hand-built descriptor. Reply: "${replyA.text.replace(/\s+/g, " ").trim().slice(0, 300)}"`,
-        );
-        ctx.gate(
-          isLiveTaintLine(contextLineA) && /\bweb\b/i.test(contextLineA),
-          `🔴 ARM A (hard): the relayed line names "web" as the taint kind on a LIVE measurement — the disclosure traces to the fetch route specifically, not just some taint somewhere, and not a model-supplied simulation whose own "(this turn: …)" aside happens to also say web (OPE-662). Reply: "${replyA.text.replace(/\s+/g, " ").trim().slice(0, 300)}"`,
-        );
+        const decisionA = liveTaintGateDecision(contextLineA);
+        if (!decisionA.hard) {
+          ctx.log(
+            `ARM A: the relayed context line is NOT a live measurement — "${contextLineA || "(no context: line found in the reply)"}". LOGGED, not gated (OPE-789): the worker supplied its own \`tainted\` argument (or the reply carried no parseable line), which is a model-instruction-following miss, not a taint-plane defect — see this arm's header. Reply: "${replyA.text.replace(/\s+/g, " ").trim().slice(0, 300)}"`,
+          );
+        } else {
+          ctx.gate(
+            /tainted:\s*true/i.test(decisionA.line),
+            `🔴 ARM A (hard): the relayed context line IS a live measurement (no "supplied by the caller" label) but reads \`tainted: false\` — the REAL web_fetch call, inside the same turn as the read, did NOT mark the turn as having ingested external content. This stays a hard gate (OPE-789): a live line that says the wrong thing is a genuine taint-plane defect, not a model habit. Reply: "${replyA.text.replace(/\s+/g, " ").trim().slice(0, 300)}"`,
+          );
+          ctx.gate(
+            /\bweb\b/i.test(decisionA.line),
+            `🔴 ARM A (hard): the relayed line is a live measurement but does not name "web" as the taint kind — the disclosure did not trace to the fetch route specifically. This stays a hard gate (OPE-789): a live line that names the wrong route is a genuine taint-plane defect. Reply: "${replyA.text.replace(/\s+/g, " ").trim().slice(0, 300)}"`,
+          );
+        }
 
         const refN = factToken("taintclean");
         const sinceN = new Date(Date.now() - 5_000).toISOString();

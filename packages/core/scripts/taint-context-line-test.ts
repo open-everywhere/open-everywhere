@@ -1,4 +1,4 @@
-const { taintContextLine, isLiveTaintLine } = await import("./e2e/taint-context-line.js");
+const { taintContextLine, isLiveTaintLine, liveTaintGateDecision } = await import("./e2e/taint-context-line.js");
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -84,4 +84,43 @@ const suppliedFalse = "context: unattended: false · tainted: false — supplied
   ok(oldArmDGate(liveLinearTainted) === false, "ANTI-VACUITY (ARM D control): the OLD gate also caught a genuine linear regression — the defect was specific to the supplied shape, not a blanket vacuity");
 }
 
-console.log(`✓ taint-context-line: ${passed} assertions — isLiveTaintLine discriminates a live explain_permission read from a model-supplied simulation, and the old bare-regex gates are shown forgeable where the new ones refuse`);
+{
+  ok(
+    liveTaintGateDecision(taintContextLine(suppliedTrueWithWebAside)).hard === false,
+    "OPE-789: a model-composed simulation (worker supplied `tainted`) dispatches SOFT — logged, not gated, even when its own aside also says web",
+  );
+  ok(
+    liveTaintGateDecision(taintContextLine(suppliedFalse)).hard === false,
+    "OPE-789: a supplied tainted:false line also dispatches SOFT",
+  );
+  ok(liveTaintGateDecision("").hard === false, "OPE-789: no context line at all dispatches SOFT — never a false hard-pass");
+
+  const decisionLive = liveTaintGateDecision(taintContextLine(liveWebTainted));
+  ok(decisionLive.hard === true, "OPE-789: a genuine live tainted:true(web) measurement dispatches HARD");
+  ok(
+    decisionLive.hard && /tainted:\s*true/i.test(decisionLive.line) && /\bweb\b/i.test(decisionLive.line),
+    "OPE-789: on that HARD dispatch, both ARM A assertions (tainted:true, names web) evaluate TRUE — a correct live run passes",
+  );
+
+  const decisionLiveClean = liveTaintGateDecision(taintContextLine(liveClean));
+  ok(
+    decisionLiveClean.hard === true,
+    "OPE-789 NEGATIVE CONTROL: a genuine live tainted:false measurement still dispatches HARD (plane failure is never demoted to soft)",
+  );
+  ok(
+    decisionLiveClean.hard && !/tainted:\s*true/i.test(decisionLiveClean.line),
+    "OPE-789 NEGATIVE CONTROL: ARM A's tainted:true assertion evaluates FALSE on that live line — the ctx.gate call would still throw",
+  );
+
+  const decisionLiveLinear = liveTaintGateDecision(taintContextLine(liveLinearTainted));
+  ok(
+    decisionLiveLinear.hard === true,
+    "OPE-789 NEGATIVE CONTROL: a genuine live linear-tainted line (wrong route for ARM A) still dispatches HARD",
+  );
+  ok(
+    decisionLiveLinear.hard && !/\bweb\b/i.test(decisionLiveLinear.line),
+    "OPE-789 NEGATIVE CONTROL: ARM A's \"names web\" assertion evaluates FALSE on that live line — the ctx.gate call would still throw",
+  );
+}
+
+console.log(`✓ taint-context-line: ${passed} assertions — isLiveTaintLine discriminates a live explain_permission read from a model-supplied simulation, the old bare-regex gates are shown forgeable where the new ones refuse, and OPE-789's liveTaintGateDecision demotes only the non-live path while a genuine live plane failure still dispatches HARD`);
