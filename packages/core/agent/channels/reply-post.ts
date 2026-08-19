@@ -8,6 +8,7 @@ import { withReplierPrefix, type ReplierLabel } from "./turn-delivery.js";
 import { recordOwnPost } from "./own-post-ledger.js";
 import { resolvePartition } from "../memory/partition.js";
 import type { EditLocus } from "./reply-edit.js";
+import { platformFailureClass, platformFailureStatus, type PlatformFailureClass } from "./platform-failure.js";
 import { recordPostTail } from "./session-tail-record.js";
 
 export type { ReplierLabel };
@@ -86,6 +87,40 @@ export async function auditReplyPost(audit: ReplyAudit | undefined, id: string, 
 }
 
 const REFUSED_WAKE_MAX = 200;
+
+export const POST_PLATFORM_ERROR_REASON = "platform-error";
+
+export async function auditReplyPostFailed(
+  audit: ReplyAudit | undefined,
+  platform: string,
+  failure: PlatformFailureClass,
+  status?: number,
+): Promise<void> {
+  if (!audit) return;
+  await appendAudit({
+    org: audit.org,
+    platform: audit.platform,
+    workspace: audit.workspace,
+    surface: audit.surface,
+    principalId: audit.principalId,
+    action: "reply.post.failed",
+    detail: {
+      reason: POST_PLATFORM_ERROR_REASON,
+      platform,
+      failure,
+      route: audit.route,
+      ...(status !== undefined ? { status } : {}),
+      ...(audit.wakeId ? { wakeId: audit.wakeId.slice(0, REFUSED_WAKE_MAX) } : {}),
+      ...(audit.sessionId ? { sessionId: audit.sessionId } : {}),
+    },
+  }).catch(() => undefined);
+}
+
+export async function notePostFailure(audit: ReplyAudit | undefined, err: unknown, platform: string): Promise<void> {
+  await auditReplyPostFailed(audit, platform, platformFailureClass(err), platformFailureStatus(err));
+}
+
+export const releasePostKeyOnFailure = (err: unknown): boolean => platformFailureClass(err) === "definitive";
 
 export async function auditReplyRefused(audit: ReplyAudit | undefined, reason: string): Promise<void> {
   if (!audit) return;
@@ -170,11 +205,18 @@ export async function postReply(target: ReplyTarget, text: string, audit?: Reply
     org: audit?.org,
     key,
     run: async () => {
-      const realId = await dispatchReply(target, body, nativeReplier);
+      let realId: string;
+      try {
+        realId = await dispatchReply(target, body, nativeReplier);
+      } catch (err) {
+        await notePostFailure(audit, err, target.platform);
+        throw err;
+      }
       await auditReplyPost(audit, realId, target.platform, body.length);
       await recordLandedPost({ org: audit?.org, editLocus: replyEditLocus(target), messageId: realId, body, platform: target.platform });
       return realId;
     },
+    releaseKeyOnFailure: releasePostKeyOnFailure,
     skipped: () => REPLY_DEDUPE_SKIPPED_ID,
   });
   return id ?? REPLY_DEDUPE_SKIPPED_ID;
@@ -212,10 +254,15 @@ export async function postTerminalProse(target: ReplyTarget, text: string, audit
   const body = replier && !arm?.displayNameCapable ? withReplierPrefix(text, replier) : text;
   const chunks = arm?.splitText?.(body) ?? [body];
   let firstId: string | undefined;
-  for (const chunk of chunks) {
-    if (!chunk.trim()) continue;
-    const id = await dispatchReply(target, chunk, nativeReplier);
-    firstId ??= id;
+  try {
+    for (const chunk of chunks) {
+      if (!chunk.trim()) continue;
+      const id = await dispatchReply(target, chunk, nativeReplier);
+      firstId ??= id;
+    }
+  } catch (err) {
+    await notePostFailure(audit, err, target.platform);
+    throw err;
   }
   if (firstId === undefined) return;
   await auditReplyPost(audit, firstId, target.platform, body.length);

@@ -35,7 +35,10 @@ function makeFakeStore() {
     rows.set(mapKey, at);
     return true;
   };
-  return { now, advance, markEventSeen };
+  const forget = async (org: string, key: string): Promise<void> => {
+    rows.delete(`${org}\u0000${key}`);
+  };
+  return { now, advance, markEventSeen, forget };
 }
 
 const K = (payload: string, over: Partial<{ action: string; channel: string; threadTs: string; stableId: string }> = {}) =>
@@ -119,5 +122,92 @@ const K = (payload: string, over: Partial<{ action: string; channel: string; thr
   ok(posts === 2, "live: the same key in another org is a fresh sighting (org-partitioned)");
 }
 
+{
+  const boom = async (): Promise<void> => {
+    throw Object.assign(new Error("the platform refused"), { applied: false });
+  };
+
+  {
+    const store = makeFakeStore();
+    const key = K("hold");
+    let posts = 0;
+    await postOnce({ org: "acme", key, now: store.now, markEventSeen: store.markEventSeen, run: boom }).catch(() => undefined);
+    await postOnce({ org: "acme", key, now: store.now, markEventSeen: store.markEventSeen, run: async () => void posts++ });
+    ok(posts === 0, "6a. WITHOUT a release predicate a failed post KEEPS its claim — the retry is suppressed (the old behaviour)");
+  }
+
+  {
+    const store = makeFakeStore();
+    const key = K("release");
+    let posts = 0;
+    let forgot: string | undefined;
+    await postOnce({
+      org: "acme",
+      key,
+      now: store.now,
+      markEventSeen: store.markEventSeen,
+      forgetEventSeen: async (_org, k) => {
+        forgot = k;
+        await store.forget("acme", k);
+      },
+      releaseKeyOnFailure: () => true,
+      run: boom,
+    }).catch(() => undefined);
+    ok(forgot === key, "6b. the release names the SAME key the claim was taken on");
+    await postOnce({ org: "acme", key, now: store.now, markEventSeen: store.markEventSeen, run: async () => void posts++ });
+    ok(posts === 1, "6b. …so the IDENTICAL retry really posts — the definitive failure is not silently swallowed");
+  }
+
+  {
+    const store = makeFakeStore();
+    const key = K("ambiguous");
+    let posts = 0;
+    let released = false;
+    await postOnce({
+      org: "acme",
+      key,
+      now: store.now,
+      markEventSeen: store.markEventSeen,
+      forgetEventSeen: async () => void (released = true),
+      releaseKeyOnFailure: () => false,
+      run: boom,
+    }).catch(() => undefined);
+    ok(!released, "6c. a predicate answering false releases NOTHING");
+    await postOnce({ org: "acme", key, now: store.now, markEventSeen: store.markEventSeen, run: async () => void posts++ });
+    ok(posts === 0, "6c. …so the identical retry stays suppressed — an ambiguous failure must not double-post");
+  }
+
+  {
+    const store = makeFakeStore();
+    const key = K("rethrow");
+    let seen: string | undefined;
+    await postOnce({
+      org: "acme",
+      key,
+      now: store.now,
+      markEventSeen: store.markEventSeen,
+      releaseKeyOnFailure: () => {
+        throw new Error("predicate blew up");
+      },
+      run: boom,
+    }).catch((e: unknown) => {
+      seen = String((e as Error).message);
+    });
+    ok(seen === "the platform refused", "6d. the ORIGINAL error re-throws — the release path never swallows or replaces it");
+  }
+
+  {
+    let posts = 0;
+    const key = outboundKey({ surface: "slack", channel: "C9", action: "release-live", payload: "integration" });
+    await postOnce({ org: "acme", key, releaseKeyOnFailure: () => true, run: boom }).catch(() => undefined);
+    await postOnce({ org: "acme", key, run: async () => void posts++ });
+    ok(posts === 1, "6e. live: the real sqlite store gives the key back, so the retry posts inside the TTL");
+    await postOnce({ org: "acme", key, run: async () => void posts++ });
+    ok(posts === 1, "6e. live NEGATIVE CONTROL: with no release the next identical send is deduped as before");
+  }
+}
+
 rmSync(dir, { recursive: true, force: true });
-console.log(`✓ post-once — ${passed} assertions (exactly-once replay, no false dedup, fail-open, short-TTL repost, key namespacing, live sqlite wiring)`);
+console.log(
+  `✓ post-once — ${passed} assertions (exactly-once replay, no false dedup, fail-open, short-TTL repost, key namespacing, failed-post claim release, live sqlite wiring)`,
+);

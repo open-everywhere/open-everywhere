@@ -2,7 +2,7 @@ import { callSlackApi } from "eve/channels/slack";
 import { registerSlackBridge, bridgeBotDisplayName, slackBridge, type SlackBridge } from "../agent/channels/slack-bridge.js";
 import { registerBotDisplayName } from "../agent/identity/bot-display-name.js";
 import { registerPostArm } from "../agent/channels/post-arms.js";
-import { markEditNotApplied } from "../agent/channels/reply-edit.js";
+import { markNotApplied } from "../agent/channels/platform-failure.js";
 import { registerIdentityMapper } from "../agent/identity/binding.js";
 import { registerCapabilityManifest } from "../agent/identity/capabilities.js";
 import { registerWakeOriginCodec } from "../agent/channels/wake-origin-codec.js";
@@ -37,7 +37,7 @@ export async function testSlackReadCall(
     readonly error?: string;
     readonly [key: string]: unknown;
   };
-  if (!json.ok) throw new Error(`Slack ${operation} failed: ${json.error ?? "unknown error"}`);
+  if (!json.ok) throw markNotApplied(new Error(`Slack ${operation} failed: ${json.error ?? "unknown error"}`));
   return json;
 }
 
@@ -96,7 +96,8 @@ export function registerSlackFixturePostArm(): void {
     const res = bridge ? await bridge.form("chat.postMessage", body.toString()) : undefined;
     const ts = typeof res?.ts === "string" ? res.ts : undefined;
     if (res?.ok !== true || !ts) {
-      throw new Error(`${label} couldn't post to Slack — ${(res?.error as string) ?? "no ts returned (check the bot token)"}`);
+      const err = new Error(`${label} couldn't post to Slack — ${(res?.error as string) ?? "no ts returned (check the bot token)"}`);
+      throw res?.ok === false ? markNotApplied(err) : err;
     }
     return ts;
   };
@@ -127,7 +128,7 @@ export function registerSlackFixturePostArm(): void {
         ? await bridge.form("chat.update", new URLSearchParams({ channel: locus.channelId, ts: messageId, text }).toString())
         : undefined;
       if (res?.ok !== true) {
-        throw markEditNotApplied(new Error(`edit_reply couldn't update the Slack message — ${(res?.error as string) ?? "chat.update returned no ok"}`));
+        throw markNotApplied(new Error(`edit_reply couldn't update the Slack message — ${(res?.error as string) ?? "chat.update returned no ok"}`));
       }
     },
   });

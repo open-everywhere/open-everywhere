@@ -37,7 +37,11 @@ export interface PostOnceOptions<T> {
   readonly now?: () => number;
   readonly ttlMs?: number;
   readonly markEventSeen?: MarkEventSeen;
+  readonly releaseKeyOnFailure?: (err: unknown) => boolean;
+  readonly forgetEventSeen?: ForgetEventSeen;
 }
+
+export type ForgetEventSeen = (org: string, key: string) => Promise<void>;
 
 let warnedStore = false;
 
@@ -66,5 +70,20 @@ export async function postOnce<T>(opts: PostOnceOptions<T>): Promise<T | undefin
   if (!firstSighting) {
     return opts.skipped ? opts.skipped() : undefined;
   }
-  return await opts.run();
+  if (!opts.releaseKeyOnFailure) return await opts.run();
+  try {
+    return await opts.run();
+  } catch (err) {
+    let release = false;
+    try {
+      release = opts.releaseKeyOnFailure(err) === true;
+    } catch {
+      release = false;
+    }
+    if (release) {
+      const forget: ForgetEventSeen = opts.forgetEventSeen ?? ((org, key) => getOperationalStore().forgetEventSeen(org, key));
+      await forget(opts.org, opts.key).catch(() => undefined);
+    }
+    throw err;
+  }
 }

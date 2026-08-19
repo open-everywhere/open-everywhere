@@ -1596,6 +1596,10 @@ export const sqliteOperationalStore: OperationalStore = {
     return row !== undefined;
   },
 
+  async forgetEventSeen(org, key) {
+    getDb().prepare("DELETE FROM event_dedupe WHERE org_id = ? AND key = ?").run(org, key);
+  },
+
   async captureDelivery(org, source, documentJson, at, captureUntil, maxRows) {
     const handle = getDb();
     const atMs = Date.parse(at);

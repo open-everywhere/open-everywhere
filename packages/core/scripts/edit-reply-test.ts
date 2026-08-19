@@ -353,15 +353,29 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
 }
 
 {
-  const { editFailureClass, markEditNotApplied } = await import("../agent/channels/reply-edit.js");
-  ok(editFailureClass(markEditNotApplied(new Error("slack said ok:false"))) === "definitive", "§14: an arm that says `applied:false` is DEFINITIVE");
-  ok(editFailureClass(Object.assign(new Error("discord 404"), { status: 404 })) === "definitive", "§14: a 404 is DEFINITIVE — the platform read the request and refused it");
-  ok(editFailureClass(Object.assign(new Error("discord 403"), { status: 403 })) === "definitive", "§14: so is a 403");
-  ok(editFailureClass(Object.assign(new Error("discord 500"), { status: 500 })) === "ambiguous", "§14: a 5xx is AMBIGUOUS — the platform may have applied it and failed afterwards");
-  ok(editFailureClass(Object.assign(new Error("rate limited"), { status: 429 })) === "ambiguous", "§14: 429 is AMBIGUOUS — it says nothing about an earlier attempt");
-  ok(editFailureClass(Object.assign(new Error("timeout"), { status: 408 })) === "ambiguous", "§14: 408 is AMBIGUOUS for the same reason");
-  ok(editFailureClass(new Error("the socket closed")) === "ambiguous", "§14: an error with NEITHER signal fails CLOSED — an unknown cannot prove the edit failed");
-  ok(editFailureClass(undefined) === "ambiguous", "§14: and so does a non-error throw, without throwing here");
+  const { platformFailureClass, markNotApplied } = await import("../agent/channels/platform-failure.js");
+  ok(platformFailureClass(markNotApplied(new Error("slack said ok:false"))) === "definitive", "§14: an arm that says `applied:false` is DEFINITIVE");
+  ok(platformFailureClass(Object.assign(new Error("discord 404"), { status: 404 })) === "definitive", "§14: a 404 is DEFINITIVE — the platform read the request and refused it");
+  ok(platformFailureClass(Object.assign(new Error("discord 403"), { status: 403 })) === "definitive", "§14: so is a 403");
+  ok(platformFailureClass(Object.assign(new Error("discord 500"), { status: 500 })) === "ambiguous", "§14: a 5xx is AMBIGUOUS — the platform may have applied it and failed afterwards");
+  ok(platformFailureClass(Object.assign(new Error("rate limited"), { status: 429 })) === "ambiguous", "§14: 429 is AMBIGUOUS — it says nothing about an earlier attempt");
+  ok(platformFailureClass(Object.assign(new Error("timeout"), { status: 408 })) === "ambiguous", "§14: 408 is AMBIGUOUS for the same reason");
+  ok(platformFailureClass(new Error("the socket closed")) === "ambiguous", "§14: an error with NEITHER signal fails CLOSED — an unknown cannot prove the edit failed");
+  ok(platformFailureClass(undefined) === "ambiguous", "§14: and so does a non-error throw, without throwing here");
+
+  const { carryFailureSignals } = await import("../agent/channels/platform-failure.js");
+  const rewrapped = carryFailureSignals(markNotApplied(new Error("slack said ok:false")), new Error("react failed — …"));
+  ok(platformFailureClass(rewrapped) === "definitive", "§14/CARRY: `applied:false` survives a re-wrap");
+  ok(platformFailureClass(carryFailureSignals(Object.assign(new Error("404"), { status: 404 }), new Error("wrapped"))) === "definitive", "§14/CARRY: so does the status");
+  ok((carryFailureSignals(Object.assign(new Error("404"), { status: 404 }), new Error("wrapped")) as { status?: number }).status === 404, "§14/CARRY: and the NUMBER itself travels, for the audit row");
+  ok(
+    platformFailureClass(carryFailureSignals(new Error("the socket closed"), new Error("wrapped"))) === "ambiguous",
+    "§14/CARRY: NEGATIVE CONTROL — a wrap of an unsignalled error stays AMBIGUOUS; the carry invents nothing",
+  );
+  ok(
+    platformFailureClass(carryFailureSignals(undefined, new Error("wrapped"))) === "ambiguous",
+    "§14/CARRY: and a non-error source does not throw here either",
+  );
 }
 
 rmSync(dir, { recursive: true, force: true });

@@ -7,11 +7,11 @@ import {
   editPostedMessage,
   auditReplyEditRefused,
   editRefusalMessage,
-  editFailureClass,
   ambiguousEditNote,
   EDIT_NO_ARM_REFUSAL_REASON,
   type EditLocus,
 } from "../channels/reply-edit.js";
+import { platformFailureClass } from "../channels/platform-failure.js";
 import type { ReplyAudit } from "../channels/reply-post.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
 import { withPendingWorkFrame } from "../channels/turn-delivery.js";
@@ -37,7 +37,7 @@ async function editOrReportAmbiguous(
   try {
     await editPostedMessage(locus, messageId, text, audit);
   } catch (err) {
-    if (editFailureClass(err) !== "ambiguous") throw err;
+    if (platformFailureClass(err) !== "ambiguous") throw err;
     return { edited: false, id: messageId, note: ambiguousEditNote(locus.platform) };
   }
   return { edited: true, id: messageId, note: editedNote(locus.platform) };

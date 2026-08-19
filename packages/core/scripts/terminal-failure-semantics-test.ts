@@ -28,6 +28,7 @@ let reactOutcome: Outcome = "ok";
 
 const { registerSlackTestBridge, registerSlackFixtureCodec, registerSlackFixtureMapper, registerSlackFixturePostArm, registerSlackFixtureManifest } =
   await import("./_slack-test-stubs.js");
+const { markNotApplied } = await import("../agent/channels/platform-failure.js");
 
 registerSlackTestBridge({
   channel: { __fixture: "slack" } as never,
@@ -45,7 +46,7 @@ registerSlackTestBridge({
   readCall: (async (method: string, args: Record<string, unknown>) => {
     if (method !== "reactions.add") return { ok: true };
     if (reactOutcome === "ambiguous") throw new Error("the connection dropped before Slack answered");
-    if (reactOutcome === "definitive") throw new Error("slack error: message_not_found");
+    if (reactOutcome === "definitive") throw markNotApplied(new Error("slack error: message_not_found"));
     reacted.push({ channel: String(args["channel"] ?? ""), name: String(args["name"] ?? "") });
     return { ok: true };
   }) as never,
@@ -64,6 +65,9 @@ const { consumeRepliedThisTurn, isWakeDoneThisTurn } = await import("../agent/ch
 const { consumeReactedThisTurn } = await import("../agent/channels/react-signal.js");
 const { peekNoReplyThisTurn } = await import("../agent/channels/no-reply-signal.js");
 const { turnHasTerminalAction, TURN_TERMINAL_TOOLS } = await import("../agent/channels/turn-terminal-actions.js");
+const { REPLY_DEDUPE_SKIPPED_ID } = await import("../agent/channels/reply-post.js");
+const { platformFailureClass } = await import("../agent/channels/platform-failure.js");
+const { readAudit } = await import("../agent/audit/audit.js");
 
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
 type UnifiedWakeOrigin = import("../agent/channels/unified-window.js").UnifiedWakeOrigin;
@@ -320,6 +324,128 @@ for (const outcome of ["definitive", "ambiguous"] as const) {
     const src = readFileSync(new URL(`../agent/tools/${verb}.ts`, import.meta.url), "utf8");
     ok(src.includes("noteTerminalCallGrain("), `§5e: tools/${verb}.ts records the calling grain — the gate is only as complete as its write sites`);
   }
+}
+
+{
+  const inTurn = newSession();
+  const w = await wakeNow();
+  postOutcome = "ok";
+  const roomBefore = posted.length;
+  const first = await inTurn(() => callReply(w, "turn_6a", "one curated answer"));
+  ok(typeof first.id === "string" && first.id !== REPLY_DEDUPE_SKIPPED_ID, "§6a: the post lands");
+  const again = await inTurn(() => callReply(w, "turn_6a_retry", "one curated answer"));
+  ok(again.id === REPLY_DEDUPE_SKIPPED_ID, "§6a: an identical repost after a SUCCESS is still suppressed — the claim is untouched on the happy path");
+  ok(posted.length === roomBefore + 1, "§6a/ROOM: the room got the answer exactly once");
+}
+{
+  const inTurn = newSession();
+  const w = await wakeNow();
+  postOutcome = "definitive";
+  const roomBefore = posted.length;
+  const first = await inTurn(() => callReply(w, "turn_6b", "the answer, verbatim"));
+  postOutcome = "ok";
+  ok(typeof first.error === "string", "§6b: the refused post reaches the model as an error");
+  ok(posted.length === roomBefore, "§6b/ROOM: nothing reached the room");
+  const retry = await inTurn(() => callReply(w, "turn_6b", "the answer, verbatim"));
+  ok(
+    typeof retry.id === "string" && retry.id !== REPLY_DEDUPE_SKIPPED_ID,
+    "§6b: the IDENTICAL retry POSTS — a definitive failure gives the dedupe claim back, so the answer is not silently swallowed",
+  );
+  ok(posted.length === roomBefore + 1, "§6b/ROOM: and the room finally got it");
+}
+{
+  const inTurn = newSession();
+  const w = await wakeNow();
+  postOutcome = "ambiguous";
+  const roomBefore = posted.length;
+  const first = await inTurn(() => callReply(w, "turn_6c", "the unconfirmed answer"));
+  postOutcome = "ok";
+  ok(typeof first.error === "string", "§6c: the unconfirmed post reaches the model as an error");
+  const retry = await inTurn(() => callReply(w, "turn_6c", "the unconfirmed answer"));
+  ok(retry.id === REPLY_DEDUPE_SKIPPED_ID, "§6c: the IDENTICAL retry is SUPPRESSED — an ambiguous failure may already be in the room");
+  ok(posted.length === roomBefore, "§6c/ROOM: the room did not get it twice");
+}
+{
+  const inTurn = newSession();
+  const w = await wakeNow();
+  postOutcome = "ambiguous";
+  const roomBefore = posted.length;
+  const first = await inTurn(() => callReply(w, "turn_6d", "the unconfirmed answer"));
+  postOutcome = "ok";
+  ok(typeof first.error === "string", "§6d: the unconfirmed post reaches the model as an error");
+  const reworded = await inTurn(() => callReply(w, "turn_6d", "the unconfirmed answer, put another way"));
+  ok(typeof reworded.id === "string" && reworded.id !== REPLY_DEDUPE_SKIPPED_ID, "§6d/REMEDY: a re-worded reply still posts — only the identical repost is held");
+  ok(posted.length === roomBefore + 1, "§6d/ROOM: and it reached the room");
+}
+
+{
+  const failedRows = async (wakeId: string): Promise<Record<string, unknown>[]> =>
+    (await readAudit({ org: ORG, action: "reply.post.failed" }))
+      .map((r) => (r.detail ?? {}) as Record<string, unknown>)
+      .filter((d) => d["wakeId"] === wakeId);
+
+  const inTurn = newSession();
+  const wDef = await wakeNow();
+  postOutcome = "definitive";
+  await inTurn(() => callReply(wDef, "turn_7a", "audited definitive"));
+  postOutcome = "ok";
+  const defRows = await failedRows(wDef);
+  ok(defRows.length === 1, "§7a/AUDIT: a failed post leaves EXACTLY ONE `reply.post.failed` row — no silent hole");
+  ok(defRows[0]?.["failure"] === "definitive", "§7a/AUDIT: the row names the CLASS the spine acted on");
+  ok(defRows[0]?.["reason"] === "platform-error", "§7a/AUDIT: and the reason, matching `reply.edit.refused`'s vocabulary");
+
+  const wAmb = await wakeNow();
+  postOutcome = "ambiguous";
+  await inTurn(() => callReply(wAmb, "turn_7b", "audited ambiguous"));
+  postOutcome = "ok";
+  const ambRows = await failedRows(wAmb);
+  ok(ambRows.length === 1, "§7b/AUDIT: the ambiguous failure is recorded too");
+  ok(ambRows[0]?.["failure"] === "ambiguous", "§7b/AUDIT: and it is counted apart from the definitive one");
+
+  const wOk = await wakeNow();
+  postOutcome = "ok";
+  await inTurn(() => callReply(wOk, "turn_7c", "audited success"));
+  ok((await failedRows(wOk)).length === 0, "§7c/AUDIT: a delivered reply writes NO failure row");
+  const postRows = (await readAudit({ org: ORG, action: "reply.post" }))
+    .map((r) => (r.detail ?? {}) as Record<string, unknown>)
+    .filter((d) => d["wakeId"] === wOk);
+  ok(postRows.length === 1, "§7c/AUDIT: the delivered reply's own `reply.post` row is untouched — the failure row never inflates the count the scorers join on");
+  ok((await readAudit({ org: ORG, action: "reply.post" })).every((r) => ((r.detail ?? {}) as Record<string, unknown>)["wakeId"] !== wDef), "§7c/AUDIT: and a FAILED post never wrote one");
+}
+
+{
+  const rawReact = async (turnId: string): Promise<unknown> => {
+    const ctx = slackCtx(turnId);
+    const armed = armOf(reactTool, ctx);
+    if (!armed) return new Error("react did not arm");
+    return armed.execute({ emoji: "eyes" }, ctx).then(() => undefined).catch((e: unknown) => e);
+  };
+  const reactRows = async (): Promise<Record<string, unknown>[]> =>
+    (await readAudit({ org: ORG, action: "slack.react.failed" })).map((r) => (r.detail ?? {}) as Record<string, unknown>);
+
+  const before = (await reactRows()).length;
+  const inTurn = newSession();
+
+  reactOutcome = "definitive";
+  const def = await inTurn(() => rawReact("turn_8a"));
+  reactOutcome = "ok";
+  ok(def instanceof Error && def.message.startsWith("react failed —"), "§8a: the tool's own copy still reaches the model");
+  ok(platformFailureClass(def) === "definitive", "§8a: and the CLASS survives the re-wrap — a refused reaction is definitive at the tool layer");
+
+  reactOutcome = "ambiguous";
+  const amb = await inTurn(() => rawReact("turn_8b"));
+  reactOutcome = "ok";
+  ok(amb instanceof Error, "§8b: an unconfirmed reaction also reaches the model as an error");
+  ok(platformFailureClass(amb) === "ambiguous", "§8b: NEGATIVE CONTROL — it is NOT definitive; a dropped connection proves nothing");
+
+  const rows = (await reactRows()).slice(before);
+  ok(rows.length === 2, "§8/AUDIT: each failed reaction leaves one `slack.react.failed` row");
+  const classes = rows.map((d) => d["failure"]).sort();
+  ok(classes.length === 2 && classes[0] === "ambiguous" && classes[1] === "definitive", "§8/AUDIT: carrying the two classes apart");
+
+  reactOutcome = "ok";
+  await inTurn(() => callReact("turn_8c"));
+  ok((await reactRows()).length === before + 2, "§8/AUDIT: a landed reaction writes NO failure row");
 }
 
 rmSync(dir, { recursive: true, force: true });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { slackReplierParams, postSlackMessage, slackThreadTarget, type SlackPostResult } from "../agent/channels/slack-post-arm.js";
-import type { ReplierLabel } from "@open-everywhere/core/agent/adapter-api.js";
+import { platformFailureClass, type ReplierLabel } from "@open-everywhere/core/agent/adapter-api.js";
 
 let n = 0;
 const eq = (a: unknown, b: unknown, label: string) => {
@@ -108,6 +108,45 @@ function scopeRejectingBridge(): { post: (body: URLSearchParams) => Promise<Slac
     "1720009900.111111",
     "threadTs WINS over replyAnchorTs — an answer inside a thread never re-anchors on the trigger message",
   );
+}
+
+console.log("postSlackMessage — the failure class:");
+{
+  const classOf = async (post: (b: URLSearchParams) => Promise<SlackPostResult>): Promise<string> => {
+    try {
+      await postSlackMessage(new URLSearchParams({ channel: "C1", text: "Done." }), undefined, "reply couldn't post to Slack", post, resolveName);
+      return "no-throw";
+    } catch (err) {
+      return platformFailureClass(err);
+    }
+  };
+
+  eq(await classOf(async () => ({ ok: false, error: "channel_not_found" })), "definitive", "`ok:false` is DEFINITIVE — Slack read the request and refused it, so nothing is in the room");
+
+  eq(await classOf(async () => ({ ok: true })), "ambiguous", "`ok:true` with NO ts is AMBIGUOUS — the message posted, we just cannot name it");
+
+  eq(
+    await classOf(async () => {
+      throw new Error("the connection dropped before Slack answered");
+    }),
+    "ambiguous",
+    "a transport throw is AMBIGUOUS — a request that got no reply may still have applied",
+  );
+
+  eq(
+    await (async () => {
+      try {
+        await postSlackMessage(new URLSearchParams({ channel: "C1", text: "Done." }), worker, "reply couldn't post to Slack", async () => ({ ok: false, error: "channel_not_found" }), resolveName);
+        return "no-throw";
+      } catch (err) {
+        return platformFailureClass(err);
+      }
+    })(),
+    "definitive",
+    "a tier-param post rejected on BOTH attempts is still DEFINITIVE — the bare retry is the answer that counts",
+  );
+
+  eq(await classOf(async () => ({ ok: true, ts: "ts-ok" })), "no-throw", "CONTROL: a post that lands does not throw — the class only exists on a failure");
 }
 
 console.log(`slack-replier-label-test: ${n} assertions passed`);

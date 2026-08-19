@@ -52,6 +52,7 @@ import {
 import { renderWake } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import type { WakeTrust } from "@open-everywhere/core/agent/channels/wake-envelope.js";
 import { discordPostMessage } from "@open-everywhere/provider-discord/agent/channels/discord-post.js";
+import { platformFailureClass } from "@open-everywhere/core/agent/adapter-api.js";
 import { threadParentChannelId, clearDiscordInfoCacheForTest } from "@open-everywhere/provider-discord/agent/channels/discord-channel-info.js";
 import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { domainKeyOf, resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
@@ -359,6 +360,39 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
     ok(bodies[0].message_reference?.message_id === "trigger", "post: only the first part carries the reply anchor");
     ok(bodies.slice(1).every((b) => b.message_reference === undefined), "post: continuation parts carry NO anchor");
     ok(bodies.every((b) => b.content.length <= 2000), "post: every posted part is within Discord's cap");
+
+    const classOf = async (run: () => Promise<unknown>): Promise<string> => {
+      try {
+        await run();
+        return "no-throw";
+      } catch (err) {
+        return platformFailureClass(err);
+      }
+    };
+    const withStatus = (status: number): typeof fetch =>
+      (async () => ({ ok: false, status, json: async () => ({}) })) as unknown as typeof fetch;
+
+    globalThis.fetch = withStatus(404);
+    ok((await classOf(() => discordPostMessage("chan", "hi"))) === "definitive", "post/CLASS: a 404 is DEFINITIVE — Discord read the request and refused it, so nothing is in the channel");
+    globalThis.fetch = withStatus(403);
+    ok((await classOf(() => discordPostMessage("chan", "hi"))) === "definitive", "post/CLASS: so is a 403");
+    globalThis.fetch = withStatus(500);
+    ok((await classOf(() => discordPostMessage("chan", "hi"))) === "ambiguous", "post/CLASS: a 500 is AMBIGUOUS — the message may have posted before Discord failed");
+    globalThis.fetch = withStatus(429);
+    ok((await classOf(() => discordPostMessage("chan", "hi"))) === "ambiguous", "post/CLASS: 429 is AMBIGUOUS — it says nothing about an earlier attempt");
+    globalThis.fetch = (async () => {
+      throw new Error("socket hang up");
+    }) as unknown as typeof fetch;
+    ok((await classOf(() => discordPostMessage("chan", "hi"))) === "ambiguous", "post/CLASS: a transport throw is AMBIGUOUS — a request that got no reply may still have applied");
+    globalThis.fetch = (async () => ({ ok: true, json: async () => ({}) })) as unknown as typeof fetch;
+    ok((await classOf(() => discordPostMessage("chan", "hi"))) === "ambiguous", "post/CLASS: a 2xx with no message id is AMBIGUOUS — the post landed, only its id is missing");
+    ok((await classOf(() => discordPostMessage("chan", "   "))) === "definitive", "post/CLASS: an all-blank body is DEFINITIVE — no POST was ever issued");
+    seq = 0;
+    globalThis.fetch = (async () => {
+      seq += 1;
+      return { ok: true, json: async () => ({ id: `msg-${seq}` }) };
+    }) as unknown as typeof fetch;
+    ok((await classOf(() => discordPostMessage("chan", "hi"))) === "no-throw", "post/CLASS CONTROL: a landed post does not throw — the class only exists on a failure");
   } finally {
     globalThis.fetch = origFetch;
     if (origToken === undefined) delete process.env.DISCORD_BOT_TOKEN;
