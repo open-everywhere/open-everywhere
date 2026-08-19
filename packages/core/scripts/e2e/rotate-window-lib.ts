@@ -1,6 +1,6 @@
 import { unifiedDomainSessionKey } from "../../agent/channels/unified-supervisor.js";
 import { buildTail } from "../../agent/channels/session-tail.js";
-import { formatWindowToken, saltSupervisorGeneration } from "../../agent/channels/window-key.js";
+import { formatWindowToken, parseWindowToken, saltSupervisorGeneration } from "../../agent/channels/window-key.js";
 import { registerOperationalPostgres, getOperationalStore } from "../../agent/operational/provider.js";
 import type { PgClient } from "../../agent/operational/postgres.js";
 import type { OperationalStore, ChannelSessionRow } from "../../agent/operational/store.js";
@@ -32,12 +32,18 @@ export async function rotateUnifiedWindow(
   org: string,
   domain: string,
   windowId?: string,
+  opts: { readonly force?: boolean } = {},
 ): Promise<RotateResult> {
   const window = windowId ?? domain;
   const registryKey = unifiedDomainSessionKey(window);
   const cur = await store.getChannelSession(org, registryKey);
+  if (opts.force !== true) {
+    const check = checkWindowTargetResumable(domain, windowId, cur);
+    if (!check.ok) throw new WindowTargetRefused(check.error);
+  }
   const generation = Date.now();
   const newToken = saltSupervisorGeneration(formatWindowToken({ domain, windowId: window, generation }));
+  assertTokenRoundTrips(newToken, domain, window, generation);
   const newRow = await store.rotateChannelSession(org, registryKey, newToken, new Date().toISOString());
   return {
     registryKey,
@@ -46,6 +52,73 @@ export async function rotateUnifiedWindow(
     mintedGeneration: generation,
     newRow,
   };
+}
+
+export type WindowTargetCheck = { readonly ok: true } | { readonly ok: false; readonly error: string };
+
+export class WindowTargetRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WindowTargetRefused";
+  }
+}
+
+export function checkWindowTargetResumable(domain: string, windowId: string | undefined, existing: ChannelSessionRow | null): WindowTargetCheck {
+  const window = windowId ?? domain;
+  const registryKey = unifiedDomainSessionKey(window);
+  const asked = `domain "${domain}" window "${window}"`;
+
+  if (existing === null) {
+    if (window === domain) return { ok: true };
+    return {
+      ok: false,
+      error:
+        `refusing to rotate ${registryKey}: no channel_session row exists there.\n` +
+        `A solo per-channel window row is minted by the LIVE wake path, so its absence means no wake has ever landed on this window. ` +
+        `There is no accumulated context to isolate from, and the row this would create may be one no wake ever reads — ` +
+        `a domain in "unified" mode keeps ONE degenerate window at ${unifiedDomainSessionKey(domain)}.\n` +
+        `Read the channel's domain and mode in agent/memory/domains.ts, then rotate the window it actually has:\n` +
+        `  rotate-window.ts ${domain}\n` +
+        `Or pass --force to mint ${asked} anyway.`,
+    };
+  }
+
+  const live = parseWindowToken(existing.token);
+  if (!live) {
+    return {
+      ok: false,
+      error:
+        `refusing to rotate ${registryKey}: its live token is not a window token, so this tool cannot check what it addresses.\n` +
+        `  live token: ${existing.token}\n` +
+        `Read the row before rotating it, or pass --force to mint ${asked} anyway.`,
+    };
+  }
+  if (live.domain === domain && live.windowId === window) return { ok: true };
+
+  const rightCall = live.windowId === live.domain ? `rotate-window.ts ${live.domain}` : `rotate-window.ts ${live.domain} --window ${live.windowId}`;
+  return {
+    ok: false,
+    error:
+      `refusing to rotate ${registryKey}: its live token addresses domain "${live.domain}" window "${live.windowId}", but this invocation mints ${asked}.\n` +
+      `  live token: ${existing.token}\n` +
+      `eve keys a session by the exact token, and every wake resumes the token this row holds. ` +
+      `A token the live wake path never composes is a token no wake resumes, so this rotation would report a fresh generation and change nothing.\n` +
+      `Re-run with the addressing the row already carries:\n` +
+      `  ${rightCall}\n` +
+      `Or pass --force to mint ${asked} anyway.`,
+  };
+}
+
+export function assertTokenRoundTrips(token: string, domain: string, windowId: string, generation: number): void {
+  const back = parseWindowToken(token);
+  if (back && back.domain === domain && back.windowId === windowId && back.generation === generation) return;
+  const got = back ? `domain "${back.domain}" window "${back.windowId}" g${back.generation}` : "NOT A WINDOW TOKEN";
+  throw new Error(
+    `rotate-window: the minted token does not round-trip through parseWindowToken — refusing to write a token the live wake path cannot address.\n` +
+      `  minted:     ${token}\n` +
+      `  minted for: domain "${domain}" window "${windowId}" g${generation}\n` +
+      `  parses as:  ${got}`,
+  );
 }
 
 export async function orgHasAnySeat(store: OperationalStore, org: string): Promise<boolean> {
@@ -72,6 +145,7 @@ export interface ParsedDomainTarget {
   readonly kind: "domain";
   readonly org: string;
   readonly allowNewOrg: boolean;
+  readonly force: boolean;
   readonly domain: string;
   readonly windowId?: string;
 }
@@ -79,6 +153,7 @@ export interface ParsedDmTarget {
   readonly kind: "dm";
   readonly org: string;
   readonly allowNewOrg: boolean;
+  readonly force: boolean;
   readonly dmSurfaceKey: string;
 }
 export type ParsedRotateTarget = ParsedDomainTarget | ParsedDmTarget;
@@ -106,6 +181,10 @@ export function parseRotateArgs(argvIn: readonly string[], env: { E2E_ORG?: stri
   const allowNewOrg = newOrgIdx !== -1;
   if (allowNewOrg) argv.splice(newOrgIdx, 1);
 
+  const forceIdx = argv.indexOf("--force");
+  const force = forceIdx !== -1;
+  if (force) argv.splice(forceIdx, 1);
+
   const dmFlag = argv.indexOf("--dm");
   if (dmFlag !== -1) {
     const dmSurfaceKey = argv[dmFlag + 1];
@@ -123,7 +202,7 @@ export function parseRotateArgs(argvIn: readonly string[], env: { E2E_ORG?: stri
     }
     argv.splice(dmFlag, 2);
     const org = explicitOrg ?? argv[0] ?? env.E2E_ORG ?? "default";
-    return { ok: true, target: { kind: "dm", org, allowNewOrg, dmSurfaceKey } };
+    return { ok: true, target: { kind: "dm", org, allowNewOrg, force, dmSurfaceKey } };
   }
 
   const windowFlag = takeValueFlag(argv, "--window");
@@ -132,10 +211,10 @@ export function parseRotateArgs(argvIn: readonly string[], env: { E2E_ORG?: stri
 
   const domain = argv[0];
   if (!domain) {
-    return { ok: false, error: "usage: rotate-window.ts <domain> [org] [--org <id>] [--window <windowId>] [--new-org]" };
+    return { ok: false, error: "usage: rotate-window.ts <domain> [org] [--org <id>] [--window <windowId>] [--new-org] [--force]" };
   }
   const org = explicitOrg ?? argv[1] ?? env.E2E_ORG ?? "default";
-  return { ok: true, target: { kind: "domain", org, allowNewOrg, domain, windowId } };
+  return { ok: true, target: { kind: "domain", org, allowNewOrg, force, domain, windowId } };
 }
 
 export interface MarkRotateResult {
