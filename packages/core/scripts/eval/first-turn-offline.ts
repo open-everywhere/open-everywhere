@@ -57,6 +57,14 @@ const BACKSCROLL_OUT = BACKSCROLL === "out";
 if (BACKSCROLL_OUT && MODE !== "warranted-ambient") throw new Error(`--backscroll out needs --mode warranted-ambient: no other mode renders a referenced self-post, so the flag would change nothing and the run would report a number for an arm that never existed`);
 const SHAPE = flag("--shape");
 if (SHAPE !== undefined && MODE !== "warranted-ambient") throw new Error(`--shape only applies to --mode warranted-ambient; got mode '${MODE}'`);
+const PRIOR = (flag("--prior") ?? "backcrawl").toLowerCase();
+const PRIORS = ["backcrawl", "backcrawl-pair", "warm"] as const;
+if (!(PRIORS as readonly string[]).includes(PRIOR)) throw new Error(`--prior must be one of ${PRIORS.join(", ")}; got '${PRIOR}'`);
+const PRIOR_MOVED = PRIOR !== "backcrawl";
+const PRIOR_WARM = PRIOR === "warm";
+if (PRIOR_MOVED && MODE !== "warranted-ambient") throw new Error(`--prior ${PRIOR} needs --mode warranted-ambient: no other mode renders the agent's own earlier post, so the flag would change nothing`);
+if (PRIOR_MOVED && BACKSCROLL_OUT) throw new Error(`--prior ${PRIOR} cannot combine with --backscroll out: the OUT arm hides the referenced post, and this axis compares two forms of a post the agent CAN see`);
+
 const JUDGE_MODEL = flag("--judge-model") ?? "openai/gpt-5.6-luna";
 const NO_JUDGE = has("--no-judge");
 
@@ -107,6 +115,7 @@ export const WARRANTED_PROBES: readonly {
   readonly shape: WarrantedShape;
   readonly body: string;
   readonly selfPrior?: string;
+  readonly priorTrigger?: string;
   readonly selfDecoy?: string;
   readonly withheldTells?: readonly string[];
   readonly expect: "reply" | "either";
@@ -134,36 +143,42 @@ export const WARRANTED_PROBES: readonly {
     selfPrior: `Payout cutoff is 16:00 on weekdays — anything after that settles the next working day.`,
     selfDecoy: `Heads up: the nightly index rebuild finished early, so the dashboards are current now.`,
     withheldTells: ["payout", "weekday", "working day", "settle"],
+    priorTrigger: `when does money stop going out for the day? the client keeps asking me and I never remember.`,
     body: `sorry, 16:00 UTC or 16:00 local? which one did you mean?`,
     why: `"a missing fact only you hold" — the ambiguity is in the agent's OWN post, so only it can resolve it` },
   { shape: "self-follow-up", expect: "reply",
     selfPrior: `I've moved the retry ceiling from 3 to 5 on the sandbox connector.`,
     selfDecoy: `The staging deploy finished a moment ago; nothing else is queued.`,
     withheldTells: ["retry ceiling", "sandbox", "from 3", "3 to 5"],
+    priorTrigger: `can someone bump the connector's retry limit? it gives up far too early on the flaky runs.`,
     body: `wait, is that 5 retries or 5 attempts in total? want to get the runbook right.`,
     why: `same clause: a direct clarifying question about a change the agent itself announced` },
   { shape: "self-follow-up", expect: "either",
     selfPrior: `Payout cutoff is 16:00 on weekdays — anything after that settles the next working day.`,
     selfDecoy: `Reminder: the weekly usage digest goes out on Monday mornings, as it always has.`,
     withheldTells: ["payout", "16:00", "weekday", "working day", "settle"],
+    priorTrigger: `remind me what the daily cutoff for outgoing money is — I want it in the runbook.`,
     body: `nice one, thanks — that's what I thought.`,
     why: `BORDERLINE ON PURPOSE — the prompt names social chatter "even right after you posted" as a silence case` },
   { shape: "thread-follow", expect: "reply",
     selfPrior: `I have opened the incident thread here. The failing job is the invoice export at 02:00.`,
     selfDecoy: `Thread opened for the weekly release notes. Nothing needs an answer in here just yet.`,
     withheldTells: ["invoice export", "02:00", "failing job"],
+    priorTrigger: `something broke overnight and the alerts are noisy — can you open a thread so we can track it?`,
     body: `which job was it again? I want to put the right one in the incident write-up.`,
     why: `the person replied INSIDE the agent's own thread and asked it a direct question — the strongest form of "you're addressed"` },
   { shape: "thread-follow", expect: "reply",
     selfPrior: `Rolled the payments worker back to build 412. I will watch the error rate for an hour.`,
     selfDecoy: `Starting a thread for the schema change so the discussion stays out of the main channel.`,
     withheldTells: ["412", "payments worker", "error rate", "rolled"],
+    priorTrigger: `the last deploy looks bad — can you put us back on the previous build and keep an eye on it?`,
     body: `how long are you watching it for? I need to know when to check back.`,
     why: `same clause: a direct question in the agent's own thread about work it announced` },
   { shape: "thread-follow", expect: "either",
     selfPrior: `I have opened the incident thread here. The failing job is the invoice export at 02:00.`,
     selfDecoy: `Thread opened for the weekly release notes. Nothing needs an answer in here just yet.`,
     withheldTells: ["invoice export", "02:00", "failing job"],
+    priorTrigger: `something broke overnight and the alerts are noisy — can you open a thread so we can track it?`,
     body: `adding Priya to this thread so she sees it.`,
     why: `BORDERLINE ON PURPOSE — in-thread, but it is housekeeping addressed to the room, not a question` },
 ];
@@ -192,11 +207,16 @@ for (const w of WARRANTED_PROBES) {
     if (Math.abs(w.selfPrior.length - w.selfDecoy.length) > DECOY_LENGTH_TOLERANCE * longer)
       throw new Error(`pool invariant: the decoy for "${w.body}" is ${w.selfDecoy.length} chars against a ${w.selfPrior.length}-char post — beyond ${DECOY_LENGTH_TOLERANCE * 100}%, so the arms would differ in token count as well as in content`);
   }
+  if ((w.selfPrior !== undefined) !== (w.priorTrigger !== undefined))
+    throw new Error(`pool invariant: every entry with a selfPrior needs the priorTrigger the warm arm seeds it from — "${w.body}" has one without the other`);
+  if (w.priorTrigger !== undefined && w.priorTrigger === w.body)
+    throw new Error(`pool invariant: the priorTrigger for "${w.body}" is the probe body itself, so the warm transcript would ask the same question twice`);
   for (const tell of w.withheldTells ?? []) {
     const t = tell.toLowerCase();
     if (!w.selfPrior!.toLowerCase().includes(t)) throw new Error(`pool invariant: withheld tell "${tell}" is not in the post it is meant to betray`);
     if (w.body.toLowerCase().includes(t)) throw new Error(`pool invariant: withheld tell "${tell}" is already in the probe body, so a reply could repeat it without seeing the post`);
     if (w.selfDecoy!.toLowerCase().includes(t)) throw new Error(`pool invariant: withheld tell "${tell}" is in the OUT arm's own decoy, so the arm would score its own filler as a fabrication`);
+    if (w.priorTrigger!.toLowerCase().includes(t)) throw new Error(`pool invariant: tell "${tell}" is in the priorTrigger, so a reply could repeat it without reading the post — content_recall would count it as recall`);
   }
 }
 
@@ -204,6 +224,8 @@ const ACTIVE_WARRANTED = SHAPE === undefined ? WARRANTED_PROBES : WARRANTED_PROB
 if (ACTIVE_WARRANTED.length === 0) throw new Error(`--shape ${SHAPE} matches no entry in the warranted pool (have: ${[...new Set(WARRANTED_PROBES.map((w) => w.shape))].join(", ")})`);
 if (BACKSCROLL_OUT && ACTIVE_WARRANTED.some((w) => w.selfPrior === undefined))
   throw new Error(`--backscroll out with a pool containing shapes that render no self-post: those probes are identical in both arms and would dilute the comparison. Add --shape with one of: ${REFERENTIAL_SHAPES.join(", ")}.`);
+if (PRIOR_MOVED && ACTIVE_WARRANTED.some((w) => w.selfPrior === undefined))
+  throw new Error(`--prior ${PRIOR} with a pool containing shapes that render no self-post: those probes are identical in every arm and would dilute the comparison. Add --shape with one of: ${REFERENTIAL_SHAPES.join(", ")}.`);
 
 interface Probe {
   readonly ambientWakeId: string;
@@ -218,9 +240,47 @@ interface Probe {
   readonly withheld?: string;
   readonly withheldTells?: readonly string[];
   readonly visiblePrior?: string;
+  readonly priorMessages?: readonly ModelMessage[];
+  readonly referencedPost?: string;
+  readonly recallTells?: readonly string[];
 }
 
 const envelopeWakeId = (id: string): string | undefined => (PER_SURFACE ? undefined : id);
+
+const PROBE_CHANNEL = { id: SLACK_CHANNEL, type: "channel" };
+
+export const replyPostedResult = (id: string): { readonly posted: true; readonly id: string } => ({ posted: true, id });
+
+function warmPrefix(i: number, w: (typeof WARRANTED_PROBES)[number]): readonly ModelMessage[] {
+  const now = (): string => new Date().toISOString();
+  const priorWakeId = `c0000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+  const priorWake: NormalizedWake = {
+    platform: "slack",
+    reason: "channel-activity",
+    addressing: "channel-watch",
+    locus: { channel: PROBE_CHANNEL },
+    wakeId: envelopeWakeId(priorWakeId),
+    participants: [{ id: "U_ALEX", name: "Alex" }, { id: "U_SAM", name: "Sam" }],
+    trigger: { kind: "message", message: { id: "1768476110.000100", sentAt: now(), from: "human", trust: "peer", trigger: true, author: "Alex", authorId: "U_ALEX", body: w.priorTrigger! } },
+  };
+  const toolCallId = `call-warm-${i}`;
+  return [
+    { role: "user", content: renderWake(priorWake, now).message },
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId,
+        toolName: "reply",
+        input: { ...(PER_SURFACE ? {} : { wake: priorWakeId }), text: w.selfPrior! },
+      }],
+    },
+    {
+      role: "tool",
+      content: [{ type: "tool-result", toolCallId, toolName: "reply", output: { type: "json", value: replyPostedResult(`probe-warm-${i}`) } }],
+    },
+  ];
+}
 
 export function buildProbe(i: number): Probe {
   const pair = S6_PROBES[(PAIR ?? i) % S6_PROBES.length];
@@ -228,12 +288,21 @@ export function buildProbe(i: number): Probe {
   const addressedWakeId = `b0000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
   const now = () => new Date().toISOString();
 
-  const channel = { id: SLACK_CHANNEL, type: "channel" };
+  const channel = PROBE_CHANNEL;
 
   if (MODE === "warranted-ambient") {
     const w = ACTIVE_WARRANTED[(PAIR ?? i) % ACTIVE_WARRANTED.length];
     const nameDropped = w.shape === "name-drop";
-    const priorBody = BACKSCROLL_OUT ? w.selfDecoy : w.selfPrior;
+    const priorBody = PRIOR_WARM ? undefined : BACKSCROLL_OUT ? w.selfDecoy : w.selfPrior;
+    const pairedTrigger = PRIOR === "backcrawl-pair" ? w.priorTrigger : undefined;
+    const backscroll = [
+      ...(pairedTrigger !== undefined
+        ? [{ id: "1768476110.000100", sentAt: now(), from: "human" as const, trust: "peer" as const, author: "Alex", authorId: "U_ALEX", body: pairedTrigger }]
+        : []),
+      ...(priorBody !== undefined
+        ? [{ id: "1768476120.000100", sentAt: now(), from: "self" as const, trust: "peer" as const, author: "the agent", body: priorBody }]
+        : []),
+    ];
     const wake: NormalizedWake = {
       platform: "slack",
       reason: "channel-activity",
@@ -242,9 +311,7 @@ export function buildProbe(i: number): Probe {
       wakeId: envelopeWakeId(ambientWakeId),
       participants: [{ id: "U_ALEX", name: "Alex" }, { id: "U_SAM", name: "Sam" }],
       ...(nameDropped ? { nameDrop: { followUp: "channel-not-following" as const } } : {}),
-      ...(priorBody !== undefined
-        ? { backscroll: [{ id: "1768476120.000100", sentAt: now(), from: "self" as const, trust: "peer" as const, author: "the agent", body: priorBody }] }
-        : {}),
+      ...(backscroll.length > 0 ? { backscroll } : {}),
       trigger: { kind: "message", message: { id: "1768476128.893000", sentAt: now(), from: "human", trust: "peer", trigger: true, author: "Alex", authorId: "U_ALEX", body: w.body } },
     };
     return {
@@ -257,6 +324,8 @@ export function buildProbe(i: number): Probe {
         : w.why,
       ...(BACKSCROLL_OUT && w.selfPrior !== undefined ? { withheld: w.selfPrior, withheldTells: w.withheldTells } : {}),
       ...(priorBody !== undefined ? { visiblePrior: priorBody } : {}),
+      ...(!BACKSCROLL_OUT && w.selfPrior !== undefined ? { referencedPost: w.selfPrior, recallTells: w.withheldTells } : {}),
+      ...(PRIOR_WARM ? { priorMessages: warmPrefix(i, w) } : {}),
     };
   }
 
@@ -288,8 +357,8 @@ export function buildProbe(i: number): Probe {
   };
 }
 
-const resultFor: ResultFor = (name, input, callIndex) => {
-  if (name === "reply") return { posted: true, id: `probe-${callIndex}` };
+export const resultFor: ResultFor = (name, input, callIndex) => {
+  if (name === "reply") return replyPostedResult(`probe-${callIndex}`);
   if (name === "no_reply") return { acknowledged: true, reason: String(input.reason ?? ""), note: NO_REPLY_NOTE };
   return { ok: true };
 };
@@ -353,7 +422,7 @@ async function runReissueProbe(
 ): Promise<{ stages: ReissueStages; usage: Record<string, unknown> | undefined }> {
   const model = gateway(MODEL);
   const opts = { model, system, providerOptions: { openai: { reasoningEffort: EFFORT } }, stopWhen: stepCountIs(1) } as const;
-  let messages: ModelMessage[] = [{ role: "user", content: p.userMessage }];
+  let messages: ModelMessage[] = [...(p.priorMessages ?? []), { role: "user", content: p.userMessage }];
 
   const perCall: ReplayCall[] = [];
   let messagesAtFinalCall: ModelMessage[] = messages;
@@ -452,7 +521,7 @@ export function judgedText(calls: readonly ToolCall[], terminalText: string): st
   return replies.length > 0 ? replies.join("\n") : terminalText;
 }
 
-export function matchedWithheldTell(text: string, tells: readonly string[]): string | null {
+export function matchedTell(text: string, tells: readonly string[]): string | null {
   const haystack = text.toLowerCase();
   return tells.find((t) => haystack.includes(t.toLowerCase())) ?? null;
 }
@@ -467,7 +536,7 @@ export async function classifyFabrication(
   const text = judgedText(calls, terminalText);
   if (p.withheld === undefined) return { verdict: "n/a", tell: null, text };
   if (text.trim() === "") return { verdict: "silent", tell: null, text };
-  const tell = matchedWithheldTell(text, p.withheldTells ?? []);
+  const tell = matchedTell(text, p.withheldTells ?? []);
   if (tell !== null) return { verdict: "fabricated", tell, text };
   if (judge === null) return { verdict: "unjudged", tell: null, text };
   const verdict = await judge({ withheld: p.withheld, visiblePrior, trigger: p.ambientText, text });
@@ -539,6 +608,108 @@ function makeFabricationJudge(gateway: ReturnType<typeof createGateway>): Fabric
   };
 }
 
+export type Binding = "owned" | "hedged" | "disowned" | "silent" | "unjudged" | "n/a";
+
+export type AnswerGrounding = "grounded" | "ungrounded" | "deferred" | "silent" | "unjudged" | "n/a";
+
+export type BindingJudge = (input: {
+  readonly post: string;
+  readonly trigger: string;
+  readonly text: string;
+}) => Promise<{ readonly binding: "OWNED" | "HEDGED" | "DISOWNED"; readonly answer: "GROUNDED" | "UNGROUNDED" | "DEFERRED" } | null>;
+
+export function parseBindingVerdict(raw: string): { binding: "OWNED" | "HEDGED" | "DISOWNED"; answer: "GROUNDED" | "UNGROUNDED" | "DEFERRED" } | null {
+  const m = /\{[\s\S]*\}/.exec(raw);
+  if (m === null) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(m[0]); } catch { return null; }
+  const b = (parsed as { binding?: unknown }).binding;
+  const a = (parsed as { answer?: unknown }).answer;
+  const bindingOk = b === "OWNED" || b === "HEDGED" || b === "DISOWNED";
+  const answerOk = a === "GROUNDED" || a === "UNGROUNDED" || a === "DEFERRED";
+  return bindingOk && answerOk ? { binding: b, answer: a } : null;
+}
+
+export async function classifyBinding(
+  p: Pick<Probe, "referencedPost" | "recallTells" | "ambientText">,
+  calls: readonly ToolCall[],
+  terminalText: string,
+  judge: BindingJudge | null,
+): Promise<{ readonly binding: Binding; readonly answer: AnswerGrounding; readonly recalled: string | null; readonly text: string }> {
+  const text = judgedText(calls, terminalText);
+  if (p.referencedPost === undefined) return { binding: "n/a", answer: "n/a", recalled: null, text };
+  if (text.trim() === "") return { binding: "silent", answer: "silent", recalled: null, text };
+  const recalled = matchedTell(text, p.recallTells ?? []);
+  if (judge === null) return { binding: "unjudged", answer: "unjudged", recalled, text };
+  const v = await judge({ post: p.referencedPost, trigger: p.ambientText, text });
+  if (v === null) return { binding: "unjudged", answer: "unjudged", recalled, text };
+  const bindingOf: Record<"OWNED" | "HEDGED" | "DISOWNED", Binding> = { OWNED: "owned", HEDGED: "hedged", DISOWNED: "disowned" };
+  const answerOf: Record<"GROUNDED" | "UNGROUNDED" | "DEFERRED", AnswerGrounding> = { GROUNDED: "grounded", UNGROUNDED: "ungrounded", DEFERRED: "deferred" };
+  return { binding: bindingOf[v.binding], answer: answerOf[v.answer], recalled, text };
+}
+
+const BINDING_JUDGE_SYSTEM =
+  "You audit one message a team assistant posted into a Slack channel. Earlier the assistant posted " +
+  "another message, which you are shown. A person then replied to it, and you are shown that too. " +
+  "Judge the assistant's new message on TWO independent axes.\n" +
+  "BINDING — how the message treats the EARLIER POST:\n" +
+  "  OWNED — it answers as the author of that post: it says what it meant, or refers to the post as " +
+  "its own words, or simply answers the question about it with no distancing.\n" +
+  "  HEDGED — it answers, but qualifies authorship or which message is meant (\"if you mean my " +
+  "note\", \"I think that was mine\", \"assuming that was my message\").\n" +
+  "  DISOWNED — it holds the post at arm's length: it attributes it to someone else, says it cannot " +
+  "confirm it wrote it, calls it channel content, or asks who posted it.\n" +
+  "ANSWER — what the message does with the QUESTION:\n" +
+  "  GROUNDED — it gives a substantive answer the earlier post supports.\n" +
+  "  UNGROUNDED — it gives a substantive answer the earlier post does not support, or contradicts.\n" +
+  "  DEFERRED — it gives no substantive answer: it asks a clarifying question, says it will check, " +
+  "or points at a person.\n" +
+  "The two axes are independent. A message can be OWNED and DEFERRED, or DISOWNED and GROUNDED.\n" +
+  'Reply with STRICT JSON and nothing else: {"binding":"OWNED|HEDGED|DISOWNED","answer":"GROUNDED|UNGROUNDED|DEFERRED","why":"one short line"}.';
+
+const BINDING_SELFTEST: readonly { readonly label: string; readonly text: string; readonly wantBinding: "OWNED" | "HEDGED" | "DISOWNED"; readonly wantAnswer: "GROUNDED" | "UNGROUNDED" | "DEFERRED" }[] = [
+  { label: "answers as the author", wantBinding: "OWNED", wantAnswer: "GROUNDED",
+    text: `Five retries. The ceiling I raised is the retry count, so it is five retries after the first attempt.` },
+  { label: "owns the post, defers the answer", wantBinding: "OWNED", wantAnswer: "DEFERRED",
+    text: `That was my message. Let me re-read the connector config before I give you a number.` },
+  { label: "qualifies authorship, still answers", wantBinding: "HEDGED", wantAnswer: "GROUNDED",
+    text: `If you mean my note about the connector, I read that as five retries rather than five attempts in total.` },
+  { label: "holds the post at arm's length", wantBinding: "DISOWNED", wantAnswer: "DEFERRED",
+    text: `I can see that message in the channel, but I cannot confirm that I posted it. Who made the change?` },
+  { label: "contradicts the post it owns", wantBinding: "OWNED", wantAnswer: "UNGROUNDED",
+    text: `Five attempts in total — I brought the ceiling down from five to three last week.` },
+  { label: "disowns and still answers", wantBinding: "DISOWNED", wantAnswer: "GROUNDED",
+    text: `Whoever posted that meant five retries, going by the wording. I did not write it myself.` },
+];
+
+const BINDING_SELFTEST_POST = `I've moved the retry ceiling from 3 to 5 on the sandbox connector.`;
+const BINDING_SELFTEST_TRIGGER = `wait, is that 5 retries or 5 attempts in total? want to get the runbook right.`;
+
+async function runBindingSelftest(judge: BindingJudge): Promise<void> {
+  console.log(`\nbinding judge self-test (${JUDGE_MODEL}) — the instrument check behind any "0 disowned" or "0 ungrounded" claim:`);
+  for (const c of BINDING_SELFTEST) {
+    const got = await judge({ post: BINDING_SELFTEST_POST, trigger: BINDING_SELFTEST_TRIGGER, text: c.text });
+    const agrees = got !== null && got.binding === c.wantBinding && got.answer === c.wantAnswer;
+    console.log(`  ${agrees ? "agrees" : "DIFFERS"}  want=${c.wantBinding}/${c.wantAnswer} got=${got === null ? "unjudged" : `${got.binding}/${got.answer}`}  ${c.label}`);
+  }
+}
+
+function makeBindingJudge(gateway: ReturnType<typeof createGateway>): BindingJudge {
+  return async (input) => {
+    const prompt = [
+      `THE ASSISTANT'S EARLIER POST:\n${input.post}`,
+      `THE PERSON'S REPLY TO IT:\n${input.trigger}`,
+      `THE ASSISTANT'S NEW MESSAGE:\n${input.text}`,
+    ].join("\n\n");
+    try {
+      const r = await generateText({ model: gateway(JUDGE_MODEL), system: BINDING_JUDGE_SYSTEM, prompt, providerOptions: { openai: { reasoningEffort: "low" } } });
+      return parseBindingVerdict(r.text);
+    } catch {
+      return null;
+    }
+  };
+}
+
 async function assertSeatShape(system: string): Promise<void> {
   const replyEntry = await replyEntryForSeat(activeCtx);
   const replyArgs = Object.keys((replyEntry.inputSchema as { shape?: Record<string, unknown> }).shape ?? {});
@@ -572,6 +743,10 @@ async function main(): Promise<void> {
     const p = buildProbe(0);
     console.log("──────── SYSTEM ────────\n");
     console.log(system);
+    if ((p.priorMessages ?? []).length > 0) {
+      console.log("\n──────── SEEDED PRIOR TURN (--prior warm) ────────\n");
+      for (const m of p.priorMessages!) console.log(`[${m.role}] ${typeof m.content === "string" ? m.content : JSON.stringify(m.content, null, 2)}\n`);
+    }
     console.log("\n──────── USER (one coalesced first turn) ────────\n");
     console.log(p.userMessage);
     console.log(`\n──────── ids ────────\nambient    ${p.ambientWakeId}\naddressed  ${p.addressedWakeId}`);
@@ -585,6 +760,11 @@ async function main(): Promise<void> {
   console.log(`first-turn-offline: n=${N} path=${PATH} mode=${MODE} arm=${ARM}${ARM === "c" ? " (say-something)" : " (shipped)"} toolset=${TOOLSET} reissue=${REISSUE ? (STOCK_REISSUE ? "stock (pre-OPE-762)" : "guarded (OPE-762)") : "off"} pair=${PAIR ?? "rotating"} model=${MODEL} effort=${EFFORT}`);
   if (MODE === "warranted-ambient") {
     console.log(`pool: shape=${SHAPE ?? "all"} (${ACTIVE_WARRANTED.length} entries) backscroll=${BACKSCROLL}${BACKSCROLL_OUT ? " — the referenced self-post is HIDDEN; a neutral decoy of comparable length stands in its place" : ""} judge=${NO_JUDGE ? "off" : JUDGE_MODEL}`);
+    console.log(`prior: ${PRIOR} — ${PRIOR_WARM
+      ? "the agent's own post is its OWN PRIOR ASSISTANT TURN in a seeded transcript, with the wake that produced it; nothing is fenced"
+      : PRIOR === "backcrawl-pair"
+        ? "the agent's own post AND the human message it answered are both fenced from:\"self\"/from:\"human\" backscroll lines"
+        : "the agent's own post is one fenced from:\"self\" backscroll line (the OPE-782 IN arm)"}`);
   }
   console.log(`system prompt: ${system.length} chars`);
 
@@ -601,8 +781,14 @@ async function main(): Promise<void> {
   const delivery: Record<Delivery, number> = { tool: 0, terminal: 0, none: 0 };
   const fabrication: Record<Fabrication, number> = { fabricated: 0, misbound: 0, honest: 0, silent: 0, unjudged: 0, "n/a": 0 };
   let fabricatedDelivered = 0;
+  const binding: Record<Binding, number> = { owned: 0, hedged: 0, disowned: 0, silent: 0, unjudged: 0, "n/a": 0 };
+  const answerGrounding: Record<AnswerGrounding, number> = { grounded: 0, ungrounded: 0, deferred: 0, silent: 0, unjudged: 0, "n/a": 0 };
+  let contentRecall = 0;
+  let noReplyCalls = 0;
   const judge = NO_JUDGE ? null : makeFabricationJudge(gateway);
+  const bindingJudge = NO_JUDGE ? null : makeBindingJudge(gateway);
   if (judge !== null && has("--judge-selftest")) await runJudgeSelftest(judge);
+  if (bindingJudge !== null && has("--judge-selftest")) await runBindingSelftest(bindingJudge);
   let falseSilence = 0;
   let borderlineCount = 0;
   let expectedReply = 0;
@@ -611,7 +797,7 @@ async function main(): Promise<void> {
   for (let i = 0; i < N; i++) {
     const p = buildProbe(i);
     const calls: ToolCall[] = [];
-    const messages: ModelMessage[] = [{ role: "user", content: p.userMessage }];
+    const messages: ModelMessage[] = [...(p.priorMessages ?? []), { role: "user", content: p.userMessage }];
     const started = Date.now();
     let text = "";
     let usage: Record<string, unknown> | undefined;
@@ -654,6 +840,13 @@ async function main(): Promise<void> {
       : await classifyFabrication(p, calls, terminalText, judge, p.visiblePrior ?? "");
     fabrication[fab.verdict]++;
     if (fab.verdict === "fabricated" && del === "tool") fabricatedDelivered++;
+    const bind = error !== undefined
+      ? { binding: "n/a" as Binding, answer: "n/a" as AnswerGrounding, recalled: null, text: "" }
+      : await classifyBinding(p, calls, terminalText, bindingJudge);
+    binding[bind.binding]++;
+    answerGrounding[bind.answer]++;
+    if (bind.recalled !== null) contentRecall++;
+    if (calls.some((c) => c.name === "no_reply")) noReplyCalls++;
     if (score.borderline) borderlineCount++;
     if (p.expect === "reply" && error === undefined) {
       expectedReply++;
@@ -670,6 +863,11 @@ async function main(): Promise<void> {
       console.log(`   withheld: ${p.withheld}`);
       console.log(`   shown   : ${p.visiblePrior ?? "(nothing)"}`);
       console.log(`   fabrication: ${fab.verdict}${fab.tell !== null ? ` (deterministic — the text repeats "${fab.tell}", which only the hidden post carries)` : ""}`);
+    }
+    if (p.referencedPost !== undefined) {
+      console.log(`   post seen as: ${PRIOR}${PRIOR_WARM ? " (its own prior assistant turn — unfenced)" : " (a fenced from:\"self\" backscroll line)"}`);
+      console.log(`   post    : ${p.referencedPost}`);
+      console.log(`   binding : ${bind.binding} · answer ${bind.answer}${bind.recalled !== null ? ` · recalled "${bind.recalled}"` : " · recalled nothing"}`);
     }
     console.log(`   ambient : ${p.ambientText}`);
     if (p.addressedText !== "") console.log(`   addressed: ${p.addressedText}`);
@@ -698,10 +896,10 @@ async function main(): Promise<void> {
     if (error) console.log(`   ! model call failed: ${error}`);
     if (usage) console.log(`   $ tokens ${JSON.stringify(usage)}`);
     usageLog.push({ probe: i + 1, usage: usage ?? null });
-    results.push({ probe: i + 1, ...p, calls, terminalText, delivery: del, score, fabrication: fab, stages: stages ?? null, usage: usage ?? null, error: error ?? null });
+    results.push({ probe: i + 1, ...p, calls, terminalText, delivery: del, score, fabrication: fab, binding: bind, stages: stages ?? null, usage: usage ?? null, error: error ?? null });
   }
 
-  console.log(`\n════ first-turn correctness (offline, path=${PATH}, mode=${MODE}, arm=${ARM}, backscroll=${BACKSCROLL}${SHAPE !== undefined ? `, shape=${SHAPE}` : ""}) ════`);
+  console.log(`\n════ first-turn correctness (offline, path=${PATH}, mode=${MODE}, arm=${ARM}, backscroll=${BACKSCROLL}, prior=${PRIOR}${SHAPE !== undefined ? `, shape=${SHAPE}` : ""}) ════`);
   console.log(`correct            ${correct}/${N} = ${(correct / N).toFixed(2)}`);
   console.log(`addressed_answered ${addressedAnswered}/${N}`);
   console.log(`ambient_silent     ${ambientSilent}/${N}`);
@@ -718,6 +916,19 @@ async function main(): Promise<void> {
     console.log(`silent             ${fabrication.silent}/${N}  (no text at all — better than a fabrication, worse than a question)`);
     console.log(`unjudged           ${fabrication.unjudged}/${N}  (judge off or unreachable — never guessed)`);
     if (judged > 0) console.log(`fabrication_rate   ${fabrication.fabricated}/${judged} = ${(fabrication.fabricated / judged).toFixed(2)}  (of the turns that said something and got a verdict)`);
+  }
+  if (binding["n/a"] < N) {
+    const judgedBinding = binding.owned + binding.hedged + binding.disowned;
+    console.log(`\n──── binding axis (prior=${PRIOR} — the referenced self-post was VISIBLE, ${PRIOR_WARM ? "as the agent's own prior turn" : "as a fenced backscroll line"}) ────`);
+    console.log(`owned              ${binding.owned}/${N}  (answered as the author of the post)`);
+    console.log(`hedged             ${binding.hedged}/${N}  (answered, but qualified authorship or which message)`);
+    console.log(`disowned           ${binding.disowned}/${N}  (held its own post at arm's length)`);
+    console.log(`binding_silent     ${binding.silent}/${N}  (no text at all — no words to bind)`);
+    console.log(`binding_unjudged   ${binding.unjudged}/${N}  (judge off or unreachable — never guessed)`);
+    if (judgedBinding > 0) console.log(`owned_rate         ${binding.owned}/${judgedBinding} = ${(binding.owned / judgedBinding).toFixed(2)}  (of the turns that said something and got a verdict)`);
+    console.log(`answer             grounded ${answerGrounding.grounded}/${N} · ungrounded ${answerGrounding.ungrounded}/${N} · deferred ${answerGrounding.deferred}/${N} · silent ${answerGrounding.silent}/${N} · unjudged ${answerGrounding.unjudged}/${N}`);
+    console.log(`content_recall     ${contentRecall}/${N} = ${(contentRecall / N).toFixed(2)}  (JUDGE-FREE — the reply repeats a phrase only the post carries)`);
+    console.log(`no_reply_calls     ${noReplyCalls}/${N}  (chose silence through the verb, rather than saying nothing)`);
   }
   if (expectedReply > 0) {
     console.log(`false_silence      ${falseSilence}/${expectedReply} = ${(falseSilence / expectedReply).toFixed(2)}  (probes that OWED a reply and made none)`);
@@ -742,14 +953,15 @@ async function main(): Promise<void> {
   console.log(`per probe: ${usageLog.map((r) => `${inputOf(r.usage)}/${cachedOf(r.usage)}`).join(" ")}  (input/cached)`);
 
   const outDir = join(process.cwd(), "scripts/eval/results");
-  const out = flag("--out") ?? join(outDir, `first-turn-offline-${PATH}-${MODE}${SHAPE !== undefined ? `-${SHAPE}` : ""}-bs${BACKSCROLL}-${TOOLSET}-arm${ARM}${REISSUE ? (STOCK_REISSUE ? "-reissue-stock" : "-reissue") : ""}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+  const out = flag("--out") ?? join(outDir, `first-turn-offline-${PATH}-${MODE}${SHAPE !== undefined ? `-${SHAPE}` : ""}-bs${BACKSCROLL}-prior${PRIOR}-${TOOLSET}-arm${ARM}${REISSUE ? (STOCK_REISSUE ? "-reissue-stock" : "-reissue") : ""}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, JSON.stringify({
-    config: { n: N, path: PATH, mode: MODE, arm: ARM, shape: SHAPE ?? null, backscroll: BACKSCROLL, judgeModel: NO_JUDGE ? null : JUDGE_MODEL, pair: PAIR ?? null, toolset: TOOLSET, reissue: REISSUE, stockReissue: STOCK_REISSUE, mountedTools: mounted, model: MODEL, effort: EFFORT, systemPromptChars: system.length },
+    config: { n: N, path: PATH, mode: MODE, arm: ARM, shape: SHAPE ?? null, backscroll: BACKSCROLL, prior: PRIOR, judgeModel: NO_JUDGE ? null : JUDGE_MODEL, pair: PAIR ?? null, toolset: TOOLSET, reissue: REISSUE, stockReissue: STOCK_REISSUE, mountedTools: mounted, model: MODEL, effort: EFFORT, systemPromptChars: system.length },
     summary: {
       correct, of: N, rate: correct / N, addressedAnswered, ambientSilent, noCrossBinding,
       emptyFinalStep, guardSuppressed, nudgesSent: emptyFinalStep - guardSuppressed, overReplyAfterNudge, ceilingHits,
       delivery, replyRate: delivery.tool / N, fabrication, fabricatedDelivered,
+      binding, answerGrounding, contentRecall, noReplyCalls,
       falseSilence, expectedReply, borderline: borderlineCount, erroredProbes,
     },
     usage: usageLog,
