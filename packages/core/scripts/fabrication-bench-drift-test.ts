@@ -4,6 +4,8 @@ import {
   BENCH_NOW,
   BENCH_WAKE_ID,
   BENCH_JUDGE_SYSTEM,
+  BENCH_JUDGE_FLOOR,
+  benchJudgeBody,
   benchJudgePrompt,
   benchMatchedTell,
   benchParseVerdict,
@@ -71,6 +73,34 @@ check("bench verdict parser agrees with parseJudgeVerdict, including the rejecti
     "{not json}",
   ]) assert.equal(benchParseVerdict(raw), harness.parseJudgeVerdict(raw), `parse disagreed on ${raw}`);
   assert.equal(benchParseVerdict("no json at all"), null);
+});
+
+check("bench judge floor equals JUDGE_FLOOR, in order and byte-exact", () => {
+  assert.equal(BENCH_JUDGE_FLOOR.length, harness.JUDGE_FLOOR.length, "the floors differ in size — a case was added or removed on one side");
+  assert.ok(BENCH_JUDGE_FLOOR.length >= 3, "a floor of fewer than three cases cannot cover the three verdicts");
+  for (const [i, b] of BENCH_JUDGE_FLOOR.entries()) {
+    const h = harness.JUDGE_FLOOR[i];
+    assert.equal(b.label, h.label, `floor case ${i}: label differs`);
+    assert.equal(b.text, h.text, `floor case ${i}: text differs`);
+    assert.equal(b.want, h.want, `floor case ${i}: expected verdict differs`);
+  }
+});
+
+check("the floor's judge inputs are probe 0's, which are the harness selftest strings", () => {
+  assert.equal(BENCH_PROBES[0].hidden, harness.SELFTEST_HIDDEN);
+  assert.equal(BENCH_PROBES[0].decoy, harness.SELFTEST_VISIBLE);
+  assert.equal(BENCH_PROBES[0].trigger, harness.SELFTEST_TRIGGER);
+});
+
+check("the bench judge body carries the shipped judge prompt and the pinned decoding", () => {
+  const body = benchJudgeBody("openai/gpt-5.6-luna", { hidden: "H", visible: "V", trigger: "T", text: "X" });
+  const messages = body.messages as { role: string; content: string }[];
+  assert.equal(messages[0].content, harness.FABRICATION_JUDGE_SYSTEM);
+  assert.equal(messages[1].content, harness.fabricationJudgePrompt({ withheld: "H", visiblePrior: "V", trigger: "T", text: "X" }));
+  assert.equal(body.temperature, 0);
+  assert.equal(body.top_p, 1);
+  assert.equal(body.reasoning_effort, "low");
+  assert.equal(benchJudgeBody("anthropic/claude-sonnet-5", { hidden: "H", visible: "V", trigger: "T", text: "X" }).reasoning_effort, undefined);
 });
 
 check("bench probes are the self-follow-up entries of WARRANTED_PROBES, in order and byte-exact", () => {

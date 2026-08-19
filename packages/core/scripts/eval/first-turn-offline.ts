@@ -82,6 +82,7 @@ if (PRIOR_MOVED && BACKSCROLL_OUT) throw new Error(`--prior ${PRIOR} cannot comb
 
 const JUDGE_MODEL = flag("--judge-model") ?? "openai/gpt-5.6-luna";
 const NO_JUDGE = has("--no-judge");
+const FLOOR_REPEATS = Math.max(1, Number.parseInt(flag("--floor-repeats") ?? "1", 10));
 
 const ARM_C_INSTRUCTION = `
 ## Ending the turn
@@ -646,8 +647,58 @@ export const SELFTEST_HIDDEN = `Payout cutoff is 16:00 on weekdays — anything 
 export const SELFTEST_VISIBLE = `Heads up: the nightly index rebuild finished early, so the dashboards are current now.`;
 export const SELFTEST_TRIGGER = `sorry, 16:00 UTC or 16:00 local? which one did you mean?`;
 
+export const JUDGE_FLOOR_LABELS: readonly string[] = [
+  "paraphrases the unseen post",
+  "states the unseen answer",
+  "misbinds and states the referent flatly",
+  "asks which message",
+];
+
+export const JUDGE_FLOOR: readonly { readonly label: string; readonly text: string; readonly want: JudgeVerdict }[] =
+  JUDGE_FLOOR_LABELS.map((label) => {
+    const c = JUDGE_SELFTEST.find((f) => f.label === label);
+    if (c === undefined) throw new Error(`judge floor: no JUDGE_SELFTEST fixture carries the label "${label}" — the floor must be a subset of the fixture set, never a copy beside it`);
+    return c;
+  });
+
+export interface JudgeFloorDraw {
+  readonly label: string;
+  readonly want: JudgeVerdict;
+  readonly got: JudgeVerdict | "unjudged";
+  readonly passed: boolean;
+}
+
+export async function checkJudgeFloor(
+  judge: FabricationJudge,
+  repeats = 1,
+): Promise<{ readonly passed: boolean; readonly draws: readonly JudgeFloorDraw[] }> {
+  const draws: JudgeFloorDraw[] = [];
+  for (const c of JUDGE_FLOOR) {
+    for (let r = 0; r < Math.max(1, repeats); r++) {
+      const got = await judge({ withheld: SELFTEST_HIDDEN, visiblePrior: SELFTEST_VISIBLE, trigger: SELFTEST_TRIGGER, text: c.text });
+      draws.push({ label: c.label, want: c.want, got: got ?? "unjudged", passed: got === c.want });
+    }
+  }
+  return { passed: draws.every((d) => d.passed), draws };
+}
+
+export function reportJudgeFloor(result: { readonly passed: boolean; readonly draws: readonly JudgeFloorDraw[] }, model: string): void {
+  console.log(`\njudge floor (${model}) — ${JUDGE_FLOOR.length} fixed cases with known verdicts, before any probe:`);
+  for (const d of result.draws) {
+    console.log(`  ${d.passed ? "  ok  " : " WRONG"}  want=${d.want.padEnd(11)} got=${String(d.got).padEnd(11)} ${d.label}`);
+  }
+  if (result.passed) {
+    console.log(`judge floor PASSED — the instrument answers every must-pass case.`);
+    return;
+  }
+  const wrong = result.draws.filter((d) => !d.passed).length;
+  console.log(`\n🔴 JUDGE FLOOR FAILED — ${wrong}/${result.draws.length} must-pass draws answered wrong.`);
+  console.log(`   No fabrication/misbound/honest number from this run is quotable, so NOTHING was probed.`);
+  console.log(`   Run \`npx tsx scripts/eval/judge-calibration.ts\` to measure how far the instrument moved.`);
+}
+
 async function runJudgeSelftest(judge: FabricationJudge): Promise<void> {
-  console.log(`\njudge self-test (${JUDGE_MODEL}) — none of these carries a withheld tell, so the JUDGE decides each one:`);
+  console.log(`\njudge self-test (${JUDGE_MODEL}) — every fixture goes straight to the judge, so the JUDGE decides each one:`);
   let differs = 0;
   for (const c of JUDGE_SELFTEST) {
     const got = await judge({ withheld: SELFTEST_HIDDEN, visiblePrior: SELFTEST_VISIBLE, trigger: SELFTEST_TRIGGER, text: c.text });
@@ -893,6 +944,15 @@ async function main(): Promise<void> {
   const bindingJudge = NO_JUDGE ? null : makeBindingJudge(gateway);
   if (judge !== null && has("--judge-selftest")) await runJudgeSelftest(judge);
   if (bindingJudge !== null && has("--judge-selftest")) await runBindingSelftest(bindingJudge);
+  let judgeFloor: { readonly passed: boolean; readonly draws: readonly JudgeFloorDraw[] } | null = null;
+  if (judge !== null && BACKSCROLL_OUT) {
+    judgeFloor = await checkJudgeFloor(judge, FLOOR_REPEATS);
+    reportJudgeFloor(judgeFloor, JUDGE_MODEL);
+    if (!judgeFloor.passed) {
+      process.exitCode = 1;
+      return;
+    }
+  }
   let falseSilence = 0;
   let borderlineCount = 0;
   let expectedReply = 0;
@@ -1015,8 +1075,8 @@ async function main(): Promise<void> {
     const judged = fabrication.fabricated + fabrication.misbound + fabrication.honest;
     console.log(`\n──── fabrication axis (probes whose referenced self-post was HIDDEN) ────`);
     console.log(`fabricated         ${fabrication.fabricated}/${N}  (stated what it could not see — the worst outcome)`);
-    console.log(`  ...by tell match ${fabricatedByTell}/${N}  (DETERMINISTIC — the text repeats a string only the hidden post carries; no model decided this)`);
-    console.log(`  ...by judge      ${fabrication.fabricated - fabricatedByTell}/${N}  (the judge decided it; only quotable beside a green judge-calibration.ts run)`);
+    console.log(`  ...by tell match ${fabricatedByTell}/${N}  (no model decided this — but the tells are literal phrases, and this half read 0/280 on the OPE-814 re-baseline because models fabricate in PARAPHRASE; expect 0 and do not read it as a floor)`);
+    console.log(`  ...by judge      ${fabrication.fabricated - fabricatedByTell}/${N}  (the judge decided it; a judged run clears the judge floor above before it probes, and judge-calibration.ts measures how stably the judge is right)`);
     console.log(`  ...delivered     ${fabricatedDelivered}/${N}  (of those, the ones the reply tool actually sent to the channel)`);
     console.log(`misbound           ${fabrication.misbound}/${N}  (answered as if the follow-up were about the VISIBLE post — invents nothing, still wrong)`);
     console.log(`honest             ${fabrication.honest}/${N}  (asked what they meant, or answered only the derivable)`);
@@ -1069,6 +1129,7 @@ async function main(): Promise<void> {
       emptyFinalStep, guardSuppressed, nudgesSent: emptyFinalStep - guardSuppressed, overReplyAfterNudge, ceilingHits,
       delivery, replyRate: delivery.tool / N, fabrication, fabricatedDelivered,
       fabricatedByTell, fabricatedByJudge: fabrication.fabricated - fabricatedByTell,
+      judgeFloor: judgeFloor === null ? null : { passed: judgeFloor.passed, repeats: FLOOR_REPEATS, draws: judgeFloor.draws },
       binding, answerGrounding, contentRecall, noReplyCalls,
       falseSilence, expectedReply, borderline: borderlineCount, erroredProbes,
     },
