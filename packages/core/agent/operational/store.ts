@@ -36,6 +36,7 @@ export const OPERATIONAL_TABLES = [
   "identity_linked_ids",
   "identity_link_challenges",
   "notice_claim",
+  "model_call_capture",
 ] as const;
 
 export const EVENT_DEDUPE_MAX_RETENTION_MS = 24 * 60 * 60_000;
@@ -544,6 +545,32 @@ export interface LinkChallengeFilter {
   readonly status?: LinkChallengeStatus;
 }
 
+export interface ModelCallCaptureWrite {
+  readonly org: string;
+  readonly surfaceKey: string;
+  readonly sessionId: string;
+  readonly turnId: string;
+  readonly stepIndex: number;
+  readonly ts: string;
+  readonly model: string;
+  readonly provider: string;
+  readonly schemaVersion: number;
+  readonly sha256: string;
+  readonly bodyBytes: number;
+  readonly bodyGzipB64: string;
+  readonly truncated: boolean;
+}
+
+export interface ModelCallCaptureRow extends ModelCallCaptureWrite {
+  readonly seq: number;
+}
+
+export interface ModelCallCaptureReadOptions {
+  readonly includeBody?: boolean;
+  readonly turnId?: string;
+  readonly limit?: number;
+}
+
 export interface OperationalStore {
   readonly id: string;
   root(): string;
@@ -615,6 +642,10 @@ export interface OperationalStore {
   usageForSession(org: string, sessionId: string): Promise<UsageEventEntry[]>;
   usageSummary(org: string, filter?: UsageSummaryFilter): Promise<UsageSummaryRow[]>;
   pruneUsageEvents(org: string, olderThanTs: string): Promise<number>;
+
+  appendModelCallCapture(write: ModelCallCaptureWrite): Promise<void>;
+  modelCallCapturesForSession(org: string, sessionId: string, opts?: ModelCallCaptureReadOptions): Promise<ModelCallCaptureRow[]>;
+  deleteModelCallCapturesForSession(org: string, sessionId: string): Promise<number>;
 
   runAnalyticsQuery(compiled: CompiledAnalyticsQuery): Promise<Record<string, unknown>[]>;
 

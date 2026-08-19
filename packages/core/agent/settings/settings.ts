@@ -102,6 +102,10 @@ export interface AgentSettings {
   readonly skills: {
     readonly domainSkillCap: number;
   };
+  readonly soak: {
+    readonly capture: boolean;
+    readonly captureSurfacePrefix: string;
+  };
   readonly stall: {
     readonly repeatThreshold: number;
   };
@@ -507,6 +511,21 @@ export const SETTINGS = {
         "Max runtime-authored domain skills per domain (`create_skill` refuses past this). Per-skill content size is capped separately, in code.",
     } satisfies SettingSpec<number>,
   },
+  soak: {
+    capture: {
+      path: "soak.capture",
+      shipped: false,
+      summary:
+        "Record the COMPOSED request body of every model call on a matching surface (gzipped, with the model id, session, turn/step index and a sha256) into `model_call_capture`, for the soak tests' prefix-replay bench. **Arm it for one soak run and disarm it after.** A capture body holds the whole prompt — rendered member messages and tool output verbatim — so the store is as sensitive as a session transcript: it lives in this deployment's own database, it is served only over a service token (`GET /control/v1/session/:id/model-calls`), and no agent tool reaches it. Retention is an explicit delete-by-session after the harvest, not a TTL. Off (shipped) the recorder does one boolean read per model call and writes nothing.",
+    } satisfies SettingSpec<boolean>,
+    captureSurfacePrefix: {
+      path: "soak.captureSurfacePrefix",
+      shipped: "",
+      summary:
+        "Narrow `soak.capture` to one part of the deployment: a call is recorded only when its surface key starts with this string. Surface keys read `platform/workspace/surface`, so `\"slack/T0123/\"` is one workspace and `\"slack/T0123/C0SOAK\"` is one channel. **Set it whenever you arm capture.** Empty (shipped) means every surface, which records the deployment's whole conversational traffic and is almost never what a soak run wants.",
+      format: (v) => (v.length > 0 ? v : "(every surface)"),
+    } satisfies SettingSpec<string>,
+  },
   spend: {
     usageEventsTtlDays: {
       path: "spend.usageEventsTtlDays",
@@ -807,6 +826,10 @@ export function getSettings(
     },
     skills: {
       domainSkillCap: resolve(SETTINGS.skills.domainSkillCap, o.skills?.domainSkillCap, env),
+    },
+    soak: {
+      capture: resolve(SETTINGS.soak.capture, o.soak?.capture, env),
+      captureSurfacePrefix: resolve(SETTINGS.soak.captureSurfacePrefix, o.soak?.captureSurfacePrefix, env),
     },
     stall: {
       repeatThreshold: resolve(SETTINGS.stall.repeatThreshold, o.stall?.repeatThreshold, env),
