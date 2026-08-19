@@ -15,6 +15,7 @@ function point(ratePerMtok: number): RateBand {
 const STACK_RATES: Readonly<Record<string, ModelRateBand>> = {
   "openai/gpt-5.6-luna": { in: point(0.25), out: point(1.2) },
   "alibaba/qwen3-vl-instruct": { in: point(0.2), out: point(0.88) },
+  "google/gemini-3.7-flash": { in: point(0.75), out: point(3.75) },
   "deepseek/deepseek-v4-flash-0731": {
     in: { minPerMtok: 0.09, maxPerMtok: 0.14 },
     out: { minPerMtok: 0.18, maxPerMtok: 0.28 },
