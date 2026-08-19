@@ -15,6 +15,7 @@ import {
 import type { ReplyAudit } from "../channels/reply-post.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
 import { withPendingWorkFrame } from "../channels/turn-delivery.js";
+import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
 import { pendingDelegationOwing } from "../access/pending-delegation-signal.js";
 import { silentRoutineThisTurn } from "../routines/report.js";
@@ -30,7 +31,9 @@ async function editOrReportAmbiguous(
   messageId: string,
   text: string,
   audit: ReplyAudit,
+  bind: BindableContext,
 ): Promise<{ edited: boolean; id: string; note: string }> {
+  noteTerminalCallGrain(bind);
   try {
     await editPostedMessage(locus, messageId, text, audit);
   } catch (err) {
@@ -89,7 +92,7 @@ export const unifiedEditReplyEntry = defineTool({
     const owingTask = pendingDelegationOwing(turnId, input.wake, addressedWakeThisTurn(turnId));
     const framed = withPendingWorkFrame(input.text, owingTask !== undefined);
 
-    return await editOrReportAmbiguous(locus, input.message_id, framed, replyAuditFor(bind, "tool", input.wake));
+    return await editOrReportAmbiguous(locus, input.message_id, framed, replyAuditFor(bind, "tool", input.wake), bind);
   },
 });
 preRegisterDynamicEntry("edit_reply", "_single", unifiedEditReplyEntry);
@@ -118,7 +121,7 @@ const baseEditReplyEntry = defineTool({
       await auditReplyEditRefused(replyAuditFor(bind, "tool"), EDIT_NO_ARM_REFUSAL_REASON);
       throw new Error(editRefusalMessage(EDIT_NO_ARM_REFUSAL_REASON, target.platform));
     }
-    return await editOrReportAmbiguous(locus, input.message_id, input.text, replyAuditFor(bind, "tool"));
+    return await editOrReportAmbiguous(locus, input.message_id, input.text, replyAuditFor(bind, "tool"), bind);
   },
 });
 preRegisterDynamicEntry("edit_reply", "_base", baseEditReplyEntry);

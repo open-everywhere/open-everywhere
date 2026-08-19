@@ -261,5 +261,66 @@ for (const outcome of ["definitive", "ambiguous"] as const) {
   );
 }
 
+{
+  const wake = { role: "user", content: "do the task" };
+  const call = (name: string) => ({ role: "assistant", content: [{ type: "tool-call", toolCallId: "c1", toolName: name, input: {} }] });
+  const okResult = (name: string) => ({ role: "tool", content: [{ type: "tool-result", toolCallId: "c1", toolName: name, output: { type: "json", value: { posted: true } } }] });
+  const repliedTurn = [wake, call("reply"), okResult("reply")];
+
+  const grainCtx = (turnWake: string, turnId: string, worker: boolean): BindableContext => {
+    const base = ctxFor(turnWake, turnId) as unknown as { session: Record<string, unknown> };
+    if (worker) base.session["parent"] = { sessionId: "parent-session-1" };
+    return base as unknown as BindableContext;
+  };
+
+  {
+    const inTurn = newSession();
+    const w = await wakeNow();
+    postOutcome = "ok";
+    const ctx = grainCtx(w, "turn_5a", false);
+    await inTurn(async () => {
+      const armed = armOf(replyTool, ctx);
+      await armed!.execute({ text: "the answer", wake: w, done: true, force: false }, ctx);
+      ok(turnHasTerminalAction(repliedTurn) === true, "§5a: on a SEAT a confirmed `reply` still suppresses the reissue — OPE-762 is intact");
+    });
+  }
+
+  {
+    const inTurn = newSession();
+    const w = await wakeNow();
+    const ctx = grainCtx(w, "turn_5b", true);
+    await inTurn(async () => {
+      ok(turnHasTerminalAction(repliedTurn) === true, "§5b: before the worker speaks, the scan behaves as it always did — the gate is armed by the CALL, not by the message array");
+      await (noReplyTool as unknown as Armed).execute({ reason: "nothing-to-add" }, ctx);
+      ok(turnHasTerminalAction(repliedTurn) === false, "§5b: after a WORKER calls a terminal verb, the reissue is NOT suppressed — its empty final step is a failure its caller is waiting on");
+    });
+  }
+
+  {
+    const inTurn = newSession();
+    await inTurn(async () => {
+      ok(turnHasTerminalAction(repliedTurn) === true, "§5c: a FRESH session is unaffected by the worker session before it — the record is session-scoped");
+    });
+  }
+
+  {
+    const inTurn = newSession();
+    const ctx = slackCtx("turn_5d") as unknown as { session: Record<string, unknown> };
+    ctx.session["parent"] = { sessionId: "parent-session-2" };
+    reactOutcome = "ok";
+    await inTurn(async () => {
+      const armed = armOf(reactTool, ctx);
+      await armed!.execute({ emoji: "eyes" }, ctx);
+      ok(turnHasTerminalAction(repliedTurn) === false, "§5d: a worker's `react` arms the gate as well — every terminal verb a worker can call must");
+    });
+  }
+
+  const { readFileSync } = await import("node:fs");
+  for (const verb of ["reply", "react", "no_reply", "edit_reply"]) {
+    const src = readFileSync(new URL(`../agent/tools/${verb}.ts`, import.meta.url), "utf8");
+    ok(src.includes("noteTerminalCallGrain("), `§5e: tools/${verb}.ts records the calling grain — the gate is only as complete as its write sites`);
+  }
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ terminal-action failure semantics: ${passed} assertions passed`);

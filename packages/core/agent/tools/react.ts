@@ -5,6 +5,7 @@ import { capabilitiesFor, capabilitiesForPlatform } from "../identity/capabiliti
 import { bridgeSlackReadCall } from "../channels/slack-bridge.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { markReactedThisTurn } from "../channels/react-signal.js";
+import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
 const EMOJI_NAME_PATTERN = /^[a-z0-9_+-]{1,100}$/;
@@ -72,6 +73,7 @@ const reactEntry = defineTool({
             }
           }
           markReactedThisTurn();
+          noteTerminalCallGrain(ctx as BindableContext);
           await auditToolAction(ctx, "slack.react", { emoji: input.emoji, ts, reason: input.reason ?? "ack" });
           return {
             reacted: true,
