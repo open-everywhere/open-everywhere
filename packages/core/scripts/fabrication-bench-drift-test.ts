@@ -16,6 +16,7 @@ import {
   NEUTRAL_SYSTEM,
   MINIMAL_SYSTEM,
   AMBIENT_SYSTEM,
+  AMBIENT_SYSTEM_WITH_FETCH,
 } from "./eval/fabrication-bench.js";
 
 const noTime = (s: string): string => s.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g, "<TIME>");
@@ -171,6 +172,16 @@ check("the ambient arm keeps the epistemics clause and names no tool it does not
     assert.equal(AMBIENT_SYSTEM.includes(absent), false, `the ambient arm names "${absent}", which this bench does not mount`);
   }
   assert.equal(AMBIENT_SYSTEM.includes("no_reply"), true, "the ambient arm lost the silence verb");
+});
+
+check("the recovery ambient arm restores exactly one clause, and it names the tool that IS mounted", () => {
+  assert.notEqual(AMBIENT_SYSTEM_WITH_FETCH, AMBIENT_SYSTEM, "the restore was a no-op — the anchor sentence moved");
+  assert.equal(AMBIENT_SYSTEM_WITH_FETCH.includes("call fetch_channel to read what was said"), true);
+  const normalise = (x: string): string => x.replace("; call fetch_channel to read what was said.", ".");
+  assert.equal(normalise(AMBIENT_SYSTEM_WITH_FETCH), AMBIENT_SYSTEM);
+  for (const absent of ["fetch_thread", "start_thread_session", "list_thread_sessions", "send_message"]) {
+    assert.equal(AMBIENT_SYSTEM_WITH_FETCH.includes(absent), false, `the recovery ambient arm names "${absent}", which is still not mounted`);
+  }
 });
 
 check("BENCH_NOW and BENCH_WAKE_ID are what the envelope actually renders", () => {
