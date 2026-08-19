@@ -12,7 +12,7 @@ import {
 } from "../agent/identity/wake-trust.js";
 import { assertDomainsValid, defineDomain, type Domain } from "../agent/memory/domain.js";
 import type { BindableContext } from "../agent/identity/binding.js";
-import { clusterBackscroll, type NormalizedMessage } from "../agent/channels/backscroll-cluster.js";
+import { fetchedBackscroll, type NormalizedMessage } from "../agent/channels/backscroll-window.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -100,17 +100,17 @@ const msgs: NormalizedMessage[] = [
   { id: "4", ms: 4000, sender: "self", authorId: undefined, text: "d", type: "channel" },
 ] as unknown as NormalizedMessage[];
 
-const plain = clusterBackscroll(msgs, 10_000);
-ok(plain.find((m) => m.id === "1")?.trust === "unauth" && plain.find((m) => m.id === "3")?.trust === "unauth", "clusterBackscroll without a resolver: human authors fail closed to unauth (never peer)");
-ok(plain.find((m) => m.id === "2")?.trust === "relay" && plain.find((m) => m.id === "4")?.trust === "relay", "clusterBackscroll without a resolver: self + foreign-bot machine authors → relay");
+const plain = fetchedBackscroll(msgs);
+ok(plain.find((m) => m.id === "1")?.trust === "unauth" && plain.find((m) => m.id === "3")?.trust === "unauth", "fetchedBackscroll without a resolver: human authors fail closed to unauth (never peer)");
+ok(plain.find((m) => m.id === "2")?.trust === "relay" && plain.find((m) => m.id === "4")?.trust === "relay", "fetchedBackscroll without a resolver: self + foreign-bot machine authors → relay");
 
-const resolved = clusterBackscroll(msgs, 10_000, undefined, backscrollTrustResolver({ surfaceInternal: true, channelKey: "slack/T1/C_ENG", domains: DOMAINS }));
+const resolved = fetchedBackscroll(msgs, undefined, backscrollTrustResolver({ surfaceInternal: true, channelKey: "slack/T1/C_ENG", domains: DOMAINS }));
 ok(resolved.find((m) => m.id === "1")?.trust === "principal", "backscrollTrustResolver: a rostered admin backscroll author resolves principal");
 ok(resolved.find((m) => m.id === "2")?.trust === "relay", "backscrollTrustResolver: a foreign-bot author resolves relay");
 ok(resolved.find((m) => m.id === "3")?.trust === "peer", "backscrollTrustResolver: an identified internal human member resolves peer");
 ok(resolved.find((m) => m.id === "4")?.trust === "relay", "backscrollTrustResolver: the bot's OWN (self) post resolves relay — our own words are the machine floor, never misread as unauth");
 
-const unvouched = clusterBackscroll(msgs, 10_000, undefined, backscrollTrustResolver({ surfaceInternal: false, channelKey: "slack/T1/C_ENG", domains: DOMAINS }));
+const unvouched = fetchedBackscroll(msgs, undefined, backscrollTrustResolver({ surfaceInternal: false, channelKey: "slack/T1/C_ENG", domains: DOMAINS }));
 ok(unvouched.find((m) => m.id === "1")?.trust === "unauth" && unvouched.find((m) => m.id === "3")?.trust === "unauth", "backscrollTrustResolver on an unvouched surface: identified human authors → unauth (unvouched, not peer)");
 ok(unvouched.find((m) => m.id === "2")?.trust === "relay" && unvouched.find((m) => m.id === "4")?.trust === "relay", "backscrollTrustResolver on an unvouched surface: machine authors (bot/self) still relay");
 

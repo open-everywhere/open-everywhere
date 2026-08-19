@@ -294,7 +294,7 @@ const slackEv = parseMessageEvent({
 const baseWakes: Array<{ token: string; window?: unknown }> = [];
 const slackBaseDeps: SupervisorRouteDeps = {
   confirmInternalWithMeta: async () => ({ internal: true, memberCount: 7 }),
-  getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false }),
+  getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false, tail: [] }),
   touchSession: async () => {},
   wake: async (input) => {
     baseWakes.push({ token: input.token, window: input.window });
@@ -335,7 +335,7 @@ const ghWindow = {
   origin: { platform: "github", owner: "acme", repo: "payments-api", issueNumber: 55, installationId: 987 } satisfies UnifiedWakeOrigin,
 };
 const ghDeps: GitHubSupervisorDeps = {
-  getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false }),
+  getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false, tail: [] }),
   wake: async ({ token, auth, message, context, window }) => {
     ok(window !== undefined, "github: the dispatch core threads the window through to the wake dep");
     await divertToUnifiedWindow(captureReceive, {
@@ -391,7 +391,7 @@ const linWindow = {
   origin: { platform: "linear", agentSessionId: "as-lin-77", issueId: "issue-uuid-77", parentId: "comment-uuid-1" } satisfies UnifiedWakeOrigin,
 };
 const linDeps: LinearSupervisorDeps = {
-  getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false }),
+  getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false, tail: [] }),
   wake: async ({ token, auth, message, context, window }) => {
     ok(window !== undefined, "linear: the dispatch core threads the window through to the wake dep");
     await divertToUnifiedWindow(captureReceive, {
@@ -451,7 +451,7 @@ const notWindow = planNotionSingleWindow(true, true, true, { discussionId: "disc
 ok(notWindow !== undefined && notWindow.addressing === "direct-mention", "notion: the REAL plan mints an ADDRESSED window for a mention on a singleWindow VOUCHED page");
 ok(planNotionSingleWindow(true, true, false, { discussionId: "disc-win-1" }) === undefined, "notion: an UN-VOUCHED page plans NO window (fail-closed — never routed to the shared window)");
 const notDeps: NotionSupervisorDeps = {
-  getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false }),
+  getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false, tail: [] }),
   wake: async ({ token, auth, message, context, window }) => {
     ok(window !== undefined, "notion: the dispatch core threads the window through to the wake dep");
     await divertToUnifiedWindow(captureReceive, {
@@ -684,7 +684,7 @@ const teamsWindow = planTeamsSingleWindow(true, true, vouchedFacts, {
 })!;
 ok(teamsWindow !== undefined && teamsWindow.addressing === "direct-mention", "teams: the REAL plan mints an ADDRESSED window for a mention on a singleWindow VOUCHED channel");
 const teamsDeps: TeamsSupervisorDeps = {
-  getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false }),
+  getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false, tail: [] }),
   wake: async ({ token, auth, message, context, window }) => {
     await divertToUnifiedWindow(captureReceive, {
       message,
@@ -1112,7 +1112,7 @@ overrideSettingsForTest({ window: { topology: false } });
       trigger: { id: "c2", authorId: "sam", sentAt: "2026-01-14T02:00:08Z", text: "plain per-team wake", trust: "peer" as const },
     },
     {
-      getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false }),
+      getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false, tail: [] }),
       wake: async ({ message, window }) => {
         offWindow = window;
         offMsg = message;

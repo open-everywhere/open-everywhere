@@ -50,6 +50,9 @@ import {
   type UnifiedWindowWake,
   type EngagementTier,
   type ExternalPolicy,
+  carryTailForward,
+  type WakeMessageInput,
+  recordWakeTail,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 const ROUTE = "/eve/v1/github";
@@ -199,16 +202,18 @@ function liveGitHubSupervisorDeps(send: GitHubSend, ev: GitHubAmbientEvent, to?:
       const existing = await store.getChannelSession(org, grain.registryKey);
       if (!existing) {
         const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, 1, () => githubSupervisorToken(owner, repo, 1)), atIso);
-        return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
+        return { token: row.token, generation: row.generation, freshGeneration: true, tail: [] as readonly WakeMessageInput[] };
       }
       if (shouldRotate(existing, atIso, { runtimeChanged })) {
         const gen = existing.generation + 1;
+        const tail = await carryTailForward(org, grain.registryKey, existing.token);
         const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, gen, () => githubSupervisorToken(owner, repo, gen)), atIso);
-        return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
+        return { token: row.token, generation: row.generation, freshGeneration: true, tail };
       }
-      return { token: existing.token, generation: existing.generation, freshGeneration: existing.firstWakeAt == null, handoffNote: existing.handoffNote };
+      return { token: existing.token, generation: existing.generation, freshGeneration: existing.firstWakeAt == null, tail: [] as readonly WakeMessageInput[] };
     },
     touchSession: (surfaceKey, atIso) => store.touchChannelSession(org, githubGrainFor(surfaceKey).registryKey, atIso),
+    recordWake: (entry, token, surfaceKey) => recordWakeTail(org, githubGrainFor(surfaceKey).registryKey, token, entry),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, window }) {
       if (window && to) {

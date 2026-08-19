@@ -46,9 +46,6 @@ const G_SLACK_SUPERVISOR = `<wake reason="channel-activity" addressing="channel-
     <participant id="U1" name="Rowan Hale" handle="rowan"/>
     <participant id="U2" name="Ada Lovelace"/>
   </participants>
-  <handoff-note from-generation="2">
-    Open asks: the billing migration is mid-flight; Ada owns the schema change.
-  </handoff-note>
   <session start="2026-03-26T01:57:00Z" end="2026-03-26T02:09:00Z" messages="2">
     <message from="human" trust="peer" author="Rowan Hale" author-id="U1" id="10.1" sent-at="2026-03-26T01:57:00Z" type="channel">
       older cluster A
@@ -128,7 +125,7 @@ const G_SLACK_GROUP_DM = `<wake reason="dm" addressing="direct-mention" current-
     { from: "human", author: "Ada Lovelace", authorId: "U2", id: "20.2", sentAt: "2026-03-26T09:04:00Z", trust: "peer", type: "thread", threadRoot: "20.1", sessionId: "s2", body: "a threaded reply" },
   ];
   const participants: readonly WakeParticipant[] = [{ id: "U1", name: "Rowan Hale", handle: "rowan" }, { id: "U2", name: "Ada Lovelace" }];
-  eq(renderWakeMessage(ev, NOW, { trust: "peer", mode: "supervisor", memberCount: 42, backscroll: bs, handoffNote: "Open asks: the billing migration is mid-flight; Ada owns the schema change.", handoffFromGeneration: 2, triggerAuthorName: "Rowan Hale", triggerAuthorHandle: "rowan", participants }), G_SLACK_SUPERVISOR, "slack supervisor (member-count + multi-cluster backscroll + handoff + participants)");
+  eq(renderWakeMessage(ev, NOW, { trust: "peer", mode: "supervisor", memberCount: 42, backscroll: bs, triggerAuthorName: "Rowan Hale", triggerAuthorHandle: "rowan", participants }), G_SLACK_SUPERVISOR, "slack supervisor (member-count + multi-message backscroll + participants)");
 }
 {
   const ev: ParsedMessageEvent = { channelId: "C123", ts: "200.0", teamId: "T1", userId: "U1", channelType: "channel", text: "does Open Everywhere handle this?", isAppMention: false };

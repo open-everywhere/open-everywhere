@@ -57,10 +57,11 @@ import {
   type SetKeyViewResult,
   stampNonMemberChatAuth,
   externalPolicyIsInert,
+  recordWakeTail,
+  dmWindowRegistryKey,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   renderWakeMessage,
-  distillSlackRotationHandoff,
   slackChannelFactsFor,
   slackAuthorIsMember,
   slackClickerIsGuest,
@@ -382,12 +383,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const handleConnectClick = opts.handleConnectClick ?? liveHandleConnectClick;
   const ambientEnabledFor = opts.ambientEnabledFor ?? ((surfaceKey: string) => ambientSupervisorEnabled(surfaceKey, getConfig().loadDomains()));
   const mentionPolicyFor = opts.mentionPolicyFor ?? slackSingleWindowMentionPolicy;
-  const resolveDmSeat =
-    opts.resolveDmSeat ??
-    ((org, dm, atIso) =>
-      liveGetOrCreateDmSeat(org, dm, atIso, {
-        distillHandoff: (scope, outgoing) => distillSlackRotationHandoff(scope, dm.channelId ?? "", outgoing, org),
-      }));
+  const resolveDmSeat = opts.resolveDmSeat ?? ((org, dm, atIso) => liveGetOrCreateDmSeat(org, dm, atIso));
   const touchDmSeatFn = opts.touchDmSeatFn ?? liveTouchDmSeat;
   const dmPartnerTrustFor = opts.dmPartnerTrustFor ?? liveDmPartnerTrust;
   const channelFactsFor = opts.channelFactsFor ?? slackChannelFactsFor;
@@ -491,21 +487,36 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         [{ trust: wakeTrust, refuted: partnerTrust === "external" }],
         { dm: true },
       );
-      const message = renderWakeMessage(ev, () => atIso, { dm: true, trust: wakeTrust, wakeId });
-      const handoff =
-        seat.freshGeneration && seat.handoffNote && seat.handoffNote.length > 0
-          ? [`<handoff-from-previous-session>\n${seat.handoffNote}\n</handoff-from-previous-session>`]
-          : undefined;
+      const message = renderWakeMessage(ev, () => atIso, {
+        dm: true,
+        trust: wakeTrust,
+        wakeId,
+        ...(seat.freshGeneration && seat.tail.length > 0 ? { backscroll: seat.tail } : {}),
+      });
+
       const origin = { platform: "slack" as const, channelId: ev.channelId, ...(ev.threadTs ? { threadTs: ev.threadTs } : {}) };
       await divertToUnifiedWindow(args.to, {
         message,
-        ...(handoff ? { context: handoff } : {}),
         token: seat.token,
         window: { wakeId, origin, addressing: "direct-mention" },
         surfaceKey: p.surfaceKey,
         auth,
       });
       args.waitUntil(touchDmSeatFn(p.org, p.surfaceKey, atIso).catch(() => {}));
+      args.waitUntil(
+        recordWakeTail(p.org, dmWindowRegistryKey(p.surfaceKey), seat.token, {
+          kind: "wake",
+          at: atIso,
+          from: "human",
+          trust: wakeTrust,
+          author: ev.userId ?? "unknown",
+          ...(ev.userId ? { authorId: ev.userId } : {}),
+          ...(ev.ts ? { id: ev.ts } : {}),
+          platform: "slack",
+          container: p.surfaceKey,
+          text: ev.text ?? "",
+        }),
+      );
     };
 
     const persistAttachments = (ev: ParsedMessageEvent): void => {

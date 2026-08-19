@@ -587,7 +587,7 @@ const store = makeOperationalPostgresStore(client);
 
   const gen1 = await store.rotateChannelSession("acme", sk, "T:oe-sup:1", "2026-07-09T10:00:00Z");
   ok(gen1.generation === 1 && gen1.token === "T:oe-sup:1" && gen1.turnCount === 0, "pg: first rotation mints generation 1");
-  ok(gen1.inputTokensTotal === 0 && gen1.firstWakeAt === null && gen1.handoffNote === null, "pg: fresh generation starts counter=0, first_wake_at=NULL, no note");
+  ok(gen1.inputTokensTotal === 0 && gen1.firstWakeAt === null && gen1.lastInputTokens === null, "pg: fresh generation starts counter=0, first_wake_at=NULL, last_input_tokens=NULL");
   let row = await store.getChannelSession("acme", sk);
   ok(
     row !== null && row.generation === 1 && row.token === "T:oe-sup:1" && row.createdAt === "2026-07-09T10:00:00Z" && row.lastWakeAt === "2026-07-09T10:00:00Z",
@@ -599,6 +599,7 @@ const store = makeOperationalPostgresStore(client);
   await store.bumpChannelSessionUsage("acme", sk, "T:oe-sup:WRONG", 9_999_999);
   row = await store.getChannelSession("acme", sk);
   ok(row !== null && row.inputTokensTotal === 1500, "pg: bumpChannelSessionUsage accumulates + a mismatched token is a no-op (token guard)");
+  ok(row !== null && row.lastInputTokens === 500, "pg: the same write SETS last_input_tokens to the LATEST request (500), not the running total (1500)");
 
   await store.touchChannelSession("acme", sk, "2026-07-09T10:05:00Z");
   row = await store.getChannelSession("acme", sk);
@@ -610,11 +611,20 @@ const store = makeOperationalPostgresStore(client);
   ok(row !== null && row.turnCount === 2, "pg: touchChannelSession accumulates across calls");
   ok(row !== null && row.firstWakeAt === "2026-07-09T10:05:00Z", "pg: a later touch does NOT move first_wake_at (COALESCE, set once)");
 
-  const gen2 = await store.rotateChannelSession("acme", sk, "T:oe-sup:2", "2026-07-09T11:00:00Z", "OPEN: sign-off pending");
+  const gen2 = await store.rotateChannelSession("acme", sk, "T:oe-sup:2", "2026-07-09T11:00:00Z");
   ok(gen2.generation === 2 && gen2.token === "T:oe-sup:2" && gen2.turnCount === 0, "pg: rotation mints generation 2, resets turnCount");
-  ok(gen2.inputTokensTotal === 0 && gen2.firstWakeAt === null && gen2.handoffNote === "OPEN: sign-off pending", "pg: rotation resets counter/first_wake_at and stores the handoff note");
+  ok(gen2.inputTokensTotal === 0 && gen2.firstWakeAt === null && gen2.lastInputTokens === null, "pg: rotation resets counter, first_wake_at AND last_input_tokens (a new generation has run no request)");
   row = await store.getChannelSession("acme", sk);
-  ok(row !== null && row.generation === 2 && row.turnCount === 0 && row.inputTokensTotal === 0 && row.createdAt === "2026-07-09T11:00:00Z" && row.handoffNote === "OPEN: sign-off pending", "pg: getChannelSession reflects the rotated generation (no stale gen-1 fields; note persisted)");
+  ok(row !== null && row.generation === 2 && row.turnCount === 0 && row.inputTokensTotal === 0 && row.createdAt === "2026-07-09T11:00:00Z" && row.lastInputTokens === null, "pg: getChannelSession reflects the rotated generation (no stale gen-1 fields)");
+
+  await store.appendSessionTail("acme", sk, "T:oe-sup:1", { kind: "wake", at: "2026-07-09T10:01:00Z", from: "human", trust: "peer", author: "alice", text: "first" });
+  await store.appendSessionTail("acme", sk, "T:oe-sup:1", { kind: "post", at: "2026-07-09T10:01:30Z", from: "self", trust: "relay", author: "self", text: "second" });
+  const ring = await store.readSessionTail("acme", sk, "T:oe-sup:1");
+  ok(ring.length === 2 && ring[0]!.text === "first" && ring[1]!.text === "second", "pg: the tail ring reads back OLDEST-FIRST, in insertion order");
+  ok((await store.readSessionTail("acme", sk, "T:oe-sup:2")).length === 0, "pg: a DIFFERENT generation's token reads an EMPTY ring — the token is the ring's partition");
+  ok((await store.readSessionTail("globex", sk, "T:oe-sup:1")).length === 0, "pg: the tail ring is org-isolated");
+  await store.clearSessionTail("acme", sk, "T:oe-sup:1");
+  ok((await store.readSessionTail("acme", sk, "T:oe-sup:1")).length === 0, "pg: clearSessionTail drops the ring");
 
   ok((await store.getChannelSession("globex", sk)) === null, "pg: channel session is org-isolated");
   await store.rotateChannelSession("globex", sk, "T:oe-sup:1", "2026-07-11T12:00:00Z");

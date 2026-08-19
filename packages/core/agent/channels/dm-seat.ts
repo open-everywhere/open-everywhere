@@ -1,9 +1,10 @@
 import { getOperationalStore } from "../operational/provider.js";
 import type { ChannelSessionRow, OperationalStore } from "../operational/store.js";
-import { shouldRotate, rotationClockMsFromDays, type RotationThresholds } from "./turn-delivery.js";
+import { shouldRotate, rotationClockMsFromDays, supervisorRotateContextSize, type RotationThresholds } from "./turn-delivery.js";
 import { claimRuntimeRotation } from "./runtime-rotation.js";
-import { recordHandoffNoteLoss } from "../model/rotation-handoff.js";
-import { dmSeatRegistryKey, dmWindowKey, formatWindowToken, saltSupervisorGeneration } from "./window-key.js";
+import { carryTailForward } from "./session-tail-record.js";
+import type { WakeMessageInput } from "./wake-envelope.js";
+import { dmWindowKey, formatWindowToken, saltSupervisorGeneration } from "./window-key.js";
 import { dmWindowRegistryKey } from "./unified-supervisor.js";
 
 export const DM_SEAT_ROTATE_EXPIRY_MS = rotationClockMsFromDays(process.env.OE_DM_SEAT_ROTATE_EXPIRY_DAYS, 30);
@@ -21,6 +22,7 @@ export function dmSeatThresholds(): Required<Omit<RotationThresholds, "runtimeCh
     turnBudget: DM_SEAT_ROTATE_TURN_BUDGET,
     tokenBudget: DM_SEAT_ROTATE_TOKEN_BUDGET,
     expiryMs: DM_SEAT_ROTATE_EXPIRY_MS,
+    contextSizeTokens: supervisorRotateContextSize(),
   };
 }
 
@@ -28,20 +30,18 @@ export interface DmSeat {
   readonly token: string;
   readonly generation: number;
   readonly freshGeneration: boolean;
-  readonly handoffNote: string | null;
+  readonly tail: readonly WakeMessageInput[];
 }
 
 export interface DmSeatDeps {
   readonly store?: OperationalStore;
   readonly thresholds?: RotationThresholds;
-  readonly distillHandoff?: (scope: string, outgoing: ChannelSessionRow) => Promise<string | undefined>;
   readonly claimRuntimeRotation?: typeof claimRuntimeRotation;
 }
 
 export interface DmSeatRef {
   readonly surfaceKey: string;
   readonly channelId?: string;
-  readonly legacyChannelId?: string;
 }
 
 export async function getOrCreateDmSeat(org: string, dm: DmSeatRef, atIso: string, deps: DmSeatDeps = {}): Promise<DmSeat> {
@@ -55,30 +55,19 @@ export async function getOrCreateDmSeat(org: string, dm: DmSeatRef, atIso: strin
   );
   const existing = await store.getChannelSession(org, key);
   if (!existing) {
-    const legacy = dm.legacyChannelId
-      ? await store.getChannelSession(org, dmSeatRegistryKey(dm.legacyChannelId)).catch(async (err: unknown) => {
-          await recordHandoffNoteLoss({ org, scope: dm.surfaceKey, reason: "legacy-note-read-error", error: err });
-          return null;
-        })
-      : null;
-    const row = await store.rotateChannelSession(org, key, mint(1), atIso, legacy?.handoffNote ?? undefined);
-    return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
+    const row = await store.rotateChannelSession(org, key, mint(1), atIso);
+    return { token: row.token, generation: row.generation, freshGeneration: true, tail: [] };
   }
   if (shouldRotate(existing, atIso, { ...thresholds, runtimeChanged })) {
-    const note = deps.distillHandoff
-      ? await deps.distillHandoff(dm.surfaceKey, existing).catch(async (err: unknown) => {
-          await recordHandoffNoteLoss({ org, scope: dm.surfaceKey, reason: "distiller-error", generation: existing.generation, error: err });
-          return undefined;
-        })
-      : undefined;
-    const row = await store.rotateChannelSession(org, key, mint(existing.generation + 1), atIso, note);
-    return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
+    const tail = await carryTailForward(org, key, existing.token, store);
+    const row = await store.rotateChannelSession(org, key, mint(existing.generation + 1), atIso);
+    return { token: row.token, generation: row.generation, freshGeneration: true, tail };
   }
   return {
     token: existing.token,
     generation: existing.generation,
     freshGeneration: existing.firstWakeAt == null,
-    handoffNote: existing.handoffNote,
+    tail: [],
   };
 }
 

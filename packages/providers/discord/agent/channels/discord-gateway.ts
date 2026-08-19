@@ -59,6 +59,10 @@ import {
   type Partition,
   type ContextLine,
   type BindableContext,
+  carryTailForward,
+  type WakeMessageInput,
+  recordWakeTail,
+  dmWindowRegistryKey,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 export { splitForDiscord };
@@ -91,7 +95,7 @@ import {
   attestedFireCreatorId,
   type ReplierLabel,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { fetchDiscordBackscrollLines, distillDiscordRotationHandoff, gradeDiscordContextLines } from "./discord-backscroll.js";
+import { fetchDiscordBackscrollLines, gradeDiscordContextLines } from "./discord-backscroll.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:discord-gateway] ${msg}`);
@@ -759,8 +763,7 @@ export interface DiscordUnifiedWakeInput {
   readonly addressing: "direct-mention" | "channel-watch" | "name-drop";
   readonly wakeId: string;
   readonly engagementTier?: WakeEngagementTier;
-  readonly handoffNote?: string;
-  readonly handoffFromGeneration?: number;
+  readonly tail?: readonly WakeMessageInput[];
   readonly botName?: string;
   readonly trigger: {
     readonly id: string;
@@ -791,7 +794,7 @@ export function buildDiscordUnifiedWake(input: DiscordUnifiedWakeInput): Normali
           },
         }
       : {}),
-    handoff: input.handoffNote ? { note: input.handoffNote, fromGeneration: input.handoffFromGeneration ?? 0 } : undefined,
+    backscroll: input.tail && input.tail.length > 0 ? input.tail : undefined,
     trigger: mkMessageTrigger({
       from: "human",
       author: input.trigger.author,
@@ -858,8 +861,7 @@ export function discordNativeWake(input: DiscordNativeWakeInput): NormalizedWake
 export interface DiscordDmWakeInput {
   readonly channelId: string;
   readonly wakeId: string;
-  readonly handoffNote?: string;
-  readonly handoffFromGeneration?: number;
+  readonly tail?: readonly WakeMessageInput[];
   readonly trigger: {
     readonly id: string;
     readonly author: string;
@@ -877,7 +879,7 @@ export function buildDiscordDmWake(input: DiscordDmWakeInput): NormalizedWake {
     addressing: "direct-mention",
     wakeId: input.wakeId,
     locus: { channel: { id: input.channelId } },
-    handoff: input.handoffNote ? { note: input.handoffNote, fromGeneration: input.handoffFromGeneration ?? 0 } : undefined,
+    backscroll: input.tail && input.tail.length > 0 ? input.tail : undefined,
     trigger: mkMessageTrigger({
       from: "human",
       author: input.trigger.author,
@@ -902,9 +904,7 @@ async function divertDiscordDmToWindow(input: {
   const atIso = new Date().toISOString();
   const surfaceKey = input.partition.surfaceKey;
 
-  const seat = await getOrCreateDmSeat(org, { surfaceKey }, atIso, {
-    distillHandoff: (scope, outgoing) => distillDiscordRotationHandoff(scope, msg.channelId, outgoing, org, msg.botId),
-  });
+  const seat = await getOrCreateDmSeat(org, { surfaceKey }, atIso);
 
   const trust = resolveWakeTrustFromContext(ctxFromAuth(input.auth), { id: msg.author.id, isBot: msg.author.bot }, { principalFallback: true });
   const wakeId = mintWakeId();
@@ -915,7 +915,7 @@ async function divertDiscordDmToWindow(input: {
     buildDiscordDmWake({
       channelId: msg.channelId,
       wakeId,
-      ...(seat.freshGeneration && seat.handoffNote ? { handoffNote: seat.handoffNote, handoffFromGeneration: Math.max(seat.generation - 1, 0) } : {}),
+      ...(seat.freshGeneration && seat.tail.length > 0 ? { tail: seat.tail } : {}),
       trigger: {
         id: msg.id || "unknown",
         author: msg.author.username ?? msg.author.id,
@@ -935,6 +935,18 @@ async function divertDiscordDmToWindow(input: {
     auth: stampNonMemberChatAuth(input.auth as unknown as { attributes?: Record<string, unknown> }, [{ trust }], { dm: true }),
   });
   await touchDmSeat(org, surfaceKey, atIso).catch(() => undefined);
+  await recordWakeTail(org, dmWindowRegistryKey(surfaceKey), seat.token, {
+    kind: "wake",
+    at: atIso,
+    from: "human",
+    trust,
+    author: msg.author.username ?? msg.author.id,
+    authorId: msg.author.id,
+    id: msg.id || "unknown",
+    platform: "discord",
+    container: surfaceKey,
+    text: msg.content,
+  });
 }
 
 async function divertDiscordWakeToUnifiedWindow(input: {
@@ -961,20 +973,21 @@ async function divertDiscordWakeToUnifiedWindow(input: {
   const runtimeChanged = await claimRuntimeRotation({ org, registryKey: grain.registryKey, surfaceKey: input.partition.surfaceKey, atIso });
 
   const existing = await store.getChannelSession(org, grain.registryKey);
-  let session: { token: string; generation: number; fresh: boolean; handoffNote?: string | null };
+  let session: { token: string; generation: number; fresh: boolean; tail: readonly WakeMessageInput[] };
   if (!existing) {
     const row = await store.rotateChannelSession(org, grain.registryKey, tokenFor(1), atIso);
-    session = { token: row.token, generation: row.generation, fresh: true, handoffNote: row.handoffNote };
+    session = { token: row.token, generation: row.generation, fresh: true, tail: [] };
   } else if (shouldRotate(existing, atIso, { runtimeChanged })) {
+    const tail = await carryTailForward(org, grain.registryKey, existing.token);
     const row = await store.rotateChannelSession(org, grain.registryKey, tokenFor(existing.generation + 1), atIso);
-    session = { token: row.token, generation: row.generation, fresh: true, handoffNote: row.handoffNote };
+    session = { token: row.token, generation: row.generation, fresh: true, tail };
   } else {
-    session = { token: existing.token, generation: existing.generation, fresh: existing.firstWakeAt == null, handoffNote: existing.handoffNote };
+    session = { token: existing.token, generation: existing.generation, fresh: existing.firstWakeAt == null, tail: [] };
   }
 
   const trust = resolveWakeTrustFromContext(ctxFromAuth(input.auth), { id: msg.author.id, isBot: msg.author.bot }, { principalFallback: true });
 
-  const doWake = async (token: string, generation: number, handoffNote: string | null | undefined): Promise<void> => {
+  const doWake = async (token: string, generation: number, tail: readonly WakeMessageInput[]): Promise<void> => {
     const wakeId = mintWakeId();
     const origin: UnifiedWakeOrigin = {
       platform: "discord",
@@ -994,8 +1007,7 @@ async function divertDiscordWakeToUnifiedWindow(input: {
         addressing: input.addressing,
         wakeId,
         engagementTier: discordEngagementTier(domainKeyOf(input.partition)),
-        handoffNote: handoffNote ?? undefined,
-        handoffFromGeneration: generation - 1,
+        tail,
         botName: msg.botName,
         trigger: {
           id: msg.id || "unknown",
@@ -1025,8 +1037,20 @@ async function divertDiscordWakeToUnifiedWindow(input: {
     });
   };
 
-  await doWake(session.token, session.generation, session.fresh ? session.handoffNote : undefined);
+  await doWake(session.token, session.generation, session.fresh ? session.tail : []);
   await store.touchChannelSession(org, grain.registryKey, atIso).catch(() => undefined);
+  await recordWakeTail(org, grain.registryKey, session.token, {
+    kind: "wake",
+    at: atIso,
+    from: "human",
+    trust,
+    author: msg.author.username ?? msg.author.id,
+    authorId: msg.author.id,
+    id: msg.id || "unknown",
+    platform: "discord",
+    container: input.partition.surfaceKey,
+    text: msg.content,
+  });
 }
 
 export type DiscordGatewaySend = (

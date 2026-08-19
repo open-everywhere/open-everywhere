@@ -10,7 +10,6 @@ import {
   registerDreamJudge,
   facetJudgeFromCompletion,
   registerFailureFacetJudge,
-  registerHandoffCompletion,
   stampModelCall,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { applyGatewayOptions, type GatewayRoutedDefaults } from "./gateway.js";
@@ -72,6 +71,3 @@ export function registerGatewayFailureFacetJudge(defaults: GatewayRoutedDefaults
   registerFailureFacetJudge(facetJudgeFromCompletion(gatewayDreamCompletion(defaults)));
 }
 
-export function registerGatewayHandoffCompletion(defaults: GatewayRoutedDefaults): void {
-  registerHandoffCompletion(gatewayDreamCompletion(defaults));
-}

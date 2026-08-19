@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
 import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
+import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { auditRowSha } from "../audit/chain.js";
 import { assembleAnalyticsSql } from "../analytics/compile.js";
@@ -136,8 +137,23 @@ function getDb(): DatabaseSync {
       turn_count         INTEGER NOT NULL DEFAULT 0, -- bumped by touchChannelSession, reset to 0 on rotation (BACKSTOP trigger)
       input_tokens_total INTEGER,                    -- measured cumulative input+cacheRead this generation (§2 #551); NULL = unknown ⇒ rotate
       first_wake_at      TEXT,                        -- ISO-8601 of the first delivered wake (H7c); NULL = none yet ⇒ still fresh
-      handoff_note       TEXT,                        -- rolling distilled channel state for the next generation (§5); NULL = none
+      last_input_tokens  INTEGER,                     -- OPE-794: measured input+cacheRead of the LATEST request (SET, not summed); NULL = none yet ⇒ rung skipped
       PRIMARY KEY (org_id, surface_key)
+    );
+    -- session_tail (OPE-794): the standing-seat TAIL ring. One row per recorded conversational
+    -- event on ONE generation — the wake messages the deployment delivered and the posts the seat
+    -- made. The rotate leg reads the OUTGOING generation's rows and renders them into the fresh
+    -- generation's first wake. Keyed by the generation's live TOKEN, so a straggler write from a
+    -- retired generation files under the retired token and is simply never read again.
+    -- Bounded on write (channels/session-tail.ts SESSION_TAIL_MAX_ENTRIES) and dropped once carried.
+    CREATE TABLE IF NOT EXISTS session_tail (
+      org_id      TEXT    NOT NULL,
+      surface_key TEXT    NOT NULL,        -- the channel_session registry key this generation lives under
+      token       TEXT    NOT NULL,        -- the generation's continuation token (the read + prune key)
+      seq         INTEGER NOT NULL,        -- insertion ordinal within the token; ties broken by the at column at render
+      at          TEXT    NOT NULL,        -- ISO-8601 of the event (the ORDERING key the render sorts on)
+      entry_json  TEXT    NOT NULL,        -- serialized SessionTailEntry (opaque to the store)
+      PRIMARY KEY (org_id, surface_key, token, seq)
     );
     CREATE TABLE IF NOT EXISTS event_dedupe (
       org_id  TEXT NOT NULL,
@@ -459,7 +475,7 @@ function getDb(): DatabaseSync {
 
     "ALTER TABLE channel_session ADD COLUMN input_tokens_total INTEGER",
     "ALTER TABLE channel_session ADD COLUMN first_wake_at TEXT",
-    "ALTER TABLE channel_session ADD COLUMN handoff_note TEXT",
+    "ALTER TABLE channel_session ADD COLUMN last_input_tokens INTEGER",
 
     "ALTER TABLE task_result ADD COLUMN caller_token TEXT",
     "ALTER TABLE task_result ADD COLUMN delivered_at TEXT",
@@ -1258,9 +1274,9 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async getChannelSession(org, surfaceKey) {
     const row = getDb()
-      .prepare("SELECT token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, handoff_note FROM channel_session WHERE org_id = ? AND surface_key = ?")
+      .prepare("SELECT token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens FROM channel_session WHERE org_id = ? AND surface_key = ?")
       .get(org, surfaceKey) as
-      | { token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number; input_tokens_total: number | null; first_wake_at: string | null; handoff_note: string | null }
+      | { token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number; input_tokens_total: number | null; first_wake_at: string | null; last_input_tokens: number | null }
       | undefined;
     return row
       ? {
@@ -1268,18 +1284,17 @@ export const sqliteOperationalStore: OperationalStore = {
           lastWakeAt: row.last_wake_at, turnCount: row.turn_count,
           inputTokensTotal: row.input_tokens_total == null ? null : Number(row.input_tokens_total),
           firstWakeAt: row.first_wake_at ?? null,
-          handoffNote: row.handoff_note ?? null,
+          lastInputTokens: row.last_input_tokens == null ? null : Number(row.last_input_tokens),
         }
       : null;
   },
 
-  async rotateChannelSession(org, surfaceKey, newToken, at, handoffNote) {
+  async rotateChannelSession(org, surfaceKey, newToken, at) {
     const handle = getDb();
-    const note = handoffNote ?? null;
     const row = handle
       .prepare(
-        `INSERT INTO channel_session (org_id, surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, handoff_note)
-         VALUES (?, ?, ?, 1, ?, ?, 0, 0, NULL, ?)
+        `INSERT INTO channel_session (org_id, surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, last_input_tokens)
+         VALUES (?, ?, ?, 1, ?, ?, 0, 0, NULL, NULL)
          ON CONFLICT(org_id, surface_key) DO UPDATE SET
            token              = excluded.token,
            generation         = generation + 1,
@@ -1288,12 +1303,12 @@ export const sqliteOperationalStore: OperationalStore = {
            turn_count         = 0,
            input_tokens_total = 0,
            first_wake_at      = NULL,
-           handoff_note       = excluded.handoff_note
+           last_input_tokens  = NULL
          RETURNING generation`,
       )
-      .get(org, surfaceKey, newToken, at, at, note) as { generation: number };
+      .get(org, surfaceKey, newToken, at, at) as { generation: number };
     const generation = row.generation;
-    return { org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0, inputTokensTotal: 0, firstWakeAt: null, handoffNote: note };
+    return { org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0, inputTokensTotal: 0, firstWakeAt: null, lastInputTokens: null };
   },
 
   async touchChannelSession(org, surfaceKey, at) {
@@ -1304,9 +1319,44 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async bumpChannelSessionUsage(org, surfaceKey, token, delta) {
     const res = getDb()
-      .prepare("UPDATE channel_session SET input_tokens_total = COALESCE(input_tokens_total, 0) + ? WHERE org_id = ? AND surface_key = ? AND token = ?")
-      .run(delta, org, surfaceKey, token);
+      .prepare("UPDATE channel_session SET input_tokens_total = COALESCE(input_tokens_total, 0) + ?, last_input_tokens = ? WHERE org_id = ? AND surface_key = ? AND token = ?")
+      .run(delta, delta, org, surfaceKey, token);
     return Number(res.changes ?? 0);
+  },
+
+  async appendSessionTail(org, surfaceKey, token, entry) {
+    const handle = getDb();
+    const next = handle
+      .prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM session_tail WHERE org_id = ? AND surface_key = ? AND token = ?")
+      .get(org, surfaceKey, token) as { seq: number };
+    handle
+      .prepare("INSERT INTO session_tail (org_id, surface_key, token, seq, at, entry_json) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(org, surfaceKey, token, next.seq, entry.at, JSON.stringify(entry));
+    handle
+      .prepare(
+        `DELETE FROM session_tail
+          WHERE org_id = ? AND surface_key = ? AND token = ?
+            AND seq <= ?`,
+      )
+      .run(org, surfaceKey, token, next.seq - SESSION_TAIL_MAX_ENTRIES);
+  },
+
+  async readSessionTail(org, surfaceKey, token) {
+    const rows = getDb()
+      .prepare("SELECT entry_json FROM session_tail WHERE org_id = ? AND surface_key = ? AND token = ? ORDER BY seq ASC")
+      .all(org, surfaceKey, token) as { entry_json: string }[];
+    const out: SessionTailEntry[] = [];
+    for (const r of rows) {
+      try {
+        out.push(JSON.parse(r.entry_json) as SessionTailEntry);
+      } catch {
+      }
+    }
+    return out;
+  },
+
+  async clearSessionTail(org, surfaceKey, token) {
+    getDb().prepare("DELETE FROM session_tail WHERE org_id = ? AND surface_key = ? AND token = ?").run(org, surfaceKey, token);
   },
 
   async listDomainSkills(org, domain) {

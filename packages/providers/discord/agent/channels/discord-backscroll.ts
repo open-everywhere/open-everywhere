@@ -1,8 +1,7 @@
 import {
-  distillRotationHandoff,
   sinceLastAgentReply,
   WAKE_BACKSCROLL_MAX,
-  clusterBackscroll,
+  fetchedBackscroll,
   resolveWakeTrustFromContext,
   armedAuthorTrustTenants,
   type ContextLine,
@@ -127,48 +126,6 @@ export async function fetchDiscordBackscrollLines(
   } catch {
     return undefined;
   }
-}
-
-const ROTATION_TRANSCRIPT_MESSAGES = 50;
-const ROTATION_TRANSCRIPT_LINE_CHARS = 240;
-const ROTATION_TRANSCRIPT_TOTAL_CHARS = 4000;
-
-export async function fetchDiscordRotationTranscript(
-  channelId: string,
-  botId?: string,
-  deps: DiscordBackscrollDeps = liveDeps,
-): Promise<string> {
-  const res = await deps.request(channelId, { limit: String(ROTATION_TRANSCRIPT_MESSAGES) });
-  const raw = extractDiscordMessages(res);
-  if (!raw) return "";
-  const lines = linesFromDiscordMessages([...raw].reverse(), botId).map((l) => {
-    const who = l.senderType === "agent" ? "[agent]" : l.senderId ? `<@${l.senderId}>` : "[unknown]";
-    const text = l.text.replace(/\s+/g, " ").trim();
-    return `${who}: ${text.length > ROTATION_TRANSCRIPT_LINE_CHARS ? `${text.slice(0, ROTATION_TRANSCRIPT_LINE_CHARS)}…` : text}`;
-  });
-  const kept: string[] = [];
-  let total = 0;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    total += lines[i]!.length + 1;
-    if (total > ROTATION_TRANSCRIPT_TOTAL_CHARS) break;
-    kept.unshift(lines[i]!);
-  }
-  return kept.join("\n");
-}
-
-export async function distillDiscordRotationHandoff(
-  scope: string,
-  channelId: string,
-  outgoing: { readonly handoffNote?: string | null; readonly generation?: number } | null,
-  org?: string,
-  botId?: string,
-): Promise<string | undefined> {
-  return distillRotationHandoff({
-    scope,
-    outgoing,
-    org,
-    fetchHistory: () => fetchDiscordRotationTranscript(channelId, botId),
-  });
 }
 
 export const DISCORD_RAW_FETCH_REACHBACK_HOURS = Number(process.env.OE_SUPERVISOR_BACKSCROLL_REACHBACK_HOURS) || 168;
@@ -296,8 +253,7 @@ export async function fetchDiscordWakeEnvelopeBackscroll(
   try {
     const window = await fetchDiscordBackscrollWindow(input, deps);
     if (window.length === 0) return [];
-    const nowMs = snowflakeToMs(input.triggerMessageId) ?? Date.now();
-    return clusterBackscroll(window, nowMs, undefined, trustFor);
+    return fetchedBackscroll(window, undefined, trustFor);
   } catch {
     return [];
   }

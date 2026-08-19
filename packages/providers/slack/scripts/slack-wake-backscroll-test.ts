@@ -184,8 +184,10 @@ const routing = (
   ok(bodies.includes("older-burst-1") && bodies.includes("spine-newest"), "spine + the in-36h older burst both surface");
 
   ok(out[0].sentAt <= out[out.length - 1].sentAt, "entries are oldest-first");
-  const sids = new Set(out.map((m) => m.sessionId));
-  ok(sids.size === 2 && !sids.has(undefined), "two idle-gap clusters → each message carries its cluster sessionId (multi-cluster)");
+  ok(
+    out.every((m) => m.sessionId === undefined),
+    "the fetched bootstrap backscroll is FLAT — no message carries a cluster sessionId, because there is no clustering left to produce one",
+  );
   const self = out.find((m) => m.body === "my own spine post");
   ok(self?.from === "self" && self?.author === "unknown" && self?.authorId === undefined, "own post → from=self, no foreign author id");
   const human = out.find((m) => m.body === "older-burst-1");
@@ -238,4 +240,4 @@ const routing = (
   ok((await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: "not-a-number" }, deps(routing([{ ts: "1.0", user: "UA", text: "hi" }])))).length === 0, "an unparseable trigger ts → empty (fail-soft)");
 }
 
-console.log(`✓ slack-wake-backscroll: ${n} assertions passed (since-last-agent slice + cold-thread + top-level + N cap + subtype/empty skip + untrusted wrap + fail-soft + supervisor cluster-aware adapter: visibility gate + thread enrichment + session grouping)`);
+console.log(`✓ slack-wake-backscroll: ${n} assertions passed (since-last-agent slice + cold-thread + top-level + N cap + subtype/empty skip + untrusted wrap + fail-soft + supervisor bootstrap adapter: visibility gate + thread enrichment + flat capped output)`);

@@ -9,6 +9,8 @@ import {
   type UnifiedWindowWake,
   type WakeTrust,
   type IngestedChatMessage,
+  type WakeMessageInput,
+  type SessionTailEntry,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import type { OpenEverywhereLinearAuth } from "./linear-identity.js";
 
@@ -102,8 +104,7 @@ export interface LinearSupervisorWakeInput {
     readonly trust: WakeTrust;
   };
   readonly engagementTier?: WakeEngagementTier;
-  readonly handoffNote?: string | null;
-  readonly handoffFromGeneration?: number;
+  readonly tail?: readonly WakeMessageInput[];
   readonly wakeId?: string;
   readonly directMention?: boolean;
 }
@@ -114,9 +115,7 @@ export function buildLinearSupervisorWake(input: LinearSupervisorWakeInput): Nor
   const contextLines: ContextLine[] | undefined = input.issueTitle
     ? [{ senderType: "user", ts: issueLabel, text: `issue ${issueLabel}: ${input.issueTitle}` }]
     : undefined;
-  const handoff = input.handoffNote
-    ? { note: input.handoffNote, fromGeneration: input.handoffFromGeneration ?? 0 }
-    : undefined;
+
   return {
     platform: "linear",
     reason: directMention ? "mention" : "channel-activity",
@@ -130,7 +129,7 @@ export function buildLinearSupervisorWake(input: LinearSupervisorWakeInput): Nor
     },
     contextLines,
     contextSource: contextLines ? "the issue this comment is on" : undefined,
-    handoff,
+    backscroll: input.tail && input.tail.length > 0 ? input.tail : undefined,
     trigger: mkMessageTrigger({
       from: "human",
       author: input.trigger.authorName ?? input.trigger.authorId ?? "unknown",
@@ -197,13 +196,15 @@ export interface LinearSupervisorSession {
   readonly token: string;
   readonly generation: number;
   readonly freshGeneration: boolean;
-  readonly handoffNote?: string | null;
+  readonly tail: readonly WakeMessageInput[];
   readonly lastWakeAt?: string | null;
 }
 
 export interface LinearSupervisorDeps {
   readonly getOrCreateSession: (surfaceKey: string, teamId: string, atIso: string) => Promise<LinearSupervisorSession>;
   readonly touchSession?: (surfaceKey: string, atIso: string) => Promise<void>;
+  readonly recordWake?: (entry: SessionTailEntry, token: string, surfaceKey: string) => Promise<void>;
+
   readonly wake: (input: {
     token: string;
     auth: OpenEverywhereLinearAuth;
@@ -243,7 +244,7 @@ export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch
     }
   }
 
-  const doWake = async (token: string, generation: number, handoffNote: string | null | undefined) => {
+  const doWake = async (token: string, generation: number, tail: readonly WakeMessageInput[]) => {
     const nw: NormalizedWake = {
       ...buildLinearSupervisorWake({
         teamId: d.teamId,
@@ -254,8 +255,7 @@ export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch
         engagementTier: d.engagementTier,
         wakeId: d.window?.wakeId,
         directMention: d.directMention,
-        handoffNote: handoffNote ?? undefined,
-        handoffFromGeneration: generation - 1,
+        tail,
       }),
       ...(memoryDelta ? { memoryDelta } : {}),
     };
@@ -264,8 +264,27 @@ export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch
     await deps.wake({ token, auth, message, context: context ?? [], window: d.window });
   };
 
-  await doWake(session.token, session.generation, session.freshGeneration ? session.handoffNote : undefined);
+  await doWake(session.token, session.generation, session.freshGeneration ? session.tail : []);
   if (deps.touchSession) await deps.touchSession(d.surfaceKey, atIso);
+  if (deps.recordWake) {
+    await deps.recordWake(
+      {
+        kind: "wake",
+        at: atIso,
+        from: "human",
+        trust: d.trigger.trust,
+        author: d.trigger.authorName ?? d.trigger.authorId ?? "unknown",
+        ...(d.trigger.authorId ? { authorId: d.trigger.authorId } : {}),
+        id: d.trigger.id,
+        platform: "linear",
+        container: d.surfaceKey,
+        threadRoot: d.issueIdentifier ?? d.issueId,
+        text: d.trigger.text,
+      },
+      session.token,
+      d.surfaceKey,
+    );
+  }
 }
 
 export { shouldRotate };

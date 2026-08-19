@@ -4,7 +4,7 @@ import {
   renderContext,
   sinceLastAgentReply,
   WAKE_BACKSCROLL_MAX,
-  clusterBackscroll,
+  fetchedBackscroll,
   type ContextLine,
   type NormalizedMessage,
   type BackscrollTrustFor,
@@ -265,8 +265,7 @@ export async function fetchWakeEnvelopeBackscroll(
   try {
     const window = await fetchSlackBackscrollWindow(input, deps);
     if (window.length === 0) return [];
-    const nowMs = Number.parseFloat(input.ts) * 1000;
-    return clusterBackscroll(window, nowMs, undefined, trustFor);
+    return fetchedBackscroll(window, undefined, trustFor);
   } catch {
     return [];
   }

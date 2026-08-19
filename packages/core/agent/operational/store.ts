@@ -2,6 +2,7 @@ import { routineGrantGeneration, type Routine } from "../routines/routine.js";
 import type { PendingActionRow } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import type { PendingUnifiedWake, UnifiedWakeRecord } from "../channels/unified-window.js";
+import type { SessionTailEntry } from "../channels/session-tail.js";
 
 export const OPERATIONAL_TABLES = [
   "spend_ledger",
@@ -12,6 +13,7 @@ export const OPERATIONAL_TABLES = [
   "connector_override",
   "thread_engagement",
   "channel_session",
+  "session_tail",
   "event_dedupe",
   "unified_wake_target",
   "thread_ownership",
@@ -424,7 +426,7 @@ export interface ChannelSessionRow {
   readonly turnCount: number;
   readonly inputTokensTotal: number | null;
   readonly firstWakeAt: string | null;
-  readonly handoffNote: string | null;
+  readonly lastInputTokens: number | null;
 }
 
 export interface TaskResultRow {
@@ -584,9 +586,13 @@ export interface OperationalStore {
   listEngagements(org: string): Promise<EngagementRow[]>;
 
   getChannelSession(org: string, surfaceKey: string): Promise<ChannelSessionRow | null>;
-  rotateChannelSession(org: string, surfaceKey: string, newToken: string, at: string, handoffNote?: string): Promise<ChannelSessionRow>;
+  rotateChannelSession(org: string, surfaceKey: string, newToken: string, at: string): Promise<ChannelSessionRow>;
   touchChannelSession(org: string, surfaceKey: string, at: string): Promise<void>;
   bumpChannelSessionUsage(org: string, surfaceKey: string, token: string, delta: number): Promise<number>;
+
+  appendSessionTail(org: string, surfaceKey: string, token: string, entry: SessionTailEntry): Promise<void>;
+  readSessionTail(org: string, surfaceKey: string, token: string): Promise<SessionTailEntry[]>;
+  clearSessionTail(org: string, surfaceKey: string, token: string): Promise<void>;
 
   listDomainSkills(org: string, domain: string): Promise<DomainSkillRow[]>;
   putDomainSkill(

@@ -3,12 +3,13 @@ import {
   mkMessageTrigger,
   mintWakeId,
   singleWindowMentionPolicy,
-  distillRotationHandoff,
   type NormalizedWake,
   type WakeEngagementTier,
   type WakeTrust,
   type SingleWindowMentionPolicy,
   type UnifiedWindowWake,
+  type WakeMessageInput,
+  type SessionTailEntry,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import type { OpenEverywhereTeamsAuth } from "./teams-identity.js";
 
@@ -82,8 +83,7 @@ export interface TeamsSupervisorWakeInput {
   readonly directMention: boolean;
   readonly wakeId: string;
   readonly engagementTier?: WakeEngagementTier;
-  readonly handoffNote?: string | null;
-  readonly handoffFromGeneration?: number;
+  readonly tail?: readonly WakeMessageInput[];
 }
 
 export function buildTeamsSupervisorWake(input: TeamsSupervisorWakeInput): NormalizedWake {
@@ -98,7 +98,7 @@ export function buildTeamsSupervisorWake(input: TeamsSupervisorWakeInput): Norma
       ...(input.threadRootId ? { thread: { ts: input.threadRootId } } : {}),
     },
     ...(input.trigger.authorName ? { participants: [{ id: input.trigger.authorId, name: input.trigger.authorName }] } : {}),
-    handoff: input.handoffNote ? { note: input.handoffNote, fromGeneration: input.handoffFromGeneration ?? 0 } : undefined,
+    backscroll: input.tail && input.tail.length > 0 ? input.tail : undefined,
     trigger: mkMessageTrigger({
       from: "human",
       author: input.trigger.authorName ?? input.trigger.authorId,
@@ -116,12 +116,14 @@ export interface TeamsSupervisorSession {
   readonly token: string;
   readonly generation: number;
   readonly freshGeneration: boolean;
-  readonly handoffNote?: string | null;
+  readonly tail: readonly WakeMessageInput[];
 }
 
 export interface TeamsSupervisorDeps {
   readonly getOrCreateSession: (surfaceKey: string, channelId: string, atIso: string) => Promise<TeamsSupervisorSession>;
   readonly touchSession?: (surfaceKey: string, atIso: string) => Promise<void>;
+  readonly recordWake?: (entry: SessionTailEntry, token: string, surfaceKey: string) => Promise<void>;
+
   readonly wake: (input: { token: string; auth: OpenEverywhereTeamsAuth; message: string; context: readonly string[]; window: UnifiedWindowWake }) => Promise<void>;
   readonly now?: () => string;
 }
@@ -140,7 +142,7 @@ export async function handleTeamsSingleWindowDispatch(d: TeamsSupervisorDispatch
   const atIso = deps.now ? deps.now() : new Date().toISOString();
   const session = await deps.getOrCreateSession(d.surfaceKey, d.channelId, atIso);
 
-  const doWake = async (token: string, generation: number, handoffNote: string | null | undefined) => {
+  const doWake = async (token: string, generation: number, tail: readonly WakeMessageInput[]) => {
     const nw = buildTeamsSupervisorWake({
       channelId: d.channelId,
       trigger: d.trigger,
@@ -148,22 +150,39 @@ export async function handleTeamsSingleWindowDispatch(d: TeamsSupervisorDispatch
       directMention: d.window.addressing === "direct-mention",
       wakeId: d.window.wakeId,
       engagementTier: d.engagementTier,
-      handoffNote: handoffNote ?? undefined,
-      handoffFromGeneration: generation - 1,
+      tail,
     });
     const { message, context } = renderWake(nw, deps.now);
     await deps.wake({ token, auth: d.auth, message, context: context ?? [], window: d.window });
   };
 
-  await doWake(session.token, session.generation, session.freshGeneration ? session.handoffNote : undefined);
+  await doWake(session.token, session.generation, session.freshGeneration ? session.tail : []);
   if (deps.touchSession) await deps.touchSession(d.surfaceKey, atIso);
+  if (deps.recordWake) {
+    await deps.recordWake(
+      {
+        kind: "wake",
+        at: atIso,
+        from: "human",
+        trust: d.trigger.trust,
+        author: d.trigger.authorName ?? d.trigger.authorId,
+        authorId: d.trigger.authorId,
+        id: d.trigger.id,
+        platform: "teams",
+        container: d.surfaceKey,
+        ...(d.threadRootId ? { threadRoot: d.threadRootId } : {}),
+        text: d.trigger.text,
+      },
+      session.token,
+      d.surfaceKey,
+    );
+  }
 }
 
 export interface TeamsDmWakeInput {
   readonly conversationId: string;
   readonly wakeId: string;
-  readonly handoffNote?: string;
-  readonly handoffFromGeneration?: number;
+  readonly tail?: readonly WakeMessageInput[];
   readonly trigger: {
     readonly id: string;
     readonly author: string;
@@ -181,7 +200,7 @@ export function buildTeamsDmWake(input: TeamsDmWakeInput): NormalizedWake {
     addressing: "direct-mention",
     wakeId: input.wakeId,
     locus: { channel: { id: input.conversationId } },
-    handoff: input.handoffNote ? { note: input.handoffNote, fromGeneration: input.handoffFromGeneration ?? 0 } : undefined,
+    backscroll: input.tail && input.tail.length > 0 ? input.tail : undefined,
     trigger: mkMessageTrigger({
       from: "human",
       author: input.trigger.author,
@@ -195,15 +214,3 @@ export function buildTeamsDmWake(input: TeamsDmWakeInput): NormalizedWake {
   };
 }
 
-export function distillTeamsRotationHandoff(
-  scope: string,
-  outgoing: { readonly handoffNote?: string | null; readonly generation?: number } | null,
-  org?: string,
-): Promise<string | undefined> {
-  return distillRotationHandoff({
-    scope,
-    outgoing,
-    org,
-    fetchHistory: async () => "",
-  });
-}

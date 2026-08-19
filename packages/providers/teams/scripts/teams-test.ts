@@ -337,14 +337,19 @@ const memCfg: MemoryResolveConfig = {
     void buildTeamsSupervisorWake({ channelId: "19:chan@thread.v2", directMention: true, wakeId: "wk-y", trigger: { id: "act-y", authorId: "29:frank", sentAt: "2026-08-10T00:00:00Z", text: "hi" } });
   }
   void __ope596TeamsPins;
-  const wHandoff = buildTeamsDmWake({
+  const wTail = buildTeamsDmWake({
     conversationId: "19:1on1@thread.v2",
     wakeId: "wk-3",
-    handoffNote: "open ask: ship the report",
-    handoffFromGeneration: 4,
+    tail: [{ from: "human", author: "Frank", authorId: "29:frank", id: "act-1", sentAt: "2026-08-09T00:00:00Z", trust: "principal", body: "open ask: ship the report" }],
     trigger: { id: "act-3", author: "Frank", authorId: "29:frank", sentAt: "2026-08-10T00:00:00Z", text: "?", trust: "principal" as const },
   });
-  ok(wHandoff.handoff?.note === "open ask: ship the report" && wHandoff.handoff?.fromGeneration === 4, "H1: a fresh generation carries the rotation handoff note (the ONLY thing it carries — no backscroll)");
+  ok(wTail.backscroll?.length === 1 && wTail.backscroll[0]!.body === "open ask: ship the report", "H1: a fresh Teams DM generation carries the recorded tail as its backscroll");
+  const wNoTail = buildTeamsDmWake({
+    conversationId: "19:1on1@thread.v2",
+    wakeId: "wk-3",
+    trigger: { id: "act-3", author: "Frank", authorId: "29:frank", sentAt: "2026-08-10T00:00:00Z", text: "?", trust: "principal" as const },
+  });
+  ok(wNoTail.backscroll === undefined, "H1 negative control: with NO recorded tail a Teams DM wake carries no backscroll at all — Teams has no history fetch to fall back on");
 }
 
 {

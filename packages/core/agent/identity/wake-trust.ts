@@ -1,5 +1,5 @@
 import type { WakeTrust } from "../channels/wake-envelope.js";
-import type { BackscrollTrustFor } from "../channels/backscroll-cluster.js";
+import type { BackscrollTrustFor, NormalizedMessage } from "../channels/backscroll-window.js";
 import type { BindableContext } from "./binding.js";
 import { bindFrom } from "./binding.js";
 import { criteriaDomain, domainForChannel, type Domain } from "../memory/domain.js";

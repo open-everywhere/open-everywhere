@@ -85,10 +85,19 @@ const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:
   ok(!message.includes("engagement="), "no tier resolved -> NO engagement attribute at all (distinct from a resolved neutral)");
 }
 {
-  const nw = buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 7, trigger, handoffNote: "Open asks: the retry-budget question in #42.", handoffFromGeneration: 1 });
+  const nw = buildGitHubSupervisorWake({
+    owner: OWNER,
+    repo: REPO,
+    issueNumber: 7,
+    trigger,
+    tail: [{ from: "human", author: "octocat", authorId: "octocat", id: "c-prev", sentAt: "2026-02-09T21:34:00Z", trust: "peer", body: "the retry-budget question in #42" }],
+  });
   const { message } = renderWake(nw, NOW);
-  ok(message.includes("Open asks: the retry-budget question in #42."), "a handoff note renders in the wake");
-  ok(message.includes(`from-generation="1"`), "the handoff note is attributed to the outgoing generation");
+  ok(message.includes("the retry-budget question in #42"), "the inherited tail renders in the wake");
+  ok(message.indexOf("the retry-budget question in #42") < message.indexOf(trigger.text), "…before this wake's own trigger (oldest-first across the rotation boundary)");
+
+  const cold = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 7, trigger }), NOW).message;
+  ok(!cold.includes("the retry-budget question in #42"), "…and a generation with NO inherited tail renders none of it");
 }
 {
   const plain = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, trigger }), NOW);
@@ -149,7 +158,7 @@ function dispatch(over: Partial<GitHubSupervisorDispatch> = {}): GitHubSuperviso
 interface WakeCapture { token: string; message: string; context: readonly string[] }
 
 {
-  const session: GitHubSupervisorSession = { token: githubSupervisorToken(OWNER, REPO, 1), generation: 1, freshGeneration: true, handoffNote: null };
+  const session: GitHubSupervisorSession = { token: githubSupervisorToken(OWNER, REPO, 1), generation: 1, freshGeneration: true, tail: [], };
   const wakes: WakeCapture[] = [];
   const touched: string[] = [];
   const deps: GitHubSupervisorDeps = {
@@ -170,7 +179,7 @@ interface WakeCapture { token: string; message: string; context: readonly string
 
 {
   const token = "oe-dom:acme-eng:oe-sup:g1";
-  const session: GitHubSupervisorSession = { token, generation: 1, freshGeneration: false, handoffNote: null };
+  const session: GitHubSupervisorSession = { token, generation: 1, freshGeneration: false, tail: [], };
   const wakeId = "wk-dispatch-1";
   const window = { wakeId, origin: { platform: "github" as const, owner: OWNER, repo: REPO, issueNumber: 42, installationId: 4242 } };
   let captured: { message: string; window: unknown } | undefined;
@@ -194,7 +203,7 @@ for (const [label, err] of [
   ["a gateway blip", new Error("transient network blip")],
   ["an eve session-limit-shaped error", new Error("SESSION_TOKEN_LIMIT_REACHED")],
 ] as const) {
-  const session: GitHubSupervisorSession = { token: githubSupervisorToken(OWNER, REPO, 1), generation: 1, freshGeneration: false, handoffNote: null };
+  const session: GitHubSupervisorSession = { token: githubSupervisorToken(OWNER, REPO, 1), generation: 1, freshGeneration: false, tail: [], };
   let touched = false;
   const wakes: WakeCapture[] = [];
   const deps: GitHubSupervisorDeps = {
@@ -390,7 +399,7 @@ for (const [label, err] of [
 }
 
 {
-  const session: GitHubSupervisorSession = { token: githubSupervisorToken(OWNER, REPO, 1), generation: 1, freshGeneration: true, handoffNote: null };
+  const session: GitHubSupervisorSession = { token: githubSupervisorToken(OWNER, REPO, 1), generation: 1, freshGeneration: true, tail: [], };
   const auths: OpenEverywhereGitHubAuth[] = [];
   const deps: GitHubSupervisorDeps = {
     getOrCreateSession: async () => session,
