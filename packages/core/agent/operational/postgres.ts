@@ -1,6 +1,6 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
@@ -369,6 +369,23 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      claimed_at text NOT NULL,
      PRIMARY KEY (org_id, key)
    )`,
+  `CREATE TABLE IF NOT EXISTS model_call_capture (
+     seq            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+     org_id         text    NOT NULL,
+     surface_key    text    NOT NULL,
+     session_id     text    NOT NULL,
+     turn_id        text    NOT NULL,
+     step_index     integer NOT NULL,
+     ts             text    NOT NULL,
+     model          text    NOT NULL,
+     provider       text    NOT NULL,
+     schema_version integer NOT NULL,
+     sha256         text    NOT NULL,
+     body_bytes     bigint  NOT NULL,
+     body_gzip_b64  text    NOT NULL,
+     truncated      boolean NOT NULL DEFAULT false
+   )`,
+  `CREATE INDEX IF NOT EXISTS model_call_capture_org_session ON model_call_capture (org_id, session_id, seq)`,
   `CREATE TABLE IF NOT EXISTS instance_meta (
      key   text PRIMARY KEY,
      value text NOT NULL
@@ -476,6 +493,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE identity_linked_ids ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE identity_link_challenges ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE notice_claim ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE model_call_capture ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill_revisions FORCE ROW LEVEL SECURITY`,
@@ -514,6 +532,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS identity_linked_ids_org_isolation ON identity_linked_ids`,
   `DROP POLICY IF EXISTS identity_link_challenges_org_isolation ON identity_link_challenges`,
   `DROP POLICY IF EXISTS notice_claim_org_isolation ON notice_claim`,
+  `DROP POLICY IF EXISTS model_call_capture_org_isolation ON model_call_capture`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
@@ -598,6 +617,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY notice_claim_org_isolation ON notice_claim
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY model_call_capture_org_isolation ON model_call_capture
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
 ];
@@ -911,6 +933,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   domain_model: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   instance_meta: ["SELECT", "INSERT", "UPDATE"],
   notice_claim: ["SELECT", "INSERT"],
+  model_call_capture: ["SELECT", "INSERT", "DELETE"],
   thread_ownership: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   turn_anchor: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   task_result: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -1974,6 +1997,89 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async pruneUsageEvents() {
       return 0;
+    },
+
+    async appendModelCallCapture(write: ModelCallCaptureWrite) {
+      await client.query(
+        `INSERT INTO model_call_capture
+           (org_id, surface_key, session_id, turn_id, step_index, ts, model, provider,
+            schema_version, sha256, body_bytes, body_gzip_b64, truncated)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        [
+          write.org,
+          write.surfaceKey,
+          write.sessionId,
+          write.turnId,
+          write.stepIndex,
+          write.ts,
+          write.model,
+          write.provider,
+          write.schemaVersion,
+          write.sha256,
+          write.bodyBytes,
+          write.bodyGzipB64,
+          write.truncated,
+        ],
+      );
+    },
+
+    async modelCallCapturesForSession(org, sessionId, opts = {}) {
+      const includeBody = opts.includeBody !== false;
+      const bodyCol = includeBody ? "body_gzip_b64" : "'' AS body_gzip_b64";
+      const where = ["org_id = $1", "session_id = $2"];
+      const params: (string | number)[] = [org, sessionId];
+      if (opts.turnId !== undefined) {
+        params.push(opts.turnId);
+        where.push(`turn_id = $${params.length}`);
+      }
+      let limit = "";
+      if (opts.limit !== undefined) {
+        params.push(Math.max(0, Math.floor(opts.limit)));
+        limit = ` LIMIT $${params.length}`;
+      }
+      const { rows } = await client.query(
+        `SELECT seq, surface_key, session_id, turn_id, step_index, ts, model, provider,
+                schema_version, sha256, body_bytes, ${bodyCol}, truncated
+         FROM model_call_capture WHERE ${where.join(" AND ")} ORDER BY seq ASC${limit}`,
+        params,
+      );
+      return (rows as {
+        seq: number | string;
+        surface_key: string;
+        session_id: string;
+        turn_id: string;
+        step_index: number | string;
+        ts: string;
+        model: string;
+        provider: string;
+        schema_version: number | string;
+        sha256: string;
+        body_bytes: number | string;
+        body_gzip_b64: string;
+        truncated: boolean;
+      }[]).map(
+        (r): ModelCallCaptureRow => ({
+          seq: Number(r.seq),
+          org,
+          surfaceKey: r.surface_key,
+          sessionId: r.session_id,
+          turnId: r.turn_id,
+          stepIndex: Number(r.step_index),
+          ts: r.ts,
+          model: r.model,
+          provider: r.provider,
+          schemaVersion: Number(r.schema_version),
+          sha256: r.sha256,
+          bodyBytes: Number(r.body_bytes),
+          bodyGzipB64: r.body_gzip_b64,
+          truncated: r.truncated === true,
+        }),
+      );
+    },
+
+    async deleteModelCallCapturesForSession(org, sessionId) {
+      const { rows } = await client.query(`DELETE FROM model_call_capture WHERE org_id = $1 AND session_id = $2 RETURNING seq`, [org, sessionId]);
+      return rows.length;
     },
 
     async runAnalyticsQuery(compiled) {

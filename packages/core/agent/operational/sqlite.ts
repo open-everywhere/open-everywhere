@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
@@ -445,6 +445,28 @@ function getDb(): DatabaseSync {
       claimed_at TEXT NOT NULL,                -- ISO-8601
       PRIMARY KEY (org_id, key)
     );
+    -- model_call_capture (OPE-846): the soak tests' byte-exact model-call recorder. MUTABLE and
+    -- deliberately so — retention here is an explicit delete-by-session, not a TTL (store.ts's
+    -- MODEL-CALL CAPTURE section carries the whole posture). Written only while soak.capture is
+    -- armed; a deployment that never arms it never grows a row. body_gzip_b64 is gzip(body)
+    -- base64'd, TRANSCRIPT-GRADE: it holds the composed prompt verbatim. Never logged.
+    CREATE TABLE IF NOT EXISTS model_call_capture (
+      seq            INTEGER PRIMARY KEY AUTOINCREMENT,
+      org_id         TEXT NOT NULL,
+      surface_key    TEXT NOT NULL,             -- spend grain (domainKeyOf), joins to usage_events
+      session_id     TEXT NOT NULL,             -- eve's durable session id (wrun_…)
+      turn_id        TEXT NOT NULL,             -- eve turn id; '' when none was resolvable
+      step_index     INTEGER NOT NULL,          -- 0-based, within the turn
+      ts             TEXT NOT NULL,             -- ISO-8601
+      model          TEXT NOT NULL,             -- the id the router resolved for THIS call
+      provider       TEXT NOT NULL,
+      schema_version INTEGER NOT NULL,          -- serialised-shape version (replay validates on read)
+      sha256         TEXT NOT NULL,             -- sha256 of the UNCOMPRESSED body
+      body_bytes     INTEGER NOT NULL,          -- uncompressed length
+      body_gzip_b64  TEXT NOT NULL,             -- '' when truncated
+      truncated      INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS model_call_capture_org_session ON model_call_capture (org_id, session_id, seq);
     CREATE TABLE IF NOT EXISTS instance_meta (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -540,6 +562,41 @@ export function _resetOperationalDbForTest(): void {
   if (db) db.close();
   db = null;
   openedPath = null;
+}
+
+type ModelCallCaptureDbRow = {
+  seq: number;
+  surface_key: string;
+  session_id: string;
+  turn_id: string;
+  step_index: number;
+  ts: string;
+  model: string;
+  provider: string;
+  schema_version: number;
+  sha256: string;
+  body_bytes: number;
+  body_gzip_b64: string;
+  truncated: number;
+};
+
+function modelCallCaptureFromRow(org: string, r: ModelCallCaptureDbRow): ModelCallCaptureRow {
+  return {
+    seq: Number(r.seq),
+    org,
+    surfaceKey: r.surface_key,
+    sessionId: r.session_id,
+    turnId: r.turn_id,
+    stepIndex: Number(r.step_index),
+    ts: r.ts,
+    model: r.model,
+    provider: r.provider,
+    schemaVersion: Number(r.schema_version),
+    sha256: r.sha256,
+    bodyBytes: Number(r.body_bytes),
+    bodyGzipB64: r.body_gzip_b64,
+    truncated: Number(r.truncated) === 1,
+  };
 }
 
 type SpendLedgerDbRow = {
@@ -1582,6 +1639,55 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async pruneUsageEvents(org, olderThanTs) {
     return Number(getDb().prepare("DELETE FROM usage_events WHERE org_id = ? AND ts < ?").run(org, olderThanTs).changes);
+  },
+
+  async appendModelCallCapture(write: ModelCallCaptureWrite) {
+    getDb()
+      .prepare(
+        `INSERT INTO model_call_capture
+           (org_id, surface_key, session_id, turn_id, step_index, ts, model, provider,
+            schema_version, sha256, body_bytes, body_gzip_b64, truncated)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        write.org,
+        write.surfaceKey,
+        write.sessionId,
+        write.turnId,
+        write.stepIndex,
+        write.ts,
+        write.model,
+        write.provider,
+        write.schemaVersion,
+        write.sha256,
+        write.bodyBytes,
+        write.bodyGzipB64,
+        write.truncated ? 1 : 0,
+      );
+  },
+
+  async modelCallCapturesForSession(org, sessionId, opts = {}) {
+    const includeBody = opts.includeBody !== false;
+    const bodyCol = includeBody ? "body_gzip_b64" : "'' AS body_gzip_b64";
+    const where = ["org_id = ?", "session_id = ?"];
+    const params: (string | number)[] = [org, sessionId];
+    if (opts.turnId !== undefined) {
+      where.push("turn_id = ?");
+      params.push(opts.turnId);
+    }
+    const limit = opts.limit !== undefined ? ` LIMIT ${Math.max(0, Math.floor(opts.limit))}` : "";
+    const rows = getDb()
+      .prepare(
+        `SELECT seq, surface_key, session_id, turn_id, step_index, ts, model, provider,
+                schema_version, sha256, body_bytes, ${bodyCol}, truncated
+         FROM model_call_capture WHERE ${where.join(" AND ")} ORDER BY seq ASC${limit}`,
+      )
+      .all(...params) as ModelCallCaptureDbRow[];
+    return rows.map((r) => modelCallCaptureFromRow(org, r));
+  },
+
+  async deleteModelCallCapturesForSession(org, sessionId) {
+    return Number(getDb().prepare("DELETE FROM model_call_capture WHERE org_id = ? AND session_id = ?").run(org, sessionId).changes);
   },
 
   async runAnalyticsQuery(compiled) {

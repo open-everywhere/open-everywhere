@@ -64,6 +64,13 @@ export const ENV = {
   slackUnifiedChannelB: "E2E_SLACK_UNIFIED_CHANNEL_B",
   unifiedDomain: "E2E_UNIFIED_DOMAIN",
 
+  slackSoakChannelDev: "E2E_SLACK_SOAK_CHANNEL_DEV",
+  slackSoakChannelOps: "E2E_SLACK_SOAK_CHANNEL_OPS",
+  notionSoakPage1: "E2E_NOTION_SOAK_PAGE_1",
+  notionSoakPage2: "E2E_NOTION_SOAK_PAGE_2",
+  linearSoakLabelId: "E2E_SOAK_LINEAR_LABEL_ID",
+  soakDomain: "E2E_SOAK_DOMAIN",
+
   expectUnified: "E2E_EXPECT_UNIFIED",
   unixArmed: "E2E_UNIX_ARMED",
   spendCapFixture: "E2E_SPEND_CAP_FIXTURE",
@@ -92,7 +99,10 @@ export type Capability =
   | "notionAmbient"
   | "slackUnified"
   | "pr"
-  | "connectorWrite";
+  | "connectorWrite"
+  | "soakSlack"
+  | "soakNotion"
+  | "soakLinear";
 
 export interface SlackDriverConfig {
   readonly token: string;
@@ -196,6 +206,20 @@ export interface PrConfig {
 
 export interface ConnectorWriteConfig {
   readonly channel: string;
+}
+
+export interface SoakSlackConfig {
+  readonly channelDev: string;
+  readonly channelOps: string;
+}
+
+export interface SoakNotionConfig {
+  readonly page1: string;
+  readonly page2: string;
+}
+
+export interface SoakLinearConfig {
+  readonly labelId: string;
 }
 
 export type Resolved<T> =
@@ -374,6 +398,24 @@ export function resolveConnectorWrite(env: Env = process.env): Resolved<Connecto
   return { ok: true, cfg: { channel: values[0] } };
 }
 
+export function resolveSoakSlack(env: Env = process.env): Resolved<SoakSlackConfig> {
+  const { values, missing } = need(env, [ENV.slackSoakChannelDev, ENV.slackSoakChannelOps]);
+  if (missing.length > 0) return { ok: false, missing };
+  return { ok: true, cfg: { channelDev: values[0], channelOps: values[1] } };
+}
+
+export function resolveSoakNotion(env: Env = process.env): Resolved<SoakNotionConfig> {
+  const { values, missing } = need(env, [ENV.notionSoakPage1, ENV.notionSoakPage2]);
+  if (missing.length > 0) return { ok: false, missing };
+  return { ok: true, cfg: { page1: values[0], page2: values[1] } };
+}
+
+export function resolveSoakLinear(env: Env = process.env): Resolved<SoakLinearConfig> {
+  const { values, missing } = need(env, [ENV.linearSoakLabelId]);
+  if (missing.length > 0) return { ok: false, missing };
+  return { ok: true, cfg: { labelId: values[0] } };
+}
+
 export function auditSilencesExpected(env: Env = process.env): boolean {
   return env[ENV.auditSilences]?.trim() === "1";
 }
@@ -404,6 +446,9 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   const slackUnified = resolveSlackUnified(env);
   const pr = resolvePr(env);
   const connectorWrite = resolveConnectorWrite(env);
+  const soakSlack = resolveSoakSlack(env);
+  const soakNotion = resolveSoakNotion(env);
+  const soakLinear = resolveSoakLinear(env);
   const available = new Set<Capability>();
   if (slack.ok) available.add("slack");
   if (discord.ok) available.add("discord");
@@ -424,6 +469,9 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   if (slackUnified.ok) available.add("slackUnified");
   if (pr.ok) available.add("pr");
   if (connectorWrite.ok) available.add("connectorWrite");
+  if (soakSlack.ok) available.add("soakSlack");
+  if (soakNotion.ok) available.add("soakNotion");
+  if (soakLinear.ok) available.add("soakLinear");
   return {
     available,
     missing: {
@@ -446,6 +494,9 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
       slackUnified: slackUnified.ok ? [] : slackUnified.missing,
       pr: pr.ok ? [] : pr.missing,
       connectorWrite: connectorWrite.ok ? [] : connectorWrite.missing,
+      soakSlack: soakSlack.ok ? [] : soakSlack.missing,
+      soakNotion: soakNotion.ok ? [] : soakNotion.missing,
+      soakLinear: soakLinear.ok ? [] : soakLinear.missing,
     },
     includeOptional: env[ENV.includeOptional] === "1",
   };
