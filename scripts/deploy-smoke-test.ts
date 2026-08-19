@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { renderSmokeReport, runGithubInstallationSmoke, runWebhookSmoke, rowDeliveryId, rowWakeId, type SmokeResult } from "./deploy/smoke-lib.js";
+import { renderSmokeReport, runGithubInstallationSmoke, runLinearSignedDeliverySmoke, runWebhookSmoke, rowDeliveryId, rowWakeId, type SmokeResult } from "./deploy/smoke-lib.js";
 import { WEBHOOK_ID_HEADER, WEBHOOK_SIGNATURE_HEADER, WEBHOOK_TIMESTAMP_HEADER, WebhookDriver } from "../packages/core/scripts/e2e/webhook.js";
 import type { AuditWireEntry } from "../packages/core/scripts/e2e/audit-read.js";
 
@@ -427,9 +427,204 @@ await check("a surface.app_installed row for a DIFFERENT owner does not satisfy 
   assert.equal(gate(result, "audits OUR delivery").pass, false, "a decoy owner's row must not satisfy the join");
 });
 
+const LINEAR_SECRET = "it-linear-smoke-secret";
+const LINEAR_SMOKE_SURFACE = (teamId: string): string => `linear/oe-deploy-smoke-linear-org/${teamId}`;
+
+interface LinearStubOpts {
+  readonly signedStatus?: number;
+  readonly unsignedStatus?: number;
+  readonly writeRow?: boolean;
+  readonly rowVerdict?: string;
+  readonly writeRowForUnsigned?: boolean;
+  readonly auditStatus?: number;
+  readonly decoys?: readonly AuditWireEntry[];
+}
+
+interface LinearStub {
+  readonly fetchImpl: Parameters<typeof runLinearSignedDeliverySmoke>[0]["fetchImpl"];
+  readonly signedHeaders: Record<string, string>[];
+  readonly unsignedHeaders: Record<string, string>[];
+}
+
+function teamIdFromForgedBody(rawBody: string | undefined): string | undefined {
+  const body = JSON.parse(rawBody ?? "{}") as { agentSession?: { issue?: { team?: { id?: string } } } };
+  return body.agentSession?.issue?.team?.id;
+}
+
+function makeLinearStub(opts: LinearStubOpts = {}): LinearStub {
+  const rows: AuditWireEntry[] = [...(opts.decoys ?? [])];
+  const signedHeaders: Record<string, string>[] = [];
+  const unsignedHeaders: Record<string, string>[] = [];
+  const fetchImpl: LinearStub["fetchImpl"] = async (url, init) => {
+    if (url.startsWith(`${TARGET}/eve/v1/linear`)) {
+      const headers = init.headers;
+      const isSigned = headers["linear-signature"] !== undefined;
+      const teamId = teamIdFromForgedBody(init.body);
+      if (isSigned) {
+        signedHeaders.push(headers);
+        if ((opts.writeRow ?? true) && teamId) {
+          rows.push({
+            ts: new Date().toISOString(),
+            org: "default",
+            platform: "linear",
+            workspace: "oe-deploy-smoke-linear-org",
+            surface: LINEAR_SMOKE_SURFACE(teamId),
+            action: "linear.external_policy_suppressed",
+            detail: { verdict: opts.rowVerdict ?? "silent-room" },
+          });
+        }
+        return { status: opts.signedStatus ?? 200, text: async () => "ok" };
+      }
+      unsignedHeaders.push(headers);
+      if (opts.writeRowForUnsigned && teamId) {
+        rows.push({
+          ts: new Date().toISOString(),
+          org: "default",
+          platform: "linear",
+          workspace: "oe-deploy-smoke-linear-org",
+          surface: LINEAR_SMOKE_SURFACE(teamId),
+          action: "linear.external_policy_suppressed",
+          detail: { verdict: "silent-room" },
+        });
+      }
+      return { status: opts.unsignedStatus ?? 401, text: async () => "unauthorized" };
+    }
+    if (url.startsWith(`${TARGET}/control/v1/audit`)) {
+      const status = opts.auditStatus ?? 200;
+      if (status !== 200) return { status, text: async () => "forbidden" };
+      return { status: 200, text: async () => JSON.stringify({ entries: rows }) };
+    }
+    throw new Error(`linear stub deployment got an unexpected request: ${url}`);
+  };
+  return { fetchImpl, signedHeaders, unsignedHeaders };
+}
+
+async function linearSmoke(opts: LinearStubOpts = {}, stub: LinearStub = makeLinearStub(opts)): Promise<SmokeResult> {
+  let clock = Date.parse("2026-01-16T13:12:00.000Z");
+  return runLinearSignedDeliverySmoke({
+    targetUrl: TARGET,
+    webhookSecret: LINEAR_SECRET,
+    controlToken: "tok-read",
+    fetchImpl: stub.fetchImpl,
+    now: () => clock,
+    sleep: async (ms) => {
+      clock += ms;
+    },
+    log: () => {},
+    firedTimeoutMs: 10_000,
+    unsignedGraceMs: 1_000,
+    pollIntervalMs: 1_000,
+  });
+}
+
+await check("a healthy deployment passes every linear room-grain gate", async () => {
+  const result = await linearSmoke();
+  assert.equal(result.ok, true, `expected ok; gates: ${JSON.stringify(result.gates)}`);
+  assert.equal(gate(result, "signed Linear agent-session delivery is accepted").pass, true);
+  assert.equal(gate(result, "audits OUR delivery").pass, true);
+  assert.equal(gate(result, "the ROOM grain (verdict silent-room)").pass, true);
+  assert.equal(gate(result, "unsigned Linear agent-session delivery is refused").pass, true);
+  assert.equal(gate(result, "leaves NO audit trace").pass, true);
+  assert.equal(result.gates.length, 5);
+});
+
+await check("the signed POST carries linear-signature; the unsigned one carries none", async () => {
+  const stub = makeLinearStub();
+  await linearSmoke({}, stub);
+  assert.ok(stub.signedHeaders[0]?.["linear-signature"], "signed delivery carries linear-signature");
+  assert.equal(stub.unsignedHeaders[0]?.["linear-signature"], undefined, "the unsigned delivery carries no signature header");
+});
+
+await check("RED — no 200 on the signed leg fails the FIRST gate and stops there (no false audit-row gate)", async () => {
+  const result = await linearSmoke({ signedStatus: 500 });
+  assert.equal(result.ok, false);
+  assert.equal(gate(result, "signed Linear agent-session delivery is accepted").pass, false);
+  assert.ok(!result.gates.some((g) => g.label.includes("audits OUR delivery")), "the audit-row gate must not even be ATTEMPTED once the 200 gate is red");
+});
+
+await check("RED — 200 with no linear.external_policy_suppressed row fails the audit-row gate", async () => {
+  const result = await linearSmoke({ writeRow: false });
+  assert.equal(result.ok, false);
+  assert.equal(gate(result, "signed Linear agent-session delivery is accepted").pass, true, "the 200 gate itself is still green");
+  assert.equal(gate(result, "audits OUR delivery").pass, false);
+  assert.ok(!result.gates.some((g) => g.label.includes("silent-room")), "the verdict gate must not even be attempted once the row gate is red");
+});
+
+await check("RED — a row on our surface with the WRONG verdict fails the room-grain gate, not the join gate", async () => {
+  const result = await linearSmoke({ rowVerdict: "withheld-author" });
+  assert.equal(result.ok, false);
+  assert.equal(gate(result, "audits OUR delivery").pass, true, "the join itself was ours — the red is the VERDICT");
+  assert.equal(gate(result, "the ROOM grain (verdict silent-room)").pass, false);
+  assert.match(gate(result, "the ROOM grain (verdict silent-room)").detail, /verdict is withheld-author/);
+});
+
+await check("RED — an unsigned delivery accepted (200) AND leaving a row behind fails BOTH negative gates", async () => {
+  const result = await linearSmoke({ unsignedStatus: 200, writeRowForUnsigned: true });
+  assert.equal(result.ok, false);
+  assert.equal(gate(result, "unsigned Linear agent-session delivery is refused").pass, false);
+  assert.equal(gate(result, "leaves NO audit trace").pass, false);
+});
+
+await check("RED — a 401 with a row behind it (the worst outcome) is still caught: the status-only gate would have missed it", async () => {
+  const result = await linearSmoke({ writeRowForUnsigned: true });
+  assert.equal(gate(result, "unsigned Linear agent-session delivery is refused").pass, true, "the status code alone looks fine");
+  assert.equal(gate(result, "leaves NO audit trace").pass, false, "…but the trace gate catches what the status code could not");
+  assert.equal(result.ok, false);
+});
+
+await check("a linear.external_policy_suppressed row for a DIFFERENT team (a stray from another run) does not satisfy the join", async () => {
+  const stub = makeLinearStub({ writeRow: false });
+  const decoyFetch: typeof stub.fetchImpl = async (url, init) => {
+    if (url.startsWith(`${TARGET}/control/v1/audit`)) {
+      return {
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            entries: [
+              {
+                ts: new Date().toISOString(),
+                org: "default",
+                platform: "linear",
+                workspace: "oe-deploy-smoke-linear-org",
+                surface: LINEAR_SMOKE_SURFACE("oe-deploy-smoke-some-other-run"),
+                action: "linear.external_policy_suppressed",
+                detail: { verdict: "silent-room" },
+              },
+            ],
+          }),
+      };
+    }
+    return stub.fetchImpl(url, init);
+  };
+  const result = await linearSmoke({}, { ...stub, fetchImpl: decoyFetch });
+  assert.equal(gate(result, "audits OUR delivery").pass, false, "a decoy run's row must not satisfy the join");
+});
+
+await check("a decoy row cannot fake the no-trace gate either — the join is on OUR refused surface", async () => {
+  const decoys: AuditWireEntry[] = [
+    {
+      ts: new Date().toISOString(),
+      org: "default",
+      platform: "linear",
+      workspace: "oe-deploy-smoke-linear-org",
+      surface: LINEAR_SMOKE_SURFACE("oe-deploy-smoke-some-other-run"),
+      action: "linear.external_policy_suppressed",
+      detail: { verdict: "silent-room" },
+    },
+  ];
+  const result = await linearSmoke({ decoys });
+  assert.equal(gate(result, "leaves NO audit trace").pass, true, "another run's row is not our refused delivery's trace");
+});
+
+await check("an unreadable audit route THROWS rather than reporting a green or a silent empty result (linear rung)", async () => {
+  await assert.rejects(() => linearSmoke({ auditStatus: 401 }), /control\/v1\/audit -> 401/);
+});
+
 if (failures.length > 0) {
   console.error(`✗ deploy-smoke: ${failures.length} of ${checks} check(s) FAILED`);
   for (const f of failures) console.error(`  ✗ ${f}`);
   process.exit(1);
 }
-console.log(`✓ deploy-smoke: ${checks} check(s) passed (gate ladder, three reds, the exact delivery-id join, the github installation rung — all offline)`);
+console.log(
+  `✓ deploy-smoke: ${checks} check(s) passed (gate ladder, three reds, the exact delivery-id join, the github installation rung, the linear room-grain rung — all offline)`,
+);

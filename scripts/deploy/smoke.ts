@@ -1,5 +1,5 @@
 import { resolveWebhook } from "../../packages/core/scripts/e2e/env.js";
-import { renderSmokeReport, runGithubInstallationSmoke, runWebhookSmoke } from "./smoke-lib.js";
+import { renderSmokeReport, runGithubInstallationSmoke, runLinearSignedDeliverySmoke, runWebhookSmoke } from "./smoke-lib.js";
 import { DeployConfigError, parseArgs } from "./lib.js";
 
 const args = parseArgs(process.argv.slice(2));
@@ -77,6 +77,26 @@ try {
     ok = ok && githubResult.ok;
   } else {
     console.log("\n  skipping the github installation rung — no E2E_GITHUB_WEBHOOK_SECRET/GITHUB_WEBHOOK_SECRET configured for this runner");
+  }
+
+  const linearSecret = process.env.E2E_LINEAR_WEBHOOK_SECRET?.trim() || process.env.LINEAR_WEBHOOK_SECRET?.trim();
+  if (linearSecret) {
+    console.log(`\n  linear external-policy room-grain rung against ${target} — no judge involved`);
+    const linearResult = await runLinearSignedDeliverySmoke({
+      targetUrl: target,
+      webhookSecret: linearSecret,
+      controlToken,
+      fetchImpl: (url, init) => fetch(url, init.method === "GET" ? { method: "GET", headers: init.headers } : init),
+      now: () => Date.now(),
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      log,
+      firedTimeoutMs: num("fired-timeout-ms", 60_000),
+      unsignedGraceMs: num("unsigned-grace-ms", 15_000),
+    });
+    for (const line of renderSmokeReport(linearResult)) console.log(line);
+    ok = ok && linearResult.ok;
+  } else {
+    console.log("\n  skipping the linear external-policy rung — no E2E_LINEAR_WEBHOOK_SECRET/LINEAR_WEBHOOK_SECRET configured for this runner");
   }
 
   process.exit(ok ? 0 : 1);
