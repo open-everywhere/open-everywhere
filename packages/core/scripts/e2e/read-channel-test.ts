@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AuditWireEntry } from "./audit-read.js";
 import { deployedBuildCarries } from "./deployed-build.js";
-import { classifyDelegatedReadEvidence, GENERIC_READ_VERBS_SHA } from "./read-channel-lib.js";
+import { classifyDelegatedReadEvidence, GENERIC_READ_VERBS_SHA, pollForDelegationSettlement, type DelegatedReadVerdict } from "./read-channel-lib.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -145,6 +145,68 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".."
     const rows = [row("slack.sources_refused", { target: "slack" })];
     const v = classifyDelegatedReadEvidence(rows, "s1", "discord");
     ok(v.kind === "none", `a slack refusal row never matches platform:"discord" (got "${v.kind}")`);
+  }
+}
+
+{
+  const row = (action: string, detail: Record<string, unknown>): AuditWireEntry => ({
+    ts: new Date().toISOString(), org: "default", platform: "unified", workspace: "delegation", action, detail,
+  });
+
+  function makeDeps(rowsSequence: readonly (readonly AuditWireEntry[])[]): { deps: { sleep: (ms: number) => Promise<void>; now: () => number; fetchRows: () => Promise<readonly AuditWireEntry[]> }; sleepCount: () => number } {
+    let now = 1_000_000;
+    let call = 0;
+    let sleeps = 0;
+    return {
+      deps: {
+        now: () => now,
+        sleep: async (ms: number) => { sleeps++; now += ms; },
+        fetchRows: async () => rowsSequence[Math.min(call++, rowsSequence.length - 1)] ?? [],
+      },
+      sleepCount: () => sleeps,
+    };
+  }
+
+  const firstUnsettled: DelegatedReadVerdict = { kind: "delegated-unsettled", taskId: "t1", detail: `delegation.task_started for task t1 (session s1) has no matching delegation.task_settled in this window — the background worker never reached a terminal state` };
+
+  {
+    const { deps, sleepCount } = makeDeps([[row("delegation.task_started", { task: "t1", session: "s1" }), row("delegation.task_settled", { task: "t1", session: "s1", status: "completed" })]]);
+    const v = await pollForDelegationSettlement(deps, "s1", "slack", 100_000, 4000, firstUnsettled);
+    ok(v.kind === "delegated-completed", `settling on the first poll ⇒ "delegated-completed" (got "${v.kind}")`);
+    ok(sleepCount() === 1, `settling on the first poll ⇒ exactly one poll happened (got ${sleepCount()})`);
+  }
+
+  {
+    const { deps, sleepCount } = makeDeps([
+      [row("delegation.task_started", { task: "t1", session: "s1" })],
+      [row("delegation.task_started", { task: "t1", session: "s1" })],
+      [row("delegation.task_started", { task: "t1", session: "s1" }), row("delegation.task_settled", { task: "t1", session: "s1", status: "completed" })],
+    ]);
+    const v = await pollForDelegationSettlement(deps, "s1", "slack", 100_000, 4000, firstUnsettled);
+    ok(v.kind === "delegated-completed", `settling on the third poll ⇒ "delegated-completed" (got "${v.kind}")`);
+    ok(sleepCount() === 3, `two unsettled reads then a settle ⇒ three polls total, not one (got ${sleepCount()})`);
+  }
+
+  {
+    const { deps, sleepCount } = makeDeps([[row("delegation.task_started", { task: "t1", session: "s1" })]]);
+    const v = await pollForDelegationSettlement(deps, "s1", "slack", 10_000, 4000, firstUnsettled);
+    ok(v.kind === "delegated-unsettled", `never settling within the bound ⇒ still "delegated-unsettled" (got "${v.kind}")`);
+    ok(v.kind === "delegated-unsettled" && v.taskId === "t1", "the timed-out verdict still carries the taskId");
+    ok(v.kind === "delegated-unsettled" && /never settled within 10000ms/.test(v.detail), `the timed-out detail names the bound explicitly (got "${v.kind === "delegated-unsettled" ? v.detail : ""}")`);
+    ok(v.kind === "delegated-unsettled" && v.detail !== firstUnsettled.detail, "the timed-out detail is DIFFERENT from the pre-poll detail — a real timeout must not read as the pre-fix bug");
+    ok(sleepCount() >= 2, `a 10s bound at a 4s poll interval polls more than once before giving up (got ${sleepCount()} polls)`);
+  }
+
+  {
+    const { deps } = makeDeps([[row("delegation.task_started", { task: "t1", session: "s1" }), row("delegation.task_settled", { task: "t1", session: "s1", status: "failed" })]]);
+    const v = await pollForDelegationSettlement(deps, "s1", "slack", 100_000, 4000, firstUnsettled);
+    ok(v.kind === "delegated-failed", `a failed settlement appearing mid-poll ⇒ "delegated-failed", not a timeout (got "${v.kind}")`);
+  }
+
+  {
+    const { deps } = makeDeps([[row("slack.sources_refused", { target: "slack" })]]);
+    const v = await pollForDelegationSettlement(deps, "s1", "slack", 100_000, 4000, firstUnsettled);
+    ok(v.kind === "refused", `a refusal row appearing mid-poll ⇒ "refused" (got "${v.kind}")`);
   }
 }
 

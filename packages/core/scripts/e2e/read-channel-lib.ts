@@ -14,6 +14,37 @@ export type DelegatedReadVerdict =
   | { readonly kind: "refused"; readonly action: string; readonly detail: string }
   | { readonly kind: "none"; readonly detail: string };
 
+export interface SettlePollDeps {
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly now: () => number;
+  readonly fetchRows: () => Promise<readonly AuditWireEntry[]>;
+}
+
+export async function pollForDelegationSettlement(
+  deps: SettlePollDeps,
+  sessionId: string,
+  platform: "slack" | "discord",
+  timeoutMs: number,
+  pollMs: number,
+  first: DelegatedReadVerdict,
+): Promise<DelegatedReadVerdict> {
+  const deadline = deps.now() + timeoutMs;
+  let verdict = first;
+  let waitedMs = 0;
+  while (verdict.kind === "delegated-unsettled" && deps.now() < deadline) {
+    await deps.sleep(pollMs);
+    waitedMs += pollMs;
+    const rows = await deps.fetchRows();
+    verdict = classifyDelegatedReadEvidence(rows, sessionId, platform);
+  }
+  if (verdict.kind !== "delegated-unsettled") return verdict;
+  return {
+    kind: "delegated-unsettled",
+    taskId: verdict.taskId,
+    detail: `${verdict.detail} — never settled within ${timeoutMs}ms (polled ~${waitedMs}ms for delegation.task_settled; a genuine settle timeout, distinct from the OPE-788 single-early-read misread)`,
+  };
+}
+
 export const readRefusalActions = (platform: "slack" | "discord"): readonly string[] => [`${platform}.sources_refused`, `${platform}.origin_refused`];
 
 export function classifyDelegatedReadEvidence(
