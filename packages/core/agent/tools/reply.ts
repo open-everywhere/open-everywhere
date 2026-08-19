@@ -12,6 +12,7 @@ import {
   REPLY_FORCED_AUDIT_REASON,
 } from "../channels/reply-freshness.js";
 import { replierLabelFor, withPendingWorkFrame } from "../channels/turn-delivery.js";
+import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
 import { markRepliedThisTurn, markWakeDoneThisTurn, isWakeDoneThisTurn, isWakeDeclinedThisTurn, WAKE_DECLINED_REFUSAL_REASON, wakeDeclinedRefusalMessage } from "../channels/reply-signal.js";
 import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
 import { addressedWakeThisTurn, claimTasksForAddressedWake } from "../access/dispatch-origin-signal.js";
@@ -109,6 +110,7 @@ export const unifiedReplyEntry = defineTool({
 
       const id = await postUnifiedReply(origin, framed, {}, replyAuditFor(ctx as BindableContext, "tool", input.wake), replierFor(bind));
       markRepliedThisTurn(turnId);
+      noteTerminalCallGrain(bind);
 
       const claimed = claimTasksForAddressedWake(turnId, input.wake);
       if (claimed.length > 0) {
@@ -158,6 +160,7 @@ const baseReplyEntry = defineTool({
           }
           const id = await postReply(target, input.text, replyAuditFor(ctx as BindableContext, "tool"), replierFor(ctx as BindableContext));
           markRepliedThisTurn(currentTurnId(ctx as BindableContext));
+          noteTerminalCallGrain(ctx as BindableContext);
           return { posted: true, id };
         },
 });

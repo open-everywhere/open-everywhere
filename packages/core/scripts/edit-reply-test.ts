@@ -41,6 +41,8 @@ const TOKEN = unifiedSupervisorToken(DOMAIN, 1);
 
 const posted: { channel: string; text: string }[] = [];
 const edited: { channel: string; ts: string; text: string }[] = [];
+let updatesSent = 0;
+let updateOutcome: "ok" | "definitive" | "ambiguous" = "ok";
 
 registerSlackTestBridge({
   channel: { __fixture: "slack" } as never,
@@ -52,6 +54,9 @@ registerSlackTestBridge({
       return { ok: true, ts: `ts-${posted.length}` } as never;
     }
     if (method === "chat.update") {
+      updatesSent++;
+      if (updateOutcome === "ambiguous") throw new Error("the connection dropped before Slack answered");
+      if (updateOutcome === "definitive") return { ok: false, error: "message_not_found" } as never;
       edited.push({ channel: p.get("channel") ?? "", ts: p.get("ts") ?? "", text: p.get("text") ?? "" });
       return { ok: true, ts: p.get("ts") } as never;
     }
@@ -294,6 +299,69 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
   ok(refusal?.includes("reply") === true, "§11/RECOVERY: it steers to posting a new `reply` instead");
   const rows = await rowsFor("reply.edit.refused", "wake-notion-probe");
   ok(rows.length === 1 && rows[0]?.["reason"] === EDIT_NO_ARM_REFUSAL_REASON, "§11/AUDIT: the refusal is recorded as `no-edit-arm`");
+}
+
+{
+  const inTurn = newSession();
+  const w = await wakeAt(CHAN, t(-1000));
+  const r = await inTurn(() => callReply(w, "turn_12", w, "Three items: a, b, c."));
+  const roomAfterReply = posted.length;
+  const editsBefore = edited.length;
+  const sentBefore = updatesSent;
+
+  updateOutcome = "definitive";
+  const e = await inTurn(() => callEdit(w, "turn_12", w, r.id as string, "Four items: a, b, c, d."));
+  updateOutcome = "ok";
+
+  ok(e.edited !== true, "§12: a definitive platform failure is NOT reported as an edit");
+  ok(typeof e.error === "string", "§12: it reaches the model as an ERROR — the turn stays open and a fresh `reply` is the remedy");
+  ok(updatesSent === sentBefore + 1, "§12: the arm did call the platform — this leg measures the platform's answer, not a host fence");
+  ok(edited.length === editsBefore, "§12/ROOM: no message changed");
+  ok(posted.length === roomAfterReply, "§12/ROOM: and nothing was posted in its place by the host");
+  const rows = await rowsFor("reply.edit.refused", w);
+  ok(rows.length === 1 && rows[0]?.["reason"] === "platform-error", "§12/AUDIT: the failure is recorded as `platform-error`");
+  ok(rows[0]?.["failure"] === "definitive", "§12/AUDIT: the row carries the CLASS the host acted on");
+}
+
+{
+  const inTurn = newSession();
+  const w = await wakeAt(CHAN, t(-1000));
+  const r = await inTurn(() => callReply(w, "turn_13", w, "Three items: a, b, c."));
+  const roomAfterReply = posted.length;
+  const editsBefore = edited.length;
+  const sentBefore = updatesSent;
+
+  updateOutcome = "ambiguous";
+  const e = (await inTurn(() => callEdit(w, "turn_13", w, r.id as string, "Four items: a, b, c, d."))) as {
+    edited?: boolean;
+    note?: string;
+    error?: string;
+  };
+  updateOutcome = "ok";
+
+  ok(e.error === undefined, "§13: an ambiguous failure does NOT reach the model as an error — an error re-opens the turn, and this one must not");
+  ok(e.edited === false, "§13: the result says the edit was NOT confirmed");
+  ok(updatesSent === sentBefore + 1, "§13: the arm did call the platform");
+  ok(edited.length === editsBefore, "§13/ROOM: the fixture accepted nothing, so nothing changed in the room");
+  ok(posted.length === roomAfterReply, "§13/ROOM: and no message was posted in its place");
+  ok(String(e.note).includes("did not confirm"), "§13/NOTE: it names the one thing the model cannot see — the platform never answered");
+  ok(/edit_reply` again/.test(String(e.note)), "§13/NOTE: the recovery it offers is a REPEAT EDIT, which is safe either way");
+  ok(/Do NOT post a new reply/.test(String(e.note)), "§13/NOTE: negative control — it forbids the fresh post, the loss direction the rule names");
+  const rows = await rowsFor("reply.edit.refused", w);
+  ok(rows.length === 1 && rows[0]?.["reason"] === "platform-error", "§13/AUDIT: a returned result hides NOTHING from the trail — the row is still written");
+  ok(rows[0]?.["failure"] === "ambiguous", "§13/AUDIT: and it names the class, so an operator can count the turns that ended without a correction");
+}
+
+{
+  const { editFailureClass, markEditNotApplied } = await import("../agent/channels/reply-edit.js");
+  ok(editFailureClass(markEditNotApplied(new Error("slack said ok:false"))) === "definitive", "§14: an arm that says `applied:false` is DEFINITIVE");
+  ok(editFailureClass(Object.assign(new Error("discord 404"), { status: 404 })) === "definitive", "§14: a 404 is DEFINITIVE — the platform read the request and refused it");
+  ok(editFailureClass(Object.assign(new Error("discord 403"), { status: 403 })) === "definitive", "§14: so is a 403");
+  ok(editFailureClass(Object.assign(new Error("discord 500"), { status: 500 })) === "ambiguous", "§14: a 5xx is AMBIGUOUS — the platform may have applied it and failed afterwards");
+  ok(editFailureClass(Object.assign(new Error("rate limited"), { status: 429 })) === "ambiguous", "§14: 429 is AMBIGUOUS — it says nothing about an earlier attempt");
+  ok(editFailureClass(Object.assign(new Error("timeout"), { status: 408 })) === "ambiguous", "§14: 408 is AMBIGUOUS for the same reason");
+  ok(editFailureClass(new Error("the socket closed")) === "ambiguous", "§14: an error with NEITHER signal fails CLOSED — an unknown cannot prove the edit failed");
+  ok(editFailureClass(undefined) === "ambiguous", "§14: and so does a non-error throw, without throwing here");
 }
 
 rmSync(dir, { recursive: true, force: true });

@@ -2,6 +2,7 @@ import { callSlackApi } from "eve/channels/slack";
 import { registerSlackBridge, bridgeBotDisplayName, slackBridge, type SlackBridge } from "../agent/channels/slack-bridge.js";
 import { registerBotDisplayName } from "../agent/identity/bot-display-name.js";
 import { registerPostArm } from "../agent/channels/post-arms.js";
+import { markEditNotApplied } from "../agent/channels/reply-edit.js";
 import { registerIdentityMapper } from "../agent/identity/binding.js";
 import { registerCapabilityManifest } from "../agent/identity/capabilities.js";
 import { registerWakeOriginCodec } from "../agent/channels/wake-origin-codec.js";
@@ -126,7 +127,7 @@ export function registerSlackFixturePostArm(): void {
         ? await bridge.form("chat.update", new URLSearchParams({ channel: locus.channelId, ts: messageId, text }).toString())
         : undefined;
       if (res?.ok !== true) {
-        throw new Error(`edit_reply couldn't update the Slack message — ${(res?.error as string) ?? "chat.update returned no ok"}`);
+        throw markEditNotApplied(new Error(`edit_reply couldn't update the Slack message — ${(res?.error as string) ?? "chat.update returned no ok"}`));
       }
     },
   });

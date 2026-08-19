@@ -21,6 +21,30 @@ export function editPlatformStatus(err: unknown): number | undefined {
   return typeof status === "number" && Number.isFinite(status) ? status : undefined;
 }
 
+export type EditFailureClass = "definitive" | "ambiguous";
+
+const AMBIGUOUS_CLIENT_STATUSES: ReadonlySet<number> = new Set([408, 429]);
+
+export function editFailureClass(err: unknown): EditFailureClass {
+  if ((err as { applied?: unknown } | null | undefined)?.applied === false) return "definitive";
+  const status = editPlatformStatus(err);
+  if (status !== undefined && status >= 400 && status < 500 && !AMBIGUOUS_CLIENT_STATUSES.has(status)) return "definitive";
+  return "ambiguous";
+}
+
+export function markEditNotApplied<E extends Error>(err: E): E {
+  return Object.assign(err, { applied: false as const });
+}
+
+export function ambiguousEditNote(platform: string): string {
+  const where = platform && platform.length > 0 ? platform : "the surface";
+  return (
+    `The edit was sent but ${where} did not confirm it, so the message may or may not have changed. ` +
+    "Do NOT post a new reply about it — if the edit did land, a fresh post says the same thing twice. " +
+    "Call `edit_reply` again with the same message id if the correction matters; repeating an edit is safe."
+  );
+}
+
 export function editRefusalMessage(reason: string, platform?: string): string {
   if (reason === EDIT_NO_ARM_REFUSAL_REASON) {
     const where = platform && platform.length > 0 ? platform : "this surface";
@@ -33,7 +57,12 @@ export function editRefusalMessage(reason: string, platform?: string): string {
   );
 }
 
-export async function auditReplyEditRefused(audit: ReplyAudit | undefined, reason: string, status?: number): Promise<void> {
+export async function auditReplyEditRefused(
+  audit: ReplyAudit | undefined,
+  reason: string,
+  status?: number,
+  failure?: EditFailureClass,
+): Promise<void> {
   if (!audit) return;
   await appendAudit({
     org: audit.org,
@@ -46,6 +75,7 @@ export async function auditReplyEditRefused(audit: ReplyAudit | undefined, reaso
       reason,
       route: audit.route,
       ...(status !== undefined ? { status } : {}),
+      ...(failure !== undefined ? { failure } : {}),
       ...(audit.wakeId ? { wakeId: audit.wakeId.slice(0, 200) } : {}),
       ...(audit.sessionId ? { sessionId: audit.sessionId } : {}),
     },
@@ -83,11 +113,11 @@ export async function editPostedMessage(
   const arm = postArm(locus.platform);
   if (!arm?.editMessage) {
     await auditReplyEditRefused(audit, EDIT_NO_ARM_REFUSAL_REASON);
-    throw new Error(editRefusalMessage(EDIT_NO_ARM_REFUSAL_REASON, locus.platform));
+    throw markEditNotApplied(new Error(editRefusalMessage(EDIT_NO_ARM_REFUSAL_REASON, locus.platform)));
   }
   if (!(await isOwnPost(audit.org, locus, messageId, ledgerDeps))) {
     await auditReplyEditRefused(audit, EDIT_NOT_OWN_REFUSAL_REASON);
-    throw new Error(editRefusalMessage(EDIT_NOT_OWN_REFUSAL_REASON));
+    throw markEditNotApplied(new Error(editRefusalMessage(EDIT_NOT_OWN_REFUSAL_REASON)));
   }
   if (process.env.OE_EGRESS_SPOOF === "1") {
     if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
@@ -98,7 +128,7 @@ export async function editPostedMessage(
   try {
     await arm.editMessage(locus, messageId, text);
   } catch (err) {
-    await auditReplyEditRefused(audit, EDIT_PLATFORM_ERROR_REASON, editPlatformStatus(err));
+    await auditReplyEditRefused(audit, EDIT_PLATFORM_ERROR_REASON, editPlatformStatus(err), editFailureClass(err));
     throw err;
   }
   await auditReplyEdit(audit, messageId, locus.platform, text.length);

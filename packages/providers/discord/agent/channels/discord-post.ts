@@ -1,3 +1,5 @@
+import { markEditNotApplied } from "@open-everywhere/core/agent/adapter-api.js";
+
 const API = "https://discord.com/api/v10";
 
 export const DISCORD_MESSAGE_MAX = 2000;
@@ -106,8 +108,10 @@ async function discordPostOne(channelId: string, content: string, replyToMessage
 
 export async function discordEditMessage(channelId: string, messageId: string, content: string): Promise<void> {
   if (content.length > DISCORD_MESSAGE_MAX) {
-    throw new Error(
-      `edit_reply couldn't update the Discord message — the new text is ${content.length} characters and Discord caps one message at ${DISCORD_MESSAGE_MAX}. A message cannot be split by an edit; shorten it, or post a new reply.`,
+    throw markEditNotApplied(
+      new Error(
+        `edit_reply couldn't update the Discord message — the new text is ${content.length} characters and Discord caps one message at ${DISCORD_MESSAGE_MAX}. A message cannot be split by an edit; shorten it, or post a new reply.`,
+      ),
     );
   }
   const res = await fetch(`${API}/channels/${channelId}/messages/${messageId}`, {
