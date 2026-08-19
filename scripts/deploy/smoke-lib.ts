@@ -2,6 +2,7 @@ import { buildAuditQuery, type AuditWireEntry } from "../../packages/core/script
 import { WebhookDriver, webhookDeliveryId, type WebhookFetch } from "../../packages/core/scripts/e2e/webhook.js";
 import type { WebhookConfig } from "../../packages/core/scripts/e2e/env.js";
 import { signGithubBody } from "../../packages/core/scripts/e2e/github-forge.js";
+import { signLinearBody } from "../../packages/core/scripts/e2e/linear-driver.js";
 
 const FIRE_ACTIONS = ["webhook.fired", "webhook.declined"] as const;
 
@@ -280,6 +281,135 @@ export async function runGithubInstallationSmoke(deps: GithubInstallationSmokeDe
     });
   } catch {
   }
+
+  return { ok: positiveOk && refused && noTrace, gates };
+}
+
+export interface LinearSignedDeliverySmokeDeps {
+  readonly targetUrl: string;
+  readonly webhookSecret: string;
+  readonly controlToken: string;
+  readonly fetchImpl: WebhookFetch;
+  readonly now: () => number;
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly log: (line: string) => void;
+  readonly firedTimeoutMs?: number;
+  readonly unsignedGraceMs?: number;
+  readonly pollIntervalMs?: number;
+}
+
+export const LINEAR_SMOKE_ORG = "oe-deploy-smoke-linear-org";
+
+function linearSmokeAgentSessionBody(input: { readonly sessionId: string; readonly teamId: string; readonly issueId: string; readonly commentId: string; readonly nowMs: number }): string {
+  return JSON.stringify({
+    type: "AgentSessionEvent",
+    action: "created",
+    webhookTimestamp: input.nowMs,
+    organizationId: LINEAR_SMOKE_ORG,
+    agentSession: {
+      id: input.sessionId,
+      sourceCommentId: input.commentId,
+      issue: { id: input.issueId, team: { id: input.teamId } },
+    },
+  });
+}
+
+async function readLinearAudit(deps: LinearSignedDeliverySmokeDeps, sinceIso: string): Promise<readonly AuditWireEntry[]> {
+  const base = deps.targetUrl.replace(/\/+$/, "");
+  const query = buildAuditQuery({ sinceIso, actions: ["linear.external_policy_suppressed"], limit: 100 });
+  const res = await deps.fetchImpl(`${base}/control/v1/audit?${query}`, {
+    method: "GET",
+    headers: { authorization: `Bearer ${deps.controlToken}`, accept: "application/json" },
+    body: "",
+  });
+  const text = await res.text();
+  if (res.status !== 200) throw new Error(`GET /control/v1/audit -> ${res.status} (${text.slice(0, 160)})`);
+  const parsed = JSON.parse(text) as { entries?: AuditWireEntry[] };
+  if (!Array.isArray(parsed.entries)) throw new Error("GET /control/v1/audit returned no entries array (malformed response)");
+  return parsed.entries;
+}
+
+export async function runLinearSignedDeliverySmoke(deps: LinearSignedDeliverySmokeDeps): Promise<SmokeResult> {
+  const firedTimeoutMs = deps.firedTimeoutMs ?? DEFAULTS.firedTimeoutMs;
+  const unsignedGraceMs = deps.unsignedGraceMs ?? DEFAULTS.unsignedGraceMs;
+  const pollIntervalMs = deps.pollIntervalMs ?? DEFAULTS.pollIntervalMs;
+  const base = deps.targetUrl.replace(/\/+$/, "");
+  const gates: SmokeGate[] = [];
+  const gate = (label: string, pass: boolean, detail: string): boolean => {
+    gates.push({ label, pass, detail });
+    deps.log(`${pass ? "✓" : "✗"} ${label} — ${detail}`);
+    return pass;
+  };
+
+  const teamId = `oe-deploy-smoke-${deps.now().toString(36)}`;
+  const surfaceKey = `linear/${LINEAR_SMOKE_ORG}/${teamId}`;
+  const sinceIso = new Date(deps.now() - 30_000).toISOString();
+  const body = linearSmokeAgentSessionBody({
+    sessionId: `oe-smoke-session-${teamId}`,
+    teamId,
+    issueId: `oe-smoke-issue-${teamId}`,
+    commentId: `oe-smoke-comment-${teamId}`,
+    nowMs: deps.now(),
+  });
+  deps.log(`signed POST /eve/v1/linear (agent-session created, team ${teamId})`);
+  const signed = await deps.fetchImpl(`${base}/eve/v1/linear`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "linear-signature": signLinearBody(deps.webhookSecret, body) },
+    body,
+  });
+  let positiveOk = gate(
+    "a signed Linear agent-session delivery is accepted (200)",
+    signed.status === 200,
+    `POST /eve/v1/linear -> ${signed.status}`,
+  );
+
+  if (positiveOk) {
+    const deadline = deps.now() + firedTimeoutMs;
+    let found: AuditWireEntry | undefined;
+    for (;;) {
+      found = (await readLinearAudit(deps, sinceIso)).find((r) => r.surface === surfaceKey);
+      if (found || deps.now() >= deadline) break;
+      await deps.sleep(pollIntervalMs);
+    }
+    positiveOk = gate(
+      "the deployment audits OUR delivery (linear.external_policy_suppressed carries our scratch surface)",
+      found !== undefined,
+      found ? `${found.action} row at ${found.ts}, verdict ${String(found.detail?.verdict)}` : `no linear.external_policy_suppressed row carrying surface ${surfaceKey} within ${firedTimeoutMs}ms`,
+    );
+    if (positiveOk && found) {
+      positiveOk = gate(
+        "that suppression is the ROOM grain (verdict silent-room) — the scratch domain's declared policy",
+        found.detail?.verdict === "silent-room",
+        `verdict is ${String(found.detail?.verdict)}`,
+      );
+    }
+  }
+
+  const unsignedTeamId = `oe-deploy-smoke-${deps.now().toString(36)}-u`;
+  const unsignedSurfaceKey = `linear/${LINEAR_SMOKE_ORG}/${unsignedTeamId}`;
+  const unsignedSince = new Date(deps.now() - 30_000).toISOString();
+  const unsignedBody = linearSmokeAgentSessionBody({
+    sessionId: `oe-smoke-session-${unsignedTeamId}`,
+    teamId: unsignedTeamId,
+    issueId: `oe-smoke-issue-${unsignedTeamId}`,
+    commentId: `oe-smoke-comment-${unsignedTeamId}`,
+    nowMs: deps.now(),
+  });
+  deps.log(`unsigned POST /eve/v1/linear (agent-session created, team ${unsignedTeamId})`);
+  const unsigned = await deps.fetchImpl(`${base}/eve/v1/linear`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: unsignedBody,
+  });
+  const refused = gate("an unsigned Linear agent-session delivery is refused (401)", unsigned.status === 401, `POST /eve/v1/linear (no signature) -> ${unsigned.status}`);
+
+  await deps.sleep(unsignedGraceMs);
+  const strayRows = (await readLinearAudit(deps, unsignedSince)).filter((r) => r.surface === unsignedSurfaceKey);
+  const noTrace = gate(
+    "the refused delivery leaves NO audit trace",
+    strayRows.length === 0,
+    strayRows.length === 0 ? `no linear.external_policy_suppressed row carries surface ${unsignedSurfaceKey}` : `${strayRows.length} row(s) carry the REFUSED surface`,
+  );
 
   return { ok: positiveOk && refused && noTrace, gates };
 }

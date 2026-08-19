@@ -71,6 +71,12 @@ const rawDomains: Domain[] = [
     models: { primary: { id: UTILITY_MODEL }, supervisor: { id: SUPERVISOR_MODEL, reasoning: "medium" } },
   }),
 
+  defineDomain({
+    name: "e2e-linear-signed-delivery",
+    containers: ["linear/oe-deploy-smoke-linear-org/oe-deploy-smoke-*"],
+    externalPolicy: { roomGrain: "silent" },
+  }),
+
   ...(process.env.OE_MEMORY_EVAL === "1"
     ? [
         defineDomain({
