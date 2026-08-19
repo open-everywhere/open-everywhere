@@ -184,6 +184,13 @@ check("the recovery ambient arm restores exactly one clause, and it names the to
   }
 });
 
+check("the recovery tool is mounted only beside the two verbs, and its result is what makes recovery real", () => {
+  const withFetch = buildRequest({ model: "openai/x", system: "s", user: "u", withTools: true, withFetch: true, effort: "high" });
+  const without = buildRequest({ model: "openai/x", system: "s", user: "u", withTools: true, withFetch: false, effort: "high" });
+  assert.deepEqual((withFetch.tools as { function: { name: string } }[]).map((t) => t.function.name), ["reply", "no_reply", "fetch_channel"]);
+  assert.deepEqual((without.tools as { function: { name: string } }[]).map((t) => t.function.name), ["reply", "no_reply"]);
+});
+
 check("BENCH_NOW and BENCH_WAKE_ID are what the envelope actually renders", () => {
   const e = renderEnvelope(BENCH_PROBES[0]);
   assert.equal(e.includes(`current-time="${BENCH_NOW}"`), true);
