@@ -33,6 +33,7 @@ import {
   registerAuthorTrust,
   _resetAuthorTrustForTest,
   OE_GRAIN_ATTR,
+  platformFailureClass,
   type BindableContext,
   type ExternalPolicy,
   type MemoryResolveConfig,
@@ -288,6 +289,30 @@ const memCfg: MemoryResolveConfig = {
 }
 
 {
+  {
+    const prevAppId = process.env.MICROSOFT_APP_ID;
+    const prevTeamsId = process.env.TEAMS_APP_ID;
+    delete process.env.MICROSOFT_APP_ID;
+    delete process.env.TEAMS_APP_ID;
+    try {
+      let cls: string | undefined;
+      let msg = "";
+      try {
+        await teamsPostArm.dispatchReply?.({ platform: "teams", serviceUrl: "https://smba.trafficmanager.net/uk/", conversationId: "19:c@thread.v2" }, "hello");
+        ok(false, "G/T4: a Teams reply with no app credentials must REFUSE");
+      } catch (e) {
+        cls = platformFailureClass(e);
+        msg = String((e as Error).message);
+      }
+      ok(msg.includes("MICROSOFT_APP_ID"), "G/T4: the credential pre-flight refuses with its own honest error");
+      ok(cls === "definitive", "🔴 G/T4: and it is DEFINITIVE — no credentials means no call, so nothing reached the room");
+    } finally {
+      if (prevAppId === undefined) delete process.env.MICROSOFT_APP_ID;
+      else process.env.MICROSOFT_APP_ID = prevAppId;
+      if (prevTeamsId !== undefined) process.env.TEAMS_APP_ID = prevTeamsId;
+    }
+  }
+
   const prevAppId = process.env.MICROSOFT_APP_ID;
   process.env.MICROSOFT_APP_ID = "app-id-for-the-test";
   try {
@@ -295,16 +320,19 @@ const memCfg: MemoryResolveConfig = {
     const dispatchReply = teamsPostArm.dispatchReply;
     ok(typeof dispatchReply === "function", "G/T4: the teams post arm HAS a mid-turn dispatch path (the one this check guards)");
     let message = "";
+    let failure: string | undefined;
     try {
       await dispatchReply?.({ platform: "teams", serviceUrl: EVIL, conversationId: "19:conv@thread.v2" }, "leak me");
       ok(false, "G/T4: dispatchTeamsReply must REFUSE an un-allowlisted serviceUrl");
     } catch (e) {
       message = String((e as Error).message);
+      failure = platformFailureClass(e);
     }
     ok(message.includes("not a Bot Framework host"), "G/T4: …and it refuses for the RIGHT reason (the host allowlist, not a transport failure)");
     ok(!message.includes(EVIL), "G/T4: the error is host-free (never echo the attacker-supplied endpoint back)");
     ok(!/password|secret|token|bearer/i.test(message), "G/T4: …and token-free, mirroring liveTeamsPost's defensive parity");
     ok(isTrustedTeamsServiceUrl("https://smba.trafficmanager.net/uk/"), "G/T4: the same predicate ADMITS a real Bot Connector host (the refusal is host-specific)");
+    ok(failure === "definitive", "🔴 G/T4: the host-allowlist refusal is DEFINITIVE — the call never left this host");
   } finally {
     if (prevAppId === undefined) delete process.env.MICROSOFT_APP_ID;
     else process.env.MICROSOFT_APP_ID = prevAppId;

@@ -1,5 +1,13 @@
 import type { UnifiedWakeOrigin } from "./unified-window.js";
-import { auditReplyPost, recordLandedPost, REPLY_DEDUPE_SKIPPED_ID, type ReplyAudit, type ReplierLabel } from "./reply-post.js";
+import {
+  auditReplyPost,
+  notePostFailure,
+  recordLandedPost,
+  releasePostKeyOnFailure,
+  REPLY_DEDUPE_SKIPPED_ID,
+  type ReplyAudit,
+  type ReplierLabel,
+} from "./reply-post.js";
 import { withReplierPrefix } from "./turn-delivery.js";
 import { onVercel } from "../access/platform.js";
 import { postArm } from "./post-arms.js";
@@ -65,11 +73,18 @@ export async function postUnifiedReply(
     org: audit?.org,
     key,
     run: async () => {
-      const realId = await dispatchUnifiedReply(origin, body, deps, nativeReplier);
+      let realId: string;
+      try {
+        realId = await dispatchUnifiedReply(origin, body, deps, nativeReplier);
+      } catch (err) {
+        await notePostFailure(audit, err, origin.platform);
+        throw err;
+      }
       await auditReplyPost(audit, realId, origin.platform, body.length);
       await recordLandedPost({ org: audit?.org, editLocus: unifiedEditLocus(origin), messageId: realId, body, platform: origin.platform });
       return realId;
     },
+    releaseKeyOnFailure: releasePostKeyOnFailure,
     skipped: () => REPLY_DEDUPE_SKIPPED_ID,
   });
   return id ?? REPLY_DEDUPE_SKIPPED_ID;

@@ -617,6 +617,7 @@ export interface OperationalStore {
 
   markEventSeen(org: string, key: string, at: string, ttlMs: number): Promise<boolean>;
   hasEventSeen(org: string, key: string, at: string, ttlMs: number): Promise<boolean>;
+  forgetEventSeen(org: string, key: string): Promise<void>;
 
   captureDelivery(
     org: string,

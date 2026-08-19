@@ -6,6 +6,7 @@ import {
   resolvePartition,
   refutedReadAuthorIds,
   ChannelScopeError,
+  markNotApplied,
   type BindableContext,
   type ReadScopeAuditDeps,
   type RenderedLine,
@@ -66,7 +67,7 @@ export async function callSlackRead(operation: string, params: Record<string, st
     throw new Error("SLACK_BOT_TOKEN is not set — the Slack read tools need the bot token to call the Web API.");
   }
   const json = (await callSlackApi({ botToken: undefined, operation, body: params })) as SlackReadResponse;
-  if (!json.ok) throw new Error(`Slack ${operation} failed: ${json.error ?? "unknown error"}`);
+  if (!json.ok) throw markNotApplied(new Error(`Slack ${operation} failed: ${json.error ?? "unknown error"}`));
   return json;
 }
 

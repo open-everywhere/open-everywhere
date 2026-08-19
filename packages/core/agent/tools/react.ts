@@ -5,6 +5,7 @@ import { capabilitiesFor, capabilitiesForPlatform } from "../identity/capabiliti
 import { bridgeSlackReadCall } from "../channels/slack-bridge.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { markReactedThisTurn } from "../channels/react-signal.js";
+import { carryFailureSignals, platformFailureClass, platformFailureStatus } from "../channels/platform-failure.js";
 import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
@@ -69,7 +70,12 @@ const reactEntry = defineTool({
           } catch (err) {
             const msg = String(err instanceof Error ? err.message : err);
             if (!msg.includes("already_reacted")) {
-              throw new Error(`react failed — ${msg}`);
+              await auditToolAction(ctx, "slack.react.failed", {
+                ts,
+                failure: platformFailureClass(err),
+                ...(platformFailureStatus(err) !== undefined ? { status: platformFailureStatus(err) } : {}),
+              });
+              throw carryFailureSignals(err, new Error(`react failed — ${msg}`));
             }
           }
           markReactedThisTurn();

@@ -1,6 +1,6 @@
 import { sendTeamsActivity, replyToTeamsActivity, splitTeamsMessageText, updateTeamsActivity, TEAMS_MESSAGE_TEXT_MAX_LENGTH } from "eve/channels/teams";
 import { isTrustedTeamsServiceUrl } from "./teams-origin-codec.js";
-import { markEditNotApplied } from "@open-everywhere/core/agent/adapter-api.js";
+import { markNotApplied, carryFailureSignals } from "@open-everywhere/core/agent/adapter-api.js";
 import type { PostArm, TargetResolveBag, ReplyTarget, UnifiedWakeOrigin, UnifiedReplyDeps, EditLocus } from "@open-everywhere/core/agent/adapter-api.js";
 
 type TeamsTarget = Extract<ReplyTarget, { platform: "teams" }>;
@@ -8,10 +8,10 @@ type TeamsOrigin = Extract<UnifiedWakeOrigin, { platform: "teams" }>;
 
 async function dispatchTeamsReply(target: TeamsTarget, text: string): Promise<string> {
   if (!process.env.MICROSOFT_APP_ID && !process.env.TEAMS_APP_ID) {
-    throw new Error("reply couldn't post to Teams — MICROSOFT_APP_ID is not set.");
+    throw markNotApplied(new Error("reply couldn't post to Teams — MICROSOFT_APP_ID is not set."));
   }
   if (!isTrustedTeamsServiceUrl(target.serviceUrl)) {
-    throw new Error(`reply couldn't post to Teams — serviceUrl is not a Bot Framework host (conversation ${target.conversationId})`);
+    throw markNotApplied(new Error(`reply couldn't post to Teams — serviceUrl is not a Bot Framework host (conversation ${target.conversationId})`));
   }
   const res = target.replyToActivityId
     ? await replyToTeamsActivity({
@@ -30,10 +30,10 @@ async function dispatchTeamsReply(target: TeamsTarget, text: string): Promise<st
 
 async function liveTeamsPost(origin: TeamsOrigin, text: string): Promise<string> {
   if (!process.env.MICROSOFT_APP_ID && !process.env.TEAMS_APP_ID) {
-    throw new Error(`unified reply couldn't post to Teams — MICROSOFT_APP_ID is not set (conversation ${origin.conversationId})`);
+    throw markNotApplied(new Error(`unified reply couldn't post to Teams — MICROSOFT_APP_ID is not set (conversation ${origin.conversationId})`));
   }
   if (!isTrustedTeamsServiceUrl(origin.serviceUrl)) {
-    throw new Error(`unified reply couldn't post to Teams — serviceUrl is not a Bot Framework host (conversation ${origin.conversationId})`);
+    throw markNotApplied(new Error(`unified reply couldn't post to Teams — serviceUrl is not a Bot Framework host (conversation ${origin.conversationId})`));
   }
   let id: string;
   try {
@@ -50,23 +50,23 @@ async function liveTeamsPost(origin: TeamsOrigin, text: string): Promise<string>
           body: { type: "message", text },
         });
     id = res.id;
-  } catch {
-    throw new Error(`unified reply couldn't post to Teams — the Connector post failed (conversation ${origin.conversationId})`);
+  } catch (err) {
+    throw carryFailureSignals(err, new Error(`unified reply couldn't post to Teams — the Connector post failed (conversation ${origin.conversationId})`));
   }
   return id || "unknown";
 }
 
 async function editTeamsMessage(locus: EditLocus, messageId: string, text: string): Promise<void> {
   if (!process.env.MICROSOFT_APP_ID && !process.env.TEAMS_APP_ID) {
-    throw markEditNotApplied(new Error("edit_reply couldn't update the Teams message — MICROSOFT_APP_ID is not set."));
+    throw markNotApplied(new Error("edit_reply couldn't update the Teams message — MICROSOFT_APP_ID is not set."));
   }
   if (!locus.serviceUrl || !isTrustedTeamsServiceUrl(locus.serviceUrl)) {
-    throw markEditNotApplied(
+    throw markNotApplied(
       new Error(`edit_reply couldn't update the Teams message — serviceUrl is not a Bot Framework host (conversation ${locus.channelId})`),
     );
   }
   if (text.length > TEAMS_MESSAGE_TEXT_MAX_LENGTH) {
-    throw markEditNotApplied(
+    throw markNotApplied(
       new Error(
         `edit_reply couldn't update the Teams message — the new text is ${text.length} characters and Teams caps one message at ${TEAMS_MESSAGE_TEXT_MAX_LENGTH}. An edit cannot split a message; shorten it, or post a new reply.`,
       ),

@@ -2,6 +2,7 @@ import { appendAudit } from "../audit/audit.js";
 import { onVercel } from "../access/platform.js";
 import { postArm } from "./post-arms.js";
 import { isOwnPost, type OwnPostLedgerDeps } from "./own-post-ledger.js";
+import { markNotApplied, platformFailureClass, platformFailureStatus, type PlatformFailureClass } from "./platform-failure.js";
 import type { ReplyAudit } from "./reply-post.js";
 
 export interface EditLocus {
@@ -15,26 +16,6 @@ export const EDIT_NOT_OWN_REFUSAL_REASON = "not-own-post";
 export const EDIT_NO_ARM_REFUSAL_REASON = "no-edit-arm";
 
 export const EDIT_PLATFORM_ERROR_REASON = "platform-error";
-
-export function editPlatformStatus(err: unknown): number | undefined {
-  const status = (err as { status?: unknown } | null | undefined)?.status;
-  return typeof status === "number" && Number.isFinite(status) ? status : undefined;
-}
-
-export type EditFailureClass = "definitive" | "ambiguous";
-
-const AMBIGUOUS_CLIENT_STATUSES: ReadonlySet<number> = new Set([408, 429]);
-
-export function editFailureClass(err: unknown): EditFailureClass {
-  if ((err as { applied?: unknown } | null | undefined)?.applied === false) return "definitive";
-  const status = editPlatformStatus(err);
-  if (status !== undefined && status >= 400 && status < 500 && !AMBIGUOUS_CLIENT_STATUSES.has(status)) return "definitive";
-  return "ambiguous";
-}
-
-export function markEditNotApplied<E extends Error>(err: E): E {
-  return Object.assign(err, { applied: false as const });
-}
 
 export function ambiguousEditNote(platform: string): string {
   const where = platform && platform.length > 0 ? platform : "the surface";
@@ -61,7 +42,7 @@ export async function auditReplyEditRefused(
   audit: ReplyAudit | undefined,
   reason: string,
   status?: number,
-  failure?: EditFailureClass,
+  failure?: PlatformFailureClass,
 ): Promise<void> {
   if (!audit) return;
   await appendAudit({
@@ -113,11 +94,11 @@ export async function editPostedMessage(
   const arm = postArm(locus.platform);
   if (!arm?.editMessage) {
     await auditReplyEditRefused(audit, EDIT_NO_ARM_REFUSAL_REASON);
-    throw markEditNotApplied(new Error(editRefusalMessage(EDIT_NO_ARM_REFUSAL_REASON, locus.platform)));
+    throw markNotApplied(new Error(editRefusalMessage(EDIT_NO_ARM_REFUSAL_REASON, locus.platform)));
   }
   if (!(await isOwnPost(audit.org, locus, messageId, ledgerDeps))) {
     await auditReplyEditRefused(audit, EDIT_NOT_OWN_REFUSAL_REASON);
-    throw markEditNotApplied(new Error(editRefusalMessage(EDIT_NOT_OWN_REFUSAL_REASON)));
+    throw markNotApplied(new Error(editRefusalMessage(EDIT_NOT_OWN_REFUSAL_REASON)));
   }
   if (process.env.OE_EGRESS_SPOOF === "1") {
     if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
@@ -128,7 +109,7 @@ export async function editPostedMessage(
   try {
     await arm.editMessage(locus, messageId, text);
   } catch (err) {
-    await auditReplyEditRefused(audit, EDIT_PLATFORM_ERROR_REASON, editPlatformStatus(err), editFailureClass(err));
+    await auditReplyEditRefused(audit, EDIT_PLATFORM_ERROR_REASON, platformFailureStatus(err), platformFailureClass(err));
     throw err;
   }
   await auditReplyEdit(audit, messageId, locus.platform, text.length);

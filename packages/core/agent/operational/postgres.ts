@@ -1968,6 +1968,10 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return rows.length > 0;
     },
 
+    async forgetEventSeen(org, key) {
+      await client.query("DELETE FROM event_dedupe WHERE org_id = $1 AND key = $2", [org, key]);
+    },
+
     async claimNotice(org, key, at) {
       const { rows } = await client.query(
         "INSERT INTO notice_claim (org_id, key, claimed_at) VALUES ($1, $2, $3) ON CONFLICT (org_id, key) DO NOTHING RETURNING key",

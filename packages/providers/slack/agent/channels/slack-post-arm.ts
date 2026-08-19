@@ -1,5 +1,5 @@
 import { slackForm, botDisplayName } from "./slack-events.js";
-import { markEditNotApplied } from "@open-everywhere/core/agent/adapter-api.js";
+import { markNotApplied } from "@open-everywhere/core/agent/adapter-api.js";
 import type {
   PostArm,
   TargetResolveBag,
@@ -55,9 +55,14 @@ export async function postSlackMessage(
     const retry = await post(base);
     const retryTs = typeof retry?.ts === "string" ? retry.ts : undefined;
     if (retry?.ok === true && retryTs) return retryTs;
-    throw new Error(`${errPrefix} — ${(retry?.error as string) ?? (res?.error as string) ?? "no ts returned (check SLACK_BOT_TOKEN)"}`);
+    throw classifiedPostError(retry, `${errPrefix} — ${(retry?.error as string) ?? (res?.error as string) ?? "no ts returned (check SLACK_BOT_TOKEN)"}`);
   }
-  throw new Error(`${errPrefix} — ${(res?.error as string) ?? "no ts returned (check SLACK_BOT_TOKEN)"}`);
+  throw classifiedPostError(res, `${errPrefix} — ${(res?.error as string) ?? "no ts returned (check SLACK_BOT_TOKEN)"}`);
+}
+
+function classifiedPostError(res: SlackPostResult | undefined, message: string): Error {
+  const err = new Error(message);
+  return res?.ok === false ? markNotApplied(err) : err;
 }
 
 async function dispatchSlackReply(target: SlackTarget, text: string, replier?: ReplierLabel): Promise<string> {
@@ -99,7 +104,7 @@ async function editSlackMessage(locus: EditLocus, messageId: string, text: strin
   const body = new URLSearchParams({ channel: locus.channelId, ts: messageId, text });
   const res = await slackForm("chat.update", body.toString());
   if (res?.ok !== true) {
-    throw markEditNotApplied(
+    throw markNotApplied(
       new Error(`edit_reply couldn't update the Slack message — ${(res?.error as string) ?? "chat.update returned no ok (check SLACK_BOT_TOKEN)"}`),
     );
   }

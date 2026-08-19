@@ -1,4 +1,4 @@
-import { markEditNotApplied } from "@open-everywhere/core/agent/adapter-api.js";
+import { markNotApplied } from "@open-everywhere/core/agent/adapter-api.js";
 
 const API = "https://discord.com/api/v10";
 
@@ -85,7 +85,7 @@ export async function discordPostMessage(channelId: string, content: string, opt
     firstId ??= id;
   }
   if (firstId === undefined) {
-    throw new Error(`Discord create-message had no content to post for channel ${channelId}`);
+    throw markNotApplied(new Error(`Discord create-message had no content to post for channel ${channelId}`));
   }
   return firstId;
 }
@@ -99,7 +99,9 @@ async function discordPostOne(channelId: string, content: string, replyToMessage
       ...(replyToMessageId ? { message_reference: { message_id: replyToMessageId, fail_if_not_exists: false } } : {}),
     }),
   });
-  if (!res.ok) throw new Error(`Discord create-message failed (${res.status}) for channel ${channelId}`);
+  if (!res.ok) {
+    throw Object.assign(new Error(`Discord create-message failed (${res.status}) for channel ${channelId}`), { status: res.status });
+  }
   const body = (await res.json()) as { id?: unknown };
   const id = typeof body?.id === "string" ? body.id : undefined;
   if (!id) throw new Error(`Discord create-message returned no message id for channel ${channelId}`);
@@ -108,7 +110,7 @@ async function discordPostOne(channelId: string, content: string, replyToMessage
 
 export async function discordEditMessage(channelId: string, messageId: string, content: string): Promise<void> {
   if (content.length > DISCORD_MESSAGE_MAX) {
-    throw markEditNotApplied(
+    throw markNotApplied(
       new Error(
         `edit_reply couldn't update the Discord message — the new text is ${content.length} characters and Discord caps one message at ${DISCORD_MESSAGE_MAX}. A message cannot be split by an edit; shorten it, or post a new reply.`,
       ),
