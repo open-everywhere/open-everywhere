@@ -1,19 +1,26 @@
 import { defineState } from "eve/context";
 import { END_TURN_WITH_SENTINEL_INSTRUCTION } from "./normalized-wake.js";
 
-const slot = defineState<boolean>("open-everywhere.replied-this-turn", () => false);
+interface RepliedThisTurn {
+  readonly turnId: string;
+  readonly replied: true;
+}
 
-export function markRepliedThisTurn(): void {
+const slot = defineState<RepliedThisTurn | null>("open-everywhere.replied-this-turn", () => null);
+
+export function markRepliedThisTurn(turnId: string | undefined): void {
+  if (turnId === undefined || turnId.length === 0) return;
   try {
-    slot.update(() => true);
+    slot.update(() => ({ turnId, replied: true }));
   } catch {
   }
 }
 
-export function consumeRepliedThisTurn(): boolean {
+export function consumeRepliedThisTurn(turnId: string | undefined): boolean {
   try {
-    const was = slot.get();
-    slot.update(() => false);
+    const cur = slot.get();
+    const was = turnId !== undefined && turnId.length > 0 && cur !== null && cur.turnId === turnId;
+    slot.update(() => null);
     return was;
   } catch {
     return false;

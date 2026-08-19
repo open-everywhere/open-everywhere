@@ -32,7 +32,7 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
 const { SessionKey } = await import(abs("dist/src/context/keys.js"));
 const inSession = <T>(fn: () => Promise<T>): Promise<T> => {
   const c = new ContextContainer();
-  c.set(SessionKey, { sessionId: "chat-audit-test", auth: null, turn: 1, parent: undefined });
+  c.set(SessionKey, { sessionId: "chat-audit-test", auth: null, turn: { id: "t1", sequence: 1 }, parent: undefined });
   return contextStorage.run(c, fn);
 };
 
@@ -65,7 +65,7 @@ async function replyPosts(platform: string): Promise<Array<{ detail?: Record<str
   ok((await readAudit({ action: "slack.replied" })).length === 0, "slack: the legacy slack.replied row is GONE (folded into reply.post)");
 
   await inSession(async () => {
-    markRepliedThisTurn();
+    markRepliedThisTurn("t1");
     await slackChannel.adapter["message.completed"]!({ finishReason: "stop", message: "" }, ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "1752501000.000100" }));
   });
   ok((await replyPosts("slack")).length === 1, "slack: a reply-tool turn's empty terminal writes NO terminal reply.post row");

@@ -1473,7 +1473,7 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
       if (action.kind === "buffer-tool-status") return;
       openTypingGate(channel.channelId);
       const status = takeTurnStatus(channel.state);
-      const repliedThisTurn = consumeRepliedThisTurn();
+      const repliedThisTurn = consumeRepliedThisTurn((ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
       const cardPostedThisTurn = consumeCardPostedThisTurn();
       const plan = planCompletion({
         action,

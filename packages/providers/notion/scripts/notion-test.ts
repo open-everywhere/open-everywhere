@@ -394,7 +394,7 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
   const inSession = <T>(fn: () => Promise<T>, attributes?: Record<string, string>): Promise<T> => {
     const c = new ContextContainer();
     const auth = attributes ? { current: { attributes }, initiator: null } : null;
-    c.set(SessionKey, { sessionId: "notion-no-reply-test", auth, turn: 1, parent: undefined });
+    c.set(SessionKey, { sessionId: "notion-no-reply-test", auth, turn: { id: "t1", sequence: 1 }, parent: undefined });
     return contextStorage.run(c, fn);
   };
 
@@ -485,7 +485,7 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
     await inSession(async () => {
       const ctx = { state: unifiedState };
       await turnStarted(ctx);
-      markRepliedThisTurn();
+      markRepliedThisTurn("t1");
       await completed("trailing narration after a real tool reply", ctx);
     }, attrs);
     ok(posts.length === 0, "UNIFIED notion turn: trailing narration after a tool reply is dropped too (never double-posts)");

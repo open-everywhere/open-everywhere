@@ -487,7 +487,7 @@ const slackMentionChannel = slackChannel({
       }
       const cardPostedThisTurn = consumeCardPostedThisTurn();
       const reactedThisTurn = consumeReactedThisTurn();
-      const repliedThisTurn = consumeRepliedThisTurn();
+      const repliedThisTurn = consumeRepliedThisTurn((ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
       if (action.kind === "silent") {
         (channel.state as unknown as Record<string, unknown>).oeSilentTurn = true;
         console.log(

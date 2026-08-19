@@ -303,7 +303,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       const sessionId = ctx?.session?.id;
       const action = finalMessageActionForTurn(data.finishReason, data.message);
       if (action.kind === "buffer-tool-status") return;
-      const replied = consumeRepliedThisTurn();
+      const replied = consumeRepliedThisTurn(currentTurnId({ session: ctx.session } as unknown as BindableContext));
       const org = deploymentOrg();
       const { workspace, surface } = auditLabels(channel.continuation?.token);
       if (action.kind === "silent") {
