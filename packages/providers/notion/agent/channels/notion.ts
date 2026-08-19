@@ -7,6 +7,7 @@ import {
   resolveWakeTrustFromContext,
   finalMessageActionForTurn,
   completeSupervisorTurn,
+  SUPERVISOR_POST_SUPPRESSED,
   getConfig,
   ambientSupervisorEnabled,
   engagementTierFor,
@@ -432,6 +433,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
         noReplyAction: "notion.no_reply",
         repliedAction: "notion.replied",
         noTargetAction: "notion.no_target",
+        replySuppressedAction: "notion.reply_suppressed_duplicate",
         contextRow: { org, platform: "notion", workspace, surface: target?.pageId ?? channel.state.pageId ?? discussionId ?? "unknown" },
         repliedRow: { org, platform: "notion", workspace, surface: target?.pageId ?? channel.state.pageId ?? discussionId },
         silentAnchor: { discussionId: discussionId ?? channel.state.discussionId },
@@ -443,7 +445,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
             target?.credentialId ?? notionCredentialForPage(workspace === "unknown" ? undefined : workspace, target?.pageId ?? channel.state.pageId ?? undefined);
           const cred = await resolveNotionCredential(credentialId);
           if (!cred) throw new Error(`reply couldn't post to Notion — no value stored for notion credential "${credentialId}" (\`oe secret set\` its secretRef; see agent/access/providers.ts).`);
-          await postOnce({
+          const result = await postOnce({
             org,
             key: outboundKey({
               surface: "notion",
@@ -453,8 +455,9 @@ export default defineChannel<NotionState, { state: NotionState }>({
               payload: text,
             }),
             run: () => createCommentReply({ discussionId: discussionId!, text, ...cred }),
+            skipped: () => SUPERVISOR_POST_SUPPRESSED,
           });
-          return text.length;
+          return result === SUPERVISOR_POST_SUPPRESSED ? SUPERVISOR_POST_SUPPRESSED : text.length;
         },
         log: (m) => log(m),
       });

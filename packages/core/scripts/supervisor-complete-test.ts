@@ -7,7 +7,7 @@ const dir = join(tmpdir(), `open-everywhere-supervisor-complete-${process.pid}`)
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 
-const { completeSupervisorTurn } = await import("../agent/channels/supervisor-complete.js");
+const { completeSupervisorTurn, SUPERVISOR_POST_SUPPRESSED } = await import("../agent/channels/supervisor-complete.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 type FinalMessageAction = import("../agent/channels/turn-delivery.js").FinalMessageAction;
 
@@ -25,6 +25,7 @@ const NO_REPLY_ACTION = "oe708.no_reply";
 const REPLIED_ACTION = "oe708.replied";
 const NO_TARGET_ACTION = "oe708.no_target";
 const DROPPED_ACTION = "turn.supervisor_prose_dropped";
+const REPLY_SUPPRESSED_ACTION = "oe708.reply_suppressed_duplicate";
 
 interface Outcome {
   readonly logs: readonly string[];
@@ -41,6 +42,7 @@ async function runTurn(input: {
   readonly proseLeak?: { readonly repliedThisTurn: boolean };
   readonly postedChars?: number;
   readonly postThrows?: boolean;
+  readonly postSuppressed?: boolean;
 }): Promise<Outcome> {
   const org = `oe708-${input.label}`;
   const logs: string[] = [];
@@ -55,6 +57,7 @@ async function runTurn(input: {
     noReplyAction: NO_REPLY_ACTION,
     repliedAction: REPLIED_ACTION,
     noTargetAction: NO_TARGET_ACTION,
+    replySuppressedAction: REPLY_SUPPRESSED_ACTION,
     contextRow: row,
     repliedRow: row,
     silentAnchor: { ticket: 1 },
@@ -63,6 +66,7 @@ async function runTurn(input: {
     post: async (text: string) => {
       posted.push(text);
       if (input.postThrows) throw new Error("the poster failed");
+      if (input.postSuppressed) return SUPERVISOR_POST_SUPPRESSED;
       return input.postedChars;
     },
     log: (m: string) => logs.push(m),
@@ -152,6 +156,23 @@ const has = (o: Outcome, mark: string) => o.logs.some((l) => l.includes(mark));
 {
   const o = await runTurn({ label: "posted-chars", action: { kind: "post", text: "raw" }, hasTarget: true, midTurnPost: false, postedChars: 42 });
   ok(o.rows.find((r) => r.action === REPLIED_ACTION)?.detail?.chars === 42, "§8 the replied row records the ACTUAL posted length the poster returned");
+}
+
+{
+  const o = await runTurn({ label: "post-suppressed", action: { kind: "post", text: "a repost" }, hasTarget: true, midTurnPost: false, postSuppressed: true });
+  ok(o.posted.length === 1, "§9a the poster was still called (postOnce runs on every call; suppression happens inside it)");
+  ok(!o.actions.includes(REPLIED_ACTION), "🔴 §9b a suppressed repost writes NO replied row — the family stays byte-identical to \"a real post landed\"");
+  ok(o.actions.includes(REPLY_SUPPRESSED_ACTION), "§9c it writes the distinct reply_suppressed_duplicate row instead");
+  const suppressedRow = o.rows.find((r) => r.action === REPLY_SUPPRESSED_ACTION);
+  ok(suppressedRow?.detail?.ticket === 1, "§9d the suppressed row carries the caller's repliedAnchor detail");
+  ok(suppressedRow?.detail?.chars === "a repost".length, "§9e the suppressed row counts the completion — a COUNT, never the text");
+  ok(suppressedRow?.detail?.sessionId === "sess-post-suppressed", "§9f the suppressed row carries the sessionId → the audit→transcript join holds on this branch too");
+  ok(o.rows.length === 1, "§9g EXACTLY ONE audit row for a suppressed repost — no replied row alongside it");
+  ok(has(o, "suppressed as a duplicate repost"), "§9h the suppression is logged");
+
+  const landed = await runTurn({ label: "post-suppressed-control", action: { kind: "post", text: "a repost" }, hasTarget: true, midTurnPost: false, postSuppressed: false });
+  ok(landed.actions.includes(REPLIED_ACTION), "§9j NEGATIVE CONTROL: an ordinary (non-suppressed) post still writes the replied row");
+  ok(!landed.actions.includes(REPLY_SUPPRESSED_ACTION), "§9k NEGATIVE CONTROL: and writes no suppressed row");
 }
 
 rmSync(dir, { recursive: true, force: true });
