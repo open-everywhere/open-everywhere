@@ -74,4 +74,10 @@ export interface ReplaySummary {
   readonly toolConsistency: number;
   readonly bindingConsistency: number | null;
   readonly coldReplays: readonly number[];
+  readonly pinnedProvider: string;
+}
+
+export interface EndpointsResponse {
+  readonly modelId: string;
+  readonly providers: readonly string[];
 }
