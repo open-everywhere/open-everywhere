@@ -1,5 +1,6 @@
 import { wireNeonOperationalStore, rotateUnifiedWindow, parseRotateArgs, checkOrgAllowed } from "./rotate-window-lib.js";
 import { dmAnchorDomain } from "../../agent/channels/window-key.js";
+import { guardStoreIdentityBeforeWrite } from "../store-identity-guard.js";
 
 async function main() {
   const parsed = parseRotateArgs(process.argv.slice(2));
@@ -15,6 +16,8 @@ async function main() {
     process.exit(1);
   }
   const store = await wireNeonOperationalStore(dbUrl);
+
+  await guardStoreIdentityBeforeWrite(store, target.org);
 
   const allowed = await checkOrgAllowed(store, target.org, target.allowNewOrg);
   if (!allowed.ok) {
