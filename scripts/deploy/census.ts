@@ -30,6 +30,7 @@ import { deploymentOrg } from "../../packages/core/agent/identity/binding.js";
 import { getOperationalStore } from "../../packages/core/agent/operational/provider.js";
 import { CONTROL_READ_RUNTIME_SIGNAL_PATH } from "../../packages/core/agent/control/read-route.js";
 import { connectOperatorStore } from "../../packages/core/scripts/operator-store-connect.js";
+import { assertStoreIdentity } from "../../packages/core/scripts/store-identity-guard.js";
 
 import { loadBundles } from "../../agent/access/bundles.js";
 import { loadConnectorCredentials } from "../../agent/access/connector-credentials.js";
@@ -57,8 +58,6 @@ const STANDING_LIMITS: readonly string[] = [
   "a refused probe proves the ingress SERVES and refuses. It does not prove a correctly SIGNED delivery is accepted or reaches a session — `npm run deploy:smoke` proves that, for one declared hook only (OPE-640).",
   "the AES key tested here is THIS process's key. It proves the stored rows are openable; the CREDENTIAL BROKER KEY finding below (OPE-641) is the observable proof of the deployment's own OE_CREDENTIAL_ENCRYPTION_KEY, when that check runs.",
   "env-brokered secrets (an env var NAME as the ref) are not store rows, so the census cannot see whether the deployment holds them.",
-  "the store censused is the one THIS process's DATABASE_URL opens. Nothing joins it to the deployment at --target, so pointing the two at different environments reports a clean census of the wrong pair.",
-  "the cron heartbeats (OPE-635) read the audit trail through THIS process's DATABASE_URL, same as the credential rows above — the same wrong-store caveat applies to them.",
 ];
 
 const GATED_SCHEDULES: readonly { readonly file: string; readonly action: string; readonly reason: string }[] = [
@@ -207,6 +206,24 @@ try {
     );
   }
 
+  const org = args.values.get("org")?.trim() || deploymentOrg();
+
+  {
+    const identityToken = (process.env.OE_DEPLOY_CONTROL_TOKEN?.trim() || process.env.E2E_CONTROL_READ_TOKEN?.trim()) ?? "";
+    if (!identityToken) {
+      throw new DeployConfigError(
+        "cannot verify this store is the deployment's own — no OE_DEPLOY_CONTROL_TOKEN / E2E_CONTROL_READ_TOKEN set.\n" +
+          "  A census against an unverified store can report a clean read of the WRONG database (OPE-835).\n" +
+          "  Set one of those env vars to a service token registered in the deployment's OE_CONTROL_READ_TOKENS and run again.",
+      );
+    }
+    try {
+      await assertStoreIdentity(getOperationalStore(), { targetUrl: target, readToken: identityToken, org });
+    } catch (err) {
+      throw new DeployConfigError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   const { routes, plumbing, limits, reportedHeartbeats } = await mountedRoutes();
   const plan = planRequiredCredentials({
     bundles: loadBundles(),
@@ -224,7 +241,6 @@ try {
 
   const endpoints = planRequiredEndpoints({ routes, hooks: loadWebhooks(), controlHookId: CONTROL_HOOK_ID });
 
-  const org = args.values.get("org")?.trim() || deploymentOrg();
   const presentRefs = await getOperationalStore().listStoredCredentialRefs(org);
 
   const observations: EndpointObservation[] = [];
