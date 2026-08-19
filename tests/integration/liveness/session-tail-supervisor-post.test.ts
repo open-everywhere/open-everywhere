@@ -97,16 +97,16 @@ async function armSeams(topology: boolean): Promise<void> {
   cleanups.push(() => installed.uninstall());
 }
 
-test("a ticketing supervisor's own post reaches its generation's tail ring", async () => {
+test("a ticketing supervisor's `reply` reaches the room and its generation's tail ring", async () => {
   await armSeams(false);
   const sinceIso = new Date(Date.now() - 5_000).toISOString();
   const marker = randomBytes(4).toString("hex");
   const question = `supervisor tail probe ${marker}`;
   const answer = `supervisor answered ${marker}`;
 
-  disposeLater(registerScript({ parent: [{ say: answer }] }));
+  disposeLater(registerScript({ parent: [{ calls: [{ tool: "reply", input: { text: answer }, id: `t811-reply-${marker}` }] }, { say: "done" }] }));
 
-  const triggerId = `it-ope-807-trigger-${marker}`;
+  const triggerId = `it-ope-811-trigger-${marker}`;
   triggerComments.set(triggerId, {
     id: triggerId,
     discussion_id: DISCUSSION_ID,
@@ -118,12 +118,22 @@ test("a ticketing supervisor's own post reaches its generation's tail ring", asy
   const res = await notionCommentEventPost({ workspaceId: NOTION_WORKSPACE_ID, commentId: triggerId });
   expect(res.status, `the Notion front refused the delivery: ${res.body.slice(0, 300)}`).toBe(200);
 
-  const replied = await waitFor(
-    async () => (await readAuditRows({ actions: ["notion.replied"], sinceIso, limit: 200 })).find((r) => (r.detail as { chars?: unknown } | undefined)?.chars === answer.length),
-    "a notion.replied audit row for this turn's scripted say",
+  const posted = await waitFor(
+    async () =>
+      (await readAuditRows({ actions: ["reply.post"], sinceIso, limit: 200 })).find(
+        (r) => (r.detail as { chars?: unknown; platform?: unknown } | undefined)?.chars === answer.length && (r.detail as { platform?: unknown }).platform === "notion",
+      ),
+    "a reply.post audit row for this turn's scripted `reply` call",
   );
-  expect(replied.detail?.discussionId).toBe(DISCUSSION_ID);
+  expect(posted.detail?.route, "the reply did not travel the TOOL route").toBe("tool");
   expect(stub!.calls.filter((c) => c.method === "POST" && c.path === "/v1/comments").length, "the route never called createCommentReply").toBeGreaterThan(0);
+
+  const replied = await waitFor(
+    async () => (await readAuditRows({ actions: ["notion.replied"], sinceIso, limit: 200 })).find((r) => (r.detail as { discussionId?: unknown } | undefined)?.discussionId === DISCUSSION_ID),
+    "a notion.replied lifecycle row closing this turn's notion.dispatched row",
+  );
+  expect(replied.detail?.route, "the lifecycle row does not name the tool route").toBe("tool");
+  expect((await readAuditRows({ actions: ["turn.supervisor_prose_dropped"], sinceIso, limit: 200 })).filter((r) => (r.detail as { chars?: unknown } | undefined)?.chars === "done".length)).toEqual([]);
 
   await sleep(2_000);
 
@@ -148,17 +158,18 @@ test("a ticketing supervisor's own post reaches its generation's tail ring", asy
   expect(rows.filter((r) => r.entry.kind === "post" && r.entry.text === answer).length).toBe(1);
 });
 
-test("🔴 negative control: terminal prose the arm DROPS reaches neither the room nor the ring", async () => {
-  await armSeams(true);
+test("🔴 OPE-811: a supervisor turn's closing prose reaches neither the room nor the ring", async () => {
+  await armSeams(false);
   const sinceIso = new Date(Date.now() - 5_000).toISOString();
   const marker = randomBytes(4).toString("hex");
   const question = `dropped-prose probe ${marker}`;
   const answer = `never posted ${marker}`;
   const before = readTailRows().length;
+  const wireCallsBefore = stub!.calls.filter((c) => c.method === "POST" && c.path === "/v1/comments").length;
 
   disposeLater(registerScript({ parent: [{ say: answer }] }));
 
-  const triggerId = `it-ope-807-drop-${marker}`;
+  const triggerId = `it-ope-811-drop-${marker}`;
   triggerComments.set(triggerId, {
     id: triggerId,
     discussion_id: DISCUSSION_ID_2,
@@ -170,13 +181,16 @@ test("🔴 negative control: terminal prose the arm DROPS reaches neither the ro
   const res = await notionCommentEventPost({ workspaceId: NOTION_WORKSPACE_ID, commentId: triggerId });
   expect(res.status, `the Notion front refused the delivery: ${res.body.slice(0, 300)}`).toBe(200);
 
-  await waitFor(
+  const dropped = await waitFor(
     async () => (await readAuditRows({ actions: ["turn.supervisor_prose_dropped"], sinceIso, limit: 200 })).find((r) => (r.detail as { chars?: unknown } | undefined)?.chars === answer.length),
     "a turn.supervisor_prose_dropped audit row for this turn's scripted say",
   );
+  expect(JSON.stringify(dropped.detail), "the dropped answer's TEXT reached an audit row — the family is taint-clean by contract").not.toContain(marker);
   await sleep(2_000);
 
-  expect((await readAuditRows({ actions: ["notion.replied"], sinceIso, limit: 200 })).filter((r) => (r.detail as { chars?: unknown } | undefined)?.chars === answer.length)).toEqual([]);
+  expect((await readAuditRows({ actions: ["notion.replied"], sinceIso, limit: 200 })).filter((r) => (r.detail as { discussionId?: unknown } | undefined)?.discussionId === DISCUSSION_ID_2)).toEqual([]);
+  expect((await readAuditRows({ actions: ["reply.post"], sinceIso, limit: 200 })).filter((r) => (r.detail as { chars?: unknown } | undefined)?.chars === answer.length)).toEqual([]);
+  expect(stub!.calls.filter((c) => c.method === "POST" && c.path === "/v1/comments").length - wireCallsBefore, "the wire saw a comment post for a turn that called no tool").toBe(0);
 
   const rows = readTailRows();
   expect(rows.filter((r) => r.entry.kind === "post" && r.entry.text === answer)).toEqual([]);
@@ -185,16 +199,25 @@ test("🔴 negative control: terminal prose the arm DROPS reaches neither the ro
   expect(rows.filter((r) => r.entry.kind === "wake" && r.entry.text.includes(question)).length).toBeGreaterThan(0);
 });
 
-test("🔴 OPE-808: a dedupe-suppressed repost writes no second tail-ring row and no second replied row", async () => {
+test("🔴 a dedupe-suppressed repost writes no second tail-ring row and no second reply.post row", async () => {
   await armSeams(false);
   const sinceIso = new Date(Date.now() - 5_000).toISOString();
   const marker = randomBytes(4).toString("hex");
   const answer = `duplicate-safe answer ${marker}`;
   const wireCallsBefore = stub!.calls.filter((c) => c.method === "POST" && c.path === "/v1/comments").length;
 
-  disposeLater(registerScript({ parent: [{ say: answer }, { say: answer }] }));
+  disposeLater(
+    registerScript({
+      parent: [
+        { calls: [{ tool: "reply", input: { text: answer }, id: `t811-dup-1-${marker}` }] },
+        { say: "done" },
+        { calls: [{ tool: "reply", input: { text: answer }, id: `t811-dup-2-${marker}` }] },
+        { say: "done" },
+      ],
+    }),
+  );
 
-  const trigger1 = `it-ope-808-trigger-1-${marker}`;
+  const trigger1 = `it-ope-811-dup-1-${marker}`;
   triggerComments.set(trigger1, {
     id: trigger1,
     discussion_id: DISCUSSION_ID_3,
@@ -207,13 +230,16 @@ test("🔴 OPE-808: a dedupe-suppressed repost writes no second tail-ring row an
   expect(res1.status, `the Notion front refused the first delivery: ${res1.body.slice(0, 300)}`).toBe(200);
 
   await waitFor(
-    async () => (await readAuditRows({ actions: ["notion.replied"], sinceIso, limit: 200 })).find((r) => (r.detail as { chars?: unknown } | undefined)?.chars === answer.length),
-    "a notion.replied audit row for the first turn's scripted say",
+    async () =>
+      (await readAuditRows({ actions: ["reply.post"], sinceIso, limit: 200 })).find(
+        (r) => (r.detail as { chars?: unknown; platform?: unknown } | undefined)?.chars === answer.length && (r.detail as { platform?: unknown }).platform === "notion",
+      ),
+    "a reply.post audit row for the first turn's `reply` call",
   );
   await sleep(1_000);
   expect(readTailRows().filter((r) => r.entry.kind === "post" && r.entry.text === answer).length, "the first turn's post did not reach the ring").toBe(1);
 
-  const trigger2 = `it-ope-808-trigger-2-${marker}`;
+  const trigger2 = `it-ope-811-dup-2-${marker}`;
   triggerComments.set(trigger2, {
     id: trigger2,
     discussion_id: DISCUSSION_ID_3,
@@ -226,12 +252,16 @@ test("🔴 OPE-808: a dedupe-suppressed repost writes no second tail-ring row an
   expect(res2.status, `the Notion front refused the second delivery: ${res2.body.slice(0, 300)}`).toBe(200);
 
   await waitFor(
-    async () => (await readAuditRows({ actions: ["notion.reply_suppressed_duplicate"], sinceIso, limit: 200 })).find((r) => (r.detail as { chars?: unknown } | undefined)?.chars === answer.length),
-    "a notion.reply_suppressed_duplicate audit row for the second turn's dedupe-suppressed repost",
+    async () => ((await readAuditRows({ actions: ["notion.replied"], sinceIso, limit: 200 })).filter((r) => (r.detail as { discussionId?: unknown } | undefined)?.discussionId === DISCUSSION_ID_3).length >= 2 ? true : undefined),
+    "two notion.replied lifecycle rows — the second turn ran and delivered through the tool",
   );
   await sleep(1_000);
 
-  expect((await readAuditRows({ actions: ["notion.replied"], sinceIso, limit: 200 })).filter((r) => (r.detail as { chars?: unknown } | undefined)?.chars === answer.length).length).toBe(1);
+  expect(
+    (await readAuditRows({ actions: ["reply.post"], sinceIso, limit: 200 })).filter(
+      (r) => (r.detail as { chars?: unknown; platform?: unknown } | undefined)?.chars === answer.length && (r.detail as { platform?: unknown }).platform === "notion",
+    ).length,
+  ).toBe(1);
   expect(readTailRows().filter((r) => r.entry.kind === "post" && r.entry.text === answer).length, "a suppressed repost must not double-file the ring").toBe(1);
 
   const wireCallsAfter = stub!.calls.filter((c) => c.method === "POST" && c.path === "/v1/comments").length;

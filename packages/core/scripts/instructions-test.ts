@@ -743,48 +743,47 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   const bareCtx = (kind: string, token: string): BindableContext =>
     ({ channel: { kind, continuationToken: token }, session: { auth: { current: { attributes: {} } } } }) as BindableContext;
 
+  const slackSeat = bareCtx("slack", "C_811:oe-sup:g1");
   const githubSeat = bareCtx("github", "acme/repo:oe-sup:g1");
-  const linearSeat = bareCtx("linear", "T_786:oe-sup:g1");
-  const linearThreadSeat = bareCtx("linear", `oe-dom:ope786:win:${threadSeatWindowId("linear/T_786", "issue-1")}:oe-sup:g1`);
+  const linearSeat = bareCtx("linear", "T_811:oe-sup:g1");
+  const notionSeat = bareCtx("notion", "page-811:oe-sup:g1");
 
-  registerCapabilityManifest("github", { midTurnPost: false, reactions: false });
-  registerCapabilityManifest("linear", { midTurnPost: true, reactions: false, supervisorReplyBroken: true });
-
-  ok(classifySessionId("acme/repo:oe-sup:g1").kind === "container-supervisor", "fixture guard: the github container token classifies as container-supervisor");
-  ok(classifySessionId("T_786:oe-sup:g1").kind === "container-supervisor", "fixture guard: the linear container token classifies as container-supervisor");
-  ok(
-    classifySessionId(`oe-dom:ope786:win:${threadSeatWindowId("linear/T_786", "issue-1")}:oe-sup:g1`).kind === "thread-seat",
-    "fixture guard: the linear thread token classifies as thread-seat",
-  );
-  ok(capabilitiesForPlatform("github").midTurnPost === false, "fixture guard: github's manifest never mounts `reply`");
-  ok(capabilitiesForPlatform("linear").supervisorReplyBroken === true, "fixture guard: linear's manifest carries supervisorReplyBroken — the fact the arm keys on");
-
-  const githubReporting = flatten(renderSupervisorPersona(githubSeat));
-  const linearReporting = flatten(renderSupervisorPersona(linearSeat));
-  ok(!githubReporting.includes("reply` posts into the channel mid-turn"), "🔴 OPE-786 — the GitHub supervisor arm drops the false `reply` mid-turn claim");
-  ok(!linearReporting.includes("reply` posts into the channel mid-turn"), "🔴 OPE-786 — the Linear supervisor arm drops the false `reply` mid-turn claim");
-  for (const [label, reporting] of [
-    ["github", githubReporting],
-    ["linear", linearReporting],
-  ] as const) {
-    ok(reporting.includes("mounts no working `reply` tool"), `🔴 …and the ${label} arm states plainly that no working \`reply\` tool exists`);
-    ok(
-      reporting.includes("whatever you write as the FINAL text of the turn is what gets posted as the comment"),
-      `🔴 …and tells the ${label} seat its closing text IS the delivery`,
-    );
-    ok(!reporting.includes("`reply`,"), `the ${label} arm never instructs a \`reply\` call (no "you can \`reply\`, keep working" phrasing)`);
-    ok(reporting.includes("Call `no_reply`"), `the ${label} arm still teaches silence via \`no_reply\``);
+  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
+  for (const platform of ["github", "linear", "notion"] as const) {
+    registerCapabilityManifest(platform, { midTurnPost: true, reactions: false, supervisorProseDropped: true });
   }
 
-  const linearThreadReporting = flatten(renderSupervisorPersona(linearThreadSeat));
-  ok(linearThreadReporting.includes("reply` posts into the channel mid-turn"), "negative control: a Linear THREAD seat reads the dual-mode arm — supervisorReplyBroken does not apply off the supervisor grain");
-  ok(linearThreadReporting.includes("mounts no working `reply` tool") === false, "negative control: a Linear thread seat is NOT told `reply` is unmounted");
+  ok(classifySessionId("acme/repo:oe-sup:g1").kind === "container-supervisor", "fixture guard: the github container token classifies as container-supervisor");
+  ok(classifySessionId("T_811:oe-sup:g1").kind === "container-supervisor", "fixture guard: the linear container token classifies as container-supervisor");
+  ok(capabilitiesForPlatform("github").midTurnPost === true, "fixture guard: github's manifest now mounts `reply` (its arm's installation-token comment)");
+  ok(capabilitiesForPlatform("linear").supervisorProseDropped === true, "fixture guard: linear declares the prose drop — the fact the arm keys on");
 
-  registerCapabilityManifest("linear", { midTurnPost: true, reactions: false });
-  const linearWithoutFact = flatten(renderSupervisorPersona(linearSeat));
-  ok(linearWithoutFact.includes("mounts no working `reply` tool") === false, "🔴 negative control: with supervisorReplyBroken absent the Linear container seat reads the dual-mode arm");
-  ok(linearWithoutFact.includes("reply` posts into the channel mid-turn"), "…and reads it in full, not an empty arm");
-  registerCapabilityManifest("linear", { midTurnPost: true, reactions: false, supervisorReplyBroken: true });
+  const slackReporting = flatten(renderSupervisorPersona(slackSeat));
+  for (const [label, seat] of [
+    ["github", githubSeat],
+    ["linear", linearSeat],
+    ["notion", notionSeat],
+  ] as const) {
+    const reporting = flatten(renderSupervisorPersona(seat));
+    ok(reporting.includes("Your turn-final text is DISCARDED"), `🔴 OPE-811 — the ${label} supervisor arm states the DROP`);
+    ok(reporting.includes("The `reply` tool is the ONLY way your own words leave this turn"), `🔴 …and names \`reply\` as the only route out on ${label}`);
+    ok(!reporting.includes("mounts no working `reply` tool"), `🔴 …and NEVER renders the retired OPE-786 no-working-reply copy on ${label}`);
+    ok(!reporting.includes("what gets posted as the comment"), `…nor tells the ${label} seat its closing text is the delivery`);
+    ok(reporting.includes("finish with `no_reply`"), `the ${label} arm still teaches the reply-then-silence shape`);
+    ok(reporting === slackReporting, `🔴 OPE-811 — the ${label} supervisor's delivery section is BYTE-IDENTICAL to Slack's: one section, every surface`);
+  }
+
+  registerCapabilityManifest("github", { midTurnPost: false, reactions: false });
+  const unwired = flatten(renderSupervisorPersona(githubSeat));
+  ok(unwired.includes("mounts no working `reply` tool"), "🔴 negative control: a surface with NO mid-turn post arm still reads the no-working-reply arm");
+  ok(unwired.includes("whatever you write as the FINAL text of the turn is what gets posted"), "negative control: …and is told its closing text is the delivery");
+  ok(!unwired.includes("Your turn-final text is DISCARDED"), "negative control: …and is never told about a drop the host cannot honour");
+  ok(!unwired.includes("`reply`,"), "negative control: that arm never instructs a `reply` call");
+  registerCapabilityManifest("github", { midTurnPost: true, reactions: false, supervisorProseDropped: true });
+  const threadSeat = bareCtx("linear", `oe-dom:ope811:win:${threadSeatWindowId("linear/T_811", "issue-1")}:oe-sup:g1`);
+  const threadReporting = flatten(renderSupervisorPersona(threadSeat));
+  ok(threadReporting.includes("reply` posts into the channel mid-turn"), "negative control: a THREAD seat still reads the dual-mode arm — the drop is container-supervisor-scoped");
+  ok(!threadReporting.includes("Your turn-final text is DISCARDED"), "negative control: …and is never told its closing text is dropped");
 }
 
 console.log(`✓ instructions: ${passed} assertions passed`);
