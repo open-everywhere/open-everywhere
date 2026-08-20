@@ -701,11 +701,15 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
 }
 
 const pristineByOrg = new Map<string, LinearChannel>();
+function buildPristine(key: string): LinearChannel {
+  const pristine = linearChannel({ credentials: key === "" ? linearAppActorCredentials : linearCredentialsForOrg(key) });
+  return pristine;
+}
 function pristineFor(organizationId: string | undefined): LinearChannel {
   const key = organizationId ?? "";
   let channel = pristineByOrg.get(key);
   if (channel === undefined) {
-    channel = linearChannel({ credentials: key === "" ? linearAppActorCredentials : linearCredentialsForOrg(key) });
+    channel = buildPristine(key);
     pristineByOrg.set(key, channel);
   }
   return channel;
