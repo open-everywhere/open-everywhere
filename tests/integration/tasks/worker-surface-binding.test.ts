@@ -10,8 +10,10 @@ import {
   registerScript,
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
+  toolSessionIdentity,
   waitForChildren,
   wrapToolExecute,
+  type ToolSessionIdentity,
 } from "../harness";
 
 interface SeenBinding {
@@ -19,6 +21,7 @@ interface SeenBinding {
   readonly workspace: string;
   readonly surface: string;
   readonly channelId: unknown;
+  readonly identity: ToolSessionIdentity | undefined;
 }
 
 test("a delegated worker's post_file resolves the dispatching conversation's channel", async () => {
@@ -29,7 +32,13 @@ test("a delegated worker's post_file resolves the dispatching conversation's cha
   afterThisTest(
     wrapToolExecute("post_file", async (_input: unknown, ctx: unknown) => {
       const b = bindFrom(ctx as Parameters<typeof bindFrom>[0]);
-      seen.push({ platform: b.platform, workspace: b.workspace, surface: b.surface, channelId: b.target?.["channelId"] });
+      seen.push({
+        platform: b.platform,
+        workspace: b.workspace,
+        surface: b.surface,
+        channelId: b.target?.["channelId"],
+        identity: toolSessionIdentity(),
+      });
       return { posted: true, count: 1, platform: b.platform };
     }),
   );
@@ -74,4 +83,16 @@ test("a delegated worker's post_file resolves the dispatching conversation's cha
   expect(worker.workspace).toBe(DISCORD_GUILD_ID);
   expect(worker.surface).toBe(DISCORD_LISTED_CHANNEL_ID);
   expect(worker.channelId).toBe(DISCORD_LISTED_CHANNEL_ID);
+
+  const identity = worker.identity;
+  expect(
+    identity,
+    "toolSessionIdentity() returned undefined inside the worker's post_file call — the harness reach " +
+      "into eve's context container is broken, not the product. Check harness.ts's " +
+      "sandboxIdentityKeyNames against eve's context/keys.js.",
+  ).toBeDefined();
+  const dispatchStep = dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 0)!;
+  const seatSessionId = String(dispatchStep.sessionId);
+  expect(identity!.sessionId).not.toBe(seatSessionId);
+  expect(identity!.parentSessionId).toBe(seatSessionId);
 });

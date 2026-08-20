@@ -382,6 +382,57 @@ export function wrapToolExecute(toolName: string, stub: (...args: unknown[]) => 
   };
 }
 
+const EVE_CONTEXT_STORAGE_SYMBOL = Symbol.for("eve.context-storage");
+
+export const sandboxIdentityKeyNames = Object.freeze({
+  sessionId: "eve.sessionId",
+  parentSession: "eve.parentSession",
+  session: "eve.session",
+  channel: "eve.channel",
+});
+
+export interface ToolSessionIdentity {
+  readonly sessionId: string;
+  readonly parentSessionId?: string;
+  readonly sandboxSessionId?: string;
+  readonly sandboxKey: string;
+}
+
+interface EveContextContainer {
+  get(key: { readonly name: string }): unknown;
+}
+
+function eveContextContainer(): EveContextContainer | undefined {
+  const als = (globalThis as Record<PropertyKey, unknown>)[EVE_CONTEXT_STORAGE_SYMBOL] as
+    | { getStore?: () => EveContextContainer | undefined }
+    | undefined;
+  if (als === undefined || typeof als.getStore !== "function") return undefined;
+  const store = als.getStore();
+  return store !== undefined && typeof store.get === "function" ? store : undefined;
+}
+
+export function toolSessionIdentity(): ToolSessionIdentity | undefined {
+  const c = eveContextContainer();
+  if (c === undefined) return undefined;
+  const derived = c.get({ name: sandboxIdentityKeyNames.session }) as
+    | { sessionId?: unknown; parent?: { sessionId?: unknown } }
+    | undefined;
+  const rawId = c.get({ name: sandboxIdentityKeyNames.sessionId });
+  const sessionId = typeof rawId === "string" && rawId.length > 0 ? rawId : typeof derived?.sessionId === "string" ? derived.sessionId : undefined;
+  if (sessionId === undefined || sessionId.length === 0) return undefined;
+  const parent = (c.get({ name: sandboxIdentityKeyNames.parentSession }) as { sessionId?: unknown } | undefined) ?? derived?.parent;
+  const parentSessionId = typeof parent?.sessionId === "string" && parent.sessionId.length > 0 ? parent.sessionId : undefined;
+  const channelState = (c.get({ name: sandboxIdentityKeyNames.channel }) as { state?: { sandboxSessionId?: unknown } } | undefined)?.state;
+  const raw = channelState?.sandboxSessionId;
+  const sandboxSessionId = typeof raw === "string" && raw.length > 0 ? raw : undefined;
+  return {
+    sessionId,
+    ...(parentSessionId === undefined ? {} : { parentSessionId }),
+    ...(sandboxSessionId === undefined ? {} : { sandboxSessionId }),
+    sandboxKey: sandboxSessionId ?? sessionId,
+  };
+}
+
 export async function discordMentionWake(input: { channelId: string; text: string; messageId?: string; userId?: string }): Promise<void> {
   if (booted === undefined) throw new Error("integration harness: discordMentionWake before bootAgent.");
   const { buildDiscordGuildMentionRelayEnvelope, signDiscordRelayRequest } = await import(

@@ -609,3 +609,6 @@ export { recordSpend, spendTotals } from "./spend/store.js";
 export { periodOf } from "./spend/spend.js";
 export { estimateSandboxCostUsd } from "./spend/sandbox-pricing.js";
 export { routineIdOf } from "./hooks/spend.js";
+
+export { liveTaskIds, liveTaskCount } from "./access/live-delegated-tasks.js";
+export { LIVE_DELEGATED_TASKS_STATE_KEY } from "./access/live-delegated-tasks.js";
