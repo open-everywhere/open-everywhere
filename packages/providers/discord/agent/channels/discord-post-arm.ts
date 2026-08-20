@@ -1,8 +1,10 @@
 import {
+  DISCORD_MESSAGE_MAX,
   discordEditMessage,
   discordExistingThreadForMessage,
   discordOpenDmChannel,
   discordPostMessage,
+  discordPostMessageWithButtons,
   discordThreadForMessage,
   splitForDiscord,
 } from "./discord-post.js";
@@ -73,6 +75,10 @@ async function retargetDiscordEditLocus(origin: UnifiedWakeOrigin, locus: EditLo
 
 async function deliverDiscordDirectMessage(input: DirectMessageRequest): Promise<DirectMessageDelivery> {
   const surfaceId = await discordOpenDmChannel(input.principalId);
+  const buttons = (input.actions ?? []).map((a) => ({ customId: a.id, label: a.label, intent: a.intent }));
+  if (buttons.length > 0 && input.text.length <= DISCORD_MESSAGE_MAX) {
+    return { surfaceId, messageId: await discordPostMessageWithButtons(surfaceId, input.text, buttons) };
+  }
   const messageId = await discordPostMessage(surfaceId, input.text);
   return { surfaceId, messageId };
 }

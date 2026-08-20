@@ -108,6 +108,34 @@ export function linkConsentAsk(input: {
   );
 }
 
+export function linkConsentButtonLabels(): { readonly confirm: string; readonly deny: string } {
+  return { confirm: "Yes — that account is mine", deny: "No — I don't recognise this" };
+}
+
+export function linkConsentClickAnswers(): {
+  readonly consented: string;
+  readonly consentedWithCode: (code: string) => string;
+  readonly denied: string;
+  readonly notYours: string;
+  readonly gone: string;
+} {
+  return {
+    consented:
+      "Recorded — thank you. NOTHING IS LINKED YET: the person who asked still has to finish it on " +
+      "their side, and I have told them you agreed. If you did not mean to do that, tell me here and " +
+      "I will take it back.",
+    consentedWithCode: (code: string) =>
+      `Recorded — thank you. Nothing is linked yet. To finish, the person who asked has to prove they ` +
+      `can read this conversation, so give them this code and let them enter it where they started the ` +
+      `link:\n\n    ${code}\n\nIt is single-use and expires with the request.`,
+    denied: "Declined. Nothing was written and nothing was linked, and that request is now closed for good.",
+    notYours:
+      "I have no open request for you to answer here. It was either already decided, or it has expired " +
+      "on its own. Nothing was written either way.",
+    gone: "That request is no longer open — it was already answered, or it expired. Nothing was written.",
+  };
+}
+
 export function codeBackInstructions(code: string): string {
   return (
     `Consent recorded. To finish, the person who asked has to prove they can read this conversation, ` +

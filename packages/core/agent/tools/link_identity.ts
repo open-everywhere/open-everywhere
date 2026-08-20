@@ -9,6 +9,7 @@ import { issueLinkChallenge } from "../identity/link-store.js";
 import { linkInitiatorRefusal } from "../identity/link-initiator.js";
 import { linkClaimInstructions, LINK_CHALLENGE_TTL_MS } from "../identity/link-challenge.js";
 import { linkConsentAsk, linkConsentPendingInstructions } from "../identity/link-flow.js";
+import { linkConsentActions } from "../identity/link-consent.js";
 import { hasAccountDirectory, lookupAccountDirectory, accountDirectoryPlatforms, DIRECTORY_MAX_CANDIDATES } from "../identity/account-directory.js";
 import { accountProfileFor, humanAccountLabel } from "../identity/account-display-name.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
@@ -140,6 +141,7 @@ export default defineTool({
           targetAnchor: accountAnchor(platform, targetTenant, nativeId),
           ttlMinutes: TTL_MINUTES,
         }),
+        actions: linkConsentActions(issued.challenge.id),
       });
     } catch (err) {
       console.log(`[open-everywhere:identity] link request ${issued.challenge.id}: the consent ask could not be delivered: ${String(err)}`);
