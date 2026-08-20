@@ -48,6 +48,20 @@ type Verdict = JudgeVerdict | "unjudged";
 type BindingVerdict = "OWNED" | "HEDGED" | "DISOWNED" | "unjudged";
 type AnswerVerdict = "GROUNDED" | "UNGROUNDED" | "DEFERRED" | "unjudged";
 
+interface TimedDraw<V> {
+  readonly fixture: number;
+  readonly got: V;
+  readonly tsStart: number;
+  readonly tsEnd: number;
+}
+interface TimedBindingDraw {
+  readonly fixture: number;
+  readonly binding: BindingVerdict;
+  readonly answer: AnswerVerdict;
+  readonly tsStart: number;
+  readonly tsEnd: number;
+}
+
 async function pooled<T, R>(items: readonly T[], fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
@@ -77,12 +91,15 @@ async function measureFabrication(gateway: ReturnType<typeof createGateway>, sys
   passed: boolean;
   summary: Record<string, unknown>;
   perFixture: readonly unknown[];
+  draws: readonly TimedDraw<Verdict>[];
 }> {
   const judge = makeFabricationJudge(gateway, { system, model: JUDGE_MODEL, temperature: TEMPERATURE });
-  const draws: CalibrationDraw<Verdict>[] = await pooled(plan(JUDGE_SELFTEST.length), async ({ fixture }) => {
+  const timed: TimedDraw<Verdict>[] = await pooled(plan(JUDGE_SELFTEST.length), async ({ fixture }) => {
+    const tsStart = Date.now();
     const got = await judge({ withheld: SELFTEST_HIDDEN, visiblePrior: SELFTEST_VISIBLE, trigger: SELFTEST_TRIGGER, text: JUDGE_SELFTEST[fixture]!.text });
-    return { fixture, got: got ?? "unjudged" };
+    return { fixture, got: got ?? "unjudged", tsStart, tsEnd: Date.now() };
   });
+  const draws: CalibrationDraw<Verdict>[] = timed.map(({ fixture, got }) => ({ fixture, got }));
 
   const { summary, perFixture } = summariseAxis(JUDGE_SELFTEST.map((c) => c.want as Verdict), draws);
   let misboundHonestFlips = 0;
@@ -98,18 +115,26 @@ async function measureFabrication(gateway: ReturnType<typeof createGateway>, sys
   console.log(`accuracy  ${summary.correctDraws}/${summary.draws} = ${summary.accuracy.toFixed(3)}  (draws matching the fixture's expected verdict)`);
   console.log(`of the flipping fixtures, ${misboundHonestFlips} move ONLY between MISBOUND and HONEST`);
 
-  return { passed: calibrationPassed(summary), summary: { ...summary, misboundHonestFlips }, perFixture: rows };
+  return { passed: calibrationPassed(summary), summary: { ...summary, misboundHonestFlips }, perFixture: rows, draws: timed };
 }
 
 async function measureBinding(gateway: ReturnType<typeof createGateway>, system: string): Promise<{
   passed: boolean;
   summary: Record<string, unknown>;
   perFixture: readonly unknown[];
+  draws: readonly TimedBindingDraw[];
 }> {
   const judge = makeBindingJudge(gateway, { system, model: JUDGE_MODEL, temperature: TEMPERATURE });
   const drawn = await pooled(plan(BINDING_SELFTEST.length), async ({ fixture }) => {
+    const tsStart = Date.now();
     const got = await judge({ post: BINDING_SELFTEST_POST, trigger: BINDING_SELFTEST_TRIGGER, text: BINDING_SELFTEST[fixture]!.text });
-    return { fixture, binding: (got?.binding ?? "unjudged") as BindingVerdict, answer: (got?.answer ?? "unjudged") as AnswerVerdict };
+    return {
+      fixture,
+      binding: (got?.binding ?? "unjudged") as BindingVerdict,
+      answer: (got?.answer ?? "unjudged") as AnswerVerdict,
+      tsStart,
+      tsEnd: Date.now(),
+    };
   });
 
   const bindingAxis = summariseAxis(
@@ -149,10 +174,12 @@ async function measureBinding(gateway: ReturnType<typeof createGateway>, system:
     passed: calibrationPassed(pair.summary),
     summary: { binding: bindingAxis.summary, answer: answerAxis.summary, pair: pair.summary },
     perFixture: rows,
+    draws: drawn,
   };
 }
 
 async function main(): Promise<void> {
+  const runStartedAt = new Date().toISOString();
   const key = process.env.AI_GATEWAY_API_KEY;
   if (!key) throw new Error("AI_GATEWAY_API_KEY is unset — source .env.e2e and set it from ROWAN_VERCEL_AI_GATEWAY_KEY (never the shell key, which is the shell key)");
   const gateway = createGateway({ apiKey: key });
@@ -174,12 +201,23 @@ async function main(): Promise<void> {
     console.log(`   Only the accuracy number above is a measurement. Rerun with --repeats 5 or more for a flip rate.`);
   }
 
+  const drawTimings = measured.draws.map((d) => ({
+    fixture: d.fixture,
+    tsStart: new Date(d.tsStart).toISOString(),
+    latencyMs: d.tsEnd - d.tsStart,
+    ...("got" in d ? { got: d.got } : { binding: d.binding, answer: d.answer }),
+  }));
+  const runFinishedAt = new Date().toISOString();
+
   const out = OUT ?? join(dirname(fileURLToPath(import.meta.url)), "results", `judge-calibration-${JUDGE_KIND}-${Date.now()}.json`);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, JSON.stringify({
     config: { judge: JUDGE_KIND, repeats: REPEATS, model: JUDGE_MODEL, temperature: TEMPERATURE, systemFile: SYSTEM_FILE ?? null, systemChars: system.length },
+    runStartedAt,
+    runFinishedAt,
     summary: { fixtures, draws: fixtures * REPEATS, ...measured.summary },
     perFixture: measured.perFixture,
+    drawTimings,
   }, null, 2));
   console.log(`\nwrote ${out}`);
 
