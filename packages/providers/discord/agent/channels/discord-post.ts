@@ -90,6 +90,23 @@ export async function discordPostMessage(channelId: string, content: string, opt
   return firstId;
 }
 
+export async function discordOpenDmChannel(userId: string): Promise<string> {
+  const res = await fetch(`${API}/users/@me/channels`, {
+    method: "POST",
+    headers: botHeaders(botToken()),
+    body: JSON.stringify({ recipient_id: userId }),
+  });
+  if (!res.ok) {
+    throw markNotApplied(
+      Object.assign(new Error(`Discord could not open a DM channel (${res.status}) with user ${userId}`), { status: res.status }),
+    );
+  }
+  const body = (await res.json()) as { id?: unknown };
+  const id = typeof body?.id === "string" ? body.id.trim() : "";
+  if (!id) throw markNotApplied(new Error(`Discord open-DM returned no channel id for user ${userId}`));
+  return id;
+}
+
 async function discordPostOne(channelId: string, content: string, replyToMessageId?: string): Promise<string> {
   const res = await fetch(`${API}/channels/${channelId}/messages`, {
     method: "POST",

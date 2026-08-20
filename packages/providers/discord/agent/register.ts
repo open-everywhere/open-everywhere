@@ -12,6 +12,7 @@ import {
   registerNativeMemberCheck,
   registerScopeLabelResolver,
   registerBotDisplayName,
+  registerAccountDirectory,
   registerProviderDocs,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
@@ -23,6 +24,7 @@ import { discordWakeOriginCodec } from "./channels/discord-origin-codec.js";
 import { discordReadAdapter } from "./channels/discord-read.js";
 import { discordMessageOps } from "./channels/discord-message-ops.js";
 import { discordBotDisplayName } from "./channels/discord-bot-name.js";
+import { fetchGuildDirectory } from "./channels/discord-directory.js";
 import { postDiscordApprovalCard } from "./approvals/discord-flow.js";
 import { discordScopeLabelResolver } from "./approvals/discord-scope-label.js";
 import { guildIdFromScopeKey, isGuildAdminViaRest, isGuildMemberViaRest } from "./approvals/discord-admin.js";
@@ -47,6 +49,7 @@ export function registerDiscordProvider(): void {
   });
   registerScopeLabelResolver("discord", discordScopeLabelResolver);
   registerBotDisplayName("discord", discordBotDisplayName);
+  registerAccountDirectory("discord", (query) => fetchGuildDirectory(query));
   registerProviderDocs("discord", PROVIDER_DOCS);
   registerDiscordOps();
 }
