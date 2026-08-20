@@ -42,6 +42,9 @@ import {
   silentRoomNotice,
   silentNoticeKey,
   EXTERNAL_SENDER_NOTICE,
+  EXTERNAL_MENTION_ACK,
+  owesSuppressedMentionAck,
+  suppressionRendering,
   type IngestedChatMessage,
   type ExternalPolicy,
   getOperationalStore,
@@ -461,22 +464,23 @@ async function openDiscordDm(userId: string): Promise<string | null> {
   }
 }
 
-async function postExternalSenderNotice(userId: string): Promise<void> {
+async function postExternalSenderNotice(userId: string): Promise<boolean> {
   const dmId = await openDiscordDm(userId);
-  if (!dmId) return;
-  await discordCreateMessage(dmId, EXTERNAL_SENDER_NOTICE);
+  if (!dmId) return false;
+  return (await discordCreateMessage(dmId, EXTERNAL_SENDER_NOTICE)) !== null;
 }
 
-async function announceSilentRoom(surfaceKey: string, channelId: string): Promise<void> {
+async function announceSilentRoom(surfaceKey: string, channelId: string): Promise<boolean> {
   const org = deploymentOrg();
-  if (!org) return;
+  if (!org) return false;
   try {
     const won = await getOperationalStore().claimNotice(org, silentNoticeKey(surfaceKey, "suppressed-wake"), new Date().toISOString());
-    if (!won) return;
+    if (!won) return false;
   } catch {
-    return;
+    return false;
   }
   await discordCreateMessage(channelId, silentRoomNotice("suppressed-wake"));
+  return true;
 }
 
 async function postDiscordReply(channelId: string, text: string): Promise<void> {
@@ -1086,19 +1090,24 @@ export async function dispatchTurn(
   const partition: Partition = resolvePartition(ctxFromAuth(auth));
   const key = engagementKey(msg);
   const isDm = isDmChannel(msg.channelType);
+  const addressed = isDm || msg.mentionsBot;
   const externalVerdict = discordExternalVerdict({
     policy: externalPolicyForRoom(domainKeyOf(partition)),
     author: {
       trust: resolveWakeTrustFromContext(ctxFromAuth(auth), { id: msg.author.id, isBot: msg.author.bot }, { principalFallback: true }),
       ...authorFacts(msg),
     },
-    addressed: isDm || msg.mentionsBot,
+    addressed,
     isDm,
     roomKey: domainKeyOf(partition),
   });
   if (externalVerdict !== "proceed") {
-    if (externalVerdict === "withheld-addressed") await postExternalSenderNotice(msg.author.id).catch(() => undefined);
-    if (externalVerdict === "silent-room") await announceSilentRoom(partition.surfaceKey, msg.channelId).catch(() => undefined);
+    let alreadyAnswered = false;
+    if (externalVerdict === "withheld-addressed") alreadyAnswered = await postExternalSenderNotice(msg.author.id).catch(() => false);
+    if (externalVerdict === "silent-room") alreadyAnswered = await announceSilentRoom(partition.surfaceKey, msg.channelId).catch(() => false);
+    const acked =
+      owesSuppressedMentionAck({ addressed, alreadyAnswered }) &&
+      (await discordCreateMessage(msg.channelId, EXTERNAL_MENTION_ACK).then((id) => id !== null, () => false));
     await appendAudit({
       org: deploymentOrg(),
       platform: "discord",
@@ -1106,7 +1115,7 @@ export async function dispatchTurn(
       surface: partition.surfaceKey,
       principalId: msg.author.id,
       action: "discord.external_policy_suppressed",
-      detail: { verdict: externalVerdict, channelId: msg.channelId },
+      detail: { verdict: externalVerdict, channelId: msg.channelId, ...suppressionRendering(acked) },
     }).catch(() => undefined);
     log(`suppressed ${partition.surfaceKey}: externalPolicy verdict "${externalVerdict}"`);
     return;

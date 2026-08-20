@@ -54,6 +54,9 @@ import {
   silentRoomNotice,
   silentNoticeKey,
   EXTERNAL_SENDER_NOTICE,
+  EXTERNAL_MENTION_ACK,
+  owesSuppressedMentionAck,
+  suppressionRendering,
   type ExternalPolicy,
   type IngestedChatMessage,
   type AuthorTrustQuery,
@@ -180,27 +183,29 @@ export function teamsExternalVerdict(input: {
     : "proceed";
 }
 
-async function postTeamsNotice(a: TeamsMessageActivity, text: string): Promise<void> {
+async function postTeamsNotice(a: TeamsMessageActivity, text: string): Promise<boolean> {
   try {
     await sendTeamsActivity({ serviceUrl: a.serviceUrl, conversationId: a.conversation.id, body: { type: "message", text } });
+    return true;
   } catch {
+    return false;
   }
 }
 
-async function postTeamsExternalSenderNotice(a: TeamsMessageActivity): Promise<void> {
-  if (a.scope !== "personal") return;
-  await postTeamsNotice(a, EXTERNAL_SENDER_NOTICE);
+async function postTeamsExternalSenderNotice(a: TeamsMessageActivity): Promise<boolean> {
+  if (a.scope !== "personal") return false;
+  return await postTeamsNotice(a, EXTERNAL_SENDER_NOTICE);
 }
 
-async function announceTeamsSilentRoom(a: TeamsMessageActivity, org: string, surfaceKey: string): Promise<void> {
-  if (!org) return;
+async function announceTeamsSilentRoom(a: TeamsMessageActivity, org: string, surfaceKey: string): Promise<boolean> {
+  if (!org) return false;
   try {
     const won = await getOperationalStore().claimNotice(org, silentNoticeKey(surfaceKey, "suppressed-wake"), new Date().toISOString());
-    if (!won) return;
+    if (!won) return false;
   } catch {
-    return;
+    return false;
   }
-  await postTeamsNotice(a, silentRoomNotice("suppressed-wake"));
+  return await postTeamsNotice(a, silentRoomNotice("suppressed-wake"));
 }
 
 export async function liveTeamsExternalGate(a: TeamsMessageActivity, probeFor?: TeamsRosterProbeFor): Promise<boolean> {
@@ -222,18 +227,22 @@ export async function liveTeamsExternalGate(a: TeamsMessageActivity, probeFor?: 
     { id: a.from.id, isBot: false },
     { principalFallback: true },
   );
+  const addressed = a.isBotMentioned === true || a.scope === "personal";
   const verdict = teamsExternalVerdict({
     policy,
     author: { trust, refuted: teamsAuthorRefuted(auth), ...teamsAuthorFacts(auth, a.from.id) },
-    addressed: a.isBotMentioned === true || a.scope === "personal",
+    addressed,
     isDm,
     vendorExternal: teamsVendorExternal(a),
     roomKey,
     ...teamsRoomGroupKey(auth),
   });
   if (verdict === "proceed") return false;
-  if (verdict === "withheld-addressed") await postTeamsExternalSenderNotice(a).catch(() => undefined);
-  if (verdict === "silent-room") await announceTeamsSilentRoom(a, partition.org, roomKey).catch(() => undefined);
+  let alreadyAnswered = false;
+  if (verdict === "withheld-addressed") alreadyAnswered = await postTeamsExternalSenderNotice(a).catch(() => false);
+  if (verdict === "silent-room") alreadyAnswered = await announceTeamsSilentRoom(a, partition.org, roomKey).catch(() => false);
+  const acked =
+    owesSuppressedMentionAck({ addressed, alreadyAnswered }) && (await postTeamsNotice(a, EXTERNAL_MENTION_ACK).catch(() => false));
   await appendAudit({
     org: partition.org || deploymentOrg(),
     platform: "teams",
@@ -241,7 +250,7 @@ export async function liveTeamsExternalGate(a: TeamsMessageActivity, probeFor?: 
     surface: roomKey,
     principalId: a.from.id,
     action: "teams.external_policy_suppressed",
-    detail: { verdict, conversationId: a.conversation.id },
+    detail: { verdict, conversationId: a.conversation.id, ...suppressionRendering(acked) },
   }).catch(() => undefined);
   tlog(`suppressed ${roomKey}: externalPolicy verdict "${verdict}"`);
   return true;

@@ -39,6 +39,7 @@ import {
   routeChannelJoinEvent,
   announceSilentJoin,
   announceSlackSilentRoom,
+  applySlackExternalPolicy,
   postSlackExternalSenderNotice,
   slackExternalVerdict,
   renderChannelJoinMessage,
@@ -60,6 +61,7 @@ import {
   supervisorRotateTurnBudget,
   supervisorRotateTokenBudget,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { EXTERNAL_MENTION_ACK, owesSuppressedMentionAck, suppressionRendering, silentRoomNotice } from "@open-everywhere/core/agent/adapter-api.js";
 import { nameDropWakeEnabled, ambientSupervisorEnabled, awarenessWakeEnabled, engagementTierFor, domainForChannel, statusVerbsFor, DEFAULT_STATUS_VERBS } from "@open-everywhere/core/agent/adapter-api.js";
 import { createHmac } from "node:crypto";
 import { classifyEnvelope, verifySlackSignature, buildFrontHandler, EventDedupe, ThreadFifo } from "../agent/channels/slack-front.js";
@@ -2247,10 +2249,10 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
   const posts: string[] = [];
   const post = async (_c: string, text: string) => { posts.push(text); };
 
-  await announceSlackSilentRoom("ORG", ROOM, "C_PAY", store, post);
+  ok(await announceSlackSilentRoom("ORG", ROOM, "C_PAY", store, post) === true, "🔴 OPE-885: the announcement answers TRUE when it FIRES — that is what suppresses a second message on the same wake");
   ok(posts.length === 1, "OPE-525: the suppressed-wake announcement posts once");
   ok(posts[0]!.includes("staying quiet"), "…and it says the agent is staying quiet, not the JOIN half's wording");
-  await announceSlackSilentRoom("ORG", ROOM, "C_PAY", store, post);
+  ok(await announceSlackSilentRoom("ORG", ROOM, "C_PAY", store, post) === false, "🔴 OPE-885: a room already announced answers FALSE — every later suppressed mention there is owed the ack instead");
   await announceSlackSilentRoom("ORG", ROOM, "C_PAY", store, post);
   ok(posts.length === 1, "🔴 OPE-525 ONCE PER ROOM, EVER — a cold start or a second suppressed wake never re-announces");
   await announceSlackSilentRoom("ORG", "slack/T_ENG/C_OTHER", "C_OTHER", store, post);
@@ -2261,16 +2263,114 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
   ok(posts.length === 2, "OPE-525 negative control: no org ⇒ no claim and no announcement");
 
   const dmPosts: { channel: string; text: string }[] = [];
-  const notice = async (channel: string, text: string) => { dmPosts.push({ channel, text }); };
-  await postSlackExternalSenderNotice("U_GUEST", undefined, { open: async () => "D_GUEST", post: notice });
+  const notice = async (channel: string, text: string) => { dmPosts.push({ channel, text }); return true; };
+  ok(await postSlackExternalSenderNotice("U_GUEST", undefined, { open: async () => "D_GUEST", post: notice }) === true, "OPE-885: a delivered private notice answers TRUE");
   ok(dmPosts.length === 1 && dmPosts[0]!.channel === "D_GUEST", "OPE-525: the private notice goes to the sender's own 1:1 DM, opened on demand");
   ok(dmPosts[0]!.text.includes("outside this organisation"), "…carrying the core-owned notice text");
-  await postSlackExternalSenderNotice("U_GUEST", "D_ALREADY", { open: async () => "D_WRONG", post: notice });
+  ok(await postSlackExternalSenderNotice("U_GUEST", "D_ALREADY", { open: async () => "D_WRONG", post: notice }) === true, "OPE-885: the arrived-in-a-DM arm also answers TRUE");
   ok(dmPosts.length === 2 && dmPosts[1]!.channel === "D_ALREADY", "OPE-525: a message that ARRIVED in a DM posts straight back — no `conversations.open` call");
-  await postSlackExternalSenderNotice("U_GUEST", undefined, { open: async () => undefined, post: notice });
-  ok(dmPosts.length === 2, "🔴 OPE-525: an un-openable DM says NOTHING (=== no post) — there is NO in-channel fallback, because that would disclose the sender's classification to the room");
-  await postSlackExternalSenderNotice(undefined, undefined, { open: async () => "D_X", post: notice });
+  ok(
+    await postSlackExternalSenderNotice("U_GUEST", undefined, { open: async () => undefined, post: notice }) === false,
+    "🔴 OPE-885: an un-openable DM answers FALSE — this notice's own text never reaches the channel, and FALSE is what makes the caller post the disclosure-free ack instead",
+  );
+  ok(dmPosts.length === 2, "🔴 OPE-525: an un-openable DM posts THIS notice nowhere (=== no post) — its text names the organisation, which would disclose the sender's classification to the room");
+  ok(await postSlackExternalSenderNotice(undefined, undefined, { open: async () => "D_X", post: notice }) === false, "OPE-885: no author id ⇒ FALSE");
   ok(dmPosts.length === 2, "OPE-525 negative control: no author id ⇒ nobody to notify, and nothing is posted");
+  ok(
+    await postSlackExternalSenderNotice("U_GUEST", "D_ALREADY", { open: async () => "D_WRONG", post: async () => false }) === false,
+    "🔴 OPE-885: a post Slack REFUSED answers FALSE — a swallowed failure would read as delivered and leave the mention unanswered",
+  );
+
+  ok(owesSuppressedMentionAck({ addressed: true, alreadyAnswered: false }) === true, "🔴 OPE-885: an EXPLICITLY addressed suppressed wake with no private answer is owed the ack");
+  ok(owesSuppressedMentionAck({ addressed: false, alreadyAnswered: false }) === false, "🔴 OPE-885 negative control: an AMBIENT or NAME-DROP suppression stays fully dark (=== false)");
+  ok(owesSuppressedMentionAck({ addressed: true, alreadyAnswered: true }) === false, "OPE-885: a mention this suppression already answered — privately, or by the room announcement — is NOT acked again (=== false)");
+  ok(EXTERNAL_MENTION_ACK.length > 0, "OPE-885: the ack line is non-empty host copy");
+  ok(
+    !/organisation|organization|guest|external|polic/i.test(EXTERNAL_MENTION_ACK),
+    "🔴 OPE-885: the ack names NO organisation, person, classification or policy — that is the whole reason it may go where the private notice may not",
+  );
+  ok(JSON.stringify(suppressionRendering(true)) === '{"rendering":"ack"}', "OPE-885: a posted ack stamps rendering:\"ack\" on the suppression audit row");
+  ok(JSON.stringify(suppressionRendering(false)) === "{}", "🔴 OPE-885 negative control: a dark suppression carries NO rendering field (=== {}) — absence is the honest record");
+
+  {
+    const AUTHOR = "U_OPE885";
+    const CHANNEL = "C_OPE885";
+    const DM = "D_OPE885";
+    const ev = (isAppMention: boolean, ts: string) =>
+      ({ channelId: CHANNEL, ts, teamId: "T_ENG", userId: AUTHOR, channelType: "channel", text: "please help", isAppMention }) as never;
+    const part = { org: "ORG885", surfaceKey: "slack/T_ENG/C_OPE885", workspace: "T_ENG" } as never;
+    const facts = { trust: "unauth", refuted: true } as const;
+
+    let calls: { method: string; body: string }[] = [];
+    let dmOpenSucceeds = true;
+    const realFetch = globalThis.fetch;
+    const prevToken = process.env.SLACK_BOT_TOKEN;
+    process.env.SLACK_BOT_TOKEN = "xoxb-ope885";
+    globalThis.fetch = (async (url: unknown, init: { body?: unknown }) => {
+      const u = String(url);
+      const method = u.slice(u.lastIndexOf("/") + 1);
+      const body = typeof init?.body === "string" ? init.body : new URLSearchParams(Object.entries((init?.body ?? {}) as Record<string, string>)).toString();
+      calls.push({ method, body });
+      if (method.startsWith("conversations.open")) {
+        return new Response(JSON.stringify(dmOpenSucceeds ? { ok: true, channel: { id: DM } } : { ok: false, error: "cannot_dm_bot" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method.startsWith("conversations.info")) {
+        return new Response(JSON.stringify({ ok: true, channel: { id: CHANNEL, is_ext_shared: false } }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ ok: true, ts: "1.1" }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    const postsTo = (channel: string) => calls.filter((c) => c.method.startsWith("chat.postMessage") && c.body.includes(`channel=${channel}`));
+    overrideSettingsForTest({ externalPolicy: { authorGrain: "withhold", roomGrain: "engage" } });
+    try {
+      calls = [];
+      dmOpenSucceeds = true;
+      ok(await applySlackExternalPolicy(ev(true, "111.1"), part, facts, "test") === "withheld-addressed", "OPE-885 site: an excluded author's @mention is withheld-addressed");
+      ok(postsTo(DM).length === 1, "OPE-525 site: the private notice goes to the sender's 1:1");
+      ok(postsTo(CHANNEL).length === 0, "🔴 OPE-885 site: a mention already answered PRIVATELY gets NO channel ack (=== 0)");
+
+      calls = [];
+      dmOpenSucceeds = false;
+      ok(await applySlackExternalPolicy(ev(true, "222.2"), part, facts, "test") === "withheld-addressed", "OPE-885 site: the verdict is unchanged when the DM cannot be opened");
+      const acks = postsTo(CHANNEL);
+      ok(acks.length === 1, "🔴 OPE-885 site: an un-DM-able sender's @mention posts EXACTLY ONE channel message");
+      ok(acks[0]!.body.includes(new URLSearchParams({ text: EXTERNAL_MENTION_ACK }).toString()), "🔴 OPE-885 site: …and its text is the fixed host ack");
+      ok(acks[0]!.body.includes("thread_ts=222.2"), "🔴 OPE-885 site: …threaded on the mention itself, so the answer lands where the member is looking");
+      ok(!/outside\+?%?20?this/i.test(acks[0]!.body) && !acks[0]!.body.includes("organisation"), "🔴 OPE-885 site: it is NOT the private notice text — that names the organisation and must not reach the channel");
+
+      overrideSettingsForTest({ externalPolicy: { authorGrain: "taint", roomGrain: "silent" } });
+      calls = [];
+      ok(await applySlackExternalPolicy(ev(true, "444.4"), part, facts, "test") === "silent-room", "OPE-885 site: a guest-present room under `silent` is a silent-room verdict");
+      const roomMsgs = postsTo(CHANNEL);
+      ok(roomMsgs.length === 1, "🔴 OPE-885 site: a silenced room's @mention gets EXACTLY ONE message — never the announcement AND the ack");
+      ok(
+        roomMsgs[0]!.body.includes(new URLSearchParams({ text: EXTERNAL_MENTION_ACK }).toString()) ||
+          roomMsgs[0]!.body.includes(new URLSearchParams({ text: silentRoomNotice("suppressed-wake") }).toString()),
+        "OPE-885 site: …and it is the ack or the room announcement, never anything else",
+      );
+      calls = [];
+      ok(await applySlackExternalPolicy(ev(false, "666.6"), part, facts, "test") === "silent-room", "OPE-885 site: an ambient message in the silenced room is suppressed too");
+      ok(postsTo(CHANNEL).length === 0, "🔴 OPE-885 site NEGATIVE CONTROL: an AMBIENT wake in an already-announced silenced room posts NOTHING");
+      overrideSettingsForTest({ externalPolicy: { authorGrain: "withhold", roomGrain: "engage" } });
+
+      for (const dmOk of [true, false]) {
+        calls = [];
+        dmOpenSucceeds = dmOk;
+        ok(await applySlackExternalPolicy(ev(false, "333.3"), part, facts, "test") === "withheld-ambient", "OPE-885 site: the ambient message is withheld-ambient");
+        ok(
+          postsTo(CHANNEL).length === 0 && postsTo(DM).length === 0,
+          `🔴 OPE-885 site NEGATIVE CONTROL: an AMBIENT suppression posts NOTHING anywhere (dmOpenSucceeds=${String(dmOk)}) — only explicit addressing is owed an answer`,
+        );
+      }
+    } finally {
+      globalThis.fetch = realFetch;
+      if (prevToken === undefined) delete process.env.SLACK_BOT_TOKEN;
+      else process.env.SLACK_BOT_TOKEN = prevToken;
+      resetSettingsForTest();
+    }
+  }
 }
 
 console.log(`✓ engagement: ${n} assertions passed (registry + warm-on-wake participating/streak + ownership routing (ownerToken/kind) + durable stopped marker + channel supervisor sessions (get/rotate/touch) + migration + stand-down suppression on BOTH routes (the stop regex is deleted) + delivery policy + event parse/route + domain read gate + fronting-route classify/verify/dedupe/FIFO/in-thread-branch + judged-reply sentinel + name-drop wake + channel-join intro (incl. the OPE-470 taint verdict: fenced, undeclared, no mark at render time) + participation-certainty classifier)`);

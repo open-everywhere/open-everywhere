@@ -14,7 +14,7 @@ import {
 import type { HttpRouteDefinition, RouteHandlerArgs } from "eve/channels";
 import { buildLinearAuth, linearAuthorFacts, teamFactsFromTeam, userGuestFromUser } from "./linear-identity.js";
 import { linearAppActorCredentials, linearAppForOrg, linearCredentialsForOrg } from "./linear-credentials.js";
-import { postLinearSilenceAck } from "./linear-silence-ack.js";
+import { postLinearSilenceAck, postLinearHostAck } from "./linear-silence-ack.js";
 import { linearWebhookVerifier } from "./linear-webhook-verify.js";
 import { LINEAR_EVENT_SOURCE, LINEAR_DELIVERY_ID_HEADER } from "./linear-event-normalizer.js";
 import {
@@ -58,6 +58,9 @@ import {
   externalPolicyOverrideFor,
   roomIsSilenced,
   withholdsBody,
+  EXTERNAL_MENTION_ACK,
+  owesSuppressedMentionAck,
+  suppressionRendering,
   stampNonMemberChatAuth,
   type SupervisorGrain,
   type UnifiedWindowWake,
@@ -308,6 +311,7 @@ async function linearExternalSuppressed(
   organizationId: string | undefined,
   principalId: string | undefined,
   author?: IngestedChatMessage,
+  agentSessionId?: string,
 ): Promise<Exclude<LinearExternalVerdict, "proceed"> | undefined> {
   let policy: ExternalPolicy;
   try {
@@ -321,6 +325,12 @@ async function linearExternalSuppressed(
     ...(author === undefined ? {} : { author }),
   });
   if (verdict === "proceed") return undefined;
+  const acked =
+    owesSuppressedMentionAck({ addressed: agentSessionId !== undefined, alreadyAnswered: false }) &&
+    (await postLinearHostAck(agentSessionId!, EXTERNAL_MENTION_ACK, organizationId).then(
+      () => true,
+      () => false,
+    ));
   await appendAudit({
     org: deploymentOrg(),
     platform: "linear",
@@ -328,9 +338,11 @@ async function linearExternalSuppressed(
     ...(surfaceKey === undefined ? {} : { surface: surfaceKey }),
     ...(principalId ? { principalId } : {}),
     action: "linear.external_policy_suppressed",
-    detail: { verdict },
+    detail: { verdict, ...suppressionRendering(acked), ...(agentSessionId === undefined ? {} : { agentSessionId }) },
   }).catch(() => undefined);
-  slog(`suppressed ${surfaceKey ?? `linear/${organizationId ?? "unknown"}/<team unresolved>`}: externalPolicy verdict "${verdict}"`);
+  slog(
+    `suppressed ${surfaceKey ?? `linear/${organizationId ?? "unknown"}/<team unresolved>`}: externalPolicy verdict "${verdict}"${agentSessionId === undefined ? "" : acked ? " — mention ack posted, session closed" : " — mention ack FAILED (spinner may persist)"}`,
+  );
   return verdict;
 }
 
@@ -582,7 +594,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
   const organizationId = sig.organizationId!;
   const roomTeamId = sig.teamId ?? verdict.teamId;
   const surfaceKey = roomTeamId ? `linear/${organizationId}/${roomTeamId}` : undefined;
-  const roomVerdict = await linearExternalSuppressed(surfaceKey, organizationId, undefined);
+  const roomVerdict = await linearExternalSuppressed(surfaceKey, organizationId, undefined, undefined, agentSessionId);
   if (roomVerdict) return;
   const triggerCommentId = sig.action === "prompted" ? sig.promptSourceCommentId : sig.sourceCommentId;
   try {
@@ -601,6 +613,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
       organizationId,
       c.authorId,
       authorFacts,
+      agentSessionId,
     );
     if (authorVerdict) return;
     const grain = linearGrainFor(`linear/${organizationId}/${c.teamId}`);
@@ -756,7 +769,7 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
     const nativeOrganizationId = event.organizationId ?? s.organizationId ?? undefined;
     if (typeof nativeOrganizationId === "string" && nativeOrganizationId && teamId) {
       const surfaceKey = `linear/${nativeOrganizationId}/${teamId}`;
-      const roomVerdict = await linearExternalSuppressed(surfaceKey, nativeOrganizationId, undefined);
+      const roomVerdict = await linearExternalSuppressed(surfaceKey, nativeOrganizationId, undefined, undefined, agentSessionId);
       if (roomVerdict) return null;
     }
 
@@ -769,7 +782,7 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
     const nativeSurfaceKey = nativeOrg !== undefined && teamId ? `linear/${nativeOrg}/${teamId}` : undefined;
 
     {
-      const authorVerdict = await linearExternalSuppressed(nativeSurfaceKey, nativeOrg, creatorId, authorFacts);
+      const authorVerdict = await linearExternalSuppressed(nativeSurfaceKey, nativeOrg, creatorId, authorFacts, agentSessionId);
       if (authorVerdict) return null;
     }
 

@@ -43,6 +43,9 @@ import {
   externalPolicyOverrideFor,
   roomIsSilenced,
   withholdsBody,
+  EXTERNAL_MENTION_ACK,
+  owesSuppressedMentionAck,
+  suppressionRendering,
   stampNonMemberChatAuth,
   type IngestedChatMessage,
   type SupervisorGrain,
@@ -155,6 +158,7 @@ async function githubExternalSuppressed(
   owner: string,
   principalId: string | undefined,
   author: IngestedChatMessage,
+  ackPost?: (message: string) => Promise<unknown>,
 ): Promise<boolean> {
   let policy: ExternalPolicy;
   try {
@@ -164,6 +168,12 @@ async function githubExternalSuppressed(
   }
   const verdict = githubExternalVerdict({ policy, author, surfaceKey });
   if (verdict === "proceed") return false;
+  const acked =
+    owesSuppressedMentionAck({ addressed: ackPost !== undefined, alreadyAnswered: false }) &&
+    (await ackPost!(EXTERNAL_MENTION_ACK).then(
+      () => true,
+      () => false,
+    ));
   await appendAudit({
     org: deploymentOrg(),
     platform: "github",
@@ -171,9 +181,9 @@ async function githubExternalSuppressed(
     surface: surfaceKey,
     ...(principalId ? { principalId } : {}),
     action: "github.external_policy_suppressed",
-    detail: { verdict },
+    detail: { verdict, ...suppressionRendering(acked) },
   }).catch(() => undefined);
-  slog(`suppressed ${surfaceKey}: externalPolicy verdict "${verdict}"`);
+  slog(`suppressed ${surfaceKey}: externalPolicy verdict "${verdict}"${acked ? " — mention ack posted" : ""}`);
   return true;
 }
 
@@ -370,7 +380,15 @@ export const githubOnComment = async (ctx: GitHubInboundContext, comment: GitHub
       authorAssociation: str(comment.raw["author_association"]),
       actorType: comment.author?.type ?? ctx.sender.type,
     });
-    if (await githubExternalSuppressed(surfaceKey, ctx.repository.owner, comment.author?.login ?? ctx.sender.login, authorFacts)) {
+    if (
+      await githubExternalSuppressed(
+        surfaceKey,
+        ctx.repository.owner,
+        comment.author?.login ?? ctx.sender.login,
+        authorFacts,
+        (message) => ctx.thread.post(message),
+      )
+    ) {
       return null;
     }
     if (shouldSuppressNativeMention(grainUsesUnifiedWindow(githubGrainFor(surfaceKey)), githubRepoVouched(ctx.repository.owner, ctx.repository.name))) {

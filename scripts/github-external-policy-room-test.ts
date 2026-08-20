@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { readAudit, resolvePartition, defineSurface, registerSurfaces, _resetSurfacesForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { readAudit, resolvePartition, defineSurface, registerSurfaces, _resetSurfacesForTest, EXTERNAL_MENTION_ACK } from "@open-everywhere/core/agent/adapter-api.js";
 import type { Domain } from "@open-everywhere/core/agent/memory/domain.js";
 
 const dir = join(tmpdir(), `open-everywhere-github-external-policy-room-${process.pid}`);
@@ -53,13 +53,21 @@ registerConfig({
 });
 
 const silenced = await drive("public-org", "public-repo");
-ok(silenced.res === null, "room grain: a declared-public repo under `silent` SILENTLY DROPS the mention (returns null)");
-ok(silenced.posted.length === 0, "room grain: NO comment is posted — the drop is silent, unlike the author grain's addressed notice");
+ok(silenced.res === null, "room grain: a declared-public repo under `silent` DROPS the mention before any turn (returns null)");
+ok(
+  silenced.posted.length === 1 && silenced.posted[0] === EXTERNAL_MENTION_ACK,
+  "🔴 OPE-885: a silenced room's EXPLICIT @mention gets EXACTLY the fixed host ack, and no second message",
+);
+ok(
+  !/quiet|external space|organisation|polic/i.test(silenced.posted[0]!),
+  "🔴 OPE-885: the ack is NOT the room announcement — it says nothing about the room, so it discloses no configuration to a world-readable repo",
+);
 const suppressedRows = (await readAudit({ org: declaredPart.org, action: "github.external_policy_suppressed" })).filter((r) => r.surface === declaredPart.surfaceKey);
 ok(
   suppressedRows.length === 1 && suppressedRows[0]!.detail?.verdict === "silent-room",
   "room grain: ONE github.external_policy_suppressed audit row names the surface with verdict silent-room",
 );
+ok(suppressedRows[0]!.detail?.rendering === "ack", "OPE-885: the row records rendering:\"ack\"");
 
 const undeclared = await drive("plain-org", "plain-repo");
 ok(

@@ -86,24 +86,29 @@ const setDomains = (domains: readonly Domain[]) =>
 setDomains([{ name: "org", match: "org", externalPolicy: { authorGrain: "withhold" } }]);
 
 const guest = await drive("as-guest", "guest-1", true);
-ok(guest.res === null, "author grain: a workspace GUEST under `withhold` is SILENTLY DROPPED (returns null)");
-ok(
-  !guest.posted.some((b) => b.includes("AgentActivityCreate")),
-  "🔴 OPE-884 author grain: a withheld author's mention creates NO Agent Activity of any type",
-);
+ok(guest.res === null, "author grain: a workspace GUEST under `withhold` is DROPPED before any turn (returns null)");
+const guestActivities = guest.posted.filter((b) => b.includes("AgentActivityCreate"));
+ok(guestActivities.length === 1, "🔴 OPE-885 author grain: a withheld author's mention creates EXACTLY ONE Agent Activity");
+ok(guestActivities[0]!.includes("response"), "🔴 OPE-885: it is a `response` activity — the only type that TERMINATES the session");
+ok(guestActivities[0]!.includes("can't help") || guestActivities[0]!.includes("can\\u0027t help"), "🔴 OPE-885: the body is the fixed host ack");
 const rows1 = await suppressedRows();
 ok(
   rows1.length === 1 && rows1[0]!.detail?.verdict === "withheld-author",
   "author grain: ONE linear.external_policy_suppressed audit row names the surface with verdict withheld-author",
 );
+ok(rows1[0]!.detail?.rendering === "ack", "🔴 OPE-885: the row records rendering:\"ack\" — the session was closed, not left hanging");
 ok(rows1[0]!.principalId === "guest-1", "author grain: the audit row names the excluded author");
 ok(
   !guest.posted.some((b) => b.includes("external space")),
   "author grain: nothing written claims the ROOM is external — the person decided it, not the place",
 );
 ok(
-  !guest.posted.some((b) => b.includes("no reply")),
-  "🔴 OPE-884 author grain: no outcome text is written either — the session is left to age out rather than announce a person's classification",
+  !/guest|outside this organisation|withheld/i.test(guestActivities[0]!.replaceAll("as-guest", "<session>")),
+  "🔴 OPE-885 author grain: the ack names no classification and no organisation — it says only that the request cannot be helped here",
+);
+ok(
+  !guest.posted.some((b) => b.includes('"stop"')) && !guest.posted.some((b) => b.includes("ephemeral")),
+  "OPE-884 (explicit): still no `stop` signal and no `ephemeral` flag — the real API refuses both on this activity",
 );
 
 const member = await drive("as-member", "member-1", false);
@@ -137,8 +142,8 @@ ok(
   "room grain: the GUEST-PRESENT verdict is recorded as silent-room, not as an author verdict",
 );
 ok(
-  !guestPresent.posted.some((b) => b.includes("AgentActivityCreate")),
-  "🔴 OPE-884 room grain: the GUEST-PRESENT verdict writes NO Agent Activity either — the verdict lives in the audit row alone",
+  guestPresent.posted.filter((b) => b.includes("AgentActivityCreate")).length === 1,
+  "🔴 OPE-885 room grain: the GUEST-PRESENT verdict posts the SAME single ack — one string for both grains, so a reader cannot tell which fired",
 );
 const memberInSilentRoom = await drive("as-member-silent", "member-1", false);
 ok(
@@ -189,11 +194,11 @@ setDomains([{ name: "org", match: "org", externalPolicy: { authorGrain: "withhol
 const noTeamGuest = await driveNoTeam("as-noteam-guest", "guest-1", true);
 ok(
   noTeamGuest.res === null,
-  "OPE-541: a GUEST under `withhold` is SILENTLY DROPPED even when the team id does NOT parse (the author grain needs no room)",
+  "OPE-541: a GUEST under `withhold` is DROPPED even when the team id does NOT parse (the author grain needs no room)",
 );
 ok(
-  !noTeamGuest.posted.some((b) => b.includes("AgentActivityCreate")),
-  "OPE-541/OPE-884: the roomless suppression creates NO Agent Activity either",
+  noTeamGuest.posted.filter((b) => b.includes("AgentActivityCreate")).length === 1,
+  "🔴 OPE-885: the roomless suppression still ACKS — the ack anchors on the SESSION, which exists whether or not the room could be named",
 );
 const rows5 = await roomlessRows();
 ok(

@@ -338,6 +338,9 @@ export {
   silentNoticeKey,
   WITHHELD_BODY_MARKER,
   EXTERNAL_SENDER_NOTICE,
+  EXTERNAL_MENTION_ACK,
+  owesSuppressedMentionAck,
+  suppressionRendering,
   SILENT_NOTICE_KINDS,
 } from "./access/external-policy.js";
 export type {

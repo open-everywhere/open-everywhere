@@ -21,7 +21,9 @@ import {
   _resetAuthorTrustForTest,
   registerSettings,
   resetSettingsForTest,
+  overrideSettingsForTest,
   defineSettings,
+  EXTERNAL_MENTION_ACK,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { parseDriverAllowlist, isAllowedDriver, isAllowedSlackDriver } from "@open-everywhere/core/agent/testing/driver-allowlist.js";
 import {
@@ -47,6 +49,7 @@ import {
   stripLeadingMention,
   buildDiscordUnifiedWake,
   buildDiscordDmWake,
+  dispatchTurn,
   type DiscordRelayMessage,
 } from "@open-everywhere/provider-discord/agent/channels/discord-gateway.js";
 import { renderWake } from "@open-everywhere/core/agent/channels/normalized-wake.js";
@@ -57,7 +60,7 @@ import { threadParentChannelId, clearDiscordInfoCacheForTest } from "@open-every
 import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { domainKeyOf, resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
 import { finalMessageAction, NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/turn-delivery.js";
-import type { OpenEverywhereDiscordAuth } from "@open-everywhere/provider-discord/agent/channels/discord-identity.js";
+import { buildDiscordAuth, type OpenEverywhereDiscordAuth } from "@open-everywhere/provider-discord/agent/channels/discord-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -894,6 +897,88 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
     ok(verdict(WITHHOLD, dmMsg, true, true) === "proceed", "…and a DM has no guild to arm, so the register cannot exclude its partner either");
   } finally {
     _resetAuthorTrustForTest();
+  }
+}
+
+{
+  const GUILD = "1300000000000000108";
+  const INSIDER = "200000000000000001";
+  const OUTSIDER = "200000000000000002";
+  const TENANT = `discord/${GUILD}`;
+  const CHANNEL = "C_ACK";
+  const DM_CHANNEL = "D_ACK";
+  const msgFor = (mentionsBot: boolean, id: string) =>
+    parseRelayPayload(
+      relayEnvelope({
+        id,
+        content: "please do the thing",
+        channelId: CHANNEL,
+        guildId: GUILD,
+        author: { id: OUTSIDER, bot: false },
+        member: { roles: [] },
+        mentionsBot,
+      }),
+    )!;
+  const authFor = (m: DiscordRelayMessage) =>
+    buildDiscordAuth({ userId: m.author.id, guildId: m.guildId, channelId: m.channelId, channelType: m.channelType, messageId: m.id });
+
+  let posts: { channel: string; body: string }[] = [];
+  let dmOpens = 0;
+  let dmOpenSucceeds = true;
+  const realFetch = globalThis.fetch;
+  const priorToken = process.env.DISCORD_BOT_TOKEN;
+  process.env.DISCORD_BOT_TOKEN = "ope885-test-token";
+  globalThis.fetch = (async (url: unknown, init: { body?: unknown }) => {
+    const u = String(url);
+    if (u.includes("/users/@me/channels")) {
+      dmOpens++;
+      return dmOpenSucceeds
+        ? new Response(JSON.stringify({ id: DM_CHANNEL }), { status: 200, headers: { "content-type": "application/json" } })
+        : new Response("forbidden", { status: 403 });
+    }
+    const m = /channels\/([^/]+)\/messages/.exec(u);
+    if (m) posts.push({ channel: m[1]!, body: String(init?.body ?? "") });
+    return new Response(JSON.stringify({ id: "posted-1" }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  overrideSettingsForTest({ externalPolicy: { authorGrain: "withhold" } });
+  registerAuthorTrust([defineAuthorTrust({ tenant: TENANT, internal: [`discord/${INSIDER}`] })]);
+  let woke = 0;
+  const send = (async () => { woke++; }) as unknown as Parameters<typeof dispatchTurn>[2];
+  try {
+    posts = [];
+    dmOpens = 0;
+    dmOpenSucceeds = true;
+    await dispatchTurn(msgFor(true, "ack-dm-ok"), authFor(msgFor(true, "ack-dm-ok")), send);
+    ok(woke === 0, "OPE-885: a suppressed @mention wakes NO model turn — the ack is host copy, posted pre-turn");
+    ok(dmOpens === 1 && posts.length === 1 && posts[0]!.channel === DM_CHANNEL, "OPE-525: a delivered private notice goes to the sender's 1:1 and nowhere else");
+    ok(
+      posts.filter((p) => p.channel === CHANNEL).length === 0,
+      "🔴 OPE-885: a mention already answered PRIVATELY gets NO channel ack (=== 0) — one answer per mention, and the private one says more",
+    );
+
+    posts = [];
+    dmOpenSucceeds = false;
+    await dispatchTurn(msgFor(true, "ack-dm-refused"), authFor(msgFor(true, "ack-dm-refused")), send);
+    ok(posts.length === 1 && posts[0]!.channel === CHANNEL, "🔴 OPE-885: an un-DM-able sender's @mention posts EXACTLY ONE message, into the channel it was said in");
+    ok(posts[0]!.body.includes(JSON.stringify(EXTERNAL_MENTION_ACK).slice(1, -1)), "🔴 OPE-885: …and its content is the fixed host ack");
+    ok(
+      !/outside this organisation|external space|staying quiet/i.test(posts[0]!.body),
+      "🔴 OPE-885: it is NOT the private sender notice and NOT the room announcement — both name things the channel may not be told",
+    );
+
+    for (const dmOk of [true, false]) {
+      posts = [];
+      dmOpenSucceeds = dmOk;
+      await dispatchTurn(msgFor(false, `ack-ambient-${String(dmOk)}`), authFor(msgFor(false, `ack-ambient-${String(dmOk)}`)), send);
+      ok(posts.length === 0, `🔴 OPE-885 NEGATIVE CONTROL: an AMBIENT suppression posts NOTHING (=== 0, dmOpenSucceeds=${String(dmOk)}) — only explicit addressing is owed an answer`);
+    }
+    ok(woke === 0, "OPE-885: no case in this block woke a model turn");
+  } finally {
+    globalThis.fetch = realFetch;
+    if (priorToken === undefined) delete process.env.DISCORD_BOT_TOKEN;
+    else process.env.DISCORD_BOT_TOKEN = priorToken;
+    _resetAuthorTrustForTest();
+    resetSettingsForTest();
   }
 }
 

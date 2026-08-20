@@ -15,11 +15,14 @@ import { teamsPostArm } from "../agent/channels/teams-post-arm.js";
 import { buildTeamsDmWake, buildTeamsSupervisorWake } from "../agent/channels/teams-supervisor.js";
 import {
   buildTeamsFrontHandler,
+  liveTeamsExternalGate,
   teamsAuthorFacts,
   teamsExternalVerdict,
   teamsVendorExternal,
   type TeamsFrontPlan,
 } from "../agent/channels/teams-front.js";
+import { overrideSettingsForTest, resetSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
+import { EXTERNAL_MENTION_ACK, EXTERNAL_SENDER_NOTICE } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   bindFrom,
   resolvePartition,
@@ -655,6 +658,71 @@ const memCfg: MemoryResolveConfig = {
       proceeded.gated === 1 && proceeded.plan === 1 && proceeded.forward === 1 && proceeded.dm === 0,
       "🔴 J3 NEGATIVE CONTROL: a gate that suppresses NOTHING leaves the route byte-identical — planFor runs and the null plan forwards",
     );
+  }
+
+  {
+    const activity = (opts: { readonly mentioned: boolean }): unknown => ({
+      type: "message",
+      id: "act-j4",
+      serviceUrl: "https://smba.trafficmanager.net/uk/",
+      from: { id: OUTSIDER_J, name: "Vendor Vic" },
+      recipient: { id: "28:bot" },
+      conversation: { id: "19:conv-j4@thread.v2", conversationType: "channel", tenantId: TENANT_J },
+      channelData: { channel: { id: "19:chan-j4" }, team: { id: TEAM_J } },
+      text: "hello there",
+      scope: "channel",
+      tenantId: TENANT_J,
+      isBotMentioned: opts.mentioned,
+    });
+
+    let sends: string[] = [];
+    const capture = (async (url: unknown, init: { body?: unknown }) => {
+      const u = String(url);
+      if (u.includes("login.microsoftonline.com") || u.includes("botframework.com/oauth")) {
+        return new Response(JSON.stringify({ access_token: "j4-token", token_type: "Bearer", expires_in: 3600 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (u.includes("/activities")) sends.push(String(init?.body ?? ""));
+      return new Response(JSON.stringify({ id: "sent", members: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+
+    const priorAppId = process.env.MICROSOFT_APP_ID;
+    const priorAppPassword = process.env.MICROSOFT_APP_PASSWORD;
+    process.env.MICROSOFT_APP_ID = "j4-app-id";
+    process.env.MICROSOFT_APP_PASSWORD = "j4-app-password";
+    overrideSettingsForTest({ externalPolicy: { authorGrain: "withhold" } });
+    registerAuthorTrust([defineAuthorTrust({ tenant: TENANT_KEY, internal: [`teams/${INSIDER_J}`] })]);
+    try {
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = capture;
+      try {
+        sends = [];
+        const mentioned = await liveTeamsExternalGate(activity({ mentioned: true }) as never);
+        ok(mentioned === true, "J4: an excluded author's channel @mention is SUPPRESSED (the gate answers true)");
+        ok(sends.length === 1, "🔴 OPE-885 J4: EXACTLY ONE message goes to the channel — the fixed ack, and nothing else");
+        ok(sends[0]!.includes(JSON.stringify(EXTERNAL_MENTION_ACK).slice(1, -1)), "🔴 OPE-885 J4: …and its text is the fixed host ack");
+        ok(
+          !sends[0]!.includes(EXTERNAL_SENDER_NOTICE.slice(0, 30)),
+          "🔴 OPE-885 J4: it is NOT the private sender notice — that text names the organisation and must never reach a team channel",
+        );
+
+        sends = [];
+        const ambient = await liveTeamsExternalGate(activity({ mentioned: false }) as never);
+        ok(ambient === true, "J4: the SAME author's AMBIENT message is suppressed too");
+        ok(sends.length === 0, "🔴 OPE-885 J4 NEGATIVE CONTROL: an AMBIENT suppression posts NOTHING (=== 0 sends) — only explicit addressing is owed an answer");
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    } finally {
+      _resetAuthorTrustForTest();
+      resetSettingsForTest();
+      if (priorAppId === undefined) delete process.env.MICROSOFT_APP_ID;
+      else process.env.MICROSOFT_APP_ID = priorAppId;
+      if (priorAppPassword === undefined) delete process.env.MICROSOFT_APP_PASSWORD;
+      else process.env.MICROSOFT_APP_PASSWORD = priorAppPassword;
+    }
   }
 }
 

@@ -44,6 +44,9 @@ import {
   silentRoomNotice,
   silentNoticeKey,
   EXTERNAL_SENDER_NOTICE,
+  EXTERNAL_MENTION_ACK,
+  owesSuppressedMentionAck,
+  suppressionRendering,
   type ExternalPolicy,
   type IngestedChatMessage,
   postOnce,
@@ -931,18 +934,18 @@ export async function postSlackExternalSenderNotice(
   dmChannelId?: string,
   seams: {
     readonly open?: (userId: string) => Promise<string | undefined>;
-    readonly post?: (channelId: string, text: string) => Promise<void>;
+    readonly post?: (channelId: string, text: string) => Promise<boolean>;
   } = {},
-): Promise<void> {
+): Promise<boolean> {
   const open = seams.open ?? liveSlackOpenDm;
-  const post = seams.post ?? liveSlackPostText;
+  const post = seams.post ?? slackPostText;
   let channel = dmChannelId;
   if (!channel) {
-    if (!userId) return;
+    if (!userId) return false;
     channel = await open(userId).catch(() => undefined);
   }
-  if (!channel) return;
-  await post(channel, EXTERNAL_SENDER_NOTICE).catch(() => undefined);
+  if (!channel) return false;
+  return await post(channel, EXTERNAL_SENDER_NOTICE).catch(() => false);
 }
 
 async function liveSlackOpenDm(userId: string): Promise<string | undefined> {
@@ -951,8 +954,16 @@ async function liveSlackOpenDm(userId: string): Promise<string | undefined> {
   return typeof ch === "string" && ch.length > 0 ? ch : undefined;
 }
 
+async function slackPostText(channelId: string, text: string, threadTs?: string): Promise<boolean> {
+  const res = await slackForm(
+    "chat.postMessage",
+    `channel=${encodeURIComponent(channelId)}&text=${encodeURIComponent(text)}${threadTs ? `&thread_ts=${encodeURIComponent(threadTs)}` : ""}`,
+  ).catch(() => undefined);
+  return res !== undefined && res["ok"] !== false;
+}
+
 async function liveSlackPostText(channelId: string, text: string): Promise<void> {
-  await slackForm("chat.postMessage", `channel=${encodeURIComponent(channelId)}&text=${encodeURIComponent(text)}`).catch(() => undefined);
+  await slackPostText(channelId, text);
 }
 
 export async function announceSlackSilentRoom(
@@ -961,16 +972,17 @@ export async function announceSlackSilentRoom(
   channelId: string,
   store?: { claimNotice: (org: string, key: string, at: string) => Promise<boolean> },
   post: (channelId: string, text: string) => Promise<void> = liveSlackPostText,
-): Promise<void> {
-  if (!org) return;
+): Promise<boolean> {
+  if (!org) return false;
   let won = false;
   try {
     won = await (store ?? getOperationalStore()).claimNotice(org, silentNoticeKey(surfaceKey, "suppressed-wake"), new Date().toISOString());
   } catch {
-    return;
+    return false;
   }
-  if (!won) return;
+  if (!won) return false;
   await post(channelId, silentRoomNotice("suppressed-wake")).catch(() => undefined);
+  return true;
 }
 
 export async function slackChannelVendorExternal(channelId: string): Promise<boolean> {
@@ -988,20 +1000,30 @@ export async function applySlackExternalPolicy(
   const roomKey = domainKeyOf(p);
   const policy = slackExternalPolicyForRoom(roomKey);
   const vendorExternal = policy.roomGrain === "silent" && !isDm ? await slackChannelVendorExternal(ev.channelId) : false;
+  const addressed = isDm || ev.isAppMention === true;
   const verdict = slackExternalVerdict({
     policy,
     author: { trust: facts.trust, refuted: facts.refuted },
-    addressed: isDm || ev.isAppMention === true,
+    addressed,
     isDm,
     ...(vendorExternal ? { vendorExternal: true } : {}),
     roomKey,
   });
   if (verdict === "proceed") return verdict;
+  let alreadyAnswered = false;
   if (verdict === "withheld-addressed") {
-    await postSlackExternalSenderNotice(ev.userId, isDm ? ev.channelId : undefined).catch(() => undefined);
+    alreadyAnswered = await postSlackExternalSenderNotice(ev.userId, isDm ? ev.channelId : undefined).catch(() => false);
   }
-  if (verdict === "silent-room") await announceSlackSilentRoom(p.org, roomKey, ev.channelId).catch(() => undefined);
-  await appendRouteAudit(p.surfaceKey, "slack.external_policy_suppressed", { verdict, route, channelId: ev.channelId }).catch(() => undefined);
+  if (verdict === "silent-room") alreadyAnswered = await announceSlackSilentRoom(p.org, roomKey, ev.channelId).catch(() => false);
+  const acked =
+    owesSuppressedMentionAck({ addressed, alreadyAnswered }) &&
+    (await slackPostText(ev.channelId, EXTERNAL_MENTION_ACK, ev.threadTs ?? ev.ts).catch(() => false));
+  await appendRouteAudit(p.surfaceKey, "slack.external_policy_suppressed", {
+    verdict,
+    route,
+    channelId: ev.channelId,
+    ...suppressionRendering(acked),
+  }).catch(() => undefined);
   return verdict;
 }
 

@@ -53,6 +53,19 @@ export const EXTERNAL_SENDER_NOTICE =
   "I can't act on messages from outside this organisation, so I haven't done anything with that. " +
   "If you need something from me, please ask someone in the organisation to raise it.";
 
+export const EXTERNAL_MENTION_ACK = "I can't help with this request here.";
+
+export function owesSuppressedMentionAck(input: {
+  readonly addressed: boolean;
+  readonly alreadyAnswered: boolean;
+}): boolean {
+  return input.addressed && !input.alreadyAnswered;
+}
+
+export function suppressionRendering(acked: boolean): { readonly rendering?: "ack" } {
+  return acked ? { rendering: "ack" as const } : {};
+}
+
 export function withholdWakeBodies(
   nw: NormalizedWake,
   isWithheld: (m: WakeMessageInput) => boolean,

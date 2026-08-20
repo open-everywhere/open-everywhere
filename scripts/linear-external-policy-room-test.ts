@@ -71,20 +71,33 @@ registerConfig({
 
 await withPatchedFetch(fakeLinearHttp, async () => {
 const silenced = await drive("public-team", "as-silenced");
-ok(silenced.res === null, "room grain: a declared-public team under `silent` SILENTLY DROPS the native mention (returns null)");
+ok(silenced.res === null, "room grain: a declared-public team under `silent` DROPS the native mention before any turn (returns null)");
+const activityWrites = silenced.posted.filter((b) => b.includes("AgentActivityCreate"));
+ok(activityWrites.length === 1, "🔴 OPE-885 room grain: a silenced room's EXPLICIT mention creates EXACTLY ONE Agent Activity");
+ok(activityWrites[0]!.includes('\\"type\\":\\"response\\"') || activityWrites[0]!.includes('"type":"response"'), "🔴 OPE-885: it is a `response` activity — the only type that TERMINATES the session");
 ok(
-  !silenced.posted.some((b) => b.includes("AgentActivityCreate")),
-  "🔴 OPE-884 room grain: a silenced room's mention creates NO Agent Activity of any type — nothing reaches the issue",
+  activityWrites[0]!.includes("can't help") || activityWrites[0]!.includes("can\\u0027t help"),
+  "🔴 OPE-885: the body is the fixed host ack, not model prose",
+);
+ok(
+  !/external space|organisation|guest|staying quiet/i.test(activityWrites[0]!),
+  "🔴 OPE-885: the ack names no room configuration, no organisation and no classification — an agent activity is readable by everyone who can open the issue",
 );
 ok(
   !silenced.posted.some((b) => b.includes('"stop"')),
   "OPE-884 room grain (explicit): no `stop` signal is sent — the real API refuses it on any non-`prompt` activity",
+);
+ok(
+  !silenced.posted.some((b) => b.includes("ephemeral")),
+  "OPE-884 room grain (explicit): the ack is NOT ephemeral — an ephemeral activity neither terminates nor tells the member anything",
 );
 const suppressedRows = (await readAudit({ org: declaredPart.org, action: "linear.external_policy_suppressed" })).filter((r) => r.surface === declaredPart.surfaceKey);
 ok(
   suppressedRows.length === 1 && suppressedRows[0]!.detail?.verdict === "silent-room",
   "room grain: ONE linear.external_policy_suppressed audit row names the surface with verdict silent-room",
 );
+ok(suppressedRows[0]!.detail?.rendering === "ack", "🔴 OPE-885: the row records rendering:\"ack\" — an operator can tell a closed session from a hanging one");
+ok(suppressedRows[0]!.detail?.agentSessionId === "as-silenced", "OPE-885: the row names the session the ack closed");
 
 const undeclared = await drive("plain-team", "as-undeclared");
 ok(
