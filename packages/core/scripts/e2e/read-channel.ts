@@ -2,7 +2,7 @@ import { fetchAudit, type AuditWireEntry } from "./audit-read.js";
 import { fetchTranscript } from "./transcript-read.js";
 import { deployedBuildCarries } from "./deployed-build.js";
 import { isWindowToken } from "../../agent/channels/window-key.js";
-import { GENERIC_READ_VERBS_SHA, dS, classifyDelegatedReadEvidence, pollForDelegationSettlement } from "./read-channel-lib.js";
+import { GENERIC_READ_VERBS_SHA, REPLY_POST_ACTION, dS, classifyDelegatedReadEvidence, pollForDelegationSettlement, pollForFinalReply } from "./read-channel-lib.js";
 
 export { GENERIC_READ_VERBS_SHA };
 
@@ -18,12 +18,13 @@ const DISCORD_CHANNEL_ID = DISCORD_SURFACE.split("/").slice(2).join("/");
 const DISCORD_GUILD_ID = DISCORD_SURFACE.split("/")[1] ?? "";
 const REPLY_TIMEOUT_MS = Number.parseInt(process.env.GRV_REPLY_TIMEOUT_MS ?? "120000", 10);
 const SETTLE_TIMEOUT_MS = Number.parseInt(process.env.GRV_SETTLE_TIMEOUT_MS ?? "120000", 10);
+const QUIET_MS = Number.parseInt(process.env.GRV_REPLY_QUIET_MS ?? "12000", 10);
 const POLL_MS = 4000;
 const RUN = Date.now().toString().slice(-7);
 const ONLY = (process.env.GRV_ONLY ?? "").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
 const want = (id: string) => ONLY.length === 0 || ONLY.includes(id);
 
-const A_REPLY = "reply.post";
+const A_REPLY = REPLY_POST_ACTION;
 type Status = "PASS" | "SKIP" | "FAIL";
 const results: { id: string; status: Status; detail: string }[] = [];
 const record = (id: string, status: Status, detail: string) => {
@@ -100,6 +101,16 @@ async function toolNamesOf(sessionId: string, sinceIso: string): Promise<string[
   } catch (e) { console.warn(`  [transcript] ${(e as Error).message}`); return null; }
 }
 
+async function awaitFinalReply(id: string, sinceIso: string, wakeId: string, sessionId: string): Promise<void> {
+  const deps = { sleep, now: () => Date.now(), fetchRows: () => rowsSince(sinceIso) };
+  try {
+    const outcome = await pollForFinalReply(deps, wakeId, sessionId, SETTLE_TIMEOUT_MS, POLL_MS, QUIET_MS);
+    console.log(`  ${id} final-reply wait: ${outcome.kind} — ${outcome.detail}`);
+  } catch (e) {
+    console.warn(`  ${id} final-reply wait abandoned (audit read failed: ${(e as Error).message}) — reading the transcript now; the classification below still decides the verdict`);
+  }
+}
+
 async function g1(): Promise<void> {
   const since = new Date().toISOString();
   const brief = `Please use read_channel with target {platform:"slack", channel:"${SLACK_CHANNEL_ID}"} to pull recent messages from that channel, then reply here with GRV1-${RUN} summarising what you saw.`;
@@ -108,6 +119,7 @@ async function g1(): Promise<void> {
   console.log(`  G1 injected Slack wake ${wakeId} → token ${token}`);
   const sid = await pollForReplySession(since, wakeId, REPLY_TIMEOUT_MS);
   if (!sid) return classifyNoReply("G1", since, wakeId, "Render byte-identity + gate pinned offline (generic-read-verbs-test.ts).");
+  await awaitFinalReply("G1", since, wakeId, sid);
   const calls = await toolNamesOf(sid, since);
   if (calls === null) return record("G1", "SKIP", `transcript fetch failed for session ${sid} — the mount cannot be observed this run. Render byte-identity + gate pinned offline (generic-read-verbs-test.ts).`);
   if (calls.includes("read_channel")) return record("G1", "PASS", `session ${sid} invoked the GENERIC read_channel for slack (the behaviour-preserving successor to read_slack_channel) and replied.`);
@@ -130,6 +142,7 @@ async function g2(): Promise<void> {
   console.log(`  G2 injected Discord wake ${wakeId} → token ${token}`);
   const sid = await pollForReplySession(since, wakeId, REPLY_TIMEOUT_MS);
   if (!sid) return classifyNoReply("G2", since, wakeId, "The Discord adapter render/normalize is pinned offline (generic-read-verbs-test.ts).");
+  await awaitFinalReply("G2", since, wakeId, sid);
   const calls = await toolNamesOf(sid, since);
   if (calls === null) return record("G2", "SKIP", `transcript fetch failed for session ${sid} — the mount cannot be observed this run. The Discord adapter render/normalize is pinned offline (generic-read-verbs-test.ts).`);
   if (calls.includes("read_channel")) return record("G2", "PASS", `session ${sid} invoked read_channel for DISCORD — the additive cross-surface read works through ONE generic tool.`);

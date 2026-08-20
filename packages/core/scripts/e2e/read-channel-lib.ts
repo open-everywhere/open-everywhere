@@ -4,6 +4,7 @@ export const GENERIC_READ_VERBS_SHA = "ea1b3c670d495466cb1bfc02c002c32a152e7f13"
 
 export const DELEGATION_TASK_STARTED_ACTION = "delegation.task_started";
 export const DELEGATION_TASK_SETTLED_ACTION = "delegation.task_settled";
+export const REPLY_POST_ACTION = "reply.post";
 
 export const dS = (e: AuditWireEntry, k: string): string | undefined => (typeof e.detail?.[k] === "string" ? (e.detail![k] as string) : undefined);
 
@@ -42,6 +43,65 @@ export async function pollForDelegationSettlement(
     kind: "delegated-unsettled",
     taskId: verdict.taskId,
     detail: `${verdict.detail} — never settled within ${timeoutMs}ms (polled ~${waitedMs}ms for delegation.task_settled; a genuine settle timeout, distinct from the OPE-788 single-early-read misread)`,
+  };
+}
+
+export type FinalReplyOutcome = {
+  readonly kind: "settled-relay" | "quiet" | "timeout";
+  readonly replyCount: number;
+  readonly detail: string;
+};
+
+const turnReplies = (rows: readonly AuditWireEntry[], wakeId: string, sessionId: string): readonly AuditWireEntry[] =>
+  rows.filter((r) => r.action === REPLY_POST_ACTION && (dS(r, "sessionId") === sessionId || dS(r, "wakeId") === wakeId));
+
+const atOrAfter = (a: string, b: string): boolean => {
+  const [x, y] = [Date.parse(a), Date.parse(b)];
+  return Number.isFinite(x) && Number.isFinite(y) && x >= y;
+};
+
+export async function pollForFinalReply(
+  deps: SettlePollDeps,
+  wakeId: string,
+  sessionId: string,
+  timeoutMs: number,
+  pollMs: number,
+  quietMs: number,
+): Promise<FinalReplyOutcome> {
+  const start = deps.now();
+  const deadline = start + timeoutMs;
+  let count = -1;
+  let lastChangeAt = start;
+  while (deps.now() < deadline) {
+    await deps.sleep(pollMs);
+    const rows = await deps.fetchRows();
+    const replies = turnReplies(rows, wakeId, sessionId);
+    const settled = rows.find((r) => r.action === DELEGATION_TASK_SETTLED_ACTION && dS(r, "session") === sessionId);
+    if (settled && replies.some((r) => atOrAfter(r.ts, settled.ts))) {
+      return {
+        kind: "settled-relay",
+        replyCount: replies.length,
+        detail: `a reply.post landed at or after delegation.task_settled for session ${sessionId} — the worker's answer, not the interim ack (${replies.length} reply row(s) this turn)`,
+      };
+    }
+    if (replies.length !== count) {
+      count = replies.length;
+      lastChangeAt = deps.now();
+      continue;
+    }
+    const outstanding = rows.some((r) => r.action === DELEGATION_TASK_STARTED_ACTION && dS(r, "session") === sessionId) && !settled;
+    if (!outstanding && deps.now() - lastChangeAt >= quietMs) {
+      return {
+        kind: "quiet",
+        replyCount: count,
+        detail: `the reply count for session ${sessionId} held at ${count} for ${quietMs}ms with no delegation outstanding — the seat has stopped posting`,
+      };
+    }
+  }
+  return {
+    kind: "timeout",
+    replyCount: Math.max(count, 0),
+    detail: `no settled relay and no ${quietMs}ms quiet period within ${timeoutMs}ms (last seen ${Math.max(count, 0)} reply row(s)) — reading the transcript anyway; the existing classification still decides the verdict`,
   };
 }
 

@@ -2109,11 +2109,18 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: askTs } = await sup.post(
         `Quick question for whoever's around — what's a good one-line summary of what this channel is for? Please include the ref ${marker} in your reply so I can find it (fresh check — even if a similar question was answered before, this one needs its own answer).`,
       );
-      const reply = await sup.awaitChannelMessage(askTs, { timeoutMs: REPLY_WAIT });
+      const reply = await sup.awaitAnyReply(askTs, {
+        timeoutMs: REPLY_WAIT,
+        skip: (m) => isFillerAck(m.text) || isApprovalCard(m),
+      });
       ctx.gate(reply.text.trim().length > 0, "supervisor: a plain non-mention answerable message drew an in-channel bot reply (the channel-watch judge woke)");
+      ctx.gate(
+        reply.threadTs === askTs || reply.text.includes(marker),
+        `supervisor: the reply is attributable to THIS run's ask — threaded under it (threadTs=${reply.threadTs ?? "(none)"}, ask=${askTs}) or carrying the run marker "${marker}"`,
+      );
 
       await sleep(SILENCE_WINDOW);
-      const afterReply = (await sup.history(reply.ts)).filter((m) => sup.isBotReply(m) && !isApprovalCard(m));
+      const afterReply = (await sup.collectBotMessagesAfter(askTs, reply.ts)).filter((m) => !isApprovalCard(m));
       ctx.gate(afterReply.length === 0, "supervisor self-loop: the bot's own post did NOT wake another reply (no runaway)");
 
       const { ts: noiseTs } = await sup.post("lol did everyone see the game last night");
@@ -2126,7 +2133,7 @@ export const SCENARIOS: readonly Scenario[] = [
         }
       }
       await sleep(SILENCE_WINDOW);
-      const noiseReplies = (await sup.history(noiseTs)).filter((m) => sup.isBotReply(m) && !isApprovalCard(m));
+      const noiseReplies = (await sup.collectBotMessagesAfter(noiseTs, noiseTs)).filter((m) => !isApprovalCard(m));
       ctx.gate(noiseReplies.length === 0, "supervisor: an off-topic aside drew NO in-channel reply within the silence window");
     },
   },
@@ -2195,13 +2202,13 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: decideTs } = await a.post(
         `Team decision to log: the deploy window token for this release is ${marker}. Can you acknowledge you've noted it? (ref for the write-up)`,
       );
-      const ackA = await a.awaitChannelMessage(decideTs, { timeoutMs: UNIFIED_REPLY_WAIT });
+      const ackA = await a.awaitAnyReply(decideTs, { timeoutMs: UNIFIED_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(ackA.text.trim().length > 0, "container A: the channel-watch judge replied in-channel (ambient wake under the unified grain)");
 
       const { ts: askTs } = await b.post(
         "Quick check before I write this up — what was the deploy window token we decided on earlier? It was mentioned in the team's other channel.",
       );
-      const replyB = await b.awaitChannelMessage(askTs, { timeoutMs: UNIFIED_REPLY_WAIT });
+      const replyB = await b.awaitAnyReply(askTs, { timeoutMs: UNIFIED_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(replyB.text.trim().length > 0, "container B: got an in-channel reply to the cross-container question");
       ctx.gate(
         replyB.text.includes(marker),
@@ -2243,7 +2250,7 @@ export const SCENARIOS: readonly Scenario[] = [
         }
       }
       await sleep(SILENCE_WINDOW);
-      const noiseReplies = (await b.history(noiseTs)).filter((m) => b.isBotReply(m));
+      const noiseReplies = await b.collectBotMessagesAfter(noiseTs, noiseTs);
       ctx.gate(noiseReplies.length === 0, "unified: an off-topic aside drew NO reply within the silence window (silence bias survives unification)");
     },
   },
@@ -2306,7 +2313,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: decideTs } = await a.post(
         `Team decision to log: the deploy window token for this release is ${marker}. Can you acknowledge you've noted it? (ref for the write-up)`,
       );
-      const ack = await a.awaitChannelMessage(decideTs, { timeoutMs: REPLY_WAIT });
+      const ack = await a.awaitAnyReply(decideTs, { timeoutMs: REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(ack.text.trim().length > 0, "slack: the unified supervisor acknowledged the decision in-channel");
 
       const askId = await gh.comment(
