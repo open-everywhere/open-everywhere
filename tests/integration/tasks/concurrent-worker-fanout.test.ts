@@ -11,18 +11,24 @@ import {
   redeliveryRecoveryNote,
   registerScript,
   SETTLEMENT_DRAIN_SCRIPT,
+  toolSessionIdentity,
   waitFor,
   waitForChildren,
   wrapToolExecute,
+  type ToolSessionIdentity,
 } from "../harness";
 
 test("two agent calls in one step start two workers that both run", async () => {
   await bootAgent();
 
   let workerToolCalls = 0;
+  const workerIdentities: (ToolSessionIdentity | undefined)[] = [];
+  const optionsBagKeys: string[][] = [];
   afterThisTest(
-    wrapToolExecute("post_file", async () => {
+    wrapToolExecute("post_file", async (_input: unknown, options: unknown) => {
       workerToolCalls += 1;
+      workerIdentities.push(toolSessionIdentity());
+      optionsBagKeys.push(options !== null && typeof options === "object" ? Object.keys(options as object) : []);
       return { posted: true, count: 1 };
     }),
   );
@@ -103,6 +109,32 @@ test("two agent calls in one step start two workers that both run", async () => 
   expect(workerSessions.has(String(dispatchStep.sessionId))).toBe(false);
 
   expect(workerToolCalls).toBeGreaterThanOrEqual(2);
+
+  expect(optionsBagKeys.length).toBeGreaterThanOrEqual(2);
+  for (const keys of optionsBagKeys) {
+    expect(keys).toContain("toolCallId");
+    expect(keys).not.toContain("session");
+  }
+
+  const identities = workerIdentities.filter((i): i is ToolSessionIdentity => i !== undefined);
+  expect(
+    identities.length,
+    `toolSessionIdentity() returned undefined for ${workerIdentities.length - identities.length} of ` +
+      `${workerIdentities.length} worker tool calls — the harness reach into eve's context container ` +
+      "is broken, not the product. Check harness.ts's sandboxIdentityKeyNames against eve's " +
+      "context/keys.js and runtime/sessions/runtime-context-keys.js.",
+  ).toBe(workerIdentities.length);
+  expect(identities.length).toBeGreaterThanOrEqual(2);
+  const seatSessionId = String(dispatchStep.sessionId);
+  for (const worker of identities) {
+    expect(worker.parentSessionId).toBe(seatSessionId);
+    expect(worker.sessionId).not.toBe(seatSessionId);
+    expect(worker.sandboxSessionId).toBe(seatSessionId);
+    expect(worker.sandboxKey).toBe(seatSessionId);
+    expect(worker.sandboxKey).not.toBe(worker.sessionId);
+  }
+  expect(new Set(identities.map((i) => i.sessionId)).size).toBeGreaterThanOrEqual(2);
+  expect(new Set(identities.map((i) => i.sandboxKey)).size).toBe(1);
 
   if (drain !== undefined) {
     await consumeSettlement({
