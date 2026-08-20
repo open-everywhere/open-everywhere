@@ -32,6 +32,7 @@ const {
   CONTROL_READ_AUDIT_PATH,
   CONTROL_READ_TRANSCRIPT_PATH,
   CONTROL_READ_RUNTIME_SIGNAL_PATH,
+  CONTROL_READ_MODEL_CALL_SESSIONS_PATH,
 } = await import("../agent/control/read-route.js");
 const { appendUsageEvent } = await import("../agent/spend/usage-events.js");
 const { readAudit, appendAudit } = await import("../agent/audit/audit.js");
@@ -488,8 +489,8 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
     routes: { method: string; path: string }[];
   };
   ok(
-    channel.routes.length === 6 && channel.routes.every((r) => r.method === "GET"),
-    "the channel mounts exactly six GET routes (usage + audit + unified-audit + transcript + runtime-signal + model-calls)",
+    channel.routes.length === 7 && channel.routes.every((r) => r.method === "GET"),
+    "the channel mounts exactly seven GET routes (usage + audit + unified-audit + transcript + runtime-signal + model-calls + model-call-sessions)",
   );
   ok(channel.routes.some((r) => r.path === CONTROL_READ_USAGE_PATH), "…one at /control/v1/usage");
   ok(channel.routes.some((r) => r.path === CONTROL_READ_AUDIT_PATH), "…one at /control/v1/audit");
@@ -497,6 +498,7 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   ok(channel.routes.some((r) => r.path === CONTROL_READ_TRANSCRIPT_PATH), "…one at /control/v1/session/:sessionId/transcript");
   ok(channel.routes.some((r) => r.path === CONTROL_READ_RUNTIME_SIGNAL_PATH), "…one at /control/v1/runtime-signal (OPE-658)");
   ok(channel.routes.some((r) => r.path === "/control/v1/session/:sessionId/model-calls"), "…one at /control/v1/session/:sessionId/model-calls (OPE-846 capture harvest)");
+  ok(channel.routes.some((r) => r.path === CONTROL_READ_MODEL_CALL_SESSIONS_PATH), "…one at /control/v1/model-calls/sessions (OPE-857 capture retention listing)");
 
   const agentDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "agent");
   for (const file of ["control/read-route.ts", "channels/control-read.ts"]) {
