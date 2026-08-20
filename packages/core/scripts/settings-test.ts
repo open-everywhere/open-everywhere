@@ -235,6 +235,22 @@ console.log("5 — a bad override fails the boot, not a turn:");
   ok(defineSettings({ rotation: { expiryDays: -1 } }).rotation?.expiryDays === -1, "[5] …negatives too, same meaning");
   eq(defineSettings({}), {}, "[5] an EMPTY override object is valid — 'this deployment holds no opinion beyond the shipped ones'");
 
+  eq(
+    defineSettings({ soak: { captureSurfacePrefix: ["slack/T1/", "notion/ws1/"] } }).soak?.captureSurfacePrefix,
+    ["slack/T1/", "notion/ws1/"],
+    "[5] 🔴 a prefix LIST is accepted — the validator overrides the typeof gate on a union-typed spec",
+  );
+  refuses(
+    () => defineSettings({ soak: { captureSurfacePrefix: 7 } } as never),
+    "expected string",
+    "[5] …a value on NEITHER arm of the union is still refused",
+  );
+  refuses(
+    () => defineSettings({ soak: { captureSurfacePrefix: ["slack/T1/", 7] } } as never),
+    "expected string",
+    "[5] …and a mixed-type array likewise — the validator rejects it, so the typeof problem stands",
+  );
+
   ok(defineSettings({ rotation: { turnBudget: 90 } }).rotation?.turnBudget === 90, "[5] 🔴 a rotation override is ACCEPTED (OPE-409 removed the by-name refusal)");
   refuses(() => defineSettings({ rotation: { turnBudget: 0 } }), "positive number", "[5] …and is validated like any other row, not waved through");
   {

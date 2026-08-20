@@ -669,6 +669,15 @@ export type AgentSettingsOverrides = {
   readonly [G in keyof AgentSettings]?: { readonly [K in keyof AgentSettings[G]]?: AgentSettings[G][K] };
 };
 
+function validatorAccepts(spec: SettingSpec<unknown>, value: unknown): boolean {
+  if (spec.validate === undefined) return false;
+  try {
+    return spec.validate(value) === undefined;
+  } catch {
+    return false;
+  }
+}
+
 export function defineSettings(overrides: AgentSettingsOverrides): AgentSettingsOverrides {
   const problems: string[] = [];
   for (const [group, values] of Object.entries(overrides) as Array<[string, Record<string, unknown> | undefined]>) {
@@ -686,7 +695,9 @@ export function defineSettings(overrides: AgentSettingsOverrides): AgentSettings
       }
       if (value === undefined) continue;
       if (typeof value !== typeof spec.shipped) {
-        problems.push(`${spec.path}: expected ${typeof spec.shipped}, got ${typeof value}`);
+        if (!validatorAccepts(spec, value)) {
+          problems.push(`${spec.path}: expected ${typeof spec.shipped}, got ${typeof value}`);
+        }
         continue;
       }
       const problem = spec.validate?.(value);
