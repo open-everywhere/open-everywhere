@@ -5,6 +5,8 @@ import { resolveTeamsUserType, teamsHandleRosterProbe } from "./teams-roster.js"
 import { admitTeamsInputResponse } from "./teams-input-response.js";
 import {
   finalMessageActionForTurn,
+  NO_REPLY_SENTINEL_REASON,
+  auditNoReplySentinelObserved,
   isBareStop,
   postTerminalProse,
   consumeRepliedThisTurn,
@@ -98,6 +100,10 @@ const native = teamsChannel({
       if (action.kind !== "post") {
         if (action.kind === "silent" && action.reason !== "empty final message") {
           console.log(`[open-everywhere:teams] judged silence (${action.reason}) — nothing posted (conversation ${channel.state.conversationId ?? "?"})`);
+        }
+        if (action.kind === "silent" && action.reason === NO_REPLY_SENTINEL_REASON) {
+          const p = auditPartitionForState(channel.state);
+          if (p) await auditNoReplySentinelObserved(p, sessionId).catch(() => undefined);
         }
         if (action.kind === "silent" && isBareStop(action, repliedThisTurn)) {
           console.warn(

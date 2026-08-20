@@ -22,6 +22,8 @@ import {
   statusVerbsFor,
   getConfig,
   finalMessageActionForTurn,
+  NO_REPLY_SENTINEL_REASON,
+  auditNoReplySentinelObserved,
   isBareStop,
   supervisorTextDelivery,
   isSupervisorProseLeak,
@@ -500,6 +502,17 @@ const slackMentionChannel = slackChannel({
         console.log(
           `[open-everywhere:slack] judged silence (${action.reason}) — nothing posted (${channel.state.channelId ?? "?"}/${channel.state.threadTs ?? "?"})`,
         );
+        if (action.reason === NO_REPLY_SENTINEL_REASON) {
+          try {
+            const p = resolvePartition({
+              channel: { kind: "slack" },
+              session: { auth: { current: { attributes: { team_id: channel.state.teamId ?? "", channel_id: channel.state.channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
+            });
+            await auditNoReplySentinelObserved(p, sessionId);
+          } catch (err) {
+            console.warn(`[open-everywhere:slack] sentinel no_reply audit write failed: ${String(err)}`);
+          }
+        }
         if (isBareStop(action, reactedThisTurn || repliedThisTurn)) {
           const channelId = channel.state.channelId ?? undefined;
           const threadTs = channel.state.threadTs ?? undefined;

@@ -92,6 +92,9 @@ import {
   type ReactionSinkDeps,
   type ReactionIngestOutcome,
   type ReactionVerb,
+  consumeNoReplyThisTurn,
+  NO_REPLY_SENTINEL_REASON,
+  auditNoReplySentinelObserved,
   getSettings,
   replierLabelFromAuthAttributes,
   authPrincipalId,
@@ -1484,6 +1487,7 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
       const status = takeTurnStatus(channel.state);
       const repliedThisTurn = consumeRepliedThisTurn((ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
       const cardPostedThisTurn = consumeCardPostedThisTurn();
+      const noReplyToolCalledThisTurn = consumeNoReplyThisTurn() !== null;
       const plan = planCompletion({
         action,
         reactionActive: Boolean(status.original),
@@ -1520,6 +1524,9 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
         }
       } else if (action.kind === "silent") {
         if (data.message) log(`judged silence (NO_REPLY) — nothing posted (channel ${channel.channelId || "?"})`);
+        if (action.reason === NO_REPLY_SENTINEL_REASON && !noReplyToolCalledThisTurn && auditP) {
+          await auditNoReplySentinelObserved(auditP, sessionId).catch(() => undefined);
+        }
       }
 
       if (action.kind === "post") {

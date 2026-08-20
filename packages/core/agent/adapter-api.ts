@@ -253,6 +253,7 @@ export { recordOwnPost } from "./channels/own-post-ledger.js";
 export { postTerminalProse } from "./channels/reply-post.js";
 export type { ReplyAudit, ReplierLabel } from "./channels/reply-post.js";
 
+export { auditNoReplySentinelObserved } from "./channels/chat-turn-audit.js";
 export type { ChatAuditPartition } from "./channels/chat-turn-audit.js";
 
 export { registerWakeOriginCodec, wakeOriginCodec } from "./channels/wake-origin-codec.js";
@@ -295,6 +296,7 @@ export {
   nameDropPattern,
   wakeNameDropTokens,
   NO_REPLY_SENTINEL,
+  NO_REPLY_SENTINEL_REASON,
   replierLabelFor,
   replierLabelFromAuthAttributes,
   withReplierPrefix,
