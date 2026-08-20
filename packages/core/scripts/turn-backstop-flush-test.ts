@@ -125,8 +125,8 @@ const settle = async (): Promise<void> => {
 }
 
 {
-  const { WORKER_WITHHELD_TOOLS } = await import("../agent/access/worker-seat.js");
-  ok(WORKER_WITHHELD_TOOLS.size === 0, "precondition: a delegated worker withholds NO tool, so it holds `ask_question` and a task really can park at input_required");
+  const { allowedOnWorkerSeat } = await import("../agent/access/worker-seat.js");
+  ok(allowedOnWorkerSeat("ask_question"), "precondition: a delegated worker holds `ask_question`, so a task really can park at input_required");
 
   ok(TERMINAL_TASK_STATUSES.includes("input_required") === false, "🔴 negative control: `input_required` is NOT terminal — a question parks a task, it does not end it");
 

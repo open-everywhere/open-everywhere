@@ -135,10 +135,20 @@ ok(allowedOnLeanSeat("ask_question"), "…and the INTERACTIVE seat still holds i
 for (const name of ["bash", "read_file", "write_file", "post_file", "web_search", "return_result", "complete_task", "reply", "final_output", "notion__search", "some_tool_nobody_declared"]) {
   ok(allowedOnWorkerSeat(name), `the worker keeps ${name} — this set is ALLOW-by-default, an exclusion of BROKEN verbs, never a narrowing of the worker's kit`);
 }
+ok(!allowedOnWorkerSeat("stand_down"), "🔴 OPE-877: a worker does NOT hold stand_down — it marks the DELEGATING SEAT's engagement row (the worker inherits the seat's binding), so a worker could make its own parent stop following a channel the worker never followed");
+ok(allowedOnLeanSeat("stand_down"), "…and the SEAT still holds stand_down — it is the only session a human can address 'stop following this' to");
+ok(!allowedOnWorkerSeat("no_reply"), "🔴 OPE-877: a worker does NOT hold no_reply — it discharges a REPLY obligation a worker does not have, and on the native route the worker's last message IS its report, so a turn ending in silence hands the seat nothing");
+ok(allowedOnLeanSeat("no_reply"), "…and the SEAT still holds no_reply — judged silence is a seat's normal output");
+for (const name of ["update_status", "task_update", "reply", "edit_reply", "react"]) {
+  ok(allowedOnWorkerSeat(name), `the worker subtraction does NOT take ${name} — neither admission test admits it`);
+}
 ok(
-  WORKER_WITHHELD_TOOLS.size === 0,
-  `the withheld set is EMPTY (got "${[...WORKER_WITHHELD_TOOLS].join(",")}") — it grows only for a structurally-unanswerable verb, never for 'tools a worker shouldn't use' (that is the lean roster's question, or the consequence registry's)`,
+  [...WORKER_WITHHELD_TOOLS].sort().join(",") === "no_reply,stand_down",
+  `the withheld set is EXACTLY no_reply,stand_down (got "${[...WORKER_WITHHELD_TOOLS].sort().join(",")}") — it grows only for a verb that is structurally wrong on a worker by test (A) or (B), never for 'tools a worker shouldn't use' (that is the lean roster's question, or the consequence registry's)`,
 );
+for (const name of ["no_reply", "stand_down"]) {
+  ok(WINDOW_UNGATED_TOOLS.has(name), `${name} stays a MOUNT-time ungated row — the worker narrowing is per-wake, not a grain matrix`);
+}
 ok(
   WINDOW_UNGATED_TOOLS.has("ask_question"),
   "ask_question stays a MOUNT-time ungated row: the narrowing is per-wake, and a grain row is not even available — manifest rule 4 needs a windowGatedKit to re-provide a framework tool, and eve exports no ask_question definition to re-provide",
@@ -180,14 +190,17 @@ function makeToolset(): Record<string, { description: string; execute: () => unk
   const toolset = makeToolset();
   const before = { ...toolset };
   const removed = restrictToolsetForWorkerSeat(toolset);
-  ok(removed.length === 0, `🔴 OPE-565: the worker subtraction removes NOTHING (got "${removed.join(",")}") — an empty set means a delegated worker's assembled kit passes through untouched`);
-  ok(Object.keys(toolset).length === Object.keys(before).length, "…and the toolset keeps every name it arrived with — a worker's wide hands are the design");
-  ok("ask_question" in toolset, "…including ask_question itself, which is the name that left the set");
+  ok(removed.join(",") === "no_reply,stand_down", `🔴 OPE-877: the worker subtraction removes EXACTLY no_reply and stand_down, sorted (got "${removed.join(",")}")`);
+  ok(!("no_reply" in toolset) && !("stand_down" in toolset), "…and both really leave the assembled toolset — ABSENCE, so the worker is never told it lost a verb and never retries into a refusal");
+  ok(Object.keys(toolset).length === Object.keys(before).length - 2, "…and NOTHING ELSE leaves — a worker's wide hands are still the design");
+  ok("ask_question" in toolset, "…including ask_question itself, which is the name that left the set (OPE-565)");
+  ok("reply" in toolset && "update_status" in toolset && "bash" in toolset && "post_file" in toolset, "…and the verbs OPE-877 checked alongside them stay: a worker still posts and still shows progress");
   ok(Object.keys(toolset).every((k) => toolset[k] === before[k]), "surviving tool OBJECTS keep their identity — eve keys approvals in a WeakMap on them");
   const armed = makeToolset();
   const removedArmed = restrictToolsetForWorkerSeat(armed, new Set(["ask_question", "bash"]));
   ok(removedArmed.join(",") === "ask_question,bash", `restrictToolsetForWorkerSeat still deletes what it is given, sorted (got "${removedArmed.join(",")}")`);
   ok(!("ask_question" in armed) && !("bash" in armed), "…and the named tools really leave the toolset");
+  ok("no_reply" in armed && "stand_down" in armed, "…while the DEFAULT set's two names survive an injected set that does not name them — the function reads its argument, never a constant");
 }
 
 const require = createRequire(import.meta.url);
@@ -248,7 +261,10 @@ inSession(() => {
   ok(currentWorkerWake(), "a marked wake resolves as a WORKER inside a live session");
   const toolset = makeToolset();
   projectToolSet(toolset as unknown as Record<string, unknown>);
+  ok(!("no_reply" in toolset), "🔴 OPE-877: projectToolSet REMOVES no_reply on a worker wake — a worker owes its caller a report, not the room a reply, and on the native route a silent turn hands the seat nothing");
+  ok(!("stand_down" in toolset), "🔴 OPE-877: projectToolSet REMOVES stand_down on a worker wake — it would mark the DELEGATING SEAT's engagement row, which the worker inherited by binding");
   ok("ask_question" in toolset, "🔴 OPE-565: projectToolSet leaves ask_question ON a worker wake — the room's answer now routes back to the child, so there is nothing to withhold");
+  ok("reply" in toolset && "update_status" in toolset, "…and the worker still POSTS and still shows progress — OPE-877 took two verbs, not the conversational family");
   ok("bash" in toolset && "write_file" in toolset && "post_file" in toolset && "web_search" in toolset && "purge_memory" in toolset, "…and the worker keeps everything else — this is NOT a second lean cut");
 });
 
@@ -258,6 +274,7 @@ inSession(() => {
   const toolset = makeToolset();
   projectToolSet(toolset as unknown as Record<string, unknown>);
   ok("ask_question" in toolset, "an unmarked (non-worker) wake keeps ask_question");
+  ok("no_reply" in toolset && "stand_down" in toolset, "🔴 an unmarked (non-worker) wake KEEPS no_reply and stand_down — the OPE-877 subtraction is keyed on the worker bit, and its fail direction is toward keeping the tool");
 });
 
 {

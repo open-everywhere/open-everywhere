@@ -1,4 +1,4 @@
-export const WORKER_WITHHELD_TOOLS: ReadonlySet<string> = new Set<string>();
+export const WORKER_WITHHELD_TOOLS: ReadonlySet<string> = new Set<string>(["no_reply", "stand_down"]);
 
 export function allowedOnWorkerSeat(name: string, withheld: ReadonlySet<string> = WORKER_WITHHELD_TOOLS): boolean {
   return !withheld.has(name);
