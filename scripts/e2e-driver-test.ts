@@ -1192,6 +1192,36 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   ok(!noThread.has("thread_ts") && !noThread.has("initial_comment"), "optional thread_ts / initial_comment are omitted when absent");
 }
 
+{
+  const { mergeBotMessagesAfter } = await import("../packages/core/scripts/e2e/slack-driver.js");
+  type M = { ts: string; text: string; userId?: string; botId?: string };
+  const isBot = (m: M): boolean => m.botId !== undefined;
+  const human = (ts: string, text: string): M => ({ ts, text, userId: "U-HUMAN" });
+  const bot = (ts: string, text: string): M => ({ ts, text, botId: "B-OE" });
+
+  ok(mergeBotMessagesAfter([human("100.0", "ask")], [], "100.0", isBot).length === 0, "merge: a thread holding only the human's own ask yields no bot messages (silence passes)");
+
+  const threaded = mergeBotMessagesAfter([human("100.0", "ask"), bot("101.0", "threaded answer")], [], "100.0", isBot);
+  ok(threaded.length === 1 && threaded[0].text === "threaded answer", `merge: a bot reply that exists ONLY in the thread is found (history is blind to it); got ${JSON.stringify(threaded.map((m) => m.text))}`);
+
+  const flat = mergeBotMessagesAfter([human("100.0", "ask")], [bot("102.0", "top-level post")], "100.0", isBot);
+  ok(flat.length === 1 && flat[0].text === "top-level post", `merge: a bot message that exists ONLY in top-level history is found; got ${JSON.stringify(flat.map((m) => m.text))}`);
+
+  const both = mergeBotMessagesAfter([bot("103.0", "broadcast")], [bot("103.0", "broadcast")], "100.0", isBot);
+  ok(both.length === 1, `merge: a message present in BOTH pages is counted once (reply_broadcast), got ${both.length}`);
+
+  const filtered = mergeBotMessagesAfter(
+    [bot("99.0", "before the floor"), bot("100.0", "exactly the floor"), human("104.0", "human chatter"), bot("105.0", "real runaway")],
+    [],
+    "100.0",
+    isBot,
+  );
+  ok(filtered.length === 1 && filtered[0].text === "real runaway", `merge: pre-floor, at-floor and human messages are all excluded; got ${JSON.stringify(filtered.map((m) => m.text))}`);
+
+  const ordered = mergeBotMessagesAfter([bot("1000.5", "later")], [bot("999.9", "earlier")], "100.0", isBot);
+  ok(ordered.map((m) => m.text).join(",") === "earlier,later", `merge: results are oldest-first by numeric ts; got ${JSON.stringify(ordered.map((m) => m.text))}`);
+}
+
 ok(SYNTHETIC_SLACK_ROUTE === PUBLIC_SLACK_ROUTE, "synthetic route literal matches slack-front's PUBLIC_SLACK_ROUTE");
 ok(SYNTHETIC_COMMANDS_ROUTE === SLACK_COMMANDS_ROUTE, "synthetic commands literal matches SLACK_COMMANDS_ROUTE");
 ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches flow.ts's OE_APPROVAL_PREFIX");

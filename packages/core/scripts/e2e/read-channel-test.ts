@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AuditWireEntry } from "./audit-read.js";
 import { deployedBuildCarries } from "./deployed-build.js";
-import { classifyDelegatedReadEvidence, GENERIC_READ_VERBS_SHA, pollForDelegationSettlement, type DelegatedReadVerdict } from "./read-channel-lib.js";
+import { classifyDelegatedReadEvidence, GENERIC_READ_VERBS_SHA, pollForDelegationSettlement, pollForFinalReply, type DelegatedReadVerdict } from "./read-channel-lib.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -207,6 +207,84 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".."
     const { deps } = makeDeps([[row("slack.sources_refused", { target: "slack" })]]);
     const v = await pollForDelegationSettlement(deps, "s1", "slack", 100_000, 4000, firstUnsettled);
     ok(v.kind === "refused", `a refusal row appearing mid-poll ⇒ "refused" (got "${v.kind}")`);
+  }
+}
+
+{
+  const rowAt = (action: string, ts: string, detail: Record<string, unknown>): AuditWireEntry => ({
+    ts, org: "default", platform: "unified", workspace: "delegation", action, detail,
+  });
+  const ack = rowAt("reply.post", "2026-04-15T09:30:02.000Z", { sessionId: "s1", wakeId: "w1", chars: 24 });
+  const started = rowAt("delegation.task_started", "2026-04-15T09:30:03.000Z", { task: "t1", session: "s1" });
+  const settled = rowAt("delegation.task_settled", "2026-04-15T09:30:45.000Z", { task: "t1", session: "s1", status: "completed" });
+  const relay = rowAt("reply.post", "2026-04-15T09:30:47.000Z", { sessionId: "s1", wakeId: "w2-completion", chars: 900 });
+
+  function makeDeps(rowsSequence: readonly (readonly AuditWireEntry[])[]): { deps: { sleep: (ms: number) => Promise<void>; now: () => number; fetchRows: () => Promise<readonly AuditWireEntry[]> }; sleepCount: () => number } {
+    let now = 1_000_000;
+    let call = 0;
+    let sleeps = 0;
+    return {
+      deps: { now: () => now, sleep: async (ms: number) => { sleeps++; now += ms; }, fetchRows: async () => rowsSequence[Math.min(call++, rowsSequence.length - 1)] ?? [] },
+      sleepCount: () => sleeps,
+    };
+  }
+
+  {
+    const { deps, sleepCount } = makeDeps([[ack, started], [ack, started], [ack, started, settled, relay]]);
+    const o = await pollForFinalReply(deps, "w1", "s1", 100_000, 4000, 12_000);
+    ok(o.kind === "settled-relay", `an ack then a worker then the relay answer ⇒ "settled-relay" (got "${o.kind}": ${o.detail})`);
+    ok(o.replyCount === 2, `…and it reports BOTH reply rows, not just the ack (got ${o.replyCount})`);
+    ok(sleepCount() === 3, `…and it waited through the running worker rather than returning on the ack's poll (got ${sleepCount()} polls)`);
+  }
+
+  {
+    const { deps } = makeDeps([[ack, started]]);
+    const o = await pollForFinalReply(deps, "w1", "s1", 40_000, 4000, 12_000);
+    ok(o.kind === "timeout", `an unsettled delegation holds the wait open to the bound ⇒ "timeout", never "quiet" (got "${o.kind}": ${o.detail})`);
+  }
+
+  {
+    const { deps, sleepCount } = makeDeps([[ack]]);
+    const o = await pollForFinalReply(deps, "w1", "s1", 100_000, 4000, 12_000);
+    ok(o.kind === "quiet", `a single in-seat reply with no delegation ⇒ "quiet" (got "${o.kind}": ${o.detail})`);
+    ok(o.replyCount === 1, `…reporting the one reply row (got ${o.replyCount})`);
+    ok(sleepCount() === 4, `…after actually holding the 12000ms quiet window at a 4000ms poll (got ${sleepCount()} polls, 1 to see the reply + 3 to hold)`);
+  }
+
+  {
+    const second = rowAt("reply.post", "2026-04-15T09:30:14.000Z", { sessionId: "s1", wakeId: "w1", chars: 700 });
+    const { deps, sleepCount } = makeDeps([[ack], [ack], [ack, second]]);
+    const o = await pollForFinalReply(deps, "w1", "s1", 100_000, 4000, 12_000);
+    ok(o.kind === "quiet" && o.replyCount === 2, `a second in-seat reply mid-wait ⇒ "quiet" once BOTH are seen (got "${o.kind}", ${o.replyCount} replies)`);
+    ok(sleepCount() === 6, `…and the quiet clock restarted on the second reply (got ${sleepCount()} polls; 4 would mean it never reset)`);
+  }
+
+  {
+    const otherSettled = rowAt("delegation.task_settled", "2026-04-15T09:30:45.000Z", { task: "tX", session: "OTHER", status: "completed" });
+    const otherReply = rowAt("reply.post", "2026-04-15T09:30:46.000Z", { sessionId: "OTHER", wakeId: "wX", chars: 50 });
+    const { deps } = makeDeps([[ack, otherSettled, otherReply]]);
+    const o = await pollForFinalReply(deps, "w1", "s1", 100_000, 4000, 12_000);
+    ok(o.kind === "quiet", `a settled row for ANOTHER session never fires the relay exit (got "${o.kind}": ${o.detail})`);
+    ok(o.replyCount === 1, `…and another session's reply is not counted as this turn's (got ${o.replyCount}, 2 would mean the join leaks)`);
+  }
+
+  for (const [label, settledTs, relayTs] of [
+    ["whole-second settle vs sub-second reply", "2026-04-15T09:30:45Z", "2026-04-15T09:30:45.100Z"],
+    ["+01:00 settle vs UTC reply", "2026-04-15T10:30:45.000+01:00", "2026-04-15T09:30:47.000Z"],
+  ] as const) {
+    const s = rowAt("delegation.task_settled", settledTs, { task: "t1", session: "s1", status: "completed" });
+    const r = rowAt("reply.post", relayTs, { sessionId: "s1", wakeId: "w2-completion", chars: 900 });
+    const { deps } = makeDeps([[ack, started, s, r]]);
+    const o = await pollForFinalReply(deps, "w1", "s1", 40_000, 4000, 12_000);
+    ok(o.kind === "settled-relay", `relay detection parses timestamps — ${label} (got "${o.kind}": ${o.detail})`);
+  }
+
+  {
+    const s = rowAt("delegation.task_settled", "2026-04-15T09:30:45.000Z", { task: "t1", session: "s1", status: "completed" });
+    const bad = rowAt("reply.post", "not-a-timestamp", { sessionId: "s1", wakeId: "w2-completion", chars: 900 });
+    const { deps } = makeDeps([[ack, started, s, bad]]);
+    const o = await pollForFinalReply(deps, "w1", "s1", 40_000, 4000, 12_000);
+    ok(o.kind !== "settled-relay", `an unparseable reply ts never counts as the relay answer (got "${o.kind}")`);
   }
 }
 

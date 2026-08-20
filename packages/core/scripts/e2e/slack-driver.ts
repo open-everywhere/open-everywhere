@@ -95,8 +95,22 @@ export function buildCompleteUploadBody(input: {
   return new URLSearchParams(params).toString();
 }
 
-function tsAfter(ts: string, floor: string): boolean {
+export function tsAfter(ts: string, floor: string): boolean {
   return Number.parseFloat(ts) > Number.parseFloat(floor);
+}
+
+export function mergeBotMessagesAfter(
+  threadMsgs: readonly SlackMessage[],
+  historyMsgs: readonly SlackMessage[],
+  afterTs: string,
+  isBot: (m: SlackMessage) => boolean,
+): readonly SlackMessage[] {
+  const byTs = new Map<string, SlackMessage>();
+  for (const m of [...threadMsgs, ...historyMsgs]) {
+    if (!isBot(m) || !tsAfter(m.ts, afterTs)) continue;
+    byTs.set(m.ts, m);
+  }
+  return [...byTs.values()].sort((a, b) => Number.parseFloat(a.ts) - Number.parseFloat(b.ts));
 }
 
 export class SlackDriver {
@@ -258,16 +272,14 @@ export class SlackDriver {
     );
   }
 
-  async awaitChannelMessage(afterTs: string, opts: { timeoutMs: number }): Promise<SlackMessage> {
-    return pollUntil(
-      async () => (await this.history(afterTs)).find((m) => this.isBotReply(m)),
-      { timeoutMs: opts.timeoutMs, what: `a bot message in channel after ${afterTs}` },
-    );
-  }
-
   async collectRepliesDuring(rootTs: string, afterTs: string, windowMs: number): Promise<readonly SlackMessage[]> {
     await sleep(windowMs);
     return (await this.replies(rootTs)).filter((m) => this.isBotReply(m) && tsAfter(m.ts, afterTs));
+  }
+
+  async collectBotMessagesAfter(rootTs: string, afterTs: string): Promise<readonly SlackMessage[]> {
+    const [threadMsgs, historyMsgs] = await Promise.all([this.replies(rootTs), this.history(afterTs)]);
+    return mergeBotMessagesAfter(threadMsgs, historyMsgs, afterTs, (m) => this.isBotReply(m));
   }
 
   async reactions(ts: string): Promise<readonly string[]> {
