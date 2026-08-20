@@ -83,17 +83,25 @@ await inSession(async () => {
 
   const audit = await readAudit({ org: "default", action: "reply.no_reply" });
   ok(audit.length === 1 && audit[0]?.detail?.reason === "awaiting_context", "no_reply: audits exactly one reply.no_reply row with the reason (flag ON)");
+
+  const observed = await readAudit({ org: "default", action: "reply.no_reply_observed" });
+  ok(observed.length === 1 && observed[0]?.detail?.reason === "awaiting_context", "no_reply: audits exactly one reply.no_reply_observed row with the reason");
+  ok(observed[0]?.detail?.explanation === undefined, "no_reply: reply.no_reply_observed carries no explanation field — minimal by design");
 });
 
 await inSession(async () => {
   overrideSettingsForTest({ audit: { silences: false } });
   try {
     const before = (await readAudit({ org: "default", action: "reply.no_reply" })).length;
+    const beforeObserved = (await readAudit({ org: "default", action: "reply.no_reply_observed" })).length;
     const res = await noReply.execute({ reason: "nothing_to_add" }, ctx());
     ok(res.acknowledged === true, "no_reply: flag OFF still acknowledges (turn termination unaffected)");
     ok(consumeNoReplyThisTurn() === "nothing_to_add", "no_reply: flag OFF still marks the silence signal");
     const after = (await readAudit({ org: "default", action: "reply.no_reply" })).length;
     ok(after === before, "no_reply: flag OFF (actions-only) writes NO reply.no_reply row");
+    const afterObserved = await readAudit({ org: "default", action: "reply.no_reply_observed" });
+    ok(afterObserved.length - beforeObserved === 1, "no_reply: flag OFF still writes ONE reply.no_reply_observed row — this is the observability fix");
+    ok(afterObserved[0]?.detail?.reason === "nothing_to_add", "no_reply: the flag-OFF reply.no_reply_observed row carries the real reason (newest-first read)");
   } finally {
     overrideSettingsForTest({ audit: { silences: true } });
   }
