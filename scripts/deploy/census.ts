@@ -7,6 +7,7 @@ import {
   credentialBrokerArmedFinding,
   cronCeilingHours,
   channelCensusContributions,
+  channelGatedHeartbeats,
   heartbeatFindings,
   planRequiredCredentials,
   planRequiredEndpoints,
@@ -85,6 +86,13 @@ const REPORTED_HEARTBEATS: readonly { readonly action: string; readonly reason: 
   { action: "routine.fire", reason: "fires only when a routine is due — total absence is a legitimate state on a deployment with none configured, so this is reported, never gated." },
 ];
 
+function resolveDiscordRelayHeartbeatMs(): number {
+  const raw = process.env.OE_RELAY_HEARTBEAT_MS?.trim();
+  if (raw === undefined || raw === "") return 300_000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 300_000;
+}
+
 async function planHeartbeats(): Promise<readonly RequiredHeartbeat[]> {
   const dir = join(REPO_ROOT, "agent", "schedules");
   const out: RequiredHeartbeat[] = [];
@@ -118,11 +126,13 @@ async function mountedRoutes(): Promise<{
   plumbing: PlumbingCredential[];
   limits: string[];
   reportedHeartbeats: ReportedHeartbeat[];
+  gatedHeartbeats: RequiredHeartbeat[];
 }> {
   const routes: MountedRoute[] = [];
   const plumbing: PlumbingCredential[] = [];
   const limits: string[] = [];
   const reportedHeartbeats: ReportedHeartbeat[] = [];
+  const gatedHeartbeats: RequiredHeartbeat[] = [];
   let files: string[] = [];
   try {
     files = readdirSync(CHANNELS_DIR).filter((f) => f.endsWith(".ts")).sort();
@@ -144,7 +154,8 @@ async function mountedRoutes(): Promise<{
   const contributions = channelCensusContributions(files);
   limits.push(...contributions.limits);
   reportedHeartbeats.push(...contributions.reportedHeartbeats);
-  return { routes, plumbing, limits, reportedHeartbeats };
+  gatedHeartbeats.push(...channelGatedHeartbeats(files, resolveDiscordRelayHeartbeatMs()));
+  return { routes, plumbing, limits, reportedHeartbeats, gatedHeartbeats };
 }
 
 async function probe(target: string, path: string, timeoutMs: number): Promise<EndpointObservation> {
@@ -224,7 +235,7 @@ try {
     }
   }
 
-  const { routes, plumbing, limits, reportedHeartbeats } = await mountedRoutes();
+  const { routes, plumbing, limits, reportedHeartbeats, gatedHeartbeats } = await mountedRoutes();
   const plan = planRequiredCredentials({
     bundles: loadBundles(),
     catalogues: loadConnectorCredentials(),
@@ -261,7 +272,7 @@ try {
   let heartbeats: readonly HeartbeatFinding[] = [];
   const heartbeatLimits: string[] = [];
   if (!args.flags.has("no-heartbeat-check")) {
-    const gatedPlan = await planHeartbeats();
+    const gatedPlan = [...(await planHeartbeats()), ...gatedHeartbeats];
     const reported: readonly ReportedHeartbeat[] = [...REPORTED_HEARTBEATS, ...reportedHeartbeats];
     const actions = [...gatedPlan.map((h) => h.action), ...reported.map((h) => h.action)];
     const heartbeatObservations: HeartbeatObservation[] = [];
@@ -272,7 +283,9 @@ try {
     heartbeats = heartbeatFindings({ gated: gatedPlan, reported, observations: heartbeatObservations, now: new Date() });
     heartbeatLimits.push("the heartbeat check reads ONE org — crons sweep OE_TIDY_ORGS, so on a multi-org deployment run one census per swept org");
   } else {
-    heartbeatLimits.push("the cron-heartbeat check DID NOT RUN (--no-heartbeat-check) — nothing here proves directory-sync, tidy or dream-mode3 are still firing");
+    heartbeatLimits.push(
+      "the cron-heartbeat check DID NOT RUN (--no-heartbeat-check) — nothing here proves directory-sync, tidy, dream-mode3 or (OPE-785, when Discord is mounted) the relay heartbeat are still firing",
+    );
   }
 
   const wantRuntimeSignal = !args.flags.has("no-runtime-signal-check");
