@@ -144,7 +144,7 @@ export async function enrichUserGuest(
   try {
     const d = await callLinearGraphQL<{ user?: { guest?: boolean } }>({
       api: opts?.api,
-      credentials: opts?.credentials ?? (opts?.organizationId ? linearCredentialsForOrg(opts.organizationId) : undefined),
+      credentials: opts?.credentials ?? (linearAppForOrg(opts?.organizationId) ? linearCredentialsForOrg(opts?.organizationId) : undefined),
       query: "query OeUserGuest($id: String!) { user(id: $id) { guest } }",
       queryName: "OeUserGuest",
       variables: { id: userId },

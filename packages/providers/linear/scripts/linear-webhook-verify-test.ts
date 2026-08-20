@@ -94,4 +94,38 @@ const TWO_APPS: NodeJS.ProcessEnv = {
   ok(verify(reaction, "primary-secret", TWO_APPS) === false, "event kinds: …and is still refused under the wrong workspace's secret");
 }
 
+{
+  process.env.LINEAR_APP_SOAK_ORG_ID = SOAK_ORG;
+  process.env.LINEAR_APP_SOAK_CLIENT_ID = "soak-client";
+  process.env.LINEAR_APP_SOAK_CLIENT_SECRET = "soak-client-secret";
+  process.env.LINEAR_APP_SOAK_WEBHOOK_SECRET = "soak-secret";
+  delete process.env.LINEAR_WEBHOOK_SECRET;
+
+  const channel = (await import("../agent/channels/linear.js")).default;
+  const route = channel.routes.find((r) => r.transport !== "websocket" && r.method === "POST" && r.path === "/eve/v1/linear");
+  ok(route !== undefined, "reachability: the provider exposes the POST /eve/v1/linear route");
+
+  const raw = JSON.stringify({
+    action: "create",
+    type: "Reaction",
+    organizationId: SOAK_ORG,
+    webhookTimestamp: Date.now(),
+    data: { emoji: "eyes" },
+  });
+  const call = async (signature: string): Promise<number> => {
+    const req = new Request("https://example.invalid/eve/v1/linear", { method: "POST", headers: { "linear-signature": signature, "content-type": "application/json" }, body: raw });
+    const res = await (route as { handler: (r: Request, a: unknown) => Promise<Response> }).handler(req, {
+      from: () => ({ send: async () => undefined }),
+      waitUntil: (p: Promise<unknown>) => void Promise.resolve(p).catch(() => undefined),
+      to: undefined,
+    });
+    return res.status;
+  };
+
+  const accepted = await call(signLinearWebhookBody(raw, "soak-secret"));
+  ok(accepted < 400, `reachability: a SOAK-signed delivery is ACCEPTED (status ${accepted}) with LINEAR_WEBHOOK_SECRET unset — only our org-aware verifier can do that`);
+  const refused = await call(signLinearWebhookBody(raw, "some-other-secret"));
+  ok(refused === 401, `reachability: the SAME delivery signed with a wrong secret is refused 401 (got ${refused}) — the route is not simply accepting everything`);
+}
+
 console.log(`\n✓ linear-webhook-verify: ${passed} assertions passed`);
