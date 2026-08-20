@@ -13,7 +13,8 @@ import {
 } from "eve/channels/linear";
 import type { HttpRouteDefinition, RouteHandlerArgs } from "eve/channels";
 import { buildLinearAuth, linearAuthorFacts, teamFactsFromTeam, userGuestFromUser } from "./linear-identity.js";
-import { linearAppActorCredentials } from "./linear-credentials.js";
+import { linearAppActorCredentials, linearAppForOrg, linearCredentialsForOrg } from "./linear-credentials.js";
+import { linearWebhookVerifier } from "./linear-webhook-verify.js";
 import { LINEAR_EVENT_SOURCE, LINEAR_DELIVERY_ID_HEADER } from "./linear-event-normalizer.js";
 import {
   classifyLinearAmbientComment,
@@ -92,13 +93,13 @@ function teamIdFromRaw(raw: unknown): string | undefined {
 
 export async function enrichTeamPrivacy(
   teamId: string | undefined,
-  opts?: { readonly api?: LinearApiOptions; readonly credentials?: LinearChannelCredentials },
+  opts?: { readonly api?: LinearApiOptions; readonly credentials?: LinearChannelCredentials; readonly organizationId?: string },
 ): Promise<boolean | undefined> {
   if (!teamId) return undefined;
   try {
     const data = await callLinearGraphQL<{ team?: { private?: boolean } }>({
       api: opts?.api,
-      credentials: opts?.credentials ?? linearAppActorCredentials,
+      credentials: opts?.credentials ?? linearCredentialsForOrg(opts?.organizationId),
       query: "query TeamPrivacy($id: String!) { team(id: $id) { private } }",
       queryName: "TeamPrivacy",
       variables: { id: teamId },
@@ -111,13 +112,13 @@ export async function enrichTeamPrivacy(
 
 export async function enrichIssueTeam(
   issueId: string | undefined,
-  opts?: { readonly api?: LinearApiOptions; readonly credentials?: LinearChannelCredentials },
+  opts?: { readonly api?: LinearApiOptions; readonly credentials?: LinearChannelCredentials; readonly organizationId?: string },
 ): Promise<{ readonly teamId: string; readonly isPrivate: boolean | undefined } | undefined> {
   if (!issueId) return undefined;
   try {
     const d = await callLinearGraphQL<{ issue?: { team?: { id?: string; private?: boolean } } }>({
       api: opts?.api,
-      credentials: opts?.credentials ?? linearAppActorCredentials,
+      credentials: opts?.credentials ?? linearCredentialsForOrg(opts?.organizationId),
       query: "query OeIssueTeam($id: String!) { issue(id: $id) { team { id private } } }",
       queryName: "OeIssueTeam",
       variables: { id: issueId },
@@ -135,7 +136,7 @@ const linearGuestCache = new Map<string, { guest: boolean; at: number }>();
 
 export async function enrichUserGuest(
   userId: string | undefined,
-  opts?: { readonly api?: LinearApiOptions; readonly credentials?: LinearChannelCredentials },
+  opts?: { readonly api?: LinearApiOptions; readonly credentials?: LinearChannelCredentials; readonly organizationId?: string },
 ): Promise<boolean | undefined> {
   if (!userId) return undefined;
   const hit = linearGuestCache.get(userId);
@@ -143,7 +144,7 @@ export async function enrichUserGuest(
   try {
     const d = await callLinearGraphQL<{ user?: { guest?: boolean } }>({
       api: opts?.api,
-      credentials: opts?.credentials,
+      credentials: opts?.credentials ?? (linearAppForOrg(opts?.organizationId) ? linearCredentialsForOrg(opts?.organizationId) : undefined),
       query: "query OeUserGuest($id: String!) { user(id: $id) { guest } }",
       queryName: "OeUserGuest",
       variables: { id: userId },
@@ -160,30 +161,33 @@ export function _resetLinearGuestCache(): void {
   linearGuestCache.clear();
 }
 
-let viewerCache: Promise<{ id?: string; name?: string }> | undefined;
-function resolveViewer(): Promise<{ id?: string; name?: string }> {
-  if (!viewerCache) {
-    const overrideId = process.env.LINEAR_APP_USER_ID;
-    const overrideName = process.env.LINEAR_APP_NAME;
-    viewerCache =
-      overrideId && overrideName
-        ? Promise.resolve({ id: overrideId, name: overrideName })
-        : callLinearGraphQL<{ viewer?: { id?: string; name?: string; displayName?: string } }>({
-            credentials: linearAppActorCredentials,
-            query: "query OeViewer { viewer { id name displayName } }",
-            queryName: "OeViewer",
-          })
-            .then((d) => ({ id: str(d.viewer?.id), name: str(d.viewer?.displayName) ?? str(d.viewer?.name) }))
-            .catch((err) => {
-              slog(`could not resolve app viewer (query OeViewer failed): ${String(err)}`);
-              return {};
-            });
-  }
-  return viewerCache;
+const viewerCache = new Map<string, Promise<{ id?: string; name?: string }>>();
+function resolveViewer(organizationId?: string): Promise<{ id?: string; name?: string }> {
+  const key = organizationId ?? "";
+  const cached = viewerCache.get(key);
+  if (cached) return cached;
+  const registered = linearAppForOrg(organizationId) !== undefined;
+  const overrideId = registered ? undefined : process.env.LINEAR_APP_USER_ID;
+  const overrideName = registered ? undefined : process.env.LINEAR_APP_NAME;
+  const resolved =
+    overrideId && overrideName
+      ? Promise.resolve({ id: overrideId, name: overrideName })
+      : callLinearGraphQL<{ viewer?: { id?: string; name?: string; displayName?: string } }>({
+          credentials: linearCredentialsForOrg(organizationId),
+          query: "query OeViewer { viewer { id name displayName } }",
+          queryName: "OeViewer",
+        })
+          .then((d) => ({ id: str(d.viewer?.id), name: str(d.viewer?.displayName) ?? str(d.viewer?.name) }))
+          .catch((err) => {
+            slog(`could not resolve app viewer (query OeViewer failed): ${String(err)}`);
+            return {};
+          });
+  viewerCache.set(key, resolved);
+  return resolved;
 }
 
 export function _resetLinearViewerCache(): void {
-  viewerCache = undefined;
+  viewerCache.clear();
 }
 
 interface EnrichedLinearComment {
@@ -202,7 +206,7 @@ interface EnrichedLinearComment {
   readonly teamPrivate?: boolean;
 }
 
-async function enrichComment(commentId: string): Promise<EnrichedLinearComment | undefined> {
+async function enrichComment(commentId: string, organizationId?: string): Promise<EnrichedLinearComment | undefined> {
   try {
     const d = await callLinearGraphQL<{
       comment?: {
@@ -214,7 +218,7 @@ async function enrichComment(commentId: string): Promise<EnrichedLinearComment |
         issue?: { id?: string; identifier?: string; title?: string; team?: { id?: string; private?: boolean } };
       };
     }>({
-      credentials: linearAppActorCredentials,
+      credentials: linearCredentialsForOrg(organizationId),
       query:
         "query OeAmbientComment($id: String!) { comment(id: $id) { id body createdAt " +
         "user { id name displayName guest } parent { id user { id } } " +
@@ -337,9 +341,10 @@ function linearSilentCloseStatus(verdict: Exclude<LinearExternalVerdict, "procee
 async function silentlyCloseLinearAgentSession(
   agentSessionId: string,
   verdict: Exclude<LinearExternalVerdict, "proceed">,
+  organizationId?: string,
 ): Promise<void> {
   await createLinearAgentActivity({
-    credentials: linearAppActorCredentials,
+    credentials: linearCredentialsForOrg(organizationId),
     activity: { agentSessionId, content: { type: "thought", body: linearSilentCloseStatus(verdict) }, ephemeral: true, signal: "stop" },
   }).catch((err) => slog(`external-policy session close failed (session ${agentSessionId}): ${String(err)}`));
 }
@@ -420,7 +425,7 @@ async function ambientDelivery(body: string, headers: Headers, send: LinearSend,
   const signal = extractLinearCommentSignal(event);
   if (!signal) return;
   if (!signal.organizationId) return;
-  const c = await enrichComment(signal.commentId);
+  const c = await enrichComment(signal.commentId, signal.organizationId);
   if (!c || !c.teamId || !c.issueId) return;
   const surfaceKey = `linear/${signal.organizationId}/${c.teamId}`;
   const authorFacts = linearAuthorFacts(c.authorGuest);
@@ -429,7 +434,7 @@ async function ambientDelivery(body: string, headers: Headers, send: LinearSend,
     await auditAmbientSkip({ platform: "linear", workspace: signal.organizationId, surfaceKey, log: slog });
     return;
   }
-  const viewer = await resolveViewer();
+  const viewer = await resolveViewer(signal.organizationId);
   const cls = classifyLinearAmbientComment(
     { body: c.body, authorId: c.authorId, parentAuthorId: c.parentAuthorId },
     viewer,
@@ -533,7 +538,7 @@ export async function computeMentionRouting(event: LinearAgentSessionEvent, team
   let enrichedPrivate: boolean | undefined;
   let enrichedTeam = false;
   if (!resolvedTeamId) {
-    const t = await enrichIssueTeam(agentSessionIssueId(event));
+    const t = await enrichIssueTeam(agentSessionIssueId(event), { organizationId: sig.organizationId });
     resolvedTeamId = t?.teamId;
     enrichedPrivate = t?.isPrivate;
     enrichedTeam = t !== undefined;
@@ -545,7 +550,7 @@ export async function computeMentionRouting(event: LinearAgentSessionEvent, team
   const isPrivate = enrichedTeam
     ? enrichedPrivate
     : singleWindow
-      ? await enrichTeamPrivacy(resolvedTeamId)
+      ? await enrichTeamPrivacy(resolvedTeamId, { organizationId: routingSig.organizationId })
       : undefined;
   if (singleWindow && sk) slog(`agent-session routing ${sk}: singleWindow, vouched=${vouched}, teamPrivate=${isPrivate === true} (signal) → ${vouched ? "may divert" : "native"}`);
   return {
@@ -588,16 +593,16 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
   const surfaceKey = roomTeamId ? `linear/${organizationId}/${roomTeamId}` : undefined;
   const roomVerdict = await linearExternalSuppressed(surfaceKey, organizationId, undefined);
   if (roomVerdict) {
-    await silentlyCloseLinearAgentSession(agentSessionId, roomVerdict);
+    await silentlyCloseLinearAgentSession(agentSessionId, roomVerdict, organizationId);
     return;
   }
   const triggerCommentId = sig.action === "prompted" ? sig.promptSourceCommentId : sig.sourceCommentId;
   try {
     if (!to) throw new Error("no cross-channel dispatch on this route (cannot reach the unified window)");
     if (!triggerCommentId) throw new Error("suppress-and-divert with no trigger comment id (unreachable — the router requires one)");
-    const c = await enrichComment(triggerCommentId);
+    const c = await enrichComment(triggerCommentId, organizationId);
     if (!c || !c.teamId || !c.issueId) throw new Error("mention-comment enrichment failed (no issue/team anchor)");
-    const viewer = await resolveViewer();
+    const viewer = await resolveViewer(organizationId);
     if (isLinearDirectSelfAuthored(c.authorId, viewer)) {
       slog(`@mention on linear/${organizationId}/${c.teamId} (${c.issueIdentifier ?? c.issueId}) dropped: self-authored comment (our own reply) — session ${agentSessionId}`);
       return;
@@ -610,7 +615,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
       authorFacts,
     );
     if (authorVerdict) {
-      await silentlyCloseLinearAgentSession(agentSessionId, authorVerdict);
+      await silentlyCloseLinearAgentSession(agentSessionId, authorVerdict, organizationId);
       return;
     }
     const grain = linearGrainFor(`linear/${organizationId}/${c.teamId}`);
@@ -671,7 +676,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
       action: "linear.dispatched",
       detail: { addressing: "direct", issueId: c.issueId, agentSessionId },
     });
-    await createLinearAgentActivity({ credentials: linearAppActorCredentials, activity: { agentSessionId, content: { type: "thought", body: LINEAR_MENTION_HANDOFF_TEXT } } }).catch((err) =>
+    await createLinearAgentActivity({ credentials: linearCredentialsForOrg(organizationId), activity: { agentSessionId, content: { type: "thought", body: LINEAR_MENTION_HANDOFF_TEXT } } }).catch((err) =>
       slog(`mention hand-off activity failed (dispatch already succeeded): ${String(err)}`),
     );
     slog(`@mention on linear/${organizationId}/${c.teamId} (${c.issueIdentifier ?? c.issueId}) → addressed direct-mention wake diverted to the unified window`);
@@ -685,7 +690,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
       action: "linear.mention_divert_failed",
       detail: { agentSessionId, error: String(err).slice(0, 300) },
     }).catch(() => undefined);
-    await createLinearAgentActivity({ credentials: linearAppActorCredentials, activity: { agentSessionId, content: { type: "error", body: LINEAR_MENTION_DIVERT_FAILED_TEXT } } }).catch(() => undefined);
+    await createLinearAgentActivity({ credentials: linearCredentialsForOrg(organizationId), activity: { agentSessionId, content: { type: "error", body: LINEAR_MENTION_DIVERT_FAILED_TEXT } } }).catch(() => undefined);
   }
 }
 
@@ -711,15 +716,15 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
       const surfaceKey = `linear/${nativeOrganizationId}/${teamId}`;
       const roomVerdict = await linearExternalSuppressed(surfaceKey, nativeOrganizationId, undefined);
       if (roomVerdict) {
-        await silentlyCloseLinearAgentSession(agentSessionId, roomVerdict);
+        await silentlyCloseLinearAgentSession(agentSessionId, roomVerdict, event.organizationId);
         return null;
       }
     }
 
-    const isPrivate = verdict.isPrivate ?? (rawTeamId === undefined ? undefined : await enrichTeamPrivacy(rawTeamId));
+    const isPrivate = verdict.isPrivate ?? (rawTeamId === undefined ? undefined : await enrichTeamPrivacy(rawTeamId, { organizationId: event.organizationId }));
 
     const creatorId = s.creator?.id ?? s.creatorId ?? event.appUserId ?? undefined;
-    const guest = await enrichUserGuest(creatorId);
+    const guest = await enrichUserGuest(creatorId, { organizationId: event.organizationId });
     const authorFacts = linearAuthorFacts(guest);
     const nativeOrg = typeof nativeOrganizationId === "string" && nativeOrganizationId ? nativeOrganizationId : undefined;
     const nativeSurfaceKey = nativeOrg !== undefined && teamId ? `linear/${nativeOrg}/${teamId}` : undefined;
@@ -727,7 +732,7 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
     {
       const authorVerdict = await linearExternalSuppressed(nativeSurfaceKey, nativeOrg, creatorId, authorFacts);
       if (authorVerdict) {
-        await silentlyCloseLinearAgentSession(agentSessionId, authorVerdict);
+        await silentlyCloseLinearAgentSession(agentSessionId, authorVerdict, event.organizationId);
         return null;
       }
     }
@@ -748,7 +753,7 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
     );
 
     const refuse = async (text: string): Promise<void> => {
-      await createLinearAgentActivity({ credentials: linearAppActorCredentials, activity: { agentSessionId, content: { type: "error", body: text } } });
+      await createLinearAgentActivity({ credentials: linearCredentialsForOrg(event.organizationId), activity: { agentSessionId, content: { type: "error", body: text } } });
     };
     if ((await ingressSpendGate({
       bindable: { channel: { kind: "linear" as const }, session: { auth: { current: auth as unknown as { attributes?: Readonly<Record<string, string>> } } } },
@@ -763,7 +768,7 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
 };
 
 const native: LinearChannel = linearChannel({
-  credentials: linearAppActorCredentials,
+  credentials: { ...linearAppActorCredentials, webhookVerifier: linearWebhookVerifier },
   turnPolicy: "queue",
   onAgentSession: linearOnAgentSession,
   events: {
