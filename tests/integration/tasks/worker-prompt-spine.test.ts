@@ -77,4 +77,18 @@ test("the delegated worker reads the worker persona, and the seat keeps its own"
 
   for (const block of SEAT_ONLY) expect(seatPrompt).toContain(block);
   expect(seatPrompt).not.toContain("## Your job");
+
+  const childTools = new Set(childRequests[0]!.tools);
+  const seatTools = new Set(parentRequests[0]!.tools);
+  expect(childTools.size).toBeGreaterThan(20);
+  expect(seatTools.size).toBeGreaterThan(5);
+  expect([...childTools]).not.toContain("return_result");
+  expect([...childTools]).not.toContain("stand_down");
+  expect([...childTools]).not.toContain("no_reply");
+
+  for (const kept of ["reply", "update_status", "bash", "post_file"]) expect([...childTools]).toContain(kept);
+  for (const kept of ["stand_down", "no_reply"]) expect([...seatTools]).toContain(kept);
+  expect([...seatTools]).not.toContain("return_result");
+  expect([...seatTools]).toContain("agent");
+  expect([...childTools]).not.toContain("agent");
 });
