@@ -41,6 +41,10 @@ export function buildBlockCommentBody(blockId: string, text: string): Record<str
   return { parent: { block_id: blockId }, rich_text: [{ text: { content: text } }] };
 }
 
+export function buildDiscussionReplyBody(discussionId: string, text: string): Record<string, unknown> {
+  return { parent: { discussion_id: discussionId }, rich_text: [{ text: { content: text } }] };
+}
+
 export class NotionDriver {
   constructor(private readonly cfg: NotionAmbientConfig) {}
 
@@ -180,6 +184,24 @@ export class NotionDriver {
       commentId: typeof json.id === "string" ? json.id : "",
       discussionId: typeof json.discussion_id === "string" ? json.discussion_id : "",
     };
+  }
+
+  async replyToDiscussion(discussionId: string, text: string): Promise<{ commentId: string }> {
+    const res = await fetch(`${NOTION_API}/comments`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${this.cfg.driverKey}`,
+        "notion-version": NOTION_COMMENT_VERSION,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(buildDiscussionReplyBody(discussionId, text)),
+    });
+    if (!res.ok) {
+      const detail = (await res.text().catch(() => "")).slice(0, 200);
+      throw new Error(`notion POST /comments (discussion ${discussionId}) → ${res.status}${detail ? ` (${detail})` : ""}`);
+    }
+    const json = (await res.json()) as Record<string, unknown>;
+    return { commentId: typeof json.id === "string" ? json.id : "" };
   }
 
   async awaitBotReplyIn(discussionId: string, sinceTime: string, opts: { timeoutMs: number; skip?: (c: NotionComment) => boolean }): Promise<NotionComment> {

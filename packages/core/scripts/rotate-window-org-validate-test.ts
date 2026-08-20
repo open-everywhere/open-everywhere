@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { initOperationalSchema, makeOperationalPostgresStore, type PgClient } from "../agent/operational/postgres.js";
 import { saltSupervisorGeneration, formatWindowToken, parseWindowToken } from "../agent/channels/window-key.js";
 import { unifiedDomainSessionKey } from "../agent/channels/unified-supervisor.js";
+import { defineDomain } from "../agent/memory/domain.js";
 import {
   assertTokenRoundTrips,
   checkOrgAllowed,
   checkWindowTargetResumable,
+  checkWindowTargetAgainstConfig,
   orgHasAnySeat,
   WindowTargetRefused,
   parseRotateArgs,
@@ -250,6 +252,95 @@ await store.rotateChannelSession(KNOWN_ORG, "oe-domain::slack/T1/C1", mintToken(
   }
 }
 
+{
+  const CFG_ORG = "config-guard-org";
+  const REAL_DOMAIN = "e2e-config-guard-real";
+  const REAL_SURFACE = "slack/TCFGGRD1/CCFGGRD01";
+  const CORRECT_SURFACE = "slack/TCFGGRD1/CCFGGRD03";
+  const OTHER_DOMAIN = "e2e-config-guard-other";
+  const OTHER_SURFACE = "slack/TCFGGRD1/CCFGGRD02";
+  const FAKE_DOMAIN = "slack";
+  const domains = [
+    defineDomain({ name: REAL_DOMAIN, channels: [REAL_SURFACE, CORRECT_SURFACE], ambientSupervisor: true, mode: "solo" }),
+    defineDomain({ name: OTHER_DOMAIN, channels: [OTHER_SURFACE], ambientSupervisor: true, mode: "solo" }),
+  ];
+
+  const threw = async (fn: () => Promise<unknown>): Promise<{ message: string; refusal: boolean } | null> => {
+    try {
+      await fn();
+      return null;
+    } catch (e) {
+      return { message: e instanceof Error ? e.message : String(e), refusal: e instanceof WindowTargetRefused };
+    }
+  };
+
+  {
+    const fakeKey = unifiedDomainSessionKey(REAL_SURFACE);
+    const firstFakeToken = saltSupervisorGeneration(formatWindowToken({ domain: FAKE_DOMAIN, windowId: REAL_SURFACE, generation: 1 }));
+    await store.rotateChannelSession(CFG_ORG, fakeKey, firstFakeToken, AT);
+    const rowAfterFirstFakeMint = await store.getChannelSession(CFG_ORG, fakeKey);
+
+    const rowOnlyVerdict = checkWindowTargetResumable(FAKE_DOMAIN, REAL_SURFACE, rowAfterFirstFakeMint);
+    eq(rowOnlyVerdict.ok, true, "🔴 THE RESIDUAL: the row-only guard passes a SECOND self-consistent mint under a domain that was never real — the witness is the last mint, not the truth");
+
+    const r = await rotateUnifiedWindow(store, CFG_ORG, FAKE_DOMAIN, REAL_SURFACE);
+    ok(r.newRow.token !== firstFakeToken, "…and, undefended, rotateUnifiedWindow actually WRITES the second self-consistently-wrong mint");
+  }
+
+  {
+    const verdict = checkWindowTargetAgainstConfig(FAKE_DOMAIN, REAL_SURFACE, domains);
+    eq(verdict.ok, false, "🔴 THE FIX: checkWindowTargetAgainstConfig refuses a domain name the roster never declared (ok is exactly false)");
+    if (!verdict.ok) {
+      ok(verdict.error.includes(FAKE_DOMAIN), "…the refusal names the offending domain");
+      ok(verdict.error.includes("agent/memory/domains.ts"), "…and points at the config file that is the source of truth");
+      ok(verdict.error.includes("--force"), "…and names the override");
+    }
+
+    const msg = await threw(() => rotateUnifiedWindow(store, CFG_ORG, FAKE_DOMAIN, REAL_SURFACE, { domains }));
+    ok(msg !== null && msg.message.includes("refusing to rotate"), "…rotateUnifiedWindow (given `domains`) throws the config refusal rather than writing");
+    eq(msg?.refusal, true, "…as a WindowTargetRefused, so the CLI prints it with no stack trace");
+  }
+
+  {
+    const liveToken = saltSupervisorGeneration(formatWindowToken({ domain: REAL_DOMAIN, windowId: CORRECT_SURFACE, generation: 1 }));
+    await store.rotateChannelSession(CFG_ORG, unifiedDomainSessionKey(CORRECT_SURFACE), liveToken, AT);
+
+    const r = await rotateUnifiedWindow(store, CFG_ORG, REAL_DOMAIN, CORRECT_SURFACE, { domains });
+    const back = parseWindowToken(r.newRow.token);
+    eq(back?.domain, REAL_DOMAIN, "the correct invocation still mints — domain round-trips");
+    eq(back?.windowId, CORRECT_SURFACE, "…and windowId round-trips");
+    ok(r.newRow.token !== liveToken, "…and it is a genuinely FRESH mint, not the seeded row read back unchanged");
+  }
+
+  {
+    const verdict = checkWindowTargetAgainstConfig(REAL_DOMAIN, OTHER_SURFACE, domains);
+    eq(verdict.ok, false, "a real domain requesting ANOTHER real domain's channel is still refused");
+    if (!verdict.ok) {
+      ok(verdict.error.includes(`rotate-window.ts ${OTHER_DOMAIN} --window ${OTHER_SURFACE}`), "🔴 the refusal prints the CORRECT invocation config actually assigns this channel to");
+    }
+  }
+
+  {
+    const verdict = checkWindowTargetAgainstConfig(REAL_DOMAIN, "slack/TCFGGRD1/CUNCLAIMED", domains);
+    eq(verdict.ok, false, "an unclaimed surfaceKey is refused");
+    if (!verdict.ok) ok(verdict.error.includes("no domain"), "…and says so, rather than naming a wrong owner");
+  }
+
+  {
+    const dmDomain = "oe-dm/slack/TCFGGRD1/DCFGDM01";
+    const verdict = checkWindowTargetAgainstConfig(dmDomain, undefined, domains);
+    eq(verdict.ok, true, "a DM pseudo-domain is skipped by the config guard, not refused for being absent from the roster");
+  }
+
+  {
+    const before = await store.getChannelSession(CFG_ORG, unifiedDomainSessionKey(REAL_SURFACE));
+    const r = await rotateUnifiedWindow(store, CFG_ORG, FAKE_DOMAIN, REAL_SURFACE, { force: true, domains });
+    ok(r.newRow.token !== before?.token, "--force mints the config-contradicting pair anyway");
+  }
+}
+
 assert.ok(passed > 0, "at least one assertion ran");
-console.log(`✓ rotate-window-org-validate: ${passed} assertions passed (unknown org refused, known org allowed, --new-org escape hatch works, --dm/--org grammar pinned including the exact positional asymmetry, OPE-854 resumability guard refuses an unresumable target and writes nothing)`);
+console.log(
+  `✓ rotate-window-org-validate: ${passed} assertions passed (unknown org refused, known org allowed, --new-org escape hatch works, --dm/--org grammar pinned including the exact positional asymmetry, OPE-854 resumability guard refuses an unresumable target and writes nothing, OPE-859 config guard closes the row-only guard's residual and writes nothing either)`,
+);
 await closeAllTestPg();

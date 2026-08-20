@@ -1,6 +1,7 @@
 import { wireNeonOperationalStore, rotateUnifiedWindow, parseRotateArgs, checkOrgAllowed, WindowTargetRefused } from "./rotate-window-lib.js";
 import { dmAnchorDomain } from "../../agent/channels/window-key.js";
 import { guardStoreIdentityBeforeWrite } from "../store-identity-guard.js";
+import { loadDomains } from "../../../../agent/memory/domains.js";
 
 async function main() {
   const parsed = parseRotateArgs(process.argv.slice(2));
@@ -9,6 +10,7 @@ async function main() {
     process.exit(1);
   }
   const { target } = parsed;
+  const domains = loadDomains();
 
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) {
@@ -26,7 +28,7 @@ async function main() {
   }
 
   if (target.kind === "dm") {
-    const r = await rotateUnifiedWindow(store, target.org, dmAnchorDomain(target.dmSurfaceKey), undefined, { force: target.force });
+    const r = await rotateUnifiedWindow(store, target.org, dmAnchorDomain(target.dmSurfaceKey), undefined, { force: target.force, domains });
     console.log("=== rotate-window (DM seat) ===");
     console.log(`org:            ${target.org}`);
     console.log(`dm surface:     ${target.dmSurfaceKey}`);
@@ -38,7 +40,7 @@ async function main() {
     return;
   }
 
-  const r = await rotateUnifiedWindow(store, target.org, target.domain, target.windowId, { force: target.force });
+  const r = await rotateUnifiedWindow(store, target.org, target.domain, target.windowId, { force: target.force, domains });
 
   console.log("=== rotate-window ===");
   console.log(`org:            ${target.org}`);

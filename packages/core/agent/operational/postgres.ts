@@ -1,6 +1,6 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
@@ -2073,6 +2073,25 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           bodyBytes: Number(r.body_bytes),
           bodyGzipB64: r.body_gzip_b64,
           truncated: r.truncated === true,
+        }),
+      );
+    },
+
+    async modelCallCaptureSessions(org) {
+      const { rows } = await client.query(
+        `SELECT session_id, MIN(ts) AS first_ts, MAX(ts) AS last_ts, COUNT(*) AS row_count, SUM(body_bytes) AS total_bytes
+         FROM model_call_capture WHERE org_id = $1
+         GROUP BY session_id
+         ORDER BY MAX(ts) DESC`,
+        [org],
+      );
+      return (rows as { session_id: string; first_ts: string; last_ts: string; row_count: number | string; total_bytes: number | string | null }[]).map(
+        (r): ModelCallCaptureSessionRow => ({
+          sessionId: r.session_id,
+          firstTs: r.first_ts,
+          lastTs: r.last_ts,
+          rowCount: Number(r.row_count),
+          totalBytes: Number(r.total_bytes ?? 0),
         }),
       );
     },

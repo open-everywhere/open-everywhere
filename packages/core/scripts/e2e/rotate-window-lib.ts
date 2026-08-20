@@ -1,9 +1,11 @@
 import { unifiedDomainSessionKey } from "../../agent/channels/unified-supervisor.js";
 import { buildTail } from "../../agent/channels/session-tail.js";
-import { formatWindowToken, parseWindowToken, saltSupervisorGeneration } from "../../agent/channels/window-key.js";
+import { formatWindowToken, parseWindowToken, saltSupervisorGeneration, isDmAnchorDomain } from "../../agent/channels/window-key.js";
+import { domainForChannel } from "../../agent/memory/domain.js";
 import { registerOperationalPostgres, getOperationalStore } from "../../agent/operational/provider.js";
 import type { PgClient } from "../../agent/operational/postgres.js";
 import type { OperationalStore, ChannelSessionRow } from "../../agent/operational/store.js";
+import type { Domain } from "../../agent/memory/domain.js";
 
 export async function wireNeonOperationalStore(dbUrl: string): Promise<OperationalStore> {
   const pkg = "@neondatabase/serverless";
@@ -32,12 +34,16 @@ export async function rotateUnifiedWindow(
   org: string,
   domain: string,
   windowId?: string,
-  opts: { readonly force?: boolean } = {},
+  opts: { readonly force?: boolean; readonly domains?: readonly Domain[] } = {},
 ): Promise<RotateResult> {
   const window = windowId ?? domain;
   const registryKey = unifiedDomainSessionKey(window);
   const cur = await store.getChannelSession(org, registryKey);
   if (opts.force !== true) {
+    if (opts.domains !== undefined) {
+      const configCheck = checkWindowTargetAgainstConfig(domain, windowId, opts.domains);
+      if (!configCheck.ok) throw new WindowTargetRefused(configCheck.error);
+    }
     const check = checkWindowTargetResumable(domain, windowId, cur);
     if (!check.ok) throw new WindowTargetRefused(check.error);
   }
@@ -107,6 +113,43 @@ export function checkWindowTargetResumable(domain: string, windowId: string | un
       `  ${rightCall}\n` +
       `Or pass --force to mint ${asked} anyway.`,
   };
+}
+
+export function checkWindowTargetAgainstConfig(domain: string, windowId: string | undefined, domains: readonly Domain[]): WindowTargetCheck {
+  if (isDmAnchorDomain(domain)) return { ok: true };
+
+  const window = windowId ?? domain;
+  const registryKey = unifiedDomainSessionKey(window);
+  const asked = `domain "${domain}" window "${window}"`;
+
+  if (!domains.some((d) => d.name === domain)) {
+    return {
+      ok: false,
+      error:
+        `refusing to rotate ${registryKey}: no domain named "${domain}" exists in agent/memory/domains.ts.\n` +
+        `Every wake resolves its window through the domain roster, so a target naming a domain the config does not ` +
+        `declare addresses a row no live wake will ever read — a permanently dead mint, whatever the store already holds for it.\n` +
+        `Read the deployment's real domain names in agent/memory/domains.ts, then rotate one of those.\n` +
+        `Or pass --force to mint ${asked} anyway.`,
+    };
+  }
+
+  if (windowId !== undefined) {
+    const owner = domainForChannel(windowId, domains);
+    if (owner?.name !== domain) {
+      return {
+        ok: false,
+        error:
+          `refusing to rotate ${registryKey}: config routes "${windowId}" to ${owner ? `domain "${owner.name}"` : "no domain"}, not "${domain}".\n` +
+          (owner
+            ? `Re-run with the domain config actually assigns this channel to:\n  rotate-window.ts ${owner.name} --window ${windowId}\n`
+            : `"${windowId}" is in no domain's channels/containers roster in agent/memory/domains.ts — add it there, or rotate a channel that already is.\n`) +
+          `Or pass --force to mint ${asked} anyway.`,
+      };
+    }
+  }
+
+  return { ok: true };
 }
 
 export function assertTokenRoundTrips(token: string, domain: string, windowId: string, generation: number): void {

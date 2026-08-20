@@ -78,6 +78,8 @@ const rawDomains: Domain[] = [
     channels: [
       "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000102",
       "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000103",
+      "slack/T0EXAMPLE/C0EXCHAN008",
+      "slack/T0EXAMPLE/C0EXCHAN009",
     ],
     memory: "soak-brain",
     ambientSupervisor: true,
