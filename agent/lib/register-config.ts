@@ -4,8 +4,15 @@ import { SETTINGS_OVERRIDES } from "../settings/settings.js";
 import { setRegisteredConnectorCredentials } from "@open-everywhere/core/agent/access/connector-credentials.js";
 import { assertRoutesWithinPolicy } from "@open-everywhere/core/agent/model/policy.js";
 import { assertDomainCredentialsResolvable } from "@open-everywhere/core/agent/access/domain-credentials.js";
-import { assertWindowSourcesVouched, assertGovernanceDomains, assertComplianceDomains, assertReportChannels } from "@open-everywhere/core/agent/memory/domain.js";
-import { isVouchedInternal } from "@open-everywhere/core/agent/identity/trust.js";
+import {
+  assertWindowSourcesVouched,
+  assertGovernanceDomains,
+  assertComplianceDomains,
+  assertReportChannels,
+  warnSilentRoomGrainWithoutPublicSignal,
+} from "@open-everywhere/core/agent/memory/domain.js";
+import { isVouchedInternal, declaredTrustForKeys } from "@open-everywhere/core/agent/identity/trust.js";
+import { resolveExternalPolicy } from "@open-everywhere/core/agent/access/external-policy.js";
 import { loadBundles, loadBindings } from "../access/bundles.js";
 import { loadNetworkAccess } from "../access/network-access.js";
 import { loadConnectorCredentials } from "../access/connector-credentials.js";
@@ -61,3 +68,7 @@ assertReportChannels(loadDomains());
 assertComplianceDomains(loadDomains());
 
 assertDomainCredentialsResolvable(loadDomains(), loadConnectorCredentials());
+
+warnSilentRoomGrainWithoutPublicSignal(loadDomains(), resolveExternalPolicy().roomGrain, (workspaceKey, surfaceKey) =>
+  declaredTrustForKeys(workspaceKey, surfaceKey) === "public",
+);

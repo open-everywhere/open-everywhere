@@ -12,7 +12,6 @@ export interface SessionTailEntry {
   readonly platform?: string;
   readonly container?: string;
   readonly threadRoot?: string;
-  readonly threadPosition?: number;
   readonly text: string;
 }
 
@@ -52,7 +51,6 @@ export function tailEntryToWakeMessage(e: SessionTailEntry): WakeMessageInput {
     trust: e.trust,
     ...(e.container ? { container: e.container } : {}),
     ...(e.threadRoot ? { type: "thread" as const, threadRoot: e.threadRoot } : {}),
-    ...(e.threadPosition === undefined ? {} : { threadPosition: e.threadPosition }),
     body: e.text,
   };
 }

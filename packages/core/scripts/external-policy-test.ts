@@ -22,7 +22,7 @@ import { stampNonMemberChatAuth, OE_CHAT_NONMEMBER_ATTR } from "../agent/access/
 import { defineSurface, registerSurfaces, _resetSurfacesForTest } from "../agent/identity/trust.js";
 import { defineAuthorTrust, registerAuthorTrust, _resetAuthorTrustForTest } from "../agent/identity/author-trust.js";
 import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
-import { externalPolicyOverrideFor } from "../agent/memory/domain.js";
+import { externalPolicyOverrideFor, warnSilentRoomGrainWithoutPublicSignal } from "../agent/memory/domain.js";
 import type { Domain } from "../agent/memory/domain.js";
 import type { NormalizedWake } from "../agent/channels/normalized-wake.js";
 import type { WakeMessageInput } from "../agent/channels/wake-envelope.js";
@@ -437,5 +437,67 @@ ok(
   silentNoticeKey(`${GUILD}/C_A`, "join").startsWith("external-silent:"),
   "the key is namespaced — it can never collide with another caller's claim",
 );
+
+console.log("7. silent-room-grain reachability signal:");
+
+{
+  const WARN_GUILD = "discord/1300000000000000900";
+  const OPEN_CH = `${WARN_GUILD}/C_OPEN`;
+  const DARK_CH = `${WARN_GUILD}/C_DARK`;
+  const ENGAGE_CH = `${WARN_GUILD}/C_ENGAGE`;
+
+  const WARN_DOMAINS: readonly Domain[] = [
+    { name: "open-room", channels: [OPEN_CH], externalPolicy: { roomGrain: "silent" } },
+    { name: "dark-room", channels: [DARK_CH], externalPolicy: { roomGrain: "silent" } },
+    { name: "engaged-room", channels: [ENGAGE_CH] },
+  ];
+
+  const declaredPublic = (workspaceKey: string, surfaceKey: string): boolean =>
+    surfaceKey === OPEN_CH || workspaceKey === "never-matches";
+
+  function collectWarnings(domains: readonly Domain[], orgDefault: "engage" | "silent" = "engage"): string[] {
+    const seen: string[] = [];
+    warnSilentRoomGrainWithoutPublicSignal(domains, orgDefault, declaredPublic, { warn: (m) => seen.push(m) });
+    return seen;
+  }
+
+  const warnings = collectWarnings(WARN_DOMAINS);
+  ok(warnings.length === 1, `exactly one channel warns (got ${warnings.length})`);
+  ok(warnings[0]!.includes(DARK_CH), "🔴 the warning names the UN-armed channel — the one with no `public` declaration");
+  ok(
+    !warnings.some((w) => w.includes(OPEN_CH)),
+    "negative control: the channel WITH a `public` declaration never warns, even though its grain is also `silent`",
+  );
+  ok(
+    !warnings.some((w) => w.includes(ENGAGE_CH)),
+    "negative control: a channel whose resolved grain stays `engage` never warns — there is nothing to arm",
+  );
+
+  const ORG_ONLY_DOMAINS: readonly Domain[] = [{ name: "org", match: "org" }, { name: "dark-room", channels: [DARK_CH] }];
+  const orgWarnings = collectWarnings(ORG_ONLY_DOMAINS, "silent");
+  ok(
+    orgWarnings.length === 1 && orgWarnings[0]!.includes(DARK_CH),
+    "🔴 a channel with NO domain-level override still resolves the ORG DEFAULT's `silent` grain and warns — the OPE-810 shape",
+  );
+  const orgEngageWarnings = collectWarnings(ORG_ONLY_DOMAINS, "engage");
+  ok(orgEngageWarnings.length === 0, "negative control: the same unassigned channel warns NOTHING when the org default is `engage`");
+
+  ok(collectWarnings([]).length === 0, "negative control: no domains ⇒ nothing to walk ⇒ no warnings");
+
+  const NEVER_SILENT: readonly Domain[] = [{ name: "dark-room", channels: [DARK_CH], externalPolicy: { roomGrain: "engage" } }];
+  ok(collectWarnings(NEVER_SILENT, "silent").length === 0, "an EXPLICIT `engage` override wins over a `silent` org default — no warning");
+
+  const originalWarn = console.warn;
+  const sink = { warned: false };
+  console.warn = (..._args: unknown[]) => {
+    sink.warned = true;
+  };
+  try {
+    warnSilentRoomGrainWithoutPublicSignal(WARN_DOMAINS, "engage", declaredPublic);
+  } finally {
+    console.warn = originalWarn;
+  }
+  ok(sink.warned === true, "OMITTED deps.warn falls back to console.warn — the real boot log, not a silently-dropped call");
+}
 
 console.log(`\n✅ external-policy: ${passed} assertions passed`);

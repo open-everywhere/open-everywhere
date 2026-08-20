@@ -8,7 +8,6 @@ export interface NormalizedMessage {
   readonly sender: "self" | "human" | "bot";
   readonly type: "channel" | "thread";
   readonly threadId?: string;
-  readonly threadPosition?: number;
   readonly text: string;
 }
 
@@ -32,7 +31,6 @@ function toWakeMessage(m: NormalizedMessage, trustFor?: BackscrollTrustFor): Wak
     trust: trustFor ? trustFor(m) : m.sender === "human" ? "unauth" : "relay",
     type: m.type,
     ...(m.threadId ? { threadRoot: m.threadId } : {}),
-    ...(m.threadPosition === undefined ? {} : { threadPosition: m.threadPosition }),
     body: m.text,
   };
 }
