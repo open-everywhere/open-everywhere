@@ -71,6 +71,7 @@ import { slackTenantAdmission } from "./slack-tenant-fence.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
 import { admitSlackInputResponse } from "./slack-input-response.js";
 import { turnEffectsFor, botDisplayName, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, dmWakeThreadOverride, replyThreadTsForState, type SupervisorReplyTarget } from "./slack-events.js";
+import { markdownToSlackMrkdwn } from "./slack-mrkdwn.js";
 
 function teamIdFromDomainConfig(channelId: string | undefined): string | undefined {
   if (!channelId) return undefined;
@@ -133,6 +134,12 @@ async function postWakeText(channel: SlackEventContext, text: string): Promise<v
     return;
   }
   await channel.thread.post(text);
+}
+
+export function supervisorPostFormBody(channelId: string, threadTs: string | undefined, text: string): string {
+  const body = new URLSearchParams({ channel: channelId, text: markdownToSlackMrkdwn(text) });
+  if (threadTs) body.set("thread_ts", threadTs);
+  return body.toString();
 }
 
 function isUninvited(state: unknown): boolean {
@@ -590,9 +597,7 @@ const slackMentionChannel = slackChannel({
               org: partition?.org,
               key: outboundKey({ surface: "slack", channel: cid, threadTs: tts, action: "slack.supervisor-reply", payload: text }),
               run: async () => {
-                const body = new URLSearchParams({ channel: cid, text });
-                if (tts) body.set("thread_ts", tts);
-                await slackForm("chat.postMessage", body.toString());
+                await slackForm("chat.postMessage", supervisorPostFormBody(cid, tts, text));
               },
             });
           },
@@ -638,7 +643,7 @@ const slackMentionChannel = slackChannel({
             (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined,
           );
         } else {
-          await channel.thread.post(action.text);
+          await channel.thread.post(markdownToSlackMrkdwn(action.text));
         }
       } else {
         console.log(
