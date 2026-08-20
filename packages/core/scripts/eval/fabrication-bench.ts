@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { chooseProvider, fetchServingProviders, pinProvider } from "../soak/soak-replay-lib.js";
 
 export const BENCH_PROBES: readonly {
   readonly label: string;
@@ -252,6 +253,7 @@ export interface BenchRequest {
   readonly tools?: unknown;
   readonly reasoning_effort?: string;
   readonly max_tokens?: number;
+  readonly providerOptions?: { readonly gateway: { readonly only: readonly string[] } };
 }
 
 export function buildRequest(opts: {
@@ -279,6 +281,14 @@ export function buildRequest(opts: {
 
 const GATEWAY = "https://ai-gateway.vercel.sh/v1/chat/completions";
 
+export function benchGatewayOrigin(): string {
+  return new URL(GATEWAY).origin;
+}
+
+export function pinBenchRequest<T>(body: T, provider: string): T {
+  return pinProvider(body, provider) as T;
+}
+
 async function post(key: string, body: unknown): Promise<{ status: number; json: Record<string, unknown> }> {
   const r = await fetch(GATEWAY, {
     method: "POST",
@@ -296,11 +306,13 @@ export async function benchCheckJudgeFloor(
   judgeModel: string,
   input: { hidden: string; visible: string; trigger: string },
   repeats = 1,
+  provider?: string,
 ): Promise<{ passed: boolean; draws: { label: string; want: string; got: string; passed: boolean }[] }> {
   const draws: { label: string; want: string; got: string; passed: boolean }[] = [];
   for (const c of BENCH_JUDGE_FLOOR) {
     for (let r = 0; r < Math.max(1, repeats); r++) {
-      const res = await post(key, benchJudgeBody(judgeModel, { ...input, text: c.text }));
+      const body = provider === undefined ? benchJudgeBody(judgeModel, { ...input, text: c.text }) : pinBenchRequest(benchJudgeBody(judgeModel, { ...input, text: c.text }), provider);
+      const res = await post(key, body);
       const raw = String(((res.json.choices as { message?: { content?: unknown } }[])?.[0]?.message?.content ?? ""));
       const got = res.status === 200 ? benchParseVerdict(raw) : null;
       draws.push({ label: c.label, want: c.want, got: got ?? "unjudged", passed: got === c.want });
@@ -390,10 +402,25 @@ async function main(): Promise<void> {
   console.log(`fabrication-bench: layer=${layer ?? "custom"} system=${SYSTEM_KIND} render=${RENDER} tools=${TOOLS} model=${MODEL} judge=${NO_JUDGE ? "off" : JUDGE_MODEL} n=${N} concurrency=${CONCURRENCY}`);
   console.log(`system prompt: ${system.length} chars · out: ${outDir}`);
 
+  const gatewayOrigin = benchGatewayOrigin();
+  const onlyFlag = flag("--only");
+  const pinnedProvider = onlyFlag ?? chooseProvider((await fetchServingProviders(gatewayOrigin, key, MODEL)).providers);
+  console.log(`pinned serving provider (model=${MODEL}): ${pinnedProvider}${onlyFlag ? " (--only)" : " (probed via GET /v1/models/<id>/endpoints)"}`);
+
+  let pinnedJudgeProvider: string | undefined;
+  if (!NO_JUDGE) {
+    const judgeOnlyFlag = flag("--judge-only");
+    if (judgeOnlyFlag !== undefined) pinnedJudgeProvider = judgeOnlyFlag;
+    else if (JUDGE_MODEL === MODEL) pinnedJudgeProvider = pinnedProvider;
+    else pinnedJudgeProvider = chooseProvider((await fetchServingProviders(gatewayOrigin, key, JUDGE_MODEL)).providers);
+    const via = judgeOnlyFlag !== undefined ? " (--judge-only)" : JUDGE_MODEL === MODEL ? " (same as model)" : " (probed via GET /v1/models/<id>/endpoints)";
+    console.log(`pinned serving provider (judge=${JUDGE_MODEL}): ${pinnedJudgeProvider}${via}`);
+  }
+
   let floor: { passed: boolean; draws: { label: string; want: string; got: string; passed: boolean }[] } | null = null;
   if (!NO_JUDGE) {
     const p0 = BENCH_PROBES[0];
-    floor = await benchCheckJudgeFloor(key, JUDGE_MODEL, { hidden: p0.hidden, visible: p0.decoy, trigger: p0.trigger }, FLOOR_REPEATS);
+    floor = await benchCheckJudgeFloor(key, JUDGE_MODEL, { hidden: p0.hidden, visible: p0.decoy, trigger: p0.trigger }, FLOOR_REPEATS, pinnedJudgeProvider);
     console.log(`\njudge floor (${JUDGE_MODEL}) — ${BENCH_JUDGE_FLOOR.length} fixed cases with known verdicts, before any probe:`);
     for (const d of floor.draws) console.log(`  ${d.passed ? "  ok  " : " WRONG"}  want=${d.want.padEnd(11)} got=${d.got.padEnd(11)} ${d.label}`);
     if (!floor.passed) {
@@ -423,7 +450,7 @@ async function main(): Promise<void> {
     let message: Record<string, unknown> = {};
 
     for (let step = 0; step < (withFetch ? 3 : 1); step++) {
-      const body = buildRequest({ model: MODEL, system, user, withTools: TOOLS !== "none", withFetch, effort: EFFORT, extraMessages: extra });
+      const body = pinBenchRequest(buildRequest({ model: MODEL, system, user, withTools: TOOLS !== "none", withFetch, effort: EFFORT, extraMessages: extra }), pinnedProvider);
       writeFileSync(join(outDir, `probe-${nn}.step${step}.request.json`), JSON.stringify(body, null, 2));
       const r = await post(key!, body);
       writeFileSync(join(outDir, `probe-${nn}.step${step}.response.json`), JSON.stringify(r.json, null, 2));
@@ -458,7 +485,7 @@ async function main(): Promise<void> {
     if (tell !== null) return { probe: i + 1, label: p.label, route, verdict: "fabricated", tell, text, fetched };
     if (NO_JUDGE) return { probe: i + 1, label: p.label, route, verdict: "unjudged", tell: null, text, fetched };
 
-    const judgeBody = benchJudgeBody(JUDGE_MODEL, { hidden: p.hidden, visible: p.decoy, trigger: p.trigger, text });
+    const judgeBody = pinBenchRequest(benchJudgeBody(JUDGE_MODEL, { hidden: p.hidden, visible: p.decoy, trigger: p.trigger, text }), pinnedJudgeProvider!);
     writeFileSync(join(outDir, `probe-${nn}.judge-request.json`), JSON.stringify(judgeBody, null, 2));
     const jr = await post(key!, judgeBody);
     writeFileSync(join(outDir, `probe-${nn}.judge-response.json`), JSON.stringify(jr.json, null, 2));
@@ -511,7 +538,7 @@ async function main(): Promise<void> {
 
   const summaryAt = join(outDir, "summary.json");
   writeFileSync(summaryAt, JSON.stringify({
-    config: { layer: layer ?? null, system: SYSTEM_KIND, render: RENDER, tools: TOOLS, model: MODEL, judgeModel: NO_JUDGE ? null : JUDGE_MODEL, effort: EFFORT, n: N, concurrency: CONCURRENCY, systemChars: system.length },
+    config: { layer: layer ?? null, system: SYSTEM_KIND, render: RENDER, tools: TOOLS, model: MODEL, judgeModel: NO_JUDGE ? null : JUDGE_MODEL, effort: EFFORT, n: N, concurrency: CONCURRENCY, systemChars: system.length, pinnedProvider, pinnedJudgeProvider: pinnedJudgeProvider ?? null },
     counts, byTell, routes, judged, fetched: fetchedCount, fabricationRate: judged > 0 ? counts.fabricated / judged : null,
     judgeFloor: floor === null ? null : { passed: floor.passed, repeats: FLOOR_REPEATS, draws: floor.draws },
     probes: rows,
