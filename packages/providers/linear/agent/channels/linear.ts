@@ -713,7 +713,6 @@ async function completeNativeLinearSilence(state: LinearChannelState, reason: st
   const teamId = typeof bag.oeTeamId === "string" && bag.oeTeamId.length > 0 ? bag.oeTeamId : undefined;
   const agentSessionId = typeof state.agentSessionId === "string" && state.agentSessionId.length > 0 ? state.agentSessionId : undefined;
   let closed: boolean | undefined;
-  const acked = Boolean(agentSessionId) && !replied;
   if (agentSessionId && !replied) {
     closed = await postLinearSilenceAck(agentSessionId, organizationId).then(
       () => true,
@@ -736,8 +735,7 @@ async function completeNativeLinearSilence(state: LinearChannelState, reason: st
       reason,
       replied,
       route: "native",
-      ...(acked ? { rendering: "ack" as const } : {}),
-      ...(closed === undefined ? {} : { closed }),
+      ...(closed === undefined ? {} : { rendering: "ack" as const, closed }),
       ...(sessionId ? { sessionId } : {}),
     },
   }).catch(() => undefined);
