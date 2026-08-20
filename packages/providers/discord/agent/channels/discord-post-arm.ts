@@ -1,6 +1,7 @@
 import {
   discordEditMessage,
   discordExistingThreadForMessage,
+  discordOpenDmChannel,
   discordPostMessage,
   discordThreadForMessage,
   splitForDiscord,
@@ -15,6 +16,8 @@ import {
   type UnifiedWakeOrigin,
   type UnifiedReplyDeps,
   type EditLocus,
+  type DirectMessageRequest,
+  type DirectMessageDelivery,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 type DiscordTarget = Extract<ReplyTarget, { platform: "discord" }>;
@@ -68,6 +71,12 @@ async function retargetDiscordEditLocus(origin: UnifiedWakeOrigin, locus: EditLo
   return threadId ? { ...locus, channelId: threadId } : locus;
 }
 
+async function deliverDiscordDirectMessage(input: DirectMessageRequest): Promise<DirectMessageDelivery> {
+  const surfaceId = await discordOpenDmChannel(input.principalId);
+  const messageId = await discordPostMessage(surfaceId, input.text);
+  return { surfaceId, messageId };
+}
+
 export const discordPostArm: PostArm = {
   platform: "discord",
   resolveTarget: (bag: TargetResolveBag): ReplyTarget | null => {
@@ -81,4 +90,5 @@ export const discordPostArm: PostArm = {
   redriveContainerId: (origin) => (origin as DiscordOrigin).channelId,
   editMessage: editDiscordMessage,
   retargetEditLocus: retargetDiscordEditLocus,
+  deliverDirectMessage: deliverDiscordDirectMessage,
 };
