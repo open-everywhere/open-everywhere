@@ -52,6 +52,26 @@ function ulog(msg: string): void {
 
 type UnifiedSendAuth = Parameters<ReturnType<RouteHandlerArgs["to"]>["send"]>[1]["auth"];
 
+export function completeWakeAuth(
+  auth:
+    | {
+        readonly attributes?: Readonly<Record<string, unknown>>;
+        readonly authenticator?: string;
+        readonly principalId?: string;
+        readonly principalType?: string;
+      }
+    | null
+    | undefined,
+): UnifiedSendAuth {
+  return {
+    ...auth,
+    attributes: auth?.attributes ?? {},
+    authenticator: auth?.authenticator ?? "",
+    principalId: auth?.principalId ?? "",
+    principalType: auth?.principalType ?? "",
+  } as UnifiedSendAuth;
+}
+
 let rememberedReceive: RouteHandlerArgs["to"] | undefined;
 function rememberUnifiedReceive(to: RouteHandlerArgs["to"]): void {
   rememberedReceive = to;
@@ -332,7 +352,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       }
     }
     return from(t.token).send(input.message, {
-      auth: input.auth,
+      auth: completeWakeAuth(input.auth),
       ...(t.context && t.context.length > 0 ? { context: [...t.context] } : {}),
     });
   },
@@ -645,7 +665,7 @@ export async function divertToUnifiedWindow(
   const deliveredAuth = recoveredTainted
     ? { ...auth, attributes: { ...auth.attributes, ...resultTaintedAttrs(true) } }
     : auth;
-  await receive(channel, target).send(message, { auth: deliveredAuth as UnifiedSendAuth });
+  await receive(channel, target).send(message, { auth: completeWakeAuth(deliveredAuth) });
   if (recovered) {
     const org = deploymentOrg();
     await markRecoveredDelivered(getOperationalStore(), org, recovered.taskIds, new Date().toISOString());

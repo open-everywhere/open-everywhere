@@ -106,7 +106,7 @@ console.log(`parked-child-lifecycle: pinning against installed eve ${eveVersion}
   );
   const parked = read("execution/parked-delivery-wait.js");
   ok(
-    /`reset`\)return\{kind:[A-Za-z_$]+\.value\.kind\}/.test(parked),
+    /`reset`\)return\{kind:[A-Za-z_$]+(?:\.value)?\.kind\}/.test(parked),
     "PIN 8: a PARKED session still surfaces `reset` from its wait — a retired generation does not need a live turn to hear it",
   );
 }

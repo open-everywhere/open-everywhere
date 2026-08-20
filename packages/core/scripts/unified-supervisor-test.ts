@@ -422,4 +422,19 @@ withEnv(true, () => {
   });
 });
 
+{
+  const { completeWakeAuth } = await import("../agent/channels/unified.js");
+  const filled = completeWakeAuth({ attributes: { oe_x: "1" } }) as unknown as Record<string, unknown>;
+  ok(filled.authenticator === "" && filled.principalId === "" && filled.principalType === "", "a host wake with only attributes gains the ABSENT-sentinel triple, never an invented identity");
+  ok(JSON.stringify(filled.attributes) === JSON.stringify({ oe_x: "1" }), "attributes pass through byte-identical");
+
+  const bare = completeWakeAuth(null) as unknown as Record<string, unknown>;
+  ok(JSON.stringify(bare.attributes) === JSON.stringify({}), "a null auth still materialises the REQUIRED attributes record");
+  ok(bare.authenticator === "" && bare.principalId === "", "…and the sentinel triple");
+
+  const member = completeWakeAuth({ attributes: { team_id: "T1" }, principalId: "U123", principalType: "slack-user" }) as unknown as Record<string, unknown>;
+  ok(member.principalId === "U123" && member.principalType === "slack-user", "a provider-supplied member identity is preserved, never overwritten");
+  ok(member.authenticator === "", "only the ABSENT field (authenticator) is filled on a member divert");
+}
+
 console.log(`unified-supervisor-test: ${n} assertions passed`);

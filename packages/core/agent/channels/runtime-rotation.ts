@@ -2,7 +2,7 @@ import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { OperationalStore } from "../operational/store.js";
 
-export const EVE_RUNTIME_VERSION = "0.39.2";
+export const EVE_RUNTIME_VERSION = "0.39.3";
 
 const RUNTIME_ROTATION_CLAIM_PREFIX = "oe-runtime-rotation";
 
