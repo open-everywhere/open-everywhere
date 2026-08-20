@@ -355,8 +355,8 @@ export const FIXTURE_FAMILIES: readonly FixtureFamily[] = [
   },
   {
     id: "soakLinear",
-    label: "Soak lane's dedicated Linear label (on the e2e fixture team, never a real-work team)",
-    required: [v(ENV.linearSoakLabelId)],
+    label: "Soak lane's dedicated Linear slice (the SOAK org's own label, driver key and team — never a shared e2e fixture, never a real-work team)",
+    required: [v(ENV.linearSoakLabelId), v(ENV.linearSoakDriverKey), v(ENV.linearSoakTeamId)],
     scenarios: "the soak scenario's narrative skeleton — phase 3 (ticket triage)",
     probe: "linear-label",
     labelVar: ENV.linearSoakLabelId,

@@ -274,8 +274,8 @@ async function probeNotionPagePair(env: Env, pageVars: readonly [string, string]
 }
 
 async function probeLinearLabel(env: Env, labelVar: string): Promise<ProbeOutcome> {
-  const apiKey = env[ENV.linearApiKey];
-  if (!apiKey) return outcome(false, `no ${ENV.linearApiKey} available to resolve the soak label`);
+  const apiKey = env[ENV.linearSoakDriverKey];
+  if (!apiKey) return outcome(false, `no ${ENV.linearSoakDriverKey} available to resolve the soak label`);
   return safe("linear soak label resolve", async () => {
     const labelId = env[labelVar]!;
     const res = await fetch("https://api.linear.app/graphql", {

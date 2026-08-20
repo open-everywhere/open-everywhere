@@ -195,7 +195,15 @@ function finding(overrides: Partial<FixtureFinding["classified"]> & { probe?: Fi
   const soakLinear = FIXTURE_FAMILIES.find((f) => f.id === "soakLinear")!;
   ok(soakSlack !== undefined && soakNotion !== undefined && soakLinear !== undefined, "the three OPE-845 soak families are declared in FIXTURE_FAMILIES");
 
-  const fullEnv = { E2E_SLACK_SOAK_CHANNEL_DEV: "C1", E2E_SLACK_SOAK_CHANNEL_OPS: "C2", E2E_NOTION_SOAK_PAGE_1: "P1", E2E_NOTION_SOAK_PAGE_2: "P2", E2E_SOAK_LINEAR_LABEL_ID: "L1" };
+  const fullEnv = {
+    E2E_SLACK_SOAK_CHANNEL_DEV: "C1",
+    E2E_SLACK_SOAK_CHANNEL_OPS: "C2",
+    E2E_NOTION_SOAK_PAGE_1: "P1",
+    E2E_NOTION_SOAK_PAGE_2: "P2",
+    E2E_SOAK_LINEAR_LABEL_ID: "L1",
+    E2E_LINEAR_SOAK_DRIVER_KEY: "lin_key",
+    E2E_SOAK_LINEAR_TEAM_ID: "team-soak",
+  };
   const fullClassified = classifyAll(fullEnv, [soakSlack, soakNotion, soakLinear]);
   ok(fullClassified.every((c) => c.classification === "set"), "all three vars present on each soak family → classification set");
 
