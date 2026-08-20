@@ -118,11 +118,9 @@ function post(secs: number, text: string, over: Partial<SessionTailEntry> = {}):
   eq(theirs.id, "1755776340.000100", "a recorded platform message id survives to the render");
   eq(theirs.trust, "peer", "…carrying the tier its ORIGINAL ingestion resolved, not one re-derived at rotation");
 
-  const threaded = tailEntryToWakeMessage(wake(2, "in a thread", { threadRoot: "1755590000.0001", threadPosition: 88 }));
+  const threaded = tailEntryToWakeMessage(wake(2, "in a thread", { threadRoot: "1755590000.0001" }));
   eq(threaded.type, "thread", "a threaded entry renders as a thread message");
   eq(threaded.threadRoot, "1755590000.0001", "…naming its root");
-  eq(threaded.threadPosition, 88, "🔴 …and carrying the GAP HINT: position 88 tells the seat how much of the thread it is not seeing");
-  eq(tailEntryToWakeMessage(wake(2, "no count")).threadPosition, undefined, "…absent where the platform reports no count — never guessed, because an invented 1 would claim a complete thread");
 }
 
 {

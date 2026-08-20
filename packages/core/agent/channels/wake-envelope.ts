@@ -60,7 +60,6 @@ export interface WakeMessageInput {
   readonly type?: "channel" | "thread";
   readonly container?: string;
   readonly threadRoot?: string;
-  readonly threadPosition?: number;
   readonly prevMessageId?: string;
   readonly sessionId?: string;
   readonly attachments?: readonly WakeAttachment[];
@@ -146,7 +145,6 @@ function renderMessage(m: WakeMessageInput, sourcePlatform: string): string {
     attr("type", m.type) +
     attr("container", m.container) +
     attr("thread", m.threadRoot) +
-    attr("thread-position", m.threadPosition === undefined ? undefined : String(m.threadPosition)) +
     attr("prev-id", m.prevMessageId) +
     attr("thread-session-id", m.ownerToken);
 
