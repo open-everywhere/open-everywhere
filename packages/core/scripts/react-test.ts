@@ -21,6 +21,32 @@ const { readAudit } = await import("../agent/audit/audit.js");
 const { markReactedThisTurn, consumeReactedThisTurn } = await import("../agent/channels/react-signal.js");
 const { renderNoiseDoctrine } = await import("../agent/instructions/access.js");
 
+const { registerCapabilityManifest } = await import("../agent/identity/capabilities.js");
+const { registerIdentityMapper } = await import("../agent/identity/binding.js");
+const { registerPostArm } = await import("../agent/channels/post-arms.js");
+
+const FIXTURE_PLATFORM = "fixture-ticket";
+registerCapabilityManifest(FIXTURE_PLATFORM, { midTurnPost: true, reactions: true });
+registerIdentityMapper(FIXTURE_PLATFORM, (c) => {
+  const a = (c.session?.auth?.current?.attributes ?? {}) as Record<string, string>;
+  const issueId = a["issue_id"];
+  return { workspace: "acme", surface: issueId, mode: "channel", visibility: "private", target: issueId ? { issueId } : undefined };
+});
+let fixtureReactCalls: { issueId: string; emoji: string }[] = [];
+let fixtureReactOutcome: "ok" | "unresolvable" | "throws" = "ok";
+registerPostArm({
+  platform: FIXTURE_PLATFORM,
+  resolveReactTarget: (bag) => {
+    if (fixtureReactOutcome === "unresolvable") return null;
+    const issueId = bag.str("issueId");
+    return issueId ? ({ platform: FIXTURE_PLATFORM, issueId } as never) : null;
+  },
+  react: async (target, emoji) => {
+    if (fixtureReactOutcome === "throws") throw new Error("fixture platform refused the reaction");
+    fixtureReactCalls.push({ issueId: (target as { issueId: string }).issueId, emoji });
+  },
+});
+
 const require = createRequire(import.meta.url);
 const eveRoot = dirname(require.resolve("eve/package.json"));
 const abs = (rel: string) => pathToFileURL(join(eveRoot, rel)).href;
@@ -273,6 +299,63 @@ await inSession(async () => {
 });
 } finally {
   restoreFetch();
+}
+
+function fixtureCtx(issueId: string | undefined) {
+  return {
+    channel: { kind: FIXTURE_PLATFORM },
+    session: {
+      auth: {
+        current: { attributes: { ...(issueId ? { issue_id: issueId } : {}) }, principalId: "U1", principalType: `${FIXTURE_PLATFORM}-user` },
+      },
+    },
+  };
+}
+
+{
+  const armEventFixture = (react as unknown as { events: Record<string, Handler> }).events["session.started"];
+  const fixtureArmed = (await armEventFixture({}, fixtureCtx("ISS1"))) as ArmedTool;
+  ok(fixtureArmed !== null, "react: mounts on a native session for a manifest-registered non-Slack platform (OPE-862)");
+
+  fixtureReactCalls = [];
+  fixtureReactOutcome = "ok";
+  await inSession(async () => {
+    ok(consumeReactedThisTurn() === false, "react-signal: a fresh session starts unreacted (fixture platform)");
+    const res = await fixtureArmed.execute({ emoji: "thumbsup" }, fixtureCtx("ISS1"));
+    ok(res.reacted === true && res.emoji === "thumbsup" && res.ts === "", 'react: the generic dispatch reports reacted:true with an empty ts — GitHub/Linear track no message-level target');
+    ok(fixtureReactCalls.length === 1 && fixtureReactCalls[0]!.issueId === "ISS1" && fixtureReactCalls[0]!.emoji === "thumbsup", "react: the arm's react() received the resolved issue anchor and the UNCHANGED emoji name");
+    ok(consumeReactedThisTurn() === true, "react-signal: a successful generic-dispatch react marks the per-turn signal too");
+    const audit = await readAudit({ org: "default", action: `${FIXTURE_PLATFORM}.react` });
+    ok(audit.length === 1, `react: audits exactly one ${FIXTURE_PLATFORM}.react row — the platform-named action, not a hardcoded slack.react`);
+    ok(audit[0]?.detail?.emoji === "thumbsup" && audit[0]?.detail?.reason === "ack", "react: the audit row carries the emoji and the default reason");
+  });
+
+  fixtureReactOutcome = "unresolvable";
+  await inSession(async () => {
+    await assert.rejects(
+      () => fixtureArmed.execute({ emoji: "eyes" }, fixtureCtx("ISS1")),
+      /couldn't resolve this conversation/,
+      "react: an arm that cannot resolve a react target throws an honest, instructive error",
+    );
+    n++;
+  });
+
+  fixtureReactOutcome = "throws";
+  await inSession(async () => {
+    const before = (await readAudit({ org: "default", action: `${FIXTURE_PLATFORM}.react` })).length;
+    await assert.rejects(
+      () => fixtureArmed.execute({ emoji: "eyes" }, fixtureCtx("ISS1")),
+      /react failed.*fixture platform refused/,
+      "react: a failed generic-dispatch react surfaces honestly, not swallowed",
+    );
+    n++;
+    ok(consumeReactedThisTurn() === false, "react-signal: a failed generic-dispatch react never marks the signal");
+    const after = (await readAudit({ org: "default", action: `${FIXTURE_PLATFORM}.react` })).length;
+    ok(after === before, "react: a failed react is never audited under the success action name");
+    const failedAudit = await readAudit({ org: "default", action: `${FIXTURE_PLATFORM}.react.failed` });
+    ok(failedAudit.length === 1, "react: the failure is audited under its OWN action name, so it is countable apart from a successful react");
+  });
+  fixtureReactOutcome = "ok";
 }
 
 console.log(`\n✓ react: ${n} assertions passed (gate, validation, execute, react-signal, audit, unified fence)\n`);

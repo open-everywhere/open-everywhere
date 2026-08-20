@@ -16,7 +16,7 @@ import { githubWebhookVerifier } from "./channels/github-webhook-verifier.js";
 
 export function registerGithubProvider(): void {
   registerIdentityMapper("github", bindGitHub);
-  registerCapabilityManifest("github", { midTurnPost: true, reactions: false, supervisorProseDropped: true });
+  registerCapabilityManifest("github", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
   registerPostArm(githubPostArm);
   registerWakeOriginCodec("github", githubWakeOriginCodec);
   registerWebhookVerifier(githubWebhookVerifier);

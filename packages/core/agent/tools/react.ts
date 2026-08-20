@@ -3,6 +3,7 @@ import { z } from "zod";
 import { bindFrom, isUnifiedWindowContext, turnOriginPlatform, type BindableContext } from "../identity/binding.js";
 import { capabilitiesFor, capabilitiesForPlatform } from "../identity/capabilities.js";
 import { bridgeSlackReadCall } from "../channels/slack-bridge.js";
+import { postArm, type TargetResolveBag } from "../channels/post-arms.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { markReactedThisTurn } from "../channels/react-signal.js";
 import { carryFailureSignals, platformFailureClass, platformFailureStatus } from "../channels/platform-failure.js";
@@ -15,12 +16,16 @@ export const REACT_REASONS = ["ack", "noise"] as const;
 
 const reactEntry = defineTool({
         description:
-          'React to a message with a Slack emoji, instead of (or as) your reply. In a busy or ' +
+          'React to a message with an emoji, instead of (or as) your reply. In a busy or ' +
           'noisy thread, a react (e.g. "eyes", "thumbsup", "white_check_mark") CAN BE your whole ' +
           "response — prefer it over a low-content text reply when a reply would just add noise. " +
           'Give the BARE emoji name, no colons (e.g. "thumbsup", not ":thumbsup:"). Defaults to ' +
           "reacting to the message that triggered this turn; pass `ts` to react to a different " +
-          "message ts in this channel instead.",
+          "message ts in this channel instead (Slack only — on GitHub/Linear a reaction always " +
+          "lands on the issue/PR itself, and `ts` is ignored there, since neither surface tracks a " +
+          "message-level target). GitHub accepts only its own fixed set (+1, -1, laugh, confused, " +
+          "heart, hooray, rocket, eyes, or common aliases like thumbsup/tada) and refuses anything " +
+          "else with an error naming the ones it supports.",
         inputSchema: z.object({
           emoji: z
             .string()
@@ -32,7 +37,7 @@ const reactEntry = defineTool({
                 'colons (e.g. "thumbsup", not ":thumbsup:").',
             })
             .describe('Bare Slack emoji name, no colons — e.g. "eyes", "thumbsup", "white_check_mark".'),
-          ts: z.string().min(1).optional().describe("The message ts to react to. Defaults to the message that triggered this turn."),
+          ts: z.string().min(1).optional().describe("The message ts to react to (Slack only). Defaults to the message that triggered this turn."),
           reason: z
             .enum(REACT_REASONS)
             .optional()
@@ -53,6 +58,49 @@ const reactEntry = defineTool({
             }
           }
           const binding = bindFrom(ctx);
+
+          if (binding.platform !== "slack") {
+            const arm = postArm(binding.platform);
+            if (!arm?.resolveReactTarget || !arm.react) {
+              throw new Error(
+                `this wake came from ${binding.platform}, which has no reaction primitive — if acknowledgement is needed, use \`reply\`, otherwise \`no_reply\`.`,
+              );
+            }
+            const t = binding.target;
+            const bag: TargetResolveBag = {
+              str: (k: string) => (typeof t?.[k] === "string" && (t[k] as string).length > 0 ? (t[k] as string) : undefined),
+              num: (k: string) => (typeof t?.[k] === "number" ? (t[k] as number) : undefined),
+              threadTs: binding.threadTs,
+              ctx: ctx as BindableContext,
+            };
+            const target = arm.resolveReactTarget(bag);
+            if (!target) {
+              throw new Error(
+                "react couldn't resolve this conversation — try again from a real issue or thread, not a synthetic context.",
+              );
+            }
+            try {
+              await arm.react(target, input.emoji);
+            } catch (err) {
+              const status = platformFailureStatus(err);
+              await auditToolAction(ctx, `${binding.platform}.react.failed`, {
+                failure: platformFailureClass(err),
+                ...(status !== undefined ? { status } : {}),
+              });
+              const msg = String(err instanceof Error ? err.message : err);
+              throw carryFailureSignals(err, new Error(`react failed — ${msg}`));
+            }
+            markReactedThisTurn();
+            noteTerminalCallGrain(ctx as BindableContext);
+            await auditToolAction(ctx, `${binding.platform}.react`, { emoji: input.emoji, reason: input.reason ?? "ack" });
+            return {
+              reacted: true,
+              emoji: input.emoji,
+              ts: "",
+              note: "Turn reply requirement satisfied — the reaction stands as this turn's acknowledgement.",
+            };
+          }
+
           const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
           if (!channelId) {
             throw new Error(

@@ -9,12 +9,14 @@ import {
   type BrokeredSecret,
   type PostArm,
   type ReplyTarget,
+  type ReactTarget,
   type TargetResolveBag,
   type UnifiedWakeOrigin,
   type UnifiedReplyDeps,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 type GitHubOrigin = Extract<UnifiedWakeOrigin, { platform: "github" }>;
+type GitHubReactTarget = Extract<ReactTarget, { platform: "github" }>;
 
 interface GitHubMintContext {
   readonly appId: string;
@@ -96,6 +98,70 @@ function originForTarget(target: GitHubReplyTarget): GitHubOrigin {
   };
 }
 
+async function liveGitHubEditComment(channelId: string, commentId: string, text: string): Promise<void> {
+  const [owner, repo] = channelId.split("/");
+  if (!owner || !repo) {
+    throw markNotApplied(new Error(`edit_reply couldn't parse the GitHub locus "${channelId}" — expected "owner/repo".`));
+  }
+  const token = await installationTokenFor({ platform: "github", owner, repo, issueNumber: 0 });
+  const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/comments/${commentId}`, {
+    method: "PATCH",
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: "application/vnd.github+json",
+      "x-github-api-version": "2022-11-28",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ body: text }),
+  });
+  if (!res.ok) {
+    throw Object.assign(new Error(`edit_reply couldn't edit the GitHub comment — ${res.status} on ${owner}/${repo} comment ${commentId}`), { status: res.status });
+  }
+}
+
+type GitHubReactionContent = "+1" | "-1" | "laugh" | "confused" | "heart" | "hooray" | "rocket" | "eyes";
+
+const GITHUB_REACTION_MAP: Readonly<Record<string, GitHubReactionContent>> = {
+  "+1": "+1",
+  thumbsup: "+1",
+  "-1": "-1",
+  thumbsdown: "-1",
+  laugh: "laugh",
+  laughing: "laugh",
+  joy: "laugh",
+  confused: "confused",
+  heart: "heart",
+  hooray: "hooray",
+  tada: "hooray",
+  rocket: "rocket",
+  eyes: "eyes",
+};
+
+async function liveGitHubReact(origin: GitHubOrigin, emoji: string): Promise<void> {
+  const content = GITHUB_REACTION_MAP[emoji.toLowerCase()];
+  if (!content) {
+    throw markNotApplied(
+      new Error(
+        `react couldn't post to GitHub — "${emoji}" has no GitHub reaction equivalent; GitHub only supports: ${[...new Set(Object.values(GITHUB_REACTION_MAP))].join(", ")}.`,
+      ),
+    );
+  }
+  const token = await installationTokenFor(origin);
+  const res = await fetch(`https://api.github.com/repos/${origin.owner}/${origin.repo}/issues/${origin.issueNumber}/reactions`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: "application/vnd.github+json",
+      "x-github-api-version": "2022-11-28",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) {
+    throw Object.assign(new Error(`react couldn't post to GitHub — ${res.status} on ${origin.owner}/${origin.repo}#${origin.issueNumber}`), { status: res.status });
+  }
+}
+
 export const githubPostArm: PostArm = {
   platform: "github",
   resolveTarget: (bag: TargetResolveBag): ReplyTarget | null => {
@@ -108,6 +174,22 @@ export const githubPostArm: PostArm = {
   },
   dispatchReply: (target, text) => liveGitHubPost(originForTarget(target as GitHubReplyTarget), text),
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps) => (deps.postGitHub ?? liveGitHubPost)(origin as GitHubOrigin, text),
+  editMessage: (locus, messageId, text) => liveGitHubEditComment(locus.channelId, messageId, text),
+  resolveReactTarget: (bag: TargetResolveBag): ReactTarget | null => {
+    const owner = bag.str("owner");
+    const repo = bag.str("repo");
+    const issueNumber = bag.num("issueNumber") ?? bag.num("pullRequestNumber");
+    if (!owner || !repo || issueNumber === undefined || !Number.isFinite(issueNumber) || issueNumber <= 0) return null;
+    const installationId = bag.num("installationId");
+    return { platform: "github", owner, repo, issueNumber, ...(installationId !== undefined ? { installationId } : {}) };
+  },
+  react: (target, emoji) => {
+    const t = target as GitHubReactTarget;
+    return liveGitHubReact(
+      { platform: "github", owner: t.owner, repo: t.repo, issueNumber: t.issueNumber, ...(t.installationId !== undefined ? { installationId: t.installationId } : {}) },
+      emoji,
+    );
+  },
   describeRedriveTarget: (origin) => {
     const o = origin as GitHubOrigin;
     return `github ${o.owner}/${o.repo}#${o.issueNumber}`;

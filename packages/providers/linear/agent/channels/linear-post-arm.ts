@@ -1,7 +1,7 @@
 import { createLinearAgentActivity, callLinearGraphQL, LinearApiError } from "eve/channels/linear";
 import { linearAppActorCredentials } from "./linear-credentials.js";
 import { markNotApplied, carryFailureSignals } from "@open-everywhere/core/agent/adapter-api.js";
-import type { PostArm, PostIntent, TargetResolveBag, ReplyTarget, UnifiedWakeOrigin, UnifiedReplyDeps } from "@open-everywhere/core/agent/adapter-api.js";
+import type { PostArm, PostIntent, TargetResolveBag, ReplyTarget, ReactTarget, UnifiedWakeOrigin, UnifiedReplyDeps } from "@open-everywhere/core/agent/adapter-api.js";
 
 function activityTypeFor(intent: PostIntent | undefined): "response" | "thought" {
   return intent?.terminal === false ? "thought" : "response";
@@ -31,6 +31,7 @@ function carryLinearFailure<E extends Error>(from: unknown, to: E): E {
 type LinearTarget = Extract<ReplyTarget, { platform: "linear"; agentSessionId: string }>;
 type LinearAmbientTarget = Extract<ReplyTarget, { platform: "linear"; issueId: string }>;
 type LinearOrigin = Extract<UnifiedWakeOrigin, { platform: "linear" }>;
+type LinearReactTarget = Extract<ReactTarget, { platform: "linear" }>;
 
 async function dispatchLinearReply(target: LinearTarget, text: string): Promise<string> {
   let res: { id: string; success: boolean };
@@ -139,6 +140,23 @@ async function dispatchLinearAmbientReply(target: LinearAmbientTarget, text: str
 
 const LINEAR_AMBIENT_COMMENT_ID = "comment";
 
+async function liveLinearReact(issueId: string, emoji: string): Promise<void> {
+  let data: { reactionCreate?: { success?: boolean } };
+  try {
+    data = await callLinearGraphQL<{ reactionCreate?: { success?: boolean } }>({
+      credentials: linearAppActorCredentials,
+      query: "mutation OeReact($input: ReactionCreateInput!) { reactionCreate(input: $input) { success } }",
+      queryName: "OeReact",
+      variables: { input: { issueId, emoji } },
+    });
+  } catch (err) {
+    throw carryFailureSignals(err, new Error(`react couldn't post to Linear — reactionCreate failed on issue ${issueId} (${describeLinearError(err)})`));
+  }
+  if (data.reactionCreate?.success !== true) {
+    throw markNotApplied(new Error(`react couldn't post to Linear — reactionCreate returned no success on issue ${issueId}`));
+  }
+}
+
 export const linearPostArm: PostArm = {
   platform: "linear",
   resolveTarget: (bag: TargetResolveBag): ReplyTarget | null => {
@@ -156,6 +174,12 @@ export const linearPostArm: PostArm = {
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps, _replier, intent) =>
     (deps.postLinear ?? liveLinearPost)(origin as LinearOrigin, text, intent),
   closeUnifiedSilently: (origin, deps: UnifiedReplyDeps) => (deps.closeLinear ?? liveLinearSilentClose)(origin as LinearOrigin),
+  resolveReactTarget: (bag: TargetResolveBag): ReactTarget | null => {
+    const issueId = bag.str("issueId");
+    if (!issueId) return null;
+    return { platform: "linear", issueId };
+  },
+  react: (target, emoji) => liveLinearReact((target as LinearReactTarget).issueId, emoji),
   describeRedriveTarget: (origin) => {
     const o = origin as LinearOrigin;
     return o.ambient ? `linear issue ${o.issueId}` : `linear session on issue ${o.issueId}`;

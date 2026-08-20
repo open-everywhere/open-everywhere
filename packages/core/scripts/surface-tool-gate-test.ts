@@ -78,6 +78,4 @@ await assertGate("purge_memory", purgeMemory, "PROPOSE ERASING remembered fact(s
 await assertGate("request_access", requestAccess, "PROPOSE widening access", EVERY_KIND, []);
 await assertGate("clear_spend_limit", clearSpendLimit, "PROPOSE clearing a spend-limit override", EVERY_KIND, []);
 
-await assertGate("react", react, "React to a message with a Slack emoji");
-
 console.log(`✓ ${passed} surface-tool-gate assertions passed`);

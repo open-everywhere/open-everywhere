@@ -21,7 +21,7 @@ import { linearEventNormalizer, linearEventScopeGrant } from "./channels/linear-
 
 export function registerLinearProvider(): void {
   registerIdentityMapper("linear", bindLinear);
-  registerCapabilityManifest("linear", { midTurnPost: true, reactions: false, supervisorProseDropped: true });
+  registerCapabilityManifest("linear", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
   registerPostArm(linearPostArm);
   registerWakeOriginCodec("linear", linearWakeOriginCodec);
   registerEntityActionAdapter(linearEntityAdapter);
