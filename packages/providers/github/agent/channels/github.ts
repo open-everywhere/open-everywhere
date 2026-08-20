@@ -23,7 +23,6 @@ import {
   isVouchedInternal,
   divertToUnifiedWindow,
   finalMessageActionForTurn,
-  silentRoutineThisTurn,
   completeSupervisorTurn,
   consumeSupervisorReplyMark,
   auditSupervisorFailure,
@@ -352,6 +351,18 @@ type AdapterEventFn = (data: unknown, adapterCtx: unknown) => unknown;
 const defaultEvent = (name: string): AdapterEventFn | undefined =>
   (pristine as unknown as { adapter?: Record<string, AdapterEventFn> }).adapter?.[name];
 
+async function auditNativeGitHubSilence(state: GitHubChannelState, reason: string, replied: boolean, sessionId?: string): Promise<void> {
+  slog(`native turn judged silence (${reason}) on ${state.owner}/${state.repo}#${state.issueNumber ?? "?"} — nothing commented`);
+  await appendAudit({
+    org: deploymentOrg(),
+    platform: "github",
+    workspace: state.owner,
+    surface: `github/${state.owner}/${state.repo}`,
+    action: "github.no_reply",
+    detail: { issueNumber: state.issueNumber ?? null, reason, replied, route: "native", ...(sessionId ? { sessionId } : {}) },
+  }).catch(() => undefined);
+}
+
 export const githubOnComment = async (ctx: GitHubInboundContext, comment: GitHubComment): Promise<GitHubInboundResult> => {
     if (!githubBotMentioned(comment.body, BOT_NAME, comment.author)) return null;
     const surfaceKey = `github/${ctx.repository.owner}/${ctx.repository.name}`;
@@ -425,7 +436,16 @@ const native: GitHubChannel = githubChannel({
     },
     async "message.completed"(data, channel, ctx) {
       if (!isSupervisorGitHubState(channel.state)) {
-        if (silentRoutineThisTurn()) return;
+        if (data.finishReason === "tool-calls") {
+          await defaultEvent("message.completed")?.(data, channel);
+          return;
+        }
+        const nativeAction = finalMessageActionForTurn(data.finishReason, data.message);
+        const nativeReplied = consumeSupervisorReplyMark(ctx);
+        if (nativeAction.kind === "silent") {
+          await auditNativeGitHubSilence(channel.state, nativeAction.reason, nativeReplied, ctx?.session?.id);
+          return;
+        }
         await defaultEvent("message.completed")?.(data, channel);
         return;
       }

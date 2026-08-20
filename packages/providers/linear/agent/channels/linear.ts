@@ -35,7 +35,6 @@ import {
   mintWakeId,
   divertToUnifiedWindow,
   finalMessageActionForTurn,
-  silentRoutineThisTurn,
   completeSupervisorTurn,
   consumeSupervisorReplyMark,
   capabilitiesForPlatform,
@@ -338,15 +337,19 @@ function linearSilentCloseStatus(verdict: Exclude<LinearExternalVerdict, "procee
   return verdict === "silent-room" ? "(no reply — this room is set up as an external space)" : "(no reply)";
 }
 
-async function silentlyCloseLinearAgentSession(
-  agentSessionId: string,
-  verdict: Exclude<LinearExternalVerdict, "proceed">,
-  organizationId?: string,
-): Promise<void> {
-  await createLinearAgentActivity({
+const LINEAR_TURN_SILENT_CLOSE_STATUS = "(no reply — nothing to add here)";
+
+async function silentlyCloseLinearAgentSession(agentSessionId: string, status: string, organizationId?: string): Promise<boolean> {
+  return createLinearAgentActivity({
     credentials: linearCredentialsForOrg(organizationId),
-    activity: { agentSessionId, content: { type: "thought", body: linearSilentCloseStatus(verdict) }, ephemeral: true, signal: "stop" },
-  }).catch((err) => slog(`external-policy session close failed (session ${agentSessionId}): ${String(err)}`));
+    activity: { agentSessionId, content: { type: "thought", body: status }, ephemeral: true, signal: "stop" },
+  }).then(
+    () => true,
+    (err) => {
+      slog(`silent session close failed (session ${agentSessionId}): ${String(err)}`);
+      return false;
+    },
+  );
 }
 
 type LinearSend = (
@@ -599,7 +602,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
   const surfaceKey = roomTeamId ? `linear/${organizationId}/${roomTeamId}` : undefined;
   const roomVerdict = await linearExternalSuppressed(surfaceKey, organizationId, undefined);
   if (roomVerdict) {
-    await silentlyCloseLinearAgentSession(agentSessionId, roomVerdict, organizationId);
+    await silentlyCloseLinearAgentSession(agentSessionId, linearSilentCloseStatus(roomVerdict), organizationId);
     return;
   }
   const triggerCommentId = sig.action === "prompted" ? sig.promptSourceCommentId : sig.sourceCommentId;
@@ -621,7 +624,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
       authorFacts,
     );
     if (authorVerdict) {
-      await silentlyCloseLinearAgentSession(agentSessionId, authorVerdict, organizationId);
+      await silentlyCloseLinearAgentSession(agentSessionId, linearSilentCloseStatus(authorVerdict), organizationId);
       return;
     }
     const grain = linearGrainFor(`linear/${organizationId}/${c.teamId}`);
@@ -728,6 +731,34 @@ function nativeOrgOf(state: LinearChannelState): string | undefined {
   return typeof fromEve === "string" && fromEve.length > 0 ? fromEve : undefined;
 }
 
+async function completeNativeLinearSilence(state: LinearChannelState, reason: string, replied: boolean, sessionId?: string): Promise<void> {
+  const bag = state as unknown as Record<string, unknown>;
+  const organizationId = nativeOrgOf(state);
+  const teamId = typeof bag.oeTeamId === "string" && bag.oeTeamId.length > 0 ? bag.oeTeamId : undefined;
+  const agentSessionId = typeof state.agentSessionId === "string" && state.agentSessionId.length > 0 ? state.agentSessionId : undefined;
+  let closed: boolean | undefined;
+  if (agentSessionId && !replied) {
+    closed = await silentlyCloseLinearAgentSession(agentSessionId, LINEAR_TURN_SILENT_CLOSE_STATUS, organizationId);
+  }
+  slog(`native turn judged silence (${reason}) — nothing posted${closed === undefined ? "" : closed ? ", session closed" : ", session close FAILED (spinner may persist)"}`);
+  await appendAudit({
+    org: deploymentOrg(),
+    platform: "linear",
+    workspace: organizationId ?? "unknown",
+    ...(teamId ? { surface: `linear/${organizationId ?? "unknown"}/${teamId}` } : {}),
+    action: "linear.no_reply",
+    detail: {
+      issueId: state.issueId ?? null,
+      agentSessionId: agentSessionId ?? null,
+      reason,
+      replied,
+      route: "native",
+      ...(closed === undefined ? {} : { closed }),
+      ...(sessionId ? { sessionId } : {}),
+    },
+  }).catch(() => undefined);
+}
+
 export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: LinearAgentSessionEvent): Promise<LinearInboundResult> => {
     const s = event.agentSession;
     const agentSessionId = s.id;
@@ -745,7 +776,7 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
       const surfaceKey = `linear/${nativeOrganizationId}/${teamId}`;
       const roomVerdict = await linearExternalSuppressed(surfaceKey, nativeOrganizationId, undefined);
       if (roomVerdict) {
-        await silentlyCloseLinearAgentSession(agentSessionId, roomVerdict, event.organizationId);
+        await silentlyCloseLinearAgentSession(agentSessionId, linearSilentCloseStatus(roomVerdict), event.organizationId);
         return null;
       }
     }
@@ -761,7 +792,7 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
     {
       const authorVerdict = await linearExternalSuppressed(nativeSurfaceKey, nativeOrg, creatorId, authorFacts);
       if (authorVerdict) {
-        await silentlyCloseLinearAgentSession(agentSessionId, authorVerdict, event.organizationId);
+        await silentlyCloseLinearAgentSession(agentSessionId, linearSilentCloseStatus(authorVerdict), event.organizationId);
         return null;
       }
     }
@@ -807,6 +838,8 @@ const native: LinearChannel = linearChannel({
         (channel.state as unknown as Record<string, unknown>).oeReplierLabel = replierLabelFromAuthAttributes(nativeAttrs);
         const wakeOrg = str(nativeAttrs?.organization_id);
         if (wakeOrg) (channel.state as unknown as Record<string, unknown>).oeOrganizationId = wakeOrg;
+        const wakeTeam = str(nativeAttrs?.team_id);
+        if (wakeTeam) (channel.state as unknown as Record<string, unknown>).oeTeamId = wakeTeam;
         await defaultEvent("turn.started", nativeOrgOf(channel.state))?.(data, channel);
         return;
       }
@@ -846,12 +879,18 @@ const native: LinearChannel = linearChannel({
     },
     async "message.completed"(data, channel, ctx) {
       if (!isSupervisorLinearState(channel.state)) {
-        if (silentRoutineThisTurn()) return;
+        if (data.finishReason === "tool-calls") {
+          await defaultEvent("message.completed", nativeOrgOf(channel.state))?.(data, channel);
+          return;
+        }
+        const nativeAction = finalMessageActionForTurn(data.finishReason, data.message);
+        const nativeReplied = consumeSupervisorReplyMark(ctx);
+        if (nativeAction.kind === "silent") {
+          await completeNativeLinearSilence(channel.state, nativeAction.reason, nativeReplied, ctx?.session?.id);
+          return;
+        }
         const nativeLabel = (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined;
-        const forwarded =
-          data.finishReason !== "tool-calls" && data.message !== null && nativeLabel
-            ? { ...data, message: withReplierPrefix(data.message, nativeLabel) }
-            : data;
+        const forwarded = nativeLabel && data.message !== null ? { ...data, message: withReplierPrefix(data.message, nativeLabel) } : data;
         await defaultEvent("message.completed", nativeOrgOf(channel.state))?.(forwarded, channel);
         return;
       }

@@ -365,10 +365,95 @@ for (const [label, err] of [
           threw = err;
         }
       }, { issue_id: ISSUE, comment_id: "c-top" });
+      const routineCalls = gql as unknown as Array<{ variables?: { input?: { content?: { type?: string }; signal?: string } } }>;
+      ok(threw === null, "SILENT routine: the arm never throws out of message.completed");
       ok(
-        gql.length === 0 && threw === null,
-        "SILENT routine: a non-supervisor linear turn is DROPPED before eve's default poster (else it posts the literal string NO_REPLY)",
+        !routineCalls.some((c) => c.variables?.input?.content?.type === "response"),
+        "SILENT routine: a non-supervisor linear turn posts NO `response` activity (else it posts the literal string NO_REPLY as a comment)",
       );
+      ok(
+        routineCalls.length === 1 && routineCalls[0]!.variables?.input?.signal === "stop",
+        "SILENT routine: the only activity is the ephemeral `stop` close, so the requester's spinner resolves",
+      );
+    }
+
+    {
+      const { readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
+      const nativeSilenceRows = async () => (await readAudit({ action: "linear.no_reply" })).filter((r) => r.detail?.route === "native");
+      const nativeState = () => ({ ...supervisorState(), oeSupervisor: undefined, agentSessionId: "agent-session-883", issueId: ISSUE });
+      type ActivityCall = { query?: string; variables?: { input?: { agentSessionId?: string; ephemeral?: boolean; signal?: string; content?: { body?: string; type?: string } } } };
+
+      {
+        const state = nativeState();
+        const before = (await nativeSilenceRows()).length;
+        gql = [];
+        let threw: unknown = null;
+        await inSession(async () => {
+          await turnStarted({ state });
+          gql = [];
+          try {
+            await completed("NO_REPLY", { state });
+          } catch (err) {
+            threw = err;
+          }
+        }, { organization_id: "org-1", team_id: TEAM, issue_id: ISSUE });
+        ok(threw === null, "OPE-883: the native sentinel arm never throws out of message.completed");
+        const calls = gql as unknown as ActivityCall[];
+        ok(!calls.some((c) => c.variables?.input?.content?.type === "response"), "🔴 OPE-883: a NATIVE turn closing with the NO_REPLY sentinel posts NO `response` activity (it posted the literal string as a comment before)");
+        ok(calls.length === 1, "OPE-883: exactly one activity leaves — the close, not a reply");
+        const close = calls[0]!;
+        ok(close.variables?.input?.agentSessionId === "agent-session-883", "OPE-883: the close addresses THIS session");
+        ok(close.variables?.input?.content?.type === "thought" && close.variables?.input?.ephemeral === true && close.variables?.input?.signal === "stop", "OPE-883: the session still TERMINATES — an EPHEMERAL `thought` carrying `stop`, so the spinner resolves and no comment is authored");
+        ok(!String(close.variables?.input?.content?.body ?? "").includes("NO_REPLY"), "OPE-883: the close body states the outcome only — the sentinel never reaches the issue in any form");
+        const rows = await nativeSilenceRows();
+        ok(rows.length === before + 1, "OPE-883: the suppressed sentinel leaves exactly one linear.no_reply row (silence stays observable)");
+        const row = rows[0]!;
+        ok(row.surface === `linear/org-1/${TEAM}` && row.detail?.issueId === ISSUE, "OPE-883: the silence row names the team and the issue it went quiet on");
+        ok(row.detail?.replied === false && row.detail?.closed === true, "OPE-883: the row records that the turn delivered NOTHING and that the close landed");
+      }
+
+      {
+        const { markRepliedThisTurn, markNoReplyThisTurn } = await import("@open-everywhere/core/agent/adapter-api.js");
+        const state = nativeState();
+        const before = (await nativeSilenceRows()).length;
+        gql = [];
+        const c = new ContextContainer();
+        c.set(SessionKey, { sessionId: "linear-supervisor-test", auth: { current: { attributes: { organization_id: "org-1", team_id: TEAM, issue_id: ISSUE } }, initiator: null }, turn: { id: "turn-883" }, parent: undefined });
+        await contextStorage.run(c, async () => {
+          markRepliedThisTurn("turn-883");
+          markNoReplyThisTurn("nothing_to_add");
+          await completed("Done — I posted the answer above.", { state });
+        });
+        ok(gql.length === 0, "🔴 OPE-883/OPE-869: a turn that ALREADY replied posts nothing AND closes nothing — the reply spent the session, a second close would fail on a dead one");
+        const rows = await nativeSilenceRows();
+        ok(rows.length === before + 1, "OPE-883: the `no_reply` tool route audits its silence too");
+        ok(rows[0]!.detail?.replied === true && rows[0]!.detail?.closed === undefined, "OPE-883: `replied` is TRUE and no `closed` field — the arm did not touch the session");
+        ok(!JSON.stringify(rows[0]!.detail).includes("answer above"), "OPE-883: taint-clean — the dropped narration is not in the row");
+      }
+
+      {
+        const state = nativeState();
+        const before = (await nativeSilenceRows()).length;
+        gql = [];
+        await inSession(async () => {
+          await completed("The backfill finished at 04:10 UTC.", { state });
+        }, { organization_id: "org-1", team_id: TEAM, issue_id: ISSUE });
+        const calls = gql as unknown as ActivityCall[];
+        ok(calls.length === 1 && calls[0]!.variables?.input?.content?.type === "response", "OPE-883 negative control: real answer text still posts as a `response` activity (the arm is not dropping everything)");
+        ok(calls[0]!.variables?.input?.content?.body === "The backfill finished at 04:10 UTC.", "OPE-883 negative control: the answer reaches the issue byte-for-byte");
+        ok((await nativeSilenceRows()).length === before, "OPE-883 negative control: a turn that answered writes NO silence row");
+      }
+
+      {
+        const state = nativeState();
+        const before = (await nativeSilenceRows()).length;
+        gql = [];
+        await inSession(async () => {
+          await completed("   ", { state });
+        }, { organization_id: "org-1", team_id: TEAM, issue_id: ISSUE });
+        ok(gql.length === 1, "OPE-883: a whitespace-only completion closes the session too (eve's default posted nothing and left the spinner up)");
+        ok((await nativeSilenceRows()).length === before + 1, "OPE-883: the empty completion is audited as a silence as well");
+      }
     }
 
     {

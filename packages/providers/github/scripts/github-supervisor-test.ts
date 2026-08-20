@@ -367,6 +367,76 @@ for (const [label, err] of [
   }
 
   {
+    const { readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
+    const nativeSilenceRows = async () => (await readAudit({ action: "github.no_reply" })).filter((r) => r.detail?.route === "native");
+    const nonSupervisor = () => ({ ...supervisorState(), oeSupervisor: undefined, issueNumber: 42 });
+
+    {
+      const state = nonSupervisor();
+      const posts: unknown[] = [];
+      const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
+      const before = (await nativeSilenceRows()).length;
+      let threw: unknown = null;
+      await inSession(async () => {
+        try {
+          await completed("NO_REPLY", { state, github });
+        } catch (err) {
+          threw = err;
+        }
+      }, { owner: OWNER, repo: REPO, issue_number: "42" });
+      ok(posts.length === 0 && threw === null, "🔴 OPE-883: a NATIVE turn closing with the NO_REPLY sentinel comments NOTHING (it commented the literal string before)");
+      const rows = await nativeSilenceRows();
+      ok(rows.length === before + 1, "OPE-883: the suppressed sentinel leaves exactly one github.no_reply row (silence stays observable)");
+      const row = rows[0]!;
+      ok(row.surface === `github/${OWNER}/${REPO}` && row.detail?.issueNumber === 42, "OPE-883: the silence row names the repo and the issue it went quiet on");
+      ok(row.detail?.replied === false, "OPE-883 negative control: `replied` is present and FALSE — this turn delivered nothing at all");
+      ok(String(row.detail?.reason).includes("sentinel"), "OPE-883: the row names WHY the turn went quiet (the sentinel), so a reader can tell it from an empty completion");
+    }
+
+    {
+      const { markRepliedThisTurn, markNoReplyThisTurn } = await import("@open-everywhere/core/agent/adapter-api.js");
+      const state = nonSupervisor();
+      const posts: unknown[] = [];
+      const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
+      const before = (await nativeSilenceRows()).length;
+      let threw: unknown = null;
+      const c = new ContextContainer();
+      c.set(SessionKey, { sessionId: "github-supervisor-test", auth: { current: { attributes: { owner: OWNER, repo: REPO, issue_number: "42" } }, initiator: null }, turn: { id: "turn-883" }, parent: undefined });
+      await contextStorage.run(c, async () => {
+        markRepliedThisTurn("turn-883");
+        markNoReplyThisTurn("nothing_to_add");
+        try {
+          await completed("Done — I posted the summary above.", { state, github });
+        } catch (err) {
+          threw = err;
+        }
+      });
+      ok(posts.length === 0 && threw === null, "OPE-883: a NATIVE turn that called `no_reply` comments NOTHING, even with trailing narration");
+      const rows = await nativeSilenceRows();
+      ok(rows.length === before + 1, "OPE-883: the `no_reply` tool route audits its silence too");
+      ok(rows[0]!.detail?.replied === true, "OPE-883: `replied` is TRUE when the turn delivered through the reply tool — a different fact from silence after nothing");
+      ok(!JSON.stringify(rows[0]!.detail).includes("summary above"), "OPE-883: taint-clean — the dropped narration is not in the row (ids, an enum reason and booleans only)");
+    }
+
+    {
+      const state = nonSupervisor();
+      const posts: unknown[] = [];
+      const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
+      const before = (await nativeSilenceRows()).length;
+      let threw: unknown = null;
+      await inSession(async () => {
+        try {
+          await completed("The backfill finished at 04:10 UTC.", { state, github });
+        } catch (err) {
+          threw = err;
+        }
+      }, { owner: OWNER, repo: REPO, issue_number: "42" });
+      ok(posts.length > 0 || threw !== null, "OPE-883 negative control: real answer text still REACHES eve's default poster (the arm is not dropping everything)");
+      ok((await nativeSilenceRows()).length === before, "OPE-883 negative control: a turn that answered writes NO silence row");
+    }
+  }
+
+  {
     const state = supervisorState();
     const posts: unknown[] = [];
     const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
