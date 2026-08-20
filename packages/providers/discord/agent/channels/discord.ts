@@ -6,6 +6,8 @@ import {
 import { buildDiscordAuth, threadParentFromRawChannel, discordMemberPendingFromRaw, type OpenEverywhereDiscordAuth } from "./discord-identity.js";
 import {
   finalMessageActionForTurn,
+  NO_REPLY_SENTINEL_REASON,
+  auditNoReplySentinelObserved,
   isBareStop,
   consumeRepliedThisTurn,
   postTerminalProse,
@@ -76,6 +78,10 @@ const discordInteractionChannel = discordChannel({
       if (action.kind !== "post") {
         if (action.kind === "silent" && action.reason !== "empty final message") {
           console.log(`[open-everywhere:discord] judged silence (${action.reason}) — nothing posted (channel ${channel.state.channelId ?? "?"})`);
+        }
+        if (action.kind === "silent" && action.reason === NO_REPLY_SENTINEL_REASON) {
+          const p = auditPartitionForState(channel.state);
+          if (p) await auditNoReplySentinelObserved(p, sessionId).catch(() => undefined);
         }
         if (action.kind === "silent" && isBareStop(action, repliedThisTurn)) {
           console.warn(

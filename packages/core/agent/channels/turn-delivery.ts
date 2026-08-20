@@ -18,10 +18,12 @@ export type FinalMessageAction =
   | { readonly kind: "silent"; readonly reason: string }
   | { readonly kind: "post"; readonly text: string };
 
+export const NO_REPLY_SENTINEL_REASON = "NO_REPLY sentinel — judged not warranted";
+
 export function finalMessageAction(finishReason: string, message: string | null): FinalMessageAction {
   if (finishReason === "tool-calls") return { kind: "buffer-tool-status" };
   if (!message || !message.trim()) return { kind: "silent", reason: "empty final message" };
-  if (isNoReply(message)) return { kind: "silent", reason: "NO_REPLY sentinel — judged not warranted" };
+  if (isNoReply(message)) return { kind: "silent", reason: NO_REPLY_SENTINEL_REASON };
   return { kind: "post", text: message };
 }
 
