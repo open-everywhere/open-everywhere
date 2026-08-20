@@ -267,26 +267,44 @@ inSession(() => {
 }
 
 {
-  const persona = (token: string) => renderSupervisorPersona({ channel: { kind: "unified", continuationToken: token } } as never);
-  const workerText = persona("unified:oe-dom:acme:win:t/C1/1721018940.000100:oe-sup:g3");
+  const persona = (token: string, oneshot?: boolean) =>
+    renderSupervisorPersona({
+      channel: { kind: "unified", continuationToken: token },
+      session: {
+        auth: {
+          current: {
+            attributes: oneshot
+              ? { oe_oneshot: { taskId: "task_1", callerToken: "unified:oe-dom:acme:oe-sup:g3", callerOrigin: { kind: "slack" } } }
+              : {},
+          },
+        },
+      },
+    } as never);
+  const TASK_TOKEN = "unified:oe-dom:acme:win:t/C1/1721018940.000100:oe-sup:g3";
+  const rollOwnText = persona(TASK_TOKEN, true);
+  const nativeText = persona(TASK_TOKEN);
   const seatText = persona("unified:oe-dom:acme:oe-sup:g3");
-  ok(workerText.length > 0 && seatText.length > 0, "fixture sanity: the persona renders for BOTH a task token and a standing one");
+  ok(rollOwnText.length > 0 && nativeText.length > 0 && seatText.length > 0, "fixture sanity: the persona renders for BOTH a task token and a standing one");
   ok(
-    !/cannot receive an answer/i.test(workerText),
+    !/cannot receive an answer/i.test(rollOwnText),
     "🔴 OPE-565: a WORKER's valve no longer claims the answer cannot reach it — that sentence is false now, and a prompt must never tell the model something it can disprove",
   );
-  ok(workerText.includes("return_result"), "…the report verb is still named, because it is still the route that always reaches a person");
-  ok(workerText.indexOf("return_result") < workerText.indexOf("ask_question"), "…and named FIRST — the valve steers on cost, and a question parks the worker while a report does not");
-  ok(workerText.includes("ask_question"), "…while `ask_question` is named as the real second route it now is");
-  ok(workerText.includes("PARKS you there"), "…and the COST is stated plainly: a question parks the worker");
-  ok(
-    !/PARKS you there until\s+somebody answers/i.test(workerText) && !/until somebody answers/i.test(workerText),
-    "🔴 the valve does NOT promise an answer — this string is emitted for the roll-own worker too, whose return leg is undriven, so 'parks you until somebody answers' would be a false promise",
-  );
-  ok(
-    /an answer might not/i.test(workerText),
-    "🔴 …it says so positively rather than by omission: the worker is told the answer may never arrive, which is what makes the report the steer",
-  );
+  ok(rollOwnText.includes("return_result"), "…the ROLL-OWN report verb is still named, because it is still the route that always reaches a person");
+  ok(rollOwnText.indexOf("return_result") < rollOwnText.indexOf("ask_question"), "…and named FIRST — the valve steers on cost, and a question parks the worker while a report does not");
+  ok(!nativeText.includes("return_result"), "🔴 OPE-863: …and NEVER named on the eve-native route, where the same call refuses");
+  ok(nativeText.includes("Your LAST message of this session is your report"), "…that worker is pointed at its last message instead, which is what eve carries back");
+  for (const [label, workerText] of [["roll-own", rollOwnText], ["native", nativeText]] as const) {
+    ok(workerText.includes("ask_question"), `${label}: \`ask_question\` is named as the real second route it now is`);
+    ok(workerText.includes("PARKS this session"), `${label}: …and the COST is stated plainly: a question parks the worker`);
+    ok(
+      !/until somebody answers/i.test(workerText),
+      `🔴 ${label}: the valve does NOT promise an answer — the roll-own return leg is undriven, so "parks you until somebody answers" would be a false promise`,
+    );
+    ok(
+      /an answer might not/i.test(workerText),
+      `🔴 ${label}: …it says so positively rather than by omission: the worker is told the answer may never arrive, which is what makes the report the steer`,
+    );
+  }
   ok(seatText.includes("ask_question") && !seatText.includes("return_result"), "the interactive seat's valve is unchanged — it still asks the room, and never names a worker verb");
 }
 
