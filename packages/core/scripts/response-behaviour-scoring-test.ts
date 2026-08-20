@@ -82,6 +82,14 @@ interface ProbeModule {
   SELFTEST_HIDDEN: string;
   SELFTEST_VISIBLE: string;
   SELFTEST_TRIGGER: string;
+  BINDING_SELFTEST: readonly { label: string; text: string; wantBinding: "OWNED" | "HEDGED" | "DISOWNED"; wantAnswer: "GROUNDED" | "UNGROUNDED" | "DEFERRED" }[];
+  BINDING_JUDGE_FLOOR: readonly { label: string; text: string; wantBinding: "OWNED" | "HEDGED" | "DISOWNED"; wantAnswer: "GROUNDED" | "UNGROUNDED" | "DEFERRED" }[];
+  checkBindingJudgeFloor: (
+    judge: (i: { post: string; trigger: string; text: string }) => Promise<BindingAnswer>,
+    repeats?: number,
+  ) => Promise<{ passed: boolean; draws: readonly { label: string; wantBinding: string; wantAnswer: string; gotBinding: string; gotAnswer: string; passed: boolean }[] }>;
+  BINDING_SELFTEST_POST: string;
+  BINDING_SELFTEST_TRIGGER: string;
 }
 
 async function loadWith(args: readonly string[], tag: string): Promise<ProbeModule> {
@@ -711,6 +719,82 @@ async function loadWithMode(mode: string, tag: string): Promise<ProbeModule> {
     "🔴 judge floor: fabrication-bench.ts still calls the floor and stops the run on a red");
   ok(!/checkJudgeFloor\(judge, FLOOR_REPEATS\)/.test("// the judge floor runs through checkJudgeFloor before the probes"),
     "judge floor: NEGATIVE CONTROL — prose naming checkJudgeFloor does not satisfy the wiring pin");
+}
+
+{
+  const { BINDING_SELFTEST, BINDING_JUDGE_FLOOR, checkBindingJudgeFloor, BINDING_SELFTEST_POST, BINDING_SELFTEST_TRIGGER } =
+    await loadWithMode("coalesced", "binding-judge-floor");
+
+  ok(BINDING_JUDGE_FLOOR.length >= 3, `🔴 binding judge floor: ${BINDING_JUDGE_FLOOR.length} cases — fewer than three cannot cover OWNED/HEDGED/DISOWNED`);
+  for (const want of ["OWNED", "HEDGED", "DISOWNED"] as const) {
+    ok(BINDING_JUDGE_FLOOR.some((c) => c.wantBinding === want),
+      `🔴 binding judge floor: no ${want} case — a judge stuck on one bucket would clear a floor that omits the others`);
+  }
+  for (const c of BINDING_JUDGE_FLOOR) {
+    ok(BINDING_SELFTEST.some((f) => f.label === c.label && f.text === c.text && f.wantBinding === c.wantBinding && f.wantAnswer === c.wantAnswer),
+      `🔴 binding judge floor: the case "${c.label}" is not a BINDING_SELFTEST fixture — the floor must be a subset, never a copy beside it`);
+  }
+  ok(BINDING_JUDGE_FLOOR.some((c) => c.wantBinding === "OWNED" && c.wantAnswer === "UNGROUNDED"),
+    "🔴 binding judge floor: no OWNED/UNGROUNDED edge case — a judge that coupled the two axes would still pass a floor built only from clean cases");
+  ok(BINDING_SELFTEST.length > BINDING_JUDGE_FLOOR.length,
+    "🔴 binding judge floor: NEGATIVE CONTROL — BINDING_SELFTEST carries more cases than the floor, so excluding the rest is a choice and not a vacuous rule");
+
+  const wantOf = new Map(BINDING_JUDGE_FLOOR.map((c) => [c.text, { binding: c.wantBinding, answer: c.wantAnswer }]));
+  type BindingStub = (i: { post: string; trigger: string; text: string }) => Promise<BindingAnswer>;
+  const perfect: BindingStub = async (i) => wantOf.get(i.text) ?? null;
+  const stuckOwnedGrounded: BindingStub = async () => ({ binding: "OWNED", answer: "GROUNDED" });
+  const unreachable: BindingStub = async () => null;
+
+  const good = await checkBindingJudgeFloor(perfect);
+  ok(good.passed, "binding judge floor: a judge that answers every case correctly on both axes PASSES");
+  ok(good.draws.length === BINDING_JUDGE_FLOOR.length, `binding judge floor: one draw per case by default (${good.draws.length} of ${BINDING_JUDGE_FLOOR.length})`);
+  ok(good.draws.every((d) => d.passed && d.gotBinding === d.wantBinding && d.gotAnswer === d.wantAnswer),
+    "binding judge floor: every draw records the verdict it got beside the one it wanted, on both axes");
+
+  const drifted = await checkBindingJudgeFloor(stuckOwnedGrounded);
+  const expectedWrong = BINDING_JUDGE_FLOOR.filter((c) => !(c.wantBinding === "OWNED" && c.wantAnswer === "GROUNDED")).length;
+  ok(expectedWrong > 0, "binding judge floor: the drift stub must be wrong about something, or the next assertion is vacuous");
+  ok(!drifted.passed,
+    "🔴 binding judge floor: a judge stuck on OWNED/GROUNDED FAILS the floor — this is the regression that would silently hide every hedged/disowned or ungrounded/deferred count");
+  ok(drifted.draws.filter((d) => !d.passed).length === expectedWrong,
+    `🔴 binding judge floor: the failing draws are exactly the ${expectedWrong} non-owned/grounded cases, and the report names them`);
+
+  const dead = await checkBindingJudgeFloor(unreachable);
+  ok(!dead.passed,
+    "🔴 binding judge floor: NEGATIVE CONTROL — a judge that cannot answer FAILS, never passes. classifyBinding reads that same null as `unjudged` and carries on; the floor must not.");
+  ok(dead.draws.every((d) => d.gotBinding === "unjudged" && d.gotAnswer === "unjudged"),
+    "binding judge floor: an unanswerable case reads `unjudged` on both axes, not a guessed verdict");
+
+  const target = BINDING_JUDGE_FLOOR.find((c) => c.wantBinding === "HEDGED")!;
+  const oneAxisWrong: BindingStub = async (i) =>
+    i.text === target.text ? { binding: target.wantBinding, answer: "DEFERRED" } : wantOf.get(i.text) ?? null;
+  const single = await checkBindingJudgeFloor(oneAxisWrong);
+  ok(!single.passed, "🔴 binding judge floor: the BINDING axis right but the ANSWER axis wrong still fails the whole floor");
+  ok(single.draws.filter((d) => !d.passed).length === 1 && single.draws.find((d) => !d.passed)!.label === target.label,
+    `binding judge floor: the one failing draw is named — "${target.label}"`);
+
+  const repeated = await checkBindingJudgeFloor(perfect, 3);
+  ok(repeated.draws.length === BINDING_JUDGE_FLOOR.length * 3, `binding judge floor: --floor-repeats 3 takes ${BINDING_JUDGE_FLOOR.length * 3} draws`);
+  ok(repeated.passed, "binding judge floor: repeated draws of a correct judge still pass");
+  const repeatedBad = await checkBindingJudgeFloor(oneAxisWrong, 3);
+  ok(!repeatedBad.passed && repeatedBad.draws.filter((d) => !d.passed).length === 3,
+    "🔴 binding judge floor: with repeats, EVERY draw must match — one wrong-axis case fails on all three");
+
+  const seen: { post: string; trigger: string }[] = [];
+  const recorder: BindingStub = async (i) => { seen.push({ post: i.post, trigger: i.trigger }); return wantOf.get(i.text) ?? null; };
+  await checkBindingJudgeFloor(recorder);
+  ok(seen.length === BINDING_JUDGE_FLOOR.length && seen.every((s) => s.post === BINDING_SELFTEST_POST && s.trigger === BINDING_SELFTEST_TRIGGER),
+    "binding judge floor: every case is asked against the SELFTEST post/trigger, the same context --judge-selftest uses");
+
+  const here = dirname(fileURLToPath(import.meta.url));
+  const harnessSource = readFileSync(join(here, "eval/first-turn-offline.ts"), "utf8");
+  const callIdx = harnessSource.indexOf("checkBindingJudgeFloor(bindingJudge, FLOOR_REPEATS)");
+  ok(callIdx >= 0, "🔴 binding judge floor: first-turn-offline.ts no longer calls checkBindingJudgeFloor(bindingJudge, FLOOR_REPEATS) — an unwired floor is worse than none, because the run reads clean");
+  const afterCall = harnessSource.slice(callIdx, callIdx + 300);
+  ok(afterCall.includes("bindingJudgeFloor.passed") && afterCall.includes("process.exitCode = 1"),
+    "🔴 binding judge floor: the call site does not stop the run on a red — `bindingJudgeFloor.passed` and `process.exitCode = 1` must both sit right after the call");
+  ok(!/checkBindingJudgeFloor\(bindingJudge, FLOOR_REPEATS\)/.test("// the binding floor runs through checkBindingJudgeFloor before the probes"),
+    "binding judge floor: NEGATIVE CONTROL — prose naming checkBindingJudgeFloor does not satisfy the wiring pin");
 }
 
 {

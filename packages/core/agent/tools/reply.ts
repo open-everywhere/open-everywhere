@@ -120,7 +120,14 @@ export const unifiedReplyEntry = defineTool({
 
       const framed = withPendingWorkFrame(input.text, owingTask !== undefined);
 
-      const id = await postUnifiedReply(origin, framed, {}, replyAuditFor(ctx as BindableContext, "tool", input.wake), replierFor(bind));
+      const id = await postUnifiedReply(
+        origin,
+        framed,
+        {},
+        replyAuditFor(ctx as BindableContext, "tool", input.wake),
+        replierFor(bind),
+        { terminal: input.done !== false },
+      );
       markRepliedThisTurn(turnId);
       markWakeRepliedThisTurn(turnId, input.wake);
       noteTerminalCallGrain(bind);

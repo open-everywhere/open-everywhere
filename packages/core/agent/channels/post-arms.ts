@@ -51,13 +51,17 @@ export type ReactTarget =
   | { readonly platform: "linear"; readonly issueId: string }
   | { readonly platform: "github"; readonly owner: string; readonly repo: string; readonly issueNumber: number; readonly installationId?: number };
 
+export interface PostIntent {
+  readonly terminal: boolean;
+}
+
 export interface PostArm {
   readonly platform: string;
   resolveTarget?(bag: TargetResolveBag): ReplyTarget | null;
   dispatchReply?(target: ReplyTarget, text: string, replier?: ReplierLabel): Promise<string>;
   readonly displayNameCapable?: boolean;
   splitText?(text: string): readonly string[];
-  dispatchUnified?(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps, replier?: ReplierLabel): Promise<string>;
+  dispatchUnified?(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps, replier?: ReplierLabel, intent?: PostIntent): Promise<string>;
   closeUnifiedSilently?(origin: UnifiedWakeOrigin, deps: UnifiedReplyDeps): Promise<void>;
   editMessage?(locus: EditLocus, messageId: string, text: string): Promise<void>;
   retargetEditLocus?(origin: UnifiedWakeOrigin, locus: EditLocus): Promise<EditLocus>;

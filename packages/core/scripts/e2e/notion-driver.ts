@@ -182,10 +182,16 @@ export class NotionDriver {
     };
   }
 
-  async awaitBotReplyIn(discussionId: string, sinceTime: string, opts: { timeoutMs: number }): Promise<NotionComment> {
+  async awaitBotReplyIn(discussionId: string, sinceTime: string, opts: { timeoutMs: number; skip?: (c: NotionComment) => boolean }): Promise<NotionComment> {
     return pollUntil(
-      async () => (await this.allComments()).find((c) => this.isBotComment(c) && c.discussionId === discussionId && c.createdTime > sinceTime),
-      { timeoutMs: opts.timeoutMs, what: `a bot reply in discussion ${discussionId} after ${sinceTime}` },
+      async () =>
+        (await this.allComments()).find(
+          (c) => this.isBotComment(c) && c.discussionId === discussionId && c.createdTime > sinceTime && !(opts.skip?.(c) ?? false),
+        ),
+      {
+        timeoutMs: opts.timeoutMs,
+        what: `a bot reply in discussion ${discussionId} after ${sinceTime}${opts.skip !== undefined ? " that is not skipped as an interim post" : ""}`,
+      },
     );
   }
 

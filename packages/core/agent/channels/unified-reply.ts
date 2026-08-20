@@ -10,7 +10,7 @@ import {
 } from "./reply-post.js";
 import { withReplierPrefix } from "./turn-delivery.js";
 import { onVercel } from "../access/platform.js";
-import { postArm } from "./post-arms.js";
+import { postArm, type PostIntent } from "./post-arms.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
 import type { EditLocus } from "./reply-edit.js";
 
@@ -24,7 +24,7 @@ type TeamsOrigin = Extract<UnifiedWakeOrigin, { platform: "teams" }>;
 export interface UnifiedReplyDeps {
   readonly postSlack?: (origin: SlackOrigin, text: string) => Promise<string>;
   readonly postGitHub?: (origin: GitHubOrigin, text: string) => Promise<string>;
-  readonly postLinear?: (origin: LinearOrigin, text: string) => Promise<string>;
+  readonly postLinear?: (origin: LinearOrigin, text: string, intent?: PostIntent) => Promise<string>;
   readonly closeLinear?: (origin: LinearOrigin) => Promise<void>;
   readonly postNotion?: (origin: NotionOrigin, text: string) => Promise<string>;
   readonly postDiscord?: (origin: DiscordOrigin, text: string) => Promise<string>;
@@ -56,6 +56,7 @@ export async function postUnifiedReply(
   deps: UnifiedReplyDeps = {},
   audit?: ReplyAudit,
   replier?: ReplierLabel,
+  intent?: PostIntent,
 ): Promise<string> {
   const arm = postArm(origin.platform);
   const nativeReplier = arm?.displayNameCapable ? replier : undefined;
@@ -75,7 +76,7 @@ export async function postUnifiedReply(
     run: async () => {
       let realId: string;
       try {
-        realId = await dispatchUnifiedReply(origin, body, deps, nativeReplier);
+        realId = await dispatchUnifiedReply(origin, body, deps, nativeReplier, intent);
       } catch (err) {
         await notePostFailure(audit, err, origin.platform);
         throw err;
@@ -113,7 +114,13 @@ export async function resolveUnifiedEditLocus(origin: UnifiedWakeOrigin): Promis
   return (await retarget(origin, locus).catch(() => locus)) ?? locus;
 }
 
-async function dispatchUnifiedReply(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps = {}, replier?: ReplierLabel): Promise<string> {
+async function dispatchUnifiedReply(
+  origin: UnifiedWakeOrigin,
+  text: string,
+  deps: UnifiedReplyDeps = {},
+  replier?: ReplierLabel,
+  intent?: PostIntent,
+): Promise<string> {
   if (process.env.OE_EGRESS_SPOOF === "1") {
     if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
     console.warn(`[oe] OE_EGRESS_SPOOF: swallowed a unified ${origin.platform} reply (${text.length}c)`);
@@ -123,7 +130,7 @@ async function dispatchUnifiedReply(origin: UnifiedWakeOrigin, text: string, dep
   if (!arm?.dispatchUnified) {
     throw new Error(`unified reply couldn't post — no post arm registered for "${origin.platform}".`);
   }
-  return arm.dispatchUnified(origin, text, deps, replier);
+  return arm.dispatchUnified(origin, text, deps, replier, intent);
 }
 
 export async function completeUnifiedSessionSilently(origin: UnifiedWakeOrigin, deps: UnifiedReplyDeps = {}): Promise<boolean> {

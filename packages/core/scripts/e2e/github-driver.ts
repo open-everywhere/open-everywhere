@@ -82,10 +82,13 @@ export class GithubDriver {
     return c.authorLogin === this.botLogin || c.authorType === "Bot";
   }
 
-  async awaitBotReply(issueNumber: number, afterCommentId: number, opts: { timeoutMs: number }): Promise<GithubComment> {
+  async awaitBotReply(issueNumber: number, afterCommentId: number, opts: { timeoutMs: number; skip?: (c: GithubComment) => boolean }): Promise<GithubComment> {
     return pollUntil(
-      async () => (await this.comments(issueNumber)).find((c) => this.isBotComment(c) && c.id > afterCommentId),
-      { timeoutMs: opts.timeoutMs, what: `a ${this.botLogin} reply on issue #${issueNumber} after comment ${afterCommentId}` },
+      async () => (await this.comments(issueNumber)).find((c) => this.isBotComment(c) && c.id > afterCommentId && !(opts.skip?.(c) ?? false)),
+      {
+        timeoutMs: opts.timeoutMs,
+        what: `a ${this.botLogin} reply on issue #${issueNumber} after comment ${afterCommentId}${opts.skip !== undefined ? " that is not skipped as an interim post" : ""}`,
+      },
     );
   }
 

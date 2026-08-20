@@ -2,6 +2,7 @@ import { gunzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import type {
   CacheEvidence,
+  EndpointsResponse,
   ModelCallsQueryOpts,
   ModelCallsReadResult,
   ModelCallWireRow,
@@ -73,6 +74,51 @@ const DEFAULT_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/v4/ai";
 export function gatewayBaseUrl(env: Readonly<Record<string, string | undefined>> = process.env): string {
   const override = env.OE_AI_GATEWAY_URL?.trim();
   return override && override.length > 0 ? override : DEFAULT_GATEWAY_BASE_URL;
+}
+
+export function endpointsUrl(gatewayOrigin: string, modelId: string): string {
+  return `${gatewayOrigin.replace(/\/+$/, "")}/v1/models/${modelId}/endpoints`;
+}
+
+export function parseEndpointsResponse(json: unknown): EndpointsResponse {
+  const o = json as Record<string, unknown> | null;
+  const data = o?.data as Record<string, unknown> | undefined;
+  if (data === undefined || typeof data !== "object") throw new Error("endpoints response missing data object");
+  const endpoints = data.endpoints;
+  if (!Array.isArray(endpoints)) throw new Error("endpoints response missing data.endpoints[]");
+  const providers = endpoints
+    .map((e) => (e as Record<string, unknown> | null)?.provider_name)
+    .filter((p): p is string => typeof p === "string" && p.length > 0);
+  return { modelId: typeof data.id === "string" ? data.id : "", providers };
+}
+
+export async function fetchServingProviders(gatewayOrigin: string, apiKey: string, modelId: string): Promise<EndpointsResponse> {
+  const res = await fetch(endpointsUrl(gatewayOrigin, modelId), {
+    headers: { authorization: `Bearer ${apiKey}`, accept: "application/json" },
+  });
+  const json = (await res.json()) as unknown;
+  if (!res.ok) throw new Error(`provider-endpoints probe failed for ${modelId}: HTTP ${res.status} — ${JSON.stringify(json).slice(0, 500)}`);
+  return parseEndpointsResponse(json);
+}
+
+export function chooseProvider(providers: readonly string[], opts: { readonly only?: string } = {}): string {
+  if (providers.length === 0) throw new Error("chooseProvider: no serving providers reported for this model — cannot pin a batch to nothing");
+  if (opts.only !== undefined) {
+    if (!providers.includes(opts.only)) {
+      throw new Error(`chooseProvider: requested provider "${opts.only}" is not among this model's reported serving providers [${providers.join(", ")}]`);
+    }
+    return opts.only;
+  }
+  return providers[0];
+}
+
+export function pinProvider(options: unknown, provider: string): unknown {
+  const o = (options ?? {}) as Record<string, unknown>;
+  const priorProviderOptions = (o.providerOptions as Record<string, unknown> | undefined) ?? {};
+  const priorGateway = (priorProviderOptions.gateway as Record<string, unknown> | undefined) ?? {};
+  const gatewayOpts: Record<string, unknown> = { ...priorGateway, only: [provider] };
+  delete gatewayOpts.order;
+  return { ...o, providerOptions: { ...priorProviderOptions, gateway: gatewayOpts } };
 }
 
 export function buildReplayRequest(row: Pick<ModelCallWireRow, "model">, decoded: DecodedCapture, opts: { readonly apiKey: string; readonly baseUrl?: string }): ReplayRequest {
@@ -197,7 +243,7 @@ export async function postReplay(request: ReplayRequest): Promise<{ readonly sta
   return { status: r.status, json };
 }
 
-export function summarizeReplaySet(meta: { readonly sessionId: string; readonly turnId: string; readonly stepIndex: number; readonly model: string }, outcomes: readonly ReplayOutcome[]): ReplaySummary {
+export function summarizeReplaySet(meta: { readonly sessionId: string; readonly turnId: string; readonly stepIndex: number; readonly model: string; readonly pinnedProvider: string }, outcomes: readonly ReplayOutcome[]): ReplaySummary {
   const toolChoices = outcomes.map((o) => o.tools[0]?.toolName ?? null).filter((t): t is string => t !== null);
   const counts = new Map<string, number>();
   for (const t of toolChoices) counts.set(t, (counts.get(t) ?? 0) + 1);
@@ -224,5 +270,6 @@ export function summarizeReplaySet(meta: { readonly sessionId: string; readonly 
     toolConsistency,
     bindingConsistency,
     coldReplays,
+    pinnedProvider: meta.pinnedProvider,
   };
 }
