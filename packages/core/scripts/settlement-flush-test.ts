@@ -7,6 +7,9 @@ delete process.env.OE_ORG;
 
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createRequire } from "node:module";
+import { dirname } from "node:path";
+import { pathToFileURL } from "node:url";
 import memoryHook from "../agent/hooks/memory.js";
 import spawnTaintHook from "../agent/hooks/spawn-taint.js";
 import { conflictName } from "../agent/hooks/memory.js";
@@ -618,4 +621,95 @@ console.log("9. the OPE-719 discriminator — the delete survives the awaits, an
   });
 }
 
-console.log(`\n✓ settlement-flush: ${n} assertions passed (a terminal task view and a sync delegation return each persist the parent's tree with outcome:"settled"; the fan-out guard skips — and audits the skip — while any delegated task is non-terminal, including one seen only as a working/input_required view; a dispatch receipt flushes nothing; the session-end backstop stays a silent, conflict-free no-op; N concurrent children share ONE tree with the parent as its only writer; a task the seat never peeks releases the tree after a bounded number of held attempts; and the OPE-719 second live id is a SECOND DISPATCH, not a lost delete)\n`);
+interface EveActionResultEvent {
+  readonly type: string;
+  readonly data: { readonly result: unknown };
+}
+
+interface EveRuntimeActions {
+  setPendingRuntimeActionBatch(input: {
+    readonly actions: readonly unknown[];
+    readonly event: { readonly sequence: number; readonly stepIndex: number; readonly turnId: string };
+    readonly responseMessages: readonly unknown[];
+    readonly session: unknown;
+  }): unknown;
+  resolvePendingRuntimeActions(input: {
+    readonly emit: (event: EveActionResultEvent) => Promise<void>;
+    readonly session: unknown;
+    readonly stepInput: { readonly runtimeActionResults: readonly unknown[] };
+  }): Promise<{ readonly outcome: string }>;
+}
+
+console.log("10. the blocking arm's batch rule — a partial dispatch batch emits NO action.result (OPE-621):");
+{
+  const require = createRequire(import.meta.url);
+  const eveRoot = dirname(require.resolve("eve/package.json"));
+  const evePath = (rel: string) => pathToFileURL(join(eveRoot, "dist/src", rel)).href;
+  const runtimeActions = (await import(evePath("harness/runtime-actions.js"))) as EveRuntimeActions;
+  const { AGENT_HANDLES_STATE_KEY } = (await import(evePath("harness/handles/state-key.js"))) as { AGENT_HANDLES_STATE_KEY: string };
+
+  const NAME = "worker";
+  const call = (id: string): unknown => ({ kind: "subagent-call", callId: id, subagentName: NAME, input: {} });
+  const handle = (id: string): unknown => ({
+    phase: "running",
+    identity: { id: `ag_${NAME}:${id}`, name: NAME, nodeId: "node" },
+    operation: { kind: "start", id: `op_${id}`, callId: id, parentTurnId: "turn_1" },
+    address: { kind: "agent/local", sessionId: `child_${id}`, continuationToken: `tok_${id}` },
+  });
+  const childResult = (id: string, output: string): unknown => ({
+    kind: "subagent-result",
+    origin: "child",
+    callId: id,
+    subagentName: NAME,
+    output,
+    outcome: { kind: "terminal", result: { kind: "succeeded", output }, usageDelta: { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0 } },
+  });
+
+  const parked = runtimeActions.setPendingRuntimeActionBatch({
+    actions: [call("call_A"), call("call_B")],
+    event: { sequence: 3, stepIndex: 0, turnId: "turn_1" },
+    responseMessages: [{ role: "assistant", content: [] }],
+    session: { sessionId: "parent-seat", history: [], state: { [AGENT_HANDLES_STATE_KEY]: { handles: [handle("call_A"), handle("call_B")] } } },
+  });
+
+  async function resolveWith(results: readonly unknown[]): Promise<{ outcome: string; events: EveActionResultEvent[] }> {
+    const events: EveActionResultEvent[] = [];
+    const out = await runtimeActions.resolvePendingRuntimeActions({
+      emit: async (e) => {
+        events.push(e);
+      },
+      session: parked,
+      stepInput: { runtimeActionResults: results },
+    });
+    return { outcome: out.outcome, events };
+  }
+
+  const partial = await resolveWith([childResult("call_A", "A answered")]);
+  eq(partial.outcome, "unresolved", "🔴 ONE of two children back ⇒ eve leaves the batch UNRESOLVED — the parent's turn stays parked");
+  eq(
+    partial.events.filter((e) => e.type === "action.result").length,
+    0,
+    "🔴 …and emits NO action.result at all, so BRANCH 3's flush never runs while child B holds the tree",
+  );
+
+  const full = await resolveWith([childResult("call_A", "A answered"), childResult("call_B", "B answered")]);
+  eq(full.outcome, "resolved", "NEGATIVE CONTROL: with BOTH children back the batch resolves");
+  const emitted = full.events.filter((e) => e.type === "action.result").map((e) => e.data.result as { callId: string });
+  eq(
+    emitted.map((r) => r.callId),
+    ["call_A", "call_B"],
+    "NEGATIVE CONTROL: …and BOTH action.result rows are emitted, in pending-key order",
+  );
+
+  const s5 = makeSeat("seat-blocking-fanout");
+  await fireMemory(s5, "session.started");
+  const BEFORE5 = stored()["MEMORY.md"] as string;
+  const EDIT5 = `${BEFORE5}- both blocking workers wrote before either result arrived\n`;
+  s5.sandbox.childEdit("MEMORY.md", EDIT5);
+  await fireResult(s5, emitted[0]);
+  eq(stored()["MEMORY.md"], EDIT5, "the FIRST eve-emitted sync result flushes the shared tree — no sibling can still be writing it");
+  await fireResult(s5, emitted[1]);
+  eq(stored()["MEMORY.md"], EDIT5, "…and the second is a diff-based no-op, exactly as P5 pins for the settlement label");
+}
+
+console.log(`\n✓ settlement-flush: ${n} assertions passed (a terminal task view and a sync delegation return each persist the parent's tree with outcome:"settled"; the fan-out guard skips — and audits the skip — while any delegated task is non-terminal, including one seen only as a working/input_required view; a dispatch receipt flushes nothing; the session-end backstop stays a silent, conflict-free no-op; N concurrent children share ONE tree with the parent as its only writer; a task the seat never peeks releases the tree after a bounded number of held attempts; the OPE-719 second live id is a SECOND DISPATCH, not a lost delete; and the installed eve emits no action.result until every child of a dispatch batch has returned, which is why the blocking arm needs no guard)\n`);
