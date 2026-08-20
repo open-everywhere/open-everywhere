@@ -356,7 +356,8 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       if (action.kind === "silent") {
         const bind = { session: ctx.session } as unknown as BindableContext;
         const wakeId = currentWakeId(bind);
-        const silentOrigin = wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null;
+        const answeredThisWake = wakeId !== undefined && repliedWakesThisTurn(currentTurnId(bind)).includes(wakeId);
+        const silentOrigin = !answeredThisWake && wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null;
         let linearClosed: boolean | undefined;
         if (silentOrigin) {
           try {

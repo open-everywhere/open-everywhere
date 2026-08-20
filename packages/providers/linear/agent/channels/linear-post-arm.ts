@@ -1,17 +1,48 @@
 import { createLinearAgentActivity, callLinearGraphQL, LinearApiError } from "eve/channels/linear";
 import { linearAppActorCredentials } from "./linear-credentials.js";
 import { markNotApplied, carryFailureSignals } from "@open-everywhere/core/agent/adapter-api.js";
-import type { PostArm, TargetResolveBag, ReplyTarget, UnifiedWakeOrigin, UnifiedReplyDeps } from "@open-everywhere/core/agent/adapter-api.js";
+import type { PostArm, PostIntent, TargetResolveBag, ReplyTarget, UnifiedWakeOrigin, UnifiedReplyDeps } from "@open-everywhere/core/agent/adapter-api.js";
+
+function activityTypeFor(intent: PostIntent | undefined): "response" | "thought" {
+  return intent?.terminal === false ? "thought" : "response";
+}
+
+function isDecidedLinearRefusal(err: unknown): boolean {
+  if (!(err instanceof LinearApiError)) return false;
+  const body = err.body as { errors?: Array<Record<string, unknown>> } | undefined;
+  if (!Array.isArray(body?.errors)) return false;
+  return body.errors.some((e) => {
+    const ext = (e as { extensions?: Record<string, unknown> } | undefined)?.extensions;
+    if (!ext || typeof ext !== "object") return false;
+    if ((ext as { userError?: unknown }).userError === true) return true;
+    const nested = (ext as { http?: { status?: unknown } }).http;
+    for (const raw of [(ext as { statusCode?: unknown }).statusCode, nested?.status]) {
+      if (typeof raw === "number" && raw >= 400 && raw < 500 && raw !== 408 && raw !== 429) return true;
+    }
+    return false;
+  });
+}
+
+function carryLinearFailure<E extends Error>(from: unknown, to: E): E {
+  const wrapped = carryFailureSignals(from, to);
+  return isDecidedLinearRefusal(from) ? markNotApplied(wrapped) : wrapped;
+}
 
 type LinearTarget = Extract<ReplyTarget, { platform: "linear"; agentSessionId: string }>;
 type LinearAmbientTarget = Extract<ReplyTarget, { platform: "linear"; issueId: string }>;
 type LinearOrigin = Extract<UnifiedWakeOrigin, { platform: "linear" }>;
 
 async function dispatchLinearReply(target: LinearTarget, text: string): Promise<string> {
-  const res = await createLinearAgentActivity({
-    credentials: linearAppActorCredentials,
-    activity: { agentSessionId: target.agentSessionId, content: { body: text, type: "response" } },
-  });
+  let res: { id: string; success: boolean };
+  try {
+    res = await createLinearAgentActivity({
+      credentials: linearAppActorCredentials,
+      activity: { agentSessionId: target.agentSessionId, content: { body: text, type: "response" } },
+    });
+  } catch (err) {
+    if (isDecidedLinearRefusal(err) && err instanceof Error) markNotApplied(err);
+    throw err;
+  }
   if (res.success !== true) {
     throw markNotApplied(new Error(`reply couldn't post to Linear — the response activity returned no success on session ${target.agentSessionId}`));
   }
@@ -29,7 +60,7 @@ function describeLinearError(err: unknown): string {
   return "network/transport error";
 }
 
-async function liveLinearPost(origin: LinearOrigin, text: string): Promise<string> {
+async function liveLinearPost(origin: LinearOrigin, text: string, intent?: PostIntent): Promise<string> {
   if (origin.ambient) {
     let data: { commentCreate?: { success?: boolean } };
     try {
@@ -40,7 +71,7 @@ async function liveLinearPost(origin: LinearOrigin, text: string): Promise<strin
         variables: { input: { issueId: origin.issueId, ...(origin.parentId ? { parentId: origin.parentId } : {}), body: text } },
       });
     } catch (err) {
-      throw carryFailureSignals(err, new Error(`unified reply couldn't post to Linear — ambient commentCreate failed on issue ${origin.issueId} (${describeLinearError(err)})`));
+      throw carryLinearFailure(err, new Error(`unified reply couldn't post to Linear — ambient commentCreate failed on issue ${origin.issueId} (${describeLinearError(err)})`));
     }
     if (data.commentCreate?.success !== true) {
       throw markNotApplied(new Error(`unified reply couldn't post to Linear — ambient commentCreate returned no success on issue ${origin.issueId}`));
@@ -48,22 +79,23 @@ async function liveLinearPost(origin: LinearOrigin, text: string): Promise<strin
     return LINEAR_AMBIENT_COMMENT_ID;
   }
   if (!origin.agentSessionId) throw new Error(`unified reply: linear origin for issue ${origin.issueId} has neither an agent session nor the ambient flag (invariant broken)`);
+  const type = activityTypeFor(intent);
   let res: { id: string; success: boolean };
   try {
     res = await createLinearAgentActivity({
       credentials: linearAppActorCredentials,
-      activity: { agentSessionId: origin.agentSessionId, content: { type: "response", body: text } },
+      activity: { agentSessionId: origin.agentSessionId, content: { type, body: text } },
     });
   } catch (err) {
-    throw carryFailureSignals(
+    throw carryLinearFailure(
       err,
       new Error(
-        `unified reply couldn't post to Linear — createLinearAgentActivity(response) failed on issue ${origin.issueId} (session ${origin.agentSessionId}) (${describeLinearError(err)})`,
+        `unified reply couldn't post to Linear — createLinearAgentActivity(${type}) failed on issue ${origin.issueId} (session ${origin.agentSessionId}) (${describeLinearError(err)})`,
       ),
     );
   }
   if (res.success !== true) {
-    throw markNotApplied(new Error(`unified reply couldn't post to Linear — the response activity returned no success on issue ${origin.issueId} (session ${origin.agentSessionId})`));
+    throw markNotApplied(new Error(`unified reply couldn't post to Linear — the ${type} activity returned no success on issue ${origin.issueId} (session ${origin.agentSessionId})`));
   }
   return res.id || "unknown";
 }
@@ -97,7 +129,7 @@ async function dispatchLinearAmbientReply(target: LinearAmbientTarget, text: str
       variables: { input: { issueId: target.issueId, ...(target.parentId ? { parentId: target.parentId } : {}), body: text } },
     });
   } catch (err) {
-    throw carryFailureSignals(err, new Error(`reply couldn't post to Linear — commentCreate failed on issue ${target.issueId} (${describeLinearError(err)})`));
+    throw carryLinearFailure(err, new Error(`reply couldn't post to Linear — commentCreate failed on issue ${target.issueId} (${describeLinearError(err)})`));
   }
   if (data.commentCreate?.success !== true) {
     throw markNotApplied(new Error(`reply couldn't post to Linear — commentCreate returned no success on issue ${target.issueId}`));
@@ -121,7 +153,8 @@ export const linearPostArm: PostArm = {
     "agentSessionId" in target
       ? dispatchLinearReply(target as LinearTarget, text)
       : dispatchLinearAmbientReply(target as LinearAmbientTarget, text),
-  dispatchUnified: (origin, text, deps: UnifiedReplyDeps) => (deps.postLinear ?? liveLinearPost)(origin as LinearOrigin, text),
+  dispatchUnified: (origin, text, deps: UnifiedReplyDeps, _replier, intent) =>
+    (deps.postLinear ?? liveLinearPost)(origin as LinearOrigin, text, intent),
   closeUnifiedSilently: (origin, deps: UnifiedReplyDeps) => (deps.closeLinear ?? liveLinearSilentClose)(origin as LinearOrigin),
   describeRedriveTarget: (origin) => {
     const o = origin as LinearOrigin;

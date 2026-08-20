@@ -85,7 +85,8 @@ const {
   createJudgeReporter,
   renderReportedJudgeSummary,
 } = await import("../packages/core/scripts/e2e/judge.js");
-const { SCENARIOS, skipCategory, skipReason, ScenarioSkip, isFillerAck, expensiveReasonError } = await import("../packages/core/scripts/e2e/scenarios.js");
+const { SCENARIOS, skipCategory, skipReason, ScenarioSkip, isFillerAck, isPendingWorkHandoff, expensiveReasonError } =
+  await import("../packages/core/scripts/e2e/scenarios.js");
 const { PENDING_WORK_FRAME } = await import("../packages/core/agent/channels/turn-delivery.js");
 const { emptySkipCounts, renderSkipBreakdown, SKIP_KINDS } = await import("../packages/core/scripts/e2e/skip-summary.js");
 const { verifySlackSignature, classifyEnvelope, buildFrontHandler, PUBLIC_SLACK_ROUTE } = await import("@open-everywhere/provider-slack/agent/channels/slack-front.js");
@@ -794,6 +795,20 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
     !isFillerAck("A worker finished the admin listing. Domains: e2e-unified, e2e-secondary. Silos: 4 total."),
     "isFillerAck: OPE-834 negative control — text that mentions a worker but carries no PENDING_WORK_FRAME stays substantive",
   );
+}
+
+{
+  ok(isPendingWorkHandoff(PENDING_WORK_FRAME), "isPendingWorkHandoff: the bare host frame line IS a hand-off");
+  ok(
+    isPendingWorkHandoff(`${PENDING_WORK_FRAME}\n\nI'm checking the issue details and will return a grounded one-line summary including \`gh-39426\`.`),
+    "isPendingWorkHandoff: the live-run J-GH hand-off comment, verbatim, IS a hand-off",
+  );
+  ok(
+    !isPendingWorkHandoff("Issue #1 (\u201c[oe-e2e] ambient supervisor fixture issue\u201d) couldn't be summarized from its body; **gh-39426**."),
+    "isPendingWorkHandoff: the live-run grounded answer is NOT a hand-off",
+  );
+  ok(!isPendingWorkHandoff("one sec, looking at it"), "isPendingWorkHandoff: plain filler prose with no host frame is NOT a hand-off (no prose heuristic here)");
+  ok(isFillerAck("one sec, looking at it"), "isPendingWorkHandoff: …and isFillerAck, the wider predicate, still catches that prose — the two are different questions");
 }
 
 {
