@@ -93,14 +93,17 @@ console.log("1. source scan (factored shape, closed inventory):");
       SLUGS.includes(slug),
       `${f} uses defineDynamic but has no row in this test's inventory — pre-register its entry (access/window-gated.ts preRegisterDynamicEntry) and add the (slug, entryKey) row here`,
     );
+    const authorsDefineTool = src.includes("defineTool(");
     ok(
       !src.slice(dynAt).includes("defineTool("),
       `${f} has an inline defineTool literal inside/after its defineDynamic call — that rides eve's BUILD-ORDER-COUNTER transform (nondeterministic durable stepIds across deploys). Factor it to a top-level const + preRegisterDynamicEntry.`,
     );
-    ok(
-      src.includes("preRegisterDynamicEntry("),
-      `${f} never calls preRegisterDynamicEntry — if it ever authors a toModelOutput projection, that projection would not survive eve's replay rebuild`,
-    );
+    if (authorsDefineTool) {
+      ok(
+        src.includes("preRegisterDynamicEntry("),
+        `${f} authors a defineTool entry but never calls preRegisterDynamicEntry — its toModelOutput projection would not survive eve's replay rebuild`,
+      );
+    }
   }
   eq(scanned, SLUGS.length, `the scan saw exactly the ${SLUGS.length} inventoried defineDynamic tool files`);
 }
