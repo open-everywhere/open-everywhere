@@ -22,6 +22,10 @@ function ctx(platform: string, attrs: Record<string, string> = {}): BindableCont
 {
   const linear = currentTurnEntityRef(ctx("linear", { issue_id: "abc-123" }));
   ok(linear?.platform === "linear" && linear.id === "abc-123", "Linear: default ref reads the issue_id auth attribute");
+  ok(linear?.organizationId === undefined, "NEGATIVE CONTROL: no organization_id stamped ⇒ the ref carries NO organizationId key (byte-identical to before OPE-882)");
+
+  const linearOrg = currentTurnEntityRef(ctx("linear", { issue_id: "abc-123", organization_id: "org-soak" }));
+  ok(linearOrg?.platform === "linear" && linearOrg.id === "abc-123" && linearOrg.organizationId === "org-soak", "🔴 THE FIX: a Linear ref carries organizationId off the turn's organization_id auth attribute");
 
   ok(currentTurnEntityRef(ctx("linear", {})) === undefined, "Linear: no issue_id stamped ⇒ no default (never guesses)");
 
@@ -97,6 +101,26 @@ function ctx(platform: string, attrs: Record<string, string> = {}): BindableCont
   ok(ref.id === "ok-id", "checkAccess passing lets resolution through");
   const outcome = await run("alice");
   ok(outcome === "assigned:ok-id:alice", "the bound `run` closure calls the adapter fn with (entityId, value)");
+}
+
+{
+  let seenOrg: string | undefined = "never called";
+  registerEntityActionAdapter({
+    platform: "test-org-threading",
+    assign: async (id, v, organizationId) => {
+      seenOrg = organizationId;
+      return `assigned:${id}:${v}:${organizationId ?? "(none)"}`;
+    },
+  });
+  const { run } = await resolveEntityAction(ctx("test-org-threading", {}), "assign", { platform: "test-org-threading", id: "1", organizationId: "org-soak" }, []);
+  const outcome = await run("bob");
+  ok(outcome === "assigned:1:bob:org-soak", `🔴 THE FIX: run() passes the explicit ref.organizationId through to the adapter fn as a third argument (got "${outcome}")`);
+  ok(seenOrg === "org-soak", "…and the adapter fn actually received it");
+
+  const { run: runNoOrg } = await resolveEntityAction(ctx("test-org-threading", {}), "assign", { platform: "test-org-threading", id: "1" }, []);
+  seenOrg = "never called";
+  await runNoOrg("bob");
+  ok(seenOrg === undefined, "NEGATIVE CONTROL: a ref with no organizationId passes undefined through — never invents one");
 }
 
 {

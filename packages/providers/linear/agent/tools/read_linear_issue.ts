@@ -9,6 +9,7 @@ import {
   TurnOriginFenceError,
   auditOriginFenceRefusal,
   currentTurnIssue,
+  currentTurnOrganization,
   sourceScopedMount,
   getConfig,
   preRegisterDynamicEntry,
@@ -63,8 +64,9 @@ export const readLinearIssueEntry = defineTool({
     }
     const issue = input.issue ?? currentTurnIssue(ctx2 as BindableContext);
     if (!issue) throw new Error("No Linear issue available for this turn — pass `issue` explicitly (its UUID or identifier, e.g. ENG-42).");
-    await assertLinearIssueAllowed(ctx2 as BindableContext, issue, getConfig().loadDomains(), async (ref) => (await enrichIssueTeam(ref))?.teamId);
-    const res = await readLinearIssue(issue, { maxComments: MAX_COMMENTS });
+    const organizationId = currentTurnOrganization(ctx2 as BindableContext);
+    await assertLinearIssueAllowed(ctx2 as BindableContext, issue, getConfig().loadDomains(), async (ref) => (await enrichIssueTeam(ref, { organizationId }))?.teamId);
+    const res = await readLinearIssue(issue, { maxComments: MAX_COMMENTS, organizationId });
     let workspaceTrust: SurfaceTrust | undefined;
     try {
       workspaceTrust = declaredWorkspaceTrust(resolvePartition(ctx2 as BindableContext).workspaceKey);

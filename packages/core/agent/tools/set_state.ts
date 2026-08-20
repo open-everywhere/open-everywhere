@@ -74,6 +74,7 @@ export const setStateEntry = defineTool({
       scopeKey: p.surfaceKey,
       platform: ref.platform,
       entityId: ref.id,
+      ...(ref.organizationId ? { organizationId: ref.organizationId } : {}),
       state: input.state,
       requestedBy,
       tainted: untrustedIngestedThisTurn(),

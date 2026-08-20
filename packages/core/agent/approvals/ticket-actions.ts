@@ -8,6 +8,7 @@ interface TicketActionArgs {
   readonly scopeKey: string;
   readonly platform: string;
   readonly entityId: string;
+  readonly organizationId?: string;
   readonly requestedBy: string;
   readonly tainted?: boolean;
 }
@@ -34,7 +35,7 @@ async function executeTicketVerb(
   if (!fn) {
     throw new Error(`${auditAction}: no "${verb}" adapter is registered for platform "${args.platform}" (was it removed since this was proposed?).`);
   }
-  const outcome = await fn(args.entityId, args.value);
+  const outcome = await fn(args.entityId, args.value, args.organizationId);
   await appendAudit({
     ...whereFromScope(args.org, args.scopeKey),
     principalId: decidedBy,

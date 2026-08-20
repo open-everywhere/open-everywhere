@@ -1,4 +1,4 @@
-import { resolveWindowSources, type BindableContext } from "../identity/binding.js";
+import { resolveWindowSources, currentTurnOrganization, type BindableContext } from "../identity/binding.js";
 import type { Domain } from "../memory/domain.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import type { EntityRef } from "./entity-actions.js";
@@ -19,7 +19,7 @@ export interface CreatedTicket {
   readonly summary: string;
 }
 
-export type TicketCreateFn = (target: string, draft: TicketDraft) => Promise<CreatedTicket>;
+export type TicketCreateFn = (target: string, draft: TicketDraft, organizationId?: string) => Promise<CreatedTicket>;
 
 export interface TicketCreateAdapter {
   readonly platform: string;
@@ -46,6 +46,7 @@ export function ticketCreateFn(platform: string): TicketCreateFn | undefined {
 export interface ResolvedTicketCreate {
   readonly platform: string;
   readonly target: string;
+  readonly organizationId?: string;
   readonly run: (draft: TicketDraft) => Promise<CreatedTicket>;
 }
 
@@ -95,7 +96,13 @@ export async function resolveTicketCreate(
   }
 
   await adapter.checkAccess?.(ctx, target, domains);
-  return { platform, target, run: (draft: TicketDraft) => adapter.create(target, draft) };
+  const organizationId = currentTurnOrganization(ctx);
+  return {
+    platform,
+    target,
+    ...(organizationId ? { organizationId } : {}),
+    run: (draft: TicketDraft) => adapter.create(target, draft, organizationId),
+  };
 }
 
 import { githubTicketCreateAdapter } from "../scm/issue-actions.js";

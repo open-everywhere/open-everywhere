@@ -8,6 +8,7 @@ export interface TicketCreateArgs {
   readonly scopeKey: string;
   readonly platform: string;
   readonly target: string;
+  readonly organizationId?: string;
   readonly title: string;
   readonly body: string;
   readonly requestedBy: string;
@@ -30,7 +31,7 @@ const ticketCreate: ActionKind<TicketCreateArgs> = {
     if (!fn) {
       throw new Error(`ticket.create: no create adapter is registered for platform "${args.platform}" (was it removed since this was proposed?).`);
     }
-    const created = await fn(args.target, { title: args.title, body: args.body });
+    const created = await fn(args.target, { title: args.title, body: args.body }, args.organizationId);
     await appendAudit({
       ...whereFromScope(args.org, args.scopeKey),
       principalId: decidedBy,

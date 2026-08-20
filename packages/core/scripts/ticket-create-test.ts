@@ -103,6 +103,26 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
 }
 
 {
+  const calls: { target: string; organizationId: string | undefined }[] = [];
+  registerTicketCreateAdapter({
+    platform: "test-create-org",
+    create: async (target, draft, organizationId) => {
+      calls.push({ target, organizationId });
+      return { ref: { platform: "test-create-org", id: `${target}#1` }, summary: `filed ${target}#1` };
+    },
+  });
+  const resolved = await resolveTicketCreate(ctx("test-create-org", { organization_id: "org-soak" }, ["test-create-org"]), { target: "ENG" }, []);
+  ok(resolved.organizationId === "org-soak", "🔴 THE FIX: resolveTicketCreate carries the turn's organization_id auth attribute as organizationId");
+  await resolved.run({ title: "t", body: "b" });
+  ok(calls[0]?.organizationId === "org-soak", "…and `run` passes it to the adapter's create fn as a THIRD argument, alongside target/draft");
+
+  const resolvedNoOrg = await resolveTicketCreate(ctx("test-create-org", {}, ["test-create-org"]), { target: "ENG" }, []);
+  ok(resolvedNoOrg.organizationId === undefined, "NEGATIVE CONTROL: no organization_id on the turn ⇒ organizationId is ABSENT, not a guessed value");
+  await resolvedNoOrg.run({ title: "t", body: "b" });
+  ok(calls[1]?.organizationId === undefined, "…and the adapter fn receives undefined, never invents a credential selector");
+}
+
+{
   registerTicketCreateAdapter({
     platform: "test-create-default",
     defaultTarget: (c) => ((c as unknown as { session: { auth: { current: { attributes: Record<string, string> } } } }).session.auth.current.attributes.team ? "INFERRED" : undefined),
@@ -158,11 +178,11 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
   ok((await resolveTicketCreate(ctx("test-create-async", {}), { target: "fine" }, marker)).target === "fine", "an async checkAccess that resolves lets creation through");
 }
 
-const created: { target: string; title: string }[] = [];
+const created: { target: string; title: string; organizationId: string | undefined }[] = [];
 registerTicketCreateAdapter({
   platform: "test-kind-platform",
-  create: async (target, draft) => {
-    created.push({ target, title: draft.title });
+  create: async (target, draft, organizationId) => {
+    created.push({ target, title: draft.title, organizationId });
     return { ref: { platform: "test-kind-platform", id: `${target}#7` }, url: "https://example.test/7", summary: `Filed ${target}#7: "${draft.title}".` };
   },
 });
@@ -218,6 +238,17 @@ function createArgs(over: Partial<TicketCreateArgs> = {}): TicketCreateArgs {
   ok(detail.platform === "test-kind-platform" && detail.target === "ENG" && detail.requestedBy === "U_PROPOSER", "audit detail carries platform/target/requestedBy");
   ok(detail.entityId === "ENG#7", "audit detail records the id of the item that was actually created");
   ok(detail.tainted === false, "audit detail stamps tainted:false on a clean proposal");
+}
+
+{
+  created.length = 0;
+  const kind = actionKind("ticket.create")!;
+  await kind.execute(createArgs({ organizationId: "org-soak" }), "U_APPROVER");
+  ok(created[0]?.organizationId === "org-soak", "🔴 THE FIX: a FROZEN organizationId reaches the create fn at decide time (no ctx) as a third argument");
+
+  created.length = 0;
+  await kind.execute(createArgs(), "U_APPROVER");
+  ok(created[0]?.organizationId === undefined, "NEGATIVE CONTROL: a row frozen with no organizationId passes undefined — never invents a credential selector");
 }
 
 {

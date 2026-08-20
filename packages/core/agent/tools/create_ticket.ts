@@ -59,7 +59,7 @@ export const createTicketEntry = defineTool({
     const bctx = ctx as BindableContext;
     await requireSessionContinuation(bctx, "create_ticket");
     const domains = safeDomains();
-    const { platform, target } = await resolveTicketCreate(
+    const { platform, target, organizationId } = await resolveTicketCreate(
       bctx,
       input.platform || input.target ? { ...(input.platform ? { platform: input.platform } : {}), ...(input.target ? { target: input.target } : {}) } : undefined,
       domains,
@@ -82,6 +82,7 @@ export const createTicketEntry = defineTool({
       scopeKey: p.surfaceKey,
       platform,
       target,
+      ...(organizationId ? { organizationId } : {}),
       title: input.title,
       body: input.body,
       requestedBy,

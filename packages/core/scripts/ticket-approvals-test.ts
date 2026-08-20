@@ -20,15 +20,15 @@ const ok = (cond: boolean, label: string) => {
   n++;
 };
 
-const calls: { entityId: string; value: string }[] = [];
+const calls: { entityId: string; value: string; organizationId: string | undefined }[] = [];
 registerEntityActionAdapter({
   platform: "test-ticket-platform",
-  setState: async (id, v) => {
-    calls.push({ entityId: id, value: v });
+  setState: async (id, v, organizationId) => {
+    calls.push({ entityId: id, value: v, organizationId });
     return `test-ticket-platform ${id} state → "${v}"`;
   },
-  assign: async (id, v) => {
-    calls.push({ entityId: id, value: v });
+  assign: async (id, v, organizationId) => {
+    calls.push({ entityId: id, value: v, organizationId });
     return `test-ticket-platform ${id} assigned to ${v}`;
   },
 });
@@ -87,6 +87,17 @@ function assignArgs(over: Partial<TicketAssignArgs> = {}): TicketAssignArgs {
   const entry = audit.find((a) => a.action === "ticket.assign");
   ok(entry !== undefined && entry!.principalId === "U_APPROVER2", "audits ticket.assign, principal = the approver");
   ok((entry!.detail as Record<string, unknown>).tainted === true, "a tainted proposal's audit row carries tainted:true even after approval");
+}
+
+{
+  calls.length = 0;
+  const kind = actionKind("ticket.set_state")!;
+  await kind.execute(setStateArgs({ organizationId: "org-soak" }), "U_APPROVER");
+  ok(calls[0]?.organizationId === "org-soak", "🔴 THE FIX: a FROZEN organizationId reaches the adapter fn at decide time (no ctx) as a third argument");
+
+  calls.length = 0;
+  await kind.execute(setStateArgs(), "U_APPROVER");
+  ok(calls[0]?.organizationId === undefined, "NEGATIVE CONTROL: a row frozen with no organizationId passes undefined — never invents a credential selector");
 }
 
 {

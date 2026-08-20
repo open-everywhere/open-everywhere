@@ -2,6 +2,7 @@ import {
   bindFrom,
   currentTurnIssue,
   currentTurnGithubTarget,
+  currentTurnOrganization,
   resolveWindowSources,
   type BindableContext,
 } from "../identity/binding.js";
@@ -11,11 +12,12 @@ import { admitProviderRegistration } from "../access/provider-selection.js";
 export interface EntityRef {
   readonly platform: string;
   readonly id: string;
+  readonly organizationId?: string;
 }
 
 export type EntityVerb = "setState" | "assign" | "addLabel";
 
-export type EntityActionFn = (entityId: string, value: string) => Promise<string>;
+export type EntityActionFn = (entityId: string, value: string, organizationId?: string) => Promise<string>;
 
 export interface EntityActionAdapter {
   readonly platform: string;
@@ -50,7 +52,9 @@ export function currentTurnEntityRef(ctx: BindableContext): EntityRef | undefine
   const binding = bindFrom(ctx);
   if (binding.platform === "linear") {
     const issue = currentTurnIssue(ctx);
-    return issue ? { platform: "linear", id: issue } : undefined;
+    if (!issue) return undefined;
+    const organizationId = currentTurnOrganization(ctx);
+    return { platform: "linear", id: issue, ...(organizationId ? { organizationId } : {}) };
   }
   if (binding.platform === "github") {
     const t = currentTurnGithubTarget(ctx);
@@ -94,7 +98,7 @@ export async function resolveEntityAction(
     );
   }
   await adapter.checkAccess?.(ctx, ref.id, domains);
-  return { ref, run: (value: string) => fn(ref.id, value) };
+  return { ref, run: (value: string) => fn(ref.id, value, ref.organizationId) };
 }
 
 import { githubEntityAdapter } from "../scm/issue-actions.js";

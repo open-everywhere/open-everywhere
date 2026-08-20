@@ -1,11 +1,20 @@
 import { callLinearGraphQL, type LinearApiOptions, type LinearChannelCredentials } from "eve/channels/linear";
-import { linearAppActorCredentials } from "./linear-credentials.js";
+import { linearCredentialsForOrg } from "./linear-credentials.js";
 import { assertLinearTeamWriteAllowed } from "./linear-scope.js";
-import { currentTurnIssue, type BindableContext, type CreatedTicket, type Domain, type TicketCreateAdapter, type TicketDraft } from "@open-everywhere/core/agent/adapter-api.js";
+import {
+  currentTurnIssue,
+  currentTurnOrganization,
+  type BindableContext,
+  type CreatedTicket,
+  type Domain,
+  type TicketCreateAdapter,
+  type TicketDraft,
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface LinearCreateOpts {
   readonly api?: LinearApiOptions;
   readonly credentials?: LinearChannelCredentials;
+  readonly organizationId?: string;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -25,7 +34,7 @@ export async function resolveLinearTeamId(target: string, opts: LinearCreateOpts
   if (UUID_RE.test(target)) return target;
   const data = await callLinearGraphQL<{ teams?: { nodes?: TeamNode[] } }>({
     api: opts.api,
-    credentials: opts.credentials ?? linearAppActorCredentials,
+    credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
     query: "query OeFindTeam { teams(first: 250) { nodes { id key name } } }",
     queryName: "OeFindTeam",
   });
@@ -44,7 +53,7 @@ export async function createLinearIssue(target: string, draft: TicketDraft, opts
   const teamId = await resolveLinearTeamId(target, opts);
   const data = await callLinearGraphQL<{ issueCreate?: { success?: boolean; issue?: { id?: string; identifier?: string; url?: string } } }>({
     api: opts.api,
-    credentials: opts.credentials ?? linearAppActorCredentials,
+    credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
     query:
       "mutation OeCreateIssue($teamId: String!, $title: String!, $description: String) { issueCreate(input: { teamId: $teamId, title: $title, description: $description }) { success issue { id identifier url } } }",
     queryName: "OeCreateIssue",
@@ -71,14 +80,16 @@ function defaultLinearTeam(ctx: BindableContext): string | undefined {
 
 export const linearTicketCreateAdapter: TicketCreateAdapter = {
   platform: "linear",
-  checkAccess: (ctx: BindableContext, target: string, domains: readonly Domain[]) =>
-    assertLinearTeamWriteAllowed(ctx, target, domains, async (t) => {
+  checkAccess: (ctx: BindableContext, target: string, domains: readonly Domain[]) => {
+    const organizationId = currentTurnOrganization(ctx);
+    return assertLinearTeamWriteAllowed(ctx, target, domains, async (t) => {
       try {
-        return await resolveLinearTeamId(t);
+        return await resolveLinearTeamId(t, { organizationId });
       } catch {
         return undefined;
       }
-    }),
+    });
+  },
   defaultTarget: defaultLinearTeam,
-  create: (target, draft) => createLinearIssue(target, draft),
+  create: (target, draft, organizationId) => createLinearIssue(target, draft, { organizationId }),
 };

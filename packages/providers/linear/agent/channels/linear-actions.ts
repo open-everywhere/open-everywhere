@@ -1,12 +1,14 @@
 import { callLinearGraphQL, type LinearApiOptions, type LinearChannelCredentials } from "eve/channels/linear";
-import { linearAppActorCredentials } from "./linear-credentials.js";
+import { linearCredentialsForOrg } from "./linear-credentials.js";
 import { assertLinearIssueWriteAllowed } from "./linear-scope.js";
 import { enrichIssueTeam } from "./linear.js";
+import { currentTurnOrganization } from "@open-everywhere/core/agent/adapter-api.js";
 import type { BindableContext, Domain, EntityActionAdapter } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface LinearActionOpts {
   readonly api?: LinearApiOptions;
   readonly credentials?: LinearChannelCredentials;
+  readonly organizationId?: string;
 }
 
 function str(v: unknown): string | undefined {
@@ -23,7 +25,7 @@ interface WorkflowStateNode {
 async function fetchIssueTeamStates(issueRef: string, opts: LinearActionOpts): Promise<WorkflowStateNode[]> {
   const data = await callLinearGraphQL<{ issue?: { team?: { states?: { nodes?: WorkflowStateNode[] } } } | null }>({
     api: opts.api,
-    credentials: opts.credentials ?? linearAppActorCredentials,
+    credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
     query: "query OeIssueTeamStates($id: String!) { issue(id: $id) { team { states(first: 100) { nodes { id name } } } } }",
     queryName: "OeIssueTeamStates",
     variables: { id: issueRef },
@@ -40,7 +42,7 @@ interface LabelNode {
 async function fetchIssueTeamLabels(issueRef: string, opts: LinearActionOpts): Promise<LabelNode[]> {
   const data = await callLinearGraphQL<{ issue?: { team?: { labels?: { nodes?: LabelNode[] } } } | null }>({
     api: opts.api,
-    credentials: opts.credentials ?? linearAppActorCredentials,
+    credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
     query: "query OeIssueTeamLabels($id: String!) { issue(id: $id) { team { labels(first: 250) { nodes { id name } } } } }",
     queryName: "OeIssueTeamLabels",
     variables: { id: issueRef },
@@ -60,7 +62,7 @@ async function resolveLinearUserId(assignee: string, opts: LinearActionOpts): Pr
   if (UUID_RE.test(assignee)) return assignee;
   const data = await callLinearGraphQL<{ users?: { nodes?: UserNode[] } }>({
     api: opts.api,
-    credentials: opts.credentials ?? linearAppActorCredentials,
+    credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
     query: "query OeFindUser { users(first: 250) { nodes { id email name displayName } } }",
     queryName: "OeFindUser",
   });
@@ -93,7 +95,7 @@ export async function setLinearIssueState(issueRef: string, stateName: string, o
   }
   await callLinearGraphQL<{ issueUpdate?: { success?: boolean } }>({
     api: opts.api,
-    credentials: opts.credentials ?? linearAppActorCredentials,
+    credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
     query: "mutation OeSetIssueState($id: String!, $stateId: String!) { issueUpdate(id: $id, input: { stateId: $stateId }) { success } }",
     queryName: "OeSetIssueState",
     variables: { id: issueRef, stateId: match.id },
@@ -105,7 +107,7 @@ export async function assignLinearIssue(issueRef: string, assignee: string, opts
   const assigneeId = await resolveLinearUserId(assignee, opts);
   await callLinearGraphQL<{ issueUpdate?: { success?: boolean } }>({
     api: opts.api,
-    credentials: opts.credentials ?? linearAppActorCredentials,
+    credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
     query: "mutation OeAssignIssue($id: String!, $assigneeId: String!) { issueUpdate(id: $id, input: { assigneeId: $assigneeId }) { success } }",
     queryName: "OeAssignIssue",
     variables: { id: issueRef, assigneeId },
@@ -122,7 +124,7 @@ export async function addLinearIssueLabel(issueRef: string, label: string, opts:
   }
   await callLinearGraphQL<{ issueAddLabel?: { success?: boolean } }>({
     api: opts.api,
-    credentials: opts.credentials ?? linearAppActorCredentials,
+    credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
     query: "mutation OeAddIssueLabel($id: String!, $labelId: String!) { issueAddLabel(id: $id, labelId: $labelId) { success } }",
     queryName: "OeAddIssueLabel",
     variables: { id: issueRef, labelId: match.id },
@@ -132,9 +134,11 @@ export async function addLinearIssueLabel(issueRef: string, label: string, opts:
 
 export const linearEntityAdapter: EntityActionAdapter = {
   platform: "linear",
-  checkAccess: (ctx: BindableContext, entityId: string, domains: readonly Domain[]) =>
-    assertLinearIssueWriteAllowed(ctx, entityId, domains, async (ref) => (await enrichIssueTeam(ref))?.teamId),
-  setState: (id, value) => setLinearIssueState(id, value),
-  assign: (id, value) => assignLinearIssue(id, value),
-  addLabel: (id, value) => addLinearIssueLabel(id, value),
+  checkAccess: (ctx: BindableContext, entityId: string, domains: readonly Domain[]) => {
+    const organizationId = currentTurnOrganization(ctx);
+    return assertLinearIssueWriteAllowed(ctx, entityId, domains, async (ref) => (await enrichIssueTeam(ref, { organizationId }))?.teamId);
+  },
+  setState: (id, value, organizationId) => setLinearIssueState(id, value, { organizationId }),
+  assign: (id, value, organizationId) => assignLinearIssue(id, value, { organizationId }),
+  addLabel: (id, value, organizationId) => addLinearIssueLabel(id, value, { organizationId }),
 };

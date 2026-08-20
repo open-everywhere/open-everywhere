@@ -298,6 +298,10 @@ export function currentTurnIssue(ctx: BindableContext): string | undefined {
   return attr(authOf(ctx)?.attributes, ["issue_id", "issueId", "issue_identifier", "issueIdentifier"]);
 }
 
+export function currentTurnOrganization(ctx: BindableContext): string | undefined {
+  return attr(authOf(ctx)?.attributes, ["organization_id", "organizationId"]);
+}
+
 export function currentTurnGithubTarget(ctx: BindableContext): { owner: string; repo: string; number: number; isPr: boolean } | undefined {
   if (channelPlatform(ctx) !== "github") return undefined;
   const a = authOf(ctx)?.attributes;

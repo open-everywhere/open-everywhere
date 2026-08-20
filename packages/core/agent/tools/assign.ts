@@ -79,6 +79,7 @@ export const assignEntry = defineTool({
       scopeKey: p.surfaceKey,
       platform: ref.platform,
       entityId: ref.id,
+      ...(ref.organizationId ? { organizationId: ref.organizationId } : {}),
       assignee: input.assignee,
       requestedBy,
       tainted: untrustedIngestedThisTurn(),
