@@ -2,6 +2,8 @@ import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } f
 import { verifyDiscordSignature } from "eve/channels/discord";
 import { OE_DISCORD_APPROVAL_PREFIX } from "../approvals/discord-card.js";
 import { handleDiscordApprovalInteraction, type DiscordInteractionResponse } from "../approvals/discord-flow.js";
+import { LINK_CONSENT_CLICK_PREFIX } from "@open-everywhere/core/agent/adapter-api.js";
+import { handleDiscordLinkConsentInteraction } from "../identity/discord-link-consent.js";
 import { OE_COMMAND_NAME, type AttachSessionForCancel } from "@open-everywhere/core/agent/adapter-api.js";
 import { handleDiscordOeCommandInteraction } from "../commands/discord-commands.js";
 
@@ -29,6 +31,7 @@ export function verifyDiscordInteraction(
 export type DiscordFrontDecision =
   | { readonly kind: "forward"; readonly reason: string }
   | { readonly kind: "approval-click"; readonly reason: string; readonly interaction: unknown }
+  | { readonly kind: "link-consent-click"; readonly reason: string; readonly interaction: unknown }
   | { readonly kind: "oe-command"; readonly reason: string; readonly interaction: unknown };
 
 export function classifyDiscordInteraction(rawBody: string): DiscordFrontDecision {
@@ -55,16 +58,20 @@ export function classifyDiscordInteraction(rawBody: string): DiscordFrontDecisio
   }
   const data = typeof p.data === "object" && p.data !== null ? (p.data as Record<string, unknown>) : undefined;
   const customId = typeof data?.custom_id === "string" ? data.custom_id : undefined;
-  if (!customId?.startsWith(OE_DISCORD_APPROVAL_PREFIX)) {
-    return { kind: "forward", reason: "component click — eve's HITL owns it" };
+  if (customId?.startsWith(OE_DISCORD_APPROVAL_PREFIX)) {
+    return { kind: "approval-click", reason: "oe-approval: component click — ours, never forwarded", interaction: json };
   }
-  return { kind: "approval-click", reason: "oe-approval: component click — ours, never forwarded", interaction: json };
+  if (customId?.startsWith(LINK_CONSENT_CLICK_PREFIX)) {
+    return { kind: "link-consent-click", reason: "oe-link: component click — ours, never forwarded", interaction: json };
+  }
+  return { kind: "forward", reason: "component click — eve's HITL owns it" };
 }
 
 export interface DiscordFrontOptions {
   readonly publicKey?: string;
   readonly now?: () => number;
   readonly handleApprovalInteraction?: (raw: unknown) => Promise<DiscordInteractionResponse | null>;
+  readonly handleLinkConsentInteraction?: (raw: unknown) => Promise<DiscordInteractionResponse | null>;
   readonly handleOeCommand?: (raw: unknown, attachSession?: AttachSessionForCancel) => Promise<DiscordInteractionResponse | null>;
 }
 
@@ -76,6 +83,7 @@ export function buildDiscordFrontHandler(innerHandler: RouteHandler, opts: Disco
   const now = opts.now ?? (() => Date.now());
   const publicKey = () => opts.publicKey ?? process.env.DISCORD_PUBLIC_KEY;
   const handleClick = opts.handleApprovalInteraction ?? handleDiscordApprovalInteraction;
+  const handleLinkConsent = opts.handleLinkConsentInteraction ?? handleDiscordLinkConsentInteraction;
   const handleOeCommand = opts.handleOeCommand ?? handleDiscordOeCommandInteraction;
 
   return async (req: Request, args: RouteHandlerArgs): Promise<Response> => {
@@ -87,6 +95,11 @@ export function buildDiscordFrontHandler(innerHandler: RouteHandler, opts: Disco
 
     if (decision.kind === "approval-click") {
       const response = await handleClick(decision.interaction);
+      if (response) return interactionJson(response);
+    }
+
+    if (decision.kind === "link-consent-click") {
+      const response = await handleLinkConsent(decision.interaction);
       if (response) return interactionJson(response);
     }
 

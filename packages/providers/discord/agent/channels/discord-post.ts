@@ -107,6 +107,50 @@ export async function discordOpenDmChannel(userId: string): Promise<string> {
   return id;
 }
 
+const COMPONENT_ACTION_ROW = 1;
+const COMPONENT_BUTTON = 2;
+const BUTTON_STYLE_SUCCESS = 3;
+const BUTTON_STYLE_DANGER = 4;
+
+export interface DiscordDmButton {
+  readonly customId: string;
+  readonly label: string;
+  readonly intent: "affirm" | "reject";
+}
+
+export async function discordPostMessageWithButtons(channelId: string, content: string, buttons: readonly DiscordDmButton[]): Promise<string> {
+  if (content.length > DISCORD_MESSAGE_MAX) {
+    throw markNotApplied(
+      new Error(`Discord create-message with buttons cannot split ${content.length} characters (cap ${DISCORD_MESSAGE_MAX}) for channel ${channelId}`),
+    );
+  }
+  const res = await fetch(`${API}/channels/${channelId}/messages`, {
+    method: "POST",
+    headers: botHeaders(botToken()),
+    body: JSON.stringify({
+      content,
+      components: [
+        {
+          type: COMPONENT_ACTION_ROW,
+          components: buttons.map((b) => ({
+            type: COMPONENT_BUTTON,
+            style: b.intent === "affirm" ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_DANGER,
+            label: b.label,
+            custom_id: b.customId,
+          })),
+        },
+      ],
+    }),
+  });
+  if (!res.ok) {
+    throw Object.assign(new Error(`Discord create-message with buttons failed (${res.status}) for channel ${channelId}`), { status: res.status });
+  }
+  const body = (await res.json()) as { id?: unknown };
+  const id = typeof body?.id === "string" ? body.id : undefined;
+  if (!id) throw new Error(`Discord create-message with buttons returned no message id for channel ${channelId}`);
+  return id;
+}
+
 async function discordPostOne(channelId: string, content: string, replyToMessageId?: string): Promise<string> {
   const res = await fetch(`${API}/channels/${channelId}/messages`, {
     method: "POST",

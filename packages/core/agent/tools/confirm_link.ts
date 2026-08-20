@@ -24,13 +24,12 @@ async function claimantName(platform: string | undefined, tenant: string | undef
 function fencedClaimantName(name: string): string {
   return ingestUntrusted(name, { source: "account-display-name" });
 }
-import { confirmLinkedId, consentLinkChallenge, denyLinkChallenge, ratifyLinkChallenge } from "../identity/link-store.js";
+import { confirmLinkedId, denyLinkChallenge, ratifyLinkChallenge } from "../identity/link-store.js";
 import { linkInitiatorRefusal } from "../identity/link-initiator.js";
-import { canDeliverDirectMessage, dispatchDirectMessage, notifyLinkSetMembers } from "../channels/post-arms.js";
+import { notifyLinkSetMembers } from "../channels/post-arms.js";
 import { pendingDirectorySuggestionsFor } from "../identity/directory-sync.js";
-import { asLinkTransport, codeBackDecision, codeBackInstructions, consentGate, finalizeGate } from "../identity/link-flow.js";
-import { mintLinkCode } from "../identity/link-challenge.js";
-import { getSettings } from "../settings/settings.js";
+import { codeBackInstructions, consentGate, finalizeGate } from "../identity/link-flow.js";
+import { commitLinkConsent } from "../identity/link-consent.js";
 
 type Waiting = { readonly role: "finalize" | "consent"; readonly challenge: LinkChallengeRow };
 
@@ -225,31 +224,12 @@ async function decideConsent(args: {
     };
   }
 
-  const decision = codeBackDecision({
-    transport: asLinkTransport(c.transport),
-    knobArmed: getSettings().identityLinking.codeBack,
+  const { codeBack: backCode } = await commitLinkConsent({
+    org: args.org,
+    challenge: c,
+    consenter: { platform: args.platform, tenant: args.tenant, nativeId: args.actor },
     deliverable: true,
   });
-  const backCode = decision.mint ? mintLinkCode() : undefined;
-  const consented = await consentLinkChallenge({
-    org: args.org,
-    challengeId: c.id,
-    consenter: { platform: args.platform, tenant: args.tenant, nativeId: args.actor },
-    ...(backCode ? { backCode } : {}),
-  });
-  if (!consented) throw new Error("that request is no longer open — it was already answered, or it expired. Ask them to start it again.");
-
-  if (canDeliverDirectMessage(c.initiatingPlatform)) {
-    const consenterName = await claimantName(args.platform, args.tenant, args.actor);
-    await dispatchDirectMessage(c.initiatingPlatform, {
-      principalId: c.initiatingNativeId,
-      text:
-        `${consenterName} agreed to the link you asked for.\n\n` +
-        (backCode
-          ? `Ask them for the code I gave them and tell me here to finish it. Nothing is linked until you do.`
-          : `Tell me here to finish it. Nothing is linked until you do.`),
-    }).catch((err: unknown) => console.log(`[open-everywhere:identity] consent notice for ${c.id} could not be delivered: ${String(err)}`));
-  }
 
   return {
     decided: "consented",

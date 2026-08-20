@@ -204,6 +204,10 @@ export type { AccountProfile, AccountDisplayNameArm } from "./identity/account-d
 export { registerAccountDirectory, hasAccountDirectory, lookupAccountDirectory, rankDirectoryCandidates, _resetAccountDirectoriesForTest } from "./identity/account-directory.js";
 export type { DirectoryCandidate, AccountDirectoryArm, DirectoryLookup } from "./identity/account-directory.js";
 
+export { LINK_CONSENT_CLICK_PREFIX, LINK_CONSENT_CLICK_ACTION, linkConsentClickId, parseLinkConsentClickId, linkConsentActions, resolveLinkConsentClick, commitLinkConsent } from "./identity/link-consent.js";
+export type { LinkConsentVerdict, LinkConsentClickResult, ConsentingAccount } from "./identity/link-consent.js";
+export { linkTenantOf, tryLinkTenantOf, LINK_TENANT_NONE } from "./identity/link-tenant.js";
+
 export { setRegisteredConnectorCredentials, resetRegisteredConnectorCredentials } from "./access/connector-credentials.js";
 
 export { ingestUntrustedModelOutput, untrustedCloseTag, normalizeFenceNonce, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "./access/untrusted.js";

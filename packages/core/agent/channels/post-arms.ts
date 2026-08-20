@@ -23,9 +23,16 @@ export interface DirectMessageDelivery {
   readonly messageId: string;
 }
 
+export interface DirectMessageAction {
+  readonly id: string;
+  readonly label: string;
+  readonly intent: "affirm" | "reject";
+}
+
 export interface DirectMessageRequest {
   readonly principalId: string;
   readonly text: string;
+  readonly actions?: readonly DirectMessageAction[];
 }
 
 export const DM_WORKSPACE_UNREACHABLE_REASON = "workspace-unreachable";
