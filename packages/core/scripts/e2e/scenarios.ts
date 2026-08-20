@@ -119,6 +119,8 @@ const BROWSER_QA_WAIT = 420_000;
 const SILENCE_WINDOW = 45_000;
 const LINK_VENUE_PROOF_WINDOW = 20_000;
 
+export const isPendingWorkHandoff = (text: string): boolean => text.includes(PENDING_WORK_FRAME);
+
 export const isFillerAck = (text: string): boolean => {
   const trimmed = text.trim();
   if (trimmed.includes(PENDING_WORK_FRAME)) return true;
@@ -1548,7 +1550,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const markerA = factToken("gh");
       const askId = await gh.comment(gh.fixtureIssue, gh.mention(`summarise this issue in one line. Include the token ${markerA} in your reply.`));
-      const reply = await gh.awaitBotReply(gh.fixtureIssue, askId, { timeoutMs: REPLY_WAIT });
+      const reply = await gh.awaitBotReply(gh.fixtureIssue, askId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) });
       ctx.gate(reply.body.trim().length > 0, "mention: a <slug>[bot] reply appears on the fixture issue (real-remote wake end-to-end)");
       await ctx.judgePass(
         closedQA(`Does the reply quote ${markerA} (proving it answered THIS comment)?`, { mustMatch: [markerA] }),
@@ -1596,14 +1598,14 @@ export const SCENARIOS: readonly Scenario[] = [
       else ctx.gate(ghVerdict.ok, `mention-gate: ${ghVerdict.label}`);
 
       const followId = await gh.comment(gh.fixtureIssue, gh.mention("and roughly how many comments does it have now? one line."));
-      const resume = await gh.awaitBotReply(gh.fixtureIssue, followId, { timeoutMs: REPLY_WAIT });
+      const resume = await gh.awaitBotReply(gh.fixtureIssue, followId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) });
       ctx.gate(resume.id > followId, "resume: a second @mention gets a fresh reply (session resumed on the stable issue continuation)");
 
       const issueB = await gh.createIssue(`(e2e) reply-targeting probe ${factToken("probe")}`, "second discussion for the reply-targeting gate");
       try {
         const markerB = factToken("ghb");
         const askBId = await gh.comment(issueB, gh.mention(`what number issue is this? Include the token ${markerB}.`));
-        const replyB = await gh.awaitBotReply(issueB, askBId, { timeoutMs: REPLY_WAIT });
+        const replyB = await gh.awaitBotReply(issueB, askBId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) });
         ctx.gate(replyB.body.trim().length > 0, "reply-targeting: the SECOND issue gets its OWN bot reply (not just the first) — the reply-targeting fix, live");
         const leakedToA = (await gh.comments(gh.fixtureIssue)).some((c) => gh.isBotComment(c) && c.body.includes(markerB));
         ctx.gate(!leakedToA, "reply-targeting: issue B's answer did NOT leak into issue A (hard gate — the bug's exact signature)");
@@ -1660,7 +1662,7 @@ export const SCENARIOS: readonly Scenario[] = [
         const askAId = await lin.comment(issueA.id, bodyA);
         const storedAsk = (await lin.comments(issueA.id)).find((c) => c.id === askAId);
         ctx.gate(storedAsk !== undefined && lin.bodyMentionsAgent(storedAsk.body), "assertion (b): the STORED comment body (read back) contains the literal @<DisplayName>");
-        const replyA = await lin.awaitAppReply(issueA.id, beforeA.add(askAId), { timeoutMs: REPLY_WAIT });
+        const replyA = await lin.awaitAppReply(issueA.id, beforeA.add(askAId), { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) });
         ctx.gate(replyA.userId === lin.appUserId, "assertion (a): the app's reply comment comes back attributed to comment.user.id === viewer.id (self-loop guard evidence)");
         await ctx.judgePass(closedQA(`Does the reply quote ${markerA}?`, { mustMatch: [markerA] }), replyA.body, "mention: reply quotes the run token");
 
@@ -1705,7 +1707,7 @@ export const SCENARIOS: readonly Scenario[] = [
           const markerB = factToken("linb");
           const beforeB = new Set((await lin.comments(issueB.id)).map((c) => c.id));
           const askBId = await lin.comment(issueB.id, lin.mention(`what is this issue's identifier? Include the token ${markerB}.`));
-          const replyB = await lin.awaitAppReply(issueB.id, beforeB.add(askBId), { timeoutMs: REPLY_WAIT });
+          const replyB = await lin.awaitAppReply(issueB.id, beforeB.add(askBId), { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) });
           ctx.gate(replyB.userId === lin.appUserId, "reply-targeting: issue B gets its OWN app-authored reply (not just the first discussion) — the reply-targeting fix, live");
           const leakedToA = (await lin.comments(issueA.id)).some((c) => lin.isAppComment(c) && c.body.includes(markerB));
           ctx.gate(!leakedToA, "reply-targeting: issue B's answer did NOT leak into issue A (hard gate — the bug's exact signature)");
@@ -1833,12 +1835,12 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const c1 = await not.createBlockDiscussion(anchorBlocks[0], `OE — quick check (${runTag}-a): what is this page for? A one-line answer right here is perfect.`);
       ctx.gate(c1.commentId.length > 0 && c1.discussionId.length > 0, "on-topic: the fresh addressed comment minted its own discussion");
-      const reply1 = await not.awaitBotReplyIn(c1.discussionId, "", { timeoutMs: REPLY_WAIT });
+      const reply1 = await not.awaitBotReplyIn(c1.discussionId, "", { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) });
       ctx.gate(not.isBotComment(reply1), "on-topic: a bot reply lands in the fresh comment's OWN discussion (discussion 1)");
 
       const c2 = await not.createBlockDiscussion(anchorBlocks[1], `Open Everywhere — different question (${runTag}-b): name one thing that could improve this page. Answer in this thread please.`);
       ctx.gate(c2.discussionId !== c1.discussionId, "reply-targeting: the second comment minted a DIFFERENT discussion (the probe needs two)");
-      const reply2 = await not.awaitBotReplyIn(c2.discussionId, "", { timeoutMs: REPLY_WAIT });
+      const reply2 = await not.awaitBotReplyIn(c2.discussionId, "", { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.text) });
       ctx.gate(reply2.discussionId === c2.discussionId, "reply-targeting: the second reply lands in discussion 2, NOT discussion 1 (the reply-targeting fix, live)");
 
       const cOff = await not.createBlockDiscussion(anchorBlocks[2], `Reminder (${runTag}-c): the plant-watering rota moved to the kitchen noticeboard.`);
@@ -2311,7 +2313,7 @@ export const SCENARIOS: readonly Scenario[] = [
         gh.fixtureIssue,
         `Before I write this up — what was the deploy window token the team decided on earlier today? It was agreed in the team's Slack channel; asking here so it's on the record.`,
       );
-      const reply = await gh.awaitBotReply(gh.fixtureIssue, askId, { timeoutMs: REPLY_WAIT });
+      const reply = await gh.awaitBotReply(gh.fixtureIssue, askId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) });
       ctx.gate(
         reply.body.includes(marker),
         `MONEY SHOT: the <slug>[bot] issue reply quotes the token "${marker}" stated ONLY in Slack (one mind across SURFACES, zero context re-entry — hard gate)`,

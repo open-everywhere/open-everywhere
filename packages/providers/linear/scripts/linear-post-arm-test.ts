@@ -15,7 +15,7 @@ function ok(cond: boolean, label: string): void {
 const SAVED_TOKEN = process.env.LINEAR_AGENT_ACCESS_TOKEN;
 process.env.LINEAR_AGENT_ACCESS_TOKEN = "lin_test_token";
 
-function stubGraphQL(status: number, data?: unknown, errors?: Array<{ message: string }>): typeof fetch {
+function stubGraphQL(status: number, data?: unknown, errors?: Array<Record<string, unknown>>): typeof fetch {
   return (async () => new Response(JSON.stringify({ ...(data !== undefined ? { data } : {}), ...(errors ? { errors } : {}) }), { status })) as unknown as typeof fetch;
 }
 
@@ -134,15 +134,69 @@ try {
 
   {
     const target: ReplyTarget = { platform: "linear", agentSessionId: "sess-3" };
-    globalThis.fetch = stubGraphQL(200, undefined, [{ message: "some internal error" }]);
-    let err: unknown;
+
+    globalThis.fetch = stubGraphQL(200, undefined, [
+      { message: "Entity not found: AgentSession", extensions: { code: "INPUT_ERROR", statusCode: 400, userError: true } },
+    ]);
+    let refused: unknown;
     try {
       await linearPostArm.dispatchReply!(target, "hi");
     } catch (e) {
-      err = e;
+      refused = e;
     }
-    ok((err as { status?: unknown } | undefined)?.status === 200, "a top-level GraphQL errors[] at HTTP 200 still carries status=200 on the thrown error");
-    ok(platformFailureClass(err) === "ambiguous", "OPE-825 scope boundary: a 200+errors[] GraphQL response classifies AMBIGUOUS, not DEFINITIVE — deliberate, see comment above");
+    ok((refused as { status?: unknown } | undefined)?.status === 200, "OPE-869: the refusal still carries Linear's own HTTP status (200) on the thrown error");
+    ok(
+      platformFailureClass(refused) === "definitive",
+      "OPE-869/THE FIX: a refusal Linear DECIDED at HTTP 200 classifies DEFINITIVE, so the dedupe claim is released and the retry can really post",
+    );
+
+    globalThis.fetch = stubGraphQL(200, undefined, [{ message: "bad input", extensions: { code: "GRAPHQL_VALIDATION_FAILED", http: { status: 400 } } }]);
+    let nested: unknown;
+    try {
+      await linearPostArm.dispatchReply!(target, "hi");
+    } catch (e) {
+      nested = e;
+    }
+    ok(platformFailureClass(nested) === "definitive", "OPE-869: a 4xx nested under `extensions.http.status` is read too");
+
+    globalThis.fetch = stubGraphQL(200, undefined, [{ message: "internal", extensions: { statusCode: 500 } }]);
+    let server: unknown;
+    try {
+      await linearPostArm.dispatchReply!(target, "hi");
+    } catch (e) {
+      server = e;
+    }
+    ok(platformFailureClass(server) === "ambiguous", "OPE-869/NEGATIVE CONTROL: a 5xx inside a 200 body stays AMBIGUOUS");
+
+    globalThis.fetch = stubGraphQL(200, undefined, [{ message: "some internal error" }]);
+    let unstamped: unknown;
+    try {
+      await linearPostArm.dispatchReply!(target, "hi");
+    } catch (e) {
+      unstamped = e;
+    }
+    ok(platformFailureClass(unstamped) === "ambiguous", "OPE-869/NEGATIVE CONTROL: an unstamped 200+errors[] stays AMBIGUOUS (fail-closed default)");
+  }
+
+  {
+    const origin = { platform: "linear", issueId: "issue-4", agentSessionId: "sess-4" } as Extract<UnifiedWakeOrigin, { platform: "linear" }>;
+    const deps = {} as UnifiedReplyDeps;
+
+    const sentTypes: string[] = [];
+    globalThis.fetch = (async (_url: unknown, init?: { body?: string }) => {
+      const body = JSON.parse(init?.body ?? "{}") as { variables?: { input?: { content?: { type?: string } } } };
+      sentTypes.push(body.variables?.input?.content?.type ?? "none");
+      return new Response(JSON.stringify({ data: { agentActivityCreate: { success: true, agentActivity: { id: "act-4" } } } }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    await linearPostArm.dispatchUnified!(origin, "the answer follows", deps, undefined, { terminal: false });
+    ok(sentTypes[0] === "thought", `OPE-869/THE FIX: a NON-TERMINAL reply posts a \`thought\`, which does NOT end the session — got "${sentTypes[0]}"`);
+
+    await linearPostArm.dispatchUnified!(origin, "here is the answer", deps, undefined, { terminal: true });
+    ok(sentTypes[1] === "response", `OPE-869/NEGATIVE CONTROL: a TERMINAL reply still posts a \`response\` — got "${sentTypes[1]}"`);
+
+    await linearPostArm.dispatchUnified!(origin, "no intent given", deps);
+    ok(sentTypes[2] === "response", `OPE-869: ABSENT intent means terminal — an older caller keeps today's behaviour, got "${sentTypes[2]}"`);
   }
   {
     type Bag = Parameters<NonNullable<typeof linearPostArm.resolveTarget>>[0];
