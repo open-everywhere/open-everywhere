@@ -276,12 +276,12 @@ export const FIXTURE_FAMILIES: readonly FixtureFamily[] = [
   },
   {
     id: "connectorWrite",
-    label: "Notion connector-WRITE arm (bound channel + explicit E2E_CONNECTOR_WRITE=1)",
-    required: [v(ENV.notionChannel), v(ENV.connectorWrite, "1")],
+    label: "Notion connector-WRITE fixture (the bound channel — arming is DERIVED, not declared)",
+    required: [v(ENV.notionChannel)],
     scenarios: "S-NOTION-WRITE / S-CONNECTOR-TIER (consequence-tier gate:member connector write)",
     probe: "presence-only",
     presenceOnlyReason:
-      "connectorWrite — the bound channel is already probed under the \"notion\" family above; the arming flag is a literal deployment posture, not a vendor credential to reach.",
+      "connectorWrite — the bound channel is already probed under the \"notion\" family above, and there is nothing else to check: whether the deployment's personal grant is consented is DERIVED at run time from its own connector.mint audit rows (connector-arming.ts, OPE-894), never declared by an env var this doctor could read.",
   },
   {
     id: "discord",

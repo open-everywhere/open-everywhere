@@ -14,6 +14,7 @@ import { FORGE_CREATOR_ID, FORGE_ISSUE_ID, FORGE_ORGANIZATION_ID, FORGE_SESSION_
 import type { NotionDriver } from "./notion-driver.js";
 import type { PrApi } from "./pr-api.js";
 import { buildUnifiedAuditQuery, type AuditQueryOpts, type AuditWireEntry, type UnifiedAuditCall, type UnifiedAuditWire } from "./audit-read.js";
+import { watchConnectorArming, type ArmingProbe } from "./connector-arming.js";
 import type { TranscriptWireEvent } from "./transcript-read.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
 import { decomposeSession, delegationJoinTargets, joinDelegations, renderDelegationTiming, renderSessionTiming } from "./transcript-timings.js";
@@ -114,6 +115,14 @@ export interface Scenario {
 
 const REPLY_WAIT = 180_000;
 const FILE_REPLY_WAIT = 420_000;
+const NOTION_CONNECTOR = "notion";
+function armingProbeOf(ctx: ScenarioContext): ArmingProbe {
+  return {
+    ...(ctx.auditRead ? { auditRead: ctx.auditRead } : {}),
+    log: (msg: string) => ctx.log(msg),
+    skip: (reason: string) => ctx.skip(reason),
+  };
+}
 const UNIFIED_REPLY_WAIT = 420_000;
 const BROWSER_QA_WAIT = 420_000;
 const SILENCE_WINDOW = 45_000;
@@ -2813,6 +2822,7 @@ export const SCENARIOS: readonly Scenario[] = [
     timeoutMs: 240_000,
     judged: true,
     run: async (ctx) => {
+      const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
       const connector = ctx.connectorWrite!;
       const token = factToken("nwrite");
       const { ts: askTs } = await connector.post(
@@ -2822,6 +2832,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       const reply = await connector.awaitThreadReply(askTs, { timeoutMs: REPLY_WAIT });
       ctx.gate(reply.text.trim().length > 0, "connector-write: the write ask drew a bot reply (the turn ran end-to-end)");
+      await arming.recheck();
       await ctx.judgePass(
         closedQA(
           "Is the reply a sane response to a Notion page-WRITE request — either asking for confirmation / naming the write it is about to perform (the gated HITL), or reporting the page created — with no error, exception, or tool-failure text?",
@@ -2845,8 +2856,7 @@ export const SCENARIOS: readonly Scenario[] = [
     timeoutMs: 300_000,
     judged: true,
     run: async (ctx) => {
-      if (process.env.E2E_CONNECTOR_OAUTH?.trim() !== "1")
-        ctx.skip("needs an OAuth-armed Notion connector (hosted MCP rejects API keys — task #93); set E2E_CONNECTOR_OAUTH=1 once the own-rolled OAuth flow (oe-oauth) is armed");
+      const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
       const connector = ctx.connectorWrite!;
       const rToken = factToken("ctread");
       const { ts: readTs } = await connector.post(
@@ -2856,6 +2866,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       const readReply = await connector.awaitThreadReply(readTs, { timeoutMs: REPLY_WAIT });
       ctx.gate(readReply.text.trim().length > 0, "tier-split: the READ op returned a reply (turn ran)");
+      await arming.recheck();
       await ctx.judgePass(
         closedQA(
           "Is this a DIRECT answer to a Notion search (a page title, or an honest 'nothing found') and NOT a request to confirm/approve an action before proceeding?",
@@ -2870,6 +2881,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       const writeReply = await connector.awaitThreadReply(writeTs, { timeoutMs: REPLY_WAIT });
       ctx.gate(writeReply.text.trim().length > 0, "tier-split: the WRITE op drew a reply (turn ran)");
+      await arming.recheck();
       await ctx.judgePass(
         closedQA(
           "Does this reply GATE the write — asking for confirmation, naming the write it is about to make, or reporting it completed after a gate — rather than acting as if no consent were required (the way the read did)?",
@@ -2897,8 +2909,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const dm = ctx.dm!;
       const forge = ctx.syntheticDm!;
       const synthetic = ctx.synthetic!;
-      if (process.env.E2E_OE_OAUTH_ARMED?.trim() !== "1")
-        ctx.skip("needs E2E_OE_OAUTH_ARMED=1 — arm the deployment (OE_OAUTH_ENABLED + provider config + one-time consent click, runbook on OPE-88), then set E2E_OE_OAUTH_ARMED=1 to assert it");
+      const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
       const { userId, teamId } = await ctx.slack!.identity();
       const ask = "can you list the pages in my Notion workspace?";
       const { ts: anchorTs } = await dm.post(ask);
@@ -2943,6 +2954,7 @@ export const SCENARIOS: readonly Scenario[] = [
         { timeoutMs: FILE_REPLY_WAIT, what: "a substantive (non-card, non-ack) bot reply to the DM Notion-pages ask" },
       );
       ctx.gate(answer.text.trim().length > 0, "the DM personal-Notion ask drew a substantive bot reply");
+      await arming.recheck();
       await ctx.judgePass(
         closedQA(
           "Does the reply substantively answer a request to list the user's Notion pages — naming/describing pages or workspace content, or an honest 'your workspace has no pages' — rather than an error, a permissions failure, or a refusal to access Notion?",
