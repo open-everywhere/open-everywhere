@@ -10,6 +10,7 @@ import {
   supervisorTextDelivery,
   isSupervisorProseLeak,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { supervisorPostFormBody } from "../agent/channels/slack.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -157,6 +158,25 @@ function spyDeps(over: Partial<SupervisorReplyDeps> & { ownerToken?: string | un
   const res = await deliverSupervisorReply(deps);
   ok(spy.posts.length === 0 && spy.binds.length === 0, "message-tool-only (top-level): stray prose posts and binds NOTHING");
   ok(res.posted === false && res.bound === false, "message-tool-only (top-level): result posted/bound nothing");
+}
+
+{
+  const body = supervisorPostFormBody(CHANNEL, undefined, "**bold** and a [link](https://example.com)");
+  const parsed = new URLSearchParams(body);
+  ok(parsed.get("text") === "*bold* and a <https://example.com|link>", "supervisor wire: **bold**/link convert to Slack mrkdwn on the wire");
+  ok(parsed.get("channel") === CHANNEL, "supervisor wire: channel carries through unchanged");
+  ok(parsed.has("thread_ts") === false, "supervisor wire: no thread_ts param when undefined (top-level post)");
+}
+{
+  const body = supervisorPostFormBody(CHANNEL, THREAD, "**bold**");
+  const parsed = new URLSearchParams(body);
+  ok(parsed.get("text") === "*bold*", "supervisor wire (threaded): **bold** still converts");
+  ok(parsed.get("thread_ts") === THREAD, "supervisor wire (threaded): thread_ts carries through unchanged");
+}
+{
+  const body = supervisorPostFormBody(CHANNEL, undefined, "*already bold*");
+  const parsed = new URLSearchParams(body);
+  ok(parsed.get("text") === "*already bold*", "supervisor wire: already-mrkdwn text is NOT double-converted");
 }
 
 console.log(`supervisor-reply: ${n} assertions passed`);
