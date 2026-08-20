@@ -73,8 +73,12 @@ await withPatchedFetch(fakeLinearHttp, async () => {
 const silenced = await drive("public-team", "as-silenced");
 ok(silenced.res === null, "room grain: a declared-public team under `silent` SILENTLY DROPS the native mention (returns null)");
 ok(
-  silenced.posted.some((b) => b.includes("\"thought\"") && b.includes("\"stop\"")) && !silenced.posted.some((b) => b.includes("\"response\"")),
-  "room grain: the already-materialised session closes via an EPHEMERAL thought+stop signal, never a visible response",
+  !silenced.posted.some((b) => b.includes("AgentActivityCreate")),
+  "🔴 OPE-884 room grain: a silenced room's mention creates NO Agent Activity of any type — nothing reaches the issue",
+);
+ok(
+  !silenced.posted.some((b) => b.includes('"stop"')),
+  "OPE-884 room grain (explicit): no `stop` signal is sent — the real API refuses it on any non-`prompt` activity",
 );
 const suppressedRows = (await readAudit({ org: declaredPart.org, action: "linear.external_policy_suppressed" })).filter((r) => r.surface === declaredPart.surfaceKey);
 ok(
@@ -105,4 +109,4 @@ ok(
 });
 _resetSurfacesForTest();
 rmSync(dir, { recursive: true, force: true });
-console.log(`\n✓ linear-external-policy-room: ${n} assertions passed (silent close + audit on a declared-public team, undeclared-team and shipped-default negative controls)`);
+console.log(`\n✓ linear-external-policy-room: ${n} assertions passed (silent drop + audit on a declared-public team, undeclared-team and shipped-default negative controls)`);

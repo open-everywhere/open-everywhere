@@ -104,7 +104,7 @@ try {
 
     reset();
     await linearPostArm.closeUnifiedSilently!(mention, deps);
-    ok(lastBearer() === `Bearer ${SOAK_MINTED}`, "🔴 THE FIX: the SILENT CLOSE presents the SOAK token — a session it cannot close stays on a spinner forever");
+    ok(lastBearer() === `Bearer ${SOAK_MINTED}`, "🔴 THE FIX: the SILENCE ACK presents the SOAK token — a session it cannot complete stays on a spinner forever");
 
     reset();
     await linearPostArm.dispatchUnified!({ platform: "linear", issueId: "ISS2", agentSessionId: "sess-2" } as Extract<UnifiedWakeOrigin, { platform: "linear" }>, "the answer", deps);
