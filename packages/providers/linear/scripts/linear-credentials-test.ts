@@ -1,7 +1,14 @@
+
 import {
   _resetLinearMintCache,
+  linearAppActorCredentials,
+  linearAppForOrg,
+  linearAppRegistry,
   linearCredentialsConfigured,
+  linearCredentialsForOrg,
   mintLinearAppActorToken,
+  primaryLinearOrganizationId,
+  resolveLinearAccessTokenForOrg,
   resolveLinearAccessTokenSeam,
   staticLinearToken,
   type LinearMintFetch,
@@ -20,6 +27,8 @@ function ok(cond: boolean, label: string): void {
 const LINEAR_ENV_KEYS = [
   "LINEAR_AGENT_ACCESS_TOKEN", "LINEAR_ACCESS_TOKEN", "LINEAR_API_KEY", "LINEAR_API_TOKEN",
   "LINEAR_CLIENT_ID", "LINEAR_CLIENT_SECRET",
+  "LINEAR_ORGANIZATION_ID",
+  "LINEAR_APP_SOAK_ORG_ID", "LINEAR_APP_SOAK_CLIENT_ID", "LINEAR_APP_SOAK_CLIENT_SECRET", "LINEAR_APP_SOAK_WEBHOOK_SECRET",
 ];
 function clearLinearEnv(): void {
   for (const k of LINEAR_ENV_KEYS) delete process.env[k];
@@ -277,6 +286,111 @@ try {
     } finally {
       globalThis.fetch = realFetch;
     }
+  }
+
+  {
+    clearLinearEnv();
+    _resetLinearMintCache();
+    process.env.LINEAR_CLIENT_ID = "primary-client";
+    process.env.LINEAR_CLIENT_SECRET = "primary-secret";
+    process.env.LINEAR_APP_SOAK_ORG_ID = "org-soak";
+    process.env.LINEAR_APP_SOAK_CLIENT_ID = "soak-client";
+    process.env.LINEAR_APP_SOAK_CLIENT_SECRET = "soak-secret";
+    process.env.LINEAR_APP_SOAK_WEBHOOK_SECRET = "soak-webhook-secret";
+
+    const registry = linearAppRegistry();
+    ok(registry.length === 1, "registry: exactly one additional app is discovered from LINEAR_APP_<SLOT>_ORG_ID");
+    ok(registry[0]!.slot === "SOAK" && registry[0]!.organizationId === "org-soak", "registry: the slot label and organization id are read from the env names");
+    ok(registry[0]!.clientId === "soak-client" && registry[0]!.clientSecret === "soak-secret", "registry: the entry carries its OWN client pair, not the primary's");
+    ok(registry[0]!.webhookSecret === "soak-webhook-secret", "registry: the entry carries its own webhook signing secret");
+    ok(linearAppForOrg("org-soak")?.slot === "SOAK", "linearAppForOrg: finds the app by organization id");
+    ok(linearAppForOrg("org-unknown") === undefined, "linearAppForOrg: an unregistered organization has no app");
+
+    const realFetch = globalThis.fetch;
+    try {
+      const bodies: string[] = [];
+      globalThis.fetch = (async (_url: string, init: { body: string }) => {
+        bodies.push(init.body);
+        const clientId = new URLSearchParams(init.body).get("client_id");
+        return new Response(JSON.stringify({ access_token: `token-for-${clientId}`, expires_in: 3600 }), { status: 200 });
+      }) as unknown as typeof fetch;
+
+      const soakToken = await resolveLinearAccessTokenForOrg("org-soak");
+      ok(soakToken === "token-for-soak-client", "org-keyed: a registered organization mints from THAT app's client pair");
+      const primaryToken = await resolveLinearAccessTokenForOrg(undefined);
+      ok(primaryToken === "token-for-primary-client", "org-keyed: the org-free form still mints from the PRIMARY client pair");
+      ok(bodies.length === 2, "org-keyed: the two organizations do NOT share one warm entry (two mints, not one cache hit)");
+
+      ok((await resolveLinearAccessTokenForOrg("org-soak")) === "token-for-soak-client", "org-keyed: the second organization's warm entry serves its OWN token");
+      ok((await resolveLinearAccessTokenForOrg(undefined)) === "token-for-primary-client", "org-keyed: the primary warm entry is unaffected by the second organization's");
+      ok(bodies.length === 2, "org-keyed: neither re-resolve minted again (one warm entry per app, both held)");
+
+      ok((await linearCredentialsForOrg("org-soak").accessToken()) === "token-for-soak-client", "linearCredentialsForOrg: the object resolves the registered organization's token");
+      ok(linearCredentialsForOrg(undefined) === linearAppActorCredentials, "linearCredentialsForOrg(undefined) returns the shared org-free object by identity (no per-call allocation)");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  {
+    clearLinearEnv();
+    _resetLinearMintCache();
+    process.env.LINEAR_ACCESS_TOKEN = "primary-static-token";
+    process.env.LINEAR_APP_SOAK_ORG_ID = "org-soak";
+    process.env.LINEAR_APP_SOAK_CLIENT_ID = "soak-client";
+    process.env.LINEAR_APP_SOAK_CLIENT_SECRET = "soak-secret";
+    const realFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async () => new Response(JSON.stringify({ access_token: "soak-minted", expires_in: 3600 }), { status: 200 })) as unknown as typeof fetch;
+      ok((await resolveLinearAccessTokenForOrg("org-soak")) === "soak-minted", "org-keyed: a registered organization does NOT get the primary workspace's static token");
+      ok((await resolveLinearAccessTokenForOrg(undefined)) === "primary-static-token", "org-keyed: the primary chain still returns the static token, unchanged");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  {
+    clearLinearEnv();
+    _resetLinearMintCache();
+    process.env.LINEAR_API_KEY = "legacy-static";
+    ok(linearAppRegistry().length === 0, "byte-identical: no LINEAR_APP_* variables ⇒ an EMPTY registry");
+    ok((await resolveLinearAccessTokenSeam()) === "legacy-static", "byte-identical: the org-free seam is the unchanged static chain");
+    ok((await resolveLinearAccessTokenForOrg("any-org-at-all")) === "legacy-static", "byte-identical: with no primary organization declared, ANY organization still gets the primary token (the pre-ticket catch-all)");
+    ok((await linearCredentialsForOrg("any-org-at-all").accessToken()) === "legacy-static", "byte-identical: the org-keyed credentials object agrees with the seam");
+  }
+
+  {
+    clearLinearEnv();
+    _resetLinearMintCache();
+    process.env.LINEAR_API_KEY = "primary-static";
+    process.env.LINEAR_ORGANIZATION_ID = "org-primary";
+    ok(primaryLinearOrganizationId() === "org-primary", "primaryLinearOrganizationId: reads LINEAR_ORGANIZATION_ID");
+    ok((await resolveLinearAccessTokenForOrg("org-primary")) === "primary-static", "fail-closed: the DECLARED primary organization still resolves the primary token");
+    ok((await resolveLinearAccessTokenForOrg(undefined)) === "primary-static", "fail-closed: a call site that names no organization still resolves the primary token");
+    ok((await resolveLinearAccessTokenForOrg("org-stranger")) === "", "fail-closed: an UNKNOWN organization resolves \"\" so eve throws its stock missing-token error");
+    process.env.LINEAR_APP_SOAK_ORG_ID = "org-soak";
+    process.env.LINEAR_APP_SOAK_CLIENT_ID = "soak-client";
+    process.env.LINEAR_APP_SOAK_CLIENT_SECRET = "soak-secret";
+    const realFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async () => new Response(JSON.stringify({ access_token: "soak-minted", expires_in: 3600 }), { status: 200 })) as unknown as typeof fetch;
+      ok((await resolveLinearAccessTokenForOrg("org-soak")) === "soak-minted", "fail-closed: a REGISTERED organization is served even with a declared primary");
+      ok((await resolveLinearAccessTokenForOrg("org-stranger")) === "", "fail-closed: an unregistered stranger is still refused");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  {
+    clearLinearEnv();
+    _resetLinearMintCache();
+    process.env.LINEAR_APP_SOAK_ORG_ID = "org-soak";
+    process.env.LINEAR_APP_SOAK_CLIENT_ID = "soak-client";
+    ok(linearAppRegistry().length === 0, "half-configured: an entry with no client secret is DROPPED from the registry");
+    ok(linearCredentialsConfigured() === false, "half-configured: the credential census does not count a half-configured app");
+    process.env.LINEAR_APP_SOAK_CLIENT_SECRET = "soak-secret";
+    ok(linearAppRegistry().length === 1, "half-configured: the entry appears once its client secret is set");
+    ok(linearCredentialsConfigured() === true, "half-configured: a registered app alone makes the surface count as credentialed");
   }
 
   console.log(`\n✓ linear-credentials: ${passed} assertions passed`);
