@@ -31,7 +31,7 @@ const {
   serialiseCallBody,
   withCapture,
 } = await import("../agent/model/call-capture.js");
-const { handleSessionModelCallsRead } = await import("../agent/control/read-route.js");
+const { handleSessionModelCallsRead, handleModelCallSessionsRead } = await import("../agent/control/read-route.js");
 const { openTestPg, closeAllTestPg } = await import("./test-pg-driver.js");
 const { initOperationalSchema, makeOperationalPostgresStore } = await import("../agent/operational/postgres.js");
 
@@ -377,12 +377,45 @@ function armed(on: boolean): void {
 }
 
 {
+  const sessions = await store.modelCallCaptureSessions(ORG);
+  const sOn = sessions.find((s) => s.sessionId === "s-on");
+  ok(sOn !== undefined, "sessions: the store lists every session holding captures, incl. s-on");
+  eq(sOn?.rowCount, 2, "sessions: rowCount matches the session's actual capture count");
+  ok((sOn?.totalBytes ?? 0) > 0, "sessions: totalBytes sums the session's body_bytes");
+  ok(!!sOn && sOn.firstTs <= sOn.lastTs, "sessions: firstTs is never after lastTs");
+  ok(!sessions.some((s) => s.sessionId === "s-off"), "🔴 sessions: a disarmed-capture session (zero rows) never appears — negative control");
+
+  const sessUrl = "https://example.test/control/v1/model-calls/sessions";
+  delete process.env.OE_CONTROL_READ_TOKENS;
+  eq((await handleModelCallSessionsRead(new Request(sessUrl))).status, 404, "🔴 sessions route: 404 with no service tokens configured");
+
+  const secret2 = "soak-harness-sessions-token";
+  const sha2 = createHash("sha256").update(secret2, "utf8").digest("hex");
+  process.env.OE_CONTROL_READ_TOKENS = `soak-harness:${sha2}`;
+  eq((await handleModelCallSessionsRead(new Request(sessUrl))).status, 401, "sessions route: 401 with no bearer");
+
+  const sessRes = await handleModelCallSessionsRead(new Request(sessUrl, { headers: { authorization: `Bearer ${secret2}` } }));
+  eq(sessRes.status, 200, "sessions route: 200 for a valid service token");
+  const sessPayload = (await sessRes.json()) as { count: number; sessions: { sessionId: string; rowCount: number }[] };
+  ok(sessPayload.sessions.some((s) => s.sessionId === "s-on"), "sessions route: s-on is present in the served list");
+  ok(!JSON.stringify(sessPayload).includes("first message"), "sessions route: no body byte is ever served (a listing, not a harvest)");
+
+  const sessSvcRows = await readAudit({ action: "control.service_call" });
+  ok(
+    sessSvcRows.some((r) => (r.detail as { view?: string } | undefined)?.view === "model_call_sessions"),
+    "sessions route: the authenticated call writes a control.service_call audit row naming the view",
+  );
+  delete process.env.OE_CONTROL_READ_TOKENS;
+}
+
+{
   const before = await store.modelCallCapturesForSession(ORG, "s-on", { includeBody: false });
   ok(before.length > 0, "retention: the session has rows to delete");
   const removed = await store.deleteModelCallCapturesForSession(ORG, "s-on");
   eq(removed, before.length, "retention: delete-by-session returns the count removed");
   eq((await store.modelCallCapturesForSession(ORG, "s-on")).length, 0, "retention: the session's captures are gone");
   ok((await store.modelCallCapturesForSession(ORG, "s-soft")).length > 0, "retention: another session's captures are untouched (negative control)");
+  ok(!(await store.modelCallCaptureSessions(ORG)).some((s) => s.sessionId === "s-on"), "retention: the purged session drops out of the session listing too");
 }
 
 {
@@ -416,6 +449,12 @@ function armed(on: boolean): void {
   eq((await pgStore.modelCallCapturesForSession("default", "wrun_pg", { turnId: "turn_1" })).length, 1, "postgres: the turnId filter binds as a parameter");
   eq((await pgStore.modelCallCapturesForSession("default", "wrun_pg", { limit: 1 })).length, 1, "postgres: the limit binds as a parameter");
   eq((await pgStore.modelCallCapturesForSession("default", "wrun_pg", { includeBody: false }))[0].bodyGzipB64, "", "postgres: includeBody:false serves no bytes");
+
+  const pgSessions = await pgStore.modelCallCaptureSessions("default");
+  const pgWrunPg = pgSessions.find((s) => s.sessionId === "wrun_pg");
+  eq(pgWrunPg?.rowCount, 2, "postgres: sessions listing groups by session and counts rows correctly");
+  ok((pgWrunPg?.totalBytes ?? 0) > 0, "postgres: sessions listing sums body_bytes, coerced from a bigint string");
+  ok(pgSessions.some((s) => s.sessionId === "wrun_other"), "postgres: sessions listing carries every session, not just the first");
 
   eq(await pgStore.deleteModelCallCapturesForSession("default", "wrun_pg"), 2, "🔴 postgres: delete-by-session removes the rows and returns the count");
   eq((await pgStore.modelCallCapturesForSession("default", "wrun_pg")).length, 0, "postgres: they are gone");

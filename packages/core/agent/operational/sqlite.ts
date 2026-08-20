@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
@@ -1684,6 +1684,26 @@ export const sqliteOperationalStore: OperationalStore = {
       )
       .all(...params) as ModelCallCaptureDbRow[];
     return rows.map((r) => modelCallCaptureFromRow(org, r));
+  },
+
+  async modelCallCaptureSessions(org) {
+    const rows = getDb()
+      .prepare(
+        `SELECT session_id, MIN(ts) AS first_ts, MAX(ts) AS last_ts, COUNT(*) AS row_count, SUM(body_bytes) AS total_bytes
+         FROM model_call_capture WHERE org_id = ?
+         GROUP BY session_id
+         ORDER BY MAX(ts) DESC`,
+      )
+      .all(org) as { session_id: string; first_ts: string; last_ts: string; row_count: number; total_bytes: number | null }[];
+    return rows.map(
+      (r): ModelCallCaptureSessionRow => ({
+        sessionId: r.session_id,
+        firstTs: r.first_ts,
+        lastTs: r.last_ts,
+        rowCount: Number(r.row_count),
+        totalBytes: Number(r.total_bytes ?? 0),
+      }),
+    );
   },
 
   async deleteModelCallCapturesForSession(org, sessionId) {

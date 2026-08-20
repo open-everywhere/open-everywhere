@@ -565,6 +565,14 @@ export interface ModelCallCaptureRow extends ModelCallCaptureWrite {
   readonly seq: number;
 }
 
+export interface ModelCallCaptureSessionRow {
+  readonly sessionId: string;
+  readonly firstTs: string;
+  readonly lastTs: string;
+  readonly rowCount: number;
+  readonly totalBytes: number;
+}
+
 export interface ModelCallCaptureReadOptions {
   readonly includeBody?: boolean;
   readonly turnId?: string;
@@ -645,6 +653,7 @@ export interface OperationalStore {
 
   appendModelCallCapture(write: ModelCallCaptureWrite): Promise<void>;
   modelCallCapturesForSession(org: string, sessionId: string, opts?: ModelCallCaptureReadOptions): Promise<ModelCallCaptureRow[]>;
+  modelCallCaptureSessions(org: string): Promise<ModelCallCaptureSessionRow[]>;
   deleteModelCallCapturesForSession(org: string, sessionId: string): Promise<number>;
 
   runAnalyticsQuery(compiled: CompiledAnalyticsQuery): Promise<Record<string, unknown>[]>;

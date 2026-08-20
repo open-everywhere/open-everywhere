@@ -14,6 +14,7 @@ export const CONTROL_READ_UNIFIED_AUDIT_PATH = "/control/v1/unified-audit";
 export const CONTROL_READ_TRANSCRIPT_PATH = "/control/v1/session/:sessionId/transcript";
 export const CONTROL_READ_RUNTIME_SIGNAL_PATH = "/control/v1/runtime-signal";
 export const CONTROL_READ_MODEL_CALLS_PATH = "/control/v1/session/:sessionId/model-calls";
+export const CONTROL_READ_MODEL_CALL_SESSIONS_PATH = "/control/v1/model-calls/sessions";
 const AUDIT_MAX_LIMIT = 1000;
 const AUDIT_DEFAULT_LIMIT = 200;
 const TRANSCRIPT_DEFAULT_LIMIT = 2000;
@@ -370,6 +371,31 @@ export async function handleSessionModelCallsRead(req: Request, params: Readonly
   try {
     const captures = await getOperationalStore().modelCallCapturesForSession(deploymentOrg(), sessionId, { includeBody, limit, ...(turnId ? { turnId } : {}) });
     return json(200, { sessionId, count: captures.length, includeBody, captures });
+  } catch (err) {
+    return json(400, { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export async function handleModelCallSessionsRead(req: Request): Promise<Response> {
+  const entries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
+  if (entries.length === 0) return new Response("not found", { status: 404 });
+
+  const match = /^Bearer\s+(.+)$/i.exec((req.headers.get("authorization") ?? "").trim());
+  const identity = match ? verifyServiceToken(match[1], entries) : null;
+  if (!identity) return json(401, { error: "unauthorized: missing or invalid bearer token" });
+
+  await appendAudit({
+    org: deploymentOrg(),
+    platform: "control",
+    workspace: "control",
+    principalId: identity.subject,
+    action: "control.service_call",
+    detail: { service: identity.subject, view: "model_call_sessions" },
+  });
+
+  try {
+    const sessions = await getOperationalStore().modelCallCaptureSessions(deploymentOrg());
+    return json(200, { count: sessions.length, sessions });
   } catch (err) {
     return json(400, { error: err instanceof Error ? err.message : String(err) });
   }
