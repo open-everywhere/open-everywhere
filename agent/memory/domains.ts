@@ -80,6 +80,7 @@ const rawDomains: Domain[] = [
       "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000103",
       "slack/T0EXAMPLE/C0EXCHAN008",
       "slack/T0EXAMPLE/C0EXCHAN009",
+      "github/example-owner/soak-scratch",
     ],
     memory: "soak-brain",
     ambientSupervisor: true,
