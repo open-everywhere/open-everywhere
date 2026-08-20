@@ -19,6 +19,7 @@ import { renderApprovalPreviewFor } from "../access/approval-preview.js";
 import { resolveLeanSeatPosture } from "../access/lean-seat.js";
 import { SEAT_RECOVERY_READ_BUDGET } from "../access/seat-read-budget.js";
 import { renderWorkerCapabilityIndex } from "../access/worker-capabilities.js";
+import { readOneshotMarker } from "../access/oneshot-marker.js";
 import { WORKER_ONLY_TOOLS_STANDING, WORKER_ONLY_TOOLS_THREAD } from "../access/worker-capability-index.generated.js";
 import { bridgeReadableChannelList } from "../channels/slack-bridge.js";
 import { encodeChannelKey } from "../channels/channel-key.js";
@@ -38,6 +39,7 @@ import {
   renderUnifiedSurfaces,
   type DeliveryArm,
   type SeatKind,
+  type WorkerReportRoute,
 } from "./seat-prompt.js";
 import type { Domain } from "../memory/domain.js";
 import {
@@ -98,6 +100,7 @@ function isLeanSeat(ctx: BindableContext): boolean {
 
 export function renderNoiseDoctrine(ctx: BindableContext): string {
   if (channelPlatform(ctx) !== "slack") return "";
+  if (isWorkerSession(ctx)) return "";
   return (
     "## Busy threads: react over reply\n" +
     "In a busy or noisy thread, a single emoji `react` CAN BE your whole response — prefer it " +
@@ -177,13 +180,45 @@ export function renderSupervisorPersona(
   ctx: BindableContext,
   opts?: { readonly messageToolOnly?: boolean; readonly pinnedPlatform?: string },
 ): string {
+  if (isWorkerSession(ctx)) {
+    const midTurnPost = opts?.messageToolOnly === true ? false : workerHasMidTurnPost(ctx);
+    return renderSeatPersona({ seatKind: "worker", report: workerReportRoute(ctx), midTurnPost });
+  }
   if (!isSupervisorSession(ctx)) return "";
   const sid = classifySessionId(ctx.channel?.continuationToken);
-  return renderSeatPersona({ seatKind: seatKindOf(sid.grain), delivery: resolveDeliveryArm(ctx, sid.kind, opts) });
+  return renderSeatPersona({ seatKind: "conversational", delivery: resolveDeliveryArm(ctx, sid.kind, opts) });
 }
 
-function seatKindOf(grain: string): SeatKind {
-  return grain === "task" ? "worker" : "conversational";
+function isWorkerSession(ctx: BindableContext): boolean {
+  try {
+    return windowGrainOf(ctx) === "task";
+  } catch {
+    return false;
+  }
+}
+
+function seatKindOf(ctx: BindableContext): SeatKind {
+  return isWorkerSession(ctx) ? "worker" : "conversational";
+}
+
+function workerReportRoute(ctx: BindableContext): WorkerReportRoute {
+  try {
+    const auth = ctx.session?.auth as
+      | { current?: { attributes?: unknown } | null; initiator?: { attributes?: unknown } | null }
+      | undefined;
+    const marker = readOneshotMarker(auth?.current?.attributes) ?? readOneshotMarker(auth?.initiator?.attributes);
+    return marker ? "return-result" : "task-result";
+  } catch {
+    return "task-result";
+  }
+}
+
+function workerHasMidTurnPost(ctx: BindableContext): boolean {
+  try {
+    return capabilitiesForPlatform(bindFrom(ctx).platform).midTurnPost !== false;
+  } catch {
+    return true;
+  }
 }
 
 function resolveDeliveryArm(
@@ -367,7 +402,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     identity: renderIdentity(agentIdentityName()),
     handle: handleInfo ? renderHandle(handleInfo.platform, handleInfo.handle) : "",
     surface: renderUnifiedSurfaces(platforms),
-    surfaceGuide: renderUnifiedSurfaceGuides(platforms),
+    surfaceGuide: renderUnifiedSurfaceGuides(platforms, seatKindOf(ctx)),
     persona: renderSupervisorPersona(ctx, { messageToolOnly: true, ...(pinnedPlatform ? { pinnedPlatform } : {}) }),
     readingAWake: canReceiveJudgedWake(ctx) ? renderReadingAWake() : "",
     replyStyle: REPLY_STYLE_RUBRIC,
@@ -394,7 +429,7 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
     identity: renderIdentity(agentIdentityName()),
     handle: handleInfo ? renderHandle(handleInfo.platform, handleInfo.handle) : "",
     surface: renderSurface(binding.platform),
-    surfaceGuide: renderSurfaceGuide(binding.platform),
+    surfaceGuide: renderSurfaceGuide(binding.platform, seatKindOf(ctx)),
     persona: renderSupervisorPersona(ctx),
     readingAWake: canReceiveJudgedWake(ctx) ? renderReadingAWake() : "",
     replyStyle: REPLY_STYLE_RUBRIC,

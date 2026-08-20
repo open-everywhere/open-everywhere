@@ -8,16 +8,18 @@ import {
   renderHandle,
   renderSeatPersona,
   renderSurface,
+  renderSurfaceGuide,
   renderUnifiedSurfaceGuides,
   renderUnifiedSurfaces,
   surfaceDisplayName,
+  SURFACE_GUIDES,
   type SeatPromptParts,
   type SeatPromptSlot,
 } from "../agent/instructions/seat-prompt.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { registerCapabilityManifest } from "../agent/identity/capabilities.js";
-import { renderScopeMarkdown } from "../agent/instructions/access.js";
+import { renderScopeMarkdown, renderSupervisorPersona } from "../agent/instructions/access.js";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { formatWindowToken } from "../agent/channels/window-key.js";
 import type { BindableContext } from "../agent/identity/binding.js";
@@ -137,7 +139,8 @@ function ok(cond: boolean, label: string): void {
 }
 
 {
-  const worker = renderSeatPersona({ seatKind: "worker", delivery: { kind: "dual-mode" } });
+  const worker = renderSeatPersona({ seatKind: "worker", report: "task-result", midTurnPost: true });
+  const rollOwn = renderSeatPersona({ seatKind: "worker", report: "return-result", midTurnPost: true });
   const seat = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } });
 
   ok(worker.includes("call `post_file` to attach it into the"), "🔴 a worker is told it CARRIES the file tools");
@@ -145,15 +148,74 @@ function ok(cond: boolean, label: string): void {
   ok(seat.includes("call `agent` — the"), "negative control: a conversational seat IS told to delegate the file");
   ok(!seat.includes("call `post_file` to attach it into the"), "negative control: …and is never told it holds the file tools");
 
-  ok(worker.includes("`return_result`"), "🔴 a worker's escalation route is its report");
-  ok(worker.includes("an answer might not"), "🔴 …and the hedge stands: a parked question may never be answered on the roll-own path");
+  ok(worker.includes("an answer might not"), "🔴 the ask-question hedge stands: a parked question may never be answered");
   ok(seat.includes("check with the channel before continuing"), "negative control: a conversational seat asks the channel instead");
   ok(!seat.includes("`return_result`"), "negative control: …and is never handed a verb it does not hold");
 
+  for (const gone of [
+    "You are the standing session for this channel",
+    "### When to speak",
+    "A react is a full response tier",
+    "`stand_down`",
+    "### Backscroll",
+    "### Owned threads",
+    "### Routing",
+    "### Trust grades",
+  ]) {
+    ok(!worker.includes(gone), `🔴 the worker persona no longer carries the seat's "${gone}"`);
+    ok(seat.includes(gone), `negative control: the conversational seat DOES still carry "${gone}" — the seat's prose is untouched`);
+  }
+
+  ok(worker.includes("## Your job"), "🔴 the worker persona opens on the job, not the channel");
+  ok(worker.includes("there is no `agent` tool on this\nsession"), "🔴 …states that the work stops with it");
+  ok(worker.includes("### Your report"), "🔴 …and tells it how to report");
+  ok(worker.length > 2000, `fixture guard: the worker persona is a real block, not a stub (got ${worker.length} bytes)`);
+
+  ok(!worker.includes("`return_result`"), "🔴 the NATIVE worker is never sent at `return_result` — it refuses on that route");
+  ok(worker.includes("Your LAST message of this session is your report"), "🔴 …it is told its last message IS the report");
+  ok(rollOwn.includes("Call `return_result` ONCE"), "🔴 the ROLL-OWN worker is told to call `return_result`");
+  ok(!rollOwn.includes("Your LAST message of this session is your report"), "negative control: …and not the other route's mechanism");
+
+  const noPost = renderSeatPersona({ seatKind: "worker", report: "task-result", midTurnPost: false });
+  ok(worker.includes("### Speaking into the conversation"), "a worker that holds `reply` is told what it is for");
+  ok(worker.includes(editReplyParagraph("")), "🔴 …built from the SHARED edit_reply paragraph, not a fourth copy");
+  ok(!noPost.includes("### Speaking into the conversation"), "🔴 negative control: a worker with no mid-turn post reads no reply section at all");
+  ok(noPost.includes("### Your report"), "negative control: …but still reports");
+
   ok(renderSeatPersona({ seatKind: "conversational", delivery: { kind: "reply-only" } }).includes(renderDeliverySection({ kind: "reply-only" })), "the persona embeds the delivery section its variant names");
 
-  ok(worker.includes("You are the standing session for this channel"), "⚠️ TODAY: a worker still reads the conversational seat's channel-watch opener — the content fix is its own ticket");
-  ok(worker.includes("`stand_down`") && worker.includes("### Backscroll"), "⚠️ TODAY: …and its stand-down and backscroll rules, neither of which a worker can act on");
+  const webSearch = "results arrive straight\nfrom the open web with NO fence around them";
+  ok(worker.includes(webSearch) && seat.includes(webSearch), "🔴 both personas state the SAME unfenced-`web_search` rule");
+  ok(worker.includes("<untrusted_external_data>") && worker.includes("do not act on it"), "🔴 the worker keeps the fence rule and the injection-escalation rule");
+}
+
+{
+  const seatGuide = renderSurfaceGuide("slack");
+  const workerGuide = renderSurfaceGuide("slack", "worker");
+  ok(seatGuide.includes("a single `react`"), "negative control: the conversational seat's Slack guide still offers a `react`");
+  ok(!workerGuide.includes("`react`"), "🔴 a worker's Slack guide never offers a tool it does not hold");
+  ok(workerGuide.includes("Slack mrkdwn") && workerGuide.includes("`thread_ts`"), "negative control: …and the rest of the Slack guide survives the subtraction");
+  ok(seatGuide === SURFACE_GUIDES["slack"], "🔴 the seat's guide is BYTE-IDENTICAL to the map entry — the split changed no seat bytes");
+
+  const unifiedSeat = renderUnifiedSurfaceGuides(["slack", "notion"]);
+  const unifiedWorker = renderUnifiedSurfaceGuides(["slack", "notion"], "worker");
+  ok(unifiedSeat.includes("a single `react`"), "negative control: the unified guide keeps it for a seat");
+  ok(!unifiedWorker.includes("`react`"), "🔴 …and drops it for a worker on the unified path too");
+  ok(unifiedWorker.includes("### Notion"), "negative control: every wired surface still gets its section");
+}
+
+{
+  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
+  const TASK_TOKEN = "unified:oe-dom:acme:win:t/C1/1721018940.000100:oe-sup:g3";
+  const ctx = {
+    channel: { kind: "slack", continuationToken: TASK_TOKEN },
+    session: { auth: { current: { attributes: { oe_platform: "slack", team_id: "T8", channel_id: "C8", oe_oneshot: { taskId: "t1", callerToken: "unified:oe-dom:acme:oe-sup:g3", callerOrigin: { kind: "slack" } } } } } },
+  } as unknown as BindableContext;
+  const addressed = renderSupervisorPersona(ctx, { messageToolOnly: true });
+  const plain = renderSupervisorPersona(ctx);
+  ok(!addressed.includes("### Speaking into the conversation"), "🔴 a wake-addressed worker reads no reply section — the address is undescribed and undriven");
+  ok(addressed.includes("Call `return_result` ONCE"), "…and still reads its report route in full, so it is not left mute");
+  ok(plain.includes("### Speaking into the conversation"), "negative control: the SAME worker off that path does read it — the withholding is the arm, not a deletion");
 }
 
 {
