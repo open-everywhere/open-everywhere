@@ -21,8 +21,7 @@ import {
   teamsVendorExternal,
   type TeamsFrontPlan,
 } from "../agent/channels/teams-front.js";
-import { overrideSettingsForTest, resetSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
-import { EXTERNAL_MENTION_ACK, EXTERNAL_SENDER_NOTICE } from "@open-everywhere/core/agent/adapter-api.js";
+import { overrideSettingsForTest, resetSettingsForTest, EXTERNAL_MENTION_ACK, EXTERNAL_SENDER_NOTICE } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   bindFrom,
   resolvePartition,
