@@ -35,7 +35,8 @@ import {
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
 import { pendingDelegationOwing, BRIDGE_WAKE_HELD_AUDIT_ACTION } from "../access/pending-delegation-signal.js";
 import { sourcesForWindow } from "./window-sources.js";
-import { finalMessageActionForTurn, replierLabelFor, withPendingWorkFrame } from "./turn-delivery.js";
+import { finalMessageActionForTurn, replierLabelFor, withPendingWorkFrame, NO_REPLY_SENTINEL_REASON } from "./turn-delivery.js";
+import { auditNoReplySentinelObserved } from "./chat-turn-audit.js";
 import { consumeRepliedThisTurn, repliedWakesThisTurn, declinedWakesThisTurn, refusalsForWakeThisTurn } from "./reply-signal.js";
 import { consumeReactedThisTurn } from "./react-signal.js";
 import { settleWakeAccounting, UNACCOUNTED_WAKES_AUDIT_ACTION, MAX_ACCOUNTING_WAKES } from "./wake-accounting.js";
@@ -390,6 +391,9 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
             linearClosed = false;
             ulog(`silent turn: FAILED to close the open ${silentOrigin.platform} session (spinner may persist until timeout): ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
           }
+        }
+        if (action.reason === NO_REPLY_SENTINEL_REASON) {
+          await auditNoReplySentinelObserved({ org, platform: "unified", workspace, surface: surface ?? "unknown" }, sessionId, wakeId).catch(() => undefined);
         }
         if (auditSilencesEnabled()) {
           await appendAudit({
