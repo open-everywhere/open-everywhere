@@ -81,6 +81,7 @@ const rawDomains: Domain[] = [
       "slack/T0EXAMPLE/C0EXCHAN008",
       "slack/T0EXAMPLE/C0EXCHAN009",
       "github/example-owner/soak-scratch",
+      "linear/1a000000-0000-4000-8000-000000000002/1a000000-0000-4000-8000-000000000013",
     ],
     memory: "soak-brain",
     ambientSupervisor: true,
