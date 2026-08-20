@@ -2,19 +2,12 @@ import { defineState } from "eve/context";
 import { persistMemoryNow, type MemoryFlushSummary, type MemoryPersistContext } from "./memory.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
-import { TERMINAL_TASK_STATUSES, type TaskSummary } from "../access/background-tasks.js";
+import { armLiveTask, consumeFlushHold, liveTaskIds, MAX_FLUSH_HOLDS } from "../access/live-delegated-tasks.js";
+export { liveTaskCount, liveTaskIds, noteTaskViews, MAX_FLUSH_HOLDS } from "../access/live-delegated-tasks.js";
 
 export const SETTLEMENT_FLUSH_ACTION = "memory.settlement_flush";
 
 export type SettlementEdge = "task-settled" | "delegation-returned" | "turn-backstop";
-
-export const MAX_FLUSH_HOLDS = 4;
-
-const liveTasks = defineState<Record<string, number>>("open-everywhere.memory.liveTasks", () => ({}));
-
-function holdsUsed(v: unknown): number {
-  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
-}
 
 const treeDirty = defineState<{ dirty: boolean }>("open-everywhere.memory.treeDirty", () => ({ dirty: false }));
 
@@ -23,11 +16,7 @@ function log(msg: string): void {
 }
 
 export function noteTaskDispatched(taskId: string): void {
-  try {
-    if (taskId.length === 0) return;
-    liveTasks.update((t) => ({ ...t, [taskId]: 0 }));
-  } catch {
-  }
+  armLiveTask(taskId);
   markTreeDirty();
 }
 
@@ -44,58 +33,6 @@ export function treeIsDirty(): boolean {
   } catch {
     return false;
   }
-}
-
-export function noteTaskViews(views: readonly TaskSummary[]): void {
-  try {
-    if (views.length === 0) return;
-    liveTasks.update((t) => {
-      const next = { ...t };
-      for (const v of views) {
-        if (TERMINAL_TASK_STATUSES.includes(v.status)) delete next[v.taskId];
-        else next[v.taskId] = 0;
-      }
-      return next;
-    });
-  } catch {
-  }
-}
-
-export function liveTaskIds(): readonly string[] {
-  try {
-    return Object.keys(liveTasks.get());
-  } catch {
-    return [];
-  }
-}
-
-function consumeFlushHold(ids: readonly string[]): readonly string[] {
-  if (ids.length === 0) return [];
-  let retired: readonly string[] = [];
-  try {
-    liveTasks.update((t) => {
-      const next = { ...t };
-      const spent: string[] = [];
-      for (const id of ids) {
-        const used = holdsUsed(next[id]) + 1;
-        if (used >= MAX_FLUSH_HOLDS) {
-          delete next[id];
-          spent.push(id);
-        } else {
-          next[id] = used;
-        }
-      }
-      retired = spent;
-      return next;
-    });
-  } catch {
-    retired = [];
-  }
-  return retired;
-}
-
-export function liveTaskCount(): number {
-  return liveTaskIds().length;
 }
 
 export interface SettlementFlushResult {

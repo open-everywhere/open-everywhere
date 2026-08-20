@@ -1,5 +1,5 @@
 import { defineHook, type HookContext } from "eve/hooks";
-import { bindFrom, domainKeyOf, resolvePartition, appendUsageEvent, usageForSession, recordSpend, periodOf, estimateSandboxCostUsd, routineIdOf, getSettings, isSubagentChildContext, subagentParentSessionId, type BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
+import { bindFrom, domainKeyOf, resolvePartition, appendUsageEvent, usageForSession, recordSpend, periodOf, estimateSandboxCostUsd, routineIdOf, getSettings, isSubagentChildContext, liveTaskIds, subagentParentSessionId, type BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
 import { resolveSandboxStopper, shouldStop, type SandboxListing, type SandboxStopper } from "./backend-stop.js";
 
 export { shouldStop, type SandboxListing, type SandboxStopper };
@@ -62,6 +62,14 @@ export function resetStopOwnershipLogForTest(): void {
   ownershipLogged = false;
 }
 
+export function liveDelegatedTasksHoldingSandbox(): readonly string[] {
+  try {
+    return liveTaskIds();
+  } catch {
+    return [];
+  }
+}
+
 async function onTurnEnd(ctx: HookContext, outcome: string): Promise<void> {
   if (!stopAfterTurnEnabled()) return;
   try {
@@ -72,6 +80,14 @@ async function onTurnEnd(ctx: HookContext, outcome: string): Promise<void> {
       log(
         `turn.${outcome}: SKIPPED the stop — this is an eve subagent child and the parent owns the shared sandbox` +
           (restored.length > 0 ? `; handed ${restored.join(", ")} back to the parent session` : ""),
+      );
+      return;
+    }
+    const holding = liveDelegatedTasksHoldingSandbox();
+    if (holding.length > 0) {
+      log(
+        `turn.${outcome}: SKIPPED the stop — ${holding.length} delegated background task(s) still hold this session's sandbox ` +
+          `[${holding.join(", ")}]; the next turn end that finds none sweeps it`,
       );
       return;
     }

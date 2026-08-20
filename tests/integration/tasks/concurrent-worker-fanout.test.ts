@@ -21,6 +21,16 @@ import {
 test("two agent calls in one step start two workers that both run", async () => {
   await bootAgent();
 
+  const hostLogLines: string[] = [];
+  const realConsoleLog = console.log;
+  console.log = (...args: unknown[]) => {
+    hostLogLines.push(args.map(String).join(" "));
+    realConsoleLog(...args);
+  };
+  afterThisTest(() => {
+    console.log = realConsoleLog;
+  });
+
   let workerToolCalls = 0;
   const workerIdentities: (ToolSessionIdentity | undefined)[] = [];
   const optionsBagKeys: string[][] = [];
@@ -135,6 +145,14 @@ test("two agent calls in one step start two workers that both run", async () => 
   }
   expect(new Set(identities.map((i) => i.sessionId)).size).toBeGreaterThanOrEqual(2);
   expect(new Set(identities.map((i) => i.sandboxKey)).size).toBe(1);
+
+  if (receipts.length > 0) {
+    const skipLine = await waitFor(
+      () => hostLogLines.find((l) => l.includes("[open-everywhere:sandbox-lifecycle]") && l.includes("delegated background task(s) still hold")),
+      "the parent's turn-end sandbox stop to be SKIPPED while its background workers are live",
+    );
+    for (const taskId of receipts) expect(skipLine).toContain(taskId);
+  }
 
   if (drain !== undefined) {
     await consumeSettlement({
