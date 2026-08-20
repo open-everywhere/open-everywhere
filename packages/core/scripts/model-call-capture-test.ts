@@ -24,6 +24,7 @@ const {
   _resetCaptureCountsForTest,
   bodySha256,
   captureArmed,
+  capturePrefixList,
   captureCountsFor,
   captureCoversSurface,
   captureSiteFrom,
@@ -278,6 +279,14 @@ function armed(on: boolean): void {
   ok(captureCoversSurface(liveKey, { soak: { capture: true, captureSurfacePrefix: liveKey } }), "scope: a surface matching the prefix is covered");
   ok(!captureCoversSurface(liveKey, { soak: { capture: true, captureSurfacePrefix: otherKey } }), "scope: a surface outside the prefix is NOT covered");
   ok(captureCoversSurface(liveKey, { soak: { capture: true, captureSurfacePrefix: "" } }), "scope: an empty prefix covers every surface (the shipped, deliberately wide default)");
+
+  ok(captureCoversSurface(liveKey, { soak: { capture: true, captureSurfacePrefix: [otherKey, liveKey] } }), "list: a surface matching ANY listed prefix is covered");
+  ok(!captureCoversSurface(liveKey, { soak: { capture: true, captureSurfacePrefix: [otherKey, "discord/g-other/c-other"] } }), "🔴 list: a surface matching NONE of the listed prefixes is not covered");
+  ok(captureCoversSurface(liveKey, { soak: { capture: true, captureSurfacePrefix: [] } }), "list: an EMPTY list covers every surface — the same wide default as an empty string");
+  ok(captureCoversSurface(liveKey, { soak: { capture: true, captureSurfacePrefix: [otherKey, ""] } }), "list: a list CONTAINING an empty-string prefix covers every surface, even alongside a real one");
+  ok(capturePrefixList("a/b/") .length === 1 && capturePrefixList("a/b/")[0] === "a/b/", "capturePrefixList: a bare string normalises to a one-element list — the string/array shorthand is symmetric");
+  eq(capturePrefixList(["a/", "b/"]), ["a/", "b/"], "capturePrefixList: an array passes through unchanged");
+  eq(capturePrefixList(undefined), [""], "capturePrefixList: an absent setting normalises to the wide-default sentinel, same as the shipped empty string");
 
   resetSettingsForTest();
   registerSettings({ soak: { capture: true, captureSurfacePrefix: otherKey }, turn: { stepBudget: 0 } });

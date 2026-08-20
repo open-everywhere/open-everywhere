@@ -56,12 +56,17 @@ export function captureArmed(settings = safeSettings()): boolean {
   return settings?.soak.capture === true;
 }
 
-export function captureCoversSurface(surfaceKey: string, settings = safeSettings()): boolean {
-  const prefix = settings?.soak.captureSurfacePrefix ?? "";
-  return prefix.length === 0 || surfaceKey.startsWith(prefix);
+export function capturePrefixList(raw: string | readonly string[] | undefined): readonly string[] {
+  if (raw === undefined) return [""];
+  return typeof raw === "string" ? [raw] : raw;
 }
 
-function safeSettings(): { soak: { capture: boolean; captureSurfacePrefix: string } } | undefined {
+export function captureCoversSurface(surfaceKey: string, settings = safeSettings()): boolean {
+  const prefixes = capturePrefixList(settings?.soak.captureSurfacePrefix);
+  return prefixes.length === 0 || prefixes.some((p) => p.length === 0 || surfaceKey.startsWith(p));
+}
+
+function safeSettings(): { soak: { capture: boolean; captureSurfacePrefix: string | readonly string[] } } | undefined {
   try {
     return getSettings();
   } catch {

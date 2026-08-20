@@ -104,7 +104,7 @@ export interface AgentSettings {
   };
   readonly soak: {
     readonly capture: boolean;
-    readonly captureSurfacePrefix: string;
+    readonly captureSurfacePrefix: string | readonly string[];
   };
   readonly stall: {
     readonly repeatThreshold: number;
@@ -151,6 +151,9 @@ const positiveNumber = (value: number): string | undefined =>
 
 const stringArray = (value: readonly string[]): string | undefined =>
   Array.isArray(value) && value.every((t) => typeof t === "string") ? undefined : "must be an array of strings";
+
+const stringOrStringArray = (value: string | readonly string[]): string | undefined =>
+  typeof value === "string" || (Array.isArray(value) && value.every((t) => typeof t === "string")) ? undefined : "must be a string or an array of strings";
 
 export const SETTINGS = {
   agent: {
@@ -520,11 +523,15 @@ export const SETTINGS = {
     } satisfies SettingSpec<boolean>,
     captureSurfacePrefix: {
       path: "soak.captureSurfacePrefix",
-      shipped: "",
+      shipped: "" as string | readonly string[],
+      validate: stringOrStringArray,
       summary:
-        "Narrow `soak.capture` to one part of the deployment: a call is recorded only when its surface key starts with this string. Surface keys read `platform/workspace/surface`, so `\"slack/T0123/\"` is one workspace and `\"slack/T0123/C0SOAK\"` is one channel. **Set it whenever you arm capture.** Empty (shipped) means every surface, which records the deployment's whole conversational traffic and is almost never what a soak run wants.",
-      format: (v) => (v.length > 0 ? v : "(every surface)"),
-    } satisfies SettingSpec<string>,
+        "Narrow `soak.capture` to part of the deployment: a call is recorded only when its surface key starts with one of these prefixes. A bare string is shorthand for a one-prefix list. Surface keys read `platform/workspace/surface`, so `\"slack/T0123/\"` is one workspace and `\"slack/T0123/C0SOAK\"` is one channel — a list lets a run scope several platform families at once (e.g. `[\"slack/T0123/\", \"notion/ws1/\"]`) instead of only one. **Set it whenever you arm capture.** Empty (shipped `\"\"`, or `[]`, or any list containing `\"\"`) means every surface, which records the deployment's whole conversational traffic and is almost never what a soak run wants.",
+      format: (v) => {
+        const list = typeof v === "string" ? [v] : v;
+        return list.length === 0 || list.some((p) => p.length === 0) ? "(every surface)" : list.join(", ");
+      },
+    } satisfies SettingSpec<string | readonly string[]>,
   },
   spend: {
     usageEventsTtlDays: {
