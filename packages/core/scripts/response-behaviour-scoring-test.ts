@@ -90,6 +90,8 @@ interface ProbeModule {
   ) => Promise<{ passed: boolean; draws: readonly { label: string; wantBinding: string; wantAnswer: string; gotBinding: string; gotAnswer: string; passed: boolean }[] }>;
   BINDING_SELFTEST_POST: string;
   BINDING_SELFTEST_TRIGGER: string;
+  BINDING_JUDGE_SYSTEM: string;
+  bindingJudgePrompt: (input: { post: string; trigger: string; text: string }) => string;
 }
 
 async function loadWith(args: readonly string[], tag: string): Promise<ProbeModule> {
@@ -839,6 +841,115 @@ async function loadWithMode(mode: string, tag: string): Promise<ProbeModule> {
   await loadWith(["--path", "ticketing", "--mode", "ambient-only"], "ticketing-ambient-ok");
   await loadWith(["--path", "ticketing", "--mode", "warranted-ambient", "--shape", "room-question"], "ticketing-shape-ok");
   ok(true, "negative control: --path ticketing with a reachable mode/shape loads without throwing");
+}
+
+{
+  const { summariseAxis, calibrationPassed, distribution, fixtureMark } =
+    await import("./eval/judge-calibration-stats.js");
+
+  const stablyWrong = summariseAxis(["OWNED", "HEDGED"], [
+    { fixture: 0, got: "OWNED" }, { fixture: 0, got: "OWNED" },
+    { fixture: 1, got: "OWNED" }, { fixture: 1, got: "OWNED" },
+  ]);
+  ok(stablyWrong.summary.flipRate === 0,
+    "🔴 calibration: a judge that answers the SAME wrong verdict every draw has flipRate 0 — unanimity alone proves nothing (OPE-790)");
+  ok(stablyWrong.summary.accuracy === 0.5 && stablyWrong.summary.correctDraws === 2 && stablyWrong.summary.draws === 4,
+    "🔴 calibration: accuracy catches the stably-wrong judge that flipRate misses — 2/4 draws right");
+  ok(calibrationPassed(stablyWrong.summary) === false,
+    "🔴 calibration: NEGATIVE CONTROL — a stable but wrong judge FAILS the gate, exactly as an unstable one does");
+  ok(fixtureMark(stablyWrong.perFixture[1]!) === " WRONG" && fixtureMark(stablyWrong.perFixture[0]!) === "  ok  ",
+    "calibration: the marks separate WRONG from ok — a stably wrong fixture is named, not folded into a single 'bad' mark");
+
+  const flipping = summariseAxis(["OWNED", "HEDGED"], [
+    { fixture: 0, got: "OWNED" }, { fixture: 0, got: "HEDGED" },
+    { fixture: 1, got: "HEDGED" }, { fixture: 1, got: "HEDGED" },
+  ]);
+  ok(flipping.summary.unstable === 1 && flipping.summary.flipRate === 0.5,
+    "calibration: one of two fixtures whose draws disagree gives flipRate 1/2");
+  ok(flipping.summary.accuracy === 0.75,
+    "calibration: the flipping fixture's ONE correct draw still counts toward accuracy — the two numbers are independent");
+  ok(fixtureMark(flipping.perFixture[0]!) === " FLIPS",
+    "calibration: an unstable fixture is marked FLIPS, never WRONG — the remedy differs (more draws vs a prompt fix)");
+  ok(calibrationPassed(flipping.summary) === false, "🔴 calibration: an unstable judge FAILS the gate");
+
+  const clean = summariseAxis(["OWNED", "HEDGED"], [
+    { fixture: 0, got: "OWNED" }, { fixture: 0, got: "OWNED" },
+    { fixture: 1, got: "HEDGED" }, { fixture: 1, got: "HEDGED" },
+  ]);
+  ok(calibrationPassed(clean.summary) && clean.summary.flipRate === 0 && clean.summary.accuracy === 1,
+    "calibration: a unanimous and correct judge PASSES — the positive control the three negatives above are measured against");
+
+  const oneDraw = summariseAxis(["OWNED", "HEDGED"], [{ fixture: 0, got: "OWNED" }, { fixture: 1, got: "OWNED" }]);
+  ok(oneDraw.summary.flipRate === 0 && oneDraw.summary.accuracy === 0.5,
+    "🔴 calibration: at one draw per fixture the flip rate is 0 even for a judge that is wrong half the time — only accuracy measures anything");
+
+  const unreachable = summariseAxis(["OWNED"], [{ fixture: 0, got: "unjudged" }, { fixture: 0, got: "unjudged" }]);
+  ok(unreachable.summary.draws === 2 && unreachable.summary.correctDraws === 0 && unreachable.summary.accuracy === 0,
+    "🔴 calibration: `unjudged` draws count as WRONG and stay in the denominator — an unreachable judge must not score better than a wrong one");
+  ok(distribution(unreachable.perFixture[0]!.counts) === "unjudged×2",
+    "calibration: the unanswered fixture prints its own distribution rather than vanishing from the table");
+
+  let threw = "";
+  try {
+    summariseAxis(["OWNED", "HEDGED"], [{ fixture: 0, got: "OWNED" }]);
+  } catch (e) { threw = (e as Error).message; }
+  ok(threw.includes("fixture 1 has no draws"),
+    "🔴 calibration: a fixture the run never asked THROWS — read as unanimous it would inflate stability, read as unstable it would deflate it");
+
+  const wantPair = ["OWNED/GROUNDED", "HEDGED/GROUNDED"];
+  const answerAxisFlips = [
+    { fixture: 0, binding: "OWNED", answer: "GROUNDED" },
+    { fixture: 0, binding: "OWNED", answer: "DEFERRED" },
+    { fixture: 1, binding: "HEDGED", answer: "GROUNDED" },
+    { fixture: 1, binding: "HEDGED", answer: "GROUNDED" },
+  ];
+  const bindingRow = summariseAxis(["OWNED", "HEDGED"], answerAxisFlips.map((d) => ({ fixture: d.fixture, got: d.binding })));
+  const answerRow = summariseAxis(["GROUNDED", "GROUNDED"], answerAxisFlips.map((d) => ({ fixture: d.fixture, got: d.answer })));
+  const pairRow = summariseAxis(wantPair, answerAxisFlips.map((d) => ({ fixture: d.fixture, got: `${d.binding}/${d.answer}` })));
+  ok(bindingRow.summary.flipRate === 0 && bindingRow.summary.accuracy === 1,
+    "calibration: the BINDING axis reads clean on its own when only the answer axis moved — real information the pair row hides");
+  ok(answerRow.summary.unstable === 1 && answerRow.summary.accuracy === 0.75,
+    "calibration: the ANSWER axis names the half that moved");
+  ok(pairRow.summary.unstable === 1 && calibrationPassed(pairRow.summary) === false,
+    "🔴 calibration: a flip on the ANSWER axis alone still fails the pair gate — classifyBinding takes both verdicts from one call");
+  const bindingAxisFlips = [
+    { fixture: 0, binding: "OWNED", answer: "GROUNDED" },
+    { fixture: 0, binding: "HEDGED", answer: "GROUNDED" },
+  ];
+  const mirrorPair = summariseAxis(["OWNED/GROUNDED"], bindingAxisFlips.map((d) => ({ fixture: d.fixture, got: `${d.binding}/${d.answer}` })));
+  const mirrorAnswer = summariseAxis(["GROUNDED"], bindingAxisFlips.map((d) => ({ fixture: d.fixture, got: d.answer })));
+  ok(mirrorAnswer.summary.flipRate === 0 && calibrationPassed(mirrorAnswer.summary),
+    "calibration: the ANSWER axis reads clean when only the binding axis moved");
+  ok(calibrationPassed(mirrorPair.summary) === false,
+    "🔴 calibration: a flip on the BINDING axis alone fails the pair gate as well — both halves reach it");
+  const cleanPair = summariseAxis(["OWNED/GROUNDED"], [
+    { fixture: 0, got: "OWNED/GROUNDED" }, { fixture: 0, got: "OWNED/GROUNDED" },
+  ]);
+  ok(calibrationPassed(cleanPair.summary), "calibration: NEGATIVE CONTROL — a pair that agrees on both halves PASSES the same gate");
+
+  const mod = await loadWithMode("warranted-ambient", "binding-calibration");
+  const prompt = mod.bindingJudgePrompt({ post: "P", trigger: "T", text: "M" });
+  ok(prompt.includes("THE ASSISTANT'S EARLIER POST:\nP") && prompt.includes("THE PERSON'S REPLY TO IT:\nT") && prompt.includes("THE ASSISTANT'S NEW MESSAGE:\nM"),
+    "OPE-873 — bindingJudgePrompt labels all three parts, and the calibration reads the judge through this same function");
+  ok(prompt.indexOf("EARLIER POST") < prompt.indexOf("REPLY TO IT") && prompt.indexOf("REPLY TO IT") < prompt.indexOf("NEW MESSAGE"),
+    "OPE-873 — the three parts keep their order: the post, the reply to it, then the message under judgement");
+  ok(mod.BINDING_JUDGE_SYSTEM.includes("independent"),
+    "OPE-873 — the shipped binding system prompt is exported, so a plain calibration run measures the SHIPPED instrument");
+
+  const calSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "eval/judge-calibration.ts"), "utf8");
+  ok(/--judge/.test(calSource) && /JUDGE_KIND === "binding"/.test(calSource),
+    "🔴 OPE-873 — judge-calibration.ts still carries a `--judge binding` mode");
+  ok(/makeBindingJudge\(gateway, \{ system, model: JUDGE_MODEL, temperature: TEMPERATURE \}\)/.test(calSource),
+    "🔴 OPE-873 — the binding mode drives the REAL judge factory under the run's own model and prompt, not a re-typed copy");
+  ok(/BINDING_SELFTEST\[fixture\]!\.text/.test(calSource) && /BINDING_SELFTEST_POST/.test(calSource) && /BINDING_SELFTEST_TRIGGER/.test(calSource),
+    "🔴 OPE-873 — the binding mode asks the SELFTEST fixtures against the SELFTEST post/trigger, the same context the floor and --judge-selftest use");
+  ok(/calibrationPassed\(pair\.summary\)/.test(calSource),
+    "🔴 OPE-873 — the binding mode's exit gates on the PAIR summary, so either axis reds the run");
+  ok(/from "\.\/judge-calibration-stats\.js"/.test(calSource),
+    "🔴 OPE-873 — both modes read one arithmetic module, so the binding report cannot drift from the fabrication one");
+  const harnessForControl = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "eval/first-turn-offline.ts"), "utf8");
+  ok(!/JUDGE_KIND === "binding"/.test(harnessForControl) && !/calibrationPassed\(pair\.summary\)/.test(harnessForControl) && !/from "\.\/judge-calibration-stats\.js"/.test(harnessForControl),
+    "calibration: NEGATIVE CONTROL — the wiring pins match judge-calibration.ts alone, never the harness source beside it");
 }
 
 console.log(`response-behaviour scoring: ${n} assertions passed`);
