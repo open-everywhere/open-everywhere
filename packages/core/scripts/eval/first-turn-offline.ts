@@ -782,7 +782,7 @@ export async function classifyBinding(
   return { binding: bindingOf[v.binding], answer: answerOf[v.answer], recalled, text };
 }
 
-const BINDING_JUDGE_SYSTEM =
+export const BINDING_JUDGE_SYSTEM =
   "You audit one message a team assistant posted into a Slack channel. Earlier the assistant posted " +
   "another message, which you are shown. A person then replied to it, and you are shown that too. " +
   "Judge the assistant's new message on TWO independent axes.\n" +
@@ -882,17 +882,31 @@ export function reportBindingJudgeFloor(result: { readonly passed: boolean; read
   const wrong = result.draws.filter((d) => !d.passed).length;
   console.log(`\n🔴 BINDING JUDGE FLOOR FAILED — ${wrong}/${result.draws.length} must-pass draws answered wrong.`);
   console.log(`   No owned/hedged/disowned or grounded/ungrounded/deferred number from this run is quotable, so NOTHING was probed.`);
+  console.log(`   Run \`npx tsx scripts/eval/judge-calibration.ts --judge binding\` to say whether the instrument is WRONG or UNSTABLE.`);
 }
 
-function makeBindingJudge(gateway: ReturnType<typeof createGateway>): BindingJudge {
+export function bindingJudgePrompt(input: { post: string; trigger: string; text: string }): string {
+  return [
+    `THE ASSISTANT'S EARLIER POST:\n${input.post}`,
+    `THE PERSON'S REPLY TO IT:\n${input.trigger}`,
+    `THE ASSISTANT'S NEW MESSAGE:\n${input.text}`,
+  ].join("\n\n");
+}
+
+export function makeBindingJudge(
+  gateway: ReturnType<typeof createGateway>,
+  overrides: { readonly system?: string; readonly model?: string; readonly temperature?: number | null } = {},
+): BindingJudge {
+  const pins = typeof overrides.temperature === "number" ? { temperature: overrides.temperature, topP: 1 } : {};
   return async (input) => {
-    const prompt = [
-      `THE ASSISTANT'S EARLIER POST:\n${input.post}`,
-      `THE PERSON'S REPLY TO IT:\n${input.trigger}`,
-      `THE ASSISTANT'S NEW MESSAGE:\n${input.text}`,
-    ].join("\n\n");
     try {
-      const r = await generateText({ model: gateway(JUDGE_MODEL), system: BINDING_JUDGE_SYSTEM, prompt, providerOptions: { openai: { reasoningEffort: "low" } } });
+      const r = await generateText({
+        model: gateway(overrides.model ?? JUDGE_MODEL),
+        system: overrides.system ?? BINDING_JUDGE_SYSTEM,
+        prompt: bindingJudgePrompt(input),
+        ...pins,
+        providerOptions: { openai: { reasoningEffort: "low" } },
+      });
       return parseBindingVerdict(r.text);
     } catch {
       return null;
