@@ -22,6 +22,7 @@ export type UnifiedWakeOrigin =
       readonly ambient?: true;
       readonly issueId: string;
       readonly parentId?: string;
+      readonly organizationId?: string;
     }
   | {
       readonly platform: "notion";

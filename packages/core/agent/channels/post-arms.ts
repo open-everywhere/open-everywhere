@@ -48,7 +48,7 @@ export function dmWorkspaceReachableFromConfig(platform: string, targetTenant: s
 }
 
 export type ReactTarget =
-  | { readonly platform: "linear"; readonly issueId: string }
+  | { readonly platform: "linear"; readonly issueId: string; readonly organizationId?: string }
   | { readonly platform: "github"; readonly owner: string; readonly repo: string; readonly issueNumber: number; readonly installationId?: number };
 
 export interface PostIntent {

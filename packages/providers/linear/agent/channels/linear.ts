@@ -464,7 +464,13 @@ async function ambientDelivery(body: string, headers: Headers, send: LinearSend,
   const ambientWindow: UnifiedWindowWake | undefined = ambientVouched
     ? {
         wakeId: mintWakeId(),
-        origin: { platform: "linear", ambient: true, issueId: c.issueId, ...(c.parentId ? { parentId: c.parentId } : {}) },
+        origin: {
+          platform: "linear",
+          ambient: true,
+          issueId: c.issueId,
+          ...(c.parentId ? { parentId: c.parentId } : {}),
+          ...(signal.organizationId ? { organizationId: signal.organizationId } : {}),
+        },
       }
     : undefined;
   await handleLinearSupervisorDispatch(
@@ -661,7 +667,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
         directMention: true,
         window: {
           wakeId: mintWakeId(),
-          origin: { platform: "linear", agentSessionId, issueId: c.issueId, parentId: c.parentId ?? c.id },
+          origin: { platform: "linear", agentSessionId, issueId: c.issueId, parentId: c.parentId ?? c.id, ...(organizationId ? { organizationId } : {}) },
           addressing: "direct-mention",
         } satisfies UnifiedWindowWake,
       },
@@ -694,10 +700,29 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
   }
 }
 
-const pristine = linearChannel({ credentials: linearAppActorCredentials });
-type AdapterEventFn = (data: unknown, adapterCtx: unknown) => unknown;
-const defaultEvent = (name: string): AdapterEventFn | undefined =>
-  (pristine as unknown as { adapter?: Record<string, AdapterEventFn> }).adapter?.[name];
+const pristineByOrg = new Map<string, LinearChannel>();
+function pristineFor(organizationId: string | undefined): LinearChannel {
+  const key = organizationId ?? "";
+  let channel = pristineByOrg.get(key);
+  if (channel === undefined) {
+    channel = linearChannel({ credentials: key === "" ? linearAppActorCredentials : linearCredentialsForOrg(key) });
+    pristineByOrg.set(key, channel);
+  }
+  return channel;
+}
+export function _resetLinearPristineChannels(): void {
+  pristineByOrg.clear();
+}
+type AdapterEventFn = (data: unknown, adapterCtx: unknown, sessionCtx?: unknown) => unknown;
+const defaultEvent = (name: string, organizationId?: string): AdapterEventFn | undefined =>
+  (pristineFor(organizationId) as unknown as { adapter?: Record<string, AdapterEventFn> }).adapter?.[name];
+
+function nativeOrgOf(state: LinearChannelState): string | undefined {
+  const stamped = (state as unknown as Record<string, unknown>).oeOrganizationId;
+  if (typeof stamped === "string" && stamped.length > 0) return stamped;
+  const fromEve = state.organizationId;
+  return typeof fromEve === "string" && fromEve.length > 0 ? fromEve : undefined;
+}
 
 export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: LinearAgentSessionEvent): Promise<LinearInboundResult> => {
     const s = event.agentSession;
@@ -776,7 +801,9 @@ const native: LinearChannel = linearChannel({
       if (!isSupervisorLinearState(channel.state)) {
         const nativeAttrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
         (channel.state as unknown as Record<string, unknown>).oeReplierLabel = replierLabelFromAuthAttributes(nativeAttrs);
-        await defaultEvent("turn.started")?.(data, channel);
+        const wakeOrg = str(nativeAttrs?.organization_id);
+        if (wakeOrg) (channel.state as unknown as Record<string, unknown>).oeOrganizationId = wakeOrg;
+        await defaultEvent("turn.started", nativeOrgOf(channel.state))?.(data, channel);
         return;
       }
       const st = channel.state as LinearSupervisorSessionState;
@@ -794,14 +821,20 @@ const native: LinearChannel = linearChannel({
           : undefined;
     },
     async "actions.requested"(data, channel) {
-      if (!isSupervisorLinearState(channel.state)) await defaultEvent("actions.requested")?.(data, channel);
+      if (!isSupervisorLinearState(channel.state)) await defaultEvent("actions.requested", nativeOrgOf(channel.state))?.(data, channel);
     },
     async "input.requested"(data, channel) {
       if (!isSupervisorLinearState(channel.state)) {
-        await defaultEvent("input.requested")?.(data, channel);
+        await defaultEvent("input.requested", nativeOrgOf(channel.state))?.(data, channel);
         return;
       }
       slog("supervisor turn requested input — unsupported on a judged ambient turn; ignored");
+    },
+    async "authorization.required"(data, channel, ctx) {
+      if (!isSupervisorLinearState(channel.state)) await defaultEvent("authorization.required", nativeOrgOf(channel.state))?.(data, channel, ctx);
+    },
+    async "authorization.completed"(data, channel, ctx) {
+      if (!isSupervisorLinearState(channel.state)) await defaultEvent("authorization.completed", nativeOrgOf(channel.state))?.(data, channel, ctx);
     },
     async "message.completed"(data, channel, ctx) {
       if (!isSupervisorLinearState(channel.state)) {
@@ -811,7 +844,7 @@ const native: LinearChannel = linearChannel({
           data.finishReason !== "tool-calls" && data.message !== null && nativeLabel
             ? { ...data, message: withReplierPrefix(data.message, nativeLabel) }
             : data;
-        await defaultEvent("message.completed")?.(forwarded, channel);
+        await defaultEvent("message.completed", nativeOrgOf(channel.state))?.(forwarded, channel);
         return;
       }
       const sessionId = ctx?.session?.id;
@@ -842,7 +875,7 @@ const native: LinearChannel = linearChannel({
     },
     async "turn.failed"(data, channel) {
       if (!isSupervisorLinearState(channel.state)) {
-        await defaultEvent("turn.failed")?.(data, channel);
+        await defaultEvent("turn.failed", nativeOrgOf(channel.state))?.(data, channel);
         return;
       }
       const st = channel.state as LinearSupervisorSessionState;
@@ -855,7 +888,7 @@ const native: LinearChannel = linearChannel({
     },
     async "session.failed"(data, channel) {
       if (!isSupervisorLinearState(channel.state)) {
-        await defaultEvent("session.failed")?.(data, channel);
+        await defaultEvent("session.failed", nativeOrgOf(channel.state))?.(data, channel);
         return;
       }
       const st = channel.state as LinearSupervisorSessionState;

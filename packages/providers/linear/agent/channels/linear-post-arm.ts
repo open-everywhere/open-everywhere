@@ -1,5 +1,5 @@
 import { createLinearAgentActivity, callLinearGraphQL, LinearApiError } from "eve/channels/linear";
-import { linearAppActorCredentials } from "./linear-credentials.js";
+import { linearCredentialsForOrg } from "./linear-credentials.js";
 import { markNotApplied, carryFailureSignals } from "@open-everywhere/core/agent/adapter-api.js";
 import type { PostArm, PostIntent, TargetResolveBag, ReplyTarget, ReactTarget, UnifiedWakeOrigin, UnifiedReplyDeps } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -37,7 +37,7 @@ async function dispatchLinearReply(target: LinearTarget, text: string): Promise<
   let res: { id: string; success: boolean };
   try {
     res = await createLinearAgentActivity({
-      credentials: linearAppActorCredentials,
+      credentials: linearCredentialsForOrg(target.organizationId),
       activity: { agentSessionId: target.agentSessionId, content: { body: text, type: "response" } },
     });
   } catch (err) {
@@ -66,7 +66,7 @@ async function liveLinearPost(origin: LinearOrigin, text: string, intent?: PostI
     let data: { commentCreate?: { success?: boolean } };
     try {
       data = await callLinearGraphQL<{ commentCreate?: { success?: boolean } }>({
-        credentials: linearAppActorCredentials,
+        credentials: linearCredentialsForOrg(origin.organizationId),
         query: "mutation OeUnifiedAmbientReply($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
         queryName: "OeUnifiedAmbientReply",
         variables: { input: { issueId: origin.issueId, ...(origin.parentId ? { parentId: origin.parentId } : {}), body: text } },
@@ -84,7 +84,7 @@ async function liveLinearPost(origin: LinearOrigin, text: string, intent?: PostI
   let res: { id: string; success: boolean };
   try {
     res = await createLinearAgentActivity({
-      credentials: linearAppActorCredentials,
+      credentials: linearCredentialsForOrg(origin.organizationId),
       activity: { agentSessionId: origin.agentSessionId, content: { type, body: text } },
     });
   } catch (err) {
@@ -107,7 +107,7 @@ async function liveLinearSilentClose(origin: LinearOrigin): Promise<void> {
   if (!origin.agentSessionId) return;
   try {
     await createLinearAgentActivity({
-      credentials: linearAppActorCredentials,
+      credentials: linearCredentialsForOrg(origin.organizationId),
       activity: {
         agentSessionId: origin.agentSessionId,
         content: { type: "thought", body: LINEAR_SILENT_CLOSE_STATUS },
@@ -124,7 +124,7 @@ async function dispatchLinearAmbientReply(target: LinearAmbientTarget, text: str
   let data: { commentCreate?: { success?: boolean } };
   try {
     data = await callLinearGraphQL<{ commentCreate?: { success?: boolean } }>({
-      credentials: linearAppActorCredentials,
+      credentials: linearCredentialsForOrg(target.organizationId),
       query: "mutation OeAmbientReply($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
       queryName: "OeAmbientReply",
       variables: { input: { issueId: target.issueId, ...(target.parentId ? { parentId: target.parentId } : {}), body: text } },
@@ -140,11 +140,11 @@ async function dispatchLinearAmbientReply(target: LinearAmbientTarget, text: str
 
 const LINEAR_AMBIENT_COMMENT_ID = "comment";
 
-async function liveLinearReact(issueId: string, emoji: string): Promise<void> {
+async function liveLinearReact(issueId: string, emoji: string, organizationId: string | undefined): Promise<void> {
   let data: { reactionCreate?: { success?: boolean } };
   try {
     data = await callLinearGraphQL<{ reactionCreate?: { success?: boolean } }>({
-      credentials: linearAppActorCredentials,
+      credentials: linearCredentialsForOrg(organizationId),
       query: "mutation OeReact($input: ReactionCreateInput!) { reactionCreate(input: $input) { success } }",
       queryName: "OeReact",
       variables: { input: { issueId, emoji } },
@@ -160,12 +160,13 @@ async function liveLinearReact(issueId: string, emoji: string): Promise<void> {
 export const linearPostArm: PostArm = {
   platform: "linear",
   resolveTarget: (bag: TargetResolveBag): ReplyTarget | null => {
+    const organizationId = bag.str("organizationId");
     const agentSessionId = bag.str("agentSessionId");
-    if (agentSessionId) return { platform: "linear", agentSessionId };
+    if (agentSessionId) return { platform: "linear", agentSessionId, ...(organizationId ? { organizationId } : {}) };
     const issueId = bag.str("issueId");
     if (!issueId) return null;
     const parentId = bag.str("parentId");
-    return { platform: "linear", issueId, ...(parentId ? { parentId } : {}) };
+    return { platform: "linear", issueId, ...(parentId ? { parentId } : {}), ...(organizationId ? { organizationId } : {}) };
   },
   dispatchReply: (target, text) =>
     "agentSessionId" in target
@@ -177,9 +178,10 @@ export const linearPostArm: PostArm = {
   resolveReactTarget: (bag: TargetResolveBag): ReactTarget | null => {
     const issueId = bag.str("issueId");
     if (!issueId) return null;
-    return { platform: "linear", issueId };
+    const organizationId = bag.str("organizationId");
+    return { platform: "linear", issueId, ...(organizationId ? { organizationId } : {}) };
   },
-  react: (target, emoji) => liveLinearReact((target as LinearReactTarget).issueId, emoji),
+  react: (target, emoji) => liveLinearReact((target as LinearReactTarget).issueId, emoji, (target as LinearReactTarget).organizationId),
   describeRedriveTarget: (origin) => {
     const o = origin as LinearOrigin;
     return o.ambient ? `linear issue ${o.issueId}` : `linear session on issue ${o.issueId}`;
