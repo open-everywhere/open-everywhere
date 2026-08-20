@@ -98,6 +98,8 @@ export function unifiedEditLocus(origin: UnifiedWakeOrigin): EditLocus | null {
       return { platform: "discord", channelId: origin.channelId };
     case "teams":
       return { platform: "teams", channelId: origin.conversationId, serviceUrl: origin.serviceUrl };
+    case "github":
+      return { platform: "github", channelId: `${origin.owner}/${origin.repo}` };
     default:
       return null;
   }

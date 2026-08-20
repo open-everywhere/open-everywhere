@@ -234,6 +234,8 @@ export function replyEditLocus(target: ReplyTarget): EditLocus | null {
       return { platform: "discord", channelId: target.channelId };
     case "teams":
       return { platform: "teams", channelId: target.conversationId, serviceUrl: target.serviceUrl };
+    case "github":
+      return { platform: "github", channelId: `${target.owner}/${target.repo}` };
     default:
       return null;
   }

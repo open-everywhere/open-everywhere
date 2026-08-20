@@ -47,6 +47,10 @@ export function dmWorkspaceReachableFromConfig(platform: string, targetTenant: s
   return classifyDmWorkspaceReachability(platform, targetTenant, soleAdmittedTenantFromConfig(platform));
 }
 
+export type ReactTarget =
+  | { readonly platform: "linear"; readonly issueId: string }
+  | { readonly platform: "github"; readonly owner: string; readonly repo: string; readonly issueNumber: number; readonly installationId?: number };
+
 export interface PostArm {
   readonly platform: string;
   resolveTarget?(bag: TargetResolveBag): ReplyTarget | null;
@@ -60,6 +64,8 @@ export interface PostArm {
   describeRedriveTarget?(origin: UnifiedWakeOrigin): string;
   redriveContainerId?(origin: UnifiedWakeOrigin): string;
   deliverDirectMessage?(input: DirectMessageRequest): Promise<DirectMessageDelivery>;
+  resolveReactTarget?(bag: TargetResolveBag): ReactTarget | null;
+  react?(target: ReactTarget, emoji: string): Promise<void>;
 }
 
 const POST_ARMS = processRegistryMap<PostArm>("post-arms.v1");

@@ -180,6 +180,59 @@ try {
     ok(refused instanceof Error, "negative control: a decided commentCreate refusal (success:false) THROWS rather than reporting a landed post");
     ok(platformFailureClass(refused) === "definitive", "OPE-825 parity: the ambient route's decided refusal classifies DEFINITIVE too");
   }
+
+  {
+    type ReactBag = Parameters<NonNullable<typeof linearPostArm.resolveReactTarget>>[0];
+    const bag = (fields: Record<string, string>): ReactBag => ({ str: (k: string) => fields[k], num: () => undefined, ctx: {} as never }) as ReactBag;
+
+    ok(typeof linearPostArm.resolveReactTarget === "function" && typeof linearPostArm.react === "function", "🔴 OPE-862: the linear arm implements the REACT pair");
+
+    const both = linearPostArm.resolveReactTarget!(bag({ agentSessionId: "sess-9", issueId: "ISS9" }));
+    assert.deepStrictEqual(both, { platform: "linear", issueId: "ISS9" }, "🔴 OPE-862: resolveReactTarget resolves the ISSUE even when an agent session is ALSO present — a react is never addressed to a session");
+    ok(linearPostArm.resolveReactTarget!(bag({ agentSessionId: "sess-9" })) === null, "negative control: an agent session ALONE (no issueId) resolves NO react target — there is nothing reactionCreate could address");
+    ok(linearPostArm.resolveReactTarget!(bag({})) === null, "negative control: neither field ⇒ NO react target");
+
+    let sentQuery: string | undefined;
+    let sentInput: { issueId?: string; emoji?: string } | undefined;
+    globalThis.fetch = (async (_input: string | URL, init?: RequestInit) => {
+      const parsed = JSON.parse(String(init?.body ?? "{}")) as { query?: string; variables?: { input?: typeof sentInput } };
+      sentQuery = parsed.query;
+      sentInput = parsed.variables?.input;
+      return new Response(JSON.stringify({ data: { reactionCreate: { success: true } } }), { status: 200 });
+    }) as unknown as typeof fetch;
+    await linearPostArm.react!(both as never, "thumbsup");
+    ok(sentQuery?.includes("reactionCreate") === true, "react: dispatches the reactionCreate mutation");
+    ok(sentInput?.issueId === "ISS9" && sentInput?.emoji === "thumbsup", "react: sends the resolved issue id and the emoji name UNCHANGED — Linear's vocabulary matches Slack's bare names directly");
+
+    globalThis.fetch = stubGraphQL(200, { reactionCreate: { success: false } });
+    let successFalseErr: unknown;
+    try {
+      await linearPostArm.react!(both as never, "eyes");
+    } catch (err) {
+      successFalseErr = err;
+    }
+    ok(successFalseErr instanceof Error, "react: a decided success:false refusal THROWS");
+    ok(platformFailureClass(successFalseErr) === "definitive", "OPE-862/825: reactionCreate success:false classifies DEFINITIVE");
+
+    globalThis.fetch = stubGraphQL(403, undefined, [{ message: "not authorized" }]);
+    let httpErr: unknown;
+    try {
+      await linearPostArm.react!(both as never, "eyes");
+    } catch (err) {
+      httpErr = err;
+    }
+    ok((httpErr as { status?: unknown } | undefined)?.status === 403, "react: a LinearApiError carries the real numeric status");
+    ok(platformFailureClass(httpErr) === "definitive", "OPE-862/825: a 403 reactionCreate classifies DEFINITIVE");
+
+    globalThis.fetch = stubGraphQL(503, undefined, [{ message: "unavailable" }]);
+    let ambiguousErr: unknown;
+    try {
+      await linearPostArm.react!(both as never, "eyes");
+    } catch (err) {
+      ambiguousErr = err;
+    }
+    ok(platformFailureClass(ambiguousErr) === "ambiguous", "OPE-862/825: a 503 reactionCreate classifies AMBIGUOUS (fail-closed default)");
+  }
 } finally {
   globalThis.fetch = savedFetch;
   if (SAVED_TOKEN === undefined) delete process.env.LINEAR_AGENT_ACCESS_TOKEN; else process.env.LINEAR_AGENT_ACCESS_TOKEN = SAVED_TOKEN;
