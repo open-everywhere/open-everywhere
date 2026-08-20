@@ -15,6 +15,12 @@ export const surfaces = [
   defineSurface({ key: "github/example-owner", trust: "internal" }),
   defineSurface({ key: "github/example-owner/e2e-scratch", trust: "internal" }),
 
+  defineSurface({ key: "linear/1a000000-0000-4000-8000-000000000002", trust: "internal" }),
+  defineSurface({
+    key: "linear/1a000000-0000-4000-8000-000000000002/1a000000-0000-4000-8000-000000000013",
+    trust: "internal",
+  }),
+
   defineSurface({ key: "linear/oe-deploy-smoke-linear-org/oe-deploy-smoke-*", trust: "public" }),
 ] as const;
 
