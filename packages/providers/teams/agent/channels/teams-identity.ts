@@ -148,6 +148,7 @@ export const bindTeams: IdentityMapper = (ctx): RawIdentity => {
     visibility: teamsVisibility(scope, membershipType, mode),
     trust: teamsTrust(scope, membershipType, mode, tenantId, userType),
     principalId: teamsAuthPrincipalId(ctx) ?? teamsAttr(a, ["user_id", "userId"]),
+    ...(conversationId ? { anchorChannelId: conversationId } : {}),
     target:
       conversationId && serviceUrl
         ? {

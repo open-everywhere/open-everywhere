@@ -3,6 +3,13 @@ import { resolveTurnAnchor, type TurnAnchorQuery } from "./turn-registry.js";
 
 export const TURN_CANCEL_ACTION = "turn.cancel_requested";
 
+export function isStopDirective(body: string | undefined): boolean {
+  if (typeof body !== "string") return false;
+  return STOP_DIRECTIVE.test(body.trim());
+}
+
+const STOP_DIRECTIVE = /^(?:\/oe\s+)?stop[.!]?$/i;
+
 export type AttachSessionForCancel = (sessionId: string) => {
   cancel(options?: { turnId?: string }): Promise<{ readonly status?: string } | undefined>;
 };

@@ -17,6 +17,7 @@ import { linearAppActorCredentials, linearAppForOrg, linearCredentialsForOrg } f
 import { postLinearSilenceAck, postLinearHostAck } from "./linear-silence-ack.js";
 import { linearWebhookVerifier } from "./linear-webhook-verify.js";
 import { LINEAR_EVENT_SOURCE, LINEAR_DELIVERY_ID_HEADER } from "./linear-event-normalizer.js";
+import { parseLinearReaction, routeLinearStopReaction } from "./linear-stop.js";
 import {
   classifyLinearAmbientComment,
   extractLinearCommentSignal,
@@ -72,6 +73,7 @@ import {
   carryTailForward,
   type WakeMessageInput,
   recordWakeTail,
+  type AttachSessionForCancel,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 const ROUTE = "/eve/v1/linear";
@@ -503,6 +505,16 @@ async function ambientDelivery(body: string, headers: Headers, send: LinearSend,
     detail: { addressing: cls.addressing, issueId: c.issueId, teamPrivate: c.teamPrivate === true, vouched: linearTeamVouched(signal.organizationId, c.teamId), diverted: ambientWindow !== undefined },
   });
   slog(`comment on ${surfaceKey} (${c.issueIdentifier ?? c.issueId}) → judged wake dispatched`);
+}
+
+async function stopReactionDelivery(body: string, attachSession: AttachSessionForCancel): Promise<void> {
+  const rx = parseLinearReaction(body);
+  if (!rx) return;
+  const out = await routeLinearStopReaction(rx, {
+    attachSession,
+    appUserId: async (organizationId) => (await resolveViewer(organizationId)).id,
+  });
+  slog(`stop reaction on issue ${rx.issueId ?? "?"}: ${out.stopped ? out.outcome : out.reason}`);
 }
 
 export const LINEAR_MENTION_HANDOFF_TEXT =
@@ -947,6 +959,7 @@ function wrapRoute(inner: HttpHandler): HttpHandler {
     if (res.ok) {
       args.waitUntil(ambientDelivery(body, req.headers, linearSendFrom(args.from), args.to).catch((err) => slog(`ambient leg failed: ${String(err)}`)));
       args.waitUntil(mentionSessionDelivery(body, req.headers, linearSendFrom(args.from), args.to).catch((err) => slog(`mention leg failed: ${String(err)}`)));
+      args.waitUntil(stopReactionDelivery(body, args.attachSession).catch((err) => slog(`stop leg failed: ${String(err)}`)));
       const deliveryId = req.headers.get(LINEAR_DELIVERY_ID_HEADER) ?? undefined;
       args.waitUntil(
         admitTrigger(

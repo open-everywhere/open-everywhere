@@ -31,6 +31,7 @@ export interface SurfaceBinding {
   readonly threadTs?: string;
   readonly engagementKey?: string;
   readonly anchorMessageId?: string;
+  readonly anchorChannelId?: string;
 }
 
 interface AuthPrincipal {
@@ -158,6 +159,7 @@ export interface RawIdentity {
   readonly threadTs?: string;
   readonly engagementKey?: string;
   readonly anchorMessageId?: string;
+  readonly anchorChannelId?: string;
 }
 
 export type IdentityMapper = (ctx: BindableContext) => RawIdentity;
@@ -511,5 +513,6 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
     threadTs: raw.threadTs,
     engagementKey: raw.engagementKey,
     anchorMessageId: raw.anchorMessageId,
+    anchorChannelId: raw.anchorChannelId,
   };
 }

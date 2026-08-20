@@ -1,6 +1,7 @@
 import type { HttpRouteDefinition, RouteHandlerArgs } from "eve/channels";
 import { githubChannel, type GitHubChannel, type GitHubChannelState, type GitHubInboundContext, type GitHubComment, type GitHubInboundResult } from "eve/channels/github";
 import { buildGitHubAuth, githubAuthorFacts, githubBotMentioned } from "./github-identity.js";
+import { parseGitHubStopComment, routeGitHubStopComment } from "./github-stop.js";
 import {
   classifyGitHubAmbientComment,
   extractGitHubAmbientEvent,
@@ -538,7 +539,17 @@ function wrapRoute(inner: HttpHandler): HttpHandler {
     }
     const eventType = req.headers.get("x-github-event") ?? "";
     args.waitUntil(fanOutGitHubDelivery(body, eventType, args.to, req.headers.get("x-github-delivery")));
-    args.waitUntil(ambientDelivery(body, eventType, githubSendFrom(args.from), args.to).catch((err) => slog(`ambient leg failed: ${String(err)}`)));
+    const stop = parseGitHubStopComment(body, eventType);
+    if (stop) {
+      args.waitUntil(
+        routeGitHubStopComment(stop, { attachSession: args.attachSession }).then(
+          (o) => slog(`stop comment on ${stop.owner}/${stop.repo}#${stop.number}: ${o.stopped ? o.outcome : o.reason}`),
+          (err) => slog(`stop leg failed: ${String(err)}`),
+        ),
+      );
+    } else {
+      args.waitUntil(ambientDelivery(body, eventType, githubSendFrom(args.from), args.to).catch((err) => slog(`ambient leg failed: ${String(err)}`)));
+    }
     args.waitUntil(installationDelivery(body, eventType).catch((err) => ilog(`installation leg failed: ${String(err)}`)));
     const cloned = new Request(req.url, { method: "POST", headers: req.headers, body });
     return inner(cloned, args);

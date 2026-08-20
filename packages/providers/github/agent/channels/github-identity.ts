@@ -118,6 +118,10 @@ function githubAuthPrincipalId(ctx: BindableContext): string | undefined {
   return pid && pid.length > 0 ? pid : undefined;
 }
 
+export function githubConversationKey(owner: string | undefined, repo: string | undefined, number: number | undefined): string | undefined {
+  return owner && repo && Number.isFinite(number) ? `${owner}/${repo}#${number}` : undefined;
+}
+
 export const bindGitHub: IdentityMapper = (ctx): RawIdentity => {
   const a = githubAuthOf(ctx)?.attributes;
   const owner = githubAttr(a, ["owner"]);
@@ -144,5 +148,14 @@ export const bindGitHub: IdentityMapper = (ctx): RawIdentity => {
     trust: githubTrust(repoPrivate, githubAttr(a, ["author_association", "authorAssociation"])),
     principalId: githubAuthPrincipalId(ctx) ?? githubAttr(a, ["user_login", "userLogin", "user_id", "userId"]),
     target: owner && repo && anchor ? { owner, repo, ...anchor, ...(installationId ? { installationId: Number(installationId) } : {}) } : undefined,
+    ...(anchor
+      ? {
+          anchorChannelId: githubConversationKey(
+            owner,
+            repo,
+            "pullRequestNumber" in anchor ? anchor.pullRequestNumber : anchor.issueNumber,
+          ),
+        }
+      : {}),
   };
 };
