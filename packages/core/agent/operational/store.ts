@@ -37,6 +37,7 @@ export const OPERATIONAL_TABLES = [
   "identity_link_challenges",
   "notice_claim",
   "model_call_capture",
+  "proactive_address",
 ] as const;
 
 export const EVENT_DEDUPE_MAX_RETENTION_MS = 24 * 60 * 60_000;
@@ -579,6 +580,33 @@ export interface ModelCallCaptureReadOptions {
   readonly limit?: number;
 }
 
+export interface ProactiveAddress {
+  readonly platform: string;
+  readonly kind: string;
+  readonly refKey: string;
+  readonly tenant: string;
+  readonly address: Readonly<Record<string, unknown>>;
+  readonly updatedAt: string;
+}
+
+export function proactiveAddressRow(
+  platform: string,
+  kind: string,
+  refKey: string,
+  tenant: string,
+  addressJson: string,
+  updatedAt: string,
+): ProactiveAddress {
+  let address: Readonly<Record<string, unknown>> = {};
+  try {
+    const parsed: unknown = JSON.parse(addressJson);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) address = parsed as Record<string, unknown>;
+  } catch {
+    address = {};
+  }
+  return { platform, kind, refKey, tenant, address, updatedAt };
+}
+
 export interface OperationalStore {
   readonly id: string;
   root(): string;
@@ -773,6 +801,10 @@ export interface OperationalStore {
 
   claimNotice(org: string, key: string, at: string): Promise<boolean>;
   noticeClaimed(org: string, key: string): Promise<boolean>;
+
+  recordProactiveAddress(org: string, row: ProactiveAddress): Promise<void>;
+  proactiveAddress(org: string, platform: string, kind: string, refKey: string): Promise<ProactiveAddress | undefined>;
+  proactiveAddresses(org: string, platform: string, kind: string, limit: number): Promise<readonly ProactiveAddress[]>;
 
   getMeta(key: string): Promise<string | null>;
   setMeta(key: string, value: string): Promise<void>;

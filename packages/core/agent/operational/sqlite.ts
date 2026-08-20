@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
@@ -444,6 +444,20 @@ function getDb(): DatabaseSync {
       key        TEXT NOT NULL,
       claimed_at TEXT NOT NULL,                -- ISO-8601
       PRIMARY KEY (org_id, key)
+    );
+    -- proactive_address (OPE-887): where this deployment may reach somebody with no live turn.
+    -- UPSERTED, never appended — one row per (platform, kind, ref_key), re-stamped by every inbound
+    -- activity, so a moved serviceUrl region corrects itself. The address column is a provider-shaped
+    -- JSON bag core never reads inside. No TTL: see store.ts's PROACTIVE ADDRESSES section.
+    CREATE TABLE IF NOT EXISTS proactive_address (
+      org_id     TEXT NOT NULL,
+      platform   TEXT NOT NULL,
+      kind       TEXT NOT NULL,                -- the provider's own record species
+      ref_key    TEXT NOT NULL,                -- the provider's own key inside (platform, kind)
+      tenant     TEXT NOT NULL,                -- "" when the platform has no tenant
+      address    TEXT NOT NULL,                -- provider-shaped JSON
+      updated_at TEXT NOT NULL,                -- ISO-8601
+      PRIMARY KEY (org_id, platform, kind, ref_key)
     );
     -- model_call_capture (OPE-846): the soak tests' byte-exact model-call recorder. MUTABLE and
     -- deliberately so — retention here is an explicit delete-by-session, not a TTL (store.ts's
@@ -1735,6 +1749,34 @@ export const sqliteOperationalStore: OperationalStore = {
   async noticeClaimed(org, key) {
     const row = getDb().prepare("SELECT 1 FROM notice_claim WHERE org_id = ? AND key = ? LIMIT 1").get(org, key);
     return row !== undefined;
+  },
+
+  async recordProactiveAddress(org, row) {
+    getDb()
+      .prepare(
+        `INSERT INTO proactive_address (org_id, platform, kind, ref_key, tenant, address, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(org_id, platform, kind, ref_key) DO UPDATE SET
+           tenant = excluded.tenant, address = excluded.address, updated_at = excluded.updated_at`,
+      )
+      .run(org, row.platform, row.kind, row.refKey, row.tenant, JSON.stringify(row.address ?? {}), row.updatedAt);
+  },
+
+  async proactiveAddress(org, platform, kind, refKey) {
+    const row = getDb()
+      .prepare("SELECT tenant, address, updated_at FROM proactive_address WHERE org_id = ? AND platform = ? AND kind = ? AND ref_key = ?")
+      .get(org, platform, kind, refKey) as { tenant: string; address: string; updated_at: string } | undefined;
+    return row ? proactiveAddressRow(platform, kind, refKey, row.tenant, row.address, row.updated_at) : undefined;
+  },
+
+  async proactiveAddresses(org, platform, kind, limit) {
+    const rows = getDb()
+      .prepare(
+        `SELECT ref_key, tenant, address, updated_at FROM proactive_address
+         WHERE org_id = ? AND platform = ? AND kind = ? ORDER BY updated_at DESC LIMIT ?`,
+      )
+      .all(org, platform, kind, Math.max(0, Math.trunc(limit))) as { ref_key: string; tenant: string; address: string; updated_at: string }[];
+    return rows.map((r) => proactiveAddressRow(platform, kind, r.ref_key, r.tenant, r.address, r.updated_at));
   },
 
   async hasEventSeen(org, key, at, ttlMs) {

@@ -1,6 +1,6 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
@@ -369,6 +369,16 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      claimed_at text NOT NULL,
      PRIMARY KEY (org_id, key)
    )`,
+  `CREATE TABLE IF NOT EXISTS proactive_address (
+     org_id     text NOT NULL,
+     platform   text NOT NULL,
+     kind       text NOT NULL,
+     ref_key    text NOT NULL,
+     tenant     text NOT NULL,
+     address    text NOT NULL,
+     updated_at text NOT NULL,
+     PRIMARY KEY (org_id, platform, kind, ref_key)
+   )`,
   `CREATE TABLE IF NOT EXISTS model_call_capture (
      seq            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
      org_id         text    NOT NULL,
@@ -494,6 +504,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE identity_link_challenges ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE notice_claim ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE model_call_capture ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE proactive_address ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill_revisions FORCE ROW LEVEL SECURITY`,
@@ -533,6 +544,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS identity_link_challenges_org_isolation ON identity_link_challenges`,
   `DROP POLICY IF EXISTS notice_claim_org_isolation ON notice_claim`,
   `DROP POLICY IF EXISTS model_call_capture_org_isolation ON model_call_capture`,
+  `DROP POLICY IF EXISTS proactive_address_org_isolation ON proactive_address`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
@@ -620,6 +632,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY model_call_capture_org_isolation ON model_call_capture
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY proactive_address_org_isolation ON proactive_address
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
 ];
@@ -934,6 +949,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   instance_meta: ["SELECT", "INSERT", "UPDATE"],
   notice_claim: ["SELECT", "INSERT"],
   model_call_capture: ["SELECT", "INSERT", "DELETE"],
+  proactive_address: ["SELECT", "INSERT", "UPDATE"],
   thread_ownership: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   turn_anchor: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   task_result: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -2149,6 +2165,36 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     async noticeClaimed(org, key) {
       const { rows } = await client.query("SELECT 1 FROM notice_claim WHERE org_id = $1 AND key = $2 LIMIT 1", [org, key]);
       return rows.length > 0;
+    },
+
+    async recordProactiveAddress(org, row) {
+      await client.query(
+        `INSERT INTO proactive_address (org_id, platform, kind, ref_key, tenant, address, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (org_id, platform, kind, ref_key) DO UPDATE SET
+           tenant = EXCLUDED.tenant, address = EXCLUDED.address, updated_at = EXCLUDED.updated_at`,
+        [org, row.platform, row.kind, row.refKey, row.tenant, JSON.stringify(row.address ?? {}), row.updatedAt],
+      );
+    },
+
+    async proactiveAddress(org, platform, kind, refKey) {
+      const { rows } = await client.query(
+        "SELECT tenant, address, updated_at FROM proactive_address WHERE org_id = $1 AND platform = $2 AND kind = $3 AND ref_key = $4",
+        [org, platform, kind, refKey],
+      );
+      const r = rows[0] as { tenant: string; address: string; updated_at: string } | undefined;
+      return r ? proactiveAddressRow(platform, kind, refKey, r.tenant, r.address, r.updated_at) : undefined;
+    },
+
+    async proactiveAddresses(org, platform, kind, limit) {
+      const { rows } = await client.query(
+        `SELECT ref_key, tenant, address, updated_at FROM proactive_address
+         WHERE org_id = $1 AND platform = $2 AND kind = $3 ORDER BY updated_at DESC LIMIT $4`,
+        [org, platform, kind, Math.max(0, Math.trunc(limit))],
+      );
+      return (rows as { ref_key: string; tenant: string; address: string; updated_at: string }[]).map((r) =>
+        proactiveAddressRow(platform, kind, r.ref_key, r.tenant, r.address, r.updated_at),
+      );
     },
 
     async captureDelivery(org, source, documentJson, at, captureUntil, maxRows) {
