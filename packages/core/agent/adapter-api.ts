@@ -377,8 +377,8 @@ export { liveMemoryDeltaDep } from "./memory/wake-delta.js";
 export { registerSurfaceMessageOps, surfaceMessageOps, postSurfaceText, resolveMessagePermalink, setSurfaceReaction } from "./channels/surface-message-ops.js";
 export type { SurfaceMessageOps, OutboundFile, MessageRef } from "./channels/surface-message-ops.js";
 
-export { cancelAnchoredTurn, TURN_CANCEL_ACTION } from "./channels/turn-cancel.js";
-export type { AttachSessionForCancel, CancelResult, CancelOutcome } from "./channels/turn-cancel.js";
+export { cancelAnchoredTurn, isStopDirective, TURN_CANCEL_ACTION } from "./channels/turn-cancel.js";
+export type { AttachSessionForCancel, CancelAnchoredTurnInput, CancelResult, CancelOutcome } from "./channels/turn-cancel.js";
 export { turnAnchorKey, turnChannelKey, TURN_ANCHOR_TTL_MS } from "./channels/turn-registry.js";
 
 export {

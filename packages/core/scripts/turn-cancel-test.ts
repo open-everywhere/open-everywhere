@@ -14,8 +14,8 @@ import {
   setPendingCancelNote,
 } from "../agent/channels/cancel-note.js";
 import { parseOeCommandTokens, parseSlackCommandText, renderHelp, runStop } from "../agent/commands/core.js";
-import { resolveTurnAnchor, recordTurnAnchor, clearTurnAnchor, turnAnchorKey, turnChannelKey, TURN_ANCHOR_TTL_MS } from "../agent/channels/turn-registry.js";
-import { cancelAnchoredTurn, TURN_CANCEL_ACTION, type AttachSessionForCancel } from "../agent/channels/turn-cancel.js";
+import { resolveTurnAnchor, recordTurnAnchor, clearTurnAnchor, turnAnchorAddress, turnAnchorKey, turnChannelKey, TURN_ANCHOR_TTL_MS } from "../agent/channels/turn-registry.js";
+import { cancelAnchoredTurn, isStopDirective, TURN_CANCEL_ACTION, type AttachSessionForCancel } from "../agent/channels/turn-cancel.js";
 import { appendAudit, readAudit } from "../agent/audit/audit.js";
 import type { SurfaceBinding } from "../agent/identity/binding.js";
 
@@ -83,6 +83,35 @@ await recordTurnAnchor(
 );
 ok((await resolveTurnAnchor("org-a", { windowKey: "w-2" })) === null, "the opportunistic prune reclaims this org's expired rows on write");
 ok((await resolveTurnAnchor("org-b", { windowKey: "w-b" }))?.turnId === "t-b", "…and NEVER crosses the tenant boundary while doing it");
+
+{
+  const slack = turnAnchorAddress({ target: { channelId: "C1" }, threadTs: "111.000" });
+  ok(slack.channelId === "C1" && slack.messageId === "111.000", "Slack is BYTE-UNCHANGED: target.channelId + threadTs");
+
+  const discord = turnAnchorAddress({ target: { channelId: "C-d" }, anchorMessageId: "m-d" });
+  ok(discord.channelId === "C-d" && discord.messageId === "m-d", "Discord is BYTE-UNCHANGED: target.channelId + anchorMessageId");
+
+  const teams = turnAnchorAddress({ target: { channelId: "19:chan@thread.tacv2" }, anchorChannelId: "19:chain@thread.tacv2" });
+  ok(teams.channelId === "19:chain@thread.tacv2", "🔴 anchorChannelId BEATS target.channelId — the stop trigger names the reply chain, not the channel");
+
+  const linear = turnAnchorAddress({ anchorChannelId: "issue-3", anchorMessageId: "comment-7" });
+  ok(linear.channelId === "issue-3" && linear.messageId === "comment-7", "a surface with no post-back channel still gets both ids");
+
+  ok(turnAnchorAddress({}).channelId === undefined, "an empty binding contributes NO container id — never a guess");
+  ok(turnAnchorAddress({ anchorChannelId: "" }).channelId === undefined, "an EMPTY anchorChannelId is not a container id");
+  ok(turnAnchorAddress({ anchorChannelId: "", target: { channelId: "C1" } }).channelId === "C1", "…and an empty one falls through to the target rather than blanking it");
+  ok(turnAnchorAddress({ target: { channelId: 42 } }).channelId === undefined, "a non-string target.channelId is refused, never coerced");
+}
+
+{
+  ok(isStopDirective("stop"), "`stop` is a stop directive");
+  ok(isStopDirective(" STOP.\n"), "case, surrounding whitespace and one trailing full stop do not matter");
+  ok(isStopDirective("/oe stop"), "the `/oe stop` spelling matches, mirroring the slash command");
+  ok(!isStopDirective("please stop"), "`please stop` is a MESSAGE, not a directive");
+  ok(!isStopDirective("stop, that's the wrong repo"), "a stop word inside a sentence is a MESSAGE");
+  ok(!isStopDirective("@oe-bot stop"), "🔴 no @mention spelling — a mention opens a native session, so the ingress would cancel and re-start in one breath");
+  ok(!isStopDirective(undefined), "a missing body is not a directive");
+}
 
 function fakeAttach(status: string | undefined, calls: { sessionId?: string; turnId?: string }): AttachSessionForCancel {
   return (sessionId: string) => ({

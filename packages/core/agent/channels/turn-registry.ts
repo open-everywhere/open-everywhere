@@ -11,6 +11,23 @@ export function turnChannelKey(platform: string | undefined, channelId: string |
   return platform && channelId ? `${platform}:${channelId}` : undefined;
 }
 
+export interface TurnAnchorAddress {
+  readonly channelId?: string;
+  readonly messageId?: string;
+}
+
+export function turnAnchorAddress(binding: {
+  readonly anchorChannelId?: string;
+  readonly anchorMessageId?: string;
+  readonly threadTs?: string;
+  readonly target?: Readonly<Record<string, unknown>>;
+}): TurnAnchorAddress {
+  const fromTarget = typeof binding.target?.["channelId"] === "string" ? (binding.target["channelId"] as string) : undefined;
+  const channelId = binding.anchorChannelId && binding.anchorChannelId.length > 0 ? binding.anchorChannelId : fromTarget;
+  const messageId = binding.threadTs ?? binding.anchorMessageId;
+  return { ...(channelId ? { channelId } : {}), ...(messageId ? { messageId } : {}) };
+}
+
 export async function recordTurnAnchor(org: string, anchor: TurnAnchorWrite, atIso: string): Promise<void> {
   try {
     await getOperationalStore().putTurnAnchor(org, anchor, atIso, TURN_ANCHOR_TTL_MS);

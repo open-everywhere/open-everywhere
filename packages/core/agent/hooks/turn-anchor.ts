@@ -6,7 +6,7 @@ import { bindFrom, channelPlatform, type BindableContext } from "../identity/bin
 import { STOP_HAND_SLACK_NAME, STOP_HAND_UNICODE } from "../status/status.js";
 import { setSurfaceReaction } from "../channels/surface-message-ops.js";
 import { postSurfaceText } from "../channels/surface-message-ops.js";
-import { clearTurnAnchor, recordTurnAnchor, turnAnchorKey, turnChannelKey } from "../channels/turn-registry.js";
+import { clearTurnAnchor, recordTurnAnchor, turnAnchorAddress, turnAnchorKey, turnChannelKey } from "../channels/turn-registry.js";
 import { attachCancelNoteRequester, clearPendingCancelNoteAfter, setPendingCancelNote } from "../channels/cancel-note.js";
 import { findCancelRequester } from "../channels/turn-cancel.js";
 import { forgetBridgedQuestion } from "../channels/question-bridge.js";
@@ -67,14 +67,12 @@ function isDelegation(action: { readonly kind: string; readonly toolName?: strin
 }
 
 const STOP_HAND = { slackName: STOP_HAND_SLACK_NAME, unicode: STOP_HAND_UNICODE } as const;
-
 async function onTurnStarted(turnId: string, ctx: HookContext): Promise<void> {
   const c = ctx as unknown as BindableContext;
   const partition = resolvePartition(c);
   const binding = bindFrom(c);
   const platform = channelPlatform(c) ?? binding.platform;
-  const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-  const messageId = binding.threadTs ?? binding.anchorMessageId;
+  const { channelId, messageId } = turnAnchorAddress(binding);
   const windowKey = ctx.channel?.continuationToken ?? ctx.session.id;
 
   write({
@@ -161,8 +159,7 @@ function reconstructCancelledTurn(turnId: string, ctx: HookContext | undefined):
     const partition = resolvePartition(c);
     const binding = bindFrom(c);
     const platform = channelPlatform(c) ?? binding.platform;
-    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-    const messageId = binding.threadTs ?? binding.anchorMessageId;
+    const { channelId, messageId } = turnAnchorAddress(binding);
     const windowKey = ctx.channel?.continuationToken ?? ctx.session.id;
     return {
       turnId,

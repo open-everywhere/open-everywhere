@@ -109,6 +109,8 @@ export const bindLinear: IdentityMapper = (ctx): RawIdentity => {
     visibility: linearVisibility(linearAttr(a, ["is_private", "isPrivate"])),
     trust: linearTrust(linearAttr(a, ["guest"])),
     principalId: linearAuthPrincipalId(ctx) ?? linearAttr(a, ["creator_id", "creatorId", "user_id", "userId"]),
+    ...(issueId ? { anchorChannelId: issueId } : {}),
+    ...(threadRoot ? { anchorMessageId: threadRoot } : {}),
     target:
       agentSessionId || issueId
         ? {

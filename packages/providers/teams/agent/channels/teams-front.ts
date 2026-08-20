@@ -16,6 +16,7 @@ import {
 } from "./teams-identity.js";
 import { resolveTeamsUserType, teamsServiceUrlRosterProbe, type TeamsRosterProbe } from "./teams-roster.js";
 import { recordTeamsConversationReference } from "./teams-conversation-ref.js";
+import { parseTeamsReaction, routeTeamsStopReaction, type TeamsReactionActivity, type TeamsStopOutcome } from "./teams-stop.js";
 import {
   planTeamsSingleWindow,
   handleTeamsSingleWindowDispatch,
@@ -70,6 +71,7 @@ import {
   type WakeMessageInput,
   recordWakeTail,
   dmWindowRegistryKey,
+  type AttachSessionForCancel,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
@@ -330,6 +332,7 @@ export interface TeamsFrontOptions {
   readonly dispatch?: (a: TeamsMessageActivity, plan: TeamsFrontPlan, to: RouteHandlerArgs["to"]) => Promise<void>;
   readonly dmDivert?: (a: TeamsMessageActivity, auth: OpenEverywhereTeamsAuth, partition: Partition, to: RouteHandlerArgs["to"]) => Promise<void>;
   readonly externalGate?: (a: TeamsMessageActivity) => Promise<boolean>;
+  readonly stopReaction?: (rx: TeamsReactionActivity, attachSession: AttachSessionForCancel) => Promise<TeamsStopOutcome>;
 }
 
 const OK = () => new Response("ok");
@@ -492,6 +495,7 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
   const dispatch = opts.dispatch ?? liveTeamsDispatch;
   const dmDivert = opts.dmDivert ?? liveTeamsDmDivert;
   const externalGate = opts.externalGate ?? liveTeamsExternalGate;
+  const stopReaction = opts.stopReaction ?? ((rx: TeamsReactionActivity, attachSession: AttachSessionForCancel) => routeTeamsStopReaction(rx, { attachSession }));
 
   return async (req: Request, args: RouteHandlerArgs): Promise<Response> => {
     let rawBody: string;
@@ -511,6 +515,17 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
     } catch {
       return forward();
     }
+    const reaction = parseTeamsReaction(parsed);
+    if (reaction) {
+      args.waitUntil(
+        stopReaction(reaction, args.attachSession).then(
+          (o) => tlog(`reaction in ${reaction.conversationId ?? "?"}: ${o.stopped ? o.outcome : o.reason}`),
+          (err) => tlog(`stop leg failed: ${String(err)}`),
+        ),
+      );
+      return OK();
+    }
+
     const activity = parseTeamsActivity(parsed);
     if (!activity || activity.type !== "message") {
       return forward();
