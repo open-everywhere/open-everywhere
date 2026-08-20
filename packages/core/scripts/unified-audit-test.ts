@@ -156,27 +156,39 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   const { ambientProseDropDetail } = await import("../agent/channels/unified.js");
 
   ok(
-    JSON.stringify(ambientProseDropDetail(undefined, false, false)) === JSON.stringify({ addressing: "ambient", reason: "no-reply-call" }),
+    JSON.stringify(ambientProseDropDetail(undefined, false, false, undefined)) === JSON.stringify({ addressing: "ambient", reason: "no-reply-call" }),
     "unaddressed + no reply-tool call → addressing:ambient, reason:no-reply-call",
   );
 
-  const nameDrop = ambientProseDropDetail(undefined, true, false);
+  const nameDrop = ambientProseDropDetail(undefined, true, false, undefined);
   ok(nameDrop.addressing === "addressed-other", "addressed (name-drop/mention) but not direct-mention → addressing:addressed-other, NOT ambient");
   ok(nameDrop.reason === "no-reply-call", "same reason as the ambient case — the drop mechanism doesn't care why it was addressed");
-  ok(nameDrop.addressing !== ambientProseDropDetail(undefined, false, false).addressing, "NEGATIVE CONTROL — addressed and unaddressed drops must NOT read as the same kind");
+  ok(nameDrop.addressing !== ambientProseDropDetail(undefined, false, false, undefined).addressing, "NEGATIVE CONTROL — addressed and unaddressed drops must NOT read as the same kind");
 
   ok(
-    ambientProseDropDetail(undefined, false, true).reason === "narration-after-reply",
+    ambientProseDropDetail(undefined, false, true, undefined).reason === "narration-after-reply",
     "a reply already posted this turn → reason:narration-after-reply (NOT no-reply-call)",
   );
   ok(
-    ambientProseDropDetail(undefined, false, true).reason !== ambientProseDropDetail(undefined, false, false).reason,
+    ambientProseDropDetail(undefined, false, true, undefined).reason !== ambientProseDropDetail(undefined, false, false, undefined).reason,
     "NEGATIVE CONTROL — replied vs not-replied must not collapse to the same reason",
   );
 
   ok(
-    ambientProseDropDetail("direct-mention", true, false).addressing === "direct-mention",
+    ambientProseDropDetail("direct-mention", true, false, undefined).addressing === "direct-mention",
     "a present raw addressing value is reported verbatim, never overridden by the addressed/ambient fallback",
+  );
+
+  const refusedDrop = ambientProseDropDetail("direct-mention", true, false, "should-be-edit");
+  ok(refusedDrop.reason === "refused:should-be-edit", "🔴 a bridge blocked by a host refusal reports `refused:<reason>` — the DECISION, not `no-reply-call`, which is only its symptom");
+  ok(refusedDrop.addressing === "direct-mention", "…and the addressing still reads direct-mention, so an owed-but-withheld answer stays countable apart from an ambient drop");
+  ok(
+    refusedDrop.reason !== ambientProseDropDetail("direct-mention", true, false, undefined).reason,
+    "NEGATIVE CONTROL — a refusal-caused drop and an unrefused one must NOT collapse to the same reason",
+  );
+  ok(
+    ambientProseDropDetail("direct-mention", true, true, "should-be-edit").reason === "narration-after-reply",
+    "🔴 `replied` still WINS: a turn that DID post through the tool and then narrated is benign narration, and the bridge was disarmed by the post, not by the refusal",
   );
 }
 

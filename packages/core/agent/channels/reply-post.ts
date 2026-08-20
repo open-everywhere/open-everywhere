@@ -1,4 +1,4 @@
-import { bindFrom, type BindableContext } from "../identity/binding.js";
+import { bindFrom, currentTurnId, type BindableContext } from "../identity/binding.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
 import { onVercel } from "../access/platform.js";
@@ -10,6 +10,7 @@ import { resolvePartition } from "../memory/partition.js";
 import type { EditLocus } from "./reply-edit.js";
 import { platformFailureClass, platformFailureStatus, type PlatformFailureClass } from "./platform-failure.js";
 import { recordPostTail } from "./session-tail-record.js";
+import { markWakeRefusedThisTurn } from "./reply-signal.js";
 
 export type { ReplierLabel };
 
@@ -49,12 +50,14 @@ export interface ReplyAudit {
   readonly creatorId?: string;
   readonly sessionId?: string;
   readonly wakeId?: string;
+  readonly turnId?: string;
   readonly route: "tool" | "terminal" | "bridge";
 }
 
 export function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], wakeId?: string): ReplyAudit {
   const p = resolvePartition(ctx);
   const sessionId = (ctx as { session?: { id?: string } }).session?.id;
+  const turnId = currentTurnId(ctx);
   return {
     org: p.org,
     platform: p.platform,
@@ -63,6 +66,7 @@ export function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], 
     principalId: bindFrom(ctx).principalId,
     ...(sessionId ? { sessionId } : {}),
     ...(wakeId ? { wakeId } : {}),
+    ...(turnId ? { turnId } : {}),
     route,
   };
 }
@@ -126,6 +130,7 @@ export const releasePostKeyOnFailure = (err: unknown): boolean => platformFailur
 
 export async function auditReplyRefused(audit: ReplyAudit | undefined, reason: string): Promise<void> {
   if (!audit) return;
+  markWakeRefusedThisTurn(audit.turnId, audit.wakeId, reason);
   await appendAudit({
     org: audit.org,
     platform: audit.platform,
