@@ -143,7 +143,16 @@ test("a signed delivery on the deploy:smoke SCRATCH surface is suppressed by the
   const dispatched = await readAuditRows({ actions: ["linear.dispatched"], sinceIso });
   expect(dispatched.find((r) => r.surface === surfaceKey)).toBeUndefined();
 
-  expect(stub.calls.filter((c) => c.operation === "AgentActivityCreate")).toHaveLength(0);
+  const activities = stub.calls.filter((c) => c.operation === "AgentActivityCreate");
+  expect(activities, "one write, and only one — the ack, never a second activity").toHaveLength(1);
+  const activityBody = JSON.stringify(activities[0]);
+  expect(activityBody, "it is a `response` — the only type that terminates the session").toContain("response");
+  expect(activityBody, "…carrying the fixed host ack").toContain("can't help");
+  expect(activityBody, "no `signal`: the real API refuses one on any non-`prompt` activity").not.toContain("stop");
+  expect(activityBody, "no `ephemeral`: an ephemeral activity neither terminates nor tells the member anything").not.toContain("ephemeral");
+  expect(activityBody, "the ack says nothing about the room's configuration").not.toContain("external space");
+
+  expect(row.detail?.rendering).toBe("ack");
 });
 
 test("a TAMPERED Linear agent-session delivery (a wrong-but-well-formed signature) is refused (401) and writes NO row", async () => {
