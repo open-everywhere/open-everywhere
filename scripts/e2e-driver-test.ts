@@ -670,6 +670,34 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
 }
 
 {
+  const { buildAgentSessionEvent, FORGE_SESSION_ID, FORGE_ORGANIZATION_ID, FORGE_ISSUE_ID, FORGE_CREATOR_ID } = await import(
+    "../packages/core/scripts/e2e/linear-driver.js"
+  );
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  ok(UUID_RE.test(FORGE_SESSION_ID), "FORGE_SESSION_ID is UUID-shaped");
+  ok(UUID_RE.test(FORGE_ORGANIZATION_ID), "FORGE_ORGANIZATION_ID is UUID-shaped");
+  ok(UUID_RE.test(FORGE_ISSUE_ID), "FORGE_ISSUE_ID is UUID-shaped");
+  ok(UUID_RE.test(FORGE_CREATOR_ID), "FORGE_CREATOR_ID is UUID-shaped");
+
+  ok(!UUID_RE.test("forged-session"), "negative control: the pre-OPE-886 literal 'forged-session' is NOT UUID-shaped");
+
+  const ev = buildAgentSessionEvent({
+    action: "created",
+    organizationId: FORGE_ORGANIZATION_ID,
+    sessionId: FORGE_SESSION_ID,
+    issueId: FORGE_ISSUE_ID,
+    issueIdentifier: "OE-0",
+    teamId: "team-x",
+    creatorId: FORGE_CREATOR_ID,
+    nowMs: 1_700_000_000_000,
+  });
+  const session = (ev.agentSession ?? {}) as { id?: string; creator?: { id?: string } };
+  ok(session.id === FORGE_SESSION_ID, "buildAgentSessionEvent embeds the UUID sessionId verbatim as agentSession.id");
+  ok(session.creator?.id === FORGE_CREATOR_ID, "buildAgentSessionEvent embeds the UUID creatorId verbatim as agentSession.creator.id");
+}
+
+{
   const prMiss = resolvePr({});
   ok(!prMiss.ok && prMiss.missing.length === 2 && prMiss.missing.includes(ENV.prRepo) && prMiss.missing.includes(ENV.githubDriverToken), "pr half reports E2E_PR_REPO + E2E_GITHUB_DRIVER_TOKEN missing in an empty env");
   const prRepoOnly = resolvePr({ [ENV.prRepo]: "acme/e2e-scratch" });
