@@ -83,6 +83,13 @@ const bundles: Bundle[] = [
   }),
 
   defineBundle({
+    name: "soak-pr-fixture",
+    repos: ["example-owner/soak-scratch"],
+    instructions:
+      "example-owner/soak-scratch is the soak tests' own scratch repository. Changes go via branch + open_pull_request.",
+  }),
+
+  defineBundle({
     name: "e2e-taint-floor-fixture",
     approvers: [
       {
@@ -104,6 +111,8 @@ const bindings: Binding[] = [
   defineBinding({ bundle: "e2e-access-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
 
   defineBinding({ bundle: "e2e-pr-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
+
+  defineBinding({ bundle: "soak-pr-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN008" } }),
 
   defineBinding({ bundle: "e2e-connector-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
 
