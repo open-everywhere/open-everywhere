@@ -469,5 +469,40 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
   ok(ambientUnifiedLocus?.channelId === "ISS-2" && ambientUnifiedLocus?.organizationId === "org-2", "§18/CONTROL: the unified ambient locus carries the issue id and the workspace credential key");
 }
 
+{
+  const { baseReplyEntry } = await import("../agent/tools/reply.js");
+  const { LEAN_SEAT_TOOLS } = await import("../agent/access/lean-seat.js");
+  const { editReplyParagraph } = await import("../agent/instructions/seat-prompt.js");
+
+  ok(LEAN_SEAT_TOOLS.has("reply"), "§19/PREMISE: the lean seat mounts `reply` — it is the seat that reads the description below");
+  ok(LEAN_SEAT_TOOLS.has("edit_reply"), "§19/PREMISE: the lean seat mounts `edit_reply` beside it, so the description may name a verb the seat truly holds");
+
+  const claimsPostsAreFinal = (s: string): boolean => /\bfinal\b/i.test(s);
+  ok(
+    claimsPostsAreFinal("Posts are FINAL — send fewer, curated messages rather than a running status.") === true,
+    "§19/CONTROL: the predicate DOES fire on the exact sentence OPE-710 deleted — a check that cannot fail is not a check",
+  );
+
+  const desc = baseReplyEntry.description;
+  ok(typeof desc === "string" && desc.length > 0, "§19: the base `reply` entry carries a description at all");
+  ok(
+    claimsPostsAreFinal(desc) === false,
+    "🔴 §19: the base `reply` description NEVER claims a post is final — a model that believes that does not reach for the verb it holds",
+  );
+  ok(
+    desc.includes("edit_reply"),
+    "§19: the base `reply` description POINTS AT `edit_reply`, so a correction folds into the posted message instead of stacking a new one",
+  );
+
+  ok(
+    editReplyParagraph("").includes("edit_reply"),
+    "§19/JOIN: the seat prompt offers the same verb the tool description names — the two model-facing strings agree rather than contradict",
+  );
+  ok(
+    claimsPostsAreFinal(editReplyParagraph("")) === false,
+    "§19/JOIN: and the seat prompt does not claim finality either",
+  );
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ edit_reply own-post fence: ${passed} assertions passed`);

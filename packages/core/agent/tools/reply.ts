@@ -159,14 +159,15 @@ export const unifiedReplyEntry = defineTool({
 });
 preRegisterDynamicEntry("reply", "_single", unifiedReplyEntry);
 
-const baseReplyEntry = defineTool({
+export const baseReplyEntry = defineTool({
         description:
           "Post a message into this conversation NOW, without ending your turn. Posting is an " +
           "action, not turn-completion: reply, keep working, and finish with `no_reply` when " +
           "you're done. A reply NOTIFIES the channel — use it for an answer, a question, a " +
-          "result, or a blocker, never for a mere progress tick. Posts are FINAL — send fewer, " +
-          "curated messages rather than a running status. Posts into the conversation that woke " +
-          "you; you can't target another place.",
+          "result, or a blocker, never for a mere progress tick. Send fewer, curated messages " +
+          "rather than a running status: to correct one you already sent, call `edit_reply` with " +
+          "the id this tool returned instead of posting again. Posts into the conversation that " +
+          "woke you; you can't target another place.",
         inputSchema: z.object({
           text: z.string().min(1).describe("The message to post (channel mrkdwn/markdown). Keep it one curated message, not a stack."),
         }),

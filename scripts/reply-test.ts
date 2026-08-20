@@ -161,9 +161,11 @@ ok(armReply(reply, { channel: { kind: "local" } }) === null, "reply is hidden on
 {
   const discordArmed = armReply(reply, { channel: { kind: "discord" } });
   const slackArmed = armReply(reply, { channel: { kind: "slack" } });
-  ok(discordArmed !== null && /FINAL/.test(discordArmed.description), "reply: description says posts are FINAL (no edit verb exists)");
+  ok(discordArmed !== null, "reply: arms on discord — every assertion below rests on this");
+  ok(!/\bfinal\b/i.test(discordArmed!.description), "🔴 reply: the description NEVER claims a post is final — `edit_reply` exists (OPE-793) and a model that believes otherwise will not reach for it");
+  ok(/edit_reply/.test(discordArmed!.description), "reply: the description POINTS AT `edit_reply` for a correction to something already sent");
   ok(slackArmed !== null && slackArmed.description === discordArmed!.description, "reply: ONE description on every surface (no per-surface silent-edit variant)");
-  ok(!/update_reply/.test(discordArmed!.description), "reply: description never mentions the dropped update_reply verb");
+  ok(!/update_reply/.test(discordArmed!.description), "reply: description never mentions the DEAD `update_reply` name — the live verb is `edit_reply`");
 }
 
 {
