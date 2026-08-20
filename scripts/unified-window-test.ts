@@ -32,6 +32,8 @@ import {
   isUnifiedWakeOrigin,
   stampUnifiedWindowAuth,
   shouldBridgeAddressedProse,
+  bridgeBlockingRefusal,
+  BRIDGE_BLOCKING_REFUSALS,
   singleWindowMentionPolicy,
   WAKE_TARGET_TTL_MS,
   OE_PLATFORM_ATTR,
@@ -41,6 +43,11 @@ import {
   type UnifiedWakeOrigin,
 } from "@open-everywhere/core/agent/channels/unified-window.js";
 import { decodeSources } from "@open-everywhere/core/agent/channels/window-sources.js";
+import { REPLY_STALE_REFUSAL_REASON } from "@open-everywhere/core/agent/channels/reply-freshness.js";
+import { REPLY_FOLD_REFUSAL_REASON } from "@open-everywhere/core/agent/channels/reply-fold.js";
+import { WAKE_DECLINED_REFUSAL_REASON, WAKE_DONE_REFUSAL_REASON } from "@open-everywhere/core/agent/channels/reply-signal.js";
+import { TASK_WAKE_UNREAD_REFUSAL_REASON } from "@open-everywhere/core/agent/channels/task-wake.js";
+import { DELEGATION_PENDING_REFUSAL_REASON } from "@open-everywhere/core/agent/access/pending-delegation-signal.js";
 import unifiedChannel, { divertToUnifiedWindow, type UnifiedReceiveTarget } from "@open-everywhere/core/agent/channels/unified.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "@open-everywhere/core/agent/channels/unified-reply.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
@@ -1159,11 +1166,27 @@ overrideSettingsForTest({ window: { topology: false } });
   ok(bAnchor.threadTs === "1768504411.235000", "bindSlack threadTs falls back to oe_reply_anchor on a top-level-mention divert (approval cards thread under the mention)");
   const bThreaded = bindFrom(mk("channel:unified", { oe_platform: "slack", team_id: "T_WIN", channel_id: "C_WINA", channel_type: "channel", is_private: "false", is_ext_shared: "false", trust_checked: "true", thread_ts: "111.222", oe_reply_anchor: "999.888" }));
   ok(bThreaded.threadTs === "111.222", "bindSlack threadTs prefers a REAL thread_ts over the anchor (a threaded trigger keeps its own thread)");
-  ok(shouldBridgeAddressedProse("direct-mention", false) === true, "bridge gate: an addressed direct-mention that did NOT call reply IS bridged");
-  ok(shouldBridgeAddressedProse("direct-mention", true) === false, "bridge gate: a direct-mention that ALREADY replied is NOT bridged (no double-post)");
-  ok(shouldBridgeAddressedProse("channel-watch", false) === false, "bridge gate: an ambient channel-watch turn is NEVER bridged — prose stays hard-dropped (message-tool-only preserved)");
-  ok(shouldBridgeAddressedProse(undefined, false) === false, "bridge gate: an unstamped (non-single-window / non-addressed) turn is NEVER bridged");
-  ok(shouldBridgeAddressedProse.length === 2, "OPE-396: the bridge gate takes exactly TWO parameters — the OPE-358 capturedInline conjunct is gone, not defaulted");
+  ok(shouldBridgeAddressedProse("direct-mention", false, undefined) === true, "bridge gate: an addressed direct-mention that did NOT call reply IS bridged");
+  ok(shouldBridgeAddressedProse("direct-mention", true, undefined) === false, "bridge gate: a direct-mention that ALREADY replied is NOT bridged (no double-post)");
+  ok(shouldBridgeAddressedProse("channel-watch", false, undefined) === false, "bridge gate: an ambient channel-watch turn is NEVER bridged — prose stays hard-dropped (message-tool-only preserved)");
+  ok(shouldBridgeAddressedProse(undefined, false, undefined) === false, "bridge gate: an unstamped (non-single-window / non-addressed) turn is NEVER bridged");
+  ok(shouldBridgeAddressedProse("direct-mention", false, "stale-conversation") === false, "🔴 bridge gate: an addressed direct-mention whose reply the host REFUSED is NOT bridged — the bridge must not post what the refusal refused");
+  ok(shouldBridgeAddressedProse("direct-mention", false, "should-be-edit") === false, "🔴 bridge gate: …and the same for a should-be-edit refusal, where a bridge post is the second message the policy refused");
+  ok(shouldBridgeAddressedProse.length === 3, "OPE-842: the bridge gate takes exactly THREE parameters, none optional — addressing, already-replied, and the blocking refusal");
+  ok(bridgeBlockingRefusal([]) === undefined, "bridge refusals: a turn that drew NO refusal blocks nothing — the ordinary bridge path is untouched");
+  ok(bridgeBlockingRefusal([REPLY_STALE_REFUSAL_REASON]) === REPLY_STALE_REFUSAL_REASON, "bridge refusals: `stale-conversation` BLOCKS — the host said the room moved on");
+  ok(bridgeBlockingRefusal([REPLY_FOLD_REFUSAL_REASON]) === REPLY_FOLD_REFUSAL_REASON, "bridge refusals: `should-be-edit` BLOCKS — the host said fold, not post a second message");
+  ok(bridgeBlockingRefusal([WAKE_DECLINED_REFUSAL_REASON]) === WAKE_DECLINED_REFUSAL_REASON, "bridge refusals: `declined-this-turn` BLOCKS — the turn already chose silence for this wake");
+  ok(bridgeBlockingRefusal([WAKE_DONE_REFUSAL_REASON]) === WAKE_DONE_REFUSAL_REASON, "bridge refusals: `answered-this-turn` BLOCKS — a bridge post would be the duplicate that guard exists to stop");
+  ok(bridgeBlockingRefusal([DELEGATION_PENDING_REFUSAL_REASON]) === undefined, "🔴 bridge refusals: `delegation-pending` does NOT block — OPE-701 decided that case the other way (the prose posts, only the wake MARK is held)");
+  ok(bridgeBlockingRefusal([TASK_WAKE_UNREAD_REFUSAL_REASON]) === undefined, "bridge refusals: `task-wake-unread` does NOT block — it objects to the address the model authored, and the bridge authors none");
+  ok(bridgeBlockingRefusal(["mismatch"]) === undefined && bridgeBlockingRefusal(["expired"]) === undefined && bridgeBlockingRefusal(["answered"]) === undefined, "bridge refusals: the wake-fence verdicts do NOT block — same reason, the bridge posts to the host-resolved target of its own wake");
+  ok(bridgeBlockingRefusal([DELEGATION_PENDING_REFUSAL_REASON, REPLY_FOLD_REFUSAL_REASON]) === REPLY_FOLD_REFUSAL_REASON, "bridge refusals: a mixed turn reports the BLOCKING reason, not the first one it drew");
+  ok(BRIDGE_BLOCKING_REFUSALS.includes(REPLY_STALE_REFUSAL_REASON), "🔴 reason pin: the freshness gate's constant is in the blocking list — a rename must not silently unblock the bridge");
+  ok(BRIDGE_BLOCKING_REFUSALS.includes(REPLY_FOLD_REFUSAL_REASON), "🔴 reason pin: the should-be-edit constant is in the blocking list");
+  ok(BRIDGE_BLOCKING_REFUSALS.includes(WAKE_DECLINED_REFUSAL_REASON), "🔴 reason pin: the no_reply-declined constant is in the blocking list");
+  ok(BRIDGE_BLOCKING_REFUSALS.includes(WAKE_DONE_REFUSAL_REASON), "🔴 reason pin: the answered-this-turn constant is in the blocking list");
+  ok(!BRIDGE_BLOCKING_REFUSALS.includes(DELEGATION_PENDING_REFUSAL_REASON), "🔴 reason pin: the delegation-pending constant is NOT in the blocking list — OPE-701's ruling stands");
   const pol = (sw: boolean, m: boolean, priv: boolean) => singleWindowMentionPolicy(sw, m, priv);
   ok(pol(true, true, true).suppressNative === true && pol(true, true, true).addressing === "direct-mention", "mention seam (sw=1,m=1,priv=1): native SUPPRESSED and the wake is addressed 'direct-mention' — the unified window owns the mention");
   ok(pol(true, true, false).suppressNative === false && pol(true, true, false).addressing === undefined, "mention seam (sw=1,m=1,priv=0): public/unknown-privacy repo — native KEPT, no addressed stamp (fail-closed on privacy)");

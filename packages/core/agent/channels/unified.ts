@@ -6,7 +6,7 @@ import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, cur
 import { getConfig } from "../access/config.js";
 import { windowedSupervisorEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, mintWakeId, stampUnifiedWindowAuth, shouldBridgeAddressedProse, unifiedThreadRef, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
+import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, mintWakeId, stampUnifiedWindowAuth, shouldBridgeAddressedProse, bridgeBlockingRefusal, unifiedThreadRef, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "./unified-reply.js";
 import {
   detectBridgeableInputRequest,
@@ -36,7 +36,7 @@ import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
 import { pendingDelegationOwing, BRIDGE_WAKE_HELD_AUDIT_ACTION } from "../access/pending-delegation-signal.js";
 import { sourcesForWindow } from "./window-sources.js";
 import { finalMessageActionForTurn, replierLabelFor, withPendingWorkFrame } from "./turn-delivery.js";
-import { consumeRepliedThisTurn, repliedWakesThisTurn, declinedWakesThisTurn } from "./reply-signal.js";
+import { consumeRepliedThisTurn, repliedWakesThisTurn, declinedWakesThisTurn, refusalsForWakeThisTurn } from "./reply-signal.js";
 import { consumeReactedThisTurn } from "./react-signal.js";
 import { settleWakeAccounting, UNACCOUNTED_WAKES_AUDIT_ACTION, MAX_ACCOUNTING_WAKES } from "./wake-accounting.js";
 import { redriveEnabled, maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
@@ -143,10 +143,11 @@ export function ambientProseDropDetail(
   rawAddressing: string | undefined,
   addressed: boolean,
   replied: boolean,
+  blockingRefusal: string | undefined,
 ): { readonly addressing: string; readonly reason: string } {
   return {
     addressing: rawAddressing ?? (addressed ? "addressed-other" : "ambient"),
-    reason: replied ? "narration-after-reply" : "no-reply-call",
+    reason: replied ? "narration-after-reply" : blockingRefusal !== undefined ? `refused:${blockingRefusal}` : "no-reply-call",
   };
 }
 
@@ -403,7 +404,8 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         return;
       }
       const bind = { session: ctx.session } as unknown as BindableContext;
-      if (shouldBridgeAddressedProse(currentTurnAddressing(bind), replied)) {
+      const bridgeRefusal = bridgeBlockingRefusal(refusalsForWakeThisTurn(currentTurnId(bind), currentWakeId(bind)));
+      if (shouldBridgeAddressedProse(currentTurnAddressing(bind), replied, bridgeRefusal)) {
         const wakeId = currentWakeId(bind);
         const origin = wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null;
         if (!origin) {
@@ -478,8 +480,9 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         currentTurnAddressing(bind),
         currentTurnAddressed(bind),
         replied,
+        bridgeRefusal,
       );
-      ulog(`message-tool-only: DROPPED terminal prose (${action.text.length} chars; replied=${replied}; addressing=${addressingKind}) — replies must come from the reply tool`);
+      ulog(`message-tool-only: DROPPED terminal prose (${action.text.length} chars; replied=${replied}; addressing=${addressingKind}; reason=${dropReason}) — replies must come from the reply tool`);
       await appendAudit({
         org,
         platform: "unified",
@@ -496,7 +499,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         },
       }).catch(() => undefined);
 
-      if (redriveEnabled() && !replied && channel.continuation?.token !== undefined) {
+      if (redriveEnabled() && !replied && bridgeRefusal === undefined && channel.continuation?.token !== undefined) {
         const wakeId = currentWakeId(bind);
         const rawToken = channel.continuation.token;
         const domain = unifiedDomainFromToken(rawToken);

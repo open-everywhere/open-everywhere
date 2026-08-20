@@ -381,4 +381,103 @@ let foldedMessageId = "";
   );
 }
 
+{
+  const unifiedAdapter = ((await import("../agent/channels/unified.js")).default as unknown as {
+    adapter: Record<string, (data: unknown, ctx: unknown) => Promise<void>>;
+  }).adapter;
+  ok(typeof unifiedAdapter["message.completed"] === "function", "🔴 §14 REACHABILITY: the unified channel really registers message.completed — the bridge lives inside it");
+
+  const adapterCtx = { session: { continuation: { token: `unified:${TOKEN}` } } };
+  const endTurnWithProse = (text: string): Promise<void> =>
+    unifiedAdapter["message.completed"]!({ finishReason: "stop", message: text }, adapterCtx);
+
+  function bridgeSession(turnWake: string, turnId: string): <T>(fn: () => Promise<T>) => Promise<T> {
+    const c = new ContextContainer();
+    c.set(SessionKey, {
+      sessionId: "reply-fold-test",
+      auth: {
+        current: {
+          attributes: {
+            oe_platform: "slack",
+            oe_grain: "standing",
+            oe_addressing: "direct-mention",
+            oe_wake_id: turnWake,
+            oe_window_token: TOKEN,
+            channel_id: CHAN,
+            team_id: "T1",
+          },
+          principalId: "U1",
+          principalType: "slack-user",
+        },
+      },
+      turn: { id: turnId, sequence: 1 },
+      parent: undefined,
+    });
+    return <T>(fn: () => Promise<T>): Promise<T> => contextStorage.run(c, fn);
+  }
+
+  const dropRows = async (wakeId: string): Promise<Record<string, unknown>[]> => rowsFor("turn.supervisor_prose_dropped", wakeId);
+  const PROSE = "Part two, said out loud instead of folded.";
+
+  {
+    const w = await wakeFor(CHAN);
+    const inTurn = bridgeSession(w, "turn_842a");
+    await inTurn(async () => seedTailWindow(TAIL_WINDOW));
+    await roomSaid(Date.now());
+    const first = await inTurn(() => callReply(w, "turn_842_seed", w, "Part one of what I found."));
+    ok(typeof first.id === "string", "§14a precondition: our own post is now the newest message in the room");
+
+    const before = posted.length;
+    await inTurn(async () => {
+      const refused = await callReply(w, "turn_842a", w, PROSE);
+      ok(refused.id === undefined && typeof refused.error === "string", "§14a precondition: the reply tool refuses the second post");
+      ok(posted.length === before, "§14a precondition: the tool posted nothing, which is the state the bridge fires in");
+      await endTurnWithProse(PROSE);
+    });
+
+    ok(posted.length === before, "🔴 §14a/ROOM: the bridge posted NOTHING — a host refusal is a decision, and the bridge must not overturn it");
+    const rows = await dropRows(w);
+    ok(rows.length === 1, "🔴 §14a/AUDIT: the withheld answer is RECORDED — a silent suppression would be indistinguishable from a turn that had nothing to say");
+    ok(rows[0]!["reason"] === `refused:${REPLY_FOLD_REFUSAL_REASON}`, "🔴 §14a/AUDIT: …under the refusal that withheld it, not the generic `no-reply-call`");
+    ok(rows[0]!["addressing"] === "direct-mention", "§14a/AUDIT: …and it still reads as an ADDRESSED turn, so an owed-but-withheld answer stays countable apart from an ambient drop");
+    ok(rows[0]!["replied"] === false, "§14a/AUDIT: …on a turn whose reply tool posted nothing");
+  }
+
+  {
+    const w = await wakeFor(CHAN);
+    const inTurn = bridgeSession(w, "turn_842b");
+    await inTurn(async () => seedTailWindow(TAIL_WINDOW));
+    await roomSaid(Date.now());
+    const before = posted.length;
+
+    await inTurn(async () => endTurnWithProse("An ordinary answer, narrated instead of posted."));
+
+    ok(posted.length === before + 1, "🔴 §14b/ROOM: with no refusal the bridge STILL POSTS — the fix suppresses a refused turn, it does not delete the bridge");
+    ok(posted[posted.length - 1]!.text.includes("An ordinary answer"), "§14b/ROOM: …and what it posted is the model's own text");
+    ok((await dropRows(w)).length === 0, "§14b/AUDIT: a delivered bridge writes no drop row");
+  }
+
+  {
+    const w = await wakeFor(CHAN);
+    const inTurn = bridgeSession(w, "turn_842c");
+    await inTurn(async () => seedTailWindow(TAIL_WINDOW));
+    await roomSaid(Date.now());
+    const seed = await inTurn(() => callReply(w, "turn_842_seed2", w, "Part one again."));
+    ok(typeof seed.id === "string", "§14c precondition: our own post is the newest message again");
+
+    const before = posted.length;
+    await inTurn(async () => {
+      const refused = await callReply(w, "turn_842c", w, "Part two.");
+      ok(refused.id === undefined, "§14c precondition: the first attempt draws the refusal");
+      const forced = await callReply(w, "turn_842c", w, "Part two, sent anyway.", true);
+      ok(typeof forced.id === "string", "🔴 §14c: a turn that overrides the verdict still DELIVERS — the refusal record never blocks the reply path itself");
+      await endTurnWithProse("And that is what I did.");
+    });
+
+    ok(posted.length === before + 1, "🔴 §14c/ROOM: exactly ONE message reached the room — the forced reply, and no bridged duplicate behind it");
+    const rows = await dropRows(w);
+    ok(rows.length === 1 && rows[0]!["reason"] === "narration-after-reply", "🔴 §14c/AUDIT: the trailing prose drops as ordinary narration — a turn that DID post is not reported as one the host withheld");
+  }
+}
+
 console.log(`✓ reply-fold: ${passed} assertions passed`);

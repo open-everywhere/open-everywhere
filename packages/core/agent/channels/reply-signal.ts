@@ -49,6 +49,8 @@ export function markWakeDoneThisTurn(turnId: string | undefined, wake: string): 
   }
 }
 
+export const WAKE_DONE_REFUSAL_REASON = "answered-this-turn";
+
 export function isWakeDoneThisTurn(turnId: string | undefined, wake: string): boolean {
   if (turnId === undefined || turnId.length === 0) return false;
   try {
@@ -134,6 +136,40 @@ export function repliedWakesThisTurn(turnId: string | undefined): readonly strin
   try {
     const cur = repliedSlot.get();
     return cur !== null && cur.turnId === turnId ? cur.wakes : [];
+  } catch {
+    return [];
+  }
+}
+
+interface RefusedWakes {
+  readonly turnId: string;
+  readonly entries: readonly { readonly wake: string; readonly reason: string }[];
+}
+
+const refusedSlot = defineState<RefusedWakes | null>("open-everywhere.reply-refused-wakes", () => null);
+
+export function markWakeRefusedThisTurn(turnId: string | undefined, wake: string | undefined, reason: string): void {
+  if (turnId === undefined || turnId.length === 0) return;
+  if (typeof wake !== "string" || wake.length === 0) return;
+  if (typeof reason !== "string" || reason.length === 0) return;
+  try {
+    refusedSlot.update((prev) => {
+      const entries = prev !== null && prev.turnId === turnId ? prev.entries : [];
+      if (entries.length >= MAX_DONE_WAKES) return { turnId, entries };
+      if (entries.some((e) => e.wake === wake && e.reason === reason)) return { turnId, entries };
+      return { turnId, entries: [...entries, { wake, reason }] };
+    });
+  } catch {
+  }
+}
+
+export function refusalsForWakeThisTurn(turnId: string | undefined, wake: string | undefined): readonly string[] {
+  if (turnId === undefined || turnId.length === 0) return [];
+  if (typeof wake !== "string" || wake.length === 0) return [];
+  try {
+    const cur = refusedSlot.get();
+    if (cur === null || cur.turnId !== turnId) return [];
+    return cur.entries.filter((e) => e.wake === wake).map((e) => e.reason);
   } catch {
     return [];
   }

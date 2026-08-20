@@ -1,3 +1,4 @@
+
 import assert from "node:assert/strict";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
 import { registerSlackProvider as __regSlack } from "@open-everywhere/provider-slack/agent/register.js";
@@ -8,6 +9,7 @@ import { rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { assertCoreDistFresh } from "./core-dist-freshness.js";
 
 const dir = join(tmpdir(), `open-everywhere-reply-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
@@ -19,6 +21,7 @@ process.env.MICROSOFT_APP_ID = "teams-app-id";
 process.env.MICROSOFT_APP_PASSWORD = "teams-app-secret";
 process.env.LINEAR_API_KEY = "linear-test-key";
 
+assertCoreDistFresh();
 const reply = (await import("@open-everywhere/core/agent/tools/reply.js")).default;
 const { resolveReplyTarget } = await import("@open-everywhere/core/agent/channels/reply-post.js");
 const { markRepliedThisTurn, consumeRepliedThisTurn } = await import("@open-everywhere/core/agent/channels/reply-signal.js");

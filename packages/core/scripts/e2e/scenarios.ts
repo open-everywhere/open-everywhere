@@ -10,7 +10,7 @@ import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import type { DiscordDriver } from "./discord-driver.js";
 import type { TeamsDriver } from "./teams-driver.js";
 import type { GithubDriver } from "./github-driver.js";
-import type { LinearDriver } from "./linear-driver.js";
+import { FORGE_CREATOR_ID, FORGE_ISSUE_ID, FORGE_ORGANIZATION_ID, FORGE_SESSION_ID, type LinearDriver } from "./linear-driver.js";
 import type { NotionDriver } from "./notion-driver.js";
 import type { PrApi } from "./pr-api.js";
 import { buildUnifiedAuditQuery, type AuditQueryOpts, type AuditWireEntry, type UnifiedAuditCall, type UnifiedAuditWire } from "./audit-read.js";
@@ -1758,9 +1758,9 @@ export const SCENARIOS: readonly Scenario[] = [
       }
 
       if (lin.canForge && ctx.targetUrl) {
-        const good = await lin.forgeAgentSession(ctx.targetUrl, { action: "created", organizationId: "e2e-org", sessionId: "forged-session", issueId: "forged-issue", issueIdentifier: "OE-0", creatorId: "e2e-user" });
+        const good = await lin.forgeAgentSession(ctx.targetUrl, { action: "created", organizationId: FORGE_ORGANIZATION_ID, sessionId: FORGE_SESSION_ID, issueId: FORGE_ISSUE_ID, issueIdentifier: "OE-0", creatorId: FORGE_CREATOR_ID });
         ctx.gate(good.status === 200, "forge: a valid Linear-Signature AgentSessionEvent is accepted (200)");
-        const bad = await lin.forgeAgentSession(ctx.targetUrl, { action: "created", organizationId: "e2e-org", sessionId: "forged-session", issueId: "forged-issue", issueIdentifier: "OE-0", creatorId: "e2e-user" }, { signed: false });
+        const bad = await lin.forgeAgentSession(ctx.targetUrl, { action: "created", organizationId: FORGE_ORGANIZATION_ID, sessionId: FORGE_SESSION_ID, issueId: FORGE_ISSUE_ID, issueIdentifier: "OE-0", creatorId: FORGE_CREATOR_ID }, { signed: false });
         ctx.gate(bad.status === 401, "forge: an unsigned AgentSessionEvent is rejected (401)");
       } else {
         ctx.log("forge leg skipped — set E2E_LINEAR_WEBHOOK_SECRET + E2E_TARGET_URL to run it");

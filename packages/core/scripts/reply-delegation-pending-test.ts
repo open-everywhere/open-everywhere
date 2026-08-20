@@ -561,10 +561,10 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
 
   {
     ok(
-      shouldBridgeAddressedProse("direct-mention", true) === false,
+      shouldBridgeAddressedProse("direct-mention", true, undefined) === false,
       "🔴 §11b: a turn whose reply tool POSTED can never reach the bridge — the gate reads `replied`",
     );
-    ok(shouldBridgeAddressedProse("direct-mention", false) === true, "§11b: …and a turn whose reply tool posted nothing can, which is the state §11a runs in");
+    ok(shouldBridgeAddressedProse("direct-mention", false, undefined) === true, "§11b: …and a turn whose reply tool posted nothing can, which is the state §11a runs in");
 
     const w = await wake("C_706_ADDRESSED", "1103.3");
     const before = posted.length;
@@ -582,7 +582,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
     ok(addressed[0] === w, "🔴 §11b: a successful reply RECORDS the wake it addressed…");
     ok(replied[0] === true, "🔴 §11b: …and the SAME post marks `replied`, so the two signals can never disagree…");
     ok(
-      shouldBridgeAddressedProse("direct-mention", replied[0] ?? false) === false,
+      shouldBridgeAddressedProse("direct-mention", replied[0] ?? false, undefined) === false,
       "🔴 §11b: …so the bridge cannot fire on a turn that has addressed a wake. §11a's `undefined` is therefore structural, not a property of its fixture",
     );
   }

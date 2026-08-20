@@ -16,6 +16,11 @@ export function signLinearBody(secret: string, rawBody: string): string {
   return createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
 }
 
+export const FORGE_SESSION_ID = "deadbeef-e2e0-4000-8000-000000000e2e";
+export const FORGE_ORGANIZATION_ID = "deadbeef-e2e0-4000-8000-0000000000a1";
+export const FORGE_ISSUE_ID = "deadbeef-e2e0-4000-8000-0000000000b2";
+export const FORGE_CREATOR_ID = "deadbeef-e2e0-4000-8000-0000000000c3";
+
 export interface AgentSessionForgeInput {
   readonly action: "created" | "prompted";
   readonly organizationId: string;

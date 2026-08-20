@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
-import { join } from "node:path";
-import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { LIVE_DELEGATED_TASKS_STATE_KEY, overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import lifecycleHook, {
   shouldStop,
   stopAfterTurnEnabled,
@@ -10,6 +12,7 @@ import lifecycleHook, {
   restoreParentSandboxTag,
   recordSandboxUsage,
   resetStopOwnershipLogForTest,
+  liveDelegatedTasksHoldingSandbox,
 } from "../agent/sandbox/vercel-lifecycle.js";
 import {
   createDockerStopper,
@@ -534,6 +537,90 @@ const parentCtx = {
 }
 
 {
+  const require = createRequire(import.meta.url);
+  const eveRoot = dirname(require.resolve("eve/package.json"));
+  const { ContextContainer, contextStorage } = await import(pathToFileURL(join(eveRoot, "dist/src/context/container.js")).href);
+
+  overrideSettingsForTest({ sandbox: { stopAfterTurn: true } });
+  const stops: string[] = [];
+  const retags: Array<{ name: string; sessionId: string }> = [];
+  const stopper = testStopper({
+    backend: "vercel",
+    metered: false,
+    ownership: "stop owner = vercel — test",
+    list: async () => [{ name: "sbx-shared", status: "running", createdAt: 1_000 }],
+    stop: async (name) => {
+      stops.push(name);
+    },
+    retag: async (name, sessionId) => {
+      retags.push({ name, sessionId });
+      return true;
+    },
+  });
+  setSandboxStopperForTest(stopper);
+  const turnCompleted = (lifecycleHook.events ?? {})["turn.completed"] as (e: unknown, c: unknown) => Promise<void>;
+
+  const slot = { name: LIVE_DELEGATED_TASKS_STATE_KEY };
+  const container = new ContextContainer();
+  const logLines: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: unknown[]) => {
+    logLines.push(args.map(String).join(" "));
+  };
+  try {
+    await contextStorage.run(container, async () => {
+      container.set(slot, { task_ope595: 0 });
+      ok(
+        liveDelegatedTasksHoldingSandbox().includes("task_ope595"),
+        "OPE-595 arm: the hook's own reader sees the dispatched task — if this reds, the state key moved in core and every assertion below would be vacuous",
+      );
+
+      await turnCompleted({}, parentCtx);
+      ok(
+        stops.length === 0,
+        "🔴 OPE-595: the parent's turn-end sweep issues NO stop while a delegated background task is still live — it would kill a child mid-bash and bill a resume cycle",
+      );
+      ok(retags.length === 0, "OPE-595: …and a skipped parent stop re-tags nothing — the tag is already the parent's");
+      ok(
+        logLines.some((l) => l.includes("SKIPPED the stop") && l.includes("task_ope595")),
+        "OPE-595: …and the skip NAMES the task that held it, so an operator can read the cause off the log rather than off a bill",
+      );
+      ok(
+        container.get(slot)?.task_ope595 === 0,
+        "🔴 OPE-595: the sandbox guard SPENDS NO HOLD — a hold is what a skipped memory persist costs, and double-spending it would retire the id early",
+      );
+
+      container.set(slot, {});
+
+      logLines.length = 0;
+      await turnCompleted({}, parentCtx);
+      ok(
+        stops.includes("sbx-shared"),
+        "🔴 OPE-595 negative control: once the task settles, the SAME parent turn end stops the VM — the guard delays the stop, it does not delete it",
+      );
+
+      stops.length = 0;
+      retags.length = 0;
+      container.set(slot, { task_sibling: 0 });
+      await turnCompleted({}, childCtx);
+      ok(stops.length === 0, "OPE-595 × OPE-447: a child still issues no stop with a live sibling task");
+      ok(
+        retags.length === 1 && retags[0].sessionId === "sess-parent",
+        "OPE-595 × OPE-447: …and still hands the tag back to the parent — the new guard sits AFTER the child guard, so it cannot swallow the hand-back",
+      );
+    });
+
+    stops.length = 0;
+    ok(liveDelegatedTasksHoldingSandbox().length === 0, "OPE-595: outside any eve context the reader fails soft to empty, never throws");
+    await turnCompleted({}, parentCtx);
+    ok(stops.includes("sbx-shared"), "OPE-595: …so a sessionless turn end still stops its sandbox");
+  } finally {
+    console.log = realLog;
+    setSandboxStopperForTest(undefined);
+  }
+}
+
+{
   resetStopOwnershipLogForTest();
   const lines: string[] = [];
   const realLog = console.log;
@@ -578,4 +665,4 @@ const parentCtx = {
   delete process.env.OE_SQLITE_PATH;
 }
 
-console.log(`\n✓ sandbox-lifecycle: ${n} assertions passed (hook shape, stop decisions, fail-soft, enable flag, runtime-seconds, spend-ledger $ record + principal/routine attribution + delta billing, write-ordering safety, duplicate-name dedupe, backend selection + docker stop + the subagent-child guard, OPE-722 id-record augmentation of Sandbox.list)\n`);
+console.log(`\n✓ sandbox-lifecycle: ${n} assertions passed (hook shape, stop decisions, fail-soft, enable flag, runtime-seconds, spend-ledger $ record + principal/routine attribution + delta billing, write-ordering safety, duplicate-name dedupe, backend selection + docker stop + the subagent-child guard, the OPE-595 live-background-task stop guard, OPE-722 id-record augmentation of Sandbox.list)\n`);
