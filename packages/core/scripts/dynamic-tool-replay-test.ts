@@ -99,7 +99,7 @@ console.log("1. source scan (factored shape, closed inventory):");
     );
     ok(
       src.includes("preRegisterDynamicEntry("),
-      `${f} never calls preRegisterDynamicEntry — its entry only registers at resolve time and a cold-resumed session silently skips the tool`,
+      `${f} never calls preRegisterDynamicEntry — if it ever authors a toModelOutput projection, that projection would not survive eve's replay rebuild`,
     );
   }
   eq(scanned, SLUGS.length, `the scan saw exactly the ${SLUGS.length} inventoried defineDynamic tool files`);
@@ -121,7 +121,7 @@ for (const c of CASES) {
   ok(reg.get(names.approval) === undefined, `${c.slug}:${c.entryKey} registers NO approval step (raw dynamic tools stay approval-less)`);
 }
 
-console.log("3. resolver returns the pre-registered (stamped) entry:");
+console.log("3. resolver returns an UNSTAMPED entry (OPE-867 retirement):");
 for (const c of CASES) {
   const saved: Record<string, string | undefined> = {};
   for (const [k, v] of Object.entries(c.env ?? {})) {
@@ -136,9 +136,8 @@ for (const c of CASES) {
         ? (resolved[c.entryKey] as Record<string, unknown>)
         : resolved;
     ok(entry !== null && typeof entry.execute === "function", `${c.slug}:${c.entryKey} arms on its happy-path session`);
-    const names = replayStepNames(c.slug, c.entryKey);
-    eq((entry!.__executeStepFn as { stepId?: string } | undefined)?.stepId, names.execute, `${c.slug}:${c.entryKey} resolver returns the STAMPED entry (durable metadata will name the module-load step)`);
-    ok(entry!.__closureVars !== undefined, `${c.slug}:${c.entryKey} entry carries __closureVars (a metadata row without it is skipped on replay)`);
+    ok(!("__executeStepFn" in entry!), `${c.slug}:${c.entryKey} carries NO __executeStepFn stamp — eve derives its own step id, not OURS`);
+    ok(!("__closureVars" in entry!), `${c.slug}:${c.entryKey} carries NO __closureVars stamp either`);
   } finally {
     for (const [k, v] of Object.entries(saved)) {
       if (v === undefined) delete process.env[k];
@@ -165,7 +164,92 @@ console.log("4. installed-eve replay (no skip):");
     closureVars: {},
   }));
   const replayed = lifecycle.replayDynamicSessionTools(meta);
-  eq(replayed.length, CASES.length, `eve's replay path finds ALL ${CASES.length} entries (a skip here is BUG A live again)`);
+  eq(replayed.length, CASES.length, `eve's replay path finds ALL ${CASES.length} entries fed under the alias name (the alias is a real, functioning step-registry entry)`);
+}
+
+console.log("5. native cold-resume self-heal against the REAL tool inventory (OPE-867):");
+{
+  const require2 = createRequire(import.meta.url);
+  const eveRoot = dirname(require2.resolve("eve/package.json"));
+  const distSrc = join(eveRoot, "dist", "src");
+  const distUrl = (rel: string): string => pathToFileURL(join(distSrc, rel)).href;
+  const nativeLifecycle = (await import(distUrl("context/dynamic-tool-lifecycle.js"))) as {
+    dispatchDynamicToolEvent(e: unknown): Promise<void>;
+    hydrateDynamicSessionTools(e: unknown): Promise<void>;
+    replayDynamicSessionTools(meta: readonly unknown[]): { name: string; execute: unknown }[];
+  };
+  const nativeKeys = (await import(distUrl("context/keys.js"))) as {
+    SessionIdKey: unknown;
+    SessionDynamicToolMetadataKey: unknown;
+    AuthKey: unknown;
+    InitiatorAuthKey: unknown;
+    ContinuationTokenKey: unknown;
+  };
+  const { ChannelKey } = (await import(distUrl("runtime/sessions/runtime-context-keys.js"))) as { ChannelKey: unknown };
+  const REG_SYMBOL = Symbol.for("@workflow/core//registeredSteps");
+  const nativeReg = (): Map<string, unknown> => (globalThis as Record<symbol, unknown>)[REG_SYMBOL] as Map<string, unknown>;
+
+  interface FixtureCtx {
+    readonly channel?: { readonly kind?: string; readonly continuationToken?: string };
+    readonly session?: { readonly auth?: { readonly current?: unknown; readonly initiator?: unknown } };
+  }
+  function nativeCtxFor(fixture: FixtureCtx, sessionId: string): { get(k: unknown): unknown; set(k: unknown, v: unknown): void; require(k: unknown): unknown } {
+    const store = new Map<unknown, unknown>();
+    store.set(nativeKeys.SessionIdKey, sessionId);
+    if (fixture.channel?.kind !== undefined) store.set(ChannelKey, { kind: fixture.channel.kind });
+    if (fixture.channel?.continuationToken !== undefined) store.set(nativeKeys.ContinuationTokenKey, fixture.channel.continuationToken);
+    if (fixture.session?.auth?.current !== undefined) store.set(nativeKeys.AuthKey, fixture.session.auth.current);
+    if (fixture.session?.auth?.initiator !== undefined) store.set(nativeKeys.InitiatorAuthKey, fixture.session.auth.initiator);
+    return {
+      get: (k) => store.get(k),
+      set: (k, v) => {
+        store.set(k, v);
+      },
+      require: (k) => {
+        if (!store.has(k)) throw new Error(`ctx.require: missing key ${String(k)}`);
+        return store.get(k);
+      },
+    };
+  }
+
+  for (const c of CASES) {
+    const saved: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(c.env ?? {})) {
+      saved[k] = process.env[k];
+      process.env[k] = v;
+    }
+    if (c.settings) overrideSettingsForTest(c.settings);
+    try {
+      const resolverDescriptor = { slug: c.slug, eventNames: ["session.started"], events: { "session.started": resolvers.get(c.slug)! } };
+      const sessionId = `sess-native-heal-${c.slug}-${c.entryKey}`;
+      const ctx = nativeCtxFor(c.ctx as FixtureCtx, sessionId);
+      const event = { type: "session.started" };
+
+      await nativeLifecycle.dispatchDynamicToolEvent({ ctx, resolvers: [resolverDescriptor], event, messages: [] });
+      const metadata = ctx.get(nativeKeys.SessionDynamicToolMetadataKey) as { entryKey: string; executeStepFnName: string; closureVars: unknown }[];
+      const row = metadata?.length === 1 ? metadata[0] : metadata?.find((r) => r.entryKey === c.entryKey);
+      ok(row !== undefined, `${c.slug}:${c.entryKey} durable metadata row exists after native resolve`);
+      if (row === undefined) continue;
+      ok(
+        row.executeStepFnName.startsWith(`eve:framework-dynamic:${sessionId}:${c.slug}:`),
+        `${c.slug}:${c.entryKey} got a SESSION-SCOPED step id from eve's own derivation (${row.executeStepFnName})`,
+      );
+      ok(typeof nativeReg().get(row.executeStepFnName) === "function", `${c.slug}:${c.entryKey} warm path: step fn registered right after resolve`);
+
+      nativeReg().delete(row.executeStepFnName);
+      ok(nativeReg().get(row.executeStepFnName) === undefined, `${c.slug}:${c.entryKey} step fn removed (cold-resume simulation)`);
+      await nativeLifecycle.hydrateDynamicSessionTools({ ctx, resolvers: [resolverDescriptor], event, messages: [] });
+      ok(typeof nativeReg().get(row.executeStepFnName) === "function", `${c.slug}:${c.entryKey} GREEN: hydrateDynamicSessionTools healed it after simulated cold start`);
+      const replayedRow = nativeLifecycle.replayDynamicSessionTools([row]);
+      eq(replayedRow.length, 1, `${c.slug}:${c.entryKey} post-heal replay returns the tool (not skipped)`);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      if (c.settings) overrideSettingsForTest({ tools: { genericReadVerbs: false, sourceScopedMount: false } });
+    }
+  }
 }
 
 console.log(`\ndynamic-tool-replay: ${n} assertions passed.`);

@@ -66,17 +66,12 @@ for (const c of CASES) {
   ok(reg.get(names.approval) === undefined, `${c.slug}:${c.entryKey} registers NO approval step (raw dynamic tools stay approval-less)`);
 }
 
-console.log("3. resolver returns the pre-registered (stamped) entry:");
+console.log("3. resolver returns an UNSTAMPED entry (OPE-867 retirement):");
 for (const c of CASES) {
   const resolved = (await resolvers.get(c.slug)!({}, c.ctx)) as Record<string, unknown> | null;
   ok(resolved !== null && typeof resolved.execute === "function", `${c.slug}:${c.entryKey} arms on its happy-path session`);
-  const names = replayStepNames(c.slug, c.entryKey);
-  eq(
-    (resolved!.__executeStepFn as { stepId?: string } | undefined)?.stepId,
-    names.execute,
-    `${c.slug}:${c.entryKey} resolver returns the STAMPED entry (durable metadata will name the module-load step)`,
-  );
-  ok(resolved!.__closureVars !== undefined, `${c.slug}:${c.entryKey} entry carries __closureVars (a metadata row without it is skipped on replay)`);
+  ok(!("__executeStepFn" in resolved!), `${c.slug}:${c.entryKey} carries NO __executeStepFn stamp — eve derives its own step id, not OURS`);
+  ok(!("__closureVars" in resolved!), `${c.slug}:${c.entryKey} carries NO __closureVars stamp either`);
 }
 
 console.log("4. untrusted-projection registration at module load:");

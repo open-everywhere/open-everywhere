@@ -223,8 +223,6 @@ export function preRegisterDynamicEntry(slug: string, entryKey: string, entry: R
   if (approvalResponse !== undefined) {
     reg.set(names.approvalResponse, (_cv: unknown, rctx: unknown) => approvalResponse(rctx));
   }
-  (entry as unknown as Record<string, unknown>).__executeStepFn = { stepId: names.execute };
-  (entry as unknown as Record<string, unknown>).__closureVars = {};
   if (typeof entry.toModelOutput === "function") {
     const mountedName = entryKey.startsWith("_") ? slug : entryKey;
     registerReplayModelProjection(mountedName, entry.toModelOutput.bind(entry));

@@ -262,7 +262,7 @@ console.log("4b. channel-less domain fallback (OPE-740):");
   eq(attemptRow!.workspace, "payments", "the per-attempt row from a channel-less execute context records the REAL domain, not \"unknown\" (the OPE-740 fix)");
 }
 
-console.log("5. replay pre-registration (eve step registry):");
+console.log("5. replay alias + eve's own replay path (eve step registry):");
 {
   const reg = (globalThis as Record<symbol, unknown>)[Symbol.for("@workflow/core//registeredSteps")] as Map<string, unknown>;
   ok(reg instanceof Map, "the @workflow/core step registry exists on globalThis");
@@ -323,9 +323,9 @@ console.log("5. replay pre-registration (eve step registry):");
   }) as unknown as GatedToolEntry;
   preRegisterDynamicEntry("pretend_reply", "_unified", rawEntry);
   const customNames = replayStepNames("pretend_reply", "_unified");
-  ok(typeof reg.get(customNames.execute) === "function", "preRegisterDynamicEntry registers a custom entryKey under eve's deterministic name at module load");
-  eq((rawEntry as unknown as Record<string, { stepId?: string }>).__executeStepFn?.stepId, customNames.execute, "the entry is STAMPED with the deterministic stepId (eve's resolve records it durably — never the transform's counter key)");
-  eq((rawEntry as unknown as Record<string, unknown>).__closureVars, {}, "the entry is stamped with empty __closureVars (a metadata row without closureVars is SKIPPED on replay)");
+  ok(typeof reg.get(customNames.execute) === "function", "preRegisterDynamicEntry registers a custom entryKey under its alias name at module load");
+  ok(!("__executeStepFn" in rawEntry), "RETIRED (OPE-867): the entry carries NO __executeStepFn stamp — eve derives its own step id, not OURS");
+  ok(!("__closureVars" in rawEntry), "RETIRED (OPE-867): the entry carries NO __closureVars stamp either");
   ok(reg.get(customNames.approval) === undefined, "an approval-less entry registers NO approval step (absent approval === never() on both paths)");
   const replayedCustom = lifecycle.replayDynamicSessionTools([
     {
@@ -338,9 +338,9 @@ console.log("5. replay pre-registration (eve step registry):");
       closureVars: {},
     },
   ]);
-  eq(replayedCustom.length, 1, "eve replays a custom-entryKey pre-registered entry (no skip)");
-  const armedBash = (await resolveWindowGated(windowGated("bash", stubEntry("bash")), grainCtx.task())) as unknown as Record<string, { stepId?: string }>;
-  eq(armedBash.__executeStepFn?.stepId, replayStepNames("bash", "_single").execute, "windowGated entries are stamped with the same deterministic stepId");
+  eq(replayedCustom.length, 1, "eve replays the alias name fed to it directly (still a valid, functioning step-registry entry)");
+  const armedBash = (await resolveWindowGated(windowGated("bash", stubEntry("bash")), grainCtx.task())) as unknown as Record<string, unknown>;
+  ok(!("__executeStepFn" in armedBash), "RETIRED (OPE-867): a windowGated entry carries no __executeStepFn stamp either");
 }
 
 console.log("6. mount refresh on a deployment change (OPE-632):");
