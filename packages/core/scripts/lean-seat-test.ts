@@ -140,7 +140,7 @@ ok(allowedOnLeanSeat("stand_down"), "…and the SEAT still holds stand_down — 
 ok(!allowedOnWorkerSeat("no_reply"), "🔴 OPE-877: a worker does NOT hold no_reply — it discharges a REPLY obligation a worker does not have, and on the native route the worker's last message IS its report, so a turn ending in silence hands the seat nothing");
 ok(allowedOnLeanSeat("no_reply"), "…and the SEAT still holds no_reply — judged silence is a seat's normal output");
 for (const name of ["update_status", "task_update", "reply", "edit_reply", "react"]) {
-  ok(allowedOnWorkerSeat(name), `the worker keeps ${name} — it neither discharges a reply obligation nor writes the seat's engagement row, so neither admission test admits it`);
+  ok(allowedOnWorkerSeat(name), `the worker subtraction does NOT take ${name} — neither admission test admits it`);
 }
 ok(
   [...WORKER_WITHHELD_TOOLS].sort().join(",") === "no_reply,stand_down",

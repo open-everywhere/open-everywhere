@@ -159,8 +159,12 @@ const THREAD_SEAT_TOKEN = `unified:${formatWindowToken({ domain: "acme", windowI
   );
   ok(worker === true, "…and the wake really WAS classified a delegated worker (the per-wake bit is `true`) — which is what makes the wide-hands exemption above meaningful");
   ok(
-    WORKER_WITHHELD_TOOLS.size === 0 && "ask_question" in toolset,
-    "…and the worker holds `ask_question` (OPE-565 emptied the withheld set and built the answer's return leg)",
+    !WORKER_WITHHELD_TOOLS.has("ask_question") && "ask_question" in toolset,
+    "…and the worker holds `ask_question` (OPE-565 took it out of the withheld set and built the answer's return leg)",
+  );
+  ok(
+    !("no_reply" in toolset) && !("stand_down" in toolset),
+    "…and the worker holds NEITHER no_reply NOR stand_down (OPE-877) — the two seat-conversational verbs leave at this same seam, under the invoker-posture cut, not instead of it",
   );
 }
 
