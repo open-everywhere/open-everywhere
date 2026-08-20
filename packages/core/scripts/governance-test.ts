@@ -321,11 +321,11 @@ function ctxFor(principalId: string, channelId: string, channelType: "channel" |
 
   armWithDm();
   ok(canDeliverDirectMessage("slack"), "canDeliverDirectMessage is true for a provider whose arm implements it");
-  ok(!canDeliverDirectMessage("teams"), "canDeliverDirectMessage is false for a platform with no arm at all");
+  ok(!canDeliverDirectMessage("notion"), "canDeliverDirectMessage is false for a platform with no arm at all");
   ok(directMessageCapablePlatforms().includes("slack"), "directMessageCapablePlatforms lists the DM-capable provider");
   await assert.rejects(
-    () => dispatchDirectMessage("teams", { principalId: "U_ORG", text: "hi" }),
-    (err: unknown) => err instanceof Error && /no DM-delivery arm for platform "teams"/.test(err.message) && !/xox|token=/.test(err.message),
+    () => dispatchDirectMessage("notion", { principalId: "U_ORG", text: "hi" }),
+    (err: unknown) => err instanceof Error && /no DM-delivery arm for platform "notion"/.test(err.message) && !/xox|token=/.test(err.message),
     "dispatchDirectMessage throws a loud, token-free refusal for a platform with no DM arm",
   );
   n++;

@@ -15,6 +15,7 @@ import {
   type OpenEverywhereTeamsAuth,
 } from "./teams-identity.js";
 import { resolveTeamsUserType, teamsServiceUrlRosterProbe, type TeamsRosterProbe } from "./teams-roster.js";
+import { recordTeamsConversationReference } from "./teams-conversation-ref.js";
 import {
   planTeamsSingleWindow,
   handleTeamsSingleWindowDispatch,
@@ -518,6 +519,19 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
     const machineAuthored = activity.from.id === activity.recipient.id || activity.from.role === "bot" || activity.from.id.startsWith("28:");
 
     if (!machineAuthored && (await externalGate(activity))) return OK();
+
+    if (!machineAuthored) {
+      args.waitUntil(
+        recordTeamsConversationReference({
+          scope: activity.scope,
+          tenantId: activity.tenantId ?? activity.conversation.tenantId,
+          conversationId: activity.conversation.id,
+          serviceUrl: activity.serviceUrl,
+          userId: activity.from.id,
+          teamId: activity.teamId,
+        }),
+      );
+    }
 
     if (activity.scope === "personal" || activity.scope === "groupChat") {
       if (machineAuthored) return OK();

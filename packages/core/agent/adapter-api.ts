@@ -129,6 +129,7 @@ export type { ConnectorMemoryCapability, ConnectorMemoryMode, DomainMemoryGrants
 export { initPostgresSchema } from "./memory/postgres.js";
 export type { PgClient } from "./memory/postgres.js";
 export { registerOperationalPostgres, getOperationalStore, registerOperationalStore, resetOperationalStore } from "./operational/provider.js";
+export type { ProactiveAddress } from "./operational/store.js";
 export { initOperationalSchema } from "./operational/postgres.js";
 export { registerOperationalPglite, registerOperationalPgliteLazy, pgliteOperationalDataDir } from "./operational/pglite-client.js";
 
