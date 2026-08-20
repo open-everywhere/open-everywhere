@@ -86,6 +86,10 @@ export default defineTool({
     markNoReplyThisTurn(input.reason as NoReplyReason);
     const wakeId = currentWakeId(ctx as BindableContext);
     markWakeDeclinedThisTurn(currentTurnId(ctx as BindableContext), wakeId);
+    await auditToolAction(ctx, "reply.no_reply_observed", {
+      reason: input.reason,
+      ...(wakeId ? { wakeId } : {}),
+    });
     if (auditSilencesEnabled()) {
       await auditToolAction(ctx, "reply.no_reply", {
         reason: input.reason,
