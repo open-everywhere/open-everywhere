@@ -24,7 +24,6 @@ export const ENV = {
   accessAllowSend: "E2E_ACCESS_ALLOW_SEND",
   notionChannel: "E2E_NOTION_CHANNEL",
   notionQuery: "E2E_NOTION_QUERY",
-  connectorWrite: "E2E_CONNECTOR_WRITE",
   teamsTenantId: "E2E_TEAMS_TENANT_ID",
   teamsClientId: "E2E_TEAMS_CLIENT_ID",
   teamsRefreshToken: "E2E_TEAMS_REFRESH_TOKEN",
@@ -392,9 +391,8 @@ export function resolvePr(env: Env = process.env): Resolved<PrConfig> {
 }
 
 export function resolveConnectorWrite(env: Env = process.env): Resolved<ConnectorWriteConfig> {
-  const { values, missing } = need(env, [ENV.notionChannel, ENV.connectorWrite]);
+  const { values, missing } = need(env, [ENV.notionChannel]);
   if (missing.length > 0) return { ok: false, missing };
-  if (env[ENV.connectorWrite]?.trim() !== "1") return { ok: false, missing: [ENV.connectorWrite] };
   return { ok: true, cfg: { channel: values[0] } };
 }
 

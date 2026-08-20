@@ -202,7 +202,8 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
     [ENV.slackUnifiedChannelB]: "C0UNIB",
   };
   const capsFull = resolveCapabilities(full);
-  ok(capsFull.available.size === 13, "full env: all thirteen capabilities live");
+  ok(capsFull.available.size === 14, "full env: all fourteen capabilities live");
+  ok(capsFull.available.has("connectorWrite"), "connectorWrite comes up with the bound channel — no arming declaration stands between the fixture and the capability");
   const capFixtureCfg = resolveSlackCapFixture(full);
   ok(capFixtureCfg.ok && capFixtureCfg.cfg.channel === "C0CAP", "S10 cap-fixture cfg carries the dedicated throwaway channel");
   const secondaryCfg = resolveSlackSecondary(full);
@@ -368,7 +369,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
     notionAmbient: [ENV.notionDriverKey, ENV.notionAmbientPageId, ENV.notionBotUserId, ENV.notionWorkspaceId],
     slackUnified: [ENV.slackUnifiedChannelA, ENV.slackUnifiedChannelB],
     pr: [ENV.prRepo, ENV.githubDriverToken],
-    connectorWrite: [ENV.notionChannel, ENV.connectorWrite],
+    connectorWrite: [ENV.notionChannel],
     soakSlack: [ENV.slackSoakChannelDev, ENV.slackSoakChannelOps],
     soakNotion: [ENV.notionSoakPage1, ENV.notionSoakPage2],
     soakLinear: [ENV.linearSoakLabelId],
@@ -898,15 +899,21 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
 {
   const cwEmpty = resolveConnectorWrite({});
   ok(
-    !cwEmpty.ok && cwEmpty.missing.length === 2 && cwEmpty.missing.includes(ENV.notionChannel) && cwEmpty.missing.includes(ENV.connectorWrite),
-    "connectorWrite half reports BOTH E2E_NOTION_CHANNEL + E2E_CONNECTOR_WRITE missing in an empty env",
+    !cwEmpty.ok && cwEmpty.missing.length === 1 && cwEmpty.missing[0] === ENV.notionChannel,
+    "connectorWrite half reports exactly E2E_NOTION_CHANNEL missing in an empty env (the bound channel is the whole fixture)",
   );
   const cwChannelOnly = resolveConnectorWrite({ [ENV.notionChannel]: "C0NOTION" });
-  ok(!cwChannelOnly.ok && cwChannelOnly.missing.join(",") === ENV.connectorWrite, "connectorWrite still fails-closed on the arming flag when only the channel is set");
-  const cwFlagZero = resolveConnectorWrite({ [ENV.notionChannel]: "C0NOTION", [ENV.connectorWrite]: "0" });
-  ok(!cwFlagZero.ok && cwFlagZero.missing.join(",") === ENV.connectorWrite, "connectorWrite treats E2E_CONNECTOR_WRITE=0 as UNSET (explicit '1' opt-in, not mere truthiness)");
-  const cwArmed = resolveConnectorWrite({ [ENV.notionChannel]: "C0NOTION", [ENV.connectorWrite]: "1" });
-  ok(cwArmed.ok && cwArmed.cfg.channel === "C0NOTION", "connectorWrite resolves only with the channel AND E2E_CONNECTOR_WRITE=1 (carries the bound channel)");
+  ok(cwChannelOnly.ok && cwChannelOnly.cfg.channel === "C0NOTION", "connectorWrite resolves from the bound channel ALONE — arming is derived at run time, not declared here");
+  const cwFalseDeclarationOn = resolveConnectorWrite({ [ENV.notionChannel]: "C0NOTION", E2E_CONNECTOR_WRITE: "1", E2E_OE_OAUTH_ARMED: "1" });
+  const cwFalseDeclarationOff = resolveConnectorWrite({ [ENV.notionChannel]: "C0NOTION", E2E_CONNECTOR_WRITE: "0", E2E_OE_OAUTH_ARMED: "0" });
+  ok(
+    cwFalseDeclarationOn.ok && cwFalseDeclarationOff.ok && cwFalseDeclarationOn.cfg.channel === cwFalseDeclarationOff.cfg.channel,
+    "🔴 a retired arming declaration is INERT: E2E_CONNECTOR_WRITE / E2E_OE_OAUTH_ARMED set to '1' or '0' resolve identically (a human claim can no longer arm or disarm a leg)",
+  );
+  ok(
+    !JSON.stringify(ENV).includes("E2E_CONNECTOR_WRITE") && !JSON.stringify(ENV).includes("E2E_OE_OAUTH_ARMED") && !JSON.stringify(ENV).includes("E2E_CONNECTOR_OAUTH"),
+    "🔴 the ENV map names NO connector arming flag — E2E_CONNECTOR_WRITE / E2E_OE_OAUTH_ARMED / E2E_CONNECTOR_OAUTH are retired, and re-adding one fails here",
+  );
 
   ok(!auditSilencesExpected({}), "auditSilencesExpected is FALSE by default (prod is actions-only)");
   ok(!auditSilencesExpected({ [ENV.auditSilences]: "0" }), "auditSilencesExpected is FALSE for E2E_AUDIT_SILENCES=0");
@@ -916,14 +923,165 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   const cwMissing = {
     slack: [], discord: [], synthetic: [], slackPrivate: [], slackChannelB: [], slackCapFixture: [], slackSupervisor: [],
     syntheticDm: [], slackUser2: [], slackSecondary: [], webhook: [], notion: [], teams: [], github: [], linear: [],
-    notionAmbient: [], slackUnified: [], pr: [], connectorWrite: [ENV.notionChannel, ENV.connectorWrite],
+    notionAmbient: [], slackUnified: [], pr: [], connectorWrite: [ENV.notionChannel],
     soakSlack: [], soakNotion: [], soakLinear: [],
   } as const;
   for (const id of ["S-NOTION-WRITE", "S-CONNECTOR-TIER"]) {
     const r = skipReason(SCENARIOS.find((s) => s.id === id)!, baseOnly, cwMissing, true);
     ok(
-      r === `missing connectorWrite driver (set ${ENV.notionChannel}, ${ENV.connectorWrite})`,
-      `${id} dry-skip names exactly E2E_NOTION_CHANNEL + E2E_CONNECTOR_WRITE (capability wins over the optional gate)`,
+      r === `missing connectorWrite driver (set ${ENV.notionChannel})`,
+      `${id} dry-skip names exactly E2E_NOTION_CHANNEL (capability wins over the optional gate)`,
+    );
+  }
+}
+
+{
+  const { classifyMintRows, deriveConnectorArming, requireConnectorArmed, watchConnectorArming, armingNote, lookbackIso, CONNECTOR_MINT_ACTION } =
+    await import("../packages/core/scripts/e2e/connector-arming.js");
+
+  const row = (ts: string, detail: Record<string, unknown>, action = CONNECTOR_MINT_ACTION) =>
+    ({ ts, org: "o", platform: "connector", workspace: "connector", action, detail }) as const;
+  const okRow = (ts: string, connector = "notion") => row(ts, { connector, subject: "user", outcome: "ok" });
+  const authRequiredRow = (ts: string, connector = "notion") =>
+    row(ts, { connector, subject: "user", outcome: "auth-required", name: "OeOauthNeedsConsentError" });
+
+  ok(CONNECTOR_MINT_ACTION === "connector.mint", "the derivation reads the action agent/connections/connector-auth.ts actually writes");
+
+  ok(classifyMintRows([okRow("2026-04-24T09:30:00.000Z")], "notion").state === "armed", "an outcome=ok personal mint ⇒ ARMED");
+  const unconsented = classifyMintRows([authRequiredRow("2026-04-24T09:30:00.000Z")], "notion");
+  ok(unconsented.state === "unconsented" && unconsented.at === "2026-04-24T09:30:00.000Z", "an outcome=auth-required personal mint ⇒ UNCONSENTED, carrying the row's ts");
+  ok(classifyMintRows([], "notion").state === "unknown", "no rows ⇒ UNKNOWN (never 'unconsented' — an empty window is not evidence of a lapsed grant)");
+  ok(
+    classifyMintRows([row("2026-04-24T09:30:00.000Z", { connector: "notion", subject: "user", outcome: "error", name: "TypeError" })], "notion").state === "unknown",
+    "🔴 outcome=error ⇒ UNKNOWN: some other mint failure is not evidence about CONSENT, and calling it 'unconsented' would skip a leg that should have run",
+  );
+  ok(
+    classifyMintRows([authRequiredRow("2026-04-23T08:30:00.000Z"), okRow("2026-04-24T09:30:00.000Z")], "notion").state === "armed",
+    "a later ok row overrides an earlier auth-required (a re-consent re-arms the leg with no human action)",
+  );
+  ok(
+    classifyMintRows([okRow("2026-04-23T08:30:00.000Z"), authRequiredRow("2026-04-24T09:30:00.000Z")], "notion").state === "unconsented",
+    "🔴 the NEGATIVE CONTROL: a later auth-required row overrides an earlier ok — a grant that LAPSED disarms the leg, which is the direction a declaration could never follow",
+  );
+  ok(
+    classifyMintRows([okRow("2026-04-24T09:30:00.000Z"), authRequiredRow("2026-04-23T08:30:00.000Z")], "notion").state === "armed" &&
+      classifyMintRows([authRequiredRow("2026-04-24T09:30:00.000Z"), okRow("2026-04-23T08:30:00.000Z")], "notion").state === "unconsented",
+    "the newest row decides in EITHER arrival order (the route's newest-first ordering is not depended on)",
+  );
+  ok(classifyMintRows([authRequiredRow("2026-04-24T09:30:00.000Z", "linear")], "notion").state === "unknown", "another connector's rows are ignored (the derivation is per-connector)");
+  ok(
+    classifyMintRows([row("2026-04-24T09:30:00.000Z", { connector: "notion", subject: "app", outcome: "auth-required" })], "notion").state === "unknown",
+    "a SERVICE (subject=app) mint is ignored — these legs assert the PERSONAL grant",
+  );
+  ok(
+    classifyMintRows([row("2026-04-24T09:30:00.000Z", { connector: "notion", subject: "user", outcome: "ok" }, "connector.use")], "notion").state === "unknown",
+    "a connector.use row is ignored — connector.use proves the GATE passed, not that the mint succeeded",
+  );
+
+  ok((await deriveConnectorArming(undefined, { connector: "notion", sinceIso: "2026-04-04T23:30:00.000Z" })).state === "unknown", "no audit reader ⇒ UNKNOWN, never a throw");
+  ok(
+    (await deriveConnectorArming(async () => { throw new Error("503"); }, { connector: "notion", sinceIso: "2026-04-04T23:30:00.000Z" })).state === "unknown",
+    "🔴 a FAILING audit read ⇒ UNKNOWN, never 'unconsented' — an audit-route blip must not masquerade as a lapsed grant and skip a leg silently",
+  );
+  let askedFor: unknown;
+  await deriveConnectorArming(async (opts) => { askedFor = opts; return []; }, { connector: "notion", sinceIso: "2026-04-04T23:30:00.000Z" });
+  ok(
+    (askedFor as { actions?: string[] }).actions?.join(",") === CONNECTOR_MINT_ACTION && (askedFor as { sinceIso?: string }).sinceIso === "2026-04-04T23:30:00.000Z",
+    "the live half narrows the audit query to connector.mint since the caller's window (the route filters at the store)",
+  );
+  const lookback = lookbackIso(14, new Date("2026-04-24T11:30:00.000Z"));
+  ok(lookback === "2026-04-10T11:30:00.000Z", "lookbackIso(14) is exactly 14 days back from the reference instant");
+
+  const probeOver = (rows: readonly unknown[]) => {
+    const logged: string[] = [];
+    return {
+      logged,
+      probe: {
+        auditRead: async () => rows as never,
+        log: (m: string) => { logged.push(m); },
+        skip: (r: string): never => { throw new ScenarioSkip(r); },
+      },
+    };
+  };
+  const opts = { connector: "notion", sinceIso: "2026-04-24T08:30:00.000Z" };
+
+  const unconsentedProbe = probeOver([authRequiredRow("2026-04-24T09:30:00.000Z")]);
+  let skipped: unknown;
+  try {
+    await requireConnectorArmed(unconsentedProbe.probe, opts);
+    skipped = undefined;
+  } catch (e) {
+    skipped = e;
+  }
+  ok(skipped instanceof ScenarioSkip, "🔴 THE FIX: an auth-required mint row in the leg's own window raises ScenarioSkip — the honest refusal can no longer reach the judge gate and red");
+  ok(
+    (skipped as Error).message.includes("NOT ARMED on this deploy") && (skipped as Error).message.includes("auth-required"),
+    "…and the skip reason names the derived cause (`NOT ARMED on this deploy`, outcome=auth-required), not a missing env var",
+  );
+
+  const armedProbe = probeOver([okRow("2026-04-24T09:30:00.000Z")]);
+  const armed = await requireConnectorArmed(armedProbe.probe, opts).catch((e) => e as unknown);
+  ok(
+    !(armed instanceof Error) && (armed as { state?: string }).state === "armed",
+    "🔴 the NEGATIVE CONTROL: an ok mint row does NOT skip — the leg runs and its gates carry weight",
+  );
+  ok(armedProbe.logged.some((l) => l.includes("ARMED")), "…and the armed derivation is LOGGED, so a run's transcript says which deployment fact it decided on");
+
+  const unknownProbe = probeOver([]);
+  ok((await requireConnectorArmed(unknownProbe.probe, opts)).state === "unknown", "an empty window does NOT skip — the leg drives, and the post-reply derivation settles it from live evidence");
+
+  ok(armingNote("notion", { state: "unknown", reason: "x" }).startsWith("notion: arming UNKNOWN"), "armingNote renders each state as one legible line for the run log");
+
+  let unwiredSkip: unknown;
+  try {
+    await watchConnectorArming({ log: () => {}, skip: (r: string): never => { throw new ScenarioSkip(r); } }, "notion");
+  } catch (e) {
+    unwiredSkip = e;
+  }
+  ok(
+    unwiredSkip instanceof ScenarioSkip && (unwiredSkip as Error).message.includes("E2E_CONTROL_READ_TOKEN"),
+    "with no audit reader the watch skips naming E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN — the evidence surface, never an arming declaration",
+  );
+
+  const staleRows = [authRequiredRow("2026-04-10T09:30:00.000Z")];
+  const staleProbe = probeOver(staleRows);
+  const staleWatch = await watchConnectorArming(staleProbe.probe, "notion").catch((e) => e as unknown);
+  ok(!(staleWatch instanceof Error), "🔴 a stale auth-required row in the lookback does NOT skip — opening the watch is advisory, so a re-consent is never masked by an old row");
+  ok(staleProbe.logged.some((l) => l.startsWith("advisory ·")), "…and what the deployment last reported is LOGGED as advisory, so the run transcript still carries it");
+
+  const liveRows: unknown[] = [];
+  const liveLogged: string[] = [];
+  let recheckQuery: unknown;
+  const liveWatch = await watchConnectorArming(
+    {
+      auditRead: async (o) => { recheckQuery = o; return liveRows as never; },
+      log: (m: string) => { liveLogged.push(m); },
+      skip: (r: string): never => { throw new ScenarioSkip(r); },
+    },
+    "notion",
+  );
+  ok((await liveWatch.recheck()).state === "unknown", "recheck over a leg that minted nothing ⇒ UNKNOWN, and the leg keeps running (silence proves nothing about the grant)");
+  ok((recheckQuery as { sinceIso?: string }).sinceIso === liveWatch.since, "recheck reads only rows written since the watch opened — the mints THIS leg caused, never the deployment's history");
+  liveRows.push(authRequiredRow(new Date(Date.parse(liveWatch.since) + 1000).toISOString()));
+  const liveSkip = await liveWatch.recheck().then(() => undefined, (e: unknown) => e);
+  ok(
+    liveSkip instanceof ScenarioSkip && (liveSkip as Error).message.includes("NOT ARMED on this deploy"),
+    "🔴 THE FIX, at the seam the legs hold: an auth-required mint row raised DURING the leg makes recheck skip — the honest refusal can no longer reach a judge gate and red",
+  );
+
+  for (const id of ["S-DM-NOTION", "S-NOTION-WRITE", "S-CONNECTOR-TIER"]) {
+    const src = SCENARIOS.find((s) => s.id === id)!.run.toString();
+    ok(src.includes("watchConnectorArming("), `🔴 REACHABILITY — ${id} opens an arming watch (a leg that dropped the call keeps every assertion above green)`);
+    const judgeGates = (src.match(/judgePass\(/g) ?? []).length;
+    const rechecks = (src.match(/\.recheck\(\)/g) ?? []).length;
+    ok(judgeGates > 0, `${id} still has at least one judge gate to protect (the count below is not vacuous)`);
+    ok(
+      rechecks >= judgeGates,
+      `🔴 REACHABILITY — ${id} rechecks the arming at least once per judge gate (${rechecks} recheck(s) for ${judgeGates} gate(s)) — a gate with no derivation in front of it is exactly the false red this closes`,
+    );
+    ok(
+      !/E2E_CONNECTOR_WRITE|E2E_OE_OAUTH_ARMED|E2E_CONNECTOR_OAUTH/.test(src),
+      `🔴 ${id} reads NO arming declaration — re-adding one fails here`,
     );
   }
 }
