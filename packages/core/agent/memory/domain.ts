@@ -14,7 +14,7 @@ import { domainCredentialProblems, type DomainCredentialOverride } from "../acce
 import type { SessionMode } from "../access/resolver.js";
 import type { Trust } from "../identity/binding.js";
 import type { ApprovalModeConfig } from "../access/approver-chain.js";
-import type { ExternalPolicyOverride } from "../access/external-policy.js";
+import type { ExternalPolicyOverride, ExternalRoomGrain } from "../access/external-policy.js";
 
 export type DomainMatch = "org" | "public" | "dm";
 
@@ -162,6 +162,40 @@ export function externalPolicyOverrideFor(channelKey: string | undefined, domain
   const explicit = channelKey === undefined ? undefined : domainForChannel(channelKey, domains);
   if (explicit) return explicit.externalPolicy;
   return criteriaDomain("org", domains)?.externalPolicy;
+}
+
+export interface SilentRoomGrainValidationDeps {
+  readonly warn?: (message: string) => void;
+}
+
+export function warnSilentRoomGrainWithoutPublicSignal(
+  domains: readonly Domain[],
+  orgDefaultRoomGrain: ExternalRoomGrain,
+  declaredPublic: (workspaceKey: string, surfaceKey: string) => boolean,
+  deps: SilentRoomGrainValidationDeps = {},
+): void {
+  const warn = deps.warn ?? ((m: string) => console.warn(m));
+  const checked = new Set<string>();
+  for (const d of domains) {
+    for (const ch of d.channels ?? []) {
+      if (checked.has(ch)) continue;
+      checked.add(ch);
+      const override = externalPolicyOverrideFor(ch, domains);
+      const roomGrain = override?.roomGrain ?? orgDefaultRoomGrain;
+      if (roomGrain !== "silent") continue;
+      const segs = ch.split("/");
+      const workspaceKey = segs.slice(0, 2).join("/");
+      if (declaredPublic(workspaceKey, ch)) continue;
+      warn(
+        `[open-everywhere:external-policy] channel "${ch}" (domain "${d.name}") resolves ` +
+          `externalPolicy.roomGrain: "silent" but no "public" trust entry covers it in ` +
+          `agent/identity/surfaces.ts — the OPERATOR-DECLARED leg of the external-room class can ` +
+          `never arm here from static config. This is fine if a vendor-external (Slack Connect / ` +
+          `Teams shared channel) or guest-present signal is meant to arm it at runtime instead; if ` +
+          `the static declaration was meant to arm it, add a "public" surface entry for this channel.`,
+      );
+    }
+  }
 }
 
 export function ambientSupervisorEnabled(channelKey: string, domains: readonly Domain[]): boolean {
