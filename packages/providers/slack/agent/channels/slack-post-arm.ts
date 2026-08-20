@@ -1,4 +1,5 @@
 import { slackForm, botDisplayName } from "./slack-events.js";
+import { markdownToSlackMrkdwn } from "./slack-mrkdwn.js";
 import { markNotApplied } from "@open-everywhere/core/agent/adapter-api.js";
 import type {
   PostArm,
@@ -66,7 +67,7 @@ function classifiedPostError(res: SlackPostResult | undefined, message: string):
 }
 
 async function dispatchSlackReply(target: SlackTarget, text: string, replier?: ReplierLabel): Promise<string> {
-  const body = new URLSearchParams({ channel: target.channelId, text });
+  const body = new URLSearchParams({ channel: target.channelId, text: markdownToSlackMrkdwn(text) });
   if (target.threadTs) body.set("thread_ts", target.threadTs);
   return postSlackMessage(body, replier, "reply couldn't post to Slack");
 }
@@ -77,7 +78,7 @@ export function slackThreadTarget(origin: Pick<SlackOrigin, "threadTs" | "replyA
 }
 
 async function liveSlackPost(origin: SlackOrigin, text: string, replier?: ReplierLabel): Promise<string> {
-  const body = new URLSearchParams({ channel: origin.channelId, text });
+  const body = new URLSearchParams({ channel: origin.channelId, text: markdownToSlackMrkdwn(text) });
   const threadTarget = slackThreadTarget(origin);
   if (threadTarget) body.set("thread_ts", threadTarget);
   return postSlackMessage(body, replier, "unified reply couldn't post to Slack");
@@ -92,7 +93,10 @@ async function deliverSlackDirectMessage(input: DirectMessageRequest): Promise<D
       `couldn't open a Slack DM with the requester — ${(opened?.error as string) ?? "no channel returned (check SLACK_BOT_TOKEN and the im:write bot scope)"}`,
     );
   }
-  const posted = await slackForm("chat.postMessage", new URLSearchParams({ channel: dmChannelId, text: input.text }).toString());
+  const posted = await slackForm(
+    "chat.postMessage",
+    new URLSearchParams({ channel: dmChannelId, text: markdownToSlackMrkdwn(input.text) }).toString(),
+  );
   const ts = typeof posted?.ts === "string" ? posted.ts : undefined;
   if (posted?.ok !== true || !ts) {
     throw new Error(`couldn't post the Slack DM — ${(posted?.error as string) ?? "no ts returned (check SLACK_BOT_TOKEN)"}`);
@@ -101,7 +105,7 @@ async function deliverSlackDirectMessage(input: DirectMessageRequest): Promise<D
 }
 
 async function editSlackMessage(locus: EditLocus, messageId: string, text: string): Promise<void> {
-  const body = new URLSearchParams({ channel: locus.channelId, ts: messageId, text });
+  const body = new URLSearchParams({ channel: locus.channelId, ts: messageId, text: markdownToSlackMrkdwn(text) });
   const res = await slackForm("chat.update", body.toString());
   if (res?.ok !== true) {
     throw markNotApplied(
