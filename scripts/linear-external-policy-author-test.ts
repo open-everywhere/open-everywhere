@@ -88,8 +88,8 @@ setDomains([{ name: "org", match: "org", externalPolicy: { authorGrain: "withhol
 const guest = await drive("as-guest", "guest-1", true);
 ok(guest.res === null, "author grain: a workspace GUEST under `withhold` is SILENTLY DROPPED (returns null)");
 ok(
-  guest.posted.some((b) => b.includes('"thought"') && b.includes('"stop"')) && !guest.posted.some((b) => b.includes('"response"')),
-  "author grain: the already-materialised session closes via an EPHEMERAL thought+stop, never a visible response",
+  !guest.posted.some((b) => b.includes("AgentActivityCreate")),
+  "🔴 OPE-884 author grain: a withheld author's mention creates NO Agent Activity of any type",
 );
 const rows1 = await suppressedRows();
 ok(
@@ -97,9 +97,14 @@ ok(
   "author grain: ONE linear.external_policy_suppressed audit row names the surface with verdict withheld-author",
 );
 ok(rows1[0]!.principalId === "guest-1", "author grain: the audit row names the excluded author");
-const guestClose = guest.posted.find((b) => b.includes('"thought"')) ?? "";
-ok(!guestClose.includes("external space"), "author grain: the close does NOT claim the ROOM is external — the person decided it, not the place");
-ok(guestClose.includes("(no reply)"), "author grain: the close states the OUTCOME only, naming no reason");
+ok(
+  !guest.posted.some((b) => b.includes("external space")),
+  "author grain: nothing written claims the ROOM is external — the person decided it, not the place",
+);
+ok(
+  !guest.posted.some((b) => b.includes("no reply")),
+  "🔴 OPE-884 author grain: no outcome text is written either — the session is left to age out rather than announce a person's classification",
+);
 
 const member = await drive("as-member", "member-1", false);
 ok(
@@ -131,8 +136,10 @@ ok(
   rows3.length === 2 && rows3.some((r) => r.detail?.verdict === "silent-room"),
   "room grain: the GUEST-PRESENT verdict is recorded as silent-room, not as an author verdict",
 );
-const roomClose = guestPresent.posted.find((b) => b.includes('"thought"')) ?? "";
-ok(roomClose.includes("external space"), "room grain: a ROOM verdict keeps the room text — a declaration the operator made and the room can already see");
+ok(
+  !guestPresent.posted.some((b) => b.includes("AgentActivityCreate")),
+  "🔴 OPE-884 room grain: the GUEST-PRESENT verdict writes NO Agent Activity either — the verdict lives in the audit row alone",
+);
 const memberInSilentRoom = await drive("as-member-silent", "member-1", false);
 ok(
   memberInSilentRoom.res !== null && (memberInSilentRoom.res as { auth?: unknown }).auth !== undefined,
@@ -185,8 +192,8 @@ ok(
   "OPE-541: a GUEST under `withhold` is SILENTLY DROPPED even when the team id does NOT parse (the author grain needs no room)",
 );
 ok(
-  noTeamGuest.posted.some((b) => b.includes('"thought"') && b.includes('"stop"')) && !noTeamGuest.posted.some((b) => b.includes('"response"')),
-  "OPE-541: the roomless suppression closes the session via an EPHEMERAL thought+stop, never a visible response",
+  !noTeamGuest.posted.some((b) => b.includes("AgentActivityCreate")),
+  "OPE-541/OPE-884: the roomless suppression creates NO Agent Activity either",
 );
 const rows5 = await roomlessRows();
 ok(
@@ -194,10 +201,9 @@ ok(
   "OPE-541: ONE suppression row records verdict withheld-author and names the excluded author",
 );
 ok(rows5[0]!.workspace === ORG, "OPE-541: the roomless row still names the WORKSPACE — only the team was unreadable");
-const noTeamClose = noTeamGuest.posted.find((b) => b.includes('"thought"')) ?? "";
 ok(
-  !noTeamClose.includes("external space") && noTeamClose.includes("(no reply)"),
-  "OPE-541: the roomless close states the OUTCOME only — it makes no claim about a room this delivery could not name",
+  !noTeamGuest.posted.some((b) => b.includes("external space")),
+  "OPE-541: nothing written claims a room this delivery could not name",
 );
 
 const noTeamMember = await driveNoTeam("as-noteam-member", "member-1", false);

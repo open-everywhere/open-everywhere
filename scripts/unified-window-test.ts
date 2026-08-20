@@ -992,7 +992,7 @@ const store = getOperationalStore();
     const closed: Array<{ agentSessionId?: string; issueId: string }> = [];
     const closeDeps = { closeLinear: async (o: { agentSessionId?: string; issueId: string }) => void closed.push({ agentSessionId: o.agentSessionId, issueId: o.issueId }) };
     const didClose = await completeUnifiedSessionSilently(linOrigin as Extract<UnifiedWakeOrigin, { platform: "linear" }>, closeDeps);
-    ok(didClose === true && closed.length === 1 && closed[0].agentSessionId === "as-lin-77" && closed[0].issueId === "issue-uuid-77", "silent close: completeUnifiedSessionSilently closes the wake's OPEN agent session (no visible reply posted)");
+    ok(didClose === true && closed.length === 1 && closed[0].agentSessionId === "as-lin-77" && closed[0].issueId === "issue-uuid-77", "silent turn: completeUnifiedSessionSilently routes the wake's OPEN agent session to the arm (no model prose posted)");
   }
 
   {
@@ -1005,7 +1005,7 @@ const store = getOperationalStore();
     ok(last.ambient === true && last.agentSessionId === undefined && last.issueId === "issue-amb-9" && last.parentId === "c-amb-1", "ambient linear reply carries issueId+parentId (commentCreate target), NO agentSessionId");
     const closedAmb: Array<{ issueId: string }> = [];
     const didCloseAmb = await completeUnifiedSessionSilently(ambOrigin as Extract<UnifiedWakeOrigin, { platform: "linear" }>, { closeLinear: async (o: { issueId: string }) => void closedAmb.push({ issueId: o.issueId }) });
-    ok(didCloseAmb === false && closedAmb.length === 0, "silent turn on an AMBIENT linear origin closes nothing (no agent session to stop)");
+    ok(didCloseAmb === false && closedAmb.length === 0, "silent turn on an AMBIENT linear origin reaches no arm (no agent session to complete, so no host ack either)");
   }
 
   ok(isUnifiedWakeOrigin({ platform: "linear", ambient: true, issueId: "i1" }) === true, "validator: ambient linear origin (ambient+issueId, no session) is VALID");

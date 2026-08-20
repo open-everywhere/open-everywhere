@@ -143,7 +143,7 @@ test("a signed delivery on the deploy:smoke SCRATCH surface is suppressed by the
   const dispatched = await readAuditRows({ actions: ["linear.dispatched"], sinceIso });
   expect(dispatched.find((r) => r.surface === surfaceKey)).toBeUndefined();
 
-  expect(stub.calls.some((c) => c.operation === "AgentActivityCreate")).toBe(true);
+  expect(stub.calls.filter((c) => c.operation === "AgentActivityCreate")).toHaveLength(0);
 });
 
 test("a TAMPERED Linear agent-session delivery (a wrong-but-well-formed signature) is refused (401) and writes NO row", async () => {

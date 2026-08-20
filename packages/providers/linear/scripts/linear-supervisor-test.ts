@@ -16,6 +16,7 @@ import {
   type LinearSupervisorSession,
 } from "../agent/channels/linear-supervisor.js";
 import { renderWake, normalizeFenceNonce, UNTRUSTED_OPEN, UNTRUSTED_CLOSE, OE_CHAT_NONMEMBER_ATTR, defineSurface, registerSurfaces, _resetSurfacesForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { LINEAR_SILENCE_ACK_BODY } from "../agent/channels/linear-silence-ack.js";
 import type { OpenEverywhereLinearAuth } from "../agent/channels/linear-identity.js";
 import { readLinearIssue } from "../agent/channels/linear-api.js";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
@@ -276,7 +277,17 @@ for (const [label, err] of [
     if (String(input).includes("api.linear.app")) {
       const parsed = JSON.parse(String(init?.body ?? "{}")) as (typeof gql)[number];
       gql.push(parsed);
-      return new Response(JSON.stringify({ data: { commentCreate: { success: true } } }), { status: 200 });
+      const activity = parsed.variables?.input as { signal?: string; content?: { type?: string } } | undefined;
+      if (activity?.signal !== undefined && activity.content?.type !== "prompt") {
+        return new Response(
+          JSON.stringify({ errors: [{ message: `Signal "${activity.signal}" is only allowed for prompt type activities.`, extensions: { code: "INPUT_ERROR" } }] }),
+          { status: 200 },
+        );
+      }
+      const body = parsed.query?.includes("AgentActivityCreate")
+        ? { agentActivityCreate: { success: true, agentActivity: { id: "act-1" } } }
+        : { commentCreate: { success: true } };
+      return new Response(JSON.stringify({ data: body }), { status: 200 });
     }
     return new Response("unexpected", { status: 500 });
   }) as typeof fetch;
@@ -365,15 +376,19 @@ for (const [label, err] of [
           threw = err;
         }
       }, { issue_id: ISSUE, comment_id: "c-top" });
-      const routineCalls = gql as unknown as Array<{ variables?: { input?: { content?: { type?: string }; signal?: string } } }>;
+      const routineCalls = gql as unknown as Array<{ variables?: { input?: { content?: { type?: string; body?: string }; signal?: string; ephemeral?: boolean } } }>;
       ok(threw === null, "SILENT routine: the arm never throws out of message.completed");
       ok(
-        !routineCalls.some((c) => c.variables?.input?.content?.type === "response"),
-        "SILENT routine: a non-supervisor linear turn posts NO `response` activity (else it posts the literal string NO_REPLY as a comment)",
+        !routineCalls.some((c) => String(c.variables?.input?.content?.body ?? "").includes("NO_REPLY")),
+        "SILENT routine: the literal string NO_REPLY never reaches the issue in any activity",
       );
       ok(
-        routineCalls.length === 1 && routineCalls[0]!.variables?.input?.signal === "stop",
-        "SILENT routine: the only activity is the ephemeral `stop` close, so the requester's spinner resolves",
+        routineCalls.length === 1 && routineCalls[0]!.variables?.input?.content?.body === LINEAR_SILENCE_ACK_BODY,
+        "OPE-884: the only activity a SILENT routine leaves is the FIXED host ack (host copy, never the model's own words)",
+      );
+      ok(
+        routineCalls[0]!.variables?.input?.signal === undefined && routineCalls[0]!.variables?.input?.ephemeral === undefined,
+        "OPE-884: the ack carries NO `signal` and is NOT ephemeral — both are refused or non-terminal on the real API",
       );
     }
 
@@ -399,17 +414,20 @@ for (const [label, err] of [
         }, { organization_id: "org-1", team_id: TEAM, issue_id: ISSUE });
         ok(threw === null, "OPE-883: the native sentinel arm never throws out of message.completed");
         const calls = gql as unknown as ActivityCall[];
-        ok(!calls.some((c) => c.variables?.input?.content?.type === "response"), "🔴 OPE-883: a NATIVE turn closing with the NO_REPLY sentinel posts NO `response` activity (it posted the literal string as a comment before)");
-        ok(calls.length === 1, "OPE-883: exactly one activity leaves — the close, not a reply");
-        const close = calls[0]!;
-        ok(close.variables?.input?.agentSessionId === "agent-session-883", "OPE-883: the close addresses THIS session");
-        ok(close.variables?.input?.content?.type === "thought" && close.variables?.input?.ephemeral === true && close.variables?.input?.signal === "stop", "OPE-883: the session still TERMINATES — an EPHEMERAL `thought` carrying `stop`, so the spinner resolves and no comment is authored");
-        ok(!String(close.variables?.input?.content?.body ?? "").includes("NO_REPLY"), "OPE-883: the close body states the outcome only — the sentinel never reaches the issue in any form");
+        ok(calls.length === 1, "OPE-883: exactly one activity leaves — the host ack, not a reply");
+        const ack = calls[0]!;
+        ok(ack.variables?.input?.agentSessionId === "agent-session-883", "OPE-883: the ack addresses THIS session");
+        ok(ack.variables?.input?.content?.type === "response", "OPE-884: the session TERMINATES — only a `response` both shows something and ends a Linear agent session");
+        ok(ack.variables?.input?.content?.body === LINEAR_SILENCE_ACK_BODY, "🔴 OPE-884: the body is the FIXED host ack, byte for byte — never the model's own text");
+        ok(ack.variables?.input?.signal === undefined, "🔴 OPE-884: NO `signal` rides the ack — the real API refuses `stop` on any non-`prompt` activity (this stub refuses it too)");
+        ok(ack.variables?.input?.ephemeral === undefined, "OPE-884: the ack is NOT ephemeral — an ephemeral activity is transient and would not terminate the session");
+        ok(!String(ack.variables?.input?.content?.body ?? "").includes("NO_REPLY"), "OPE-883: the sentinel never reaches the issue in any form");
         const rows = await nativeSilenceRows();
         ok(rows.length === before + 1, "OPE-883: the suppressed sentinel leaves exactly one linear.no_reply row (silence stays observable)");
         const row = rows[0]!;
         ok(row.surface === `linear/org-1/${TEAM}` && row.detail?.issueId === ISSUE, "OPE-883: the silence row names the team and the issue it went quiet on");
-        ok(row.detail?.replied === false && row.detail?.closed === true, "OPE-883: the row records that the turn delivered NOTHING and that the close landed");
+        ok(row.detail?.replied === false && row.detail?.closed === true, "OPE-883: the row records that the turn delivered NOTHING and that the session completed");
+        ok(row.detail?.rendering === "ack", "🔴 OPE-884: the row records WHICH rendering the host chose — `ack`, so an operator can tell a member-visible silence from an invisible one");
       }
 
       {
@@ -424,10 +442,11 @@ for (const [label, err] of [
           markNoReplyThisTurn("nothing_to_add");
           await completed("Done — I posted the answer above.", { state });
         });
-        ok(gql.length === 0, "🔴 OPE-883/OPE-869: a turn that ALREADY replied posts nothing AND closes nothing — the reply spent the session, a second close would fail on a dead one");
+        ok(gql.length === 0, "🔴 OPE-883/OPE-869: a turn that ALREADY replied posts nothing AND completes nothing — the reply spent the session, a second activity would fail on a dead one");
         const rows = await nativeSilenceRows();
         ok(rows.length === before + 1, "OPE-883: the `no_reply` tool route audits its silence too");
         ok(rows[0]!.detail?.replied === true && rows[0]!.detail?.closed === undefined, "OPE-883: `replied` is TRUE and no `closed` field — the arm did not touch the session");
+        ok(rows[0]!.detail?.rendering === undefined, "🔴 OPE-884 negative control: an answered-then-`no_reply` turn carries NO `rendering` field — the ack is for TRUE silence only");
         ok(!JSON.stringify(rows[0]!.detail).includes("answer above"), "OPE-883: taint-clean — the dropped narration is not in the row");
       }
 
@@ -441,6 +460,7 @@ for (const [label, err] of [
         const calls = gql as unknown as ActivityCall[];
         ok(calls.length === 1 && calls[0]!.variables?.input?.content?.type === "response", "OPE-883 negative control: real answer text still posts as a `response` activity (the arm is not dropping everything)");
         ok(calls[0]!.variables?.input?.content?.body === "The backfill finished at 04:10 UTC.", "OPE-883 negative control: the answer reaches the issue byte-for-byte");
+        ok(calls[0]!.variables?.input?.content?.body !== LINEAR_SILENCE_ACK_BODY, "OPE-884 negative control: a real answer is NOT replaced by the ack — the ack and the answer are different activities on the same `response` type");
         ok((await nativeSilenceRows()).length === before, "OPE-883 negative control: a turn that answered writes NO silence row");
       }
 
@@ -451,7 +471,9 @@ for (const [label, err] of [
         await inSession(async () => {
           await completed("   ", { state });
         }, { organization_id: "org-1", team_id: TEAM, issue_id: ISSUE });
-        ok(gql.length === 1, "OPE-883: a whitespace-only completion closes the session too (eve's default posted nothing and left the spinner up)");
+        const emptyCalls = gql as unknown as ActivityCall[];
+        ok(emptyCalls.length === 1, "OPE-883: a whitespace-only completion completes the session too (eve's default posted nothing and left the spinner up)");
+        ok(emptyCalls[0]!.variables?.input?.content?.body === LINEAR_SILENCE_ACK_BODY, "OPE-884: the empty completion renders the SAME fixed ack — one behaviour across all four silence routes");
         ok((await nativeSilenceRows()).length === before + 1, "OPE-883: the empty completion is audited as a silence as well");
       }
     }

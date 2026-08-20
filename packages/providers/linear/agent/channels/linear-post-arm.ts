@@ -1,5 +1,6 @@
 import { createLinearAgentActivity, callLinearGraphQL, LinearApiError } from "eve/channels/linear";
 import { linearCredentialsForOrg } from "./linear-credentials.js";
+import { postLinearSilenceAck } from "./linear-silence-ack.js";
 import { markNotApplied, carryFailureSignals } from "@open-everywhere/core/agent/adapter-api.js";
 import type { PostArm, PostIntent, TargetResolveBag, ReplyTarget, ReactTarget, UnifiedWakeOrigin, UnifiedReplyDeps, EditLocus } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -101,22 +102,12 @@ async function liveLinearPost(origin: LinearOrigin, text: string, intent?: PostI
   return res.id || "unknown";
 }
 
-const LINEAR_SILENT_CLOSE_STATUS = "(no reply — nothing to add here)";
-
-async function liveLinearSilentClose(origin: LinearOrigin): Promise<void> {
+async function liveLinearSilenceAck(origin: LinearOrigin): Promise<void> {
   if (!origin.agentSessionId) return;
   try {
-    await createLinearAgentActivity({
-      credentials: linearCredentialsForOrg(origin.organizationId),
-      activity: {
-        agentSessionId: origin.agentSessionId,
-        content: { type: "thought", body: LINEAR_SILENT_CLOSE_STATUS },
-        ephemeral: true,
-        signal: "stop",
-      },
-    });
+    await postLinearSilenceAck(origin.agentSessionId, origin.organizationId);
   } catch (err) {
-    throw new Error(`unified silent-close couldn't stop the Linear session ${origin.agentSessionId} (${describeLinearError(err)})`);
+    throw new Error(`unified silence ack couldn't complete the Linear session ${origin.agentSessionId} (${describeLinearError(err)})`);
   }
 }
 
@@ -191,7 +182,7 @@ export const linearPostArm: PostArm = {
       : dispatchLinearAmbientReply(target as LinearAmbientTarget, text),
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps, _replier, intent) =>
     (deps.postLinear ?? liveLinearPost)(origin as LinearOrigin, text, intent),
-  closeUnifiedSilently: (origin, deps: UnifiedReplyDeps) => (deps.closeLinear ?? liveLinearSilentClose)(origin as LinearOrigin),
+  closeUnifiedSilently: (origin, deps: UnifiedReplyDeps) => (deps.closeLinear ?? liveLinearSilenceAck)(origin as LinearOrigin),
   editMessage: (locus, messageId, text) => liveLinearEditComment(locus, messageId, text),
   resolveReactTarget: (bag: TargetResolveBag): ReactTarget | null => {
     const issueId = bag.str("issueId");

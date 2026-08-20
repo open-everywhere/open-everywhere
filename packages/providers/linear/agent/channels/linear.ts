@@ -14,6 +14,7 @@ import {
 import type { HttpRouteDefinition, RouteHandlerArgs } from "eve/channels";
 import { buildLinearAuth, linearAuthorFacts, teamFactsFromTeam, userGuestFromUser } from "./linear-identity.js";
 import { linearAppActorCredentials, linearAppForOrg, linearCredentialsForOrg } from "./linear-credentials.js";
+import { postLinearSilenceAck } from "./linear-silence-ack.js";
 import { linearWebhookVerifier } from "./linear-webhook-verify.js";
 import { LINEAR_EVENT_SOURCE, LINEAR_DELIVERY_ID_HEADER } from "./linear-event-normalizer.js";
 import {
@@ -333,25 +334,6 @@ async function linearExternalSuppressed(
   return verdict;
 }
 
-function linearSilentCloseStatus(verdict: Exclude<LinearExternalVerdict, "proceed">): string {
-  return verdict === "silent-room" ? "(no reply — this room is set up as an external space)" : "(no reply)";
-}
-
-const LINEAR_TURN_SILENT_CLOSE_STATUS = "(no reply — nothing to add here)";
-
-async function silentlyCloseLinearAgentSession(agentSessionId: string, status: string, organizationId?: string): Promise<boolean> {
-  return createLinearAgentActivity({
-    credentials: linearCredentialsForOrg(organizationId),
-    activity: { agentSessionId, content: { type: "thought", body: status }, ephemeral: true, signal: "stop" },
-  }).then(
-    () => true,
-    (err) => {
-      slog(`silent session close failed (session ${agentSessionId}): ${String(err)}`);
-      return false;
-    },
-  );
-}
-
 type LinearSend = (
   payload: { readonly message: string; readonly context?: readonly string[] },
   options: { readonly auth: unknown; readonly continuationToken: string; readonly state?: LinearChannelState },
@@ -601,10 +583,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
   const roomTeamId = sig.teamId ?? verdict.teamId;
   const surfaceKey = roomTeamId ? `linear/${organizationId}/${roomTeamId}` : undefined;
   const roomVerdict = await linearExternalSuppressed(surfaceKey, organizationId, undefined);
-  if (roomVerdict) {
-    await silentlyCloseLinearAgentSession(agentSessionId, linearSilentCloseStatus(roomVerdict), organizationId);
-    return;
-  }
+  if (roomVerdict) return;
   const triggerCommentId = sig.action === "prompted" ? sig.promptSourceCommentId : sig.sourceCommentId;
   try {
     if (!to) throw new Error("no cross-channel dispatch on this route (cannot reach the unified window)");
@@ -623,10 +602,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
       c.authorId,
       authorFacts,
     );
-    if (authorVerdict) {
-      await silentlyCloseLinearAgentSession(agentSessionId, linearSilentCloseStatus(authorVerdict), organizationId);
-      return;
-    }
+    if (authorVerdict) return;
     const grain = linearGrainFor(`linear/${organizationId}/${c.teamId}`);
     if (!grainUsesUnifiedWindow(grain)) throw new Error("no single-context window (crossSurface/solo) holds for the enriched team (config raced or team mismatch)");
     const vouched = linearTeamVouched(organizationId, c.teamId);
@@ -738,9 +714,15 @@ async function completeNativeLinearSilence(state: LinearChannelState, reason: st
   const agentSessionId = typeof state.agentSessionId === "string" && state.agentSessionId.length > 0 ? state.agentSessionId : undefined;
   let closed: boolean | undefined;
   if (agentSessionId && !replied) {
-    closed = await silentlyCloseLinearAgentSession(agentSessionId, LINEAR_TURN_SILENT_CLOSE_STATUS, organizationId);
+    closed = await postLinearSilenceAck(agentSessionId, organizationId).then(
+      () => true,
+      (err) => {
+        slog(`silence ack failed (session ${agentSessionId}): ${String(err)}`);
+        return false;
+      },
+    );
   }
-  slog(`native turn judged silence (${reason}) — nothing posted${closed === undefined ? "" : closed ? ", session closed" : ", session close FAILED (spinner may persist)"}`);
+  slog(`native turn judged silence (${reason}) — model prose dropped${closed === undefined ? "" : closed ? ", host ack posted and session closed" : ", host ack FAILED (spinner may persist)"}`);
   await appendAudit({
     org: deploymentOrg(),
     platform: "linear",
@@ -753,7 +735,7 @@ async function completeNativeLinearSilence(state: LinearChannelState, reason: st
       reason,
       replied,
       route: "native",
-      ...(closed === undefined ? {} : { closed }),
+      ...(closed === undefined ? {} : { rendering: "ack" as const, closed }),
       ...(sessionId ? { sessionId } : {}),
     },
   }).catch(() => undefined);
@@ -775,10 +757,7 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
     if (typeof nativeOrganizationId === "string" && nativeOrganizationId && teamId) {
       const surfaceKey = `linear/${nativeOrganizationId}/${teamId}`;
       const roomVerdict = await linearExternalSuppressed(surfaceKey, nativeOrganizationId, undefined);
-      if (roomVerdict) {
-        await silentlyCloseLinearAgentSession(agentSessionId, linearSilentCloseStatus(roomVerdict), event.organizationId);
-        return null;
-      }
+      if (roomVerdict) return null;
     }
 
     const isPrivate = verdict.isPrivate ?? (rawTeamId === undefined ? undefined : await enrichTeamPrivacy(rawTeamId, { organizationId: event.organizationId }));
@@ -791,10 +770,7 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
 
     {
       const authorVerdict = await linearExternalSuppressed(nativeSurfaceKey, nativeOrg, creatorId, authorFacts);
-      if (authorVerdict) {
-        await silentlyCloseLinearAgentSession(agentSessionId, linearSilentCloseStatus(authorVerdict), event.organizationId);
-        return null;
-      }
+      if (authorVerdict) return null;
     }
 
     const auth = stampNonMemberChatAuth(
