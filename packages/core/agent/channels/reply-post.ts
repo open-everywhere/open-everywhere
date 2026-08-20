@@ -236,6 +236,10 @@ export function replyEditLocus(target: ReplyTarget): EditLocus | null {
       return { platform: "teams", channelId: target.conversationId, serviceUrl: target.serviceUrl };
     case "github":
       return { platform: "github", channelId: `${target.owner}/${target.repo}` };
+    case "linear":
+      return "agentSessionId" in target
+        ? null
+        : { platform: "linear", channelId: target.issueId, ...(target.organizationId ? { organizationId: target.organizationId } : {}) };
     default:
       return null;
   }

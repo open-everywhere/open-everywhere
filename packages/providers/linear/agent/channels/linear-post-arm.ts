@@ -1,7 +1,7 @@
 import { createLinearAgentActivity, callLinearGraphQL, LinearApiError } from "eve/channels/linear";
 import { linearCredentialsForOrg } from "./linear-credentials.js";
 import { markNotApplied, carryFailureSignals } from "@open-everywhere/core/agent/adapter-api.js";
-import type { PostArm, PostIntent, TargetResolveBag, ReplyTarget, ReactTarget, UnifiedWakeOrigin, UnifiedReplyDeps } from "@open-everywhere/core/agent/adapter-api.js";
+import type { PostArm, PostIntent, TargetResolveBag, ReplyTarget, ReactTarget, UnifiedWakeOrigin, UnifiedReplyDeps, EditLocus } from "@open-everywhere/core/agent/adapter-api.js";
 
 function activityTypeFor(intent: PostIntent | undefined): "response" | "thought" {
   return intent?.terminal === false ? "thought" : "response";
@@ -63,11 +63,11 @@ function describeLinearError(err: unknown): string {
 
 async function liveLinearPost(origin: LinearOrigin, text: string, intent?: PostIntent): Promise<string> {
   if (origin.ambient) {
-    let data: { commentCreate?: { success?: boolean } };
+    let data: { commentCreate?: { success?: boolean; comment?: { id?: string } } };
     try {
-      data = await callLinearGraphQL<{ commentCreate?: { success?: boolean } }>({
+      data = await callLinearGraphQL<{ commentCreate?: { success?: boolean; comment?: { id?: string } } }>({
         credentials: linearCredentialsForOrg(origin.organizationId),
-        query: "mutation OeUnifiedAmbientReply($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
+        query: "mutation OeUnifiedAmbientReply($input: CommentCreateInput!) { commentCreate(input: $input) { success comment { id } } }",
         queryName: "OeUnifiedAmbientReply",
         variables: { input: { issueId: origin.issueId, ...(origin.parentId ? { parentId: origin.parentId } : {}), body: text } },
       });
@@ -77,7 +77,7 @@ async function liveLinearPost(origin: LinearOrigin, text: string, intent?: PostI
     if (data.commentCreate?.success !== true) {
       throw markNotApplied(new Error(`unified reply couldn't post to Linear — ambient commentCreate returned no success on issue ${origin.issueId}`));
     }
-    return LINEAR_AMBIENT_COMMENT_ID;
+    return data.commentCreate.comment?.id || LINEAR_AMBIENT_COMMENT_ID;
   }
   if (!origin.agentSessionId) throw new Error(`unified reply: linear origin for issue ${origin.issueId} has neither an agent session nor the ambient flag (invariant broken)`);
   const type = activityTypeFor(intent);
@@ -121,11 +121,11 @@ async function liveLinearSilentClose(origin: LinearOrigin): Promise<void> {
 }
 
 async function dispatchLinearAmbientReply(target: LinearAmbientTarget, text: string): Promise<string> {
-  let data: { commentCreate?: { success?: boolean } };
+  let data: { commentCreate?: { success?: boolean; comment?: { id?: string } } };
   try {
-    data = await callLinearGraphQL<{ commentCreate?: { success?: boolean } }>({
+    data = await callLinearGraphQL<{ commentCreate?: { success?: boolean; comment?: { id?: string } } }>({
       credentials: linearCredentialsForOrg(target.organizationId),
-      query: "mutation OeAmbientReply($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
+      query: "mutation OeAmbientReply($input: CommentCreateInput!) { commentCreate(input: $input) { success comment { id } } }",
       queryName: "OeAmbientReply",
       variables: { input: { issueId: target.issueId, ...(target.parentId ? { parentId: target.parentId } : {}), body: text } },
     });
@@ -135,10 +135,27 @@ async function dispatchLinearAmbientReply(target: LinearAmbientTarget, text: str
   if (data.commentCreate?.success !== true) {
     throw markNotApplied(new Error(`reply couldn't post to Linear — commentCreate returned no success on issue ${target.issueId}`));
   }
-  return LINEAR_AMBIENT_COMMENT_ID;
+  return data.commentCreate.comment?.id || LINEAR_AMBIENT_COMMENT_ID;
 }
 
 const LINEAR_AMBIENT_COMMENT_ID = "comment";
+
+async function liveLinearEditComment(locus: EditLocus, messageId: string, text: string): Promise<void> {
+  let data: { commentUpdate?: { success?: boolean } };
+  try {
+    data = await callLinearGraphQL<{ commentUpdate?: { success?: boolean } }>({
+      credentials: linearCredentialsForOrg(locus.organizationId),
+      query: "mutation OeEditReply($id: String!, $input: CommentUpdateInput!) { commentUpdate(id: $id, input: $input) { success } }",
+      queryName: "OeEditReply",
+      variables: { id: messageId, input: { body: text } },
+    });
+  } catch (err) {
+    throw carryLinearFailure(err, new Error(`edit_reply couldn't edit the Linear comment ${messageId} on issue ${locus.channelId} (${describeLinearError(err)})`));
+  }
+  if (data.commentUpdate?.success !== true) {
+    throw markNotApplied(new Error(`edit_reply couldn't edit the Linear comment ${messageId} on issue ${locus.channelId} — commentUpdate returned no success`));
+  }
+}
 
 async function liveLinearReact(issueId: string, emoji: string, organizationId: string | undefined): Promise<void> {
   let data: { reactionCreate?: { success?: boolean } };
@@ -175,6 +192,7 @@ export const linearPostArm: PostArm = {
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps, _replier, intent) =>
     (deps.postLinear ?? liveLinearPost)(origin as LinearOrigin, text, intent),
   closeUnifiedSilently: (origin, deps: UnifiedReplyDeps) => (deps.closeLinear ?? liveLinearSilentClose)(origin as LinearOrigin),
+  editMessage: (locus, messageId, text) => liveLinearEditComment(locus, messageId, text),
   resolveReactTarget: (bag: TargetResolveBag): ReactTarget | null => {
     const issueId = bag.str("issueId");
     if (!issueId) return null;

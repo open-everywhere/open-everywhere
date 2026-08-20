@@ -223,6 +223,18 @@ try {
       "NEGATIVE CONTROL: no workspace on the delivery ⇒ NO stamp (never a claim the delivery did not make)",
     );
   }
+
+  {
+    stubLinear({ commentUpdate: { success: true } });
+    reset();
+    await linearPostArm.editMessage!({ platform: "linear", channelId: "ISS9", organizationId: SOAK_ORG }, "cm-1", "corrected");
+    ok(lastBearer() === `Bearer ${SOAK_MINTED}`, "🔴 THE FIX: editMessage against a locus in the SOAK workspace presents the SOAK token");
+    ok(bodies[bodies.length - 1]?.query?.includes("commentUpdate") === true, "…and it is the commentUpdate mutation");
+
+    reset();
+    await linearPostArm.editMessage!({ platform: "linear", channelId: "ISS9" }, "cm-1", "corrected");
+    ok(lastBearer() === `Bearer ${PRIMARY_TOKEN}`, "NEGATIVE CONTROL: editMessage with no organization id on the locus presents the PRIMARY token");
+  }
 } finally {
   globalThis.fetch = savedFetch;
   for (const [name, value] of Object.entries(SAVED)) {

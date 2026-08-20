@@ -63,9 +63,13 @@ try {
     const origin = { platform: "linear", issueId: "issue-1", ambient: true } as Extract<UnifiedWakeOrigin, { platform: "linear" }>;
     const deps = {} as UnifiedReplyDeps;
 
-    globalThis.fetch = stubGraphQL(200, { commentCreate: { success: true } });
+    globalThis.fetch = stubGraphQL(200, { commentCreate: { success: true, comment: { id: "cm-unified-1" } } });
     const id = await linearPostArm.dispatchUnified!(origin, "hi", deps);
-    ok(id === "comment", "success control: the ambient arm returns on a landed commentCreate");
+    ok(id === "cm-unified-1", "OPE-872/THE FIX: the ambient arm returns the REAL comment id commentCreate handed back, not a sentinel");
+
+    globalThis.fetch = stubGraphQL(200, { commentCreate: { success: true } });
+    const fallbackId = await linearPostArm.dispatchUnified!(origin, "hi", deps);
+    ok(fallbackId === "comment", "OPE-872/NEGATIVE CONTROL: success:true with no comment.id falls back to the old sentinel, never throws or returns empty");
 
     globalThis.fetch = stubGraphQL(200, { commentCreate: { success: false } });
     let successFalseErr: unknown;
@@ -217,12 +221,13 @@ try {
       const parsed = JSON.parse(String(init?.body ?? "{}")) as { query?: string; variables?: { input?: typeof sentInput } };
       sentQuery = parsed.query;
       sentInput = parsed.variables?.input;
-      return new Response(JSON.stringify({ data: { commentCreate: { success: true } } }), { status: 200 });
+      return new Response(JSON.stringify({ data: { commentCreate: { success: true, comment: { id: "cm-mid-turn-1" } } } }), { status: 200 });
     }) as unknown as typeof fetch;
     const ambientId = await linearPostArm.dispatchReply!({ platform: "linear", issueId: "ISS9", parentId: "C1" } as ReplyTarget, "the mid-turn answer");
     ok(sentQuery?.includes("commentCreate") === true, "🔴 OPE-811: the ambient target dispatches commentCreate, NOT an agent activity");
+    ok(sentQuery?.includes("comment { id }") === true, "🔴 OPE-872: the mutation now SELECTS the real comment id, not just {success}");
     ok(sentInput?.issueId === "ISS9" && sentInput?.parentId === "C1" && sentInput?.body === "the mid-turn answer", "OPE-811: it posts the text into the resolved issue + thread root");
-    ok(typeof ambientId === "string" && ambientId.length > 0, "OPE-811: it returns a non-empty id — commentCreate selects only {success}, so the spine gets the fixed sentinel");
+    ok(ambientId === "cm-mid-turn-1", "OPE-872/THE FIX: dispatchLinearAmbientReply returns the REAL comment id — the address edit_reply's commentUpdate needs later");
 
     globalThis.fetch = stubGraphQL(200, { commentCreate: { success: false } });
     let refused: unknown;
@@ -286,6 +291,67 @@ try {
       ambiguousErr = err;
     }
     ok(platformFailureClass(ambiguousErr) === "ambiguous", "OPE-862/825: a 503 reactionCreate classifies AMBIGUOUS (fail-closed default)");
+  }
+
+  {
+    const locus = { platform: "linear", channelId: "ISS9", organizationId: "org-9" } as unknown as Parameters<NonNullable<typeof linearPostArm.editMessage>>[0];
+
+    ok(typeof linearPostArm.editMessage === "function", "🔴 OPE-872: the linear arm implements editMessage");
+
+    let sentQuery: string | undefined;
+    let sentVars: { id?: string; input?: { body?: string } } | undefined;
+    let sentAuth: string | undefined;
+    globalThis.fetch = (async (_input: string | URL, init?: RequestInit) => {
+      const parsed = JSON.parse(String(init?.body ?? "{}")) as { query?: string; variables?: typeof sentVars };
+      sentQuery = parsed.query;
+      sentVars = parsed.variables;
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      sentAuth = headers["authorization"] ?? headers["Authorization"];
+      return new Response(JSON.stringify({ data: { commentUpdate: { success: true } } }), { status: 200 });
+    }) as unknown as typeof fetch;
+    await linearPostArm.editMessage!(locus, "cm-mid-turn-1", "corrected text");
+    ok(sentQuery?.includes("commentUpdate") === true, "OPE-872/THE FIX: editMessage dispatches the commentUpdate mutation");
+    ok(sentVars?.id === "cm-mid-turn-1", "OPE-872: it addresses the message id the caller passed, not the issue id");
+    ok(sentVars?.input?.body === "corrected text", "OPE-872: it sends the replacement text as the mutation's body input");
+    ok(sentAuth === "Bearer lin_test_token", "OPE-872: it resolves credentials through linearCredentialsForOrg, same as every other write on this arm");
+
+    globalThis.fetch = stubGraphQL(200, { commentUpdate: { success: false } });
+    let successFalseErr: unknown;
+    try {
+      await linearPostArm.editMessage!(locus, "cm-mid-turn-1", "corrected text");
+    } catch (err) {
+      successFalseErr = err;
+    }
+    ok(successFalseErr instanceof Error, "OPE-872: success:false with no thrown error still THROWS from editMessage");
+    ok(platformFailureClass(successFalseErr) === "definitive", "OPE-872/825: a decided success:false commentUpdate refusal classifies DEFINITIVE");
+
+    globalThis.fetch = stubGraphQL(404, undefined, [{ message: "comment not found" }]);
+    let httpErr: unknown;
+    try {
+      await linearPostArm.editMessage!(locus, "cm-mid-turn-1", "corrected text");
+    } catch (err) {
+      httpErr = err;
+    }
+    ok((httpErr as { status?: unknown } | undefined)?.status === 404, "OPE-872: a LinearApiError carries the real numeric status (404)");
+    ok(platformFailureClass(httpErr) === "definitive", "OPE-872/825: a 404 LinearApiError classifies DEFINITIVE");
+
+    globalThis.fetch = stubGraphQL(503, undefined, [{ message: "unavailable" }]);
+    let ambiguousErr: unknown;
+    try {
+      await linearPostArm.editMessage!(locus, "cm-mid-turn-1", "corrected text");
+    } catch (err) {
+      ambiguousErr = err;
+    }
+    ok(platformFailureClass(ambiguousErr) === "ambiguous", "OPE-872/825/NEGATIVE CONTROL: a 503 editMessage failure classifies AMBIGUOUS (fail-closed default)");
+
+    globalThis.fetch = stubGraphQL(200, undefined, [{ message: "Entity not found: Comment", extensions: { code: "INPUT_ERROR", statusCode: 400, userError: true } }]);
+    let decided200: unknown;
+    try {
+      await linearPostArm.editMessage!(locus, "cm-mid-turn-1", "corrected text");
+    } catch (err) {
+      decided200 = err;
+    }
+    ok(platformFailureClass(decided200) === "definitive", "OPE-872/869: a refusal Linear decided at HTTP 200 classifies DEFINITIVE on the edit path too");
   }
 } finally {
   globalThis.fetch = savedFetch;

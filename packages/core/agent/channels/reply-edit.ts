@@ -9,6 +9,7 @@ export interface EditLocus {
   readonly platform: string;
   readonly channelId: string;
   readonly serviceUrl?: string;
+  readonly organizationId?: string;
 }
 
 export const EDIT_NOT_OWN_REFUSAL_REASON = "not-own-post";

@@ -448,5 +448,26 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
   );
 }
 
+{
+  const { replyEditLocus } = await import("../agent/channels/reply-post.js");
+  const { unifiedEditLocus } = await import("../agent/channels/unified-reply.js");
+
+  const mentionTarget = { platform: "linear", agentSessionId: "sess-1" } as import("../agent/channels/reply-post.js").ReplyTarget;
+  ok(replyEditLocus(mentionTarget) === null, "🔴 §18: replyEditLocus refuses the MENTION-route target (agentSessionId present) — no editable address");
+
+  const ambientTarget = { platform: "linear", issueId: "ISS-1", organizationId: "org-1" } as import("../agent/channels/reply-post.js").ReplyTarget;
+  const ambientLocus = replyEditLocus(ambientTarget);
+  ok(ambientLocus !== null, "§18/CONTROL: replyEditLocus resolves an address for the AMBIENT-route target — §18's null is a real distinction, not a blanket refusal");
+  ok(ambientLocus?.channelId === "ISS-1" && ambientLocus?.organizationId === "org-1", "§18/CONTROL: the ambient locus carries the issue id and the workspace credential key");
+
+  const mentionOrigin = { platform: "linear", issueId: "ISS-2", agentSessionId: "sess-2" } as UnifiedWakeOrigin;
+  ok(unifiedEditLocus(mentionOrigin) === null, "🔴 §18: unifiedEditLocus refuses the MENTION-route origin too — the unified resolver must not diverge from the per-surface one");
+
+  const ambientOrigin = { platform: "linear", issueId: "ISS-2", ambient: true, organizationId: "org-2" } as UnifiedWakeOrigin;
+  const ambientUnifiedLocus = unifiedEditLocus(ambientOrigin);
+  ok(ambientUnifiedLocus !== null, "§18/CONTROL: unifiedEditLocus resolves an address for the AMBIENT-route origin");
+  ok(ambientUnifiedLocus?.channelId === "ISS-2" && ambientUnifiedLocus?.organizationId === "org-2", "§18/CONTROL: the unified ambient locus carries the issue id and the workspace credential key");
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ edit_reply own-post fence: ${passed} assertions passed`);
