@@ -831,7 +831,11 @@ const native: LinearChannel = linearChannel({
       slog("supervisor turn requested input — unsupported on a judged ambient turn; ignored");
     },
     async "authorization.required"(data, channel, ctx) {
-      if (!isSupervisorLinearState(channel.state)) await defaultEvent("authorization.required", nativeOrgOf(channel.state))?.(data, channel, ctx);
+      if (!isSupervisorLinearState(channel.state)) {
+        await defaultEvent("authorization.required", nativeOrgOf(channel.state))?.(data, channel, ctx);
+        return;
+      }
+      slog("supervisor turn requested authorization — there is no agent session to elicit into; ignored");
     },
     async "authorization.completed"(data, channel, ctx) {
       if (!isSupervisorLinearState(channel.state)) await defaultEvent("authorization.completed", nativeOrgOf(channel.state))?.(data, channel, ctx);

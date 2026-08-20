@@ -47,12 +47,17 @@ ok(lin.visibility === "private", "linear: no privacy signal -> fail-closed priva
 ok(lin.principalId === "LU3", "linear: principalId from creator_id");
 ok(lin.target?.agentSessionId === "AS1", "linear: post-back target carries the agent session (NOT the surface key)");
 ok(lin.target?.issueId === "ISS9", "🔴 OPE-811: it ALSO carries the issue anchor — the ambient reply route's target");
+ok(lin.target?.organizationId === "ORG1", "🔴 OPE-875: the post-back target carries the WORKSPACE — the arm's credential selector, not an anchor");
 {
   const ambient = bindFrom(linearCtx({ organization_id: "ORG1", team_id: "TEAM5", issue_id: "ISS9", comment_id: "C1" }));
   ok(ambient.target?.agentSessionId === undefined, "OPE-811: a supervisor delivery binds NO agent session (there is none)");
   ok(ambient.target?.issueId === "ISS9" && ambient.target?.parentId === "C1", "🔴 OPE-811: …and still binds a postable ambient target — issue + the trigger's own thread root");
   const threaded = bindFrom(linearCtx({ organization_id: "ORG1", team_id: "TEAM5", issue_id: "ISS9", comment_id: "C2", parent_comment_id: "C_ROOT" }));
   ok(threaded.target?.parentId === "C_ROOT", "OPE-811: a THREADED trigger anchors on the SAME thread root, not the reply comment");
+  const noOrg = bindFrom(linearCtx({ team_id: "TEAM5", issue_id: "ISS9", comment_id: "C1" }));
+  ok(noOrg.target?.organizationId === undefined, "OPE-875 NEGATIVE CONTROL: no organization on the delivery ⇒ NO workspace on the target (the primary chain, unchanged)");
+  const orgOnly = bindFrom(linearCtx({ organization_id: "ORG1", team_id: "TEAM5" }));
+  ok(orgOnly.target === undefined, "OPE-875 NEGATIVE CONTROL: a workspace with NO session and NO issue binds NO target at all");
   const anchorless = bindFrom(linearCtx({ organization_id: "ORG1", team_id: "TEAM5" }));
   ok(anchorless.target === undefined, "OPE-811 negative control: no session AND no issue ⇒ NO target — `reply` refuses rather than guessing a place");
 }
