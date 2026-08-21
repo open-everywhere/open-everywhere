@@ -24,6 +24,15 @@ function fakeLinearApi(table: ReadonlyArray<{ readonly match: RegExp; readonly d
   return { api: { fetch: fetchFn }, credentials: { accessToken: "test-token" }, calls };
 }
 
+function fakeLinearApiRefusing(matchRefused: RegExp, refusalMessage: string) {
+  const fetchFn = (async (_url: unknown, init: { body?: string }) => {
+    const body = JSON.parse(String(init.body)) as { query: string };
+    if (!matchRefused.test(body.query)) throw new Error(`fakeLinearApiRefusing: unexpected query: ${body.query.slice(0, 80)}`);
+    return { ok: true, status: 200, text: async () => JSON.stringify({ errors: [{ message: refusalMessage }] }) };
+  }) as unknown as typeof fetch;
+  return { api: { fetch: fetchFn }, credentials: { accessToken: "test-token" } };
+}
+
 {
   const { api, credentials, calls } = fakeLinearApi([
     { match: /OeIssueTeamStates/, data: { issue: { team: { states: { nodes: [{ id: "s1", name: "Todo" }, { id: "s2", name: "Done" }] } } } } },
@@ -49,6 +58,15 @@ function fakeLinearApi(table: ReadonlyArray<{ readonly match: RegExp; readonly d
 {
   const { api, credentials } = fakeLinearApi([{ match: /OeIssueTeamStates/, data: { issue: null } }]);
   await assert.rejects(() => setLinearIssueState("ENG-999", "Done", { api, credentials }), /not found or not visible/, "a null issue (not shared with the token) refuses loudly");
+  n++;
+}
+{
+  const { api, credentials } = fakeLinearApiRefusing(/OeIssueTeamStates/, "Entity not found: Issue");
+  await assert.rejects(
+    () => setLinearIssueState("SOAK-9", "Done", { api, credentials }),
+    /Entity not found: Issue/,
+    "the team-states read's GraphQL refusal reason reaches the thrown error, not just an HTTP status",
+  );
   n++;
 }
 
@@ -95,6 +113,15 @@ function fakeLinearApi(table: ReadonlyArray<{ readonly match: RegExp; readonly d
 {
   const { api, credentials } = fakeLinearApi([{ match: /OeIssueTeamLabels/, data: { issue: { team: { labels: { nodes: [{ id: "l1", name: "bug" }] } } } } }]);
   await assert.rejects(() => addLinearIssueLabel("ENG-42", "nonexistent", { api, credentials }), /no label named "nonexistent".*available: bug/s, "an unmatched label refuses, listing the real options");
+  n++;
+}
+{
+  const { api, credentials } = fakeLinearApiRefusing(/OeIssueTeamLabels/, "Entity not found: Issue");
+  await assert.rejects(
+    () => addLinearIssueLabel("SOAK-9", "bug", { api, credentials }),
+    /Entity not found: Issue/,
+    "the team-labels read's GraphQL refusal reason reaches the thrown error, not just an HTTP status",
+  );
   n++;
 }
 
