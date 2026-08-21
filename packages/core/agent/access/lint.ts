@@ -8,6 +8,7 @@ function credentialedFields(bundle: Bundle): string[] {
   const fields: string[] = [];
   if (bundle.connections?.length) fields.push(`${bundle.connections.length} connection(s)`);
   if (bundle.repos?.length) fields.push(`${bundle.repos.length} repo(s)`);
+  if (bundle.workSurfaces?.length) fields.push(`${bundle.workSurfaces.length} work surface(s)`);
   if (bundle.connectors?.length) fields.push(`${bundle.connectors.length} connector credential(s)`);
   if (bundle.awsRoles?.length) fields.push(`${bundle.awsRoles.length} AWS role(s)`);
   return fields;

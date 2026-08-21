@@ -578,6 +578,8 @@ export { resolveAccessFor } from "./access/request.js";
 export { resolveAccess } from "./access/resolver.js";
 export type { EffectiveAccess } from "./access/resolver.js";
 export { defineBundle, defineBinding } from "./access/bundle.js";
+export { parseSurfaceKeyEntry, surfaceKeyEntryMatches } from "./identity/surface-key-grammar.js";
+export type { SurfaceKeyEntry } from "./identity/surface-key-grammar.js";
 
 export {
   supervisorRotateQuietGapMs,
