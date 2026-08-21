@@ -214,3 +214,31 @@ test("② a delegated worker holds neither chat read — the seat holds both", a
   expect(worker!.tools, "the worker must hold the wide kit — this arm measures a subtraction, not a narrow seat").toContain("create_routine");
   expect(worker!.tools, "the worker must hold the wide kit").toContain("read_file_upload");
 }, 420_000);
+
+test("③ the delegated worker holds the WORK-plane chat reads its domain is granted", async () => {
+  const { handle } = await driven();
+
+  const { loadDomains } = await import("../../../agent/memory/domains");
+  const { domainHoldsSurfaceWorkGrant } = await import("@open-everywhere/core/agent/access/surface-work-grant.js");
+  const home = loadDomains().find((d) => (d.channels ?? []).includes(`slack/${SLACK_TEAM_ID}/${WAKE_CHANNEL_ID}`));
+  expect(home, "the wake channel is in no domain — this arm cannot measure a mount").toBeDefined();
+  expect(
+    domainHoldsSurfaceWorkGrant(home, "slack"),
+    `the domain ${home?.name} declares NO slack work role, so this arm cannot measure a mount — restore its \`credentials\` entry`,
+  ).toBe(true);
+
+  const seat = handle.requests.find((r) => r.role === "parent")!;
+  const worker = handle.requests.find((r) => r.role === "child");
+  expect(worker, "no worker request was recorded — the delegation never reached a child").toBeDefined();
+
+  for (const verb of ["read_work_channel", "read_work_thread"]) {
+    expect(
+      worker!.tools,
+      `🔴 the worker was NOT offered ${verb} — the granted work read never mounted, so the OPE-929 subtraction is still a hole. It was offered [${worker!.tools.slice().sort().join(", ")}]`,
+    ).toContain(verb);
+  }
+
+  for (const verb of ["read_work_channel", "read_work_thread"]) {
+    expect(seat.tools, `🔴 the SEAT was offered ${verb} — the work plane is not the worker's any more`).not.toContain(verb);
+  }
+}, 420_000);

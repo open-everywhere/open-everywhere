@@ -53,6 +53,18 @@ export const CONTRIBUTIONS = {
     { kind: "tool", name: "read_routine_transcript", module: "agent/tools/read_routine_transcript.js", summary: "Read the transcript of a past routine run in THIS channel — what it was woken with, what it did, which tools it called and what they returned." },
     { kind: "tool", name: "read_thread", module: "agent/tools/read_thread.js", summary: "Read all replies in THIS thread — the thread this turn arrived in. Takes no target." },
     { kind: "tool", name: "read_webhook_history", module: "agent/tools/read_webhook_history.js", summary: "Diagnose an inbound webhook: whether the sender is actually reaching us, and what each delivery did or didn't trigger." },
+    {
+      kind: "tool",
+      name: "read_work_channel",
+      module: "agent/tools/read_work_channel.js",
+      summary: "Read recent messages from the channel this task was delegated from — the work-surface read, under the domain's work grant. Takes no target.",
+    },
+    {
+      kind: "tool",
+      name: "read_work_thread",
+      module: "agent/tools/read_work_thread.js",
+      summary: "Read every reply in the thread this task was delegated from — the work-surface read, under the domain's work grant. Takes no target.",
+    },
     { kind: "tool", name: "record_job_state", module: "agent/tools/record_job_state.js", summary: "Record your progress on this DURABLE JOB — a short, canonical note (goal, what's done, what's next) that survives even if this session is later replaced, so it's your reliable hand-off to the next…" },
     { kind: "tool", name: "record_watch_state", module: "agent/tools/record_watch_state.js", summary: "Record the state a WATCH routine just observed, and learn whether it changed since the last check." },
     { kind: "tool", name: "remove_routine_rule", module: "agent/tools/remove_routine_rule.js", summary: "PROPOSE removing ONE standing rule from a routine — the rule stops being applied to every future run." },

@@ -71,6 +71,7 @@ const rawDomains: Domain[] = [
     engagementTier: "neutral",
     reasoningCeiling: "high",
     models: { primary: { id: UTILITY_MODEL }, supervisor: { id: SUPERVISOR_MODEL, reasoning: "medium" } },
+    credentials: [{ connector: "slack", credential: "work-token", use: "chat-token" }],
   }),
 
   defineDomain({
