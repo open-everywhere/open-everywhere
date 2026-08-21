@@ -68,6 +68,11 @@ export const ENV = {
   notionSoakPage1: "E2E_NOTION_SOAK_PAGE_1",
   notionSoakPage2: "E2E_NOTION_SOAK_PAGE_2",
   linearSoakLabelId: "E2E_SOAK_LINEAR_LABEL_ID",
+  linearSoakDriverKey: "E2E_LINEAR_SOAK_DRIVER_KEY",
+  linearSoakTeamId: "E2E_SOAK_LINEAR_TEAM_ID",
+  linearSoakAppUserId: "E2E_SOAK_LINEAR_APP_USER_ID",
+  linearSoakAgentHandle: "E2E_SOAK_LINEAR_AGENT_HANDLE",
+  githubSoakRepo: "E2E_GITHUB_SOAK_REPO",
   soakDomain: "E2E_SOAK_DOMAIN",
 
   expectUnified: "E2E_EXPECT_UNIFIED",
@@ -219,6 +224,8 @@ export interface SoakNotionConfig {
 
 export interface SoakLinearConfig {
   readonly labelId: string;
+  readonly apiKey: string;
+  readonly teamId: string;
 }
 
 export type Resolved<T> =
@@ -409,9 +416,22 @@ export function resolveSoakNotion(env: Env = process.env): Resolved<SoakNotionCo
 }
 
 export function resolveSoakLinear(env: Env = process.env): Resolved<SoakLinearConfig> {
-  const { values, missing } = need(env, [ENV.linearSoakLabelId]);
+  const { values, missing } = need(env, [ENV.linearSoakLabelId, ENV.linearSoakDriverKey, ENV.linearSoakTeamId]);
   if (missing.length > 0) return { ok: false, missing };
-  return { ok: true, cfg: { labelId: values[0] } };
+  return { ok: true, cfg: { labelId: values[0], apiKey: values[1], teamId: values[2] } };
+}
+
+export function resolveSoakLinearDriver(env: Env = process.env): Resolved<LinearDriverConfig> {
+  const { values, missing } = need(env, [ENV.linearSoakDriverKey, ENV.linearSoakTeamId, ENV.linearSoakAppUserId, ENV.linearSoakAgentHandle]);
+  if (missing.length > 0) return { ok: false, missing };
+  return { ok: true, cfg: { apiKey: values[0], teamId: values[1], appUserId: values[2], agentHandle: values[3] } };
+}
+
+export function resolveSoakGithub(env: Env = process.env): Resolved<GithubDriverConfig> {
+  const base = resolveGithub(env);
+  const { values, missing } = need(env, [ENV.githubSoakRepo]);
+  if (!base.ok || missing.length > 0) return { ok: false, missing: [...(base.ok ? [] : base.missing), ...missing] };
+  return { ok: true, cfg: { ...base.cfg, repo: values[0] } };
 }
 
 export function auditSilencesExpected(env: Env = process.env): boolean {
