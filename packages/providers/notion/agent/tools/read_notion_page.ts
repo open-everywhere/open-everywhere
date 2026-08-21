@@ -2,7 +2,8 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { readNotionPage, resolveBlockOwningPage, resolveNotionCredential } from "../channels/notion-api.js";
 import { notionCallerCredential } from "../channels/notion-credentials.js";
-import { assertNotionPageAllowed, assertNotionPageAllowedOrResolveBlock } from "../channels/notion-scope.js";
+import { assertNotionPageAllowed, assertNotionPageAllowedOrResolveBlock, assertNotionWorkPageAllowed } from "../channels/notion-scope.js";
+import { notionWorkGrant, notionWorkMount, notionWorkspacesOf, type NotionWorkGrant } from "../channels/notion-work.js";
 import {
   ingestUntrustedModelOutput,
   assertTurnSurface,
@@ -42,30 +43,59 @@ export const readNotionPageEntry = defineTool({
           workspaceTrust: z.enum(["internal", "public"]).optional(),
         }),
         async execute(input, ctx2) {
+          const domains = getConfig().loadDomains();
+          let workGrant: NotionWorkGrant | undefined;
           try {
             assertTurnSurface(ctx2 as BindableContext, "notion");
           } catch (err) {
-            if (err instanceof TurnOriginFenceError) await auditOriginFenceRefusal(ctx2 as BindableContext, "notion");
-            throw err;
+            if (!(err instanceof TurnOriginFenceError)) throw err;
+            workGrant = notionWorkGrant(ctx2 as BindableContext, domains);
+            if (!workGrant) {
+              await auditOriginFenceRefusal(ctx2 as BindableContext, "notion");
+              throw err;
+            }
           }
-          const requestedPage = input.page ?? bindFrom(ctx2 as BindableContext).surface;
-          if (!requestedPage) throw new Error("No Notion page id available for this session — pass `page` explicitly.");
-          const domains = getConfig().loadDomains();
-          const cred = await resolveNotionCredential(notionCallerCredential(ctx2 as BindableContext, domains));
+          const requestedPage = input.page ?? (workGrant ? undefined : bindFrom(ctx2 as BindableContext).surface);
+          if (!requestedPage) {
+            throw new Error(
+              workGrant
+                ? "Pass `page` explicitly — this session was not woken on a Notion page, so there is no page to default to."
+                : "No Notion page id available for this session — pass `page` explicitly.",
+            );
+          }
+          const credentialId = workGrant ? workGrant.credential : notionCallerCredential(ctx2 as BindableContext, domains);
+          const cred = await resolveNotionCredential(credentialId);
           let page: string;
-          if (cred) {
+          if (workGrant) {
+            await assertNotionWorkPageAllowed(
+              ctx2 as BindableContext,
+              requestedPage,
+              workGrant.domain,
+              domains,
+              notionWorkspacesOf(workGrant.domain),
+            );
+            page = requestedPage;
+          } else if (cred) {
             page = await assertNotionPageAllowedOrResolveBlock(ctx2 as BindableContext, requestedPage, domains, (id) => resolveBlockOwningPage(id, { ...cred }));
           } else {
             await assertNotionPageAllowed(ctx2 as BindableContext, requestedPage, domains);
             page = requestedPage;
           }
-          if (!cred) throw new Error("no value stored under db:notion:channel-key — cannot read the page.");
+          if (!cred) {
+            throw new Error(
+              workGrant
+                ? `no value stored for this domain's Notion work credential "${credentialId}" — cannot read the page.`
+                : "no value stored under db:notion:channel-key — cannot read the page.",
+            );
+          }
           const res = await readNotionPage(page, { ...cred, maxChars: MAX_CHARS, maxBlocks: MAX_BLOCKS });
           let workspaceTrust: SurfaceTrust | undefined;
-          try {
-            workspaceTrust = declaredWorkspaceTrust(resolvePartition(ctx2 as BindableContext).workspaceKey);
-          } catch {
-            workspaceTrust = undefined;
+          if (!workGrant) {
+            try {
+              workspaceTrust = declaredWorkspaceTrust(resolvePartition(ctx2 as BindableContext).workspaceKey);
+            } catch {
+              workspaceTrust = undefined;
+            }
           }
           return { page, blocks: res.blockCount, truncated: res.truncated, text: res.text, ...(workspaceTrust !== undefined ? { workspaceTrust } : {}) };
         },
@@ -88,7 +118,10 @@ preRegisterDynamicEntry("read_notion_page", "_single", readNotionPageEntry);
 export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
-      if (!sourceScopedMount(ctx as BindableContext, "notion", () => getConfig().loadDomains())) return null;
+      const ok =
+        sourceScopedMount(ctx as BindableContext, "notion", () => getConfig().loadDomains()) ||
+        notionWorkMount(ctx as BindableContext, () => getConfig().loadDomains());
+      if (!ok) return null;
       return readNotionPageEntry;
     },
   },
