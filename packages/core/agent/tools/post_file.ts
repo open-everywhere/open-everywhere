@@ -84,7 +84,7 @@ interface ResolvedFile {
   readonly caption?: string;
 }
 
-async function postTextToSlack(ctx: BindableContext, text: string): Promise<void> {
+async function postTextToSlack(ctx: BindableContext, text: string): Promise<string | undefined> {
   const binding = bindFrom(ctx);
   const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
   if (!channelId) {
@@ -92,10 +92,11 @@ async function postTextToSlack(ctx: BindableContext, text: string): Promise<void
   }
   const body: Record<string, string> = { channel: channelId, text };
   if (binding.threadTs) body.thread_ts = binding.threadTs;
-  await bridgeSlackReadCall("chat.postMessage", body);
+  const res = await bridgeSlackReadCall("chat.postMessage", body);
+  return typeof res.ts === "string" ? res.ts : undefined;
 }
 
-async function postTextToDiscord(ctx: BindableContext, text: string): Promise<void> {
+async function postTextToDiscord(ctx: BindableContext, text: string): Promise<string | undefined> {
   const ops = surfaceMessageOps("discord");
   if (!ops) {
     throw new Error("post_file: Discord message transport is not registered — the @open-everywhere/provider-discord bundle isn't wired.");
@@ -105,16 +106,20 @@ async function postTextToDiscord(ctx: BindableContext, text: string): Promise<vo
   if (!channelId) {
     throw new Error("post_file: couldn't resolve this Discord channel's id — try again from a real channel or DM.");
   }
-  await ops.postText(channelId, text);
+  return await ops.postText(channelId, text);
 }
 
-async function postLinkToSurface(ctx: BindableContext, platform: string, urls: readonly string[], comment: string | undefined): Promise<void> {
+async function postLinkToSurface(
+  ctx: BindableContext,
+  platform: string,
+  urls: readonly string[],
+  comment: string | undefined,
+): Promise<string | undefined> {
   const text = [comment, ...urls].filter((s): s is string => Boolean(s)).join("\n");
-  if (platform === "slack") await postTextToSlack(ctx, text);
-  else await postTextToDiscord(ctx, text);
+  return platform === "slack" ? await postTextToSlack(ctx, text) : await postTextToDiscord(ctx, text);
 }
 
-async function postFilesToSlack(ctx: BindableContext, files: readonly ResolvedFile[], comment: string | undefined): Promise<void> {
+async function postFilesToSlack(ctx: BindableContext, files: readonly ResolvedFile[], comment: string | undefined): Promise<string | undefined> {
   const binding = bindFrom(ctx);
   const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
   if (!channelId) {
@@ -143,9 +148,10 @@ async function postFilesToSlack(ctx: BindableContext, files: readonly ResolvedFi
   if (binding.threadTs) complete.thread_ts = binding.threadTs;
   if (comment) complete.initial_comment = comment;
   await bridgeSlackReadCall("files.completeUploadExternal", complete);
+  return undefined;
 }
 
-async function postFilesToDiscord(ctx: BindableContext, files: readonly ResolvedFile[], comment: string | undefined): Promise<void> {
+async function postFilesToDiscord(ctx: BindableContext, files: readonly ResolvedFile[], comment: string | undefined): Promise<string | undefined> {
   const ops = surfaceMessageOps("discord");
   if (!ops) {
     throw new Error("post_file: Discord message transport is not registered — the @open-everywhere/provider-discord bundle isn't wired.");
@@ -155,7 +161,7 @@ async function postFilesToDiscord(ctx: BindableContext, files: readonly Resolved
   if (!channelId) {
     throw new Error("post_file: couldn't resolve this Discord channel's id — try again from a real channel or DM.");
   }
-  await ops.postFiles(channelId, files, comment);
+  return await ops.postFiles(channelId, files, comment);
 }
 
 const MAX_FILES = 10;
@@ -234,8 +240,9 @@ export default windowGated("post_file", defineTool({
     const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
     const callId = typeof (ctx as { callId?: unknown }).callId === "string" ? (ctx as { callId: string }).callId : undefined;
 
+    let attachId: string | undefined;
     if (toAttach.length > 0) {
-      await postOnce({
+      attachId = await postOnce({
         org: binding.org,
         key: outboundKey({
           surface: platform,
@@ -245,14 +252,15 @@ export default windowGated("post_file", defineTool({
           stableId: callId,
           payload: `${input.comment ?? ""}\x00${toAttach.map((f) => `${f.filename}:${f.contentType}:${f.bytes.byteLength}`).join(",")}`,
         }),
-        run: async () => {
-          if (platform === "slack") await postFilesToSlack(ctx as BindableContext, toAttach, input.comment);
-          else await postFilesToDiscord(ctx as BindableContext, toAttach, input.comment);
-        },
+        run: async () =>
+          platform === "slack"
+            ? await postFilesToSlack(ctx as BindableContext, toAttach, input.comment)
+            : await postFilesToDiscord(ctx as BindableContext, toAttach, input.comment),
       });
     }
+    let linkId: string | undefined;
     if (hostedUrls.length > 0) {
-      await postOnce({
+      linkId = await postOnce({
         org: binding.org,
         key: outboundKey({
           surface: platform,
@@ -266,12 +274,14 @@ export default windowGated("post_file", defineTool({
       });
     }
 
+    const deliveredId = attachId ?? linkId;
     await auditToolAction(ctx, `${platform}.post_file`, {
       count: resolved.length,
       filenames: resolved.map((f) => f.filename),
       hasComment: Boolean(input.comment),
       hosted: hostedUrls.length,
       attached: toAttach.length,
+      ...(deliveredId ? { id: deliveredId } : {}),
     });
     return { posted: true, count: resolved.length, platform, ...(hostedUrls.length > 0 ? { urls: hostedUrls } : {}) };
   },
