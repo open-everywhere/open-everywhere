@@ -162,7 +162,7 @@ function removedBy(before: Record<string, unknown>, after: Record<string, unknow
     .sort();
 }
 
-const TASK_FAMILY = ["task_cancel", "task_peek", "task_sleep", "task_update"] as const;
+const TASK_FAMILY = ["task_cancel", "task_update"] as const;
 
 {
   const toolset = makeToolset();
@@ -214,7 +214,7 @@ inSession(() => {
   projectToolSet(toolset as unknown as Record<string, unknown>);
   eq(removedBy(before, toolset), ["task_update"], "an ESCALATED job wake keeps the full toolset apart from the child-only `task_update` — the OPE-111 restriction exists because nobody is watching, so it lifts when somebody is");
   ok("open_pull_request" in toolset && "purge_memory" in toolset && "agent" in toolset, "the escalated turn holds the human's normal posture");
-  ok("task_peek" in toolset && "task_cancel" in toolset && "task_sleep" in toolset, "…including the PARENT task verbs, because a seat that may delegate may read back and stop its own work");
+  ok("task_cancel" in toolset, "…including the PARENT task verb, because a seat that may delegate may stop its own work");
 });
 
 inSession(() => {

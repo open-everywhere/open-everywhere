@@ -124,14 +124,8 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   load_skill: open("loads a skill's instructions INTO CONTEXT — reading a procedure, not executing an effect; arming a skill stays gated at create_skill"),
   connection_search: open("read of WHICH connectors exist for this session; a connector's own OPERATIONS are the separate design-deferred plane (§3 grain 2)"),
 
-  task_peek: open(
-    "reads status and last output for task ids this session's OWN receipts produced — a read of work the caller already started, escaping nothing. The child's output arrives as content, so a consequential action the caller then takes off it re-gates on the normal ingest-taint path",
-  ),
   task_update: open(
     "writes a one-line status message onto the CALLING task's own row — the same shape as record_job_state next door: bookkeeping about itself, located from the running task rather than a supplied id, aimed at nobody else",
-  ),
-  task_sleep: open(
-    "records a durable pause of the calling turn and nothing else. It reaches no store, no audience and no credential; its worst case is a turn that resumes later than it might have",
   ),
   task_cancel: open(
     "stops delegated work this session itself spawned — de-escalation only, the same posture as revoke_routine_permissions and stand_down. After it runs the agent can do strictly LESS, so a card here would put a confirmation in front of the brake pedal. It cannot reach another session's task: eve validates the ids against this session's own receipts",

@@ -15,7 +15,6 @@ export const LEAN_SEAT_TOOLS: ReadonlySet<string> = new Set([
   "complete_thread",
   "ask_question",
   "todo",
-  "task_peek",
   "task_cancel",
   "read_channel",
   "read_thread",

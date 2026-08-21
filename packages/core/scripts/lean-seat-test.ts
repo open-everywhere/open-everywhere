@@ -38,7 +38,7 @@ function removedBy(before: Record<string, unknown>, after: Record<string, unknow
     .sort();
 }
 
-const TASK_FAMILY = ["task_cancel", "task_peek", "task_sleep", "task_update"] as const;
+const TASK_FAMILY = ["task_cancel", "task_update"] as const;
 
 const posture = (grain: "standing" | "thread" | "native" | "task", canDelegate: boolean, unattendedFire = false) =>
   resolveLeanSeatPosture({ grain, canDelegate, unattendedFire });
@@ -65,15 +65,17 @@ for (const name of ["ask_question", "todo"]) {
 }
 ok(allowedOnLeanSeat("final_output"), "the lean roster keeps eve's structured-output sink (a lean turn must still be able to return)");
 
-for (const name of ["task_peek", "task_cancel"]) {
-  ok(allowedOnLeanSeat(name), `OPE-583: the lean roster keeps ${name} — the seat can read back and stop work it itself delegated`);
+for (const name of ["task_cancel"]) {
+  ok(allowedOnLeanSeat(name), `OPE-583: the lean roster keeps ${name} — the seat can stop work it itself delegated`);
   ok(LEAN_SEAT_TOOLS.has(name), `${name} is a NAMED LEAN_SEAT_TOOLS member, not merely surviving on a different default`);
 }
 for (const [name, why] of [
-  ["task_sleep", "no measured seat-side need — pausing delegated work is a worker's own decision, not a routing one"],
+  ["task_peek", "DELETED by eve 0.40.0 — the worker's output now arrives inline on the settlement notification, so no seat-side read verb exists to grant"],
+  ["task_sleep", "DELETED by eve 0.42.0 — task-mode parents rely on lifecycle notifications instead of model-paced waits"],
   ["task_update", "CHILD-only: eve's isTaskToolAvailable never mounts it on a seat (measured on the T1 probe)"],
 ] as const) {
   ok(!allowedOnLeanSeat(name), `lean seat does NOT hold ${name} — ${why}`);
+  ok(!LEAN_SEAT_TOOLS.has(name), `${name} is NOT a named LEAN_SEAT_TOOLS member — the table tracks what the pinned eve mounts`);
 }
 
 for (const name of ["read_channel", "read_thread"]) {

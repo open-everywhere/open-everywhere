@@ -33,11 +33,29 @@ console.log(`parked-child-lifecycle: pinning against installed eve ${eveVersion}
 
 {
   const index = read("tasks/session-index.js");
+  const executor = ((): string | undefined => {
+    const head = "executor:z.strictObject({";
+    const at = index.indexOf(head);
+    if (at < 0) return undefined;
+    let depth = 0;
+    for (let i = at + head.length - 1; i < index.length; i++) {
+      if (index[i] === "{") depth++;
+      else if (index[i] === "}") {
+        depth--;
+        if (depth === 0) return index.slice(at + head.length, i);
+      }
+    }
+    return undefined;
+  })();
+  ok(executor !== undefined, "PIN 2: eve's INTERNAL task view still declares an `executor` shape");
   ok(
-    /executor:z\.strictObject\(\{childSessionId:/.test(index),
+    executor?.includes("childSessionId:") === true,
     "PIN 2: eve's INTERNAL task view still carries `executor.childSessionId` — the id pin 1 proves OE never receives",
   );
-  ok(index.includes("lifecycle"), "PIN 2: the internal executor shape still carries `lifecycle` (`parked` / `terminal`)");
+  ok(
+    /lifecycle:z\.enum\(\[`parked`,`terminal`\]\)/.test(executor ?? ""),
+    "PIN 2: the internal executor shape still carries `lifecycle` (`parked` / `terminal`)",
+  );
 }
 
 {
@@ -46,7 +64,7 @@ console.log(`parked-child-lifecycle: pinning against installed eve ${eveVersion}
     transitions.includes("cannot change a terminal task"),
     "PIN 3 🔴: a terminal task still REJECTS every command but one — `cancel` at settlement changes nothing",
   );
-  const terminalArm = /isTerminalTaskStatus\(n\.status\)\)\{if\(r\.kind===`settle-executor`\)/.test(transitions);
+  const terminalArm = /isTerminalTaskStatus\([A-Za-z_$]{1,2}\.status\)\)\{if\([A-Za-z_$]{1,2}\.kind===`settle-executor`\)/.test(transitions);
   ok(terminalArm, "PIN 3: `settle-executor` is still the ONE command a terminal task accepts");
 }
 
