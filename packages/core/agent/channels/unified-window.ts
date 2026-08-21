@@ -133,6 +133,10 @@ export function sameUnifiedConversation(a: UnifiedWakeOrigin, b: UnifiedWakeOrig
   return ra.channelKey === rb.channelKey && ra.threadKey === rb.threadKey;
 }
 
+export function sameUnifiedContainer(a: UnifiedWakeOrigin, b: UnifiedWakeOrigin): boolean {
+  return unifiedThreadRef(a).channelKey === unifiedThreadRef(b).channelKey;
+}
+
 export type AnswerableReplyResolution =
   | { readonly ok: true; readonly origin: UnifiedWakeOrigin; readonly via: "turn" | "same-conversation" | "pending" }
   | { readonly ok: false; readonly reason: "mismatch" | "expired" | "answered" };

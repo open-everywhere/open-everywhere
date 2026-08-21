@@ -69,7 +69,7 @@ export interface PostArm {
   readonly displayNameCapable?: boolean;
   splitText?(text: string): readonly string[];
   dispatchUnified?(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps, replier?: ReplierLabel, intent?: PostIntent): Promise<string>;
-  closeUnifiedSilently?(origin: UnifiedWakeOrigin, deps: UnifiedReplyDeps): Promise<void>;
+  closeUnifiedSilently?(origin: UnifiedWakeOrigin, deps: UnifiedReplyDeps, answered?: boolean): Promise<void>;
   editMessage?(locus: EditLocus, messageId: string, text: string): Promise<void>;
   retargetEditLocus?(origin: UnifiedWakeOrigin, locus: EditLocus): Promise<EditLocus>;
   describeRedriveTarget?(origin: UnifiedWakeOrigin): string;

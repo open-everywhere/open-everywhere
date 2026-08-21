@@ -6,7 +6,7 @@ import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, cur
 import { getConfig } from "../access/config.js";
 import { windowedSupervisorEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, mintWakeId, stampUnifiedWindowAuth, shouldBridgeAddressedProse, bridgeBlockingRefusal, unifiedThreadRef, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
+import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, mintWakeId, stampUnifiedWindowAuth, shouldBridgeAddressedProse, bridgeBlockingRefusal, unifiedThreadRef, sameUnifiedContainer, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "./unified-reply.js";
 import {
   detectBridgeableInputRequest,
@@ -150,6 +150,17 @@ export function ambientProseDropDetail(
     addressing: rawAddressing ?? (addressed ? "addressed-other" : "ambient"),
     reason: replied ? "narration-after-reply" : blockingRefusal !== undefined ? `refused:${blockingRefusal}` : "no-reply-call",
   };
+}
+
+export async function answeredSameContainerThisTurn(org: string, turnId: string | undefined, wakeId: string | undefined, origin: UnifiedWakeOrigin): Promise<boolean> {
+  const replied = repliedWakesThisTurn(turnId).filter((w) => w !== wakeId);
+  if (replied.length === 0) return false;
+  const store = getOperationalStore();
+  for (const w of replied) {
+    const other = await resolveUnifiedWakeTarget(store, org, w).catch(() => null);
+    if (other && sameUnifiedContainer(other, origin)) return true;
+  }
+  return false;
 }
 
 async function auditUnaccountedWakesForTurn(
@@ -378,14 +389,16 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       if (action.kind === "silent") {
         const bind = { session: ctx.session } as unknown as BindableContext;
         const wakeId = currentWakeId(bind);
-        const answeredThisWake = wakeId !== undefined && repliedWakesThisTurn(currentTurnId(bind)).includes(wakeId);
+        const silentTurnId = currentTurnId(bind);
+        const answeredThisWake = wakeId !== undefined && repliedWakesThisTurn(silentTurnId).includes(wakeId);
         const silentOrigin = !answeredThisWake && wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null;
+        const answeredContainer = silentOrigin ? await answeredSameContainerThisTurn(org, silentTurnId, wakeId, silentOrigin) : false;
         let linearClosed: boolean | undefined;
         if (silentOrigin) {
           try {
-            if (await completeUnifiedSessionSilently(silentOrigin)) {
+            if (await completeUnifiedSessionSilently(silentOrigin, {}, answeredContainer)) {
               linearClosed = true;
-              ulog(`silent turn: closed the wake's open ${silentOrigin.platform} session without posting (ephemeral stop)`);
+              ulog(`silent turn: closed the wake's open ${silentOrigin.platform} session without posting model prose (answered elsewhere in this container: ${answeredContainer})`);
             }
           } catch (err) {
             linearClosed = false;
@@ -402,7 +415,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
             workspace,
             surface,
             action: "unified.no_reply",
-            detail: { reason: action.reason, replied, wakeId: wakeId ?? null, ...(linearClosed !== undefined ? { linearClosed } : {}), ...(sessionId ? { sessionId } : {}) },
+            detail: { reason: action.reason, replied, wakeId: wakeId ?? null, ...(linearClosed !== undefined ? { linearClosed, answeredContainer } : {}), ...(sessionId ? { sessionId } : {}) },
           }).catch(() => undefined);
         }
         return;
