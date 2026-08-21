@@ -50,7 +50,7 @@ import { REPLY_FOLD_REFUSAL_REASON } from "@open-everywhere/core/agent/channels/
 import { WAKE_DECLINED_REFUSAL_REASON, WAKE_DONE_REFUSAL_REASON } from "@open-everywhere/core/agent/channels/reply-signal.js";
 import { TASK_WAKE_UNREAD_REFUSAL_REASON } from "@open-everywhere/core/agent/channels/task-wake.js";
 import { DELEGATION_PENDING_REFUSAL_REASON } from "@open-everywhere/core/agent/access/pending-delegation-signal.js";
-import unifiedChannel, { divertToUnifiedWindow, answeredSameContainerThisTurn, type UnifiedReceiveTarget } from "@open-everywhere/core/agent/channels/unified.js";
+import unifiedChannel, { divertToUnifiedWindow, answeredSameContainerThisTurn, answeredContainerVia, type UnifiedReceiveTarget } from "@open-everywhere/core/agent/channels/unified.js";
 import { markWakeRepliedThisTurn } from "@open-everywhere/core/agent/channels/reply-signal.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "@open-everywhere/core/agent/channels/unified-reply.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
@@ -1074,6 +1074,68 @@ function inOpe922Turn<T>(fn: () => Promise<T>): Promise<T> {
     await completeUnifiedSessionSilently(linSession, flagDeps, false);
     await completeUnifiedSessionSilently(linSession, flagDeps);
     ok(JSON.stringify(flags) === "[true,false,false]", "🔴 OPE-922: completeUnifiedSessionSilently hands the verdict to the arm, and an OMITTED flag stays false (pre-fix behaviour)");
+  }
+
+  {
+    const TURN_ANSWER = "turn-ope922-answer";
+    const TURN_SIBLING = "turn-ope922-sibling";
+    const ISSUE_2 = "issue-uuid-88";
+    const arrivedAt = new Date(Date.now() - 20_000).toISOString();
+    const answerWake = mintWakeId();
+    const siblingWake = mintWakeId();
+    await registerUnifiedWakeTarget(store, "default", answerWake, { platform: "linear", agentSessionId: "as-lin-88a", issueId: ISSUE_2, parentId: "c-88-1" }, arrivedAt);
+    await registerUnifiedWakeTarget(store, "default", siblingWake, { platform: "linear", agentSessionId: "as-lin-88b", issueId: ISSUE_2, parentId: "c-88-2" }, arrivedAt);
+    const answerOrigin = await resolveUnifiedWakeTarget(store, "default", answerWake);
+    const siblingOrigin = await resolveUnifiedWakeTarget(store, "default", siblingWake);
+    ok(answerOrigin !== null && siblingOrigin !== null, "OPE-922 stage 2 fixture: both wakes on the one issue resolve from the map");
+    const siblingLinear = siblingOrigin as Extract<UnifiedWakeOrigin, { platform: "linear" }>;
+
+    ok(
+      (await inOpe922Turn(async () => answeredContainerVia("default", TURN_SIBLING, siblingWake, siblingLinear))) === undefined,
+      "🔴 OPE-922 stage 2 pre-state: with no answer on record the arm answers UNDEFINED — a genuinely silent turn still gets OPE-884's silence ack",
+    );
+
+    const postedId = await inOpe922Turn(async () => {
+      markWakeRepliedThisTurn(TURN_ANSWER, answerWake);
+      return postUnifiedReply(answerOrigin!, "harbor-KX52 is the current codename.", deps, { org: "default", platform: "unified", workspace: "soak", surface: "oe-domain::soak", wakeId: answerWake, route: "tool" });
+    });
+    ok(typeof postedId === "string" && postedId.length > 0 && postedId !== "deduped:reply", "OPE-922 stage 2: the answer really posted through the REAL unified reply choke point");
+
+    ok(
+      (await inOpe922Turn(async () => answeredSameContainerThisTurn("default", TURN_SIBLING, siblingWake, siblingLinear))) === false,
+      "🔴 OPE-922 stage 2: the PER-TURN arm answers FALSE from the sibling turn — this is the shipped defect, reproduced",
+    );
+    ok(
+      (await inOpe922Turn(async () => answeredContainerVia("default", TURN_SIBLING, siblingWake, siblingLinear))) === "container",
+      "🔴 OPE-922 stage 2 THE FIX: the DURABLE arm answers `container` from the sibling turn — the run-2 sequence cannot render 'Noted — no response needed.' any more",
+    );
+    ok(
+      (await inOpe922Turn(async () => {
+        markWakeRepliedThisTurn(TURN_ANSWER, answerWake);
+        return answeredContainerVia("default", TURN_ANSWER, siblingWake, siblingLinear);
+      })) === "turn",
+      "OPE-922 stage 2: a SAME-TURN answer still reports `turn` — the exact arm is preferred and the audit row can tell the two apart",
+    );
+
+    const laterWake = mintWakeId();
+    await registerUnifiedWakeTarget(store, "default", laterWake, { platform: "linear", agentSessionId: "as-lin-88c", issueId: ISSUE_2, parentId: "c-88-3" }, new Date(Date.now() + 60_000).toISOString());
+    ok(
+      (await inOpe922Turn(async () => answeredContainerVia("default", TURN_SIBLING, laterWake, siblingLinear))) === undefined,
+      "🔴 OPE-922 stage 2 NEGATIVE CONTROL: a wake that arrived AFTER the answer reads UNDEFINED — a stale answer never speaks for a new ask",
+    );
+
+    const otherIssueWake = mintWakeId();
+    await registerUnifiedWakeTarget(store, "default", otherIssueWake, { platform: "linear", agentSessionId: "as-lin-89", issueId: "issue-uuid-89", parentId: "c-89-1" }, arrivedAt);
+    const otherIssueOrigin = (await resolveUnifiedWakeTarget(store, "default", otherIssueWake)) as Extract<UnifiedWakeOrigin, { platform: "linear" }>;
+    ok(
+      (await inOpe922Turn(async () => answeredContainerVia("default", TURN_SIBLING, otherIssueWake, otherIssueOrigin))) === undefined,
+      "🔴 OPE-922 stage 2 NEGATIVE CONTROL: another Linear ISSUE reads UNDEFINED across turns too — the ledger is per-container",
+    );
+
+    ok(
+      (await inOpe922Turn(async () => answeredContainerVia("default", TURN_SIBLING, "no-such-wake-id", siblingLinear))) === undefined,
+      "🔴 OPE-922 stage 2 fail-soft: an unresolvable wake row reads UNDEFINED — no arrival stamp, no claim",
+    );
   }
 
   {
