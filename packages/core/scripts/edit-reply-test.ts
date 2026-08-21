@@ -140,9 +140,9 @@ async function callEdit(turnWake: string, turnId: string, wake: string, messageI
     .catch((e: unknown) => ({ error: String(e) }));
 }
 
-async function wakeAt(channelId: string, atIso: string): Promise<string> {
+async function wakeAt(channelId: string, atIso: string, threadTs?: string): Promise<string> {
   const id = mintWakeId();
-  const origin: UnifiedWakeOrigin = { platform: "slack", channelId };
+  const origin: UnifiedWakeOrigin = threadTs === undefined ? { platform: "slack", channelId } : { platform: "slack", channelId, threadTs };
   await registerUnifiedWakeTarget(store, ORG, id, origin, atIso, TOKEN, true);
   await recordWakeTail(TAIL_WINDOW.org, TAIL_WINDOW.registryKey, TAIL_WINDOW.token, {
     kind: "wake",
@@ -501,6 +501,77 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
   ok(
     claimsPostsAreFinal(editReplyParagraph("")) === false,
     "§19/JOIN: and the seat prompt does not claim finality either",
+  );
+}
+
+{
+  const { sameUnifiedConversation } = await import("../agent/channels/unified-window.js");
+  const THREAD = "1768292527.000100";
+
+  const inTurnA = newSession();
+  const w1 = await wakeAt(CHAN, t(-2000), THREAD);
+  const r = await inTurnA(() => callReply(w1, "turn_20a", w1, "Status: the handover doc is drafted."));
+  ok(typeof r.id === "string" && r.id.length > 0, "§20: turn A posted the status line");
+
+  const answeredRow = await store.getUnifiedWakeRecord(ORG, w1);
+  ok(answeredRow?.answeredAt !== undefined, "🔴 §20/PREMISE: turn A really marked the wake ANSWERED — without the mark this section measures nothing");
+  ok(answeredRow?.answeredTurnId === "turn_20a", "§20/PREMISE: …and the mark names turn A, so a later turn compares unequal");
+
+  const inTurnB = newSession();
+  const w2 = await wakeAt(CHAN, t(-1000));
+  const originA = JSON.parse((await store.getUnifiedWakeRecord(ORG, w1))!.targetJson) as UnifiedWakeOrigin;
+  const originB = JSON.parse((await store.getUnifiedWakeRecord(ORG, w2))!.targetJson) as UnifiedWakeOrigin;
+  ok(
+    sameUnifiedConversation(originA, originB) === false,
+    "🔴 §20/PREMISE: the two wakes name DIFFERENT conversations (a thread and the channel top level), so the same-conversation arm cannot admit the edit — arm 4, the one that reads the answered mark, is the arm under test",
+  );
+
+  const editsBefore = edited.length;
+  const roomBefore = posted.length;
+  const e = await inTurnB(() => callEdit(w2, "turn_20b", w1, r.id as string, "Status: the handover doc is drafted — https://example.invalid/pr/1."));
+  ok(e.edited === true, "🔴 §20: a member-requested edit of a PRIOR turn's message SUCCEEDS — an answered wake still names a message the agent may correct");
+  ok(edited.length === editsBefore + 1, "§20/UPDATE: exactly one chat.update reached Slack");
+  ok(edited[edited.length - 1]?.ts === r.id, "§20/UPDATE: it addressed the message turn A posted");
+  ok(posted.length === roomBefore, "§20/ROOM: the correction added NO second line — the stale-sibling outcome the soak measured is gone");
+
+  const refusedBefore = (await rowsFor("reply.refused", w1)).length;
+  const second = await inTurnB(() => callReply(w2, "turn_20b", w1, "Answering the settled wake again."));
+  ok(second.error !== undefined, "🔴 §20/CONTROL: a `reply` to that same answered wake is STILL refused — the loosening is scoped to the edit verb");
+  ok(/already replied to wake-id/.test(String(second.error)), "§20/CONTROL: and it is the ANSWERED refusal that refused it, not some other guard");
+  ok(posted.length === roomBefore, "§20/CONTROL/ROOM: nothing was posted by the refused reply");
+  const refusals = await rowsFor("reply.refused", w1);
+  ok(refusals.length === refusedBefore + 1, "§20/CONTROL/AUDIT: the refused reply is recorded");
+  ok(refusals[refusals.length - 1]?.["reason"] === "answered", "§20/CONTROL/AUDIT: …under reason `answered`");
+
+  const notOursBefore = (await rowsFor("reply.edit.refused", w1)).length;
+  const sentBefore = updatesSent;
+  const notOurs = await inTurnB(() => callEdit(w2, "turn_20b", w1, "1755805215.000001", "Rewriting a message we never posted."));
+  ok(notOurs.edited !== true, "🔴 §20/LEDGER: an id this deployment never posted is still REFUSED cross-turn — ownership is what decides, and it did not move");
+  ok(updatesSent === sentBefore, "§20/LEDGER: no chat.update was attempted");
+  const notOursRows = await rowsFor("reply.edit.refused", w1);
+  ok(notOursRows.length === notOursBefore + 1, "§20/LEDGER/AUDIT: the refusal is recorded");
+  ok(notOursRows[notOursRows.length - 1]?.["reason"] === EDIT_NOT_OWN_REFUSAL_REASON, `§20/LEDGER/AUDIT: …as \`${EDIT_NOT_OWN_REFUSAL_REASON}\``);
+  ok(
+    /replaces the earlier message/.test(String(notOurs.error)),
+    "🔴 §20/COPY: the surviving refusal steers the HONEST fallback — a repost that says it replaces the earlier message and why the original could not change",
+  );
+  ok(
+    /could not be edited/.test(String(notOurs.error)),
+    "§20/COPY: …and names the reason, so the room is not left with two versions and no explanation",
+  );
+
+  const stale = "1700159720.000020";
+  await recordOwnPost(ORG, { platform: "slack", channelId: CHAN }, stale, { now: () => Date.now() - OWN_POST_TTL_MS * 2 });
+  const outOfWindow = await inTurnB(() => callEdit(w2, "turn_20b", w1, stale, "Editing a post from last week."));
+  ok(outOfWindow.edited !== true, "🔴 §20/WINDOW: a post older than the edit window is still refused — unbounded edit reach is a deliberate non-goal");
+  ok(updatesSent === sentBefore, "§20/WINDOW: no chat.update was attempted for it either");
+
+  const fresh = "1700159720.000021";
+  await recordOwnPost(ORG, { platform: "slack", channelId: CHAN }, fresh);
+  const inWindow = await inTurnB(() => callEdit(w2, "turn_20b", w1, fresh, "Editing a post from a minute ago."));
+  ok(
+    inWindow.edited === true,
+    "§20/WINDOW/CONTROL: the SAME cross-turn call succeeds for a post inside the window — §20/WINDOW measures the TTL, not a path that refuses everything",
   );
 }
 

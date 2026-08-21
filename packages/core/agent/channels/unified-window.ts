@@ -172,6 +172,31 @@ export async function resolveAnswerableReplyTarget(
   inputWake: string,
   nowMs?: number,
 ): Promise<AnswerableReplyResolution> {
+  return resolveWindowWakeTarget(store, org, turnWake, windowToken, turnId, inputWake, nowMs, "reply");
+}
+
+export async function resolveEditableWakeTarget(
+  store: AnswerableWakeStore,
+  org: string,
+  turnWake: string | undefined,
+  windowToken: string | undefined,
+  turnId: string | undefined,
+  inputWake: string,
+  nowMs?: number,
+): Promise<AnswerableReplyResolution> {
+  return resolveWindowWakeTarget(store, org, turnWake, windowToken, turnId, inputWake, nowMs, "edit");
+}
+
+async function resolveWindowWakeTarget(
+  store: AnswerableWakeStore,
+  org: string,
+  turnWake: string | undefined,
+  windowToken: string | undefined,
+  turnId: string | undefined,
+  inputWake: string,
+  nowMs: number | undefined,
+  use: "reply" | "edit",
+): Promise<AnswerableReplyResolution> {
   if (!turnWake) return { ok: false, reason: "mismatch" };
   if (inputWake === turnWake) {
     const origin = await resolveUnifiedWakeTarget(store, org, inputWake);
@@ -204,7 +229,7 @@ export async function resolveAnswerableReplyTarget(
   const created = Date.parse(row.createdAt);
   const now = nowMs ?? Date.now();
   if (!Number.isFinite(created) || now - created > WAKE_TARGET_TTL_MS) return { ok: false, reason: "expired" };
-  if (row.answeredAt !== undefined && row.answeredTurnId !== turnId) return { ok: false, reason: "answered" };
+  if (use === "reply" && row.answeredAt !== undefined && row.answeredTurnId !== turnId) return { ok: false, reason: "answered" };
   return { ok: true, origin: parsed, via: "pending" };
 }
 

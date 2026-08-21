@@ -13,7 +13,7 @@ import {
 } from "../channels/reply-edit.js";
 import { platformFailureClass } from "../channels/platform-failure.js";
 import type { ReplyAudit } from "../channels/reply-post.js";
-import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
+import { resolveEditableWakeTarget, replyRefusalMessage } from "../channels/unified-window.js";
 import { withPendingWorkFrame } from "../channels/turn-delivery.js";
 import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
 import { editPostTail } from "../channels/session-tail-record.js";
@@ -80,7 +80,7 @@ export const unifiedEditReplyEntry = defineTool({
     const org = deploymentOrg();
     const store = getOperationalStore();
 
-    const resolution = await resolveAnswerableReplyTarget(store, org, turnWake, windowToken, turnId, input.wake);
+    const resolution = await resolveEditableWakeTarget(store, org, turnWake, windowToken, turnId, input.wake);
     if (!resolution.ok) {
       await auditReplyEditRefused(replyAuditFor(bind, "tool", input.wake), resolution.reason);
       throw new Error(replyRefusalMessage(resolution.reason, input.wake, { turnWake, silent: silentRoutineThisTurn() }));

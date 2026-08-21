@@ -31,12 +31,17 @@ export function ambiguousEditNote(platform: string): string {
 export function editRefusalMessage(reason: string, platform?: string): string {
   if (reason === EDIT_NO_ARM_REFUSAL_REASON) {
     const where = platform && platform.length > 0 ? platform : "this surface";
-    return `edit_reply can't edit a message on ${where} — that surface has no API for editing the agent's own posts, so nothing here can be edited. Post a new \`reply\` with the correction instead.`;
+    return (
+      `edit_reply can't edit a message on ${where} — that surface has no API for editing the agent's own posts, so nothing here can be edited. ` +
+      `Post a new \`reply\` with the correction instead, and say in it that it replaces the earlier message and that ${where} cannot edit a posted message. ` +
+      "Otherwise the room is left with two versions and no way to tell which one is current."
+    );
   }
   return (
     "edit_reply refused: that message id is not one of your own recent posts in this conversation. " +
     "You can only edit a message YOU posted here with `reply`, and only for a few hours after posting. " +
-    "Post a new `reply` with the correction instead."
+    "Post a new `reply` with the correction instead, and say in it that it replaces the earlier message and that the original could not be edited. " +
+    "Otherwise the room is left with two versions and no way to tell which one is current."
   );
 }
 
