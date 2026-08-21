@@ -48,8 +48,8 @@ function ctx(platform: string, attrs: Record<string, string> = {}): BindableCont
 {
   await assert.rejects(
     () => resolveEntityAction(ctx("slack", {}), "setState", { platform: "linear", id: "ENG-1" }, []),
-    /not one of this window's sources/,
-    "a ref naming a platform outside this window's sources is refused (topology gate)",
+    /not one of this session's work destinations/,
+    "a ref naming a platform this session may not address is refused (the entity gate)",
   );
   n++;
 }

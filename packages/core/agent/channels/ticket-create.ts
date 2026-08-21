@@ -1,4 +1,5 @@
-import { resolveWindowSources, currentTurnOrganization, type BindableContext } from "../identity/binding.js";
+import { currentTurnOrganization, type BindableContext } from "../identity/binding.js";
+import { workDestinationPlatforms } from "./work-destinations.js";
 import type { Domain } from "../memory/domain.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import type { EntityRef } from "./entity-actions.js";
@@ -56,27 +57,29 @@ export async function resolveTicketCreate(
   dest: TicketDestination | undefined,
   domains: readonly Domain[],
 ): Promise<ResolvedTicketCreate> {
-  const sources = resolveWindowSources(ctx, domains);
+  const destinations = workDestinationPlatforms(ctx, domains);
   const supported = supportedTicketCreatePlatforms();
 
   let platform = dest?.platform;
   if (!platform) {
-    const candidates = sources.filter((s) => supported.includes(s));
+    const candidates = destinations.filter((s) => supported.includes(s));
     if (candidates.length === 1) platform = candidates[0];
     else {
       throw new Error(
         candidates.length === 0
-          ? `create_ticket: none of this window's sources (${sources.join(", ") || "none"}) can file a work item — ` +
-            (supported.length ? `supported on ${supported.join(", ")}; add one to the memory domain's sources.` : "no surface supports it yet.")
-          : `create_ticket: this window has more than one work surface (${candidates.join(", ")}) — pass \`platform\` to say which one to file on.`,
+          ? `create_ticket: none of this session's work destinations (${destinations.join(", ") || "none"}) can file a work item — ` +
+            (supported.length
+              ? `supported on ${supported.join(", ")}; give the memory domain a work credential for one of them (\`credentials\`), or add it to the domain's channels.`
+              : "no surface supports it yet.")
+          : `create_ticket: this session has more than one work surface (${candidates.join(", ")}) — pass \`platform\` to say which one to file on.`,
       );
     }
   }
 
-  if (!sources.includes(platform)) {
+  if (!destinations.includes(platform)) {
     throw new Error(
-      `create_ticket: "${platform}" is not one of this window's sources (${sources.join(", ") || "none"}) — ` +
-        "you can only file into a surface that fans into this window (add it to the memory domain's sources).",
+      `create_ticket: "${platform}" is not one of this session's work destinations (${destinations.join(", ") || "none"}) — ` +
+        "the memory domain must hold a work credential for it (`credentials`), or list it among the domain's channels.",
     );
   }
 
