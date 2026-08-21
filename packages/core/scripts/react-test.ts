@@ -155,6 +155,11 @@ function slackCtx(channelId: string | undefined, threadTs?: string) {
   ok(slackDoctrine.includes("react") && slackDoctrine.toLowerCase().includes("busy"), "noise doctrine mentions react + busy threads on Slack");
   const discordDoctrine = renderNoiseDoctrine({ channel: { kind: "discord" } } as never);
   ok(discordDoctrine === "", "noise doctrine renders nothing off Slack (react doesn't exist there)");
+
+  ok(slackDoctrine.includes("did NOT address you"), "🔴 the react-alone case is scoped to an UNADDRESSED message");
+  ok(slackDoctrine.includes("post ONE short `reply` before the turn"), "🔴 …and an addressed message is owed one short reply");
+  ok(slackDoctrine.includes("including when you hand the work to a delegated session"), "🔴 …which delegating does not discharge");
+  ok(!slackDoctrine.includes("react over reply"), "🔴 negative control: the unconditional 'react over reply' heading is gone");
 }
 
 await inSession(async () => {

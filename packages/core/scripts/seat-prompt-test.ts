@@ -154,7 +154,7 @@ function ok(cond: boolean, label: string): void {
   for (const gone of [
     "You are the standing session for this channel",
     "### When to speak",
-    "A react is a full response tier",
+    "A react acknowledges; it does not answer",
     "`stand_down`",
     "### Backscroll",
     "### Owned threads",
@@ -218,6 +218,47 @@ function ok(cond: boolean, label: string): void {
 }
 
 {
+  const seat = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } });
+  const worker = renderSeatPersona({ seatKind: "worker", report: "task-result", midTurnPost: true });
+
+  ok(seat.includes("A react acknowledges; it does not answer"), "🔴 the seat is told a react is not an answer");
+  ok(seat.includes("then still post ONE short reply before the turn ends"), "🔴 …and that an ADDRESSED message is owed one short reply");
+  ok(
+    seat.includes("Delegating the\nwork does not discharge that reply"),
+    "🔴 …including on the exact shape OPE-906 measured — react, delegate, go quiet",
+  );
+
+  ok(
+    seat.includes("A react alone\nis the whole answer only on a message that did NOT address you"),
+    "🔴 negative control: a react alone is STILL the whole answer on an unaddressed message",
+  );
+  ok(seat.includes("`no_reply` is the most common correct ending to a wake"), "negative control: the silence bar itself is untouched");
+
+  for (const retired of ["A react is a full response tier", "a single emoji is the whole answer"]) {
+    ok(!seat.includes(retired), `🔴 the retired claim "${retired}" is deleted, not left standing beside the new rule`);
+  }
+
+  ok(seat.includes("your own turn has a budget"), "🔴 the seat reads an explicit per-turn budget");
+  ok(
+    seat.includes("a few reads to get your bearings, a react, ONE short reply"),
+    "🔴 …enumerated: a few reads, a react, ONE short reply, a memory note, a delegation",
+  );
+  ok(seat.includes("A second reply is itself the signal that you are over budget"), "🔴 …with a second reply as the escalation threshold");
+  ok(seat.includes("with a brief of\nwhat you already know in its instructions"), "🔴 …and the delegation carries a brief of what the seat already knows");
+
+  for (const seatOnly of ["A react acknowledges", "your own turn has a budget", "ONE short reply"]) {
+    ok(!worker.includes(seatOnly), `🔴 the worker persona never reads the seat's "${seatOnly}"`);
+  }
+}
+
+{
+  const seatGuide = renderSurfaceGuide("slack");
+  ok(seatGuide.includes("to a message that did not address you"), "🔴 the Slack guide's react sentence names the UNADDRESSED case");
+  ok(seatGuide.includes("one short `reply` still\nfollows") || seatGuide.includes("one short `reply` still follows"), "🔴 …and the addressed case's reply floor");
+  ok(!renderSurfaceGuide("slack", "worker").includes("`react`"), "negative control: the worker subtraction still removes the WHOLE sentence");
+}
+
+{
   registerSlackFixtureMapper();
   registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
   registerConfig({
@@ -248,7 +289,7 @@ function ok(cond: boolean, label: string): void {
     "## What stops for a human": "approvalPreview",
     "## What a worker can do that you cannot": "workerCapabilities",
     "## When somebody refers to something you cannot see": "recoveryRead",
-    "## Busy threads: react over reply": "noiseDoctrine",
+    "## Busy threads: a react instead of a low-content reply": "noiseDoctrine",
   };
   const slotSequence = (md: string): SeatPromptSlot[] =>
     md

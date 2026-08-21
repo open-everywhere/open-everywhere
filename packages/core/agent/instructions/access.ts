@@ -87,10 +87,13 @@ export function renderNoiseDoctrine(ctx: BindableContext): string {
   if (channelPlatform(ctx) !== "slack") return "";
   if (isWorkerSession(ctx)) return "";
   return (
-    "## Busy threads: react over reply\n" +
-    "In a busy or noisy thread, a single emoji `react` CAN BE your whole response — prefer it " +
-    'over a low-content text reply (a bare "got it" or "on it") that would just add another line. ' +
-    "Reserve full text replies for when you actually have something to say."
+    "## Busy threads: a react instead of a low-content reply\n" +
+    "On a message that did NOT address you, a single emoji `react` CAN BE your whole response — " +
+    'prefer it over a low-content text reply (a bare "got it" or "on it") that would just add ' +
+    "another line.\n\n" +
+    "When someone DOES address you, the react is your fast acknowledgement and never the answer. " +
+    "React first if you want them to know you saw it, then post ONE short `reply` before the turn " +
+    "ends — including when you hand the work to a delegated session."
   );
 }
 

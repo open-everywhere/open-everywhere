@@ -280,7 +280,7 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     loadSilos: () => [defineMemorySilo({ name: "solo-notes", description: "solo-domain notes", provider: "sqlite" })],
     domainsForSurface: ({ surface }) => (surface === "C_SOLO" ? ["solo-dom"] : []),
   });
-  const NOISE = "## Busy threads: react over reply";
+  const NOISE = "## Busy threads: a react instead of a low-content reply";
 
   const crossMd = await renderScopeMarkdown({
     channel: { kind: "channel:unified", continuationToken: "oe-dom:solo-dom:oe-sup:g1" },
