@@ -109,15 +109,36 @@ async function rowsOfThisArm(wakeAt: number, actions: readonly string[]): Promis
   return got.filter((r) => new Date(r.ts).getTime() >= wakeAt);
 }
 
+const ROW_WAIT_MS = 45_000;
+
 async function armRows(wakeAt: number, want: { verdictRow: boolean; forwardRows: boolean }): Promise<AuditRow[]> {
-  const label = [want.verdictRow ? "its taint.verdict row" : "", want.forwardRows ? "its taint.forward mark+adopt rows" : ""].filter((s) => s.length > 0);
-  return waitFor(async () => {
-    const got = await rowsOfThisArm(wakeAt, ["approval.chain", "taint.verdict", "taint.forward"]);
-    if (!got.some((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine")) return undefined;
-    if (want.verdictRow && readerVerdictRows(got).length === 0) return undefined;
-    if (want.forwardRows && (forwardLeg(got, "mark").length === 0 || forwardLeg(got, "adopt").length === 0)) return undefined;
-    return got;
-  }, `this arm's approval.chain row${label.length > 0 ? ` and ${label.join(" and ")}` : ""} to land`);
+  const ACTIONS = ["approval.chain", "taint.verdict", "taint.forward"];
+  let rows = await waitFor(async () => {
+    const got = await rowsOfThisArm(wakeAt, ACTIONS);
+    return got.some((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine") ? got : undefined;
+  }, "this arm's create_routine approval.chain row to land");
+
+  if (want.verdictRow) {
+    rows = await waitFor(
+      async () => {
+        const got = await rowsOfThisArm(wakeAt, ACTIONS);
+        return readerVerdictRows(got).length > 0 ? got : undefined;
+      },
+      `this arm's ${READER_LABEL} taint.verdict row to land — the table wrote no divergence for this read`,
+      ROW_WAIT_MS,
+    );
+  }
+  if (want.forwardRows) {
+    rows = await waitFor(
+      async () => {
+        const got = await rowsOfThisArm(wakeAt, ACTIONS);
+        return forwardLeg(got, "mark").length > 0 && forwardLeg(got, "adopt").length > 0 ? got : undefined;
+      },
+      "this arm's taint.forward mark AND adopt rows to land — the seat's taint did not propagate to its worker",
+      ROW_WAIT_MS,
+    );
+  }
+  return rows;
 }
 
 function chainRow(rows: readonly AuditRow[]): AuditRow {
