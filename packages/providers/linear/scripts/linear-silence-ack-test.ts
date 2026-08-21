@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { LINEAR_SILENCE_ACK_BODY, postLinearSilenceAck } from "../agent/channels/linear-silence-ack.js";
+import { LINEAR_SILENCE_ACK_BODY, LINEAR_ANSWERED_ACK_BODY, postLinearSilenceAck, postLinearAnsweredAck } from "../agent/channels/linear-silence-ack.js";
 import { linearPostArm } from "../agent/channels/linear-post-arm.js";
 import type { UnifiedWakeOrigin, UnifiedReplyDeps } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -45,6 +45,10 @@ function stubLinear(opts: { success?: boolean } = {}): typeof fetch {
 try {
   ok(LINEAR_SILENCE_ACK_BODY === "Noted — no response needed.", "🔴 OPE-884: the ack copy is pinned byte for byte (host copy, fixed)");
   ok(!/\{|\}|\$/.test(LINEAR_SILENCE_ACK_BODY), "OPE-884: the ack carries no interpolation — nothing from the turn can reach the issue through it");
+  ok(LINEAR_ANSWERED_ACK_BODY === "Answered in the comments.", "🔴 OPE-922: the ANSWERED close copy is pinned byte for byte (host copy, fixed)");
+  ok(!/\{|\}|\$/.test(LINEAR_ANSWERED_ACK_BODY), "OPE-922: the answered close carries no interpolation either");
+  ok((LINEAR_ANSWERED_ACK_BODY as string) !== (LINEAR_SILENCE_ACK_BODY as string), "🔴 OPE-922: the two lines are DIFFERENT — collapsing them re-ships the contradiction this ticket fixed");
+  ok(!/no response needed/i.test(LINEAR_ANSWERED_ACK_BODY), "🔴 OPE-922: the answered close never denies that an answer exists");
 
   {
     sent = [];
@@ -111,7 +115,40 @@ try {
     ok(armErr instanceof Error, "OPE-884: a refused ack THROWS out of the arm for the spine to record");
   }
 
-  console.log(`\n✓ linear-silence-ack: ${passed} assertions passed (pinned host copy, the accepted activity shape, refusals that throw, and the unified seam with its ambient negative control)`);
+  {
+    sent = [];
+    globalThis.fetch = stubLinear();
+    await postLinearAnsweredAck("sess-ans-1", "org-1");
+    ok(sent.length === 1, "OPE-922: the answered close is exactly ONE activity");
+    const a = sent[0]!;
+    ok(a.content?.body === LINEAR_ANSWERED_ACK_BODY, "OPE-922: …carrying the ANSWERED line");
+    ok(a.content?.type === "response", "🔴 OPE-922: …as a `response` — the close still has to TERMINATE the session");
+    ok(a.signal === undefined && a.ephemeral === undefined, "🔴 OPE-922: …with the same accepted shape (no `signal`, not ephemeral)");
+
+    const mention2: UnifiedWakeOrigin = { platform: "linear", issueId: "issue-9", agentSessionId: "sess-ans-2", organizationId: "org-1" } as UnifiedWakeOrigin;
+    sent = [];
+    globalThis.fetch = stubLinear();
+    await linearPostArm.closeUnifiedSilently!(mention2, {} as UnifiedReplyDeps, true);
+    ok(sent.length === 1 && sent[0]!.content?.body === LINEAR_ANSWERED_ACK_BODY, "🔴 OPE-922: `answered:true` closes the session with the ANSWERED line, not the silence line");
+
+    sent = [];
+    globalThis.fetch = stubLinear();
+    await linearPostArm.closeUnifiedSilently!(mention2, {} as UnifiedReplyDeps, false);
+    ok(sent.length === 1 && sent[0]!.content?.body === LINEAR_SILENCE_ACK_BODY, "🔴 OPE-922 negative control: `answered:false` still renders OPE-884's SILENCE line — a genuinely silent turn is untouched");
+
+    sent = [];
+    globalThis.fetch = stubLinear();
+    await linearPostArm.closeUnifiedSilently!(mention2, {} as UnifiedReplyDeps);
+    ok(sent.length === 1 && sent[0]!.content?.body === LINEAR_SILENCE_ACK_BODY, "OPE-922: an OMITTED flag renders the silence line — the default is the old behaviour");
+
+    const ambient2: UnifiedWakeOrigin = { platform: "linear", issueId: "issue-10", ambient: true, organizationId: "org-1" } as UnifiedWakeOrigin;
+    sent = [];
+    globalThis.fetch = stubLinear();
+    await linearPostArm.closeUnifiedSilently!(ambient2, {} as UnifiedReplyDeps, true);
+    ok(sent.length === 0, "OPE-922: an AMBIENT origin still posts NOTHING, answered or not");
+  }
+
+  console.log(`\n✓ linear-silence-ack: ${passed} assertions passed (both pinned host copies, the accepted activity shape, refusals that throw, and the unified seam with its ambient + silence negative controls)`);
 } finally {
   globalThis.fetch = savedFetch;
   if (SAVED_TOKEN === undefined) delete process.env.LINEAR_AGENT_ACCESS_TOKEN;

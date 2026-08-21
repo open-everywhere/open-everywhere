@@ -25,7 +25,7 @@ export interface UnifiedReplyDeps {
   readonly postSlack?: (origin: SlackOrigin, text: string) => Promise<string>;
   readonly postGitHub?: (origin: GitHubOrigin, text: string) => Promise<string>;
   readonly postLinear?: (origin: LinearOrigin, text: string, intent?: PostIntent) => Promise<string>;
-  readonly closeLinear?: (origin: LinearOrigin) => Promise<void>;
+  readonly closeLinear?: (origin: LinearOrigin, answered?: boolean) => Promise<void>;
   readonly postNotion?: (origin: NotionOrigin, text: string) => Promise<string>;
   readonly postDiscord?: (origin: DiscordOrigin, text: string) => Promise<string>;
   readonly postTeams?: (origin: TeamsOrigin, text: string) => Promise<string>;
@@ -137,10 +137,10 @@ async function dispatchUnifiedReply(
   return arm.dispatchUnified(origin, text, deps, replier, intent);
 }
 
-export async function completeUnifiedSessionSilently(origin: UnifiedWakeOrigin, deps: UnifiedReplyDeps = {}): Promise<boolean> {
+export async function completeUnifiedSessionSilently(origin: UnifiedWakeOrigin, deps: UnifiedReplyDeps = {}, answered = false): Promise<boolean> {
   if ((origin as { ambient?: boolean }).ambient) return false;
   const arm = postArm(origin.platform);
   if (!arm?.closeUnifiedSilently) return false;
-  await arm.closeUnifiedSilently(origin, deps);
+  await arm.closeUnifiedSilently(origin, deps, answered);
   return true;
 }

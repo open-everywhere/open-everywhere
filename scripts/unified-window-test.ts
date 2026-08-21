@@ -1,8 +1,10 @@
 
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-unified-window-")), "ops.sqlite3");
 delete process.env.OE_ORG;
@@ -48,7 +50,8 @@ import { REPLY_FOLD_REFUSAL_REASON } from "@open-everywhere/core/agent/channels/
 import { WAKE_DECLINED_REFUSAL_REASON, WAKE_DONE_REFUSAL_REASON } from "@open-everywhere/core/agent/channels/reply-signal.js";
 import { TASK_WAKE_UNREAD_REFUSAL_REASON } from "@open-everywhere/core/agent/channels/task-wake.js";
 import { DELEGATION_PENDING_REFUSAL_REASON } from "@open-everywhere/core/agent/access/pending-delegation-signal.js";
-import unifiedChannel, { divertToUnifiedWindow, type UnifiedReceiveTarget } from "@open-everywhere/core/agent/channels/unified.js";
+import unifiedChannel, { divertToUnifiedWindow, answeredSameContainerThisTurn, type UnifiedReceiveTarget } from "@open-everywhere/core/agent/channels/unified.js";
+import { markWakeRepliedThisTurn } from "@open-everywhere/core/agent/channels/reply-signal.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "@open-everywhere/core/agent/channels/unified-reply.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
 import { claimRuntimeRotation } from "@open-everywhere/core/agent/channels/runtime-rotation.js";
@@ -772,6 +775,17 @@ await handleTeamsSingleWindowDispatch(
 }
 
 const store = getOperationalStore();
+
+const ope922Require = createRequire(import.meta.url);
+const ope922EveRoot = dirname(ope922Require.resolve("eve/package.json"));
+const ope922Abs = (rel: string): string => pathToFileURL(join(ope922EveRoot, rel)).href;
+const { ContextContainer: Ope922Container, contextStorage: ope922Storage } = await import(ope922Abs("dist/src/context/container.js"));
+const { SessionKey: Ope922SessionKey } = await import(ope922Abs("dist/src/context/keys.js"));
+function inOpe922Turn<T>(fn: () => Promise<T>): Promise<T> {
+  const c = new Ope922Container();
+  c.set(Ope922SessionKey, { sessionId: "unified-window-test-ope922", auth: null, turn: 1, parent: undefined });
+  return ope922Storage.run(c, fn) as Promise<T>;
+}
 {
   const sent: Array<{ payload: { message?: string; context?: readonly string[] }; opts: { continuationToken: string; auth: unknown } }> = [];
   let mapVisibleAtSend = false;
@@ -1000,6 +1014,66 @@ const store = getOperationalStore();
     const closeDeps = { closeLinear: async (o: { agentSessionId?: string; issueId: string }) => void closed.push({ agentSessionId: o.agentSessionId, issueId: o.issueId }) };
     const didClose = await completeUnifiedSessionSilently(linOrigin as Extract<UnifiedWakeOrigin, { platform: "linear" }>, closeDeps);
     ok(didClose === true && closed.length === 1 && closed[0].agentSessionId === "as-lin-77" && closed[0].issueId === "issue-uuid-77", "silent turn: completeUnifiedSessionSilently routes the wake's OPEN agent session to the arm (no model prose posted)");
+  }
+
+  {
+    const ANS_TURN = "turn-ope922";
+    const linSession = linOrigin as Extract<UnifiedWakeOrigin, { platform: "linear" }>;
+    const sibSameIssue = mintWakeId();
+    await registerUnifiedWakeTarget(store, "default", sibSameIssue, { platform: "linear", agentSessionId: "as-lin-78", issueId: "issue-uuid-77", parentId: "comment-uuid-2" }, new Date().toISOString());
+    const otherIssue = mintWakeId();
+    await registerUnifiedWakeTarget(store, "default", otherIssue, { platform: "linear", agentSessionId: "as-lin-99", issueId: "issue-uuid-99", parentId: "comment-uuid-9" }, new Date().toISOString());
+    const slackSibling = mintWakeId();
+    await registerUnifiedWakeTarget(store, "default", slackSibling, { platform: "slack", channelId: "C_WINA" }, new Date().toISOString());
+
+    ok(
+      (await inOpe922Turn(async () => answeredSameContainerThisTurn("default", ANS_TURN, TURN_WAKE, linSession))) === false,
+      "🔴 OPE-922 negative control: a turn that replied to NOTHING answers false — a genuinely silent turn still gets OPE-884's silence ack",
+    );
+
+    ok(
+      (await inOpe922Turn(async () => {
+        markWakeRepliedThisTurn(ANS_TURN, otherIssue);
+        return answeredSameContainerThisTurn("default", ANS_TURN, TURN_WAKE, linSession);
+      })) === false,
+      "🔴 OPE-922 negative control: a reply on ANOTHER Linear issue answers false — the wake here really did get nothing",
+    );
+
+    ok(
+      (await inOpe922Turn(async () => {
+        markWakeRepliedThisTurn(ANS_TURN, slackSibling);
+        return answeredSameContainerThisTurn("default", ANS_TURN, TURN_WAKE, linSession);
+      })) === false,
+      "🔴 OPE-922 negative control: a reply on a SLACK sibling answers false — a cross-surface answer never speaks for this Linear session",
+    );
+
+    ok(
+      (await inOpe922Turn(async () => {
+        markWakeRepliedThisTurn(ANS_TURN, sibSameIssue);
+        return answeredSameContainerThisTurn("default", ANS_TURN, TURN_WAKE, linSession);
+      })) === true,
+      "🔴 OPE-922: a reply on a SIBLING wake of the SAME issue answers TRUE — the room was answered, so the close may not deny it",
+    );
+
+    ok(
+      (await inOpe922Turn(async () => answeredSameContainerThisTurn("default", ANS_TURN, TURN_WAKE, linSession))) === false,
+      "🔴 OPE-922: the gate reads the per-turn REPLY RECORD — an unmarked sibling answers false however much the turn said",
+    );
+
+    ok(
+      (await inOpe922Turn(async () => {
+        markWakeRepliedThisTurn(ANS_TURN, TURN_WAKE);
+        return answeredSameContainerThisTurn("default", ANS_TURN, TURN_WAKE, linSession);
+      })) === false,
+      "OPE-922: the wake being closed is excluded from its own evidence — only a SIBLING can answer for it",
+    );
+
+    const flags: boolean[] = [];
+    const flagDeps = { closeLinear: async (_o: { issueId: string }, answered?: boolean) => void flags.push(answered === true) };
+    await completeUnifiedSessionSilently(linSession, flagDeps, true);
+    await completeUnifiedSessionSilently(linSession, flagDeps, false);
+    await completeUnifiedSessionSilently(linSession, flagDeps);
+    ok(JSON.stringify(flags) === "[true,false,false]", "🔴 OPE-922: completeUnifiedSessionSilently hands the verdict to the arm, and an OMITTED flag stays false (pre-fix behaviour)");
   }
 
   {
