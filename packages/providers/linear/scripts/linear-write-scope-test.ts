@@ -5,8 +5,16 @@ import {
   assertLinearTeamWriteAllowed,
   linearScopeRefusal,
   linearTeamScope,
+  linearWorkGrantOrg,
 } from "../agent/channels/linear-scope.js";
-import { ChannelScopeError, defineDomain, type BindableContext, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
+import {
+  ChannelScopeError,
+  defineDomain,
+  registerConfig,
+  registerIdentityMapper,
+  type BindableContext,
+  type Domain,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import { linearEntityAdapter } from "../agent/channels/linear-actions.js";
 import { linearTicketCreateAdapter } from "../agent/channels/linear-create.js";
 import { registerLinearProvider } from "../agent/register.js";
@@ -29,9 +37,12 @@ const TEAM_LOOSE = "team-loose-3333";
 const ORG2 = "org-2";
 const TEAM_WIDE = "team-wide-4444";
 
+const SLACK_PAY = "slack/T1/CPAY";
+const SLACK_ENG = "slack/T1/CENG";
+
 const DOMAINS: readonly Domain[] = [
-  defineDomain({ name: "payments", channels: [`linear/${ORG}/${TEAM_PAY}`] }),
-  defineDomain({ name: "eng", channels: [`linear/${ORG}/${TEAM_ENG}`] }),
+  defineDomain({ name: "payments", channels: [`linear/${ORG}/${TEAM_PAY}`, SLACK_PAY] }),
+  defineDomain({ name: "eng", channels: [`linear/${ORG}/${TEAM_ENG}`, SLACK_ENG] }),
   defineDomain({ name: "wide", containers: [`linear/${ORG2}`] }),
 ];
 
@@ -172,6 +183,147 @@ for (const k of ["LINEAR_AGENT_ACCESS_TOKEN", "LINEAR_ACCESS_TOKEN", "LINEAR_API
 
   ok(typeof linearEntityAdapter.checkAccess === "function", "the entity adapter DECLARES checkAccess (it declared none before OPE-241)");
   ok(typeof linearTicketCreateAdapter.checkAccess === "function", "the create adapter DECLARES checkAccess");
+}
+
+const WORK_PAY = `linear/${ORG}/${TEAM_PAY}`;
+const WORK_ORG_WIDE = `linear/${ORG}`;
+
+{
+  const fromSlack = (team: string | undefined, grants: readonly string[]) => linearTeamScope(SLACK_PAY, team, DOMAINS, grants);
+
+  const ungranted = fromSlack(TEAM_PAY, []);
+  ok(!ungranted.allowed && ungranted.reason === "target-unresolvable", "a Slack caller with NO work grant is still refused target-unresolvable");
+  ok(ungranted.callerDomain === "payments", "…and the refusal still names the caller's domain, so the audit row is readable");
+
+  ok(!fromSlack(TEAM_PAY, []).allowed, "the domain's Linear CHAT-channel entry does NOT confer write capability on its Slack room");
+
+  const granted = fromSlack(TEAM_PAY, [WORK_PAY]);
+  ok(granted.allowed && granted.reason === "work-grant", "the SAME create is admitted once the scope holds a Linear work-surface grant");
+  ok(granted.targetTeam === TEAM_PAY && granted.callerDomain === "payments", "…and the admit verdict records the team and the caller's domain");
+
+  ok(fromSlack(TEAM_PAY, [WORK_ORG_WIDE]).allowed, "a whole-workspace work grant admits a team it never enumerated");
+  ok(fromSlack(TEAM_PAY, [`linear/${ORG}/team-pay-*`]).allowed, "a same-level glob grant admits a matching team");
+
+  const outside = fromSlack(TEAM_LOOSE, [WORK_PAY]);
+  ok(!outside.allowed && outside.reason === "outside-work-grant", "a team the grant does not name is refused outside-work-grant");
+
+  ok(fromSlack(TEAM_LOOSE, [`linear/${ORG}/${TEAM_LOOSE}`]).allowed, "an explicitly granted team in no memory domain is admitted on the grant alone");
+
+  const annexed = fromSlack(TEAM_ENG, [WORK_ORG_WIDE]);
+  ok(!annexed.allowed && annexed.reason === "cross-domain", "even a whole-workspace grant cannot reach a team ANOTHER domain owns");
+  ok(annexed.targetDomain === "eng" && annexed.callerDomain === "payments", "…and the refusal names both domains");
+
+  const ambiguous = fromSlack(TEAM_PAY, [WORK_PAY, `linear/${ORG2}/${TEAM_WIDE}`]);
+  ok(!ambiguous.allowed && ambiguous.reason === "work-grant-ambiguous", "a grant spanning TWO Linear workspaces refuses as ambiguous, never guesses");
+  ok(linearWorkGrantOrg([WORK_PAY, `linear/${ORG2}/${TEAM_WIDE}`]) === undefined, "…and the workspace selector answers undefined, so no credential is chosen either");
+  ok(linearWorkGrantOrg([WORK_PAY, `linear/${ORG}/${TEAM_LOOSE}`]) === ORG, "two teams in ONE workspace are unambiguous");
+  ok(linearWorkGrantOrg([]) === undefined && linearWorkGrantOrg(["github/acme/web"]) === undefined, "no Linear grant ⇒ no workspace (a GitHub entry is not one)");
+
+  const nomad = linearTeamScope("slack/T1/CNOWHERE", TEAM_PAY, DOMAINS, [WORK_PAY]);
+  ok(!nomad.allowed && nomad.reason === "caller-unassigned", "a caller in NO domain is refused even holding a work grant");
+
+  ok(linearTeamScope(keyFor(ORG, TEAM_PAY), TEAM_PAY, DOMAINS, [`linear/${ORG2}/${TEAM_WIDE}`]).reason === "roster", "a Linear caller still resolves through its OWN key, not the grant");
+  ok(!linearTeamScope(keyFor(ORG, TEAM_PAY), TEAM_ENG, DOMAINS, [WORK_ORG_WIDE]).allowed, "a work grant cannot widen a Linear caller past the cross-domain wall");
+}
+
+{
+  const slackCtx = (channelId: string): BindableContext =>
+    ({
+      channel: { kind: "slack" },
+      session: {
+        auth: {
+          current: { attributes: { team_id: "T1", channel_id: channelId, channel_type: "channel" }, principalId: "U_SLACK", principalType: "slack-user" },
+        },
+      },
+    }) as BindableContext;
+
+  registerIdentityMapper("slack", (ctx) => {
+    const a = (ctx as BindableContext).session?.auth?.current?.attributes as Record<string, string> | undefined;
+    return { workspace: a?.["team_id"], surface: a?.["channel_id"], mode: "channel", visibility: "public", trust: "internal", principalId: a?.["user_id"] };
+  });
+
+  const rows: Array<{ action: string; platform: string; detail?: Record<string, unknown> }> = [];
+  const audit = async (e: { action: string; platform: string; detail?: Record<string, unknown> }) => void rows.push(e);
+  let lookups = 0;
+  let sawOrg: string | undefined;
+  const teamResolver = async (t: string, organizationId: string | undefined): Promise<string | undefined> => {
+    lookups++;
+    sawOrg = organizationId;
+    return t === "PAY" ? TEAM_PAY : t === "ENG" ? TEAM_ENG : undefined;
+  };
+
+  const slackPay = slackCtx("CPAY");
+
+  await assert.rejects(() => assertLinearTeamWriteAllowed(slackPay, "PAY", DOMAINS, teamResolver, { audit }), ChannelScopeError, "an ungranted cross-surface create is refused");
+  ok(rows.length === 1 && rows[0]!.action === "write.refused" && rows[0]!.detail?.reason === "target-unresolvable", "…audited write.refused/target-unresolvable — the row the live soak run produced");
+  ok(lookups === 0, "…and refused BEFORE any team lookup");
+
+  rows.length = 0;
+  await assertLinearTeamWriteAllowed(slackPay, "PAY", DOMAINS, teamResolver, { audit, workSurfaces: [WORK_PAY] });
+  ok(rows.length === 0 && lookups === 1, "a granted cross-surface create is admitted, costing exactly one lookup");
+  ok(sawOrg === ORG, "…and the team lookup ran under the GRANTED workspace, which is also the credential selector");
+
+  rows.length = 0;
+  const before = lookups;
+  await assert.rejects(
+    () => assertLinearTeamWriteAllowed(slackPay, "PAY", DOMAINS, teamResolver, { audit, workSurfaces: [WORK_PAY, `linear/${ORG2}/${TEAM_WIDE}`] }),
+    ChannelScopeError,
+    "a two-workspace grant refuses rather than filing into one of them",
+  );
+  ok(rows[0]!.detail?.reason === "work-grant-ambiguous" && lookups === before, "…audited work-grant-ambiguous, with no lookup spent");
+
+  const copy = linearScopeRefusal("PAY", linearTeamScope(SLACK_PAY, TEAM_PAY, DOMAINS, []), "write");
+  ok(copy.includes("workSurfaces"), "the write refusal names the WORK-SURFACE grant as the remedy");
+  ok(!linearScopeRefusal("PAY", linearTeamScope(SLACK_PAY, TEAM_PAY, DOMAINS, []), "read").includes("workSurfaces"), "…and the READ copy does not, since a work grant is not a read grant");
+
+  sawOrg = undefined;
+  await assertLinearTeamWriteAllowed(ctxFor(TEAM_PAY, ISSUE_OWN), "PAY", DOMAINS, teamResolver, { audit, workSurfaces: [`linear/${ORG2}/${TEAM_WIDE}`] });
+  ok(sawOrg === ORG, "a Linear caller's lookup still runs under the workspace it was woken in, never the grant's");
+}
+
+{
+  const slackPay = {
+    channel: { kind: "slack" },
+    session: { auth: { current: { attributes: { team_id: "T1", channel_id: "CPAY", channel_type: "channel" }, principalId: "U_SLACK", principalType: "slack-user" } } },
+  } as BindableContext;
+
+  const withBundles = (workSurfaces: readonly string[]): void =>
+    registerConfig({
+      loadBundles: () => [{ name: "work", workSurfaces }],
+      loadBindings: () => [{ bundle: "work", scope: { level: "surface", surface: SLACK_PAY } }],
+      pluginRegistry: {},
+      skillContent: {},
+      loadDomains: () => DOMAINS,
+      loadSilos: () => [],
+      domainsForSurface: ({ workspaceKey, surface }) => {
+        const key = `${workspaceKey}/${surface}`;
+        return DOMAINS.filter((d) => (d.channels ?? []).includes(key)).map((d) => d.name);
+      },
+    });
+
+  const TEAM_UUID = "aaaaaaaa-1111-4111-8111-111111111111";
+
+  withBundles([]);
+  await assert.rejects(
+    () => linearTicketCreateAdapter.checkAccess!(slackPay, TEAM_UUID, DOMAINS) as Promise<void>,
+    ChannelScopeError,
+    "the create adapter refuses a cross-surface filing when the scope holds no work grant",
+  );
+  ok(linearTicketCreateAdapter.workspaceFor?.(slackPay) === undefined, "…and names no workspace, so nothing downstream picks a credential");
+
+  withBundles([`linear/${ORG}/${TEAM_UUID}`]);
+  ok(linearTicketCreateAdapter.workspaceFor?.(slackPay) === ORG, "with the grant the adapter names the destination workspace — the frozen credential selector");
+  const admitted = await Promise.resolve(linearTicketCreateAdapter.checkAccess!(slackPay, TEAM_UUID, DOMAINS)).then(
+    () => true,
+    () => false,
+  );
+  ok(admitted, "the ADAPTER admits the granted cross-surface filing — the grant list really is fed to the fence");
+
+  await assert.rejects(
+    () => linearTicketCreateAdapter.checkAccess!(slackPay, "bbbbbbbb-2222-4222-8222-222222222222", DOMAINS) as Promise<void>,
+    ChannelScopeError,
+    "…and a team the grant does not name is still refused",
+  );
 }
 
 console.log(`✓ ${passed} linear write-scope assertions passed`);

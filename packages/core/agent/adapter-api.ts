@@ -363,7 +363,8 @@ export { auditAmbientSkip, resetAmbientSkipSightings } from "./channels/ambient-
 export type { AmbientSkipRecord } from "./channels/ambient-skip.js";
 
 export { credentialOverrideFor, domainCredentialId, connectorIntegrations } from "./access/domain-credentials.js";
-export type { DomainCredentialOverride, ConnectorIntegration } from "./access/domain-credentials.js";
+export type { DomainCredentialOverride, ConnectorIntegration, CredentialBoundDomain } from "./access/domain-credentials.js";
+export { workGrantCredential, hasWorkGrant } from "./access/work-grant.js";
 export { getOperatorSecret, OperatorSecretNotSetError } from "./credentials/operator-secrets.js";
 
 export { windowTopologyEnabled } from "./access/capabilities.js";
@@ -578,6 +579,8 @@ export { resolveAccessFor } from "./access/request.js";
 export { resolveAccess } from "./access/resolver.js";
 export type { EffectiveAccess } from "./access/resolver.js";
 export { defineBundle, defineBinding } from "./access/bundle.js";
+export { parseSurfaceKeyEntry, surfaceKeyEntryMatches } from "./identity/surface-key-grammar.js";
+export type { SurfaceKeyEntry } from "./identity/surface-key-grammar.js";
 
 export {
   supervisorRotateQuietGapMs,

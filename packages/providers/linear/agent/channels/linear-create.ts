@@ -1,9 +1,9 @@
 import { callLinearGraphQL, type LinearApiOptions, type LinearChannelCredentials } from "eve/channels/linear";
 import { linearCredentialsForOrg } from "./linear-credentials.js";
-import { assertLinearTeamWriteAllowed } from "./linear-scope.js";
+import { assertLinearTeamWriteAllowed, linearWorkGrantOrg } from "./linear-scope.js";
 import {
   currentTurnIssue,
-  currentTurnOrganization,
+  resolveAccessFor,
   type BindableContext,
   type CreatedTicket,
   type Domain,
@@ -78,18 +78,31 @@ function defaultLinearTeam(ctx: BindableContext): string | undefined {
   return m ? m[1] : undefined;
 }
 
+function grantedWorkSurfaces(ctx: BindableContext): readonly string[] {
+  try {
+    return resolveAccessFor(ctx).workSurfaces;
+  } catch {
+    return [];
+  }
+}
+
 export const linearTicketCreateAdapter: TicketCreateAdapter = {
   platform: "linear",
-  checkAccess: (ctx: BindableContext, target: string, domains: readonly Domain[]) => {
-    const organizationId = currentTurnOrganization(ctx);
-    return assertLinearTeamWriteAllowed(ctx, target, domains, async (t) => {
-      try {
-        return await resolveLinearTeamId(t, { organizationId });
-      } catch {
-        return undefined;
-      }
-    });
-  },
+  checkAccess: (ctx: BindableContext, target: string, domains: readonly Domain[]) =>
+    assertLinearTeamWriteAllowed(
+      ctx,
+      target,
+      domains,
+      async (t, organizationId) => {
+        try {
+          return await resolveLinearTeamId(t, { organizationId });
+        } catch {
+          return undefined;
+        }
+      },
+      { workSurfaces: grantedWorkSurfaces(ctx) },
+    ),
   defaultTarget: defaultLinearTeam,
+  workspaceFor: (ctx: BindableContext) => linearWorkGrantOrg(grantedWorkSurfaces(ctx)),
   create: (target, draft, organizationId) => createLinearIssue(target, draft, { organizationId }),
 };

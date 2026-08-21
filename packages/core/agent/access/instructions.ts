@@ -24,6 +24,9 @@ export function assembleAccessInstructions(access: EffectiveAccess): string | nu
   if (access.repos.length > 0) {
     caps.push(`- Repositories granted: ${access.repos.map((r) => `\`${r}\``).join(", ")}`);
   }
+  if (access.workSurfaces.length > 0) {
+    caps.push(`- Work trackers you can file into: ${access.workSurfaces.map((w) => `\`${w}\``).join(", ")}`);
+  }
   if (access.plugins.length > 0) {
     caps.push(`- Plugins granted: ${access.plugins.map((p) => `\`${p}\``).join(", ")}`);
   }

@@ -111,6 +111,44 @@ export function notionReadScope(callerSurfaceKey: string, pageId: string, domain
   };
 }
 
+export function notionWorkScope(
+  callerDomain: Domain | undefined,
+  pageId: string,
+  domains: readonly Domain[],
+  workspaceHints: readonly string[] = [],
+): NotionScopeVerdict {
+  if (!callerDomain) return { allowed: false, reason: "caller-unassigned" };
+  let target = notionPageDomain(undefined, pageId, domains);
+  for (const ws of workspaceHints) {
+    if (target.domain) break;
+    target = notionPageDomain(ws, pageId, domains);
+  }
+  if (!target.domain) return { allowed: false, reason: "target-unassigned", callerDomain: callerDomain.name };
+  if (target.domain.name !== callerDomain.name) {
+    return { allowed: false, reason: "cross-domain", callerDomain: callerDomain.name, targetDomain: target.domain.name };
+  }
+  return {
+    allowed: true,
+    reason: target.via === "container" ? "container" : "roster",
+    callerDomain: callerDomain.name,
+    targetDomain: target.domain.name,
+  };
+}
+
+export async function assertNotionWorkPageAllowed(
+  ctx: BindableContext,
+  pageId: string,
+  callerDomain: Domain | undefined,
+  domains: readonly Domain[],
+  workspaceHints: readonly string[] = [],
+  deps?: NotionScopeDeps,
+): Promise<void> {
+  const verdict = notionWorkScope(callerDomain, pageId, domains, workspaceHints);
+  if (verdict.allowed) return;
+  await auditNotionReadRefusal(ctx, pageId, verdict.reason, verdict, deps);
+  throw new ChannelScopeError(notionScopeRefusal(pageId, verdict));
+}
+
 export function notionBlockRefusal(blockId: string, callerDomain: string | undefined): string {
   const scope = callerDomain ? `domain "${callerDomain}"` : "this session's";
   return (

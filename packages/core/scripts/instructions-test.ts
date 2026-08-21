@@ -34,6 +34,7 @@ const base: EffectiveAccess = {
   connectorContentOrigin: {},
   reachableHosts: [],
   repos: [],
+  workSurfaces: [],
   awsRoles: [], approvers: [],
   plugins: [],
   skills: [],
@@ -57,6 +58,14 @@ ok(assembleAccessInstructions(base) === null, "bare scope -> null (no scope-spec
   const md = assembleAccessInstructions({ ...base, repos: ["acme/web"] });
   ok(md !== null && md.includes("Connections you may use"), "a scope with other caps still states its connector boundary");
   ok(md!.includes("(none)"), "an empty grant on a capable scope reads as '(none)', not omitted (fail closed)");
+}
+
+{
+  const md = assembleAccessInstructions({ ...base, workSurfaces: ["linear/org-1/team-pay"] });
+  ok(md !== null && md.includes("Work trackers you can file into"), "a work-surface grant is named in the capability summary");
+  ok(md!.includes("`linear/org-1/team-pay`"), "…naming the granted surface key");
+  const none = assembleAccessInstructions({ ...base, repos: ["acme/web"] });
+  ok(none !== null && !none.includes("Work trackers you can file into"), "a scope with NO work grant says nothing about filing");
 }
 
 {

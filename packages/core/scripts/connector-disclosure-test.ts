@@ -390,11 +390,15 @@ const rowsFor = async (action: string) => (await readAudit({ action })).length;
   );
 
   const scopeSrc = readFileSync(join(REPO, "packages/core/agent/access/connector-scope.ts"), "utf8");
-  const wallAt = scopeSrc.indexOf("if (connectorDmOnlyEnabled() && mode !== \"dm\")");
+  const wallAt = scopeSrc.indexOf("connectorDmOnlyEnabled() && mode !== \"dm\"");
   const gateAt = scopeSrc.indexOf("await assertConnectorDisclosure(");
   ok(wallAt > 0 && gateAt > wallAt, "n3: the DM-only wall is evaluated BEFORE the disclosure gate");
-  overrideSettingsForTest({ connectors: { dmOnly: true } });
-  ok(connectorDmOnlyEnabled(), "n3: the DM-only wall DEFAULTS ON (unset env) — leg 1 needs OE_CONNECTOR_DM_ONLY=0 to see a channel turn");
+  ok(
+    scopeSrc.slice(wallAt, gateAt).includes("!workSurfaceTierArmed"),
+    "n3: the work-surface carve-out is part of that same wall condition (OPE-913), not a separate earlier branch",
+  );
+  overrideSettingsForTest({ connectors: { dmOnly: true, opTiering: false } });
+  ok(connectorDmOnlyEnabled(), "n3: the DM-only wall DEFAULTS ON — leg 1 needs the wall down, or a work grant with opTiering armed, to see a channel turn");
 
   {
     _resetGovernanceMemberSupplierForTest();
