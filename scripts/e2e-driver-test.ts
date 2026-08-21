@@ -1148,9 +1148,9 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   ok(bc.rich_text?.[0]?.text?.content === "hi there", "buildBlockCommentBody carries the comment text as one rich-text item");
 
   const { buildDiscussionReplyBody } = await import("../packages/core/scripts/e2e/notion-driver.js");
-  const dr = buildDiscussionReplyBody("disc-456", "second turn") as { parent?: { discussion_id?: string; block_id?: string }; rich_text?: { text?: { content?: string } }[] };
-  ok(dr.parent?.discussion_id === "disc-456", "buildDiscussionReplyBody anchors on parent.discussion_id (joins the existing thread)");
-  ok(dr.parent?.block_id === undefined, "buildDiscussionReplyBody carries no block_id — it must not mint a fresh discussion");
+  const dr = buildDiscussionReplyBody("disc-456", "second turn") as { discussion_id?: string; parent?: { discussion_id?: string; block_id?: string }; rich_text?: { text?: { content?: string } }[] };
+  ok(dr.discussion_id === "disc-456", "buildDiscussionReplyBody anchors on TOP-LEVEL discussion_id (joins the existing thread)");
+  ok(dr.parent === undefined, "buildDiscussionReplyBody carries no parent at all — parent.discussion_id 400s and parent.block_id would mint a fresh discussion");
   ok(dr.rich_text?.[0]?.text?.content === "second turn", "buildDiscussionReplyBody carries the reply text as one rich-text item");
 
   const { signNotionBody, buildCommentCreatedEvent } = await import("../packages/core/scripts/e2e/notion-driver.js");
