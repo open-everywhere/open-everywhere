@@ -179,5 +179,38 @@ const settle = async (): Promise<void> => {
   ok((await flushEdges()).filter((e) => e === "turn-backstop").length - before === 3, "answered: the persist is audited under the same edge label as the holds that preceded it");
 }
 
+{
+  const container = new FakeEveContext();
+  const before = (await flushEdges()).filter((e) => e === "turn-backstop").length;
+
+  await inEveContext(container, async () => {
+    noteTaskDispatched("task-note");
+    ok(liveTaskCount() === 1, "notification: the dispatch arms the guard, exactly as the view path does");
+  });
+
+  await inEveContext(container, async () => {
+    noteTaskViews([{ taskId: "task-note", status: TERMINAL_TASK_STATUSES[0]! }] as never);
+    const cleared = await flushDirtyTreeAtTurnEnd(seatCtx);
+    ok(cleared !== null && cleared.outcome === "flushed", "notification: an earlier turn persists and clears the flag");
+    ok(treeIsDirty() === false, "🔴 notification PRECONDITION: the tree now reads CLEAN — asserted `=== false`. The child goes on writing past this point, which is the whole hazard");
+  });
+
+  await inEveContext(container, async () => {
+    noteTaskDispatched("task-note2");
+    ok(liveTaskCount() === 1, "notification: a second child is dispatched and holds the tree");
+    const flushSettled = await import("../agent/hooks/settlement-flush.js");
+    flushSettled.noteTaskSettled({ taskId: "task-note2", status: TERMINAL_TASK_STATUSES[0]!, agentId: null });
+    ok(liveTaskCount() === 0, "🔴 notification: `noteTaskSettled` OPENS the fan-out guard — the settled child can never write again");
+    ok(
+      treeIsDirty() === true,
+      "🔴 notification: …and RE-MARKS the tree dirty — asserted `=== true`. Without this the backstop below returns null and the child's edits sit in the sandbox until rotation overwrites them",
+    );
+    const r = await flushDirtyTreeAtTurnEnd(seatCtx);
+    ok(r !== null && r.outcome === "flushed", "🔴 notification END TO END: the turn the notification arrived on PERSISTS the child's edits — no `task_peek`, no `task_cancel`, no tool call at all");
+  });
+  await settle();
+  ok((await flushEdges()).filter((e) => e === "turn-backstop").length - before === 2, "notification: both persists are audited under the turn-backstop edge label");
+}
+
 rmSync(tmp, { recursive: true, force: true });
 console.log(`✓ turn-backstop-flush: ${passed} assertions passed`);

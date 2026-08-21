@@ -75,7 +75,7 @@ const TASK_CALL_PREFIX = "oe-task-call:";
 
 const TASK_AGENT_PREFIX = "oe-task-agent:";
 
-export type TaskCallLink = { callId: string; childToken: string };
+export type TaskCallLink = { callId: string; childToken: string; agentId?: string };
 
 export function taskCallKey(taskId: string): string {
   return `${TASK_CALL_PREFIX}${taskId}`;
@@ -87,12 +87,13 @@ export function taskAgentKey(parentSessionId: string, agentId: string): string {
 
 function parseTaskCallLink(raw: string | null): TaskCallLink | undefined {
   if (raw === null) return undefined;
-  const parsed = JSON.parse(raw) as { callId?: unknown; childToken?: unknown } | null;
+  const parsed = JSON.parse(raw) as { callId?: unknown; childToken?: unknown; agentId?: unknown } | null;
   const callId = parsed?.callId;
   const childToken = parsed?.childToken;
+  const agentId = parsed?.agentId;
   if (typeof callId !== "string" || callId.length === 0) return undefined;
   if (typeof childToken !== "string" || childToken.length === 0) return undefined;
-  return { callId, childToken };
+  return typeof agentId === "string" && agentId.length > 0 ? { callId, childToken, agentId } : { callId, childToken };
 }
 
 export async function rememberTaskCall(org: string, taskId: string, link: TaskCallLink): Promise<void> {

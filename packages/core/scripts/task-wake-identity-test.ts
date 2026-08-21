@@ -326,13 +326,13 @@ await new Promise((r) => setTimeout(r, 60));
 
     const installed = await installTaskWake({ org: ORG, taskId: "task_597", status: "completed", sessionId: SESSION, turnId: "turn_597", inheritedWakeId: W_PREV });
     eq(installed.outcome, "installed", "P11a: reading the terminal view installs the task's identity");
-    eq(currentWakeId(ctx), minted597, "🔴 P11a THE RECOVERY: the SAME turn now answers under the task's own wake — the refusal is a steer toward `task_peek`, not a dead end");
+    eq(currentWakeId(ctx), minted597, "🔴 P11a THE RECOVERY: the SAME turn now answers under the task's own wake — the install is what restores the address");
     eq(await resolveUnifiedWakeTarget(store, ORG, minted597!), ASK_THREAD, "🔴 P11a END TO END: …and that address is the thread that ASKED for the work, never the stale one");
   });
 
   {
     const copy = taskWakeUnreadRefusalMessage();
-    ok(copy.includes("task_peek"), "🔴 P11b: the refusal NAMES the one action that restores the address — a bare refusal would end the turn in silence");
+    ok(!/task_(peek|sleep|cancel|update)/.test(copy), "🔴 P11b: the refusal names NO task tool — there is no read that recovers this address, and eve 0.40.0 deletes the tool the old copy named");
     ok(copy.includes("no_reply"), "P11b: …and names the escape, so silence stays an explicit outcome rather than an accident");
     ok(!copy.includes(W_LAST) && !copy.includes(W_ASK), "🔴 P11b: it discloses NO wake id — every id this turn can see belongs to another conversation, so naming one would hand it the wrong address");
     eq(TASK_WAKE_UNREAD_REFUSAL_REASON, "task-wake-unread", "P11b: the `reply.refused` reason is its own string, so this hole is countable apart from every other refusal");

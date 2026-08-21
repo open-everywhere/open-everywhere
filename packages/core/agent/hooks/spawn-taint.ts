@@ -21,7 +21,7 @@ import {
   taskAgentLink,
   type TaskCallLink,
 } from "../access/subagent-taint.js";
-import { readTaskReceipt, taskViewsOf, terminalTaskViewsOf, type TaskReceipt, type TaskSummary } from "../access/background-tasks.js";
+import { readTaskReceipt, taskViewsOf, terminalTaskNotification, terminalTaskViewsOf, type TaskReceipt, type TaskSummary } from "../access/background-tasks.js";
 import { JOB_TAINT_ATTR } from "../access/job-posture.js";
 import { beginTaintVerdictTurn, registerTaintVerdictSink, taintEnabled, taintMode, type TaintVerdictRow } from "../access/taint-enforcement.js";
 import { appendAudit } from "../audit/audit.js";
@@ -31,7 +31,7 @@ import { installTaskWake, openTaskWake } from "../channels/task-wake.js";
 import { noteTurnBoundary } from "../access/task-wake-signal.js";
 import { addressedWakeThisTurn, noteTaskDispatchedThisTurn } from "../access/dispatch-origin-signal.js";
 import { notePendingDelegation, noteDelegationSettled } from "../access/pending-delegation-signal.js";
-import { flushDirtyTreeAtTurnEnd, flushSettledMemory, noteTaskDispatched, noteTaskViews } from "./settlement-flush.js";
+import { flushDirtyTreeAtTurnEnd, flushSettledMemory, noteTaskDispatched, noteTaskSettled, noteTaskViews } from "./settlement-flush.js";
 import type { MemoryPersistContext } from "./memory.js";
 
 export const TAINT_VERDICT_ACTION = "taint.verdict";
@@ -360,7 +360,9 @@ export async function noteTaskReceipt(receipt: TaskReceipt, ownSessionId: string
       } else {
         const pinned = receipt.agentId === null ? undefined : await taskAgentLink(org, ownSessionId, receipt.agentId);
         continuation = pinned !== undefined && pinned.callId !== receipt.callId;
-        link = pinned ?? { callId: receipt.callId, childToken: `subagent:${ownSessionId}:${receipt.callId}` };
+        const fresh: TaskCallLink = { callId: receipt.callId, childToken: `subagent:${ownSessionId}:${receipt.callId}` };
+        link = pinned ?? fresh;
+        if (link.agentId === undefined && receipt.agentId !== null) link = { ...link, agentId: receipt.agentId };
         if (receipt.agentId !== null && !continuation) await rememberTaskAgent(org, ownSessionId, receipt.agentId, link);
         await rememberTaskCall(org, receipt.taskId, link);
       }
@@ -425,12 +427,57 @@ export async function adoptTaskTaint(view: TaskSummary, ownSessionId: string): P
   return adopted;
 }
 
+export async function applyTaskSettlement(views: readonly TaskSummary[], ownSessionId: string, ctx: HookContext): Promise<boolean> {
+  if (views.length === 0) return false;
+  const bind = ctx as unknown as BindableContext;
+  const inheritedWakeId = inheritedWakeStampOf(bind);
+  const wakeTurnId = currentTurnId(bind);
+  for (const view of views) noteDelegationSettled(wakeTurnId, view.taskId);
+  for (const view of views) {
+    await installTaskWake({
+      org: deploymentOrg(),
+      taskId: view.taskId,
+      status: view.status,
+      sessionId: ownSessionId,
+      turnId: wakeTurnId,
+      inheritedWakeId,
+    });
+  }
+  let any = false;
+  for (const view of views) any = (await adoptTaskTaint(view, ownSessionId)) || any;
+  if (any) recordTurnTaintForChildren();
+  return any;
+}
+
+export async function settleFromTaskNotification(message: unknown, ownSessionId: string, ctx: HookContext): Promise<boolean> {
+  const view = terminalTaskNotification(message);
+  if (view === null) return false;
+  let settled = view;
+  try {
+    const link = await taskCallLink(deploymentOrg(), view.taskId);
+    if (link?.agentId !== undefined) settled = { ...view, agentId: link.agentId };
+  } catch {
+  }
+  noteTaskSettled(settled);
+  return applyTaskSettlement([settled], ownSessionId, ctx);
+}
+
 export default defineHook({
   events: {
     "turn.started": (_event, ctx) => {
       openTaintTurn(ctx);
       const bind = ctx as unknown as BindableContext;
       noteTurnBoundary(currentTurnId(bind), deliveryStampOf(bind));
+    },
+
+    "message.received": async (event, ctx) => {
+      try {
+        if (isSubagentChildContext(ctx as unknown as BindableContext)) return;
+        const ownSessionId = (ctx as { session?: { id?: string } }).session?.id;
+        if (typeof ownSessionId !== "string" || ownSessionId.length === 0) return;
+        await settleFromTaskNotification((event as { data?: { message?: unknown } }).data?.message, ownSessionId, ctx);
+      } catch {
+      }
     },
 
     "turn.completed": async (_event, ctx) => {
@@ -468,23 +515,7 @@ export default defineHook({
         noteTaskViews(taskViewsOf(result));
         const terminal = terminalTaskViewsOf(result);
         if (terminal.length > 0) {
-          const wakeBind = ctx as unknown as BindableContext;
-          const inheritedWakeId = inheritedWakeStampOf(wakeBind);
-          const wakeTurnId = currentTurnId(wakeBind);
-          for (const view of terminal) noteDelegationSettled(wakeTurnId, view.taskId);
-          for (const view of terminal) {
-            await installTaskWake({
-              org: deploymentOrg(),
-              taskId: view.taskId,
-              status: view.status,
-              sessionId: ownSessionId,
-              turnId: wakeTurnId,
-              inheritedWakeId,
-            });
-          }
-          let any = false;
-          for (const view of terminal) any = (await adoptTaskTaint(view, ownSessionId)) || any;
-          if (any) recordTurnTaintForChildren();
+          await applyTaskSettlement(terminal, ownSessionId, ctx);
           await flushSettledMemory(ctx as unknown as MemoryPersistContext, "task-settled");
           return;
         }

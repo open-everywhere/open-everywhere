@@ -12,10 +12,10 @@ export const TASK_WAKE_UNREAD_REFUSAL_REASON = "task-wake-unread";
 
 export function taskWakeUnreadRefusalMessage(): string {
   return (
-    "reply: this turn was woken by delegated work finishing, and it has NO reply address yet — nothing was posted. " +
+    "reply: this turn was woken by delegated work finishing, and it has NO reply address — nothing was posted. " +
     "The wake-id from the previous message belongs to a different conversation, so replying under it would answer a room that asked nothing. " +
-    "Call `task_peek` to read the finished task's result first: that gives this turn the task's own address, and `reply` then lands in the conversation that asked for the work. " +
-    "If nothing needs saying, call `no_reply`."
+    "No tool call can recover the address: the task's own wake record is missing or expired. " +
+    "Call `no_reply` to end this turn, and say what the worker found the next time that conversation asks."
   );
 }
 

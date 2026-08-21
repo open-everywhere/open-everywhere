@@ -137,7 +137,11 @@ async function runChild(callId: string, sessionId: string, taint: boolean): Prom
 await onParentTurn(async () => {
   const link = await spawnTaint.noteTaskReceipt({ taskId: "task_1", callId: "call_1", agentId: "ag_agent:1111" }, PARENT);
   eq(untrustedIngestedThisTurn(), false, "🔴 T1 THE MEASURED DEFECT, CLOSED: a parked task receipt marks the parent's turn NOT AT ALL — asserted `=== false`, not merely falsy. Before this branch existed the fail-closed read ran here and every clean delegation tainted its own seat");
-  eq(link, { callId: "call_1", childToken: `subagent:${PARENT}:call_1` }, "…and it REMEMBERS the join instead: the callId the child writes its marker under, and the continuation token eve minted for it");
+  eq(
+    link,
+    { callId: "call_1", childToken: `subagent:${PARENT}:call_1`, agentId: "ag_agent:1111" },
+    "…and it REMEMBERS the join instead: the callId the child writes its marker under, the continuation token eve minted for it, and the worker's agent handle for the census",
+  );
   eq(await store.taskCallLink(ORG, "task_1"), link, "…persisted under the task id, which is the only id present on BOTH edges of a background delegation");
 });
 
@@ -216,7 +220,11 @@ await onParentTurn(async () => {
   eq(untrustedIngestedThisTurn(), false, "…asserted on the turn signal too, `=== false`");
 });
 
-eq(await store.taskAgentLink(ORG, PARENT, "ag_agent:5555"), { callId: "call_5", childToken: `subagent:${PARENT}:call_5` }, "🔴 T5: the agent-keyed row still holds the FIRST dispatch's callId after a continuation wrote through it");
+eq(
+  await store.taskAgentLink(ORG, PARENT, "ag_agent:5555"),
+  { callId: "call_5", childToken: `subagent:${PARENT}:call_5`, agentId: "ag_agent:5555" },
+  "🔴 T5: the agent-keyed row still holds the FIRST dispatch's callId after a continuation wrote through it",
+);
 
 await runChild("call_6", "sess-child-sync", true);
 await contextStorage.run(new ContextContainer(), async () => {
@@ -239,7 +247,7 @@ await contextStorage.run(new ContextContainer(), async () => {
 await onParentTurn(async () => {
   const receipt = { taskId: "task_replay", callId: "call_replay", agentId: "ag_agent:rrrr" };
   const first = await spawnTaint.noteTaskReceipt(receipt, PARENT);
-  eq(first, { callId: "call_replay", childToken: `subagent:${PARENT}:call_replay` }, "the first pass mints the join exactly as T1 does");
+  eq(first, { callId: "call_replay", childToken: `subagent:${PARENT}:call_replay`, agentId: "ag_agent:rrrr" }, "the first pass mints the join exactly as T1 does");
 
   const replayed = await spawnTaint.noteTaskReceipt(receipt, PARENT);
   eq(replayed, first, "🔴 OPE-586: the replayed pass resolves to the SAME recorded link, not a fresh one");
@@ -257,7 +265,9 @@ await onParentTurn(async () => {
   eq(await store.taskCallLink(ORG, "task_crash"), undefined, "precondition: the task-keyed row never landed — the simulated crash window");
 
   const link = await spawnTaint.noteTaskReceipt({ taskId: "task_crash", callId: "call_crash", agentId: "ag_agent:crash" }, PARENT);
-  eq(link, halfWritten, "the redelivery resolves to the SAME link the crashed pass had already pinned");
+  eq(link?.callId, halfWritten.callId, "the redelivery resolves to the SAME link the crashed pass had already pinned");
+  eq(link?.childToken, halfWritten.childToken, "…the same continuation token, which is the id the child's marker is readable under");
+  eq(link?.agentId, "ag_agent:crash", "🔴 OPE-904: a join row written without the census field GAINS it from the receipt — a task in flight across the deploy stays countable");
 
   await new Promise((r) => setTimeout(r, 50));
   const rows = await readAudit({ org: ORG, action: spawnTaint.TASK_STARTED_ACTION });
@@ -300,6 +310,61 @@ await new Promise((r) => setTimeout(r, 50));
   eq(settled.filter((r) => r.detail?.task === "task_live").length, 0, "🔴 OPE-566 NEGATIVE CONTROL: a WORKING view writes NO settled row — the census counts parked workers, never peeks");
   const started = await readAudit({ org: ORG, action: spawnTaint.TASK_STARTED_ACTION });
   eq(started.filter((r) => r.detail?.task === "task_live" && r.detail?.agent === "ag_agent:live").length, 1, "…and the dispatch row carries the SAME `agent` key, which is what joins the two halves of the census");
+}
+
+const messageHandler = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["message.received"]!;
+
+ok(typeof messageHandler === "function", "🔴 OPE-904 REACHABILITY: the taint hook SUBSCRIBES to `message.received`. Without this subscription every assertion below tests a function nothing calls, and the settlement edge does not exist on a real host");
+
+await contextStorage.run(new ContextContainer(), async () => {
+  spawnTaint.openTaintTurn(parentCtx as never);
+  await handler({ data: { result: receiptResult("call_note", "task_a1b2c3d4e5f60001", "ag_agent:note") } }, parentCtx);
+  await contextStorage.run(new ContextContainer(), async () => {
+    spawnTaint.openTaintTurn(childCtx("call_note", "sess-child-note") as never);
+    markUntrustedIngestedThisTurn();
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  await contextStorage.run(new ContextContainer(), async () => {
+    spawnTaint.openTaintTurn(parentCtx as never);
+    ok(!untrustedIngestedThisTurn(), "OPE-904 N1 CONTROL: the settlement turn starts CLEAN, so the adoption below is caused by the notification and not inherited");
+    await messageHandler({ data: { message: "Background task task_a1b2c3d4e5f60001 (agent) is completed.\n\nResult:\nI read a page." } }, parentCtx);
+    ok(untrustedIngestedThisTurn(), "🔴 OPE-904 N1: the NOTIFICATION alone adopts the child's taint — no `task_peek`, no `task_cancel`, no tool result of any kind");
+  });
+});
+await new Promise((r) => setTimeout(r, 50));
+{
+  const settled = await readAudit({ org: ORG, action: spawnTaint.TASK_SETTLED_ACTION });
+  const mine = settled.filter((r) => r.detail?.task === "task_a1b2c3d4e5f60001");
+  eq(mine.length, 1, "OPE-904 N1: exactly one settled row for the notification-settled task");
+  eq(mine[0]?.detail?.marker, "tainted", "OPE-904 N1: …and it records the child's marker as the reason, not a bare boolean");
+  eq(mine[0]?.detail?.adopted, true, "OPE-904 N1: …and says the parent adopted it");
+  eq(mine[0]?.detail?.agent, "ag_agent:note", "🔴 OPE-904 N3 THE CENSUS SURVIVES: the settled row still names the parked worker's agent handle, read back off the DISPATCH row this session wrote — eve's notification text does not carry one");
+}
+
+await contextStorage.run(new ContextContainer(), async () => {
+  spawnTaint.openTaintTurn(parentCtx as never);
+  await handler({ data: { result: receiptResult("call_wip", "task_a1b2c3d4e5f60002", "ag_agent:wip") } }, parentCtx);
+  await contextStorage.run(new ContextContainer(), async () => {
+    spawnTaint.openTaintTurn(childCtx("call_wip", "sess-child-wip") as never);
+    markUntrustedIngestedThisTurn();
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  await contextStorage.run(new ContextContainer(), async () => {
+    spawnTaint.openTaintTurn(parentCtx as never);
+    await messageHandler({ data: { message: "Background task task_a1b2c3d4e5f60002 (agent) is working. Use task_peek to read its output." } }, parentCtx);
+    eq(
+      untrustedIngestedThisTurn(),
+      false,
+      "🔴 OPE-904 N2 NEGATIVE CONTROL: a `working` notification adopts NOTHING — asserted `=== false`. Such a child can still read untrusted content, so its marker is not final and settling on it would be a lie in both directions",
+    );
+    await messageHandler({ data: { message: "Background task task_a1b2c3d4e5f60002 (agent) update: read 3 of 9 files" } }, parentCtx);
+    eq(untrustedIngestedThisTurn(), false, "🔴 OPE-904 N2: eve's PROGRESS notification adopts nothing either — asserted `=== false`");
+  });
+});
+await new Promise((r) => setTimeout(r, 50));
+{
+  const settled = await readAudit({ org: ORG, action: spawnTaint.TASK_SETTLED_ACTION });
+  eq(settled.filter((r) => r.detail?.task === "task_a1b2c3d4e5f60002").length, 0, "🔴 OPE-904 N2: …and writes NO settled row, so the census still counts parked workers rather than notifications");
 }
 
 console.log(`background-task-taint-test: ${n} assertions passed`);
