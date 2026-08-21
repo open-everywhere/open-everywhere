@@ -51,7 +51,7 @@ const catalogues: ConnectorCredentials[] = [
   }),
 
   defineConnectorCredentials({
-    description: "Slack workspace — the WORK surface a granted domain reads conversations on at full fidelity.",
+    description: "Slack workspace — the WORK surface a granted domain's delegated workers read conversations on.",
     connector: "slack",
     allows: ["api-key"],
     credentials: [
@@ -60,7 +60,7 @@ const catalogues: ConnectorCredentials[] = [
     ],
   }),
   defineConnectorCredentials({
-    description: "Discord guild — the WORK surface a granted domain reads conversations on at full fidelity.",
+    description: "Discord guild — the WORK surface a granted domain's delegated workers read conversations on.",
     connector: "discord",
     allows: ["api-key"],
     credentials: [
@@ -69,7 +69,7 @@ const catalogues: ConnectorCredentials[] = [
     ],
   }),
   defineConnectorCredentials({
-    description: "Microsoft Teams — the WORK surface a granted domain reads conversations on at full fidelity.",
+    description: "Microsoft Teams — the WORK surface a granted domain's delegated workers read conversations on.",
     connector: "teams",
     allows: ["api-key"],
     credentials: [

@@ -11,7 +11,7 @@ import { capReadForInline } from "../channels/read-spool.js";
 import { assertSurfaceWorkGrant, surfaceWorkReadMount } from "../access/surface-work-grant.js";
 import type { Domain } from "../memory/domain.js";
 
-const MAX_LIMIT = 500;
+const MAX_LIMIT = 100;
 
 function safeDomains(): readonly Domain[] {
   try {
