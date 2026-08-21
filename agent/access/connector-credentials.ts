@@ -35,6 +35,22 @@ const catalogues: ConnectorCredentials[] = [
   }),
 
   defineConnectorCredentials({
+    description: "Linear workspace — the WORK surface a granted domain files and mutates issues through.",
+    connector: "linear",
+    allows: ["api-key"],
+    credentials: [
+      { id: "workspace", type: "api-key", secretRef: "LINEAR_ACCESS_TOKEN", broker: "env", intake: false },
+      {
+        id: "1a000000-0000-4000-8000-000000000002",
+        type: "api-key",
+        secretRef: "LINEAR_APP_SOAK_CLIENT_SECRET",
+        broker: "env",
+        intake: false,
+      },
+    ],
+  }),
+
+  defineConnectorCredentials({
     description: "E2E-only: isolated credentials the connector intake / org-click legs forge against (inert — never granted).",
     connector: "e2e-intake",
     allows: ["api-key", "service-oauth"],

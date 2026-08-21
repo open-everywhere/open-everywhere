@@ -90,13 +90,6 @@ const bundles: Bundle[] = [
   }),
 
   defineBundle({
-    name: "soak-linear-fixture",
-    workSurfaces: ["linear/1a000000-0000-4000-8000-000000000002/1a000000-0000-4000-8000-000000000013"],
-    instructions:
-      "The SOAK Linear team is the soak suite's own tracker. File soak work items there with create_ticket.",
-  }),
-
-  defineBundle({
     name: "e2e-taint-floor-fixture",
     approvers: [
       {
@@ -120,8 +113,6 @@ const bindings: Binding[] = [
   defineBinding({ bundle: "e2e-pr-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
 
   defineBinding({ bundle: "soak-pr-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN008" } }),
-
-  defineBinding({ bundle: "soak-linear-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN008" } }),
 
   defineBinding({ bundle: "e2e-connector-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
 

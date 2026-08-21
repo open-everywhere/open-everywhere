@@ -237,40 +237,6 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
 }
 
 {
-  const SOAK = "linear/org-soak/team-soak";
-  const OTHER = "linear/org-soak/team-other";
-  const bundles: Bundle[] = [
-    { name: "work-a", workSurfaces: [SOAK] },
-    { name: "work-b", workSurfaces: [OTHER] },
-  ];
-  const bindings: Binding[] = [
-    { bundle: "work-a", scope: { level: "surface", surface: "slack/T1/C1" } },
-    { bundle: "work-b", scope: { level: "surface", surface: "slack/T1/C1" } },
-  ];
-  const granted = resolveAccessT(chan("T1", "C1"), bundles, bindings);
-  ok(granted.workSurfaces.length === 2 && granted.workSurfaces.includes(SOAK) && granted.workSurfaces.includes(OTHER), "work surfaces union across two bundles at one scope");
-  const ungranted = resolveAccessT(chan("T1", "C2"), bundles, bindings);
-  ok(ungranted.workSurfaces.length === 0, "an unbound channel resolves NO work surface (default-deny)");
-
-  ok(
-    resolveAccessT(chan("T1", "C1"), bundles, [{ bundle: "work-a", scope: { level: "org" } }]).warnings.some((w) => w.startsWith("broad grant") && w.includes("work surface")),
-    "work surfaces at org scope raise a broad-grant warning",
-  );
-  ok(
-    !resolveAccessT(chan("T1", "C1"), bundles, [{ bundle: "work-a", scope: { level: "surface", surface: "slack/T1/C1" } }]).warnings.some((w) => w.startsWith("broad grant")),
-    "work surfaces at surface scope -> NO broad-grant warning",
-  );
-
-  ok(assertBundlesValid([{ name: "ok", workSurfaces: [SOAK, "linear/org-soak", "linear/org-soak/team-*"] }]) === undefined, "an exact key, a whole-tenant claim and a same-level glob all load");
-  throwsWith(() => assertBundlesValid([{ name: "bad", workSurfaces: ["linear"] }]), "is not a well-formed surface key", "a one-segment entry is refused");
-  throwsWith(() => assertBundlesValid([{ name: "bad", workSurfaces: ["linear/*/team-x"] }]), "is not a well-formed surface key", "a wildcard tenant is refused");
-  throwsWith(() => assertBundlesValid([{ name: "bad", workSurfaces: ["slack/T1/C1"] }]), "reads no work-surface grant", "a platform with no consumer is refused (dead config reads as a live capability)");
-  throwsWith(() => assertBundlesValid([{ name: "bad", workSurfaces: ["github/acme/web"] }]), "granted with `repos`", "GitHub is refused here and pointed at the grant that already exists");
-  throwsWith(() => assertBundlesValid([{ name: "bad", workSurfaces: ["linear/org-soak/team:x"] }]), "person-GROUP rung", "a group rung is refused — a work grant addresses a surface");
-  throwsWith(() => assertBundlesValid([{ name: "bad", workSurfaces: [SOAK, SOAK] }]), "more than once", "a duplicated entry is refused");
-}
-
-{
   const bundles: Bundle[] = [
     { name: "base", connectors: [{ name: "notion", credential: "k" }] },
     { name: "pay", connectors: [{ name: "linear-mcp", credential: "k" }, { name: "notion", credential: "k" }] },

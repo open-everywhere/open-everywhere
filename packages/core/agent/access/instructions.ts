@@ -1,7 +1,10 @@
+import { workGrantedConnectors } from "./work-grant.js";
+import type { CredentialBoundDomain } from "./domain-credentials.js";
 import type { EffectiveAccess } from "./resolver.js";
 
-export function assembleAccessInstructions(access: EffectiveAccess): string | null {
+export function assembleAccessInstructions(access: EffectiveAccess, domains: readonly (CredentialBoundDomain | undefined)[] = []): string | null {
   const parts: string[] = [];
+  const workConnectors = workGrantedConnectors(domains);
 
   if (access.instructionStack.length > 0) {
     const lines = access.instructionStack.map((l) => `- (${l.source}) ${l.text}`).join("\n");
@@ -24,8 +27,8 @@ export function assembleAccessInstructions(access: EffectiveAccess): string | nu
   if (access.repos.length > 0) {
     caps.push(`- Repositories granted: ${access.repos.map((r) => `\`${r}\``).join(", ")}`);
   }
-  if (access.workSurfaces.length > 0) {
-    caps.push(`- Work trackers you can file into: ${access.workSurfaces.map((w) => `\`${w}\``).join(", ")}`);
+  if (workConnectors.length > 0) {
+    caps.push(`- Work surfaces your domain is granted: ${workConnectors.map((w) => `\`${w}\``).join(", ")}`);
   }
   if (access.plugins.length > 0) {
     caps.push(`- Plugins granted: ${access.plugins.map((p) => `\`${p}\``).join(", ")}`);
