@@ -22,6 +22,7 @@ interface GitHubMintContext {
   readonly appId: string;
   readonly privateKeyPem: string;
   readonly installationId: string;
+  readonly owner: string;
   readonly repo: string;
 }
 
@@ -35,6 +36,12 @@ const installationToken = warmCredential<GitHubMintContext>({
   mint: async (ctx): Promise<BrokeredSecret> => {
     const jwt = await signAppJwt(parsePrivateKey(ctx.privateKeyPem), ctx.appId, Math.floor(Date.now() / 1000));
     const minted = await mintInstallationToken({ jwt, installationId: ctx.installationId, repoNames: [ctx.repo], permissions: { issues: "write" } });
+    const expected = `${ctx.owner}/${ctx.repo}`;
+    if (!minted.repositories.includes(expected)) {
+      throw new Error(
+        `installation token for "${ctx.installationId}" does not cover "${expected}" — granted: [${minted.repositories.join(", ") || "none"}].`,
+      );
+    }
     const parsed = Date.parse(minted.expiresAt);
     return { value: minted.token, expiresAtMs: Number.isFinite(parsed) ? parsed : undefined };
   },
@@ -64,7 +71,7 @@ async function installationTokenFor(origin: GitHubOrigin): Promise<string> {
       `reply couldn't post to GitHub — no installation id for owner "${origin.owner}" (the wake carried none, OE_GITHUB_INSTALLATIONS has no entry, and no installation webhook has registered one).`,
     ));
   }
-  return installationToken.get({ appId: creds.appId, privateKeyPem: creds.privateKeyPem, installationId, repo: origin.repo });
+  return installationToken.get({ appId: creds.appId, privateKeyPem: creds.privateKeyPem, installationId, owner: origin.owner, repo: origin.repo });
 }
 
 async function liveGitHubPost(origin: GitHubOrigin, text: string): Promise<string> {

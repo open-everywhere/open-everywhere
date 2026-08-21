@@ -65,17 +65,25 @@ ok(assembleAccessInstructions(base) === null, "bare scope -> null (no scope-spec
   ok(md !== null && md.includes("Work surfaces your domain is granted"), "a work grant is named in the capability summary");
   ok(md!.includes("`linear`"), "…naming the granted provider");
 
+  const capable = { ...base, plugins: ["some-plugin"] };
+
   const chatOnly = { name: "chat", credentials: [{ connector: "notion", credential: "channel-key", use: "other-key" }] };
-  const chatMd = assembleAccessInstructions({ ...base, repos: ["acme/web"] }, [chatOnly]);
+  const chatMd = assembleAccessInstructions(capable, [chatOnly]);
   ok(
     chatMd !== null && !chatMd.includes("Work surfaces your domain is granted"),
     "a domain declaring only a CHAT role says nothing about work — a chat entry confers no work capability",
   );
 
-  const none = assembleAccessInstructions({ ...base, repos: ["acme/web"] }, [{ name: "plain" }]);
+  const none = assembleAccessInstructions(capable, [{ name: "plain" }]);
   ok(none !== null && !none.includes("Work surfaces your domain is granted"), "a domain with NO work grant says nothing about filing");
-  const noDomain = assembleAccessInstructions({ ...base, repos: ["acme/web"] });
+  const noDomain = assembleAccessInstructions(capable);
   ok(noDomain !== null && !noDomain.includes("Work surfaces your domain is granted"), "an unresolved domain says nothing about filing (fail closed)");
+
+  const gh = assembleAccessInstructions({ ...base, repos: ["acme/web"] });
+  ok(gh !== null && gh.includes("Work surfaces your domain is granted: `github`"), "🔴 OPE-940: a repo grant alone names github as a granted work surface");
+  ok(gh!.includes("Repositories granted: `acme/web`"), "…alongside the repo list, in the same capability section");
+  const ghAndLinear = assembleAccessInstructions({ ...base, repos: ["acme/web"] }, [granted]);
+  ok(ghAndLinear!.includes("`github`") && ghAndLinear!.includes("`linear`"), "a repo grant and a declared work role render on ONE line, sorted");
 
   const both = {
     name: "kb",
@@ -116,7 +124,7 @@ ok(assembleAccessInstructions(base) === null, "bare scope -> null (no scope-spec
 
   const grantedMd = assembleAccessInstructions(soakAccess, [soakDomain]);
   const grantedConnections = connectionsSection(grantedMd);
-  const ungrantedMd = assembleAccessInstructions(soakAccess, [{ name: "plain" }]);
+  const ungrantedMd = assembleAccessInstructions({ ...soakAccess, repos: [] }, [{ name: "plain" }]);
   const ungrantedConnections = connectionsSection(ungrantedMd);
 
   ok(grantedConnections.length > 0 && ungrantedConnections.length > 0, "(a) fixture guard: both shapes render a connections section to compare");

@@ -17,9 +17,9 @@ import {
 const OBSERVATION_ACTION = "memory.observation";
 const SETTLEMENT_FLUSH_ACTION = "memory.settlement_flush";
 
-function observationKey(detail: Record<string, unknown> | undefined): string {
-  const key = detail?.["key"];
-  return typeof key === "string" ? key : "";
+function observationSig(detail: Record<string, unknown> | undefined): string {
+  const sig = detail?.["sigSha"];
+  return typeof sig === "string" ? sig : "";
 }
 
 test("the dream cycle fingerprints the seat's own request and never the worker's brief", async () => {
@@ -72,13 +72,40 @@ test("the dream cycle fingerprints the seat's own request and never the worker's
   expect(workerRequests.length).toBeGreaterThanOrEqual(1);
   expect(workerRequests[0].messages.map((m) => m.text).join("\n")).toContain(workerNonce);
 
+  const { workflowSignature, signatureDigest } = await import("@open-everywhere/core/agent/memory/dream/recurrence.js");
+  const digestOf = (text: string): string => {
+    const sig = workflowSignature(text);
+    expect(sig, "the fixture request must produce a signature, else the claims below pass for free").not.toBe("");
+    return signatureDigest(sig);
+  };
+  const spellings = (nonce: string): string[] => [
+    `${nonce} reconcile the quarterly ledger`,
+    `<@9000000000000000001> ${nonce} reconcile the quarterly ledger`,
+  ].map(digestOf);
+  const seatDigests = spellings(seatNonce);
+  const workerDigests = spellings(workerNonce);
+  expect(
+    seatDigests.filter((d) => workerDigests.includes(d)),
+    "the two nonces must fingerprint apart, else ② is satisfied by ①'s own row",
+  ).toEqual([]);
+
   const rows = await waitFor(async () => {
     const found = await readAuditRows({ actions: [SETTLEMENT_FLUSH_ACTION, OBSERVATION_ACTION], sinceIso, limit: 200 });
-    return found.some((r) => r.action === OBSERVATION_ACTION && observationKey(r.detail).includes(seatNonce)) ? found : undefined;
+    return found.some((r) => r.action === OBSERVATION_ACTION && seatDigests.includes(observationSig(r.detail))) ? found : undefined;
   }, `a ${OBSERVATION_ACTION} row fingerprinting the SEAT's own request — the cycle running on the turn edge`);
 
-  const keys = rows.filter((r) => r.action === OBSERVATION_ACTION).map((r) => observationKey(r.detail));
+  const observations = rows.filter((r) => r.action === OBSERVATION_ACTION);
+  const sigs = observations.map((r) => observationSig(r.detail));
 
-  expect(keys.filter((k) => k.includes(seatNonce)).length).toBe(1);
-  expect(keys.filter((k) => k.includes(workerNonce))).toEqual([]);
+  expect(sigs.filter((s) => seatDigests.includes(s)).length).toBe(1);
+  expect(sigs.filter((s) => workerDigests.includes(s))).toEqual([]);
+
+  expect(observations.length).toBeGreaterThan(0);
+  for (const row of observations) {
+    const serialised = JSON.stringify(row.detail ?? {});
+    expect(serialised, "a member's own word reached a taint-clean audit row").not.toContain(seatNonce);
+    expect(serialised, "the parent model's brief reached a taint-clean audit row").not.toContain(workerNonce);
+    expect(serialised, "the request's plain words reached a taint-clean audit row").not.toContain("quarterly");
+    expect(observationSig(row.detail)).toMatch(/^[0-9a-f]{64}$/);
+  }
 });

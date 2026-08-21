@@ -9,6 +9,7 @@ import { narrowByConnectorOverride } from "../access/connector-scope.js";
 import { getConfig } from "../access/config.js";
 import { resolveNetworkAccessLevel } from "../access/network-access.js";
 import { getGitHubApp, repoAllowed } from "../scm/provider.js";
+import { githubWorkMount } from "../scm/github-work.js";
 import { READ_PERMISSIONS } from "../scm/mint.js";
 import { mintGitReadBroker, mergeGitReadBroker } from "../scm/broker.js";
 import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.js";
@@ -136,4 +137,4 @@ export default windowGated("checkout_repo", defineTool({
         `Branch and commit there, then open_pull_request — it pushes your branch and opens the PR after approval (plain git push is not authorized).${conventionNote}${skillNote}${agentNote}`,
     };
   },
-}));
+}), githubWorkMount);

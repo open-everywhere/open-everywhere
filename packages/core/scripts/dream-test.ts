@@ -224,11 +224,46 @@ const tidySchedule = await import("../agent/schedules/tidy.js");
 
 {
   const ledger = auditRecurrenceLedger("acme");
-  eq(await ledger.count("k1"), 0, "audit-ledger: unseen key counts 0");
-  eq(await ledger.observe("k1"), 1, "audit-ledger: first observe → 1");
-  eq(await ledger.observe("k1"), 2, "audit-ledger: second observe → 2 (durable)");
-  eq(await ledger.observe("k2"), 1, "audit-ledger: distinct key counted apart");
-  eq(await ledger.count("k1"), 2, "audit-ledger: count reflects prior observes");
+  const k1 = { scope: "brain", signature: "ledger quarterly reconcile" };
+  const k2 = { scope: "brain", signature: "cluster frankfurt provision warehouse" };
+  const sameSigOtherScope = { scope: "other-brain", signature: k1.signature };
+  eq(await ledger.count(k1), 0, "audit-ledger: unseen key counts 0");
+  eq(await ledger.observe(k1), 1, "audit-ledger: first observe → 1");
+  eq(await ledger.observe(k1), 2, "audit-ledger: second observe → 2 (durable)");
+  eq(await ledger.observe(k2), 1, "audit-ledger: distinct signature counted apart");
+  eq(await ledger.observe(sameSigOtherScope), 1, "audit-ledger: the same signature in another scope counts apart");
+  eq(await ledger.count(k1), 2, "audit-ledger: count reflects prior observes");
+}
+
+{
+  const { readAudit } = await import("../agent/audit/audit.js");
+  const { signatureDigest } = await import("../agent/memory/dream/recurrence.js");
+
+  const request = "escalate the northwind pipeline hotfix immediately";
+  const signature = workflowSignature(request);
+  ok(signature.length > 0, "OPE-924 fixture: the request produces a non-empty signature (else the checks pass for free)");
+  const words = signature.split(" ");
+  ok(words.length >= 3, "OPE-924 fixture: the signature carries several distinct words to look for");
+
+  await auditRecurrenceLedger("taintco").observe({ scope: "brain", signature }, "delivery-1");
+  const rows = await readAudit({ org: "taintco", action: "memory.observation" });
+  eq(rows.length, 1, "OPE-924: exactly one observation row was written");
+  const detail = rows[0].detail ?? {};
+
+  const serialised = JSON.stringify(detail);
+  for (const w of words) {
+    ok(!serialised.includes(w), `OPE-924: the signature word "${w}" is NOT in the observation row's detail`);
+  }
+  ok(!serialised.includes(signature), "OPE-924: the joined signature is not in the row either");
+
+  eq(detail["sigSha"], signatureDigest(signature), "OPE-924: the row carries the SHA-256 digest of the signature");
+  eq(detail["scope"], "brain", "OPE-924: the OE-minted scope stays in the clear — the row is still useful");
+  eq(detail["delivery"], "delivery-1", "OPE-924: the delivery id (the dedupe key) survives");
+  ok(/^[0-9a-f]{64}$/.test(String(detail["sigSha"])), "OPE-924: the digest is 64 hex characters");
+
+  eq(Object.keys(detail).sort(), ["delivery", "scope", "sigSha"], "OPE-924: the row carries THOSE THREE keys and nothing else");
+
+  ok(signatureDigest(signature) !== signatureDigest(`${signature} extra`), "OPE-924: distinct signatures digest apart");
 }
 
 {

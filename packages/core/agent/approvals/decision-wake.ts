@@ -44,7 +44,9 @@ function outcomeClause(outcome: ApprovalOutcome, clickerId?: string): string {
 export function approvalDecisionBody(input: ApprovalDecisionWakeInput): string {
   const closed =
     input.outcome === "approved"
-      ? `Nothing more is needed from you unless someone asks a follow-up.`
+      ? `If you told the room you would do more once this was approved, continue that work now — the ` +
+        `approval unblocks it, it does not end your turn. Otherwise, nothing more is needed unless ` +
+        `someone asks a follow-up.`
       : `If someone still genuinely wants this change, treat a fresh request as a NEW proposal (a new card) — do not point anyone at the old, dead card, and do not re-propose unprompted.`;
   return (
     `A pending approval you were waiting on (id ${input.pendingId}) has been decided. The request ` +

@@ -350,19 +350,34 @@ const GRANTED_DOMAINS: readonly Domain[] = [
   ok(rows[0]?.detail?.reason === "cross-domain", "…for the same reason as before");
 
   rows.length = 0;
+  await assertLinearIssueAllowed(slackPay, ISSUE_SIBLING, GRANTED_DOMAINS, issueResolver, { audit, workOrg: ORG });
+  ok(rows.length === 0, "🔴 THE FIX: a Slack-woken read_linear_issue caller is ADMITTED under the domain's Linear work grant");
+
+  rows.length = 0;
   await assert.rejects(
     () => assertLinearIssueAllowed(slackPay, ISSUE_SIBLING, GRANTED_DOMAINS, issueResolver, { audit }),
     ChannelScopeError,
-    "a cross-surface READ is still refused — the grant reaches the WRITE fences only",
+    "NEGATIVE CONTROL: a cross-surface READ with no grant threaded in is still refused",
   );
   ok(rows[0]?.action === "read.refused", "…and it is audited as a read, not a write");
+
   let readErr: unknown;
   try {
     await assertLinearIssueAllowed(slackPay, ISSUE_SIBLING, GRANTED_DOMAINS, issueResolver, { audit });
   } catch (e) {
     readErr = e;
   }
-  ok(!(readErr as Error).message.includes('credential: "workspace"'), "NEGATIVE CONTROL: a READ refusal never names the work grant as a remedy — it would not deliver one");
+  ok((readErr as Error).message.includes('credential: "workspace"'), "🔴 the READ refusal NOW names the work credential remedy — the read tool can honour one");
+
+  rows.length = 0;
+  let walledReadErr: unknown;
+  try {
+    await assertLinearIssueAllowed(slackPay, ISSUE_ENG, GRANTED_DOMAINS, issueResolver, { audit, workOrg: ORG });
+  } catch (e) {
+    walledReadErr = e;
+  }
+  ok(rows[0]?.detail?.reason === "cross-domain", "even a granted READ caller cannot cross into another domain's issue");
+  ok(!(walledReadErr as Error).message.includes('credential: "workspace"'), "NEGATIVE CONTROL: a granted READ caller is NOT told to add a grant it already holds");
 }
 
 {

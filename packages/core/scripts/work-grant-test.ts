@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { hasWorkGrant, workGrantCredential } from "../agent/access/work-grant.js";
+import { hasGithubWorkGrant, hasWorkGrant, workGrantCredential, workGrantedConnectors } from "../agent/access/work-grant.js";
 import { domainCredentialId } from "../agent/access/domain-credentials.js";
 import type { Domain } from "../agent/memory/domain.js";
 
@@ -63,5 +63,17 @@ const both: Domain = {
 };
 ok(workGrantCredential(both, NOTION, WORK_ROLE) === "kb-work-key", "the work role resolves its own credential when both roles are declared");
 ok(domainCredentialId(both, NOTION, CHAT_ROLE) === "kb-chat-key", "the chat role still resolves its own credential, untouched by the work grant");
+
+ok(hasGithubWorkGrant(["acme/api"]), "a granted repo IS the GitHub work grant");
+ok(hasGithubWorkGrant(["acme/*"]), "a WILDCARD grant is a grant — it reaches every repo under that owner");
+ok(hasGithubWorkGrant([]) === false, "NEGATIVE CONTROL: no granted repo, no GitHub work grant (explicit false)");
+
+ok(workGrantedConnectors([worker]).includes("notion"), "the summary names a credential-declared provider");
+ok(workGrantedConnectors([worker]).includes("github") === false, "NEGATIVE CONTROL: a Notion-granted domain with NO repo grant is not told it may do GitHub work");
+ok(workGrantedConnectors([worker], ["acme/api"]).includes("github"), "🔴 OPE-940: a repo grant puts github in the summary the model reads");
+ok(workGrantedConnectors([plain], ["acme/api"]).join(",") === "github", "the repo grant stands ALONE — a domain that declares no work role at all still holds GitHub's");
+ok(workGrantedConnectors([plain], []).length === 0, "NEGATIVE CONTROL: no declaration and no repo ⇒ no work line at all");
+const sorted = workGrantedConnectors([worker], ["acme/api"]);
+ok(sorted.join(",") === "github,notion", `the list stays sorted with github in it (${sorted.join(",")})`);
 
 console.log(`✓ work-grant: ${passed} assertions passed`);

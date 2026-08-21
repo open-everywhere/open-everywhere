@@ -90,7 +90,7 @@ const TEAMS_CHANNEL = "teams/TEN_WG/K_WG";
 ok(surfaceWorkRole("slack") === WORK_ROLE, "slack names the work-token role");
 ok(surfaceWorkRole("discord") === WORK_ROLE, "discord names the work-token role");
 ok(surfaceWorkRole("teams") === WORK_ROLE, "teams names the work-token role");
-ok(surfaceWorkRole("github") === undefined, "github declares NO chat work role yet (its grant is still the bundle's repos: field)");
+ok(surfaceWorkRole("github") === undefined, "github declares NO chat work role — its grant is the bundle's repos: list (OPE-940)");
 ok(surfaceWorkRole("notion") === undefined, "notion is not a chat work surface — its work half is the page, under its own role");
 ok(surfaceWorkRole("linear") === undefined, "linear is not a chat work surface — its work half is the issue, under its own role");
 ok(surfaceWorkRole("nonsense") === undefined, "an unknown platform names no role");
