@@ -51,7 +51,6 @@ export function registerSlackTestBridge(overrides: Partial<SlackBridge> = {}): v
     botDisplayName: async () => undefined,
     confirmChannelInternal: async () => false,
     partnerFactsFromInfo: () => ({ dmPartnerTrust: "external" }),
-    readableChannelList: () => [],
     channel: {} as never,
     ...overrides,
   });

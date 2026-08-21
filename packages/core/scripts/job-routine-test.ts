@@ -26,7 +26,6 @@ registerSlackBridge({
   botDisplayName: async () => undefined,
   confirmChannelInternal: async () => false,
   partnerFactsFromInfo: () => ({ dmPartnerTrust: "external" }),
-  readableChannelList: () => [],
   channel: {} as never,
 });
 

@@ -26,7 +26,6 @@ export const SEAT_PROMPT_SLOTS = [
   "workerCapabilities",
   "recoveryRead",
   "memoryIndex",
-  "channelScope",
   "noiseDoctrine",
 ] as const;
 

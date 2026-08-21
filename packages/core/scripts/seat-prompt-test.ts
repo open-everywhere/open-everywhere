@@ -50,7 +50,6 @@ function ok(cond: boolean, label: string): void {
     "workerCapabilities",
     "recoveryRead",
     "memoryIndex",
-    "channelScope",
     "noiseDoctrine",
   ];
   ok(JSON.stringify([...SEAT_PROMPT_SLOTS]) === JSON.stringify(EXPECTED_ORDER), "🔴 SEAT_PROMPT_SLOTS is exactly the pinned order — a reorder must be deliberate");
@@ -63,7 +62,7 @@ function ok(cond: boolean, label: string): void {
   ok(composeSeatPrompt(withHole) === expected, "an empty slot drops out and leaves no extra blank line");
   ok(!composeSeatPrompt(withHole).includes("\n\n\n"), "negative control: dropping a slot never produces a double blank line");
 
-  for (const missing of ["persona", "readingAWake", "channelScope"] as SeatPromptSlot[]) {
+  for (const missing of ["persona", "readingAWake", "memoryIndex"] as SeatPromptSlot[]) {
     const partial = { ...named } as Record<string, string>;
     delete partial[missing];
     let threw = "";
@@ -249,7 +248,6 @@ function ok(cond: boolean, label: string): void {
     "## What stops for a human": "approvalPreview",
     "## What a worker can do that you cannot": "workerCapabilities",
     "## When somebody refers to something you cannot see": "recoveryRead",
-    "## Channels you can read": "channelScope",
     "## Busy threads: react over reply": "noiseDoctrine",
   };
   const slotSequence = (md: string): SeatPromptSlot[] =>

@@ -1,6 +1,7 @@
 import { callSlackApi } from "eve/channels/slack";
 import {
   auditChannelReadRefusal,
+  bindFrom,
   getConfig,
   domainForChannel,
   resolvePartition,
@@ -10,6 +11,7 @@ import {
   type BindableContext,
   type ReadScopeAuditDeps,
   type RenderedLine,
+  type WakeReadAddress,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { slackAuthorIsMember, type SlackMemberProbe } from "./slack-events.js";
 
@@ -50,10 +52,6 @@ export async function assertChannelAllowed(ctx: BindableContext, channelId: stri
     `channel "${channelId}" is not in ${scope} read scope. The agent may only read channels in its ` +
       `memory domain (memory/domains.ts). Add the channel to the domain's \`channels\` to grant it.`,
   );
-}
-
-export function readableChannelList(ctx: BindableContext): string[] {
-  return [...allowedChannelIds(ctx).ids].sort();
 }
 
 interface SlackReadResponse {
@@ -111,6 +109,12 @@ function slackReadTenant(ctx: BindableContext): { teamId: string; tenantKey: str
 
 export const slackReadAdapter = {
   platform: "slack" as const,
+  wakeAddress(ctx: BindableContext): WakeReadAddress | undefined {
+    const b = bindFrom(ctx);
+    const container = typeof b.target?.["channelId"] === "string" ? (b.target["channelId"] as string) : undefined;
+    if (!container) return undefined;
+    return { container, ...(b.threadTs ? { threadRoot: b.threadTs } : {}) };
+  },
   async readChannel(ctx: BindableContext, channel: string, limit?: number, call: SlackReadCall = callSlackRead): Promise<readonly RenderedLine[]> {
     await assertChannelAllowed(ctx, channel);
     const res = await call("conversations.history", { channel, limit: limit ?? SLACK_CHANNEL_DEFAULT_LIMIT, inclusive: true });

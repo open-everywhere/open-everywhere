@@ -164,6 +164,7 @@ const ctx = {} as BindableContext;
 function adapter(graded: boolean | "none"): ReadAdapter {
   return {
     platform: "slack",
+    wakeAddress: () => undefined,
     readChannel: async () => PAGE,
     readThread: async () => PAGE,
     ...(graded === "none" ? {} : { refutedAuthorIds: async () => (graded ? ["GUEST"] : []) }),
@@ -192,6 +193,7 @@ function adapter(graded: boolean | "none"): ReadAdapter {
 
   const thrower: ReadAdapter = {
     platform: "slack",
+    wakeAddress: () => undefined,
     readChannel: async () => PAGE,
     readThread: async () => PAGE,
     refutedAuthorIds: async () => {
@@ -211,6 +213,7 @@ console.log("5b. coverage disclosure (OPE-761):");
 {
   const cappedAdapter: ReadAdapter = {
     platform: "slack",
+    wakeAddress: () => undefined,
     readChannel: async (_c, _ch, limit) => Array.from({ length: limit ?? 50 }, (_v, i) => human(`U${i}`, `msg ${i}`)),
     readThread: async (_c, _ch, _ts, limit) => Array.from({ length: limit ?? 100 }, (_v, i) => human(`U${i}`, `reply ${i}`)),
   };
@@ -224,6 +227,7 @@ console.log("5b. coverage disclosure (OPE-761):");
 
   const shortAdapter: ReadAdapter = {
     platform: "slack",
+    wakeAddress: () => undefined,
     readChannel: async () => [human("U1", "only message")],
     readThread: async () => [human("U1", "only reply")],
   };
@@ -363,6 +367,7 @@ console.log("7. the author grain on the read path (OPE-534):");
   const botLine: RenderedLine = { author: "GUEST", ts: "2", text: "beep", authorId: "GUEST", bot: true };
   const botAdapter: ReadAdapter = {
     platform: "slack",
+    wakeAddress: () => undefined,
     readChannel: async () => [botLine],
     readThread: async () => [botLine],
     refutedAuthorIds: async () => ["GUEST"],

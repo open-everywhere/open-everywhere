@@ -21,8 +21,6 @@ import { SEAT_RECOVERY_READ_BUDGET } from "../access/seat-read-budget.js";
 import { renderWorkerCapabilityIndex } from "../access/worker-capabilities.js";
 import { readOneshotMarker } from "../access/oneshot-marker.js";
 import { WORKER_ONLY_TOOLS_STANDING, WORKER_ONLY_TOOLS_THREAD } from "../access/worker-capability-index.generated.js";
-import { bridgeReadableChannelList } from "../channels/slack-bridge.js";
-import { encodeChannelKey } from "../channels/channel-key.js";
 import { renderPendingCancelNote } from "../channels/cancel-note.js";
 import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
 import { isSupervisorSession } from "../model/routing.js";
@@ -51,20 +49,6 @@ import {
   type SurfaceBinding,
 } from "../identity/binding.js";
 
-function renderChannelScope(ctx: BindableContext): string {
-  if (channelPlatform(ctx) !== "slack") return "";
-  const channels = bridgeReadableChannelList(ctx);
-  if (channels.length < 2) return "";
-  const tools = genericReadVerbsEnabled() ? "`read_channel` / `read_thread`" : "`read_slack_channel` / `read_slack_thread`";
-  return (
-    "## Channels you can read\n" +
-    "Your memory domain spans these channels — you may read any of them with " +
-    tools +
-    ", and no others:\n" +
-    channels.map((c) => `- ${encodeChannelKey("slack", c)}`).join("\n")
-  );
-}
-
 export function renderRecoveryReadDoctrine(lean: boolean): string {
   if (!lean || !genericReadVerbsEnabled()) return "";
   return [
@@ -73,8 +57,9 @@ export function renderRecoveryReadDoctrine(lean: boolean): string {
     "Your wake carries recent backscroll. It does not carry all of it. So a person can refer to a",
     "message that is not in front of you — theirs or your own.",
     "",
-    "When that happens, GO AND LOOK. `read_channel` reads a channel; `read_thread` reads a thread.",
-    "Read first, then reply from what you read.",
+    "When that happens, GO AND LOOK. `read_channel` reads this conversation's channel; `read_thread`",
+    "reads this thread. Both read WHERE YOU ARE and take no target — you cannot point them somewhere",
+    "else. Read first, then reply from what you read.",
     "",
     "Two things you must not do instead. Do not state the content you cannot see — you would be",
     "inventing it. And do not say the message does not exist, or that you never said it: you cannot",
@@ -412,7 +397,6 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     workerCapabilities: renderWorkerCapabilitiesFor(ctx, recall),
     recoveryRead: renderRecoveryReadDoctrine(isLeanSeat(ctx)),
     memoryIndex: memoryMd,
-    channelScope: soloMode ? renderChannelScope(ctx) : "",
     noiseDoctrine: soloMode ? renderNoiseDoctrine(ctx) : "",
   });
 }
@@ -448,7 +432,6 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
     workerCapabilities: renderWorkerCapabilitiesFor(ctx, recall),
     recoveryRead: renderRecoveryReadDoctrine(isLeanSeat(ctx)),
     memoryIndex: memoryMd,
-    channelScope: renderChannelScope(ctx),
     noiseDoctrine: renderNoiseDoctrine(ctx),
   });
 }

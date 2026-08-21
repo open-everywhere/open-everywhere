@@ -5,7 +5,8 @@ import { type BindableContext, TurnOriginFenceError } from "../identity/binding.
 import { resolveWindowSources } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
-import { resolveReadTarget, readChannelResult, chatReadIngestion, renderChannelBody, channelReadSource, keyedReadResult, WindowSourcesRefusalError } from "../channels/channel-read.js";
+import { readChannelResult, chatReadIngestion, renderChannelBody, channelReadSource, keyedReadResult, WindowSourcesRefusalError } from "../channels/channel-read.js";
+import { resolveWakeChannel } from "../channels/wake-container.js";
 import { auditSourcesGateRefusal, auditOriginFenceRefusal } from "../channels/read-scope-audit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import { assertSeatReadBudget } from "../access/seat-read-budget.js";
@@ -24,14 +25,10 @@ function safeDomains(): readonly Domain[] {
 
 const readChannelEntry = defineTool({
   description:
-    "Read recent messages from a channel this window's memory domain grants. Pass the channel key " +
-    "you were given — the `id` on the `<channel>` element of your wake, or an entry from your " +
-    "readable-channel list. You can only read channels your domain grants; others are refused.",
+    "Read recent messages from THIS conversation's channel — the room this turn arrived in. It takes " +
+    "no target: it always reads where you are. Use it when somebody refers to a message you cannot " +
+    "see in your wake.",
   inputSchema: z.object({
-    channel: z
-      .string()
-      .min(1)
-      .describe("The channel key to read (the `id` from your wake's `<channel>` element, or an entry from your readable-channel list)."),
     limit: z
       .number()
       .int()
@@ -52,9 +49,9 @@ const readChannelEntry = defineTool({
   async execute(input, ctx) {
     const bctx = ctx as unknown as BindableContext;
     assertSeatReadBudget("read_channel");
-    let resolved: ReturnType<typeof resolveReadTarget>;
+    let resolved: ReturnType<typeof resolveWakeChannel>;
     try {
-      resolved = resolveReadTarget(bctx, input.channel, safeDomains());
+      resolved = resolveWakeChannel(bctx, safeDomains());
     } catch (err) {
       if (err instanceof WindowSourcesRefusalError) await auditSourcesGateRefusal(bctx, err.platform);
       else if (err instanceof TurnOriginFenceError) await auditOriginFenceRefusal(bctx, err.surface);
@@ -62,7 +59,8 @@ const readChannelEntry = defineTool({
     }
     const { platform, adapter, container } = resolved;
     const out = await readChannelResult(bctx, platform, adapter, container, input.limit);
-    return await capReadForInline(bctx, out, "channel", input.channel, () => renderChannelBody(keyedReadResult(out)));
+    const keyed = keyedReadResult(out);
+    return await capReadForInline(bctx, out, "channel", keyed.channel, () => renderChannelBody(keyed));
   },
   toModelOutput(output) {
     const keyed = keyedReadResult(output);

@@ -5,7 +5,8 @@ import { type BindableContext, TurnOriginFenceError } from "../identity/binding.
 import { resolveWindowSources } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
-import { resolveReadTarget, readThreadResult, chatReadIngestion, renderThreadBody, threadReadSource, keyedReadResult, WindowSourcesRefusalError } from "../channels/channel-read.js";
+import { readThreadResult, chatReadIngestion, renderThreadBody, threadReadSource, keyedReadResult, WindowSourcesRefusalError } from "../channels/channel-read.js";
+import { resolveWakeChannel, requireWakeThreadRoot } from "../channels/wake-container.js";
 import { auditSourcesGateRefusal, auditOriginFenceRefusal } from "../channels/read-scope-audit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import { assertSeatReadBudget } from "../access/seat-read-budget.js";
@@ -24,17 +25,9 @@ function safeDomains(): readonly Domain[] {
 
 const readThreadEntry = defineTool({
   description:
-    "Read all replies in a thread this window's memory domain grants. Pass the channel key you were " +
-    "given — the `id` on the `<channel>` element of your wake — plus thread_ts, the thread root.",
+    "Read all replies in THIS thread — the thread this turn arrived in. It takes no target: it " +
+    "always reads where you are. If this turn is not in a thread, use `read_channel` instead.",
   inputSchema: z.object({
-    channel: z
-      .string()
-      .min(1)
-      .describe("The channel key holding the thread (the `id` from your wake's `<channel>` element)."),
-    thread_ts: z
-      .string()
-      .min(1)
-      .describe("The thread root, as shown on your wake's `<thread ts>` (Slack: the root message ts; Discord: the thread's own channel id)."),
     limit: z.number().int().min(1).max(MAX_LIMIT).optional().describe(`Max replies to fetch (default 100, max ${MAX_LIMIT}).`),
   }),
   outputSchema: z.object({
@@ -50,17 +43,19 @@ const readThreadEntry = defineTool({
   async execute(input, ctx) {
     const bctx = ctx as unknown as BindableContext;
     assertSeatReadBudget("read_thread");
-    let resolved: ReturnType<typeof resolveReadTarget>;
+    let resolved: ReturnType<typeof resolveWakeChannel>;
     try {
-      resolved = resolveReadTarget(bctx, input.channel, safeDomains());
+      resolved = resolveWakeChannel(bctx, safeDomains());
     } catch (err) {
       if (err instanceof WindowSourcesRefusalError) await auditSourcesGateRefusal(bctx, err.platform);
       else if (err instanceof TurnOriginFenceError) await auditOriginFenceRefusal(bctx, err.surface);
       throw err;
     }
     const { platform, adapter, container } = resolved;
-    const out = await readThreadResult(bctx, platform, adapter, container, input.thread_ts, input.limit);
-    return await capReadForInline(bctx, out, "thread", input.channel, () => renderThreadBody(keyedReadResult(out)));
+    const threadRoot = requireWakeThreadRoot(resolved);
+    const out = await readThreadResult(bctx, platform, adapter, container, threadRoot, input.limit);
+    const keyed = keyedReadResult(out);
+    return await capReadForInline(bctx, out, "thread", keyed.channel, () => renderThreadBody(keyed));
   },
   toModelOutput(output) {
     const keyed = keyedReadResult(output);

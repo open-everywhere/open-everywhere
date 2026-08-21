@@ -68,7 +68,7 @@ import { classifyEnvelope, verifySlackSignature, buildFrontHandler, EventDedupe,
 import { _resetOperationalDbForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import { resolvePartition } from "@open-everywhere/core/agent/adapter-api.js";
 import { OE_APPROVAL_PREFIX } from "@open-everywhere/core/agent/adapter-api.js";
-import { allowedChannelIds, assertChannelAllowed, ChannelScopeError, readableChannelList } from "../agent/channels/slack-read.js";
+import { allowedChannelIds, assertChannelAllowed, ChannelScopeError } from "../agent/channels/slack-read.js";
 import { bindSlack } from "../agent/channels/slack-identity.js";
 import type { BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
 import type { WakeMessageInput } from "@open-everywhere/core/agent/adapter-api.js";
@@ -484,7 +484,6 @@ registerConfig({
 
   const inDomain = allowedChannelIds(ctxFor("C_TXN"));
   ok(inDomain.domain === "transactions" && inDomain.ids.has("C_TXN") && inDomain.ids.has("C_TXN_EMEA"), "domain channel → both siblings allowed");
-  ok(readableChannelList(ctxFor("C_TXN")).length === 2, "readable list exposes both channels");
 
   await assert.doesNotReject(() => assertChannelAllowed(ctxFor("C_TXN"), "C_TXN_EMEA"), "sibling read allowed");
   ok(true, "sibling read allowed (no throw)");

@@ -88,7 +88,6 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
     botDisplayName: async () => undefined,
     confirmChannelInternal: async () => true,
     partnerFactsFromInfo: () => ({ dmPartnerTrust: "external" }),
-    readableChannelList: () => [],
     channel: {} as never,
   });
 

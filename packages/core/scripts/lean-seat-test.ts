@@ -142,9 +142,13 @@ ok(allowedOnLeanSeat("no_reply"), "…and the SEAT still holds no_reply — judg
 for (const name of ["update_status", "task_update", "reply", "edit_reply", "react"]) {
   ok(allowedOnWorkerSeat(name), `the worker subtraction does NOT take ${name} — neither admission test admits it`);
 }
+ok(!allowedOnWorkerSeat("read_channel"), "🔴 OPE-929: a worker does NOT hold read_channel — it is the CHAT surface's verb on the chat credential, and a worker holds the WORK surface under the domain's work grant");
+ok(allowedOnLeanSeat("read_channel"), "…and the SEAT still holds read_channel — the recovery read is what stops it inventing a referent it cannot see (OPE-829)");
+ok(!allowedOnWorkerSeat("read_thread"), "🔴 OPE-929: a worker does NOT hold read_thread — same plane split as read_channel");
+ok(allowedOnLeanSeat("read_thread"), "…and the SEAT still holds read_thread");
 ok(
-  [...WORKER_WITHHELD_TOOLS].sort().join(",") === "no_reply,stand_down",
-  `the withheld set is EXACTLY no_reply,stand_down (got "${[...WORKER_WITHHELD_TOOLS].sort().join(",")}") — it grows only for a verb that is structurally wrong on a worker by test (A) or (B), never for 'tools a worker shouldn't use' (that is the lean roster's question, or the consequence registry's)`,
+  [...WORKER_WITHHELD_TOOLS].sort().join(",") === "no_reply,read_channel,read_thread,stand_down",
+  `the withheld set is EXACTLY no_reply,read_channel,read_thread,stand_down (got "${[...WORKER_WITHHELD_TOOLS].sort().join(",")}") — it grows only for a verb that is structurally wrong on a worker by test (A), (B) or (C), never for 'tools a worker shouldn't use' (that is the lean roster's question, or the consequence registry's)`,
 );
 for (const name of ["no_reply", "stand_down"]) {
   ok(WINDOW_UNGATED_TOOLS.has(name), `${name} stays a MOUNT-time ungated row — the worker narrowing is per-wake, not a grain matrix`);
@@ -190,9 +194,16 @@ function makeToolset(): Record<string, { description: string; execute: () => unk
   const toolset = makeToolset();
   const before = { ...toolset };
   const removed = restrictToolsetForWorkerSeat(toolset);
-  ok(removed.join(",") === "no_reply,stand_down", `🔴 OPE-877: the worker subtraction removes EXACTLY no_reply and stand_down, sorted (got "${removed.join(",")}")`);
+  ok(
+    removed.join(",") === "no_reply,read_channel,read_thread,stand_down",
+    `🔴 OPE-877 + OPE-929: the worker subtraction removes EXACTLY no_reply, read_channel, read_thread and stand_down, sorted (got "${removed.join(",")}")`,
+  );
   ok(!("no_reply" in toolset) && !("stand_down" in toolset), "…and both really leave the assembled toolset — ABSENCE, so the worker is never told it lost a verb and never retries into a refusal");
-  ok(Object.keys(toolset).length === Object.keys(before).length - 2, "…and NOTHING ELSE leaves — a worker's wide hands are still the design");
+  ok(
+    !("read_channel" in toolset) && !("read_thread" in toolset),
+    "🔴 OPE-929: the abstract chat READS really leave a worker's assembled toolset — the chat API is the SEAT's vocabulary",
+  );
+  ok(Object.keys(toolset).length === Object.keys(before).length - 4, "…and NOTHING ELSE leaves — a worker's wide hands are still the design");
   ok("ask_question" in toolset, "…including ask_question itself, which is the name that left the set (OPE-565)");
   ok("reply" in toolset && "update_status" in toolset && "bash" in toolset && "post_file" in toolset, "…and the verbs OPE-877 checked alongside them stay: a worker still posts and still shows progress");
   ok(Object.keys(toolset).every((k) => toolset[k] === before[k]), "surviving tool OBJECTS keep their identity — eve keys approvals in a WeakMap on them");
@@ -200,7 +211,10 @@ function makeToolset(): Record<string, { description: string; execute: () => unk
   const removedArmed = restrictToolsetForWorkerSeat(armed, new Set(["ask_question", "bash"]));
   ok(removedArmed.join(",") === "ask_question,bash", `restrictToolsetForWorkerSeat still deletes what it is given, sorted (got "${removedArmed.join(",")}")`);
   ok(!("ask_question" in armed) && !("bash" in armed), "…and the named tools really leave the toolset");
-  ok("no_reply" in armed && "stand_down" in armed, "…while the DEFAULT set's two names survive an injected set that does not name them — the function reads its argument, never a constant");
+  ok(
+    "no_reply" in armed && "stand_down" in armed && "read_channel" in armed && "read_thread" in armed,
+    "…while the DEFAULT set's four names survive an injected set that does not name them — the function reads its argument, never a constant",
+  );
 }
 
 const require = createRequire(import.meta.url);

@@ -16,6 +16,13 @@ export function teamsChannelGrainConversationId(conversationId: string): string 
   return i < 0 ? conversationId : conversationId.slice(0, i);
 }
 
+export function teamsReplyChainRoot(conversationId: string): string | undefined {
+  const i = conversationId.lastIndexOf(TEAMS_REPLY_CHAIN_SUFFIX);
+  if (i < 0) return undefined;
+  const root = conversationId.slice(i + TEAMS_REPLY_CHAIN_SUFFIX.length);
+  return root.length > 0 ? root : undefined;
+}
+
 export interface TeamsConversationRef {
   readonly serviceUrl: string;
   readonly conversationId: string;
