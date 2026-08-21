@@ -211,8 +211,8 @@ async function assertLinearIssueScope(
 ): Promise<void> {
   const partition = resolvePartition(ctx);
   const own = currentTurnIssueRefs(ctx);
-  const workOrg = direction === "write" ? deps?.workOrg : undefined;
-  const grantCapable = direction === "write" && workGrantWouldHelp(partition.surfaceKey, workOrg);
+  const workOrg = deps?.workOrg;
+  const grantCapable = workGrantWouldHelp(partition.surfaceKey, workOrg);
   const pure = linearIssueScope(partition.surfaceKey, own, issueRef, undefined, domains, workOrg);
   if (pure.allowed) return;
   if (pure.reason === "caller-unassigned") {

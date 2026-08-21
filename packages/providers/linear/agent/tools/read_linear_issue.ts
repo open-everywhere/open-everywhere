@@ -3,6 +3,7 @@ import { z } from "zod";
 import { readLinearIssue, type LinearCommentSummary } from "../channels/linear-api.js";
 import { enrichIssueTeam } from "../channels/linear.js";
 import { assertLinearIssueAllowed } from "../channels/linear-scope.js";
+import { linearWorkOrg } from "../channels/linear-work.js";
 import {
   ingestUntrustedModelOutput,
   assertTurnSurface,
@@ -10,7 +11,7 @@ import {
   auditOriginFenceRefusal,
   currentTurnIssue,
   currentTurnOrganization,
-  sourceScopedMount,
+  workDestinationPlatforms,
   getConfig,
   preRegisterDynamicEntry,
   resolvePartition,
@@ -56,20 +57,26 @@ export const readLinearIssueEntry = defineTool({
     workspaceTrust: z.enum(["internal", "public"]).optional(),
   }),
   async execute(input, ctx2) {
+    const bctx = ctx2 as BindableContext;
+    const domains = getConfig().loadDomains();
+    const workOrg = linearWorkOrg(bctx, domains);
     try {
-      assertTurnSurface(ctx2 as BindableContext, "linear");
+      assertTurnSurface(bctx, "linear");
     } catch (err) {
-      if (err instanceof TurnOriginFenceError) await auditOriginFenceRefusal(ctx2 as BindableContext, "linear");
-      throw err;
+      if (!(err instanceof TurnOriginFenceError)) throw err;
+      if (!workOrg) {
+        await auditOriginFenceRefusal(bctx, "linear");
+        throw err;
+      }
     }
-    const issue = input.issue ?? currentTurnIssue(ctx2 as BindableContext);
+    const issue = input.issue ?? currentTurnIssue(bctx);
     if (!issue) throw new Error("No Linear issue available for this turn — pass `issue` explicitly (its UUID or identifier, e.g. ENG-42).");
-    const organizationId = currentTurnOrganization(ctx2 as BindableContext);
-    await assertLinearIssueAllowed(ctx2 as BindableContext, issue, getConfig().loadDomains(), async (ref) => (await enrichIssueTeam(ref, { organizationId }))?.teamId);
+    const organizationId = currentTurnOrganization(bctx) ?? workOrg;
+    await assertLinearIssueAllowed(bctx, issue, domains, async (ref) => (await enrichIssueTeam(ref, { organizationId }))?.teamId, { workOrg });
     const res = await readLinearIssue(issue, { maxComments: MAX_COMMENTS, organizationId });
     let workspaceTrust: SurfaceTrust | undefined;
     try {
-      workspaceTrust = declaredWorkspaceTrust(resolvePartition(ctx2 as BindableContext).workspaceKey);
+      workspaceTrust = declaredWorkspaceTrust(resolvePartition(bctx).workspaceKey);
     } catch {
       workspaceTrust = undefined;
     }
@@ -111,7 +118,8 @@ preRegisterDynamicEntry("read_linear_issue", "_single", readLinearIssueEntry);
 export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
-      if (!sourceScopedMount(ctx as BindableContext, "linear", () => getConfig().loadDomains())) return null;
+      const bctx = ctx as BindableContext;
+      if (!workDestinationPlatforms(bctx, getConfig().loadDomains()).includes("linear")) return null;
       return readLinearIssueEntry;
     },
   },
