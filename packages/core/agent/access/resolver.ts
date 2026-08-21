@@ -45,7 +45,6 @@ export interface EffectiveAccess {
   readonly connections: readonly Connection[];
   readonly reachableHosts: readonly ReachableHost[];
   readonly repos: readonly string[];
-  readonly workSurfaces: readonly string[];
   readonly awsRoles: readonly AwsRoleGrant[];
   readonly approvers: readonly OperatorApprover[];
   readonly plugins: readonly string[];
@@ -210,7 +209,6 @@ export function resolveAccess(
   const reachableHosts = [...hostMap.values()].sort((a, b) => a.host.localeCompare(b.host));
 
   const repos = [...new Set(ordered.flatMap(({ bundle }) => bundle.repos ?? []))].sort();
-  const workSurfaces = [...new Set(ordered.flatMap(({ bundle }) => bundle.workSurfaces ?? []))].sort();
 
   const awsRoleMap = new Map<string, AwsRoleGrant>();
   for (const { bundle } of ordered) {
@@ -311,11 +309,6 @@ export function resolveAccess(
         `broad grant: bundle "${bundle.name}" grants ${bundle.repos!.length} repo(s) at ${where} scope — every surface under it inherits them (incl. future/public surfaces). Bind repo grants to a domain or specific surface instead.`,
       );
     }
-    if ((bundle.workSurfaces?.length ?? 0) > 0) {
-      warnings.push(
-        `broad grant: bundle "${bundle.name}" grants ${bundle.workSurfaces!.length} work surface(s) at ${where} scope — every surface under it may file and act on those trackers (incl. future/public surfaces). Bind work-surface grants to a domain or specific surface instead.`,
-      );
-    }
     if ((bundle.connections?.length ?? 0) > 0) {
       warnings.push(
         `broad grant: bundle "${bundle.name}" binds ${bundle.connections!.length} credential(s) at ${where} scope — their credentials are reachable from every surface under it. Bind sensitive credentials to a domain or specific surface instead.`,
@@ -352,7 +345,6 @@ export function resolveAccess(
     connections,
     reachableHosts,
     repos,
-    workSurfaces,
     awsRoles,
     approvers,
     plugins,

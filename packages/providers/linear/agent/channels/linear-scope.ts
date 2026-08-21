@@ -1,14 +1,11 @@
 import {
   appendAudit,
   bindFrom,
-  parseSurfaceKeyEntry,
   resolveDomainForChannel,
   resolvePartition,
-  surfaceKeyEntryMatches,
   ChannelScopeError,
   type BindableContext,
   type Domain,
-  type SurfaceKeyEntry,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 export type LinearScopeDirection = "read" | "write";
@@ -21,9 +18,7 @@ export type LinearScopeReason =
   | "target-unresolvable"
   | "target-unassigned"
   | "caller-unassigned"
-  | "work-grant"
-  | "work-grant-ambiguous"
-  | "outside-work-grant";
+  | "work-grant";
 
 export interface LinearScopeVerdict {
   readonly allowed: boolean;
@@ -39,33 +34,16 @@ function splitLinearKey(surfaceKey: string): { org?: string; surface?: string } 
   return { org: parts[1] || undefined, surface: parts[2] || undefined };
 }
 
-function linearWorkGrantEntries(workGrants: readonly string[]): readonly SurfaceKeyEntry[] {
-  const parsed: SurfaceKeyEntry[] = [];
-  for (const entry of workGrants) {
-    const e = parseSurfaceKeyEntry(entry);
-    if (e && e.platform === "linear" && e.kind !== "group") parsed.push(e);
-  }
-  return parsed;
-}
-
-export function linearWorkGrantOrg(workGrants: readonly string[]): string | undefined {
-  const orgs = new Set(linearWorkGrantEntries(workGrants).map((e) => e.tenant));
-  return orgs.size === 1 ? [...orgs][0] : undefined;
-}
-
 type LinearWriteOrg =
-  | { readonly ok: true; readonly org: string; readonly via: "caller-key"; readonly grants: readonly SurfaceKeyEntry[] }
-  | { readonly ok: true; readonly org: string; readonly via: "work-grant"; readonly grants: readonly SurfaceKeyEntry[] }
-  | { readonly ok: false; readonly reason: "target-unresolvable" | "work-grant-ambiguous" };
+  | { readonly ok: true; readonly org: string; readonly via: "caller-key" }
+  | { readonly ok: true; readonly org: string; readonly via: "work-grant" }
+  | { readonly ok: false; readonly reason: "target-unresolvable" };
 
-function linearWriteOrg(callerSurfaceKey: string, workGrants: readonly string[]): LinearWriteOrg {
-  const grants = linearWorkGrantEntries(workGrants);
+function linearWriteOrg(callerSurfaceKey: string, workOrg: string | undefined): LinearWriteOrg {
   const { org } = splitLinearKey(callerSurfaceKey);
-  if (org) return { ok: true, org, via: "caller-key", grants };
-  if (grants.length === 0) return { ok: false, reason: "target-unresolvable" };
-  const granted = linearWorkGrantOrg(workGrants);
-  if (!granted) return { ok: false, reason: "work-grant-ambiguous" };
-  return { ok: true, org: granted, via: "work-grant", grants };
+  if (org) return { ok: true, org, via: "caller-key" };
+  if (!workOrg) return { ok: false, reason: "target-unresolvable" };
+  return { ok: true, org: workOrg, via: "work-grant" };
 }
 
 function sameRef(a: string, b: string): boolean {
@@ -113,16 +91,13 @@ export function linearScopeRefusal(targetRef: string, verdict: LinearScopeVerdic
       ? "Its team could not be established, and a target whose team is unknown is refused rather than assumed."
       : verdict.reason === "target-unassigned"
         ? "Its team is in no memory domain, and an unassigned team is refused rather than assumed."
-        : verdict.reason === "work-grant-ambiguous"
-          ? "This scope holds a Linear work-surface grant in MORE THAN ONE workspace, so the destination workspace is ambiguous and is refused rather than guessed."
-          : verdict.reason === "outside-work-grant"
-            ? "This scope holds a Linear work-surface grant, and that grant does not name this team."
-            : "";
+        : "";
   const may = direction === "write" ? "may only act on Linear entities on teams" : "may only read issues on teams";
   const workGrant =
     direction === "write"
-      ? " If this session was woken on another surface, the Linear WORK-SURFACE grant is what lets it file here: add " +
-        '`workSurfaces: ["linear/<organization_id>/<team_id>"]` to a bundle bound to this scope (agent/access/bundles.ts).'
+      ? " If this session was woken on another surface, the domain's Linear WORK grant is what lets it file here: add " +
+        '`credentials: [{ connector: "linear", credential: "workspace", use: "<organization_id>" }]` to the domain ' +
+        "(agent/memory/domains.ts)."
       : "";
   return (
     `Linear target "${targetRef}" is not in ${scope} ${direction} scope, so it is refused. ${why} ` +
@@ -134,7 +109,7 @@ export function linearScopeRefusal(targetRef: string, verdict: LinearScopeVerdic
 
 export interface LinearScopeDeps {
   readonly audit?: (entry: Parameters<typeof appendAudit>[0]) => Promise<void>;
-  readonly workSurfaces?: readonly string[];
+  readonly workOrg?: string;
 }
 
 type AuthAttrs = Readonly<Record<string, string | readonly string[]>> | undefined;
@@ -229,13 +204,13 @@ export function linearTeamScope(
   callerSurfaceKey: string,
   targetTeamId: string | undefined,
   domains: readonly Domain[],
-  workGrants: readonly string[] = [],
+  workOrg?: string,
 ): LinearScopeVerdict {
   const caller = resolveDomainForChannel(callerSurfaceKey, domains);
   const callerName = caller.domain?.name;
   if (!callerName) return { allowed: false, reason: "caller-unassigned" };
 
-  const source = linearWriteOrg(callerSurfaceKey, workGrants);
+  const source = linearWriteOrg(callerSurfaceKey, workOrg);
   if (!source.ok) {
     return { allowed: false, reason: source.reason, callerDomain: callerName };
   }
@@ -243,9 +218,6 @@ export function linearTeamScope(
   const targetKey = `linear/${source.org}/${targetTeamId}`;
 
   if (source.via === "work-grant") {
-    if (!source.grants.some((g) => surfaceKeyEntryMatches(g, targetKey))) {
-      return { allowed: false, reason: "outside-work-grant", callerDomain: callerName, targetTeam: targetTeamId };
-    }
     const granted = resolveDomainForChannel(targetKey, domains);
     if (granted.domain && granted.domain.name !== callerName) {
       return { allowed: false, reason: "cross-domain", callerDomain: callerName, targetDomain: granted.domain.name, targetTeam: targetTeamId };
@@ -281,15 +253,15 @@ export async function assertLinearTeamWriteAllowed(
   deps?: LinearScopeDeps,
 ): Promise<void> {
   const partition = resolvePartition(ctx);
-  const workGrants = deps?.workSurfaces ?? [];
-  const source = linearWriteOrg(partition.surfaceKey, workGrants);
-  const pure = linearTeamScope(partition.surfaceKey, undefined, domains, workGrants);
+  const workOrg = deps?.workOrg;
+  const source = linearWriteOrg(partition.surfaceKey, workOrg);
+  const pure = linearTeamScope(partition.surfaceKey, undefined, domains, workOrg);
   if (pure.reason === "caller-unassigned" || !source.ok) {
     await auditLinearRefusal(ctx, target, pure, "write", deps);
     throw new ChannelScopeError(linearScopeRefusal(target, pure, "write"));
   }
   const teamId = await resolveTeamId(target, source.org);
-  const verdict = linearTeamScope(partition.surfaceKey, teamId, domains, workGrants);
+  const verdict = linearTeamScope(partition.surfaceKey, teamId, domains, workOrg);
   if (verdict.allowed) return;
   await auditLinearRefusal(ctx, target, verdict, "write", deps);
   throw new ChannelScopeError(linearScopeRefusal(target, verdict, "write"));

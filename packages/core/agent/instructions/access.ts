@@ -374,7 +374,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
         cfg.loadConnectorCredentials?.() ?? [],
       );
       for (const w of access.warnings) console.log(`[open-everywhere:access] warning: ${w}`);
-      accessMd = assembleAccessInstructions(access) ?? "";
+      accessMd = assembleAccessInstructions(access, [domain]) ?? "";
     } catch (err) {
       console.log(`[open-everywhere:access] unified access resolution skipped: ${String(err)}`);
     }
@@ -417,6 +417,15 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
   });
 }
 
+function sessionDomains(access: { readonly domains: readonly string[] }): readonly Domain[] {
+  try {
+    const all = getConfig().loadDomains();
+    return access.domains.map((name) => all.find((d) => d.name === name)).filter((d): d is Domain => d !== undefined);
+  } catch {
+    return [];
+  }
+}
+
 async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
   const access = resolveAccessFor(ctx);
   for (const w of access.warnings) console.log(`[open-everywhere:access] warning: ${w}`);
@@ -434,7 +443,7 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
     readingAWake: canReceiveJudgedWake(ctx) ? renderReadingAWake() : "",
     replyStyle: REPLY_STYLE_RUBRIC,
     role: renderRolePrompt(ctx),
-    access: assembleAccessInstructions(access) ?? "",
+    access: assembleAccessInstructions(access, sessionDomains(access)) ?? "",
     approvalPreview: renderApprovalPreviewFor(windowGrainOf(ctx), recall),
     workerCapabilities: renderWorkerCapabilitiesFor(ctx, recall),
     recoveryRead: renderRecoveryReadDoctrine(isLeanSeat(ctx)),

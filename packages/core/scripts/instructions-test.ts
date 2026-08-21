@@ -34,7 +34,6 @@ const base: EffectiveAccess = {
   connectorContentOrigin: {},
   reachableHosts: [],
   repos: [],
-  workSurfaces: [],
   awsRoles: [], approvers: [],
   plugins: [],
   skills: [],
@@ -61,11 +60,35 @@ ok(assembleAccessInstructions(base) === null, "bare scope -> null (no scope-spec
 }
 
 {
-  const md = assembleAccessInstructions({ ...base, workSurfaces: ["linear/org-1/team-pay"] });
-  ok(md !== null && md.includes("Work trackers you can file into"), "a work-surface grant is named in the capability summary");
-  ok(md!.includes("`linear/org-1/team-pay`"), "…naming the granted surface key");
-  const none = assembleAccessInstructions({ ...base, repos: ["acme/web"] });
-  ok(none !== null && !none.includes("Work trackers you can file into"), "a scope with NO work grant says nothing about filing");
+  const granted = { name: "payments", credentials: [{ connector: "linear", credential: "workspace", use: "org-1" }] };
+  const md = assembleAccessInstructions({ ...base, repos: ["acme/web"] }, [granted]);
+  ok(md !== null && md.includes("Work surfaces your domain is granted"), "a work grant is named in the capability summary");
+  ok(md!.includes("`linear`"), "…naming the granted provider");
+
+  const chatOnly = { name: "chat", credentials: [{ connector: "notion", credential: "channel-key", use: "other-key" }] };
+  const chatMd = assembleAccessInstructions({ ...base, repos: ["acme/web"] }, [chatOnly]);
+  ok(
+    chatMd !== null && !chatMd.includes("Work surfaces your domain is granted"),
+    "a domain declaring only a CHAT role says nothing about work — a chat entry confers no work capability",
+  );
+
+  const none = assembleAccessInstructions({ ...base, repos: ["acme/web"] }, [{ name: "plain" }]);
+  ok(none !== null && !none.includes("Work surfaces your domain is granted"), "a domain with NO work grant says nothing about filing");
+  const noDomain = assembleAccessInstructions({ ...base, repos: ["acme/web"] });
+  ok(noDomain !== null && !noDomain.includes("Work surfaces your domain is granted"), "an unresolved domain says nothing about filing (fail closed)");
+
+  const both = {
+    name: "kb",
+    credentials: [
+      { connector: "notion", credential: "team-key", use: "kb-work-key" },
+      { connector: "linear", credential: "workspace", use: "org-2" },
+    ],
+  };
+  const bothMd = assembleAccessInstructions({ ...base, repos: ["acme/web"] }, [both]);
+  ok(bothMd!.includes("`linear`") && bothMd!.includes("`notion`"), "both providers' grants render from the SAME declaration field");
+
+  const twoDomains = assembleAccessInstructions({ ...base, repos: ["acme/web"] }, [{ name: "plain" }, granted]);
+  ok(twoDomains!.includes("`linear`"), "a grant on the SECOND resolved domain is still named (the union, not the first)");
 }
 
 {

@@ -88,7 +88,10 @@ const rawDomains: Domain[] = [
     mode: "unified",
     engagementTier: "neutral",
     models: { primary: { id: UTILITY_MODEL }, supervisor: { id: SUPERVISOR_MODEL, reasoning: "medium" } },
-    credentials: [{ connector: "notion", credential: "team-key", use: "channel-key" }],
+    credentials: [
+      { connector: "notion", credential: "team-key", use: "channel-key" },
+      { connector: "linear", credential: "workspace", use: "1a000000-0000-4000-8000-000000000002" },
+    ],
   }),
 
   defineDomain({

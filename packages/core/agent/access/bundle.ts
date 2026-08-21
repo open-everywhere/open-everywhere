@@ -105,7 +105,6 @@ export interface Bundle {
   readonly connectors?: readonly ConnectorGrantSpec[];
   readonly connectorOps?: readonly ConnectorOpGating[];
   readonly repos?: readonly string[];
-  readonly workSurfaces?: readonly string[];
   readonly domains?: readonly string[];
   readonly plugins?: readonly string[];
   readonly awsRoles?: readonly AwsRoleGrant[];
@@ -141,8 +140,6 @@ export function defineBinding(binding: Binding): Binding {
 }
 
 const REPO_FORM = /^[\w.-]+\/[\w.-]+$/u;
-
-export const WORK_SURFACE_GRANT_PLATFORMS: readonly string[] = ["linear"];
 
 const ROLE_ARN_FORM = /^arn:aws[\w-]*:iam::\d{12}:role\/.+$/u;
 
@@ -275,31 +272,6 @@ export function assertBundlesValid(bundles: readonly Bundle[]): void {
     for (const repo of b.repos ?? []) {
       if (!REPO_FORM.test(repo)) {
         bad.push(`  bundle "${b.name}" repo "${repo}" must be bare owner/name form (e.g. "acme/web") — not a URL, a bare owner, or an owner/name/extra path`);
-      }
-    }
-    const workSurfaces = new Set<string>();
-    for (const entry of b.workSurfaces ?? []) {
-      if (workSurfaces.has(entry)) {
-        bad.push(`  bundle "${b.name}" grants work surface "${entry}" more than once — remove the duplicate`);
-      }
-      workSurfaces.add(entry);
-      const parsed = parseSurfaceKeyEntry(entry);
-      if (!parsed) {
-        bad.push(
-          `  bundle "${b.name}" work surface "${entry}" is not a well-formed surface key — write \`platform/<tenant-id>/<container-id>\` ` +
-            `(e.g. "linear/<organization_id>/<team_id>"), a same-level glob \`platform/<tenant-id>/<prefix>*\`, or the whole tenant \`platform/<tenant-id>\``,
-        );
-        continue;
-      }
-      if (parsed.kind === "group") {
-        bad.push(`  bundle "${b.name}" work surface "${entry}" names a person-GROUP rung — a work grant addresses a surface, never a group`);
-        continue;
-      }
-      if (!WORK_SURFACE_GRANT_PLATFORMS.includes(parsed.platform)) {
-        bad.push(
-          `  bundle "${b.name}" work surface "${entry}" names platform "${parsed.platform}", which reads no work-surface grant — ` +
-            `consumed today by: ${WORK_SURFACE_GRANT_PLATFORMS.join(", ")}. GitHub work is granted with \`repos\`.`,
-        );
       }
     }
     const roleArns = new Set<string>();
