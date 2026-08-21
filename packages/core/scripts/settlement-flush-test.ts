@@ -271,6 +271,10 @@ function receipt(taskId: string, callId: string): unknown {
   };
 }
 
+function receiptV2(taskId: string, callId: string): unknown {
+  return { kind: "tool-result", toolName: "agent", callId, output: { agentId: `ag_${callId}`, status: "working", taskId } };
+}
+
 function peek(views: readonly { taskId: string; status: string }[]): unknown {
   return {
     kind: "tool-result",
@@ -438,6 +442,21 @@ console.log("6. a dispatch receipt flushes nothing:");
   eq((await memoryWrites(s.sessionId)).length, 0, "…and emitted no memory.write row");
   await fireResult(s, syncResult("call_G2"));
   eq(stored()["MEMORY.md"], BEFORE, "…and the dispatched task counts LIVE: a later sync return is held closed by the guard");
+}
+
+console.log("6B. an eve 0.43.0+ dispatch receipt flushes nothing, and arms the guard:");
+{
+  const s = makeSeat("seat-dispatch-v2");
+  await fireMemory(s, "session.started");
+  const BEFORE = stored()["MEMORY.md"];
+  s.sandbox.childEdit("MEMORY.md", `${BEFORE}- an edit that must NOT be flushed at dispatch\n`);
+
+  await fireResult(s, receiptV2("task_G943", "call_G943"));
+
+  eq(stored()["MEMORY.md"], BEFORE, "🔴 P6B: the ENVELOPE B dispatch edge wrote nothing to the store — it took BRANCH 1, not the sync BRANCH 3 that flushes");
+  eq((await memoryWrites(s.sessionId)).length, 0, "…and emitted no memory.write row");
+  await fireResult(s, syncResult("call_G943b"));
+  eq(stored()["MEMORY.md"], BEFORE, "🔴 P6B: …and the ENVELOPE B task counts LIVE in the fan-out guard: a later sync return is held closed. This is the OPE-592 arming that was OFF on eve 0.43.0+");
 }
 
 console.log("7. N concurrent children hold ONE tree and the parent stays its only writer:");
