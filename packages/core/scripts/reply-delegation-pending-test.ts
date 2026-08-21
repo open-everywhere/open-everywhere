@@ -92,6 +92,13 @@ const receiptResult = (callId: string, taskId: string) => ({
   subagentName: "agent",
 });
 
+const receiptResultV2 = (callId: string, taskId: string) => ({
+  callId,
+  kind: "tool-result",
+  toolName: "agent",
+  output: { agentId: "ag_agent:6666", status: "working", taskId },
+});
+
 const peekResult = (taskId: string, status: string) => ({
   callId: `call_peek_${taskId}`,
   kind: "tool-result",
@@ -204,6 +211,30 @@ const roomHas = (needle: string): boolean => posted.some((m) => m.text.includes(
 
 {
   const inTurn = newSession();
+  const wAsk = await wake("C_ASK_V2", "111.2");
+  const before = posted.length;
+
+  await inTurn(async () => {
+    await hook({ data: { result: receiptResultV2("call_943a", "task_943a") } }, ctxFor(wAsk, "turn_943"));
+    const minted = await taskWakeId(ORG, "task_943a");
+    ok(typeof minted === "string" && minted.length > 0, "🔴 §1B REACHABILITY: the REAL hook ran BRANCH 1 for an ENVELOPE B receipt and minted the wake. Before the reader was widened this read `undefined`, and the refusal below would pass on a branch that never ran");
+
+    const fake = await callReply(wAsk, "turn_943", wAsk, FABRICATION, true);
+    ok(typeof fake.error === "string", "🔴 §1B THE ACCEPTANCE: a `done:true` answer while an ENVELOPE B worker is still running is REFUSED");
+    ok(posted.length === before, "🔴 §1B/ROOM: NOTHING reached the room");
+
+    const ack = await callReply(wAsk, "turn_943", wAsk, "I've handed this to a worker and will report back.", false);
+    ok(ack.posted === true, "§1B: the `done:false` hand-off note still POSTS");
+
+    await hook({ data: { result: peekResult("task_943a", "completed") } }, ctxFor(wAsk, "turn_943"));
+    const real = await callReply(wAsk, "turn_943", wAsk, REAL_REFUSAL, true);
+    ok(real.posted === true, "🔴 §1B END TO END: once the ENVELOPE B worker settles the turn CAN close the wake — the guard is a wait, not a wall, on both envelopes");
+    ok(posted.length === before + 2, "§1B/ROOM: two messages — the ack and the real answer, and not the fabrication");
+  });
+}
+
+{
+  const inTurn = newSession();
   const w = await wake("C_PLAIN", "222.2");
   const before = posted.length;
 
@@ -284,7 +315,7 @@ const roomHas = (needle: string): boolean => posted.some((m) => m.text.includes(
 {
   const rows = await refusedRows();
   const mine = rows.filter((d) => d["reason"] === DELEGATION_PENDING_REFUSAL_REASON);
-  ok(mine.length === 3, `🔴 §7/AUDIT: every refusal above is a ROW, not an absence (expected 3, saw ${mine.length})`);
+  ok(mine.length === 4, `🔴 §7/AUDIT: every refusal above is a ROW, not an absence (expected 4, saw ${mine.length})`);
   ok(DELEGATION_PENDING_REFUSAL_REASON === "delegation-pending", "§7/AUDIT: under its own reason string");
   ok(
     rows.every((d) => d["reason"] !== "answered-this-turn"),

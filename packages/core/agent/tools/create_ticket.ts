@@ -1,12 +1,13 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { bindFrom, resolveWindowSources } from "../identity/binding.js";
+import { bindFrom } from "../identity/binding.js";
 import type { BindableContext } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { resolveTicketCreate, supportedTicketCreatePlatforms } from "../channels/ticket-create.js";
+import { workDestinationPlatforms } from "../channels/work-destinations.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
@@ -131,9 +132,9 @@ export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
       const bctx = ctx as BindableContext;
-      const sources = resolveWindowSources(bctx, safeDomains());
+      const destinations = workDestinationPlatforms(bctx, safeDomains());
       const adapterPlatforms = supportedTicketCreatePlatforms();
-      if (!sources.some((s) => adapterPlatforms.includes(s))) return null;
+      if (!destinations.some((s) => adapterPlatforms.includes(s))) return null;
       return createTicketEntry;
     },
   },

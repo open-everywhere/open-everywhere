@@ -92,6 +92,71 @@ ok(assembleAccessInstructions(base) === null, "bare scope -> null (no scope-spec
 }
 
 {
+  const soakAccess: EffectiveAccess = {
+    ...base,
+    scopeKey: "slack/T0EXAMPLE/C0EXCHAN008",
+    tenantKey: "slack/T0EXAMPLE",
+    surfaceKey: "slack/T0EXAMPLE/C0EXCHAN008",
+    reachableHosts: [{ host: "api.github.com", viaConnection: null }],
+    repos: ["example-owner/soak-scratch"],
+    connectors: [],
+  };
+  const soakDomain = {
+    name: "soak",
+    credentials: [
+      { connector: "notion", credential: "team-key", use: "soak-work-key" },
+      { connector: "linear", credential: "workspace", use: "soak-org" },
+    ],
+  };
+
+  const connectionsSection = (md: string | null): string => {
+    const i = (md ?? "").indexOf("### Connections you may use");
+    return i < 0 ? "" : (md ?? "").slice(i);
+  };
+
+  const grantedMd = assembleAccessInstructions(soakAccess, [soakDomain]);
+  const grantedConnections = connectionsSection(grantedMd);
+  const ungrantedMd = assembleAccessInstructions(soakAccess, [{ name: "plain" }]);
+  const ungrantedConnections = connectionsSection(ungrantedMd);
+
+  ok(grantedConnections.length > 0 && ungrantedConnections.length > 0, "(a) fixture guard: both shapes render a connections section to compare");
+  ok(grantedMd!.includes("Work surfaces your domain is granted"), "(a) fixture guard: the granted shape really renders the work line");
+  ok(grantedConnections.includes("Allowed connections for this channel: (none)"), "(a) fixture guard: its connection list really is empty — the exact shape the worker read");
+  ok(!ungrantedMd!.includes("Work surfaces your domain is granted"), "(a) fixture guard: the ungranted shape renders no work line");
+
+  ok(grantedConnections.includes("`linear`") && grantedConnections.includes("`notion`"), "🔴 (b) OPE-942 ACCEPTANCE: the connections section names every granted work surface — the `(none)` no longer stands unqualified");
+
+  ok(grantedConnections.includes("It does not narrow the work surfaces"), "(c) …and states that the connection list does not narrow the work surfaces");
+  ok(grantedConnections.includes("**What you can access in this channel**"), "(c2) …naming the capability section it defers to");
+  ok(grantedMd!.includes("### What you can access in this channel"), "🔴 (c2) …and that section is really rendered — the cross-reference resolves");
+
+  ok(
+    grantedConnections.includes("never a reason to call a granted work surface unavailable"),
+    "🔴 (d) …and refuses the measured inference outright — an empty connection list is never a reason to call a granted work surface unavailable",
+  );
+
+  ok(grantedMd!.includes("runs on the provider's own tools, never on a connection"), "(e) the work line names the route the grant is served by, not only the connector slug");
+  ok(!grantedMd!.includes("`notion_search`") && !grantedMd!.includes("`read_linear_issue`"), "(e) …and names NO tool — a per-connector tool list would claim capability this renderer cannot verify");
+
+  ok(grantedConnections !== ungrantedConnections, "🔴 (f) the connections section is no longer BYTE-IDENTICAL between a work-granted domain and an ungranted one");
+
+  ok(ungrantedConnections.includes("do not invoke it"), "🔴 (g) NEGATIVE CONTROL: an ungranted session keeps the hard 'do not invoke it' guidance");
+  ok(ungrantedConnections.includes("not** authorized"), "(g) …and the full 'not authorized' guard");
+  ok(ungrantedConnections.includes("It does not narrow the work surfaces") === false, "🔴 (g) …and carries NO reconciliation paragraph — there is no work grant for the empty list to be wrong about");
+  ok(ungrantedConnections.includes("`notion`") === false && ungrantedConnections.includes("`linear`") === false, "(g) …and names no work surface it was never granted");
+
+  const notionOnly = assembleAccessInstructions(soakAccess, [{ name: "kb", credentials: [{ connector: "notion", credential: "team-key", use: "kb-key" }] }]);
+  const notionOnlyConnections = connectionsSection(notionOnly);
+  ok(notionOnlyConnections.includes("`notion`"), "(h) a NOTION-only grant reconciles Notion in the connections section");
+  ok(notionOnlyConnections.includes("`linear`") === false, "🔴 (h) …and names Linear nowhere — the paragraph renders the SAME resolved set as the work line, not a fixed pair");
+
+  const alsoConnected = connectionsSection(assembleAccessInstructions({ ...soakAccess, connectors: ["gcal"] }, [soakDomain]));
+  ok(alsoConnected.includes("`gcal`"), "(i) fixture guard: a real connector grant renders in the list");
+  ok(alsoConnected.includes("It does not narrow the work surfaces"), "(i) …and the plane split is still stated — the reconciliation is not an artefact of the list being empty");
+  ok(alsoConnected.includes("`notion`") && alsoConnected.includes("`linear`"), "(i) …naming the same granted work surfaces alongside the granted connection");
+}
+
+{
   const md = assembleAccessInstructions({
     ...base,
     instructionStack: [{ source: "org", text: "Be explicit about the target repo." }],

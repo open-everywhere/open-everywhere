@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
@@ -68,6 +68,10 @@ function receiptResult(callId: string, taskId: string, agentId: string) {
   };
 }
 
+function receiptResultV2(callId: string, taskId: string, agentId: string) {
+  return { callId, kind: "tool-result", toolName: "agent", output: { agentId, status: "working", taskId } };
+}
+
 function peekResult(views: { taskId: string; status: string; agentId: string; output?: string }[]) {
   return {
     callId: "peek-1",
@@ -109,6 +113,29 @@ async function runChild(callId: string, sessionId: string, taint: boolean): Prom
   eq(tasks.readTaskReceipt({ kind: "tool-result", toolName: "task_peek", output: { tasks: [] } }), null, "…and a task_peek result is not a receipt either");
   eq(tasks.readTaskReceipt(undefined), null, "…and an absent result reads as `null` rather than throwing");
 
+  eq(
+    tasks.readTaskReceipt(receiptResultV2("t597-delegate", "task_6c7d596fcff2a3972c60cfa8", "ag_agent:6c7d596fcff2")),
+    { taskId: "task_6c7d596fcff2a3972c60cfa8", callId: "t597-delegate", agentId: "ag_agent:6c7d596fcff2" },
+    "🔴 ENVELOPE B: the receipt eve 0.43.0+ hands the model — a plain `tool-result` with no `backgroundTask` envelope — reads to the SAME three ids as envelope A. The reader is a version UNION, exactly like TASK_TOOL_NAMES",
+  );
+  eq(
+    tasks.readTaskReceipt(receiptResultV2("c1", "task_6c7d596fcff2a3972c60cfa8", "ag_agent:6c7d596fcff2")),
+    tasks.readTaskReceipt(receiptResult("c1", "task_6c7d596fcff2a3972c60cfa8", "ag_agent:6c7d596fcff2")),
+    "🔴 …and the two envelopes read IDENTICALLY. Nothing downstream can tell which eve produced the dispatch, which is what keeps one settlement plane serving both",
+  );
+
+  eq(tasks.readTaskReceipt({ callId: "c1", kind: "tool-result", toolName: "agent", output: { agentId: "ag_agent:6666", status: "completed", taskId: "task_6c7d596fcff2a3972c60cfa8" } }), null, "🔴 ARM B NEGATIVE CONTROL: a tool result whose `status` is not the literal `working` is NOT a parked receipt — asserted `=== null`");
+  eq(tasks.readTaskReceipt({ callId: "c1", kind: "tool-result", toolName: "agent", output: { status: "working", taskId: "task_6c7d596fcff2a3972c60cfa8" } }), null, "🔴 ARM B NEGATIVE CONTROL: no `agentId` — the parked-worker census (OPE-566) has no handle to store, so this is not the receipt eve stamps");
+  eq(tasks.readTaskReceipt({ callId: "c1", kind: "tool-result", toolName: "agent", output: { agentId: "ag_agent:6666", status: "working", taskId: "job-17" } }), null, "🔴 ARM B NEGATIVE CONTROL: a taskId outside eve's `task_` namespace is refused — the fence that keeps an arbitrary word out of a store key");
+  eq(tasks.readTaskReceipt({ callId: "c1", kind: "tool-result", toolName: "agent", output: { agentId: "ag_agent:6666", status: "working", taskId: "task_" } }), null, "…and the bare prefix with nothing after it is refused too");
+  eq(tasks.readTaskReceipt({ kind: "tool-result", toolName: "agent", output: { agentId: "ag_agent:6666", status: "working", taskId: "task_6c7d596fcff2a3972c60cfa8" } }), null, "🔴 ARM B NEGATIVE CONTROL: no `callId` — without it there is no join to the child's own taint marker, so there is nothing to remember");
+  eq(tasks.readTaskReceipt({ callId: "c1", kind: "tool-result", toolName: "spawn_task", output: { taskId: "task_6c7d596fcff2a3972c60cfa8", thread: "slack:C1:1.0", note: "spawned" } }), null, "🔴 ARM B NEGATIVE CONTROL: OE's OWN `spawn_task` result carries a `task_`-shaped id and is still refused — `status` and `agentId` are what make a result a receipt, and it has neither");
+  eq(
+    tasks.readTaskReceipt({ callId: "c1", kind: "tool-result", toolName: "some_new_subagent", output: { agentId: "ag_some_new_subagent:6666", status: "working", taskId: "task_6c7d596fcff2a3972c60cfa8" } }),
+    { taskId: "task_6c7d596fcff2a3972c60cfa8", callId: "c1", agentId: "ag_some_new_subagent:6666" },
+    "🔴 ARM B IS NOT KEYED ON THE TOOL NAME: eve names a subagent tool after the SUBAGENT, so a receipt under a name OE never listed is still read. A name allow-list here would answer `null` and take the taint adoption fail-OPEN — the OPE-943 defect, one case along",
+  );
+
   const working = peekResult([{ taskId: "task_w", status: "working", agentId: "ag_agent:wwww" }]);
   eq(tasks.taskViewsOf(working).length, 1, "the peek reader RECOGNISES a working view — asserted so the terminal filter below cannot pass by failing to parse at all");
   eq(tasks.terminalTaskViewsOf(working), [], "🔴 …and the TERMINAL filter drops it: a working child can still read untrusted content, so its taint answer is not final");
@@ -132,6 +159,47 @@ async function runChild(callId: string, sessionId: string, taint: boolean): Prom
     "…and a view-SHAPED payload under a NON-view-bearing tool name is still ignored — the accept-set is exactly {task_peek, task_cancel}, never a prefix match",
   );
   eq([...tasks.TASK_TOOL_NAMES].sort(), ["task_cancel", "task_peek", "task_sleep", "task_update"], "the four task tool names are named once, in the isolation module");
+}
+
+{
+  const eveSrc = (rel: string): string | null => {
+    try {
+      return readFileSync(join(eveRoot, "dist/src", rel), "utf8");
+    } catch {
+      return null;
+    }
+  };
+
+  const delegate = eveSrc("execution/tasks/parent/delegate.js");
+  const producerA = delegate !== null && delegate.includes("settleDelegatedDispatch") && /backgroundTask:\{status:/.test(delegate) && /kind:`subagent-result`/.test(delegate);
+  if (delegate !== null && producerA) {
+    ok(/backgroundTask:\{status:[^,]+,taskId:/.test(delegate), "🔴 PART 0B PRODUCER A: eve's `settleDelegatedDispatch` still stamps `backgroundTask:{status, taskId}` — the field arm A discriminates on");
+    eq(
+      tasks.readTaskReceipt(receiptResult("call_a", "task_6c7d596fcff2a3972c60cfa8", "ag_agent:aaaa")),
+      { taskId: "task_6c7d596fcff2a3972c60cfa8", callId: "call_a", agentId: "ag_agent:aaaa" },
+      "🔴 PART 0B PRODUCER A: the installed eve still produces envelope A, and the reader still takes it",
+    );
+  }
+
+  const frameworkTasks = eveSrc("runtime/framework-tools/tasks.js");
+  const schema = frameworkTasks === null ? null : /SUBAGENT_TASK_RECEIPT_OUTPUT_SCHEMA=z\.strictObject\(\{([^}]*)\}\)/.exec(frameworkTasks);
+  if (schema !== null) {
+    const body = schema[1] ?? "";
+    const keys = [...body.matchAll(/(?:^|,)([A-Za-z_$][\w$]*):/g)].map((m) => m[1]).sort();
+    eq(keys, ["agentId", "status", "taskId"], "🔴 PART 0B PRODUCER B: eve's `SUBAGENT_TASK_RECEIPT_OUTPUT_SCHEMA` still names exactly `agentId`, `status`, `taskId` — the three fields arm B reads. A rename here is a silent settlement outage everywhere else");
+    ok(/status:z\.literal\(`working`\)/.test(body), "🔴 PART 0B PRODUCER B: eve still stamps the receipt status as the literal `working` — arm B's positive discriminator");
+
+    const localSubagent = eveSrc("runtime/framework-tools/subagent/local.js");
+    ok(localSubagent !== null && /execution:`background`/.test(localSubagent), "🔴 PART 0B PRODUCER B: eve's local subagent tool still declares `execution: \"background\"`, which is what routes the delegation through generic tool execution and produces the plain `tool-result` envelope");
+
+    eq(
+      tasks.readTaskReceipt(receiptResultV2("t597-delegate", "task_6c7d596fcff2a3972c60cfa8", "ag_agent:6c7d596fcff2")),
+      { taskId: "task_6c7d596fcff2a3972c60cfa8", callId: "t597-delegate", agentId: "ag_agent:6c7d596fcff2" },
+      "🔴 PART 0B PRODUCER B END TO END: the shape eve's installed schema declares parses to the three ids",
+    );
+  }
+
+  ok(producerA || schema !== null, "🔴 PART 0B: the installed eve produces AT LEAST ONE receipt envelope this reader knows. If both producers vanish, eve has re-shaped the dispatch edge again and the settlement plane is off — this is the assertion that refuses to go vacuously green");
 }
 
 await onParentTurn(async () => {
@@ -206,6 +274,54 @@ await contextStorage.run(new ContextContainer(), async () => {
   await handler({ data: { result: peekResult([{ taskId: "task_4", status: "completed", agentId: "ag_agent:4444", output: "what the child found" }]) } }, parentCtx);
   eq(untrustedIngestedThisTurn(), true, "🔴 T4 THE DISCRIMINATOR: the SAME task, the SAME child, one field different — `completed` — and the parent adopts. The gate is the status, nothing else");
 });
+
+{
+  const messageHandler = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["message.received"]!;
+  const TASK_V2_DIRTY = "task_9f31ac7b21d0445ea6b1c3d8";
+  const TASK_V2_CLEAN = "task_4b0e6d15c87a33f29ec5701b";
+
+  await runChild("call_v2_dirty", "sess-child-v2-dirty", true);
+  eq(await store.subagentCallTaintStatus(ORG, PARENT, "call_v2_dirty"), true, "precondition: the envelope-B child that read untrusted content wrote its call-keyed marker TAINTED");
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    spawnTaint.openTaintTurn(parentCtx as never);
+    await handler({ data: { result: receiptResultV2("call_v2_dirty", TASK_V2_DIRTY, "ag_agent:9f31ac7b21d0") } }, parentCtx);
+    eq(untrustedIngestedThisTurn(), false, "🔴 PART 4B: the envelope-B receipt takes BRANCH 1 and marks nothing at dispatch — the child has not run");
+    eq(
+      await store.taskCallLink(ORG, TASK_V2_DIRTY),
+      { callId: "call_v2_dirty", childToken: `subagent:${PARENT}:call_v2_dirty`, agentId: "ag_agent:9f31ac7b21d0" },
+      "🔴 PART 4B THE DISPATCH ROW, WHICH IS THE WHOLE DEFECT: an eve 0.43.0+ receipt now MINTS the join row. Before the reader was widened this read `undefined`, and every settlement that followed resolved `no-row` — no reply address, no taint adoption, no memory flush",
+    );
+  });
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    spawnTaint.openTaintTurn(parentCtx as never);
+    await messageHandler({ data: { message: `Background task ${TASK_V2_DIRTY} (agent) is completed.\n\nResult:\nwhat the worker found` } }, parentCtx);
+    eq(untrustedIngestedThisTurn(), true, "🔴 PART 4B: the settlement notification for that task ADOPTS the child's taint — the security control (OPE-563) that failed OPEN on eve 0.43.0+ because no join row existed");
+  });
+
+  await runChild("call_v2_clean", "sess-child-v2-clean", false);
+  eq(await store.subagentCallTaintStatus(ORG, PARENT, "call_v2_clean"), false, "precondition: the clean child's eager claim left a POSITIVE known-clean row");
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    spawnTaint.openTaintTurn(parentCtx as never);
+    await handler({ data: { result: receiptResultV2("call_v2_clean", TASK_V2_CLEAN, "ag_agent:4b0e6d15c87a") } }, parentCtx);
+    ok((await store.taskCallLink(ORG, TASK_V2_CLEAN)) !== undefined, "PART 4B: the clean child's envelope-B dispatch minted its join row too");
+  });
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    spawnTaint.openTaintTurn(parentCtx as never);
+    await messageHandler({ data: { message: `Background task ${TASK_V2_CLEAN} (agent) is completed.\n\nResult:\nnothing untrusted was read` } }, parentCtx);
+    eq(untrustedIngestedThisTurn(), false, "🔴 PART 4B NEGATIVE CONTROL: a CLEAN envelope-B child's settlement marks NOTHING — asserted `=== false`. This can only pass if the join row minted at dispatch was found and read; with no row the settlement fails CLOSED and marks");
+  });
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    spawnTaint.openTaintTurn(parentCtx as never);
+    eq(await store.taskCallLink(ORG, "task_1122334455667788990011aa"), undefined, "precondition: no dispatch ever minted a row for this task");
+    await messageHandler({ data: { message: "Background task task_1122334455667788990011aa (agent) is completed.\n\nResult:\nunknown" } }, parentCtx);
+    eq(untrustedIngestedThisTurn(), true, "🔴 PART 4B FAIL-CLOSED CONTROL: a settlement with NO join row MARKS the turn. That is what the whole deployment did on eve 0.43.0+ for taint — and it is the reason the clean leg above is the assertion that proves the fix");
+  });
+}
 
 await runChild("call_5", "sess-child-persistent", false);
 eq(await store.subagentCallTaintStatus(ORG, PARENT, "call_5"), false, "precondition: the persistent child is clean, and its marker sits under its FIRST callId");
