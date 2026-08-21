@@ -42,7 +42,7 @@ export function buildBlockCommentBody(blockId: string, text: string): Record<str
 }
 
 export function buildDiscussionReplyBody(discussionId: string, text: string): Record<string, unknown> {
-  return { parent: { discussion_id: discussionId }, rich_text: [{ text: { content: text } }] };
+  return { discussion_id: discussionId, rich_text: [{ text: { content: text } }] };
 }
 
 export class NotionDriver {
@@ -202,6 +202,17 @@ export class NotionDriver {
     }
     const json = (await res.json()) as Record<string, unknown>;
     return { commentId: typeof json.id === "string" ? json.id : "" };
+  }
+
+  async awaitBotReplyOnBlock(blockId: string, discussionId: string, sinceTime: string, opts: { timeoutMs: number }): Promise<NotionComment> {
+    return pollUntil(
+      async () =>
+        (await this.blockComments(blockId)).find((c) => this.isBotComment(c) && c.discussionId === discussionId && c.createdTime > sinceTime),
+      {
+        timeoutMs: opts.timeoutMs,
+        what: `a bot reply in discussion ${discussionId} on block ${blockId} after ${sinceTime}`,
+      },
+    );
   }
 
   async awaitBotReplyIn(discussionId: string, sinceTime: string, opts: { timeoutMs: number; skip?: (c: NotionComment) => boolean }): Promise<NotionComment> {
