@@ -23,7 +23,7 @@ function systemText(req: RecordedRequest): string {
 const SEAT_ONLY = [
   "You are the standing session for this channel",
   "### When to speak",
-  "A react is a full response tier",
+  "A react acknowledges; it does not answer",
   "`stand_down`",
   "### Backscroll",
   "### Owned threads",
