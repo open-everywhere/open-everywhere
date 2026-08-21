@@ -55,7 +55,7 @@ const catalogues: ConnectorCredentials[] = [
     connector: "slack",
     allows: ["api-key"],
     credentials: [
-      { id: "work-token", type: "api-key", secretRef: "SLACK_WORK_BOT_TOKEN", broker: "env", intake: false },
+      { id: "work-token", type: "api-key", secretRef: "SLACK_BOT_TOKEN", broker: "env", intake: false },
       { id: "chat-token", type: "api-key", secretRef: "SLACK_BOT_TOKEN", broker: "env", intake: false },
     ],
   }),
@@ -64,7 +64,7 @@ const catalogues: ConnectorCredentials[] = [
     connector: "discord",
     allows: ["api-key"],
     credentials: [
-      { id: "work-token", type: "api-key", secretRef: "DISCORD_WORK_BOT_TOKEN", broker: "env", intake: false },
+      { id: "work-token", type: "api-key", secretRef: "DISCORD_BOT_TOKEN", broker: "env", intake: false },
       { id: "chat-token", type: "api-key", secretRef: "DISCORD_BOT_TOKEN", broker: "env", intake: false },
     ],
   }),
@@ -73,7 +73,7 @@ const catalogues: ConnectorCredentials[] = [
     connector: "teams",
     allows: ["api-key"],
     credentials: [
-      { id: "work-token", type: "api-key", secretRef: "TEAMS_WORK_APP_PASSWORD", broker: "env", intake: false },
+      { id: "work-token", type: "api-key", secretRef: "TEAMS_APP_PASSWORD", broker: "env", intake: false },
       { id: "chat-token", type: "api-key", secretRef: "TEAMS_APP_PASSWORD", broker: "env", intake: false },
     ],
   }),

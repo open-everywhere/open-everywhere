@@ -124,6 +124,8 @@ firesWith(
     { name: "read_linear_issue", source: gated("linear") },
     { name: "read_channel", source: "resolveReadAdapter();" },
     { name: "read_thread", source: "resolveReadAdapter();" },
+    { name: "read_work_channel", source: "resolveWakeChannel();" },
+    { name: "read_work_thread", source: "resolveWakeChannel();" },
     { name: "request_access", source: cardGuard },
     { name: "forget", source: cardGuard },
     { name: "clear_connector_override", source: cardGuard },
@@ -138,8 +140,10 @@ firesWith(
 );
 
 ok(JSON.stringify(SOURCE_SCOPED_TOOLS) === JSON.stringify({ read_slack_channel: "slack", read_slack_thread: "slack", read_notion_page: "notion", read_notion_comments: "notion", read_linear_issue: "linear" }), "SOURCE_SCOPED_TOOLS pins the per-surface readers → their platforms (slack channel/thread + notion page/comments + linear issue)");
-
-ok(JSON.stringify([...GENERIC_READ_VERBS]) === JSON.stringify(["read_channel", "read_thread"]), "GENERIC_READ_VERBS pins the two generic read verbs");
+ok(
+  JSON.stringify([...GENERIC_READ_VERBS]) === JSON.stringify(["read_channel", "read_thread", "read_work_channel", "read_work_thread"]),
+  "GENERIC_READ_VERBS pins the two chat read verbs and the two work read verbs",
+);
 
 const perSurfaceOk = [
   { name: "read_slack_channel", source: gated("slack") },
@@ -149,15 +153,28 @@ const perSurfaceOk = [
   { name: "read_linear_issue", source: gated("linear") },
 ];
 
+const genericWorkPair = [
+  { name: "read_work_channel", source: "const { platform, adapter, container } = resolveWakeChannel(bctx, domains);" },
+  { name: "read_work_thread", source: "const { platform, adapter, container } = resolveWakeChannel(bctx, domains);" },
+];
+
 firesWith(
-  checkSourceGate([...perSurfaceOk, { name: "read_channel", source: "export default defineDynamic({ async execute() {} });" }, { name: "read_thread", source: "resolveReadAdapter(); assertTurnSurface();" }]),
+  checkSourceGate([
+    ...perSurfaceOk,
+    { name: "read_channel", source: "export default defineDynamic({ async execute() {} });" },
+    { name: "read_thread", source: "resolveReadAdapter(); assertTurnSurface();" },
+    ...genericWorkPair,
+  ]),
   "must route its per-platform access through the sources gate in execute",
   "a generic read verb that skips the execute-time source/fence gate FAILS",
 );
 
 {
   const genericOk = (name: string) => ({ name, source: "const { platform, adapter } = resolveReadAdapter(bctx, input.target.platform, safeDomains());" });
-  ok(checkSourceGate([...perSurfaceOk, genericOk("read_channel"), genericOk("read_thread")]).length === 0, "generic verbs gating via resolveReadAdapter pass the source-gate lint");
+  ok(
+    checkSourceGate([...perSurfaceOk, genericOk("read_channel"), genericOk("read_thread"), ...genericWorkPair]).length === 0,
+    "generic verbs gating via resolveReadAdapter pass the source-gate lint",
+  );
   firesWith(
     checkSourceGate([...perSurfaceOk, genericOk("read_channel")]),
     'GENERIC_READ_VERBS names "read_thread"',
@@ -170,6 +187,7 @@ ok(
     ...perSurfaceOk,
     { name: "read_channel", source: "resolveWindowSources(); assertTurnSurface();" },
     { name: "read_thread", source: "resolveReadAdapter();" },
+    ...genericWorkPair,
   ]).length === 0,
   "a generic verb gating via resolveWindowSources+assertTurnSurface directly also passes",
 );

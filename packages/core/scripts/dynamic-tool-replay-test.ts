@@ -18,6 +18,10 @@ import { registerBrowserToolkit } from "../agent/access/browser-toolkit.js";
 
 import { registerSlackFixtureMapper, registerSlackFixtureManifest } from "./_slack-test-stubs.js";
 import { overrideSettingsForTest, type AgentSettingsOverrides } from "../agent/settings/settings.js";
+import { registerConfig } from "../agent/access/config.js";
+import { defineDomain } from "../agent/memory/domain.js";
+import { resolvePartition } from "../agent/memory/partition.js";
+import type { BindableContext } from "../agent/identity/binding.js";
 registerSlackFixtureMapper();
 registerSlackFixtureManifest();
 
@@ -44,6 +48,25 @@ interface ToolCase {
   readonly settings?: AgentSettingsOverrides;
 }
 const slackCtx = { channel: { kind: "slack" }, session: { auth: { current: { attributes: {} } } } };
+
+const SLACK_FIXTURE_SURFACE = resolvePartition(slackCtx as unknown as BindableContext).surfaceKey;
+const REPLAY_DOMAINS = [
+  defineDomain({
+    name: "replay-fixture",
+    channels: [SLACK_FIXTURE_SURFACE],
+    credentials: [{ connector: "slack", credential: "work-token", use: "chat-token" }],
+  }),
+];
+registerConfig({
+  loadBundles: () => [],
+  loadBindings: () => [],
+  pluginRegistry: {},
+  skillContent: {},
+  loadDomains: () => REPLAY_DOMAINS,
+  loadSilos: () => [],
+  domainsForSurface: ({ workspaceKey, surface }) =>
+    REPLAY_DOMAINS.filter((d) => (d.channels ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
+});
 const githubCtx = { channel: { kind: "github" }, session: { auth: { current: { attributes: {} } } } };
 const unifiedCtx = { channel: { kind: "unified" }, session: { auth: { current: { attributes: { oe_platform: "slack" } } } } };
 const taskCtx = {
@@ -75,6 +98,8 @@ const CASES: readonly ToolCase[] = [
   },
   { slug: "browser_tools", entryKey: "browser_navigate", ctx: taskCtx },
   { slug: "browser_tools", entryKey: "browser_screenshot", ctx: taskCtx },
+  { slug: "read_work_channel", entryKey: "_single", ctx: slackCtx },
+  { slug: "read_work_thread", entryKey: "_single", ctx: slackCtx },
 ];
 const SLUGS = [...new Set(CASES.map((c) => c.slug))];
 
