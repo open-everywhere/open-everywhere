@@ -69,7 +69,7 @@ export type TaskNotification = {
   readonly status: string;
 };
 
-const TASK_NOTIFICATION_RE = /^Background task (\S+) \([^)]*\) (?:is ([a-z_]+)\.|needs input\.)/;
+const TASK_NOTIFICATION_RE = /^Background task (\S+) \([^)]*\) (?:is ([a-z_]+)\.|needs input\.)/m;
 
 const TASK_ID_RE = /^task_[A-Za-z0-9_-]{8,}$/;
 

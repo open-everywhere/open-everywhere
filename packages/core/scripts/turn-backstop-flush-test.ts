@@ -182,34 +182,55 @@ const settle = async (): Promise<void> => {
 {
   const container = new FakeEveContext();
   const before = (await flushEdges()).filter((e) => e === "turn-backstop").length;
+  const { MAX_FLUSH_HOLDS, noteTaskSettled } = await import("../agent/hooks/settlement-flush.js");
 
   await inEveContext(container, async () => {
     noteTaskDispatched("task-note");
     ok(liveTaskCount() === 1, "notification: the dispatch arms the guard, exactly as the view path does");
-  });
+    ok(treeIsDirty() === true, "notification: …and marks the tree dirty");
 
-  await inEveContext(container, async () => {
-    noteTaskViews([{ taskId: "task-note", status: TERMINAL_TASK_STATUSES[0]! }] as never);
+    for (let i = 0; i < MAX_FLUSH_HOLDS; i++) {
+      const held = await flushDirtyTreeAtTurnEnd(seatCtx);
+      ok(held !== null && held.outcome === "skipped", `notification: held attempt ${i + 1} of ${MAX_FLUSH_HOLDS} is SKIPPED while the child holds the tree`);
+    }
+    ok(liveTaskCount() === 0, "notification: the last hold RETIRES the id (OPE-724) — the guard stops protecting a child it has waited long enough for");
+
     const cleared = await flushDirtyTreeAtTurnEnd(seatCtx);
-    ok(cleared !== null && cleared.outcome === "flushed", "notification: an earlier turn persists and clears the flag");
-    ok(treeIsDirty() === false, "🔴 notification PRECONDITION: the tree now reads CLEAN — asserted `=== false`. The child goes on writing past this point, which is the whole hazard");
-  });
+    ok(cleared !== null && cleared.outcome === "flushed", "notification: the next turn end therefore PERSISTS");
+    ok(
+      treeIsDirty() === false,
+      "🔴 notification PRECONDITION: the tree now reads CLEAN — asserted `=== false` — while the child is STILL RUNNING and still writing. This is the state the settlement has to repair",
+    );
 
-  await inEveContext(container, async () => {
-    noteTaskDispatched("task-note2");
-    ok(liveTaskCount() === 1, "notification: a second child is dispatched and holds the tree");
-    const flushSettled = await import("../agent/hooks/settlement-flush.js");
-    flushSettled.noteTaskSettled({ taskId: "task-note2", status: TERMINAL_TASK_STATUSES[0]!, agentId: null });
-    ok(liveTaskCount() === 0, "🔴 notification: `noteTaskSettled` OPENS the fan-out guard — the settled child can never write again");
+    noteTaskSettled({ taskId: "task-note", status: TERMINAL_TASK_STATUSES[0]!, agentId: null });
     ok(
       treeIsDirty() === true,
-      "🔴 notification: …and RE-MARKS the tree dirty — asserted `=== true`. Without this the backstop below returns null and the child's edits sit in the sandbox until rotation overwrites them",
+      "🔴 notification: `noteTaskSettled` RE-MARKS the tree dirty — asserted `=== true`. Delete that half and the backstop below returns null, and everything the child wrote after the retirement flush is lost at the next rotation",
     );
     const r = await flushDirtyTreeAtTurnEnd(seatCtx);
-    ok(r !== null && r.outcome === "flushed", "🔴 notification END TO END: the turn the notification arrived on PERSISTS the child's edits — no `task_peek`, no `task_cancel`, no tool call at all");
+    ok(r !== null && r.outcome === "flushed", "🔴 notification END TO END: the turn the notification arrived on PERSISTS the child's final edits — no `task_peek`, no `task_cancel`, no tool call at all");
   });
   await settle();
-  ok((await flushEdges()).filter((e) => e === "turn-backstop").length - before === 2, "notification: both persists are audited under the turn-backstop edge label");
+  ok((await flushEdges()).filter((e) => e === "turn-backstop").length - before === MAX_FLUSH_HOLDS + 2, "notification: every attempt is audited — the holds, the retirement flush and the settlement flush");
+}
+
+{
+  const container = new FakeEveContext();
+  const { noteTaskSettled } = await import("../agent/hooks/settlement-flush.js");
+  await inEveContext(container, async () => {
+    noteTaskDispatched("task-sib-a");
+    noteTaskDispatched("task-sib-b");
+    ok(liveTaskCount() === 2, "siblings: two background children hold the tree");
+    noteTaskSettled({ taskId: "task-sib-a", status: TERMINAL_TASK_STATUSES[0]!, agentId: null });
+    ok(liveTaskCount() === 1, "🔴 siblings: a settlement notification drops ITS id and only its id — asserted `=== 1`, so the guard still holds for the sibling that is mid-write");
+    const held = await flushDirtyTreeAtTurnEnd(seatCtx);
+    ok(held !== null && held.outcome === "skipped", "🔴 siblings NEGATIVE CONTROL: the flush is still HELD — one settlement does not open the guard for a child that never settled");
+    noteTaskSettled({ taskId: "task-sib-b", status: TERMINAL_TASK_STATUSES[0]!, agentId: null });
+    ok(liveTaskCount() === 0, "siblings: the second settlement empties the set");
+    const flushed = await flushDirtyTreeAtTurnEnd(seatCtx);
+    ok(flushed !== null && flushed.outcome === "flushed", "siblings: …and only then does the turn end persist");
+  });
+  await settle();
 }
 
 rmSync(tmp, { recursive: true, force: true });
