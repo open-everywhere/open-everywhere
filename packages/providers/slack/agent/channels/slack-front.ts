@@ -36,6 +36,7 @@ import {
   isThreadEngaged,
   divertInboundToUnifiedWindow,
   divertToUnifiedWindow,
+  isPrunedDeploymentWakeError,
   mintWakeId,
   resolveWakeTrust,
   ambientSupervisorEnabled,
@@ -313,6 +314,16 @@ const logOutcome =
     );
   };
 
+export async function deliverWithStrandRetry(deliver: () => Promise<void>): Promise<void> {
+  try {
+    await deliver();
+  } catch (err) {
+    if (!isPrunedDeploymentWakeError(err)) throw err;
+    console.warn(`[open-everywhere:slack-front] wake hit a pruned deployment — seat marked for rotation, re-delivering once: ${String(err)}`);
+    await deliver();
+  }
+}
+
 export function recordWakeFailure(key: string, err: unknown): void {
   const channelId = key.split(":")[0] ?? key;
   try {
@@ -437,11 +448,13 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         const supKey = supervisorFifoKey(ev.channelId);
         args.waitUntil(
           fifo.enqueue(supKey, () =>
-            routeSupervisorEvent(
-              ev,
-              withSingleWindowDiversion(liveSupervisorDeps(send), args.to, surfaceKey!),
-              directMention ? { directMention: true } : undefined,
-            ).then(logOutcome(`${label}-supervisor`, ev.channelId, ev.ts)),
+            deliverWithStrandRetry(() =>
+              routeSupervisorEvent(
+                ev,
+                withSingleWindowDiversion(liveSupervisorDeps(send), args.to, surfaceKey!),
+                directMention ? { directMention: true } : undefined,
+              ).then(logOutcome(`${label}-supervisor`, ev.channelId, ev.ts)),
+            ),
           ),
         );
         return;
@@ -551,7 +564,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       if (!(await notYetSeen(decision.env, dev))) return OK();
       args.waitUntil(
         fifo.enqueue(dmFifoKey(dev.channelId), async () => {
-          await scheduleDmWake(dev, decision.dmKind);
+          await deliverWithStrandRetry(() => scheduleDmWake(dev, decision.dmKind));
           console.log(`[open-everywhere:slack-front] ${decision.dmKind} ${dev.channelId}/${dev.ts}: woke — diverted to the DM window seat`);
         }),
       );
@@ -588,7 +601,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
           );
           args.waitUntil(
             fifo.enqueue(dmFifoKey(mev.channelId), async () => {
-              await scheduleDmWake({ ...mev, channelType: "mpim" }, "mpim");
+              await deliverWithStrandRetry(() => scheduleDmWake({ ...mev, channelType: "mpim" }, "mpim"));
             }),
           );
           return OK();

@@ -43,6 +43,7 @@ import { consumeReactedThisTurn } from "./react-signal.js";
 import { settleWakeAccounting, UNACCOUNTED_WAKES_AUDIT_ACTION, MAX_ACCOUNTING_WAKES } from "./wake-accounting.js";
 import { redriveEnabled, maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
 import { unresumableAuditDetail } from "./session-resume.js";
+import { healPrunedDeploymentStrand } from "./stranded-seat.js";
 import { collectTaskResultDelta, markRecoveredDelivered } from "../access/task-result-delta.js";
 import { resultTaintedAttrs } from "../access/taint-signal.js";
 import { admitInboundSurface, providerSelection } from "../access/provider-selection.js";
@@ -697,7 +698,18 @@ export async function divertToUnifiedWindow(
   const deliveredAuth = recoveredTainted
     ? { ...auth, attributes: { ...auth.attributes, ...resultTaintedAttrs(true) } }
     : auth;
-  await receive(channel, target).send(message, { auth: completeWakeAuth(deliveredAuth) });
+  try {
+    await receive(channel, target).send(message, { auth: completeWakeAuth(deliveredAuth) });
+  } catch (err) {
+    await healPrunedDeploymentStrand({
+      token: bareToken,
+      surfaceKey: input.surfaceKey,
+      platform: input.window.origin.platform,
+      atIso: new Date().toISOString(),
+      err,
+    });
+    throw err;
+  }
   if (recovered) {
     const org = deploymentOrg();
     await markRecoveredDelivered(getOperationalStore(), org, recovered.taskIds, new Date().toISOString());
