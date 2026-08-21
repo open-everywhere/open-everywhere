@@ -270,16 +270,32 @@ const GRANTED_DOMAINS: readonly Domain[] = [
   ok(rows.length === 0 && lookups === 1, "a granted cross-surface create is admitted, costing exactly one lookup");
   ok(sawOrg === ORG, "…and the team lookup ran under the GRANTED workspace, which is also the credential selector");
 
-  const copy = linearScopeRefusal("PAY", linearTeamScope(SLACK_PAY, TEAM_PAY, DOMAINS), "write");
+  const copy = linearScopeRefusal("PAY", linearTeamScope(SLACK_PAY, TEAM_PAY, DOMAINS), "write", true);
   ok(copy.includes('credential: "workspace"'), "the write refusal names the domain's Linear WORK credential declaration as the remedy");
   ok(
     !linearScopeRefusal("PAY", linearTeamScope(SLACK_PAY, TEAM_PAY, DOMAINS), "read").includes('credential: "workspace"'),
     "…and the READ copy does not, since a work grant is not a read grant",
   );
+  ok(
+    !linearScopeRefusal("PAY", linearTeamScope(SLACK_PAY, TEAM_PAY, DOMAINS), "write").includes('credential: "workspace"'),
+    "the DEFAULT write copy (no grantCapable arg) names no grant remedy — the issue-shaped fence's own shape",
+  );
 
   sawOrg = undefined;
   await assertLinearTeamWriteAllowed(ctxFor(TEAM_PAY, ISSUE_OWN), "PAY", DOMAINS, teamResolver, { audit, workOrg: ORG2 });
   ok(sawOrg === ORG, "a Linear caller's lookup still runs under the workspace it was woken in, never the grant's");
+
+  let issueErr: unknown;
+  try {
+    await assertLinearIssueWriteAllowed(slackPay, ISSUE_SIBLING, GRANTED_DOMAINS, async () => TEAM_PAY, { audit, workOrg: ORG });
+  } catch (e) {
+    issueErr = e;
+  }
+  ok(issueErr instanceof ChannelScopeError, "a Slack-woken set_state/assign/add_label caller is refused even holding a REAL Linear work grant");
+  ok(
+    !(issueErr as Error).message.includes('credential: "workspace"'),
+    "…and the refusal message never claims the work grant is a remedy — it can't deliver one",
+  );
 }
 
 {
