@@ -1,6 +1,7 @@
 import { callLinearGraphQL, type LinearApiOptions, type LinearChannelCredentials } from "eve/channels/linear";
 import { linearCredentialsForOrg } from "./linear-credentials.js";
 import { assertLinearIssueWriteAllowed } from "./linear-scope.js";
+import { linearWorkOrg } from "./linear-work.js";
 import { enrichIssueTeam } from "./linear.js";
 import { currentTurnOrganization } from "@open-everywhere/core/agent/adapter-api.js";
 import type { BindableContext, Domain, EntityActionAdapter } from "@open-everywhere/core/agent/adapter-api.js";
@@ -135,9 +136,11 @@ export async function addLinearIssueLabel(issueRef: string, label: string, opts:
 export const linearEntityAdapter: EntityActionAdapter = {
   platform: "linear",
   checkAccess: (ctx: BindableContext, entityId: string, domains: readonly Domain[]) => {
-    const organizationId = currentTurnOrganization(ctx);
-    return assertLinearIssueWriteAllowed(ctx, entityId, domains, async (ref) => (await enrichIssueTeam(ref, { organizationId }))?.teamId);
+    const workOrg = linearWorkOrg(ctx, domains);
+    const organizationId = currentTurnOrganization(ctx) ?? workOrg;
+    return assertLinearIssueWriteAllowed(ctx, entityId, domains, async (ref) => (await enrichIssueTeam(ref, { organizationId }))?.teamId, { workOrg });
   },
+  workspaceFor: linearWorkOrg,
   setState: (id, value, organizationId) => setLinearIssueState(id, value, { organizationId }),
   assign: (id, value, organizationId) => assignLinearIssue(id, value, { organizationId }),
   addLabel: (id, value, organizationId) => addLinearIssueLabel(id, value, { organizationId }),

@@ -599,7 +599,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
 
   await refuses(
     () => (armed(setStateTool, conv2, "set_state") as Promise<Entry>).then((e) => e.execute({ ref: { platform: "venue-ticket", id: "VT-9" }, state: "Done" }, conv2)),
-    /"venue-ticket" is not one of this window's sources/,
+    /"venue-ticket" is not one of this session's work destinations/,
     "args-vs-card(326): 🔴 a ref reachable from the VENUE's domain but not from the ASKING window is still refused — the redirect moves the card, never the authorization surface",
   );
 }
