@@ -1,6 +1,7 @@
 import type { OperatorApprover } from "./approver-chain.js";
 import { preApprovalRuleProblems, type PreApprovalRule } from "./pre-approval-rules.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
+import { parseSurfaceKeyEntry } from "../identity/surface-key-grammar.js";
 import { tenantRungRemedy } from "./tenant-admission.js";
 import { isValidLinkSetRef } from "../identity/link-set-ref.js";
 import type { Group } from "../identity/groups.js";

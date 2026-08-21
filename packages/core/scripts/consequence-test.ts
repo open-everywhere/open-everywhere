@@ -355,6 +355,7 @@ firesWith(
     "extend_workspace_time",
     "read_notion_page",
     "read_notion_comments",
+    "notion_search",
     "read_linear_issue",
     "read_slack_channel",
     "read_slack_thread",

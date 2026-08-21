@@ -450,6 +450,50 @@ export function richTextChunks(text: string): Array<{ type: "text"; text: { cont
   return chunks;
 }
 
+export interface NotionSearchHit {
+  readonly id: string;
+  readonly object: string;
+  readonly title: string;
+  readonly url?: string;
+}
+
+export async function searchNotion(
+  query: string,
+  opts: NotionCallOpts & { readonly pageSize?: number; readonly filter?: "page" | "database" },
+): Promise<readonly NotionSearchHit[]> {
+  const body: Record<string, unknown> = { page_size: Math.min(Math.max(opts.pageSize ?? 10, 1), 100) };
+  if (query.length > 0) body.query = query;
+  if (opts.filter) body.filter = { property: "object", value: opts.filter };
+  const res = await notionFetch(`${NOTION_API_BASE}/v1/search`, {
+    method: "POST",
+    headers: notionHeaders(opts),
+    body: JSON.stringify(body),
+  }, opts);
+  if (!res.ok) throw new Error(`notion search failed: ${res.status} ${await safeText(res)}`);
+  const parsed = (await res.json()) as { results?: unknown };
+  const results = Array.isArray(parsed.results) ? parsed.results : [];
+  const hits: NotionSearchHit[] = [];
+  for (const raw of results) {
+    const item = raw as { id?: unknown; object?: unknown; url?: unknown; title?: unknown; properties?: unknown };
+    if (typeof item.id !== "string" || item.id.length === 0) continue;
+    hits.push({
+      id: item.id,
+      object: typeof item.object === "string" ? item.object : "unknown",
+      title: notionItemTitle(item),
+      ...(typeof item.url === "string" ? { url: item.url } : {}),
+    });
+  }
+  return hits;
+}
+
+function notionItemTitle(item: { readonly title?: unknown; readonly properties?: unknown }): string {
+  if (Array.isArray(item.title)) return richTextToPlainText(item.title as NotionRichText[]);
+  const props = item.properties as Record<string, { type?: unknown; title?: unknown }> | undefined;
+  for (const value of Object.values(props ?? {})) {
+    if (value?.type === "title" && Array.isArray(value.title)) return richTextToPlainText(value.title as NotionRichText[]);
+  }
+  return "";
+}
 
 async function safeText(res: Response): Promise<string> {
   try {

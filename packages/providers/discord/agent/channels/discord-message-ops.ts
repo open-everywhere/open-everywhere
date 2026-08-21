@@ -54,5 +54,7 @@ export const discordMessageOps: SurfaceMessageOps = {
       body: form,
     });
     if (!res.ok) throw new Error(`Discord create-message (files) failed (HTTP ${res.status}) for channel ${channelId}`);
+    const body = (await res.json().catch(() => undefined)) as { id?: unknown } | undefined;
+    return typeof body?.id === "string" ? body.id : undefined;
   },
 };

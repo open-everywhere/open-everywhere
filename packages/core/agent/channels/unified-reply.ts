@@ -8,6 +8,7 @@ import {
   type ReplyAudit,
   type ReplierLabel,
 } from "./reply-post.js";
+import { recordContainerAnswered } from "./answered-container-ledger.js";
 import { withReplierPrefix, truncateMemoryCitationPaths } from "./turn-delivery.js";
 import { onVercel } from "../access/platform.js";
 import { postArm, type PostIntent } from "./post-arms.js";
@@ -84,6 +85,7 @@ export async function postUnifiedReply(
       }
       await auditReplyPost(audit, realId, origin.platform, body.length);
       await recordLandedPost({ org: audit?.org, editLocus: unifiedEditLocus(origin), messageId: realId, body, platform: origin.platform });
+      await recordContainerAnswered(audit?.org, origin);
       return realId;
     },
     releaseKeyOnFailure: releasePostKeyOnFailure,

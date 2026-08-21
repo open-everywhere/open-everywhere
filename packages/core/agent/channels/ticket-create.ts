@@ -25,6 +25,7 @@ export interface TicketCreateAdapter {
   readonly platform: string;
   checkAccess?(ctx: BindableContext, target: string, domains: readonly Domain[]): void | Promise<void>;
   defaultTarget?(ctx: BindableContext): string | undefined;
+  workspaceFor?(ctx: BindableContext): string | undefined;
   create: TicketCreateFn;
 }
 
@@ -96,7 +97,7 @@ export async function resolveTicketCreate(
   }
 
   await adapter.checkAccess?.(ctx, target, domains);
-  const organizationId = currentTurnOrganization(ctx);
+  const organizationId = currentTurnOrganization(ctx) ?? adapter.workspaceFor?.(ctx);
   return {
     platform,
     target,

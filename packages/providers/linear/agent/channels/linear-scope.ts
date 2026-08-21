@@ -17,7 +17,8 @@ export type LinearScopeReason =
   | "cross-domain"
   | "target-unresolvable"
   | "target-unassigned"
-  | "caller-unassigned";
+  | "caller-unassigned"
+  | "work-grant";
 
 export interface LinearScopeVerdict {
   readonly allowed: boolean;
@@ -31,6 +32,18 @@ function splitLinearKey(surfaceKey: string): { org?: string; surface?: string } 
   const parts = surfaceKey.split("/");
   if (parts.length !== 3 || parts[0] !== "linear") return {};
   return { org: parts[1] || undefined, surface: parts[2] || undefined };
+}
+
+type LinearWriteOrg =
+  | { readonly ok: true; readonly org: string; readonly via: "caller-key" }
+  | { readonly ok: true; readonly org: string; readonly via: "work-grant" }
+  | { readonly ok: false; readonly reason: "target-unresolvable" };
+
+function linearWriteOrg(callerSurfaceKey: string, workOrg: string | undefined): LinearWriteOrg {
+  const { org } = splitLinearKey(callerSurfaceKey);
+  if (org) return { ok: true, org, via: "caller-key" };
+  if (!workOrg) return { ok: false, reason: "target-unresolvable" };
+  return { ok: true, org: workOrg, via: "work-grant" };
 }
 
 function sameRef(a: string, b: string): boolean {
@@ -80,16 +93,23 @@ export function linearScopeRefusal(targetRef: string, verdict: LinearScopeVerdic
         ? "Its team is in no memory domain, and an unassigned team is refused rather than assumed."
         : "";
   const may = direction === "write" ? "may only act on Linear entities on teams" : "may only read issues on teams";
+  const workGrant =
+    direction === "write"
+      ? " If this session was woken on another surface, the domain's Linear WORK grant is what lets it file here: add " +
+        '`credentials: [{ connector: "linear", credential: "workspace", use: "<organization_id>" }]` to the domain ' +
+        "(agent/memory/domains.ts)."
+      : "";
   return (
     `Linear target "${targetRef}" is not in ${scope} ${direction} scope, so it is refused. ${why} ` +
     `The agent ${may} in its memory domain (memory/domains.ts). Add the team to ` +
     "the domain's `channels` as `linear/<organization_id>/<team_id>`, or claim the whole workspace in " +
-    "`containers` as `linear/<organization_id>`, to grant it."
+    `\`containers\` as \`linear/<organization_id>\`, to grant it.${workGrant}`
   ).replace(/\s{2,}/g, " ");
 }
 
 export interface LinearScopeDeps {
   readonly audit?: (entry: Parameters<typeof appendAudit>[0]) => Promise<void>;
+  readonly workOrg?: string;
 }
 
 type AuthAttrs = Readonly<Record<string, string | readonly string[]>> | undefined;
@@ -184,13 +204,34 @@ export function linearTeamScope(
   callerSurfaceKey: string,
   targetTeamId: string | undefined,
   domains: readonly Domain[],
+  workOrg?: string,
 ): LinearScopeVerdict {
-  const { org } = splitLinearKey(callerSurfaceKey);
   const caller = resolveDomainForChannel(callerSurfaceKey, domains);
   const callerName = caller.domain?.name;
   if (!callerName) return { allowed: false, reason: "caller-unassigned" };
-  if (!targetTeamId || !org) return { allowed: false, reason: "target-unresolvable", callerDomain: callerName };
-  const target = resolveDomainForChannel(`linear/${org}/${targetTeamId}`, domains);
+
+  const source = linearWriteOrg(callerSurfaceKey, workOrg);
+  if (!source.ok) {
+    return { allowed: false, reason: source.reason, callerDomain: callerName };
+  }
+  if (!targetTeamId) return { allowed: false, reason: "target-unresolvable", callerDomain: callerName };
+  const targetKey = `linear/${source.org}/${targetTeamId}`;
+
+  if (source.via === "work-grant") {
+    const granted = resolveDomainForChannel(targetKey, domains);
+    if (granted.domain && granted.domain.name !== callerName) {
+      return { allowed: false, reason: "cross-domain", callerDomain: callerName, targetDomain: granted.domain.name, targetTeam: targetTeamId };
+    }
+    return {
+      allowed: true,
+      reason: "work-grant",
+      callerDomain: callerName,
+      targetDomain: granted.domain?.name ?? callerName,
+      targetTeam: targetTeamId,
+    };
+  }
+
+  const target = resolveDomainForChannel(targetKey, domains);
   if (!target.domain) return { allowed: false, reason: "target-unassigned", callerDomain: callerName, targetTeam: targetTeamId };
   if (target.domain.name !== callerName) {
     return { allowed: false, reason: "cross-domain", callerDomain: callerName, targetDomain: target.domain.name, targetTeam: targetTeamId };
@@ -208,17 +249,19 @@ export async function assertLinearTeamWriteAllowed(
   ctx: BindableContext,
   target: string,
   domains: readonly Domain[],
-  resolveTeamId: (target: string) => Promise<string | undefined>,
+  resolveTeamId: (target: string, organizationId: string | undefined) => Promise<string | undefined>,
   deps?: LinearScopeDeps,
 ): Promise<void> {
   const partition = resolvePartition(ctx);
-  const pure = linearTeamScope(partition.surfaceKey, undefined, domains);
-  if (pure.reason === "caller-unassigned") {
+  const workOrg = deps?.workOrg;
+  const source = linearWriteOrg(partition.surfaceKey, workOrg);
+  const pure = linearTeamScope(partition.surfaceKey, undefined, domains, workOrg);
+  if (pure.reason === "caller-unassigned" || !source.ok) {
     await auditLinearRefusal(ctx, target, pure, "write", deps);
     throw new ChannelScopeError(linearScopeRefusal(target, pure, "write"));
   }
-  const teamId = await resolveTeamId(target);
-  const verdict = linearTeamScope(partition.surfaceKey, teamId, domains);
+  const teamId = await resolveTeamId(target, source.org);
+  const verdict = linearTeamScope(partition.surfaceKey, teamId, domains, workOrg);
   if (verdict.allowed) return;
   await auditLinearRefusal(ctx, target, verdict, "write", deps);
   throw new ChannelScopeError(linearScopeRefusal(target, verdict, "write"));

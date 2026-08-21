@@ -340,6 +340,7 @@ function access(hosts: ReachableHost[], connections: Connection[]): EffectiveAcc
     connectorCredentials: {},
     reachableHosts: hosts,
     repos: [],
+   
     plugins: [],
     skills: [],
     subagents: [],

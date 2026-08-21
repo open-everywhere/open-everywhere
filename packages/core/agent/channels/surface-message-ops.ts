@@ -13,7 +13,7 @@ export interface SurfaceMessageOps {
   readonly platform: string;
   postText(channelId: string, text: string, opts?: { replyToMessageId?: string }): Promise<string>;
   editMessage(channelId: string, messageId: string, text: string): Promise<void>;
-  postFiles(channelId: string, files: readonly OutboundFile[], comment: string | undefined): Promise<void>;
+  postFiles(channelId: string, files: readonly OutboundFile[], comment: string | undefined): Promise<string | undefined>;
   permalink?(ref: MessageRef): Promise<string | undefined>;
   setReaction?(channelId: string, messageId: string, emoji: string, on: boolean): Promise<void>;
 }
