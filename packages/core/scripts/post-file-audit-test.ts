@@ -157,6 +157,8 @@ async function armed(ctx: BindableContext): Promise<ArmedPostFile> {
   registerConfig({
     loadBundles: () => [],
     loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
     loadDomains: () => [],
     loadSilos: () => [],
     domainsForSurface: emptyDomains.domainsForSurface,

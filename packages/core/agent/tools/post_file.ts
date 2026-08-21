@@ -282,7 +282,6 @@ export default windowGated("post_file", defineTool({
       hosted: hostedUrls.length,
       attached: toAttach.length,
       ...(deliveredId ? { id: deliveredId } : {}),
-      ...(attachId && linkId && attachId !== linkId ? { linkId } : {}),
     });
     return { posted: true, count: resolved.length, platform, ...(hostedUrls.length > 0 ? { urls: hostedUrls } : {}) };
   },
