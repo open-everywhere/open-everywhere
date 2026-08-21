@@ -9,6 +9,7 @@ import {
   registerProviderDocs,
   registerEventNormalizer,
   registerEventScopeGrant,
+  registerSurfaceMessageOps,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
 import { bindLinear } from "./channels/linear-identity.js";
@@ -18,11 +19,13 @@ import { linearEntityAdapter } from "./channels/linear-actions.js";
 import { linearTicketCreateAdapter } from "./channels/linear-create.js";
 import { linearCredentialsConfigured } from "./channels/linear-credentials.js";
 import { linearEventNormalizer, linearEventScopeGrant } from "./channels/linear-event-normalizer.js";
+import { linearMessageOps } from "./channels/linear-message-ops.js";
 
 export function registerLinearProvider(): void {
   registerIdentityMapper("linear", bindLinear);
   registerCapabilityManifest("linear", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
   registerPostArm(linearPostArm);
+  registerSurfaceMessageOps(linearMessageOps);
   registerWakeOriginCodec("linear", linearWakeOriginCodec);
   registerEntityActionAdapter(linearEntityAdapter);
   registerTicketCreateAdapter(linearTicketCreateAdapter);

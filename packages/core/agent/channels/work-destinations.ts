@@ -1,17 +1,11 @@
 import { resolveWindowSources, type BindableContext } from "../identity/binding.js";
-import { workGrantedConnectors } from "../access/work-grant.js";
+import { callerWorkDomain, workGrantedConnectors } from "../access/work-grant.js";
 import { resolveAccessFor } from "../access/request.js";
-import { resolveDomainForChannel, type Domain } from "../memory/domain.js";
-import { resolvePartition } from "../memory/partition.js";
+import type { Domain } from "../memory/domain.js";
 
 function callerDomains(ctx: BindableContext, domains: readonly Domain[]): readonly (Domain | undefined)[] {
-  try {
-    const surfaceKey = resolvePartition(ctx).surfaceKey;
-    const domain = resolveDomainForChannel(surfaceKey, domains).domain;
-    return domain ? [domain] : [];
-  } catch {
-    return [];
-  }
+  const domain = callerWorkDomain(ctx, () => domains);
+  return domain ? [domain] : [];
 }
 
 function grantedRepos(ctx: BindableContext): readonly string[] {

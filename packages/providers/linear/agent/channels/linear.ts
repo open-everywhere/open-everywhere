@@ -167,7 +167,7 @@ export function _resetLinearGuestCache(): void {
 }
 
 const viewerCache = new Map<string, Promise<{ id?: string; name?: string }>>();
-function resolveViewer(organizationId?: string): Promise<{ id?: string; name?: string }> {
+export function resolveViewer(organizationId?: string): Promise<{ id?: string; name?: string }> {
   const key = organizationId ?? "";
   const cached = viewerCache.get(key);
   if (cached) return cached;

@@ -364,7 +364,7 @@ export type { AmbientSkipRecord } from "./channels/ambient-skip.js";
 
 export { credentialOverrideFor, domainCredentialId, connectorIntegrations } from "./access/domain-credentials.js";
 export type { DomainCredentialOverride, ConnectorIntegration, CredentialBoundDomain } from "./access/domain-credentials.js";
-export { workGrantCredential, hasWorkGrant } from "./access/work-grant.js";
+export { callerWorkDomain, callerWorkGrant, workGrantCredential, hasWorkGrant, type WorkDomainResolver } from "./access/work-grant.js";
 export { workDestinationPlatforms } from "./channels/work-destinations.js";
 export { getOperatorSecret, OperatorSecretNotSetError } from "./credentials/operator-secrets.js";
 
