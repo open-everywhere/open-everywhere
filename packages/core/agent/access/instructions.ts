@@ -4,7 +4,7 @@ import type { EffectiveAccess } from "./resolver.js";
 
 export function assembleAccessInstructions(access: EffectiveAccess, domains: readonly (CredentialBoundDomain | undefined)[] = []): string | null {
   const parts: string[] = [];
-  const workConnectors = workGrantedConnectors(domains);
+  const workConnectors = workGrantedConnectors(domains, access.repos);
 
   if (access.instructionStack.length > 0) {
     const lines = access.instructionStack.map((l) => `- (${l.source}) ${l.text}`).join("\n");

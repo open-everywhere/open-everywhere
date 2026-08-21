@@ -28,12 +28,22 @@ export const WORK_ROLES: readonly WorkRole[] = [
   { connector: "linear", role: "workspace" },
 ];
 
-export function workGrantedConnectors(domains: readonly (CredentialBoundDomain | undefined)[]): readonly string[] {
+export const GITHUB_CONNECTOR = "github";
+
+export function hasGithubWorkGrant(repos: readonly string[]): boolean {
+  return repos.length > 0;
+}
+
+export function workGrantedConnectors(
+  domains: readonly (CredentialBoundDomain | undefined)[],
+  repos: readonly string[] = [],
+): readonly string[] {
   const out = new Set<string>();
   for (const domain of domains) {
     for (const w of WORK_ROLES) {
       if (hasWorkGrant(domain, w.connector, w.role)) out.add(w.connector);
     }
   }
+  if (hasGithubWorkGrant(repos)) out.add(GITHUB_CONNECTOR);
   return [...out].sort();
 }
