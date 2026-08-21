@@ -19,14 +19,17 @@ const { defineBundle, defineBinding } = await import("../agent/access/bundle.js"
 registerConfig({
   loadConnectorCredentials: () => [
     { connector: "notion", allows: ["api-key"], credentials: [{ id: "team", type: "api-key", secretRef: "NOTION_TEAM", broker: "env" }] },
+    { connector: "personal-only", allows: ["api-key"], credentials: [{ id: "mine", type: "api-key", secretRef: "MINE", broker: "env" }] },
   ],
   loadBundles: () => [
     defineBundle({ name: "svc", connectors: [{ name: "notion", credential: "team", contentOrigin: "external" }] }),
     defineBundle({ name: "personal", connectors: [{ name: "notion", credential: "team", contentOrigin: "external" }] }),
+    defineBundle({ name: "personal-universe", connectors: [{ name: "personal-only", credential: "mine", contentOrigin: "external" }] }),
   ],
   loadBindings: () => [
     defineBinding({ bundle: "svc", scope: { level: "org" } }),
     defineBinding({ bundle: "personal", scope: { level: "principal", principal: "slack/T_TEAM/U_caller" } }),
+    defineBinding({ bundle: "personal-universe", scope: { level: "principal", principal: "slack/T_TEAM/U_caller" } }),
   ],
   pluginRegistry: {},
   skillContent: {},
@@ -132,6 +135,40 @@ overrideSettingsForTest({ connectors: { dmOnly: true } });
   const denied = await refusal("not-a-connection", channelAuth);
   ok(denied.includes("not granted"), "disarming the wall does NOT disarm the grant gate");
   overrideSettingsForTest({ connectors: { dmOnly: true } });
+}
+
+{
+  overrideSettingsForTest({ connectors: { dmOnly: true, opTiering: true } });
+  ok(scope.connectorDmOnlyEnabled(), "the wall is still UP for this block — the carve-out is not the escape hatch");
+
+  const before = (await readAudit({ org: "default", action: "connector.use" })).length;
+  const msg = await refusal("notion", channelAuth);
+  ok(msg === "", "opTiering armed -> a CHANNEL surface holding a service grant passes the wall");
+  const rows = await readAudit({ org: "default", action: "connector.use" });
+  ok(rows.length === before + 1, "the carve-out pass wrote one connector.use audit row");
+  const carved = rows.filter((r) => r.detail?.grant === "work-surface");
+  ok(carved.length === 1, "exactly one row names the tier that admitted it (grant=work-surface)");
+  ok(carved[0].detail?.mode === "channel", "that row still carries the resolved mode");
+  ok(
+    rows.filter((r) => r.detail?.mode === "dm").every((r) => r.detail?.grant === undefined),
+    "a DM pass carries NO work-surface stamp — the two tiers are distinguishable in the log",
+  );
+
+  const channelWorkerAuth = slackAuth({ channel_id: "C_CHAN", channel_type: "channel", user_id: "U_caller", oe_grain: "task" });
+  ok((await refusal("notion", channelWorkerAuth)) === "", "a CHANNEL-spawned worker reaches the domain work grant (the OPE-913 shape)");
+
+  const personalFromChannel = await refusal("personal-only", channelAuth);
+  ok(personalFromChannel.includes("not granted"), "a PERSONAL-only connector is still unreachable from a channel with the carve-out armed");
+  ok(!personalFromChannel.includes("DM-only"), "and it fails at the GRANT gate, not the wall — the personal universe never resolved at all");
+  ok((await refusal("personal-only", dmAuth)) === "", "the same personal connector still works in its owner's DM");
+
+  ok((await refusal("not-a-connection", channelAuth)).includes("not granted"), "the carve-out does NOT disarm the grant gate");
+
+  overrideSettingsForTest({ connectors: { dmOnly: true, opTiering: false } });
+  const refused = await refusal("notion", channelAuth);
+  ok(refused.includes("DM-only"), "opTiering OFF -> the same channel call is refused by the wall again");
+  ok(refused.includes("opTiering"), "the refusal names the setting a deployment must arm to hold a work grant");
+  overrideSettingsForTest({ connectors: { dmOnly: true, opTiering: false } });
 }
 
 rmSync(tmp, { recursive: true, force: true });

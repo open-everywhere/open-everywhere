@@ -3,7 +3,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { replayStepNames } from "@open-everywhere/core/agent/adapter-api.js";
-import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { defineDomain, overrideSettingsForTest, registerConfig } from "@open-everywhere/core/agent/adapter-api.js";
+import { registerNotionProvider } from "../agent/register.js";
 
 delete process.env.OE_PLATFORM;
 overrideSettingsForTest({ tools: { sourceScopedMount: false } });
@@ -19,9 +20,32 @@ const eq = (a: unknown, b: unknown, label: string) => {
 };
 
 const notionCtx = { channel: { kind: "notion" }, session: { auth: { current: { attributes: {} } } } };
+const WORK_WS = "ws-replay";
+const WORK_PAGE = "eeeeeeee-1111-4111-8111-eeeeeeeeeeee";
+registerNotionProvider();
+registerConfig({
+  loadDomains: () => [
+    defineDomain({
+      name: "replay",
+      channels: [`notion/${WORK_WS}/${WORK_PAGE}`],
+      credentials: [{ connector: "notion", credential: "team-key", use: "team-key" }],
+    }),
+  ],
+  loadSilos: () => [],
+  loadBundles: () => [],
+  loadBindings: () => [],
+  domainsForSurface: () => [],
+  pluginRegistry: {},
+  skillContent: {},
+});
+const notionWorkCtx = {
+  channel: { kind: "notion" },
+  session: { auth: { current: { attributes: { workspace_id: WORK_WS, page_id: WORK_PAGE }, principalId: "U_R", principalType: "notion-user" } } },
+};
 const CASES = [
   { slug: "read_notion_page", entryKey: "_single", ctx: notionCtx },
   { slug: "read_notion_comments", entryKey: "_single", ctx: notionCtx },
+  { slug: "notion_search", entryKey: "_single", ctx: notionWorkCtx },
 ] as const;
 const SLUGS = [...new Set(CASES.map((c) => c.slug))];
 
