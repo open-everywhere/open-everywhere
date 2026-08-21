@@ -11,7 +11,7 @@ export const SOURCE_SCOPED_TOOLS: Readonly<Record<string, string>> = {
   read_linear_issue: "linear",
 };
 
-export const GENERIC_READ_VERBS: readonly string[] = ["read_channel", "read_thread"];
+export const GENERIC_READ_VERBS: readonly string[] = ["read_channel", "read_thread", "read_work_channel", "read_work_thread"];
 
 const PLATFORM_SLUGS = ["slack", "notion", "github", "linear", "discord", "teams"];
 

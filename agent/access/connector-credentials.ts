@@ -51,6 +51,34 @@ const catalogues: ConnectorCredentials[] = [
   }),
 
   defineConnectorCredentials({
+    description: "Slack workspace — the WORK surface a granted domain reads conversations on at full fidelity.",
+    connector: "slack",
+    allows: ["api-key"],
+    credentials: [
+      { id: "work-token", type: "api-key", secretRef: "SLACK_WORK_BOT_TOKEN", broker: "env", intake: false },
+      { id: "chat-token", type: "api-key", secretRef: "SLACK_BOT_TOKEN", broker: "env", intake: false },
+    ],
+  }),
+  defineConnectorCredentials({
+    description: "Discord guild — the WORK surface a granted domain reads conversations on at full fidelity.",
+    connector: "discord",
+    allows: ["api-key"],
+    credentials: [
+      { id: "work-token", type: "api-key", secretRef: "DISCORD_WORK_BOT_TOKEN", broker: "env", intake: false },
+      { id: "chat-token", type: "api-key", secretRef: "DISCORD_BOT_TOKEN", broker: "env", intake: false },
+    ],
+  }),
+  defineConnectorCredentials({
+    description: "Microsoft Teams — the WORK surface a granted domain reads conversations on at full fidelity.",
+    connector: "teams",
+    allows: ["api-key"],
+    credentials: [
+      { id: "work-token", type: "api-key", secretRef: "TEAMS_WORK_APP_PASSWORD", broker: "env", intake: false },
+      { id: "chat-token", type: "api-key", secretRef: "TEAMS_APP_PASSWORD", broker: "env", intake: false },
+    ],
+  }),
+
+  defineConnectorCredentials({
     description: "E2E-only: isolated credentials the connector intake / org-click legs forge against (inert — never granted).",
     connector: "e2e-intake",
     allows: ["api-key", "service-oauth"],

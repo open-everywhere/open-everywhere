@@ -65,6 +65,8 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "read_thread",
   "read_slack_channel",
   "read_slack_thread",
+  "read_work_channel",
+  "read_work_thread",
   "session_cost",
   "spend_report",
   "usage_report",
