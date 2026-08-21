@@ -1,6 +1,11 @@
 
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-stranded-seat-")), "ops.sqlite3");
+delete process.env.OE_ORG;
 import {
   isPrunedDeploymentWakeError,
   prunedDeploymentIds,
@@ -10,6 +15,16 @@ import {
   HTTP_404_MARKER,
   PRUNED_DEPLOYMENT_AUDIT_ACTION,
 } from "../agent/channels/stranded-seat.js";
+import { divertToUnifiedWindow } from "../agent/channels/unified.js";
+import { formatWindowToken } from "../agent/channels/window-key.js";
+import { unifiedDomainSessionKey } from "../agent/channels/unified-supervisor.js";
+import { getOperationalStore } from "../agent/operational/provider.js";
+import { deploymentOrg } from "../agent/identity/binding.js";
+import { readAudit } from "../agent/audit/audit.js";
+import type { RouteHandlerArgs } from "eve/channels";
+import { registerSlackFixtureMapper, registerSlackFixtureCodec } from "./_slack-test-stubs.js";
+registerSlackFixtureMapper();
+registerSlackFixtureCodec();
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -170,6 +185,60 @@ const base = { surfaceKey: "slack/T0AAAAAAA/D0AAAAAAAAA", platform: "slack", atI
     haystack.includes("/v1/workflow/run-key/"),
     "pin: eve still fetches the run key per DEPLOYMENT from the Vercel API — the whole strand depends on that deployment-scoped lookup",
   );
+}
+
+{
+  const org = deploymentOrg();
+  const store = getOperationalStore();
+  const DOMAIN = "payments";
+  const token = formatWindowToken({ domain: DOMAIN, windowId: DOMAIN, generation: 3 });
+  const registryKey = unifiedDomainSessionKey(DOMAIN);
+  await store.rotateChannelSession(org, registryKey, token, "2026-04-04T08:00:00.000Z");
+  const before = await store.getChannelSession(org, registryKey);
+  ok(before?.rotateMarkedAt == null, "wiring precondition: the seat starts UNMARKED (so a green below cannot be vacuous)");
+
+  const failingReceive = ((_ch: unknown, _target: unknown) => ({
+    async send(): Promise<never> {
+      throw new Error(REAL_MESSAGE);
+    },
+  })) as unknown as RouteHandlerArgs["to"];
+
+  let threw: unknown;
+  try {
+    await divertToUnifiedWindow(failingReceive, {
+      message: "<wake>hello</wake>",
+      token,
+      window: { wakeId: "w1", origin: { platform: "slack", channelId: "C1" }, addressing: "direct-mention" },
+      surfaceKey: "slack/T1/C1",
+      auth: { attributes: { team_id: "T1", channel_id: "C1" } },
+    });
+  } catch (err) {
+    threw = err;
+  }
+  ok(threw !== undefined, "wiring: the divert still RETHROWS — the surface's own wake_failed record is untouched");
+  ok(isPrunedDeploymentWakeError(threw), "wiring: the rethrown error is the original one, not the heal's");
+
+  const after = await store.getChannelSession(org, registryKey);
+  ok(after?.rotateMarkedAt != null, "🔴 wiring: the live divert MARKED the seat for rotation — the next wake rotates into a fresh run");
+  const rows = await readAudit({ org, action: PRUNED_DEPLOYMENT_AUDIT_ACTION });
+  ok(rows.length === 1, "wiring: the live divert wrote exactly one strand audit row");
+
+  await store.rotateChannelSession(org, registryKey, token, "2026-04-04T08:30:00.000Z");
+  const healthyReceive = ((_ch: unknown, _target: unknown) => ({
+    async send(): Promise<never> {
+      throw new Error("socket hang up");
+    },
+  })) as unknown as RouteHandlerArgs["to"];
+  await divertToUnifiedWindow(healthyReceive, {
+    message: "<wake>hello</wake>",
+    token,
+    window: { wakeId: "w2", origin: { platform: "slack", channelId: "C1" }, addressing: "direct-mention" },
+    surfaceKey: "slack/T1/C1",
+    auth: { attributes: { team_id: "T1", channel_id: "C1" } },
+  }).catch(() => undefined);
+  const stillHealthy = await store.getChannelSession(org, registryKey);
+  ok(stillHealthy?.rotateMarkedAt == null, "🔴 wiring (negative control): a TRANSIENT send failure marks NOTHING — a live seat keeps its context");
+  ok((await readAudit({ org, action: PRUNED_DEPLOYMENT_AUDIT_ACTION })).length === 1, "wiring (negative control): and writes no second strand row");
 }
 
 console.log(`✓ stranded-seat: ${passed} assertions passed`);
