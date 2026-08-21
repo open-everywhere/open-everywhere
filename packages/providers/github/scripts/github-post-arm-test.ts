@@ -63,6 +63,62 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
 {
   const savedEnv = { id: process.env.GITHUB_APP_ID, pem: process.env.GITHUB_APP_PRIVATE_KEY };
   const savedFetch = globalThis.fetch;
+  const org = deploymentOrg();
+  const before = (await readAudit({ org, platform: "github", action: "github.token_mint_failed" })).length;
+  _resetGitHubInstallationTokenCache();
+  try {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
+    process.env.GITHUB_APP_ID = "12345";
+    process.env.GITHUB_APP_PRIVATE_KEY = privateKey;
+    globalThis.fetch = (async (url: string) => {
+      if (String(url).includes("access_tokens")) {
+        return new Response(
+          JSON.stringify({ token: "ghs_mismatched", expires_at: new Date(Date.now() + 3_600_000).toISOString(), repositories: [{ full_name: "acme/some-other-repo" }] }),
+          { status: 201 },
+        );
+      }
+      return new Response(JSON.stringify({ id: 1 }), { status: 201 });
+    }) as unknown as typeof fetch;
+
+    let threw = false;
+    let message = "";
+    try {
+      await githubPostArm.dispatchUnified!({ ...GH_ORIGIN, installationId: 778 } as UnifiedWakeOrigin, "text", {} as Parameters<NonNullable<typeof githubPostArm.dispatchUnified>>[2]);
+    } catch (err) {
+      threw = true;
+      message = err instanceof Error ? err.message : String(err);
+    }
+    ok(threw, "OPE-914: a mint that grants a repo OTHER than the one requested REJECTS — the arm never serves a token scoped to nothing that matches");
+    ok(message.includes("acme/payments-api") && message.includes("acme/some-other-repo"), "OPE-914: the refusal names both the expected repo and what was actually granted");
+    const after = await readAudit({ org, platform: "github", action: "github.token_mint_failed" });
+    ok(after.length > before, "OPE-914: the mismatch is as loud as any other mint failure — same durable audit row");
+
+    _resetGitHubInstallationTokenCache();
+    const beforeMatch = (await readAudit({ org, platform: "github", action: "github.token_mint_failed" })).length;
+    globalThis.fetch = (async (url: string) => {
+      if (String(url).includes("access_tokens")) {
+        return new Response(
+          JSON.stringify({ token: "ghs_matched", expires_at: new Date(Date.now() + 3_600_000).toISOString(), repositories: [{ full_name: "acme/payments-api" }] }),
+          { status: 201 },
+        );
+      }
+      return new Response(JSON.stringify({ id: 2 }), { status: 201 });
+    }) as unknown as typeof fetch;
+    const id = await githubPostArm.dispatchUnified!({ ...GH_ORIGIN, installationId: 779 } as UnifiedWakeOrigin, "text", {} as Parameters<NonNullable<typeof githubPostArm.dispatchUnified>>[2]);
+    ok(id === "2", "negative control: a mint that DOES grant the requested repo posts normally");
+    const afterMatch = await readAudit({ org, platform: "github", action: "github.token_mint_failed" });
+    ok(afterMatch.length === beforeMatch, "negative control: a matching grant appends NO mint-failure row");
+  } finally {
+    globalThis.fetch = savedFetch;
+    if (savedEnv.id === undefined) delete process.env.GITHUB_APP_ID; else process.env.GITHUB_APP_ID = savedEnv.id;
+    if (savedEnv.pem === undefined) delete process.env.GITHUB_APP_PRIVATE_KEY; else process.env.GITHUB_APP_PRIVATE_KEY = savedEnv.pem;
+    _resetGitHubInstallationTokenCache();
+  }
+}
+
+{
+  const savedEnv = { id: process.env.GITHUB_APP_ID, pem: process.env.GITHUB_APP_PRIVATE_KEY };
+  const savedFetch = globalThis.fetch;
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
   process.env.GITHUB_APP_ID = "12345";
   process.env.GITHUB_APP_PRIVATE_KEY = privateKey;
@@ -71,7 +127,7 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
     (async (url: string) => {
       const u = String(url);
       if (u.includes("access_tokens")) {
-        return new Response(JSON.stringify({ token: "ghs_faketoken", expires_at: new Date(Date.now() + 3_600_000).toISOString() }), { status: 201 });
+        return new Response(JSON.stringify({ token: "ghs_faketoken", expires_at: new Date(Date.now() + 3_600_000).toISOString(), repositories: [{ full_name: "acme/payments-api" }] }), { status: 201 });
       }
       return new Response(JSON.stringify(commentBody), { status: commentStatus });
     }) as unknown as typeof fetch;
@@ -163,7 +219,7 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
   globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
     const url = String(input);
     seen.push(url);
-    if (url.includes("/access_tokens")) return new Response(JSON.stringify({ token: "ghs_811", expires_at: new Date(Date.now() + 3_600_000).toISOString() }), { status: 201 });
+    if (url.includes("/access_tokens")) return new Response(JSON.stringify({ token: "ghs_811", expires_at: new Date(Date.now() + 3_600_000).toISOString(), repositories: [{ full_name: "acme/payments-api" }] }), { status: 201 });
     if (url.endsWith("/comments")) return new Response(JSON.stringify({ id: 987 }), { status: 201, headers: { "content-type": "application/json" } });
     return new Response("unexpected", { status: 500 });
   }) as typeof fetch;
@@ -200,7 +256,7 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
     const seen: { url: string; method: string; body: string }[] = [];
     globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.includes("/access_tokens")) return new Response(JSON.stringify({ token: "ghs_edit", expires_at: new Date(Date.now() + 3_600_000).toISOString() }), { status: 201 });
+      if (url.includes("/access_tokens")) return new Response(JSON.stringify({ token: "ghs_edit", expires_at: new Date(Date.now() + 3_600_000).toISOString(), repositories: [{ full_name: "acme/payments-api" }] }), { status: 201 });
       seen.push({ url, method: String(init?.method), body: String(init?.body ?? "") });
       return new Response(JSON.stringify({ id: 555 }), { status: 200 });
     }) as typeof fetch;
@@ -226,7 +282,7 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
     _resetGitHubInstallationTokenCache();
     globalThis.fetch = (async (input: string | URL) => {
       const url = String(input);
-      if (url.includes("/access_tokens")) return new Response(JSON.stringify({ token: "ghs_edit2", expires_at: new Date(Date.now() + 3_600_000).toISOString() }), { status: 201 });
+      if (url.includes("/access_tokens")) return new Response(JSON.stringify({ token: "ghs_edit2", expires_at: new Date(Date.now() + 3_600_000).toISOString(), repositories: [{ full_name: "acme/payments-api" }] }), { status: 201 });
       return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
     }) as typeof fetch;
     let err: unknown;
@@ -240,7 +296,7 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
     _resetGitHubInstallationTokenCache();
     globalThis.fetch = (async (input: string | URL) => {
       const url = String(input);
-      if (url.includes("/access_tokens")) return new Response(JSON.stringify({ token: "ghs_edit3", expires_at: new Date(Date.now() + 3_600_000).toISOString() }), { status: 201 });
+      if (url.includes("/access_tokens")) return new Response(JSON.stringify({ token: "ghs_edit3", expires_at: new Date(Date.now() + 3_600_000).toISOString(), repositories: [{ full_name: "acme/payments-api" }] }), { status: 201 });
       return new Response(JSON.stringify({ message: "Service unavailable" }), { status: 503 });
     }) as typeof fetch;
     let ambErr: unknown;
@@ -287,7 +343,7 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
     const seen: { url: string; body: string }[] = [];
     globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.includes("/access_tokens")) return new Response(JSON.stringify({ token: "ghs_react", expires_at: new Date(Date.now() + 3_600_000).toISOString() }), { status: 201 });
+      if (url.includes("/access_tokens")) return new Response(JSON.stringify({ token: "ghs_react", expires_at: new Date(Date.now() + 3_600_000).toISOString(), repositories: [{ full_name: "acme/payments-api" }] }), { status: 201 });
       seen.push({ url, body: String(init?.body ?? "") });
       return new Response(JSON.stringify({ id: 1, content: "+1" }), { status: 201 });
     }) as typeof fetch;
@@ -319,7 +375,7 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
     _resetGitHubInstallationTokenCache();
     globalThis.fetch = (async (input: string | URL) => {
       const url = String(input);
-      if (url.includes("/access_tokens")) return new Response(JSON.stringify({ token: "ghs_react2", expires_at: new Date(Date.now() + 3_600_000).toISOString() }), { status: 201 });
+      if (url.includes("/access_tokens")) return new Response(JSON.stringify({ token: "ghs_react2", expires_at: new Date(Date.now() + 3_600_000).toISOString(), repositories: [{ full_name: "acme/payments-api" }] }), { status: 201 });
       return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
     }) as typeof fetch;
     let err: unknown;
@@ -333,7 +389,7 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
     _resetGitHubInstallationTokenCache();
     globalThis.fetch = (async (input: string | URL) => {
       const url = String(input);
-      if (url.includes("/access_tokens")) return new Response(JSON.stringify({ token: "ghs_react3", expires_at: new Date(Date.now() + 3_600_000).toISOString() }), { status: 201 });
+      if (url.includes("/access_tokens")) return new Response(JSON.stringify({ token: "ghs_react3", expires_at: new Date(Date.now() + 3_600_000).toISOString(), repositories: [{ full_name: "acme/payments-api" }] }), { status: 201 });
       return new Response(JSON.stringify({ message: "Service unavailable" }), { status: 503 });
     }) as typeof fetch;
     let ambErr: unknown;
