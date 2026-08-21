@@ -1,5 +1,6 @@
 import { resolveWindowSources, type BindableContext } from "../identity/binding.js";
 import { workGrantedConnectors } from "../access/work-grant.js";
+import { resolveAccessFor } from "../access/request.js";
 import { resolveDomainForChannel, type Domain } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 
@@ -13,9 +14,17 @@ function callerDomains(ctx: BindableContext, domains: readonly Domain[]): readon
   }
 }
 
+function grantedRepos(ctx: BindableContext): readonly string[] {
+  try {
+    return resolveAccessFor(ctx).repos;
+  } catch {
+    return [];
+  }
+}
+
 export function workDestinationPlatforms(ctx: BindableContext, domains: readonly Domain[]): readonly string[] {
   const sources = resolveWindowSources(ctx, domains);
-  const granted = workGrantedConnectors(callerDomains(ctx, domains));
+  const granted = workGrantedConnectors(callerDomains(ctx, domains), grantedRepos(ctx));
   if (granted.length === 0) return sources;
   const out = [...sources];
   for (const connector of granted) {

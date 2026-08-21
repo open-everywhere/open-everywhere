@@ -64,11 +64,15 @@ const silos = [orgSilo, engSilo];
 const memCfg = { domains, silos };
 const bundles = [
   { name: "personal", connectors: [{ name: "personal-notion", credential: "mine", contentOrigin: "external" }] },
+  { name: "coding", repos: ["acme/app"] },
 ] as never;
 const catalogues = [
   { connector: "personal-notion", allows: ["user-oauth"], credentials: [{ id: "mine", type: "user-oauth", home: { kind: "vercel-connect", config: { connector: "oauth/notion-user" } } }] },
 ] as never;
-const bindings = [{ scope: { level: "principal" as const, principal: principalKey("slack", TEAM, CREATOR) }, bundle: "personal" }] as never;
+const bindings = [
+  { scope: { level: "principal" as const, principal: principalKey("slack", TEAM, CREATOR) }, bundle: "personal" },
+  { scope: { level: "surface" as const, surface: `slack/${TEAM}/C_ENG` }, bundle: "coding" },
+] as never;
 let spendBudgets: import("../agent/spend/spend.js").SpendBudgets = {};
 registerConfig({
   loadBundles: () => bundles,

@@ -6,6 +6,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { principalIdOf, resolveAccessFor, unattendedOf } from "../access/request.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getGitHubApp, repoAllowed } from "../scm/provider.js";
+import { githubWorkMount } from "../scm/github-work.js";
 import { isSafeBranchName, isSafeCheckoutDir, parseStagedSha, redactSecret, stagePushCommand } from "../scm/git.js";
 import type { SandboxNetworkPolicy } from "eve/sandbox";
 import { compileNetworkPolicy } from "../access/egress.js";
@@ -229,4 +230,4 @@ export default windowGated("open_pull_request", defineTool({
       message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to approve the publish (pending ${posted.id}).${describeVenueRedirect(venue, "approve the publish")}`,
     };
   },
-}));
+}), githubWorkMount);

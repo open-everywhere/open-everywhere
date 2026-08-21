@@ -71,7 +71,7 @@ registerIdentityMapper("venue-ticket", (ctx) => {
 });
 
 const DOMAINS = [
-  defineDomain({ name: "eng", channels: ["teams/W1/CONV1", "teams/W1/CONV2", "venue-ticket/W1/VT_ROOM", "slack/T1/C_OPS"], memory: "eng-brain" }),
+  defineDomain({ name: "eng", channels: ["teams/W1/CONV1", "teams/W1/CONV2", "teams/W1/CONV_PR", "venue-ticket/W1/VT_ROOM", "slack/T1/C_OPS"], memory: "eng-brain" }),
   defineDomain({ name: "lonely", channels: ["teams/W1/CONV_LONE"], memory: "eng-brain" }),
   defineDomain({ name: "slackside", channels: ["slack/T1/C1"], memory: "eng-brain" }),
 ];
@@ -84,7 +84,7 @@ const BUNDLES = [
 ];
 const BINDINGS = [
   { bundle: "linear-basket", scope: { level: "surface" as const, surface: "slack/T1/C9" } },
-  { bundle: "coding", scope: { level: "org" as const } },
+  { bundle: "coding", scope: { level: "surface" as const, surface: "teams/W1/CONV_PR" } },
 ];
 process.env.GITHUB_TOKEN = "test-pat";
 
@@ -467,7 +467,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   ok(deletedRow["postedTo"] === "slack/T1/C_OPS", "325-redirect: delete_skill routes too — the sibling that TAKES a guardrail (a skill) away");
   ok(deleted.message.includes("card posted in slack/T1/C_OPS") && deleted.message.includes("confirm the removal"), "325-redirect: …with its own verb");
 
-  const prCtx = teamsCtx("CONV1", true);
+  const prCtx = teamsCtx("CONV_PR", true);
   const pr = (await (await armed(openPullRequestTool, prCtx, "open_pull_request")).execute({ repo: "acme/web", head: "fix/1", base: "main", title: "Fix the widget", body: "What changed." }, prCtx)) as {
     pending: boolean;
     pendingId: string;
