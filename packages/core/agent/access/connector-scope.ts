@@ -9,6 +9,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
 import { getSettings } from "../settings/settings.js";
+import { connectorOpTieringEnabled } from "../connections/connector-flags.js";
 
 export class ConnectorScopeError extends Error {}
 
@@ -229,7 +230,8 @@ export async function assertConnectorGranted(connectionName: string, auth: Sessi
   } catch {
     mode = undefined;
   }
-  if (connectorDmOnlyEnabled() && mode !== "dm") {
+  const workSurfaceTierArmed = connectorOpTieringEnabled();
+  if (connectorDmOnlyEnabled() && mode !== "dm" && !workSurfaceTierArmed) {
     await auditConnectorGate(ctx, "connector.refused", {
       connection: connectionName,
       reason: "dm_only",
@@ -237,7 +239,9 @@ export async function assertConnectorGranted(connectionName: string, auth: Sessi
     });
     throw new ConnectorScopeError(
       `connection "${connectionName}": refused — host-side connector operations are DM-only ` +
-        `(this surface resolved mode "${mode ?? "unresolved"}", not a DM). This is a deployment ` +
+        `(this surface resolved mode "${mode ?? "unresolved"}", not a DM) unless this deployment arms ` +
+        `per-op consequence tiering (\`connectors: { opTiering: true }\` in agent/settings.ts), which ` +
+        `is what keeps a domain work-surface grant's WRITES behind an approval. This is a deployment ` +
         `rule enforced at the credential layer, not a permission that can be requested in-chat.`,
     );
   }
@@ -246,5 +250,6 @@ export async function assertConnectorGranted(connectionName: string, auth: Sessi
   await auditConnectorGate(ctx, "connector.use", {
     connection: connectionName,
     ...(mode !== undefined ? { mode } : {}),
+    ...(connectorDmOnlyEnabled() && mode !== "dm" ? { grant: "work-surface" } : {}),
   });
 }

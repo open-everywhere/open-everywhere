@@ -363,7 +363,8 @@ export { auditAmbientSkip, resetAmbientSkipSightings } from "./channels/ambient-
 export type { AmbientSkipRecord } from "./channels/ambient-skip.js";
 
 export { credentialOverrideFor, domainCredentialId, connectorIntegrations } from "./access/domain-credentials.js";
-export type { DomainCredentialOverride, ConnectorIntegration } from "./access/domain-credentials.js";
+export type { DomainCredentialOverride, ConnectorIntegration, CredentialBoundDomain } from "./access/domain-credentials.js";
+export { workGrantCredential, hasWorkGrant } from "./access/work-grant.js";
 export { getOperatorSecret, OperatorSecretNotSetError } from "./credentials/operator-secrets.js";
 
 export { windowTopologyEnabled } from "./access/capabilities.js";
