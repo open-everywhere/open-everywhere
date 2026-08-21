@@ -8,6 +8,7 @@ import { windowedSupervisorEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, mintWakeId, stampUnifiedWindowAuth, shouldBridgeAddressedProse, bridgeBlockingRefusal, unifiedThreadRef, sameUnifiedContainer, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "./unified-reply.js";
+import { containerAnsweredSince } from "./answered-container-ledger.js";
 import {
   detectBridgeableInputRequest,
   bridgeQuestionToSurface,
@@ -161,6 +162,16 @@ export async function answeredSameContainerThisTurn(org: string, turnId: string 
     if (other && sameUnifiedContainer(other, origin)) return true;
   }
   return false;
+}
+
+export async function answeredContainerArm(org: string, turnId: string | undefined, wakeId: string | undefined, origin: UnifiedWakeOrigin): Promise<"turn" | "container" | undefined> {
+  if (await answeredSameContainerThisTurn(org, turnId, wakeId, origin)) return "turn";
+  if (wakeId === undefined) return undefined;
+  const record = await getOperationalStore()
+    .getUnifiedWakeRecord(org, wakeId)
+    .catch(() => null);
+  if (!record) return undefined;
+  return (await containerAnsweredSince(org, origin, record.createdAt)) ? "container" : undefined;
 }
 
 async function auditUnaccountedWakesForTurn(
@@ -392,7 +403,8 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         const silentTurnId = currentTurnId(bind);
         const answeredThisWake = wakeId !== undefined && repliedWakesThisTurn(silentTurnId).includes(wakeId);
         const silentOrigin = !answeredThisWake && wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null;
-        const answeredContainer = silentOrigin ? await answeredSameContainerThisTurn(org, silentTurnId, wakeId, silentOrigin) : false;
+        const answeredVia = silentOrigin ? await answeredContainerArm(org, silentTurnId, wakeId, silentOrigin) : undefined;
+        const answeredContainer = answeredVia !== undefined;
         let linearClosed: boolean | undefined;
         if (silentOrigin) {
           try {
@@ -415,7 +427,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
             workspace,
             surface,
             action: "unified.no_reply",
-            detail: { reason: action.reason, replied, wakeId: wakeId ?? null, ...(linearClosed !== undefined ? { linearClosed, answeredContainer } : {}), ...(sessionId ? { sessionId } : {}) },
+            detail: { reason: action.reason, replied, wakeId: wakeId ?? null, ...(linearClosed !== undefined ? { linearClosed, answeredContainer, ...(answeredVia ? { answeredVia } : {}) } : {}), ...(sessionId ? { sessionId } : {}) },
           }).catch(() => undefined);
         }
         return;
