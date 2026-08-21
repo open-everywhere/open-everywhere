@@ -82,7 +82,12 @@ export function linearIssueScope(
   };
 }
 
-export function linearScopeRefusal(targetRef: string, verdict: LinearScopeVerdict, direction: LinearScopeDirection = "read"): string {
+export function linearScopeRefusal(
+  targetRef: string,
+  verdict: LinearScopeVerdict,
+  direction: LinearScopeDirection = "read",
+  grantCapable = false,
+): string {
   const scope = verdict.callerDomain
     ? `domain "${verdict.callerDomain}"`
     : "this session's (no domain owns the surface this session was woken on)";
@@ -93,12 +98,11 @@ export function linearScopeRefusal(targetRef: string, verdict: LinearScopeVerdic
         ? "Its team is in no memory domain, and an unassigned team is refused rather than assumed."
         : "";
   const may = direction === "write" ? "may only act on Linear entities on teams" : "may only read issues on teams";
-  const workGrant =
-    direction === "write"
-      ? " If this session was woken on another surface, the domain's Linear WORK grant is what lets it file here: add " +
-        '`credentials: [{ connector: "linear", credential: "workspace", use: "<organization_id>" }]` to the domain ' +
-        "(agent/memory/domains.ts)."
-      : "";
+  const workGrant = grantCapable
+    ? " If this session was woken on another surface, the domain's Linear WORK grant is what lets it file here: add " +
+      '`credentials: [{ connector: "linear", credential: "workspace", use: "<organization_id>" }]` to the domain ' +
+      "(agent/memory/domains.ts)."
+    : "";
   return (
     `Linear target "${targetRef}" is not in ${scope} ${direction} scope, so it is refused. ${why} ` +
     `The agent ${may} in its memory domain (memory/domains.ts). Add the team to ` +
@@ -258,11 +262,11 @@ export async function assertLinearTeamWriteAllowed(
   const pure = linearTeamScope(partition.surfaceKey, undefined, domains, workOrg);
   if (pure.reason === "caller-unassigned" || !source.ok) {
     await auditLinearRefusal(ctx, target, pure, "write", deps);
-    throw new ChannelScopeError(linearScopeRefusal(target, pure, "write"));
+    throw new ChannelScopeError(linearScopeRefusal(target, pure, "write", true));
   }
   const teamId = await resolveTeamId(target, source.org);
   const verdict = linearTeamScope(partition.surfaceKey, teamId, domains, workOrg);
   if (verdict.allowed) return;
   await auditLinearRefusal(ctx, target, verdict, "write", deps);
-  throw new ChannelScopeError(linearScopeRefusal(target, verdict, "write"));
+  throw new ChannelScopeError(linearScopeRefusal(target, verdict, "write", true));
 }

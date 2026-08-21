@@ -194,7 +194,7 @@ function delegationReturnShape(route: "agent" | "spawn_task", asyncVerb: "spawn_
   const lines = [
     `\`${route}\` does NOT block. It starts the worker in the background and hands you a task receipt at once, so this turn ends and this room stays answerable while the work runs.`,
     `Acknowledge the hand-off in the same turn and pass \`done: false\`, which keeps the wake open for the real answer.`,
-    `When the worker settles, its completion arrives as a NEW message on a later turn. Read the worker's output with \`task_peek\`, using the task id from the receipt, and stop work you no longer need with \`task_cancel\`.`,
+    `When the worker settles, its completion arrives as a NEW message on a later turn, and that message tells you how to read its output. Stop work you no longer need with \`task_cancel\`, using the task id from the receipt.`,
     `Say which request the result answers. Another message can arrive in this room while a worker runs, and an answer posted against the wrong one reads as a non-sequitur.`,
     `A worker does ONE job. You cannot send more work to a worker that has already run: \`agentId\` is refused. Start a fresh \`${route}\` call and put everything the new worker needs in its brief, including whatever the last one found.`,
     SHARED_FILESYSTEM_LINE,

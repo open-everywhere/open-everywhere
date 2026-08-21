@@ -82,5 +82,15 @@ test("a clean delegation taints nothing — a parked receipt is not a settlement
     expect(started).toEqual([]);
   }
 
-  expect(mine.filter((r) => r.action === "delegation.task_settled")).toEqual([]);
+  const settledRows = mine.filter((r) => r.action === "delegation.task_settled");
+  if (taskMode) {
+    expect(settledRows.length).toBe(1);
+    expect(settledRows[0].detail?.task).toBe(output.taskId);
+    expect(settledRows[0].detail?.agent).toBe(output.agentId);
+    expect(settledRows[0].detail?.marker).toBe("clean");
+    expect(settledRows[0].detail?.adopted).toBe(false);
+    expect(JSON.stringify(settledRows[0].detail)).not.toContain(CHILD_ANSWER);
+  } else {
+    expect(settledRows).toEqual([]);
+  }
 });

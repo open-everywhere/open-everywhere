@@ -118,7 +118,9 @@ ok(/does NOT block/.test(backgroundBlock), "…and the block says so in as many 
 ok(/task receipt/.test(backgroundBlock), "the seat is told what the call hands back — a receipt, not the worker's answer");
 ok(/`done: false`/.test(backgroundBlock), "the acknowledge route is named exactly: `reply` with `done: false` keeps the wake open for the real answer");
 ok(/arrives as a NEW message on a later turn/.test(backgroundBlock), "the seat is told WHERE the result appears — a later turn, not this one");
-ok(backgroundBlock.includes("`task_peek`"), "the read verb is named — eve's own completion notice tells the seat to peek, so the prompt must too (OPE-583/T1)");
+ok(!backgroundBlock.includes("`task_peek`"), "🔴 OPE-904: the prompt names NO read verb — eve owns that steer, and the tool it named is deleted at eve 0.40.0");
+ok(/that message tells you how to read its output/.test(backgroundBlock), "…and points the seat at the completion message, which is the one instruction true on every eve version");
+ok(backgroundBlock.includes("`task_cancel`"), "the STOP verb is still named — `task_cancel` survives eve 0.42.0 and is how a seat drops work it no longer needs");
 ok(backgroundBlock.includes("`task_cancel`"), "the stop verb is named — the other half of the two lifecycle verbs a seat actually holds");
 ok(!backgroundBlock.includes("`task_update`"), "🔴 `task_update` is the CHILD's verb and is NEVER offered to a seat — naming it would be the dead-affordance class OPE-359 removed");
 ok(!backgroundBlock.includes("`task_sleep`"), "`task_sleep` is not named either — pausing its own delegated work is a worker decision, not a routing one (OPE-583)");

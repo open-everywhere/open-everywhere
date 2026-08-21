@@ -63,3 +63,33 @@ export function taskViewsOf(result: unknown): readonly TaskSummary[] {
 export function terminalTaskViewsOf(result: unknown): readonly TaskSummary[] {
   return taskViewsOf(result).filter((v) => TERMINAL_TASK_STATUSES.includes(v.status));
 }
+
+export type TaskNotification = {
+  readonly taskId: string;
+  readonly status: string;
+};
+
+const TASK_NOTIFICATION_RE = /^Background task (\S+) \([^)]*\) (?:is ([a-z_]+)\.|needs input\.)/m;
+
+const TASK_ID_RE = /^task_[A-Za-z0-9_-]{8,}$/;
+
+export function readTaskNotification(message: unknown): TaskNotification | null {
+  try {
+    if (typeof message !== "string" || message.length === 0) return null;
+    const m = TASK_NOTIFICATION_RE.exec(message.trimStart());
+    if (m === null) return null;
+    const taskId = m[1] ?? "";
+    if (!TASK_ID_RE.test(taskId)) return null;
+    const status = m[2] ?? "input_required";
+    return { taskId, status };
+  } catch {
+    return null;
+  }
+}
+
+export function terminalTaskNotification(message: unknown): TaskSummary | null {
+  const note = readTaskNotification(message);
+  if (note === null) return null;
+  if (!TERMINAL_TASK_STATUSES.includes(note.status)) return null;
+  return { taskId: note.taskId, status: note.status, agentId: null };
+}

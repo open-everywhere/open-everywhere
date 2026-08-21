@@ -2,7 +2,8 @@ import { defineState } from "eve/context";
 import { persistMemoryNow, type MemoryFlushSummary, type MemoryPersistContext } from "./memory.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
-import { armLiveTask, consumeFlushHold, liveTaskIds, MAX_FLUSH_HOLDS } from "../access/live-delegated-tasks.js";
+import { armLiveTask, consumeFlushHold, liveTaskIds, noteTaskViews, MAX_FLUSH_HOLDS } from "../access/live-delegated-tasks.js";
+import type { TaskSummary } from "../access/background-tasks.js";
 export { liveTaskCount, liveTaskIds, noteTaskViews, MAX_FLUSH_HOLDS } from "../access/live-delegated-tasks.js";
 
 export const SETTLEMENT_FLUSH_ACTION = "memory.settlement_flush";
@@ -17,6 +18,11 @@ function log(msg: string): void {
 
 export function noteTaskDispatched(taskId: string): void {
   armLiveTask(taskId);
+  markTreeDirty();
+}
+
+export function noteTaskSettled(view: TaskSummary): void {
+  noteTaskViews([view]);
   markTreeDirty();
 }
 

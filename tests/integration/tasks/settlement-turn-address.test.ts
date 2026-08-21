@@ -19,7 +19,7 @@ const CHILD_ANSWER = "the worker finished the addressed job";
 
 const MADE_UP_WAKE = "wake-that-never-existed-0597";
 
-const STEER = "task_peek";
+const NO_ADDRESS_COPY = "it has NO reply address";
 
 function replyResultOf(request: RecordedRequest | undefined): { isError: boolean; text: string } | undefined {
   const results = request?.toolResults.filter((t) => t.name === "reply") ?? [];
@@ -32,7 +32,7 @@ function disclosedTurnWake(text: string): string | undefined {
   return /delivered under is .([0-9a-f-]{36})./.exec(text)?.[1];
 }
 
-test("a settlement turn holds no address until it reads the task view, and task_peek gives it one", async () => {
+test("a settlement turn holds the task's own address from the notification, before it reads anything", async () => {
   await bootAgent();
 
   const dispatched = disposeLater(
@@ -67,7 +67,7 @@ test("a settlement turn holds no address until it reads the task view, and task_
     "the dispatch turn's reply result",
   );
   expect(ingressedReply.isError).toBe(true);
-  expect(ingressedReply.text).not.toContain(STEER);
+  expect(ingressedReply.text).not.toContain(NO_ADDRESS_COPY);
   const dispatchWake = disclosedTurnWake(ingressedReply.text);
   expect(dispatchWake).toBeDefined();
 
@@ -103,7 +103,10 @@ test("a settlement turn holds no address until it reads the task view, and task_
     "the settlement turn's FIRST reply result — the call made before any task view",
   );
   expect(early.isError).toBe(true);
-  expect(early.text).toContain(STEER);
+  expect(early.text).not.toContain(NO_ADDRESS_COPY);
+  const earlyWake = disclosedTurnWake(early.text);
+  expect(earlyWake).toBeDefined();
+  expect(earlyWake).not.toBe(dispatchWake);
 
   const peek = await waitFor(
     () => settlement.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_peek")),
@@ -118,20 +121,27 @@ test("a settlement turn holds no address until it reads the task view, and task_
     "the settlement turn's SECOND reply result — the call made after the task view",
   );
   expect(recovered.isError).toBe(true);
-  expect(recovered.text).not.toContain(STEER);
+  expect(recovered.text).not.toContain(NO_ADDRESS_COPY);
   const recoveredWake = disclosedTurnWake(recovered.text);
   expect(recoveredWake).toBeDefined();
   expect(recoveredWake).not.toBe(dispatchWake);
+  expect(recoveredWake).toBe(earlyWake);
 
   await sleep(1_500);
   const refusals = await readAuditRows({ actions: ["reply.refused"], sinceIso });
   const reasons = refusals.map((r) => String(r.detail?.reason));
-  expect(reasons.filter((r) => r === "task-wake-unread").length).toBe(1);
-  expect(reasons.filter((r) => r === "mismatch").length).toBeGreaterThanOrEqual(2);
+  expect(reasons.filter((r) => r === "task-wake-unread").length).toBe(0);
+  expect(reasons.filter((r) => r === "mismatch").length).toBeGreaterThanOrEqual(3);
 
   const posts = await readAuditRows({ actions: ["reply.post"], sinceIso });
   const postWakes = [...new Set(posts.map((r) => String(r.detail?.wakeId)))].sort();
-  expect(postWakes).toEqual([dispatchWake!, recoveredWake!].sort());
+  expect(postWakes).toEqual([dispatchWake!, earlyWake!].sort());
+
+  const wakeRows = await readAuditRows({ actions: ["unified.task_wake"], sinceIso });
+  const mine = wakeRows.filter((r) => String(r.detail?.task) === taskId);
+  expect(mine.length).toBeGreaterThanOrEqual(1);
+  expect(mine.map((r) => String(r.detail?.outcome))).toContain("installed");
+  expect(String(mine.find((r) => String(r.detail?.outcome) === "installed")?.detail?.wakeId)).toBe(earlyWake);
 
   expect(dispatchedRequests.filter((r) => r.fault !== undefined)).toEqual([]);
   expect(settlement.requests.filter((r) => r.fault !== undefined)).toEqual([]);
