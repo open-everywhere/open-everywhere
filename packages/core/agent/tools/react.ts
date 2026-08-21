@@ -16,9 +16,10 @@ export const REACT_REASONS = ["ack", "noise"] as const;
 
 const reactEntry = defineTool({
         description:
-          'React to a message with an emoji, instead of (or as) your reply. In a busy or ' +
-          'noisy thread, a react (e.g. "eyes", "thumbsup", "white_check_mark") CAN BE your whole ' +
-          "response — prefer it over a low-content text reply when a reply would just add noise. " +
+          "React to a message with an emoji. On a message that did NOT address you, a react " +
+          '(e.g. "eyes", "thumbsup", "white_check_mark") CAN BE your whole response — prefer it ' +
+          "over a low-content text reply that would just add noise. On a message that ADDRESSED " +
+          "you the react only acknowledges: post one short `reply` as well before the turn ends. " +
           'Give the BARE emoji name, no colons (e.g. "thumbsup", not ":thumbsup:"). Defaults to ' +
           "reacting to the message that triggered this turn; pass `ts` to react to a different " +
           "message ts in this channel instead (Slack only — on GitHub/Linear a reaction always " +
@@ -42,9 +43,10 @@ const reactEntry = defineTool({
             .enum(REACT_REASONS)
             .optional()
             .describe(
-              'Why a react is your whole response (default "ack"): "ack" — a bare acknowledgement ' +
-                '("got it"/"on it"/done), the react says everything a reply would; "noise" — a busy/noisy ' +
-                "thread where a low-content text reply would just add another line.",
+              'Why you reacted (default "ack"): "ack" — you acknowledge the message ("got it"/"on ' +
+                'it"/done), and on a message that addressed you one short `reply` still follows; ' +
+                '"noise" — an unaddressed message in a busy thread, where a low-content text reply ' +
+                "would just add another line.",
             ),
         }),
         outputSchema: z.object({ reacted: z.boolean(), emoji: z.string(), ts: z.string(), note: z.string() }),
