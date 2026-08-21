@@ -18,9 +18,18 @@ import {
   declaredWorkspaceTrust,
   type SurfaceTrust,
   type BindableContext,
+  type Domain,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 const MAX_COMMENTS = 50;
+
+function safeDomains(): readonly Domain[] {
+  try {
+    return getConfig().loadDomains();
+  } catch {
+    return [];
+  }
+}
 
 function renderComments(comments: readonly LinearCommentSummary[]): string {
   return comments
@@ -119,7 +128,7 @@ export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
       const bctx = ctx as BindableContext;
-      if (!workDestinationPlatforms(bctx, getConfig().loadDomains()).includes("linear")) return null;
+      if (!workDestinationPlatforms(bctx, safeDomains()).includes("linear")) return null;
       return readLinearIssueEntry;
     },
   },
