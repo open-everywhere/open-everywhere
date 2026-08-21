@@ -3,6 +3,7 @@ import { onVercel } from "../access/platform.js";
 import { postArm } from "./post-arms.js";
 import { isOwnPost, type OwnPostLedgerDeps } from "./own-post-ledger.js";
 import { markNotApplied, platformFailureClass, platformFailureStatus, type PlatformFailureClass } from "./platform-failure.js";
+import { truncateMemoryCitationPaths } from "./turn-delivery.js";
 import type { ReplyAudit } from "./reply-post.js";
 
 export interface EditLocus {
@@ -92,6 +93,7 @@ export async function editPostedMessage(
   audit: ReplyAudit,
   ledgerDeps: OwnPostLedgerDeps = {},
 ): Promise<void> {
+  text = truncateMemoryCitationPaths(text);
   const arm = postArm(locus.platform);
   if (!arm?.editMessage) {
     await auditReplyEditRefused(audit, EDIT_NO_ARM_REFUSAL_REASON);

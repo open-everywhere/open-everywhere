@@ -100,6 +100,29 @@ export function withPendingWorkFrame(text: string, pendingWork: boolean): string
   return pendingWork ? `${PENDING_WORK_FRAME}\n\n${text}` : text;
 }
 
+const MEMORY_MOUNT_SEGMENT = "workspace/memory/";
+
+const MARKDOWN_LINK_RE =
+  /\[[^\]\n]*\]\(((?:file:\/\/\/workspace\/memory\/|(?<![\w./:-])\/workspace\/memory\/)[^\s()]+)\)/g;
+
+const SLACK_LINK_RE =
+  /<((?:file:\/\/\/workspace\/memory\/|(?<![\w./:-])\/workspace\/memory\/)[^\s|>]+)\|[^>]*>/g;
+
+const BARE_MEMORY_REF_RE =
+  /(?:file:\/\/\/workspace\/memory\/|(?<![\w./:-])\/workspace\/memory\/)([^\s()|<>]+)/g;
+
+function siloRelativePath(url: string): string {
+  const idx = url.indexOf(MEMORY_MOUNT_SEGMENT);
+  return idx < 0 ? url : url.slice(idx + MEMORY_MOUNT_SEGMENT.length);
+}
+
+export function truncateMemoryCitationPaths(text: string): string {
+  let out = text.replace(MARKDOWN_LINK_RE, (_m, url: string) => siloRelativePath(url));
+  out = out.replace(SLACK_LINK_RE, (_m, url: string) => siloRelativePath(url));
+  out = out.replace(BARE_MEMORY_REF_RE, (_m, tail: string) => tail);
+  return out;
+}
+
 export function supervisorRotateQuietGapMs(): number {
   return getSettings().rotation.quietGapHours * 3_600_000;
 }

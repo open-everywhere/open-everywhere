@@ -4,7 +4,7 @@ import { appendAudit } from "../audit/audit.js";
 import { onVercel } from "../access/platform.js";
 import { postArm } from "./post-arms.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
-import { withReplierPrefix, type ReplierLabel } from "./turn-delivery.js";
+import { withReplierPrefix, truncateMemoryCitationPaths, type ReplierLabel } from "./turn-delivery.js";
 import { recordOwnPost } from "./own-post-ledger.js";
 import { resolvePartition } from "../memory/partition.js";
 import type { EditLocus } from "./reply-edit.js";
@@ -198,9 +198,10 @@ export async function recordLandedPost(input: {
 }
 
 export async function postReply(target: ReplyTarget, text: string, audit?: ReplyAudit, replier?: ReplierLabel): Promise<string> {
+  const clean = truncateMemoryCitationPaths(text);
   const arm = postArm(target.platform);
   const nativeReplier = arm?.displayNameCapable ? replier : undefined;
-  const body = replier && !arm?.displayNameCapable ? withReplierPrefix(text, replier) : text;
+  const body = replier && !arm?.displayNameCapable ? withReplierPrefix(clean, replier) : clean;
   const locus = replyDedupeLocus(target);
   const key = outboundKey({
     surface: target.platform,
@@ -264,9 +265,10 @@ async function dispatchReply(target: ReplyTarget, text: string, replier?: Replie
 }
 
 export async function postTerminalProse(target: ReplyTarget, text: string, audit: ReplyAudit, replier?: ReplierLabel): Promise<void> {
+  const clean = truncateMemoryCitationPaths(text);
   const arm = postArm(target.platform);
   const nativeReplier = arm?.displayNameCapable ? replier : undefined;
-  const body = replier && !arm?.displayNameCapable ? withReplierPrefix(text, replier) : text;
+  const body = replier && !arm?.displayNameCapable ? withReplierPrefix(clean, replier) : clean;
   const chunks = arm?.splitText?.(body) ?? [body];
   let firstId: string | undefined;
   try {

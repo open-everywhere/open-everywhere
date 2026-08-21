@@ -8,7 +8,7 @@ import {
   type ReplyAudit,
   type ReplierLabel,
 } from "./reply-post.js";
-import { withReplierPrefix } from "./turn-delivery.js";
+import { withReplierPrefix, truncateMemoryCitationPaths } from "./turn-delivery.js";
 import { onVercel } from "../access/platform.js";
 import { postArm, type PostIntent } from "./post-arms.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
@@ -58,9 +58,10 @@ export async function postUnifiedReply(
   replier?: ReplierLabel,
   intent?: PostIntent,
 ): Promise<string> {
+  const clean = truncateMemoryCitationPaths(text);
   const arm = postArm(origin.platform);
   const nativeReplier = arm?.displayNameCapable ? replier : undefined;
-  const body = replier && !arm?.displayNameCapable ? withReplierPrefix(text, replier) : text;
+  const body = replier && !arm?.displayNameCapable ? withReplierPrefix(clean, replier) : clean;
   const locus = unifiedDedupeLocus(origin);
   const key = outboundKey({
     surface: origin.platform,
