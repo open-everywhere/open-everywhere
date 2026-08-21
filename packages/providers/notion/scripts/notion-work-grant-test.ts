@@ -5,10 +5,12 @@ import {
   declaredWorkspaceTrust,
   defineDomain,
   defineSurface,
+  isSubagentChildContext,
   overrideSettingsForTest,
   registerConfig,
   registerIdentityMapper,
   registerSurfaces,
+  resolvePartition,
   type BindableContext,
   type Domain,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -260,6 +262,97 @@ const notionCtx = (page: string, ws = WS): BindableContext =>
     resetRegisteredConnectorCredentials();
     resetBrokers();
   }
+}
+
+{
+  const resolve = (notionSearch as unknown as { events?: Record<string, ((e: unknown, c: BindableContext) => unknown) | undefined> }).events?.[
+    "session.started"
+  ]!;
+
+  const inheritedAttrs = (channel: string) => ({
+    oe_platform: "slack",
+    oe_grain: "standing",
+    oe_window_token: "oe-dom:soak:oe-sup:g1784858540866-a6cc41",
+    oe_wake_id: "wake_936",
+    team_id: "T1",
+    channel_id: channel,
+  });
+
+  const workerResolverCtx = (channel: string): BindableContext =>
+    ({
+      channel: { kind: "subagent", continuationToken: "subagent:sess-parent:call_1" },
+      session: { id: "sess-child", auth: { current: { attributes: inheritedAttrs(channel) } } },
+    }) as unknown as BindableContext;
+
+  const workerHookCtx = (channel: string): BindableContext =>
+    ({
+      channel: { kind: "subagent", continuationToken: "subagent:sess-parent:call_1" },
+      session: {
+        id: "sess-child",
+        parent: { sessionId: "sess-parent", callId: "call_1" },
+        auth: { current: { attributes: inheritedAttrs(channel) } },
+      },
+    }) as unknown as BindableContext;
+
+  const unstampedWorkerCtx: BindableContext = {
+    channel: { kind: "subagent", continuationToken: "subagent:sess-parent:call_2" },
+    session: { id: "sess-child-unstamped", auth: { current: { attributes: { team_id: "T1", channel_id: "C_DEV" } } } },
+  } as unknown as BindableContext;
+
+  ok(isSubagentChildContext(workerResolverCtx("C_DEV")), "the resolver-shaped worker context IS recognised as a native subagent child");
+  ok(
+    resolvePartition(workerResolverCtx("C_DEV")).surfaceKey === "slack/T1/C_DEV",
+    "🔴 a delegated worker's surface key is its SPAWNING surface's key — not `unified/<domain>/…`, not `subagent/…`",
+  );
+  ok(notionCallerDomain(resolvePartition(workerResolverCtx("C_DEV")).surfaceKey, DOMAINS)?.name === "soak", "…so it resolves the spawning domain");
+
+  ok((await resolve({}, workerResolverCtx("C_DEV"))) === notionSearchEntry, "🔴 notion_search MOUNTS on a delegated worker spawned from a work-granted domain");
+  ok((await resolve({}, workerHookCtx("C_DEV"))) === notionSearchEntry, "…on the hook-shaped context too — both discriminator sets agree");
+  ok(notionWorkMount(workerResolverCtx("C_DEV"), () => DOMAINS), "the mount predicate is true for the worker (explicit true)");
+
+  ok(notionWorkGrant(workerResolverCtx("C_DEV"), DOMAINS)?.credential === "soak-work-key", "the worker's grant names the WORK credential");
+  ok(notionWorkGrant(workerResolverCtx("C_DEV"), DOMAINS)?.domain.name === "soak", "…and names the spawning domain, never a wider set");
+
+  ok((await resolve({}, workerResolverCtx("C_ENG"))) === null, "🔴 a worker spawned from an UNGRANTED domain mounts NOTHING — delegation is not a grant");
+  ok((await resolve({}, workerResolverCtx("C_BILL"))) === null, "🔴 …and a chat-credential declaration does not mount it for a worker either");
+  ok((await resolve({}, workerResolverCtx("C_NOWHERE"))) === null, "🔴 …nor does a worker spawned from a surface in no domain");
+  ok(notionWorkGrant(workerResolverCtx("C_ENG"), DOMAINS) === undefined, "…and no work credential resolves there (explicit undefined)");
+
+  ok(notionCallerDomain(resolvePartition(unstampedWorkerCtx).surfaceKey, DOMAINS) === undefined, "an unstamped child resolves NO domain — the hop is what carries the identity");
+  ok((await resolve({}, unstampedWorkerCtx)) === null, "🔴 …so notion_search is ABSENT on it (fail closed, never a guessed domain)");
+
+  const execute = readNotionPageEntry.execute as (i: unknown, c: BindableContext) => Promise<unknown>;
+  await assert.rejects(
+    () => execute({ page: SPEC_PAGE }, workerResolverCtx("C_DEV")),
+    /work credential "soak-work-key"/,
+    "a worker's read of its own domain's page passes both fences and resolves the WORK credential",
+  );
+  passed++;
+  await assert.rejects(
+    () => execute({ page: OTHER_PAGE }, workerResolverCtx("C_DEV")),
+    ChannelScopeError,
+    "🔴 …and STILL cannot reach another domain's page (the OPE-913 cross-domain wall holds for a worker)",
+  );
+  passed++;
+  await assert.rejects(
+    () => execute({ page: OTHER_PAGE }, workerResolverCtx("C_ENG")),
+    TurnOriginFenceError,
+    "🔴 a worker in an UNGRANTED domain is still refused by the per-turn origin fence",
+  );
+  passed++;
+
+  const taskWindowWorkerCtx = (channel: string): BindableContext =>
+    ({
+      channel: { kind: "channel:unified" },
+      session: { id: "sess-task", auth: { current: { attributes: { ...inheritedAttrs(channel), oe_grain: "task" } } } },
+    }) as unknown as BindableContext;
+
+  ok(
+    resolvePartition(taskWindowWorkerCtx("C_DEV")).surfaceKey === "slack/T1/C_DEV",
+    "🔴 a one-shot task-window worker ALSO binds its origin surface — never `unified/<domainName>/…`",
+  );
+  ok((await resolve({}, taskWindowWorkerCtx("C_DEV"))) === notionSearchEntry, "…so notion_search mounts on it too");
+  ok((await resolve({}, taskWindowWorkerCtx("C_ENG"))) === null, "🔴 …and is ABSENT for one spawned from an ungranted domain");
 }
 
 console.log(`✓ notion-work-grant: ${passed} assertions passed`);
