@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { getOperationalStore } from "../operational/provider.js";
-import { unifiedThreadRef, type UnifiedWakeOrigin } from "./unified-window.js";
+import { wakeOriginCodec } from "./wake-origin-codec.js";
+import type { UnifiedWakeOrigin } from "./unified-window.js";
 
 export const ANSWERED_CONTAINER_KEY_PREFIX = "answered:";
 
@@ -13,20 +14,17 @@ export interface AnsweredContainerDeps {
   readonly now?: () => number;
 }
 
-export function answeredContainerKey(origin: UnifiedWakeOrigin): string {
-  const channelKey = unifiedThreadRef(origin).channelKey;
+export function answeredContainerKey(origin: UnifiedWakeOrigin): string | null {
+  const channelKey = wakeOriginCodec(origin.platform)?.threadRef(origin)?.channelKey;
+  if (typeof channelKey !== "string" || channelKey.length === 0) return null;
   const digest = createHash("sha256").update(channelKey).digest("hex");
   return `${ANSWERED_CONTAINER_KEY_PREFIX}${origin.platform}:${digest}`;
 }
 
 export async function recordContainerAnswered(org: string | undefined, origin: UnifiedWakeOrigin, deps: AnsweredContainerDeps = {}): Promise<void> {
   if (!org) return;
-  let key: string;
-  try {
-    key = answeredContainerKey(origin);
-  } catch {
-    return;
-  }
+  const key = answeredContainerKey(origin);
+  if (key === null) return;
   const forget = deps.forgetEventSeen ?? ((o, k) => getOperationalStore().forgetEventSeen(o, k));
   const mark = deps.markEventSeen ?? ((o, k, at, ttl) => getOperationalStore().markEventSeen(o, k, at, ttl));
   const at = new Date((deps.now ?? Date.now)()).toISOString();
@@ -42,12 +40,8 @@ export async function containerAnsweredSince(org: string | undefined, origin: Un
   const window = nowMs - sinceMs;
   if (!(window > 0)) return false;
   const ttlMs = Math.min(window, ANSWERED_CONTAINER_TTL_MS);
-  let key: string;
-  try {
-    key = answeredContainerKey(origin);
-  } catch {
-    return false;
-  }
+  const key = answeredContainerKey(origin);
+  if (key === null) return false;
   const has = deps.hasEventSeen ?? ((o, k, at, ttl) => getOperationalStore().hasEventSeen(o, k, at, ttl));
   try {
     return await has(org, key, new Date(nowMs).toISOString(), ttlMs);

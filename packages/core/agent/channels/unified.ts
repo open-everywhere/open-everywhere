@@ -164,7 +164,7 @@ export async function answeredSameContainerThisTurn(org: string, turnId: string 
   return false;
 }
 
-export async function answeredContainerArm(org: string, turnId: string | undefined, wakeId: string | undefined, origin: UnifiedWakeOrigin): Promise<"turn" | "container" | undefined> {
+export async function answeredContainerVia(org: string, turnId: string | undefined, wakeId: string | undefined, origin: UnifiedWakeOrigin): Promise<"turn" | "container" | undefined> {
   if (await answeredSameContainerThisTurn(org, turnId, wakeId, origin)) return "turn";
   if (wakeId === undefined) return undefined;
   const record = await getOperationalStore()
@@ -403,7 +403,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         const silentTurnId = currentTurnId(bind);
         const answeredThisWake = wakeId !== undefined && repliedWakesThisTurn(silentTurnId).includes(wakeId);
         const silentOrigin = !answeredThisWake && wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null;
-        const answeredVia = silentOrigin ? await answeredContainerArm(org, silentTurnId, wakeId, silentOrigin) : undefined;
+        const answeredVia = silentOrigin ? await answeredContainerVia(org, silentTurnId, wakeId, silentOrigin) : undefined;
         const answeredContainer = answeredVia !== undefined;
         let linearClosed: boolean | undefined;
         if (silentOrigin) {

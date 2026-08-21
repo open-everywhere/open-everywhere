@@ -167,19 +167,13 @@ const iso = (ms: number): string => new Date(ms).toISOString();
 }
 
 {
-  ok(answeredContainerKey(answeringWake).startsWith(`${ANSWERED_CONTAINER_KEY_PREFIX}slack:`), "§7 the key is namespaced and names its platform in the clear");
+  ok((answeredContainerKey(answeringWake) ?? "").startsWith(`${ANSWERED_CONTAINER_KEY_PREFIX}slack:`), "§7 the key is namespaced and names its platform in the clear");
   ok(answeredContainerKey(answeringWake) !== answeredContainerKey(otherRoom), "§7 a different container is a different key");
   ok(
     answeredContainerKey(siblingWake) === answeredContainerKey(answeringWake),
     "🔴 §7 the key is the CONTAINER, not the thread — a threaded reply and a top-level one answer the same room",
   );
-  let keyThrew = false;
-  try {
-    answeredContainerKey({ platform: "nosuch" } as unknown as UnifiedWakeOrigin);
-  } catch {
-    keyThrew = true;
-  }
-  ok(keyThrew === true, "§7 an UNREGISTERED platform throws out of the key derivation — the callers catch it and read/record nothing");
+  ok(answeredContainerKey({ platform: "nosuch" } as unknown as UnifiedWakeOrigin) === null, "§7 an UNREGISTERED platform has NO key — the derivation answers null instead of inventing one");
   ok(
     (await containerAnsweredSince(ORG, { platform: "nosuch" } as unknown as UnifiedWakeOrigin, iso(Date.now() - 5_000))) === false,
     "🔴 §7 fail-soft: an unregistered platform reads FALSE rather than throwing out of the close gate",
