@@ -1,3 +1,6 @@
+import { resolveDomainForChannel, type Domain } from "../memory/domain.js";
+import { resolvePartition } from "../memory/partition.js";
+import type { BindableContext } from "../identity/binding.js";
 import { credentialOverrideFor, type CredentialBoundDomain } from "./domain-credentials.js";
 
 export function workGrantCredential(
@@ -16,6 +19,32 @@ export function hasWorkGrant(
   workRole: string,
 ): boolean {
   return workGrantCredential(domain, connector, workRole) !== undefined;
+}
+
+export type WorkDomainResolver = (surfaceKey: string, domains: readonly Domain[]) => Domain | undefined;
+
+const resolveByChannelKey: WorkDomainResolver = (surfaceKey, domains) => resolveDomainForChannel(surfaceKey, domains).domain;
+
+export function callerWorkDomain(
+  ctx: BindableContext,
+  domains: () => readonly Domain[],
+  resolveDomain: WorkDomainResolver = resolveByChannelKey,
+): Domain | undefined {
+  try {
+    return resolveDomain(resolvePartition(ctx).surfaceKey, domains());
+  } catch {
+    return undefined;
+  }
+}
+
+export function callerWorkGrant(
+  ctx: BindableContext,
+  connector: string,
+  workRole: string,
+  domains: () => readonly Domain[],
+  resolveDomain?: WorkDomainResolver,
+): string | undefined {
+  return workGrantCredential(callerWorkDomain(ctx, domains, resolveDomain), connector, workRole);
 }
 
 export interface WorkRole {
