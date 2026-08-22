@@ -285,6 +285,11 @@ test("OPE-727 negative control — the documented dispose-and-re-register patter
   );
   expect(settled.fault).toBeUndefined();
   expect(settled.stepIndex).toBe(0);
+
+  await waitFor(
+    () => settlement.requests.find((r) => r.role === "parent" && r.stepIndex === 1),
+    "the settlement turn's OWN terminal step, so this session makes no further call after the dispose below",
+  );
   expect(settlement.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
   settlement.dispose();

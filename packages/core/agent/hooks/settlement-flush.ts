@@ -1,5 +1,6 @@
 import { defineState } from "eve/context";
 import { persistMemoryNow, type MemoryFlushSummary, type MemoryPersistContext } from "./memory.js";
+import { resolvePartition } from "../memory/partition.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { armLiveTask, consumeFlushHold, liveTaskIds, noteTaskViews, MAX_FLUSH_HOLDS } from "../access/live-delegated-tasks.js";
@@ -16,6 +17,14 @@ function log(msg: string): void {
   console.log(`[open-everywhere:settlement-flush] ${msg}`);
 }
 
+function resolvedSurface(ctx: MemoryPersistContext): string {
+  try {
+    return resolvePartition(ctx).surfaceKey;
+  } catch {
+    return "unresolved";
+  }
+}
+
 export function noteTaskDispatched(taskId: string): void {
   armLiveTask(taskId);
   markTreeDirty();
@@ -29,14 +38,16 @@ export function noteTaskSettled(view: TaskSummary): void {
 function markTreeDirty(): void {
   try {
     treeDirty.update(() => ({ dirty: true }));
-  } catch {
+  } catch (err) {
+    log(`the turn-end backstop is DISARMED for this session — its dirty flag could not be set: ${String(err)}`);
   }
 }
 
 export function treeIsDirty(): boolean {
   try {
     return treeDirty.get().dirty;
-  } catch {
+  } catch (err) {
+    log(`the dirty flag is UNREADABLE, so this turn's backstop reads the tree as clean: ${String(err)}`);
     return false;
   }
 }
@@ -51,6 +62,7 @@ export interface SettlementFlushResult {
 
 export async function flushSettledMemory(ctx: MemoryPersistContext, edge: SettlementEdge): Promise<SettlementFlushResult> {
   let result: SettlementFlushResult = { outcome: "skipped", live: 0, liveIds: [], retiredIds: [], flush: null };
+  const surfaceKey = resolvedSurface(ctx);
   try {
     const liveIds = liveTaskIds();
     const live = liveIds.length;
@@ -65,6 +77,7 @@ export async function flushSettledMemory(ctx: MemoryPersistContext, edge: Settle
       result = { outcome: "skipped", live, liveIds, retiredIds, flush: null };
     } else {
       const flush = await persistMemoryNow(ctx, "settled");
+      log(`${edge}: FLUSHED ${surfaceKey} — ${flush.persisted} file(s) across ${flush.silos} silo(s), ${flush.changed} changed, ${flush.failed} failed`);
       try {
         treeDirty.update(() => ({ dirty: false }));
       } catch {
@@ -84,6 +97,7 @@ export async function flushSettledMemory(ctx: MemoryPersistContext, edge: Settle
       edge,
       outcome: result.outcome,
       liveTasks: result.live,
+      surfaceKey,
       ...(result.liveIds.length === 0 ? {} : { liveTaskIds: result.liveIds }),
       ...(result.retiredIds.length === 0 ? {} : { retiredTaskIds: result.retiredIds }),
       ...(result.flush === null ? {} : { flush: result.flush }),
@@ -93,6 +107,14 @@ export async function flushSettledMemory(ctx: MemoryPersistContext, edge: Settle
 }
 
 export async function flushDirtyTreeAtTurnEnd(ctx: MemoryPersistContext): Promise<SettlementFlushResult | null> {
-  if (!treeIsDirty()) return null;
+  if (!treeIsDirty()) {
+    const orphaned = liveTaskIds();
+    if (orphaned.length === 0) return null;
+    log(
+      `turn-backstop: the dirty flag is LOST but ${orphaned.length} delegated task(s) are still live [${orphaned.join(", ")}] — ` +
+        "RE-ARMING it, because a lost flag would otherwise disarm this session's only background persist route",
+    );
+    markTreeDirty();
+  }
   return flushSettledMemory(ctx, "turn-backstop");
 }
