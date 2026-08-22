@@ -190,4 +190,34 @@ async function armed(tool: unknown, c: BindableContext): Promise<unknown> {
   );
 }
 
+{
+  const { declareProviderSelection, clearProviderSelection } = await import("../agent/access/provider-selection.js");
+  const { registeredWorkPlatforms } = await import("../agent/channels/work-registry.js");
+
+  declareProviderSelection(["notion", "bugtracker"]);
+  try {
+    registerTicketCreateAdapter({
+      platform: "ghost-tracker",
+      workRole: "project-key",
+      create: async (target) => ({ ref: { platform: "ghost-tracker", id: target }, summary: "never" }),
+    });
+    ok(
+      registeredWorkPlatforms().includes("ghost-tracker") === false,
+      "🔴 an UNSELECTED provider's adapter registration leaves NO row in the work registry (explicit false) — the gate upstream is why registerWorkPlatform needs none of its own",
+    );
+    ok(
+      workDestinationPlatforms(chatCtx("COPS"), DOMAINS).includes("ghost-tracker") === false,
+      "…so it can never be a work destination either, whatever a domain declares",
+    );
+    registerTicketCreateAdapter({
+      platform: "bugtracker",
+      workRole: "project-key",
+      create: async (target) => ({ ref: { platform: "bugtracker", id: target }, summary: "ok" }),
+    });
+    ok(registeredWorkPlatforms().includes("bugtracker"), "NEGATIVE CONTROL: a SELECTED provider registering the same way DOES get its row");
+  } finally {
+    clearProviderSelection();
+  }
+}
+
 console.log(`✓ ${n} work-destination assertions passed`);
