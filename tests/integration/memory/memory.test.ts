@@ -12,6 +12,8 @@ import {
   registerScript,
   SETTLEMENT_DRAIN_SCRIPT,
   wrapToolExecute,
+  type ScriptedStep,
+  type ScriptedHandle,
   taskIdOfDelegation,
   armSettlement,
   consumeSettlement,
@@ -288,7 +290,7 @@ test("OPE-727 negative control — the documented dispose-and-re-register patter
   settlement.dispose();
 });
 
-test("OPE-426 — a worker that ingests external content marks the bullets it ADDS, and a bullet written on a clean worker turn stays unmarked", async () => {
+test("OPE-426 — a worker turn that ingests external content marks the bullets it adds, a clean worker turn marks nothing, and only bullets are marked", async () => {
   await bootAgent({ sharedSqlite: true });
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.overrideSettingsForTest({ taint: { mode: "on" } });
@@ -305,98 +307,82 @@ test("OPE-426 — a worker that ingests external content marks the bullets it AD
 
   const sinceIso = new Date(Date.now() - 1_000).toISOString();
   const stamp = Date.now();
-  const held = `- 2026-08-21: PROV-HELD-FACT-${stamp} — written on a CLEAN worker turn`;
-  const added = `- 2026-08-22: PROV-ADDED-FACT-${stamp} — Ada owns billing, from the handover`;
-  const relPath = "provenance-fixture.md";
-  const filePath = `/workspace/memory/it-memory-brain/${relPath}`;
-  const hostPath = siloFilePath("it-memory-brain", relPath);
+  const marked = "provenance-fixture.md";
+  const fenced = ["```sh", "- not a bullet, an argument", "```"].join("\n");
+  const body = [
+    "# Provenance fixture",
+    "",
+    "Prose about the handover, which is not a bullet and takes no mark.",
+    "",
+    fenced,
+    "",
+    `- 2026-08-22: PROV-ADDED-A-${stamp} — Ada owns billing`,
+    `- 2026-08-22: PROV-ADDED-B-${stamp} — the handover names her`,
+    "",
+  ].join("\n");
 
-  const clean = disposeLater(
-    registerScript({
-      parent: [
-        { calls: [{ tool: "agent", input: { message: "note who owns billing" }, id: "m5a-delegate" }] },
-        { say: "the worker reported back" },
-      ],
-      child: [{ calls: [{ tool: "write_file", input: { filePath, content: `# Provenance fixture\n\n${held}\n` }, id: "m5a-write" }] }, { say: "noted" }],
-    }),
-  );
+  async function drivePass(input: { ids: string; ask: string; child: readonly ScriptedStep[] }): Promise<ScriptedHandle> {
+    const handle = disposeLater(
+      registerScript({
+        parent: [{ calls: [{ tool: "agent", input: { message: input.ask }, id: `${input.ids}-delegate` }] }, { say: "the worker reported back" }],
+        child: [...input.child, { say: "noted" }],
+      }),
+    );
+    await discordMentionWake({ channelId: IT_MEMORY_PROVENANCE_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> ${input.ask}` });
+    await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), `the ${input.ids} parent terminal step`);
+    const taskId = taskIdOfDelegation(handle, `the ${input.ids} delegation`);
+    const armed = armSettlement(handle, SETTLEMENT_DRAIN_SCRIPT);
+    await waitForChildren(handle, { count: 1, lastStepIndex: input.child.length, label: `the ${input.ids} worker's own terminal step` });
+    expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+    expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
+    await consumeSettlement({ armed, dispatched: handle, taskId, label: `the ${input.ids} worker's completion notification` });
+    expect(armed.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+    armed.dispose();
+    return handle;
+  }
 
-  await discordMentionWake({ channelId: IT_MEMORY_PROVENANCE_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> please note who owns billing` });
-  await waitFor(() => clean.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the clean pass's parent terminal step");
-  const cleanTask = taskIdOfDelegation(clean, "the clean delegation");
-  const cleanArmed = armSettlement(clean, SETTLEMENT_DRAIN_SCRIPT);
-  await waitForChildren(clean, { count: 1, lastStepIndex: 1, label: "the clean worker's own terminal step" });
-  expect(clean.requests.flatMap((r) => r.toolResults).find((t) => t.name === "write_file")?.isError).toBe(false);
-  await consumeSettlement({ armed: cleanArmed, dispatched: clean, taskId: cleanTask, label: "the clean worker's completion notification" });
-  expect(cleanArmed.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  cleanArmed.dispose();
-
-  const afterClean = await waitFor(() => {
-    const text = existsSync(hostPath) ? readFileSync(hostPath, "utf-8") : "";
-    return text.includes(`PROV-HELD-FACT-${stamp}`) ? text : undefined;
-  }, "the clean worker's write to reach the DURABLE store via the settlement flush");
-  expect(afterClean).not.toContain("[external-provenance:");
-
-  const tainted = disposeLater(
-    registerScript({
-      parent: [
-        { calls: [{ tool: "agent", input: { message: "read the handover and note what it says" }, id: "m5b-delegate" }] },
-        { say: "the worker reported back" },
-      ],
-      child: [
-        { calls: [{ tool: "read_file_upload", input: { attachmentId: "upload-1" }, id: "m5b-read" }] },
-        { calls: [{ tool: "read_file", input: { filePath }, id: "m5b-open" }] },
-        { calls: [{ tool: "write_file", input: { filePath, content: `# Provenance fixture\n\n${held}\n${added}\n` }, id: "m5b-write" }] },
-        { say: "noted" },
-      ],
-    }),
-  );
-
-  await discordMentionWake({ channelId: IT_MEMORY_PROVENANCE_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> please read the handover and note it` });
-  await waitFor(
-    () => tainted.requests.find((r) => r.role === "parent" && r.stepIndex === 1),
-    "the tainted pass's parent terminal step",
-  );
-  const taintedTask = taskIdOfDelegation(tainted, "the tainted delegation");
-  const taintedArmed = armSettlement(tainted, SETTLEMENT_DRAIN_SCRIPT);
-  afterThisTest(() => taintedArmed.dispose());
-  await waitForChildren(tainted, { count: 1, lastStepIndex: 3, label: "the tainted worker's own terminal step" });
-  expect(tainted.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  expect(tainted.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
-
-  const results = tainted.requests.flatMap((r) => r.toolResults);
-  expect(results.find((t) => t.name === "read_file_upload")?.isError).toBe(false);
-  expect(results.find((t) => t.name === "read_file")?.isError).toBe(false);
-  expect(results.find((t) => t.name === "write_file")?.isError).toBe(false);
-
-  await consumeSettlement({ armed: taintedArmed, dispatched: tainted, taskId: taintedTask, label: "the tainted worker's completion notification" });
-  expect(taintedArmed.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-
-  const body = await waitFor(() => {
-    const text = existsSync(hostPath) ? readFileSync(hostPath, "utf-8") : "";
-    return text.includes(`PROV-ADDED-FACT-${stamp}`) ? text : undefined;
-  }, "the tainted worker's marked write to reach the DURABLE store via the settlement flush");
-
-  const addedLine = body.split("\n").find((l) => l.includes(`PROV-ADDED-FACT-${stamp}`));
-  expect(addedLine).toBeDefined();
-  expect(addedLine).toContain("[external-provenance:");
-  expect(addedLine).toContain("file-upload");
-
-  const heldLine = body.split("\n").find((l) => l.includes(`PROV-HELD-FACT-${stamp}`));
-  expect(heldLine).toBeDefined();
-  expect(heldLine).not.toContain("[external-provenance:");
-  expect(body.split("[external-provenance:").length - 1).toBe(1);
+  const tainted = await drivePass({
+    ids: "m5a",
+    ask: "please read the handover and note what it says",
+    child: [
+      { calls: [{ tool: "read_file_upload", input: { attachmentId: "upload-1" }, id: "m5a-read" }] },
+      { calls: [{ tool: "write_file", input: { filePath: `/workspace/memory/it-memory-brain/${marked}`, content: body }, id: "m5a-write" }] },
+    ],
+  });
+  const taintedResults = tainted.requests.flatMap((r) => r.toolResults);
+  expect(taintedResults.find((t) => t.name === "read_file_upload")?.isError).toBe(false);
+  expect(taintedResults.find((t) => t.name === "write_file")?.isError).toBe(false);
 
   const rows = await waitFor(async () => {
     const got = await readAuditRows({ actions: ["memory.provenance_marked"], sinceIso, limit: 50 });
     return got.length > 0 ? got : undefined;
-  }, "the memory.provenance_marked audit row");
+  }, "the memory.provenance_marked audit row for the tainted worker turn");
   expect(rows.length).toBe(1);
-  const detail = rows[0]!.detail as { bullets?: number; files?: string[]; kinds?: string[] };
-  expect(detail.bullets).toBe(1);
-  expect(detail.files?.some((f) => f.endsWith(relPath))).toBe(true);
+  const detail = rows[0]!.detail as { bullets?: number; files?: string[]; kinds?: string[]; where?: string };
+  expect(detail.bullets).toBe(2);
+  expect(detail.files?.some((f) => f.endsWith(marked))).toBe(true);
   expect(detail.kinds).toContain("file-upload");
-  expect(JSON.stringify(detail)).not.toContain("PROV-ADDED-FACT");
+  expect(detail.where).toBe("turn.completed");
+  expect(JSON.stringify(detail)).not.toContain("PROV-ADDED-A");
 
-  expect(tainted.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  const clean = await drivePass({
+    ids: "m5b",
+    ask: "please note the billing owner in your own words",
+    child: [
+      {
+        calls: [
+          {
+            tool: "write_file",
+            input: { filePath: "/workspace/memory/it-memory-brain/clean-fixture.md", content: `# Clean fixture\n\n- 2026-08-22: PROV-CLEAN-FACT-${stamp} — noted with nothing ingested\n` },
+            id: "m5b-write",
+          },
+        ],
+      },
+    ],
+  });
+  expect(clean.requests.flatMap((r) => r.toolResults).find((t) => t.name === "write_file")?.isError).toBe(false);
+
+  const after = await readAuditRows({ actions: ["memory.provenance_marked"], sinceIso, limit: 50 });
+  expect(after.length).toBe(1);
+  expect(JSON.stringify(after[0]!.detail)).not.toContain("clean-fixture.md");
 });
