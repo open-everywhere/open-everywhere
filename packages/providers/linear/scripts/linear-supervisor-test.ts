@@ -673,8 +673,8 @@ for (const [label, err] of [
         state: { name: "In Progress", type: "started" },
         comments: {
           nodes: [
-            { id: "c1", body: "seen it on prod too", createdAt: "2026-02-24T06:00:00.000Z", user: { id: "u1", name: "ann", displayName: "Ann" } },
             { id: "c2", body: "retry budget is the cause", createdAt: "2026-07-20T11:00:00.000Z", user: { id: "u2", displayName: "Bo" } },
+            { id: "c1", body: "seen it on prod too", createdAt: "2026-02-24T06:00:00.000Z", user: { id: "u1", name: "ann", displayName: "Ann" } },
           ],
           pageInfo: { hasNextPage: false },
         },
@@ -686,6 +686,7 @@ for (const [label, err] of [
       ok(res.comments.length === 2 && res.truncated === false, "readLinearIssue: reads the full comment thread, not truncated when it fits");
       ok(res.comments[0]!.authorName === "Ann" && res.comments[0]!.text === "seen it on prod too", "readLinearIssue: comment author (data) + body read");
       ok(res.comments[1]!.authorName === "Bo", "readLinearIssue: prefers displayName when name is absent");
+      ok(res.comments[0]!.createdAt! < res.comments[1]!.createdAt!, "readLinearIssue: the newest-first page comes back CHRONOLOGICAL (OPE-988)");
     }
 
     {
