@@ -79,6 +79,29 @@ for (const [name, tool] of Object.entries(gated)) {
   );
 }
 
+type DynamicToolModule = { readonly default: { readonly events: Record<string, (event: unknown, ctx: BindableContext) => unknown> } };
+
+async function resolveDynamic(slug: string, ctx: BindableContext): Promise<unknown> {
+  const mod = (await import(`../agent/tools/${slug}.js`)) as DynamicToolModule;
+  const resolver = mod.default.events["session.started"];
+  ok(typeof resolver === "function", `${slug} exports a session.started resolver`);
+  return resolver({}, ctx);
+}
+
+const UNGATED_GITHUB_TOOLS = ["check_pr_status", "get_pr_feedback", "walk_pr", "post_pr_walkthrough", "subscribe_pr"] as const;
+
+for (const slug of UNGATED_GITHUB_TOOLS) {
+  ok((await resolveDynamic(slug, chatCtx("CPAY"))) !== null, `${slug} MOUNTS for a seat whose scope grants a repo`);
+  ok(
+    (await resolveDynamic(slug, chatCtx("CENG"))) === null,
+    `🔴 THE FIX (OPE-960): ${slug} is ABSENT for a seat with NO repo grant (it used to mount and refuse at execute)`,
+  );
+  ok(
+    (await resolveDynamic(slug, chatCtx("CPAY", "standing"))) !== null,
+    `${slug} still mounts on a STANDING seat that holds the grant (it is window-UNGATED — the grant is its only mount rule)`,
+  );
+}
+
 const { workDestinationPlatforms } = await import("../agent/channels/work-destinations.js");
 {
   const granted = workDestinationPlatforms(chatCtx("CPAY"), DOMAINS);
@@ -110,6 +133,40 @@ const { assembleAccessInstructions } = await import("../agent/access/instruction
   const access = resolveAccessFor(chatCtx("CPAY"));
   ok(repoAllowed("acme/api", access.repos), "the granted repo passes the execute-time fence");
   ok(repoAllowed("evil/repo", access.repos) === false, "🔴 an ungranted repo is still refused at execute, in the room that MOUNTS the tool");
+}
+
+{
+  const { routineFireAttributes } = await import("../agent/routines/fire-auth.js");
+  type Routine = import("../agent/routines/routine.js").Routine;
+
+  function fireCtx(room: string): BindableContext {
+    const routine = {
+      id: "r-pr-sub",
+      org: "default",
+      surfaceKey: `${CHAT}/W1/${room}`,
+      promptGeneration: 1,
+      sessionMode: "fresh",
+    } as unknown as Routine;
+    const attributes = routineFireAttributes(routine, { ws: "W1", room }, "channel", false);
+    return {
+      channel: { kind: CHAT },
+      session: { id: `fire-${room}`, auth: { current: { attributes, principalId: "eve:app", principalType: "app" } } },
+    } as unknown as BindableContext;
+  }
+
+  ok(resolveAccessFor(fireCtx("CPAY")).repos.join(",") === "acme/api", "FIXTURE: an unattended fire in the granted room resolves the repo grant");
+  ok(resolveAccessFor(fireCtx("CENG")).repos.length === 0, "FIXTURE: an unattended fire in the control room resolves NO repo grant");
+
+  for (const slug of UNGATED_GITHUB_TOOLS) {
+    ok(
+      (await resolveDynamic(slug, fireCtx("CPAY"))) !== null,
+      `🔴 LIVE SUBSCRIPTION: ${slug} still mounts on an UNATTENDED FIRE in the granted room (a fire that lost it would end the chain silently)`,
+    );
+    ok(
+      (await resolveDynamic(slug, fireCtx("CENG"))) === null,
+      `NEGATIVE CONTROL: ${slug} is absent on a fire in a room with no repo grant (explicit null, not a refusal)`,
+    );
+  }
 }
 
 console.log(`✓ github-work-grant: ${n} assertions passed`);

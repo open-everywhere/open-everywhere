@@ -16,6 +16,11 @@ export const WORK_TOOL_MOUNTS: Readonly<Record<string, WorkMountRule>> = {
   read_linear_issue: { connector: "linear", via: "grant-or-source" },
   checkout_repo: { connector: "github", via: "grant" },
   open_pull_request: { connector: "github", via: "grant" },
+  check_pr_status: { connector: "github", via: "grant" },
+  get_pr_feedback: { connector: "github", via: "grant" },
+  walk_pr: { connector: "github", via: "grant" },
+  post_pr_walkthrough: { connector: "github", via: "grant" },
+  subscribe_pr: { connector: "github", via: "grant" },
   read_work_channel: { connector: "*", via: "grant-and-source" },
   read_work_thread: { connector: "*", via: "grant-and-source" },
   create_ticket: { connector: "*", via: "grant-or-source" },
@@ -24,13 +29,7 @@ export const WORK_TOOL_MOUNTS: Readonly<Record<string, WorkMountRule>> = {
   add_label: { connector: "*", via: "grant-or-source" },
 };
 
-export const WORK_MOUNT_GAPS: Readonly<Record<string, string>> = {
-  check_pr_status: "OPE-960",
-  get_pr_feedback: "OPE-960",
-  walk_pr: "OPE-960",
-  post_pr_walkthrough: "OPE-960",
-  subscribe_pr: "OPE-960",
-};
+export const WORK_MOUNT_GAPS: Readonly<Record<string, string>> = {};
 
 const WORK_SIGNAL = new RegExp(
   [

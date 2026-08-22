@@ -150,19 +150,28 @@ if (intersection) {
   });
 }
 
-const gapName = Object.keys(WORK_MOUNT_GAPS)[0];
-assert.ok(gapName, "the gap table's shape is under test; if it empties, delete this block with it");
+const GAP_NAME = "crafted_gap";
+const craftedGapSurface = (source: string): WorkToolFile[] => [{ name: GAP_NAME, source }];
+
+check("the REAL WORK_MOUNT_GAPS table is EMPTY — every work tool mounts on its grant", () => {
+  assert.deepEqual(Object.keys(WORK_MOUNT_GAPS), [], "a new gap row needs a reviewer's ruling and a ticket — see the table's header");
+});
+
+check("a WORK_MOUNT_GAPS row that KEEPS its repoAllowed execute fence is tolerated", () => {
+  const problems = checkWorkMounts(craftedGapSurface(`repoAllowed(input.repo, access.repos)`), {}, { [GAP_NAME]: "OPE-960" });
+  assert.deepEqual(problems, [], "NEGATIVE CONTROL for the two defects below");
+});
 
 check("a WORK_MOUNT_GAPS row that LOSES its repoAllowed execute fence FAILS", () => {
-  const problems = messagesFor(mutate(gapName, `workDestinationPlatforms(ctx, d)`), gapName);
+  const problems = checkWorkMounts(craftedGapSurface(`workDestinationPlatforms(ctx, d)`), {}, { [GAP_NAME]: "OPE-960" });
   assert.equal(problems.length, 1, `expected one problem, got ${JSON.stringify(problems)}`);
   assert.match(problems[0], /tolerated ONLY while the execute fence still refuses/u);
 });
 
-check("every WORK_MOUNT_GAPS value is a real ticket id", () => {
-  for (const [name, ticket] of Object.entries(WORK_MOUNT_GAPS)) {
-    assert.match(ticket, /^OPE-\d+$/u, `gap row "${name}" must name a ticket, got "${ticket}"`);
-  }
+check("a WORK_MOUNT_GAPS value that is not a ticket id FAILS", () => {
+  const problems = checkWorkMounts(craftedGapSurface(`repoAllowed(input.repo, access.repos)`), {}, { [GAP_NAME]: "later" });
+  assert.equal(problems.length, 1, `expected one problem, got ${JSON.stringify(problems)}`);
+  assert.match(problems[0], /is not a ticket id/u);
 });
 
 check("a tool in BOTH tables FAILS, and the real tables are disjoint", () => {

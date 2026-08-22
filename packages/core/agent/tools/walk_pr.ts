@@ -1,8 +1,10 @@
-import { defineTool } from "eve/tools";
-import { never } from "eve/tools/approval";
+import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { resolveAccessFor } from "../access/request.js";
+import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import type { BindableContext } from "../identity/binding.js";
 import { repoAllowed } from "../scm/provider.js";
+import { githubWorkMount } from "../scm/github-work.js";
 import { describePrStatus, fetchPullRequestStatus, prStateLabel, resolveReadToken } from "../scm/pr-status.js";
 import { fetchPrDiff } from "../scm/pr-diff.js";
 import { fetchConfigFacts } from "../review/facts-artifact.js";
@@ -15,7 +17,7 @@ const inputSchema = z.object({
   number: z.number().int().positive().describe("PR number."),
 });
 
-export default defineTool({
+export const walkPrEntry = defineTool({
   description:
     "Gather everything needed to walk a human through a pull request before they merge it: the PR's state, its diff, and the resolved-config FACTS computed by CI (effective access per scope, domain rosters, declared webhooks, standing instructions) read from the config-diff workflow's own artifact. Returns a `narratorBrief` — pass it verbatim as `message` to fresh_eyes_review, then call post_pr_walkthrough with that verdict. Read-only, no approval needed. It deliberately takes no free-text input: you cannot add your own framing to what the independent reviewer sees.",
   inputSchema,
@@ -34,7 +36,6 @@ export default defineTool({
     factsOnlyWalkthrough: z.string().describe("The walkthrough as it stands with NO narration — every interpretive section renders NOT COMPUTABLE."),
     nextStep: z.string(),
   }),
-  approval: never(),
   async execute(input, ctx) {
     const access = resolveAccessFor(ctx);
     if (!repoAllowed(input.repo, access.repos)) {
@@ -102,5 +103,12 @@ export default defineTool({
         `── NEXT ── ${o.nextStep}`,
       ].join("\n"),
     };
+  },
+});
+preRegisterDynamicEntry("walk_pr", "_single", walkPrEntry);
+
+export default defineDynamic({
+  events: {
+    "session.started": (_event, ctx) => (githubWorkMount(ctx as BindableContext) ? walkPrEntry : null),
   },
 });

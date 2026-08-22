@@ -1,9 +1,10 @@
-import { defineTool } from "eve/tools";
-import { never } from "eve/tools/approval";
+import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
 import { resolveMode, principalIdOf, resolveAccessFor } from "../access/request.js";
+import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
+import { githubWorkMount } from "../scm/github-work.js";
 import { addRoutine, getRoutine, newRoutineId } from "../routines/store.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { describeTrigger, routineMarker, type Routine } from "../routines/routine.js";
@@ -77,7 +78,7 @@ async function inheritedChecksRemaining(ctx: BindableContext, repo: string, numb
   return Math.max(0, watch.checksRemaining);
 }
 
-export default defineTool({
+export const subscribePrEntry = defineTool({
   description:
     "Subscribe this channel to a GitHub pull request: re-checks it on an interval (default 15 min) and posts here when something changes — reviews, comments, new commits, CI going red or green, merged or closed. Self-serve, no webhook setup, unlike an `event` routine. Each check arms the next; it retires itself when the PR settles or the check budget runs out. Stop it early with cancel_routine on the returned routineId.",
   inputSchema: z.object({
@@ -106,7 +107,6 @@ export default defineTool({
     checksRemaining: z.number(),
     stopReason: z.enum(["settled", "cap"]).optional(),
   }),
-  approval: never(),
   async execute(input, ctx) {
     const mode = resolveMode(ctx);
     if (mode === "mpim") {
@@ -205,5 +205,12 @@ export default defineTool({
       nextCheckAt: at.toISOString(),
       checksRemaining,
     };
+  },
+});
+preRegisterDynamicEntry("subscribe_pr", "_single", subscribePrEntry);
+
+export default defineDynamic({
+  events: {
+    "session.started": (_event, ctx) => (githubWorkMount(ctx as BindableContext) ? subscribePrEntry : null),
   },
 });

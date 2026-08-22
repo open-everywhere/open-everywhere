@@ -26,8 +26,8 @@ import {
   MAX_CHECKS_PER_SUBSCRIPTION,
   PR_FINGERPRINT_VERSION,
 } from "../agent/scm/pr-watch.js";
-import checkPrStatusTool from "../agent/tools/check_pr_status.js";
-import subscribePrTool, { subscribePrPrompt, DEFAULT_CHECK_INTERVAL_MINUTES, MIN_CHECK_INTERVAL_MINUTES } from "../agent/tools/subscribe_pr.js";
+import { checkPrStatusEntry as checkPrStatusTool } from "../agent/tools/check_pr_status.js";
+import { subscribePrEntry as subscribePrTool, subscribePrPrompt, DEFAULT_CHECK_INTERVAL_MINUTES, MIN_CHECK_INTERVAL_MINUTES } from "../agent/tools/subscribe_pr.js";
 import type { PrFetchFn } from "../agent/scm/pr.js";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";

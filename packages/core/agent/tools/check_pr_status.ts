@@ -1,11 +1,13 @@
-import { defineTool } from "eve/tools";
-import { never } from "eve/tools/approval";
+import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { resolveAccessFor } from "../access/request.js";
+import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import type { BindableContext } from "../identity/binding.js";
 import { repoAllowed } from "../scm/provider.js";
+import { githubWorkMount } from "../scm/github-work.js";
 import { fetchPullRequestStatus, describePrStatus, resolveReadToken } from "../scm/pr-status.js";
 
-export default defineTool({
+export const checkPrStatusEntry = defineTool({
   description:
     "Look up the current status of a GitHub pull request — open/closed/merged, draft, title, last updated. Read-only, no approval needed. Use this to check on a PR directly, or to re-check one you're watching via a pr-subscription routine (subscribe_pr).",
   inputSchema: z.object({
@@ -21,7 +23,6 @@ export default defineTool({
     updatedAt: z.string(),
     summary: z.string().describe("One-line human summary — the format the subscription baseline uses."),
   }),
-  approval: never(),
   async execute(input, ctx) {
     const access = resolveAccessFor(ctx);
     if (!repoAllowed(input.repo, access.repos)) {
@@ -41,5 +42,12 @@ export default defineTool({
       updatedAt: status.updatedAt,
       summary: describePrStatus(status),
     };
+  },
+});
+preRegisterDynamicEntry("check_pr_status", "_single", checkPrStatusEntry);
+
+export default defineDynamic({
+  events: {
+    "session.started": (_event, ctx) => (githubWorkMount(ctx as BindableContext) ? checkPrStatusEntry : null),
   },
 });

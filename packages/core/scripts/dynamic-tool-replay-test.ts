@@ -19,6 +19,7 @@ import { registerBrowserToolkit } from "../agent/access/browser-toolkit.js";
 import { registerSlackFixtureMapper, registerSlackFixtureManifest } from "./_slack-test-stubs.js";
 import { overrideSettingsForTest, type AgentSettingsOverrides } from "../agent/settings/settings.js";
 import { registerConfig } from "../agent/access/config.js";
+import { defineBinding, defineBundle } from "../agent/access/bundle.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { resolvePartition } from "../agent/memory/partition.js";
 import type { BindableContext } from "../agent/identity/binding.js";
@@ -58,8 +59,8 @@ const REPLAY_DOMAINS = [
   }),
 ];
 registerConfig({
-  loadBundles: () => [],
-  loadBindings: () => [],
+  loadBundles: () => [defineBundle({ name: "coding", repos: ["acme/api"] })],
+  loadBindings: () => [defineBinding({ bundle: "coding", scope: { level: "org" } })],
   pluginRegistry: {},
   skillContent: {},
   loadDomains: () => REPLAY_DOMAINS,
@@ -100,6 +101,11 @@ const CASES: readonly ToolCase[] = [
   { slug: "browser_tools", entryKey: "browser_screenshot", ctx: taskCtx },
   { slug: "read_work_channel", entryKey: "_single", ctx: slackCtx },
   { slug: "read_work_thread", entryKey: "_single", ctx: slackCtx },
+  { slug: "check_pr_status", entryKey: "_single", ctx: slackCtx },
+  { slug: "get_pr_feedback", entryKey: "_single", ctx: slackCtx },
+  { slug: "walk_pr", entryKey: "_single", ctx: slackCtx },
+  { slug: "post_pr_walkthrough", entryKey: "_single", ctx: slackCtx },
+  { slug: "subscribe_pr", entryKey: "_single", ctx: slackCtx },
 ];
 const SLUGS = [...new Set(CASES.map((c) => c.slug))];
 

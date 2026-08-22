@@ -570,14 +570,14 @@ const NARRATION: WalkthroughNarration = {
 }
 
 {
-  const walkPr = (await import("../agent/tools/walk_pr.js")).default as unknown as { inputSchema: { shape: Record<string, unknown> } };
+  const walkPr = (await import("../agent/tools/walk_pr.js")).walkPrEntry as unknown as { inputSchema: { shape: Record<string, unknown> } };
   eq(
     Object.keys(walkPr.inputSchema.shape).sort(),
     ["number", "repo"],
     "🔴 walk_pr's input schema is EXACTLY {repo, number} — there is no free-text field through which the proposing session could frame the review it is asking for",
   );
 
-  const postTool = (await import("../agent/tools/post_pr_walkthrough.js")).default as unknown as { inputSchema: { shape: Record<string, unknown> } };
+  const postTool = (await import("../agent/tools/post_pr_walkthrough.js")).postPrWalkthroughEntry as unknown as { inputSchema: { shape: Record<string, unknown> } };
   const postKeys = Object.keys(postTool.inputSchema.shape).sort();
   eq(postKeys, ["factsRunId", "narration", "number", "repo"], "post_pr_walkthrough takes the narration, a PR and a run id to check — and nothing else");
   ok(

@@ -1,10 +1,11 @@
-import { defineTool } from "eve/tools";
-import { never } from "eve/tools/approval";
+import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { appendAudit } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
 import { resolveAccessFor } from "../access/request.js";
-import { deploymentOrg } from "../identity/binding.js";
+import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { deploymentOrg, type BindableContext } from "../identity/binding.js";
+import { githubWorkMount } from "../scm/github-work.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { repoAllowed } from "../scm/provider.js";
 import { fetchPullRequestStatus, prStateLabel, resolveReadToken } from "../scm/pr-status.js";
@@ -59,7 +60,7 @@ function adminChannel(): string | undefined {
   }
 }
 
-export default defineTool({
+export const postPrWalkthroughEntry = defineTool({
   description:
     "Render the PR walkthrough and post it to the governance admin channel. Pass the fresh_eyes_review verdict as `narration`; the resolved-config FACTS are re-fetched here from CI's own artifact and are not something you can supply, alter or omit. The document labels every computed fact and every model opinion differently, states whether the spend ledger shows a delegated subagent run behind the narration, and always states what it cannot establish. It approves and merges nothing — the merge stays with the human. Call walk_pr first.",
   inputSchema,
@@ -75,7 +76,6 @@ export default defineTool({
     delivered: z.boolean(),
     outcome: z.string(),
   }),
-  approval: never(),
   async execute(input, ctx) {
     const access = resolveAccessFor(ctx);
     if (!repoAllowed(input.repo, access.repos)) {
@@ -186,5 +186,12 @@ export default defineTool({
         `Narration provenance: ${attestationNote}. ` +
         `Nothing was approved or merged; the merge is still the reviewer's.`,
     };
+  },
+});
+preRegisterDynamicEntry("post_pr_walkthrough", "_single", postPrWalkthroughEntry);
+
+export default defineDynamic({
+  events: {
+    "session.started": (_event, ctx) => (githubWorkMount(ctx as BindableContext) ? postPrWalkthroughEntry : null),
   },
 });

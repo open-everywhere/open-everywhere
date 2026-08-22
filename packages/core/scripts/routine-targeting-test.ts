@@ -293,7 +293,7 @@ const ORG = "default";
 }
 
 {
-  const subscribeTool = (await import("../agent/tools/subscribe_pr.js")).default;
+  const subscribeTool = (await import("../agent/tools/subscribe_pr.js")).subscribePrEntry;
   const linearCtx = {
     channel: { kind: "linear" },
     session: { auth: { current: { attributes: { workspace_id: "W1", issue_id: "ISSUE1" }, principalId: "U1" } } },

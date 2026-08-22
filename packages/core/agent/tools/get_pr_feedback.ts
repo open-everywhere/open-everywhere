@@ -1,8 +1,10 @@
-import { defineTool } from "eve/tools";
-import { never } from "eve/tools/approval";
+import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { resolveAccessFor } from "../access/request.js";
+import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import type { BindableContext } from "../identity/binding.js";
 import { repoAllowed } from "../scm/provider.js";
+import { githubWorkMount } from "../scm/github-work.js";
 import { resolveReadToken } from "../scm/pr-status.js";
 import { fetchPrFeedback, renderPrFeedbackForModel, type PrFeedbackDigest } from "../scm/pr-feedback.js";
 
@@ -32,7 +34,7 @@ const prFeedbackOutputSchema = z.object({
   repoPrivate: z.boolean().optional(),
 });
 
-export default defineTool({
+export const getPrFeedbackEntry = defineTool({
   description:
     "Read the feedback on a GitHub pull request: review verdicts (approved / changes-requested), inline review comments (with file + line), issue-thread comments, and check runs (with a failure excerpt for red checks). Read-only, no approval needed. Use this after a PR @mention to see the requested changes before fixing them — the mention only carries the single triggering comment. Bounded: large threads are capped and the result reports what was truncated.",
   inputSchema: z.object({
@@ -40,7 +42,6 @@ export default defineTool({
     number: z.number().int().positive().describe("PR number."),
   }),
   outputSchema: prFeedbackOutputSchema,
-  approval: never(),
   async execute(input, ctx) {
     const access = resolveAccessFor(ctx);
     if (!repoAllowed(input.repo, access.repos)) {
@@ -54,5 +55,12 @@ export default defineTool({
   },
   toModelOutput(output) {
     return { type: "text" as const, value: renderPrFeedbackForModel(output as unknown as PrFeedbackDigest) };
+  },
+});
+preRegisterDynamicEntry("get_pr_feedback", "_single", getPrFeedbackEntry);
+
+export default defineDynamic({
+  events: {
+    "session.started": (_event, ctx) => (githubWorkMount(ctx as BindableContext) ? getPrFeedbackEntry : null),
   },
 });
