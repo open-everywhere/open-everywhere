@@ -23,10 +23,10 @@ export const WORK_TOOL_MOUNTS: Readonly<Record<string, WorkMountRule>> = {
   subscribe_pr: { connector: "github", via: "grant" },
   read_work_channel: { connector: "*", via: "grant-and-source" },
   read_work_thread: { connector: "*", via: "grant-and-source" },
-  create_ticket: { connector: "*", via: "grant-or-source" },
-  set_state: { connector: "*", via: "grant-or-source" },
-  assign: { connector: "*", via: "grant-or-source" },
-  add_label: { connector: "*", via: "grant-or-source" },
+  create_ticket: { connector: "*", via: "grant" },
+  set_state: { connector: "*", via: "grant" },
+  assign: { connector: "*", via: "grant" },
+  add_label: { connector: "*", via: "grant" },
 };
 
 export const WORK_MOUNT_GAPS: Readonly<Record<string, string>> = {};
@@ -62,7 +62,6 @@ function namesIdentifier(source: string, identifier: string): boolean {
 }
 
 function mountsOnUnion(source: string, connector: string): boolean {
-  if (namesIdentifier(source, "workDestinationPlatforms")) return true;
   if (connector === "*") return false;
   return namesIdentifier(source, grantMountPredicate(connector)) && namesIdentifier(source, "sourceScopedMount");
 }
@@ -98,9 +97,11 @@ export function checkWorkMounts(
       }
       if (rule.via === "grant") {
         if (rule.connector === "*") {
-          problems.push(
-            `tool "${tool.name}" declares via:"grant" with connector:"*" — a neutral verb names no single connector, so no connector-named mount predicate can gate it (use via:"grant-or-source")`,
-          );
+          if (!namesIdentifier(tool.source, "workDestinationPlatforms")) {
+            problems.push(
+              `tool "${tool.name}" declares via:"grant" with connector:"*" but never names workDestinationPlatforms — a neutral work verb mounts on the GRANT SET (channels/work-destinations.ts), which is the connector-less spelling of the same rule`,
+            );
+          }
         } else if (!namesIdentifier(tool.source, grantMountPredicate(rule.connector))) {
           problems.push(
             `tool "${tool.name}" declares via:"grant" but its source never names ${grantMountPredicate(rule.connector)} — a grant-only work tool MUST decide its mount with the connector's grant predicate (access/work-grant.ts), not grain and not topology`,
@@ -119,12 +120,12 @@ export function checkWorkMounts(
         }
         if (namesIdentifier(tool.source, "workDestinationPlatforms")) {
           problems.push(
-            `tool "${tool.name}" declares via:"grant-and-source" but names workDestinationPlatforms — that predicate is the UNION, so it would mount this verb on chat presence alone and defeat the grant`,
+            `tool "${tool.name}" declares via:"grant-and-source" but names workDestinationPlatforms — that predicate is the GRANT SET alone, so it would arm this verb on every granted connector regardless of which one this window actually sources`,
           );
         }
       } else if (!mountsOnUnion(tool.source, rule.connector)) {
         problems.push(
-          `tool "${tool.name}" declares via:"grant-or-source" but its source names neither workDestinationPlatforms nor the pair (${grantMountPredicate(rule.connector)} + sourceScopedMount) — the union mount must come from access/work-grant.ts, not from topology alone`,
+          `tool "${tool.name}" declares via:"grant-or-source" but its source does not name the pair (${grantMountPredicate(rule.connector)} + sourceScopedMount) — since OPE-953 that is the ONE spelling of this class: the container read OR the grant. workDestinationPlatforms is the GRANT SET now and carries no chat arm, so it cannot stand in for the pair`,
         );
       }
       continue;

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { readLinearIssue, type LinearCommentSummary } from "../channels/linear-api.js";
 import { enrichIssueTeam } from "../channels/linear.js";
 import { assertLinearIssueAllowed } from "../channels/linear-scope.js";
-import { linearWorkOrg } from "../channels/linear-work.js";
+import { linearWorkMount, linearWorkOrg } from "../channels/linear-work.js";
 import {
   ingestUntrustedModelOutput,
   assertTurnSurface,
@@ -11,7 +11,7 @@ import {
   auditOriginFenceRefusal,
   currentTurnIssue,
   currentTurnOrganization,
-  workDestinationPlatforms,
+  sourceScopedMount,
   getConfig,
   preRegisterDynamicEntry,
   resolvePartition,
@@ -128,7 +128,8 @@ export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
       const bctx = ctx as BindableContext;
-      if (!workDestinationPlatforms(bctx, safeDomains()).includes("linear")) return null;
+      const ok = sourceScopedMount(bctx, "linear", safeDomains) || linearWorkMount(bctx, safeDomains);
+      if (!ok) return null;
       return readLinearIssueEntry;
     },
   },

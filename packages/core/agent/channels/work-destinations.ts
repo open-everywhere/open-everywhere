@@ -1,4 +1,4 @@
-import { resolveWindowSources, type BindableContext } from "../identity/binding.js";
+import type { BindableContext } from "../identity/binding.js";
 import { callerWorkDomain, hasGithubWorkGrant, hasWorkGrant, workRoleFor, GITHUB_CONNECTOR } from "../access/work-grant.js";
 import { registeredWorkPlatforms, registeredWorkRole } from "./work-registry.js";
 import { resolveAccessFor } from "../access/request.js";
@@ -22,15 +22,9 @@ function grantedRepos(ctx: BindableContext): readonly string[] {
 }
 
 export function workDestinationPlatforms(ctx: BindableContext, domains: readonly Domain[]): readonly string[] {
-  const sources = resolveWindowSources(ctx, domains);
   const granted = [...grantedWorkPlatforms(ctx, domains)];
   if (hasGithubWorkGrant(grantedRepos(ctx)) && registeredWorkPlatforms().includes(GITHUB_CONNECTOR) && !granted.includes(GITHUB_CONNECTOR)) {
     granted.push(GITHUB_CONNECTOR);
   }
-  if (granted.length === 0) return sources;
-  const out = [...sources];
-  for (const connector of granted.sort()) {
-    if (!out.includes(connector)) out.push(connector);
-  }
-  return out;
+  return granted.sort();
 }

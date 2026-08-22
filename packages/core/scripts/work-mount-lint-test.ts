@@ -26,11 +26,15 @@ function cleanSurface(): WorkToolFile[] {
   for (const [name, rule] of Object.entries(WORK_TOOL_MOUNTS)) {
     const body =
       rule.via === "grant"
-        ? `import { ${rule.connector}WorkMount } from "x"; ${rule.connector}WorkMount(ctx);`
+        ?
+          rule.connector === "*"
+          ? `import { workDestinationPlatforms } from "x"; workDestinationPlatforms(ctx, d);`
+          : `import { ${rule.connector}WorkMount } from "x"; ${rule.connector}WorkMount(ctx);`
         : rule.via === "grant-and-source"
           ?
             `import { surfaceWorkReadMount, assertSurfaceWorkGrant } from "x"; surfaceWorkReadMount(ctx, d); assertSurfaceWorkGrant(ctx, d, p);`
-          : `import { workDestinationPlatforms } from "x"; workDestinationPlatforms(ctx, d);`;
+          :
+            `import { ${rule.connector}WorkMount, sourceScopedMount } from "x"; ${rule.connector}WorkMount(ctx, d); sourceScopedMount(ctx, "${rule.connector}", d);`;
     out.push({ name, source: body });
   }
   for (const name of Object.keys(WORK_MOUNT_GAPS)) {
@@ -104,26 +108,34 @@ const [unionName, unionRule] = union;
 check(`a via:"grant-or-source" tool that mounts on topology alone FAILS`, () => {
   const problems = messagesFor(mutate(unionName, `resolveWindowSources(ctx, domains).includes("x"); repoAllowed(a, b);`), unionName);
   assert.equal(problems.length, 1, `expected one problem, got ${JSON.stringify(problems)}`);
-  assert.match(problems[0], /the union mount must come from access\/work-grant\.ts/u);
+  assert.match(problems[0], /does not name the pair/u);
 });
 
-check(`a via:"grant-or-source" tool is CLEAN on the second union spelling (…WorkMount + sourceScopedMount)`, () => {
-  if (unionRule.connector === "*") return;
+check(`a via:"grant-or-source" tool is CLEAN on the ONE union spelling (…WorkMount + sourceScopedMount)`, () => {
   const source = `${unionRule.connector}WorkMount(ctx, d); sourceScopedMount(ctx, "${unionRule.connector}");`;
   assert.deepEqual(messagesFor(mutate(unionName, source), unionName), []);
 });
 
-check(`a neutral verb (connector:"*") declared via:"grant" FAILS — no connector names it`, () => {
-  const tools: WorkToolFile[] = [{ name: "make_believe", source: `workDestinationPlatforms(ctx, d)` }];
-  const problems = checkWorkMounts(tools, { make_believe: { connector: "*", via: "grant" } }, {}).filter((p) => p.includes("make_believe"));
+check(`a via:"grant-or-source" tool spelled with workDestinationPlatforms FAILS (OPE-953 collapsed that spelling)`, () => {
+  const problems = messagesFor(mutate(unionName, `workDestinationPlatforms(ctx, d);`), unionName);
   assert.equal(problems.length, 1, `expected one problem, got ${JSON.stringify(problems)}`);
-  assert.match(problems[0], /a neutral verb names no single connector/u);
-  assert.deepEqual(checkWorkMounts(tools, { make_believe: { connector: "*", via: "grant-or-source" } }, {}), []);
+  assert.match(problems[0], /the pair \(/u);
+});
+
+check(`a neutral verb (connector:"*") declared via:"grant" must name the GRANT SET`, () => {
+  const missing: WorkToolFile[] = [{ name: "make_believe", source: `hasWorkGrant(d, "notion", "team-key")` }];
+  const problems = checkWorkMounts(missing, { make_believe: { connector: "*", via: "grant" } }, {}).filter((p) => p.includes("make_believe"));
+  assert.equal(problems.length, 1, `expected one problem, got ${JSON.stringify(problems)}`);
+  assert.match(problems[0], /never names workDestinationPlatforms/u);
+  const named: WorkToolFile[] = [{ name: "make_believe", source: `workDestinationPlatforms(ctx, d)` }];
+  assert.deepEqual(checkWorkMounts(named, { make_believe: { connector: "*", via: "grant" } }, {}), []);
+  const unionAttempt = checkWorkMounts(named, { make_believe: { connector: "*", via: "grant-or-source" } }, {}).filter((p) => p.includes("make_believe"));
+  assert.equal(unionAttempt.length, 1, `expected one problem, got ${JSON.stringify(unionAttempt)}`);
   for (const [name, rule] of Object.entries(WORK_TOOL_MOUNTS)) {
     if (rule.connector === "*") {
       assert.ok(
-        rule.via === "grant-or-source" || rule.via === "grant-and-source",
-        `neutral verb "${name}" must mount on the union or the intersection — no single connector gates it (got via:"${rule.via}")`,
+        rule.via === "grant" || rule.via === "grant-and-source",
+        `neutral verb "${name}" must mount on the grant set or the intersection — no single connector gates it (got via:"${rule.via}")`,
       );
     }
   }

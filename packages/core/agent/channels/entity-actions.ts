@@ -89,7 +89,7 @@ export async function resolveEntityAction(
   if (!destinations.includes(ref.platform)) {
     throw new Error(
       `${verb}: "${ref.platform}" is not one of this session's work destinations (${destinations.join(", ") || "none"}) — ` +
-        "the memory domain must hold a work credential for it (`credentials`), or list it among the domain's channels.",
+        "the memory domain must hold a work credential for it (`credentials`). Talking on that platform does not grant mutating its tickets.",
     );
   }
   const adapter = ENTITY_ACTION_ADAPTERS[ref.platform];

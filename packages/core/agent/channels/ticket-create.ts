@@ -72,7 +72,7 @@ export async function resolveTicketCreate(
         candidates.length === 0
           ? `create_ticket: none of this session's work destinations (${destinations.join(", ") || "none"}) can file a work item — ` +
             (supported.length
-              ? `supported on ${supported.join(", ")}; give the memory domain a work credential for one of them (\`credentials\`), or add it to the domain's channels.`
+              ? `supported on ${supported.join(", ")}; give the memory domain a work credential for one of them (\`credentials\`). A chat channel on that platform does not confer it.`
               : "no surface supports it yet.")
           : `create_ticket: this session has more than one work surface (${candidates.join(", ")}) — pass \`platform\` to say which one to file on.`,
       );
@@ -82,7 +82,7 @@ export async function resolveTicketCreate(
   if (!destinations.includes(platform)) {
     throw new Error(
       `create_ticket: "${platform}" is not one of this session's work destinations (${destinations.join(", ") || "none"}) — ` +
-        "the memory domain must hold a work credential for it (`credentials`), or list it among the domain's channels.",
+        "the memory domain must hold a work credential for it (`credentials`). Talking on that platform does not grant filing on it.",
     );
   }
 

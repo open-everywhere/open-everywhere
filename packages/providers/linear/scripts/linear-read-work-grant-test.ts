@@ -124,10 +124,10 @@ try {
     ok((await mount(slackCtx("CPAY"))) === null, "read_linear_issue does NOT mount on an ungranted Slack session with no Linear source");
 
     withDomains(GRANTED_DOMAINS);
-    ok((await mount(slackCtx("CPAY"))) !== null, "🔴 THE FIX: read_linear_issue MOUNTS on a Slack session whose domain holds the Linear work grant");
+    ok((await mount(slackCtx("CPAY"))) !== null, "🔴 THE WORK ARM: read_linear_issue MOUNTS on a Slack session whose domain holds the Linear work grant");
 
     withDomains(UNGRANTED_DOMAINS);
-    ok((await mount(linearCtx(TEAM_PAY, ISSUE_PAY))) !== null, "a Linear-origin session still mounts with no grant declared (unchanged)");
+    ok((await mount(linearCtx(TEAM_PAY, ISSUE_PAY))) !== null, "🔴 THE CHAT ARM: a Linear-origin session mounts with NO grant declared — reading its own container is not work");
   }
 
   {
