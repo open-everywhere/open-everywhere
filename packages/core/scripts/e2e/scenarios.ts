@@ -10,6 +10,7 @@ import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import { tsAfter } from "./slack-driver.js";
 import type { DiscordDriver } from "./discord-driver.js";
 import type { TeamsDriver } from "./teams-driver.js";
+import { isMissingChatScopeError } from "./teams-driver.js";
 import type { GithubDriver } from "./github-driver.js";
 import { FORGE_CREATOR_ID, FORGE_ISSUE_ID, FORGE_ORGANIZATION_ID, FORGE_SESSION_ID, type LinearDriver } from "./linear-driver.js";
 import type { NotionDriver } from "./notion-driver.js";
@@ -1545,6 +1546,55 @@ export const SCENARIOS: readonly Scenario[] = [
         `re-mention: EXACTLY ONE reply carries the run token "${markerT}" — one question, one answer (OPE-568 double-post gate); saw ${answers.length}`,
       );
       ctx.log(`re-mention: ${chain.filter((m) => teams.isBotReply(m)).length} bot post(s) in the chain overall (a completion relay may add one — only the token-carrying count is gated)`);
+    },
+  },
+  {
+    id: "J-TEAMS-DM",
+    title: "Teams 1:1 DM: a personal-scope Graph message wakes the bot and gets a reply — the DM plane's first live leg (OPE-972)",
+    requires: ["teams"],
+    surface: "teams",
+    suite: "core",
+    smoke: false,
+    optional: false,
+    timeoutMs: REPLY_WAIT * 2,
+    judged: true,
+    run: async (ctx) => {
+      const teams = ctx.teams!;
+      const { chatId } = await teams.resolveDmChat().catch((err: unknown) =>
+        ctx.skip(
+          `teams DM: ${err instanceof Error ? err.message : String(err)} — grant the personal-scope install for the driver ` +
+            "user (OPE-887) and re-run.",
+        ),
+      );
+
+      const markerD = factToken("teams-dm");
+      const driven = await teams
+        .postDm(chatId, `Hi — this is an automated e2e check of the Teams 1:1 DM plane. Reply with a one-line acknowledgement and include the token ${markerD}.`)
+        .catch((err: unknown) => {
+          if (isMissingChatScopeError(err)) {
+            ctx.skip(
+              "teams DM: Graph 403'd the post — the driver's Entra app has no Chat.ReadWrite / ChatMessage.Send delegated scope " +
+                `consented. Grant Chat.ReadWrite (or ChatMessage.Send + Chat.Read), admin-consent it, and re-run. (${err instanceof Error ? err.message : String(err)})`,
+            );
+          }
+          throw err;
+        });
+      const reply = await teams.awaitDmReply(chatId, { timeoutMs: REPLY_WAIT, contains: markerD }).catch((err: unknown) => {
+        if (isMissingChatScopeError(err)) {
+          ctx.skip(
+            `teams DM: the post succeeded but reading the reply back 403'd — the driver's Entra app has no Chat.Read / Chat.ReadWrite ` +
+              `delegated scope consented. Grant it, admin-consent it, and re-run. (${err instanceof Error ? err.message : String(err)})`,
+          );
+        }
+        throw err;
+      });
+      ctx.gate(reply.text.trim().length > 0, "DM: bot replied in the 1:1 chat (a real personal-scope Graph message woke it end-to-end)");
+      await ctx.judgePass(
+        closedQA(`Is the reply a relevant, non-empty acknowledgement that quotes the token ${markerD} (not an error)?`, { mustMatch: [markerD] }),
+        reply.text,
+        "DM: relevance",
+      );
+      ctx.log(`DM: root message ${driven.id} in chat ${chatId}`);
     },
   },
   {

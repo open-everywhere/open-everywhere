@@ -302,7 +302,8 @@ export const FIXTURE_FAMILIES: readonly FixtureFamily[] = [
       v(ENV.teamsBotAppId),
     ],
     optional: [ENV.teamsRefreshTokenFile],
-    scenarios: "ST1 (Teams @mention drive)",
+    scenarios:
+      "J-TEAMS (channel @mention drive) + J-TEAMS-DM (1:1 chat drive — self-skips without the personal install or a Chat.* Graph scope, OPE-972)",
     probe: "teams",
   },
   {

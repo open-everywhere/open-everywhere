@@ -46,7 +46,7 @@ const {
   resolveCapabilities,
   DEFAULT_TEAMS_REFRESH_SINK,
 } = await import("../packages/core/scripts/e2e/env.js");
-const { readRefreshSidecar, writeRefreshSidecar } = await import("../packages/core/scripts/e2e/teams-driver.js");
+const { readRefreshSidecar, writeRefreshSidecar, isMissingChatScopeError } = await import("../packages/core/scripts/e2e/teams-driver.js");
 const { backoffDelayMs, pollUntil, pollOptional, PollTimeout } = await import("../packages/core/scripts/e2e/poll.js");
 const {
   signSlackRequest,
@@ -246,6 +246,30 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   writeRefreshSidecar(sinkPath, "rotated-token-3");
   ok(readRefreshSidecar(sinkPath) === "rotated-token-3", "sidecar overwrite wins (latest rotation)");
   rmSync(sinkPath, { force: true });
+
+  const graphGetForbidden =
+    "teams GET /chats/19%3A.../messages failed: http 403 {\"error\":{\"code\":\"Forbidden\",\"message\":\"Missing scope permissions on the request. " +
+    "API requires one of 'Chat.ReadBasic, Chat.Read, Chat.ReadWrite'. Scopes on the request 'AppCatalog.Read.All, Channel.ReadBasic.All'\"}}";
+  const graphPostForbidden =
+    "teams POST /chats/19%3A.../messages failed: http 403 {\"error\":{\"code\":\"Forbidden\",\"message\":\"Missing scope permissions on the request. " +
+    "API requires one of 'ChatMessage.Send, Chat.ReadWrite'. Scopes on the request 'AppCatalog.Read.All'\"}}";
+  ok(isMissingChatScopeError(new Error(graphGetForbidden)), "the real GET 403 (Chat.ReadBasic/Chat.Read/Chat.ReadWrite) classifies as a missing-scope error");
+  ok(isMissingChatScopeError(new Error(graphPostForbidden)), "the real POST 403 (ChatMessage.Send/Chat.ReadWrite) classifies as a missing-scope error too — 'Chat.ReadWrite' contains the 'Chat.Read' substring the classifier keys on");
+  ok(
+    !isMissingChatScopeError(new Error("teams GET /teams/t1/channels/c1 failed: http 404 channel not found")),
+    "🔴 NEGATIVE CONTROL: an unrelated Graph error (no scope wording at all) does NOT classify as a missing-scope error",
+  );
+  ok(
+    !isMissingChatScopeError(
+      new Error("teams POST /teams/t1/channels/c1/messages failed: http 403 Missing scope permissions on the request. API requires one of 'Team.ReadBasic.All'"),
+    ),
+    "🔴 NEGATIVE CONTROL: a missing-scope 403 for a DIFFERENT scope family (no Chat.* named) does NOT classify as a missing-chat-scope error",
+  );
+  ok(
+    !isMissingChatScopeError(new Error("please see the Chat.Read Graph permission docs for background")),
+    "🔴 NEGATIVE CONTROL: text that merely MENTIONS Chat.Read without the 'missing scope permissions' shape does NOT classify as the 403 — the classifier requires BOTH",
+  );
+  ok(!isMissingChatScopeError("a plain string, not an Error"), "a non-Error value is coerced to its string form rather than throwing");
   const user2 = resolveSlackUser2(full);
   ok(user2.ok && user2.cfg.userId === "U2NONADMIN", "user2 cfg carries the non-admin id");
   const dmCfg = resolveSyntheticDm(full);
@@ -275,13 +299,13 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
   const EXPECTED_IDS = new Set([
     "J1", "J2", "S-MEM-READ", "J3", "J4", "S6", "J-DISC", "S8", "S9", "S10", "S11", "S13", "S14",
-    "S-LINK-SLACK", "S20", "S23", "S24", "J-TEAMS", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC", "J-SUP",
+    "S-LINK-SLACK", "S20", "S23", "S24", "J-TEAMS", "J-TEAMS-DM", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC", "J-SUP",
     "J-UNIFIED", "J-UNI-X", "J-PR", "S-PR-SESSION", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "J-WORKFLOW", "S-NOTION-WRITE", "S-CONNECTOR-TIER",
     "S-DM-NOTION", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-TAINT-DRYRUN", "S-TAINT-ROUTE-LIVE", "S-TAINT-UNATTENDED-DENY",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
-    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-SESSION the OPE-53 approve-for-session grant→skip pair + S-PR-BOUNDARY the ungranted-repo refusal + S-AWS-BOUNDARY its twin on the OTHER consequential door (the ungated \`aws\` tool, whose only control is the fail-closed awsRoles grant); S-LINK-SLACK drives the whole proof-of-control identity-link loop across two REAL Slack accounts (mint → claim → notice → ratify), asserted on the identity.link.* audit rows because no read-tool exposes link rows; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit + S-APIKEY-INTAKE the db-broker Set-API-key intake — all self-skipping until their fixtures are armed; S-MEM-READ is the OPE-121 leg that asserts a memory recall OPENED A FILE rather than trusting the reply text, which is what J2 alone could never catch; S-TAINT-DRYRUN is the OPE-331 double-opt-in volume leg that drives the source-tier table (ENFORCED since OPE-324) and gates on \`taint.verdict\` audit rows — including \`mode:\"enforced\"\`+\`applied:true\`, the live proof the table DECIDED rather than observed — never reply text; S-TAINT-ROUTE-LIVE (OPE-439/OPE-844) drives a REAL web_fetch (Arm A, hard) + a REAL get_pr_feedback GitHub PR-feedback read (Arm B, hard, direction fixed by the fixture PR's repoPrivate), then a real propose or explain_permission simulation in the SAME turn, and gates on the \`approval.chain\` row's \`tainted\`/\`taintKinds\` disclosure pair with a clean negative control — proving the route→mark join live where S-TAINT-DRYRUN's \`taint.verdict\` rows are structurally silent (they fire on DIVERGENCE only, and web_fetch agrees with the table); S-TAINT-UNATTENDED-DENY (OPE-452) fires a REAL one-shot routine unattended and gates on the \`approval.chain\` row naming the \`unattended\` ask→deny arrow, plus a hard negative that no card was minted; S-DM-DISCORD, which drove this same DM-delegation mechanism on Discord, was RETIRED at OPE-725 — it needed \`delegation.nativeSubagent: false\` on the deployment, which stopped shipping by default at OPE-396, so it could never pass live; its roll-own claim now has tier-2 coverage instead (tests/integration/tasks/rollown-oneshot-backstop.test.ts, OPE-666);)`,
+    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-SESSION the OPE-53 approve-for-session grant→skip pair + S-PR-BOUNDARY the ungranted-repo refusal + S-AWS-BOUNDARY its twin on the OTHER consequential door (the ungated \`aws\` tool, whose only control is the fail-closed awsRoles grant); S-LINK-SLACK drives the whole proof-of-control identity-link loop across two REAL Slack accounts (mint → claim → notice → ratify), asserted on the identity.link.* audit rows because no read-tool exposes link rows; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit + S-APIKEY-INTAKE the db-broker Set-API-key intake — all self-skipping until their fixtures are armed; S-MEM-READ is the OPE-121 leg that asserts a memory recall OPENED A FILE rather than trusting the reply text, which is what J2 alone could never catch; S-TAINT-DRYRUN is the OPE-331 double-opt-in volume leg that drives the source-tier table (ENFORCED since OPE-324) and gates on \`taint.verdict\` audit rows — including \`mode:\"enforced\"\`+\`applied:true\`, the live proof the table DECIDED rather than observed — never reply text; S-TAINT-ROUTE-LIVE (OPE-439/OPE-844) drives a REAL web_fetch (Arm A, hard) + a REAL get_pr_feedback GitHub PR-feedback read (Arm B, hard, direction fixed by the fixture PR's repoPrivate), then a real propose or explain_permission simulation in the SAME turn, and gates on the \`approval.chain\` row's \`tainted\`/\`taintKinds\` disclosure pair with a clean negative control — proving the route→mark join live where S-TAINT-DRYRUN's \`taint.verdict\` rows are structurally silent (they fire on DIVERGENCE only, and web_fetch agrees with the table); S-TAINT-UNATTENDED-DENY (OPE-452) fires a REAL one-shot routine unattended and gates on the \`approval.chain\` row naming the \`unattended\` ask→deny arrow, plus a hard negative that no card was minted; S-DM-DISCORD, which drove this same DM-delegation mechanism on Discord, was RETIRED at OPE-725 — it needed \`delegation.nativeSubagent: false\` on the deployment, which stopped shipping by default at OPE-396, so it could never pass live; its roll-own claim now has tier-2 coverage instead (tests/integration/tasks/rollown-oneshot-backstop.test.ts, OPE-666); J-TEAMS-DM (OPE-972) is the Teams 1:1 DM plane's first live leg, riding the same "teams" capability as J-TEAMS with no new fixture var — it self-skips at RUNTIME (never via the capability gate) on either the OPE-887 personal-install precondition or the still-unconsented Chat.ReadWrite/ChatMessage.Send Graph scope;)`,
   );
   const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite"]);
   for (const s of SCENARIOS) {
@@ -309,11 +333,12 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   ok(SCENARIOS.find((s) => s.id === "J-DISC")!.surface === "discord", "J-DISC is the discord surface");
   ok(SCENARIOS.find((s) => s.id === "S8")!.surface === "cross", "S8 (Slack→Discord recall) is the cross surface");
   ok(SCENARIOS.find((s) => s.id === "J-TEAMS")!.surface === "teams", "J-TEAMS is the teams surface");
+  ok(SCENARIOS.find((s) => s.id === "J-TEAMS-DM")!.surface === "teams", "J-TEAMS-DM is the teams surface");
   ok(SCENARIOS.find((s) => s.id === "J-GH")!.surface === "github", "J-GH is the github surface");
   const nonSlack = SCENARIOS.filter((s) => s.surface !== "slack").map((s) => s.id).sort();
   ok(
-    nonSlack.join(",") === "J-DISC,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-UNI-X,J-WORKFLOW,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DM-NOTION,S-NOTION-WRITE,S-PR-SESSION,S8",
-    "the non-slack scenarios are exactly J-DISC(discord)/S8+J-UNI-X+J-PR+S-PR-SESSION+J-WORKFLOW(cross)/J-TEAMS(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER+S-DM-NOTION+S-CONNECT-CARD+S-APIKEY-INTAKE(notion) (S-DM-DISCORD retired at OPE-725)",
+    nonSlack.join(",") === "J-DISC,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-TEAMS-DM,J-UNI-X,J-WORKFLOW,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DM-NOTION,S-NOTION-WRITE,S-PR-SESSION,S8",
+    "the non-slack scenarios are exactly J-DISC(discord)/S8+J-UNI-X+J-PR+S-PR-SESSION+J-WORKFLOW(cross)/J-TEAMS+J-TEAMS-DM(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER+S-DM-NOTION+S-CONNECT-CARD+S-APIKEY-INTAKE(notion) (S-DM-DISCORD retired at OPE-725)",
   );
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
   ok(smoke.join(",") === "J1,J-TEAMS", "the smoke lane is exactly J1 (slack wake+reply) + J-TEAMS (teams)");
@@ -333,6 +358,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   ok(req("J1") === "slack" && req("S23") === "slack", "J1 (core journey) + S23 need only the base slack driver");
   ok(req("S24") === "slack+notion", "S24 requires slack + notion (the gated Notion add-on)");
   ok(req("J-TEAMS") === "teams", "J-TEAMS requires only the teams driver");
+  ok(req("J-TEAMS-DM") === "teams", "J-TEAMS-DM requires only the teams driver — no new fixture var, the chat/scope gap is derived at runtime");
   ok(req("J-UNIFIED") === "slack+slackUnified", "J-UNIFIED requires slack + slackUnified (the two-channel unified-domain fixture; audit legs guard on targetUrl/token at runtime)");
   ok(req("J-UNI-X") === "slack+slackUnified+github", "J-UNI-X (plan-only) requires slack + slackUnified + github — the eventual cross-surface fixture union");
   ok(req("J-PR") === "slack+synthetic+pr", "J-PR requires slack + synthetic (forge the approve) + pr (the granted target repo + readback token)");
@@ -430,6 +456,9 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   const st1reason = skipReason(SCENARIOS.find((s) => s.id === "J-TEAMS")!, slackOnly, missing, false);
   ok(st1reason?.includes("teams") === true && st1reason.includes(ENV.teamsRefreshToken), "J-TEAMS skip names the teams vars specifically");
   ok(skipReason(SCENARIOS.find((s) => s.id === "J-TEAMS")!, all, noneMissing, false) === undefined, "J-TEAMS runs when the teams capability is live");
+  const dmReason = skipReason(SCENARIOS.find((s) => s.id === "J-TEAMS-DM")!, slackOnly, missing, false);
+  ok(dmReason?.includes("teams") === true && dmReason.includes(ENV.teamsRefreshToken), "J-TEAMS-DM skip names the teams vars specifically when the base capability is missing");
+  ok(skipReason(SCENARIOS.find((s) => s.id === "J-TEAMS-DM")!, all, noneMissing, false) === undefined, "J-TEAMS-DM is attempted (capability-wise) once the teams capability is live — its own precondition gap is a runtime skip, not a capability skip");
   const baseOnly = new Set(["slack", "discord", "synthetic"] as const);
   const s11 = skipReason(SCENARIOS.find((s) => s.id === "S11")!, baseOnly, missing, false);
   ok(s11 === `missing slackPrivate driver (set ${ENV.slackPrivateChannel})`, "S11 skip names exactly E2E_SLACK_PRIVATE_CHANNEL");
