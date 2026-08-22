@@ -38,6 +38,7 @@ export const OPERATIONAL_TABLES = [
   "notice_claim",
   "model_call_capture",
   "proactive_address",
+  "memory_proposal",
 ] as const;
 
 export const EVENT_DEDUPE_MAX_RETENTION_MS = 24 * 60 * 60_000;
@@ -580,6 +581,21 @@ export interface ModelCallCaptureReadOptions {
   readonly limit?: number;
 }
 
+export interface MemoryProposalRow {
+  readonly id: number;
+  readonly org: string;
+  readonly kind: string;
+  readonly scope: string;
+  readonly summary: string;
+  readonly before?: string;
+  readonly after?: string;
+  readonly detail?: Readonly<Record<string, unknown>>;
+  readonly principalId: string;
+  readonly createdAt: string;
+}
+
+export type MemoryProposalWrite = Omit<MemoryProposalRow, "id">;
+
 export interface ProactiveAddress {
   readonly platform: string;
   readonly kind: string;
@@ -683,6 +699,9 @@ export interface OperationalStore {
   modelCallCapturesForSession(org: string, sessionId: string, opts?: ModelCallCaptureReadOptions): Promise<ModelCallCaptureRow[]>;
   modelCallCaptureSessions(org: string): Promise<ModelCallCaptureSessionRow[]>;
   deleteModelCallCapturesForSession(org: string, sessionId: string): Promise<number>;
+
+  addMemoryProposal(write: MemoryProposalWrite): Promise<MemoryProposalRow>;
+  listMemoryProposals(org: string): Promise<MemoryProposalRow[]>;
 
   runAnalyticsQuery(compiled: CompiledAnalyticsQuery): Promise<Record<string, unknown>[]>;
 

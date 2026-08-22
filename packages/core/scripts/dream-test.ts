@@ -210,16 +210,27 @@ const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-dream-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 
 const { recordProposal, recordMemoryOpProposals, listProposals } = await import("../agent/memory/dream/proposal.js");
+const { readAudit } = await import("../agent/audit/audit.js");
 const { registerConfig } = await import("../agent/access/config.js");
 const tidySchedule = await import("../agent/schedules/tidy.js");
 
 {
   await recordProposal("acme", { kind: "contradiction", scope: "payments", summary: "conflict on Ada ownership", before: "a\nb" });
   const list = await listProposals("acme");
-  ok(list.length === 1 && list[0].action === "memory.proposal", "proposal: recorded as an audited entry");
-  eq(list[0].detail?.["kind"], "contradiction", "proposal: op kind persisted in detail");
-  eq(list[0].detail?.["scope"], "payments", "proposal: scope persisted");
+  ok(list.length === 1 && list[0].kind === "contradiction", "proposal: recorded in the memory_proposal store");
+  eq(list[0].scope, "payments", "proposal: scope persisted");
+  eq(list[0].summary, "conflict on Ada ownership", "proposal: summary persisted");
+  eq(list[0].before, "a\nb", "proposal: content persisted (before)");
   ok((await listProposals("other-org")).length === 0, "proposal: org-isolated (no cross-org bleed)");
+
+  const auditRows = await readAudit({ org: "acme", action: "memory.proposal" });
+  ok(auditRows.length === 1, "proposal: one taint-clean audit row recorded alongside the store row");
+  eq(auditRows[0].detail?.["kind"], "contradiction", "proposal audit: kind persisted");
+  eq(auditRows[0].detail?.["scope"], "payments", "proposal audit: scope persisted");
+  eq(auditRows[0].detail?.["proposalId"], list[0].id, "proposal audit: joins to the store row by id");
+  ok(!("summary" in (auditRows[0].detail ?? {})), "proposal audit: summary is NOT in the audit row (taint-clean)");
+  ok(!("before" in (auditRows[0].detail ?? {})), "proposal audit: before is NOT in the audit row (taint-clean)");
+  ok(!JSON.stringify(auditRows[0].detail ?? {}).includes("Ada"), "proposal audit: the content text never reaches the audit row");
 }
 
 {
@@ -307,8 +318,7 @@ const tidySchedule = await import("../agent/schedules/tidy.js");
   eq((ro["MEMORY.md"].match(/- dup/g) ?? []).length, 2, "tidyTick: read-only silo left untouched");
 
   const proposals = await listProposals("sweepco");
-  ok(proposals.some((e) => e.detail?.["kind"] === "stale"), "tidyTick: a stale proposal is recorded + auditable");
-  const { readAudit } = await import("../agent/audit/audit.js");
+  ok(proposals.some((e) => e.kind === "stale"), "tidyTick: a stale proposal is recorded + auditable");
   ok((await readAudit({ org: "sweepco", action: "memory.tidy" })).length === 1, "tidyTick: the safe-apply write is audited (memory.tidy)");
 
   const heartbeats = await readAudit({ org: "sweepco", action: "memory.tidy_tick" });

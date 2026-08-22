@@ -270,8 +270,8 @@ const p = { org: "judgeco", platform: "judgeco", workspace: "judgeco", surface: 
   ok(report.applied > 0 && report.changed === 1, "tidyTick: safe zero-LLM ops still applied + written");
 
   const proposals = await listProposals("judgeco");
-  ok(proposals.some((e) => e.detail?.["kind"] === "consolidate" && String(e.detail?.["summary"]).startsWith("judge-confirmed")), "tidyTick: the judge-confirmed consolidate is recorded for review");
-  eq(proposals.filter((e) => e.detail?.["kind"] === "stale").length, 0, "tidyTick: NO stale proposal for the lone old bullet (v1's noise, judged out)");
+  ok(proposals.some((e) => e.kind === "consolidate" && e.summary.startsWith("judge-confirmed")), "tidyTick: the judge-confirmed consolidate is recorded for review");
+  eq(proposals.filter((e) => e.kind === "stale").length, 0, "tidyTick: NO stale proposal for the lone old bullet (v1's noise, judged out)");
 
   const after = await provider.readTier(p as never, siloTier("judge-brain"), { name: "judge-brain", provider: "sqlite" });
   ok(after["MEMORY.md"].includes("2018-05-05") && after["MEMORY.md"].includes("pipeline runs staging"), "tidyTick: destructive edits still propose-only (both lines survive)");
