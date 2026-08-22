@@ -194,10 +194,11 @@ registerReadAdapter(fakeSlackAdapter);
   n++;
   ok(rows.length === 1, "auditOriginFenceRefusal: exactly one row written");
   {
-    const row = rows[0] as { action?: string; platform?: string; detail?: Record<string, unknown> };
+    const row = rows[0] as { action?: string; platform?: string; workspace?: string; surface?: string; detail?: Record<string, unknown> };
     ok(row.action === "notion.origin_refused", "…action name is `<target>.origin_refused`");
     ok(row.platform === "notion", "…platform field equals the target (queryable by platform)");
     ok(row.detail?.target === "notion" && row.detail?.origin === "slack" && "sessionId" in (row.detail ?? {}), "…detail carries target, this turn's origin, and a sessionId key");
+    ok(row.workspace === "unknown" && row.surface === "unknown", "…workspace/surface are stamped \"unknown\" for a foreign-platform target, never the caller's real slack ids");
   }
   rows.length = 0;
 
@@ -205,10 +206,21 @@ registerReadAdapter(fakeSlackAdapter);
   n++;
   ok(rows.length === 1, "auditSourcesGateRefusal: exactly one row written");
   {
-    const row = rows[0] as { action?: string; platform?: string; detail?: Record<string, unknown> };
+    const row = rows[0] as { action?: string; platform?: string; workspace?: string; surface?: string; detail?: Record<string, unknown> };
     ok(row.action === "linear.sources_refused", "…action name is `<target>.sources_refused`");
     ok(row.platform === "linear", "…platform field equals the target");
     ok(row.detail?.target === "linear" && row.detail?.origin === "slack", "…detail names the refused target and this turn's origin");
+    ok(row.workspace === "unknown" && row.surface === "unknown", "…same OPE-982 stamp: a linear-labelled row never carries the slack caller's real workspace/surface");
+  }
+  rows.length = 0;
+
+  await auditOriginFenceRefusal(uniSlack, "slack", { audit });
+  n++;
+  ok(rows.length === 1, "auditOriginFenceRefusal (own-platform): exactly one row written");
+  {
+    const row = rows[0] as { platform?: string; workspace?: string; surface?: string };
+    ok(row.platform === "slack", "…platform field equals the (own) target");
+    ok(row.workspace !== "unknown" && row.surface !== "unknown", "…own-platform refusal: workspace/surface stay the caller's REAL ids, never stamped \"unknown\"");
   }
   rows.length = 0;
 
