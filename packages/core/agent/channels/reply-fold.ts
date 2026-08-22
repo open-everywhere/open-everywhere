@@ -27,6 +27,7 @@ export function foldTargetInTail(
   input: {
     readonly container: string | undefined;
     readonly platform: string;
+    readonly answeringWake?: string | undefined;
     readonly canEdit?: (platform: string) => boolean;
     readonly nowMs?: number;
     readonly windowMs?: number;
@@ -39,6 +40,7 @@ export function foldTargetInTail(
   const last = ordered[ordered.length - 1];
   if (last.kind !== "post" || last.from !== "self") return null;
   if (!last.id) return null;
+  if (last.wake !== undefined && input.answeringWake !== undefined && last.wake !== input.answeringWake) return null;
   const platform = last.platform ?? input.platform;
   if (platform !== input.platform) return null;
   if (!(input.canEdit ?? platformCanEdit)(platform)) return null;
@@ -48,14 +50,16 @@ export function foldTargetInTail(
   return { messageId: last.id, platform };
 }
 
-export async function replyFoldTarget(
-  store: ReplyFoldStore,
-  window: TailWindow | null,
-  platform: string,
-  locus: OwnPostLocus | null,
-  nowMs?: number,
-  ledgerDeps: OwnPostLedgerDeps = {},
-): Promise<FoldTarget | null> {
+export async function replyFoldTarget(input: {
+  readonly store: ReplyFoldStore;
+  readonly window: TailWindow | null;
+  readonly platform: string;
+  readonly locus: OwnPostLocus | null;
+  readonly answeringWake?: string | undefined;
+  readonly nowMs?: number | undefined;
+  readonly ledgerDeps?: OwnPostLedgerDeps;
+}): Promise<FoldTarget | null> {
+  const { store, window, platform, locus } = input;
   if (!window || !locus) return null;
   let ring: SessionTailEntry[];
   try {
@@ -66,10 +70,11 @@ export async function replyFoldTarget(
   const target = foldTargetInTail(ring, {
     container: window.container,
     platform,
-    ...(nowMs === undefined ? {} : { nowMs }),
+    answeringWake: input.answeringWake,
+    ...(input.nowMs === undefined ? {} : { nowMs: input.nowMs }),
   });
   if (!target) return null;
-  return (await isOwnPost(window.org, locus, target.messageId, ledgerDeps)) ? target : null;
+  return (await isOwnPost(window.org, locus, target.messageId, input.ledgerDeps ?? {})) ? target : null;
 }
 
 export function foldIntoEditRefusalMessage(target: FoldTarget, canForce: boolean): string {
@@ -93,11 +98,18 @@ export async function refuseIfShouldFold(input: {
   readonly locus: OwnPostLocus | null;
   readonly turnId: string | undefined;
   readonly audit: ReplyAudit;
+  readonly answeringWake?: string | undefined;
   readonly force?: boolean | undefined;
 }): Promise<void> {
   const room = input.window?.container;
   if (wasFoldRefusedThisTurn(input.turnId, room)) return;
-  const target = await replyFoldTarget(input.store, input.window, input.platform, input.locus);
+  const target = await replyFoldTarget({
+    store: input.store,
+    window: input.window,
+    platform: input.platform,
+    locus: input.locus,
+    answeringWake: input.answeringWake,
+  });
   if (!target) return;
   if (input.force === true) {
     await auditReplyForced(input.audit, REPLY_FOLD_FORCED_AUDIT_REASON);

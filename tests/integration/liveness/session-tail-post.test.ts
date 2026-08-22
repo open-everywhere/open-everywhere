@@ -15,6 +15,7 @@ interface TailEntry {
   readonly text: string;
   readonly at: string;
   readonly container?: string;
+  readonly wake?: string;
 }
 
 function readTailRows(): readonly (TailRow & { readonly entry: TailEntry })[] {
@@ -41,7 +42,7 @@ test("a standing seat's own reply reaches its generation's tail ring", async () 
 
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: question, messageId: `it-tail-${marker}` });
 
-  await waitFor(
+  const postRow = await waitFor(
     async () => (await readAuditRows({ actions: ["reply.post"], sinceIso })).find((r) => (r.detail as { chars?: unknown } | undefined)?.chars === answer.length),
     "a reply.post audit row for this turn's scripted say",
   );
@@ -63,6 +64,10 @@ test("a standing seat's own reply reaches its generation's tail ring", async () 
 
   expect(posts[0]!.entry.container).toBe(wake!.entry.container);
   expect(Date.parse(posts[0]!.entry.at)).toBeGreaterThanOrEqual(Date.parse(wake!.entry.at));
+
+  const auditedWake = (postRow!.detail as { wakeId?: unknown } | undefined)?.wakeId;
+  expect(typeof auditedWake).toBe("string");
+  expect(posts[0]!.entry.wake).toBe(auditedWake);
 
   expect(rows.filter((r) => r.entry.kind === "post" && r.entry.text === answer).length).toBe(1);
 });

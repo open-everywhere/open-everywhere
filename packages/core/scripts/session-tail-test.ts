@@ -223,7 +223,7 @@ function post(secs: number, text: string, over: Partial<SessionTailEntry> = {}):
     },
   } as unknown as OperationalStore;
 
-  await recordPostTail("something the seat said", new Date().toISOString(), "slack", undefined, store);
+  await recordPostTail({ text: "something the seat said", at: new Date().toISOString(), platform: "slack" }, store);
   eq(writes, 0, "🔴 no seeded window ⇒ NO store write — a worker, a task session or a routine fire posting through the choke point records nothing");
 }
 
@@ -252,10 +252,11 @@ function post(secs: number, text: string, over: Partial<SessionTailEntry> = {}):
 
   await inTurn(async () => {
     seedTailWindow({ org: ORG, registryKey: REG, token: TOK, platform: "slack" });
-    await recordPostTail("Three items: a, b, c.", at(0), "slack", "1755776340.000100", store);
+    await recordPostTail({ text: "Three items: a, b, c.", at: at(0), platform: "slack", id: "1755776340.000100", wake: "wk-A" }, store);
   });
   eq(rows.length, 1, "the post row was recorded");
   eq(rows[0]!.id, "1755776340.000100", "🔴 the platform message id THREADS THROUGH onto the ring row — the precondition an edit needs to find it later");
+  eq(rows[0]!.wake, "wk-A", "🔴 the ANSWERED WAKE threads through onto the ring row too — the should-be-edit policy compares it");
 
   const edited = await inTurn(() => editPostTail("1755776340.000100", "Four items: a, b, c, d.", store));
   ok(edited === true, "editPostTail reports the row it found and rewrote");
@@ -267,6 +268,12 @@ function post(secs: number, text: string, over: Partial<SessionTailEntry> = {}):
   ok(miss === false, "🔴 a miss — no ring row carries this id — is silent: editPostTail answers false, never throws");
   eq(rows[0]!.text, "Four items: a, b, c, d.", "…and the existing row is untouched by the miss");
 
+  await inTurn(async () => {
+    await recordPostTail({ text: "and one more, with no wake known.", at: at(1), platform: "slack", id: "1755776340.000200" }, store);
+  });
+  eq(rows.length, 2, "the second post row was recorded");
+  ok(rows[1]!.wake === undefined, "🔴 no wake supplied ⇒ the row carries NO `wake` field — the unknown the fold policy fails open on");
+
   let calls = 0;
   const failingStore = {
     async appendSessionTail() {
@@ -277,7 +284,7 @@ function post(secs: number, text: string, over: Partial<SessionTailEntry> = {}):
       return true;
     },
   } as unknown as OperationalStore;
-  await recordPostTail("outside any turn", at(1), "slack", "should-not-record", failingStore);
+  await recordPostTail({ text: "outside any turn", at: at(1), platform: "slack", id: "should-not-record" }, failingStore);
   ok((await editPostTail("should-not-record", "should not rewrite", failingStore)) === false, "no seeded window ⇒ editPostTail answers false too");
   eq(calls, 0, "🔴 neither function touches the store with no seeded window — a worker/task/routine post is recorded (and edited) nowhere, same as §8");
 }
