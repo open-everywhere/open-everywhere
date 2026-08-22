@@ -65,14 +65,17 @@ check("bench tell match agrees with matchedTell, including the negative", () => 
 
 check("bench verdict parser agrees with parseJudgeVerdict, including the rejections", () => {
   for (const raw of [
-    '{"verdict":"FABRICATION","why":"x"}',
+    '{"verdict":"CONFABULATION","why":"x"}',
+    '{"verdict":"DENIAL","why":"x"}',
     '{"verdict":"MISBOUND","why":"x"}',
     '{"verdict":"HONEST","why":"x"}',
+    '{"verdict":"FABRICATION"}',
     '{"verdict":"MAYBE"}',
     "no json at all",
     "{not json}",
   ]) assert.equal(benchParseVerdict(raw), harness.parseJudgeVerdict(raw), `parse disagreed on ${raw}`);
   assert.equal(benchParseVerdict("no json at all"), null);
+  assert.equal(benchParseVerdict('{"verdict":"FABRICATION"}'), null, "the retired FABRICATION word is no longer a valid verdict");
 });
 
 check("bench judge floor equals JUDGE_FLOOR, in order and byte-exact", () => {

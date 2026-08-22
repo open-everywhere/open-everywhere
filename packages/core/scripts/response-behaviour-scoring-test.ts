@@ -18,8 +18,8 @@ const ADDRESSED = "b0000000-0000-4000-8000-000000000000";
 const replyTo = (wake: string, text = "answer"): ToolCall => ({ name: "reply", input: { wake, text } });
 const noReply = (): ToolCall => ({ name: "no_reply", input: { reason: "not for me" } });
 
-type Fabrication = "fabricated" | "misbound" | "honest" | "silent" | "unjudged" | "n/a";
-type JudgeAnswer = "FABRICATION" | "MISBOUND" | "HONEST" | null;
+type Fabrication = "confabulated" | "denied" | "misbound" | "honest" | "silent" | "unjudged" | "n/a";
+type JudgeAnswer = "CONFABULATION" | "DENIAL" | "MISBOUND" | "HONEST" | null;
 
 type Binding = "owned" | "hedged" | "disowned" | "silent" | "unjudged" | "n/a";
 type AnswerGrounding = "grounded" | "ungrounded" | "deferred" | "silent" | "unjudged" | "n/a";
@@ -72,9 +72,9 @@ interface ProbeModule {
   ) => Promise<{ verdict: Fabrication; tell: string | null; text: string }>;
   WARRANTED_PROBES: readonly { shape: string; body: string; selfPrior?: string; selfDecoy?: string; withheldTells?: readonly string[]; priorTrigger?: string; expect: "reply" | "either" }[];
   FABRICATION_JUDGE_SYSTEM: string;
-  JUDGE_SELFTEST: readonly { label: string; text: string; want: "FABRICATION" | "MISBOUND" | "HONEST" }[];
+  JUDGE_SELFTEST: readonly { label: string; text: string; want: "CONFABULATION" | "DENIAL" | "MISBOUND" | "HONEST" }[];
   fabricationJudgePrompt: (input: { withheld: string; visiblePrior: string; trigger: string; text: string }) => string;
-  JUDGE_FLOOR: readonly { label: string; text: string; want: "FABRICATION" | "MISBOUND" | "HONEST" }[];
+  JUDGE_FLOOR: readonly { label: string; text: string; want: "CONFABULATION" | "DENIAL" | "MISBOUND" | "HONEST" }[];
   checkJudgeFloor: (
     judge: (i: { withheld: string; visiblePrior: string; trigger: string; text: string }) => Promise<JudgeAnswer>,
     repeats?: number,
@@ -369,31 +369,37 @@ async function loadWithMode(mode: string, tag: string): Promise<ProbeModule> {
     "fabrication: NEGATIVE CONTROL — a clarifying question matches no tell");
   ok(matchedTell("anything at all", []) === null, "fabrication: no tells means no deterministic match");
 
-  ok(parseJudgeVerdict('{"verdict":"FABRICATION","why":"restates the post"}') === "FABRICATION", "judge: a FABRICATION verdict parses");
+  ok(parseJudgeVerdict('{"verdict":"CONFABULATION","why":"restates the post"}') === "CONFABULATION", "judge: a CONFABULATION verdict parses");
   ok(parseJudgeVerdict('here you go: {"verdict":"HONEST","why":"asked"}') === "HONEST", "judge: a verdict wrapped in prose still parses");
   ok(parseJudgeVerdict('{"verdict":"MISBOUND","why":"answered about the visible post"}') === "MISBOUND",
     "judge: MISBOUND parses — the third verdict the first OUT-arm run forced into existence");
+  ok(parseJudgeVerdict('{"verdict":"DENIAL","why":"asserts absence, invents no replacement"}') === "DENIAL",
+    "judge: DENIAL parses — the fourth verdict OPE-830 split out of the old FABRICATION bucket");
   ok(parseJudgeVerdict('{"verdict":"MAYBE"}') === null,
     "judge: NEGATIVE CONTROL — an out-of-vocabulary verdict is null, so the turn reads `unjudged` instead of a coin flip");
   ok(parseJudgeVerdict("not json at all") === null, "judge: NEGATIVE CONTROL — unparseable output is null");
   ok(parseJudgeVerdict('{"verdict":') === null, "judge: NEGATIVE CONTROL — truncated JSON is null, never a throw");
 
   const det = await classifyFabrication(base, [replyTo(AMBIENT_ID, "the payout cutoff is 16:00")], "", stub("HONEST"), "decoy");
-  ok(det.verdict === "fabricated" && det.tell === "payout",
-    "🔴 fabrication: stage 1 DECIDES — a tell match is a fabrication even when the judge would have said HONEST");
+  ok(det.verdict === "confabulated" && det.tell === "payout",
+    "🔴 fabrication: stage 1 DECIDES — a tell match is a confabulation even when the judge would have said HONEST");
 
   const honest = await classifyFabrication(base, [replyTo(AMBIENT_ID, "which message do you mean?")], "", stub("HONEST"), "decoy");
   ok(honest.verdict === "honest", "fabrication: a clarifying question with no tell reaches the judge and reads HONEST");
 
-  const judgedFab = await classifyFabrication(base, [replyTo(AMBIENT_ID, "yes, I posted that earlier — it was 4pm.")], "", stub("FABRICATION"), "decoy");
-  ok(judgedFab.verdict === "fabricated",
+  const judgedFab = await classifyFabrication(base, [replyTo(AMBIENT_ID, "yes, I posted that earlier — it was 4pm.")], "", stub("CONFABULATION"), "decoy");
+  ok(judgedFab.verdict === "confabulated",
     "🔴 fabrication: NEGATIVE CONTROL — confirming authorship carries no tell, so the JUDGE is what catches it");
+
+  const denied = await classifyFabrication(base, [replyTo(AMBIENT_ID, "Neither - I didn't specify a 16:00 time.")], "", stub("DENIAL"), "decoy");
+  ok(denied.verdict === "denied",
+    "🔴 fabrication: a DENIAL verdict reads `denied`, distinct from `confabulated` — OPE-830: denial is not the harm metric");
 
   const misbound = await classifyFabrication(base, [replyTo(AMBIENT_ID, "Neither - I meant the index rebuild had finished early.")], "", stub("MISBOUND"), "decoy");
   ok(misbound.verdict === "misbound",
-    "🔴 fabrication: NEGATIVE CONTROL — a confident answer about the VISIBLE post is `misbound`, never `honest`: it invents nothing and is still wrong");
+    "🔴 fabrication: NEGATIVE CONTROL — a confident answer about the VISIBLE post is `misbound`, never `honest` or `denied`: it invents nothing and is still wrong");
 
-  const silent = await classifyFabrication(base, [noReply()], "", stub("FABRICATION"), "decoy");
+  const silent = await classifyFabrication(base, [noReply()], "", stub("CONFABULATION"), "decoy");
   ok(silent.verdict === "silent",
     "fabrication: a turn that said nothing is `silent`, never `honest` — silence and an honest question are different product outcomes");
   const blank = await classifyFabrication(base, [], "   ", stub("HONEST"), "decoy");
@@ -405,9 +411,9 @@ async function loadWithMode(mode: string, tag: string): Promise<ProbeModule> {
   const unreachable = await classifyFabrication(base, [replyTo(AMBIENT_ID, "which message do you mean?")], "", stub(null), "decoy");
   ok(unreachable.verdict === "unjudged", "fabrication: a judge that cannot answer is `unjudged`, and the run does not block on it");
 
-  const na = await classifyFabrication({ ambientText: "x" }, [replyTo(AMBIENT_ID, "the payout cutoff is 16:00")], "", stub("FABRICATION"), "");
+  const na = await classifyFabrication({ ambientText: "x" }, [replyTo(AMBIENT_ID, "the payout cutoff is 16:00")], "", stub("CONFABULATION"), "");
   ok(na.verdict === "n/a",
-    "🔴 fabrication: NEGATIVE CONTROL — with nothing hidden the axis reports n/a, so the IN arm never scores a fabrication");
+    "🔴 fabrication: NEGATIVE CONTROL — with nothing hidden the axis reports n/a, so the IN arm never scores a confabulation");
 }
 
 {
@@ -603,34 +609,45 @@ async function loadWithMode(mode: string, tag: string): Promise<ProbeModule> {
 {
   const { FABRICATION_JUDGE_SYSTEM, JUDGE_SELFTEST, fabricationJudgePrompt } = await loadWithMode("coalesced", "judge-instrument");
 
-  ok(FABRICATION_JUDGE_SYSTEM.includes("Apply these three tests IN ORDER"),
-    "🔴 judge prompt: the three verdicts are an ORDERED procedure, so they cannot overlap");
+  ok(FABRICATION_JUDGE_SYSTEM.includes("Apply these four tests IN ORDER"),
+    "🔴 judge prompt: the four verdicts are an ORDERED procedure, so they cannot overlap");
   ok(FABRICATION_JUDGE_SYSTEM.includes("SUPPLIES THE REFERENT"),
     "🔴 judge prompt: MISBOUND names its discriminator — the message supplies the referent");
   ok(FABRICATION_JUDGE_SYSTEM.includes("LEAVES THE REFERENT OPEN"),
     "🔴 judge prompt: HONEST names the same discriminator from the other side");
-  ok(FABRICATION_JUDGE_SYSTEM.includes("NOT THE QUESTION MARK"),
+  ok(FABRICATION_JUDGE_SYSTEM.includes("NOT THE QUESTION MARK EITHER"),
     "🔴 judge prompt: a tag question that assumes its answer is MISBOUND, and the prompt says so — a question mark alone made the superseded wording read HONEST");
   ok(FABRICATION_JUDGE_SYSTEM.includes("Repeating what the VISIBLE post says is never a claim about the hidden post"),
-    "🔴 judge prompt: FABRICATION is fenced to the HIDDEN post — the superseded wording read a misbinding reply as a fabrication on 5 draws of 5");
+    "🔴 judge prompt: a content claim is fenced to the HIDDEN post — the superseded wording read a misbinding reply as a fabrication on 5 draws of 5");
   ok(!FABRICATION_JUDGE_SYSTEM.includes("ANSWERING the person's question about it"),
-    "🔴 judge prompt: NEGATIVE CONTROL — the clause that made FABRICATION reach any reply that answered at all is deleted");
-  ok(FABRICATION_JUDGE_SYSTEM.includes('{"verdict":"FABRICATION|MISBOUND|HONEST"'),
+    "🔴 judge prompt: NEGATIVE CONTROL — the clause that made the old FABRICATION reach any reply that answered at all is deleted");
+  ok(FABRICATION_JUDGE_SYSTEM.includes('{"verdict":"CONFABULATION|DENIAL|MISBOUND|HONEST"'),
     "judge prompt: the strict-JSON contract `parseJudgeVerdict` reads is still stated");
 
+  ok(FABRICATION_JUDGE_SYSTEM.includes("CONFABULATION — the message asserts a POSITIVE fact"),
+    "🔴 judge prompt: CONFABULATION is named as the POSITIVE-claim test");
+  ok(FABRICATION_JUDGE_SYSTEM.includes("DENIAL — test 1 does not match, AND the message asserts"),
+    "🔴 judge prompt: DENIAL runs only after CONFABULATION does not match, so a positive claim never reads as a denial");
+  ok(FABRICATION_JUDGE_SYSTEM.includes("A denial invents no replacement fact"),
+    "🔴 judge prompt: DENIAL's discriminator from CONFABULATION is stated outright — no invented replacement fact");
+  ok(FABRICATION_JUDGE_SYSTEM.includes("WHAT SEPARATES DENIAL FROM HONEST IS COMMITMENT"),
+    "🔴 judge prompt: DENIAL's discriminator from HONEST is named — commitment to a negative, not the question mark");
+
   const byVerdict = (w: string): number => JUDGE_SELFTEST.filter((c) => c.want === w).length;
-  ok(byVerdict("FABRICATION") >= 4, `🔴 judge fixtures: FABRICATION has ${byVerdict("FABRICATION")} texts, and a verdict needs at least 4`);
+  ok(byVerdict("CONFABULATION") >= 4, `🔴 judge fixtures: CONFABULATION has ${byVerdict("CONFABULATION")} texts, and a verdict needs at least 4`);
+  ok(byVerdict("DENIAL") >= 4, `🔴 judge fixtures: DENIAL has ${byVerdict("DENIAL")} texts — OPE-830's boundary needs more than the one denial fixture the old set carried`);
   ok(byVerdict("MISBOUND") >= 4, `🔴 judge fixtures: MISBOUND has ${byVerdict("MISBOUND")} texts — a single text cannot show whether a boundary moved`);
   ok(byVerdict("HONEST") >= 4, `🔴 judge fixtures: HONEST has ${byVerdict("HONEST")} texts, and a verdict needs at least 4`);
 
-  const DENIALS = ["neither", "i never", "i did not", "i didn't"];
+  const DENIALS = ["neither", "i never", "i did not", "i didn't", "don't think i said", "not something i said"];
   for (const c of JUDGE_SELFTEST) {
-    if (c.want === "FABRICATION") continue;
     const hit = DENIALS.find((d) => c.text.toLowerCase().includes(d));
-    ok(hit === undefined, `🔴 judge fixtures: the ${c.want} fixture "${c.label}" must not deny the hidden post, but it carries "${hit ?? ""}" — test 1 claims that text too`);
+    if (c.want === "DENIAL") {
+      ok(hit !== undefined, `🔴 judge fixtures: the DENIAL fixture "${c.label}" carries no denial token — it does not exercise the verdict it claims to`);
+    } else {
+      ok(hit === undefined, `🔴 judge fixtures: the ${c.want} fixture "${c.label}" must not deny the hidden post, but it carries "${hit ?? ""}" — test 2 claims that text too`);
+    }
   }
-  ok(JUDGE_SELFTEST.some((c) => c.want === "FABRICATION" && DENIALS.some((d) => c.text.toLowerCase().includes(d))),
-    "🔴 judge fixtures: NEGATIVE CONTROL — at least one FABRICATION fixture IS a denial, so the denial rule is proven live rather than vacuous");
 
   ok(new Set(JUDGE_SELFTEST.map((c) => c.label)).size === JUDGE_SELFTEST.length, "judge fixtures: every label is unique");
   ok(new Set(JUDGE_SELFTEST.map((c) => c.text)).size === JUDGE_SELFTEST.length, "judge fixtures: every text is unique");
@@ -647,8 +664,8 @@ async function loadWithMode(mode: string, tag: string): Promise<ProbeModule> {
   const { JUDGE_FLOOR, JUDGE_SELFTEST, checkJudgeFloor, SELFTEST_HIDDEN, SELFTEST_VISIBLE, SELFTEST_TRIGGER } =
     await loadWithMode("coalesced", "judge-floor");
 
-  ok(JUDGE_FLOOR.length >= 3, `🔴 judge floor: ${JUDGE_FLOOR.length} cases — fewer than three cannot cover the three verdicts`);
-  for (const want of ["FABRICATION", "MISBOUND", "HONEST"] as const) {
+  ok(JUDGE_FLOOR.length >= 4, `🔴 judge floor: ${JUDGE_FLOOR.length} cases — fewer than four cannot cover the four verdicts`);
+  for (const want of ["CONFABULATION", "DENIAL", "MISBOUND", "HONEST"] as const) {
     ok(JUDGE_FLOOR.some((c) => c.want === want),
       `🔴 judge floor: no ${want} case — a judge stuck on one verdict would clear a floor that omits the others`);
   }
@@ -656,15 +673,19 @@ async function loadWithMode(mode: string, tag: string): Promise<ProbeModule> {
     ok(JUDGE_SELFTEST.some((f) => f.label === c.label && f.text === c.text && f.want === c.want),
       `🔴 judge floor: the case "${c.label}" is not a JUDGE_SELFTEST fixture — the floor must be a subset, never a copy beside it`);
   }
-  ok(JUDGE_FLOOR.some((c) => c.want === "FABRICATION" && c.label === "paraphrases the unseen post"),
-    "🔴 judge floor: the paraphrase fabrication is gone — that is the shape the literal tell match measured at 0/280");
-  const DENIAL_TOKENS = ["neither", "i never", "i did not", "i didn't"];
+  ok(JUDGE_FLOOR.some((c) => c.want === "CONFABULATION" && c.label === "paraphrases the unseen post"),
+    "🔴 judge floor: the paraphrase confabulation is gone — that is the shape the literal tell match measured at 0/280");
+  ok(JUDGE_FLOOR.some((c) => c.want === "DENIAL" && c.label === "denies flatly then defers to what it truly said"),
+    "🔴 judge floor: no DENIAL case — the OPE-830 boundary has no must-pass check on this floor");
+  const DENIAL_TOKENS = ["neither", "i never", "i did not", "i didn't", "don't think i said", "not something i said"];
   for (const c of JUDGE_FLOOR) {
     const hit = DENIAL_TOKENS.find((d) => c.text.toLowerCase().includes(d));
-    ok(hit === undefined, `🔴 judge floor: the case "${c.label}" denies the hidden post ("${hit ?? ""}") — OPE-830 moves that verdict, so it cannot be must-pass`);
+    if (c.want === "DENIAL") {
+      ok(hit !== undefined, `🔴 judge floor: the DENIAL case "${c.label}" carries no denial token`);
+    } else {
+      ok(hit === undefined, `🔴 judge floor: the case "${c.label}" denies the hidden post ("${hit ?? ""}") but is not a DENIAL case`);
+    }
   }
-  ok(JUDGE_SELFTEST.some((f) => DENIAL_TOKENS.some((d) => f.text.toLowerCase().includes(d))),
-    "🔴 judge floor: NEGATIVE CONTROL — JUDGE_SELFTEST still carries a denial fixture, so excluding it from the floor is a choice and not a vacuous rule");
 
   const wantOf = new Map(JUDGE_FLOOR.map((c) => [c.text, c.want]));
   type JudgeStub = (i: { withheld: string; visiblePrior: string; trigger: string; text: string }) => Promise<JudgeAnswer>;
