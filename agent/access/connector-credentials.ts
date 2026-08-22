@@ -13,7 +13,7 @@ const catalogues: ConnectorCredentials[] = [
     connector: "notion",
     allows: ["api-key", "user-oauth"],
     credentials: [
-      { id: "team-key", type: "api-key", secretRef: "db:notion:team-key", broker: "db" },
+      { id: "team-key", type: "api-key", secretRef: "db:notion:team-key", broker: "db", endpoints: { hosts: ["api.notion.com"], pathPrefixes: ["/v1/"], methods: ["GET", "POST"] } },
       {
         id: "channel-key",
         type: "api-key",

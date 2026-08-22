@@ -13,6 +13,7 @@ import { definedConnectors, definedConnectorCredentials, planAccessDelta } from 
 import { connectorGrantCredentialProblems } from "@open-everywhere/core/agent/access/lint.js";
 import { compileNetworkPolicy } from "@open-everywhere/core/agent/access/egress.js";
 import { resolveHeaders } from "@open-everywhere/core/agent/access/credentials.js";
+import { credentialEndpointVerdict, credentialEndpointHostVerdict } from "@open-everywhere/core/agent/access/credential-endpoints.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -92,6 +93,35 @@ ok(
   catalogues.some((c) => c.connector === "notion" && c.credentials.some((cr) => cr.id === "team-key")),
   "the shipped notion catalogue configures the 'team-key' credential the e2e-connector-fixture grant names",
 );
+
+{
+  const notionCat = catalogues.find((c) => c.connector === "notion")!;
+  const teamKey = notionCat.credentials.find((cr) => cr.id === "team-key");
+  const channelKey = notionCat.credentials.find((cr) => cr.id === "channel-key");
+  ok(teamKey?.endpoints !== undefined, "🔴 the shipped 'team-key' credential now declares `endpoints` (was undefined before OPE-934)");
+  ok(
+    JSON.stringify(teamKey?.endpoints) === JSON.stringify(channelKey?.endpoints),
+    "…and its rules match 'channel-key' — team-key runs through the SAME guarded notionFetch (search/pages/blocks/comments), so it needs the same host/path/method reach",
+  );
+
+  ok(
+    credentialEndpointVerdict(teamKey?.endpoints, "https://api.notion.com/v1/pages/abc", "GET").allowed,
+    "the real rules ADMIT team-key's actual work-plane call shape (GET /v1/pages/…) — a positive control, so the refusal below proves something",
+  );
+  ok(
+    !credentialEndpointVerdict(teamKey?.endpoints, "https://evil.example/v1/pages/abc", "GET").allowed,
+    "🔴 the real rules REFUSE a wrong-host call — this is exactly what ran unfenced (silently ALLOWED) before OPE-934, since `rules === undefined` short-circuits to allowed",
+  );
+  ok(
+    !credentialEndpointVerdict(teamKey?.endpoints, "https://api.notion.com/v1/pages/abc", "DELETE").allowed,
+    "…and a wrong-method call, same fence",
+  );
+
+  ok(
+    !credentialEndpointHostVerdict(teamKey?.endpoints, "https://mcp.notion.com/mcp").allowed,
+    "the accepted trade-off: team-key's rules do NOT admit mcp.notion.com (the MCP connector's directUrl) — a connector grant now fails at the credential wall instead of at Notion's 401",
+  );
+}
 
 {
   const defined = definedConnectors(bundles);
