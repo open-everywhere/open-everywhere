@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, createPublicKey } from "node:crypto";
 import { jwtVerify } from "jose";
-import { parsePrivateKey, signAppJwt, buildMintBody, mintInstallationToken, DEFAULT_PERMISSIONS, READ_PERMISSIONS, PR_READ_PERMISSIONS, normalizePrivateKeyPem, type FetchFn } from "../agent/scm/mint.js";
+import { parsePrivateKey, signAppJwt, buildMintBody, mintInstallationToken, DEFAULT_PERMISSIONS, READ_PERMISSIONS, PR_READ_PERMISSIONS, CONVERSATION_WRITE_PERMISSIONS, normalizePrivateKeyPem, type FetchFn } from "../agent/scm/mint.js";
 import { authExtraHeader, cloneArgs, fetchArgs, pushArgs, botCommitter, identityArgs, checkoutCommand, isSafeCheckoutDir, isSafeBranchName, stagePushCommand, parseStagedSha, PENDING_REF_PREFIX, STAGED_SHA_MARKER, redactSecret, CHECKOUT_OK, conventionProbe, parseConventionProbe, CONV_MARKER, CONVENTION_FILES, skillsProbe, parseSkillsProbe, SKILL_MARKER, SKILL_TRUNC_MARKER, SKILL_ROOTS, MAX_REPO_SKILLS, MAX_SKILL_BYTES, agentsProbe, parseAgentsProbe, AGENT_MARKER, AGENT_TRUNC_MARKER, AGENT_ROOTS, MAX_REPO_AGENTS } from "../agent/scm/git.js";
 import { createOrUpdatePullRequest, type PrFetchFn } from "../agent/scm/pr.js";
 import {
@@ -11,6 +11,7 @@ import {
   summarizeChecks,
   describeChecks,
   resolveReadToken,
+  resolveConversationReadToken,
   MAX_FAILING_CHECK_NAMES,
   type CheckRun,
 } from "../agent/scm/pr-status.js";
@@ -20,7 +21,8 @@ import { repoSlug, mergeRepoSkills, isSafeSkillName, parseRepoAgent, delegationH
 import { loadGitHubAppConfig } from "../agent/scm/config.js";
 import { composeGitHubInstallations } from "../agent/scm/installations.js";
 import { GitHubApp } from "../agent/scm/app.js";
-import { repoAllowed } from "../agent/scm/provider.js";
+import { repoAllowed, resetGitHubApp } from "../agent/scm/provider.js";
+import { readGithubEntity } from "../agent/routines/github-entity-read.js";
 import { compileNetworkPolicy } from "../agent/access/egress.js";
 import type { EffectiveAccess } from "../agent/access/resolver.js";
 
@@ -189,6 +191,99 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   ok(
     calls[1].body.permissions.contents === "read" && calls[1].body.permissions.metadata === "read",
     "the checkout mint is byte-for-byte the set it always was",
+  );
+}
+
+{
+  const calls: { body: { repositories: string[]; permissions: Record<string, string | undefined> } }[] = [];
+  const fetchFn: FetchFn = async (url, init) => {
+    const installationId = url.match(/installations\/([^/]+)\//)![1];
+    calls.push({ body: JSON.parse(init.body) });
+    return { ok: true, status: 201, text: async () => "", json: async () => ({ token: `tok_${installationId}`, expires_at: "2026-06-25T13:00:00Z", repositories: [] }) };
+  };
+  const app = new GitHubApp(
+    { appId: "111", privateKeyPem: pkcs1, appSlug: "open-everywhere", botUserId: "12345", installations: { acme: "4242" } },
+    { fetchFn, now: () => 1_750_000_000_000 },
+  );
+
+  const token = await resolveConversationReadToken("acme/web", app);
+  ok(token === "tok_4242", "resolveConversationReadToken returns the owner-scoped installation token");
+  ok(
+    calls[0].body.permissions.contents === undefined,
+    "the conversation-read mint asks for NO contents: it fetches an issue and its comments, never a file — so this set is narrower than the PR-read one on that axis",
+  );
+  assert.deepStrictEqual(
+    calls[0].body.permissions,
+    { issues: "read", pull_requests: "read", metadata: "read" },
+    "🔴 …and it asks for issues:read AND pull_requests:read — an endpoint that serves both kinds needs both families (OPE-1019)",
+  );
+  n++;
+
+  {
+    const savedFetch = globalThis.fetch;
+    const savedEnv = {
+      id: process.env.OE_GITHUB_APP_ID,
+      pem: process.env.OE_GITHUB_APP_PRIVATE_KEY,
+      slug: process.env.OE_GITHUB_APP_SLUG,
+      owner: process.env.OE_GITHUB_OWNER,
+      inst: process.env.OE_GITHUB_INSTALLATION_ID,
+      pat: process.env.GITHUB_TOKEN,
+    };
+    const minted: Record<string, string | undefined>[] = [];
+    const urls: string[] = [];
+    try {
+      process.env.OE_GITHUB_APP_ID = "111";
+      process.env.OE_GITHUB_APP_PRIVATE_KEY = pkcs1;
+      process.env.OE_GITHUB_APP_SLUG = "open-everywhere";
+      process.env.OE_GITHUB_OWNER = "acme";
+      process.env.OE_GITHUB_INSTALLATION_ID = "4242";
+      delete process.env.GITHUB_TOKEN;
+      resetGitHubApp();
+      globalThis.fetch = (async (_url: string, init: { body?: string }) => {
+        minted.push((JSON.parse(init.body ?? "{}") as { permissions?: Record<string, string | undefined> }).permissions ?? {});
+        return new Response(JSON.stringify({ token: "tok_4242", expires_at: "2026-06-25T13:00:00Z", repositories: [] }), { status: 201 });
+      }) as unknown as typeof fetch;
+
+      const outcome = await readGithubEntity("acme/web#7", {
+        fetchFn: (async (url: string) => {
+          urls.push(url);
+          return { ok: true, status: 200, text: async () => "", json: async () => ({ title: "t", state: "open" }) };
+        }) as unknown as PrFetchFn,
+      });
+      ok(outcome.status === "ok", "the entity re-read succeeds under its DEFAULT credential");
+      ok(urls.length === 1 && urls[0]!.endsWith("/repos/acme/web/issues/7"), "the entity re-read's ONLY endpoint is /issues/{n} — which serves an issue AND a pull request");
+      assert.deepStrictEqual(
+        minted[0],
+        { issues: "read", pull_requests: "read", metadata: "read" },
+        "🔴 …so its DEFAULT credential names BOTH families. Under the PR-read set every plain-issue re-read came back `forbidden` (OPE-1019)",
+      );
+      n++;
+    } finally {
+      globalThis.fetch = savedFetch;
+      for (const [key, value] of Object.entries({
+        OE_GITHUB_APP_ID: savedEnv.id,
+        OE_GITHUB_APP_PRIVATE_KEY: savedEnv.pem,
+        OE_GITHUB_APP_SLUG: savedEnv.slug,
+        OE_GITHUB_OWNER: savedEnv.owner,
+        OE_GITHUB_INSTALLATION_ID: savedEnv.inst,
+        GITHUB_TOKEN: savedEnv.pat,
+      })) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      resetGitHubApp();
+    }
+  }
+
+  assert.deepStrictEqual(
+    PR_READ_PERMISSIONS,
+    { contents: "read", pull_requests: "read", metadata: "read" },
+    "🔴 the PR-read set was NOT widened by the conversation-read fix — the two stay separate constants",
+  );
+  n++;
+  ok(
+    CONVERSATION_WRITE_PERMISSIONS.contents === undefined && CONVERSATION_WRITE_PERMISSIONS.issues === "write" && CONVERSATION_WRITE_PERMISSIONS.pull_requests === "write",
+    "🔴 the conversation-WRITE set carries both write families and NO contents — the reply arm posts on a PR and still cannot push code (OPE-1020)",
   );
 }
 

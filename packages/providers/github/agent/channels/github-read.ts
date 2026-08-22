@@ -2,7 +2,7 @@ import {
   assertSurfaceAllowed,
   bindFrom,
   prApiHeaders,
-  resolveReadToken,
+  resolveConversationReadToken,
   ChannelScopeError,
   type BindableContext,
   type PrFetchFn,
@@ -163,7 +163,7 @@ export const githubReadAdapter = {
   ): Promise<readonly RenderedLine[]> {
     const target = await admitContainer(ctx, channel);
     const effective = Math.min(limit ?? GITHUB_CHANNEL_DEFAULT_LIMIT, GITHUB_MAX_PAGE);
-    const token = await resolveReadToken(target.repoFull);
+    const token = await resolveConversationReadToken(target.repoFull);
     const issue = await fetchIssue(fetchFn, token, target);
     const total = typeof issue.comments === "number" && issue.comments > 0 ? issue.comments : 0;
     const comments = total === 0 ? [] : await fetchRecentComments(fetchFn, token, target, total, Math.max(1, effective - 1));
@@ -177,7 +177,7 @@ export const githubReadAdapter = {
     fetchFn: PrFetchFn = liveGithubFetch,
   ): Promise<readonly RenderedLine[]> {
     const target = await admitContainer(ctx, channel);
-    const token = await resolveReadToken(target.repoFull);
+    const token = await resolveConversationReadToken(target.repoFull);
     const comments = await fetchReviewComments(fetchFn, token, target);
     return reviewThreadLines(comments, threadTs).slice(-(limit ?? GITHUB_THREAD_DEFAULT_LIMIT));
   },

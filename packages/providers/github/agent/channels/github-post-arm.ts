@@ -2,6 +2,7 @@ import {
   parsePrivateKey,
   signAppJwt,
   mintInstallationToken,
+  CONVERSATION_WRITE_PERMISSIONS,
   loadGitHubAppConfig,
   resolveGitHubInstallationId,
   warmCredential,
@@ -35,7 +36,7 @@ const installationToken = warmCredential<GitHubMintContext>({
   key: (ctx) => `${ctx.installationId} ${ctx.repo}`,
   mint: async (ctx): Promise<BrokeredSecret> => {
     const jwt = await signAppJwt(parsePrivateKey(ctx.privateKeyPem), ctx.appId, Math.floor(Date.now() / 1000));
-    const minted = await mintInstallationToken({ jwt, installationId: ctx.installationId, repoNames: [ctx.repo], permissions: { issues: "write" } });
+    const minted = await mintInstallationToken({ jwt, installationId: ctx.installationId, repoNames: [ctx.repo], permissions: CONVERSATION_WRITE_PERMISSIONS });
     const expected = `${ctx.owner}/${ctx.repo}`;
     if (!minted.repositories.includes(expected)) {
       throw new Error(

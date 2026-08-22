@@ -19,6 +19,18 @@ export const PR_READ_PERMISSIONS: MintPermissions = {
   metadata: "read",
 };
 
+export const CONVERSATION_READ_PERMISSIONS: MintPermissions = {
+  issues: "read",
+  pull_requests: "read",
+  metadata: "read",
+};
+
+export const CONVERSATION_WRITE_PERMISSIONS: MintPermissions = {
+  issues: "write",
+  pull_requests: "write",
+  metadata: "read",
+};
+
 export const ISSUE_WRITE_PERMISSIONS: MintPermissions = {
   issues: "write",
   metadata: "read",

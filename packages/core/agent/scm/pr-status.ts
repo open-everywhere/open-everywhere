@@ -1,6 +1,7 @@
 import type { GitHubApp } from "./app.js";
 import { getGitHubApp } from "./provider.js";
-import { PR_READ_PERMISSIONS } from "./mint.js";
+import { CONVERSATION_READ_PERMISSIONS, PR_READ_PERMISSIONS } from "./mint.js";
+import type { MintPermissions } from "./types.js";
 import { prApiHeaders, type PrFetchFn } from "./pr.js";
 import {
   describeActivity,
@@ -190,8 +191,23 @@ export function prIsSettled(s: PrStatusSnapshot): boolean {
 }
 
 export async function resolveReadToken(repo: string, app: GitHubApp | null = getGitHubApp()): Promise<string> {
+  return await resolveTokenWith(repo, PR_READ_PERMISSIONS, app);
+}
+
+export async function resolveConversationReadToken(
+  repo: string,
+  app: GitHubApp | null = getGitHubApp(),
+): Promise<string> {
+  return await resolveTokenWith(repo, CONVERSATION_READ_PERMISSIONS, app);
+}
+
+async function resolveTokenWith(
+  repo: string,
+  permissions: MintPermissions,
+  app: GitHubApp | null,
+): Promise<string> {
   if (app) {
-    const { tokens, ungranted } = await app.tokensForRepos([repo], PR_READ_PERMISSIONS);
+    const { tokens, ungranted } = await app.tokensForRepos([repo], permissions);
     if (!ungranted.length) return tokens.get(repo.slice(0, repo.indexOf("/")))!.token;
   }
   const pat = process.env.GITHUB_TOKEN;

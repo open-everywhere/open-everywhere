@@ -1,6 +1,6 @@
 import { registerEntityRead, type EntityReadAdapter, type HydrationOutcome } from "./entity-read.js";
 import { parseGithubEntityId } from "../scm/issue-actions.js";
-import { resolveReadToken } from "../scm/pr-status.js";
+import { resolveConversationReadToken } from "../scm/pr-status.js";
 import { prApiHeaders, type PrFetchFn } from "../scm/pr.js";
 
 export const GITHUB_ENTITY_PLATFORM = "github";
@@ -23,7 +23,7 @@ export async function readGithubEntity(id: string, opts: GithubEntityReadOpts = 
   const { repo, number } = parseGithubEntityId(id);
   const fetchFn = opts.fetchFn ?? (globalThis.fetch as unknown as PrFetchFn);
   const apiBase = opts.apiBase ?? "https://api.github.com";
-  const token = await (opts.resolveToken ?? resolveReadToken)(repo);
+  const token = await (opts.resolveToken ?? resolveConversationReadToken)(repo);
   const res = await fetchFn(`${apiBase}/repos/${repo}/issues/${number}`, { method: "GET", headers: prApiHeaders(token) });
   const kind = githubReadStatusOutcome(res.status);
   if (kind === "gone") return { status: "gone" };
