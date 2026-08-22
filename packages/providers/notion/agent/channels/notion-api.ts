@@ -275,16 +275,18 @@ export async function notionParentLink(id: string, opts: NotionCallOpts): Promis
 export interface NotionCommentSummary {
   readonly discussionId?: string;
   readonly anchorId?: string;
+  readonly anchorText?: string;
   readonly authorId?: string;
   readonly authorKind?: string;
   readonly createdTime?: string;
   readonly text: string;
 }
 
-function toCommentSummary(c: NotionComment, fallbackAnchor: string): NotionCommentSummary {
+export function toNotionCommentSummary(c: NotionComment, fallbackAnchor: string, anchorText?: string): NotionCommentSummary {
   return {
     discussionId: c.discussion_id,
     anchorId: c.parent?.block_id ?? c.parent?.page_id ?? fallbackAnchor,
+    ...(anchorText !== undefined && anchorText.length > 0 ? { anchorText } : {}),
     authorId: c.created_by?.id,
     authorKind: c.created_by?.type,
     createdTime: c.created_time,
@@ -303,13 +305,13 @@ export async function readNotionComments(
   let truncated = false;
   let blocksScanned = 0;
 
-  const take = (raw: NotionComment[], anchor: string): boolean => {
+  const take = (raw: NotionComment[], anchor: string, anchorText?: string): boolean => {
     for (const c of raw) {
       if (comments.length >= maxComments) {
         truncated = true;
         return true;
       }
-      comments.push(toCommentSummary(c, anchor));
+      comments.push(toNotionCommentSummary(c, anchor, anchorText));
       if (typeof c.discussion_id === "string" && c.discussion_id.length > 0) discussions.add(c.discussion_id);
     }
     return false;
@@ -335,7 +337,7 @@ export async function readNotionComments(
       blocksScanned += 1;
       const id = typeof b.id === "string" ? b.id : undefined;
       if (!id) continue;
-      if (take(await listBlockComments(id, opts), id)) break outer;
+      if (take(await listBlockComments(id, opts), id, blockPlainText(b))) break outer;
     }
     if (nextCursor && blocksScanned < maxBlockScans) {
       cursor = nextCursor;

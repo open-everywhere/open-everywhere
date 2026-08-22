@@ -3,6 +3,7 @@ import {
   registerCapabilityManifest,
   registerPostArm,
   registerWakeOriginCodec,
+  registerReadAdapter,
   registerProviderDocs,
   registerWebhookVerifier,
   registerEventNormalizer,
@@ -14,6 +15,7 @@ import { PROVIDER_DOCS } from "./docs-generated.js";
 import { bindNotion } from "./channels/notion-identity.js";
 import { notionPostArm } from "./channels/notion-post-arm.js";
 import { notionWakeOriginCodec } from "./channels/notion-origin-codec.js";
+import { notionReadAdapter } from "./channels/notion-read.js";
 import { notionWebhookVerifier } from "./channels/notion-webhook-verifier.js";
 import { notionEventNormalizer, notionEventScopeGrant } from "./channels/notion-event-normalizer.js";
 import { registerNotionMemory } from "./memory/memory.js";
@@ -23,6 +25,7 @@ export function registerNotionProvider(): void {
   registerCapabilityManifest("notion", { midTurnPost: true, reactions: false, supervisorProseDropped: true });
   registerPostArm(notionPostArm);
   registerWakeOriginCodec("notion", notionWakeOriginCodec);
+  registerReadAdapter(notionReadAdapter);
   registerWebhookVerifier(notionWebhookVerifier);
   registerEventNormalizer(notionEventNormalizer);
   registerEventScopeGrant(notionEventScopeGrant);
