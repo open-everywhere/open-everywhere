@@ -1,6 +1,8 @@
 import { callLinearGraphQL, type LinearApiOptions, type LinearChannelCredentials } from "eve/channels/linear";
 import { linearCredentialsForOrg } from "./linear-credentials.js";
+import { describeLinearError } from "./linear-errors.js";
 import { assertLinearIssueWriteAllowed } from "./linear-scope.js";
+import { linearWorkOrg } from "./linear-work.js";
 import { enrichIssueTeam } from "./linear.js";
 import { currentTurnOrganization } from "@open-everywhere/core/agent/adapter-api.js";
 import type { BindableContext, Domain, EntityActionAdapter } from "@open-everywhere/core/agent/adapter-api.js";
@@ -23,13 +25,18 @@ interface WorkflowStateNode {
 }
 
 async function fetchIssueTeamStates(issueRef: string, opts: LinearActionOpts): Promise<WorkflowStateNode[]> {
-  const data = await callLinearGraphQL<{ issue?: { team?: { states?: { nodes?: WorkflowStateNode[] } } } | null }>({
-    api: opts.api,
-    credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
-    query: "query OeIssueTeamStates($id: String!) { issue(id: $id) { team { states(first: 100) { nodes { id name } } } } }",
-    queryName: "OeIssueTeamStates",
-    variables: { id: issueRef },
-  });
+  let data: { issue?: { team?: { states?: { nodes?: WorkflowStateNode[] } } } | null };
+  try {
+    data = await callLinearGraphQL<{ issue?: { team?: { states?: { nodes?: WorkflowStateNode[] } } } | null }>({
+      api: opts.api,
+      credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
+      query: "query OeIssueTeamStates($id: String!) { issue(id: $id) { team { states(first: 100) { nodes { id name } } } } }",
+      queryName: "OeIssueTeamStates",
+      variables: { id: issueRef },
+    });
+  } catch (err) {
+    throw new Error(`Linear: couldn't read ${issueRef}'s team workflow states (${describeLinearError(err)}).`);
+  }
   if (!data.issue) throw new Error(`Linear issue ${issueRef} not found or not visible to the workspace token.`);
   return data.issue.team?.states?.nodes ?? [];
 }
@@ -40,13 +47,18 @@ interface LabelNode {
 }
 
 async function fetchIssueTeamLabels(issueRef: string, opts: LinearActionOpts): Promise<LabelNode[]> {
-  const data = await callLinearGraphQL<{ issue?: { team?: { labels?: { nodes?: LabelNode[] } } } | null }>({
-    api: opts.api,
-    credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
-    query: "query OeIssueTeamLabels($id: String!) { issue(id: $id) { team { labels(first: 250) { nodes { id name } } } } }",
-    queryName: "OeIssueTeamLabels",
-    variables: { id: issueRef },
-  });
+  let data: { issue?: { team?: { labels?: { nodes?: LabelNode[] } } } | null };
+  try {
+    data = await callLinearGraphQL<{ issue?: { team?: { labels?: { nodes?: LabelNode[] } } } | null }>({
+      api: opts.api,
+      credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
+      query: "query OeIssueTeamLabels($id: String!) { issue(id: $id) { team { labels(first: 250) { nodes { id name } } } } }",
+      queryName: "OeIssueTeamLabels",
+      variables: { id: issueRef },
+    });
+  } catch (err) {
+    throw new Error(`Linear: couldn't read ${issueRef}'s team labels (${describeLinearError(err)}).`);
+  }
   if (!data.issue) throw new Error(`Linear issue ${issueRef} not found or not visible to the workspace token.`);
   return data.issue.team?.labels?.nodes ?? [];
 }
@@ -60,12 +72,17 @@ interface UserNode {
 
 async function resolveLinearUserId(assignee: string, opts: LinearActionOpts): Promise<string> {
   if (UUID_RE.test(assignee)) return assignee;
-  const data = await callLinearGraphQL<{ users?: { nodes?: UserNode[] } }>({
-    api: opts.api,
-    credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
-    query: "query OeFindUser { users(first: 250) { nodes { id email name displayName } } }",
-    queryName: "OeFindUser",
-  });
+  let data: { users?: { nodes?: UserNode[] } };
+  try {
+    data = await callLinearGraphQL<{ users?: { nodes?: UserNode[] } }>({
+      api: opts.api,
+      credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
+      query: "query OeFindUser { users(first: 250) { nodes { id email name displayName } } }",
+      queryName: "OeFindUser",
+    });
+  } catch (err) {
+    throw new Error(`Linear: couldn't look up workspace users to resolve "${assignee}" (${describeLinearError(err)}).`);
+  }
   const needle = assignee.trim().toLowerCase();
   const matches = (data.users?.nodes ?? []).filter(
     (u) => str(u.email)?.toLowerCase() === needle || str(u.name)?.toLowerCase() === needle || str(u.displayName)?.toLowerCase() === needle,
@@ -93,25 +110,33 @@ export async function setLinearIssueState(issueRef: string, stateName: string, o
     const names = states.map((s) => str(s.name)).filter((n): n is string => Boolean(n));
     throw new Error(`Linear: no state named "${stateName}" on this issue's team — available: ${names.length ? names.join(", ") : "(none found)"}.`);
   }
-  await callLinearGraphQL<{ issueUpdate?: { success?: boolean } }>({
-    api: opts.api,
-    credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
-    query: "mutation OeSetIssueState($id: String!, $stateId: String!) { issueUpdate(id: $id, input: { stateId: $stateId }) { success } }",
-    queryName: "OeSetIssueState",
-    variables: { id: issueRef, stateId: match.id },
-  });
+  try {
+    await callLinearGraphQL<{ issueUpdate?: { success?: boolean } }>({
+      api: opts.api,
+      credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
+      query: "mutation OeSetIssueState($id: String!, $stateId: String!) { issueUpdate(id: $id, input: { stateId: $stateId }) { success } }",
+      queryName: "OeSetIssueState",
+      variables: { id: issueRef, stateId: match.id },
+    });
+  } catch (err) {
+    throw new Error(`Linear: couldn't set ${issueRef}'s state to "${match.name}" (${describeLinearError(err)}).`);
+  }
   return `Linear issue ${issueRef} state set to "${match.name}".`;
 }
 
 export async function assignLinearIssue(issueRef: string, assignee: string, opts: LinearActionOpts = {}): Promise<string> {
   const assigneeId = await resolveLinearUserId(assignee, opts);
-  await callLinearGraphQL<{ issueUpdate?: { success?: boolean } }>({
-    api: opts.api,
-    credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
-    query: "mutation OeAssignIssue($id: String!, $assigneeId: String!) { issueUpdate(id: $id, input: { assigneeId: $assigneeId }) { success } }",
-    queryName: "OeAssignIssue",
-    variables: { id: issueRef, assigneeId },
-  });
+  try {
+    await callLinearGraphQL<{ issueUpdate?: { success?: boolean } }>({
+      api: opts.api,
+      credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
+      query: "mutation OeAssignIssue($id: String!, $assigneeId: String!) { issueUpdate(id: $id, input: { assigneeId: $assigneeId }) { success } }",
+      queryName: "OeAssignIssue",
+      variables: { id: issueRef, assigneeId },
+    });
+  } catch (err) {
+    throw new Error(`Linear: couldn't assign ${issueRef} to ${assignee} (${describeLinearError(err)}).`);
+  }
   return `Linear issue ${issueRef} assigned to ${assignee}.`;
 }
 
@@ -122,22 +147,28 @@ export async function addLinearIssueLabel(issueRef: string, label: string, opts:
     const names = labels.map((l) => str(l.name)).filter((n): n is string => Boolean(n));
     throw new Error(`Linear: no label named "${label}" on this issue's team — available: ${names.length ? names.join(", ") : "(none found)"}.`);
   }
-  await callLinearGraphQL<{ issueAddLabel?: { success?: boolean } }>({
-    api: opts.api,
-    credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
-    query: "mutation OeAddIssueLabel($id: String!, $labelId: String!) { issueAddLabel(id: $id, labelId: $labelId) { success } }",
-    queryName: "OeAddIssueLabel",
-    variables: { id: issueRef, labelId: match.id },
-  });
+  try {
+    await callLinearGraphQL<{ issueAddLabel?: { success?: boolean } }>({
+      api: opts.api,
+      credentials: opts.credentials ?? linearCredentialsForOrg(opts.organizationId),
+      query: "mutation OeAddIssueLabel($id: String!, $labelId: String!) { issueAddLabel(id: $id, labelId: $labelId) { success } }",
+      queryName: "OeAddIssueLabel",
+      variables: { id: issueRef, labelId: match.id },
+    });
+  } catch (err) {
+    throw new Error(`Linear: couldn't add label "${match.name}" to ${issueRef} (${describeLinearError(err)}).`);
+  }
   return `Label "${match.name}" added to Linear issue ${issueRef}.`;
 }
 
 export const linearEntityAdapter: EntityActionAdapter = {
   platform: "linear",
   checkAccess: (ctx: BindableContext, entityId: string, domains: readonly Domain[]) => {
-    const organizationId = currentTurnOrganization(ctx);
-    return assertLinearIssueWriteAllowed(ctx, entityId, domains, async (ref) => (await enrichIssueTeam(ref, { organizationId }))?.teamId);
+    const workOrg = linearWorkOrg(ctx, domains);
+    const organizationId = currentTurnOrganization(ctx) ?? workOrg;
+    return assertLinearIssueWriteAllowed(ctx, entityId, domains, async (ref) => (await enrichIssueTeam(ref, { organizationId }))?.teamId, { workOrg });
   },
+  workspaceFor: linearWorkOrg,
   setState: (id, value, organizationId) => setLinearIssueState(id, value, { organizationId }),
   assign: (id, value, organizationId) => assignLinearIssue(id, value, { organizationId }),
   addLabel: (id, value, organizationId) => addLinearIssueLabel(id, value, { organizationId }),

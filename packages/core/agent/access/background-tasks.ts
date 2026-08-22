@@ -14,17 +14,34 @@ export type TaskReceipt = {
   readonly agentId: string | null;
 };
 
+const TASK_ID_PREFIX = "task_";
+
 export function readTaskReceipt(result: unknown): TaskReceipt | null {
   try {
-    const r = result as { kind?: unknown; callId?: unknown; backgroundTask?: { taskId?: unknown }; output?: { agentId?: unknown } } | null;
+    const r = result as { kind?: unknown; callId?: unknown; backgroundTask?: { taskId?: unknown }; output?: unknown } | null;
     if (r === null || typeof r !== "object") return null;
-    if (r.kind !== "subagent-result") return null;
-    const taskId = r.backgroundTask?.taskId;
     const callId = r.callId;
-    if (typeof taskId !== "string" || taskId.length === 0) return null;
     if (typeof callId !== "string" || callId.length === 0) return null;
-    const agentId = (r.output as { agentId?: unknown } | undefined)?.agentId;
-    return { taskId, callId, agentId: typeof agentId === "string" && agentId.length > 0 ? agentId : null };
+    const agentId = (r.output as { agentId?: unknown } | null | undefined)?.agentId;
+    const handle = typeof agentId === "string" && agentId.length > 0 ? agentId : null;
+
+    if (r.kind === "subagent-result") {
+      const taskId = r.backgroundTask?.taskId;
+      if (typeof taskId !== "string" || taskId.length === 0) return null;
+      return { taskId, callId, agentId: handle };
+    }
+
+    if (r.kind === "tool-result") {
+      const output = r.output as { status?: unknown; taskId?: unknown } | null | undefined;
+      if (output === null || typeof output !== "object") return null;
+      if (output.status !== "working") return null;
+      const taskId = output.taskId;
+      if (typeof taskId !== "string" || !taskId.startsWith(TASK_ID_PREFIX) || taskId.length <= TASK_ID_PREFIX.length) return null;
+      if (handle === null) return null;
+      return { taskId, callId, agentId: handle };
+    }
+
+    return null;
   } catch {
     return null;
   }

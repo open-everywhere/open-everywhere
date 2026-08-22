@@ -60,8 +60,8 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
 {
   await assert.rejects(
     () => resolveTicketCreate(ctx("slack", {}), { platform: "github", target: "acme/web" }, []),
-    /not one of this window's sources/,
-    "filing into a platform that doesn't fan into this window is refused (topology gate)",
+    /not one of this session's work destinations/,
+    "filing into a platform this session may not address is refused (the destination gate)",
   );
   n++;
 }
@@ -91,7 +91,7 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
   } catch (err) {
     noneMsg = String((err as Error).message);
   }
-  ok(/none of this window's sources/.test(noneMsg), `a window with no work surface refuses (${noneMsg})`);
+  ok(/none of this session's work destinations/.test(noneMsg), `a session with no work surface refuses (${noneMsg})`);
   ok(noneMsg.includes("github") && noneMsg.includes("test-create-a"), "that refusal also names the supported set");
 
   await assert.rejects(

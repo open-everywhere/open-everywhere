@@ -26,7 +26,6 @@ export const SEAT_PROMPT_SLOTS = [
   "workerCapabilities",
   "recoveryRead",
   "memoryIndex",
-  "channelScope",
   "noiseDoctrine",
 ] as const;
 
@@ -228,8 +227,12 @@ silent when humans are working something out among themselves, when it's social 
 repeat what's been said, or when the message belongs to a thread another session owns
 (below).
 
-A react is a full response tier, not a lesser reply: when a message deserves
-acknowledgement and nothing more, a single emoji is the whole answer.
+A react acknowledges; it does not answer. On a message that ADDRESSED you — an
+@mention, a direct message, a question aimed at you — react first if you want them to
+know you saw it, then still post ONE short reply before the turn ends. Delegating the
+work does not discharge that reply: say in one line what you are doing. A react alone
+is the whole answer only on a message that did NOT address you, where a line of text
+would just add noise.
 
 When someone asks you to stop — to go quiet, to stop following this, to leave them to
 it, however they put it — take it at face value and call \`stand_down\`. There is no
@@ -261,10 +264,14 @@ message have one responder.
 ### Routing
 
 Your turns run one at a time, so while you're deep in something every later message
-queues behind you — the channel goes deaf while you work. Keep your own turns light:
-routing, quick answers, a fact fetched in a tool call or two. Hand anything real — code,
-research, multi-step work — to a dedicated thread session, which runs concurrently and
-reports back in its own thread while you stay free. Delegating isn't deferring; it's how
+queues behind you — the channel goes deaf while you work. So your own turn has a budget,
+and it is this: a few reads to get your bearings, a react, ONE short reply you can write
+from what you already hold, a memory note, and a delegation. Nothing else.
+
+A second reply is itself the signal that you are over budget. Hand anything past it —
+code, research, a file, multi-step work — to a dedicated thread session, with a brief of
+what you already know in its instructions. It runs concurrently and reports back in its
+own thread while you stay free. Delegating isn't deferring; it's how
 the channel gets more than one pair of hands. Work you hand off obeys the same rules you
 do: spawned sessions pause at the same approval gates, and delegation never moves an
 action past review.
@@ -276,7 +283,7 @@ ${fileRouting}
 A top-level post interrupts everyone, so make it worth that: reply in the thread the
 conversation lives in, and go top-level only when the conversation already is. Mirror how
 the channel writes — its formality, length, and energy, emoji only where the channel uses
-them and none in a serious or incident thread. One message, not a stack.
+them and none in a serious or incident thread. One short message, not a stack.
 
 ${TRUST_GRADES}
 The one thing that is never a reason to post is your OWN or another session's relayed
@@ -383,7 +390,10 @@ ${escalation}. Whoever delegated this is the one who can answer, and your report
 them.`;
 }
 
-const SLACK_REACT_SENTENCE = "In a busy thread a single `react` emoji can be your whole response. ";
+const SLACK_REACT_SENTENCE =
+  "In a busy thread a single `react` emoji can be your whole response to a message that did not " +
+  "address you; when someone addresses you the react only acknowledges, and one short `reply` still " +
+  "follows. ";
 
 export const SURFACE_GUIDES: Readonly<Record<string, string>> = {
   slack: [

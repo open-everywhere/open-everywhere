@@ -3,9 +3,9 @@ import {
   currentTurnIssue,
   currentTurnGithubTarget,
   currentTurnOrganization,
-  resolveWindowSources,
   type BindableContext,
 } from "../identity/binding.js";
+import { workDestinationPlatforms } from "./work-destinations.js";
 import type { Domain } from "../memory/domain.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 
@@ -22,6 +22,7 @@ export type EntityActionFn = (entityId: string, value: string, organizationId?: 
 export interface EntityActionAdapter {
   readonly platform: string;
   checkAccess?(ctx: BindableContext, entityId: string, domains: readonly Domain[]): void | Promise<void>;
+  workspaceFor?(ctx: BindableContext): string | undefined;
   setState?: EntityActionFn;
   assign?: EntityActionFn;
   addLabel?: EntityActionFn;
@@ -81,11 +82,11 @@ export async function resolveEntityAction(
         `Chat surfaces (Slack, Discord, Teams) and Notion have no entity for this verb — not supported there.`,
     );
   }
-  const sources = resolveWindowSources(ctx, domains);
-  if (!sources.includes(ref.platform)) {
+  const destinations = workDestinationPlatforms(ctx, domains);
+  if (!destinations.includes(ref.platform)) {
     throw new Error(
-      `${verb}: "${ref.platform}" is not one of this window's sources (${sources.join(", ") || "none"}) — ` +
-        "you can only act on an entity whose platform fans into this window (add it to the memory domain's sources).",
+      `${verb}: "${ref.platform}" is not one of this session's work destinations (${destinations.join(", ") || "none"}) — ` +
+        "the memory domain must hold a work credential for it (`credentials`), or list it among the domain's channels.",
     );
   }
   const adapter = ENTITY_ACTION_ADAPTERS[ref.platform];
@@ -98,7 +99,9 @@ export async function resolveEntityAction(
     );
   }
   await adapter.checkAccess?.(ctx, ref.id, domains);
-  return { ref, run: (value: string) => fn(ref.id, value, ref.organizationId) };
+  const organizationId = ref.organizationId ?? adapter.workspaceFor?.(ctx);
+  const resolved: EntityRef = organizationId ? { ...ref, organizationId } : ref;
+  return { ref: resolved, run: (value: string) => fn(resolved.id, value, resolved.organizationId) };
 }
 
 import { githubEntityAdapter } from "../scm/issue-actions.js";

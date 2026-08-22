@@ -1,7 +1,7 @@
 import {
+  callerWorkDomain,
   hasWorkGrant,
   resolveDomainForChannel,
-  resolvePartition,
   workGrantCredential,
   type BindableContext,
   type Domain,
@@ -25,15 +25,8 @@ export function notionCallerDomain(surfaceKey: string, domains: readonly Domain[
 }
 
 export function notionWorkGrant(ctx: BindableContext, domains: readonly Domain[]): NotionWorkGrant | undefined {
-  let surfaceKey: string;
-  try {
-    surfaceKey = resolvePartition(ctx).surfaceKey;
-  } catch {
-    return undefined;
-  }
-  const domain = notionCallerDomain(surfaceKey, domains);
-  if (!domain) return undefined;
-  return notionWorkGrantForDomain(domain);
+  const domain = callerWorkDomain(ctx, () => domains, notionCallerDomain);
+  return domain ? notionWorkGrantForDomain(domain) : undefined;
 }
 
 export function notionWorkMount(ctx: BindableContext, domains: () => readonly Domain[]): boolean {

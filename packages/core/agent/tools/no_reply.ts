@@ -29,7 +29,8 @@ export default defineTool({
   description:
     "End this turn without posting a reply. Call it, then stop — text after it is discarded. " +
     "`addressed_to_other` — multi-party thread, message is for someone else; " +
-    "`reacted_instead` — acknowledged with an emoji react instead of a reply; " +
+    "`reacted_instead` — an UNADDRESSED message acknowledged with an emoji react; never use it on " +
+    "a message that addressed you, which is owed one short reply as well as the react; " +
     "`nothing_to_add` — would just be agreeing/restating, no new information; " +
     "`not_relevant` — auto-respond/firehose message doesn't warrant a response; " +
     "`duplicate` — already covered by an earlier reply or another participant; " +

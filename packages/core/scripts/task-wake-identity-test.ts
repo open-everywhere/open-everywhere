@@ -208,6 +208,13 @@ await new Promise((r) => setTimeout(r, 60));
     subagentName: "agent",
   });
 
+  const receiptResultV2 = (callId: string, taskId: string) => ({
+    callId,
+    kind: "tool-result",
+    toolName: "agent",
+    output: { agentId: "ag_agent:6666", status: "working", taskId },
+  });
+
   const THREAD_P = { platform: "slack", channelId: "C_P", threadTs: "333.3" } as const;
   const W_P = "wake-p-0601";
   const W_DECISION = "wake-decision-0601";
@@ -285,6 +292,18 @@ await new Promise((r) => setTimeout(r, 60));
       "🔴 THE NO-OP CONTROL: the task is ALREADY registered against the conversation the turn addressed, so NOTHING is written — every turn woken by one conversation is byte-identical to pre-OPE-601",
     );
     eq(await resolveUnifiedWakeTarget(store, ORG, mintedD!), THREAD_P, "…and its address is unchanged");
+  });
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    const ctx = seatCtx(W_P, "turn_v2_601");
+    noteTurnBoundary("turn_v2_601", W_P);
+    await handler({ data: { result: receiptResultV2("call_601e", "task_601e") } }, ctx);
+    const mintedE = await taskWakeId(ORG, "task_601e");
+    ok(typeof mintedE === "string" && mintedE.length > 0, "🔴 P11: the REAL hook minted a wake for an ENVELOPE B dispatch. Before the reader was widened this read `undefined` and every assertion below would have failed on a branch that never ran");
+    eq(await resolveUnifiedWakeTarget(store, ORG, mintedE!), THREAD_P, "P11: …registered against the conversation that asked for the work");
+    const target = await resolveAnswerableReplyTarget(store, ORG, mintedE!, WINDOW, "turn_settle_601e", mintedE!);
+    ok(target.ok, "🔴 P11 END TO END: the settlement turn HAS a reply address for an eve 0.43.0+ delegation. This is the `no-row` outcome OPE-943 measured, closed");
+    eq(target.ok ? target.origin : null, THREAD_P, "…and it names thread P, so the worker's answer lands where the work was asked for");
   });
 
   eq(

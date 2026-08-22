@@ -12,7 +12,7 @@ import type { IngestionSource } from "../access/taint-tiers.js";
 import { resolveExternalPolicy, shippedExternalPolicy, WITHHELD_BODY_MARKER, type ExternalPolicy } from "../access/external-policy.js";
 
 import { ChannelScopeError } from "./read-scope-error.js";
-import { decodeChannelKey, encodeChannelKey } from "./channel-key.js";
+import { encodeChannelKey } from "./channel-key.js";
 import { auditChannelReadRefusal, type ReadScopeAuditDeps } from "./read-scope-audit.js";
 import { spoolNote, type ReadSpool } from "./read-spool.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
@@ -47,10 +47,16 @@ export interface ThreadReadResult {
   readonly spool?: ReadSpool;
 }
 
+export interface WakeReadAddress {
+  readonly container: string;
+  readonly threadRoot?: string;
+}
+
 export interface ReadAdapter {
   readonly platform: string;
   readChannel(ctx: BindableContext, channel: string, limit?: number): Promise<readonly RenderedLine[]>;
   readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number): Promise<readonly RenderedLine[]>;
+  wakeAddress(ctx: BindableContext): WakeReadAddress | undefined;
   refutedAuthorIds?(ctx: BindableContext, lines: readonly RenderedLine[]): Promise<readonly string[]>;
 }
 
@@ -148,24 +154,6 @@ export function resolveReadAdapter(
     throw new Error(`read: reading a ${platform} channel is not supported yet (supported: ${supportedReadPlatforms().join(", ")}).`);
   }
   return { platform, adapter };
-}
-
-export class ChannelKeyError extends Error {}
-
-export function resolveReadTarget(
-  ctx: BindableContext,
-  channelKey: string,
-  domains: readonly Domain[],
-): { platform: string; adapter: ReadAdapter; container: string } {
-  const address = decodeChannelKey(channelKey);
-  if (!address) {
-    throw new ChannelKeyError(
-      `read: "${channelKey}" is not a channel key. Use the \`id\` from the \`<channel>\` element of your ` +
-        "wake (or from your readable-channel list) — a raw platform channel id is not an address here.",
-    );
-  }
-  const { platform, adapter } = resolveReadAdapter(ctx, address.platform, domains);
-  return { platform, adapter, container: address.container };
 }
 
 export interface ReadOutputLine {

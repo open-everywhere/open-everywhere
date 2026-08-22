@@ -156,6 +156,9 @@ async function postFilesToDiscord(ctx: BindableContext, files: readonly Resolved
   if (!ops) {
     throw new Error("post_file: Discord message transport is not registered — the @open-everywhere/provider-discord bundle isn't wired.");
   }
+  if (!ops.postFiles) {
+    throw new Error("post_file: Discord message transport has no file-upload op registered.");
+  }
   const binding = bindFrom(ctx);
   const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
   if (!channelId) {

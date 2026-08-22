@@ -24,7 +24,6 @@ registerSlackBridge({
   botDisplayName: async () => undefined,
   confirmChannelInternal: async () => false,
   partnerFactsFromInfo: () => ({ dmPartnerTrust: "external" }),
-  readableChannelList: () => [],
   channel: SENTINEL_SLACK_CHANNEL,
 });
 registerIdentityMapper("slack", (c) => {

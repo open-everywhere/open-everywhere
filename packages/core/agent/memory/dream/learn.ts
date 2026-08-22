@@ -63,8 +63,7 @@ export async function learnFromSession(
   const signature = workflowSignature(request);
   if (!signature) return empty;
 
-  const key = `${scope}::${signature}`;
-  const count = await ledger.observe(key, signals.dedupeKey);
+  const count = await ledger.observe({ scope, signature }, signals.dedupeKey);
 
   const skillProposal: Proposal | null =
     count === skillThreshold

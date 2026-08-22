@@ -93,6 +93,7 @@ async function runFront(
     fifo?: SpyFifo;
     channelFacts?: { internal: boolean; channelType?: string } | null;
     authorRefuted?: boolean;
+    sendThrowsFirst?: Error;
   } = {},
 ) {
   const dispatched: Dispatched[] = [];
@@ -101,10 +102,13 @@ async function runFront(
   let innerCalled = false;
   const fifo = opts.fifo ?? new SpyFifo();
 
+  let sendAttempts = 0;
   const fakeArgs = {
     from: () => ({ send: async () => ({}) }),
     to: (_channel: unknown, target: Dispatched["target"]) => ({
       send: async (message: string, sendOpts: { auth: Dispatched["auth"] }) => {
+        sendAttempts += 1;
+        if (sendAttempts === 1 && opts.sendThrowsFirst) throw opts.sendThrowsFirst;
         dispatched.push({ target, message, auth: sendOpts.auth });
         return {};
       },
@@ -158,7 +162,7 @@ async function runFront(
   let authorFactLookups = 0;
   const res = await handler(mkReq(body), fakeArgs as unknown as Parameters<typeof handler>[1]);
   const settled = await Promise.allSettled(waits);
-  return { dispatched, touched, seatCalls, innerCalled, res, fifo, settled, factsLookups, partnerLookups, authorFactLookups };
+  return { dispatched, touched, seatCalls, innerCalled, res, fifo, settled, factsLookups, partnerLookups, authorFactLookups, sendAttempts: () => sendAttempts };
 }
 
 {
@@ -487,4 +491,22 @@ async function runFront(
   }
 }
 
-console.log(`✓ slack-dm-divert: ${n} assertions passed (classification, window token + fence, addressing, DM auth attrs, dm envelope, carried tail, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression, OPE-525 external-participant policy)`);
+{
+  const pruned = new Error(
+    'Failed to fetch run key for wrun_01AAAAAAAAAAAAAAAAAAAAAAAA (deployment dpl_AAAAAAAAAAAAAAAAAAAAAAAAAAAA): HTTP 404 Not Found — {"error":{"code":"not_found","message":"Deployment not found."}}',
+  );
+  const r = await runFront(dmEnvelope("Ev16"), { sendThrowsFirst: pruned });
+  eq(r.sendAttempts(), 2, "🔴 a pruned-deployment strand is RE-DELIVERED: the DM route sends a SECOND time");
+  eq(r.dispatched.length, 1, "…and the member gets exactly ONE wake, not two — only the failed attempt is repeated");
+  eq(r.seatCalls.length, 2, "🔴 …the seat is RE-RESOLVED on the retry, which is what lets the marked row rotate into a fresh run");
+  eq(r.fifo.failures.length, 0, "…so nothing reaches the FIFO's loud handler: the DM is answered, not audited as a failure");
+}
+{
+  const r = await runFront(dmEnvelope("Ev16b"), { sendThrowsFirst: new Error("socket hang up") });
+  eq(r.sendAttempts(), 1, "🔴 negative control: a TRANSIENT send failure is NOT retried");
+  eq(r.dispatched.length, 0, "negative control: …nothing is delivered");
+  eq(r.seatCalls.length, 1, "negative control: …and the seat is resolved exactly once");
+  eq(r.fifo.failures.length, 1, "negative control: …the failure still propagates to the FIFO's loud handler");
+}
+
+console.log(`✓ slack-dm-divert: ${n} assertions passed (classification, window token + fence, addressing, DM auth attrs, dm envelope, carried tail, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression, OPE-525 external-participant policy, OPE-963 pruned-deployment re-delivery)`);

@@ -17,7 +17,6 @@ export interface SlackBridge {
   readonly botDisplayName: () => Promise<string | undefined>;
   readonly confirmChannelInternal: (channelId: string) => Promise<boolean>;
   readonly partnerFactsFromInfo: (info: unknown, expectedTeamId?: string) => { dmPartnerTrust: "internal" | "external" };
-  readonly readableChannelList: (ctx: BindableContext) => string[];
   readonly channel: Channel<any, any, any>;
 }
 
@@ -61,10 +60,6 @@ export async function bridgeConfirmChannelInternal(channelId: string): Promise<b
 
 export function bridgePartnerFactsFromInfo(info: unknown, expectedTeamId?: string): { dmPartnerTrust: "internal" | "external" } {
   return bridgeSlot.get() ? bridgeSlot.get()!.partnerFactsFromInfo(info, expectedTeamId) : { dmPartnerTrust: "external" };
-}
-
-export function bridgeReadableChannelList(ctx: BindableContext): string[] {
-  return bridgeSlot.get() ? bridgeSlot.get()!.readableChannelList(ctx) : [];
 }
 
 export function bridgeSlackChannel(): Channel<any, any, any> | undefined {

@@ -4,9 +4,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   resolveReadAdapter,
-  resolveReadTarget,
   keyedReadResult,
-  ChannelKeyError,
   renderChannelBody,
   channelReadSource,
   renderThreadBody,
@@ -59,6 +57,7 @@ const MSGS = [
 }
 const fakeSlackAdapter: ReadAdapter = {
   platform: "slack",
+  wakeAddress: () => undefined,
   readChannel: async () => MSGS,
   readThread: async () => MSGS,
 };
@@ -110,6 +109,7 @@ registerReadAdapter(fakeSlackAdapter);
 
   const fakeReadAdapter: ReadAdapter = {
     platform: "fake-test-platform",
+    wakeAddress: () => undefined,
     async readChannel() { return []; },
     async readThread() { return []; },
   };
@@ -177,7 +177,8 @@ registerReadAdapter(fakeSlackAdapter);
   const readThreadSrc = readFileSync(join(toolsDir, "read_thread.ts"), "utf8");
   for (const [name, src] of [["read_channel", readChanSrc], ["read_thread", readThreadSrc]] as const) {
     ok(/if \(!genericReadVerbsEnabled\(\)\) return null;/u.test(src), `wiring: ${name} is ABSENT when the flag is OFF`);
-    ok(src.includes("resolveReadTarget("), `wiring: ${name} routes through the neutral execute chain (resolveReadTarget → resolveReadAdapter)`);
+    ok(src.includes("resolveWakeChannel("), `wiring: ${name} routes through the neutral execute chain (resolveWakeChannel → resolveReadAdapter)`);
+    ok(!src.includes("resolveReadTarget("), `🔴 OPE-929: ${name} does NOT decode a model-supplied channel key — it takes no target at all`);
     ok(src.includes("resolveWindowSources("), `wiring: ${name} gates its mount on sources non-empty`);
   }
 }
@@ -251,21 +252,6 @@ registerReadAdapter(fakeSlackAdapter);
   ok(encodeChannelKey("", "C0ABC") === "C0ABC", "codec: a locus with NO platform passes its container id through rather than minting a key that decodes to nothing");
   ok(encodeChannelKey("slack", "") === "", "codec: a locus with NO container id mints nothing");
 
-  const uniSlack = mk("unified", { oe_platform: "slack", oe_sources: "slack,discord" });
-  const t = resolveReadTarget(uniSlack, "ch_c2xhY2s6QzBBQkM", []);
-  ok(t.platform === "slack" && t.adapter === fakeSlackAdapter && t.container === "C0ABC", "read target: the key alone resolves the platform, the adapter AND the container id — no `platform` argument exists any more");
-
-  assert.throws(() => resolveReadTarget(uniSlack, "C0ABC", []), ChannelKeyError, "read target: a RAW container id is refused — it is not an address");
-  n++;
-  assert.throws(() => resolveReadTarget(uniSlack, "C0ABC", []), /is not a channel key/u, "read target: …and the refusal tells the model where to find a real one");
-  n++;
-
-  assert.throws(() => resolveReadTarget(uniSlack, encodeChannelKey("discord", "D1"), []), /the message that woke this turn came from slack/u, "read target: the origin fence fires on the platform the KEY names (the key is an address, never a grant)");
-  n++;
-  const soloSlack = mk("unified", { oe_platform: "slack", oe_sources: "slack" });
-  assert.throws(() => resolveReadTarget(soloSlack, encodeChannelKey("discord", "D1"), []), /is not one of this window's sources/u, "read target: the topology gate fires on the platform the KEY names");
-  n++;
-
   const chan: ChannelReadResult = { platform: "slack", channel: "C0ABC", count: 2, messages: MSGS };
   const keyed = keyedReadResult(chan);
   ok(keyed.channel === "ch_c2xhY2s6QzBBQkM", "render: keyedReadResult swaps the fetched container id for the key");
@@ -283,8 +269,8 @@ registerReadAdapter(fakeSlackAdapter);
   const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "../packages/core/agent/tools");
   for (const name of ["read_channel", "read_thread"] as const) {
     const src = readFileSync(join(toolsDir, `${name}.ts`), "utf8");
-    ok(src.includes("resolveReadTarget("), `wiring: ${name} resolves its target from the channel key`);
-    ok(!src.includes("input.target"), `wiring: ${name} takes NO platform argument — one key is the whole address`);
+    ok(src.includes("resolveWakeChannel("), `wiring: ${name} resolves its container from THIS turn's wake`);
+    ok(!src.includes("input.target") && !src.includes("input.channel"), `wiring: ${name} reads NO address off its input — the fence is the absent parameter`);
     ok(src.includes("keyedReadResult("), `wiring: ${name} re-addresses its model-facing output in the key`);
   }
 }

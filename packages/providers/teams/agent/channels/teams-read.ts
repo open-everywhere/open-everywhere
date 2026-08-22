@@ -13,8 +13,10 @@ import {
   type BrokeredSecret,
   type Domain,
   type ReadScopeAuditDeps,
+  type WakeReadAddress,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { noteTeamsReadBoundary, teamsReadBoundary, _resetTeamsReadBoundaryForTest } from "./teams-graph-boundary.js";
+import { teamsReplyChainRoot } from "./teams-conversation-ref.js";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 const GRAPH_TOKEN_SCOPE = "https://graph.microsoft.com/.default";
@@ -216,6 +218,14 @@ function noTeamIdError(what: string): Error {
 
 export const teamsReadAdapter = {
   platform: "teams" as const,
+  wakeAddress(ctx: BindableContext): WakeReadAddress | undefined {
+    const b = bindFrom(ctx);
+    const container = typeof b.target?.["channelId"] === "string" ? (b.target["channelId"] as string) : undefined;
+    if (!container) return undefined;
+    const conversation = typeof b.target?.["conversationId"] === "string" ? (b.target["conversationId"] as string) : undefined;
+    const root = conversation ? teamsReplyChainRoot(conversation) : undefined;
+    return { container, ...(root ? { threadRoot: root } : {}) };
+  },
   async readChannel(ctx: BindableContext, channel: string, limit?: number, req: TeamsGraphRequester = liveTeamsGraphRequest): Promise<readonly TeamsRenderedLine[]> {
     await assertTeamsChannelAllowed(ctx, channel);
     const teamId = currentTeamId(ctx);

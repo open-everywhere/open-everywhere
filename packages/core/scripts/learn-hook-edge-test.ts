@@ -21,7 +21,7 @@ await import("./_register-test-config.js");
 
 const { FakeEveContext, inEveContext } = await import("./_eve-context-stub.js");
 const { readAudit } = await import("../agent/audit/audit.js");
-const { workflowSignature } = await import("../agent/memory/dream/recurrence.js");
+const { workflowSignature, signatureDigest } = await import("../agent/memory/dream/recurrence.js");
 const { SCHEDULE_APP_AUTHENTICATOR, SCHEDULE_APP_PRINCIPAL_ID, SCHEDULE_APP_PRINCIPAL_TYPE } = await import("../agent/identity/binding.js");
 const { ROUTINE_MARKER } = await import("../agent/routines/routine.js");
 const { renderWakeEnvelope } = await import("../agent/channels/wake-envelope.js");
@@ -39,15 +39,20 @@ function wake(body: string): string {
 const ORG = "acme";
 const SLACK_ATTRS = { team_id: "T1", channel_id: "C1", channel_type: "channel" };
 
-async function observedKeys(): Promise<string[]> {
+async function observedDigests(): Promise<string[]> {
   const rows = await readAudit({ org: ORG, action: "memory.observation" });
-  return rows.map((r) => String(r.detail?.["key"] ?? ""));
+  return rows.map((r) => String(r.detail?.["sigSha"] ?? ""));
+}
+
+async function observedDetails(): Promise<string[]> {
+  const rows = await readAudit({ org: ORG, action: "memory.observation" });
+  return rows.map((r) => JSON.stringify(r.detail ?? {}));
 }
 
 async function observed(request: string): Promise<boolean> {
   const sig = workflowSignature(request);
   ok(sig.length > 0, `fixture: "${request}" produces a non-empty signature (otherwise the check below passes for free)`);
-  return (await observedKeys()).some((k) => k.endsWith(`::${sig}`));
+  return (await observedDigests()).includes(signatureDigest(sig));
 }
 
 function seatCtx(sessionId: string, deliveryId = `delivery-${sessionId}`): never {
@@ -85,8 +90,8 @@ async function deliver(container: InstanceType<typeof FakeEveContext>, ctx: neve
   await deliver(container, ctx, second);
   await deliver(container, ctx, third);
 
-  const keys = await observedKeys();
-  const countOf = (req: string) => keys.filter((k) => k.endsWith(`::${workflowSignature(req)}`)).length;
+  const keys = await observedDigests();
+  const countOf = (req: string) => keys.filter((k) => k === signatureDigest(workflowSignature(req))).length;
   ok(countOf(first) === 1, "per-turn: the session's FIRST request is observed exactly ONCE across three turns — not once per turn");
   ok(countOf(second) === 1, "per-turn: the second turn observes its OWN request");
   ok(countOf(third) === 1, "per-turn: and the third observes its own");
@@ -97,12 +102,12 @@ async function deliver(container: InstanceType<typeof FakeEveContext>, ctx: neve
   const ctx = seatCtx("sess-empty");
   const only = "rotate the staging database credentials";
   await deliver(container, ctx, only);
-  const before = (await observedKeys()).length;
+  const before = (await observedDigests()).length;
   await inEveContext(container, async () => {
     await learnHook.events!["turn.started"]!({} as never, ctx);
     await learnHook.events!["turn.completed"]!({} as never, ctx);
   });
-  ok((await observedKeys()).length === before, "per-turn: a turn carrying NO user message observes nothing — the capture is reset, never inherited");
+  ok((await observedDigests()).length === before, "per-turn: a turn carrying NO user message observes nothing — the capture is reset, never inherited");
 }
 
 {
@@ -118,7 +123,7 @@ async function deliver(container: InstanceType<typeof FakeEveContext>, ctx: neve
   await deliver(new FakeEveContext(), childCtx, brief);
   const sig = workflowSignature(brief);
   ok(sig.length > 0, "fixture: the brief produces a non-empty signature");
-  ok(!(await observedKeys()).some((k) => k.endsWith(`::${sig}`)), "skip: a delegated CHILD's brief is NOT fingerprinted — the cycle learns from humans, not from the agent's notes to itself");
+  ok(!(await observedDigests()).includes(signatureDigest(sig)), "skip: a delegated CHILD's brief is NOT fingerprinted — the cycle learns from humans, not from the agent's notes to itself");
 }
 
 {
@@ -143,7 +148,7 @@ async function deliver(container: InstanceType<typeof FakeEveContext>, ctx: neve
   await deliver(container, fireCtx, cronPrompt);
   const sig = workflowSignature(cronPrompt);
   ok(sig.length > 0, "fixture: the cron prompt produces a non-empty signature");
-  ok(!(await observedKeys()).some((k) => k.endsWith(`::${sig}`)), "skip: a routine FIRE's prompt is NOT fingerprinted, even after three fires — a cron is not a recurring human workflow");
+  ok(!(await observedDigests()).includes(signatureDigest(sig)), "skip: a routine FIRE's prompt is NOT fingerprinted, even after three fires — a cron is not a recurring human workflow");
 }
 
 {
@@ -155,22 +160,31 @@ async function deliver(container: InstanceType<typeof FakeEveContext>, ctx: neve
 
   const sig = workflowSignature(request);
   ok(sig.length > 0, "fixture: the request produces a non-empty signature");
-  const counted = (await observedKeys()).filter((k) => k.endsWith(`::${sig}`)).length;
+  const counted = (await observedDigests()).filter((k) => k === signatureDigest(sig)).length;
   ok(counted === 1, `replay: five re-executions of ONE delivery record ONE observation (got ${counted}) — a single message can never cross the recurrence threshold by itself`);
 
   await deliver(container, seatCtx("sess-replay", "delivery-replay-2"), request);
-  const after = (await observedKeys()).filter((k) => k.endsWith(`::${sig}`)).length;
+  const after = (await observedDigests()).filter((k) => k === signatureDigest(sig)).length;
   ok(after === 2, `replay: the SAME words on a NEW delivery DO count (got ${after}) — the dedupe separates requests, it does not silence the ledger`);
 }
 
 {
-  const rendered = wake("a body that is not what this assertion is about");
+  const body = "escalate the pricing anomaly in the frankfurt tariff table";
+  const rendered = wake(body);
   ok(rendered.includes("<wake") && rendered.includes('trigger="true"'), "fixture: the renderer really produces an envelope around the body");
-  const envelopeWords = ["wake", "channel", "message", "trigger", "current"];
-  const keys = await observedKeys();
-  ok(keys.length > 0, "envelope: there are keys to check (otherwise the next line passes for free)");
-  const polluted = keys.filter((k) => envelopeWords.every((w) => k.includes(w)));
-  ok(polluted.length === 0, `envelope: no recorded key is the ENVELOPE's boilerplate signature — the body is parsed out before the fingerprint (found: ${polluted.join(" | ")})`);
+  const bodySig = workflowSignature(body);
+  const envelopeSig = workflowSignature(rendered);
+  ok(bodySig !== envelopeSig && envelopeSig.length > 0, "fixture: the envelope and the body really fingerprint differently (else ① proves nothing)");
+
+  await deliver(new FakeEveContext(), seatCtx("sess-envelope"), body);
+  const keys = await observedDigests();
+  ok(keys.includes(signatureDigest(bodySig)), "envelope: the AUTHOR's body is what got fingerprinted");
+  ok(!keys.includes(signatureDigest(envelopeSig)), "envelope: the rendered ENVELOPE's boilerplate signature is NOT recorded — the body is parsed out before the fingerprint");
+
+  const details = await observedDetails();
+  ok(details.length > 0, "envelope: there are rows to check (otherwise the next line passes for free)");
+  const leaked = details.filter((d) => ["escalate", "frankfurt", "reconcile", "quarterly", "anomaly", "northwind"].some((w) => d.includes(w)));
+  ok(leaked.length === 0, `OPE-924: no observation row's detail carries message-derived words (found: ${leaked.join(" | ")})`);
 
   const notification = "Background task task_19b02bf3ac581355a2f4fcf5 (agent) is completed. Use task_peek to read its output.";
   const container = new FakeEveContext();
@@ -182,7 +196,7 @@ async function deliver(container: InstanceType<typeof FakeEveContext>, ctx: neve
   });
   const sig = workflowSignature(notification);
   ok(sig.length > 0, "fixture: the task notification produces a non-empty signature");
-  ok(!(await observedKeys()).some((k) => k.endsWith(`::${sig}`)), "envelope: eve's own task-settlement notification is NOT fingerprinted — it carries no envelope, so no human authored it");
+  ok(!(await observedDigests()).includes(signatureDigest(sig)), "envelope: eve's own task-settlement notification is NOT fingerprinted — it carries no envelope, so no human authored it");
 }
 
 {

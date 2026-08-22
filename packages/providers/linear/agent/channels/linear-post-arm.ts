@@ -1,5 +1,6 @@
 import { createLinearAgentActivity, callLinearGraphQL, LinearApiError } from "eve/channels/linear";
 import { linearCredentialsForOrg } from "./linear-credentials.js";
+import { describeLinearError } from "./linear-errors.js";
 import { postLinearSilenceAck, postLinearAnsweredAck } from "./linear-silence-ack.js";
 import { markNotApplied, carryFailureSignals } from "@open-everywhere/core/agent/adapter-api.js";
 import type { PostArm, PostIntent, TargetResolveBag, ReplyTarget, ReactTarget, UnifiedWakeOrigin, UnifiedReplyDeps, EditLocus } from "@open-everywhere/core/agent/adapter-api.js";
@@ -49,17 +50,6 @@ async function dispatchLinearReply(target: LinearTarget, text: string): Promise<
     throw markNotApplied(new Error(`reply couldn't post to Linear — the response activity returned no success on session ${target.agentSessionId}`));
   }
   return res.id;
-}
-
-function describeLinearError(err: unknown): string {
-  if (err instanceof LinearApiError) {
-    const body = err.body as { errors?: Array<{ message?: unknown }> } | undefined;
-    const msgs = Array.isArray(body?.errors)
-      ? body.errors.map((e) => (typeof e?.message === "string" ? e.message : "")).filter(Boolean).join("; ")
-      : "";
-    return `HTTP ${err.status}${msgs ? `: ${msgs}` : ""}`.slice(0, 240);
-  }
-  return "network/transport error";
 }
 
 async function liveLinearPost(origin: LinearOrigin, text: string, intent?: PostIntent): Promise<string> {

@@ -37,7 +37,7 @@ for (let used = 1; used <= SEAT_RECOVERY_READ_BUDGET; used++) {
 const overText = seatReadBudgetRefusal("read_channel", SEAT_RECOVERY_READ_BUDGET + 1);
 ok(overText !== null, `read ${SEAT_RECOVERY_READ_BUDGET + 1} is REFUSED — the bound is real, not advisory`);
 ok(overText!.includes("read_channel"), "the refusal names the verb it refused");
-ok(overText!.includes("delegate a worker"), "…and points at the worker, which reads without this limit");
+ok(overText!.includes("delegate a worker"), "…and points at the worker, which digs further on its work surfaces");
 ok(overText!.includes("could not find it"), "…and sanctions the honest answer, so silence is not the only alternative");
 ok(overText!.includes("Do not guess"), "…and forbids the guess, which is the defect this whole ticket exists for");
 ok(seatReadBudgetRefusal("read_channel", 0) === null, "a `used` of 0 (no session context) is NEVER refused");

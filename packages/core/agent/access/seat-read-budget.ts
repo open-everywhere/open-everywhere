@@ -9,8 +9,8 @@ export function seatReadBudgetRefusal(toolName: string, used: number): string | 
     `\`${toolName}\` is refused: you have used your ${SEAT_RECOVERY_READ_BUDGET} recovery reads on this turn. ` +
     `Reading is how you recover a message somebody referred to that you cannot see — it is not how you work ` +
     `through a room. Do one of three things now. Answer from what you have already read. Or say plainly what ` +
-    `you looked at and that you could not find it, which is a good answer. Or delegate a worker, which reads ` +
-    `without this limit and reports back. Do not guess the content you could not find.`
+    `you looked at and that you could not find it, which is a good answer. Or delegate a worker to dig ` +
+    `further on its work surfaces and report back. Do not guess the content you could not find.`
   );
 }
 

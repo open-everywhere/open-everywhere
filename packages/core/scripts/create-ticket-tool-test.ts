@@ -132,8 +132,8 @@ async function inFakeSession<T>(fn: () => T | Promise<T>): Promise<T> {
     async () => {
       await execTool(createTicketEntry)({ platform: "github", target: "acme/web", title: "x", body: "y" }, slackCtx() as never);
     },
-    /not one of this window's sources/,
-    "a destination outside this window's sources refuses (topology gate reaches the tool)",
+    /not one of this session's work destinations/,
+    "a destination this session may not address refuses (the destination gate reaches the tool)",
   );
   n++;
 }

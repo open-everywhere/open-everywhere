@@ -3,7 +3,7 @@ import { defineState } from "eve/context";
 import { resolvePartition } from "../memory/partition.js";
 import { bindFrom, deliveryStampOf, isSubagentChildContext, isScheduleOriginatedAuth, type BindableContext } from "../identity/binding.js";
 import { planFor } from "../memory/resolve.js";
-import { auditRecurrenceLedger } from "../memory/dream/recurrence.js";
+import { auditRecurrenceLedger, signatureDigest } from "../memory/dream/recurrence.js";
 import { learnFromSession, safeDistill, enrichmentBullets, writeEnrichment } from "../memory/dream/learn.js";
 import { dreamJudge } from "../memory/dream/judge.js";
 import { recordProposal } from "../memory/dream/proposal.js";
@@ -93,7 +93,7 @@ async function consolidate(ctx: HookContext): Promise<void> {
         surface: p.surface,
         principalId: binding.principalId,
         action: "memory.learn",
-        detail: { silo: target.silo.name, signature: result.signature, count: result.count, distilled: facts?.length ?? 0, version: sha },
+        detail: { silo: target.silo.name, sigSha: signatureDigest(result.signature), count: result.count, distilled: facts?.length ?? 0, version: sha },
       });
       log(`enriched ${target.silo.name}: ${facts && facts.length > 0 ? `${facts.length} distilled fact(s)` : `recurring workflow "${result.signature}"`} (${result.count}×)`);
     } catch (err) {

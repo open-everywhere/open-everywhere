@@ -266,7 +266,7 @@ export { windowGrainOf } from "./identity/binding.js";
 export type { WindowGrain } from "./identity/binding.js";
 
 export { registerReadAdapter, resolveReadAdapter, READ_ADAPTERS, SUPPORTED_READ_PLATFORMS, supportedReadPlatforms } from "./channels/channel-read.js";
-export type { ReadAdapter } from "./channels/channel-read.js";
+export type { ReadAdapter, WakeReadAddress } from "./channels/channel-read.js";
 export { ChannelScopeError } from "./channels/read-scope-error.js";
 export { EventDedupe, ThreadFifo } from "./channels/front-queue.js";
 
@@ -277,6 +277,8 @@ export type { NormalizedWake, WakeEngagementTier } from "./channels/normalized-w
 export type { WakeMessageInput, WakeTrust, WakeReason } from "./channels/wake-envelope.js";
 
 export { divertToUnifiedWindow } from "./channels/unified.js";
+
+export { isPrunedDeploymentWakeError } from "./channels/stranded-seat.js";
 
 export { supervisorGrainFor, grainUsesUnifiedWindow, mintRotationToken } from "./channels/unified-supervisor.js";
 export type { SupervisorGrain } from "./channels/unified-supervisor.js";
@@ -364,7 +366,8 @@ export type { AmbientSkipRecord } from "./channels/ambient-skip.js";
 
 export { credentialOverrideFor, domainCredentialId, connectorIntegrations } from "./access/domain-credentials.js";
 export type { DomainCredentialOverride, ConnectorIntegration, CredentialBoundDomain } from "./access/domain-credentials.js";
-export { workGrantCredential, hasWorkGrant } from "./access/work-grant.js";
+export { callerWorkDomain, callerWorkGrant, workGrantCredential, hasWorkGrant, type WorkDomainResolver } from "./access/work-grant.js";
+export { workDestinationPlatforms } from "./channels/work-destinations.js";
 export { getOperatorSecret, OperatorSecretNotSetError } from "./credentials/operator-secrets.js";
 
 export { windowTopologyEnabled } from "./access/capabilities.js";

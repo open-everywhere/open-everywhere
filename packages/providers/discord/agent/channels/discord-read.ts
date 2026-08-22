@@ -1,9 +1,11 @@
 import {
   assertSurfaceAllowed,
+  bindFrom,
   resolvePartition,
   refutedReadAuthorIds,
   type BindableContext,
   type RenderedLine,
+  type WakeReadAddress,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { linesFromDiscordMessages, type DiscordRoleProbe } from "./discord-backscroll.js";
 import { discordAuthorRoles } from "../approvals/discord-admin.js";
@@ -42,6 +44,12 @@ export function discordLinesFromRaw(raw: unknown): RenderedLine[] {
 
 export const discordReadAdapter = {
   platform: "discord" as const,
+  wakeAddress(ctx: BindableContext): WakeReadAddress | undefined {
+    const b = bindFrom(ctx);
+    const container = typeof b.target?.["channelId"] === "string" ? (b.target["channelId"] as string) : undefined;
+    if (!container) return undefined;
+    return { container, ...(b.domainSurface ? { threadRoot: container } : {}) };
+  },
   async readChannel(ctx: BindableContext, channel: string, limit?: number, req: DiscordReadRequester = liveDiscordRead): Promise<readonly RenderedLine[]> {
     await assertSurfaceAllowed(ctx, "discord", channel);
     return discordLinesFromRaw(await req(channel, limit ?? DISCORD_CHANNEL_DEFAULT_LIMIT));

@@ -1,7 +1,8 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { resolveEntityAction, currentTurnEntityRef, supportedEntityActionPlatforms } from "../channels/entity-actions.js";
-import { resolveWindowSources, type BindableContext } from "../identity/binding.js";
+import { workDestinationPlatforms } from "../channels/work-destinations.js";
+import { type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
@@ -47,9 +48,9 @@ export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
       const bctx = ctx as BindableContext;
-      const sources = resolveWindowSources(bctx, safeDomains());
+      const destinations = workDestinationPlatforms(bctx, safeDomains());
       const adapterPlatforms = supportedEntityActionPlatforms();
-      if (!sources.some((s) => adapterPlatforms.includes(s)) && !currentTurnEntityRef(bctx)) return null;
+      if (!destinations.some((s) => adapterPlatforms.includes(s)) && !currentTurnEntityRef(bctx)) return null;
       return addLabelEntry;
     },
   },

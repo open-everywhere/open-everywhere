@@ -59,8 +59,20 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   },
   {
     id: "work-surfaces",
-    headline: "Read and change the work surfaces — search and read Notion pages and comments, read Linear and GitHub issues, set their state, assignee and labels",
-    tools: ["read_notion_page", "read_notion_comments", "notion_search", "read_linear_issue", "create_ticket", "set_state", "assign", "add_label"],
+    headline:
+      "Read and change the work surfaces — search and read Notion pages and comments, read Linear and GitHub issues, re-read the chat surfaces the domain works on in full, set their state, assignee and labels",
+    tools: [
+      "read_notion_page",
+      "read_notion_comments",
+      "notion_search",
+      "read_linear_issue",
+      "read_work_channel",
+      "read_work_thread",
+      "create_ticket",
+      "set_state",
+      "assign",
+      "add_label",
+    ],
   },
   {
     id: "conversation-history",

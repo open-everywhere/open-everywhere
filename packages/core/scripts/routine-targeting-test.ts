@@ -336,7 +336,6 @@ const ORG = "default";
     botDisplayName: async () => undefined,
     confirmChannelInternal: async () => true,
     partnerFactsFromInfo: () => ({ dmPartnerTrust: "external" }),
-    readableChannelList: () => [],
     channel: {} as never,
   } as never);
   const opsStore = (await import("../agent/operational/provider.js")).getOperationalStore();

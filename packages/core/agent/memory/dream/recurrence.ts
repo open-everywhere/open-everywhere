@@ -1,8 +1,14 @@
+import { createHash } from "node:crypto";
 import { appendAudit, readAudit } from "../../audit/audit.js";
 
+export interface RecurrenceKey {
+  readonly scope: string;
+  readonly signature: string;
+}
+
 export interface RecurrenceLedger {
-  observe(key: string, dedupeKey?: string): Promise<number>;
-  count(key: string): Promise<number>;
+  observe(key: RecurrenceKey, dedupeKey?: string): Promise<number>;
+  count(key: RecurrenceKey): Promise<number>;
 }
 
 const STOP = new Set([
@@ -20,11 +26,20 @@ export function workflowSignature(request: string): string {
   return [...new Set(words)].sort().join(" ").slice(0, 160);
 }
 
+export function signatureDigest(signature: string): string {
+  return createHash("sha256").update(signature).digest("hex");
+}
+
+function mapKey(key: RecurrenceKey): string {
+  return `${key.scope}\u0000${key.signature}`;
+}
+
 export function inMemoryLedger(): RecurrenceLedger {
   const counts = new Map<string, number>();
   const seen = new Set<string>();
   return {
-    async observe(key, dedupeKey) {
+    async observe(rkey, dedupeKey) {
+      const key = mapKey(rkey);
       if (dedupeKey !== undefined) {
         const mark = `${dedupeKey}\u0000${key}`;
         if (seen.has(mark)) return counts.get(key) ?? 0;
@@ -34,20 +49,23 @@ export function inMemoryLedger(): RecurrenceLedger {
       counts.set(key, n);
       return n;
     },
-    async count(key) {
-      return counts.get(key) ?? 0;
+    async count(rkey) {
+      return counts.get(mapKey(rkey)) ?? 0;
     },
   };
 }
 
 const DELIVERY_FIELD = "delivery";
+const SCOPE_FIELD = "scope";
+const SIGNATURE_FIELD = "sigSha";
 
 export function auditRecurrenceLedger(org: string): RecurrenceLedger {
-  const rowsFor = async (key: string) => {
+  const rowsFor = async (key: RecurrenceKey) => {
     const rows = await readAudit({ org, action: "memory.observation" });
-    return rows.filter((r) => r.detail?.["key"] === key);
+    const sig = signatureDigest(key.signature);
+    return rows.filter((r) => r.detail?.[SCOPE_FIELD] === key.scope && r.detail?.[SIGNATURE_FIELD] === sig);
   };
-  const matches = async (key: string): Promise<number> => (await rowsFor(key)).length;
+  const matches = async (key: RecurrenceKey): Promise<number> => (await rowsFor(key)).length;
   return {
     async observe(key, dedupeKey) {
       if (dedupeKey !== undefined) {
@@ -59,7 +77,11 @@ export function auditRecurrenceLedger(org: string): RecurrenceLedger {
         platform: "memory",
         workspace: "@recurrence",
         action: "memory.observation",
-        detail: { key, ...(dedupeKey !== undefined ? { [DELIVERY_FIELD]: dedupeKey } : {}) },
+        detail: {
+          [SCOPE_FIELD]: key.scope,
+          [SIGNATURE_FIELD]: signatureDigest(key.signature),
+          ...(dedupeKey !== undefined ? { [DELIVERY_FIELD]: dedupeKey } : {}),
+        },
       });
       return matches(key);
     },

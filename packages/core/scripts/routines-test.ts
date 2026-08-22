@@ -285,7 +285,6 @@ ok((await store.removeRoutine(p as never, made.id)) === false, "store: removing 
     botDisplayName: async () => undefined,
     confirmChannelInternal: async () => false,
     partnerFactsFromInfo: () => ({ dmPartnerTrust: "external" }),
-    readableChannelList: () => [],
     channel: {} as never,
   });
   try {

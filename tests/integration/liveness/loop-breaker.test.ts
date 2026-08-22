@@ -12,12 +12,12 @@ import {
   wrapToolExecute,
 } from "../harness";
 
-const READER = "read_channel";
-const FIXED_MESSAGE_TEXT = "nothing new in the channel";
+const READER = "read_notion_page";
+const FIXED_MESSAGE_TEXT = "nothing new in the doc";
 const NUDGE_MARKER = "LOOP BREAKER";
 
 function readChannelCall(id: string): { tool: string; input: unknown; id: string } {
-  return { tool: READER, input: { channel: "ch_ZGlzY29yZDpDMExPT1BGSVhUVVJF", limit: 10 }, id };
+  return { tool: READER, input: { page: "11111111-2222-3333-4444-555555555555" }, id };
 }
 
 test("a worker's identical read repeats trip the loop breaker within a turn, and a RESUMED turn starts fresh", async () => {
@@ -26,16 +26,16 @@ test("a worker's identical read repeats trip the loop breaker within a turn, and
 
   afterThisTest(
     wrapToolExecute(READER, async () => ({
-      platform: "discord",
-      channel: "C0LOOPFIXTURE",
-      count: 1,
-      messages: [{ author: "U0LOOPAUTHOR", ts: "1700159720.000200", text: FIXED_MESSAGE_TEXT }],
+      page: "11111111-2222-3333-4444-555555555555",
+      blocks: 1,
+      truncated: false,
+      text: FIXED_MESSAGE_TEXT,
     })),
   );
 
   const asking = disposeLater(
     registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: "read the channel a few times and ask if unsure" }, id: "lb-delegate" }] }, { say: "handing this off" }],
+      parent: [{ calls: [{ tool: "agent", input: { message: "read the doc a few times and ask if unsure" }, id: "lb-delegate" }] }, { say: "handing this off" }],
       child: [
         { calls: [readChannelCall("lb-read-1")] },
         { calls: [readChannelCall("lb-read-2")] },

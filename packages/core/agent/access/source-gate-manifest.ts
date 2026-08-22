@@ -8,10 +8,9 @@ export const SOURCE_SCOPED_TOOLS: Readonly<Record<string, string>> = {
   read_slack_thread: "slack",
   read_notion_page: "notion",
   read_notion_comments: "notion",
-  read_linear_issue: "linear",
 };
 
-export const GENERIC_READ_VERBS: readonly string[] = ["read_channel", "read_thread"];
+export const GENERIC_READ_VERBS: readonly string[] = ["read_channel", "read_thread", "read_work_channel", "read_work_thread"];
 
 const PLATFORM_SLUGS = ["slack", "notion", "github", "linear", "discord", "teams"];
 
@@ -29,7 +28,7 @@ function gatesOnSources(source: string, platform: string): boolean {
 }
 
 function gatesPerPlatformInExecute(source: string): boolean {
-  const viaChain = /resolveReadAdapter\s*\(/u.test(source) || /resolveReadTarget\s*\(/u.test(source);
+  const viaChain = /resolveReadAdapter\s*\(/u.test(source) || /resolveWakeChannel\s*\(/u.test(source);
   const routesSources = /resolveWindowSources\s*\(/u.test(source) || viaChain;
   const fencesTurn = /assertTurnSurface\s*\(/u.test(source) || viaChain;
   return routesSources && fencesTurn;
