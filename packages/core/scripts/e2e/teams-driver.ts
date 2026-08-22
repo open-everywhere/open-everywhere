@@ -53,6 +53,11 @@ function toMessage(m: GraphChatMessage): TeamsMessage {
   };
 }
 
+export function isMissingChatScopeError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /missing scope permissions/i.test(msg) && /\bchat\.read/i.test(msg);
+}
+
 export function readRefreshSidecar(path: string): string | undefined {
   try {
     if (!existsSync(path)) return undefined;
@@ -159,6 +164,50 @@ export class TeamsDriver {
       displayName?: string;
     };
     return { id: json.id ?? "", displayName: json.displayName ?? "" };
+  }
+
+  async resolveDmChat(): Promise<{ chatId: string }> {
+    const installed = (await this.graph("GET", "/me/teamwork/installedApps?$expand=teamsApp")) as {
+      value?: readonly { id?: string; teamsApp?: { externalId?: string; displayName?: string } }[];
+    };
+    const row = (installed.value ?? []).find((r) => r.teamsApp?.externalId === this.cfg.botAppId);
+    if (!row?.id) {
+      throw new Error(
+        `teams DM: no personal install row for app externalId ${this.cfg.botAppId} in ${(installed.value ?? []).length} ` +
+          `installedApps — the OPE-887 precondition (personal-scope install for the driver user) is not met`,
+      );
+    }
+    const chat = (await this.graph("GET", `/me/teamwork/installedApps/${encodeURIComponent(row.id)}/chat`)) as { id?: string };
+    if (!chat.id) throw new Error(`teams DM: installedApps/${row.id}/chat returned no chat id`);
+    return { chatId: chat.id };
+  }
+
+  async postDm(chatId: string, text: string): Promise<TeamsMessage> {
+    const json = (await this.graph("POST", `/chats/${encodeURIComponent(chatId)}/messages`, {
+      body: { contentType: "html", content: htmlEscape(text) },
+    })) as GraphChatMessage;
+    return toMessage(json);
+  }
+
+  async dmMessages(chatId: string): Promise<readonly TeamsMessage[]> {
+    const json = (await this.graph("GET", `/chats/${encodeURIComponent(chatId)}/messages`)) as { value?: readonly GraphChatMessage[] };
+    return (json.value ?? []).map(toMessage);
+  }
+
+  async awaitDmReply(chatId: string, opts: { timeoutMs: number; afterIso?: string; contains?: string }): Promise<TeamsMessage> {
+    return pollUntil(
+      async () =>
+        (await this.dmMessages(chatId)).find(
+          (m) =>
+            this.isBotReply(m) &&
+            (opts.afterIso === undefined || (m.createdDateTime ?? "") > opts.afterIso!) &&
+            (opts.contains === undefined || m.text.includes(opts.contains)),
+        ),
+      {
+        timeoutMs: opts.timeoutMs,
+        what: `a bot reply in the 1:1 chat ${chatId}${opts.afterIso ? ` after ${opts.afterIso}` : ""}${opts.contains ? ` containing "${opts.contains}"` : ""}`,
+      },
+    );
   }
 
   async postMention(text: string): Promise<TeamsMessage> {
