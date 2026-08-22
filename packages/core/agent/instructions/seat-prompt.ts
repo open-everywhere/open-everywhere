@@ -390,7 +390,7 @@ ${escalation}. Whoever delegated this is the one who can answer, and your report
 them.`;
 }
 
-const SLACK_REACT_SENTENCE =
+const REACT_SENTENCE =
   "In a busy thread a single `react` emoji can be your whole response to a message that did not " +
   "address you; when someone addresses you the react only acknowledges, and one short `reply` still " +
   "follows. ";
@@ -401,7 +401,7 @@ export const SURFACE_GUIDES: Readonly<Record<string, string>> = {
     "Slack mrkdwn, not standard Markdown: `*bold*`, `_italic_`, `` `code` ``, `<https://url|link text>`, " +
       "`<@U123>` to mention someone (renders as a real @mention). `reply` posts a new message — prefer one " +
       "curated message over stacking new posts, and use `edit_reply` to correct one you already sent. " +
-      SLACK_REACT_SENTENCE +
+      REACT_SENTENCE +
       "Threads follow `thread_ts` — a `reply` always lands in the " +
       "thread that woke you, never a different one.",
   ].join("\n"),
@@ -412,7 +412,8 @@ export const SURFACE_GUIDES: Readonly<Record<string, string>> = {
       "over-cap message into several posts, sent in order, so a long reply still lands. Prefer one " +
       "curated message over a stack, and use `edit_reply` to correct one you already sent — an edit " +
       "is a single PATCH, so it can't split, and the corrected text must fit under 2000 on its own. " +
-      "There's no `react` tool on this surface. A Discord thread IS its " +
+      REACT_SENTENCE +
+      "A Discord thread IS its " +
       "own channel — you're just replying in the channel you were woken in, no separate thread id to track.",
   ].join("\n"),
   teams: [
@@ -425,7 +426,7 @@ export const SURFACE_GUIDES: Readonly<Record<string, string>> = {
 };
 
 function guideFor(guide: string, seatKind: SeatKind): string {
-  return seatKind === "worker" ? guide.replace(SLACK_REACT_SENTENCE, "") : guide;
+  return seatKind === "worker" ? guide.replace(REACT_SENTENCE, "") : guide;
 }
 
 export function renderSurfaceGuide(platform: string, seatKind: SeatKind = "conversational"): string {
