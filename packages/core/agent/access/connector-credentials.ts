@@ -92,6 +92,7 @@ export interface ResolvedConnectorCredential {
   readonly broker?: string;
   readonly home?: CredentialHomeRef;
   readonly endpoints?: CredentialEndpointRules;
+  readonly memberPlane?: true;
 }
 
 export function defineConnectorCredentials(c: ConnectorCredentials): ConnectorCredentials {
@@ -246,7 +247,10 @@ export function assertConnectorCredentialsValid(catalogues: readonly ConnectorCr
 export function expandConnectorGrant(
   grant: { readonly name: string; readonly credential: string },
   cfg: ConnectorCredentials | undefined,
-  opts: { readonly dm: boolean },
+  opts: {
+    readonly dm: boolean;
+    readonly memberPlane?: ReadonlySet<string>;
+  },
 ): { resolved: ResolvedConnectorCredential | null; warnings: readonly string[] } {
   if (!cfg) {
     return {
@@ -265,13 +269,16 @@ export function expandConnectorGrant(
   }
   const principal = principalOfCredential(cred);
 
-  if (principal === "user" && !opts.dm) {
+  const memberPlane = principal === "user" && !opts.dm && opts.memberPlane?.has(`${cfg.connector}/${cred.id}`) === true;
+
+  if (principal === "user" && !opts.dm && !memberPlane) {
     const why = isHumanActing(cred) ? `${cred.type}, human-acting grant` : cred.type;
     return {
       resolved: null,
       warnings: [
         `connector "${cfg.connector}": credential "${cred.id}" is user-principal (${why}) — ` +
-          `personal credentials resolve only in DMs, never on a channel/domain binding. Ignored.`,
+          `personal credentials resolve only in DMs, never on a channel/domain binding, unless the ` +
+          `domain declares this connector's member role (access/member-grant.ts). Ignored.`,
       ],
     };
   }
@@ -297,6 +304,7 @@ export function expandConnectorGrant(
       broker: cred.broker,
       home: cred.home,
       endpoints: cred.endpoints,
+      ...(memberPlane ? { memberPlane: true as const } : {}),
     },
     warnings: [],
   };
