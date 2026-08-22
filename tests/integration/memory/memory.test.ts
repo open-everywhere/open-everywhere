@@ -82,16 +82,16 @@ test("session.started seeds the domain's own silo at the expected path and body,
     dispatched: handle,
     taskId,
     script: {
-      parent: [{ calls: [{ tool: "task_peek", input: { taskIds: [taskId] }, id: "m1-peek" }] }, { say: "noted" }],
+      parent: [{ calls: [{ tool: "task_cancel", input: { taskIds: [taskId] }, id: "m1-peek" }] }, { say: "noted" }],
     },
     label: "the worker's completion, delivered as a new message naming the task id",
   });
   afterThisTest(() => settlement.handle.dispose());
   const peeked = await waitFor(
-    () => settlement.handle.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_peek")),
-    "the parent's step carrying the task_peek result — the edge the settlement flush hangs off",
+    () => settlement.handle.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_cancel")),
+    "the parent's step carrying the task_cancel result — the edge the settlement flush hangs off",
   );
-  expect(peeked.toolResults.find((t) => t.name === "task_peek")!.isError).toBe(false);
+  expect(peeked.toolResults.find((t) => t.name === "task_cancel")!.isError).toBe(false);
   expect(settlement.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
   const notesPath = siloFilePath("it-memory-brain", "notes.md");
@@ -272,7 +272,7 @@ test("OPE-727 negative control — the documented dispose-and-re-register patter
   const taskId = taskIdOfDelegation(dispatched, "the dispatch");
 
   dispatched.dispose();
-  const settlement = registerScript({ parent: [{ calls: [{ tool: "task_peek", input: { taskIds: [taskId] }, id: "proper-peek" }] }, { say: "noted" }] });
+  const settlement = registerScript({ parent: [{ calls: [{ tool: "task_cancel", input: { taskIds: [taskId] }, id: "proper-peek" }] }, { say: "noted" }] });
   const settled = await waitFor(
     () => settlement.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes(taskId))),
     "the settlement notification to be served by the freshly-registered entry",

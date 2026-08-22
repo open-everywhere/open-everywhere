@@ -1,3 +1,4 @@
+
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -119,20 +120,6 @@ const FIRE = {
   ok(entry !== null && typeof entry === "object", "tool MOUNTS once the relay secret + base URL are configured");
   ok(typeof entry.toModelOutput === "function", "the mounted entry authors a toModelOutput (the fence)");
 
-  const durable = (await import(pathToFileURL(join(eveRoot, "dist/src/shared/durable-dynamic-tool-callbacks.js")).href)) as {
-    createDurableDynamicCallback<A extends unknown[], R>(i: { closure: Record<string, unknown>; callback: (c: Record<string, unknown>, ...a: A) => R; stepId: string }): (...a: A) => R;
-  };
-  const { defineTool: eveDefineTool } = (await import(pathToFileURL(join(eveRoot, "dist/src/public/tools/index.js")).href)) as {
-    defineTool<T extends Record<string, unknown>>(e: T): T;
-  };
-  const wrap = <A extends unknown[], R>(fn: (...a: A) => R, phase: string): ((...a: A) => R) =>
-    durable.createDurableDynamicCallback<A, R>({ closure: {}, stepId: `oe:test:read_routine_transcript:${phase}`, callback: (_c, ...a: A) => fn(...a) });
-  const durableEntry = eveDefineTool({
-    ...entry,
-    execute: wrap(entry.execute as (...a: unknown[]) => unknown, "execute"),
-    toModelOutput: wrap(entry.toModelOutput as (...a: unknown[]) => unknown, "toModelOutput"),
-  });
-
   const ctx = makeCtx();
   await lifecycle.dispatchDynamicToolEvent({
     ctx,
@@ -141,7 +128,7 @@ const FIRE = {
         slug: "read_routine_transcript",
         eventNames: ["session.started"],
         sourceId: "oe",
-        events: { "session.started": () => durableEntry },
+        events: { "session.started": () => entry },
       },
     ],
     event: { type: "session.started" },

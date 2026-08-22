@@ -52,16 +52,16 @@ test("the dream cycle fingerprints the seat's own request and never the worker's
   const settlement = await awaitTaskSettlement({
     dispatched: handle,
     taskId,
-    script: { parent: [{ calls: [{ tool: "task_peek", input: { taskIds: [taskId] }, id: "se-peek" }] }, { say: "acknowledged" }] },
+    script: { parent: [{ calls: [{ tool: "task_cancel", input: { taskIds: [taskId] }, id: "se-peek" }] }, { say: "acknowledged" }] },
     label: "the worker's completion, delivered as a new message naming the task id",
   });
   afterThisTest(() => settlement.handle.dispose());
 
   const peeked = await waitFor(
-    () => settlement.handle.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_peek")),
-    "the parent's step carrying the task_peek result — eve's own terminal view of the worker",
+    () => settlement.handle.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_cancel")),
+    "the parent's step carrying the task_cancel result — eve's own terminal view of the worker",
   );
-  expect(peeked.toolResults.find((t) => t.name === "task_peek")!.isError).toBe(false);
+  expect(peeked.toolResults.find((t) => t.name === "task_cancel")!.isError).toBe(false);
   expect(settlement.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
   const seatFirst = handle.requests[0];

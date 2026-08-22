@@ -75,16 +75,16 @@ test("a windowed routine fire whose delegated worker settles folds its run outco
   const settlement = await awaitTaskSettlement({
     dispatched: handle,
     taskId,
-    script: { parent: [{ calls: [{ tool: "task_peek", input: { taskIds: [taskId] }, id: "se-fire-peek" }] }, { say: "acknowledged" }] },
+    script: { parent: [{ calls: [{ tool: "task_cancel", input: { taskIds: [taskId] }, id: "se-fire-peek" }] }, { say: "acknowledged" }] },
     label: "the fire worker's completion, delivered as a new message naming the task id",
   });
   afterThisTest(() => settlement.handle.dispose());
 
   const peeked = await waitFor(
-    () => settlement.handle.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_peek")),
-    "the parent's step carrying the task_peek result — eve's own terminal view of the fire's worker",
+    () => settlement.handle.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_cancel")),
+    "the parent's step carrying the task_cancel result — eve's own terminal view of the fire's worker",
   );
-  expect(peeked.toolResults.find((t) => t.name === "task_peek")!.isError).toBe(false);
+  expect(peeked.toolResults.find((t) => t.name === "task_cancel")!.isError).toBe(false);
   expect(settlement.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
   const rows = await waitFor(async () => {

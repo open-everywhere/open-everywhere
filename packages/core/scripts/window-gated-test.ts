@@ -345,6 +345,22 @@ console.log("5. replay alias + eve's own replay path (eve step registry):");
   eq(replayedCustom.length, 1, "eve replays the alias name fed to it directly (still a valid, functioning step-registry entry)");
   const armedBash = (await resolveWindowGated(windowGated("bash", stubEntry("bash")), grainCtx.task())) as unknown as Record<string, unknown>;
   ok(!("__executeStepFn" in armedBash), "RETIRED (OPE-867): a windowGated entry carries no __executeStepFn stamp either");
+
+  const DURABLE_TOOL_CALLBACKS = Symbol.for("eve:durable-dynamic-tool-callbacks");
+  type Ref = { stepId: string; closure: unknown };
+  const descriptorsOf = (e: unknown): Record<string, Ref | undefined> => ((e as Record<symbol, unknown>)[DURABLE_TOOL_CALLBACKS] as Record<string, Ref | undefined>) ?? {};
+  ok(
+    readFileSync(join(eveRoot, "dist/src/shared/durable-dynamic-tool-callbacks.js"), "utf8").includes("Symbol.for(`eve:durable-dynamic-tool-callbacks`)"),
+    "the descriptor symbol OE stamps is the one the installed eve reads (pinned against eve's own bytes, not from memory)",
+  );
+  const singleArmed = descriptorsOf((await resolveWindowGated(windowGated("bash", stubEntry("bash")), grainCtx.task())) as unknown);
+  eq(singleArmed.execute?.stepId, replayStepNames("bash", "_single").execute, "a windowGated entry describes its EXECUTE under the step name preRegisterDynamicEntry registered");
+  ok(typeof reg.get(singleArmed.execute!.stepId) === "function", "…and that step id really is registered, which is the second half eve validates");
+  ok(singleArmed.approvalRequest === undefined, "NEGATIVE CONTROL: an approval-less entry describes NO approval phase (describing one would make eve validate a step nothing calls)");
+  const gatedApproval = descriptorsOf(await resolveWindowGated(windowGated("post_file", withApproval), grainCtx.task()));
+  eq(gatedApproval.approvalRequest?.stepId, replayStepNames("post_file", "_single").approval, "an approval-bearing entry describes its approval REQUEST phase too");
+  const kitArmed = descriptorsOf((await resolveWindowGated(windowGatedKit("test_kit", { web_fetch: stubEntry("web_fetch") }), grainCtx.task()) as Record<string, unknown>).web_fetch);
+  eq(kitArmed.execute?.stepId, replayStepNames("test_kit", "web_fetch").execute, "a KIT member describes its execute under the <slug>:<entryKey> step name");
 }
 
 console.log("6. mount refresh on a deployment change (OPE-632):");
@@ -380,35 +396,11 @@ console.log("6. mount refresh on a deployment change (OPE-632):");
   }) as unknown as GatedToolEntry;
   const kitV2 = windowGatedKit("refresh_kit", { bash: bashV2, web_fetch: stubEntry("web_fetch") }, { web_fetch: () => false });
   const kitV3 = windowGatedKit("refresh_kit", { bash: bashV2, web_fetch: stubEntry("web_fetch"), glob: stubEntry("glob") }, { web_fetch: () => false });
-  const durableMod = (await import(abs3("dist/src/shared/durable-dynamic-tool-callbacks.js"))) as {
-    createDurableDynamicCallback<A extends unknown[], R>(i: { closure: Record<string, unknown>; callback: (c: Record<string, unknown>, ...a: A) => R; stepId: string }): (...a: A) => R;
-  };
-  function durablize(entry: Record<string, unknown>, stepPrefix: string): Record<string, unknown> {
-    const wrap = <A extends unknown[], R>(fn: (...a: A) => R, phase: string): ((...a: A) => R) =>
-      durableMod.createDurableDynamicCallback<A, R>({ closure: {}, stepId: `${stepPrefix}:${phase}`, callback: (_c, ...a: A) => fn(...a) });
-    const copy: Record<string, unknown> = { ...entry };
-    copy.execute = wrap(entry.execute as (...a: unknown[]) => unknown, "execute");
-    if (typeof entry.toModelOutput === "function") copy.toModelOutput = wrap(entry.toModelOutput as (...a: unknown[]) => unknown, "toModelOutput");
-    if (typeof entry.approval === "function") copy.approval = wrap(entry.approval as (...a: unknown[]) => unknown, "approvalRequest");
-    return defineTool(copy as never) as unknown as Record<string, unknown>;
-  }
   const resolverOf = (kit: unknown) => ({
     slug: "refresh_kit",
     logicalPath: "agent/tools/refresh_kit.ts",
     eventNames: ["session.started"],
-    events: Object.fromEntries(
-      Object.entries((kit as { events: Record<string, (...a: unknown[]) => Promise<unknown>> }).events).map(([arm, handler]) => [
-        arm,
-        async (...args: unknown[]): Promise<unknown> => {
-          const out = (await handler(...args)) as Record<string, unknown> | null;
-          if (out === null || out === undefined) return out;
-          if (typeof (out as { execute?: unknown }).execute === "function") return durablize(out, "oe:test-transform:refresh_kit");
-          const mapped: Record<string, unknown> = {};
-          for (const [key, value] of Object.entries(out)) mapped[key] = durablize(value as Record<string, unknown>, `oe:test-transform:refresh_kit:${key}`);
-          return mapped;
-        },
-      ]),
-    ),
+    events: (kit as { events: Record<string, unknown> }).events,
   });
 
   const ctx6 = new ContextContainer();

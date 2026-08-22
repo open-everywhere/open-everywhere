@@ -197,12 +197,35 @@ function stepRegistry(): Map<string, unknown> {
   return reg;
 }
 
-export function replayStepNames(slug: string, entryKey: string): { execute: string; approval: string; approvalResponse: string } {
+export function replayStepNames(slug: string, entryKey: string): { execute: string; approval: string; approvalResponse: string; toModelOutput: string } {
   return {
     execute: `eve:framework-dynamic:${slug}:${entryKey}`,
     approval: `eve:dynamic-tool-approval:${slug}:${entryKey}`,
     approvalResponse: `eve:dynamic-tool-approval-response:${slug}:${entryKey}`,
+    toModelOutput: `eve:dynamic-tool-model-output:${slug}:${entryKey}`,
   };
+}
+
+const DURABLE_TOOL_CALLBACKS = Symbol.for("eve:durable-dynamic-tool-callbacks");
+
+interface DurableCallbackReference {
+  readonly stepId: string;
+  readonly closure: Record<string, never>;
+}
+
+function fillDurableCallbackDescriptors(entry: ReplayableToolEntry, names: ReturnType<typeof replayStepNames>): void {
+  const holder = entry as unknown as Record<symbol, unknown>;
+  const existing = (holder[DURABLE_TOOL_CALLBACKS] as Record<string, DurableCallbackReference | undefined> | undefined) ?? {};
+  const next: Record<string, DurableCallbackReference> = {};
+  for (const [phase, reference] of Object.entries(existing)) if (reference !== undefined) next[phase] = reference;
+  const fill = (phase: string, stepId: string): void => {
+    if (next[phase] === undefined) next[phase] = { stepId, closure: {} };
+  };
+  fill("execute", names.execute);
+  if (approvalRequestOf(entry) !== undefined) fill("approvalRequest", names.approval);
+  if (approvalResponseOf(entry) !== undefined) fill("approvalResponse", names.approvalResponse);
+  if (typeof entry.toModelOutput === "function") fill("toModelOutput", names.toModelOutput);
+  Object.defineProperty(holder, DURABLE_TOOL_CALLBACKS, { configurable: true, value: next });
 }
 
 export interface ReplayableToolEntry {
@@ -226,7 +249,9 @@ export function preRegisterDynamicEntry(slug: string, entryKey: string, entry: R
   if (typeof entry.toModelOutput === "function") {
     const mountedName = entryKey.startsWith("_") ? slug : entryKey;
     registerReplayModelProjection(mountedName, entry.toModelOutput.bind(entry));
+    reg.set(names.toModelOutput, (_cv: unknown, out: unknown) => (entry.toModelOutput as (o: unknown) => unknown)(out));
   }
+  fillDurableCallbackDescriptors(entry, names);
 }
 
 function armEntry(name: string, entry: GatedToolEntry): GatedToolEntry {
