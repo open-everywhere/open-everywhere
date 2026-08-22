@@ -24,6 +24,11 @@ function targetDomainOf(refusal: ReadScopeRefusal): string | undefined {
   return domainForChannel(`${parts[0]}/${parts[1]}/${refusal.surfaceId}`, refusal.domains)?.name;
 }
 
+function stampedWorkspaceSurface(partition: { platform: string; workspace: string; surface: string }, rowPlatform: string): { workspace: string; surface: string } {
+  const foreignCaller = partition.platform !== rowPlatform;
+  return { workspace: foreignCaller ? "unknown" : partition.workspace, surface: foreignCaller ? "unknown" : partition.surface };
+}
+
 export async function auditChannelReadRefusal(
   ctx: BindableContext,
   refusal: ReadScopeRefusal,
@@ -35,8 +40,7 @@ export async function auditChannelReadRefusal(
     await (deps?.audit ?? appendAudit)({
       org: partition.org,
       platform: refusal.platform,
-      workspace: partition.workspace,
-      surface: partition.surface,
+      ...stampedWorkspaceSurface(partition, refusal.platform),
       ...(principalId ? { principalId } : {}),
       action: "read.refused",
       detail: {
@@ -66,8 +70,7 @@ async function auditFenceRefusal(
     await (deps?.audit ?? appendAudit)({
       org: partition.org,
       platform: target,
-      workspace: partition.workspace,
-      surface: partition.surface,
+      ...stampedWorkspaceSurface(partition, target),
       ...(principalId ? { principalId } : {}),
       action,
       detail: { target, origin: turnOriginPlatform(ctx) ?? null, sessionId: currentSessionId(ctx) ?? null },

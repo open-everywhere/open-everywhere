@@ -178,6 +178,30 @@ const engCtx = discordCtx({ userId: "U-ALICE", guildId: GUILD, channelId: CHAN_E
 }
 
 {
+  const rows: Array<Record<string, unknown>> = [];
+  const audit = async (e: Record<string, unknown>) => {
+    rows.push(e);
+  };
+  await assert.rejects(
+    () => assertSurfaceAllowed(engCtx, "linear", "SOME-LINEAR-TEAM", { audit }),
+    /is not in domain "eng" linear read scope/u,
+    "a cross-platform target is refused exactly like an own-platform one",
+  );
+  n++;
+  ok(rows.length === 1, "exactly one read.refused row");
+  const row = rows[0] as { platform?: string; workspace?: string; surface?: string; detail?: Record<string, unknown> };
+  ok(row.platform === "linear", "…platform names the REFUSED surface's own platform (linear), not the caller's (discord)");
+  ok(
+    row.workspace === "unknown" && row.surface === "unknown",
+    "…and since the caller's real platform (discord) differs from the row's platform (linear), workspace/surface are stamped \"unknown\" — never GUILD1, which would be a fiction under a linear row",
+  );
+  ok(
+    row.detail?.callerSurfaceKey === `discord/${GUILD}/${CHAN_ENG}`,
+    "…the caller's real identity is not lost: detail.callerSurfaceKey still names the real discord/GUILD1/C-ENG caller",
+  );
+}
+
+{
   const savedToken = process.env.DISCORD_BOT_TOKEN;
   process.env.DISCORD_BOT_TOKEN = "test-bot-token";
   try {
