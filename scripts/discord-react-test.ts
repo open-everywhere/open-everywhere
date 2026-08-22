@@ -68,8 +68,6 @@ ok(capabilitiesForPlatform("discord").reactions === true, "🔴 OPE-987: the dis
   ok(discordPostArm.resolveReactTarget!(bag(undefined, TRIGGER_MESSAGE)) === null, "negative control: no channel id ⇒ NO react target");
   ok(discordPostArm.resolveReactTarget!(bag(CHANNEL, undefined)) === null, "negative control: no triggering message id ⇒ NO react target (Discord has no anchor fallback the way GitHub/Linear do)");
 
-  const savedFetch = globalThis.fetch;
-
   await withPatchedFetch(
     (async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
@@ -129,8 +127,6 @@ ok(capabilitiesForPlatform("discord").reactions === true, "🔴 OPE-987: the dis
     );
     ok(platformFailureClass(ambErr) === "ambiguous", "OPE-987/825: a 503 reactions PUT classifies AMBIGUOUS");
   }
-
-  globalThis.fetch = savedFetch;
 }
 
 await withPatchedFetch(
