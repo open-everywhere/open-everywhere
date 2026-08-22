@@ -82,8 +82,8 @@ console.log("1. eve dist pins:");
   const brStart = dyn.indexOf("function buildReplayedApproval(");
   ok(brStart >= 0, "build-dynamic-tools.js still declares buildReplayedApproval");
   const br = dyn.slice(brStart, dyn.indexOf("function buildResponseAuthorizationTools("));
-  ok(/rejecting responses\.`\)/.test(br), "an unregistered response authorizer still degrades to REJECT-EVERYTHING (not to allow, not to re-ask)");
-  ok(/requiring approval by default\.`\)/.test(br), "…while the REQUEST half degrades to a harmless re-ask — the asymmetry the pre-registration exists for");
+  ok(/approvalResponse`[\s\S]{0,160}?status:`rejected`/.test(br), "an unregistered response authorizer still degrades to REJECT-EVERYTHING (not to allow, not to re-ask)");
+  ok(/approvalRequest`[\s\S]{0,120}?`user-approval`/.test(br), "…while the REQUEST half degrades to a harmless re-ask — the asymmetry the pre-registration exists for");
 
   const hookMap = read("public/definitions/hook.d.ts");
   ok(/"approval\.candidate": ProtocolEvent<"approval\.candidate">/.test(hookMap), "`approval.candidate` is still an authored-hook event");
@@ -176,10 +176,11 @@ console.log("3. replay registration (the unapprovable-card trap):");
     inputSchema: { type: "object", properties: {} },
     resolverSlug: "pretend_publish",
     entryKey: "_single",
-    executeStepFnName: names.execute,
-    approvalStepFnName: names.approval,
-    approvalResponseStepFnName: names.approvalResponse,
-    closureVars: {},
+    callbacks: {
+      execute: { stepId: names.execute, closure: {} },
+      approvalRequest: { stepId: names.approval, closure: {} },
+      approvalResponse: { stepId: names.approvalResponse, closure: {} },
+    },
   };
   const replayed = replayLookup([metaRow]);
   eq(replayed.size, 1, "eve replays the pre-registered entry (no skip)");
@@ -197,7 +198,9 @@ console.log("3. replay registration (the unapprovable-card trap):");
     "…and rejects a bystander with OUR reason (eve's fallback reason would differ)",
   );
 
-  const unregistered = replayLookup([{ ...metaRow, approvalResponseStepFnName: "eve:dynamic-tool-approval-response:never_registered:_single" }]);
+  const unregistered = replayLookup([
+    { ...metaRow, callbacks: { ...metaRow.callbacks, approvalResponse: { stepId: "eve:dynamic-tool-approval-response:never_registered:_single", closure: {} } } },
+  ]);
   const bad = unregistered.get("pretend_publish")?.approval as { response?: (c: unknown) => Promise<{ status?: string }> } | undefined;
   const badDecision = await bad?.response?.({ responder: alice, session: { initiator: alice } });
   eq(badDecision?.status, "rejected", "an UNREGISTERED response authorizer rejects even the initiator — the trap is real (negative control)");

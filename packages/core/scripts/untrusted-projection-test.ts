@@ -32,6 +32,12 @@ const lifecycle = await import(pathToFileURL(join(eveRoot, "dist/src/context/dyn
 const builder = await import(pathToFileURL(join(eveRoot, "dist/src/context/build-dynamic-tools.js")).href);
 const harnessTools = await import(pathToFileURL(join(eveRoot, "dist/src/harness/tools.js")).href);
 const toolSchema = await import(pathToFileURL(join(eveRoot, "dist/src/shared/tool-schema.js")).href);
+const durable = (await import(pathToFileURL(join(eveRoot, "dist/src/shared/durable-dynamic-tool-callbacks.js")).href)) as {
+  createDurableDynamicCallback<A extends unknown[], R>(i: { closure: Record<string, unknown>; callback: (c: Record<string, unknown>, ...a: A) => R; stepId: string }): (...a: A) => R;
+};
+const { defineTool: eveDefineTool } = (await import(pathToFileURL(join(eveRoot, "dist/src/public/tools/index.js")).href)) as {
+  defineTool<T extends Record<string, unknown>>(entry: T): T;
+};
 
 const TOOL_BRAND = Symbol.for("eve:tool-brand");
 
@@ -52,13 +58,22 @@ interface BuiltTool {
 }
 
 {
-  const entry = {
-    [TOOL_BRAND]: true,
+  const authoredProjection = durable.createDurableDynamicCallback<[{ body: string }], { type: string; value: string }>({
+    closure: {},
+    stepId: "oe:test:probe_tool:toModelOutput",
+    callback: (_c, o) => ({ type: "text", value: `AUTHORED(${o.body})` }),
+  });
+  const entry = eveDefineTool({
     description: "probe",
     inputSchema: { type: "object", properties: {} },
-    execute: async () => ({ body: "RAW" }),
-    toModelOutput: (o: { body: string }) => ({ type: "text", value: `AUTHORED(${o.body})` }),
-  };
+    execute: durable.createDurableDynamicCallback<[], Promise<{ body: string }>>({
+      closure: {},
+      stepId: "oe:test:probe_tool:execute",
+      callback: async () => ({ body: "RAW" }),
+    }),
+    toModelOutput: authoredProjection,
+  }) as { toModelOutput: (o: { body: string }) => { type: string; value: string } };
+  ok((entry as Record<symbol, unknown>)[TOOL_BRAND] === true, "eve's defineTool brands the entry (the resolver's result must be branded or eve refuses it)");
   const ctx = makeCtx();
   await lifecycle.dispatchDynamicToolEvent({
     ctx,
@@ -69,8 +84,8 @@ interface BuiltTool {
   const defs = builder.buildDynamicTools(ctx) as Array<{ name: string; toModelOutput?: unknown }>;
   ok(defs.length === 1 && defs[0].name === "probe_tool", "tripwire: the session-mounted tool is built for the model call");
   ok(
-    defs[0].toModelOutput === undefined,
-    "TRIPWIRE: installed eve still DROPS authored toModelOutput on the session.started dynamic path — the projection hook exists because of this; if eve now preserves it, re-evaluate the hook (authored-restore becomes idempotent no-op)",
+    typeof defs[0].toModelOutput === "function",
+    "TRIPWIRE FLIPPED: installed eve now PRESERVES authored toModelOutput on the session.started dynamic path (0.44.0). If this reverts to `undefined`, the projection hook is load-bearing again — do not shrink it.",
   );
 
   const toolset = harnessTools.buildToolSetFromDefinitions({ approvedTools: new Set(), tools: defs }) as Record<string, BuiltTool>;
@@ -402,4 +417,4 @@ function buildSet(defs: Array<Record<string, unknown>>): Record<string, BuiltToo
   registerTaintVerdictSink(priorSink);
 }
 
-console.log(`\n✓ untrusted-projection: ${n} assertions passed (eve drop tripwire, authored restore, connector fence + auth passthrough, provider skip, registration wiring, web_fetch envelope, browser family seam, connection_search status-only no-taint, OPE-339 declared grantContentOrigin + OPE-324 per-tool grain)\n`);
+console.log(`\n✓ untrusted-projection: ${n} assertions passed (eve projection tripwire, authored restore, connector fence + auth passthrough, provider skip, registration wiring, web_fetch envelope, browser family seam, connection_search status-only no-taint, OPE-339 declared grantContentOrigin + OPE-324 per-tool grain)\n`);

@@ -308,8 +308,8 @@ const OE_POLICY_CALLERS = [
     "eve's bootstrap session wrapper still LOGS the network policy it is handed",
   );
   ok(
-    /function formatNetworkPolicy\(\w+\)\{return truncateOneLine\(typeof \w+==`string`\?\w+:JSON\.stringify\(\w+\)\)\}/.test(logging),
-    "that log still renders the policy with JSON.stringify — a bootstrap-time transform header would appear in it verbatim",
+    /function formatNetworkPolicy\(\w+\)\{return truncateOneLine\(typeof \w+==`string`\?\w+:JSON\.stringify\(\w+,\(\w+,\w+\)=>\w+===`transform`\?`\[redacted\]`:\w+\)\)\}/.test(logging),
+    "that log REDACTS the whole `transform` key (eve 0.44.0) — a bootstrap-time credential header can no longer reach it verbatim",
   );
   const wrapperUsers = [...distFilesMatching(/createLoggingSandboxSession\(/g)].filter((f) => !f.startsWith("execution/sandbox/logging-session"));
   ok(wrapperUsers.length > 0, "eve's sandbox bindings still install the policy-logging wrapper somewhere (the confinement check below is not vacuous)");

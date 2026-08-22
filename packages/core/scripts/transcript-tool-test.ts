@@ -119,6 +119,20 @@ const FIRE = {
   ok(entry !== null && typeof entry === "object", "tool MOUNTS once the relay secret + base URL are configured");
   ok(typeof entry.toModelOutput === "function", "the mounted entry authors a toModelOutput (the fence)");
 
+  const durable = (await import(pathToFileURL(join(eveRoot, "dist/src/shared/durable-dynamic-tool-callbacks.js")).href)) as {
+    createDurableDynamicCallback<A extends unknown[], R>(i: { closure: Record<string, unknown>; callback: (c: Record<string, unknown>, ...a: A) => R; stepId: string }): (...a: A) => R;
+  };
+  const { defineTool: eveDefineTool } = (await import(pathToFileURL(join(eveRoot, "dist/src/public/tools/index.js")).href)) as {
+    defineTool<T extends Record<string, unknown>>(e: T): T;
+  };
+  const wrap = <A extends unknown[], R>(fn: (...a: A) => R, phase: string): ((...a: A) => R) =>
+    durable.createDurableDynamicCallback<A, R>({ closure: {}, stepId: `oe:test:read_routine_transcript:${phase}`, callback: (_c, ...a: A) => fn(...a) });
+  const durableEntry = eveDefineTool({
+    ...entry,
+    execute: wrap(entry.execute as (...a: unknown[]) => unknown, "execute"),
+    toModelOutput: wrap(entry.toModelOutput as (...a: unknown[]) => unknown, "toModelOutput"),
+  });
+
   const ctx = makeCtx();
   await lifecycle.dispatchDynamicToolEvent({
     ctx,
@@ -127,7 +141,7 @@ const FIRE = {
         slug: "read_routine_transcript",
         eventNames: ["session.started"],
         sourceId: "oe",
-        events: { "session.started": () => entry },
+        events: { "session.started": () => durableEntry },
       },
     ],
     event: { type: "session.started" },
@@ -137,8 +151,8 @@ const FIRE = {
   const def = defs.find((d) => d.name === "read_routine_transcript");
   ok(def !== undefined, "the tool is built for the model call off the session.started path");
   ok(
-    def!.toModelOutput === undefined,
-    "eve DROPPED the authored toModelOutput on the replay path — the fence does NOT reach the model by authoring alone (this is the OPE-73 gap this tool depends on the hook to close)",
+    typeof def!.toModelOutput === "function",
+    "eve PRESERVES the authored toModelOutput on the replay path (0.44.0) — if this reverts, the fence depends on the OPE-73 hook alone",
   );
 
   const converted = defs.map((d) => ({ ...d, inputSchema: toolSchema.toInputSchema(d.inputSchema) }));
@@ -169,10 +183,10 @@ const FIRE = {
   };
 
   const preHook = await built.toModelOutput!(sampleOutput);
-  const unfenced = preHook.type === "text" ? String(preHook.value) : JSON.stringify(preHook.value);
-  ok(preHook.type === "json", "pre-hook: eve's fallback closure passes the RAW execute output through as json (the authored projection is gone)");
-  ok(!unfenced.includes(UNTRUSTED_OPEN), "🔴 pre-hook: eve's own closure hands the model the transcript with NO fence — authoring toModelOutput is not enough");
-  ok(unfenced.includes("IGNORE ALL PREVIOUS INSTRUCTIONS"), "pre-hook: …and the injected instruction is right there in it");
+  const preValue = preHook.type === "text" ? String(preHook.value) : JSON.stringify(preHook.value);
+  ok(preHook.type === "text", "pre-hook: eve's replayed closure serves the AUTHORED projection (0.44.0), not a raw json passthrough");
+  ok(preValue.startsWith(UNTRUSTED_OPEN), "pre-hook: …so the fence is already on the model-visible bytes before OE's hook runs");
+  ok(preValue.includes("IGNORE ALL PREVIOUS INSTRUCTIONS"), "pre-hook: and the ingested content is preserved inside it (fencing, not censoring)");
 
   const before = built;
   projectToolSet(toolset as unknown as Record<string, unknown>);
