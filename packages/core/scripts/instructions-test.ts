@@ -280,6 +280,7 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     loadSilos: () => [defineMemorySilo({ name: "solo-notes", description: "solo-domain notes", provider: "sqlite" })],
     domainsForSurface: ({ surface }) => (surface === "C_SOLO" ? ["solo-dom"] : []),
   });
+  registerSlackFixtureManifest();
   const NOISE = "## Busy threads: a react instead of a low-content reply";
 
   const crossMd = await renderScopeMarkdown({
@@ -315,7 +316,7 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     channel: { kind: "channel:unified", continuationToken: "oe-dom:solo-dom:win:github/acme/x:oe-sup:g1" },
     session: { auth: { current: { attributes: { oe_platform: "github" } } } },
   } as BindableContext);
-  ok(!soloGh.includes(NOISE), "a non-Slack solo window adds no Slack scope (per-surface renderers fail-soft off Slack)");
+  ok(!soloGh.includes(NOISE), "a solo window on a reactions:false surface adds no per-surface scope (manifest-gated, not Slack-literal)");
 }
 
 {

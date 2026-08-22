@@ -6,7 +6,7 @@ import { resolveAccess } from "../access/resolver.js";
 import { getConfig } from "../access/config.js";
 import { resolvePartition, type Partition } from "../memory/partition.js";
 import { bindFrom } from "../identity/binding.js";
-import { capabilitiesForPlatform } from "../identity/capabilities.js";
+import { capabilitiesFor, capabilitiesForPlatform } from "../identity/capabilities.js";
 import { configuredAgentName } from "../identity/bot-name.js";
 import { botDisplayNameFor } from "../identity/bot-display-name.js";
 import { planFor, resolveMemoryPlan } from "../memory/resolve.js";
@@ -84,7 +84,7 @@ function isLeanSeat(ctx: BindableContext): boolean {
 }
 
 export function renderNoiseDoctrine(ctx: BindableContext): string {
-  if (channelPlatform(ctx) !== "slack") return "";
+  if (!capabilitiesFor(ctx).reactions) return "";
   if (isWorkerSession(ctx)) return "";
   return (
     "## Busy threads: a react instead of a low-content reply\n" +
