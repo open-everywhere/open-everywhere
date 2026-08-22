@@ -20,7 +20,15 @@ import { isConnectorOpTool } from "../access/consequence.js";
 import { effectiveConnectorOpTier } from "../access/connector-op-gating.js";
 import { sharedVaultSubjectFor } from "../access/group-request.js";
 import { rawVaultSubject, SHARED_VAULT_SUBJECT_PREFIX } from "../identity/oauth-vault-share.js";
-import { connectorOpTieringEnabled, connectorLinkSetVaultEnabled } from "./connector-flags.js";
+import { connectorOpTieringEnabled, connectorLinkSetVaultEnabled, connectorMemberPlaneEnabled } from "./connector-flags.js";
+import {
+  memberPlaneRefusalMessage,
+  memberPlaneVerdict,
+  nonMemberWakeFromAuth,
+  requesterFromAuth,
+} from "../access/member-plane.js";
+import { OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED } from "../access/requester-identity.js";
+import { OE_CHAT_NONMEMBER_ATTR } from "../access/taint-signal.js";
 import { getSecretVia } from "../access/credentials.js";
 import { withDuplicateApprovalGuard } from "../access/approval-dedupe.js";
 import { initiatorBoundResponsePolicy } from "../approvals/eve-response-policy.js";
@@ -248,28 +256,45 @@ export function userAwareProviderToken(
           assertCredentialEndpointHostAllowed(cred.endpoints, opts.directUrl, `connection "${opts.connector}" credential "${cred.credential}"`);
         }
         const { mode, principalId, platform, workspace, org } = await resolveDmPrincipal(ctx.session.auth);
+        let memberRequester: string | undefined;
         if (mode !== "dm") {
-          throw new Error(
-            `connection "${opts.connector}": a per-user credential resolved on a non-DM surface ` +
-              `(mode "${mode ?? "unresolved"}") — refusing to mint a personal token off a shared seat.`,
-          );
+          if (cred.memberPlane !== true) {
+            throw new Error(
+              `connection "${opts.connector}": a per-user credential resolved on a non-DM surface ` +
+                `(mode "${mode ?? "unresolved"}") — refusing to mint a personal token off a shared seat.`,
+            );
+          }
+          const verdict = memberPlaneVerdict({
+            armed: connectorMemberPlaneEnabled(),
+            opTiered: connectorOpTieringEnabled(),
+            granted: true,
+            requester: requesterFromAuth(ctx.session.auth, OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED),
+            nonMemberWake: nonMemberWakeFromAuth(ctx.session.auth, OE_CHAT_NONMEMBER_ATTR),
+          });
+          if (!verdict.admit) {
+            await auditMintOutcome(opts.connector, { subject: "user", plane: "member", outcome: "refused", reason: verdict.reason });
+            throw new Error(memberPlaneRefusalMessage(opts.connector, verdict.reason));
+          }
+          memberRequester = verdict.requesterPrincipalId;
         }
-        if (!principalId) {
+        if (!principalId && memberRequester === undefined) {
           throw new Error(
             `connection "${opts.connector}": cannot mint a per-user token — this DM surface has no ` +
               `resolvable user identity (principalId). Fail closed.`,
           );
         }
+        const actorId = memberRequester ?? (principalId as string);
         const connector = vercelConnectorOf(cred);
         if (!connector)
           throw new Error(`connection "${opts.connector}": user-oauth credential has no vercel-connect home`);
-        const subjectId = await effectiveUserVaultSubject(opts.connector, org, platform, workspace, principalId);
+        const subjectId = await effectiveUserVaultSubject(opts.connector, org, platform, workspace, actorId);
         try {
           const minted = await mintUser(connector, { subject: { type: "user", id: subjectId } });
           await auditMintOutcome(opts.connector, {
             subject: "user",
             outcome: "ok",
             shared: subjectId.startsWith(SHARED_VAULT_SUBJECT_PREFIX),
+            ...(memberRequester === undefined ? {} : { plane: "member", requester: memberRequester }),
           });
           return minted;
         } catch (e) {
@@ -301,15 +326,35 @@ export function userAwareProviderToken(
   });
 }
 
-export function connectorOpApproval(): ApprovalPolicy {
-  return (ctx): ApprovalStatus => {
+export function connectorOpApproval(deps: ConnectorOpApprovalDeps = {}): ApprovalPolicy {
+  return (ctx): ApprovalStatus | Promise<ApprovalStatus> => {
     if (!isConnectorOpTool(ctx.toolName)) return "not-applicable";
     const tier = effectiveConnectorOpTier(ctx.toolName);
     if (tier === "read") return "not-applicable";
-    if (tier === "destructive") return "user-approval";
-    if (ctx.approvedTools.has(ctx.toolName)) return "not-applicable";
-    return "user-approval";
+    return decideConnectorWrite(ctx, tier, deps.boundCredential ?? boundConnectorCredential);
   };
+}
+
+export interface ConnectorOpApprovalDeps {
+  readonly boundCredential?: typeof boundConnectorCredential;
+}
+
+async function decideConnectorWrite(
+  ctx: { readonly toolName: string; readonly approvedTools: ReadonlySet<string>; readonly session?: { readonly auth?: unknown } },
+  tier: ReturnType<typeof effectiveConnectorOpTier>,
+  boundCredential: typeof boundConnectorCredential,
+): Promise<ApprovalStatus> {
+  const auth = ctx.session?.auth;
+  if (auth !== undefined && auth !== null) {
+    const connection = ctx.toolName.split("__")[0] as string;
+    const bound = await boundCredential(connection, auth as Parameters<typeof boundConnectorCredential>[1]);
+    if (bound?.memberPlane === true) {
+      return { type: "denied", reason: memberPlaneRefusalMessage(connection, "member_plane_write") };
+    }
+  }
+  if (tier === "destructive") return "user-approval";
+  if (ctx.approvedTools.has(ctx.toolName)) return "not-applicable";
+  return "user-approval";
 }
 
 export function connectorApprovalPolicy(): ApprovalConfiguration {

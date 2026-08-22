@@ -39,6 +39,7 @@ export interface AgentSettings {
     readonly userPrincipal: boolean;
     readonly linkSetVault: boolean;
     readonly opTiering: boolean;
+    readonly memberPlane: boolean;
   };
   readonly identityLinking: {
     readonly codeBack: boolean;
@@ -267,6 +268,12 @@ export const SETTINGS = {
       shipped: false,
       summary:
         "The per-op consequence gate (A2): each `<connection>__<op>` call is classified individually (reads open, writes gated) instead of a blanket `once()`.",
+    } satisfies SettingSpec<boolean>,
+    memberPlane: {
+      path: "connectors.memberPlane",
+      shipped: false,
+      summary:
+        "The member plane (OPE-944): a member's own connector credential resolves in a shared room their domain declared it for, keyed to the one verified requester of that turn, reads only.",
     } satisfies SettingSpec<boolean>,
   },
   identityLinking: {
@@ -782,6 +789,7 @@ export function getSettings(
       userPrincipal: resolve(SETTINGS.connectors.userPrincipal, o.connectors?.userPrincipal, env),
       linkSetVault: resolve(SETTINGS.connectors.linkSetVault, o.connectors?.linkSetVault, env),
       opTiering: resolve(SETTINGS.connectors.opTiering, o.connectors?.opTiering, env),
+      memberPlane: resolve(SETTINGS.connectors.memberPlane, o.connectors?.memberPlane, env),
     },
     identityLinking: {
       codeBack: resolve(SETTINGS.identityLinking.codeBack, o.identityLinking?.codeBack, env),
