@@ -153,8 +153,26 @@ function slackCtx(channelId: string | undefined, threadTs?: string) {
 {
   const slackDoctrine = renderNoiseDoctrine({ channel: { kind: "slack" } } as never);
   ok(slackDoctrine.includes("react") && slackDoctrine.toLowerCase().includes("busy"), "noise doctrine mentions react + busy threads on Slack");
+
+  registerCapabilityManifest("discord", { midTurnPost: true, reactions: true });
   const discordDoctrine = renderNoiseDoctrine({ channel: { kind: "discord" } } as never);
-  ok(discordDoctrine === "", "noise doctrine renders nothing off Slack (react doesn't exist there)");
+  assert.strictEqual(discordDoctrine, slackDoctrine, "🔴 OPE-997: a Discord seat with manifest reactions:true reads the SAME noise doctrine bytes as Slack, not \"\"");
+  registerCapabilityManifest("discord", { midTurnPost: true, reactions: false });
+
+  const notionDoctrine = renderNoiseDoctrine({ channel: { kind: "notion" } } as never);
+  ok(notionDoctrine === "", "negative control: noise doctrine stays absent where the manifest's reactions flag is false");
+
+  assert.strictEqual(
+    slackDoctrine,
+    "## Busy threads: a react instead of a low-content reply\n" +
+      "On a message that did NOT address you, a single emoji `react` CAN BE your whole response — " +
+      'prefer it over a low-content text reply (a bare "got it" or "on it") that would just add ' +
+      "another line.\n\n" +
+      "When someone DOES address you, the react is your fast acknowledgement and never the answer. " +
+      "React first if you want them to know you saw it, then post ONE short `reply` before the turn " +
+      "ends — including when you hand the work to a delegated session.",
+    "🔴 negative control: Slack's rendering is byte-unchanged by the OPE-997 gate switch",
+  );
 
   ok(slackDoctrine.includes("did NOT address you"), "🔴 the react-alone case is scoped to an UNADDRESSED message");
   ok(slackDoctrine.includes("post ONE short `reply` before the turn"), "🔴 …and an addressed message is owed one short reply");
