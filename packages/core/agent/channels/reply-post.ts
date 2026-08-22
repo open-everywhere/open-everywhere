@@ -192,9 +192,16 @@ export async function recordLandedPost(input: {
   readonly messageId: string;
   readonly body: string;
   readonly platform: string;
+  readonly wake?: string | undefined;
 }): Promise<void> {
   if (input.editLocus) await recordOwnPost(input.org, input.editLocus, input.messageId);
-  await recordPostTail(input.body, new Date().toISOString(), input.platform, input.messageId);
+  await recordPostTail({
+    text: input.body,
+    at: new Date().toISOString(),
+    platform: input.platform,
+    id: input.messageId,
+    ...(input.wake ? { wake: input.wake } : {}),
+  });
 }
 
 export async function postReply(target: ReplyTarget, text: string, audit?: ReplyAudit, replier?: ReplierLabel): Promise<string> {
@@ -223,7 +230,14 @@ export async function postReply(target: ReplyTarget, text: string, audit?: Reply
         throw err;
       }
       await auditReplyPost(audit, realId, target.platform, body.length);
-      await recordLandedPost({ org: audit?.org, editLocus: replyEditLocus(target), messageId: realId, body, platform: target.platform });
+      await recordLandedPost({
+        org: audit?.org,
+        editLocus: replyEditLocus(target),
+        messageId: realId,
+        body,
+        platform: target.platform,
+        wake: audit?.wakeId,
+      });
       return realId;
     },
     releaseKeyOnFailure: releasePostKeyOnFailure,

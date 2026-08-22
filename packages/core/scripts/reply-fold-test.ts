@@ -119,13 +119,13 @@ async function callReply(
   turnId: string,
   wake: string,
   text: string,
-  force = false,
+  opts: { readonly force?: boolean; readonly done?: boolean } = {},
 ): Promise<{ id?: string; error?: string }> {
   const ctx = ctxFor(turnWake, turnId);
   const armed = armOf(replyTool, ctx);
   if (!armed) return { error: "reply did not arm" };
   return armed
-    .execute({ text, wake, done: true, force }, ctx)
+    .execute({ text, wake, done: opts.done ?? true, force: opts.force ?? false }, ctx)
     .then((r) => r as { id?: string })
     .catch((e: unknown) => ({ error: String(e) }));
 }
@@ -140,10 +140,10 @@ async function callEdit(turnWake: string, turnId: string, wake: string, messageI
     .catch((e: unknown) => ({ error: String(e) }));
 }
 
-async function wakeFor(channelId: string): Promise<string> {
+async function wakeFor(channelId: string, agoMs = 60_000): Promise<string> {
   const id = mintWakeId();
   const origin: UnifiedWakeOrigin = { platform: "slack", channelId };
-  await registerUnifiedWakeTarget(store, ORG, id, origin, new Date(Date.now() - 60_000).toISOString(), TOKEN, true);
+  await registerUnifiedWakeTarget(store, ORG, id, origin, new Date(Date.now() - agoMs).toISOString(), TOKEN, true);
   return id;
 }
 
@@ -224,9 +224,12 @@ let foldedMessageId = "";
   const inTurn = newSession();
   await inTurn(async () => seedTailWindow(TAIL_WINDOW));
   const w = await wakeFor(CHAN);
+  await roomSaid(Date.now());
+  const seed = await inTurn(() => callReply(w, "turn_4_seed", w, "The first part of the answer."));
+  ok(typeof seed.id === "string", "§4 precondition: our own post on THIS wake is the newest message in the room");
 
   const refused = await inTurn(() => callReply(w, "turn_4", w, "Something genuinely new."));
-  ok(refused.id === undefined, "§4: the first attempt is refused (§3's post is the newest message)");
+  ok(refused.id === undefined, "§4: the first attempt is refused");
   const before = posted.length;
   const again = await inTurn(() => callReply(w, "turn_4", w, "Something genuinely new."));
   ok(typeof again.id === "string", "🔴 §4: the SAME call in the SAME turn POSTS — the policy refuses at most once per room per turn");
@@ -237,9 +240,12 @@ let foldedMessageId = "";
   const inTurn = newSession();
   await inTurn(async () => seedTailWindow(TAIL_WINDOW));
   const w = await wakeFor(CHAN);
+  await roomSaid(Date.now());
+  const seed = await inTurn(() => callReply(w, "turn_5_seed", w, "The first part of the answer."));
+  ok(typeof seed.id === "string", "§5 precondition: our own post on THIS wake is the newest message in the room");
   const before = posted.length;
 
-  const forced = await inTurn(() => callReply(w, "turn_5", w, "This one has to notify.", true));
+  const forced = await inTurn(() => callReply(w, "turn_5", w, "This one has to notify.", { force: true }));
   ok(typeof forced.id === "string", "§5: `force: true` posts through a fold verdict");
   ok(posted.length === before + 1, "§5/ROOM: the forced message reached the room");
   const rows = await rowsFor("reply.forced", w);
@@ -248,7 +254,7 @@ let foldedMessageId = "";
 
   const w2 = await wakeFor(CHAN);
   await roomSaid(Date.now());
-  const clean = await inTurn(() => callReply(w2, "turn_5b", w2, "Nothing to override here.", true));
+  const clean = await inTurn(() => callReply(w2, "turn_5b", w2, "Nothing to override here.", { force: true }));
   ok(typeof clean.id === "string", "§5/CONTROL: the reply posts");
   ok((await rowsFor("reply.forced", w2)).length === 0, "🔴 §5/CONTROL: …and writes NO `reply.forced` row — a force on a clean room overrode nothing");
 }
@@ -258,17 +264,18 @@ let foldedMessageId = "";
   await inTurn(async () => seedTailWindow(TAIL_WINDOW));
   const w = await wakeFor(CHAN);
   await roomSaid(Date.now());
-  await inTurn(() => callReply(w, "turn_6a", w, "The first message."));
+  const seed = await inTurn(() => callReply(w, "turn_6a", w, "The first message.", { done: false }));
+  ok(typeof seed.id === "string", "§6 precondition: the fold target posted");
+  ok(!(await store.getUnifiedWakeRecord(ORG, w))?.answeredAt, "§6 precondition: a `done: false` post leaves the wake UNANSWERED, which is what the assertion below measures against");
 
-  const w2 = await wakeFor(CHAN);
   const text = "The message the policy refuses.";
-  const refused = await inTurn(() => callReply(w2, "turn_6b", w2, text));
+  const refused = await inTurn(() => callReply(w, "turn_6b", w, text));
   ok(refused.id === undefined, "§6: the post is refused");
-  const answeredAfterRefusal = await store.getUnifiedWakeRecord(ORG, w2);
+  const answeredAfterRefusal = await store.getUnifiedWakeRecord(ORG, w);
   ok(!answeredAfterRefusal?.answeredAt, "🔴 §6/WAKE: the refusal did NOT mark the wake answered — the turn still owes this conversation an answer");
 
   const before = posted.length;
-  const forced = await inTurn(() => callReply(w2, "turn_6c", w2, text, true));
+  const forced = await inTurn(() => callReply(w, "turn_6c", w, text, { force: true }));
   ok(forced.id !== undefined && forced.id !== REPLY_DEDUPE_SKIPPED_ID, "🔴 §6/DEDUPE: the SAME text posts with a real platform id — the refusal never claimed the post-once key");
   ok(posted.length === before + 1, "§6/ROOM: and it genuinely reached the room, rather than being suppressed as a duplicate");
 }
@@ -326,15 +333,18 @@ let foldedMessageId = "";
 
 {
   const now = Date.now();
-  ok((await replyFoldTarget(store, null, "slack", LOCUS)) === null, "§10: NO TAIL WINDOW (a worker, a task session, a native seat) ⇒ no fold");
-  ok((await replyFoldTarget(store, TAIL_WINDOW, "slack", null)) === null, "§10: NO EDITABLE ADDRESS for this surface ⇒ no fold");
+  ok((await replyFoldTarget({ store, window: null, platform: "slack", locus: LOCUS })) === null, "§10: NO TAIL WINDOW (a worker, a task session, a native seat) ⇒ no fold");
+  ok((await replyFoldTarget({ store, window: TAIL_WINDOW, platform: "slack", locus: null })) === null, "§10: NO EDITABLE ADDRESS for this surface ⇒ no fold");
   ok(
     foldTargetInTail([entry({ kind: "post", at: new Date(now).toISOString(), id: "m1" })], { container: undefined, platform: "slack", canEdit: () => true, nowMs: now }) === null,
     "§10: NO CONTAINER ⇒ the rooms cannot be told apart ⇒ no fold",
   );
   ok(foldTargetInTail([], { container: SURFACE, platform: "slack", canEdit: () => true, nowMs: now }) === null, "§10: an EMPTY ring ⇒ no fold");
   const brokenStore = { readSessionTail: async (): Promise<SessionTailEntry[]> => { throw new Error("store down"); } };
-  ok((await replyFoldTarget(brokenStore, TAIL_WINDOW, "slack", LOCUS)) === null, "🔴 §10: an UNREADABLE store ⇒ no fold, and the reply posts");
+  ok(
+    (await replyFoldTarget({ store: brokenStore, window: TAIL_WINDOW, platform: "slack", locus: LOCUS })) === null,
+    "🔴 §10: an UNREADABLE store ⇒ no fold, and the reply posts",
+  );
   const tied = [entry({ kind: "post", at: new Date(now).toISOString(), id: "m1" }), entry({ kind: "wake", at: new Date(now).toISOString() })];
   ok(foldTargetInTail(tied, { container: SURFACE, platform: "slack", canEdit: () => true, nowMs: now }) === null, "§10: a same-millisecond TIE reads as 'the room spoke' ⇒ no fold");
 }
@@ -344,21 +354,20 @@ let foldedMessageId = "";
   await inTurn(async () => seedTailWindow(TAIL_WINDOW));
   const w = await wakeFor(CHAN);
   await roomSaid(Date.now());
-  const first = await inTurn(() => callReply(w, "turn_11a", w, "The message that will be folded into."));
+  const first = await inTurn(() => callReply(w, "turn_11a", w, "The message that will be folded into.", { done: false }));
   ok(typeof first.id === "string", "§11: the first reply posted");
 
-  const w2 = await wakeFor(CHAN);
   const acted = await inTurn(async () => {
-    const refused = await callReply(w2, "turn_11b", w2, "The part that should fold in.");
+    const refused = await callReply(w, "turn_11b", w, "The part that should fold in.");
     ok(refused.id === undefined, "§11: the second post is refused, as §2 proves");
-    const e = await callEdit(w2, "turn_11b", w2, first.id as string, "The whole message, both parts.");
+    const e = await callEdit(w, "turn_11b", w, first.id as string, "The whole message, both parts.");
     ok(e.edited === true, "§11: the model folds via `edit_reply`, and the platform confirms");
     return repliedWakesThisTurn("turn_11b");
   });
-  ok(acted.includes(w2), "🔴 §11: the folded wake is in the turn's ACTED-ON set — a compliance is not a dropped wake");
+  ok(acted.includes(w), "🔴 §11: the folded wake is in the turn's ACTED-ON set — a compliance is not a dropped wake");
 
   const control = await inTurn(async () => repliedWakesThisTurn("turn_11_never_ran"));
-  ok(!control.includes(w2), "§11/CONTROL: a turn that did nothing holds an EMPTY acted-on set — the mark is not ambient");
+  ok(!control.includes(w), "§11/CONTROL: a turn that did nothing holds an EMPTY acted-on set — the mark is not ambient");
 }
 
 {
@@ -372,11 +381,12 @@ let foldedMessageId = "";
   const ringOnly: SessionTailEntry[] = [entry({ kind: "post", at: new Date().toISOString(), id: "never-in-the-ledger" })];
   const fakeStore = { readSessionTail: async (): Promise<SessionTailEntry[]> => ringOnly };
   ok(
-    (await replyFoldTarget(fakeStore, TAIL_WINDOW, "slack", LOCUS)) === null,
+    (await replyFoldTarget({ store: fakeStore, window: TAIL_WINDOW, platform: "slack", locus: LOCUS })) === null,
     "🔴 §13: a ring row with NO ledger row is NOT a fold target — the redirect must land somewhere `edit_reply` accepts",
   );
   ok(
-    (await replyFoldTarget(fakeStore, TAIL_WINDOW, "slack", LOCUS, undefined, { hasEventSeen: async () => true }))?.messageId === "never-in-the-ledger",
+    (await replyFoldTarget({ store: fakeStore, window: TAIL_WINDOW, platform: "slack", locus: LOCUS, ledgerDeps: { hasEventSeen: async () => true } }))
+      ?.messageId === "never-in-the-ledger",
     "§13/CONTROL: with the ledger confirming, the SAME ring row IS the fold target — the ledger read is the only difference",
   );
 }
@@ -469,7 +479,7 @@ let foldedMessageId = "";
     await inTurn(async () => {
       const refused = await callReply(w, "turn_842c", w, "Part two.");
       ok(refused.id === undefined, "§14c precondition: the first attempt draws the refusal");
-      const forced = await callReply(w, "turn_842c", w, "Part two, sent anyway.", true);
+      const forced = await callReply(w, "turn_842c", w, "Part two, sent anyway.", { force: true });
       ok(typeof forced.id === "string", "🔴 §14c: a turn that overrides the verdict still DELIVERS — the refusal record never blocks the reply path itself");
       await endTurnWithProse("And that is what I did.");
     });
@@ -478,6 +488,66 @@ let foldedMessageId = "";
     const rows = await dropRows(w);
     ok(rows.length === 1 && rows[0]!["reason"] === "narration-after-reply", "🔴 §14c/AUDIT: the trailing prose drops as ordinary narration — a turn that DID post is not reported as one the host withheld");
   }
+}
+
+{
+  const now = Date.now();
+  const at = new Date(now - 1_000).toISOString();
+  const base = { container: SURFACE, platform: "slack", canEdit: () => true, nowMs: now } as const;
+  const ringA: SessionTailEntry[] = [entry({ kind: "post", at, id: "mA", wake: "wk-A" })];
+
+  ok(
+    foldTargetInTail(ringA, { ...base, answeringWake: "wk-B" }) === null,
+    "🔴 §15: a post that answered wake A is NOT a fold target for the answer to wake B",
+  );
+  const same = foldTargetInTail(ringA, { ...base, answeringWake: "wk-A" });
+  ok(same !== null && same.messageId === "mA", "🔴 §15/CONTROL: the SAME ring answering the SAME wake still folds, onto that exact message");
+
+  const burst: SessionTailEntry[] = [
+    entry({ kind: "wake", at: new Date(now - 3_000).toISOString() }),
+    entry({ kind: "wake", at: new Date(now - 2_500).toISOString() }),
+    entry({ kind: "post", at, id: "mA", wake: "wk-A" }),
+  ];
+  ok(
+    foldTargetInTail(burst, { ...base, answeringWake: "wk-B" }) === null,
+    "🔴 §15/BURST: with two wakes pending, the answer to the second does NOT fold into the answer to the first",
+  );
+  ok(
+    foldTargetInTail(burst, { ...base, answeringWake: "wk-A" })?.messageId === "mA",
+    "§15/BURST/CONTROL: the SAME burst ring answering wake A still folds — the wake id is the only variable",
+  );
+
+  ok(
+    foldTargetInTail([entry({ kind: "post", at, id: "mLegacy" })], { ...base, answeringWake: "wk-B" })?.messageId === "mLegacy",
+    "🔴 §15/LEGACY: a ring row written before the wake was recorded still folds — a pre-change ring does not change behaviour",
+  );
+  ok(
+    foldTargetInTail(ringA, { ...base, answeringWake: undefined })?.messageId === "mA",
+    "🔴 §15/PER-SURFACE: a caller with NO wake (the per-surface `reply`) compares nothing and folds exactly as before",
+  );
+}
+
+{
+  const inTurn = newSession();
+  await inTurn(async () => seedTailWindow(TAIL_WINDOW));
+  const wA = await wakeFor(CHAN, 10_000);
+  const wB = await wakeFor(CHAN, 20_000);
+  await roomSaid(Date.now());
+
+  const first = await inTurn(() => callReply(wA, "turn_16a", wA, "The answer to the first question."));
+  ok(typeof first.id === "string", "§16 precondition: the answer to wake A is now the newest message in the room");
+
+  const before = posted.length;
+  const second = await inTurn(() => callReply(wB, "turn_16b", wB, "The answer to the SECOND question."));
+  ok(typeof second.id === "string", "🔴 §16: the answer to wake B POSTS — it answers a different question, so it is not a continuation");
+  ok(posted.length === before + 1, "§16/ROOM: and it really reached the room");
+  ok((await rowsFor("reply.refused", wB)).length === 0, "🔴 §16/AUDIT: NO `should-be-edit` row — the verdict the model declined 9 of 9 times is no longer drawn");
+
+  const third = await inTurn(() => callReply(wB, "turn_16c", wB, "More about the second question."));
+  ok(third.id === undefined && typeof third.error === "string", "🔴 §16/CONTROL: a second post on wake B IS refused — the policy is alive on this exact ring");
+  const refusals = await rowsFor("reply.refused", wB);
+  ok(refusals.length === 1 && refusals[0]!["reason"] === REPLY_FOLD_REFUSAL_REASON, "§16/CONTROL/AUDIT: one `should-be-edit` row, and it names wake B");
+  ok(String(third.error).includes(second.id as string), "🔴 §16/CONTROL/COPY: …and it steers at wake B's OWN post, not at wake A's");
 }
 
 console.log(`✓ reply-fold: ${passed} assertions passed`);

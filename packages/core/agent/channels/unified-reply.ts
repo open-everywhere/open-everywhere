@@ -84,7 +84,14 @@ export async function postUnifiedReply(
         throw err;
       }
       await auditReplyPost(audit, realId, origin.platform, body.length);
-      await recordLandedPost({ org: audit?.org, editLocus: unifiedEditLocus(origin), messageId: realId, body, platform: origin.platform });
+      await recordLandedPost({
+        org: audit?.org,
+        editLocus: unifiedEditLocus(origin),
+        messageId: realId,
+        body,
+        platform: origin.platform,
+        wake: audit?.wakeId,
+      });
       await recordContainerAnswered(audit?.org, origin);
       return realId;
     },

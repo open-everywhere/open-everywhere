@@ -115,6 +115,7 @@ export const unifiedReplyEntry = defineTool({
         locus: unifiedEditLocus(origin),
         turnId,
         audit: replyAuditFor(bind, "tool", input.wake),
+        answeringWake: input.wake,
         force: input.force === true,
       });
 
