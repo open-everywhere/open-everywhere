@@ -1,9 +1,10 @@
 import { type AuditWireEntry } from "./audit-read.js";
 import {
-  sleep, dS, makeWant, createRecorder, createInjector, createAuditReader, readToolCalls, readToolNames,
+  sleep, dS, makeWant, createRecorder, createInjector, createAuditReader, readToolCalls, readToolNames, scoreWithheld,
 } from "./window-harness.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import { withheldFromGrain } from "../../agent/access/window-gate-manifest.js";
+import { LEAN_SEAT_TOOLS } from "../../agent/access/lean-seat.js";
 import { windowGrainOf, type BindableContext } from "../../agent/identity/binding.js";
 import { taskWindowId, formatWindowToken, parseWindowToken, isTaskWindowToken, isThreadSeatWindowToken } from "../../agent/channels/window-key.js";
 import { oneshotAgentEnabled } from "../../agent/access/delegation-flag.js";
@@ -75,6 +76,8 @@ const toolCallsWithErrorsOf = (sessionId: string, sinceIso?: string): Promise<{ 
 const HEAVY = "please clone the acme/web repo, run the full test suite in a sandbox, then open a pull request with the fix. reply here when the PR is up.";
 const withheldStanding = new Set(withheldFromGrain("standing"));
 
+const leanKeep = [...LEAN_SEAT_TOOLS].filter((n) => !withheldStanding.has(n)).sort();
+
 async function f1(): Promise<void> {
   const since = new Date().toISOString();
   const { wakeId, token } = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: slackOrigin, text: HEAVY });
@@ -83,15 +86,16 @@ async function f1(): Promise<void> {
   if (!g) return record("F1", "FAIL", `no turn.tool_gated row appeared for wake ${wakeId} within ${GATE_TIMEOUT_MS}ms — the standing unified window was NOT narrowed`);
   const withheld = (g.detail?.withheld as string[]) ?? [];
   const grain = dS(g, "grain");
+  const reason = dS(g, "reason") ?? "grain";
   const missingWide = WIDE_HANDS.filter((w) => !withheld.includes(w));
-  const setMatch = withheld.length === withheldStanding.size && withheld.every((w) => withheldStanding.has(w));
-  if (grain !== "standing" || missingWide.length > 0 || !setMatch) {
-    return record("F1", "FAIL", `gated row present but grain=${grain}, withheld=[${withheld.join(",")}] (missing wide-hands: ${missingWide.join(",") || "none"}; manifest-match=${setMatch})`);
+  const verdict = scoreWithheld(withheld, [...withheldStanding], leanKeep);
+  if (grain !== "standing" || missingWide.length > 0 || !verdict.ok) {
+    return record("F1", "FAIL", `gated row present (reason=${reason}) but grain=${grain} — missing wide-hands: ${missingWide.join(",") || "none"}; manifest names NOT withheld: ${verdict.missing.join(",") || "none"}; speak/delegate roster wrongly withheld: ${verdict.cutKeep.join(",") || "none"}; withheld=[${withheld.join(",")}]`);
   }
   const sid = dS(g, "sessionId");
   const calls = sid ? await toolNamesOf(sid, since) : [];
   const leaked = calls.filter((c) => WIDE_HANDS.includes(c));
-  record("F1", "PASS", `standing unified window NARROWED — grain=standing, withheld ${withheld.length} incl. bash/checkout_repo/open_pull_request; transcript(${sid}) tools=[${[...new Set(calls)].join(",") || "none"}]${leaked.length ? ` ⚠ LEAKED ${leaked.join(",")}` : " (no wide-hands invoked)"}`);
+  record("F1", "PASS", `standing unified window NARROWED — grain=standing, reason=${reason}, withheld ${withheld.length} ⊇ all ${withheldStanding.size} standing-manifest names (incl. bash/checkout_repo/open_pull_request); speak/delegate roster intact (${leanKeep.join(",")}); surplus ${verdict.surplus.length} beyond the manifest (INFORMATION — the lean-seat subtraction, not a leak); transcript(${sid}) tools=[${[...new Set(calls)].join(",") || "none"}]${leaked.length ? ` ⚠ LEAKED ${leaked.join(",")}` : " (no wide-hands invoked)"}`);
 }
 
 async function f2(): Promise<void> {
@@ -287,6 +291,7 @@ async function f9(): Promise<void> {
 async function main(): Promise<void> {
   console.log(`=== WINDOW TOOL-GATING · STAGE F per-route e2e · run ${RUN} · ${new Date().toISOString()} ===`);
   console.log(`target=${TARGET || "(unset)"} domain=${DOMAIN} surface=${SURFACE}`);
+  console.log(`seat lock: /tmp/oe-e2e-locks/domain-${DOMAIN}.lock — hold it for the whole live drive`);
   if (!TARGET || !READ || !INJECT) {
     console.error("\nMISSING E2E_TARGET_URL and/or E2E_CONTROL_READ_TOKEN and/or E2E_CONTROL_INJECT_TOKEN — cannot drive any route.");
     for (const id of ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN / E2E_CONTROL_INJECT_TOKEN");

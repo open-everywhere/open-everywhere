@@ -838,6 +838,13 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   );
   ok(!isPendingWorkHandoff("one sec, looking at it"), "isPendingWorkHandoff: plain filler prose with no host frame is NOT a hand-off (no prose heuristic here)");
   ok(isFillerAck("one sec, looking at it"), "isPendingWorkHandoff: …and isFillerAck, the wider predicate, still catches that prose — the two are different questions");
+
+  const s11Interim = `${PENDING_WORK_FRAME}\n\nI'm checking the durable team memory for the exact \`sprint-22088\` mascot and will report back plainly if it isn't recorded.`;
+  ok(isPendingWorkHandoff(s11Interim), "isPendingWorkHandoff: the live-run S11 interim, verbatim, IS a hand-off — 194 chars, so no LENGTH threshold could have caught it");
+  ok(
+    !isPendingWorkHandoff("I couldn't find any recorded team mascot for `sprint-22088` in durable memory, so I don't know it."),
+    "isPendingWorkHandoff: the live-run S11 clean decline is NOT a hand-off — it is exactly what the gate asks for",
+  );
 }
 
 {
@@ -2054,6 +2061,120 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
     ],
   });
   ok(!unlabelled.includes("container="), "🔴 the negative control: strip the attribute and the render carries NO room label at all — two surfaces' messages become one undifferentiated stream");
+}
+
+{
+  const { scoreWithheld, classifyDelegationOutcome, delegationArmOf } =
+    await import("../packages/core/scripts/e2e/window-harness.js");
+  const { withheldFromGrain } = await import("@open-everywhere/core/agent/access/window-gate-manifest.js");
+  const { LEAN_SEAT_TOOLS } = await import("@open-everywhere/core/agent/access/lean-seat.js");
+
+  const manifest = withheldFromGrain("standing");
+  const keep = [...LEAN_SEAT_TOOLS].filter((n: string) => !manifest.includes(n));
+  ok(manifest.length > 0, "F1 fixture: the standing grain withholds at least one manifest name (else the pins below are vacuous)");
+  ok(keep.includes("reply") && keep.includes("agent"), "F1 fixture: the standing lean-seat keep set includes the speak verb AND the delegation verb");
+
+  const exact = scoreWithheld(manifest, manifest, keep);
+  ok(exact.ok, "scoreWithheld: the grain-gate row (withheld == the manifest slice) PASSES");
+  ok(exact.surplus.length === 0, "scoreWithheld: an exact row reports no surplus");
+
+  const leanRow = [...new Set([...manifest, "aws", "web_search", "sandbox_tools", "browser_tools"])];
+  const superset = scoreWithheld(leanRow, manifest, keep);
+  ok(superset.ok, "scoreWithheld: a SUPERSET of the manifest PASSES — the lean-seat row is stricter than the manifest, never leakier (the OPE-981 red)");
+  ok(
+    superset.surplus.join(",") === "aws,browser_tools,sandbox_tools,web_search",
+    "scoreWithheld: the surplus is reported as information, sorted, and names exactly the extra tools",
+  );
+
+  const leaked = scoreWithheld(manifest.filter((n: string) => n !== "bash"), manifest, keep);
+  ok(!leaked.ok, "scoreWithheld: a manifest name absent from the live withheld list FAILS — that is a leak, and it is the whole point of the gate");
+  ok(leaked.missing.join(",") === "bash", "scoreWithheld: the failure names the leaked tool");
+  const leakedSuperset = scoreWithheld(leanRow.filter((n: string) => n !== "bash"), manifest, keep);
+  ok(!leakedSuperset.ok && leakedSuperset.missing.join(",") === "bash", "scoreWithheld: a big surplus does NOT mask a missing manifest name");
+
+  const overCut = scoreWithheld([...manifest, "reply"], manifest, keep);
+  ok(!overCut.ok && overCut.cutKeep.join(",") === "reply", "scoreWithheld: withholding a lean-seat KEEP name FAILS (a seat cut past usefulness)");
+
+  ok(delegationArmOf(true, true) === "native-tasks", "delegationArmOf: the SHIPPED defaults (nativeSubagent + backgroundTasks) are the native-tasks arm");
+  ok(delegationArmOf(true, false) === "native-sync", "delegationArmOf: native without background tasks is the native-sync arm");
+  ok(delegationArmOf(false, true) === "roll-own", "delegationArmOf: nativeSubagent off is the roll-own arm, whatever backgroundTasks says");
+
+  const base = { nativeReceipt: false, rollOwnReceipt: false, replied: false, calls: null, arm: "native-tasks" as const };
+  ok(
+    classifyDelegationOutcome({ ...base, nativeReceipt: true }).status === "PASS",
+    "classifyDelegationOutcome: a delegation.task_started row joined to the caller session PASSES on the shipped native arm (the OPE-979 permanent red)",
+  );
+  ok(
+    classifyDelegationOutcome({ ...base, arm: "roll-own", rollOwnReceipt: true }).status === "PASS",
+    "classifyDelegationOutcome: a task.spawned row still PASSES on the roll-own arm",
+  );
+  ok(
+    classifyDelegationOutcome({ ...base, arm: "native-tasks", rollOwnReceipt: true }).status === "PASS",
+    "classifyDelegationOutcome: an observed roll-own receipt PASSES even when the driver's flags say native (observation outranks derivation)",
+  );
+  const called = [{ name: "agent", errored: false }];
+  ok(
+    classifyDelegationOutcome({ ...base, replied: true, calls: called }).status === "FAIL",
+    "classifyDelegationOutcome: a clean agent call with NO receipt row FAILS on an arm that writes one — the dispatch leg is broken",
+  );
+  ok(
+    classifyDelegationOutcome({ ...base, replied: true, calls: [{ name: "agent", errored: true }] }).status === "FAIL",
+    "classifyDelegationOutcome: an agent call whose execute ERRORED FAILS (never laundered into a model-didn't-choose SKIP)",
+  );
+  ok(
+    classifyDelegationOutcome({ ...base, arm: "native-sync", replied: true, calls: called }).status === "PASS",
+    "classifyDelegationOutcome: on native-sync a clean agent call IS the receipt — that arm writes no dispatch row at all",
+  );
+  ok(
+    classifyDelegationOutcome({ ...base, arm: "native-sync", replied: true, calls: [{ name: "agent", errored: true }] }).status === "FAIL",
+    "classifyDelegationOutcome: native-sync does NOT excuse an errored agent call",
+  );
+  ok(
+    classifyDelegationOutcome({ ...base, replied: true, calls: null }).status === "SKIP",
+    "classifyDelegationOutcome: an unreadable transcript is a SKIP (an observability failure is not model behaviour, and not a product red)",
+  );
+  ok(
+    classifyDelegationOutcome({ ...base, replied: true, calls: [{ name: "reply", errored: false }] }).status === "SKIP",
+    "classifyDelegationOutcome: a reply with no agent call is a SKIP — delegation is model-dependent",
+  );
+  ok(
+    classifyDelegationOutcome({ ...base }).status === "SKIP",
+    "classifyDelegationOutcome: no receipt and no reply is a SKIP (the turn may still be running)",
+  );
+  ok(
+    classifyDelegationOutcome({ ...base, replied: true, calls: called }).reason.includes("delegation.task_started"),
+    "classifyDelegationOutcome: the native-arm failure NAMES the row it expected (the old text misdirected to OE_SPAWN_DISPATCH_SECRET)",
+  );
+}
+
+{
+  const { silenceAssertionPlan } = await import("../packages/core/scripts/e2e/journey.js");
+  const { auditSilencesEnabled } = await import("@open-everywhere/core/agent/audit/audit.js");
+  ok(auditSilencesEnabled() === false, "premise: audit.silences ships OFF — prod is actions-only and writes no full-detail silence row");
+
+  const undeclared = silenceAssertionPlan("github.no_reply", false);
+  ok(
+    undeclared.always.join(",") === "reply.no_reply_observed",
+    "silenceAssertionPlan: the ALWAYS poll is the ungated reply.no_reply_observed row — the leg keeps real coverage on prod instead of timing out (the OPE-978 red)",
+  );
+  ok(undeclared.whenDeclared.length === 0, "silenceAssertionPlan: an undeclared target polls for NO flag-gated row (that poll could only time out)");
+  ok(
+    !undeclared.always.includes("github.no_reply") && !undeclared.always.includes("unified.no_reply"),
+    "negative control: the ALWAYS poll never contains a flag-gated action name",
+  );
+
+  const declared = silenceAssertionPlan("github.no_reply", true);
+  ok(declared.always.join(",") === "reply.no_reply_observed", "silenceAssertionPlan: declaring the flag does NOT weaken the always-on assertion");
+  ok(
+    declared.whenDeclared.join(",") === "github.no_reply,unified.no_reply",
+    "silenceAssertionPlan: a declared target ALSO asserts the per-surface row and the unified one (a unified domain's silence is judged by the unified supervisor)",
+  );
+  for (const surface of ["linear.no_reply", "notion.no_reply"]) {
+    ok(
+      silenceAssertionPlan(surface, true).whenDeclared[0] === surface,
+      `silenceAssertionPlan: the per-surface action is carried through for ${surface}`,
+    );
+  }
 }
 
 rmSync(dir, { recursive: true, force: true });
