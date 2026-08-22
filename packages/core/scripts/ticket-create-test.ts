@@ -20,6 +20,9 @@ const { createGithubIssue } = await import("../agent/scm/issue-actions.js");
 type TicketCreateAdapter = import("../agent/channels/ticket-create.js").TicketCreateAdapter;
 type TicketCreateArgs = import("../agent/approvals/ticket-create.js").TicketCreateArgs;
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
+type Domain = import("../agent/memory/domain.js").Domain;
+const { registerIdentityMapper } = await import("../agent/identity/binding.js");
+const { defineDomain } = await import("../agent/memory/domain.js");
 await import("../agent/approvals/flow.js");
 
 let n = 0;
@@ -27,6 +30,23 @@ const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);
   n++;
 };
+
+const WORK_ROLE = "project-key";
+const mapped = new Set<string>();
+function grantFor(...platforms: readonly string[]): readonly Domain[] {
+  for (const platform of platforms) {
+    if (mapped.has(platform)) continue;
+    registerIdentityMapper(platform, () => ({ workspace: "W1", surface: platform, mode: "channel", visibility: "public", trust: "internal", principalId: "U_TEST" }));
+    mapped.add(platform);
+  }
+  return [
+    defineDomain({
+      name: "filing",
+      channels: platforms.map((x) => `${x}/W1/${x}`),
+      credentials: platforms.map((x) => ({ connector: x, credential: WORK_ROLE, use: `${x}-key` })),
+    }),
+  ];
+}
 
 function ctx(platform: string, attrs: Record<string, string> = {}, sources?: readonly string[]): BindableContext {
   return {
@@ -52,7 +72,21 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
   } catch (err) {
     msg = String((err as Error).message);
   }
-  ok(/not supported on "notion"/.test(msg), `an unregistered platform refuses cleanly (${msg})`);
+  ok(/not one of this session's work destinations/.test(msg), `an unregistered platform is refused at the DESTINATION gate (${msg})`);
+  ok(!msg.includes("filed") && !msg.includes("created"), "the refusal never claims anything was filed");
+}
+
+{
+  const { registerEntityActionAdapter } = await import("../agent/channels/entity-actions.js");
+  registerEntityActionAdapter({ platform: "entity-only", workRole: WORK_ROLE, setState: async () => "ok" });
+  let msg = "";
+  try {
+    await resolveTicketCreate(ctx("entity-only", {}), { platform: "entity-only", target: "X-1" }, grantFor("entity-only"));
+    assert.fail("expected a throw");
+  } catch (err) {
+    msg = String((err as Error).message);
+  }
+  ok(/not supported on "entity-only"/.test(msg), `a granted, registered platform with no create adapter refuses cleanly (${msg})`);
   ok(msg.includes("github"), "the refusal NAMES the supported set (github, in core alone)");
   ok(!msg.includes("filed") && !msg.includes("created"), "the refusal never claims anything was filed");
 }
@@ -70,15 +104,16 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
   const calls: { target: string; title: string; body: string }[] = [];
   const adapter: TicketCreateAdapter = {
     platform: "test-create-a",
+    workRole: WORK_ROLE,
     create: async (target, draft) => {
       calls.push({ target, title: draft.title, body: draft.body });
       return { ref: { platform: "test-create-a", id: `${target}#1` }, url: "https://example.test/1", summary: `filed ${target}#1` };
     },
   };
   registerTicketCreateAdapter(adapter);
-  registerTicketCreateAdapter({ platform: "test-create-b", create: async () => ({ ref: { platform: "test-create-b", id: "b#1" }, summary: "filed b#1" }) });
+  registerTicketCreateAdapter({ platform: "test-create-b", workRole: WORK_ROLE, create: async () => ({ ref: { platform: "test-create-b", id: "b#1" }, summary: "filed b#1" }) });
 
-  const resolved = await resolveTicketCreate(ctx("slack", {}, ["slack", "test-create-a"]), { target: "T-1" }, []);
+  const resolved = await resolveTicketCreate(ctx("test-create-a", {}, ["slack", "test-create-a"]), { target: "T-1" }, grantFor("test-create-a"));
   ok(resolved.platform === "test-create-a" && resolved.target === "T-1", "a window with ONE work surface infers the platform");
   const created = await resolved.run({ title: "hi", body: "there" });
   ok(created.ref.id === "T-1#1" && created.url === "https://example.test/1", "the bound `run` closure calls the adapter with (target, draft) and returns the neutral ref");
@@ -95,7 +130,7 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
   ok(noneMsg.includes("github") && noneMsg.includes("test-create-a"), "that refusal also names the supported set");
 
   await assert.rejects(
-    () => resolveTicketCreate(ctx("slack", {}, ["slack", "test-create-a", "test-create-b"]), { target: "T-1" }, []),
+    () => resolveTicketCreate(ctx("test-create-a", {}, ["slack", "test-create-a", "test-create-b"]), { target: "T-1" }, grantFor("test-create-a", "test-create-b")),
     /more than one work surface.*pass `platform`/s,
     "an ambiguous window refuses rather than guessing which surface to file on",
   );
@@ -106,17 +141,18 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
   const calls: { target: string; organizationId: string | undefined }[] = [];
   registerTicketCreateAdapter({
     platform: "test-create-org",
+    workRole: WORK_ROLE,
     create: async (target, draft, organizationId) => {
       calls.push({ target, organizationId });
       return { ref: { platform: "test-create-org", id: `${target}#1` }, summary: `filed ${target}#1` };
     },
   });
-  const resolved = await resolveTicketCreate(ctx("test-create-org", { organization_id: "org-soak" }, ["test-create-org"]), { target: "ENG" }, []);
+  const resolved = await resolveTicketCreate(ctx("test-create-org", { organization_id: "org-soak" }, ["test-create-org"]), { target: "ENG" }, grantFor("test-create-org"));
   ok(resolved.organizationId === "org-soak", "🔴 THE FIX: resolveTicketCreate carries the turn's organization_id auth attribute as organizationId");
   await resolved.run({ title: "t", body: "b" });
   ok(calls[0]?.organizationId === "org-soak", "…and `run` passes it to the adapter's create fn as a THIRD argument, alongside target/draft");
 
-  const resolvedNoOrg = await resolveTicketCreate(ctx("test-create-org", {}, ["test-create-org"]), { target: "ENG" }, []);
+  const resolvedNoOrg = await resolveTicketCreate(ctx("test-create-org", {}, ["test-create-org"]), { target: "ENG" }, grantFor("test-create-org"));
   ok(resolvedNoOrg.organizationId === undefined, "NEGATIVE CONTROL: no organization_id on the turn ⇒ organizationId is ABSENT, not a guessed value");
   await resolvedNoOrg.run({ title: "t", body: "b" });
   ok(calls[1]?.organizationId === undefined, "…and the adapter fn receives undefined, never invents a credential selector");
@@ -125,15 +161,16 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
 {
   registerTicketCreateAdapter({
     platform: "test-create-default",
+    workRole: WORK_ROLE,
     defaultTarget: (c) => ((c as unknown as { session: { auth: { current: { attributes: Record<string, string> } } } }).session.auth.current.attributes.team ? "INFERRED" : undefined),
     create: async (target) => ({ ref: { platform: "test-create-default", id: `${target}#9` }, summary: `filed on ${target}` }),
   });
-  const inferred = await resolveTicketCreate(ctx("test-create-default", { team: "yes" }), undefined, []);
+  const inferred = await resolveTicketCreate(ctx("test-create-default", { team: "yes" }), undefined, grantFor("test-create-default"));
   ok(inferred.target === "INFERRED", "defaultTarget supplies the destination when the caller named none");
-  const explicit = await resolveTicketCreate(ctx("test-create-default", { team: "yes" }), { target: "EXPLICIT" }, []);
+  const explicit = await resolveTicketCreate(ctx("test-create-default", { team: "yes" }), { target: "EXPLICIT" }, grantFor("test-create-default"));
   ok(explicit.target === "EXPLICIT", "an explicit target always wins over defaultTarget");
   await assert.rejects(
-    () => resolveTicketCreate(ctx("test-create-default", {}), undefined, []),
+    () => resolveTicketCreate(ctx("test-create-default", {}), undefined, grantFor("test-create-default")),
     /no destination.*pass `target`/s,
     "no target and nothing inferable refuses asking for it (never guesses a destination)",
   );
@@ -143,38 +180,43 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
 {
   registerTicketCreateAdapter({
     platform: "test-create-gated",
+    workRole: WORK_ROLE,
     checkAccess: (_c, target) => {
       if (target === "forbidden") throw new Error("nope, not granted");
     },
     create: async (target) => ({ ref: { platform: "test-create-gated", id: `${target}#1` }, summary: "filed" }),
   });
   await assert.rejects(
-    () => resolveTicketCreate(ctx("test-create-gated", {}), { target: "forbidden" }, []),
+    () => resolveTicketCreate(ctx("test-create-gated", {}), { target: "forbidden" }, grantFor("test-create-gated")),
     /nope, not granted/,
     "checkAccess's refusal propagates from resolveTicketCreate (before anything is frozen)",
   );
   n++;
-  ok((await resolveTicketCreate(ctx("test-create-gated", {}), { target: "ok" }, [])).target === "ok", "checkAccess passing lets resolution through");
+  ok((await resolveTicketCreate(ctx("test-create-gated", {}), { target: "ok" }, grantFor("test-create-gated"))).target === "ok", "checkAccess passing lets resolution through");
 }
 
 {
   let seenDomains: unknown = "never called";
   registerTicketCreateAdapter({
     platform: "test-create-async",
+    workRole: WORK_ROLE,
     checkAccess: async (_c, target, domains) => {
       seenDomains = domains;
       if (target === "forbidden") throw new Error("async refusal from create checkAccess");
     },
     create: async (target) => ({ ref: { platform: "test-create-async", id: `${target}#1` }, summary: "filed" }),
   });
-  const marker = [{ name: "marker-domain" }] as unknown as Parameters<typeof resolveTicketCreate>[2];
+  const marker = [...grantFor("test-create-async"), { name: "marker-domain" }] as unknown as Parameters<typeof resolveTicketCreate>[2];
   await assert.rejects(
     () => resolveTicketCreate(ctx("test-create-async", {}), { target: "forbidden" }, marker),
     /async refusal from create checkAccess/,
     "an ASYNC checkAccess's rejection propagates — resolveTicketCreate awaits it, so a refused destination can never be frozen onto a card",
   );
   n++;
-  ok(Array.isArray(seenDomains) && (seenDomains as { name: string }[])[0]?.name === "marker-domain", "the `domains` the resolver was given is handed to checkAccess unchanged");
+  ok(
+    Array.isArray(seenDomains) && (seenDomains as { name: string }[]).some((d) => d.name === "marker-domain"),
+    "the `domains` the resolver was given is handed to checkAccess unchanged",
+  );
   ok((await resolveTicketCreate(ctx("test-create-async", {}), { target: "fine" }, marker)).target === "fine", "an async checkAccess that resolves lets creation through");
 }
 

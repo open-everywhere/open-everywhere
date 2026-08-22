@@ -25,14 +25,40 @@ const { assignEntry } = await import("../agent/tools/assign.js");
 await import("../agent/approvals/flow.js");
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
 
+const WORK_ROLE = "project-key";
+const { registerIdentityMapper } = await import("../agent/identity/binding.js");
+const { defineDomain } = await import("../agent/memory/domain.js");
+for (const platform of ["tool-test-platform", "slack", "linear", "notion"]) {
+  registerIdentityMapper(platform, (c) => {
+    const attrs = ((c as { session?: { auth?: { current?: { attributes?: Record<string, string> } } } }).session?.auth?.current?.attributes) ?? {};
+    return { workspace: "W1", surface: attrs["room"] ?? platform, mode: "channel", visibility: "public", trust: "internal", principalId: attrs["user_id"] ?? "U_TEST" };
+  });
+}
+const VERB_DOMAINS = [
+  defineDomain({
+    name: "filing",
+    channels: ["tool-test-platform/W1/tool-test-platform", "linear/W1/linear"],
+    credentials: [
+      { connector: "tool-test-platform", credential: WORK_ROLE, use: "filing-key" },
+      { connector: "linear", credential: "workspace", use: "filing-linear" },
+    ],
+  }),
+  defineDomain({
+    name: "filing-slack",
+    channels: ["slack/W1/granted"],
+    credentials: [{ connector: "tool-test-platform", credential: WORK_ROLE, use: "filing-key" }],
+  }),
+  defineDomain({ name: "chat", channels: ["slack/W1/slack", "notion/W1/notion"] }),
+];
 registerConfig({
   loadBundles: () => [],
   loadBindings: () => [],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [],
+  loadDomains: () => VERB_DOMAINS,
   loadSilos: () => [],
-  domainsForSurface: () => [],
+  domainsForSurface: ({ workspaceKey, surface }) =>
+    VERB_DOMAINS.filter((d) => (d.channels ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
 });
 
 let n = 0;
@@ -44,6 +70,7 @@ const ok = (cond: boolean, label: string) => {
 const calls: { verb: string; entityId: string; value: string }[] = [];
 registerEntityActionAdapter({
   platform: "tool-test-platform",
+  workRole: WORK_ROLE,
   setState: async (id, v) => {
     calls.push({ verb: "setState", entityId: id, value: v });
     return `set ${id} → ${v}`;
@@ -75,8 +102,11 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
   const onAdapterPlatform = await armed(addLabelDefault, ctx("tool-test-platform", {}));
   ok(onAdapterPlatform !== null, "add_label mounts on a session whose own origin has a ticket-action adapter");
 
-  const crossSurface = await armed(addLabelDefault, ctx("slack", {}, ["slack", "tool-test-platform"]));
-  ok(crossSurface !== null, "add_label mounts on a Slack session whose domain sources include a ticket-adapter platform");
+  const crossSurface = await armed(addLabelDefault, ctx("slack", { room: "granted" }, ["slack", "tool-test-platform"]));
+  ok(crossSurface !== null, "add_label mounts on a Slack session whose DOMAIN holds a ticket-adapter platform's work grant");
+
+  const sourcedButUngranted = await armed(addLabelDefault, ctx("slack", {}, ["slack", "tool-test-platform"]));
+  ok(sourcedButUngranted === null, "add_label is ABSENT on a Slack session that SOURCES the tracker but holds no grant for it");
 
   const plainChat = await armed(addLabelDefault, ctx("slack", {}));
   ok(plainChat === null, "add_label is ABSENT on a plain chat session with no ticket-adapter source and no default entity");
@@ -110,8 +140,8 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
 {
   await assert.rejects(
     async () => { await execTool(addLabelEntry)({ ref: { platform: "notion", id: "page-1" }, label: "x" }, ctx("notion", {}) as never); },
-    /not supported on "notion"/,
-    "add_label refuses cleanly on an unsupported platform (Notion — no status/label mapping)",
+    /not one of this session's work destinations/,
+    "add_label refuses cleanly on a platform no work adapter registered (Notion — no status/label mapping)",
   );
   n++;
 }
@@ -120,7 +150,7 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
   const before = (await getOperationalStore().listPendingActions("default")).length;
   await assert.rejects(
     async () => { await execTool(setStateEntry)({ ref: { platform: "tool-test-platform", id: "TT-1" }, state: "Done" }, ctx("tool-test-platform", {}) as never); },
-    /I can't change that ticket's status from here.*has no approval-card path.*isn't in an explicit domain.*domains\.ts/s,
+    /I can't change that ticket's status from here.*has no approval-card path.*no Slack or Discord channel to put the card in.*domains\.ts/s,
     "set_state on a card-less origin refuses with the VENUE's copy (OPE-326) — its own verb, and the config change that would unblock it, not a flat 'this surface is not Slack'",
   );
   n++;
@@ -131,7 +161,7 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
   process.env.OE_EGRESS_SPOOF = "1";
   const slackCtx = ctx(
     "slack",
-    { team_id: "T1", channel_id: "C1", channel_type: "channel", user_id: "U_PROPOSER" },
+    { room: "granted", team_id: "T1", channel_id: "C1", channel_type: "channel", user_id: "U_PROPOSER" },
     ["slack", "tool-test-platform"],
   );
   const out = await execTool(setStateEntry)({ ref: { platform: "tool-test-platform", id: "TT-2" }, state: "Done" }, slackCtx as never);
@@ -147,7 +177,7 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
 {
   await assert.rejects(
     async () => { await execTool(assignEntry)({ ref: { platform: "tool-test-platform", id: "TT-1" }, assignee: "alice" }, ctx("tool-test-platform", {}) as never); },
-    /I can't assign that ticket from here.*has no approval-card path.*isn't in an explicit domain.*domains\.ts/s,
+    /I can't assign that ticket from here.*has no approval-card path.*no Slack or Discord channel to put the card in.*domains\.ts/s,
     "assign refuses with the same venue copy and its own verb",
   );
   n++;
@@ -156,7 +186,7 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
   process.env.OE_EGRESS_SPOOF = "1";
   const slackCtx = ctx(
     "slack",
-    { team_id: "T1", channel_id: "C1", channel_type: "channel", user_id: "U_PROPOSER" },
+    { room: "granted", team_id: "T1", channel_id: "C1", channel_type: "channel", user_id: "U_PROPOSER" },
     ["slack", "tool-test-platform"],
   );
   const out = await execTool(assignEntry)({ ref: { platform: "tool-test-platform", id: "TT-3" }, assignee: "alice" }, slackCtx as never);
