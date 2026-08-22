@@ -5,6 +5,7 @@ import { withBashHangGuard } from "../stall/bash-hang-guard.js";
 import { windowGatedKit } from "../access/window-gated.js";
 import { ingestUntrusted, ingestUntrustedModelOutput } from "../access/untrusted.js";
 import { withEgressFence } from "../access/web-fetch-fence.js";
+import { withMemoryWriteFence } from "../memory/write-fence.js";
 import { extractSkillEnvelopes, sanitizeSkillEnvelopeSource } from "../access/skill-taint-envelope.js";
 
 interface WebFetchOutput {
@@ -49,7 +50,7 @@ export default windowGatedKit("sandbox_tools", {
   glob: defineTool(withStallGuard("glob", glob)),
   grep: defineTool(withStallGuard("grep", grep)),
   read_file: defineTool(withStallGuard("read_file", readFile)),
-  write_file: defineTool(withStallGuard("write_file", writeFile)),
+  write_file: defineTool(withStallGuard("write_file", withMemoryWriteFence("write_file", writeFile))),
   web_fetch: defineTool({
     ...withStallGuard("web_fetch", withEgressFence("web_fetch", webFetch)),
     toModelOutput(output: unknown) {
