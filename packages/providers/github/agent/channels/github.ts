@@ -77,6 +77,10 @@ function str(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
+function num(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
 type GitHubSupervisorSessionState = GitHubChannelState & {
   oeSupervisor?: boolean;
   oeUnified?: boolean;
@@ -405,6 +409,8 @@ export const githubOnComment = async (ctx: GitHubInboundContext, comment: GitHub
         conversationKind: ctx.conversation.kind,
         issueNumber: ctx.conversation.issueNumber ?? undefined,
         pullRequestNumber: ctx.conversation.pullRequestNumber ?? undefined,
+        reviewThreadRootCommentId:
+          ctx.conversation.kind === "review_thread" ? (num(comment.raw["in_reply_to_id"]) ?? comment.id) : undefined,
         installationId: ctx.github.installationId,
         actorLogin: comment.author?.login ?? ctx.sender.login,
         actorId: comment.author?.id ?? ctx.sender.id,

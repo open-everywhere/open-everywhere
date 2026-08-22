@@ -1,0 +1,191 @@
+import assert from "node:assert/strict";
+import {
+  registerConfig,
+  resolveReadAdapter,
+  supportedReadPlatforms,
+  READ_ADAPTERS,
+  ChannelScopeError,
+  type BindableContext,
+  type PrFetchFn,
+  type RenderedLine,
+} from "@open-everywhere/core/agent/adapter-api.js";
+import { registerGithubProvider } from "../agent/register.js";
+import { githubReadAdapter, parseGithubContainer, reviewThreadLines } from "../agent/channels/github-read.js";
+import { buildGitHubAuth } from "../agent/channels/github-identity.js";
+
+process.env.GITHUB_TOKEN = "gh-test-token";
+
+registerGithubProvider();
+registerConfig({
+  loadDomains: () => [{ name: "d", channels: ["github/acme/api"] }],
+} as unknown as Parameters<typeof registerConfig>[0]);
+
+let passed = 0;
+function ok(cond: boolean, label: string): void {
+  assert.ok(cond, label);
+  passed++;
+}
+function eq(a: unknown, b: unknown, label: string): void {
+  assert.deepStrictEqual(a, b, label);
+  passed++;
+}
+async function throws(fn: () => Promise<unknown>, label: string): Promise<void> {
+  await assert.rejects(fn, (err: unknown) => err instanceof ChannelScopeError, label);
+  passed++;
+}
+
+function githubTurn(opts: {
+  owner?: string;
+  repo?: string;
+  issue?: number;
+  pr?: number;
+  kind?: string;
+  review?: number;
+}): BindableContext {
+  const auth = buildGitHubAuth({
+    owner: opts.owner ?? "acme",
+    repo: opts.repo ?? "api",
+    isPrivate: true,
+    conversationKind: opts.kind ?? (opts.pr ? "pull_request" : "issue"),
+    ...(opts.issue !== undefined ? { issueNumber: opts.issue } : {}),
+    ...(opts.pr !== undefined ? { pullRequestNumber: opts.pr } : {}),
+    ...(opts.review !== undefined ? { reviewThreadRootCommentId: opts.review } : {}),
+    actorLogin: "alice",
+    authorAssociation: "MEMBER",
+  });
+  return { channel: { kind: "github" }, session: { auth: { current: auth } } } as unknown as BindableContext;
+}
+
+function transport(routes: readonly (readonly [string, unknown])[]): { fn: PrFetchFn; urls: string[] } {
+  const urls: string[] = [];
+  const fn: PrFetchFn = async (url) => {
+    urls.push(url);
+    const hit = routes.find(([fragment]) => url.includes(fragment));
+    if (!hit) return { ok: false, status: 404, text: async () => "not found", json: async () => ({}) };
+    return { ok: true, status: 200, text: async () => JSON.stringify(hit[1]), json: async () => hit[1] };
+  };
+  return { fn, urls };
+}
+
+const ISSUE_7 = { title: "Broken", body: "it fails", user: { login: "alice", type: "User" }, created_at: "t0", comments: 2 };
+const COMMENTS_7 = [
+  { id: 11, body: "looking", user: { login: "bob", type: "User" }, created_at: "t1" },
+  { id: 12, body: "ci says no", user: { login: "ci-app", type: "Bot" }, created_at: "t2" },
+];
+
+ok(supportedReadPlatforms().includes("github"), "registerGithubProvider registers the github read adapter");
+ok(READ_ADAPTERS["github"] === githubReadAdapter, "…and the registered adapter IS this bundle's");
+{
+  const resolved = resolveReadAdapter(githubTurn({ issue: 7 }), undefined, [{ name: "d", channels: ["github/acme/api"] }]);
+  ok(resolved.platform === "github", "a github turn resolves the github platform");
+  ok(resolved.adapter === githubReadAdapter, "…and resolves this adapter, not a 'not supported' throw");
+}
+
+eq(githubReadAdapter.wakeAddress(githubTurn({ issue: 7 })), { container: "acme/api#7" }, "an ISSUE turn names its conversation and no thread");
+eq(githubReadAdapter.wakeAddress(githubTurn({ pr: 12 })), { container: "acme/api#12" }, "a PR TIMELINE turn names the PR and no thread");
+eq(
+  githubReadAdapter.wakeAddress(githubTurn({ pr: 12, kind: "review_thread", review: 555 })),
+  { container: "acme/api#12", threadRoot: "555" },
+  "a REVIEW-THREAD turn names the PR and the thread's root comment",
+);
+eq(githubReadAdapter.wakeAddress(githubTurn({})), undefined, "a turn with no conversation anchor names NO container (explicit undefined)");
+
+eq(parseGithubContainer("acme/api#7"), { owner: "acme", repo: "api", repoFull: "acme/api", number: 7 }, "the container id parses to owner/repo/number");
+eq(parseGithubContainer("acme/api"), undefined, "a container with no number is refused");
+eq(parseGithubContainer("api#7"), undefined, "a container with no owner is refused");
+eq(parseGithubContainer("acme/api#0"), undefined, "conversation number 0 is refused");
+
+{
+  const t = transport([
+    ["/issues/7/comments", COMMENTS_7],
+    ["/issues/7", ISSUE_7],
+  ]);
+  const lines = await githubReadAdapter.readChannel(githubTurn({ issue: 7 }), "acme/api#7", 50, t.fn);
+  eq(lines.length, 3, "an issue read returns its opening post plus both comments");
+  eq(lines[0], { author: "alice", authorId: "alice", ts: "t0", text: "Broken\n\nit fails" }, "the opening line is the issue's title and body");
+  eq(lines[1]?.text, "looking", "the first comment follows the opening post, oldest first");
+  eq(lines[2], { author: "ci-app", bot: true, ts: "t2", text: "ci says no" }, "a Bot comment is marked a machine and carries no author id");
+  ok(
+    t.urls.every((u) => !u.includes("/pulls/")),
+    "the issue read NEVER fetches the PR object — this is the 404 gap (scm/pr-feedback.ts:151) closed",
+  );
+  ok(t.urls.some((u) => u.includes("/repos/acme/api/issues/7?") || u.endsWith("/repos/acme/api/issues/7")), "it reads the issue through /issues/{n}");
+}
+{
+  const pr = { ...ISSUE_7, title: "Add caching", comments: 1 };
+  const t = transport([
+    ["/issues/12/comments", [COMMENTS_7[0]]],
+    ["/issues/12", pr],
+  ]);
+  const lines = await githubReadAdapter.readChannel(githubTurn({ pr: 12 }), "acme/api#12", 50, t.fn);
+  eq(lines.length, 2, "a PR conversation reads through the same endpoint");
+  eq(lines[0]?.text, "Add caching\n\nit fails", "…and its opening line is the PR's own title and body");
+}
+{
+  const t = transport([["/issues/9", { ...ISSUE_7, comments: 0 }]]);
+  const lines = await githubReadAdapter.readChannel(githubTurn({ issue: 9 }), "acme/api#9", 50, t.fn);
+  eq(lines.length, 1, "a comment-less conversation reads as its opening post alone");
+  ok(t.urls.every((u) => !u.includes("/comments")), "…and asks for no comment page at all");
+}
+
+{
+  const page2 = Array.from({ length: 50 }, (_, i) => ({ id: 100 + i, body: `c${i}`, user: { login: "bob" }, created_at: `t${i}` }));
+  const t = transport([
+    ["/issues/7/comments", page2],
+    ["/issues/7", { ...ISSUE_7, comments: 150 }],
+  ]);
+  const lines = await githubReadAdapter.readChannel(githubTurn({ issue: 7 }), "acme/api#7", 50, t.fn);
+  ok(t.urls.some((u) => u.includes("comments?per_page=100&page=2")), "a 150-comment conversation reads the LAST page, not page 1");
+  ok(!t.urls.some((u) => u.includes("comments?per_page=100&page=1")), "…and does not also read page 1 when the last page covers the limit");
+  eq(lines.length, 50, "the page is capped to the caller's limit, opening post included");
+  eq(lines[lines.length - 1]?.text, "c49", "the NEWEST comment is the last line");
+}
+{
+  const page1 = Array.from({ length: 100 }, (_, i) => ({ id: 200 + i, body: `p${i}`, user: { login: "bob" }, created_at: `u${i}` }));
+  const page2 = [{ id: 999, body: "newest", user: { login: "bob" }, created_at: "z" }];
+  const urls: string[] = [];
+  const fn: PrFetchFn = async (url) => {
+    urls.push(url);
+    const body = url.includes("page=2") ? page2 : url.includes("page=1") ? page1 : { ...ISSUE_7, comments: 101 };
+    return { ok: true, status: 200, text: async () => "", json: async () => body };
+  };
+  const lines = await githubReadAdapter.readChannel(githubTurn({ issue: 7 }), "acme/api#7", 50, fn);
+  ok(urls.some((u) => u.includes("page=2")) && urls.some((u) => u.includes("page=1")), "a short last page pulls the page before it");
+  eq(lines[lines.length - 1]?.text, "newest", "the newest comment is still last");
+  eq(lines.length, 50, "and the read still holds to the caller's limit");
+}
+
+const REVIEW_COMMENTS = [
+  { id: 555, body: "this allocates", user: { login: "bob", type: "User" }, created_at: "r1" },
+  { id: 556, body: "fixed", user: { login: "alice", type: "User" }, created_at: "r2", in_reply_to_id: 555 },
+  { id: 777, body: "another thread", user: { login: "carol", type: "User" }, created_at: "r3" },
+  { id: 778, body: "reply elsewhere", user: { login: "bob", type: "User" }, created_at: "r4", in_reply_to_id: 777 },
+];
+eq(reviewThreadLines(REVIEW_COMMENTS, "555").map((l: RenderedLine) => l.text), ["this allocates", "fixed"], "a thread read keeps its root and its replies");
+eq(reviewThreadLines(REVIEW_COMMENTS, "777").map((l: RenderedLine) => l.text), ["another thread", "reply elsewhere"], "…and the OTHER thread on the same PR reads separately");
+eq(reviewThreadLines(REVIEW_COMMENTS, "12345"), [], "a root nothing replies to reads as an empty thread, never as the whole PR");
+{
+  const t = transport([["/pulls/12/comments", REVIEW_COMMENTS]]);
+  const lines = await githubReadAdapter.readThread(githubTurn({ pr: 12, kind: "review_thread", review: 555 }), "acme/api#12", "555", 100, t.fn);
+  eq(lines.map((l) => l.text), ["this allocates", "fixed"], "the live thread read fetches the PR's review comments and filters to the thread");
+  eq(lines[0]?.authorId, "bob", "…and attributes each line to its author");
+}
+
+{
+  const t = transport([
+    ["/issues/7/comments", COMMENTS_7],
+    ["/issues/7", ISSUE_7],
+  ]);
+  const own = githubTurn({ issue: 7 });
+  ok((await githubReadAdapter.readChannel(own, "acme/api#7", 50, t.fn)).length === 3, "control: the turn's OWN container reads");
+  await throws(() => githubReadAdapter.readChannel(own, "evil/api#7", 50, t.fn), "another OWNER's repo of the same name is refused");
+  await throws(() => githubReadAdapter.readChannel(own, "acme/secret#7", 50, t.fn), "a repo outside the domain's read scope is refused");
+  await throws(() => githubReadAdapter.readChannel(own, "acme/api", 50, t.fn), "a container id that names no conversation is refused");
+  await throws(() => githubReadAdapter.readThread(own, "evil/api#7", "555", 100, t.fn), "the thread read runs the SAME fence");
+  ok(
+    !t.urls.some((u) => u.includes("evil") || u.includes("secret")),
+    "no refused read reached the network — the fence runs BEFORE the fetch",
+  );
+}
+
+console.log(`✓ github-read: ${passed} assertions passed`);

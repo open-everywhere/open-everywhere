@@ -16,6 +16,7 @@ export interface GitHubIdentityInput {
   readonly conversationKind?: string;
   readonly issueNumber?: number;
   readonly pullRequestNumber?: number;
+  readonly reviewThreadRootCommentId?: number;
   readonly installationId?: number;
   readonly actorLogin: string;
   readonly actorId?: number;
@@ -35,6 +36,7 @@ export function buildGitHubAuth(input: GitHubIdentityInput): OpenEverywhereGitHu
   if (input.conversationKind) attributes.conversation_kind = input.conversationKind;
   if (typeof input.issueNumber === "number") attributes.issue_number = String(input.issueNumber);
   if (typeof input.pullRequestNumber === "number") attributes.pull_request_number = String(input.pullRequestNumber);
+  if (typeof input.reviewThreadRootCommentId === "number") attributes.review_thread_root_comment_id = String(input.reviewThreadRootCommentId);
   if (typeof input.installationId === "number") attributes.installation_id = String(input.installationId);
   if (typeof input.actorId === "number") attributes.user_id = String(input.actorId);
   if (input.actorType) attributes.user_type = input.actorType;
@@ -120,6 +122,11 @@ function githubAuthPrincipalId(ctx: BindableContext): string | undefined {
 
 export function githubConversationKey(owner: string | undefined, repo: string | undefined, number: number | undefined): string | undefined {
   return owner && repo && Number.isFinite(number) ? `${owner}/${repo}#${number}` : undefined;
+}
+
+export function githubReviewThreadRoot(ctx: BindableContext): string | undefined {
+  const raw = githubAttr(githubAuthOf(ctx)?.attributes, ["review_thread_root_comment_id", "reviewThreadRootCommentId"]);
+  return raw !== undefined && /^\d+$/u.test(raw) ? raw : undefined;
 }
 
 export const bindGitHub: IdentityMapper = (ctx): RawIdentity => {

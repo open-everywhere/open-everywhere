@@ -38,9 +38,12 @@ function chatCtx(room: string, grain = "task"): BindableContext {
 const PAY_ROOM = `${CHAT}/W1/CPAY`;
 const ENG_ROOM = `${CHAT}/W1/CENG`;
 
+const PAY_REPO_ROOM = "github/W1/api";
+const ENG_REPO_ROOM = "github/W1/other";
+
 const DOMAINS: readonly Domain[] = [
-  defineDomain({ name: "payments", channels: [PAY_ROOM] }),
-  defineDomain({ name: "eng", channels: [ENG_ROOM] }),
+  defineDomain({ name: "payments", channels: [PAY_ROOM, PAY_REPO_ROOM] }),
+  defineDomain({ name: "eng", channels: [ENG_ROOM, ENG_REPO_ROOM] }),
 ];
 
 registerConfig({
@@ -170,6 +173,55 @@ const { assembleAccessInstructions } = await import("../agent/access/instruction
       `NEGATIVE CONTROL: ${slug} is absent on a fire in a room with no repo grant (explicit null, not a refusal)`,
     );
   }
+}
+
+{
+  const { surfaceWorkRole, domainHoldsSurfaceWorkGrant, surfaceWorkReadPlatforms, surfaceWorkReadMount, assertSurfaceWorkGrant, SurfaceWorkGrantError } =
+    await import("../agent/access/surface-work-grant.js");
+
+  registerIdentityMapper("github", (ctx) => {
+    const a = (ctx as BindableContext).session?.auth?.current?.attributes as Record<string, string> | undefined;
+    return { workspace: a?.["ws"], surface: a?.["repo"], mode: "channel", visibility: "private", trust: "internal", principalId: "U_GH" };
+  });
+
+  function githubCtx(repo: string): BindableContext {
+    return {
+      channel: { kind: "github" },
+      session: { id: `gh-${repo}`, auth: { current: { attributes: { ws: "W1", repo }, principalId: "U_GH", principalType: "github-user" } } },
+    } as unknown as BindableContext;
+  }
+
+  ok(resolveAccessFor(githubCtx("api")).repos.join(",") === "acme/api", "FIXTURE: the granted repo room resolves the repo grant");
+  ok(resolveAccessFor(githubCtx("other")).repos.length === 0, "FIXTURE: the control repo room resolves NO repo grant");
+
+  ok(surfaceWorkRole("github") === undefined, "github still declares no chat work role — the arm is not a WORK_ROLES row (OPE-940 stands)");
+  ok(domainHoldsSurfaceWorkGrant(undefined, "github", ["acme/api"]) === true, "🔴 THE FIX: a repo grant IS github's chat-surface work grant, with no domain declaration");
+  ok(domainHoldsSurfaceWorkGrant(undefined, "github", []) === false, "NEGATIVE CONTROL: no repos, no grant (explicit false)");
+  ok(domainHoldsSurfaceWorkGrant(DOMAINS[0], "github") === false, "a caller that passes no repo grant holds none — the default is a refusal, not the domain");
+
+  ok(surfaceWorkReadPlatforms(githubCtx("api"), DOMAINS).join(",") === "github", "a repo-granted github window reads its own surface on the work plane");
+  ok(surfaceWorkReadMount(githubCtx("api"), () => DOMAINS) === true, "…and the work reads MOUNT there");
+  ok(surfaceWorkReadPlatforms(githubCtx("other"), DOMAINS).length === 0, "NEGATIVE CONTROL: an ungranted repo room reads nothing (explicit empty)");
+  ok(surfaceWorkReadMount(githubCtx("other"), () => DOMAINS) === false, "…and the work reads do NOT mount there (explicit false)");
+  ok(surfaceWorkReadMount({} as unknown as BindableContext, () => DOMAINS) === false, "an identity-less ctx mounts nothing (fail closed)");
+
+  assertSurfaceWorkGrant(githubCtx("api"), DOMAINS, "github");
+  n++;
+  assert.throws(
+    () => assertSurfaceWorkGrant(githubCtx("other"), DOMAINS, "github"),
+    (err: unknown) => err instanceof SurfaceWorkGrantError && err.platform === "github" && /repos:/.test(err.message),
+    "an ungranted repo room is refused, and the message names the access bundle's repos: list, not a credentials role",
+  );
+  n++;
+
+  ok(
+    surfaceWorkReadPlatforms(chatCtx("CPAY"), DOMAINS).length === 0,
+    "🔴 the repo grant confers NO work read on the chat platform in the same domain (explicit empty)",
+  );
+  ok(
+    domainHoldsSurfaceWorkGrant(DOMAINS[0], CHAT, ["acme/api"]) === false,
+    "…and a repo grant is not a credential-declared surface's grant either (explicit false)",
+  );
 }
 
 console.log(`✓ github-work-grant: ${n} assertions passed`);
