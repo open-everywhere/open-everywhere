@@ -40,6 +40,7 @@ const catalogues: ConnectorCredentials[] = [
     allows: ["api-key"],
     credentials: [
       { id: "workspace", type: "api-key", secretRef: "LINEAR_ACCESS_TOKEN", broker: "env", intake: false },
+      { id: "1a000000-0000-4000-8000-000000000001", type: "api-key", secretRef: "LINEAR_ACCESS_TOKEN", broker: "env", intake: false },
       {
         id: "1a000000-0000-4000-8000-000000000002",
         type: "api-key",

@@ -1,3 +1,4 @@
+
 import assert from "node:assert/strict";
 import { registerConfig } from "../agent/access/config.js";
 import { hasWorkGrant } from "../agent/access/work-grant.js";
@@ -33,7 +34,14 @@ const OPS_ROOM = `${CHAT}/W1/COPS`;
 const DOMAINS: readonly Domain[] = [
   defineDomain({ name: "payments", channels: [PAY_ROOM], credentials: [{ connector: "notion", credential: "team-key", use: "payments-work-key" }] }),
   defineDomain({ name: "eng", channels: [ENG_ROOM] }),
-  defineDomain({ name: "ops", channels: [OPS_ROOM], credentials: [{ connector: "bugtracker", credential: "project-key", use: "ops-bugtracker" }] }),
+  defineDomain({
+    name: "ops",
+    channels: [OPS_ROOM],
+    credentials: [
+      { connector: "bugtracker", credential: "project-key", use: "ops-bugtracker" },
+      { connector: "noworkspace", credential: "project-key", use: "ops-noworkspace" },
+    ],
+  }),
 ];
 
 registerConfig({
@@ -63,20 +71,23 @@ registerTicketCreateAdapter({
 
 {
   const granted = workDestinationPlatforms(chatCtx("CPAY"), DOMAINS);
-  ok(granted.includes("notion"), "🔴 THE FIX: a domain that holds the notion WORK credential may address notion, with NO notion chat channel anywhere in it");
-  ok(granted.includes(CHAT), "…and the window's own source is still in the set (the union never narrows)");
-  ok(granted[0] === CHAT, "sources come first, so platform inference reads exactly as it did before");
+  ok(granted.includes("notion"), "🔴 OPE-931: a domain that holds the notion WORK credential may address notion, with NO notion chat channel anywhere in it");
+  ok(
+    granted.includes(CHAT) === false,
+    "🔴 OPE-953: the window's OWN chat platform is NOT a work destination — talking somewhere never confers filing there (explicit false)",
+  );
+  ok(granted.join(",") === "notion", "…so the set is exactly the granted connectors, in their own sorted order");
 
   const ungranted = workDestinationPlatforms(chatCtx("CENG"), DOMAINS);
   ok(ungranted.includes("notion") === false, "NEGATIVE CONTROL: a domain that declares NO work role may not address notion (explicit false)");
-  ok(ungranted.includes(CHAT), "…while its own source is unaffected");
+  ok(ungranted.length === 0, "…and a domain with no work declaration at all addresses NOTHING — its chat channel buys it no destination");
 
   ok(workDestinationPlatforms(chatCtx("CENG"), DOMAINS).join(",") !== workDestinationPlatforms(chatCtx("CPAY"), DOMAINS).join(","), "a grant belongs to ONE domain — the other domain's set differs");
 
   ok(workDestinationPlatforms(chatCtx("CNOWHERE"), DOMAINS).includes("notion") === false, "a room in no memory domain holds no work grant (fail closed)");
 
   const blind = workDestinationPlatforms({} as unknown as BindableContext, DOMAINS);
-  ok(blind.includes("notion") === false, "an identity-less ctx resolves NO grant (the resolution fails closed, it does not throw)");
+  ok(blind.length === 0, "an identity-less ctx resolves NO grant and therefore NO destination (fails closed, does not throw)");
 }
 
 const created: { target: string; title: string; organizationId: string | undefined }[] = [];
@@ -135,9 +146,8 @@ registerEntityActionAdapter({
   const { ref } = await resolveEntityAction(chatCtx("CPAY"), "setState", { platform: "notion", id: "PAGE-1", organizationId: "own-workspace" }, DOMAINS);
   ok(ref.organizationId === "own-workspace", "a ref that already names its workspace keeps it — the turn's own stamp beats the grant");
 
-  registerEntityActionAdapter({ platform: "test-no-workspace", setState: async () => "ok" });
-  const ownSurface = { channel: { kind: "test-no-workspace" }, session: { auth: { current: { attributes: {} } } } } as unknown as BindableContext;
-  const bare = await resolveEntityAction(ownSurface, "setState", { platform: "test-no-workspace", id: "1" }, DOMAINS);
+  registerEntityActionAdapter({ platform: "noworkspace", workRole: "project-key", setState: async () => "ok" });
+  const bare = await resolveEntityAction(chatCtx("COPS"), "setState", { platform: "noworkspace", id: "1" }, DOMAINS);
   ok(bare.ref.organizationId === undefined, "NEGATIVE CONTROL: an adapter with no workspaceFor leaves organizationId ABSENT — never a guessed credential selector");
 }
 

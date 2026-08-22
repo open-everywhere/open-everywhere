@@ -106,11 +106,14 @@ const { workDestinationPlatforms } = await import("../agent/channels/work-destin
 {
   const granted = workDestinationPlatforms(chatCtx("CPAY"), DOMAINS);
   ok(granted.includes("github"), "🔴 THE FIX: a repo-granted domain may address github with NO github chat channel anywhere in it");
-  ok(granted.includes(CHAT), "…and the window's own source is still in the set (the union never narrows)");
+  ok(
+    granted.includes(CHAT) === false,
+    "🔴 OPE-953: the window's OWN chat platform is NOT a destination — the set is the grant alone (explicit false)",
+  );
 
   const ungranted = workDestinationPlatforms(chatCtx("CENG"), DOMAINS);
   ok(ungranted.includes("github") === false, "NEGATIVE CONTROL: a domain with no repo grant may not address github (explicit false)");
-  ok(ungranted.includes(CHAT), "…while its own source is unaffected");
+  ok(ungranted.length === 0, "…and it addresses nothing at all — a chat room confers no work destination");
 
   ok(
     workDestinationPlatforms({} as unknown as BindableContext, DOMAINS).includes("github") === false,

@@ -30,6 +30,7 @@ const { registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
 registerSlackFixtureMapper();
 
 const { registerIdentityMapper } = await import("../agent/identity/binding.js");
+const WORK_ROLE = "project-key";
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineDomain } = await import("../agent/memory/domain.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
@@ -71,9 +72,24 @@ registerIdentityMapper("venue-ticket", (ctx) => {
 });
 
 const DOMAINS = [
-  defineDomain({ name: "eng", channels: ["teams/W1/CONV1", "teams/W1/CONV2", "teams/W1/CONV_PR", "venue-ticket/W1/VT_ROOM", "slack/T1/C_OPS"], memory: "eng-brain" }),
-  defineDomain({ name: "lonely", channels: ["teams/W1/CONV_LONE"], memory: "eng-brain" }),
-  defineDomain({ name: "slackside", channels: ["slack/T1/C1"], memory: "eng-brain" }),
+  defineDomain({
+    name: "eng",
+    channels: ["teams/W1/CONV1", "teams/W1/CONV2", "teams/W1/CONV_PR", "venue-ticket/W1/VT_ROOM", "slack/T1/C_OPS"],
+    memory: "eng-brain",
+    credentials: [{ connector: "venue-ticket", credential: WORK_ROLE, use: "eng-tracker" }],
+  }),
+  defineDomain({
+    name: "lonely",
+    channels: ["teams/W1/CONV_LONE"],
+    memory: "eng-brain",
+    credentials: [{ connector: "venue-ticket", credential: WORK_ROLE, use: "lonely-tracker" }],
+  }),
+  defineDomain({
+    name: "slackside",
+    channels: ["slack/T1/C1"],
+    memory: "eng-brain",
+    credentials: [{ connector: "venue-ticket", credential: WORK_ROLE, use: "slackside-tracker" }],
+  }),
 ];
 
 const CONNECTIONS = [{ id: "notion-rest", credentialType: "bearer" as const, secretRef: "NOTION_API_KEY", allowedWebsites: ["api.notion.com"], methods: ["GET" as const] }];
@@ -135,21 +151,28 @@ const createTicketTool = (await import("../agent/tools/create_ticket.js")).defau
 
 registerEntityActionAdapter({
   platform: "venue-ticket",
+  workRole: WORK_ROLE,
   setState: async (id, v) => `set ${id} → ${v}`,
   assign: async (id, v) => `assigned ${id} → ${v}`,
 });
 registerEntityActionAdapter({
   platform: "venue-ticket-b",
+  workRole: WORK_ROLE,
   setState: async (id, v) => `set ${id} → ${v}`,
   assign: async (id, v) => `assigned ${id} → ${v}`,
 });
 registerTicketCreateAdapter({
   platform: "venue-ticket",
-  defaultTarget: () => "acme/from-conv1",
+  workRole: WORK_ROLE,
+  defaultTarget: (ctx) => {
+    const attrs = (ctx as unknown as { session?: { auth?: { current?: { attributes?: Record<string, string> } } } }).session?.auth?.current?.attributes ?? {};
+    return attrs["conversation_id"] === "CONV2" ? "acme/from-conv2" : "acme/from-conv1";
+  },
   create: async (target) => ({ ref: { platform: "venue-ticket", id: `${target}#1` }, summary: `filed ${target}#1` }),
 });
 registerTicketCreateAdapter({
   platform: "venue-ticket-b",
+  workRole: WORK_ROLE,
   defaultTarget: () => "acme/from-conv2",
   create: async (target) => ({ ref: { platform: "venue-ticket-b", id: `${target}#1` }, summary: `filed ${target}#1` }),
 });
@@ -593,14 +616,14 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   const tRow2 = await rowOf(ticketFrom2.pendingId);
   ok(tRow1["postedTo"] === "slack/T1/C_OPS" && tRow2["postedTo"] === "slack/T1/C_OPS", "args-vs-card(326): both filings' cards land in the same venue");
   ok(
-    ticketFrom1.platform === "venue-ticket" && ticketFrom1.target === "acme/from-conv1" && ticketFrom2.platform === "venue-ticket-b" && ticketFrom2.target === "acme/from-conv2",
-    "args-vs-card(326): 🔴 …and the DESTINATION differs per asking room — the tracker filed into is the asking window's, not the venue's",
+    ticketFrom1.platform === "venue-ticket" && ticketFrom1.target === "acme/from-conv1" && ticketFrom2.platform === "venue-ticket" && ticketFrom2.target === "acme/from-conv2",
+    "args-vs-card(326): 🔴 …and the TARGET differs per asking room — what is filed comes from the asking turn, not from the venue the card landed in",
   );
 
   await refuses(
-    () => (armed(setStateTool, conv2, "set_state") as Promise<Entry>).then((e) => e.execute({ ref: { platform: "venue-ticket", id: "VT-9" }, state: "Done" }, conv2)),
-    /"venue-ticket" is not one of this session's work destinations/,
-    "args-vs-card(326): 🔴 a ref reachable from the VENUE's domain but not from the ASKING window is still refused — the redirect moves the card, never the authorization surface",
+    () => (armed(setStateTool, conv2, "set_state") as Promise<Entry>).then((e) => e.execute({ ref: { platform: "venue-ticket-b", id: "VTB-9" }, state: "Done" }, conv2)),
+    /"venue-ticket-b" is not one of this session's work destinations/,
+    "args-vs-card(326): 🔴 a ref this window SOURCES but its domain holds no grant for is refused — chat topology is not a work capability",
   );
 }
 
@@ -616,11 +639,11 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
     /I can't assign that ticket from here.*domain "lonely" has no Slack or Discord channel.*domains\.ts/s,
     "326-refuse: assign names ITS verb, not its sibling's",
   );
-  await refuses(
-    () => (armed(createTicketTool, teamsTicketCtx("CONV_ORPHAN"), "create_ticket") as Promise<Entry>).then((e) => e.execute({ title: "x", body: "" }, teamsTicketCtx("CONV_ORPHAN"))),
-    /I can't file that ticket from here.*isn't in an explicit domain.*domains\.ts/s,
-    "326-refuse: create_ticket in NO domain gets the OTHER reason — the config change is different, and naming the wrong one is how a refusal becomes useless",
-  );
+  {
+    const handler = (createTicketTool as { events?: Record<string, (e: unknown, c: unknown) => unknown> }).events?.["session.started"];
+    const resolved = handler ? await handler({}, teamsTicketCtx("CONV_ORPHAN")) : null;
+    ok(resolved === null, "326-refuse: 🔴 create_ticket is ABSENT in a room that is in NO domain — it holds no work grant, so the verb never appears to be offered");
+  }
   ok(await pendingCount().then((after) => after === before), "326-refuse: 🔴 NOTHING is minted on any of the three refusals");
 }
 

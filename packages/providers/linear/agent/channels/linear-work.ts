@@ -7,3 +7,11 @@ export const LINEAR_WORK_CREDENTIAL = "workspace";
 export function linearWorkOrg(ctx: BindableContext, domains?: readonly Domain[]): string | undefined {
   return callerWorkGrant(ctx, LINEAR_PROVIDER, LINEAR_WORK_CREDENTIAL, () => domains ?? getConfig().loadDomains());
 }
+
+export function linearWorkMount(ctx: BindableContext, domains: () => readonly Domain[]): boolean {
+  try {
+    return linearWorkOrg(ctx, domains()) !== undefined;
+  } catch {
+    return false;
+  }
+}
