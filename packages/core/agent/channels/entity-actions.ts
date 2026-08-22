@@ -6,6 +6,7 @@ import {
   type BindableContext,
 } from "../identity/binding.js";
 import { workDestinationPlatforms } from "./work-destinations.js";
+import { registerWorkPlatform } from "./work-registry.js";
 import type { Domain } from "../memory/domain.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 
@@ -21,6 +22,7 @@ export type EntityActionFn = (entityId: string, value: string, organizationId?: 
 
 export interface EntityActionAdapter {
   readonly platform: string;
+  readonly workRole?: string;
   checkAccess?(ctx: BindableContext, entityId: string, domains: readonly Domain[]): void | Promise<void>;
   workspaceFor?(ctx: BindableContext): string | undefined;
   setState?: EntityActionFn;
@@ -33,6 +35,7 @@ const ENTITY_ACTION_ADAPTERS: Record<string, EntityActionAdapter> = {};
 export function registerEntityActionAdapter(adapter: EntityActionAdapter): void {
   if (!admitProviderRegistration(adapter.platform, "entity-action-adapter")) return;
   ENTITY_ACTION_ADAPTERS[adapter.platform] = adapter;
+  registerWorkPlatform(adapter.platform, adapter.workRole);
 }
 
 export function supportedEntityActionPlatforms(): readonly string[] {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { registerConfig } from "../agent/access/config.js";
+import { hasWorkGrant } from "../agent/access/work-grant.js";
 import { workDestinationPlatforms } from "../agent/channels/work-destinations.js";
 import { registerTicketCreateAdapter, resolveTicketCreate } from "../agent/channels/ticket-create.js";
 import { registerEntityActionAdapter, resolveEntityAction } from "../agent/channels/entity-actions.js";
@@ -27,10 +28,12 @@ function chatCtx(room: string): BindableContext {
 
 const PAY_ROOM = `${CHAT}/W1/CPAY`;
 const ENG_ROOM = `${CHAT}/W1/CENG`;
+const OPS_ROOM = `${CHAT}/W1/COPS`;
 
 const DOMAINS: readonly Domain[] = [
   defineDomain({ name: "payments", channels: [PAY_ROOM], credentials: [{ connector: "notion", credential: "team-key", use: "payments-work-key" }] }),
   defineDomain({ name: "eng", channels: [ENG_ROOM] }),
+  defineDomain({ name: "ops", channels: [OPS_ROOM], credentials: [{ connector: "bugtracker", credential: "project-key", use: "ops-bugtracker" }] }),
 ];
 
 registerConfig({
@@ -44,6 +47,18 @@ registerConfig({
     const key = `${workspaceKey}/${surface}`;
     return DOMAINS.filter((d) => (d.channels ?? []).includes(key)).map((d) => d.name);
   },
+});
+
+{
+  ok(
+    workDestinationPlatforms(chatCtx("CPAY"), DOMAINS).includes("notion") === false,
+    "🔴 OPE-959: a domain HOLDING the notion work grant may NOT address notion while no notion adapter is registered (explicit false)",
+  );
+}
+
+registerTicketCreateAdapter({
+  platform: "notion",
+  create: async (target) => ({ ref: { platform: "notion", id: `${target}#0` }, summary: "unused" }),
 });
 
 {
@@ -147,6 +162,32 @@ async function armed(tool: unknown, c: BindableContext): Promise<unknown> {
     ok((await armed(tool, chatCtx("CPAY"))) !== null, `🔴 THE FIX: ${name} MOUNTS for a granted domain whose only channel is a chat room`);
     ok((await armed(tool, chatCtx("CENG"))) === null, `NEGATIVE CONTROL: ${name} is ABSENT for the ungranted domain in the same deployment`);
   }
+}
+
+{
+  ok(
+    workDestinationPlatforms(chatCtx("COPS"), DOMAINS).includes("bugtracker") === false,
+    "NEGATIVE CONTROL: a domain declaring the bugtracker work role addresses NOTHING while no bugtracker adapter is registered",
+  );
+
+  registerTicketCreateAdapter({
+    platform: "bugtracker",
+    workRole: "project-key",
+    create: async (target) => ({ ref: { platform: "bugtracker", id: `${target}#1` }, summary: `filed ${target}#1` }),
+  });
+
+  ok(
+    workDestinationPlatforms(chatCtx("COPS"), DOMAINS).includes("bugtracker"),
+    "🔴 OPE-959: registering an adapter that NAMES its work role makes the platform addressable for a domain that declares that role — no core table names it",
+  );
+  ok(
+    workDestinationPlatforms(chatCtx("CPAY"), DOMAINS).includes("bugtracker") === false,
+    "NEGATIVE CONTROL: a domain that declares a DIFFERENT provider's work role is not admitted to bugtracker (the grant is still per-domain)",
+  );
+  ok(
+    hasWorkGrant(DOMAINS[2], "bugtracker", "some-other-role") === false,
+    "…and the ROLE decides — the same domain holds no grant under a role it never declared (explicit false)",
+  );
 }
 
 console.log(`✓ ${n} work-destination assertions passed`);
