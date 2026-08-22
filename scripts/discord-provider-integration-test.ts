@@ -19,7 +19,7 @@ const ok = (cond: boolean, label: string): void => {
 const ctxFor = (kind: string): BindableContext => ({ channel: { kind } }) as unknown as BindableContext;
 
 const m = capabilitiesForPlatform("discord");
-ok(m.midTurnPost === true && m.reactions === false, "discord manifest = { midTurnPost: true, reactions: false } once the bundle registers it");
+ok(m.midTurnPost === true && m.reactions === true, "discord manifest = { midTurnPost: true, reactions: true } once the bundle registers it (OPE-987: react is now wired)");
 ok(capabilitiesFor(ctxFor("channel:discord")).midTurnPost === true, "namespaced 'channel:discord' resolves the registered discord manifest");
 ok(capabilitiesFor(ctxFor("discord-gateway")).midTurnPost === true, "'discord-gateway' aliases to discord and resolves its registered manifest");
 

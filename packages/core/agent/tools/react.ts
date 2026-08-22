@@ -22,11 +22,11 @@ const reactEntry = defineTool({
           "you the react only acknowledges: post one short `reply` as well before the turn ends. " +
           'Give the BARE emoji name, no colons (e.g. "thumbsup", not ":thumbsup:"). Defaults to ' +
           "reacting to the message that triggered this turn; pass `ts` to react to a different " +
-          "message ts in this channel instead (Slack only — on GitHub/Linear a reaction always " +
-          "lands on the issue/PR itself, and `ts` is ignored there, since neither surface tracks a " +
-          "message-level target). GitHub accepts only its own fixed set (+1, -1, laugh, confused, " +
-          "heart, hooray, rocket, eyes, or common aliases like thumbsup/tada) and refuses anything " +
-          "else with an error naming the ones it supports.",
+          "message ts in this channel instead (Slack only — GitHub and Linear ignore `ts`, since a " +
+          "reaction always lands on the issue/PR itself there; Discord also ignores `ts` and always " +
+          "reacts to the message that triggered this turn). GitHub accepts only its own fixed set " +
+          "(+1, -1, laugh, confused, heart, hooray, rocket, eyes, or common aliases like " +
+          "thumbsup/tada) and refuses anything else with an error naming the ones it supports.",
         inputSchema: z.object({
           emoji: z
             .string()

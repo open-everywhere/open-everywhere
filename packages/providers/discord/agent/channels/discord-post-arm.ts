@@ -1,5 +1,6 @@
 import {
   DISCORD_MESSAGE_MAX,
+  discordAddReaction,
   discordEditMessage,
   discordExistingThreadForMessage,
   discordOpenDmChannel,
@@ -9,12 +10,14 @@ import {
   splitForDiscord,
 } from "./discord-post.js";
 import {
+  bindFrom,
   markThreadEngaged,
   deploymentOrg,
   recordOwnPost,
   type PostArm,
   type TargetResolveBag,
   type ReplyTarget,
+  type ReactTarget,
   type UnifiedWakeOrigin,
   type UnifiedReplyDeps,
   type EditLocus,
@@ -24,6 +27,7 @@ import {
 
 type DiscordTarget = Extract<ReplyTarget, { platform: "discord" }>;
 type DiscordOrigin = Extract<UnifiedWakeOrigin, { platform: "discord" }>;
+type DiscordReactTarget = Extract<ReactTarget, { platform: "discord" }>;
 
 async function liveDiscordPost(origin: DiscordOrigin, text: string): Promise<string> {
   let targetChannelId = origin.channelId;
@@ -97,4 +101,14 @@ export const discordPostArm: PostArm = {
   editMessage: editDiscordMessage,
   retargetEditLocus: retargetDiscordEditLocus,
   deliverDirectMessage: deliverDiscordDirectMessage,
+  resolveReactTarget: (bag: TargetResolveBag): ReactTarget | null => {
+    const channelId = bag.str("channelId");
+    if (!channelId) return null;
+    const messageId = bindFrom(bag.ctx).anchorMessageId;
+    return messageId ? { platform: "discord", channelId, messageId } : null;
+  },
+  react: (target, emoji) => {
+    const t = target as DiscordReactTarget;
+    return discordAddReaction(t.channelId, t.messageId, emoji);
+  },
 };
