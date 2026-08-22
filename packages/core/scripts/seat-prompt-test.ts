@@ -283,6 +283,19 @@ function ok(cond: boolean, label: string): void {
 }
 
 {
+  const seatGuide = renderSurfaceGuide("discord");
+  const workerGuide = renderSurfaceGuide("discord", "worker");
+  ok(!seatGuide.includes("no `react` tool"), "🔴 the Discord seat guide no longer denies the `react` tool");
+  ok(seatGuide.includes("a single `react`"), "🔴 …and states the same react-first-response guidance Slack gets");
+  ok(seatGuide === SURFACE_GUIDES["discord"], "negative control: the seat's guide is byte-identical to the map entry");
+  ok(!workerGuide.includes("`react`"), "negative control: a Discord worker still holds no `react`, so its guide still drops the sentence");
+  ok(workerGuide.includes("Discord hard-caps a single message at 2000"), "negative control: the rest of the Discord guide survives the subtraction");
+
+  const teamsGuide = SURFACE_GUIDES["teams"];
+  ok(teamsGuide.includes("no `react` tool on this surface"), "negative control: Teams' denial stays — its manifest really has no react primitive");
+}
+
+{
   registerSlackFixtureMapper();
   registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
   registerConfig({

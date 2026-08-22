@@ -198,7 +198,8 @@ ok(assembleAccessInstructions(base) === null, "bare scope -> null (no scope-spec
 {
   const md = renderSurfaceGuide("discord");
   ok(md.includes("**bold**") && md.includes("2000 characters"), "discord guide names Markdown bold + the 2000-char cap");
-  ok(md.includes("no `react` tool") && !md.includes("update_reply"), "discord guide states there's no react tool and never mentions update_reply");
+  ok(md.includes("`react`") && !md.includes("no `react` tool"), "discord guide names its react primitive and never denies it");
+  ok(!md.includes("update_reply"), "discord guide never mentions the dropped update_reply verb");
 }
 
 {
