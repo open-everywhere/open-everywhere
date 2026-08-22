@@ -87,4 +87,34 @@ ok(
   !siblingTool.includes("S-AWS-BOUNDARY"),
 );
 
+const taskWakeOnly = relevantScenarios(["packages/core/agent/channels/task-wake.ts"]);
+const dispatchOriginOnly = relevantScenarios(["packages/core/agent/access/dispatch-origin-signal.ts"]);
+const settlementFlushOnly = relevantScenarios(["packages/core/agent/hooks/settlement-flush.ts"]);
+const beyondAlways = (ids: string[]) => ids.filter((id) => !ALWAYS_RELEVANT.includes(id));
+
+ok(
+  "task-wake.ts routes to a live scenario beyond ALWAYS_RELEVANT",
+  beyondAlways(taskWakeOnly).length > 0,
+);
+ok(
+  "dispatch-origin-signal.ts routes to a live scenario beyond ALWAYS_RELEVANT",
+  beyondAlways(dispatchOriginOnly).length > 0,
+);
+ok(
+  "settlement-flush.ts routes to a live scenario beyond ALWAYS_RELEVANT",
+  beyondAlways(settlementFlushOnly).length > 0,
+);
+ok(
+  "S-TAINT-ROUTE-LIVE (the ticket-named already-live delegated-worker leg) covers all three delegation-identity paths",
+  taskWakeOnly.includes("S-TAINT-ROUTE-LIVE") &&
+    dispatchOriginOnly.includes("S-TAINT-ROUTE-LIVE") &&
+    settlementFlushOnly.includes("S-TAINT-ROUTE-LIVE"),
+);
+
+const siblingHook = relevantScenarios(["packages/core/agent/hooks/memory.ts"]);
+ok(
+  "a sibling hook file (memory.ts, not settlement-flush.ts) does NOT pick up S-TAINT-ROUTE-LIVE via delegation-identity",
+  !siblingHook.includes("S-TAINT-ROUTE-LIVE"),
+);
+
 console.log(`\n✓ changed-relevant map: ${n} assertions passed (${CHANGED_RELEVANT_MAP.length} areas, ${rosterIds.size} roster scenarios, ${UNMAPPED_BY_DESIGN.length} unmapped-by-design)\n`);
