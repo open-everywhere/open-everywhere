@@ -42,13 +42,8 @@ export function memoryWriteTarget(raw: string): MemoryWriteTarget | null {
   return { dir, rel: rest.slice(1).join("/"), sandboxDir: `${MEMORY_ROOT}/${dir}` };
 }
 
-function writableNames(plan: MemoryPlan): string[] {
-  return plan.writes.map((w) => w.silo.name);
-}
-
 function writableClause(plan: MemoryPlan): string {
-  const names = writableNames(plan);
-  if (names.length === 0) {
+  if (plan.writes.length === 0) {
     return `This session has NO writable memory (${plan.reason}), so nothing under /workspace/memory/ will save.`;
   }
   const dirs = plan.writes.map((w) => `\`${tierSandboxDir(w.tier)}/\` (silo "${w.silo.name}")`);

@@ -68,7 +68,15 @@ test("session.started seeds the domain's own silo at the expected path and body,
         { calls: [{ tool: "agent", input: { message: "note this down" }, id: "m1-delegate" }] },
         { say: "the worker reported back" },
       ],
-      child: [{ calls: [{ tool: "write_file", input: { filePath: "/workspace/memory/it-memory-brain/notes.md", content }, id: "m1-write" }] }, { say: "noted" }],
+      child: [
+        {
+          calls: [
+            { tool: "write_file", input: { filePath: "/workspace/memory/it-memory-brain/notes.md", content }, id: "m1-write" },
+            { tool: "write_file", input: { filePath: "/workspace/memory/it-memory-b-brain/stolen.md", content }, id: "m1-write-unowned" },
+          ],
+        },
+        { say: "noted" },
+      ],
     }),
   );
 
@@ -79,9 +87,17 @@ test("session.started seeds the domain's own silo at the expected path and body,
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
 
-  const writeResult = handle.requests.flatMap((r) => r.toolResults).find((t) => t.name === "write_file");
-  expect(writeResult).toBeDefined();
-  expect(writeResult!.isError).toBe(false);
+  const writes = handle.requests.flatMap((r) => r.toolResults).filter((t) => t.name === "write_file");
+  expect(writes.length).toBe(2);
+  const owned = writes.filter((t) => !t.isError);
+  expect(owned.length).toBe(1);
+
+  const refused = writes.filter((t) => t.isError);
+  expect(refused.length).toBe(1);
+  const refusalText = JSON.stringify(refused[0].output);
+  expect(refusalText).toContain("it-memory-b-brain");
+  expect(refusalText).toContain("memory/it-memory-brain/");
+  expect(refusalText).toContain("DROPPED");
 
   const taskId = taskIdOfDelegation(handle, "the note-taking delegation");
   const settlement = await awaitTaskSettlement({
