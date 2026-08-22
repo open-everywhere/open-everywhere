@@ -298,19 +298,21 @@ console.log("5. replay alias + eve's own replay path (eve step registry):");
   const require2 = createRequire(import.meta.url);
   const eveRoot = dirname(require2.resolve("eve/package.json"));
   const lifecycle = (await import(pathToFileURL(join(eveRoot, "dist/src/context/dynamic-tool-lifecycle.js")).href)) as {
-    replayDynamicSessionTools(meta: readonly unknown[], ctx?: unknown): { name: string; execute: unknown }[];
+    replayDynamicSessionTools(meta: readonly unknown[], resolvers: readonly unknown[]): { name: string; execute: unknown }[];
   };
-  const replayed = lifecycle.replayDynamicSessionTools([
-    {
-      name: "bash",
-      description: "stub bash",
-      inputSchema: { type: "object", properties: {} },
-      resolverSlug: "bash",
-      entryKey: "_single",
-      executeStepFnName: single.execute,
-      closureVars: {},
-    },
-  ]);
+  const replayed = lifecycle.replayDynamicSessionTools(
+    [
+      {
+        name: "bash",
+        description: "stub bash",
+        inputSchema: { type: "object", properties: {} },
+        resolverSlug: "bash",
+        entryKey: "_single",
+        callbacks: { execute: { stepId: single.execute, closure: {} } },
+      },
+    ],
+    [],
+  );
   eq(replayed.length, 1, "eve's replay path finds the pre-registered step fn (no skip) — the seam name is pinned against the installed eve");
   eq(replayed[0]?.name, "bash", "the replayed tool carries its mounted name");
 
@@ -327,17 +329,19 @@ console.log("5. replay alias + eve's own replay path (eve step registry):");
   ok(!("__executeStepFn" in rawEntry), "RETIRED (OPE-867): the entry carries NO __executeStepFn stamp — eve derives its own step id, not OURS");
   ok(!("__closureVars" in rawEntry), "RETIRED (OPE-867): the entry carries NO __closureVars stamp either");
   ok(reg.get(customNames.approval) === undefined, "an approval-less entry registers NO approval step (absent approval === never() on both paths)");
-  const replayedCustom = lifecycle.replayDynamicSessionTools([
-    {
-      name: "reply",
-      description: "raw pre-registered tool",
-      inputSchema: { type: "object", properties: {} },
-      resolverSlug: "pretend_reply",
-      entryKey: "_unified",
-      executeStepFnName: customNames.execute,
-      closureVars: {},
-    },
-  ]);
+  const replayedCustom = lifecycle.replayDynamicSessionTools(
+    [
+      {
+        name: "reply",
+        description: "raw pre-registered tool",
+        inputSchema: { type: "object", properties: {} },
+        resolverSlug: "pretend_reply",
+        entryKey: "_unified",
+        callbacks: { execute: { stepId: customNames.execute, closure: {} } },
+      },
+    ],
+    [],
+  );
   eq(replayedCustom.length, 1, "eve replays the alias name fed to it directly (still a valid, functioning step-registry entry)");
   const armedBash = (await resolveWindowGated(windowGated("bash", stubEntry("bash")), grainCtx.task())) as unknown as Record<string, unknown>;
   ok(!("__executeStepFn" in armedBash), "RETIRED (OPE-867): a windowGated entry carries no __executeStepFn stamp either");
@@ -376,11 +380,35 @@ console.log("6. mount refresh on a deployment change (OPE-632):");
   }) as unknown as GatedToolEntry;
   const kitV2 = windowGatedKit("refresh_kit", { bash: bashV2, web_fetch: stubEntry("web_fetch") }, { web_fetch: () => false });
   const kitV3 = windowGatedKit("refresh_kit", { bash: bashV2, web_fetch: stubEntry("web_fetch"), glob: stubEntry("glob") }, { web_fetch: () => false });
+  const durableMod = (await import(abs3("dist/src/shared/durable-dynamic-tool-callbacks.js"))) as {
+    createDurableDynamicCallback<A extends unknown[], R>(i: { closure: Record<string, unknown>; callback: (c: Record<string, unknown>, ...a: A) => R; stepId: string }): (...a: A) => R;
+  };
+  function durablize(entry: Record<string, unknown>, stepPrefix: string): Record<string, unknown> {
+    const wrap = <A extends unknown[], R>(fn: (...a: A) => R, phase: string): ((...a: A) => R) =>
+      durableMod.createDurableDynamicCallback<A, R>({ closure: {}, stepId: `${stepPrefix}:${phase}`, callback: (_c, ...a: A) => fn(...a) });
+    const copy: Record<string, unknown> = { ...entry };
+    copy.execute = wrap(entry.execute as (...a: unknown[]) => unknown, "execute");
+    if (typeof entry.toModelOutput === "function") copy.toModelOutput = wrap(entry.toModelOutput as (...a: unknown[]) => unknown, "toModelOutput");
+    if (typeof entry.approval === "function") copy.approval = wrap(entry.approval as (...a: unknown[]) => unknown, "approvalRequest");
+    return defineTool(copy as never) as unknown as Record<string, unknown>;
+  }
   const resolverOf = (kit: unknown) => ({
     slug: "refresh_kit",
     logicalPath: "agent/tools/refresh_kit.ts",
     eventNames: ["session.started"],
-    events: (kit as { events: Record<string, unknown> }).events,
+    events: Object.fromEntries(
+      Object.entries((kit as { events: Record<string, (...a: unknown[]) => Promise<unknown>> }).events).map(([arm, handler]) => [
+        arm,
+        async (...args: unknown[]): Promise<unknown> => {
+          const out = (await handler(...args)) as Record<string, unknown> | null;
+          if (out === null || out === undefined) return out;
+          if (typeof (out as { execute?: unknown }).execute === "function") return durablize(out, "oe:test-transform:refresh_kit");
+          const mapped: Record<string, unknown> = {};
+          for (const [key, value] of Object.entries(out)) mapped[key] = durablize(value as Record<string, unknown>, `oe:test-transform:refresh_kit:${key}`);
+          return mapped;
+        },
+      ]),
+    ),
   });
 
   const ctx6 = new ContextContainer();
@@ -422,14 +450,15 @@ console.log("6. mount refresh on a deployment change (OPE-632):");
     "a session's FIRST turn seeds the revision key; every later turn takes the refresh branch",
   );
   ok(
-    /refreshDynamicSessionToolsForRuntimeRevision\(\{ctx:(\w+),resolvers:(\w+),event:(\w+),messages:(\w+)\.history,runtimeRevision:(\w+)\}\)/.test(steps6),
+    /refreshDynamicSessionToolsForRuntimeRevision\(\{ctx:(\w+),resolvers:(\w+),event:(\w+),messages:[\w.]+,runtimeRevision:(\w+)\}\)/.test(steps6),
     "…and that branch calls the tool refresh on the durable turn path (the reachability fact — a refresh nothing calls is no refresh at all)",
   );
-  const life6 = readFileSync(join(eveRoot3, "dist", "src", "context", "dynamic-tool-lifecycle.js"), "utf8");
+  const life6 = readFileSync(join(eveRoot3, "dist", "src", "context", "build-dynamic-tools.js"), "utf8");
   ok(
-    /\{description:(\w+)\.description,execute:createToolExecuteWithAuth\([\s\S]{0,160}?inputSchema:toInputSchema\(\1\.inputSchema\),name:\1\.name/.test(life6),
+    /\{description:(\w+)\.description,execute:createToolExecuteWithAuth\([\s\S]{0,260}?inputSchema:toInputSchema\(\1\.inputSchema\),name:\1\.name/.test(life6),
     "replay serves the DESCRIPTION and INPUT SCHEMA from the durable metadata — which is exactly why the refresh is load-bearing and not a nicety",
   );
+  ok(/toModelOutput:(\w+)=>\{if\(\w+===null\)throw missingCallbackError/.test(life6), "eve's own replay now rebuilds `toModelOutput` from the durable metadata (0.44.0) — see OPE-946");
 }
 
 console.log(`\nwindow-gated: ${n} assertions passed.`);

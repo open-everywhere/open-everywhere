@@ -180,7 +180,7 @@ console.log("4. installed-eve replay (no skip):");
   const require2 = createRequire(import.meta.url);
   const eveRoot = dirname(require2.resolve("eve/package.json"));
   const lifecycle = (await import(pathToFileURL(join(eveRoot, "dist/src/context/dynamic-tool-lifecycle.js")).href)) as {
-    replayDynamicSessionTools(meta: readonly unknown[], ctx?: unknown): { name: string; execute: unknown }[];
+    replayDynamicSessionTools(meta: readonly unknown[], resolvers: readonly unknown[]): { name: string; execute: unknown }[];
   };
   const meta = CASES.map((c) => ({
     name: c.slug,
@@ -188,14 +188,13 @@ console.log("4. installed-eve replay (no skip):");
     inputSchema: { type: "object", properties: {} },
     resolverSlug: c.slug,
     entryKey: c.entryKey,
-    executeStepFnName: replayStepNames(c.slug, c.entryKey).execute,
-    closureVars: {},
+    callbacks: { execute: { stepId: replayStepNames(c.slug, c.entryKey).execute, closure: {} } },
   }));
-  const replayed = lifecycle.replayDynamicSessionTools(meta);
+  const replayed = lifecycle.replayDynamicSessionTools(meta, []);
   eq(replayed.length, CASES.length, `eve's replay path finds ALL ${CASES.length} entries fed under the alias name (the alias is a real, functioning step-registry entry)`);
 }
 
-console.log("5. native cold-resume self-heal against the REAL tool inventory (OPE-867):");
+console.log("5. native cold-resume survival against the REAL tool inventory (OPE-867):");
 {
   const require2 = createRequire(import.meta.url);
   const eveRoot = dirname(require2.resolve("eve/package.json"));
@@ -203,9 +202,31 @@ console.log("5. native cold-resume self-heal against the REAL tool inventory (OP
   const distUrl = (rel: string): string => pathToFileURL(join(distSrc, rel)).href;
   const nativeLifecycle = (await import(distUrl("context/dynamic-tool-lifecycle.js"))) as {
     dispatchDynamicToolEvent(e: unknown): Promise<void>;
-    hydrateDynamicSessionTools(e: unknown): Promise<void>;
-    replayDynamicSessionTools(meta: readonly unknown[]): { name: string; execute: unknown }[];
+    replayDynamicSessionTools(meta: readonly unknown[], resolvers: readonly unknown[]): { name: string; execute: unknown }[];
   };
+  const durable = (await import(distUrl("shared/durable-dynamic-tool-callbacks.js"))) as {
+    createDurableDynamicCallback<A extends unknown[], R>(i: { closure: Record<string, unknown>; callback: (c: Record<string, unknown>, ...a: A) => R; stepId: string }): (...a: A) => R;
+  };
+  const { defineTool: eveDefineTool } = (await import(distUrl("public/tools/index.js"))) as {
+    defineTool<T extends Record<string, unknown>>(entry: T): T;
+  };
+  function durablize(entry: Record<string, unknown>, stepPrefix: string): Record<string, unknown> {
+    const wrap = <A extends unknown[], R>(fn: (...a: A) => R, phase: string): ((...a: A) => R) =>
+      durable.createDurableDynamicCallback<A, R>({ closure: {}, stepId: `${stepPrefix}:${phase}`, callback: (_c, ...a: A) => fn(...a) });
+    const copy: Record<string, unknown> = { ...entry };
+    copy.execute = wrap(entry.execute as (...a: unknown[]) => unknown, "execute");
+    if (typeof entry.toModelOutput === "function") copy.toModelOutput = wrap(entry.toModelOutput as (...a: unknown[]) => unknown, "toModelOutput");
+    const approval = entry.approval;
+    if (typeof approval === "function") copy.approval = wrap(approval as (...a: unknown[]) => unknown, "approvalRequest");
+    else if (approval !== null && typeof approval === "object") {
+      const a = approval as { request?: unknown; response?: unknown };
+      const next: Record<string, unknown> = { ...a };
+      if (typeof a.request === "function") next.request = wrap(a.request as (...x: unknown[]) => unknown, "approvalRequest");
+      if (typeof a.response === "function") next.response = wrap(a.response as (...x: unknown[]) => unknown, "approvalResponse");
+      copy.approval = next;
+    }
+    return eveDefineTool(copy);
+  }
   const nativeKeys = (await import(distUrl("context/keys.js"))) as {
     SessionIdKey: unknown;
     SessionDynamicToolMetadataKey: unknown;
@@ -248,28 +269,42 @@ console.log("5. native cold-resume self-heal against the REAL tool inventory (OP
     }
     if (c.settings) overrideSettingsForTest(c.settings);
     try {
-      const resolverDescriptor = { slug: c.slug, eventNames: ["session.started"], events: { "session.started": resolvers.get(c.slug)! } };
+      const stepPrefix = `oe:test-transform:${c.slug}:${c.entryKey}`;
+      const rawResolver = resolvers.get(c.slug)!;
+      const resolve = async (...args: unknown[]): Promise<unknown> => {
+        const out = (await (rawResolver as (...a: unknown[]) => unknown)(...args)) as Record<string, unknown> | null;
+        if (out === null || out === undefined) return out;
+        if (typeof (out as { execute?: unknown }).execute === "function") return durablize(out, stepPrefix);
+        const mapped: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(out)) mapped[k] = durablize(v as Record<string, unknown>, `${stepPrefix}:${k}`);
+        return mapped;
+      };
+      const resolverDescriptor = { slug: c.slug, eventNames: ["session.started"], events: { "session.started": resolve } };
       const sessionId = `sess-native-heal-${c.slug}-${c.entryKey}`;
       const ctx = nativeCtxFor(c.ctx as FixtureCtx, sessionId);
       const event = { type: "session.started" };
 
       await nativeLifecycle.dispatchDynamicToolEvent({ ctx, resolvers: [resolverDescriptor], event, messages: [] });
-      const metadata = ctx.get(nativeKeys.SessionDynamicToolMetadataKey) as { entryKey: string; executeStepFnName: string; closureVars: unknown }[];
+      const metadata = ctx.get(nativeKeys.SessionDynamicToolMetadataKey) as { entryKey: string; callbacks: { execute: { stepId: string } } }[];
       const row = metadata?.length === 1 ? metadata[0] : metadata?.find((r) => r.entryKey === c.entryKey);
       ok(row !== undefined, `${c.slug}:${c.entryKey} durable metadata row exists after native resolve`);
       if (row === undefined) continue;
       ok(
-        row.executeStepFnName.startsWith(`eve:framework-dynamic:${sessionId}:${c.slug}:`),
-        `${c.slug}:${c.entryKey} got a SESSION-SCOPED step id from eve's own derivation (${row.executeStepFnName})`,
+        row.callbacks.execute.stepId.startsWith(stepPrefix),
+        `${c.slug}:${c.entryKey} kept the CODE-OWNED durable step id through resolve (${row.callbacks.execute.stepId})`,
       );
-      ok(typeof nativeReg().get(row.executeStepFnName) === "function", `${c.slug}:${c.entryKey} warm path: step fn registered right after resolve`);
+      ok(!row.callbacks.execute.stepId.includes(sessionId), `${c.slug}:${c.entryKey} …and the id names no session, so a fresh invocation re-registers the same one`);
+      ok(typeof nativeReg().get(row.callbacks.execute.stepId) === "function", `${c.slug}:${c.entryKey} warm path: step fn registered right after resolve`);
 
-      nativeReg().delete(row.executeStepFnName);
-      ok(nativeReg().get(row.executeStepFnName) === undefined, `${c.slug}:${c.entryKey} step fn removed (cold-resume simulation)`);
-      await nativeLifecycle.hydrateDynamicSessionTools({ ctx, resolvers: [resolverDescriptor], event, messages: [] });
-      ok(typeof nativeReg().get(row.executeStepFnName) === "function", `${c.slug}:${c.entryKey} GREEN: hydrateDynamicSessionTools healed it after simulated cold start`);
-      const replayedRow = nativeLifecycle.replayDynamicSessionTools([row]);
-      eq(replayedRow.length, 1, `${c.slug}:${c.entryKey} post-heal replay returns the tool (not skipped)`);
+      nativeReg().delete(row.callbacks.execute.stepId);
+      ok(nativeReg().get(row.callbacks.execute.stepId) === undefined, `${c.slug}:${c.entryKey} step fn removed (cold-resume simulation)`);
+      const cold = nativeLifecycle.replayDynamicSessionTools([row], []);
+      eq(cold.length, 1, `${c.slug}:${c.entryKey} RED: a cold-resumed replay still MOUNTS the tool with its step fn missing (0.44.0 no longer drops it silently)`);
+
+      await nativeLifecycle.dispatchDynamicToolEvent({ ctx, resolvers: [resolverDescriptor], event, messages: [] });
+      ok(typeof nativeReg().get(row.callbacks.execute.stepId) === "function", `${c.slug}:${c.entryKey} GREEN: re-registration restores the SAME code-owned step id after a simulated cold start`);
+      const replayedRow = nativeLifecycle.replayDynamicSessionTools([row], []);
+      eq(replayedRow.length, 1, `${c.slug}:${c.entryKey} post-heal replay returns the tool`);
     } finally {
       for (const [k, v] of Object.entries(saved)) {
         if (v === undefined) delete process.env[k];

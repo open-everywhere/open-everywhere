@@ -130,7 +130,6 @@ test("a delegated child taints itself: marking, injected judge verdict, refuse-t
     taskId,
     script: {
       parent: [
-        { calls: [{ tool: "task_peek", input: { taskIds: [taskId] }, id: "t1-peek" }] },
         { calls: [{ tool: "agent", input: { message: "delegate once more" }, id: "t1-delegate-2" }] },
         { say: SETTLEMENT_SAY },
       ],
@@ -141,11 +140,10 @@ test("a delegated child taints itself: marking, injected judge verdict, refuse-t
   afterThisTest(() => settlement.handle.dispose());
 
   const parentResumed = await waitFor(
-    () => settlement.handle.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_peek")),
-    "the parent's step carrying the task_peek result — the edge the taint adoption hangs off",
+    () => settlement.handle.requests.find((r) => r.role === "parent" && r.stepIndex === 0),
+    "the settlement turn's FIRST model call — the parent is already tainted here, having read nothing",
   );
-  const view = parentResumed.toolResults.find((t) => t.name === "task_peek")!;
-  expect(view.isError).toBe(false);
+  expect(settlement.handle.requests.flatMap((r) => r.toolResults.map((t) => t.name)).filter((t) => t.startsWith("task_"))).toEqual([]);
   expect(parentResumed.tools).toContain("agent");
   const settlementTerminal = await waitFor(
     () => settlement.handle.requests.find((r) => r.role === "parent" && r.sessionId === parentResumed.sessionId && r.toolResults.some((t) => t.name === "agent")),

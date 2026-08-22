@@ -89,7 +89,7 @@ test("a settlement turn holds the task's own address from the notification, befo
     script: {
       parent: [
         { calls: [{ tool: "reply", input: { wake: MADE_UP_WAKE, text: "too early" }, id: "t597-reply-unread" }] },
-        { calls: [{ tool: "task_peek", input: { taskIds: [taskId] }, id: "t597-peek" }] },
+        { calls: [{ tool: "task_cancel", input: { taskIds: [taskId] }, id: "t597-view" }] },
         { calls: [{ tool: "reply", input: { wake: MADE_UP_WAKE, text: "too late" }, id: "t597-reply-recovered" }] },
         { say: "the worker is done" },
       ],
@@ -108,11 +108,11 @@ test("a settlement turn holds the task's own address from the notification, befo
   expect(earlyWake).toBeDefined();
   expect(earlyWake).not.toBe(dispatchWake);
 
-  const peek = await waitFor(
-    () => settlement.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_peek")),
-    "the settlement turn's task_peek result",
+  const viewStep = await waitFor(
+    () => settlement.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_cancel")),
+    "the settlement turn's task_cancel result — the surviving view edge",
   );
-  const view = peek.toolResults.find((t) => t.name === "task_peek")!;
+  const view = viewStep.toolResults.find((t) => t.name === "task_cancel")!;
   expect(view.isError).toBe(false);
   expect(JSON.stringify(view.output)).toContain(CHILD_ANSWER);
 

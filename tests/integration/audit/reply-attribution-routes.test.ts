@@ -87,7 +87,7 @@ test("a HOST-WOKEN settlement reply names the human whose seat it is — the aut
 
   const settlementHandle = disposeLater(
     armSettlement(handle, {
-      parent: [{ calls: [{ tool: "task_peek", input: { taskIds: [taskId] }, id: "oe659-peek" }] }, { say: SETTLEMENT_SAY }],
+      parent: [{ say: SETTLEMENT_SAY }],
     }),
   );
   await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: "the worker's own model call" });
@@ -99,7 +99,7 @@ test("a HOST-WOKEN settlement reply names the human whose seat it is — the aut
     label: "the settled worker's completion, delivered as a new message naming the task id",
   });
   expect(notification.fault).toBeUndefined();
-  await waitFor(() => settlementHandle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the settlement turn's terminal step");
+  await waitFor(() => settlementHandle.requests.find((r) => r.role === "parent" && r.stepIndex === 0), "the settlement turn's terminal step");
 
   const rows = await waitFor(
     async () => {
@@ -138,7 +138,7 @@ test("OPE-734 — arming the settlement script under the dispatch turn's session
 
   const settlementHandle = disposeLater(
     armSettlement(handle, {
-      parent: [{ calls: [{ tool: "task_peek", input: { taskIds: [taskId] }, id: "ope734-peek" }] }, { say }],
+      parent: [{ say }],
     }),
   );
 
@@ -153,7 +153,7 @@ test("OPE-734 — arming the settlement script under the dispatch turn's session
   expect(settlementHandle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   expect(handle.requests.some((r) => r.turnId === notification.turnId)).toBe(false);
 
-  await waitFor(() => settlementHandle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the settlement turn's terminal step");
+  await waitFor(() => settlementHandle.requests.find((r) => r.role === "parent" && r.stepIndex === 0), "the settlement turn's terminal step");
   const rows = await waitFor(
     async () => {
       const got = (await readAuditRows({ actions: ["reply.post"], sinceIso })).filter((r) => r.detail?.route === "bridge");

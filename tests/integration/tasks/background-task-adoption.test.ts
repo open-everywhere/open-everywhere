@@ -63,10 +63,10 @@ test("a background delegation ends the parent's turn, comes back as a message, a
   expect(offered.has("agent")).toBe(true);
 
   if (taskMode) {
-    expect(offered.has("task_peek")).toBe(true);
     expect(offered.has("task_cancel")).toBe(true);
     expect(offered.has("task_update")).toBe(false);
     expect(offered.has("task_sleep")).toBe(false);
+    expect(offered.has("task_peek")).toBe(false);
   } else {
     for (const name of TASK_TOOLS) expect(offered.has(name)).toBe(false);
   }
@@ -87,9 +87,7 @@ test("a background delegation ends the parent's turn, comes back as a message, a
   close(first);
   const second = open(
     registerScript({
-      parent: taskMode
-        ? [{ calls: [{ tool: "task_peek", input: { taskIds: [taskId] }, id: "t3-peek" }] }, { say: "the worker is done" }]
-        : [{ say: "nothing to do" }],
+      parent: taskMode ? [{ say: "the worker is done" }] : [{ say: "nothing to do" }],
       child: [{ say: "nothing to do" }],
     }),
   );
@@ -101,13 +99,9 @@ test("a background delegation ends the parent's turn, comes back as a message, a
     );
     expect(notification.fault).toBeUndefined();
 
-    const peek = await waitFor(
-      () => second.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_peek")),
-      "the parent's step carrying the task_peek result",
-    );
-    const view = peek.toolResults.find((t) => t.name === "task_peek")!;
-    expect(view.isError).toBe(false);
-    expect(JSON.stringify(view.output)).toContain(CHILD_ANSWER);
+    const notificationText = notification.messages.map((m) => m.text).join("\n");
+    expect(notificationText).toContain(CHILD_ANSWER);
+    expect(second.requests.flatMap((r) => r.toolResults.map((t) => t.name)).filter((t) => t.startsWith("task_"))).toEqual([]);
 
     const cancels = [...firstRequests, ...second.requests].flatMap((r) => r.toolResults.filter((t) => t.name === "task_cancel"));
     expect(cancels).toEqual([]);
