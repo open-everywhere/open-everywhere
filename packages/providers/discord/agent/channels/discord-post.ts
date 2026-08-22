@@ -189,6 +189,55 @@ export async function discordEditMessage(channelId: string, messageId: string, c
   }
 }
 
+export const DISCORD_EMOJI_MAP: Readonly<Record<string, string>> = {
+  thumbsup: "👍",
+  "+1": "👍",
+  thumbsdown: "👎",
+  "-1": "👎",
+  eyes: "👀",
+  white_check_mark: "✅",
+  heavy_check_mark: "✔️",
+  x: "❌",
+  tada: "🎉",
+  rocket: "🚀",
+  heart: "❤️",
+  fire: "🔥",
+  clap: "👏",
+  wave: "👋",
+  raised_hand: "✋",
+  raised_hands: "🙌",
+  pray: "🙏",
+  laughing: "😆",
+  joy: "😂",
+  confused: "😕",
+  thinking_face: "🤔",
+  hourglass: "⏳",
+  hourglass_flowing_sand: "⏳",
+  question: "❓",
+  exclamation: "❗",
+  warning: "⚠️",
+  octagonal_sign: "🛑",
+  "100": "💯",
+};
+
+export async function discordAddReaction(channelId: string, messageId: string, emojiName: string): Promise<void> {
+  const unicode = DISCORD_EMOJI_MAP[emojiName.toLowerCase()];
+  if (!unicode) {
+    throw markNotApplied(
+      new Error(
+        `react couldn't post to Discord — "${emojiName}" has no Discord emoji equivalent here; this deployment supports: ${Object.keys(DISCORD_EMOJI_MAP).join(", ")}.`,
+      ),
+    );
+  }
+  const res = await fetch(`${API}/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(unicode)}/@me`, {
+    method: "PUT",
+    headers: botHeaders(botToken()),
+  });
+  if (!res.ok) {
+    throw Object.assign(new Error(`react couldn't post to Discord — ${res.status} on channel ${channelId}`), { status: res.status });
+  }
+}
+
 export async function discordExistingThreadForMessage(channelId: string, messageId: string): Promise<string | null> {
   try {
     const msgRes = await fetch(`${API}/channels/${channelId}/messages/${messageId}`, {

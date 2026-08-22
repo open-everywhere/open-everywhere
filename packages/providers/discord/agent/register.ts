@@ -31,7 +31,7 @@ import { guildIdFromScopeKey, isGuildAdminViaRest, isGuildMemberViaRest } from "
 
 export function registerDiscordProvider(): void {
   registerIdentityMapper("discord", bindDiscord);
-  registerCapabilityManifest("discord", { midTurnPost: true, reactions: false });
+  registerCapabilityManifest("discord", { midTurnPost: true, reactions: true });
   registerPostArm(discordPostArm);
   registerWakeOriginCodec("discord", discordWakeOriginCodec);
   registerReadAdapter(discordReadAdapter);
