@@ -29,8 +29,8 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "teams-provider",
     globs: ["packages/providers/teams/**"],
-    scenarios: ["J-TEAMS"],
-    why: "J-TEAMS is the only surface: \"teams\" scenario, and it is also the smoke-lane's non-Slack half (scenarios.ts smoke: true).",
+    scenarios: ["J-TEAMS", "J-TEAMS-DM"],
+    why: "J-TEAMS and J-TEAMS-DM are the two surface: \"teams\" scenarios (channel and 1:1 DM respectively); J-TEAMS is also the smoke-lane's non-Slack half (scenarios.ts smoke: true) — J-TEAMS-DM is not (it self-skips until the driver's Chat.* Graph scope is consented, OPE-972).",
   },
   {
     area: "github-provider",
