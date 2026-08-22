@@ -7,6 +7,8 @@ export const TEAMS_PERSONAL_ADDRESS_KIND = "personal";
 
 export const TEAMS_TEAM_ADDRESS_KIND = "team";
 
+export const TEAMS_CONVERSATION_ADDRESS_KIND = "conversation";
+
 export const TEAMS_TEAM_ADDRESS_READ_LIMIT = 8;
 
 const TEAMS_REPLY_CHAIN_SUFFIX = ";messageid=";
@@ -50,37 +52,44 @@ export function teamsAddressRowsFor(input: TeamsInboundReference, at: Date = new
   if (!isTrustedTeamsServiceUrl(serviceUrl)) return [];
   const updatedAt = at.toISOString();
 
+  const rows: ProactiveAddress[] = [
+    {
+      platform: TEAMS_ADDRESS_PLATFORM,
+      kind: TEAMS_CONVERSATION_ADDRESS_KIND,
+      refKey: conversationId,
+      tenant: tenantId,
+      address: { serviceUrl, conversationId },
+      updatedAt,
+    },
+  ];
+
   if (input.scope === "personal") {
     const userId = nonEmpty(input.userId);
-    if (!userId) return [];
-    return [
-      {
+    if (userId) {
+      rows.push({
         platform: TEAMS_ADDRESS_PLATFORM,
         kind: TEAMS_PERSONAL_ADDRESS_KIND,
         refKey: userId,
         tenant: tenantId,
         address: { serviceUrl, conversationId },
         updatedAt,
-      },
-    ];
-  }
-
-  if (input.scope === "channel") {
+      });
+    }
+  } else if (input.scope === "channel") {
     const teamId = nonEmpty(input.teamId);
-    if (!teamId) return [];
-    return [
-      {
+    if (teamId) {
+      rows.push({
         platform: TEAMS_ADDRESS_PLATFORM,
         kind: TEAMS_TEAM_ADDRESS_KIND,
         refKey: teamId,
         tenant: tenantId,
         address: { serviceUrl, conversationId: teamsChannelGrainConversationId(conversationId) },
         updatedAt,
-      },
-    ];
+      });
+    }
   }
 
-  return [];
+  return rows;
 }
 
 function log(msg: string): void {
@@ -117,6 +126,18 @@ export async function teamsPersonalConversationRef(principalId: string): Promise
     return refFrom(row);
   } catch (err) {
     log(`could not read the personal conversation reference: ${(err as Error)?.message ?? String(err)}`);
+    return undefined;
+  }
+}
+
+export async function teamsConversationRef(conversationId: string): Promise<TeamsConversationRef | undefined> {
+  const id = nonEmpty(conversationId);
+  if (!id) return undefined;
+  try {
+    const row = await getOperationalStore().proactiveAddress(deploymentOrg(), TEAMS_ADDRESS_PLATFORM, TEAMS_CONVERSATION_ADDRESS_KIND, id);
+    return refFrom(row);
+  } catch (err) {
+    log(`could not read the conversation reference: ${(err as Error)?.message ?? String(err)}`);
     return undefined;
   }
 }

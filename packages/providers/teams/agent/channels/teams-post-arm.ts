@@ -26,10 +26,10 @@ import type {
   DirectMessageDelivery,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
-type TeamsTarget = Extract<ReplyTarget, { platform: "teams" }>;
+export type TeamsTarget = Extract<ReplyTarget, { platform: "teams" }>;
 type TeamsOrigin = Extract<UnifiedWakeOrigin, { platform: "teams" }>;
 
-async function dispatchTeamsReply(target: TeamsTarget, text: string): Promise<string> {
+export async function dispatchTeamsReply(target: TeamsTarget, text: string): Promise<string> {
   if (!process.env.MICROSOFT_APP_ID && !process.env.TEAMS_APP_ID) {
     throw markNotApplied(new Error("reply couldn't post to Teams — MICROSOFT_APP_ID is not set."));
   }
@@ -79,7 +79,7 @@ async function liveTeamsPost(origin: TeamsOrigin, text: string): Promise<string>
   return id || "unknown";
 }
 
-async function editTeamsMessage(locus: EditLocus, messageId: string, text: string): Promise<void> {
+export async function editTeamsMessage(locus: EditLocus, messageId: string, text: string): Promise<void> {
   if (!process.env.MICROSOFT_APP_ID && !process.env.TEAMS_APP_ID) {
     throw markNotApplied(new Error("edit_reply couldn't update the Teams message — MICROSOFT_APP_ID is not set."));
   }
