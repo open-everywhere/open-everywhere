@@ -27,6 +27,7 @@ const require = createRequire(import.meta.url);
 const eveRoot = dirname(require.resolve("eve/package.json"));
 const abs = (rel: string) => pathToFileURL(join(eveRoot, rel)).href;
 const { ContextContainer, contextStorage } = await import(abs("dist/src/context/container.js"));
+const { SessionKey } = await import(abs("dist/src/context/keys.js"));
 const inSession = <T>(fn: () => Promise<T>): Promise<T> => contextStorage.run(new ContextContainer(), fn);
 
 let n = 0;
@@ -195,6 +196,55 @@ await inSession(async () => {
   ok(isBareStop(toolSilent, false) === false, "isBareStop: the no_reply tool already explains the silence — not a bare stop");
   ok(isBareStop(posted, false) === false, "isBareStop: a posted reply is never a bare stop");
   ok(typeof markReactedThisTurn === "function", "react-signal's marker is importable from the bare-stop caller's sibling module (no circular-import issue)");
+}
+
+{
+  const unified = (await import("../agent/channels/unified.js")).default as unknown as {
+    readonly adapter: Record<string, (data: unknown, ctx: unknown) => Promise<void>>;
+  };
+  const onCompleted = unified.adapter["message.completed"]!;
+  const WINDOW_TOKEN = "oe-dom:e2e-unified:oe-sup:g1-bd552c";
+  const windowChannel = { continuation: { token: WINDOW_TOKEN }, state: {} };
+  const inWindowTurn = (sessionId: string, wakeId: string, turnId: string) => {
+    const c = new ContextContainer();
+    c.set(SessionKey, {
+      sessionId,
+      auth: { current: { attributes: { oe_platform: "slack", oe_wake_id: wakeId, oe_window_token: WINDOW_TOKEN } }, initiator: null },
+      turn: { id: turnId },
+      parent: undefined,
+    });
+    return <T>(fn: () => Promise<T>): Promise<T> => contextStorage.run(c, fn);
+  };
+
+  await inWindowTurn("wrun_bare", "wake-bare-1", "turn-bare")(async () => {
+    overrideSettingsForTest({ audit: { silences: false } });
+    try {
+      const before = (await readAudit({ org: "default", action: "turn.bare_stop" })).length;
+      await onCompleted({ finishReason: "stop", message: "" }, windowChannel);
+      const rows = await readAudit({ org: "default", action: "turn.bare_stop" });
+      ok(rows.length - before === 1, "unified bare stop: an empty final message with no reply/react/no_reply writes ONE turn.bare_stop row with audit.silences OFF");
+      ok(rows[0]?.detail?.sessionId === "wrun_bare", "unified bare stop: the row names the session so it joins to the transcript");
+      ok(rows[0]?.detail?.wakeId === "wake-bare-1", "unified bare stop: the row names the wake that went unanswered");
+      ok((await readAudit({ org: "default", action: "unified.no_reply" })).length === 0, "unified bare stop: the gated judged-silence row still writes nothing on the actions-only posture");
+    } finally {
+      overrideSettingsForTest({ audit: { silences: true } });
+    }
+  });
+
+  await inWindowTurn("wrun_reacted", "wake-reacted-1", "turn-reacted")(async () => {
+    const before = (await readAudit({ org: "default", action: "turn.bare_stop" })).length;
+    markReactedThisTurn();
+    await onCompleted({ finishReason: "stop", message: "" }, windowChannel);
+    const after = (await readAudit({ org: "default", action: "turn.bare_stop" })).length;
+    ok(after === before, "unified bare stop: a turn that reacted is NOT a bare stop — no row");
+  });
+
+  await inWindowTurn("wrun_example7", "wake-sentinel-1", "turn-sentinel")(async () => {
+    const before = (await readAudit({ org: "default", action: "turn.bare_stop" })).length;
+    await onCompleted({ finishReason: "stop", message: NO_REPLY_SENTINEL }, windowChannel);
+    const after = (await readAudit({ org: "default", action: "turn.bare_stop" })).length;
+    ok(after === before, "unified bare stop: the NO_REPLY sentinel route is a stated silence — no row");
+  });
 }
 
 ok(isNoReply(`${NO_REPLY_SENTINEL} trailing rationale`), "isNoReply: prefix match still holds for the legacy sentinel");

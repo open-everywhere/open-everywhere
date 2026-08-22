@@ -36,7 +36,7 @@ import {
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
 import { pendingDelegationOwing, BRIDGE_WAKE_HELD_AUDIT_ACTION } from "../access/pending-delegation-signal.js";
 import { sourcesForWindow } from "./window-sources.js";
-import { finalMessageActionForTurn, replierLabelFor, withPendingWorkFrame, NO_REPLY_SENTINEL_REASON } from "./turn-delivery.js";
+import { finalMessageActionForTurn, isBareStop, replierLabelFor, withPendingWorkFrame, NO_REPLY_SENTINEL_REASON } from "./turn-delivery.js";
 import { auditNoReplySentinelObserved } from "./chat-turn-audit.js";
 import { consumeRepliedThisTurn, repliedWakesThisTurn, declinedWakesThisTurn, refusalsForWakeThisTurn } from "./reply-signal.js";
 import { consumeReactedThisTurn } from "./react-signal.js";
@@ -182,11 +182,12 @@ async function auditUnaccountedWakesForTurn(
   windowToken: string | undefined,
   turnId: string | undefined,
   turnWake: string | undefined,
+  reacted: boolean,
 ): Promise<void> {
   if (!windowToken || !turnId || !turnWake) return;
   try {
     const accounted = new Set<string>([...repliedWakesThisTurn(turnId), ...declinedWakesThisTurn(turnId)]);
-    if (consumeReactedThisTurn()) accounted.add(turnWake);
+    if (reacted) accounted.add(turnWake);
     const unaccounted = await settleWakeAccounting(getOperationalStore(), org, { windowToken, turnWake }, accounted);
     if (unaccounted.length === 0) return;
     const addressedCount = unaccounted.filter((w) => w.addressing === "addressed").length;
@@ -390,6 +391,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       const org = deploymentOrg();
       const { workspace, surface } = auditLabels(channel.continuation?.token);
       const accountingBind = { session: ctx.session } as unknown as BindableContext;
+      const reacted = consumeReactedThisTurn();
       await auditUnaccountedWakesForTurn(
         org,
         workspace,
@@ -397,6 +399,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         bareTokenFromEveContext(channel.continuation?.token),
         currentTurnId(accountingBind),
         currentWakeId(accountingBind),
+        reacted,
       ).catch(() => undefined);
       if (action.kind === "silent") {
         const bind = { session: ctx.session } as unknown as BindableContext;
@@ -420,6 +423,20 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         }
         if (action.reason === NO_REPLY_SENTINEL_REASON) {
           await auditNoReplySentinelObserved({ org, platform: "unified", workspace, surface: surface ?? "unknown" }, sessionId, wakeId).catch(() => undefined);
+        }
+        if (isBareStop(action, replied || reacted)) {
+          ulog(
+            `BARE STOP — turn ended with no reply, no react and no no_reply (wake ${wakeId ?? "none"}) — ` +
+              `this usually means a judgement went missing, not that one was made.`,
+          );
+          await appendAudit({
+            org,
+            platform: "unified",
+            workspace,
+            surface,
+            action: "turn.bare_stop",
+            detail: { wakeId: wakeId ?? null, ...(sessionId ? { sessionId } : {}) },
+          }).catch(() => undefined);
         }
         if (auditSilencesEnabled()) {
           await appendAudit({
