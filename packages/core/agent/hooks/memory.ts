@@ -4,13 +4,16 @@ import { join } from "node:path";
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { resolvePartition } from "../memory/partition.js";
-import { bindFrom, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { bindFrom, isSubagentChildContext, windowGrainOf, type BindableContext } from "../identity/binding.js";
 import { planFor, type ResolvedMemory } from "../memory/resolve.js";
 import { providerById } from "../memory/provider.js";
 import { renderMemoryIndex } from "../memory/listing.js";
 import { tierId, storeRoot, type MemoryFiles, type Tier } from "../memory/store.js";
 import { seedFor } from "../memory/layout.js";
-import { syncTierIntoSandbox, readTierFromSandbox, removeTierFiles, removeTierDir, tierSandboxDir } from "../memory/sandbox-sync.js";
+import { syncTierIntoSandbox, readTierFromSandbox, removeTierFiles, removeTierDir, tierSandboxDir, writeTierFile } from "../memory/sandbox-sync.js";
+import { baselineOf, markAddedBullets, renderProvenanceMark } from "../memory/provenance-mark.js";
+import { untrustedIngestedThisTurn, taintKindsThisTurn } from "../access/taint-signal.js";
+import { taintEnabled } from "../access/taint-enforcement.js";
 import { readOnlyBanner, hasReadOnlyBanner, lockCommand, unlockCommand } from "../memory/readonly.js";
 import { removedLineDigests } from "../memory/purge-redaction.js";
 import { startMemorySyncTiming, emitMemorySyncTiming, byteSize } from "../memory/sync-timing.js";
@@ -43,6 +46,11 @@ const failedReadSilos = defineState<Record<string, string>>(
 
 const materialisedTiers = defineState<Record<string, { tier: Tier; silo: string; readOnly: boolean }>>(
   "open-everywhere.memory.materialisedTiers",
+  () => ({}),
+);
+
+const provenanceBaseline = defineState<{ armed?: boolean; tiers?: Record<string, Record<string, string[]>> }>(
+  "open-everywhere.memory.provenanceBaseline",
   () => ({}),
 );
 
@@ -254,6 +262,7 @@ export async function persistMemoryNow(ctx: MemoryPersistContext, outcome: Memor
     log(`${where}: nothing to persist — ${plan.reason}`);
     return NOTHING_PERSISTED;
   }
+  await markProvenanceForTurn(ctx, `persist:${outcome}`);
   const sessionId = ctx.session?.id ?? "";
   const principalId = binding.principalId;
   const request = sessionLog.get().firstMessage?.trim().replace(/\n+/g, " ").slice(0, 200);
@@ -577,6 +586,96 @@ async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
   }
 }
 
+function provenanceArmed(ctx: MemoryPersistContext): boolean {
+  try {
+    if (!taintEnabled()) return false;
+    return windowGrainOf(ctx as unknown as BindableContext) === "task";
+  } catch {
+    return false;
+  }
+}
+
+async function provenanceTargets(
+  ctx: MemoryPersistContext,
+): Promise<{ p: ReturnType<typeof resolvePartition>; principalId: string | undefined; writes: readonly ResolvedMemory[]; sandbox: MemorySandbox } | null> {
+  if (!provenanceArmed(ctx)) return null;
+  const p = resolvePartition(ctx);
+  const binding = bindFrom(ctx);
+  const plan = planFor(binding, p);
+  if (plan.writes.length === 0 || ctx.getSandbox === undefined) return null;
+  return { p, principalId: binding.principalId, writes: plan.writes, sandbox: await ctx.getSandbox() };
+}
+
+async function captureProvenanceBaseline(ctx: MemoryPersistContext): Promise<void> {
+  try {
+    if (provenanceBaseline.get().armed === true) return;
+    const target = await provenanceTargets(ctx);
+    if (target === null) return;
+    const tiers: Record<string, Record<string, string[]>> = {};
+    for (const rm of target.writes) tiers[tierId(rm.tier)] = baselineOf(await readTierFromSandbox(target.sandbox, rm.tier));
+    provenanceBaseline.update(() => ({ armed: true, tiers }));
+    log(`provenance baseline captured for ${target.writes.length} writable tier(s)`);
+  } catch (err) {
+    log(`provenance baseline capture SKIPPED — no bullet this session adds takes a mark: ${String(err)}`);
+  }
+}
+
+async function markProvenanceForTurn(ctx: MemoryPersistContext, where: string): Promise<void> {
+  try {
+    const state = provenanceBaseline.get();
+    if (state.armed !== true) return;
+    const target = await provenanceTargets(ctx);
+    if (target === null) return;
+    const tainted = untrustedIngestedThisTurn();
+    const mark = tainted ? renderProvenanceMark(taintKindsThisTurn()) : "";
+    const tiers: Record<string, Record<string, string[]>> = {};
+    const markedFiles: string[] = [];
+    let marked = 0;
+    for (const rm of target.writes) {
+      const tid = tierId(rm.tier);
+      const files = await readTierFromSandbox(target.sandbox, rm.tier);
+      let current = files;
+      const held = state.tiers?.[tid];
+      if (tainted && held !== undefined) {
+        const pass = markAddedBullets(held, files, mark);
+        for (const [rel, content] of Object.entries(pass.files)) {
+          await writeTierFile(target.sandbox, rm.tier, rel, content);
+          markedFiles.push(`${tid}/${rel}`);
+        }
+        if (pass.marked > 0) {
+          current = { ...files, ...pass.files };
+          marked += pass.marked;
+        }
+      }
+      tiers[tid] = baselineOf(current);
+    }
+    provenanceBaseline.update((cur) => ({ ...cur, armed: true, tiers }));
+    if (marked === 0) return;
+    log(`${where}: marked ${marked} added bullet(s) with external provenance in ${markedFiles.join(", ")}`);
+    try {
+      await appendAudit({
+        org: target.p.org,
+        platform: target.p.platform,
+        workspace: target.p.workspace,
+        surface: target.p.surface,
+        principalId: target.principalId,
+        action: "memory.provenance_marked",
+        detail: {
+          where,
+          bullets: marked,
+          files: markedFiles,
+          kinds: [...taintKindsThisTurn()],
+          ...(ctx.session?.id ? { sessionId: ctx.session.id } : {}),
+        },
+      });
+    } catch (err) {
+      log(`memory.provenance_marked audit skipped (the marks are already in the sandbox): ${String(err)}`);
+    }
+  } catch (err) {
+    log(`${where}: provenance marking skipped (the turn is unaffected): ${String(err)}`);
+  }
+}
+
 export default defineHook({
   events: {
     "session.started": async (_event, ctx) => {
@@ -694,12 +793,14 @@ export default defineHook({
     },
 
     "turn.started": async (_event, ctx) => {
-      if (!resyncArmed(ctx)) return;
-      try {
-        await resyncSupervisorReads(ctx);
-      } catch (err) {
-        log(`turn.started re-sync skipped: ${String(err)}`);
+      if (resyncArmed(ctx)) {
+        try {
+          await resyncSupervisorReads(ctx);
+        } catch (err) {
+          log(`turn.started re-sync skipped: ${String(err)}`);
+        }
       }
+      await captureProvenanceBaseline(ctx);
     },
 
     "message.received": (event, _ctx) => {
@@ -707,6 +808,14 @@ export default defineHook({
       if (!current.firstMessage && typeof event.data?.message === "string") {
         sessionLog.update((s) => ({ ...s, firstMessage: event.data.message }));
       }
+    },
+
+    "turn.completed": async (_event, ctx) => {
+      await markProvenanceForTurn(ctx, "turn.completed");
+    },
+
+    "turn.failed": async (_event, ctx) => {
+      await markProvenanceForTurn(ctx, "turn.failed");
     },
 
     "session.completed": async (_event, ctx) => {

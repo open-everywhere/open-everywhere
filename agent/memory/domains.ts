@@ -156,7 +156,11 @@ const rawDomains: Domain[] = [
 
   defineDomain({
     name: "it-memory",
-    channels: ["discord/1300000000000000100/1300000001500000001", "discord/1300000000000000100/1300000001500000003"],
+    channels: [
+      "discord/1300000000000000100/1300000001500000001",
+      "discord/1300000000000000100/1300000001500000003",
+      "discord/1300000000000000100/1300000001500000005",
+    ],
     memory: "it-memory-brain",
     ambientSupervisor: true,
     mode: "solo",

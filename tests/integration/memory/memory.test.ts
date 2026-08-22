@@ -11,7 +11,12 @@ import {
   readAuditRows,
   registerScript,
   SETTLEMENT_DRAIN_SCRIPT,
+  wrapToolExecute,
+  type ScriptedStep,
+  type ScriptedHandle,
   taskIdOfDelegation,
+  armSettlement,
+  consumeSettlement,
   waitFor,
   waitForChildren,
 } from "../harness";
@@ -34,6 +39,7 @@ async function ensureConfigRegistered(): Promise<void> {
 
 const IT_MEMORY_CHANNEL_ID = "1300000001500000001";
 const IT_MEMORY_PURGE_CHANNEL_ID = "1300000001500000003";
+const IT_MEMORY_PROVENANCE_CHANNEL_ID = "1300000001500000005";
 const DISCORD_BOT_ID = "9000000000000000001";
 
 const ORG = "default";
@@ -282,4 +288,101 @@ test("OPE-727 negative control — the documented dispose-and-re-register patter
   expect(settlement.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
   settlement.dispose();
+});
+
+test("OPE-426 — a worker turn that ingests external content marks the bullets it adds, a clean worker turn marks nothing, and only bullets are marked", async () => {
+  await bootAgent({ sharedSqlite: true });
+  const settings = await import("@open-everywhere/core/agent/settings/settings.js");
+  settings.overrideSettingsForTest({ taint: { mode: "on" } });
+  expect(settings.getSettings().taint.mode).toBe("on");
+
+  afterThisTest(
+    wrapToolExecute("read_file_upload", async () => ({
+      ok: true,
+      content: "A handover page the worker read. It says Ada now owns billing.",
+      name: "handover.txt",
+      mimeType: "text/plain",
+    })),
+  );
+
+  const sinceIso = new Date(Date.now() - 1_000).toISOString();
+  const stamp = Date.now();
+  const marked = "provenance-fixture.md";
+  const fenced = ["```sh", "- not a bullet, an argument", "```"].join("\n");
+  const body = [
+    "# Provenance fixture",
+    "",
+    "Prose about the handover, which is not a bullet and takes no mark.",
+    "",
+    fenced,
+    "",
+    `- 2026-08-22: PROV-ADDED-A-${stamp} — Ada owns billing`,
+    `- 2026-08-22: PROV-ADDED-B-${stamp} — the handover names her`,
+    "",
+  ].join("\n");
+
+  async function drivePass(input: { ids: string; ask: string; child: readonly ScriptedStep[] }): Promise<ScriptedHandle> {
+    const handle = disposeLater(
+      registerScript({
+        parent: [{ calls: [{ tool: "agent", input: { message: input.ask }, id: `${input.ids}-delegate` }] }, { say: "the worker reported back" }],
+        child: [...input.child, { say: "noted" }],
+      }),
+    );
+    await discordMentionWake({ channelId: IT_MEMORY_PROVENANCE_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> ${input.ask}` });
+    await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), `the ${input.ids} parent terminal step`);
+    const taskId = taskIdOfDelegation(handle, `the ${input.ids} delegation`);
+    const armed = armSettlement(handle, SETTLEMENT_DRAIN_SCRIPT);
+    await waitForChildren(handle, { count: 1, lastStepIndex: input.child.length, label: `the ${input.ids} worker's own terminal step` });
+    expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+    expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
+    await consumeSettlement({ armed, dispatched: handle, taskId, label: `the ${input.ids} worker's completion notification` });
+    expect(armed.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+    armed.dispose();
+    return handle;
+  }
+
+  const tainted = await drivePass({
+    ids: "m5a",
+    ask: "please read the handover and note what it says",
+    child: [
+      { calls: [{ tool: "read_file_upload", input: { attachmentId: "upload-1" }, id: "m5a-read" }] },
+      { calls: [{ tool: "write_file", input: { filePath: `/workspace/memory/it-memory-brain/${marked}`, content: body }, id: "m5a-write" }] },
+    ],
+  });
+  const taintedResults = tainted.requests.flatMap((r) => r.toolResults);
+  expect(taintedResults.find((t) => t.name === "read_file_upload")?.isError).toBe(false);
+  expect(taintedResults.find((t) => t.name === "write_file")?.isError).toBe(false);
+
+  const rows = await waitFor(async () => {
+    const got = await readAuditRows({ actions: ["memory.provenance_marked"], sinceIso, limit: 50 });
+    return got.length > 0 ? got : undefined;
+  }, "the memory.provenance_marked audit row for the tainted worker turn");
+  expect(rows.length).toBe(1);
+  const detail = rows[0]!.detail as { bullets?: number; files?: string[]; kinds?: string[]; where?: string };
+  expect(detail.bullets).toBe(2);
+  expect(detail.files?.some((f) => f.endsWith(marked))).toBe(true);
+  expect(detail.kinds).toContain("file-upload");
+  expect(detail.where).toBe("turn.completed");
+  expect(JSON.stringify(detail)).not.toContain("PROV-ADDED-A");
+
+  const clean = await drivePass({
+    ids: "m5b",
+    ask: "please note the billing owner in your own words",
+    child: [
+      {
+        calls: [
+          {
+            tool: "write_file",
+            input: { filePath: "/workspace/memory/it-memory-brain/clean-fixture.md", content: `# Clean fixture\n\n- 2026-08-22: PROV-CLEAN-FACT-${stamp} — noted with nothing ingested\n` },
+            id: "m5b-write",
+          },
+        ],
+      },
+    ],
+  });
+  expect(clean.requests.flatMap((r) => r.toolResults).find((t) => t.name === "write_file")?.isError).toBe(false);
+
+  const after = await readAuditRows({ actions: ["memory.provenance_marked"], sinceIso, limit: 50 });
+  expect(after.length).toBe(1);
+  expect(JSON.stringify(after[0]!.detail)).not.toContain("clean-fixture.md");
 });
