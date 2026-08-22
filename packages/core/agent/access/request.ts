@@ -4,6 +4,7 @@ import { resolveAccess, type EffectiveAccess, type ResolveRequest, type SessionM
 import { getConfig } from "./config.js";
 import { groupsForPrincipal } from "../identity/groups.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
+import { memberPlaneGrants } from "./member-grant.js";
 
 export type { Visibility, Trust } from "../identity/binding.js";
 
@@ -34,6 +35,7 @@ export function unattendedOf(ctx: BindableContext): boolean {
 export function buildResolveRequest(ctx: BindableContext): ResolveRequest {
   const b = bindFrom(ctx);
   const p = resolvePartition(ctx);
+  const memberPlane = memberPlaneFor(b.domainSurface ?? p.surface, p.workspaceKey);
   const acting = actingPrincipalId(b);
   return {
     mode: b.mode,
@@ -43,7 +45,17 @@ export function buildResolveRequest(ctx: BindableContext): ResolveRequest {
     domains: getConfig().domainsForSurface({ workspaceKey: p.workspaceKey, surface: b.domainSurface ?? p.surface }),
     principalId: acting,
     groups: groupsForPrincipal(getConfig().loadGroups?.() ?? [], acting === undefined ? undefined : tryPrincipalKey(p.platform, p.workspace, acting)),
+    ...(memberPlane.length === 0 ? {} : { memberPlane }),
   };
+}
+
+function memberPlaneFor(surface: string, workspaceKey: string): readonly string[] {
+  try {
+    const names = new Set(getConfig().domainsForSurface({ workspaceKey, surface }));
+    return memberPlaneGrants(getConfig().loadDomains().filter((d) => names.has(d.name)));
+  } catch {
+    return [];
+  }
 }
 
 export function resolveAccessFor(ctx: BindableContext): EffectiveAccess {

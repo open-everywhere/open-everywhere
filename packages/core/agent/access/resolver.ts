@@ -22,6 +22,7 @@ export interface ResolveRequest {
   readonly principalId?: string;
   readonly groups?: readonly string[];
   readonly principalLinkSets?: readonly string[];
+  readonly memberPlane?: readonly string[];
 }
 
 export interface ReachableHost {
@@ -236,6 +237,7 @@ export function resolveAccess(
   }
   const skills = [...skillSet].sort();
   const subagents = [...subagentSet].sort();
+  const memberPlaneKeys = req.memberPlane === undefined || req.memberPlane.length === 0 ? undefined : new Set(req.memberPlane);
   const catalogueByConnector = new Map(connectorCredentialsConfig.map((c) => [c.connector, c]));
   const connectorCredentials: Record<string, ResolvedConnectorCredential> = {};
   const grantedConnectors = new Set<string>();
@@ -251,6 +253,7 @@ export function resolveAccess(
       }
       const { resolved, warnings: gw } = expandConnectorGrant({ name, credential }, catalogueByConnector.get(name), {
         dm: req.mode === "dm",
+        ...(memberPlaneKeys === undefined ? {} : { memberPlane: memberPlaneKeys }),
       });
       for (const w of gw) warnings.push(`bundle "${bundle.name}": ${w}`);
       if (resolved) {

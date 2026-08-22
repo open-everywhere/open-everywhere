@@ -40,11 +40,11 @@ ok(classifyConnectorOp("notion__notionette") === "gate:member", "prefix strip re
 const approve = connectorOpApproval();
 const noneApproved = new Set<string>();
 ok(approve({ toolName: "notion__search", approvedTools: noneApproved } as never) === "not-applicable", "read op → not-applicable (no prompt)");
-ok(approve({ toolName: "notion__create_page", approvedTools: noneApproved } as never) === "user-approval", "unapproved write → user-approval (prompt)");
+ok((await approve({ toolName: "notion__create_page", approvedTools: noneApproved } as never)) === "user-approval", "unapproved write → user-approval (prompt)");
 const oneApproved = new Set<string>(["notion__create_page"]);
-ok(approve({ toolName: "notion__create_page", approvedTools: oneApproved } as never) === "not-applicable", "already-approved write → not-applicable (once-per-op)");
-ok(approve({ toolName: "notion__delete_page", approvedTools: oneApproved } as never) === "user-approval", "a DIFFERENT write still prompts (approval is per-op, not blanket)");
-ok(approve({ toolName: "notion__delete_page", approvedTools: new Set<string>(["notion__delete_page"]) } as never) === "user-approval", "an already-approved DESTRUCTIVE op STILL prompts (per-call, OPE-11)");
+ok((await approve({ toolName: "notion__create_page", approvedTools: oneApproved } as never)) === "not-applicable", "already-approved write → not-applicable (once-per-op)");
+ok((await approve({ toolName: "notion__delete_page", approvedTools: oneApproved } as never)) === "user-approval", "a DIFFERENT write still prompts (approval is per-op, not blanket)");
+ok((await approve({ toolName: "notion__delete_page", approvedTools: new Set<string>(["notion__delete_page"]) } as never)) === "user-approval", "an already-approved DESTRUCTIVE op STILL prompts (per-call, OPE-11)");
 
 resetSettingsForTest();
 {
