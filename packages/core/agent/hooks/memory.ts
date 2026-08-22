@@ -15,6 +15,7 @@ import { baselineOf, markAddedBullets, renderProvenanceMark } from "../memory/pr
 import { untrustedIngestedThisTurn, taintKindsThisTurn } from "../access/taint-signal.js";
 import { taintEnabled } from "../access/taint-enforcement.js";
 import { readOnlyBanner, hasReadOnlyBanner, lockCommand, unlockCommand } from "../memory/readonly.js";
+import { lockMemoryRoot, memoryRootUnlockCommand } from "../memory/root-fence.js";
 import { removedLineDigests } from "../memory/purge-redaction.js";
 import { startMemorySyncTiming, emitMemorySyncTiming, byteSize } from "../memory/sync-timing.js";
 import type { MemorySilo } from "../memory/silo.js";
@@ -487,6 +488,31 @@ async function unmaterialiseDroppedTiers(
 }
 
 async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
+  let sandbox: Awaited<ReturnType<HookContext["getSandbox"]>> | null = null;
+  let rootUnlocked = false;
+  const openSandbox = async (): Promise<Awaited<ReturnType<HookContext["getSandbox"]>>> => {
+    sandbox ??= await ctx.getSandbox();
+    if (!rootUnlocked) {
+      try {
+        await sandbox.run({ command: memoryRootUnlockCommand() });
+        rootUnlocked = true;
+      } catch (err) {
+        log(`turn.started memory root unlock failed (a gained/dropped tier may not apply this turn): ${String(err)}`);
+      }
+    }
+    return sandbox;
+  };
+  try {
+    await runSupervisorResync(ctx, openSandbox);
+  } finally {
+    if (rootUnlocked && sandbox) await lockMemoryRoot(sandbox);
+  }
+}
+
+async function runSupervisorResync(
+  ctx: HookContext,
+  openSandbox: () => Promise<Awaited<ReturnType<HookContext["getSandbox"]>>>,
+): Promise<void> {
   const binding = bindFrom(ctx);
   const p = resolvePartition(ctx);
   const plan = planFor(binding, p);
@@ -506,7 +532,7 @@ async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
   let removed: string[] = [];
   const removedNames: string[] = [];
   if (dropped.length > 0) {
-    sandbox = await ctx.getSandbox();
+    sandbox = await openSandbox();
     removed = await unmaterialiseDroppedTiers(sandbox, dropped);
     if (removed.length > 0) {
       const gone = new Set(removed);
@@ -529,7 +555,7 @@ async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
       const version = await provider.tierVersion(p, rm.tier, rm.silo, rm.access);
       const lastSynced = last[tid];
       if (lastSynced !== undefined && version === lastSynced) continue;
-      sandbox ??= await ctx.getSandbox();
+      sandbox = await openSandbox();
       if (rm.readOnly) await refreshReadOnlyTier(sandbox, p, rm);
       else await refreshWritableTier(sandbox, p, rm);
       next[tid] = version;
@@ -772,6 +798,7 @@ export default defineHook({
         await sandbox.writeTextFile({ path: "memory/MEMORY.md", content: renderMemoryIndex(okReads, failedReads) });
         await lock(sandbox, "memory/MEMORY.md");
         timing?.mark("index", tIndex);
+        if (!(await lockMemoryRoot(sandbox))) log("memory root fence NOT applied (chmod failed) — a shell write into an unowned silo would be dropped silently, as before OPE-999");
         if (resyncArmed(ctx)) {
           const tVersions = timing ? timing.now() : 0;
           await recordReadVersions(p, okReads);

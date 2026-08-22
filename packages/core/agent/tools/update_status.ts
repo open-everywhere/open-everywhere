@@ -5,6 +5,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { SURFACE } from "../memory/store.js";
 import { getProvider } from "../memory/provider.js";
 import { readTierFile, writeTierFile, readTierFromSandbox } from "../memory/sandbox-sync.js";
+import { withMemoryRootWritable } from "../memory/root-fence.js";
 import { statusItemLine, upsertStatusItem, statusSeed, type WorkState } from "../status/status.js";
 
 export default defineTool({
@@ -28,7 +29,7 @@ export default defineTool({
     const current = (await readTierFile(sandbox, SURFACE, "STATUS.md")) ?? statusSeed(p.surfaceKey);
     const updated = upsertStatusItem(current, sessionId, line);
 
-    await writeTierFile(sandbox, SURFACE, "STATUS.md", updated);
+    await withMemoryRootWritable(sandbox, () => writeTierFile(sandbox, SURFACE, "STATUS.md", updated));
     const files = await readTierFromSandbox(sandbox, SURFACE);
     files["STATUS.md"] = updated;
     await getProvider().writeTier(p, SURFACE, files, `status [${input.state}] ${sessionId}`);

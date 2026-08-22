@@ -40,7 +40,9 @@ async function ensureConfigRegistered(): Promise<void> {
 const IT_MEMORY_CHANNEL_ID = "1300000001500000001";
 const IT_MEMORY_PURGE_CHANNEL_ID = "1300000001500000003";
 const IT_MEMORY_PROVENANCE_CHANNEL_ID = "1300000001500000005";
+const IT_MEMORY_STATUS_CHANNEL_ID = "1300000001500000007";
 const DISCORD_BOT_ID = "9000000000000000001";
+const DISCORD_TEST_GUILD_ID = "1300000000000000100";
 
 const ORG = "default";
 
@@ -50,17 +52,24 @@ function siloFilePath(silo: string, rel: string): string {
   return join(dir, ORG, "@silos", silo, rel);
 }
 
+function surfaceFilePath(channelId: string, rel: string): string {
+  const dir = process.env.OE_MEMORY_DIR;
+  if (!dir) throw new Error("memory test: OE_MEMORY_DIR is not set — call surfaceFilePath() after bootAgent().");
+  return join(dir, ORG, "discord", DISCORD_TEST_GUILD_ID, "@surfaces", channelId, rel);
+}
+
 async function frozenSiloFilePath(silo: string, rel: string): Promise<string> {
   const { storeRoot } = await import("@open-everywhere/core/agent/memory/store.js");
   return join(storeRoot(), ORG, "@silos", silo, rel);
 }
 
-test("session.started seeds the domain's own silo at the expected path and body, never a sibling domain's silo, and a delegated write_file call does not error", async () => {
+test("session.started seeds the domain's own silo at the expected path and body, never a sibling domain's silo, and both write fences hold for write_file and for bash", async () => {
   await bootAgent({ sharedSqlite: true });
 
   const sinceIso = new Date(Date.now() - 1_000).toISOString();
   const marker = `IT-MEMORY-FACT-${Date.now()}`;
   const content = `# Notes\n\n- ${marker}: integration coverage sentinel for OPE-551\n`;
+  const shellMarker = `IT-MEMORY-SHELL-${Date.now()}`;
 
   const handle = disposeLater(
     registerScript({
@@ -75,6 +84,28 @@ test("session.started seeds the domain's own silo at the expected path and body,
             { tool: "write_file", input: { filePath: "/workspace/memory/it-memory-b-brain/stolen.md", content }, id: "m1-write-unowned" },
           ],
         },
+        {
+          calls: [
+            {
+              tool: "bash",
+              input: {
+                command:
+                  "mkdir -p /workspace/memory/it-memory-b-brain && " +
+                  `echo '${shellMarker}' > /workspace/memory/it-memory-b-brain/stolen-via-shell.md`,
+              },
+              id: "m1-shell-unowned",
+            },
+          ],
+        },
+        {
+          calls: [
+            {
+              tool: "bash",
+              input: { command: `echo '${shellMarker}' > /workspace/memory/it-memory-brain/shell-note.md` },
+              id: "m1-shell-owned",
+            },
+          ],
+        },
         { say: "noted" },
       ],
     }),
@@ -82,12 +113,16 @@ test("session.started seeds the domain's own silo at the expected path and body,
 
   await discordMentionWake({ channelId: IT_MEMORY_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> please note this` });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
-  await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: "the delegated worker's own terminal step" });
+  await waitForChildren(handle, { count: 1, lastStepIndex: 3, label: "the delegated worker's own terminal step" });
 
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
 
-  const writes = handle.requests.flatMap((r) => r.toolResults).filter((t) => t.name === "write_file");
+  const childTerminal = handle.requests.filter((r) => r.role === "child").at(-1);
+  if (!childTerminal) throw new Error("memory test: no child request recorded — the delegation never ran");
+  const childResults = childTerminal.toolResults;
+
+  const writes = childResults.filter((t) => t.name === "write_file");
   expect(writes.length).toBe(2);
   const owned = writes.filter((t) => !t.isError);
   expect(owned.length).toBe(1);
@@ -98,6 +133,19 @@ test("session.started seeds the domain's own silo at the expected path and body,
   expect(refusalText).toContain("it-memory-b-brain");
   expect(refusalText).toContain("memory/it-memory-brain/");
   expect(refusalText).toContain("DROPPED");
+
+  const shells = childResults
+    .filter((t) => t.name === "bash")
+    .map((t) => t.output as { exitCode: number; stdout: string; stderr: string });
+  expect(shells.length).toBe(2);
+  const unownedShell = shells[0];
+  expect(unownedShell.exitCode).not.toBe(0);
+  expect(`${unownedShell.stderr}${unownedShell.stdout}`).toMatch(/Permission denied|EACCES/i);
+
+  const stolenPath = siloFilePath("it-memory-b-brain", "stolen-via-shell.md");
+  expect(existsSync(stolenPath)).toBe(false);
+
+  expect(shells[1].exitCode).toBe(0);
 
   const taskId = taskIdOfDelegation(handle, "the note-taking delegation");
   const settlement = await awaitTaskSettlement({
@@ -120,6 +168,10 @@ test("session.started seeds the domain's own silo at the expected path and body,
   await waitFor(() => (existsSync(notesPath) ? true : undefined), "the delegated child's write_file to land on the DURABLE store via the settlement flush");
   expect(readFileSync(notesPath, "utf-8")).toContain(marker);
 
+  const shellNotePath = siloFilePath("it-memory-brain", "shell-note.md");
+  await waitFor(() => (existsSync(shellNotePath) ? true : undefined), "the delegated child's SHELL write into the owned silo to land on the DURABLE store");
+  expect(readFileSync(shellNotePath, "utf-8")).toContain(shellMarker);
+
   const writeRows = await readAuditRows({ actions: ["memory.write"], sinceIso });
   const settled = writeRows.filter((r) => (r.detail as { outcome?: string; silo?: string }).outcome === "settled" && (r.detail as { silo?: string }).silo === "it-memory-brain");
   expect(settled.length).toBeGreaterThan(0);
@@ -134,6 +186,53 @@ test("session.started seeds the domain's own silo at the expected path and body,
   expect(existsSync(bDir)).toBe(false);
 
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+});
+
+test("OPE-999 — update_status still writes STATUS.md against the fenced memory root, and re-locks it afterwards", async () => {
+  await bootAgent({ sharedSqlite: true });
+  const summary = `IT-STATUS-${Date.now()}`;
+
+  const handle = disposeLater(
+    registerScript({
+      parent: [
+        { calls: [{ tool: "update_status", input: { state: "working", summary }, id: "m1b-status" }] },
+        { calls: [{ tool: "agent", input: { message: "try the shell" }, id: "m1b-delegate" }] },
+        { say: "the worker reported back" },
+      ],
+      child: [
+        {
+          calls: [
+            {
+              tool: "bash",
+              input: { command: "mkdir -p /workspace/memory/it-memory-b-brain && echo x > /workspace/memory/it-memory-b-brain/after-status.md" },
+              id: "m1b-shell-unowned",
+            },
+          ],
+        },
+        { say: "tried" },
+      ],
+    }),
+  );
+
+  await discordMentionWake({ channelId: IT_MEMORY_STATUS_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> status please` });
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 2), "the parent's terminal step to be served");
+  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+
+  const status = handle.requests.flatMap((r) => r.toolResults).find((t) => t.name === "update_status");
+  expect(status?.isError).toBe(false);
+
+  const statusPath = surfaceFilePath(IT_MEMORY_STATUS_CHANNEL_ID, "STATUS.md");
+  await waitFor(() => (existsSync(statusPath) ? true : undefined), "update_status's STATUS.md to reach the durable surface tier");
+  expect(readFileSync(statusPath, "utf-8")).toContain(summary);
+
+  await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: "the delegated worker's own terminal step" });
+  const childTerminal = handle.requests.filter((r) => r.role === "child").at(-1);
+  if (!childTerminal) throw new Error("memory test: no child request recorded — the delegation never ran");
+  const shell = childTerminal.toolResults.find((t) => t.name === "bash")?.output as { exitCode: number; stdout: string; stderr: string } | undefined;
+  expect(shell).toBeDefined();
+  expect(shell!.exitCode).not.toBe(0);
+  expect(`${shell!.stderr}${shell!.stdout}`).toMatch(/Permission denied|EACCES/i);
+  expect(existsSync(siloFilePath("it-memory-b-brain", "after-status.md"))).toBe(false);
 });
 
 test("purge_memory proposes a card under the egress spoof and redacts the fact on the approval-equivalent decide path, leaving only digests behind", async () => {

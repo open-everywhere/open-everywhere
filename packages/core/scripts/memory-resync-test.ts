@@ -56,6 +56,7 @@ function eveContextStorage(): AsyncLocalStorage<unknown> {
 class FakeSandbox {
   readonly files = new Map<string, string>();
   readonly locked = new Set<string>();
+  rootLocked = false;
   writes = 0;
   runs = 0;
   failWrites = false;
@@ -64,9 +65,19 @@ class FakeSandbox {
     for (const l of this.locked) if (path === l || path.startsWith(`${l}/`)) return true;
     return false;
   }
+  private wouldCreateRootEntry(path: string): boolean {
+    if (!path.startsWith("memory/")) return false;
+    const rest = path.slice("memory/".length);
+    const slash = rest.indexOf("/");
+    if (slash < 0) return !this.files.has(path);
+    const dir = `memory/${rest.slice(0, slash)}/`;
+    for (const k of this.files.keys()) if (k.startsWith(dir)) return false;
+    return true;
+  }
   async writeTextFile({ path, content }: { path: string; content: string }): Promise<void> {
     if (this.failWrites) throw new Error(`simulated sandbox transport error writing '${path}'`);
     if (this.isLocked(path)) throw new Error(`EACCES: '${path}' is read-only`);
+    if (this.rootLocked && this.wouldCreateRootEntry(path)) throw new Error(`EACCES: cannot create '${path}' — the memory root is fenced`);
     this.files.set(path, content);
     this.writes++;
   }
@@ -85,6 +96,16 @@ class FakeSandbox {
       this.locked.delete(unlock[1]);
       return { stdout: "" };
     }
+    const rootLock = command.match(/^chmod a-w '(.+)'$/);
+    if (rootLock) {
+      if (rootLock[1] === "memory") this.rootLocked = true;
+      return { stdout: "" };
+    }
+    const rootUnlock = command.match(/^chmod u\+w '(.+)'$/);
+    if (rootUnlock) {
+      if (rootUnlock[1] === "memory") this.rootLocked = false;
+      return { stdout: "" };
+    }
     const list = command.match(/^cd (\S+) 2>\/dev\/null && find \. -type f/);
     if (list) {
       const dir = list[1];
@@ -94,6 +115,7 @@ class FakeSandbox {
     if (command.startsWith("rm -rf ")) {
       for (const m of command.matchAll(/'([^']+)'/g)) {
         const dir = m[1];
+        if (this.rootLocked && /^memory\/[^/]+$/.test(dir)) throw new Error(`EACCES: cannot remove '${dir}' — the memory root is fenced`);
         for (const k of [...this.files.keys()]) if (k === dir || k.startsWith(`${dir}/`)) this.files.delete(k);
         this.locked.delete(dir);
       }
@@ -572,4 +594,30 @@ const setPaymentsMemory = (memory: string[]) => {
   setPaymentsMemory(DEFAULT_PAYMENTS_MEMORY);
 }
 
-console.log(`\n✓ memory-resync: ${n} assertions passed (concurrent write visible on turn.started, version-gated skip, read-only relock, probe-less skip, edit-preserving refresh, non-supervisor + gate-off byte-identical; FIX-1 unlock-leak re-lock; FIX-2 delete propagation + no persist-resurrection + agent-edit preserved + read-only ghost removal; trust/domain isolation; failed-silo heal index refresh; OPE-245 destructive-write floor wired into persistMemoryNow + append still lands; OPE-300 G4 un-materialisation of dropped tiers)\n`);
+{
+  const s = makeSession("sup-root", SUP_TOKEN);
+  await fire(s, "session.started");
+  ok(s.sandbox.rootLocked, "OPE-999: session.started fences the memory ROOT after the tiers and the index are in place");
+
+  await assert.rejects(
+    () => s.sandbox.writeTextFile({ path: "memory/unowned-silo/stolen.md", content: "x" }),
+    /EACCES/,
+    "OPE-999: a write that would create a NEW silo directory under the fenced root fails",
+  );
+  n++;
+  await s.sandbox.writeTextFile({ path: "memory/brain-silo/shell-note.md", content: "kept" });
+  ok(s.sandbox.files.get("memory/brain-silo/shell-note.md") === "kept", "OPE-999: a file inside an OWNED silo still writes against the fenced root");
+
+  setPaymentsMemory(["brain-silo", "noprobe-silo"]);
+  await fire(s, "turn.started");
+  ok(s.sandbox.files.get("memory/baseline-silo/MEMORY.md") === undefined, "OPE-999: the re-sync still UN-MATERIALISES a dropped tier against a fenced root (it unlocked first)");
+  ok(s.sandbox.rootLocked, "OPE-999: …and the root is RE-LOCKED when the re-sync returns");
+
+  setPaymentsMemory(DEFAULT_PAYMENTS_MEMORY);
+  await fire(s, "turn.started");
+  ok(!!s.sandbox.files.get("memory/baseline-silo/MEMORY.md"), "OPE-999: the re-sync still MATERIALISES a tier the plan GAINED against a fenced root");
+  ok(s.sandbox.rootLocked, "OPE-999: …and the root is RE-LOCKED after that turn too");
+  ok(s.sandbox.locked.has("memory/baseline-silo"), "OPE-999: the re-materialised read-only tier is locked again as well — the two fences are independent");
+}
+
+console.log(`\n✓ memory-resync: ${n} assertions passed (concurrent write visible on turn.started, version-gated skip, read-only relock, probe-less skip, edit-preserving refresh, non-supervisor + gate-off byte-identical; FIX-1 unlock-leak re-lock; FIX-2 delete propagation + no persist-resurrection + agent-edit preserved + read-only ghost removal; trust/domain isolation; failed-silo heal index refresh; OPE-245 destructive-write floor wired into persistMemoryNow + append still lands; OPE-300 G4 un-materialisation of dropped tiers; OPE-999 memory-root fence + the re-sync's unlock/re-lock)\n`);
