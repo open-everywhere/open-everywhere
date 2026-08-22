@@ -277,6 +277,25 @@ let armedRow: AuditWireEntry;
   }
 }
 
+function leakSurfaceOf(row: unknown): string {
+  const found: string[] = [];
+  const walk = (value: unknown, key: string): void => {
+    if (typeof value === "string") {
+      if (key !== "ts") found.push(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item, key);
+      return;
+    }
+    if (value !== null && typeof value === "object") {
+      for (const [k, v] of Object.entries(value)) walk(v, k);
+    }
+  };
+  walk(row, "");
+  return found.join("\n");
+}
+
 {
   const serialised = JSON.stringify(armedRow);
   ok(!serialised.includes(BRAIN_SECRET), "TAINT: a memory file's BODY appears nowhere in the row");
@@ -344,8 +363,25 @@ let armedRow: AuditWireEntry;
   ok(silos.length === 1 && silos[0]["ok"] === false, "the failed silo is recorded as ok:false — a slow FAILING silo still spent boot time");
   ok(typeof silos[0]["loadMs"] === "number" && (silos[0]["loadMs"] as number) >= 0, "…with the time it burned before throwing (that is the number worth having)");
   ok(silos[0]["files"] === 0 && silos[0]["bytes"] === 0, "a failed silo materialised nothing");
-  ok(!JSON.stringify(rows[0]).includes("CANARY"), "TAINT: the provider's error text — which can quote a response BODY — is not in the row");
-  ok(!JSON.stringify(rows[0]).includes("401"), "TAINT: no fragment of the provider error survives");
+  const brokenSurface = leakSurfaceOf(rows[0]);
+  ok(!brokenSurface.includes("CANARY"), "TAINT: the provider's error text — which can quote a response BODY — is not in the row");
+  ok(!brokenSurface.includes("401"), "TAINT: no fragment of the provider error survives");
+  ok(!brokenSurface.includes("acme private workspace"), "TAINT: the response BODY the error quoted is not in the row either");
+  const planted = JSON.parse(JSON.stringify(rows[0])) as { detail: Record<string, unknown> };
+  (planted.detail["silos"] as Record<string, unknown>[])[0]["silo"] = FLAKY_ERROR_SECRET;
+  const plantedSurface = leakSurfaceOf(planted);
+  ok(
+    plantedSurface.includes("CANARY") && plantedSurface.includes("401") && plantedSurface.includes("acme private workspace"),
+    "TAINT (negative control): plant the provider error into a string field and all three hunts DO trip — the narrowed search still has teeth",
+  );
+  const numeric = JSON.parse(JSON.stringify(rows[0])) as { ts: string; detail: Record<string, unknown> };
+  numeric.ts = "2026-03-26T22:06:42.401Z";
+  (numeric.detail["silos"] as Record<string, unknown>[])[0]["loadMs"] = 401;
+  numeric.detail["hookMs"] = 1401;
+  ok(
+    !leakSurfaceOf(numeric).includes("401"),
+    "TAINT: a row whose TIMESTAMP and DURATIONS spell \"401\" does NOT trip the hunt — a number cannot carry error text, and the old whole-JSON search read one as a leak",
+  );
   ok(sandbox.files.has("memory/MEMORY.md"), "…and the index was still written (per-silo isolation unchanged)");
 }
 

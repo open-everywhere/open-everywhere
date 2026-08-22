@@ -42,7 +42,12 @@ async function listen(server: import("node:http").Server): Promise<string> {
   ok("HTTP transport lists exactly the admin tools", JSON.stringify(names) === JSON.stringify([...CONTROL_TOOL_NAMES].sort()));
 
   const res = await client.callTool({ name: "spend_report", arguments: {} });
-  const parsed = JSON.parse((res.content as { type: string; text: string }[])[0].text);
+  const text = (res.content as { type: string; text: string }[])[0].text;
+  ok(
+    `spend_report succeeded over HTTP (the view did not throw) — got: ${text.slice(0, 300)}`,
+    res.isError !== true,
+  );
+  const parsed = JSON.parse(text);
   ok("spend_report returns a period over HTTP", /^\d{4}-\d{2}$/.test(parsed.period));
 
   await client.close();
