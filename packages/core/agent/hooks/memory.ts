@@ -595,18 +595,26 @@ function provenanceArmed(ctx: MemoryPersistContext): boolean {
   }
 }
 
+async function provenanceTargets(
+  ctx: MemoryPersistContext,
+): Promise<{ p: ReturnType<typeof resolvePartition>; principalId: string | undefined; writes: readonly ResolvedMemory[]; sandbox: MemorySandbox } | null> {
+  if (!provenanceArmed(ctx)) return null;
+  const p = resolvePartition(ctx);
+  const binding = bindFrom(ctx);
+  const plan = planFor(binding, p);
+  if (plan.writes.length === 0 || ctx.getSandbox === undefined) return null;
+  return { p, principalId: binding.principalId, writes: plan.writes, sandbox: await ctx.getSandbox() };
+}
+
 async function captureProvenanceBaseline(ctx: MemoryPersistContext): Promise<void> {
   try {
-    if (!provenanceArmed(ctx)) return;
     if (provenanceBaseline.get().armed === true) return;
-    const p = resolvePartition(ctx);
-    const plan = planFor(bindFrom(ctx), p);
-    if (plan.writes.length === 0 || ctx.getSandbox === undefined) return;
-    const sandbox = await ctx.getSandbox();
+    const target = await provenanceTargets(ctx);
+    if (target === null) return;
     const tiers: Record<string, Record<string, string[]>> = {};
-    for (const rm of plan.writes) tiers[tierId(rm.tier)] = baselineOf(await readTierFromSandbox(sandbox, rm.tier));
+    for (const rm of target.writes) tiers[tierId(rm.tier)] = baselineOf(await readTierFromSandbox(target.sandbox, rm.tier));
     provenanceBaseline.update(() => ({ armed: true, tiers }));
-    log(`provenance baseline captured for ${plan.writes.length} writable tier(s)`);
+    log(`provenance baseline captured for ${target.writes.length} writable tier(s)`);
   } catch (err) {
     log(`provenance baseline capture SKIPPED — no bullet this session adds takes a mark: ${String(err)}`);
   }
@@ -616,25 +624,22 @@ async function markProvenanceForTurn(ctx: MemoryPersistContext, where: string): 
   try {
     const state = provenanceBaseline.get();
     if (state.armed !== true) return;
-    if (!provenanceArmed(ctx)) return;
-    const p = resolvePartition(ctx);
-    const plan = planFor(bindFrom(ctx), p);
-    if (plan.writes.length === 0 || ctx.getSandbox === undefined) return;
+    const target = await provenanceTargets(ctx);
+    if (target === null) return;
     const tainted = untrustedIngestedThisTurn();
-    const mark = renderProvenanceMark(taintKindsThisTurn());
-    const sandbox = await ctx.getSandbox();
+    const mark = tainted ? renderProvenanceMark(taintKindsThisTurn()) : "";
     const tiers: Record<string, Record<string, string[]>> = {};
     const markedFiles: string[] = [];
     let marked = 0;
-    for (const rm of plan.writes) {
+    for (const rm of target.writes) {
       const tid = tierId(rm.tier);
-      const files = await readTierFromSandbox(sandbox, rm.tier);
+      const files = await readTierFromSandbox(target.sandbox, rm.tier);
       let current = files;
       const held = state.tiers?.[tid];
       if (tainted && held !== undefined) {
         const pass = markAddedBullets(held, files, mark);
         for (const [rel, content] of Object.entries(pass.files)) {
-          await writeTierFile(sandbox, rm.tier, rel, content);
+          await writeTierFile(target.sandbox, rm.tier, rel, content);
           markedFiles.push(`${tid}/${rel}`);
         }
         if (pass.marked > 0) {
@@ -649,11 +654,11 @@ async function markProvenanceForTurn(ctx: MemoryPersistContext, where: string): 
     log(`${where}: marked ${marked} added bullet(s) with external provenance in ${markedFiles.join(", ")}`);
     try {
       await appendAudit({
-        org: p.org,
-        platform: p.platform,
-        workspace: p.workspace,
-        surface: p.surface,
-        principalId: bindFrom(ctx).principalId,
+        org: target.p.org,
+        platform: target.p.platform,
+        workspace: target.p.workspace,
+        surface: target.p.surface,
+        principalId: target.principalId,
         action: "memory.provenance_marked",
         detail: {
           where,
