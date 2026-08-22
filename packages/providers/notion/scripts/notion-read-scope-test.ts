@@ -117,8 +117,9 @@ const ctxFor = (page: string, ws = WS): BindableContext =>
   await assertNotionPageAllowed(ctxFor(PAGE_A), PAGE_A2, DOMAINS, { audit: async (e) => void quiet.push(e) });
   ok(quiet.length === 0, "an ALLOWED read appends no refusal row");
 
-  const rows: Array<{ action: string; platform: string; detail?: Record<string, unknown>; principalId?: string }> = [];
-  const audit = async (e: { action: string; platform: string; detail?: Record<string, unknown>; principalId?: string }) => void rows.push(e);
+  const rows: Array<{ action: string; platform: string; workspace?: string; surface?: string; detail?: Record<string, unknown>; principalId?: string }> = [];
+  const audit = async (e: { action: string; platform: string; workspace?: string; surface?: string; detail?: Record<string, unknown>; principalId?: string }) =>
+    void rows.push(e);
   await assert.rejects(
     () => assertNotionPageAllowed(ctxFor(PAGE_A), PAGE_B, DOMAINS, { audit }),
     ChannelScopeError,
@@ -133,6 +134,7 @@ const ctxFor = (page: string, ws = WS): BindableContext =>
   ok(row.detail?.target === PAGE_B && row.detail?.callerDomain === "payments" && row.detail?.targetDomain === "eng", "the row records the target and BOTH domains");
   ok(row.principalId === "U_NOTION", "the row records WHO asked");
   ok(!Object.prototype.hasOwnProperty.call(row.detail ?? {}, "text"), "the row carries no page content (nothing was fetched)");
+  ok(row.workspace === WS && row.surface === PAGE_A, "a chat-plane refusal's workspace/surface columns are the CALLER'S REAL Notion ids, not stamped unknown");
 
   rows.length = 0;
   await assert.rejects(() => assertNotionPageAllowed(ctxFor(PAGE_A), PAGE_LOOSE, DOMAINS, { audit }), ChannelScopeError, "unassigned page refused");
