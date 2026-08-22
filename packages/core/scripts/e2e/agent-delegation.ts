@@ -1,6 +1,9 @@
 import {
   sleep, dS, makeWant, createRecorder, createInjector, createAuditReader, readToolCalls,
+  classifyDelegationOutcome, delegationArmOf, type DelegationArm, type ToolCall,
 } from "./window-harness.js";
+import { nativeSubagentEnabled, backgroundTasksEnabled } from "../../agent/access/delegation-flag.js";
+import { type AuditWireEntry } from "./audit-read.js";
 
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
@@ -20,8 +23,18 @@ const slackOrigin = { platform: "slack" as const, channelId: CHANNEL_ID };
 const inject = createInjector(TARGET, INJECT);
 const { rowsSince, readFailed: auditReadFailed } = createAuditReader(TARGET, READ, { onError: "swallow" });
 
-const toolCallsOf = (sessionId: string, sinceIso?: string): Promise<{ name: string; errored: boolean }[] | null> =>
+const toolCallsOf = (sessionId: string, sinceIso?: string): Promise<ToolCall[] | null> =>
   readToolCalls(TARGET, READ, sessionId, { paged: true, sinceIso });
+
+const ARM: DelegationArm = delegationArmOf(nativeSubagentEnabled(), backgroundTasksEnabled());
+
+function receiptsFor(rows: readonly AuditWireEntry[], wakeId: string): { nativeReceipt: boolean; rollOwnReceipt: boolean; sessionId: string | undefined; settled: AuditWireEntry | undefined } {
+  const rollOwn = rows.find((r) => r.action === "task.spawned" && (dS(r, "parentWakeId") === wakeId || dS(r, "wakeId") === wakeId));
+  const sessionId = rows.find((r) => dS(r, "wakeId") === wakeId && (dS(r, "sessionId") ?? "").length > 0)?.detail?.sessionId as string | undefined;
+  const started = sessionId === undefined ? undefined : rows.find((r) => r.action === "delegation.task_started" && dS(r, "session") === sessionId);
+  const settled = started === undefined ? undefined : rows.find((r) => r.action === "delegation.task_settled" && dS(r, "task") === dS(started, "task"));
+  return { nativeReceipt: started !== undefined, rollOwnReceipt: rollOwn !== undefined, sessionId, settled };
+}
 
 const ASYNC_BRIEF =
   "This is a long job: in a sandbox, write and run a script that computes the first 40 fibonacci " +
@@ -38,24 +51,21 @@ async function t1aAsync(): Promise<void> {
   while (Date.now() < deadline) {
     await sleep(POLL_MS);
     const rows = await rowsSince(since);
-    const spawn = rows.find((r) => r.action === "task.spawned" && (dS(r, "parentWakeId") === wakeId || dS(r, "wakeId") === wakeId));
-    if (spawn) {
-      return record("T1a", "PASS", `agent(async) delegated — a task.spawned row appeared (taskId=${dS(spawn, "taskId")}, parentWakeId=${dS(spawn, "parentWakeId")}). The one-shot worker does the job and wakes the caller with return_result; this is spawnOneShotTask reached through \`agent\`.`);
+    const { nativeReceipt, rollOwnReceipt, sessionId, settled } = receiptsFor(rows, wakeId);
+    if (nativeReceipt || rollOwnReceipt) {
+      const route = nativeReceipt ? `delegation.task_started (caller session ${sessionId})` : "task.spawned (roll-own one-shot)";
+      const close = settled === undefined ? "not yet settled at this read" : `settled status=${dS(settled, "status")} marker=${dS(settled, "marker")}`;
+      return record("T1a", "PASS", `agent delegated on the ${ARM} arm — ${route}; ${close}. The worker does the job and its result reaches the caller.`);
     }
     const reply = rows.find((r) => r.action === "reply.post" && dS(r, "wakeId") === wakeId);
     if (reply) {
       const sid = dS(reply, "sessionId");
       const calls = sid ? await toolCallsOf(sid, since) : null;
-      if (calls === null) {
-        return record("T1a", "SKIP", `the seat replied (wake ${wakeId}, session ${sid ?? "<absent>"}) with no task.spawned row, but the transcript is UNREADABLE — delegation outcome UNVERIFIED (an observability failure, not model behaviour); fix the transcript read and re-run.`);
-      }
-      if (calls.some((c) => c.name === "agent")) {
-        return record("T1a", "FAIL", `the model CALLED agent (session ${sid}) but NO task.spawned row landed for wake ${wakeId} — the execute refused/errored (window-token attr absent?) or the self-dispatch route failed (OE_SPAWN_DISPATCH_SECRET / OE_PUBLIC_BASE_URL); read the action.result error in the transcript.`);
-      }
-      return record("T1a", "SKIP", `the seat replied (session ${sid}, tools=[${[...new Set(calls.map((c) => c.name))].join(",") || "none"}]) without invoking agent — the model did not choose agent(async) this turn (delegation is model-dependent), or the flag was off. Re-run with delegation.oneshotAgent`);
+      const v = classifyDelegationOutcome({ nativeReceipt, rollOwnReceipt, replied: true, calls, arm: ARM });
+      return record("T1a", v.status, `${v.reason} (wake ${wakeId}, session ${sid ?? "<absent>"}, arm ${ARM}).`);
     }
   }
-  record("T1a", "SKIP", `no task.spawned row (and no reply) for wake ${wakeId} within ${TIMEOUT_MS}ms — the model did not choose agent(async) this turn (delegation is model-dependent), OR the target was not started with delegation.oneshotAgent (agent is then absent). Re-run with the flag ON.${auditReadFailed() ? " NOTE: at least one audit READ failed during the poll — this SKIP may be an audit-route observability failure, not model behaviour." : ""}`);
+  record("T1a", "SKIP", `no delegation receipt row (and no reply) for wake ${wakeId} within ${TIMEOUT_MS}ms on the ${ARM} arm — the model did not choose to delegate this turn (delegation is model-dependent), or the turn is still running.${auditReadFailed() ? " NOTE: at least one audit READ failed during the poll — this SKIP may be an audit-route observability failure, not model behaviour." : ""}`);
 }
 
 async function t1cFile(): Promise<void> {
@@ -66,39 +76,38 @@ async function t1cFile(): Promise<void> {
   while (Date.now() < deadline) {
     await sleep(POLL_MS);
     const rows = await rowsSince(since);
-    const spawn = rows.find((r) => r.action === "task.spawned" && (dS(r, "parentWakeId") === wakeId || dS(r, "wakeId") === wakeId));
-    if (spawn) {
-      const taskId = dS(spawn, "taskId");
+    const { nativeReceipt, rollOwnReceipt, sessionId, settled } = receiptsFor(rows, wakeId);
+    if (nativeReceipt || rollOwnReceipt) {
+      const route = nativeReceipt ? `delegation.task_started (caller session ${sessionId})` : "task.spawned (roll-own one-shot)";
       const posted = rows.find((r) => r.action.endsWith(".post_file"));
       if (posted) {
-        return record("T1c", "PASS", `agent delegated a FILE ask and the worker POSTED the artifact — task.spawned (taskId=${taskId}) then ${posted.action} (files=${dS(posted, "filenames") || "?"}). The standing seat carries no post_file; the worker delivered the file into the thread per renderOneShotBrief's carve-out.`);
+        return record("T1c", "PASS", `agent delegated a FILE ask on the ${ARM} arm and the worker POSTED the artifact — ${route} then ${posted.action} (files=${dS(posted, "filenames") || "?"}). The standing seat carries no post_file; the worker delivered the file into the thread per renderOneShotBrief's carve-out.`);
       }
-      const returned = taskId ? rows.find((r) => r.action === "task.returned" && dS(r, "taskId") === taskId) : undefined;
+      const returned = settled ?? rows.find((r) => r.action === "task.returned" && dS(r, "wakeId") === wakeId);
       if (returned) {
-        return record("T1c", "FAIL", `the worker for task ${taskId} RETURNED with no .post_file row — it did the work but never delivered the FILE into the thread (a text-only return_result leaves the requester empty-handed). Check renderOneShotBrief still permits post_file for a file task.`);
+        return record("T1c", "FAIL", `the delegated worker RETURNED (${returned.action}) with no .post_file row — it did the work but never delivered the FILE into the thread (a text-only return leaves the requester empty-handed). Check renderOneShotBrief still permits post_file for a file task.`);
       }
     } else {
       const reply = rows.find((r) => r.action === "reply.post" && dS(r, "wakeId") === wakeId);
       if (reply) {
         const sid = dS(reply, "sessionId");
         const calls = sid ? await toolCallsOf(sid, since) : null;
-        if (calls === null) {
-          return record("T1c", "SKIP", `the seat replied (wake ${wakeId}, session ${sid ?? "<absent>"}) with no task.spawned row, but the transcript is UNREADABLE — outcome UNVERIFIED (observability failure, not model behaviour); fix the transcript read and re-run.`);
+        const v = classifyDelegationOutcome({ nativeReceipt, rollOwnReceipt, replied: true, calls, arm: ARM });
+        if (v.status === "PASS") {
+          return record("T1c", "SKIP", `${v.reason} — but no .post_file row landed for the file ask (wake ${wakeId}, session ${sid ?? "<absent>"}). Artifact delivery UNVERIFIED on the ${ARM} arm.`);
         }
-        if (calls.some((c) => c.name === "agent")) {
-          return record("T1c", "FAIL", `the model CALLED agent (session ${sid}) but NO task.spawned row landed for wake ${wakeId} — the execute refused/errored or the self-dispatch route failed; read the action.result error in the transcript.`);
-        }
-        return record("T1c", "SKIP", `the seat replied (session ${sid}, tools=[${[...new Set(calls.map((c) => c.name))].join(",") || "none"}]) without delegating the file ask — the model did not choose agent this turn (model-dependent), or the flag was off. Re-run with delegation.oneshotAgent`);
+        return record("T1c", v.status, `${v.reason} (file ask; wake ${wakeId}, session ${sid ?? "<absent>"}, arm ${ARM}).`);
       }
     }
   }
-  record("T1c", "SKIP", `no task.spawned/post_file (and no reply) for wake ${wakeId} within ${TIMEOUT_MS}ms — the model did not delegate the file ask this turn (model-dependent), OR the target was not started with delegation.oneshotAgent${auditReadFailed() ? " NOTE: an audit READ failed during the poll — this SKIP may be an observability failure, not model behaviour." : ""}`);
+  record("T1c", "SKIP", `no delegation receipt / .post_file row (and no reply) for wake ${wakeId} within ${TIMEOUT_MS}ms on the ${ARM} arm — the model did not delegate the file ask this turn (model-dependent), or the turn is still running.${auditReadFailed() ? " NOTE: an audit READ failed during the poll — this SKIP may be an observability failure, not model behaviour." : ""}`);
 }
 
 async function main(): Promise<void> {
-  console.log(`agent-delegation e2e — target=${TARGET || "(none)"} org=${ORG} domain=${DOMAIN} surface=${SURFACE}`);
+  console.log(`agent-delegation e2e — target=${TARGET || "(none)"} org=${ORG} domain=${DOMAIN} surface=${SURFACE} arm=${ARM}`);
+  console.log(`  seat lock: /tmp/oe-e2e-locks/domain-${DOMAIN}.lock — hold it for the whole live drive`);
   if (!TARGET || !READ || !INJECT) {
-    for (const id of ["T1a", "T1c"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN / E2E_CONTROL_INJECT_TOKEN — the delegation e2e needs the live spoofed-ingest target deployed with `delegation.oneshotAgent` armed");
+    for (const id of ["T1a", "T1c"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN / E2E_CONTROL_INJECT_TOKEN — the delegation e2e needs a live spoofed-ingest target");
   } else {
     if (want("T1a")) await t1aAsync();
     if (want("T1c")) await t1cFile();
