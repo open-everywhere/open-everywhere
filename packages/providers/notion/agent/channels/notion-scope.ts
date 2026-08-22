@@ -210,11 +210,12 @@ async function auditNotionReadRefusal(
 ): Promise<void> {
   const partition = resolvePartition(ctx);
   const principalId = bindFrom(ctx).principalId;
+  const foreignCaller = partition.platform !== "notion";
   await (deps?.audit ?? appendAudit)({
     org: partition.org,
     platform: "notion",
-    workspace: partition.workspace,
-    surface: partition.surface,
+    workspace: foreignCaller ? "unknown" : partition.workspace,
+    surface: foreignCaller ? "unknown" : partition.surface,
     ...(principalId ? { principalId } : {}),
     action: "read.refused",
     detail: {

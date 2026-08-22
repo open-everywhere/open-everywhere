@@ -141,8 +141,9 @@ const notionCtx = (page: string, ws = WS): BindableContext =>
   ok(!notionWorkScope(claimed, CLAIMED_PAGE, DOMAINS, []).allowed, "…and unreadable without them — the hints are load-bearing, not decoration");
   ok(!notionWorkScope(granted, CLAIMED_PAGE, DOMAINS, notionWorkspacesOf(granted)).allowed, "another domain's hints never reach the claimed page");
 
-  const rows: Array<{ action?: string; detail?: Record<string, unknown> }> = [];
-  const audit = async (e: { action?: string; detail?: Record<string, unknown> }) => void rows.push(e);
+  const rows: Array<{ action?: string; platform?: string; workspace?: string; surface?: string; detail?: Record<string, unknown> }> = [];
+  const audit = async (e: { action?: string; platform?: string; workspace?: string; surface?: string; detail?: Record<string, unknown> }) =>
+    void rows.push(e);
   await assertNotionWorkPageAllowed(slackCtx("C_DEV"), SPEC_PAGE, granted, DOMAINS, notionWorkspacesOf(granted), { audit });
   ok(rows.length === 0, "an ALLOWED work read appends no refusal row");
   await assert.rejects(
@@ -153,6 +154,9 @@ const notionCtx = (page: string, ws = WS): BindableContext =>
   ok(rows.length === 1 && rows[0]!.detail?.reason === "cross-domain", "…and the refusal is audited with its reason");
   ok(rows[0]!.detail?.target === OTHER_PAGE, "the row records the target id");
   ok(!Object.prototype.hasOwnProperty.call(rows[0]!.detail ?? {}, "text"), "the row carries no page content (nothing was fetched)");
+  ok(rows[0]!.platform === "notion", "the row's platform names the REFUSED READ's subject (notion), not the caller's own platform");
+  ok(rows[0]!.workspace === "unknown" && rows[0]!.surface === "unknown", "a work-plane refusal from a NON-Notion caller stamps workspace/surface unknown, never a foreign platform's ids");
+  ok(rows[0]!.detail?.callerSurfaceKey === "slack/T1/C_DEV", "…and the real caller identity survives whole in detail.callerSurfaceKey");
 }
 
 {
