@@ -47,15 +47,29 @@ export function callerWorkGrant(
   return workGrantCredential(callerWorkDomain(ctx, domains, resolveDomain), connector, workRole);
 }
 
+export type WorkSurfaceKind = "entity" | "container";
+
 export interface WorkRole {
   readonly connector: string;
   readonly role: string;
+  readonly kind: WorkSurfaceKind;
 }
 
 export const WORK_ROLES: readonly WorkRole[] = [
-  { connector: "notion", role: "team-key" },
-  { connector: "linear", role: "workspace" },
+  { connector: "notion", role: "team-key", kind: "entity" },
+  { connector: "linear", role: "workspace", kind: "entity" },
+  { connector: "slack", role: "work-token", kind: "container" },
+  { connector: "discord", role: "work-token", kind: "container" },
+  { connector: "teams", role: "work-token", kind: "container" },
 ];
+
+export function workRoleFor(connector: string): string | undefined {
+  return WORK_ROLES.find((w) => w.connector === connector)?.role;
+}
+
+export function containerWorkRoleFor(connector: string): string | undefined {
+  return WORK_ROLES.find((w) => w.connector === connector && w.kind === "container")?.role;
+}
 
 export const GITHUB_CONNECTOR = "github";
 
