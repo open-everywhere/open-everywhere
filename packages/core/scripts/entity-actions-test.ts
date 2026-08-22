@@ -7,7 +7,8 @@ import {
   supportedEntityActionPlatforms,
   type EntityActionAdapter,
 } from "../agent/channels/entity-actions.js";
-import type { BindableContext } from "../agent/identity/binding.js";
+import { registerIdentityMapper, type BindableContext } from "../agent/identity/binding.js";
+import { defineDomain, type Domain } from "../agent/memory/domain.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -17,6 +18,22 @@ const ok = (cond: boolean, label: string) => {
 
 function ctx(platform: string, attrs: Record<string, string> = {}): BindableContext {
   return { channel: { kind: platform }, session: { auth: { current: { attributes: attrs } } } } as unknown as BindableContext;
+}
+
+const WORK_ROLE = "project-key";
+const grantedPlatforms = new Set<string>();
+function grantFor(platform: string): readonly Domain[] {
+  if (!grantedPlatforms.has(platform)) {
+    registerIdentityMapper(platform, () => ({ workspace: "W1", surface: platform, mode: "channel", visibility: "public", trust: "internal", principalId: "U_TEST" }));
+    grantedPlatforms.add(platform);
+  }
+  return [
+    defineDomain({
+      name: `d-${platform}`,
+      channels: [`${platform}/W1/${platform}`],
+      credentials: [{ connector: platform, credential: WORK_ROLE, use: `${platform}-key` }],
+    }),
+  ];
 }
 
 {
@@ -56,35 +73,36 @@ function ctx(platform: string, attrs: Record<string, string> = {}): BindableCont
 
 {
   await assert.rejects(
-    () => resolveEntityAction(ctx("notion", {}), "addLabel", { platform: "notion", id: "page-1" }, []),
-    /not supported on "notion".*entity-gated/s,
-    "an unregistered platform refuses with a structured 'entity-gated: not supported' error",
-  );
-  try {
-    await resolveEntityAction(ctx("notion", {}), "addLabel", { platform: "notion", id: "page-1" }, []);
-    assert.fail("expected a throw");
-  } catch (err) {
-    const msg = String((err as Error).message);
-    ok(msg.includes("github"), "the refusal names the platforms that DO support addLabel (github in core alone)");
-  }
-}
-
-{
-  const readOnlyAdapter: EntityActionAdapter = { platform: "test-verb-partial", setState: async (id, v) => `set:${id}:${v}` };
-  registerEntityActionAdapter(readOnlyAdapter);
-  const { ref } = await resolveEntityAction(ctx("test-verb-partial", {}), "setState", { platform: "test-verb-partial", id: "1" }, []);
-  ok(ref.id === "1", "a verb the adapter DOES implement resolves fine");
-  await assert.rejects(
-    () => resolveEntityAction(ctx("test-verb-partial", {}), "addLabel", { platform: "test-verb-partial", id: "1" }, []),
-    /addLabel is not supported on "test-verb-partial"/,
-    "a registered platform missing THIS verb refuses (per-verb entity gating, not per-platform)",
+    () => resolveEntityAction(ctx("notion", {}), "addLabel", { platform: "notion", id: "page-1" }, grantFor("notion")),
+    /not one of this session's work destinations/,
+    "a platform with NO registered work adapter is refused at the destination gate, even by a domain that declares its work role",
   );
   n++;
 }
 
 {
+  const readOnlyAdapter: EntityActionAdapter = { platform: "test-verb-partial", workRole: WORK_ROLE, setState: async (id, v) => `set:${id}:${v}` };
+  registerEntityActionAdapter(readOnlyAdapter);
+  const { ref } = await resolveEntityAction(ctx("test-verb-partial", {}), "setState", { platform: "test-verb-partial", id: "1" }, grantFor("test-verb-partial"));
+  ok(ref.id === "1", "a verb the adapter DOES implement resolves fine");
+  await assert.rejects(
+    () => resolveEntityAction(ctx("test-verb-partial", {}), "addLabel", { platform: "test-verb-partial", id: "1" }, grantFor("test-verb-partial")),
+    /addLabel is not supported on "test-verb-partial"/,
+    "a registered platform missing THIS verb refuses (per-verb entity gating, not per-platform)",
+  );
+  n++;
+  try {
+    await resolveEntityAction(ctx("test-verb-partial", {}), "addLabel", { platform: "test-verb-partial", id: "1" }, grantFor("test-verb-partial"));
+    assert.fail("expected a throw");
+  } catch (err) {
+    ok(String((err as Error).message).includes("github"), "the refusal names the platforms that DO support addLabel (github in core alone)");
+  }
+}
+
+{
   const gatedAdapter: EntityActionAdapter = {
     platform: "test-checked",
+    workRole: WORK_ROLE,
     checkAccess: (_c, id) => {
       if (id === "forbidden") throw new Error("nope, not granted");
     },
@@ -92,12 +110,12 @@ function ctx(platform: string, attrs: Record<string, string> = {}): BindableCont
   };
   registerEntityActionAdapter(gatedAdapter);
   await assert.rejects(
-    () => resolveEntityAction(ctx("test-checked", {}), "assign", { platform: "test-checked", id: "forbidden" }, []),
+    () => resolveEntityAction(ctx("test-checked", {}), "assign", { platform: "test-checked", id: "forbidden" }, grantFor("test-checked")),
     /nope, not granted/,
     "checkAccess's refusal propagates from resolveEntityAction",
   );
   n++;
-  const { ref, run } = await resolveEntityAction(ctx("test-checked", {}), "assign", { platform: "test-checked", id: "ok-id" }, []);
+  const { ref, run } = await resolveEntityAction(ctx("test-checked", {}), "assign", { platform: "test-checked", id: "ok-id" }, grantFor("test-checked"));
   ok(ref.id === "ok-id", "checkAccess passing lets resolution through");
   const outcome = await run("alice");
   ok(outcome === "assigned:ok-id:alice", "the bound `run` closure calls the adapter fn with (entityId, value)");
@@ -107,17 +125,18 @@ function ctx(platform: string, attrs: Record<string, string> = {}): BindableCont
   let seenOrg: string | undefined = "never called";
   registerEntityActionAdapter({
     platform: "test-org-threading",
+    workRole: WORK_ROLE,
     assign: async (id, v, organizationId) => {
       seenOrg = organizationId;
       return `assigned:${id}:${v}:${organizationId ?? "(none)"}`;
     },
   });
-  const { run } = await resolveEntityAction(ctx("test-org-threading", {}), "assign", { platform: "test-org-threading", id: "1", organizationId: "org-soak" }, []);
+  const { run } = await resolveEntityAction(ctx("test-org-threading", {}), "assign", { platform: "test-org-threading", id: "1", organizationId: "org-soak" }, grantFor("test-org-threading"));
   const outcome = await run("bob");
   ok(outcome === "assigned:1:bob:org-soak", `🔴 THE FIX: run() passes the explicit ref.organizationId through to the adapter fn as a third argument (got "${outcome}")`);
   ok(seenOrg === "org-soak", "…and the adapter fn actually received it");
 
-  const { run: runNoOrg } = await resolveEntityAction(ctx("test-org-threading", {}), "assign", { platform: "test-org-threading", id: "1" }, []);
+  const { run: runNoOrg } = await resolveEntityAction(ctx("test-org-threading", {}), "assign", { platform: "test-org-threading", id: "1" }, grantFor("test-org-threading"));
   seenOrg = "never called";
   await runNoOrg("bob");
   ok(seenOrg === undefined, "NEGATIVE CONTROL: a ref with no organizationId passes undefined through — never invents one");
@@ -127,6 +146,7 @@ function ctx(platform: string, attrs: Record<string, string> = {}): BindableCont
   let consulted = 0;
   registerEntityActionAdapter({
     platform: "test-async-checked",
+    workRole: WORK_ROLE,
     checkAccess: async (_c, id) => {
       consulted++;
       if (id === "forbidden") throw new Error("async refusal from checkAccess");
@@ -134,13 +154,13 @@ function ctx(platform: string, attrs: Record<string, string> = {}): BindableCont
     assign: async (id, v) => `assigned:${id}:${v}`,
   });
   await assert.rejects(
-    () => resolveEntityAction(ctx("test-async-checked", {}), "assign", { platform: "test-async-checked", id: "forbidden" }, []),
+    () => resolveEntityAction(ctx("test-async-checked", {}), "assign", { platform: "test-async-checked", id: "forbidden" }, grantFor("test-async-checked")),
     /async refusal from checkAccess/,
     "an ASYNC checkAccess's rejection propagates — resolveEntityAction awaits it, so a refusal cannot float away unnoticed",
   );
   ok(consulted === 1, "…and the hook was actually consulted, not skipped");
   n++;
-  const okRes = await resolveEntityAction(ctx("test-async-checked", {}), "assign", { platform: "test-async-checked", id: "fine" }, []);
+  const okRes = await resolveEntityAction(ctx("test-async-checked", {}), "assign", { platform: "test-async-checked", id: "fine" }, grantFor("test-async-checked"));
   ok(okRes.ref.id === "fine" && consulted === 2, "an async checkAccess that resolves lets resolution through");
 }
 
@@ -148,12 +168,16 @@ function ctx(platform: string, attrs: Record<string, string> = {}): BindableCont
   let seen: unknown = "never called";
   registerEntityActionAdapter({
     platform: "test-domains-arg",
+    workRole: WORK_ROLE,
     checkAccess: (_c, _id, domains) => void (seen = domains),
     setState: async () => "ok",
   });
-  const marker = [{ name: "marker-domain" }] as unknown as Parameters<typeof resolveEntityAction>[3];
+  const marker = [...grantFor("test-domains-arg"), { name: "marker-domain" }] as unknown as Parameters<typeof resolveEntityAction>[3];
   await resolveEntityAction(ctx("test-domains-arg", {}), "setState", { platform: "test-domains-arg", id: "1" }, marker);
-  ok(Array.isArray(seen) && (seen as { name: string }[])[0]?.name === "marker-domain", "the `domains` the resolver was given is handed to checkAccess unchanged");
+  ok(
+    Array.isArray(seen) && (seen as { name: string }[]).some((d) => d.name === "marker-domain"),
+    "the `domains` the resolver was given is handed to checkAccess unchanged",
+  );
   n++;
 }
 

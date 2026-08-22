@@ -108,12 +108,16 @@ n++;
   ok(typeof entityActionFn("linear", "setState") === "function", "linear declares setState");
   ok(typeof entityActionFn("linear", "assign") === "function", "linear declares assign");
   ok(typeof entityActionFn("linear", "addLabel") === "function", "linear declares addLabel");
+  ok(
+    platforms.filter((x) => x === "linear" || x === "github").length === 2,
+    "the composed entity-action surface carries BOTH linear (bundle) and github (core) — the set every refusal is rendered from",
+  );
   try {
     await resolveEntityAction(ctx("notion", {}), "addLabel", { platform: "notion", id: "page-1" }, []);
     assert.fail("expected a throw");
   } catch (err) {
     const msg = String((err as Error).message);
-    ok(msg.includes("linear") && msg.includes("github"), "the addLabel refusal names BOTH linear and github (core + bundle composed)");
+    ok(/not one of this session's work destinations/.test(msg), `notion is refused at the DESTINATION gate — it registers no work adapter, so no domain can address it (${msg})`);
   }
 }
 
@@ -123,13 +127,16 @@ n++;
   ok(platforms.includes("github"), "github's ticket-CREATE adapter is registered (core module-load side effect)");
   ok(!platforms.includes("notion"), "notion registers NO create adapter — a database row's property schema can't be inferred, so it fails closed rather than faking a ticket");
   ok(typeof ticketCreateFn("linear") === "function", "linear declares create");
+  ok(
+    platforms.filter((x) => x === "linear" || x === "github").length === 2,
+    "the composed ticket-CREATE surface carries BOTH linear (bundle) and github (core)",
+  );
   try {
     await resolveTicketCreate(ctx("notion", {}), { platform: "notion", target: "db-1" }, []);
     assert.fail("expected a throw");
   } catch (err) {
     const msg = String((err as Error).message);
-    ok(/not supported on "notion"/.test(msg), "create_ticket refuses on notion");
-    ok(msg.includes("linear") && msg.includes("github"), "…naming BOTH linear and github as the supported set (core + bundle composed)");
+    ok(/not one of this session's work destinations/.test(msg), `create_ticket refuses notion at the DESTINATION gate — it registers no create adapter, so it is addressable by nobody (${msg})`);
   }
 }
 
