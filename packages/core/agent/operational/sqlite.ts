@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { assertSpendLimitAmount, assertDomainModelPick, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
@@ -481,6 +481,22 @@ function getDb(): DatabaseSync {
       truncated      INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS model_call_capture_org_session ON model_call_capture (org_id, session_id, seq);
+    -- memory_proposal (OPE-957): the dream cycle's proposal review queue, moved off the audit log
+    -- (store.ts's MEMORY PROPOSALS section carries the whole posture). MUTABLE, like
+    -- model_call_capture — a store holding member text needs a real erasure path.
+    CREATE TABLE IF NOT EXISTS memory_proposal (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      org_id       TEXT NOT NULL,
+      kind         TEXT NOT NULL,
+      scope        TEXT NOT NULL,
+      summary      TEXT NOT NULL,
+      before_text  TEXT,
+      after_text   TEXT,
+      detail_json  TEXT,
+      principal_id TEXT NOT NULL,
+      created_at   TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS memory_proposal_org ON memory_proposal (org_id, id);
     CREATE TABLE IF NOT EXISTS instance_meta (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -1722,6 +1738,59 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async deleteModelCallCapturesForSession(org, sessionId) {
     return Number(getDb().prepare("DELETE FROM model_call_capture WHERE org_id = ? AND session_id = ?").run(org, sessionId).changes);
+  },
+
+  async addMemoryProposal(write: MemoryProposalWrite) {
+    const result = getDb()
+      .prepare(
+        `INSERT INTO memory_proposal (org_id, kind, scope, summary, before_text, after_text, detail_json, principal_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        write.org,
+        write.kind,
+        write.scope,
+        write.summary,
+        write.before ?? null,
+        write.after ?? null,
+        write.detail ? JSON.stringify(write.detail) : null,
+        write.principalId,
+        write.createdAt,
+      );
+    return { ...write, id: Number(result.lastInsertRowid) } as MemoryProposalRow;
+  },
+
+  async listMemoryProposals(org) {
+    const rows = getDb()
+      .prepare(
+        `SELECT id, kind, scope, summary, before_text, after_text, detail_json, principal_id, created_at
+         FROM memory_proposal WHERE org_id = ? ORDER BY id DESC`,
+      )
+      .all(org) as {
+      id: number;
+      kind: string;
+      scope: string;
+      summary: string;
+      before_text: string | null;
+      after_text: string | null;
+      detail_json: string | null;
+      principal_id: string;
+      created_at: string;
+    }[];
+    return rows.map(
+      (r): MemoryProposalRow => ({
+        id: r.id,
+        org,
+        kind: r.kind,
+        scope: r.scope,
+        summary: r.summary,
+        ...(r.before_text !== null ? { before: r.before_text } : {}),
+        ...(r.after_text !== null ? { after: r.after_text } : {}),
+        ...(r.detail_json ? { detail: JSON.parse(r.detail_json) as Record<string, unknown> } : {}),
+        principalId: r.principal_id,
+        createdAt: r.created_at,
+      }),
+    );
   },
 
   async runAnalyticsQuery(compiled) {

@@ -785,6 +785,36 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
+  const row = await store.addMemoryProposal({
+    org: "acme",
+    kind: "contradiction",
+    scope: "payments",
+    summary: "conflict on Ada ownership",
+    before: "a\nb",
+    after: "b",
+    detail: { file: "MEMORY.md" },
+    principalId: "dream-cycle",
+    createdAt: "2026-06-30T10:00:00Z",
+  });
+  ok(typeof row.id === "number", "pg: addMemoryProposal returns a store-assigned numeric id");
+  const acme = await store.listMemoryProposals("acme");
+  ok(acme.length === 1, "pg: the proposal round-trips");
+  ok(acme[0].id === row.id, "pg: the listed row carries the same id the write returned");
+  ok(acme[0].before === "a\nb", "pg: `before` round-trips");
+  ok(acme[0].after === "b", "pg: `after` round-trips");
+  ok(acme[0].detail?.["file"] === "MEMORY.md", "pg: `detail` JSON round-trips");
+
+  await store.addMemoryProposal({ org: "acme", kind: "skill", scope: "eng", summary: "repeated workflow", principalId: "dream-cycle", createdAt: "2026-06-30T10:05:00Z" });
+  const acmeAfter = await store.listMemoryProposals("acme");
+  ok(acmeAfter.length === 2, "pg: a second proposal for the same org is a second row");
+  const minimal = acmeAfter.find((r) => r.kind === "skill");
+  ok(minimal !== undefined && minimal.before === undefined && minimal.detail === undefined, "pg: an omitted before/detail reads back absent, not null-as-string");
+  ok(acmeAfter[0].id === minimal?.id, "pg: listMemoryProposals is newest-first");
+
+  ok((await store.listMemoryProposals("globex")).length === 0, "pg: a different org sees no rows — org-isolated (no cross-org bleed)");
+}
+
+{
   ok((await store.listDomainSkills("acme", "eng")).length === 0, "pg: empty domain starts with no skills");
   await store.putDomainSkill("acme", "eng", "deploy-runbook", "# Deploy\nSteps.", "U1", "2026-06-30T10:00:00Z");
   let rows = await store.listDomainSkills("acme", "eng");

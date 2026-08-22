@@ -1,6 +1,6 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { assertSpendLimitAmount, assertDomainModelPick, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
@@ -396,6 +396,19 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      truncated      boolean NOT NULL DEFAULT false
    )`,
   `CREATE INDEX IF NOT EXISTS model_call_capture_org_session ON model_call_capture (org_id, session_id, seq)`,
+  `CREATE TABLE IF NOT EXISTS memory_proposal (
+     id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+     org_id       text NOT NULL,
+     kind         text NOT NULL,
+     scope        text NOT NULL,
+     summary      text NOT NULL,
+     before_text  text,
+     after_text   text,
+     detail_json  text,
+     principal_id text NOT NULL,
+     created_at   text NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS memory_proposal_org ON memory_proposal (org_id, id)`,
   `CREATE TABLE IF NOT EXISTS instance_meta (
      key   text PRIMARY KEY,
      value text NOT NULL
@@ -505,6 +518,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE notice_claim ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE model_call_capture ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE proactive_address ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE memory_proposal ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill_revisions FORCE ROW LEVEL SECURITY`,
@@ -545,6 +559,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS notice_claim_org_isolation ON notice_claim`,
   `DROP POLICY IF EXISTS model_call_capture_org_isolation ON model_call_capture`,
   `DROP POLICY IF EXISTS proactive_address_org_isolation ON proactive_address`,
+  `DROP POLICY IF EXISTS memory_proposal_org_isolation ON memory_proposal`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
@@ -635,6 +650,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY proactive_address_org_isolation ON proactive_address
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY memory_proposal_org_isolation ON memory_proposal
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
 ];
@@ -950,6 +968,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   notice_claim: ["SELECT", "INSERT"],
   model_call_capture: ["SELECT", "INSERT", "DELETE"],
   proactive_address: ["SELECT", "INSERT", "UPDATE"],
+  memory_proposal: ["SELECT", "INSERT"],
   thread_ownership: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   turn_anchor: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   task_result: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -2115,6 +2134,58 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     async deleteModelCallCapturesForSession(org, sessionId) {
       const { rows } = await client.query(`DELETE FROM model_call_capture WHERE org_id = $1 AND session_id = $2 RETURNING seq`, [org, sessionId]);
       return rows.length;
+    },
+
+    async addMemoryProposal(write: MemoryProposalWrite) {
+      const { rows } = await client.query(
+        `INSERT INTO memory_proposal (org_id, kind, scope, summary, before_text, after_text, detail_json, principal_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id`,
+        [
+          write.org,
+          write.kind,
+          write.scope,
+          write.summary,
+          write.before ?? null,
+          write.after ?? null,
+          write.detail ? JSON.stringify(write.detail) : null,
+          write.principalId,
+          write.createdAt,
+        ],
+      );
+      return { ...write, id: Number((rows[0] as { id: number | string }).id) } as MemoryProposalRow;
+    },
+
+    async listMemoryProposals(org) {
+      const { rows } = await client.query(
+        `SELECT id, kind, scope, summary, before_text, after_text, detail_json, principal_id, created_at
+         FROM memory_proposal WHERE org_id = $1 ORDER BY id DESC`,
+        [org],
+      );
+      return (rows as {
+        id: number | string;
+        kind: string;
+        scope: string;
+        summary: string;
+        before_text: string | null;
+        after_text: string | null;
+        detail_json: string | null;
+        principal_id: string;
+        created_at: string;
+      }[]).map(
+        (r): MemoryProposalRow => ({
+          id: Number(r.id),
+          org,
+          kind: r.kind,
+          scope: r.scope,
+          summary: r.summary,
+          ...(r.before_text !== null ? { before: r.before_text } : {}),
+          ...(r.after_text !== null ? { after: r.after_text } : {}),
+          ...(r.detail_json ? { detail: JSON.parse(r.detail_json) as Record<string, unknown> } : {}),
+          principalId: r.principal_id,
+          createdAt: r.created_at,
+        }),
+      );
     },
 
     async runAnalyticsQuery(compiled) {
