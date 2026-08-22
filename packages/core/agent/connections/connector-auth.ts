@@ -256,6 +256,12 @@ export function userAwareProviderToken(
           assertCredentialEndpointHostAllowed(cred.endpoints, opts.directUrl, `connection "${opts.connector}" credential "${cred.credential}"`);
         }
         const { mode, principalId, platform, workspace, org } = await resolveDmPrincipal(ctx.session.auth);
+        if (!principalId) {
+          throw new Error(
+            `connection "${opts.connector}": cannot mint a per-user token — this surface has no ` +
+              `resolvable user identity (principalId). Fail closed.`,
+          );
+        }
         let memberRequester: string | undefined;
         if (mode !== "dm") {
           if (cred.memberPlane !== true) {
@@ -277,13 +283,7 @@ export function userAwareProviderToken(
           }
           memberRequester = verdict.requesterPrincipalId;
         }
-        if (!principalId && memberRequester === undefined) {
-          throw new Error(
-            `connection "${opts.connector}": cannot mint a per-user token — this DM surface has no ` +
-              `resolvable user identity (principalId). Fail closed.`,
-          );
-        }
-        const actorId = memberRequester ?? (principalId as string);
+        const actorId = memberRequester ?? principalId;
         const connector = vercelConnectorOf(cred);
         if (!connector)
           throw new Error(`connection "${opts.connector}": user-oauth credential has no vercel-connect home`);
