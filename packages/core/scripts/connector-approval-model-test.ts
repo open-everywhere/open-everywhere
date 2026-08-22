@@ -65,10 +65,10 @@ ok(sessionGrantKind({ kind: "connector.op:notion", argsJson: "{}" }) === null, "
   const approve = connectorOpApproval();
   ok(approve({ toolName: "notion__search", approvedTools: new Set<string>() } as never) === "not-applicable", "read never prompts");
   const approvedWrite = new Set<string>(["notion__create_page"]);
-  ok(approve({ toolName: "notion__create_page", approvedTools: approvedWrite } as never) === "not-applicable", "an already-approved WRITE is silenced (once-per-op)");
+  ok((await approve({ toolName: "notion__create_page", approvedTools: approvedWrite } as never)) === "not-applicable", "an already-approved WRITE is silenced (once-per-op)");
   const approvedDelete = new Set<string>(["notion__delete_page"]);
-  ok(approve({ toolName: "notion__delete_page", approvedTools: approvedDelete } as never) === "user-approval", "a DESTRUCTIVE op prompts PER CALL even when already approved (never honours the memo)");
-  ok(approve({ toolName: "notion__delete_page", approvedTools: new Set<string>() } as never) === "user-approval", "an unapproved destructive op prompts");
+  ok((await approve({ toolName: "notion__delete_page", approvedTools: approvedDelete } as never)) === "user-approval", "a DESTRUCTIVE op prompts PER CALL even when already approved (never honours the memo)");
+  ok((await approve({ toolName: "notion__delete_page", approvedTools: new Set<string>() } as never)) === "user-approval", "an unapproved destructive op prompts");
 }
 
 console.log(`✓ connector-approval-model: ${passed} assertions passed (tier + REST map + session-grant + destructive-per-call)`);

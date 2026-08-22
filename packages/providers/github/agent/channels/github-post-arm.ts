@@ -74,7 +74,7 @@ async function installationTokenFor(origin: GitHubOrigin): Promise<string> {
   return installationToken.get({ appId: creds.appId, privateKeyPem: creds.privateKeyPem, installationId, owner: origin.owner, repo: origin.repo });
 }
 
-async function liveGitHubPost(origin: GitHubOrigin, text: string): Promise<string> {
+export async function liveGitHubPost(origin: GitHubOrigin, text: string): Promise<string> {
   const token = await installationTokenFor(origin);
   const res = await fetch(`https://api.github.com/repos/${origin.owner}/${origin.repo}/issues/${origin.issueNumber}/comments`, {
     method: "POST",
@@ -105,7 +105,7 @@ function originForTarget(target: GitHubReplyTarget): GitHubOrigin {
   };
 }
 
-async function liveGitHubEditComment(channelId: string, commentId: string, text: string): Promise<void> {
+export async function liveGitHubEditComment(channelId: string, commentId: string, text: string): Promise<void> {
   const [owner, repo] = channelId.split("/");
   if (!owner || !repo) {
     throw markNotApplied(new Error(`edit_reply couldn't parse the GitHub locus "${channelId}" — expected "owner/repo".`));

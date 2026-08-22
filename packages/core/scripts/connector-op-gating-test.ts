@@ -193,15 +193,15 @@ const approve = connectorOpApproval();
 const ctxFor = (toolName: string, approved: readonly string[] = []) =>
   ({ toolName, approvedTools: new Set(approved) }) as unknown as Parameters<typeof approve>[0];
 
-eq(approve(ctxFor("notion__get_page")), "not-applicable", "live gate: an unraised READ still sails through with no prompt");
-eq(approve(ctxFor(READ_OP)), "user-approval", "🔴 live gate: the READ raised by `gated` now PROMPTS — the declaration reaches the eve-native seam");
-eq(approve(ctxFor(READ_OP, [READ_OP])), "not-applicable", "…and, being a WRITE-tier raise, it is silenced once approved this session");
-eq(approve(ctxFor(WRITE_OP)), "user-approval", "live gate: the WRITE raised to `destructive` prompts");
+eq(await approve(ctxFor("notion__get_page")), "not-applicable", "live gate: an unraised READ still sails through with no prompt");
+eq(await approve(ctxFor(READ_OP)), "user-approval", "🔴 live gate: the READ raised by `gated` now PROMPTS — the declaration reaches the eve-native seam");
+eq(await approve(ctxFor(READ_OP, [READ_OP])), "not-applicable", "…and, being a WRITE-tier raise, it is silenced once approved this session");
+eq(await approve(ctxFor(WRITE_OP)), "user-approval", "live gate: the WRITE raised to `destructive` prompts");
 eq(
-  approve(ctxFor(WRITE_OP, [WRITE_OP])),
+  await approve(ctxFor(WRITE_OP, [WRITE_OP])),
   "user-approval",
   "🔴 live gate: …and STILL prompts after approval — a raise to destructive really did buy per-call gating, not just a label",
 );
-eq(approve(ctxFor("linear__search")), "not-applicable", "live gate: the same op name on an undeclared connector is untouched");
+eq(await approve(ctxFor("linear__search")), "not-applicable", "live gate: the same op name on an undeclared connector is untouched");
 
 console.log(`✓ connector-op-gating: ${passed} assertions passed`);

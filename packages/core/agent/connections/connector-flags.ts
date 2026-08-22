@@ -19,3 +19,7 @@ export function directoryLinkSetVaultArmed(): boolean {
 export function connectorOpTieringEnabled(): boolean {
   return getSettings().connectors.opTiering;
 }
+
+export function connectorMemberPlaneEnabled(): boolean {
+  return getSettings().connectors.memberPlane;
+}
