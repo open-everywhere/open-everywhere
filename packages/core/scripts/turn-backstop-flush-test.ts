@@ -233,5 +233,69 @@ const settle = async (): Promise<void> => {
   await settle();
 }
 
+{
+  const container = new FakeEveContext();
+  const { MAX_FLUSH_HOLDS } = await import("../agent/hooks/settlement-flush.js");
+  const before = (await flushEdges()).filter((e) => e === "turn-backstop").length;
+
+  await inEveContext(container, async () => {
+    noteTaskViews([{ taskId: "task-orphan", status: "working" }] as never);
+    ok(liveTaskCount() === 1, "orphan: a non-terminal view arms the guard on a session that never saw the dispatch");
+    ok(treeIsDirty() === false, "🔴 orphan PRECONDITION: the dirty flag is CLEAN — asserted `=== false` — while a child still holds the tree. This is the contradiction the guard reads");
+
+    for (let i = 0; i < MAX_FLUSH_HOLDS; i++) {
+      const held = await flushDirtyTreeAtTurnEnd(seatCtx);
+      ok(
+        held !== null && held.outcome === "skipped",
+        `🔴 orphan attempt ${i + 1} of ${MAX_FLUSH_HOLDS}: the backstop ENTERS the flush path on a clean flag with a live task — it no longer returns null and disarms the session`,
+      );
+      ok(held!.live === 1, `orphan attempt ${i + 1}: the fan-out guard still holds it closed, so the recovery never publishes a torn file`);
+    }
+    ok(liveTaskCount() === 0, "orphan: the last hold RETIRES the id, exactly as it does on a session whose flag survived (OPE-724)");
+
+    const flushed = await flushDirtyTreeAtTurnEnd(seatCtx);
+    ok(
+      flushed !== null && flushed.outcome === "flushed",
+      "🔴 orphan END TO END: the next turn end PERSISTS the child's edits — the session recovered inside the bound instead of losing them at rotation",
+    );
+  });
+  await settle();
+  ok(
+    (await flushEdges()).filter((e) => e === "turn-backstop").length - before === MAX_FLUSH_HOLDS + 1,
+    "orphan: every recovered attempt is AUDITED — the holds and the flush that ends them",
+  );
+
+  {
+    const idle = new FakeEveContext();
+    const idleBefore = (await flushEdges()).filter((e) => e === "turn-backstop").length;
+    await inEveContext(idle, async () => {
+      ok(liveTaskCount() === 0, "idle control: no delegated task is live");
+      ok(treeIsDirty() === false, "idle control: and the tree is clean");
+      ok((await flushDirtyTreeAtTurnEnd(seatCtx)) === null, "🔴 idle control: the backstop still returns null — asserted `=== null`, so the OPE-986 guard reads the CONTRADICTION and not merely the clean flag");
+    });
+    await settle();
+    ok((await flushEdges()).filter((e) => e === "turn-backstop").length === idleBefore, "idle control: …and writes NO audit row, so an idle session pays nothing");
+  }
+}
+
+{
+  const container = new FakeEveContext();
+  const before = (await readAudit({ org: ORG, action: SETTLEMENT_FLUSH_ACTION })).length;
+  await inEveContext(container, async () => {
+    noteTaskDispatched("task-where");
+    noteTaskViews([{ taskId: "task-where", status: TERMINAL_TASK_STATUSES[0]! }] as never);
+    const r = await flushDirtyTreeAtTurnEnd(seatCtx);
+    ok(r !== null && r.outcome === "flushed", "surface: the attempt flushed, so the row below is a FLUSH row and not a skip");
+  });
+  await settle();
+  const rows = await readAudit({ org: ORG, action: SETTLEMENT_FLUSH_ACTION });
+  ok(rows.length === before + 1, "surface: exactly one new row");
+  const surfaceKey = String(rows.at(-1)?.detail?.["surfaceKey"] ?? "");
+  ok(
+    surfaceKey === "slack/T1/C1",
+    `🔴 surface: the row names WHERE the flush wrote — got "${surfaceKey}", expected "slack/T1/C1". Drop the field and a flush of another domain is indistinguishable from no flush at all`,
+  );
+}
+
 rmSync(tmp, { recursive: true, force: true });
 console.log(`✓ turn-backstop-flush: ${passed} assertions passed`);
