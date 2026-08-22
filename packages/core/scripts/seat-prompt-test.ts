@@ -259,6 +259,30 @@ function ok(cond: boolean, label: string): void {
 }
 
 {
+  const discordGuide = SURFACE_GUIDES["discord"];
+  ok(!discordGuide.includes("doesn't split for you"), "🔴 the Discord guide no longer claims `reply` doesn't split");
+  ok(!discordGuide.includes("or the post fails"), "🔴 …and no longer claims an over-cap `reply` fails");
+  ok(discordGuide.includes("`reply` splits an"), "🔴 …and states what is true: `reply` splits an over-cap message");
+  ok(discordGuide.includes("several posts, sent in order"), "🔴 …into several posts, sent in order");
+  ok(discordGuide.includes("an edit is a single PATCH, so it can't split"), "negative control: the edit_reply caveat survives, worded as a fact about edits, not a warning against the verb");
+}
+
+{
+  for (const platform of ["slack", "discord", "teams"]) {
+    const guide = SURFACE_GUIDES[platform];
+    ok(!guide.includes("ending turn text"), `🔴 the ${platform} guide does not claim turn-final text posts`);
+    ok(!guide.includes("also posts"), `🔴 …and carries no second delivery claim at all`);
+  }
+
+  const teamsGuideSection = renderUnifiedSurfaceGuides(["teams"]);
+  const delivery = renderDeliverySection({ kind: "wake-addressed", pinned: false });
+  const joined = `${teamsGuideSection}\n\n${delivery}`;
+  ok(joined.includes("DISCARDED"), "🔴 the joined wake-addressed Teams prompt states the drop");
+  ok(!joined.includes("also posts"), "🔴 …and carries no contradicting claim that turn-final text posts");
+  ok(teamsGuideSection.includes("no reaction primitive wired"), "negative control: the rest of the Teams guide survives the deletion");
+}
+
+{
   registerSlackFixtureMapper();
   registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
   registerConfig({

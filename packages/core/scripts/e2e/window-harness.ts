@@ -176,3 +176,66 @@ export async function sessionMatrix<T extends { tag: string }>(
   }
   return tagToSession;
 }
+
+export type DelegationArm = "native-tasks" | "native-sync" | "roll-own";
+
+export function delegationArmOf(nativeSubagent: boolean, backgroundTasks: boolean): DelegationArm {
+  if (!nativeSubagent) return "roll-own";
+  return backgroundTasks ? "native-tasks" : "native-sync";
+}
+
+export interface DelegationEvidence {
+  readonly nativeReceipt: boolean;
+  readonly rollOwnReceipt: boolean;
+  readonly replied: boolean;
+  readonly calls: readonly { readonly name: string; readonly errored: boolean }[] | null;
+  readonly arm: DelegationArm;
+}
+
+export interface DelegationVerdict {
+  readonly status: Status;
+  readonly reason: string;
+}
+
+export function classifyDelegationOutcome(ev: DelegationEvidence): DelegationVerdict {
+  if (ev.nativeReceipt) {
+    return { status: "PASS", reason: "a delegation.task_started row joined this seat's session — the native background-task route dispatched a worker" };
+  }
+  if (ev.rollOwnReceipt) {
+    return { status: "PASS", reason: "a task.spawned row joined this wake — the roll-own one-shot route dispatched a worker" };
+  }
+  if (!ev.replied) {
+    return { status: "SKIP", reason: "no receipt row and no reply for this wake — the model did not choose to delegate this turn, or the turn is still running" };
+  }
+  if (ev.calls === null) {
+    return { status: "SKIP", reason: "the seat replied but its transcript is UNREADABLE — the delegation outcome is UNVERIFIED (an observability failure, not model behaviour)" };
+  }
+  const agentCalls = ev.calls.filter((c) => c.name === "agent");
+  if (agentCalls.length === 0) {
+    return { status: "SKIP", reason: `the seat replied without invoking agent (tools=[${[...new Set(ev.calls.map((c) => c.name))].join(",") || "none"}]) — the model did not choose to delegate this turn` };
+  }
+  if (agentCalls.some((c) => c.errored)) {
+    return { status: "FAIL", reason: "the model CALLED agent and the execute ERRORED — read the action.result error in the transcript; the delegation route is broken, not unchosen" };
+  }
+  if (ev.arm === "native-sync") {
+    return { status: "PASS", reason: "the model called agent and the call did not error — on the native-sync arm (delegation.backgroundTasks off) no receipt row exists, so a clean call IS the receipt" };
+  }
+  const expected = ev.arm === "native-tasks" ? "delegation.task_started (joined on the caller session)" : "task.spawned (joined on the wake)";
+  return { status: "FAIL", reason: `the model called agent, the call did NOT error, and yet no ${expected} row landed — the dispatch leg is broken on the ${ev.arm} arm` };
+}
+
+export interface WithheldVerdict {
+  readonly ok: boolean;
+  readonly missing: readonly string[];
+  readonly cutKeep: readonly string[];
+  readonly surplus: readonly string[];
+}
+
+export function scoreWithheld(live: readonly string[], manifestWithheld: readonly string[], mustKeep: readonly string[]): WithheldVerdict {
+  const set = new Set(live);
+  const missing = manifestWithheld.filter((n) => !set.has(n)).sort();
+  const cutKeep = mustKeep.filter((n) => set.has(n)).sort();
+  const manifest = new Set(manifestWithheld);
+  const surplus = live.filter((n) => !manifest.has(n)).sort();
+  return { ok: missing.length === 0 && cutKeep.length === 0, missing, cutKeep, surplus };
+}

@@ -9,6 +9,7 @@ export interface SessionTailEntry {
   readonly author: string;
   readonly authorId?: string;
   readonly id?: string;
+  readonly wake?: string;
   readonly platform?: string;
   readonly container?: string;
   readonly threadRoot?: string;

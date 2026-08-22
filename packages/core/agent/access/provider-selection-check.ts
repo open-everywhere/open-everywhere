@@ -20,6 +20,8 @@ export interface ParsedProviderRow {
 export const UNGATED_SEAMS: Readonly<Record<string, string>> = {
   registerAuditDropCounter: "injects a single process-wide audit-drop counter; the `platform` is a callback ARGUMENT, not a registry key — nothing per-provider is stored",
   registerControlWriteTools: "registers control-plane MCP tools keyed by TOOL NAME; the `.platform` it touches is a linked-identity row's data column, not a per-provider registry key",
+  registerWorkPlatform: "records a platform an ALREADY-ADMITTED adapter registration named; both callers gate with admitProviderRegistration before reaching it (proven in work-destinations-test §6)",
+  registeredWorkRole: "a pure READ of that registry — it stores nothing and admits nothing; the name matches the sweep's `register*` shape by accident of English",
 };
 
 const PROVIDER_PKG = /@open-everywhere\/provider-([a-z0-9-]+)/gu;

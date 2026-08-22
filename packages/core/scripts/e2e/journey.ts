@@ -115,6 +115,26 @@ export function spendGateDoorOf(rows: readonly AuditWireEntry[]): string | undef
 
 export const SPEND_GATE_DOORS = ["mention", "engagement", "join", "window"] as const;
 
+export const DECLARED_SILENCE_ROW_WAIT_MS = 30_000;
+
+export interface SilenceAssertionPlan {
+  readonly always: readonly string[];
+  readonly whenDeclared: readonly string[];
+  readonly alwaysLabel: string;
+  readonly declaredLabel: string;
+}
+
+export function silenceAssertionPlan(surfaceAction: string, silencesDeclared: boolean): SilenceAssertionPlan {
+  return {
+    always: ["reply.no_reply_observed"],
+    whenDeclared: silencesDeclared ? [surfaceAction, "unified.no_reply"] : [],
+    alwaysLabel:
+      "audited silence: a reply.no_reply_observed row exists for the run (the ALWAYS-ON judged-silence row — the positive assertion that holds on prod's actions-only posture). " +
+      "Absent, either a silent turn left NO trace at all, or no turn ran — read the silence-WINDOW gate and the classifySilence line beside this one to tell those apart",
+    declaredLabel: `audited silence (declared audit.silences): a ${surfaceAction}/unified.no_reply row exists for the run (the FULL-DETAIL judged-silence row this target declares it writes)`,
+  };
+}
+
 export type SilenceCause = { readonly kind: "unwired" } | { readonly kind: "routing" } | { readonly kind: "cap"; readonly detail: string };
 
 export async function classifySilence(
@@ -130,6 +150,38 @@ export async function classifySilence(
   } catch {
     return { kind: "unwired" };
   }
+}
+
+export async function assertAuditedSilence(args: {
+  readonly auditRead: (opts: AuditQueryOpts) => Promise<readonly AuditWireEntry[]>;
+  readonly sinceIso: string;
+  readonly surfaceAction: string;
+  readonly silencesDeclared: boolean;
+  readonly timeoutMs: number;
+  readonly gate: (ok: boolean, label: string) => void;
+  readonly log: (msg: string) => void;
+}): Promise<void> {
+  const plan = silenceAssertionPlan(args.surfaceAction, args.silencesDeclared);
+  const seen = await pollOptional(
+    async () => {
+      const r = await args.auditRead({ sinceIso: args.sinceIso, actions: [...plan.always] });
+      return r.length > 0 ? r : undefined;
+    },
+    { timeoutMs: args.timeoutMs, what: plan.alwaysLabel },
+  );
+  args.gate((seen ?? []).length > 0, plan.alwaysLabel);
+  if (plan.whenDeclared.length === 0) {
+    args.log("silence auditing not declared for this target — asserting the ALWAYS-ON reply.no_reply_observed row only; set E2E_AUDIT_SILENCES=1 against an audit.silences deployment to assert the full-detail row too");
+    return;
+  }
+  const declared = await pollOptional(
+    async () => {
+      const r = await args.auditRead({ sinceIso: args.sinceIso, actions: [...plan.whenDeclared] });
+      return r.length > 0 ? r : undefined;
+    },
+    { timeoutMs: Math.min(args.timeoutMs, DECLARED_SILENCE_ROW_WAIT_MS), what: plan.declaredLabel },
+  );
+  args.gate((declared ?? []).length > 0, plan.declaredLabel);
 }
 
 export function silenceCauseGate(cause: SilenceCause): { readonly ok: boolean; readonly label: string } {

@@ -1,5 +1,6 @@
 import { currentTurnOrganization, type BindableContext } from "../identity/binding.js";
 import { workDestinationPlatforms } from "./work-destinations.js";
+import { registerWorkPlatform } from "./work-registry.js";
 import type { Domain } from "../memory/domain.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import type { EntityRef } from "./entity-actions.js";
@@ -24,6 +25,7 @@ export type TicketCreateFn = (target: string, draft: TicketDraft, organizationId
 
 export interface TicketCreateAdapter {
   readonly platform: string;
+  readonly workRole?: string;
   checkAccess?(ctx: BindableContext, target: string, domains: readonly Domain[]): void | Promise<void>;
   defaultTarget?(ctx: BindableContext): string | undefined;
   workspaceFor?(ctx: BindableContext): string | undefined;
@@ -35,6 +37,7 @@ const TICKET_CREATE_ADAPTERS: Record<string, TicketCreateAdapter> = {};
 export function registerTicketCreateAdapter(adapter: TicketCreateAdapter): void {
   if (!admitProviderRegistration(adapter.platform, "ticket-create-adapter")) return;
   TICKET_CREATE_ADAPTERS[adapter.platform] = adapter;
+  registerWorkPlatform(adapter.platform, adapter.workRole);
 }
 
 export function supportedTicketCreatePlatforms(): readonly string[] {

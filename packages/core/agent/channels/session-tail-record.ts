@@ -64,10 +64,13 @@ export async function recordWakeTail(
 }
 
 export async function recordPostTail(
-  text: string,
-  at: string,
-  platform?: string,
-  id?: string,
+  post: {
+    readonly text: string;
+    readonly at: string;
+    readonly platform?: string;
+    readonly id?: string;
+    readonly wake?: string;
+  },
   store: OperationalStore = getOperationalStore(),
 ): Promise<void> {
   const w = tailWindow();
@@ -75,14 +78,15 @@ export async function recordPostTail(
   try {
     await store.appendSessionTail(w.org, w.registryKey, w.token, {
       kind: "post",
-      at,
+      at: post.at,
       from: "self",
       trust: "relay" satisfies WakeTrust,
       author: "self",
-      ...(platform ?? w.platform ? { platform: platform ?? w.platform } : {}),
+      ...(post.platform ?? w.platform ? { platform: post.platform ?? w.platform } : {}),
       ...(w.container ? { container: w.container } : {}),
-      ...(id ? { id } : {}),
-      text,
+      ...(post.id ? { id: post.id } : {}),
+      ...(post.wake ? { wake: post.wake } : {}),
+      text: post.text,
     });
   } catch (err) {
     console.warn(`[open-everywhere:session-tail] post entry not recorded (${w.registryKey}): ${String(err)}`);

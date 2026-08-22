@@ -6,6 +6,8 @@ import {
   hasWorkGrant,
   workGrantCredential,
   workGrantedConnectors,
+  workRoleFor,
+  containerWorkRoleFor,
 } from "../agent/access/work-grant.js";
 import { domainCredentialId } from "../agent/access/domain-credentials.js";
 import { registerIdentityMapper, type BindableContext } from "../agent/identity/binding.js";
@@ -83,6 +85,23 @@ ok(workGrantedConnectors([plain], ["acme/api"]).join(",") === "github", "the rep
 ok(workGrantedConnectors([plain], []).length === 0, "NEGATIVE CONTROL: no declaration and no repo ⇒ no work line at all");
 const sorted = workGrantedConnectors([worker], ["acme/api"]);
 ok(sorted.join(",") === "github,notion", `the list stays sorted with github in it (${sorted.join(",")})`);
+
+const chatWorker: Domain = {
+  name: "chat-worker",
+  channels: ["slack/T1/C1"],
+  credentials: [{ connector: "slack", credential: "work-token", use: "chat-token" }],
+};
+ok(workGrantedConnectors([chatWorker]).includes("slack"), "🔴 OPE-959: a Slack work grant now appears in the prompt-facing summary, on the same terms as Notion's");
+ok(
+  workGrantedConnectors([{ name: "chat-plain", channels: ["slack/T1/C2"] } as Domain]).includes("slack") === false,
+  "NEGATIVE CONTROL: a domain with a Slack CHANNEL and no work declaration is told nothing (explicit false)",
+);
+
+ok(containerWorkRoleFor("slack") === "work-token", "slack is a CONTAINER work surface — its work half is the conversation");
+ok(containerWorkRoleFor("notion") === undefined, "NEGATIVE CONTROL: notion is an ENTITY work surface, so it names no container role (explicit undefined)");
+ok(containerWorkRoleFor("linear") === undefined, "…and so is linear — its work half is the issue, not the room");
+ok(workRoleFor("notion") === "team-key" && workRoleFor("slack") === "work-token", "…while workRoleFor answers for BOTH kinds — it is the grant lookup, not the container test");
+ok(workRoleFor("github") === undefined, "github names no Domain.credentials role at all — its grant is the bundle's repos: list");
 
 const WORK_CHAT = "workgranttestchat";
 registerIdentityMapper(WORK_CHAT, (ctx) => {

@@ -408,10 +408,11 @@ export const SURFACE_GUIDES: Readonly<Record<string, string>> = {
   discord: [
     "## Formatting & tools here",
     "Standard Discord Markdown: `**bold**`, `_italic_`, `` `code` ``, and the same `<@id>` token as Slack " +
-      "to mention someone. Discord hard-caps a single message at 2000 characters and `reply` doesn't " +
-      "split for you — keep each message under that or the post fails. Prefer one curated message over " +
-      "a stack, and use `edit_reply` to correct one you already sent (an edit can't split, so the " +
-      "corrected text must also fit under 2000). There's no `react` tool on this surface. A Discord thread IS its " +
+      "to mention someone. Discord hard-caps a single message at 2000 characters; `reply` splits an " +
+      "over-cap message into several posts, sent in order, so a long reply still lands. Prefer one " +
+      "curated message over a stack, and use `edit_reply` to correct one you already sent — an edit " +
+      "is a single PATCH, so it can't split, and the corrected text must fit under 2000 on its own. " +
+      "There's no `react` tool on this surface. A Discord thread IS its " +
       "own channel — you're just replying in the channel you were woken in, no separate thread id to track.",
   ].join("\n"),
   teams: [
@@ -419,8 +420,7 @@ export const SURFACE_GUIDES: Readonly<Record<string, string>> = {
     "Standard Markdown (`**bold**`, `_italic_`, `` `code` ``), not Slack mrkdwn. There's no mention token " +
       "here — `<@id>` won't render as a mention on this surface — so address people by name instead. " +
       "`reply` posts a message into this conversation; prefer one curated message over a stack, and use " +
-      "`edit_reply` to correct one you already sent. There's no `react` tool on this surface (no reaction primitive wired). Your ending " +
-      "turn text also posts (auto-split into chunks if it's unusually long, which in practice it won't be).",
+      "`edit_reply` to correct one you already sent. There's no `react` tool on this surface (no reaction primitive wired).",
   ].join("\n"),
 };
 

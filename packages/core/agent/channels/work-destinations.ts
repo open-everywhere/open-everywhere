@@ -1,11 +1,16 @@
 import { resolveWindowSources, type BindableContext } from "../identity/binding.js";
-import { callerWorkDomain, workGrantedConnectors } from "../access/work-grant.js";
+import { callerWorkDomain, hasGithubWorkGrant, hasWorkGrant, workRoleFor, GITHUB_CONNECTOR } from "../access/work-grant.js";
+import { registeredWorkPlatforms, registeredWorkRole } from "./work-registry.js";
 import { resolveAccessFor } from "../access/request.js";
 import type { Domain } from "../memory/domain.js";
 
-function callerDomains(ctx: BindableContext, domains: readonly Domain[]): readonly (Domain | undefined)[] {
+function grantedWorkPlatforms(ctx: BindableContext, domains: readonly Domain[]): readonly string[] {
   const domain = callerWorkDomain(ctx, () => domains);
-  return domain ? [domain] : [];
+  if (!domain) return [];
+  return registeredWorkPlatforms().filter((platform) => {
+    const role = registeredWorkRole(platform) ?? workRoleFor(platform);
+    return role !== undefined && hasWorkGrant(domain, platform, role);
+  });
 }
 
 function grantedRepos(ctx: BindableContext): readonly string[] {
@@ -18,10 +23,13 @@ function grantedRepos(ctx: BindableContext): readonly string[] {
 
 export function workDestinationPlatforms(ctx: BindableContext, domains: readonly Domain[]): readonly string[] {
   const sources = resolveWindowSources(ctx, domains);
-  const granted = workGrantedConnectors(callerDomains(ctx, domains), grantedRepos(ctx));
+  const granted = [...grantedWorkPlatforms(ctx, domains)];
+  if (hasGithubWorkGrant(grantedRepos(ctx)) && registeredWorkPlatforms().includes(GITHUB_CONNECTOR) && !granted.includes(GITHUB_CONNECTOR)) {
+    granted.push(GITHUB_CONNECTOR);
+  }
   if (granted.length === 0) return sources;
   const out = [...sources];
-  for (const connector of granted) {
+  for (const connector of granted.sort()) {
     if (!out.includes(connector)) out.push(connector);
   }
   return out;

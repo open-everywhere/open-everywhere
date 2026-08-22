@@ -1,17 +1,15 @@
-import { hasWorkGrant } from "./work-grant.js";
+import { containerWorkRoleFor, hasWorkGrant, WORK_ROLES } from "./work-grant.js";
 import { resolveWindowSources, type BindableContext } from "../identity/binding.js";
 import { resolveDomainForChannel, type Domain } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 
-export const SURFACE_WORK_ROLES: Readonly<Record<string, string>> = {
-  slack: "work-token",
-  discord: "work-token",
-  teams: "work-token",
-};
-
 export function surfaceWorkRole(platform: string): string | undefined {
-  return SURFACE_WORK_ROLES[platform];
+  return containerWorkRoleFor(platform);
 }
+
+export const SURFACE_WORK_ROLES: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(WORK_ROLES.filter((w) => w.kind === "container").map((w) => [w.connector, w.role])),
+);
 
 export function domainHoldsSurfaceWorkGrant(domain: Domain | undefined, platform: string): boolean {
   const role = surfaceWorkRole(platform);

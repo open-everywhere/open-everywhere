@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { registerConfig } from "../agent/access/config.js";
+import { hasWorkGrant } from "../agent/access/work-grant.js";
 import { workDestinationPlatforms } from "../agent/channels/work-destinations.js";
 import { registerTicketCreateAdapter, resolveTicketCreate } from "../agent/channels/ticket-create.js";
 import { registerEntityActionAdapter, resolveEntityAction } from "../agent/channels/entity-actions.js";
@@ -27,10 +28,12 @@ function chatCtx(room: string): BindableContext {
 
 const PAY_ROOM = `${CHAT}/W1/CPAY`;
 const ENG_ROOM = `${CHAT}/W1/CENG`;
+const OPS_ROOM = `${CHAT}/W1/COPS`;
 
 const DOMAINS: readonly Domain[] = [
   defineDomain({ name: "payments", channels: [PAY_ROOM], credentials: [{ connector: "notion", credential: "team-key", use: "payments-work-key" }] }),
   defineDomain({ name: "eng", channels: [ENG_ROOM] }),
+  defineDomain({ name: "ops", channels: [OPS_ROOM], credentials: [{ connector: "bugtracker", credential: "project-key", use: "ops-bugtracker" }] }),
 ];
 
 registerConfig({
@@ -44,6 +47,18 @@ registerConfig({
     const key = `${workspaceKey}/${surface}`;
     return DOMAINS.filter((d) => (d.channels ?? []).includes(key)).map((d) => d.name);
   },
+});
+
+{
+  ok(
+    workDestinationPlatforms(chatCtx("CPAY"), DOMAINS).includes("notion") === false,
+    "🔴 OPE-959: a domain HOLDING the notion work grant may NOT address notion while no notion adapter is registered (explicit false)",
+  );
+}
+
+registerTicketCreateAdapter({
+  platform: "notion",
+  create: async (target) => ({ ref: { platform: "notion", id: `${target}#0` }, summary: "unused" }),
 });
 
 {
@@ -146,6 +161,62 @@ async function armed(tool: unknown, c: BindableContext): Promise<unknown> {
   ] as const) {
     ok((await armed(tool, chatCtx("CPAY"))) !== null, `🔴 THE FIX: ${name} MOUNTS for a granted domain whose only channel is a chat room`);
     ok((await armed(tool, chatCtx("CENG"))) === null, `NEGATIVE CONTROL: ${name} is ABSENT for the ungranted domain in the same deployment`);
+  }
+}
+
+{
+  ok(
+    workDestinationPlatforms(chatCtx("COPS"), DOMAINS).includes("bugtracker") === false,
+    "NEGATIVE CONTROL: a domain declaring the bugtracker work role addresses NOTHING while no bugtracker adapter is registered",
+  );
+
+  registerTicketCreateAdapter({
+    platform: "bugtracker",
+    workRole: "project-key",
+    create: async (target) => ({ ref: { platform: "bugtracker", id: `${target}#1` }, summary: `filed ${target}#1` }),
+  });
+
+  ok(
+    workDestinationPlatforms(chatCtx("COPS"), DOMAINS).includes("bugtracker"),
+    "🔴 OPE-959: registering an adapter that NAMES its work role makes the platform addressable for a domain that declares that role — no core table names it",
+  );
+  ok(
+    workDestinationPlatforms(chatCtx("CPAY"), DOMAINS).includes("bugtracker") === false,
+    "NEGATIVE CONTROL: a domain that declares a DIFFERENT provider's work role is not admitted to bugtracker (the grant is still per-domain)",
+  );
+  ok(
+    hasWorkGrant(DOMAINS[2], "bugtracker", "some-other-role") === false,
+    "…and the ROLE decides — the same domain holds no grant under a role it never declared (explicit false)",
+  );
+}
+
+{
+  const { declareProviderSelection, clearProviderSelection } = await import("../agent/access/provider-selection.js");
+  const { registeredWorkPlatforms } = await import("../agent/channels/work-registry.js");
+
+  declareProviderSelection(["notion", "bugtracker"]);
+  try {
+    registerTicketCreateAdapter({
+      platform: "ghost-tracker",
+      workRole: "project-key",
+      create: async (target) => ({ ref: { platform: "ghost-tracker", id: target }, summary: "never" }),
+    });
+    ok(
+      registeredWorkPlatforms().includes("ghost-tracker") === false,
+      "🔴 an UNSELECTED provider's adapter registration leaves NO row in the work registry (explicit false) — the gate upstream is why registerWorkPlatform needs none of its own",
+    );
+    ok(
+      workDestinationPlatforms(chatCtx("COPS"), DOMAINS).includes("ghost-tracker") === false,
+      "…so it can never be a work destination either, whatever a domain declares",
+    );
+    registerTicketCreateAdapter({
+      platform: "bugtracker",
+      workRole: "project-key",
+      create: async (target) => ({ ref: { platform: "bugtracker", id: target }, summary: "ok" }),
+    });
+    ok(registeredWorkPlatforms().includes("bugtracker"), "NEGATIVE CONTROL: a SELECTED provider registering the same way DOES get its row");
+  } finally {
+    clearProviderSelection();
   }
 }
 
