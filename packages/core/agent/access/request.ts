@@ -35,6 +35,7 @@ export function unattendedOf(ctx: BindableContext): boolean {
 export function buildResolveRequest(ctx: BindableContext): ResolveRequest {
   const b = bindFrom(ctx);
   const p = resolvePartition(ctx);
+  const memberPlane = memberPlaneFor(b.domainSurface ?? p.surface, p.workspaceKey);
   const acting = actingPrincipalId(b);
   return {
     mode: b.mode,
@@ -44,7 +45,7 @@ export function buildResolveRequest(ctx: BindableContext): ResolveRequest {
     domains: getConfig().domainsForSurface({ workspaceKey: p.workspaceKey, surface: b.domainSurface ?? p.surface }),
     principalId: acting,
     groups: groupsForPrincipal(getConfig().loadGroups?.() ?? [], acting === undefined ? undefined : tryPrincipalKey(p.platform, p.workspace, acting)),
-    memberPlane: memberPlaneFor(b.domainSurface ?? p.surface, p.workspaceKey),
+    ...(memberPlane.length === 0 ? {} : { memberPlane }),
   };
 }
 
