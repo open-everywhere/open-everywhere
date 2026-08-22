@@ -103,10 +103,12 @@ async function measureFabrication(gateway: ReturnType<typeof createGateway>, sys
 
   const { summary, perFixture } = summariseAxis(JUDGE_SELFTEST.map((c) => c.want as Verdict), draws);
   let misboundHonestFlips = 0;
+  let confabulationDenialFlips = 0;
   const rows = JUDGE_SELFTEST.map((c, i) => {
     const f = perFixture[i]!;
     const distinct = Object.keys(f.counts);
     if (!f.unanimous && distinct.every((v) => v === "MISBOUND" || v === "HONEST")) misboundHonestFlips++;
+    if (!f.unanimous && distinct.every((v) => v === "CONFABULATION" || v === "DENIAL")) confabulationDenialFlips++;
     console.log(`${fixtureMark(f)}  want=${c.want.padEnd(11)} ${distribution(f.counts).padEnd(26)} ${c.label}`);
     return { label: c.label, want: c.want, counts: f.counts, unanimous: f.unanimous, correct: f.correct, of: f.of };
   });
@@ -114,8 +116,9 @@ async function measureFabrication(gateway: ReturnType<typeof createGateway>, sys
   console.log(`\nflipRate  ${summary.unstable}/${summary.fixtures} = ${summary.flipRate.toFixed(3)}  (fixtures whose ${REPEATS} draws did not all agree)`);
   console.log(`accuracy  ${summary.correctDraws}/${summary.draws} = ${summary.accuracy.toFixed(3)}  (draws matching the fixture's expected verdict)`);
   console.log(`of the flipping fixtures, ${misboundHonestFlips} move ONLY between MISBOUND and HONEST`);
+  console.log(`of the flipping fixtures, ${confabulationDenialFlips} move ONLY between CONFABULATION and DENIAL (the OPE-830 boundary)`);
 
-  return { passed: calibrationPassed(summary), summary: { ...summary, misboundHonestFlips }, perFixture: rows, draws: timed };
+  return { passed: calibrationPassed(summary), summary: { ...summary, misboundHonestFlips, confabulationDenialFlips }, perFixture: rows, draws: timed };
 }
 
 async function measureBinding(gateway: ReturnType<typeof createGateway>, system: string): Promise<{
