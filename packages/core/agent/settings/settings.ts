@@ -1,4 +1,5 @@
 import { processRegistrySlot } from "../lib/process-registry.js";
+import { SLACK_DRIVER_PAIR } from "../testing/driver-allowlist.js";
 
 export type TaintTierMode = "enforced" | "dryrun";
 
@@ -127,6 +128,7 @@ export interface AgentSettings {
   readonly wake: {
     readonly nameDropInclude: readonly string[];
     readonly nameDropExclude: readonly string[];
+    readonly slackDmDriver: string;
   };
   readonly window: {
     readonly topology: boolean;
@@ -655,6 +657,17 @@ export const SETTINGS = {
         "Name tokens the Slack/Discord name-drop wake NEVER fires on, even when the live display name, `identity.name`, or `wake.nameDrop.include` would otherwise carry them. WINS over both — the narrowing always has the last word.",
       format: (v) => (v.length > 0 ? v.join(", ") : "(none)"),
     } satisfies SettingSpec<readonly string[]>,
+    slackDmDriver: {
+      path: "wake.slackDmDriver",
+      shipped: "",
+      validate: (v) =>
+        v === "" || SLACK_DRIVER_PAIR.test(v)
+          ? undefined
+          : 'must be "" or exactly one Slack `teamId:botId` pair (e.g. "T0123ABCD:B0456EFGH")',
+      summary:
+        "The ONE Slack bot identity the DM DOOR admits, written as a `teamId:botId` pair — the workspace and the POSTING APP's `B…` bot record, which is what a `message.im`/`message.mpim` event carries in `bot_id`. Slack stamps `bot_id` on anything an app posts through the Web API, a USER token included, so without this the e2e driver cannot drive a real Slack DM and the DM legs can only forge an envelope. Empty (shipped) ⇒ the DM door admits NO bot author at all: every bot-authored DM drops with its `surface.wake_dropped` row, exactly as before. Set ⇒ that ONE identity's DM wakes the DM seat like a human's, writes a `surface.wake_admitted` row naming the carve-out, and its author trust resolves from the HUMAN `user` the post carries — no trust is invented for the bot. Deliberately SEPARATE from the `OE_TEST_DRIVER_IDS` allowlist that lifts a driver at the engagement and mention doors: a DM seat holds a window token, delegation and memory, so admitting a bot there is a larger grant and is made by its own reviewed diff. TEST BEDS ONLY — a real deployment leaves it empty.",
+      format: (v) => (v === "" ? "(none)" : v),
+    } satisfies SettingSpec<string>,
   },
   window: {
     topology: {
@@ -877,6 +890,7 @@ export function getSettings(
     wake: {
       nameDropInclude: resolve(SETTINGS.wake.nameDropInclude, o.wake?.nameDropInclude, env),
       nameDropExclude: resolve(SETTINGS.wake.nameDropExclude, o.wake?.nameDropExclude, env),
+      slackDmDriver: resolve(SETTINGS.wake.slackDmDriver, o.wake?.slackDmDriver, env),
     },
     window: {
       topology: resolve(SETTINGS.window.topology, o.window?.topology, env),

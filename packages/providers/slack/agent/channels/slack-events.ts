@@ -92,6 +92,7 @@ import {
   ingestReaction,
   liveReactionSink,
   isAllowedSlackDriver,
+  getSettings,
   admittedTenantsFromConfig,
   unadmittedTenantLog,
   UNADMITTED_TENANT_DROP_REASON,
@@ -573,6 +574,38 @@ export async function auditDmBotAuthorDrop(
     vouchedDriver: isAllowedSlackDriver(ev.teamId, ev.botId),
   });
   return true;
+}
+
+export function dmDoorAdmitsDriver(ev: ParsedMessageEvent, configured = getSettings().wake.slackDmDriver): boolean {
+  if (configured === "") return false;
+  if (!ev.teamId || !ev.botId) return false;
+  return configured === `${ev.teamId}:${ev.botId}`;
+}
+
+export const DM_DRIVER_ADMIT_REASON = "e2e driver — the DM door admits the one named driver identity";
+
+export async function auditDmDriverAdmitted(ev: ParsedMessageEvent, dmKind: "im" | "mpim"): Promise<void> {
+  try {
+    const p = resolvePartition(bindableFor(ev));
+    await getOperationalStore().appendAudit({
+      ts: new Date().toISOString(),
+      org: p.org,
+      platform: p.platform,
+      workspace: p.workspace,
+      surface: p.surface,
+      action: "surface.wake_admitted",
+      detail: {
+        reason: DM_DRIVER_ADMIT_REASON,
+        door: "dm",
+        dmKind,
+        botId: ev.botId ?? null,
+        team: ev.teamId ?? null,
+        channel: ev.channelId,
+        ts: ev.ts,
+      },
+    });
+  } catch {
+  }
 }
 
 export async function slackJoinSpendGate(ev: ParsedChannelJoinEvent, p: Partition, channelType: string | undefined): Promise<SpendGateDecision> {
