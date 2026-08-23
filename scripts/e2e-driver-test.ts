@@ -1,6 +1,7 @@
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
 let passed = 0;
@@ -874,6 +875,64 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
     !isPendingWorkHandoff("I couldn't find any recorded team mascot for `sprint-22088` in durable memory, so I don't know it."),
     "isPendingWorkHandoff: the live-run S11 clean decline is NOT a hand-off — it is exactly what the gate asks for",
   );
+}
+
+{
+  const scenariosPath = fileURLToPath(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url));
+  const src = readFileSync(scenariosPath, "utf-8");
+  const REPLY_WAIT_METHOD = /\.(awaitThreadReply|awaitAnyReply|awaitBotReply|awaitBotReplyIn)\(/g;
+  const NO_SKIP_MARKER = "OPE-984: no skip needed";
+
+  function callSpan(openIdx: number): string {
+    let depth = 1;
+    let i = openIdx + 1;
+    while (depth > 0 && i < src.length) {
+      if (src[i] === "(") depth++;
+      else if (src[i] === ")") depth--;
+      i++;
+    }
+    return src.slice(openIdx, i);
+  }
+
+  let total = 0;
+  let guarded = 0;
+  let unguardedNoMarker: string[] = [];
+  for (const m of src.matchAll(REPLY_WAIT_METHOD)) {
+    total++;
+    const openIdx = m.index! + m[0].length - 1;
+    const span = callSpan(openIdx);
+    if (span.includes("skip:")) {
+      guarded++;
+      continue;
+    }
+    const closeIdx = openIdx + span.length;
+    const before = src.slice(Math.max(0, m.index! - 400), m.index!);
+    const after = src.slice(closeIdx, closeIdx + 150);
+    if (before.includes(NO_SKIP_MARKER) || after.includes(NO_SKIP_MARKER)) continue;
+    const line = src.slice(0, m.index).split("\n").length;
+    unguardedNoMarker.push(`line ${line}: ${m[0]}`);
+  }
+
+  ok(total >= 60, `OPE-984: scenarios.ts has ${total} reply-wait call sites (sanity floor — the scan itself found the methods)`);
+  ok(
+    unguardedNoMarker.length === 0,
+    `OPE-984: every reply-wait call site carries either a skip predicate or an explicit ` +
+      `"${NO_SKIP_MARKER}" marker — found ${unguardedNoMarker.length} with NEITHER: ${unguardedNoMarker.join("; ")}`,
+  );
+  ok(guarded >= 34, `OPE-984: at least 34 reply-wait call sites carry a skip predicate (found ${guarded}) — the post-sweep floor`);
+
+  const syntheticUnguarded = 'const x = await slack.awaitThreadReply(rootTs, { timeoutMs: REPLY_WAIT });';
+  const fakeMatch = [...syntheticUnguarded.matchAll(REPLY_WAIT_METHOD)][0]!;
+  const fakeOpenIdx = fakeMatch.index! + fakeMatch[0].length - 1;
+  let depth = 1;
+  let i = fakeOpenIdx + 1;
+  while (depth > 0 && i < syntheticUnguarded.length) {
+    if (syntheticUnguarded[i] === "(") depth++;
+    else if (syntheticUnguarded[i] === ")") depth--;
+    i++;
+  }
+  const fakeSpan = syntheticUnguarded.slice(fakeOpenIdx, i);
+  ok(!fakeSpan.includes("skip:"), "OPE-984: NEGATIVE CONTROL — the scanner correctly reads an un-swept call site as unguarded");
 }
 
 {

@@ -392,17 +392,21 @@ test("OPE-727 negative control — the documented dispose-and-re-register patter
 
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> please do the thing, properly this time` });
   await waitFor(() => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the dispatch turn's own terminal step to be served");
+  const taskId = taskIdOfDelegation(dispatched, "the dispatch");
+
+  const settlement = armSettlement(dispatched, {
+    parent: [{ calls: [{ tool: "task_cancel", input: { taskIds: [taskId] }, id: "proper-peek" }] }, { say: "noted" }],
+  });
+
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 0, label: "the delegated worker's own (single) step" });
   expect(dispatched.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
-  const taskId = taskIdOfDelegation(dispatched, "the dispatch");
-
-  dispatched.dispose();
-  const settlement = registerScript({ parent: [{ calls: [{ tool: "task_cancel", input: { taskIds: [taskId] }, id: "proper-peek" }] }, { say: "noted" }] });
-  const settled = await waitFor(
-    () => settlement.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes(taskId))),
-    "the settlement notification to be served by the freshly-registered entry",
-  );
+  const settled = await consumeSettlement({
+    armed: settlement,
+    dispatched,
+    taskId,
+    label: "the settlement notification to be served by the freshly-registered entry",
+  });
   expect(settled.fault).toBeUndefined();
   expect(settled.stepIndex).toBe(0);
 

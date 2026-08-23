@@ -11,6 +11,7 @@ import {
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
   toolSessionIdentity,
+  waitFor,
   waitForChildren,
   wrapToolExecute,
   type ToolSessionIdentity,
@@ -66,6 +67,7 @@ test("a delegated worker's post_file resolves the dispatching conversation's cha
 
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> write a file and post it" });
 
+  await waitFor(() => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the dispatch turn's own terminal step to be served");
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 1, label: "the delegated worker to serve its whole arm" });
   const taskId = taskIdOfDelegation(dispatched, "the OPE-602 delegation");
   const { handle: drain } = await awaitTaskSettlement({
