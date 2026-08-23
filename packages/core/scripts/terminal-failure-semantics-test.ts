@@ -448,5 +448,70 @@ for (const outcome of ["definitive", "ambiguous"] as const) {
   ok((await reactRows()).length === before + 2, "§8/AUDIT: a landed reaction writes NO failure row");
 }
 
+{
+  const wake = { role: "user", content: "@bot please react to this" };
+  const call = (name: string) => ({ role: "assistant", content: [{ type: "tool-call", toolCallId: "c1", toolName: name, input: {} }] });
+  const okResult = (name: string) => ({ role: "tool", content: [{ type: "tool-result", toolCallId: "c1", toolName: name, output: { type: "json", value: { reacted: true } } }] });
+  const reactedTurn = [wake, call("react"), okResult("react")];
+
+  const addressedSlackCtx = (turnId: string): BindableContext => {
+    const base = slackCtx(turnId) as unknown as { session: { auth: { current: { attributes: Record<string, unknown> } } } };
+    base.session.auth.current.attributes["oe_addressed"] = "true";
+    return base as unknown as BindableContext;
+  };
+
+  {
+    const inTurn = newSession();
+    reactOutcome = "ok";
+    const ctx = slackCtx("turn_9a");
+    await inTurn(async () => {
+      const armed = armOf(reactTool, ctx);
+      await armed!.execute({ emoji: "eyes" }, ctx);
+      ok(turnHasTerminalAction(reactedTurn) === true, "§9a: an UNADDRESSED react still discharges the turn alone — OPE-762 stays intact, and the negative control for §9b");
+    });
+  }
+
+  {
+    const inTurn = newSession();
+    reactOutcome = "ok";
+    const ctx = addressedSlackCtx("turn_9b");
+    await inTurn(async () => {
+      const armed = armOf(reactTool, ctx);
+      const r = (await armed!.execute({ emoji: "eyes" }, ctx)) as { reacted?: boolean };
+      ok(r.reacted === true, "§9b: the reaction still lands — the tool's own behaviour is unchanged");
+      ok(turnHasTerminalAction(reactedTurn) === false, "§9b/FIX: an ADDRESSED react does NOT suppress the reissue — the owed `reply` still gets nudged");
+    });
+  }
+
+  {
+    const inTurn = newSession();
+    await inTurn(async () => {
+      ok(turnHasTerminalAction(reactedTurn) === true, "§9c: a FRESH session reads as unaddressed — the exemption doesn't leak across sessions");
+    });
+  }
+
+  {
+    const inTurn = newSession();
+    postOutcome = "ok";
+    reactOutcome = "ok";
+    const w = await wakeNow();
+    const ctx = addressedSlackCtx("turn_9d");
+    await inTurn(async () => {
+      const armed = armOf(reactTool, ctx);
+      await armed!.execute({ emoji: "eyes" }, ctx);
+      await callReply(w, "turn_9d", "the actual answer");
+      const both = [wake, call("react"), okResult("react"), call("reply"), okResult("reply")];
+      ok(turnHasTerminalAction(both) === true, "§9d: a `reply` elsewhere in the window still discharges the turn, addressed react or not");
+    });
+  }
+
+  {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(new URL(`../agent/tools/react.ts`, import.meta.url), "utf8");
+    const hits = (src.match(/noteReactCallAddressed\(/g) ?? []).length;
+    ok(hits === 2, `§9e: tools/react.ts records addressedness on BOTH branches (registry dispatch + Slack) — got ${hits}`);
+  }
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ terminal-action failure semantics: ${passed} assertions passed`);

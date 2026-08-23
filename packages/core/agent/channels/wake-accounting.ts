@@ -11,6 +11,8 @@ export const MAX_ACCOUNTING_WAKES = 50;
 
 export const UNACCOUNTED_WAKES_AUDIT_ACTION = "turn.unaccounted_wakes";
 
+export const WAKE_ACCOUNTING_SKIPPED_AUDIT_ACTION = "turn.wake_accounting_skipped";
+
 export type WakeAddressingClass = "addressed" | "ambient";
 
 export interface UnaccountedWake {

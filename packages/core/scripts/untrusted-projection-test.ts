@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
@@ -96,6 +96,44 @@ interface BuiltTool {
   ok(toolset["probe_tool"] === before, "projection MUTATES in place (object identity preserved — approval WeakMap safety)");
   const projected = await before.toModelOutput!({ output: { body: "RAW" }, toolCallId: "c1" });
   ok(projected.type === "text" && projected.value === "AUTHORED(RAW)", "projection restores the authored model output byte-identically through the real eve toolset");
+}
+
+{
+  const authored = (o: { body: string }) => ({ type: "text", value: `AUTHORED(${o.body})` });
+  const entry = eveDefineTool({
+    description: "undescribed",
+    inputSchema: { type: "object", properties: {} },
+    execute: durable.createDurableDynamicCallback<[], Promise<{ body: string }>>({
+      closure: {},
+      stepId: "oe:test:undescribed_tool:execute",
+      callback: async () => ({ body: "RAW" }),
+    }),
+    toModelOutput: authored,
+  });
+  const ctx = makeCtx();
+  await lifecycle.dispatchDynamicToolEvent({
+    ctx,
+    resolvers: [{ slug: "undescribed_tool", eventNames: ["session.started"], sourceId: "probe", events: { "session.started": () => entry } }],
+    event: { type: "session.started" },
+    messages: [],
+  });
+  const defs = builder.buildDynamicTools(ctx) as Array<{ name: string; toModelOutput?: unknown }>;
+  ok(
+    defs.length === 0,
+    "1B: an authored toModelOutput with no durable descriptor takes the WHOLE tool off the seat — eve refuses the entry and drops the resolver's entire result. The OPE-73 gap fails CLOSED at 0.44.0: fenced or absent, never unfenced.",
+  );
+}
+
+{
+  const connectionSearchSrc = readFileSync(join(eveRoot, "dist/src/runtime/framework-tools/connection-search-dynamic.js"), "utf8");
+  ok(
+    connectionSearchSrc.includes("qualifiedConnectionToolName"),
+    "1C: eve still mints connector tools as <connection>__<tool> (the naming convention isConnectorExternalName keys on)",
+  );
+  ok(
+    !connectionSearchSrc.includes("toModelOutput"),
+    "1C: eve authors NO toModelOutput anywhere on the connector path — every MCP result reaches the model unfenced without OE's connector wrap. If this ever reds, re-read patch part 1's retirement question (OPE-946).",
+  );
 }
 
 function buildSet(defs: Array<Record<string, unknown>>): Record<string, BuiltTool> {
@@ -417,4 +455,4 @@ function buildSet(defs: Array<Record<string, unknown>>): Record<string, BuiltToo
   registerTaintVerdictSink(priorSink);
 }
 
-console.log(`\n✓ untrusted-projection: ${n} assertions passed (eve projection tripwire, authored restore, connector fence + auth passthrough, provider skip, registration wiring, web_fetch envelope, browser family seam, connection_search status-only no-taint, OPE-339 declared grantContentOrigin + OPE-324 per-tool grain)\n`);
+console.log(`\n✓ untrusted-projection: ${n} assertions passed (eve projection tripwire + descriptor negative control + connector-path absence, authored restore, connector fence + auth passthrough, provider skip, registration wiring, web_fetch envelope, browser family seam, connection_search status-only no-taint, OPE-339 declared grantContentOrigin + OPE-324 per-tool grain)\n`);

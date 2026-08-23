@@ -133,6 +133,7 @@ export const CONTRIBUTIONS = {
     { kind: "hook", name: "stall-guard", module: "agent/hooks/stall-guard.js", summary: "Stall-guard DETECTION hook — the observe-only seam that feeds the within-loop stall guard (agent/stall/guard.ts)." },
     { kind: "hook", name: "telemetry", module: "agent/hooks/telemetry.js", summary: "Turn-level telemetry — accumulates one turn's step count + token total + start time, then emits `oe.turn.completed`/`oe.turn.failed` (surface TYPE only, never a surfaceKey/session/principal id — see…" },
     { kind: "hook", name: "turn-anchor", module: "agent/hooks/turn-anchor.js", summary: "THE TURN-ANCHOR HOOK (OPE-418) — the writer for the stop registry, and the whole ✋ lifecycle." },
+    { kind: "hook", name: "wake-accounting-turn", module: "agent/hooks/wake-accounting-turn.js", summary: "THE TURN EDGE FOR PER-WAKE ACCOUNTING (OPE-1013) — the second call site for channels/unified.ts's `auditUnaccountedWakesForTurn`, wired to turn.completed/turn.cancelled/session.failed so a turn whose…" },
     { kind: "hook", name: "window-routing", module: "agent/hooks/window-routing.js", summary: "Routing-invariant hook (OPE-121) — audit a wake that landed on a NATIVE seat even though its own domain windows." },
 
     { kind: "schedule", name: "directory-sync", module: "agent/schedules/directory-sync.js", summary: "The DIRECTORY-SYNC SCHEDULE — the clock half of IdP pre-population (P2.3)." },

@@ -26,6 +26,15 @@ const callIdx = src.search(wiring);
 const mergeIdx = src.indexOf("buildDynamicTools(");
 ok(mergeIdx !== -1 && mergeIdx < callIdx, "wiring: the dynamic-tool merge precedes the hook (dynamic tools are in the set it projects)");
 
+const toolsetVar = src.match(wiring)?.[1];
+ok(toolsetVar !== undefined, "wiring: the toolset variable name is recoverable from the call site");
+const providerBuild = `${toolsetVar}=await buildToolSetWithProviderTools(`;
+const providerIdx = src.indexOf(providerBuild);
+ok(
+  providerIdx !== -1 && providerIdx < callIdx,
+  "wiring: the SAME toolset the hook receives is the one buildToolSetWithProviderTools produced — the framework/provider mounts (`agent`, the task family, the wide-hands kit) are in reach of the seat cuts",
+);
+
 const helper = new Function(`${helperDef}\n return __oeProjectToolSet;`)() as (ts: Record<string, unknown>) => Record<string, unknown>;
 
 const HOOK_KEY = "__oeToolResultProjection";
@@ -75,4 +84,4 @@ delete g[HOOK_KEY];
 if (saved === undefined) delete g[HOOK_KEY];
 else g[HOOK_KEY] = saved;
 
-console.log(`\n✓ untrusted-projection-patch: ${n} assertions passed (presence, wiring shape, passthrough/invoke/throw/garbage drive)\n`);
+console.log(`\n✓ untrusted-projection-patch: ${n} assertions passed (presence, wiring shape, framework-toolset reach, passthrough/invoke/throw/garbage drive)\n`);
