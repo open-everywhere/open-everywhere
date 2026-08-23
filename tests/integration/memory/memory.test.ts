@@ -109,6 +109,17 @@ test("session.started seeds the domain's own silo at the expected path and body,
             },
           ],
         },
+        {
+          calls: [
+            {
+              tool: "bash",
+              input: {
+                command: `mkdir -p /workspace/memory/surface && echo '${shellMarker}' > /workspace/memory/surface/stolen-surface.md`,
+              },
+              id: "m1-shell-surface",
+            },
+          ],
+        },
         { say: "noted" },
       ],
     }),
@@ -116,7 +127,7 @@ test("session.started seeds the domain's own silo at the expected path and body,
 
   await discordMentionWake({ channelId: IT_MEMORY_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> please note this` });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
-  await waitForChildren(handle, { count: 1, lastStepIndex: 3, label: "the delegated worker's own terminal step" });
+  await waitForChildren(handle, { count: 1, lastStepIndex: 4, label: "the delegated worker's own terminal step" });
 
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
@@ -140,7 +151,7 @@ test("session.started seeds the domain's own silo at the expected path and body,
   const shells = childResults
     .filter((t) => t.name === "bash")
     .map((t) => t.output as { exitCode: number; stdout: string; stderr: string });
-  expect(shells.length).toBe(2);
+  expect(shells.length).toBe(3);
   const unownedShell = shells[0];
   expect(unownedShell.exitCode).not.toBe(0);
   expect(`${unownedShell.stderr}${unownedShell.stdout}`).toMatch(/Permission denied|EACCES/i);
@@ -149,6 +160,11 @@ test("session.started seeds the domain's own silo at the expected path and body,
   expect(existsSync(stolenPath)).toBe(false);
 
   expect(shells[1].exitCode).toBe(0);
+
+  const surfaceShell = shells[2];
+  expect(surfaceShell.exitCode).not.toBe(0);
+  expect(`${surfaceShell.stderr}${surfaceShell.stdout}`).toMatch(/Permission denied|EACCES/i);
+  expect(existsSync(surfaceFilePath(IT_MEMORY_CHANNEL_ID, "stolen-surface.md"))).toBe(false);
 
   const taskId = taskIdOfDelegation(handle, "the note-taking delegation");
   const settlement = await awaitTaskSettlement({
