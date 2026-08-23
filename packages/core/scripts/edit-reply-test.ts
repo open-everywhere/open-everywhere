@@ -575,5 +575,40 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
   );
 }
 
+{
+  const { replyEditLocus } = await import("../agent/channels/reply-post.js");
+  const { unifiedEditLocus } = await import("../agent/channels/unified-reply.js");
+
+  const notionTarget = {
+    platform: "notion",
+    discussionId: "d-1",
+    workspaceId: "ws-1",
+    pageId: "pg-1",
+  } as import("../agent/channels/reply-post.js").ReplyTarget;
+  const notionLocus = replyEditLocus(notionTarget);
+  ok(notionLocus !== null, "§21: replyEditLocus resolves a real address for a notion target with workspace+page — OPE-1046, was a permanent `null` before it");
+  ok(
+    notionLocus?.channelId === "ws-1/pg-1",
+    "§21: the notion locus channelId is the `<workspace>/<page>` composite `liveNotionEditComment` parses back apart",
+  );
+
+  const notionTargetNoPage = { platform: "notion", discussionId: "d-2", workspaceId: "ws-1" } as import("../agent/channels/reply-post.js").ReplyTarget;
+  ok(
+    replyEditLocus(notionTargetNoPage) === null,
+    "🔴 §21/CONTROL: a notion target with no pageId still resolves `null` — no editable address without a credential to resolve",
+  );
+
+  const notionOrigin = { platform: "notion", discussionId: "d-3", workspaceId: "ws-2", pageId: "pg-2" } as UnifiedWakeOrigin;
+  const notionUnifiedLocus = unifiedEditLocus(notionOrigin);
+  ok(notionUnifiedLocus !== null, "§21: unifiedEditLocus resolves a real address for a notion origin with workspace+page too");
+  ok(notionUnifiedLocus?.channelId === "ws-2/pg-2", "§21: the unified notion locus carries the same composite key");
+
+  const notionOriginNoWorkspace = { platform: "notion", discussionId: "d-4", pageId: "pg-2" } as UnifiedWakeOrigin;
+  ok(
+    unifiedEditLocus(notionOriginNoWorkspace) === null,
+    "🔴 §21/CONTROL: a notion origin with no workspaceId still resolves `null` — the unified resolver must not diverge from the per-surface one",
+  );
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ edit_reply own-post fence: ${passed} assertions passed`);
