@@ -75,7 +75,7 @@ export async function searchGithubIssues(
 
 export const githubWorkSearchAdapter: WorkSearchAdapter = {
   connector: "github",
-  async search(ctx: BindableContext, _domain: Domain, query: string, opts: { limit: number; insideDomain: boolean }): Promise<readonly WorkSearchHit[]> {
+  async search(ctx: BindableContext, _domain: Domain | undefined, query: string, opts: { limit: number; insideDomain: boolean }): Promise<readonly WorkSearchHit[]> {
     const repos = resolveAccessFor(ctx).repos;
     if (repos.length === 0) throw new Error("this domain holds no GitHub repo grant.");
     return searchGithubIssues(repos, query, opts.limit);

@@ -52,6 +52,27 @@ ok(
   "NEGATIVE CONTROL: the ticket-registry-filtered set does NOT name Notion (no ticket-create/entity adapter registered for it) — proving the two sets are genuinely different, not just differently spelled",
 );
 
+const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
+const { registerConfig: registerConfigEarly } = await import("../agent/access/config.js");
+const UNMATCHED_ROOM = "CNOWHERE";
+registerConfigEarly({
+  loadBundles: () => [defineBundle({ name: "coding", repos: ["acme/api"] })],
+  loadBindings: () => [defineBinding({ bundle: "coding", scope: { level: "org" } })],
+  pluginRegistry: {},
+  skillContent: {},
+  loadDomains: () => [],
+  loadSilos: () => [],
+  domainsForSurface: () => [],
+});
+ok(
+  searchGrantedConnectors(ctxIn(UNMATCHED_ROOM), []).includes("github"),
+  "🔴 a ctx with NO resolved memory domain still names github when the access bundle grants repos org-wide (the domain-free GitHub grant path)",
+);
+ok(
+  searchGrantedConnectors(ctxIn(UNMATCHED_ROOM), []).includes("notion") === false,
+  "NEGATIVE CONTROL: the SAME domain-free ctx names no domain-keyed connector — only github's repo-grant path survives an unresolved domain",
+);
+
 const fakeHit = (connector: string, id: string): WorkSearchHit => ({ connector, id, title: `title-${id}` });
 
 const fakeNotion: WorkSearchAdapter = {

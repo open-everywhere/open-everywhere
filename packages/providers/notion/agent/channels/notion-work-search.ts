@@ -20,7 +20,8 @@ export function domainOwnPageIds(domain: Domain): ReadonlySet<string> {
 
 export const notionWorkSearchAdapter: WorkSearchAdapter = {
   connector: "notion",
-  async search(ctx: BindableContext, domain: Domain, query: string, opts: { limit: number; insideDomain: boolean }): Promise<readonly WorkSearchHit[]> {
+  async search(ctx: BindableContext, domain: Domain | undefined, query: string, opts: { limit: number; insideDomain: boolean }): Promise<readonly WorkSearchHit[]> {
+    if (!domain) throw new Error("this domain holds no Notion work grant.");
     const grant = notionWorkGrant(ctx, [domain]);
     if (!grant) throw new Error("this domain holds no Notion work grant.");
     const cred = await resolveNotionCredential(grant.credential);

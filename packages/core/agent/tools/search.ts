@@ -50,9 +50,6 @@ export const searchEntry = defineTool({
     const bctx = ctx as BindableContext;
     const domains = safeDomains();
     const domain = callerWorkDomain(bctx, () => domains);
-    if (!domain) {
-      throw new Error("This session's domain holds no work grant, so search is unavailable here.");
-    }
     const granted = searchGrantedConnectors(bctx, domains);
     if (granted.length === 0) {
       throw new Error("This domain holds no work grant on any connected surface, so search is unavailable here.");

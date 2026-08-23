@@ -29,7 +29,8 @@ export function domainOwnTeamIds(domain: Domain, org: string): ReadonlySet<strin
 
 export const linearWorkSearchAdapter: WorkSearchAdapter = {
   connector: "linear",
-  async search(ctx: BindableContext, domain: Domain, query: string, opts: { limit: number; insideDomain: boolean }): Promise<readonly WorkSearchHit[]> {
+  async search(ctx: BindableContext, domain: Domain | undefined, query: string, opts: { limit: number; insideDomain: boolean }): Promise<readonly WorkSearchHit[]> {
+    if (!domain) throw new Error("this domain holds no Linear work grant.");
     const org = linearWorkOrg(ctx, [domain]);
     if (!org) throw new Error("this domain holds no Linear work grant.");
     const first = Math.min(Math.max(opts.limit, 1), 50);

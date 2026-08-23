@@ -23,7 +23,7 @@ export interface WorkSearchOpts {
 
 export interface WorkSearchAdapter {
   readonly connector: string;
-  search(ctx: BindableContext, domain: Domain, query: string, opts: WorkSearchOpts): Promise<readonly WorkSearchHit[]>;
+  search(ctx: BindableContext, domain: Domain | undefined, query: string, opts: WorkSearchOpts): Promise<readonly WorkSearchHit[]>;
 }
 
 const WORK_SEARCH_REGISTRY: Record<string, WorkSearchAdapter> = {};
@@ -47,7 +47,6 @@ export function registeredSearchConnectors(): readonly string[] {
 
 export function searchGrantedConnectors(ctx: BindableContext, domains: readonly Domain[]): readonly string[] {
   const domain = callerWorkDomain(ctx, () => domains);
-  if (!domain) return [];
   let repos: readonly string[] = [];
   try {
     repos = resolveAccessFor(ctx).repos;
