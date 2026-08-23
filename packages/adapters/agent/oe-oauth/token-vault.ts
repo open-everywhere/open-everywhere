@@ -200,7 +200,13 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
     let live = 0;
     let unreadable = 0;
     for (const ref of refs) {
-      const rec = await readJson<PendingRecord>(ref);
+      let rec: PendingRecord | null;
+      try {
+        rec = await readJson<PendingRecord>(ref);
+      } catch {
+        unreadable++;
+        continue;
+      }
       if (!rec || typeof rec.expiresAt !== "number" || !Number.isFinite(rec.expiresAt)) {
         unreadable++;
         continue;

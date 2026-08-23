@@ -619,6 +619,30 @@ const tokRef = "oe-oauth:tok:notion:user:U1";
 
   {
     const v = memVault();
+    const POISON = `${PEND}POISON`;
+    const guarded: EncryptedKvVault = {
+      ...v,
+      async read(ref) {
+        if (ref === POISON) throw new Error("db credential broker: stored ciphertext is truncated — refusing (fail closed).");
+        return v.read(ref);
+      },
+    };
+    const s: MockState = { registrations: 0, exchanges: 0, refreshCount: 0, access: "AT", validRefresh: "RT", seq: 0, exchangeExpiresIn: 3600 };
+    const vault = makeOeOauthTokenVault(providers, { vault: guarded, fetch: makeMockFetch(s), now: () => clock.t, pendingRetentionMs: RETENTION });
+
+    await v.write(POISON, "irrelevant — the read throws before this is parsed");
+    await seedPend(v, "AAA-EXPIRED", clock.t - 30 * 24 * 3600_000);
+    await seedPend(v, "ZZZ-EXPIRED", clock.t - 30 * 24 * 3600_000);
+
+    const report = await vault.sweepExpiredPending();
+    ok(report.unreadable === 1, `🔴 an undecryptable row is COUNTED as unreadable, not thrown (unreadable ${report.unreadable})`);
+    ok(report.deleted === 2, `🔴 the sweep CONTINUES past the undecryptable row — the rows after it are still destroyed (deleted ${report.deleted}, expected 2)`);
+    ok((await v.read(`${PEND}ZZZ-EXPIRED`)) === null, "🔴 the expired row sorted AFTER the poison row is destroyed — one bad row cannot disable the sweep");
+    ok((await v.read(POISON)) !== null, "🔴 negative control: the undecryptable row itself SURVIVES — its expiry is unknowable, so it is not ours to destroy");
+  }
+
+  {
+    const v = memVault();
     const s: MockState = { registrations: 0, exchanges: 0, refreshCount: 0, access: "AT", validRefresh: "RT", seq: 0, exchangeExpiresIn: 3600 };
     const vault = makeOeOauthTokenVault(providers, { vault: v, fetch: makeMockFetch(s), now: () => clock.t, newState: () => "FRESH", newPkce: () => ({ verifier: "V", challenge: "C" }), redirectUri: () => REDIRECT, pendingRetentionMs: RETENTION });
     await seedPend(v, "STALE", clock.t - 30 * 24 * 3600_000);
