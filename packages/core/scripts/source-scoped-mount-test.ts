@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { sourceScopedMount } from "../agent/access/source-scoped-mount.js";
+import { sourceScopedMount, workerChatArmMount } from "../agent/access/source-scoped-mount.js";
 import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
-import { checkSourceGate, SOURCE_SCOPED_TOOLS, GENERIC_READ_VERBS, type SourceToolFile } from "../agent/access/source-gate-manifest.js";
+import { checkSourceGate, SOURCE_SCOPED_TOOLS, GENERIC_READ_VERBS, WORKER_CHAT_ARM_TOOLS, type SourceToolFile } from "../agent/access/source-gate-manifest.js";
 import { assertTurnSurface, isUnifiedWindowContext, channelPlatform, type BindableContext } from "../agent/identity/binding.js";
 import { defineDomain } from "../agent/memory/domain.js";
 
@@ -89,12 +89,46 @@ setFlag(true);
 }
 setFlag(undefined);
 
+{
+  const seatNative = mk("notion", {});
+  const seatStanding = mk("notion", { oe_grain: "standing" });
+  const seatThread = mk("notion", { oe_grain: "thread" });
+  const worker = mk("notion", { oe_grain: "task" });
+  const subagentChild = mk("subagent", { oe_platform: "notion", oe_grain: "standing" }, "subagent:sess-parent:call_1");
+
+  ok(workerChatArmMount(worker, "notion", () => domains) === true, "grain: a `task` worker mounts the vendor chat arm");
+  ok(
+    workerChatArmMount(subagentChild, "notion", () => domains) === true,
+    "grain: an eve-native subagent child mounts it too — `windowGrainOf` overrides the inherited `standing` stamp to `task`",
+  );
+
+  for (const [label, ctx] of [
+    ["native", seatNative],
+    ["standing", seatStanding],
+    ["thread", seatThread],
+  ] as const) {
+    ok(sourceScopedMount(ctx, "notion", () => domains) === true, `grain: the plain sources rule still admits a ${label} seat (the conjunct is what refuses)`);
+    ok(workerChatArmMount(ctx, "notion", () => domains) === false, `grain: a ${label} conversational seat does NOT mount the vendor chat arm`);
+  }
+
+  ok(workerChatArmMount(mk("slack", { oe_grain: "task" }), "notion", () => domains) === false, "grain: a worker on a Slack session does NOT mount the Notion reader — the sources half still binds");
+
+  const hostile = new Proxy({} as BindableContext, {
+    get() {
+      throw new Error("unreadable context");
+    },
+  });
+  ok(workerChatArmMount(hostile, "notion", () => domains) === false, "grain: an UNREADABLE ctx answers false rather than throwing out of the mount resolver");
+}
+
+
 const firesWith = (problems: string[], needle: string, label: string) =>
   ok(problems.some((p) => p.includes(needle)), `${label} (got: ${JSON.stringify(problems)})`);
 
 const armOnUnified = (platform: string) =>
   `if (!isUnifiedWindowContext(ctx as BindableContext) && channelPlatform(ctx as BindableContext) !== "${platform}") return null;`;
 const gated = (platform: string) => `if (!sourceScopedMount(ctx as BindableContext, "${platform}", () => getConfig().loadDomains())) return null;`;
+const workerGated = (platform: string) => `if (!workerChatArmMount(ctx as BindableContext, "${platform}", () => getConfig().loadDomains())) return null;`;
 
 firesWith(
   checkSourceGate([{ name: "read_discord_channel", source: armOnUnified("discord") }]),
@@ -103,13 +137,13 @@ firesWith(
 );
 
 firesWith(
-  checkSourceGate([{ name: "read_slack_channel", source: "export default defineDynamic({ /* no gate */ });" }, { name: "read_slack_thread", source: gated("slack") }, { name: "read_notion_page", source: gated("notion") }]),
+  checkSourceGate([{ name: "read_slack_channel", source: "export default defineDynamic({ /* no gate */ });" }, { name: "read_slack_thread", source: gated("slack") }, { name: "read_notion_page", source: workerGated("notion") }]),
   'must gate its mount via sourceScopedMount',
   "a declared per-surface tool with no sourceScopedMount call FAILS",
 );
 
 firesWith(
-  checkSourceGate([{ name: "read_slack_channel", source: gated("slack") + "\n" + armOnUnified("slack") }, { name: "read_slack_thread", source: gated("slack") }, { name: "read_notion_page", source: gated("notion") }]),
+  checkSourceGate([{ name: "read_slack_channel", source: gated("slack") + "\n" + armOnUnified("slack") }, { name: "read_slack_thread", source: gated("slack") }, { name: "read_notion_page", source: workerGated("notion") }]),
   'still carries the ad-hoc "arm on any unified window" guard',
   "a declared tool that keeps BOTH the source gate and the old compound guard FAILS",
 );
@@ -119,9 +153,9 @@ firesWith(
   const problems = checkSourceGate([
     { name: "read_slack_channel", source: gated("slack") },
     { name: "read_slack_thread", source: gated("slack") },
-    { name: "read_notion_page", source: gated("notion") },
-    { name: "read_notion_comments", source: gated("notion") },
-    { name: "read_linear_issue", source: gated("linear") },
+    { name: "read_notion_page", source: workerGated("notion") },
+    { name: "read_notion_comments", source: workerGated("notion") },
+    { name: "read_linear_issue", source: workerGated("linear") },
     { name: "read_channel", source: "resolveReadAdapter();" },
     { name: "read_thread", source: "resolveReadAdapter();" },
     { name: "read_work_channel", source: "resolveWakeChannel();" },
@@ -144,6 +178,37 @@ ok(
     JSON.stringify({ read_slack_channel: "slack", read_slack_thread: "slack", read_notion_page: "notion", read_notion_comments: "notion", read_linear_issue: "linear" }),
   "SOURCE_SCOPED_TOOLS pins the per-surface readers → their platforms (slack channel/thread, notion page/comments, linear issue)",
 );
+
+const perSurfaceOkNames = [
+  { name: "read_slack_channel", source: gated("slack") },
+  { name: "read_slack_thread", source: gated("slack") },
+  { name: "read_notion_page", source: workerGated("notion") },
+  { name: "read_notion_comments", source: workerGated("notion") },
+  { name: "read_channel", source: "resolveReadAdapter();" },
+  { name: "read_thread", source: "resolveReadAdapter();" },
+  { name: "read_work_channel", source: "resolveWakeChannel();" },
+  { name: "read_work_thread", source: "resolveWakeChannel();" },
+];
+ok(
+  JSON.stringify([...WORKER_CHAT_ARM_TOOLS]) === JSON.stringify(["read_notion_page", "read_notion_comments", "read_linear_issue"]),
+  "WORKER_CHAT_ARM_TOOLS pins exactly the three vendor container reads",
+);
+firesWith(
+  checkSourceGate([...perSurfaceOkNames, { name: "read_linear_issue", source: gated("linear") }]),
+  "still calls the bare sourceScopedMount",
+  "a vendor container read that reverts to the bare sourceScopedMount FAILS",
+);
+firesWith(
+  checkSourceGate([...perSurfaceOkNames, { name: "read_linear_issue", source: "export default defineDynamic({ /* no gate */ });" }]),
+  "must gate its CHAT arm on workerChatArmMount",
+  "a vendor container read with no chat-arm predicate FAILS",
+);
+firesWith(
+  checkSourceGate([{ name: "read_slack_channel", source: workerGated("slack") }]),
+  "is NOT declared in WORKER_CHAT_ARM_TOOLS",
+  "an undeclared tool that calls workerChatArmMount FAILS",
+);
+
 ok(
   JSON.stringify([...GENERIC_READ_VERBS]) === JSON.stringify(["read_channel", "read_thread", "read_work_channel", "read_work_thread"]),
   "GENERIC_READ_VERBS pins the two chat read verbs and the two work read verbs",
@@ -152,9 +217,9 @@ ok(
 const perSurfaceOk = [
   { name: "read_slack_channel", source: gated("slack") },
   { name: "read_slack_thread", source: gated("slack") },
-  { name: "read_notion_page", source: gated("notion") },
-  { name: "read_notion_comments", source: gated("notion") },
-  { name: "read_linear_issue", source: gated("linear") },
+  { name: "read_notion_page", source: workerGated("notion") },
+  { name: "read_notion_comments", source: workerGated("notion") },
+  { name: "read_linear_issue", source: workerGated("linear") },
 ];
 
 const genericWorkPair = [

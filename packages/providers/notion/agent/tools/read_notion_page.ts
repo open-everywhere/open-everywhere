@@ -10,7 +10,7 @@ import {
   TurnOriginFenceError,
   auditOriginFenceRefusal,
   bindFrom,
-  sourceScopedMount,
+  workerChatArmMount,
   getConfig,
   preRegisterDynamicEntry,
   resolvePartition,
@@ -123,7 +123,7 @@ export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
       const ok =
-        sourceScopedMount(ctx as BindableContext, "notion", () => getConfig().loadDomains()) ||
+        workerChatArmMount(ctx as BindableContext, "notion", () => getConfig().loadDomains()) ||
         notionWorkMount(ctx as BindableContext, () => getConfig().loadDomains());
       if (!ok) return null;
       return readNotionPageEntry;

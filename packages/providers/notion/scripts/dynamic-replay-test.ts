@@ -19,7 +19,10 @@ const eq = (a: unknown, b: unknown, label: string) => {
   n++;
 };
 
-const notionCtx = { channel: { kind: "notion" }, session: { auth: { current: { attributes: {} } } } };
+const notionCtx = {
+  channel: { kind: "subagent", continuationToken: "subagent:sess-parent:call_1" },
+  session: { id: "sess-child", auth: { current: { attributes: { oe_platform: "notion", oe_grain: "standing" } } } },
+};
 const WORK_WS = "ws-replay";
 const WORK_PAGE = "eeeeeeee-1111-4111-8111-eeeeeeeeeeee";
 registerNotionProvider();

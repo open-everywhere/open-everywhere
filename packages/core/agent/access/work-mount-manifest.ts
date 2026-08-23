@@ -65,7 +65,8 @@ function namesIdentifier(source: string, identifier: string): boolean {
 
 function mountsOnUnion(source: string, connector: string): boolean {
   if (connector === "*") return false;
-  return namesIdentifier(source, grantMountPredicate(connector)) && namesIdentifier(source, "sourceScopedMount");
+  const chatArm = namesIdentifier(source, "sourceScopedMount") || namesIdentifier(source, "workerChatArmMount");
+  return namesIdentifier(source, grantMountPredicate(connector)) && chatArm;
 }
 
 function mountsOnIntersection(source: string): boolean {
