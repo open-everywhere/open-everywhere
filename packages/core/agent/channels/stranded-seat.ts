@@ -84,3 +84,15 @@ export async function healPrunedDeploymentStrand(input: StrandHealInput): Promis
     return "failed";
   }
 }
+
+const UNDELIVERED_AFTER_HEAL = Symbol("oeUndeliveredAfterHeal");
+
+export function markUndeliveredAfterHeal(err: unknown): void {
+  if (err && typeof err === "object") {
+    (err as Record<PropertyKey, unknown>)[UNDELIVERED_AFTER_HEAL] = true;
+  }
+}
+
+export function isUndeliveredAfterHeal(err: unknown): boolean {
+  return Boolean(err && typeof err === "object" && (err as Record<PropertyKey, unknown>)[UNDELIVERED_AFTER_HEAL] === true);
+}

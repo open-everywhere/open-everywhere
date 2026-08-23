@@ -58,29 +58,35 @@ interface Received {
   auth: { attributes?: Record<string, unknown> };
 }
 
-async function run(msg: DiscordRelayMessage, opts: { noReceive?: boolean } = {}) {
+async function run(msg: DiscordRelayMessage, opts: { noReceive?: boolean; sendThrows?: Error } = {}) {
   const received: Received[] = [];
   const nativeSends: unknown[] = [];
   let threadAttempts = 0;
   const send = (async (...args: unknown[]) => void nativeSends.push(args)) as unknown as DiscordGatewaySend;
   const capture = ((ch: unknown, target: unknown) => ({
     async send(message: string, options: { auth: unknown }) {
+      if (opts.sendThrows) throw opts.sendThrows;
       received.push({ channel: ch, message, target: target as UnifiedReceiveTarget, auth: options.auth as Received["auth"] });
       return {} as never;
     },
   })) as unknown as RouteHandlerArgs["to"];
-  await dispatchTurn(
-    msg,
-    authForRelayMessage(msg)!,
-    send,
-    async () => {
-      threadAttempts++;
-      return null;
-    },
-    async () => undefined,
-    opts.noReceive ? undefined : capture,
-  );
-  return { received, nativeSends, threadAttempts };
+  let threw: unknown;
+  try {
+    await dispatchTurn(
+      msg,
+      authForRelayMessage(msg)!,
+      send,
+      async () => {
+        threadAttempts++;
+        return null;
+      },
+      async () => undefined,
+      opts.noReceive ? undefined : capture,
+    );
+  } catch (err) {
+    threw = err;
+  }
+  return { received, nativeSends, threadAttempts, threw };
 }
 
 {
@@ -245,4 +251,21 @@ async function run(msg: DiscordRelayMessage, opts: { noReceive?: boolean } = {})
   ok(rendered.message.includes('wake-id="wk_1"'), "the rendered envelope carries the wake-id — the only reply route on the unified channel");
 }
 
-console.log(`✓ discord-dm-divert: ${n} assertions passed (divert + fence, DM origin/codec, auth attrs, dm envelope, resume, rotation tail carry-forward, group DM, escape hatches, guild untouched, builder)`);
+{
+  const boom = new Error("socket hang up");
+  const before = new Date().toISOString();
+  const r = await run(dmMsg({ id: "5009", content: "are you there" }), { sendThrows: boom });
+  eq(r.received.length, 0, "the failed send delivers nothing");
+  ok(r.threw !== undefined, "🔴 the divert failure still PROPAGATES — this is an audit ADDITION, not a swallow");
+
+  const rows = (await getOperationalStore().readAudit({ org: "default", action: "surface.wake_failed" })).filter(
+    (row) => row.ts >= before,
+  );
+  eq(rows.length, 1, "🔴 the divert failure writes exactly ONE `surface.wake_failed` row — previously it wrote NONE");
+  eq(rows[0]!.platform, "discord", "…on the discord platform");
+  eq(rows[0]!.surface, DM_SURFACE, "…keyed to the DM's own surface, so a per-surface audit query finds it");
+  const detail = (rows[0]!.detail ?? {}) as Record<string, unknown>;
+  ok(String(detail.message).includes("socket hang up"), "…and the row names the real failure, not a generic placeholder");
+}
+
+console.log(`✓ discord-dm-divert: ${n} assertions passed (divert + fence, DM origin/codec, auth attrs, dm envelope, resume, rotation tail carry-forward, group DM, escape hatches, guild untouched, builder, OPE-970 wake-failure audit)`);
