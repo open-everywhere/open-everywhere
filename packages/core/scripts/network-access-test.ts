@@ -177,6 +177,7 @@ const ok = (cond: boolean, label: string) => {
       connectorCredentials: {},
       reachableHosts: hosts,
       repos: [],
+      repoCapabilities: {},
      
       plugins: [],
       skills: [],

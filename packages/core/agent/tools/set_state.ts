@@ -56,7 +56,7 @@ export const setStateEntry = defineTool({
     const bctx = ctx as BindableContext;
     await requireSessionContinuation(bctx, "set_state");
     const domains = safeDomains();
-    const { ref } = await resolveEntityAction(bctx, "setState", input.ref, domains);
+    const { ref, capabilities } = await resolveEntityAction(bctx, "setState", input.ref, domains);
 
     const binding = bindFrom(ctx);
     const p = resolvePartition(ctx);
@@ -79,6 +79,7 @@ export const setStateEntry = defineTool({
       state: input.state,
       requestedBy,
       tainted: untrustedIngestedThisTurn(),
+      ...(capabilities.length ? { capabilities } : {}),
     };
 
     const posted = await requestApproval(

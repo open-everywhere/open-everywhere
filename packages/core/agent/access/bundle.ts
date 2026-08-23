@@ -1,5 +1,6 @@
 import type { OperatorApprover } from "./approver-chain.js";
 import { preApprovalRuleProblems, type PreApprovalRule } from "./pre-approval-rules.js";
+import { repoCapabilityProblems, type RepoCapability } from "./repo-capabilities.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 import { parseSurfaceKeyEntry } from "../identity/surface-key-grammar.js";
 import { tenantRungRemedy } from "./tenant-admission.js";
@@ -98,13 +99,28 @@ export interface AwsRoleGrant {
   readonly allow: readonly string[];
 }
 
+export interface RepoGrant {
+  readonly repo: string;
+  readonly capabilities?: readonly RepoCapability[];
+}
+
+export type RepoGrantSpec = string | RepoGrant;
+
+export function repoGrantName(grant: RepoGrantSpec): string {
+  return typeof grant === "string" ? grant : grant.repo;
+}
+
+export function repoGrantCapabilities(grant: RepoGrantSpec): readonly RepoCapability[] {
+  return typeof grant === "string" ? [] : (grant.capabilities ?? []);
+}
+
 export interface Bundle {
   readonly name: string;
   readonly title?: string;
   readonly connections?: readonly Connection[];
   readonly connectors?: readonly ConnectorGrantSpec[];
   readonly connectorOps?: readonly ConnectorOpGating[];
-  readonly repos?: readonly string[];
+  readonly repos?: readonly RepoGrantSpec[];
   readonly domains?: readonly string[];
   readonly plugins?: readonly string[];
   readonly awsRoles?: readonly AwsRoleGrant[];
@@ -269,9 +285,27 @@ export function assertBundlesValid(bundles: readonly Bundle[]): void {
         bad.push(`  bundle "${b.name}" connectorOps entry for "${g.connector}" has an empty op name — every entry must name a real operation (or "*" for all of them)`);
       }
     }
-    for (const repo of b.repos ?? []) {
-      if (!REPO_FORM.test(repo)) {
-        bad.push(`  bundle "${b.name}" repo "${repo}" must be bare owner/name form (e.g. "acme/web") — not a URL, a bare owner, or an owner/name/extra path`);
+    const repoNames = new Set<string>();
+    for (const grant of b.repos ?? []) {
+      if (grant === null || (typeof grant !== "string" && typeof grant !== "object") || Array.isArray(grant)) {
+        bad.push(`  bundle "${b.name}" has a repo grant that is neither "owner/name" nor a { repo, capabilities } object — got ${JSON.stringify(grant)}`);
+        continue;
+      }
+      const name = repoGrantName(grant as RepoGrantSpec);
+      if (typeof name !== "string" || !REPO_FORM.test(name)) {
+        bad.push(`  bundle "${b.name}" repo ${JSON.stringify(name)} must be bare owner/name form (e.g. "acme/web") — not a URL, a bare owner, or an owner/name/extra path`);
+      }
+      if (repoNames.has(name)) {
+        bad.push(`  bundle "${b.name}" grants repo ${JSON.stringify(name)} more than once — merge the entries (two entries for one repo make its capabilities ambiguous)`);
+      }
+      repoNames.add(name);
+      if (typeof grant === "object") {
+        for (const k of Object.keys(grant)) {
+          if (k !== "repo" && k !== "capabilities") {
+            bad.push(`  bundle "${b.name}" repo grant ${JSON.stringify(name)} has unknown field "${k}" — a repo grant carries { repo, capabilities } only`);
+          }
+        }
+        bad.push(...repoCapabilityProblems(`bundle "${b.name}" repo ${JSON.stringify(name)}`, (grant as RepoGrant).capabilities));
       }
     }
     const roleArns = new Set<string>();

@@ -172,6 +172,7 @@ export default windowGated("open_pull_request", defineTool({
       headSha,
       requestedBy,
       tainted,
+      ...(access.repoCapabilities[input.repo]?.length ? { capabilities: access.repoCapabilities[input.repo] } : {}),
       ...(sessionId ? { sessionId } : {}),
     };
 

@@ -75,6 +75,38 @@ export class GitHubApp {
     return { tokens, ungranted };
   }
 
+  async installationPermissions(owner: string): Promise<Readonly<Record<string, string>> | undefined> {
+    await this.deps.hydrate?.();
+    const installationId = this.installationFor(owner);
+    if (!installationId) return undefined;
+    const fetchFn = (this.deps.fetchFn ?? (globalThis.fetch as unknown as FetchFn)) as unknown as (
+      url: string,
+      init: { method: string; headers: Record<string, string> },
+    ) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
+    try {
+      const jwt = await signAppJwt(this.key, this.issuer(), this.nowSeconds());
+      const res = await fetchFn(`https://api.github.com/app/installations/${installationId}`, {
+        method: "GET",
+        headers: {
+          authorization: `Bearer ${jwt}`,
+          accept: "application/vnd.github+json",
+          "x-github-api-version": "2022-11-28",
+        },
+      });
+      if (!res.ok) return undefined;
+      const body = (await res.json()) as { permissions?: unknown };
+      const perms = body?.permissions;
+      if (perms === null || typeof perms !== "object" || Array.isArray(perms)) return undefined;
+      const out: Record<string, string> = {};
+      for (const [family, grade] of Object.entries(perms as Record<string, unknown>)) {
+        if (typeof grade === "string") out[family] = grade;
+      }
+      return out;
+    } catch {
+      return undefined;
+    }
+  }
+
   committer(): { name: string; email: string } {
     return botCommitter(this.config.appSlug, this.config.botUserId ?? this.config.appId);
   }
