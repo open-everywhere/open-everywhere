@@ -11,7 +11,7 @@ import {
   auditOriginFenceRefusal,
   currentTurnIssue,
   currentTurnOrganization,
-  sourceScopedMount,
+  workerChatArmMount,
   getConfig,
   preRegisterDynamicEntry,
   resolvePartition,
@@ -139,7 +139,7 @@ export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
       const bctx = ctx as BindableContext;
-      const ok = sourceScopedMount(bctx, "linear", safeDomains) || linearWorkMount(bctx, safeDomains);
+      const ok = workerChatArmMount(bctx, "linear", safeDomains) || linearWorkMount(bctx, safeDomains);
       if (!ok) return null;
       return readLinearIssueEntry;
     },

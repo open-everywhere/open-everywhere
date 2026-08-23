@@ -9,7 +9,7 @@ process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-lean-seat-")), 
 
 import { LEAN_SEAT_TOOLS, allowedOnLeanSeat, resolveLeanSeatPosture, restrictToolsetForLeanSeat, withheldFromLeanSeat } from "../agent/access/lean-seat.js";
 import { setLeanSeatWake, currentLeanSeatPosture } from "../agent/access/lean-seat-state.js";
-import { WORKER_WITHHELD_TOOLS, allowedOnWorkerSeat, restrictToolsetForWorkerSeat } from "../agent/access/worker-seat.js";
+import { WORKER_WITHHELD_TOOLS, allowedOnWorkerSeat, chatArmGrain, restrictToolsetForWorkerSeat } from "../agent/access/worker-seat.js";
 import { setWorkerWake, currentWorkerWake } from "../agent/access/worker-seat-state.js";
 import { renderSupervisorPersona } from "../agent/instructions/access.js";
 import { markJobSession, setJobWakeEscalated } from "../agent/access/job-session-state.js";
@@ -152,6 +152,21 @@ ok(
   [...WORKER_WITHHELD_TOOLS].sort().join(",") === "no_reply,read_channel,read_thread,stand_down",
   `the withheld set is EXACTLY no_reply,read_channel,read_thread,stand_down (got "${[...WORKER_WITHHELD_TOOLS].sort().join(",")}") — it grows only for a verb that is structurally wrong on a worker by test (A), (B) or (C), never for 'tools a worker shouldn't use' (that is the lean roster's question, or the consequence registry's)`,
 );
+ok(chatArmGrain("task"), "🔴 OPE-1014: the vendor container reads' CHAT arm mounts on the `task` grain — the one grain this subtraction leaves without a generic container read");
+for (const grain of ["standing", "native", "thread"] as const) {
+  ok(chatArmGrain(grain) === false, `a ${grain} conversational seat does NOT hold the vendor chat arm — it reads its own container through read_channel/read_thread`);
+}
+ok(
+  allowedOnLeanSeat("read_channel") && allowedOnLeanSeat("read_thread"),
+  "…and the grains that lose the vendor chat arm provably KEEP the generic pair that replaces it (the lean roster holds both)",
+);
+for (const name of ["read_notion_page", "read_notion_comments", "read_linear_issue"]) {
+  ok(
+    WINDOW_UNGATED_TOOLS.has(name),
+    `${name} stays a MOUNT-time UNGATED row — the grain decides its CHAT arm inside its own resolver, while its WORK arm mounts on every grain, so a WINDOW_GATED_TOOLS row would claim an absence that is not true`,
+  );
+}
+
 for (const name of ["no_reply", "stand_down"]) {
   ok(WINDOW_UNGATED_TOOLS.has(name), `${name} stays a MOUNT-time ungated row — the worker narrowing is per-wake, not a grain matrix`);
 }

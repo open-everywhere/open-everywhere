@@ -303,7 +303,7 @@ console.log("P0-f — per-channel STANDING seat is NARROWED (Stage C flip):");
     "purge_memory",
     "create_routine", "subscribe_pr", "cancel_routine",
     "describe_image",
-    "read_slack_channel", "read_slack_thread", "read_notion_page", "check_pr_status",
+    "read_slack_channel", "read_slack_thread", "read_channel", "check_pr_status",
     "list_repos", "list_routines", "list_skills", "session_cost", "spend_report", "usage_report",
   ] as const;
   const STANDING_WITHHELD = [
