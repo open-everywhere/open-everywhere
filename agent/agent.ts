@@ -24,6 +24,7 @@ import { backgroundTasksAtBuild, getSettings } from "@open-everywhere/core/agent
 import { SETTINGS_OVERRIDES } from "./settings/settings.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 const GATEWAY_DEFAULTS = {
   caching: "auto",
@@ -67,12 +68,31 @@ function readAppVersion(): string {
     return "unknown";
   }
 }
+
+function readDeploymentSha(): string {
+  const sha = (process.env.VERCEL_GIT_COMMIT_SHA ?? "").trim();
+  return sha.length > 0 ? sha : "unknown";
+}
+
+function readEvePin(): string {
+  try {
+    const require = createRequire(import.meta.url);
+    const path = require.resolve("eve/package.json");
+    const pkg = JSON.parse(readFileSync(path, "utf8")) as { version?: unknown };
+    return typeof pkg.version === "string" && pkg.version.length > 0 ? pkg.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 registerAppInfo({
   version: readAppVersion(),
   primaryModel: DEFAULT_MODEL,
   utilityModel: UTILITY_MODEL,
   contextWindowTokens: PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS,
   compactionThresholdTokens: COMPACTION_THRESHOLD_TOKENS,
+  deploymentSha: readDeploymentSha(),
+  evePin: readEvePin(),
 });
 
 function primaryModelSelection<TModel>(model: TModel): {
