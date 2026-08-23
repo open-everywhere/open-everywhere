@@ -78,6 +78,12 @@ export const CONTRIBUTIONS = {
     { kind: "tool", name: "rotate_webhook", module: "agent/tools/rotate_webhook.js", summary: "Issue a signing secret for a webhook that exists here, and send it privately as a one-time link." },
     { kind: "tool", name: "run_routine_now", module: "agent/tools/run_routine_now.js", summary: "Run an existing routine ONCE right now, off its schedule, without changing the schedule." },
     { kind: "tool", name: "sandbox_tools", module: "agent/tools/sandbox_tools.js", summary: "sandbox_tools — the per-GRAIN provider of the six framework sandbox/egress tools: `bash`, `glob`, `grep`, `read_file`, `write_file`, `web_fetch` (window-tool-gating Stage C)." },
+    {
+      kind: "tool",
+      name: "search",
+      module: "agent/tools/search.js",
+      summary: "Search this domain's connected work surfaces (GitHub, Notion, Linear, ...) by keyword, and get back ids + titles — a pointer, not an answer.",
+    },
     { kind: "tool", name: "session_cost", module: "agent/tools/session_cost.js", summary: "What did THIS conversation cost so far — tokens (input/output/cache), an estimated $ (if a model can be assumed), and sandbox runtime seconds + an estimated $ for any sandbox time this session used." },
     { kind: "tool", name: "set_spend_limit", module: "agent/tools/set_spend_limit.js", summary: "PROPOSE a monthly spend limit — token count and/or USD — for this surface (or, with level:\"workspace\", the whole workspace: the Slack workspace / Discord server; with level:\"domain\", every surface in…" },
     { kind: "tool", name: "set_state", module: "agent/tools/set_state.js", summary: "PROPOSE changing a ticket's status — a Linear issue's workflow state (e.g." },
