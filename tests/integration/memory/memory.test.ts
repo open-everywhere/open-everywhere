@@ -1,6 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { expect, test } from "vitest";
+
+import { __setStaleTurnParkMsForTest } from "../../../agent/model/scripted-model";
+
 import {
   afterThisTest,
   disposeLater,
@@ -349,6 +352,8 @@ test("OPE-727 — a dispatch handle left registered past its own turn FAULTS a s
   const dispatchTurnId = handle.requests[0]?.turnId;
   const taskId = taskIdOfDelegation(handle, "the dispatch");
 
+  __setStaleTurnParkMsForTest(3_000);
+  afterThisTest(() => __setStaleTurnParkMsForTest(undefined));
   const phantom = await waitFor(
     () => handle.requests.find((r) => r.role === "parent" && r.turnId !== dispatchTurnId && r.messages.some((m) => m.text.includes(taskId))),
     "a settlement-turn request to land on the still-registered dispatch handle",

@@ -83,12 +83,14 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
   const stop = await discordOeCommandPost(discordOeStopInteraction({ channelId: DISCORD_LISTED_CHANNEL_ID, userId: STOPPER_ID }));
   expect(stop.status, `the stop command was refused: ${stop.body}`).toBe(200);
   expect(stop.body).toContain("Standing down");
+  b.releaseHolds();
   b.dispose();
 
   await waitFor(
     async () => ((await resolveTurnAnchor(org, { channelKey })) === null ? true : undefined),
     "the turn-anchor row cleared by the cancelled arm",
   );
+  expect(b.holdsCutShort()).toBe(1);
 
   const c = disposeLater(registerScript({ parent: [{ say: "ack ope693c" }] }));
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `${BOT_MENTION} ope693c`, messageId: "ope693-c" });

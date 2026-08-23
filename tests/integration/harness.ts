@@ -316,6 +316,8 @@ export function armSettlement(dispatched: ScriptedHandle, script: SeatScript): S
   return {
     requests: primary.requests,
     resolves: primary.resolves,
+    releaseHolds: () => primary.releaseHolds(),
+    holdsCutShort: () => primary.holdsCutShort(),
     dispose: () => {
       const store = scriptedStore();
       const mine = store.get(sessionId);
