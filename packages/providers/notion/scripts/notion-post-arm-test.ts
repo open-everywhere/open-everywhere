@@ -208,12 +208,17 @@ function armCredential(present: boolean): void {
     ok(platformFailureClass(ambiguousErr) === "ambiguous", "OPE-1046/CONTROL: a 500 stays AMBIGUOUS across the re-wrap — not every failure is DEFINITIVE");
 
     let sawPatchBody: unknown;
-    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    let sawUrl: unknown;
+    let sawMethod: unknown;
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      sawUrl = url;
+      sawMethod = init?.method;
       sawPatchBody = init?.body ? JSON.parse(String(init.body)) : undefined;
       return new Response(JSON.stringify({}), { status: 200 });
     }) as unknown as typeof fetch;
     await notionPostArm.editMessage!(locus, "cmt-ours", "the corrected text");
-    ok(true, "success control: liveNotionEditComment resolves cleanly on a landed PATCH");
+    ok(sawMethod === "PATCH", "OPE-1046: liveNotionEditComment issues a PATCH, not a POST or a PUT");
+    ok(String(sawUrl).endsWith("/v1/comments/cmt-ours"), "OPE-1046: the PATCH URL addresses the real comment id passed to editMessage, not the discussion or page");
     ok(
       Array.isArray((sawPatchBody as { rich_text?: unknown[] } | undefined)?.rich_text),
       "OPE-1046: the PATCH body carries `rich_text` chunks (richTextChunks), the exact shape `updateComment` sends",
