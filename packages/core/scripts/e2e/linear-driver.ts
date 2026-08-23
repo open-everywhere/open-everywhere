@@ -12,6 +12,10 @@ export interface LinearComment {
   readonly createdAt: string;
 }
 
+export interface LinearReplyWithActivity extends LinearComment {
+  readonly activityId?: string;
+}
+
 export function signLinearBody(secret: string, rawBody: string): string {
   return createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
 }
@@ -123,15 +127,30 @@ export class LinearDriver {
     return c.userId === this.cfg.appUserId;
   }
 
+  async resolveActivityId(issueId: string, commentId: string): Promise<string | undefined> {
+    const data = await this.graphql<{
+      issue?: { agentSessions?: { nodes?: { activities?: { nodes?: { id?: string; sourceComment?: { id?: string } | null }[] } }[] } };
+    }>(`query($issueId:String!){issue(id:$issueId){agentSessions{nodes{activities{nodes{id sourceComment{id}}}}}}}`, { issueId });
+    const sessions = data.issue?.agentSessions?.nodes ?? [];
+    for (const session of sessions) {
+      for (const activity of session.activities?.nodes ?? []) {
+        if (activity.sourceComment?.id === commentId && activity.id !== undefined) return activity.id;
+      }
+    }
+    return undefined;
+  }
+
   async awaitAppReply(
     issueId: string,
     beforeIds: ReadonlySet<string>,
     opts: { timeoutMs: number; skip?: (c: LinearComment) => boolean },
-  ): Promise<LinearComment> {
-    return pollUntil(
-      async () => (await this.comments(issueId)).find((c) => this.isAppComment(c) && !beforeIds.has(c.id) && !(opts.skip?.(c) ?? false)),
+  ): Promise<LinearReplyWithActivity> {
+    const c = await pollUntil(
+      async () => (await this.comments(issueId)).find((comment) => this.isAppComment(comment) && !beforeIds.has(comment.id) && !(opts.skip?.(comment) ?? false)),
       { timeoutMs: opts.timeoutMs, what: `an app-authored (user.id=${this.cfg.appUserId}) reply comment on issue ${issueId}${opts.skip !== undefined ? " that is not skipped as an interim ack" : ""}` },
     );
+    const activityId = await this.resolveActivityId(issueId, c.id).catch(() => undefined);
+    return { ...c, ...(activityId !== undefined ? { activityId } : {}) };
   }
 
   async awaitAgentSession(issueId: string, opts: { timeoutMs: number }): Promise<LinearComment> {
