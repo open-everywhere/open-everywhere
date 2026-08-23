@@ -80,6 +80,7 @@ export interface ScriptedEntry {
   readonly registeredAt: string;
   readonly epoch: number;
   readonly seq: number;
+  readonly holds: { released: boolean; cutShort: number };
 }
 
 export const ANY_SESSION = "*";
@@ -169,6 +170,8 @@ export interface ScriptedHandle {
   readonly requests: readonly RecordedRequest[];
   readonly resolves: readonly ResolveObservation[];
   dispose(): void;
+  releaseHolds(): void;
+  holdsCutShort(): number;
 }
 
 function callerFrame(): string {
@@ -206,11 +209,16 @@ export function registerScript(script: SeatScript, sessionId: string = ANY_SESSI
     registeredAt: callerFrame(),
     epoch: scriptedEpoch(),
     seq: nextRegistrationSeq(),
+    holds: { released: false, cutShort: 0 },
   };
   store.set(sessionId, entry);
   return {
     requests: entry.requests,
     resolves: entry.resolves,
+    releaseHolds: () => {
+      entry.holds.released = true;
+    },
+    holdsCutShort: () => entry.holds.cutShort,
     dispose: () => {
       if (store.get(sessionId) === entry) store.delete(sessionId);
     },

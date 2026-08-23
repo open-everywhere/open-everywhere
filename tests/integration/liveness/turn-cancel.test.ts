@@ -92,6 +92,8 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
   expect(requested[0]!.detail?.outcome).toBe("requested");
   expect(requested[0]!.detail?.turnId).toBe(cancelledTurnId);
 
+  handle.releaseHolds();
+
   const cancelled = await waitFor(async () => {
     const rows = await readAuditRows({ actions: ["turn.cancelled"], sinceIso });
     return rows.length > 0 ? rows : undefined;
@@ -100,6 +102,7 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
   expect(cancelled[0]!.platform).toBe("discord");
   expect(cancelled[0]!.detail?.ran).toEqual([RAN_TOOL]);
   expect(Number(cancelled[0]!.detail?.steps)).toBeGreaterThanOrEqual(1);
+  expect(handle.holdsCutShort()).toBe(1);
 
   const cleared = await waitFor(
     async () => ((await resolveTurnAnchor(org, { channelKey })) === null ? true : undefined),

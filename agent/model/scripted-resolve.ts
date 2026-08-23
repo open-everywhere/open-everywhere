@@ -221,7 +221,9 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation, seqAtResol
       });
 
       if (typeof step.delayMs === "number" && step.delayMs > 0) {
-        await new Promise((r) => setTimeout(r, step.delayMs));
+        const deadline = Date.now() + step.delayMs;
+        while (!target.holds.released && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+        if (target.holds.released) target.holds.cutShort += 1;
       }
 
       return {
