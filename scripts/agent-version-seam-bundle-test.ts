@@ -5,6 +5,14 @@ import { EVE_RUNTIME_VERSION } from "@open-everywhere/core/agent/channels/runtim
 const ROOT = process.cwd();
 const BUNDLE_PATH = join(ROOT, ".output", "server", "index.mjs");
 
+if (process.env.VERCEL) {
+  console.log(
+    "agent-version-seam-bundle: SKIP — Vercel builder shape writes no .output/ (OPE-1055); " +
+      "this gate rides the eve-build output in CI and local builds.",
+  );
+  process.exit(0);
+}
+
 const problems: string[] = [];
 
 if (!existsSync(BUNDLE_PATH)) {
