@@ -17,6 +17,7 @@ import {
   runCronCheck,
   runRecord,
   runRollback,
+  unresolvedAliasFailure,
 } from "./lib.js";
 
 const args = parseArgs(process.argv.slice(2));
@@ -47,7 +48,12 @@ try {
     log(`✓ deploy:verify: ${decision.message}`);
 
     const client = createVercelClient(env);
-    const current = await currentAliasTarget(client, env.alias);
+    const resolved = await currentAliasTarget(client, env.alias);
+    if (resolved.kind === "unresolved") {
+      console.error(`✗ ${unresolvedAliasFailure({ alias: env.alias, reason: resolved.reason, recording: args.flags.has("record") })}`);
+      process.exit(1);
+    }
+    const current = resolved.target;
 
     log("  checking cron registration");
     const cronResult = await runCronCheck({
@@ -57,8 +63,8 @@ try {
         envScope: env.scope,
         projectJsonPath: join(process.cwd(), ".vercel", "project.json"),
       }),
-      resolvedDeploymentId: current?.id,
-      deploymentCreatedAt: current?.createdAt,
+      resolvedDeploymentId: current.id,
+      deploymentCreatedAt: current.createdAt,
       localCrons: readLocalCronCount(join(process.cwd(), ".vercel", "output", "config.json")),
       apiFetch: async (url, init) => {
         const res = await fetch(url, { headers: init.headers });
@@ -72,16 +78,18 @@ try {
     }
 
     if (args.flags.has("record")) {
-      await runRecord({
+      const recorded = await runRecord({
         env,
         client,
         store: fileStore(env.stateFile),
-        url: current?.url,
-        id: current?.id,
+        url: args.values.get("url") ?? current.url,
+        id: args.values.get("id") ?? current.id,
         commit: args.values.get("commit") ?? (await currentCommit()),
         note: args.values.get("note"),
+        label: "deploy:verify --record",
         log,
       });
+      if (!recorded.ok) process.exit(1);
     }
     process.exit(0);
   }

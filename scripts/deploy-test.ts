@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
+  binResolutionError,
   checkCronDefinitionCount,
   checkCronDeploymentId,
   checkCronUpdatedAt,
   chooseRollbackTarget,
   createVercelClient,
+  currentAliasTarget,
   decideAfterProbe,
   DeployConfigError,
   fetchProjectInfo,
@@ -22,14 +27,18 @@ import {
   probeUrl,
   readLocalCronCount,
   readState,
+  realExec,
   recordGood,
   resolveControlToken,
   resolveDeployEnv,
+  resolveExecutable,
   resolveProjectRef,
   resolveVercelApiToken,
   runCronCheck,
   runRecord,
   runRollback,
+  unresolvedAliasFailure,
+  vercelExec,
   writeState,
   type ApiFetchLike,
   type DeployEntry,
@@ -858,5 +867,248 @@ check("parseArgs treats a trailing flag as a flag, not a value-eater", () => {
   assert.equal(args.values.size, 0);
 });
 
+const binIo = (present: string[]) => ({ exists: (p: string) => present.includes(p), listDir: () => [] as string[] });
+
+check("resolveExecutable: OE_VERCEL_BIN wins when it exists", () => {
+  const found = resolveExecutable({
+    name: "vercel",
+    overrideVar: "OE_VERCEL_BIN",
+    env: { OE_VERCEL_BIN: "/opt/bin/vercel", PATH: "/usr/bin" },
+    cwd: "/repo",
+    io: binIo(["/opt/bin/vercel", "/usr/bin/vercel"]),
+  });
+  assert.equal(found.kind, "found");
+  assert.equal(found.kind === "found" && found.path, "/opt/bin/vercel");
+});
+
+check("resolveExecutable: an OE_VERCEL_BIN that does not exist STOPS — it never falls through to PATH", () => {
+  const found = resolveExecutable({
+    name: "vercel",
+    overrideVar: "OE_VERCEL_BIN",
+    env: { OE_VERCEL_BIN: "/opt/bin/vercel", PATH: "/usr/bin" },
+    cwd: "/repo",
+    io: binIo(["/usr/bin/vercel"]),
+  });
+  assert.equal(found.kind, "missing");
+  assert.deepEqual(found.kind === "missing" && found.searched, ["/opt/bin/vercel"]);
+});
+
+check("resolveExecutable: an override variable it was NOT given cannot redirect it", () => {
+  const found = resolveExecutable({
+    name: "git",
+    env: { OE_VERCEL_BIN: "/opt/bin/vercel", PATH: "/usr/bin" },
+    cwd: "/repo",
+    io: binIo(["/opt/bin/vercel", "/usr/bin/git"]),
+  });
+  assert.equal(found.kind === "found" && found.path, "/usr/bin/git");
+});
+
+check("resolveExecutable: prefers a repo-local install, then PATH", () => {
+  const local = resolveExecutable({ name: "vercel", env: { PATH: "/usr/bin" }, cwd: "/repo", io: binIo(["/repo/node_modules/.bin/vercel", "/usr/bin/vercel"]) });
+  assert.equal(local.kind === "found" && local.path, "/repo/node_modules/.bin/vercel");
+
+  const onPath = resolveExecutable({ name: "vercel", env: { PATH: `/nope${":"}/usr/bin` }, cwd: "/repo", io: binIo(["/usr/bin/vercel"]) });
+  assert.equal(onPath.kind === "found" && onPath.path, "/usr/bin/vercel");
+});
+
+check("resolveExecutable: finds the nvm-installed CLI that `nvm use` swapped off PATH", () => {
+  const found = resolveExecutable({
+    name: "vercel",
+    env: { PATH: "/home/op/.nvm/versions/node/v24.18.0/bin", NVM_DIR: "/home/op/.nvm" },
+    cwd: "/repo",
+    io: {
+      exists: (p) => p === "/home/op/.nvm/versions/node/v22.18.0/bin/vercel",
+      listDir: (p) => (p === "/home/op/.nvm/versions/node/v22.18.0" ? [] : ["v20.0.0", "v22.18.0"]),
+    },
+  });
+  assert.equal(found.kind === "found" && found.path, "/home/op/.nvm/versions/node/v22.18.0/bin/vercel");
+});
+
+check("resolveExecutable: reports MISSING with the search list when nothing resolves", () => {
+  const found = resolveExecutable({ name: "vercel", env: { PATH: "/usr/bin:/usr/local/bin" }, cwd: "/repo", io: binIo([]) });
+  assert.equal(found.kind, "missing");
+  assert.ok(found.kind === "missing" && found.searched.includes("/usr/bin/vercel"));
+  assert.ok(found.kind === "missing" && found.searched.includes("/repo/node_modules/.bin/vercel"));
+  const err = binResolutionError("vercel", found.kind === "missing" ? found.searched : []);
+  assert.ok(err instanceof DeployConfigError);
+  assert.ok(/OE_VERCEL_BIN/.test(err.message));
+  assert.ok(/never ran/.test(err.message));
+});
+
+await check("realExec: a command that cannot be spawned sets spawnError — it is NOT an empty result", async () => {
+  const res = await realExec("oe-1028-no-such-binary", ["inspect"]);
+  assert.equal(res.stdout, "");
+  assert.equal(res.stderr, "");
+  assert.ok(res.spawnError, "a failed spawn must be reported, not flattened into empty output");
+  assert.ok(/ENOENT/.test(res.spawnError ?? ""));
+});
+
+await check("realExec: a command that DOES run carries no spawnError", async () => {
+  const res = await realExec(process.execPath, ["-e", "process.stdout.write('ok')"]);
+  assert.equal(res.spawnError, undefined);
+  assert.equal(res.stdout, "ok");
+  assert.equal(res.code, 0);
+});
+
+await check("vercelExec: an unresolvable CLI THROWS a config error rather than returning empty output", async () => {
+  const previous = process.env.OE_VERCEL_BIN;
+  process.env.OE_VERCEL_BIN = join(scratch, "definitely-not-here", "vercel");
+  try {
+    await assert.rejects(
+      () => vercelExec("vercel", ["inspect", "my-agent.vercel.app"]),
+      (err: unknown) => err instanceof DeployConfigError && /could not find the `vercel` executable/.test((err as Error).message),
+    );
+  } finally {
+    if (previous === undefined) delete process.env.OE_VERCEL_BIN;
+    else process.env.OE_VERCEL_BIN = previous;
+  }
+});
+
+await check("currentAliasTarget: a CLI that printed nothing is `unresolved`, with a reason", async () => {
+  const { exec } = stubExec(() => ({ code: 0, stdout: "", stderr: "" }));
+  const result = await currentAliasTarget(createVercelClient(ENV, exec), ENV.alias);
+  assert.equal(result.kind, "unresolved");
+  assert.ok(result.kind === "unresolved" && /my-agent\.vercel\.app/.test(result.reason));
+});
+
+await check("currentAliasTarget: a THROWING client is `unresolved` and keeps the thrown reason", async () => {
+  const exec: Exec = async () => {
+    throw new DeployConfigError("could not find the `vercel` executable — it never ran");
+  };
+  const result = await currentAliasTarget(createVercelClient(ENV, exec), ENV.alias);
+  assert.equal(result.kind, "unresolved");
+  assert.ok(result.kind === "unresolved" && /never ran/.test(result.reason));
+});
+
+await check("currentAliasTarget: a real inspect block is `resolved`", async () => {
+  const { exec } = stubExec(() => ({ code: 0, stdout: "", stderr: "id\tdpl_1\nurl\tmy-agent-abc.vercel.app\n" }));
+  const result = await currentAliasTarget(createVercelClient(ENV, exec), ENV.alias);
+  assert.equal(result.kind, "resolved");
+  assert.equal(result.kind === "resolved" && result.target.url, "https://my-agent-abc.vercel.app");
+});
+
+check("unresolvedAliasFailure names every check that stops running, and the record only when recording", () => {
+  const recording = unresolvedAliasFailure({ alias: "my-agent.vercel.app", reason: "the CLI never ran", recording: true });
+  assert.ok(/cron deploymentId check/.test(recording));
+  assert.ok(/cron staleness check/.test(recording));
+  assert.ok(/known-good pointer record/.test(recording));
+  assert.ok(/no-op guard/.test(recording));
+  assert.ok(/FATAL/.test(recording));
+
+  const probeOnly = unresolvedAliasFailure({ alias: "my-agent.vercel.app", reason: "the CLI never ran", recording: false });
+  assert.equal(/known-good pointer record/.test(probeOnly), false);
+  assert.ok(/cron deploymentId check/.test(probeOnly));
+});
+
+await check("runRollback: an unreadable alias says the no-op guard is OFF, and still rolls back", async () => {
+  const { exec } = stubExec(({ args }) => {
+    if (args[0] === "inspect") return { code: 1, stdout: "", stderr: "" };
+    return { code: 0, stdout: "", stderr: "Success! Assigned alias" };
+  });
+  const store = memoryStore({ version: 1, lastGood: entry("https://my-agent-good.vercel.app", "t1"), history: [] });
+  const lines: string[] = [];
+  const result = await runRollback({ env: ENV, client: createVercelClient(ENV, exec), store, log: (l) => lines.push(l) });
+  assert.equal(result.ok, true);
+  assert.ok(lines.some((l) => /no-op guard is OFF/.test(l)), "the disarmed guard must be announced, not vanish");
+});
+
+await check("runRecord: an unresolvable alias names the CALLING script and records nothing", async () => {
+  const { exec } = stubExec(() => ({ code: 1, stdout: "", stderr: "" }));
+  const store = memoryStore();
+  const lines: string[] = [];
+  const result = await runRecord({
+    env: ENV,
+    client: createVercelClient(ENV, exec),
+    store,
+    label: "deploy:verify --record",
+    log: (l) => lines.push(l),
+  });
+  assert.equal(result.ok, false);
+  assert.ok(lines.some((l) => /✗ deploy:verify --record:/.test(l)), "the ✗ line must name the script the operator ran");
+  assert.ok(lines.some((l) => /npm run deploy:verify -- --url/.test(l)), "the remedy must be runnable on that script");
+  assert.equal(store.current.lastGood, undefined);
+});
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const tsxBin = join(repoRoot, "node_modules", ".bin", "tsx");
+const fakeHome = join(scratch, "fake-home");
+mkdirSync(fakeHome, { recursive: true });
+
+const fakeVercel = join(scratch, "fake-vercel");
+writeFileSync(
+  fakeVercel,
+  "#!/bin/sh\n" +
+    "printf 'id\\tdpl_OPE1028FAKE\\nurl\\toe-1028-fake.vercel.app\\nstatus\\t\\xe2\\x97\\x8f Ready\\ncreated\\tSat Aug 23 2026 11:22:30 GMT+0100 (British Summer Time) [1m ago]\\n' >&2\n",
+);
+chmodSync(fakeVercel, 0o755);
+
+type VerifyRun = { code: number | null; output: string };
+
+async function runVerify(argv: string[], vars: Record<string, string>): Promise<VerifyRun> {
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as { port: number }).port;
+  try {
+    return await new Promise<VerifyRun>((resolve) => {
+      const child = spawn(tsxBin, [join("scripts", "deploy", "verify.ts"), ...argv, "--attempts", "1", "--delay-ms", "1"], {
+        cwd: repoRoot,
+        env: {
+          PATH: process.env.PATH ?? "",
+          HOME: fakeHome,
+          NODE_NO_WARNINGS: "1",
+          OE_DEPLOY_SCOPE: "team-slug",
+          OE_DEPLOY_ALIAS: "oe-1028-e2e.invalid",
+          OE_DEPLOY_BASE_URL: `http://127.0.0.1:${port}`,
+          OE_DEPLOY_CONTROL_TOKEN: "oe-1028-not-a-real-token",
+          ...vars,
+        },
+      });
+      let output = "";
+      child.stdout.on("data", (c) => (output += String(c)));
+      child.stderr.on("data", (c) => (output += String(c)));
+      child.on("close", (code) => resolve({ code, output }));
+    });
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+await check("deploy:verify EXITS NON-ZERO when it cannot resolve what the alias points at", async () => {
+  const pointer = join(scratch, "e2e-unresolved.json");
+  const run = await runVerify(["--record", "--no-rollback"], {
+    OE_VERCEL_BIN: join(scratch, "no-such-vercel"),
+    OE_DEPLOY_STATE_FILE: pointer,
+  });
+  assert.notEqual(run.code, 0, `deploy:verify must not exit 0 when the alias is unresolvable — got ${run.code}\n${run.output}`);
+  assert.ok(/✓ deploy:verify: HTTP 200/.test(run.output), `the probe itself should have passed:\n${run.output}`);
+  assert.ok(/cron deploymentId check/.test(run.output), "it must name the checks that stopped running");
+  assert.ok(/known-good pointer record/.test(run.output));
+  assert.equal(existsSync(pointer), false, "nothing may be recorded when the deployment is unknown");
+});
+
+await check("deploy:verify --record exits 0 and WRITES the pointer when the CLI resolves", async () => {
+  const pointer = join(scratch, "e2e-resolved.json");
+  const run = await runVerify(["--record", "--no-rollback"], { OE_VERCEL_BIN: fakeVercel, OE_DEPLOY_STATE_FILE: pointer });
+  assert.equal(run.code, 0, `expected a clean exit, got ${run.code}\n${run.output}`);
+  const state = JSON.parse(readFileSync(pointer, "utf8")) as DeployState;
+  assert.equal(state.lastGood?.url, "https://oe-1028-fake.vercel.app");
+  assert.equal(state.lastGood?.id, "dpl_OPE1028FAKE");
+});
+
+await check("deploy:verify honours --url/--id, so its own printed remedy works", async () => {
+  const pointer = join(scratch, "e2e-explicit.json");
+  const run = await runVerify(["--record", "--no-rollback", "--url", "https://oe-1028-explicit.vercel.app", "--id", "dpl_OPE1028EXPLICIT"], {
+    OE_VERCEL_BIN: fakeVercel,
+    OE_DEPLOY_STATE_FILE: pointer,
+  });
+  assert.equal(run.code, 0, run.output);
+  const state = JSON.parse(readFileSync(pointer, "utf8")) as DeployState;
+  assert.equal(state.lastGood?.url, "https://oe-1028-explicit.vercel.app");
+  assert.equal(state.lastGood?.id, "dpl_OPE1028EXPLICIT");
+});
+
 rmSync(scratch, { recursive: true, force: true });
-console.log(`✓ deploy: ${checks} check(s) passed (rollback selection, pointer, probe→decision, cron registration, env validation — all offline)`);
+console.log(`✓ deploy: ${checks} check(s) passed (rollback selection, pointer, probe→decision, cron registration, CLI resolution, verify exit codes, env validation — all offline)`);
