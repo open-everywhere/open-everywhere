@@ -233,6 +233,7 @@ async function deliverFor(
       return true;
     },
     fetch: recordingFetch(seen, parent, shape?.blockParents),
+    attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
     dispatch: async (d) => {
       dispatched = d.credentialId;
       attributes = { ...d.auth.attributes };
@@ -372,6 +373,7 @@ async function deliverFor(
     resolveBotUserId: async () => "U_BOT",
     ambientEnabled: () => true,
     fetch: recordingFetch(seen),
+    attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
     dispatch: async () => {
       throw new Error("a bound domain with no credential must never dispatch");
     },
@@ -551,6 +553,7 @@ async function deliverFor(
         return true;
       },
       fetch: recordingFetch([], { type: "page_id", page_id: page }),
+      attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
       dispatch: async (d) => {
         dispatched = true;
         surfaceKey = d.surfaceKey;
@@ -661,6 +664,7 @@ async function deliverFor(
       resolveBotUserId: async () => "U_BOT",
       ambientEnabled: () => true,
       fetch: recordingFetch([], { type: "page_id", page_id: PAGE_PAY }),
+      attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
       dispatch: async (d) => {
         dispatched = true;
         surfaceKey = d.surfaceKey;
@@ -735,6 +739,7 @@ async function deliverFor(
       resolveBotUserId: async () => "U_BOT",
       ambientEnabled: () => true,
       fetch: recordingFetch([], { type: "page_id", page_id: page }),
+      attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
       dispatch: async (d) => {
         dispatched = true;
         surfaceKey = d.surfaceKey;

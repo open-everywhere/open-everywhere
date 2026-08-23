@@ -161,6 +161,7 @@ function baseDeps(
     ambientEnabled: () => true,
     fetch: fetchImpl,
     dispatch,
+    attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
     ...extra,
   };
   return { ...merged, domains: merged.domains ?? [] };

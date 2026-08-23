@@ -202,7 +202,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
     return { state };
   },
   routes: [
-    POST(ROUTE, async (req, { from, waitUntil, to }) => {
+    POST(ROUTE, async (req, { from, waitUntil, to, attachSession }) => {
       const send = notionSendFrom(from);
       const rawBody = await req.text();
       const signature = req.headers.get("x-notion-signature");
@@ -316,6 +316,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
         ambientEnabled: notionAmbientEnabled,
         engagementTier: (surfaceKey) => engagementTierFor(surfaceKey, getConfig().loadDomains()),
         dispatch,
+        attachSession,
       });
 
       if (outcome.verified) {
@@ -355,6 +356,8 @@ export default defineChannel<NotionState, { state: NotionState }>({
         }
       } else if (outcome.action === "dispatched") {
         log(`comment.created → dispatched (${outcome.detail})`);
+      } else if (outcome.action === "stopped") {
+        log(`stop comment → ${outcome.detail}`);
       } else if (outcome.action === "ambient-disabled") {
         const surfaceKey = outcome.detail ?? "";
         waitUntil(

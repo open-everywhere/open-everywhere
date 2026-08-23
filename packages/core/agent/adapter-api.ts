@@ -287,7 +287,7 @@ export type { WakeMessageInput, WakeTrust, WakeReason } from "./channels/wake-en
 
 export { divertToUnifiedWindow } from "./channels/unified.js";
 
-export { isPrunedDeploymentWakeError } from "./channels/stranded-seat.js";
+export { isPrunedDeploymentWakeError, markUndeliveredAfterHeal, isUndeliveredAfterHeal } from "./channels/stranded-seat.js";
 
 export { supervisorGrainFor, grainUsesUnifiedWindow, mintRotationToken } from "./channels/unified-supervisor.js";
 export type { SupervisorGrain } from "./channels/unified-supervisor.js";

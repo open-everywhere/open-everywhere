@@ -40,6 +40,8 @@ import {
   divertInboundToUnifiedWindow,
   divertToUnifiedWindow,
   isPrunedDeploymentWakeError,
+  markUndeliveredAfterHeal,
+  isUndeliveredAfterHeal,
   mintWakeId,
   resolveWakeTrust,
   ambientSupervisorEnabled,
@@ -323,7 +325,12 @@ export async function deliverWithStrandRetry(deliver: () => Promise<void>): Prom
   } catch (err) {
     if (!isPrunedDeploymentWakeError(err)) throw err;
     console.warn(`[open-everywhere:slack-front] wake hit a pruned deployment — seat marked for rotation, re-delivering once: ${String(err)}`);
-    await deliver();
+    try {
+      await deliver();
+    } catch (retryErr) {
+      markUndeliveredAfterHeal(retryErr);
+      throw retryErr;
+    }
   }
 }
 
@@ -340,6 +347,7 @@ export function recordWakeFailure(key: string, err: unknown): void {
         channel: { kind: "slack" },
         session: { auth: { current: { attributes: { team_id: "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
       } as Parameters<typeof resolvePartition>[0]);
+      const undeliveredAfterHeal = isUndeliveredAfterHeal(err);
       await getOperationalStore().appendAudit({
         ts: new Date().toISOString(),
         org: p.org,
@@ -347,7 +355,13 @@ export function recordWakeFailure(key: string, err: unknown): void {
         workspace: p.workspace,
         surface: p.surface,
         action: "surface.wake_failed",
-        detail: { fifoKey: key, message: String(err instanceof Error ? err.message : err).slice(0, 500) },
+        detail: {
+          fifoKey: key,
+          message: String(err instanceof Error ? err.message : err).slice(0, 500),
+          ...(undeliveredAfterHeal
+            ? { reason: "pruned-deployment-heal-retry-failed", remedy: "seat healed for its next wake; this message got no answer" }
+            : {}),
+        },
       });
     } catch {
     }

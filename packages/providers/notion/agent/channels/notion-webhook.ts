@@ -21,7 +21,8 @@ import { resolveNotionDeliveryTrust, type NotionTrustRoots } from "./notion-ance
 import { notionDeliveryScopeVerdict } from "./notion-credentials.js";
 import { notionRosterWorkspace } from "./notion-scope.js";
 import { classifyNotionComment, type NotionUntieredSupervisorDispatch, type NotionUntieredWakeMessage } from "./notion-supervisor.js";
-import { OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
+import { notionCommentIsStopDirective, routeNotionStopComment } from "./notion-stop.js";
+import { OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR, type AttachSessionForCancel, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface NotionReplyTarget {
   readonly discussionId: string;
@@ -53,6 +54,7 @@ export interface HandleNotionDeliveryDeps {
   readonly version?: string;
   readonly dispatch: (d: NotionUntieredSupervisorDispatch) => Promise<void>;
   readonly onHandshakeToken?: (token: string) => void;
+  readonly attachSession: AttachSessionForCancel;
 }
 
 export interface NotionDeliveryOutcome {
@@ -70,6 +72,7 @@ export interface NotionDeliveryOutcome {
     | "dispatched"
     | "no-api-key"
     | "unresolved-page"
+    | "stopped"
     | "scope-refused"
     | "error";
   readonly detail?: string;
@@ -156,6 +159,27 @@ async function deliver(
   const workspaceId = notionRosterWorkspace(pageId, deps.domains) ?? payloadWorkspaceId;
 
   const surfaceKey = notionSurfaceKey(workspaceId, pageId);
+
+  if (notionCommentIsStopDirective(comment, botUserId)) {
+    const result = await routeNotionStopComment(
+      {
+        workspaceId,
+        pageId,
+        discussionId: discussionId || undefined,
+        credentialId,
+        requesterId: comment.created_by?.id,
+      },
+      { attachSession: deps.attachSession },
+    );
+    return {
+      status: 200,
+      body: "ok",
+      action: "stopped",
+      detail: result.stopped ? result.outcome : result.reason,
+      signed,
+      credentialId,
+    };
+  }
 
   if (!deps.ambientEnabled(surfaceKey)) {
     return { status: 200, body: "ok", action: "ambient-disabled", detail: surfaceKey, signed, credentialId };
