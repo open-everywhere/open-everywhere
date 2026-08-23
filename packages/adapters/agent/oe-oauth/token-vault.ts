@@ -42,6 +42,13 @@ interface PendingRecord {
   readonly consumed?: boolean;
 }
 
+export interface PendingSweepReport {
+  readonly scanned: number;
+  readonly deleted: number;
+  readonly live: number;
+  readonly unreadable: number;
+}
+
 interface TokenRecord {
   readonly accessToken: string;
   readonly refreshToken?: string;
@@ -52,6 +59,8 @@ interface TokenRecord {
 
 const DEFAULT_PENDING_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_EXPIRY_SKEW_MS = 60 * 1000;
+
+const DEFAULT_PENDING_RETENTION_MS = 60 * 60 * 1000;
 
 export const CLAIM_LEASE_TTL_MS = 30_000;
 const LOSER_WAIT_BUDGET_MS = 15_000;
@@ -67,6 +76,7 @@ export interface OeOauthVaultDeps {
   readonly newPkce?: () => { readonly verifier: string; readonly challenge: string };
   readonly redirectUri?: () => string | undefined;
   readonly pendingTtlMs?: number;
+  readonly pendingRetentionMs?: number;
   readonly expirySkewMs?: number;
   readonly newClaimId?: () => string;
   readonly sleep?: (ms: number) => Promise<void>;
@@ -91,6 +101,7 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
   const newPkce = deps.newPkce ?? makePkce;
   const redirectUriOf = deps.redirectUri ?? defaultRedirectUri;
   const pendingTtl = deps.pendingTtlMs ?? DEFAULT_PENDING_TTL_MS;
+  const pendingRetention = deps.pendingRetentionMs ?? DEFAULT_PENDING_RETENTION_MS;
   const skew = deps.expirySkewMs ?? DEFAULT_EXPIRY_SKEW_MS;
   const newClaimId = deps.newClaimId ?? (() => randomUUID());
   const sleep = deps.sleep ?? realSleep;
@@ -183,10 +194,38 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
     });
   }
 
+  async function sweepExpiredPending(): Promise<PendingSweepReport> {
+    const refs = await vault.listRefs("oe-oauth:pend:");
+    let deleted = 0;
+    let live = 0;
+    let unreadable = 0;
+    for (const ref of refs) {
+      let rec: PendingRecord | null;
+      try {
+        rec = await readJson<PendingRecord>(ref);
+      } catch {
+        unreadable++;
+        continue;
+      }
+      if (!rec || typeof rec.expiresAt !== "number" || !Number.isFinite(rec.expiresAt)) {
+        unreadable++;
+        continue;
+      }
+      if (now() <= rec.expiresAt + pendingRetention) {
+        live++;
+        continue;
+      }
+      if (await vault.delete(ref)) deleted++;
+    }
+    return { scanned: refs.length, deleted, live, unreadable };
+  }
+
   return {
     subjectKey,
 
     forget,
+
+    sweepExpiredPending,
 
     async forgetAll(subject: OeOauthSubject): Promise<number> {
       let purged = 0;
@@ -236,6 +275,11 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
         resource: client.resource,
         ...(client.scopes ? { scopes: client.scopes } : {}),
       });
+      try {
+        await sweepExpiredPending();
+      } catch (e) {
+        console.warn(`[oe-oauth] the expired-pending sweep failed (the authorization URL is unaffected): ${e instanceof Error ? e.message : String(e)}`);
+      }
       return { url };
     },
 

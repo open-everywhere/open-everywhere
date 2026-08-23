@@ -150,6 +150,10 @@ function memVault(shared?: SharedBacking): EncryptedKvVault & SharedBacking {
       claims.delete(ref);
       return had;
     },
+    async listRefs(refPrefix) {
+      if (!refPrefix) throw new Error("encryptedKvVault.listRefs: a non-empty ref prefix is required — this interface cannot enumerate the whole credential store.");
+      return [...raw.keys()].filter((k) => k.startsWith(refPrefix)).sort();
+    },
     async withLock(key, fn) {
       const prev = tails.get(key) ?? Promise.resolve();
       let release!: () => void;
@@ -420,6 +424,9 @@ const tokRef = "oe-oauth:tok:notion:user:U1";
     async delete() {
       return false;
     },
+    async listRefs() {
+      throw new Error("vault backing unavailable");
+    },
     async withLock(_k, fn) {
       return fn();
     },
@@ -572,4 +579,105 @@ const tokRef = "oe-oauth:tok:notion:user:U1";
   }
 }
 
-console.log(`✓ oe-oauth: ${n} assertions passed (PKCE, DCR/authorize, in-process + cross-process single-flight, crashed-winner steal, loser-timeout, recovery, real-store claim CAS, RFC 9728 well-known derivation, hasFreshGrant probe, RFC 7009 purge, typed errors)`);
+{
+  const RETENTION = 60 * 60 * 1000;
+  const PEND = "oe-oauth:pend:";
+  const clock = { t: 5_000_000_000 };
+  const seedPend = (v: EncryptedKvVault, state: string, expiresAt: number) =>
+    v.write(`${PEND}${state}`, JSON.stringify({ providerRef: "notion", subject: { type: "user", id: "U1" }, pkceVerifier: "VER", tokenEndpoint: TOKEN_URL, clientId: "CID-1", resource: RESOURCE, redirectUri: REDIRECT, createdAt: expiresAt - 900_000, expiresAt }));
+
+  {
+    const v = memVault();
+    await seedDcr(v);
+    const s: MockState = { registrations: 0, exchanges: 0, refreshCount: 0, access: "AT", validRefresh: "RT", seq: 0, exchangeExpiresIn: 3600 };
+    const vault = makeOeOauthTokenVault(providers, { vault: v, fetch: makeMockFetch(s), now: () => clock.t, pendingRetentionMs: RETENTION });
+
+    await seedPend(v, "OLD-1", clock.t - 30 * 24 * 3600_000);
+    await seedPend(v, "OLD-2", clock.t - RETENTION - 1);
+    await seedPend(v, "EDGE-KEEP", clock.t - RETENTION);
+    await seedPend(v, "LIVE", clock.t + 600_000);
+    await v.write(`${PEND}CORRUPT`, "{not json");
+    await v.write(`${PEND}NO-EXPIRY`, JSON.stringify({ providerRef: "notion", subject: { type: "user", id: "U1" } }));
+    await v.write("oe-oauth:tok:notion:user:U1", JSON.stringify({ accessToken: "AT", refreshToken: "RT", obtainedAt: 0 }));
+
+    const report = await vault.sweepExpiredPending();
+    ok(report.scanned === 6, `sweep scans ONLY the oe-oauth:pend: namespace (scanned ${report.scanned}, expected 6 — the tok row and the DCR row are not in it)`);
+    ok(report.deleted === 2, `sweep destroys the rows past expiry + retention (deleted ${report.deleted}, expected 2)`);
+    ok(report.live === 2, `sweep KEEPS the rows that may still complete (live ${report.live}, expected 2)`);
+    ok(report.unreadable === 2, `sweep KEEPS and COUNTS the rows whose expiry it cannot establish (unreadable ${report.unreadable}, expected 2)`);
+    ok(report.scanned === report.deleted + report.live + report.unreadable, "the sweep's four counts RECONCILE");
+
+    ok((await v.read(`${PEND}OLD-1`)) === null, "🔴 an expired pending row is DESTROYED (the month-old residue)");
+    ok((await v.read(`${PEND}OLD-2`)) === null, "🔴 a row one ms past the retention edge is DESTROYED");
+    ok((await v.read(`${PEND}EDGE-KEEP`)) !== null, "🔴 negative control: a row exactly AT the retention edge SURVIVES (the boundary is >, not >=)");
+    ok((await v.read(`${PEND}LIVE`)) !== null, "🔴 negative control: a row inside its consent window SURVIVES the sweep");
+    ok((await v.read(`${PEND}CORRUPT`)) !== null, "🔴 negative control: an UNREADABLE row SURVIVES — its expiry is the one fact the sweep cannot establish");
+    ok((await v.read(`${PEND}NO-EXPIRY`)) !== null, "🔴 negative control: a row with no numeric expiresAt SURVIVES");
+    ok((await v.read("oe-oauth:tok:notion:user:U1")) !== null, "🔴 negative control: a TOKEN row is untouched — the sweep never leaves its own namespace");
+    ok((await v.read("oe-oauth:dcr:notion")) !== null, "🔴 negative control: the DCR client registration is untouched");
+  }
+
+  {
+    const v = memVault();
+    const POISON = `${PEND}POISON`;
+    const guarded: EncryptedKvVault = {
+      ...v,
+      async read(ref) {
+        if (ref === POISON) throw new Error("db credential broker: stored ciphertext is truncated — refusing (fail closed).");
+        return v.read(ref);
+      },
+    };
+    const s: MockState = { registrations: 0, exchanges: 0, refreshCount: 0, access: "AT", validRefresh: "RT", seq: 0, exchangeExpiresIn: 3600 };
+    const vault = makeOeOauthTokenVault(providers, { vault: guarded, fetch: makeMockFetch(s), now: () => clock.t, pendingRetentionMs: RETENTION });
+
+    await v.write(POISON, "irrelevant — the read throws before this is parsed");
+    await seedPend(v, "AAA-EXPIRED", clock.t - 30 * 24 * 3600_000);
+    await seedPend(v, "ZZZ-EXPIRED", clock.t - 30 * 24 * 3600_000);
+
+    const report = await vault.sweepExpiredPending();
+    ok(report.unreadable === 1, `🔴 an undecryptable row is COUNTED as unreadable, not thrown (unreadable ${report.unreadable})`);
+    ok(report.deleted === 2, `🔴 the sweep CONTINUES past the undecryptable row — the rows after it are still destroyed (deleted ${report.deleted}, expected 2)`);
+    ok((await v.read(`${PEND}ZZZ-EXPIRED`)) === null, "🔴 the expired row sorted AFTER the poison row is destroyed — one bad row cannot disable the sweep");
+    ok((await v.read(POISON)) !== null, "🔴 negative control: the undecryptable row itself SURVIVES — its expiry is unknowable, so it is not ours to destroy");
+  }
+
+  {
+    const v = memVault();
+    const s: MockState = { registrations: 0, exchanges: 0, refreshCount: 0, access: "AT", validRefresh: "RT", seq: 0, exchangeExpiresIn: 3600 };
+    const vault = makeOeOauthTokenVault(providers, { vault: v, fetch: makeMockFetch(s), now: () => clock.t, newState: () => "FRESH", newPkce: () => ({ verifier: "V", challenge: "C" }), redirectUri: () => REDIRECT, pendingRetentionMs: RETENTION });
+    await seedPend(v, "STALE", clock.t - 30 * 24 * 3600_000);
+    ok((await v.read(`${PEND}STALE`)) !== null, "reachability precondition: the stale row exists BEFORE the mint");
+
+    await vault.startAuthorization("notion", { type: "user", id: "U1" }, {});
+    ok((await v.read(`${PEND}STALE`)) === null, "🔴 REACHABILITY: startAuthorization CALLS the sweep — the stale row is gone after a mint");
+    ok((await v.read(`${PEND}FRESH`)) !== null, "🔴 the pending row the mint JUST wrote survives its own sweep (kept by the expiry rule, not by ordering)");
+  }
+
+  {
+    const v = memVault();
+    const breaking: EncryptedKvVault = { ...v, async listRefs() { throw new Error("enumeration unavailable"); } };
+    const s: MockState = { registrations: 0, exchanges: 0, refreshCount: 0, access: "AT", validRefresh: "RT", seq: 0, exchangeExpiresIn: 3600 };
+    const vault = makeOeOauthTokenVault(providers, { vault: breaking, fetch: makeMockFetch(s), now: () => clock.t, newState: () => "S", newPkce: () => ({ verifier: "V", challenge: "C" }), redirectUri: () => REDIRECT });
+    let url: string | undefined;
+    let threw = false;
+    try {
+      ({ url } = await vault.startAuthorization("notion", { type: "user", id: "U1" }, {}));
+    } catch {
+      threw = true;
+    }
+    ok(!threw && typeof url === "string" && url.startsWith(`${AS}/authorize`), "🔴 a sweep that THROWS is swallowed — the mint still returns the authorization URL");
+  }
+
+  {
+    const v = memVault();
+    let threw = false;
+    try {
+      await v.listRefs("");
+    } catch {
+      threw = true;
+    }
+    ok(threw, "🔴 listRefs REFUSES an empty prefix — there is no way to spell 'enumerate every credential'");
+  }
+}
+
+console.log(`✓ oe-oauth: ${n} assertions passed (PKCE, DCR/authorize, in-process + cross-process single-flight, crashed-winner steal, loser-timeout, recovery, real-store claim CAS, RFC 9728 well-known derivation, hasFreshGrant probe, RFC 7009 purge, expired-pending sweep, typed errors)`);
