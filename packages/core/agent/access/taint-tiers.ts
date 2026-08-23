@@ -13,7 +13,8 @@ export type IngestionKind =
   | "image-description"
   | "file-upload"
   | "aws"
-  | "skill-declared";
+  | "skill-declared"
+  | "work-search";
 
 export interface IngestionSource {
   readonly kind: IngestionKind;
@@ -86,6 +87,9 @@ export function classifyIngestion(src: IngestionSource): IngestionVerdict {
 
     case "skill-declared":
       return untrusted("a skill script's self-declared external fetch — a sandbox script vouching for its own bytes may only ADD taint, never relax; unconditional, no metadata branch");
+
+    case "work-search":
+      return untrusted("the federated search tool's result — a single call can mix several connectors' hits, so no one instance's trust tier could stand for the whole row; titles are arbitrary workspace text either way");
   }
 }
 
@@ -103,4 +107,5 @@ export const INGESTION_KINDS: readonly IngestionKind[] = [
   "file-upload",
   "aws",
   "skill-declared",
+  "work-search",
 ];

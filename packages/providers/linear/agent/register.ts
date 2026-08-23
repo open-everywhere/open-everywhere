@@ -22,6 +22,7 @@ import { linearCredentialsConfigured } from "./channels/linear-credentials.js";
 import { linearEventNormalizer, linearEventScopeGrant } from "./channels/linear-event-normalizer.js";
 import { linearMessageOps } from "./channels/linear-message-ops.js";
 import { linearReadAdapter } from "./channels/linear-read.js";
+import { registerLinearWorkSearch } from "./channels/linear-work-search.js";
 
 export function registerLinearProvider(): void {
   registerIdentityMapper("linear", bindLinear);
@@ -30,6 +31,7 @@ export function registerLinearProvider(): void {
   registerSurfaceMessageOps(linearMessageOps);
   registerWakeOriginCodec("linear", linearWakeOriginCodec);
   registerReadAdapter(linearReadAdapter);
+  registerLinearWorkSearch();
   registerEntityActionAdapter(linearEntityAdapter);
   registerTicketCreateAdapter(linearTicketCreateAdapter);
   registerSurfaceCredentialProbe("linear", linearCredentialsConfigured);
