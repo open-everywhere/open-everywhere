@@ -1,6 +1,7 @@
 export const WORKER_ONLY_TOOLS_STANDING: readonly string[] = [
   "add_label",
   "add_routine_rule",
+  "agent_version",
   "assign",
   "aws",
   "bash",
@@ -79,6 +80,7 @@ export const WORKER_ONLY_TOOLS_STANDING: readonly string[] = [
 export const WORKER_ONLY_TOOLS_THREAD: readonly string[] = [
   "add_label",
   "add_routine_rule",
+  "agent_version",
   "assign",
   "aws",
   "bash",

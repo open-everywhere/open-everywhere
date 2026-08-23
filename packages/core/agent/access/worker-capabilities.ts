@@ -137,6 +137,11 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
     headline: "Look up how OE's own capabilities actually work",
     tools: ["read_docs"],
   },
+  {
+    id: "own-version",
+    headline: "State which version of this deployment is currently running — package version, commit sha, eve pin",
+    tools: ["agent_version"],
+  },
 ];
 
 function mountedOn(name: string, grain: WindowGrain, gated: Readonly<Record<string, readonly WindowGrain[]>>, ungated: ReadonlySet<string>): boolean {

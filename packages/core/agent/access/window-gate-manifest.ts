@@ -68,6 +68,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "read_work_channel",
   "read_work_thread",
   "session_cost",
+  "agent_version",
   "spend_report",
   "usage_report",
   "query_analytics",
@@ -159,6 +160,7 @@ export const JOB_WAKE_TOOLS: ReadonlySet<string> = new Set([
   "usage_report",
   "query_analytics",
   "permission_fit_report",
+  "agent_version",
   "todo",
   "load_skill",
 ]);

@@ -1,5 +1,6 @@
 import type { AwsRoleGrant, Binding, Bundle, Connection, ConnectorContentOriginSpec, HttpMethod, Scope } from "./bundle.js";
-import { connectorGrantName, connectorGrantContentOrigin, connectorGrantCredential } from "./bundle.js";
+import { connectorGrantName, connectorGrantContentOrigin, connectorGrantCredential, repoGrantName, repoGrantCapabilities } from "./bundle.js";
+import { unionRepoCapabilities, type RepoCapability } from "./repo-capabilities.js";
 import type { OperatorApprover } from "./approver-chain.js";
 import {
   assemblePreApprovalRules,
@@ -46,6 +47,7 @@ export interface EffectiveAccess {
   readonly connections: readonly Connection[];
   readonly reachableHosts: readonly ReachableHost[];
   readonly repos: readonly string[];
+  readonly repoCapabilities: Readonly<Record<string, readonly RepoCapability[]>>;
   readonly awsRoles: readonly AwsRoleGrant[];
   readonly approvers: readonly OperatorApprover[];
   readonly plugins: readonly string[];
@@ -209,7 +211,19 @@ export function resolveAccess(
   }
   const reachableHosts = [...hostMap.values()].sort((a, b) => a.host.localeCompare(b.host));
 
-  const repos = [...new Set(ordered.flatMap(({ bundle }) => bundle.repos ?? []))].sort();
+  const repos = [...new Set(ordered.flatMap(({ bundle }) => (bundle.repos ?? []).map(repoGrantName)))].sort();
+
+  const repoCapabilityMap = new Map<string, readonly RepoCapability[]>();
+  for (const { bundle } of ordered) {
+    for (const grant of bundle.repos ?? []) {
+      const caps = repoGrantCapabilities(grant);
+      if (caps.length === 0) continue;
+      const name = repoGrantName(grant);
+      repoCapabilityMap.set(name, unionRepoCapabilities(repoCapabilityMap.get(name) ?? [], caps));
+    }
+  }
+  const repoCapabilities: Record<string, readonly RepoCapability[]> = {};
+  for (const name of [...repoCapabilityMap.keys()].sort()) repoCapabilities[name] = repoCapabilityMap.get(name)!;
 
   const awsRoleMap = new Map<string, AwsRoleGrant>();
   for (const { bundle } of ordered) {
@@ -348,6 +362,7 @@ export function resolveAccess(
     connections,
     reachableHosts,
     repos,
+    repoCapabilities,
     awsRoles,
     approvers,
     plugins,

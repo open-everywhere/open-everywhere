@@ -9,6 +9,7 @@ import {
   registerScript,
   SETTLEMENT_DRAIN_SCRIPT,
   taskIdOfDelegation,
+  waitFor,
   waitForChildren,
   type RecordedRequest,
 } from "../harness";
@@ -52,6 +53,7 @@ test("the delegated worker reads the worker persona, and the seat keeps its own"
 
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> count the files" });
 
+  await waitFor(() => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the dispatch turn's own terminal step to be served");
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 0, label: "the delegated worker to serve its arm" });
   const taskId = taskIdOfDelegation(dispatched, "the OPE-863 delegation");
   const { handle: drain } = await awaitTaskSettlement({

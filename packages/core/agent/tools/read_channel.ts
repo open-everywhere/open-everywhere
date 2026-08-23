@@ -41,7 +41,15 @@ const readChannelEntry = defineTool({
     platform: z.string(),
     channel: z.string(),
     count: z.number(),
-    messages: z.array(z.object({ author: z.string(), ts: z.string(), text: z.string() })),
+    messages: z.array(
+      z.object({
+        author: z.string(),
+        ts: z.string(),
+        text: z.string(),
+        readAt: z.string().optional(),
+        live: z.boolean().optional(),
+      }),
+    ),
     authoredByNonMember: z.boolean().optional(),
     possiblyIncomplete: z.boolean().optional(),
     spool: z.object({ path: z.string().optional(), shown: z.number(), total: z.number() }).optional(),

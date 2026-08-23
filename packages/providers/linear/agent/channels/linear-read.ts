@@ -38,10 +38,12 @@ function authorFields(id: string | undefined, name: string | undefined): Pick<Re
 export function linearTopicLine(issue: LinearIssueRead): RenderedLine {
   const title = (issue.title ?? "").trim();
   const description = issue.description.trim();
+  const state = issue.stateName?.trim();
+  const headline = [title, state ? `[${state}]` : undefined].filter((part): part is string => !!part && part.length > 0).join(" ");
   return {
     ...authorFields(issue.creatorId, issue.creatorName),
     ts: issue.createdAt ?? "",
-    text: [title, description].filter((part) => part.length > 0).join("\n\n"),
+    text: [headline, description].filter((part) => part.length > 0).join("\n\n"),
   };
 }
 
@@ -91,12 +93,19 @@ export const linearReadAdapter = {
   },
   async readChannel(ctx: BindableContext, channel: string, limit?: number, deps?: LinearReadDeps): Promise<readonly RenderedLine[]> {
     const issue = await admitAndRead(ctx, channel, deps);
+    const readAt = new Date().toISOString();
     const effective = Math.max(1, limit ?? LINEAR_CHANNEL_DEFAULT_LIMIT);
     const roots = linearRootComments(issue.comments).slice(-Math.max(1, effective - 1));
-    return [linearTopicLine(issue), ...roots.map((c) => commentLine(c))];
+    return [
+      { ...linearTopicLine(issue), readAt, live: true },
+      ...roots.map((c) => ({ ...commentLine(c), readAt })),
+    ];
   },
   async readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number, deps?: LinearReadDeps): Promise<readonly RenderedLine[]> {
     const issue = await admitAndRead(ctx, channel, deps);
-    return linearThreadLines(issue.comments, threadTs).slice(-(limit ?? LINEAR_THREAD_DEFAULT_LIMIT));
+    const readAt = new Date().toISOString();
+    return linearThreadLines(issue.comments, threadTs)
+      .map((line) => ({ ...line, readAt }))
+      .slice(-(limit ?? LINEAR_THREAD_DEFAULT_LIMIT));
   },
 };

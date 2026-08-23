@@ -6,6 +6,8 @@ import { appendAudit } from "../audit/audit.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import { DEFAULT_PERMISSIONS, expandMintPermissions } from "../scm/mint.js";
+import type { RepoCapability } from "../access/repo-capabilities.js";
 
 export interface PrOpenArgs {
   readonly org: string;
@@ -18,6 +20,7 @@ export interface PrOpenArgs {
   readonly headSha: string;
   readonly requestedBy: string;
   readonly tainted?: boolean;
+  readonly capabilities?: readonly RepoCapability[];
   readonly sessionId?: string;
 }
 
@@ -29,13 +32,13 @@ export interface PrOpenExecuteDeps {
   readonly updateRef?: typeof updateRef;
   readonly deleteRef?: typeof deleteRef;
   readonly createPr?: typeof createOrUpdatePullRequest;
-  readonly resolveToken?: (repo: string) => Promise<string>;
+  readonly resolveToken?: (repo: string, capabilities?: readonly RepoCapability[]) => Promise<string>;
 }
 
-async function resolveWriteToken(repo: string): Promise<string> {
+async function resolveWriteToken(repo: string, capabilities: readonly RepoCapability[] = []): Promise<string> {
   const app = getGitHubApp();
   if (app) {
-    const { tokens, ungranted } = await app.tokensForRepos([repo]);
+    const { tokens, ungranted } = await app.tokensForRepos([repo], expandMintPermissions(DEFAULT_PERMISSIONS, capabilities));
     if (!ungranted.length) return tokens.get(repo.slice(0, repo.indexOf("/")))!.token;
   }
   const pat = process.env.GITHUB_TOKEN;
@@ -46,7 +49,7 @@ async function resolveWriteToken(repo: string): Promise<string> {
 }
 
 export async function executePrOpen(args: PrOpenArgs, decidedBy: string, deps: PrOpenExecuteDeps = {}, opts: { sessionApproved?: boolean } = {}): Promise<string> {
-  const token = await (deps.resolveToken ?? resolveWriteToken)(args.repo);
+  const token = await (deps.resolveToken ?? resolveWriteToken)(args.repo, args.capabilities ?? []);
 
   const current = await (deps.getBranchSha ?? getBranchSha)({ repo: args.repo, branch: args.head, token });
   if (current === null) {

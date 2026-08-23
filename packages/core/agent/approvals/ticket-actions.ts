@@ -2,6 +2,7 @@ import { entityActionFn } from "../channels/entity-actions.js";
 import { appendAudit } from "../audit/audit.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import type { RepoCapability } from "../access/repo-capabilities.js";
 
 interface TicketActionArgs {
   readonly org: string;
@@ -11,6 +12,7 @@ interface TicketActionArgs {
   readonly organizationId?: string;
   readonly requestedBy: string;
   readonly tainted?: boolean;
+  readonly capabilities?: readonly RepoCapability[];
 }
 
 export interface TicketSetStateArgs extends TicketActionArgs {
@@ -35,7 +37,7 @@ async function executeTicketVerb(
   if (!fn) {
     throw new Error(`${auditAction}: no "${verb}" adapter is registered for platform "${args.platform}" (was it removed since this was proposed?).`);
   }
-  const outcome = await fn(args.entityId, args.value, args.organizationId);
+  const outcome = await fn(args.entityId, args.value, args.organizationId, args.capabilities ?? []);
   await appendAudit({
     ...whereFromScope(args.org, args.scopeKey),
     principalId: decidedBy,

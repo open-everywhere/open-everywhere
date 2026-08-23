@@ -22,6 +22,7 @@ function access(hosts: ReachableHost[], connections: Connection[] = []): Effecti
     connectorCredentials: {},
     reachableHosts: hosts,
     repos: [],
+    repoCapabilities: {},
    
     plugins: [],
     skills: [],
