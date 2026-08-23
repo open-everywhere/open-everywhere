@@ -32,9 +32,12 @@ export const notionMessageOps: SurfaceMessageOps = {
     const { workspaceId, pageId } = requireConversation(channelId);
     const cred = await requireCredential(workspaceId, pageId);
     if (opts?.replyToMessageId) {
-      const discussionId = await retrieveComment(opts.replyToMessageId, cred)
-        .then((c) => c.discussion_id)
-        .catch(() => undefined);
+      let discussionId: string | undefined;
+      try {
+        discussionId = (await retrieveComment(opts.replyToMessageId, cred)).discussion_id;
+      } catch {
+        discussionId = undefined;
+      }
       if (discussionId) return createCommentReply({ discussionId, text, ...cred });
     }
     return createPageComment({ pageId, text, ...cred });
