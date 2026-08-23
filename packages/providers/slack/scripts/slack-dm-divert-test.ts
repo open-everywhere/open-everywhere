@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { registerSlackProvider } from "../agent/register.js";
 import { buildFrontHandler, classifyEnvelope, dmFifoKey, ThreadFifo, EventDedupe } from "../agent/channels/slack-front.js";
-import { DM_BOT_AUTHOR_DROP_REASON } from "../agent/channels/slack-events.js";
+import { DM_BOT_AUTHOR_DROP_REASON, DM_DRIVER_ADMIT_REASON } from "../agent/channels/slack-events.js";
 import { getOperationalStore, overrideSettingsForTest, type WakeMessageInput } from "@open-everywhere/core/agent/adapter-api.js";
 
 registerSlackProvider();
@@ -365,6 +365,92 @@ async function runFront(
 }
 
 {
+  const store = getOperationalStore();
+  const rowsFor = async (action: string, ts: string) => {
+    const rows = await store.readAudit({ org: "default", action });
+    return rows.filter((r) => (r.detail as { ts?: unknown } | undefined)?.ts === ts);
+  };
+  const admitRows = (ts: string) => rowsFor("surface.wake_admitted", ts);
+  const dropRows = (ts: string) => rowsFor("surface.wake_dropped", ts);
+
+  const DRIVER_BOT = "B0DRIVER99";
+  const DRIVER_PAIR = `${TEAM}:${DRIVER_BOT}`;
+  const SELF_PAIRABLE = "B0SELF77";
+
+  const arm = (pair: string): void => void overrideSettingsForTest({ wake: { slackDmDriver: pair } });
+
+  arm(DRIVER_PAIR);
+  const DRIVER_TS = "1768686402.910001";
+  const admitted = await runFront(dmEnvelope("Ev7bDriver", { bot_id: DRIVER_BOT, ts: DRIVER_TS }), { partnerTrust: "internal" });
+  eq(admitted.dispatched.length, 1, "🔴 the NAMED driver's bot-authored DM WAKES the seat — this is the whole point: a real Slack delivery drives the DM legs, not a forged envelope");
+  ok(!admitted.innerCalled, "…and it is still NOT forwarded to eve's native door — the DM window owns the turn, admitted or not");
+  eq(admitted.dispatched[0]!.target.surfaceKey, SURFACE, "…into the DM's OWN window seat, the same one a human DM resolves");
+
+  ok(
+    admitted.dispatched[0]!.message.includes('trust="principal"'),
+    "🔴 …and the admitted driver's author renders `principal`, IDENTICALLY to the human leg — the driver posts through a human `xoxp` token, so the tier is resolved from that real member id. Not `relay`: the machine floor Slack's bot_id stamp would otherwise impose is what the carve-out removes",
+  );
+  ok(!admitted.dispatched[0]!.message.includes('trust="relay"'), "…and NOT the `relay` floor — the negative control for the line above");
+
+  const aRows = await admitRows(DRIVER_TS);
+  eq(aRows.length, 1, "🔴 an admitted driver DM writes exactly ONE `surface.wake_admitted` row — a door that widened silently would be worse than the silent drop OPE-1022 fixed");
+  {
+    const d = (aRows[0]!.detail ?? {}) as Record<string, unknown>;
+    eq(d.reason, DM_DRIVER_ADMIT_REASON, "the row names the carve-out that let it through");
+    eq(d.door, "dm", "…the ingress door");
+    eq(d.dmKind, "im", "…which DM family member it was");
+    eq(d.botId, DRIVER_BOT, "…the bot record admitted");
+    eq(d.team, TEAM, "…and the workspace it was admitted in");
+  }
+  eq(aRows[0]!.surface, DM_CHANNEL, "the row is keyed to the DM's own surface, so a per-surface audit query finds it");
+  eq((await dropRows(DRIVER_TS)).length, 0, "🔴 …and NO `surface.wake_dropped` row — an admitted wake is not also a dropped one, or the trail says both");
+
+  const OTHER_TS = "1768686402.910002";
+  const other = await runFront(dmEnvelope("Ev7bOther", { bot_id: OTHER_BOT, ts: OTHER_TS }), { partnerTrust: "internal" });
+  eq(other.dispatched.length, 0, "🔴 a DIFFERENT bot in the SAME workspace still wakes nothing — the setting names ONE identity, not 'bots we have heard of'");
+  eq((await admitRows(OTHER_TS)).length, 0, "…and writes no admitted row");
+  eq((await dropRows(OTHER_TS)).length, 1, "…and still writes its `surface.wake_dropped` row, exactly as before the carve-out existed");
+
+  const FOREIGN_TEAM_TS = "1768686402.910003";
+  const foreignTeamEnvelope = JSON.stringify({
+    type: "event_callback",
+    event_id: "Ev7bForeignTeam",
+    team_id: "T9OTHERWS",
+    event: { type: "message", channel_type: "im", channel: DM_CHANNEL, user: USER, ts: FOREIGN_TEAM_TS, text: "hello from another workspace", bot_id: DRIVER_BOT },
+  });
+  const foreignTeam = await runFront(foreignTeamEnvelope, { partnerTrust: "internal" });
+  eq(foreignTeam.dispatched.length, 0, "🔴 the SAME bot record posting from a DIFFERENT workspace wakes nothing — the pair pins the identity to one team, so a leaked driver token is only ever a problem in the workspace it was named for");
+  eq((await admitRows(FOREIGN_TEAM_TS)).length, 0, "…and writes no admitted row");
+
+  arm(`${TEAM}:${SELF_PAIRABLE}`);
+  const SELF_LOOP_TS = "1768686402.910004";
+  const selfLoop = await runFront(dmEnvelope("Ev7bSelfLoop", { bot_id: SELF_PAIRABLE, ts: SELF_LOOP_TS }), {
+    partnerTrust: "internal",
+    selfBotId: SELF_PAIRABLE,
+  });
+  eq(selfLoop.dispatched.length, 0, "🔴 OE's OWN bot record is NEVER admitted, even named in the setting — its reply echo would otherwise re-wake the seat on every turn, forever");
+  eq((await admitRows(SELF_LOOP_TS)).length, 0, "…and writes no admitted row");
+
+  arm(DRIVER_PAIR);
+  const HUMAN_ARMED_TS = "1768686402.910005";
+  const human = await runFront(dmEnvelope("Ev7bHuman", { ts: HUMAN_ARMED_TS }), { partnerTrust: "internal" });
+  eq(human.dispatched.length, 1, "a human-authored DM still wakes with the setting ARMED (no new gate on the ordinary path)");
+  eq((await admitRows(HUMAN_ARMED_TS)).length, 0, "🔴 …and writes NO admitted row — the row must mean 'the driver spoke here', or it cannot tell a soak reviewer anything");
+
+  const MPIM_DRIVER_TS = "1768686403.910006";
+  const mpimAdmitted = await runFront(mpimEnvelope("Ev7bMpim", { bot_id: DRIVER_BOT, ts: MPIM_DRIVER_TS }));
+  eq(mpimAdmitted.dispatched.length, 1, "the named driver's GROUP DM is admitted at the same door");
+  eq(((await admitRows(MPIM_DRIVER_TS))[0]?.detail as Record<string, unknown> | undefined)?.dmKind, "mpim", "…and the row names it as the mpim family member");
+
+  arm("");
+  const DISARMED_TS = "1768686402.910007";
+  const disarmed = await runFront(dmEnvelope("Ev7bDisarmed", { bot_id: DRIVER_BOT, ts: DISARMED_TS }), { partnerTrust: "internal" });
+  eq(disarmed.dispatched.length, 0, "🔴 with the setting back at its shipped `\"\"` the SAME driver DM drops again — empty is not 'admit nobody in particular', it is 'admit nobody'");
+  eq((await admitRows(DISARMED_TS)).length, 0, "…and writes no admitted row");
+  eq((await dropRows(DISARMED_TS)).length, 1, "…and writes the ordinary drop row, so an unconfigured deployment's audit trail is unchanged");
+}
+
+{
   const dedupe = new EventDedupe();
   const first = await runFront(dmEnvelope("EvDUP"), { dedupe });
   const second = await runFront(dmEnvelope("EvDUP"), { dedupe });
@@ -562,4 +648,4 @@ async function runFront(
   eq(r.fifo.failures.length, 1, "negative control: …the failure still propagates to the FIFO's loud handler");
 }
 
-console.log(`✓ slack-dm-divert: ${n} assertions passed (classification, window token + fence, addressing, DM auth attrs, dm envelope, carried tail, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression, OPE-525 external-participant policy, OPE-963 pruned-deployment re-delivery)`);
+console.log(`✓ slack-dm-divert: ${n} assertions passed (classification, window token + fence, addressing, DM auth attrs, dm envelope, carried tail, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression, OPE-1023 named-driver DM carve-out, OPE-525 external-participant policy, OPE-963 pruned-deployment re-delivery)`);
