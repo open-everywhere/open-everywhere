@@ -81,6 +81,7 @@ registerConfig({
 
 function accessIn(...domains: string[]): EffectiveAccess {
   return {
+    repoCapabilities: {},
     mode: "channel",
     scopeKey: "notion/test",
     tenantKey: "notion/test",

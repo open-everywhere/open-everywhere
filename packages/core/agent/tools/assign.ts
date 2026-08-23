@@ -61,7 +61,7 @@ export const assignEntry = defineTool({
     const bctx = ctx as BindableContext;
     await requireSessionContinuation(bctx, "assign");
     const domains = safeDomains();
-    const { ref } = await resolveEntityAction(bctx, "assign", input.ref, domains);
+    const { ref, capabilities } = await resolveEntityAction(bctx, "assign", input.ref, domains);
 
     const binding = bindFrom(ctx);
     const p = resolvePartition(ctx);
@@ -84,6 +84,7 @@ export const assignEntry = defineTool({
       assignee: input.assignee,
       requestedBy,
       tainted: untrustedIngestedThisTurn(),
+      ...(capabilities.length ? { capabilities } : {}),
     };
 
     const posted = await requestApproval(

@@ -1,6 +1,7 @@
 import { getGitHubApp, repoAllowed } from "./provider.js";
 import { resolveAccessFor } from "../access/request.js";
-import { ISSUE_WRITE_PERMISSIONS } from "./mint.js";
+import { ISSUE_WRITE_PERMISSIONS, expandMintPermissions } from "./mint.js";
+import type { RepoCapability } from "../access/repo-capabilities.js";
 import { prApiHeaders, type PrFetchFn } from "./pr.js";
 import { currentTurnGithubTarget, type BindableContext } from "../identity/binding.js";
 import type { EntityActionAdapter } from "../channels/entity-actions.js";
@@ -12,9 +13,13 @@ export function parseGithubEntityId(id: string): { repo: string; number: number 
   return { repo: m[1], number: Number(m[2]) };
 }
 
-export async function resolveIssueWriteToken(repo: string, app = getGitHubApp()): Promise<string> {
+export async function resolveIssueWriteToken(
+  repo: string,
+  app = getGitHubApp(),
+  capabilities: readonly RepoCapability[] = [],
+): Promise<string> {
   if (app) {
-    const { tokens, ungranted } = await app.tokensForRepos([repo], ISSUE_WRITE_PERMISSIONS);
+    const { tokens, ungranted } = await app.tokensForRepos([repo], expandMintPermissions(ISSUE_WRITE_PERMISSIONS, capabilities));
     if (!ungranted.length) return tokens.get(repo.slice(0, repo.indexOf("/")))!.token;
   }
   const pat = process.env.GITHUB_TOKEN;
@@ -28,6 +33,7 @@ export interface GithubActionOpts {
   readonly fetchFn?: PrFetchFn;
   readonly apiBase?: string;
   readonly resolveToken?: (repo: string) => Promise<string>;
+  readonly capabilities?: readonly RepoCapability[];
 }
 
 async function callIssueApi(
@@ -40,7 +46,7 @@ async function callIssueApi(
 ): Promise<void> {
   const fetchFn = opts.fetchFn ?? (globalThis.fetch as unknown as PrFetchFn);
   const apiBase = opts.apiBase ?? "https://api.github.com";
-  const token = await (opts.resolveToken ?? resolveIssueWriteToken)(repo);
+  const token = await (opts.resolveToken ?? ((r: string) => resolveIssueWriteToken(r, getGitHubApp(), opts.capabilities ?? [])))(repo);
   const res = await fetchFn(`${apiBase}${path}`, { method, headers: prApiHeaders(token), body: JSON.stringify(body) });
   if (!res.ok) {
     throw new Error(`GitHub issue action failed for ${repo}#${number}: ${res.status} ${await res.text()}`);
@@ -83,12 +89,18 @@ function checkGithubAccess(ctx: BindableContext, entityId: string): void {
   requireRepoGrant(ctx, parseGithubEntityId(entityId).repo);
 }
 
+function githubCapabilitiesFor(ctx: BindableContext, entityId: string): readonly RepoCapability[] {
+  const { repo } = parseGithubEntityId(entityId);
+  return resolveAccessFor(ctx).repoCapabilities[repo] ?? [];
+}
+
 export const githubEntityAdapter: EntityActionAdapter = {
   platform: "github",
   checkAccess: checkGithubAccess,
-  setState: (id, value) => setGithubIssueState(id, value),
-  assign: (id, value) => assignGithubIssue(id, value),
-  addLabel: (id, value) => addGithubIssueLabel(id, value),
+  capabilitiesFor: githubCapabilitiesFor,
+  setState: (id, value, _organizationId, capabilities) => setGithubIssueState(id, value, { capabilities: capabilities ?? [] }),
+  assign: (id, value, _organizationId, capabilities) => assignGithubIssue(id, value, { capabilities: capabilities ?? [] }),
+  addLabel: (id, value, _organizationId, capabilities) => addGithubIssueLabel(id, value, { capabilities: capabilities ?? [] }),
 };
 
 interface CreatedIssueResponse {
@@ -102,7 +114,7 @@ export async function createGithubIssue(repo: string, draft: TicketDraft, opts: 
   }
   const fetchFn = opts.fetchFn ?? (globalThis.fetch as unknown as PrFetchFn);
   const apiBase = opts.apiBase ?? "https://api.github.com";
-  const token = await (opts.resolveToken ?? resolveIssueWriteToken)(repo);
+  const token = await (opts.resolveToken ?? ((r: string) => resolveIssueWriteToken(r, getGitHubApp(), opts.capabilities ?? [])))(repo);
   const res = await fetchFn(`${apiBase}/repos/${repo}/issues`, {
     method: "POST",
     headers: prApiHeaders(token),

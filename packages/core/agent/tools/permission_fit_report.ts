@@ -20,10 +20,14 @@ import {
 } from "../access/permission-evidence.js";
 import { proposePermissionChanges, renderPermissionProposals } from "../access/permission-proposal.js";
 import type { BindableContext } from "../identity/binding.js";
+import { getGitHubApp } from "../scm/provider.js";
+import { repoCapabilityRows, renderRepoCapabilityRows, repoOwner } from "../scm/capability-fit.js";
 
 const EVIDENCE_ACTIONS = ["aws.exec", "aws.refused", "connector.op", "approval.chain", "egress.denied"] as const;
 
 const ROW_CAP = 4000;
+
+const MAX_INSTALLATION_PROBES = 10;
 
 export default defineTool({
   description:
@@ -49,6 +53,9 @@ export default defineTool({
         remedy: z.string().optional(),
       }),
     ),
+    repoCapabilities: z
+      .array(z.object({ repo: z.string(), capability: z.string(), declared: z.boolean(), installationSupports: z.enum(["yes", "no", "unreported"]) }))
+      .describe("Per (repo, named capability set): whether this domain's binding already opted in, and whether the App installation can honour it. Proposal input — nothing here grants anything."),
     report: z.string().describe("The whole thing as readable text — post this."),
   }),
   approval: never(),
@@ -92,9 +99,20 @@ export default defineTool({
       for (const row of page) if (inThisDomain(row)) rows.push({ ts: row.ts, action: row.action, detail: row.detail });
     }
 
+    const app = getGitHubApp();
+    const owners = [...new Set(access.repos.map(repoOwner).filter((o) => o !== ""))].slice(0, MAX_INSTALLATION_PROBES);
+    const grantedByOwner: Record<string, Readonly<Record<string, string>> | undefined> = {};
+    const installationIdByOwner: Record<string, string | undefined> = {};
+    for (const owner of owners) {
+      grantedByOwner[owner] = app ? await app.installationPermissions(owner).catch(() => undefined) : undefined;
+      installationIdByOwner[owner] = app?.installationFor(owner);
+    }
+    const capabilityRows = repoCapabilityRows(access.repos, access.repoCapabilities, grantedByOwner);
+
     const evidence = permissionEvidence(rows, grants, window);
     const proposals = proposePermissionChanges(evidence, input.direction ?? "both");
     let report = renderPermissionProposals(evidence, proposals);
+    report += `\n\n## GitHub repo capability sets\n${renderRepoCapabilityRows(capabilityRows, installationIdByOwner).join("\n")}`;
     if (truncated) {
       report = `⚠ Row cap (${ROW_CAP}/action) hit — usage is UNDER-counted in this window, so tightening proposals are unproven. Re-run with a shorter \`days\`.\n\n${report}`;
     }
@@ -119,6 +137,12 @@ export default defineTool({
       rowsConsidered: evidence.rowsConsidered,
       truncated,
       grantsExamined: evidence.usage.length,
+      repoCapabilities: capabilityRows.map((r) => ({
+        repo: r.repo,
+        capability: r.capability,
+        declared: r.declared,
+        installationSupports: (!r.fit.reported ? "unreported" : r.fit.ok ? "yes" : "no") as "yes" | "no" | "unreported",
+      })),
       proposals: proposals.map((p) => ({
         id: p.id,
         direction: p.direction,
