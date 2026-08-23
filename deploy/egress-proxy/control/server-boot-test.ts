@@ -86,6 +86,16 @@ async function waitForHealthz(base: string, child: ControlProcess, timeoutMs = 1
   throw new Error(`control service never became healthy within ${timeoutMs}ms`);
 }
 
+async function waitForStdout(getStdout: () => string, substring: string, timeoutMs = 5_000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const current = getStdout();
+    if (current.includes(substring)) return current;
+    if (Date.now() >= deadline) return current;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
 {
   for (const [value, label] of [
     [undefined, "unset"],
@@ -129,6 +139,7 @@ async function waitForHealthz(base: string, child: ControlProcess, timeoutMs = 1
 
   try {
     await waitForHealthz(base, child);
+    stdout = await waitForStdout(() => stdout, "auth required on /policy");
     ok(stdout.includes("auth required on /policy"), "the boot log states that /policy requires auth");
 
     const push = (headers: Record<string, string>, body: unknown) =>
