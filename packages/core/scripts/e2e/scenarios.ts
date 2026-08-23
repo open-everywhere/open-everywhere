@@ -2970,10 +2970,9 @@ export const SCENARIOS: readonly Scenario[] = [
       const clicked = new Set<string>();
       const answer = await pollUntil(
         async () => {
-          const msgs = await dm.replies(anchorTs);
+          const msgs = await dm.collectBotMessagesAfter(anchorTs, anchorTs);
           let pending: SlackMessage | undefined;
           for (const m of msgs) {
-            if (!dm.isBotReply(m) || Number.parseFloat(m.ts) <= Number.parseFloat(anchorTs)) continue;
             const buttons = m.actions ?? [];
             const isApprovalCard = buttons.some((a) => a.value === "approve" || /^(allow|deny)$/i.test((a.text ?? "").trim()));
             if (isApprovalCard) {

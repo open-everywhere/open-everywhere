@@ -972,7 +972,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
 }
 
 {
-  const { classifyMintRows, deriveConnectorArming, requireConnectorArmed, watchConnectorArming, armingNote, lookbackIso, CONNECTOR_MINT_ACTION } =
+  const { classifyMintRows, deriveConnectorArming, requireConnectorArmed, watchConnectorArming, armingNote, lookbackIso, CONNECTOR_MINT_ACTION, ARMING_QUERY_LIMIT } =
     await import("../packages/core/scripts/e2e/connector-arming.js");
 
   const row = (ts: string, detail: Record<string, unknown>, action = CONNECTOR_MINT_ACTION) =>
@@ -1025,6 +1025,10 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
     (askedFor as { actions?: string[] }).actions?.join(",") === CONNECTOR_MINT_ACTION && (askedFor as { sinceIso?: string }).sinceIso === "2026-04-04T23:30:00.000Z",
     "the live half narrows the audit query to connector.mint since the caller's window (the route filters at the store)",
   );
+  ok((askedFor as { limit?: number }).limit === ARMING_QUERY_LIMIT && ARMING_QUERY_LIMIT === 1000, "🔴 OPE-1027 — an unspecified limit asks for the route's max (1000), not a truncation-prone small default");
+  let askedForCapped: unknown;
+  await deriveConnectorArming(async (opts) => { askedForCapped = opts; return []; }, { connector: "notion", sinceIso: "2026-04-04T23:30:00.000Z", limit: 50 });
+  ok((askedForCapped as { limit?: number }).limit === 50, "an explicit limit is still honoured (a caller that wants a narrower window can ask for one)");
   const lookback = lookbackIso(14, new Date("2026-04-24T11:30:00.000Z"));
   ok(lookback === "2026-04-10T11:30:00.000Z", "lookbackIso(14) is exactly 14 days back from the reference instant");
 
@@ -1083,7 +1087,11 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   const staleProbe = probeOver(staleRows);
   const staleWatch = await watchConnectorArming(staleProbe.probe, "notion").catch((e) => e as unknown);
   ok(!(staleWatch instanceof Error), "🔴 a stale auth-required row in the lookback does NOT skip — opening the watch is advisory, so a re-consent is never masked by an old row");
-  ok(staleProbe.logged.some((l) => l.startsWith("advisory ·")), "…and what the deployment last reported is LOGGED as advisory, so the run transcript still carries it");
+  ok(staleProbe.logged.some((l) => l.startsWith("advisory (")), "…and what the deployment last reported is LOGGED as advisory, so the run transcript still carries it");
+  ok(
+    staleProbe.logged.some((l) => l.includes("before this leg drives") && l.includes("recheck() below is decisive")),
+    "🔴 OPE-1027 — the advisory line names itself as a pre-drive snapshot and points at recheck() as the decisive fact",
+  );
 
   const liveRows: unknown[] = [];
   const liveLogged: string[] = [];
@@ -1118,6 +1126,18 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
     ok(
       !/E2E_CONNECTOR_WRITE|E2E_OE_OAUTH_ARMED|E2E_CONNECTOR_OAUTH/.test(src),
       `🔴 ${id} reads NO arming declaration — re-adding one fails here`,
+    );
+  }
+
+  {
+    const src = SCENARIOS.find((s) => s.id === "S-DM-NOTION")!.run.toString();
+    ok(
+      src.includes("dm.collectBotMessagesAfter("),
+      "🔴 OPE-1027 — S-DM-NOTION polls the merged thread+top-level geometry (collectBotMessagesAfter), not a thread-only read",
+    );
+    ok(
+      !/await dm\.replies\(anchorTs\)/.test(src),
+      "🔴 OPE-1027 — S-DM-NOTION's poll body no longer reads dm.replies(anchorTs) alone (the thread-only trap that redded a live run)",
     );
   }
 }

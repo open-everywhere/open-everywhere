@@ -2,6 +2,8 @@ import type { AuditQueryOpts, AuditWireEntry } from "./audit-read.js";
 
 export const CONNECTOR_MINT_ACTION = "connector.mint";
 
+export const ARMING_QUERY_LIMIT = 1000;
+
 export type ConnectorArming =
   | { readonly state: "armed"; readonly at: string }
   | { readonly state: "unconsented"; readonly at: string; readonly name?: string }
@@ -68,7 +70,7 @@ export async function deriveConnectorArming(
 ): Promise<ConnectorArming> {
   if (!auditRead) return { state: "unknown", reason: "no audit reader (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN)" };
   try {
-    const rows = await auditRead({ sinceIso: opts.sinceIso, actions: [CONNECTOR_MINT_ACTION], limit: opts.limit ?? 200 });
+    const rows = await auditRead({ sinceIso: opts.sinceIso, actions: [CONNECTOR_MINT_ACTION], limit: opts.limit ?? ARMING_QUERY_LIMIT });
     return classifyMintRows(rows, opts.connector);
   } catch (e) {
     return { state: "unknown", reason: `audit read failed: ${e instanceof Error ? e.message : String(e)}` };
@@ -104,6 +106,9 @@ export async function watchConnectorArming(probe: ArmingProbe, connector: string
       `needs E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN — the deployment's own ${CONNECTOR_MINT_ACTION} rows are the only honest evidence that the "${connector}" personal grant is consented, and no arming env var replaces them (OPE-894)`,
     );
   const since = new Date().toISOString();
-  probe.log(`advisory · ${armingNote(connector, await deriveConnectorArming(probe.auditRead, { connector, sinceIso: lookbackIso(ARMING_ADVISORY_LOOKBACK_DAYS) }))}`);
+  probe.log(
+    `advisory (as of ${since}, before this leg drives — recheck() below is decisive) · ` +
+      `${armingNote(connector, await deriveConnectorArming(probe.auditRead, { connector, sinceIso: lookbackIso(ARMING_ADVISORY_LOOKBACK_DAYS) }))}`,
+  );
   return { since, recheck: () => requireConnectorArmed(probe, { connector, sinceIso: since }) };
 }
