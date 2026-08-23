@@ -2,6 +2,7 @@ import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } f
 import { SLACK_SIGNATURE_HEADER, SLACK_TIMESTAMP_HEADER, slackSignatureMatches } from "./slack-signature.js";
 import { callSlackApi, slackContinuationToken } from "eve/channels/slack";
 import {
+  auditDmBotAuthorDrop,
   parseMessageEvent,
   routeMessageEvent,
   liveDeps,
@@ -555,7 +556,23 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
 
     if (decision.kind === "dm-wake") {
       const dev = parseMessageEvent(decision.env);
-      if (!dev || dev.botId) return OK();
+      if (!dev) {
+        console.log(`[open-everywhere:slack-front] ${decision.dmKind} wake dropped — the envelope parsed to no channel/ts`);
+        return OK();
+      }
+      if (dev.botId) {
+        const { botId: selfBotId } = await getBotIdentity();
+        args.waitUntil(
+          auditDmBotAuthorDrop(dev, decision.dmKind, selfBotId).then((audited) => {
+            if (audited) {
+              console.log(
+                `[open-everywhere:slack-front] ${decision.dmKind} ${dev.channelId}/${dev.ts}: bot-authored DM dropped — no turn (bot ${dev.botId} in team ${dev.teamId ?? "?"}; the DM door admits no bot author)`,
+              );
+            }
+          }),
+        );
+        return OK();
+      }
       if (decision.dmKind === "mpim") {
         const { userId: dmBotUserId } = await getBotIdentity();
         if (dmBotUserId && dev.text.includes(`<@${dmBotUserId}>`)) return OK();

@@ -1,8 +1,12 @@
+
+process.env.OE_SQLITE_PATH = ":memory:";
+
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { registerSlackProvider } from "../agent/register.js";
 import { buildFrontHandler, classifyEnvelope, dmFifoKey, ThreadFifo, EventDedupe } from "../agent/channels/slack-front.js";
-import { overrideSettingsForTest, type WakeMessageInput } from "@open-everywhere/core/agent/adapter-api.js";
+import { DM_BOT_AUTHOR_DROP_REASON } from "../agent/channels/slack-events.js";
+import { getOperationalStore, overrideSettingsForTest, type WakeMessageInput } from "@open-everywhere/core/agent/adapter-api.js";
 
 registerSlackProvider();
 
@@ -23,6 +27,8 @@ const TEAM = "T1";
 const USER = "U_ALICE";
 const SURFACE = `slack/${TEAM}/${DM_CHANNEL}`;
 const MPIM_CHANNEL = "G_TRIAGE";
+const SELF_BOT = "B_OE_SELF";
+const OTHER_BOT = "B_OTHER_APP";
 const MPIM_SURFACE = `slack/${TEAM}/${MPIM_CHANNEL}`;
 
 const SEAT_TOKEN = `oe-dom:oe-dm/${SURFACE}:oe-sup:g3-abc123`;
@@ -94,6 +100,7 @@ async function runFront(
     channelFacts?: { internal: boolean; channelType?: string } | null;
     authorRefuted?: boolean;
     sendThrowsFirst?: Error;
+    selfBotId?: string | null;
   } = {},
 ) {
   const dispatched: Dispatched[] = [];
@@ -125,7 +132,7 @@ async function runFront(
       signingSecret: SECRET,
       now: () => NOW_MS,
       markEventSeen: async () => true,
-      getBotIdentity: async () => ({ userId: "UBOT" }),
+      getBotIdentity: async () => (opts.selfBotId === null ? { userId: "UBOT" } : { userId: "UBOT", botId: opts.selfBotId ?? SELF_BOT }),
       fifo,
       ...(opts.dedupe ? { dedupe: opts.dedupe } : {}),
       dmPartnerTrustFor: async () => {
@@ -305,10 +312,56 @@ async function runFront(
 }
 
 {
-  const r = await runFront(dmEnvelope("Ev7", { bot_id: "B123", user: undefined }));
-  eq(r.dispatched.length, 0, "a bot-authored DM (our own post arrives as bot_message) wakes nothing");
+  const store = getOperationalStore();
+  const dropRows = async (ts: string) => {
+    const rows = await store.readAudit({ org: "default", action: "surface.wake_dropped" });
+    return rows.filter((r) => (r.detail as { ts?: unknown } | undefined)?.ts === ts);
+  };
+
+  const FOREIGN_TS = "1768686402.900001";
+  const r = await runFront(dmEnvelope("Ev7", { bot_id: OTHER_BOT, ts: FOREIGN_TS }));
+  eq(r.dispatched.length, 0, "a bot-authored DM wakes nothing");
   ok(!r.innerCalled, "🔴 …and is NOT forwarded: handing eve's native door a turn the DM window owns would open a second, un-rotatable session");
   eq(r.res.status, 200, "it is a plain no-op 200");
+
+  const rows = await dropRows(FOREIGN_TS);
+  eq(rows.length, 1, "🔴 …and the drop writes exactly ONE surface.wake_dropped row — the silent-drop defect (OPE-1022) was that this was ZERO");
+  {
+    const d = (rows[0]!.detail ?? {}) as Record<string, unknown>;
+    eq(d.reason, DM_BOT_AUTHOR_DROP_REASON, "the row names WHY the wake was dropped");
+    ok(
+      d.reason !== "bot author is not an allowlisted driver",
+      "🔴 …and it is NOT the engagement door's reason: the DM door admits no bot author at all, so blaming the allowlist would send the reader to fix a list that was never consulted",
+    );
+    eq(d.door, "dm", "the row names the ingress door");
+    eq(d.dmKind, "im", "…and which DM family member it was");
+    eq(d.botId, OTHER_BOT, "the row carries the offending bot record");
+    eq(d.channel, DM_CHANNEL, "…and the channel — enough to identify the surface from the audit alone");
+    eq(d.team, TEAM, "…and the workspace");
+    eq(d.vouchedDriver, false, "…and whether the driver allowlist vouches for this bot (false here — an unknown app)");
+  }
+  eq(rows[0]!.surface, DM_CHANNEL, "the row is keyed to the DM's OWN surface, so a per-surface audit query finds it");
+  eq(rows[0]!.workspace, TEAM, "…under the real workspace, not the `dev` stand-in a partition falls back to when the team never resolved");
+
+  const SELF_TS = "1768686402.900002";
+  const echo = await runFront(dmEnvelope("Ev7self", { bot_id: SELF_BOT, ts: SELF_TS }));
+  eq(echo.dispatched.length, 0, "OE's own reply echo still wakes nothing");
+  eq((await dropRows(SELF_TS)).length, 0, "🔴 …and writes NO row — a row must mean 'somebody else's bot spoke here', or the trail is drowned by our own replies");
+
+  const HUMAN_TS = "1768686402.900003";
+  const human = await runFront(dmEnvelope("Ev7human", { ts: HUMAN_TS }));
+  eq(human.dispatched.length, 1, "a human-authored DM still wakes the seat (no new gate on the ordinary path)");
+  eq((await dropRows(HUMAN_TS)).length, 0, "…and writes NO surface.wake_dropped row — a row must mean a drop");
+
+  const UNRESOLVED_TS = "1768686402.900004";
+  await runFront(dmEnvelope("Ev7noid", { bot_id: SELF_BOT, ts: UNRESOLVED_TS }), { selfBotId: null });
+  eq((await dropRows(UNRESOLVED_TS)).length, 1, "an unresolvable bot identity fails NOISY — the drop is still counted");
+
+  const MPIM_TS = "1768686403.900005";
+  await runFront(mpimEnvelope("Ev7mpim", { bot_id: OTHER_BOT, ts: MPIM_TS }));
+  const mpimRows = await dropRows(MPIM_TS);
+  eq(mpimRows.length, 1, "a bot-authored GROUP DM is counted at the same door");
+  eq(((mpimRows[0]!.detail ?? {}) as Record<string, unknown>).dmKind, "mpim", "…and the row names it as the mpim family member");
 }
 
 {

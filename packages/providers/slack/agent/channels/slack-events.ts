@@ -499,21 +499,23 @@ export async function slackWakeSpendGate(ev: ParsedMessageEvent, p: Partition, t
 }
 
 function auditEngagementWakeDropped(ev: ParsedMessageEvent, reason: string, detail: Record<string, unknown> = {}): void {
-  void (async () => {
-    try {
-      const p = resolvePartition(bindableFor(ev));
-      await getOperationalStore().appendAudit({
-        ts: new Date().toISOString(),
-        org: p.org,
-        platform: p.platform,
-        workspace: p.workspace,
-        surface: p.surface,
-        action: "surface.wake_dropped",
-        detail: { reason, channel: ev.channelId, ts: ev.ts, ...detail },
-      });
-    } catch {
-    }
-  })();
+  void appendWakeDroppedRow(ev, reason, detail);
+}
+
+async function appendWakeDroppedRow(ev: ParsedMessageEvent, reason: string, detail: Record<string, unknown>): Promise<void> {
+  try {
+    const p = resolvePartition(bindableFor(ev));
+    await getOperationalStore().appendAudit({
+      ts: new Date().toISOString(),
+      org: p.org,
+      platform: p.platform,
+      workspace: p.workspace,
+      surface: p.surface,
+      action: "surface.wake_dropped",
+      detail: { reason, channel: ev.channelId, ts: ev.ts, ...detail },
+    });
+  } catch {
+  }
 }
 
 function tenantFenceDeclined(ev: ParsedMessageEvent, route: string): boolean {
@@ -552,6 +554,25 @@ function auditIfBotAuthorDrop(ev: ParsedMessageEvent, door: SpendGateDoor, decis
   if (!unvouchedBotAuthor(ev)) return;
   if (!decisionReason?.startsWith("author is a bot")) return;
   auditEngagementWakeDropped(ev, BOT_AUTHOR_DROP_REASON, { door, botId: ev.botId ?? null, team: ev.teamId ?? null, decision: decisionReason });
+}
+
+export const DM_BOT_AUTHOR_DROP_REASON = "bot author — the DM door admits no bot author";
+
+export async function auditDmBotAuthorDrop(
+  ev: ParsedMessageEvent,
+  dmKind: "im" | "mpim",
+  selfBotId: string | undefined,
+): Promise<boolean> {
+  if (!ev.botId) return false;
+  if (selfBotId && ev.botId === selfBotId) return false;
+  await appendWakeDroppedRow(ev, DM_BOT_AUTHOR_DROP_REASON, {
+    door: "dm",
+    dmKind,
+    botId: ev.botId,
+    team: ev.teamId ?? null,
+    vouchedDriver: isAllowedSlackDriver(ev.teamId, ev.botId),
+  });
+  return true;
 }
 
 export async function slackJoinSpendGate(ev: ParsedChannelJoinEvent, p: Partition, channelType: string | undefined): Promise<SpendGateDecision> {
