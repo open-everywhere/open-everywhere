@@ -22,9 +22,8 @@ import { scriptedModelFor } from "./model/scripted-resolve.js";
 import { registerAppInfo } from "@open-everywhere/core/agent/commands/core.js";
 import { backgroundTasksAtBuild, getSettings } from "@open-everywhere/core/agent/settings/settings.js";
 import { SETTINGS_OVERRIDES } from "./settings/settings.js";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
+import { EVE_RUNTIME_VERSION } from "@open-everywhere/core/agent/channels/runtime-rotation.js";
+import appPackageJson from "../package.json" with { type: "json" };
 
 const GATEWAY_DEFAULTS = {
   caching: "auto",
@@ -60,13 +59,8 @@ registerGatewayImageDescriber({ id: VISION_MODEL });
 registerPricingSource(gatewayCatalogPricingSource());
 
 function readAppVersion(): string {
-  try {
-    const path = fileURLToPath(new URL("../package.json", import.meta.url));
-    const pkg = JSON.parse(readFileSync(path, "utf8")) as { version?: unknown };
-    return typeof pkg.version === "string" && pkg.version.length > 0 ? pkg.version : "unknown";
-  } catch {
-    return "unknown";
-  }
+  const version = appPackageJson.version;
+  return typeof version === "string" && version.length > 0 ? version : "unknown";
 }
 
 function readDeploymentSha(): string {
@@ -75,14 +69,8 @@ function readDeploymentSha(): string {
 }
 
 function readEvePin(): string {
-  try {
-    const require = createRequire(import.meta.url);
-    const path = require.resolve("eve/package.json");
-    const pkg = JSON.parse(readFileSync(path, "utf8")) as { version?: unknown };
-    return typeof pkg.version === "string" && pkg.version.length > 0 ? pkg.version : "unknown";
-  } catch {
-    return "unknown";
-  }
+  const version = EVE_RUNTIME_VERSION.trim();
+  return version.length > 0 ? version : "unknown";
 }
 
 registerAppInfo({
