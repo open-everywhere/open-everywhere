@@ -123,26 +123,55 @@ function discordBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding
     ok(help.includes(needle), `renderHelp mentions "${needle}"`);
   }
 
-  const status = renderStatus({ version: "1.2.3", primaryModel: "zai/glm-5.2", utilityModel: "deepseek/deepseek-v4-flash" }, "sqlite");
+  const status = renderStatus(
+    { version: "1.2.3", primaryModel: "zai/glm-5.2", utilityModel: "deepseek/deepseek-v4-flash", deploymentSha: "abc1234", evePin: "0.44.0" },
+    "sqlite",
+  );
   ok(status.includes("1.2.3"), "renderStatus includes the app version");
   ok(status.includes("zai/glm-5.2"), "renderStatus includes the primary model");
   ok(status.includes("deepseek/deepseek-v4-flash"), "renderStatus includes the utility model");
   ok(status.includes("sqlite"), "renderStatus includes the memory provider");
   ok(status.includes("telemetry: `unknown`"), "renderStatus defaults the telemetry line when the caller omits it");
+  ok(status.includes("deployment sha: `abc1234`"), "renderStatus includes the deployment sha");
+  ok(status.includes("eve: `0.44.0`"), "renderStatus includes the eve pin");
+  const statusUnknownVersion = renderStatus(
+    { version: "1.2.3", primaryModel: "zai/glm-5.2", utilityModel: "deepseek/deepseek-v4-flash", deploymentSha: "unknown", evePin: "unknown" },
+    "sqlite",
+  );
+  ok(statusUnknownVersion.includes("deployment sha: `unknown`"), "renderStatus states \"unknown\" rather than fabricating a sha when unregistered");
 
-  const statusWithTelemetry = renderStatus({ version: "1.2.3", primaryModel: "zai/glm-5.2", utilityModel: "deepseek/deepseek-v4-flash" }, "sqlite", "on (default collector)");
+  const statusWithTelemetry = renderStatus(
+    { version: "1.2.3", primaryModel: "zai/glm-5.2", utilityModel: "deepseek/deepseek-v4-flash", deploymentSha: "abc1234", evePin: "0.44.0" },
+    "sqlite",
+    "on (default collector)",
+  );
   ok(statusWithTelemetry.includes("telemetry: `on (default collector)`"), "renderStatus includes an explicit telemetry status");
 
   ok(!status.includes("compaction fires at"), "renderStatus omits the compaction line when the app registered no window");
   ok(!status.includes("context window:"), "renderStatus omits the context-window line when the app registered no window");
   const statusWithWindow = renderStatus(
-    { version: "1.2.3", primaryModel: "zai/glm-5.2", utilityModel: "deepseek/deepseek-v4-flash", contextWindowTokens: 1_050_000, compactionThresholdTokens: 210_000 },
+    {
+      version: "1.2.3",
+      primaryModel: "zai/glm-5.2",
+      utilityModel: "deepseek/deepseek-v4-flash",
+      deploymentSha: "abc1234",
+      evePin: "0.44.0",
+      contextWindowTokens: 1_050_000,
+      compactionThresholdTokens: 210_000,
+    },
     "sqlite",
   );
   ok(statusWithWindow.includes("context window: `1,050,000` tokens"), "renderStatus groups the context window with commas");
   ok(statusWithWindow.includes("compaction fires at `210,000` (20%)"), "renderStatus states the absolute compaction threshold and its percent");
   const statusHalf = renderStatus(
-    { version: "1.2.3", primaryModel: "zai/glm-5.2", utilityModel: "deepseek/deepseek-v4-flash", contextWindowTokens: 1_050_000 },
+    {
+      version: "1.2.3",
+      primaryModel: "zai/glm-5.2",
+      utilityModel: "deepseek/deepseek-v4-flash",
+      deploymentSha: "abc1234",
+      evePin: "0.44.0",
+      contextWindowTokens: 1_050_000,
+    },
     "sqlite",
   );
   ok(!statusHalf.includes("context window:"), "renderStatus omits the line when only the window is registered");
@@ -262,13 +291,18 @@ function discordOeInteraction(opts: {
 {
   const before = getAppInfo();
   ok(before.version === "unknown", "app info starts unregistered (unknown)");
-  registerAppInfo({ version: "9.9.9", primaryModel: "test/primary", utilityModel: "test/utility" });
+  ok(before.deploymentSha === "unknown", "app info starts with an unknown deployment sha");
+  ok(before.evePin === "unknown", "app info starts with an unknown eve pin");
+  registerAppInfo({ version: "9.9.9", primaryModel: "test/primary", utilityModel: "test/utility", deploymentSha: "cafe123", evePin: "0.44.0" });
   ok(getAppInfo().version === "9.9.9", "registerAppInfo updates the registered info");
+  ok(getAppInfo().deploymentSha === "cafe123", "registerAppInfo updates the registered deployment sha");
   const statusReply = await runOeCommand({ kind: "status" }, discordBinding());
   ok(statusReply.includes("9.9.9") && statusReply.includes("test/primary") && statusReply.includes("test/utility"), "runOeCommand(status) reflects registered app info");
+  ok(statusReply.includes("cafe123") && statusReply.includes("0.44.0"), "runOeCommand(status) reflects the registered deployment sha and eve pin");
   resetAppInfo();
   ok(getAppInfo().version === "unknown", "resetAppInfo restores the unregistered default");
-  registerAppInfo({ version: "9.9.9", primaryModel: "test/primary", utilityModel: "test/utility" });
+  ok(getAppInfo().deploymentSha === "unknown", "resetAppInfo restores the unknown deployment sha");
+  registerAppInfo({ version: "9.9.9", primaryModel: "test/primary", utilityModel: "test/utility", deploymentSha: "cafe123", evePin: "0.44.0" });
 }
 
 {

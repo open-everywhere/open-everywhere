@@ -30,9 +30,17 @@ export interface AppInfo {
   readonly utilityModel: string;
   readonly contextWindowTokens?: number;
   readonly compactionThresholdTokens?: number;
+  readonly deploymentSha: string;
+  readonly evePin: string;
 }
 
-const UNKNOWN_APP_INFO: AppInfo = { version: "unknown", primaryModel: "unknown", utilityModel: "unknown" };
+const UNKNOWN_APP_INFO: AppInfo = {
+  version: "unknown",
+  primaryModel: "unknown",
+  utilityModel: "unknown",
+  deploymentSha: "unknown",
+  evePin: "unknown",
+};
 let registeredAppInfo: AppInfo = UNKNOWN_APP_INFO;
 
 export function registerAppInfo(info: AppInfo): void {
@@ -94,7 +102,7 @@ export function renderHelp(): string {
   return [
     "*/oe* — zero-inference control-plane commands (pure logic, code-rendered, no model turn — " +
       "these work even during a spend-cap decline or a model/gateway outage):",
-    "• `/oe status` — deploy sanity: app version, model config, memory provider.",
+    "• `/oe status` — deploy sanity: app version, deployment sha, eve pin, model config, memory provider.",
     "• `/oe stop` — stand down the turn running in this channel (free, instant, works over a spend cap).",
     "• `/oe budget` — this channel's and workspace's effective spend caps + current-month spend.",
     "• `/oe budget raise <usd>` — propose a new monthly USD cap for this channel (posts an approval card; an admin decides).",
@@ -111,6 +119,8 @@ export function renderStatus(info: AppInfo, memoryProviderId: string, telemetryS
   const { contextWindowTokens: windowTokens, compactionThresholdTokens: thresholdTokens } = info;
   return [
     `*Open Everywhere* v${info.version}`,
+    `• deployment sha: \`${info.deploymentSha}\``,
+    `• eve: \`${info.evePin}\``,
     `• primary model: \`${info.primaryModel}\``,
     `• utility model: \`${info.utilityModel}\``,
     ...(windowTokens !== undefined && thresholdTokens !== undefined && windowTokens > 0
