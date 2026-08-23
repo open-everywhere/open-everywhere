@@ -18,7 +18,10 @@ const eq = (a: unknown, b: unknown, label: string) => {
   n++;
 };
 
-const linearCtx = { channel: { kind: "linear" }, session: { auth: { current: { attributes: {} } } } };
+const linearCtx = {
+  channel: { kind: "subagent", continuationToken: "subagent:sess-parent:call_1" },
+  session: { id: "sess-child", auth: { current: { attributes: { oe_platform: "linear", oe_grain: "standing" } } } },
+};
 const CASES = [
   { slug: "read_linear_issue", entryKey: "_single", ctx: linearCtx },
 ] as const;

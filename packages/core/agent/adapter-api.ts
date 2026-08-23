@@ -235,7 +235,7 @@ export {
 } from "./access/taint-signal.js";
 export type { IngestedChatMessage, ChatWakeRoom } from "./access/taint-signal.js";
 
-export { sourceScopedMount } from "./access/source-scoped-mount.js";
+export { sourceScopedMount, workerChatArmMount } from "./access/source-scoped-mount.js";
 
 export { preRegisterDynamicEntry, replayStepNames } from "./access/window-gated.js";
 export type { ReplayableToolEntry } from "./access/window-gated.js";

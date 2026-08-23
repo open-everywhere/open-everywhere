@@ -9,7 +9,7 @@ import {
   TurnOriginFenceError,
   auditOriginFenceRefusal,
   bindFrom,
-  sourceScopedMount,
+  workerChatArmMount,
   getConfig,
   preRegisterDynamicEntry,
   resolvePartition,
@@ -144,7 +144,7 @@ preRegisterDynamicEntry("read_notion_comments", "_single", readNotionCommentsEnt
 export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
-      if (!sourceScopedMount(ctx as BindableContext, "notion", () => getConfig().loadDomains())) return null;
+      if (!workerChatArmMount(ctx as BindableContext, "notion", () => getConfig().loadDomains())) return null;
       return readNotionCommentsEntry;
     },
   },

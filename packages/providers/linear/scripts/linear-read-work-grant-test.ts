@@ -77,6 +77,38 @@ function linearCtx(team: string, issueId: string, org = ORG): BindableContext {
   } as unknown as BindableContext;
 }
 
+function linearWorkerCtx(team: string, issueId: string, org = ORG): BindableContext {
+  return {
+    channel: { kind: "subagent", continuationToken: "subagent:sess-parent:call_1" },
+    session: {
+      id: "sess-child",
+      auth: {
+        current: {
+          attributes: { oe_platform: "linear", oe_grain: "standing", organization_id: org, team_id: team, issue_id: issueId },
+          principalId: "U_LINEAR",
+          principalType: "linear-user",
+        },
+      },
+    },
+  } as unknown as BindableContext;
+}
+
+function slackWorkerCtx(channelId: string): BindableContext {
+  return {
+    channel: { kind: "subagent", continuationToken: "subagent:sess-parent:call_2" },
+    session: {
+      id: "sess-child-2",
+      auth: {
+        current: {
+          attributes: { oe_platform: "slack", oe_grain: "standing", team_id: "T1", channel_id: channelId, channel_type: "channel" },
+          principalId: "U_SLACK",
+          principalType: "slack-user",
+        },
+      },
+    },
+  } as unknown as BindableContext;
+}
+
 type MountHandler = (event: unknown, ctx: unknown) => unknown;
 async function mount(ctx: BindableContext): Promise<unknown> {
   const handler = (readLinearIssueDefault as unknown as { events: Record<string, MountHandler> }).events["session.started"];
@@ -127,7 +159,20 @@ try {
     ok((await mount(slackCtx("CPAY"))) !== null, "🔴 THE WORK ARM: read_linear_issue MOUNTS on a Slack session whose domain holds the Linear work grant");
 
     withDomains(UNGRANTED_DOMAINS);
-    ok((await mount(linearCtx(TEAM_PAY, ISSUE_PAY))) !== null, "🔴 THE CHAT ARM: a Linear-origin session mounts with NO grant declared — reading its own container is not work");
+    ok(
+      (await mount(linearCtx(TEAM_PAY, ISSUE_PAY))) === null,
+      "🔴 NEGATIVE CONTROL: a CONVERSATIONAL Linear-origin session does NOT mount it with no grant — the chat plane speaks generic verbs",
+    );
+    ok(
+      (await mount(linearWorkerCtx(TEAM_PAY, ISSUE_PAY))) !== null,
+      "🔴 THE CHAT ARM: a DELEGATED WORKER from that same Linear conversation DOES mount it with no grant — its only container read",
+    );
+    ok(
+      (await mount(slackWorkerCtx("CPAY"))) === null,
+      "🔴 NEGATIVE CONTROL: a worker delegated from an UNGRANTED Slack conversation mounts nothing — the worker grain is not a grant",
+    );
+    withDomains(GRANTED_DOMAINS);
+    ok((await mount(slackWorkerCtx("CPAY"))) !== null, "the WORK arm is grain-blind — a granted Slack-delegated worker mounts it too");
   }
 
   {
