@@ -28,6 +28,7 @@ export const INGESTION_ROUTES: readonly IngestionRoute[] = [
   { key: "packages/core/agent/tools/read_work_thread.ts#read_work_thread:${output.platform}", file: "packages/core/agent/tools/read_work_thread.ts", form: "chatReadIngestion", kind: "chat-message", label: "read_work_thread:${output.platform}", pending: false },
   { key: "packages/core/agent/tools/sandbox_tools.ts#<ingestion-property>", file: "packages/core/agent/tools/sandbox_tools.ts", form: "ingestion-property", kind: "skill-declared", label: null, pending: false },
   { key: "packages/core/agent/tools/sandbox_tools.ts#web_fetch", file: "packages/core/agent/tools/sandbox_tools.ts", form: "ingestion-property", kind: "web", label: "web_fetch", pending: false },
+  { key: "packages/core/agent/tools/search.ts#search", file: "packages/core/agent/tools/search.ts", form: "ingestion-property", kind: "work-search", label: "search", pending: false },
   { key: "packages/core/agent/tools/subscribe_pr.ts#subscribe_pr:title", file: "packages/core/agent/tools/subscribe_pr.ts", form: "noteIngestionVerdict", kind: "github", label: "subscribe_pr:title", pending: false },
   { key: "packages/core/agent/webhooks/dispatch.ts#webhook-body", file: "packages/core/agent/webhooks/dispatch.ts", form: "ingestion-property", kind: "webhook", label: "webhook-body", pending: false },
   { key: "packages/core/agent/webhooks/dispatch.ts#webhook-summary", file: "packages/core/agent/webhooks/dispatch.ts", form: "ingestion-property", kind: "webhook", label: "webhook-summary", pending: false },

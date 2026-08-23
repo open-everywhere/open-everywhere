@@ -27,6 +27,7 @@ export const WORK_TOOL_MOUNTS: Readonly<Record<string, WorkMountRule>> = {
   set_state: { connector: "*", via: "grant" },
   assign: { connector: "*", via: "grant" },
   add_label: { connector: "*", via: "grant" },
+  search: { connector: "*", via: "grant" },
 };
 
 export const WORK_MOUNT_GAPS: Readonly<Record<string, string>> = {};
@@ -45,6 +46,7 @@ const WORK_SIGNAL = new RegExp(
     "\\bcallerWorkGrant\\b",
     "\\bsurfaceWorkReadMount\\b",
     "\\bassertSurfaceWorkGrant\\b",
+    "\\bsearchGrantedConnectors\\b",
   ].join("|"),
   "u",
 );
@@ -97,9 +99,11 @@ export function checkWorkMounts(
       }
       if (rule.via === "grant") {
         if (rule.connector === "*") {
-          if (!namesIdentifier(tool.source, "workDestinationPlatforms")) {
+          const wantsSearchSet = tool.name === "search";
+          const spelling = wantsSearchSet ? "searchGrantedConnectors" : "workDestinationPlatforms";
+          if (!namesIdentifier(tool.source, spelling)) {
             problems.push(
-              `tool "${tool.name}" declares via:"grant" with connector:"*" but never names workDestinationPlatforms — a neutral work verb mounts on the GRANT SET (channels/work-destinations.ts), which is the connector-less spelling of the same rule`,
+              `tool "${tool.name}" declares via:"grant" with connector:"*" but never names ${spelling} — a neutral work verb mounts on the GRANT SET, which is the connector-less spelling of the same rule (ticket-destination verbs read workDestinationPlatforms; the search verb reads the raw searchGrantedConnectors instead — see channels/work-search.ts)`,
             );
           }
         } else if (!namesIdentifier(tool.source, grantMountPredicate(rule.connector))) {

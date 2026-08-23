@@ -65,6 +65,7 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
       "read_notion_page",
       "read_notion_comments",
       "notion_search",
+      "search",
       "read_linear_issue",
       "read_work_channel",
       "read_work_thread",

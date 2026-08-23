@@ -106,6 +106,7 @@ const CASES: readonly ToolCase[] = [
   { slug: "walk_pr", entryKey: "_single", ctx: slackCtx },
   { slug: "post_pr_walkthrough", entryKey: "_single", ctx: slackCtx },
   { slug: "subscribe_pr", entryKey: "_single", ctx: slackCtx },
+  { slug: "search", entryKey: "_single", ctx: slackCtx },
 ];
 const SLUGS = [...new Set(CASES.map((c) => c.slug))];
 

@@ -161,6 +161,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   notion_search: open(
     "granted read of page/database TITLES and ids — never page content (OPE-913). Reach is the WORK credential's reach, which Notion enforces itself (an integration sees only the trees a human shared with it), and the tool mounts only where the domain declares that credential. Reading anything it finds still costs a second, domain-fenced call",
   ),
+  search: open(
+    "the federated cross-surface search verb (OPE-929 piece 3 / OPE-961) — the same shape as notion_search above, generalised: granted read of TITLES and ids only, never body content, across whichever connectors the caller's domain holds a work grant on. Reach on each connector is that connector's own credential reach (never a post-hoc filter); `insideDomain` narrows the QUERY as a convenience and cannot widen anything. Reading anything a hit points at still costs a second, domain-fenced call (read_notion_page, read_linear_issue, check_pr_status, ...)",
+  ),
   read_notion_comments: open("granted read of page comments/inline discussions; bounded by the room-level grant (membership is the ACL)"),
   read_linear_issue: open("granted read of an issue's body + comment thread via the workspace token; bounded by what that token is shared into (membership is the ACL)"),
   add_label: open("trivially reversible (react-class — un-label is one more add_label call away); entity-gated to ticketing surfaces (Linear/GitHub), audited per call"),
