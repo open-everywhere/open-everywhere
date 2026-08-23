@@ -8,7 +8,7 @@ import {
 } from "../agent/channels/linear-scope.js";
 import { ChannelScopeError, defineDomain, registerConfig, type BindableContext, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerLinearProvider } from "../agent/register.js";
-import { readLinearIssueEntry } from "../agent/tools/read_linear_issue.js";
+import { commentAgeAtRead, readLinearIssueEntry } from "../agent/tools/read_linear_issue.js";
 
 registerLinearProvider();
 
@@ -195,6 +195,116 @@ const ctxFor = (surface: string, issueId?: string, issueIdentifier?: string, org
   }
   if (!(err instanceof ChannelScopeError)) console.error("  [debug] read_linear_issue threw:", err);
   ok(err instanceof ChannelScopeError, "read_linear_issue refuses an out-of-domain issue through the FENCE (not the missing-credential error)");
+}
+
+{
+  const ghostVerdict = linearIssueScope(keyFor(ORG, TEAM_PAY), [], ISSUE_GHOST, undefined, DOMAINS);
+  const notFound = linearScopeRefusal(ISSUE_GHOST, ghostVerdict, "read", false, true);
+  ok(notFound.includes("could not be resolved in this workspace"), "a target the lookup could not place says the lookup found nothing");
+  ok(notFound.includes("visible to the workspace credential"), "…and names the credential, which is the thing that decided");
+  ok(!notFound.includes("memory/domains.ts"), "…and does NOT blame the memory domain, which decided nothing");
+  ok(!notFound.includes("containers"), "…and does NOT offer the domain-grant remedy, which would not work");
+
+  const noWorkspace = linearScopeRefusal("PAY-9", { allowed: false, reason: "target-unresolvable", callerDomain: "payments" }, "read", true);
+  ok(noWorkspace.includes("memory/domains.ts") && noWorkspace.includes("containers"), "a caller with NO workspace still gets the domain remedy");
+  ok(noWorkspace.includes('credential: "workspace"'), "…and the work-grant remedy, which for it is real");
+  ok(!noWorkspace.includes("could not be resolved in this workspace"), "…and never the not-found copy");
+
+  const crossDomain = linearScopeRefusal(ISSUE_ENG, linearIssueScope(keyFor(ORG, TEAM_PAY), [], ISSUE_ENG, TEAM_ENG, DOMAINS), "read", false, true);
+  ok(crossDomain.includes("memory/domains.ts") && !crossDomain.includes("could not be resolved in this workspace"), "a cross-domain refusal keeps its own copy");
+
+  const turn = ctxFor(TEAM_PAY, ISSUE_OWN);
+  const resolver = async (ref: string): Promise<string | undefined> => TEAM_OF[ref];
+  let wired: unknown;
+  try {
+    await assertLinearIssueAllowed(turn, ISSUE_GHOST, DOMAINS, resolver, { audit: async () => {} });
+  } catch (e) {
+    wired = e;
+  }
+  ok(wired instanceof ChannelScopeError, "the wired fence still refuses an unplaceable issue");
+  ok((wired as Error).message.includes("could not be resolved in this workspace"), "…and the message the model reads is the not-found copy");
+  ok(!(wired as Error).message.includes("memory/domains.ts"), "…with no false domain remedy in it");
+}
+
+{
+  const READ_AT = "2026-03-16T20:20:54.000Z";
+  ok(commentAgeAtRead("2026-03-16T19:53:54.000Z", READ_AT) === "27 minutes", "a 27-minute-old comment is reported as 27 minutes old");
+  ok(commentAgeAtRead("2026-03-16T20:20:00.000Z", READ_AT) === "less than a minute", "a fresh comment says so");
+  ok(commentAgeAtRead("2026-03-16T20:19:30.000Z", READ_AT) === "1 minute", "one minute is singular");
+  ok(commentAgeAtRead("2026-03-16T17:20:54.000Z", READ_AT) === "3 hours", "hours once minutes stop helping");
+  ok(commentAgeAtRead("2026-03-14T20:20:54.000Z", READ_AT) === "2 days", "days once hours stop helping");
+  ok(commentAgeAtRead("2026-03-16T20:31:00.000Z", READ_AT) === undefined, "a comment stamped AFTER the read gets no age (never guess under clock skew)");
+  ok(commentAgeAtRead(undefined, READ_AT) === undefined && commentAgeAtRead("2026-03-16T19:53:54.000Z", undefined) === undefined, "a missing timestamp gets no age");
+  ok(commentAgeAtRead("not-a-date", READ_AT) === undefined, "an unparseable timestamp gets no age");
+
+  const render = (o: Record<string, unknown>): string =>
+    (readLinearIssueEntry as unknown as { toModelOutput: (o: unknown) => { value: string } }).toModelOutput({
+      issue: "SOAK-14",
+      identifier: "SOAK-14",
+      title: "Implement throttle retry ladder",
+      state: "Todo",
+      comments: 1,
+      truncated: false,
+      description: "",
+      text: "  - openeverywhere at 2026-03-16T19:53:54.000Z (27 minutes before this read): the move is pending human approval.",
+      ...o,
+    }).value;
+
+  const dated = render({ readAt: READ_AT });
+  ok(dated.includes(`Read live at ${READ_AT}`), "the render dates the read");
+  ok(dated.includes("the fields above are the issue's state at that moment"), "…and says the state is what is CURRENT");
+  ok(dated.includes("HISTORY"), "…and names the comment block history");
+  ok(dated.includes("not the present state"), "…and says plainly that a comment's claim is not the present state");
+  ok(dated.includes("[Todo]") && dated.includes("(27 minutes before this read)"), "…so the live state and the comment's age sit in the same render");
+  ok(dated.includes("oldest first"), "…and the comment order is stated, not assumed");
+
+  const undatedOut = render({});
+  ok(!undatedOut.includes("Read live at"), "an output with no readAt claims no read time");
+  ok(!undatedOut.includes("HISTORY"), "…and makes no claim it cannot date");
+  ok(undatedOut.includes("[Todo]"), "…while still rendering the issue");
+}
+
+{
+  const savedFetch = globalThis.fetch;
+  const savedToken = process.env.LINEAR_AGENT_ACCESS_TOKEN;
+  process.env.LINEAR_AGENT_ACCESS_TOKEN = "read-scope-test-token";
+  const commentAt = new Date(Date.now() - 27 * 60_000).toISOString();
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        data: {
+          issue: {
+            id: ISSUE_OWN,
+            identifier: "SOAK-14",
+            title: "Implement throttle retry ladder",
+            description: "the v1 ladder",
+            state: { name: "Todo", type: "unstarted" },
+            comments: {
+              nodes: [{ id: "c1", body: "the move is pending human approval, so it has not moved yet", createdAt: commentAt, user: { id: "u1", name: "openeverywhere" } }],
+              pageInfo: { hasNextPage: false },
+            },
+          },
+        },
+      }),
+      { status: 200 },
+    )) as unknown as typeof fetch;
+  try {
+    const turn = ctxFor(TEAM_PAY, ISSUE_OWN);
+    const entry = readLinearIssueEntry as unknown as {
+      execute: (i: unknown, c: unknown) => Promise<{ readAt?: string; text: string }>;
+      toModelOutput: (o: unknown) => { value: string };
+    };
+    const out = await entry.execute({ issue: ISSUE_OWN }, turn);
+    ok(typeof out.readAt === "string" && Number.isFinite(Date.parse(out.readAt!)), "execute stamps the read with a parseable time");
+    ok(out.text.includes("(27 minutes before this read)"), "execute ages every comment against that read time");
+    const rendered = entry.toModelOutput(out).value;
+    ok(rendered.includes(`Read live at ${out.readAt}`), "…and the model sees the read time on the output it gets");
+    ok(rendered.includes("[Todo]") && rendered.includes("(27 minutes before this read)"), "…beside the live state and the comment's age — the pair soak run 3 could not tell apart");
+  } finally {
+    globalThis.fetch = savedFetch;
+    if (savedToken === undefined) delete process.env.LINEAR_AGENT_ACCESS_TOKEN;
+    else process.env.LINEAR_AGENT_ACCESS_TOKEN = savedToken;
+  }
 }
 
 console.log(`✓ ${passed} linear read-scope assertions passed`);
