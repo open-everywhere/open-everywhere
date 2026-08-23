@@ -7,7 +7,7 @@ import { postArm, type TargetResolveBag } from "../channels/post-arms.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { markReactedThisTurn } from "../channels/react-signal.js";
 import { carryFailureSignals, platformFailureClass, platformFailureStatus } from "../channels/platform-failure.js";
-import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
+import { noteReactCallAddressed, noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
 const EMOJI_NAME_PATTERN = /^[a-z0-9_+-]{1,100}$/;
@@ -94,6 +94,7 @@ const reactEntry = defineTool({
             }
             markReactedThisTurn();
             noteTerminalCallGrain(ctx as BindableContext);
+            noteReactCallAddressed(ctx as BindableContext);
             await auditToolAction(ctx, `${binding.platform}.react`, { emoji: input.emoji, reason: input.reason ?? "ack" });
             return {
               reacted: true,
@@ -131,6 +132,7 @@ const reactEntry = defineTool({
           }
           markReactedThisTurn();
           noteTerminalCallGrain(ctx as BindableContext);
+          noteReactCallAddressed(ctx as BindableContext);
           await auditToolAction(ctx, "slack.react", { emoji: input.emoji, ts, reason: input.reason ?? "ack" });
           return {
             reacted: true,
