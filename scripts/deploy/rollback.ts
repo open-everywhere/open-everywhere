@@ -1,10 +1,10 @@
-import { createVercelClient, DeployConfigError, fileStore, parseArgs, resolveDeployEnv, runRollback } from "./lib.js";
+import { createVercelClient, DeployConfigError, fileStore, parseArgs, realApiFetch, resolveDeployEnv, resolveVercelApi, runRollback } from "./lib.js";
 
 const args = parseArgs(process.argv.slice(2));
 
 try {
   const env = resolveDeployEnv(process.env);
-  const client = createVercelClient(env);
+  const client = createVercelClient(resolveVercelApi({ env: process.env, deployEnv: env, cwd: process.cwd(), fetchImpl: realApiFetch }));
   const result = await runRollback({
     env,
     client,
