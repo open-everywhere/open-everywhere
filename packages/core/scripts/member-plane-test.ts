@@ -3,8 +3,11 @@ import {
   memberPlaneRefusalMessage,
   memberPlaneVerdict,
   nonMemberWakeFromAuth,
+  personalConnectorWriteVerdict,
+  personalWriteRefusalMessage,
   requesterFromAuth,
   type MemberPlaneInput,
+  type PersonalConnectorWriteInput,
 } from "../agent/access/member-plane.js";
 import { expandConnectorGrant, type ConnectorCredentials } from "../agent/access/connector-credentials.js";
 import { memberGrantKey } from "../agent/access/member-grant.js";
@@ -148,27 +151,107 @@ ok(notAllowed.resolved === null, "🔴 the member plane does not bypass the conn
 
 const memberBinding = { connector: "notion", credential: "personal", type: "user-oauth", grantFamily: "install", principal: "user", memberPlane: true } as never;
 const plainBinding = { connector: "notion", credential: "team-key", type: "api-key", grantFamily: "install", principal: "app", broker: "db", secretRef: "db:notion:team-key" } as never;
+const dmPersonalBinding = { connector: "notion", credential: "personal", type: "user-oauth", grantFamily: "install", principal: "user" } as never;
+
+const surfaceIs = (mode?: string, principalId?: string) => async () => ({
+  ...(mode === undefined ? {} : { mode }),
+  ...(principalId === undefined ? {} : { principalId }),
+});
+const IN_DM = surfaceIs("dm", ASKER);
+const IN_CHANNEL = surfaceIs("channel", ASKER);
+const UNRESOLVABLE_SURFACE = surfaceIs(undefined, undefined);
 
 registerSettings({ connectors: { opTiering: true } });
-const ctxFor = (toolName: string) => ({ toolName, approvedTools: new Set<string>(), session: { auth: {} } }) as never;
+const ctxFor = (toolName: string, attrs: Record<string, unknown> = {}) =>
+  ({ toolName, approvedTools: new Set<string>(), session: { auth: auth(attrs) } }) as never;
 
 {
-  const policy = connectorOpApproval({ boundCredential: async () => memberBinding });
+  const policy = connectorOpApproval({ boundCredential: async () => memberBinding, dmPrincipal: IN_CHANNEL });
   const write = await policy(ctxFor("notion__create_page"));
   ok(typeof write === "object" && write !== null && (write as { type?: string }).type === "denied", "🔴 G5 ENFORCED: a WRITE on a member-plane binding is DENIED at the approval seam — not prompted");
+  ok(
+    (write as { reason?: string }).reason === memberPlaneRefusalMessage("notion", "member_plane_write"),
+    "🔴 …and the denial carries the MEMBER-PLANE sentence verbatim — the shared-room refusal must not drift into a different reason",
+  );
   const destructive = await policy(ctxFor("notion__delete_page"));
   ok(typeof destructive === "object" && destructive !== null && (destructive as { type?: string }).type === "denied", "🔴 …and a DESTRUCTIVE op too");
   ok((await policy(ctxFor("notion__search"))) === "not-applicable", "…while a READ on the same binding is still auto-allowed (the positive control)");
 }
 {
-  const policy = connectorOpApproval({ boundCredential: async () => plainBinding });
+  const policy = connectorOpApproval({ boundCredential: async () => plainBinding, dmPrincipal: IN_CHANNEL });
   ok((await policy(ctxFor("notion__create_page"))) === "user-approval", "🔴 NEGATIVE CONTROL: a non-member binding's WRITE still PROMPTS — the denial is scoped to the member plane");
   ok((await policy(ctxFor("notion__delete_page"))) === "user-approval", "…and a destructive op still prompts per call");
 }
 {
-  const policy = connectorOpApproval({ boundCredential: async () => null });
+  const policy = connectorOpApproval({ boundCredential: async () => null, dmPrincipal: UNRESOLVABLE_SURFACE });
   ok((await policy(ctxFor("notion__create_page"))) === "user-approval", "🔴 an UNRESOLVABLE binding prompts rather than denying — byte-identical to a tree without the member plane");
 }
+
+{
+  const policy = connectorOpApproval({ boundCredential: async () => dmPersonalBinding, dmPrincipal: IN_DM });
+  ok((await policy(ctxFor("notion__create_page", { [REQ_ATTR]: ASKER }))) === "user-approval", "🔴 OPE-1002: a personal-credential WRITE in a DM PROMPTS — the normal approval card, not a denial");
+  ok((await policy(ctxFor("notion__delete_page", { [REQ_ATTR]: ASKER }))) === "user-approval", "…and a DESTRUCTIVE personal op in a DM prompts per call rather than denying");
+  ok((await policy(ctxFor("notion__search", { [REQ_ATTR]: ASKER }))) === "not-applicable", "…while a READ still never prompts (the positive control)");
+  ok((await policy(ctxFor("notion__create_page"))) === "user-approval", "🔴 a DM turn that stamped NO requester still prompts — a DM carries one human, so absence is not a mismatch");
+  ok((await policy(ctxFor("notion__create_page", { [REQ_ATTR]: UNVERIFIED }))) === "user-approval", "🔴 …and an `unverified` stamp is not a mismatch either");
+}
+{
+  const onChannel = connectorOpApproval({ boundCredential: async () => dmPersonalBinding, dmPrincipal: IN_CHANNEL });
+  const denied = await onChannel(ctxFor("notion__create_page", { [REQ_ATTR]: ASKER }));
+  ok(typeof denied === "object" && denied !== null && (denied as { type?: string }).type === "denied", "🔴 an UNSTAMPED personal credential on a CHANNEL is DENIED — the seam proves the DM, it does not infer it");
+  const unresolved = connectorOpApproval({ boundCredential: async () => dmPersonalBinding, dmPrincipal: UNRESOLVABLE_SURFACE });
+  const deniedToo = await unresolved(ctxFor("notion__create_page", { [REQ_ATTR]: ASKER }));
+  ok(typeof deniedToo === "object" && deniedToo !== null && (deniedToo as { type?: string }).type === "denied", "🔴 an UNRESOLVABLE surface is DENIED too — an unproven DM is not a DM");
+  const throwing = connectorOpApproval({
+    boundCredential: async () => dmPersonalBinding,
+    dmPrincipal: async () => {
+      throw new Error("surface read exploded");
+    },
+  });
+  const deniedOnThrow = await throwing(ctxFor("notion__create_page", { [REQ_ATTR]: ASKER }));
+  ok(typeof deniedOnThrow === "object" && deniedOnThrow !== null && (deniedOnThrow as { type?: string }).type === "denied", "🔴 a THROWING surface read is DENIED rather than rejected — the seam always returns an answer");
+}
+{
+  const policy = connectorOpApproval({ boundCredential: async () => dmPersonalBinding, dmPrincipal: surfaceIs("dm", "U_OWNER") });
+  const mismatch = await policy(ctxFor("notion__create_page", { [REQ_ATTR]: "U_SOMEBODY_ELSE" }));
+  ok(typeof mismatch === "object" && mismatch !== null && (mismatch as { type?: string }).type === "denied", "🔴 a DM whose REQUESTER is not the DM's own person is DENIED — one person's name must never ride another person's approval");
+  ok((await policy(ctxFor("notion__create_page", { [REQ_ATTR]: "U_OWNER" }))) === "user-approval", "…and the same surface with the matching requester prompts (the positive control for the mismatch check)");
+}
+
+const dmWrite: PersonalConnectorWriteInput = {
+  memberPlaneBinding: false,
+  personalCredential: true,
+  surfaceMode: "dm",
+  actingPrincipalId: ASKER,
+  requester: { kind: "requester", principalId: ASKER },
+};
+
+function writeRefusal(patch: Partial<PersonalConnectorWriteInput>): string {
+  const v = personalConnectorWriteVerdict({ ...dmWrite, ...patch });
+  return v.prompt ? "PROMPTED" : v.reason;
+}
+
+ok(personalConnectorWriteVerdict(dmWrite).prompt === true, "the DM write prompts (the one admitting input)");
+ok(writeRefusal({ memberPlaneBinding: true }) === "member_plane_write", "🔴 the SHARED-ROOM denial is unchanged and reads FIRST — it never depends on the surface or the requester");
+ok(writeRefusal({ memberPlaneBinding: true, surfaceMode: "dm" }) === "member_plane_write", "🔴 …and a stamped binding claiming a DM surface is still denied — the stamp means `resolved outside a DM`");
+ok(writeRefusal({ surfaceMode: "channel" }) === "personal_write_unproven_dm", "🔴 a channel refuses");
+ok(writeRefusal({ surfaceMode: "mpim" }) === "personal_write_unproven_dm", "🔴 a group DM (mpim) refuses — only the literal `dm` admits");
+ok(writeRefusal({ surfaceMode: undefined }) === "personal_write_unproven_dm", "🔴 an unreadable surface mode refuses");
+ok(writeRefusal({ actingPrincipalId: undefined }) === "personal_write_unproven_dm", "🔴 a DM with no resolvable actor refuses");
+ok(writeRefusal({ actingPrincipalId: "" }) === "personal_write_unproven_dm", "🔴 an EMPTY actor id refuses too");
+ok(writeRefusal({ requester: { kind: "requester", principalId: "U_OTHER" } }) === "personal_write_requester_mismatch", "🔴 a NAMED requester who is not the DM's person refuses");
+ok(writeRefusal({ requester: { kind: "unverified" } }) === "PROMPTED", "an `unverified` requester is not a mismatch — a DM has one human, so there is no second ask to confuse it with");
+ok(writeRefusal({ requester: { kind: "none" } }) === "PROMPTED", "…and `none` is not a mismatch either");
+ok(writeRefusal({ personalCredential: false, surfaceMode: "channel" }) === "PROMPTED", "🔴 an APP-principal write on a CHANNEL is untouched — the ordinary work-surface write still prompts");
+ok(writeRefusal({ personalCredential: false, surfaceMode: undefined, actingPrincipalId: undefined }) === "PROMPTED", "…and it does not acquire a new way to fail on an unreadable surface");
+
+for (const reason of ["member_plane_write", "personal_write_unproven_dm", "personal_write_requester_mismatch"] as const) {
+  const msg = personalWriteRefusalMessage("notion", reason);
+  ok(msg.includes("notion") && msg.length > 40, `the personal-write refusal message for ${reason} names the connector and says why`);
+  ok(!msg.includes(ASKER) && !msg.includes("U_OWNER"), `…and never names a person (${reason})`);
+}
+ok(personalWriteRefusalMessage("notion", "member_plane_write") === memberPlaneRefusalMessage("notion", "member_plane_write"), "🔴 the shared-room sentence has ONE home — the personal-write message delegates to it verbatim");
+
 resetSettingsForTest();
 
 assert.equal(typeof passed, "number");

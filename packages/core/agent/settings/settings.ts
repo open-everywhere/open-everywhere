@@ -275,7 +275,7 @@ export const SETTINGS = {
       path: "connectors.memberPlane",
       shipped: false,
       summary:
-        "The member plane (OPE-944): a member's own connector credential resolves in a shared room their domain declared it for, keyed to the one verified requester of that turn, reads only.",
+        "The member plane (OPE-944): a member's own connector credential resolves in a SHARED ROOM their domain declared it for, keyed to the one verified requester of that turn, reads only. It does not govern DMs — a personal credential always resolves in the asker's own DM, where a write takes the ordinary approval card.",
     } satisfies SettingSpec<boolean>,
   },
   identityLinking: {

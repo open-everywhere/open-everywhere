@@ -80,6 +80,55 @@ export function memberPlaneRefusalMessage(connector: string, reason: MemberPlane
   }
 }
 
+export type PersonalWriteRefusal =
+  | "member_plane_write"
+  | "personal_write_unproven_dm"
+  | "personal_write_requester_mismatch";
+
+export interface PersonalConnectorWriteInput {
+  readonly memberPlaneBinding: boolean;
+  readonly personalCredential: boolean;
+  readonly surfaceMode?: string;
+  readonly actingPrincipalId?: string;
+  readonly requester: MemberPlaneRequester;
+}
+
+export type PersonalConnectorWriteVerdict =
+  | { readonly prompt: true }
+  | { readonly prompt: false; readonly reason: PersonalWriteRefusal };
+
+export function personalConnectorWriteVerdict(input: PersonalConnectorWriteInput): PersonalConnectorWriteVerdict {
+  if (input.memberPlaneBinding) return { prompt: false, reason: "member_plane_write" };
+  if (!input.personalCredential) return { prompt: true };
+  if (input.surfaceMode !== "dm") return { prompt: false, reason: "personal_write_unproven_dm" };
+  if (input.actingPrincipalId === undefined || input.actingPrincipalId.length === 0) {
+    return { prompt: false, reason: "personal_write_unproven_dm" };
+  }
+  if (input.requester.kind === "requester" && input.requester.principalId !== input.actingPrincipalId) {
+    return { prompt: false, reason: "personal_write_requester_mismatch" };
+  }
+  return { prompt: true };
+}
+
+export function personalWriteRefusalMessage(connector: string, reason: PersonalWriteRefusal): string {
+  switch (reason) {
+    case "member_plane_write":
+      return memberPlaneRefusalMessage(connector, "member_plane_write");
+    case "personal_write_unproven_dm":
+      return (
+        `connection "${connector}": refusing to write with your personal credential — this surface did ` +
+        `not resolve as a DM. A write records your own name at the provider, so it is admitted only ` +
+        `where the asker, the approver and that name are the same person. Ask again in a DM.`
+      );
+    case "personal_write_requester_mismatch":
+      return (
+        `connection "${connector}": refusing to write with a personal credential — the person this ` +
+        `turn serves and the person this conversation belongs to are not the same. A write would ` +
+        `record one person's name on another person's approval.`
+      );
+  }
+}
+
 export interface MemberPlaneAuthLike {
   readonly current?: { readonly attributes?: Readonly<Record<string, unknown>> } | null;
 }

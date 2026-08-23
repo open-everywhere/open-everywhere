@@ -25,7 +25,10 @@ import {
   memberPlaneRefusalMessage,
   memberPlaneVerdict,
   nonMemberWakeFromAuth,
+  personalConnectorWriteVerdict,
+  personalWriteRefusalMessage,
   requesterFromAuth,
+  type MemberPlaneAuthLike,
 } from "../access/member-plane.js";
 import { OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED } from "../access/requester-identity.js";
 import { OE_CHAT_NONMEMBER_ATTR } from "../access/taint-signal.js";
@@ -331,25 +334,40 @@ export function connectorOpApproval(deps: ConnectorOpApprovalDeps = {}): Approva
     if (!isConnectorOpTool(ctx.toolName)) return "not-applicable";
     const tier = effectiveConnectorOpTier(ctx.toolName);
     if (tier === "read") return "not-applicable";
-    return decideConnectorWrite(ctx, tier, deps.boundCredential ?? boundConnectorCredential);
+    return decideConnectorWrite(ctx, tier, deps.boundCredential ?? boundConnectorCredential, deps.dmPrincipal ?? resolveDmPrincipal);
   };
 }
 
 export interface ConnectorOpApprovalDeps {
   readonly boundCredential?: typeof boundConnectorCredential;
+  readonly dmPrincipal?: typeof resolveDmPrincipal;
 }
 
 async function decideConnectorWrite(
   ctx: { readonly toolName: string; readonly approvedTools: ReadonlySet<string>; readonly session?: { readonly auth?: unknown } },
   tier: ReturnType<typeof effectiveConnectorOpTier>,
   boundCredential: typeof boundConnectorCredential,
+  dmPrincipal: typeof resolveDmPrincipal,
 ): Promise<ApprovalStatus> {
   const auth = ctx.session?.auth;
   if (auth !== undefined && auth !== null) {
+    const sessionAuth = auth as Parameters<typeof boundConnectorCredential>[1];
     const connection = ctx.toolName.split("__")[0] as string;
-    const bound = await boundCredential(connection, auth as Parameters<typeof boundConnectorCredential>[1]);
-    if (bound?.memberPlane === true) {
-      return { type: "denied", reason: memberPlaneRefusalMessage(connection, "member_plane_write") };
+    const bound = await boundCredential(connection, sessionAuth);
+    const memberPlaneBinding = bound?.memberPlane === true;
+    const personalCredential = bound?.principal === "user";
+    const unreadableSurface: Awaited<ReturnType<typeof resolveDmPrincipal>> = {};
+    const surface =
+      personalCredential && !memberPlaneBinding ? await dmPrincipal(sessionAuth).catch(() => unreadableSurface) : unreadableSurface;
+    const verdict = personalConnectorWriteVerdict({
+      memberPlaneBinding,
+      personalCredential,
+      ...(surface.mode === undefined ? {} : { surfaceMode: surface.mode }),
+      ...(surface.principalId === undefined ? {} : { actingPrincipalId: surface.principalId }),
+      requester: requesterFromAuth(auth as MemberPlaneAuthLike, OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED),
+    });
+    if (!verdict.prompt) {
+      return { type: "denied", reason: personalWriteRefusalMessage(connection, verdict.reason) };
     }
   }
   if (tier === "destructive") return "user-approval";
