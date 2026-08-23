@@ -41,6 +41,7 @@ import {
   tierId,
   getProvider,
   providerById,
+  surfaceProvider,
   upsertUnderSection,
   bindFrom,
   authPrincipalId,
@@ -188,11 +189,12 @@ async function syncPinnedStatus(channel: SlackEventContext): Promise<void> {
   try {
     const { channelId, teamId } = channel.state;
     if (!channelId) return;
-    const p = resolvePartition({
-      channel: { kind: "slack" },
+    const stub = {
+      channel: { kind: "slack" as const },
       session: { auth: { current: { attributes: { team_id: teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
-    });
-    const files = await getProvider().readTier(p, SURFACE);
+    };
+    const p = resolvePartition(stub);
+    const files = await surfaceProvider(bindFrom(stub)).readTier(p, SURFACE);
     const text = renderPinned(files["STATUS.md"]);
 
     const slack = channel.slack;

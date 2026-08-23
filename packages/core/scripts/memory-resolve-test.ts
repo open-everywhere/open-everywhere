@@ -1,5 +1,6 @@
 
-import { resolveMemoryPlan, type MemoryResolveConfig } from "../agent/memory/resolve.js";
+import { resolveMemoryPlan, surfaceProvider, type MemoryResolveConfig } from "../agent/memory/resolve.js";
+import { getProvider, providerById, registerProvider, resetProvider, type MemoryProvider } from "../agent/memory/provider.js";
 import {
   defineDomain,
   domainForChannel,
@@ -228,5 +229,16 @@ ok(!noneIndex.includes("`agent`") && !noneIndex.includes("`spawn_task`"), "recal
 assertSilosValid(cfg.silos);
 ok(true, "validation: a valid silo set passes");
 throws(() => assertSilosValid([{ name: "empty" } as MemorySilo]), "validation: a silo with no provider throws");
+
+{
+  const fakeDb: MemoryProvider = { id: "sqlite", async readTier() { return {}; }, async ensureTier() { return {}; }, async writeTier() { return null; }, async deleteTier() {} };
+  registerProvider(fakeDb);
+  resetProvider();
+  ok(surfaceProvider(binding("dm", "internal")).id === "sqlite", "surfaceProvider: a DM resolves the DB-pinned provider (dbProviderId), not the env-selected one");
+  ok(surfaceProvider(binding("dm", "internal")).id === providerById("sqlite").id, "…the SAME provider personalSilo()'s pin would resolve for this DM's own memory");
+  ok(surfaceProvider(binding("channel", "internal")).id === getProvider().id, "surfaceProvider: a channel keeps the env-selected singleton (no plan pin exists for it)");
+  ok(surfaceProvider(binding("mpim", "internal")).id === getProvider().id, "…and so does mpim");
+  ok(surfaceProvider(binding("channel", "internal")).id !== "sqlite", "…which is NOT the DB provider (the negative control for the DM assertion above)");
+}
 
 console.log(`✓ memory-resolve: ${passed} assertions passed`);

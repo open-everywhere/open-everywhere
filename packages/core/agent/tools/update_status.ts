@@ -3,7 +3,8 @@ import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
 import { SURFACE } from "../memory/store.js";
-import { getProvider } from "../memory/provider.js";
+import { surfaceProvider } from "../memory/resolve.js";
+import { bindFrom } from "../identity/binding.js";
 import { writeTierFile } from "../memory/sandbox-sync.js";
 import { withMemoryRootWritable } from "../memory/root-fence.js";
 import { statusItemLine, upsertStatusItem, statusSeed, type WorkState } from "../status/status.js";
@@ -25,13 +26,15 @@ export default defineTool({
     const when = new Date().toISOString().slice(0, 16).replace("T", " ") + "Z";
     const line = statusItemLine(sessionId, input.state as WorkState, input.summary, when);
 
-    const durable = await getProvider().readTier(p, SURFACE);
+    const provider = surfaceProvider(bindFrom(ctx));
+
+    const durable = await provider.readTier(p, SURFACE);
     const current = durable["STATUS.md"] ?? statusSeed(p.surfaceKey);
     const updated = upsertStatusItem(current, sessionId, line);
 
     const sandbox = await ctx.getSandbox();
     await withMemoryRootWritable(sandbox, () => writeTierFile(sandbox, SURFACE, "STATUS.md", updated));
-    await getProvider().writeTier(p, SURFACE, { "STATUS.md": updated }, `status [${input.state}] ${sessionId}`);
+    await provider.writeTier(p, SURFACE, { "STATUS.md": updated }, `status [${input.state}] ${sessionId}`);
 
     return { updated: true, state: input.state };
   },

@@ -176,4 +176,47 @@ const stored = (): MemoryFiles => ({ ...(durable.get(surfaceTierId) ?? {}) });
   ok(!sandbox.commands.some((c) => c.includes("find . -type f")), "the tool no longer LISTS the sandbox surface directory at all");
 }
 
+{
+  const dmStore = new Map<string, MemoryFiles>();
+  const dbWriteCalls: { tier: string; files: MemoryFiles }[] = [];
+  const dbProvider: MemoryProvider = {
+    id: "sqlite",
+    async readTier(_p: Partition, tier: Tier) {
+      return { ...(dmStore.get(tierId(tier)) ?? {}) };
+    },
+    async ensureTier(_p: Partition, tier: Tier) {
+      return { ...(dmStore.get(tierId(tier)) ?? {}) };
+    },
+    async writeTier(_p: Partition, tier: Tier, files: MemoryFiles) {
+      dbWriteCalls.push({ tier: tierId(tier), files: { ...files } });
+      dmStore.set(tierId(tier), { ...(dmStore.get(tierId(tier)) ?? {}), ...files });
+      return "db-v1";
+    },
+    async deleteTier() {},
+  };
+  registerProvider(dbProvider);
+
+  const DM_ATTRS: Record<string, string> = {
+    team_id: "T1",
+    channel_id: "D1",
+    channel_type: "im",
+    dm_partner_trust: "internal",
+    user_id: "U7",
+  };
+  const sandbox = new FakeSandbox();
+  const dmCtx = {
+    agent: { name: "test" },
+    channel: { kind: "slack" },
+    getSandbox: async () => sandbox,
+    session: { id: "sess-dm-real", auth: { current: { principalId: "U7", principalType: "slack-user", attributes: { ...DM_ATTRS } } } },
+  } as unknown as BindableContext;
+
+  await runStatus({ state: "working", summary: "S5-dm" }, dmCtx as never);
+
+  ok(!(stored()["STATUS.md"] ?? "").includes("S5-dm"), "the env-selected durable store does NOT receive a DM's status line");
+  const dmFiles = { ...(dmStore.get(surfaceTierId) ?? {}) };
+  ok((dmFiles["STATUS.md"] ?? "").includes("S5-dm"), "…the DB-pinned provider (the DM's own personal-silo backing) receives it instead");
+  for (const call of dbWriteCalls) eq(Object.keys(call.files), ["STATUS.md"], "the DB write also names exactly one file");
+}
+
 console.log(`✅ update_status durable-write tests passed (${n} assertions)`);

@@ -4,7 +4,7 @@ import type { Domain } from "./domain.js";
 import type { MemorySilo } from "./silo.js";
 import { SURFACE, siloTier, type Tier } from "./store.js";
 import { domainForChannel, criteriaDomain, memoryRefs } from "./domain.js";
-import { dbProviderId, type MemoryAccess } from "./provider.js";
+import { dbProviderId, getProvider, providerById, type MemoryAccess, type MemoryProvider } from "./provider.js";
 import { getConfig } from "../access/config.js";
 
 export interface ResolvedMemory {
@@ -29,6 +29,10 @@ const NONE = (reason: string): MemoryPlan => ({ reads: [], writes: [], reason })
 
 function personalSilo(): MemorySilo {
   return { name: "@personal", provider: dbProviderId() };
+}
+
+export function surfaceProvider(binding: SurfaceBinding): MemoryProvider {
+  return binding.mode === "dm" ? providerById(dbProviderId()) : getProvider();
 }
 
 function findSilo(silos: readonly MemorySilo[], name: string, referencedBy: string): MemorySilo {

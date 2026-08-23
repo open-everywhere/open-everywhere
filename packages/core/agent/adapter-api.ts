@@ -561,7 +561,7 @@ export type { ReactionState } from "./status/status.js";
 export { SURFACE, tierId } from "./memory/store.js";
 export { getProvider, providerById } from "./memory/provider.js";
 export { upsertUnderSection } from "./memory/markdown.js";
-export { planFor } from "./memory/resolve.js";
+export { planFor, surfaceProvider } from "./memory/resolve.js";
 
 export { getOrCreateDmSeat, touchDmSeat, dmSeatThresholds } from "./channels/dm-seat.js";
 export type { DmSeat } from "./channels/dm-seat.js";
