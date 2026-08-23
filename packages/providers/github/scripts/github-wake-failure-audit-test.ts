@@ -10,11 +10,10 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 process.env.GITHUB_APP_SLUG = "eve-bot";
 
-const { registerGithubProvider } = await import("@open-everywhere/provider-github/agent/register.js");
+const { registerGithubProvider } = await import("../agent/register.js");
 registerGithubProvider();
-const { liveGitHubSupervisorDeps } = await import("@open-everywhere/provider-github/agent/channels/github.js");
-const { getOperationalStore } = await import("@open-everywhere/core/agent/operational/provider.js");
-const { deploymentOrg } = await import("@open-everywhere/core/agent/identity/binding.js");
+const { liveGitHubSupervisorDeps } = await import("../agent/channels/github.js");
+const { getOperationalStore, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {

@@ -8,11 +8,10 @@ rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 
-const { registerLinearProvider } = await import("@open-everywhere/provider-linear/agent/register.js");
+const { registerLinearProvider } = await import("../agent/register.js");
 registerLinearProvider();
-const { liveLinearSupervisorDeps } = await import("@open-everywhere/provider-linear/agent/channels/linear.js");
-const { getOperationalStore } = await import("@open-everywhere/core/agent/operational/provider.js");
-const { deploymentOrg } = await import("@open-everywhere/core/agent/identity/binding.js");
+const { liveLinearSupervisorDeps } = await import("../agent/channels/linear.js");
+const { getOperationalStore, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
