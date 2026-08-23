@@ -38,10 +38,12 @@ function authorFields(id: string | undefined, name: string | undefined): Pick<Re
 export function linearTopicLine(issue: LinearIssueRead): RenderedLine {
   const title = (issue.title ?? "").trim();
   const description = issue.description.trim();
+  const state = issue.stateName?.trim();
+  const headline = [title, state ? `[${state}]` : undefined].filter((part): part is string => !!part && part.length > 0).join(" ");
   return {
     ...authorFields(issue.creatorId, issue.creatorName),
     ts: issue.createdAt ?? "",
-    text: [title, description].filter((part) => part.length > 0).join("\n\n"),
+    text: [headline, description].filter((part) => part.length > 0).join("\n\n"),
   };
 }
 
