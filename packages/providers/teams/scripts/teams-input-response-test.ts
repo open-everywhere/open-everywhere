@@ -110,6 +110,49 @@ console.log("admitTeamsInputResponse:");
 }
 
 {
+  let seenSpend: { door?: string; principalId?: string } | undefined;
+  const res = await admitTeamsInputResponse(ctx, activity, {
+    admit: allow,
+    userType: async () => "member",
+    spendGate: async (input) => {
+      seenSpend = { door: input.door, principalId: input.principalId };
+      return "proceed";
+    },
+  });
+  ok(res !== null && res.auth !== null && res.auth.principalId === "29:answerer", "an under-cap resume proceeds to the room/guest admission");
+  ok(seenSpend?.door === "answer", "🔴 the spend gate is consulted with its own door (\"answer\")");
+  ok(seenSpend?.principalId === "29:answerer", "the spend gate judges the submitting Teams user as principal");
+}
+
+{
+  let admitCalled = false;
+  let userTypeCalled = false;
+  const posted: string[] = [];
+  const ctxWithPost = { teams: { request: async () => ({ ok: false, body: {} }) }, thread: { post: async (t: string) => { posted.push(t); } } } as unknown as Ctx;
+  const res = await admitTeamsInputResponse(ctxWithPost, activity, {
+    admit: async () => {
+      admitCalled = true;
+      return { ok: true, floor: "member" };
+    },
+    userType: async () => {
+      userTypeCalled = true;
+      return "member";
+    },
+    spendGate: async (input) => {
+      await input.post("over cap, holding off");
+      return "declined";
+    },
+  });
+  ok(res === null, "🔴 a DECLINED spend gate returns null — the same as a room/guest refusal");
+  ok(!admitCalled, "🔴 a declined spend gate short-circuits BEFORE the room/guest admission runs");
+  ok(userTypeCalled, "the member probe still ran (it builds the auth the gate itself needs)");
+  ok(
+    posted.length === 1 && posted[0] === "over cap, holding off",
+    "the spend gate's own post callback reaches the answerer through ctx.thread.post, the same channel the room/guest refusal uses",
+  );
+}
+
+{
   const src = readFileSync(fileURLToPath(new URL("../agent/channels/teams.ts", import.meta.url)), "utf8");
   ok(
     /onInputResponse:[^\n]*admitTeamsInputResponse/.test(src),
@@ -118,4 +161,13 @@ console.log("admitTeamsInputResponse:");
   ok(/onMessage:\s*teamsOnMessage/.test(src), "teams.ts still authors onMessage — the fact that makes eve's omitted-hook default `rejectInput` rather than accept-any");
 }
 
-console.log(`\n✓ teams-input-response: ${n} assertions passed (allow parity, null-refusal, leg-B verdict polarity, fail-open, notice failure, wiring pin)\n`);
+{
+  const src = readFileSync(fileURLToPath(new URL("../agent/channels/teams-input-response.ts", import.meta.url)), "utf8");
+  ok(
+    /deps\.spendGate\s*\?\?\s*ingressSpendGate/.test(src),
+    "🔴 admitTeamsInputResponse's live default spendGate is ingressSpendGate — reverting to a stub that never gates would otherwise pass a naive \"ingressSpendGate appears somewhere\" source scan",
+  );
+  ok(/door:\s*"answer"/.test(src), "🔴 the spend gate is consulted with its own door (\"answer\"), not silently folded into an existing one");
+}
+
+console.log(`\n✓ teams-input-response: ${n} assertions passed (allow parity, null-refusal, leg-B verdict polarity, fail-open, notice failure, spend gate first + negative control, wiring pins)\n`);

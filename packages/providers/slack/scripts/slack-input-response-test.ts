@@ -165,6 +165,53 @@ console.log("admitSlackInputResponse:");
 }
 
 {
+  let seenSpend: { door?: string; principalId?: string; workspaceRef?: string | null } | undefined;
+  const res = await admitSlackInputResponse(ctx, submission, {
+    admit: allow,
+    spendGate: async (input) => {
+      seenSpend = { door: input.door, principalId: input.principalId, workspaceRef: input.workspaceRef };
+      return "proceed";
+    },
+  });
+  ok(res !== null && res.auth === defaultAuth, "an under-cap resume proceeds to the room/guest admission");
+  ok(seenSpend?.door === "answer", "🔴 the spend gate is consulted with its own door (\"answer\")");
+  ok(seenSpend?.principalId === "U_ANSWERER", "the spend gate judges the submitting user as principal");
+  ok(seenSpend?.workspaceRef === "T1", "the spend gate carries the real team id for its audit row");
+}
+
+{
+  let admitCalled = false;
+  let guestVerdictCalled = false;
+  const posted: string[] = [];
+  const ctxWithPost = {
+    defaultAuth,
+    thread: { postEphemeral: async (_u: string, t: string) => { posted.push(t); } },
+    slack: {},
+  } as unknown as Ctx;
+  const res = await admitSlackInputResponse(ctxWithPost, submission, {
+    admit: async () => {
+      admitCalled = true;
+      return { ok: true, floor: "member" };
+    },
+    guestVerdict: async () => {
+      guestVerdictCalled = true;
+      return false;
+    },
+    spendGate: async (input) => {
+      await input.post("over cap, holding off");
+      return "declined";
+    },
+  });
+  ok(res === null, "🔴 a DECLINED spend gate returns null — the same as a room/guest refusal");
+  ok(!admitCalled, "🔴 a declined spend gate short-circuits BEFORE the room/guest admission runs");
+  ok(!guestVerdictCalled, "a declined spend gate short-circuits before the guest probe runs");
+  ok(
+    posted.length === 1 && posted[0] === "over cap, holding off",
+    "the spend gate's own post callback reaches the answerer through ctx.thread.postEphemeral, the same channel the room/guest refusal uses",
+  );
+}
+
+{
   const src = readFileSync(fileURLToPath(new URL("../agent/channels/slack.ts", import.meta.url)), "utf8");
   ok(
     /onInputResponse:[^\n]*admitSlackInputResponse/.test(src),
@@ -180,4 +227,13 @@ console.log("admitSlackInputResponse:");
   );
 }
 
-console.log(`\n✓ slack-input-response: ${n} assertions passed (allow parity, null-refusal, judged facts, leg B guest/member/unresolved/throw, live-default degrade, fail-open, notice failure, wiring pins)\n`);
+{
+  const src = readFileSync(fileURLToPath(new URL("../agent/channels/slack-input-response.ts", import.meta.url)), "utf8");
+  ok(
+    /deps\.spendGate\s*\?\?\s*ingressSpendGate/.test(src),
+    "🔴 admitSlackInputResponse's live default spendGate is ingressSpendGate — reverting to a stub that never gates would otherwise pass a naive \"ingressSpendGate appears somewhere\" source scan",
+  );
+  ok(/door:\s*"answer"/.test(src), "🔴 the spend gate is consulted with its own door (\"answer\"), not silently folded into an existing one");
+}
+
+console.log(`\n✓ slack-input-response: ${n} assertions passed (allow parity, null-refusal, judged facts, leg B guest/member/unresolved/throw, live-default degrade, fail-open, notice failure, spend gate first + negative control, wiring pins)\n`);

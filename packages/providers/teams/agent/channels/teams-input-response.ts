@@ -1,5 +1,14 @@
 import type { TeamsContext, TeamsInputResponseResult, TeamsInvokeActivity, TeamsMessageActivity } from "eve/channels/teams";
-import { admitInputResponse, resolvePartition, type InputResponseAdmission, type InputResponseScope } from "@open-everywhere/core/agent/adapter-api.js";
+import {
+  admitInputResponse,
+  ingressSpendGate,
+  resolvePartition,
+  type BindableContext,
+  type IngressSpendGateInput,
+  type InputResponseAdmission,
+  type InputResponseScope,
+  type SpendGateDecision,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import { buildTeamsAuth, teamsMembershipType } from "./teams-identity.js";
 import { resolveTeamsUserType, teamsHandleRosterProbe } from "./teams-roster.js";
 
@@ -7,6 +16,7 @@ export interface TeamsInputResponseDeps {
   readonly admit?: (scope: InputResponseScope) => Promise<InputResponseAdmission>;
   readonly userType?: (activity: TeamsInvokeActivity | TeamsMessageActivity) => Promise<"guest" | "member" | undefined>;
   readonly notify?: (text: string) => Promise<void>;
+  readonly spendGate?: (input: IngressSpendGateInput) => Promise<SpendGateDecision>;
 }
 
 export async function admitTeamsInputResponse(
@@ -31,10 +41,21 @@ export async function admitTeamsInputResponse(
       membershipType: teamsMembershipType(activity.channelData),
       userType,
     });
-    const p = resolvePartition({
+    const bindable = {
       channel: { kind: "teams" },
       session: { auth: { current: auth } },
-    } as Parameters<typeof resolvePartition>[0]);
+    } as BindableContext;
+    const p = resolvePartition(bindable);
+
+    const spendGate = deps.spendGate ?? ingressSpendGate;
+    const spendVerdict = await spendGate({
+      bindable,
+      door: "answer",
+      principalId: activity.from.id,
+      post: async (text) => { await ctx.thread.post(text); },
+    });
+    if (spendVerdict === "declined") return null;
+
     const verdict = await (deps.admit ?? admitInputResponse)({
       org: p.org,
       platform: p.platform,
