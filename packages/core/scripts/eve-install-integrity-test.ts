@@ -207,7 +207,7 @@ for (const eveDir of copies) {
   const src = readFileSync(toolLoop, "utf8");
   ok(
     src.includes("__oeProjectToolSet"),
-    `copies: ${where} carries the __oeProjectToolSet hook (OPE-73) — an unpatched copy means authored toModelOutput is dropped on session-mounted dynamic tools, so untrusted-content envelopes never reach the model (prompt-injection containment regression)`,
+    `copies: ${where} carries the __oeProjectToolSet hook (OPE-73) — an unpatched copy means connector and MCP results reach the model unfenced (prompt-injection containment regression) and every seat cut is lost: the lean seat, the job wake, the worker subtraction, the invoker-posture withdrawal and the \`agent\` gate all run in that hook`,
   );
   ok(
     src.includes("__oeCompactionReduced(") && src.includes("__oeWithReduced("),
