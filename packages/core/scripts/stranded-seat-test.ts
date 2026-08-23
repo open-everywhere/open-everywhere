@@ -163,6 +163,34 @@ const base = { surfaceKey: "slack/T0AAAAAAA/D0AAAAAAAAA", platform: "slack", atI
   ok(f.calls.length === 0, "heal: a non-window token writes NOTHING — no phantom registry row");
   eq(a.rows[0].detail.remedy, "none", "audit: an unhealable token still gets a row, and the row says the remedy is NONE — visible instead of silent");
 }
+const NATIVE_TOKEN = "C0123456:oe-sup:g1";
+{
+  const f = fakeStore(true);
+  const a = fakeAudit();
+  const outcome = await healPrunedDeploymentStrand({
+    ...base,
+    token: NATIVE_TOKEN,
+    registryKey: "slack/T0AAAAAAA/C0123456",
+    workspace: "T0AAAAAAA",
+    err: new Error(REAL_MESSAGE),
+    store: f.store,
+    audit: a.audit,
+  });
+  ok(outcome === "marked", "🔴 OPE-971: an explicit registryKey override marks the seat even though the token itself does not parse as a window");
+  ok(f.calls.length === 1, "…exactly ONE mark is written");
+  eq(f.calls[0].key, "slack/T0AAAAAAA/C0123456", "…and it lands on the OVERRIDE key, not any token-derived guess");
+  eq(a.rows[0].detail.registryKey, "slack/T0AAAAAAA/C0123456", "…the audit row names the override key");
+  eq(a.rows[0].workspace, "T0AAAAAAA", "…and the override workspace wins over the token-derived (absent) domain");
+  eq(a.rows[0].detail.remedy, "rotate-at-next-wake", "…the remedy is the real one, not `none`");
+}
+{
+  const f = fakeStore(true);
+  const a = fakeAudit();
+  const outcome = await healPrunedDeploymentStrand({ ...base, token: NATIVE_TOKEN, err: new Error(REAL_MESSAGE), store: f.store, audit: a.audit });
+  ok(outcome === "not-a-window", "OPE-971 negative control: the SAME native token WITHOUT the override still resolves not-a-window — the override is additive");
+  ok(f.calls.length === 0, "…and writes NOTHING — the pre-971 call site's behaviour is untouched");
+  eq(a.rows[0].workspace, "unknown", "…the audit row falls back to `unknown`, exactly as before the override existed");
+}
 {
   const f = fakeStore("throw");
   const outcome = await healPrunedDeploymentStrand({ ...base, token: REAL_TOKEN, err: new Error(REAL_MESSAGE), store: f.store, audit: async () => {} });

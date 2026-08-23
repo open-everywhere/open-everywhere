@@ -20,6 +20,7 @@ import { dmAnchorSurfaceForToken, dmAnchorDomain } from "@open-everywhere/core/a
 import { wakeOriginCodec } from "@open-everywhere/core/agent/channels/wake-origin-codec.js";
 import { renderWake } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import type { UnifiedReceiveTarget } from "@open-everywhere/core/agent/channels/unified.js";
+import { RUN_KEY_FETCH_MARKER, HTTP_404_MARKER, PRUNED_DEPLOYMENT_AUDIT_ACTION } from "@open-everywhere/core/agent/channels/stranded-seat.js";
 import type { RouteHandlerArgs } from "eve/channels";
 
 registerDiscordProvider();
@@ -268,4 +269,65 @@ async function run(msg: DiscordRelayMessage, opts: { noReceive?: boolean; sendTh
   ok(String(detail.message).includes("socket hang up"), "…and the row names the real failure, not a generic placeholder");
 }
 
-console.log(`✓ discord-dm-divert: ${n} assertions passed (divert + fence, DM origin/codec, auth attrs, dm envelope, resume, rotation tail carry-forward, group DM, escape hatches, guild untouched, builder, OPE-970 wake-failure audit)`);
+{
+  const boom = new Error(`${RUN_KEY_FETCH_MARKER} for wrun_TEST (deployment dpl_TEST): ${HTTP_404_MARKER} Not Found`);
+  const throwingSend = (async () => {
+    throw boom;
+  }) as unknown as DiscordGatewaySend;
+  const guildMsg: DiscordRelayMessage = {
+    id: "6001",
+    content: "<@BOT9> ping",
+    channelId: "7002",
+    channelType: "0",
+    guildId: "G_ACME2",
+    author: { id: "U_CAROL", username: "carol", bot: false },
+    mentionsBot: true,
+    botId: BOT,
+  };
+  let threw: unknown;
+  try {
+    await dispatchTurn(guildMsg, authForRelayMessage(guildMsg)!, throwingSend, async () => null, async () => undefined, undefined);
+  } catch (err) {
+    threw = err;
+  }
+  ok(threw === boom, "🔴 the native guild send failure still PROPAGATES unchanged — this is an audit ADDITION, not a swallow");
+
+  const strandRows = (await getOperationalStore().readAudit({ org: "default", action: PRUNED_DEPLOYMENT_AUDIT_ACTION })).filter(
+    (row) => (row.detail as { token?: unknown } | undefined)?.token === "discord:7002",
+  );
+  eq(strandRows.length, 1, "🔴 OPE-971: the native guild dispatch's pruned-deployment strand now writes exactly ONE audit row — previously it wrote NONE");
+  eq(strandRows[0]!.platform, "discord", "…on the discord platform");
+  const detail = (strandRows[0]!.detail ?? {}) as Record<string, unknown>;
+  eq(detail.outcome, "not-a-window", "…outcome is `not-a-window`: a plain `discord:<channelId>` token never parses as a window token");
+  eq(detail.remedy, "none", "…and the remedy is honestly `none` — no rotatable registry row exists for a native guild session, so no rotation is invented");
+}
+
+{
+  const transient = new Error("socket hang up");
+  const throwingSend = (async () => {
+    throw transient;
+  }) as unknown as DiscordGatewaySend;
+  const guildMsg: DiscordRelayMessage = {
+    id: "6002",
+    content: "<@BOT9> ping again",
+    channelId: "7003",
+    channelType: "0",
+    guildId: "G_ACME3",
+    author: { id: "U_DAVE", username: "dave", bot: false },
+    mentionsBot: true,
+    botId: BOT,
+  };
+  let threw: unknown;
+  try {
+    await dispatchTurn(guildMsg, authForRelayMessage(guildMsg)!, throwingSend, async () => null, async () => undefined, undefined);
+  } catch (err) {
+    threw = err;
+  }
+  ok(threw === transient, "the transient failure still propagates unchanged");
+  const strandRows = (await getOperationalStore().readAudit({ org: "default", action: PRUNED_DEPLOYMENT_AUDIT_ACTION })).filter(
+    (row) => (row.detail as { token?: unknown } | undefined)?.token === "discord:7003",
+  );
+  eq(strandRows.length, 0, "negative control: a TRANSIENT native guild send failure classifies not-classified and writes NO strand audit row at all");
+}
+
+console.log(`✓ discord-dm-divert: ${n} assertions passed (divert + fence, DM origin/codec, auth attrs, dm envelope, resume, rotation tail carry-forward, group DM, escape hatches, guild untouched, builder, OPE-970 wake-failure audit, OPE-971 native guild strand audit + negative control)`);
