@@ -3,7 +3,17 @@ import type {
   SlackInputResponseResult,
   SlackInputResponseSubmission,
 } from "eve/channels/slack";
-import { admitInputResponse, resolvePartition, type InputResponseAdmission, type InputResponseScope } from "@open-everywhere/core/agent/adapter-api.js";
+import {
+  admitInputResponse,
+  ingressSpendGate,
+  resolvePartition,
+  SLACK_SPEND_BADGES,
+  type BindableContext,
+  type IngressSpendGateInput,
+  type InputResponseAdmission,
+  type InputResponseScope,
+  type SpendGateDecision,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import { slackClickerIsGuest } from "./slack-events.js";
 
 function slackAuthTeamId(auth: SlackInputResponseContext["defaultAuth"]): string | undefined {
@@ -17,6 +27,7 @@ export interface SlackInputResponseDeps {
   readonly admit?: (scope: InputResponseScope) => Promise<InputResponseAdmission>;
   readonly notify?: (userId: string, text: string) => Promise<void>;
   readonly guestVerdict?: (userId: string, teamId: string | undefined) => Promise<boolean | undefined>;
+  readonly spendGate?: (input: IngressSpendGateInput) => Promise<SpendGateDecision>;
 }
 
 export async function admitSlackInputResponse(
@@ -26,12 +37,28 @@ export async function admitSlackInputResponse(
 ): Promise<SlackInputResponseResult> {
   const allow: SlackInputResponseResult = { auth: ctx.defaultAuth };
   try {
-    const p = resolvePartition({
+    const bindable = {
       channel: { kind: "slack" },
       session: { auth: { current: ctx.defaultAuth } },
-    } as Parameters<typeof resolvePartition>[0]);
+    } as BindableContext;
+    const p = resolvePartition(bindable);
+    const teamId = slackAuthTeamId(ctx.defaultAuth);
+
+    const spendGate = deps.spendGate ?? ingressSpendGate;
+    const spendVerdict = await spendGate({
+      bindable,
+      door: "answer",
+      principalId: submission.user.id,
+      workspaceRef: teamId ?? null,
+      badges: SLACK_SPEND_BADGES,
+      post: async (text) => {
+        await ctx.thread.postEphemeral(submission.user.id, text);
+      },
+    });
+    if (spendVerdict === "declined") return null;
+
     const guestVerdict = deps.guestVerdict ?? slackClickerIsGuest;
-    const answererIsGuest = await guestVerdict(submission.user.id, slackAuthTeamId(ctx.defaultAuth)).catch(() => undefined);
+    const answererIsGuest = await guestVerdict(submission.user.id, teamId).catch(() => undefined);
     const verdict = await (deps.admit ?? admitInputResponse)({
       org: p.org,
       platform: p.platform,

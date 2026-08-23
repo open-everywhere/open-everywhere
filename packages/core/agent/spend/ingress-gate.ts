@@ -5,7 +5,7 @@ import { capBypassFor } from "./bypass.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { SessionMode } from "../access/resolver.js";
 
-export type SpendGateDoor = "mention" | "engagement" | "join" | "window";
+export type SpendGateDoor = "mention" | "engagement" | "join" | "window" | "answer";
 
 export type SpendGateDecision = "proceed" | "declined";
 
