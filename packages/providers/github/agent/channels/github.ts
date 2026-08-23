@@ -206,7 +206,7 @@ function githubSendFrom(from: RouteHandlerArgs<GitHubChannelState>["from"]): Git
     } as never);
 }
 
-function liveGitHubSupervisorDeps(send: GitHubSend, ev: GitHubAmbientEvent, to?: RouteHandlerArgs["to"]): GitHubSupervisorDeps {
+export function liveGitHubSupervisorDeps(send: GitHubSend, ev: GitHubAmbientEvent, to?: RouteHandlerArgs["to"]): GitHubSupervisorDeps {
   const org = deploymentOrg();
   const store = getOperationalStore();
   return {
@@ -231,14 +231,24 @@ function liveGitHubSupervisorDeps(send: GitHubSend, ev: GitHubAmbientEvent, to?:
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, window }) {
       if (window && to) {
-        await divertToUnifiedWindow(to, {
-          message,
-          context: [...context],
-          token,
-          window,
-          surfaceKey: `github/${ev.owner}/${ev.repo}`,
-          auth: auth as unknown as { attributes?: Record<string, unknown> },
-        });
+        const surfaceKey = `github/${ev.owner}/${ev.repo}`;
+        try {
+          await divertToUnifiedWindow(to, {
+            message,
+            context: [...context],
+            token,
+            window,
+            surfaceKey,
+            auth: auth as unknown as { attributes?: Record<string, unknown> },
+          });
+        } catch (err) {
+          await auditSupervisorFailure(
+            { org: deploymentOrg(), platform: "github", workspace: ev.owner, surface: surfaceKey },
+            "surface.wake_failed",
+            { message: String(err instanceof Error ? err.message : err).slice(0, 500), wakeId: window.wakeId },
+          );
+          throw err;
+        }
         return;
       }
       const unified = githubGrainFor(`github/${ev.owner}/${ev.repo}`).unified;

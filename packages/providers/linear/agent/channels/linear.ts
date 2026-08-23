@@ -362,7 +362,7 @@ function linearSendFrom(from: RouteHandlerArgs<LinearChannelState>["from"]): Lin
     } as never);
 }
 
-function liveLinearSupervisorDeps(
+export function liveLinearSupervisorDeps(
   send: LinearSend,
   teamId: string,
   organizationId: string,
@@ -394,14 +394,24 @@ function liveLinearSupervisorDeps(
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, window }) {
       if (window && to) {
-        await divertToUnifiedWindow(to, {
-          message,
-          context: [...context],
-          token,
-          window,
-          surfaceKey: `linear/${organizationId}/${teamId}`,
-          auth: auth as unknown as { attributes?: Record<string, unknown> },
-        });
+        const surfaceKey = `linear/${organizationId}/${teamId}`;
+        try {
+          await divertToUnifiedWindow(to, {
+            message,
+            context: [...context],
+            token,
+            window,
+            surfaceKey,
+            auth: auth as unknown as { attributes?: Record<string, unknown> },
+          });
+        } catch (err) {
+          await auditSupervisorFailure(
+            { org: deploymentOrg(), platform: "linear", workspace: organizationId, surface: surfaceKey },
+            "surface.wake_failed",
+            { message: String(err instanceof Error ? err.message : err).slice(0, 500), wakeId: window.wakeId },
+          );
+          throw err;
+        }
         return;
       }
       const unified = linearGrainFor(`linear/${organizationId}/${teamId}`).unified;

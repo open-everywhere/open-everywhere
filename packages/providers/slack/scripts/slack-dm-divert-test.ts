@@ -4,9 +4,15 @@ process.env.OE_SQLITE_PATH = ":memory:";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { registerSlackProvider } from "../agent/register.js";
-import { buildFrontHandler, classifyEnvelope, dmFifoKey, ThreadFifo, EventDedupe } from "../agent/channels/slack-front.js";
+import { buildFrontHandler, classifyEnvelope, dmFifoKey, ThreadFifo, EventDedupe, recordWakeFailure } from "../agent/channels/slack-front.js";
 import { DM_BOT_AUTHOR_DROP_REASON, DM_DRIVER_ADMIT_REASON } from "../agent/channels/slack-events.js";
-import { getOperationalStore, overrideSettingsForTest, type WakeMessageInput } from "@open-everywhere/core/agent/adapter-api.js";
+import {
+  getOperationalStore,
+  overrideSettingsForTest,
+  markUndeliveredAfterHeal,
+  isUndeliveredAfterHeal,
+  type WakeMessageInput,
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 registerSlackProvider();
 
@@ -100,6 +106,7 @@ async function runFront(
     channelFacts?: { internal: boolean; channelType?: string } | null;
     authorRefuted?: boolean;
     sendThrowsFirst?: Error;
+    sendThrowsAlways?: Error;
     selfBotId?: string | null;
   } = {},
 ) {
@@ -115,6 +122,7 @@ async function runFront(
     to: (_channel: unknown, target: Dispatched["target"]) => ({
       send: async (message: string, sendOpts: { auth: Dispatched["auth"] }) => {
         sendAttempts += 1;
+        if (opts.sendThrowsAlways) throw opts.sendThrowsAlways;
         if (sendAttempts === 1 && opts.sendThrowsFirst) throw opts.sendThrowsFirst;
         dispatched.push({ target, message, auth: sendOpts.auth });
         return {};
@@ -648,4 +656,44 @@ async function runFront(
   eq(r.fifo.failures.length, 1, "negative control: …the failure still propagates to the FIFO's loud handler");
 }
 
-console.log(`✓ slack-dm-divert: ${n} assertions passed (classification, window token + fence, addressing, DM auth attrs, dm envelope, carried tail, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression, OPE-1023 named-driver DM carve-out, OPE-525 external-participant policy, OPE-963 pruned-deployment re-delivery)`);
+{
+  const pruned = new Error(
+    'Failed to fetch run key for wrun_01BBBBBBBBBBBBBBBBBBBBBBBB (deployment dpl_BBBBBBBBBBBBBBBBBBBBBBBBBBBB): HTTP 404 Not Found — {"error":{"code":"not_found","message":"Deployment not found."}}',
+  );
+  const r = await runFront(dmEnvelope("Ev17"), { sendThrowsAlways: pruned });
+  eq(r.sendAttempts(), 2, "🔴 the retry still fires exactly once (unchanged from the single-failure class)");
+  eq(r.dispatched.length, 0, "…and the member gets NO answer — both attempts died");
+  eq(r.seatCalls.length, 2, "…the seat was still re-resolved for the retry");
+  eq(r.fifo.failures.length, 1, "…the SECOND failure propagates to the FIFO's loud handler exactly as any other failure does");
+  ok(
+    isUndeliveredAfterHeal(r.fifo.failures[0]?.err),
+    "🔴 …and the error the FIFO receives is TAGGED — the surface's own recorder can tell this class apart from an ordinary send failure",
+  );
+
+  const store = getOperationalStore();
+  const untaggedKey = `Cope970untagged:oe-dm`;
+  recordWakeFailure(untaggedKey, new Error("socket hang up"));
+  await new Promise((res) => setTimeout(res, 0));
+  const untaggedRows = (await store.readAudit({ org: "default", action: "surface.wake_failed" })).filter(
+    (row) => (row.detail as Record<string, unknown> | undefined)?.fifoKey === untaggedKey,
+  );
+  eq(untaggedRows.length, 1, "recordWakeFailure still writes exactly one row for an ordinary failure");
+  eq((untaggedRows[0]!.detail as Record<string, unknown>).reason, undefined, "…and an ORDINARY failure carries NO `reason` field — negative control");
+
+  const taggedKey = `Cope970tagged:oe-dm`;
+  const taggedErr = new Error("Failed to fetch run key for wrun_x (deployment dpl_x): HTTP 404 Not Found");
+  markUndeliveredAfterHeal(taggedErr);
+  recordWakeFailure(taggedKey, taggedErr);
+  await new Promise((res) => setTimeout(res, 0));
+  const taggedRows = (await store.readAudit({ org: "default", action: "surface.wake_failed" })).filter(
+    (row) => (row.detail as Record<string, unknown> | undefined)?.fifoKey === taggedKey,
+  );
+  eq(taggedRows.length, 1, "recordWakeFailure writes exactly one row for the OPE-970 class too");
+  eq(
+    (taggedRows[0]!.detail as Record<string, unknown>).reason,
+    "pruned-deployment-heal-retry-failed",
+    "🔴 …and THIS row carries its OWN reason — an operator (or a future member-facing read) can tell 'the seat is fine now but this message was lost' from an ordinary blip without reading raw message text",
+  );
+}
+
+console.log(`✓ slack-dm-divert: ${n} assertions passed (classification, window token + fence, addressing, DM auth attrs, dm envelope, carried tail, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression, OPE-1023 named-driver DM carve-out, OPE-525 external-participant policy, OPE-963 pruned-deployment re-delivery, OPE-970 undelivered-after-heal reason)`);
