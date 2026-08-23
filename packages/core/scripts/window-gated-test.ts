@@ -308,7 +308,7 @@ console.log("5. replay alias + eve's own replay path (eve step registry):");
         inputSchema: { type: "object", properties: {} },
         resolverSlug: "bash",
         entryKey: "_single",
-        callbacks: { execute: { stepId: single.execute, closure: {} } },
+        callbacks: { execute: { closure: {} } },
       },
     ],
     [],
@@ -337,7 +337,7 @@ console.log("5. replay alias + eve's own replay path (eve step registry):");
         inputSchema: { type: "object", properties: {} },
         resolverSlug: "pretend_reply",
         entryKey: "_unified",
-        callbacks: { execute: { stepId: customNames.execute, closure: {} } },
+        callbacks: { execute: { closure: {} } },
       },
     ],
     [],
@@ -347,20 +347,22 @@ console.log("5. replay alias + eve's own replay path (eve step registry):");
   ok(!("__executeStepFn" in armedBash), "RETIRED (OPE-867): a windowGated entry carries no __executeStepFn stamp either");
 
   const DURABLE_TOOL_CALLBACKS = Symbol.for("eve:durable-dynamic-tool-callbacks");
-  type Ref = { stepId: string; closure: unknown };
+  type Ref = { callback: unknown; closure: unknown };
   const descriptorsOf = (e: unknown): Record<string, Ref | undefined> => ((e as Record<symbol, unknown>)[DURABLE_TOOL_CALLBACKS] as Record<string, Ref | undefined>) ?? {};
   ok(
     readFileSync(join(eveRoot, "dist/src/shared/durable-dynamic-tool-callbacks.js"), "utf8").includes("Symbol.for(`eve:durable-dynamic-tool-callbacks`)"),
     "the descriptor symbol OE stamps is the one the installed eve reads (pinned against eve's own bytes, not from memory)",
   );
   const singleArmed = descriptorsOf((await resolveWindowGated(windowGated("bash", stubEntry("bash")), grainCtx.task())) as unknown);
-  eq(singleArmed.execute?.stepId, replayStepNames("bash", "_single").execute, "a windowGated entry describes its EXECUTE under the step name preRegisterDynamicEntry registered");
-  ok(typeof reg.get(singleArmed.execute!.stepId) === "function", "…and that step id really is registered, which is the second half eve validates");
-  ok(singleArmed.approvalRequest === undefined, "NEGATIVE CONTROL: an approval-less entry describes NO approval phase (describing one would make eve validate a step nothing calls)");
+  ok(typeof singleArmed.execute?.callback === "function", "a windowGated entry describes its EXECUTE with a live callback — the shape eve registers under (toolName, phase)");
+  eq(singleArmed.execute?.closure, {}, "…and an empty closure, which is all eve persists");
+  ok(!("stepId" in (singleArmed.execute as object)), "…and NO stepId — eve refuses that key outright, taking the tool off the seat");
+  ok(singleArmed.approvalRequest === undefined, "NEGATIVE CONTROL: an approval-less entry describes NO approval phase (describing one would make eve register a binding nothing calls)");
   const gatedApproval = descriptorsOf(await resolveWindowGated(windowGated("post_file", withApproval), grainCtx.task()));
-  eq(gatedApproval.approvalRequest?.stepId, replayStepNames("post_file", "_single").approval, "an approval-bearing entry describes its approval REQUEST phase too");
+  ok(typeof gatedApproval.approvalRequest?.callback === "function", "an approval-bearing entry describes its approval REQUEST phase too");
   const kitArmed = descriptorsOf((await resolveWindowGated(windowGatedKit("test_kit", { web_fetch: stubEntry("web_fetch") }), grainCtx.task()) as Record<string, unknown>).web_fetch);
-  eq(kitArmed.execute?.stepId, replayStepNames("test_kit", "web_fetch").execute, "a KIT member describes its execute under the <slug>:<entryKey> step name");
+  ok(typeof kitArmed.execute?.callback === "function", "a KIT member describes its execute the same way");
+  eq(kitArmed.execute?.callback, reg.get(replayStepNames("test_kit", "web_fetch").execute), "…and the alias registry holds that SAME callable (one definition serves both)");
 }
 
 console.log("6. mount refresh on a deployment change (OPE-632):");
@@ -450,7 +452,7 @@ console.log("6. mount refresh on a deployment change (OPE-632):");
     /\{description:(\w+)\.description,execute:createToolExecuteWithAuth\([\s\S]{0,260}?inputSchema:toInputSchema\(\1\.inputSchema\),name:\1\.name/.test(life6),
     "replay serves the DESCRIPTION and INPUT SCHEMA from the durable metadata — which is exactly why the refresh is load-bearing and not a nicety",
   );
-  ok(/toModelOutput:(\w+)=>\{if\(\w+===null\)throw missingCallbackError/.test(life6), "eve's own replay now rebuilds `toModelOutput` from the durable metadata (0.44.0) — see OPE-946");
+  ok(/toModelOutput:(\w+)=>\{if\(\w+===void 0\)throw missingCallbackError/.test(life6), "eve's own replay rebuilds `toModelOutput` from the durable metadata — see OPE-946");
 }
 
 console.log(`\nwindow-gated: ${n} assertions passed.`);

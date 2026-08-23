@@ -170,17 +170,19 @@ console.log("3. replay registration (the unapprovable-card trap):");
   };
   const contextOf = (meta: readonly unknown[]) => ({ get: (key: unknown) => (key === keys.SessionDynamicToolMetadataKey ? meta : undefined) });
   const replayLookup = (meta: readonly unknown[]) => builder.buildResponseAuthorizationTools({ authoredTools: new Map(), context: contextOf(meta) });
+  const lifecycle = (await import(pathToFileURL(join(distSrc, "context/dynamic-tool-lifecycle.js")).href)) as {
+    validateDurableDynamicToolCallbacks(name: string, entry: unknown): Record<string, { closure: Record<string, unknown> }>;
+  };
+  const persisted = lifecycle.validateDurableDynamicToolCallbacks("pretend_publish", entry);
+  ok(persisted.approvalResponse !== undefined, "resolve-time validation persists the approval RESPONSE phase preRegisterDynamicEntry described");
+  ok(!("stepId" in persisted.approvalResponse!), "…as a closure-only reference — a stepId key is refused as the pre-release shape");
   const metaRow = {
     name: "pretend_publish",
     description: "stub publish tool",
     inputSchema: { type: "object", properties: {} },
     resolverSlug: "pretend_publish",
     entryKey: "_single",
-    callbacks: {
-      execute: { stepId: names.execute, closure: {} },
-      approvalRequest: { stepId: names.approval, closure: {} },
-      approvalResponse: { stepId: names.approvalResponse, closure: {} },
-    },
+    callbacks: persisted,
   };
   const replayed = replayLookup([metaRow]);
   eq(replayed.size, 1, "eve replays the pre-registered entry (no skip)");
@@ -198,10 +200,8 @@ console.log("3. replay registration (the unapprovable-card trap):");
     "…and rejects a bystander with OUR reason (eve's fallback reason would differ)",
   );
 
-  const unregistered = replayLookup([
-    { ...metaRow, callbacks: { ...metaRow.callbacks, approvalResponse: { stepId: "eve:dynamic-tool-approval-response:never_registered:_single", closure: {} } } },
-  ]);
-  const bad = unregistered.get("pretend_publish")?.approval as { response?: (c: unknown) => Promise<{ status?: string }> } | undefined;
+  const unregistered = replayLookup([{ ...metaRow, name: "never_registered_tool" }]);
+  const bad = unregistered.get("never_registered_tool")?.approval as { response?: (c: unknown) => Promise<{ status?: string }> } | undefined;
   const badDecision = await bad?.response?.({ responder: alice, session: { initiator: alice } });
   eq(badDecision?.status, "rejected", "an UNREGISTERED response authorizer rejects even the initiator — the trap is real (negative control)");
 }

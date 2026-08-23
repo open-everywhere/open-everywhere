@@ -25,7 +25,7 @@ import { silentRoutineThisTurn } from "../routines/report.js";
 import { resolveOwnWindowToken } from "../access/oneshot-spawn.js";
 import { postUnifiedReply, unifiedEditLocus } from "../channels/unified-reply.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { preRegisterDynamicVariants } from "../access/window-gated.js";
 
 function replierFor(ctx: BindableContext): ReplierLabel | undefined {
   return replierLabelFor(windowGrainOf(ctx), windowTaskLabelOf(ctx));
@@ -158,7 +158,6 @@ export const unifiedReplyEntry = defineTool({
       };
     },
 });
-preRegisterDynamicEntry("reply", "_single", unifiedReplyEntry);
 
 export const baseReplyEntry = defineTool({
         description:
@@ -199,7 +198,7 @@ export const baseReplyEntry = defineTool({
           return { posted: true, id };
         },
 });
-preRegisterDynamicEntry("reply", "_base", baseReplyEntry);
+preRegisterDynamicVariants("reply", { _base: baseReplyEntry, _single: unifiedReplyEntry });
 
 export default defineDynamic({
   events: {

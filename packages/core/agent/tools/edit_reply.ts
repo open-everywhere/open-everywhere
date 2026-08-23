@@ -23,7 +23,7 @@ import { pendingDelegationOwing } from "../access/pending-delegation-signal.js";
 import { silentRoutineThisTurn } from "../routines/report.js";
 import { resolveOwnWindowToken } from "../access/oneshot-spawn.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { preRegisterDynamicVariants } from "../access/window-gated.js";
 
 const editedNote = (platform: string): string =>
   `Message updated on ${platform}. Nobody was notified — an edit changes what is already there, so anything NEW to say still needs a \`reply\`.`;
@@ -100,7 +100,6 @@ export const unifiedEditReplyEntry = defineTool({
     return result;
   },
 });
-preRegisterDynamicEntry("edit_reply", "_single", unifiedEditReplyEntry);
 
 const baseEditReplyEntry = defineTool({
   description:
@@ -129,7 +128,7 @@ const baseEditReplyEntry = defineTool({
     return await editOrReportAmbiguous(locus, input.message_id, input.text, replyAuditFor(bind, "tool"), bind);
   },
 });
-preRegisterDynamicEntry("edit_reply", "_base", baseEditReplyEntry);
+preRegisterDynamicVariants("edit_reply", { _base: baseEditReplyEntry, _single: unifiedEditReplyEntry });
 
 export default defineDynamic({
   events: {

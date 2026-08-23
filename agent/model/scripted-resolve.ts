@@ -147,7 +147,7 @@ function promptShapeFields(
       ...(t.description !== undefined ? { description: t.description } : {}),
       ...(t.inputSchema !== undefined ? { inputSchema: snapshotSchema(t.inputSchema) } : {}),
     })),
-    toolResults: request.toolResults.map((r) => ({ name: r.name, isError: r.isError, output: r.output })),
+    toolResults: request.toolResults.map((r) => ({ id: r.id, name: r.name, isError: r.isError, output: r.output })),
     messages: request.messages.map((m) => ({ role: m.role, text: m.text })),
   };
 }

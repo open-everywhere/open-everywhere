@@ -33,8 +33,16 @@ const builder = await import(pathToFileURL(join(eveRoot, "dist/src/context/build
 const harnessTools = await import(pathToFileURL(join(eveRoot, "dist/src/harness/tools.js")).href);
 const toolSchema = await import(pathToFileURL(join(eveRoot, "dist/src/shared/tool-schema.js")).href);
 const durable = (await import(pathToFileURL(join(eveRoot, "dist/src/shared/durable-dynamic-tool-callbacks.js")).href)) as {
-  createDurableDynamicCallback<A extends unknown[], R>(i: { closure: Record<string, unknown>; callback: (c: Record<string, unknown>, ...a: A) => R; stepId: string }): (...a: A) => R;
+  stampDurableDynamicCallback<T extends (...a: never[]) => unknown>(cb: T, d: { callback: (c: Record<string, unknown>, ...a: never[]) => unknown; closure: Record<string, unknown> }): T;
 };
+
+function described<A extends unknown[], R>(fn: (...a: A) => R): (...a: A) => R {
+  const live = (...a: A): R => fn(...a);
+  return durable.stampDurableDynamicCallback(live as (...a: never[]) => unknown, {
+    callback: (_closure: Record<string, unknown>, ...a: never[]) => fn(...(a as unknown as A)),
+    closure: {},
+  }) as unknown as (...a: A) => R;
+}
 const { defineTool: eveDefineTool } = (await import(pathToFileURL(join(eveRoot, "dist/src/public/tools/index.js")).href)) as {
   defineTool<T extends Record<string, unknown>>(entry: T): T;
 };
@@ -58,21 +66,14 @@ interface BuiltTool {
 }
 
 {
-  const authoredProjection = durable.createDurableDynamicCallback<[{ body: string }], { type: string; value: string }>({
-    closure: {},
-    stepId: "oe:test:probe_tool:toModelOutput",
-    callback: (_c, o) => ({ type: "text", value: `AUTHORED(${o.body})` }),
-  });
-  const entry = eveDefineTool({
+  const authoredProjection = described((o: { body: string }) => ({ type: "text", value: `AUTHORED(${o.body})` }));
+  const built = eveDefineTool({
     description: "probe",
     inputSchema: { type: "object", properties: {} },
-    execute: durable.createDurableDynamicCallback<[], Promise<{ body: string }>>({
-      closure: {},
-      stepId: "oe:test:probe_tool:execute",
-      callback: async () => ({ body: "RAW" }),
-    }),
+    execute: described(async () => ({ body: "RAW" })),
     toModelOutput: authoredProjection,
-  }) as { toModelOutput: (o: { body: string }) => { type: string; value: string } };
+  });
+  const entry = built as unknown as { toModelOutput: (o: { body: string }) => { type: string; value: string } };
   ok((entry as Record<symbol, unknown>)[TOOL_BRAND] === true, "eve's defineTool brands the entry (the resolver's result must be branded or eve refuses it)");
   const ctx = makeCtx();
   await lifecycle.dispatchDynamicToolEvent({
@@ -103,11 +104,7 @@ interface BuiltTool {
   const entry = eveDefineTool({
     description: "undescribed",
     inputSchema: { type: "object", properties: {} },
-    execute: durable.createDurableDynamicCallback<[], Promise<{ body: string }>>({
-      closure: {},
-      stepId: "oe:test:undescribed_tool:execute",
-      callback: async () => ({ body: "RAW" }),
-    }),
+    execute: described(async () => ({ body: "RAW" })),
     toModelOutput: authored,
   });
   const ctx = makeCtx();

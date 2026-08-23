@@ -208,23 +208,30 @@ export function replayStepNames(slug: string, entryKey: string): { execute: stri
 
 const DURABLE_TOOL_CALLBACKS = Symbol.for("eve:durable-dynamic-tool-callbacks");
 
+type ReplayCallback = (closure: Record<string, never>, ...args: never[]) => unknown;
+
+type CallbackPhase = "approvalRequest" | "approvalResponse" | "execute" | "toModelOutput";
+
 interface DurableCallbackReference {
-  readonly stepId: string;
+  readonly callback: ReplayCallback;
   readonly closure: Record<string, never>;
 }
 
-function fillDurableCallbackDescriptors(entry: ReplayableToolEntry, names: ReturnType<typeof replayStepNames>): void {
+function fillDurableCallbackDescriptors(
+  entry: ReplayableToolEntry,
+  callbacks: Partial<Record<CallbackPhase, ReplayCallback>>,
+  options: { readonly closure?: Record<string, string>; readonly overwrite?: boolean } = {},
+): void {
   const holder = entry as unknown as Record<symbol, unknown>;
   const existing = (holder[DURABLE_TOOL_CALLBACKS] as Record<string, DurableCallbackReference | undefined> | undefined) ?? {};
   const next: Record<string, DurableCallbackReference> = {};
   for (const [phase, reference] of Object.entries(existing)) if (reference !== undefined) next[phase] = reference;
-  const fill = (phase: string, stepId: string): void => {
-    if (next[phase] === undefined) next[phase] = { stepId, closure: {} };
-  };
-  fill("execute", names.execute);
-  if (approvalRequestOf(entry) !== undefined) fill("approvalRequest", names.approval);
-  if (approvalResponseOf(entry) !== undefined) fill("approvalResponse", names.approvalResponse);
-  if (typeof entry.toModelOutput === "function") fill("toModelOutput", names.toModelOutput);
+  const closure = (options.closure ?? {}) as Record<string, never>;
+  for (const [phase, callback] of Object.entries(callbacks)) {
+    if (callback === undefined) continue;
+    if (next[phase] !== undefined && options.overwrite !== true) continue;
+    next[phase] = { callback, closure: { ...closure } };
+  }
   Object.defineProperty(holder, DURABLE_TOOL_CALLBACKS, { configurable: true, value: next });
 }
 
@@ -234,24 +241,127 @@ export interface ReplayableToolEntry {
   toModelOutput?(output: any): any;
 }
 
+const MOUNTED_ENTRIES = new Map<string, { readonly entries: Set<ReplayableToolEntry>; variantManaged: boolean }>();
+
+function mountedNameOf(slug: string, entryKey: string): string {
+  return entryKey.startsWith("_") ? slug : entryKey;
+}
+
+function claimMountedName(mountedName: string, entry: ReplayableToolEntry, variantManaged: boolean): void {
+  const held = MOUNTED_ENTRIES.get(mountedName);
+  if (held === undefined) {
+    MOUNTED_ENTRIES.set(mountedName, { entries: new Set([entry]), variantManaged });
+    return;
+  }
+  held.entries.add(entry);
+  if (variantManaged) held.variantManaged = true;
+}
+
+export interface MountedEntryCollision {
+  readonly name: string;
+  readonly entryCount: number;
+  readonly variantManaged: boolean;
+  readonly distinctExecuteCallbacks: number;
+}
+
+export function mountedEntryCollisions(): MountedEntryCollision[] {
+  const out: MountedEntryCollision[] = [];
+  for (const [name, held] of MOUNTED_ENTRIES) {
+    if (held.entries.size < 2) continue;
+    const callbacks = new Set<unknown>();
+    for (const entry of held.entries) {
+      const described = (entry as unknown as Record<symbol, unknown>)[DURABLE_TOOL_CALLBACKS] as
+        | Record<string, DurableCallbackReference | undefined>
+        | undefined;
+      callbacks.add(described?.execute?.callback);
+    }
+    out.push({ distinctExecuteCallbacks: callbacks.size, entryCount: held.entries.size, name, variantManaged: held.variantManaged });
+  }
+  return out;
+}
+
+export function preRegisterDynamicVariants(mountedName: string, variants: Readonly<Record<string, ReplayableToolEntry>>): void {
+  const entryKeys = Object.keys(variants);
+  if (entryKeys.length < 2) {
+    throw new Error(`preRegisterDynamicVariants("${mountedName}"): needs at least two variants — use preRegisterDynamicEntry for one.`);
+  }
+  for (const entryKey of entryKeys) {
+    if (typeof variants[entryKey].toModelOutput === "function") {
+      throw new Error(
+        `preRegisterDynamicVariants("${mountedName}"): variant "${entryKey}" authors toModelOutput, which the projection registry keys by mounted name alone and cannot disambiguate.`,
+      );
+    }
+  }
+  const pick = (closure: unknown): { entryKey: string; entry: ReplayableToolEntry } => {
+    const entryKey = (closure as { entryKey?: unknown } | undefined)?.entryKey;
+    if (typeof entryKey !== "string" || variants[entryKey] === undefined) {
+      throw new Error(
+        `Dynamic tool "${mountedName}" was replayed with no variant key in its durable closure (got ${JSON.stringify(entryKey)}). ` +
+          `Its metadata predates the variant dispatcher and cannot say which implementation the session mounted. Start a new session.`,
+      );
+    }
+    return { entry: variants[entryKey], entryKey };
+  };
+  const shared: Partial<Record<CallbackPhase, ReplayCallback>> = {};
+  shared.execute = ((closure: unknown, input: unknown, ctx: unknown) => pick(closure).entry.execute(input, ctx)) as ReplayCallback;
+  const hasApprovalRequest = entryKeys.some((k) => approvalRequestOf(variants[k]) !== undefined);
+  const hasApprovalResponse = entryKeys.some((k) => approvalResponseOf(variants[k]) !== undefined);
+  if (hasApprovalRequest) {
+    shared.approvalRequest = ((closure: unknown, actx: unknown) => {
+      const { entry, entryKey } = pick(closure);
+      const request = approvalRequestOf(entry);
+      if (request === undefined) throw new Error(`Dynamic tool "${mountedName}" variant "${entryKey}" has no approval request policy.`);
+      return request(actx);
+    }) as ReplayCallback;
+  }
+  if (hasApprovalResponse) {
+    shared.approvalResponse = ((closure: unknown, rctx: unknown) => {
+      const { entry, entryKey } = pick(closure);
+      const response = approvalResponseOf(entry);
+      if (response === undefined) throw new Error(`Dynamic tool "${mountedName}" variant "${entryKey}" has no approval response policy.`);
+      return response(rctx);
+    }) as ReplayCallback;
+  }
+  const reg = stepRegistry();
+  for (const entryKey of entryKeys) {
+    const entry = variants[entryKey];
+    const names = replayStepNames(mountedName, entryKey);
+    reg.set(names.execute, ((_cv: unknown, input: unknown, ctx: unknown) => entry.execute(input, ctx)) as ReplayCallback);
+    const approval = approvalRequestOf(entry);
+    if (approval !== undefined) reg.set(names.approval, ((_cv: unknown, actx: unknown) => approval(actx)) as ReplayCallback);
+    const approvalResponse = approvalResponseOf(entry);
+    if (approvalResponse !== undefined) reg.set(names.approvalResponse, ((_cv: unknown, rctx: unknown) => approvalResponse(rctx)) as ReplayCallback);
+    const own: Partial<Record<CallbackPhase, ReplayCallback>> = { execute: shared.execute };
+    if (approval !== undefined) own.approvalRequest = shared.approvalRequest;
+    if (approvalResponse !== undefined) own.approvalResponse = shared.approvalResponse;
+    fillDurableCallbackDescriptors(entry, own, { closure: { entryKey }, overwrite: true });
+    claimMountedName(mountedName, entry, true);
+  }
+}
+
 export function preRegisterDynamicEntry(slug: string, entryKey: string, entry: ReplayableToolEntry): void {
   const names = replayStepNames(slug, entryKey);
   const reg = stepRegistry();
-  reg.set(names.execute, (_cv: unknown, input: unknown, ctx: unknown) => entry.execute(input, ctx));
+  claimMountedName(mountedNameOf(slug, entryKey), entry, false);
+  const callbacks: Partial<Record<CallbackPhase, ReplayCallback>> = {};
+  callbacks.execute = ((_cv: unknown, input: unknown, ctx: unknown) => entry.execute(input, ctx)) as ReplayCallback;
+  reg.set(names.execute, callbacks.execute);
   const approval = approvalRequestOf(entry);
   if (approval !== undefined) {
-    reg.set(names.approval, (_cv: unknown, actx: unknown) => approval(actx));
+    callbacks.approvalRequest = ((_cv: unknown, actx: unknown) => approval(actx)) as ReplayCallback;
+    reg.set(names.approval, callbacks.approvalRequest);
   }
   const approvalResponse = approvalResponseOf(entry);
   if (approvalResponse !== undefined) {
-    reg.set(names.approvalResponse, (_cv: unknown, rctx: unknown) => approvalResponse(rctx));
+    callbacks.approvalResponse = ((_cv: unknown, rctx: unknown) => approvalResponse(rctx)) as ReplayCallback;
+    reg.set(names.approvalResponse, callbacks.approvalResponse);
   }
   if (typeof entry.toModelOutput === "function") {
-    const mountedName = entryKey.startsWith("_") ? slug : entryKey;
-    registerReplayModelProjection(mountedName, entry.toModelOutput.bind(entry));
-    reg.set(names.toModelOutput, (_cv: unknown, out: unknown) => (entry.toModelOutput as (o: unknown) => unknown)(out));
+    registerReplayModelProjection(mountedNameOf(slug, entryKey), entry.toModelOutput.bind(entry));
+    callbacks.toModelOutput = ((_cv: unknown, out: unknown) => (entry.toModelOutput as (o: unknown) => unknown)(out)) as ReplayCallback;
+    reg.set(names.toModelOutput, callbacks.toModelOutput);
   }
-  fillDurableCallbackDescriptors(entry, names);
+  fillDurableCallbackDescriptors(entry, callbacks);
 }
 
 function armEntry(name: string, entry: GatedToolEntry): GatedToolEntry {

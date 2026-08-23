@@ -47,6 +47,7 @@ interface ToolCase {
   readonly ctx: unknown;
   readonly env?: Readonly<Record<string, string>>;
   readonly settings?: AgentSettingsOverrides;
+  readonly variantManaged?: boolean;
 }
 const slackCtx = { channel: { kind: "slack" }, session: { auth: { current: { attributes: {} } } } };
 
@@ -75,10 +76,10 @@ const taskCtx = {
   session: { auth: { current: { attributes: { oe_platform: "slack", oe_grain: "task" } } } },
 };
 const CASES: readonly ToolCase[] = [
-  { slug: "reply", entryKey: "_base", ctx: slackCtx },
-  { slug: "reply", entryKey: "_single", ctx: unifiedCtx },
-  { slug: "edit_reply", entryKey: "_base", ctx: slackCtx },
-  { slug: "edit_reply", entryKey: "_single", ctx: unifiedCtx },
+  { slug: "reply", entryKey: "_base", ctx: slackCtx, variantManaged: true },
+  { slug: "reply", entryKey: "_single", ctx: unifiedCtx, variantManaged: true },
+  { slug: "edit_reply", entryKey: "_base", ctx: slackCtx, variantManaged: true },
+  { slug: "edit_reply", entryKey: "_single", ctx: unifiedCtx, variantManaged: true },
   { slug: "react", entryKey: "_single", ctx: slackCtx },
   { slug: "read_channel", entryKey: "_single", ctx: slackCtx, settings: { tools: { genericReadVerbs: true } } },
   { slug: "read_thread", entryKey: "_single", ctx: slackCtx, settings: { tools: { genericReadVerbs: true } } },
@@ -132,8 +133,8 @@ console.log("1. source scan (factored shape, closed inventory):");
     );
     if (authorsDefineTool) {
       ok(
-        src.includes("preRegisterDynamicEntry("),
-        `${f} authors a defineTool entry but never calls preRegisterDynamicEntry — its toModelOutput projection would not survive eve's replay rebuild`,
+        src.includes("preRegisterDynamicEntry(") || src.includes("preRegisterDynamicVariants("),
+        `${f} authors a defineTool entry but pre-registers neither a single entry nor a variant set — its durable descriptor would be missing and eve would drop the resolver's whole result`,
       );
     }
   }
@@ -195,10 +196,10 @@ console.log("4. installed-eve replay (no skip):");
     inputSchema: { type: "object", properties: {} },
     resolverSlug: c.slug,
     entryKey: c.entryKey,
-    callbacks: { execute: { stepId: replayStepNames(c.slug, c.entryKey).execute, closure: {} } },
+    callbacks: { execute: { closure: {} } },
   }));
   const replayed = lifecycle.replayDynamicSessionTools(meta, []);
-  eq(replayed.length, CASES.length, `eve's replay path finds ALL ${CASES.length} entries fed under the alias name (the alias is a real, functioning step-registry entry)`);
+  eq(replayed.length, CASES.length, `eve's replay path mounts ALL ${CASES.length} durable rows back into tools`);
 }
 
 console.log("5. durable callback descriptors across the REAL tool inventory (OPE-867/OPE-903):");
@@ -219,8 +220,9 @@ console.log("5. durable callback descriptors across the REAL tool inventory (OPE
     ContinuationTokenKey: unknown;
   };
   const { ChannelKey } = (await import(distUrl("runtime/sessions/runtime-context-keys.js"))) as { ChannelKey: unknown };
-  const REG_SYMBOL = Symbol.for("@workflow/core//registeredSteps");
-  const nativeReg = (): Map<string, unknown> => (globalThis as Record<symbol, unknown>)[REG_SYMBOL] as Map<string, unknown>;
+  const nativeDurable = (await import(distUrl("shared/durable-dynamic-tool-callbacks.js"))) as {
+    lookupDurableDynamicCallback(toolName: string, phase: string): ((c: Record<string, unknown>, ...a: unknown[]) => unknown) | undefined;
+  };
 
   interface FixtureCtx {
     readonly channel?: { readonly kind?: string; readonly continuationToken?: string };
@@ -259,17 +261,21 @@ console.log("5. durable callback descriptors across the REAL tool inventory (OPE
       const event = { type: "session.started" };
 
       await nativeLifecycle.dispatchDynamicToolEvent({ ctx, resolvers: [resolverDescriptor], event, messages: [] });
-      const metadata = ctx.get(nativeKeys.SessionDynamicToolMetadataKey) as { entryKey: string; callbacks: { execute: { stepId: string } } }[];
+      const metadata = ctx.get(nativeKeys.SessionDynamicToolMetadataKey) as { name: string; entryKey: string; callbacks: { execute: Record<string, unknown> } }[];
       const row = metadata?.length === 1 ? metadata[0] : metadata?.find((r) => r.entryKey === c.entryKey);
       ok(row !== undefined, `${c.slug}:${c.entryKey} durable metadata row exists after native resolve`);
       if (row === undefined) continue;
       eq(
-        row.callbacks.execute.stepId,
-        replayStepNames(c.slug, c.entryKey).execute,
-        `${c.slug}:${c.entryKey} resolved with the durable execute descriptor preRegisterDynamicEntry filled`,
+        row.callbacks.execute,
+        { closure: c.variantManaged === true ? { entryKey: c.entryKey } : {} },
+        `${c.slug}:${c.entryKey} persists the descriptor's closure and nothing else`,
       );
-      ok(!row.callbacks.execute.stepId.includes(sessionId), `${c.slug}:${c.entryKey} …and the id names no session, so a fresh invocation re-registers the same one`);
-      ok(typeof nativeReg().get(row.callbacks.execute.stepId) === "function", `${c.slug}:${c.entryKey} …and the step id it names IS registered — the second half eve validates`);
+      ok(!("stepId" in row.callbacks.execute), `${c.slug}:${c.entryKey} …and carries NO stepId — that key is refused as the pre-release shape`);
+      ok(!JSON.stringify(row.callbacks.execute).includes(sessionId), `${c.slug}:${c.entryKey} …and names no session, so a fresh invocation rebinds the same identity`);
+      ok(
+        typeof nativeDurable.lookupDurableDynamicCallback(row.name, "execute") === "function",
+        `${c.slug}:${c.entryKey} …and resolve BOUND the live callback under (${row.name}, execute) — the second half eve validates`,
+      );
       const replayedRow = nativeLifecycle.replayDynamicSessionTools([row], []);
       eq(replayedRow.length, 1, `${c.slug}:${c.entryKey} eve replays the durable row back into a mounted tool`);
     } finally {

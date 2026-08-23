@@ -21,11 +21,12 @@ const MADE_UP_WAKE = "wake-that-never-existed-0597";
 
 const NO_ADDRESS_COPY = "it has NO reply address";
 
-function replyResultOf(request: RecordedRequest | undefined): { isError: boolean; text: string } | undefined {
-  const results = request?.toolResults.filter((t) => t.name === "reply") ?? [];
-  const result = results[results.length - 1];
-  if (!result) return undefined;
-  return { isError: result.isError, text: JSON.stringify(result.output) };
+function replyResultById(requests: readonly RecordedRequest[], callId: string): { isError: boolean; text: string } | undefined {
+  for (const request of requests) {
+    const result = request.toolResults.find((t) => t.id === callId && t.name === "reply");
+    if (result !== undefined) return { isError: result.isError, text: JSON.stringify(result.output) };
+  }
+  return undefined;
 }
 
 function disclosedTurnWake(text: string): string | undefined {
@@ -63,8 +64,8 @@ test("a settlement turn holds the task's own address from the notification, befo
   const taskMode = typeof output?.taskId === "string";
 
   const ingressedReply = await waitFor(
-    () => replyResultOf(dispatched.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "reply"))),
-    "the dispatch turn's reply result",
+    () => replyResultById(dispatched.requests, "t597-reply-ingressed"),
+    "the dispatch turn's `t597-reply-ingressed` result",
   );
   expect(ingressedReply.isError).toBe(true);
   expect(ingressedReply.text).not.toContain(NO_ADDRESS_COPY);
@@ -99,8 +100,8 @@ test("a settlement turn holds the task's own address from the notification, befo
   disposeLater(settlement);
 
   const early = await waitFor(
-    () => replyResultOf(settlement.requests.find((r) => r.role === "parent" && r.stepIndex === 1)),
-    "the settlement turn's FIRST reply result — the call made before any task view",
+    () => replyResultById(settlement.requests, "t597-reply-unread"),
+    "the settlement turn's `t597-reply-unread` result — the call made before any task view",
   );
   expect(early.isError).toBe(true);
   expect(early.text).not.toContain(NO_ADDRESS_COPY);
@@ -117,8 +118,8 @@ test("a settlement turn holds the task's own address from the notification, befo
   expect(JSON.stringify(view.output)).toContain(CHILD_ANSWER);
 
   const recovered = await waitFor(
-    () => replyResultOf(settlement.requests.find((r) => r.role === "parent" && r.stepIndex === 3)),
-    "the settlement turn's SECOND reply result — the call made after the task view",
+    () => replyResultById(settlement.requests, "t597-reply-recovered"),
+    "the settlement turn's `t597-reply-recovered` result — the call made after the task view",
   );
   expect(recovered.isError).toBe(true);
   expect(recovered.text).not.toContain(NO_ADDRESS_COPY);
@@ -136,6 +137,7 @@ test("a settlement turn holds the task's own address from the notification, befo
   const posts = await readAuditRows({ actions: ["reply.post"], sinceIso });
   const postWakes = [...new Set(posts.map((r) => String(r.detail?.wakeId)))].sort();
   expect(postWakes).toEqual([dispatchWake!, earlyWake!].sort());
+  expect(posts.map((r) => String(r.detail?.id)).filter((id) => !id.startsWith("spoof-unified-"))).toEqual([]);
 
   const wakeRows = await readAuditRows({ actions: ["unified.task_wake"], sinceIso });
   const mine = wakeRows.filter((r) => String(r.detail?.task) === taskId);

@@ -24,18 +24,34 @@ const { defineTool } = (await import(u("public/tools/index.js"))) as {
 const lifecycle = (await import(u("context/dynamic-tool-lifecycle.js"))) as {
   dispatchDynamicToolEvent(e: unknown): Promise<void>;
   replayDynamicSessionTools(meta: readonly unknown[], resolvers: readonly unknown[]): { name: string; approval?: unknown }[];
+  refreshDynamicSessionToolsForRuntimeRevision?(i: unknown): Promise<void>;
 };
+type ReplayFn = (closure: Record<string, unknown>, ...a: unknown[]) => unknown;
 const durable = (await import(u("shared/durable-dynamic-tool-callbacks.js"))) as {
-  createDurableDynamicCallback<A extends unknown[], R>(i: { closure: Record<string, unknown>; callback: (c: Record<string, unknown>, ...a: A) => R; stepId: string }): (...a: A) => R;
+  stampDurableDynamicCallback<T extends (...a: never[]) => unknown>(cb: T, d: { callback: ReplayFn; closure: Record<string, unknown> }): T;
+  lookupDurableDynamicCallback(toolName: string, phase: string): ReplayFn | undefined;
+  hasUnregisteredDurableDynamicCallbacks(meta: readonly { callbacks: Record<string, unknown>; name: string }[]): boolean;
 };
 const keys = (await import(u("context/keys.js"))) as { SessionIdKey: unknown; SessionDynamicToolMetadataKey: unknown };
 const { dispatchDynamicToolEvent, replayDynamicSessionTools } = lifecycle;
 const { SessionIdKey, SessionDynamicToolMetadataKey } = keys;
 
-ok(!("hydrateDynamicSessionTools" in lifecycle), "eve 0.44.0 no longer exports hydrateDynamicSessionTools — the durable descriptor replaced it");
+ok(!("hydrateDynamicSessionTools" in lifecycle), "eve no longer exports hydrateDynamicSessionTools — the durable descriptor replaced it");
+ok(
+  typeof lifecycle.refreshDynamicSessionToolsForRuntimeRevision === "function",
+  "…and refreshDynamicSessionToolsForRuntimeRevision is the replacement heal — it re-runs the session.started resolvers",
+);
 
-const REG_SYMBOL = Symbol.for("@workflow/core//registeredSteps");
-const registry = (): Map<string, unknown> => (globalThis as Record<symbol, unknown>)[REG_SYMBOL] as Map<string, unknown>;
+const REG_SYMBOL = Symbol.for("eve:dynamic-tool-callbacks");
+const registry = (): Map<string, Map<string, unknown>> => (globalThis as Record<symbol, unknown>)[REG_SYMBOL] as Map<string, Map<string, unknown>>;
+
+function described<A extends unknown[], R>(fn: (...a: A) => R): (...a: A) => R {
+  const live = (...a: A): R => fn(...a);
+  return durable.stampDurableDynamicCallback(live as (...a: never[]) => unknown, {
+    callback: ((_closure: Record<string, unknown>, ...a: unknown[]) => fn(...(a as A))) as ReplayFn,
+    closure: {},
+  }) as unknown as (...a: A) => R;
+}
 
 interface FakeCtx {
   get(k: unknown): unknown;
@@ -59,29 +75,21 @@ function makeCtx(sessionId: string): FakeCtx {
 
 interface DurableRow {
   readonly name: string;
-  readonly callbacks: {
-    readonly execute: { readonly stepId: string; readonly closure: Record<string, unknown> };
-    readonly approvalRequest?: { readonly stepId: string; readonly closure: Record<string, unknown> };
-    readonly approvalResponse?: { readonly stepId: string; readonly closure: Record<string, unknown> };
-  };
+  readonly callbacks: Record<string, { readonly closure: Record<string, unknown> } | undefined>;
 }
 
-const EXECUTE_STEP = "oe:test:synthetic_probe_tool:execute";
+const TOOL = "synthetic_probe_tool";
 
 console.log("1. execute-only synthetic tool (durable descriptor contract):");
 {
   let callCount = 0;
-  const execute = durable.createDurableDynamicCallback<[unknown, unknown], Promise<{ ok: boolean; callCount: number }>>({
-    closure: {},
-    stepId: EXECUTE_STEP,
-    callback: async () => {
-      callCount++;
-      return { ok: true, callCount };
-    },
+  const execute = described(async () => {
+    callCount++;
+    return { ok: true, callCount };
   });
   const entry = defineTool({ description: "synthetic probe tool", inputSchema: { type: "object", properties: {} }, execute });
 
-  const resolverDescriptor = { slug: "synthetic_probe_tool", eventNames: ["session.started"], events: { "session.started": async () => entry } };
+  const resolverDescriptor = { slug: TOOL, eventNames: ["session.started"], events: { "session.started": async () => entry } };
   const event = { type: "session.started" };
 
   const ctx = makeCtx("sess-ope867-native-heal-1");
@@ -89,13 +97,15 @@ console.log("1. execute-only synthetic tool (durable descriptor contract):");
   const metadata = ctx.get(SessionDynamicToolMetadataKey) as DurableRow[];
   ok(Array.isArray(metadata) && metadata.length === 1, "session.started resolve stored ONE durable metadata row");
   const row = metadata[0]!;
-  eq(row.callbacks.execute.stepId, EXECUTE_STEP, "the durable row carries the CODE-OWNED step id, not a derived one");
-  ok(typeof registry().get(EXECUTE_STEP) === "function", "warm path: the step fn IS in the process registry (the helper registered it at authoring time)");
+  eq(row.callbacks.execute, { closure: {} }, "the PERSISTED row carries only the closure — identity travels as (toolName, phase), not in the row");
+  ok(!("stepId" in (row.callbacks.execute as object)), "…and it carries NO stepId — that key is the refused pre-release shape");
+  ok(typeof durable.lookupDurableDynamicCallback(TOOL, "execute") === "function", "warm path: resolve REGISTERED the live callback under (toolName, phase)");
 
   const ctx2 = makeCtx("sess-ope867-native-heal-1-other");
   await dispatchDynamicToolEvent({ ctx: ctx2, resolvers: [resolverDescriptor], event, messages: [] });
   const row2 = (ctx2.get(SessionDynamicToolMetadataKey) as DurableRow[])[0]!;
-  eq(row2.callbacks.execute.stepId, row.callbacks.execute.stepId, "a DIFFERENT session derives the SAME step id — the id names code, never a session");
+  eq(row2.name, row.name, "a DIFFERENT session resolves the SAME tool name — the binding names code, never a session");
+  eq(row2.callbacks.execute, row.callbacks.execute, "…and the same persisted descriptor, so replay in either session finds the same binding");
 
   const undescribed = defineTool({
     description: "undescribed probe tool",
@@ -119,69 +129,86 @@ console.log("1. execute-only synthetic tool (durable descriptor contract):");
     "NEGATIVE CONTROL: an entry with an undescribed execute stores NO durable row — eve refuses it rather than mounting a tool it could never replay",
   );
 
+  const stale = defineTool({ description: "stale-shape probe", inputSchema: { type: "object", properties: {} }, execute: async () => ({ ok: true }) });
+  Object.defineProperty(stale, Symbol.for("eve:durable-dynamic-tool-callbacks"), {
+    configurable: true,
+    value: { execute: { stepId: "eve:framework-dynamic:stale_probe_tool:_single", closure: {} } },
+  });
+  const ctxStale = makeCtx("sess-ope867-native-heal-stale");
+  await dispatchDynamicToolEvent({
+    ctx: ctxStale,
+    resolvers: [{ slug: "stale_probe_tool", eventNames: ["session.started"], events: { "session.started": async () => stale } }],
+    event,
+    messages: [],
+  });
+  eq(
+    (ctxStale.get(SessionDynamicToolMetadataKey) as DurableRow[]).length,
+    0,
+    "NEGATIVE CONTROL: a `{stepId, closure}` descriptor is REFUSED — the pre-release shape unmounts the tool rather than degrading",
+  );
+
   (globalThis as Record<symbol, unknown>)[REG_SYMBOL] = new Map();
   ok(registry().size === 0, "registry wiped (cold-start simulation)");
   const cold = replayDynamicSessionTools([row], []);
-  eq(cold.length, 1, "RED: a cold-resumed replay still MOUNTS the tool (0.44.0 does not drop it silently)");
-  ok(registry().get(EXECUTE_STEP) === undefined, "RED: …and its step function is genuinely absent — the tool would throw if called");
+  eq(cold.length, 1, "RED: a cold-resumed replay still MOUNTS the tool (eve does not drop it silently)");
+  ok(durable.lookupDurableDynamicCallback(TOOL, "execute") === undefined, "RED: …and its binding is genuinely absent — the tool would throw if called");
+  ok(
+    durable.hasUnregisteredDurableDynamicCallbacks([{ callbacks: row.callbacks as Record<string, unknown>, name: row.name }]),
+    "RED: …and eve's own detector reports it, which is what triggers the resolver re-run on resume",
+  );
 
-  const rebound = durable.createDurableDynamicCallback<[unknown, unknown], Promise<{ ok: boolean; callCount: number }>>({
-    closure: {},
-    stepId: EXECUTE_STEP,
-    callback: async () => {
-      callCount++;
-      return { ok: true, callCount };
-    },
-  });
-  void rebound;
-  ok(typeof registry().get(EXECUTE_STEP) === "function", "GREEN: the module-scope registration puts the SAME step id back after a simulated cold start");
+  const ctxWarm = makeCtx("sess-ope867-native-heal-1-resumed");
+  await dispatchDynamicToolEvent({ ctx: ctxWarm, resolvers: [resolverDescriptor], event, messages: [] });
+  ok(typeof durable.lookupDurableDynamicCallback(TOOL, "execute") === "function", "GREEN: re-resolving rebinds the SAME (toolName, phase) after a simulated cold start");
+  ok(
+    !durable.hasUnregisteredDurableDynamicCallbacks([{ callbacks: row.callbacks as Record<string, unknown>, name: row.name }]),
+    "…and eve's detector agrees the row is bound again",
+  );
   const replayed = replayDynamicSessionTools([row], []);
-  eq(replayed.length === 1 && replayed[0]!.name, "synthetic_probe_tool", "post-heal replay returns the tool under its mounted name");
+  eq(replayed.length === 1 && replayed[0]!.name, TOOL, "post-heal replay returns the tool under its mounted name");
 
-  const stepFn = registry().get(EXECUTE_STEP) as (cv: unknown, input: unknown, ctx: unknown) => Promise<{ ok: boolean; callCount: number }>;
-  const result = await stepFn(row.callbacks.execute.closure, {}, {});
-  eq(result, { ok: true, callCount: 1 }, "the restored step fn IS the real closure (its own counter moved), not a mismatched tool");
+  const bound = durable.lookupDurableDynamicCallback(TOOL, "execute")!;
+  const result = (await bound(row.callbacks.execute!.closure, {}, {})) as { ok: boolean; callCount: number };
+  eq(result, { ok: true, callCount: 1 }, "the restored binding IS the real closure (its own counter moved), not a mismatched tool");
 }
 
 console.log("2. approval-bearing synthetic tool (OPE-575 response-half):");
 {
-  const REQUEST_STEP = "oe:test:synthetic_probe_approval_tool:approvalRequest";
-  const RESPONSE_STEP = "oe:test:synthetic_probe_approval_tool:approvalResponse";
-  const EXEC_STEP = "oe:test:synthetic_probe_approval_tool:execute";
-  const mk = <A extends unknown[], R>(stepId: string, fn: (...a: A) => R): ((...a: A) => R) =>
-    durable.createDurableDynamicCallback<A, R>({ closure: {}, stepId, callback: (_c, ...a: A) => fn(...a) });
-
+  const APPROVAL_TOOL = "synthetic_probe_approval_tool";
   const entry = defineTool({
     description: "synthetic approval probe",
     inputSchema: { type: "object", properties: {} },
-    execute: mk(EXEC_STEP, async () => ({ ok: true })),
+    execute: described(async () => ({ ok: true })),
     approval: {
-      request: mk(REQUEST_STEP, async () => "user-approval"),
-      response: mk(RESPONSE_STEP, async () => ({ status: "approved", reason: "probe" })),
+      request: described(async () => "user-approval"),
+      response: described(async () => ({ status: "approved", reason: "probe" })),
     },
   });
-  const resolverDescriptor = { slug: "synthetic_probe_approval_tool", eventNames: ["session.started"], events: { "session.started": async () => entry } };
+  const resolverDescriptor = { slug: APPROVAL_TOOL, eventNames: ["session.started"], events: { "session.started": async () => entry } };
   const ctx = makeCtx("sess-ope867-native-heal-2");
   const event = { type: "session.started" };
   await dispatchDynamicToolEvent({ ctx, resolvers: [resolverDescriptor], event, messages: [] });
   const row = (ctx.get(SessionDynamicToolMetadataKey) as DurableRow[])[0]!;
-  eq(row.callbacks.approvalRequest?.stepId, REQUEST_STEP, "the approval REQUEST phase carries its own durable descriptor");
-  eq(row.callbacks.approvalResponse?.stepId, RESPONSE_STEP, "…and so does the approval RESPONSE phase (the OPE-575 half)");
+  ok(row.callbacks.approvalRequest !== undefined, "the approval REQUEST phase carries its own durable descriptor");
+  ok(row.callbacks.approvalResponse !== undefined, "…and so does the approval RESPONSE phase (the OPE-575 half)");
+  ok(typeof durable.lookupDurableDynamicCallback(APPROVAL_TOOL, "approvalResponse") === "function", "…and resolve bound the response phase under its own (toolName, phase)");
 
   type ApprovalPair = { request(a: unknown): Promise<unknown>; response(a: unknown): Promise<{ status: string; reason?: string }> };
   const healthy = replayDynamicSessionTools([row], [])[0]!.approval as ApprovalPair;
   eq(await healthy.request({}), "user-approval", "replay serves the REAL approval request policy");
   eq(await healthy.response({}), { status: "approved", reason: "probe" }, "replay serves the REAL approval response authorizer");
 
-  registry().delete(RESPONSE_STEP);
+  registry().get(APPROVAL_TOOL)!.delete("approvalResponse");
   const degraded = replayDynamicSessionTools([row], [])[0]!.approval as ApprovalPair;
   const verdict = await degraded.response({});
-  eq(verdict.status, "rejected", "RED: a MISSING approval-response step degrades to reject-everything (OPE-575's hazard, stated by eve itself)");
-  ok(String(verdict.reason).includes(RESPONSE_STEP), "…and the refusal names the step id that went missing, so the cause is countable");
+  eq(verdict.status, "rejected", "RED: a MISSING approval-response binding degrades to reject-everything (OPE-575's hazard, stated by eve itself)");
+  ok(String(verdict.reason).includes(APPROVAL_TOOL), "…and the refusal names the tool whose binding went missing, so the cause is countable");
+  ok(String(verdict.reason).includes("approvalResponse"), "…and the phase, so the cause is not merely the tool");
 
-  mk(RESPONSE_STEP, async () => ({ status: "approved", reason: "probe" }));
+  const ctxAgain = makeCtx("sess-ope867-native-heal-2-resumed");
+  await dispatchDynamicToolEvent({ ctx: ctxAgain, resolvers: [resolverDescriptor], event, messages: [] });
   const restored = replayDynamicSessionTools([row], [])[0]!.approval as ApprovalPair;
-  eq(await restored.response({}), { status: "approved", reason: "probe" }, "GREEN: re-registering the response step restores the real authorizer");
+  eq(await restored.response({}), { status: "approved", reason: "probe" }, "GREEN: re-resolving restores the real authorizer");
 }
 
 console.log(`\ndynamic-tool-native-heal: ${n} assertions passed.`);

@@ -34,6 +34,7 @@ export interface SeatScript {
 export type ScriptedRole = "parent" | "child";
 
 export interface RecordedToolResult {
+  readonly id: string;
   readonly name: string;
   readonly isError: boolean;
   readonly output: unknown;
