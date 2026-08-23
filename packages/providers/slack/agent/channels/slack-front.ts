@@ -561,14 +561,15 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         return OK();
       }
       if (dev.botId) {
-        const { botId: selfBotId } = await getBotIdentity();
         args.waitUntil(
-          auditDmBotAuthorDrop(dev, decision.dmKind, selfBotId).then((audited) => {
-            if (audited) {
+          (async () => {
+            const { botId: selfBotId } = await getBotIdentity();
+            if (await auditDmBotAuthorDrop(dev, decision.dmKind, selfBotId)) {
               console.log(
                 `[open-everywhere:slack-front] ${decision.dmKind} ${dev.channelId}/${dev.ts}: bot-authored DM dropped — no turn (bot ${dev.botId} in team ${dev.teamId ?? "?"}; the DM door admits no bot author)`,
               );
             }
+          })().catch(() => {
           }),
         );
         return OK();

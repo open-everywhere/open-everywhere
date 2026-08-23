@@ -7,6 +7,7 @@ import { registerConfig, registerIdentityMapper, defineDomain, getOperationalSto
 import { bindSlack } from "../agent/channels/slack-identity.js";
 import { slackTenantAdmission } from "../agent/channels/slack-tenant-fence.js";
 import { admitInbound } from "../agent/channels/slack.js";
+import { stripComments } from "./_source-scan-utils.js";
 
 for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_ORG", "OE_TRUST", "OE_TEST_DRIVER_IDS", MULTI_TENANT_ENV]) {
   delete process.env[k];
@@ -143,17 +144,20 @@ async function dropRows(ts: string) {
   }
   ok(/auditJoinWakeDropped\(ev, p, UNADMITTED_TENANT_DROP_REASON\)/.test(engagementDoor), "the channel-JOIN door carries it too — an intro is a model turn, and being invited from a foreign workspace is exactly the delivery to refuse");
 
+  const engagementCode = stripComments(engagementDoor);
   const fnRe = /export async function (\w+)\(/g;
   const starts: { name: string; at: number }[] = [];
-  for (let m = fnRe.exec(engagementDoor); m; m = fnRe.exec(engagementDoor)) starts.push({ name: m[1]!, at: m.index });
+  for (let m = fnRe.exec(engagementCode); m; m = fnRe.exec(engagementCode)) starts.push({ name: m[1]!, at: m.index });
   let dispatching = 0;
   for (let i = 0; i < starts.length; i++) {
-    const body = engagementDoor.slice(starts[i]!.at, starts[i + 1]?.at ?? engagementDoor.length);
+    const body = engagementCode.slice(starts[i]!.at, starts[i + 1]?.at ?? engagementCode.length);
     if (!/deps\.wake\(/.test(body)) continue;
     dispatching++;
     ok(/tenantFenceDeclined\(|slackTenantAdmission\(/.test(body), `TOTALITY: ${starts[i]!.name} dispatches a turn, so it must consult the tenant fence`);
   }
   ok(dispatching >= 4, `…and the scan actually found the dispatching routes (${dispatching}) — an empty scan would pass vacuously`);
+  ok(!/deps\.wake\(/.test(stripComments("/** talks about `deps.wake(...)` */\nconst x = 1;")), "the comment strip really removes a doc-comment mention (the scan reads code)");
+  ok(/deps\.wake\(/.test(stripComments("await deps.wake(input);")), "…and really keeps a genuine call (it is not stripping everything)");
 }
 
 console.log(`slack-tenant-fence: ${n} assertions passed`);
