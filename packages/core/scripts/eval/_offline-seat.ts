@@ -7,12 +7,15 @@ import updateStatusTool from "../../agent/tools/update_status.js";
 import standDownTool from "../../agent/tools/stand_down.js";
 import reactDynamic from "../../agent/tools/react.js";
 import spawnThreadSessionDynamic from "../../agent/tools/spawn_thread_session.js";
+import readChannelDynamic from "../../agent/tools/read_channel.js";
+import readThreadDynamic from "../../agent/tools/read_thread.js";
 import { renderScopeMarkdown } from "../../agent/instructions/access.js";
 import { registerConfig } from "../../agent/access/config.js";
 import { defineDomain } from "../../agent/memory/domain.js";
 import { defineMemorySilo } from "../../agent/memory/silo.js";
 import { registerSlackFixtureMapper, registerSlackFixtureManifest } from "../_slack-test-stubs.js";
 import { registerCapabilityManifest } from "../../agent/identity/capabilities.js";
+import { overrideSettingsForTest } from "../../agent/settings/settings.js";
 import type { BindableContext } from "../../agent/identity/binding.js";
 
 export const DOMAIN = "payments";
@@ -105,7 +108,11 @@ export function swapMarkdownSection(md: string, heading: string, replacement: st
 
 export interface ToolCall { readonly name: string; readonly input: Record<string, unknown> }
 
-export interface MountableEntry { readonly description: string; readonly inputSchema: unknown }
+export interface MountableEntry {
+  readonly description: string;
+  readonly inputSchema: unknown;
+  readonly toModelOutput?: (output: unknown) => unknown;
+}
 
 const realSchema = (entry: { readonly inputSchema: unknown }): z.ZodType => entry.inputSchema as z.ZodType;
 
@@ -121,7 +128,10 @@ export function createRecorder(calls: ToolCall[], resultFor: ResultFor) {
         calls.push({ name, input: typed });
         return resultFor(name, typed, calls.length);
       },
-    });
+      ...(entry.toModelOutput
+        ? { toModelOutput: async (args: { readonly output: unknown }) => entry.toModelOutput!(args.output) }
+        : {}),
+    } as never);
 }
 
 export async function resolveDynamicEntry(mod: unknown, ctx: BindableContext): Promise<MountableEntry | null> {
@@ -153,6 +163,7 @@ export async function buildLeanSeatToolset(opts: {
   readonly onSkip?: (name: string) => void;
   readonly allowNoReply?: boolean;
 }): Promise<ToolSet> {
+  overrideSettingsForTest({ tools: { genericReadVerbs: true } });
   const rec = createRecorder(opts.calls, opts.resultFor);
   const set: Record<string, ToolSet[string]> = {
     no_reply: rec("no_reply", noReplyTool as MountableEntry),
@@ -166,7 +177,12 @@ export async function buildLeanSeatToolset(opts: {
   } else {
     set.reply = rec("reply", await replyEntryForSeat(opts.ctx));
   }
-  for (const [name, mod] of [["react", reactDynamic], ["spawn_thread_session", spawnThreadSessionDynamic]] as const) {
+  for (const [name, mod] of [
+    ["react", reactDynamic],
+    ["spawn_thread_session", spawnThreadSessionDynamic],
+    ["read_channel", readChannelDynamic],
+    ["read_thread", readThreadDynamic],
+  ] as const) {
     const entry = await resolveDynamicEntry(mod, opts.ctx);
     if (entry !== null) set[name] = rec(name, entry);
     else opts.onSkip?.(name);
