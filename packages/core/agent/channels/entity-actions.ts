@@ -9,6 +9,7 @@ import { workDestinationPlatforms } from "./work-destinations.js";
 import { registerWorkPlatform } from "./work-registry.js";
 import type { Domain } from "../memory/domain.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
+import type { RepoCapability } from "../access/repo-capabilities.js";
 
 export interface EntityRef {
   readonly platform: string;
@@ -18,13 +19,19 @@ export interface EntityRef {
 
 export type EntityVerb = "setState" | "assign" | "addLabel";
 
-export type EntityActionFn = (entityId: string, value: string, organizationId?: string) => Promise<string>;
+export type EntityActionFn = (
+  entityId: string,
+  value: string,
+  organizationId?: string,
+  capabilities?: readonly RepoCapability[],
+) => Promise<string>;
 
 export interface EntityActionAdapter {
   readonly platform: string;
   readonly workRole?: string;
   checkAccess?(ctx: BindableContext, entityId: string, domains: readonly Domain[]): void | Promise<void>;
   workspaceFor?(ctx: BindableContext): string | undefined;
+  capabilitiesFor?(ctx: BindableContext, entityId: string): readonly RepoCapability[];
   setState?: EntityActionFn;
   assign?: EntityActionFn;
   addLabel?: EntityActionFn;
@@ -70,6 +77,7 @@ export function currentTurnEntityRef(ctx: BindableContext): EntityRef | undefine
 export interface ResolvedEntityAction {
   readonly ref: EntityRef;
   readonly run: (value: string) => Promise<string>;
+  readonly capabilities: readonly RepoCapability[];
 }
 
 export async function resolveEntityAction(
@@ -104,7 +112,8 @@ export async function resolveEntityAction(
   await adapter.checkAccess?.(ctx, ref.id, domains);
   const organizationId = ref.organizationId ?? adapter.workspaceFor?.(ctx);
   const resolved: EntityRef = organizationId ? { ...ref, organizationId } : ref;
-  return { ref: resolved, run: (value: string) => fn(resolved.id, value, resolved.organizationId) };
+  const capabilities = adapter.capabilitiesFor?.(ctx, resolved.id) ?? [];
+  return { ref: resolved, capabilities, run: (value: string) => fn(resolved.id, value, resolved.organizationId, capabilities) };
 }
 
 import { githubEntityAdapter } from "../scm/issue-actions.js";

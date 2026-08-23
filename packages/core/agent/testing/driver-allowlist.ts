@@ -1,12 +1,13 @@
 const DISCORD_PAIR = /^\d+:\d+$/;
-const SLACK_PAIR = /^T[A-Z0-9]+:B[A-Z0-9]+$/;
+
+export const SLACK_DRIVER_PAIR = /^T[A-Z0-9]+:B[A-Z0-9]+$/;
 
 export function parseDriverAllowlist(raw: string | undefined): ReadonlySet<string> {
   const out = new Set<string>();
   if (!raw) return out;
   for (const entry of raw.split(",")) {
     const pair = entry.trim();
-    if (DISCORD_PAIR.test(pair) || SLACK_PAIR.test(pair)) out.add(pair);
+    if (DISCORD_PAIR.test(pair) || SLACK_DRIVER_PAIR.test(pair)) out.add(pair);
   }
   return out;
 }

@@ -3,6 +3,8 @@ import { SLACK_SIGNATURE_HEADER, SLACK_TIMESTAMP_HEADER, slackSignatureMatches }
 import { callSlackApi, slackContinuationToken } from "eve/channels/slack";
 import {
   auditDmBotAuthorDrop,
+  auditDmDriverAdmitted,
+  dmDoorAdmitsDriver,
   parseMessageEvent,
   routeMessageEvent,
   liveDeps,
@@ -463,14 +465,18 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       args.waitUntil(routeNameDropEvent(ev, liveNameDropDeps(send)).then(logOutcome(label, ev.channelId, ev.ts)));
     };
 
-    const scheduleDmWake = async (ev: ParsedMessageEvent, dmKind: "im" | "mpim"): Promise<void> => {
+    const scheduleDmWake = async (
+      ev: ParsedMessageEvent,
+      dmKind: "im" | "mpim",
+      driverAdmitted = false,
+    ): Promise<void> => {
       const p = resolvePartition(bindableFor(ev));
       const atIso = new Date(now()).toISOString();
       const isGroup = dmKind === "mpim";
       const partnerTrust = !isGroup && ev.userId ? await dmPartnerTrustFor(ev.userId, ev.teamId) : undefined;
       const surfaceInternal = isGroup ? (await channelFactsFor(ev.channelId)).internal : partnerTrust === "internal";
       const wakeTrust = resolveWakeTrust({
-        authorIsBot: Boolean(ev.botId),
+        authorIsBot: Boolean(ev.botId) && !driverAdmitted,
         authorId: ev.userId,
         surfaceInternal,
         channelKey: p.surfaceKey,
@@ -560,7 +566,16 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         console.log(`[open-everywhere:slack-front] ${decision.dmKind} wake dropped — the envelope parsed to no channel/ts`);
         return OK();
       }
-      if (dev.botId) {
+      const driverAdmitted = Boolean(dev.botId) && dmDoorAdmitsDriver(dev) && dev.botId !== (await getBotIdentity()).botId;
+      if (driverAdmitted) {
+        args.waitUntil(
+          auditDmDriverAdmitted(dev, decision.dmKind).catch(() => {
+          }),
+        );
+        console.log(
+          `[open-everywhere:slack-front] ${decision.dmKind} ${dev.channelId}/${dev.ts}: bot-authored DM ADMITTED — the named e2e driver identity (bot ${dev.botId} in team ${dev.teamId ?? "?"})`,
+        );
+      } else if (dev.botId) {
         args.waitUntil(
           (async () => {
             const { botId: selfBotId } = await getBotIdentity();
@@ -582,7 +597,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       if (!(await notYetSeen(decision.env, dev))) return OK();
       args.waitUntil(
         fifo.enqueue(dmFifoKey(dev.channelId), async () => {
-          await deliverWithStrandRetry(() => scheduleDmWake(dev, decision.dmKind));
+          await deliverWithStrandRetry(() => scheduleDmWake(dev, decision.dmKind, driverAdmitted));
           console.log(`[open-everywhere:slack-front] ${decision.dmKind} ${dev.channelId}/${dev.ts}: woke — diverted to the DM window seat`);
         }),
       );

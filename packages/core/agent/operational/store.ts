@@ -155,6 +155,10 @@ export interface SpendTotals {
   readonly calls: number;
 }
 
+export function likePrefixPattern(prefix: string): string {
+  return `${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+}
+
 export function spendLedgerConjuncts(filter: SpendLedgerFilter): { conjuncts: string[]; params: (string | number)[] } {
   const conjuncts: string[] = [];
   const params: (string | number)[] = [];
@@ -763,7 +767,7 @@ export interface OperationalStore {
   putStoredCredential(org: string, rec: StoredCredentialRow): Promise<void>;
   getStoredCredential(org: string, ref: string): Promise<StoredCredentialRow | null>;
   deleteStoredCredential(org: string, ref: string): Promise<boolean>;
-  listStoredCredentialRefs(org: string): Promise<readonly string[]>;
+  listStoredCredentialRefs(org: string, refPrefix?: string): Promise<readonly string[]>;
 
   putGitHubInstallation(org: string, rec: GitHubInstallationRow): Promise<void>;
   deleteGitHubInstallation(org: string, owner: string): Promise<boolean>;

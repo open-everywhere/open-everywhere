@@ -92,6 +92,7 @@ import {
   ingestReaction,
   liveReactionSink,
   isAllowedSlackDriver,
+  getSettings,
   admittedTenantsFromConfig,
   unadmittedTenantLog,
   UNADMITTED_TENANT_DROP_REASON,
@@ -503,6 +504,10 @@ function auditEngagementWakeDropped(ev: ParsedMessageEvent, reason: string, deta
 }
 
 async function appendWakeDroppedRow(ev: ParsedMessageEvent, reason: string, detail: Record<string, unknown>): Promise<void> {
+  await appendWakeRow(ev, "surface.wake_dropped", reason, detail);
+}
+
+async function appendWakeRow(ev: ParsedMessageEvent, action: string, reason: string, detail: Record<string, unknown>): Promise<void> {
   try {
     const p = resolvePartition(bindableFor(ev));
     await getOperationalStore().appendAudit({
@@ -511,7 +516,7 @@ async function appendWakeDroppedRow(ev: ParsedMessageEvent, reason: string, deta
       platform: p.platform,
       workspace: p.workspace,
       surface: p.surface,
-      action: "surface.wake_dropped",
+      action,
       detail: { reason, channel: ev.channelId, ts: ev.ts, ...detail },
     });
   } catch {
@@ -573,6 +578,23 @@ export async function auditDmBotAuthorDrop(
     vouchedDriver: isAllowedSlackDriver(ev.teamId, ev.botId),
   });
   return true;
+}
+
+export function dmDoorAdmitsDriver(ev: ParsedMessageEvent, configured = getSettings().wake.slackDmDriver): boolean {
+  if (configured === "") return false;
+  if (!ev.teamId || !ev.botId) return false;
+  return configured === `${ev.teamId}:${ev.botId}`;
+}
+
+export const DM_DRIVER_ADMIT_REASON = "e2e driver — the DM door admits the one named driver identity";
+
+export async function auditDmDriverAdmitted(ev: ParsedMessageEvent, dmKind: "im" | "mpim"): Promise<void> {
+  await appendWakeRow(ev, "surface.wake_admitted", DM_DRIVER_ADMIT_REASON, {
+    door: "dm",
+    dmKind,
+    botId: ev.botId ?? null,
+    team: ev.teamId ?? null,
+  });
 }
 
 export async function slackJoinSpendGate(ev: ParsedChannelJoinEvent, p: Partition, channelType: string | undefined): Promise<SpendGateDecision> {

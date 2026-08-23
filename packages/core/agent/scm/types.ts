@@ -5,6 +5,7 @@ export interface MintPermissions {
   readonly pull_requests?: "read" | "write";
   readonly metadata?: "read";
   readonly issues?: "read" | "write";
+  readonly workflows?: "write";
 }
 
 export interface InstallationToken {

@@ -312,6 +312,10 @@ function portalCredsJson(expirationMs: number): string {
       for (let i = writes.length - 1; i >= 0; i--) if (writes[i].ref === ref) writes.splice(i, 1);
       return had;
     },
+    async listRefs(refPrefix) {
+      if (!refPrefix) throw new Error("encryptedKvVault.listRefs: a non-empty ref prefix is required — this interface cannot enumerate the whole credential store.");
+      return [...new Set(writes.map((w) => w.ref))].filter((r) => r.startsWith(refPrefix)).sort();
+    },
     async withLock(_key, fn) {
       return fn();
     },

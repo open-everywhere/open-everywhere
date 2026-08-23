@@ -485,4 +485,32 @@ console.log("\n10 — wake.nameDrop.include / wake.nameDrop.exclude (OPE-571):")
   resetSettingsForTest();
 }
 
+console.log("\n11 — wake.slackDmDriver (OPE-1023):");
+{
+  resetSettingsForTest();
+  eq(at({}).wake.slackDmDriver, "", "[11] 🔴 the shipped value is EMPTY — an unconfigured deployment admits NO bot author at the DM door, which is the pre-OPE-1023 behaviour exactly");
+
+  registerSettings(defineSettings({ wake: { slackDmDriver: "T0123ABCD:B0456EFGH" } }));
+  eq(at({}).wake.slackDmDriver, "T0123ABCD:B0456EFGH", "[11] a well-formed `teamId:botId` pair resolves through");
+  resetSettingsForTest();
+
+  const refusesPair = (value: string, needle: string, label: string): void => {
+    let message = "";
+    try {
+      defineSettings({ wake: { slackDmDriver: value } });
+    } catch (e) {
+      message = e instanceof Error ? e.message : String(e);
+    }
+    ok(message.includes(needle), `${label} (got: ${message.slice(0, 160) || "NO THROW"})`);
+  };
+  refusesPair("T0123ABCD:B0456EFGH,T0123ABCD:B0999ZZZZ", "exactly one", "[11] 🔴 a COMMA-SEPARATED list is refused — the DM door admits one named identity, and a list would let a reviewed diff widen silently");
+  refusesPair("B0456EFGH", "exactly one", "[11] a bare bot id with no workspace is refused — the pair is workspace-pinned or it is not a pin");
+  refusesPair("T0123ABCD", "exactly one", "[11] …and a bare workspace with no bot id is refused too");
+  refusesPair("T0123ABCD:b0456efgh", "exactly one", "[11] a lowercase bot id is refused — Slack ids are upper-case, and a case-insensitive match is a wider match");
+  refusesPair("123456789:987654321", "exactly one", "[11] a DISCORD `guildId:botUserId` pair is refused — this lever is the SLACK DM door's, and accepting the other surface's grammar would admit an identity nothing here can check");
+  refusesPair(" T0123ABCD:B0456EFGH ", "exactly one", "[11] a padded pair is refused rather than trimmed — the stored value is the value matched, with no normalisation step to disagree about");
+
+  resetSettingsForTest();
+}
+
 console.log(`\nsettings: ${n} assertions passed.`);

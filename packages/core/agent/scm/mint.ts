@@ -1,6 +1,7 @@
 import { createPrivateKey, type KeyObject } from "node:crypto";
 import { SignJWT } from "jose";
 import type { InstallationToken, MintPermissions } from "./types.js";
+import type { RepoCapability } from "../access/repo-capabilities.js";
 
 export const DEFAULT_PERMISSIONS: MintPermissions = {
   contents: "write",
@@ -35,6 +36,47 @@ export const ISSUE_WRITE_PERMISSIONS: MintPermissions = {
   issues: "write",
   metadata: "read",
 };
+
+export const EXPANSION_FORBIDDEN_FAMILIES: readonly string[] = ["contents"];
+
+export const REPO_CAPABILITY_PERMISSIONS: Readonly<Record<RepoCapability, MintPermissions>> = {
+  "pr-admin": { pull_requests: "write" },
+  workflows: { workflows: "write" },
+};
+
+function atLeast(a: string | undefined, b: string | undefined): boolean {
+  if (b === undefined) return true;
+  if (a === undefined) return false;
+  return a === "write" || a === b;
+}
+
+export function expandMintPermissions(
+  plane: MintPermissions,
+  capabilities: readonly RepoCapability[] = [],
+  table: Readonly<Record<string, MintPermissions>> = REPO_CAPABILITY_PERMISSIONS,
+): MintPermissions {
+  if (capabilities.length === 0) return plane;
+  const out: Record<string, string | undefined> = { ...plane };
+  for (const cap of capabilities) {
+    const add = table[cap];
+    if (!add) {
+      throw new Error(
+        `unknown repo capability "${cap}" — this build maps ${Object.keys(table).sort().join(", ")}. ` +
+          `A capability is a NAME this deployment implements, never a raw GitHub permission string.`,
+      );
+    }
+    for (const [family, grade] of Object.entries(add)) {
+      if (EXPANSION_FORBIDDEN_FAMILIES.includes(family)) {
+        throw new Error(
+          `repo capability "${cap}" maps to the forbidden permission family "${family}" — a capability expansion may never raise it. ` +
+            `READ_PERMISSIONS is persisted into a clone's git config, so a raisable "contents" would hand cloned code a pushable token.`,
+        );
+      }
+      if (!atLeast(out[family], grade)) out[family] = grade;
+    }
+  }
+  return out as MintPermissions;
+}
 
 export function normalizePrivateKeyPem(pem: string): string {
   return pem.includes("\\n") && !pem.includes("\n") ? pem.replace(/\\n/g, "\n") : pem;
