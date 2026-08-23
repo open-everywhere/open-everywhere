@@ -163,8 +163,6 @@ export interface NotionConfig {
 }
 
 export interface SyntheticDmConfig {
-  readonly targetUrl: string;
-  readonly signingSecret: string;
   readonly dmChannel: string;
 }
 
@@ -328,9 +326,9 @@ export function resolveSlackSecondary(env: Env = process.env): Resolved<SlackSec
 }
 
 export function resolveSyntheticDm(env: Env = process.env): Resolved<SyntheticDmConfig> {
-  const { values, missing } = need(env, [ENV.targetUrl, ENV.slackSigningSecret, ENV.slackDmChannel]);
+  const { values, missing } = need(env, [ENV.slackDmChannel]);
   if (missing.length > 0) return { ok: false, missing };
-  return { ok: true, cfg: { targetUrl: values[0].replace(/\/+$/, ""), signingSecret: values[1], dmChannel: values[2] } };
+  return { ok: true, cfg: { dmChannel: values[0] } };
 }
 
 export function resolveWebhook(env: Env = process.env): Resolved<WebhookConfig> {

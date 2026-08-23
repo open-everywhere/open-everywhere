@@ -250,9 +250,9 @@ export const FIXTURE_FAMILIES: readonly FixtureFamily[] = [
   },
   {
     id: "syntheticDm",
-    label: "Synthetic Slack DM forge (target + signing secret + real DM channel)",
-    required: [v(ENV.targetUrl), v(ENV.slackSigningSecret), v(ENV.slackDmChannel)],
-    scenarios: "S13/S14 (synthetic Slack DM scenarios)",
+    label: "Slack DM fixture (real DM channel — OPE-1036: posts through the real front door, no forge)",
+    required: [v(ENV.slackDmChannel)],
+    scenarios: "S13/S14/J4/S-LINK-SLACK/S-DM-NOTION (real Slack DM scenarios)",
     probe: "slack-dm-channel",
     channelVar: ENV.slackDmChannel,
   },

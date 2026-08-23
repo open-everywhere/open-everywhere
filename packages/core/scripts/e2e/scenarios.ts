@@ -21,7 +21,7 @@ import type { TranscriptWireEvent } from "./transcript-read.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
 import { decomposeSession, delegationJoinTargets, joinDelegations, renderDelegationTiming, renderSessionTiming } from "./transcript-timings.js";
 import type { TimingsRecord } from "./timings-record.js";
-import { type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
+import { type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
 import { pollOptional, pollUntil, sleep } from "./poll.js";
 import type { ReplyJudge, Rubric } from "./judge.js";
@@ -66,7 +66,6 @@ export interface ScenarioContext {
   readonly slackB?: SlackDriver;
   readonly slackCapFixture?: SlackDriver;
   readonly slackSupervisor?: SlackDriver;
-  readonly syntheticDm?: SyntheticDm;
   readonly dm?: SlackDriver;
   readonly slackUser2?: SlackUser2Config;
   readonly slackSecondary?: SlackDriver;
@@ -126,6 +125,15 @@ function armingProbeOf(ctx: ScenarioContext): ArmingProbe {
     log: (msg: string) => ctx.log(msg),
     skip: (reason: string) => ctx.skip(reason),
   };
+}
+
+async function assertDmDoorAdmitted(ctx: ScenarioContext, sinceIso: string, label: string): Promise<void> {
+  if (!ctx.auditRead) return;
+  const rows = await ctx.auditRead({ sinceIso, actions: ["surface.wake_admitted"] });
+  ctx.gate(
+    rows.some((r) => (r.detail as { door?: unknown } | undefined)?.door === "dm"),
+    `${label}: a surface.wake_admitted row (door "dm") proves the real DM front door — not a forge — admitted the driver (OPE-1036)`,
+  );
 }
 const UNIFIED_REPLY_WAIT = 420_000;
 const BROWSER_QA_WAIT = 420_000;
@@ -876,7 +884,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S13",
-    title: "Synthetic DM: forged message.im wakes the agent, reply lands in the real DM",
+    title: "Real Slack DM: a genuine chat.postMessage through the driver's own token wakes the agent (OPE-1036 — no forged envelope)",
     requires: ["slack", "syntheticDm"],
     surface: "slack",
     suite: "core",
@@ -885,19 +893,16 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: true,
     run: async (ctx) => {
       const dm = ctx.dm!;
-      const forge = ctx.syntheticDm!;
-      const { userId, teamId } = await ctx.slack!.identity();
+      const sinceIso = new Date(Date.now() - 60_000).toISOString();
       const text = "quick one — what's 9*9? reply with just the number";
       const { ts: anchorTs } = await dm.post(text);
-      const sent = await forge.message({ text, userId, teamId, ts: anchorTs });
-      ctx.log(`${sent.label}: POST → ${sent.status}`);
-      ctx.gate(sent.status === 200, "synthetic DM event acked 200 by the deployment's Slack route");
       const reply = await dm.awaitAnyReply(anchorTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       ctx.gate(reply.text.trim().length > 0, "agent replied in the real DM channel");
+      await assertDmDoorAdmitted(ctx, sinceIso, "S13");
       await ctx.judgePass(
         closedQA("Does the reply give 81?", { mustMatch: ["81"] }),
         reply.text,
-        "synthetic-DM arithmetic sanity",
+        "real-DM arithmetic sanity",
       );
     },
   },
@@ -912,20 +917,16 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: true,
     run: async (ctx) => {
       const dm = ctx.dm!;
-      const forge = ctx.syntheticDm!;
       const pub = ctx.slack!;
-      const { userId, teamId } = await ctx.slack!.identity();
+      const sinceIso = new Date(Date.now() - 60_000).toISOString();
       const cheese = factToken("wensleydale");
       const batch = factToken("tasting");
       const teach = `remember: my favourite cheese from ${batch} is ${cheese}`;
       const { ts: teachTs } = await dm.post(teach);
-      const taught = await forge.message({ text: teach, userId, teamId, ts: teachTs });
-      ctx.gate(taught.status === 200, "synthetic DM (teach) acked 200");
       await dm.awaitAnyReply(teachTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      await assertDmDoorAdmitted(ctx, sinceIso, "S14 (teach)");
       const askDm = `what's my favourite cheese from ${batch}? give its exact name as stored; if you don't know, say so plainly`;
       const { ts: askTs } = await dm.post(askDm);
-      const asked = await forge.message({ text: askDm, userId, teamId, ts: askTs });
-      ctx.gate(asked.status === 200, "synthetic DM (recall) acked 200");
       const recall = await dm.awaitAnyReply(askTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(
         recall.text.toLowerCase().includes(cheese.toLowerCase()),
@@ -952,8 +953,7 @@ export const SCENARIOS: readonly Scenario[] = [
         "channel probe declines cleanly",
       );
       const cleanup = `forget the stored fact about my favourite cheese from ${batch} — it was test data`;
-      const { ts: cleanTs } = await dm.post(cleanup);
-      await forge.message({ text: cleanup, userId, teamId, ts: cleanTs }).catch(() => undefined);
+      await dm.post(cleanup).catch(() => undefined);
     },
   },
   {
@@ -969,7 +969,6 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const slack = ctx.slack!;
       const dm = ctx.dm!;
-      const forge = ctx.syntheticDm!;
       const secondaryId = ctx.slackSecondaryUserId!;
       const claimant = ctx.slackSecondary!.withChannel(slack.channelId);
       const runStart = new Date(Date.now() - 60_000).toISOString();
@@ -980,7 +979,7 @@ export const SCENARIOS: readonly Scenario[] = [
         );
       }
       const auditRead = ctx.auditRead!;
-      const { userId, teamId } = await slack.identity();
+      const { userId } = await slack.identity();
       ctx.gate(secondaryId !== userId, "fixture: the secondary identity is a DIFFERENT account from the initiator (a self-claim is refused by design)");
       if (!(await slack.isMember(secondaryId))) {
         ctx.skip(
@@ -991,9 +990,8 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const mintAsk = "please start linking another one of my accounts to this one — give me the code.";
       const { ts: mintTs } = await dm.post(mintAsk);
-      const mintSent = await forge.message({ text: mintAsk, userId, teamId, ts: mintTs });
-      ctx.gate(mintSent.status === 200, "mint: the synthetic DM ask acked 200");
       const mintReply = await dm.awaitAnyReply(mintTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      await assertDmDoorAdmitted(ctx, runStart, "S-LINK-SLACK (mint)");
       const code = parseLinkCode(mintReply.text);
       const issuedRows = await auditRead({ sinceIso: runStart, actions: ["identity.link.challenge_issued"] });
       if (!code) {
@@ -1055,12 +1053,10 @@ export const SCENARIOS: readonly Scenario[] = [
       }
       const secondaryDmChannel = await openSecondaryOwnDm();
       const secondaryDm = ctx.slackSecondary!.withChannel(secondaryDmChannel);
-      const { teamId: secondaryTeamId } = await ctx.slackSecondary!.identity();
       const claimAsk = `link ${code!}`;
       const { ts: claimTs } = await secondaryDm.post(claimAsk);
-      const claimSent = await forge.message({ text: claimAsk, userId: secondaryId, teamId: secondaryTeamId, ts: claimTs, channelId: secondaryDmChannel });
-      ctx.gate(claimSent.status === 200, "own-dm claim: the synthetic DM claim acked 200");
       const claimReply = await secondaryDm.awaitAnyReply(claimTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      await assertDmDoorAdmitted(ctx, runStart, "S-LINK-SLACK (own-dm claim)");
       const code2 = parseLinkCode(claimReply.text);
       ctx.gate(
         code2 !== undefined,
@@ -1087,10 +1083,9 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const confirmAsk = `confirm — the code is ${code2!}.`;
       const { ts: confirmTs } = await dm.post(confirmAsk);
-      const confirmSent = await forge.message({ text: confirmAsk, userId, teamId, ts: confirmTs });
-      ctx.gate(confirmSent.status === 200, "confirm: the synthetic DM code-back acked 200");
       const confirmReply = await dm.awaitAnyReply(confirmTs, { timeoutMs: REPLY_WAIT });
       ctx.gate(confirmReply.text.trim().length > 0, "confirm: the agent replied to the code-back turn");
+      await assertDmDoorAdmitted(ctx, runStart, "S-LINK-SLACK (confirm)");
       const confirmedRows = await pollOptional(
         async () => {
           const r = await auditRead({ sinceIso: runStart, actions: ["identity.link.confirmed"] });
@@ -1119,8 +1114,7 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const slack = ctx.slack!;
       const dm = ctx.dm!;
-      const forge = ctx.syntheticDm!;
-      const { userId, teamId } = await slack.identity();
+      const { teamId } = await slack.identity();
 
       let opStore: OperationalStore | undefined;
       const rotateDbUrl = process.env.DATABASE_URL;
@@ -1134,7 +1128,7 @@ export const SCENARIOS: readonly Scenario[] = [
           ctx.log(
             `J4: rotated the ${domain} window → fresh generation ${rot.mintedGeneration} (OPE-344 — this run starts with no widen-ask/reject footprint from prior runs)`,
           );
-          const dmChannelId = ctx.syntheticDm?.dmChannel;
+          const dmChannelId = ctx.dm?.channelId;
           if (dmChannelId) {
             const dmSurfaceKey = `slack/${teamId}/${dmChannelId}`;
             const dmRot = await rotateUnifiedWindow(store, org, dmAnchorDomain(dmSurfaceKey));
@@ -1230,12 +1224,12 @@ export const SCENARIOS: readonly Scenario[] = [
         "request access for THIS CHANNEL — a channel-scope access request (target=channel) to widen the e2e-fixture " +
         `connection so it also allows ${dmMethod} (internal ref ${dmNonce}). I do not mean my own personal DM access and I do not mean a group grant: ` +
         "I mean the channel's own access.";
+      const dmSinceIso = new Date(Date.now() - 60_000).toISOString();
       const { ts: dmTs } = await dm.post(dmAsk);
-      const sentDm = await forge.message({ text: dmAsk, userId, teamId, ts: dmTs });
-      ctx.gate(sentDm.status === 200, "S18: synthetic DM ask acked 200");
       const dmReply = await dm.awaitAnyReply(dmTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(dmReply.text.trim().length > 0, "S18: agent replied to the DM channel-target access ask");
       ctx.gate(approveButton(dmReply) === undefined, "S18: NO access-request card is posted for a CHANNEL-target ask made from a DM (hard gate)");
+      await assertDmDoorAdmitted(ctx, dmSinceIso, "J4 (channel-target DM ask)");
       await ctx.judgePass(
         closedQA("Does the reply decline to request the CHANNEL's access from this DM, rather than posting a request card?", {
           mustMatch: [/channel|admin|dm|direct message|from here|can.?t|cannot|unable|not able/i],
@@ -1262,10 +1256,10 @@ export const SCENARIOS: readonly Scenario[] = [
       const personalAsk =
         "now something different: widen MY OWN personal access — a target=personal request, for me, in this DM only " +
         `(not this or any channel's access, and not a group). Add POST to a connection I have here (internal ref ${personalNonce}).`;
+      const personalSinceIso = new Date(Date.now() - 60_000).toISOString();
       const { ts: personalTs } = await dm.post(personalAsk);
-      const sentPersonal = await forge.message({ text: personalAsk, userId, teamId, ts: personalTs });
-      ctx.gate(sentPersonal.status === 200, "personal: synthetic DM target=personal ask acked 200");
       const personalReply = await dm.awaitAnyReply(personalTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      await assertDmDoorAdmitted(ctx, personalSinceIso, "J4 (target=personal DM ask)");
       const personalCard =
         approveButton(personalReply) !== undefined
           ? personalReply
@@ -2948,7 +2942,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "S-DM-NOTION",
     title:
-      "DM personal-Notion journey: forged message.im wakes the seat on a Notion ask → real answer about the user's pages (reads are consequence-tier open since e768c58, so any eve-native approval card that DOES appear is Allow-clicked, but its absence is not a failure)",
+      "DM personal-Notion journey: a real DM through the front door wakes the seat on a Notion ask → real answer about the user's pages (reads are consequence-tier open since e768c58, so any eve-native approval card that DOES appear is Allow-clicked, but its absence is not a failure)",
     requires: ["slack", "syntheticDm", "synthetic"],
     surface: "notion",
     suite: "extended",
@@ -2957,15 +2951,12 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: true,
     run: async (ctx) => {
       const dm = ctx.dm!;
-      const forge = ctx.syntheticDm!;
       const synthetic = ctx.synthetic!;
       const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
       const { userId, teamId } = await ctx.slack!.identity();
       const ask = "can you list the pages in my Notion workspace?";
+      const sinceIso = new Date(Date.now() - 60_000).toISOString();
       const { ts: anchorTs } = await dm.post(ask);
-      const sent = await forge.message({ text: ask, userId, teamId, ts: anchorTs });
-      ctx.log(`${sent.label}: POST → ${sent.status}`);
-      ctx.gate(sent.status === 200, "synthetic DM event acked 200 by the deployment's Slack route");
 
       const clicked = new Set<string>();
       const answer = await pollUntil(
@@ -3003,6 +2994,7 @@ export const SCENARIOS: readonly Scenario[] = [
         { timeoutMs: FILE_REPLY_WAIT, what: "a substantive (non-card, non-ack) bot reply to the DM Notion-pages ask" },
       );
       ctx.gate(answer.text.trim().length > 0, "the DM personal-Notion ask drew a substantive bot reply");
+      await assertDmDoorAdmitted(ctx, sinceIso, "S-DM-NOTION");
       await arming.recheck();
       await ctx.judgePass(
         closedQA(

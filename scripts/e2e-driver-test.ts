@@ -54,9 +54,7 @@ const {
   buildApprovalClickPayload,
   encodeInteractionBody,
   buildSlashCommandBody,
-  buildDmEventEnvelope,
   buildChannelMentionEnvelope,
-  syntheticSlackTs,
   SYNTHETIC_SLACK_ROUTE,
   SYNTHETIC_COMMANDS_ROUTE,
   APPROVAL_PREFIX,
@@ -106,7 +104,7 @@ const { standardWebhookVerifier, SW_ID_HEADER, SW_SIGNATURE_HEADER, SW_TIMESTAMP
 const eveRootDir = (await import("node:path")).dirname(
   (await import("node:module")).createRequire(import.meta.url).resolve("eve/package.json"),
 );
-const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/channels/slack/inbound.js`);
+const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/channels/slack/inbound.js`);
 
 {
   const empty = {};
@@ -128,7 +126,10 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   const slackCap = resolveSlackCapFixture(empty);
   ok(!slackCap.ok && slackCap.missing.join(",") === ENV.slackCapChannel, "S10 cap-fixture add-on misses exactly E2E_SLACK_CAP_CHANNEL");
   const synDm = resolveSyntheticDm(empty);
-  ok(!synDm.ok && synDm.missing.includes(ENV.slackDmChannel) && synDm.missing.includes(ENV.targetUrl), "synthetic-DM half misses E2E_SLACK_DM_CHANNEL + E2E_TARGET_URL");
+  ok(
+    !synDm.ok && synDm.missing.join(",") === ENV.slackDmChannel,
+    "DM fixture misses exactly E2E_SLACK_DM_CHANNEL (OPE-1036: no longer needs a target URL or signing secret — the DM legs post through the real front door, not a forge)",
+  );
   const user2Miss = resolveSlackUser2(empty);
   ok(!user2Miss.ok && user2Miss.missing.join(",") === ENV.slackUser2Id, "user2 add-on misses exactly E2E_SLACK_USER2_ID");
   const secondaryMiss = resolveSlackSecondary(empty);
@@ -274,7 +275,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   const user2 = resolveSlackUser2(full);
   ok(user2.ok && user2.cfg.userId === "U2NONADMIN", "user2 cfg carries the non-admin id");
   const dmCfg = resolveSyntheticDm(full);
-  ok(dmCfg.ok && dmCfg.cfg.dmChannel === "D0DM" && dmCfg.cfg.targetUrl === "https://oe.example.test", "syntheticDm cfg carries the DM channel + slash-stripped target");
+  ok(dmCfg.ok && dmCfg.cfg.dmChannel === "D0DM", "syntheticDm cfg carries the DM channel");
   const webhookCfg = resolveWebhook(full);
   ok(
     webhookCfg.ok && webhookCfg.cfg.hookId === "e2e-smoke" && webhookCfg.cfg.targetUrl === "https://oe.example.test",
@@ -1593,39 +1594,6 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
 }
 
 {
-  ok(/^\d+\.\d{6}$/.test(syntheticSlackTs(1_720_009_900_123)), "syntheticSlackTs is Slack-shaped (secs.6digits)");
-  ok(syntheticSlackTs(1_720_009_900_123) === "1720009900.123000", "syntheticSlackTs derives deterministically from nowMs");
-
-  const input = { text: "what's 9*9?", channelId: "D0DM", userId: "U2ADMIN", teamId: "T1", ts: "1720000000.000200" };
-  const envelope = buildDmEventEnvelope(input);
-  const event = envelope.event as Record<string, unknown>;
-  ok(envelope.type === "event_callback" && event.type === "message" && event.channel_type === "im", "envelope is an event_callback message.im");
-  ok(!("bot_id" in event) && !("subtype" in event), "envelope carries NO bot_id and NO subtype (either would be dropped)");
-  ok(event.user === "U2ADMIN" && event.channel === "D0DM" && event.ts === input.ts, "envelope names the real user, DM channel and anchor ts");
-  ok(typeof envelope.event_id === "string" && (envelope.event_id as string).length > 0, "envelope carries an event_id (eve dedupes on it)");
-
-  const decision = classifyEnvelope(JSON.stringify(envelope), "application/json");
-  ok(decision.kind === "dm-wake" && decision.reason.includes("message.im"), "classifyEnvelope routes the forged DM to the DM window seat (`dm-wake`)");
-
-  type EveEnvelope = Parameters<typeof parseDirectMessageEvent>[0];
-  const parsed = parseDirectMessageEvent(envelope as unknown as EveEnvelope);
-  ok(parsed !== null && parsed.channelId === "D0DM" && parsed.author?.userId === "U2ADMIN", "eve's parseDirectMessageEvent ACCEPTS the forged envelope");
-  ok(parsed !== null && parsed.threadTs === input.ts, "eve threads the DM session under the anchor ts (why the anchor must be a REAL message)");
-  const stamped = buildDmEventEnvelope(input);
-  (stamped.event as Record<string, unknown>).bot_id = "B0EXBOT0001";
-  ok(parseDirectMessageEvent(stamped as unknown as EveEnvelope) === null, "a bot_id-stamped DM is DROPPED by eve (the driver-DM impossibility, pinned)");
-  const subtyped = buildDmEventEnvelope(input);
-  (subtyped.event as Record<string, unknown>).subtype = "message_changed";
-  ok(parseDirectMessageEvent(subtyped as unknown as EveEnvelope) === null, "a subtyped DM is DROPPED by eve");
-
-  const raw = JSON.stringify(envelope);
-  const now = Date.now();
-  const sig = signSlackRequest(raw, "e2e-test-secret", now);
-  const headers = new Headers({ "x-slack-request-timestamp": sig.timestamp, "x-slack-signature": sig.signature });
-  ok(verifySlackSignature(raw, headers, "e2e-test-secret", now), "a signed synthetic DM body verifies against verifySlackSignature");
-}
-
-{
   const input = { text: "remember this: the OPE329 canary is xyz", channelId: "D0DISCORDDM", userId: "111222333444555666" };
   const envelope = buildDiscordDmRelayEnvelope(input) as { source: string; message: Record<string, unknown> };
   ok(envelope.source === "discord-gateway-relay", "envelope carries the relay's own source marker");
@@ -1721,11 +1689,14 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
       body,
     });
   };
-  const sibling = (text: string, ts: string) => {
-    const env = buildDmEventEnvelope({ text, channelId: "C123", userId: user2, teamId: "T1", ts });
-    (env.event as Record<string, unknown>).channel_type = "channel";
-    return JSON.stringify(env);
-  };
+  const sibling = (text: string, ts: string) =>
+    JSON.stringify({
+      type: "event_callback",
+      team_id: "T1",
+      event_id: `EvE2ESib${ts.replace(".", "")}`,
+      event_time: Math.floor(Number.parseFloat(ts)),
+      event: { type: "message", channel_type: "channel", channel: "C123", user: user2, text, ts, event_ts: ts, team: "T1" },
+    });
   ok(
     classifyEnvelope(sibling(input.text, "1720009900.000310"), "application/json").kind === "wake",
     "the message.channels sibling classifies as a wake CANDIDATE (suppression lives in the handler, not classify)",

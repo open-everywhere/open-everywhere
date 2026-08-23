@@ -27,7 +27,7 @@ import { GithubDriver } from "./github-driver.js";
 import { LinearDriver } from "./linear-driver.js";
 import { NotionDriver } from "./notion-driver.js";
 import { PrApi } from "./pr-api.js";
-import { SyntheticDm, SyntheticSlack } from "./synthetic.js";
+import { SyntheticSlack } from "./synthetic.js";
 import { WebhookDriver } from "./webhook.js";
 import { createJudgeReporter, judge3, judgeBannerTag, renderReportedJudgeSummary, resolveJudge, type Rubric } from "./judge.js";
 import { GateFailure, ScenarioSkip, SCENARIOS, skipCategory, skipReason, type ScenarioContext } from "./scenarios.js";
@@ -132,7 +132,6 @@ async function main(): Promise<void> {
   const slackSupervisorDriver = slackDriver && slackSupervisor.ok ? slackDriver.withChannel(slackSupervisor.cfg.channel) : undefined;
   const slackUnifiedADriver = slackDriver && slackUnified.ok ? slackDriver.withChannel(slackUnified.cfg.channelA) : undefined;
   const slackUnifiedBDriver = slackDriver && slackUnified.ok ? slackDriver.withChannel(slackUnified.cfg.channelB) : undefined;
-  const syntheticDmForge = syntheticDm.ok ? new SyntheticDm(syntheticDm.cfg) : undefined;
   const dmDriver = slackDriver && syntheticDm.ok ? slackDriver.withChannel(syntheticDm.cfg.dmChannel) : undefined;
   const webhookDriver = webhook.ok ? new WebhookDriver(webhook.cfg) : undefined;
   const notionDriver = slackDriver && notion.ok ? slackDriver.withChannel(notion.cfg.channel) : undefined;
@@ -255,7 +254,6 @@ async function main(): Promise<void> {
       slackB: slackBDriver,
       slackCapFixture: slackCapFixtureDriver,
       slackSupervisor: slackSupervisorDriver,
-      syntheticDm: syntheticDmForge,
       dm: dmDriver,
       slackUser2: slackUser2.ok ? slackUser2.cfg : undefined,
       slackSecondary: slackSecondaryDriver,

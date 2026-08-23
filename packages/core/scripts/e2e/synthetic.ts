@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import type { SyntheticConfig, SyntheticDmConfig } from "./env.js";
+import type { SyntheticConfig } from "./env.js";
 
 export const SYNTHETIC_SLACK_ROUTE = "/eve/v1/slack";
 export const SYNTHETIC_COMMANDS_ROUTE = "/eve/v1/slack/commands";
@@ -141,38 +141,6 @@ export function buildSlashCommandBody(input: SlashCommandInput): string {
   }).toString();
 }
 
-export function syntheticSlackTs(nowMs: number = Date.now()): string {
-  return `${Math.floor(nowMs / 1000)}.${String(nowMs % 1000).padStart(3, "0")}000`;
-}
-
-export interface DmEventInput {
-  readonly text: string;
-  readonly channelId: string;
-  readonly userId: string;
-  readonly teamId: string;
-  readonly ts: string;
-  readonly eventId?: string;
-}
-
-export function buildDmEventEnvelope(input: DmEventInput): Record<string, unknown> {
-  return {
-    type: "event_callback",
-    team_id: input.teamId,
-    event_id: input.eventId ?? `EvE2E${input.ts.replace(".", "")}`,
-    event_time: Math.floor(Number.parseFloat(input.ts)),
-    event: {
-      type: "message",
-      channel_type: "im",
-      channel: input.channelId,
-      user: input.userId,
-      text: input.text,
-      ts: input.ts,
-      event_ts: input.ts,
-      team: input.teamId,
-    },
-  };
-}
-
 export interface ChannelMentionInput {
   readonly text: string;
   readonly channelId: string;
@@ -203,7 +171,7 @@ export function buildChannelMentionEnvelope(input: ChannelMentionInput): Record<
 export interface SyntheticResult {
   readonly status: number;
   readonly body: string;
-  readonly label: "synthetic click" | "synthetic command" | "synthetic DM" | "synthetic mention";
+  readonly label: "synthetic click" | "synthetic command" | "synthetic mention";
 }
 
 export class SyntheticSlack {
@@ -277,28 +245,5 @@ export class SyntheticSlack {
   async setKeySubmit(input: Omit<SetKeySubmissionInput, "userId"> & { userId?: string }): Promise<SyntheticResult> {
     const payload = buildSetKeySubmissionPayload({ ...input, userId: input.userId ?? this.cfg.adminUserId });
     return this.signedPost(SYNTHETIC_SLACK_ROUTE, encodeInteractionBody(payload), "synthetic click");
-  }
-}
-
-export class SyntheticDm {
-  constructor(private readonly cfg: SyntheticDmConfig) {}
-
-  get dmChannel(): string {
-    return this.cfg.dmChannel;
-  }
-
-  async message(input: { text: string; userId: string; teamId: string; ts: string; channelId?: string }): Promise<SyntheticResult> {
-    const rawBody = JSON.stringify(buildDmEventEnvelope({ ...input, channelId: input.channelId ?? this.cfg.dmChannel }));
-    const { timestamp, signature } = signSlackRequest(rawBody, this.cfg.signingSecret);
-    const res = await fetch(`${this.cfg.targetUrl}${SYNTHETIC_SLACK_ROUTE}`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-slack-request-timestamp": timestamp,
-        "x-slack-signature": signature,
-      },
-      body: rawBody,
-    });
-    return { status: res.status, body: await res.text(), label: "synthetic DM" };
   }
 }
