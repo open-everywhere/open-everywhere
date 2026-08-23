@@ -9,6 +9,8 @@ import {
   ANY_SESSION,
   SCRIPTED_MODEL_ENV,
   SCRIPTED_MODEL_ID,
+  clearIncompleteParentTurn,
+  incompleteParentTurnFor,
   noteStaleHoldExpiry,
   scriptedModelArmed,
   scriptedRegistrationSeq,
@@ -64,7 +66,9 @@ export function scriptedModelFor(event: unknown, ctx: unknown): ReturnType<typeo
   const rawSession = (ctx as { session?: { id?: unknown } } | undefined)?.session;
   const sessionId = typeof rawSession?.id === "string" ? rawSession.id : undefined;
   const store = scriptedStore();
-  const entry = (sessionId !== undefined ? store.get(sessionId) : undefined) ?? store.get(ANY_SESSION);
+  const ownEntry = sessionId !== undefined ? store.get(sessionId) : undefined;
+  const usedFallback = ownEntry === undefined;
+  const entry = ownEntry ?? store.get(ANY_SESSION);
   if (entry === undefined) {
     throw new Error(
       `open-everywhere: ${SCRIPTED_MODEL_ENV}=1 but no script is registered for session ` +
@@ -88,8 +92,46 @@ export function scriptedModelFor(event: unknown, ctx: unknown): ReturnType<typeo
     hasSessionParent: bindable?.session?.parent !== undefined,
     eventEcho: safeEcho(event),
   };
-  entry.resolves.push(observation);
 
+  if (usedFallback && role === "parent" && sessionId !== undefined && turnId !== undefined) {
+    const incomplete = incompleteParentTurnFor(sessionId);
+    if (incomplete !== undefined && incomplete.turnId === turnId) {
+      clearIncompleteParentTurn(sessionId);
+      const fault =
+        `stray call (OPE-995): session "${sessionId}" turn "${turnId}" is a straggler from a script ` +
+        `disposed after serving only ${incomplete.servedThrough + 1}/${incomplete.totalSteps} of its ` +
+        `parent steps (registered at ${incomplete.registeredAt}). Refusing to answer it from the ` +
+        `now-live "${ANY_SESSION}" entry (registered at ${entry.registeredAt}) — that script belongs to ` +
+        "a different registration and must not be spent on this turn.";
+      observation.fault = fault;
+      entry.resolves.push(observation);
+      return mockModel({
+        modelId: SCRIPTED_MODEL_ID,
+        provider: "open-everywhere-scripted",
+        respond: async (request) => {
+          entry.requests.push({
+            role,
+            sessionId,
+            turnId,
+            stepIndex: -1,
+            pid: process.pid,
+            tools: request.tools.map((t) => t.name),
+            toolDefinitions: request.tools.map((t) => ({
+              name: t.name,
+              ...(t.description !== undefined ? { description: t.description } : {}),
+              ...(t.inputSchema !== undefined ? { inputSchema: snapshotSchema(t.inputSchema) } : {}),
+            })),
+            toolResults: request.toolResults.map((r) => ({ name: r.name, isError: r.isError, output: r.output })),
+            messages: request.messages.map((m) => ({ role: m.role, text: m.text })),
+            fault,
+          });
+          return { text: "scripted-model fault: see the record" };
+        },
+      });
+    }
+  }
+
+  entry.resolves.push(observation);
   return buildStepModel(entry, observation, seqAtResolve);
 }
 
