@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { assertSpendLimitAmount, assertDomainModelPick, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite } from "./store.js";
+import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
@@ -2130,7 +2130,11 @@ export const sqliteOperationalStore: OperationalStore = {
     return getDb().prepare("DELETE FROM stored_credential WHERE org_id = ? AND ref = ?").run(org, ref).changes > 0;
   },
 
-  async listStoredCredentialRefs(org) {
+  async listStoredCredentialRefs(org, refPrefix) {
+    if (refPrefix) {
+      const rows = getDb().prepare("SELECT ref FROM stored_credential WHERE org_id = ? AND ref LIKE ? ESCAPE '\\' ORDER BY ref").all(org, likePrefixPattern(refPrefix)) as { ref: string }[];
+      return rows.map((r) => r.ref);
+    }
     const rows = getDb().prepare("SELECT ref FROM stored_credential WHERE org_id = ? ORDER BY ref").all(org) as { ref: string }[];
     return rows.map((r) => r.ref);
   },

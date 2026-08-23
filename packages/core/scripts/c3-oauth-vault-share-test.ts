@@ -118,6 +118,37 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
   ok((await sharedVaultSubjectFor("orgA", C, "slack", "P", WS)) === "ls:orgA/SHARED_ID", label("org isolation: orgA resolves ls:orgA/SHARED_ID"));
   ok((await sharedVaultSubjectFor("orgB", C, "slack", "P", WS)) === undefined, label("org isolation: orgB (same id string, no membership of its own) → RAW — never sees orgA's set"));
   ok(sharedVaultSubject("orgA", "SHARED_ID") !== sharedVaultSubject("orgB", "SHARED_ID"), label("org isolation: the subject shape itself org-qualifies (no cross-org vault-key alias)"));
+
+  {
+    const P = "ope1025:";
+    const put = (ref: string) => store.putStoredCredential(ORG, { ref, ciphertext: "opaque", createdBy: "test", createdAt: new Date().toISOString() });
+    await put(`${P}pend:a`);
+    await put(`${P}pend:b`);
+    await put(`${P}tok:a`);
+    await put(`${P}pendX`);
+    await put(`${P}pend_x`);
+    await put("ope1025-other:pend:a");
+
+    const pend = await store.listStoredCredentialRefs(ORG, `${P}pend:`);
+    ok(pend.length === 2 && pend[0] === `${P}pend:a` && pend[1] === `${P}pend:b`, label(`prefix enumeration returns ONLY the prefixed refs, ref-ascending (got ${pend.length}: ${pend.join(",")})`));
+    ok(!pend.includes(`${P}tok:a`), label("🔴 negative control: a SIBLING namespace under the same root is NOT returned — the product sweep never sees another holder's refs"));
+    ok(!pend.includes("ope1025-other:pend:a"), label("🔴 negative control: a ref outside the prefix is NOT returned"));
+
+    const underscore = await store.listStoredCredentialRefs(ORG, `${P}pend_`);
+    ok(underscore.length === 1 && underscore[0] === `${P}pend_x`, label(`🔴 an "_" in the prefix matches ITSELF, not any character (got ${underscore.length}: ${underscore.join(",")} — unescaped this returns 2)`));
+    ok(!underscore.includes(`${P}pendX`), label("🔴 negative control: the LIKE wildcard `_` does NOT reach pendX"));
+
+    await put(`${P}pct%x`);
+    const pct = await store.listStoredCredentialRefs(ORG, `${P}pct%`);
+    ok(pct.length === 1 && pct[0] === `${P}pct%x`, label(`🔴 a "%" in the prefix matches ITSELF, not any run of characters (got ${pct.length}: ${pct.join(",")})`));
+
+    const all = await store.listStoredCredentialRefs(ORG);
+    ok(all.length > pend.length && all.includes(`${P}tok:a`), label("no prefix ⇒ the full walk is unchanged — the out-of-band operator sweep still sees every ref"));
+
+    await store.putStoredCredential("orgZ", { ref: `${P}pend:zzz`, ciphertext: "opaque", createdBy: "test", createdAt: new Date().toISOString() });
+    const stillTwo = await store.listStoredCredentialRefs(ORG, `${P}pend:`);
+    ok(stillTwo.length === 2, label("🔴 negative control: ANOTHER org's row under the same prefix is NOT returned (the enumeration is org-scoped)"));
+  }
 }
 
 {
@@ -296,6 +327,7 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
     const unlinkRow = (await store.readAudit({ org: ORG })).filter((r) => r.action === "identity.link.unlinked").at(-1);
     ok((unlinkRow?.detail as { credentialsPurged?: number } | undefined)?.credentialsPurged === 1, "G3: the unlink audit row states how many credentials were destroyed");
   }
+
 }
 
 {
