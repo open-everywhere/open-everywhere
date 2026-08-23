@@ -482,7 +482,7 @@ export function parseVercelAuthToken(text: string): string | undefined {
 }
 
 export function resolveVercelApiToken(input: { env: Env; homeDir?: string; readFile?: ReadFile }): string | undefined {
-  const fromEnv = input.env.VERCEL_TOKEN?.trim();
+  const fromEnv = input.env.OE_VERCEL_API_TOKEN?.trim();
   if (fromEnv) return fromEnv;
   const homeDir = input.homeDir ?? homedir();
   const readFile = input.readFile ?? safeReadFileSync;
@@ -494,7 +494,7 @@ export function resolveVercelApiToken(input: { env: Env; homeDir?: string; readF
   return undefined;
 }
 
-export type VercelProjectRef = { idOrName: string; teamSlug: string };
+export type VercelProjectRef = { idOrName: string; teamSlug: string; teamId?: string };
 
 export function resolveProjectRef(input: { envProject?: string; envScope: string; projectJsonPath: string; readFile?: ReadFile }): VercelProjectRef | undefined {
   if (input.envProject) return { idOrName: input.envProject, teamSlug: input.envScope };
@@ -502,9 +502,10 @@ export function resolveProjectRef(input: { envProject?: string; envScope: string
   const text = readFile(input.projectJsonPath);
   if (!text) return undefined;
   try {
-    const parsed = JSON.parse(text) as { projectId?: unknown };
+    const parsed = JSON.parse(text) as { projectId?: unknown; orgId?: unknown };
     if (typeof parsed.projectId !== "string" || parsed.projectId.length === 0) return undefined;
-    return { idOrName: parsed.projectId, teamSlug: input.envScope };
+    const teamId = typeof parsed.orgId === "string" && parsed.orgId.length > 0 ? parsed.orgId : undefined;
+    return { idOrName: parsed.projectId, teamSlug: input.envScope, teamId };
   } catch {
     return undefined;
   }
@@ -515,7 +516,10 @@ export async function fetchProjectInfo(input: {
   token: string;
   fetchImpl: ApiFetchLike;
 }): Promise<{ status: number; body?: unknown; parseError?: string }> {
-  const url = `https://api.vercel.com/v9/projects/${encodeURIComponent(input.project.idOrName)}?slug=${encodeURIComponent(input.project.teamSlug)}`;
+  const teamParam = input.project.teamId
+    ? `teamId=${encodeURIComponent(input.project.teamId)}`
+    : `slug=${encodeURIComponent(input.project.teamSlug)}`;
+  const url = `https://api.vercel.com/v9/projects/${encodeURIComponent(input.project.idOrName)}?${teamParam}`;
   const res = await input.fetchImpl(url, { headers: { authorization: `Bearer ${input.token}` } });
   const text = await res.text();
   if (res.status !== 200) {
@@ -642,7 +646,7 @@ export async function runCronCheck(input: {
   };
 
   if (!input.token) {
-    return skip("no Vercel API token found (checked VERCEL_TOKEN and the CLI's stored login) — skipping the cron registration check.");
+    return skip("no Vercel API token found (checked OE_VERCEL_API_TOKEN and the CLI's stored login) — skipping the cron registration check.");
   }
   if (!input.project) {
     return skip("could not resolve the Vercel project (set OE_DEPLOY_PROJECT, or run from a directory `vercel link` has linked) — skipping the cron registration check.");

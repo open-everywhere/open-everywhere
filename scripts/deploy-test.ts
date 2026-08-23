@@ -670,13 +670,22 @@ check("resolveProjectRef: OE_DEPLOY_PROJECT wins, and never touches the filesyst
   assert.equal(read, false);
 });
 
-check("resolveProjectRef: falls back to .vercel/project.json's projectId", () => {
+check("resolveProjectRef: falls back to .vercel/project.json's projectId, and reads orgId as teamId", () => {
   const ref = resolveProjectRef({
     envScope: "team-slug",
     projectJsonPath: "/repo/.vercel/project.json",
     readFile: (p) => (p === "/repo/.vercel/project.json" ? JSON.stringify({ projectId: "prj_abc123", orgId: "team_xyz" }) : undefined),
   });
-  assert.deepEqual(ref, { idOrName: "prj_abc123", teamSlug: "team-slug" });
+  assert.deepEqual(ref, { idOrName: "prj_abc123", teamSlug: "team-slug", teamId: "team_xyz" });
+});
+
+check("resolveProjectRef: a file with no orgId leaves teamId undefined", () => {
+  const ref = resolveProjectRef({
+    envScope: "team-slug",
+    projectJsonPath: "/repo/.vercel/project.json",
+    readFile: (p) => (p === "/repo/.vercel/project.json" ? JSON.stringify({ projectId: "prj_abc123" }) : undefined),
+  });
+  assert.deepEqual(ref, { idOrName: "prj_abc123", teamSlug: "team-slug", teamId: undefined });
 });
 
 check("resolveProjectRef: undefined when neither the env var nor the file resolves anything", () => {
@@ -690,9 +699,14 @@ check("parseVercelAuthToken: reads the token field, and is defensive on garbage"
   assert.equal(parseVercelAuthToken(JSON.stringify({ noToken: true })), undefined);
 });
 
-check("resolveVercelApiToken: VERCEL_TOKEN wins over the CLI's stored login", () => {
-  const token = resolveVercelApiToken({ env: { VERCEL_TOKEN: "env-token" }, readFile: () => JSON.stringify({ token: "file-token" }) });
+check("resolveVercelApiToken: OE_VERCEL_API_TOKEN wins over the CLI's stored login", () => {
+  const token = resolveVercelApiToken({ env: { OE_VERCEL_API_TOKEN: "env-token" }, readFile: () => JSON.stringify({ token: "file-token" }) });
   assert.equal(token, "env-token");
+});
+
+check("resolveVercelApiToken: a bare VERCEL_TOKEN is NOT read — that name is the CLI's own (OPE-1031)", () => {
+  const token = resolveVercelApiToken({ env: { VERCEL_TOKEN: "cli-colliding-name" }, homeDir: "/home/op", readFile: () => undefined });
+  assert.equal(token, undefined);
 });
 
 check("resolveVercelApiToken: falls back to the CLI's stored login when unset", () => {
@@ -725,6 +739,16 @@ await check("fetchProjectInfo: sends the bearer token and reports a non-200 with
   const result = await fetchProjectInfo({ project: { idOrName: "prj_abc", teamSlug: "team-slug" }, token: "s3cret", fetchImpl });
   assert.equal(result.status, 404);
   assert.equal(seenAuth, "Bearer s3cret");
+});
+
+await check("fetchProjectInfo: prefers teamId over slug when both are known", async () => {
+  const fetchImpl: ApiFetchLike = async (url) => {
+    assert.match(url, /teamId=team_xyz/);
+    assert.doesNotMatch(url, /slug=/);
+    return { status: 200, text: async () => JSON.stringify({ crons: {} }) };
+  };
+  const result = await fetchProjectInfo({ project: { idOrName: "prj_abc", teamSlug: "team-slug", teamId: "team_xyz" }, token: "tok", fetchImpl });
+  assert.equal(result.status, 200);
 });
 
 await check("fetchProjectInfo: an unparsable 200 body is reported, not thrown", async () => {
