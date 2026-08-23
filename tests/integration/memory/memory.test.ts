@@ -236,6 +236,17 @@ test("OPE-999 — update_status still writes STATUS.md against the fenced memory
   expect(shell!.exitCode).not.toBe(0);
   expect(`${shell!.stderr}${shell!.stdout}`).toMatch(/Permission denied|EACCES/i);
   expect(existsSync(siloFilePath("it-memory-b-brain", "after-status.md"))).toBe(false);
+
+  const drained = await awaitTaskSettlement({
+    dispatched: handle,
+    taskId: taskIdOfDelegation(handle, "the shell-try delegation"),
+    script: SETTLEMENT_DRAIN_SCRIPT,
+    label: "the shell-trying worker's settlement wake",
+  });
+  expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  drained.handle.dispose();
+
+  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 });
 
 test("purge_memory proposes a card under the egress spoof and redacts the fact on the approval-equivalent decide path, leaving only digests behind", async () => {

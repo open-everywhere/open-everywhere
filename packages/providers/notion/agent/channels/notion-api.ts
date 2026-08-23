@@ -441,6 +441,34 @@ export async function createCommentReply(
   return typeof body.id === "string" ? body.id : "";
 }
 
+export async function createPageComment(
+  args: { pageId: string; text: string } & NotionCallOpts,
+): Promise<string> {
+  const res = await notionFetch(`${NOTION_API_BASE}/v1/comments`, {
+    method: "POST",
+    headers: notionHeaders(args),
+    body: JSON.stringify({ parent: { page_id: args.pageId }, rich_text: richTextChunks(args.text) }),
+  }, args);
+  if (!res.ok) {
+    throw Object.assign(new Error(`createPageComment failed: ${res.status} ${await safeText(res)}`), { status: res.status });
+  }
+  const body = (await res.json().catch(() => ({}))) as { id?: unknown };
+  return typeof body.id === "string" ? body.id : "";
+}
+
+export async function updateComment(
+  args: { commentId: string; text: string } & NotionCallOpts,
+): Promise<void> {
+  const res = await notionFetch(`${NOTION_API_BASE}/v1/comments/${encodeURIComponent(args.commentId)}`, {
+    method: "PATCH",
+    headers: notionHeaders(args),
+    body: JSON.stringify({ rich_text: richTextChunks(args.text) }),
+  }, args);
+  if (!res.ok) {
+    throw Object.assign(new Error(`updateComment ${args.commentId} failed: ${res.status} ${await safeText(res)}`), { status: res.status });
+  }
+}
+
 export function richTextChunks(text: string): Array<{ type: "text"; text: { content: string } }> {
   const MAX_ITEM = 2000;
   const MAX_ITEMS = 100;

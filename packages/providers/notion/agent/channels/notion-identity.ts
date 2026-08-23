@@ -45,6 +45,14 @@ export function notionConversationKey(workspaceId: string | undefined, pageId: s
   return workspaceId && pageId ? `${workspaceId}/${pageId}` : undefined;
 }
 
+export function parseNotionConversationKey(channelId: string): { readonly workspaceId: string; readonly pageId: string } | undefined {
+  const i = channelId.indexOf("/");
+  if (i <= 0 || i === channelId.length - 1) return undefined;
+  const workspaceId = channelId.slice(0, i);
+  const pageId = channelId.slice(i + 1);
+  return workspaceId.length > 0 && pageId.length > 0 ? { workspaceId, pageId } : undefined;
+}
+
 export function notionMode(): SessionMode {
   return "channel";
 }
