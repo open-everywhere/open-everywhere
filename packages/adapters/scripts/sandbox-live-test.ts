@@ -3,8 +3,8 @@ import { stopSessionSandboxes } from "../agent/sandbox/vercel-lifecycle.js";
 import { vercelStopper } from "../agent/sandbox/backend-stop.js";
 import { recordCreatedSandbox } from "../agent/sandbox/created-sandbox-registry.js";
 
-if (!process.env.VERCEL_OIDC_TOKEN && !process.env.OE_VERCEL_API_TOKEN) {
-  console.error("sandbox-live: SKIPPED — no VERCEL_OIDC_TOKEN/OE_VERCEL_API_TOKEN in env (run `vercel env pull` and source .env.local, or source .env.e2e).");
+if (!process.env.VERCEL_OIDC_TOKEN) {
+  console.error("sandbox-live: SKIPPED — no VERCEL_OIDC_TOKEN in env (run `vercel env pull` and source .env.local).");
   process.exit(2);
 }
 
