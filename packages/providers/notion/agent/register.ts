@@ -18,6 +18,7 @@ import { notionPostArm } from "./channels/notion-post-arm.js";
 import { notionMessageOps } from "./channels/notion-message-ops.js";
 import { notionWakeOriginCodec } from "./channels/notion-origin-codec.js";
 import { notionReadAdapter } from "./channels/notion-read.js";
+import { registerNotionWorkSearch } from "./channels/notion-work-search.js";
 import { notionWebhookVerifier } from "./channels/notion-webhook-verifier.js";
 import { notionEventNormalizer, notionEventScopeGrant } from "./channels/notion-event-normalizer.js";
 import { registerNotionMemory } from "./memory/memory.js";
@@ -29,6 +30,7 @@ export function registerNotionProvider(): void {
   registerSurfaceMessageOps(notionMessageOps);
   registerWakeOriginCodec("notion", notionWakeOriginCodec);
   registerReadAdapter(notionReadAdapter);
+  registerNotionWorkSearch();
   registerWebhookVerifier(notionWebhookVerifier);
   registerEventNormalizer(notionEventNormalizer);
   registerEventScopeGrant(notionEventScopeGrant);

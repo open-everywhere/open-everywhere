@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 
 export type ExecResult = {
   code: number;
@@ -20,74 +20,6 @@ export const realExec: Exec = (command, args) =>
       resolve({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? ""), ...(spawnError ? { spawnError } : {}) });
     });
   });
-
-export type BinLookupIo = { exists: (path: string) => boolean; listDir: (path: string) => string[] };
-
-const REAL_BIN_IO: BinLookupIo = {
-  exists: (path) => existsSync(path),
-  listDir: (path) => {
-    try {
-      return readdirSync(path);
-    } catch {
-      return [];
-    }
-  },
-};
-
-export type BinResolution = { kind: "found"; path: string; via: string } | { kind: "missing"; searched: string[] };
-
-export function resolveExecutable(input: { name: string; overrideVar?: string; env: Env; cwd: string; io?: BinLookupIo }): BinResolution {
-  const io = input.io ?? REAL_BIN_IO;
-  const searched: string[] = [];
-  const tryPath = (candidate: string): boolean => {
-    searched.push(candidate);
-    return io.exists(candidate);
-  };
-
-  const override = input.overrideVar ? input.env[input.overrideVar]?.trim() : undefined;
-  if (override) {
-    return tryPath(override) ? { kind: "found", path: override, via: input.overrideVar ?? "override" } : { kind: "missing", searched };
-  }
-
-  const local = join(input.cwd, "node_modules", ".bin", input.name);
-  if (tryPath(local)) return { kind: "found", path: local, via: "node_modules/.bin" };
-
-  for (const dir of (input.env.PATH ?? "").split(delimiter)) {
-    if (!dir) continue;
-    const candidate = join(dir, input.name);
-    if (tryPath(candidate)) return { kind: "found", path: candidate, via: "PATH" };
-  }
-
-  const nvmDir = input.env.NVM_DIR?.trim() || join(input.env.HOME ?? homedir(), ".nvm");
-  const versionsDir = join(nvmDir, "versions", "node");
-  for (const version of io.listDir(versionsDir).sort().reverse()) {
-    const candidate = join(versionsDir, version, "bin", input.name);
-    if (tryPath(candidate)) return { kind: "found", path: candidate, via: `nvm (${version})` };
-  }
-
-  return { kind: "missing", searched };
-}
-
-export function binResolutionError(name: string, searched: string[]): DeployConfigError {
-  return new DeployConfigError(
-    `could not find the \`${name}\` executable — it never ran, so nothing this script reads from it is known.\n` +
-      `  \`execFile\` uses no shell: it resolves \`${name}\` against this node process's PATH, which is not\n` +
-      "  your interactive shell's PATH when nvm has swapped node versions.\n" +
-      `  Remedy: install it (\`npm i -g ${name}\`) for the node version you run the deploy chain with,\n` +
-      `  or point OE_VERCEL_BIN at the absolute path of the binary you want.\n` +
-      `  Searched (${searched.length}): ${searched.slice(0, 12).join(", ")}${searched.length > 12 ? ", …" : ""}`,
-  );
-}
-
-export const VERCEL_BIN_OVERRIDE_VAR = "OE_VERCEL_BIN";
-
-export const vercelExec: Exec = async (command, args) => {
-  const found = resolveExecutable({ name: command, overrideVar: VERCEL_BIN_OVERRIDE_VAR, env: process.env, cwd: process.cwd() });
-  if (found.kind === "missing") throw binResolutionError(command, found.searched);
-  const res = await realExec(found.path, args);
-  if (res.spawnError) throw binResolutionError(command, [`${found.path} (${res.spawnError})`]);
-  return res;
-};
 
 export type Env = Record<string, string | undefined>;
 
@@ -116,7 +48,7 @@ function required(env: Env, name: string, why: string): string {
 }
 
 export function resolveDeployEnv(env: Env, cwd = process.cwd()): DeployEnv {
-  const scope = required(env, "OE_DEPLOY_SCOPE", "the vercel CLI needs a team/scope slug (`vercel --scope <slug>`)");
+  const scope = required(env, "OE_DEPLOY_SCOPE", "the Vercel REST API needs a team/scope slug to qualify every call");
   const alias = required(
     env,
     "OE_DEPLOY_ALIAS",
@@ -148,48 +80,69 @@ export type DeploymentRow = {
   raw: string;
 };
 
-const DEPLOYMENT_URL = /\bhttps?:\/\/[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:\/[^\s]*)?/i;
-const STATE_WORD = /\b(READY|ERROR|BUILDING|QUEUED|CANCELED|CANCELLED|INITIALIZING)\b/i;
-const TARGET_WORD = /\b(PRODUCTION|PREVIEW)\b/i;
-
-export function parseDeploymentList(stdout: string): DeploymentRow[] {
-  const rows: DeploymentRow[] = [];
-  for (const raw of stdout.split("\n")) {
-    const line = raw.trim();
-    if (line.length === 0) continue;
-    const match = DEPLOYMENT_URL.exec(line);
-    if (!match) continue;
-    const url = normalizeDeploymentUrl(match[0]);
-    if (!url) continue;
-    rows.push({
-      url,
-      state: STATE_WORD.exec(line)?.[1]?.toUpperCase(),
-      target: TARGET_WORD.exec(line)?.[1]?.toUpperCase(),
-      raw: line,
-    });
-  }
-  return rows;
-}
-
 export function normalizeDeploymentUrl(value: string): string {
   const trimmed = value.trim().replace(/\/+$/, "");
   if (trimmed.length === 0) return "";
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
+export function deploymentKey(target: string): string {
+  return target
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/[/?#].*$/, "");
+}
+
 export type InspectResult = { id?: string; url?: string; state?: string; createdAt?: string };
 
-export function parseInspect(output: string): InspectResult {
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) if (typeof value === "string" && value.length > 0) return value;
+  return undefined;
+}
+
+function firstNumber(...values: unknown[]): number | undefined {
+  for (const value of values) if (typeof value === "number" && Number.isFinite(value)) return value;
+  return undefined;
+}
+
+export function parseDeploymentRecord(body: unknown): InspectResult {
   const result: InspectResult = {};
-  const id = /(?:^|\s)id\s+(dpl_[A-Za-z0-9]+)/.exec(output);
-  if (id) result.id = id[1];
-  const url = /(?:^|\s)url\s+(\S+)/.exec(output);
-  if (url) result.url = normalizeDeploymentUrl(url[1]);
-  const state = /(?:^|\s)status\s+(\S+)|(?:^|\s)state\s+(\S+)/.exec(output);
-  if (state) result.state = (state[1] ?? state[2])?.toUpperCase();
-  const created = /(?:^|\s)created\s+(.+)$/m.exec(output);
-  if (created) result.createdAt = created[1].replace(/\s*\[[^\]]*\]\s*$/, "").trim();
+  if (!isRecord(body)) return result;
+  const id = firstString(body.id, body.uid);
+  if (id) result.id = id;
+  const url = firstString(body.url);
+  if (url) result.url = normalizeDeploymentUrl(url);
+  const state = firstString(body.readyState, body.status, body.state);
+  if (state) result.state = state.toUpperCase();
+  const created = firstNumber(body.createdAt, body.created);
+  if (created !== undefined) {
+    const date = new Date(created);
+    if (!Number.isNaN(date.getTime())) result.createdAt = date.toISOString();
+  }
   return result;
+}
+
+export function parseDeploymentList(body: unknown): DeploymentRow[] {
+  const list = isRecord(body) && Array.isArray(body.deployments) ? body.deployments : [];
+  const ranked: { row: DeploymentRow; created: number }[] = [];
+  for (const item of list) {
+    if (!isRecord(item)) continue;
+    const rawUrl = firstString(item.url);
+    const url = rawUrl ? normalizeDeploymentUrl(rawUrl) : "";
+    if (!url) continue;
+    const state = firstString(item.readyState, item.state)?.toUpperCase();
+    const target = firstString(item.target)?.toUpperCase();
+    ranked.push({
+      row: {
+        url,
+        ...(state ? { state } : {}),
+        ...(target ? { target } : {}),
+        raw: `${url} ${state ?? "?"} ${target ?? "?"}`,
+      },
+      created: firstNumber(item.created, item.createdAt) ?? 0,
+    });
+  }
+  return ranked.sort((a, b) => b.created - a.created).map((entry) => entry.row);
 }
 
 export type DeployEntry = {
@@ -292,14 +245,14 @@ export function chooseRollbackTarget(input: {
   for (const row of input.discovered) {
     if (row.state && row.state !== "READY") continue;
     if (current && row.url === current) continue;
-    return { kind: "discovered", url: row.url, why: "newest READY deployment from `vercel ls` that is not the current alias target" };
+    return { kind: "discovered", url: row.url, why: "newest READY deployment in the project listing that is not the current alias target" };
   }
 
   return {
     kind: "none",
     why:
       "nothing to roll back to — the known-good pointer is empty (run `npm run deploy:record` after a good deploy) " +
-      "and `vercel ls` offered no READY deployment other than the current one. Pass `--to <deployment-url>` to name one.",
+      "and the project listing offered no READY deployment other than the current one. Pass `--to <deployment-url>` to name one.",
   };
 }
 
@@ -384,27 +337,112 @@ export function decideAfterProbe(input: { outcome: ProbeOutcome; noRollback: boo
   return { action: "rollback", message: `probe failed (${detail}) after ${input.outcome.attempts} attempt(s) — rolling back.` };
 }
 
+export const VERCEL_API_BASE = "https://api.vercel.com";
+
+export const DEPLOYMENT_LIST_LIMIT = 20;
+
+export class VercelApiError extends Error {}
+
+export type VercelApi = {
+  token: string;
+  project: VercelProjectRef;
+  fetchImpl: ApiFetchLike;
+  apiBase?: string;
+};
+
+export function teamQuery(project: VercelProjectRef): string {
+  return project.teamId ? `teamId=${encodeURIComponent(project.teamId)}` : `slug=${encodeURIComponent(project.teamSlug)}`;
+}
+
+function describeApiFailure(body: unknown, text: string): string {
+  if (isRecord(body) && isRecord(body.error)) {
+    const detail = [firstString(body.error.code), firstString(body.error.message)].filter(Boolean).join(" — ");
+    if (detail) return detail;
+  }
+  const trimmed = text.slice(0, 200).replace(/\s+/g, " ").trim();
+  return trimmed || "(empty body)";
+}
+
+function redactToken(text: string, token: string): string {
+  return token.length >= 8 ? text.split(token).join("«redacted-token»") : text;
+}
+
+export async function vercelApiJson(api: VercelApi, path: string, init?: { method: string; body: unknown }): Promise<unknown> {
+  const base = (api.apiBase ?? VERCEL_API_BASE).replace(/\/+$/, "");
+  const headers: Record<string, string> = { authorization: `Bearer ${api.token}` };
+  if (init) headers["content-type"] = "application/json";
+  const method = init?.method ?? "GET";
+  const res = await api.fetchImpl(`${base}${path}`, {
+    headers,
+    ...(init ? { method: init.method, body: JSON.stringify(init.body) } : {}),
+  });
+  const text = await res.text();
+  let body: unknown;
+  try {
+    body = JSON.parse(text) as unknown;
+  } catch {
+    body = undefined;
+  }
+  if (res.status < 200 || res.status >= 300) {
+    throw new VercelApiError(redactToken(`${method} ${path} → HTTP ${res.status}: ${describeApiFailure(body, text)}`, api.token));
+  }
+  if (body === undefined) {
+    throw new VercelApiError(`${method} ${path} → HTTP ${res.status} with a body that is not JSON`);
+  }
+  return body;
+}
+
+export type AliasSetResult = { ok: boolean; detail: string };
+
 export type VercelClient = {
   ls(): Promise<DeploymentRow[]>;
   inspect(target: string): Promise<InspectResult>;
-  aliasSet(deploymentUrl: string, alias: string): Promise<ExecResult>;
+  aliasSet(deploymentUrl: string, alias: string): Promise<AliasSetResult>;
 };
 
-export function createVercelClient(env: DeployEnv, exec: Exec = vercelExec, bin = "vercel"): VercelClient {
-  const scoped = (args: string[]): string[] => [...args, "--scope", env.scope];
+export function createVercelClient(api: VercelApi): VercelClient {
+  const team = teamQuery(api.project);
+  const readDeployment = async (target: string): Promise<InspectResult> =>
+    parseDeploymentRecord(await vercelApiJson(api, `/v13/deployments/${encodeURIComponent(deploymentKey(target))}?${team}`));
+
   return {
     async ls() {
-      const args = env.project ? ["ls", env.project] : ["ls"];
-      const res = await exec(bin, scoped(args));
-      return parseDeploymentList(`${res.stdout}\n${res.stderr}`);
+      const projectQuery = api.project.idOrName.startsWith("prj_")
+        ? `projectId=${encodeURIComponent(api.project.idOrName)}`
+        : `app=${encodeURIComponent(api.project.idOrName)}`;
+      const body = await vercelApiJson(api, `/v6/deployments?${projectQuery}&${team}&limit=${DEPLOYMENT_LIST_LIMIT}&target=production`);
+      return parseDeploymentList(body);
     },
-    async inspect(target) {
-      const res = await exec(bin, scoped(["inspect", target]));
-      return parseInspect(`${res.stdout}\n${res.stderr}`);
-    },
+
+    inspect: readDeployment,
+
+
     async aliasSet(deploymentUrl, alias) {
-      return exec(bin, scoped(["alias", "set", deploymentUrl, alias]));
+      let id: string;
+      try {
+        const target = await readDeployment(deploymentUrl);
+        if (!target.id) return { ok: false, detail: `${deploymentUrl} resolved to a deployment with no dpl_ id, so the alias cannot be assigned` };
+        id = target.id;
+      } catch (err) {
+        return { ok: false, detail: `could not resolve ${deploymentUrl} to a deployment id — ${err instanceof Error ? err.message : String(err)}` };
+      }
+      try {
+        await vercelApiJson(api, `/v2/deployments/${encodeURIComponent(id)}/aliases?${team}`, { method: "POST", body: { alias } });
+        return { ok: true, detail: `assigned ${alias} → ${deploymentUrl} (${id})` };
+      } catch (err) {
+        return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+      }
     },
+  };
+}
+
+export function lazyVercelClient(build: () => VercelApi): VercelClient {
+  let built: VercelClient | undefined;
+  const client = (): VercelClient => (built ??= createVercelClient(build()));
+  return {
+    ls: () => client().ls(),
+    inspect: (target) => client().inspect(target),
+    aliasSet: (deploymentUrl, alias) => client().aliasSet(deploymentUrl, alias),
   };
 }
 
@@ -418,7 +456,7 @@ export async function currentAliasTarget(client: VercelClient, alias: string): P
     return { kind: "unresolved", reason: err instanceof Error ? err.message : String(err) };
   }
   if (!result.url && !result.id) {
-    return { kind: "unresolved", reason: `\`vercel inspect ${alias}\` returned neither a url nor a dpl_ id` };
+    return { kind: "unresolved", reason: `the deployment record for ${alias} carried neither a url nor a dpl_ id` };
   }
   return { kind: "resolved", target: result };
 }
@@ -434,8 +472,8 @@ export function unresolvedAliasFailure(input: { alias: string; reason: string; r
     `deploy:verify: the probe passed, but ${input.alias} could not be resolved to a deployment — ${input.reason}\n` +
     "  This is FATAL, not a warning: these checks cannot run and would otherwise be skipped in silence —\n" +
     disarmed.map((line) => `    • ${line}`).join("\n") +
-    "\n  Remedy: make the `vercel` CLI runnable from this process (see OE_VERCEL_BIN), then re-run.\n" +
-    "  To record a known-good pointer without the CLI: `npm run deploy:record -- --url <deployment-url> [--id dpl_…]`."
+    "\n  Remedy: check OE_VERCEL_API_TOKEN, OE_DEPLOY_ALIAS and the project variables, then re-run.\n" +
+    "  To record a known-good pointer without the lookup: `npm run deploy:record -- --url <deployment-url> [--id dpl_…]`."
   );
 }
 
@@ -465,7 +503,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export type ApiFetchLike = (url: string, init: { headers: Record<string, string> }) => Promise<{ status: number; text(): Promise<string> }>;
+export type ApiFetchLike = (
+  url: string,
+  init: { headers: Record<string, string>; method?: string; body?: string },
+) => Promise<{ status: number; text(): Promise<string> }>;
+
+export const realApiFetch: ApiFetchLike = async (url, init) => {
+  const res = await fetch(url, {
+    headers: init.headers,
+    ...(init.method ? { method: init.method } : {}),
+    ...(init.body !== undefined ? { body: init.body } : {}),
+  });
+  return { status: res.status, text: () => res.text() };
+};
 
 const VERCEL_AUTH_RELATIVE_PATHS = [
   [".local", "share", "com.vercel.cli", "auth.json"],
@@ -496,30 +546,80 @@ export function resolveVercelApiToken(input: { env: Env; homeDir?: string; readF
 
 export type VercelProjectRef = { idOrName: string; teamSlug: string; teamId?: string };
 
-export function resolveProjectRef(input: { envProject?: string; envScope: string; projectJsonPath: string; readFile?: ReadFile }): VercelProjectRef | undefined {
-  if (input.envProject) return { idOrName: input.envProject, teamSlug: input.envScope };
+export function resolveProjectRef(input: {
+  envProject?: string;
+  envProjectId?: string;
+  envTeamId?: string;
+  envScope: string;
+  projectJsonPath: string;
+  readFile?: ReadFile;
+}): VercelProjectRef | undefined {
+  const envTeamId = input.envTeamId?.trim() || undefined;
+  if (input.envProject) return { idOrName: input.envProject, teamSlug: input.envScope, ...(envTeamId ? { teamId: envTeamId } : {}) };
+  const envProjectId = input.envProjectId?.trim() || undefined;
+  if (envProjectId) return { idOrName: envProjectId, teamSlug: input.envScope, ...(envTeamId ? { teamId: envTeamId } : {}) };
   const readFile = input.readFile ?? safeReadFileSync;
   const text = readFile(input.projectJsonPath);
   if (!text) return undefined;
   try {
     const parsed = JSON.parse(text) as { projectId?: unknown; orgId?: unknown };
     if (typeof parsed.projectId !== "string" || parsed.projectId.length === 0) return undefined;
-    const teamId = typeof parsed.orgId === "string" && parsed.orgId.length > 0 ? parsed.orgId : undefined;
-    return { idOrName: parsed.projectId, teamSlug: input.envScope, teamId };
+    const fileTeamId = typeof parsed.orgId === "string" && parsed.orgId.length > 0 ? parsed.orgId : undefined;
+    return { idOrName: parsed.projectId, teamSlug: input.envScope, teamId: envTeamId ?? fileTeamId };
   } catch {
     return undefined;
   }
+}
+
+export function resolveVercelApi(input: {
+  env: Env;
+  deployEnv: DeployEnv;
+  cwd: string;
+  fetchImpl: ApiFetchLike;
+  homeDir?: string;
+  readFile?: ReadFile;
+}): VercelApi {
+  const token = resolveVercelApiToken({ env: input.env, ...(input.homeDir ? { homeDir: input.homeDir } : {}), ...(input.readFile ? { readFile: input.readFile } : {}) });
+  if (!token) {
+    throw new DeployConfigError(
+      "no Vercel API token — set OE_VERCEL_API_TOKEN, or run `vercel login` on this machine.\n" +
+        "  Every deployment read these scripts make goes to the Vercel REST API: which deployment the\n" +
+        "  alias points at, the deployment listing rollback discovers from, the alias move itself, and\n" +
+        "  the cron registration check. Without a token none of them can run, and a verify that cannot\n" +
+        "  read the alias is not a safety net.\n" +
+        "  A TEAM-SCOPED token is correct here. It is the `vercel` CLI, not the REST API, that refuses\n" +
+        "  one (OPE-1045) — so do NOT set VERCEL_TOKEN in this shell to work around it (OPE-1031).",
+    );
+  }
+  const project = resolveProjectRef({
+    ...(input.deployEnv.project ? { envProject: input.deployEnv.project } : {}),
+    ...(input.env.VERCEL_PROJECT_ID ? { envProjectId: input.env.VERCEL_PROJECT_ID } : {}),
+    ...(input.env.VERCEL_ORG_ID ? { envTeamId: input.env.VERCEL_ORG_ID } : {}),
+    envScope: input.deployEnv.scope,
+    projectJsonPath: join(input.cwd, ".vercel", "project.json"),
+    ...(input.readFile ? { readFile: input.readFile } : {}),
+  });
+  if (!project) {
+    throw new DeployConfigError(
+      "could not resolve the Vercel project — the REST API needs one to name the deployment.\n" +
+        "  Set OE_DEPLOY_PROJECT (the project's name or its prj_ id), or set VERCEL_PROJECT_ID and\n" +
+        "  VERCEL_ORG_ID (the pair `vercel link` prints), or run from a directory `vercel link` has\n" +
+        "  linked. On a CI runner the checkout has no .vercel/project.json, so one of the two env\n" +
+        "  sources is required there.",
+    );
+  }
+  const apiBase = input.env.OE_VERCEL_API_BASE?.trim();
+  return { token, project, fetchImpl: input.fetchImpl, ...(apiBase ? { apiBase } : {}) };
 }
 
 export async function fetchProjectInfo(input: {
   project: VercelProjectRef;
   token: string;
   fetchImpl: ApiFetchLike;
+  apiBase?: string;
 }): Promise<{ status: number; body?: unknown; parseError?: string }> {
-  const teamParam = input.project.teamId
-    ? `teamId=${encodeURIComponent(input.project.teamId)}`
-    : `slug=${encodeURIComponent(input.project.teamSlug)}`;
-  const url = `https://api.vercel.com/v9/projects/${encodeURIComponent(input.project.idOrName)}?${teamParam}`;
+  const base = (input.apiBase ?? VERCEL_API_BASE).replace(/\/+$/, "");
+  const url = `${base}/v9/projects/${encodeURIComponent(input.project.idOrName)}?${teamQuery(input.project)}`;
   const res = await input.fetchImpl(url, { headers: { authorization: `Bearer ${input.token}` } });
   const text = await res.text();
   if (res.status !== 200) {
@@ -565,7 +665,7 @@ export function checkCronDeploymentId(input: { crons?: RawProjectCrons; resolved
     };
   }
   if (!input.resolvedDeploymentId) {
-    return { kind: "warn", message: "could not resolve the deployment id the alias currently points at (`vercel inspect` gave no id) — skipping the cron deploymentId check." };
+    return { kind: "warn", message: "could not resolve the deployment id the alias currently points at (the deployment record carried no id) — skipping the cron deploymentId check." };
   }
   if (deploymentId !== input.resolvedDeploymentId) {
     return {
@@ -614,7 +714,7 @@ export function checkCronUpdatedAt(input: { crons?: RawProjectCrons; deploymentC
     return { kind: "warn", message: "crons.updatedAt is missing, not a date, or not a string/number in the Vercel API response — skipping the cron staleness check." };
   }
   if (!input.deploymentCreatedAt) {
-    return { kind: "warn", message: "the deployment's created timestamp is unknown (`vercel inspect` gave no `created`) — skipping the cron staleness check." };
+    return { kind: "warn", message: "the deployment's created timestamp is unknown (the deployment record carried no `createdAt`) — skipping the cron staleness check." };
   }
   const created = toDate(input.deploymentCreatedAt);
   if (!created) {
@@ -638,6 +738,7 @@ export async function runCronCheck(input: {
   deploymentCreatedAt?: string;
   localCrons: LocalCronCount;
   apiFetch: ApiFetchLike;
+  apiBase?: string;
   log: Logger;
 }): Promise<CronCheckResult> {
   const skip = (message: string): CronCheckResult => {
@@ -646,13 +747,18 @@ export async function runCronCheck(input: {
   };
 
   if (!input.token) {
-    return skip("no Vercel API token found (checked OE_VERCEL_API_TOKEN and the CLI's stored login) — skipping the cron registration check.");
+    return skip("no Vercel API token found (checked OE_VERCEL_API_TOKEN and the vercel CLI's stored login) — skipping the cron registration check.");
   }
   if (!input.project) {
     return skip("could not resolve the Vercel project (set OE_DEPLOY_PROJECT, or run from a directory `vercel link` has linked) — skipping the cron registration check.");
   }
 
-  const response = await fetchProjectInfo({ project: input.project, token: input.token, fetchImpl: input.apiFetch });
+  const response = await fetchProjectInfo({
+    project: input.project,
+    token: input.token,
+    fetchImpl: input.apiFetch,
+    ...(input.apiBase ? { apiBase: input.apiBase } : {}),
+  });
   if (response.status !== 200 || response.body === undefined) {
     const detail = response.parseError ? ` (unparsable body: ${response.parseError})` : "";
     return skip(`GET /v9/projects/${input.project.idOrName} returned HTTP ${response.status}${detail} — skipping the cron registration check.`);
@@ -718,14 +824,13 @@ export async function runRollback(input: {
 
   log(`  target  ${choice.url}  [${choice.kind}: ${choice.why}]`);
   if (input.dryRun) {
-    log(`✓ rollback (dry run): would run \`vercel alias set ${choice.url} ${env.alias} --scope ${env.scope}\``);
+    log(`✓ rollback (dry run): would assign ${env.alias} → ${choice.url} in scope ${env.scope}`);
     return { ok: true, target: choice.url, choice };
   }
 
   const result = await client.aliasSet(choice.url, env.alias);
-  if (result.code !== 0) {
-    log(`✗ rollback: \`vercel alias set\` exited ${result.code}`);
-    for (const line of `${result.stderr}\n${result.stdout}`.split("\n").filter(Boolean).slice(0, 20)) log(`    ${line}`);
+  if (!result.ok) {
+    log(`✗ rollback: the alias assignment failed — ${result.detail}`);
     return { ok: false, target: choice.url, choice };
   }
 
@@ -763,7 +868,7 @@ export async function runRecord(input: {
     url = current?.url;
     id = id ?? current?.id;
     if (!url) {
-      const reason = resolved.kind === "unresolved" ? resolved.reason : "`vercel inspect` gave no url";
+      const reason = resolved.kind === "unresolved" ? resolved.reason : "the deployment record carried no url";
       const script = label.split(" ")[0];
       log(`✗ ${label}: could not resolve what ${env.alias} points at — ${reason}`);
       log("    Nothing was recorded. The known-good pointer still names the PREVIOUS deployment, so a rollback");

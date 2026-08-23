@@ -28,7 +28,9 @@ function cleanSurface(): WorkToolFile[] {
       rule.via === "grant"
         ?
           rule.connector === "*"
-          ? `import { workDestinationPlatforms } from "x"; workDestinationPlatforms(ctx, d);`
+          ? name === "search"
+            ? `import { searchGrantedConnectors } from "x"; searchGrantedConnectors(ctx, d);`
+            : `import { workDestinationPlatforms } from "x"; workDestinationPlatforms(ctx, d);`
           : `import { ${rule.connector}WorkMount } from "x"; ${rule.connector}WorkMount(ctx);`
         : rule.via === "grant-and-source"
           ?
@@ -139,6 +141,21 @@ check(`a neutral verb (connector:"*") declared via:"grant" must name the GRANT S
       );
     }
   }
+});
+
+check(`🔴 OPE-961: "search" is the ONE row that reads searchGrantedConnectors, not workDestinationPlatforms`, () => {
+  const searchNamesWrongSet: WorkToolFile[] = [{ name: "search", source: `workDestinationPlatforms(ctx, d)` }];
+  const wrongProblems = checkWorkMounts(searchNamesWrongSet, { search: { connector: "*", via: "grant" } }, {}).filter((p) => p.includes(`"search"`));
+  assert.equal(wrongProblems.length, 1, `expected one problem, got ${JSON.stringify(wrongProblems)}`);
+  assert.match(wrongProblems[0], /never names searchGrantedConnectors/u);
+
+  const searchClean: WorkToolFile[] = [{ name: "search", source: `searchGrantedConnectors(ctx, d)` }];
+  assert.deepEqual(checkWorkMounts(searchClean, { search: { connector: "*", via: "grant" } }, {}), []);
+
+  const otherNamesSearchSet: WorkToolFile[] = [{ name: "make_believe", source: `searchGrantedConnectors(ctx, d)` }];
+  const otherProblems = checkWorkMounts(otherNamesSearchSet, { make_believe: { connector: "*", via: "grant" } }, {}).filter((p) => p.includes("make_believe"));
+  assert.equal(otherProblems.length, 1, `expected one problem, got ${JSON.stringify(otherProblems)}`);
+  assert.match(otherProblems[0], /never names workDestinationPlatforms/u);
 });
 
 const intersection = Object.entries(WORK_TOOL_MOUNTS).find(([, r]) => r.via === "grant-and-source");

@@ -10,10 +10,10 @@ import {
   parseArgs,
   probeHealth,
   readLocalCronCount,
+  realApiFetch,
   resolveControlToken,
   resolveDeployEnv,
-  resolveProjectRef,
-  resolveVercelApiToken,
+  resolveVercelApi,
   runCronCheck,
   runRecord,
   runRollback,
@@ -26,6 +26,7 @@ const log = (line: string): void => console.log(line);
 try {
   const env = resolveDeployEnv(process.env);
   const token = resolveControlToken(process.env);
+  const api = resolveVercelApi({ env: process.env, deployEnv: env, cwd: process.cwd(), fetchImpl: realApiFetch });
   const noRollback = args.flags.has("no-rollback");
   const attempts = Number(args.values.get("attempts") ?? "3") || 3;
   const delayMs = Number(args.values.get("delay-ms") ?? "5000") || 5000;
@@ -47,7 +48,7 @@ try {
   if (decision.action === "pass") {
     log(`✓ deploy:verify: ${decision.message}`);
 
-    const client = createVercelClient(env);
+    const client = createVercelClient(api);
     const resolved = await currentAliasTarget(client, env.alias);
     if (resolved.kind === "unresolved") {
       console.error(`✗ ${unresolvedAliasFailure({ alias: env.alias, reason: resolved.reason, recording: args.flags.has("record") })}`);
@@ -57,19 +58,13 @@ try {
 
     log("  checking cron registration");
     const cronResult = await runCronCheck({
-      token: resolveVercelApiToken({ env: process.env }),
-      project: resolveProjectRef({
-        envProject: env.project,
-        envScope: env.scope,
-        projectJsonPath: join(process.cwd(), ".vercel", "project.json"),
-      }),
+      token: api.token,
+      project: api.project,
       resolvedDeploymentId: current.id,
       deploymentCreatedAt: current.createdAt,
       localCrons: readLocalCronCount(join(process.cwd(), ".vercel", "output", "config.json")),
-      apiFetch: async (url, init) => {
-        const res = await fetch(url, { headers: init.headers });
-        return { status: res.status, text: () => res.text() };
-      },
+      apiFetch: api.fetchImpl,
+      ...(api.apiBase ? { apiBase: api.apiBase } : {}),
       log,
     });
     if (!cronResult.ok) {
@@ -102,7 +97,7 @@ try {
   console.error(`✗ deploy:verify: ${decision.message}`);
   const rolled = await runRollback({
     env,
-    client: createVercelClient(env),
+    client: createVercelClient(api),
     store: fileStore(env.stateFile),
     log,
   });

@@ -1,10 +1,10 @@
-import { createVercelClient, currentCommit, DeployConfigError, fileStore, parseArgs, resolveDeployEnv, runRecord } from "./lib.js";
+import { currentCommit, DeployConfigError, fileStore, lazyVercelClient, parseArgs, realApiFetch, resolveDeployEnv, resolveVercelApi, runRecord } from "./lib.js";
 
 const args = parseArgs(process.argv.slice(2));
 
 try {
   const env = resolveDeployEnv(process.env);
-  const client = createVercelClient(env);
+  const client = lazyVercelClient(() => resolveVercelApi({ env: process.env, deployEnv: env, cwd: process.cwd(), fetchImpl: realApiFetch }));
   const result = await runRecord({
     env,
     client,
