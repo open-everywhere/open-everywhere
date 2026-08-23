@@ -42,6 +42,7 @@ import {
   isPrunedDeploymentWakeError,
   markUndeliveredAfterHeal,
   isUndeliveredAfterHeal,
+  healPrunedDeploymentStrand,
   mintWakeId,
   resolveWakeTrust,
   ambientSupervisorEnabled,
@@ -376,7 +377,23 @@ export function withSingleWindowDiversion(
   return {
     ...deps,
     async wake(input) {
-      if (!input.window) return deps.wake(input);
+      if (!input.window) {
+        try {
+          await deps.wake(input);
+        } catch (err) {
+          await healPrunedDeploymentStrand({
+            token: input.token,
+            registryKey: surfaceKey,
+            surfaceKey,
+            workspace: surfaceKey.split("/")[1] ?? "unknown",
+            platform: "slack",
+            atIso: new Date().toISOString(),
+            err,
+          });
+          throw err;
+        }
+        return;
+      }
       await divertInboundToUnifiedWindow(to, {
         message: input.message,
         token: input.token,

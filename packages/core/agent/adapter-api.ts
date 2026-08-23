@@ -287,7 +287,16 @@ export type { WakeMessageInput, WakeTrust, WakeReason } from "./channels/wake-en
 
 export { divertToUnifiedWindow } from "./channels/unified.js";
 
-export { isPrunedDeploymentWakeError, markUndeliveredAfterHeal, isUndeliveredAfterHeal } from "./channels/stranded-seat.js";
+export {
+  isPrunedDeploymentWakeError,
+  markUndeliveredAfterHeal,
+  isUndeliveredAfterHeal,
+  healPrunedDeploymentStrand,
+  RUN_KEY_FETCH_MARKER,
+  HTTP_404_MARKER,
+  PRUNED_DEPLOYMENT_AUDIT_ACTION,
+} from "./channels/stranded-seat.js";
+export type { StrandHealInput, StrandHealOutcome } from "./channels/stranded-seat.js";
 
 export { supervisorGrainFor, grainUsesUnifiedWindow, mintRotationToken } from "./channels/unified-supervisor.js";
 export type { SupervisorGrain } from "./channels/unified-supervisor.js";

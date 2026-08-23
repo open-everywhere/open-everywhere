@@ -51,6 +51,8 @@ export interface StrandHealInput {
   readonly org?: string;
   readonly store?: Pick<OperationalStore, "markChannelSessionRotation">;
   readonly audit?: (entry: AuditInput) => Promise<void>;
+  readonly registryKey?: string;
+  readonly workspace?: string;
 }
 
 export async function healPrunedDeploymentStrand(input: StrandHealInput): Promise<StrandHealOutcome> {
@@ -59,7 +61,7 @@ export async function healPrunedDeploymentStrand(input: StrandHealInput): Promis
     const org = input.org ?? deploymentOrg();
     const key = parseWindowToken(input.token);
     const ids = prunedDeploymentIds(input.err);
-    const registryKey = key ? unifiedDomainSessionKey(key.windowId) : undefined;
+    const registryKey = input.registryKey ?? (key ? unifiedDomainSessionKey(key.windowId) : undefined);
     const marked = registryKey
       ? await (input.store ?? getOperationalStore()).markChannelSessionRotation(org, registryKey, input.atIso)
       : false;
@@ -68,7 +70,7 @@ export async function healPrunedDeploymentStrand(input: StrandHealInput): Promis
       ts: input.atIso,
       org,
       platform: input.platform,
-      workspace: key?.domain ?? "unknown",
+      workspace: input.workspace ?? key?.domain ?? "unknown",
       surface: input.surfaceKey,
       action: PRUNED_DEPLOYMENT_AUDIT_ACTION,
       detail: {

@@ -13,7 +13,9 @@ process.env.GITHUB_APP_SLUG = "eve-bot";
 const { registerGithubProvider } = await import("../agent/register.js");
 registerGithubProvider();
 const { liveGitHubSupervisorDeps } = await import("../agent/channels/github.js");
-const { getOperationalStore, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
+const { getOperationalStore, deploymentOrg, RUN_KEY_FETCH_MARKER, HTTP_404_MARKER, PRUNED_DEPLOYMENT_AUDIT_ACTION } = await import(
+  "@open-everywhere/core/agent/adapter-api.js"
+);
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -99,4 +101,64 @@ const noopSend = (async () => ({})) as unknown as Parameters<typeof liveGitHubSu
   eq(rows.length, 0, "negative control: a successful divert writes NO `surface.wake_failed` row (scoped to wakeId \"w2\", this call's own)");
 }
 
-console.log(`✓ github-wake-failure-audit: ${n} assertions passed (OPE-970 ambient divert failure audit + negative control)`);
+{
+  const org = deploymentOrg();
+  const seedToken = "seed-tok";
+  await getOperationalStore().rotateChannelSession(org, SURFACE, seedToken, "2026-08-22T00:00:00.000Z");
+  const before = await getOperationalStore().getChannelSession(org, SURFACE);
+  ok(before?.rotateMarkedAt == null, "wiring precondition: the repo's seat starts UNMARKED (so a green below cannot be vacuous)");
+
+  const boom = new Error(`${RUN_KEY_FETCH_MARKER} for wrun_TEST (deployment dpl_TEST): ${HTTP_404_MARKER} Not Found`);
+  const failingSend = (async () => {
+    throw boom;
+  }) as unknown as Parameters<typeof liveGitHubSupervisorDeps>[0];
+  const deps = liveGitHubSupervisorDeps(failingSend, ev, undefined);
+
+  let threw: unknown;
+  try {
+    await deps.wake({
+      token: "native-tok",
+      auth: { attributes: {} } as never,
+      message: "<wake>hi</wake>",
+      context: [],
+    });
+  } catch (err) {
+    threw = err;
+  }
+  ok(threw === boom, "the native send failure still PROPAGATES unchanged");
+
+  const after = await getOperationalStore().getChannelSession(org, SURFACE);
+  ok(after?.rotateMarkedAt != null, "🔴 OPE-971: the NATIVE (flag-off) wake heal MARKED the repo's own seat for rotation — githubGrainFor's registryKey === surfaceKey flag-off");
+  const strandRows = (await getOperationalStore().readAudit({ org, action: PRUNED_DEPLOYMENT_AUDIT_ACTION })).filter(
+    (row) => (row.detail as { token?: unknown } | undefined)?.token === "native-tok",
+  );
+  eq(strandRows.length, 1, "…and wrote exactly ONE strand audit row for this token");
+  eq(strandRows[0]!.workspace, OWNER, "…workspace is the repo's owner, not `unknown`");
+  eq((strandRows[0]!.detail as Record<string, unknown>).registryKey, SURFACE, "…the row names the registryKey it marked");
+}
+
+{
+  const org = deploymentOrg();
+  const before = await getOperationalStore().getChannelSession(org, SURFACE);
+  const transient = new Error("socket hang up");
+  const failingSend = (async () => {
+    throw transient;
+  }) as unknown as Parameters<typeof liveGitHubSupervisorDeps>[0];
+  const deps = liveGitHubSupervisorDeps(failingSend, ev, undefined);
+
+  await deps.wake({
+    token: "transient-tok",
+    auth: { attributes: {} } as never,
+    message: "<wake>hi</wake>",
+    context: [],
+  }).catch(() => undefined);
+
+  const after = await getOperationalStore().getChannelSession(org, SURFACE);
+  eq(after?.rotateMarkedAt, before?.rotateMarkedAt, "negative control: a TRANSIENT native send failure changes NOTHING about the seat's mark state");
+  const strandRows = (await getOperationalStore().readAudit({ org, action: PRUNED_DEPLOYMENT_AUDIT_ACTION })).filter(
+    (row) => (row.detail as { token?: unknown } | undefined)?.token === "transient-tok",
+  );
+  eq(strandRows.length, 0, "…and writes no strand audit row either");
+}
+
+console.log(`✓ github-wake-failure-audit: ${n} assertions passed (OPE-970 ambient divert failure audit + negative control, OPE-971 native flag-off heal + negative control)`);
