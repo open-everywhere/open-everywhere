@@ -200,6 +200,7 @@ function normalize(body: string): NormalizedEvent | null {
       dispatch: async () => {
         seenDispatch.push(type);
       },
+      attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
     });
     ok(outcome.action === "ignored" && outcome.detail === type, `${type} is IGNORED by the ambient supervisor — a structural delivery never double-drives it`);
     ok(outcome.verified === true, `${type} carrying a real signature is marked verified`);
@@ -388,6 +389,7 @@ function normalize(body: string): NormalizedEvent | null {
     resolveBotUserId: async () => "bot",
     ambientEnabled: () => true,
     dispatch: async () => {},
+    attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
   });
   ok(hatch.action !== "rejected", "the OE_ALLOW_UNVERIFIED_NOTION_WEBHOOK hatch still ACCEPTS the delivery for the supervisor path");
   ok(hatch.verified === false, "🔴 …but it is NOT `verified`, so notion.ts never hands it to admitTrigger — a dev hatch cannot fire a routine");
@@ -401,6 +403,7 @@ function normalize(body: string): NormalizedEvent | null {
     resolveBotUserId: async () => "bot",
     ambientEnabled: () => true,
     dispatch: async () => {},
+    attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
   });
   ok(rejected.action === "rejected" && rejected.verified === false, "a bad signature is rejected and never verified");
 
@@ -413,6 +416,7 @@ function normalize(body: string): NormalizedEvent | null {
     resolveBotUserId: async () => "bot",
     ambientEnabled: () => true,
     dispatch: async () => {},
+    attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
   });
   ok(handshake.action === "handshake" && handshake.verified === false, "the handshake arrives BEFORE any secret exists and is never verified");
 }
@@ -586,6 +590,7 @@ function normalize(body: string): NormalizedEvent | null {
     resolveBotUserId: async () => "bot",
     ambientEnabled: () => true,
     dispatch: async () => {},
+    attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
   });
   ok(ignored.action === "ignored" && ignored.verified === true, "a structural delivery is `ignored` by the comment path and still `verified`");
   ok(ignored.signerCredentialId === PAY_CRED, "🔴 …and it reports the integration whose secret VERIFIED it, which is the only fact the fence can stand on");
@@ -600,6 +605,7 @@ function normalize(body: string): NormalizedEvent | null {
     resolveBotUserId: async () => "bot",
     ambientEnabled: () => true,
     dispatch: async () => {},
+    attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
   });
   ok(hatched.signerCredentialId === undefined, "the unverified dev hatch names NO signer — nothing verified, so nothing is claimed");
 

@@ -41,6 +41,10 @@ export function notionSurfaceKey(workspaceId: string | undefined, surface: strin
   return `notion/${workspaceId ?? "unknown"}/${surface ?? "unknown"}`;
 }
 
+export function notionConversationKey(workspaceId: string | undefined, pageId: string | undefined): string | undefined {
+  return workspaceId && pageId ? `${workspaceId}/${pageId}` : undefined;
+}
+
 export function notionMode(): SessionMode {
   return "channel";
 }
@@ -86,5 +90,6 @@ export const bindNotion: IdentityMapper = (ctx): RawIdentity => {
     trust: trustRoot ? ("internal" as const) : undefined,
     principalId: (principal && principal.length > 0 ? principal : undefined) ?? notionAttr(a, ["user_id", "userId"]),
     target: discussionId ? { discussionId, ...(pageId ? { pageId } : {}), ...(credentialId ? { credentialId } : {}) } : undefined,
+    ...(notionConversationKey(workspaceId, pageId) ? { anchorChannelId: notionConversationKey(workspaceId, pageId) } : {}),
   };
 };
