@@ -115,20 +115,27 @@ export const notionReadAdapter = {
     const call = await admit(ctx, channel, deps);
     const effective = Math.max(1, limit ?? NOTION_CHANNEL_DEFAULT_LIMIT);
     const res = await readNotionComments(channel, { ...call, maxComments: effective, maxBlockScans: NOTION_MAX_BLOCK_SCANS });
-    return notionChannelLines(res.comments, channel);
+    const readAt = new Date().toISOString();
+    return notionChannelLines(res.comments, channel).map((line) => ({ ...line, readAt }));
   },
   async readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number, deps?: NotionReadDeps): Promise<readonly RenderedLine[]> {
     const call = await admit(ctx, channel, deps);
     const pageLevel = (await listBlockComments(channel, call)).filter((c) => c.discussion_id === threadTs);
     if (pageLevel.length > 0) {
       const summaries: NotionCommentSummary[] = pageLevel.map((c) => toNotionCommentSummary(c, channel));
-      return notionThreadLines(summaries, threadTs, channel).slice(-(limit ?? NOTION_THREAD_DEFAULT_LIMIT));
+      const readAt = new Date().toISOString();
+      return notionThreadLines(summaries, threadTs, channel)
+        .map((line) => ({ ...line, readAt }))
+        .slice(-(limit ?? NOTION_THREAD_DEFAULT_LIMIT));
     }
     const res = await readNotionComments(channel, {
       ...call,
       maxComments: NOTION_THREAD_SWEEP_COMMENTS,
       maxBlockScans: NOTION_MAX_BLOCK_SCANS,
     });
-    return notionThreadLines(res.comments, threadTs, channel).slice(-(limit ?? NOTION_THREAD_DEFAULT_LIMIT));
+    const readAt = new Date().toISOString();
+    return notionThreadLines(res.comments, threadTs, channel)
+      .map((line) => ({ ...line, readAt }))
+      .slice(-(limit ?? NOTION_THREAD_DEFAULT_LIMIT));
   },
 };

@@ -153,6 +153,14 @@ eq(notionReadAdapter.wakeAddress(notionTurn({})), undefined, "a turn with neithe
   ok(lines[4]!.text.startsWith(`[discussion d-2 — on "${B2_TEXT}"]\n`), "the third discussion is headed too");
   eq(lines[0]!.author, "person u1", "an author renders as its Notion kind and id");
   eq(lines[0]!.ts, "t1", "…and carries the comment's own creation time");
+  ok(
+    lines.every((l) => typeof l.readAt === "string" && l.readAt === lines[0]!.readAt),
+    "🔴 OPE-1039: every line carries the SAME readAt stamp",
+  );
+  ok(
+    lines.every((l) => l.live === undefined),
+    "🔴 negative control (OPE-1039): NO line is marked live — a generic Notion read has no live field, only history (page prose stays out of the chat plane by ruling)",
+  );
 }
 {
   const bot: NotionCommentSummary[] = [
@@ -180,6 +188,10 @@ eq(notionReadAdapter.wakeAddress(notionTurn({})), undefined, "a turn with neithe
   eq(lines.map((l) => l.text.split("\n").pop()), ["is this doc current?", "yes"], "a page-level discussion reads its own comments");
   ok(lines[0]!.text.startsWith("[discussion d-page — on the page]"), "…opened by the same header the channel view uses");
   ok(!sweptBlocks(t.urls), "the cheap path takes NO block sweep — one call served it");
+  ok(
+    lines.every((l) => typeof l.readAt === "string" && l.live === undefined),
+    "🔴 OPE-1039: the CHEAP thread path dates every line too, and marks none live",
+  );
 }
 {
   const t = transport();
@@ -190,6 +202,10 @@ eq(notionReadAdapter.wakeAddress(notionTurn({})), undefined, "a turn with neithe
   ok(
     !lines.some((l) => l.text.includes("unrelated point") || l.text.includes("is this doc current?")),
     "🔴 a SIBLING discussion never leaks into a thread read — sibling discussions are unrelated",
+  );
+  ok(
+    lines.every((l) => typeof l.readAt === "string" && l.live === undefined),
+    "🔴 OPE-1039: the SWEEP thread path dates every line too, and marks none live",
   );
 }
 {

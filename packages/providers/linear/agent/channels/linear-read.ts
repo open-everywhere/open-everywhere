@@ -93,12 +93,19 @@ export const linearReadAdapter = {
   },
   async readChannel(ctx: BindableContext, channel: string, limit?: number, deps?: LinearReadDeps): Promise<readonly RenderedLine[]> {
     const issue = await admitAndRead(ctx, channel, deps);
+    const readAt = new Date().toISOString();
     const effective = Math.max(1, limit ?? LINEAR_CHANNEL_DEFAULT_LIMIT);
     const roots = linearRootComments(issue.comments).slice(-Math.max(1, effective - 1));
-    return [linearTopicLine(issue), ...roots.map((c) => commentLine(c))];
+    return [
+      { ...linearTopicLine(issue), readAt, live: true },
+      ...roots.map((c) => ({ ...commentLine(c), readAt })),
+    ];
   },
   async readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number, deps?: LinearReadDeps): Promise<readonly RenderedLine[]> {
     const issue = await admitAndRead(ctx, channel, deps);
-    return linearThreadLines(issue.comments, threadTs).slice(-(limit ?? LINEAR_THREAD_DEFAULT_LIMIT));
+    const readAt = new Date().toISOString();
+    return linearThreadLines(issue.comments, threadTs)
+      .map((line) => ({ ...line, readAt }))
+      .slice(-(limit ?? LINEAR_THREAD_DEFAULT_LIMIT));
   },
 };

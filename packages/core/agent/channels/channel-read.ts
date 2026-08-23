@@ -16,6 +16,7 @@ import { encodeChannelKey } from "./channel-key.js";
 import { auditChannelReadRefusal, type ReadScopeAuditDeps } from "./read-scope-audit.js";
 import { spoolNote, type ReadSpool } from "./read-spool.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
+import { ageAtRead } from "../access/dated-read.js";
 export { ChannelScopeError };
 
 export interface RenderedLine {
@@ -24,6 +25,8 @@ export interface RenderedLine {
   readonly text: string;
   readonly authorId?: string;
   readonly bot?: boolean;
+  readonly readAt?: string;
+  readonly live?: boolean;
 }
 
 export interface ChannelReadResult {
@@ -160,6 +163,8 @@ export interface ReadOutputLine {
   author: string;
   ts: string;
   text: string;
+  readAt?: string;
+  live?: boolean;
 }
 
 export interface ChannelReadOutput {
@@ -195,7 +200,13 @@ async function gradeAndProject(
   const withheld = (m: RenderedLine): boolean => withholding && m.bot !== true && m.authorId !== undefined && refuted.has(m.authorId);
   return {
     count: lines.length,
-    messages: lines.map((m) => ({ author: m.author, ts: m.ts, text: withheld(m) ? WITHHELD_BODY_MARKER : m.text })),
+    messages: lines.map((m) => ({
+      author: m.author,
+      ts: m.ts,
+      text: withheld(m) ? WITHHELD_BODY_MARKER : m.text,
+      ...(m.readAt !== undefined ? { readAt: m.readAt } : {}),
+      ...(m.live !== undefined ? { live: m.live } : {}),
+    })),
     ...(refuted.size > 0 && !withholding ? { authoredByNonMember: true } : {}),
     ...(lines.length >= effectiveLimit ? { possiblyIncomplete: true } : {}),
   };
@@ -235,15 +246,32 @@ function coverageNote(kind: "channel" | "thread", count: number): string {
   return `\n\n[coverage: showing the ${count} most recent ${kind === "channel" ? "messages" : "replies"} this fetch could return — older ${kind === "channel" ? "history" : "replies"} may exist beyond this page]`;
 }
 
+function ageSuffix(m: RenderedLine): string {
+  if (m.live) return "";
+  const age = ageAtRead(m.ts, m.readAt);
+  return age ? ` (${age} before this read)` : "";
+}
+
+function provenanceLine(messages: readonly RenderedLine[]): string {
+  const live = messages.find((m) => m.live === true && m.readAt !== undefined);
+  if (!live) return "";
+  return (
+    `\n\nRead live at ${live.readAt}: the first line above is the current state. Everything else is ` +
+    "HISTORY — a message's claim about status, approval or progress is not the present state."
+  );
+}
+
 export function keyedReadResult<T extends { readonly platform: string; readonly channel: string }>(out: T): T {
   return { ...out, channel: encodeChannelKey(out.platform, out.channel) };
 }
 
 export function renderChannelBody(out: ChannelReadResult): string {
   if (out.count === 0) return `No readable messages in ${out.channel}.`;
-  const body = `Recent messages in ${out.channel} (oldest first):\n` + out.messages.map((m) => `[${m.author}] ${m.text}`).join("\n");
+  const body =
+    `Recent messages in ${out.channel} (oldest first):\n` + out.messages.map((m) => `[${m.author}] ${m.text}${ageSuffix(m)}`).join("\n");
   const covered = out.possiblyIncomplete ? body + coverageNote("channel", out.count) : body;
-  return out.spool ? covered + spoolNote("channel", out.spool) : covered;
+  const dated = covered + provenanceLine(out.messages);
+  return out.spool ? dated + spoolNote("channel", out.spool) : dated;
 }
 
 export function channelReadSource(out: ChannelReadResult): string {
@@ -252,9 +280,11 @@ export function channelReadSource(out: ChannelReadResult): string {
 
 export function renderThreadBody(out: ThreadReadResult): string {
   if (out.count === 0) return `No readable replies in thread ${out.thread_ts}.`;
-  const body = `Thread ${out.thread_ts} in ${out.channel} (oldest first):\n` + out.messages.map((m) => `[${m.author}] ${m.text}`).join("\n");
+  const body =
+    `Thread ${out.thread_ts} in ${out.channel} (oldest first):\n` + out.messages.map((m) => `[${m.author}] ${m.text}${ageSuffix(m)}`).join("\n");
   const covered = out.possiblyIncomplete ? body + coverageNote("thread", out.count) : body;
-  return out.spool ? covered + spoolNote("thread", out.spool) : covered;
+  const dated = covered + provenanceLine(out.messages);
+  return out.spool ? dated + spoolNote("thread", out.spool) : dated;
 }
 
 export function threadReadSource(out: ThreadReadResult): string {

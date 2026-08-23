@@ -145,16 +145,23 @@ eq(linearReadAdapter.wakeAddress(linearTurn({})), undefined, "a turn with no iss
   const t = transport();
   const lines = await linearReadAdapter.readChannel(linearTurn({ issue: OWN_ISSUE, comment: "c1" }), OWN_ISSUE, 50, deps(t));
   eq(lines.length, 4, "the channel read is the topic plus the three ROOT comments");
+  const topic = lines[0]!;
   eq(
-    lines[0],
-    { author: "alice", authorId: "u1", ts: "t0", text: "Balances drift\n\nthe ledger disagrees" },
-    "the first line is the issue's title and description — the channel's TOPIC",
+    { author: topic.author, authorId: topic.authorId, ts: topic.ts, text: topic.text, live: topic.live },
+    { author: "alice", authorId: "u1", ts: "t0", text: "Balances drift [Todo]\n\nthe ledger disagrees", live: true },
+    "🔴 OPE-1038: the first line carries the issue's STATE in its headline. 🔴 OPE-1039: it is marked LIVE — the channel's current state",
   );
+  ok(typeof topic.readAt === "string" && topic.readAt.length > 0, "🔴 OPE-1039: the topic line carries a readAt stamp");
   eq(
     lines.slice(1).map((l) => l.text),
     ["first root", "second root", "and another root"],
     "…and the rest are the top-level comments, oldest first",
   );
+  ok(
+    lines.slice(1).every((l) => l.live === undefined),
+    "🔴 negative control (OPE-1039): a comment line is never marked LIVE — only the topic is the current state",
+  );
+  ok(lines.every((l) => l.readAt === topic.readAt), "…and every line on the page shares the SAME read moment");
   ok(
     !lines.some((l) => l.text === "reply to root 1" || l.text === "deep reply"),
     "a THREADED REPLY never appears in the channel view — that is the Slack shape this ruling names",
@@ -171,7 +178,25 @@ eq(linearReadAdapter.wakeAddress(linearTurn({})), undefined, "a turn with no iss
 eq(
   linearTopicLine({ title: "Bare", description: "", comments: [], truncated: false, createdAt: "t0", creatorId: "u9" }),
   { author: "u9", authorId: "u9", ts: "t0", text: "Bare" },
-  "an issue with no description renders its title alone as the topic",
+  "🔴 negative control (OPE-1038): an issue with no resolvable state renders no invented status",
+);
+eq(
+  linearTopicLine({ title: "Ship it", description: "", stateName: "In Progress", comments: [], truncated: false, createdAt: "t0", creatorId: "u9" }),
+  { author: "u9", authorId: "u9", ts: "t0", text: "Ship it [In Progress]" },
+  "an issue's state joins the topic headline",
+);
+eq(
+  linearTopicLine({
+    title: "Ship it",
+    description: "ships on green",
+    stateName: "In Progress",
+    comments: [],
+    truncated: false,
+    createdAt: "t0",
+    creatorId: "u9",
+  }),
+  { author: "u9", authorId: "u9", ts: "t0", text: "Ship it [In Progress]\n\nships on green" },
+  "…and the description still follows, on its own paragraph",
 );
 
 {
@@ -183,6 +208,10 @@ eq(
     "a thread read is its root, its reply, and the reply BELOW that reply (transitive)",
   );
   eq(lines[1]?.author, "bob", "…and each line is attributed to its own author");
+  ok(
+    lines.every((l) => typeof l.readAt === "string" && l.live === undefined),
+    "🔴 OPE-1039: a thread read dates every line but marks NONE live — a thread has no topic line to be the current state",
+  );
 }
 {
   const t = transport();
