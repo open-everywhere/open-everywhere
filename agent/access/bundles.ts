@@ -112,7 +112,7 @@ const bindings: Binding[] = [
 
   defineBinding({ bundle: "e2e-pr-fixture", scope: { level: "domain", domain: "e2e-unified" } }),
 
-  defineBinding({ bundle: "soak-pr-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN008" } }),
+  defineBinding({ bundle: "soak-pr-fixture", scope: { level: "domain", domain: "soak" } }),
 
   defineBinding({ bundle: "e2e-connector-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
 
