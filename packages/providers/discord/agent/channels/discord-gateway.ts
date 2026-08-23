@@ -67,6 +67,7 @@ import {
   recordWakeTail,
   dmWindowRegistryKey,
   auditSupervisorFailure,
+  healPrunedDeploymentStrand,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 export { splitForDiscord };
@@ -1329,18 +1330,29 @@ export async function dispatchTurn(
     }),
   );
 
-  await send(
-    rendered.context && rendered.context.length ? { message: rendered.message, context: rendered.context } : rendered.message,
-    {
-      auth: stampNonMemberChatAuth(
-        surface.auth,
-        [{ trust, refuted: msg.memberPending === true, ...authorFacts(msg) }, ...(gradedBackscrollLines ?? []).map(contextLineIngestion)],
-        isDm ? { dm: true } : { surfaceKey: domainKeyOf(dispatchPartition) },
-      ),
-      continuationToken: surface.continuationToken,
-      state: turnState,
-    },
-  );
+  try {
+    await send(
+      rendered.context && rendered.context.length ? { message: rendered.message, context: rendered.context } : rendered.message,
+      {
+        auth: stampNonMemberChatAuth(
+          surface.auth,
+          [{ trust, refuted: msg.memberPending === true, ...authorFacts(msg) }, ...(gradedBackscrollLines ?? []).map(contextLineIngestion)],
+          isDm ? { dm: true } : { surfaceKey: domainKeyOf(dispatchPartition) },
+        ),
+        continuationToken: surface.continuationToken,
+        state: turnState,
+      },
+    );
+  } catch (err) {
+    await healPrunedDeploymentStrand({
+      token: surface.continuationToken,
+      surfaceKey: dispatchPartition.surfaceKey,
+      platform: "discord",
+      atIso: new Date().toISOString(),
+      err,
+    });
+    throw err;
+  }
   log(
     `dispatched ${dispatchPartition.surfaceKey} (${isDm ? "dm" : msg.mentionsBot ? "mention" : nameDrop ? "name-drop" : "engaged"}` +
       `${threadId ? ", auto-threaded+👀" : ""})`,

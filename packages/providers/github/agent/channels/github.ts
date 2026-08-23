@@ -27,6 +27,7 @@ import {
   completeSupervisorTurn,
   consumeSupervisorReplyMark,
   auditSupervisorFailure,
+  healPrunedDeploymentStrand,
   capabilitiesForPlatform,
   appendAudit,
   ingressSpendGate,
@@ -230,8 +231,8 @@ export function liveGitHubSupervisorDeps(send: GitHubSend, ev: GitHubAmbientEven
     recordWake: (entry, token, surfaceKey) => recordWakeTail(org, githubGrainFor(surfaceKey).registryKey, token, entry),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, window }) {
+      const surfaceKey = `github/${ev.owner}/${ev.repo}`;
       if (window && to) {
-        const surfaceKey = `github/${ev.owner}/${ev.repo}`;
         try {
           await divertToUnifiedWindow(to, {
             message,
@@ -251,11 +252,16 @@ export function liveGitHubSupervisorDeps(send: GitHubSend, ev: GitHubAmbientEven
         }
         return;
       }
-      const unified = githubGrainFor(`github/${ev.owner}/${ev.repo}`).unified;
-      await send(
-        { message, context: [...context] },
-        { auth: auth as unknown, continuationToken: token, state: supervisorSeedState(ev, unified) },
-      );
+      const unified = githubGrainFor(surfaceKey).unified;
+      try {
+        await send(
+          { message, context: [...context] },
+          { auth: auth as unknown, continuationToken: token, state: supervisorSeedState(ev, unified) },
+        );
+      } catch (err) {
+        await healPrunedDeploymentStrand({ token, registryKey: surfaceKey, surfaceKey, workspace: ev.owner, platform: "github", atIso: new Date().toISOString(), err });
+        throw err;
+      }
     },
   };
 }

@@ -41,6 +41,7 @@ import {
   consumeSupervisorReplyMark,
   capabilitiesForPlatform,
   auditSupervisorFailure,
+  healPrunedDeploymentStrand,
   appendAudit,
   ingressSpendGate,
   auditAmbientSkip,
@@ -393,8 +394,8 @@ export function liveLinearSupervisorDeps(
     memoryDelta: liveMemoryDeltaDep(org, `linear/${organizationId}/${teamId}`),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, window }) {
+      const surfaceKey = `linear/${organizationId}/${teamId}`;
       if (window && to) {
-        const surfaceKey = `linear/${organizationId}/${teamId}`;
         try {
           await divertToUnifiedWindow(to, {
             message,
@@ -414,11 +415,16 @@ export function liveLinearSupervisorDeps(
         }
         return;
       }
-      const unified = linearGrainFor(`linear/${organizationId}/${teamId}`).unified;
-      await send(
-        { message, context: [...context] },
-        { auth: auth as unknown, continuationToken: token, state: supervisorSeedState(teamId, organizationId, unified) },
-      );
+      const unified = linearGrainFor(surfaceKey).unified;
+      try {
+        await send(
+          { message, context: [...context] },
+          { auth: auth as unknown, continuationToken: token, state: supervisorSeedState(teamId, organizationId, unified) },
+        );
+      } catch (err) {
+        await healPrunedDeploymentStrand({ token, registryKey: surfaceKey, surfaceKey, workspace: organizationId, platform: "linear", atIso: new Date().toISOString(), err });
+        throw err;
+      }
     },
   };
 }

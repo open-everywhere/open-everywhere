@@ -22,6 +22,7 @@ import {
   claimRuntimeRotation,
   grainUsesUnifiedWindow,
   divertToUnifiedWindow,
+  healPrunedDeploymentStrand,
   captureHandshakeSecret,
   admitTrigger,
   NOTION_HANDSHAKE_REF_NAMESPACE,
@@ -137,7 +138,7 @@ export function notionSingleWindowPrivacyOk(
 
 type NotionState = NotionSessionState;
 
-function liveNotionSupervisorDeps(send: SendFn, surfaceKey: string, to?: RouteHandlerArgs["to"]): NotionSupervisorDeps {
+export function liveNotionSupervisorDeps(send: SendFn, surfaceKey: string, to?: RouteHandlerArgs["to"]): NotionSupervisorDeps {
   const org = deploymentOrg();
   const store = getOperationalStore();
   return {
@@ -175,7 +176,20 @@ function liveNotionSupervisorDeps(send: SendFn, surfaceKey: string, to?: RouteHa
         });
         return;
       }
-      await send({ message, context: [...context] }, { auth, continuationToken: token, state });
+      try {
+        await send({ message, context: [...context] }, { auth, continuationToken: token, state });
+      } catch (err) {
+        await healPrunedDeploymentStrand({
+          token,
+          registryKey: surfaceKey,
+          surfaceKey,
+          workspace: surfaceKey.split("/")[1] ?? "unknown",
+          platform: "notion",
+          atIso: new Date().toISOString(),
+          err,
+        });
+        throw err;
+      }
     },
   };
 }
