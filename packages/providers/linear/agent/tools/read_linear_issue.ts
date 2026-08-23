@@ -16,6 +16,7 @@ import {
   preRegisterDynamicEntry,
   resolvePartition,
   declaredWorkspaceTrust,
+  ageAtRead,
   type SurfaceTrust,
   type BindableContext,
   type Domain,
@@ -31,28 +32,14 @@ function safeDomains(): readonly Domain[] {
   }
 }
 
-export function commentAgeAtRead(createdAt: string | undefined, readAt: string | undefined): string | undefined {
-  if (!createdAt || !readAt) return undefined;
-  const then = Date.parse(createdAt);
-  const now = Date.parse(readAt);
-  if (!Number.isFinite(then) || !Number.isFinite(now)) return undefined;
-  const ms = now - then;
-  if (ms < 0) return undefined;
-  const minutes = Math.floor(ms / 60_000);
-  if (minutes < 1) return "less than a minute";
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"}`;
-  const days = Math.floor(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"}`;
-}
+export { ageAtRead as commentAgeAtRead };
 
 function renderComments(comments: readonly LinearCommentSummary[], readAt?: string): string {
   return comments
     .map((c) => {
       const who = c.authorName ?? c.authorId ?? "unknown author";
       const when = c.createdAt ? ` at ${c.createdAt}` : "";
-      const age = commentAgeAtRead(c.createdAt, readAt);
+      const age = ageAtRead(c.createdAt, readAt);
       const old = age ? ` (${age} before this read)` : "";
       return `  - ${who}${when}${old}: ${c.text}`;
     })

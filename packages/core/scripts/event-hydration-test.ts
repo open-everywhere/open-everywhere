@@ -320,6 +320,21 @@ function harness(routines: Routine[], outcome: HydrationOutcome, repos: readonly
 }
 
 {
+  const dated = renderHydratedEntity(entity());
+  ok(dated.includes("Read live at 2026-03-30T11:30:00.000Z"), "dated: the render states the read instant");
+  ok(dated.includes("this is the CURRENT, authoritative state"), "dated: ...and says this block is the current state");
+  ok(dated.includes("HISTORY"), "dated: ...and names the event summary ABOVE this block as history");
+  ok(dated.includes("updated: 2026-07-26T10:00:00.000Z (2 hours before this read)"), "dated: the vendor's own updated-at is aged against the read, same shape as Linear's comment age");
+
+  const noUpdatedAt = renderHydratedEntity(entity({ updatedAt: undefined }));
+  ok(noUpdatedAt.includes("updated:") === false, "dated negative control: no updatedAt -> no updated line, never an invented one");
+  ok(noUpdatedAt.includes("before this read") === false, "dated negative control: ...and no age fabricated from nothing");
+
+  const skewed = renderHydratedEntity(entity({ updatedAt: "2026-07-26T13:00:00.000Z" }));
+  ok(skewed.includes("updated: 2026-07-26T13:00:00.000Z") && skewed.includes("before this read") === false, "dated negative control: an updatedAt after the read gets no age, never a guess");
+}
+
+{
   const withEntity = eventPrompt({ prompt: "P" }, { summary: "S", url: "U", entity: `E-${INJECTED}` });
   const open = withEntity.indexOf(UNTRUSTED_OPEN);
   const close = withEntity.indexOf(UNTRUSTED_CLOSE);

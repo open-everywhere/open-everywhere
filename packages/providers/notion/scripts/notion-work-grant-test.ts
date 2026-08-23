@@ -32,6 +32,7 @@ import {
 import { assertNotionWorkPageAllowed, notionWorkScope } from "../agent/channels/notion-scope.js";
 import notionSearch, { notionSearchEntry } from "../agent/tools/notion_search.js";
 import { readNotionPageEntry } from "../agent/tools/read_notion_page.js";
+import { readNotionCommentsEntry } from "../agent/tools/read_notion_comments.js";
 
 registerNotionProvider();
 
@@ -357,6 +358,67 @@ const notionCtx = (page: string, ws = WS): BindableContext =>
   );
   ok((await resolve({}, taskWindowWorkerCtx("C_DEV"))) === notionSearchEntry, "…so notion_search mounts on it too");
   ok((await resolve({}, taskWindowWorkerCtx("C_ENG"))) === null, "🔴 …and is ABSENT for one spawned from an ungranted domain");
+}
+
+{
+  resetBrokers();
+  registerBroker("test", {
+    async getSecret(ref) {
+      if (ref === "test:notion:channel") return "fake-channel-token";
+      throw new Error(`no secret for ${ref}`);
+    },
+  });
+  resetRegisteredConnectorCredentials();
+  setRegisteredConnectorCredentials([
+    {
+      connector: "notion",
+      allows: ["api-key"],
+      credentials: [{ id: "channel-key", type: "api-key", secretRef: "test:notion:channel", broker: "test", intake: false }],
+    },
+  ]);
+
+  const commentAt = new Date(Date.now() - 27 * 60_000).toISOString();
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    const u = new URL(input);
+    if (u.pathname === "/v1/comments" && u.searchParams.get("block_id") === SPEC_PAGE) {
+      return new Response(
+        JSON.stringify({
+          results: [
+            {
+              id: "c1",
+              discussion_id: "disc-1",
+              created_by: { id: "u1", object: "user", type: "person" },
+              created_time: commentAt,
+              rich_text: [{ type: "text", plain_text: "the move is pending human approval", text: { content: "the move is pending human approval" } }],
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    return new Response(JSON.stringify({ results: [], has_more: false }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const execute = readNotionCommentsEntry.execute as unknown as (i: unknown, c: BindableContext) => Promise<{ readAt?: string; comments: number; text: string }>;
+    const out = await execute({ page: SPEC_PAGE }, notionCtx(SPEC_PAGE));
+    ok(typeof out.readAt === "string" && Number.isFinite(Date.parse(out.readAt)), "execute stamps the read with a parseable readAt");
+    ok(out.text.includes("(27 minutes before this read)"), "execute ages the comment against that read time");
+
+    const toModelOutput = (readNotionCommentsEntry as unknown as { toModelOutput: (o: unknown) => { value: string } }).toModelOutput;
+    const rendered = toModelOutput(out);
+    ok(rendered.value.includes(`Read live at ${out.readAt}`), "…and the model sees the read time on the output it gets");
+    ok(rendered.value.includes("HISTORY") && rendered.value.includes("(27 minutes before this read)"), "…beside the per-comment age, the pair OPE-1012 exists to keep apart");
+
+    const undated = toModelOutput({ ...out, readAt: undefined });
+    ok(!undated.value.includes("Read live at"), "negative control: an output with no readAt claims no read time");
+    ok(!undated.value.includes("HISTORY"), "…and makes no claim it cannot date");
+    ok(undated.value.includes("pending human approval"), "…while still rendering the comment");
+  } finally {
+    globalThis.fetch = realFetch;
+    resetRegisteredConnectorCredentials();
+    resetBrokers();
+  }
 }
 
 console.log(`✓ notion-work-grant: ${passed} assertions passed`);
