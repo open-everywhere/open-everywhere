@@ -169,6 +169,8 @@ const resultFor: ResultFor = (name, input, callIndex) => {
   if (name === "reply") return { posted: true, id: `probe-${callIndex}` };
   if (name === "no_reply") return { acknowledged: true, reason: String(input.reason ?? ""), note: NO_REPLY_NOTE };
   if (name === "agent") return { started: true, note: "The worker is running. Its report arrives later; this turn does not have it." };
+  if (name === "read_channel") return { platform: "slack", channel: SLACK_CHANNEL, count: 0, messages: [] };
+  if (name === "read_thread") return { platform: "slack", channel: SLACK_CHANNEL, thread_ts: "0.0", count: 0, messages: [] };
   return { ok: true };
 };
 
