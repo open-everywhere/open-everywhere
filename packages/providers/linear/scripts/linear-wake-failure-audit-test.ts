@@ -1,0 +1,90 @@
+import assert from "node:assert/strict";
+import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
+
+const dir = join(tmpdir(), `open-everywhere-linear-wake-failure-audit-${process.pid}`);
+rmSync(dir, { recursive: true, force: true });
+process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+delete process.env.OE_PLATFORM;
+
+const { registerLinearProvider } = await import("../agent/register.js");
+registerLinearProvider();
+const { liveLinearSupervisorDeps } = await import("../agent/channels/linear.js");
+const { getOperationalStore, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
+
+let n = 0;
+const ok = (cond: boolean, label: string): void => {
+  assert.ok(cond, label);
+  n++;
+};
+const eq = (a: unknown, b: unknown, label: string): void => {
+  assert.deepStrictEqual(a, b, `${label}\n  actual:   ${JSON.stringify(a)}\n  expected: ${JSON.stringify(b)}`);
+  n++;
+};
+
+const ORG_ID = "org_acme";
+const TEAM_ID = "team_widgets";
+const SURFACE = `linear/${ORG_ID}/${TEAM_ID}`;
+
+const noopSend = (async () => ({})) as unknown as Parameters<typeof liveLinearSupervisorDeps>[0];
+
+{
+  const boom = new Error("socket hang up");
+  const failingTo = ((_channel: unknown, _target: unknown) => ({
+    async send(): Promise<never> {
+      throw boom;
+    },
+  })) as unknown as Parameters<typeof liveLinearSupervisorDeps>[3];
+
+  const deps = liveLinearSupervisorDeps(noopSend, TEAM_ID, ORG_ID, failingTo);
+  const before = new Date().toISOString();
+
+  let threw: unknown;
+  try {
+    await deps.wake({
+      token: "tok1",
+      auth: { attributes: {} } as never,
+      message: "<wake>hi</wake>",
+      context: [],
+      window: { wakeId: "w1", origin: { platform: "linear", agentSessionId: "as1", issueId: "iss1", parentId: "iss1", organizationId: ORG_ID } },
+    });
+  } catch (err) {
+    threw = err;
+  }
+  ok(threw === boom, "🔴 the divert failure still PROPAGATES unchanged — this is an audit ADDITION, not a swallow");
+
+  const rows = (await getOperationalStore().readAudit({ org: deploymentOrg(), action: "surface.wake_failed" })).filter((row) => row.ts >= before);
+  eq(rows.length, 1, "🔴 the ambient wake's divert failure writes exactly ONE `surface.wake_failed` row — previously it wrote NONE");
+  eq(rows[0]!.platform, "linear", "…on the linear platform");
+  eq(rows[0]!.workspace, ORG_ID, "…keyed to the organization as workspace");
+  eq(rows[0]!.surface, SURFACE, "…and to the compound `linear/org/team` surface, matching this file's OWN convention for every other audit row it writes");
+  const detail = (rows[0]!.detail ?? {}) as Record<string, unknown>;
+  ok(String(detail.message).includes("socket hang up"), "…and the row names the real failure");
+  eq(detail.wakeId, "w1", "…and the wake id, so the row is joinable to a specific delivery attempt");
+}
+
+{
+  const received: unknown[] = [];
+  const okTo = ((_channel: unknown, _target: unknown) => ({
+    async send(message: string, opts: unknown) {
+      received.push({ message, opts });
+      return {};
+    },
+  })) as unknown as Parameters<typeof liveLinearSupervisorDeps>[3];
+
+  const deps = liveLinearSupervisorDeps(noopSend, TEAM_ID, ORG_ID, okTo);
+  const before = new Date().toISOString();
+  await deps.wake({
+    token: "tok2",
+    auth: { attributes: {} } as never,
+    message: "<wake>hi again</wake>",
+    context: [],
+    window: { wakeId: "w2", origin: { platform: "linear", agentSessionId: "as2", issueId: "iss1", parentId: "iss1", organizationId: ORG_ID } },
+  });
+  eq(received.length, 1, "the divert delivered normally");
+  const rows = (await getOperationalStore().readAudit({ org: deploymentOrg(), action: "surface.wake_failed" })).filter((row) => row.ts >= before);
+  eq(rows.length, 0, "negative control: a successful divert writes NO `surface.wake_failed` row");
+}
+
+console.log(`✓ linear-wake-failure-audit: ${n} assertions passed (OPE-970 ambient divert failure audit + negative control)`);

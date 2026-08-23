@@ -66,6 +66,7 @@ import {
   type WakeMessageInput,
   recordWakeTail,
   dmWindowRegistryKey,
+  auditSupervisorFailure,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 export { splitForDiscord };
@@ -933,14 +934,23 @@ async function divertDiscordDmToWindow(input: {
       },
     }),
   );
-  await divertToUnifiedWindow(input.receive, {
-    message: rendered.message,
-    ...(rendered.context && rendered.context.length > 0 ? { context: rendered.context } : {}),
-    token: seat.token,
-    window: { wakeId, origin, addressing: "direct-mention" } satisfies UnifiedWindowWake,
-    surfaceKey,
-    auth: stampNonMemberChatAuth(input.auth as unknown as { attributes?: Record<string, unknown> }, [{ trust }], { dm: true }),
-  });
+  try {
+    await divertToUnifiedWindow(input.receive, {
+      message: rendered.message,
+      ...(rendered.context && rendered.context.length > 0 ? { context: rendered.context } : {}),
+      token: seat.token,
+      window: { wakeId, origin, addressing: "direct-mention" } satisfies UnifiedWindowWake,
+      surfaceKey,
+      auth: stampNonMemberChatAuth(input.auth as unknown as { attributes?: Record<string, unknown> }, [{ trust }], { dm: true }),
+    });
+  } catch (err) {
+    await auditSupervisorFailure({ org, platform: input.partition.platform, workspace: input.partition.workspace, surface: surfaceKey }, "surface.wake_failed", {
+      message: String(err instanceof Error ? err.message : err).slice(0, 500),
+      wakeId,
+      addressing: "direct-mention",
+    });
+    throw err;
+  }
   await touchDmSeat(org, surfaceKey, atIso).catch(() => undefined);
   await recordWakeTail(org, dmWindowRegistryKey(surfaceKey), seat.token, {
     kind: "wake",
@@ -1026,22 +1036,32 @@ async function divertDiscordWakeToUnifiedWindow(input: {
         },
       }),
     );
-    await divertToUnifiedWindow(input.receive, {
-      message: rendered.message,
-      context: [...(rendered.context ?? []), ...input.context],
-      token,
-      window: {
-        wakeId,
-        origin,
-        ...(input.addressing === "direct-mention" ? { addressing: "direct-mention" as const } : {}),
-      } satisfies UnifiedWindowWake,
-      surfaceKey: domainKeyOf(input.partition),
-      auth: stampNonMemberChatAuth(
-        input.auth as unknown as { attributes?: Record<string, unknown> },
-        [{ trust, refuted: msg.memberPending === true, ...authorFacts(msg) }, ...input.contextIngestion],
-        { surfaceKey: domainKeyOf(input.partition) },
-      ),
-    });
+    const domainSurfaceKey = domainKeyOf(input.partition);
+    try {
+      await divertToUnifiedWindow(input.receive, {
+        message: rendered.message,
+        context: [...(rendered.context ?? []), ...input.context],
+        token,
+        window: {
+          wakeId,
+          origin,
+          ...(input.addressing === "direct-mention" ? { addressing: "direct-mention" as const } : {}),
+        } satisfies UnifiedWindowWake,
+        surfaceKey: domainSurfaceKey,
+        auth: stampNonMemberChatAuth(
+          input.auth as unknown as { attributes?: Record<string, unknown> },
+          [{ trust, refuted: msg.memberPending === true, ...authorFacts(msg) }, ...input.contextIngestion],
+          { surfaceKey: domainSurfaceKey },
+        ),
+      });
+    } catch (err) {
+      await auditSupervisorFailure(
+        { org: deploymentOrg(), platform: input.partition.platform, workspace: input.partition.workspace, surface: domainSurfaceKey },
+        "surface.wake_failed",
+        { message: String(err instanceof Error ? err.message : err).slice(0, 500), wakeId, addressing: input.addressing },
+      );
+      throw err;
+    }
   };
 
   await doWake(session.token, session.generation, session.fresh ? session.tail : []);
