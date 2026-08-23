@@ -260,6 +260,10 @@ export function replyEditLocus(target: ReplyTarget): EditLocus | null {
       return "agentSessionId" in target
         ? null
         : { platform: "linear", channelId: target.issueId, ...(target.organizationId ? { organizationId: target.organizationId } : {}) };
+    case "notion":
+      return target.workspaceId && target.pageId
+        ? { platform: "notion", channelId: `${target.workspaceId}/${target.pageId}` }
+        : null;
     default:
       return null;
   }
