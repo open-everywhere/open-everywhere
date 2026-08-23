@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "vitest";
+import { afterAll, expect, test, vi } from "vitest";
 
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolveTurnAnchor, turnChannelKey } from "@open-everywhere/core/agent/channels/turn-registry.js";
@@ -61,6 +61,10 @@ function comment(input: { id: string; authorId: string; authorType?: string; tex
 test("a human's bare `stop` comment cancels an in-flight Notion turn; a bot-authored one does not", async () => {
   await bootAgent({ sharedSqlite: true });
   await seedNotionChannelKey();
+  const warnings: string[] = [];
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation((msg?: unknown) => {
+    warnings.push(String(msg));
+  });
   const org = deploymentOrg();
   const channelKey = turnChannelKey("notion", `${NOTION_WORKSPACE_ID}/${NOTION_PAGE_ID}`)!;
   const sinceIso = new Date(Date.now() - 10_000).toISOString();
@@ -145,6 +149,9 @@ test("a human's bare `stop` comment cancels an in-flight Notion turn; a bot-auth
   expect(cancelled[0]!.detail?.ran).toEqual([RAN_TOOL]);
   expect(Number(cancelled[0]!.detail?.steps)).toBeGreaterThanOrEqual(1);
   expect(handle.holdsCutShort()).toBe(1);
+
+  expect(warnings.some((w) => w.includes("swallowed a notion surface-text post")), "the cancelled arm attempted the acknowledgement post for this Notion turn").toBe(true);
+  warnSpy.mockRestore();
 
   const cleared = await waitFor(
     async () => ((await resolveTurnAnchor(org, { channelKey })) === null ? true : undefined),

@@ -124,12 +124,27 @@ eq(tier({ kind: "delegation-result" }), "untrusted", "delegation-result: the tab
   );
 }
 
+{
+  const searchRow = classifyIngestion({ kind: "work-search", label: "search" });
+  eq(searchRow.tier, "untrusted", "work-search: the federated search tool's result is unconditionally untrusted");
+  eq(searchRow.assumed, false, "🔴 work-search: a POSITIVE ruling, never `assumed` — no metadata is consulted, so none can be absent");
+  eq(
+    classifyIngestion({ kind: "work-search", workspaceTrust: "internal", repoPrivate: true, grantContentOrigin: "internal" }).tier,
+    "untrusted",
+    "🔴 work-search: NO metadata branch — setting every trusting field another row reads does NOT make a mixed-connector result trusted",
+  );
+}
+
 for (const kind of INGESTION_KINDS) {
   const v = classifyIngestion({ kind: kind as IngestionKind });
   ok(v.tier === "trusted" || v.tier === "untrusted", `every kind resolves to a tier — "${kind}"`);
   ok(typeof v.reason === "string" && v.reason.length > 0, `every kind carries prose reasoning — "${kind}"`);
 }
-eq(INGESTION_KINDS.length, 13, "the table has exactly the 13 ruled kinds (a 14th means a design decision, not a drive-by add — the 12th `aws` was OPE-305; the 13th `skill-declared` OPE-361; the `handoff` row was DELETED by OPE-794 with the note it classified)");
+eq(
+  INGESTION_KINDS.length,
+  14,
+  "the table has exactly the 14 ruled kinds (a 15th means a design decision, not a drive-by add — the 12th `aws` was OPE-305; the 13th `skill-declared` OPE-361; the 14th `work-search` OPE-929/OPE-961; the `handoff` row was DELETED by OPE-794 with the note it classified)",
+);
 
 console.log("2. the enforced seam:");
 

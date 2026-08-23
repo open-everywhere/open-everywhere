@@ -38,7 +38,6 @@ const noopSend = (async () => ({})) as unknown as Parameters<typeof liveLinearSu
   })) as unknown as Parameters<typeof liveLinearSupervisorDeps>[3];
 
   const deps = liveLinearSupervisorDeps(noopSend, TEAM_ID, ORG_ID, failingTo);
-  const before = new Date().toISOString();
 
   let threw: unknown;
   try {
@@ -54,7 +53,9 @@ const noopSend = (async () => ({})) as unknown as Parameters<typeof liveLinearSu
   }
   ok(threw === boom, "🔴 the divert failure still PROPAGATES unchanged — this is an audit ADDITION, not a swallow");
 
-  const rows = (await getOperationalStore().readAudit({ org: deploymentOrg(), action: "surface.wake_failed" })).filter((row) => row.ts >= before);
+  const rows = (await getOperationalStore().readAudit({ org: deploymentOrg(), action: "surface.wake_failed" })).filter(
+    (row) => (row.detail as { wakeId?: unknown } | undefined)?.wakeId === "w1",
+  );
   eq(rows.length, 1, "🔴 the ambient wake's divert failure writes exactly ONE `surface.wake_failed` row — previously it wrote NONE");
   eq(rows[0]!.platform, "linear", "…on the linear platform");
   eq(rows[0]!.workspace, ORG_ID, "…keyed to the organization as workspace");
@@ -74,7 +75,6 @@ const noopSend = (async () => ({})) as unknown as Parameters<typeof liveLinearSu
   })) as unknown as Parameters<typeof liveLinearSupervisorDeps>[3];
 
   const deps = liveLinearSupervisorDeps(noopSend, TEAM_ID, ORG_ID, okTo);
-  const before = new Date().toISOString();
   await deps.wake({
     token: "tok2",
     auth: { attributes: {} } as never,
@@ -83,8 +83,10 @@ const noopSend = (async () => ({})) as unknown as Parameters<typeof liveLinearSu
     window: { wakeId: "w2", origin: { platform: "linear", agentSessionId: "as2", issueId: "iss1", parentId: "iss1", organizationId: ORG_ID } },
   });
   eq(received.length, 1, "the divert delivered normally");
-  const rows = (await getOperationalStore().readAudit({ org: deploymentOrg(), action: "surface.wake_failed" })).filter((row) => row.ts >= before);
-  eq(rows.length, 0, "negative control: a successful divert writes NO `surface.wake_failed` row");
+  const rows = (await getOperationalStore().readAudit({ org: deploymentOrg(), action: "surface.wake_failed" })).filter(
+    (row) => (row.detail as { wakeId?: unknown } | undefined)?.wakeId === "w2",
+  );
+  eq(rows.length, 0, "negative control: a successful divert writes NO `surface.wake_failed` row (scoped to wakeId \"w2\", this call's own)");
 }
 
 console.log(`✓ linear-wake-failure-audit: ${n} assertions passed (OPE-970 ambient divert failure audit + negative control)`);

@@ -274,6 +274,9 @@ export type { WindowGrain } from "./identity/binding.js";
 export { registerReadAdapter, resolveReadAdapter, READ_ADAPTERS, SUPPORTED_READ_PLATFORMS, supportedReadPlatforms } from "./channels/channel-read.js";
 export type { ReadAdapter, WakeReadAddress } from "./channels/channel-read.js";
 export { ChannelScopeError } from "./channels/read-scope-error.js";
+
+export { registerWorkSearchAdapter, registerCoreWorkSearchAdapter, workSearchAdapterFor, registeredSearchConnectors, searchGrantedConnectors } from "./channels/work-search.js";
+export type { WorkSearchAdapter, WorkSearchHit, WorkSearchAbsence, WorkSearchOpts } from "./channels/work-search.js";
 export { EventDedupe, ThreadFifo } from "./channels/front-queue.js";
 
 export { registerReactionSurface, isRegisteredReactionSurface } from "./channels/reaction-ingest.js";
