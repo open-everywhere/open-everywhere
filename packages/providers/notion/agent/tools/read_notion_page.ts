@@ -40,6 +40,7 @@ export const readNotionPageEntry = defineTool({
           blocks: z.number(),
           truncated: z.boolean(),
           text: z.string(),
+          readAt: z.string().optional(),
           workspaceTrust: z.enum(["internal", "public"]).optional(),
         }),
         async execute(input, ctx2) {
@@ -89,6 +90,7 @@ export const readNotionPageEntry = defineTool({
             );
           }
           const res = await readNotionPage(page, { ...cred, maxChars: MAX_CHARS, maxBlocks: MAX_BLOCKS });
+          const readAt = new Date().toISOString();
           let workspaceTrust: SurfaceTrust | undefined;
           if (!workGrant) {
             try {
@@ -97,12 +99,14 @@ export const readNotionPageEntry = defineTool({
               workspaceTrust = undefined;
             }
           }
-          return { page, blocks: res.blockCount, truncated: res.truncated, text: res.text, ...(workspaceTrust !== undefined ? { workspaceTrust } : {}) };
+          return { page, blocks: res.blockCount, truncated: res.truncated, text: res.text, readAt, ...(workspaceTrust !== undefined ? { workspaceTrust } : {}) };
         },
         toModelOutput(output) {
           const header = output.text.length === 0 ? `Notion page ${output.page} has no readable text.` : `Notion page ${output.page}:`;
           const suffix = output.truncated ? "\n\n[truncated — the page has more content than shown]" : "";
-          const body = output.text.length === 0 ? header : `${header}\n${output.text}${suffix}`;
+          const asOf =
+            output.text.length > 0 && output.readAt ? `\n\nRead live at ${output.readAt}: the text above is the page's current content, as of that moment.` : "";
+          const body = output.text.length === 0 ? header : `${header}\n${output.text}${suffix}${asOf}`;
           return ingestUntrustedModelOutput(body, {
             source: `notion page ${output.page}`,
             ingestion: {

@@ -14,6 +14,7 @@ import {
   preRegisterDynamicEntry,
   resolvePartition,
   declaredWorkspaceTrust,
+  ageAtRead,
   type SurfaceTrust,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -21,7 +22,7 @@ import {
 const MAX_COMMENTS = 100;
 const MAX_BLOCK_SCANS = 80;
 
-function renderComments(comments: readonly NotionCommentSummary[]): string {
+function renderComments(comments: readonly NotionCommentSummary[], readAt?: string): string {
   if (comments.length === 0) return "";
   const byAnchor = new Map<string, NotionCommentSummary[]>();
   for (const c of comments) {
@@ -40,7 +41,9 @@ function renderComments(comments: readonly NotionCommentSummary[]): string {
     const lines = list.map((c) => {
       const who = c.authorId ? `${c.authorKind ?? "user"} ${c.authorId}` : "unknown author";
       const when = c.createdTime ? ` at ${c.createdTime}` : "";
-      return `  - ${who}${when}: ${c.text}`;
+      const age = ageAtRead(c.createdTime, readAt);
+      const old = age ? ` (${age} before this read)` : "";
+      return `  - ${who}${when}${old}: ${c.text}`;
     });
     sections.push([head, ...lines].join("\n"));
   }
@@ -72,6 +75,7 @@ export const readNotionCommentsEntry = defineTool({
     blocksScanned: z.number(),
     truncated: z.boolean(),
     text: z.string(),
+    readAt: z.string().optional(),
     workspaceTrust: z.enum(["internal", "public"]).optional(),
   }),
   async execute(input, ctx2) {
@@ -96,6 +100,7 @@ export const readNotionCommentsEntry = defineTool({
       maxComments: MAX_COMMENTS,
       maxBlockScans: MAX_BLOCK_SCANS,
     });
+    const readAt = new Date().toISOString();
     let workspaceTrust: SurfaceTrust | undefined;
     try {
       workspaceTrust = declaredWorkspaceTrust(resolvePartition(ctx2 as BindableContext).workspaceKey);
@@ -108,7 +113,8 @@ export const readNotionCommentsEntry = defineTool({
       comments: res.comments.length,
       blocksScanned: res.blocksScanned,
       truncated: res.truncated,
-      text: renderComments(res.comments),
+      text: renderComments(res.comments, readAt),
+      readAt,
       ...(workspaceTrust !== undefined ? { workspaceTrust } : {}),
     };
   },
@@ -118,7 +124,11 @@ export const readNotionCommentsEntry = defineTool({
         ? `Notion page ${output.page} has no readable comments.`
         : `Notion page ${output.page} — ${output.comments} comment(s) across ${output.discussions} discussion(s):`;
     const suffix = output.truncated ? "\n\n[truncated — the page has more comments/blocks than shown]" : "";
-    const body = output.comments === 0 ? header : `${header}\n${output.text}${suffix}`;
+    const asOf =
+      output.comments > 0 && output.readAt
+        ? `\n\nRead live at ${output.readAt}: the comments above are HISTORY, each dated against this read. A comment's claim about status, approval or progress is not the page's current state — read the page itself (read_notion_page) for that.`
+        : "";
+    const body = output.comments === 0 ? header : `${header}\n${output.text}${suffix}${asOf}`;
     return ingestUntrustedModelOutput(body, {
       source: `notion comments ${output.page}`,
       ingestion: {

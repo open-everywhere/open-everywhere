@@ -1,4 +1,5 @@
 import { admitProviderRegistration } from "../access/provider-selection.js";
+import { ageAtRead } from "../access/dated-read.js";
 import type { EntityPointer } from "./event-model.js";
 
 export interface HydratedEntity {
@@ -106,11 +107,15 @@ export async function hydratePointer(
 export const HYDRATED_BODY_MAX = 4000;
 
 export function renderHydratedEntity(e: HydratedEntity): string {
-  const lines: string[] = [`fetched ${e.fetchedAt} — ${e.platform} ${e.id} (authoritative state, read with our own credential)`];
+  const updatedAge = ageAtRead(e.updatedAt, e.fetchedAt);
+  const lines: string[] = [
+    `Read live at ${e.fetchedAt}: this is the CURRENT, authoritative state of ${e.platform} ${e.id}, read with our own credential. ` +
+      `Any event summary above this block is what the webhook reported when it fired and may be older — treat it as HISTORY, not the present state.`,
+  ];
   if (e.state) lines.push(`state: ${e.state}`);
   if (e.title) lines.push(`title: ${e.title}`);
   if (e.url) lines.push(`url: ${e.url}`);
-  if (e.updatedAt) lines.push(`updated: ${e.updatedAt}`);
+  if (e.updatedAt) lines.push(`updated: ${e.updatedAt}${updatedAge ? ` (${updatedAge} before this read)` : ""}`);
   if (e.body) {
     const body = e.body.length > HYDRATED_BODY_MAX ? `${e.body.slice(0, HYDRATED_BODY_MAX)}\n…[truncated at ${HYDRATED_BODY_MAX} chars]` : e.body;
     lines.push(`body:\n${body}`);
