@@ -566,7 +566,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         console.log(`[open-everywhere:slack-front] ${decision.dmKind} wake dropped — the envelope parsed to no channel/ts`);
         return OK();
       }
-      const driverAdmitted = dmDoorAdmitsDriver(dev) && dev.botId !== (await getBotIdentity()).botId;
+      const driverAdmitted = Boolean(dev.botId) && dmDoorAdmitsDriver(dev) && dev.botId !== (await getBotIdentity()).botId;
       if (driverAdmitted) {
         args.waitUntil(
           auditDmDriverAdmitted(dev, decision.dmKind).catch(() => {
