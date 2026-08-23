@@ -1,4 +1,4 @@
-import { mockModel } from "eve/evals";
+import { mockModel, type MockModelRequest } from "eve/evals";
 import { onVercel } from "@open-everywhere/core/agent/access/platform.js";
 import { isSubagentChildContext, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { classifySessionId } from "@open-everywhere/core/agent/channels/window-key.js";
@@ -16,6 +16,7 @@ import {
   scriptedRegistrationSeq,
   scriptedStore,
   staleTurnParkMs,
+  type RecordedRequest,
   type ResolveObservation,
   type ScriptedEntry,
   type ScriptedRole,
@@ -115,14 +116,7 @@ export function scriptedModelFor(event: unknown, ctx: unknown): ReturnType<typeo
             turnId,
             stepIndex: -1,
             pid: process.pid,
-            tools: request.tools.map((t) => t.name),
-            toolDefinitions: request.tools.map((t) => ({
-              name: t.name,
-              ...(t.description !== undefined ? { description: t.description } : {}),
-              ...(t.inputSchema !== undefined ? { inputSchema: snapshotSchema(t.inputSchema) } : {}),
-            })),
-            toolResults: request.toolResults.map((r) => ({ name: r.name, isError: r.isError, output: r.output })),
-            messages: request.messages.map((m) => ({ role: m.role, text: m.text })),
+            ...promptShapeFields(request),
             fault,
           });
           return { text: "scripted-model fault: see the record" };
@@ -141,6 +135,21 @@ function snapshotSchema(schema: unknown): unknown {
   } catch {
     return schema;
   }
+}
+
+function promptShapeFields(
+  request: Pick<MockModelRequest, "tools" | "toolResults" | "messages">,
+): Pick<RecordedRequest, "tools" | "toolDefinitions" | "toolResults" | "messages"> {
+  return {
+    tools: request.tools.map((t) => t.name),
+    toolDefinitions: request.tools.map((t) => ({
+      name: t.name,
+      ...(t.description !== undefined ? { description: t.description } : {}),
+      ...(t.inputSchema !== undefined ? { inputSchema: snapshotSchema(t.inputSchema) } : {}),
+    })),
+    toolResults: request.toolResults.map((r) => ({ name: r.name, isError: r.isError, output: r.output })),
+    messages: request.messages.map((m) => ({ role: m.role, text: m.text })),
+  };
 }
 
 function stepIndexFor(arm: readonly ScriptedStep[], answered: number): number | string {
@@ -251,14 +260,7 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation, seqAtResol
         turnId: observation.turnId,
         stepIndex: served,
         pid: process.pid,
-        tools: request.tools.map((t) => t.name),
-        toolDefinitions: request.tools.map((t) => ({
-          name: t.name,
-          ...(t.description !== undefined ? { description: t.description } : {}),
-          ...(t.inputSchema !== undefined ? { inputSchema: snapshotSchema(t.inputSchema) } : {}),
-        })),
-        toolResults: request.toolResults.map((r) => ({ name: r.name, isError: r.isError, output: r.output })),
-        messages: request.messages.map((m) => ({ role: m.role, text: m.text })),
+        ...promptShapeFields(request),
         ...(fault !== undefined ? { fault } : {}),
       });
 
