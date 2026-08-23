@@ -85,6 +85,48 @@ export interface ScriptedEntry {
 
 export const ANY_SESSION = "*";
 
+export interface IncompleteParentTurn {
+  readonly turnId: string;
+  readonly servedThrough: number;
+  readonly totalSteps: number;
+  readonly registeredAt: string;
+}
+
+function incompleteParentTurnCell(): Map<string, IncompleteParentTurn> {
+  return processRegistryMap<IncompleteParentTurn>("scripted-model-incomplete-parent-turn.v1");
+}
+
+function noteIfParentTurnIncomplete(entry: ScriptedEntry): void {
+  const totalSteps = entry.script.parent.length;
+  if (totalSteps === 0) return;
+  const bySession = new Map<string, RecordedRequest[]>();
+  for (const r of entry.requests) {
+    if (r.role !== "parent" || r.sessionId === undefined || r.turnId === undefined || r.fault !== undefined) continue;
+    const list = bySession.get(r.sessionId);
+    if (list === undefined) bySession.set(r.sessionId, [r]);
+    else list.push(r);
+  }
+  const owners = incompleteParentTurnCell();
+  for (const [sid, reqs] of bySession) {
+    const lastTurnId = reqs[reqs.length - 1].turnId as string;
+    const sameTurn = reqs.filter((r) => r.turnId === lastTurnId);
+    const maxServed = Math.max(...sameTurn.map((r) => r.stepIndex));
+    if (maxServed < totalSteps - 1) {
+      owners.set(sid, { turnId: lastTurnId, servedThrough: maxServed, totalSteps, registeredAt: entry.registeredAt });
+    } else {
+      owners.delete(sid);
+    }
+  }
+}
+
+export function incompleteParentTurnFor(sessionId: string): IncompleteParentTurn | undefined {
+  return incompleteParentTurnCell().get(sessionId);
+}
+
+export function clearIncompleteParentTurn(sessionId: string): void {
+  incompleteParentTurnCell().delete(sessionId);
+}
+
 function epochCell(): Map<string, number> {
   return processRegistryMap<number>("scripted-model-epoch.v1");
 }
@@ -220,7 +262,10 @@ export function registerScript(script: SeatScript, sessionId: string = ANY_SESSI
     },
     holdsCutShort: () => entry.holds.cutShort,
     dispose: () => {
-      if (store.get(sessionId) === entry) store.delete(sessionId);
+      if (store.get(sessionId) === entry) {
+        store.delete(sessionId);
+        noteIfParentTurnIncomplete(entry);
+      }
     },
   };
 }
