@@ -4,7 +4,7 @@ import { registerBroker, resetBrokers, setRegisteredConnectorCredentials } from 
 import { createCommentReply, type FetchLike } from "../agent/channels/notion-api.js";
 import { NOTION_CHANNEL_CREDENTIAL } from "../agent/channels/notion-credentials.js";
 import { notionPostArm } from "../agent/channels/notion-post-arm.js";
-import type { ReplyTarget, UnifiedWakeOrigin } from "@open-everywhere/core/agent/adapter-api.js";
+import type { ReplyTarget, UnifiedWakeOrigin, EditLocus } from "@open-everywhere/core/agent/adapter-api.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -140,6 +140,89 @@ function armCredential(present: boolean): void {
     globalThis.fetch = (async () => new Response(JSON.stringify({ id: "cmt-3" }), { status: 200 })) as unknown as typeof fetch;
     const id = await notionPostArm.dispatchUnified!(origin, "hi", {} as Parameters<NonNullable<typeof notionPostArm.dispatchUnified>>[2]);
     ok(id === "cmt-3", "success control: liveNotionPost returns the real comment id on a landed post");
+  } finally {
+    globalThis.fetch = savedFetch;
+  }
+}
+
+{
+  const WORKSPACE = "ws-1046";
+  const PAGE = "pg-1046";
+  const locus: EditLocus = { platform: "notion", channelId: `${WORKSPACE}/${PAGE}` };
+
+  armCredential(true);
+  let malformedErr: unknown;
+  try {
+    await notionPostArm.editMessage!({ platform: "notion", channelId: "not-a-conversation-key" }, "cmt-x", "corrected");
+  } catch (err) {
+    malformedErr = err;
+  }
+  ok(malformedErr instanceof Error, "OPE-1046: a malformed edit locus (no workspace/page split) throws");
+  ok(platformFailureClass(malformedErr) === "definitive", "OPE-1046: the malformed-locus refusal classifies DEFINITIVE — nothing left this host");
+
+  armCredential(false);
+  let preflightErr: unknown;
+  try {
+    await notionPostArm.editMessage!(locus, "cmt-1", "corrected");
+  } catch (err) {
+    preflightErr = err;
+  }
+  ok(preflightErr instanceof Error, "OPE-1046: no Notion credential registered ⇒ liveNotionEditComment throws");
+  ok(platformFailureClass(preflightErr) === "definitive", "OPE-1046: the missing-credential pre-flight refusal classifies DEFINITIVE");
+
+  armCredential(true);
+  const savedFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = (async () => new Response(JSON.stringify({ message: "not found" }), { status: 404 })) as unknown as typeof fetch;
+    let wrongAuthorErr: unknown;
+    try {
+      await notionPostArm.editMessage!(locus, "cmt-not-ours", "corrected");
+    } catch (e) {
+      wrongAuthorErr = e;
+    }
+    ok(
+      wrongAuthorErr instanceof Error && /updateComment failed/.test((wrongAuthorErr as Error).message),
+      "OPE-1046/WRONG-AUTHOR: liveNotionEditComment re-wraps a 404 (comment this connection didn't create) in its own token-free copy",
+    );
+    ok(
+      platformFailureClass(wrongAuthorErr) === "definitive",
+      "OPE-1046/WRONG-AUTHOR: carryFailureSignals keeps the 404 DEFINITIVE across the re-wrap — the model may retry with a fresh `reply`",
+    );
+
+    globalThis.fetch = (async () => new Response(JSON.stringify({ message: "restricted" }), { status: 403 })) as unknown as typeof fetch;
+    let forbiddenErr: unknown;
+    try {
+      await notionPostArm.editMessage!(locus, "cmt-2", "corrected");
+    } catch (e) {
+      forbiddenErr = e;
+    }
+    ok(platformFailureClass(forbiddenErr) === "definitive", "OPE-1046: a 403 (no insert-comment capability) classifies DEFINITIVE");
+
+    globalThis.fetch = (async () => new Response(JSON.stringify({ message: "unavailable" }), { status: 500 })) as unknown as typeof fetch;
+    let ambiguousErr: unknown;
+    try {
+      await notionPostArm.editMessage!(locus, "cmt-3", "corrected");
+    } catch (e) {
+      ambiguousErr = e;
+    }
+    ok(platformFailureClass(ambiguousErr) === "ambiguous", "OPE-1046/CONTROL: a 500 stays AMBIGUOUS across the re-wrap — not every failure is DEFINITIVE");
+
+    let sawPatchBody: unknown;
+    let sawUrl: unknown;
+    let sawMethod: unknown;
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      sawUrl = url;
+      sawMethod = init?.method;
+      sawPatchBody = init?.body ? JSON.parse(String(init.body)) : undefined;
+      return new Response(JSON.stringify({}), { status: 200 });
+    }) as unknown as typeof fetch;
+    await notionPostArm.editMessage!(locus, "cmt-ours", "the corrected text");
+    ok(sawMethod === "PATCH", "OPE-1046: liveNotionEditComment issues a PATCH, not a POST or a PUT");
+    ok(String(sawUrl).endsWith("/v1/comments/cmt-ours"), "OPE-1046: the PATCH URL addresses the real comment id passed to editMessage, not the discussion or page");
+    ok(
+      Array.isArray((sawPatchBody as { rich_text?: unknown[] } | undefined)?.rich_text),
+      "OPE-1046: the PATCH body carries `rich_text` chunks (richTextChunks), the exact shape `updateComment` sends",
+    );
   } finally {
     globalThis.fetch = savedFetch;
   }

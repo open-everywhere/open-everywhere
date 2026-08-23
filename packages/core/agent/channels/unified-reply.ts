@@ -115,6 +115,10 @@ export function unifiedEditLocus(origin: UnifiedWakeOrigin): EditLocus | null {
       return origin.ambient
         ? { platform: "linear", channelId: origin.issueId, ...(origin.organizationId ? { organizationId: origin.organizationId } : {}) }
         : null;
+    case "notion":
+      return origin.workspaceId && origin.pageId
+        ? { platform: "notion", channelId: `${origin.workspaceId}/${origin.pageId}` }
+        : null;
     default:
       return null;
   }

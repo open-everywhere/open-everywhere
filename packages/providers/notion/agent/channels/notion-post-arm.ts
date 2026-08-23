@@ -1,7 +1,8 @@
-import { createCommentReply, resolveNotionCredential } from "./notion-api.js";
+import { createCommentReply, updateComment, resolveNotionCredential } from "./notion-api.js";
 import { notionChannelCredentialFor } from "./notion-credentials.js";
+import { parseNotionConversationKey } from "./notion-identity.js";
 import { getConfig, resolvePartition, markNotApplied, carryFailureSignals, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
-import type { PostArm, TargetResolveBag, ReplyTarget, UnifiedWakeOrigin, UnifiedReplyDeps } from "@open-everywhere/core/agent/adapter-api.js";
+import type { PostArm, TargetResolveBag, ReplyTarget, UnifiedWakeOrigin, UnifiedReplyDeps, EditLocus } from "@open-everywhere/core/agent/adapter-api.js";
 
 function notionDomains(): readonly Domain[] {
   try {
@@ -42,6 +43,23 @@ async function liveNotionPost(origin: NotionOrigin, text: string): Promise<strin
   return id || "unknown";
 }
 
+async function liveNotionEditComment(locus: EditLocus, messageId: string, text: string): Promise<void> {
+  const parsed = parseNotionConversationKey(locus.channelId);
+  if (!parsed) {
+    throw markNotApplied(new Error(`edit_reply couldn't edit the Notion comment ${messageId} — "${locus.channelId}" is not a conversation id.`));
+  }
+  const credentialId = notionReplyCredential(parsed.workspaceId, parsed.pageId);
+  const cred = await resolveNotionCredential(credentialId);
+  if (!cred) {
+    throw markNotApplied(new Error(`edit_reply couldn't edit the Notion comment ${messageId} — no value stored for notion credential "${credentialId ?? "channel-key"}".`));
+  }
+  try {
+    await updateComment({ commentId: messageId, text, ...cred });
+  } catch (err) {
+    throw carryFailureSignals(err, new Error(`edit_reply couldn't edit the Notion comment ${messageId} — updateComment failed`));
+  }
+}
+
 export const notionPostArm: PostArm = {
   platform: "notion",
   resolveTarget: (bag: TargetResolveBag): ReplyTarget | null => {
@@ -65,6 +83,7 @@ export const notionPostArm: PostArm = {
   },
   dispatchReply: (target, text) => dispatchNotionReply(target as NotionTarget, text),
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps) => (deps.postNotion ?? liveNotionPost)(origin as NotionOrigin, text),
+  editMessage: (locus, messageId, text) => liveNotionEditComment(locus, messageId, text),
   describeRedriveTarget: (origin) => `notion discussion ${(origin as NotionOrigin).discussionId}`,
   redriveContainerId: (origin) => (origin as NotionOrigin).discussionId,
 };
