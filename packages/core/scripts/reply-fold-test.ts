@@ -282,8 +282,8 @@ let foldedMessageId = "";
 
 {
   ok(platformCanEdit("slack") === true, "§7: the registry says slack can edit (its arm carries `editMessage`)");
-  ok(platformCanEdit("notion") === false, "🔴 §7: …and notion cannot — no comment-update endpoint exists, so there is no arm");
-  ok(platformCanEdit("no-such-surface") === false, "§7: an unregistered platform cannot edit either");
+  ok(platformCanEdit("no-such-surface") === false, "§7: an unregistered platform cannot edit");
+  ok(platformCanEdit("another-unregistered-surface") === false, "§7: …and neither can a second one — the predicate is the registry lookup, not a hardcoded list");
 
   const ring = [entry({ kind: "post", at: new Date().toISOString(), id: "m1" })];
   ok(foldTargetInTail(ring, { container: SURFACE, platform: "slack", canEdit: () => true })?.messageId === "m1", "§7: with an edit arm, our own last post IS the fold target");
