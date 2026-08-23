@@ -302,17 +302,18 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
   ok(armed !== null, "§11: the tool MOUNTS even where an edit primitive cannot be resolved — an absent verb teaches the model nothing");
 
   const { editPostedMessage, EDIT_NO_ARM_REFUSAL_REASON } = await import("../agent/channels/reply-edit.js");
-  const audit = { org: ORG, platform: "notion", workspace: "W1", route: "tool" as const, wakeId: "wake-notion-probe" };
+  const NO_ARM_PLATFORM = "no-such-surface";
+  const audit = { org: ORG, platform: NO_ARM_PLATFORM, workspace: "W1", route: "tool" as const, wakeId: "wake-no-arm-probe" };
   let refusal: string | undefined;
-  await editPostedMessage({ platform: "notion", channelId: "D1" }, "comment-1", "corrected", audit)
+  await editPostedMessage({ platform: NO_ARM_PLATFORM, channelId: "D1" }, "comment-1", "corrected", audit)
     .then(() => undefined)
     .catch((e: unknown) => {
       refusal = String(e);
     });
   ok(refusal !== undefined, "§11: a surface with no edit arm ERRORS — never a silent no-op");
-  ok(refusal?.includes("notion") === true, "§11/COPY: the error NAMES the surface, so the model knows the limit is the platform's");
+  ok(refusal?.includes(NO_ARM_PLATFORM) === true, "§11/COPY: the error NAMES the surface, so the model knows the limit is the platform's");
   ok(refusal?.includes("reply") === true, "§11/RECOVERY: it steers to posting a new `reply` instead");
-  const rows = await rowsFor("reply.edit.refused", "wake-notion-probe");
+  const rows = await rowsFor("reply.edit.refused", "wake-no-arm-probe");
   ok(rows.length === 1 && rows[0]?.["reason"] === EDIT_NO_ARM_REFUSAL_REASON, "§11/AUDIT: the refusal is recorded as `no-edit-arm`");
 }
 
@@ -572,6 +573,41 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
   ok(
     inWindow.edited === true,
     "§20/WINDOW/CONTROL: the SAME cross-turn call succeeds for a post inside the window — §20/WINDOW measures the TTL, not a path that refuses everything",
+  );
+}
+
+{
+  const { replyEditLocus } = await import("../agent/channels/reply-post.js");
+  const { unifiedEditLocus } = await import("../agent/channels/unified-reply.js");
+
+  const notionTarget = {
+    platform: "notion",
+    discussionId: "d-1",
+    workspaceId: "ws-1",
+    pageId: "pg-1",
+  } as import("../agent/channels/reply-post.js").ReplyTarget;
+  const notionLocus = replyEditLocus(notionTarget);
+  ok(notionLocus !== null, "§21: replyEditLocus resolves a real address for a notion target with workspace+page — OPE-1046, was a permanent `null` before it");
+  ok(
+    notionLocus?.channelId === "ws-1/pg-1",
+    "§21: the notion locus channelId is the `<workspace>/<page>` composite `liveNotionEditComment` parses back apart",
+  );
+
+  const notionTargetNoPage = { platform: "notion", discussionId: "d-2", workspaceId: "ws-1" } as import("../agent/channels/reply-post.js").ReplyTarget;
+  ok(
+    replyEditLocus(notionTargetNoPage) === null,
+    "🔴 §21/CONTROL: a notion target with no pageId still resolves `null` — no editable address without a credential to resolve",
+  );
+
+  const notionOrigin = { platform: "notion", discussionId: "d-3", workspaceId: "ws-2", pageId: "pg-2" } as UnifiedWakeOrigin;
+  const notionUnifiedLocus = unifiedEditLocus(notionOrigin);
+  ok(notionUnifiedLocus !== null, "§21: unifiedEditLocus resolves a real address for a notion origin with workspace+page too");
+  ok(notionUnifiedLocus?.channelId === "ws-2/pg-2", "§21: the unified notion locus carries the same composite key");
+
+  const notionOriginNoWorkspace = { platform: "notion", discussionId: "d-4", pageId: "pg-2" } as UnifiedWakeOrigin;
+  ok(
+    unifiedEditLocus(notionOriginNoWorkspace) === null,
+    "🔴 §21/CONTROL: a notion origin with no workspaceId still resolves `null` — the unified resolver must not diverge from the per-surface one",
   );
 }
 

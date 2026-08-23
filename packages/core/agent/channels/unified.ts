@@ -40,7 +40,7 @@ import { finalMessageActionForTurn, isBareStop, replierLabelFor, withPendingWork
 import { auditNoReplySentinelObserved } from "./chat-turn-audit.js";
 import { consumeRepliedThisTurn, repliedWakesThisTurn, declinedWakesThisTurn, refusalsForWakeThisTurn } from "./reply-signal.js";
 import { consumeReactedThisTurn } from "./react-signal.js";
-import { settleWakeAccounting, UNACCOUNTED_WAKES_AUDIT_ACTION, MAX_ACCOUNTING_WAKES } from "./wake-accounting.js";
+import { settleWakeAccounting, UNACCOUNTED_WAKES_AUDIT_ACTION, WAKE_ACCOUNTING_SKIPPED_AUDIT_ACTION, MAX_ACCOUNTING_WAKES } from "./wake-accounting.js";
 import { redriveEnabled, maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
 import { unresumableAuditDetail } from "./session-resume.js";
 import { healPrunedDeploymentStrand } from "./stranded-seat.js";
@@ -128,7 +128,7 @@ export function windowEnabledFor(surfaceKey: string, token: string): boolean {
   }
 }
 
-function auditLabels(rawToken: string | undefined): { workspace: string; surface: string | undefined } {
+export function auditLabels(rawToken: string | undefined): { workspace: string; surface: string | undefined } {
   const key = parseWindowToken(rawToken);
   return {
     workspace: key ? platformWorkspaceForWindowDomain(key.domain) : "unknown",
@@ -175,7 +175,7 @@ export async function answeredContainerVia(org: string, turnId: string | undefin
   return (await containerAnsweredSince(org, origin, record.createdAt)) ? "container" : undefined;
 }
 
-async function auditUnaccountedWakesForTurn(
+export async function auditUnaccountedWakesForTurn(
   org: string,
   workspace: string,
   surface: string | undefined,
@@ -184,7 +184,18 @@ async function auditUnaccountedWakesForTurn(
   turnWake: string | undefined,
   reacted: boolean,
 ): Promise<void> {
-  if (!windowToken || !turnId || !turnWake) return;
+  if (!windowToken || !turnId || !turnWake) {
+    const reason = !windowToken ? "no-window-token" : !turnId ? "no-turn-id" : "no-turn-wake";
+    await appendAudit({
+      org,
+      platform: "unified",
+      workspace,
+      surface,
+      action: WAKE_ACCOUNTING_SKIPPED_AUDIT_ACTION,
+      detail: { reason },
+    }).catch(() => undefined);
+    return;
+  }
   try {
     const accounted = new Set<string>([...repliedWakesThisTurn(turnId), ...declinedWakesThisTurn(turnId)]);
     if (reacted) accounted.add(turnWake);
