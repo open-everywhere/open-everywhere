@@ -31,12 +31,30 @@ function safeDomains(): readonly Domain[] {
   }
 }
 
-function renderComments(comments: readonly LinearCommentSummary[]): string {
+export function commentAgeAtRead(createdAt: string | undefined, readAt: string | undefined): string | undefined {
+  if (!createdAt || !readAt) return undefined;
+  const then = Date.parse(createdAt);
+  const now = Date.parse(readAt);
+  if (!Number.isFinite(then) || !Number.isFinite(now)) return undefined;
+  const ms = now - then;
+  if (ms < 0) return undefined;
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 1) return "less than a minute";
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"}`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"}`;
+}
+
+function renderComments(comments: readonly LinearCommentSummary[], readAt?: string): string {
   return comments
     .map((c) => {
       const who = c.authorName ?? c.authorId ?? "unknown author";
       const when = c.createdAt ? ` at ${c.createdAt}` : "";
-      return `  - ${who}${when}: ${c.text}`;
+      const age = commentAgeAtRead(c.createdAt, readAt);
+      const old = age ? ` (${age} before this read)` : "";
+      return `  - ${who}${when}${old}: ${c.text}`;
     })
     .join("\n");
 }
@@ -63,6 +81,7 @@ export const readLinearIssueEntry = defineTool({
     truncated: z.boolean(),
     description: z.string(),
     text: z.string(),
+    readAt: z.string().optional(),
     workspaceTrust: z.enum(["internal", "public"]).optional(),
   }),
   async execute(input, ctx2) {
@@ -83,6 +102,7 @@ export const readLinearIssueEntry = defineTool({
     const organizationId = currentTurnOrganization(bctx) ?? workOrg;
     await assertLinearIssueAllowed(bctx, issue, domains, async (ref) => (await enrichIssueTeam(ref, { organizationId }))?.teamId, { workOrg });
     const res = await readLinearIssue(issue, { maxComments: MAX_COMMENTS, organizationId });
+    const readAt = new Date().toISOString();
     let workspaceTrust: SurfaceTrust | undefined;
     try {
       workspaceTrust = declaredWorkspaceTrust(resolvePartition(bctx).workspaceKey);
@@ -98,7 +118,8 @@ export const readLinearIssueEntry = defineTool({
       comments: res.comments.length,
       truncated: res.truncated,
       description: res.description,
-      text: renderComments(res.comments),
+      text: renderComments(res.comments, readAt),
+      readAt,
     };
   },
   toModelOutput(output) {
@@ -107,12 +128,15 @@ export const readLinearIssueEntry = defineTool({
     if (output.title) headParts.push(output.title);
     if (output.state) headParts.push(`[${output.state}]`);
     const header = headParts.join(" — ");
+    const asOf = output.readAt
+      ? `\nRead live at ${output.readAt}: the fields above are the issue's state at that moment. The comments below are HISTORY — what a comment claimed about status, approval or progress is not the present state.`
+      : "";
     const bodyBlock = output.description.length > 0 ? `\n\nDescription:\n${output.description}` : "\n\n(no description)";
     const commentsBlock =
       output.comments === 0
         ? "\n\nNo comments."
-        : `\n\n${output.comments} comment(s)${output.truncated ? " (truncated — the issue has more)" : ""}:\n${output.text}`;
-    return ingestUntrustedModelOutput(`${header}${bodyBlock}${commentsBlock}`, {
+        : `\n\n${output.comments} comment(s), oldest first${output.truncated ? " (truncated — the issue has older comments than these)" : ""}:\n${output.text}`;
+    return ingestUntrustedModelOutput(`${header}${asOf}${bodyBlock}${commentsBlock}`, {
       source: `linear issue ${ref}`,
       ingestion: {
         kind: "linear",

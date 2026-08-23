@@ -107,7 +107,17 @@ export function linearScopeRefusal(
   verdict: LinearScopeVerdict,
   direction: LinearScopeDirection = "read",
   grantCapable = false,
+  workspaceResolved = false,
 ): string {
+  if (verdict.reason === "target-unresolvable" && workspaceResolved) {
+    return (
+      `Linear target "${targetRef}" could not be resolved in this workspace: nothing with that ` +
+      "reference is visible to the workspace credential. It may not exist, or it may be on a team " +
+      `the credential cannot see. The ${direction} is refused rather than assumed to be in scope. ` +
+      "Check the reference; if it is right, the team it lives on has to be shared with the " +
+      "workspace credential."
+    ).replace(/\s{2,}/g, " ");
+  }
   const scope = verdict.callerDomain
     ? `domain "${verdict.callerDomain}"`
     : "this session's (no domain owns the surface this session was woken on)";
@@ -227,7 +237,7 @@ async function assertLinearIssueScope(
   const verdict = linearIssueScope(partition.surfaceKey, own, issueRef, teamId, domains, workOrg);
   if (verdict.allowed) return;
   await auditLinearRefusal(ctx, issueRef, verdict, direction, deps);
-  throw new ChannelScopeError(linearScopeRefusal(issueRef, verdict, direction, grantCapable));
+  throw new ChannelScopeError(linearScopeRefusal(issueRef, verdict, direction, grantCapable, true));
 }
 
 export function linearTeamScope(
@@ -295,5 +305,5 @@ export async function assertLinearTeamWriteAllowed(
   const verdict = linearTeamScope(partition.surfaceKey, teamId, domains, workOrg);
   if (verdict.allowed) return;
   await auditLinearRefusal(ctx, target, verdict, "write", deps);
-  throw new ChannelScopeError(linearScopeRefusal(target, verdict, "write", grantCapable));
+  throw new ChannelScopeError(linearScopeRefusal(target, verdict, "write", grantCapable, true));
 }
