@@ -1,18 +1,93 @@
 import { execFile } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { delimiter, dirname, isAbsolute, join } from "node:path";
 
-export type ExecResult = { code: number; stdout: string; stderr: string };
+export type ExecResult = {
+  code: number;
+  stdout: string;
+  stderr: string;
+  spawnError?: string;
+};
 export type Exec = (command: string, args: string[]) => Promise<ExecResult>;
 
 export const realExec: Exec = (command, args) =>
   new Promise((resolve) => {
     execFile(command, args, { maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
-      const code = err && typeof (err as { code?: unknown }).code === "number" ? (err as { code: number }).code : err ? 1 : 0;
-      resolve({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
+      const rawCode = (err as { code?: unknown } | null)?.code;
+      const code = typeof rawCode === "number" ? rawCode : err ? 1 : 0;
+      const spawnError = typeof rawCode === "string" ? `${rawCode}: ${(err as Error).message}` : undefined;
+      resolve({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? ""), ...(spawnError ? { spawnError } : {}) });
     });
   });
+
+export type BinLookupIo = { exists: (path: string) => boolean; listDir: (path: string) => string[] };
+
+const REAL_BIN_IO: BinLookupIo = {
+  exists: (path) => existsSync(path),
+  listDir: (path) => {
+    try {
+      return readdirSync(path);
+    } catch {
+      return [];
+    }
+  },
+};
+
+export type BinResolution = { kind: "found"; path: string; via: string } | { kind: "missing"; searched: string[] };
+
+export function resolveExecutable(input: { name: string; overrideVar?: string; env: Env; cwd: string; io?: BinLookupIo }): BinResolution {
+  const io = input.io ?? REAL_BIN_IO;
+  const searched: string[] = [];
+  const tryPath = (candidate: string): boolean => {
+    searched.push(candidate);
+    return io.exists(candidate);
+  };
+
+  const override = input.overrideVar ? input.env[input.overrideVar]?.trim() : undefined;
+  if (override) {
+    return tryPath(override) ? { kind: "found", path: override, via: input.overrideVar ?? "override" } : { kind: "missing", searched };
+  }
+
+  const local = join(input.cwd, "node_modules", ".bin", input.name);
+  if (tryPath(local)) return { kind: "found", path: local, via: "node_modules/.bin" };
+
+  for (const dir of (input.env.PATH ?? "").split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, input.name);
+    if (tryPath(candidate)) return { kind: "found", path: candidate, via: "PATH" };
+  }
+
+  const nvmDir = input.env.NVM_DIR?.trim() || join(input.env.HOME ?? homedir(), ".nvm");
+  const versionsDir = join(nvmDir, "versions", "node");
+  for (const version of io.listDir(versionsDir).sort().reverse()) {
+    const candidate = join(versionsDir, version, "bin", input.name);
+    if (tryPath(candidate)) return { kind: "found", path: candidate, via: `nvm (${version})` };
+  }
+
+  return { kind: "missing", searched };
+}
+
+export function binResolutionError(name: string, searched: string[]): DeployConfigError {
+  return new DeployConfigError(
+    `could not find the \`${name}\` executable — it never ran, so nothing this script reads from it is known.\n` +
+      `  \`execFile\` uses no shell: it resolves \`${name}\` against this node process's PATH, which is not\n` +
+      "  your interactive shell's PATH when nvm has swapped node versions.\n" +
+      `  Remedy: install it (\`npm i -g ${name}\`) for the node version you run the deploy chain with,\n` +
+      `  or point OE_VERCEL_BIN at the absolute path of the binary you want.\n` +
+      `  Searched (${searched.length}): ${searched.slice(0, 12).join(", ")}${searched.length > 12 ? ", …" : ""}`,
+  );
+}
+
+export const VERCEL_BIN_OVERRIDE_VAR = "OE_VERCEL_BIN";
+
+export const vercelExec: Exec = async (command, args) => {
+  const found = resolveExecutable({ name: command, overrideVar: VERCEL_BIN_OVERRIDE_VAR, env: process.env, cwd: process.cwd() });
+  if (found.kind === "missing") throw binResolutionError(command, found.searched);
+  const res = await realExec(found.path, args);
+  if (res.spawnError) throw binResolutionError(command, [`${found.path} (${res.spawnError})`]);
+  return res;
+};
 
 export type Env = Record<string, string | undefined>;
 
@@ -315,7 +390,7 @@ export type VercelClient = {
   aliasSet(deploymentUrl: string, alias: string): Promise<ExecResult>;
 };
 
-export function createVercelClient(env: DeployEnv, exec: Exec = realExec, bin = "vercel"): VercelClient {
+export function createVercelClient(env: DeployEnv, exec: Exec = vercelExec, bin = "vercel"): VercelClient {
   const scoped = (args: string[]): string[] => [...args, "--scope", env.scope];
   return {
     async ls() {
@@ -333,13 +408,35 @@ export function createVercelClient(env: DeployEnv, exec: Exec = realExec, bin = 
   };
 }
 
-export async function currentAliasTarget(client: VercelClient, alias: string): Promise<InspectResult | undefined> {
+export type AliasTarget = { kind: "resolved"; target: InspectResult } | { kind: "unresolved"; reason: string };
+
+export async function currentAliasTarget(client: VercelClient, alias: string): Promise<AliasTarget> {
+  let result: InspectResult;
   try {
-    const result = await client.inspect(alias);
-    return result.url || result.id ? result : undefined;
-  } catch {
-    return undefined;
+    result = await client.inspect(alias);
+  } catch (err) {
+    return { kind: "unresolved", reason: err instanceof Error ? err.message : String(err) };
   }
+  if (!result.url && !result.id) {
+    return { kind: "unresolved", reason: `\`vercel inspect ${alias}\` returned neither a url nor a dpl_ id` };
+  }
+  return { kind: "resolved", target: result };
+}
+
+export function unresolvedAliasFailure(input: { alias: string; reason: string; recording: boolean }): string {
+  const disarmed = [
+    "the cron deploymentId check (does the cron registration point at THIS deployment?)",
+    "the cron staleness check (is the registration older than the deployment?)",
+    ...(input.recording ? ["the known-good pointer record (--record) — the rollback target would stay on the PREVIOUS deploy"] : []),
+    "the rollback no-op guard, which reads the same value",
+  ];
+  return (
+    `deploy:verify: the probe passed, but ${input.alias} could not be resolved to a deployment — ${input.reason}\n` +
+    "  This is FATAL, not a warning: these checks cannot run and would otherwise be skipped in silence —\n" +
+    disarmed.map((line) => `    • ${line}`).join("\n") +
+    "\n  Remedy: make the `vercel` CLI runnable from this process (see OE_VERCEL_BIN), then re-run.\n" +
+    "  To record a known-good pointer without the CLI: `npm run deploy:record -- --url <deployment-url> [--id dpl_…]`."
+  );
 }
 
 export async function currentCommit(exec: Exec = realExec): Promise<string | undefined> {
@@ -590,8 +687,15 @@ export async function runRollback(input: {
 }): Promise<RollbackResult> {
   const { env, client, store, log } = input;
 
-  const current = await currentAliasTarget(client, env.alias);
-  log(`  alias   ${env.alias} → ${current?.url ?? "unknown"}${current?.id ? ` (${current.id})` : ""}`);
+  const resolved = await currentAliasTarget(client, env.alias);
+  const current = resolved.kind === "resolved" ? resolved.target : undefined;
+  if (resolved.kind === "resolved") {
+    const target = resolved.target;
+    log(`  alias   ${env.alias} → ${target.url ?? "unknown"}${target.id ? ` (${target.id})` : ""}`);
+  } else {
+    log(`  ⚠ rollback: cannot read what ${env.alias} points at (${resolved.reason}).`);
+    log("    The no-op guard is OFF for this run — a rollback onto the deployment already serving the alias would NOT be caught.");
+  }
 
   const state = store.read();
   let choice = chooseRollbackTarget({ explicitTo: input.explicitTo, state, currentUrl: current?.url, discovered: [] });
@@ -621,7 +725,8 @@ export async function runRollback(input: {
     return { ok: false, target: choice.url, choice };
   }
 
-  const after = await currentAliasTarget(client, env.alias);
+  const afterResolved = await currentAliasTarget(client, env.alias);
+  const after = afterResolved.kind === "resolved" ? afterResolved.target : undefined;
   if (after?.url && after.url !== choice.url) {
     log(`✗ rollback: alias set reported success but ${env.alias} still resolves to ${after.url}.`);
     return { ok: false, target: choice.url, choice };
@@ -640,21 +745,25 @@ export async function runRecord(input: {
   commit?: string;
   note?: string;
   now?: Date;
+  label?: string;
   log: Logger;
 }): Promise<{ ok: boolean; entry?: DeployEntry }> {
   const { env, client, store, log } = input;
+  const label = input.label ?? "deploy:record";
 
   let url = input.url ? normalizeDeploymentUrl(input.url) : undefined;
   let id = input.id;
   if (!url) {
-    const current = await currentAliasTarget(client, env.alias);
+    const resolved = await currentAliasTarget(client, env.alias);
+    const current = resolved.kind === "resolved" ? resolved.target : undefined;
     url = current?.url;
     id = id ?? current?.id;
     if (!url) {
-      log(
-        `✗ deploy:record: could not resolve what ${env.alias} points at (\`vercel inspect\` gave no url). ` +
-          `Pass --url <deployment-url> explicitly.`,
-      );
+      const reason = resolved.kind === "unresolved" ? resolved.reason : "`vercel inspect` gave no url";
+      const script = label.split(" ")[0];
+      log(`✗ ${label}: could not resolve what ${env.alias} points at — ${reason}`);
+      log("    Nothing was recorded. The known-good pointer still names the PREVIOUS deployment, so a rollback");
+      log(`    would go to the wrong place. Remedy: \`npm run ${script} -- --url <deployment-url> [--id dpl_…]\`.`);
       return { ok: false };
     }
   }
@@ -668,7 +777,7 @@ export async function runRecord(input: {
   };
   const next = recordGood(store.read(), entry);
   store.write(next);
-  log(`✓ deploy:record: known-good → ${entry.url}${entry.commit ? ` @ ${entry.commit}` : ""}`);
+  log(`✓ ${label}: known-good → ${entry.url}${entry.commit ? ` @ ${entry.commit}` : ""}`);
   log(`  pointer ${env.stateFile} (gitignored, per-operator); ${next.history.length} previous entry(ies) retained`);
   return { ok: true, entry };
 }
