@@ -220,7 +220,10 @@ const rawDomains: Domain[] = [
     ambientSupervisor: true,
     engagementTier: "neutral",
     models: { primary: { id: UTILITY_MODEL } },
-    credentials: [{ connector: "notion", credential: "team-key", use: "channel-key" }],
+    credentials: [
+      { connector: "notion", credential: "team-key", use: "channel-key" },
+      { connector: "notion", credential: "user-oauth", use: "user-oauth-rest" },
+    ],
   }),
 
 ];
