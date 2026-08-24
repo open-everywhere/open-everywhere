@@ -25,7 +25,13 @@ import {
   jobWakeEscalated,
   currentJobWakePosture,
 } from "../agent/access/job-session-state.js";
-import { JOB_WAKE_TOOLS, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../agent/access/window-gate-manifest.js";
+import {
+  CONVERSATIONAL_ROOT_GRAINS,
+  JOB_WAKE_TOOLS,
+  WINDOW_GATED_TOOLS,
+  WINDOW_UNGATED_TOOLS,
+} from "../agent/access/window-gate-manifest.js";
+import { TRIGGERED_FIRE_GRAIN } from "../agent/routines/fire-window.js";
 import { grantToolName } from "../agent/operational/credential-grant-rows.js";
 import { projectToolSet } from "../agent/access/untrusted-projection.js";
 import { setNativeDelegationSeat } from "../agent/access/native-delegation-state.js";
@@ -155,6 +161,25 @@ const withheldList = withheldFromJobWake();
 ok(withheldList.includes("purge_memory") && withheldList.includes("agent") && withheldList.includes("bash"), "withheldFromJobWake lists the consequential names (the audit row's content)");
 ok(!withheldList.includes("reply") && !withheldList.includes("complete_job"), "withheldFromJobWake excludes the kit");
 ok(withheldList.join(",") === [...withheldList].sort().join(","), "withheldFromJobWake is sorted (a stable, diffable audit row)");
+
+ok(Array.isArray(WINDOW_GATED_TOOLS.web_fetch), "web_fetch carries a kit row in WINDOW_GATED_TOOLS (the layer-1 lookup has something to read)");
+ok(Array.isArray(WINDOW_GATED_TOOLS.agent), "agent carries a kit row in WINDOW_GATED_TOOLS (the negative control below has something to read)");
+ok(
+  !(WINDOW_GATED_TOOLS.web_fetch as readonly string[]).includes(TRIGGERED_FIRE_GRAIN),
+  `🔴 OPE-252 LAYER 1: web_fetch does not mount on the fire grain "${TRIGGERED_FIRE_GRAIN}" — the grain gate withholds it before the job kit is reached, so a kit admission alone would be inert`,
+);
+ok(!allowedOnRestrictedJobWake("web_fetch"), "🔴 OPE-252 LAYER 2: the job kit withholds web_fetch as well — the two layers are independent");
+ok(
+  (CONVERSATIONAL_ROOT_GRAINS as readonly string[]).includes(TRIGGERED_FIRE_GRAIN),
+  "🔴 OPE-252: the fire grain is a CONVERSATIONAL ROOT grain, so adding it to web_fetch's kit row would put wide hands on the class that must never hold them",
+);
+ok(
+  (WINDOW_GATED_TOOLS.agent as readonly string[]).includes(TRIGGERED_FIRE_GRAIN),
+  `🔴 NEGATIVE CONTROL: \`agent\` DOES mount on the fire grain "${TRIGGERED_FIRE_GRAIN}" — for delegation the job kit is the only control, which is exactly why OPE-252 refuses to solve the fetch gap with it`,
+);
+ok(!allowedOnRestrictedJobWake("agent"), "…and the job kit is what withholds it there (a fire must not launder its restriction into a full-kit worker)");
+ok(!WINDOW_UNGATED_TOOLS.has("web_fetch"), "web_fetch is grain-GATED, not part of the always-mounted conversational kit — the layer-1 lookup is meaningful");
+ok(allowedOnRestrictedJobWake("read_channel") && !Object.keys(WINDOW_GATED_TOOLS).includes("read_channel"), "NEGATIVE CONTROL: a fire's own reads are ungated, so they mount on every grain and survive both layers");
 
 function makeToolset(): Record<string, { description: string; execute: () => unknown }> {
   const names = [
