@@ -126,13 +126,29 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
     }
   }
 
+  function dcrRecordNeedsBackfill(rec: DcrClientRecord): boolean {
+    return rec.revocationEndpoint === undefined;
+  }
+
   async function ensureDcrClient(providerRef: string): Promise<DcrClientRecord> {
     const existing = await readJson<DcrClientRecord>(dcrRef(providerRef));
-    if (existing) return existing;
+    if (existing && !dcrRecordNeedsBackfill(existing)) return existing;
     const cfg = providerConfig(providerRef);
     return vault.withLock(dcrRef(providerRef), async () => {
       const again = await readJson<DcrClientRecord>(dcrRef(providerRef));
-      if (again) return again;
+      if (again && !dcrRecordNeedsBackfill(again)) return again;
+      if (again) {
+        try {
+          const endpoints = await discoverEndpoints(cfg.resource, doFetch);
+          if (endpoints.revocationEndpoint === undefined) return again;
+          const backfilled: DcrClientRecord = { ...again, revocationEndpoint: endpoints.revocationEndpoint };
+          await vault.write(dcrRef(providerRef), JSON.stringify(backfilled), { connector: providerRef });
+          return backfilled;
+        } catch (e) {
+          console.warn(`[oe-oauth] DCR backfill discovery failed for "${providerRef}" (using the frozen record): ${e instanceof Error ? e.message : String(e)}`);
+          return again;
+        }
+      }
       const redirectUri = redirectUriOf();
       if (!redirectUri) {
         throw new Error(`connection "${providerRef}": OE_PUBLIC_BASE_URL is unset — cannot register a DCR client without a redirect_uri.`);
