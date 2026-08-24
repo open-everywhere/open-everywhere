@@ -3,14 +3,14 @@ import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { getConfig } from "../access/config.js";
 import { escapeHtml as esc, securePageResponse, BUTTON_STYLE, CODE_BLOCK_STYLE } from "../credentials/page-chrome.js";
-import { mintPageToken, pageBaseUrl, verifyPageToken, PAGE_TOKEN_KEY_ENV } from "../credentials/page-token.js";
+import { mintPageToken, pageBaseUrl, verifyPageToken, PAGE_TOKEN_KEY_ENV, REVEAL_GRANT_CONNECTOR } from "../credentials/page-token.js";
 import { getOrMintSelfSecret, selfSecretsArmed } from "../credentials/self-secrets.js";
 import { webhookVerifier, type WebhookSenderGuidance } from "./verifier.js";
 import type { CredentialIntakeRow } from "../operational/store.js";
 
 export const REVEAL_PAGE_PATH = "/connect/v1/reveal";
 
-export const REVEAL_GRANT_CONNECTOR = "webhook-reveal";
+export { REVEAL_GRANT_CONNECTOR };
 
 export const REVEAL_GRANT_TTL_MS = 15 * 60_000;
 

@@ -1,7 +1,8 @@
 import { createCredentialIntake, completeCredentialIntake, type RequestCredentialIntakeInput, type CredentialIntakeDeps } from "./intake.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { mintPageToken, pageBaseUrl, verifyPageToken, PAGE_TOKEN_KEY_ENV, type PageTokenClaims } from "./page-token.js";
+import { mintPageToken, pageBaseUrl, verifyPageToken, isReservedGrantConnector, PAGE_TOKEN_KEY_ENV, type PageTokenClaims } from "./page-token.js";
 import { getOrMintSelfSecret, selfSecretsArmed } from "./self-secrets.js";
+import type { CredentialIntakeRow } from "../operational/store.js";
 
 export const INTAKE_PAGE_PATH = "/connect/v1/intake";
 
@@ -100,6 +101,16 @@ export interface IntakePageHandlerDeps extends CredentialIntakeDeps {
   readonly env?: NodeJS.ProcessEnv;
 }
 
+function intakeRowOpen(row: CredentialIntakeRow | null, boundTo: string, nowMs: number): row is CredentialIntakeRow {
+  return (
+    row !== null &&
+    !row.usedAt &&
+    !isReservedGrantConnector(row.connector) &&
+    row.requestedBy === boundTo &&
+    Date.parse(row.expiresAt) > nowMs
+  );
+}
+
 export async function handleIntakePageGet(req: Request, deps: IntakePageHandlerDeps = {}): Promise<Response> {
   const env = deps.env ?? process.env;
   if (!selfSecretsArmed()) return new Response("not found", { status: 404 });
@@ -111,9 +122,7 @@ export async function handleIntakePageGet(req: Request, deps: IntakePageHandlerD
   if (!claims) return invalidPage();
 
   const intake = await getOperationalStore().getCredentialIntake(claims.org, claims.id);
-  if (!intake || intake.usedAt || intake.requestedBy !== claims.rb || Date.parse(intake.expiresAt) <= now) {
-    return invalidPage();
-  }
+  if (!intakeRowOpen(intake, claims.rb, now)) return invalidPage();
   return formPage(token, intake.connector, intake.domain);
 }
 
@@ -138,7 +147,7 @@ export async function handleIntakePagePost(req: Request, deps: IntakePageHandler
 
   if (!value.trim()) {
     const intake = await getOperationalStore().getCredentialIntake(claims.org, claims.id);
-    if (!intake || intake.usedAt || intake.requestedBy !== claims.rb || Date.parse(intake.expiresAt) <= now) return invalidPage();
+    if (!intakeRowOpen(intake, claims.rb, now)) return invalidPage();
     return formPage(token, intake.connector, intake.domain, "Enter the API key.");
   }
 
@@ -149,7 +158,7 @@ export async function handleIntakePagePost(req: Request, deps: IntakePageHandler
   if (!result.ok) {
     if (result.code === "empty") {
       const intake = await getOperationalStore().getCredentialIntake(claims.org, claims.id);
-      if (intake && !intake.usedAt) return formPage(token, intake.connector, intake.domain, "Enter the API key.");
+      if (intakeRowOpen(intake, claims.rb, now)) return formPage(token, intake.connector, intake.domain, "Enter the API key.");
     }
     return invalidPage();
   }

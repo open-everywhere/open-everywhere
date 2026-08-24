@@ -31,7 +31,8 @@ registerConfig({
   domainsForSurface: () => [],
   loadWebhooks: () => DECLARED,
 } as never);
-const { PAGE_AUDIENCES, mintPageToken, pageTokenSigningKey } = await import("../agent/credentials/page-token.js");
+const { PAGE_AUDIENCES, mintPageToken, verifyPageToken, pageTokenSigningKey } = await import("../agent/credentials/page-token.js");
+const { completeCredentialIntake, createCredentialIntake, handleSetKeyClick } = await import("../agent/credentials/intake.js");
 type PageAudience = import("../agent/credentials/page-token.js").PageAudience;
 const { encryptedKvVault } = await import("../agent/credentials/kv-vault.js");
 const { resetSelfSecretCache } = await import("../agent/credentials/self-secrets.js");
@@ -438,6 +439,108 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
   eq(reveal.revealedHookId("db:notion:key"), undefined, "…and an ordinary stored-credential ref under some other connector names no hook");
 }
 
+{
+  console.log("\n11. the cross-CLASS redemption wall (OPE-607):");
+
+  const grant = await freshGrant();
+  const grantRow = (await store.getCredentialIntake(ORG, grant.id))!;
+  eq(grantRow.connector, reveal.REVEAL_GRANT_CONNECTOR, "fixture: the row really is a REVEAL grant, not an intake");
+  eq(await vault.read(grantRow.ref), SENTINEL, "fixture: its ref holds the hook's live signing secret");
+
+  const crossToken = mintPageToken({ v: 1, aud: "intake", org: ORG, id: grant.id, rb: USER, exp: Date.now() + 60_000 }, KEY);
+  ok(verifyPageToken(crossToken, KEY, "intake", Date.now()) !== null, "🔴 the token CLEARS the first wall — it is a valid intake token, so nothing below is the audience check");
+
+  const crossGet = await intakePage.handleIntakePageGet(
+    new Request(`https://oe.example.test${intakePage.INTAKE_PAGE_PATH}?t=${encodeURIComponent(crossToken)}`),
+  );
+  eq(crossGet.status, 404, "🔴 the intake GET refuses a REVEAL-class row — no form renders for a grant");
+
+  const ATTACKER_VALUE = "FAKE-ATTACKER-CHOSEN-KEY-DO-NOT-USE";
+  const crossPost = await intakePage.handleIntakePagePost(
+    new Request(`https://oe.example.test${intakePage.INTAKE_PAGE_PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ t: crossToken, k: ATTACKER_VALUE }).toString(),
+    }),
+  );
+  eq(crossPost.status, 404, "🔴 the intake POST refuses it too");
+
+  eq(await vault.read(grantRow.ref), SENTINEL, "🔴🔴 the hook's signing secret is UNCHANGED — the cross-class redemption never reached the vault");
+  eq((await store.getCredentialIntake(ORG, grant.id))!.usedAt, undefined, "…and the grant is NOT burned, so the legitimate holder still has their one shot");
+  const stillWorks = await reveal.handleRevealPost(postReq(grant.token));
+  eq(stillWorks.status, 200, "…proved: the reveal route still redeems the grant the attempt touched");
+  ok((await stillWorks.text()).includes(SENTINEL), "…and hands over the ORIGINAL secret, not the submitted value");
+
+  const genericIntake404 = await (await intakePage.handleIntakePageGet(new Request(`https://oe.example.test${intakePage.INTAKE_PAGE_PATH}?t=garbage`))).text();
+  eq(await crossGet.text(), genericIntake404, "the wrong-class 404 is byte-identical to every other intake failure");
+
+  const openGrant = await freshGrant();
+  const named = await completeCredentialIntake({
+    org: ORG,
+    id: openGrant.id,
+    value: ATTACKER_VALUE,
+    submittedBy: USER,
+    audit: { platform: "web", workspace: "intake-page", surface: "/connect/v1/intake" },
+  });
+  eq(named.ok, false, "the finalize seam refuses a reveal-grant row");
+  eq(named.ok === false ? named.code : undefined, "wrong-class", "🔴 …with a NAMED reason — not collapsed into not-found");
+
+  const clickGrant = await freshGrant();
+  eq((await store.getCredentialIntake(ORG, clickGrant.id))!.usedAt, undefined, "fixture: the click's grant is open, so no other check can account for the refusal");
+  const posted: string[] = [];
+  const clickHandled = await handleSetKeyClick(
+    {
+      type: "block_actions",
+      trigger_id: "TRIGGER",
+      user: { id: USER },
+      channel: { id: "C1" },
+      actions: [{ action_id: `oe_setkey:${clickGrant.id}`, value: ORG }],
+    },
+    { post: async (method: string) => (posted.push(method), { ok: true }) },
+  );
+  ok(clickHandled, "the Slack click handler owns the click (it must never forward a half-understood payload)");
+  ok(!posted.includes("views.open"), "🔴 …and opens NO modal for a REVEAL-class row — the grant's labels never reach a modal title");
+  ok(posted.includes("chat.postEphemeral"), "…the clicker gets the same 'no longer available' notice as an unknown id");
+
+  let minted = false;
+  await assert.rejects(
+    async () => {
+      await createCredentialIntake({
+        org: ORG,
+        connector: reveal.REVEAL_GRANT_CONNECTOR,
+        ref: "db:ope607-smuggled-key",
+        requestedBy: USER,
+        channelId: "C1",
+        mintId: () => "ope607-smuggled",
+      } as never);
+      minted = true;
+    },
+    /reserved for grant rows/,
+    "🔴 minting an intake row in the reserved grant class is refused",
+  );
+  n++;
+  ok(!minted, "…the mint threw rather than returning");
+  eq(await store.getCredentialIntake(ORG, "ope607-smuggled"), null, "…and wrote NO row");
+
+  const goodRef = "db:ope607-real-key";
+  const good = await createCredentialIntake({ org: ORG, connector: "notion", ref: goodRef, requestedBy: USER, channelId: "C1" });
+  const goodToken = mintPageToken({ v: 1, aud: "intake", org: ORG, id: good.id, rb: USER, exp: Date.parse(good.expiresAt) }, KEY);
+  eq(
+    (await intakePage.handleIntakePageGet(new Request(`https://oe.example.test${intakePage.INTAKE_PAGE_PATH}?t=${encodeURIComponent(goodToken)}`))).status,
+    200,
+    "a REAL intake row still renders its form",
+  );
+  const goodPost = await intakePage.handleIntakePagePost(
+    new Request(`https://oe.example.test${intakePage.INTAKE_PAGE_PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ t: goodToken, k: "FAKE-REAL-INTAKE-VALUE" }).toString(),
+    }),
+  );
+  eq(goodPost.status, 200, "…and still stores through the page");
+  ok((await store.getStoredCredential(ORG, goodRef)) !== null, "…the credential really landed in its home (the 200 is not the claim)");
+  ok(typeof (await store.getCredentialIntake(ORG, good.id))!.usedAt === "string", "…and its row is spent, exactly as before");
+}
 
 rmSync(dir, { recursive: true, force: true });
 console.log(`\n✅ webhook-reveal: ${n} checks passed`);
