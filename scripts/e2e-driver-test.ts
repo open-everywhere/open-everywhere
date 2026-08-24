@@ -1524,6 +1524,45 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(ordered.map((m) => m.text).join(",") === "earlier,later", `merge: results are oldest-first by numeric ts; got ${JSON.stringify(ordered.map((m) => m.text))}`);
 }
 
+{
+  const { isQualifyingEdit, DEFAULT_QUALIFYING_EDIT_WINDOW_MS, SlackDriver } = await import("../packages/core/scripts/e2e/slack-driver.js");
+  type Msg = { ts: string; text: string; editedTs?: string };
+  const msg = (ts: string, text: string, editedTs?: string): Msg => ({ ts, text, editedTs });
+
+  const folded = msg(
+    "1777797937.974000",
+    "I'm recording that preference in durable memory and will report back once the edit is confirmed.\n\nSaved successfully. The preference is now recorded in `surface/notes.md` and `surface/MEMORY.md`: “favourite cheese is wensleydale”.",
+    "1777797992.000000",
+  );
+  ok(isFillerAck(folded.text), "OPE-1067 fixture: the folded text still matches isFillerAck (the ack phrase never left it) — this is the trap, not the fix");
+  ok(isQualifyingEdit(folded), "isQualifyingEdit: the live OPE-1067 shape (edited ~54s after its own post) qualifies");
+
+  ok(!isQualifyingEdit(msg("100.0", "one sec, checking now")), "isQualifyingEdit: an unedited message (no editedTs) never qualifies");
+
+  const staleEditTs = (100 + (DEFAULT_QUALIFYING_EDIT_WINDOW_MS + 1) / 1000).toFixed(6);
+  ok(!isQualifyingEdit(msg("100.0", "one sec, checking now", staleEditTs)), "isQualifyingEdit: an edit landing AFTER the window does not qualify (bounded, not forever)");
+
+  const atBoundaryTs = (100 + DEFAULT_QUALIFYING_EDIT_WINDOW_MS / 1000).toFixed(6);
+  ok(isQualifyingEdit(msg("100.0", "one sec", atBoundaryTs)), "isQualifyingEdit: an edit landing EXACTLY at the window boundary qualifies");
+
+  ok(!isQualifyingEdit(msg("100.0", "one sec", "50.0")), "isQualifyingEdit: an edited.ts BEFORE the message's own ts is refused, not accepted");
+
+  const { withPatchedFetch } = await import("../packages/core/scripts/_fetch-test-utils.js");
+  const scriptedHistoryMessage = { ts: folded.ts, text: folded.text, edited: { ts: folded.editedTs }, bot_id: "B-OE" };
+  const jsonResp = (body: unknown): Response => ({ ok: true, status: 200, json: async () => body }) as unknown as Response;
+  const fake = (async (url: unknown) => {
+    const u = String(url);
+    if (u.includes("conversations.replies")) return jsonResp({ ok: true, messages: [{ ts: "782.0" }] });
+    if (u.includes("conversations.history")) return jsonResp({ ok: true, messages: [scriptedHistoryMessage] });
+    return jsonResp({ ok: true });
+  }) as typeof fetch;
+  await withPatchedFetch(fake, async () => {
+    const driver = new SlackDriver({ token: "xoxb-test", channel: "C-DM", botUserId: "B-OE" });
+    const found = await driver.awaitAnyReply("782.0", { timeoutMs: 3_000, skip: (m) => isFillerAck(m.text) });
+    ok(found.ts === folded.ts, "awaitAnyReply: resolves to the folded-into-edit message despite `skip` still matching its text (the OPE-1067 override reaches the real poll loop)");
+  });
+}
+
 ok(SYNTHETIC_SLACK_ROUTE === PUBLIC_SLACK_ROUTE, "synthetic route literal matches slack-front's PUBLIC_SLACK_ROUTE");
 ok(SYNTHETIC_COMMANDS_ROUTE === SLACK_COMMANDS_ROUTE, "synthetic commands literal matches SLACK_COMMANDS_ROUTE");
 ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches flow.ts's OE_APPROVAL_PREFIX");

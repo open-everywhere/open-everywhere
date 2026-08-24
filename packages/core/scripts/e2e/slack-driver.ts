@@ -23,6 +23,7 @@ export interface SlackMessage {
   readonly text: string;
   readonly actions?: readonly SlackMessageAction[];
   readonly files?: readonly SlackFile[];
+  readonly editedTs?: string;
 }
 
 interface SlackApiButton {
@@ -44,6 +45,7 @@ interface SlackApiMessage {
   text?: string;
   blocks?: readonly SlackApiBlock[];
   files?: readonly { id?: string; name?: string; filetype?: string; mimetype?: string }[];
+  edited?: { ts?: string };
 }
 
 function buttonLabel(b: SlackApiButton): string | undefined {
@@ -68,6 +70,7 @@ function toMessage(m: SlackApiMessage): SlackMessage {
     text: m.text ?? "",
     actions: actions.length > 0 ? actions : undefined,
     files: files.length > 0 ? files : undefined,
+    editedTs: m.edited?.ts,
   };
 }
 
@@ -97,6 +100,18 @@ export function buildCompleteUploadBody(input: {
 
 export function tsAfter(ts: string, floor: string): boolean {
   return Number.parseFloat(ts) > Number.parseFloat(floor);
+}
+
+export const DEFAULT_QUALIFYING_EDIT_WINDOW_MS = 600_000;
+
+export function isQualifyingEdit(m: SlackMessage, maxDelayMs: number = DEFAULT_QUALIFYING_EDIT_WINDOW_MS): boolean {
+  if (!m.editedTs) return false;
+  const delayMs = (Number.parseFloat(m.editedTs) - Number.parseFloat(m.ts)) * 1000;
+  return delayMs >= 0 && delayMs <= maxDelayMs;
+}
+
+function passesSkip(m: SlackMessage, skip: ((m: SlackMessage) => boolean) | undefined): boolean {
+  return !(skip?.(m) ?? false) || isQualifyingEdit(m);
 }
 
 export function mergeBotMessagesAfter(
@@ -246,7 +261,7 @@ export class SlackDriver {
     return pollUntil(
       async () =>
         (await this.replies(rootTs)).find(
-          (m) => this.isBotReply(m) && tsAfter(m.ts, floor) && !(opts.skip?.(m) ?? false),
+          (m) => this.isBotReply(m) && tsAfter(m.ts, floor) && passesSkip(m, opts.skip),
         ),
       { timeoutMs: opts.timeoutMs, what: `a substantive bot reply in thread ${rootTs}` },
     );
@@ -261,7 +276,7 @@ export class SlackDriver {
   }
 
   async awaitAnyReply(anchorTs: string, opts: { timeoutMs: number; skip?: (m: SlackMessage) => boolean }): Promise<SlackMessage> {
-    const wanted = (m: SlackMessage): boolean => this.isBotReply(m) && !(opts.skip?.(m) ?? false);
+    const wanted = (m: SlackMessage): boolean => this.isBotReply(m) && passesSkip(m, opts.skip);
     return pollUntil(
       async () => {
         const threaded = (await this.replies(anchorTs)).find((m) => wanted(m) && tsAfter(m.ts, anchorTs));
