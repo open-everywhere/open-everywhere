@@ -64,7 +64,7 @@ const seatCtx = (sessionId: string, stampPlatform = true): BindableContext =>
     },
   }) as unknown as BindableContext;
 
-const ENVELOPE = '<message trigger="true" from="human" author-id="slack:U-req">read the granted page</message>';
+const ENVELOPE = '<message trigger="true" from="human" author-id="slack/T1/U-req">read the granted page</message>';
 
 const ORG = resolvePartition(seatCtx("probe")).org;
 const stamps = { org: ORG, platform: "slack", surface: "slack/T1/C-ROOM", workspace: "T1" };
@@ -121,11 +121,11 @@ const askInput = (scopeKey: string, mode: "once" | "session" | "standing") => ({
   ownerHandle: "Rowan Hale",
   ownerNativeId: "U-owner",
   ownerPlatform: "slack",
-  ownerPrincipalId: "slack:U-owner",
+  ownerPrincipalId: "slack/T1/U-owner",
   purpose: "draft the Q3 summary",
   requestedMode: mode,
   requesterLabel: "Ada",
-  requesterPrincipalId: "slack:U-req",
+  requesterPrincipalId: "slack/T1/U-req",
   resource: "notion:page/abc123",
   scopeKey,
   verb: "read_page",
@@ -135,7 +135,7 @@ const store = getOperationalStore();
 
 const mintGrant = async (scopeKey: string, mode: "once" | "session" | "standing"): Promise<string> => {
   const ask = await askForCredentialGrant(askInput(scopeKey, mode));
-  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", mode, "slack:U-owner", NOW + 500);
+  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", mode, "slack/T1/U-owner", NOW + 500);
   return approved.approved ? approved.grant.id : "";
 };
 
@@ -155,10 +155,10 @@ const callThroughMount = async (scopeKey: string): Promise<{ ok: boolean; disclo
 
 console.log("1. the host-authored copy:");
 {
-  const row = { ownerSlug: "rowan_hale", requesterPrincipalId: "slack:U-req" };
+  const row = { ownerSlug: "rowan_hale", requesterPrincipalId: "slack/T1/U-req" };
   const text = grantRoomNoticeText("acting as rowan_hale — granted tool `read_page` on `notion:page/abc123`", row, "2026-05-04T05:52:01.000Z");
   ok(text.includes("acting as rowan_hale — granted tool"), "the room copy carries the broker's disclosure line VERBATIM — the model authors none of it");
-  ok(text.includes("`slack:U-req`'s act"), "…and it names the REQUESTER as the actor (§8.2 bullet 2), not the owner");
+  ok(text.includes("`slack/T1/U-req`'s act"), "…and it names the REQUESTER as the actor (§8.2 bullet 2), not the owner");
   ok(text.includes("run with rowan_hale's credential"), "…and the owner only as the credential holder");
   ok(text.includes("2026-05-04T05:52:01.000Z"), "…and a per-call timestamp, so two uses of one unchanging grant row never render as byte-identical text");
   eq(grantUseNoticeKey("g1"), "grant-use:g1", "the owner-notice latch is keyed per grant, so two grants never share one notice");
@@ -177,7 +177,7 @@ const sessionGrant = await mintGrant("session-standing", "standing");
   ok(posted[0].text.includes(result.disclosure ?? "NO-DISCLOSURE"), "…carrying the SAME host-authored line the broker put in the tool result");
   eq(posted[0].replier, undefined, "…and NO replier label reaches the display-name-capable arm: the post is never re-attributed to the owner (§8.2 bullet 2)");
   ok(posted[0].text.startsWith("Granted-credential use at "), "…and no bracket prefix was baked into the body either, which is how a NON-capable arm would render a replier label");
-  ok(posted[0].text.includes("`slack:U-req`'s act"), "…and the copy names the requester as the actor");
+  ok(posted[0].text.includes("`slack/T1/U-req`'s act"), "…and the copy names the requester as the actor");
   ok(!posted[0].text.includes("blocks"), "…and never the vendor OUTPUT (§8.2: names and ids only), though the transport returned a body with `blocks` in it");
 
   eq(dmed.length, dmsAfterCard + 1, "THE OWNER GOT A DM on the first use of their grant");
@@ -214,7 +214,7 @@ console.log("4. once-mode — the burn notifies the owner and says the grant is 
 
 console.log("5. NEGATIVE CONTROL — a refused call posts nothing and DMs nobody:");
 {
-  eq(await revokeCredentialGrant(stamps, sessionGrant, "slack:U-owner", "thread", NOW + 2000), true, "the owner revokes the standing grant");
+  eq(await revokeCredentialGrant(stamps, sessionGrant, "slack/T1/U-owner", "thread", NOW + 2000), true, "the owner revokes the standing grant");
   const postsBefore = posted.length;
   const dmsBefore = dmed.length;
   const sentBefore = sent.length;
@@ -230,7 +230,7 @@ console.log("6. NEGATIVE CONTROL — the broker driven OUTSIDE the mount notices
   const grantId = await mintGrant("session-bare", "standing");
   const postsBefore = posted.length;
   const dmsBefore = dmed.length;
-  const result = await runGrantedCall(grantId, {}, { ...stamps, nowMs: NOW + 1000, requesterPrincipalId: "slack:U-req", scopeKey: "session-bare" });
+  const result = await runGrantedCall(grantId, {}, { ...stamps, nowMs: NOW + 1000, requesterPrincipalId: "slack/T1/U-req", scopeKey: "session-bare" });
   ok(result.ok, "the granted call itself still succeeds — a notice is never a gate");
   eq(posted.length, postsBefore, "…but nothing was posted to any room");
   eq(dmed.length, dmsBefore, "…and nothing was DMed");
@@ -243,7 +243,7 @@ console.log("7. an unaddressable room still DMs the owner:");
   const postsBefore = posted.length;
   const dmsBefore = dmed.length;
   await withGrantRoomContext({ ctx: seatCtx("session-noroom", false), org: ORG }, () =>
-    runGrantedCall(grantId, {}, { ...stamps, nowMs: NOW + 1000, requesterPrincipalId: "slack:U-req", scopeKey: "session-noroom" }),
+    runGrantedCall(grantId, {}, { ...stamps, nowMs: NOW + 1000, requesterPrincipalId: "slack/T1/U-req", scopeKey: "session-noroom" }),
   );
   eq(posted.length, postsBefore, "the room half posted nothing — an unresolvable target is an honest 'cannot post here'");
   eq(dmed.length, dmsBefore + 1, "…and the owner half still delivered: a room with no post arm must not cost the owner their notice");
@@ -256,7 +256,7 @@ console.log("7b. no DM arm — the first-use claim survives:");
   const postsBefore = posted.length;
   const dmsBefore = dmed.length;
   await withGrantRoomContext({ ctx: seatCtx("session-nodm"), org: ORG }, () =>
-    runGrantedCall(grantId, {}, { ...stamps, nowMs: NOW + 1000, requesterPrincipalId: "slack:U-req", scopeKey: "session-nodm" }),
+    runGrantedCall(grantId, {}, { ...stamps, nowMs: NOW + 1000, requesterPrincipalId: "slack/T1/U-req", scopeKey: "session-nodm" }),
   );
   eq(posted.length, postsBefore + 1, "the room still saw the line");
   eq(dmed.length, dmsBefore, "…the owner was not DMed, because this deployment holds no DM arm");
@@ -268,7 +268,7 @@ console.log("7b. no DM arm — the first-use claim survives:");
 
   registerPostArm({ ...slackArmMembers, deliverDirectMessage: captureDirectMessage, platform: "slack" });
   await withGrantRoomContext({ ctx: seatCtx("session-nodm"), org: ORG }, () =>
-    runGrantedCall(grantId, {}, { ...stamps, nowMs: NOW + 2000, requesterPrincipalId: "slack:U-req", scopeKey: "session-nodm" }),
+    runGrantedCall(grantId, {}, { ...stamps, nowMs: NOW + 2000, requesterPrincipalId: "slack/T1/U-req", scopeKey: "session-nodm" }),
   );
   eq(dmed.length, dmsBefore + 1, "…the owner IS DMed on the next call, once a DM arm exists");
   eq(await store.noticeClaimed(ORG, grantUseNoticeKey(grantId)), true, "…and only now is the claim held");
@@ -297,7 +297,7 @@ console.log("9. the two halves called directly:");
     false,
     "…and a grant whose claim is already held delivers nothing, however it is called",
   );
-  ok(grantOwnerNoticeText(grant).includes("`slack:U-req`"), "the owner's DM names WHO ran it — the person they would be revoking against");
+  ok(grantOwnerNoticeText(grant).includes("`slack/T1/U-req`"), "the owner's DM names WHO ran it — the person they would be revoking against");
   ok(!grantOwnerNoticeText(grant).includes("blocks"), "…and never the vendor OUTPUT: the notice reports the act, never what it read");
 }
 
