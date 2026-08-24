@@ -386,9 +386,23 @@ export const JUDGE_ENFORCE_TIMEOUT_MS = 30_000;
 export const APPROVAL_JUDGE_BREAKER_THRESHOLD = 3;
 export const APPROVAL_JUDGE_BREAKER_WINDOW_DAYS = 14;
 
+export const APPROVAL_JUDGE_ADMIN_DISARM = "admin-disarm";
+
 export async function recordApprovalJudgeContradiction(
   where: { readonly org: string; readonly platform: string; readonly workspace: string; readonly surface?: string; readonly principalId?: string },
-  detail: { readonly domain?: string; readonly tool?: string; readonly judgeVerdict?: string; readonly humanAction?: string; readonly note?: string },
+  detail: {
+    readonly id?: string;
+    readonly kind?: string;
+    readonly domain?: string;
+    readonly tool?: string;
+    readonly judgeVerdict?: string;
+    readonly humanAction?: string;
+    readonly route?: string;
+    readonly venuePlatform?: string;
+    readonly venueWorkspace?: string;
+    readonly venueChannel?: string;
+    readonly note?: string;
+  },
 ): Promise<void> {
   await appendAudit({
     ...where,
@@ -401,11 +415,12 @@ export async function approvalJudgeBreakerTripped(domain: string | undefined): P
   try {
     const since = new Date(Date.now() - APPROVAL_JUDGE_BREAKER_WINDOW_DAYS * 86_400_000).toISOString();
     const rows = await readAudit({ action: "approval.judge.contradicted", since, limit: 1000 });
-    const n = rows.filter((r) => {
+    const counted = rows.filter((r) => {
       const d = (r.detail as { domain?: unknown } | undefined)?.domain;
       return d === undefined || (typeof d === "string" && d === domain);
-    }).length;
-    return n >= APPROVAL_JUDGE_BREAKER_THRESHOLD;
+    });
+    if (counted.some((r) => (r.detail as { humanAction?: unknown } | undefined)?.humanAction === APPROVAL_JUDGE_ADMIN_DISARM)) return true;
+    return counted.length >= APPROVAL_JUDGE_BREAKER_THRESHOLD;
   } catch {
     return true;
   }
