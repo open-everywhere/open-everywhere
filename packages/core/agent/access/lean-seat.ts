@@ -1,4 +1,5 @@
 import type { WindowGrain } from "../identity/binding.js";
+import { isGrantToolName } from "../operational/credential-grant-rows.js";
 import { HARNESS_INTERNAL_TOOLS } from "./job-posture.js";
 
 export const LEAN_SEAT_TOOLS: ReadonlySet<string> = new Set([
@@ -38,7 +39,7 @@ export function resolveLeanSeatPosture(s: LeanSeatSignals): LeanSeatPosture {
 }
 
 export function allowedOnLeanSeat(name: string, dmSeat = false): boolean {
-  return LEAN_SEAT_TOOLS.has(name) || HARNESS_INTERNAL_TOOLS.has(name) || (dmSeat && DM_SEAT_CARVE_IN.has(name));
+  return LEAN_SEAT_TOOLS.has(name) || HARNESS_INTERNAL_TOOLS.has(name) || isGrantToolName(name) || (dmSeat && DM_SEAT_CARVE_IN.has(name));
 }
 
 export function restrictToolsetForLeanSeat(toolset: Record<string, unknown>, dmSeat = false): string[] {

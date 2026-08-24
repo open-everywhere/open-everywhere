@@ -65,6 +65,12 @@ export function grantToolName(ownerSlug: string, verb: string): string {
   return `${CREDENTIAL_GRANT_NAMESPACE}__${ownerSlug}__${verb}`;
 }
 
+export function isGrantToolName(name: string): boolean {
+  const segments = name.split("__");
+  if (segments.length !== 3) return false;
+  return segments[0] === CREDENTIAL_GRANT_NAMESPACE && isGrantNameSegment(segments[1] ?? "") && isGrantNameSegment(segments[2] ?? "");
+}
+
 export type CredentialGrantRefusal =
   | "revoked"
   | "expired"
