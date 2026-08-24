@@ -27,7 +27,8 @@ import { parseScopeKey } from "../access/scope-key.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type ClickerFloorRefusal } from "./clicker-floor.js";
 import { checkCardDisclosure, cardDisclosureRefusalNotice } from "./card-disclosure.js";
-import { pendingCardBlocks, decidedCardBlocks, type RenderedCard } from "./card.js";
+import { pendingCardBlocks, decidedCardBlocks, judgeLiftNoticeBlocks, type RenderedCard } from "./card.js";
+import { contradictJudgeAllow, judgeContradictionNotice, type ContradictJudgeAllowOutcome } from "./judge-contradiction.js";
 import { sessionGrantKind } from "./session-grant.js";
 import { markCardPostedThisTurn } from "./card-signal.js";
 import { withTaintDisclosure } from "./taint-disclosure.js";
@@ -56,16 +57,18 @@ export const OE_APPROVAL_PREFIX = "oe_approval:";
 
 type PostFn = (method: string, body: string) => Promise<Record<string, unknown> | undefined>;
 
-export type ApprovalDecision = "approve" | "reject" | "approve_session";
+export type ApprovalDecision = "approve" | "reject" | "approve_session" | "contradict";
+
+const APPROVAL_DECISIONS: readonly ApprovalDecision[] = ["approve", "reject", "approve_session", "contradict"];
 
 export function parseApprovalAction(actionId: string): { decision: ApprovalDecision; id: string } | null {
   if (!actionId.startsWith(OE_APPROVAL_PREFIX)) return null;
   const rest = actionId.slice(OE_APPROVAL_PREFIX.length);
   const sep = rest.indexOf(":");
   if (sep < 0) return null;
-  const decision = rest.slice(0, sep);
+  const decision = rest.slice(0, sep) as ApprovalDecision;
   const id = rest.slice(sep + 1);
-  if ((decision !== "approve" && decision !== "reject" && decision !== "approve_session") || id.length === 0) return null;
+  if (!APPROVAL_DECISIONS.includes(decision) || id.length === 0) return null;
   return { decision, id };
 }
 
@@ -291,6 +294,10 @@ export async function requestApproval(
       };
       await store.addPendingAction(row);
       const outcome = await kindDef.execute(input.args, decidedBy);
+      if (resolution.resolvedBy === "judge" && input.postedTo?.startsWith("slack/") && !deps.postCard) {
+        const noticeLines = withTaintDisclosure(input.summaryLines ? [...input.summaryLines] : kindDef.summarize(input.args), input.args);
+        await postRenderedCard(deps.post ?? bridgeSlackForm, input.channelId, input.threadTs, judgeLiftNoticeBlocks(row, noticeLines, outcome)).catch(() => undefined);
+      }
       await appendAudit({
         ...whereFromScope(input.org, input.scopeKey),
         principalId: input.requestedBy,
@@ -370,16 +377,7 @@ export async function requestApproval(
   } else if (deps.postCard) {
     messageTs = await deps.postCard(row, summaryLines);
   } else {
-    const { blocks, text } = pendingCardBlocks(row, summaryLines);
-
-    const body = new URLSearchParams();
-    body.set("channel", input.channelId);
-    if (input.threadTs) body.set("thread_ts", input.threadTs);
-    body.set("text", text);
-    body.set("blocks", JSON.stringify(blocks));
-
-    const res = await post("chat.postMessage", body.toString());
-    messageTs = res?.ok === true && typeof res.ts === "string" ? res.ts : undefined;
+    messageTs = await postRenderedCard(post, input.channelId, input.threadTs, pendingCardBlocks(row, summaryLines));
   }
 
   if (!messageTs) {
@@ -474,6 +472,16 @@ async function updateCardText(post: PostFn, channelId: string, ts: string | unde
   await post("chat.update", body.toString());
 }
 
+async function postRenderedCard(post: PostFn, channelId: string, threadTs: string | null | undefined, card: RenderedCard): Promise<string | undefined> {
+  const body = new URLSearchParams();
+  body.set("channel", channelId);
+  if (threadTs) body.set("thread_ts", threadTs);
+  body.set("text", card.text);
+  body.set("blocks", JSON.stringify(card.blocks));
+  const res = await post("chat.postMessage", body.toString());
+  return res?.ok === true && typeof res.ts === "string" ? res.ts : undefined;
+}
+
 async function postThreadNote(post: PostFn, channelId: string, threadTs: string | undefined, text: string): Promise<void> {
   const body = new URLSearchParams();
   body.set("channel", channelId);
@@ -515,6 +523,12 @@ export type ApprovalClickResolution =
       readonly summaryLines: string[];
       readonly outcomeLine: string;
       readonly executed: "ok" | "failed" | "none";
+    }
+  | {
+      readonly outcome: "contradicted";
+      readonly row: PendingActionRow;
+      readonly summaryLines: string[];
+      readonly contradiction: ContradictJudgeAllowOutcome;
     };
 
 export interface ResolveApprovalClickInput {
@@ -549,10 +563,12 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
   const row = await store.getPendingAction(input.org, input.id);
 
   if (!row) return { outcome: "unknown" };
-  if (row.status !== "pending") return { outcome: "not-pending" };
+
+  const contradicting = input.decision === "contradict";
+  if (!contradicting && row.status !== "pending") return { outcome: "not-pending" };
 
   const nowIso = new Date().toISOString();
-  if (Date.parse(row.expiresAt) <= Date.now()) {
+  if (!contradicting && Date.parse(row.expiresAt) <= Date.now()) {
     const cas = await store.decidePendingAction(input.org, row.id, "expired", "system", nowIso);
     if (!cas) return { outcome: "expired-race" };
     const expiredRow: PendingActionRow = { ...row, status: "expired", decidedBy: "system", decidedAt: nowIso };
@@ -599,6 +615,12 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
   }
 
   const venue = venueDetail(row, input.clickContext?.surfaceKey);
+
+  if (contradicting) {
+    const res = await contradictJudgeAllow({ org: input.org, id: row.id, principalId: input.clickerId, route: "click", venue });
+    emitTelemetry("oe.feature.used", { "oe.feature": "approval_judge_contradicted", "oe.outcome": res.outcome });
+    return { outcome: "contradicted", row, summaryLines: summaryLinesFor(row), contradiction: res.outcome };
+  }
 
   const status = input.decision === "reject" ? "rejected" : "approved";
   const cas = await store.decidePendingAction(input.org, row.id, status, input.clickerId, nowIso);
@@ -841,6 +863,10 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
     });
     switch (res.outcome) {
       case "unknown":
+        if (parsed.decision === "contradict") {
+          await postThreadNote(post, channelId, messageTs, `<@${clickerId}> ${judgeContradictionNotice("unknown")}`);
+          return true;
+        }
         await updateCardText(post, channelId, messageTs, "This approval request is no longer known (it may have already been decided or has aged out).");
         return true;
       case "not-pending":
@@ -870,6 +896,10 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
       case "clicker-denied":
         await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, `<@${clickerId}> ${clickerFloorRefusalNotice(res.reason)}`);
         return true;
+      case "contradicted": {
+        await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, `<@${clickerId}> ${judgeContradictionNotice(res.contradiction)}`);
+        return true;
+      }
       case "decided": {
         await updateCard(post, channelId, messageTs, decidedCardBlocks(res.row, res.summaryLines, res.outcomeLine));
         await deliverDecisionFeedback(

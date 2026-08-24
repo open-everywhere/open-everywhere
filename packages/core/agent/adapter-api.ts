@@ -422,6 +422,8 @@ export {
 export type { CardPoster, ApprovalClickResolution, DecisionWakeDeps } from "./approvals/flow.js";
 export { clickerFloorRefusalNotice } from "./approvals/clicker-floor.js";
 export type { ClickerFloorRefusal } from "./approvals/clicker-floor.js";
+export { judgeContradictionNotice } from "./approvals/judge-contradiction.js";
+export type { ContradictJudgeAllowOutcome } from "./approvals/judge-contradiction.js";
 export { admitInputResponse, inputResponseRefusalNotice, INPUT_RESPONSE_DENIED_AUDIT_ACTION } from "./approvals/input-response-floor.js";
 export type { InputResponseAdmission, InputResponseRefusal, InputResponseScope } from "./approvals/input-response-floor.js";
 export type { ApprovalOutcome } from "./approvals/decision-wake.js";

@@ -13,6 +13,16 @@ export const PROTECTED_HUMAN_ONLY_EXPORTS: readonly ProtectedHumanOnlyExportGrou
       "only a human's click or the RBAC-gated control plane may DECIDE one.",
   },
   {
+    module: "agent/approvals/judge-contradiction.ts",
+    exportNames: ["contradictJudgeAllow", "disarmApprovalJudge"],
+    reason:
+      "writes an `approval.judge.contradicted` row — the ledger the contradiction breaker counts. " +
+      "Every row asserts that A PERSON overruled the judge, so a tool-written one would be the " +
+      "machine forging a human judgement in the honest record. Note the disarm direction is " +
+      "restrictive (the judge stops lifting, cards come back), so this guards audit integrity, " +
+      "not an escalation path. Only a human's click or the RBAC-gated control plane may write one.",
+  },
+  {
     module: "agent/identity/trust.ts",
     exportNames: ["registerSurfaces"],
     reason:

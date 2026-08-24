@@ -16,7 +16,6 @@ const {
   judgeScrutinyPrompt,
   judgeVerdictCacheKey,
   judgeVerdictPrompt,
-  recordApprovalJudgeContradiction,
   registerApprovalJudgeCompletion,
   resetApprovalJudgeCompletion,
   runApprovalJudge,
@@ -27,7 +26,8 @@ const {
 } = await import("../agent/access/approval-judge.js");
 const { resolveApproverChain, toolForActionKind } = await import("../agent/access/approver-chain.js");
 const { registerConfig } = await import("../agent/access/config.js");
-const { requestApproval } = await import("../agent/approvals/flow.js");
+const { requestApproval, resolveApprovalClick } = await import("../agent/approvals/flow.js");
+const { disarmApprovalJudge, JUDGE_LIFT_DECIDED_BY } = await import("../agent/approvals/judge-contradiction.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 
@@ -415,15 +415,82 @@ async function judgeDetailWhere(want: (d: Record<string, unknown>) => boolean, l
   clearApprovalJudgeVerdictCache();
 }
 
+const contradictionRows = async (): Promise<{ principalId?: string; detail?: Record<string, unknown> }[]> =>
+  (await readAudit({})).filter((r) => r.action === "approval.judge.contradicted") as { principalId?: string; detail?: Record<string, unknown> }[];
+
+async function liftedWedgeRow(tokens: number): Promise<string> {
+  clearApprovalJudgeVerdictCache();
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn" });
+  const lifted = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: tokens } }, { postCard });
+  ok(lifted.autoApproved?.resolvedBy === "judge", `wedge ${tokens}: the judge lifted the gate, so a wedge row exists to overrule`);
+  resetApprovalJudgeCompletion();
+  return lifted.id;
+}
+
 {
   ok((await approvalJudgeBreakerTripped("plain")) === false, "breaker: a clean ledger reads armed");
-  const where = { org: "test-org", platform: "domain", workspace: "plain" };
-  for (let i = 0; i < APPROVAL_JUDGE_BREAKER_THRESHOLD; i++) {
-    await recordApprovalJudgeContradiction(where, { domain: "plain", tool: "set_spend_limit", judgeVerdict: "allow", humanAction: "reject", note: `test contradiction ${i}` });
+  ok((await contradictionRows()).length === 0, "producers: no contradiction row exists until a HUMAN acts — nothing writes one on its own");
+
+  const wedgeId = await liftedWedgeRow(111_000);
+  const wedge = await getOperationalStore().getPendingAction("test-org", wedgeId);
+  ok(wedge?.status === "approved" && wedge.decidedBy === JUDGE_LIFT_DECIDED_BY, "click surface: JUDGE_LIFT_DECIDED_BY is what the propose plane really freezes on a judge lift");
+
+  clearApprovalJudgeVerdictCache();
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: ask\nREASON: large raise, wants a human" });
+  const carded = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 901_000 } }, { postCard });
+  resetApprovalJudgeCompletion();
+  const approved = await resolveApprovalClick({ org: "test-org", id: carded.id, decision: "approve", clickerId: "U_ADMIN", platformAdmin: () => true });
+  ok(approved.outcome === "decided", "negative control: the ordinary approve click still decides normally");
+  ok((await contradictionRows()).length === 0, "negative control: an ordinary approve click emits NO contradiction row");
+
+  clearApprovalJudgeVerdictCache();
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: ask\nREASON: wants a human" });
+  const stillPending = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 902_000 } }, { postCard });
+  resetApprovalJudgeCompletion();
+  const onPending = await resolveApprovalClick({ org: "test-org", id: stillPending.id, decision: "contradict", clickerId: "U_ADMIN", platformAdmin: () => true });
+  ok(onPending.outcome === "contradicted" && onPending.contradiction === "not-judge-lift", "negative control: contradicting a still-pending card is refused");
+
+  const configLiftId = `config-lift-${Date.now()}`;
+  await getOperationalStore().addPendingAction({
+    ...(wedge as NonNullable<typeof wedge>),
+    id: configLiftId,
+    decidedBy: "chain:mode:DANGEROUSLY_BYPASS",
+  });
+  const onConfigLift = await resolveApprovalClick({ org: "test-org", id: configLiftId, decision: "contradict", clickerId: "U_ADMIN", platformAdmin: () => true });
+  ok(onConfigLift.outcome === "contradicted" && onConfigLift.contradiction === "not-judge-lift", "negative control: contradicting a CONFIG lift is refused — only a judge verdict is overrulable");
+  ok((await contradictionRows()).length === 0, "negative control: neither refused contradict click wrote a row");
+
+  const noStanding = await resolveApprovalClick({ org: "test-org", id: wedgeId, decision: "contradict", clickerId: "U_RANDOM" });
+  ok(noStanding.outcome === "denied", "negative control: a clicker with no admin standing cannot overrule the judge");
+  ok((await contradictionRows()).length === 0, "negative control: the refused overrule wrote no row");
+
+  const overruled = await resolveApprovalClick({ org: "test-org", id: wedgeId, decision: "contradict", clickerId: "U_ADMIN", platformAdmin: () => true });
+  ok(overruled.outcome === "contradicted" && overruled.contradiction === "recorded", "click surface: the overrule is recorded");
+  const clickRows = await contradictionRows();
+  ok(clickRows.length === 1, "click surface: exactly one contradiction row");
+  const cd = clickRows[0]!.detail ?? {};
+  ok(cd.id === wedgeId && cd.kind === "spend.set", "click surface: the row names WHICH approval (id + kind) — the join to the wedge row");
+  ok(cd.tool === "set_spend_limit" && cd.judgeVerdict === "allow", "click surface: the row names WHICH judge verdict it overrules");
+  ok(clickRows[0]!.principalId === "U_ADMIN", "click surface: the row names WHO contradicted");
+  ok(cd.route === "click" && cd.humanAction === "overrule", "click surface: the row names the ROUTE the overrule came through");
+  ok(cd.domain === "plain", "click surface: the row is domain-scoped, so it counts only against its own domain");
+
+  const again = await resolveApprovalClick({ org: "test-org", id: wedgeId, decision: "contradict", clickerId: "U_ADMIN", platformAdmin: () => true });
+  ok(again.outcome === "contradicted" && again.contradiction === "already-recorded", "click surface: a second click on the same wedge row is a no-op");
+  ok((await contradictionRows()).length === 1, "click surface: the repeat click wrote no second row — one action counts once");
+
+  ok((await approvalJudgeBreakerTripped("plain")) === false, "breaker: one real overrule is not yet the threshold");
+
+  for (const tokens of [112_000, 113_000]) {
+    const id = await liftedWedgeRow(tokens);
+    const res = await resolveApprovalClick({ org: "test-org", id, decision: "contradict", clickerId: "U_ADMIN", platformAdmin: () => true });
+    ok(res.outcome === "contradicted" && res.contradiction === "recorded", `breaker: overrule on wedge ${tokens} recorded`);
   }
-  ok((await approvalJudgeBreakerTripped("plain")) === true, "breaker: N contradictions in the window trip it for the domain");
+  ok((await contradictionRows()).length === APPROVAL_JUDGE_BREAKER_THRESHOLD, "breaker: the click producer wrote exactly the threshold's worth of rows");
+  ok((await approvalJudgeBreakerTripped("plain")) === true, "breaker: N producer-written overrules trip it for the domain");
   ok((await approvalJudgeBreakerTripped("otherdomain")) === false, "breaker: a sibling domain's judge stays armed (domain-scoped rows count only for their domain)");
 
+  clearApprovalJudgeVerdictCache();
   const tripped = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: n/a" });
   const degraded = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 250_000 } }, { postCard });
   ok(degraded.autoApproved === undefined, "breaker: the propose cards — a tripped breaker means no lift, ever");
@@ -434,9 +501,53 @@ async function judgeDetailWhere(want: (d: Record<string, unknown>) => boolean, l
   clearApprovalJudgeVerdictCache();
 }
 
+{
+  ok((await approvalJudgeBreakerTripped("otherdomain")) === false, "admin disarm: the target domain reads armed before the call");
+  const before = (await contradictionRows()).length;
+  await disarmApprovalJudge({ org: "test-org", domain: "otherdomain", principalId: "U_OPS" });
+  const rows = await contradictionRows();
+  ok(rows.length === before + 1, "admin disarm: exactly ONE row — the disarm is not three overrules in a trench coat");
+  const disarmRow = rows.find((r) => (r.detail ?? {}).domain === "otherdomain")!;
+  ok(disarmRow !== undefined, "admin disarm: the row is scoped to the named domain");
+  ok((disarmRow.detail ?? {}).humanAction === "admin-disarm" && (disarmRow.detail ?? {}).route === "control", "admin disarm: the row names the act and the ROUTE, separating it from a click overrule");
+  ok(disarmRow.principalId === "U_OPS", "admin disarm: the row names WHO disarmed");
+  ok((await approvalJudgeBreakerTripped("otherdomain")) === true, "admin disarm: ONE marked row trips the breaker on its own");
+  ok((await approvalJudgeBreakerTripped("thirddomain")) === false, "admin disarm: an unnamed domain's judge stays armed");
+}
+
+{
+  const posts: { method: string; body: string }[] = [];
+  const post = async (method: string, body: string): Promise<Record<string, unknown>> => {
+    posts.push({ method, body });
+    return { ok: true, ts: "9.9" };
+  };
+  clearApprovalJudgeVerdictCache();
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest" });
+  const noticed = await requestApproval(
+    { ...spendInput, domain: "noticedomain", args: { ...spendInput.args, monthlyTokens: 121_000 }, postedTo: "slack/T1/C_PLAIN" },
+    { post },
+  );
+  ok(noticed.autoApproved?.resolvedBy === "judge", "notice: the judge lifted, so the room gets its notice");
+  const notice = posts.find((p) => p.method === "chat.postMessage");
+  ok(notice !== undefined, "notice: a judge lift posts ONE message into the room it would have carded");
+  const noticeBlocks = new URLSearchParams(notice!.body).get("blocks") ?? "";
+  ok(noticeBlocks.includes(`oe_approval:contradict:${noticed.id}`), "notice: the message carries the contradict button bound to THIS wedge row");
+  ok(noticeBlocks.includes("This should not have run"), "notice: the button says what it does");
+  ok(!noticeBlocks.includes("oe_approval:approve:"), "notice: it is a REVIEW surface, not a decision one — no approve button on an act that already ran");
+
+  posts.length = 0;
+  clearApprovalJudgeVerdictCache();
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest" });
+  const silent = await requestApproval({ ...spendInput, domain: "noticedomain", args: { ...spendInput.args, monthlyTokens: 122_000 } }, { post });
+  ok(silent.autoApproved?.resolvedBy === "judge", "notice: the control lift happened too");
+  ok(posts.length === 0, "notice: a lift with no postedTo posts nothing — never a guessed room");
+  resetApprovalJudgeCompletion();
+  clearApprovalJudgeVerdictCache();
+}
+
 overrideSettingsForTest({ approvals: { judgeMode: "off" } });
 
 console.log(
-  `✓ approval-judge: ${passed} assertions — fail-closed arming (off/shadow/enforce, exact strings only), judge-off ≡ today, per-verb-default shadow eligibility, exemption predicate, two-pass flow with fail-closed defers, taint-invalidated (op, connection) verdict cache, shadow rows beside real cards — and PHASE 2: pass-1 allow short disabled under enforcement, session-or-nothing enforce cache refusing pass-1 entries, bounded timeout with no late cache back-fill, judge allow/ask/deny/degraded/unattended through the live propose plane with per-consult approval.judge.verdict rows, and the contradiction breaker disarming per domain`,
+  `✓ approval-judge: ${passed} assertions — fail-closed arming (off/shadow/enforce, exact strings only), judge-off ≡ today, per-verb-default shadow eligibility, exemption predicate, two-pass flow with fail-closed defers, taint-invalidated (op, connection) verdict cache, shadow rows beside real cards — and PHASE 2: pass-1 allow short disabled under enforcement, session-or-nothing enforce cache refusing pass-1 entries, bounded timeout with no late cache back-fill, judge allow/ask/deny/degraded/unattended through the live propose plane with per-consult approval.judge.verdict rows — and OPE-965: both contradiction producers (a click overrule on a real judge-lift wedge row, de-duplicated per row and refused without admin standing; the control-plane admin disarm tripping on ONE marked row), the judge-lift notice carrying the button, and the breaker disarming per domain on PRODUCER-WRITTEN rows`,
 );
 rmSync(tmp, { recursive: true, force: true });

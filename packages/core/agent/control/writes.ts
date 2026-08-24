@@ -14,6 +14,8 @@ import { isModelUsable, reasoningRank } from "../model/policy.js";
 import { reasoningCeilingForDomain } from "../memory/domain.js";
 import { stampHumanEdit } from "../memory/provenance.js";
 import { resolveApprovalClick, isOrgAdminOnlySpendCap } from "../approvals/flow.js";
+import { disarmApprovalJudge } from "../approvals/judge-contradiction.js";
+import { APPROVAL_JUDGE_BREAKER_WINDOW_DAYS } from "../access/approval-judge.js";
 import { whereFromScope } from "../approvals/actions.js";
 import { supervisorGrainFor } from "../channels/unified-supervisor.js";
 import { listLinkSetsWithIds, purgeLinkSetCredentials, revokeLinkSet, setLinkSetHold } from "../identity/link-store.js";
@@ -36,6 +38,7 @@ export const CONTROL_WRITE_TOOL_NAMES = [
   "set_domain_model",
   "clear_domain_model",
   "decide_pending_action",
+  "disarm_approval_judge",
   "link_sets_list",
   "suspend_link_set",
   "reactivate_link_set",
@@ -275,6 +278,8 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
             return errorResult(`decide_pending_action: not authorized to decide "${a.id}".`);
           case "clicker-denied":
             return errorResult(`decide_pending_action: the click for "${a.id}" was refused (${res.reason}).`);
+          case "contradicted":
+            return errorResult(`decide_pending_action: "${a.id}" resolved as a judge contradiction, which this tool never requests.`);
           case "not-pending":
           case "lost-race":
             return jsonResult({ ok: true, outcome: "already-decided", org: a.org, id: a.id });
@@ -294,6 +299,27 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         return errorResult(`decide_pending_action: unexpected resolution for "${a.id}".`);
       } catch (e) {
         return errorResult(`decide_pending_action failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "disarm_approval_judge",
+    {
+      title: "Disarm the approval judge for a domain (break-glass)",
+      description:
+        "Turn the LLM approval judge OFF for one domain, now. The judge lifts explicitly defer-flipped gated verbs without a card (agent/access/approval-judge.ts); the automatic contradiction breaker already disarms it after 3 human overrules in 14 days, and this is the operator saying it directly instead of waiting for three. Effect: every defer-flipped verb in the domain falls back to its last-resort approval card, which is the pre-judge behaviour — the degrade never widens access. Recorded as one `approval.judge.contradicted` audit row (humanAction \"admin-disarm\"), and it LIFTS ON ITS OWN after the breaker's 14-day window; there is no re-arm verb. Requires a role covering the domain (a domain:<name> role, or org-wide \"admin\").",
+      inputSchema: { org: z.string().min(1), domain: z.string().min(1) },
+    },
+    async (a) => {
+      const denial = scopeDenial(roles, { org: a.org, domain: a.domain });
+      if (denial) return errorResult(denial);
+      try {
+        await disarmApprovalJudge({ org: a.org, domain: a.domain, principalId: actor });
+        await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "admin.approval.judge_disarm", detail: { domain: a.domain } });
+        return jsonResult({ ok: true, org: a.org, domain: a.domain, disarmed: true, windowDays: APPROVAL_JUDGE_BREAKER_WINDOW_DAYS });
+      } catch (e) {
+        return errorResult(`disarm_approval_judge failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   );
