@@ -1,6 +1,6 @@
 import { type AuditWireEntry } from "./audit-read.js";
 import {
-  sleep, dS, makeWant, createRecorder, createInjector, createAuditReader, readToolCalls, readToolNames, scoreWithheld,
+  sleep, dS, makeWant, createRecorder, createInjector, createAuditReader, readToolCalls, readToolNames, scoreWithheldPair,
 } from "./window-harness.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import { withheldFromGrain } from "../../agent/access/window-gate-manifest.js";
@@ -42,6 +42,14 @@ const { rowsSince } = createAuditReader(TARGET, READ, { onError: "swallow" });
 
 const gatedRowFor = (rows: readonly AuditWireEntry[], wakeId: string): AuditWireEntry | null =>
   rows.find((r) => r.action === A_GATED && dS(r, "wakeId") === wakeId) ?? null;
+
+const gatedRowsFor = (rows: readonly AuditWireEntry[], wakeId: string): { grainRow: AuditWireEntry | null; leanRow: AuditWireEntry | null } => {
+  const matches = rows.filter((r) => r.action === A_GATED && dS(r, "wakeId") === wakeId);
+  return {
+    grainRow: matches.find((r) => dS(r, "reason") === undefined) ?? null,
+    leanRow: matches.find((r) => dS(r, "reason") === "lean-seat") ?? null,
+  };
+};
 const sessionJoinRowsFor = (rows: readonly AuditWireEntry[], wakeId: string): AuditWireEntry[] =>
   rows.filter((r) => (r.action === A_REPLY || r.action === A_NO_REPLY) && dS(r, "wakeId") === wakeId);
 
@@ -53,6 +61,16 @@ async function pollForGated(sinceIso: string, wakeId: string, timeoutMs: number)
     if (g) return g;
   }
   return null;
+}
+async function pollForGatedPair(sinceIso: string, wakeId: string, timeoutMs: number): Promise<{ grainRow: AuditWireEntry | null; leanRow: AuditWireEntry | null }> {
+  const deadline = Date.now() + timeoutMs;
+  let pair: { grainRow: AuditWireEntry | null; leanRow: AuditWireEntry | null } = { grainRow: null, leanRow: null };
+  while (Date.now() < deadline) {
+    await sleep(POLL_MS);
+    pair = gatedRowsFor(await rowsSince(sinceIso), wakeId);
+    if (pair.grainRow && pair.leanRow) return pair;
+  }
+  return pair;
 }
 async function pollForReply(sinceIso: string, wakeId: string, timeoutMs: number): Promise<{ sessionId: string | null; via: string | null; sawGated: boolean }> {
   const deadline = Date.now() + timeoutMs;
@@ -82,20 +100,22 @@ async function f1(): Promise<void> {
   const since = new Date().toISOString();
   const { wakeId, token } = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: slackOrigin, text: HEAVY });
   console.log(`  F1 injected standing unified wake ${wakeId} → token ${token}`);
-  const g = await pollForGated(since, wakeId, GATE_TIMEOUT_MS);
-  if (!g) return record("F1", "FAIL", `no turn.tool_gated row appeared for wake ${wakeId} within ${GATE_TIMEOUT_MS}ms — the standing unified window was NOT narrowed`);
-  const withheld = (g.detail?.withheld as string[]) ?? [];
-  const grain = dS(g, "grain");
-  const reason = dS(g, "reason") ?? "grain";
-  const missingWide = WIDE_HANDS.filter((w) => !withheld.includes(w));
-  const verdict = scoreWithheld(withheld, [...withheldStanding], leanKeep);
+  const { grainRow, leanRow } = await pollForGatedPair(since, wakeId, GATE_TIMEOUT_MS);
+  if (!grainRow && !leanRow) return record("F1", "FAIL", `no turn.tool_gated row appeared for wake ${wakeId} within ${GATE_TIMEOUT_MS}ms — the standing unified window was NOT narrowed`);
+  if (!grainRow) return record("F1", "FAIL", `the LEAN-SEAT row landed for wake ${wakeId} but the GRAIN gate row (no reason) never did within ${GATE_TIMEOUT_MS}ms — the MUST-WITHHOLD wall cannot be scored`);
+  if (!leanRow) return record("F1", "FAIL", `the GRAIN gate row landed for wake ${wakeId} but the LEAN-SEAT row (reason=lean-seat) never did within ${GATE_TIMEOUT_MS}ms — the MUST-KEEP wall cannot be scored`);
+  const grainWithheld = (grainRow.detail?.withheld as string[]) ?? [];
+  const leanWithheld = (leanRow.detail?.withheld as string[]) ?? [];
+  const grain = dS(grainRow, "grain");
+  const missingWide = WIDE_HANDS.filter((w) => !grainWithheld.includes(w));
+  const verdict = scoreWithheldPair(grainWithheld, leanWithheld, [...withheldStanding], leanKeep);
   if (grain !== "standing" || missingWide.length > 0 || !verdict.ok) {
-    return record("F1", "FAIL", `gated row present (reason=${reason}) but grain=${grain} — missing wide-hands: ${missingWide.join(",") || "none"}; manifest names NOT withheld: ${verdict.missing.join(",") || "none"}; speak/delegate roster wrongly withheld: ${verdict.cutKeep.join(",") || "none"}; withheld=[${withheld.join(",")}]`);
+    return record("F1", "FAIL", `gated rows present (grain=${grain}) — missing wide-hands: ${missingWide.join(",") || "none"}; manifest names NOT withheld: ${verdict.missing.join(",") || "none"}; speak/delegate roster wrongly withheld: ${verdict.cutKeep.join(",") || "none"}; grain-withheld=[${grainWithheld.join(",")}]; lean-withheld=[${leanWithheld.join(",")}]`);
   }
-  const sid = dS(g, "sessionId");
+  const sid = dS(leanRow, "sessionId") ?? dS(grainRow, "sessionId");
   const calls = sid ? await toolNamesOf(sid, since) : [];
   const leaked = calls.filter((c) => WIDE_HANDS.includes(c));
-  record("F1", "PASS", `standing unified window NARROWED — grain=standing, reason=${reason}, withheld ${withheld.length} ⊇ all ${withheldStanding.size} standing-manifest names (incl. bash/checkout_repo/open_pull_request); speak/delegate roster intact (${leanKeep.join(",")}); surplus ${verdict.surplus.length} beyond the manifest (INFORMATION — the lean-seat subtraction, not a leak); transcript(${sid}) tools=[${[...new Set(calls)].join(",") || "none"}]${leaked.length ? ` ⚠ LEAKED ${leaked.join(",")}` : " (no wide-hands invoked)"}`);
+  record("F1", "PASS", `standing unified window NARROWED — grain=standing, grain-gate withheld ${grainWithheld.length} ⊇ all ${withheldStanding.size} standing-manifest names (incl. bash/checkout_repo/open_pull_request); lean-seat withheld ${leanWithheld.length} keeps the whole speak/delegate roster intact (${leanKeep.join(",")}); surplus ${verdict.surplus.length} beyond the manifest (INFORMATION — the lean-seat subtraction, not a leak); transcript(${sid}) tools=[${[...new Set(calls)].join(",") || "none"}]${leaked.length ? ` ⚠ LEAKED ${leaked.join(",")}` : " (no wide-hands invoked)"}`);
 }
 
 async function f2(): Promise<void> {

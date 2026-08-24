@@ -9,6 +9,11 @@ import reactDynamic from "../../agent/tools/react.js";
 import spawnThreadSessionDynamic from "../../agent/tools/spawn_thread_session.js";
 import readChannelDynamic from "../../agent/tools/read_channel.js";
 import readThreadDynamic from "../../agent/tools/read_thread.js";
+import editReplyDynamic from "../../agent/tools/edit_reply.js";
+import stopTaskDynamic from "../../agent/tools/stop_task.js";
+import spawnTaskDynamic from "../../agent/tools/spawn_task.js";
+import completeThreadDynamic from "../../agent/tools/complete_thread.js";
+import setDmDeliveryDynamic from "../../agent/tools/set_dm_delivery.js";
 import { renderScopeMarkdown } from "../../agent/instructions/access.js";
 import { registerConfig } from "../../agent/access/config.js";
 import { defineDomain } from "../../agent/memory/domain.js";
@@ -17,6 +22,7 @@ import { registerSlackFixtureMapper, registerSlackFixtureManifest } from "../_sl
 import { registerCapabilityManifest } from "../../agent/identity/capabilities.js";
 import { overrideSettingsForTest } from "../../agent/settings/settings.js";
 import type { BindableContext } from "../../agent/identity/binding.js";
+import { LEAN_SEAT_TOOLS } from "../../agent/access/lean-seat.js";
 
 export const DOMAIN = "payments";
 export const SLACK_CHANNEL = "C_PAY";
@@ -165,6 +171,11 @@ export async function buildLeanSeatToolset(opts: {
 }): Promise<ToolSet> {
   overrideSettingsForTest({ tools: { genericReadVerbs: true } });
   const rec = createRecorder(opts.calls, opts.resultFor);
+  const skipped: string[] = [];
+  const skip = (name: string): void => {
+    skipped.push(name);
+    opts.onSkip?.(name);
+  };
   const set: Record<string, ToolSet[string]> = {
     no_reply: rec("no_reply", noReplyTool as MountableEntry),
     update_status: rec("update_status", updateStatusTool as MountableEntry),
@@ -173,7 +184,7 @@ export async function buildLeanSeatToolset(opts: {
   if (opts.allowNoReply) {
     const entry = await tryReplyEntryForSeat(opts.ctx);
     if (entry !== null) set.reply = rec("reply", entry);
-    else opts.onSkip?.("reply");
+    else skip("reply");
   } else {
     set.reply = rec("reply", await replyEntryForSeat(opts.ctx));
   }
@@ -182,10 +193,15 @@ export async function buildLeanSeatToolset(opts: {
     ["spawn_thread_session", spawnThreadSessionDynamic],
     ["read_channel", readChannelDynamic],
     ["read_thread", readThreadDynamic],
+    ["edit_reply", editReplyDynamic],
+    ["stop_task", stopTaskDynamic],
+    ["spawn_task", spawnTaskDynamic],
+    ["complete_thread", completeThreadDynamic],
+    ["set_dm_delivery", setDmDeliveryDynamic],
   ] as const) {
     const entry = await resolveDynamicEntry(mod, opts.ctx);
     if (entry !== null) set[name] = rec(name, entry);
-    else opts.onSkip?.(name);
+    else skip(name);
   }
   const agentMod = await eveFrameworkTool("agent.js");
   set.agent = rec("agent", agentMod.AGENT_TOOL_DEFINITION as MountableEntry);
@@ -195,7 +211,14 @@ export async function buildLeanSeatToolset(opts: {
   set.todo = rec("todo", todoMod.TODO_TOOL_DEFINITION as MountableEntry);
   const taskMod = await eveFrameworkTool("tasks.js");
   for (const def of taskMod.TASK_TOOL_DEFINITIONS as readonly (MountableEntry & { readonly name: string })[]) {
-    if (def.name === "task_peek" || def.name === "task_cancel") set[def.name] = rec(def.name, def);
+    if (def.name === "task_cancel") set[def.name] = rec(def.name, def);
+  }
+  const accountedFor = new Set([...Object.keys(set), ...skipped]);
+  const unaccounted = [...LEAN_SEAT_TOOLS].filter((name) => !accountedFor.has(name));
+  if (unaccounted.length > 0) {
+    throw new Error(
+      `buildLeanSeatToolset: LEAN_SEAT_TOOLS grew name(s) this builder never resolves: ${unaccounted.join(", ")} — add a mount/skip arm above (see the OPE-1052 doc comment)`,
+    );
   }
   return set as ToolSet;
 }

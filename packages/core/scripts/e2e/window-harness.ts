@@ -239,3 +239,13 @@ export function scoreWithheld(live: readonly string[], manifestWithheld: readonl
   const surplus = live.filter((n) => !manifest.has(n)).sort();
   return { ok: missing.length === 0 && cutKeep.length === 0, missing, cutKeep, surplus };
 }
+
+export function scoreWithheldPair(grainLive: readonly string[], leanLive: readonly string[], manifestWithheld: readonly string[], mustKeep: readonly string[]): WithheldVerdict {
+  const grainSet = new Set(grainLive);
+  const leanSet = new Set(leanLive);
+  const missing = manifestWithheld.filter((n) => !grainSet.has(n)).sort();
+  const cutKeep = mustKeep.filter((n) => leanSet.has(n)).sort();
+  const manifest = new Set(manifestWithheld);
+  const surplus = leanLive.filter((n) => !manifest.has(n)).sort();
+  return { ok: missing.length === 0 && cutKeep.length === 0, missing, cutKeep, surplus };
+}

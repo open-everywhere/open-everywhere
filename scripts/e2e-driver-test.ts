@@ -45,6 +45,7 @@ const {
   resolvePr,
   resolveConnectorWrite,
   auditSilencesExpected,
+  isLocalEvalTarget,
   resolveCapabilities,
   DEFAULT_TEAMS_REFRESH_SINK,
 } = await import("../packages/core/scripts/e2e/env.js");
@@ -1012,9 +1013,20 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "🔴 the ENV map names NO connector arming flag — E2E_CONNECTOR_WRITE / E2E_OE_OAUTH_ARMED / E2E_CONNECTOR_OAUTH are retired, and re-adding one fails here",
   );
 
-  ok(!auditSilencesExpected({}), "auditSilencesExpected is FALSE by default (prod is actions-only)");
-  ok(!auditSilencesExpected({ [ENV.auditSilences]: "0" }), "auditSilencesExpected is FALSE for E2E_AUDIT_SILENCES=0");
-  ok(auditSilencesExpected({ [ENV.auditSilences]: "1" }), "auditSilencesExpected is TRUE only at E2E_AUDIT_SILENCES=1");
+  const LOCAL_TARGET = "http://127.0.0.1:3000";
+  const PROD_TARGET = "https://my-agent.vercel.app";
+  ok(!auditSilencesExpected({}, LOCAL_TARGET), "auditSilencesExpected is FALSE by default (prod is actions-only), even against the local eval target");
+  ok(!auditSilencesExpected({ [ENV.auditSilences]: "0" }, LOCAL_TARGET), "auditSilencesExpected is FALSE for E2E_AUDIT_SILENCES=0");
+  ok(auditSilencesExpected({ [ENV.auditSilences]: "1" }, LOCAL_TARGET), "auditSilencesExpected is TRUE at E2E_AUDIT_SILENCES=1 against the local eval target");
+  ok(!auditSilencesExpected({ [ENV.auditSilences]: "1" }, PROD_TARGET), "🔴 OPE-1007: E2E_AUDIT_SILENCES=1 does NOT arm the positive polls against prod — the declaration is scoped to the local eval target");
+  ok(!auditSilencesExpected({ [ENV.auditSilences]: "1" }), "auditSilencesExpected with NO target is FALSE even when declared — omission is not a free pass");
+  ok(!auditSilencesExpected({ [ENV.auditSilences]: "1" }, ""), "auditSilencesExpected with an EMPTY target is FALSE — same safe side as omission");
+  ok(!auditSilencesExpected({ [ENV.auditSilences]: "1" }, "not a url"), "auditSilencesExpected with a MALFORMED target is FALSE, not a thrown error");
+
+  ok(isLocalEvalTarget("http://127.0.0.1:3000"), "isLocalEvalTarget: 127.0.0.1 matches");
+  ok(isLocalEvalTarget("http://localhost:3000"), "isLocalEvalTarget: localhost matches");
+  ok(!isLocalEvalTarget(PROD_TARGET), "isLocalEvalTarget: a real deployed host does NOT match");
+  ok(!isLocalEvalTarget(undefined), "isLocalEvalTarget: undefined does not match (and does not throw)");
 
   const baseOnly = new Set(["slack"] as const);
   const cwMissing = {
