@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     include: ["tests/integration/**/*.test.ts"],
     pool: "forks",
-    fileParallelism: false,
+    fileParallelism: true,
     isolate: true,
     env: { NODE_ENV: "" },
     sequence: { concurrent: false },
