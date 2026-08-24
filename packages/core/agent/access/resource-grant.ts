@@ -13,6 +13,7 @@ export interface ResourceAddress {
 
 const RESOURCE_TYPES: Readonly<Record<string, readonly string[]>> = Object.freeze({
   slack: Object.freeze(["channel", "person"]),
+  discord: Object.freeze(["channel", "person"]),
 });
 
 export const RESOURCE_CONNECTORS: readonly string[] = Object.keys(RESOURCE_TYPES).sort();

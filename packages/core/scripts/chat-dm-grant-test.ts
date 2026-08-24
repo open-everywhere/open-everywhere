@@ -76,11 +76,16 @@ const DOMAINS: readonly Domain[] = [
 const SARAH_ID = "U_SARAH";
 const SARAH = personAddress("slack", SARAH_ID);
 const MARK = personAddress("slack", "U_MARK");
+const RAY_ID = "900000000000000042";
+const RAY = personAddress("discord", RAY_ID);
 const ELSEWHERE = resourceAddress("slack", CONTAINER_RESOURCE_TYPE, "C_ELSEWHERE");
 const ORG = "default";
 
 {
   ok(resourceTypesFor("slack").includes(PERSON_RESOURCE_TYPE), "slack implements the `person` resource type");
+  ok(resourceTypesFor("discord").includes(PERSON_RESOURCE_TYPE), "discord implements the `person` resource type too (OPE-1077)");
+  ok(resourceTypesFor("teams").includes(PERSON_RESOURCE_TYPE) === false, "teams does NOT — its `29:` person id is unspellable in this grammar");
+  ok(RAY === "discord:person/900000000000000042", "a discord person address composes with the snowflake id intact");
   ok(SARAH === "slack:person/U_SARAH", "the person address composes as <connector>:person/<id>");
   const parsed = parseResourceAddress(SARAH);
   ok(parsed?.connector === "slack" && parsed.type === "person" && parsed.id === SARAH_ID, "a person address parses into three facts");
@@ -128,8 +133,15 @@ const ORG = "default";
   const rawPerm = resourceGrantProblems("b", [{ connector: "slack", resources: [SARAH], capabilities: ["im:write"] as never }]);
   ok(rawPerm.length === 1 && rawPerm[0]!.includes("never raw vendor permission strings"), "a raw Slack scope is not writable as a person capability");
 
+  ok(resourceGrantProblems("b", [{ connector: "discord", resources: [RAY] }]).length === 0, "a well-formed discord person row loads");
+  ok(throws(() => assertBundlesValid(bundle([{ connector: "discord", resources: [RAY] }]))) === "", "a discord person row passes assertBundlesValid");
+  ok(resourceGrantCapabilities({ connector: "discord", resources: [RAY] })[0] === "dm", "an unadorned discord person row grants `dm`");
+  const discordMixed = resourceGrantProblems("b", [{ connector: "discord", resources: [RAY, "discord:channel/900000000000000001"] }]);
+  ok(discordMixed.length === 1 && discordMixed[0]!.includes("mixes resource types"), "the one-row-one-type rule holds on discord too");
+
   const unknownConnector = resourceGrantProblems("b", [{ connector: "teams", resources: ["teams:person/U1"] }]);
-  ok(unknownConnector.length > 0, "a person row on a connector with no wired DM transport refuses at load");
+  ok(unknownConnector.length > 0, "a person row on a connector this table does not admit refuses at load");
+  ok(parseResourceAddress("teams:person/29:1abc") === undefined, "a REAL teams person id does not parse — the `29:` prefix carries a second colon");
 }
 
 {
@@ -164,6 +176,42 @@ const ORG = "default";
   ok(chatDmTargetsFrom(DISCORD_HOME, granted, DOMAINS).length === 0, "a caller whose domain holds no slack container resolves no slack person");
 
   ok(chatDmTargetsFrom("", granted, DOMAINS).length === 0, "an unreadable caller surface resolves nothing");
+}
+
+{
+  const rayGranted = { [RAY]: ["dm"] as const };
+  ok(domainWorksOnPlatform(DISCORD_HOME, "discord", DOMAINS), "the ops domain works on discord");
+  ok(domainWorksOnPlatform(HOME, "discord", DOMAINS) === false, "the eng domain does NOT work on discord — it rosters no discord container");
+
+  const targets = chatDmTargetsFrom(DISCORD_HOME, rayGranted, DOMAINS);
+  ok(targets.length === 1, "a granted discord person on a domain that works on discord resolves");
+  ok(targets[0]!.platform === "discord" && targets[0]!.principalId === RAY_ID, "the resolved id is the bare snowflake `deliverDirectMessage` takes");
+  ok(targets[0]!.address === RAY, "the discord target carries the address exactly as config wrote it");
+
+  ok(chatWriteTargetsFrom(DISCORD_HOME, rayGranted, DOMAINS).length === 0, "a discord person grant grants no cross-container post");
+
+  const refusal = (surfaceKey: string, g: Record<string, readonly ("dm" | "post")[]>, requested: string): ChatDmGrantError => {
+    try {
+      resolveChatDmTargetFrom(surfaceKey, g, DOMAINS, requested);
+    } catch (e) {
+      return e as ChatDmGrantError;
+    }
+    throw new Error(`expected a refusal for ${requested}`);
+  };
+
+  const ungranted = refusal(DISCORD_HOME, {}, RAY);
+  ok(ungranted.boundary === "ungranted", "a discord person nobody granted refuses as `ungranted`");
+  ok(ungranted.platform === "discord", "the refusal names the RECIPIENT's platform — what the dm.refused row files under");
+  ok(ungranted.message.includes("presence alone"), "the discord ungranted refusal says presence is not a grant");
+
+  ok(chatDmTargetsFrom(HOME, rayGranted, DOMAINS).length === 0, "a slack-only domain names no discord person, however the bundle is bound");
+  const cross = refusal(HOME, rayGranted, RAY);
+  ok(cross.boundary === "cross-domain", "a granted discord person refuses as `cross-domain` for a domain with no discord container");
+  ok(cross.message.includes("memory/domains.ts"), "the discord cross-domain refusal names the DOMAIN remedy");
+  ok(cross.message !== ungranted.message, "the two discord refusals are different messages, because the remedies are different files");
+
+  const malformed = refusal(DISCORD_HOME, rayGranted, RAY_ID);
+  ok(malformed.boundary === "malformed", "a bare discord snowflake (no address form) is `malformed`, never `ungranted`");
 }
 
 {
