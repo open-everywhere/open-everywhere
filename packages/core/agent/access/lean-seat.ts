@@ -20,6 +20,7 @@ export const LEAN_SEAT_TOOLS: ReadonlySet<string> = new Set([
   "task_cancel",
   "read_channel",
   "read_thread",
+  "request_credential_grant",
 ]);
 
 export const DM_SEAT_CARVE_IN: ReadonlySet<string> = new Set(["link_identity", "confirm_link", "unlink_identity"]);

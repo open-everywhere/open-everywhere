@@ -56,6 +56,8 @@ import {
   handleSetKeyViewSubmission as liveHandleSetKeyViewSubmission,
   OE_CONNECT_ACTION_PREFIX,
   handleConnectClick as liveHandleConnectClick,
+  OE_GRANT_ACTION_PREFIX,
+  handleGrantCardClick as liveHandleGrantCardClick,
   buildRecord,
   enqueue as enqueueLogRecord,
   flushLogShip,
@@ -94,6 +96,7 @@ export type FrontDecision =
   | { readonly kind: "setkey-click"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "setkey-submit"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "connect-click"; readonly reason: string; readonly payload: unknown }
+  | { readonly kind: "grant-click"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "mention"; readonly reason: string; readonly env: SlackEventEnvelope }
   | { readonly kind: "dm-wake"; readonly reason: string; readonly env: SlackEventEnvelope; readonly dmKind: "im" | "mpim" };
 
@@ -157,6 +160,19 @@ function parseOeConnectClickPayload(rawBody: string): unknown | undefined {
   return isOurs ? p : undefined;
 }
 
+function parseOeGrantClickPayload(rawBody: string): unknown | undefined {
+  const p = decodeInteractivityPayload(rawBody);
+  if (!p || p.type !== "block_actions" || !Array.isArray(p.actions)) return undefined;
+  const isOurs = (p.actions as unknown[]).some(
+    (a) =>
+      typeof a === "object" &&
+      a !== null &&
+      typeof (a as Record<string, unknown>).action_id === "string" &&
+      ((a as Record<string, unknown>).action_id as string).startsWith(OE_GRANT_ACTION_PREFIX),
+  );
+  return isOurs ? p : undefined;
+}
+
 function parseOeSetKeyViewSubmission(rawBody: string): unknown | undefined {
   const p = decodeInteractivityPayload(rawBody);
   if (!p || p.type !== "view_submission") return undefined;
@@ -181,6 +197,10 @@ export function classifyEnvelope(rawBody: string, contentType: string): FrontDec
     const connectClick = parseOeConnectClickPayload(rawBody);
     if (connectClick !== undefined) {
       return { kind: "connect-click", reason: "block_actions oe_connect: click — ours, never forwarded", payload: connectClick };
+    }
+    const grantClick = parseOeGrantClickPayload(rawBody);
+    if (grantClick !== undefined) {
+      return { kind: "grant-click", reason: "block_actions oe_grant: click — ours, never forwarded", payload: grantClick };
     }
     return { kind: "forward", reason: "urlencoded interaction/slash — slackChannel owns it" };
   }
@@ -279,6 +299,7 @@ export interface FrontOptions {
   readonly handleSetKeyClick?: (payload: unknown) => Promise<boolean>;
   readonly handleSetKeyViewSubmission?: (payload: unknown) => Promise<SetKeyViewResult>;
   readonly handleConnectClick?: (payload: unknown) => Promise<boolean>;
+  readonly handleGrantCardClick?: (payload: unknown) => Promise<boolean>;
   readonly mentionPolicyFor?: (channelId: string, surfaceKey: string) => Promise<SingleWindowMentionPolicy>;
   readonly resolveDmSeat?: (org: string, dm: { surfaceKey: string; channelId?: string; legacyChannelId?: string }, atIso: string) => Promise<DmSeat>;
   readonly touchDmSeatFn?: (org: string, dmSurfaceKey: string, atIso: string) => Promise<void>;
@@ -426,6 +447,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const handleSetKeyClick = opts.handleSetKeyClick ?? liveHandleSetKeyClick;
   const handleSetKeyViewSubmission = opts.handleSetKeyViewSubmission ?? liveHandleSetKeyViewSubmission;
   const handleConnectClick = opts.handleConnectClick ?? liveHandleConnectClick;
+  const handleGrantCardClick = opts.handleGrantCardClick ?? liveHandleGrantCardClick;
   const ambientEnabledFor = opts.ambientEnabledFor ?? ((surfaceKey: string) => ambientSupervisorEnabled(surfaceKey, getConfig().loadDomains()));
   const mentionPolicyFor = opts.mentionPolicyFor ?? slackSingleWindowMentionPolicy;
   const resolveDmSeat = opts.resolveDmSeat ?? ((org, dm, atIso) => liveGetOrCreateDmSeat(org, dm, atIso));
@@ -720,6 +742,14 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
 
     if (decision.kind === "connect-click") {
       if (await handleConnectClick(decision.payload)) {
+        return new Response(null, { status: 200 });
+      }
+      const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
+      return innerHandler(forwarded, args);
+    }
+
+    if (decision.kind === "grant-click") {
+      if (await handleGrantCardClick(decision.payload)) {
         return new Response(null, { status: 200 });
       }
       const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });

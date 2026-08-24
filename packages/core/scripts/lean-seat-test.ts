@@ -196,9 +196,11 @@ ok(!allowedOnWorkerSeat("read_channel"), "🔴 OPE-929: a worker does NOT hold r
 ok(allowedOnLeanSeat("read_channel"), "…and the SEAT still holds read_channel — the recovery read is what stops it inventing a referent it cannot see (OPE-829)");
 ok(!allowedOnWorkerSeat("read_thread"), "🔴 OPE-929: a worker does NOT hold read_thread — same plane split as read_channel");
 ok(allowedOnLeanSeat("read_thread"), "…and the SEAT still holds read_thread");
+ok(!allowedOnWorkerSeat("request_credential_grant"), "🔴 OPE-1060: a worker does NOT hold request_credential_grant — it would pin its OWN one-shot session as the chat the grant serves");
+ok(allowedOnLeanSeat("request_credential_grant"), "…and the SEAT still holds it — the granted tool it mints is seat-side too, so a seat that could not ask would hold a capability it can never obtain");
 ok(
-  [...WORKER_WITHHELD_TOOLS].sort().join(",") === "no_reply,read_channel,read_thread,stand_down",
-  `the withheld set is EXACTLY no_reply,read_channel,read_thread,stand_down (got "${[...WORKER_WITHHELD_TOOLS].sort().join(",")}") — it grows only for a verb that is structurally wrong on a worker by test (A), (B) or (C), never for 'tools a worker shouldn't use' (that is the lean roster's question, or the consequence registry's)`,
+  [...WORKER_WITHHELD_TOOLS].sort().join(",") === "no_reply,read_channel,read_thread,request_credential_grant,stand_down",
+  `the withheld set is EXACTLY no_reply,read_channel,read_thread,request_credential_grant,stand_down (got "${[...WORKER_WITHHELD_TOOLS].sort().join(",")}") — it grows only for a verb that is structurally wrong on a worker by test (A), (B) or (C), never for 'tools a worker shouldn't use' (that is the lean roster's question, or the consequence registry's)`,
 );
 ok(chatArmGrain("task"), "🔴 OPE-1014: the vendor container reads' CHAT arm mounts on the `task` grain — the one grain this subtraction leaves without a generic container read");
 for (const grain of ["standing", "native", "thread"] as const) {
@@ -263,15 +265,15 @@ function makeToolset(): Record<string, { description: string; execute: () => unk
   const before = { ...toolset };
   const removed = restrictToolsetForWorkerSeat(toolset);
   ok(
-    removed.join(",") === "no_reply,read_channel,read_thread,stand_down",
-    `🔴 OPE-877 + OPE-929: the worker subtraction removes EXACTLY no_reply, read_channel, read_thread and stand_down, sorted (got "${removed.join(",")}")`,
+    removed.join(",") === "no_reply,read_channel,read_thread,request_credential_grant,stand_down",
+    `🔴 OPE-877 + OPE-929 + OPE-1060: the worker subtraction removes EXACTLY no_reply, read_channel, read_thread, request_credential_grant and stand_down, sorted (got "${removed.join(",")}")`,
   );
   ok(!("no_reply" in toolset) && !("stand_down" in toolset), "…and both really leave the assembled toolset — ABSENCE, so the worker is never told it lost a verb and never retries into a refusal");
   ok(
     !("read_channel" in toolset) && !("read_thread" in toolset),
     "🔴 OPE-929: the abstract chat READS really leave a worker's assembled toolset — the chat API is the SEAT's vocabulary",
   );
-  ok(Object.keys(toolset).length === Object.keys(before).length - 4, "…and NOTHING ELSE leaves — a worker's wide hands are still the design");
+  ok(Object.keys(toolset).length === Object.keys(before).length - 5, "…and NOTHING ELSE leaves — a worker's wide hands are still the design");
   ok("ask_question" in toolset, "…including ask_question itself, which is the name that left the set (OPE-565)");
   ok("reply" in toolset && "update_status" in toolset && "bash" in toolset && "post_file" in toolset, "…and the verbs OPE-877 checked alongside them stay: a worker still posts and still shows progress");
   ok(Object.keys(toolset).every((k) => toolset[k] === before[k]), "surviving tool OBJECTS keep their identity — eve keys approvals in a WeakMap on them");

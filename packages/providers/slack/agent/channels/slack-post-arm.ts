@@ -11,6 +11,7 @@ import type {
   UnifiedReplyDeps,
   DirectMessageRequest,
   DirectMessageDelivery,
+  DirectMessageAction,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 type SlackTarget = Extract<ReplyTarget, { platform: "slack" }>;
@@ -84,6 +85,18 @@ async function liveSlackPost(origin: SlackOrigin, text: string, replier?: Replie
   return postSlackMessage(body, replier, "unified reply couldn't post to Slack");
 }
 
+function slackDirectMessageActionBlock(actions: readonly DirectMessageAction[]): Record<string, unknown> | undefined {
+  const elements = actions
+    .filter((a) => a.id.length > 0 && a.id.length <= 255 && a.label.length > 0 && a.label.length <= 75)
+    .map((a) => ({
+      action_id: a.id,
+      text: { emoji: true, text: a.label, type: "plain_text" },
+      type: "button",
+      ...(a.intent === "reject" ? { style: "danger" } : {}),
+    }));
+  return elements.length > 0 ? { elements, type: "actions" } : undefined;
+}
+
 async function deliverSlackDirectMessage(input: DirectMessageRequest): Promise<DirectMessageDelivery> {
   const opened = await slackForm("conversations.open", new URLSearchParams({ users: input.principalId }).toString());
   const channel = opened?.channel as { id?: unknown } | undefined;
@@ -93,10 +106,13 @@ async function deliverSlackDirectMessage(input: DirectMessageRequest): Promise<D
       `couldn't open a Slack DM with the requester — ${(opened?.error as string) ?? "no channel returned (check SLACK_BOT_TOKEN and the im:write bot scope)"}`,
     );
   }
-  const posted = await slackForm(
-    "chat.postMessage",
-    new URLSearchParams({ channel: dmChannelId, text: markdownToSlackMrkdwn(input.text) }).toString(),
-  );
+  const rendered = markdownToSlackMrkdwn(input.text);
+  const actionBlock = input.actions === undefined ? undefined : slackDirectMessageActionBlock(input.actions);
+  const form = new URLSearchParams({ channel: dmChannelId, text: rendered });
+  if (actionBlock !== undefined) {
+    form.set("blocks", JSON.stringify([{ text: { text: rendered, type: "mrkdwn" }, type: "section" }, actionBlock]));
+  }
+  const posted = await slackForm("chat.postMessage", form.toString());
   const ts = typeof posted?.ts === "string" ? posted.ts : undefined;
   if (posted?.ok !== true || !ts) {
     throw new Error(`couldn't post the Slack DM — ${(posted?.error as string) ?? "no ts returned (check SLACK_BOT_TOKEN)"}`);

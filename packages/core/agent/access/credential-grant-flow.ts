@@ -11,6 +11,7 @@ import {
   type GrantMintRefusal,
 } from "./credential-grant.js";
 import { deliverGrantCard, type GrantCardDelivery } from "./credential-grant-card.js";
+import { postGrantResolution } from "./credential-grant-resolution.js";
 import {
   quotedPurpose,
   type CredentialGrantAskRow,
@@ -37,6 +38,7 @@ export interface AskForGrantInput extends GrantAuditStamps {
   readonly resource: string;
   readonly scopeKey: string;
   readonly purpose: string;
+  readonly requesterTarget?: string;
   readonly requestedMode: CredentialGrantMode;
   readonly domainGrantsConnector: boolean;
   readonly nowMs: number;
@@ -50,9 +52,14 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
   const store = getOperationalStore();
   const nowIso = new Date(input.nowMs).toISOString();
   const live = await store.liveCredentialGrant(input.org, input.ownerPrincipalId, input.verb, input.scopeKey, nowIso);
+  const liveAsk =
+    input.requesterPrincipalId === undefined
+      ? null
+      : await store.liveCredentialGrantAsk(input.org, input.requesterPrincipalId, input.ownerPrincipalId, input.verb, input.resource, nowIso);
   const mintInput: GrantMintInput = {
     connector: input.connector,
     domainGrantsConnector: input.domainGrantsConnector,
+    liveAsk: liveAsk ?? undefined,
     liveGrant: live ?? undefined,
     ownerHandle: input.ownerHandle,
     ownerPrincipalId: input.ownerPrincipalId,
@@ -83,6 +90,7 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
     purpose: input.purpose,
     requestedMode: input.requestedMode,
     requesterPrincipalId,
+    ...(input.requesterTarget === undefined ? {} : { requesterTarget: input.requesterTarget }),
     resource: input.resource,
     scopeKey: input.scopeKey,
     status: "pending",
@@ -136,6 +144,7 @@ export async function approveCredentialGrant(
   const verdict = credentialGrantMintVerdict({
     connector: ask.connector,
     domainGrantsConnector: true,
+    liveAsk: undefined,
     liveGrant: undefined,
     ownerHandle: ask.ownerSlug,
     ownerPrincipalId: ask.ownerPrincipalId,
@@ -166,6 +175,7 @@ export async function approveCredentialGrant(
     tier: grant.tier,
     verb: grant.verb,
   });
+  await postGrantResolution(ask, { grant, kind: "approved" });
   return { approved: true, grant };
 }
 
@@ -173,8 +183,11 @@ export async function declineCredentialGrant(stamps: GrantAuditStamps, askId: st
   const store = getOperationalStore();
   const nowIso = new Date(nowMs).toISOString();
   const decided = await store.decideCredentialGrantAsk(stamps.org, askId, ["pending"], "declined", nowIso);
-  if (decided) await auditGrant(stamps, "grant.declined", declinerPrincipalId, { askId, reason: "declined" });
-  return decided;
+  if (!decided) return false;
+  await auditGrant(stamps, "grant.declined", declinerPrincipalId, { askId, reason: "declined" });
+  const ask = await store.getCredentialGrantAsk(stamps.org, askId);
+  if (ask !== null) await postGrantResolution(ask, { kind: "declined" });
+  return true;
 }
 
 export async function revokeCredentialGrant(

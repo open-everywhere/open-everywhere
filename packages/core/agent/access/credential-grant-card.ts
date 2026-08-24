@@ -1,15 +1,34 @@
 import { canDeliverDirectMessage, postArm, type DirectMessageAction } from "../channels/post-arms.js";
+import { GRANT_STANDING_MAX_MS } from "./credential-grant.js";
 import { quotedPurpose, type CredentialGrantAskRow, type CredentialGrantMode } from "../operational/credential-grant-rows.js";
 
-export function grantCardActionId(askId: string, answer: CredentialGrantMode | "decline"): string {
-  return `grant:${answer}:${askId}`;
+const STANDING_DAYS = Math.round(GRANT_STANDING_MAX_MS / (24 * 60 * 60 * 1000));
+
+export const OE_GRANT_ACTION_PREFIX = "oe_grant:";
+
+export type GrantCardAnswer = CredentialGrantMode | "decline";
+
+export function grantCardActionId(askId: string, answer: GrantCardAnswer): string {
+  return `${OE_GRANT_ACTION_PREFIX}${answer}:${askId}`;
+}
+
+export function parseGrantCardActionId(raw: string | undefined): { readonly askId: string; readonly answer: GrantCardAnswer } | undefined {
+  if (typeof raw !== "string" || !raw.startsWith(OE_GRANT_ACTION_PREFIX)) return undefined;
+  const body = raw.slice(OE_GRANT_ACTION_PREFIX.length);
+  const cut = body.indexOf(":");
+  if (cut <= 0) return undefined;
+  const answer = body.slice(0, cut);
+  const askId = body.slice(cut + 1);
+  if (askId.length === 0) return undefined;
+  if (answer !== "once" && answer !== "session" && answer !== "standing" && answer !== "decline") return undefined;
+  return { answer, askId };
 }
 
 export function grantCardActions(ask: CredentialGrantAskRow): readonly DirectMessageAction[] {
   return [
     { id: grantCardActionId(ask.id, "once"), intent: "affirm", label: "Approve once" },
     { id: grantCardActionId(ask.id, "session"), intent: "affirm", label: "Approve for this conversation" },
-    { id: grantCardActionId(ask.id, "standing"), intent: "affirm", label: "Approve until it expires" },
+    { id: grantCardActionId(ask.id, "standing"), intent: "affirm", label: `Approve for ${STANDING_DAYS} days` },
     { id: grantCardActionId(ask.id, "decline"), intent: "reject", label: "Decline" },
   ];
 }
@@ -24,8 +43,8 @@ export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string
     `• They asked for: ${modeWords(ask.requestedMode)}`,
     `• Their stated purpose: "${quotedPurpose(ask.purpose)}"`,
     "",
-    "You can approve it once, for this conversation, or until it expires — or decline.",
-    "Reply `once`, `conversation`, `until expiry` or `no` if you cannot see the buttons.",
+    `You can approve it once, for this conversation, or for ${STANDING_DAYS} days — or decline.`,
+    "Reply `once`, `conversation`, `standing` or `no` if you cannot see the buttons.",
     "Approving lets that conversation run this one tool on this one resource with your credential. It grants nothing else.",
   ].join("\n");
 }

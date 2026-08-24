@@ -3,7 +3,7 @@ import { allowedSurfaceIdsFrom } from "../channels/channel-read.js";
 import { PERSON_RESOURCE_TYPE, personAddress, readDmAudience } from "../channels/dm-audience.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import type { Domain } from "../memory/domain.js";
-import { domainKeyOf, resolvePartition } from "../memory/partition.js";
+import { resolvePartition } from "../memory/partition.js";
 import { resolveAccessFor } from "./request.js";
 import type { ResourceCapability } from "./resource-capabilities.js";
 import { parseResourceAddress, resourceTypesFor } from "./resource-grant.js";
@@ -35,20 +35,20 @@ function grantedAddresses(ctx: BindableContext): Readonly<Record<string, readonl
   }
 }
 
-function callerDomainKey(ctx: BindableContext): string | undefined {
+function callerSurfaceKey(ctx: BindableContext): string | undefined {
   try {
-    return domainKeyOf(resolvePartition(ctx));
+    return resolvePartition(ctx).surfaceKey;
   } catch {
     return undefined;
   }
 }
 
-export function domainWorksOnPlatform(domainKey: string, platform: string, domains: readonly Domain[]): boolean {
-  return allowedSurfaceIdsFrom(domainKey, platform, domains).ids.size > 0;
+export function domainWorksOnPlatform(surfaceKey: string, platform: string, domains: readonly Domain[]): boolean {
+  return allowedSurfaceIdsFrom(surfaceKey, platform, domains).ids.size > 0;
 }
 
 export function chatDmTargetsFrom(
-  domainKey: string,
+  surfaceKey: string,
   granted: Readonly<Record<string, readonly ResourceCapability[]>>,
   domains: readonly Domain[],
 ): readonly ChatDmTarget[] {
@@ -61,7 +61,7 @@ export function chatDmTargetsFrom(
     if (!resourceTypesFor(parsed.connector).includes(parsed.type)) continue;
     let works = worksOn.get(parsed.connector);
     if (works === undefined) {
-      works = domainWorksOnPlatform(domainKey, parsed.connector, domains);
+      works = domainWorksOnPlatform(surfaceKey, parsed.connector, domains);
       worksOn.set(parsed.connector, works);
     }
     if (!works) continue;
@@ -71,9 +71,9 @@ export function chatDmTargetsFrom(
 }
 
 export function chatDmTargets(ctx: BindableContext, domains: readonly Domain[]): readonly ChatDmTarget[] {
-  const domainKey = callerDomainKey(ctx);
-  if (!domainKey) return [];
-  return chatDmTargetsFrom(domainKey, grantedAddresses(ctx), domains);
+  const surfaceKey = callerSurfaceKey(ctx);
+  if (!surfaceKey) return [];
+  return chatDmTargetsFrom(surfaceKey, grantedAddresses(ctx), domains);
 }
 
 export function chatDmMount(ctx: BindableContext, domains: () => readonly Domain[]): boolean {
@@ -85,7 +85,7 @@ export function chatDmMount(ctx: BindableContext, domains: () => readonly Domain
 }
 
 export function resolveChatDmTargetFrom(
-  domainKey: string | undefined,
+  surfaceKey: string | undefined,
   granted: Readonly<Record<string, readonly ResourceCapability[]>>,
   domains: readonly Domain[],
   requested: string,
@@ -101,10 +101,10 @@ export function resolveChatDmTargetFrom(
     );
   }
   const target =
-    domainKey === undefined ? undefined : chatDmTargetsFrom(domainKey, granted, domains).find((t) => t.address === requested);
+    surfaceKey === undefined ? undefined : chatDmTargetsFrom(surfaceKey, granted, domains).find((t) => t.address === requested);
   if (target) return target;
 
-  const worksOnPlatform = domainKey !== undefined && domainWorksOnPlatform(domainKey, parsed.connector, domains);
+  const worksOnPlatform = surfaceKey !== undefined && domainWorksOnPlatform(surfaceKey, parsed.connector, domains);
   if (worksOnPlatform) {
     throw new ChatDmGrantError(
       parsed.connector,
@@ -127,7 +127,7 @@ export function resolveChatDmTargetFrom(
 }
 
 export function resolveChatDmTarget(ctx: BindableContext, domains: readonly Domain[], requested: string): ChatDmTarget {
-  return resolveChatDmTargetFrom(callerDomainKey(ctx), grantedAddresses(ctx), domains, requested);
+  return resolveChatDmTargetFrom(callerSurfaceKey(ctx), grantedAddresses(ctx), domains, requested);
 }
 
 export interface AdmittedChatDm {
@@ -201,7 +201,6 @@ async function auditChatDmRefusal(ctx: BindableContext, refusal: ChatDmGrantErro
         target: refusal.principalId,
         boundary: refusal.boundary,
         callerSurfaceKey: partition.surfaceKey,
-        ...(domainKeyOf(partition) === partition.surfaceKey ? {} : { callerDomainKey: domainKeyOf(partition) }),
       },
     });
   } catch (err) {

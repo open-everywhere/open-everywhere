@@ -2,7 +2,7 @@ import { appendAudit } from "../audit/audit.js";
 import { allowedSurfaceIdsFrom } from "../channels/channel-read.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import type { Domain } from "../memory/domain.js";
-import { domainKeyOf, resolvePartition } from "../memory/partition.js";
+import { resolvePartition } from "../memory/partition.js";
 import { resolveAccessFor } from "./request.js";
 import type { ResourceCapability } from "./resource-capabilities.js";
 import { parseResourceAddress, resourceAddress, resourceTypesFor } from "./resource-grant.js";
@@ -34,16 +34,16 @@ function grantedAddresses(ctx: BindableContext): Readonly<Record<string, readonl
   }
 }
 
-function callerDomainKey(ctx: BindableContext): string | undefined {
+function callerSurfaceKey(ctx: BindableContext): string | undefined {
   try {
-    return domainKeyOf(resolvePartition(ctx));
+    return resolvePartition(ctx).surfaceKey;
   } catch {
     return undefined;
   }
 }
 
 export function chatWriteTargetsFrom(
-  domainKey: string,
+  surfaceKey: string,
   granted: Readonly<Record<string, readonly ResourceCapability[]>>,
   domains: readonly Domain[],
 ): readonly ChatWriteTarget[] {
@@ -56,7 +56,7 @@ export function chatWriteTargetsFrom(
     if (!resourceTypesFor(parsed.connector).includes(parsed.type)) continue;
     let roster = rosterByPlatform.get(parsed.connector);
     if (!roster) {
-      roster = allowedSurfaceIdsFrom(domainKey, parsed.connector, domains).ids;
+      roster = allowedSurfaceIdsFrom(surfaceKey, parsed.connector, domains).ids;
       rosterByPlatform.set(parsed.connector, roster);
     }
     if (!roster.has(parsed.id)) continue;
@@ -66,9 +66,9 @@ export function chatWriteTargetsFrom(
 }
 
 export function chatWriteTargets(ctx: BindableContext, domains: readonly Domain[]): readonly ChatWriteTarget[] {
-  const domainKey = callerDomainKey(ctx);
-  if (!domainKey) return [];
-  return chatWriteTargetsFrom(domainKey, grantedAddresses(ctx), domains);
+  const surfaceKey = callerSurfaceKey(ctx);
+  if (!surfaceKey) return [];
+  return chatWriteTargetsFrom(surfaceKey, grantedAddresses(ctx), domains);
 }
 
 export function chatWriteMount(ctx: BindableContext, domains: () => readonly Domain[]): boolean {
@@ -80,7 +80,7 @@ export function chatWriteMount(ctx: BindableContext, domains: () => readonly Dom
 }
 
 export function resolveChatWriteTargetFrom(
-  domainKey: string | undefined,
+  surfaceKey: string | undefined,
   granted: Readonly<Record<string, readonly ResourceCapability[]>>,
   domains: readonly Domain[],
   requested: string,
@@ -96,11 +96,11 @@ export function resolveChatWriteTargetFrom(
     );
   }
   const target =
-    domainKey === undefined ? undefined : chatWriteTargetsFrom(domainKey, granted, domains).find((t) => t.address === requested);
+    surfaceKey === undefined ? undefined : chatWriteTargetsFrom(surfaceKey, granted, domains).find((t) => t.address === requested);
   if (target) return target;
 
   const inDomain =
-    domainKey !== undefined && allowedSurfaceIdsFrom(domainKey, parsed.connector, domains).ids.has(parsed.id);
+    surfaceKey !== undefined && allowedSurfaceIdsFrom(surfaceKey, parsed.connector, domains).ids.has(parsed.id);
   if (inDomain) {
     throw new ChatWriteGrantError(
       parsed.connector,
@@ -127,7 +127,7 @@ export function resolveChatWriteTarget(
   domains: readonly Domain[],
   requested: string,
 ): ChatWriteTarget {
-  return resolveChatWriteTargetFrom(callerDomainKey(ctx), grantedAddresses(ctx), domains, requested);
+  return resolveChatWriteTargetFrom(callerSurfaceKey(ctx), grantedAddresses(ctx), domains, requested);
 }
 
 export async function assertChatWriteAllowed(
@@ -160,7 +160,6 @@ async function auditChatWriteRefusal(ctx: BindableContext, refusal: ChatWriteGra
         target: refusal.container,
         boundary: refusal.boundary,
         callerSurfaceKey: partition.surfaceKey,
-        ...(domainKeyOf(partition) === partition.surfaceKey ? {} : { callerDomainKey: domainKeyOf(partition) }),
       },
     });
   } catch (err) {

@@ -377,6 +377,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      resource               text NOT NULL,   -- ARN-like: notion:page/<id>
      scope_key              text NOT NULL,   -- the CHAT this would serve (the session id)
      purpose                text NOT NULL,   -- model-authored; untrusted content
+     requester_target       text,            -- JSON ReplyTarget: where the owner's answer is reported back
      requested_mode         text NOT NULL,   -- once | session | standing
      status                 text NOT NULL,   -- pending | approved | declined | expired
      created_at             text NOT NULL,
@@ -522,6 +523,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS target_tenant text`,
   `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS target_native_id text`,
   `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS back_nonce_hash text`,
+  `ALTER TABLE credential_grant_ask ADD COLUMN IF NOT EXISTS requester_target text`,
   `DO $$
    BEGIN
      IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'identity_linked_ids' AND relkind = 'r')
@@ -1272,7 +1274,7 @@ function linkChallengeFromPgRow(org: string, r: LinkChallengePgRow): LinkChallen
 
 const GRANT_ASK_COLUMNS =
   `id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
-   scope_key, purpose, requested_mode, status, created_at, expires_at, decided_at, grant_id`;
+   scope_key, purpose, requester_target, requested_mode, status, created_at, expires_at, decided_at, grant_id`;
 const GRANT_ASK_SELECT = `SELECT ${GRANT_ASK_COLUMNS} FROM credential_grant_ask`;
 
 type GrantAskPgRow = {
@@ -1287,6 +1289,7 @@ type GrantAskPgRow = {
   resource: string;
   scope_key: string;
   purpose: string;
+  requester_target: string | null;
   requested_mode: string;
   status: string;
   created_at: string;
@@ -1308,6 +1311,7 @@ function grantAskFromPgRow(r: GrantAskPgRow): CredentialGrantAskRow {
     resource: r.resource,
     scopeKey: r.scope_key,
     purpose: r.purpose,
+    ...(r.requester_target === null ? {} : { requesterTarget: r.requester_target }),
     requestedMode: r.requested_mode as CredentialGrantMode,
     status: r.status as CredentialGrantAskState,
     createdAt: r.created_at,
@@ -3223,8 +3227,8 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       await client.query(
         `INSERT INTO credential_grant_ask
            (org_id, id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
-            scope_key, purpose, requested_mode, status, created_at, expires_at, decided_at, grant_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+            scope_key, purpose, requester_target, requested_mode, status, created_at, expires_at, decided_at, grant_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
         [
           org,
           row.id,
@@ -3238,6 +3242,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           row.resource,
           row.scopeKey,
           row.purpose,
+          row.requesterTarget ?? null,
           row.requestedMode,
           row.status,
           row.createdAt,
@@ -3250,6 +3255,18 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async getCredentialGrantAsk(org, id) {
       const { rows } = await client.query(`${GRANT_ASK_SELECT} WHERE org_id = $1 AND id = $2`, [org, id]);
+      const r = (rows as GrantAskPgRow[])[0];
+      return r ? grantAskFromPgRow(r) : null;
+    },
+
+    async liveCredentialGrantAsk(org, requesterPrincipalId, ownerPrincipalId, verb, resource, nowIso) {
+      const { rows } = await client.query(
+        `${GRANT_ASK_SELECT}
+         WHERE org_id = $1 AND requester_principal_id = $2 AND owner_principal_id = $3 AND verb = $4 AND resource = $5
+           AND status = 'pending' AND expires_at > $6
+         ORDER BY created_at DESC LIMIT 1`,
+        [org, requesterPrincipalId, ownerPrincipalId, verb, resource, nowIso],
+      );
       const r = (rows as GrantAskPgRow[])[0];
       return r ? grantAskFromPgRow(r) : null;
     },

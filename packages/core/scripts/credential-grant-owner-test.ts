@@ -77,6 +77,7 @@ console.log("3. the same fact refuses at the MINT, one refusal instead of a dead
   const mintInput = (ownerPrincipalId: string) => ({
     connector: "notion",
     domainGrantsConnector: true,
+    liveAsk: undefined,
     liveGrant: undefined,
     ownerHandle: "Rowan Hale",
     ownerPrincipalId,

@@ -69,6 +69,7 @@ console.log("1. the mint decision table:");
 const baseMint: GrantMintInput = {
   connector: "notion",
   domainGrantsConnector: true,
+  liveAsk: undefined,
   liveGrant: undefined,
   ownerHandle: "Rowan Hale",
   ownerPrincipalId: "slack/W1/U-owner",

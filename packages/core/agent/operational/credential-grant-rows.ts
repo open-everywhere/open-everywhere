@@ -16,6 +16,7 @@ export interface CredentialGrantAskRow {
   readonly resource: string;
   readonly scopeKey: string;
   readonly purpose: string;
+  readonly requesterTarget?: string;
   readonly requestedMode: CredentialGrantMode;
   readonly status: CredentialGrantAskState;
   readonly createdAt: string;

@@ -840,6 +840,14 @@ export interface OperationalStore {
 
   addCredentialGrantAsk(org: string, row: CredentialGrantAskRow): Promise<void>;
   getCredentialGrantAsk(org: string, id: string): Promise<CredentialGrantAskRow | null>;
+  liveCredentialGrantAsk(
+    org: string,
+    requesterPrincipalId: string,
+    ownerPrincipalId: string,
+    verb: string,
+    resource: string,
+    nowIso: string,
+  ): Promise<CredentialGrantAskRow | null>;
   approveCredentialGrantAsk(org: string, id: string, mode: CredentialGrantMode, grantId: string, at: string): Promise<CredentialGrantAskRow | null>;
   decideCredentialGrantAsk(org: string, id: string, from: readonly CredentialGrantAskState[], to: CredentialGrantAskState, at: string): Promise<boolean>;
   expireCredentialGrantAsks(org: string, nowIso: string): Promise<number>;

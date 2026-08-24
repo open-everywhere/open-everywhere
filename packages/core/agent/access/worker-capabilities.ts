@@ -124,7 +124,7 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   {
     id: "identity-and-access",
     headline: "Link somebody's other accounts, ask for access this scope lacks, stand up a new agent, explain why something is refused, review whether the access here still fits",
-    tools: ["link_identity", "confirm_link", "unlink_identity", "request_access", "create_agent", "explain_permission", "permission_fit_report"],
+    tools: ["link_identity", "confirm_link", "unlink_identity", "request_access", "request_credential_grant", "create_agent", "explain_permission", "permission_fit_report"],
   },
   {
     id: "spend-and-telemetry",

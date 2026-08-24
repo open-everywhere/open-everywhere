@@ -1,0 +1,57 @@
+import { postArm } from "../channels/post-arms.js";
+import { postReply, type ReplyTarget } from "../channels/reply-post.js";
+import { credentialGrantDisclosureLine, grantToolName, type CredentialGrantAskRow, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
+
+function log(line: string): void {
+  console.log(`[open-everywhere:grant] ${line}`);
+}
+
+export type GrantResolution = { readonly kind: "approved"; readonly grant: CredentialGrantRow } | { readonly kind: "declined" };
+
+export function parseGrantRequesterTarget(raw: string | undefined): ReplyTarget | undefined {
+  if (typeof raw !== "string" || raw.length === 0) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  const platform = (parsed as Record<string, unknown>).platform;
+  if (typeof platform !== "string" || platform.length === 0) return undefined;
+  if (postArm(platform)?.dispatchReply === undefined) return undefined;
+  return parsed as ReplyTarget;
+}
+
+export function grantResolutionText(ask: CredentialGrantAskRow, resolution: GrantResolution): string {
+  const what = `\`${ask.verb}\` on \`${ask.resource}\``;
+  switch (resolution.kind) {
+    case "approved": {
+      let toolName: string;
+      try {
+        toolName = grantToolName(resolution.grant.ownerSlug, resolution.grant.verb);
+      } catch {
+        return `${ask.ownerSlug} approved the credential grant for ${what}. ${credentialGrantDisclosureLine(resolution.grant)}`;
+      }
+      return [
+        `${ask.ownerSlug} approved the credential grant for ${what}.`,
+        `This conversation now holds the tool \`${toolName}\` (${resolution.grant.mode}), and it expires ${resolution.grant.expiresAt}.`,
+        credentialGrantDisclosureLine(resolution.grant),
+      ].join("\n");
+    }
+    case "declined":
+      return `${ask.ownerSlug} declined the credential grant for ${what}. Nothing was granted and no tool is mounted. Do not ask again for the same thing — find another way, or ask the room.`;
+  }
+}
+
+export async function postGrantResolution(ask: CredentialGrantAskRow, resolution: GrantResolution): Promise<boolean> {
+  const target = parseGrantRequesterTarget(ask.requesterTarget);
+  if (target === undefined) return false;
+  try {
+    await postReply(target, grantResolutionText(ask, resolution));
+    return true;
+  } catch (err) {
+    log(`resolution notice for ask ${ask.id} could not be posted: ${String(err)}`);
+    return false;
+  }
+}

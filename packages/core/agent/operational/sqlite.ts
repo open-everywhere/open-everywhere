@@ -452,6 +452,7 @@ function getDb(): DatabaseSync {
       resource               TEXT NOT NULL,   -- ARN-like: notion:page/<id>
       scope_key              TEXT NOT NULL,   -- the CHAT this would serve (the session id)
       purpose                TEXT NOT NULL,   -- model-authored; untrusted content
+      requester_target       TEXT,            -- JSON ReplyTarget: where the owner's answer is reported back
       requested_mode         TEXT NOT NULL,   -- once | session | standing
       status                 TEXT NOT NULL,   -- pending | approved | declined | expired
       created_at             TEXT NOT NULL,
@@ -629,6 +630,8 @@ function getDb(): DatabaseSync {
     "ALTER TABLE identity_link_challenges ADD COLUMN target_tenant TEXT",
     "ALTER TABLE identity_link_challenges ADD COLUMN target_native_id TEXT",
     "ALTER TABLE identity_link_challenges ADD COLUMN back_nonce_hash TEXT",
+
+    "ALTER TABLE credential_grant_ask ADD COLUMN requester_target TEXT",
   ]) {
     try {
       handle.exec(ddl);
@@ -929,7 +932,7 @@ function linkChallengeFromSqliteRow(org: string, r: LinkChallengeSqliteRow): Lin
 
 const GRANT_ASK_SQLITE_SELECT =
   `SELECT id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
-          scope_key, purpose, requested_mode, status, created_at, expires_at, decided_at, grant_id
+          scope_key, purpose, requester_target, requested_mode, status, created_at, expires_at, decided_at, grant_id
    FROM credential_grant_ask`;
 
 type GrantAskSqliteRow = {
@@ -944,6 +947,7 @@ type GrantAskSqliteRow = {
   resource: string;
   scope_key: string;
   purpose: string;
+  requester_target: string | null;
   requested_mode: string;
   status: string;
   created_at: string;
@@ -965,6 +969,7 @@ function grantAskFromSqliteRow(r: GrantAskSqliteRow): CredentialGrantAskRow {
     resource: r.resource,
     scopeKey: r.scope_key,
     purpose: r.purpose,
+    ...(r.requester_target === null ? {} : { requesterTarget: r.requester_target }),
     requestedMode: r.requested_mode as CredentialGrantMode,
     status: r.status as CredentialGrantAskState,
     createdAt: r.created_at,
@@ -2752,8 +2757,8 @@ export const sqliteOperationalStore: OperationalStore = {
       .prepare(
         `INSERT INTO credential_grant_ask
            (org_id, id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
-            scope_key, purpose, requested_mode, status, created_at, expires_at, decided_at, grant_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            scope_key, purpose, requester_target, requested_mode, status, created_at, expires_at, decided_at, grant_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         org,
@@ -2768,6 +2773,7 @@ export const sqliteOperationalStore: OperationalStore = {
         row.resource,
         row.scopeKey,
         row.purpose,
+        row.requesterTarget ?? null,
         row.requestedMode,
         row.status,
         row.createdAt,
@@ -2779,6 +2785,18 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async getCredentialGrantAsk(org, id) {
     const row = getDb().prepare(`${GRANT_ASK_SQLITE_SELECT} WHERE org_id = ? AND id = ?`).get(org, id) as GrantAskSqliteRow | undefined;
+    return row ? grantAskFromSqliteRow(row) : null;
+  },
+
+  async liveCredentialGrantAsk(org, requesterPrincipalId, ownerPrincipalId, verb, resource, nowIso) {
+    const row = getDb()
+      .prepare(
+        `${GRANT_ASK_SQLITE_SELECT}
+         WHERE org_id = ? AND requester_principal_id = ? AND owner_principal_id = ? AND verb = ? AND resource = ?
+           AND status = 'pending' AND expires_at > ?
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(org, requesterPrincipalId, ownerPrincipalId, verb, resource, nowIso) as GrantAskSqliteRow | undefined;
     return row ? grantAskFromSqliteRow(row) : null;
   },
 

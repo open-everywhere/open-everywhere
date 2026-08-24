@@ -33,6 +33,12 @@ export const CONTRIBUTIONS = {
     { kind: "tool", name: "enable_routine", module: "agent/tools/enable_routine.js", summary: "PROPOSE re-arming a routine that stopped itself after repeated failures, keeping its id, its history and everything it had learned (a watch's baseline, a durable job's progress and thread)." },
     { kind: "tool", name: "explain_permission", module: "agent/tools/explain_permission.js", summary: "Explain what would happen if a named tool were used HERE: resolves the real approver chain for this scope (config approvers, surface controls, the consequence registry, the domain's approval mode…" },
     { kind: "tool", name: "grant_tools", module: "agent/tools/grant_tools.js", summary: "grant_tools — the resolver FILE that mounts one tool per live CREDENTIAL GRANT in this conversation (OPE-1060)." },
+    {
+      kind: "tool",
+      name: "request_credential_grant",
+      module: "agent/tools/request_credential_grant.js",
+      summary: "ASK a named person to let this conversation spend their own connector credential — they answer in their own DM; this grants nothing (OPE-1060).",
+    },
     { kind: "tool", name: "get_pr_feedback", module: "agent/tools/get_pr_feedback.js", summary: "Read the feedback on a GitHub pull request: review verdicts (approved / changes-requested), inline review comments (with file + line), issue-thread comments, and check runs (with a failure excerpt…" },
     { kind: "tool", name: "link_identity", module: "agent/tools/link_identity.js", summary: "Start linking another account (GitHub, Linear, Slack, …) to the person you are talking to, so their work is attributed to ONE human across surfaces." },
     { kind: "tool", name: "list_recent_events", module: "agent/tools/list_recent_events.js", summary: "Read the deliveries a webhook has actually sent, numbered, so a subscription filter can be written against real traffic instead of guesswork." },

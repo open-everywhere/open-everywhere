@@ -81,6 +81,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "confirm_link",
   "unlink_identity",
   "request_access",
+  "request_credential_grant",
   "create_agent",
   "connector",
   "cancel_routine",

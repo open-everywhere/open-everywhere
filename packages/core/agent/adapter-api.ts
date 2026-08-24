@@ -251,7 +251,7 @@ export { registerCapabilityManifest, capabilitiesForPlatform } from "./identity/
 export type { CapabilityManifest } from "./identity/capabilities.js";
 
 export { registerPostArm } from "./channels/post-arms.js";
-export type { PostArm, PostIntent, TargetResolveBag, DirectMessageRequest, DirectMessageDelivery, ReactTarget } from "./channels/post-arms.js";
+export type { PostArm, PostIntent, TargetResolveBag, DirectMessageRequest, DirectMessageDelivery, DirectMessageAction, ReactTarget } from "./channels/post-arms.js";
 export type { ReplyTarget } from "./channels/reply-post.js";
 export type { UnifiedReplyDeps } from "./channels/unified-reply.js";
 export type { EditLocus } from "./channels/reply-edit.js";
@@ -587,6 +587,11 @@ export {
 } from "./credentials/intake.js";
 export type { SetKeyViewResult } from "./credentials/intake.js";
 export { OE_CONNECT_ACTION_PREFIX, handleConnectClick } from "./connections/connector-card.js";
+
+export { OE_GRANT_ACTION_PREFIX, grantCardActionId, parseGrantCardActionId, grantCardActions, grantCardText } from "./access/credential-grant-card.js";
+export type { GrantCardAnswer } from "./access/credential-grant-card.js";
+export { handleGrantCardClick, resolveGrantCardClick, GRANT_CARD_CLICK_ACTION } from "./access/credential-grant-click.js";
+export type { GrantClicker, GrantClickResult, GrantClickInput } from "./access/credential-grant-click.js";
 
 export { buildRecord, enqueue, flushLogShip } from "./observability/ship.js";
 

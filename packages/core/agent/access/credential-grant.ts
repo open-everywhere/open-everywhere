@@ -14,6 +14,25 @@ export function credentialGrantRole(domain: CredentialBoundDomain | undefined, c
   return declared.use;
 }
 
+export interface CredentialGrantRole {
+  readonly connector: string;
+  readonly role: string;
+}
+
+export const CREDENTIAL_GRANT_ROLES: readonly CredentialGrantRole[] = [
+  { connector: "notion", role: "user-oauth" },
+];
+
+export function domainsAdmitCredentialGrant(domains: readonly (CredentialBoundDomain | undefined)[], connector: string): boolean {
+  for (const domain of domains) {
+    for (const r of CREDENTIAL_GRANT_ROLES) {
+      if (r.connector !== connector) continue;
+      if (credentialGrantRole(domain, connector, r.role) !== undefined) return true;
+    }
+  }
+  return false;
+}
+
 export interface GrantResource {
   readonly connector: string;
   readonly kind: string;
@@ -80,6 +99,7 @@ export type GrantMintRefusal =
   | "illegal_owner_handle"
   | "unresolvable_owner"
   | "grant_already_live"
+  | "ask_already_pending"
   | "write_verb_out_of_slice";
 
 export interface GrantMintInput {
@@ -91,6 +111,7 @@ export interface GrantMintInput {
   readonly verb: string;
   readonly resource: string;
   readonly liveGrant: CredentialGrantRow | undefined;
+  readonly liveAsk: CredentialGrantAskRow | undefined;
 }
 
 export type GrantMintVerdict =
@@ -112,6 +133,7 @@ export function credentialGrantMintVerdict(input: GrantMintInput): GrantMintVerd
   const ownerSlug = grantOwnerSlug(input.ownerHandle);
   if (ownerSlug === undefined) return { ok: false, reason: "illegal_owner_handle" };
   if (input.liveGrant !== undefined) return { ok: false, reason: "grant_already_live" };
+  if (input.liveAsk !== undefined) return { ok: false, reason: "ask_already_pending" };
   return { ok: true, ownerSlug, tier: definition.tier, toolName: `grant__${ownerSlug}__${input.verb}` };
 }
 
@@ -135,6 +157,8 @@ export function grantMintRefusalMessage(connector: string, reason: GrantMintRefu
       return "That owner is not named in a form this deployment can resolve a credential for, so nothing could ever be spent under the grant. Ask again naming the owner by their linked account.";
     case "grant_already_live":
       return "A live grant for that owner, verb and conversation already exists. Use it, or ask the owner to revoke it before asking again.";
+    case "ask_already_pending":
+      return "You already asked that person for that verb on that resource, and they have not answered yet. Do not ask again — they were sent one card, and asking again would page them a second time for the same decision. Tell the room the ask is still with them, and carry on with something else.";
     case "write_verb_out_of_slice":
       return "That verb mutates. Credential grants admit read verbs today; a write grant records the owner's name at the vendor on the requester's act, and it needs its own slice.";
   }

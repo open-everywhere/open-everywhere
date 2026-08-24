@@ -23,6 +23,7 @@ import { defineBinding, defineBundle } from "../agent/access/bundle.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { resolvePartition } from "../agent/memory/partition.js";
 import type { BindableContext } from "../agent/identity/binding.js";
+import { registerGrantableVerb } from "../agent/access/credential-grant.js";
 registerSlackFixtureMapper();
 registerSlackFixtureManifest();
 
@@ -59,7 +60,10 @@ const REPLAY_DOMAINS = [
   defineDomain({
     name: "replay-fixture",
     channels: [SLACK_FIXTURE_SURFACE, SLACK_FIXTURE_ELSEWHERE],
-    credentials: [{ connector: "slack", credential: "work-token", use: "chat-token" }],
+    credentials: [
+      { connector: "slack", credential: "work-token", use: "chat-token" },
+      { connector: "notion", credential: "user-oauth", use: "user-oauth" },
+    ],
   }),
 ];
 registerConfig({
@@ -104,6 +108,7 @@ const CASES: readonly ToolCase[] = [
   { slug: "dm_person", entryKey: "_single", ctx: slackCtx },
   { slug: "set_dm_delivery", entryKey: "_single", ctx: slackDmCtx },
   { slug: "request_access", entryKey: "_single", ctx: slackCtx },
+  { slug: "request_credential_grant", entryKey: "_single", ctx: slackCtx },
   { slug: "connector", entryKey: "_single", ctx: slackCtx },
   { slug: "purge_memory", entryKey: "_single", ctx: slackCtx },
   { slug: "clear_connector_override", entryKey: "_single", ctx: slackCtx },
@@ -128,6 +133,16 @@ const CASES: readonly ToolCase[] = [
 const SLUGS = [...new Set(CASES.map((c) => c.slug))];
 
 const RESOLVE_TIME_ONLY_SLUGS: ReadonlySet<string> = new Set(["grant_tools"]);
+
+registerGrantableVerb({
+  compose: () => ({ method: "GET", url: "https://api.notion.com/v1/blocks/x/children" }),
+  connector: "notion",
+  describe: () => "read one page",
+  inputSchema: { properties: {}, type: "object" },
+  resourceKind: "page",
+  tier: "read",
+  verb: "read_page",
+});
 
 const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "../agent/tools");
 
