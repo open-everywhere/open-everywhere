@@ -16,10 +16,14 @@ import type { BindableContext } from "@open-everywhere/core/agent/identity/bindi
 import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
 import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
+import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
+import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/register.js";
 
 registerSlackProvider();
 registerDiscordProvider();
 registerTeamsProvider();
+registerNotionProvider();
+registerLinearProvider();
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -33,11 +37,17 @@ function ok(cond: boolean, label: string): void {
 const WORK_ROLE = "work-token";
 const CHAT_ROLE = "chat-token";
 
+function workRoleForTestConnector(connector: string): string {
+  if (connector === "notion") return "team-key";
+  if (connector === "linear") return "workspace";
+  return WORK_ROLE;
+}
 function granted(name: string, channels: readonly string[], connector: string): Domain {
-  return defineDomain({ name, channels: [...channels], credentials: [{ connector, credential: WORK_ROLE, use: CHAT_ROLE }] });
+  return defineDomain({ name, channels: [...channels], credentials: [{ connector, credential: workRoleForTestConnector(connector), use: CHAT_ROLE }] });
 }
 function chatOnly(name: string, channels: readonly string[], connector: string): Domain {
-  return defineDomain({ name, channels: [...channels], credentials: [{ connector, credential: CHAT_ROLE, use: "some-other-key" }] });
+  const role = connector === "notion" ? "channel-key" : connector === "linear" ? "not-the-work-role" : CHAT_ROLE;
+  return defineDomain({ name, channels: [...channels], credentials: [{ connector, credential: role, use: "some-other-key" }] });
 }
 
 function slackCtx(sources?: string): BindableContext {
@@ -82,24 +92,56 @@ function teamsCtx(sources?: string): BindableContext {
     },
   } as unknown as BindableContext;
 }
+function notionCtx(sources?: string): BindableContext {
+  return {
+    channel: { kind: "notion" },
+    session: {
+      auth: {
+        current: {
+          attributes: { workspace_id: "WS_WG", page_id: "P_WG", ...(sources ? { oe_sources: sources } : {}) },
+          principalId: "U_WG",
+          principalType: "notion-user",
+        },
+      },
+    },
+  } as unknown as BindableContext;
+}
+function linearCtx(sources?: string): BindableContext {
+  return {
+    channel: { kind: "linear" },
+    session: {
+      auth: {
+        current: {
+          attributes: { organization_id: "ORG_WG", team_id: "TEAM_WG", ...(sources ? { oe_sources: sources } : {}) },
+          principalId: "U_WG",
+          principalType: "linear-user",
+        },
+      },
+    },
+  } as unknown as BindableContext;
+}
 
 const SLACK_CHANNEL = "slack/T_WG/C_WG";
 const DISCORD_CHANNEL = "discord/G_WG/D_WG";
 const TEAMS_CHANNEL = "teams/TEN_WG/K_WG";
+const NOTION_CHANNEL = "notion/WS_WG/P_WG";
+const LINEAR_CHANNEL = "linear/ORG_WG/TEAM_WG";
 
 ok(surfaceWorkRole("slack") === WORK_ROLE, "slack names the work-token role");
 ok(surfaceWorkRole("discord") === WORK_ROLE, "discord names the work-token role");
 ok(surfaceWorkRole("teams") === WORK_ROLE, "teams names the work-token role");
 ok(surfaceWorkRole("github") === undefined, "github declares NO chat work role — its grant is the bundle's repos: list (OPE-940)");
-ok(surfaceWorkRole("notion") === undefined, "notion is not a chat work surface — its work half is the page, under its own role");
-ok(surfaceWorkRole("linear") === undefined, "linear is not a chat work surface — its work half is the issue, under its own role");
+ok(surfaceWorkRole("notion") === "team-key", "notion IS now a chat/container work surface too (OPE-1064) — same role as its entity row");
+ok(surfaceWorkRole("linear") === "workspace", "linear IS now a chat/container work surface too (OPE-1064) — same role as its entity row");
 ok(surfaceWorkRole("nonsense") === undefined, "an unknown platform names no role");
-ok(Object.keys(SURFACE_WORK_ROLES).length === 3, "exactly three chat work surfaces are declared — a fourth must arrive with its read adapter");
+ok(Object.keys(SURFACE_WORK_ROLES).length === 5, "exactly five chat/container work surfaces are declared — a sixth must arrive with its read adapter");
 
 for (const [platform, channel] of [
   ["slack", SLACK_CHANNEL],
   ["discord", DISCORD_CHANNEL],
   ["teams", TEAMS_CHANNEL],
+  ["notion", NOTION_CHANNEL],
+  ["linear", LINEAR_CHANNEL],
 ] as const) {
   const g = granted(`g-${platform}`, [channel], platform);
   const c = chatOnly(`c-${platform}`, [channel], platform);
@@ -119,6 +161,8 @@ for (const [platform, channel] of [
     { platform: "slack", channel: SLACK_CHANNEL, ctx: slackCtx, foreign: DISCORD_CHANNEL, foreignPlatform: "discord" },
     { platform: "discord", channel: DISCORD_CHANNEL, ctx: discordCtx, foreign: SLACK_CHANNEL, foreignPlatform: "slack" },
     { platform: "teams", channel: TEAMS_CHANNEL, ctx: teamsCtx, foreign: SLACK_CHANNEL, foreignPlatform: "slack" },
+    { platform: "notion", channel: NOTION_CHANNEL, ctx: notionCtx, foreign: SLACK_CHANNEL, foreignPlatform: "slack" },
+    { platform: "linear", channel: LINEAR_CHANNEL, ctx: linearCtx, foreign: SLACK_CHANNEL, foreignPlatform: "slack" },
   ] as const;
   for (const c of cases) {
     const g = [granted(`m-${c.platform}`, [c.channel], c.platform)];

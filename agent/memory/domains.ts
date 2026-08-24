@@ -194,6 +194,26 @@ const rawDomains: Domain[] = [
     models: { primary: { id: UTILITY_MODEL } },
   }),
 
+  defineDomain({
+    name: "it-work-read-fixture-discord",
+    channels: ["discord/1300000000000000100/1300000001500000009"],
+    ambientSupervisor: true,
+    mode: "solo",
+    engagementTier: "neutral",
+    models: { primary: { id: UTILITY_MODEL } },
+    credentials: [{ connector: "discord", credential: "work-token", use: "chat-token" }],
+  }),
+  defineDomain({
+    name: "it-work-read-fixture-teams",
+    channels: ["teams/it1064-teams-tenant/it1064-teams-channel"],
+    ambientSupervisor: true,
+    mode: "unified",
+    engagementTier: "neutral",
+    reasoningCeiling: "high",
+    models: { primary: { id: UTILITY_MODEL }, supervisor: { id: SUPERVISOR_MODEL, reasoning: "medium" } },
+    credentials: [{ connector: "teams", credential: "work-token", use: "chat-token" }],
+  }),
+
 ];
 
 const agentsOverlay = loadAgentsOverlay();

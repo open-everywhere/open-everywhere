@@ -98,8 +98,12 @@ ok(
 );
 
 ok(containerWorkRoleFor("slack") === "work-token", "slack is a CONTAINER work surface — its work half is the conversation");
-ok(containerWorkRoleFor("notion") === undefined, "NEGATIVE CONTROL: notion is an ENTITY work surface, so it names no container role (explicit undefined)");
-ok(containerWorkRoleFor("linear") === undefined, "…and so is linear — its work half is the issue, not the room");
+ok(
+  containerWorkRoleFor("notion") === "team-key",
+  "notion is ALSO a CONTAINER work surface now (OPE-1064) — the SAME role its entity row already names, not a second declaration",
+);
+ok(containerWorkRoleFor("linear") === "workspace", "…and so is linear — the same 'workspace' role, container-read as well as entity-addressed");
+ok(containerWorkRoleFor("github") === undefined, "NEGATIVE CONTROL: github names no Domain.credentials role at all — its grant is the bundle's repos: list (OPE-940)");
 ok(workRoleFor("notion") === "team-key" && workRoleFor("slack") === "work-token", "…while workRoleFor answers for BOTH kinds — it is the grant lookup, not the container test");
 ok(workRoleFor("github") === undefined, "github names no Domain.credentials role at all — its grant is the bundle's repos: list");
 

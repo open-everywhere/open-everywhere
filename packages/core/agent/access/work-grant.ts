@@ -61,6 +61,8 @@ export const WORK_ROLES: readonly WorkRole[] = [
   { connector: "slack", role: "work-token", kind: "container" },
   { connector: "discord", role: "work-token", kind: "container" },
   { connector: "teams", role: "work-token", kind: "container" },
+  { connector: "notion", role: "team-key", kind: "container" },
+  { connector: "linear", role: "workspace", kind: "container" },
 ];
 
 export function workRoleFor(connector: string): string | undefined {

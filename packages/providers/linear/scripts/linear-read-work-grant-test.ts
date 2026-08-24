@@ -165,7 +165,7 @@ try {
     );
     ok(
       (await mount(linearWorkerCtx(TEAM_PAY, ISSUE_PAY))) !== null,
-      "🔴 THE CHAT ARM: a DELEGATED WORKER from that same Linear conversation DOES mount it with no grant — its only container read",
+      "🔴 THE CHAT ARM: a DELEGATED WORKER from that same Linear conversation DOES mount it with no grant — its only container read on an UNGRANTED domain",
     );
     ok(
       (await mount(slackWorkerCtx("CPAY"))) === null,
