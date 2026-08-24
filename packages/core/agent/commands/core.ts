@@ -34,6 +34,20 @@ export interface AppInfo {
   readonly evePin: string;
 }
 
+export const APP_VERSION_UNVERSIONED = "unversioned";
+
+const UNVERSIONED_PLACEHOLDER = "0.0.0";
+
+export function normalizeAppVersion(raw: string): string {
+  const v = raw.trim();
+  if (v === "" || v === UNVERSIONED_PLACEHOLDER) return APP_VERSION_UNVERSIONED;
+  return v;
+}
+
+export function hasRealAppVersion(info: AppInfo): boolean {
+  return info.version !== APP_VERSION_UNVERSIONED && info.version !== "unknown";
+}
+
 const UNKNOWN_APP_INFO: AppInfo = {
   version: "unknown",
   primaryModel: "unknown",
@@ -44,7 +58,7 @@ const UNKNOWN_APP_INFO: AppInfo = {
 let registeredAppInfo: AppInfo = UNKNOWN_APP_INFO;
 
 export function registerAppInfo(info: AppInfo): void {
-  registeredAppInfo = info;
+  registeredAppInfo = { ...info, version: normalizeAppVersion(info.version) };
 }
 
 export function getAppInfo(): AppInfo {
@@ -118,7 +132,7 @@ function fmtTokenCount(n: number): string {
 export function renderStatus(info: AppInfo, memoryProviderId: string, telemetryStatus = "unknown"): string {
   const { contextWindowTokens: windowTokens, compactionThresholdTokens: thresholdTokens } = info;
   return [
-    `*Open Everywhere* v${info.version}`,
+    hasRealAppVersion(info) ? `*Open Everywhere* v${info.version}` : "*Open Everywhere*",
     `• deployment sha: \`${info.deploymentSha}\``,
     `• eve: \`${info.evePin}\``,
     `• primary model: \`${info.primaryModel}\``,

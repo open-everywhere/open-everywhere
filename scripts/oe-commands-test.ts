@@ -32,6 +32,9 @@ const {
   registerAppInfo,
   getAppInfo,
   resetAppInfo,
+  normalizeAppVersion,
+  hasRealAppVersion,
+  APP_VERSION_UNVERSIONED,
 } = await import("@open-everywhere/core/agent/commands/core.js");
 const { parseDiscordOeCommandOptions, parseOeCommandInteraction, handleDiscordOeCommandInteraction, buildOeDiscordCommandDefinition } = await import(
   "@open-everywhere/provider-discord/agent/commands/discord-commands.js"
@@ -139,6 +142,35 @@ function discordBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding
     "sqlite",
   );
   ok(statusUnknownVersion.includes("deployment sha: `unknown`"), "renderStatus states \"unknown\" rather than fabricating a sha when unregistered");
+
+  ok(normalizeAppVersion("0.0.0") === APP_VERSION_UNVERSIONED, "normalizeAppVersion collapses the npm placeholder to the unversioned sentinel");
+  ok(normalizeAppVersion("") === APP_VERSION_UNVERSIONED, "…and an empty string");
+  ok(normalizeAppVersion("  0.0.0  ") === APP_VERSION_UNVERSIONED, "…and a padded placeholder (the raw value is trimmed before it is judged)");
+  ok(normalizeAppVersion("unknown") === "unknown", "🔴 normalizeAppVersion leaves \"unknown\" alone — nobody-told-us and nothing-to-tell stay two answers");
+  ok(normalizeAppVersion("1.2.3") === "1.2.3", "🔴 NEGATIVE CONTROL: a REAL version passes through untouched — a fork that versions its own deploy keeps its answer");
+  ok(normalizeAppVersion("0.0.1") === "0.0.1", "…and a neighbouring version is not swallowed: the match is the exact placeholder, never a prefix");
+  ok(normalizeAppVersion("0.0.0-rc.1") === "0.0.0-rc.1", "…and a prerelease built on the placeholder is a real, distinguishing version");
+
+  const statusUnversioned = renderStatus(
+    { version: APP_VERSION_UNVERSIONED, primaryModel: "zai/glm-5.2", utilityModel: "deepseek/deepseek-v4-flash", deploymentSha: "abc1234", evePin: "0.44.0" },
+    "sqlite",
+  );
+  ok(statusUnversioned.split("\n")[0] === "*Open Everywhere*", "renderStatus prints NO version on the title when the build carries none");
+  ok(!statusUnversioned.includes("v0.0.0") && !statusUnversioned.includes(`v${APP_VERSION_UNVERSIONED}`), "…and never renders the sentinel as if it were a version number");
+  ok(statusUnversioned.includes("deployment sha: `abc1234`"), "…while the sha line — the identity that DOES separate two builds — is unchanged");
+  ok(status.split("\n")[0] === "*Open Everywhere* v1.2.3", "🔴 NEGATIVE CONTROL: a real version still rides the title, so the suppression is conditional and not a deletion");
+
+  registerAppInfo({ version: "0.0.0", primaryModel: "m", utilityModel: "u", deploymentSha: "sha1", evePin: "0.44.0" });
+  ok(getAppInfo().version === APP_VERSION_UNVERSIONED, "registerAppInfo normalises the placeholder, so every consumer reads the same word");
+  ok(!hasRealAppVersion(getAppInfo()), "hasRealAppVersion is false for an unversioned build");
+  registerAppInfo({ version: "2.5.0", primaryModel: "m", utilityModel: "u", deploymentSha: "sha1", evePin: "0.44.0" });
+  ok(getAppInfo().version === "2.5.0", "🔴 NEGATIVE CONTROL: registerAppInfo leaves a real version alone");
+  ok(hasRealAppVersion(getAppInfo()), "…and hasRealAppVersion is true for it");
+  resetAppInfo();
+  ok(getAppInfo().version === "unknown", "an UNREGISTERED app still reads \"unknown\" — the OPE-991 default is untouched");
+  ok(!hasRealAppVersion(getAppInfo()), "…and it prints no version either: both non-answers are suppressed, for two different reasons");
+  const statusUnregistered = renderStatus(getAppInfo(), "sqlite");
+  ok(statusUnregistered.split("\n")[0] === "*Open Everywhere*", "…so an unregistered app's title carries no `vunknown` either");
 
   const statusWithTelemetry = renderStatus(
     { version: "1.2.3", primaryModel: "zai/glm-5.2", utilityModel: "deepseek/deepseek-v4-flash", deploymentSha: "abc1234", evePin: "0.44.0" },
