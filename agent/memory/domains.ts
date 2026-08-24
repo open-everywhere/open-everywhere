@@ -214,6 +214,15 @@ const rawDomains: Domain[] = [
     credentials: [{ connector: "teams", credential: "work-token", use: "chat-token" }],
   }),
 
+  defineDomain({
+    name: "it-work-read-fixture-notion",
+    channels: ["notion/6f7ea678-1071-4000-8000-000000000001/6f7ea678-1071-4000-8000-000000000002"],
+    ambientSupervisor: true,
+    engagementTier: "neutral",
+    models: { primary: { id: UTILITY_MODEL } },
+    credentials: [{ connector: "notion", credential: "team-key", use: "channel-key" }],
+  }),
+
 ];
 
 const agentsOverlay = loadAgentsOverlay();
