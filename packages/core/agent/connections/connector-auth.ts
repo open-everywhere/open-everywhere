@@ -197,7 +197,7 @@ export async function resolveDmPrincipal(
   }
 }
 
-async function effectiveUserVaultSubject(
+export async function effectiveUserVaultSubject(
   connector: string,
   org: string | undefined,
   platform: string | undefined,
