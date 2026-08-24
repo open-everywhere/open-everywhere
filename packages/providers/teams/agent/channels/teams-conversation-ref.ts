@@ -64,6 +64,18 @@ export function teamsAddressRowsFor(input: TeamsInboundReference, at: Date = new
     },
   ];
 
+  const channelGrain = teamsChannelGrainConversationId(conversationId);
+  if (channelGrain.length > 0 && channelGrain !== conversationId) {
+    rows.push({
+      platform: TEAMS_ADDRESS_PLATFORM,
+      kind: TEAMS_CONVERSATION_ADDRESS_KIND,
+      refKey: channelGrain,
+      tenant: tenantId,
+      address: { serviceUrl, conversationId: channelGrain },
+      updatedAt,
+    });
+  }
+
   if (input.scope === "personal") {
     const userId = nonEmpty(input.userId);
     if (userId) {
@@ -92,6 +104,10 @@ export function teamsAddressRowsFor(input: TeamsInboundReference, at: Date = new
 
   const conversationKey = teamsIdIndexRow(TEAMS_CONVERSATION_KEY_KIND, conversationId, tenantId, updatedAt);
   if (conversationKey) rows.push(conversationKey);
+  if (channelGrain.length > 0 && channelGrain !== conversationId) {
+    const channelKey = teamsIdIndexRow(TEAMS_CONVERSATION_KEY_KIND, channelGrain, tenantId, updatedAt);
+    if (channelKey) rows.push(channelKey);
+  }
   const authorId = nonEmpty(input.userId);
   if (authorId) {
     const personKey = teamsIdIndexRow(TEAMS_PERSON_KEY_KIND, authorId, tenantId, updatedAt);

@@ -45,7 +45,11 @@ const ok = (cond: boolean, label: string): void => {
 
 const TEAMS_SERVICE_URL = "https://smba.trafficmanager.net/uk/";
 const TEAMS_TENANT = "parity-tenant-id";
-const RAW_CONTAINER: Readonly<Record<string, string>> = { teams: "19:parityConversation@thread.tacv2" };
+
+const TEAMS_CHANNEL_GRAIN = "19:parityConversation@thread.tacv2";
+const TEAMS_INBOUND_CONVERSATION = `${TEAMS_CHANNEL_GRAIN};messageid=1774124431388`;
+
+const RAW_CONTAINER: Readonly<Record<string, string>> = { teams: TEAMS_CHANNEL_GRAIN };
 const RAW_PERSON: Readonly<Record<string, string>> = { teams: "29:1parityBotFrameworkPersonId" };
 
 const containerAddressId = (connector: string): string => surfaceKeySegment(RAW_CONTAINER[connector] ?? "CONTAINER_1");
@@ -89,7 +93,7 @@ try {
     await recordTeamsConversationReference({
       scope: "channel",
       tenantId: TEAMS_TENANT,
-      conversationId: RAW_CONTAINER.teams!,
+      conversationId: TEAMS_INBOUND_CONVERSATION,
       serviceUrl: TEAMS_SERVICE_URL,
       userId: "29:1someOtherChannelSpeaker",
       teamId: "TEAM_PARITY",
@@ -104,6 +108,10 @@ try {
     ok(
       containerAddressId("teams") !== RAW_CONTAINER.teams && personAddressId("teams") !== RAW_PERSON.teams,
       "the Teams address spelling really DIFFERS from the raw Bot Framework ids — otherwise the loop below would prove nothing about restoration",
+    );
+    ok(
+      TEAMS_INBOUND_CONVERSATION !== RAW_CONTAINER.teams && TEAMS_INBOUND_CONVERSATION.startsWith(`${RAW_CONTAINER.teams!};messageid=`),
+      "the seeded Teams activity carries the REPLY-CHAIN grain while the granted address names the CHANNEL grain — the join the live tenant refused",
     );
 
     ok(RESOURCE_CONNECTORS.length > 0, "the closed table admits at least one connector");
@@ -128,14 +136,20 @@ try {
     ok(unknownCalls.length === 0, `every transport call hit an endpoint this file knows (unmatched: ${unknownCalls.join(", ") || "none"})`);
 
     ok(resourceTypesFor("teams").includes(CONTAINER_RESOURCE_TYPE) && resourceTypesFor("teams").includes(PERSON_RESOURCE_TYPE), "teams admits BOTH resource types");
+
     const teamsSends = wireCalls.filter((u) => u.startsWith(TEAMS_SERVICE_URL) && u.endsWith("/activities"));
+    const sentConversationIds = teamsSends.map((u) => decodeURIComponent(u.slice(0, -"/activities".length).split("/v3/conversations/")[1] ?? ""));
     ok(
-      teamsSends.some((u) => u.includes(encodeURIComponent(RAW_CONTAINER.teams!))),
-      "the Teams container post reached the RAW conversation id on the wire — the index restored it from the address spelling",
+      sentConversationIds.includes(RAW_CONTAINER.teams!),
+      `the Teams container post reached the RAW CHANNEL-GRAIN conversation id on the wire — the index restored it from the address spelling (sent: ${sentConversationIds.join(", ") || "nothing"})`,
     );
     ok(
-      teamsSends.every((u) => !u.includes(encodeURIComponent(containerAddressId("teams")))),
+      !sentConversationIds.includes(containerAddressId("teams")),
       "…and the SPELLED id never reached the Bot Framework, which would refuse it",
+    );
+    ok(
+      !sentConversationIds.includes(TEAMS_INBOUND_CONVERSATION),
+      "…and the post did NOT go to the seeding activity's REPLY CHAIN — a container grant addresses the channel, not a thread inside it",
     );
 
     ok(resourceTypesFor("irc").length === 0, "a connector nobody implements names no resource type");
