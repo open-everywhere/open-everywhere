@@ -42,11 +42,44 @@ const baseInput: ApprovalDecisionWakeInput = {
 }
 
 {
+  const body = approvalDecisionBody({ ...baseInput, execution: { ran: "ok", line: "sent a direct message to teams person 29-1oW" } });
+  ok(body.includes("ALREADY RUN"), `approved+ran states the act already ran (${body})`);
+  ok(body.includes("sent a direct message to teams person 29-1oW"), "approved+ran quotes the EXECUTOR's own outcome line — the direct observable");
+  ok(body.includes("NOT delegate it again"), "approved+ran names the observed failure mode: re-delegating the same act");
+  ok(body.includes("repeats the same effect"), "approved+ran says WHY a second run is wrong, in terms of the people it reached");
+  ok(body.includes("continue that work now"), "approved+ran keeps OPE-921's continuation for work BEYOND the approved act");
+  ok(body.includes("does not re-open the act above"), "approved+ran holds the two clauses apart — continue the rest, not the act itself");
+}
+
+{
+  const body = approvalDecisionBody({ ...baseInput, execution: { ran: "failed", line: "FAILED: Slack refused the DM (missing im:write)" } });
+  ok(body.includes("RAN AND FAILED"), `approved+failed states the failure (${body})`);
+  ok(body.includes("nothing was applied"), "approved+failed says nothing landed");
+  ok(body.includes("missing im:write"), "approved+failed carries the failure reason");
+  ok(body.includes("attempt it again"), "approved+failed leaves the seat free to retry");
+  ok(!body.includes("ALREADY RUN"), "approved+failed NEVER claims the act already ran");
+  ok(!body.includes("NOT delegate it again"), "approved+failed carries no re-delegation ban");
+}
+
+{
+  const body = approvalDecisionBody({ ...baseInput, outcome: "rejected", execution: { ran: "ok", line: "should never be read" } });
+  ok(!body.includes("should never be read"), "a rejected outcome never renders an execution line");
+  ok(!body.includes("ALREADY RUN"), "a rejected outcome never claims an act already ran");
+}
+
+{
+  const body = approvalDecisionBody(baseInput);
+  ok(!body.includes("ALREADY RUN"), "no execution fact ⇒ the wake claims nothing about what ran");
+}
+
+{
   const wake = buildApprovalDecisionWake(baseInput, "2026-08-21T12:00:00.000Z");
   ok(wake.addressing === "channel-watch", "still AMBIENT — the humans were already told in-thread");
   ok(wake.wakeId === baseInput.wakeId, "host-minted wake id rides the envelope");
   const rendered = renderApprovalDecisionMessage(baseInput, "2026-08-21T12:00:00.000Z");
   ok(rendered.includes("continue that work now"), "the rendered turn message (what the model actually reads) carries the fix");
+  const renderedRan = renderApprovalDecisionMessage({ ...baseInput, execution: { ran: "ok", line: "sent a direct message to teams person 29-1oW" } }, "2026-08-21T12:00:00.000Z");
+  ok(renderedRan.includes("ALREADY RUN") && renderedRan.includes("29-1oW"), "the rendered turn message carries the OPE-1097 observable, not just the builder's return");
 }
 
 console.log(`✓ ${n} decision-wake assertions passed`);

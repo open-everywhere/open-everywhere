@@ -509,7 +509,13 @@ export type ApprovalClickResolution =
   | { readonly outcome: "denied"; readonly row: PendingActionRow }
   | { readonly outcome: "clicker-denied"; readonly row: PendingActionRow; readonly reason: ClickerFloorRefusal }
   | { readonly outcome: "lost-race" }
-  | { readonly outcome: "decided"; readonly row: PendingActionRow; readonly summaryLines: string[]; readonly outcomeLine: string };
+  | {
+      readonly outcome: "decided";
+      readonly row: PendingActionRow;
+      readonly summaryLines: string[];
+      readonly outcomeLine: string;
+      readonly executed: "ok" | "failed" | "none";
+    };
 
 export interface ResolveApprovalClickInput {
   readonly org: string;
@@ -604,7 +610,7 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
   if (status === "rejected") {
     await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.rejected", detail: { id: row.id, kind: row.kind, ...venue } });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "rejected" });
-    return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: "rejected" };
+    return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: "rejected", executed: "none" };
   }
 
   if (input.decision === "approve_session") {
@@ -622,12 +628,12 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     const outcome = await withArmingApproval({ id: row.id, kind: row.kind }, () => kindDef.execute(args, input.clickerId));
     await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.approved", detail: { id: row.id, kind: row.kind, ...venue, outcome } });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "approved" });
-    return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: outcome };
+    return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: outcome, executed: "ok" };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.failed", detail: { id: row.id, kind: row.kind, ...venue, error: message } });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "failed" });
-    return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: `FAILED: ${message}` };
+    return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: `FAILED: ${message}`, executed: "failed" };
   }
 }
 
@@ -655,6 +661,7 @@ async function sweepExpiryFeedback(row: PendingActionRow, deps: SweepFeedbackDep
       summaryLines: summaryLinesFor(row),
       outcome: "expired",
       outcomeLine: "expired",
+      executed: "none",
       target: platform === "slack" ? slackDecisionWakeTarget(row, workspace) : discordDecisionWakeTarget(row, workspace),
       postNotice,
     },
@@ -698,6 +705,7 @@ export async function wakeWindowOnDecision(
     readonly outcome: ApprovalOutcome;
     readonly summaryLine: string;
     readonly clickerId?: string;
+    readonly execution?: { readonly ran: "ok" | "failed"; readonly line: string };
     readonly surfaceKey: string;
     readonly origin: UnifiedWakeOrigin;
   },
@@ -730,6 +738,7 @@ export async function wakeWindowOnDecision(
       summaryLine: input.summaryLine,
       outcome: input.outcome,
       ...(input.clickerId ? { clickerId: input.clickerId } : {}),
+      ...(input.execution ? { execution: input.execution } : {}),
       pendingId: input.row.id,
     },
     nowIso,
@@ -772,6 +781,7 @@ export interface DecisionFeedbackInput {
   readonly summaryLines: string[];
   readonly outcome: ApprovalOutcome;
   readonly outcomeLine: string;
+  readonly executed: "ok" | "failed" | "none";
   readonly clickerId?: string;
   readonly target: { surfaceKey: string; origin: UnifiedWakeOrigin } | null;
   readonly postNotice: (text: string) => Promise<unknown>;
@@ -786,6 +796,7 @@ export async function deliverDecisionFeedback(input: DecisionFeedbackInput, deci
         outcome: input.outcome,
         summaryLine: input.summaryLines[0] ?? "the requested change",
         ...(input.clickerId ? { clickerId: input.clickerId } : {}),
+        ...(input.executed === "none" ? {} : { execution: { ran: input.executed, line: input.outcomeLine } }),
         surfaceKey: input.target.surfaceKey,
         origin: input.target.origin,
       },
@@ -845,6 +856,7 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
             summaryLines: res.summaryLines,
             outcome: "expired",
             outcomeLine: "expired",
+            executed: "none",
             target: slackDecisionWakeTarget(res.row, teamId),
             postNotice: (text) => postThreadNote(post, channelId, res.row.threadTs ?? messageTs, text),
           },
@@ -866,6 +878,7 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
             summaryLines: res.summaryLines,
             outcome: res.row.status as ApprovalOutcome,
             outcomeLine: res.outcomeLine,
+            executed: res.executed,
             clickerId,
             target: slackDecisionWakeTarget(res.row, teamId),
             postNotice: (text) => postThreadNote(post, channelId, res.row.threadTs ?? messageTs, text),
