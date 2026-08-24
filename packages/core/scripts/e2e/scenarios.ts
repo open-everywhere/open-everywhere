@@ -1700,7 +1700,7 @@ export const SCENARIOS: readonly Scenario[] = [
           auditRead: ctx.auditRead,
           sinceIso: runStart,
           surfaceAction: "github.no_reply",
-          silencesDeclared: auditSilencesExpected(),
+          silencesDeclared: auditSilencesExpected(process.env, ctx.targetUrl),
           timeoutMs: REPLY_WAIT,
           gate: (ok, label) => ctx.gate(ok, label),
           log: (m) => ctx.log(m),
@@ -1814,7 +1814,7 @@ export const SCENARIOS: readonly Scenario[] = [
             auditRead: ctx.auditRead,
             sinceIso: runStart,
             surfaceAction: "linear.no_reply",
-            silencesDeclared: auditSilencesExpected(),
+            silencesDeclared: auditSilencesExpected(process.env, ctx.targetUrl),
             timeoutMs: REPLY_WAIT,
             gate: (ok, label) => ctx.gate(ok, label),
             log: (m) => ctx.log(m),
@@ -1924,7 +1924,7 @@ export const SCENARIOS: readonly Scenario[] = [
           auditRead: ctx.auditRead,
           sinceIso: runStart,
           surfaceAction: "notion.no_reply",
-          silencesDeclared: auditSilencesExpected(),
+          silencesDeclared: auditSilencesExpected(process.env, ctx.targetUrl),
           timeoutMs: REPLY_WAIT,
           gate: (ok, label) => ctx.gate(ok, label),
           log: (m) => ctx.log(m),
@@ -2220,7 +2220,7 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(afterReply.length === 0, "supervisor self-loop: the bot's own post did NOT wake another reply (no runaway)");
 
       const { ts: noiseTs } = await sup.post("lol did everyone see the game last night");
-      if (ctx.auditRead && auditSilencesExpected()) {
+      if (ctx.auditRead && auditSilencesExpected(process.env, ctx.targetUrl)) {
         try {
           const rows = await ctx.auditRead({ sinceIso: runStart, platform: "slack", actions: ["slack.no_reply"] });
           ctx.log(`supervisor audited silence: ${rows.length} slack.no_reply row(s) in the run window`);
@@ -2337,7 +2337,7 @@ export const SCENARIOS: readonly Scenario[] = [
       }
 
       const { ts: noiseTs } = await b.post("lol nothing to do with work — did anyone catch the match last night");
-      if (ctx.auditRead && auditSilencesExpected()) {
+      if (ctx.auditRead && auditSilencesExpected(process.env, ctx.targetUrl)) {
         try {
           const rows = await ctx.auditRead({ sinceIso: runStart, actions: ["unified.no_reply", "slack.no_reply"] });
           ctx.log(`unified audited silence: ${rows.length} unified.no_reply|slack.no_reply row(s) in the run window`);

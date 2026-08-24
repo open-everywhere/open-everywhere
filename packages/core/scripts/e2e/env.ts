@@ -432,8 +432,18 @@ export function resolveSoakGithub(env: Env = process.env): Resolved<GithubDriver
   return { ok: true, cfg: { ...base.cfg, repo: values[0] } };
 }
 
-export function auditSilencesExpected(env: Env = process.env): boolean {
-  return env[ENV.auditSilences]?.trim() === "1";
+export function isLocalEvalTarget(targetUrl: string | undefined): boolean {
+  if (!targetUrl) return false;
+  try {
+    const { hostname } = new URL(targetUrl);
+    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+  } catch {
+    return false;
+  }
+}
+
+export function auditSilencesExpected(env: Env = process.env, targetUrl?: string): boolean {
+  return env[ENV.auditSilences]?.trim() === "1" && isLocalEvalTarget(targetUrl);
 }
 
 export interface CapabilityReport {
