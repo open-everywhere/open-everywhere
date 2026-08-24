@@ -71,8 +71,8 @@ const baseMint: GrantMintInput = {
   domainGrantsConnector: true,
   liveGrant: undefined,
   ownerHandle: "Rowan Hale",
-  ownerPrincipalId: "slack:U-owner",
-  requesterPrincipalId: "slack:U-req",
+  ownerPrincipalId: "slack/W1/U-owner",
+  requesterPrincipalId: "slack/W1/U-req",
   resource: "notion:page/abc123",
   verb: "read_page",
 };
@@ -127,11 +127,11 @@ const askRow = (id: string, patch: Partial<CredentialGrantAskRow> = {}): Credent
   id,
   ownerNativeId: "U-owner",
   ownerPlatform: "slack",
-  ownerPrincipalId: "slack:U-owner",
+  ownerPrincipalId: "slack/W1/U-owner",
   ownerSlug: "rowan_hale",
   purpose: "draft the Q3 summary",
   requestedMode: "once",
-  requesterPrincipalId: "slack:U-req",
+  requesterPrincipalId: "slack/W1/U-req",
   resource: "notion:page/abc123",
   scopeKey: "session-1",
   status: "pending",
@@ -146,10 +146,10 @@ const grantRow = (id: string, patch: Partial<CredentialGrantRow> = {}): Credenti
   expiresAt: iso(NOW + 60 * 60_000),
   id,
   mode: "once",
-  ownerPrincipalId: "slack:U-owner",
+  ownerPrincipalId: "slack/W1/U-owner",
   ownerSlug: "rowan_hale",
   purpose: "draft the Q3 summary",
-  requesterPrincipalId: "slack:U-req",
+  requesterPrincipalId: "slack/W1/U-req",
   resource: "notion:page/abc123",
   scopeKey: "session-1",
   status: "active",
@@ -217,9 +217,9 @@ const grantRow = (id: string, patch: Partial<CredentialGrantRow> = {}): Credenti
 
 {
   await store.addCredentialGrant(ORG, grantRow("grant-live", { scopeKey: "session-live" }));
-  const live = await store.liveCredentialGrant(ORG, "slack:U-owner", "read_page", "session-live", iso(NOW));
+  const live = await store.liveCredentialGrant(ORG, "slack/W1/U-owner", "read_page", "session-live", iso(NOW));
   eq(live?.id, "grant-live", "the live-grant read finds an active, unexpired grant for (owner, verb, scope)");
-  eq(await store.liveCredentialGrant(ORG, "slack:U-owner", "read_page", "session-live", iso(NOW + 90 * 60_000)), null, "…and finds nothing once it has expired, so the at-most-one rule stops blocking a fresh ask");
+  eq(await store.liveCredentialGrant(ORG, "slack/W1/U-owner", "read_page", "session-live", iso(NOW + 90 * 60_000)), null, "…and finds nothing once it has expired, so the at-most-one rule stops blocking a fresh ask");
   eq(await store.liveCredentialGrant(ORG, "slack:U-other", "read_page", "session-live", iso(NOW)), null, "…and nothing for a DIFFERENT owner, so one person's grant never blocks another's");
 }
 

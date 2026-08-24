@@ -71,6 +71,7 @@ export type CredentialGrantRefusal =
   | "burned"
   | "out_of_scope"
   | "no_transport"
+  | "owner_unresolvable"
   | "unverified_requester";
 
 export function credentialGrantStateRefusal(row: CredentialGrantRow, nowIso: string): CredentialGrantRefusal | undefined {
@@ -94,6 +95,8 @@ export function credentialGrantRefusalMessage(row: Pick<CredentialGrantRow, "own
       return `Refused: this grant was approved for a different conversation. ${what} is spendable only where its owner approved it.`;
     case "no_transport":
       return `Refused: this deployment carries no ${row.verb} transport for the granted connector, so the composed request cannot be sent. The grant itself is valid.`;
+    case "owner_unresolvable":
+      return `Refused: this grant does not name ${row.ownerSlug} in a form this deployment can resolve a credential for, so ${what} cannot be spent under anybody. Do not retry — ask again so a fresh grant is minted.`;
     case "unverified_requester":
       return `Refused: this turn names no single verified requester, so nobody can be recorded as having spent ${row.ownerSlug}'s credential. Do not retry.`;
   }

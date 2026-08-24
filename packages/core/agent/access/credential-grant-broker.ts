@@ -9,8 +9,9 @@ import {
 import { getOperationalStore } from "../operational/provider.js";
 import { grantableVerb, type GrantedRequest } from "./credential-grant.js";
 import { auditGrant, type GrantAuditStamps } from "./credential-grant-flow.js";
+import { grantOwnerSubject, type GrantOwnerSubject } from "./credential-grant-owner.js";
 
-export type GrantTransport = (request: GrantedRequest, grant: CredentialGrantRow) => Promise<unknown>;
+export type GrantTransport = (request: GrantedRequest, grant: CredentialGrantRow, owner: GrantOwnerSubject) => Promise<unknown>;
 
 const TRANSPORTS = new Map<string, GrantTransport>();
 
@@ -77,6 +78,9 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
   const transport = grantTransport(grant.connector);
   if (transport === undefined) return refuse("no_transport");
 
+  const owner = await grantOwnerSubject(ctx.org, grant.connector, grant.ownerPrincipalId);
+  if (owner === undefined) return refuse("owner_unresolvable");
+
   if (grant.mode === "once") {
     const burned = await store.burnCredentialGrant(ctx.org, grant.id, nowIso);
     if (burned === null) return refuse("burned");
@@ -96,7 +100,7 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
     tier: grant.tier,
     verb: grant.verb,
   });
-  const result = await transport(request, grant);
+  const result = await transport(request, grant, owner);
   if (roomNotice !== undefined) {
     try {
       await roomNotice(disclosure, grant);
