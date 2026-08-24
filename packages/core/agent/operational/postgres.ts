@@ -1,6 +1,6 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite } from "./store.js";
+import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
@@ -454,6 +454,13 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      created_at   text NOT NULL
    )`,
   `CREATE INDEX IF NOT EXISTS memory_proposal_org ON memory_proposal (org_id, id)`,
+  `CREATE TABLE IF NOT EXISTS dm_audience (
+     org_id      text NOT NULL,
+     address     text NOT NULL,
+     first_dm_at text,
+     stopped_at  text,
+     PRIMARY KEY (org_id, address)
+   )`,
   `CREATE TABLE IF NOT EXISTS instance_meta (
      key   text PRIMARY KEY,
      value text NOT NULL
@@ -566,6 +573,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE memory_proposal ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE credential_grant_ask ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE credential_grant ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE dm_audience ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill_revisions FORCE ROW LEVEL SECURITY`,
@@ -609,6 +617,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS memory_proposal_org_isolation ON memory_proposal`,
   `DROP POLICY IF EXISTS credential_grant_ask_org_isolation ON credential_grant_ask`,
   `DROP POLICY IF EXISTS credential_grant_org_isolation ON credential_grant`,
+  `DROP POLICY IF EXISTS dm_audience_org_isolation ON dm_audience`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
@@ -710,9 +719,26 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE POLICY credential_grant_org_isolation ON credential_grant
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY dm_audience_org_isolation ON dm_audience
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
 ];
 
 const APPEND_ONLY_TABLES = ["audit_entry", "usage_events", "domain_skill_revisions", "routine_prompt_revisions"] as const;
+
+interface DmAudienceDbRow {
+  readonly address: string;
+  readonly first_dm_at: string | null;
+  readonly stopped_at: string | null;
+}
+
+function dmAudienceRowFrom(r: DmAudienceDbRow): DmAudienceRow {
+  return {
+    address: r.address,
+    ...(r.first_dm_at === null ? {} : { firstDmAt: r.first_dm_at }),
+    ...(r.stopped_at === null ? {} : { stoppedAt: r.stopped_at }),
+  };
+}
 
 interface ExpectedPolicy {
   readonly name: string;
@@ -1024,6 +1050,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   model_call_capture: ["SELECT", "INSERT", "DELETE"],
   proactive_address: ["SELECT", "INSERT", "UPDATE"],
   memory_proposal: ["SELECT", "INSERT"],
+  dm_audience: ["SELECT", "INSERT", "UPDATE"],
   thread_ownership: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   turn_anchor: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   task_result: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -2337,6 +2364,47 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           createdAt: r.created_at,
         }),
       );
+    },
+
+    async getDmAudience(org, address) {
+      const { rows } = await client.query(
+        "SELECT address, first_dm_at, stopped_at FROM dm_audience WHERE org_id = $1 AND address = $2",
+        [org, address],
+      );
+      const row = rows[0] as DmAudienceDbRow | undefined;
+      return row ? dmAudienceRowFrom(row) : null;
+    },
+
+    async markDmAudienceDelivered(org, address, at) {
+      await client.query(
+        `INSERT INTO dm_audience (org_id, address, first_dm_at, stopped_at) VALUES ($1, $2, $3, NULL)
+         ON CONFLICT (org_id, address) DO UPDATE SET first_dm_at = COALESCE(dm_audience.first_dm_at, excluded.first_dm_at)`,
+        [org, address, at],
+      );
+    },
+
+    async setDmAudienceStopped(org, address, at) {
+      await client.query(
+        `INSERT INTO dm_audience (org_id, address, first_dm_at, stopped_at) VALUES ($1, $2, NULL, $3)
+         ON CONFLICT (org_id, address) DO UPDATE SET stopped_at = COALESCE(dm_audience.stopped_at, excluded.stopped_at)`,
+        [org, address, at],
+      );
+    },
+
+    async clearDmAudienceStopped(org, address) {
+      const { rows } = await client.query(
+        "UPDATE dm_audience SET stopped_at = NULL WHERE org_id = $1 AND address = $2 AND stopped_at IS NOT NULL RETURNING address",
+        [org, address],
+      );
+      return rows.length > 0;
+    },
+
+    async listDmAudience(org) {
+      const { rows } = await client.query(
+        "SELECT address, first_dm_at, stopped_at FROM dm_audience WHERE org_id = $1 ORDER BY address",
+        [org],
+      );
+      return (rows as DmAudienceDbRow[]).map(dmAudienceRowFrom);
     },
 
     async runAnalyticsQuery(compiled) {

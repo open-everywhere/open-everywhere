@@ -331,6 +331,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   complete_thread: open(
     "a thread seat releasing its own thread's ownership — the next message then wakes the standing seat instead. Reversible (the seat re-opens), touches no memory/spend/audience beyond the ownership index; a conversational verb, audited (thread_seat.completed)",
   ),
+  set_dm_delivery: open(
+    "the RECIPIENT of the agent's direct messages turning them off, or back on, from their own DM (OPE-1064 tier P2). The stop REMOVES the agent's reach — one durable row that outranks every grant — and the resume restores only what that same person just gave up, in a room that holds nobody else. It touches no memory, no spend, no credential and no audience beyond the person setting it. Nothing here for an approver to weigh: a card in front of \"please stop messaging me\" would be the product asking permission to stop bothering somebody. Audited (dm.audience.stopped / dm.audience.resumed)",
+  ),
   stand_down: open(
     "the agent stopping following a conversation it was asked to leave (OPE-418 Part B). It REMOVES the agent's own reach — one durable `stopped` flag on this surface's engagement row, cleared by the next @mention — and touches no memory, no spend, no credential and no audience. Nothing here for an approver to weigh: putting a card in front of \"please be quiet\" would be the product asking permission to stop annoying someone. Audited (engagement.stood_down)",
   ),
@@ -381,6 +384,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   ),
   post_message: member("chat.post", "disclose",
     "audience-expanding: a message posted into a container the turn did NOT arrive in interrupts named humans who never asked, is attributed to the deployment, and cannot be un-seen after an edit — and the model authors the body, so the card (which renders the destination and the full text) is the injection gate before those bytes reach a room that never asked for them",
+  ),
+  dm_person: member("chat.dm", "disclose",
+    "audience-expanding: a direct message interrupts one named human who never asked, is attributed to the deployment, and cannot be un-seen after an edit — so the FIRST message to a person takes the card, which renders the recipient, the full text and the host footer, and is the injection gate before the agent starts a correspondence nobody invited. 🔴 THE CARD DOES NOT REPEAT: later messages to that same person FLOW (OPE-893 — \"ask for forgiveness, not permission ... give the user a way to make it stop\"), so from the second message on the model's bytes reach a person with no reviewer between. What remains is the operator's grant, an audit row per delivery, and the recipient's own stop (set_dm_delivery), which outranks every grant",
   ),
 
   set_spend_limit: deferToJudge(admin("spend.set", "disclose", "self-modification + money: changes what the org will spend")),

@@ -67,7 +67,10 @@ registerConfig({
     defineBundle({
       name: "coding",
       repos: ["acme/api"],
-      resourceGrants: [{ connector: "slack", resources: [`slack:channel/${SLACK_FIXTURE_ELSEWHERE_ID}`] }],
+      resourceGrants: [
+        { connector: "slack", resources: [`slack:channel/${SLACK_FIXTURE_ELSEWHERE_ID}`] },
+        { connector: "slack", resources: ["slack:person/U_REPLAY_PERSON"] },
+      ],
     }),
   ],
   loadBindings: () => [defineBinding({ bundle: "coding", scope: { level: "org" } })],
@@ -78,6 +81,7 @@ registerConfig({
   domainsForSurface: ({ workspaceKey, surface }) =>
     REPLAY_DOMAINS.filter((d) => (d.channels ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
 });
+const slackDmCtx = { channel: { kind: "slack" }, session: { auth: { current: { principalId: "U_PARTNER", attributes: { channel_type: "im" } } } } };
 const githubCtx = { channel: { kind: "github" }, session: { auth: { current: { attributes: {} } } } };
 const unifiedCtx = { channel: { kind: "unified" }, session: { auth: { current: { attributes: { oe_platform: "slack" } } } } };
 const taskCtx = {
@@ -97,6 +101,8 @@ const CASES: readonly ToolCase[] = [
   { slug: "assign", entryKey: "_single", ctx: githubCtx },
   { slug: "create_ticket", entryKey: "_single", ctx: githubCtx },
   { slug: "post_message", entryKey: "_single", ctx: slackCtx },
+  { slug: "dm_person", entryKey: "_single", ctx: slackCtx },
+  { slug: "set_dm_delivery", entryKey: "_single", ctx: slackDmCtx },
   { slug: "request_access", entryKey: "_single", ctx: slackCtx },
   { slug: "connector", entryKey: "_single", ctx: slackCtx },
   { slug: "purge_memory", entryKey: "_single", ctx: slackCtx },

@@ -42,6 +42,7 @@ export const OPERATIONAL_TABLES = [
   "memory_proposal",
   "credential_grant_ask",
   "credential_grant",
+  "dm_audience",
 ] as const;
 
 export const EVENT_DEDUPE_MAX_RETENTION_MS = 24 * 60 * 60_000;
@@ -603,6 +604,12 @@ export interface MemoryProposalRow {
 
 export type MemoryProposalWrite = Omit<MemoryProposalRow, "id">;
 
+export interface DmAudienceRow {
+  readonly address: string;
+  readonly firstDmAt?: string;
+  readonly stoppedAt?: string;
+}
+
 export interface ProactiveAddress {
   readonly platform: string;
   readonly kind: string;
@@ -709,6 +716,12 @@ export interface OperationalStore {
 
   addMemoryProposal(write: MemoryProposalWrite): Promise<MemoryProposalRow>;
   listMemoryProposals(org: string): Promise<MemoryProposalRow[]>;
+
+  getDmAudience(org: string, address: string): Promise<DmAudienceRow | null>;
+  markDmAudienceDelivered(org: string, address: string, at: string): Promise<void>;
+  setDmAudienceStopped(org: string, address: string, at: string): Promise<void>;
+  clearDmAudienceStopped(org: string, address: string): Promise<boolean>;
+  listDmAudience(org: string): Promise<DmAudienceRow[]>;
 
   runAnalyticsQuery(compiled: CompiledAnalyticsQuery): Promise<Record<string, unknown>[]>;
 

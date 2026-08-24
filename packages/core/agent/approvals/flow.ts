@@ -49,6 +49,7 @@ import "./agent-create.js";
 import "./ticket-actions.js";
 import "./ticket-create.js";
 import "./chat-post.js";
+import "./chat-dm.js";
 import "./session-checkpoint.js";
 
 export const OE_APPROVAL_PREFIX = "oe_approval:";

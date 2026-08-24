@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite } from "./store.js";
+import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
@@ -550,6 +550,16 @@ function getDb(): DatabaseSync {
       created_at   TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS memory_proposal_org ON memory_proposal (org_id, id);
+    -- dm_audience (OPE-1064 tier P2): who this deployment may START a direct message with, and
+    -- whether they have stopped it. Two nullable timestamps and no content — store.ts's DM AUDIENCE
+    -- section carries the whole posture, including why the key is the grant's own ARN-like address.
+    CREATE TABLE IF NOT EXISTS dm_audience (
+      org_id      TEXT NOT NULL,
+      address     TEXT NOT NULL,          -- the person address, e.g. slack:person/U0123ABC
+      first_dm_at TEXT,                   -- ISO-8601 of the FIRST proactive DM; NULL = never delivered
+      stopped_at  TEXT,                   -- ISO-8601 the recipient stopped it; NULL = not stopped
+      PRIMARY KEY (org_id, address)
+    );
     CREATE TABLE IF NOT EXISTS instance_meta (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -1008,6 +1018,14 @@ function grantFromSqliteRow(r: GrantSqliteRow): CredentialGrantRow {
     expiresAt: r.expires_at,
     ...(r.used_at === null ? {} : { usedAt: r.used_at }),
     ...(r.revoked_at === null ? {} : { revokedAt: r.revoked_at }),
+  };
+}
+
+function dmAudienceRowFrom(r: { address: string; first_dm_at: string | null; stopped_at: string | null }): DmAudienceRow {
+  return {
+    address: r.address,
+    ...(r.first_dm_at === null ? {} : { firstDmAt: r.first_dm_at }),
+    ...(r.stopped_at === null ? {} : { stoppedAt: r.stopped_at }),
   };
 }
 
@@ -1938,6 +1956,46 @@ export const sqliteOperationalStore: OperationalStore = {
         createdAt: r.created_at,
       }),
     );
+  },
+
+  async getDmAudience(org, address) {
+    const row = getDb()
+      .prepare("SELECT address, first_dm_at, stopped_at FROM dm_audience WHERE org_id = ? AND address = ?")
+      .get(org, address) as { address: string; first_dm_at: string | null; stopped_at: string | null } | undefined;
+    return row ? dmAudienceRowFrom(row) : null;
+  },
+
+  async markDmAudienceDelivered(org, address, at) {
+    getDb()
+      .prepare(
+        `INSERT INTO dm_audience (org_id, address, first_dm_at, stopped_at) VALUES (?, ?, ?, NULL)
+         ON CONFLICT (org_id, address) DO UPDATE SET first_dm_at = COALESCE(dm_audience.first_dm_at, excluded.first_dm_at)`,
+      )
+      .run(org, address, at);
+  },
+
+  async setDmAudienceStopped(org, address, at) {
+    getDb()
+      .prepare(
+        `INSERT INTO dm_audience (org_id, address, first_dm_at, stopped_at) VALUES (?, ?, NULL, ?)
+         ON CONFLICT (org_id, address) DO UPDATE SET stopped_at = COALESCE(dm_audience.stopped_at, excluded.stopped_at)`,
+      )
+      .run(org, address, at);
+  },
+
+  async clearDmAudienceStopped(org, address) {
+    return (
+      getDb()
+        .prepare("UPDATE dm_audience SET stopped_at = NULL WHERE org_id = ? AND address = ? AND stopped_at IS NOT NULL")
+        .run(org, address).changes > 0
+    );
+  },
+
+  async listDmAudience(org) {
+    const rows = getDb()
+      .prepare("SELECT address, first_dm_at, stopped_at FROM dm_audience WHERE org_id = ? ORDER BY address")
+      .all(org) as { address: string; first_dm_at: string | null; stopped_at: string | null }[];
+    return rows.map(dmAudienceRowFrom);
   },
 
   async runAnalyticsQuery(compiled) {

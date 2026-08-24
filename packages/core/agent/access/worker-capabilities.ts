@@ -32,6 +32,7 @@ export const WORKER_INDEX_SEAT_VERBS: ReadonlySet<string> = new Set([
   "react",
   "update_status",
   "stand_down",
+  "set_dm_delivery",
   "ask_question",
   "todo",
 ]);
@@ -60,7 +61,7 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   {
     id: "work-surfaces",
     headline:
-      "Read and change the work surfaces — search and read Notion pages and comments, read Linear and GitHub issues, re-read the chat surfaces the domain works on in full, set their state, assignee and labels, and post a message into another container this domain owns",
+      "Read and change the work surfaces — search and read Notion pages and comments, read Linear and GitHub issues, re-read the chat surfaces the domain works on in full, set their state, assignee and labels, post a message into another container this domain owns, and send a direct message to a person this domain was granted",
     tools: [
       "read_notion_page",
       "read_notion_comments",
@@ -74,6 +75,7 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
       "assign",
       "add_label",
       "post_message",
+      "dm_person",
     ],
   },
   {
