@@ -12,11 +12,17 @@ import {
   rollOwnMissingMessage,
   rollOwnTargetExists,
 } from "./rollown-target";
+import { sweepStaleSandboxSessions } from "./sandbox-session-sweep";
 
 export default async function globalSetup(): Promise<void> {
   const root = process.cwd();
   const swept = sweepStaleForkAppRoots();
   if (swept > 0) console.log(`integration global-setup: removed ${swept} fork app root(s) left by an interrupted run.`);
+  const sweptSessions = sweepStaleSandboxSessions(root);
+  if (sweptSessions > 0) {
+    console.log(`integration global-setup: removed ${sweptSessions} stale just-bash sandbox session(s).`);
+  }
+  const setupStartedAt = Date.now();
   const templateDir = join(root, ".eve", "sandbox-cache", "just-bash", "templates");
   if (process.env.OE_IT_SKIP_BUILD === "1") {
     if (!existsSync(join(root, ".output", "server", "index.mjs"))) {
@@ -38,6 +44,7 @@ export default async function globalSetup(): Promise<void> {
   await buildRollOwnTarget(root);
   execFileSync("npx", ["eve", "build"], { cwd: root, stdio: "inherit" });
   await prewarmJustBashTemplate(root);
+  console.log(`integration global-setup: total ${((Date.now() - setupStartedAt) / 1000).toFixed(1)}s (oe:build + two eve builds + two prewarms, all serial).`);
 }
 
 async function buildRollOwnTarget(root: string): Promise<void> {
