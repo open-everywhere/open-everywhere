@@ -1,10 +1,11 @@
 import { type AuditWireEntry } from "./audit-read.js";
 import {
-  sleep, dS, makeWant, createRecorder, createInjector, createAuditReader, readToolCalls, sessionMatrix,
+  sleep, dS, makeWant, createRecorder, createInjector, createAuditReader, readToolCalls, sessionMatrix, scoreWithheldPair,
   type InjectBody, type Injected,
 } from "./window-harness.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import { withheldFromGrain } from "../../agent/access/window-gate-manifest.js";
+import { LEAN_SEAT_TOOLS } from "../../agent/access/lean-seat.js";
 import { parseWindowToken } from "../../agent/channels/window-key.js";
 import { unifiedDomainSessionKey } from "../../agent/channels/unified-supervisor.js";
 import { sourceScopedToolsEnabled } from "../../agent/access/source-scoped-mount.js";
@@ -37,6 +38,7 @@ const A_REPLY = "reply.post";
 const A_NO_REPLY = "unified.no_reply";
 const WIDE_HANDS = ["bash", "checkout_repo", "open_pull_request", "web_fetch", "write_file"];
 const withheldStanding = new Set(withheldFromGrain("standing"));
+const leanKeep = [...LEAN_SEAT_TOOLS].filter((n) => !withheldStanding.has(n)).sort();
 
 const { results, record } = createRecorder();
 const injectRaw = createInjector(TARGET, INJECT);
@@ -84,17 +86,26 @@ function unarmedReason(e: unknown, surfaceKey: string): string | null {
 const gatedRowFor = (rows: readonly AuditWireEntry[], wakeId: string): AuditWireEntry | null =>
   rows.find((r) => r.action === A_GATED && dS(r, "wakeId") === wakeId) ?? null;
 
+const gatedRowsFor = (rows: readonly AuditWireEntry[], wakeId: string): { grainRow: AuditWireEntry | null; leanRow: AuditWireEntry | null } => {
+  const matches = rows.filter((r) => r.action === A_GATED && dS(r, "wakeId") === wakeId);
+  return {
+    grainRow: matches.find((r) => dS(r, "reason") === undefined) ?? null,
+    leanRow: matches.find((r) => dS(r, "reason") === "lean-seat") ?? null,
+  };
+};
+
 const sessionJoinRowsFor = (rows: readonly AuditWireEntry[], wakeId: string): AuditWireEntry[] =>
   rows.filter((r) => (r.action === A_REPLY || r.action === A_NO_REPLY) && dS(r, "wakeId") === wakeId);
 
-async function pollForGated(sinceIso: string, wakeId: string, timeoutMs: number): Promise<AuditWireEntry | null> {
+async function pollForGatedPair(sinceIso: string, wakeId: string, timeoutMs: number): Promise<{ grainRow: AuditWireEntry | null; leanRow: AuditWireEntry | null }> {
   const deadline = Date.now() + timeoutMs;
+  let pair: { grainRow: AuditWireEntry | null; leanRow: AuditWireEntry | null } = { grainRow: null, leanRow: null };
   while (Date.now() < deadline) {
     await sleep(POLL_MS);
-    const g = gatedRowFor(await rowsSince(sinceIso), wakeId);
-    if (g) return g;
+    pair = gatedRowsFor(await rowsSince(sinceIso), wakeId);
+    if (pair.grainRow && pair.leanRow) return pair;
   }
-  return null;
+  return pair;
 }
 
 async function pollForSession(sinceIso: string, wakeId: string, timeoutMs: number): Promise<{ sessionId: string | null; via: string | null }> {
@@ -144,25 +155,32 @@ async function w1(): Promise<void> {
   if (!shape.ok) {
     return record("W1", "FAIL", `the REAL solo path did not re-key the window: ${shape.detail}. Dispatched token: ${inj.token}. (This is the whole topology — supervisorGrainFor → windowModeFor → windowId = surfaceKey → supervisorTokenForGrain's explicit :win: form.)`);
   }
-  const g = await pollForGated(since, inj.wakeId, GATE_TIMEOUT_MS);
-  if (!g) {
+  const { grainRow, leanRow } = await pollForGatedPair(since, inj.wakeId, GATE_TIMEOUT_MS);
+  if (!grainRow && !leanRow) {
     const ev = await ranEvidence(since, inj.wakeId);
     if (ev.length === 0) {
       return record("W1", "FAIL", `NO turn.tool_gated row AND no audit activity of any kind for wake ${inj.wakeId} within ${GATE_TIMEOUT_MS}ms — consistent with the solo session never starting, not with a gating decision. ${readFailed() ? "NB an audit read FAILED during this run, so this may be an observability failure rather than a dead session." : ""}`);
     }
     return record("W1", "FAIL", `the solo session RAN (audit: ${ev.join(",")}) but emitted NO turn.tool_gated row for wake ${inj.wakeId} — a solo window was NOT narrowed. A solo window is a standing watcher and MUST narrow; the "sources.length===1 ⇒ full toolset" idea in window-capability-e2e-spec.md §2(b) is explicitly NOT what ships.`);
   }
-  const withheld = (g.detail?.withheld as string[]) ?? [];
-  const grain = dS(g, "grain");
-  const missingWide = WIDE_HANDS.filter((w) => !withheld.includes(w));
-  const setMatch = withheld.length === withheldStanding.size && withheld.every((w) => withheldStanding.has(w));
-  if (grain !== "standing" || missingWide.length > 0 || !setMatch) {
-    return record("W1", "FAIL", `gated row present but grain=${grain}, withheld=[${withheld.join(",")}] (missing wide-hands: ${missingWide.join(",") || "none"}; manifest-match=${setMatch})`);
+  if (!grainRow) {
+    return record("W1", "FAIL", `the LEAN-SEAT row landed for wake ${inj.wakeId} but the GRAIN gate row (no reason) never did within ${GATE_TIMEOUT_MS}ms — the MUST-WITHHOLD wall cannot be scored`);
   }
-  const sid = dS(g, "sessionId");
+  if (!leanRow) {
+    return record("W1", "FAIL", `the GRAIN gate row landed for wake ${inj.wakeId} but the LEAN-SEAT row (reason=lean-seat) never did within ${GATE_TIMEOUT_MS}ms — the MUST-KEEP wall cannot be scored`);
+  }
+  const grainWithheld = (grainRow.detail?.withheld as string[]) ?? [];
+  const leanWithheld = (leanRow.detail?.withheld as string[]) ?? [];
+  const grain = dS(grainRow, "grain");
+  const missingWide = WIDE_HANDS.filter((w) => !grainWithheld.includes(w));
+  const verdict = scoreWithheldPair(grainWithheld, leanWithheld, [...withheldStanding], leanKeep);
+  if (grain !== "standing" || missingWide.length > 0 || !verdict.ok) {
+    return record("W1", "FAIL", `gated rows present (grain=${grain}) — missing wide-hands: ${missingWide.join(",") || "none"}; manifest names NOT withheld: ${verdict.missing.join(",") || "none"}; speak/delegate roster wrongly withheld: ${verdict.cutKeep.join(",") || "none"}; grain-withheld=[${grainWithheld.join(",")}]; lean-withheld=[${leanWithheld.join(",")}]`);
+  }
+  const sid = dS(leanRow, "sessionId") ?? dS(grainRow, "sessionId");
   const calls = sid ? await readToolCalls(TARGET, READ, sid, { paged: true, sinceIso: since }) : null;
   const leaked = (calls ?? []).filter((c) => WIDE_HANDS.includes(c.name)).map((c) => c.name);
-  record("W1", "PASS", `the REAL solo topology re-keyed AND narrowed — the dispatch resolved a per-channel window (${shape.detail}) through supervisorGrainFor's solo arm (nothing here passed a soloWindowId selector: the token came from the \`oe-domain::${SLACK_A}\` registry row, which only exists because windowedSupervisorEnabled admitted the channel), and its seat is grain=standing with all ${withheld.length} manifest-withheld tools absent incl. bash/checkout_repo/open_pull_request. Session ${sid ?? "?"} tools=[${[...new Set((calls ?? []).map((c) => c.name))].join(",") || "none"}]${calls === null ? " (transcript UNREADABLE — the leak check could not run)" : leaked.length ? ` ⚠ LEAKED ${leaked.join(",")}` : " (no wide-hands invoked)"}.`);
+  record("W1", "PASS", `the REAL solo topology re-keyed AND narrowed — the dispatch resolved a per-channel window (${shape.detail}) through supervisorGrainFor's solo arm (nothing here passed a soloWindowId selector: the token came from the \`oe-domain::${SLACK_A}\` registry row, which only exists because windowedSupervisorEnabled admitted the channel), and its seat is grain=standing with all ${grainWithheld.length} manifest-withheld tools absent incl. bash/checkout_repo/open_pull_request (lean-seat withheld ${leanWithheld.length} keeps the whole speak/delegate roster intact: ${leanKeep.join(",")}; surplus ${verdict.surplus.length} beyond the manifest — INFORMATION, not a leak). Session ${sid ?? "?"} tools=[${[...new Set((calls ?? []).map((c) => c.name))].join(",") || "none"}]${calls === null ? " (transcript UNREADABLE — the leak check could not run)" : leaked.length ? ` ⚠ LEAKED ${leaked.join(",")}` : " (no wide-hands invoked)"}.`);
 }
 
 interface Leg { tag: string; surfaceKey: string; sessionId: string | null; via: string | null; wakeId: string }
