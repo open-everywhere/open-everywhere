@@ -109,6 +109,16 @@ const bundles: Bundle[] = [
     ],
   }),
 
+  defineBundle({
+    name: "e2e-teams-channel-fixture",
+    resourceGrants: [
+      {
+        connector: "teams",
+        resources: ["teams:channel/19-0exampleTeamsChannel00000000000000001-thread.tacv2"],
+      },
+    ],
+  }),
+
 ];
 
 const bindings: Binding[] = [
@@ -129,6 +139,8 @@ const bindings: Binding[] = [
   defineBinding({ bundle: "e2e-taint-floor-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
 
   defineBinding({ bundle: "e2e-teams-person-fixture", scope: { level: "domain", domain: "e2e-unified" } }),
+
+  defineBinding({ bundle: "e2e-teams-channel-fixture", scope: { level: "domain", domain: "e2e-unified" } }),
 
   defineBinding({
     bundle: "notion-connectors",
