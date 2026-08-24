@@ -31,6 +31,12 @@ const catalogues: ConnectorCredentials[] = [
         endpoints: { hosts: ["api.notion.com"], pathPrefixes: ["/v1/blocks/"], methods: ["GET"] },
       },
       { id: "user-oauth", type: "user-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp") },
+      {
+        id: "user-oauth-rest",
+        type: "user-oauth",
+        home: vercelConnectorHome("api.notion.com/rest"),
+        endpoints: { hosts: ["api.notion.com"], pathPrefixes: ["/v1/"], methods: ["GET"] },
+      },
     ],
   }),
 
