@@ -14,7 +14,7 @@ export type LooseApproval = ((ctx: any) => any) | { readonly request: (ctx: any)
 import { bindFrom, windowGrainOf, currentWakeId, currentWindowToken, deploymentOrg, FIRE_UNATTENDED_ATTR, type BindableContext, type WindowGrain } from "../identity/binding.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
 import { classifySessionId } from "../channels/window-key.js";
-import { registerReplayModelProjection } from "./untrusted-projection.js";
+import { registerReplayModelProjection, setVariantProjectedName } from "./untrusted-projection.js";
 import { WINDOW_GATED_TOOLS, withheldFromGrain, FULL_KIT } from "./window-gate-manifest.js";
 import { allowedOnRestrictedJobWake, jobFireStamped, resolveJobWakePosture } from "./job-posture.js";
 import { isJobSession, jobWakeEscalated } from "./job-session-state.js";
@@ -367,6 +367,7 @@ function installVariants(mountedName: string, variants: Readonly<Record<string, 
       return project.call(entry, out);
     }) as ReplayCallback;
   }
+  setVariantProjectedName(mountedName, entryKeys.length > 0 && entryKeys.every((k) => typeof variants[k].toModelOutput === "function"));
   const reg = stepRegistry();
   for (const entryKey of entryKeys) {
     const entry = variants[entryKey];
