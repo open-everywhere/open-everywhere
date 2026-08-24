@@ -3,16 +3,16 @@ import { generateKeyPairSync } from "node:crypto";
 import {
   registerConfig,
   CONVERSATION_WRITE_PERMISSIONS,
+  entityActionFn,
   type BindableContext,
   type PrFetchFn,
+  type RepoCapability,
   type UnifiedWakeOrigin,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerGithubProvider } from "../agent/register.js";
 import { githubReadAdapter } from "../agent/channels/github-read.js";
 import { githubPostArm, _resetGitHubInstallationTokenCache } from "../agent/channels/github-post-arm.js";
 import { buildGitHubAuth } from "../agent/channels/github-identity.js";
-import { setGithubIssueState, assignGithubIssue, addGithubIssueLabel } from "@open-everywhere/core/agent/scm/issue-actions.js";
-import type { RepoCapability } from "@open-everywhere/core/agent/access/repo-capabilities.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -288,34 +288,26 @@ const REVIEW_12 = [{ id: 555, body: "this line", user: { login: "bob", type: "Us
   }
 }
 
+const SET_STATE = entityActionFn("github", "setState")!;
+const ASSIGN = entityActionFn("github", "assign")!;
+const ADD_LABEL = entityActionFn("github", "addLabel")!;
 {
-  function restTransport(): { fn: PrFetchFn; calls: { method: string; url: string }[] } {
-    const calls: { method: string; url: string }[] = [];
-    const fn: PrFetchFn = async (url, init) => {
-      calls.push({ method: init.method, url });
-      return { ok: true, status: 200, text: async () => "{}", json: async () => ({}) };
-    };
-    return { fn, calls };
-  }
-
   async function driveTicketActions(
     capabilities: readonly RepoCapability[],
-  ): Promise<{ mints: Permissions[]; perVerb: { label: string; calls: { method: string; url: string }[] }[] }> {
+  ): Promise<{ mints: Permissions[]; perVerb: { label: string; call: { method: string; url: string } }[] }> {
     _resetGitHubInstallationTokenCache();
     const { rec, restore } = recordGlobalFetch();
     try {
-      const state = restTransport();
-      await setGithubIssueState("acme/api#47", "closed", { fetchFn: state.fn, capabilities });
-      const assignee = restTransport();
-      await assignGithubIssue("acme/api#47", "bob", { fetchFn: assignee.fn, capabilities });
-      const label = restTransport();
-      await addGithubIssueLabel("acme/api#47", "documentation", { fetchFn: label.fn, capabilities });
+      await SET_STATE("acme/api#47", "closed", undefined, capabilities);
+      await ASSIGN("acme/api#47", "bob", undefined, capabilities);
+      await ADD_LABEL("acme/api#47", "documentation", undefined, capabilities);
+      ok(rec.calls.length === 3, "the three verbs made exactly one REST call each");
       return {
         mints: rec.mints,
         perVerb: [
-          { label: "set_state", calls: state.calls },
-          { label: "assign", calls: assignee.calls },
-          { label: "add_label", calls: label.calls },
+          { label: "set_state", call: rec.calls[0]! },
+          { label: "assign", call: rec.calls[1]! },
+          { label: "add_label", call: rec.calls[2]! },
         ],
       };
     } finally {
@@ -334,17 +326,15 @@ const REVIEW_12 = [{ id: 555, body: "this line", user: { login: "bob", type: "Us
         "🔴 with no capability, the mint body is exactly ISSUE_WRITE_PERMISSIONS — unchanged from before OPE-1024",
       );
     }
-    for (const { label, calls } of perVerb) {
-      for (const call of calls) {
-        const path = pathOf(call.url);
-        const row = ENDPOINTS.find((r) => r.method === call.method && r.match.test(path));
-        ok(row !== undefined, `default ${label}: ${call.method} ${path} is named in the endpoint table`);
-        if (!row) continue;
-        ok(
-          shortfall({ issues: "write", metadata: "read" }, row).join() === "pull_requests:write",
-          `🔴 default ${label}: ${call.method} ${path} is REFUSED for lack of pull_requests:write — the exact a live run 403 (OPE-1021)`,
-        );
-      }
+    for (const { label, call } of perVerb) {
+      const path = pathOf(call.url);
+      const row = ENDPOINTS.find((r) => r.method === call.method && r.match.test(path));
+      ok(row !== undefined, `default ${label}: ${call.method} ${path} is named in the endpoint table`);
+      if (!row) continue;
+      ok(
+        shortfall({ issues: "write", metadata: "read" }, row).join() === "pull_requests:write",
+        `🔴 default ${label}: ${call.method} ${path} is REFUSED for lack of pull_requests:write — the exact a live run 403 (OPE-1021)`,
+      );
     }
     passed++;
   }
@@ -360,8 +350,8 @@ const REVIEW_12 = [{ id: 555, body: "this line", user: { login: "bob", type: "Us
       );
       ok(mint.contents === undefined, "…and NO contents: pr-admin still cannot push code");
     }
-    for (const [i, { label, calls }] of perVerb.entries()) {
-      assertCovered(mints[i]!, calls, `pr-admin: ${label}`);
+    for (const [i, { label, call }] of perVerb.entries()) {
+      assertCovered(mints[i]!, [call], `pr-admin: ${label}`);
     }
     passed++;
   }
