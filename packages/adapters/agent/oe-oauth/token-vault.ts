@@ -1,13 +1,18 @@
 import type { EncryptedKvVault } from "@open-everywhere/core/agent/adapter-api.js";
-import { encryptedKvVault, OE_OAUTH_CALLBACK_PATH } from "@open-everywhere/core/agent/adapter-api.js";
-import type { OeOauthProviderConfig } from "./config.js";
+import { encryptedKvVault, getSecretVia, OE_OAUTH_CALLBACK_PATH } from "@open-everywhere/core/agent/adapter-api.js";
+import { isStaticConfidential, OE_OAUTH_MODE_STATIC, type OeOauthProviderConfig, type OeOauthStaticProviderConfig } from "./config.js";
 import {
   discoverEndpoints,
   registerClient,
   buildAuthorizationUrl,
+  buildStaticAuthorizationUrl,
   exchangeCode,
+  exchangeCodeConfidential,
   refreshToken,
+  refreshTokenConfidential,
   revokeToken,
+  revokeTokenConfidential,
+  type ConfidentialClient,
   type OAuthFetch,
   type OAuthTokenResponse,
 } from "./oauth-client.js";
@@ -28,13 +33,30 @@ interface DcrClientRecord {
   readonly registeredAt: number;
 }
 
+interface StaticClientRecord {
+  readonly mode: typeof OE_OAUTH_MODE_STATIC;
+  readonly clientId: string;
+  readonly authorizationEndpoint: string;
+  readonly tokenEndpoint: string;
+  readonly revocationEndpoint?: string;
+  readonly scopes?: readonly string[];
+  readonly authorizeParams?: Readonly<Record<string, string>>;
+}
+
+type ClientRecord = DcrClientRecord | StaticClientRecord;
+
+function isStaticClient(rec: ClientRecord): rec is StaticClientRecord {
+  return (rec as StaticClientRecord).mode === OE_OAUTH_MODE_STATIC;
+}
+
 interface PendingRecord {
   readonly providerRef: string;
   readonly subject: OeOauthSubject;
   readonly pkceVerifier: string;
   readonly tokenEndpoint: string;
   readonly clientId: string;
-  readonly resource: string;
+  readonly resource?: string;
+  readonly mode?: typeof OE_OAUTH_MODE_STATIC;
   readonly redirectUri: string;
   readonly scopes?: readonly string[];
   readonly createdAt: number;
@@ -80,6 +102,7 @@ export interface OeOauthVaultDeps {
   readonly expirySkewMs?: number;
   readonly newClaimId?: () => string;
   readonly sleep?: (ms: number) => Promise<void>;
+  readonly resolveSecret?: (broker: string | undefined, ref: string) => Promise<string>;
 }
 
 function subjectKey(subject: OeOauthSubject): string {
@@ -105,6 +128,7 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
   const skew = deps.expirySkewMs ?? DEFAULT_EXPIRY_SKEW_MS;
   const newClaimId = deps.newClaimId ?? (() => randomUUID());
   const sleep = deps.sleep ?? realSleep;
+  const resolveSecret = deps.resolveSecret ?? ((broker: string | undefined, ref: string) => getSecretVia(broker, ref));
 
   const dcrRef = (providerRef: string) => `oe-oauth:dcr:${providerRef}`;
   const pendRef = (state: string) => `oe-oauth:pend:${state}`;
@@ -134,6 +158,7 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
     const existing = await readJson<DcrClientRecord>(dcrRef(providerRef));
     if (existing && !dcrRecordNeedsBackfill(existing)) return existing;
     const cfg = providerConfig(providerRef);
+    if (isStaticConfidential(cfg)) throw new Error(`connection "${providerRef}": declares the "${OE_OAUTH_MODE_STATIC}" mode, which registers no dynamic client.`);
     return vault.withLock(dcrRef(providerRef), async () => {
       const again = await readJson<DcrClientRecord>(dcrRef(providerRef));
       if (again && !dcrRecordNeedsBackfill(again)) return again;
@@ -174,6 +199,58 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
     });
   }
 
+  function staticClient(cfg: OeOauthStaticProviderConfig): StaticClientRecord {
+    return {
+      mode: OE_OAUTH_MODE_STATIC,
+      clientId: cfg.clientId,
+      authorizationEndpoint: cfg.authorizationEndpoint,
+      tokenEndpoint: cfg.tokenEndpoint,
+      ...(cfg.revocationEndpoint ? { revocationEndpoint: cfg.revocationEndpoint } : {}),
+      ...(cfg.scopes ? { scopes: cfg.scopes } : {}),
+      ...(cfg.authorizeParams ? { authorizeParams: cfg.authorizeParams } : {}),
+    };
+  }
+
+  async function ensureClient(providerRef: string): Promise<ClientRecord> {
+    const cfg = providers.get(providerRef);
+    return cfg !== undefined && isStaticConfidential(cfg) ? staticClient(cfg) : ensureDcrClient(providerRef);
+  }
+
+  async function confidentialClientFor(cfg: OeOauthStaticProviderConfig): Promise<ConfidentialClient> {
+    const secret = await resolveSecret(cfg.clientSecretBroker, cfg.clientSecretRef);
+    if (typeof secret !== "string" || secret === "") {
+      throw new Error(
+        `connection "${cfg.ref}": the OAuth client secret at ref "${cfg.clientSecretRef}" (broker "${cfg.clientSecretBroker}") has no stored value — ` +
+          `store it with \`oe secret set ${cfg.clientSecretRef}\` before this connection can mint a token.`,
+      );
+    }
+    return {
+      clientId: cfg.clientId,
+      clientSecret: secret,
+      bodyEncoding: cfg.bodyEncoding,
+      ...(cfg.tokenHeaders ? { headers: cfg.tokenHeaders } : {}),
+    };
+  }
+
+  async function exchangeForPending(pending: PendingRecord, code: string): Promise<OAuthTokenResponse> {
+    const cfg = providers.get(pending.providerRef);
+    const startedStatic = pending.mode === OE_OAUTH_MODE_STATIC;
+    if (cfg !== undefined && isStaticConfidential(cfg) !== startedStatic) {
+      throw new Error(
+        `connection "${pending.providerRef}": this authorization started as ${startedStatic ? "a static confidential client" : "a public PKCE client"}, ` +
+          `but the provider config no longer declares that mode — start again.`,
+      );
+    }
+    if (startedStatic) {
+      if (cfg === undefined || !isStaticConfidential(cfg)) {
+        throw new Error(`connection "${pending.providerRef}": no static confidential provider config, so the client that started this authorization cannot be resolved — start again.`);
+      }
+      return exchangeCodeConfidential(pending.tokenEndpoint, { code, redirectUri: pending.redirectUri }, await confidentialClientFor(cfg), doFetch);
+    }
+    if (!pending.resource) throw new Error(`connection "${pending.providerRef}": this authorization record carries no resource indicator — start again.`);
+    return exchangeCode(pending.tokenEndpoint, { code, verifier: pending.pkceVerifier, clientId: pending.clientId, redirectUri: pending.redirectUri, resource: pending.resource }, doFetch);
+  }
+
   function isExpired(rec: TokenRecord): boolean {
     return rec.expiresAt !== undefined && now() >= rec.expiresAt - skew;
   }
@@ -196,11 +273,17 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
     return vault.withLock(ref, async () => {
       const rec = await readJson<TokenRecord>(ref);
       if (rec) {
-        const client = await readJson<DcrClientRecord>(dcrRef(providerRef));
+        const cfg = providers.get(providerRef);
+        const client: ClientRecord | null = cfg && isStaticConfidential(cfg) ? staticClient(cfg) : await readJson<DcrClientRecord>(dcrRef(providerRef));
         const token = rec.refreshToken ?? rec.accessToken;
         if (client?.revocationEndpoint && token) {
           try {
-            await revokeToken(client.revocationEndpoint, { token, clientId: client.clientId, tokenTypeHint: rec.refreshToken ? "refresh_token" : "access_token" }, doFetch);
+            const hint = rec.refreshToken ? ("refresh_token" as const) : ("access_token" as const);
+            if (cfg && isStaticConfidential(cfg)) {
+              await revokeTokenConfidential(client.revocationEndpoint, { token, tokenTypeHint: hint }, await confidentialClientFor(cfg), doFetch);
+            } else {
+              await revokeToken(client.revocationEndpoint, { token, clientId: client.clientId, tokenTypeHint: hint }, doFetch);
+            }
           } catch (e) {
             console.warn(`[oe-oauth] revocation at the provider failed for "${providerRef}" (purging locally anyway): ${e instanceof Error ? e.message : String(e)}`);
           }
@@ -264,33 +347,42 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
     },
 
     async startAuthorization(providerRef: string, subject: OeOauthSubject, options: { readonly expiresInMs?: number }): Promise<{ url: string }> {
-      const client = await ensureDcrClient(providerRef);
+      const client = await ensureClient(providerRef);
       const redirectUri = redirectUriOf();
       if (!redirectUri) throw new Error(`connection "${providerRef}": OE_PUBLIC_BASE_URL is unset — cannot build a redirect_uri.`);
-      const pkce = newPkce();
       const state = newState();
+      const pkce = isStaticClient(client) ? { verifier: "", challenge: "" } : newPkce();
       const pending: PendingRecord = {
         providerRef,
         subject,
         pkceVerifier: pkce.verifier,
         tokenEndpoint: client.tokenEndpoint,
         clientId: client.clientId,
-        resource: client.resource,
+        ...(isStaticClient(client) ? { mode: OE_OAUTH_MODE_STATIC } : { resource: client.resource }),
         redirectUri,
         ...(client.scopes ? { scopes: client.scopes } : {}),
         createdAt: now(),
         expiresAt: now() + (options.expiresInMs ?? pendingTtl),
       };
       await vault.write(pendRef(state), JSON.stringify(pending), { connector: providerRef });
-      const url = buildAuthorizationUrl({
-        authorizationEndpoint: client.authorizationEndpoint,
-        clientId: client.clientId,
-        redirectUri,
-        state,
-        codeChallenge: pkce.challenge,
-        resource: client.resource,
-        ...(client.scopes ? { scopes: client.scopes } : {}),
-      });
+      const url = isStaticClient(client)
+        ? buildStaticAuthorizationUrl({
+            authorizationEndpoint: client.authorizationEndpoint,
+            clientId: client.clientId,
+            redirectUri,
+            state,
+            ...(client.scopes ? { scopes: client.scopes } : {}),
+            ...(client.authorizeParams ? { extraParams: client.authorizeParams } : {}),
+          })
+        : buildAuthorizationUrl({
+            authorizationEndpoint: client.authorizationEndpoint,
+            clientId: client.clientId,
+            redirectUri,
+            state,
+            codeChallenge: pkce.challenge,
+            resource: client.resource,
+            ...(client.scopes ? { scopes: client.scopes } : {}),
+          });
       try {
         await sweepExpiredPending();
       } catch (e) {
@@ -304,11 +396,7 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
       if (!pending) throw new Error("unknown or expired authorization state");
       if (pending.consumed) throw new Error("authorization state already used");
       if (now() > pending.expiresAt) throw new Error("authorization state expired");
-      const tok = await exchangeCode(
-        pending.tokenEndpoint,
-        { code, verifier: pending.pkceVerifier, clientId: pending.clientId, redirectUri: pending.redirectUri, resource: pending.resource },
-        doFetch,
-      );
+      const tok = await exchangeForPending(pending, code);
       await storeToken(pending.providerRef, pending.subject, tok);
       await vault.write(pendRef(state), JSON.stringify({ ...pending, consumed: true, pkceVerifier: "" }), { connector: pending.providerRef });
       return { providerRef: pending.providerRef };
@@ -325,19 +413,30 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
         if (!rec) throw new OeOauthNeedsConsentError(providerRef, subject);
         if (!isExpired(rec)) return rec.accessToken;
         if (!rec.refreshToken) throw new OeOauthNeedsReconsentError(providerRef, subject, "no refresh token stored");
+        const presentedRefresh = rec.refreshToken;
 
         const claimId = newClaimId();
         const won = await vault.claim(ref, claimId, now(), CLAIM_LEASE_TTL_MS);
         if (won) {
           try {
-            const client = await ensureDcrClient(providerRef);
+            const cfg = providers.get(providerRef);
             let tok: OAuthTokenResponse;
             try {
-              tok = await refreshToken(
-                client.tokenEndpoint,
-                { refreshToken: rec.refreshToken, clientId: client.clientId, resource: client.resource, ...(client.scopes ? { scopes: client.scopes } : {}) },
-                doFetch,
-              );
+              if (cfg !== undefined && isStaticConfidential(cfg)) {
+                tok = await refreshTokenConfidential(
+                  cfg.tokenEndpoint,
+                  { refreshToken: presentedRefresh, ...(cfg.scopes ? { scopes: cfg.scopes } : {}) },
+                  await confidentialClientFor(cfg),
+                  doFetch,
+                );
+              } else {
+                const client = await ensureDcrClient(providerRef);
+                tok = await refreshToken(
+                  client.tokenEndpoint,
+                  { refreshToken: presentedRefresh, clientId: client.clientId, resource: client.resource, ...(client.scopes ? { scopes: client.scopes } : {}) },
+                  doFetch,
+                );
+              }
             } catch (e) {
               if (isInvalidGrant(e)) {
                 const rec2 = await readJson<TokenRecord>(ref);

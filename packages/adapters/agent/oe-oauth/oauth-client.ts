@@ -113,12 +113,7 @@ export function buildAuthorizationUrl(input: {
   return u.toString();
 }
 
-async function postToken(tokenEndpoint: string, form: Record<string, string>, fetchImpl: OAuthFetch): Promise<OAuthTokenResponse> {
-  const res = await fetchImpl(tokenEndpoint, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-    body: new URLSearchParams(form).toString(),
-  });
+async function readTokenResponse(tokenEndpoint: string, res: Response): Promise<OAuthTokenResponse> {
   if (!res.ok) {
     const { oauthError } = await readError(res);
     throw new OeOauthError(`token endpoint ${tokenEndpoint} returned ${res.status}${oauthError ? ` (${oauthError})` : ""}`, {
@@ -129,6 +124,15 @@ async function postToken(tokenEndpoint: string, form: Record<string, string>, fe
   const body = (await res.json().catch(() => ({}))) as OAuthTokenResponse;
   if (typeof body.access_token !== "string" || !body.access_token) throw new OeOauthError(`token endpoint ${tokenEndpoint} returned no access_token`);
   return body;
+}
+
+async function postToken(tokenEndpoint: string, form: Record<string, string>, fetchImpl: OAuthFetch): Promise<OAuthTokenResponse> {
+  const res = await fetchImpl(tokenEndpoint, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+    body: new URLSearchParams(form).toString(),
+  });
+  return readTokenResponse(tokenEndpoint, res);
 }
 
 export function exchangeCode(
@@ -163,6 +167,113 @@ export async function revokeToken(
       client_id: input.clientId,
       ...(input.tokenTypeHint ? { token_type_hint: input.tokenTypeHint } : {}),
     }).toString(),
+  });
+  if (!res.ok) {
+    const { oauthError } = await readError(res);
+    throw new OeOauthError(`revocation endpoint ${revocationEndpoint} returned ${res.status}${oauthError ? ` (${oauthError})` : ""}`, {
+      httpStatus: res.status,
+      ...(oauthError ? { oauthError } : {}),
+    });
+  }
+}
+
+export interface ConfidentialClient {
+  readonly clientId: string;
+  readonly clientSecret: string;
+  readonly bodyEncoding: "json" | "form";
+  readonly headers?: Readonly<Record<string, string>>;
+}
+
+export function basicAuthHeader(clientId: string, clientSecret: string): string {
+  return `Basic ${Buffer.from(`${clientId}:${clientSecret}`, "utf-8").toString("base64")}`;
+}
+
+export function buildStaticAuthorizationUrl(input: {
+  readonly authorizationEndpoint: string;
+  readonly clientId: string;
+  readonly redirectUri: string;
+  readonly state: string;
+  readonly scopes?: readonly string[];
+  readonly extraParams?: Readonly<Record<string, string>>;
+}): string {
+  const u = new URL(input.authorizationEndpoint);
+  for (const [k, v] of Object.entries(input.extraParams ?? {})) u.searchParams.set(k, v);
+  u.searchParams.set("response_type", "code");
+  u.searchParams.set("client_id", input.clientId);
+  u.searchParams.set("redirect_uri", input.redirectUri);
+  u.searchParams.set("state", input.state);
+  if (input.scopes && input.scopes.length) u.searchParams.set("scope", input.scopes.join(" "));
+  return u.toString();
+}
+
+function vendorHeaders(client: ConfidentialClient, owned: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(client.headers ?? {})) {
+    if (!owned.includes(name.toLowerCase())) out[name] = value;
+  }
+  return out;
+}
+
+const OWNED_TOKEN_HEADERS = ["accept", "content-type", "authorization"] as const;
+
+async function postTokenConfidential(
+  tokenEndpoint: string,
+  client: ConfidentialClient,
+  params: Record<string, string>,
+  fetchImpl: OAuthFetch,
+): Promise<Response> {
+  const headers: Record<string, string> = vendorHeaders(client, OWNED_TOKEN_HEADERS);
+  headers.accept = "application/json";
+  headers["content-type"] = client.bodyEncoding === "json" ? "application/json" : "application/x-www-form-urlencoded";
+  headers.authorization = basicAuthHeader(client.clientId, client.clientSecret);
+  return fetchImpl(tokenEndpoint, {
+    method: "POST",
+    headers,
+    body: client.bodyEncoding === "json" ? JSON.stringify(params) : new URLSearchParams(params).toString(),
+    redirect: "error",
+  });
+}
+
+export async function exchangeCodeConfidential(
+  tokenEndpoint: string,
+  input: { readonly code: string; readonly redirectUri: string },
+  client: ConfidentialClient,
+  fetchImpl: OAuthFetch,
+): Promise<OAuthTokenResponse> {
+  const res = await postTokenConfidential(tokenEndpoint, client, { grant_type: "authorization_code", code: input.code, redirect_uri: input.redirectUri }, fetchImpl);
+  return readTokenResponse(tokenEndpoint, res);
+}
+
+export async function refreshTokenConfidential(
+  tokenEndpoint: string,
+  input: { readonly refreshToken: string; readonly scopes?: readonly string[] },
+  client: ConfidentialClient,
+  fetchImpl: OAuthFetch,
+): Promise<OAuthTokenResponse> {
+  const res = await postTokenConfidential(
+    tokenEndpoint,
+    client,
+    { grant_type: "refresh_token", refresh_token: input.refreshToken, ...(input.scopes && input.scopes.length ? { scope: input.scopes.join(" ") } : {}) },
+    fetchImpl,
+  );
+  return readTokenResponse(tokenEndpoint, res);
+}
+
+export async function revokeTokenConfidential(
+  revocationEndpoint: string,
+  input: { readonly token: string; readonly tokenTypeHint?: "refresh_token" | "access_token" },
+  client: ConfidentialClient,
+  fetchImpl: OAuthFetch,
+): Promise<void> {
+  const headers: Record<string, string> = vendorHeaders(client, OWNED_TOKEN_HEADERS);
+  headers.accept = "application/json";
+  headers["content-type"] = "application/x-www-form-urlencoded";
+  headers.authorization = basicAuthHeader(client.clientId, client.clientSecret);
+  const res = await fetchImpl(revocationEndpoint, {
+    method: "POST",
+    headers,
+    body: new URLSearchParams({ token: input.token, ...(input.tokenTypeHint ? { token_type_hint: input.tokenTypeHint } : {}) }).toString(),
+    redirect: "error",
   });
   if (!res.ok) {
     const { oauthError } = await readError(res);

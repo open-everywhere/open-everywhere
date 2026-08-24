@@ -124,6 +124,25 @@ ok(
 }
 
 {
+  const notionCat = catalogues.find((c) => c.connector === "notion")!;
+  const rest = notionCat.credentials.find((cr) => cr.id === "user-oauth-rest");
+  ok(rest !== undefined, "the shipped notion catalogue declares the per-user REST credential 'user-oauth-rest'");
+  ok(rest?.type === "user-oauth", "…and it is PER-USER — an api-key here would spend the deployment's own integration under a person's name");
+  ok(rest?.endpoints !== undefined, "🔴 …and it declares `endpoints`, which the grant transport refuses to mint without");
+  ok(
+    credentialEndpointVerdict(rest?.endpoints, "https://api.notion.com/v1/blocks/abc/children", "GET").allowed,
+    "the real rules ADMIT the grantable verb's actual call shape (GET /v1/blocks/…/children) — the positive control that makes the refusals below mean something",
+  );
+  ok(!credentialEndpointVerdict(rest?.endpoints, "https://evil.example/v1/blocks/abc/children", "GET").allowed, "🔴 …and REFUSE a wrong-host call, which is what an unfenced credential would have allowed");
+  ok(!credentialEndpointVerdict(rest?.endpoints, "https://api.notion.com/v1/blocks/abc/children", "POST").allowed, "…and REFUSE a write: every grantable Notion verb today is a read");
+  ok(!credentialEndpointHostVerdict(rest?.endpoints, "https://mcp.notion.com/mcp").allowed, "…and REFUSE hosted MCP, which is the OTHER token family's host");
+
+  const mcpUser = notionCat.credentials.find((cr) => cr.id === "user-oauth");
+  ok(mcpUser !== undefined, "the MCP-family per-user credential 'user-oauth' still exists");
+  ok(JSON.stringify(mcpUser?.home) !== JSON.stringify(rest?.home), "…and the two per-user credentials are homed at DIFFERENT OAuth providers — two token families, two clients");
+}
+
+{
   const defined = definedConnectors(bundles);
   ok(defined.includes("notion"), "OPE-580 FIX: 'notion' is in the grant-connector VOCABULARY (definedConnectors reads the one list)");
   ok(!defined.includes("linear-mcp"), "…and the defined set is not a wildcard: an ungranted connector name is absent");

@@ -28,7 +28,7 @@ const RESOURCE = "https://mcp.test";
 const AS = "https://as.test";
 const TOKEN_URL = `${AS}/token`;
 const REG_URL = `${AS}/register`;
-const providers = new Map<string, OeOauthProviderConfig>([["notion", { ref: "notion", resource: RESOURCE }]]);
+const providers = new Map<string, OeOauthProviderConfig>([["notion", { mode: "discovery-dcr-pkce", ref: "notion", resource: RESOURCE }]]);
 const REDIRECT = "https://oe.example/oauth/v1/callback";
 
 function json(obj: unknown, status = 200): Response {
@@ -542,8 +542,8 @@ const tokRef = "oe-oauth:tok:notion:user:U1";
   {
     const calls: RevokeCall[] = [];
     const multi = new Map<string, OeOauthProviderConfig>([
-      ["notion", { ref: "notion", resource: RESOURCE }],
-      ["linear", { ref: "linear", resource: RESOURCE }],
+      ["notion", { mode: "discovery-dcr-pkce", ref: "notion", resource: RESOURCE }],
+      ["linear", { mode: "discovery-dcr-pkce", ref: "linear", resource: RESOURCE }],
     ]);
     const v = memVault();
     const { purge } = makeOeOauth(multi, { vault: v, fetch: purgeFetch({ revocation: true }, calls), redirectUri: () => REDIRECT });
