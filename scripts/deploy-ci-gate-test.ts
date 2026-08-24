@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 
 import type { ExecResult } from "./deploy/lib.js";
-import { classifyCheckRuns, decideCiGate, fetchCheckRunsForSha, runCiGate, type CheckRun } from "./deploy/ci-gate-lib.js";
+import {
+  classifyCheckRuns,
+  classifyHeavyJob,
+  decideCiGate,
+  fetchCheckRunsForSha,
+  HEAVY_JOB_NAME,
+  listFirstParentAncestors,
+  runCiGate,
+  walkBackForHeavyProof,
+  type CheckRun,
+} from "./deploy/ci-gate-lib.js";
 
 let checks = 0;
 const check = (label: string, fn: () => void | Promise<void>): Promise<void> | void => {
@@ -164,4 +174,197 @@ await check("runCiGate: a genuinely green response PASSES end to end", async () 
   assert.equal(decision.verdict, "pass");
 });
 
-console.log(`✓ deploy-ci-gate: ${checks} check(s) passed (classification, decision matrix, spawn-trap seam, fetch→decide — all offline)`);
+check("decideCiGate: a 'skipped' heavy job, with nothing else considered, REFUSES on its own", () => {
+  const decision = decideCiGate({
+    sha: SHA,
+    checkRuns: [GREEN[0], { name: HEAVY_JOB_NAME, status: "completed", conclusion: "skipped" }],
+    isTip: true,
+  });
+  assert.equal(decision.verdict, "refuse");
+});
+
+const A1 = "a1".repeat(20);
+const A2 = "b2".repeat(20);
+const A3 = "c3".repeat(20);
+
+check("classifyHeavyJob: success / skipped / red / pending / absent, read from the named check-run only", () => {
+  assert.deepEqual(classifyHeavyJob([{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "success" }]), { kind: "success" });
+  assert.deepEqual(classifyHeavyJob([{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "skipped" }]), { kind: "skipped" });
+  assert.deepEqual(classifyHeavyJob([{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "failure" }]), { kind: "red", conclusion: "failure" });
+  assert.deepEqual(classifyHeavyJob([{ name: HEAVY_JOB_NAME, status: "in_progress", conclusion: null }]), { kind: "pending" });
+  assert.deepEqual(classifyHeavyJob([GREEN[0]]), { kind: "absent" });
+  assert.deepEqual(classifyHeavyJob([]), { kind: "absent" });
+});
+
+function routedExec(fixture: { ancestors?: string[]; checkRuns?: Record<string, CheckRun[]>; diffs?: Record<string, string[]> }, calls: string[]) {
+  return async (command: string, args: string[]): Promise<ExecResult> => {
+    calls.push(`${command} ${args.join(" ")}`);
+    if (command === "gh") {
+      const m = /commits\/([0-9a-fA-F]+)\/check-runs/.exec(args[1] ?? "");
+      const sha = m?.[1];
+      const runs = sha ? fixture.checkRuns?.[sha] : undefined;
+      if (!runs) return { code: 1, stdout: "", stderr: `routedExec: no check-runs fixture for ${sha}` };
+      return { code: 0, stdout: JSON.stringify({ check_runs: runs }), stderr: "" };
+    }
+    if (command === "git" && args[0] === "rev-list") {
+      const shas = fixture.ancestors ?? [];
+      return { code: 0, stdout: `${shas.join("\n")}\n`, stderr: "" };
+    }
+    if (command === "git" && args[0] === "diff") {
+      const key = `${args[2]}..${args[3]}`;
+      const paths = fixture.diffs?.[key];
+      if (paths === undefined) return { code: 1, stdout: "", stderr: `routedExec: no diff fixture for ${key}` };
+      return { code: 0, stdout: paths.length ? `${paths.join("\n")}\n` : "", stderr: "" };
+    }
+    return { code: 1, stdout: "", stderr: `routedExec: unhandled ${command} ${args.join(" ")}` };
+  };
+}
+
+await check("walkBackForHeavyProof: PASSES when the nearest green ancestor's cumulative diff is entirely skippable", async () => {
+  const calls: string[] = [];
+  const exec = routedExec(
+    {
+      ancestors: [SHA, A1, A2],
+      checkRuns: {
+        [A1]: [{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "skipped" }],
+        [A2]: [{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "success" }],
+      },
+      diffs: { [`${A2}..${SHA}`]: [".claude/skills/example/SKILL.md", "docs/deploy/rollback.md"] },
+    },
+    calls,
+  );
+  const decision = await walkBackForHeavyProof({ sha: SHA, exec });
+  assert.equal(decision.verdict, "pass");
+  assert.match(decision.message, new RegExp(A2.slice(0, 12)));
+  assert.match(decision.message, /legitimately skipped/);
+});
+
+await check("walkBackForHeavyProof: REFUSES when the cumulative diff includes a runtime path — names it", async () => {
+  const calls: string[] = [];
+  const exec = routedExec(
+    {
+      ancestors: [SHA, A1, A2],
+      checkRuns: {
+        [A1]: [{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "skipped" }],
+        [A2]: [{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "success" }],
+      },
+      diffs: { [`${A2}..${SHA}`]: [".claude/skills/example/SKILL.md", "agent/agent.ts"] },
+    },
+    calls,
+  );
+  const decision = await walkBackForHeavyProof({ sha: SHA, exec });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /agent\/agent\.ts/);
+});
+
+await check("walkBackForHeavyProof: REFUSES immediately on a RED ancestor — never walks further back past it", async () => {
+  const calls: string[] = [];
+  const exec = routedExec(
+    {
+      ancestors: [SHA, A1, A2],
+      checkRuns: {
+        [A1]: [{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "failure" }],
+      },
+      diffs: {},
+    },
+    calls,
+  );
+  const decision = await walkBackForHeavyProof({ sha: SHA, exec });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /\bred\b/);
+  assert.equal(
+    calls.some((c) => c.includes(A2)),
+    false,
+    "must not have called gh/git for the ancestor past the red one",
+  );
+});
+
+await check("walkBackForHeavyProof: REFUSES when no green run is found within maxDepth (ambiguous, not a pass)", async () => {
+  const calls: string[] = [];
+  const exec = routedExec(
+    {
+      ancestors: [SHA, A1, A2],
+      checkRuns: {
+        [A1]: [{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "skipped" }],
+        [A2]: [{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "skipped" }],
+      },
+      diffs: {},
+    },
+    calls,
+  );
+  const decision = await walkBackForHeavyProof({ sha: SHA, exec, maxDepth: 2 });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /within 2 ancestor commit\(s\)/);
+});
+
+await check("listFirstParentAncestors: parses rev-list output, sha itself first", async () => {
+  const exec = async () => ({ code: 0, stdout: `${SHA}\n${A1}\n${A2}\n`, stderr: "" });
+  const result = await listFirstParentAncestors({ sha: SHA, count: 3, exec });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual(result.shas, [SHA, A1, A2]);
+});
+
+await check("listFirstParentAncestors: a spawn failure refuses (same OPE-1028 discipline as gh)", async () => {
+  const exec = async () => ({ code: 1, stdout: "", stderr: "", spawnError: "ENOENT: spawn git ENOENT" });
+  const result = await listFirstParentAncestors({ sha: SHA, count: 3, exec });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.reason, /could not run `git rev-list`/);
+});
+
+await check("runCiGate: end to end, a 'skipped' heavy job covered by a proven ancestor PASSES", async () => {
+  const calls: string[] = [];
+  const exec = routedExec(
+    {
+      checkRuns: {
+        [SHA]: [GREEN[0], { name: HEAVY_JOB_NAME, status: "completed", conclusion: "skipped" }],
+        [A1]: [{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "success" }],
+      },
+      ancestors: [SHA, A1],
+      diffs: { [`${A1}..${SHA}`]: ["AGENTS.md"] },
+    },
+    calls,
+  );
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec });
+  assert.equal(decision.verdict, "pass");
+});
+
+await check("runCiGate: a genuinely RED heavy job never triggers the walk-back (no git/gh calls made for it)", async () => {
+  const calls: string[] = [];
+  const exec = routedExec(
+    { checkRuns: { [SHA]: [GREEN[0], { name: HEAVY_JOB_NAME, status: "completed", conclusion: "failure" }] } },
+    calls,
+  );
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /red/);
+  assert.equal(
+    calls.filter((c) => c.startsWith("git ")).length,
+    0,
+    "a red heavy job must never trigger the walk-back's rev-list/diff calls",
+  );
+});
+
+await check("runCiGate: a 'skipped' heavy job alongside a non-green unit run never triggers the walk-back", async () => {
+  const calls: string[] = [];
+  const exec = routedExec(
+    {
+      checkRuns: {
+        [SHA]: [
+          { name: GREEN[0].name, status: "in_progress", conclusion: null },
+          { name: HEAVY_JOB_NAME, status: "completed", conclusion: "skipped" },
+        ],
+      },
+    },
+    calls,
+  );
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /in flight/);
+  assert.equal(
+    calls.filter((c) => c.startsWith("git ")).length,
+    0,
+    "the unit job being non-green must block the walk-back before any git call is made",
+  );
+});
+
+console.log(`✓ deploy-ci-gate: ${checks} check(s) passed (classification, decision matrix, spawn-trap seam, fetch→decide, walk-back — all offline)`);
