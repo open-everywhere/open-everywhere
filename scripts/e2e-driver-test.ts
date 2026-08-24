@@ -2,6 +2,7 @@ import { tmpdir } from "node:os";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { AuditWireEntry } from "../packages/core/scripts/e2e/audit-read.js";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
 let passed = 0;
@@ -84,7 +85,7 @@ const {
   createJudgeReporter,
   renderReportedJudgeSummary,
 } = await import("../packages/core/scripts/e2e/judge.js");
-const { SCENARIOS, skipCategory, skipReason, ScenarioSkip, isFillerAck, isPendingWorkHandoff, expensiveReasonError } =
+const { SCENARIOS, skipCategory, skipReason, ScenarioSkip, isFillerAck, isPendingWorkHandoff, expensiveReasonError, delegationHasReturned } =
   await import("../packages/core/scripts/e2e/scenarios.js");
 const { PENDING_WORK_FRAME } = await import("../packages/core/agent/channels/turn-delivery.js");
 const { emptySkipCounts, renderSkipBreakdown, SKIP_KINDS } = await import("../packages/core/scripts/e2e/skip-summary.js");
@@ -1561,6 +1562,78 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     const found = await driver.awaitAnyReply("782.0", { timeoutMs: 3_000, skip: (m) => isFillerAck(m.text) });
     ok(found.ts === folded.ts, "awaitAnyReply: resolves to the folded-into-edit message despite `skip` still matching its text (the OPE-1067 override reaches the real poll loop)");
   });
+}
+
+{
+  const row = (action: string, detail: Record<string, unknown>): AuditWireEntry => ({
+    ts: "2026-05-03T12:23:00.000Z",
+    org: "default",
+    platform: "slack",
+    workspace: "T0EXAMPLE",
+    action,
+    detail,
+  });
+
+  ok(
+    delegationHasReturned([row("delegation.task_started", { task: "t1", session: "s1" }), row("delegation.task_settled", { task: "t1", session: "s1", status: "completed" })]),
+    "delegationHasReturned: native started+settled pair (same task id) returns true",
+  );
+
+  ok(
+    !delegationHasReturned([row("delegation.task_started", { task: "t1", session: "s1" })]),
+    "delegationHasReturned: a started row with NO matching settled row is NOT a return (the OPE-1076 race window)",
+  );
+
+  ok(
+    !delegationHasReturned([row("delegation.task_started", { task: "t1", session: "s1" }), row("delegation.task_settled", { task: "OTHER-TASK", session: "s1", status: "completed" })]),
+    "delegationHasReturned: a settled row for a different task id does not satisfy the started row's join",
+  );
+
+  ok(
+    delegationHasReturned([row("task.spawned", { taskId: "rt1", parentSessionId: "s1" }), row("task.returned", { taskId: "rt1", sessionId: "w1" })]),
+    "delegationHasReturned: roll-own spawned+returned pair (same taskId) returns true",
+  );
+  ok(
+    !delegationHasReturned([row("task.spawned", { taskId: "rt1", parentSessionId: "s1" })]),
+    "delegationHasReturned: a roll-own spawned row with no matching returned row is NOT a return",
+  );
+
+  ok(!delegationHasReturned([]), "delegationHasReturned: an empty row set is not a return");
+  ok(
+    !delegationHasReturned([row("reply.post", { sessionId: "s1" }), row("browser.navigate", {})]),
+    "delegationHasReturned: unrelated rows (a reply ack, a browser op with no delegation join) are not a return",
+  );
+
+  ok(
+    !delegationHasReturned([row("delegation.task_started", { session: "s1" }), row("delegation.task_settled", { session: "s1", status: "completed" })]),
+    "delegationHasReturned: started/settled rows with NO task id on either side do not vacuously join",
+  );
+}
+
+{
+  const { pollOptional } = await import("../packages/core/scripts/e2e/poll.js");
+  const row = (action: string, detail: Record<string, unknown>): AuditWireEntry => ({
+    ts: "2026-05-03T12:23:00.000Z",
+    org: "default",
+    platform: "slack",
+    workspace: "T0EXAMPLE",
+    action,
+    detail,
+  });
+  const started = row("delegation.task_started", { task: "t1", session: "s1" });
+  const settled = row("delegation.task_settled", { task: "t1", session: "s1", status: "completed" });
+  const ticks: (readonly AuditWireEntry[])[] = [[started], [started], [started, settled]];
+  let call = 0;
+  const fetchRows = async (): Promise<readonly AuditWireEntry[]> => ticks[Math.min(call++, ticks.length - 1)];
+  const settledResult = await pollOptional(
+    async () => {
+      const rows = await fetchRows();
+      return delegationHasReturned(rows) ? true : undefined;
+    },
+    { timeoutMs: 30_000, initialDelayMs: 10, maxDelayMs: 10, what: "delegation settlement (test)" },
+  );
+  ok(settledResult === true, "F-ART leg-4 poll: delegationHasReturned only resolves the poll once the settled row lands on tick 3, not on the earlier started-only ticks");
+  ok(call >= 3, `F-ART leg-4 poll: the probe was re-polled through the unsettled ticks (called ${call} time(s), expected >=3) — it did not stop early on the started-only row`);
 }
 
 ok(SYNTHETIC_SLACK_ROUTE === PUBLIC_SLACK_ROUTE, "synthetic route literal matches slack-front's PUBLIC_SLACK_ROUTE");
