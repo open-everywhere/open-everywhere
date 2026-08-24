@@ -1,8 +1,16 @@
 import {
   classifyConnectorOp,
+  classifyConnectorOpTier,
   connectorOpName,
+  CONNECTOR_DESTRUCTIVE_VERBS,
+  CONNECTOR_READ_VERBS,
+  CONNECTOR_WRITE_VERBS,
   isConnectorOpTool,
+  parseQualifiedToolName,
+  TOOL_CONSEQUENCE,
+  type ConnectorOpTier,
 } from "../agent/access/consequence.js";
+import { WORKER_ONLY_TOOLS_STANDING, WORKER_ONLY_TOOLS_THREAD } from "../agent/access/worker-capability-index.generated.js";
 import { connectorOpApproval, connectorApprovalPolicy } from "../agent/connections/connector-auth.js";
 import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
 
@@ -59,5 +67,149 @@ registerSettings({ connectors: { opTiering: true } });
   ok((await on({ toolName: "notion__create_page", approvedTools: new Set<string>() } as never)) === "user-approval", "flag ON → tiered: a WRITE prompts");
 }
 resetSettingsForTest();
+
+function oracleTier(toolName: string): ConnectorOpTier {
+  let op = connectorOpName(toolName).toLowerCase();
+  const sep = toolName.indexOf("__");
+  if (sep > 0) {
+    const conn = toolName.slice(0, sep).toLowerCase();
+    if (op.startsWith(`${conn}-`) || op.startsWith(`${conn}_`)) op = op.slice(conn.length + 1);
+  }
+  let best: ConnectorOpTier | undefined;
+  for (const token of op.split(/[_-]/)) {
+    if (CONNECTOR_DESTRUCTIVE_VERBS.includes(token)) return "destructive";
+    if (CONNECTOR_WRITE_VERBS.includes(token)) best = "write";
+    else if (best === undefined && CONNECTOR_READ_VERBS.includes(token)) best = "read";
+  }
+  return best ?? "destructive";
+}
+
+const TIER_RANK: Readonly<Record<ConnectorOpTier, number>> = { read: 0, write: 1, destructive: 2 };
+
+for (const falseOpen of [
+  "grant__will_read__frobnicate",
+  "grant__team_get__frobnicate",
+  "acme__search__frobnicate",
+  "wiki__list__frobnicate",
+]) {
+  ok(oracleTier(falseOpen) === "read", `NEGATIVE CONTROL — the pre-fix classifier called ${falseOpen} a READ, so the call took NO card`);
+  ok(classifyConnectorOpTier(falseOpen) === "destructive", `${falseOpen} → destructive: an unknown verb fails closed, whatever the middle segment spells`);
+  ok(classifyConnectorOp(falseOpen) === "gate:member", `${falseOpen} → gate:member: the call now takes a card`);
+}
+
+ok(classifyConnectorOpTier("acme__delete__query") === "destructive", "a destructive token in the connection path still raises (read verb, destructive slug)");
+ok(classifyConnectorOpTier("acme__create__query") === "write", "a write token in the connection path raises a read verb to write");
+ok(classifyConnectorOpTier("acme__create__frobnicate") === "destructive", "…but a path raise never RESCUES an unknown verb from destructive");
+ok(classifyConnectorOpTier("acme__search__query") === "read", "a read token in the connection path is ignored — the verb already reads");
+
+ok(classifyConnectorOpTier("grant__amy__get_page") === "read", "a lent read classifies read from its VERB segment");
+ok(classifyConnectorOpTier("grant__amy_delete__get_page") === "read", "an owner handle spelling `delete` does NOT gate a lent read — the owner segment never raises");
+ok(classifyConnectorOpTier("grant__amy__create_page") === "write", "a lent write classifies write from its VERB segment");
+ok(classifyConnectorOpTier("grant__amy__delete_page") === "destructive", "a lent destructive verb classifies destructive");
+ok(oracleTier("grant__delete__query") === "destructive", "the pre-fix classifier read an owner handle `delete` as a destructive verb");
+ok(classifyConnectorOpTier("grant__delete__query") === "read", "…and the fix does not — the owner segment is inert in BOTH directions (no grant tool ships yet)");
+
+for (const malformed of ["grant__frobnicate", "grant__a__b__c", "grant__amy__", "grant__"]) {
+  ok(classifyConnectorOpTier(malformed) === "destructive", `malformed reserved name ${malformed} → destructive (fail-closed)`);
+  ok(classifyConnectorOp(malformed) === "gate:member", `malformed reserved name ${malformed} → gate:member`);
+}
+ok(classifyConnectorOpTier("grant__search") === "destructive", "🔴 a two-segment `grant__search` does NOT read as a connector op called `grant` — the reserved head fails closed");
+
+ok(parseQualifiedToolName("reply") === undefined, "an unqualified name does not parse");
+ok(parseQualifiedToolName("notion__create_page")?.verb === "create_page", "a two-segment name's verb is its second segment");
+ok(parseQualifiedToolName("notion__create_page")?.connection === "notion", "…and its connection is the first");
+ok(parseQualifiedToolName("acme__search__query")?.connection === "acme__search", "🔴 a plugin connection slug keeps its own `__` — the connection is EVERY segment before the verb");
+ok(parseQualifiedToolName("acme__search__query")?.verb === "query", "…and only the trailing segment is the verb");
+ok(parseQualifiedToolName("grant__amy__get_page")?.namespace === "grant", "a reserved name reports its namespace");
+ok(parseQualifiedToolName("grant__amy__get_page")?.owner === "amy", "…its owner segment");
+ok(parseQualifiedToolName("grant__amy__get_page")?.connection === undefined, "…and no connection: a grant tool is not a connector op");
+ok(parseQualifiedToolName("grant__a__b__c") === undefined, "a reserved name of the wrong arity does not parse");
+
+const CONNECTION_HEADS: readonly string[] = [
+  "notion", "linear", "gh", "slack", "acme", "wiki", "helpdesk", "forum", "x", "y", "z", "a", "b", "c",
+  "acme-tools", "notion-tools", "linear-mcp", "acme-forms", "other", "custom", "bare", "sentinel", "fixture",
+  "search", "list", "get", "read", "delete", "create", "post", "share", "link", "copy", "move", "mark",
+];
+const ALL_VERBS: readonly string[] = [...CONNECTOR_READ_VERBS, ...CONNECTOR_WRITE_VERBS, ...CONNECTOR_DESTRUCTIVE_VERBS];
+const VERB_SHAPES: readonly string[] = [
+  ...ALL_VERBS,
+  ...ALL_VERBS.map((v) => `${v}_page`),
+  ...ALL_VERBS.map((v) => `${v}-block`),
+  ...ALL_VERBS.map((v) => `get_or_${v}_entity`),
+  ...ALL_VERBS.map((v) => `check_and_${v}_message`),
+  "frobnicate", "frobnicate_widget", "notionette", "", "constructor", "anything", "op", "api", "worker", "researcher",
+];
+const OBSERVED_QUALIFIED_NAMES: readonly string[] = [
+  "a__archive_page", "a__erase_row", "a__fetch", "acme-forms__submit", "acme-tools__bare", "acme-tools__cmd-summary",
+  "acme-tools__cmd-triage", "acme-tools__deploy-runbook", "acme-tools__lint", "acme-tools__researcher",
+  "acme-tools__scribe", "acme-tools__search", "acme__api", "acme__forms", "acme__lint", "acme__list",
+  "acme__search", "acme__search__query", "acme__worker", "acmelike__x", "b__comment", "b__view_doc", "b__wipe_db",
+  "bare__fmt", "c__retrieve", "custom__tool", "fixture__cmd-ship", "fixture__greet", "forum__our_runbook",
+  "forum__threads", "gh__delete_branch", "gh__destroy_repo", "gh__read_file", "helpdesk__anything",
+  "helpdesk__constructor", "helpdesk__list_queues", "helpdesk__search", "helpdesk__search_tickets",
+  "linear-mcp__issues", "linear__create_issue", "linear__get_issue", "linear__issues", "linear__list_issues",
+  "linear__list_or_create_labels", "linear__remove_label", "linear__search", "notion-tools__search", "notion__",
+  "notion__append_block", "notion__create_page", "notion__create_pages", "notion__delete_block",
+  "notion__delete_page", "notion__frobnicate_widget", "notion__get_or_create_entity", "notion__get_page",
+  "notion__list_databases", "notion__notion-create-pages", "notion__notion-fetch", "notion__notion-search",
+  "notion__notion_delete_page", "notion__notionette", "notion__search", "notion__unarchive_page",
+  "notion__update_page", "other__search", "sentinel__op", "slack__check_and_post_message", "wiki__fetch",
+  "wiki__mirror", "wiki__mirror__fetch", "wiki__search", "x__drop_table", "x__fetch", "x__get_delete_marker",
+  "x__get_or_delete_row", "x__post_message", "x__query", "y__find", "y__purge_cache", "y__retrieve",
+  "y__set_property", "z__archive_page", "z__describe_page", "z__move_card", "z__query", "z__trash_doc",
+];
+
+let twoSegmentChecked = 0;
+for (const head of CONNECTION_HEADS) {
+  for (const verb of VERB_SHAPES) {
+    const name = `${head}__${verb}`;
+    if (classifyConnectorOpTier(name) !== oracleTier(name)) {
+      console.error(`✗ two-segment name changed tier: ${name} — was ${oracleTier(name)}, now ${classifyConnectorOpTier(name)}`);
+      process.exit(1);
+    }
+    twoSegmentChecked++;
+  }
+}
+ok(twoSegmentChecked > 3000, `two-segment corpus is real (${twoSegmentChecked} names, every shipped verb × every head shape)`);
+
+let observedChanged = 0;
+for (const name of OBSERVED_QUALIFIED_NAMES) {
+  if (classifyConnectorOpTier(name) !== oracleTier(name)) {
+    console.error(`✗ an OBSERVED tool name changed tier: ${name} — was ${oracleTier(name)}, now ${classifyConnectorOpTier(name)}`);
+    observedChanged++;
+  }
+}
+ok(observedChanged === 0, `every one of the ${OBSERVED_QUALIFIED_NAMES.length} qualified names in the tree keeps its tier exactly`);
+
+let threeSegmentChecked = 0;
+let tightened = 0;
+for (const head of ["acme", "wiki", "helpdesk", "notion", "search"]) {
+  for (const middle of ["search", "list", "delete", "create", "mirror", "will_read", "amy", "team_get"]) {
+    for (const verb of ["query", "get_page", "create_page", "delete_page", "frobnicate", ""]) {
+      const name = `${head}__${middle}__${verb}`;
+      const now = classifyConnectorOpTier(name);
+      const was = oracleTier(name);
+      if (TIER_RANK[now] < TIER_RANK[was]) {
+        console.error(`✗ three-segment name got MORE OPEN: ${name} — was ${was}, now ${now}`);
+        process.exit(1);
+      }
+      if (TIER_RANK[now] > TIER_RANK[was]) tightened++;
+      threeSegmentChecked++;
+    }
+  }
+}
+ok(threeSegmentChecked === 240, `three-segment corpus is complete (${threeSegmentChecked} names)`);
+ok(tightened > 0, `…and the fix genuinely tightens ${tightened} of them — an all-equal result would mean the defect was never reachable`);
+
+const AUTHORED_AND_FRAMEWORK: readonly string[] = [
+  ...Object.keys(TOOL_CONSEQUENCE),
+  ...WORKER_ONLY_TOOLS_STANDING,
+  ...WORKER_ONLY_TOOLS_THREAD,
+];
+ok(AUTHORED_AND_FRAMEWORK.length > 150, `the authored/framework inventory is real (${AUTHORED_AND_FRAMEWORK.length} names)`);
+for (const name of AUTHORED_AND_FRAMEWORK) {
+  ok(!isConnectorOpTool(name), `authored/framework tool ${name} is not a qualified name — the connector-op plane never sees it`);
+  ok(parseQualifiedToolName(name) === undefined, `…and it does not parse as one either (${name})`);
+}
 
 console.log(`✓ connector-op-tier: ${passed} assertions passed`);
