@@ -622,8 +622,9 @@ export {
 export { bindBridged } from "./identity/binding.js";
 export { bridgedContext } from "./identity/binding-bridge.js";
 
-export { registerEntityActionAdapter } from "./channels/entity-actions.js";
-export type { EntityActionAdapter, EntityRef, EntityVerb } from "./channels/entity-actions.js";
+export { registerEntityActionAdapter, entityActionFn } from "./channels/entity-actions.js";
+export type { EntityActionAdapter, EntityActionFn, EntityRef, EntityVerb } from "./channels/entity-actions.js";
+export type { RepoCapability } from "./access/repo-capabilities.js";
 
 export { registerTicketCreateAdapter } from "./channels/ticket-create.js";
 export type { TicketCreateAdapter, TicketCreateFn, TicketDestination, TicketDraft, CreatedTicket } from "./channels/ticket-create.js";

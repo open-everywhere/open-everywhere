@@ -3,8 +3,10 @@ import { generateKeyPairSync } from "node:crypto";
 import {
   registerConfig,
   CONVERSATION_WRITE_PERMISSIONS,
+  entityActionFn,
   type BindableContext,
   type PrFetchFn,
+  type RepoCapability,
   type UnifiedWakeOrigin,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerGithubProvider } from "../agent/register.js";
@@ -82,6 +84,33 @@ const ENDPOINTS: readonly EndpointRow[] = [
     needs: [["issues", "write"]],
     why: "GitHub lists the issue-reaction endpoint under Issues only",
   },
+  {
+    method: "PATCH",
+    match: /^\/repos\/[^/]+\/[^/]+\/issues\/\d+$/u,
+    needs: [
+      ["issues", "write"],
+      ["pull_requests", "write"],
+    ],
+    why: "OPE-1021 — set_state closes/reopens an issue OR a pull request through one endpoint",
+  },
+  {
+    method: "POST",
+    match: /^\/repos\/[^/]+\/[^/]+\/issues\/\d+\/assignees$/u,
+    needs: [
+      ["issues", "write"],
+      ["pull_requests", "write"],
+    ],
+    why: "OPE-1021 — assign adds an assignee to an issue OR a pull request through one endpoint",
+  },
+  {
+    method: "POST",
+    match: /^\/repos\/[^/]+\/[^/]+\/issues\/\d+\/labels$/u,
+    needs: [
+      ["issues", "write"],
+      ["pull_requests", "write"],
+    ],
+    why: "OPE-1021 — add_label labels an issue OR a pull request through one endpoint; a live run measured 403 on a PR",
+  },
 ];
 
 const MINT_URL = /^\/app\/installations\/[^/]+\/access_tokens$/u;
@@ -120,6 +149,15 @@ function assertCovered(perms: Permissions, calls: readonly { method: string; url
   ok(shortfall({ issues: "read", pull_requests: "read" }, postRow).join() === "issues:write,pull_requests:write", "checker: a READ level never satisfies a WRITE need");
   ok(shortfall(CONVERSATION_WRITE_PERMISSIONS as Permissions, postRow).length === 0, "checker: the conversation-WRITE set covers the comment POST");
   ok(!ENDPOINTS.some((r) => r.method === "DELETE" && r.match.test("/repos/acme/api/issues/7")), "checker: an unnamed method matches no row");
+  const addLabelRow = ENDPOINTS.find((r) => r.method === "POST" && r.match.source.endsWith("\\/labels$"))!;
+  ok(
+    shortfall({ issues: "write", metadata: "read" }, addLabelRow).join() === "pull_requests:write",
+    "🔴 checker: the pre-fix `{issues:write}` body is REFUSED on add_label's endpoint — the exact a live run shortfall",
+  );
+  ok(
+    shortfall({ issues: "write", pull_requests: "write", metadata: "read" }, addLabelRow).length === 0,
+    "checker: the pr-admin-expanded body covers add_label's endpoint",
+  );
 }
 
 const { privateKey } = generateKeyPairSync("rsa", {
@@ -247,6 +285,75 @@ const REVIEW_12 = [{ id: 555, body: "this line", user: { login: "bob", type: "Us
   } finally {
     restore();
     _resetGitHubInstallationTokenCache();
+  }
+}
+
+const SET_STATE = entityActionFn("github", "setState")!;
+const ASSIGN = entityActionFn("github", "assign")!;
+const ADD_LABEL = entityActionFn("github", "addLabel")!;
+{
+  async function driveTicketActions(
+    capabilities: readonly RepoCapability[],
+  ): Promise<{ mints: Permissions[]; perVerb: { label: string; call: { method: string; url: string } }[] }> {
+    _resetGitHubInstallationTokenCache();
+    const { rec, restore } = recordGlobalFetch();
+    try {
+      await SET_STATE("acme/api#47", "closed", undefined, capabilities);
+      await ASSIGN("acme/api#47", "bob", undefined, capabilities);
+      await ADD_LABEL("acme/api#47", "documentation", undefined, capabilities);
+      ok(rec.calls.length === 3, "the three verbs made exactly one REST call each");
+      return {
+        mints: rec.mints,
+        perVerb: [
+          { label: "set_state", call: rec.calls[0]! },
+          { label: "assign", call: rec.calls[1]! },
+          { label: "add_label", call: rec.calls[2]! },
+        ],
+      };
+    } finally {
+      restore();
+      _resetGitHubInstallationTokenCache();
+    }
+  }
+
+  {
+    const { mints, perVerb } = await driveTicketActions([]);
+    ok(mints.length === 3, "each ticket-action verb minted its own token (no capability passed to share a warm one)");
+    for (const mint of mints) {
+      assert.deepStrictEqual(
+        mint,
+        { issues: "write", metadata: "read" },
+        "🔴 with no capability, the mint body is exactly ISSUE_WRITE_PERMISSIONS — unchanged from before OPE-1024",
+      );
+    }
+    for (const { label, call } of perVerb) {
+      const path = pathOf(call.url);
+      const row = ENDPOINTS.find((r) => r.method === call.method && r.match.test(path));
+      ok(row !== undefined, `default ${label}: ${call.method} ${path} is named in the endpoint table`);
+      if (!row) continue;
+      ok(
+        shortfall({ issues: "write", metadata: "read" }, row).join() === "pull_requests:write",
+        `🔴 default ${label}: ${call.method} ${path} is REFUSED for lack of pull_requests:write — the exact a live run 403 (OPE-1021)`,
+      );
+    }
+    passed++;
+  }
+
+  {
+    const { mints, perVerb } = await driveTicketActions(["pr-admin"]);
+    ok(mints.length === 3, "each ticket-action verb minted its own token (pr-admin case)");
+    for (const mint of mints) {
+      assert.deepStrictEqual(
+        mint,
+        { issues: "write", pull_requests: "write", metadata: "read" },
+        "the pr-admin-expanded mint body carries BOTH write families — this is what OPE-1024 dissolves OPE-1021's 403 into",
+      );
+      ok(mint.contents === undefined, "…and NO contents: pr-admin still cannot push code");
+    }
+    for (const [i, { label, call }] of perVerb.entries()) {
+      assertCovered(mints[i]!, [call], `pr-admin: ${label}`);
+    }
+    passed++;
   }
 }
 
