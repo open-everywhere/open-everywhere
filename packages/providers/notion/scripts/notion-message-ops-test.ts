@@ -14,6 +14,7 @@ const TOKEN = "ntn_test_token_1043";
 const WORKSPACE = "ws-1043";
 const PAGE = "page-1043";
 const CHANNEL_ID = `${WORKSPACE}/${PAGE}`;
+const FILE_BYTES = new TextEncoder().encode("fake-attachment-bytes");
 
 function armCredential(present: boolean): void {
   resetBrokers();
@@ -35,6 +36,7 @@ interface Call {
   readonly method: string;
   readonly url: string;
   readonly body: unknown;
+  readonly rawBody?: unknown;
 }
 
 function stubNotionFetch(onCall: (call: Call) => Response): { calls: Call[] } {
@@ -43,7 +45,7 @@ function stubNotionFetch(onCall: (call: Call) => Response): { calls: Call[] } {
     const url = String(input);
     const raw = typeof init?.body === "string" ? init.body : undefined;
     const body = raw ? JSON.parse(raw) : undefined;
-    const call: Call = { method: String(init?.method ?? "GET"), url, body };
+    const call: Call = { method: String(init?.method ?? "GET"), url, body, rawBody: init?.body };
     calls.push(call);
     return onCall(call);
   }) as unknown as typeof fetch;
@@ -59,7 +61,7 @@ try {
     ok(resolved !== undefined, "registerNotionProvider() makes surfaceMessageOps('notion') resolve to something (before OPE-1043 it resolved undefined)");
     ok(resolved === notionMessageOps, "…and it resolves to THIS module's ops object, by identity — the same one turn-anchor.ts's postSurfaceText dispatches to");
     ok(typeof resolved?.postText === "function" && typeof resolved?.editMessage === "function", "the resolved ops carry postText/editMessage");
-    ok(resolved?.postFiles === undefined, "…and NO postFiles (the attachment upload flow is unwired — OPE-1047)");
+    ok(typeof resolved?.postFiles === "function", "…and postFiles too (OPE-1047: the two-step upload flow is now wired)");
     ok(resolved?.setReaction === undefined, "…and NO setReaction (Notion has no reaction resource for comments)");
   }
 
@@ -133,6 +135,18 @@ try {
     ok(threw, "editMessage: a malformed channelId refuses the same way postText's does");
     ok(calls.length === 0, "…and nothing left this host");
   }
+  {
+    armCredential(true);
+    const { calls } = stubNotionFetch(() => new Response("{}", { status: 200 }));
+    let threw = false;
+    try {
+      await notionMessageOps.postFiles!("not-a-conversation-id", [{ bytes: FILE_BYTES, filename: "a.png", contentType: "image/png" }], undefined);
+    } catch {
+      threw = true;
+    }
+    ok(threw, "postFiles: a malformed channelId refuses the same way postText's does");
+    ok(calls.length === 0, "…and nothing left this host — no upload was attempted");
+  }
 
   {
     armCredential(false);
@@ -161,6 +175,18 @@ try {
     ok(threw, "editMessage: no registered Notion credential ⇒ refuses");
     ok(calls.length === 0, "…and nothing left this host");
   }
+  {
+    armCredential(false);
+    const { calls } = stubNotionFetch(() => new Response("{}", { status: 200 }));
+    let threw = false;
+    try {
+      await notionMessageOps.postFiles!(CHANNEL_ID, [{ bytes: FILE_BYTES, filename: "a.png", contentType: "image/png" }], undefined);
+    } catch {
+      threw = true;
+    }
+    ok(threw, "postFiles: no registered Notion credential ⇒ refuses");
+    ok(calls.length === 0, "…and nothing left this host — no upload was attempted");
+  }
 
   {
     armCredential(true);
@@ -170,6 +196,96 @@ try {
     ok(calls[0]!.method === "PATCH" && calls[0]!.url === "https://api.notion.com/v1/comments/cmt-existing", "PATCHes the given comment id");
     const richText = (calls[0]!.body as { rich_text?: Array<{ text?: { content?: string } }> }).rich_text;
     ok(richText?.[0]?.text?.content === "corrected text", "carries the new body");
+  }
+
+  {
+    armCredential(true);
+    let uploadCount = 0;
+    const { calls } = stubNotionFetch((call) => {
+      if (call.method === "POST" && call.url === "https://api.notion.com/v1/file_uploads") {
+        uploadCount += 1;
+        return new Response(JSON.stringify({ id: `up-${uploadCount}`, upload_url: `https://api.notion.com/v1/file_uploads/up-${uploadCount}/send` }), { status: 200 });
+      }
+      if (call.method === "POST" && call.url.endsWith("/send")) {
+        return new Response(JSON.stringify({ status: "uploaded" }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ id: "cmt-files" }), { status: 200 });
+    });
+    const files = [
+      { bytes: FILE_BYTES, filename: "shot.png", contentType: "image/png" },
+      { bytes: FILE_BYTES, filename: "notes.txt", contentType: "text/plain" },
+    ];
+    const id = await notionMessageOps.postFiles!(CHANNEL_ID, files, "the files");
+    ok(id === "cmt-files", "postFiles: returns the created comment id");
+    ok(calls.filter((c) => c.url === "https://api.notion.com/v1/file_uploads").length === 2, "postFiles: creates one upload object PER file");
+    ok(calls.filter((c) => c.url.endsWith("/send")).length === 2, "postFiles: sends bytes for EACH file");
+    const uploadCall = calls.find((c) => c.url === "https://api.notion.com/v1/file_uploads");
+    ok((uploadCall!.body as { filename?: string }).filename === "shot.png", "postFiles: the upload object carries the file's own filename");
+    const sendCall = calls.find((c) => c.url.endsWith("/send"));
+    ok(sendCall!.rawBody instanceof FormData, "postFiles: the send step's body is multipart/form-data");
+    const commentCall = calls.find((c) => c.url === "https://api.notion.com/v1/comments");
+    ok((commentCall!.body as { parent?: { page_id?: string } }).parent?.page_id === PAGE, "postFiles: lands ONE fresh comment on the parsed page");
+    ok((commentCall!.body as { discussion_id?: unknown }).discussion_id === undefined, "postFiles: never a reply — always a fresh page comment (postFiles carries no reply anchor)");
+    const attachments = (commentCall!.body as { attachments?: Array<{ file_upload_id: string; type: string }> }).attachments;
+    ok(
+      JSON.stringify(attachments) === JSON.stringify([{ file_upload_id: "up-1", type: "file_upload" }, { file_upload_id: "up-2", type: "file_upload" }]),
+      "postFiles: attaches BOTH uploaded ids, in order",
+    );
+    const richText = (commentCall!.body as { rich_text?: Array<{ text?: { content?: string } }> }).rich_text;
+    ok(richText?.[0]?.text?.content === "the files", "postFiles: the comment carries the given comment text");
+  }
+  {
+    armCredential(true);
+    const { calls } = stubNotionFetch((call) => {
+      if (call.url === "https://api.notion.com/v1/file_uploads") return new Response(JSON.stringify({ id: "up-1", upload_url: "https://api.notion.com/v1/file_uploads/up-1/send" }), { status: 200 });
+      if (call.url.endsWith("/send")) return new Response(JSON.stringify({ status: "uploaded" }), { status: 200 });
+      return new Response(JSON.stringify({ id: "cmt-nocaption" }), { status: 200 });
+    });
+    await notionMessageOps.postFiles!(CHANNEL_ID, [{ bytes: FILE_BYTES, filename: "a.png", contentType: "image/png" }], undefined);
+    const commentCall = calls.find((c) => c.url === "https://api.notion.com/v1/comments");
+    const richText = (commentCall!.body as { rich_text?: Array<{ text?: { content?: string } }> }).rich_text;
+    ok(richText?.[0]?.text?.content === "(no content)", "postFiles: no comment ⇒ falls back to richTextChunks' empty-content default rather than omitting rich_text");
+  }
+  {
+    armCredential(true);
+    const { calls } = stubNotionFetch(() => new Response(JSON.stringify({ id: "up-x", upload_url: "https://api.notion.com/v1/file_uploads/up-x/send" }), { status: 200 }));
+    const tooMany = Array.from({ length: 4 }, (_, i) => ({ bytes: FILE_BYTES, filename: `f${i}.png`, contentType: "image/png" }));
+    let threw = false;
+    let message = "";
+    try {
+      await notionMessageOps.postFiles!(CHANNEL_ID, tooMany, undefined);
+    } catch (err) {
+      threw = true;
+      message = err instanceof Error ? err.message : String(err);
+    }
+    ok(threw, "postFiles: refuses a batch over the per-post cap");
+    ok(message.includes("3") && message.includes("4"), "…and names the cap and the count in the refusal");
+    ok(calls.length === 0, "…and refuses BEFORE any upload call — no bytes were spent on a batch it then discards");
+  }
+  {
+    armCredential(true);
+    let uploadCount = 0;
+    const { calls } = stubNotionFetch((call) => {
+      if (call.url === "https://api.notion.com/v1/file_uploads") {
+        uploadCount += 1;
+        if (uploadCount === 2) return new Response(JSON.stringify({ message: "server error" }), { status: 500 });
+        return new Response(JSON.stringify({ id: `up-${uploadCount}`, upload_url: `https://api.notion.com/v1/file_uploads/up-${uploadCount}/send` }), { status: 200 });
+      }
+      if (call.url.endsWith("/send")) return new Response(JSON.stringify({ status: "uploaded" }), { status: 200 });
+      return new Response(JSON.stringify({ id: "cmt-should-not-happen" }), { status: 200 });
+    });
+    const files = [
+      { bytes: FILE_BYTES, filename: "one.png", contentType: "image/png" },
+      { bytes: FILE_BYTES, filename: "two.png", contentType: "image/png" },
+    ];
+    let threw = false;
+    try {
+      await notionMessageOps.postFiles!(CHANNEL_ID, files, "two files");
+    } catch {
+      threw = true;
+    }
+    ok(threw, "postFiles: a failed upload propagates rather than posting a partial attach");
+    ok(!calls.some((c) => c.url === "https://api.notion.com/v1/comments"), "…and the comment step never ran — no comment claims a file that never finished uploading");
   }
 } finally {
   globalThis.fetch = savedFetch;

@@ -1,6 +1,15 @@
-import type { SurfaceMessageOps } from "@open-everywhere/core/agent/adapter-api.js";
+import type { SurfaceMessageOps, OutboundFile } from "@open-everywhere/core/agent/adapter-api.js";
 import { getConfig, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
-import { createPageComment, createCommentReply, updateComment, resolveNotionCredential, retrieveComment, type ResolvedNotionCredential } from "./notion-api.js";
+import {
+  createPageComment,
+  createCommentReply,
+  updateComment,
+  resolveNotionCredential,
+  retrieveComment,
+  uploadNotionFile,
+  NOTION_MAX_ATTACHMENTS,
+  type ResolvedNotionCredential,
+} from "./notion-api.js";
 import { notionChannelCredentialFor } from "./notion-credentials.js";
 import { parseNotionConversationKey } from "./notion-identity.js";
 
@@ -47,5 +56,21 @@ export const notionMessageOps: SurfaceMessageOps = {
     const { workspaceId, pageId } = requireConversation(channelId);
     const cred = await requireCredential(workspaceId, pageId);
     await updateComment({ commentId: messageId, text, ...cred });
+  },
+
+  async postFiles(channelId, files: readonly OutboundFile[], comment) {
+    if (files.length > NOTION_MAX_ATTACHMENTS) {
+      throw new Error(`Notion surface message ops: at most ${NOTION_MAX_ATTACHMENTS} files per post; got ${files.length}.`);
+    }
+    const { workspaceId, pageId } = requireConversation(channelId);
+    const cred = await requireCredential(workspaceId, pageId);
+    const fileUploadIds: string[] = [];
+    for (const file of files) {
+      fileUploadIds.push(
+        await uploadNotionFile({ filename: file.filename, contentType: file.contentType, bytes: file.bytes, ...cred }),
+      );
+    }
+    const id = await createPageComment({ pageId, text: comment ?? "", attachments: fileUploadIds, ...cred });
+    return id.length > 0 ? id : undefined;
   },
 };

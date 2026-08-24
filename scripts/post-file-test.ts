@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
 __regDiscord();
+import { registerNotionProvider as __regNotion } from "@open-everywhere/provider-notion/agent/register.js";
+import { buildNotionAuth } from "@open-everywhere/provider-notion/agent/channels/notion-identity.js";
+import { NOTION_CHANNEL_CREDENTIAL } from "@open-everywhere/provider-notion/agent/channels/notion-credentials.js";
+import { registerBroker as __registerNotionBroker, setRegisteredConnectorCredentials as __setNotionCredentials } from "@open-everywhere/core/agent/adapter-api.js";
+__regNotion();
+__registerNotionBroker("test", { async getSecret() { return "ntn_test_token_post_file"; } });
+__setNotionCredentials([
+  {
+    connector: "notion",
+    allows: ["api-key"],
+    credentials: [{ id: NOTION_CHANNEL_CREDENTIAL, type: "api-key", secretRef: "db:notion:channel-key", broker: "test", intake: false }],
+  },
+]);
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -123,6 +136,13 @@ function discordCtx(sandbox?: { missing?: readonly string[]; oversize?: readonly
   };
   return withSandbox(base, sandbox);
 }
+const NOTION_WORKSPACE = "ws-post-file";
+const NOTION_PAGE = "page-post-file";
+function notionCtx(sandbox?: { missing?: readonly string[]; oversize?: readonly string[] }) {
+  const auth = buildNotionAuth({ workspaceId: NOTION_WORKSPACE, pageId: NOTION_PAGE, discussionId: "disc-post-file" });
+  const base = { channel: { kind: "notion" }, session: { auth: { current: { ...auth, attributes: { ...auth.attributes, oe_grain: "task" } } } } };
+  return withSandbox(base, sandbox);
+}
 function platformCtx(kind: string, withSb = true) {
   const base = { channel: { kind }, session: { auth: { current: { attributes: { channel_id: "X1", oe_grain: "task" }, principalId: "U1" } } } };
   return withSb ? withSandbox(base) : base;
@@ -139,6 +159,7 @@ let calls: FetchCall[] = [];
 const realFetch = globalThis.fetch;
 const UPLOAD_URL = "https://files.slack.example/upload/AAA";
 function fakeNet(): void {
+  let notionUploadCount = 0;
   globalThis.fetch = (async (url: unknown, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}) => {
     const u = String(url);
     const isForm = typeof FormData !== "undefined" && init.body instanceof FormData;
@@ -152,6 +173,17 @@ function fakeNet(): void {
     }
     if (u === UPLOAD_URL) return { ok: true, status: 200, text: async () => "OK" } as Response;
     if (u.includes("discord.com/api")) return { ok: true, status: 200, json: async () => ({ id: "M1" }) } as Response;
+    if (u === "https://api.notion.com/v1/file_uploads") {
+      notionUploadCount += 1;
+      const id = `NUP${notionUploadCount}`;
+      return { ok: true, status: 200, json: async () => ({ id, upload_url: `https://api.notion.com/v1/file_uploads/${id}/send` }) } as Response;
+    }
+    if (u.startsWith("https://api.notion.com/v1/file_uploads/") && u.endsWith("/send")) {
+      return { ok: true, status: 200, json: async () => ({ status: "uploaded" }) } as Response;
+    }
+    if (u === "https://api.notion.com/v1/comments") {
+      return { ok: true, status: 200, json: async () => ({ id: "cmt-notion-post-file" }) } as Response;
+    }
     return { ok: true, status: 200, json: async () => ({ ok: true }) } as Response;
   }) as typeof fetch;
 }
@@ -263,6 +295,54 @@ await inSession(async () => {
 
   const audit = await readAudit({ org: "default", action: "discord.post_file" });
   ok(audit.length === 1, "post_file(discord): audits exactly one discord.post_file row");
+});
+} finally {
+  restoreFetch();
+}
+
+calls = [];
+fakeNet();
+try {
+await inSession(async () => {
+  const res = await postFile.execute(
+    { files: [{ source: { path: "shot.png" }, filename: "shot.png" }, { source: { path: "notes.txt" }, filename: "notes.txt" }], comment: "the files" },
+    notionCtx(),
+  );
+  ok(res.posted === true && res.count === 2 && res.platform === "notion", "post_file(notion): returns posted/count/platform");
+  const uploads = calls.filter((c) => c.url === "https://api.notion.com/v1/file_uploads");
+  ok(uploads.length === 2, "post_file(notion): creates one upload object PER file");
+  const sends = calls.filter((c) => c.url.startsWith("https://api.notion.com/v1/file_uploads/") && c.url.endsWith("/send"));
+  ok(sends.length === 2 && sends.every((c) => c.bodyIsFormData), "post_file(notion): sends each file's bytes as multipart/form-data");
+  const comment = calls.find((c) => c.url === "https://api.notion.com/v1/comments");
+  ok(!!comment && comment.method === "POST", "post_file(notion): lands a create-comment call");
+  const commentBody = JSON.parse(comment!.body) as { parent?: { page_id?: string }; attachments?: Array<{ file_upload_id: string; type: string }>; rich_text?: Array<{ text?: { content?: string } }> };
+  ok(commentBody.parent?.page_id === NOTION_PAGE, "post_file(notion): targets the current page");
+  ok(
+    JSON.stringify(commentBody.attachments) === JSON.stringify([{ file_upload_id: "NUP1", type: "file_upload" }, { file_upload_id: "NUP2", type: "file_upload" }]),
+    "post_file(notion): attaches BOTH uploaded ids, in order",
+  );
+  ok(commentBody.rich_text?.[0]?.text?.content === "the files", "post_file(notion): the comment carries the given comment");
+  ok(comment!.headers["notion-version"] === "2026-03-11", "post_file(notion): the attaching comment call pins Notion-Version 2026-03-11");
+
+  const audit = await readAudit({ org: "default", action: "notion.post_file" });
+  ok(audit.length === 1, "post_file(notion): audits exactly one notion.post_file row");
+  ok(audit[0]?.detail?.count === 2 && Array.isArray(audit[0]?.detail?.filenames), "post_file(notion): audit row carries count + filenames");
+});
+} finally {
+  restoreFetch();
+}
+
+calls = [];
+fakeNet();
+try {
+await inSession(async () => {
+  const tooMany = Array.from({ length: 4 }, (_, i) => ({ source: { path: `f${i}.png` }, filename: `f${i}.png` }));
+  await assert.rejects(
+    () => postFile.execute({ files: tooMany }, notionCtx()),
+    /Notion accepts at most 3 files/,
+    "post_file(notion): refuses a batch over Notion's per-post cap",
+  );
+  ok(!calls.some((c) => c.url === "https://api.notion.com/v1/file_uploads"), "post_file(notion): …and no upload was even attempted — refused before any byte was resolved/spent");
 });
 } finally {
   restoreFetch();

@@ -116,7 +116,9 @@ async function postLinkToSurface(
   comment: string | undefined,
 ): Promise<string | undefined> {
   const text = [comment, ...urls].filter((s): s is string => Boolean(s)).join("\n");
-  return platform === "slack" ? await postTextToSlack(ctx, text) : await postTextToDiscord(ctx, text);
+  if (platform === "slack") return await postTextToSlack(ctx, text);
+  if (platform === "discord") return await postTextToDiscord(ctx, text);
+  return await postTextToNotion(ctx, text);
 }
 
 async function postFilesToSlack(ctx: BindableContext, files: readonly ResolvedFile[], comment: string | undefined): Promise<string | undefined> {
@@ -167,7 +169,37 @@ async function postFilesToDiscord(ctx: BindableContext, files: readonly Resolved
   return await ops.postFiles(channelId, files, comment);
 }
 
+function notionPageChannelId(ctx: BindableContext): string {
+  const binding = bindFrom(ctx);
+  const channelId = typeof binding.anchorChannelId === "string" && binding.anchorChannelId.length > 0 ? binding.anchorChannelId : undefined;
+  if (!channelId) {
+    throw new Error("post_file: couldn't resolve this Notion page's address — try again from a real page comment.");
+  }
+  return channelId;
+}
+
+async function postFilesToNotion(ctx: BindableContext, files: readonly ResolvedFile[], comment: string | undefined): Promise<string | undefined> {
+  const ops = surfaceMessageOps("notion");
+  if (!ops) {
+    throw new Error("post_file: Notion message transport is not registered — the @open-everywhere/provider-notion bundle isn't wired.");
+  }
+  if (!ops.postFiles) {
+    throw new Error("post_file: Notion message transport has no file-upload op registered.");
+  }
+  return await ops.postFiles(notionPageChannelId(ctx), files, comment);
+}
+
+async function postTextToNotion(ctx: BindableContext, text: string): Promise<string | undefined> {
+  const ops = surfaceMessageOps("notion");
+  if (!ops) {
+    throw new Error("post_file: Notion message transport is not registered — the @open-everywhere/provider-notion bundle isn't wired.");
+  }
+  return await ops.postText(notionPageChannelId(ctx), text);
+}
+
 const MAX_FILES = 10;
+
+const NOTION_MAX_POST_FILE_ATTACHMENTS = 3;
 
 const inputSchema = z.object({
   files: z
@@ -205,7 +237,8 @@ export default windowGated("post_file", defineTool({
     "`source: { path }` — a file in THIS session's workspace/sandbox (e.g. a bash-written artifact, " +
     "or an agent-browser screenshot) — and a `filename`; `contentType` is inferred from the filename " +
     "if omitted. Each file is capped at 10 MB. Add an optional `comment` to post alongside the files, " +
-    "and a per-file `caption`. Works on Slack and Discord today; on other surfaces it returns a clear " +
+    "and a per-file `caption`. Works on Slack, Discord and Notion today (Notion accepts at most 3 " +
+    "files per post — a comment's own vendor cap); on other surfaces it returns a clear " +
     "'not supported here' error so you can fall back to a text reply. HTML pages: if this org has " +
     "opted in to Blob hosting they're published to a public URL (approval-gated); otherwise the raw " +
     "`.html` is attached as a downloadable file.",
@@ -214,10 +247,15 @@ export default windowGated("post_file", defineTool({
   approval: { request: withDuplicateApprovalGuard(approvalPolicy), response: initiatorBoundResponsePolicy<PostFileInput>() },
   async execute(input, ctx) {
     const platform = bindFrom(ctx as BindableContext).platform;
-    if (platform !== "slack" && platform !== "discord") {
+    if (platform !== "slack" && platform !== "discord" && platform !== "notion") {
       throw new Error(
-        `post_file: file posting is not supported on "${platform}" yet (supported: Slack, Discord). ` +
+        `post_file: file posting is not supported on "${platform}" yet (supported: Slack, Discord, Notion). ` +
           "Reply with text, or share a link to an already-hosted file instead.",
+      );
+    }
+    if (platform === "notion" && input.files.length > NOTION_MAX_POST_FILE_ATTACHMENTS) {
+      throw new Error(
+        `post_file: Notion accepts at most ${NOTION_MAX_POST_FILE_ATTACHMENTS} files per post; got ${input.files.length}. Split them across multiple posts.`,
       );
     }
 
@@ -240,7 +278,12 @@ export default windowGated("post_file", defineTool({
     }
 
     const binding = bindFrom(ctx as BindableContext);
-    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
+    const channelId =
+      typeof binding.target?.channelId === "string"
+        ? binding.target.channelId
+        : typeof binding.anchorChannelId === "string"
+          ? binding.anchorChannelId
+          : undefined;
     const callId = typeof (ctx as { callId?: unknown }).callId === "string" ? (ctx as { callId: string }).callId : undefined;
 
     let attachId: string | undefined;
@@ -255,10 +298,11 @@ export default windowGated("post_file", defineTool({
           stableId: callId,
           payload: `${input.comment ?? ""}\x00${toAttach.map((f) => `${f.filename}:${f.contentType}:${f.bytes.byteLength}`).join(",")}`,
         }),
-        run: async () =>
-          platform === "slack"
-            ? await postFilesToSlack(ctx as BindableContext, toAttach, input.comment)
-            : await postFilesToDiscord(ctx as BindableContext, toAttach, input.comment),
+        run: async () => {
+          if (platform === "slack") return await postFilesToSlack(ctx as BindableContext, toAttach, input.comment);
+          if (platform === "discord") return await postFilesToDiscord(ctx as BindableContext, toAttach, input.comment);
+          return await postFilesToNotion(ctx as BindableContext, toAttach, input.comment);
+        },
       });
     }
     let linkId: string | undefined;

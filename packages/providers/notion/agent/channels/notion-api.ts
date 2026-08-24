@@ -15,6 +15,8 @@ export function notionVersion(): string {
   return v && v.trim().length > 0 ? v.trim() : "2022-06-28";
 }
 
+const NOTION_FILE_UPLOAD_VERSION = "2026-03-11";
+
 export interface ResolvedNotionCredential {
   readonly apiKey: string;
   readonly endpoints?: CredentialEndpointRules;
@@ -426,13 +428,24 @@ export async function readNotionPage(
   return { text: lines.join("\n"), blockCount, truncated };
 }
 
+export const NOTION_MAX_ATTACHMENTS = 3;
+
+function attachmentsBody(fileUploadIds: readonly string[] | undefined): { attachments: Array<{ file_upload_id: string; type: "file_upload" }> } | Record<string, never> {
+  if (!fileUploadIds || fileUploadIds.length === 0) return {};
+  if (fileUploadIds.length > NOTION_MAX_ATTACHMENTS) {
+    throw new Error(`Notion comments accept at most ${NOTION_MAX_ATTACHMENTS} attachments; got ${fileUploadIds.length}.`);
+  }
+  return { attachments: fileUploadIds.map((id) => ({ file_upload_id: id, type: "file_upload" as const })) };
+}
+
 export async function createCommentReply(
-  args: { discussionId: string; text: string } & NotionCallOpts,
+  args: { discussionId: string; text: string; attachments?: readonly string[] } & NotionCallOpts,
 ): Promise<string> {
+  const attach = attachmentsBody(args.attachments);
   const res = await notionFetch(`${NOTION_API_BASE}/v1/comments`, {
     method: "POST",
-    headers: notionHeaders(args),
-    body: JSON.stringify({ discussion_id: args.discussionId, rich_text: richTextChunks(args.text) }),
+    headers: notionHeaders(Object.keys(attach).length > 0 ? { ...args, version: NOTION_FILE_UPLOAD_VERSION } : args),
+    body: JSON.stringify({ discussion_id: args.discussionId, rich_text: richTextChunks(args.text), ...attach }),
   }, args);
   if (!res.ok) {
     throw Object.assign(new Error(`createCommentReply failed: ${res.status} ${await safeText(res)}`), { status: res.status });
@@ -442,12 +455,13 @@ export async function createCommentReply(
 }
 
 export async function createPageComment(
-  args: { pageId: string; text: string } & NotionCallOpts,
+  args: { pageId: string; text: string; attachments?: readonly string[] } & NotionCallOpts,
 ): Promise<string> {
+  const attach = attachmentsBody(args.attachments);
   const res = await notionFetch(`${NOTION_API_BASE}/v1/comments`, {
     method: "POST",
-    headers: notionHeaders(args),
-    body: JSON.stringify({ parent: { page_id: args.pageId }, rich_text: richTextChunks(args.text) }),
+    headers: notionHeaders(Object.keys(attach).length > 0 ? { ...args, version: NOTION_FILE_UPLOAD_VERSION } : args),
+    body: JSON.stringify({ parent: { page_id: args.pageId }, rich_text: richTextChunks(args.text), ...attach }),
   }, args);
   if (!res.ok) {
     throw Object.assign(new Error(`createPageComment failed: ${res.status} ${await safeText(res)}`), { status: res.status });
@@ -467,6 +481,50 @@ export async function updateComment(
   if (!res.ok) {
     throw Object.assign(new Error(`updateComment ${args.commentId} failed: ${res.status} ${await safeText(res)}`), { status: res.status });
   }
+}
+
+export interface NotionFileUploadObject {
+  readonly id?: string;
+  readonly upload_url?: string;
+  readonly status?: string;
+}
+
+export async function createFileUpload(
+  args: { readonly filename: string; readonly contentType: string } & NotionCallOpts,
+): Promise<{ readonly id: string; readonly uploadUrl: string }> {
+  const res = await notionFetch(`${NOTION_API_BASE}/v1/file_uploads`, {
+    method: "POST",
+    headers: notionHeaders({ ...args, version: NOTION_FILE_UPLOAD_VERSION }),
+    body: JSON.stringify({ filename: args.filename, content_type: args.contentType }),
+  }, args);
+  if (!res.ok) throw new Error(`createFileUpload failed: ${res.status} ${await safeText(res)}`);
+  const body = (await res.json().catch(() => ({}))) as NotionFileUploadObject;
+  if (typeof body.id !== "string" || body.id.length === 0 || typeof body.upload_url !== "string" || body.upload_url.length === 0) {
+    throw new Error("createFileUpload: Notion response carried no usable id/upload_url.");
+  }
+  return { id: body.id, uploadUrl: body.upload_url };
+}
+
+export async function sendFileUploadBytes(
+  args: { readonly uploadUrl: string; readonly filename: string; readonly contentType: string; readonly bytes: Uint8Array } & NotionCallOpts,
+): Promise<void> {
+  const form = new FormData();
+  const ab = args.bytes.buffer.slice(args.bytes.byteOffset, args.bytes.byteOffset + args.bytes.byteLength) as ArrayBuffer;
+  form.append("file", new Blob([ab], { type: args.contentType }), args.filename);
+  const res = await notionFetch(args.uploadUrl, {
+    method: "POST",
+    headers: { authorization: `Bearer ${args.apiKey}`, "notion-version": NOTION_FILE_UPLOAD_VERSION },
+    body: form,
+  }, args);
+  if (!res.ok) throw new Error(`sendFileUploadBytes failed: ${res.status} ${await safeText(res)}`);
+}
+
+export async function uploadNotionFile(
+  args: { readonly filename: string; readonly contentType: string; readonly bytes: Uint8Array } & NotionCallOpts,
+): Promise<string> {
+  const { id, uploadUrl } = await createFileUpload(args);
+  await sendFileUploadBytes({ ...args, uploadUrl });
+  return id;
 }
 
 export function richTextChunks(text: string): Array<{ type: "text"; text: { content: string } }> {
