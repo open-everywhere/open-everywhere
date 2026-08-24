@@ -46,6 +46,7 @@ const readThreadEntry = defineTool({
     ),
     authoredByNonMember: z.boolean().optional(),
     possiblyIncomplete: z.boolean().optional(),
+    partialReason: z.string().optional(),
     spool: z.object({ path: z.string().optional(), shown: z.number(), total: z.number() }).optional(),
   }),
   async execute(input, ctx) {

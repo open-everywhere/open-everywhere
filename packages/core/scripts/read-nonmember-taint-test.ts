@@ -8,6 +8,7 @@ import {
   chatReadIngestion,
   renderChannelBody,
   renderThreadBody,
+  type AdapterReadFetch,
   type ReadAdapter,
   type ReadOutputLine,
   type RenderedLine,
@@ -238,6 +239,63 @@ console.log("5b. coverage disclosure (OPE-761):");
   const defaultCapped = await readChannelResult(ctx, "slack", cappedAdapter, "C1");
   eq(defaultCapped.count, 50, "no explicit limit ⇒ the channel default (50) is what the fetch actually asked for");
   eq(defaultCapped.possiblyIncomplete, true, "…and hitting the default ceiling is flagged too, not just an explicit limit");
+}
+
+console.log("5c. adapter-declared partiality (OPE-1015):");
+{
+  const declaredPartialAdapter: ReadAdapter = {
+    platform: "slack",
+    wakeAddress: () => undefined,
+    readChannel: async (): Promise<AdapterReadFetch> => ({
+      lines: [human("U1", "only one line on this page")],
+      possiblyIncomplete: true,
+      partialReason: "a vendor page limit trimmed older history",
+    }),
+    readThread: async (): Promise<AdapterReadFetch> => ({
+      lines: [human("U1", "only one reply on this page")],
+      possiblyIncomplete: true,
+      partialReason: "a permission-trimmed thread",
+    }),
+  };
+  const declaredPartial = await readChannelResult(ctx, "slack", declaredPartialAdapter, "C1", 5);
+  eq(declaredPartial.count, 1, "the page genuinely IS short — one line, well under the limit");
+  eq(declaredPartial.possiblyIncomplete, true, "🔴 THE RED THIS PROVES: a SHORT page still renders coverage when the adapter declares it — the line-count heuristic alone would have missed this entirely");
+  eq(declaredPartial.partialReason, "a vendor page limit trimmed older history", "…and the reason rides through as its own field — data, not prose folded into the note");
+  ok(renderChannelBody(declaredPartial).includes("[coverage:"), "…and the rendered body carries the coverage note despite the short page");
+  ok(renderChannelBody(declaredPartial).includes("a vendor page limit trimmed older history"), "…with the adapter's own reason readable in the note itself");
+
+  const declaredPartialThread = await readThreadResult(ctx, "slack", declaredPartialAdapter, "C1", "999.9", 5);
+  eq(declaredPartialThread.possiblyIncomplete, true, "read_thread: the same adapter-declared fact, from the same shared body");
+  ok(renderThreadBody(declaredPartialThread).includes("a permission-trimmed thread"), "…and the thread's OWN reason (not the channel's) rides through");
+
+  const undeclaredAdapter: ReadAdapter = {
+    platform: "slack",
+    wakeAddress: () => undefined,
+    readChannel: async () => [human("U1", "short page, no adapter opinion")],
+    readThread: async () => [human("U1", "short reply page, no adapter opinion")],
+  };
+  const undeclared = await readChannelResult(ctx, "slack", undeclaredAdapter, "C1", 5);
+  ok(!("possiblyIncomplete" in undeclared), "negative control: an UNDECLARED adapter's short page carries no field at all");
+  ok(!("partialReason" in undeclared), "…and no reason either");
+  eq(
+    renderChannelBody(undeclared),
+    "Recent messages in C1 (oldest first):\n[U1] short page, no adapter opinion",
+    "🔴 negative control: an undeclared adapter's rendered body is BYTE-IDENTICAL to the pre-OPE-1015 render — no coverage note, no trailing bytes",
+  );
+
+  const declaredCompleteAdapter: ReadAdapter = {
+    platform: "slack",
+    wakeAddress: () => undefined,
+    readChannel: async (_c, _ch, limit): Promise<AdapterReadFetch> => ({
+      lines: Array.from({ length: limit ?? 50 }, (_v, i) => human(`U${i}`, `msg ${i}`)),
+      possiblyIncomplete: false,
+    }),
+    readThread: async () => [],
+  };
+  const declaredComplete = await readChannelResult(ctx, "slack", declaredCompleteAdapter, "C1", 5);
+  eq(declaredComplete.count, 5, "the page lands EXACTLY on the caller's limit — the heuristic alone would guess partial here");
+  ok(!("possiblyIncomplete" in declaredComplete), "🔴 negative control: the adapter's declared `false` overrides the heuristic — a declared-complete read renders complete, POSITIVE-ONLY shape preserved");
+  ok(!renderChannelBody(declaredComplete).includes("[coverage:"), "…and the rendered body carries NO coverage note despite hitting the line-count ceiling");
 }
 
 console.log("6. end to end — execute → the replayed toModelOutput → the turn mark:");

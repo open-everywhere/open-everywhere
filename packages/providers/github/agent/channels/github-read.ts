@@ -4,6 +4,7 @@ import {
   prApiHeaders,
   resolveConversationReadToken,
   ChannelScopeError,
+  type AdapterReadFetch,
   type BindableContext,
   type PrFetchFn,
   type RenderedLine,
@@ -127,19 +128,27 @@ async function fetchRecentComments(
   return out.slice(-limit);
 }
 
-async function fetchReviewComments(fetchFn: PrFetchFn, token: string, target: GitHubContainer): Promise<RawComment[]> {
+async function fetchReviewComments(fetchFn: PrFetchFn, token: string, target: GitHubContainer): Promise<{ comments: RawComment[]; mightBeTruncated: boolean }> {
   const out: RawComment[] = [];
+  let mightBeTruncated = false;
   for (let page = 1; page <= MAX_REVIEW_PAGES; page++) {
     const batch = await getJson<RawComment[]>(
       fetchFn,
       `${API_BASE}/repos/${target.repoFull}/pulls/${target.number}/comments?per_page=${GITHUB_MAX_PAGE}&page=${page}`,
       token,
     );
-    if (!Array.isArray(batch) || batch.length === 0) break;
+    if (!Array.isArray(batch) || batch.length === 0) {
+      mightBeTruncated = false;
+      break;
+    }
     out.push(...batch);
-    if (batch.length < GITHUB_MAX_PAGE) break;
+    if (batch.length < GITHUB_MAX_PAGE) {
+      mightBeTruncated = false;
+      break;
+    }
+    mightBeTruncated = page === MAX_REVIEW_PAGES;
   }
-  return out;
+  return { comments: out, mightBeTruncated };
 }
 
 export function reviewThreadLines(comments: readonly RawComment[], rootId: string): RenderedLine[] {
@@ -160,14 +169,20 @@ export const githubReadAdapter = {
     channel: string,
     limit?: number,
     fetchFn: PrFetchFn = liveGithubFetch,
-  ): Promise<readonly RenderedLine[]> {
+  ): Promise<AdapterReadFetch> {
     const target = await admitContainer(ctx, channel);
     const effective = Math.min(limit ?? GITHUB_CHANNEL_DEFAULT_LIMIT, GITHUB_MAX_PAGE);
     const token = await resolveConversationReadToken(target.repoFull);
     const issue = await fetchIssue(fetchFn, token, target);
     const total = typeof issue.comments === "number" && issue.comments > 0 ? issue.comments : 0;
-    const comments = total === 0 ? [] : await fetchRecentComments(fetchFn, token, target, total, Math.max(1, effective - 1));
-    return [openingLine(issue), ...comments.map((c) => commentLine(c))];
+    const wanted = Math.max(1, effective - 1);
+    const comments = total === 0 ? [] : await fetchRecentComments(fetchFn, token, target, total, wanted);
+    const possiblyIncomplete = total > wanted;
+    return {
+      lines: [openingLine(issue), ...comments.map((c) => commentLine(c))],
+      possiblyIncomplete,
+      ...(possiblyIncomplete ? { partialReason: `vendor page limit: the conversation holds ${total} comments, only the newest ${wanted} were fetched` } : {}),
+    };
   },
   async readThread(
     ctx: BindableContext,
@@ -175,10 +190,17 @@ export const githubReadAdapter = {
     threadTs: string,
     limit?: number,
     fetchFn: PrFetchFn = liveGithubFetch,
-  ): Promise<readonly RenderedLine[]> {
+  ): Promise<AdapterReadFetch> {
     const target = await admitContainer(ctx, channel);
     const token = await resolveConversationReadToken(target.repoFull);
-    const comments = await fetchReviewComments(fetchFn, token, target);
-    return reviewThreadLines(comments, threadTs).slice(-(limit ?? GITHUB_THREAD_DEFAULT_LIMIT));
+    const { comments, mightBeTruncated } = await fetchReviewComments(fetchFn, token, target);
+    const threadAll = reviewThreadLines(comments, threadTs);
+    const lines = threadAll.slice(-(limit ?? GITHUB_THREAD_DEFAULT_LIMIT));
+    const callerTrimmed = lines.length < threadAll.length;
+    return {
+      lines,
+      possiblyIncomplete: mightBeTruncated || callerTrimmed,
+      ...(mightBeTruncated ? { partialReason: `vendor page limit: only the first ${MAX_REVIEW_PAGES * GITHUB_MAX_PAGE} review comments on this PR were fetched` } : {}),
+    };
   },
 };

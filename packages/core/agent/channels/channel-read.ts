@@ -36,6 +36,7 @@ export interface ChannelReadResult {
   readonly messages: readonly RenderedLine[];
   readonly authoredByNonMember?: boolean;
   readonly possiblyIncomplete?: boolean;
+  readonly partialReason?: string;
   readonly spool?: ReadSpool;
 }
 
@@ -47,6 +48,7 @@ export interface ThreadReadResult {
   readonly messages: readonly RenderedLine[];
   readonly authoredByNonMember?: boolean;
   readonly possiblyIncomplete?: boolean;
+  readonly partialReason?: string;
   readonly spool?: ReadSpool;
 }
 
@@ -55,10 +57,16 @@ export interface WakeReadAddress {
   readonly threadRoot?: string;
 }
 
+export interface AdapterReadFetch {
+  readonly lines: readonly RenderedLine[];
+  readonly possiblyIncomplete?: boolean;
+  readonly partialReason?: string;
+}
+
 export interface ReadAdapter {
   readonly platform: string;
-  readChannel(ctx: BindableContext, channel: string, limit?: number): Promise<readonly RenderedLine[]>;
-  readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number): Promise<readonly RenderedLine[]>;
+  readChannel(ctx: BindableContext, channel: string, limit?: number): Promise<readonly RenderedLine[] | AdapterReadFetch>;
+  readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number): Promise<readonly RenderedLine[] | AdapterReadFetch>;
   wakeAddress(ctx: BindableContext): WakeReadAddress | undefined;
   refutedAuthorIds?(ctx: BindableContext, lines: readonly RenderedLine[]): Promise<readonly string[]>;
 }
@@ -174,6 +182,7 @@ export interface ChannelReadOutput {
   messages: ReadOutputLine[];
   authoredByNonMember?: boolean;
   possiblyIncomplete?: boolean;
+  partialReason?: string;
   spool?: ReadSpool;
 }
 
@@ -189,15 +198,31 @@ function readAuthorPolicy(ctx: BindableContext): ExternalPolicy {
   }
 }
 
+function normalizeAdapterFetch(result: readonly RenderedLine[] | AdapterReadFetch): {
+  lines: readonly RenderedLine[];
+  possiblyIncomplete?: boolean;
+  partialReason?: string;
+} {
+  if (Array.isArray(result)) return { lines: result };
+  const fetch = result as AdapterReadFetch;
+  return {
+    lines: fetch.lines,
+    ...(fetch.possiblyIncomplete !== undefined ? { possiblyIncomplete: fetch.possiblyIncomplete } : {}),
+    ...(fetch.partialReason !== undefined ? { partialReason: fetch.partialReason } : {}),
+  };
+}
+
 async function gradeAndProject(
   ctx: BindableContext,
   adapter: ReadAdapter,
   lines: readonly RenderedLine[],
   effectiveLimit: number,
-): Promise<{ count: number; messages: ReadOutputLine[]; authoredByNonMember?: boolean; possiblyIncomplete?: boolean }> {
+  declared?: { possiblyIncomplete?: boolean; partialReason?: string },
+): Promise<{ count: number; messages: ReadOutputLine[]; authoredByNonMember?: boolean; possiblyIncomplete?: boolean; partialReason?: string }> {
   const refuted = await adapterRefutedAuthorIds(adapter, ctx, lines);
   const withholding = refuted.size > 0 && readAuthorPolicy(ctx).authorGrain === "withhold";
   const withheld = (m: RenderedLine): boolean => withholding && m.bot !== true && m.authorId !== undefined && refuted.has(m.authorId);
+  const possiblyIncomplete = declared?.possiblyIncomplete !== undefined ? declared.possiblyIncomplete : lines.length >= effectiveLimit;
   return {
     count: lines.length,
     messages: lines.map((m) => ({
@@ -208,7 +233,8 @@ async function gradeAndProject(
       ...(m.live !== undefined ? { live: m.live } : {}),
     })),
     ...(refuted.size > 0 && !withholding ? { authoredByNonMember: true } : {}),
-    ...(lines.length >= effectiveLimit ? { possiblyIncomplete: true } : {}),
+    ...(possiblyIncomplete ? { possiblyIncomplete: true } : {}),
+    ...(possiblyIncomplete && declared?.partialReason !== undefined ? { partialReason: declared.partialReason } : {}),
   };
 }
 
@@ -222,8 +248,12 @@ export async function readChannelResult(
   channel: string,
   limit?: number,
 ): Promise<ChannelReadOutput> {
-  const lines = await adapter.readChannel(ctx, channel, limit);
-  return { platform, channel, ...(await gradeAndProject(ctx, adapter, lines, limit ?? DEFAULT_CHANNEL_LIMIT_ESTIMATE)) };
+  const fetched = normalizeAdapterFetch(await adapter.readChannel(ctx, channel, limit));
+  return {
+    platform,
+    channel,
+    ...(await gradeAndProject(ctx, adapter, fetched.lines, limit ?? DEFAULT_CHANNEL_LIMIT_ESTIMATE, fetched)),
+  };
 }
 
 export async function readThreadResult(
@@ -234,16 +264,21 @@ export async function readThreadResult(
   threadTs: string,
   limit?: number,
 ): Promise<ThreadReadOutput> {
-  const lines = await adapter.readThread(ctx, channel, threadTs, limit);
-  return { platform, channel, thread_ts: threadTs, ...(await gradeAndProject(ctx, adapter, lines, limit ?? DEFAULT_THREAD_LIMIT_ESTIMATE)) };
+  const fetched = normalizeAdapterFetch(await adapter.readThread(ctx, channel, threadTs, limit));
+  return {
+    platform,
+    channel,
+    thread_ts: threadTs,
+    ...(await gradeAndProject(ctx, adapter, fetched.lines, limit ?? DEFAULT_THREAD_LIMIT_ESTIMATE, fetched)),
+  };
 }
 
 export function chatReadIngestion(label: string, out: { readonly authoredByNonMember?: boolean }): IngestionSource {
   return { kind: "chat-message", label, ...(out.authoredByNonMember === true ? { authoredByNonMember: true } : {}) };
 }
 
-function coverageNote(kind: "channel" | "thread", count: number): string {
-  return `\n\n[coverage: showing the ${count} most recent ${kind === "channel" ? "messages" : "replies"} this fetch could return — older ${kind === "channel" ? "history" : "replies"} may exist beyond this page]`;
+function coverageNote(kind: "channel" | "thread", count: number, reason?: string): string {
+  return `\n\n[coverage: showing the ${count} most recent ${kind === "channel" ? "messages" : "replies"} this fetch could return — older ${kind === "channel" ? "history" : "replies"} may exist beyond this page${reason ? ` (${reason})` : ""}]`;
 }
 
 function ageSuffix(m: RenderedLine): string {
@@ -269,7 +304,7 @@ export function renderChannelBody(out: ChannelReadResult): string {
   if (out.count === 0) return `No readable messages in ${out.channel}.`;
   const body =
     `Recent messages in ${out.channel} (oldest first):\n` + out.messages.map((m) => `[${m.author}] ${m.text}${ageSuffix(m)}`).join("\n");
-  const covered = out.possiblyIncomplete ? body + coverageNote("channel", out.count) : body;
+  const covered = out.possiblyIncomplete ? body + coverageNote("channel", out.count, out.partialReason) : body;
   const dated = covered + provenanceLine(out.messages);
   return out.spool ? dated + spoolNote("channel", out.spool) : dated;
 }
@@ -282,7 +317,7 @@ export function renderThreadBody(out: ThreadReadResult): string {
   if (out.count === 0) return `No readable replies in thread ${out.thread_ts}.`;
   const body =
     `Thread ${out.thread_ts} in ${out.channel} (oldest first):\n` + out.messages.map((m) => `[${m.author}] ${m.text}${ageSuffix(m)}`).join("\n");
-  const covered = out.possiblyIncomplete ? body + coverageNote("thread", out.count) : body;
+  const covered = out.possiblyIncomplete ? body + coverageNote("thread", out.count, out.partialReason) : body;
   const dated = covered + provenanceLine(out.messages);
   return out.spool ? dated + spoolNote("thread", out.spool) : dated;
 }
