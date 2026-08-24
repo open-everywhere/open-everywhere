@@ -217,6 +217,23 @@ interface DurableCallbackReference {
   readonly closure: Record<string, never>;
 }
 
+function isDurableClosureSerializable(value: unknown, seen: WeakSet<object> = new WeakSet()): boolean {
+  if (value === null || typeof value === "boolean" || typeof value === "string") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every((item) => isDurableClosureSerializable(item, seen));
+  if (typeof value !== "object") return false;
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== null && proto !== Object.prototype) return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  for (const item of Object.values(value)) {
+    if (item === undefined) continue;
+    if (!isDurableClosureSerializable(item, seen)) return false;
+  }
+  seen.delete(value);
+  return true;
+}
+
 function fillDurableCallbackDescriptors(
   entry: ReplayableToolEntry,
   callbacks: Partial<Record<CallbackPhase, ReplayCallback>>,
@@ -229,7 +246,15 @@ function fillDurableCallbackDescriptors(
   const closure = (options.closure ?? {}) as Record<string, never>;
   for (const [phase, callback] of Object.entries(callbacks)) {
     if (callback === undefined) continue;
-    if (next[phase] !== undefined && options.overwrite !== true) continue;
+    const held = next[phase];
+    if (held !== undefined && options.overwrite !== true) {
+      if (isDurableClosureSerializable(held.closure)) continue;
+      console.error(
+        `[open-everywhere:dynamic-tools] the build transform's "${phase}" descriptor carries a non-serializable ` +
+          "capture, which eve would refuse — taking the slot back with an empty closure. Hoist the callback out of " +
+          "the defineTool literal into a module-level factory (OPE-1063; see scripts/dynamic-callback-closure-bundle-test.ts).",
+      );
+    }
     next[phase] = { callback, closure: { ...closure } };
   }
   Object.defineProperty(holder, DURABLE_TOOL_CALLBACKS, { configurable: true, value: next });

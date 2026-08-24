@@ -211,4 +211,59 @@ console.log("2. approval-bearing synthetic tool (OPE-575 response-half):");
   eq(await restored.response({}), { status: "approved", reason: "probe" }, "GREEN: re-resolving restores the real authorizer");
 }
 
+console.log("3. a build-transform descriptor whose capture cannot serialize (OPE-1063):");
+{
+  const { preRegisterDynamicEntry } = await import("../agent/access/window-gated.js");
+  const BROKEN = "synthetic_probe_unserializable_tool";
+  const capturedEntry = { description: "the captured vendor entry", execute: async () => ({ ok: true }) };
+  let callCount = 0;
+  const live = async (): Promise<{ ok: boolean; callCount: number }> => {
+    callCount++;
+    return { ok: true, callCount };
+  };
+  const stamped = durable.stampDurableDynamicCallback(live as unknown as (...a: never[]) => unknown, {
+    callback: ((_closure: Record<string, unknown>) => live()) as ReplayFn,
+    closure: { entry: capturedEntry },
+  }) as unknown as typeof live;
+  const entry = defineTool({ description: "unserializable-capture probe", inputSchema: { type: "object", properties: {} }, execute: stamped });
+  const resolverDescriptor = { slug: BROKEN, eventNames: ["session.started"], events: { "session.started": async () => entry } };
+  const event = { type: "session.started" };
+
+  const ctxBad = makeCtx("sess-ope1063-unserializable");
+  await dispatchDynamicToolEvent({ ctx: ctxBad, resolvers: [resolverDescriptor], event, messages: [] });
+  eq(
+    (ctxBad.get(SessionDynamicToolMetadataKey) as DurableRow[]).length,
+    0,
+    "THE OPE-1063 DEFECT: a transform descriptor holding a non-serializable capture stores NO durable row — eve drops the tool silently",
+  );
+  ok(durable.lookupDurableDynamicCallback(BROKEN, "execute") === undefined, "…and nothing is bound, so the tool is absent from the seat rather than broken at call time");
+
+  preRegisterDynamicEntry(BROKEN, "_single", entry as unknown as Parameters<typeof preRegisterDynamicEntry>[2]);
+  const ctxHealed = makeCtx("sess-ope1063-unserializable-healed");
+  await dispatchDynamicToolEvent({ ctx: ctxHealed, resolvers: [resolverDescriptor], event, messages: [] });
+  const healedRows = ctxHealed.get(SessionDynamicToolMetadataKey) as DurableRow[];
+  eq(healedRows.length, 1, "GREEN: after preRegisterDynamicEntry the SAME entry resolves and stores its durable row");
+  eq(healedRows[0]!.callbacks.execute, { closure: {} }, "…and the persisted closure is EMPTY — the unserializable capture is gone from the metadata");
+
+  const bound = durable.lookupDurableDynamicCallback(BROKEN, "execute")!;
+  const result = (await bound(healedRows[0]!.callbacks.execute!.closure, {}, {})) as { ok: boolean; callCount: number };
+  eq(result, { ok: true, callCount: 1 }, "…and the restored binding IS the real callback — the backstop keeps the behaviour, it only drops the capture");
+
+  const SERIALIZABLE = "synthetic_probe_serializable_capture_tool";
+  const liveOk = async (): Promise<{ ok: boolean }> => ({ ok: true });
+  const stampedOk = durable.stampDurableDynamicCallback(liveOk as unknown as (...a: never[]) => unknown, {
+    callback: ((_closure: Record<string, unknown>) => liveOk()) as ReplayFn,
+    closure: { grantId: "g-1", limit: 3 },
+  }) as unknown as typeof liveOk;
+  const entryOk = defineTool({ description: "serializable-capture probe", inputSchema: { type: "object", properties: {} }, execute: stampedOk });
+  preRegisterDynamicEntry(SERIALIZABLE, "_single", entryOk as unknown as Parameters<typeof preRegisterDynamicEntry>[2]);
+  const ctxOk = makeCtx("sess-ope1063-serializable");
+  await dispatchDynamicToolEvent({ ctx: ctxOk, resolvers: [{ slug: SERIALIZABLE, eventNames: ["session.started"], events: { "session.started": async () => entryOk } }], event, messages: [] });
+  eq(
+    (ctxOk.get(SessionDynamicToolMetadataKey) as DurableRow[])[0]!.callbacks.execute,
+    { closure: { grantId: "g-1", limit: 3 } },
+    "NEGATIVE CONTROL: a SERIALIZABLE capture is left alone — preRegisterDynamicEntry still defers to the transform there",
+  );
+}
+
 console.log(`\ndynamic-tool-native-heal: ${n} assertions passed.`);

@@ -72,6 +72,15 @@ export function browserContentModelOutput(name: string, output: unknown): { type
 
 let registered: Readonly<Record<string, BrowserToolEntry>> | undefined;
 
+function browserBackstoppedExecute(name: string, entry: BrowserToolEntry, auditAction: string): (input: unknown, ctx: unknown) => Promise<unknown> {
+  return async (input: unknown, ctx: unknown) => {
+    await grainBackstopAtExecute(name, FULL_KIT, ctx as BindableContext);
+    const result = await entry.execute(input, ctx);
+    await auditToolAction(ctx as BindableContext, auditAction);
+    return result;
+  };
+}
+
 export function registerBrowserToolkit(entries: Readonly<Record<string, BrowserToolEntry>>): void {
   const armed: Record<string, BrowserToolEntry> = {};
   for (const [name, entry] of Object.entries(entries)) {
@@ -88,12 +97,7 @@ export function registerBrowserToolkit(entries: Readonly<Record<string, BrowserT
     const fenced = !BROWSER_UNFENCED_OPS.has(name);
     const backstopped = defineTool({
       ...entry,
-      execute: async (input: unknown, ctx: unknown) => {
-        await grainBackstopAtExecute(name, FULL_KIT, ctx as BindableContext);
-        const result = await entry.execute(input, ctx);
-        await auditToolAction(ctx as BindableContext, auditAction);
-        return result;
-      },
+      execute: browserBackstoppedExecute(name, entry, auditAction),
       ...(fenced ? { toModelOutput: (output: unknown) => browserContentModelOutput(name, output) } : {}),
     } as unknown as ToolDefinition) as unknown as BrowserToolEntry;
     preRegisterDynamicEntry(BROWSER_TOOLS_SLUG, name, backstopped);
