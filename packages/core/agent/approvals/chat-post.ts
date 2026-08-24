@@ -1,4 +1,4 @@
-import { postSurfaceText } from "../channels/surface-message-ops.js";
+import { postSurfaceTextStrict } from "../channels/surface-message-ops.js";
 import { appendAudit } from "../audit/audit.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
@@ -25,12 +25,12 @@ const chatPost: ActionKind<ChatPostArgs> = {
   policy: "member",
   summarize: summarizePost,
   async execute(args, decidedBy) {
-    const messageId = await postSurfaceText(args.platform, { channelId: args.container, text: args.text });
-    if (messageId === undefined) {
-      throw new Error(
-        `chat.post: the ${args.platform} post into "${args.container}" did not land. The surface reported no message id — ` +
-          `check the bot is a member of that container and that its token carries the post scope.`,
-      );
+    let messageId: string;
+    try {
+      messageId = await postSurfaceTextStrict(args.platform, { channelId: args.container, text: args.text });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`chat.post: the ${args.platform} post into "${args.container}" did not land — ${reason}`);
     }
     await appendAudit({
       ...whereFromScope(args.org, args.scopeKey),

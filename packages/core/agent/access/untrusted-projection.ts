@@ -1,4 +1,4 @@
-import { hostAuthoredModelOutput, ingestUntrustedModelOutput } from "./untrusted.js";
+import { hostAuthoredModelOutput, ingestUntrustedModelOutput, UNTRUSTED_OPEN } from "./untrusted.js";
 import { declaredContentOriginForToolName } from "./connector-content-origin-state.js";
 import { restrictToolsetForJobWake } from "./job-posture.js";
 import { currentJobWakePosture } from "./job-session-state.js";
@@ -39,6 +39,17 @@ export function registerReplayModelProjection(name: string, projection: Authored
 
 export function registeredProjectionNames(): readonly string[] {
   return [...authoredProjections.keys()];
+}
+
+const variantProjectedNames = new Set<string>();
+
+export function setVariantProjectedName(mountedName: string, projected: boolean): void {
+  if (projected) variantProjectedNames.add(mountedName);
+  else variantProjectedNames.delete(mountedName);
+}
+
+export function variantProjectedNameList(): readonly string[] {
+  return [...variantProjectedNames];
 }
 
 function isConnectorExternalName(name: string): boolean {
@@ -103,12 +114,16 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
           if (prev !== undefined) return prev(args);
           return { type: "text", value: "Authorization required. Waiting for the user to sign in." };
         }
+        let base: ToolModelOutputShape | undefined;
         let text: string;
         if (prev !== undefined) {
-          const base = await prev(args);
+          base = await prev(args);
           text = base.type === "text" ? String(base.value) : JSON.stringify(base.value ?? null);
         } else {
           text = typeof output === "string" ? output : JSON.stringify(output ?? null);
+        }
+        if (base !== undefined && base.type === "text" && variantProjectedNames.has(name) && text.startsWith(`${UNTRUSTED_OPEN} `)) {
+          return base;
         }
         if (name === "connection_search" && isStatusOnlyConnectionSearch(output)) {
           return hostAuthoredModelOutput(text, { source: `connector ${name}` });

@@ -32,7 +32,7 @@ registerTeamsProvider();
 const { RESOURCE_CONNECTORS, resourceTypesFor } = await import("@open-everywhere/core/agent/access/resource-grant.js");
 const { CONTAINER_RESOURCE_TYPE } = await import("@open-everywhere/core/agent/access/chat-write-grant.js");
 const { PERSON_RESOURCE_TYPE } = await import("@open-everywhere/core/agent/channels/dm-audience.js");
-const { postSurfaceText } = await import("@open-everywhere/core/agent/channels/surface-message-ops.js");
+const { postSurfaceText, postSurfaceTextStrict } = await import("@open-everywhere/core/agent/channels/surface-message-ops.js");
 const { dispatchDirectMessage, canDeliverDirectMessage } = await import("@open-everywhere/core/agent/channels/post-arms.js");
 const { surfaceKeySegment } = await import("@open-everywhere/core/agent/adapter-api.js");
 const { recordTeamsConversationReference } = await import("@open-everywhere/provider-teams/agent/channels/teams-conversation-ref.js");
@@ -56,12 +56,23 @@ const wireCalls: string[] = [];
 const json = (body: unknown, status = 200): Response =>
   ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) }) as unknown as Response;
 
-const fakeVendorHttp = (async (url: unknown) => {
+const DECOY_BOT_TOKEN = "decoy-leaked-bot-token-should-never-appear-in-an-error";
+const SLACK_NOT_IN_CHANNEL = "C_NOT_IN_CHANNEL";
+const DISCORD_FORBIDDEN_CHANNEL = "FORBIDDEN_CHANNEL";
+
+const fakeVendorHttp = (async (url: unknown, init?: unknown) => {
   const u = String(url);
   wireCalls.push(u);
-  if (u.includes("slack.com/api/chat.postMessage")) return json({ ok: true, ts: "1712.500000" });
+  if (u.includes("slack.com/api/chat.postMessage")) {
+    const body = String((init as { body?: unknown } | undefined)?.body ?? "");
+    if (body.includes(`channel=${SLACK_NOT_IN_CHANNEL}`)) return json({ ok: false, error: "not_in_channel" });
+    return json({ ok: true, ts: "1712.500000" });
+  }
   if (u.includes("slack.com/api/conversations.open")) return json({ ok: true, channel: { id: "D_SLACK_DM" } });
   if (u.includes("discord.com/api/") && u.endsWith("/users/@me/channels")) return json({ id: "1000000000000000001" });
+  if (u.includes("discord.com/api/") && u.includes(`/channels/${DISCORD_FORBIDDEN_CHANNEL}/messages`)) {
+    return json({ message: "Missing Access", code: 50001, leaked_if_read: DECOY_BOT_TOKEN }, 403);
+  }
   if (u.includes("discord.com/api/") && u.endsWith("/messages")) return json({ id: "1000000000000000002" });
   if (u.includes("login.microsoftonline.com") || u.includes("botframework.com/oauth")) {
     return json({ access_token: "fixture-token-not-a-secret", token_type: "Bearer", expires_in: 3600 });
@@ -129,6 +140,48 @@ try {
 
     ok(resourceTypesFor("irc").length === 0, "a connector nobody implements names no resource type");
     ok(RESOURCE_CONNECTORS.includes("irc") === false, "…and does not appear in the admitted list");
+
+    const tokenFree = (message: string): boolean =>
+      !/password|secret|bearer/i.test(message) &&
+      !message.includes(process.env.SLACK_BOT_TOKEN!) &&
+      !message.includes(process.env.DISCORD_BOT_TOKEN!) &&
+      !message.includes(DECOY_BOT_TOKEN);
+
+    {
+      let message = "";
+      try {
+        await postSurfaceTextStrict("slack", { channelId: SLACK_NOT_IN_CHANNEL, text: "tier P1 parity probe" });
+        ok(false, "4a. Slack: an ok:false chat.postMessage must THROW, not resolve");
+      } catch (e) {
+        message = String((e as Error).message);
+      }
+      ok(message.includes("not_in_channel"), `4a. Slack: the REAL refusal code reaches the throw (got: ${message})`);
+      ok(tokenFree(message), `4a. …and it is token-free (got: ${message})`);
+    }
+
+    {
+      let message = "";
+      try {
+        await postSurfaceTextStrict("discord", { channelId: DISCORD_FORBIDDEN_CHANNEL, text: "tier P1 parity probe" });
+        ok(false, "4b. Discord: a 403 create-message must THROW, not resolve");
+      } catch (e) {
+        message = String((e as Error).message);
+      }
+      ok(message.includes("403") && message.includes(DISCORD_FORBIDDEN_CHANNEL), `4b. Discord: the REAL HTTP status + channel reach the throw (got: ${message})`);
+      ok(tokenFree(message), `4b. …and it is token-free — the decoy in the response BODY never leaked (got: ${message})`);
+    }
+
+    {
+      let message = "";
+      try {
+        await postSurfaceTextStrict("teams", { channelId: "TEAMS_NEVER_SEEN", text: "tier P1 parity probe" });
+        ok(false, "4c. Teams: an unseen conversation id must THROW, not resolve");
+      } catch (e) {
+        message = String((e as Error).message);
+      }
+      ok(message.includes("no conversation reference") && message.includes("TEAMS_NEVER_SEEN"), `4c. Teams: the REAL reason reaches the throw (got: ${message})`);
+      ok(tokenFree(message), `4c. …and it is token-free (got: ${message})`);
+    }
   });
 
   console.log(`resource-grant-transport-parity: ${n} assertions passed`);

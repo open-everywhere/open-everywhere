@@ -4,13 +4,30 @@ import { registerDynamicVariant, type ReplayableToolEntry } from "../access/wind
 import { runGrantedCall } from "../access/credential-grant-broker.js";
 import { installGrantUseNotices, withGrantRoomContext } from "../access/credential-grant-notice.js";
 import { grantableVerb } from "../access/credential-grant.js";
-import { grantToolName, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
+import { hostAuthoredModelOutput, ingestUntrustedModelOutput } from "../access/untrusted.js";
+import { credentialGrantDisclosureLine, grantToolName, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { requesterThisTurn } from "../access/requester-identity.js";
 import { currentSessionId, currentTurnId, windowGrainOf, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
 
 installGrantUseNotices();
+
+function grantModelProjection(grant: CredentialGrantRow): (output: unknown) => { type: "text"; value: string } {
+  const source = `granted ${grant.verb} as ${grant.ownerSlug} — ${grant.connector} ${grant.resource}`;
+  const label = `grant:${grant.connector}:${grant.verb}`;
+  return (output: unknown) => {
+    const row = typeof output === "object" && output !== null ? (output as Record<string, unknown>) : undefined;
+    if (row?.ok === false && typeof row.message === "string") return hostAuthoredModelOutput(row.message, { source });
+    const body = row?.ok === true ? row.result : output;
+    const fenced = ingestUntrustedModelOutput(typeof body === "string" ? body : JSON.stringify(body ?? null), {
+      ingestion: { kind: "connector", label },
+      source,
+    });
+    const disclosure = typeof row?.disclosure === "string" ? row.disclosure : credentialGrantDisclosureLine(grant);
+    return { type: "text", value: `${fenced.value}\n\n${disclosure}` };
+  };
+}
 
 export function grantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry | undefined {
   const definition = grantableVerb(grant.verb);
@@ -45,6 +62,7 @@ export function grantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry |
         }),
       );
     },
+    toModelOutput: grantModelProjection(grant),
   } as never) as unknown as ReplayableToolEntry;
 }
 
