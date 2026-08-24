@@ -23,6 +23,8 @@ async function dispatchOneWorker(tag: string): Promise<{ dispatched: ScriptedHan
     }),
   );
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> ${tag}, please` });
+
+  await waitFor(() => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 1), `the ${tag} dispatch turn's own terminal step to be served`);
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 0, label: `the ${tag} delegated worker's own step` });
   const taskId = taskIdOfDelegation(dispatched, `the ${tag} delegation`);
   return { dispatched, taskId };
