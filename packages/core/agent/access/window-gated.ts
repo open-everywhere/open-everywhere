@@ -319,22 +319,15 @@ export function registerDynamicVariant(mountedName: string, entryKey: string, en
   const held = INCREMENTAL_VARIANTS.get(mountedName) ?? {};
   held[entryKey] = entry;
   INCREMENTAL_VARIANTS.set(mountedName, held);
-  installVariants(mountedName, held, "registerDynamicVariant");
+  installVariants(mountedName, held);
 }
 
 export function _resetDynamicVariantsForTest(): void {
   INCREMENTAL_VARIANTS.clear();
 }
 
-function installVariants(mountedName: string, variants: Readonly<Record<string, ReplayableToolEntry>>, door = "preRegisterDynamicVariants"): void {
+function installVariants(mountedName: string, variants: Readonly<Record<string, ReplayableToolEntry>>): void {
   const entryKeys = Object.keys(variants);
-  for (const entryKey of entryKeys) {
-    if (typeof variants[entryKey].toModelOutput === "function") {
-      throw new Error(
-        `${door}("${mountedName}"): variant "${entryKey}" authors toModelOutput, which the projection registry keys by mounted name alone and cannot disambiguate.`,
-      );
-    }
-  }
   const pick = (closure: unknown): { entryKey: string; entry: ReplayableToolEntry } => {
     const entryKey = (closure as { entryKey?: unknown } | undefined)?.entryKey;
     if (typeof entryKey !== "string" || variants[entryKey] === undefined) {
@@ -365,6 +358,15 @@ function installVariants(mountedName: string, variants: Readonly<Record<string, 
       return response(rctx);
     }) as ReplayCallback;
   }
+  const hasModelOutput = entryKeys.some((k) => typeof variants[k].toModelOutput === "function");
+  if (hasModelOutput) {
+    shared.toModelOutput = ((closure: unknown, out: unknown) => {
+      const { entry, entryKey } = pick(closure);
+      const project = entry.toModelOutput;
+      if (typeof project !== "function") throw new Error(`Dynamic tool "${mountedName}" variant "${entryKey}" authors no toModelOutput.`);
+      return project.call(entry, out);
+    }) as ReplayCallback;
+  }
   const reg = stepRegistry();
   for (const entryKey of entryKeys) {
     const entry = variants[entryKey];
@@ -374,9 +376,12 @@ function installVariants(mountedName: string, variants: Readonly<Record<string, 
     if (approval !== undefined) reg.set(names.approval, ((_cv: unknown, actx: unknown) => approval(actx)) as ReplayCallback);
     const approvalResponse = approvalResponseOf(entry);
     if (approvalResponse !== undefined) reg.set(names.approvalResponse, ((_cv: unknown, rctx: unknown) => approvalResponse(rctx)) as ReplayCallback);
+    const project = entry.toModelOutput;
+    if (typeof project === "function") reg.set(names.toModelOutput, ((_cv: unknown, out: unknown) => project.call(entry, out)) as ReplayCallback);
     const own: Partial<Record<CallbackPhase, ReplayCallback>> = { execute: shared.execute };
     if (approval !== undefined) own.approvalRequest = shared.approvalRequest;
     if (approvalResponse !== undefined) own.approvalResponse = shared.approvalResponse;
+    if (typeof project === "function") own.toModelOutput = shared.toModelOutput;
     fillDurableCallbackDescriptors(entry, own, { closure: { entryKey }, overwrite: true });
     claimMountedName(mountedName, entry, true);
   }
