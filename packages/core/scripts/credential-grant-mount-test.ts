@@ -22,8 +22,9 @@ import { _resetDynamicVariantsForTest, mountedEntryCollisions, preRegisterDynami
 import { registerPostArm, type DirectMessageRequest } from "../agent/channels/post-arms.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { resolvePartition } from "../agent/memory/partition.js";
-import grantTools, { mountGrantEntries } from "../agent/tools/grant_tools.js";
+import grantTools, { mountGrantEntries, requesterKeyForGrantCall } from "../agent/tools/grant_tools.js";
 import { readAudit } from "../agent/audit/audit.js";
+import { parsePrincipalKey } from "../agent/identity/principal-key.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -283,6 +284,24 @@ console.log("6. revoke, out-of-scope, no transport, unverified requester:");
   const noTransport = await runGrantedCall(grantId, {}, callCtx("session-scope"));
   eq(noTransport.ok ? "OK" : noTransport.refused, "no_transport", "a connector with no registered transport refuses `no_transport`");
   eq((await store.getCredentialGrant(ORG, grantId))?.status, "active", "…and the grant is NOT spent by a deployment that could never have sent the request");
+}
+
+console.log("7. the requester key grammar (OPE-1090):");
+{
+  const requester = requesterKeyForGrantCall("discord", "unused-on-a-non-tenant-platform", { kind: "requester", principalId: "9000000000000000042" });
+  eq(requester, "discord/9000000000000000042", "a bare native id composes into a QUALIFIED principal key, never the bare id the wake envelope carries");
+  ok(requester !== undefined && parsePrincipalKey(requester) !== undefined, "…and the composed key PARSES as a principal key");
+
+  const owner = "slack/T0EXAMPLE/U0BFOPE1081OWNER";
+  ok(parsePrincipalKey(owner) !== undefined && requester !== undefined && parsePrincipalKey(requester) !== undefined, "the owner half and the requester half both parse as principal keys — joinable in one row");
+
+  const tenantScoped = requesterKeyForGrantCall("slack", "T1", { kind: "requester", principalId: "U-req" });
+  eq(tenantScoped, "slack/T1/U-req", "a TENANT-SCOPED platform composes the three-segment key, the same shape the owner half already carries");
+
+  eq(requesterKeyForGrantCall("slack", "dev", { kind: "requester", principalId: "U-req" }), undefined, "an UNNAMED tenant refuses to compose — the broker reads this as `unverified_requester`, never a malformed key");
+
+  eq(requesterKeyForGrantCall("discord", "w", { kind: "unverified", reason: "several people woke this turn" }), undefined, "an UNVERIFIED verdict still composes to undefined — this fix touches only the SHAPE of a named requester, not when one is named");
+  eq(requesterKeyForGrantCall("discord", "w", { kind: "none" }), undefined, "…and a `none` verdict too");
 }
 
 console.log(`\ncredential-grant-mount: ${n} assertions passed.`);

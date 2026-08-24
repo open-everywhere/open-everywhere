@@ -7,9 +7,10 @@ import { grantableVerb } from "../access/credential-grant.js";
 import { hostAuthoredModelOutput, ingestUntrustedModelOutput } from "../access/untrusted.js";
 import { credentialGrantDisclosureLine, grantToolName, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { requesterThisTurn } from "../access/requester-identity.js";
+import { requesterThisTurn, type RequesterVerdict } from "../access/requester-identity.js";
 import { currentSessionId, currentTurnId, windowGrainOf, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
+import { tryPrincipalKey } from "../identity/principal-key.js";
 
 installGrantUseNotices();
 
@@ -27,6 +28,10 @@ function grantModelProjection(grant: CredentialGrantRow): (output: unknown) => {
     const disclosure = typeof row?.disclosure === "string" ? row.disclosure : credentialGrantDisclosureLine(grant);
     return { type: "text", value: `${fenced.value}\n\n${disclosure}` };
   };
+}
+
+export function requesterKeyForGrantCall(platform: string, workspace: string, verdict: RequesterVerdict): string | undefined {
+  return verdict.kind === "requester" ? tryPrincipalKey(platform, workspace, verdict.principalId) : undefined;
 }
 
 export function grantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry | undefined {
@@ -55,7 +60,7 @@ export function grantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry |
           nowMs: Date.now(),
           org,
           platform,
-          requesterPrincipalId: requester.kind === "requester" ? requester.principalId : undefined,
+          requesterPrincipalId: requesterKeyForGrantCall(platform, workspace, requester),
           scopeKey: currentSessionId(c) ?? "",
           ...(surface === undefined ? {} : { surface }),
           workspace,
