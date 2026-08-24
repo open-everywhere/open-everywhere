@@ -46,6 +46,7 @@ const {
   resumeDmAudience,
   stopDmAudience,
 } = await import("../agent/channels/dm-audience.js");
+const { surfaceKeySegment } = await import("../agent/identity/binding.js");
 const { TOOL_CONSEQUENCE } = await import("../agent/access/consequence.js");
 const { LEAN_SEAT_TOOLS } = await import("../agent/access/lean-seat.js");
 const { WINDOW_UNGATED_TOOLS } = await import("../agent/access/window-gate-manifest.js");
@@ -84,7 +85,7 @@ const ORG = "default";
 {
   ok(resourceTypesFor("slack").includes(PERSON_RESOURCE_TYPE), "slack implements the `person` resource type");
   ok(resourceTypesFor("discord").includes(PERSON_RESOURCE_TYPE), "discord implements the `person` resource type too (OPE-1077)");
-  ok(resourceTypesFor("teams").includes(PERSON_RESOURCE_TYPE) === false, "teams does NOT — its `29:` person id is unspellable in this grammar");
+  ok(resourceTypesFor("teams").includes(PERSON_RESOURCE_TYPE), "teams implements it too (OPE-1078) — at the surface-key spelling of its `29:` id");
   ok(RAY === "discord:person/900000000000000042", "a discord person address composes with the snowflake id intact");
   ok(SARAH === "slack:person/U_SARAH", "the person address composes as <connector>:person/<id>");
   const parsed = parseResourceAddress(SARAH);
@@ -139,9 +140,17 @@ const ORG = "default";
   const discordMixed = resourceGrantProblems("b", [{ connector: "discord", resources: [RAY, "discord:channel/900000000000000001"] }]);
   ok(discordMixed.length === 1 && discordMixed[0]!.includes("mixes resource types"), "the one-row-one-type rule holds on discord too");
 
-  const unknownConnector = resourceGrantProblems("b", [{ connector: "teams", resources: ["teams:person/U1"] }]);
+  const unknownConnector = resourceGrantProblems("b", [{ connector: "irc", resources: ["irc:person/U1"] }]);
   ok(unknownConnector.length > 0, "a person row on a connector this table does not admit refuses at load");
+
   ok(parseResourceAddress("teams:person/29:1abc") === undefined, "a REAL teams person id does not parse — the `29:` prefix carries a second colon");
+  const TEAMS_RAW_PERSON = "29:1boTframeworkPersonId";
+  const TEAMS_PERSON = personAddress("teams", TEAMS_RAW_PERSON);
+  ok(TEAMS_PERSON === `teams:person/${surfaceKeySegment(TEAMS_RAW_PERSON)}`, "personAddress composes a teams person address at the surface-key spelling");
+  ok(TEAMS_PERSON !== `teams:person/${TEAMS_RAW_PERSON}`, "…which is NOT the raw id — the two really are different strings");
+  ok(parseResourceAddress(TEAMS_PERSON)?.id === surfaceKeySegment(TEAMS_RAW_PERSON), "…and the composed address parses back to that same spelling");
+  ok(personAddress("teams", TEAMS_PERSON.slice("teams:person/".length)) === TEAMS_PERSON, "composing from an ALREADY-spelled id is a no-op — one address, however it is reached");
+  ok(personAddress("slack", SARAH_ID) === SARAH && personAddress("discord", RAY_ID) === RAY, "…and the spelling changes nothing for slack or discord, whose ids are already safe");
 }
 
 {

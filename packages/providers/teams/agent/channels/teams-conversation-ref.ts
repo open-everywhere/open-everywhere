@@ -1,5 +1,6 @@
 import { getOperationalStore, deploymentOrg, type ProactiveAddress } from "@open-everywhere/core/agent/adapter-api.js";
 import { isTrustedTeamsServiceUrl } from "./teams-origin-codec.js";
+import { teamsIdIndexRow, TEAMS_CONVERSATION_KEY_KIND, TEAMS_PERSON_KEY_KIND } from "./teams-id-restore.js";
 
 export const TEAMS_ADDRESS_PLATFORM = "teams";
 
@@ -87,6 +88,14 @@ export function teamsAddressRowsFor(input: TeamsInboundReference, at: Date = new
         updatedAt,
       });
     }
+  }
+
+  const conversationKey = teamsIdIndexRow(TEAMS_CONVERSATION_KEY_KIND, conversationId, tenantId, updatedAt);
+  if (conversationKey) rows.push(conversationKey);
+  const authorId = nonEmpty(input.userId);
+  if (authorId) {
+    const personKey = teamsIdIndexRow(TEAMS_PERSON_KEY_KIND, authorId, tenantId, updatedAt);
+    if (personKey) rows.push(personKey);
   }
 
   return rows;

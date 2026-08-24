@@ -1,9 +1,10 @@
 import type { SurfaceMessageOps } from "@open-everywhere/core/agent/adapter-api.js";
 import { dispatchTeamsReply, editTeamsMessage, type TeamsTarget } from "./teams-post-arm.js";
 import { teamsConversationRef } from "./teams-conversation-ref.js";
+import { restoreTeamsConversationId } from "./teams-id-restore.js";
 
 async function requireConversationRef(channelId: string): Promise<{ readonly serviceUrl: string; readonly conversationId: string }> {
-  const ref = await teamsConversationRef(channelId);
+  const ref = await teamsConversationRef(await restoreTeamsConversationId(channelId));
   if (!ref) {
     throw new Error(
       `Teams surface message ops: no conversation reference for "${channelId}" — this deployment has never seen an inbound activity on that id.`,
@@ -27,7 +28,7 @@ export const teamsMessageOps: SurfaceMessageOps = {
   },
 
   async editMessage(channelId, messageId, text) {
-    const { serviceUrl } = await requireConversationRef(channelId);
-    await editTeamsMessage({ platform: "teams", channelId, serviceUrl }, messageId, text);
+    const { serviceUrl, conversationId } = await requireConversationRef(channelId);
+    await editTeamsMessage({ platform: "teams", channelId: conversationId, serviceUrl }, messageId, text);
   },
 };
