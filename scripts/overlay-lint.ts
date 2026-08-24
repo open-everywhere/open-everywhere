@@ -84,7 +84,11 @@ const OVERLAYS: readonly OverlaySpec[] = [
   },
 ];
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const rootFlagAt = process.argv.indexOf("--root");
+const root =
+  rootFlagAt >= 0 && process.argv[rootFlagAt + 1] !== undefined
+    ? process.argv[rootFlagAt + 1]
+    : join(dirname(fileURLToPath(import.meta.url)), "..");
 const check = process.argv.includes("--check");
 
 const problems: string[] = [];
