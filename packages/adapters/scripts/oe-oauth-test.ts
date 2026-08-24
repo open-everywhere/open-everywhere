@@ -680,4 +680,113 @@ const tokRef = "oe-oauth:tok:notion:user:U1";
   }
 }
 
-console.log(`✓ oe-oauth: ${n} assertions passed (PKCE, DCR/authorize, in-process + cross-process single-flight, crashed-winner steal, loser-timeout, recovery, real-store claim CAS, RFC 9728 well-known derivation, hasFreshGrant probe, RFC 7009 purge, expired-pending sweep, typed errors)`);
+{
+  const REVOKE_URL = `${AS}/revoke`;
+  function dcrFetch(opts: { revocation: boolean }, counts: { discovery: number; registrations: number; revokes: number }) {
+    return async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (input.endsWith("/.well-known/oauth-protected-resource")) return json({ authorization_servers: [AS] });
+      if (input.endsWith("/.well-known/oauth-authorization-server")) {
+        counts.discovery++;
+        return json({
+          authorization_endpoint: `${AS}/authorize`,
+          token_endpoint: TOKEN_URL,
+          registration_endpoint: REG_URL,
+          ...(opts.revocation ? { revocation_endpoint: REVOKE_URL } : {}),
+        });
+      }
+      if (input === REG_URL && method === "POST") {
+        counts.registrations++;
+        return json({ client_id: "CID-1" });
+      }
+      if (input === REVOKE_URL && method === "POST") {
+        counts.revokes++;
+        return new Response("", { status: 200 });
+      }
+      return new Response("unexpected", { status: 404 });
+    };
+  }
+
+  {
+    const counts = { discovery: 0, registrations: 0, revokes: 0 };
+    const v = memVault();
+    await seedDcr(v);
+    const vault = makeOeOauthTokenVault(providers, { vault: v, fetch: dcrFetch({ revocation: true }, counts), redirectUri: () => REDIRECT });
+
+    ok(
+      (JSON.parse((await v.read("oe-oauth:dcr:notion"))!) as { revocationEndpoint?: string }).revocationEndpoint === undefined,
+      "backfill precondition: the seeded record predates revocationEndpoint parsing",
+    );
+
+    await vault.startAuthorization("notion", { type: "user", id: "U1" }, {});
+
+    const rec = JSON.parse((await v.read("oe-oauth:dcr:notion"))!) as { clientId: string; revocationEndpoint?: string };
+    ok(rec.revocationEndpoint === REVOKE_URL, "🔴 OPE-1037: the next mint BACKFILLS the missing revocationEndpoint onto the existing record");
+    ok(rec.clientId === "CID-1", "backfill NEVER re-registers — the clientId is unchanged");
+    ok(counts.registrations === 0, "🔴 backfill calls discovery, never registerClient — zero registrations");
+
+    await v.write(tokRef, JSON.stringify({ accessToken: "AT-live", refreshToken: "RT-live", obtainedAt: 0 }));
+    ok((await vault.forget("notion", { type: "user", id: "U1" })) === true, "backfill: forget still reports the row went");
+    ok(counts.revokes === 1, "🔴 OPE-1037: a purge that was LOCAL-ONLY before the backfill now reaches the vendor's revoke endpoint");
+  }
+
+  {
+    const counts = { discovery: 0, registrations: 0, revokes: 0 };
+    const v = memVault();
+    await seedDcr(v);
+    const vault = makeOeOauthTokenVault(providers, { vault: v, fetch: dcrFetch({ revocation: false }, counts), redirectUri: () => REDIRECT });
+
+    await vault.startAuthorization("notion", { type: "user", id: "U1" }, {});
+    const rec = JSON.parse((await v.read("oe-oauth:dcr:notion"))!) as { revocationEndpoint?: string };
+    ok(rec.revocationEndpoint === undefined, "🔴 negative control: a server publishing no revocation endpoint is NOT backfilled — this is a real answer, not a failure");
+
+    await v.write(tokRef, JSON.stringify({ accessToken: "AT-only", obtainedAt: 0 }));
+    let threw = false;
+    let purged: boolean | undefined;
+    try {
+      purged = await vault.forget("notion", { type: "user", id: "U1" });
+    } catch {
+      threw = true;
+    }
+    ok(!threw && purged === true, "🔴 negative control: the purge still succeeds locally, without looping or throwing");
+    ok(counts.revokes === 0, "negative control: no vendor revoke was attempted — none exists to call");
+  }
+
+  {
+    const counts = { discovery: 0, registrations: 0, revokes: 0 };
+    const v = memVault();
+    await seedDcr(v);
+    const vault = makeOeOauthTokenVault(providers, { vault: v, fetch: dcrFetch({ revocation: true }, counts), redirectUri: () => REDIRECT });
+
+    await vault.startAuthorization("notion", { type: "user", id: "U1" }, {});
+    const discoveryAfterRun1 = counts.discovery;
+    ok(discoveryAfterRun1 > 0, "run 1 performed the backfill discovery");
+    await vault.startAuthorization("notion", { type: "user", id: "U1" }, {});
+    await vault.startAuthorization("notion", { type: "user", id: "U1" }, {});
+    ok(counts.discovery === discoveryAfterRun1, "🔴 OPE-1037: once backfilled, later runs take the fast path — no repeat discovery calls");
+    ok(counts.registrations === 0, "🔴 the job survives multiple runs without ever re-registering");
+    const rec = JSON.parse((await v.read("oe-oauth:dcr:notion"))!) as { clientId: string; revocationEndpoint?: string };
+    ok(rec.clientId === "CID-1" && rec.revocationEndpoint === REVOKE_URL, "the record is complete and stable across all three runs");
+  }
+
+  {
+    const v = memVault();
+    await seedDcr(v);
+    const breaking = async (): Promise<Response> => {
+      throw new Error("discovery unreachable");
+    };
+    const vault = makeOeOauthTokenVault(providers, { vault: v, fetch: breaking, redirectUri: () => REDIRECT });
+    let url: string | undefined;
+    let threw = false;
+    try {
+      ({ url } = await vault.startAuthorization("notion", { type: "user", id: "U1" }, {}));
+    } catch {
+      threw = true;
+    }
+    ok(!threw && typeof url === "string" && url.startsWith(`${AS}/authorize`), "🔴 a backfill discovery failure is swallowed — the mint still returns the authorization URL");
+    const rec = JSON.parse((await v.read("oe-oauth:dcr:notion"))!) as { clientId: string; revocationEndpoint?: string };
+    ok(rec.clientId === "CID-1" && rec.revocationEndpoint === undefined, "a failed backfill leaves the frozen record exactly as it was");
+  }
+}
+
+console.log(`✓ oe-oauth: ${n} assertions passed (PKCE, DCR/authorize, in-process + cross-process single-flight, crashed-winner steal, loser-timeout, recovery, real-store claim CAS, RFC 9728 well-known derivation, hasFreshGrant probe, RFC 7009 purge, expired-pending sweep, DCR endpoint backfill, typed errors)`);

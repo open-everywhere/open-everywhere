@@ -60,6 +60,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "assign",
   "add_label",
   "create_ticket",
+  "post_message",
   "search",
   "aws",
   "read_channel",

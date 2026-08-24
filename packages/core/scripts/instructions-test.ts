@@ -25,6 +25,7 @@ function ok(cond: boolean, label: string): void {
 
 const base: EffectiveAccess = {
   repoCapabilities: {},
+  resourceCapabilities: {},
   mode: "channel",
   scopeKey: "slack/T1/C1",
   tenantKey: "slack/T1",

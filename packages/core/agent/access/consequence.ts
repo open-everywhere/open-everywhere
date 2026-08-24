@@ -1,6 +1,6 @@
 export type ConsequenceTier = "open" | "gate:member" | "gate:admin";
 
-const CONNECTOR_READ_VERBS: readonly string[] = [
+export const CONNECTOR_READ_VERBS: readonly string[] = [
   "search", "list", "get", "read", "fetch", "query", "find", "describe",
   "view", "retrieve", "show", "lookup", "count", "check", "browse", "download",
 ];
@@ -14,15 +14,36 @@ export function isConnectorOpTool(toolName: string): boolean {
   return toolName.includes("__");
 }
 
+const RESERVED_TOOL_NAMESPACES: ReadonlySet<string> = new Set(["grant"]);
+
+export interface QualifiedToolName {
+  readonly namespace?: string;
+  readonly owner?: string;
+  readonly connection?: string;
+  readonly verb: string;
+}
+
+export function parseQualifiedToolName(toolName: string): QualifiedToolName | undefined {
+  const segments = toolName.split("__");
+  if (segments.length < 2) return undefined;
+  const verb = segments[segments.length - 1] ?? "";
+  const head = segments[0] ?? "";
+  if (RESERVED_TOOL_NAMESPACES.has(head)) {
+    if (segments.length !== 3) return undefined;
+    return { namespace: head, owner: segments[1] ?? "", verb };
+  }
+  return { connection: segments.slice(0, -1).join("__"), verb };
+}
+
 export function classifyConnectorOp(toolName: string): "open" | "gate:member" {
   return classifyConnectorOpTier(toolName) === "read" ? "open" : "gate:member";
 }
 
 export type ConnectorOpTier = "read" | "write" | "destructive";
 
-const CONNECTOR_DESTRUCTIVE_VERBS: readonly string[] = ["delete", "remove", "destroy", "drop", "purge", "trash", "erase", "wipe"];
+export const CONNECTOR_DESTRUCTIVE_VERBS: readonly string[] = ["delete", "remove", "destroy", "drop", "purge", "trash", "erase", "wipe"];
 
-const CONNECTOR_WRITE_VERBS: readonly string[] = [
+export const CONNECTOR_WRITE_VERBS: readonly string[] = [
   "create", "update", "add", "append", "insert", "post", "put", "patch", "set", "move", "comment", "edit",
   "write", "upload", "send", "assign", "label", "rename", "duplicate", "copy", "publish", "share", "invite",
   "mark", "complete", "close", "reopen", "merge", "approve", "submit", "reply", "star", "upsert", "modify",
@@ -30,13 +51,23 @@ const CONNECTOR_WRITE_VERBS: readonly string[] = [
 ];
 
 function connectorOpVerbTokens(toolName: string): string[] {
-  let op = connectorOpName(toolName).toLowerCase();
   const sep = toolName.indexOf("__");
+  if (sep < 0) return toolName.toLowerCase().split(/[_-]/);
+  const parsed = parseQualifiedToolName(toolName);
+  if (parsed === undefined) return [];
+  let verb = parsed.verb.toLowerCase();
   if (sep > 0) {
     const conn = toolName.slice(0, sep).toLowerCase();
-    if (op.startsWith(`${conn}-`) || op.startsWith(`${conn}_`)) op = op.slice(conn.length + 1);
+    if (verb.startsWith(`${conn}-`) || verb.startsWith(`${conn}_`)) verb = verb.slice(conn.length + 1);
   }
-  return op.split(/[_-]/);
+  return verb.split(/[_-]/);
+}
+
+function connectorPathTokens(toolName: string): string[] {
+  const parsed = parseQualifiedToolName(toolName);
+  if (parsed === undefined || parsed.connection === undefined) return [];
+  const segments = parsed.connection.split("__");
+  return segments.slice(1).join("__").toLowerCase().split(/[_-]/);
 }
 
 export function classifyConnectorOpTier(toolName: string): ConnectorOpTier {
@@ -45,6 +76,10 @@ export function classifyConnectorOpTier(toolName: string): ConnectorOpTier {
     if (CONNECTOR_DESTRUCTIVE_VERBS.includes(token)) return "destructive";
     if (CONNECTOR_WRITE_VERBS.includes(token)) best = "write";
     else if (best === undefined && CONNECTOR_READ_VERBS.includes(token)) best = "read";
+  }
+  for (const token of connectorPathTokens(toolName)) {
+    if (CONNECTOR_DESTRUCTIVE_VERBS.includes(token)) return "destructive";
+    if (best === "read" && CONNECTOR_WRITE_VERBS.includes(token)) best = "write";
   }
   return best ?? "destructive";
 }
@@ -340,6 +375,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   assign: member("ticket.assign", "disclose", "audience-expanding: assignment makes the entity someone's explicit responsibility, visible to the whole team/repo, not just the asking room"),
   create_ticket: member("ticket.create", "disclose",
     "audience-expanding: a filed work item reaches every watcher of the repo/team, its triage automation and its subscribers — none of them in the asking room — and the model authors the title + body, so the card (which renders both in full) is the injection gate before that text is published",
+  ),
+  post_message: member("chat.post", "disclose",
+    "audience-expanding: a message posted into a container the turn did NOT arrive in interrupts named humans who never asked, is attributed to the deployment, and cannot be un-seen after an edit — and the model authors the body, so the card (which renders the destination and the full text) is the injection gate before those bytes reach a room that never asked for them",
   ),
 
   set_spend_limit: deferToJudge(admin("spend.set", "disclose", "self-modification + money: changes what the org will spend")),

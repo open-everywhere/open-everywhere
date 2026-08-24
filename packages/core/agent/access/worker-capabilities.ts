@@ -60,7 +60,7 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   {
     id: "work-surfaces",
     headline:
-      "Read and change the work surfaces — search and read Notion pages and comments, read Linear and GitHub issues, re-read the chat surfaces the domain works on in full, set their state, assignee and labels",
+      "Read and change the work surfaces — search and read Notion pages and comments, read Linear and GitHub issues, re-read the chat surfaces the domain works on in full, set their state, assignee and labels, and post a message into another container this domain owns",
     tools: [
       "read_notion_page",
       "read_notion_comments",
@@ -73,6 +73,7 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
       "set_state",
       "assign",
       "add_label",
+      "post_message",
     ],
   },
   {

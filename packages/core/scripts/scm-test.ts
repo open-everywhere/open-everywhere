@@ -592,7 +592,7 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
 
 {
   const base = (repos: string[]): EffectiveAccess => ({
-    mode: "channel", scopeKey: "x", tenantKey: "slack/T1", surfaceKey: "slack/T1/C1", domains: [], connections: [], connectorCredentials: {}, reachableHosts: [], repos, repoCapabilities: {}, awsRoles: [], approvers: [], plugins: [], skills: [], subagents: [], connectors: [], connectorContentOrigin: {}, instructionStack: [], preApprovalRules: [], warnings: [],
+    mode: "channel", scopeKey: "x", tenantKey: "slack/T1", surfaceKey: "slack/T1/C1", domains: [], connections: [], connectorCredentials: {}, reachableHosts: [], repos, repoCapabilities: {}, resourceCapabilities: {}, awsRoles: [], approvers: [], plugins: [], skills: [], subagents: [], connectors: [], connectorContentOrigin: {}, instructionStack: [], preApprovalRules: [], warnings: [],
   });
   const withRepos = await compileNetworkPolicy(base(["acme/web"]), async () => ({}), async (ids) => ids);
   const allow = (typeof withRepos === "object" ? withRepos.allow : undefined) as Record<string, unknown[]> | undefined;
