@@ -90,14 +90,17 @@ export function accountProfileFor(platform: string, nativeId: string, tenant?: s
   return settled;
 }
 
+export function composedAccountName(profile: AccountProfile | undefined): string | undefined {
+  if (!profile) return undefined;
+  return profile.name && profile.handle && profile.name !== profile.handle
+    ? `${profile.name} (@${profile.handle})`
+    : (profile.name ?? (profile.handle ? `@${profile.handle}` : undefined));
+}
+
 export async function humanAccountLabel(platform: string, nativeId: string, tenant?: string): Promise<string> {
   const profile = await accountProfileFor(platform, nativeId, tenant);
   const fallback = `the ${platform} account "${nativeId}"`;
-  if (!profile) return fallback;
-  const named =
-    profile.name && profile.handle && profile.name !== profile.handle
-      ? `${profile.name} (@${profile.handle})`
-      : (profile.name ?? (profile.handle ? `@${profile.handle}` : undefined));
+  const named = composedAccountName(profile);
   if (!named) return fallback;
   const workspace = tenant && tenant.length > 0 ? `${platform}/${tenant}` : platform;
   return `${named} (${nativeId}) on ${workspace}`;
