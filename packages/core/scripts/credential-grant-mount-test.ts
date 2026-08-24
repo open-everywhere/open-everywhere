@@ -35,7 +35,7 @@ const eq = (a: unknown, b: unknown, label: string): void => {
   n++;
 };
 
-const NOW = Date.parse("2026-01-29T18:22:00.000Z");
+const NOW = Date.now();
 const iso = (ms: number): string => new Date(ms).toISOString();
 
 const seatCtx = (sessionId: string): unknown => ({
