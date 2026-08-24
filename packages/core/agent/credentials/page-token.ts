@@ -10,6 +10,14 @@ type _AudiencesAreTotal = Exclude<PageAudience, (typeof PAGE_AUDIENCES)[number]>
 const _audiencesAreTotal: _AudiencesAreTotal = true;
 void _audiencesAreTotal;
 
+export const REVEAL_GRANT_CONNECTOR = "webhook-reveal";
+
+export const RESERVED_GRANT_CONNECTORS: readonly string[] = [REVEAL_GRANT_CONNECTOR];
+
+export function isReservedGrantConnector(connector: string): boolean {
+  return RESERVED_GRANT_CONNECTORS.includes(connector);
+}
+
 export interface PageTokenClaims {
   readonly v: 1;
   readonly aud: PageAudience;

@@ -6,6 +6,7 @@ import { DB_BROKER } from "./db-broker.js";
 import { parseDbCredentialRef, parseCredentialRef } from "./ref.js";
 import { credentialHome } from "./home.js";
 import { stageCredentialBindingPr } from "./binding-pr.js";
+import { isReservedGrantConnector } from "./page-token.js";
 
 type PostFn = (method: string, body: string) => Promise<Record<string, unknown> | undefined>;
 
@@ -48,6 +49,10 @@ export async function createCredentialIntake(
   input: RequestCredentialIntakeInput,
   deps: CredentialIntakeDeps = {},
 ): Promise<CreatedCredentialIntake> {
+  if (isReservedGrantConnector(input.connector)) {
+    throw new Error(`connector "${input.connector}" is reserved for grant rows and cannot take a credential intake`);
+  }
+
   const now = (deps.now ?? (() => new Date()))();
   const id = (deps.mintId ?? randomUUID)();
   const createdAt = now.toISOString();
@@ -152,6 +157,10 @@ export async function handleSetKeyClick(payload: unknown, deps: CredentialIntake
       await ephemeral(post, channelId, clickerId, "This credential request is no longer available (it may have been used or aged out).");
       return true;
     }
+    if (isReservedGrantConnector(intake.connector)) {
+      await ephemeral(post, channelId, clickerId, "This credential request is no longer available (it may have been used or aged out).");
+      return true;
+    }
     if (intake.usedAt) {
       await ephemeral(post, channelId, clickerId, "This credential request has already been used.");
       return true;
@@ -200,7 +209,7 @@ export async function handleSetKeyClick(payload: unknown, deps: CredentialIntake
   }
 }
 
-export type CompleteIntakeFailure = "empty" | "not-found" | "not-owner" | "expired" | "already-used" | "store-failed";
+export type CompleteIntakeFailure = "empty" | "not-found" | "wrong-class" | "not-owner" | "expired" | "already-used" | "store-failed";
 
 export type CompleteIntakeResult =
   | {
@@ -231,6 +240,7 @@ export async function completeCredentialIntake(
   const store = getOperationalStore();
   const intake = await store.getCredentialIntake(input.org, input.id);
   if (!intake) return { ok: false, code: "not-found" };
+  if (isReservedGrantConnector(intake.connector)) return { ok: false, code: "wrong-class" };
   if (input.submittedBy !== intake.requestedBy) return { ok: false, code: "not-owner" };
   if (Date.parse(intake.expiresAt) <= now.getTime()) return { ok: false, code: "expired" };
 
@@ -342,6 +352,7 @@ export async function handleSetKeyViewSubmission(payload: unknown, deps: Credent
       switch (result.code) {
         case "empty": return inputError("Enter the API key.");
         case "not-found": return inputError("This credential request is no longer available.");
+        case "wrong-class": return inputError("This credential request is no longer available.");
         case "not-owner": return inputError("This credential request isn’t yours to complete.");
         case "expired": return inputError("This credential request has expired — please ask for a new one.");
         case "already-used": return inputError("This credential request was already used.");
