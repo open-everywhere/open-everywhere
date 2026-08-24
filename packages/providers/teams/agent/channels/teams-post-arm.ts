@@ -14,6 +14,7 @@ import {
   rememberTeamsPersonalConversation,
   type TeamsConversationRef,
 } from "./teams-conversation-ref.js";
+import { restoreTeamsPersonId } from "./teams-id-restore.js";
 import { markNotApplied, carryFailureSignals } from "@open-everywhere/core/agent/adapter-api.js";
 import type {
   PostArm,
@@ -138,7 +139,7 @@ async function openTeamsPersonalConversation(region: { readonly serviceUrl: stri
 
 async function deliverTeamsDirectMessage(input: DirectMessageRequest): Promise<DirectMessageDelivery> {
   requireTeamsAppCredential("the direct message");
-  const principalId = input.principalId.trim();
+  const principalId = await restoreTeamsPersonId(input.principalId.trim());
   if (principalId.length === 0) throw markNotApplied(new Error("the direct message couldn't reach Teams — no account id was given."));
 
   const stored = await teamsPersonalConversationRef(principalId);

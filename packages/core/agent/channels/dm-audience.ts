@@ -1,5 +1,6 @@
 import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
+import { surfaceKeySegment } from "../identity/binding.js";
 import { dispatchDirectMessage, type DirectMessageDelivery } from "./post-arms.js";
 import type { DmAudienceRow } from "../operational/store.js";
 import { resourceAddress } from "../access/resource-grant.js";
@@ -7,7 +8,7 @@ import { resourceAddress } from "../access/resource-grant.js";
 export const PERSON_RESOURCE_TYPE = "person";
 
 export function personAddress(platform: string, principalId: string): string {
-  return resourceAddress(platform, PERSON_RESOURCE_TYPE, principalId);
+  return resourceAddress(platform, PERSON_RESOURCE_TYPE, surfaceKeySegment(principalId));
 }
 
 export const DM_STOP_ACTION = "dm.audience.stopped";

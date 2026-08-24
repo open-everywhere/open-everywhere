@@ -194,6 +194,8 @@ export { registerIdentityMapper, deploymentOrg, bindFrom, assertTurnSurface, Tur
 export type { IdentityMapper, RawIdentity, Visibility, SurfaceBinding } from "./identity/binding.js";
 export type { SessionMode } from "./access/resolver.js";
 
+export { surfaceKeySegment } from "./identity/binding.js";
+
 export { registerSurfaces, defineSurface, _resetSurfacesForTest } from "./identity/trust.js";
 export { registerSubtreePlatform, applySubtreeSurfaceClaims, subtreeSurfaceKeys, _resetSubtreePlatformsForTest } from "./identity/trust.js";
 export type { Surface, SurfaceTrust, SubtreeSurfaceHandler } from "./identity/trust.js";

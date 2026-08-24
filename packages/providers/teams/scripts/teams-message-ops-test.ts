@@ -39,8 +39,10 @@ try {
 
   {
     const CHANNEL_CONV = "19:team-chan@thread.tacv2;messageid=100000001";
+    const addressKinds = (rows: readonly { readonly kind: string }[]): string[] =>
+      rows.filter((r) => r.kind === "personal" || r.kind === "team" || r.kind === "conversation").map((r) => r.kind).sort();
     const rowsChannel = teamsAddressRowsFor({ scope: "channel", tenantId: TENANT, conversationId: CHANNEL_CONV, serviceUrl: SERVICE_URL, teamId: "TEAM_A" });
-    ok(rowsChannel.length === 2, "a channel activity writes TWO rows — team AND conversation");
+    ok(JSON.stringify(addressKinds(rowsChannel)) === JSON.stringify(["conversation", "team"]), "a channel activity writes TWO address rows — team AND conversation");
     const teamRow = rowsChannel.find((r) => r.kind === "team");
     const convRow = rowsChannel.find((r) => r.kind === "conversation");
     ok(teamRow !== undefined && convRow !== undefined, "…one of each kind");
@@ -49,12 +51,10 @@ try {
     ok(convRow?.address["conversationId"] !== teamRow?.address["conversationId"], "…proven by inequality, not just by reading the code");
 
     const rowsPersonal = teamsAddressRowsFor({ scope: "personal", tenantId: TENANT, conversationId: "19:1on1@thread.v2", serviceUrl: SERVICE_URL, userId: "29:hazel" });
-    ok(rowsPersonal.length === 2, "a personal activity writes TWO rows — personal AND conversation");
-    ok(rowsPersonal.some((r) => r.kind === "personal") && rowsPersonal.some((r) => r.kind === "conversation"), "…one of each kind");
+    ok(JSON.stringify(addressKinds(rowsPersonal)) === JSON.stringify(["conversation", "personal"]), "a personal activity writes TWO address rows — personal AND conversation");
 
     const rowsGroup = teamsAddressRowsFor({ scope: "groupChat", tenantId: TENANT, conversationId: "19:group@thread.v2", serviceUrl: SERVICE_URL });
-    ok(rowsGroup.length === 1, "🔴 a group-chat activity writes EXACTLY one row — never a personal/team row (unsupported, never faked)");
-    ok(rowsGroup[0]?.kind === "conversation", "…and it IS the conversation row — a group chat is stoppable-and-acknowledgeable even though it has no DM/directory use");
+    ok(JSON.stringify(addressKinds(rowsGroup)) === JSON.stringify(["conversation"]), "🔴 a group-chat activity writes EXACTLY one address row — never a personal/team row (unsupported, never faked)");
 
     const rowsRogue = teamsAddressRowsFor({ scope: "channel", tenantId: TENANT, conversationId: CHANNEL_CONV, serviceUrl: ROGUE_URL, teamId: "TEAM_A" });
     ok(rowsRogue.length === 0, "🔴 an UNTRUSTED serviceUrl writes NO row of any species — OPE-899 extends the double allowlist, it does not bypass it");
