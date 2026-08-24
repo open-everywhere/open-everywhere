@@ -2,12 +2,15 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { CONVERSATIONAL_ROOT_GRAINS } from "../access/window-gate-manifest.js";
 import { registerDynamicVariant, type ReplayableToolEntry } from "../access/window-gated.js";
 import { runGrantedCall } from "../access/credential-grant-broker.js";
+import { installGrantUseNotices, withGrantRoomContext } from "../access/credential-grant-notice.js";
 import { grantableVerb } from "../access/credential-grant.js";
 import { grantToolName, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { requesterThisTurn } from "../access/requester-identity.js";
 import { currentSessionId, currentTurnId, windowGrainOf, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
+
+installGrantUseNotices();
 
 export function grantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry | undefined {
   const definition = grantableVerb(grant.verb);
@@ -30,15 +33,17 @@ export function grantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry |
         surface = p.surface;
       } catch {
       }
-      return runGrantedCall(grant.id, (input ?? {}) as Record<string, unknown>, {
-        nowMs: Date.now(),
-        org,
-        platform,
-        requesterPrincipalId: requester.kind === "requester" ? requester.principalId : undefined,
-        scopeKey: currentSessionId(c) ?? "",
-        ...(surface === undefined ? {} : { surface }),
-        workspace,
-      });
+      return withGrantRoomContext({ ctx: c, org }, () =>
+        runGrantedCall(grant.id, (input ?? {}) as Record<string, unknown>, {
+          nowMs: Date.now(),
+          org,
+          platform,
+          requesterPrincipalId: requester.kind === "requester" ? requester.principalId : undefined,
+          scopeKey: currentSessionId(c) ?? "",
+          ...(surface === undefined ? {} : { surface }),
+          workspace,
+        }),
+      );
     },
   } as never) as unknown as ReplayableToolEntry;
 }
