@@ -136,6 +136,7 @@ try {
     ok(unknownCalls.length === 0, `every transport call hit an endpoint this file knows (unmatched: ${unknownCalls.join(", ") || "none"})`);
 
     ok(resourceTypesFor("teams").includes(CONTAINER_RESOURCE_TYPE) && resourceTypesFor("teams").includes(PERSON_RESOURCE_TYPE), "teams admits BOTH resource types");
+
     const teamsSends = wireCalls.filter((u) => u.startsWith(TEAMS_SERVICE_URL) && u.endsWith("/activities"));
     const sentConversationIds = teamsSends.map((u) => decodeURIComponent(u.slice(0, -"/activities".length).split("/v3/conversations/")[1] ?? ""));
     ok(
