@@ -42,13 +42,22 @@ try {
     const addressKinds = (rows: readonly { readonly kind: string }[]): string[] =>
       rows.filter((r) => r.kind === "personal" || r.kind === "team" || r.kind === "conversation").map((r) => r.kind).sort();
     const rowsChannel = teamsAddressRowsFor({ scope: "channel", tenantId: TENANT, conversationId: CHANNEL_CONV, serviceUrl: SERVICE_URL, teamId: "TEAM_A" });
-    ok(JSON.stringify(addressKinds(rowsChannel)) === JSON.stringify(["conversation", "team"]), "a channel activity writes TWO address rows — team AND conversation");
+    ok(
+      JSON.stringify(addressKinds(rowsChannel)) === JSON.stringify(["conversation", "conversation", "team"]),
+      "a channel activity writes THREE address rows — team, plus a conversation row at EACH grain (OPE-1093)",
+    );
     const teamRow = rowsChannel.find((r) => r.kind === "team");
-    const convRow = rowsChannel.find((r) => r.kind === "conversation");
-    ok(teamRow !== undefined && convRow !== undefined, "…one of each kind");
+    const convRow = rowsChannel.find((r) => r.kind === "conversation" && r.refKey === CHANNEL_CONV);
+    ok(teamRow !== undefined && convRow !== undefined, "…the team row and the reply-chain conversation row are both present");
     ok(convRow?.refKey === CHANNEL_CONV, "the conversation row keys on the EXACT id, reply-chain suffix included");
     ok(teamRow?.address["conversationId"] === "19:team-chan@thread.tacv2", "🔴 the team row strips the reply-chain suffix — the two rows name DIFFERENT addresses, on purpose");
     ok(convRow?.address["conversationId"] !== teamRow?.address["conversationId"], "…proven by inequality, not just by reading the code");
+    const channelGrainRow = rowsChannel.find((r) => r.kind === "conversation" && r.refKey === "19:team-chan@thread.tacv2");
+    ok(channelGrainRow !== undefined, "🔴 a channel activity ALSO writes a conversation row at the CHANNEL grain — the grain a roster entry and a grant address name");
+    ok(
+      channelGrainRow?.address["conversationId"] === "19:team-chan@thread.tacv2" && channelGrainRow?.address["serviceUrl"] === SERVICE_URL,
+      "…addressing the channel itself, under the same trusted serviceUrl the activity arrived on",
+    );
 
     const rowsPersonal = teamsAddressRowsFor({ scope: "personal", tenantId: TENANT, conversationId: "19:1on1@thread.v2", serviceUrl: SERVICE_URL, userId: "29:hazel" });
     ok(JSON.stringify(addressKinds(rowsPersonal)) === JSON.stringify(["conversation", "personal"]), "a personal activity writes TWO address rows — personal AND conversation");

@@ -99,6 +99,16 @@ const bundles: Bundle[] = [
     ],
   }),
 
+  defineBundle({
+    name: "e2e-teams-person-fixture",
+    resourceGrants: [
+      {
+        connector: "teams",
+        resources: ["teams:person/29-1oW-qHp1WJKhqw_Ddjc_hwMzNrg-vc6KPMyO5osV_SHTTuHytqrPZr-86xE-HaP9oJwAp1YV9skPbKRRwAdLjxQ"],
+      },
+    ],
+  }),
+
 ];
 
 const bindings: Binding[] = [
@@ -117,6 +127,8 @@ const bindings: Binding[] = [
   defineBinding({ bundle: "e2e-connector-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
 
   defineBinding({ bundle: "e2e-taint-floor-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
+
+  defineBinding({ bundle: "e2e-teams-person-fixture", scope: { level: "domain", domain: "e2e-unified" } }),
 
   defineBinding({
     bundle: "notion-connectors",

@@ -24,6 +24,8 @@ const TENANT = "tenant-one";
 
 const RAW_CHANNEL_CONV = "19:engRoom@thread.tacv2;messageid=100000001";
 const KEY_CHANNEL_CONV = surfaceKeySegment(RAW_CHANNEL_CONV);
+const RAW_CHANNEL_GRAIN = "19:engRoom@thread.tacv2";
+const KEY_CHANNEL_GRAIN = surfaceKeySegment(RAW_CHANNEL_GRAIN);
 const RAW_PERSON = "29:1hazelBotFrameworkPersonId";
 const KEY_PERSON = surfaceKeySegment(RAW_PERSON);
 const RAW_COLD_PERSON = "29:1rowanNeverDmedBefore";
@@ -66,8 +68,24 @@ try {
     ok(personKey?.refKey === KEY_PERSON, "🔴 a CHANNEL activity contributes the person index row too — the index is scope-agnostic");
     ok(channel.some((r) => r.kind === "personal") === false, "…while the personal ADDRESS row stays scope-selective, unchanged");
 
+    const convKeys = channel.filter((r) => r.kind === TEAMS_CONVERSATION_KEY_KIND).map((r) => r.refKey).sort();
+    ok(
+      JSON.stringify(convKeys) === JSON.stringify([KEY_CHANNEL_CONV, KEY_CHANNEL_GRAIN].sort()),
+      "🔴 a channel activity contributes an index row at BOTH grains — the reply chain it arrived on AND the channel a roster entry names",
+    );
+    ok(
+      channel.find((r) => r.kind === TEAMS_CONVERSATION_KEY_KIND && r.refKey === KEY_CHANNEL_GRAIN)?.address["rawId"] === RAW_CHANNEL_GRAIN,
+      "…and the channel-grain row holds the RAW channel-grain id, never the reply-chain one — a grant addresses the channel, not a thread inside it",
+    );
+
+    const personal = teamsAddressRowsFor({ scope: "personal", tenantId: TENANT, conversationId: "19:hazel1to1@thread.v2", serviceUrl: SERVICE_URL, userId: RAW_PERSON });
+    ok(
+      personal.filter((r) => r.kind === TEAMS_CONVERSATION_KEY_KIND).length === 1,
+      "a suffix-free conversation id writes exactly ONE conversation index row — the channel-grain twin is not a duplicate of every id",
+    );
+
     const rogue = teamsAddressRowsFor({ scope: "channel", tenantId: TENANT, conversationId: RAW_CHANNEL_CONV, serviceUrl: ROGUE_URL, userId: RAW_PERSON, teamId: "TEAM_A" });
-    ok(rogue.length === 0, "🔴 an UNTRUSTED serviceUrl writes NO row of any species, index rows included — one gate, not two");
+    ok(rogue.length === 0, "🔴 an UNTRUSTED serviceUrl writes NO row of any species, index rows and both channel grains included — one gate, not two");
   }
 
   {
@@ -81,6 +99,12 @@ try {
     ok((await restoreTeamsConversationId(RAW_CHANNEL_CONV)) === RAW_CHANNEL_CONV, "an ALREADY-RAW id is returned unchanged — every pre-existing caller is untouched");
     ok((await restoreTeamsPersonId("29:1someoneWeHaveNeverSeen")) === "29:1someoneWeHaveNeverSeen", "…even one this deployment holds no row for");
     ok((await restoreTeamsConversationId("19-neverSeen-thread.tacv2")) === "19-neverSeen-thread.tacv2", "an unknown spelling STILL comes back unchanged after the store has rows");
+
+    ok(KEY_CHANNEL_GRAIN !== KEY_CHANNEL_CONV, "the two grains really are two spellings — otherwise the assertion below would prove nothing");
+    ok(
+      (await restoreTeamsConversationId(KEY_CHANNEL_GRAIN)) === RAW_CHANNEL_GRAIN,
+      "🔴 the CHANNEL-GRAIN spelling restores to the raw channel id — the grain a roster entry names is now one this deployment holds",
+    );
   }
 
   const sends: { url: string; method: string; body: string }[] = [];
@@ -105,6 +129,14 @@ try {
       const send = sends.find((c) => c.url.endsWith("/activities"));
       ok(send?.url.includes(encodeURIComponent(RAW_CHANNEL_CONV)) === true, "🔴 …and the wire carried the RAW conversation id, restored from the spelling");
       ok(send?.url.includes(encodeURIComponent(KEY_CHANNEL_CONV)) === false, "…never the spelling, which the Bot Framework would refuse");
+
+      sends.length = 0;
+      const grantId = await teamsMessageOps.postText(KEY_CHANNEL_GRAIN, "a granted container post");
+      ok(grantId === "activity-1", "🔴 postText at the ROSTER spelling posts — a Teams container grant is deliverable");
+      const grantSend = sends.find((c) => c.url.endsWith("/activities"));
+      const grantConversation = decodeURIComponent(grantSend?.url.slice(0, -"/activities".length).split("/v3/conversations/")[1] ?? "");
+      ok(grantConversation === RAW_CHANNEL_GRAIN, `…and the wire carried the raw CHANNEL id (got: ${grantConversation})`);
+      ok(grantConversation !== RAW_CHANNEL_CONV, "…never the reply chain the seeding activity arrived on — a container grant addresses the channel, not a thread inside it");
 
       sends.length = 0;
       await teamsMessageOps.editMessage(KEY_CHANNEL_CONV, "activity-1", "edited");

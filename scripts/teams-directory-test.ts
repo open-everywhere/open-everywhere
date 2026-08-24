@@ -183,17 +183,21 @@ const teamRow = (teamId: string) => store.proactiveAddress("acme", TEAMS_ADDRESS
   );
 
   const channel = addressRows(teamsAddressRowsFor({ ...base, scope: "channel", conversationId: `${TEAM_CONV};messageid=99` }));
-  ok(channel.length === 2, "§3 a CHANNEL activity writes TWO address rows — `team` AND `conversation` (OPE-899)");
+  ok(channel.length === 3, "§3 a CHANNEL activity writes THREE address rows — `team`, plus a `conversation` row at EACH grain (OPE-899, OPE-1093)");
   const channelTeamRow = channel.find((r) => r.kind === "team");
   ok(channelTeamRow?.refKey === TEAM_ID, "§3 …one of them is the `team` row, keyed on the team id");
   ok(
     (channelTeamRow!.address as { conversationId: string }).conversationId === TEAM_CONV,
     "§3 the team row stores the CHANNEL-grain conversation id — the roster is a property of the channel, never of one reply chain",
   );
-  const channelConvRow = channel.find((r) => r.kind === "conversation");
+  const channelConvKeys = channel.filter((r) => r.kind === "conversation").map((r) => r.refKey).sort();
   ok(
-    (channelConvRow?.address as { conversationId: string })?.conversationId === `${TEAM_CONV};messageid=99`,
-    "🔴 §3 …the OTHER is the `conversation` row, and it keeps the reply-chain suffix the team row strips — the two rows name DIFFERENT addresses",
+    JSON.stringify(channelConvKeys) === JSON.stringify([TEAM_CONV, `${TEAM_CONV};messageid=99`].sort()),
+    "🔴 §3 …the other TWO are `conversation` rows, one per grain: the reply chain the activity arrived on, and the CHANNEL a roster entry names (OPE-1093)",
+  );
+  ok(
+    channel.every((r) => r.kind !== "conversation" || (r.address as { conversationId: string }).conversationId === r.refKey),
+    "§3 every `conversation` row addresses the id it is keyed on — a row keyed on one grain and addressing the other would deliver into the wrong place",
   );
   ok(
     channel.every((r) => r.kind !== "personal"),
