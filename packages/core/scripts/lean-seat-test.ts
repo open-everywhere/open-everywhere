@@ -341,8 +341,9 @@ inSession(() => {
   ok("read_channel" in toolset && "record_job_state" in toolset, "a restricted JOB wake keeps the job kit's reads + ledger verbs — the lean filter never runs over it");
   ok(!("agent" in toolset) && !("spawn_thread_session" in toolset), "…and holds NO delegation verb (the job kit's own rule wins)");
   ok([...JOB_WAKE_TOOLS].filter((k) => k in makeToolset()).every((k) => k in toolset), "every job-kit name present in the assembled set survived — the lean filter subtracted nothing from the job wake");
-  ok(GRANT_TOOL in toolset, "MEASURED, not ruled: a restricted JOB wake KEEPS a granted READ — the job kit's own connector-op read arm admits the name (OPE-1091)");
-  ok(!("grant__a__b__c" in toolset), "…while a malformed grant name is withheld on a job fire too — that arm fails closed on a name with no readable verb");
+  ok(!(GRANT_TOOL in toolset), "🔴 OPE-1091: a restricted JOB wake WITHHOLDS a granted READ — nobody is in the room, so there is no requester act to spend the owner's credential for");
+  ok(!("grant__a__b__c" in toolset), "…and a malformed grant name too — it was already withheld, by the tier arm's fail-closed default");
+  ok("notion__search" in toolset, "🔴 NEGATIVE CONTROL: the fire still keeps its connector READS — OPE-1091 took the reserved namespace, not the tier rule (a job that cannot read cannot work)");
 });
 
 inSession(() => {
