@@ -10,6 +10,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { grantableVerb, type GrantedRequest } from "./credential-grant.js";
 import { auditGrant, type GrantAuditStamps } from "./credential-grant-flow.js";
 import { grantOwnerSubject, type GrantOwnerSubject } from "./credential-grant-owner.js";
+import { currentJobWakePosture } from "./job-session-state.js";
 
 export type GrantTransport = (request: GrantedRequest, grant: CredentialGrantRow, owner: GrantOwnerSubject) => Promise<unknown>;
 
@@ -67,6 +68,8 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
     });
     return { message: credentialGrantRefusalMessage(grant, reason), ok: false, refused: reason };
   };
+
+  if (currentJobWakePosture() === "restricted") return refuse("nonmember_wake");
 
   const stateRefusal = credentialGrantStateRefusal(grant, nowIso);
   if (stateRefusal !== undefined) return refuse(stateRefusal);

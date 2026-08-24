@@ -78,7 +78,8 @@ export type CredentialGrantRefusal =
   | "out_of_scope"
   | "no_transport"
   | "owner_unresolvable"
-  | "unverified_requester";
+  | "unverified_requester"
+  | "nonmember_wake";
 
 export function credentialGrantStateRefusal(row: CredentialGrantRow, nowIso: string): CredentialGrantRefusal | undefined {
   if (row.status === "revoked") return "revoked";
@@ -105,6 +106,12 @@ export function credentialGrantRefusalMessage(row: Pick<CredentialGrantRow, "own
       return `Refused: this grant does not name ${row.ownerSlug} in a form this deployment can resolve a credential for, so ${what} cannot be spent under anybody. Do not retry — ask again so a fresh grant is minted.`;
     case "unverified_requester":
       return `Refused: this turn names no single verified requester, so nobody can be recorded as having spent ${row.ownerSlug}'s credential. Do not retry.`;
+    case "nonmember_wake":
+      return (
+        `Refused: the scheduler started this turn and nobody is in the room. A grant is spendable only where a person asked for it: ` +
+        `there is no requester to record against ${row.ownerSlug}'s credential, and nobody to read the "acting as ${row.ownerSlug}" notice. ` +
+        `${what} stays granted. Do not retry — it is spendable the next time a person addresses this conversation.`
+      );
   }
 }
 
