@@ -71,10 +71,22 @@ export function grantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry |
   } as never) as unknown as ReplayableToolEntry;
 }
 
+const GRANT_ENTRIES = new Map<string, { readonly fingerprint: string; readonly entry: ReplayableToolEntry }>();
+
+function cachedGrantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry | undefined {
+  const fingerprint = JSON.stringify(grant);
+  const held = GRANT_ENTRIES.get(grant.id);
+  if (held !== undefined && held.fingerprint === fingerprint) return held.entry;
+  const entry = grantToolEntry(grant);
+  if (entry === undefined) return undefined;
+  GRANT_ENTRIES.set(grant.id, { entry, fingerprint });
+  return entry;
+}
+
 export function mountGrantEntries(grants: readonly CredentialGrantRow[]): Record<string, ReplayableToolEntry> {
   const mounted: Record<string, ReplayableToolEntry> = {};
   for (const grant of grants) {
-    const entry = grantToolEntry(grant);
+    const entry = cachedGrantToolEntry(grant);
     if (entry === undefined) continue;
     let name: string;
     try {
@@ -88,28 +100,31 @@ export function mountGrantEntries(grants: readonly CredentialGrantRow[]): Record
   return mounted;
 }
 
+async function resolveGrantMount(ctx: unknown): Promise<Record<string, ReplayableToolEntry> | null> {
+  const c = ctx as BindableContext;
+  let grain: string;
+  try {
+    grain = windowGrainOf(c);
+  } catch {
+    return null;
+  }
+  if (!(CONVERSATIONAL_ROOT_GRAINS as readonly string[]).includes(grain)) return null;
+  const scopeKey = currentSessionId(c);
+  if (scopeKey === undefined || scopeKey.length === 0) return null;
+  let org: string;
+  try {
+    org = resolvePartition(c).org;
+  } catch {
+    return null;
+  }
+  const grants = await getOperationalStore().credentialGrantsForScope(org, scopeKey);
+  const mounted = mountGrantEntries(grants);
+  return Object.keys(mounted).length > 0 ? mounted : null;
+}
+
 export default defineDynamic({
   events: {
-    "session.started": async (_event, ctx) => {
-      const c = ctx as BindableContext;
-      let grain: string;
-      try {
-        grain = windowGrainOf(c);
-      } catch {
-        return null;
-      }
-      if (!(CONVERSATIONAL_ROOT_GRAINS as readonly string[]).includes(grain)) return null;
-      const scopeKey = currentSessionId(c);
-      if (scopeKey === undefined || scopeKey.length === 0) return null;
-      let org: string;
-      try {
-        org = resolvePartition(c).org;
-      } catch {
-        return null;
-      }
-      const grants = await getOperationalStore().credentialGrantsForScope(org, scopeKey);
-      const mounted = mountGrantEntries(grants);
-      return Object.keys(mounted).length > 0 ? mounted : null;
-    },
+    "session.started": async (_event, ctx) => await resolveGrantMount(ctx),
+    "turn.started": async (_event, ctx) => await resolveGrantMount(ctx),
   },
 });
