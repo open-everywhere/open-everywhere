@@ -6,6 +6,7 @@ import {
   type CredentialGrantMode,
   type CredentialGrantRow,
 } from "../operational/credential-grant-rows.js";
+import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 
 export function credentialGrantRole(domain: CredentialBoundDomain | undefined, connector: string, grantRole: string): string | undefined {
   const declared = credentialOverrideFor(domain, connector, grantRole);
@@ -77,6 +78,7 @@ export type GrantMintRefusal =
   | "resource_kind_mismatch"
   | "connector_mismatch"
   | "illegal_owner_handle"
+  | "unresolvable_owner"
   | "grant_already_live"
   | "write_verb_out_of_slice";
 
@@ -98,6 +100,7 @@ export type GrantMintVerdict =
 export function credentialGrantMintVerdict(input: GrantMintInput): GrantMintVerdict {
   if (!input.domainGrantsConnector) return { ok: false, reason: "no_domain_grant" };
   if (input.requesterPrincipalId === undefined) return { ok: false, reason: "unverified_requester" };
+  if (!isQualifiedPrincipalKey(input.ownerPrincipalId)) return { ok: false, reason: "unresolvable_owner" };
   const definition = grantableVerb(input.verb);
   if (definition === undefined) return { ok: false, reason: "unknown_verb" };
   if (definition.connector !== input.connector) return { ok: false, reason: "connector_mismatch" };
@@ -128,6 +131,8 @@ export function grantMintRefusalMessage(connector: string, reason: GrantMintRefu
       return `The verb and the resource must both belong to ${connector}.`;
     case "illegal_owner_handle":
       return "That owner's handle carries no characters a tool name can hold, so the grant could not be named. Link the account to a readable handle first.";
+    case "unresolvable_owner":
+      return "That owner is not named in a form this deployment can resolve a credential for, so nothing could ever be spent under the grant. Ask again naming the owner by their linked account.";
     case "grant_already_live":
       return "A live grant for that owner, verb and conversation already exists. Use it, or ask the owner to revoke it before asking again.";
     case "write_verb_out_of_slice":

@@ -96,17 +96,17 @@ const askInput = (scopeKey: string, mode: "once" | "session" | "standing") => ({
   ownerHandle: "Rowan Hale",
   ownerNativeId: "U-owner",
   ownerPlatform: "slack",
-  ownerPrincipalId: "slack:U-owner",
+  ownerPrincipalId: "slack/W1/U-owner",
   purpose: "draft the Q3 summary",
   requestedMode: mode,
   requesterLabel: "Ada",
-  requesterPrincipalId: "slack:U-req",
+  requesterPrincipalId: "slack/W1/U-req",
   resource: "notion:page/abc123",
   scopeKey,
   verb: "read_page",
 });
 
-const callCtx = (scopeKey: string, nowMs = NOW + 1000) => ({ ...stamps, nowMs, requesterPrincipalId: "slack:U-req", scopeKey });
+const callCtx = (scopeKey: string, nowMs = NOW + 1000) => ({ ...stamps, nowMs, requesterPrincipalId: "slack/W1/U-req", scopeKey });
 
 console.log("1. ask -> owner card -> approve -> mount -> compose -> audit:");
 
@@ -123,7 +123,7 @@ for (const mode of ["once", "session", "standing"] as const) {
   eq(card.principalId, "U-owner", `[${mode}] the card went to the OWNER's DM, never to the requesting room`);
   eq(card.actions?.length, 4, `[${mode}] the card carries the four mode buttons`);
 
-  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", mode, "slack:U-owner", NOW + 500);
+  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", mode, "slack/W1/U-owner", NOW + 500);
   ok(approved.approved, `[${mode}] the owner's approval mints a grant`);
   const grant = approved.approved ? approved.grant : undefined;
   eq(grant?.mode, mode, `[${mode}] the row records the mode the owner PRESSED, not the one the requester suggested`);
@@ -167,8 +167,8 @@ console.log("   audit rows:");
   }
   const used = rows.find((r) => r.action === "grant.used");
   const detail = (used?.detail ?? {}) as Record<string, unknown>;
-  eq(used?.principalId, "slack:U-req", "the grant.used row is stamped with the REQUESTER — a granted act is the requester's act");
-  eq(detail.owner, "slack:U-owner", "…and the SAME ROW names the owner whose credential paid for it (both principals, one row)");
+  eq(used?.principalId, "slack/W1/U-req", "the grant.used row is stamped with the REQUESTER — a granted act is the requester's act");
+  eq(detail.owner, "slack/W1/U-owner", "…and the SAME ROW names the owner whose credential paid for it (both principals, one row)");
   eq(detail.tier, "read", "…and the tier it was minted at");
   ok(typeof detail.scopeDigest === "string" && !(detail.scopeDigest as string).includes("abc123"), "…and a coarse scope DIGEST, never the composed request: the page id is not in the log");
   ok(!JSON.stringify(detail).includes("one") || !JSON.stringify(detail).includes("blocks"), "…and never the vendor OUTPUT");
@@ -242,7 +242,7 @@ console.log("4. mountedEntryCollisions over the grant names:");
 console.log("5. once-mode under concurrency, through the broker:");
 {
   const ask = await askForCredentialGrant(askInput("session-race", "once"));
-  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", "once", "slack:U-owner", NOW + 500);
+  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", "once", "slack/W1/U-owner", NOW + 500);
   const grantId = approved.approved ? approved.grant.id : "";
   const sentBefore = sent.length;
   const results = await Promise.all([
@@ -258,7 +258,7 @@ console.log("5. once-mode under concurrency, through the broker:");
 console.log("6. revoke, out-of-scope, no transport, unverified requester:");
 {
   const grantId = grantIds.session;
-  eq(await revokeCredentialGrant(stamps, grantId, "slack:U-owner", "thread", NOW + 2000), true, "the owner revokes the live session grant");
+  eq(await revokeCredentialGrant(stamps, grantId, "slack/W1/U-owner", "thread", NOW + 2000), true, "the owner revokes the live session grant");
   const refused = await runGrantedCall(grantId, {}, callCtx("session-session", NOW + 3000));
   eq(refused.ok ? "OK" : refused.refused, "revoked", "the granted call now refuses `revoked`");
   ok(!refused.ok && refused.message.includes("revoked this grant") && refused.message.includes("Do not retry"), "…with copy that names WHO ended it and tells the model not to retry");
@@ -272,7 +272,7 @@ console.log("6. revoke, out-of-scope, no transport, unverified requester:");
 
 {
   const ask = await askForCredentialGrant(askInput("session-scope", "session"));
-  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", "session", "slack:U-owner", NOW + 500);
+  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", "session", "slack/W1/U-owner", NOW + 500);
   const grantId = approved.approved ? approved.grant.id : "";
   const wrongRoom = await runGrantedCall(grantId, {}, callCtx("some-other-session"));
   eq(wrongRoom.ok ? "OK" : wrongRoom.refused, "out_of_scope", "a granted call from ANOTHER chat refuses `out_of_scope` — L0 holds at execute, not only at mount");

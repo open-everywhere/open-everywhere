@@ -90,7 +90,7 @@ export type { AwsSsoCallbackArgs, AwsSsoCallbackResult, AwsSsoCallbackCompleter 
 
 export type { Connection, CredentialAuthorizationDetail } from "./access/bundle.js";
 
-export { registerUserAuthFlow } from "./connections/user-auth-flow.js";
+export { registerUserAuthFlow, requireUserAuthFlow } from "./connections/user-auth-flow.js";
 export type { UserAuthFlowProvider, UserAuthSubject, UserTokenMintParams } from "./connections/user-auth-flow.js";
 
 export { registerConnectorTransport } from "./connections/connector-transport.js";
@@ -389,6 +389,7 @@ export { registerGrantableVerb, parseGrantResource } from "./access/credential-g
 export type { GrantableVerb, GrantedRequest, GrantResource } from "./access/credential-grant.js";
 export { registerGrantTransport } from "./access/credential-grant-broker.js";
 export type { GrantTransport } from "./access/credential-grant-broker.js";
+export type { GrantOwnerSubject } from "./access/credential-grant-owner.js";
 export type { CredentialGrantRow, CredentialGrantMode } from "./operational/credential-grant-rows.js";
 export { workDestinationPlatforms } from "./channels/work-destinations.js";
 export { getOperatorSecret, OperatorSecretNotSetError } from "./credentials/operator-secrets.js";

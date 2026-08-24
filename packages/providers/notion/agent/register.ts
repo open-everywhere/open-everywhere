@@ -10,6 +10,7 @@ import {
   registerEventScopeGrant,
   registerSubtreePlatform,
   registerSurfaceMessageOps,
+  registerGrantTransport,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerNotionTrustRoots } from "./channels/notion-ancestry-trust.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
@@ -20,6 +21,7 @@ import { notionWakeOriginCodec } from "./channels/notion-origin-codec.js";
 import { notionReadAdapter } from "./channels/notion-read.js";
 import { registerNotionWorkSearch } from "./channels/notion-work-search.js";
 import { registerNotionGrantVerbs } from "./channels/notion-grant-verbs.js";
+import { notionGrantTransport } from "./channels/notion-grant-transport.js";
 import { notionWebhookVerifier } from "./channels/notion-webhook-verifier.js";
 import { notionEventNormalizer, notionEventScopeGrant } from "./channels/notion-event-normalizer.js";
 import { registerNotionMemory } from "./memory/memory.js";
@@ -33,6 +35,7 @@ export function registerNotionProvider(): void {
   registerReadAdapter(notionReadAdapter);
   registerNotionWorkSearch();
   registerNotionGrantVerbs();
+  registerGrantTransport("notion", notionGrantTransport());
   registerWebhookVerifier(notionWebhookVerifier);
   registerEventNormalizer(notionEventNormalizer);
   registerEventScopeGrant(notionEventScopeGrant);
