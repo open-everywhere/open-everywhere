@@ -1,5 +1,5 @@
 import { JOB_WAKE_TOOLS, withheldFromJobWake } from "./window-gate-manifest.js";
-import { classifyConnectorOpTier } from "./consequence.js";
+import { classifyConnectorOpTier, isReservedNamespaceTool } from "./consequence.js";
 
 export const JOB_FIRE_ATTR = "oe_job_fire";
 
@@ -43,6 +43,7 @@ export const HARNESS_INTERNAL_TOOLS: ReadonlySet<string> = new Set(["final_outpu
 export function allowedOnRestrictedJobWake(name: string, jobKit: ReadonlySet<string> = JOB_WAKE_TOOLS): boolean {
   if (jobKit.has(name)) return true;
   if (HARNESS_INTERNAL_TOOLS.has(name)) return true;
+  if (isReservedNamespaceTool(name)) return false;
   if (name.includes("__")) return classifyConnectorOpTier(name) === "read";
   return false;
 }

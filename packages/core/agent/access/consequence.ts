@@ -16,6 +16,11 @@ export function isConnectorOpTool(toolName: string): boolean {
 
 const RESERVED_TOOL_NAMESPACES: ReadonlySet<string> = new Set(["grant"]);
 
+export function isReservedNamespaceTool(toolName: string): boolean {
+  const segments = toolName.split("__");
+  return segments.length >= 2 && RESERVED_TOOL_NAMESPACES.has(segments[0] ?? "");
+}
+
 export interface QualifiedToolName {
   readonly namespace?: string;
   readonly owner?: string;

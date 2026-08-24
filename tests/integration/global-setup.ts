@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { sweepStaleForkAppRoots } from "./fork-app-root";
 import {
   ROLLOWN_OUTPUT_DIR,
   ROLLOWN_SENTINEL_RELPATH,
@@ -14,6 +15,8 @@ import {
 
 export default async function globalSetup(): Promise<void> {
   const root = process.cwd();
+  const swept = sweepStaleForkAppRoots();
+  if (swept > 0) console.log(`integration global-setup: removed ${swept} fork app root(s) left by an interrupted run.`);
   const templateDir = join(root, ".eve", "sandbox-cache", "just-bash", "templates");
   if (process.env.OE_IT_SKIP_BUILD === "1") {
     if (!existsSync(join(root, ".output", "server", "index.mjs"))) {

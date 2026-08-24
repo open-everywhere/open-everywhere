@@ -26,6 +26,7 @@ import {
   currentJobWakePosture,
 } from "../agent/access/job-session-state.js";
 import { JOB_WAKE_TOOLS, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../agent/access/window-gate-manifest.js";
+import { grantToolName } from "../agent/operational/credential-grant-rows.js";
 import { projectToolSet } from "../agent/access/untrusted-projection.js";
 import { setNativeDelegationSeat } from "../agent/access/native-delegation-state.js";
 import { grainBackstopAtExecute } from "../agent/access/window-gated.js";
@@ -128,6 +129,20 @@ ok(
 );
 ok(!allowedOnRestrictedJobWake("some_tool_nobody_declared"), "DEFAULT DENY: an unknown name is withheld, so the restriction cannot rot open as tools are added");
 
+ok(!allowedOnRestrictedJobWake(grantToolName("rowan", "read_page")), "🔴 OPE-1091: a restricted job wake WITHHOLDS a granted READ — a fire is nobody's ask, so it spends nobody's credential");
+ok(!allowedOnRestrictedJobWake(grantToolName("rowan", "create_page")), "…and a granted WRITE (which the connector arm already refused — the fail direction is unchanged for it)");
+ok(!allowedOnRestrictedJobWake("grant__a__b__c"), "…and a malformed reserved name, which has no readable verb at all");
+ok(
+  !allowedOnRestrictedJobWake("grant__Rowan__read_page"),
+  "🔴 …and a reserved name NO MINT PATH COULD PRODUCE: `grant__Rowan__read_page` parses as the grant namespace and its verb reads, so a mint-shaped predicate (isGrantToolName) would have admitted it. The roster asks the WIDER question (isReservedNamespaceTool)",
+);
+ok(allowedOnRestrictedJobWake("notion__search"), "🔴 NEGATIVE CONTROL: connector READ ops still survive a restricted job wake — the grant arm took the reserved namespace, not the tier rule");
+ok(
+  allowedOnRestrictedJobWake("grants__rowan__read_page"),
+  "🔴 NEGATIVE CONTROL: a NEIGHBOURING head survives — `grants` is an ordinary connection name, and the match is the first SEGMENT, never the prefix `grant__`",
+);
+ok(allowedOnRestrictedJobWake("notion__grant__read"), "…and so does a connector op with the word in the middle — only the HEAD segment is reserved");
+
 const surfaceNames = new Set<string>([...Object.keys(WINDOW_GATED_TOOLS), ...WINDOW_UNGATED_TOOLS]);
 for (const name of JOB_WAKE_TOOLS) {
   ok(surfaceNames.has(name), `job-kit name ${name} carries a window-gate posture (the kit only ever REMOVES from a mounted set)`);
@@ -150,6 +165,7 @@ function makeToolset(): Record<string, { description: string; execute: () => unk
     "notion__delete_block",
     "browser_navigate",
     "final_output",
+    grantToolName("rowan", "read_page"),
   ];
   const out: Record<string, { description: string; execute: () => unknown }> = {};
   for (const name of names) out[name] = { description: `${name} tool`, execute: () => ({ ok: true }) };
@@ -172,7 +188,7 @@ const TASK_FAMILY = ["task_cancel", "task_update"] as const;
   const expected = new Set<string>([...[...JOB_WAKE_TOOLS].filter((k) => k in before), "notion__search", "final_output"]);
   ok(
     survivors.size === expected.size && [...expected].every((k) => survivors.has(k)),
-    `the restricted toolset is EXACTLY the job kit + connector reads + the harness sink (got ${[...survivors].sort().join(",")})`,
+    `the restricted toolset is EXACTLY the job kit + connector reads + the harness sink — no granted-credential tool (OPE-1091), got ${[...survivors].sort().join(",")}`,
   );
   ok(removed.length > 0 && removed.every((k) => !survivors.has(k)), "restrictToolsetForJobWake reports every removed name");
   ok(removed.join(",") === [...removed].sort().join(","), "the removed list is sorted");
@@ -202,6 +218,7 @@ inSession(() => {
   ok(!("purge_memory" in toolset) && !("open_pull_request" in toolset) && !("agent" in toolset) && !("web_search" in toolset), "projectToolSet withholds the consequential names on an un-escalated job wake");
   ok("reply" in toolset && "record_job_state" in toolset && "complete_job" in toolset && "read_channel" in toolset, "projectToolSet keeps the job kit");
   ok("notion__search" in toolset && !("notion__create_page" in toolset), "connector reads survive the seam, connector writes do not");
+  ok(!(grantToolName("rowan", "read_page") in toolset), "🔴 OPE-1091: projectToolSet REMOVES this chat's mounted grant on a restricted job wake — absence, so the model never sees a credential it may not spend");
 });
 
 inSession(() => {
@@ -215,6 +232,7 @@ inSession(() => {
   eq(removedBy(before, toolset), ["task_update"], "an ESCALATED job wake keeps the full toolset apart from the child-only `task_update` — the OPE-111 restriction exists because nobody is watching, so it lifts when somebody is");
   ok("open_pull_request" in toolset && "purge_memory" in toolset && "agent" in toolset, "the escalated turn holds the human's normal posture");
   ok("task_cancel" in toolset, "…including the PARENT task verb, because a seat that may delegate may stop its own work");
+  ok(grantToolName("rowan", "read_page") in toolset, "🔴 an ESCALATED job wake KEEPS the mounted grant — a person is in the room, so the requester the grant is spent for exists");
 });
 
 inSession(() => {

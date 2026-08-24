@@ -6,6 +6,7 @@ import {
   CONNECTOR_READ_VERBS,
   CONNECTOR_WRITE_VERBS,
   isConnectorOpTool,
+  isReservedNamespaceTool,
   parseQualifiedToolName,
   TOOL_CONSEQUENCE,
   type ConnectorOpTier,
@@ -124,6 +125,15 @@ ok(parseQualifiedToolName("grant__amy__get_page")?.namespace === "grant", "a res
 ok(parseQualifiedToolName("grant__amy__get_page")?.owner === "amy", "…its owner segment");
 ok(parseQualifiedToolName("grant__amy__get_page")?.connection === undefined, "…and no connection: a grant tool is not a connector op");
 ok(parseQualifiedToolName("grant__a__b__c") === undefined, "a reserved name of the wrong arity does not parse");
+
+ok(isReservedNamespaceTool("grant__amy__get_page"), "a well-formed grant name sits in a reserved namespace");
+ok(isReservedNamespaceTool("grant__Amy__get_page"), "🔴 …so does one no mint path could produce: the parser still reads its verb, so a narrower predicate would leave it classified `read`");
+ok(isReservedNamespaceTool("grant__a__b__c"), "…and one the parser refuses to read at all");
+ok(isReservedNamespaceTool("grant__search"), "…and a two-segment reserved name");
+ok(!isReservedNamespaceTool("grants__amy__get_page"), "🔴 the match is the first SEGMENT, never the prefix `grant__`: `grants` is an ordinary connection name");
+ok(!isReservedNamespaceTool("notion__grant__read"), "…and the word in the MIDDLE reserves nothing");
+ok(!isReservedNamespaceTool("notion__search"), "an ordinary connector op is not in a reserved namespace");
+ok(!isReservedNamespaceTool("grant"), "the bare namespace word carries no `__` and is not a qualified name");
 
 const CONNECTION_HEADS: readonly string[] = [
   "notion", "linear", "gh", "slack", "acme", "wiki", "helpdesk", "forum", "x", "y", "z", "a", "b", "c",
