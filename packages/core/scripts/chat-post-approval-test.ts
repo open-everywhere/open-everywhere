@@ -30,6 +30,15 @@ registerSurfaceMessageOps({
   editMessage: async () => {},
 });
 
+const THROWN_REASON = 'test-chat-platform-throws: refused — "C_NO_SCOPE" is missing the post scope for this bot token';
+registerSurfaceMessageOps({
+  platform: "test-chat-platform-throws",
+  postText: async () => {
+    throw new Error(THROWN_REASON);
+  },
+  editMessage: async () => {},
+});
+
 const GRANT = "test-chat-platform:channel/C_ELSEWHERE";
 function args(over: Partial<ChatPostArgs> = {}): ChatPostArgs {
   return {
@@ -101,6 +110,29 @@ function args(over: Partial<ChatPostArgs> = {}): ChatPostArgs {
   ok(
     audit.find((a) => a.action === "chat.post" && (a.detail as Record<string, unknown>).container === "C_NOT_A_MEMBER") === undefined,
     "a post that did not land writes NO chat.post audit row — the log never records a message nobody received",
+  );
+}
+
+{
+  const kind = actionKind("chat.post")!;
+  let err: unknown;
+  try {
+    await kind.execute(args({ platform: "test-chat-platform-throws", container: "C_NO_SCOPE" }), "U_APPROVER3");
+  } catch (e) {
+    err = e;
+  }
+  ok(err !== undefined, "a transport that THROWS still fails the decision loudly");
+  const message = String((err as Error).message);
+  ok(message.includes(THROWN_REASON), `the failure carries the TRANSPORT'S OWN reason verbatim (got: ${message})`);
+  ok(
+    !message.includes("check the bot is a member of that container"),
+    "the old GUESSED remedy is ABSENT once a real reason is available",
+  );
+  ok(!message.includes("token carries the post scope"), "the old guessed remedy's second half is also absent");
+  const audit = await readAudit({ org: "default", limit: 5 });
+  ok(
+    audit.find((a) => a.action === "chat.post" && (a.detail as Record<string, unknown>).container === "C_NO_SCOPE") === undefined,
+    "a post whose transport threw writes NO chat.post audit row",
   );
 }
 
