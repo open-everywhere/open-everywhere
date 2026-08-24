@@ -22,6 +22,7 @@ import { _resetDynamicVariantsForTest, type ReplayableToolEntry } from "../agent
 import { recordRequesterIdentity } from "../agent/access/requester-identity.js";
 import { registerPostArm, type DirectMessageRequest } from "../agent/channels/post-arms.js";
 import type { ReplierLabel, ReplyTarget } from "../agent/channels/reply-post.js";
+import { registerAccountDisplayName, _resetAccountDisplayNamesForTest } from "../agent/identity/account-display-name.js";
 import { registerSlackFixtureManifest, registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { FakeEveContext, inEveContext } from "./_eve-context-stub.js";
 import type { BindableContext } from "../agent/identity/binding.js";
@@ -299,6 +300,40 @@ console.log("9. the two halves called directly:");
   );
   ok(grantOwnerNoticeText(grant).includes("`slack/T1/U-req`"), "the owner's DM names WHO ran it — the person they would be revoking against");
   ok(!grantOwnerNoticeText(grant).includes("blocks"), "…and never the vendor OUTPUT: the notice reports the act, never what it read");
+}
+
+console.log("10. a registered display-name arm resolves a label, and the principal key stays visible too:");
+{
+  _resetAccountDisplayNamesForTest();
+
+  registerAccountDisplayName("slack", async (nativeId) => (nativeId === "U-req" ? { handle: "rae", name: "Rae Chen" } : undefined));
+
+  await mintGrant("session-label", "standing");
+  const dmsBefore = dmed.length;
+  const result = await callThroughMount("session-label");
+  ok(result.ok, "the granted call succeeded");
+  eq(dmed.length, dmsBefore + 1, "…and DMed the owner on this grant's first use");
+
+  ok(posted[posted.length - 1].text.includes("Rae Chen (@rae)"), "THE ROOM LINE carries the RESOLVED display label");
+  ok(posted[posted.length - 1].text.includes("`slack/T1/U-req`"), "…and STILL carries the principal key — the audit join stays visible");
+  ok(dmed[dmed.length - 1].text.includes("Rae Chen (@rae)"), "THE OWNER'S DM carries the resolved label too");
+  ok(dmed[dmed.length - 1].text.includes("`slack/T1/U-req`"), "…and the principal key, for the same reason");
+
+  _resetAccountDisplayNamesForTest();
+}
+
+console.log("11. NEGATIVE CONTROL — no display-name arm resolves ⇒ the notice falls back to the principal key alone:");
+{
+  await mintGrant("session-nolabel", "standing");
+  const dmsBefore = dmed.length;
+  const result = await callThroughMount("session-nolabel");
+  ok(result.ok, "the granted call succeeded");
+  eq(dmed.length, dmsBefore + 1, "…and DMed the owner on this grant's first use");
+
+  ok(posted[posted.length - 1].text.includes("`slack/T1/U-req`"), "the room line still names the requester, by principal key");
+  ok(!posted[posted.length - 1].text.includes("Rae Chen"), "…and never a name this deployment cannot resolve — no arm is registered right now");
+  ok(dmed[dmed.length - 1].text.includes("`slack/T1/U-req`"), "the owner's DM names the requester by principal key too");
+  ok(!dmed[dmed.length - 1].text.includes("Rae Chen"), "…and no invented name there either");
 }
 
 console.log(`\ncredential-grant-notice: ${n} assertions passed.`);
