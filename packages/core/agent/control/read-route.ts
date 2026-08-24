@@ -119,9 +119,16 @@ export async function handleAuditWindowRead(req: Request): Promise<Response> {
       return json(200, view);
     }
     const view = await auditView({ ...base, limit: AUDIT_MAX_LIMIT });
+    const scanTruncated = view.entries.length >= AUDIT_MAX_LIMIT;
     const wanted = new Set(actions);
     const filtered = view.entries.filter((e) => wanted.has(e.action)).slice(0, limit);
-    return json(200, { ...view, filter: { ...view.filter, limit }, entries: filtered, capped: filtered.length === limit });
+    return json(200, {
+      ...view,
+      filter: { ...view.filter, limit },
+      entries: filtered,
+      capped: filtered.length === limit || scanTruncated,
+      ...(scanTruncated ? { scanTruncated: true, scanned: view.entries.length } : {}),
+    });
   } catch (err) {
     return json(400, { error: err instanceof Error ? err.message : String(err) });
   }

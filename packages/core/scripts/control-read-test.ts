@@ -191,8 +191,13 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
 {
   const entries = await readAudit({ org: "acme", action: "control.service_call", principalId: "svc:e2e-harness" });
   ok(entries.length > 0, "authenticated read is audited as control.service_call under svc:<name>");
-  const detail = entries[0].detail as { view?: string; workspaces?: string };
-  ok(detail.view === "usage_window" && detail.workspaces === "slack/T1", "audit detail names the view + workspace filter");
+  ok(
+    entries.some((e) => {
+      const detail = e.detail as { view?: string; workspaces?: string };
+      return detail.view === "usage_window" && detail.workspaces === "slack/T1";
+    }),
+    "audit detail names the view + workspace filter",
+  );
 }
 
 {
@@ -238,6 +243,35 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
 
   const svc = await readAudit({ org: "acme", action: "control.service_call", principalId: "svc:e2e-harness" });
   ok(svc.some((e) => (e.detail as { view?: string }).view === "audit"), "audit read is self-audited as control.service_call view=audit");
+
+  const untruncated = (await (await getAudit(`${sinceQ}&actions=notion.no_reply,github.dispatched`, SECRET)).json()) as {
+    capped: boolean;
+    scanTruncated?: boolean;
+  };
+  ok(
+    untruncated.capped === false && untruncated.scanTruncated === undefined,
+    "audit actions=<csv> over a SMALL window reports no truncation (negative control)",
+  );
+  for (let i = 0; i < 1000; i++) {
+    await appendAudit({ org: "acme", platform: "noise", workspace: "ws1", action: "noise.filler", detail: { i } });
+  }
+  const truncated = (await (await getAudit(`${sinceQ}&actions=notion.no_reply,github.dispatched`, SECRET)).json()) as {
+    capped: boolean;
+    scanTruncated?: boolean;
+    scanned?: number;
+    entries: unknown[];
+  };
+  ok(truncated.scanTruncated === true, "audit actions=<csv> over a TRUNCATED scan reports scanTruncated:true");
+  ok(truncated.capped === true, "audit actions=<csv> over a TRUNCATED scan reports capped:true even when nothing matched");
+  ok(truncated.scanned === 1000, "audit actions=<csv> names how many rows the scan actually read");
+  const single = (await (await getAudit(`${sinceQ}&actions=notion.no_reply&limit=5`, SECRET)).json()) as {
+    entries: { action: string }[];
+    scanTruncated?: boolean;
+  };
+  ok(
+    single.scanTruncated === undefined && single.entries.length > 0 && single.entries.every((e) => e.action === "notion.no_reply"),
+    "audit actions=<one> still narrows at the store and finds its rows behind 1000 newer ones",
+  );
 }
 
 {

@@ -216,6 +216,8 @@ function deletionDetail(hostCurrent: MemoryFiles, files: MemoryFiles): Record<st
   };
 }
 
+export const SUBAGENT_SKIP_MARKER = "SKIPPED — this is an eve subagent child";
+
 function skipAsSubagentChild(ctx: HookContext, phase: string): boolean {
   let child = false;
   try {
@@ -223,7 +225,7 @@ function skipAsSubagentChild(ctx: HookContext, phase: string): boolean {
   } catch {
     child = false;
   }
-  if (child) log(`${phase}: SKIPPED — this is an eve subagent child; the parent owns the shared sandbox's memory tree`);
+  if (child) log(`${phase}: ${SUBAGENT_SKIP_MARKER}; the parent owns the shared sandbox's memory tree`);
   return child;
 }
 
