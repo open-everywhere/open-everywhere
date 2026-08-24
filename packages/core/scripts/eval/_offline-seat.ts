@@ -14,6 +14,7 @@ import stopTaskDynamic from "../../agent/tools/stop_task.js";
 import spawnTaskDynamic from "../../agent/tools/spawn_task.js";
 import completeThreadDynamic from "../../agent/tools/complete_thread.js";
 import setDmDeliveryDynamic from "../../agent/tools/set_dm_delivery.js";
+import requestCredentialGrantDynamic from "../../agent/tools/request_credential_grant.js";
 import { renderScopeMarkdown } from "../../agent/instructions/access.js";
 import { registerConfig } from "../../agent/access/config.js";
 import { defineDomain } from "../../agent/memory/domain.js";
@@ -198,6 +199,7 @@ export async function buildLeanSeatToolset(opts: {
     ["spawn_task", spawnTaskDynamic],
     ["complete_thread", completeThreadDynamic],
     ["set_dm_delivery", setDmDeliveryDynamic],
+    ["request_credential_grant", requestCredentialGrantDynamic],
   ] as const) {
     const entry = await resolveDynamicEntry(mod, opts.ctx);
     if (entry !== null) set[name] = rec(name, entry);
