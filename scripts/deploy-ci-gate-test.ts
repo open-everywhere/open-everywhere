@@ -3,15 +3,21 @@ import assert from "node:assert/strict";
 import type { ExecResult } from "./deploy/lib.js";
 import {
   classifyCheckRuns,
+  classifyCloudProofStatus,
   classifyHeavyJob,
   decideCiGate,
+  decideCiGateViaCloudProof,
   fetchCheckRunsForSha,
+  fetchCombinedStatusForSha,
   HEAVY_JOB_NAME,
   listFirstParentAncestors,
   runCiGate,
+  walkBackForCloudProof,
   walkBackForHeavyProof,
   type CheckRun,
+  type CommitStatus,
 } from "./deploy/ci-gate-lib.js";
+import { CLOUD_PROOF_CONTEXT } from "./deploy/cloud-proof-post-lib.js";
 
 let checks = 0;
 const check = (label: string, fn: () => void | Promise<void>): Promise<void> | void => {
@@ -367,4 +373,182 @@ await check("runCiGate: a 'skipped' heavy job alongside a non-green unit run nev
   );
 });
 
-console.log(`✓ deploy-ci-gate: ${checks} check(s) passed (classification, decision matrix, spawn-trap seam, fetch→decide, walk-back — all offline)`);
+function routedExecWithCloudProof(
+  fixture: { ancestors?: string[]; checkRuns?: Record<string, CheckRun[]>; statuses?: Record<string, CommitStatus[]>; diffs?: Record<string, string[]> },
+  calls: string[],
+) {
+  return async (command: string, args: string[]): Promise<ExecResult> => {
+    calls.push(`${command} ${args.join(" ")}`);
+    if (command === "gh") {
+      const path = args[1] ?? "";
+      const statusMatch = /commits\/([0-9a-fA-F]+)\/status$/.exec(path);
+      if (statusMatch) {
+        const sha = statusMatch[1];
+        const statuses = fixture.statuses?.[sha];
+        if (statuses === undefined) return { code: 1, stdout: "", stderr: `routedExecWithCloudProof: no status fixture for ${sha}` };
+        return { code: 0, stdout: JSON.stringify({ statuses }), stderr: "" };
+      }
+      const checkRunsMatch = /commits\/([0-9a-fA-F]+)\/check-runs/.exec(path);
+      if (checkRunsMatch) {
+        const sha = checkRunsMatch[1];
+        const runs = fixture.checkRuns?.[sha];
+        if (runs === undefined) return { code: 1, stdout: "", stderr: `routedExecWithCloudProof: no check-runs fixture for ${sha}` };
+        return { code: 0, stdout: JSON.stringify({ check_runs: runs }), stderr: "" };
+      }
+      return { code: 1, stdout: "", stderr: `routedExecWithCloudProof: unhandled gh ${args.join(" ")}` };
+    }
+    if (command === "git" && args[0] === "rev-list") {
+      const shas = fixture.ancestors ?? [];
+      return { code: 0, stdout: `${shas.join("\n")}\n`, stderr: "" };
+    }
+    if (command === "git" && args[0] === "diff") {
+      const key = `${args[2]}..${args[3]}`;
+      const paths = fixture.diffs?.[key];
+      if (paths === undefined) return { code: 1, stdout: "", stderr: `routedExecWithCloudProof: no diff fixture for ${key}` };
+      return { code: 0, stdout: paths.length ? `${paths.join("\n")}\n` : "", stderr: "" };
+    }
+    return { code: 1, stdout: "", stderr: `routedExecWithCloudProof: unhandled ${command} ${args.join(" ")}` };
+  };
+}
+
+check("classifyCloudProofStatus: success / pending / red / absent, read from the oe/cloud-proof context only", () => {
+  assert.deepEqual(classifyCloudProofStatus([{ context: CLOUD_PROOF_CONTEXT, state: "success" }]), { kind: "success" });
+  assert.deepEqual(classifyCloudProofStatus([{ context: CLOUD_PROOF_CONTEXT, state: "pending" }]), { kind: "pending" });
+  assert.deepEqual(classifyCloudProofStatus([{ context: CLOUD_PROOF_CONTEXT, state: "failure" }]), { kind: "red", state: "failure" });
+  assert.deepEqual(classifyCloudProofStatus([{ context: "some-other-context", state: "success" }]), { kind: "absent" });
+  assert.deepEqual(classifyCloudProofStatus([]), { kind: "absent" });
+});
+
+check("fetchCombinedStatusForSha: a failed SPAWN refuses loudly, naming the spawn error", async () => {
+  const spawnFailed: ExecResult = { code: 1, stdout: "", stderr: "", spawnError: "ENOENT: spawn gh ENOENT" };
+  const result = await fetchCombinedStatusForSha({ sha: SHA, exec: async () => spawnFailed });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.reason, /could not run `gh`/);
+});
+
+check("fetchCombinedStatusForSha: parses a real combined-status response shape", async () => {
+  const body = { state: "success", statuses: [{ context: CLOUD_PROOF_CONTEXT, state: "success" }, { context: "other-check", state: "pending" }] };
+  const ok: ExecResult = { code: 0, stdout: JSON.stringify(body), stderr: "" };
+  const result = await fetchCombinedStatusForSha({ sha: SHA, exec: async () => ok });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.statuses.length, 2);
+});
+
+await check("fetchCombinedStatusForSha: a response with no statuses array refuses rather than treating it as empty", async () => {
+  const malformed: ExecResult = { code: 0, stdout: JSON.stringify({ message: "Not Found" }), stderr: "" };
+  const result = await fetchCombinedStatusForSha({ sha: SHA, exec: async () => malformed });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.reason, /statuses/);
+});
+
+await check("decideCiGateViaCloudProof: PASSES when the tip's own oe/cloud-proof status is success", async () => {
+  const body = { statuses: [{ context: CLOUD_PROOF_CONTEXT, state: "success" }] };
+  const ok: ExecResult = { code: 0, stdout: JSON.stringify(body), stderr: "" };
+  const decision = await decideCiGateViaCloudProof({ sha: SHA, isTip: true, exec: async () => ok });
+  assert.equal(decision.verdict, "pass");
+  assert.match(decision.message, /oe\/cloud-proof/);
+});
+
+await check("decideCiGateViaCloudProof: REFUSES when oe/cloud-proof is still pending", async () => {
+  const body = { statuses: [{ context: CLOUD_PROOF_CONTEXT, state: "pending" }] };
+  const ok: ExecResult = { code: 0, stdout: JSON.stringify(body), stderr: "" };
+  const decision = await decideCiGateViaCloudProof({ sha: SHA, isTip: true, exec: async () => ok });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /pending/);
+});
+
+await check("decideCiGateViaCloudProof: REFUSES when oe/cloud-proof is red — never treated as a pass", async () => {
+  const body = { statuses: [{ context: CLOUD_PROOF_CONTEXT, state: "failure" }] };
+  const ok: ExecResult = { code: 0, stdout: JSON.stringify(body), stderr: "" };
+  const decision = await decideCiGateViaCloudProof({ sha: SHA, isTip: true, exec: async () => ok });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /red/);
+});
+
+await check("walkBackForCloudProof: PASSES when the nearest green ancestor's cumulative diff is entirely skippable", async () => {
+  const calls: string[] = [];
+  const exec = routedExecWithCloudProof(
+    {
+      ancestors: [SHA, A1, A2],
+      statuses: { [A1]: [], [A2]: [{ context: CLOUD_PROOF_CONTEXT, state: "success" }] },
+      diffs: { [`${A2}..${SHA}`]: [".claude/skills/example/SKILL.md", "docs/deploy/rollback.md"] },
+    },
+    calls,
+  );
+  const decision = await walkBackForCloudProof({ sha: SHA, exec });
+  assert.equal(decision.verdict, "pass");
+  assert.match(decision.message, new RegExp(A2.slice(0, 12)));
+});
+
+await check("walkBackForCloudProof: REFUSES when the cumulative diff includes a runtime path — names it", async () => {
+  const calls: string[] = [];
+  const exec = routedExecWithCloudProof(
+    {
+      ancestors: [SHA, A1, A2],
+      statuses: { [A1]: [], [A2]: [{ context: CLOUD_PROOF_CONTEXT, state: "success" }] },
+      diffs: { [`${A2}..${SHA}`]: [".claude/skills/example/SKILL.md", "agent/agent.ts"] },
+    },
+    calls,
+  );
+  const decision = await walkBackForCloudProof({ sha: SHA, exec });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /agent\/agent\.ts/);
+});
+
+await check("walkBackForCloudProof: REFUSES immediately on a RED ancestor — never walks further back past it", async () => {
+  const calls: string[] = [];
+  const exec = routedExecWithCloudProof(
+    { ancestors: [SHA, A1, A2], statuses: { [A1]: [{ context: CLOUD_PROOF_CONTEXT, state: "failure" }] }, diffs: {} },
+    calls,
+  );
+  const decision = await walkBackForCloudProof({ sha: SHA, exec });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /\bred\b/);
+  assert.equal(calls.some((c) => c.includes(A2)), false, "must not have called gh/git for the ancestor past the red one");
+});
+
+await check("walkBackForCloudProof: REFUSES when no green status is found within maxDepth (ambiguous, not a pass)", async () => {
+  const calls: string[] = [];
+  const exec = routedExecWithCloudProof({ ancestors: [SHA, A1, A2], statuses: { [A1]: [], [A2]: [] }, diffs: {} }, calls);
+  const decision = await walkBackForCloudProof({ sha: SHA, exec, maxDepth: 2 });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /within 2 ancestor commit\(s\)/);
+});
+
+await check("runCiGate: zero GitHub check-runs + a green oe/cloud-proof on the tip PASSES", async () => {
+  const calls: string[] = [];
+  const exec = routedExecWithCloudProof({ checkRuns: { [SHA]: [] }, statuses: { [SHA]: [{ context: CLOUD_PROOF_CONTEXT, state: "success" }] } }, calls);
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec });
+  assert.equal(decision.verdict, "pass");
+  assert.match(decision.message, /oe\/cloud-proof/);
+});
+
+await check("runCiGate: zero GitHub check-runs + no oe/cloud-proof anywhere REFUSES (fail closed, never a silent pass)", async () => {
+  const calls: string[] = [];
+  const exec = routedExecWithCloudProof(
+    { checkRuns: { [SHA]: [] }, ancestors: [SHA, A1], statuses: { [SHA]: [], [A1]: [] }, diffs: {} },
+    calls,
+  );
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec });
+  assert.equal(decision.verdict, "refuse");
+});
+
+await check("runCiGate: any GitHub check-run present at all means oe/cloud-proof is never even queried", async () => {
+  const calls: string[] = [];
+  const exec = async (command: string, args: string[]): Promise<ExecResult> => {
+    calls.push(`${command} ${args.join(" ")}`);
+    if (command === "gh" && (args[1] ?? "").includes("check-runs")) {
+      return { code: 0, stdout: JSON.stringify({ check_runs: GREEN }), stderr: "" };
+    }
+    return { code: 1, stdout: "", stderr: "unhandled — must never be called" };
+  };
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec });
+  assert.equal(decision.verdict, "pass");
+  assert.equal(
+    calls.some((c) => c.includes("/status")),
+    false,
+    "oe/cloud-proof must never be queried when GitHub Actions already produced check-runs",
+  );
+});
+
+console.log(`✓ deploy-ci-gate: ${checks} check(s) passed (classification, decision matrix, spawn-trap seam, fetch→decide, walk-back, oe/cloud-proof lane — all offline)`);

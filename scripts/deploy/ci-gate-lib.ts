@@ -1,5 +1,6 @@
 import { fetchChangedPaths } from "../ci/changed-paths.js";
 import { isSkippableDiff, runtimePaths } from "../ci/skippable-paths.js";
+import { CLOUD_PROOF_CONTEXT } from "./cloud-proof-post-lib.js";
 import { type Exec, realExec } from "./lib.js";
 
 export type CheckRun = {
@@ -221,11 +222,143 @@ export async function walkBackForHeavyProof(input: { sha: string; exec?: Exec; m
   return { verdict: "refuse", message: `walk-back for ${short}: no green heavy run found within ${maxDepth} ancestor commit(s) — refusing rather than guessing.` };
 }
 
+export type CommitStatus = { context: string; state: string };
+
+function parseCombinedStatusResponse(body: unknown): CommitStatus[] | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const raw = (body as Record<string, unknown>).statuses;
+  if (!Array.isArray(raw)) return undefined;
+  const statuses: CommitStatus[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const rec = entry as Record<string, unknown>;
+    if (typeof rec.context === "string" && typeof rec.state === "string") {
+      statuses.push({ context: rec.context, state: rec.state });
+    }
+  }
+  return statuses;
+}
+
+export type FetchCombinedStatusResult = { ok: true; statuses: CommitStatus[] } | { ok: false; reason: string };
+
+export async function fetchCombinedStatusForSha(input: { sha: string; exec?: Exec }): Promise<FetchCombinedStatusResult> {
+  const exec = input.exec ?? realExec;
+  const res = await exec("gh", ["api", `repos/{owner}/{repo}/commits/${input.sha}/status`, "--method", "GET"]);
+
+  if (res.spawnError) {
+    return { ok: false, reason: `could not run \`gh\` (${res.spawnError}) — is the GitHub CLI installed, on PATH, and authenticated?` };
+  }
+  if (res.code !== 0) {
+    return { ok: false, reason: `\`gh api\` exited ${res.code}: ${(res.stderr || res.stdout || "no output").trim().slice(0, 500)}` };
+  }
+
+  let body: unknown;
+  try {
+    body = JSON.parse(res.stdout);
+  } catch {
+    return { ok: false, reason: `\`gh api\` returned output that is not JSON: ${res.stdout.slice(0, 200)}` };
+  }
+
+  const statuses = parseCombinedStatusResponse(body);
+  if (statuses === undefined) {
+    return { ok: false, reason: "the combined status response has no `statuses` array — cannot evaluate cloud-proof state" };
+  }
+  return { ok: true, statuses };
+}
+
+export type CloudProofStatus = { kind: "success" } | { kind: "absent" } | { kind: "pending" } | { kind: "red"; state: string };
+
+const CLOUD_PROOF_PASSING_STATES = new Set(["success"]);
+const CLOUD_PROOF_PENDING_STATES = new Set(["pending"]);
+
+export function classifyCloudProofStatus(statuses: CommitStatus[]): CloudProofStatus {
+  const status = statuses.find((s) => s.context === CLOUD_PROOF_CONTEXT);
+  if (!status) return { kind: "absent" };
+  if (CLOUD_PROOF_PASSING_STATES.has(status.state)) return { kind: "success" };
+  if (CLOUD_PROOF_PENDING_STATES.has(status.state)) return { kind: "pending" };
+  return { kind: "red", state: status.state };
+}
+
+export async function walkBackForCloudProof(input: { sha: string; exec?: Exec; maxDepth?: number }): Promise<CiGateDecision> {
+  const exec = input.exec ?? realExec;
+  const maxDepth = input.maxDepth ?? WALK_BACK_MAX_DEPTH;
+  const short = input.sha.slice(0, 12);
+
+  const ancestors = await listFirstParentAncestors({ sha: input.sha, count: maxDepth + 1, exec });
+  if (!ancestors.ok) {
+    return { verdict: "refuse", message: `cloud-proof walk-back for ${short}: could not list ancestor commits (${ancestors.reason}) — refusing rather than guessing.` };
+  }
+
+  for (let i = 1; i < ancestors.shas.length; i++) {
+    const candidate = ancestors.shas[i];
+    const candidateShort = candidate.slice(0, 12);
+    const fetched = await fetchCombinedStatusForSha({ sha: candidate, exec });
+    if (!fetched.ok) {
+      return { verdict: "refuse", message: `cloud-proof walk-back for ${short}: could not read status for ancestor ${candidateShort} (${fetched.reason}) — refusing.` };
+    }
+
+    const cloud = classifyCloudProofStatus(fetched.statuses);
+    if (cloud.kind === "absent") continue;
+
+    if (cloud.kind !== "success") {
+      const shown = cloud.kind === "red" ? `red: ${cloud.state}` : cloud.kind;
+      return { verdict: "refuse", message: `cloud-proof walk-back for ${short}: ancestor ${candidateShort} has no usable oe/cloud-proof proof (${shown}) — refusing rather than guessing.` };
+    }
+
+    const diff = await fetchChangedPaths({ before: candidate, after: input.sha, exec });
+    if (!diff.ok) {
+      return { verdict: "refuse", message: `cloud-proof walk-back for ${short}: found a green oe/cloud-proof at ${candidateShort}, but could not read the diff since then (${diff.reason}) — refusing.` };
+    }
+    if (isSkippableDiff(diff.paths)) {
+      return {
+        verdict: "pass",
+        message: `CI is green for ${short} via oe/cloud-proof: no GitHub check-run exists for this sha, but the nearest ancestor with a green oe/cloud-proof status is ${candidateShort} and the diff since then is non-runtime.`,
+      };
+    }
+    const blocking = runtimePaths(diff.paths);
+    const shown = blocking.slice(0, 10).join(", ") + (blocking.length > 10 ? ", …" : "");
+    return {
+      verdict: "refuse",
+      message: `cloud-proof walk-back for ${short}: the nearest green oe/cloud-proof is at ${candidateShort}, but the diff since then includes runtime path(s): ${shown} — refusing.`,
+    };
+  }
+
+  return { verdict: "refuse", message: `cloud-proof walk-back for ${short}: no green oe/cloud-proof status found within ${maxDepth} ancestor commit(s) — refusing rather than guessing.` };
+}
+
+export async function decideCiGateViaCloudProof(input: { sha: string; isTip: boolean; exec?: Exec }): Promise<CiGateDecision> {
+  const exec = input.exec ?? realExec;
+  const short = input.sha.slice(0, 12);
+  const fetched = await fetchCombinedStatusForSha({ sha: input.sha, exec });
+  if (!fetched.ok) {
+    return {
+      verdict: "refuse",
+      message: `no GitHub check-run exists for ${short}, and its oe/cloud-proof status could not be read (${fetched.reason}) — refusing rather than guessing.`,
+    };
+  }
+
+  const cloud = classifyCloudProofStatus(fetched.statuses);
+  if (cloud.kind === "success") {
+    return { verdict: "pass", message: `CI is green for ${short} via oe/cloud-proof (no GitHub check-run exists for this sha; oe/cloud-proof reports success).` };
+  }
+  if (cloud.kind === "pending") {
+    return { verdict: "refuse", message: `oe/cloud-proof is still pending for ${short} — retry once it completes.` };
+  }
+  if (cloud.kind === "red") {
+    return { verdict: "refuse", message: `oe/cloud-proof is red for ${short} (${cloud.state}) — refusing.` };
+  }
+  return walkBackForCloudProof({ sha: input.sha, exec });
+}
+
 export async function runCiGate(input: { sha: string; isTip: boolean; exec?: Exec }): Promise<CiGateDecision> {
   const exec = input.exec ?? realExec;
   const fetched = await fetchCheckRunsForSha({ sha: input.sha, exec });
   if (!fetched.ok) {
     return { verdict: "refuse", message: `could not read CI state for ${input.sha.slice(0, 12)}: ${fetched.reason}` };
+  }
+
+  if (fetched.checkRuns.length === 0) {
+    return decideCiGateViaCloudProof({ sha: input.sha, isTip: input.isTip, exec });
   }
 
   const decision = decideCiGate({ sha: input.sha, checkRuns: fetched.checkRuns, isTip: input.isTip });
