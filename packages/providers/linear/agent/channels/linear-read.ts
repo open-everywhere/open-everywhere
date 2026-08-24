@@ -2,6 +2,7 @@ import {
   bindFrom,
   getConfig,
   currentTurnOrganization,
+  type AdapterReadFetch,
   type BindableContext,
   type Domain,
   type RenderedLine,
@@ -15,6 +16,14 @@ import { linearWorkOrg } from "./linear-work.js";
 export const LINEAR_FETCH_COMMENTS = 100;
 const LINEAR_CHANNEL_DEFAULT_LIMIT = 50;
 const LINEAR_THREAD_DEFAULT_LIMIT = 100;
+
+function partialFetch(lines: readonly RenderedLine[], possiblyIncomplete: boolean, vendorTruncated: boolean): AdapterReadFetch {
+  return {
+    lines,
+    possiblyIncomplete,
+    ...(vendorTruncated ? { partialReason: `vendor page limit: only the newest ${LINEAR_FETCH_COMMENTS} comments were fetched` } : {}),
+  };
+}
 
 export interface LinearReadDeps {
   readonly api?: LinearReadOpts["api"];
@@ -91,21 +100,25 @@ export const linearReadAdapter = {
     const threadRoot = binding.anchorMessageId;
     return { container, ...(threadRoot ? { threadRoot } : {}) };
   },
-  async readChannel(ctx: BindableContext, channel: string, limit?: number, deps?: LinearReadDeps): Promise<readonly RenderedLine[]> {
+  async readChannel(ctx: BindableContext, channel: string, limit?: number, deps?: LinearReadDeps): Promise<AdapterReadFetch> {
     const issue = await admitAndRead(ctx, channel, deps);
     const readAt = new Date().toISOString();
     const effective = Math.max(1, limit ?? LINEAR_CHANNEL_DEFAULT_LIMIT);
-    const roots = linearRootComments(issue.comments).slice(-Math.max(1, effective - 1));
-    return [
-      { ...linearTopicLine(issue), readAt, live: true },
-      ...roots.map((c) => ({ ...commentLine(c), readAt })),
-    ];
+    const rootsAll = linearRootComments(issue.comments);
+    const roots = rootsAll.slice(-Math.max(1, effective - 1));
+    const callerTrimmed = roots.length < rootsAll.length;
+    return partialFetch(
+      [{ ...linearTopicLine(issue), readAt, live: true }, ...roots.map((c) => ({ ...commentLine(c), readAt }))],
+      issue.truncated || callerTrimmed,
+      issue.truncated,
+    );
   },
-  async readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number, deps?: LinearReadDeps): Promise<readonly RenderedLine[]> {
+  async readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number, deps?: LinearReadDeps): Promise<AdapterReadFetch> {
     const issue = await admitAndRead(ctx, channel, deps);
     const readAt = new Date().toISOString();
-    return linearThreadLines(issue.comments, threadTs)
-      .map((line) => ({ ...line, readAt }))
-      .slice(-(limit ?? LINEAR_THREAD_DEFAULT_LIMIT));
+    const threadAll = linearThreadLines(issue.comments, threadTs).map((line) => ({ ...line, readAt }));
+    const lines = threadAll.slice(-(limit ?? LINEAR_THREAD_DEFAULT_LIMIT));
+    const callerTrimmed = lines.length < threadAll.length;
+    return partialFetch(lines, issue.truncated || callerTrimmed, issue.truncated);
   },
 };

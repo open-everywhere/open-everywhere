@@ -100,11 +100,12 @@ eq(parseGithubContainer("acme/api#0"), undefined, "conversation number 0 is refu
     ["/issues/7/comments", COMMENTS_7],
     ["/issues/7", ISSUE_7],
   ]);
-  const lines = await githubReadAdapter.readChannel(githubTurn({ issue: 7 }), "acme/api#7", 50, t.fn);
+  const { lines, possiblyIncomplete } = await githubReadAdapter.readChannel(githubTurn({ issue: 7 }), "acme/api#7", 50, t.fn);
   eq(lines.length, 3, "an issue read returns its opening post plus both comments");
   eq(lines[0], { author: "alice", authorId: "alice", ts: "t0", text: "Broken\n\nit fails" }, "the opening line is the issue's title and body");
   eq(lines[1]?.text, "looking", "the first comment follows the opening post, oldest first");
   eq(lines[2], { author: "ci-app", bot: true, ts: "t2", text: "ci says no" }, "a Bot comment is marked a machine and carries no author id");
+  eq(possiblyIncomplete, false, "🔴 OPE-1015: the issue's own comment COUNT (2, both fetched) declares this complete — not left absent for the heuristic");
   ok(
     t.urls.every((u) => !u.includes("/pulls/")),
     "the issue read NEVER fetches the PR object — this is the 404 gap (scm/pr-feedback.ts:151) closed",
@@ -117,13 +118,13 @@ eq(parseGithubContainer("acme/api#0"), undefined, "conversation number 0 is refu
     ["/issues/12/comments", [COMMENTS_7[0]]],
     ["/issues/12", pr],
   ]);
-  const lines = await githubReadAdapter.readChannel(githubTurn({ pr: 12 }), "acme/api#12", 50, t.fn);
+  const { lines } = await githubReadAdapter.readChannel(githubTurn({ pr: 12 }), "acme/api#12", 50, t.fn);
   eq(lines.length, 2, "a PR conversation reads through the same endpoint");
   eq(lines[0]?.text, "Add caching\n\nit fails", "…and its opening line is the PR's own title and body");
 }
 {
   const t = transport([["/issues/9", { ...ISSUE_7, comments: 0 }]]);
-  const lines = await githubReadAdapter.readChannel(githubTurn({ issue: 9 }), "acme/api#9", 50, t.fn);
+  const { lines } = await githubReadAdapter.readChannel(githubTurn({ issue: 9 }), "acme/api#9", 50, t.fn);
   eq(lines.length, 1, "a comment-less conversation reads as its opening post alone");
   ok(t.urls.every((u) => !u.includes("/comments")), "…and asks for no comment page at all");
 }
@@ -134,11 +135,12 @@ eq(parseGithubContainer("acme/api#0"), undefined, "conversation number 0 is refu
     ["/issues/7/comments", page2],
     ["/issues/7", { ...ISSUE_7, comments: 150 }],
   ]);
-  const lines = await githubReadAdapter.readChannel(githubTurn({ issue: 7 }), "acme/api#7", 50, t.fn);
+  const { lines, possiblyIncomplete } = await githubReadAdapter.readChannel(githubTurn({ issue: 7 }), "acme/api#7", 50, t.fn);
   ok(t.urls.some((u) => u.includes("comments?per_page=100&page=2")), "a 150-comment conversation reads the LAST page, not page 1");
   ok(!t.urls.some((u) => u.includes("comments?per_page=100&page=1")), "…and does not also read page 1 when the last page covers the limit");
   eq(lines.length, 50, "the page is capped to the caller's limit, opening post included");
   eq(lines[lines.length - 1]?.text, "c49", "the NEWEST comment is the last line");
+  eq(possiblyIncomplete, true, "🔴 OPE-1015: 150 total comments against 49 fetched DECLARES partial from the issue's own count, exact — not a line-count guess");
 }
 {
   const page1 = Array.from({ length: 100 }, (_, i) => ({ id: 200 + i, body: `p${i}`, user: { login: "bob" }, created_at: `u${i}` }));
@@ -149,7 +151,7 @@ eq(parseGithubContainer("acme/api#0"), undefined, "conversation number 0 is refu
     const body = url.includes("page=2") ? page2 : url.includes("page=1") ? page1 : { ...ISSUE_7, comments: 101 };
     return { ok: true, status: 200, text: async () => "", json: async () => body };
   };
-  const lines = await githubReadAdapter.readChannel(githubTurn({ issue: 7 }), "acme/api#7", 50, fn);
+  const { lines } = await githubReadAdapter.readChannel(githubTurn({ issue: 7 }), "acme/api#7", 50, fn);
   ok(urls.some((u) => u.includes("page=2")) && urls.some((u) => u.includes("page=1")), "a short last page pulls the page before it");
   eq(lines[lines.length - 1]?.text, "newest", "the newest comment is still last");
   eq(lines.length, 50, "and the read still holds to the caller's limit");
@@ -166,9 +168,17 @@ eq(reviewThreadLines(REVIEW_COMMENTS, "777").map((l: RenderedLine) => l.text), [
 eq(reviewThreadLines(REVIEW_COMMENTS, "12345"), [], "a root nothing replies to reads as an empty thread, never as the whole PR");
 {
   const t = transport([["/pulls/12/comments", REVIEW_COMMENTS]]);
-  const lines = await githubReadAdapter.readThread(githubTurn({ pr: 12, kind: "review_thread", review: 555 }), "acme/api#12", "555", 100, t.fn);
+  const { lines, possiblyIncomplete } = await githubReadAdapter.readThread(githubTurn({ pr: 12, kind: "review_thread", review: 555 }), "acme/api#12", "555", 100, t.fn);
   eq(lines.map((l) => l.text), ["this allocates", "fixed"], "the live thread read fetches the PR's review comments and filters to the thread");
   eq(lines[0]?.authorId, "bob", "…and attributes each line to its author");
+  eq(possiblyIncomplete, false, "🔴 OPE-1015: the review-comment walk saw a SHORT page (< 100) — it can PROVE it saw everything, so this declares complete");
+}
+{
+  const fullPage = Array.from({ length: 100 }, (_, i) => ({ id: 900 + i, body: `r${i}`, user: { login: "bob", type: "User" }, created_at: `s${i}` }));
+  const t = transport([["/pulls/12/comments", fullPage]]);
+  const out = await githubReadAdapter.readThread(githubTurn({ pr: 12, kind: "review_thread", review: 900 }), "acme/api#12", "900", 100, t.fn);
+  eq(out.possiblyIncomplete, true, "🔴 five full 100-comment pages give the walk no proof it saw everything — declared partial");
+  ok(typeof out.partialReason === "string" && out.partialReason.length > 0, "…and the reason rides as data — the review-comment page ceiling, named");
 }
 
 {
@@ -177,7 +187,7 @@ eq(reviewThreadLines(REVIEW_COMMENTS, "12345"), [], "a root nothing replies to r
     ["/issues/7", ISSUE_7],
   ]);
   const own = githubTurn({ issue: 7 });
-  ok((await githubReadAdapter.readChannel(own, "acme/api#7", 50, t.fn)).length === 3, "control: the turn's OWN container reads");
+  ok((await githubReadAdapter.readChannel(own, "acme/api#7", 50, t.fn)).lines.length === 3, "control: the turn's OWN container reads");
   await throws(() => githubReadAdapter.readChannel(own, "evil/api#7", 50, t.fn), "another OWNER's repo of the same name is refused");
   await throws(() => githubReadAdapter.readChannel(own, "acme/secret#7", 50, t.fn), "a repo outside the domain's read scope is refused");
   await throws(() => githubReadAdapter.readChannel(own, "acme/api", 50, t.fn), "a container id that names no conversation is refused");

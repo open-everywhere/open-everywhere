@@ -143,8 +143,9 @@ eq(linearReadAdapter.wakeAddress(linearTurn({})), undefined, "a turn with no iss
 
 {
   const t = transport();
-  const lines = await linearReadAdapter.readChannel(linearTurn({ issue: OWN_ISSUE, comment: "c1" }), OWN_ISSUE, 50, deps(t));
+  const { lines, possiblyIncomplete } = await linearReadAdapter.readChannel(linearTurn({ issue: OWN_ISSUE, comment: "c1" }), OWN_ISSUE, 50, deps(t));
   eq(lines.length, 4, "the channel read is the topic plus the three ROOT comments");
+  eq(possiblyIncomplete, false, "🔴 OPE-1015: a fully-fetched, untruncated issue DECLARES itself complete — not left absent for the heuristic to guess");
   const topic = lines[0]!;
   eq(
     { author: topic.author, authorId: topic.authorId, ts: topic.ts, text: topic.text, live: topic.live },
@@ -201,7 +202,7 @@ eq(
 
 {
   const t = transport();
-  const lines = await linearReadAdapter.readThread(linearTurn({ issue: OWN_ISSUE, comment: "c1" }), OWN_ISSUE, "c1", 100, deps(t));
+  const { lines } = await linearReadAdapter.readThread(linearTurn({ issue: OWN_ISSUE, comment: "c1" }), OWN_ISSUE, "c1", 100, deps(t));
   eq(
     lines.map((l) => l.text),
     ["first root", "reply to root 1", "deep reply"],
@@ -215,7 +216,7 @@ eq(
 }
 {
   const t = transport();
-  const lines = await linearReadAdapter.readThread(linearTurn({ issue: OWN_ISSUE, comment: "c2" }), OWN_ISSUE, "c2", 100, deps(t));
+  const { lines } = await linearReadAdapter.readThread(linearTurn({ issue: OWN_ISSUE, comment: "c2" }), OWN_ISSUE, "c2", 100, deps(t));
   eq(lines.map((l) => l.text), ["second root"], "a SECOND root's thread reads separately — no other root's replies leak in");
 }
 {
@@ -232,7 +233,7 @@ eq(
 {
   const t = transport();
   const own = linearTurn({ issue: OWN_ISSUE, comment: "c1" });
-  ok((await linearReadAdapter.readChannel(own, OWN_ISSUE, 50, deps(t))).length === 4, "control: the turn's OWN issue reads");
+  ok((await linearReadAdapter.readChannel(own, OWN_ISSUE, 50, deps(t))).lines.length === 4, "control: the turn's OWN issue reads");
   const before = t.bodies.length;
   await throws(() => linearReadAdapter.readChannel(own, OTHER_ISSUE, 50, deps(t, { [OTHER_ISSUE]: "team-legal" })), "an issue in another domain's team is refused");
   await throws(
@@ -241,6 +242,28 @@ eq(
   );
   await throws(() => linearReadAdapter.readChannel(own, OTHER_ISSUE, 50, deps(t, {})), "an issue whose team will not resolve is refused, not admitted");
   eq(t.bodies.length, before, "no refused read reached the network — the fence runs BEFORE the fetch");
+}
+
+{
+  const truncatedPayload = {
+    ...ISSUE_PAYLOAD,
+    comments: { nodes: [RAW_NODES_NEWEST_FIRST[4]], pageInfo: { hasNextPage: true } },
+  };
+  const t = transport(truncatedPayload);
+  const out = await linearReadAdapter.readChannel(linearTurn({ issue: OWN_ISSUE, comment: "c1" }), OWN_ISSUE, 50, deps(t));
+  eq(out.lines.length, 2, "one topic line plus the single root on this page — a genuinely SHORT page");
+  eq(out.possiblyIncomplete, true, "🔴 the vendor's own hasNextPage is what declares this partial, not the (short) line count");
+  ok(typeof out.partialReason === "string" && out.partialReason.length > 0, "…and the reason rides as data — the vendor page limit, named");
+
+  const threadOut = await linearReadAdapter.readThread(linearTurn({ issue: OWN_ISSUE, comment: "c1" }), OWN_ISSUE, "c1", 100, deps(t));
+  eq(threadOut.possiblyIncomplete, true, "read_thread: the same vendor-truncation fact, from the same fetched page");
+}
+{
+  const t = transport();
+  const out = await linearReadAdapter.readChannel(linearTurn({ issue: OWN_ISSUE, comment: "c1" }), OWN_ISSUE, 2, deps(t));
+  eq(out.lines.length, 2, "topic plus ONE root — the caller asked for only 2 lines total");
+  eq(out.possiblyIncomplete, true, "🔴 a caller-limit trim is ALSO a real partial view, even though Linear itself was not truncated");
+  ok(!("partialReason" in out), "…and it carries NO reason: nothing vendor-side explains it, so core states no cause");
 }
 
 console.log(`✓ linear-read: ${passed} assertions passed`);

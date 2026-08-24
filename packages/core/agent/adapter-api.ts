@@ -274,7 +274,7 @@ export { windowGrainOf } from "./identity/binding.js";
 export type { WindowGrain } from "./identity/binding.js";
 
 export { registerReadAdapter, resolveReadAdapter, READ_ADAPTERS, SUPPORTED_READ_PLATFORMS, supportedReadPlatforms } from "./channels/channel-read.js";
-export type { ReadAdapter, WakeReadAddress } from "./channels/channel-read.js";
+export type { ReadAdapter, WakeReadAddress, AdapterReadFetch } from "./channels/channel-read.js";
 export { ChannelScopeError } from "./channels/read-scope-error.js";
 
 export { registerWorkSearchAdapter, registerCoreWorkSearchAdapter, workSearchAdapterFor, registeredSearchConnectors, searchGrantedConnectors } from "./channels/work-search.js";
