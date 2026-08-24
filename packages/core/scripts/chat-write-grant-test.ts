@@ -45,12 +45,18 @@ const throws = (fn: () => unknown): string => {
 const HOME = "slack/T1/C_HOME";
 const ELSEWHERE_ID = "C_ELSEWHERE";
 const OTHER_ID = "C_OTHER";
+const D_HOME_ID = "900000000000000001";
+const D_HOME = `discord/G1/${D_HOME_ID}`;
+const D_ELSEWHERE_ID = "900000000000000002";
+const D_OTHER_ID = "900000000000000003";
 const DOMAINS: readonly Domain[] = [
-  { name: "eng", channels: [HOME, `slack/T1/${ELSEWHERE_ID}`] },
-  { name: "finance", channels: [`slack/T1/${OTHER_ID}`] },
+  { name: "eng", channels: [HOME, `slack/T1/${ELSEWHERE_ID}`, D_HOME, `discord/G1/${D_ELSEWHERE_ID}`] },
+  { name: "finance", channels: [`slack/T1/${OTHER_ID}`, `discord/G1/${D_OTHER_ID}`] },
 ];
 const ELSEWHERE = resourceAddress("slack", CONTAINER_RESOURCE_TYPE, ELSEWHERE_ID);
 const OTHER = resourceAddress("slack", CONTAINER_RESOURCE_TYPE, OTHER_ID);
+const D_ELSEWHERE = resourceAddress("discord", CONTAINER_RESOURCE_TYPE, D_ELSEWHERE_ID);
+const D_OTHER = resourceAddress("discord", CONTAINER_RESOURCE_TYPE, D_OTHER_ID);
 
 {
   ok(RESOURCE_CAPABILITY_NAMES.length > 0, "the resource capability vocabulary is non-empty");
@@ -104,9 +110,19 @@ const OTHER = resourceAddress("slack", CONTAINER_RESOURCE_TYPE, OTHER_ID);
     ok(parseResourceAddress(bad) === undefined, `malformed address ${JSON.stringify(bad)} refuses to parse`);
   }
   ok(parseResourceAddress("slack:channel/C*") === undefined, "a glob id is unnameable — tier P4 has no spelling");
-  ok(RESOURCE_CONNECTORS.includes("slack"), "slack is the implemented connector");
+  ok(RESOURCE_CONNECTORS.includes("slack"), "slack is an implemented connector");
   ok(resourceTypesFor("slack").includes(CONTAINER_RESOURCE_TYPE), "slack implements the container resource type");
-  ok(resourceTypesFor("discord").length === 0, "discord is deliberately NOT implemented yet (its slice has not driven it)");
+  ok(RESOURCE_CONNECTORS.includes("discord"), "discord is an implemented connector");
+  ok(resourceTypesFor("discord").includes(CONTAINER_RESOURCE_TYPE), "discord implements the container resource type");
+  const parsedDiscord = parseResourceAddress(D_ELSEWHERE);
+  ok(
+    parsedDiscord?.connector === "discord" && parsedDiscord.type === "channel" && parsedDiscord.id === D_ELSEWHERE_ID,
+    "a discord container address parses into three facts, snowflake id intact",
+  );
+
+  ok(resourceTypesFor("teams").length === 0, "teams is deliberately NOT in the closed table — its ids do not survive the surface-key sanitiser");
+  ok(parseResourceAddress("teams:channel/19:x@thread.tacv2") === undefined, "a RAW teams conversation address does not even parse — a second colon is refused");
+  ok(parseResourceAddress("teams:person/29:1abc") === undefined, "a RAW teams person address does not parse either — `deliverDirectMessage` takes exactly that `29:` id");
 }
 
 {
@@ -132,6 +148,20 @@ const OTHER = resourceAddress("slack", CONTAINER_RESOURCE_TYPE, OTHER_ID);
   ok(unknownConnector !== "", "an unknown connector THROWS at config load — it does not load silently");
   ok(unknownConnector.includes('unknown connector "irc"'), "the unknown-connector error names the connector");
   ok(unknownConnector.includes('"slack"'), "the unknown-connector error lists what IS implemented");
+  ok(unknownConnector.includes('"discord"'), "the unknown-connector error lists discord too — the list is the closed table, not a literal");
+
+  ok(resourceGrantProblems("b", [{ connector: "discord", resources: [D_ELSEWHERE] }]).length === 0, "a bare discord container row is valid");
+  assert.doesNotThrow(() => assertBundlesValid([row({ connector: "discord", resources: [D_ELSEWHERE] })]));
+  n++;
+  ok(
+    JSON.stringify(resourceGrantCapabilities({ connector: "discord", resources: [D_ELSEWHERE] })) ===
+      JSON.stringify(DEFAULT_RESOURCE_CAPABILITIES),
+    "a bare discord row reads as the same container default a slack row does",
+  );
+
+  const teamsRow = throws(() => assertBundlesValid([row({ connector: "teams", resources: ["teams:channel/CONV1"] })]));
+  ok(teamsRow.includes('unknown connector "teams"'), "a teams resource row refuses at config load");
+  ok(teamsRow.includes("never in config"), "the teams refusal says a connector is added in the diff that wires its transport");
 
   const malformed = throws(() => assertBundlesValid([row({ connector: "slack", resources: ["C0123ABC"] })]));
   ok(malformed !== "", "a malformed address THROWS at config load");
@@ -232,7 +262,7 @@ const OTHER = resourceAddress("slack", CONTAINER_RESOURCE_TYPE, OTHER_ID);
 
   ok(chatWriteTargetsFrom(HOME, { [ELSEWHERE]: [] }, DOMAINS).length === 0, "an address granted with NO capability is not a target");
 
-  ok(chatWriteTargetsFrom(HOME, { "discord:channel/D1": ["post"] }, DOMAINS).length === 0, "an unimplemented connector's address grants nothing");
+  ok(chatWriteTargetsFrom(HOME, { "teams:channel/CONV1": ["post"] }, DOMAINS).length === 0, "an unimplemented connector's address grants nothing");
 
   let shapeErr: unknown;
   try {
@@ -252,6 +282,54 @@ const OTHER = resourceAddress("slack", CONTAINER_RESOURCE_TYPE, OTHER_ID);
 
   const home = resourceAddress("slack", CONTAINER_RESOURCE_TYPE, "C_HOME");
   ok(chatWriteTargetsFrom(HOME, {}, DOMAINS).find((t) => t.address === home) === undefined, "the arrival container is not a P1 target without a grant");
+}
+
+{
+  const dGranted = { [D_ELSEWHERE]: ["post"] as const };
+
+  const fromDiscord = chatWriteTargetsFrom(D_HOME, dGranted, DOMAINS);
+  ok(fromDiscord.length === 1, "a granted in-domain discord container is a target for a discord caller");
+  ok(fromDiscord[0]!.platform === "discord" && fromDiscord[0]!.container === D_ELSEWHERE_ID, "the discord target parses to platform + container");
+  ok(fromDiscord[0]!.address === D_ELSEWHERE, "the discord target carries the grant address verbatim");
+
+  const fromSlack = chatWriteTargetsFrom(HOME, dGranted, DOMAINS);
+  ok(fromSlack.length === 1 && fromSlack[0]!.address === D_ELSEWHERE, "a SLACK caller may name a granted DISCORD container its own domain rosters");
+  const resolvedCross = resolveChatWriteTargetFrom(HOME, dGranted, DOMAINS, D_ELSEWHERE);
+  ok(resolvedCross.platform === "discord" && resolvedCross.container === D_ELSEWHERE_ID, "the fence resolves the cross-surface target for the caller to freeze");
+
+  let dUngranted: unknown;
+  try {
+    resolveChatWriteTargetFrom(D_HOME, {}, DOMAINS, D_ELSEWHERE);
+  } catch (e) {
+    dUngranted = e;
+  }
+  ok(dUngranted instanceof ChatWriteGrantError, "an ungranted discord container throws ChatWriteGrantError");
+  ok((dUngranted as ChatWriteGrantError).boundary === "ungranted", "the discord ungranted refusal names the GRANT boundary");
+  ok((dUngranted as ChatWriteGrantError).platform === "discord", "the refusal names the DESTINATION's platform, which is what the audit row files under");
+  ok((dUngranted as ChatWriteGrantError).message.includes("resourceGrants"), "the discord ungranted refusal names the remedy: a bundle row");
+
+  const dCross = { [D_OTHER]: ["post"] as const };
+  ok(chatWriteTargetsFrom(D_HOME, dCross, DOMAINS).length === 0, "a granted discord container in ANOTHER domain is not a target");
+  let dCrossErr: unknown;
+  try {
+    resolveChatWriteTargetFrom(D_HOME, dCross, DOMAINS, D_OTHER);
+  } catch (e) {
+    dCrossErr = e;
+  }
+  ok((dCrossErr as ChatWriteGrantError).boundary === "cross-domain", "the discord cross-domain refusal names the DOMAIN boundary, not the grant");
+  ok((dCrossErr as ChatWriteGrantError).message.includes("memory/domains.ts"), "the discord cross-domain refusal names the DOMAIN remedy");
+
+  const slackOnly: readonly Domain[] = [{ name: "solo", channels: [HOME] }];
+  ok(chatWriteTargetsFrom(HOME, dGranted, slackOnly).length === 0, "a caller whose domain rosters NO discord container names no discord target");
+  let soloErr: unknown;
+  try {
+    resolveChatWriteTargetFrom(HOME, dGranted, slackOnly, D_ELSEWHERE);
+  } catch (e) {
+    soloErr = e;
+  }
+  ok((soloErr as ChatWriteGrantError).boundary === "cross-domain", "…and it refuses as cross-domain, naming the roster rather than the grant");
+
+  ok(chatWriteTargetsFrom(HOME, dGranted, DOMAINS).some((t) => t.platform === "slack") === false, "a discord grant admits no slack container");
 }
 
 {
