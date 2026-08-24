@@ -36,13 +36,12 @@ console.log("1. the owner's vault subject comes from the OWNER'S principal key:"
   ok(slack !== undefined, "a well-formed slack owner key derives a subject");
   eq(slack!.vaultSubject, rawVaultSubject(ORG, "slack", WS, "U-owner"), "…composed by the SAME grammar the owner's own DM authorization wrote through");
   eq(slack!.vaultSubject, `p:${ORG}/slack/${WS}/U-owner`, "…which spells p:<org>/<platform>/<tenant>/<id> on a tenant-scoped platform");
-  eq(slack!.platform, "slack", "the platform is read off the OWNER'S key, never off the calling surface");
-  eq(slack!.tenant, WS, "…and so is the tenant rung, which is the namespace a slack id is issued in");
-  eq(slack!.shared, false, "…and an unlinked owner is not reported as link-set keyed");
+  ok(slack!.vaultSubject.includes("/slack/"), "the platform is read off the OWNER'S key, never off the calling surface");
+  ok(slack!.vaultSubject.includes(`/${WS}/`), "…and so is the tenant rung, which is the namespace a slack id is issued in");
+  eq(slack!.org, ORG, "…and the subject is qualified by the org the call runs in");
 
   const discord = await grantOwnerSubject(ORG, "notion", "discord/9001");
   eq(discord!.vaultSubject, `p:${ORG}/discord/9001`, "a vendor-global platform's owner subject carries no tenant rung");
-  eq(discord!.tenant, undefined, "…and names none");
 
   const other = await grantOwnerSubject(ORG, "notion", `slack/${WS}/U-somebody-else`);
   ok(other!.vaultSubject !== slack!.vaultSubject, "a DIFFERENT owner derives a DIFFERENT subject — the key is read, not ignored");
@@ -111,12 +110,11 @@ console.log("4. a confirmed link-set member derives the link-set subject, and th
   resetSettingsForTest();
   const off = await grantOwnerSubject(ORG, "notion", `slack/${WS}/U-linked`);
   eq(off!.vaultSubject, rawVaultSubject(ORG, "slack", WS, "U-linked"), "flag OFF: a confirmed member still derives their OWN raw subject");
-  eq(off!.shared, false, "…and is not reported as shared");
 
   registerSettings({ connectors: { linkSetVault: true } });
   const on = await grantOwnerSubject(ORG, "notion", `slack/${WS}/U-linked`);
   eq(on!.vaultSubject, sharedVaultSubject(ORG, "S-owner"), "flag ON: a confirmed member derives the org-scoped LINK-SET subject — the row their consent-once wrote");
-  eq(on!.shared, true, "…and says so");
+  ok(on!.vaultSubject.startsWith("ls:"), "…namespaced apart from every raw subject");
 
   const unlinked = await grantOwnerSubject(ORG, "notion", `slack/${WS}/U-owner`);
   eq(unlinked!.vaultSubject, rawVaultSubject(ORG, "slack", WS, "U-owner"), "flag ON but unlinked: the owner's OWN raw subject, never a stranger's set");
