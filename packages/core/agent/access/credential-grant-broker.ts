@@ -69,7 +69,7 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
     return { message: credentialGrantRefusalMessage(grant, reason), ok: false, refused: reason };
   };
 
-  if (currentJobWakePosture() === "restricted") return refuse("nonmember_wake");
+  if (currentJobWakePosture() === "restricted") return refuse("unattended_wake");
 
   const stateRefusal = credentialGrantStateRefusal(grant, nowIso);
   if (stateRefusal !== undefined) return refuse(stateRefusal);

@@ -113,11 +113,11 @@ console.log("1. an unattended wake carrying a STAMPED requester still refuses, o
     ok(currentJobWakePosture() === "restricted", "the fixture really is a restricted job wake");
     return runGrantedCall("g-wake-once", {}, ctx());
   });
-  eq(refused.ok ? "OK" : refused.refused, "nonmember_wake", "🔴 the broker refuses by its OWN named gate, not by the OPE-675 attribution arm");
+  eq(refused.ok ? "OK" : refused.refused, "unattended_wake", "🔴 the broker refuses by its OWN named gate, not by the OPE-675 attribution arm");
   eq(sent.length, 0, "…no vendor request was composed or sent");
   eq((await store.getCredentialGrant(ORG, "g-wake-once"))?.status, "active", "…and the once-mode grant is NOT burned: the refusal runs before the burn");
   ok(
-    !refused.ok && refused.refused === "nonmember_wake" && refused.message !== credentialGrantRefusalMessage(row("g-wake-once", "once"), "unverified_requester"),
+    !refused.ok && refused.refused === "unattended_wake" && refused.message !== credentialGrantRefusalMessage(row("g-wake-once", "once"), "unverified_requester"),
     "…and the model reads the WAKE sentence, not the attribution one — the two boundaries are different facts",
   );
 
@@ -126,7 +126,7 @@ console.log("1. an unattended wake carrying a STAMPED requester still refuses, o
     setJobWakeEscalated(false);
     return runGrantedCall("g-wake-session", {}, ctx());
   });
-  eq(second.ok ? "OK" : second.refused, "nonmember_wake", "a session-mode grant on an unattended wake refuses the same way");
+  eq(second.ok ? "OK" : second.refused, "unattended_wake", "a session-mode grant on an unattended wake refuses the same way");
 }
 
 console.log("2. the wake refusal precedes every state check:");
@@ -138,8 +138,8 @@ console.log("2. the wake refusal precedes every state check:");
   });
   eq(
     revoked.ok ? "OK" : revoked.refused,
-    "nonmember_wake",
-    "a REVOKED grant on an unattended wake refuses `nonmember_wake` — the room is judged before the row",
+    "unattended_wake",
+    "a REVOKED grant on an unattended wake refuses `unattended_wake` — the room is judged before the row",
   );
   const attended = await inSession(async () => {
     markJobSession();
@@ -152,9 +152,9 @@ console.log("2. the wake refusal precedes every state check:");
 console.log("3. every refusal lands a grant.refused row naming the gate:");
 {
   const gates = await refusedGates();
-  eq(gates, ["nonmember_wake", "nonmember_wake", "nonmember_wake", "revoked"], "one row per refusal so far, each carrying the gate that produced it");
+  eq(gates, ["revoked", "unattended_wake", "unattended_wake", "unattended_wake"], "one row per refusal so far, each carrying the gate that produced it");
   const rows = await readAudit({ action: "grant.refused", org: ORG });
-  const wake = rows.find((r) => (r.detail as Record<string, unknown>)["gate"] === "nonmember_wake");
+  const wake = rows.find((r) => (r.detail as Record<string, unknown>)["gate"] === "unattended_wake");
   eq((wake?.detail as Record<string, unknown>)["owner"], OWNER, "…the row names the owner whose credential was not spent");
   eq(wake?.principalId, REQUESTER, "…and the requester the wake carried, so the hazard is legible in the log");
 }
@@ -181,13 +181,13 @@ console.log("5. NEGATIVE CONTROL — the unverified_requester refusal is untouch
     setJobWakeEscalated(false);
     return runGrantedCall("g-wake-session", {}, { ...ctx(), requesterPrincipalId: undefined });
   });
-  eq(fireToday.ok ? "OK" : fireToday.refused, "nonmember_wake", "a fire as dispatched TODAY now reads the wake boundary rather than the attribution one");
+  eq(fireToday.ok ? "OK" : fireToday.refused, "unattended_wake", "a fire as dispatched TODAY now reads the wake boundary rather than the attribution one");
   eq(sent.length, 1, "…and neither refusal reached the transport");
 }
 
 console.log("6. the refusal copy names the boundary and the vocabulary stays exhaustive:");
 {
-  const message = credentialGrantRefusalMessage(row("g-copy", "session"), "nonmember_wake");
+  const message = credentialGrantRefusalMessage(row("g-copy", "session"), "unattended_wake");
   ok(message.includes("scheduler"), "the copy says who started the turn");
   ok(message.includes("nobody is in the room"), "…and names the boundary in words the model can act on");
   ok(message.includes("rowan"), "…and names the owner whose credential stayed unspent");
@@ -200,7 +200,7 @@ console.log("6. the refusal copy names the boundary and the vocabulary stays exh
     "no_transport",
     "owner_unresolvable",
     "unverified_requester",
-    "nonmember_wake",
+    "unattended_wake",
   ];
   ok(
     every.every((reason) => credentialGrantRefusalMessage(row("g-copy", "session"), reason).length > 0),
