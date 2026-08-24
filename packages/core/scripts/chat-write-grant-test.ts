@@ -25,6 +25,7 @@ import {
   resolveChatWriteTargetFrom,
 } from "../agent/access/chat-write-grant.js";
 import { TOOL_CONSEQUENCE } from "../agent/access/consequence.js";
+import { surfaceKeySegment } from "../agent/identity/binding.js";
 import type { Domain } from "../agent/memory/domain.js";
 
 let n = 0;
@@ -49,14 +50,21 @@ const D_HOME_ID = "900000000000000001";
 const D_HOME = `discord/G1/${D_HOME_ID}`;
 const D_ELSEWHERE_ID = "900000000000000002";
 const D_OTHER_ID = "900000000000000003";
+const T_RAW_ELSEWHERE = "19:engTeamsConversation@thread.tacv2";
+const T_ELSEWHERE_ID = surfaceKeySegment(T_RAW_ELSEWHERE);
+const T_RAW_HOME = "19:engTeamsHome@thread.tacv2;messageid=17";
+const T_HOME = `teams/TENANT1/${surfaceKeySegment(T_RAW_HOME)}`;
+const T_OTHER_ID = surfaceKeySegment("19:financeTeamsConversation@thread.tacv2");
 const DOMAINS: readonly Domain[] = [
-  { name: "eng", channels: [HOME, `slack/T1/${ELSEWHERE_ID}`, D_HOME, `discord/G1/${D_ELSEWHERE_ID}`] },
-  { name: "finance", channels: [`slack/T1/${OTHER_ID}`, `discord/G1/${D_OTHER_ID}`] },
+  { name: "eng", channels: [HOME, `slack/T1/${ELSEWHERE_ID}`, D_HOME, `discord/G1/${D_ELSEWHERE_ID}`, T_HOME, `teams/TENANT1/${T_ELSEWHERE_ID}`] },
+  { name: "finance", channels: [`slack/T1/${OTHER_ID}`, `discord/G1/${D_OTHER_ID}`, `teams/TENANT1/${T_OTHER_ID}`] },
 ];
 const ELSEWHERE = resourceAddress("slack", CONTAINER_RESOURCE_TYPE, ELSEWHERE_ID);
 const OTHER = resourceAddress("slack", CONTAINER_RESOURCE_TYPE, OTHER_ID);
 const D_ELSEWHERE = resourceAddress("discord", CONTAINER_RESOURCE_TYPE, D_ELSEWHERE_ID);
 const D_OTHER = resourceAddress("discord", CONTAINER_RESOURCE_TYPE, D_OTHER_ID);
+const T_ELSEWHERE = resourceAddress("teams", CONTAINER_RESOURCE_TYPE, T_ELSEWHERE_ID);
+const T_OTHER = resourceAddress("teams", CONTAINER_RESOURCE_TYPE, T_OTHER_ID);
 
 {
   ok(RESOURCE_CAPABILITY_NAMES.length > 0, "the resource capability vocabulary is non-empty");
@@ -120,9 +128,17 @@ const D_OTHER = resourceAddress("discord", CONTAINER_RESOURCE_TYPE, D_OTHER_ID);
     "a discord container address parses into three facts, snowflake id intact",
   );
 
-  ok(resourceTypesFor("teams").length === 0, "teams is deliberately NOT in the closed table — its ids do not survive the surface-key sanitiser");
-  ok(parseResourceAddress("teams:channel/19:x@thread.tacv2") === undefined, "a RAW teams conversation address does not even parse — a second colon is refused");
-  ok(parseResourceAddress("teams:person/29:1abc") === undefined, "a RAW teams person address does not parse either — `deliverDirectMessage` takes exactly that `29:` id");
+  ok(RESOURCE_CONNECTORS.includes("teams"), "teams is an implemented connector");
+  ok(resourceTypesFor("teams").includes(CONTAINER_RESOURCE_TYPE), "teams implements the container resource type");
+  ok(parseResourceAddress("teams:channel/19:x@thread.tacv2") === undefined, "a RAW teams conversation address does not parse — a second colon is still refused");
+  ok(parseResourceAddress("teams:person/29:1abc") === undefined, "a RAW teams person address does not parse either — the grammar is unchanged");
+  const parsedTeams = parseResourceAddress(T_ELSEWHERE);
+  ok(
+    parsedTeams?.connector === "teams" && parsedTeams.type === "channel" && parsedTeams.id === T_ELSEWHERE_ID,
+    "the SPELLED teams container address parses into three facts",
+  );
+  ok(parsedTeams!.id !== T_RAW_ELSEWHERE, "…and its id is NOT the raw Bot Framework id — the two really are different strings");
+  ok(surfaceKeySegment(T_ELSEWHERE_ID) === T_ELSEWHERE_ID, "the spelling is idempotent, so an address id and a roster id cannot drift apart");
 }
 
 {
@@ -159,9 +175,12 @@ const D_OTHER = resourceAddress("discord", CONTAINER_RESOURCE_TYPE, D_OTHER_ID);
     "a bare discord row reads as the same container default a slack row does",
   );
 
-  const teamsRow = throws(() => assertBundlesValid([row({ connector: "teams", resources: ["teams:channel/CONV1"] })]));
-  ok(teamsRow.includes('unknown connector "teams"'), "a teams resource row refuses at config load");
-  ok(teamsRow.includes("never in config"), "the teams refusal says a connector is added in the diff that wires its transport");
+  const ircRow = throws(() => assertBundlesValid([row({ connector: "irc", resources: ["irc:channel/CONV1"] })]));
+  ok(ircRow.includes('unknown connector "irc"'), "an unimplemented connector's resource row refuses at config load");
+  ok(ircRow.includes("never in config"), "the refusal says a connector is added in the diff that wires its transport");
+  ok(throws(() => assertBundlesValid([row({ connector: "teams", resources: [T_ELSEWHERE] })])) === "", "a teams row at the spelled id loads");
+  const rawTeamsRow = throws(() => assertBundlesValid([row({ connector: "teams", resources: [`teams:channel/${T_RAW_ELSEWHERE}`] })]));
+  ok(rawTeamsRow.includes("malformed resource"), "a teams row at the RAW id refuses at load as malformed — never silently");
 
   const malformed = throws(() => assertBundlesValid([row({ connector: "slack", resources: ["C0123ABC"] })]));
   ok(malformed !== "", "a malformed address THROWS at config load");
@@ -262,7 +281,20 @@ const D_OTHER = resourceAddress("discord", CONTAINER_RESOURCE_TYPE, D_OTHER_ID);
 
   ok(chatWriteTargetsFrom(HOME, { [ELSEWHERE]: [] }, DOMAINS).length === 0, "an address granted with NO capability is not a target");
 
-  ok(chatWriteTargetsFrom(HOME, { "teams:channel/CONV1": ["post"] }, DOMAINS).length === 0, "an unimplemented connector's address grants nothing");
+  ok(chatWriteTargetsFrom(HOME, { "irc:channel/CONV1": ["post"] }, DOMAINS).length === 0, "an unimplemented connector's address grants nothing");
+
+  const teamsGranted = { [T_ELSEWHERE]: ["post" as const], [T_OTHER]: ["post" as const] };
+  const teamsTargets = chatWriteTargetsFrom(T_HOME, teamsGranted, DOMAINS);
+  ok(teamsTargets.length === 1, "a teams caller resolves exactly ONE granted in-domain container");
+  ok(teamsTargets[0]?.address === T_ELSEWHERE && teamsTargets[0]?.container === T_ELSEWHERE_ID, "…the in-domain one, at the address spelling the transport restores from");
+  ok(
+    resolveChatWriteTargetFrom(T_HOME, teamsGranted, DOMAINS, T_ELSEWHERE).container === T_ELSEWHERE_ID,
+    "…and the per-call fence admits it: the grant names it AND the caller's roster holds it",
+  );
+  ok(
+    (throws(() => resolveChatWriteTargetFrom(T_HOME, teamsGranted, DOMAINS, T_OTHER)) as string).includes("not in this session's memory domain"),
+    "…while a GRANTED teams container in another domain is still refused cross-domain — the negative control",
+  );
 
   let shapeErr: unknown;
   try {

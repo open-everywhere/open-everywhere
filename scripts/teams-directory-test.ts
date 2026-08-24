@@ -168,9 +168,11 @@ const teamRow = (teamId: string) => store.proactiveAddress("acme", TEAMS_ADDRESS
 
 {
   const base = { tenantId: TENANT, serviceUrl: SERVICE_URL, userId: HAZEL, teamId: TEAM_ID };
+  const addressRows = <T extends { readonly kind: string }>(rows: readonly T[]): readonly T[] =>
+    rows.filter((r) => r.kind === "personal" || r.kind === "team" || r.kind === "conversation");
 
-  const personal = teamsAddressRowsFor({ ...base, scope: "personal", conversationId: PERSONAL_CONV });
-  ok(personal.length === 2, "§3 a PERSONAL activity writes TWO rows — `personal` AND `conversation` (OPE-899)");
+  const personal = addressRows(teamsAddressRowsFor({ ...base, scope: "personal", conversationId: PERSONAL_CONV }));
+  ok(personal.length === 2, "§3 a PERSONAL activity writes TWO address rows — `personal` AND `conversation` (OPE-899)");
   ok(
     personal.some((r) => r.kind === "personal" && r.refKey === HAZEL),
     "§3 …one of them is the `personal` row, keyed on the Bot Framework user id",
@@ -180,8 +182,8 @@ const teamRow = (teamId: string) => store.proactiveAddress("acme", TEAMS_ADDRESS
     "🔴 §3 WRONG HAND: a personal chat writes NO team row — a 1:1 conversation is not a team, and a directory read addressed at it would return one person",
   );
 
-  const channel = teamsAddressRowsFor({ ...base, scope: "channel", conversationId: `${TEAM_CONV};messageid=99` });
-  ok(channel.length === 2, "§3 a CHANNEL activity writes TWO rows — `team` AND `conversation` (OPE-899)");
+  const channel = addressRows(teamsAddressRowsFor({ ...base, scope: "channel", conversationId: `${TEAM_CONV};messageid=99` }));
+  ok(channel.length === 2, "§3 a CHANNEL activity writes TWO address rows — `team` AND `conversation` (OPE-899)");
   const channelTeamRow = channel.find((r) => r.kind === "team");
   ok(channelTeamRow?.refKey === TEAM_ID, "§3 …one of them is the `team` row, keyed on the team id");
   ok(
@@ -198,12 +200,12 @@ const teamRow = (teamId: string) => store.proactiveAddress("acme", TEAMS_ADDRESS
     "🔴 §3 WRONG HAND: a CHANNEL activity writes NO personal row. A channel conversation id in a personal row would post an identity-link consent ask into a room where everybody can read it",
   );
 
-  const group = teamsAddressRowsFor({ ...base, scope: "groupChat", conversationId: "19:group@thread.v2" });
+  const group = addressRows(teamsAddressRowsFor({ ...base, scope: "groupChat", conversationId: "19:group@thread.v2" }));
   ok(
     group.length === 1 && group[0]!.kind === "conversation",
     "§3 a GROUP chat writes exactly the `conversation` row — never a `personal`/`team` row (neither reader has a use for a group chat), but OPE-899's row still stands",
   );
-  const noScope = teamsAddressRowsFor({ ...base, scope: undefined, conversationId: PERSONAL_CONV });
+  const noScope = addressRows(teamsAddressRowsFor({ ...base, scope: undefined, conversationId: PERSONAL_CONV }));
   ok(
     noScope.length === 1 && noScope[0]!.kind === "conversation",
     "§3 an activity with no scope writes ONLY the `conversation` row — no `personal`/`team` row (refuse, never guess which species it is), but the exact id it arrived on is still recorded",
@@ -211,12 +213,12 @@ const teamRow = (teamId: string) => store.proactiveAddress("acme", TEAMS_ADDRESS
   ok(teamsAddressRowsFor({ ...base, scope: "personal", conversationId: PERSONAL_CONV, serviceUrl: ROGUE_URL }).length === 0, "🔴 §3 an UNTRUSTED serviceUrl host is refused at WRITE time, for EVERY species including `conversation` — a stored address becomes the target of a Connector bearer token");
   ok(teamsAddressRowsFor({ ...base, scope: "personal", conversationId: PERSONAL_CONV, tenantId: undefined }).length === 0, "§3 no tenant ⇒ no row of any species (opening a cold 1:1 names a tenant, so a tenant-less address is only half an address)");
   ok(teamsAddressRowsFor({ ...base, scope: "personal", conversationId: undefined }).length === 0, "§3 no conversation ⇒ no row of any species");
-  const blankAuthor = teamsAddressRowsFor({ ...base, scope: "personal", conversationId: PERSONAL_CONV, userId: "  " });
+  const blankAuthor = addressRows(teamsAddressRowsFor({ ...base, scope: "personal", conversationId: PERSONAL_CONV, userId: "  " }));
   ok(
     blankAuthor.length === 1 && blankAuthor[0]!.kind === "conversation",
     "§3 a blank author costs the `personal` row (no key to store it under) but NOT the `conversation` row",
   );
-  const noTeamId = teamsAddressRowsFor({ ...base, scope: "channel", conversationId: TEAM_CONV, teamId: undefined });
+  const noTeamId = addressRows(teamsAddressRowsFor({ ...base, scope: "channel", conversationId: TEAM_CONV, teamId: undefined }));
   ok(
     noTeamId.length === 1 && noTeamId[0]!.kind === "conversation",
     "§3 a channel activity with NO team id costs the `team` row (no key to store it under) but NOT the `conversation` row",

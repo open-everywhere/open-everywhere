@@ -19,11 +19,20 @@ import { buildUnifiedAuditQuery, type AuditQueryOpts, type AuditWireEntry, type 
 import { watchConnectorArming, type ArmingProbe } from "./connector-arming.js";
 import type { TranscriptWireEvent } from "./transcript-read.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
-import { decomposeSession, delegationJoinTargets, joinDelegations, renderDelegationTiming, renderSessionTiming } from "./transcript-timings.js";
+import {
+  decomposeSession,
+  delegationJoinTargets,
+  joinDelegations,
+  renderDelegationTiming,
+  renderSessionTiming,
+  TASK_RETURNED_ACTION,
+  TASK_SPAWNED_ACTION,
+} from "./transcript-timings.js";
 import type { TimingsRecord } from "./timings-record.js";
 import { type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
 import { pollOptional, pollUntil, sleep } from "./poll.js";
+import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS } from "./read-channel-lib.js";
 import type { ReplyJudge, Rubric } from "./judge.js";
 import { liveTaintGateDecision, taintContextLine } from "./taint-context-line.js";
 import {
@@ -153,6 +162,23 @@ export const isFillerAck = (text: string): boolean => {
     /^(?:done|ok|okay|sorted|sure|got it|will do|no problem)[.!]?\s*(?::[a-z_+-]+:|✅|👍)?$/i.test(trimmed)
   );
 };
+
+export function delegationHasReturned(rows: readonly AuditWireEntry[]): boolean {
+  const nativeStarted = rows.filter((r) => r.action === DELEGATION_TASK_STARTED_ACTION);
+  if (
+    nativeStarted.some((s) => {
+      const taskId = dS(s, "task");
+      return taskId !== undefined && rows.some((r) => r.action === DELEGATION_TASK_SETTLED_ACTION && dS(r, "task") === taskId);
+    })
+  ) {
+    return true;
+  }
+  const rollSpawned = rows.filter((r) => r.action === TASK_SPAWNED_ACTION);
+  return rollSpawned.some((s) => {
+    const taskId = dS(s, "taskId");
+    return taskId !== undefined && rows.some((r) => r.action === TASK_RETURNED_ACTION && dS(r, "taskId") === taskId);
+  });
+}
 
 const STOOD_DOWN_ACTION = "engagement.stood_down";
 const CAP_REFUSAL = "I'm holding off here";
@@ -2018,7 +2044,30 @@ export const SCENARIOS: readonly Scenario[] = [
               "Then reply with the exact heading text that describe_image read from the screenshot.",
           ),
         );
-        const qaReply = await slack.awaitThreadReply(qaTs, { timeoutMs: BROWSER_QA_WAIT, skip: (m) => isFillerAck(m.text) });
+        const qaDeadline = Date.now() + BROWSER_QA_WAIT;
+        const remaining = (): number => Math.max(qaDeadline - Date.now(), 0);
+        if (ctx.auditRead) {
+          const auditRead = ctx.auditRead;
+          const settled = await pollOptional(
+            async () => {
+              const rows = await auditRead({
+                sinceIso: browserStart,
+                actions: [DELEGATION_TASK_STARTED_ACTION, DELEGATION_TASK_SETTLED_ACTION, TASK_SPAWNED_ACTION, TASK_RETURNED_ACTION],
+              });
+              return delegationHasReturned(rows) ? true : undefined;
+            },
+            {
+              timeoutMs: remaining(),
+              what: "the delegated browser-QA worker's task to settle (delegation.task_settled / task.returned) before reading the browser.* audit trail — OPE-1076",
+            },
+          );
+          ctx.log(
+            settled
+              ? "browser-QA: the delegated task settled — reading the browser.* audit trail now"
+              : `browser-QA: no task settlement observed within ${BROWSER_QA_WAIT}ms — reading the audit trail anyway (a genuine stall shows up as missing rows below)`,
+          );
+        }
+        const qaReply = await slack.awaitThreadReply(qaTs, { timeoutMs: remaining(), skip: (m) => isFillerAck(m.text) });
         if (ctx.auditRead) {
           const rows = await ctx.auditRead({ sinceIso: browserStart, actions: ["browser.navigate", "browser.screenshot", "describe_image"] });
           const has = (action: string) => rows.some((r) => r.action === action);

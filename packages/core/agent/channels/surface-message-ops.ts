@@ -36,25 +36,45 @@ export function surfaceMessageOps(platform: string | undefined): SurfaceMessageO
   return platform === undefined ? undefined : REGISTRY.get(platform);
 }
 
-export async function postSurfaceText(
-  platform: string,
-  target: { readonly channelId: string; readonly text: string; readonly threadTs?: string | null; readonly replyToMessageId?: string },
-): Promise<string | undefined> {
-  if (process.env.OE_EGRESS_SPOOF === "1") {
-    if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
-    console.warn(`[oe] OE_EGRESS_SPOOF: swallowed a ${platform} surface-text post`);
-    return `spoof-${platform}-${Date.now()}`;
+type PostSurfaceTextTarget = {
+  readonly channelId: string;
+  readonly text: string;
+  readonly threadTs?: string | null;
+  readonly replyToMessageId?: string;
+};
+
+function surfaceTextSpoof(platform: string): string | undefined {
+  if (process.env.OE_EGRESS_SPOOF !== "1") return undefined;
+  if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
+  console.warn(`[oe] OE_EGRESS_SPOOF: swallowed a ${platform} surface-text post`);
+  return `spoof-${platform}-${Date.now()}`;
+}
+
+export async function postSurfaceTextStrict(platform: string, target: PostSurfaceTextTarget): Promise<string> {
+  const spoofed = surfaceTextSpoof(platform);
+  if (spoofed !== undefined) return spoofed;
+  if (platform === "slack") {
+    const body = new URLSearchParams({ channel: target.channelId, text: target.text });
+    if (target.threadTs) body.set("thread_ts", target.threadTs);
+    const res = await bridgeSlackForm("chat.postMessage", body.toString());
+    if (res?.ok === true && typeof res["ts"] === "string") return res["ts"] as string;
+    const reason = res && typeof res["error"] === "string" ? (res["error"] as string) : "no bot token configured, or the request never reached Slack";
+    throw new Error(`Slack chat.postMessage refused: ${reason}`);
   }
+  const ops = surfaceMessageOps(platform);
+  if (!ops) throw new Error(`no surface message transport is registered for platform "${platform}"`);
+  const id = await ops.postText(target.channelId, target.text, target.replyToMessageId ? { replyToMessageId: target.replyToMessageId } : undefined);
+  if (typeof id !== "string" || !id) {
+    throw new Error(`${platform} surface accepted the post into "${target.channelId}" without error, but named no message id`);
+  }
+  return id;
+}
+
+export async function postSurfaceText(platform: string, target: PostSurfaceTextTarget): Promise<string | undefined> {
+  const spoofed = surfaceTextSpoof(platform);
+  if (spoofed !== undefined) return spoofed;
   try {
-    if (platform === "slack") {
-      const body = new URLSearchParams({ channel: target.channelId, text: target.text });
-      if (target.threadTs) body.set("thread_ts", target.threadTs);
-      const res = await bridgeSlackForm("chat.postMessage", body.toString());
-      return res?.ok === true && typeof res["ts"] === "string" ? (res["ts"] as string) : undefined;
-    }
-    const ops = surfaceMessageOps(platform);
-    if (!ops) return undefined;
-    return await ops.postText(target.channelId, target.text, target.replyToMessageId ? { replyToMessageId: target.replyToMessageId } : undefined);
+    return await postSurfaceTextStrict(platform, target);
   } catch (err) {
     console.warn(`[open-everywhere:surface] text post failed (${platform}): ${String(err)}`);
     return undefined;

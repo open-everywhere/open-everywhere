@@ -30,14 +30,18 @@ export function isDistStale(srcMtimeMs: number | undefined, distMtimeMs: number 
 }
 
 export function assertCoreDistFresh(): void {
-  const srcMtime = newestMtimeMs(CORE_SRC_DIR, [".ts"]);
-  const distMtime = newestMtimeMs(CORE_DIST_DIR, [".js"]);
+  assertPackageDistFresh("packages/core", "@open-everywhere/core");
+}
+
+export function assertPackageDistFresh(pkgRelDir: string, workspace: string): void {
+  const srcMtime = newestMtimeMs(join(REPO_ROOT, pkgRelDir, "agent"), [".ts"]);
+  const distMtime = newestMtimeMs(join(REPO_ROOT, pkgRelDir, "dist/agent"), [".js"]);
   if (isDistStale(srcMtime, distMtime)) {
     throw new Error(
-      "packages/core/dist is stale relative to packages/core/agent source (OPE-888) — this test " +
-        "imports @open-everywhere/core through the package specifier, which resolves to dist, not " +
-        "source. Run: npm run build -w @open-everywhere/core, then re-run this test. If that does " +
-        "not clear this error, delete packages/core/.tsbuildinfo first (a checkout/stash can reset " +
+      `${pkgRelDir}/dist is stale relative to ${pkgRelDir}/agent source (OPE-888) — this test ` +
+        `imports ${workspace} through the package specifier, which resolves to dist, not ` +
+        `source. Run: npm run build -w ${workspace}, then re-run this test. If that does ` +
+        `not clear this error, delete ${pkgRelDir}/.tsbuildinfo first (a checkout/stash can reset ` +
         "a source mtime without changing content, so tsc's incremental build skips re-emitting).",
     );
   }

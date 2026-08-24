@@ -69,6 +69,10 @@ function seg(value: string | undefined, fallback: string): string {
   return cleaned.length > 0 ? cleaned.slice(0, 100) : fallback;
 }
 
+export function surfaceKeySegment(value: string | undefined): string {
+  return seg(value, "");
+}
+
 export function deploymentOrg(): string {
   return seg(process.env.OE_ORG, "default");
 }
