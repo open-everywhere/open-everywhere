@@ -266,4 +266,74 @@ console.log("3. a build-transform descriptor whose capture cannot serialize (OPE
   );
 }
 
+console.log("4. variant-dispatched toModelOutput across ONE mounted name (OPE-1068):");
+{
+  const { preRegisterDynamicVariants } = await import("../agent/access/window-gated.js");
+  const { registeredProjectionNames } = await import("../agent/access/untrusted-projection.js");
+  const NAME = "synthetic_probe_variant_projection_tool";
+
+  interface ProbeEntry {
+    description: string;
+    inputSchema: Record<string, unknown>;
+    execute(): Promise<{ marker: string; ok: boolean }>;
+    toModelOutput?(output: unknown): { type: string; value: string };
+  }
+  const withProjection = (marker: string): ProbeEntry =>
+    defineTool({
+      description: `variant ${marker}`,
+      inputSchema: { type: "object", properties: {} },
+      execute: async () => ({ marker, ok: true }),
+      toModelOutput: (output: unknown) => ({ type: "text", value: `${marker}|${JSON.stringify(output)}` }),
+    }) as unknown as ProbeEntry;
+  const alpha = withProjection("alpha");
+  const beta = withProjection("beta");
+  const plain = defineTool({
+    description: "variant plain",
+    inputSchema: { type: "object", properties: {} },
+    execute: async () => ({ marker: "plain", ok: true }),
+  }) as unknown as ProbeEntry;
+
+  preRegisterDynamicVariants(NAME, { alpha, beta, plain });
+
+  const event = { type: "session.started" };
+  const resolveWith = async (entry: ProbeEntry, sessionId: string): Promise<DurableRow> => {
+    const ctx = makeCtx(sessionId);
+    await dispatchDynamicToolEvent({
+      ctx,
+      resolvers: [{ slug: NAME, eventNames: ["session.started"], events: { "session.started": async () => entry } }],
+      event,
+      messages: [],
+    });
+    const rows = ctx.get(SessionDynamicToolMetadataKey) as DurableRow[];
+    return rows[0]!;
+  };
+
+  const rowAlpha = await resolveWith(alpha, "sess-ope1068-variant-alpha");
+  const rowBeta = await resolveWith(beta, "sess-ope1068-variant-beta");
+  ok(rowAlpha !== undefined && rowBeta !== undefined, "both projection-authoring variants resolve — eve accepts the descriptor OE fills for the toModelOutput phase");
+  eq(rowAlpha.callbacks.toModelOutput, { closure: { entryKey: "alpha" } }, "alpha's PERSISTED row names its own variant in the toModelOutput closure");
+  eq(rowBeta.callbacks.toModelOutput, { closure: { entryKey: "beta" } }, "…and beta's names beta — the closure is the only thing that tells them apart");
+  ok(
+    typeof durable.lookupDurableDynamicCallback(NAME, "toModelOutput") === "function",
+    "resolve BOUND one shared toModelOutput callback under (toolName, phase) — eve holds exactly one, whichever variant resolved last",
+  );
+
+  type Replayed = { name: string; toModelOutput?: (output: unknown) => { type: string; value: string } };
+  const replayedAlpha = replayDynamicSessionTools([rowAlpha], [])[0]! as Replayed;
+  const replayedBeta = replayDynamicSessionTools([rowBeta], [])[0]! as Replayed;
+  ok(typeof replayedAlpha.toModelOutput === "function", "eve REPLAYS the authored projection onto the rebuilt tool (the OPE-73 drop is closed at 0.44.0)");
+  eq(replayedAlpha.toModelOutput!({ n: 1 }), { type: "text", value: 'alpha|{"n":1}' }, "alpha's replayed tool runs ALPHA's projection — the closure re-selected the variant the session mounted");
+  eq(replayedBeta.toModelOutput!({ n: 1 }), { type: "text", value: 'beta|{"n":1}' }, "…and beta's runs BETA's, from the same shared callback — one name, two projections, no collision");
+
+  const rowPlain = await resolveWith(plain, "sess-ope1068-variant-plain");
+  ok(rowPlain.callbacks.toModelOutput === undefined, "NEGATIVE CONTROL: a variant with no authored projection persists NO toModelOutput phase");
+  ok(rowPlain.callbacks.execute !== undefined, "…while still carrying its execute descriptor, so it mounts normally");
+  ok(
+    (replayDynamicSessionTools([rowPlain], [])[0]! as Replayed).toModelOutput === undefined,
+    "…and its replayed tool carries no projection — the raw output reaches eve's own default rendering",
+  );
+
+  ok(!registeredProjectionNames().includes(NAME), "NEGATIVE CONTROL: no variant name enters the name-keyed projection registry, which could not disambiguate them");
+}
+
 console.log(`\ndynamic-tool-native-heal: ${n} assertions passed.`);
