@@ -745,13 +745,34 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     ok(!!oRej && oRej.channelId === "C_WIN" && oRej.threadTs === "ANCHOR.W", "decision wake: origin = the card's own anchor thread (a warranted reply lands beside the notice)");
     ok(wakes[0]!.message.includes("REJECTED") && wakes[0]!.message.includes("NOT applied"), "decision wake: the rejected notice states the outcome + that nothing was applied");
     ok(wakes[0]!.message.includes("p-win-reject"), "decision wake: the notice names the pending id so the model can correlate it");
+    ok(!wakes[0]!.message.includes("ALREADY RUN"), "decision wake: a REJECTED wake never claims an act already ran");
     ok(wakes[0]!.wakeId === "wake-fixed", "decision wake: the host-minted wakeId rides the dispatch (reply-target map key)");
 
     await store.addPendingAction(winRow({ id: "p-win-approve", argsJson: JSON.stringify({ org: "default", scopeKey: "slack/TW/C_WIN", level: "surface", monthlyTokens: 800, currentCap: null }) }));
     wakes.length = 0;
     await handleApprovalPayload(winPayload("oe_approval:approve:p-win-approve"), { post, decisionWake });
     ok(wakes.length === 1 && wakes[0]!.message.includes("APPROVED"), "decision wake: an APPROVE in a window domain emits one wake carrying the approved outcome");
+    ok(wakes[0]!.message.includes("spend limit set to"), `decision wake: the approved wake carries the EXECUTOR's own outcome line (${wakes[0]!.message})`);
+    ok(wakes[0]!.message.includes("ALREADY RUN"), "decision wake: the approved wake states the act already ran");
+    ok(wakes[0]!.message.includes("NOT delegate it again"), "decision wake: the approved wake forbids re-delegating the same act");
     await store.clearSpendLimit("default", "slack/TW/C_WIN", "surface");
+
+    registerActionKind({
+      kind: "test.throws",
+      policy: "admin",
+      summarize: () => ["a kind whose execute always throws"],
+      execute: async () => {
+        throw new Error("transport refused the send");
+      },
+    });
+    await store.addPendingAction(winRow({ id: "p-win-fail", kind: "test.throws", argsJson: "{}" }));
+    wakes.length = 0;
+    await handleApprovalPayload(winPayload("oe_approval:approve:p-win-fail"), { post, decisionWake });
+    ok(wakes.length === 1, "decision wake: a FAILED execute still emits exactly one wake");
+    ok(wakes[0]!.message.includes("RAN AND FAILED"), `decision wake: a failed execute says the act failed (${wakes[0]!.message})`);
+    ok(wakes[0]!.message.includes("transport refused the send"), "decision wake: a failed execute carries the failure reason");
+    ok(!wakes[0]!.message.includes("ALREADY RUN"), "decision wake: a failed execute NEVER claims the act already ran");
+    ok(wakes[0]!.message.includes("attempt it again"), "decision wake: a failed execute leaves the seat free to retry");
 
     await store.addPendingAction(winRow({ id: "p-win-expire", expiresAt: "2000-01-01T00:00:00Z", argsJson: JSON.stringify({ org: "default", scopeKey: "slack/TW/C_WIN", level: "surface", monthlyTokens: 900, currentCap: null }) }));
     wakes.length = 0;
