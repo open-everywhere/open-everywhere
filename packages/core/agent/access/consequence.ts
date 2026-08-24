@@ -346,6 +346,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   delegation_tools: open(
     "the resolver FILE that re-provides the disabled framework-named `agent` per session grain (access/window-gated.ts windowGatedKit — the sandbox_tools shape); mounts nothing beyond the `agent` name above, at its own open tier",
   ),
+  grant_tools: open(
+    "the resolver FILE that projects a chat's live CREDENTIAL GRANTS into per-grant `grant__<owner>__<verb>` tools (OPE-1060, the sandbox_tools shape). It mounts nothing under its own name and grants nothing: it reads grant rows an OWNER already approved in their own DM and returns one tool per row. Its own tier is open because resolving is a read of rows that already exist. Each MOUNTED name is classified on the RESERVED-NAMESPACE path instead of by a static row here — a runtime-minted name cannot have one — and its authoritative tier is the one pinned on the GRANT ROW at mint, from the reviewed verb definition, never re-derived from the mounted name (the false-open arm S0 closed)",
+  ),
 
   link_identity: open(
     "issues a short-TTL, single-use proof-of-control CODE in the initiator's own DM and writes one challenge row. It links nothing, reaches nobody outside that DM, and changes no behaviour — the code's entire power is to earn its holder a QUESTION in the initiator's DM naming them. Gating it would put a card in front of asking a question. The consequential step is confirm_link, and that step is already a specific identified human answering in their own DM, which no card can improve on",

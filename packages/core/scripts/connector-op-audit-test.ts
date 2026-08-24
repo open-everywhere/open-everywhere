@@ -77,5 +77,19 @@ await handler(ev({ kind: "tool-result", toolName: "notion__update_page", isError
   ok(errRow?.detail?.isError === true && errRow?.detail?.status === "error", "an errored op row carries isError + status");
 }
 
+await handler(ev({ kind: "tool-result", toolName: "grant__rowan_hale__read_page", isError: false }), ctx);
+{
+  const rows = await readAudit({ org: "default", action: "connector.op" });
+  ok(rows.length === 3, "a credential-grant tool writes NO connector.op row");
+  ok(rows.every((r) => r.detail?.connection !== "grant"), "...so no row ever carries the non-existent connection \"grant\"");
+}
+
+await handler(ev({ kind: "tool-result", toolName: "acme__server__search", isError: false }), ctx);
+{
+  const rows = await readAudit({ org: "default", action: "connector.op" });
+  ok(rows.length === 4, "a three-segment PLUGIN connector name still writes its row -- the skip is namespace-keyed, not segment-count-keyed");
+  ok(rows.some((r) => r.detail?.connection === "acme"), "...stamped with its real connection head");
+}
+
 rmSync(tmp, { recursive: true, force: true });
 console.log(`✓ connector-op-audit: ${passed} assertions passed`);

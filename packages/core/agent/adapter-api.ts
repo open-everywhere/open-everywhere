@@ -385,6 +385,11 @@ export type { AmbientSkipRecord } from "./channels/ambient-skip.js";
 export { credentialOverrideFor, domainCredentialId, connectorIntegrations } from "./access/domain-credentials.js";
 export type { DomainCredentialOverride, ConnectorIntegration, CredentialBoundDomain } from "./access/domain-credentials.js";
 export { callerWorkDomain, callerWorkGrant, workGrantCredential, hasWorkGrant, type WorkDomainResolver } from "./access/work-grant.js";
+export { registerGrantableVerb, parseGrantResource } from "./access/credential-grant.js";
+export type { GrantableVerb, GrantedRequest, GrantResource } from "./access/credential-grant.js";
+export { registerGrantTransport } from "./access/credential-grant-broker.js";
+export type { GrantTransport } from "./access/credential-grant-broker.js";
+export type { CredentialGrantRow, CredentialGrantMode } from "./operational/credential-grant-rows.js";
 export { workDestinationPlatforms } from "./channels/work-destinations.js";
 export { getOperatorSecret, OperatorSecretNotSetError } from "./credentials/operator-secrets.js";
 

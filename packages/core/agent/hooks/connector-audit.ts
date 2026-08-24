@@ -2,7 +2,7 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { appendAudit } from "../audit/audit.js";
 import { bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
-import { classifyConnectorOpTier, connectorOpName, isConnectorOpTool } from "../access/consequence.js";
+import { classifyConnectorOpTier, connectorOpName, isConnectorOpTool, parseQualifiedToolName } from "../access/consequence.js";
 import { effectiveConnectorOpConsequence, effectiveConnectorOpTier } from "../access/connector-op-gating.js";
 
 interface ToolResultLike {
@@ -18,6 +18,7 @@ async function auditOpResult(event: unknown, ctx: HookContext): Promise<void> {
     if (!result || result.kind !== "tool-result") return;
     const toolName = result.toolName;
     if (typeof toolName !== "string" || !isConnectorOpTool(toolName)) return;
+    if (parseQualifiedToolName(toolName)?.namespace !== undefined) return;
 
     const connection = toolName.slice(0, toolName.indexOf("__"));
     const op = connectorOpName(toolName);

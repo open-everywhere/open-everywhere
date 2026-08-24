@@ -121,6 +121,8 @@ const CASES: readonly ToolCase[] = [
 ];
 const SLUGS = [...new Set(CASES.map((c) => c.slug))];
 
+const RESOLVE_TIME_ONLY_SLUGS: ReadonlySet<string> = new Set(["grant_tools"]);
+
 const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "../agent/tools");
 
 console.log("1. source scan (factored shape, closed inventory):");
@@ -130,10 +132,14 @@ console.log("1. source scan (factored shape, closed inventory):");
     const src = readFileSync(join(toolsDir, f), "utf8");
     const dynAt = src.indexOf("defineDynamic(");
     if (dynAt === -1) continue;
-    scanned++;
     const slug = f.replace(/\.ts$/, "");
+    if (RESOLVE_TIME_ONLY_SLUGS.has(slug)) {
+      ok(true, `${f} is a resolve-time-only family (see RESOLVE_TIME_ONLY_SLUGS) — no case row, source shape still checked`);
+    } else {
+      scanned++;
+    }
     ok(
-      SLUGS.includes(slug),
+      SLUGS.includes(slug) || RESOLVE_TIME_ONLY_SLUGS.has(slug),
       `${f} uses defineDynamic but has no row in this test's inventory — pre-register its entry (access/window-gated.ts preRegisterDynamicEntry) and add the (slug, entryKey) row here`,
     );
     const authorsDefineTool = src.includes("defineTool(");
@@ -143,8 +149,8 @@ console.log("1. source scan (factored shape, closed inventory):");
     );
     if (authorsDefineTool) {
       ok(
-        src.includes("preRegisterDynamicEntry(") || src.includes("preRegisterDynamicVariants("),
-        `${f} authors a defineTool entry but pre-registers neither a single entry nor a variant set — its durable descriptor would be missing and eve would drop the resolver's whole result`,
+        src.includes("preRegisterDynamicEntry(") || src.includes("preRegisterDynamicVariants(") || src.includes("registerDynamicVariant("),
+        `${f} authors a defineTool entry but registers it through none of the three doors (preRegisterDynamicEntry / preRegisterDynamicVariants / registerDynamicVariant) — its durable descriptor would be missing and eve would drop the resolver's whole result`,
       );
     }
   }

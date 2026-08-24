@@ -1,6 +1,7 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
 import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite } from "./store.js";
+import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
@@ -363,6 +364,50 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      PRIMARY KEY (org_id, id)
    )`,
   `CREATE INDEX IF NOT EXISTS identity_link_challenges_org_nonce ON identity_link_challenges (org_id, nonce_hash)`,
+  `CREATE TABLE IF NOT EXISTS credential_grant_ask (
+     org_id                 text NOT NULL,
+     id                     text NOT NULL,
+     requester_principal_id text NOT NULL,
+     owner_principal_id     text NOT NULL,
+     owner_slug             text NOT NULL,   -- the eventual tool name's owner segment, PINNED here
+     owner_platform         text NOT NULL,   -- where the owner's card is delivered
+     owner_native_id        text NOT NULL,   -- the bare platform id the DM arm addresses
+     connector              text NOT NULL,
+     verb                   text NOT NULL,   -- a REGISTERED grantable verb, never a vendor permission
+     resource               text NOT NULL,   -- ARN-like: notion:page/<id>
+     scope_key              text NOT NULL,   -- the CHAT this would serve (the session id)
+     purpose                text NOT NULL,   -- model-authored; untrusted content
+     requested_mode         text NOT NULL,   -- once | session | standing
+     status                 text NOT NULL,   -- pending | approved | declined | expired
+     created_at             text NOT NULL,
+     expires_at             text NOT NULL,   -- the ASK's own short TTL, NOT the grant's
+     decided_at             text,
+     grant_id               text,            -- stamped by the approve CAS
+     PRIMARY KEY (org_id, id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS credential_grant_ask_org_scope ON credential_grant_ask (org_id, scope_key)`,
+  `CREATE TABLE IF NOT EXISTS credential_grant (
+     org_id                 text NOT NULL,
+     id                     text NOT NULL,
+     ask_id                 text NOT NULL,
+     requester_principal_id text NOT NULL,
+     owner_principal_id     text NOT NULL,
+     owner_slug             text NOT NULL,   -- the mounted name's owner segment, PINNED at mint
+     connector              text NOT NULL,
+     verb                   text NOT NULL,
+     resource               text NOT NULL,
+     scope_key              text NOT NULL,
+     mode                   text NOT NULL,   -- once | session | standing
+     tier                   text NOT NULL,   -- read | write | destructive (from the verb, at mint)
+     status                 text NOT NULL,   -- active | used | revoked | expired
+     purpose                text NOT NULL,   -- model-authored; untrusted content
+     created_at             text NOT NULL,
+     expires_at             text NOT NULL,
+     used_at                text,
+     revoked_at             text,
+     PRIMARY KEY (org_id, id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS credential_grant_org_scope ON credential_grant (org_id, scope_key)`,
   `CREATE TABLE IF NOT EXISTS notice_claim (
      org_id     text NOT NULL,
      key        text NOT NULL,
@@ -519,6 +564,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE model_call_capture ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE proactive_address ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE memory_proposal ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE credential_grant_ask ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE credential_grant ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill_revisions FORCE ROW LEVEL SECURITY`,
@@ -560,6 +607,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS model_call_capture_org_isolation ON model_call_capture`,
   `DROP POLICY IF EXISTS proactive_address_org_isolation ON proactive_address`,
   `DROP POLICY IF EXISTS memory_proposal_org_isolation ON memory_proposal`,
+  `DROP POLICY IF EXISTS credential_grant_ask_org_isolation ON credential_grant_ask`,
+  `DROP POLICY IF EXISTS credential_grant_org_isolation ON credential_grant`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
@@ -653,6 +702,12 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY memory_proposal_org_isolation ON memory_proposal
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY credential_grant_ask_org_isolation ON credential_grant_ask
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY credential_grant_org_isolation ON credential_grant
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
 ];
@@ -982,6 +1037,8 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   identity_link_sets: ["SELECT", "INSERT", "UPDATE"],
   identity_linked_ids: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   identity_link_challenges: ["SELECT", "INSERT", "UPDATE"],
+  credential_grant_ask: ["SELECT", "INSERT", "UPDATE"],
+  credential_grant: ["SELECT", "INSERT", "UPDATE"],
 };
 
 function mutableTableGrantsSql(role: string): string[] {
@@ -1183,6 +1240,100 @@ function linkChallengeFromPgRow(org: string, r: LinkChallengePgRow): LinkChallen
     createdAt: r.created_at,
     expiresAt: r.expires_at,
     ...(r.decided_at === null ? {} : { decidedAt: r.decided_at }),
+  };
+}
+
+const GRANT_ASK_COLUMNS =
+  `id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
+   scope_key, purpose, requested_mode, status, created_at, expires_at, decided_at, grant_id`;
+const GRANT_ASK_SELECT = `SELECT ${GRANT_ASK_COLUMNS} FROM credential_grant_ask`;
+
+type GrantAskPgRow = {
+  id: string;
+  requester_principal_id: string;
+  owner_principal_id: string;
+  owner_slug: string;
+  owner_platform: string;
+  owner_native_id: string;
+  connector: string;
+  verb: string;
+  resource: string;
+  scope_key: string;
+  purpose: string;
+  requested_mode: string;
+  status: string;
+  created_at: string;
+  expires_at: string;
+  decided_at: string | null;
+  grant_id: string | null;
+};
+
+function grantAskFromPgRow(r: GrantAskPgRow): CredentialGrantAskRow {
+  return {
+    id: r.id,
+    requesterPrincipalId: r.requester_principal_id,
+    ownerPrincipalId: r.owner_principal_id,
+    ownerSlug: r.owner_slug,
+    ownerPlatform: r.owner_platform,
+    ownerNativeId: r.owner_native_id,
+    connector: r.connector,
+    verb: r.verb,
+    resource: r.resource,
+    scopeKey: r.scope_key,
+    purpose: r.purpose,
+    requestedMode: r.requested_mode as CredentialGrantMode,
+    status: r.status as CredentialGrantAskState,
+    createdAt: r.created_at,
+    expiresAt: r.expires_at,
+    ...(r.decided_at === null ? {} : { decidedAt: r.decided_at }),
+    ...(r.grant_id === null ? {} : { grantId: r.grant_id }),
+  };
+}
+
+const GRANT_COLUMNS =
+  `id, ask_id, requester_principal_id, owner_principal_id, owner_slug, connector, verb, resource,
+   scope_key, mode, tier, status, purpose, created_at, expires_at, used_at, revoked_at`;
+const GRANT_SELECT = `SELECT ${GRANT_COLUMNS} FROM credential_grant`;
+
+type GrantPgRow = {
+  id: string;
+  ask_id: string;
+  requester_principal_id: string;
+  owner_principal_id: string;
+  owner_slug: string;
+  connector: string;
+  verb: string;
+  resource: string;
+  scope_key: string;
+  mode: string;
+  tier: string;
+  status: string;
+  purpose: string;
+  created_at: string;
+  expires_at: string;
+  used_at: string | null;
+  revoked_at: string | null;
+};
+
+function grantFromPgRow(r: GrantPgRow): CredentialGrantRow {
+  return {
+    id: r.id,
+    askId: r.ask_id,
+    requesterPrincipalId: r.requester_principal_id,
+    ownerPrincipalId: r.owner_principal_id,
+    ownerSlug: r.owner_slug,
+    connector: r.connector,
+    verb: r.verb,
+    resource: r.resource,
+    scopeKey: r.scope_key,
+    mode: r.mode as CredentialGrantMode,
+    tier: r.tier as CredentialGrantRow["tier"],
+    status: r.status as CredentialGrantState,
+    purpose: r.purpose,
+    createdAt: r.created_at,
+    expiresAt: r.expires_at,
+    ...(r.used_at === null ? {} : { usedAt: r.used_at }),
+    ...(r.revoked_at === null ? {} : { revokedAt: r.revoked_at }),
   };
 }
 
@@ -2996,6 +3147,145 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         `UPDATE identity_link_challenges SET status = 'expired', decided_at = $1
          WHERE org_id = $2 AND status IN ('pending', 'claimed') AND expires_at <= $1 RETURNING id`,
         [nowIso, org],
+      );
+      return (rows as unknown[]).length;
+    },
+
+    async addCredentialGrantAsk(org: string, row: CredentialGrantAskRow) {
+      await client.query(
+        `INSERT INTO credential_grant_ask
+           (org_id, id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
+            scope_key, purpose, requested_mode, status, created_at, expires_at, decided_at, grant_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+        [
+          org,
+          row.id,
+          row.requesterPrincipalId,
+          row.ownerPrincipalId,
+          row.ownerSlug,
+          row.ownerPlatform,
+          row.ownerNativeId,
+          row.connector,
+          row.verb,
+          row.resource,
+          row.scopeKey,
+          row.purpose,
+          row.requestedMode,
+          row.status,
+          row.createdAt,
+          row.expiresAt,
+          row.decidedAt ?? null,
+          row.grantId ?? null,
+        ],
+      );
+    },
+
+    async getCredentialGrantAsk(org, id) {
+      const { rows } = await client.query(`${GRANT_ASK_SELECT} WHERE org_id = $1 AND id = $2`, [org, id]);
+      const r = (rows as GrantAskPgRow[])[0];
+      return r ? grantAskFromPgRow(r) : null;
+    },
+
+    async approveCredentialGrantAsk(org, id, mode, grantId, at) {
+      const { rows } = await client.query(
+        `UPDATE credential_grant_ask SET status = 'approved', requested_mode = $1, grant_id = $2, decided_at = $3
+         WHERE org_id = $4 AND id = $5 AND status = 'pending' AND expires_at > $3
+         RETURNING ${GRANT_ASK_COLUMNS}`,
+        [mode, grantId, at, org, id],
+      );
+      const r = (rows as GrantAskPgRow[])[0];
+      return r ? grantAskFromPgRow(r) : null;
+    },
+
+    async decideCredentialGrantAsk(org, id, from, to, at) {
+      const { rows } = await client.query(
+        `UPDATE credential_grant_ask SET status = $1, decided_at = $2 WHERE org_id = $3 AND id = $4 AND status = ANY($5) RETURNING id`,
+        [to, at, org, id, [...from]],
+      );
+      return (rows as unknown[]).length > 0;
+    },
+
+    async expireCredentialGrantAsks(org, nowIso) {
+      const { rows } = await client.query(
+        `UPDATE credential_grant_ask SET status = 'expired', decided_at = $1
+         WHERE org_id = $2 AND status = 'pending' AND expires_at <= $1 RETURNING id`,
+        [nowIso, org],
+      );
+      return (rows as unknown[]).length;
+    },
+
+    async addCredentialGrant(org: string, row: CredentialGrantRow) {
+      await client.query(
+        `INSERT INTO credential_grant
+           (org_id, id, ask_id, requester_principal_id, owner_principal_id, owner_slug, connector, verb, resource,
+            scope_key, mode, tier, status, purpose, created_at, expires_at, used_at, revoked_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+        [
+          org,
+          row.id,
+          row.askId,
+          row.requesterPrincipalId,
+          row.ownerPrincipalId,
+          row.ownerSlug,
+          row.connector,
+          row.verb,
+          row.resource,
+          row.scopeKey,
+          row.mode,
+          row.tier,
+          row.status,
+          row.purpose,
+          row.createdAt,
+          row.expiresAt,
+          row.usedAt ?? null,
+          row.revokedAt ?? null,
+        ],
+      );
+    },
+
+    async getCredentialGrant(org, id) {
+      const { rows } = await client.query(`${GRANT_SELECT} WHERE org_id = $1 AND id = $2`, [org, id]);
+      const r = (rows as GrantPgRow[])[0];
+      return r ? grantFromPgRow(r) : null;
+    },
+
+    async credentialGrantsForScope(org, scopeKey) {
+      const { rows } = await client.query(`${GRANT_SELECT} WHERE org_id = $1 AND scope_key = $2 ORDER BY created_at DESC`, [org, scopeKey]);
+      return (rows as GrantPgRow[]).map(grantFromPgRow);
+    },
+
+    async liveCredentialGrant(org, ownerPrincipalId, verb, scopeKey, nowIso) {
+      const { rows } = await client.query(
+        `${GRANT_SELECT} WHERE org_id = $1 AND owner_principal_id = $2 AND verb = $3 AND scope_key = $4
+           AND status = 'active' AND expires_at > $5 ORDER BY created_at DESC LIMIT 1`,
+        [org, ownerPrincipalId, verb, scopeKey, nowIso],
+      );
+      const r = (rows as GrantPgRow[])[0];
+      return r ? grantFromPgRow(r) : null;
+    },
+
+    async burnCredentialGrant(org, id, at) {
+      const { rows } = await client.query(
+        `UPDATE credential_grant SET status = 'used', used_at = $1
+         WHERE org_id = $2 AND id = $3 AND status = 'active' AND expires_at > $1 RETURNING ${GRANT_COLUMNS}`,
+        [at, org, id],
+      );
+      const r = (rows as GrantPgRow[])[0];
+      return r ? grantFromPgRow(r) : null;
+    },
+
+    async revokeCredentialGrant(org, id, at) {
+      const { rows } = await client.query(
+        `UPDATE credential_grant SET status = 'revoked', revoked_at = $1 WHERE org_id = $2 AND id = $3 AND status = 'active' RETURNING id`,
+        [at, org, id],
+      );
+      return (rows as unknown[]).length > 0;
+    },
+
+    async expireCredentialGrants(org, nowIso) {
+      const { rows } = await client.query(
+        `UPDATE credential_grant SET status = 'expired' WHERE org_id = $1 AND status = 'active' AND expires_at <= $2 RETURNING id`,
+        [org, nowIso],
       );
       return (rows as unknown[]).length;
     },

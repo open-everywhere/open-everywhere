@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
 import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite } from "./store.js";
+import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
@@ -435,6 +436,58 @@ function getDb(): DatabaseSync {
       PRIMARY KEY (org_id, id)
     );
     CREATE INDEX IF NOT EXISTS identity_link_challenges_org_nonce ON identity_link_challenges (org_id, nonce_hash);
+    -- credential_grant_ask (OPE-1060): one person's REQUEST for another person's credential, pending
+    -- the owner's answer in their own DM. The purpose is MODEL-AUTHORED and is stored as data -- every
+    -- reader renders it escaped and quoted. Single-answer is the pending-only approve CAS.
+    CREATE TABLE IF NOT EXISTS credential_grant_ask (
+      org_id                 TEXT NOT NULL,
+      id                     TEXT NOT NULL,
+      requester_principal_id TEXT NOT NULL,
+      owner_principal_id     TEXT NOT NULL,
+      owner_slug             TEXT NOT NULL,   -- the eventual tool name's owner segment, PINNED here
+      owner_platform         TEXT NOT NULL,   -- where the owner's card is delivered
+      owner_native_id        TEXT NOT NULL,   -- the bare platform id the DM arm addresses
+      connector              TEXT NOT NULL,
+      verb                   TEXT NOT NULL,   -- a REGISTERED grantable verb, never a vendor permission
+      resource               TEXT NOT NULL,   -- ARN-like: notion:page/<id>
+      scope_key              TEXT NOT NULL,   -- the CHAT this would serve (the session id)
+      purpose                TEXT NOT NULL,   -- model-authored; untrusted content
+      requested_mode         TEXT NOT NULL,   -- once | session | standing
+      status                 TEXT NOT NULL,   -- pending | approved | declined | expired
+      created_at             TEXT NOT NULL,
+      expires_at             TEXT NOT NULL,   -- the ASK's own short TTL, NOT the grant's
+      decided_at             TEXT,
+      grant_id               TEXT,            -- stamped by the approve CAS
+      PRIMARY KEY (org_id, id)
+    );
+    CREATE INDEX IF NOT EXISTS credential_grant_ask_org_scope ON credential_grant_ask (org_id, scope_key);
+    -- credential_grant (OPE-1060): the owner-approved grant a chat spends. The tier is decided ONCE at
+    -- mint against the underlying VERB definition and is never re-derived from the mounted tool name
+    -- (a grant__<owner>__<verb> name carries a person's handle where a classifier looks for a verb).
+    -- Rows are NEVER deleted: the mount projects every row for a scope and the broker refuses on
+    -- state, so a removed row would make a tool vanish mid-plan instead of refusing.
+    CREATE TABLE IF NOT EXISTS credential_grant (
+      org_id                 TEXT NOT NULL,
+      id                     TEXT NOT NULL,
+      ask_id                 TEXT NOT NULL,
+      requester_principal_id TEXT NOT NULL,
+      owner_principal_id     TEXT NOT NULL,
+      owner_slug             TEXT NOT NULL,   -- the mounted name's owner segment, PINNED at mint
+      connector              TEXT NOT NULL,
+      verb                   TEXT NOT NULL,
+      resource               TEXT NOT NULL,
+      scope_key              TEXT NOT NULL,
+      mode                   TEXT NOT NULL,   -- once | session | standing
+      tier                   TEXT NOT NULL,   -- read | write | destructive (from the verb, at mint)
+      status                 TEXT NOT NULL,   -- active | used | revoked | expired
+      purpose                TEXT NOT NULL,   -- model-authored; untrusted content
+      created_at             TEXT NOT NULL,
+      expires_at             TEXT NOT NULL,
+      used_at                TEXT,
+      revoked_at             TEXT,
+      PRIMARY KEY (org_id, id)
+    );
+    CREATE INDEX IF NOT EXISTS credential_grant_org_scope ON credential_grant (org_id, scope_key);
     -- notice_claim: LIFETIME at-most-once claims (store.ts claimNotice). No TTL and NO prune, on
     -- purpose: the one thing it records is "this was already said", and expiring that would make the
     -- announcement periodic. Bounded by configuration (one row per room per notice kind), not by
@@ -861,6 +914,100 @@ function linkChallengeFromSqliteRow(org: string, r: LinkChallengeSqliteRow): Lin
     createdAt: r.created_at,
     expiresAt: r.expires_at,
     ...(r.decided_at === null ? {} : { decidedAt: r.decided_at }),
+  };
+}
+
+const GRANT_ASK_SQLITE_SELECT =
+  `SELECT id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
+          scope_key, purpose, requested_mode, status, created_at, expires_at, decided_at, grant_id
+   FROM credential_grant_ask`;
+
+type GrantAskSqliteRow = {
+  id: string;
+  requester_principal_id: string;
+  owner_principal_id: string;
+  owner_slug: string;
+  owner_platform: string;
+  owner_native_id: string;
+  connector: string;
+  verb: string;
+  resource: string;
+  scope_key: string;
+  purpose: string;
+  requested_mode: string;
+  status: string;
+  created_at: string;
+  expires_at: string;
+  decided_at: string | null;
+  grant_id: string | null;
+};
+
+function grantAskFromSqliteRow(r: GrantAskSqliteRow): CredentialGrantAskRow {
+  return {
+    id: r.id,
+    requesterPrincipalId: r.requester_principal_id,
+    ownerPrincipalId: r.owner_principal_id,
+    ownerSlug: r.owner_slug,
+    ownerPlatform: r.owner_platform,
+    ownerNativeId: r.owner_native_id,
+    connector: r.connector,
+    verb: r.verb,
+    resource: r.resource,
+    scopeKey: r.scope_key,
+    purpose: r.purpose,
+    requestedMode: r.requested_mode as CredentialGrantMode,
+    status: r.status as CredentialGrantAskState,
+    createdAt: r.created_at,
+    expiresAt: r.expires_at,
+    ...(r.decided_at === null ? {} : { decidedAt: r.decided_at }),
+    ...(r.grant_id === null ? {} : { grantId: r.grant_id }),
+  };
+}
+
+const GRANT_SQLITE_SELECT =
+  `SELECT id, ask_id, requester_principal_id, owner_principal_id, owner_slug, connector, verb, resource,
+          scope_key, mode, tier, status, purpose, created_at, expires_at, used_at, revoked_at
+   FROM credential_grant`;
+
+type GrantSqliteRow = {
+  id: string;
+  ask_id: string;
+  requester_principal_id: string;
+  owner_principal_id: string;
+  owner_slug: string;
+  connector: string;
+  verb: string;
+  resource: string;
+  scope_key: string;
+  mode: string;
+  tier: string;
+  status: string;
+  purpose: string;
+  created_at: string;
+  expires_at: string;
+  used_at: string | null;
+  revoked_at: string | null;
+};
+
+function grantFromSqliteRow(r: GrantSqliteRow): CredentialGrantRow {
+  return {
+    id: r.id,
+    askId: r.ask_id,
+    requesterPrincipalId: r.requester_principal_id,
+    ownerPrincipalId: r.owner_principal_id,
+    ownerSlug: r.owner_slug,
+    connector: r.connector,
+    verb: r.verb,
+    resource: r.resource,
+    scopeKey: r.scope_key,
+    mode: r.mode as CredentialGrantMode,
+    tier: r.tier as CredentialGrantRow["tier"],
+    status: r.status as CredentialGrantState,
+    purpose: r.purpose,
+    createdAt: r.created_at,
+    expiresAt: r.expires_at,
+    ...(r.used_at === null ? {} : { usedAt: r.used_at }),
+    ...(r.revoked_at === null ? {} : { revokedAt: r.revoked_at }),
   };
 }
 
@@ -2539,6 +2686,146 @@ export const sqliteOperationalStore: OperationalStore = {
       getDb()
         .prepare("UPDATE identity_link_challenges SET status = 'expired', decided_at = ? WHERE org_id = ? AND status IN ('pending', 'claimed') AND expires_at <= ?")
         .run(nowIso, org, nowIso).changes,
+    );
+  },
+
+  async addCredentialGrantAsk(org, row) {
+    getDb()
+      .prepare(
+        `INSERT INTO credential_grant_ask
+           (org_id, id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
+            scope_key, purpose, requested_mode, status, created_at, expires_at, decided_at, grant_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        org,
+        row.id,
+        row.requesterPrincipalId,
+        row.ownerPrincipalId,
+        row.ownerSlug,
+        row.ownerPlatform,
+        row.ownerNativeId,
+        row.connector,
+        row.verb,
+        row.resource,
+        row.scopeKey,
+        row.purpose,
+        row.requestedMode,
+        row.status,
+        row.createdAt,
+        row.expiresAt,
+        row.decidedAt ?? null,
+        row.grantId ?? null,
+      );
+  },
+
+  async getCredentialGrantAsk(org, id) {
+    const row = getDb().prepare(`${GRANT_ASK_SQLITE_SELECT} WHERE org_id = ? AND id = ?`).get(org, id) as GrantAskSqliteRow | undefined;
+    return row ? grantAskFromSqliteRow(row) : null;
+  },
+
+  async approveCredentialGrantAsk(org, id, mode, grantId, at) {
+    const db = getDb();
+    const changes = db
+      .prepare(
+        `UPDATE credential_grant_ask SET status = 'approved', requested_mode = ?, grant_id = ?, decided_at = ?
+         WHERE org_id = ? AND id = ? AND status = 'pending' AND expires_at > ?`,
+      )
+      .run(mode, grantId, at, org, id, at).changes;
+    if (Number(changes) === 0) return null;
+    const row = db.prepare(`${GRANT_ASK_SQLITE_SELECT} WHERE org_id = ? AND id = ?`).get(org, id) as GrantAskSqliteRow | undefined;
+    return row ? grantAskFromSqliteRow(row) : null;
+  },
+
+  async decideCredentialGrantAsk(org, id, from, to, at) {
+    const changes = getDb()
+      .prepare(`UPDATE credential_grant_ask SET status = ?, decided_at = ? WHERE org_id = ? AND id = ? AND status IN (${placeholders(from.length)})`)
+      .run(to, at, org, id, ...from).changes;
+    return Number(changes) > 0;
+  },
+
+  async expireCredentialGrantAsks(org, nowIso) {
+    return Number(
+      getDb()
+        .prepare("UPDATE credential_grant_ask SET status = 'expired', decided_at = ? WHERE org_id = ? AND status = 'pending' AND expires_at <= ?")
+        .run(nowIso, org, nowIso).changes,
+    );
+  },
+
+  async addCredentialGrant(org, row) {
+    getDb()
+      .prepare(
+        `INSERT INTO credential_grant
+           (org_id, id, ask_id, requester_principal_id, owner_principal_id, owner_slug, connector, verb, resource,
+            scope_key, mode, tier, status, purpose, created_at, expires_at, used_at, revoked_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        org,
+        row.id,
+        row.askId,
+        row.requesterPrincipalId,
+        row.ownerPrincipalId,
+        row.ownerSlug,
+        row.connector,
+        row.verb,
+        row.resource,
+        row.scopeKey,
+        row.mode,
+        row.tier,
+        row.status,
+        row.purpose,
+        row.createdAt,
+        row.expiresAt,
+        row.usedAt ?? null,
+        row.revokedAt ?? null,
+      );
+  },
+
+  async getCredentialGrant(org, id) {
+    const row = getDb().prepare(`${GRANT_SQLITE_SELECT} WHERE org_id = ? AND id = ?`).get(org, id) as GrantSqliteRow | undefined;
+    return row ? grantFromSqliteRow(row) : null;
+  },
+
+  async credentialGrantsForScope(org, scopeKey) {
+    const rows = getDb()
+      .prepare(`${GRANT_SQLITE_SELECT} WHERE org_id = ? AND scope_key = ? ORDER BY created_at DESC`)
+      .all(org, scopeKey) as GrantSqliteRow[];
+    return rows.map(grantFromSqliteRow);
+  },
+
+  async liveCredentialGrant(org, ownerPrincipalId, verb, scopeKey, nowIso) {
+    const row = getDb()
+      .prepare(
+        `${GRANT_SQLITE_SELECT} WHERE org_id = ? AND owner_principal_id = ? AND verb = ? AND scope_key = ?
+           AND status = 'active' AND expires_at > ? ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(org, ownerPrincipalId, verb, scopeKey, nowIso) as GrantSqliteRow | undefined;
+    return row ? grantFromSqliteRow(row) : null;
+  },
+
+  async burnCredentialGrant(org, id, at) {
+    const db = getDb();
+    const changes = db
+      .prepare(`UPDATE credential_grant SET status = 'used', used_at = ? WHERE org_id = ? AND id = ? AND status = 'active' AND expires_at > ?`)
+      .run(at, org, id, at).changes;
+    if (Number(changes) === 0) return null;
+    const row = db.prepare(`${GRANT_SQLITE_SELECT} WHERE org_id = ? AND id = ?`).get(org, id) as GrantSqliteRow | undefined;
+    return row ? grantFromSqliteRow(row) : null;
+  },
+
+  async revokeCredentialGrant(org, id, at) {
+    const changes = getDb()
+      .prepare("UPDATE credential_grant SET status = 'revoked', revoked_at = ? WHERE org_id = ? AND id = ? AND status = 'active'")
+      .run(at, org, id).changes;
+    return Number(changes) > 0;
+  },
+
+  async expireCredentialGrants(org, nowIso) {
+    return Number(
+      getDb()
+        .prepare("UPDATE credential_grant SET status = 'expired' WHERE org_id = ? AND status = 'active' AND expires_at <= ?")
+        .run(org, nowIso).changes,
     );
   },
 

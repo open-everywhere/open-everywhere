@@ -3,6 +3,7 @@ import type { PendingActionRow } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import type { PendingUnifiedWake, UnifiedWakeRecord } from "../channels/unified-window.js";
 import type { SessionTailEntry } from "../channels/session-tail.js";
+import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow } from "./credential-grant-rows.js";
 
 export const OPERATIONAL_TABLES = [
   "spend_ledger",
@@ -39,6 +40,8 @@ export const OPERATIONAL_TABLES = [
   "model_call_capture",
   "proactive_address",
   "memory_proposal",
+  "credential_grant_ask",
+  "credential_grant",
 ] as const;
 
 export const EVENT_DEDUPE_MAX_RETENTION_MS = 24 * 60 * 60_000;
@@ -821,6 +824,19 @@ export interface OperationalStore {
   ): Promise<LinkChallengeRow | null>;
   decideLinkChallenge(org: string, id: string, from: readonly LinkChallengeStatus[], to: LinkChallengeStatus, at: string): Promise<boolean>;
   expireLinkChallenges(org: string, nowIso: string): Promise<number>;
+
+  addCredentialGrantAsk(org: string, row: CredentialGrantAskRow): Promise<void>;
+  getCredentialGrantAsk(org: string, id: string): Promise<CredentialGrantAskRow | null>;
+  approveCredentialGrantAsk(org: string, id: string, mode: CredentialGrantMode, grantId: string, at: string): Promise<CredentialGrantAskRow | null>;
+  decideCredentialGrantAsk(org: string, id: string, from: readonly CredentialGrantAskState[], to: CredentialGrantAskState, at: string): Promise<boolean>;
+  expireCredentialGrantAsks(org: string, nowIso: string): Promise<number>;
+  addCredentialGrant(org: string, row: CredentialGrantRow): Promise<void>;
+  getCredentialGrant(org: string, id: string): Promise<CredentialGrantRow | null>;
+  credentialGrantsForScope(org: string, scopeKey: string): Promise<readonly CredentialGrantRow[]>;
+  liveCredentialGrant(org: string, ownerPrincipalId: string, verb: string, scopeKey: string, nowIso: string): Promise<CredentialGrantRow | null>;
+  burnCredentialGrant(org: string, id: string, at: string): Promise<CredentialGrantRow | null>;
+  revokeCredentialGrant(org: string, id: string, at: string): Promise<boolean>;
+  expireCredentialGrants(org: string, nowIso: string): Promise<number>;
 
   claimNotice(org: string, key: string, at: string): Promise<boolean>;
   noticeClaimed(org: string, key: string): Promise<boolean>;

@@ -285,10 +285,28 @@ export function preRegisterDynamicVariants(mountedName: string, variants: Readon
   if (entryKeys.length < 2) {
     throw new Error(`preRegisterDynamicVariants("${mountedName}"): needs at least two variants — use preRegisterDynamicEntry for one.`);
   }
+  installVariants(mountedName, variants);
+}
+
+const INCREMENTAL_VARIANTS = new Map<string, Record<string, ReplayableToolEntry>>();
+
+export function registerDynamicVariant(mountedName: string, entryKey: string, entry: ReplayableToolEntry): void {
+  const held = INCREMENTAL_VARIANTS.get(mountedName) ?? {};
+  held[entryKey] = entry;
+  INCREMENTAL_VARIANTS.set(mountedName, held);
+  installVariants(mountedName, held, "registerDynamicVariant");
+}
+
+export function _resetDynamicVariantsForTest(): void {
+  INCREMENTAL_VARIANTS.clear();
+}
+
+function installVariants(mountedName: string, variants: Readonly<Record<string, ReplayableToolEntry>>, door = "preRegisterDynamicVariants"): void {
+  const entryKeys = Object.keys(variants);
   for (const entryKey of entryKeys) {
     if (typeof variants[entryKey].toModelOutput === "function") {
       throw new Error(
-        `preRegisterDynamicVariants("${mountedName}"): variant "${entryKey}" authors toModelOutput, which the projection registry keys by mounted name alone and cannot disambiguate.`,
+        `${door}("${mountedName}"): variant "${entryKey}" authors toModelOutput, which the projection registry keys by mounted name alone and cannot disambiguate.`,
       );
     }
   }
