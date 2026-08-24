@@ -20,7 +20,7 @@ const { defineDomain } = await import("../agent/memory/domain.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { parseApprovalAction, requestApproval, handleApprovalPayload, resolveApprovalClick, clickerMayDecide, OE_APPROVAL_PREFIX, sweepExpiredPendings } = await import("../agent/approvals/flow.js");
-const { pendingCardBlocks, decidedCardBlocks } = await import("../agent/approvals/card.js");
+const { pendingCardBlocks, decidedCardBlocks, judgeLiftNoticeBlocks } = await import("../agent/approvals/card.js");
 const { registerActionKind, actionKind } = await import("../agent/approvals/actions.js");
 const { effectiveCaps } = await import("../agent/spend/caps.js");
 const { applyConnectorOverrides } = await import("../agent/access/connector-scope.js");
@@ -92,6 +92,7 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
   ok(JSON.stringify(parseApprovalAction("oe_approval:reject:p-1")) === JSON.stringify({ decision: "reject", id: "p-1" }), "parses a reject action_id");
   ok(JSON.stringify(parseApprovalAction("oe_approval:approve_session:p-1")) === JSON.stringify({ decision: "approve_session", id: "p-1" }), "parses an approve_session action_id (OPE-53)");
   ok(parseApprovalAction("eve_input:something") === null, "rejects a foreign prefix (Eve's own HITL buttons)");
+  ok(JSON.stringify(parseApprovalAction("oe_approval:contradict:p-1")) === JSON.stringify({ decision: "contradict", id: "p-1" }), "parses a contradict action_id (OPE-965)");
   ok(parseApprovalAction("oe_approval:maybe:p-1") === null, "rejects an unrecognised decision segment");
   ok(parseApprovalAction("oe_approval:approve:") === null, "rejects a missing id");
   ok(parseApprovalAction("oe_approval:approve") === null, "rejects a missing separator entirely");
@@ -127,6 +128,18 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
   ok(JSON.stringify(rejected.blocks).includes("❌ Rejected by <@U_ORG_ADMIN>"), "decidedCardBlocks renders the rejected context line");
   const expired = decidedCardBlocks({ ...r, status: "expired", decidedBy: "system" }, ["line one"], "n/a");
   ok(JSON.stringify(expired.blocks).includes("⏰ Expired"), "decidedCardBlocks renders the expired context line");
+
+  const notice = judgeLiftNoticeBlocks({ ...r, status: "approved", decidedBy: "chain:judge" }, ["line one"], "spend limit set");
+  const noticeActions = notice.blocks.find((b) => b.type === "actions") as unknown as { elements: { action_id: string; value: string; text: { text: string } }[] } | undefined;
+  ok(noticeActions !== undefined, "judgeLiftNoticeBlocks includes an actions block");
+  const noticeIds = noticeActions!.elements.map((e) => e.action_id);
+  ok(noticeIds.length === 1 && noticeIds[0] === `${OE_APPROVAL_PREFIX}contradict:p-1`, "the notice carries EXACTLY one button — the id-scoped contradict action_id");
+  ok(parseApprovalAction(noticeIds[0]!) !== null, "the notice's action_id round-trips through parseApprovalAction");
+  ok(noticeActions!.elements[0]!.value === "default", "the notice button carries the org as its value (the click payload's only org source)");
+  ok(noticeActions!.elements[0]!.text.text === "This should not have run", "the notice button says what it does");
+  ok(!noticeIds.some((i) => i.includes("approve") || i.includes("reject")), "🔴 the notice is a REVIEW surface, never a decision one — no approve/reject on an act that already ran");
+  ok(JSON.stringify(notice.blocks).includes("already run"), "the notice says the action has already run — it never implies a click could undo it");
+  ok(JSON.stringify(notice.blocks).includes("spend limit set"), "the notice relays the executor's own outcome line");
 }
 
 {
@@ -313,6 +326,14 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
 
   ok((await handleApprovalPayload({ actions: [] }, { post })) === false, "handleApprovalPayload: no actions at all also returns false");
   ok((await handleApprovalPayload(null, { post })) === false, "handleApprovalPayload: a null payload is handled without throwing");
+
+  calls.length = 0;
+  ok((await handleApprovalPayload(payloadFor("oe_approval:contradict:p-never-existed"), { post })) === true, "an unknown-row contradict click is still owned by the handler");
+  ok(calls.every((c) => c.method !== "chat.update"), "🔴 an unknown-row contradict click NEVER edits the message — the judge-lift notice is not erasable by clicking it");
+  ok(calls.some((c) => c.method === "chat.postMessage"), "an unknown-row contradict click answers in-thread instead");
+  calls.length = 0;
+  await handleApprovalPayload(payloadFor("oe_approval:approve:p-never-existed"), { post });
+  ok(calls.some((c) => c.method === "chat.update"), "contrast: an unknown-row APPROVE click still replaces the now-moot card");
 }
 
 {

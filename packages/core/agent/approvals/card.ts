@@ -60,6 +60,29 @@ export function pendingCardBlocks(row: PendingActionRow, summaryLines: readonly 
   return { blocks, text: `Approval requested: ${row.kind}\n${summaryLines.join(" · ")}\n${requestedContext}` };
 }
 
+export function judgeLiftNoticeBlocks(row: PendingActionRow, summaryLines: readonly string[], outcomeLine: string): RenderedCard {
+  const context = `⚡ Auto-approved by the approval judge — no card was posted and this has already run · ${outcomeLine}`;
+  const blocks: SlackBlock[] = [
+    { type: "header", text: { type: "plain_text", text: `Ran without asking: ${row.kind}`, emoji: true } },
+    summarySection(summaryLines),
+    contextBlock(context),
+    {
+      type: "actions",
+      block_id: `oe_approval_actions:${row.id}`,
+      elements: [
+        {
+          type: "button",
+          style: "danger",
+          text: { type: "plain_text", text: "This should not have run", emoji: true },
+          action_id: `${APPROVAL_PREFIX}contradict:${row.id}`,
+          value: row.org,
+        },
+      ],
+    },
+  ];
+  return { blocks, text: `Ran without asking: ${row.kind}\n${summaryLines.join(" · ")}\n${context}` };
+}
+
 export function decidedCardBlocks(row: PendingActionRow, summaryLines: readonly string[], outcomeLine: string): RenderedCard {
   const decidedContext =
     row.status === "approved"

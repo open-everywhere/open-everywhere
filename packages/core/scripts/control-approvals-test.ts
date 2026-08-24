@@ -178,6 +178,41 @@ await client.connect(clientT);
   ok("an org admin CAN decide a per-user spend cap", orgOk.ok === true && orgOk.outcome === "decided");
 }
 
+{
+  const { approvalJudgeBreakerTripped } = await import("../agent/access/approval-judge.js");
+  const contradictions = async () =>
+    (await readAudit({ action: "approval.judge.contradicted" })) as { principalId?: string; detail?: Record<string, unknown> }[];
+
+  ok("disarm_approval_judge is a declared WRITE tool", (CONTROL_WRITE_TOOL_NAMES as readonly string[]).includes("disarm_approval_judge"));
+  ok("the read-only server does NOT expose it", !Object.keys((buildControlServer() as unknown as { _registeredTools: Record<string, unknown> })._registeredTools).includes("disarm_approval_judge"));
+
+  ok("the target domain's judge reads ARMED before the call", (await approvalJudgeBreakerTripped("eng")) === false);
+  ok("no contradiction row exists before an operator acts", (await contradictions()).length === 0);
+
+  const otherServer = buildControlServer({ includeWrites: true, actor: "other-op", roles: ["domain:other"] });
+  const [c6, s6] = InMemoryTransport.createLinkedPair();
+  await otherServer.connect(s6);
+  const otherClient = new Client({ name: "disarm-rbac", version: "0" });
+  await otherClient.connect(c6);
+  const refused = await otherClient.callTool({ name: "disarm_approval_judge", arguments: { org: "default", domain: "eng" } });
+  ok("a non-covering role CANNOT disarm the judge for a domain", refused.isError === true);
+  ok("the refused call wrote no contradiction row", (await contradictions()).length === 0);
+  ok("the refused call left the judge armed", (await approvalJudgeBreakerTripped("eng")) === false);
+  await otherClient.close();
+
+  const done = await callJson(client, "disarm_approval_judge", { org: "default", domain: "eng" });
+  ok("the org admin's disarm reports success for the named domain", done.ok === true && done.domain === "eng" && done.disarmed === true);
+  const rows = await contradictions();
+  ok("ONE row — an explicit disarm is not three overrules in a trench coat", rows.length === 1);
+  ok("the row names the domain, the act and the route", (rows[0]!.detail ?? {}).domain === "eng" && (rows[0]!.detail ?? {}).humanAction === "admin-disarm" && (rows[0]!.detail ?? {}).route === "control");
+  ok("the row names WHO disarmed", rows[0]!.principalId === "admin@example.com");
+  ok("🔴 the judge is now DISARMED for that domain off ONE row — a disarm verb that only counted 1/3 would not be one", (await approvalJudgeBreakerTripped("eng")) === true);
+  ok("a sibling domain's judge stays armed", (await approvalJudgeBreakerTripped("other")) === false);
+
+  const provenance = (await readAudit({ action: "admin.approval.judge_disarm" })) as { principalId?: string; detail?: Record<string, unknown> }[];
+  ok("a control-plane provenance row names the door and the operator", provenance.length === 1 && provenance[0]!.principalId === "admin@example.com" && (provenance[0]!.detail ?? {}).domain === "eng");
+}
+
 await client.close();
 rmSync(dir, { recursive: true, force: true });
-console.log(`\n✓ control approvals tools: ${n} assertions passed (decide reuses the CAS core + executes; list is redacted + role-filtered; RBAC + domain-cap carve-out hold)\n`);
+console.log(`\n✓ control approvals tools: ${n} assertions passed (decide reuses the CAS core + executes; list is redacted + role-filtered; RBAC + domain-cap carve-out hold; disarm_approval_judge disarms one domain off one RBAC-gated row)\n`);
