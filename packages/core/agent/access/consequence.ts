@@ -376,6 +376,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   create_ticket: member("ticket.create", "disclose",
     "audience-expanding: a filed work item reaches every watcher of the repo/team, its triage automation and its subscribers — none of them in the asking room — and the model authors the title + body, so the card (which renders both in full) is the injection gate before that text is published",
   ),
+  post_message: member("chat.post", "disclose",
+    "audience-expanding: a message posted into a container the turn did NOT arrive in interrupts named humans who never asked, is attributed to the deployment, and cannot be un-seen after an edit — and the model authors the body, so the card (which renders the destination and the full text) is the injection gate before those bytes reach a room that never asked for them",
+  ),
 
   set_spend_limit: deferToJudge(admin("spend.set", "disclose", "self-modification + money: changes what the org will spend")),
   clear_spend_limit: admin("spend.clear", "disclose", "reverts a spend control — same bar as setting one"),

@@ -1,0 +1,269 @@
+import assert from "node:assert/strict";
+import {
+  RESOURCE_CAPABILITIES,
+  RESOURCE_CAPABILITY_NAMES,
+  DEFAULT_RESOURCE_CAPABILITIES,
+  isResourceCapability,
+  resourceCapabilityProblems,
+  unionResourceCapabilities,
+} from "../agent/access/resource-capabilities.js";
+import {
+  RESOURCE_CONNECTORS,
+  parseResourceAddress,
+  resourceAddress,
+  resourceGrantCapabilities,
+  resourceGrantProblems,
+  resourceTypesFor,
+  type ResourceGrant,
+} from "../agent/access/resource-grant.js";
+import { assertBundlesValid, type Bundle } from "../agent/access/bundle.js";
+import { resolveAccess } from "../agent/access/resolver.js";
+import {
+  ChatWriteGrantError,
+  CONTAINER_RESOURCE_TYPE,
+  chatWriteTargetsFrom,
+  resolveChatWriteTargetFrom,
+} from "../agent/access/chat-write-grant.js";
+import { TOOL_CONSEQUENCE } from "../agent/access/consequence.js";
+import type { Domain } from "../agent/memory/domain.js";
+
+let n = 0;
+const ok = (cond: boolean, label: string) => {
+  assert.ok(cond, label);
+  n++;
+};
+
+const throws = (fn: () => unknown): string => {
+  try {
+    fn();
+  } catch (e) {
+    return (e as Error).message;
+  }
+  return "";
+};
+
+const HOME = "slack/T1/C_HOME";
+const ELSEWHERE_ID = "C_ELSEWHERE";
+const OTHER_ID = "C_OTHER";
+const DOMAINS: readonly Domain[] = [
+  { name: "eng", channels: [HOME, `slack/T1/${ELSEWHERE_ID}`] },
+  { name: "finance", channels: [`slack/T1/${OTHER_ID}`] },
+];
+const ELSEWHERE = resourceAddress("slack", CONTAINER_RESOURCE_TYPE, ELSEWHERE_ID);
+const OTHER = resourceAddress("slack", CONTAINER_RESOURCE_TYPE, OTHER_ID);
+
+{
+  ok(RESOURCE_CAPABILITY_NAMES.length > 0, "the resource capability vocabulary is non-empty");
+  for (const name of RESOURCE_CAPABILITY_NAMES) {
+    ok(
+      typeof RESOURCE_CAPABILITIES[name]?.summary === "string" && RESOURCE_CAPABILITIES[name].summary.length > 0,
+      `capability "${name}" carries an operator-facing summary`,
+    );
+  }
+  ok(isResourceCapability("post"), "`post` is implemented");
+  ok(!isResourceCapability("chat:write"), "a raw vendor permission string is NOT a capability");
+  ok(!isResourceCapability("posts"), "a near-miss typo is NOT a capability");
+  ok(DEFAULT_RESOURCE_CAPABILITIES.includes("post"), "an unadorned row defaults to `post`");
+  for (const name of DEFAULT_RESOURCE_CAPABILITIES) {
+    ok(isResourceCapability(name), `the default capability "${name}" is in the closed set`);
+  }
+  ok(
+    JSON.stringify(unionResourceCapabilities(["post"], ["post"])) === JSON.stringify(["post"]),
+    "the capability union dedupes",
+  );
+
+  ok(resourceCapabilityProblems("row", undefined).length === 0, "an absent `capabilities` is valid (it means the default)");
+  ok(resourceCapabilityProblems("row", ["post"]).length === 0, "the default spelled out explicitly is valid");
+  const empty = resourceCapabilityProblems("row", []);
+  ok(empty.length === 1 && empty[0]!.includes("grants nothing"), "`capabilities: []` refuses, naming what it would grant");
+  const raw = resourceCapabilityProblems("row", ["chat:write"]);
+  ok(raw.length === 1, "an unknown capability refuses");
+  ok(
+    raw[0]!.includes("never raw vendor permission strings"),
+    "the unknown-capability error says a capability is a NAME we implement, never a vendor permission string",
+  );
+  ok(raw[0]!.includes('"post"'), "the unknown-capability error lists the implemented vocabulary");
+  ok(resourceCapabilityProblems("row", ["post", "post"]).length === 1, "a duplicate capability refuses");
+}
+
+{
+  const parsed = parseResourceAddress("slack:channel/C0123ABC");
+  ok(parsed?.connector === "slack" && parsed.type === "channel" && parsed.id === "C0123ABC", "a well-formed address parses into three facts");
+  ok(resourceAddress("slack", "channel", "C0123ABC") === "slack:channel/C0123ABC", "the composer round-trips the parser");
+  for (const bad of [
+    "C0123ABC",
+    "slack:channel",
+    "slack:/C1",
+    ":channel/C1",
+    "slack:channel/",
+    "slack:channel/C1/extra",
+    "slack:chan:nel/C1",
+    "slack:channel/*",
+    "slack:channel/C 1",
+  ]) {
+    ok(parseResourceAddress(bad) === undefined, `malformed address ${JSON.stringify(bad)} refuses to parse`);
+  }
+  ok(parseResourceAddress("slack:channel/C*") === undefined, "a glob id is unnameable — tier P4 has no spelling");
+  ok(RESOURCE_CONNECTORS.includes("slack"), "slack is the implemented connector");
+  ok(resourceTypesFor("slack").includes(CONTAINER_RESOURCE_TYPE), "slack implements the container resource type");
+  ok(resourceTypesFor("discord").length === 0, "discord is deliberately NOT implemented yet (its slice has not driven it)");
+}
+
+{
+  const row = (grant: ResourceGrant): Bundle => ({ name: "eng", resourceGrants: [grant] });
+
+  ok(resourceGrantProblems("b", [{ connector: "slack", resources: [ELSEWHERE] }]).length === 0, "a bare row is valid");
+  ok(
+    resourceGrantProblems("b", [{ connector: "slack", resources: [ELSEWHERE], capabilities: ["post"] }]).length === 0,
+    "a row naming the capability explicitly is valid",
+  );
+  ok(resourceGrantProblems("b", undefined).length === 0, "a bundle with no resourceGrants is valid — that is tier P0");
+  assert.doesNotThrow(() => assertBundlesValid([row({ connector: "slack", resources: [ELSEWHERE] })]));
+  n++;
+  ok(
+    JSON.stringify(resourceGrantCapabilities({ connector: "slack", resources: [ELSEWHERE] })) ===
+      JSON.stringify(DEFAULT_RESOURCE_CAPABILITIES),
+    "a row with no `capabilities` reads as the default",
+  );
+
+  const unknownConnector = throws(() =>
+    assertBundlesValid([row({ connector: "irc", resources: ["irc:channel/x"] })]),
+  );
+  ok(unknownConnector !== "", "an unknown connector THROWS at config load — it does not load silently");
+  ok(unknownConnector.includes('unknown connector "irc"'), "the unknown-connector error names the connector");
+  ok(unknownConnector.includes('"slack"'), "the unknown-connector error lists what IS implemented");
+
+  const malformed = throws(() => assertBundlesValid([row({ connector: "slack", resources: ["C0123ABC"] })]));
+  ok(malformed !== "", "a malformed address THROWS at config load");
+  ok(malformed.includes("malformed resource"), "the malformed-address error says the address is malformed");
+  ok(malformed.includes("<connector>:<type>/<id>"), "the malformed-address error states the address form");
+  ok(malformed.includes("No wildcards"), "the malformed-address error states that a grant names containers one by one");
+
+  const mismatch = throws(() => assertBundlesValid([row({ connector: "slack", resources: ["discord:channel/1"] })]));
+  ok(mismatch.includes("but the row's `connector` is"), "an address on a different connector from its row refuses");
+
+  const badType = throws(() => assertBundlesValid([row({ connector: "slack", resources: ["slack:dm/U1"] })]));
+  ok(badType.includes("resource type"), "an unimplemented resource type refuses at config load");
+
+  ok(throws(() => assertBundlesValid([row({ connector: "slack", resources: [] })])).includes("declares no `resources`"), "an empty resources list refuses");
+  ok(
+    throws(() => assertBundlesValid([row({ connector: "slack", resources: [ELSEWHERE], capabilities: [] })])).includes("grants nothing"),
+    "an empty capabilities list refuses through the bundle validator too",
+  );
+  ok(
+    throws(() =>
+      assertBundlesValid([{ name: "eng", resourceGrants: [{ connector: "slack", resources: [ELSEWHERE, ELSEWHERE] }] }]),
+    ).includes("more than once"),
+    "a duplicate address in one bundle refuses",
+  );
+  ok(
+    throws(() => assertBundlesValid([row({ connector: "slack", resources: [ELSEWHERE], capabilities: ["chat:write"] as never })])).includes(
+      "never raw vendor permission strings",
+    ),
+    "a raw vendor permission string refuses through the bundle validator",
+  );
+}
+
+{
+  const request = { mode: "channel", platform: "slack", workspace: "T1", channel: "C_HOME", domains: ["eng"] } as const;
+  const bind = (bundle: string) => ({ bundle, scope: { level: "org" } as const });
+
+  const none = resolveAccess({ ...request }, [{ name: "b1" }], [bind("b1")]);
+  ok(Object.keys(none.resourceCapabilities).length === 0, "a deployment with no grant resolves an EMPTY resource map (tier P0)");
+
+  const one = resolveAccess({ ...request }, [{ name: "b1", resourceGrants: [{ connector: "slack", resources: [ELSEWHERE] }] }], [bind("b1")]);
+  ok(JSON.stringify(one.resourceCapabilities[ELSEWHERE]) === JSON.stringify(["post"]), "a bare grant resolves the default capability");
+
+  const two = resolveAccess(
+    { ...request },
+    [
+      { name: "b1", resourceGrants: [{ connector: "slack", resources: [ELSEWHERE] }] },
+      { name: "b2", resourceGrants: [{ connector: "slack", resources: [ELSEWHERE], capabilities: ["post"] }] },
+    ],
+    [bind("b1"), bind("b2")],
+  );
+  ok(JSON.stringify(two.resourceCapabilities[ELSEWHERE]) === JSON.stringify(["post"]), "two bundles granting one address union, deduped");
+  ok(Object.keys(two.resourceCapabilities).length === 1, "the union does not invent addresses");
+
+  const unbound = resolveAccess({ ...request }, [{ name: "b1" }, { name: "b2", resourceGrants: [{ connector: "slack", resources: [ELSEWHERE] }] }], [bind("b1")]);
+  ok(unbound.resourceCapabilities[ELSEWHERE] === undefined, "an UNBOUND bundle's grant does not reach this scope");
+}
+
+{
+  const granted = { [ELSEWHERE]: ["post"] as const };
+
+  const targets = chatWriteTargetsFrom(HOME, granted, DOMAINS);
+  ok(targets.length === 1, "a granted in-domain container is a target");
+  ok(targets[0]!.platform === "slack" && targets[0]!.container === ELSEWHERE_ID, "the target parses to platform + container");
+  ok(targets[0]!.address === ELSEWHERE, "the target carries the grant address verbatim — what the card and the audit row quote");
+  const resolved = resolveChatWriteTargetFrom(HOME, granted, DOMAINS, ELSEWHERE);
+  ok(resolved.container === ELSEWHERE_ID && resolved.address === ELSEWHERE, "the fence returns the resolved target for the caller to freeze");
+
+  ok(chatWriteTargetsFrom(HOME, {}, DOMAINS).length === 0, "with NO grant there is no target — tier P0 is unchanged");
+  let err: unknown;
+  try {
+    resolveChatWriteTargetFrom(HOME, {}, DOMAINS, ELSEWHERE);
+  } catch (e) {
+    err = e;
+  }
+  ok(err instanceof ChatWriteGrantError, "an ungranted target throws ChatWriteGrantError");
+  ok((err as ChatWriteGrantError).boundary === "ungranted", "the ungranted refusal names the GRANT boundary");
+  ok((err as ChatWriteGrantError).message.includes("not granted to this scope"), "the ungranted refusal says the scope holds no grant");
+  ok((err as ChatWriteGrantError).message.includes("resourceGrants"), "the ungranted refusal names the remedy: a bundle row");
+
+  const crossGranted = { [OTHER]: ["post"] as const };
+  ok(chatWriteTargetsFrom(HOME, crossGranted, DOMAINS).length === 0, "a granted container in ANOTHER domain is not a target");
+  let crossErr: unknown;
+  try {
+    resolveChatWriteTargetFrom(HOME, crossGranted, DOMAINS, OTHER);
+  } catch (e) {
+    crossErr = e;
+  }
+  ok(crossErr instanceof ChatWriteGrantError, "a cross-domain target throws even though it IS granted");
+  ok((crossErr as ChatWriteGrantError).boundary === "cross-domain", "the cross-domain refusal names the DOMAIN boundary, not the grant");
+  ok(
+    (crossErr as ChatWriteGrantError).message.includes("not in this session's memory domain"),
+    "the cross-domain refusal names the boundary that stopped it",
+  );
+  ok(
+    (crossErr as ChatWriteGrantError).message !== (err as ChatWriteGrantError).message,
+    "the two refusals are DIFFERENT messages — the remedies live in different files",
+  );
+
+  ok(chatWriteTargetsFrom(HOME, { [ELSEWHERE]: [] }, DOMAINS).length === 0, "an address granted with NO capability is not a target");
+
+  ok(chatWriteTargetsFrom(HOME, { "discord:channel/D1": ["post"] }, DOMAINS).length === 0, "an unimplemented connector's address grants nothing");
+
+  let shapeErr: unknown;
+  try {
+    resolveChatWriteTargetFrom(HOME, granted, DOMAINS, ELSEWHERE_ID);
+  } catch (e) {
+    shapeErr = e;
+  }
+  ok(shapeErr instanceof ChatWriteGrantError, "a bare container id (no address form) refuses");
+  ok((shapeErr as ChatWriteGrantError).message.includes("is not a container address"), "the shape refusal states the address form");
+  ok((shapeErr as ChatWriteGrantError).boundary === "malformed", "a malformed address is its OWN boundary, never `ungranted`");
+
+  ok(chatWriteTargetsFrom("", granted, DOMAINS).length === 0, "an empty caller surface key yields no target");
+  ok(
+    throws(() => resolveChatWriteTargetFrom(undefined, granted, DOMAINS, ELSEWHERE)) !== "",
+    "an unresolvable caller surface refuses the write",
+  );
+
+  const home = resourceAddress("slack", CONTAINER_RESOURCE_TYPE, "C_HOME");
+  ok(chatWriteTargetsFrom(HOME, {}, DOMAINS).find((t) => t.address === home) === undefined, "the arrival container is not a P1 target without a grant");
+}
+
+{
+  const row = TOOL_CONSEQUENCE["post_message"];
+  ok(row !== undefined, "post_message carries a TOOL_CONSEQUENCE row");
+  ok(row!.tier === "gate:member", "post_message is gate:member — a post beyond the asking room is consequential");
+  ok(row!.via.kind === "action-kind" && row!.via.action === "chat.post", "post_message proposes the chat.post ActionKind");
+  ok(row!.taint === "disclose", "post_message discloses taint on the card rather than auto-rejecting");
+  const { actionKind } = await import("../agent/approvals/actions.js");
+  await import("../agent/approvals/chat-post.js");
+  ok(actionKind("chat.post") !== undefined, "the chat.post ActionKind is registered");
+  ok(actionKind("chat.post")!.policy === "member", "the chat.post kind's policy matches its tier");
+}
+
+console.log(`chat-write-grant: ${n} assertions passed`);

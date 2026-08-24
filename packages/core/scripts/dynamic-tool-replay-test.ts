@@ -51,16 +51,25 @@ interface ToolCase {
 }
 const slackCtx = { channel: { kind: "slack" }, session: { auth: { current: { attributes: {} } } } };
 
-const SLACK_FIXTURE_SURFACE = resolvePartition(slackCtx as unknown as BindableContext).surfaceKey;
+const SLACK_FIXTURE_PARTITION = resolvePartition(slackCtx as unknown as BindableContext);
+const SLACK_FIXTURE_SURFACE = SLACK_FIXTURE_PARTITION.surfaceKey;
+const SLACK_FIXTURE_ELSEWHERE_ID = "C_REPLAY_ELSEWHERE";
+const SLACK_FIXTURE_ELSEWHERE = `${SLACK_FIXTURE_PARTITION.workspaceKey}/${SLACK_FIXTURE_ELSEWHERE_ID}`;
 const REPLAY_DOMAINS = [
   defineDomain({
     name: "replay-fixture",
-    channels: [SLACK_FIXTURE_SURFACE],
+    channels: [SLACK_FIXTURE_SURFACE, SLACK_FIXTURE_ELSEWHERE],
     credentials: [{ connector: "slack", credential: "work-token", use: "chat-token" }],
   }),
 ];
 registerConfig({
-  loadBundles: () => [defineBundle({ name: "coding", repos: ["acme/api"] })],
+  loadBundles: () => [
+    defineBundle({
+      name: "coding",
+      repos: ["acme/api"],
+      resourceGrants: [{ connector: "slack", resources: [`slack:channel/${SLACK_FIXTURE_ELSEWHERE_ID}`] }],
+    }),
+  ],
   loadBindings: () => [defineBinding({ bundle: "coding", scope: { level: "org" } })],
   pluginRegistry: {},
   skillContent: {},
@@ -87,6 +96,7 @@ const CASES: readonly ToolCase[] = [
   { slug: "set_state", entryKey: "_single", ctx: githubCtx },
   { slug: "assign", entryKey: "_single", ctx: githubCtx },
   { slug: "create_ticket", entryKey: "_single", ctx: githubCtx },
+  { slug: "post_message", entryKey: "_single", ctx: slackCtx },
   { slug: "request_access", entryKey: "_single", ctx: slackCtx },
   { slug: "connector", entryKey: "_single", ctx: slackCtx },
   { slug: "purge_memory", entryKey: "_single", ctx: slackCtx },

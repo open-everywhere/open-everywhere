@@ -1,6 +1,8 @@
 import type { AwsRoleGrant, Binding, Bundle, Connection, ConnectorContentOriginSpec, HttpMethod, Scope } from "./bundle.js";
 import { connectorGrantName, connectorGrantContentOrigin, connectorGrantCredential, repoGrantName, repoGrantCapabilities } from "./bundle.js";
 import { unionRepoCapabilities, type RepoCapability } from "./repo-capabilities.js";
+import { unionResourceCapabilities, type ResourceCapability } from "./resource-capabilities.js";
+import { resourceGrantCapabilities } from "./resource-grant.js";
 import type { OperatorApprover } from "./approver-chain.js";
 import {
   assemblePreApprovalRules,
@@ -48,6 +50,7 @@ export interface EffectiveAccess {
   readonly reachableHosts: readonly ReachableHost[];
   readonly repos: readonly string[];
   readonly repoCapabilities: Readonly<Record<string, readonly RepoCapability[]>>;
+  readonly resourceCapabilities: Readonly<Record<string, readonly ResourceCapability[]>>;
   readonly awsRoles: readonly AwsRoleGrant[];
   readonly approvers: readonly OperatorApprover[];
   readonly plugins: readonly string[];
@@ -225,6 +228,18 @@ export function resolveAccess(
   const repoCapabilities: Record<string, readonly RepoCapability[]> = {};
   for (const name of [...repoCapabilityMap.keys()].sort()) repoCapabilities[name] = repoCapabilityMap.get(name)!;
 
+  const resourceCapabilityMap = new Map<string, readonly ResourceCapability[]>();
+  for (const { bundle } of ordered) {
+    for (const grant of bundle.resourceGrants ?? []) {
+      const caps = resourceGrantCapabilities(grant);
+      for (const address of grant.resources ?? []) {
+        resourceCapabilityMap.set(address, unionResourceCapabilities(resourceCapabilityMap.get(address) ?? [], caps));
+      }
+    }
+  }
+  const resourceCapabilities: Record<string, readonly ResourceCapability[]> = {};
+  for (const address of [...resourceCapabilityMap.keys()].sort()) resourceCapabilities[address] = resourceCapabilityMap.get(address)!;
+
   const awsRoleMap = new Map<string, AwsRoleGrant>();
   for (const { bundle } of ordered) {
     for (const grant of bundle.awsRoles ?? []) awsRoleMap.set(grant.roleArn, grant);
@@ -363,6 +378,7 @@ export function resolveAccess(
     reachableHosts,
     repos,
     repoCapabilities,
+    resourceCapabilities,
     awsRoles,
     approvers,
     plugins,
