@@ -20,8 +20,6 @@ rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_ORG = "acme";
 delete process.env.OE_CONTROL_READ_TOKENS;
-const prevPricing = process.env.OE_MODEL_PRICING;
-process.env.OE_MODEL_PRICING = JSON.stringify({ "test/model-a": { inPerMtok: 1, outPerMtok: 2 } });
 
 const {
   handleUsageWindowRead,
@@ -36,8 +34,8 @@ const {
 } = await import("../agent/control/read-route.js");
 const { appendUsageEvent } = await import("../agent/spend/usage-events.js");
 const { readAudit, appendAudit } = await import("../agent/audit/audit.js");
-const { _resetPricingCacheForTest } = await import("../agent/spend/pricing.js");
-_resetPricingCacheForTest();
+const { registerModelPricing, _resetModelPricingForTest } = await import("../agent/spend/pricing.js");
+registerModelPricing({ "test/model-a": { inPerMtok: 1, outPerMtok: 2 } });
 
 type _EveSession = ReturnType<AttachSessionFn>;
 const _eveLookupShapePin: (attach: AttachSessionFn) => {
@@ -160,32 +158,29 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
 }
 
 {
-  const { registerPricingSource, _resetPricingSourceForTest } = await import("../agent/spend/pricing.js");
-  let catalog: Record<string, { inPerMtok: number; outPerMtok: number }> = {};
-  registerPricingSource({
-    priceFor: (id) => catalog[id],
-    ensureReady: async () => {
-      await new Promise((r) => setTimeout(r, 5));
-      catalog = { "test/catalog-only": { inPerMtok: 2, outPerMtok: 4 } };
-    },
-  });
   await appendUsageEvent({
     org: "acme",
     surfaceKey: "slack/T1/C2",
     sessionId: "s3",
     principalId: "u1",
     kind: "channel",
-    model: "test/catalog-only",
+    model: "test/deployer-only",
     inputTokens: 1_000_000,
     outputTokens: 500_000,
   });
+
+  const before = await get(goodQuery, SECRET);
+  const beforeBody = (await before.json()) as { rows: { model?: string; estimatedUsd?: number }[]; unpricedModels: string[] };
+  ok(beforeBody.unpricedModels.includes("test/deployer-only"), "an id no code table prices is listed under unpricedModels, never given another model's rate");
+  ok(beforeBody.rows.find((r) => r.model === "test/deployer-only")?.estimatedUsd === undefined, "…and its row carries no estimatedUsd");
+
+  registerModelPricing({ "test/model-a": { inPerMtok: 1, outPerMtok: 2 }, "test/deployer-only": { inPerMtok: 2, outPerMtok: 4 } });
   const res = await get(goodQuery, SECRET);
-  ok(res.status === 200, "cold-catalog read still 200");
+  ok(res.status === 200, "deployer-priced read still 200");
   const body = (await res.json()) as { rows: { model?: string; estimatedUsd?: number }[]; unpricedModels: string[] };
-  const row = body.rows.find((r) => r.model === "test/catalog-only");
-  ok(Math.abs((row?.estimatedUsd ?? 0) - 4) < 1e-9, "a catalog-only model prices on the FIRST read of a cold instance (the view awaits ensureReady): 1M in @$2 + 0.5M out @$4 = $4");
-  ok(!body.unpricedModels.includes("test/catalog-only"), "…and is not listed under unpricedModels");
-  _resetPricingSourceForTest();
+  const row = body.rows.find((r) => r.model === "test/deployer-only");
+  ok(Math.abs((row?.estimatedUsd ?? 0) - 4) < 1e-9, "a deployer-table-only model prices on the view read: 1M in @$2 + 0.5M out @$4 = $4");
+  ok(!body.unpricedModels.includes("test/deployer-only"), "…and is no longer listed under unpricedModels");
 }
 
 {
@@ -545,8 +540,7 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   }
 }
 
-if (prevPricing === undefined) delete process.env.OE_MODEL_PRICING;
-else process.env.OE_MODEL_PRICING = prevPricing;
+_resetModelPricingForTest();
 
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ control-read route: ${passed} assertions passed (fail-closed 404 / 401 / 400 / priced 200 / runtime-signal presence-never-value / audited / structurally read-only)`);

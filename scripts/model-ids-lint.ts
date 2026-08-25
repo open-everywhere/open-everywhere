@@ -1,10 +1,25 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { SETTINGS } from "@open-everywhere/core/agent/settings/settings.js";
+import {
+  registerModelPricing,
+  selectedStackModelIds,
+  routePinnedModelIds,
+  unpricedModelIds,
+  builtInModelIds,
+  deployerPricedModelIds,
+  modelPricing,
+} from "@open-everywhere/core/agent/spend/pricing.js";
+import { stackModelRateBand } from "@open-everywhere/core/agent/spend/stack-pricing.js";
 import { SHIPPED_STACK, STACKS, STACK_ALIASES, isStackAlias } from "../agent/model/stacks.js";
+import { loadModelPricing } from "../agent/spend/model-pricing.js";
+import { loadModelPolicy } from "../agent/model/policy.js";
+import { loadRoles } from "../agent/roles/roles.js";
+import { loadDomains } from "../agent/memory/domains.js";
 
 const APP_DIR = "agent";
 const REGISTRY = "agent/model/stacks.ts";
+const PRICE_TABLE = "agent/spend/model-pricing.ts";
 const RESOLVER = "agent/model/models.ts";
 const PRICING = "packages/core/agent/spend/pricing.ts";
 const CORE_DEFAULT = "packages/core/agent/model/default-model.ts";
@@ -35,7 +50,7 @@ const reds: string[] = [];
 
 let scanned = 0;
 for (const file of tsFilesUnder(APP_DIR)) {
-  if (file === REGISTRY) continue;
+  if (file === REGISTRY || file === PRICE_TABLE) continue;
   scanned++;
   const code = stripComments(readFileSync(file, "utf8"));
   for (const m of code.matchAll(/["'`]([^"'`\n]+)["'`]/g)) {
@@ -138,6 +153,57 @@ for (const [alias, stack] of Object.entries(STACKS)) {
   }
 }
 
+registerModelPricing(loadModelPricing());
+const allowListed = (loadModelPolicy()?.allow ?? []).map((entry) => entry.id);
+const selected = [
+  ...new Set([
+    ...selectedStackModelIds(STACKS),
+    ...allowListed,
+    ...routePinnedModelIds(loadDomains()),
+    ...routePinnedModelIds(loadRoles()),
+  ]),
+].sort();
+for (const id of unpricedModelIds(selected)) {
+  reds.push(
+    `UNPRICED MODEL: "${id}" is selectable by this config — a shipped stack (${REGISTRY}), the model-policy ` +
+      `allow-list (agent/model/policy.ts), or a route pin in agent/memory/domains.ts or agent/roles/roles.ts ` +
+      `— but no code table prices it. A USD cap counts an unpriced call as $0 ` +
+      `— evidence-only, never a guessed rate — so a $ budget over this model would enforce over nothing. ` +
+      `FIX: measure the rate (\`npm run probe:models\`; the gateway's public catalog at ` +
+      `https://ai-gateway.vercel.sh/v1/models is a research lead, NOT the committed number — it has been wrong ` +
+      `for every id measured) and commit the entry in ${PRICE_TABLE} in this PR. ` +
+      `Priced today: ${[...builtInModelIds(), ...deployerPricedModelIds()].sort().join(", ")}.`,
+  );
+}
+
+for (const id of [...new Set([...builtInModelIds(), ...deployerPricedModelIds()])].sort()) {
+  const band = stackModelRateBand(id);
+  const live = modelPricing(id);
+  if (!live) continue;
+  if (!band) {
+    reds.push(
+      `RATE TABLE SPLIT: "${id}" is priced in code but packages/core/agent/spend/stack-pricing.ts has no measured ` +
+        `band for it, so \`npm run pricing:stacks\` renders any role running it as UNPRICED and reports a partial ` +
+        `total. Add the band there (same measurement, expressed as min/max) in this diff.`,
+    );
+    continue;
+  }
+  for (const [field, measured] of [
+    ["inPerMtok", band.in.maxPerMtok],
+    ["outPerMtok", band.out.maxPerMtok],
+  ] as const) {
+    const actual = live[field];
+    if (actual !== measured) {
+      reds.push(
+        `RATE TABLE SPLIT: "${id}".${field} is ${actual} in the live pricing table but ${measured} at the top of ` +
+          `stack-pricing.ts's measured band. The live number must be the band MAXIMUM — the only direction a cap ` +
+          `may err is the one that cannot understate spend. Re-probe once and update BOTH tables in one diff ` +
+          `(${PRICE_TABLE} / ${PRICING} and packages/core/agent/spend/stack-pricing.ts).`,
+      );
+    }
+  }
+}
+
 if (reds.length > 0) {
   console.error(`✗ model-ids: ${reds.length} drift(s):\n`);
   for (const r of reds) console.error(`  • ${r}`);
@@ -146,5 +212,6 @@ if (reds.length > 0) {
 
 console.log(
   `✓ model-ids: ${scanned} app file(s) name no model id directly; ${STACK_ALIASES.length} stack(s) complete; ` +
-    `BUILT_IN pricing, core's literal and the models.stack default all agree on "${shippedPrimary}" (stack "${SHIPPED_STACK}")`,
+    `BUILT_IN pricing, core's literal and the models.stack default all agree on "${shippedPrimary}" (stack "${SHIPPED_STACK}"); ` +
+    `all ${selected.length} selectable model(s) priced in code and consistent with the measured bands`,
 );

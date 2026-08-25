@@ -10,9 +10,10 @@ import { periodOf, UNKNOWN_MODEL } from "../agent/spend/spend.js";
 import type { SurfacePeriodSpend } from "../agent/spend/store.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import {
-  pricedModelIds,
   soleConfiguredModel,
-  _resetPricingCacheForTest,
+  _setBuiltInForTest,
+  registerModelPricing,
+  _resetModelPricingForTest,
   builtInModelIds,
   modelPricing,
 } from "../agent/spend/pricing.js";
@@ -93,18 +94,20 @@ const ctxMpim = ctxFor({ channelId: "G1", channelType: "mpim" });
 const ctxExternal = ctxFor({ channelId: "C_EXT" });
 
 {
-  delete process.env.OE_MODEL_PRICING;
-  _resetPricingCacheForTest();
-  ok(pricedModelIds().length === 1 && pricedModelIds()[0] === PRICED_MODEL, "pricedModelIds: just the one built-in, verified model by default");
+  _resetModelPricingForTest();
+  ok(builtInModelIds().length === 1 && builtInModelIds()[0] === PRICED_MODEL, "builtInModelIds: just the one shipped, verified model by default");
   ok(soleConfiguredModel() === PRICED_MODEL, "soleConfiguredModel: resolves the sole priced model");
 
-  process.env.OE_MODEL_PRICING = JSON.stringify({ "acme/two": { inPerMtok: 1, outPerMtok: 2 } });
-  _resetPricingCacheForTest();
-  ok(pricedModelIds().length === 2, "pricedModelIds: env override adds to the built-in set");
-  ok(soleConfiguredModel() === undefined, "soleConfiguredModel: two candidates -> undefined, never guesses");
+  registerModelPricing({ "acme/two": { inPerMtok: 1, outPerMtok: 2 } });
+  ok(soleConfiguredModel() === PRICED_MODEL, "soleConfiguredModel: a deployer-table id does NOT become a candidate");
+  _resetModelPricingForTest();
 
-  delete process.env.OE_MODEL_PRICING;
-  _resetPricingCacheForTest();
+  _setBuiltInForTest({ [PRICED_MODEL]: { inPerMtok: 1, outPerMtok: 2 }, "acme/two": { inPerMtok: 1, outPerMtok: 2 } });
+  ok(builtInModelIds().length === 2, "builtInModelIds: reports every shipped entry");
+  ok(soleConfiguredModel() === undefined, "soleConfiguredModel: two candidates -> undefined, never guesses");
+  _setBuiltInForTest({});
+  ok(soleConfiguredModel() === undefined, "soleConfiguredModel: zero candidates -> undefined too");
+  _setBuiltInForTest(null);
 }
 
 {
@@ -145,8 +148,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 }
 
 {
-  delete process.env.OE_MODEL_PRICING;
-  _resetPricingCacheForTest();
+  _resetModelPricingForTest();
   const auto = resolveAssumedModel(undefined);
   ok(auto.model === PRICED_MODEL && auto.pricing !== undefined, "resolveAssumedModel: falls back to the sole configured model");
   ok(/only priced model/.test(auto.note), "resolveAssumedModel: note explains the auto-assumption");
@@ -157,17 +159,14 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const unpriced = resolveAssumedModel("no/such-model");
   ok(unpriced.model === "no/such-model" && unpriced.pricing === undefined && /no configured pricing/.test(unpriced.note), "resolveAssumedModel: an unpriced explicit model -> no pricing, explained, never a guessed rate");
 
-  process.env.OE_MODEL_PRICING = JSON.stringify({ "acme/two": { inPerMtok: 1, outPerMtok: 2 } });
-  _resetPricingCacheForTest();
+  _setBuiltInForTest({ [PRICED_MODEL]: { inPerMtok: 0.25, outPerMtok: 1.2, cachedInPerMtok: 0.02 }, "acme/two": { inPerMtok: 1, outPerMtok: 2 } });
   const ambiguous = resolveAssumedModel(undefined);
   ok(ambiguous.model === undefined && ambiguous.pricing === undefined && /no single default/.test(ambiguous.note), "resolveAssumedModel: two candidates and no explicit choice -> omitted, never a guess");
-  delete process.env.OE_MODEL_PRICING;
-  _resetPricingCacheForTest();
+  _setBuiltInForTest(null);
 }
 
 {
-  process.env.OE_MODEL_PRICING = JSON.stringify({ "anthropic/claude-sonnet-5": { inPerMtok: 3, outPerMtok: 15 } });
-  _resetPricingCacheForTest();
+  _setBuiltInForTest({ [PRICED_MODEL]: { inPerMtok: 0.25, outPerMtok: 1.2, cachedInPerMtok: 0.02 }, "anthropic/claude-sonnet-5": { inPerMtok: 3, outPerMtok: 15 } });
 
   const explicitAssumed = resolveAssumedModel(PRICED_MODEL);
   const ambiguousAssumed = resolveAssumedModel(undefined);
@@ -211,8 +210,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
     ok(!noneUnattributed.includes(UNKNOWN_MODEL) && /1 row\(s\) omitted/.test(noneUnattributed), "pricingNote: with nothing unattributed the wording is byte-identical to before OPE-369");
   }
 
-  delete process.env.OE_MODEL_PRICING;
-  _resetPricingCacheForTest();
+  _setBuiltInForTest(null);
 }
 
 {
@@ -344,8 +342,8 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-cost", principalId: "U1", kind: "channel", inputTokens: 200, outputTokens: 100, ts: FIXTURE_DAY + "T09:01:00Z" });
   await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-cost", kind: "sandbox", detail: { sandboxSeconds: 3600 }, ts: FIXTURE_DAY + "T09:02:00Z" });
 
-  delete process.env.OE_MODEL_PRICING;
-  _resetPricingCacheForTest();
+  _resetModelPricingForTest();
+  _setBuiltInForTest(null);
   const populated = await execTool(sessionCostTool)({}, ctxEng("sess-cost") as never);
   ok(populated.events === 2, "session_cost: events count excludes the sandbox row");
   ok(populated.inputTokens === 1200 && populated.outputTokens === 600, "session_cost: token totals sum the non-sandbox rows");
@@ -370,8 +368,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   });
   await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-mixed", principalId: "U1", kind: "channel", inputTokens: 1_000_000, outputTokens: 0, ts: FIXTURE_DAY + "T09:01:00Z" });
 
-  process.env.OE_MODEL_PRICING = JSON.stringify({ "anthropic/claude-sonnet-5": { inPerMtok: 3, outPerMtok: 15 } });
-  _resetPricingCacheForTest();
+  registerModelPricing({ "anthropic/claude-sonnet-5": { inPerMtok: 3, outPerMtok: 15 } });
 
   const mixed = await execTool(sessionCostTool)({ assumedModelId: PRICED_MODEL }, ctxEng("sess-mixed") as never);
   const mixedExpected = 3 + modelPricing(PRICED_MODEL)!.inPerMtok;
@@ -386,8 +383,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   ok(engChannel?.costUsd !== undefined && Math.abs(engChannel.costUsd - (expectedStamplessCost + expectedExactCost)) < 1e-6, "spend_report: a (surfaceKey, kind) group prices EACH underlying summary row at its own resolution, then sums — never one blended rate across a merged group");
   ok(/priced exactly by their own recorded model/.test(mixedReport.note) && /no recorded model/.test(mixedReport.note), "spend_report: note honestly describes the exact/assumed mix at rollup scope too");
 
-  delete process.env.OE_MODEL_PRICING;
-  _resetPricingCacheForTest();
+  _resetModelPricingForTest();
 }
 
 {

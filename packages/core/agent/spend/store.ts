@@ -1,6 +1,6 @@
 import { domainKeyOf, type Partition } from "../memory/partition.js";
 import { billableTokens, type Usage } from "./spend.js";
-import { ensurePricingFor, usdMicrosAtWrite } from "./pricing.js";
+import { usdMicrosAtWrite } from "./pricing.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { SpendLedgerFilter, SpendLedgerRow, SpendTotals } from "../operational/store.js";
 
@@ -20,11 +20,7 @@ export interface SpendEntry {
 
 export async function recordSpend(p: Partition, entry: SpendEntry): Promise<void> {
   const model = entry.model ?? "";
-  let usdMicros = entry.usdMicros;
-  if (usdMicros === undefined) {
-    await ensurePricingFor([model || undefined]);
-    usdMicros = usdMicrosAtWrite(entry.usage, model || undefined);
-  }
+  const usdMicros = entry.usdMicros ?? usdMicrosAtWrite(entry.usage, model || undefined);
   const measuredMicros = entry.measuredUsd !== undefined && Number.isFinite(entry.measuredUsd) ? Math.round(entry.measuredUsd * 1_000_000) : undefined;
   await getOperationalStore().recordSpend(p.org, {
     surfaceKey: domainKeyOf(p),

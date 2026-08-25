@@ -118,7 +118,7 @@ function main(): void {
       connection: 26,
       identity: 20,
       platform: 11,
-      "pending-migration": 36,
+      "pending-migration": 35,
     };
     for (const [klass, n] of Object.entries(expected)) {
       ok(
@@ -126,7 +126,7 @@ function main(): void {
         `class ${klass} holds ${n} entries (found ${census.get(klass) ?? 0}) — if you meant to change this, say so here`,
       );
     }
-    ok(ENV_READ_ALLOWLIST.size === 113, `the allowlist holds 113 names (found ${ENV_READ_ALLOWLIST.size})`);
+    ok(ENV_READ_ALLOWLIST.size === 112, `the allowlist holds 112 names (found ${ENV_READ_ALLOWLIST.size})`);
   }
 
   {

@@ -4,108 +4,122 @@ export interface ModelPricing {
   readonly cachedInPerMtok?: number;
 }
 
-const BUILT_IN: Readonly<Record<string, ModelPricing>> = {
+import { defaultAgentModelId } from "../model/default-model.js";
+
+export type ModelPricingTable = Readonly<Record<string, ModelPricing>>;
+
+const BUILT_IN: ModelPricingTable = {
   "openai/gpt-5.6-luna": { inPerMtok: 0.25, outPerMtok: 1.2, cachedInPerMtok: 0.02 },
 };
 
-let envTable: Readonly<Record<string, ModelPricing>> | null | undefined;
+let deployerTable: ModelPricingTable = {};
 
-function isModelPricing(v: unknown): v is ModelPricing {
-  if (typeof v !== "object" || v === null) return false;
-  const o = v as Record<string, unknown>;
-  return (
-    typeof o.inPerMtok === "number" &&
-    typeof o.outPerMtok === "number" &&
-    (o.cachedInPerMtok === undefined || typeof o.cachedInPerMtok === "number")
-  );
+let builtIn: ModelPricingTable = BUILT_IN;
+
+export function _setBuiltInForTest(table: ModelPricingTable | null): void {
+  builtIn = table ?? BUILT_IN;
 }
 
-function envPricingTable(): Readonly<Record<string, ModelPricing>> {
-  if (envTable !== undefined) return envTable ?? {};
-  const raw = process.env.OE_MODEL_PRICING;
-  if (!raw) {
-    envTable = null;
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed !== "object" || parsed === null) throw new Error("not an object");
-    const out: Record<string, ModelPricing> = {};
-    for (const [modelId, val] of Object.entries(parsed as Record<string, unknown>)) {
-      if (isModelPricing(val)) out[modelId] = val;
+export function registerModelPricing(table: ModelPricingTable): void {
+  deployerTable = table;
+}
+
+export function _resetModelPricingForTest(): void {
+  deployerTable = {};
+}
+
+export function deployerPricedModelIds(): readonly string[] {
+  return Object.keys(deployerTable);
+}
+
+export function defineModelPricing(table: ModelPricingTable): ModelPricingTable {
+  return table;
+}
+
+export function assertModelPricingValid(table: ModelPricingTable): void {
+  const bad: string[] = [];
+  for (const [modelId, rates] of Object.entries(table)) {
+    if (!/^[^/\s]+\/[^/\s]+$/.test(modelId)) {
+      bad.push(`  "${modelId}" is not a <vendor>/<model> gateway model id`);
     }
-    envTable = out;
-  } catch (err) {
-    console.warn(`[open-everywhere:pricing] OE_MODEL_PRICING ignored (malformed JSON): ${String(err)}`);
-    envTable = null;
+    if (typeof rates !== "object" || rates === null) {
+      bad.push(`  "${modelId}" is ${JSON.stringify(rates)} — must be an object of rates`);
+      continue;
+    }
+    const known = new Set(["inPerMtok", "outPerMtok", "cachedInPerMtok"]);
+    for (const field of Object.keys(rates)) {
+      if (!known.has(field)) bad.push(`  "${modelId}" has unknown field "${field}"`);
+    }
+    for (const field of ["inPerMtok", "outPerMtok"] as const) {
+      const v = rates[field];
+      if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
+        bad.push(`  "${modelId}".${field} is ${JSON.stringify(v)} — must be a finite number > 0`);
+      }
+    }
+    const cached = rates.cachedInPerMtok;
+    if (cached !== undefined && (!Number.isFinite(cached) || cached <= 0)) {
+      bad.push(`  "${modelId}".cachedInPerMtok is ${JSON.stringify(cached)} — omit it, or give a finite number > 0`);
+    }
   }
-  return envTable ?? {};
-}
-
-export function _resetPricingCacheForTest(): void {
-  envTable = undefined;
-}
-
-export interface PricingSource {
-  priceFor(modelId: string): ModelPricing | undefined;
-  ensureReady?(): Promise<void>;
-}
-
-let pricingSource: PricingSource | null = null;
-
-export function registerPricingSource(source: PricingSource): void {
-  pricingSource = source;
-}
-
-export function _resetPricingSourceForTest(): void {
-  pricingSource = null;
-}
-
-const ENSURE_READY_TIMEOUT_MS = 3_000;
-
-export async function ensurePricingFor(modelIds: readonly (string | undefined)[], timeoutMs: number = ENSURE_READY_TIMEOUT_MS): Promise<void> {
-  const source = pricingSource;
-  if (!source?.ensureReady) return;
-  const needsSource = modelIds.some((id) => id !== undefined && !envPricingTable()[id] && !BUILT_IN[id]);
-  if (!needsSource) return;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      source.ensureReady(),
-      new Promise<void>((resolveRace) => {
-        timer = setTimeout(resolveRace, timeoutMs);
-      }),
-    ]);
-  } catch (err) {
-    console.warn(`[open-everywhere:pricing] PricingSource ensureReady failed — affected models will show unpriced: ${String(err)}`);
-  } finally {
-    if (timer) clearTimeout(timer);
+  if (bad.length > 0) {
+    throw new Error(
+      "open-everywhere: invalid model pricing table:\n" + bad.join("\n") +
+        "\n(agent/spend/model-pricing.ts / docs/security/spend-and-cost.md)",
+    );
   }
 }
 
 export function modelPricing(modelId: string): ModelPricing | undefined {
-  const configured = envPricingTable()[modelId] ?? BUILT_IN[modelId];
-  if (configured) return configured;
-  if (!pricingSource) return undefined;
-  try {
-    return pricingSource.priceFor(modelId) ?? undefined;
-  } catch (err) {
-    console.warn(`[open-everywhere:pricing] registered PricingSource threw for "${modelId}" — treating as unpriced: ${String(err)}`);
-    return undefined;
-  }
+  return own(deployerTable, modelId) ?? own(builtIn, modelId);
 }
 
-export function pricedModelIds(): string[] {
-  return [...new Set([...Object.keys(BUILT_IN), ...Object.keys(envPricingTable())])];
+function own(table: ModelPricingTable, modelId: string): ModelPricing | undefined {
+  return Object.prototype.hasOwnProperty.call(table, modelId) ? table[modelId] : undefined;
 }
 
 export function builtInModelIds(): readonly string[] {
-  return Object.keys(BUILT_IN);
+  return Object.keys(builtIn);
 }
 
 export function soleConfiguredModel(): string | undefined {
-  const ids = pricedModelIds();
-  return ids.length === 1 ? ids[0] : undefined;
+  const ids = builtInModelIds();
+  if (ids.length !== 1) return undefined;
+  return ids[0] === defaultAgentModelId() ? ids[0] : undefined;
+}
+
+export interface PricedRoleRef {
+  readonly id: string;
+}
+
+export function selectedStackModelIds(stacks: Readonly<Record<string, Readonly<Record<string, PricedRoleRef>>>>): readonly string[] {
+  const ids = new Set<string>();
+  for (const stack of Object.values(stacks)) {
+    for (const role of Object.values(stack)) ids.add(role.id);
+  }
+  return [...ids].sort();
+}
+
+export interface RoutePinnedLayer {
+  readonly name?: string;
+  readonly models?: {
+    readonly primary?: { readonly id?: string };
+    readonly utility?: { readonly id?: string };
+    readonly supervisor?: { readonly id?: string };
+  };
+}
+
+export function routePinnedModelIds(layers: readonly RoutePinnedLayer[]): readonly string[] {
+  const ids = new Set<string>();
+  for (const layer of layers) {
+    for (const route of Object.values(layer.models ?? {}) as ReadonlyArray<{ readonly id?: string } | undefined>) {
+      if (typeof route?.id === "string" && route.id.length > 0) ids.add(route.id);
+    }
+  }
+  return [...ids].sort();
+}
+
+export function unpricedModelIds(modelIds: readonly string[]): readonly string[] {
+  return [...new Set(modelIds)].filter((id) => modelPricing(id) === undefined).sort();
 }
 
 export interface UsageTokens {

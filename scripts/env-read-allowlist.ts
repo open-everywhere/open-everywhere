@@ -132,7 +132,6 @@ allow("pending-migration", [
   ["OE_SUPERVISOR_BACKSCROLL_REACHBACK_HOURS", "OPE-1153: the ambient-surface backscroll reach-back window."],
   ["OE_FORCE_MODEL", "OPE-1153: model policy, which the settings model stack already owns a home for."],
   ["OE_PRIMARY_MODEL", "OPE-1153: model policy, with the same home waiting."],
-  ["OE_MODEL_PRICING", "OPE-1153: a pricing table as an env var. OPE-1148 deletes this read — whichever lands second deletes this entry too."],
   ["OE_NOTION_MAX_DEPTH", "OPE-1153: a traversal cap."],
   ["OE_NOTION_MAX_PAGES", "OPE-1153: a traversal cap."],
   ["OE_NOTION_TTL_MS", "OPE-1153: a cache lifetime."],

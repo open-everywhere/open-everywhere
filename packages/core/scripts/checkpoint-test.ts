@@ -108,9 +108,8 @@ ok(checkpointConfigured({ sessionUsd: 1 }), "checkpointConfigured: any component
 }
 
 {
-  process.env.OE_MODEL_PRICING = JSON.stringify({ "zai/glm-5.2": { inPerMtok: 1, outPerMtok: 2 } });
-  const { _resetPricingCacheForTest } = await import("../agent/spend/pricing.js");
-  _resetPricingCacheForTest();
+  const { registerModelPricing, _resetModelPricingForTest } = await import("../agent/spend/pricing.js");
+  registerModelPricing({ "zai/glm-5.2": { inPerMtok: 1, outPerMtok: 2 } });
   const usageEvents = await import("../agent/spend/usage-events.js");
   const sid = "sess-usage";
   await usageEvents.appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C1", sessionId: sid, kind: "channel", model: "zai/glm-5.2", inputTokens: 1_000_000, outputTokens: 500_000 });
@@ -122,8 +121,7 @@ ok(checkpointConfigured({ sessionUsd: 1 }), "checkpointConfigured: any component
   ok(u.usd !== undefined && Math.abs(u.usd - 2.5) < 1e-9, "sessionUsage: prices per-row USD (evidence-only)");
   const empty = await sessionUsage("default", "sess-none");
   ok(empty.tokens === 0 && empty.modelCalls === 0, "sessionUsage: a session with no rows is zero");
-  delete process.env.OE_MODEL_PRICING;
-  _resetPricingCacheForTest();
+  _resetModelPricingForTest();
 }
 
 {

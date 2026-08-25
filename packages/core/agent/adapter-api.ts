@@ -650,7 +650,7 @@ export type { RoutineDispatchProvider, DispatchTarget } from "./schedules/routin
 export type { Routine } from "./routines/routine.js";
 
 export { appendUsageEvent, usageForSession } from "./spend/usage-events.js";
-export type { ModelPricing, PricingSource } from "./spend/pricing.js";
+export type { ModelPricing } from "./spend/pricing.js";
 export { recordSpend, spendTotals } from "./spend/store.js";
 export { periodOf } from "./spend/spend.js";
 export { estimateSandboxCostUsd } from "./spend/sandbox-pricing.js";

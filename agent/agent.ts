@@ -6,8 +6,6 @@ import { gatewayModelResolver } from "@open-everywhere/adapters/agent/model/gate
 import { registerGatewayDreamJudge, registerGatewayFailureFacetJudge } from "@open-everywhere/adapters/agent/model/dream-judge.js";
 import { registerGatewayApprovalJudge } from "@open-everywhere/adapters/agent/model/approval-judge.js";
 import { registerGatewayImageDescriber } from "@open-everywhere/adapters/agent/model/gateway-vision.js";
-import { gatewayCatalogPricingSource } from "@open-everywhere/adapters/agent/spend/gateway-pricing.js";
-import { registerPricingSource } from "@open-everywhere/core/agent/spend/pricing.js";
 import { isModelUsable } from "@open-everywhere/core/agent/model/policy.js";
 import {
   JUDGE_MODEL,
@@ -55,8 +53,6 @@ if (!isModelUsable(VISION_MODEL, loadModelPolicy())) {
   );
 }
 registerGatewayImageDescriber({ id: VISION_MODEL });
-
-registerPricingSource(gatewayCatalogPricingSource());
 
 function readAppVersion(): string {
   const version = appPackageJson.version;

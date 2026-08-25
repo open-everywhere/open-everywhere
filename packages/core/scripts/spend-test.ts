@@ -600,9 +600,8 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
 }
 
 {
-  process.env.OE_MODEL_PRICING = JSON.stringify({ [PRICED_MODEL]: { inPerMtok: 1, outPerMtok: 2 } });
-  const { _resetPricingCacheForTest } = await import("../agent/spend/pricing.js");
-  _resetPricingCacheForTest();
+  const { registerModelPricing, _resetModelPricingForTest } = await import("../agent/spend/pricing.js");
+  registerModelPricing({ [PRICED_MODEL]: { inPerMtok: 1, outPerMtok: 2 } });
 
   let budgets: SpendBudgets = {};
   const { registerConfig } = await import("../agent/access/config.js");
@@ -724,8 +723,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   _resetOperationalDbForTest();
   process.env.OE_SQLITE_PATH = goodPath;
 
-  delete process.env.OE_MODEL_PRICING;
-  _resetPricingCacheForTest();
+  _resetModelPricingForTest();
 }
 
 {
@@ -814,38 +812,31 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
 }
 
 {
-  const { registerPricingSource, _resetPricingSourceForTest, _resetPricingCacheForTest } = await import("../agent/spend/pricing.js");
-  delete process.env.OE_MODEL_PRICING;
-  _resetPricingCacheForTest();
+  const { registerModelPricing, _resetModelPricingForTest } = await import("../agent/spend/pricing.js");
   const store4 = await import("../agent/spend/store.js");
+  registerModelPricing({ "deployer/only-model": { inPerMtok: 2, outPerMtok: 4 } });
 
-  let ready = false;
-  let ensureCalls = 0;
-  registerPricingSource({
-    priceFor: (id) => (ready && id === "catalog/only-model" ? { inPerMtok: 2, outPerMtok: 4 } : undefined),
-    ensureReady: async () => {
-      ensureCalls++;
-      ready = true;
-    },
-  });
-
-  const org = "cold-pricing-org";
+  const org = "deployer-pricing-org";
   const p = { org, platform: "slack", workspace: "T6", surface: "C_COLD", workspaceKey: "slack/T6", surfaceKey: "slack/T6/C_COLD", key: "slack/T6/C_COLD" };
-  await store4.recordSpend(p as never, { period: "2026-07", usage: { inputTokens: 1_000_000, outputTokens: 0 }, model: "catalog/only-model" });
-  ok(ensureCalls === 1, "OPE-275: recordSpend awaited the source's readiness before pricing (the write path has the same determinism seam the read path got)");
+  await store4.recordSpend(p as never, { period: "2026-07", usage: { inputTokens: 1_000_000, outputTokens: 0 }, model: "deployer/only-model" });
   const totals = await store4.spendTotals(org, { surfaceKey: "slack/T6/C_COLD", period: "2026-07" });
-  ok(totals.usdMicros === 2_000_000, `OPE-275: a catalog-only model priced against a COLD cache writes its real rate, not a permanent $0 (got ${totals.usdMicros} micros, want 2000000)`);
+  ok(totals.usdMicros === 2_000_000, `OPE-1148: a model priced ONLY by the deployer table writes its real rate at write time (got ${totals.usdMicros} micros, want 2000000)`);
 
-  await store4.recordSpend(p as never, { period: "2026-07", usage: {}, model: "", usdMicros: 5 });
-  ok(ensureCalls === 1, "OPE-275: an explicit-usdMicros write (sandbox runtime) never consults the source — no rate is involved");
+  _resetModelPricingForTest();
+  const p2 = { ...p, surface: "C_COLD2", surfaceKey: "slack/T6/C_COLD2", key: "slack/T6/C_COLD2" };
+  await store4.recordSpend(p2 as never, { period: "2026-07", usage: { inputTokens: 1_000_000, outputTokens: 0 }, model: "deployer/only-model" });
+  const totals2 = await store4.spendTotals(org, { surfaceKey: "slack/T6/C_COLD2", period: "2026-07" });
+  ok(totals2.usdMicros === 0, `OPE-1148: with no deployer table the SAME write prices $0 — evidence-only, never a borrowed rate (got ${totals2.usdMicros} micros)`);
 
-  _resetPricingSourceForTest();
+  const p3 = { ...p, surface: "C_COLD3", surfaceKey: "slack/T6/C_COLD3", key: "slack/T6/C_COLD3" };
+  await store4.recordSpend(p3 as never, { period: "2026-07", usage: {}, model: "", usdMicros: 5 });
+  const totals3 = await store4.spendTotals(org, { surfaceKey: "slack/T6/C_COLD3", period: "2026-07" });
+  ok(totals3.usdMicros === 5, "OPE-1148: an explicit-usdMicros write (sandbox runtime) is recorded verbatim — no rate is involved");
 }
 
 {
-  process.env.OE_MODEL_PRICING = JSON.stringify({ [PRICED_MODEL]: { inPerMtok: 1, outPerMtok: 2 } });
-  const { _resetPricingCacheForTest } = await import("../agent/spend/pricing.js");
-  _resetPricingCacheForTest();
+  const { registerModelPricing, _resetModelPricingForTest } = await import("../agent/spend/pricing.js");
+  registerModelPricing({ [PRICED_MODEL]: { inPerMtok: 1, outPerMtok: 2 } });
 
   const { scopeUsdSpend } = await import("../agent/spend/check.js");
   const { activeSpendLimitsForOrg } = await import("../agent/spend/caps.js");
@@ -890,8 +881,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   _resetOperationalDbForTest();
   process.env.OE_SQLITE_PATH = goodSpendPath;
 
-  delete process.env.OE_MODEL_PRICING;
-  _resetPricingCacheForTest();
+  _resetModelPricingForTest();
 }
 
 rmSync(dir, { recursive: true, force: true });

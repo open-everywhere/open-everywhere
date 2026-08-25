@@ -1,5 +1,7 @@
 import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
 import { registerSettings } from "@open-everywhere/core/agent/settings/settings.js";
+import { registerModelPricing } from "@open-everywhere/core/agent/spend/pricing.js";
+import { loadModelPricing } from "../spend/model-pricing.js";
 import { SETTINGS_OVERRIDES } from "../settings/settings.js";
 import { setRegisteredConnectorCredentials } from "@open-everywhere/core/agent/access/connector-credentials.js";
 import { assertRoutesWithinPolicy } from "@open-everywhere/core/agent/model/policy.js";
@@ -33,6 +35,8 @@ import "../identity/authors.js";
 import "./register-docs.js";
 
 registerSettings(SETTINGS_OVERRIDES);
+
+registerModelPricing(loadModelPricing());
 
 registerConfig({
   loadBundles,

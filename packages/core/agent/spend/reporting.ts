@@ -65,12 +65,12 @@ export function resolveAssumedModel(explicit?: string): AssumedModelPricing {
   const model = explicit ?? soleConfiguredModel();
   if (!model) {
     return {
-      note: "token $ omitted — hook-written usage rows carry no model id, and this deployment has no single default model to assume (pass assumedModelId, or configure OE_MODEL_PRICING with exactly one entry).",
+      note: "token $ omitted — hook-written usage rows carry no model id, and this deployment has no single default model to assume (pass assumedModelId, or ship exactly one entry in the built-in pricing table).",
     };
   }
   const pricing = modelPricing(model);
   if (!pricing) {
-    return { model, note: `token $ omitted — "${model}" has no configured pricing (checked OE_MODEL_PRICING, the built-in table, and the live catalog, if one is registered).` };
+    return { model, note: `token $ omitted — "${model}" has no configured pricing (checked the deployer pricing table and the built-in table).` };
   }
   return {
     model,
@@ -127,7 +127,7 @@ export function pricingNote(mix: PricingMix, assumed: AssumedModelPricing): stri
   if (mix.assumed > 0) parts.push(`${mix.assumed} row(s) with no recorded model: ${assumed.note}`);
   const unpricedButAttributed = mix.unpriced - mix.unattributed;
   if (unpricedButAttributed > 0) {
-    parts.push(`${unpricedButAttributed} row(s) omitted — a recorded model this deployment hasn't configured a rate for (see OE_MODEL_PRICING), never priced at another model's rate.`);
+    parts.push(`${unpricedButAttributed} row(s) omitted — a recorded model this deployment hasn't configured a rate for (see agent/spend/model-pricing.ts), never priced at another model's rate.`);
   }
   if (mix.unattributed > 0) {
     parts.push(
