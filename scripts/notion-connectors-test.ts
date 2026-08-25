@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
+import { NOTION_GRANT_CREDENTIAL } from "../packages/providers/notion/agent/channels/notion-grant-transport.js";
 import { loadBindings, loadBundles } from "../agent/access/bundles.js";
 import { loadConnectorCredentials } from "../agent/access/connector-credentials.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
@@ -140,6 +141,22 @@ ok(
   const mcpUser = notionCat.credentials.find((cr) => cr.id === "user-oauth");
   ok(mcpUser !== undefined, "the MCP-family per-user credential 'user-oauth' still exists");
   ok(JSON.stringify(mcpUser?.home) !== JSON.stringify(rest?.home), "…and the two per-user credentials are homed at DIFFERENT OAuth providers — two token families, two clients");
+
+  ok(
+    notionCat.credentials.some((cr) => cr.id === NOTION_GRANT_CREDENTIAL),
+    `the granted transport names the notion credential "${NOTION_GRANT_CREDENTIAL}", which the shipped catalogue does not declare`,
+  );
+  const granted = notionCat.credentials.find((cr) => cr.id === NOTION_GRANT_CREDENTIAL);
+  ok(granted?.type === "user-oauth", `…and it is PER-USER, not "${granted?.type}" — a grant spends one named person's reach`);
+  ok(granted?.endpoints !== undefined, "…and it declares `endpoints`, without which the transport refuses every granted call");
+  ok(
+    credentialEndpointVerdict(granted?.endpoints, "https://api.notion.com/v1/blocks/abc/children", "GET").allowed,
+    "…and its fence ADMITS the grantable verb's real call shape (GET api.notion.com/v1/blocks/…/children)",
+  );
+  ok(
+    JSON.stringify(granted?.home) === JSON.stringify(rest?.home),
+    "🔴 …and it is the REST-family credential — the MCP-family token gets 401 from api.notion.com",
+  );
 }
 
 {
