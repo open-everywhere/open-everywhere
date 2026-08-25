@@ -15,8 +15,10 @@ import {
   parseDiscordApprovalCustomId,
   pendingDiscordCard,
   decidedDiscordCard,
+  judgeLiftNoticeDiscordCard,
   isGuildAdministrator,
   scopeWithinGuild,
+  type DiscordCardMessage,
 } from "./discord-card.js";
 import { guildIdFromScopeKey, isGuildAdminViaRest } from "./discord-admin.js";
 
@@ -41,32 +43,50 @@ export async function postDiscordApprovalCard(
   summaryLines: readonly string[],
   deps: DiscordPostDeps = {},
 ): Promise<string | undefined> {
+  return postDiscordCardMessage(row, deps, "approval card", () => pendingDiscordCard(row, summaryLines));
+}
+
+export async function postDiscordJudgeLiftNotice(
+  row: PendingActionRow,
+  summaryLines: readonly string[],
+  outcomeLine: string,
+  deps: DiscordPostDeps = {},
+): Promise<void> {
+  await postDiscordCardMessage(row, deps, "judge-lift notice", () => judgeLiftNoticeDiscordCard(row, summaryLines, outcomeLine));
+}
+
+async function postDiscordCardMessage(
+  row: PendingActionRow,
+  deps: DiscordPostDeps,
+  what: string,
+  render: () => DiscordCardMessage,
+): Promise<string | undefined> {
   const token = deps.token ?? process.env.DISCORD_BOT_TOKEN;
   if (!token) {
-    log(`DISCORD_BOT_TOKEN is not set — cannot post the approval card to channel ${row.channelId}`);
+    log(`DISCORD_BOT_TOKEN is not set — cannot post the ${what} to channel ${row.channelId}`);
     return undefined;
   }
   if (!row.channelId) {
-    log("no channel id on the pending row — nothing to post to");
+    log(`no channel id on the pending row — nothing to post the ${what} to`);
     return undefined;
   }
   const doFetch = deps.fetchFn ?? fetch;
   try {
-    const card = pendingDiscordCard(row, summaryLines);
+    const card = render();
     const res = await doFetch(`https://discord.com/api/v10/channels/${row.channelId}/messages`, {
       method: "POST",
       headers: { authorization: `Bot ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ content: card.content, components: card.components }),
     });
     if (!res.ok) {
-      log(`Discord create-message failed (${res.status}) posting the approval card to channel ${row.channelId}`);
+      log(`Discord create-message failed (${res.status}) posting the ${what} to channel ${row.channelId}`);
       return undefined;
     }
     const body = (await res.json()) as unknown;
     const id = body && typeof body === "object" ? (body as Record<string, unknown>)["id"] : undefined;
     return typeof id === "string" && id.length > 0 ? id : undefined;
   } catch (err) {
-    log(`Discord approval-card post error for channel ${row.channelId}: ${(err as Error)?.message ?? String(err)}`);
+    log(`Discord ${what} post error for channel ${row.channelId}: ${(err as Error)?.message ?? String(err)}`);
     return undefined;
   }
 }

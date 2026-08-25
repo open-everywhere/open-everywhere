@@ -26,13 +26,14 @@ const {
 } = await import("../agent/access/approval-judge.js");
 const { resolveApproverChain, toolForActionKind } = await import("../agent/access/approver-chain.js");
 const { registerConfig } = await import("../agent/access/config.js");
-const { requestApproval, resolveApprovalClick } = await import("../agent/approvals/flow.js");
+const { requestApproval, resolveApprovalClick, registerJudgeLiftNoticePoster } = await import("../agent/approvals/flow.js");
 const { disarmApprovalJudge, rearmApprovalJudge, JUDGE_LIFT_DECIDED_BY } = await import("../agent/approvals/judge-contradiction.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 
 import type { ApprovalChainRequest } from "../agent/access/approver-chain.js";
 import type { ApprovalJudgeContext, JudgeCacheEntry } from "../agent/access/approval-judge.js";
+import type { PendingActionRow } from "../agent/approvals/types.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
@@ -193,7 +194,10 @@ registerConfig({
   loadBindings: () => [],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [{ name: "plain", channels: ["slack/T1/C_PLAIN"] }],
+  loadDomains: () => [
+    { name: "plain", channels: ["slack/T1/C_PLAIN"] },
+    { name: "bypassdomain", approvalMode: { mode: "DANGEROUSLY_BYPASS" as const } },
+  ],
   loadSilos: () => [],
   domainsForSurface: () => [],
 });
@@ -610,6 +614,58 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   const silent = await requestApproval({ ...spendInput, domain: "noticedomain", args: { ...spendInput.args, monthlyTokens: 122_000 } }, { post });
   ok(silent.autoApproved?.resolvedBy === "judge", "notice: the control lift happened too");
   ok(posts.length === 0, "notice: a lift with no postedTo posts nothing — never a guessed room");
+  resetApprovalJudgeCompletion();
+  clearApprovalJudgeVerdictCache();
+
+  const noticed2: { row: PendingActionRow; lines: readonly string[]; outcome: string }[] = [];
+  registerJudgeLiftNoticePoster("testsurface", async (row, lines, outcomeLine) => {
+    noticed2.push({ row, lines, outcome: outcomeLine });
+  });
+  posts.length = 0;
+  clearApprovalJudgeVerdictCache();
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest" });
+  const routed = await requestApproval(
+    { ...spendInput, domain: "noticedomain", args: { ...spendInput.args, monthlyTokens: 123_000 }, postedTo: "testsurface/W1/C_ROOM" },
+    { post },
+  );
+  ok(routed.autoApproved?.resolvedBy === "judge", "router: the judge lifted on the non-Slack surface too");
+  ok(noticed2.length === 1, "router: the platform's REGISTERED notice poster is the one that runs");
+  ok(noticed2[0]!.row.id === routed.id, "router: it is handed THIS wedge row, so its button can bind to it");
+  ok(noticed2[0]!.outcome.length > 0 && noticed2[0]!.lines.length > 0, "router: it is handed the executor's outcome line and the code-rendered summary");
+  ok(posts.length === 0, "router: 🔴 the built-in Slack Block Kit render did NOT also fire — one notice, in one room, on one envelope");
+
+  posts.length = 0;
+  noticed2.length = 0;
+  clearApprovalJudgeVerdictCache();
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest" });
+  const unregistered = await requestApproval(
+    { ...spendInput, domain: "noticedomain", args: { ...spendInput.args, monthlyTokens: 124_000 }, postedTo: "nosuchsurface/W1/C_ROOM" },
+    { post },
+  );
+  ok(unregistered.autoApproved?.resolvedBy === "judge", "router: the control lift happened too");
+  ok(posts.length === 0 && noticed2.length === 0, "router: an unregistered platform gets NO notice — never Slack's blocks on a foreign surface");
+
+  posts.length = 0;
+  noticed2.length = 0;
+  resetApprovalJudgeCompletion();
+  clearApprovalJudgeVerdictCache();
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: ask\nREASON: the judge wants a human — only CONFIG lifts this" });
+  const bypassLegs = [
+    { label: "registered-poster", postedTo: "testsurface/W1/C_ROOM", tokens: 125_000 },
+    { label: "built-in Slack", postedTo: "slack/T1/C_PLAIN", tokens: 126_000 },
+  ];
+  for (const { label, postedTo, tokens } of bypassLegs) {
+    clearApprovalJudgeVerdictCache();
+    const configLift = await requestApproval(
+      { ...spendInput, domain: "bypassdomain", args: { ...spendInput.args, monthlyTokens: tokens }, postedTo },
+      { post },
+    );
+    ok(configLift.autoApproved !== undefined, `config lift (${label}): the gate really was lowered, so the notice branch really was reached`);
+    ok(configLift.autoApproved?.resolvedBy === "registry", `config lift (${label}): …by CONFIG, and the row does NOT name the judge — the one changed fact`);
+  }
+  ok(noticed2.length === 0, "🔴 config lift: the registered notice poster is NOT called — a judge notice for a lift no judge made would be a false attribution");
+  ok(posts.length === 0, "🔴 config lift: the built-in Slack render does not fire either — the gate is `resolvedBy`, not the platform");
+
   resetApprovalJudgeCompletion();
   clearApprovalJudgeVerdictCache();
 }

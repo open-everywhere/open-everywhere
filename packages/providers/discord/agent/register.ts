@@ -7,6 +7,7 @@ import {
   registerReactionSurface,
   registerSurfaceMessageOps,
   registerCardPoster,
+  registerJudgeLiftNoticePoster,
   registerRoutineDispatch,
   registerNativeAdminCheck,
   registerNativeMemberCheck,
@@ -25,7 +26,7 @@ import { discordReadAdapter } from "./channels/discord-read.js";
 import { discordMessageOps } from "./channels/discord-message-ops.js";
 import { discordBotDisplayName } from "./channels/discord-bot-name.js";
 import { fetchGuildDirectory } from "./channels/discord-directory.js";
-import { postDiscordApprovalCard } from "./approvals/discord-flow.js";
+import { postDiscordApprovalCard, postDiscordJudgeLiftNotice } from "./approvals/discord-flow.js";
 import { discordScopeLabelResolver } from "./approvals/discord-scope-label.js";
 import { guildIdFromScopeKey, isGuildAdminViaRest, isGuildMemberViaRest } from "./approvals/discord-admin.js";
 
@@ -38,6 +39,7 @@ export function registerDiscordProvider(): void {
   registerReactionSurface("discord");
   registerSurfaceMessageOps(discordMessageOps);
   registerCardPoster("discord", postDiscordApprovalCard);
+  registerJudgeLiftNoticePoster("discord", postDiscordJudgeLiftNotice);
   registerRoutineDispatch("discord", { resolveTarget: resolveDiscordTarget, reportTargetFor: discordReportTargetFor });
   registerNativeAdminCheck("discord", async (scopeKey, principalId) => {
     const guildId = guildIdFromScopeKey(scopeKey);

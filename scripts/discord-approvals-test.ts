@@ -29,16 +29,18 @@ const {
   parseDiscordApprovalCustomId,
   pendingDiscordCard,
   decidedDiscordCard,
+  judgeLiftNoticeDiscordCard,
   isGuildAdministrator,
   scopeWithinGuild,
 } = await import("@open-everywhere/provider-discord/agent/approvals/discord-card.js");
-const { postDiscordApprovalCard, parseDiscordComponentClick, discordResponseFor, handleDiscordApprovalInteraction } = await import(
+const { postDiscordApprovalCard, postDiscordJudgeLiftNotice, parseDiscordComponentClick, discordResponseFor, handleDiscordApprovalInteraction } = await import(
   "@open-everywhere/provider-discord/agent/approvals/discord-flow.js"
 );
+const { judgeLiftNoticeBlocks } = await import("@open-everywhere/core/agent/approvals/card.js");
 const { guildIdFromScopeKey, isGuildAdminViaRest, isGuildMemberViaRest, discordAuthorRoles, _resetDiscordAuthorRolesCache } = await import(
   "@open-everywhere/provider-discord/agent/approvals/discord-admin.js"
 );
-const { clickerFloorRefusalNotice } = await import("@open-everywhere/core/agent/adapter-api.js");
+const { clickerFloorRefusalNotice, cardPosterFor, judgeLiftNoticePosterFor, judgeContradictionNotice } = await import("@open-everywhere/core/agent/adapter-api.js");
 const {
   PUBLIC_DISCORD_ROUTE,
   INTERNAL_DISCORD_ROUTE,
@@ -135,6 +137,9 @@ function clickPayload(
   ok(parseDiscordApprovalCustomId(rejectId)?.decision === "reject", "parse round-trips the reject custom_id");
   const sessionId = buildDiscordApprovalCustomId(r, "approve_session");
   ok(parseDiscordApprovalCustomId(sessionId)?.decision === "approve_session", "parse round-trips the approve_session custom_id (OPE-53)");
+  const contradictId = buildDiscordApprovalCustomId(r, "contradict");
+  ok(parseDiscordApprovalCustomId(contradictId)?.decision === "contradict", "parse round-trips the contradict custom_id (OPE-1103)");
+  ok(contradictId.length < sessionId.length, "the contradict verb is shorter than approve_session — it can never be the verb that first trips the cap");
   ok(parseDiscordApprovalCustomId("eve_input:something") === null, "rejects a foreign prefix (eve's HITL buttons)");
   ok(parseDiscordApprovalCustomId("oe-approval:id-only") === null, "rejects a missing verb/org");
   ok(parseDiscordApprovalCustomId("oe-approval:id:maybe:org") === null, "rejects an unrecognised decision segment");
@@ -185,6 +190,33 @@ function clickPayload(
   ok(rejected.content.includes("❌ Rejected by <@U_ORG_ADMIN>"), "decided card renders the rejected line");
   const expired = decidedDiscordCard({ ...r, status: "expired", decidedBy: "system" }, ["line one"], "expired");
   ok(expired.content.includes("⏰ Expired"), "decided card renders the expired line");
+}
+
+{
+  const wedge = row({ id: "wedge-render", status: "approved", decidedBy: "chain:judge" });
+  const notice = judgeLiftNoticeDiscordCard(wedge, ["raise the cap to 5000"], "spend limit set");
+  ok(notice.content.includes("**Ran without asking: spend.set**"), "notice leads with 'Ran without asking', never 'Approval requested'");
+  ok(!notice.content.includes("Approval requested"), "notice never claims a card was requested — nobody was asked");
+  ok(notice.content.includes("raise the cap to 5000"), "notice carries the code-rendered summary lines");
+  ok(notice.content.includes("⚡ Auto-approved by the approval judge") && notice.content.includes("spend limit set"), "notice states WHO lifted it and WHAT the executor did");
+  ok(!notice.content.includes("expires"), "notice carries no expiry line — nothing is pending");
+  const nButtons = (notice.components[0] as unknown as { components: { type: number; style: number; label: string; custom_id: string }[] }).components;
+  ok(notice.components.length === 1 && nButtons.length === 1, "notice holds exactly ONE button");
+  ok(nButtons[0].label === "This should not have run" && nButtons[0].style === 4, "the button says what it does, in red (danger)");
+  ok(nButtons[0].custom_id === `${OE_DISCORD_APPROVAL_PREFIX}${wedge.id}:contradict:default`, "the button is bound to THIS wedge row's id, carrying the contradict verb");
+  ok(parseDiscordApprovalCustomId(nButtons[0].custom_id)?.id === wedge.id, "…and the product's own parser decodes it");
+  ok(
+    !nButtons.some((b) => ["approve", "reject", "approve_session"].includes(parseDiscordApprovalCustomId(b.custom_id)?.decision ?? "")),
+    "no decision verb rides this message — an Approve button on a finished act would be a lie",
+  );
+  const slack = judgeLiftNoticeBlocks(wedge, ["raise the cap to 5000"], "spend limit set");
+  const slackText = JSON.stringify(slack.blocks);
+  ok(slackText.includes(`Ran without asking: ${wedge.kind}`), "cross-surface: Slack's notice uses the same header phrase");
+  ok(slackText.includes("This should not have run"), "cross-surface: Slack's notice uses the same button label");
+  ok(slackText.includes("⚡ Auto-approved by the approval judge — no card was posted and this has already run · spend limit set"), "cross-surface: the ⚡ context line is word-for-word the same sentence");
+
+  assert.throws(() => judgeLiftNoticeDiscordCard(row({ org: "x".repeat(80), status: "approved", decidedBy: "chain:judge" }), ["l"], "done"), /100/);
+  n++;
 }
 
 {
@@ -321,6 +353,44 @@ const signedHeaders = (body: string, timestamp: string): Headers =>
     (await postDiscordApprovalCard(row({ org: "x".repeat(80) }), ["l"], { token: "t", fetchFn: fetchOk })) === undefined,
     "an over-cap custom_id fails the post softly (render throws, poster catches)",
   );
+}
+
+{
+  const wedge = row({ id: "wedge-post", status: "approved", decidedBy: "chain:judge" });
+  const calls: { url: string; init: RequestInit }[] = [];
+  const fetchOk = (async (url: string, init: RequestInit) => {
+    calls.push({ url, init });
+    return { ok: true, status: 200, json: async () => ({ id: "dmsg-notice" }) };
+  }) as unknown as typeof fetch;
+  await postDiscordJudgeLiftNotice(wedge, ["raise the cap to 5000"], "spend limit set", { token: "test-token", fetchFn: fetchOk });
+  ok(calls.length === 1 && calls[0].url.includes("/channels/C_ENG/messages"), "notice poster targets the wedge row's own channel");
+  const sent = JSON.parse(String(calls[0].init.body)) as { content: string; components: { components: { custom_id: string }[] }[] };
+  ok(sent.content.includes("Ran without asking"), "notice poster sends the NOTICE render, not the pending card");
+  ok(sent.components[0].components[0].custom_id === `${OE_DISCORD_APPROVAL_PREFIX}${wedge.id}:contradict:default`, "…with the contradict button bound to the wedge row");
+  ok((calls[0].init.headers as Record<string, string>).authorization === "Bot test-token", "notice poster authenticates with the bot token header");
+
+  const fetchFail = (async () => ({ ok: false, status: 403, json: async () => ({}) })) as unknown as typeof fetch;
+  await assert.doesNotReject(() => postDiscordJudgeLiftNotice(wedge, ["l"], "done", { token: "t", fetchFn: fetchFail }), "a non-ok status is swallowed");
+  n++;
+  const fetchThrows = (async () => {
+    throw new Error("network down");
+  }) as unknown as typeof fetch;
+  await assert.doesNotReject(() => postDiscordJudgeLiftNotice(wedge, ["l"], "done", { token: "t", fetchFn: fetchThrows }), "a network error is swallowed");
+  n++;
+  await assert.doesNotReject(() => postDiscordJudgeLiftNotice(wedge, ["l"], "done", { fetchFn: fetchOk }), "a missing bot token is swallowed");
+  n++;
+  await assert.doesNotReject(
+    () => postDiscordJudgeLiftNotice(row({ org: "x".repeat(80), status: "approved", decidedBy: "chain:judge" }), ["l"], "done", { token: "t", fetchFn: fetchOk }),
+    "an over-cap custom_id is swallowed (render throws, poster catches)",
+  );
+  n++;
+
+  ok(judgeLiftNoticePosterFor("discord") === postDiscordJudgeLiftNotice, "the discord bundle REGISTERS this poster under its platform key");
+  ok(judgeLiftNoticePosterFor("slack") === undefined, "slack registers none — its notice is core's built-in Block Kit render");
+  ok(judgeLiftNoticePosterFor(undefined) === undefined, "an absent platform resolves no poster (a notice is never posted to a guessed room)");
+
+  ok(cardPosterFor("discord") !== undefined && judgeLiftNoticePosterFor("discord") !== undefined, "PAIRING: a platform with a card path also has a judge-lift notice path — a card poster without one is OPE-1103 again");
+  ok(cardPosterFor("slack") === undefined && judgeLiftNoticePosterFor("slack") === undefined, "PAIRING: Slack is the exemption and registers NEITHER — the built-in path renders both");
 }
 
 {
@@ -757,4 +827,47 @@ const store = getOperationalStore();
   );
 }
 
-console.log(`\n✓ discord-approvals: ${n} assertions passed (card render, custom_id codec, admin bitfield, scope fence, REST admin standing, ed25519 gate, poster, click matrix, decision feedback, front route, OPE-475 role-evidence probe)\n`);
+{
+  const contradictionRows = async (): Promise<{ principalId?: string; detail?: Record<string, unknown> }[]> =>
+    (await readAudit({ org: "default", action: "approval.judge.contradicted" })) as { principalId?: string; detail?: Record<string, unknown> }[];
+  const adminClick = (id: string, user = "U_GUILD_ADMIN") => clickPayload(`oe-approval:${id}:contradict:default`, { user, permissions: "8" });
+
+  ok((await contradictionRows()).length === 0, "contradict: no contradiction row exists before a human clicks — nothing writes one on its own");
+
+  await store.addPendingAction(row({ id: "dc-pending" }));
+  const onPending = (await handleDiscordApprovalInteraction(adminClick("dc-pending"))) as Resp;
+  ok(onPending.type === 4 && onPending.data?.flags === 64, "contradict on a pending row → ephemeral, message untouched");
+  ok(onPending.data?.content === judgeContradictionNotice("not-judge-lift"), "…rendering core's ONE copy for not-judge-lift");
+  ok((await store.getPendingAction("default", "dc-pending"))?.status === "pending", "…and the row is NOT consumed");
+
+  await store.addPendingAction(row({ id: "dc-config", status: "approved", decidedBy: "chain:mode:DANGEROUSLY_BYPASS" }));
+  const onConfig = (await handleDiscordApprovalInteraction(adminClick("dc-config"))) as Resp;
+  ok(onConfig.data?.content === judgeContradictionNotice("not-judge-lift"), "contradict on a CONFIG lift is refused — only a judge verdict is overrulable");
+  ok((await contradictionRows()).length === 0, "…and neither refused click wrote a row");
+
+  await store.addPendingAction(row({ id: "dc-wedge", status: "approved", decidedBy: "chain:judge", domain: "eng" }));
+  const noStanding = (await handleDiscordApprovalInteraction(clickPayload("oe-approval:dc-wedge:contradict:default", { user: "U_RANDO", permissions: "0" }))) as Resp;
+  ok(noStanding.type === 4 && noStanding.data?.flags === 64, "a plain member's overrule is refused");
+  ok(noStanding.data?.content !== judgeContradictionNotice("recorded"), "…with the denial copy, not the recorded copy");
+  ok((await contradictionRows()).length === 0, "…and the refused overrule wrote NO row");
+
+  const recorded = (await handleDiscordApprovalInteraction(adminClick("dc-wedge"))) as Resp;
+  ok(recorded.type === 4 && recorded.data?.flags === 64, "the overrule answers an ephemeral to the clicker alone");
+  ok(recorded.data?.content === judgeContradictionNotice("recorded"), "…rendering core's ONE recorded copy — Slack and Discord cannot drift");
+  ok(recorded.data?.components === undefined, "…and the notice message is left standing (no type-7 replace) — it is the room's trace of a real act");
+  const rows = await contradictionRows();
+  ok(rows.length === 1, "exactly one approval.judge.contradicted row");
+  const detail = rows[0].detail ?? {};
+  ok(detail.id === "dc-wedge" && detail.kind === "spend.set", "the row names WHICH approval — the join back to the wedge row");
+  ok(detail.route === "click" && detail.humanAction === "overrule", "the row names the ROUTE the overrule came through");
+  ok(rows[0].principalId === "U_GUILD_ADMIN", "the row names WHO contradicted");
+  ok(detail.judgeVerdict === "allow" && detail.domain === "eng", "the row names the verdict overruled and stays scoped to its own domain");
+
+  const again = (await handleDiscordApprovalInteraction(adminClick("dc-wedge"))) as Resp;
+  ok(again.data?.content === judgeContradictionNotice("already-recorded"), "a second click on the same notice is a defined no-op, and says so");
+  ok((await contradictionRows()).length === 1, "…and wrote no second row — one action counts once");
+}
+
+console.log(
+  `\n✓ discord-approvals: ${n} assertions passed (card render, custom_id codec, admin bitfield, scope fence, REST admin standing, ed25519 gate, poster, click matrix, decision feedback, front route, OPE-475 role-evidence probe, OPE-1103 judge-lift notice render + poster + registration + contradict click)\n`,
+);

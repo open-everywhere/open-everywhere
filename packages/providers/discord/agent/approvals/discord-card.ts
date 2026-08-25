@@ -21,7 +21,11 @@ export interface DiscordCardMessage {
   readonly components: readonly DiscordComponent[];
 }
 
-export function buildDiscordApprovalCustomId(row: PendingActionRow, decision: "approve" | "reject" | "approve_session"): string {
+export type DiscordApprovalDecision = "approve" | "reject" | "approve_session" | "contradict";
+
+const DISCORD_APPROVAL_DECISIONS: readonly DiscordApprovalDecision[] = ["approve", "reject", "approve_session", "contradict"];
+
+export function buildDiscordApprovalCustomId(row: PendingActionRow, decision: DiscordApprovalDecision): string {
   const customId = `${OE_DISCORD_APPROVAL_PREFIX}${row.id}:${decision}:${row.org}`;
   if (customId.length > DISCORD_CUSTOM_ID_MAX) {
     throw new Error(
@@ -31,7 +35,7 @@ export function buildDiscordApprovalCustomId(row: PendingActionRow, decision: "a
   return customId;
 }
 
-export function parseDiscordApprovalCustomId(customId: string): { id: string; decision: "approve" | "reject" | "approve_session"; org: string } | null {
+export function parseDiscordApprovalCustomId(customId: string): { id: string; decision: DiscordApprovalDecision; org: string } | null {
   if (!customId.startsWith(OE_DISCORD_APPROVAL_PREFIX)) return null;
   const rest = customId.slice(OE_DISCORD_APPROVAL_PREFIX.length);
   const first = rest.indexOf(":");
@@ -41,8 +45,8 @@ export function parseDiscordApprovalCustomId(customId: string): { id: string; de
   const id = rest.slice(0, first);
   const decision = rest.slice(first + 1, second);
   const org = rest.slice(second + 1);
-  if ((decision !== "approve" && decision !== "reject" && decision !== "approve_session") || org.length === 0) return null;
-  return { id, decision, org };
+  if (!DISCORD_APPROVAL_DECISIONS.includes(decision as DiscordApprovalDecision) || org.length === 0) return null;
+  return { id, decision: decision as DiscordApprovalDecision, org };
 }
 
 function cardBody(row: PendingActionRow, summaryLines: readonly string[], footer: string): string {
@@ -74,6 +78,26 @@ export function pendingDiscordCard(row: PendingActionRow, summaryLines: readonly
     custom_id: buildDiscordApprovalCustomId(row, "reject"),
   });
   return { content, components: [{ type: COMPONENT_ACTION_ROW, components: buttons }] };
+}
+
+export function judgeLiftNoticeDiscordCard(row: PendingActionRow, summaryLines: readonly string[], outcomeLine: string): DiscordCardMessage {
+  const context = `-# ⚡ Auto-approved by the approval judge — no card was posted and this has already run · ${outcomeLine}`;
+  return {
+    content: [`**Ran without asking: ${row.kind}**`, ...summaryLines, context].join("\n"),
+    components: [
+      {
+        type: COMPONENT_ACTION_ROW,
+        components: [
+          {
+            type: COMPONENT_BUTTON,
+            style: BUTTON_STYLE_DANGER,
+            label: "This should not have run",
+            custom_id: buildDiscordApprovalCustomId(row, "contradict"),
+          },
+        ],
+      },
+    ],
+  };
 }
 
 export function decidedDiscordCard(row: PendingActionRow, summaryLines: readonly string[], outcomeLine: string): DiscordCardMessage {

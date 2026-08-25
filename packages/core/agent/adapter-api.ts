@@ -414,12 +414,14 @@ export { turnAnchorKey, turnChannelKey, TURN_ANCHOR_TTL_MS } from "./channels/tu
 export {
   registerCardPoster,
   cardPosterFor,
+  registerJudgeLiftNoticePoster,
+  judgeLiftNoticePosterFor,
   resolveApprovalClick,
   deliverDecisionFeedback,
   discordDecisionWakeTarget,
   postDiscordDecisionNotice,
 } from "./approvals/flow.js";
-export type { CardPoster, ApprovalClickResolution, DecisionWakeDeps } from "./approvals/flow.js";
+export type { CardPoster, JudgeLiftNoticePoster, ApprovalClickResolution, DecisionWakeDeps } from "./approvals/flow.js";
 export { clickerFloorRefusalNotice } from "./approvals/clicker-floor.js";
 export type { ClickerFloorRefusal } from "./approvals/clicker-floor.js";
 export { judgeContradictionNotice } from "./approvals/judge-contradiction.js";

@@ -23,7 +23,7 @@ import {
   type ApprovalChainRequest,
 } from "../access/approver-chain.js";
 import { shadowJudgeAuditDetail } from "../access/approval-judge.js";
-import { parseScopeKey } from "../access/scope-key.js";
+import { parseScopeKey, platformOfScopeKey } from "../access/scope-key.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type ClickerFloorRefusal } from "./clicker-floor.js";
 import { checkCardDisclosure, cardDisclosureRefusalNotice } from "./card-disclosure.js";
@@ -147,6 +147,19 @@ export function registerCardPoster(platform: string, poster: CardPoster): void {
 
 export function cardPosterFor(platform: string | undefined): CardPoster | undefined {
   return platform === undefined ? undefined : CARD_POSTERS.get(platform);
+}
+
+export type JudgeLiftNoticePoster = (row: PendingActionRow, summaryLines: readonly string[], outcomeLine: string) => Promise<void>;
+
+const JUDGE_LIFT_NOTICE_POSTERS = new Map<string, JudgeLiftNoticePoster>();
+
+export function registerJudgeLiftNoticePoster(platform: string, poster: JudgeLiftNoticePoster): void {
+  if (!admitProviderRegistration(platform, "judge-lift-notice-poster")) return;
+  JUDGE_LIFT_NOTICE_POSTERS.set(platform, poster);
+}
+
+export function judgeLiftNoticePosterFor(platform: string | undefined): JudgeLiftNoticePoster | undefined {
+  return platform === undefined ? undefined : JUDGE_LIFT_NOTICE_POSTERS.get(platform);
 }
 
 export interface AutoApprovedOutcome {
@@ -294,9 +307,15 @@ export async function requestApproval(
       };
       await store.addPendingAction(row);
       const outcome = await kindDef.execute(input.args, decidedBy);
-      if (resolution.resolvedBy === "judge" && input.postedTo?.startsWith("slack/") && !deps.postCard) {
-        const noticeLines = withTaintDisclosure(input.summaryLines ? [...input.summaryLines] : kindDef.summarize(input.args), input.args);
-        await postRenderedCard(deps.post ?? bridgeSlackForm, input.channelId, input.threadTs, judgeLiftNoticeBlocks(row, noticeLines, outcome)).catch(() => undefined);
+      const noticePlatform = resolution.resolvedBy === "judge" ? platformOfScopeKey(input.postedTo) : undefined;
+      const noticePoster = judgeLiftNoticePosterFor(noticePlatform);
+      if (noticePlatform === "slack" || noticePoster) {
+        try {
+          const noticeLines = withTaintDisclosure(input.summaryLines ? [...input.summaryLines] : kindDef.summarize(input.args), input.args);
+          if (noticePoster) await noticePoster(row, noticeLines, outcome);
+          else await postRenderedCard(deps.post ?? bridgeSlackForm, input.channelId, input.threadTs, judgeLiftNoticeBlocks(row, noticeLines, outcome));
+        } catch {
+        }
       }
       await appendAudit({
         ...whereFromScope(input.org, input.scopeKey),
