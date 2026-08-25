@@ -378,6 +378,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      scope_key              text NOT NULL,   -- the CHAT this would serve (the session id)
      purpose                text NOT NULL,   -- model-authored; untrusted content
      requester_target       text,            -- JSON ReplyTarget: where the owner's answer is reported back
+     card_surface_id        text,            -- where the owner's card landed -- the lapse sweep rewrites it
+     card_message_id        text,
      requested_mode         text NOT NULL,   -- once | session | standing
      status                 text NOT NULL,   -- pending | approved | declined | expired
      created_at             text NOT NULL,
@@ -524,6 +526,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS target_native_id text`,
   `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS back_nonce_hash text`,
   `ALTER TABLE credential_grant_ask ADD COLUMN IF NOT EXISTS requester_target text`,
+  `ALTER TABLE credential_grant_ask ADD COLUMN IF NOT EXISTS card_surface_id text`,
+  `ALTER TABLE credential_grant_ask ADD COLUMN IF NOT EXISTS card_message_id text`,
   `DO $$
    BEGIN
      IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'identity_linked_ids' AND relkind = 'r')
@@ -1274,7 +1278,7 @@ function linkChallengeFromPgRow(org: string, r: LinkChallengePgRow): LinkChallen
 
 const GRANT_ASK_COLUMNS =
   `id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
-   scope_key, purpose, requester_target, requested_mode, status, created_at, expires_at, decided_at, grant_id`;
+   scope_key, purpose, requester_target, card_surface_id, card_message_id, requested_mode, status, created_at, expires_at, decided_at, grant_id`;
 const GRANT_ASK_SELECT = `SELECT ${GRANT_ASK_COLUMNS} FROM credential_grant_ask`;
 
 type GrantAskPgRow = {
@@ -1290,6 +1294,8 @@ type GrantAskPgRow = {
   scope_key: string;
   purpose: string;
   requester_target: string | null;
+  card_surface_id: string | null;
+  card_message_id: string | null;
   requested_mode: string;
   status: string;
   created_at: string;
@@ -1312,6 +1318,8 @@ function grantAskFromPgRow(r: GrantAskPgRow): CredentialGrantAskRow {
     scopeKey: r.scope_key,
     purpose: r.purpose,
     ...(r.requester_target === null ? {} : { requesterTarget: r.requester_target }),
+    ...(r.card_surface_id === null || r.card_surface_id === undefined ? {} : { cardSurfaceId: r.card_surface_id }),
+    ...(r.card_message_id === null || r.card_message_id === undefined ? {} : { cardMessageId: r.card_message_id }),
     requestedMode: r.requested_mode as CredentialGrantMode,
     status: r.status as CredentialGrantAskState,
     createdAt: r.created_at,
@@ -3227,8 +3235,8 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       await client.query(
         `INSERT INTO credential_grant_ask
            (org_id, id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
-            scope_key, purpose, requester_target, requested_mode, status, created_at, expires_at, decided_at, grant_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+            scope_key, purpose, requester_target, card_surface_id, card_message_id, requested_mode, status, created_at, expires_at, decided_at, grant_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
         [
           org,
           row.id,
@@ -3243,6 +3251,8 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           row.scopeKey,
           row.purpose,
           row.requesterTarget ?? null,
+          row.cardSurfaceId ?? null,
+          row.cardMessageId ?? null,
           row.requestedMode,
           row.status,
           row.createdAt,
@@ -3251,6 +3261,10 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           row.grantId ?? null,
         ],
       );
+    },
+
+    async setCredentialGrantAskCard(org, id, surfaceId, messageId) {
+      await client.query("UPDATE credential_grant_ask SET card_surface_id = $1, card_message_id = $2 WHERE org_id = $3 AND id = $4", [surfaceId, messageId, org, id]);
     },
 
     async getCredentialGrantAsk(org, id) {
@@ -3290,13 +3304,9 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return (rows as unknown[]).length > 0;
     },
 
-    async expireCredentialGrantAsks(org, nowIso) {
-      const { rows } = await client.query(
-        `UPDATE credential_grant_ask SET status = 'expired', decided_at = $1
-         WHERE org_id = $2 AND status = 'pending' AND expires_at <= $1 RETURNING id`,
-        [nowIso, org],
-      );
-      return (rows as unknown[]).length;
+    async listExpiredCredentialGrantAsks(org, nowIso) {
+      const { rows } = await client.query(`${GRANT_ASK_SELECT} WHERE org_id = $1 AND status = 'pending' AND expires_at <= $2 ORDER BY created_at ASC`, [org, nowIso]);
+      return (rows as GrantAskPgRow[]).map(grantAskFromPgRow);
     },
 
     async addCredentialGrant(org: string, row: CredentialGrantRow) {

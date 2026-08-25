@@ -17,7 +17,8 @@ import {
   registerGrantableVerb,
   type GrantMintInput,
 } from "../agent/access/credential-grant.js";
-import { grantCardActions, grantCardText } from "../agent/access/credential-grant-card.js";
+import { expiredGrantCardText, grantCardActions, grantCardText } from "../agent/access/credential-grant-card.js";
+import { grantResolutionText } from "../agent/access/credential-grant-resolution.js";
 import {
   credentialGrantRefusalMessage,
   credentialGrantStateRefusal,
@@ -179,10 +180,33 @@ const grantRow = (id: string, patch: Partial<CredentialGrantRow> = {}): Credenti
 
 {
   await store.addCredentialGrantAsk(ORG, askRow("ask-sweep"));
-  const swept = await store.expireCredentialGrantAsks(ORG, iso(NOW + 31 * 60_000));
-  ok(swept >= 1, `the sweep expires an ask past its TTL (${swept} row(s))`);
+  const early = await store.listExpiredCredentialGrantAsks(ORG, iso(NOW + 29 * 60_000));
+  ok(
+    !early.some((r) => r.id === "ask-sweep"),
+    "NEGATIVE CONTROL: an ask still INSIDE its TTL is not in the expired read — a read that returned every pending row would make every assertion below vacuous",
+  );
+  const due = await store.listExpiredCredentialGrantAsks(ORG, iso(NOW + 31 * 60_000));
+  ok(
+    due.some((r) => r.id === "ask-sweep"),
+    `the expired read returns an ask past its TTL (${due.length} row(s))`,
+  );
+  eq((await store.getCredentialGrantAsk(ORG, "ask-sweep"))?.status, "pending", "…and the READ alone decides nothing — it is a read, so the CAS is still what closes the row");
+  eq(await store.decideCredentialGrantAsk(ORG, "ask-sweep", ["pending"], "expired", iso(NOW + 31 * 60_000)), true, "the sweep's CAS closes it");
   eq((await store.getCredentialGrantAsk(ORG, "ask-sweep"))?.status, "expired", "…and the swept ask is terminal");
   eq(await store.decideCredentialGrantAsk(ORG, "ask-sweep", ["pending"], "declined", iso(NOW)), false, "…so a decline that arrives after the sweep loses too");
+  const after = await store.listExpiredCredentialGrantAsks(ORG, iso(NOW + 31 * 60_000));
+  ok(!after.some((r) => r.id === "ask-sweep"), "…and a second sweep pass does not see it again — the read is `pending`-only, so the notices cannot be sent twice");
+}
+
+{
+  await store.addCredentialGrantAsk(ORG, askRow("ask-card"));
+  const before = await store.getCredentialGrantAsk(ORG, "ask-card");
+  eq(before?.cardSurfaceId, undefined, "NEGATIVE CONTROL: an unstamped ask carries NO card locus — absent, never an empty string a caller would address");
+  eq(before?.cardMessageId, undefined, "…on both halves");
+  await store.setCredentialGrantAskCard(ORG, "ask-card", "D-owner-dm", "1724500000.0001");
+  const stamped = await store.getCredentialGrantAsk(ORG, "ask-card");
+  eq(stamped?.cardSurfaceId, "D-owner-dm", "the card's surface id is stamped after delivery and reads back");
+  eq(stamped?.cardMessageId, "1724500000.0001", "…and so is the message id — together they are the only address the sweep can rewrite");
 }
 
 {
@@ -263,6 +287,32 @@ console.log("6. the owner's card:");
   ok(text.split("\n").filter((l) => l.includes("Reply `once`")).length === 1, "the copy states the four answers in words, because an arm with no component plane delivers the text alone");
   eq(quotedPurpose('a "quoted" purpose'), "a quoted purpose", "quotedPurpose strips the characters that would escape the span");
   ok(quotedPurpose("x".repeat(500)).length <= 200, "…and caps the length");
+}
+
+console.log("7. the lapse copy:");
+{
+  const ask = askRow("ask-lapse");
+  const lapse = grantResolutionText(ask, { kind: "expired" });
+  const declined = grantResolutionText(ask, { kind: "declined" });
+  ok(lapse.includes("`read_page`") && lapse.includes("`notion:page/abc123`"), "the lapse notice names the exact tool and resource the room watched being asked for");
+  ok(lapse.includes("expired") && lapse.includes("no answer"), "…and says the request TIMED OUT");
+  ok(!lapse.includes("declined the credential grant"), "a lapse is NEVER reported as a decline — the owner made no decision at all");
+  ok(lapse.includes("did not decline"), "…and it says so out loud, because 'expired' alone reads as a soft no");
+  ok(lapse.includes("ask again"), "…so asking again stays open");
+  ok(declined.includes("Do not ask again"), "NEGATIVE CONTROL: the DECLINE arm still tells the room to stop — the two arms give opposite advice, so neither can be passing on shared copy");
+  ok(!declined.includes("did not decline"), "…and the decline arm carries none of the lapse wording");
+
+  const card = expiredGrantCardText(ask, true);
+  ok(card.includes("EXPIRED"), "the owner's card is rewritten to say expired");
+  ok(card.includes("`read_page`") && card.includes("`notion:page/abc123`"), "…and still names what was asked for, so the owner reads one story");
+  ok(card.includes("does nothing"), "…and says a tap achieves nothing, which is true whether or not the surface kept the buttons");
+  ok(!card.includes(ask.purpose), "the model-authored purpose is NOT replayed into the expired card — it has served its purpose and nothing needs it again");
+  ok(grantCardText(ask, "Ada") !== card, "NEGATIVE CONTROL: the expired card is not the live card — a rewrite to identical text would leave the owner an ask that still looks answerable");
+
+  const cardUntold = expiredGrantCardText(ask, false);
+  ok(card.includes("has been told"), "when the requester WAS told, the card says so");
+  ok(!cardUntold.includes("has been told"), "NEGATIVE CONTROL: when the requester was NOT told, the card does not claim they were");
+  ok(cardUntold.includes("NOT been told"), "…it says the opposite out loud, so the owner knows somebody may still be waiting");
 }
 
 console.log(`\ncredential-grant: ${n} assertions passed.`);

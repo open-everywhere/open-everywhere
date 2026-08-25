@@ -18,6 +18,8 @@ export interface CredentialGrantAskRow {
   readonly purpose: string;
   readonly requesterTarget?: string;
   readonly requestedMode: CredentialGrantMode;
+  readonly cardSurfaceId?: string;
+  readonly cardMessageId?: string;
   readonly status: CredentialGrantAskState;
   readonly createdAt: string;
   readonly expiresAt: string;

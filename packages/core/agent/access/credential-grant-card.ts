@@ -1,4 +1,5 @@
 import { canDeliverDirectMessage, postArm, type DirectMessageAction } from "../channels/post-arms.js";
+import { editSurfaceText } from "../channels/surface-message-ops.js";
 import { GRANT_STANDING_MAX_MS } from "./credential-grant.js";
 import { quotedPurpose, type CredentialGrantAskRow, type CredentialGrantMode } from "../operational/credential-grant-rows.js";
 
@@ -60,6 +61,20 @@ function modeWords(mode: CredentialGrantMode): string {
   }
 }
 
+export function expiredGrantCardText(ask: CredentialGrantAskRow, requesterNotified: boolean): string {
+  return [
+    `⌛ EXPIRED — this request timed out.`,
+    "",
+    `• Tool: \`${ask.verb}\``,
+    `• Resource: \`${ask.resource}\``,
+    "",
+    "Nothing was granted and nothing was spent. Tapping a button on this card now does nothing.",
+    requesterNotified
+      ? "The person who asked has been told the request lapsed, and they can ask again if they still need it."
+      : "This deployment could not reach the conversation they asked from, so they have NOT been told — they may still be waiting on an answer.",
+  ].join("\n");
+}
+
 export type GrantCardDelivery =
   | { readonly delivered: true; readonly surfaceId: string; readonly messageId: string }
   | { readonly delivered: false; readonly reason: "no_dm_arm" | "send_failed" };
@@ -75,4 +90,9 @@ export async function deliverGrantCard(ask: CredentialGrantAskRow, requesterLabe
   } catch {
     return { delivered: false, reason: "send_failed" };
   }
+}
+
+export async function expireGrantCard(ask: CredentialGrantAskRow, requesterNotified: boolean): Promise<boolean> {
+  if (ask.cardSurfaceId === undefined || ask.cardMessageId === undefined) return false;
+  return await editSurfaceText(ask.ownerPlatform, { channelId: ask.cardSurfaceId, messageId: ask.cardMessageId }, expiredGrantCardText(ask, requesterNotified));
 }

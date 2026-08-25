@@ -10,8 +10,8 @@ import {
   type GrantMintInput,
   type GrantMintRefusal,
 } from "./credential-grant.js";
-import { deliverGrantCard, type GrantCardDelivery } from "./credential-grant-card.js";
-import { postGrantResolution } from "./credential-grant-resolution.js";
+import { deliverGrantCard, expireGrantCard, type GrantCardDelivery } from "./credential-grant-card.js";
+import { postGrantResolution, type GrantNoticeOutcome } from "./credential-grant-resolution.js";
 import {
   quotedPurpose,
   type CredentialGrantAskRow,
@@ -109,6 +109,11 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
     });
     return { reason: "owner_unreachable", sent: false };
   }
+  try {
+    await store.setCredentialGrantAskCard(input.org, ask.id, delivery.surfaceId, delivery.messageId);
+  } catch (err) {
+    console.log(`[open-everywhere:grant] card locus for ask ${ask.id} could not be stamped: ${String(err)}`);
+  }
   await auditGrant(input, "grant.asked", ask.requesterPrincipalId, {
     askId: ask.id,
     connector: ask.connector,
@@ -203,9 +208,48 @@ export async function revokeCredentialGrant(
   return revoked;
 }
 
-export async function sweepCredentialGrants(org: string, nowIso: string): Promise<{ asks: number; grants: number }> {
+export async function sweepCredentialGrants(org: string, nowIso: string): Promise<GrantSweepReport> {
   const store = getOperationalStore();
-  return { asks: await store.expireCredentialGrantAsks(org, nowIso), grants: await store.expireCredentialGrants(org, nowIso) };
+  let asks = 0;
+  let requesterNotices = 0;
+  let cardsUpdated = 0;
+  const staleBefore = new Date(Date.parse(nowIso) - GRANT_LAPSE_NOTICE_MAX_AGE_MS).toISOString();
+  for (const ask of await store.listExpiredCredentialGrantAsks(org, nowIso)) {
+    try {
+      const won = await store.decideCredentialGrantAsk(org, ask.id, ["pending"], "expired", nowIso);
+      if (!won) continue;
+      asks++;
+      const fresh = ask.expiresAt > staleBefore;
+      const notice: GrantSweepNotice = fresh ? await postGrantResolution(ask, { kind: "expired" }) : "withheld_stale";
+      if (notice === "sent") requesterNotices++;
+      const cardUpdated = fresh && (await expireGrantCard(ask, notice === "sent"));
+      if (cardUpdated) cardsUpdated++;
+      await auditGrant({ org, platform: "grant", workspace: "sweep" }, "grant.expired", ask.requesterPrincipalId, {
+        askId: ask.id,
+        cardUpdated,
+        cause: "ttl",
+        connector: ask.connector,
+        notice,
+        owner: ask.ownerPrincipalId,
+        resource: ask.resource,
+        verb: ask.verb,
+      });
+    } catch (err) {
+      console.log(`[open-everywhere:grant] sweep: ask ${ask.id} could not be expired: ${String(err)}`);
+    }
+  }
+  return { asks, cardsUpdated, grants: await store.expireCredentialGrants(org, nowIso), requesterNotices };
+}
+
+export const GRANT_LAPSE_NOTICE_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+
+export type GrantSweepNotice = GrantNoticeOutcome | "withheld_stale";
+
+export interface GrantSweepReport {
+  readonly asks: number;
+  readonly grants: number;
+  readonly requesterNotices: number;
+  readonly cardsUpdated: number;
 }
 
 export async function auditGrant(

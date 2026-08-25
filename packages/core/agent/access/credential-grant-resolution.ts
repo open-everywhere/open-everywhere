@@ -6,7 +6,7 @@ function log(line: string): void {
   console.log(`[open-everywhere:grant] ${line}`);
 }
 
-export type GrantResolution = { readonly kind: "approved"; readonly grant: CredentialGrantRow } | { readonly kind: "declined" };
+export type GrantResolution = { readonly kind: "approved"; readonly grant: CredentialGrantRow } | { readonly kind: "declined" } | { readonly kind: "expired" };
 
 export function parseGrantRequesterTarget(raw: string | undefined): ReplyTarget | undefined {
   if (typeof raw !== "string" || raw.length === 0) return undefined;
@@ -41,17 +41,25 @@ export function grantResolutionText(ask: CredentialGrantAskRow, resolution: Gran
     }
     case "declined":
       return `${ask.ownerSlug} declined the credential grant for ${what}. Nothing was granted and no tool is mounted. Do not ask again for the same thing — find another way, or ask the room.`;
+    case "expired":
+      return [
+        `The credential grant request for ${what} expired with no answer from ${ask.ownerSlug}.`,
+        `Nothing was granted and no tool is mounted. ${ask.ownerSlug} did not decline — the request simply timed out.`,
+        "You can ask again if it is still needed.",
+      ].join("\n");
   }
 }
 
-export async function postGrantResolution(ask: CredentialGrantAskRow, resolution: GrantResolution): Promise<boolean> {
+export type GrantNoticeOutcome = "sent" | "no_target" | "failed";
+
+export async function postGrantResolution(ask: CredentialGrantAskRow, resolution: GrantResolution): Promise<GrantNoticeOutcome> {
   const target = parseGrantRequesterTarget(ask.requesterTarget);
-  if (target === undefined) return false;
+  if (target === undefined) return "no_target";
   try {
     await postReply(target, grantResolutionText(ask, resolution));
-    return true;
+    return "sent";
   } catch (err) {
     log(`resolution notice for ask ${ask.id} could not be posted: ${String(err)}`);
-    return false;
+    return "failed";
   }
 }

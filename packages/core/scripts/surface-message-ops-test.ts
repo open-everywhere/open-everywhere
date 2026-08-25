@@ -59,6 +59,38 @@ const isSpoofId = (id: string | undefined) => typeof id === "string" && id.start
 
 delete process.env.OE_EGRESS_SPOOF;
 
+{
+  const { editSurfaceText } = await import("../agent/channels/surface-message-ops.js");
+  const { registerSlackBridge, _resetSlackBridgeForTest } = await import("../agent/channels/slack-bridge.js");
+
+  const sent: { method: string; body: URLSearchParams }[] = [];
+  registerSlackBridge({
+    async form(method: string, body: string) {
+      sent.push({ body: new URLSearchParams(body), method });
+      return { ok: true };
+    },
+  } as never);
+
+  const landed = await editSurfaceText("slack", { channelId: "C-card", messageId: "1724.0001" }, "⌛ EXPIRED — this request timed out.");
+  ok(landed, "4a. the Slack arm reports the edit landed");
+  ok(sent.length === 1 && sent[0]?.method === "chat.update", "4b. …via chat.update, one call");
+
+  const form = sent[0]!.body;
+  const blocks = form.get("blocks");
+  ok(blocks !== null, "4c. 🔴 the update SENDS blocks — without them chat.update keeps the old card's blocks and the owner sees the unchanged card");
+  const parsed = JSON.parse(blocks ?? "[]") as { type: string; text?: { text?: string } }[];
+  ok(parsed.length === 1 && parsed[0]?.type === "section", "4d. …exactly ONE section block, so any stale button row is replaced rather than left behind");
+  ok(parsed[0]?.text?.text?.includes("EXPIRED") === true, "4e. …carrying the new text, which is what a reader actually sees");
+  ok(form.get("text")?.includes("EXPIRED") === true, "4f. `text` still rides along as the notification fallback");
+  ok(form.get("channel") === "C-card" && form.get("ts") === "1724.0001", "4g. …addressed at the message the caller named");
+
+  ok((await editSurfaceText("no-such-platform", { channelId: "C1", messageId: "m1" }, "x")) === false, "4h. NEGATIVE CONTROL: an unregistered surface returns false rather than reporting a rewrite that never happened");
+  ok((await editSurfaceText("slack", { channelId: "", messageId: "m1" }, "x")) === false, "4i. NEGATIVE CONTROL: an empty locus is refused before any vendor call");
+  ok(sent.length === 1, "4j. …and neither of those issued a second Slack call");
+
+  _resetSlackBridgeForTest();
+}
+
 console.log(
   `✓ surface-message-ops (OPE-558) — ${n} assertions (notice leg now honours OE_EGRESS_SPOOF: skips the real vendor call, returns a spoof id, refuses on Vercel; negative control proves the un-spoofed path is unchanged)`,
 );

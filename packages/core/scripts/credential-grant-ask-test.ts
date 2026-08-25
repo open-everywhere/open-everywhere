@@ -135,6 +135,10 @@ let firstAskId = "";
   firstAskId = first.askId ?? "";
   eq(dmed.length, 1, "…and the owner got exactly one card");
 
+  const stamped = await store.getCredentialGrantAsk(ORG, firstAskId);
+  eq(stamped?.cardSurfaceId, "D-owner", "the ask row pins the DM surface the card landed in");
+  eq(stamped?.cardMessageId, "dm-1", "…and the message id the delivery named — together they are the sweep's only way to find the card");
+
   const second = await raise();
   eq(second.reason, "ask_already_pending", "a SECOND ask for the same tuple refuses by name");
   eq(dmed.length, 1, "…and no second card was sent — this is the anti-nag control, so the DM count is the assertion that matters");

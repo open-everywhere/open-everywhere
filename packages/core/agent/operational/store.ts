@@ -850,7 +850,8 @@ export interface OperationalStore {
   ): Promise<CredentialGrantAskRow | null>;
   approveCredentialGrantAsk(org: string, id: string, mode: CredentialGrantMode, grantId: string, at: string): Promise<CredentialGrantAskRow | null>;
   decideCredentialGrantAsk(org: string, id: string, from: readonly CredentialGrantAskState[], to: CredentialGrantAskState, at: string): Promise<boolean>;
-  expireCredentialGrantAsks(org: string, nowIso: string): Promise<number>;
+  setCredentialGrantAskCard(org: string, id: string, surfaceId: string, messageId: string): Promise<void>;
+  listExpiredCredentialGrantAsks(org: string, nowIso: string): Promise<readonly CredentialGrantAskRow[]>;
   addCredentialGrant(org: string, row: CredentialGrantRow): Promise<void>;
   getCredentialGrant(org: string, id: string): Promise<CredentialGrantRow | null>;
   credentialGrantsForScope(org: string, scopeKey: string): Promise<readonly CredentialGrantRow[]>;

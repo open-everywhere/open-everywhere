@@ -81,6 +81,30 @@ export async function postSurfaceText(platform: string, target: PostSurfaceTextT
   }
 }
 
+export async function editSurfaceText(platform: string, ref: { readonly channelId: string; readonly messageId: string }, text: string): Promise<boolean> {
+  if (!ref.channelId || !ref.messageId) return false;
+  if (process.env.OE_EGRESS_SPOOF === "1") {
+    if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
+    console.warn(`[oe] OE_EGRESS_SPOOF: swallowed a ${platform} surface-text edit`);
+    return true;
+  }
+  try {
+    if (platform === "slack") {
+      const body = new URLSearchParams({ channel: ref.channelId, ts: ref.messageId, text });
+      body.set("blocks", JSON.stringify([{ text: { text, type: "mrkdwn" }, type: "section" }]));
+      const res = await bridgeSlackForm("chat.update", body.toString());
+      return res?.ok === true;
+    }
+    const ops = surfaceMessageOps(platform);
+    if (!ops) return false;
+    await ops.editMessage(ref.channelId, ref.messageId, text);
+    return true;
+  } catch (err) {
+    console.warn(`[open-everywhere:surface] text edit failed (${platform}): ${String(err)}`);
+    return false;
+  }
+}
+
 export async function resolveMessagePermalink(platform: string, ref: MessageRef): Promise<string | undefined> {
   if (!ref.channelId || !ref.messageId) return undefined;
   try {

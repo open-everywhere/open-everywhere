@@ -453,6 +453,8 @@ function getDb(): DatabaseSync {
       scope_key              TEXT NOT NULL,   -- the CHAT this would serve (the session id)
       purpose                TEXT NOT NULL,   -- model-authored; untrusted content
       requester_target       TEXT,            -- JSON ReplyTarget: where the owner's answer is reported back
+      card_surface_id        TEXT,            -- where the owner's card landed -- the lapse sweep rewrites it
+      card_message_id        TEXT,
       requested_mode         TEXT NOT NULL,   -- once | session | standing
       status                 TEXT NOT NULL,   -- pending | approved | declined | expired
       created_at             TEXT NOT NULL,
@@ -632,6 +634,9 @@ function getDb(): DatabaseSync {
     "ALTER TABLE identity_link_challenges ADD COLUMN back_nonce_hash TEXT",
 
     "ALTER TABLE credential_grant_ask ADD COLUMN requester_target TEXT",
+
+    "ALTER TABLE credential_grant_ask ADD COLUMN card_surface_id TEXT",
+    "ALTER TABLE credential_grant_ask ADD COLUMN card_message_id TEXT",
   ]) {
     try {
       handle.exec(ddl);
@@ -932,7 +937,7 @@ function linkChallengeFromSqliteRow(org: string, r: LinkChallengeSqliteRow): Lin
 
 const GRANT_ASK_SQLITE_SELECT =
   `SELECT id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
-          scope_key, purpose, requester_target, requested_mode, status, created_at, expires_at, decided_at, grant_id
+          scope_key, purpose, requester_target, card_surface_id, card_message_id, requested_mode, status, created_at, expires_at, decided_at, grant_id
    FROM credential_grant_ask`;
 
 type GrantAskSqliteRow = {
@@ -948,6 +953,8 @@ type GrantAskSqliteRow = {
   scope_key: string;
   purpose: string;
   requester_target: string | null;
+  card_surface_id: string | null;
+  card_message_id: string | null;
   requested_mode: string;
   status: string;
   created_at: string;
@@ -970,6 +977,8 @@ function grantAskFromSqliteRow(r: GrantAskSqliteRow): CredentialGrantAskRow {
     scopeKey: r.scope_key,
     purpose: r.purpose,
     ...(r.requester_target === null ? {} : { requesterTarget: r.requester_target }),
+    ...(r.card_surface_id === null ? {} : { cardSurfaceId: r.card_surface_id }),
+    ...(r.card_message_id === null ? {} : { cardMessageId: r.card_message_id }),
     requestedMode: r.requested_mode as CredentialGrantMode,
     status: r.status as CredentialGrantAskState,
     createdAt: r.created_at,
@@ -2757,8 +2766,8 @@ export const sqliteOperationalStore: OperationalStore = {
       .prepare(
         `INSERT INTO credential_grant_ask
            (org_id, id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
-            scope_key, purpose, requester_target, requested_mode, status, created_at, expires_at, decided_at, grant_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            scope_key, purpose, requester_target, card_surface_id, card_message_id, requested_mode, status, created_at, expires_at, decided_at, grant_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         org,
@@ -2774,6 +2783,8 @@ export const sqliteOperationalStore: OperationalStore = {
         row.scopeKey,
         row.purpose,
         row.requesterTarget ?? null,
+        row.cardSurfaceId ?? null,
+        row.cardMessageId ?? null,
         row.requestedMode,
         row.status,
         row.createdAt,
@@ -2781,6 +2792,10 @@ export const sqliteOperationalStore: OperationalStore = {
         row.decidedAt ?? null,
         row.grantId ?? null,
       );
+  },
+
+  async setCredentialGrantAskCard(org, id, surfaceId, messageId) {
+    getDb().prepare("UPDATE credential_grant_ask SET card_surface_id = ?, card_message_id = ? WHERE org_id = ? AND id = ?").run(surfaceId, messageId, org, id);
   },
 
   async getCredentialGrantAsk(org, id) {
@@ -2820,12 +2835,11 @@ export const sqliteOperationalStore: OperationalStore = {
     return Number(changes) > 0;
   },
 
-  async expireCredentialGrantAsks(org, nowIso) {
-    return Number(
-      getDb()
-        .prepare("UPDATE credential_grant_ask SET status = 'expired', decided_at = ? WHERE org_id = ? AND status = 'pending' AND expires_at <= ?")
-        .run(nowIso, org, nowIso).changes,
-    );
+  async listExpiredCredentialGrantAsks(org, nowIso) {
+    const rows = getDb()
+      .prepare(`${GRANT_ASK_SQLITE_SELECT} WHERE org_id = ? AND status = 'pending' AND expires_at <= ? ORDER BY created_at ASC`)
+      .all(org, nowIso) as GrantAskSqliteRow[];
+    return rows.map(grantAskFromSqliteRow);
   },
 
   async addCredentialGrant(org, row) {

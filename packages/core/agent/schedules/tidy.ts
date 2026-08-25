@@ -10,6 +10,7 @@ import { dreamJudge } from "../memory/dream/judge.js";
 import { recordMemoryOpProposals, DREAM_ACTOR } from "../memory/dream/proposal.js";
 import { appendAudit } from "../audit/audit.js";
 import { sweepExpiredPendings } from "../approvals/flow.js";
+import { sweepCredentialGrants } from "../access/credential-grant-flow.js";
 import { getSettings } from "../settings/settings.js";
 
 function log(msg: string): void {
@@ -47,6 +48,10 @@ export interface TidyTickReport {
   readonly changed: number;
   readonly judged: JudgeStats;
   readonly expiredApprovals: number;
+  readonly expiredGrantAsks: number;
+  readonly grantLapseNotices: number;
+  readonly grantCardsExpired: number;
+  readonly expiredGrants: number;
 }
 
 export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: readonly string[] } = {}): Promise<TidyTickReport> {
@@ -60,7 +65,7 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
     domains = getConfig().loadDomains();
   } catch (err) {
     log(`tick skipped — config not registered: ${String(err)}`);
-    return { orgs: 0, silos: 0, applied: 0, proposed: 0, changed: 0, judged: noJudge, expiredApprovals: 0 };
+    return { orgs: 0, silos: 0, applied: 0, proposed: 0, changed: 0, judged: noJudge, expiredApprovals: 0, expiredGrantAsks: 0, grantLapseNotices: 0, grantCardsExpired: 0, expiredGrants: 0 };
   }
 
   const judge = dreamJudge();
@@ -72,9 +77,13 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
   let changed = 0;
   let judged = noJudge;
   let expiredApprovals = 0;
+  let expiredGrantAsks = 0;
+  let grantLapseNotices = 0;
+  let grantCardsExpired = 0;
+  let expiredGrants = 0;
 
   for (const org of orgs) {
-    const orgStart = { siloCount, applied, proposed, changed, expiredApprovals };
+    const orgStart = { siloCount, applied, proposed, changed, expiredApprovals, expiredGrantAsks };
     const p = partitionForOrg(org);
     for (const silo of silos) {
       if (silo.readOnly) continue;
@@ -141,11 +150,22 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
       log(`skip approval-sweep ${org} — ${String(err)}`);
     }
 
+    try {
+      const grants = await sweepCredentialGrants(org, now.toISOString());
+      expiredGrantAsks += grants.asks;
+      grantLapseNotices += grants.requesterNotices;
+      grantCardsExpired += grants.cardsUpdated;
+      expiredGrants += grants.grants;
+    } catch (err) {
+      log(`skip credential-grant-sweep ${org} — ${String(err)}`);
+    }
+
     const orgSilos = siloCount - orgStart.siloCount;
     const orgApplied = applied - orgStart.applied;
     const orgProposed = proposed - orgStart.proposed;
     const orgChanged = changed - orgStart.changed;
     const orgExpired = expiredApprovals - orgStart.expiredApprovals;
+    const orgExpiredGrantAsks = expiredGrantAsks - orgStart.expiredGrantAsks;
     await appendAudit({
       org,
       platform: "memory",
@@ -159,6 +179,7 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
         proposed: orgProposed,
         changed: orgChanged,
         expiredApprovals: orgExpired,
+        expiredGrantAsks: orgExpiredGrantAsks,
       },
     });
   }
@@ -166,8 +187,13 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
   const judgeNote = judge
     ? ` (judge: ${judged.candidates} candidate(s), ${judged.confirmed} confirmed, ${judged.rejected} rejected, ${judged.failed} failed-quiet)`
     : " (no judge registered — zero-LLM heuristics)";
-  log(`tick: ${orgs.length} org(s), ${siloCount} silo(s) — ${applied} safe op(s) applied, ${changed} silo(s) written, ${proposed} proposal(s) recorded, ${expiredApprovals} approval(s) expired${judgeNote}`);
-  return { orgs: orgs.length, silos: siloCount, applied, proposed, changed, judged, expiredApprovals };
+  log(
+    `tick: ${orgs.length} org(s), ${siloCount} silo(s) — ${applied} safe op(s) applied, ${changed} silo(s) written, ` +
+      `${proposed} proposal(s) recorded, ${expiredApprovals} approval(s) expired, ` +
+      `${expiredGrantAsks} grant ask(s) lapsed (${grantLapseNotices} notice(s), ${grantCardsExpired} card(s) updated), ` +
+      `${expiredGrants} grant(s) expired${judgeNote}`,
+  );
+  return { orgs: orgs.length, silos: siloCount, applied, proposed, changed, judged, expiredApprovals, expiredGrantAsks, grantLapseNotices, grantCardsExpired, expiredGrants };
 }
 
 export default defineSchedule({
