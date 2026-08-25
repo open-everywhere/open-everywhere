@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AuditWireEntry } from "./audit-read.js";
 import { deployedBuildCarries } from "./deployed-build.js";
-import { classifyDelegatedReadEvidence, GENERIC_READ_VERBS_SHA, pollForDelegationSettlement, pollForFinalReply, type DelegatedReadVerdict } from "./read-channel-lib.js";
+import { classifyDelegatedReadEvidence, GENERIC_READ_VERBS_SHA, pollForDelegationSettlement, pollForFinalReply, shouldAssertShaAncestry, type DelegatedReadVerdict } from "./read-channel-lib.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -15,25 +15,42 @@ const ok = (cond: boolean, label: string) => {
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 
+const runsClean = (args: readonly string[]): boolean => {
+  try {
+    execFileSync("git", [...args], { cwd: REPO_ROOT, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const gitStdout = (args: readonly string[]): string => {
+  try {
+    return execFileSync("git", [...args], { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return "";
+  }
+};
+
 {
   ok(/^[0-9a-f]{40}$/.test(GENERIC_READ_VERBS_SHA), "GENERIC_READ_VERBS_SHA is a full 40-char sha (not a typo/abbreviation)");
 
-  let shaKnownLocally = true;
-  try {
-    execFileSync("git", ["cat-file", "-e", `${GENERIC_READ_VERBS_SHA}^{commit}`], { cwd: REPO_ROOT, stdio: "ignore" });
-  } catch {
-    shaKnownLocally = false;
-  }
-  if (shaKnownLocally) {
-    let isAncestorOfHead = false;
-    try {
-      execFileSync("git", ["merge-base", "--is-ancestor", GENERIC_READ_VERBS_SHA, "HEAD"], { cwd: REPO_ROOT, stdio: "ignore" });
-      isAncestorOfHead = true;
-    } catch {}
+  const shaKnownLocally = runsClean(["cat-file", "-e", `${GENERIC_READ_VERBS_SHA}^{commit}`]);
+  const shallowClone = gitStdout(["rev-parse", "--is-shallow-repository"]) === "true";
+  if (shouldAssertShaAncestry({ objectPresent: shaKnownLocally, shallowClone })) {
+    const isAncestorOfHead = runsClean(["merge-base", "--is-ancestor", GENERIC_READ_VERBS_SHA, "HEAD"]);
     ok(isAncestorOfHead, `GENERIC_READ_VERBS_SHA (${GENERIC_READ_VERBS_SHA.slice(0, 8)}) is a real ancestor of HEAD — agent/settings/settings.ts's tools.genericReadVerbs:true commit, OPE-434`);
   } else {
-    console.log(`  (skipping the ancestor-of-HEAD sanity check — ${GENERIC_READ_VERBS_SHA.slice(0, 8)} is not present in this checkout's git history, e.g. a shallow CI clone. The deployedBuildCarries controls below don't depend on it.)`);
+    const why = shallowClone
+      ? "this checkout is a SHALLOW clone, so the ancestry chain to HEAD is not present locally"
+      : `${GENERIC_READ_VERBS_SHA.slice(0, 8)} is not present in this checkout's git history`;
+    console.log(`  (skipping the ancestor-of-HEAD sanity check — ${why}. The deployedBuildCarries controls below don't depend on it.)`);
   }
+
+  ok(shouldAssertShaAncestry({ objectPresent: true, shallowClone: false }) === true, "full clone + object present → assert ancestry (the only state that proves the constant)");
+  ok(shouldAssertShaAncestry({ objectPresent: true, shallowClone: true }) === false, "SHALLOW clone + object present → skip (a graft boundary has no parent links; OPE-1111)");
+  ok(shouldAssertShaAncestry({ objectPresent: false, shallowClone: true }) === false, "shallow clone + object absent → skip (the CI runner's fetch-depth 1 shape)");
+  ok(shouldAssertShaAncestry({ objectPresent: false, shallowClone: false }) === false, "full clone + object absent → skip (nothing to probe)");
 
   const recordDir = join(REPO_ROOT, ".open-everywhere-deploy");
   const recordFile = join(recordDir, "known-good.json");

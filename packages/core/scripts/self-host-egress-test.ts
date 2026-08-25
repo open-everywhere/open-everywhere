@@ -10,6 +10,7 @@ import {
 } from "../agent/access/self-host-egress.js";
 import type { SandboxNetworkPolicy } from "eve/sandbox";
 import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
+import { resolveSelfHostBackendKind, type SelfHostBackendKind } from "../agent/sandbox/backend-select.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -136,4 +137,30 @@ function fakeFetch(res: { ok: boolean; status: number; text?: string }): {
   ok(both.warn === undefined && both.info.includes("ENFORCED"), "proxy + hatch → still ENFORCED (proxy wins, no warn)");
 }
 
-console.log(`\n✓ self-host-egress: ${n} assertions passed (switch + push serialisation + fail-closed on push failure + boot posture)\n`);
+{
+  resetSettingsForTest();
+
+  const WIRED_BACKEND_KINDS: Record<SelfHostBackendKind, true> = { docker: true, justbash: true };
+  const wired = Object.keys(WIRED_BACKEND_KINDS);
+  ok(wired.length === 2, `OPE-955 tripwire: exactly 2 off-Vercel backends are wired (found ${wired.length}: ${wired.join(", ")}). A new one may enforce natively — make the boot log backend-aware before shipping it.`);
+  for (const kind of wired) {
+    ok(resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: kind } as NodeJS.ProcessEnv) === kind, `${kind} still resolves as a wired off-Vercel backend`);
+  }
+
+  for (const candidate of ["microsandbox", "firecracker", "gvisor", "e2b"]) {
+    let threw = false;
+    try {
+      resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: candidate } as NodeJS.ProcessEnv);
+    } catch {
+      threw = true;
+    }
+    ok(threw, `OPE-955 tripwire: '${candidate}' is NOT wired, so selfHostEgressBootLog's backend-blind ABORT claim still holds. If this is red, that backend may enforce natively — make the boot log warn about PARTIAL enforcement (credential injection is a measured gap, OPE-917/OPE-954), never go silent.`);
+  }
+
+  const underDocker = selfHostEgressBootLog({ OE_SANDBOX_BACKEND: "docker" } as NodeJS.ProcessEnv);
+  const underJustbash = selfHostEgressBootLog({ OE_SANDBOX_BACKEND: "justbash" } as NodeJS.ProcessEnv);
+  ok(underDocker.warn !== undefined && underDocker.warn === underJustbash.warn, "the no-proxy ABORT warn is identical across backends (selfHostEgressBootLog reads no backend kind)");
+  ok(underDocker.warn !== undefined && underDocker.warn.includes("ABORT"), "…and it is the ABORT warn, not some other posture line (a content pin on the assertion above)");
+}
+
+console.log(`\n✓ self-host-egress: ${n} assertions passed (switch + push serialisation + fail-closed on push failure + boot posture + OPE-955 backend tripwire)\n`);

@@ -2,6 +2,15 @@ import type { AuditWireEntry } from "./audit-read.js";
 
 export const GENERIC_READ_VERBS_SHA = "ea1b3c670d495466cb1bfc02c002c32a152e7f13";
 
+export interface ShaAncestryProbe {
+  objectPresent: boolean;
+  shallowClone: boolean;
+}
+
+export function shouldAssertShaAncestry(probe: ShaAncestryProbe): boolean {
+  return probe.objectPresent && !probe.shallowClone;
+}
+
 export const DELEGATION_TASK_STARTED_ACTION = "delegation.task_started";
 export const DELEGATION_TASK_SETTLED_ACTION = "delegation.task_settled";
 export const REPLY_POST_ACTION = "reply.post";
