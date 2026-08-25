@@ -24,6 +24,12 @@ export interface ConnectorTransport {
 
 const TRANSPORTS = new Map<string, ConnectorTransport>();
 
+const SPECS = new Map<string, ConnectorTransportSpec>();
+
+export function connectorTransportSpec(connector: string): ConnectorTransportSpec | undefined {
+  return SPECS.get(connector);
+}
+
 export function registerConnectorTransport(transport: ConnectorTransport): void {
   TRANSPORTS.set(transport.name, transport);
 }
@@ -38,6 +44,7 @@ export function resetConnectorTransports(): void {
 }
 
 export function selectConnectorTransport(spec: ConnectorTransportSpec): ResolvedConnectorTransport {
+  SPECS.set(spec.connector, spec);
   const active = [...TRANSPORTS.values()].filter((t) => t.isActive(spec)).sort((a, b) => b.priority - a.priority);
   const chosen = active[0];
   if (!chosen) {

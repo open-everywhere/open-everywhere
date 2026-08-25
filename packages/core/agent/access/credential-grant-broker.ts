@@ -7,6 +7,7 @@ import {
   type CredentialGrantRow,
 } from "../operational/credential-grant-rows.js";
 import { getOperationalStore } from "../operational/provider.js";
+import { connectorTransportSpec } from "../connections/connector-transport.js";
 import { grantableVerb, type GrantedRequest } from "./credential-grant.js";
 import { auditGrant, type GrantAuditStamps } from "./credential-grant-flow.js";
 import { grantOwnerSubject, type GrantOwnerSubject } from "./credential-grant-owner.js";
@@ -26,6 +27,27 @@ export function grantTransport(connector: string): GrantTransport | undefined {
 
 export function _resetGrantTransportsForTest(): void {
   TRANSPORTS.clear();
+}
+
+export interface GrantBorrowCall {
+  readonly mcpTool: string;
+  readonly input: Readonly<Record<string, unknown>>;
+}
+
+export type GrantBorrowTransport = (call: GrantBorrowCall, grant: CredentialGrantRow, owner: GrantOwnerSubject) => Promise<unknown>;
+
+const BORROW_TRANSPORTS = new Map<string, GrantBorrowTransport>();
+
+export function registerGrantBorrowTransport(connector: string, transport: GrantBorrowTransport): void {
+  BORROW_TRANSPORTS.set(connector, transport);
+}
+
+export function grantBorrowTransport(connector: string): GrantBorrowTransport | undefined {
+  return BORROW_TRANSPORTS.get(connector);
+}
+
+export function _resetGrantBorrowTransportsForTest(): void {
+  BORROW_TRANSPORTS.clear();
 }
 
 export type GrantRoomNotice = (line: string, grant: CredentialGrantRow) => Promise<void>;
@@ -76,10 +98,8 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
   if (grant.scopeKey !== ctx.scopeKey) return refuse("out_of_scope");
   if (ctx.requesterPrincipalId === undefined) return refuse("unverified_requester");
 
-  const definition = grantableVerb(grant.verb);
-  if (definition === undefined) return refuse("no_transport");
-  const transport = grantTransport(grant.connector);
-  if (transport === undefined) return refuse("no_transport");
+  const path = grant.mcpTool === undefined ? resolveVerbPath(grant) : resolveBorrowPath(grant, grant.mcpTool);
+  if (path === undefined) return refuse("no_transport");
 
   const owner = await grantOwnerSubject(ctx.org, grant.connector, grant.ownerPrincipalId);
   if (owner === undefined) return refuse("owner_unresolvable");
@@ -89,7 +109,7 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
     if (burned === null) return refuse("burned");
   }
 
-  const request = definition.compose(grant, input);
+  const send = path.prepare(input);
   const disclosure = credentialGrantDisclosureLine(grant);
   await auditGrant(ctx, "grant.used", ctx.requesterPrincipalId, {
     connector: grant.connector,
@@ -99,11 +119,11 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
     purpose: quotedPurpose(grant.purpose),
     requester: ctx.requesterPrincipalId,
     resource: grant.resource,
-    scopeDigest: composedScopeDigest(request),
+    scopeDigest: send.scopeDigest,
     tier: grant.tier,
     verb: grant.verb,
   });
-  const result = await transport(request, grant, owner);
+  const result = await send.run(owner);
   if (roomNotice !== undefined) {
     try {
       await roomNotice(disclosure, grant);
@@ -111,6 +131,56 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
     }
   }
   return { disclosure, ok: true, result };
+}
+
+interface GrantSendPath {
+  prepare(input: Readonly<Record<string, unknown>>): GrantSend;
+}
+
+interface GrantSend {
+  readonly scopeDigest: string;
+  run(owner: GrantOwnerSubject): Promise<unknown>;
+}
+
+function resolveVerbPath(grant: CredentialGrantRow): GrantSendPath | undefined {
+  const definition = grantableVerb(grant.verb);
+  if (definition === undefined) return undefined;
+  const transport = grantTransport(grant.connector);
+  if (transport === undefined) return undefined;
+  return {
+    prepare: (input) => {
+      const request = definition.compose(grant, input);
+      return { run: async (owner) => await transport(request, grant, owner), scopeDigest: composedScopeDigest(request) };
+    },
+  };
+}
+
+function resolveBorrowPath(grant: CredentialGrantRow, mcpTool: string): GrantSendPath | undefined {
+  const spec = connectorTransportSpec(grant.connector);
+  if (spec === undefined) return undefined;
+  const transport = grantBorrowTransport(grant.connector);
+  if (transport === undefined) return undefined;
+  return {
+    prepare: (input) => ({
+      run: async (owner) => await transport({ input, mcpTool }, grant, owner),
+      scopeDigest: borrowScopeDigest(spec.directUrl, mcpTool, input, grant.frozenArgs ?? {}),
+    }),
+  };
+}
+
+export function borrowScopeDigest(
+  directUrl: string,
+  mcpTool: string,
+  input: Readonly<Record<string, unknown>>,
+  frozenArgs: Readonly<Record<string, unknown>>,
+): string {
+  let host = "unparseable";
+  try {
+    host = new URL(directUrl).host;
+  } catch {
+  }
+  const keys = [...new Set([...Object.keys(input), ...Object.keys(frozenArgs)])].sort().join(",");
+  return `mcp ${host} tools/call ${quotedPurpose(mcpTool)} keys:${keys}`;
 }
 
 export function composedScopeDigest(request: GrantedRequest): string {

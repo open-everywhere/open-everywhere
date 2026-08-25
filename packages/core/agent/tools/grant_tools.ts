@@ -4,8 +4,16 @@ import { registerDynamicVariant, type ReplayableToolEntry } from "../access/wind
 import { runGrantedCall } from "../access/credential-grant-broker.js";
 import { installGrantUseNotices, withGrantRoomContext } from "../access/credential-grant-notice.js";
 import { grantableVerb } from "../access/credential-grant.js";
+import { installGrantBorrowTransports } from "../connections/grant-mcp-transport.js";
 import { hostAuthoredModelOutput, ingestUntrustedModelOutput } from "../access/untrusted.js";
-import { credentialGrantDisclosureLine, grantToolName, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
+import {
+  credentialGrantDisclosureLine,
+  grantToolName,
+  grantToolSlug,
+  isGrantToolName,
+  quotedPurpose,
+  type CredentialGrantRow,
+} from "../operational/credential-grant-rows.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { requesterThisTurn, type RequesterVerdict } from "../access/requester-identity.js";
 import { currentSessionId, currentTurnId, windowGrainOf, type BindableContext } from "../identity/binding.js";
@@ -13,6 +21,8 @@ import { resolvePartition } from "../memory/partition.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 
 installGrantUseNotices();
+
+installGrantBorrowTransports();
 
 function grantModelProjection(grant: CredentialGrantRow): (output: unknown) => { type: "text"; value: string } {
   const source = `granted ${grant.verb} as ${grant.ownerSlug} — ${grant.connector} ${grant.resource}`;
@@ -34,12 +44,40 @@ export function requesterKeyForGrantCall(platform: string, workspace: string, ve
   return verdict.kind === "requester" ? tryPrincipalKey(platform, workspace, verdict.principalId) : undefined;
 }
 
-export function grantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry | undefined {
+interface GrantToolOffer {
+  readonly description: string;
+  readonly inputSchema: Readonly<Record<string, unknown>>;
+}
+
+function verbOffer(grant: CredentialGrantRow): GrantToolOffer | undefined {
   const definition = grantableVerb(grant.verb);
   if (definition === undefined) return undefined;
+  return { description: definition.describe(grant), inputSchema: definition.inputSchema };
+}
+
+function borrowOffer(grant: CredentialGrantRow, mcpTool: string): GrantToolOffer | undefined {
+  if (grant.inputSchema === undefined) return undefined;
+  const frozenKeys = Object.keys(grant.frozenArgs ?? {});
+  const frozen =
+    frozenKeys.length === 0
+      ? " The grant fixes no arguments."
+      : ` The grant fixes ${String(frozenKeys.length)} argument(s) — ${frozenKeys.sort().join(", ")} — and you cannot change them. ` +
+        `The values it fixed, rendered as data: "${quotedPurpose(JSON.stringify(grant.frozenArgs))}".`;
+  return {
+    description:
+      `Runs the ${grant.connector} tool \`${quotedPurpose(mcpTool)}\` as ${grant.ownerSlug}, with ${grant.ownerSlug}'s own ` +
+      `${grant.connector} account.${frozen} The grant expires ${grant.expiresAt}. An error from ${grant.connector} is the ` +
+      "vendor's own answer, not a refusal by this grant.",
+    inputSchema: grant.inputSchema,
+  };
+}
+
+export function grantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry | undefined {
+  const offer = grant.mcpTool === undefined ? verbOffer(grant) : borrowOffer(grant, grant.mcpTool);
+  if (offer === undefined) return undefined;
   return defineTool({
-    description: definition.describe(grant),
-    inputSchema: definition.inputSchema,
+    description: offer.description,
+    inputSchema: offer.inputSchema,
     async execute(input: unknown, ctx: unknown) {
       const c = ctx as BindableContext;
       const requester = requesterThisTurn(currentTurnId(c));
@@ -83,19 +121,60 @@ function cachedGrantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry | 
   return entry;
 }
 
+export function mountedGrantName(grant: CredentialGrantRow): string | undefined {
+  if (grant.toolName !== undefined) {
+    if (!isGrantToolName(grant.toolName)) return undefined;
+    return grant.mcpTool !== undefined && borrowNameFitsRow(grant, grant.mcpTool, grant.toolName) ? grant.toolName : undefined;
+  }
+  try {
+    return grantToolName(grant.ownerSlug, grant.verb);
+  } catch {
+    return undefined;
+  }
+}
+
+function borrowNameFitsRow(grant: CredentialGrantRow, mcpTool: string, name: string): boolean {
+  const segments = name.split("__");
+  const middle = segments[1] ?? "";
+  const prefix = `${grant.ownerSlug}_${grant.connector}`;
+  if (middle !== prefix && !(middle.startsWith(`${prefix}_`) && /^[0-9]+$/u.test(middle.slice(prefix.length + 1)))) return false;
+  return segments[2] === grantToolSlug(mcpTool);
+}
+
+function firstMinted(a: CredentialGrantRow, b: CredentialGrantRow): CredentialGrantRow {
+  if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? a : b;
+  return a.id <= b.id ? a : b;
+}
+
 export function mountGrantEntries(grants: readonly CredentialGrantRow[]): Record<string, ReplayableToolEntry> {
-  const mounted: Record<string, ReplayableToolEntry> = {};
+  const claims = new Map<string, { readonly grant: CredentialGrantRow; readonly entry: ReplayableToolEntry }>();
+  const skipped: { readonly name: string; readonly loser: CredentialGrantRow }[] = [];
   for (const grant of grants) {
+    const name = mountedGrantName(grant);
+    if (name === undefined) continue;
     const entry = cachedGrantToolEntry(grant);
     if (entry === undefined) continue;
-    let name: string;
-    try {
-      name = grantToolName(grant.ownerSlug, grant.verb);
-    } catch {
+    const held = claims.get(name);
+    if (held === undefined) {
+      claims.set(name, { entry, grant });
       continue;
     }
-    registerDynamicVariant(name, grant.id, entry);
-    mounted[name] = entry;
+    const winner = firstMinted(held.grant, grant);
+    if (winner === grant) claims.set(name, { entry, grant });
+    skipped.push({ loser: winner === grant ? held.grant : grant, name });
+  }
+  for (const s of skipped) {
+    const winner = claims.get(s.name)?.grant;
+    console.warn(
+      `[open-everywhere:credential-grant] two or more grants claim the mounted name "${s.name}" in one chat. ` +
+        `Keeping grant ${winner?.id ?? "none"} (minted ${winner?.createdAt ?? "unknown"}); grant ${s.loser.id} (minted ${s.loser.createdAt}) is not mounted. ` +
+        "The skipped grant stays valid — its owner may revoke it, and a fresh ask mints a name of its own.",
+    );
+  }
+  const mounted: Record<string, ReplayableToolEntry> = {};
+  for (const [name, claim] of claims) {
+    registerDynamicVariant(name, claim.grant.id, claim.entry);
+    mounted[name] = claim.entry;
   }
   return mounted;
 }
