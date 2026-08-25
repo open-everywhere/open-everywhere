@@ -237,7 +237,7 @@ await check("fetchCombinedStatusForSha: gh ENOENT + a token falls back to REST a
   const result = await fetchCombinedStatusForSha({ sha: SHA, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
   assert.equal(result.ok, true);
   if (result.ok) assert.deepEqual(result.statuses, [{ context: CLOUD_PROOF_CONTEXT, state: "success" }]);
-  assert.equal(calls[0].url, `${GITHUB_API_BASE}/repos/acme/oe/commits/${SHA}/status`);
+  assert.equal(calls[0].url, `${GITHUB_API_BASE}/repos/acme/oe/commits/${SHA}/status?per_page=100`);
 });
 
 await check("runCiGate: gh ENOENT + REST fallback → GREEN check-runs PASSES, same verdict as the gh path", async () => {
@@ -704,4 +704,272 @@ await check("runCiGate: any GitHub check-run present at all means oe/cloud-proof
   );
 });
 
-console.log(`✓ deploy-ci-gate: ${checks} check(s) passed (classification, decision matrix, spawn-trap seam, fetch→decide, walk-back, oe/cloud-proof lane, REST fallback transport — all offline)`);
+const greenRuns = (n: number): Record<string, unknown>[] => Array.from({ length: n }, (_, i) => ({ name: `shard ${i}`, status: "completed", conclusion: "success" }));
+
+const otherStatuses = (n: number): Record<string, unknown>[] => Array.from({ length: n }, (_, i) => ({ context: `other/check-${i}`, state: "success" }));
+
+const execOk: ExecResult = { code: 0, stdout: "", stderr: "" };
+const ghStdout = (body: unknown): ExecResult => ({ code: 0, stdout: JSON.stringify(body), stderr: "" });
+
+await check("REST fallback: a network failure DURING the body read REFUSES with a named reason, never escapes as a raw throw", async () => {
+  const midBodyFail: GithubApiFetchLike = async () => ({
+    status: 200,
+    text: async () => {
+      throw new Error("socket hang up");
+    },
+  });
+  const result = await fetchCheckRunsForSha({ sha: SHA, exec: NO_GH_EXEC, fetchImpl: midBodyFail, env: TOKEN_ENV });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.match(result.reason, /REST fallback GET/);
+    assert.match(result.reason, /socket hang up/);
+  }
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl: midBodyFail, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /could not read CI state/);
+});
+
+await check("REST fallback: the same response shape with a readable body PASSES — negative control for the mid-body refusal", async () => {
+  const okBody: GithubApiFetchLike = async () => ({ status: 200, text: async () => JSON.stringify({ total_count: 2, check_runs: GREEN }) });
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl: okBody, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "pass");
+});
+
+await check("REST fallback: HTTP 500 REFUSES, naming the status and the body", async () => {
+  const fetchImpl = routedRestFetch({ "/check-runs": { status: 500, body: { message: "Server Error" } } }, []);
+  const result = await fetchCheckRunsForSha({ sha: SHA, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.match(result.reason, /HTTP 500/);
+    assert.match(result.reason, /Server Error/);
+  }
+});
+
+await check("REST fallback: the same body at HTTP 200 refuses for the missing array instead — negative control for the HTTP 500 branch", async () => {
+  const fetchImpl = routedRestFetch({ "/check-runs": { status: 200, body: { message: "Server Error" } } }, []);
+  const result = await fetchCheckRunsForSha({ sha: SHA, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.match(result.reason, /no `check_runs` array/);
+    assert.equal(/HTTP 500/.test(result.reason), false);
+  }
+});
+
+await check("REST fallback: a non-JSON body (an HTML error page) REFUSES, naming it as not JSON", async () => {
+  const nonJson: GithubApiFetchLike = async () => ({ status: 200, text: async () => "<html><body>502 Bad Gateway</body></html>" });
+  const result = await fetchCheckRunsForSha({ sha: SHA, exec: NO_GH_EXEC, fetchImpl: nonJson, env: TOKEN_ENV });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.match(result.reason, /not JSON/);
+    assert.match(result.reason, /502 Bad Gateway/);
+  }
+});
+
+await check("REST fallback: an EMPTY check_runs array is never 'nothing to block on' — it routes to the cloud-proof lane, and a red proof there REFUSES", async () => {
+  const fetchImpl = routedRestFetch(
+    {
+      "/check-runs": { status: 200, body: { total_count: 0, check_runs: [] } },
+      "/status": { status: 200, body: { total_count: 1, statuses: [{ context: CLOUD_PROOF_CONTEXT, state: "failure" }] } },
+    },
+    [],
+  );
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /\bred\b/);
+});
+
+await check("REST fallback: the same empty check_runs array with a GREEN oe/cloud-proof PASSES — negative control for the empty-array route", async () => {
+  const fetchImpl = routedRestFetch(
+    {
+      "/check-runs": { status: 200, body: { total_count: 0, check_runs: [] } },
+      "/status": { status: 200, body: { total_count: 1, statuses: [{ context: CLOUD_PROOF_CONTEXT, state: "success" }] } },
+    },
+    [],
+  );
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "pass");
+});
+
+await check("runCiGate: a check-runs page whose total_count EXCEEDS it REFUSES — the shape a stripped or ignored per_page produces", async () => {
+  const fetchImpl = routedRestFetch({ "/check-runs": { status: 200, body: { total_count: 150, check_runs: greenRuns(30) } } }, []);
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /does not describe itself consistently/);
+  assert.match(decision.message, /total_count=150/);
+  assert.match(decision.message, /30 record/);
+});
+
+await check("runCiGate: a FULL check-runs page REFUSES even when total_count agrees — completeness rests on the page bound, not on total_count", async () => {
+  const fetchImpl = routedRestFetch({ "/check-runs": { status: 200, body: { total_count: 100, check_runs: greenRuns(100) } } }, []);
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /fills a whole page/);
+});
+
+await check("runCiGate: a SHORT check-runs page with a matching total_count PASSES — negative control for both truncation branches", async () => {
+  const fetchImpl = routedRestFetch({ "/check-runs": { status: 200, body: { total_count: 99, check_runs: greenRuns(99) } } }, []);
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "pass");
+});
+
+await check("fetchCheckRunsForSha: a total_count BELOW the delivered length also REFUSES — a self-inconsistent response is never trusted", async () => {
+  const result = await fetchCheckRunsForSha({ sha: SHA, exec: async () => ghStdout({ total_count: 2, check_runs: greenRuns(5) }), fetchImpl: PANIC_FETCH, env: NO_TOKEN_ENV });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.match(result.reason, /does not describe itself consistently/);
+    assert.match(result.reason, /total_count=2/);
+  }
+});
+
+await check("runCiGate: the truncation refusal is NOT REST-specific — the `gh` transport refuses the identical body", async () => {
+  const decision = await runCiGate({
+    sha: SHA,
+    isTip: true,
+    exec: async () => ghStdout({ total_count: 150, check_runs: greenRuns(30) }),
+    fetchImpl: PANIC_FETCH,
+    env: NO_TOKEN_ENV,
+  });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /does not describe itself consistently/);
+});
+
+await check("fetchCheckRunsForSha: a FULL page with no total_count REFUSES; a short page without one still parses", async () => {
+  const full = await fetchCheckRunsForSha({ sha: SHA, exec: async () => ghStdout({ check_runs: greenRuns(100) }), fetchImpl: PANIC_FETCH, env: NO_TOKEN_ENV });
+  assert.equal(full.ok, false);
+  if (!full.ok) assert.match(full.reason, /fills a whole page/);
+  const short = await fetchCheckRunsForSha({ sha: SHA, exec: async () => ghStdout({ check_runs: greenRuns(99) }), fetchImpl: PANIC_FETCH, env: NO_TOKEN_ENV });
+  assert.equal(short.ok, true);
+  if (short.ok) assert.equal(short.checkRuns.length, 99);
+});
+
+function recordingNoGhExec(calls: string[], revListCode = 128): Exec {
+  return async (command, args) => {
+    calls.push(`${command} ${args.join(" ")}`);
+    if (command === "gh") return GH_ENOENT;
+    if (command === "git" && args[0] === "rev-list") return { code: revListCode, stdout: "", stderr: "fatal: bad revision" };
+    return execOk;
+  };
+}
+
+await check(
+  "runCiGate: a TRUNCATED combined-status page REFUSES and never enters the walk-back — an ancestor's green proof can no longer stand in for this sha's unread red",
+  async () => {
+    const calls: string[] = [];
+    const fetchImpl = routedRestFetch(
+      {
+        "/check-runs": { status: 200, body: { total_count: 0, check_runs: [] } },
+        "/status": { status: 200, body: { total_count: 45, statuses: otherStatuses(30) } },
+      },
+      [],
+    );
+    const decision = await runCiGate({ sha: SHA, isTip: true, exec: recordingNoGhExec(calls), fetchImpl, env: TOKEN_ENV });
+    assert.equal(decision.verdict, "refuse");
+    assert.match(decision.message, /does not describe itself consistently/);
+    assert.match(decision.message, /total_count=45/);
+    assert.equal(
+      calls.some((c) => c.includes("rev-list")),
+      false,
+      "the walk-back must never run over a status page that could not be read completely",
+    );
+  },
+);
+
+await check("runCiGate: a COMPLETE status page with no oe/cloud-proof DOES enter the walk-back — negative control for the truncation refusal", async () => {
+  const calls: string[] = [];
+  const fetchImpl = routedRestFetch(
+    {
+      "/check-runs": { status: 200, body: { total_count: 0, check_runs: [] } },
+      "/status": { status: 200, body: { total_count: 30, statuses: otherStatuses(30) } },
+    },
+    [],
+  );
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: recordingNoGhExec(calls), fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /could not list ancestor commits/);
+  assert.equal(/does not describe itself consistently/.test(decision.message), false);
+  assert.equal(
+    calls.some((c) => c.includes("rev-list")),
+    true,
+    "a complete status page with no oe/cloud-proof must still walk back, exactly as before",
+  );
+});
+
+await check(
+  "runCiGate: a FULL status page REFUSES even when total_count agrees — an ancestor's green proof can never stand in for a proof that merely paged off",
+  async () => {
+    const calls: string[] = [];
+    const fetchImpl = routedRestFetch(
+      {
+        "/check-runs": { status: 200, body: { total_count: 0, check_runs: [] } },
+        "/status": { status: 200, body: { total_count: 100, statuses: otherStatuses(100) } },
+      },
+      [],
+    );
+    const decision = await runCiGate({ sha: SHA, isTip: true, exec: recordingNoGhExec(calls), fetchImpl, env: TOKEN_ENV });
+    assert.equal(decision.verdict, "refuse");
+    assert.match(decision.message, /fills a whole page/);
+    assert.equal(
+      calls.some((c) => c.includes("rev-list")),
+      false,
+      "the walk-back must never run over a status page that fills the per_page bound",
+    );
+  },
+);
+
+await check("runCiGate: a SHORT status page with a matching total_count still reaches the walk-back — negative control for the status page bound", async () => {
+  const calls: string[] = [];
+  const fetchImpl = routedRestFetch(
+    {
+      "/check-runs": { status: 200, body: { total_count: 0, check_runs: [] } },
+      "/status": { status: 200, body: { total_count: 99, statuses: otherStatuses(99) } },
+    },
+    [],
+  );
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: recordingNoGhExec(calls), fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /could not list ancestor commits/);
+  assert.equal(
+    calls.some((c) => c.includes("rev-list")),
+    true,
+    "a provably complete status page with no oe/cloud-proof must still walk back",
+  );
+});
+
+await check("walkBackForCloudProof: a truncated status page on an ANCESTOR refuses too — the walk never reads a partial page as 'keep going'", async () => {
+  const fetchImpl = routedRestFetch({ "/status": { status: 200, body: { total_count: 45, statuses: otherStatuses(30) } } }, []);
+  const exec: Exec = async (command, args) => {
+    if (command === "gh") return GH_ENOENT;
+    if (command === "git" && args[0] === "rev-list") return { code: 0, stdout: `${SHA}\n${A1}\n`, stderr: "" };
+    return execOk;
+  };
+  const decision = await walkBackForCloudProof({ sha: SHA, exec, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /does not describe itself consistently/);
+  assert.match(decision.message, new RegExp(A1.slice(0, 12)));
+});
+
+await check("the four refusal cases still name themselves — red / in flight / no run yet / transport failure never blur into one another", async () => {
+  const restRefusal = async (checkRuns: unknown): Promise<string> => {
+    const fetchImpl = routedRestFetch({ "/check-runs": { status: 200, body: checkRuns } }, []);
+    const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+    assert.equal(decision.verdict, "refuse");
+    return decision.message;
+  };
+
+  const cases = [
+    { label: "red", own: /CI is red for/, message: await restRefusal({ total_count: 2, check_runs: [GREEN[0], { name: HEAVY_JOB_NAME, status: "completed", conclusion: "failure" }] }) },
+    { label: "in flight", own: /still in flight/, message: await restRefusal({ total_count: 2, check_runs: [GREEN[0], { name: HEAVY_JOB_NAME, status: "in_progress", conclusion: null }] }) },
+    { label: "no run yet", own: /no CI run found yet/, message: decideCiGate({ sha: SHA, checkRuns: [], isTip: true }).message },
+    { label: "transport failure", own: /could not read CI state/, message: await restRefusal({ total_count: 150, check_runs: greenRuns(30) }) },
+  ];
+
+  for (const c of cases) {
+    assert.match(c.message, c.own, `the ${c.label} refusal must name its own case`);
+    for (const other of cases) {
+      if (other.label === c.label) continue;
+      assert.equal(other.own.test(c.message), false, `the ${c.label} refusal must not read as ${other.label}`);
+    }
+  }
+});
+
+console.log(`✓ deploy-ci-gate: ${checks} check(s) passed (classification, decision matrix, spawn-trap seam, fetch→decide, walk-back, oe/cloud-proof lane, REST fallback transport, fail-closed fetch edge — all offline)`);

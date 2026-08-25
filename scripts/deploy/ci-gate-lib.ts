@@ -170,52 +170,76 @@ async function fetchGithubApi(input: {
 
   const url = `${GITHUB_API_BASE}/repos/${ownerRepo.owner}/${ownerRepo.repo}/${input.restPathSuffix}`;
   let httpRes: { status: number; text(): Promise<string> };
+  let text: string;
   try {
     httpRes = await input.fetchImpl(url, { headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json" } });
+    text = await httpRes.text();
   } catch (err) {
     return { ok: false, reason: `REST fallback GET ${url} failed: ${err instanceof Error ? err.message : String(err)}` };
   }
-  const text = await httpRes.text();
   if (httpRes.status < 200 || httpRes.status >= 300) {
     return { ok: false, reason: `REST fallback GET ${url} → HTTP ${httpRes.status}: ${text.slice(0, 500)}` };
   }
   return parseJsonBody(text);
 }
 
+export const GITHUB_API_PAGE_SIZE = 100;
+
+function truncationReason(input: { body: Record<string, unknown>; received: number; what: string }): string | undefined {
+  if (input.received >= GITHUB_API_PAGE_SIZE) {
+    return (
+      `the ${input.what} response fills a whole page (${input.received} record(s), the per_page bound this gate asks for), ` +
+      "so GitHub may hold more behind it. This gate reads one page, and a red record beyond it would be invisible — " +
+      "refusing rather than passing on a read that cannot be shown to be complete."
+    );
+  }
+  const raw = input.body.total_count;
+  const total = typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+  if (total !== undefined && total !== input.received) {
+    return (
+      `the ${input.what} response does not describe itself consistently: GitHub reports total_count=${total} but this page carries ${input.received} record(s). ` +
+      "This gate cannot tell which is the true set — refusing rather than passing on a read it cannot trust."
+    );
+  }
+  return undefined;
+}
+
 export type FetchCheckRunsResult = { ok: true; checkRuns: CheckRun[] } | { ok: false; reason: string };
 
-function parseCheckRunsResponse(body: unknown): CheckRun[] | undefined {
-  if (!body || typeof body !== "object") return undefined;
-  const raw = (body as Record<string, unknown>).check_runs;
-  if (!Array.isArray(raw)) return undefined;
+function parseCheckRunsResponse(body: unknown): FetchCheckRunsResult {
+  const noArray = { ok: false as const, reason: "the check-runs response has no `check_runs` array — cannot evaluate CI state" };
+  if (!body || typeof body !== "object") return noArray;
+  const rec = body as Record<string, unknown>;
+  const raw = rec.check_runs;
+  if (!Array.isArray(raw)) return noArray;
+
+  const truncated = truncationReason({ body: rec, received: raw.length, what: "check-runs" });
+  if (truncated) return { ok: false, reason: truncated };
+
   const runs: CheckRun[] = [];
   for (const entry of raw) {
     if (!entry || typeof entry !== "object") continue;
-    const rec = entry as Record<string, unknown>;
+    const entryRec = entry as Record<string, unknown>;
     runs.push({
-      name: typeof rec.name === "string" ? rec.name : "unnamed check-run",
-      status: typeof rec.status === "string" ? rec.status : "unknown",
-      conclusion: typeof rec.conclusion === "string" ? rec.conclusion : null,
+      name: typeof entryRec.name === "string" ? entryRec.name : "unnamed check-run",
+      status: typeof entryRec.status === "string" ? entryRec.status : "unknown",
+      conclusion: typeof entryRec.conclusion === "string" ? entryRec.conclusion : null,
     });
   }
-  return runs;
+  return { ok: true, checkRuns: runs };
 }
 
 export async function fetchCheckRunsForSha(input: { sha: string; exec?: Exec; fetchImpl?: GithubApiFetchLike; env?: Env }): Promise<FetchCheckRunsResult> {
   const raw = await fetchGithubApi({
-    ghArgs: ["api", `repos/{owner}/{repo}/commits/${input.sha}/check-runs`, "--method", "GET", "-f", "per_page=100"],
-    restPathSuffix: `commits/${input.sha}/check-runs?per_page=100`,
+    ghArgs: ["api", `repos/{owner}/{repo}/commits/${input.sha}/check-runs`, "--method", "GET", "-f", `per_page=${GITHUB_API_PAGE_SIZE}`],
+    restPathSuffix: `commits/${input.sha}/check-runs?per_page=${GITHUB_API_PAGE_SIZE}`,
     exec: input.exec ?? realExec,
     fetchImpl: input.fetchImpl ?? realGithubApiFetch,
     env: input.env ?? process.env,
   });
   if (!raw.ok) return { ok: false, reason: raw.reason };
 
-  const checkRuns = parseCheckRunsResponse(raw.body);
-  if (checkRuns === undefined) {
-    return { ok: false, reason: "the check-runs response has no `check_runs` array — cannot evaluate CI state" };
-  }
-  return { ok: true, checkRuns };
+  return parseCheckRunsResponse(raw.body);
 }
 
 export type HeavyJobStatus =
@@ -311,38 +335,40 @@ export async function walkBackForHeavyProof(input: { sha: string; exec?: Exec; m
 
 export type CommitStatus = { context: string; state: string };
 
-function parseCombinedStatusResponse(body: unknown): CommitStatus[] | undefined {
-  if (!body || typeof body !== "object") return undefined;
-  const raw = (body as Record<string, unknown>).statuses;
-  if (!Array.isArray(raw)) return undefined;
+export type FetchCombinedStatusResult = { ok: true; statuses: CommitStatus[] } | { ok: false; reason: string };
+
+function parseCombinedStatusResponse(body: unknown): FetchCombinedStatusResult {
+  const noArray = { ok: false as const, reason: "the combined status response has no `statuses` array — cannot evaluate cloud-proof state" };
+  if (!body || typeof body !== "object") return noArray;
+  const rec = body as Record<string, unknown>;
+  const raw = rec.statuses;
+  if (!Array.isArray(raw)) return noArray;
+
+  const truncated = truncationReason({ body: rec, received: raw.length, what: "combined status" });
+  if (truncated) return { ok: false, reason: truncated };
+
   const statuses: CommitStatus[] = [];
   for (const entry of raw) {
     if (!entry || typeof entry !== "object") continue;
-    const rec = entry as Record<string, unknown>;
-    if (typeof rec.context === "string" && typeof rec.state === "string") {
-      statuses.push({ context: rec.context, state: rec.state });
+    const entryRec = entry as Record<string, unknown>;
+    if (typeof entryRec.context === "string" && typeof entryRec.state === "string") {
+      statuses.push({ context: entryRec.context, state: entryRec.state });
     }
   }
-  return statuses;
+  return { ok: true, statuses };
 }
-
-export type FetchCombinedStatusResult = { ok: true; statuses: CommitStatus[] } | { ok: false; reason: string };
 
 export async function fetchCombinedStatusForSha(input: { sha: string; exec?: Exec; fetchImpl?: GithubApiFetchLike; env?: Env }): Promise<FetchCombinedStatusResult> {
   const raw = await fetchGithubApi({
-    ghArgs: ["api", `repos/{owner}/{repo}/commits/${input.sha}/status`, "--method", "GET"],
-    restPathSuffix: `commits/${input.sha}/status`,
+    ghArgs: ["api", `repos/{owner}/{repo}/commits/${input.sha}/status`, "--method", "GET", "-f", `per_page=${GITHUB_API_PAGE_SIZE}`],
+    restPathSuffix: `commits/${input.sha}/status?per_page=${GITHUB_API_PAGE_SIZE}`,
     exec: input.exec ?? realExec,
     fetchImpl: input.fetchImpl ?? realGithubApiFetch,
     env: input.env ?? process.env,
   });
   if (!raw.ok) return { ok: false, reason: raw.reason };
 
-  const statuses = parseCombinedStatusResponse(raw.body);
-  if (statuses === undefined) {
-    return { ok: false, reason: "the combined status response has no `statuses` array — cannot evaluate cloud-proof state" };
-  }
-  return { ok: true, statuses };
+  return parseCombinedStatusResponse(raw.body);
 }
 
 export type CloudProofStatus = { kind: "success" } | { kind: "absent" } | { kind: "pending" } | { kind: "red"; state: string };
