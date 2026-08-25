@@ -1,5 +1,7 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { ENV_READ_ALLOWLIST, auditEnvReads } from "./env-read-allowlist.js";
 
 const CODE_ROOTS = ["agent", "packages"];
 const DOC_ROOTS = ["docs"];
@@ -61,7 +63,8 @@ for (const [name, where] of [...reads].sort((a, b) => a[0].localeCompare(b[0])))
   if (isDocumented) documentedCount++;
   if (listMode) {
     const status = isDocumented ? "documented" : GRANDFATHERED.has(name) ? "GRANDFATHERED" : "UNDOCUMENTED";
-    console.log(`  ${status.padEnd(14)} ${name}  (${where.length} file(s), e.g. ${where[0]})`);
+    const klass = ENV_READ_ALLOWLIST.get(name)?.klass ?? "NOT-ALLOWLISTED";
+    console.log(`  ${status.padEnd(14)} ${klass.padEnd(18)} ${name}  (${where.length} file(s), e.g. ${where[0]})`);
   }
   if (!isDocumented && !GRANDFATHERED.has(name)) {
     reds.push(
@@ -90,6 +93,8 @@ for (const name of GRANDFATHERED) {
   }
 }
 
+reds.push(...auditEnvReads(reads));
+
 const REVERSE_SCAN_ROOTS = ["agent", "packages", "scripts", "tests", "deploy"];
 
 const REVERSE_EXEMPT = new Map<string, string>([
@@ -111,10 +116,26 @@ const REVERSE_EXEMPT = new Map<string, string>([
   ],
 ]);
 
+const REVERSE_SCAN_SELF = [
+  "scripts/env-docs-lint.ts",
+  "scripts/env-read-allowlist.ts",
+  "scripts/env-read-allowlist-test.ts",
+];
+const LINT_SOURCE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+for (const self of REVERSE_SCAN_SELF) {
+  if (!existsSync(join(LINT_SOURCE_ROOT, self))) {
+    reds.push(
+      `STALE REVERSE_SCAN_SELF: ${self} is excluded from the reverse arm's scan in scripts/env-docs-lint.ts but no ` +
+        `such file exists — it was renamed or deleted. Update the list, or the file it names is counted as a reader ` +
+        `of every env name it quotes.`,
+    );
+  }
+}
+
 function reverseUsedNames(): Set<string> {
   const files = REVERSE_SCAN_ROOTS.flatMap((root) =>
     filesUnder(root, (name) => (name.endsWith(".ts") || name.endsWith(".js")) && !name.endsWith(".d.ts")),
-  );
+  ).filter((p) => !REVERSE_SCAN_SELF.includes(p));
   const used = new Set<string>();
   for (const file of files) {
     const content = readFileSync(file, "utf8");
@@ -179,8 +200,12 @@ if (reds.length > 0) {
   process.exit(1);
 }
 
+const pendingMigration = [...ENV_READ_ALLOWLIST.values()].filter((e) => e.klass === "pending-migration").length;
+
 console.log(
   `✓ env-docs: ${reads.size} env name(s) read by the runtime — ${documentedCount} documented, ` +
     `${GRANDFATHERED.size} grandfathered (frozen 2026-08-10, must only shrink), 0 new gaps. ` +
-    `Reverse arm: ${documentedNames.size} documented name(s), ${REVERSE_EXEMPT.size} exempt, 0 stale rows.`,
+    `Reverse arm: ${documentedNames.size} documented name(s), ${REVERSE_EXEMPT.size} exempt, 0 stale rows. ` +
+    `Allowlist arm: ${ENV_READ_ALLOWLIST.size} allowed, ${pendingMigration} pending migration to settings ` +
+    `(OPE-1153, must only shrink), 0 unallowed reads.`,
 );
