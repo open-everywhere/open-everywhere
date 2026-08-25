@@ -74,6 +74,7 @@ const rawDomains: Domain[] = [
     credentials: [
       { connector: "slack", credential: "work-token", use: "chat-token" },
       { connector: "linear", credential: "workspace", use: "1a000000-0000-4000-8000-000000000001" },
+      { connector: "notion", credential: "user-oauth", use: "user-oauth-rest" },
     ],
   }),
 

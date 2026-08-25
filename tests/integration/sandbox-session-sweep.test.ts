@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -41,6 +41,27 @@ test("sweepStaleSandboxSessions collects a stale session, leaves the current run
   expect(existsSync(join(templateEntry, "seed.txt"))).toBe(true);
 
   expect(sweepStaleSandboxSessions(root, now)).toBe(0);
+});
+
+test.skipIf(process.getuid?.() === 0)("sweepStaleSandboxSessions clears a stale session even when it ships a read-only subtree", () => {
+  const root = mkdtempSync(join(tmpdir(), "oe-it-fixture-sandbox-sweep-readonly-"));
+  const sessionsDir = join(root, JUST_BASH_SESSIONS_RELPATH);
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const stale = join(sessionsDir, "eve-sbx-ses-just-bash-eee-fff-wrun_01STALERODIRXXXXXXXXXXXX-__root__");
+  const lockedSubdir = join(stale, "fs", "workspace", "memory");
+  mkdirSync(lockedSubdir, { recursive: true });
+  writeFileSync(join(lockedSubdir, "MEMORY.md"), "a locked-down fixture file", "utf8");
+  chmodSync(join(lockedSubdir, "MEMORY.md"), 0o444);
+  chmodSync(lockedSubdir, 0o555);
+  const past = (Date.now() - 60_000) / 1000;
+  utimesSync(stale, past, past);
+
+  const now = Date.now();
+
+  expect(existsSync(stale)).toBe(true);
+  expect(sweepStaleSandboxSessions(root, now)).toBe(1);
+  expect(existsSync(stale)).toBe(false);
 });
 
 test("sweepStaleSandboxSessions returns 0, without throwing, when sessions/ was never minted", () => {
