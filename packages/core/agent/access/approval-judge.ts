@@ -264,7 +264,7 @@ function rulesSigOf(ctx: ApprovalJudgeContext): string {
 
 export interface ApprovalJudgeRun {
   readonly verdict: "allow" | "deny" | "ask" | "defer";
-  readonly source: "cache" | "pass1" | "pass2" | "unavailable" | "error" | "timeout" | "breaker";
+  readonly source: "cache" | "pass1" | "pass2" | "unavailable" | "error" | "timeout" | "admin-disarm";
   readonly reasoning: string;
   readonly cacheKey: string;
   readonly cacheHit: boolean;
@@ -383,10 +383,16 @@ export async function runApprovalJudge(ctx: ApprovalJudgeContext, opts: RunAppro
 
 export const JUDGE_ENFORCE_TIMEOUT_MS = 30_000;
 
-export const APPROVAL_JUDGE_BREAKER_THRESHOLD = 3;
-export const APPROVAL_JUDGE_BREAKER_WINDOW_DAYS = 14;
-
 export const APPROVAL_JUDGE_ADMIN_DISARM = "admin-disarm";
+
+export const APPROVAL_JUDGE_ADMIN_REARM = "admin-rearm";
+
+const LEDGER_READ_LIMIT = 1000;
+
+let testLedgerReadLimit: number | undefined;
+export function setApprovalJudgeLedgerReadLimitForTest(limit: number | undefined): void {
+  testLedgerReadLimit = limit;
+}
 
 export async function recordApprovalJudgeContradiction(
   where: { readonly org: string; readonly platform: string; readonly workspace: string; readonly surface?: string; readonly principalId?: string },
@@ -411,16 +417,20 @@ export async function recordApprovalJudgeContradiction(
   });
 }
 
-export async function approvalJudgeBreakerTripped(domain: string | undefined): Promise<boolean> {
+export async function approvalJudgeAdminDisarmed(domain: string | undefined): Promise<boolean> {
+  if (domain === undefined) return false;
+  const limit = testLedgerReadLimit ?? LEDGER_READ_LIMIT;
   try {
-    const since = new Date(Date.now() - APPROVAL_JUDGE_BREAKER_WINDOW_DAYS * 86_400_000).toISOString();
-    const rows = await readAudit({ action: "approval.judge.contradicted", since, limit: 1000 });
-    const counted = rows.filter((r) => {
-      const d = (r.detail as { domain?: unknown } | undefined)?.domain;
-      return d === undefined || (typeof d === "string" && d === domain);
+    const rows = await readAudit({ action: "approval.judge.contradicted", limit });
+    const latest = rows.find((r) => {
+      const d = r.detail as { domain?: unknown; humanAction?: unknown } | undefined;
+      if (d?.domain !== domain) return false;
+      return d?.humanAction === APPROVAL_JUDGE_ADMIN_DISARM || d?.humanAction === APPROVAL_JUDGE_ADMIN_REARM;
     });
-    if (counted.some((r) => (r.detail as { humanAction?: unknown } | undefined)?.humanAction === APPROVAL_JUDGE_ADMIN_DISARM)) return true;
-    return counted.length >= APPROVAL_JUDGE_BREAKER_THRESHOLD;
+    if (latest !== undefined) {
+      return (latest.detail as { humanAction?: unknown } | undefined)?.humanAction === APPROVAL_JUDGE_ADMIN_DISARM;
+    }
+    return rows.length >= limit;
   } catch {
     return true;
   }

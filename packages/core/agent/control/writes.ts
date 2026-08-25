@@ -14,8 +14,7 @@ import { isModelUsable, reasoningRank } from "../model/policy.js";
 import { reasoningCeilingForDomain } from "../memory/domain.js";
 import { stampHumanEdit } from "../memory/provenance.js";
 import { resolveApprovalClick, isOrgAdminOnlySpendCap } from "../approvals/flow.js";
-import { disarmApprovalJudge } from "../approvals/judge-contradiction.js";
-import { APPROVAL_JUDGE_BREAKER_WINDOW_DAYS } from "../access/approval-judge.js";
+import { disarmApprovalJudge, rearmApprovalJudge } from "../approvals/judge-contradiction.js";
 import { whereFromScope } from "../approvals/actions.js";
 import { supervisorGrainFor } from "../channels/unified-supervisor.js";
 import { listLinkSetsWithIds, purgeLinkSetCredentials, revokeLinkSet, setLinkSetHold } from "../identity/link-store.js";
@@ -39,6 +38,7 @@ export const CONTROL_WRITE_TOOL_NAMES = [
   "clear_domain_model",
   "decide_pending_action",
   "disarm_approval_judge",
+  "rearm_approval_judge",
   "link_sets_list",
   "suspend_link_set",
   "reactivate_link_set",
@@ -308,7 +308,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
     {
       title: "Disarm the approval judge for a domain (break-glass)",
       description:
-        "Turn the LLM approval judge OFF for one domain, now. The judge lifts explicitly defer-flipped gated verbs without a card (agent/access/approval-judge.ts); the automatic contradiction breaker already disarms it after 3 human overrules in 14 days, and this is the operator saying it directly instead of waiting for three. Effect: every defer-flipped verb in the domain falls back to its last-resort approval card, which is the pre-judge behaviour — the degrade never widens access. Recorded as one `approval.judge.contradicted` audit row (humanAction \"admin-disarm\"), and it LIFTS ON ITS OWN after the breaker's 14-day window; there is no re-arm verb. Requires a role covering the domain (a domain:<name> role, or org-wide \"admin\").",
+        "Turn the LLM approval judge OFF for one domain, now. The judge lifts explicitly defer-flipped gated verbs without a card (agent/access/approval-judge.ts), and an operator is the only thing that disarms it — no volume of human overrules does. Effect: every defer-flipped verb in the domain falls back to its last-resort approval card, which is the pre-judge behaviour — the degrade never widens access. Recorded as one `approval.judge.contradicted` audit row (humanAction \"admin-disarm\"). It LASTS UNTIL AN OPERATOR RE-ARMS with `rearm_approval_judge`; no clock lifts it. Requires a role covering the domain (a domain:<name> role, or org-wide \"admin\").",
       inputSchema: { org: z.string().min(1), domain: z.string().min(1) },
     },
     async (a) => {
@@ -317,9 +317,30 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
       try {
         await disarmApprovalJudge({ org: a.org, domain: a.domain, principalId: actor });
         await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "admin.approval.judge_disarm", detail: { domain: a.domain } });
-        return jsonResult({ ok: true, org: a.org, domain: a.domain, disarmed: true, windowDays: APPROVAL_JUDGE_BREAKER_WINDOW_DAYS });
+        return jsonResult({ ok: true, org: a.org, domain: a.domain, disarmed: true });
       } catch (e) {
         return errorResult(`disarm_approval_judge failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "rearm_approval_judge",
+    {
+      title: "Re-arm the approval judge for a domain",
+      description:
+        "Turn the LLM approval judge back ON for one domain, now — the symmetric partner of `disarm_approval_judge` and the only thing that cancels a disarm. Effect: defer-flipped verbs in the domain are judged again, exactly as before the disarm; a domain that was never disarmed is already armed and this call changes nothing. Recorded as one `approval.judge.contradicted` audit row (humanAction \"admin-rearm\"). The ledger is APPEND-ONLY: this cancels the operator's disarm and erases nothing — every human overrule stays in the trail, and overrules drive no automatic behaviour to suppress. Requires a role covering the domain (a domain:<name> role, or org-wide \"admin\").",
+      inputSchema: { org: z.string().min(1), domain: z.string().min(1) },
+    },
+    async (a) => {
+      const denial = scopeDenial(roles, { org: a.org, domain: a.domain });
+      if (denial) return errorResult(denial);
+      try {
+        await rearmApprovalJudge({ org: a.org, domain: a.domain, principalId: actor });
+        await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "admin.approval.judge_rearm", detail: { domain: a.domain } });
+        return jsonResult({ ok: true, org: a.org, domain: a.domain, rearmed: true });
+      } catch (e) {
+        return errorResult(`rearm_approval_judge failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   );

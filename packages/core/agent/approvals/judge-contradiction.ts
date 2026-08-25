@@ -3,7 +3,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { toolForActionKind } from "../access/approver-chain.js";
 import {
   APPROVAL_JUDGE_ADMIN_DISARM,
-  APPROVAL_JUDGE_BREAKER_WINDOW_DAYS,
+  APPROVAL_JUDGE_ADMIN_REARM,
   recordApprovalJudgeContradiction,
 } from "../access/approval-judge.js";
 import { whereFromScope } from "./actions.js";
@@ -37,8 +37,7 @@ export interface ContradictJudgeAllowResult {
 
 async function alreadyContradicted(pendingId: string): Promise<boolean> {
   try {
-    const since = new Date(Date.now() - APPROVAL_JUDGE_BREAKER_WINDOW_DAYS * 86_400_000).toISOString();
-    const rows = await readAudit({ action: "approval.judge.contradicted", since, limit: 1000 });
+    const rows = await readAudit({ action: "approval.judge.contradicted", limit: 1000 });
     return rows.some((r) => (r.detail as { id?: unknown } | undefined)?.id === pendingId);
   } catch {
     return false;
@@ -71,9 +70,9 @@ export async function contradictJudgeAllow(input: ContradictJudgeAllowInput): Pr
 export function judgeContradictionNotice(outcome: ContradictJudgeAllowOutcome): string {
   switch (outcome) {
     case "recorded":
-      return "recorded — the approval judge is now one overrule closer to being disarmed for this domain. This does NOT undo the action; it already ran.";
+      return "recorded — your overrule is in the audit trail for review. It does NOT undo the action (it already ran) and it does not turn the approval judge off; an operator does that with the control plane's disarm.";
     case "already-recorded":
-      return "this action was already flagged, so it still counts once. Nothing changed.";
+      return "this action was already flagged, so it is in the trail once. Nothing changed.";
     case "not-judge-lift":
       return "this action was not auto-approved by the approval judge, so there is no judge verdict to overrule.";
     case "unknown":
@@ -87,6 +86,8 @@ export interface DisarmApprovalJudgeInput {
   readonly principalId: string;
 }
 
+export type RearmApprovalJudgeInput = DisarmApprovalJudgeInput;
+
 export async function disarmApprovalJudge(input: DisarmApprovalJudgeInput): Promise<void> {
   await recordApprovalJudgeContradiction(
     { ...whereFromScope(input.org, input.domain), principalId: input.principalId },
@@ -94,6 +95,17 @@ export async function disarmApprovalJudge(input: DisarmApprovalJudgeInput): Prom
       domain: input.domain,
       judgeVerdict: "allow",
       humanAction: APPROVAL_JUDGE_ADMIN_DISARM,
+      route: "control",
+    },
+  );
+}
+
+export async function rearmApprovalJudge(input: RearmApprovalJudgeInput): Promise<void> {
+  await recordApprovalJudgeContradiction(
+    { ...whereFromScope(input.org, input.domain), principalId: input.principalId },
+    {
+      domain: input.domain,
+      humanAction: APPROVAL_JUDGE_ADMIN_REARM,
       route: "control",
     },
   );

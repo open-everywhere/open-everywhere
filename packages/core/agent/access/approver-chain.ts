@@ -3,14 +3,13 @@ import { awsCommandVerdict, type AwsScreenInput } from "./aws-screen.js";
 import { untrustedIngestedThisTurn, taintKindsThisTurn } from "./taint-signal.js";
 import { taintMode, type TaintMode } from "./taint-enforcement.js";
 import {
-  approvalJudgeBreakerTripped,
+  approvalJudgeAdminDisarmed,
   approvalJudgeMode,
   judgeContextOf,
   judgeVerdictCacheKey,
   JUDGE_ENFORCE_TIMEOUT_MS,
   runApprovalJudge,
-  APPROVAL_JUDGE_BREAKER_THRESHOLD,
-  APPROVAL_JUDGE_BREAKER_WINDOW_DAYS,
+  APPROVAL_JUDGE_ADMIN_DISARM,
   type ApprovalJudgeRun,
 } from "./approval-judge.js";
 import type { ResolvedPreApprovalRule } from "./pre-approval-rules.js";
@@ -334,11 +333,11 @@ export async function resolveApproverChain(
     judgeDeferredTool(req.tool) &&
     approvalJudgeMode() === "enforce"
   ) {
-    if (await approvalJudgeBreakerTripped(req.domain)) {
+    if (await approvalJudgeAdminDisarmed(req.domain)) {
       judgeRun = {
         verdict: "defer",
-        source: "breaker",
-        reasoning: `judge disarmed: ≥${APPROVAL_JUDGE_BREAKER_THRESHOLD} human-contradicted verdicts within ${APPROVAL_JUDGE_BREAKER_WINDOW_DAYS}d`,
+        source: "admin-disarm",
+        reasoning: `judge disarmed for this domain by an operator (${APPROVAL_JUDGE_ADMIN_DISARM}) — re-arm with the control plane's rearm_approval_judge`,
         cacheKey: judgeVerdictCacheKey(req.tool),
         cacheHit: false,
         passes: 0,

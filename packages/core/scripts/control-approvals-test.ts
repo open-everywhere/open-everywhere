@@ -179,15 +179,18 @@ await client.connect(clientT);
 }
 
 {
-  const { approvalJudgeBreakerTripped } = await import("../agent/access/approval-judge.js");
+  const { approvalJudgeAdminDisarmed } = await import("../agent/access/approval-judge.js");
   const contradictions = async () =>
     (await readAudit({ action: "approval.judge.contradicted" })) as { principalId?: string; detail?: Record<string, unknown> }[];
 
   ok("disarm_approval_judge is a declared WRITE tool", (CONTROL_WRITE_TOOL_NAMES as readonly string[]).includes("disarm_approval_judge"));
-  ok("the read-only server does NOT expose it", !Object.keys((buildControlServer() as unknown as { _registeredTools: Record<string, unknown> })._registeredTools).includes("disarm_approval_judge"));
+  ok("rearm_approval_judge is a declared WRITE tool", (CONTROL_WRITE_TOOL_NAMES as readonly string[]).includes("rearm_approval_judge"));
+  const readOnlyNames = Object.keys((buildControlServer() as unknown as { _registeredTools: Record<string, unknown> })._registeredTools);
+  ok("the read-only server does NOT expose the disarm", !readOnlyNames.includes("disarm_approval_judge"));
+  ok("🔴 the read-only server does NOT expose the rearm either — re-arming a judge an operator turned off is a WRITE", !readOnlyNames.includes("rearm_approval_judge"));
 
-  ok("the target domain's judge reads ARMED before the call", (await approvalJudgeBreakerTripped("eng")) === false);
-  ok("no contradiction row exists before an operator acts", (await contradictions()).length === 0);
+  ok("the target domain's judge reads ARMED before the call", (await approvalJudgeAdminDisarmed("eng")) === false);
+  ok("no ledger row exists before an operator acts", (await contradictions()).length === 0);
 
   const otherServer = buildControlServer({ includeWrites: true, actor: "other-op", roles: ["domain:other"] });
   const [c6, s6] = InMemoryTransport.createLinkedPair();
@@ -196,23 +199,42 @@ await client.connect(clientT);
   await otherClient.connect(c6);
   const refused = await otherClient.callTool({ name: "disarm_approval_judge", arguments: { org: "default", domain: "eng" } });
   ok("a non-covering role CANNOT disarm the judge for a domain", refused.isError === true);
-  ok("the refused call wrote no contradiction row", (await contradictions()).length === 0);
-  ok("the refused call left the judge armed", (await approvalJudgeBreakerTripped("eng")) === false);
-  await otherClient.close();
+  ok("the refused call wrote no ledger row", (await contradictions()).length === 0);
+  ok("the refused call left the judge armed", (await approvalJudgeAdminDisarmed("eng")) === false);
 
   const done = await callJson(client, "disarm_approval_judge", { org: "default", domain: "eng" });
   ok("the org admin's disarm reports success for the named domain", done.ok === true && done.domain === "eng" && done.disarmed === true);
+  ok("🔴 the disarm result no longer advertises a lapse window — it lasts until an operator re-arms", done.windowDays === undefined);
   const rows = await contradictions();
-  ok("ONE row — an explicit disarm is not three overrules in a trench coat", rows.length === 1);
+  ok("ONE row per operator act", rows.length === 1);
   ok("the row names the domain, the act and the route", (rows[0]!.detail ?? {}).domain === "eng" && (rows[0]!.detail ?? {}).humanAction === "admin-disarm" && (rows[0]!.detail ?? {}).route === "control");
   ok("the row names WHO disarmed", rows[0]!.principalId === "admin@example.com");
-  ok("🔴 the judge is now DISARMED for that domain off ONE row — a disarm verb that only counted 1/3 would not be one", (await approvalJudgeBreakerTripped("eng")) === true);
-  ok("a sibling domain's judge stays armed", (await approvalJudgeBreakerTripped("other")) === false);
+  ok("🔴 the judge is now DISARMED for that domain off ONE row", (await approvalJudgeAdminDisarmed("eng")) === true);
+  ok("a sibling domain's judge stays armed", (await approvalJudgeAdminDisarmed("other")) === false);
 
   const provenance = (await readAudit({ action: "admin.approval.judge_disarm" })) as { principalId?: string; detail?: Record<string, unknown> }[];
   ok("a control-plane provenance row names the door and the operator", provenance.length === 1 && provenance[0]!.principalId === "admin@example.com" && (provenance[0]!.detail ?? {}).domain === "eng");
+
+  const refusedRearm = await otherClient.callTool({ name: "rearm_approval_judge", arguments: { org: "default", domain: "eng" } });
+  ok("🔴 a non-covering role CANNOT re-arm the judge for a domain", refusedRearm.isError === true);
+  ok("the refused re-arm wrote no ledger row", (await contradictions()).length === 1);
+  ok("🔴 the refused re-arm left the judge DISARMED — an unauthorised call cannot restore a judge an operator turned off", (await approvalJudgeAdminDisarmed("eng")) === true);
+  await otherClient.close();
+
+  const rearmed = await callJson(client, "rearm_approval_judge", { org: "default", domain: "eng" });
+  ok("the org admin's re-arm reports success for the named domain", rearmed.ok === true && rearmed.domain === "eng" && rearmed.rearmed === true);
+  const afterRearm = await contradictions();
+  ok("the re-arm appended ONE row", afterRearm.length === 2);
+  const rearmRow = afterRearm.find((r) => (r.detail ?? {}).humanAction === "admin-rearm")!;
+  ok("the re-arm row names the domain, the act and the route", rearmRow !== undefined && (rearmRow.detail ?? {}).domain === "eng" && (rearmRow.detail ?? {}).route === "control");
+  ok("the re-arm row names WHO re-armed", rearmRow.principalId === "admin@example.com");
+  ok("🔴 the judge is ARMED again for that domain", (await approvalJudgeAdminDisarmed("eng")) === false);
+  ok("🔴 the cancelled disarm row survives — the ledger is append-only", afterRearm.some((r) => (r.detail ?? {}).humanAction === "admin-disarm" && (r.detail ?? {}).domain === "eng"));
+
+  const rearmProvenance = (await readAudit({ action: "admin.approval.judge_rearm" })) as { principalId?: string; detail?: Record<string, unknown> }[];
+  ok("a control-plane provenance row names the re-arm door and the operator", rearmProvenance.length === 1 && rearmProvenance[0]!.principalId === "admin@example.com" && (rearmProvenance[0]!.detail ?? {}).domain === "eng");
 }
 
 await client.close();
 rmSync(dir, { recursive: true, force: true });
-console.log(`\n✓ control approvals tools: ${n} assertions passed (decide reuses the CAS core + executes; list is redacted + role-filtered; RBAC + domain-cap carve-out hold; disarm_approval_judge disarms one domain off one RBAC-gated row)\n`);
+console.log(`\n✓ control approvals tools: ${n} assertions passed (decide reuses the CAS core + executes; list is redacted + role-filtered; RBAC + domain-cap carve-out hold; disarm_approval_judge disarms one domain off one RBAC-gated row and rearm_approval_judge restores it, both write-only and append-only)\n`);

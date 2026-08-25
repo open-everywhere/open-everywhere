@@ -14,13 +14,16 @@ export const PROTECTED_HUMAN_ONLY_EXPORTS: readonly ProtectedHumanOnlyExportGrou
   },
   {
     module: "agent/approvals/judge-contradiction.ts",
-    exportNames: ["contradictJudgeAllow", "disarmApprovalJudge"],
+    exportNames: ["contradictJudgeAllow", "disarmApprovalJudge", "rearmApprovalJudge"],
     reason:
-      "writes an `approval.judge.contradicted` row — the ledger the contradiction breaker counts. " +
-      "Every row asserts that A PERSON overruled the judge, so a tool-written one would be the " +
-      "machine forging a human judgement in the honest record. Note the disarm direction is " +
-      "restrictive (the judge stops lifting, cards come back), so this guards audit integrity, " +
-      "not an escalation path. Only a human's click or the RBAC-gated control plane may write one.",
+      "writes an `approval.judge.contradicted` row — the ledger that carries every human act over " +
+      "the approval judge, and the one the judge's own disarm state is derived from. Every row " +
+      "asserts that A PERSON acted, so a tool-written one would be the machine forging a human " +
+      "judgement in the honest record. 🔴 The module holds BOTH directions since OPE-1102: an " +
+      "overrule and a disarm are restrictive (the judge stops lifting, cards come back), but a " +
+      "RE-ARM is permissive — a tool-written one would cancel an operator's break-glass disarm and " +
+      "restore card-free auto-approval for the domain. So this guards audit integrity AND an " +
+      "escalation path. Only a human's click or the RBAC-gated control plane may write one.",
   },
   {
     module: "agent/identity/trust.ts",

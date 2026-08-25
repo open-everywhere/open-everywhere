@@ -9,7 +9,7 @@ overrideSettingsForTest({ approvals: { judgeMode: "off" } });
 
 const {
   approvalJudgeMode,
-  approvalJudgeBreakerTripped,
+  approvalJudgeAdminDisarmed,
   clearApprovalJudgeVerdictCache,
   judgeContextOf,
   judgeExemption,
@@ -22,12 +22,12 @@ const {
   setApprovalJudgeCacheStoreForTest,
   shadowJudgeAuditDetail,
   shadowJudgeEligible,
-  APPROVAL_JUDGE_BREAKER_THRESHOLD,
+  setApprovalJudgeLedgerReadLimitForTest,
 } = await import("../agent/access/approval-judge.js");
 const { resolveApproverChain, toolForActionKind } = await import("../agent/access/approver-chain.js");
 const { registerConfig } = await import("../agent/access/config.js");
 const { requestApproval, resolveApprovalClick } = await import("../agent/approvals/flow.js");
-const { disarmApprovalJudge, JUDGE_LIFT_DECIDED_BY } = await import("../agent/approvals/judge-contradiction.js");
+const { disarmApprovalJudge, rearmApprovalJudge, JUDGE_LIFT_DECIDED_BY } = await import("../agent/approvals/judge-contradiction.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 
@@ -428,7 +428,7 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
 }
 
 {
-  ok((await approvalJudgeBreakerTripped("plain")) === false, "breaker: a clean ledger reads armed");
+  ok((await approvalJudgeAdminDisarmed("plain")) === false, "disarm state: a clean ledger reads ARMED");
   ok((await contradictionRows()).length === 0, "producers: no contradiction row exists until a HUMAN acts — nothing writes one on its own");
 
   const wedgeId = await liftedWedgeRow(111_000);
@@ -479,40 +479,109 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   ok(again.outcome === "contradicted" && again.contradiction === "already-recorded", "click surface: a second click on the same wedge row is a no-op");
   ok((await contradictionRows()).length === 1, "click surface: the repeat click wrote no second row — one action counts once");
 
-  ok((await approvalJudgeBreakerTripped("plain")) === false, "breaker: one real overrule is not yet the threshold");
+  ok((await approvalJudgeAdminDisarmed("plain")) === false, "🔴 OPE-1102: one real overrule leaves the judge ARMED");
 
-  for (const tokens of [112_000, 113_000]) {
+  for (const tokens of [112_000, 113_000, 114_000]) {
     const id = await liftedWedgeRow(tokens);
     const res = await resolveApprovalClick({ org: "test-org", id, decision: "contradict", clickerId: "U_ADMIN", platformAdmin: () => true });
-    ok(res.outcome === "contradicted" && res.contradiction === "recorded", `breaker: overrule on wedge ${tokens} recorded`);
+    ok(res.outcome === "contradicted" && res.contradiction === "recorded", `overrules: the click on wedge ${tokens} is recorded`);
   }
-  ok((await contradictionRows()).length === APPROVAL_JUDGE_BREAKER_THRESHOLD, "breaker: the click producer wrote exactly the threshold's worth of rows");
-  ok((await approvalJudgeBreakerTripped("plain")) === true, "breaker: N producer-written overrules trip it for the domain");
-  ok((await approvalJudgeBreakerTripped("otherdomain")) === false, "breaker: a sibling domain's judge stays armed (domain-scoped rows count only for their domain)");
+  ok((await contradictionRows()).length === 4, "overrules: the click producer wrote all four rows — the evidence is kept, it just drives nothing");
+  ok((await approvalJudgeAdminDisarmed("plain")) === false, "🔴 OPE-1102: FOUR human overrules — past the removed breaker's threshold of 3 — still leave the judge ARMED");
 
   clearApprovalJudgeVerdictCache();
-  const tripped = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: n/a" });
-  const degraded = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 250_000 } }, { postCard });
-  ok(degraded.autoApproved === undefined, "breaker: the propose cards — a tripped breaker means no lift, ever");
-  ok(tripped.calls.length === 0, "breaker: the transport was never consulted");
-  const breakerDetail = await judgeDetailWhere((d) => d.source === "breaker", "breaker");
-  ok(breakerDetail.verdict === "defer" && breakerDetail.enforcedVerdict === "ask", "breaker: the consult row records the disarm (source: breaker) — the degrade is queryable");
+  const overruledDomain = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn" });
+  const stillLifts = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 250_000 } }, { postCard });
+  ok(stillLifts.autoApproved?.resolvedBy === "judge", "🔴 OPE-1102: the propose plane still LIFTS in a domain with four overrules against it");
+  ok(overruledDomain.calls.length === 2, "OPE-1102: the transport really ran both passes — the lift is a live verdict, not a skipped consult");
   resetApprovalJudgeCompletion();
   clearApprovalJudgeVerdictCache();
 }
 
 {
-  ok((await approvalJudgeBreakerTripped("otherdomain")) === false, "admin disarm: the target domain reads armed before the call");
+  ok((await approvalJudgeAdminDisarmed("otherdomain")) === false, "admin disarm: the target domain reads ARMED before the call");
   const before = (await contradictionRows()).length;
   await disarmApprovalJudge({ org: "test-org", domain: "otherdomain", principalId: "U_OPS" });
   const rows = await contradictionRows();
-  ok(rows.length === before + 1, "admin disarm: exactly ONE row — the disarm is not three overrules in a trench coat");
+  ok(rows.length === before + 1, "admin disarm: exactly ONE row");
   const disarmRow = rows.find((r) => (r.detail ?? {}).domain === "otherdomain")!;
   ok(disarmRow !== undefined, "admin disarm: the row is scoped to the named domain");
   ok((disarmRow.detail ?? {}).humanAction === "admin-disarm" && (disarmRow.detail ?? {}).route === "control", "admin disarm: the row names the act and the ROUTE, separating it from a click overrule");
   ok(disarmRow.principalId === "U_OPS", "admin disarm: the row names WHO disarmed");
-  ok((await approvalJudgeBreakerTripped("otherdomain")) === true, "admin disarm: ONE marked row trips the breaker on its own");
-  ok((await approvalJudgeBreakerTripped("thirddomain")) === false, "admin disarm: an unnamed domain's judge stays armed");
+  ok((await approvalJudgeAdminDisarmed("otherdomain")) === true, "admin disarm: ONE marked row disarms the domain on its own");
+  ok((await approvalJudgeAdminDisarmed("thirddomain")) === false, "admin disarm: an unnamed domain's judge stays armed");
+
+  const rearmBefore = (await contradictionRows()).length;
+  await rearmApprovalJudge({ org: "test-org", domain: "otherdomain", principalId: "U_OPS2" });
+  const afterRearm = await contradictionRows();
+  ok(afterRearm.length === rearmBefore + 1, "admin rearm: exactly ONE row");
+  ok((await approvalJudgeAdminDisarmed("otherdomain")) === false, "🔴 admin rearm: the domain reads ARMED again — the re-arm cancelled the disarm");
+  const rearmRow = afterRearm.find((r) => (r.detail ?? {}).humanAction === "admin-rearm")!;
+  ok(rearmRow !== undefined && (rearmRow.detail ?? {}).domain === "otherdomain" && (rearmRow.detail ?? {}).route === "control", "admin rearm: the row names the act, the domain and the ROUTE");
+  ok(rearmRow.principalId === "U_OPS2", "admin rearm: the row names WHO re-armed");
+  ok((rearmRow.detail ?? {}).judgeVerdict === undefined, "admin rearm: the row claims NO judge verdict — a re-arm is about no single verdict");
+
+  const stillThere = afterRearm.filter((r) => (r.detail ?? {}).humanAction === "admin-disarm" && (r.detail ?? {}).domain === "otherdomain");
+  ok(stillThere.length === 1, "🔴 admin rearm: the cancelled disarm row SURVIVES — the ledger is append-only, nothing is erased");
+  ok(afterRearm.filter((r) => (r.detail ?? {}).humanAction === "overrule").length === 4, "🔴 admin rearm: every click overrule survives it too — a re-arm suppresses no human evidence");
+
+  await disarmApprovalJudge({ org: "test-org", domain: "siblingdomain", principalId: "U_OPS" });
+  ok((await approvalJudgeAdminDisarmed("siblingdomain")) === true, "rearm scope: the sibling domain is disarmed");
+  await rearmApprovalJudge({ org: "test-org", domain: "otherdomain", principalId: "U_OPS2" });
+  ok((await approvalJudgeAdminDisarmed("siblingdomain")) === true, "🔴 rearm scope: re-arming one domain does NOT re-arm another operator's disarmed domain");
+
+  await disarmApprovalJudge({ org: "test-org", domain: "otherdomain", principalId: "U_OPS" });
+  ok((await approvalJudgeAdminDisarmed("otherdomain")) === true, "🔴 latest wins: a disarm AFTER a re-arm disarms again — the state is the newest operator row, not a one-way latch");
+}
+{
+  const { registerOperationalStore, resetOperationalStore } = await import("../agent/operational/provider.js");
+  const live = getOperationalStore();
+
+  const throwing = {
+    ...live,
+    readAudit: async () => {
+      throw new Error("audit store unavailable");
+    },
+  } as typeof live;
+  registerOperationalStore(throwing);
+  resetOperationalStore();
+  ok((await approvalJudgeAdminDisarmed("neverdisarmed")) === true, "🔴 fail-closed: an UNREADABLE audit store reads as DISARMED, even for a domain nobody ever disarmed");
+  registerOperationalStore(live);
+  resetOperationalStore();
+  ok((await approvalJudgeAdminDisarmed("neverdisarmed")) === false, "fail-closed control: the SAME domain reads ARMED once the store is readable again");
+
+  const shortPage = (await contradictionRows()).length;
+  ok(shortPage > 0, "full-page bound: the ledger already carries rows from the blocks above");
+
+  setApprovalJudgeLedgerReadLimitForTest(shortPage);
+  ok((await approvalJudgeAdminDisarmed("neverdisarmed")) === true, "🔴 fail-closed: a FULL ledger page carrying no operator row for the domain reads as DISARMED — the decision is unproven, not absent");
+
+  setApprovalJudgeLedgerReadLimitForTest(shortPage + 1);
+  ok((await approvalJudgeAdminDisarmed("neverdisarmed")) === false, "🔴 full-page control: a SHORT page proves no operator ever acted, so the same domain reads ARMED");
+
+  ok((await approvalJudgeAdminDisarmed("otherdomain")) === true, "full-page control: a domain with a real disarm row is unaffected by the bound");
+  setApprovalJudgeLedgerReadLimitForTest(undefined);
+}
+{
+  const DOMAIN = "chaindomain";
+  clearApprovalJudgeVerdictCache();
+  await disarmApprovalJudge({ org: "test-org", domain: DOMAIN, principalId: "U_OPS" });
+  const disarmedRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: would have lifted" });
+  const carded = await requestApproval({ ...spendInput, domain: DOMAIN, args: { ...spendInput.args, monthlyTokens: 131_000 } }, { postCard });
+  ok(carded.autoApproved === undefined, "chain: a disarmed domain CARDS — no lift while the operator's disarm stands");
+  ok(disarmedRun.calls.length === 0, "chain: the transport was never consulted in a disarmed domain");
+  const disarmDetail = await judgeDetailWhere((d) => d.source === "admin-disarm", "admin-disarm");
+  ok(disarmDetail.verdict === "defer" && disarmDetail.enforcedVerdict === "ask", "chain: the consult row records the disarm (source: admin-disarm) — the degrade is queryable per affected row");
+  resetApprovalJudgeCompletion();
+
+  clearApprovalJudgeVerdictCache();
+  await rearmApprovalJudge({ org: "test-org", domain: DOMAIN, principalId: "U_OPS2" });
+  const rearmedRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn" });
+  const lifted = await requestApproval({ ...spendInput, domain: DOMAIN, args: { ...spendInput.args, monthlyTokens: 132_000 } }, { postCard });
+  ok(lifted.autoApproved?.resolvedBy === "judge", "🔴 chain: the RE-ARMED domain lifts again — the judge is consulted and its verdict enforces");
+  ok(rearmedRun.calls.length === 2, "chain: the re-armed consult really ran both passes");
+  resetApprovalJudgeCompletion();
+  clearApprovalJudgeVerdictCache();
 }
 
 {
@@ -548,6 +617,6 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
 overrideSettingsForTest({ approvals: { judgeMode: "off" } });
 
 console.log(
-  `✓ approval-judge: ${passed} assertions — fail-closed arming (off/shadow/enforce, exact strings only), judge-off ≡ today, per-verb-default shadow eligibility, exemption predicate, two-pass flow with fail-closed defers, taint-invalidated (op, connection) verdict cache, shadow rows beside real cards — and PHASE 2: pass-1 allow short disabled under enforcement, session-or-nothing enforce cache refusing pass-1 entries, bounded timeout with no late cache back-fill, judge allow/ask/deny/degraded/unattended through the live propose plane with per-consult approval.judge.verdict rows — and OPE-965: both contradiction producers (a click overrule on a real judge-lift wedge row, de-duplicated per row and refused without admin standing; the control-plane admin disarm tripping on ONE marked row), the judge-lift notice carrying the button, and the breaker disarming per domain on PRODUCER-WRITTEN rows`,
+  `✓ approval-judge: ${passed} assertions — fail-closed arming (off/shadow/enforce, exact strings only), judge-off ≡ today, per-verb-default shadow eligibility, exemption predicate, two-pass flow with fail-closed defers, taint-invalidated (op, connection) verdict cache, shadow rows beside real cards — and PHASE 2: pass-1 allow short disabled under enforcement, session-or-nothing enforce cache refusing pass-1 entries, bounded timeout with no late cache back-fill, judge allow/ask/deny/degraded/unattended through the live propose plane with per-consult approval.judge.verdict rows — and OPE-965/OPE-1102: all three ledger producers on PRODUCER-WRITTEN rows (a click overrule on a real judge-lift wedge row, de-duplicated per row and refused without admin standing; the admin disarm off ONE marked row; its symmetric admin re-arm), FOUR overrules leaving the judge armed and still lifting (no contradiction breaker), the append-only ledger surviving a re-arm, latest-operator-row-wins in both directions, domain scoping on both verbs, and the disarm/re-arm state reaching the chain (a disarmed domain cards with the transport untouched; the re-armed domain lifts again)`,
 );
 rmSync(tmp, { recursive: true, force: true });
