@@ -10,7 +10,7 @@ import {
 } from "./reply-post.js";
 import { recordContainerAnswered } from "./answered-container-ledger.js";
 import { withReplierPrefix, truncateMemoryCitationPaths } from "./turn-delivery.js";
-import { onVercel } from "../access/platform.js";
+import { swallowRoomPost } from "./egress-spoof.js";
 import { postArm, type PostIntent } from "./post-arms.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
 import type { EditLocus } from "./reply-edit.js";
@@ -139,11 +139,8 @@ async function dispatchUnifiedReply(
   replier?: ReplierLabel,
   intent?: PostIntent,
 ): Promise<string> {
-  if (process.env.OE_EGRESS_SPOOF === "1") {
-    if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
-    console.warn(`[oe] OE_EGRESS_SPOOF: swallowed a unified ${origin.platform} reply (${text.length}c)`);
-    return `spoof-unified-${origin.platform}-${Date.now()}`;
-  }
+  const swallowed = swallowRoomPost(`a unified ${origin.platform} reply (${text.length}c)`, `unified-${origin.platform}`);
+  if (swallowed !== undefined) return swallowed;
   const arm = postArm(origin.platform);
   if (!arm?.dispatchUnified) {
     throw new Error(`unified reply couldn't post — no post arm registered for "${origin.platform}".`);

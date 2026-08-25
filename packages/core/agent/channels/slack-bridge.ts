@@ -1,6 +1,7 @@
 import type { Channel } from "eve/channels";
 import type { BindableContext } from "../identity/binding.js";
 import { processRegistrySlot } from "../lib/process-registry.js";
+import { swallowRoomOp } from "./egress-spoof.js";
 
 export type SlackFormFn = (method: string, body: string, token?: string) => Promise<Record<string, unknown> | undefined>;
 
@@ -34,10 +35,31 @@ export function slackBridge(): SlackBridge | null {
   return bridgeSlot.get();
 }
 
-export const bridgeSlackForm: SlackFormFn = async (method, body, token) =>
-  bridgeSlot.get() ? bridgeSlot.get()!.form(method, body, token) : undefined;
+const SLACK_ROOM_WRITE_METHODS = new Set([
+  "chat.postMessage",
+  "chat.postEphemeral",
+  "chat.update",
+  "chat.delete",
+  "chat.scheduleMessage",
+  "reactions.add",
+  "reactions.remove",
+  "files.getUploadURLExternal",
+  "files.completeUploadExternal",
+]);
+
+function spoofedSlackWrite(method: string): Record<string, unknown> {
+  return { ok: true, ts: `spoof-slack-${Date.now()}`, channel: "spoof-slack-channel", method };
+}
+
+export const bridgeSlackForm: SlackFormFn = async (method, body, token) => {
+  if (SLACK_ROOM_WRITE_METHODS.has(method) && swallowRoomOp(`a slack ${method} call`)) return spoofedSlackWrite(method);
+  return bridgeSlot.get() ? bridgeSlot.get()!.form(method, body, token) : undefined;
+};
 
 export const bridgeSlackReadCall: SlackReadCallFn = async (operation, params) => {
+  if (SLACK_ROOM_WRITE_METHODS.has(operation) && swallowRoomOp(`a slack ${operation} call`)) {
+    return spoofedSlackWrite(operation) as { readonly ok: boolean; readonly [key: string]: unknown };
+  }
   if (!bridgeSlot.get()) throw new Error("no Slack provider is registered — the Slack Web API is unavailable (registerSlackProvider).");
   return bridgeSlot.get()!.readCall(operation, params);
 };

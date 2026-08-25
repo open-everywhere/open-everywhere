@@ -1,5 +1,5 @@
 import { admitProviderRegistration } from "../access/provider-selection.js";
-import { onVercel } from "../access/platform.js";
+import { swallowRoomOp, swallowRoomPost } from "./egress-spoof.js";
 import { bridgeSlackForm } from "./slack-bridge.js";
 
 export interface OutboundFile {
@@ -44,10 +44,7 @@ type PostSurfaceTextTarget = {
 };
 
 function surfaceTextSpoof(platform: string): string | undefined {
-  if (process.env.OE_EGRESS_SPOOF !== "1") return undefined;
-  if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
-  console.warn(`[oe] OE_EGRESS_SPOOF: swallowed a ${platform} surface-text post`);
-  return `spoof-${platform}-${Date.now()}`;
+  return swallowRoomPost(`a ${platform} surface-text post`, platform);
 }
 
 export async function postSurfaceTextStrict(platform: string, target: PostSurfaceTextTarget): Promise<string> {
@@ -83,11 +80,7 @@ export async function postSurfaceText(platform: string, target: PostSurfaceTextT
 
 export async function editSurfaceText(platform: string, ref: { readonly channelId: string; readonly messageId: string }, text: string): Promise<boolean> {
   if (!ref.channelId || !ref.messageId) return false;
-  if (process.env.OE_EGRESS_SPOOF === "1") {
-    if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
-    console.warn(`[oe] OE_EGRESS_SPOOF: swallowed a ${platform} surface-text edit`);
-    return true;
-  }
+  if (swallowRoomOp(`a ${platform} surface-text edit`)) return true;
   try {
     if (platform === "slack") {
       const body = new URLSearchParams({ channel: ref.channelId, ts: ref.messageId, text });
@@ -127,6 +120,7 @@ export async function setSurfaceReaction(
   on: boolean,
 ): Promise<boolean> {
   if (!ref.channelId || !ref.messageId) return false;
+  if (swallowRoomOp(`a ${platform} reaction ${on ? "add" : "remove"}`)) return true;
   try {
     if (platform === "slack") {
       const body = new URLSearchParams({ channel: ref.channelId, name: emoji.slackName, timestamp: ref.messageId });

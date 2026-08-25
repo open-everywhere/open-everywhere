@@ -1,5 +1,5 @@
 import { appendAudit } from "../audit/audit.js";
-import { onVercel } from "../access/platform.js";
+import { swallowRoomOp } from "./egress-spoof.js";
 import { postArm } from "./post-arms.js";
 import { isOwnPost, type OwnPostLedgerDeps } from "./own-post-ledger.js";
 import { markNotApplied, platformFailureClass, platformFailureStatus, type PlatformFailureClass } from "./platform-failure.js";
@@ -108,9 +108,7 @@ export async function editPostedMessage(
     await auditReplyEditRefused(audit, EDIT_NOT_OWN_REFUSAL_REASON);
     throw markNotApplied(new Error(editRefusalMessage(EDIT_NOT_OWN_REFUSAL_REASON)));
   }
-  if (process.env.OE_EGRESS_SPOOF === "1") {
-    if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
-    console.warn(`[oe] OE_EGRESS_SPOOF: swallowed a ${locus.platform} edit (${text.length}c)`);
+  if (swallowRoomOp(`a ${locus.platform} edit (${text.length}c)`)) {
     await auditReplyEdit(audit, messageId, locus.platform, text.length);
     return;
   }

@@ -67,6 +67,7 @@ import {
   type ReactionState,
   type ReplierLabel,
   dmTrustTtlMs,
+  swallowRoomOp,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { loadConversationContext } from "./slack-context.js";
 import { slackSpendGate } from "./slack-spend-gate.js";
@@ -178,6 +179,7 @@ async function setStatusReaction(slack: SlackHandle, state: ReactionState | "non
   const channel = slack.channelId;
   const timestamp = threadTsOverride ?? slack.threadTs;
   if (!channel || !timestamp) return;
+  if (swallowRoomOp("a slack status reaction")) return;
   for (const [s, name] of Object.entries(STATUS_REACTION)) {
     try {
       await slack.request(s === state ? "reactions.add" : "reactions.remove", { channel, name, timestamp });

@@ -1,7 +1,7 @@
 import { bindFrom, currentTurnId, type BindableContext } from "../identity/binding.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
-import { onVercel } from "../access/platform.js";
+import { swallowRoomPost } from "./egress-spoof.js";
 import { postArm } from "./post-arms.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
 import { withReplierPrefix, truncateMemoryCitationPaths, type ReplierLabel } from "./turn-delivery.js";
@@ -270,11 +270,8 @@ export function replyEditLocus(target: ReplyTarget): EditLocus | null {
 }
 
 async function dispatchReply(target: ReplyTarget, text: string, replier?: ReplierLabel): Promise<string> {
-  if (process.env.OE_EGRESS_SPOOF === "1") {
-    if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
-    console.warn(`[oe] OE_EGRESS_SPOOF: swallowed a ${target.platform} reply (${text.length}c)`);
-    return `spoof-${target.platform}-${Date.now()}`;
-  }
+  const swallowed = swallowRoomPost(`a ${target.platform} reply (${text.length}c)`, target.platform);
+  if (swallowed !== undefined) return swallowed;
   const arm = postArm(target.platform);
   if (!arm?.dispatchReply) {
     throw new Error(`reply couldn't post — no mid-turn post arm registered for "${target.platform}".`);

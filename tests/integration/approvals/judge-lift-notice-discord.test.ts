@@ -124,8 +124,20 @@ async function rowsSince(wakeAt: number, actions: readonly string[]): Promise<Au
   return got.filter((r) => new Date(r.ts).getTime() >= wakeAt);
 }
 
-async function messageThisTurn(label: string): Promise<DiscordCreateMessageCall> {
-  return waitFor(() => (discord.messages.length > 0 ? discord.messages[discord.messages.length - 1] : undefined), label);
+const NOTICE_MARK = "Ran without asking";
+const CARD_MARK = "Approval requested";
+
+function noticesThisTurn(): DiscordCreateMessageCall[] {
+  return discord.messages.filter((m) => m.content.includes(NOTICE_MARK));
+}
+
+async function noticeThisTurn(label: string): Promise<DiscordCreateMessageCall> {
+  return waitFor(() => noticesThisTurn()[0], label);
+}
+
+function egressSpoof(on: boolean): void {
+  if (on) process.env.OE_EGRESS_SPOOF = "1";
+  else delete process.env.OE_EGRESS_SPOOF;
 }
 
 function buttonsOf(message: DiscordCreateMessageCall): { label?: string; custom_id?: string }[] {
@@ -142,6 +154,7 @@ let deploymentOrg = "";
 test("① an armed judge lift POSTS the notice into the Discord room, carrying the contradict button", async () => {
   await armSeams();
   await armJudgeMode("enforce");
+  egressSpoof(false);
   (discord.messages as DiscordCreateMessageCall[]).length = 0;
 
   const wakeAt = await proposeRoutine("lift", "post the standup digest every weekday morning");
@@ -157,12 +170,13 @@ test("① an armed judge lift POSTS the notice into the Discord room, carrying t
   expect(reasons.length).toBeGreaterThan(0);
   wedgeRowId = String(lifted[0]!.detail?.id);
 
-  const message = await messageThisTurn("the judge-lift notice to reach the Discord room");
-  expect(discord.messages).toHaveLength(1);
+  const message = await noticeThisTurn("the judge-lift notice to reach the Discord room");
+  expect(noticesThisTurn()).toHaveLength(1);
+  expect(discord.messages.filter((m) => m.content.includes(CARD_MARK))).toEqual([]);
   expect(message.channelId).toBe(DISCORD_LISTED_CHANNEL_ID);
   expect(message.content).toContain("Ran without asking: routine.create");
   expect(message.content).toContain("Auto-approved by the approval judge");
-  expect(message.content).not.toContain("Approval requested");
+  expect(message.content).not.toContain(CARD_MARK);
   expect(message.content).not.toContain("expires");
 
   const buttons = buttonsOf(message);
@@ -207,6 +221,7 @@ test("② a signed click on THAT button records the contradiction, and a second 
 
 test("③ 🔴 with the judge OFF no notice reaches the room, and a contradict click records nothing", async () => {
   await armJudgeMode("off");
+  egressSpoof(false);
   (discord.messages as DiscordCreateMessageCall[]).length = 0;
   const consultsBefore = reasons.length;
 
@@ -219,7 +234,8 @@ test("③ 🔴 with the judge OFF no notice reaches the room, and a contradict c
   expect(rows.filter((r) => r.action === "approval.autoapproved")).toEqual([]);
   expect(reasons.length).toBe(consultsBefore);
 
-  expect(discord.messages).toEqual([]);
+  expect(noticesThisTurn()).toEqual([]);
+  expect(discord.messages.filter((m) => m.content.includes(CARD_MARK))).toHaveLength(1);
 
   const pendingId = String(rows.find((r) => r.action === "approval.requested")!.detail?.id);
   const clickAt = Date.now();
@@ -227,4 +243,25 @@ test("③ 🔴 with the judge OFF no notice reaches the room, and a contradict c
   expect(refused.type).toBe(4);
   expect(refused.content).toContain("not auto-approved by the approval judge");
   expect(await rowsSince(clickAt, ["approval.judge.contradicted"])).toEqual([]);
+});
+
+test("④ 🔴 with OE_EGRESS_SPOOF armed and a real bot token present, the notice reaches NO vendor transport", async () => {
+  await armSeams();
+  await armJudgeMode("enforce");
+  egressSpoof(true);
+  (discord.messages as DiscordCreateMessageCall[]).length = 0;
+
+  const wakeAt = await proposeRoutine("spoofed", "post the oncall handover every weekday evening");
+
+  const rows = await waitFor(async () => {
+    const got = await rowsSince(wakeAt, APPROVAL_ACTIONS);
+    return got.some((r) => r.action === "approval.autoapproved") ? got : undefined;
+  }, "the spoofed turn's approval.autoapproved row to land");
+  expect(rows.filter((r) => r.action === "approval.autoapproved")).toHaveLength(1);
+  expect(rows.filter((r) => r.action === "approval.autoapproved")[0]!.detail?.resolvedBy).toBe("judge");
+
+  expect(noticesThisTurn()).toEqual([]);
+  expect(discord.messages).toEqual([]);
+
+  egressSpoof(false);
 });

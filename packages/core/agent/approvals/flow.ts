@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
-import { onVercel } from "../access/platform.js";
+import { swallowRoomOp, swallowRoomPost } from "../channels/egress-spoof.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { criteriaDomain } from "../memory/domain.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
@@ -309,7 +309,7 @@ export async function requestApproval(
       const outcome = await kindDef.execute(input.args, decidedBy);
       const noticePlatform = resolution.resolvedBy === "judge" ? platformOfScopeKey(input.postedTo) : undefined;
       const noticePoster = judgeLiftNoticePosterFor(noticePlatform);
-      if (noticePlatform === "slack" || noticePoster) {
+      if ((noticePlatform === "slack" || noticePoster) && !swallowRoomOp(`a judge-lift notice for "${input.kind}" (${input.scopeKey})`)) {
         try {
           const noticeLines = withTaintDisclosure(input.summaryLines ? [...input.summaryLines] : kindDef.summarize(input.args), input.args);
           if (noticePoster) await noticePoster(row, noticeLines, outcome);
@@ -388,15 +388,11 @@ export async function requestApproval(
 
   const summaryLines = withTaintDisclosure(input.summaryLines ? [...input.summaryLines] : kindDef.summarize(input.args), input.args);
 
-  let messageTs: string | undefined;
-  if (process.env.OE_EGRESS_SPOOF === "1") {
-    if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
-    console.warn(`[oe] OE_EGRESS_SPOOF: swallowed an approval-card post for "${input.kind}" (${input.scopeKey})`);
-    messageTs = `spoof-card-${Date.now()}`;
-  } else if (deps.postCard) {
-    messageTs = await deps.postCard(row, summaryLines);
-  } else {
-    messageTs = await postRenderedCard(post, input.channelId, input.threadTs, pendingCardBlocks(row, summaryLines));
+  let messageTs = swallowRoomPost(`an approval-card post for "${input.kind}" (${input.scopeKey})`, "card");
+  if (messageTs === undefined) {
+    messageTs = deps.postCard
+      ? await deps.postCard(row, summaryLines)
+      : await postRenderedCard(post, input.channelId, input.threadTs, pendingCardBlocks(row, summaryLines));
   }
 
   if (!messageTs) {
@@ -473,6 +469,7 @@ export interface HandleApprovalDeps {
 
 async function updateCard(post: PostFn, channelId: string, ts: string | undefined, card: RenderedCard): Promise<void> {
   if (!ts) return;
+  if (swallowRoomOp("a slack approval-card rewrite")) return;
   const body = new URLSearchParams();
   body.set("channel", channelId);
   body.set("ts", ts);
@@ -483,6 +480,7 @@ async function updateCard(post: PostFn, channelId: string, ts: string | undefine
 
 async function updateCardText(post: PostFn, channelId: string, ts: string | undefined, text: string): Promise<void> {
   if (!ts) return;
+  if (swallowRoomOp("a slack approval-card rewrite")) return;
   const body = new URLSearchParams();
   body.set("channel", channelId);
   body.set("ts", ts);
@@ -502,6 +500,7 @@ async function postRenderedCard(post: PostFn, channelId: string, threadTs: strin
 }
 
 async function postThreadNote(post: PostFn, channelId: string, threadTs: string | undefined, text: string): Promise<void> {
+  if (swallowRoomOp("a slack approval thread note")) return;
   const body = new URLSearchParams();
   body.set("channel", channelId);
   if (threadTs) body.set("thread_ts", threadTs);
@@ -829,7 +828,9 @@ export interface DecisionFeedbackInput {
 }
 
 export async function deliverDecisionFeedback(input: DecisionFeedbackInput, decisionWake?: DecisionWakeDeps): Promise<void> {
-  await input.postNotice(decisionNoticeText(input.summaryLines, input.outcomeLine, input.clickerId ?? "system", input.outcome)).catch(() => undefined);
+  if (!swallowRoomOp(`an approval decision notice (${input.outcome})`)) {
+    await input.postNotice(decisionNoticeText(input.summaryLines, input.outcomeLine, input.clickerId ?? "system", input.outcome)).catch(() => undefined);
+  }
   if (input.target) {
     await wakeWindowOnDecision(
       {

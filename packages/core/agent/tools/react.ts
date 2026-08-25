@@ -3,6 +3,7 @@ import { z } from "zod";
 import { bindFrom, isUnifiedWindowContext, turnOriginPlatform, type BindableContext } from "../identity/binding.js";
 import { capabilitiesFor, capabilitiesForPlatform } from "../identity/capabilities.js";
 import { bridgeSlackReadCall } from "../channels/slack-bridge.js";
+import { swallowRoomOp } from "../channels/egress-spoof.js";
 import { postArm, type TargetResolveBag } from "../channels/post-arms.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { markReactedThisTurn } from "../channels/react-signal.js";
@@ -81,8 +82,9 @@ const reactEntry = defineTool({
                 "react couldn't resolve this conversation — try again from a real issue or thread, not a synthetic context.",
               );
             }
+            const reactSwallowed = swallowRoomOp(`a ${binding.platform} react (${input.emoji})`);
             try {
-              await arm.react(target, input.emoji);
+              if (!reactSwallowed) await arm.react(target, input.emoji);
             } catch (err) {
               const status = platformFailureStatus(err);
               await auditToolAction(ctx, `${binding.platform}.react.failed`, {

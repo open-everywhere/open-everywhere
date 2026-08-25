@@ -404,6 +404,7 @@ export { postOnce, outboundKey } from "./operational/post-once.js";
 
 export { liveMemoryDeltaDep } from "./memory/wake-delta.js";
 
+export { swallowRoomPost, swallowRoomOp } from "./channels/egress-spoof.js";
 export { registerSurfaceMessageOps, surfaceMessageOps, postSurfaceText, resolveMessagePermalink, setSurfaceReaction } from "./channels/surface-message-ops.js";
 export type { SurfaceMessageOps, OutboundFile, MessageRef } from "./channels/surface-message-ops.js";
 
