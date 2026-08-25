@@ -346,7 +346,7 @@ const staleBag = delivered[1]!.attributes;
       (await resolveWindowGated((await import(`../agent/tools/${name}.js`)).default, ctx as never)) as Entry | null;
 
     for (const name of ["create_skill", "delete_skill", "open_pull_request"]) {
-      ok((await mountOn(name, chanFire)) !== null, `skills: 🔴 a CHANNEL fire on a DELEGATION-DISARMED deployment (OE_ONESHOT_AGENT off ⇒ FULL_KIT = ["task","native"]) really does MOUNT ${name} — grain withholds nothing here, so the identity gate is the whole control`);
+      ok((await mountOn(name, chanFire)) !== null, `skills: 🔴 a CHANNEL fire on a DELEGATION-DISARMED deployment (OE_ONESHOT_AGENT off ⇒ fullKit() = ["task","native"]) really does MOUNT ${name} — grain withholds nothing here, so the identity gate is the whole control`);
     }
 
     await putDomainSkill(ORG, "eng", "deploy-runbook", "# Deploy\nSteps.", CREATOR, "2026-07-01T00:00:00.000Z");

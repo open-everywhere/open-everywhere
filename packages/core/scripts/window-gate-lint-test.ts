@@ -8,7 +8,7 @@ import {
   classifyFrameworkTools,
   WINDOW_GATED_TOOLS,
   WINDOW_UNGATED_TOOLS,
-  FULL_KIT,
+  fullKit,
   JOB_WAKE_TOOLS,
   withheldFromGrain,
   type FrameworkToolMount,
@@ -58,7 +58,7 @@ const u = (...names: string[]) => new Set(names);
     ["reply", 'export { default } from "@open-everywhere/core/agent/tools/reply.js";'],
   ]);
   core.push({ name: "reply", source: "export default defineTool({});" });
-  const problems = checkWindowGateManifest(core, shims, [], g({ open_pull_request: FULL_KIT }), u("reply"));
+  const problems = checkWindowGateManifest(core, shims, [], g({ open_pull_request: fullKit() }), u("reply"));
   ok(problems.length === 0, `a total, matching manifest is clean (got: ${JSON.stringify(problems)})`);
 }
 
@@ -69,13 +69,13 @@ firesWith(
 );
 
 firesWith(
-  checkWindowGateManifest([{ name: "reply", source: "x" }], new Map([["reply", "x"]]), [], g({ reply: FULL_KIT }), u("reply")),
+  checkWindowGateManifest([{ name: "reply", source: "x" }], new Map([["reply", "x"]]), [], g({ reply: fullKit() }), u("reply")),
   'declared in BOTH',
   "a tool in both WINDOW_GATED_TOOLS and WINDOW_UNGATED_TOOLS FAILS",
 );
 
 firesWith(
-  checkWindowGateManifest([], new Map(), [], g({ ghost: FULL_KIT }), u()),
+  checkWindowGateManifest([], new Map(), [], g({ ghost: fullKit() }), u()),
   'WINDOW_GATED_TOOLS names "ghost"',
   "a stale WINDOW_GATED_TOOLS row FAILS",
 );
@@ -88,7 +88,7 @@ firesWith(
 firesWith(
   checkWindowGateManifest([{ name: "open_pull_request", source: wrapped("open_pull_request") }], new Map([["open_pull_request", ""]]), [], g({ open_pull_request: ["standing"] }), u()),
   'must be exactly ["task"]',
-  "a wide-hands tool leaking onto a STANDING seat FAILS (ambient = the ARMED shipped default since OPE-370, so FULL_KIT is task-only)",
+  "a wide-hands tool leaking onto a STANDING seat FAILS (ambient = the ARMED shipped default since OPE-370, so fullKit() is task-only)",
 );
 firesWith(
   checkWindowGateManifest([{ name: "open_pull_request", source: wrapped("open_pull_request") }], new Map([["open_pull_request", ""]]), [], g({ open_pull_request: ["task"] }), u(), ["task", "native"]),
@@ -107,7 +107,7 @@ firesWith(
 );
 
 firesWith(
-  checkWindowGateManifest([{ name: "post_file", source: unwrapped("post_file") }], new Map([["post_file", ""]]), [], g({ post_file: FULL_KIT }), u()),
+  checkWindowGateManifest([{ name: "post_file", source: unwrapped("post_file") }], new Map([["post_file", ""]]), [], g({ post_file: fullKit() }), u()),
   'does not wrap its export in windowGated("post_file"',
   "a gated authored tool that dropped its windowGated wrapper FAILS (silent static re-introduction)",
 );
@@ -116,7 +116,7 @@ firesWith(
     [{ name: "post_file", source: wrapped("post_file") }],
     new Map([["post_file", ""]]),
     [],
-    g({ post_file: FULL_KIT }),
+    g({ post_file: fullKit() }),
     u(),
   );
   ok(problems.length === 0, "the correctly-wrapped gated tool is clean");
@@ -130,7 +130,7 @@ firesWith(
       ["sandbox_tools", 'export { default } from "@open-everywhere/core/agent/tools/sandbox_tools.js";'],
     ]),
     ["bash"],
-    g({ bash: FULL_KIT }),
+    g({ bash: fullKit() }),
     u("sandbox_tools"),
   ),
   "is not a `disableTool()` sentinel",
@@ -144,7 +144,7 @@ firesWith(
       ["sandbox_tools", 'export { default } from "@open-everywhere/core/agent/tools/sandbox_tools.js";'],
     ]),
     ["web_fetch"],
-    g({ web_fetch: FULL_KIT }),
+    g({ web_fetch: fullKit() }),
     u("sandbox_tools"),
   ),
   'framework tool "web_fetch" is grain-gated but no windowGatedKit(...) in packages/core/agent/tools/ re-provides it per grain',
@@ -170,18 +170,18 @@ const AUTHORED = "export default defineTool({});";
 const fw = (entries: Record<string, FrameworkToolMount>): ReadonlyMap<string, FrameworkToolMount> => new Map(Object.entries(entries));
 
 firesWith(
-  checkWindowGateManifest(OPTIN_KIT, new Map([["sandbox_tools", KIT_SHIM]]), fw({ bash: "default" }), g({ bash: FULL_KIT }), u("sandbox_tools")),
+  checkWindowGateManifest(OPTIN_KIT, new Map([["sandbox_tools", KIT_SHIM]]), fw({ bash: "default" }), g({ bash: fullKit() }), u("sandbox_tools")),
   "is not a `disableTool()` sentinel",
   "a DEFAULT-MOUNTED framework tool with NO app shim FAILS — the A6 guard is untouched for the class it was written for",
 );
 firesWith(
-  checkWindowGateManifest(OPTIN_KIT, new Map([["bash", AUTHORED], ["sandbox_tools", KIT_SHIM]]), fw({ bash: "default" }), g({ bash: FULL_KIT }), u("sandbox_tools")),
+  checkWindowGateManifest(OPTIN_KIT, new Map([["bash", AUTHORED], ["sandbox_tools", KIT_SHIM]]), fw({ bash: "default" }), g({ bash: fullKit() }), u("sandbox_tools")),
   "is not a `disableTool()` sentinel",
   "a DEFAULT-MOUNTED framework tool whose shim is an authored tool FAILS",
 );
 
 firesWith(
-  checkWindowGateManifest(OPTIN_KIT, new Map([["glob", AUTHORED], ["sandbox_tools", KIT_SHIM]]), fw({ glob: "opt-in" }), g({ glob: FULL_KIT }), u("sandbox_tools")),
+  checkWindowGateManifest(OPTIN_KIT, new Map([["glob", AUTHORED], ["sandbox_tools", KIT_SHIM]]), fw({ glob: "opt-in" }), g({ glob: fullKit() }), u("sandbox_tools")),
   "which IS opting in",
   "an OPT-IN framework tool the app OPTS INTO (authored shim, not a sentinel) FAILS — the guard's purpose survives the loosening",
 );
@@ -190,7 +190,7 @@ for (const [shims, label] of [
   [new Map([["sandbox_tools", KIT_SHIM]]), "NO app shim at all"],
   [new Map([["glob", SENTINEL], ["sandbox_tools", KIT_SHIM]]), "the (inert) disableTool() sentinel the tree ships today"],
 ] as const) {
-  const problems = checkWindowGateManifest(OPTIN_KIT, shims, fw({ glob: "opt-in" }), g({ glob: FULL_KIT }), u("sandbox_tools"));
+  const problems = checkWindowGateManifest(OPTIN_KIT, shims, fw({ glob: "opt-in" }), g({ glob: fullKit() }), u("sandbox_tools"));
   ok(problems.length === 0, `an OPT-IN framework tool with ${label} is clean — eve mounts nothing under the name, so there is nothing to disable (got: ${JSON.stringify(problems)})`);
 }
 
@@ -199,7 +199,7 @@ for (const [surfaceSpelling, label] of [
   [["glob"], "the plain-ARRAY surface spelling (no classification at all)"],
 ] as const) {
   firesWith(
-    checkWindowGateManifest(OPTIN_KIT, new Map([["sandbox_tools", KIT_SHIM]]), surfaceSpelling, g({ glob: FULL_KIT }), u("sandbox_tools")),
+    checkWindowGateManifest(OPTIN_KIT, new Map([["sandbox_tools", KIT_SHIM]]), surfaceSpelling, g({ glob: fullKit() }), u("sandbox_tools")),
     "is not a `disableTool()` sentinel",
     `${label} with no sentinel FAILS — the check fails CLOSED on every name it cannot prove is opt-in`,
   );
@@ -246,7 +246,7 @@ ok(JSON.stringify([...WINDOW_GATED_TOOLS.complete_task]) === JSON.stringify(["ta
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.complete_thread]) === JSON.stringify(["thread"]), "complete_thread is thread-only");
 ok(JSON.stringify([...(WINDOW_GATED_TOOLS.agent ?? [])]) === JSON.stringify(["standing", "thread"]) && !WINDOW_UNGATED_TOOLS.has("agent"), "agent is grain-gated to standing+thread (a gated row again since #96; the disableTool() sentinel removes eve's built-in and delegation_tools.ts re-provides it per grain)");
 ok(JSON.stringify([...(WINDOW_GATED_TOOLS.stop_task ?? [])]) === JSON.stringify(["standing", "thread"]) && !WINDOW_UNGATED_TOOLS.has("stop_task"), "stop_task (OPE-730) carries agent's own matrix — only a seat that can delegate can un-delegate, and a task worker leaf never reaches the cancel door");
-ok([...FULL_KIT].sort().join(",") === "task", "FULL_KIT = task-only — the ARMED shipped default since OPE-370 (default==prod); the flag-OFF Stage-C widening to task+native is pinned by the injected crafted case above");
+ok([...fullKit()].sort().join(",") === "task", "fullKit() = task-only — the ARMED shipped default since OPE-370 (default==prod); the flag-OFF Stage-C widening to task+native is pinned by the injected crafted case above");
 ok(
   withheldFromGrain("standing").includes("bash") && withheldFromGrain("standing").includes("complete_task") && withheldFromGrain("standing").includes("complete_thread"),
   "a standing seat withholds the wide-hands set + complete_task + complete_thread",
@@ -418,13 +418,13 @@ for (const name of Object.keys(WINDOW_GATED_TOOLS)) {
     FRAMEWORK_TOOLS,
     WINDOW_GATED_TOOLS,
     WINDOW_UNGATED_TOOLS,
-    FULL_KIT,
+    fullKit(),
     subagentNames,
     new Set([...JOB_WAKE_TOOLS, "ghost_job_verb"]),
     realArmed,
   );
   firesWith(stale, 'JOB_WAKE_TOOLS names "ghost_job_verb"', "a stale JOB_WAKE_TOOLS row FAILS (rule 6)");
-  const cleanKit = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOLS, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, FULL_KIT, subagentNames, JOB_WAKE_TOOLS, realArmed);
+  const cleanKit = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOLS, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, fullKit(), subagentNames, JOB_WAKE_TOOLS, realArmed);
   ok(cleanKit.length === 0, `the REAL job kit is clean against the real surface (problems: ${JSON.stringify(cleanKit)})`);
 }
 

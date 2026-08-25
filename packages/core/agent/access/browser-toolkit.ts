@@ -1,6 +1,6 @@
 import { defineTool, type ToolDefinition } from "eve/tools";
 import type { WindowGrain } from "../identity/binding.js";
-import { preRegisterDynamicEntry, grainBackstopAtExecute, FULL_KIT } from "./window-gated.js";
+import { preRegisterDynamicEntry, grainBackstopAtExecute, fullKit } from "./window-gated.js";
 import type { BindableContext } from "../identity/binding.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { ingestUntrustedModelOutput } from "./untrusted.js";
@@ -74,7 +74,7 @@ let registered: Readonly<Record<string, BrowserToolEntry>> | undefined;
 
 function browserBackstoppedExecute(name: string, entry: BrowserToolEntry, auditAction: string): (input: unknown, ctx: unknown) => Promise<unknown> {
   return async (input: unknown, ctx: unknown) => {
-    await grainBackstopAtExecute(name, FULL_KIT, ctx as BindableContext);
+    await grainBackstopAtExecute(name, fullKit(), ctx as BindableContext);
     const result = await entry.execute(input, ctx);
     await auditToolAction(ctx as BindableContext, auditAction);
     return result;
@@ -116,5 +116,5 @@ export function resetBrowserToolkitForTest(): void {
 
 export function resolveBrowserKit(grain: WindowGrain): Readonly<Record<string, BrowserToolEntry>> | null {
   if (registered === undefined || Object.keys(registered).length === 0) return null;
-  return FULL_KIT.includes(grain) ? registered : null;
+  return fullKit().includes(grain) ? registered : null;
 }

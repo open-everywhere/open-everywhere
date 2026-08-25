@@ -17,7 +17,7 @@ import {
   type InvokerPosture,
 } from "../agent/access/invoker-posture.js";
 import { currentInvokerPosture, setInvokerPosture } from "../agent/access/invoker-posture-state.js";
-import { FULL_KIT, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../agent/access/window-gate-manifest.js";
+import { fullKit, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../agent/access/window-gate-manifest.js";
 import { projectToolSet } from "../agent/access/untrusted-projection.js";
 import { setNativeDelegationSeat } from "../agent/access/native-delegation-state.js";
 import { currentLeanSeatPosture } from "../agent/access/lean-seat-state.js";
@@ -62,7 +62,7 @@ ok(resolveInvokerPosture({ ...base, stamped: undefined }) === "interactive", "an
 
 const manifestWideHands = new Set(
   Object.entries(WINDOW_GATED_TOOLS)
-    .filter(([, grains]) => grains === FULL_KIT)
+    .filter(([, grains]) => grains === fullKit())
     .map(([name]) => name),
 );
 ok(manifestWideHands.size === UNTRUSTED_REMOTE_WITHHELD_TOOLS.size, `the withheld set is the same SIZE as the manifest's wide-hands rows (${manifestWideHands.size})`);

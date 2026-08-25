@@ -197,18 +197,18 @@ const sandbox = {
   setNetworkPolicy: async () => {},
 };
 
-const teamsCtx = (conversationId: string, fullKit?: boolean) =>
+const teamsCtx = (conversationId: string, wideHands?: boolean) =>
   ({
     channel: { kind: "teams" },
-    session: { auth: { current: { attributes: { workspace_id: "W1", conversation_id: conversationId, user_id: "U_ASK", ...(fullKit ? { oe_grain: "task" } : {}) }, principalId: "U_ASK" } } },
+    session: { auth: { current: { attributes: { workspace_id: "W1", conversation_id: conversationId, user_id: "U_ASK", ...(wideHands ? { oe_grain: "task" } : {}) }, principalId: "U_ASK" } } },
     getSandbox: async () => sandbox,
   }) as never;
 
-const slackCtx = (channelId: string, fullKit?: boolean) =>
+const slackCtx = (channelId: string, wideHands?: boolean) =>
   ({
     channel: { kind: "slack" },
     session: {
-      auth: { current: { attributes: { team_id: "T1", channel_id: channelId, channel_type: "channel", trust_checked: "true", user_id: "U_ASK", ...(fullKit ? { oe_grain: "task" } : {}) }, principalId: "U_ASK" } },
+      auth: { current: { attributes: { team_id: "T1", channel_id: channelId, channel_type: "channel", trust_checked: "true", user_id: "U_ASK", ...(wideHands ? { oe_grain: "task" } : {}) }, principalId: "U_ASK" } },
     },
     getSandbox: async () => sandbox,
   }) as never;

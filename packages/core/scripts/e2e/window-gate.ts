@@ -275,7 +275,7 @@ async function f7(): Promise<void> {
 }
 
 async function f8(): Promise<void> {
-  record("F8", "SKIP", `native @mention (cse_… session) is not injectable via the unified test-wake seam — a native seat runs on the surface's own eve channel and the unified receive refuses non-supervisor tokens (isUnifiedSupervisorToken). Grain "native" is unit-pinned: flag-OFF a suffix-less token ⇒ native ⇒ FULL kit (Stage-C byte-identical, window-capability-test.ts P1-c); flag-ON (Stage T2 Resolution A) native LOSES the wide hands (FULL_KIT drops it — window-gate-lint-test.ts's injectable-wideHandsGrains crafted case + window-gated-test.ts's flag-off/on split). The live-surface @mention e2e (prod pack, real Slack drive) is the end-to-end confirmation. Not faked here.`);
+  record("F8", "SKIP", `native @mention (cse_… session) is not injectable via the unified test-wake seam — a native seat runs on the surface's own eve channel and the unified receive refuses non-supervisor tokens (isUnifiedSupervisorToken). Grain "native" is unit-pinned: flag-OFF a suffix-less token ⇒ native ⇒ FULL kit (Stage-C byte-identical, window-capability-test.ts P1-c); flag-ON (Stage T2 Resolution A) native LOSES the wide hands (fullKit() drops it — window-gate-lint-test.ts's injectable-wideHandsGrains crafted case + window-gated-test.ts's flag-off/on split). The live-surface @mention e2e (prod pack, real Slack drive) is the end-to-end confirmation. Not faked here.`);
 }
 
 async function f9(): Promise<void> {

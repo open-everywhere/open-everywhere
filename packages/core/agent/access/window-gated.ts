@@ -15,12 +15,12 @@ import { bindFrom, windowGrainOf, currentWakeId, currentWindowToken, deploymentO
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
 import { classifySessionId } from "../channels/window-key.js";
 import { registerReplayModelProjection, setVariantProjectedName } from "./untrusted-projection.js";
-import { WINDOW_GATED_TOOLS, withheldFromGrain, FULL_KIT } from "./window-gate-manifest.js";
+import { WINDOW_GATED_TOOLS, withheldFromGrain, fullKit } from "./window-gate-manifest.js";
 import { allowedOnRestrictedJobWake, jobFireStamped, resolveJobWakePosture } from "./job-posture.js";
 import { isJobSession, jobWakeEscalated } from "./job-session-state.js";
 import { allowedOnLeanSeat, resolveLeanSeatPosture } from "./lean-seat.js";
 import { canDelegateFromSeat } from "./delegation-mount.js";
-export { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, withheldFromGrain, checkWindowGateManifest, FULL_KIT } from "./window-gate-manifest.js";
+export { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, withheldFromGrain, checkWindowGateManifest, fullKit } from "./window-gate-manifest.js";
 export type { WindowToolSource } from "./window-gate-manifest.js";
 
 export function approvalRequestOf(entry: { readonly approval?: LooseApproval }): ((ctx: any) => any) | undefined {
@@ -38,7 +38,7 @@ export function approvalResponseOf(entry: { readonly approval?: LooseApproval })
 }
 
 function isNarrowedGrain(grain: WindowGrain): boolean {
-  return !FULL_KIT.includes(grain);
+  return !fullKit().includes(grain);
 }
 
 function grainOf(ctx: BindableContext): WindowGrain {
@@ -418,8 +418,7 @@ function armEntry(name: string, entry: GatedToolEntry): GatedToolEntry {
 }
 
 export function windowGated(name: string, entry: GatedToolEntry, mountGate?: (ctx: BindableContext) => boolean): unknown {
-  const grains = WINDOW_GATED_TOOLS[name];
-  if (grains === undefined) {
+  if (WINDOW_GATED_TOOLS[name] === undefined) {
     throw new Error(`windowGated("${name}"): not in WINDOW_GATED_TOOLS — add the kit row (the table is the single source of truth)`);
   }
   const armed = armEntry(name, entry);
@@ -429,7 +428,7 @@ export function windowGated(name: string, entry: GatedToolEntry, mountGate?: (ct
       "session.started": async (_event, ctx) => {
         const c = ctx as BindableContext;
         const grain = grainOf(c);
-        if (!grains.includes(grain)) {
+        if (!WINDOW_GATED_TOOLS[name].includes(grain)) {
           if (isNarrowedGrain(grain)) await auditGateOnce(c, grain);
           return null;
         }

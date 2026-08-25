@@ -11,6 +11,8 @@ delete process.env.OE_ORG;
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { memoryRecallRouteFor } from "../agent/access/window-gate-manifest.js";
+import { oneshotAgentEnabled } from "../agent/access/delegation-flag.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { canDelegateFromSeat } from "../agent/access/delegation-mount.js";
 import {
   WINDOW_GATED_TOOLS,
@@ -196,7 +198,7 @@ _resetWindowGateAuditForTest();
 
   const beforeFull = await countRows();
   await resolveWindowGated(windowGated("spawn_task", stubEntry("spawn_task")), grainCtx.task());
-  eq(await countRows(), beforeFull, "withholding spawn_task from a TASK worker emits NO resolve-time row (task ∈ FULL_KIT — confinement, not narrowing)");
+  eq(await countRows(), beforeFull, "withholding spawn_task from a TASK worker emits NO resolve-time row (task is a wide-hands grain — confinement, not narrowing)");
   await resolveWindowGated(windowGated("spawn_task", stubEntry("spawn_task")), grainCtx.native());
   eq(await countRows(), beforeFull + 1, "a NATIVE seat DOES emit one resolve-time row, delegation armed — it is narrowed of the wide hands, and that narrowing is an auditable event");
 
@@ -453,6 +455,37 @@ console.log("6. mount refresh on a deployment change (OPE-632):");
     "replay serves the DESCRIPTION and INPUT SCHEMA from the durable metadata — which is exactly why the refresh is load-bearing and not a nicety",
   );
   ok(/toModelOutput:(\w+)=>\{if\(\w+===void 0\)throw missingCallbackError/.test(life6), "eve's own replay rebuilds `toModelOutput` from the durable metadata — see OPE-946");
+}
+
+{
+  const before = oneshotAgentEnabled();
+  const single = windowGated("post_file", stubEntry("post_file"));
+  const kit = windowGatedKit("test_live_kit", { web_fetch: stubEntry("web_fetch") });
+  try {
+    for (const armed of [!before, before]) {
+      overrideSettingsForTest({ delegation: { oneshotAgent: armed } });
+      const shouldMount = !armed;
+      eq(
+        (await resolveWindowGated(single, grainCtx.native())) !== null,
+        shouldMount,
+        `live-read/windowGated: with delegation.oneshotAgent=${armed} set AFTER the resolver was built, an AUTHORED wide-hands tool (post_file) ${shouldMount ? "MOUNTS" : "is ABSENT"} on a native seat — the resolver re-read WINDOW_GATED_TOOLS[name] rather than holding the row it looked up at module load`,
+      );
+      const kitMount = (await resolveWindowGated(kit, grainCtx.native())) as Record<string, unknown> | null;
+      eq(
+        kitMount !== null && kitMount.web_fetch !== undefined,
+        shouldMount,
+        `live-read/windowGatedKit: …and the KIT wrapper agrees for a framework-named wide-hands tool (web_fetch) on the same seat`,
+      );
+      const fixed = windowGatedKit("test_live_fixed", { complete_task: stubEntry("complete_task") });
+      eq(
+        (await resolveWindowGated(fixed, grainCtx.native())) === null,
+        true,
+        `live-read/negative control: complete_task is a FIXED ["task"] row and stays ABSENT on a native seat with delegation.oneshotAgent=${armed}`,
+      );
+    }
+  } finally {
+    overrideSettingsForTest({ delegation: { oneshotAgent: before } });
+  }
 }
 
 console.log(`\nwindow-gated: ${n} assertions passed.`);

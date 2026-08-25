@@ -22,7 +22,7 @@ const CHILD = "subagent:ses_01ABCDEF:call_7";
 {
   const sid = classifySessionId(CHILD);
   eq(sid.kind, "subagent", "eve's delegated-child token classifies kind 'subagent' (was an unrecognised 'native' before OPE-45)");
-  eq(sid.grain, "native", "the subagent arm's GRAIN stays 'native' — 'task' is a WIDE-HANDS grain (FULL_KIT), so promoting it would widen the tool gate");
+  eq(sid.grain, "native", "the subagent arm's GRAIN stays 'native' — 'task' is a WIDE-HANDS grain, so promoting it would widen the tool gate");
   eq(sid.kind === "subagent" ? sid.parentSessionId : undefined, "ses_01ABCDEF", "parentSessionId is recovered (the attribution anchor: a child's spend belongs to its parent's surface)");
   eq(sid.kind === "subagent" ? sid.callId : undefined, "call_7", "callId is recovered — the parent's tool-call this child answers");
 

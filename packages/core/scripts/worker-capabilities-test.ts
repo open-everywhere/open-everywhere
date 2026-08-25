@@ -76,7 +76,7 @@ for (const grain of ["standing", "thread"] as const) {
   eq(
     [...workerOnlyTools(grain, withFullKit(["task"]), WINDOW_UNGATED_TOOLS)],
     [...workerOnlyTools(grain, withFullKit(["task", "native"]), WINDOW_UNGATED_TOOLS)],
-    `the ${grain} index is identical under both FULL_KIT matrices (OE_ONESHOT_AGENT cannot silently change what a seat is told it can route)`,
+    `the ${grain} index is identical under both wide-hands matrices (OE_ONESHOT_AGENT cannot silently change what a seat is told it can route)`,
   );
 }
 

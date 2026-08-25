@@ -27,7 +27,7 @@ const { classifySessionId, isThreadSeatWindowToken, parseWindowToken } = await i
 const { standingSeatRegistryKey, unifiedDomainSessionKey, unifiedWindowFromToken } = await import("../agent/channels/unified-supervisor.js");
 const { claimRuntimeRotation, RUNTIME_ROTATION_AUDIT_ACTION } = await import("../agent/channels/runtime-rotation.js");
 const { windowGrainOf } = await import("../agent/identity/binding.js");
-const { FULL_KIT, WINDOW_GATED_TOOLS, memoryRecallRouteFor } = await import("../agent/access/window-gate-manifest.js");
+const { fullKit, WINDOW_GATED_TOOLS, memoryRecallRouteFor } = await import("../agent/access/window-gate-manifest.js");
 const { OE_GRAIN_ATTR, OE_ADDRESSING_ATTR, resolveAnswerableReplyTarget, mintWakeId } = await import("../agent/channels/unified-window.js");
 const { OE_REQUESTER_ATTR, OE_REQUESTER_CANDIDATES_ATTR, REQUESTER_UNVERIFIED } = await import("../agent/access/requester-identity.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
@@ -201,7 +201,7 @@ const store = getOperationalStore();
   ok(!WINDOW_GATED_TOOLS["agent"].includes("native"), "delegator: `agent` does NOT mount on native — which is why the pre-fix fire had none");
   ok(memoryRecallRouteFor("thread", ARMED_KIT, true) === "agent", "memory: a thread-grain fire reaches its org memory via `agent`");
   ok(memoryRecallRouteFor("native", ARMED_KIT, true) === "none", "memory/defect pinned: the grain the fire USED to land on could not reach memory at all");
-  ok(Array.isArray(FULL_KIT), "hands: FULL_KIT is the single flag-derived lever both rows above read");
+  ok(Array.isArray(fullKit()), "hands: fullKit() is the single flag-derived lever both rows above read");
 }
 
 interface Delivered {

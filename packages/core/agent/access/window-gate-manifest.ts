@@ -1,22 +1,27 @@
 import type { WindowGrain } from "../identity/binding.js";
 import { oneshotAgentEnabled } from "./delegation-flag.js";
 
-export const FULL_KIT: readonly WindowGrain[] = oneshotAgentEnabled() ? (["task"] as const) : (["task", "native"] as const);
+const WIDE_HANDS_ARMED: readonly WindowGrain[] = Object.freeze(["task"] as const);
+const WIDE_HANDS_DISARMED: readonly WindowGrain[] = Object.freeze(["task", "native"] as const);
+
+export function fullKit(): readonly WindowGrain[] {
+  return oneshotAgentEnabled() ? WIDE_HANDS_ARMED : WIDE_HANDS_DISARMED;
+}
 
 export const CONVERSATIONAL_ROOT_GRAINS = ["standing", "native", "thread"] as const;
 
 export const WINDOW_GATED_TOOLS: Readonly<Record<string, readonly WindowGrain[]>> = {
-  bash: FULL_KIT,
-  glob: FULL_KIT,
-  grep: FULL_KIT,
-  read_file: FULL_KIT,
-  write_file: FULL_KIT,
-  web_fetch: FULL_KIT,
-  checkout_repo: FULL_KIT,
-  open_pull_request: FULL_KIT,
-  post_file: FULL_KIT,
-  create_skill: FULL_KIT,
-  delete_skill: FULL_KIT,
+  get bash() { return fullKit(); },
+  get glob() { return fullKit(); },
+  get grep() { return fullKit(); },
+  get read_file() { return fullKit(); },
+  get write_file() { return fullKit(); },
+  get web_fetch() { return fullKit(); },
+  get checkout_repo() { return fullKit(); },
+  get open_pull_request() { return fullKit(); },
+  get post_file() { return fullKit(); },
+  get create_skill() { return fullKit(); },
+  get delete_skill() { return fullKit(); },
   agent: ["standing", "thread"],
   stop_task: ["standing", "thread"],
   spawn_task: ["standing"],
@@ -126,7 +131,7 @@ export type MemoryRecallRoute = "file-tools" | "agent" | "spawn_task" | "none";
 
 export function memoryRecallRouteFor(
   grain: WindowGrain,
-  wideHandsGrains: readonly WindowGrain[] = FULL_KIT,
+  wideHandsGrains: readonly WindowGrain[] = fullKit(),
   armed: boolean = oneshotAgentEnabled(),
   canDelegate: boolean = true,
 ): MemoryRecallRoute {
@@ -213,7 +218,7 @@ export function checkWindowGateManifest(
   frameworkTools: readonly string[] | ReadonlyMap<string, FrameworkToolMount>,
   gated: Readonly<Record<string, readonly WindowGrain[]>> = WINDOW_GATED_TOOLS,
   ungated: ReadonlySet<string> = WINDOW_UNGATED_TOOLS,
-  wideHandsGrains: readonly WindowGrain[] = FULL_KIT,
+  wideHandsGrains: readonly WindowGrain[] = fullKit(),
   subagentNames: readonly string[] = [],
   jobKit: ReadonlySet<string> = JOB_WAKE_TOOLS,
   nativeSubagentArmed = false,
