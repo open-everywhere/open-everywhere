@@ -319,6 +319,21 @@ async function recordEgressAudit(t: InstanceType<typeof Timeline>, hosts: readon
   }
 }
 
+const PROXY_VARS = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"] as const;
+
+async function withDirectEgressPath<T>(run: () => Promise<T>): Promise<T> {
+  const saved = PROXY_VARS.map((k) => [k, process.env[k]] as const);
+  for (const k of PROXY_VARS) delete process.env[k];
+  try {
+    return await run();
+  } finally {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
 async function egressGolden(
   name: string,
   body: (t: InstanceType<typeof Timeline>) => Promise<void>,
@@ -331,7 +346,7 @@ async function egressGolden(
     return { ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(3) } as unknown as Response;
   }) as typeof fetch;
   try {
-    await body(t);
+    await withDirectEgressPath(() => body(t));
   } catch (err) {
     toolFailures++;
     console.error(`✗ ${name}: scenario threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);

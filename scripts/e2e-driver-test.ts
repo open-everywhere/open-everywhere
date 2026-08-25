@@ -502,15 +502,39 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     ok(capMiss?.includes("slackUnified") === true && capMiss.includes(ENV.slackUnifiedChannelA), "J-UNI-X capability skip names the unified fixture vars (checked before the optional gate)");
     ok(skipReason(jx, all, noneMissing, false)?.includes("E2E_INCLUDE_OPTIONAL") === true, "J-UNI-X stays skipped without E2E_INCLUDE_OPTIONAL=1 even with full tokens");
     ok(skipReason(jx, all, noneMissing, true) === undefined, "J-UNI-X is SELECTED with full tokens + optional — the roster entry is live");
-    let selfSkip = "";
-    try {
-      await jx.run({ skip: (why: string) => { throw new ScenarioSkip(why); } } as never);
-    } catch (err) {
-      if (err instanceof ScenarioSkip) selfSkip = err.message;
-    }
+    const runSelfSkip = async (armed: boolean): Promise<{ skip: string; gate: string }> => {
+      const before = process.env.E2E_UNIX_ARMED;
+      if (armed) process.env.E2E_UNIX_ARMED = "1";
+      else delete process.env.E2E_UNIX_ARMED;
+      let skip = "";
+      let gate = "";
+      try {
+        await jx.run({
+          skip: (why: string) => { throw new ScenarioSkip(why); },
+          gate: (pass: boolean, why: string) => { if (!pass) throw new Error(`GATE ${why}`); },
+        } as never);
+      } catch (err) {
+        if (err instanceof ScenarioSkip) skip = err.message;
+        else if (err instanceof Error && err.message.startsWith("GATE ")) gate = err.message;
+        else throw err;
+      } finally {
+        if (before === undefined) delete process.env.E2E_UNIX_ARMED;
+        else process.env.E2E_UNIX_ARMED = before;
+      }
+      return { skip, gate };
+    };
+    const unarmed = await runSelfSkip(false);
+    const selfSkip = unarmed.skip;
     ok(selfSkip.includes("live-fixture-pending"), "…without the unified-audit caller the body self-skips as live-fixture-pending (fixture detection, not a stub)");
     ok(selfSkip.includes("E2E_TARGET_URL") && selfSkip.includes("E2E_CONTROL_READ_TOKEN"), "…and the self-skip names the env pair that arms fixture detection");
     ok(!selfSkip.includes("TODO(unified-dispatch)") && !selfSkip.includes("TODO(unified-reply)"), "…and no longer names the retired TODO(unified-dispatch)/TODO(unified-reply) stubs (they are wired)");
+    ok(unarmed.gate === "", "…and the UNARMED branch never gates — a missing fixture is a skip, not a red");
+    const armed = await runSelfSkip(true);
+    ok(armed.skip === "", "E2E_UNIX_ARMED=1: the armed fixture does NOT skip — an armed regression must not read as 'not provisioned'");
+    ok(
+      armed.gate.includes("ARMED fixture regressed") && armed.gate.includes("live-fixture-pending"),
+      "E2E_UNIX_ARMED=1: the same missing fixture GATES, naming the armed flag and carrying the underlying reason",
+    );
   }
   for (const id of ["J1", "S23"]) {
     ok(skipReason(SCENARIOS.find((s) => s.id === id)!, slackOnly, missing, false) === undefined, `${id} runs with slack alone (no add-on fixture needed)`);
