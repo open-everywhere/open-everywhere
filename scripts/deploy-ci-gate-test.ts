@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import type { ExecResult } from "./deploy/lib.js";
+import type { Env, Exec, ExecResult } from "./deploy/lib.js";
 import {
   classifyCheckRuns,
   classifyCloudProofStatus,
@@ -9,15 +9,26 @@ import {
   decideCiGateViaCloudProof,
   fetchCheckRunsForSha,
   fetchCombinedStatusForSha,
+  GITHUB_API_BASE,
   HEAVY_JOB_NAME,
   listFirstParentAncestors,
+  parseGithubOwnerRepo,
+  resolveGithubOwnerRepoFromEnv,
+  resolveGithubRestToken,
   runCiGate,
   walkBackForCloudProof,
   walkBackForHeavyProof,
   type CheckRun,
   type CommitStatus,
+  type GithubApiFetchLike,
 } from "./deploy/ci-gate-lib.js";
 import { CLOUD_PROOF_CONTEXT } from "./deploy/cloud-proof-post-lib.js";
+
+const NO_TOKEN_ENV: Env = {};
+
+const PANIC_FETCH: GithubApiFetchLike = async () => {
+  throw new Error("PANIC_FETCH: the REST fallback must not have been called here");
+};
 
 let checks = 0;
 const check = (label: string, fn: () => void | Promise<void>): Promise<void> | void => {
@@ -114,13 +125,15 @@ check("decideCiGate: cancelled + isTip → refuse, no superseding commit to expl
   assert.match(decision.message, /no later commit/);
 });
 
-check("fetchCheckRunsForSha: a failed SPAWN refuses loudly, naming the spawn error — not empty check-runs", async () => {
+check("fetchCheckRunsForSha: a failed SPAWN with no token refuses loudly, naming BOTH remedies (OPE-1117)", async () => {
   const spawnFailed: ExecResult = { code: 1, stdout: "", stderr: "", spawnError: "ENOENT: spawn gh ENOENT" };
-  const result = await fetchCheckRunsForSha({ sha: SHA, exec: async () => spawnFailed });
+  const result = await fetchCheckRunsForSha({ sha: SHA, exec: async () => spawnFailed, fetchImpl: PANIC_FETCH, env: NO_TOKEN_ENV });
   assert.equal(result.ok, false);
   if (!result.ok) {
     assert.match(result.reason, /could not run `gh`/);
     assert.match(result.reason, /ENOENT/);
+    assert.match(result.reason, /install the GitHub CLI/);
+    assert.match(result.reason, /GH_TOKEN/);
   }
 });
 
@@ -134,11 +147,19 @@ check("fetchCheckRunsForSha: empty stdout WITHOUT spawnError is read as unparsab
   }
 });
 
-check("fetchCheckRunsForSha: a non-zero gh exit refuses and surfaces stderr", async () => {
+check("fetchCheckRunsForSha: a non-zero gh exit refuses and surfaces stderr — never falls back, even with a token set", async () => {
   const authFailed: ExecResult = { code: 4, stdout: "", stderr: "gh: not authenticated" };
-  const result = await fetchCheckRunsForSha({ sha: SHA, exec: async () => authFailed });
+  const result = await fetchCheckRunsForSha({
+    sha: SHA,
+    exec: async () => authFailed,
+    fetchImpl: PANIC_FETCH,
+    env: { GH_TOKEN: "would-be-used-if-this-were-a-spawn-failure" },
+  });
   assert.equal(result.ok, false);
-  if (!result.ok) assert.match(result.reason, /not authenticated/);
+  if (!result.ok) {
+    assert.match(result.reason, /not authenticated/);
+    assert.doesNotMatch(result.reason, /REST fallback/);
+  }
 });
 
 check("fetchCheckRunsForSha: parses a real check-runs response shape into CheckRun[]", async () => {
@@ -168,7 +189,7 @@ check("fetchCheckRunsForSha: a response with no check_runs array refuses rather 
 
 await check("runCiGate: a fetch failure REFUSES (never passes a deploy CI state could not be read for)", async () => {
   const spawnFailed: ExecResult = { code: 1, stdout: "", stderr: "", spawnError: "ENOENT: spawn gh ENOENT" };
-  const decision = await runCiGate({ sha: SHA, isTip: true, exec: async () => spawnFailed });
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: async () => spawnFailed, fetchImpl: PANIC_FETCH, env: NO_TOKEN_ENV });
   assert.equal(decision.verdict, "refuse");
   assert.match(decision.message, /could not read CI state/);
 });
@@ -178,6 +199,138 @@ await check("runCiGate: a genuinely green response PASSES end to end", async () 
   const ok: ExecResult = { code: 0, stdout: JSON.stringify(body), stderr: "" };
   const decision = await runCiGate({ sha: SHA, isTip: true, exec: async () => ok });
   assert.equal(decision.verdict, "pass");
+});
+
+const GH_ENOENT: ExecResult = { code: 1, stdout: "", stderr: "", spawnError: "ENOENT: spawn gh ENOENT" };
+const TOKEN_ENV: Env = { GH_TOKEN: "test-gh-token", GITHUB_REPOSITORY: "acme/oe" };
+
+const NO_GH_EXEC: Exec = async (command, args) => {
+  if (command === "gh") return GH_ENOENT;
+  throw new Error(`NO_GH_EXEC: unexpected exec(${command}, ${JSON.stringify(args)}) — GITHUB_REPOSITORY should have made this unnecessary`);
+};
+
+function routedRestFetch(fixture: Record<string, { status: number; body: unknown }>, calls: { url: string; headers: Record<string, string> }[]): GithubApiFetchLike {
+  return async (url, init) => {
+    calls.push({ url, headers: init.headers });
+    const path = new URL(url).pathname;
+    const match = Object.entries(fixture).find(([suffix]) => path.endsWith(suffix));
+    if (!match) throw new Error(`routedRestFetch: no fixture for ${path}`);
+    const [, { status, body }] = match;
+    return { status, text: async () => JSON.stringify(body) };
+  };
+}
+
+await check("fetchCheckRunsForSha: gh ENOENT + a token falls back to REST and parses identically to the gh path", async () => {
+  const calls: { url: string; headers: Record<string, string> }[] = [];
+  const fetchImpl = routedRestFetch({ "/check-runs": { status: 200, body: { total_count: 2, check_runs: GREEN.map((r) => ({ ...r, head_sha: SHA })) } } }, calls);
+  const result = await fetchCheckRunsForSha({ sha: SHA, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual(result.checkRuns, GREEN);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${GITHUB_API_BASE}/repos/acme/oe/commits/${SHA}/check-runs?per_page=100`);
+  assert.equal(calls[0].headers.authorization, "Bearer test-gh-token");
+});
+
+await check("fetchCombinedStatusForSha: gh ENOENT + a token falls back to REST and parses identically to the gh path", async () => {
+  const calls: { url: string; headers: Record<string, string> }[] = [];
+  const fetchImpl = routedRestFetch({ "/status": { status: 200, body: { statuses: [{ context: CLOUD_PROOF_CONTEXT, state: "success" }] } } }, calls);
+  const result = await fetchCombinedStatusForSha({ sha: SHA, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual(result.statuses, [{ context: CLOUD_PROOF_CONTEXT, state: "success" }]);
+  assert.equal(calls[0].url, `${GITHUB_API_BASE}/repos/acme/oe/commits/${SHA}/status`);
+});
+
+await check("runCiGate: gh ENOENT + REST fallback → GREEN check-runs PASSES, same verdict as the gh path", async () => {
+  const fetchImpl = routedRestFetch({ "/check-runs": { status: 200, body: { check_runs: GREEN } } }, []);
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "pass");
+});
+
+await check("runCiGate: gh ENOENT + REST fallback → RED check-run REFUSES, same verdict as the gh path", async () => {
+  const fetchImpl = routedRestFetch(
+    { "/check-runs": { status: 200, body: { check_runs: [GREEN[0], { name: HEAVY_JOB_NAME, status: "completed", conclusion: "failure" }] } } },
+    [],
+  );
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /red/);
+});
+
+await check("runCiGate: gh ENOENT + REST fallback → IN-FLIGHT check-run REFUSES, same verdict as the gh path", async () => {
+  const fetchImpl = routedRestFetch(
+    { "/check-runs": { status: 200, body: { check_runs: [GREEN[0], { name: HEAVY_JOB_NAME, status: "in_progress", conclusion: null }] } } },
+    [],
+  );
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /in flight/);
+});
+
+await check(
+  "runCiGate: gh ENOENT + REST fallback → ABSENT everywhere REFUSES, proving REST also feeds the cloud-proof + walk-back lane (no forked logic)",
+  async () => {
+    const calls: { url: string; headers: Record<string, string> }[] = [];
+    const fetchImpl = routedRestFetch(
+      { "/check-runs": { status: 200, body: { check_runs: [] } }, "/status": { status: 200, body: { statuses: [] } } },
+      calls,
+    );
+    const exec: Exec = async (command, args) => {
+      if (command === "gh") return GH_ENOENT;
+      if (command === "git" && args[0] === "rev-list") return { code: 128, stdout: "", stderr: "fatal: bad revision" };
+      throw new Error(`unexpected exec(${command}, ${JSON.stringify(args)})`);
+    };
+    const decision = await runCiGate({ sha: SHA, isTip: true, exec, fetchImpl, env: TOKEN_ENV });
+    assert.equal(decision.verdict, "refuse");
+    assert.match(decision.message, /could not list ancestor commits/);
+    assert.equal(calls.filter((c) => c.url.includes("/check-runs")).length, 1);
+    assert.equal(calls.filter((c) => c.url.includes("/status")).length, 1);
+  },
+);
+
+await check("fetchCheckRunsForSha: gh ENOENT + token + NO GITHUB_REPOSITORY falls back to `git remote get-url origin`", async () => {
+  const exec: Exec = async (command, args) => {
+    if (command === "gh") return GH_ENOENT;
+    if (command === "git" && args[0] === "remote") return { code: 0, stdout: "https://github.com/acme/oe.git\n", stderr: "" };
+    throw new Error(`unexpected exec(${command}, ${JSON.stringify(args)})`);
+  };
+  const calls: { url: string; headers: Record<string, string> }[] = [];
+  const fetchImpl = routedRestFetch({ "/check-runs": { status: 200, body: { check_runs: GREEN } } }, calls);
+  const result = await fetchCheckRunsForSha({ sha: SHA, exec, fetchImpl, env: { GH_TOKEN: "tok" } });
+  assert.equal(result.ok, true);
+  assert.equal(calls[0].url, `${GITHUB_API_BASE}/repos/acme/oe/commits/${SHA}/check-runs?per_page=100`);
+});
+
+await check("fetchCheckRunsForSha: gh ENOENT + token but no resolvable owner/repo (no GITHUB_REPOSITORY, no origin remote) REFUSES", async () => {
+  const exec: Exec = async (command) => {
+    if (command === "gh") return GH_ENOENT;
+    if (command === "git") return { code: 128, stdout: "", stderr: "fatal: No such remote 'origin'" };
+    throw new Error("unexpected exec");
+  };
+  const result = await fetchCheckRunsForSha({ sha: SHA, exec, fetchImpl: PANIC_FETCH, env: { GH_TOKEN: "tok" } });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.match(result.reason, /GITHUB_REPOSITORY/);
+    assert.match(result.reason, /git remote get-url origin/);
+  }
+});
+
+check("parseGithubOwnerRepo: parses https and ssh GitHub remote URLs; rejects a non-GitHub host", () => {
+  assert.deepEqual(parseGithubOwnerRepo("https://github.com/acme/oe.git"), { owner: "acme", repo: "oe" });
+  assert.deepEqual(parseGithubOwnerRepo("https://github.com/acme/oe"), { owner: "acme", repo: "oe" });
+  assert.deepEqual(parseGithubOwnerRepo("git@github.com:acme/oe.git"), { owner: "acme", repo: "oe" });
+  assert.equal(parseGithubOwnerRepo("https://gitlab.com/acme/oe.git"), undefined);
+});
+
+check("resolveGithubOwnerRepoFromEnv: reads GITHUB_REPOSITORY, rejects a missing or malformed value", () => {
+  assert.deepEqual(resolveGithubOwnerRepoFromEnv({ GITHUB_REPOSITORY: "acme/oe" }), { owner: "acme", repo: "oe" });
+  assert.equal(resolveGithubOwnerRepoFromEnv({}), undefined);
+  assert.equal(resolveGithubOwnerRepoFromEnv({ GITHUB_REPOSITORY: "no-slash" }), undefined);
+});
+
+check("resolveGithubRestToken: GH_TOKEN wins over GITHUB_TOKEN; either alone works; neither is undefined", () => {
+  assert.equal(resolveGithubRestToken({ GH_TOKEN: "a", GITHUB_TOKEN: "b" }), "a");
+  assert.equal(resolveGithubRestToken({ GITHUB_TOKEN: "b" }), "b");
+  assert.equal(resolveGithubRestToken({}), undefined);
 });
 
 check("decideCiGate: a 'skipped' heavy job, with nothing else considered, REFUSES on its own", () => {
@@ -421,7 +574,7 @@ check("classifyCloudProofStatus: success / pending / red / absent, read from the
 
 check("fetchCombinedStatusForSha: a failed SPAWN refuses loudly, naming the spawn error", async () => {
   const spawnFailed: ExecResult = { code: 1, stdout: "", stderr: "", spawnError: "ENOENT: spawn gh ENOENT" };
-  const result = await fetchCombinedStatusForSha({ sha: SHA, exec: async () => spawnFailed });
+  const result = await fetchCombinedStatusForSha({ sha: SHA, exec: async () => spawnFailed, fetchImpl: PANIC_FETCH, env: NO_TOKEN_ENV });
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.reason, /could not run `gh`/);
 });
@@ -551,4 +704,4 @@ await check("runCiGate: any GitHub check-run present at all means oe/cloud-proof
   );
 });
 
-console.log(`✓ deploy-ci-gate: ${checks} check(s) passed (classification, decision matrix, spawn-trap seam, fetch→decide, walk-back, oe/cloud-proof lane — all offline)`);
+console.log(`✓ deploy-ci-gate: ${checks} check(s) passed (classification, decision matrix, spawn-trap seam, fetch→decide, walk-back, oe/cloud-proof lane, REST fallback transport — all offline)`);

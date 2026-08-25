@@ -1,7 +1,7 @@
 import { fetchChangedPaths } from "../ci/changed-paths.js";
 import { isSkippableDiff, runtimePaths } from "../ci/skippable-paths.js";
 import { CLOUD_PROOF_CONTEXT } from "./cloud-proof-post-lib.js";
-import { type Exec, realExec } from "./lib.js";
+import { type Env, type Exec, realExec } from "./lib.js";
 
 export type CheckRun = {
   name: string;
@@ -89,6 +89,99 @@ export function decideCiGate(input: { sha: string; checkRuns: CheckRun[]; isTip:
   return { verdict: "refuse", message: `could not classify CI state for ${short} from ${checkRuns.length} check-run(s) — refusing rather than guessing.` };
 }
 
+export type GithubApiFetchLike = (url: string, init: { headers: Record<string, string> }) => Promise<{ status: number; text(): Promise<string> }>;
+
+export const GITHUB_API_BASE = "https://api.github.com";
+
+export const realGithubApiFetch: GithubApiFetchLike = async (url, init) => {
+  const res = await fetch(url, { headers: init.headers });
+  return { status: res.status, text: () => res.text() };
+};
+
+export function resolveGithubRestToken(env: Env): string | undefined {
+  return env.GH_TOKEN?.trim() || env.GITHUB_TOKEN?.trim() || undefined;
+}
+
+export function resolveGithubOwnerRepoFromEnv(env: Env): { owner: string; repo: string } | undefined {
+  const raw = env.GITHUB_REPOSITORY?.trim();
+  if (!raw) return undefined;
+  const slash = raw.indexOf("/");
+  if (slash <= 0 || slash === raw.length - 1) return undefined;
+  return { owner: raw.slice(0, slash), repo: raw.slice(slash + 1) };
+}
+
+export function parseGithubOwnerRepo(remoteUrl: string): { owner: string; repo: string } | undefined {
+  const m = /github\.com[:/]([^/]+)\/(.+?)(?:\.git)?\/?$/.exec(remoteUrl.trim());
+  if (!m) return undefined;
+  return { owner: m[1], repo: m[2] };
+}
+
+export async function resolveGithubOwnerRepoFromGit(exec: Exec): Promise<{ owner: string; repo: string } | undefined> {
+  const res = await exec("git", ["remote", "get-url", "origin"]);
+  if (res.spawnError || res.code !== 0) return undefined;
+  return parseGithubOwnerRepo(res.stdout);
+}
+
+type GithubApiBody = { ok: true; body: unknown } | { ok: false; reason: string };
+
+function parseJsonBody(text: string): GithubApiBody {
+  try {
+    return { ok: true, body: JSON.parse(text) };
+  } catch {
+    return { ok: false, reason: `response is not JSON: ${text.slice(0, 200)}` };
+  }
+}
+
+async function fetchGithubApi(input: {
+  ghArgs: string[];
+  restPathSuffix: string;
+  exec: Exec;
+  fetchImpl: GithubApiFetchLike;
+  env: Env;
+}): Promise<GithubApiBody> {
+  const res = await input.exec("gh", input.ghArgs);
+
+  if (!res.spawnError) {
+    if (res.code !== 0) {
+      return { ok: false, reason: `\`gh api\` exited ${res.code}: ${(res.stderr || res.stdout || "no output").trim().slice(0, 500)}` };
+    }
+    return parseJsonBody(res.stdout);
+  }
+
+  const token = resolveGithubRestToken(input.env);
+  if (!token) {
+    return {
+      ok: false,
+      reason:
+        `could not run \`gh\` (${res.spawnError}) — install the GitHub CLI and put it on PATH, ` +
+        "or set GH_TOKEN (or GITHUB_TOKEN) to let this gate read CI state over the GitHub REST API instead.",
+    };
+  }
+
+  const ownerRepo = resolveGithubOwnerRepoFromEnv(input.env) ?? (await resolveGithubOwnerRepoFromGit(input.exec));
+  if (!ownerRepo) {
+    return {
+      ok: false,
+      reason:
+        `could not run \`gh\` (${res.spawnError}); a token is set for the REST fallback, but neither GITHUB_REPOSITORY ` +
+        "nor `git remote get-url origin` named a github.com owner/repo to read.",
+    };
+  }
+
+  const url = `${GITHUB_API_BASE}/repos/${ownerRepo.owner}/${ownerRepo.repo}/${input.restPathSuffix}`;
+  let httpRes: { status: number; text(): Promise<string> };
+  try {
+    httpRes = await input.fetchImpl(url, { headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json" } });
+  } catch (err) {
+    return { ok: false, reason: `REST fallback GET ${url} failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  const text = await httpRes.text();
+  if (httpRes.status < 200 || httpRes.status >= 300) {
+    return { ok: false, reason: `REST fallback GET ${url} → HTTP ${httpRes.status}: ${text.slice(0, 500)}` };
+  }
+  return parseJsonBody(text);
+}
+
 export type FetchCheckRunsResult = { ok: true; checkRuns: CheckRun[] } | { ok: false; reason: string };
 
 function parseCheckRunsResponse(body: unknown): CheckRun[] | undefined {
@@ -108,25 +201,17 @@ function parseCheckRunsResponse(body: unknown): CheckRun[] | undefined {
   return runs;
 }
 
-export async function fetchCheckRunsForSha(input: { sha: string; exec?: Exec }): Promise<FetchCheckRunsResult> {
-  const exec = input.exec ?? realExec;
-  const res = await exec("gh", ["api", `repos/{owner}/{repo}/commits/${input.sha}/check-runs`, "--method", "GET", "-f", "per_page=100"]);
+export async function fetchCheckRunsForSha(input: { sha: string; exec?: Exec; fetchImpl?: GithubApiFetchLike; env?: Env }): Promise<FetchCheckRunsResult> {
+  const raw = await fetchGithubApi({
+    ghArgs: ["api", `repos/{owner}/{repo}/commits/${input.sha}/check-runs`, "--method", "GET", "-f", "per_page=100"],
+    restPathSuffix: `commits/${input.sha}/check-runs?per_page=100`,
+    exec: input.exec ?? realExec,
+    fetchImpl: input.fetchImpl ?? realGithubApiFetch,
+    env: input.env ?? process.env,
+  });
+  if (!raw.ok) return { ok: false, reason: raw.reason };
 
-  if (res.spawnError) {
-    return { ok: false, reason: `could not run \`gh\` (${res.spawnError}) — is the GitHub CLI installed, on PATH, and authenticated?` };
-  }
-  if (res.code !== 0) {
-    return { ok: false, reason: `\`gh api\` exited ${res.code}: ${(res.stderr || res.stdout || "no output").trim().slice(0, 500)}` };
-  }
-
-  let body: unknown;
-  try {
-    body = JSON.parse(res.stdout);
-  } catch {
-    return { ok: false, reason: `\`gh api\` returned output that is not JSON: ${res.stdout.slice(0, 200)}` };
-  }
-
-  const checkRuns = parseCheckRunsResponse(body);
+  const checkRuns = parseCheckRunsResponse(raw.body);
   if (checkRuns === undefined) {
     return { ok: false, reason: "the check-runs response has no `check_runs` array — cannot evaluate CI state" };
   }
@@ -175,8 +260,10 @@ export async function listFirstParentAncestors(input: { sha: string; count: numb
   return { ok: true, shas };
 }
 
-export async function walkBackForHeavyProof(input: { sha: string; exec?: Exec; maxDepth?: number }): Promise<CiGateDecision> {
+export async function walkBackForHeavyProof(input: { sha: string; exec?: Exec; maxDepth?: number; fetchImpl?: GithubApiFetchLike; env?: Env }): Promise<CiGateDecision> {
   const exec = input.exec ?? realExec;
+  const fetchImpl = input.fetchImpl ?? realGithubApiFetch;
+  const env = input.env ?? process.env;
   const maxDepth = input.maxDepth ?? WALK_BACK_MAX_DEPTH;
   const short = input.sha.slice(0, 12);
 
@@ -188,7 +275,7 @@ export async function walkBackForHeavyProof(input: { sha: string; exec?: Exec; m
   for (let i = 1; i < ancestors.shas.length; i++) {
     const candidate = ancestors.shas[i];
     const candidateShort = candidate.slice(0, 12);
-    const fetched = await fetchCheckRunsForSha({ sha: candidate, exec });
+    const fetched = await fetchCheckRunsForSha({ sha: candidate, exec, fetchImpl, env });
     if (!fetched.ok) {
       return { verdict: "refuse", message: `walk-back for ${short}: could not read CI state for ancestor ${candidateShort} (${fetched.reason}) — refusing.` };
     }
@@ -241,25 +328,17 @@ function parseCombinedStatusResponse(body: unknown): CommitStatus[] | undefined 
 
 export type FetchCombinedStatusResult = { ok: true; statuses: CommitStatus[] } | { ok: false; reason: string };
 
-export async function fetchCombinedStatusForSha(input: { sha: string; exec?: Exec }): Promise<FetchCombinedStatusResult> {
-  const exec = input.exec ?? realExec;
-  const res = await exec("gh", ["api", `repos/{owner}/{repo}/commits/${input.sha}/status`, "--method", "GET"]);
+export async function fetchCombinedStatusForSha(input: { sha: string; exec?: Exec; fetchImpl?: GithubApiFetchLike; env?: Env }): Promise<FetchCombinedStatusResult> {
+  const raw = await fetchGithubApi({
+    ghArgs: ["api", `repos/{owner}/{repo}/commits/${input.sha}/status`, "--method", "GET"],
+    restPathSuffix: `commits/${input.sha}/status`,
+    exec: input.exec ?? realExec,
+    fetchImpl: input.fetchImpl ?? realGithubApiFetch,
+    env: input.env ?? process.env,
+  });
+  if (!raw.ok) return { ok: false, reason: raw.reason };
 
-  if (res.spawnError) {
-    return { ok: false, reason: `could not run \`gh\` (${res.spawnError}) — is the GitHub CLI installed, on PATH, and authenticated?` };
-  }
-  if (res.code !== 0) {
-    return { ok: false, reason: `\`gh api\` exited ${res.code}: ${(res.stderr || res.stdout || "no output").trim().slice(0, 500)}` };
-  }
-
-  let body: unknown;
-  try {
-    body = JSON.parse(res.stdout);
-  } catch {
-    return { ok: false, reason: `\`gh api\` returned output that is not JSON: ${res.stdout.slice(0, 200)}` };
-  }
-
-  const statuses = parseCombinedStatusResponse(body);
+  const statuses = parseCombinedStatusResponse(raw.body);
   if (statuses === undefined) {
     return { ok: false, reason: "the combined status response has no `statuses` array — cannot evaluate cloud-proof state" };
   }
@@ -279,8 +358,10 @@ export function classifyCloudProofStatus(statuses: CommitStatus[]): CloudProofSt
   return { kind: "red", state: status.state };
 }
 
-export async function walkBackForCloudProof(input: { sha: string; exec?: Exec; maxDepth?: number }): Promise<CiGateDecision> {
+export async function walkBackForCloudProof(input: { sha: string; exec?: Exec; maxDepth?: number; fetchImpl?: GithubApiFetchLike; env?: Env }): Promise<CiGateDecision> {
   const exec = input.exec ?? realExec;
+  const fetchImpl = input.fetchImpl ?? realGithubApiFetch;
+  const env = input.env ?? process.env;
   const maxDepth = input.maxDepth ?? WALK_BACK_MAX_DEPTH;
   const short = input.sha.slice(0, 12);
 
@@ -292,7 +373,7 @@ export async function walkBackForCloudProof(input: { sha: string; exec?: Exec; m
   for (let i = 1; i < ancestors.shas.length; i++) {
     const candidate = ancestors.shas[i];
     const candidateShort = candidate.slice(0, 12);
-    const fetched = await fetchCombinedStatusForSha({ sha: candidate, exec });
+    const fetched = await fetchCombinedStatusForSha({ sha: candidate, exec, fetchImpl, env });
     if (!fetched.ok) {
       return { verdict: "refuse", message: `cloud-proof walk-back for ${short}: could not read status for ancestor ${candidateShort} (${fetched.reason}) — refusing.` };
     }
@@ -326,10 +407,12 @@ export async function walkBackForCloudProof(input: { sha: string; exec?: Exec; m
   return { verdict: "refuse", message: `cloud-proof walk-back for ${short}: no green oe/cloud-proof status found within ${maxDepth} ancestor commit(s) — refusing rather than guessing.` };
 }
 
-export async function decideCiGateViaCloudProof(input: { sha: string; isTip: boolean; exec?: Exec }): Promise<CiGateDecision> {
+export async function decideCiGateViaCloudProof(input: { sha: string; isTip: boolean; exec?: Exec; fetchImpl?: GithubApiFetchLike; env?: Env }): Promise<CiGateDecision> {
   const exec = input.exec ?? realExec;
+  const fetchImpl = input.fetchImpl ?? realGithubApiFetch;
+  const env = input.env ?? process.env;
   const short = input.sha.slice(0, 12);
-  const fetched = await fetchCombinedStatusForSha({ sha: input.sha, exec });
+  const fetched = await fetchCombinedStatusForSha({ sha: input.sha, exec, fetchImpl, env });
   if (!fetched.ok) {
     return {
       verdict: "refuse",
@@ -347,18 +430,20 @@ export async function decideCiGateViaCloudProof(input: { sha: string; isTip: boo
   if (cloud.kind === "red") {
     return { verdict: "refuse", message: `oe/cloud-proof is red for ${short} (${cloud.state}) — refusing.` };
   }
-  return walkBackForCloudProof({ sha: input.sha, exec });
+  return walkBackForCloudProof({ sha: input.sha, exec, fetchImpl, env });
 }
 
-export async function runCiGate(input: { sha: string; isTip: boolean; exec?: Exec }): Promise<CiGateDecision> {
+export async function runCiGate(input: { sha: string; isTip: boolean; exec?: Exec; fetchImpl?: GithubApiFetchLike; env?: Env }): Promise<CiGateDecision> {
   const exec = input.exec ?? realExec;
-  const fetched = await fetchCheckRunsForSha({ sha: input.sha, exec });
+  const fetchImpl = input.fetchImpl ?? realGithubApiFetch;
+  const env = input.env ?? process.env;
+  const fetched = await fetchCheckRunsForSha({ sha: input.sha, exec, fetchImpl, env });
   if (!fetched.ok) {
     return { verdict: "refuse", message: `could not read CI state for ${input.sha.slice(0, 12)}: ${fetched.reason}` };
   }
 
   if (fetched.checkRuns.length === 0) {
-    return decideCiGateViaCloudProof({ sha: input.sha, isTip: input.isTip, exec });
+    return decideCiGateViaCloudProof({ sha: input.sha, isTip: input.isTip, exec, fetchImpl, env });
   }
 
   const decision = decideCiGate({ sha: input.sha, checkRuns: fetched.checkRuns, isTip: input.isTip });
@@ -371,5 +456,5 @@ export async function runCiGate(input: { sha: string; isTip: boolean; exec?: Exe
     return decision;
   }
 
-  return walkBackForHeavyProof({ sha: input.sha, exec });
+  return walkBackForHeavyProof({ sha: input.sha, exec, fetchImpl, env });
 }
