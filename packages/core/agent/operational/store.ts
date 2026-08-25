@@ -856,6 +856,15 @@ export interface OperationalStore {
   getCredentialGrant(org: string, id: string): Promise<CredentialGrantRow | null>;
   credentialGrantsForScope(org: string, scopeKey: string): Promise<readonly CredentialGrantRow[]>;
   liveCredentialGrant(org: string, ownerPrincipalId: string, verb: string, scopeKey: string, nowIso: string): Promise<CredentialGrantRow | null>;
+  liveBorrowCredentialGrant(
+    org: string,
+    ownerPrincipalId: string,
+    connector: string,
+    mcpTool: string,
+    frozenArgsDigest: string,
+    scopeKey: string,
+    nowIso: string,
+  ): Promise<CredentialGrantRow | null>;
   burnCredentialGrant(org: string, id: string, at: string): Promise<CredentialGrantRow | null>;
   revokeCredentialGrant(org: string, id: string, at: string): Promise<boolean>;
   expireCredentialGrants(org: string, nowIso: string): Promise<number>;

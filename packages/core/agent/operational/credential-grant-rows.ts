@@ -1,8 +1,12 @@
+import { createHash } from "node:crypto";
+
 export type CredentialGrantMode = "once" | "session" | "standing";
 
 export type CredentialGrantState = "active" | "used" | "revoked" | "expired";
 
 export type CredentialGrantAskState = "pending" | "approved" | "declined" | "expired";
+
+export type GrantJsonObject = Readonly<Record<string, unknown>>;
 
 export interface CredentialGrantAskRow {
   readonly id: string;
@@ -14,6 +18,9 @@ export interface CredentialGrantAskRow {
   readonly connector: string;
   readonly verb: string;
   readonly resource: string;
+  readonly mcpTool?: string;
+  readonly frozenArgs?: GrantJsonObject;
+  readonly toolName?: string;
   readonly scopeKey: string;
   readonly purpose: string;
   readonly requesterTarget?: string;
@@ -36,6 +43,10 @@ export interface CredentialGrantRow {
   readonly connector: string;
   readonly verb: string;
   readonly resource: string;
+  readonly mcpTool?: string;
+  readonly frozenArgs?: GrantJsonObject;
+  readonly toolName?: string;
+  readonly inputSchema?: GrantJsonObject;
   readonly scopeKey: string;
   readonly mode: CredentialGrantMode;
   readonly tier: "read" | "write" | "destructive";
@@ -54,7 +65,15 @@ export function isGrantNameSegment(segment: string): boolean {
 }
 
 export function grantOwnerSlug(handle: string): string | undefined {
-  const slug = handle
+  return grantNameSlug(handle);
+}
+
+export function grantToolSlug(mcpTool: string): string | undefined {
+  return grantNameSlug(mcpTool);
+}
+
+function grantNameSlug(raw: string): string | undefined {
+  const slug = raw
     .toLowerCase()
     .replace(/[^a-z0-9]+/gu, "_")
     .replace(/^_+|_+$/gu, "")
@@ -72,6 +91,92 @@ export function isGrantToolName(name: string): boolean {
   const segments = name.split("__");
   if (segments.length !== 3) return false;
   return segments[0] === CREDENTIAL_GRANT_NAMESPACE && isGrantNameSegment(segments[1] ?? "") && isGrantNameSegment(segments[2] ?? "");
+}
+
+export function grantBorrowToolName(ownerSlug: string, connector: string, toolSlug: string, ordinal?: number): string {
+  if (!isGrantNameSegment(ownerSlug)) throw new Error(`grantBorrowToolName: illegal owner segment "${ownerSlug}" (a segment may not contain "__")`);
+  if (!isGrantNameSegment(connector)) throw new Error(`grantBorrowToolName: illegal connector segment "${connector}" (a segment may not contain "__")`);
+  if (!isGrantNameSegment(toolSlug)) throw new Error(`grantBorrowToolName: illegal tool segment "${toolSlug}" (slugify it with grantToolSlug first)`);
+  if (ordinal !== undefined && (!Number.isInteger(ordinal) || ordinal < 1)) {
+    throw new Error(`grantBorrowToolName: ordinal must be an integer of 1 or more, not ${String(ordinal)}`);
+  }
+  const suffix = ordinal === undefined || ordinal === 1 ? "" : `_${String(ordinal)}`;
+  const name = `${CREDENTIAL_GRANT_NAMESPACE}__${ownerSlug}_${connector}${suffix}__${toolSlug}`;
+  if (!isGrantToolName(name)) throw new Error(`grantBorrowToolName: composed an unreadable name "${name}"`);
+  return name;
+}
+
+export function nextGrantBorrowToolName(ownerSlug: string, connector: string, toolSlug: string, taken: readonly string[]): string {
+  const claimed = new Set(taken);
+  for (let ordinal = 1; ; ordinal++) {
+    const name = grantBorrowToolName(ownerSlug, connector, toolSlug, ordinal);
+    if (!claimed.has(name)) return name;
+  }
+}
+
+export function grantJsonColumn(value: GrantJsonObject | undefined): string | null {
+  return value === undefined ? null : canonicalJson(value, "value");
+}
+
+export function grantJsonFromColumn(text: string | null | undefined, column: string): GrantJsonObject | undefined {
+  if (text === null || text === undefined) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    throw new Error(`credential grant row: column "${column}" does not hold JSON (${String(err)})`);
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`credential grant row: column "${column}" holds ${Array.isArray(parsed) ? "an array" : String(parsed === null ? "null" : typeof parsed)}, not a JSON object`);
+  }
+  return parsed as GrantJsonObject;
+}
+
+export function grantBorrowColumnsProblem(row: {
+  readonly mcpTool?: string;
+  readonly frozenArgs?: GrantJsonObject;
+  readonly toolName?: string;
+  readonly inputSchema?: GrantJsonObject;
+}): string | undefined {
+  const present = [
+    ["mcpTool", row.mcpTool !== undefined],
+    ["frozenArgs", row.frozenArgs !== undefined],
+    ["toolName", row.toolName !== undefined],
+  ] as const;
+  const named = present.filter(([, has]) => has);
+  if (named.length > 0 && named.length < present.length) {
+    const missing = present.filter(([, has]) => !has).map(([name]) => name);
+    return `a borrow names ${named.map(([name]) => name).join(", ")} but not ${missing.join(", ")} — the three are decided together at the ask and must be written together`;
+  }
+  if (row.inputSchema !== undefined && row.mcpTool === undefined) return "a schema snapshot was written without the vendor tool it snapshots";
+  return undefined;
+}
+
+export function grantFrozenArgsDigest(frozenArgs: GrantJsonObject): string {
+  return createHash("sha256").update(canonicalJson(frozenArgs, "frozenArgs")).digest("hex");
+}
+
+const GRANT_JSON_MAX_DEPTH = 64;
+
+function canonicalJson(value: unknown, path: string, depth = 0): string {
+  if (depth > GRANT_JSON_MAX_DEPTH) throw new Error(`credential grant row: ${path} nests deeper than ${String(GRANT_JSON_MAX_DEPTH)} levels (a cycle, or a value no vendor tool takes)`);
+  if (value === null) return "null";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error(`credential grant row: ${path} is ${String(value)}, which JSON cannot hold`);
+    return JSON.stringify(value);
+  }
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item, i) => canonicalJson(item, `${path}[${String(i)}]`, depth + 1)).join(",")}]`;
+  if (typeof value !== "object") throw new Error(`credential grant row: ${path} is a ${typeof value}, which JSON cannot hold`);
+  const proto = Object.getPrototypeOf(value) as unknown;
+  if (proto !== Object.prototype && proto !== null) throw new Error(`credential grant row: ${path} is a ${(value as object).constructor?.name ?? "non-plain"} object, not a JSON object`);
+  const entries = Object.entries(value as Record<string, unknown>);
+  for (const [k, v] of entries) {
+    if (v === undefined) throw new Error(`credential grant row: ${path}.${k} is undefined, which JSON cannot hold — a dropped key is a lost narrowing`);
+  }
+  entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v, `${path}.${k}`, depth + 1)}`).join(",")}}`;
 }
 
 export type CredentialGrantRefusal =

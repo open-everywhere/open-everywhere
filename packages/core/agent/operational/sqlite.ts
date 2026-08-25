@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
 import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
+import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
@@ -450,6 +451,9 @@ function getDb(): DatabaseSync {
       connector              TEXT NOT NULL,
       verb                   TEXT NOT NULL,   -- a REGISTERED grantable verb, never a vendor permission
       resource               TEXT NOT NULL,   -- ARN-like: notion:page/<id>
+      mcp_tool               TEXT,            -- OPE-1136: the vendor MCP tool, in the vendor's exact bytes
+      frozen_args            TEXT,            -- OPE-1136: canonical JSON; '{}' is "nothing frozen", NULL is "no borrow"
+      tool_name              TEXT,            -- OPE-1136: the full mounted name, PINNED here with the ordinal
       scope_key              TEXT NOT NULL,   -- the CHAT this would serve (the session id)
       purpose                TEXT NOT NULL,   -- model-authored; untrusted content
       requester_target       TEXT,            -- JSON ReplyTarget: where the owner's answer is reported back
@@ -465,10 +469,18 @@ function getDb(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS credential_grant_ask_org_scope ON credential_grant_ask (org_id, scope_key);
     -- credential_grant (OPE-1060): the owner-approved grant a chat spends. The tier is decided ONCE at
-    -- mint against the underlying VERB definition and is never re-derived from the mounted tool name
-    -- (a grant__<owner>__<verb> name carries a person's handle where a classifier looks for a verb).
+    -- mint -- from the verb definition on the registry path, from classifyConnectorOpTier on the
+    -- OPE-1136 borrow path -- and is never re-derived from the mounted tool name (a grant__… name
+    -- carries a person's handle where a classifier looks for a verb).
     -- Rows are NEVER deleted: the mount projects every row for a scope and the broker refuses on
     -- state, so a removed row would make a tool vanish mid-plan instead of refusing.
+    -- 🔴 NO UNIQUE INDEX ON (org_id, scope_key, tool_name), and the reason is stated once here
+    -- (OPE-1136). Uniqueness inside one chat is held by the ORDINAL: nextGrantBorrowToolName reads
+    -- every row in the scope, dead ones included, and picks the lowest free ordinal. The only hole
+    -- that leaves is two asks composing at the same instant, and the mount-side dedupe closes that
+    -- one. A unique index would ALSO refuse a write, and it would start doing so before any writer
+    -- of tool_name exists to be tested against it -- so the constraint waits for the transport
+    -- slice, where a real writer can be proven against it.
     CREATE TABLE IF NOT EXISTS credential_grant (
       org_id                 TEXT NOT NULL,
       id                     TEXT NOT NULL,
@@ -479,9 +491,13 @@ function getDb(): DatabaseSync {
       connector              TEXT NOT NULL,
       verb                   TEXT NOT NULL,
       resource               TEXT NOT NULL,
+      mcp_tool               TEXT,            -- OPE-1136: the vendor MCP tool, in the vendor's exact bytes
+      frozen_args            TEXT,            -- OPE-1136: canonical JSON; '{}' is "nothing frozen", NULL is "no borrow"
+      tool_name              TEXT,            -- OPE-1136: the full mounted name, copied from the ask
+      input_schema           TEXT,            -- OPE-1136: the post-bake schema snapshot, taken at approve
       scope_key              TEXT NOT NULL,
       mode                   TEXT NOT NULL,   -- once | session | standing
-      tier                   TEXT NOT NULL,   -- read | write | destructive (from the verb, at mint)
+      tier                   TEXT NOT NULL,   -- read | write | destructive, pinned at mint
       status                 TEXT NOT NULL,   -- active | used | revoked | expired
       purpose                TEXT NOT NULL,   -- model-authored; untrusted content
       created_at             TEXT NOT NULL,
@@ -637,6 +653,14 @@ function getDb(): DatabaseSync {
 
     "ALTER TABLE credential_grant_ask ADD COLUMN card_surface_id TEXT",
     "ALTER TABLE credential_grant_ask ADD COLUMN card_message_id TEXT",
+
+    "ALTER TABLE credential_grant_ask ADD COLUMN mcp_tool TEXT",
+    "ALTER TABLE credential_grant_ask ADD COLUMN frozen_args TEXT",
+    "ALTER TABLE credential_grant_ask ADD COLUMN tool_name TEXT",
+    "ALTER TABLE credential_grant ADD COLUMN mcp_tool TEXT",
+    "ALTER TABLE credential_grant ADD COLUMN frozen_args TEXT",
+    "ALTER TABLE credential_grant ADD COLUMN tool_name TEXT",
+    "ALTER TABLE credential_grant ADD COLUMN input_schema TEXT",
   ]) {
     try {
       handle.exec(ddl);
@@ -935,8 +959,14 @@ function linkChallengeFromSqliteRow(org: string, r: LinkChallengeSqliteRow): Lin
   };
 }
 
+function refuseHalfBorrow(table: string, row: Parameters<typeof grantBorrowColumnsProblem>[0]): void {
+  const problem = grantBorrowColumnsProblem(row);
+  if (problem !== undefined) throw new Error(`${table}: ${problem}`);
+}
+
 const GRANT_ASK_SQLITE_SELECT =
   `SELECT id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
+          mcp_tool, frozen_args, tool_name,
           scope_key, purpose, requester_target, card_surface_id, card_message_id, requested_mode, status, created_at, expires_at, decided_at, grant_id
    FROM credential_grant_ask`;
 
@@ -950,6 +980,9 @@ type GrantAskSqliteRow = {
   connector: string;
   verb: string;
   resource: string;
+  mcp_tool: string | null;
+  frozen_args: string | null;
+  tool_name: string | null;
   scope_key: string;
   purpose: string;
   requester_target: string | null;
@@ -964,6 +997,7 @@ type GrantAskSqliteRow = {
 };
 
 function grantAskFromSqliteRow(r: GrantAskSqliteRow): CredentialGrantAskRow {
+  const frozenArgs = grantJsonFromColumn(r.frozen_args, "credential_grant_ask.frozen_args");
   return {
     id: r.id,
     requesterPrincipalId: r.requester_principal_id,
@@ -974,6 +1008,9 @@ function grantAskFromSqliteRow(r: GrantAskSqliteRow): CredentialGrantAskRow {
     connector: r.connector,
     verb: r.verb,
     resource: r.resource,
+    ...(r.mcp_tool === null || r.mcp_tool === undefined ? {} : { mcpTool: r.mcp_tool }),
+    ...(frozenArgs === undefined ? {} : { frozenArgs }),
+    ...(r.tool_name === null || r.tool_name === undefined ? {} : { toolName: r.tool_name }),
     scopeKey: r.scope_key,
     purpose: r.purpose,
     ...(r.requester_target === null ? {} : { requesterTarget: r.requester_target }),
@@ -990,6 +1027,7 @@ function grantAskFromSqliteRow(r: GrantAskSqliteRow): CredentialGrantAskRow {
 
 const GRANT_SQLITE_SELECT =
   `SELECT id, ask_id, requester_principal_id, owner_principal_id, owner_slug, connector, verb, resource,
+          mcp_tool, frozen_args, tool_name, input_schema,
           scope_key, mode, tier, status, purpose, created_at, expires_at, used_at, revoked_at
    FROM credential_grant`;
 
@@ -1002,6 +1040,10 @@ type GrantSqliteRow = {
   connector: string;
   verb: string;
   resource: string;
+  mcp_tool: string | null;
+  frozen_args: string | null;
+  tool_name: string | null;
+  input_schema: string | null;
   scope_key: string;
   mode: string;
   tier: string;
@@ -1014,6 +1056,8 @@ type GrantSqliteRow = {
 };
 
 function grantFromSqliteRow(r: GrantSqliteRow): CredentialGrantRow {
+  const frozenArgs = grantJsonFromColumn(r.frozen_args, "credential_grant.frozen_args");
+  const inputSchema = grantJsonFromColumn(r.input_schema, "credential_grant.input_schema");
   return {
     id: r.id,
     askId: r.ask_id,
@@ -1023,6 +1067,10 @@ function grantFromSqliteRow(r: GrantSqliteRow): CredentialGrantRow {
     connector: r.connector,
     verb: r.verb,
     resource: r.resource,
+    ...(r.mcp_tool === null || r.mcp_tool === undefined ? {} : { mcpTool: r.mcp_tool }),
+    ...(frozenArgs === undefined ? {} : { frozenArgs }),
+    ...(r.tool_name === null || r.tool_name === undefined ? {} : { toolName: r.tool_name }),
+    ...(inputSchema === undefined ? {} : { inputSchema }),
     scopeKey: r.scope_key,
     mode: r.mode as CredentialGrantMode,
     tier: r.tier as CredentialGrantRow["tier"],
@@ -2762,12 +2810,14 @@ export const sqliteOperationalStore: OperationalStore = {
   },
 
   async addCredentialGrantAsk(org, row) {
+    refuseHalfBorrow("credential_grant_ask", row);
     getDb()
       .prepare(
         `INSERT INTO credential_grant_ask
            (org_id, id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
+            mcp_tool, frozen_args, tool_name,
             scope_key, purpose, requester_target, card_surface_id, card_message_id, requested_mode, status, created_at, expires_at, decided_at, grant_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         org,
@@ -2780,6 +2830,9 @@ export const sqliteOperationalStore: OperationalStore = {
         row.connector,
         row.verb,
         row.resource,
+        row.mcpTool ?? null,
+        grantJsonColumn(row.frozenArgs),
+        row.toolName ?? null,
         row.scopeKey,
         row.purpose,
         row.requesterTarget ?? null,
@@ -2843,12 +2896,14 @@ export const sqliteOperationalStore: OperationalStore = {
   },
 
   async addCredentialGrant(org, row) {
+    refuseHalfBorrow("credential_grant", row);
     getDb()
       .prepare(
         `INSERT INTO credential_grant
            (org_id, id, ask_id, requester_principal_id, owner_principal_id, owner_slug, connector, verb, resource,
+            mcp_tool, frozen_args, tool_name, input_schema,
             scope_key, mode, tier, status, purpose, created_at, expires_at, used_at, revoked_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         org,
@@ -2860,6 +2915,10 @@ export const sqliteOperationalStore: OperationalStore = {
         row.connector,
         row.verb,
         row.resource,
+        row.mcpTool ?? null,
+        grantJsonColumn(row.frozenArgs),
+        row.toolName ?? null,
+        grantJsonColumn(row.inputSchema),
         row.scopeKey,
         row.mode,
         row.tier,
@@ -2892,6 +2951,20 @@ export const sqliteOperationalStore: OperationalStore = {
       )
       .get(org, ownerPrincipalId, verb, scopeKey, nowIso) as GrantSqliteRow | undefined;
     return row ? grantFromSqliteRow(row) : null;
+  },
+
+  async liveBorrowCredentialGrant(org, ownerPrincipalId, connector, mcpTool, frozenArgsDigest, scopeKey, nowIso) {
+    const rows = getDb()
+      .prepare(
+        `${GRANT_SQLITE_SELECT} WHERE org_id = ? AND owner_principal_id = ? AND connector = ? AND mcp_tool = ? AND scope_key = ?
+           AND status = 'active' AND expires_at > ? ORDER BY created_at DESC`,
+      )
+      .all(org, ownerPrincipalId, connector, mcpTool, scopeKey, nowIso) as GrantSqliteRow[];
+    for (const r of rows) {
+      const row = grantFromSqliteRow(r);
+      if (row.frozenArgs !== undefined && grantFrozenArgsDigest(row.frozenArgs) === frozenArgsDigest) return row;
+    }
+    return null;
   },
 
   async burnCredentialGrant(org, id, at) {

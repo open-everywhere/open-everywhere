@@ -1,6 +1,7 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
 import { likePrefixPattern, assertSpendLimitAmount, assertDomainModelPick, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
+import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
@@ -375,6 +376,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      connector              text NOT NULL,
      verb                   text NOT NULL,   -- a REGISTERED grantable verb, never a vendor permission
      resource               text NOT NULL,   -- ARN-like: notion:page/<id>
+     mcp_tool               text,            -- OPE-1136: the vendor MCP tool, in the vendor's exact bytes
+     frozen_args            text,            -- OPE-1136: canonical JSON; '{}' is "nothing frozen", NULL is "no borrow"
+     tool_name              text,            -- OPE-1136: the full mounted name, PINNED here with the ordinal
      scope_key              text NOT NULL,   -- the CHAT this would serve (the session id)
      purpose                text NOT NULL,   -- model-authored; untrusted content
      requester_target       text,            -- JSON ReplyTarget: where the owner's answer is reported back
@@ -399,9 +403,13 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      connector              text NOT NULL,
      verb                   text NOT NULL,
      resource               text NOT NULL,
+     mcp_tool               text,            -- OPE-1136: the vendor MCP tool, in the vendor's exact bytes
+     frozen_args            text,            -- OPE-1136: canonical JSON; '{}' is "nothing frozen", NULL is "no borrow"
+     tool_name              text,            -- OPE-1136: the full mounted name, copied from the ask
+     input_schema           text,            -- OPE-1136: the post-bake schema snapshot, taken at approve
      scope_key              text NOT NULL,
      mode                   text NOT NULL,   -- once | session | standing
-     tier                   text NOT NULL,   -- read | write | destructive (from the verb, at mint)
+     tier                   text NOT NULL,   -- read | write | destructive, pinned at mint
      status                 text NOT NULL,   -- active | used | revoked | expired
      purpose                text NOT NULL,   -- model-authored; untrusted content
      created_at             text NOT NULL,
@@ -528,6 +536,13 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE credential_grant_ask ADD COLUMN IF NOT EXISTS requester_target text`,
   `ALTER TABLE credential_grant_ask ADD COLUMN IF NOT EXISTS card_surface_id text`,
   `ALTER TABLE credential_grant_ask ADD COLUMN IF NOT EXISTS card_message_id text`,
+  `ALTER TABLE credential_grant_ask ADD COLUMN IF NOT EXISTS mcp_tool text`,
+  `ALTER TABLE credential_grant_ask ADD COLUMN IF NOT EXISTS frozen_args text`,
+  `ALTER TABLE credential_grant_ask ADD COLUMN IF NOT EXISTS tool_name text`,
+  `ALTER TABLE credential_grant ADD COLUMN IF NOT EXISTS mcp_tool text`,
+  `ALTER TABLE credential_grant ADD COLUMN IF NOT EXISTS frozen_args text`,
+  `ALTER TABLE credential_grant ADD COLUMN IF NOT EXISTS tool_name text`,
+  `ALTER TABLE credential_grant ADD COLUMN IF NOT EXISTS input_schema text`,
   `DO $$
    BEGIN
      IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'identity_linked_ids' AND relkind = 'r')
@@ -1276,8 +1291,14 @@ function linkChallengeFromPgRow(org: string, r: LinkChallengePgRow): LinkChallen
   };
 }
 
+function refuseHalfBorrow(table: string, row: Parameters<typeof grantBorrowColumnsProblem>[0]): void {
+  const problem = grantBorrowColumnsProblem(row);
+  if (problem !== undefined) throw new Error(`${table}: ${problem}`);
+}
+
 const GRANT_ASK_COLUMNS =
   `id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
+   mcp_tool, frozen_args, tool_name,
    scope_key, purpose, requester_target, card_surface_id, card_message_id, requested_mode, status, created_at, expires_at, decided_at, grant_id`;
 const GRANT_ASK_SELECT = `SELECT ${GRANT_ASK_COLUMNS} FROM credential_grant_ask`;
 
@@ -1291,6 +1312,9 @@ type GrantAskPgRow = {
   connector: string;
   verb: string;
   resource: string;
+  mcp_tool: string | null;
+  frozen_args: string | null;
+  tool_name: string | null;
   scope_key: string;
   purpose: string;
   requester_target: string | null;
@@ -1305,6 +1329,7 @@ type GrantAskPgRow = {
 };
 
 function grantAskFromPgRow(r: GrantAskPgRow): CredentialGrantAskRow {
+  const frozenArgs = grantJsonFromColumn(r.frozen_args, "credential_grant_ask.frozen_args");
   return {
     id: r.id,
     requesterPrincipalId: r.requester_principal_id,
@@ -1315,6 +1340,9 @@ function grantAskFromPgRow(r: GrantAskPgRow): CredentialGrantAskRow {
     connector: r.connector,
     verb: r.verb,
     resource: r.resource,
+    ...(r.mcp_tool === null || r.mcp_tool === undefined ? {} : { mcpTool: r.mcp_tool }),
+    ...(frozenArgs === undefined ? {} : { frozenArgs }),
+    ...(r.tool_name === null || r.tool_name === undefined ? {} : { toolName: r.tool_name }),
     scopeKey: r.scope_key,
     purpose: r.purpose,
     ...(r.requester_target === null ? {} : { requesterTarget: r.requester_target }),
@@ -1331,6 +1359,7 @@ function grantAskFromPgRow(r: GrantAskPgRow): CredentialGrantAskRow {
 
 const GRANT_COLUMNS =
   `id, ask_id, requester_principal_id, owner_principal_id, owner_slug, connector, verb, resource,
+   mcp_tool, frozen_args, tool_name, input_schema,
    scope_key, mode, tier, status, purpose, created_at, expires_at, used_at, revoked_at`;
 const GRANT_SELECT = `SELECT ${GRANT_COLUMNS} FROM credential_grant`;
 
@@ -1343,6 +1372,10 @@ type GrantPgRow = {
   connector: string;
   verb: string;
   resource: string;
+  mcp_tool: string | null;
+  frozen_args: string | null;
+  tool_name: string | null;
+  input_schema: string | null;
   scope_key: string;
   mode: string;
   tier: string;
@@ -1355,6 +1388,8 @@ type GrantPgRow = {
 };
 
 function grantFromPgRow(r: GrantPgRow): CredentialGrantRow {
+  const frozenArgs = grantJsonFromColumn(r.frozen_args, "credential_grant.frozen_args");
+  const inputSchema = grantJsonFromColumn(r.input_schema, "credential_grant.input_schema");
   return {
     id: r.id,
     askId: r.ask_id,
@@ -1364,6 +1399,10 @@ function grantFromPgRow(r: GrantPgRow): CredentialGrantRow {
     connector: r.connector,
     verb: r.verb,
     resource: r.resource,
+    ...(r.mcp_tool === null || r.mcp_tool === undefined ? {} : { mcpTool: r.mcp_tool }),
+    ...(frozenArgs === undefined ? {} : { frozenArgs }),
+    ...(r.tool_name === null || r.tool_name === undefined ? {} : { toolName: r.tool_name }),
+    ...(inputSchema === undefined ? {} : { inputSchema }),
     scopeKey: r.scope_key,
     mode: r.mode as CredentialGrantMode,
     tier: r.tier as CredentialGrantRow["tier"],
@@ -3232,11 +3271,13 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     async addCredentialGrantAsk(org: string, row: CredentialGrantAskRow) {
+      refuseHalfBorrow("credential_grant_ask", row);
       await client.query(
         `INSERT INTO credential_grant_ask
            (org_id, id, requester_principal_id, owner_principal_id, owner_slug, owner_platform, owner_native_id, connector, verb, resource,
+            mcp_tool, frozen_args, tool_name,
             scope_key, purpose, requester_target, card_surface_id, card_message_id, requested_mode, status, created_at, expires_at, decided_at, grant_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
         [
           org,
           row.id,
@@ -3248,6 +3289,9 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           row.connector,
           row.verb,
           row.resource,
+          row.mcpTool ?? null,
+          grantJsonColumn(row.frozenArgs),
+          row.toolName ?? null,
           row.scopeKey,
           row.purpose,
           row.requesterTarget ?? null,
@@ -3310,11 +3354,13 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     async addCredentialGrant(org: string, row: CredentialGrantRow) {
+      refuseHalfBorrow("credential_grant", row);
       await client.query(
         `INSERT INTO credential_grant
            (org_id, id, ask_id, requester_principal_id, owner_principal_id, owner_slug, connector, verb, resource,
+            mcp_tool, frozen_args, tool_name, input_schema,
             scope_key, mode, tier, status, purpose, created_at, expires_at, used_at, revoked_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
         [
           org,
           row.id,
@@ -3325,6 +3371,10 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           row.connector,
           row.verb,
           row.resource,
+          row.mcpTool ?? null,
+          grantJsonColumn(row.frozenArgs),
+          row.toolName ?? null,
+          grantJsonColumn(row.inputSchema),
           row.scopeKey,
           row.mode,
           row.tier,
@@ -3357,6 +3407,19 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       );
       const r = (rows as GrantPgRow[])[0];
       return r ? grantFromPgRow(r) : null;
+    },
+
+    async liveBorrowCredentialGrant(org, ownerPrincipalId, connector, mcpTool, frozenArgsDigest, scopeKey, nowIso) {
+      const { rows } = await client.query(
+        `${GRANT_SELECT} WHERE org_id = $1 AND owner_principal_id = $2 AND connector = $3 AND mcp_tool = $4 AND scope_key = $5
+           AND status = 'active' AND expires_at > $6 ORDER BY created_at DESC`,
+        [org, ownerPrincipalId, connector, mcpTool, scopeKey, nowIso],
+      );
+      for (const r of rows as GrantPgRow[]) {
+        const row = grantFromPgRow(r);
+        if (row.frozenArgs !== undefined && grantFrozenArgsDigest(row.frozenArgs) === frozenArgsDigest) return row;
+      }
+      return null;
     },
 
     async burnCredentialGrant(org, id, at) {

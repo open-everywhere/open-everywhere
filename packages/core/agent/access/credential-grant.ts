@@ -1,10 +1,15 @@
+import { classifyConnectorOpTier } from "./consequence.js";
 import { credentialOverrideFor, type CredentialBoundDomain } from "./domain-credentials.js";
 import {
   grantOwnerSlug,
+  grantToolName,
+  grantToolSlug,
   isGrantNameSegment,
+  nextGrantBorrowToolName,
   type CredentialGrantAskRow,
   type CredentialGrantMode,
   type CredentialGrantRow,
+  type GrantJsonObject,
 } from "../operational/credential-grant-rows.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 
@@ -100,7 +105,14 @@ export type GrantMintRefusal =
   | "unresolvable_owner"
   | "grant_already_live"
   | "ask_already_pending"
-  | "write_verb_out_of_slice";
+  | "write_verb_out_of_slice"
+  | "illegal_tool_name"
+  | "illegal_connector_id";
+
+export interface GrantBorrowMintInput {
+  readonly mcpTool: string;
+  readonly takenToolNames: readonly string[];
+}
 
 export interface GrantMintInput {
   readonly domainGrantsConnector: boolean;
@@ -110,6 +122,7 @@ export interface GrantMintInput {
   readonly connector: string;
   readonly verb: string;
   readonly resource: string;
+  readonly borrow?: GrantBorrowMintInput;
   readonly liveGrant: CredentialGrantRow | undefined;
   readonly liveAsk: CredentialGrantAskRow | undefined;
 }
@@ -122,6 +135,22 @@ export function credentialGrantMintVerdict(input: GrantMintInput): GrantMintVerd
   if (!input.domainGrantsConnector) return { ok: false, reason: "no_domain_grant" };
   if (input.requesterPrincipalId === undefined) return { ok: false, reason: "unverified_requester" };
   if (!isQualifiedPrincipalKey(input.ownerPrincipalId)) return { ok: false, reason: "unresolvable_owner" };
+  const shape = input.borrow === undefined ? verbShape(input) : borrowShape(input.connector, input.borrow);
+  if (!shape.ok) return shape;
+  const ownerSlug = grantOwnerSlug(input.ownerHandle);
+  if (ownerSlug === undefined) return { ok: false, reason: "illegal_owner_handle" };
+  if (input.liveGrant !== undefined) return { ok: false, reason: "grant_already_live" };
+  if (input.liveAsk !== undefined) return { ok: false, reason: "ask_already_pending" };
+  const toolName = shape.name(ownerSlug);
+  if (toolName === undefined) return { ok: false, reason: "illegal_tool_name" };
+  return { ok: true, ownerSlug, tier: shape.tier, toolName };
+}
+
+type GrantMintShape =
+  | { readonly ok: true; readonly tier: "read" | "write" | "destructive"; name(ownerSlug: string): string | undefined }
+  | { readonly ok: false; readonly reason: GrantMintRefusal };
+
+function verbShape(input: GrantMintInput): GrantMintShape {
   const definition = grantableVerb(input.verb);
   if (definition === undefined) return { ok: false, reason: "unknown_verb" };
   if (definition.connector !== input.connector) return { ok: false, reason: "connector_mismatch" };
@@ -130,11 +159,24 @@ export function credentialGrantMintVerdict(input: GrantMintInput): GrantMintVerd
   if (resource.connector !== input.connector) return { ok: false, reason: "connector_mismatch" };
   if (resource.kind !== definition.resourceKind) return { ok: false, reason: "resource_kind_mismatch" };
   if (definition.tier !== "read") return { ok: false, reason: "write_verb_out_of_slice" };
-  const ownerSlug = grantOwnerSlug(input.ownerHandle);
-  if (ownerSlug === undefined) return { ok: false, reason: "illegal_owner_handle" };
-  if (input.liveGrant !== undefined) return { ok: false, reason: "grant_already_live" };
-  if (input.liveAsk !== undefined) return { ok: false, reason: "ask_already_pending" };
-  return { ok: true, ownerSlug, tier: definition.tier, toolName: `grant__${ownerSlug}__${input.verb}` };
+  return { name: (ownerSlug) => tryCompose(() => grantToolName(ownerSlug, input.verb)), ok: true, tier: definition.tier };
+}
+
+function borrowShape(connector: string, borrow: GrantBorrowMintInput): GrantMintShape {
+  if (!isGrantNameSegment(connector)) return { ok: false, reason: "illegal_connector_id" };
+  const toolSlug = grantToolSlug(borrow.mcpTool);
+  if (toolSlug === undefined) return { ok: false, reason: "illegal_tool_name" };
+  const tier = classifyConnectorOpTier(`${connector}__${borrow.mcpTool}`);
+  if (tier !== "read") return { ok: false, reason: "write_verb_out_of_slice" };
+  return { name: (ownerSlug) => tryCompose(() => nextGrantBorrowToolName(ownerSlug, connector, toolSlug, borrow.takenToolNames)), ok: true, tier };
+}
+
+function tryCompose(compose: () => string): string | undefined {
+  try {
+    return compose();
+  } catch {
+    return undefined;
+  }
 }
 
 export function grantMintRefusalMessage(connector: string, reason: GrantMintRefusal): string {
@@ -160,7 +202,11 @@ export function grantMintRefusalMessage(connector: string, reason: GrantMintRefu
     case "ask_already_pending":
       return "You already asked that person for that verb on that resource, and they have not answered yet. Do not ask again — they were sent one card, and asking again would page them a second time for the same decision. Tell the room the ask is still with them, and carry on with something else.";
     case "write_verb_out_of_slice":
-      return "That verb mutates. Credential grants admit read verbs today; a write grant records the owner's name at the vendor on the requester's act, and it needs its own slice.";
+      return "That call mutates. Credential grants admit read operations today; a write grant records the owner's name at the vendor on the requester's act, and it needs its own slice.";
+    case "illegal_tool_name":
+      return `That tool name carries no characters a mounted tool name can hold, so the grant could not be named. Name the ${connector} tool exactly as the connection publishes it.`;
+    case "illegal_connector_id":
+      return `This deployment spells the ${connector} connector id in a form a mounted tool name cannot hold, so no grant for it can be named. Nothing about the ask was wrong — an operator fixes this, not a retry.`;
   }
 }
 
@@ -178,7 +224,15 @@ export const GRANT_ASK_TTL_MS = 30 * 60 * 1000;
 
 export function credentialGrantFromAsk(
   ask: CredentialGrantAskRow,
-  fields: { readonly grantId: string; readonly ownerSlug: string; readonly tier: "read" | "write" | "destructive"; readonly mode: CredentialGrantMode; readonly nowIso: string; readonly expiresAt: string },
+  fields: {
+    readonly grantId: string;
+    readonly ownerSlug: string;
+    readonly tier: "read" | "write" | "destructive";
+    readonly mode: CredentialGrantMode;
+    readonly nowIso: string;
+    readonly expiresAt: string;
+    readonly inputSchema?: GrantJsonObject;
+  },
 ): CredentialGrantRow {
   return {
     id: fields.grantId,
@@ -189,6 +243,10 @@ export function credentialGrantFromAsk(
     connector: ask.connector,
     verb: ask.verb,
     resource: ask.resource,
+    ...(ask.mcpTool === undefined ? {} : { mcpTool: ask.mcpTool }),
+    ...(ask.frozenArgs === undefined ? {} : { frozenArgs: ask.frozenArgs }),
+    ...(ask.toolName === undefined ? {} : { toolName: ask.toolName }),
+    ...(fields.inputSchema === undefined ? {} : { inputSchema: fields.inputSchema }),
     scopeKey: ask.scopeKey,
     mode: fields.mode,
     tier: fields.tier,
