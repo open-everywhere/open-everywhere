@@ -11,8 +11,25 @@ export type PostDecision =
   | { kind: "refuse"; reason: string }
   | { kind: "post"; invocation: GhInvocation; state: "success" | "failure"; description: string; sha: string };
 
-function truncateDescription(text: string): string {
+export function truncateDescription(text: string): string {
   return text.length <= DESCRIPTION_MAX_LENGTH ? text : `${text.slice(0, DESCRIPTION_MAX_LENGTH - 1)}…`;
+}
+
+export function buildStatusInvocation(input: { sha: string; state: "success" | "failure"; context: string; description: string; targetUrl?: string }): GhInvocation {
+  const args = [
+    "api",
+    `repos/{owner}/{repo}/statuses/${input.sha}`,
+    "--method",
+    "POST",
+    "-f",
+    `state=${input.state}`,
+    "-f",
+    `context=${input.context}`,
+    "-f",
+    `description=${input.description}`,
+  ];
+  if (input.targetUrl) args.push("-f", `target_url=${input.targetUrl}`);
+  return { command: "gh", args };
 }
 
 export function buildPostDecision(input: { verdict: ProofVerdict; expectedSha: string; sessionId: string; targetUrl?: string }): PostDecision {
@@ -41,10 +58,9 @@ export function buildPostDecision(input: { verdict: ProofVerdict; expectedSha: s
   const suiteSummary = verdict.suites.map((s) => `${s.name}=${s.exit}`).join(", ") || "no suites";
   const description = truncateDescription(`cloud-proof session ${sessionId}: ${state} — ${suiteSummary}`);
 
-  const args = ["api", `repos/{owner}/{repo}/statuses/${verdict.sha}`, "--method", "POST", "-f", `state=${state}`, "-f", `context=${CLOUD_PROOF_CONTEXT}`, "-f", `description=${description}`];
-  if (targetUrl) args.push("-f", `target_url=${targetUrl}`);
+  const invocation = buildStatusInvocation({ sha: verdict.sha, state, context: CLOUD_PROOF_CONTEXT, description, ...(targetUrl ? { targetUrl } : {}) });
 
-  return { kind: "post", invocation: { command: "gh", args }, state, description, sha: verdict.sha };
+  return { kind: "post", invocation, state, description, sha: verdict.sha };
 }
 
 export function formatInvocation(invocation: GhInvocation): string {
@@ -54,7 +70,7 @@ export function formatInvocation(invocation: GhInvocation): string {
 
 export type PostResult = { ok: true; detail: string } | { ok: false; reason: string };
 
-export async function postCloudProofStatus(invocation: GhInvocation, exec: Exec = realExec): Promise<PostResult> {
+export async function postCommitStatus(invocation: GhInvocation, exec: Exec = realExec): Promise<PostResult> {
   const res = await exec(invocation.command, invocation.args);
   if (res.spawnError) {
     return { ok: false, reason: `could not run \`gh\` (${res.spawnError}) — is the GitHub CLI installed, on PATH, and authenticated?` };

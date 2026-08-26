@@ -38,6 +38,7 @@ export type FenceSubject = {
   authorLogin: string;
   authorType: string;
   merged: boolean;
+  mergeCommitSha?: string;
 };
 
 export type SubjectParse = { ok: true; subject: FenceSubject } | { ok: false; reason: string };
@@ -90,6 +91,7 @@ export function parsePullRequestSubject(body: unknown): SubjectParse {
       authorLogin,
       authorType,
       merged: pr.merged === true,
+      ...(str(pr.merge_commit_sha) ? { mergeCommitSha: str(pr.merge_commit_sha) as string } : {}),
     },
   };
 }
@@ -162,17 +164,19 @@ export type MergeFenceDecision = {
   fence: "pass" | "warn" | "refuse" | "unknown";
   message: string;
   detail: string;
+  subject?: FenceSubject;
 };
 
 export const GITHUB_API_URL_DEFAULT = "https://api.github.com";
 
-function refuse(message: string, detail = ""): MergeFenceDecision {
-  return { verdict: "refuse", fence: "unknown", message, detail };
+function refuse(message: string, detail = "", subject?: FenceSubject): MergeFenceDecision {
+  return { verdict: "refuse", fence: "unknown", message, detail, ...(subject ? { subject } : {}) };
 }
 
 export async function runMergeFence(input: {
   prNumber: number;
   expectedHeadSha?: string;
+  requiredBaseRef?: string;
   exec?: Exec;
   fetchImpl?: GithubApiFetchLike;
   env?: Env;
@@ -215,10 +219,22 @@ export async function runMergeFence(input: {
   if (!parsed.ok) return refuse(`${parsed.reason} — refusing rather than merging unjudged.`);
   const subject = parsed.subject;
 
+  if (input.requiredBaseRef !== undefined && subject.baseRef !== input.requiredBaseRef) {
+    return refuse(
+      `pull request #${subject.number} targets \`${subject.baseRef || "(no base ref)"}\`, but this run may only execute the fence from \`${input.requiredBaseRef}\`. ` +
+        "The fence is the BASE ref's own code, run in this process — a base the proposal controls would make this an arbitrary-code path. " +
+        "Judge a stacked pull request from a session with no more authority than its author.",
+      "",
+      subject,
+    );
+  }
+
   if (subject.merged) {
     return refuse(
       `pull request #${subject.number} is already merged — this rung judges a PROPOSAL, and there is nothing left to fence. ` +
         "A fence that runs after merge is a gate on the consequence, not a fence.",
+      "",
+      subject,
     );
   }
 
@@ -226,11 +242,13 @@ export async function runMergeFence(input: {
     return refuse(
       `pull request #${subject.number} has head ${subject.headSha.slice(0, 12)}, but this run was asked to clear ${input.expectedHeadSha.slice(0, 12)} — ` +
         "these must match exactly. Push, then re-run; clearing a sha the fence did not judge proves nothing.",
+      "",
+      subject,
     );
   }
 
   const extracted = await extractBaseFence({ baseSha: subject.baseSha, exec, ...(input.tmpRoot ? { tmpRoot: input.tmpRoot } : {}) });
-  if (!extracted.ok) return refuse(extracted.reason);
+  if (!extracted.ok) return refuse(extracted.reason, "", subject);
 
   const eventPath = join(extracted.dir, "event.json");
   writeFileSync(eventPath, JSON.stringify({ pull_request: raw.body }), "utf8");
@@ -255,11 +273,12 @@ export async function runMergeFence(input: {
 
   const report = `${ran.stdout}${ran.stderr}`.trim();
   if (ran.spawnError) {
-    return refuse(`the fence driver never ran (${ran.spawnError}) — a fence that could not start must never read as a pass.`, report);
+    return refuse(`the fence driver never ran (${ran.spawnError}) — a fence that could not start must never read as a pass.`, report, subject);
   }
   if (ran.code !== 0) {
     return {
       verdict: "refuse",
+      subject,
       fence: report.includes("REFUSED") ? "refuse" : "unknown",
       message:
         `the base-ref fence exited ${ran.code} for pull request #${subject.number} (head ${subject.headSha.slice(0, 12)}, base ${subject.baseSha.slice(0, 12)}). ` +
@@ -271,6 +290,7 @@ export async function runMergeFence(input: {
   const warned = report.includes("::warning file=");
   return {
     verdict: "clear",
+    subject,
     fence: warned ? "warn" : "pass",
     message: warned
       ? `the base-ref fence WARNS on pull request #${subject.number}: it changes a protected path, and it reads as person-authored so the fence does not refuse it. Review those files as a guardrail change.`

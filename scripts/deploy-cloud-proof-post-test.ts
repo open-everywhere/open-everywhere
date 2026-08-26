@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 import type { ExecResult } from "./deploy/lib.js";
-import { buildPostDecision, CLOUD_PROOF_CONTEXT, formatInvocation, postCloudProofStatus } from "./deploy/cloud-proof-post-lib.js";
+import { buildPostDecision, CLOUD_PROOF_CONTEXT, formatInvocation, postCommitStatus } from "./deploy/cloud-proof-post-lib.js";
 import type { ProofVerdict } from "./deploy/cloud-proof-verify-lib.js";
 
 let checks = 0;
@@ -85,23 +85,23 @@ check("formatInvocation: leaves a plain argument unquoted", () => {
   assert.equal(rendered, `gh api repos/{owner}/{repo}/statuses/${SHA}`);
 });
 
-check("postCloudProofStatus: a failed SPAWN refuses loudly, naming the spawn error", async () => {
+check("postCommitStatus: a failed SPAWN refuses loudly, naming the spawn error", async () => {
   const spawnFailed: ExecResult = { code: 1, stdout: "", stderr: "", spawnError: "ENOENT: spawn gh ENOENT" };
-  const result = await postCloudProofStatus({ command: "gh", args: ["api", "x"] }, async () => spawnFailed);
+  const result = await postCommitStatus({ command: "gh", args: ["api", "x"] }, async () => spawnFailed);
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.reason, /could not run `gh`/);
 });
 
-check("postCloudProofStatus: a non-zero gh exit refuses and surfaces stderr", async () => {
+check("postCommitStatus: a non-zero gh exit refuses and surfaces stderr", async () => {
   const authFailed: ExecResult = { code: 4, stdout: "", stderr: "gh: not authenticated" };
-  const result = await postCloudProofStatus({ command: "gh", args: ["api", "x"] }, async () => authFailed);
+  const result = await postCommitStatus({ command: "gh", args: ["api", "x"] }, async () => authFailed);
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.reason, /not authenticated/);
 });
 
-check("postCloudProofStatus: a clean exit reports ok with the stdout detail", async () => {
+check("postCommitStatus: a clean exit reports ok with the stdout detail", async () => {
   const ok: ExecResult = { code: 0, stdout: '{"id": 1}', stderr: "" };
-  const result = await postCloudProofStatus({ command: "gh", args: ["api", "x"] }, async () => ok);
+  const result = await postCommitStatus({ command: "gh", args: ["api", "x"] }, async () => ok);
   assert.equal(result.ok, true);
   if (result.ok) assert.match(result.detail, /"id": 1/);
 });

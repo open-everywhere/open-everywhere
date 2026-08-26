@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import { buildPostDecision, formatInvocation, postCloudProofStatus } from "./cloud-proof-post-lib.js";
+import { buildPostDecision, formatInvocation, postCommitStatus } from "./cloud-proof-post-lib.js";
 import { parseEvidence } from "./cloud-proof-verify-lib.js";
 import { parseArgs } from "./lib.js";
 
@@ -39,7 +39,7 @@ if (dryRun) {
   process.exit(0);
 }
 
-const result = await postCloudProofStatus(decision.invocation);
+const result = await postCommitStatus(decision.invocation);
 if (!result.ok) {
   console.error(`✗ deploy:cloud-proof-post: ${result.reason}`);
   process.exit(1);

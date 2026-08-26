@@ -168,7 +168,8 @@ export async function fetchGithubApi(input: {
     };
   }
 
-  const url = `${GITHUB_API_BASE}/repos/${ownerRepo.owner}/${ownerRepo.repo}/${input.restPathSuffix}`;
+  const suffix = input.restPathSuffix ? `/${input.restPathSuffix}` : "";
+  const url = `${GITHUB_API_BASE}/repos/${ownerRepo.owner}/${ownerRepo.repo}${suffix}`;
   let httpRes: { status: number; text(): Promise<string> };
   let text: string;
   try {

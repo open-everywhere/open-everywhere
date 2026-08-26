@@ -55,12 +55,20 @@ export const PROTECTED_PATH_RULES: readonly ProtectedPathRule[] = [
   },
   {
     id: "the-fence-itself",
-    paths: ["scripts/upgrade-fence/", "scripts/upgrade-diff-fence.ts", "scripts/upgrade-diff-fence-test.ts", "scripts/deploy-merge-fence-test.ts"],
+    paths: [
+      "scripts/upgrade-fence/",
+      "scripts/upgrade-diff-fence.ts",
+      "scripts/upgrade-diff-fence-test.ts",
+      "scripts/deploy-merge-fence-test.ts",
+      "scripts/deploy-merge-attest-test.ts",
+    ],
     why:
-      "This fence: the judgement, its driver, and the two suites that hold it up. An upgrade that may rewrite its own fence has no fence. " +
-      "The RUNNER (scripts/deploy/merge-fence*.ts) is covered by merge-gate-surface above; the two suites are named here by exact path because " +
-      "they sit at `scripts/` root, outside that prefix. scripts/deploy-merge-fence-test.ts is what proves the runner is REACHED — delete it " +
-      "and its chain leg and nothing reds, after which the rung itself can be dropped with no suite left to notice (OPE-1172).",
+      "This fence: the judgement, its driver, and the three suites that hold it up. An upgrade that may rewrite its own fence has no fence. " +
+      "The RUNNERS (scripts/deploy/merge-fence*.ts and scripts/deploy/merge-attest*.ts) are covered by merge-gate-surface above; the suites are " +
+      "named here by exact path because they sit at `scripts/` root, outside that prefix. scripts/deploy-merge-fence-test.ts is what proves the " +
+      "in-session rung is REACHED — delete it and its chain leg and nothing reds, after which the rung itself can be dropped with no suite left " +
+      "to notice (OPE-1172). scripts/deploy-merge-attest-test.ts does the same for the out-of-session attestation, which is the rung that makes " +
+      "the fence's verdict visible on the pull request head at all (OPE-1182).",
   },
   {
     id: "security-lint-drivers",
