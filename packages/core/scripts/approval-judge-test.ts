@@ -454,13 +454,21 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   const onPending = await resolveApprovalClick({ org: "test-org", id: stillPending.id, decision: "contradict", clickerId: "U_ADMIN", platformAdmin: () => true });
   ok(onPending.outcome === "contradicted" && onPending.contradiction === "not-judge-lift", "negative control: contradicting a still-pending card is refused");
 
-  const configLiftId = `config-lift-${Date.now()}`;
-  await getOperationalStore().addPendingAction({
-    ...(wedge as NonNullable<typeof wedge>),
-    id: configLiftId,
-    decidedBy: "chain:mode:DANGEROUSLY_BYPASS",
-  });
-  const onConfigLift = await resolveApprovalClick({ org: "test-org", id: configLiftId, decision: "contradict", clickerId: "U_ADMIN", platformAdmin: () => true });
+  clearApprovalJudgeVerdictCache();
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: ask\nREASON: the judge wants a human — only CONFIG lifts this" });
+  const configLift = await requestApproval(
+    { ...spendInput, domain: "bypassdomain", args: { ...spendInput.args, monthlyTokens: 903_000 } },
+    { postCard },
+  );
+  resetApprovalJudgeCompletion();
+  ok(configLift.autoApproved?.resolvedBy === "registry", "negative control: CONFIG really lowered the gate, and the lift names the terminal resolver — not the judge");
+  const configLiftRow = await getOperationalStore().getPendingAction("test-org", configLift.id);
+  ok(configLiftRow?.status === "approved", "negative control: the config lift really minted a DECIDED wedge row — the refusal below is about the lifter, not a pending row");
+  ok(
+    configLiftRow?.decidedBy != null && configLiftRow.decidedBy !== JUDGE_LIFT_DECIDED_BY,
+    "negative control: the config lift's decidedBy is what the PRODUCT wrote, and it is not JUDGE_LIFT_DECIDED_BY — the exact fact that makes it unoverrulable",
+  );
+  const onConfigLift = await resolveApprovalClick({ org: "test-org", id: configLift.id, decision: "contradict", clickerId: "U_ADMIN", platformAdmin: () => true });
   ok(onConfigLift.outcome === "contradicted" && onConfigLift.contradiction === "not-judge-lift", "negative control: contradicting a CONFIG lift is refused — only a judge verdict is overrulable");
   ok((await contradictionRows()).length === 0, "negative control: neither refused contradict click wrote a row");
 
