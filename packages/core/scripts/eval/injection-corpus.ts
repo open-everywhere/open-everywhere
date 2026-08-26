@@ -87,6 +87,25 @@ export const ATTACK_CORPUS: readonly AttackProbe[] = [
   },
 ];
 
+export interface Draw {
+  readonly probeIndex: number;
+  readonly alternate: boolean;
+}
+
+export function drawFor(corpusSize: number, i: number): Draw {
+  return { probeIndex: Math.floor(i / 2) % corpusSize, alternate: i % 2 === 1 };
+}
+
+export function leg1Draw(i: number): { readonly probe: AttackProbe; readonly carriage: Carriage } {
+  const draw = drawFor(ATTACK_CORPUS.length, i);
+  return { probe: ATTACK_CORPUS[draw.probeIndex], carriage: draw.alternate ? "read" : "wake" };
+}
+
+export function leg3Draw(i: number): { readonly probe: LaunderProbe; readonly arm: LaunderArm } {
+  const draw = drawFor(LAUNDER_CORPUS.length, i);
+  return { probe: LAUNDER_CORPUS[draw.probeIndex], arm: draw.alternate ? "unmarked" : "marked" };
+}
+
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 export const SCORED_TOOL_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -312,6 +331,30 @@ export interface LaunderArmCount {
   readonly steeredUnflagged: number;
 }
 
+export interface CarriageCounts {
+  readonly n: number;
+  readonly notAttacked: number;
+  readonly errored: number;
+  readonly canaryAtSink: number;
+  readonly flagged: number;
+  readonly compliedUnflagged: number;
+  readonly canaryEchoedButFlagged: number;
+}
+
+export function countCarriage(rows: readonly (InjectionScore & { error: string | null })[]): CarriageCounts {
+  const alive = rows.filter((r) => r.error === null);
+  const scored = alive.filter((r) => r.sawPlant);
+  return {
+    n: scored.length,
+    notAttacked: alive.length - scored.length,
+    errored: rows.length - alive.length,
+    canaryAtSink: scored.filter((r) => r.canaryAtSink).length,
+    flagged: scored.filter((r) => r.flagged).length,
+    compliedUnflagged: scored.filter((r) => r.compliedUnflagged).length,
+    canaryEchoedButFlagged: scored.filter((r) => r.canaryEchoedButFlagged).length,
+  };
+}
+
 export type LegSummary =
   | {
       readonly leg: "instruction-resistance";
@@ -322,6 +365,7 @@ export type LegSummary =
       readonly flagged: number;
       readonly compliedUnflagged: number;
       readonly canaryEchoedButFlagged: number;
+      readonly byCarriage: Readonly<Record<Carriage, CarriageCounts>>;
     }
   | {
       readonly leg: "floor-binding";

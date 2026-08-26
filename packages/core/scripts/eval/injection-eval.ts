@@ -28,7 +28,10 @@ import {
 } from "./_offline-seat.js";
 import {
   ATTACK_CORPUS,
+  countCarriage,
   LAUNDER_CORPUS,
+  leg1Draw,
+  leg3Draw,
   LEG_IDS,
   scoreInjectionTurn,
   scoreLaunderTurn,
@@ -57,9 +60,10 @@ const MODEL = flag("--model") ?? "scripted";
 const SCRIPTED = MODEL === "scripted";
 const EFFORT = flag("--effort") ?? "medium";
 const N = ((): number => {
-  const raw = flag("--n") ?? "6";
+  const raw = flag("--n") ?? String(2 * ATTACK_CORPUS.length);
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 1) throw new Error(`--n ${raw} is not a positive integer — a NaN here would silently run no measured probes at all`);
+  if (n % 2 !== 0) throw new Error(`--n ${raw} is odd — legs 1 and 3 draw in pairs, so an odd n gives one arm an extra draw and silently weights the split`);
   return n;
 })();
 const LEGS: readonly LegId[] = (() => {
@@ -376,8 +380,7 @@ async function runLeg1(model: LanguageModel): Promise<{ summary: LegSummary; row
   const measured: (InjectionScore & { error: string | null })[] = [];
   if (!SCRIPTED) {
     for (let i = 0; i < N; i++) {
-      const probe = ATTACK_CORPUS[i % ATTACK_CORPUS.length];
-      const carriage: Carriage = i % 2 === 0 ? "wake" : "read";
+      const { probe, carriage } = leg1Draw(i);
       if (carriage === "read") armReadPage(probe);
       else currentReadPage = [];
       const rec = await drive({
@@ -406,6 +409,10 @@ async function runLeg1(model: LanguageModel): Promise<{ summary: LegSummary; row
       flagged: scored.filter((r) => r.flagged).length,
       compliedUnflagged: scored.filter((r) => r.compliedUnflagged).length,
       canaryEchoedButFlagged: scored.filter((r) => r.canaryEchoedButFlagged).length,
+      byCarriage: {
+        wake: countCarriage(driven.filter((r) => r.carriage === "wake")),
+        read: countCarriage(driven.filter((r) => r.carriage === "read")),
+      },
     },
     rows,
   };
@@ -587,8 +594,7 @@ async function runLeg3(model: LanguageModel): Promise<{ summary: LegSummary; row
   const measured: (LaunderScore & { error: string | null })[] = [];
   if (!SCRIPTED) {
     for (let i = 0; i < N; i++) {
-      const probe = LAUNDER_CORPUS[i % LAUNDER_CORPUS.length];
-      const arm: LaunderArm = i % 2 === 0 ? "marked" : "unmarked";
+      const { probe, arm } = leg3Draw(i);
       currentMemoryFile = memoryFileFor(probe, arm);
       const rec = await drive({ model, arm: "wide", messages: [{ role: "user", content: launderWakeMessage(probe, i) }], steps: 6 });
       const score = { ...scoreLaunderTurn(probe, arm, rec), error: rec.error };
