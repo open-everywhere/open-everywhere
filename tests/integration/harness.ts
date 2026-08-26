@@ -1,6 +1,5 @@
 import { createHash, createHmac, generateKeyPairSync, randomBytes, sign as signEd25519 } from "node:crypto";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -9,6 +8,7 @@ import { afterEach } from "vitest";
 import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
 import { REDELIVERY_SIGNATURE, REDELIVERY_STORM_THRESHOLD, RedeliveryStormGuard } from "./redelivery-storm-guard";
 import { installHostFetchStub } from "./fetch-stub";
+import { createStateDir } from "./state-dir";
 
 import {
   ANY_SESSION,
@@ -187,7 +187,7 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
     delete process.env[k];
   }
 
-  const state = mkdtempSync(join(tmpdir(), "oe-it-"));
+  const state = createStateDir();
   process.env.OE_SCRIPTED_MODEL = "1";
   process.env.OE_EGRESS_SPOOF = "1";
   process.env.OE_RELAY_SECRET = RELAY_SECRET;

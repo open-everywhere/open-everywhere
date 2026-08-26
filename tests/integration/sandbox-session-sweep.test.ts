@@ -1,13 +1,13 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { expect, test } from "vitest";
 
 import { JUST_BASH_SESSIONS_RELPATH, sweepStaleSandboxSessions } from "./sandbox-session-sweep";
+import { scratchDir } from "./temp-dir-fixtures";
 
 test("sweepStaleSandboxSessions collects a stale session, leaves the current run and templates/ alone", () => {
-  const root = mkdtempSync(join(tmpdir(), "oe-it-fixture-sandbox-sweep-"));
+  const root = scratchDir("oe-it-fixture-sandbox-sweep-");
   const sessionsDir = join(root, JUST_BASH_SESSIONS_RELPATH);
   mkdirSync(sessionsDir, { recursive: true });
 
@@ -44,7 +44,7 @@ test("sweepStaleSandboxSessions collects a stale session, leaves the current run
 });
 
 test.skipIf(process.getuid?.() === 0)("sweepStaleSandboxSessions clears a stale session even when it ships a read-only subtree", () => {
-  const root = mkdtempSync(join(tmpdir(), "oe-it-fixture-sandbox-sweep-readonly-"));
+  const root = scratchDir("oe-it-fixture-sandbox-sweep-readonly-");
   const sessionsDir = join(root, JUST_BASH_SESSIONS_RELPATH);
   mkdirSync(sessionsDir, { recursive: true });
 
@@ -65,7 +65,7 @@ test.skipIf(process.getuid?.() === 0)("sweepStaleSandboxSessions clears a stale 
 });
 
 test("sweepStaleSandboxSessions returns 0, without throwing, when sessions/ was never minted", () => {
-  const root = mkdtempSync(join(tmpdir(), "oe-it-fixture-sandbox-sweep-empty-"));
+  const root = scratchDir("oe-it-fixture-sandbox-sweep-empty-");
   expect(sweepStaleSandboxSessions(root, Date.now())).toBe(0);
   expect(existsSync(join(root, JUST_BASH_SESSIONS_RELPATH))).toBe(false);
 });

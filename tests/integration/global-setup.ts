@@ -1,16 +1,21 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { sweepStaleForkAppRoots } from "./fork-app-root";
 import { sweepStaleSandboxSessions } from "./sandbox-session-sweep";
+import { createStateDir, sweepAbandonedStateDirs } from "./state-dir";
+import { sweepAbandonedFixtureDirs } from "./temp-dir-fixtures";
 
 export default async function globalSetup(): Promise<void> {
   const root = process.cwd();
   const swept = sweepStaleForkAppRoots();
-  if (swept > 0) console.log(`integration global-setup: removed ${swept} fork app root(s) left by an interrupted run.`);
+  if (swept > 0) console.log(`integration global-setup: removed ${swept} abandoned fork app root(s).`);
+  const sweptState = sweepAbandonedStateDirs();
+  if (sweptState > 0) console.log(`integration global-setup: removed ${sweptState} abandoned state dir(s).`);
+  const sweptFixtures = sweepAbandonedFixtureDirs();
+  if (sweptFixtures > 0) console.log(`integration global-setup: removed ${sweptFixtures} abandoned fixture dir(s).`);
   const sweptSessions = sweepStaleSandboxSessions(root);
   if (sweptSessions > 0) {
     console.log(`integration global-setup: removed ${sweptSessions} stale just-bash sandbox session(s).`);
@@ -38,7 +43,7 @@ export default async function globalSetup(): Promise<void> {
 
 async function prewarmJustBashTemplate(root: string): Promise<void> {
   process.env.OE_SANDBOX_BACKEND = "justbash";
-  const state = mkdtempSync(join(tmpdir(), "oe-it-prewarm-"));
+  const state = createStateDir();
   const restoreStateEnv = pinStateEnvForPrewarm(state);
   delete process.env.NODE_ENV;
 

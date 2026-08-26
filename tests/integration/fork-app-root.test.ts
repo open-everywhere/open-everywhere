@@ -1,5 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, lstatSync, mkdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,6 +12,7 @@ import {
   removeForkAppRoot,
   sweepStaleForkAppRoots,
 } from "./fork-app-root";
+import { aPidThatHasExited, scratchDir } from "./temp-dir-fixtures";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -41,7 +41,7 @@ test("the built target and node_modules are reachable through the constructed ro
 });
 
 test("constructForkAppRoot mirrors every entry as a symlink and splits only the workflow store", () => {
-  const fake = mkdtempSync(join(tmpdir(), "oe-it-fixture-src-"));
+  const fake = scratchDir("oe-it-fixture-src-");
   mkdirSync(join(fake, "node_modules"));
   writeFileSync(join(fake, "package.json"), "{}\n", "utf8");
   mkdirSync(join(fake, ".eve", "sandbox-cache"), { recursive: true });
@@ -65,12 +65,12 @@ test("constructForkAppRoot mirrors every entry as a symlink and splits only the 
 });
 
 test("removeForkAppRoot never deletes THROUGH a symlink — the catastrophic-delete guard", () => {
-  const victim = mkdtempSync(join(tmpdir(), "oe-it-fixture-victim-"));
+  const victim = scratchDir("oe-it-fixture-victim-");
   mkdirSync(join(victim, "deep", "deeper"), { recursive: true });
   const sentinel = join(victim, "deep", "deeper", "precious.txt");
   writeFileSync(sentinel, "must survive", "utf8");
 
-  const forkRoot = mkdtempSync(join(tmpdir(), "oe-it-fixture-target-"));
+  const forkRoot = scratchDir("oe-it-fixture-target-");
   symlinkSync(victim, join(forkRoot, "linked-dir"));
   symlinkSync(sentinel, join(forkRoot, "linked-file"));
   mkdirSync(join(forkRoot, "real-dir"));
@@ -85,12 +85,12 @@ test("removeForkAppRoot never deletes THROUGH a symlink — the catastrophic-del
 });
 
 test("sweepStaleForkAppRoots removes the roots a killed fork left, and touches nothing else", () => {
-  const scratch = mkdtempSync(join(tmpdir(), "oe-it-fixture-sweep-"));
+  const scratch = scratchDir("oe-it-fixture-sweep-");
   const stale = join(scratch, `${FORK_APP_ROOT_PREFIX}abc123`);
   mkdirSync(join(stale, ".eve", ISOLATED_EVE_ENTRY), { recursive: true });
-  writeFileSync(join(stale, FORK_APP_ROOT_MARKER), "999\n", "utf8");
+  writeFileSync(join(stale, FORK_APP_ROOT_MARKER), `${aPidThatHasExited()}\n`, "utf8");
   writeFileSync(join(stale, ".eve", ISOLATED_EVE_ENTRY, "run.json"), "{}\n", "utf8");
-  const outside = mkdtempSync(join(tmpdir(), "oe-it-fixture-outside-"));
+  const outside = scratchDir("oe-it-fixture-outside-");
   writeFileSync(join(outside, "keep.txt"), "keep", "utf8");
   symlinkSync(outside, join(stale, "linked"));
   const namedBystander = join(scratch, "unrelated-dir");
@@ -108,8 +108,29 @@ test("sweepStaleForkAppRoots removes the roots a killed fork left, and touches n
   expect(sweepStaleForkAppRoots(scratch)).toBe(0);
 });
 
+test("the sweep spares a LIVE run's fork app root and takes the abandoned one beside it (OPE-1165)", () => {
+  const scratch = scratchDir("oe-it-fixture-liveness-");
+  const live = join(scratch, `${FORK_APP_ROOT_PREFIX}live`);
+  mkdirSync(join(live, ".eve", ISOLATED_EVE_ENTRY), { recursive: true });
+  writeFileSync(join(live, ".eve", ISOLATED_EVE_ENTRY, "run.json"), "{}\n", "utf8");
+  writeFileSync(join(live, FORK_APP_ROOT_MARKER), `${process.pid}\n`, "utf8");
+
+  const abandoned = join(scratch, `${FORK_APP_ROOT_PREFIX}abandoned`);
+  mkdirSync(join(abandoned, ".eve", ISOLATED_EVE_ENTRY), { recursive: true });
+  writeFileSync(join(abandoned, FORK_APP_ROOT_MARKER), `${aPidThatHasExited()}\n`, "utf8");
+
+  expect(sweepStaleForkAppRoots(scratch)).toBe(1);
+  expect(existsSync(abandoned)).toBe(false);
+  expect(existsSync(live)).toBe(true);
+  expect(existsSync(join(live, ".eve", ISOLATED_EVE_ENTRY, "run.json"))).toBe(true);
+
+  writeFileSync(join(live, FORK_APP_ROOT_MARKER), `${aPidThatHasExited()}\n`, "utf8");
+  expect(sweepStaleForkAppRoots(scratch)).toBe(1);
+  expect(existsSync(live)).toBe(false);
+});
+
 test("a constructed fork app root carries the marker the sweep identifies it by", () => {
-  const fake = mkdtempSync(join(tmpdir(), "oe-it-fixture-marker-"));
+  const fake = scratchDir("oe-it-fixture-marker-");
   mkdirSync(join(fake, ".eve"), { recursive: true });
   const forkRoot = constructForkAppRoot(fake);
   try {
