@@ -386,7 +386,7 @@ const NO_REQUESTER_BASELINE =
   });
 
   const joined = new SeededSession();
-  joined.set({ name: ANCHOR_KEY }, { ...anchorState, turnId: "t-453" });
+  joined.set({ name: ANCHOR_KEY }, { ...anchorState, turnId: "t-453", sessionId: "s-453" });
   await storage.run(joined, async () => {
     await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-453" } });
     const pending = readPendingCancelNote();
@@ -395,12 +395,26 @@ const NO_REQUESTER_BASELINE =
 
     clearPendingCancelNoteAfter("t-later");
     ok(readPendingCancelNote() === null, "(the previous note retires before the negative control)");
-    joined.set({ name: ANCHOR_KEY }, { ...anchorState, turnId: "t-454" });
+    joined.set({ name: ANCHOR_KEY }, { ...anchorState, turnId: "t-454", sessionId: "s-454" });
     await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-454" } });
     const orphan = readPendingCancelNote();
     ok(orphan !== null, "an unmatched cancel still writes the reconstruction (the OPE-430 half is untouched)");
     ok(orphan!.by === undefined, "🔴 no matching request row ⇒ NO requester — never a placeholder, never the wrong turn's");
     ok(renderPendingCancelNote() === NO_REQUESTER_BASELINE, "🔴 …and the reminder is BYTE-IDENTICAL to the anonymous wording");
+
+    clearPendingCancelNoteAfter("t-later-2");
+    ok(readPendingCancelNote() === null, "(the previous note retires before the collision control)");
+    await appendAudit({
+      org: "org-a",
+      platform: "slack",
+      workspace: "T1",
+      action: TURN_CANCEL_ACTION,
+      principalId: "U-SOMEONE-ELSE",
+      detail: { via: "reaction", outcome: "requested", sessionId: "s-other", turnId: "t-456" },
+    });
+    joined.set({ name: ANCHOR_KEY }, { ...anchorState, turnId: "t-456", sessionId: "s-456" });
+    await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-456" } });
+    ok(readPendingCancelNote()!.by === undefined, "🔴 a request row for the SAME turn id in ANOTHER session names NOBODY — the join keys on both ids");
   });
 
   await appendAudit({
@@ -412,7 +426,7 @@ const NO_REQUESTER_BASELINE =
     detail: { via: "reaction", outcome: "requested", sessionId: "s-455", turnId: "t-455" },
   });
   const forged = new SeededSession();
-  forged.set({ name: ANCHOR_KEY }, { ...anchorState, turnId: "t-455" });
+  forged.set({ name: ANCHOR_KEY }, { ...anchorState, turnId: "t-455", sessionId: "s-455" });
   await storage.run(forged, async () => {
     await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-455" } });
     const pending = readPendingCancelNote();
@@ -532,6 +546,249 @@ const NO_REQUESTER_BASELINE =
     ok(JSON.stringify(second.detail?.["ran"]) === JSON.stringify(["read_thread", "create_ticket"]), "…with the aborted step's tool named there too");
 
     resetTurnTalliesForTest();
+  }
+
+  {
+    const { registerSurfaceMessageOps } = await import("../agent/channels/surface-message-ops.js");
+    const { TURN_STOP_IGNORED_ACTION, IGNORED_STOP_NOTE, __setCancelSettleGraceForTest, __clearSettledCancelsForTest, __flushIgnoredStopChecksForTest, __pendingIgnoredStopCountForTest } = await import("../agent/hooks/turn-anchor.js");
+    __setCancelSettleGraceForTest(600_000);
+    const flush = async (): Promise<void> => __flushIgnoredStopChecksForTest();
+
+    const posts: { channelId: string; text: string }[] = [];
+    registerSurfaceMessageOps({
+      platform: "discord",
+      postText: async (channelId, text) => {
+        posts.push({ channelId, text });
+        return "posted-1190";
+      },
+      editMessage: async () => {},
+      postFiles: async () => {},
+      setReaction: async () => {},
+    });
+
+    const CHANNEL = "C-1190";
+    const ROOT = "m-1190-root";
+    const STOPPER = "U-1190";
+    const droppingDoor: AttachSessionForCancel = () => ({ cancel: async () => ({ status: "accepted" }) });
+    const parkedDoor: AttachSessionForCancel = () => ({ cancel: async () => ({ status: "no_active_turn" }) });
+
+    const rowsFor = async (org: string, action: string): Promise<Record<string, unknown>[]> =>
+      (await readAudit({ org, action })).map((r) => ({ ...r.detail, principalId: r.principalId, platform: r.platform }));
+
+    const runStoppedTurn = async (input: {
+      readonly turnId: string;
+      readonly session: string;
+      readonly window: string;
+      readonly endedAs: "completed" | "failed" | "cancelled";
+      readonly stop: "dropped" | "parked" | "none";
+      readonly anchorSession?: string;
+    }): Promise<string> => {
+      const ctx = { channel: { continuationToken: input.window }, session: { id: input.session } };
+      const org = resolvePartition(ctx as never).org;
+      const container = new SeededSession();
+      await storage.run(container, async () => {
+        await hook.events["turn.started"]({ type: "turn.started", data: { turnId: input.turnId } }, ctx);
+        container.set({ name: ANCHOR_KEY }, { ...(container.get({ name: ANCHOR_KEY }) as Record<string, unknown>), platform: "discord", channelId: CHANNEL, messageId: ROOT });
+      });
+      if (input.anchorSession !== undefined) {
+        await recordTurnAnchor(org, { windowKey: input.window, sessionId: input.anchorSession, turnId: input.turnId, surfaceKey: "discord/G1/C-1190" }, new Date().toISOString());
+      }
+      if (input.stop !== "none") {
+        const receipt = await cancelAnchoredTurn({
+          org,
+          platform: "discord",
+          workspace: "G1",
+          requestedBy: STOPPER,
+          via: "command",
+          query: { windowKey: input.window },
+          attachSession: input.stop === "dropped" ? droppingDoor : parkedDoor,
+        });
+        ok(receipt.turnId === input.turnId, `(precondition) the ingress resolved this turn's anchor — got ${String(receipt.turnId)}`);
+        ok(receipt.outcome === (input.stop === "dropped" ? "requested" : "no_active_turn"), `(precondition) the ingress recorded the ${input.stop} outcome — got ${receipt.outcome}`);
+      }
+      await storage.run(container, async () => {
+        const event = input.endedAs === "cancelled" ? "turn.cancelled" : `turn.${input.endedAs}`;
+        await hook.events[event]!({ type: event, data: { turnId: input.turnId } }, ctx);
+      });
+      await flush();
+      return org;
+    };
+
+    posts.length = 0;
+    const cancelledBefore = (await readAudit({ action: TURN_CANCELLED_ACTION })).length;
+    const org1 = await runStoppedTurn({ turnId: "t-1190a", session: "s-1190a", window: "w-1190a", endedAs: "completed", stop: "dropped" });
+    const ignored = (await rowsFor(org1, TURN_STOP_IGNORED_ACTION)).filter((r) => r["turnId"] === "t-1190a");
+    ok(ignored.length === 1, `🔴 an ignored stop writes exactly one ${TURN_STOP_IGNORED_ACTION} row — got ${ignored.length}`);
+    ok(ignored[0]!["sessionId"] === "s-1190a" && ignored[0]!["turnId"] === "t-1190a", "…carrying BOTH join ids back to the request row");
+    ok(ignored[0]!["principalId"] === STOPPER, "…and the identity of the person whose stop was ignored");
+    ok(ignored[0]!["via"] === "command", "…and the affordance the stop came through");
+    ok(typeof ignored[0]!["requestedAt"] === "string", "…and when the stop was asked for");
+    ok(ignored[0]!["endedAs"] === "completed", "🔴 …and HOW the turn really ended — the fact that makes this a finding and not a guess");
+    ok(ignored[0]!["platform"] === "discord", "…on the surface the turn was running on");
+
+    ok((await readAudit({ action: TURN_CANCELLED_ACTION })).length === cancelledBefore, "🔴 …and NO turn.cancelled row — the strict row's meaning is unchanged");
+
+    ok(posts.length === 1, `🔴 the ignored-stop arm posts exactly one note — got ${posts.length}`);
+    ok(posts[0]!.text === IGNORED_STOP_NOTE, `🔴 …and it says the stop did not take effect — got ${JSON.stringify(posts[0]?.text)}`);
+    ok(posts[0]!.channelId === CHANNEL, "…in the room the stopped turn was running in");
+
+    await storage.run(new SeededSession(), async () => {
+      ok(readPendingCancelNote() === null, "🔴 an ignored stop writes NO reconstruction — the model must not be told it was interrupted");
+    });
+
+    posts.length = 0;
+    const org2 = await runStoppedTurn({ turnId: "t-1190b", session: "s-1190b", window: "w-1190b", endedAs: "completed", stop: "none" });
+    ok((await rowsFor(org2, TURN_STOP_IGNORED_ACTION)).filter((r) => r["turnId"] === "t-1190b").length === 0, "🔴 an ordinary turn end with NO stop request writes no row");
+    ok(posts.length === 0, "…and says nothing in the room");
+
+    posts.length = 0;
+    const org3 = await runStoppedTurn({ turnId: "t-1190c", session: "s-1190c", window: "w-1190c", endedAs: "completed", stop: "dropped", anchorSession: "s-1190c-other" });
+    ok((await rowsFor(org3, TURN_STOP_IGNORED_ACTION)).filter((r) => r["turnId"] === "t-1190c").length === 0, "🔴 a request row for the SAME turn id in ANOTHER session does not match — the join keys on both ids");
+    ok(posts.length === 0, "…and no note is posted to a turn nobody stopped");
+
+    posts.length = 0;
+    const org4 = await runStoppedTurn({ turnId: "t-1190d", session: "s-1190d", window: "w-1190d", endedAs: "completed", stop: "parked" });
+    ok((await rowsFor(org4, TURN_STOP_IGNORED_ACTION)).filter((r) => r["turnId"] === "t-1190d").length === 0, "🔴 a `no_active_turn` request is not an ignored stop — only an ACCEPTED cancel is");
+    ok(posts.length === 0, "…and the room hears nothing more about it");
+
+    posts.length = 0;
+    const container5 = new SeededSession();
+    const ctx5 = { channel: { continuationToken: "w-1190e" }, session: { id: "s-1190e" } };
+    const org5 = resolvePartition(ctx5 as never).org;
+    await storage.run(container5, async () => {
+      await hook.events["turn.started"]({ type: "turn.started", data: { turnId: "t-1190e" } }, ctx5);
+      container5.set({ name: ANCHOR_KEY }, { ...(container5.get({ name: ANCHOR_KEY }) as Record<string, unknown>), platform: "discord", channelId: CHANNEL, messageId: ROOT });
+    });
+    await cancelAnchoredTurn({ org: org5, platform: "discord", workspace: "G1", requestedBy: STOPPER, via: "command", query: { windowKey: "w-1190e" }, attachSession: droppingDoor });
+    await storage.run(container5, async () => {
+      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-1190e" } }, ctx5);
+      ok(readPendingCancelNote()?.turnId === "t-1190e", "🔴 (positive control) a REAL cancel still writes the reconstruction — so leg ①'s null is a decision, not a dead arm");
+      ok(readPendingCancelNote()?.by === STOPPER, "…and still names the requester through the tightened session-aware join");
+    });
+    await flush();
+    ok((await rowsFor(org5, TURN_STOP_IGNORED_ACTION)).filter((r) => r["turnId"] === "t-1190e").length === 0, "🔴 (positive control) a REAL cancel writes NO ignored-stop row — the two arms are exclusive");
+    ok(posts.length === 1 && posts[0]!.text.startsWith("Stood down"), `…and the room gets the STOOD-DOWN note instead — got ${JSON.stringify(posts[0]?.text)}`);
+
+    posts.length = 0;
+    const org6 = await runStoppedTurn({ turnId: "t-1190f", session: "s-1190f", window: "w-1190f", endedAs: "failed", stop: "dropped" });
+    const failedRow = (await rowsFor(org6, TURN_STOP_IGNORED_ACTION)).filter((r) => r["turnId"] === "t-1190f");
+    ok(failedRow.length === 1, "a stop ignored by a turn that FAILED is recorded too");
+    ok(failedRow[0]!["endedAs"] === "failed", "🔴 …and the row says which ordinary end it reached, rather than rounding both to one");
+
+    await recordTurnAnchor(org6, { windowKey: "w-1190g", sessionId: "s-1190g", turnId: "t-1190g", surfaceKey: "discord/G1/C-1190" }, new Date().toISOString());
+    const accepted = await cancelAnchoredTurn({ org: org6, platform: "discord", workspace: "G1", requestedBy: STOPPER, via: "command", query: { windowKey: "w-1190g" }, attachSession: droppingDoor });
+    ok(accepted.outcome === "requested", `(precondition) this leg reads the ACCEPTED sentence — got ${accepted.outcome}`);
+    ok(accepted.message.startsWith("Standing down"), "the accepted receipt still opens with the stand-down wording every surface's test reads");
+    ok(accepted.message.includes("the outcome in the thread"), "🔴 …and points at the thread rather than promising the turn will stop — eve's `accepted` cannot support that claim");
+    ok(!/stop this turn where it is/.test(accepted.message), "🔴 …so the old promise is gone, not merely softened");
+
+    posts.length = 0;
+    const container8 = new SeededSession();
+    const ctx8 = { channel: { continuationToken: "w-1190h" }, session: { id: "s-1190h" } };
+    const org8 = resolvePartition(ctx8 as never).org;
+    await storage.run(container8, async () => {
+      await hook.events["turn.started"]({ type: "turn.started", data: { turnId: "t-1190h" } }, ctx8);
+      container8.set({ name: ANCHOR_KEY }, { ...(container8.get({ name: ANCHOR_KEY }) as Record<string, unknown>), platform: "discord", channelId: CHANNEL, messageId: ROOT });
+    });
+    await cancelAnchoredTurn({ org: org8, platform: "discord", workspace: "G1", requestedBy: STOPPER, via: "command", query: { windowKey: "w-1190h" }, attachSession: droppingDoor });
+    await storage.run(container8, async () => {
+      await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-1190h" } }, ctx8);
+      ok(__pendingIgnoredStopCountForTest() === 1, `(precondition) the ordinary arm SCHEDULED a check rather than deciding at once — got ${__pendingIgnoredStopCountForTest()}`);
+      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-1190h" } }, ctx8);
+      ok(__pendingIgnoredStopCountForTest() === 0, "🔴 the cancelled arm DROPS the scheduled check — the decision is answered, not merely out-voted later");
+      await flush();
+    });
+    ok(
+      (await rowsFor(org8, TURN_STOP_IGNORED_ACTION)).filter((r) => r["turnId"] === "t-1190h").length === 0,
+      "🔴 a cancel that settles INSIDE the grace window is not an ignored stop — the ordinary terminal event alone is never the proof",
+    );
+    ok(
+      posts.filter((p) => p.text === IGNORED_STOP_NOTE).length === 0,
+      `🔴 …and the room is never told a stop failed that in fact worked — got ${JSON.stringify(posts.map((p) => p.text))}`,
+    );
+    ok(posts.length === 0, `…and no note at all reaches this fixture's room — got ${JSON.stringify(posts.map((p) => p.text))}`);
+
+    posts.length = 0;
+    const container9 = new SeededSession();
+    const ctx9 = { channel: { continuationToken: "w-1190i" }, session: { id: "s-1190i" } };
+    const org9 = resolvePartition(ctx9 as never).org;
+    await storage.run(container9, async () => {
+      await hook.events["turn.started"]({ type: "turn.started", data: { turnId: "t-1190i" } }, ctx9);
+      container9.set({ name: ANCHOR_KEY }, { ...(container9.get({ name: ANCHOR_KEY }) as Record<string, unknown>), platform: "discord", channelId: CHANNEL, messageId: ROOT });
+      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-1190i" } }, ctx9);
+    });
+    const cancelledRow = (await rowsFor(org9, TURN_CANCELLED_ACTION)).filter((r) => r["turnId"] === "t-1190i");
+    ok(cancelledRow.length === 1, `🔴 the strict row now carries its own turn id — without it the pair is not joinable at all (got ${cancelledRow.length})`);
+    ok(cancelledRow[0]!["sessionId"] === "s-1190i", "…and its session id, the other half of that join");
+    __clearSettledCancelsForTest();
+    await recordTurnAnchor(org9, { windowKey: "w-1190i", sessionId: "s-1190i", turnId: "t-1190i", surfaceKey: "discord/G1/C-1190" }, new Date().toISOString());
+    const late = await cancelAnchoredTurn({ org: org9, platform: "discord", workspace: "G1", requestedBy: STOPPER, via: "command", query: { windowKey: "w-1190i" }, attachSession: droppingDoor });
+    ok(late.outcome === "requested", `(precondition) the second stop was accepted, so an ignored-stop row is genuinely in play — got ${late.outcome}`);
+    posts.length = 0;
+    const container9b = new SeededSession();
+    await storage.run(container9b, async () => {
+      container9b.set({ name: ANCHOR_KEY }, { turnId: "t-1190i", sessionId: "s-1190i", org: org9, windowKey: "w-1190i", workspace: "G1", surfaceKey: "discord/G1/C-1190", platform: "discord", channelId: CHANNEL, messageId: ROOT, handPlaced: false, ran: [], steps: 0 });
+      await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-1190i" } }, ctx9);
+      await flush();
+    });
+    ok(
+      (await rowsFor(org9, TURN_STOP_IGNORED_ACTION)).filter((r) => r["turnId"] === "t-1190i").length === 0,
+      "🔴 a settled cancel already ON THE RECORD suppresses the ignored-stop row even in a process that never saw the event",
+    );
+    ok(posts.length === 0, `…and the room is told nothing — got ${JSON.stringify(posts.map((p) => p.text))}`);
+
+    posts.length = 0;
+    __clearSettledCancelsForTest();
+    const ctxJ = { channel: { continuationToken: "w-1190j" }, session: { id: "s-1190j" } };
+    const orgJ = resolvePartition(ctxJ as never).org;
+    const slotJ = { turnId: "t-1190j", sessionId: "s-1190j", org: orgJ, windowKey: "w-1190j", workspace: "G1", surfaceKey: "discord/G1/C-1190", platform: "discord", channelId: CHANNEL, messageId: ROOT, handPlaced: false, ran: [], steps: 0 };
+    await recordTurnAnchor(orgJ, { windowKey: "w-1190j", sessionId: "s-1190j", turnId: "t-1190j", surfaceKey: "discord/G1/C-1190" }, new Date().toISOString());
+    const stopJ = await cancelAnchoredTurn({ org: orgJ, platform: "discord", workspace: "G1", requestedBy: STOPPER, via: "command", query: { windowKey: "w-1190j" }, attachSession: droppingDoor });
+    ok(stopJ.outcome === "requested", `(precondition) the stop was accepted, so an ignored-stop row is genuinely in play — got ${stopJ.outcome}`);
+    const cancelledBeforeJ = (await readAudit({ org: orgJ, action: TURN_CANCELLED_ACTION })).length;
+    const mismatched = new SeededSession();
+    mismatched.set({ name: ANCHOR_KEY }, { ...slotJ, turnId: "t-1190j-other" });
+    await storage.run(mismatched, async () => {
+      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-1190j" } }, ctxJ);
+    });
+    ok(
+      (await readAudit({ org: orgJ, action: TURN_CANCELLED_ACTION })).length === cancelledBeforeJ,
+      "(precondition) the mismatch guard wrote NO turn.cancelled row — so the durable half of the settle check cannot answer this leg",
+    );
+    const endedJ = new SeededSession();
+    endedJ.set({ name: ANCHOR_KEY }, { ...slotJ });
+    await storage.run(endedJ, async () => {
+      await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-1190j" } }, ctxJ);
+      await flush();
+    });
+    ok(
+      (await rowsFor(orgJ, TURN_STOP_IGNORED_ACTION)).filter((r) => r["turnId"] === "t-1190j").length === 0,
+      "🔴 the process's own witness alone suppresses the ignored-stop row — the cancel ARRIVED, even though no row records it",
+    );
+    ok(posts.length === 0, `…and the room is told nothing — got ${JSON.stringify(posts.map((p) => p.text))}`);
+
+    posts.length = 0;
+    __clearSettledCancelsForTest();
+    const ctxK = { channel: { continuationToken: "w-1190k" }, session: { id: "s-1190k" } };
+    const orgK = resolvePartition(ctxK as never).org;
+    const slotK = { turnId: "t-1190k", sessionId: "s-1190k", org: orgK, windowKey: "w-1190k", workspace: "G1", surfaceKey: "discord/G1/C-1190", platform: "discord", channelId: CHANNEL, messageId: ROOT, handPlaced: false, ran: [], steps: 0 };
+    await recordTurnAnchor(orgK, { windowKey: "w-1190k", sessionId: "s-1190k", turnId: "t-1190k", surfaceKey: "discord/G1/C-1190" }, new Date().toISOString());
+    await cancelAnchoredTurn({ org: orgK, platform: "discord", workspace: "G1", requestedBy: STOPPER, via: "command", query: { windowKey: "w-1190k" }, attachSession: droppingDoor });
+    for (const delivery of [1, 2]) {
+      const container = new SeededSession();
+      container.set({ name: ANCHOR_KEY }, { ...slotK });
+      await storage.run(container, async () => {
+        await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-1190k" } }, ctxK);
+        await flush();
+      });
+      ok(
+        (await rowsFor(orgK, TURN_STOP_IGNORED_ACTION)).filter((r) => r["turnId"] === "t-1190k").length === 1,
+        `🔴 delivery ${delivery} of the same turn end leaves exactly ONE ignored-stop row`,
+      );
+      ok(posts.filter((post) => post.text === IGNORED_STOP_NOTE).length === 1, `🔴 …and the room is told exactly once (delivery ${delivery})`);
+    }
+
+    __setCancelSettleGraceForTest();
   }
 }
 

@@ -1,6 +1,6 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
-import { appendAudit } from "../audit/audit.js";
+import { appendAudit, readAudit } from "../audit/audit.js";
 import { resolvePartition } from "../memory/partition.js";
 import { bindFrom, channelPlatform, type BindableContext } from "../identity/binding.js";
 import { STOP_HAND_SLACK_NAME, STOP_HAND_UNICODE } from "../status/status.js";
@@ -8,7 +8,7 @@ import { setSurfaceReaction } from "../channels/surface-message-ops.js";
 import { postSurfaceText } from "../channels/surface-message-ops.js";
 import { clearTurnAnchor, recordTurnAnchor, turnAnchorAddress, turnAnchorKey, turnChannelKey } from "../channels/turn-registry.js";
 import { attachCancelNoteRequester, clearPendingCancelNoteAfter, setPendingCancelNote } from "../channels/cancel-note.js";
-import { findCancelRequester } from "../channels/turn-cancel.js";
+import { findCancelRequest, findCancelRequester, type CancelRequestRecord } from "../channels/turn-cancel.js";
 import { forgetBridgedQuestion } from "../channels/question-bridge.js";
 import { bareTokenFromEveContext } from "../channels/window-key.js";
 import { seedTailWindow, tailWindowFor } from "../channels/session-tail-record.js";
@@ -17,6 +17,64 @@ import { getOperationalStore } from "../operational/provider.js";
 import { closeTurnTally, openTurnTally, readTurnTally, recordTallyAction, recordTallyHand, recordTallyStep } from "./turn-tally.js";
 
 export const TURN_CANCELLED_ACTION = "turn.cancelled";
+
+export const TURN_STOP_IGNORED_ACTION = "turn.stop_ignored";
+
+export const IGNORED_STOP_NOTE = "The stop did not take effect — this turn ended on its own before the cancel reached it. Nothing was interrupted.";
+
+const CANCEL_SETTLE_GRACE_MS = 10_000;
+
+let cancelSettleGraceMs = CANCEL_SETTLE_GRACE_MS;
+
+export function __setCancelSettleGraceForTest(ms?: number): void {
+  cancelSettleGraceMs = ms ?? CANCEL_SETTLE_GRACE_MS;
+}
+
+const SETTLED_CANCELS = new Map<string, number>();
+
+export function __clearSettledCancelsForTest(): void {
+  SETTLED_CANCELS.clear();
+}
+
+const settledKey = (sessionId: string, turnId: string): string => `${sessionId}\u0000${turnId}`;
+
+const PENDING_IGNORED_STOPS = new Map<string, { timer: ReturnType<typeof setTimeout>; dueAt: number; resolve: () => Promise<void> }>();
+
+async function drainDueIgnoredStops(): Promise<void> {
+  const now = Date.now();
+  const due = [...PENDING_IGNORED_STOPS.entries()].filter(([, entry]) => entry.dueAt <= now);
+  for (const [key, entry] of due) {
+    clearTimeout(entry.timer);
+    PENDING_IGNORED_STOPS.delete(key);
+  }
+  await Promise.all(due.map(([, entry]) => entry.resolve()));
+}
+
+export async function __flushIgnoredStopChecksForTest(): Promise<void> {
+  const pending = [...PENDING_IGNORED_STOPS.values()];
+  PENDING_IGNORED_STOPS.clear();
+  for (const entry of pending) clearTimeout(entry.timer);
+  await Promise.all(pending.map((entry) => entry.resolve()));
+}
+
+export function __pendingIgnoredStopCountForTest(): number {
+  return PENDING_IGNORED_STOPS.size;
+}
+
+function dropPendingIgnoredStop(sessionId: string, turnId: string): void {
+  const key = settledKey(sessionId, turnId);
+  const entry = PENDING_IGNORED_STOPS.get(key);
+  if (entry === undefined) return;
+  clearTimeout(entry.timer);
+  PENDING_IGNORED_STOPS.delete(key);
+}
+
+function markCancelSettled(sessionId: string, turnId: string): void {
+  const cutoff = Date.now() - 10 * Math.max(cancelSettleGraceMs, CANCEL_SETTLE_GRACE_MS);
+  for (const [key, at] of SETTLED_CANCELS) if (at < cutoff) SETTLED_CANCELS.delete(key);
+  SETTLED_CANCELS.set(settledKey(sessionId, turnId), Date.now());
+  dropPendingIgnoredStop(sessionId, turnId);
+}
 
 const MAX_NAMED_ACTIONS = 3;
 
@@ -182,6 +240,9 @@ function reconstructCancelledTurn(turnId: string, ctx: HookContext | undefined):
 
 async function onTurnCancelled(turnId: string, ctx?: HookContext): Promise<void> {
   const live = read();
+  for (const sessionId of new Set([live?.sessionId, ctx?.session.id])) {
+    if (sessionId !== undefined) markCancelSettled(sessionId, turnId);
+  }
   if (live && live.turnId !== turnId) {
     closeTurnTally(live.sessionId, turnId);
     return;
@@ -204,7 +265,7 @@ async function onTurnCancelled(turnId: string, ctx?: HookContext): Promise<void>
     await postSurfaceText(s.platform, { channelId: s.channelId, text: note, threadTs: s.messageId ?? null });
   }
 
-  const by = await findCancelRequester(s.org, turnId);
+  const by = await findCancelRequester(s.org, turnId, s.sessionId);
   if (by) attachCancelNoteRequester(turnId, by);
 
   try {
@@ -214,24 +275,85 @@ async function onTurnCancelled(turnId: string, ctx?: HookContext): Promise<void>
       workspace: s.workspace,
       action: TURN_CANCELLED_ACTION,
       detail: s.accounted
-        ? { surfaceKey: s.surfaceKey, steps: s.steps, ran: s.ran, accounted: true }
-        : { surfaceKey: s.surfaceKey, accounted: false },
+        ? { surfaceKey: s.surfaceKey, sessionId: s.sessionId, turnId, steps: s.steps, ran: s.ran, accounted: true }
+        : { surfaceKey: s.surfaceKey, sessionId: s.sessionId, turnId, accounted: false },
     });
   } catch {
   }
   write(null);
 }
 
-async function onTurnEnded(turnId: string, ctx?: HookContext): Promise<void> {
+async function pairedRowExists(org: string, action: string, sessionId: string, turnId: string, endedAt: number): Promise<boolean> {
+  const since = new Date(Math.min(Date.now(), endedAt) - 4 * CANCEL_SETTLE_GRACE_MS).toISOString();
+  const rows = await readAudit({ org, action, since, limit: 50 });
+  return rows.some((row) => row.detail?.["turnId"] === turnId && row.detail?.["sessionId"] === sessionId);
+}
+
+async function auditIgnoredStop(s: TurnAnchorState, turnId: string, endedAs: "completed" | "failed"): Promise<void> {
+  const request = await findCancelRequest({ org: s.org, turnId, sessionId: s.sessionId });
+  if (request?.outcome !== "requested") return;
+  const key = settledKey(s.sessionId, turnId);
+  if (PENDING_IGNORED_STOPS.has(key)) return;
+  const endedAt = Date.now();
+  const resolve = async (): Promise<void> => {
+    PENDING_IGNORED_STOPS.delete(key);
+    try {
+      await writeIgnoredStop(s, turnId, endedAs, request, endedAt);
+    } catch (err) {
+      console.error(
+        `[open-everywhere:turn-anchor] 🔴 the ignored-stop check FAILED for turn ${turnId}: ${String(err)} — a stop was accepted for this turn and its ${TURN_STOP_IGNORED_ACTION} record may be incomplete (the row, the room note, or both)`,
+      );
+    }
+  };
+  const timer = setTimeout(() => void resolve(), cancelSettleGraceMs);
+  PENDING_IGNORED_STOPS.set(key, { timer, dueAt: endedAt + cancelSettleGraceMs, resolve });
+}
+
+async function writeIgnoredStop(s: TurnAnchorState, turnId: string, endedAs: "completed" | "failed", request: CancelRequestRecord, endedAt: number): Promise<void> {
+  if (SETTLED_CANCELS.has(settledKey(s.sessionId, turnId))) return;
+  if (await pairedRowExists(s.org, TURN_CANCELLED_ACTION, s.sessionId, turnId, endedAt)) return;
+  if (await pairedRowExists(s.org, TURN_STOP_IGNORED_ACTION, s.sessionId, turnId, endedAt)) return;
+  await appendAudit({
+    org: s.org,
+    platform: s.platform ?? "unknown",
+    workspace: s.workspace,
+    action: TURN_STOP_IGNORED_ACTION,
+    ...(request.principalId ? { principalId: request.principalId } : {}),
+    detail: {
+      surfaceKey: s.surfaceKey,
+      sessionId: s.sessionId,
+      turnId,
+      endedAs,
+      ...(request.via ? { via: request.via } : {}),
+      ...(request.at ? { requestedAt: request.at } : {}),
+    },
+  });
+  if (s.platform && s.channelId) {
+    await postSurfaceText(s.platform, { channelId: s.channelId, text: IGNORED_STOP_NOTE, threadTs: s.messageId ?? null });
+  }
+}
+
+async function onTurnEnded(turnId: string, ctx: HookContext | undefined, endedAs: "completed" | "failed"): Promise<void> {
   clearPendingCancelNoteAfter(turnId);
   const s = read();
   const sessionId = s?.sessionId ?? ctx?.session.id;
   const tally = sessionId === undefined ? null : readTurnTally(sessionId, turnId);
   if (sessionId !== undefined) closeTurnTally(sessionId, turnId);
-  if (!s || s.turnId !== turnId) return;
-  await removeStopHand(tally ? { ...s, handPlaced: tally.handPlaced } : s);
-  await clearTurnAnchor(s.org, s.windowKey);
-  write(null);
+  const live = s && s.turnId === turnId ? s : null;
+  if (live) {
+    await removeStopHand(tally ? { ...live, handPlaced: tally.handPlaced } : live);
+    await clearTurnAnchor(live.org, live.windowKey);
+    write(null);
+  }
+  const addressing = live ?? reconstructCancelledTurn(turnId, ctx);
+  if (!addressing) return;
+  try {
+    await auditIgnoredStop(addressing, turnId, endedAs);
+  } catch (err) {
+    console.error(
+      `[open-everywhere:turn-anchor] 🔴 the ignored-stop check FAILED for turn ${turnId}: ${String(err)} — if a stop was accepted for this turn, NO ${TURN_STOP_IGNORED_ACTION} row was written for it`,
+    );
+  }
 }
 
 export default defineHook({
@@ -241,6 +363,11 @@ export default defineHook({
         await onTurnStarted(event.data.turnId, ctx);
       } catch (err) {
         console.warn(`[open-everywhere:turn-anchor] turn.started failed: ${String(err)}`);
+      }
+      try {
+        await drainDueIgnoredStops();
+      } catch (err) {
+        console.warn(`[open-everywhere:turn-anchor] ignored-stop drain failed: ${String(err)}`);
       }
     },
     "actions.requested": async (event) => {
@@ -276,14 +403,14 @@ export default defineHook({
     },
     "turn.completed": async (event, ctx: HookContext) => {
       try {
-        await onTurnEnded(event.data.turnId, ctx);
+        await onTurnEnded(event.data.turnId, ctx, "completed");
       } catch (err) {
         console.warn(`[open-everywhere:turn-anchor] turn.completed failed: ${String(err)}`);
       }
     },
     "turn.failed": async (event, ctx: HookContext) => {
       try {
-        await onTurnEnded(event.data.turnId, ctx);
+        await onTurnEnded(event.data.turnId, ctx, "failed");
       } catch (err) {
         console.warn(`[open-everywhere:turn-anchor] turn.failed failed: ${String(err)}`);
       }
@@ -293,6 +420,20 @@ export default defineHook({
         await onTurnCancelled(event.data.turnId, ctx);
       } catch (err) {
         console.warn(`[open-everywhere:turn-anchor] turn.cancelled failed: ${String(err)}`);
+      }
+    },
+    "session.completed": async () => {
+      try {
+        await drainDueIgnoredStops();
+      } catch (err) {
+        console.warn(`[open-everywhere:turn-anchor] ignored-stop drain failed: ${String(err)}`);
+      }
+    },
+    "session.failed": async () => {
+      try {
+        await drainDueIgnoredStops();
+      } catch (err) {
+        console.warn(`[open-everywhere:turn-anchor] ignored-stop drain failed: ${String(err)}`);
       }
     },
   },

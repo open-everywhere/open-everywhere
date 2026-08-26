@@ -43,7 +43,7 @@ function recordingDeps(over: Partial<LinearStopDeps> = {}): { deps: LinearStopDe
     appUserId: async () => APP_USER,
     cancel: async (input: CancelAnchoredTurnInput): Promise<CancelResult> => {
       calls.push(input);
-      return { outcome: "requested", message: "Standing down — I'll stop this turn where it is." };
+      return { outcome: "requested", message: "Standing down — I've asked this turn to stop. I'll post the outcome in the thread." };
     },
     ...over,
   };

@@ -30,7 +30,7 @@ function recordingDeps(): { deps: GitHubStopDeps; calls: CancelAnchoredTurnInput
       attachSession: () => ({ cancel: async () => ({ status: "accepted" }) }),
       cancel: async (input: CancelAnchoredTurnInput): Promise<CancelResult> => {
         calls.push(input);
-        return { outcome: "requested", message: "Standing down — I'll stop this turn where it is." };
+        return { outcome: "requested", message: "Standing down — I've asked this turn to stop. I'll post the outcome in the thread." };
       },
     },
   };

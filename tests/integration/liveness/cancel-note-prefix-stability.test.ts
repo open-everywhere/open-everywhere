@@ -89,7 +89,15 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
   b.dispose();
 
   await waitFor(async () => {
-    const rows = await readAuditRows({ actions: ["turn.cancelled"], sinceIso });
+    const rows = await readAuditRows({ actions: ["turn.cancelled", "turn.stop_ignored"], sinceIso });
+    const ignored = rows.find((r) => r.action === "turn.stop_ignored" && r.detail?.turnId === cancelledTurnId);
+    if (ignored !== undefined) {
+      throw new Error(
+        `eve DROPPED this cancel (OPE-1190): a turn.stop_ignored row for turn ${String(ignored.detail?.turnId)} says the stop was accepted and the turn then ` +
+          `ended as "${String(ignored.detail?.endedAs)}" with no cancellation settled. No reconstruction was written, so turn C below could never carry one. ` +
+          `This is the cancel-path race, not a slow box and not this file's own defect — tests/integration/liveness/stop-evidence.test.ts is the leg that passes on both branches.`,
+      );
+    }
     return rows.length > 0 ? rows : undefined;
   }, "the turn.cancelled row — the cancel arm has run and the reconstruction is pending");
   expect(await resolveTurnAnchor(org, { channelKey })).toBeNull();
