@@ -43,9 +43,15 @@ export const PROTECTED_PATH_RULES: readonly ProtectedPathRule[] = [
       "pull request; an upgrade that edits this file would be exactly the path that property forbids.",
   },
   {
-    id: "ci-workflows",
-    paths: [".github/workflows/"],
-    why: "Every CI gate, this fence included. A diff here can disarm the thing that is judging it.",
+    id: "merge-gate-surface",
+    paths: ["scripts/deploy/", ".claude/agents/"],
+    why:
+      "Two things that decide whether a change may merge. `scripts/deploy/` holds the enforcement scripts — the CI gate, " +
+      "and the cloud-proof verify and post that decide whether a run proved anything. `.claude/agents/` holds the tracked " +
+      "run definitions a cloud session follows: the builder's self-merge conditions and the reviewer's verdict rules. No " +
+      "code reads those files; a session does, which is why an edit to them changes what the agent may do. A diff that " +
+      "weakens either is a guardrail change, not an upgrade. This rule covers the two directories NAMED here and nothing " +
+      "else — the deploy scripts' own tests sit at `scripts/` root and are outside it.",
   },
   {
     id: "the-fence-itself",

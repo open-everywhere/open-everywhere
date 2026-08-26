@@ -24,7 +24,6 @@ export const CONFIG_DIFF_TRIGGER_PATHS: readonly string[] = [
   "scripts/config-snapshot*.ts",
   "scripts/config-diff.ts",
   "scripts/access-diff.ts",
-  ".github/workflows/config-diff.yml",
 ];
 
 export function pathMatchesGlob(path: string, glob: string): boolean {

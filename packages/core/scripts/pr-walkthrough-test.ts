@@ -296,7 +296,7 @@ const FORBIDDEN_URL_PATTERNS: readonly RegExp[] = [/\/issues\/\d+\/comments/, /\
   ok(!pathMatchesGlob("scripts/sub/config-snapshot-x.ts", "scripts/config-snapshot*.ts"), "…and a single * does NOT cross a /");
   ok(triggersConfigDiff(["README.md", "agent/memory/domains.ts"]), "one matching path in a set triggers");
   ok(!triggersConfigDiff(["README.md", "packages/core/x.ts"]), "no matching path does not");
-  ok(CONFIG_DIFF_TRIGGER_PATHS.includes("agent/**"), "the mirrored trigger list carries the config root (bound to the real workflow by scripts/pr-walkthrough-facts-test.ts)");
+  ok(CONFIG_DIFF_TRIGGER_PATHS.includes("agent/**"), "the trigger list carries the config root (joined to the repo's tracked files by scripts/pr-walkthrough-facts-test.ts)");
 }
 
 function facts(sections: ConfigFacts["sections"], over: Partial<ConfigFacts> = {}): ConfigFacts {

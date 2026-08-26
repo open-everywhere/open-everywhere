@@ -111,6 +111,12 @@ const MARKED_BODY = "Bumps eve.\n\noe-upgrade: 111111111111111111111111111111111
     if (ruleFor(file) === undefined) fail(`3: ${file} is in OPE-992's minimum protected set and no rule covers it`);
   }
 
+  for (const file of ["scripts/deploy/ci-gate-lib.ts", "scripts/deploy/cloud-proof-post-lib.ts", ".claude/agents/builder.md"]) {
+    if (ruleFor(file)?.id !== "merge-gate-surface") {
+      fail(`3: ${file} is part of the merge gate — the enforcement scripts and the tracked run definitions they enforce — and merge-gate-surface must cover it`);
+    }
+  }
+
   for (const file of [...CLEAN_UPGRADE_DIFF, "docs/README.md", "packages/core/agent/tools/open_pull_request.ts", "scripts/release-record-lint.ts"]) {
     if (ruleFor(file) !== undefined) fail(`3: ${file} must not be protected — got rule ${ruleFor(file)?.id}`);
   }

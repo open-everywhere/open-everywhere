@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -6,7 +7,14 @@ import { buildConfigSnapshot } from "./config-snapshot-build.js";
 import { accessSideEffectFindings, diffConfigSnapshots, SNAPSHOT_FORMAT_VERSION, type ConfigSnapshot } from "./config-snapshot-diff.js";
 import { parseConfigFacts, READABLE_SNAPSHOT_FORMAT_VERSION } from "@open-everywhere/core/agent/review/config-facts.js";
 import { computeBlastRadius } from "@open-everywhere/core/agent/review/blast-radius.js";
-import { CONFIG_DIFF_TRIGGER_PATHS, CONFIG_DIFF_WORKFLOW_PATH, CONFIG_DIFF_ARTIFACT_NAME, CONFIG_DIFF_JSON_ENTRY, OVERLAY_GATE_ENTRY } from "@open-everywhere/core/agent/review/facts-artifact.js";
+import {
+  CONFIG_DIFF_TRIGGER_PATHS,
+  CONFIG_DIFF_WORKFLOW_PATH,
+  fetchConfigFacts,
+  pathMatchesGlob,
+  triggersConfigDiff,
+  type ArtifactFetchFn,
+} from "@open-everywhere/core/agent/review/facts-artifact.js";
 import { SNAPSHOT_BLIND_SPOTS } from "@open-everywhere/core/agent/review/pr-walkthrough.js";
 
 let passed = 0;
@@ -82,40 +90,63 @@ const blindBr = computeBlastRadius(blindParsed.ok ? blindParsed.facts : parsed.f
 ok(!blindBr.widens, "a fully-blind facts document does not report widens…");
 ok(blindBr.notComputable.length === head.sections.length, "…and reports every section as not-computable, so the render cannot show a green");
 
-const workflow = readFileSync(join(root, CONFIG_DIFF_WORKFLOW_PATH), "utf8");
+let trackedFiles: string[];
+try {
+  trackedFiles = execFileSync("git", ["ls-files"], { cwd: root, encoding: "utf8" }).split("\n").filter(Boolean);
+} catch (err) {
+  console.error(`✗ \`git ls-files\` failed in ${root}, so no glob below can be joined to anything: ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
+}
+ok(trackedFiles.length > 0, "`git ls-files` lists this repo's tracked files (if not, every join below proves nothing)");
 
-function workflowTriggerPaths(text: string): string[] {
-  const start = text.indexOf("\n    paths:");
-  if (start < 0) return [];
-  const out: string[] = [];
-  for (const line of text.slice(start + 1).split("\n").slice(1)) {
-    const m = /^\s+- "([^"]+)"\s*$/.exec(line);
-    if (m) {
-      out.push(m[1]);
-      continue;
-    }
-    if (line.trim().startsWith("#") || line.trim().length === 0) continue;
-    break;
-  }
-  return out;
+for (const glob of CONFIG_DIFF_TRIGGER_PATHS) {
+  ok(
+    trackedFiles.some((f) => pathMatchesGlob(f, glob)),
+    `🔴 CONFIG_DIFF_TRIGGER_PATHS names "${glob}", and no tracked file matches it. A glob that can never match does not widen ` +
+      `the trigger set — it narrows it silently: a walkthrough reports "this PR touches no config" (a COMPUTED ABSENCE) for a PR ` +
+      `whose config it simply stopped looking at. Drop the entry in packages/core/agent/review/facts-artifact.ts, or restore the path`,
+  );
 }
 
-eq(
-  workflowTriggerPaths(workflow),
-  [...CONFIG_DIFF_TRIGGER_PATHS],
-  `🔴 packages/core/agent/review/facts-artifact.ts's CONFIG_DIFF_TRIGGER_PATHS must mirror ${CONFIG_DIFF_WORKFLOW_PATH}'s \`paths:\` filter exactly. ` +
-    `They disagree, which means a walkthrough would report "this PR touches no config" (a COMPUTED ABSENCE) for a PR the gate actually runs on — ` +
-    `the exact green-produced-by-blindness the whole flow refuses`,
+ok(triggersConfigDiff(["agent/access/bundles.ts"]), "a PR touching the deployer's own config triggers a config diff");
+ok(triggersConfigDiff(["scripts/config-diff.ts"]), "…as does a PR touching the producer itself");
+ok(!triggersConfigDiff(["packages/core/agent/tools/reply.ts", "docs/README.md"]), "…and a pure code/docs PR does NOT (the computed absence this list exists to compute)");
+
+ok(
+  !existsSync(join(root, CONFIG_DIFF_WORKFLOW_PATH)),
+  `${CONFIG_DIFF_WORKFLOW_PATH} exists again. facts-artifact.ts accepts a run of exactly that workflow as its only producer, so the ` +
+    `walkthrough's facts lane is live once more — re-bind this leg to the workflow's \`paths:\` filter and artifact contract before ` +
+    `trusting a walkthrough's facts section`,
 );
 
-ok(workflow.includes(`name: ${CONFIG_DIFF_ARTIFACT_NAME}`), `the workflow still uploads an artifact named "${CONFIG_DIFF_ARTIFACT_NAME}"`);
-ok(workflow.includes(`/tmp/${CONFIG_DIFF_JSON_ENTRY}`), `…containing ${CONFIG_DIFF_JSON_ENTRY} (the machine-readable facts the walkthrough reads)`);
-ok(workflow.includes(`/tmp/${OVERLAY_GATE_ENTRY}`), `…and ${OVERLAY_GATE_ENTRY} (the overlay single-scope gate's own report)`);
-ok(/on:\s*\n\s*pull_request:/.test(workflow), "🔴 the gate still triggers on `pull_request`, never `pull_request_target` (AGENTS.md's CI invariant)");
-ok(!/^\s*pull_request_target\s*:/m.test(workflow), "…and `pull_request_target` appears nowhere as an event key (a fork PR must not run with repo write scope)");
+for (const script of ["scripts/deploy/cloud-proof-verify.ts", "scripts/deploy/cloud-proof-post.ts", "scripts/deploy/ci-gate.ts"]) {
+  ok(existsSync(join(root, script)), `the merge gate that replaced the Actions lane still ships ${script}`);
+}
+
+const noProducerFetch: ArtifactFetchFn = async () => ({
+  ok: true,
+  status: 200,
+  text: async () => "",
+  json: async () => ({ workflow_runs: [{ id: 1, path: ".github/workflows/other.yml", event: "pull_request", head_sha: "deadbeefdeadbeef" }] }),
+  arrayBuffer: async () => new ArrayBuffer(0),
+});
+
+const dormant = await fetchConfigFacts({
+  repo: "example/repo",
+  headSha: "deadbeefdeadbeef",
+  token: "not-a-real-token",
+  changedPaths: ["agent/access/bundles.ts"],
+  fetchFn: noProducerFetch,
+});
+
+eq(dormant.kind, "unavailable", "🔴 with no run of the config-diff workflow, the facts are UNAVAILABLE — an unknown, never an `artifact` and never a silent green");
 ok(
-  workflow.includes("--json /tmp/config-diff.json"),
-  "the workflow still asks scripts/config-diff.ts for the `--json` document — without it the artifact carries only prose and no walkthrough can be built",
+  dormant.kind === "unavailable" && dormant.reason.includes(CONFIG_DIFF_WORKFLOW_PATH),
+  `…and the reason names ${CONFIG_DIFF_WORKFLOW_PATH}, so a reader learns WHICH producer did not run`,
+);
+ok(
+  dormant.kind === "unavailable" && /NOT established/i.test(dormant.reason),
+  "…and states the facts are not established, so the render cannot show the absence as an all-clear",
 );
 
 ok(
