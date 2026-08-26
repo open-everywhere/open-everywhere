@@ -132,7 +132,7 @@ export interface OutstandingQuestion {
 }
 
 export interface BridgedQuestionStore {
-  putTaskResult(org: string, key: string, resultJson: string, at: string, ttlMs: number, callerToken?: string): Promise<void>;
+  putTaskResult(org: string, key: string, resultJson: string, at: string, ttlMs: number): Promise<void>;
   getTaskResult(org: string, key: string): Promise<string | null>;
   deleteTaskResult(org: string, key: string): Promise<boolean>;
 }
@@ -161,7 +161,7 @@ export async function rememberBridgedQuestion(
       ...(taskId !== undefined ? { taskId } : {}),
       at,
     };
-    await store.putTaskResult(org, bridgedQuestionKey(bareToken), JSON.stringify(row), at, BRIDGED_QUESTION_TTL_MS, undefined);
+    await store.putTaskResult(org, bridgedQuestionKey(bareToken), JSON.stringify(row), at, BRIDGED_QUESTION_TTL_MS);
     return true;
   } catch {
     return false;

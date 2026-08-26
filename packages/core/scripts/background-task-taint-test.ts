@@ -214,13 +214,7 @@ await onParentTurn(async () => {
 });
 
 {
-  const { getOperationalStore } = await import("../agent/operational/provider.js");
-  const undelivered = await getOperationalStore().listUndeliveredTaskResults(ORG, "oe-dom:e2e:oe-sup:g1", 50);
-  ok(
-    undelivered.every((r) => !r.taskId.startsWith("oe-task-call:") && !r.taskId.startsWith("oe-task-agent:")),
-    "🔴 T1: both join rows carry NO callerToken, so neither appears in listUndeliveredTaskResults — they are bookkeeping, not results",
-  );
-  ok(store.taskCallKey("t").startsWith("oe-task-call:") && store.taskAgentKey(PARENT, "a").startsWith("oe-task-agent:"), "…and the two prefixes are namespaced apart from each other and from both marker prefixes");
+  ok(store.taskCallKey("t").startsWith("oe-task-call:") && store.taskAgentKey(PARENT, "a").startsWith("oe-task-agent:"), "🔴 T1: the two join-row prefixes are namespaced separately from each other and from the taint markers, so no two consumers of the shared slice can collide");
 }
 
 await runChild("call_2", "sess-child-dirty", true);

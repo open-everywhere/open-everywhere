@@ -17,7 +17,6 @@ export async function markSubagentTainted(org: string, childToken: string): Prom
       JSON.stringify({ tainted: true }),
       new Date().toISOString(),
       SUBAGENT_TAINT_TTL_MS,
-      undefined,
     );
   } catch {
   }
@@ -50,7 +49,6 @@ export async function claimSubagentCallClean(org: string, parentSessionId: strin
       JSON.stringify({ tainted: false }),
       new Date().toISOString(),
       SUBAGENT_TAINT_TTL_MS,
-      undefined,
     );
   } catch {
   }
@@ -65,7 +63,6 @@ export async function markSubagentCallTainted(org: string, parentSessionId: stri
       JSON.stringify({ tainted: true }),
       new Date().toISOString(),
       SUBAGENT_TAINT_TTL_MS,
-      undefined,
     );
   } catch {
   }
@@ -105,7 +102,6 @@ export async function rememberTaskCall(org: string, taskId: string, link: TaskCa
       JSON.stringify(link),
       new Date().toISOString(),
       SUBAGENT_TAINT_TTL_MS,
-      undefined,
     );
   } catch {
   }
@@ -129,7 +125,6 @@ export async function rememberTaskAgent(org: string, parentSessionId: string, ag
       JSON.stringify(link),
       new Date().toISOString(),
       SUBAGENT_TAINT_TTL_MS,
-      undefined,
     );
   } catch {
   }

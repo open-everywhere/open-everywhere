@@ -334,17 +334,8 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   stand_down: open(
     "the agent stopping following a conversation it was asked to leave (OPE-418 Part B). It REMOVES the agent's own reach — one durable `stopped` flag on this surface's engagement row, cleared by the next @mention — and touches no memory, no spend, no credential and no audience. Nothing here for an approver to weigh: putting a card in front of \"please be quiet\" would be the product asking permission to stop annoying someone. Audited (engagement.stood_down)",
   ),
-  return_result: open(
-    "a one-shot task worker reporting its result back to the seat that delegated it (delegation reshape, Phase 1): writes the durable result row + wakes the CALLER's OWN seat with the caller's OWN forwarded identity — no new audience. The summary rides untrusted-wrapped, so a consequential action the caller takes off it re-gates via the normal ingest-taint path. Widens nothing; audited (task.returned)",
-  ),
   agent: open(
-    "delegation (reshape): both modes spawn a full-hands ONE-SHOT worker on a credential-correct new session — it re-gates every L2 consequence INSIDE the child, forwards taint, and widens hands not consequence. async returns at once and the worker wakes the caller with its result; sync HOLDS FOCUS and block-polls the durable result row, returning it inline (degrading to async on MAX_WAIT). Escapes nothing this table doesn't re-gate in the worker; audited via task.spawned",
-  ),
-  stop_task: open(
-    "the seat standing DOWN a worker it delegated with `agent` (OPE-730) — de-escalation only, the same posture as stand_down and revoke_routine_permissions. After it runs the agent can do strictly LESS, so a card here would put a confirmation in front of the brake pedal, and the one person most likely to need it is the one watching the worker go wrong. It reaches no task outside the CALLER'S OWN DOMAIN: control/task-cancel.ts checks the named task token was minted from the caller's own domain and carries the `t/` task grain, over an HMAC-signed hop whose caller token is host-derived. It writes nothing but the shared turn.cancel_requested audit row, and the worker's own ending still reports back through the ordinary completion wake",
-  ),
-  delegation_tools: open(
-    "the resolver FILE that re-provides the disabled framework-named `agent` per session grain (access/window-gated.ts windowGatedKit — the sandbox_tools shape); mounts nothing beyond the `agent` name above, at its own open tier",
+    "delegation: eve's BUILT-IN `agent` hands a self-contained job to a full-hands worker in the parent's own sandbox, bound to the parent's identity. It re-gates every L2 consequence INSIDE the child, forwards taint onto the child's opening auth, and widens HANDS, never CONSEQUENCE. The call returns a task receipt at once and eve delivers the settled child as a new message. Escapes nothing this table doesn't re-gate in the worker; audited via delegation.task_started / delegation.task_settled",
   ),
   grant_tools: open(
     "the resolver FILE that projects a chat's live CREDENTIAL GRANTS into per-grant `grant__<owner>__<verb>` tools (OPE-1060, the sandbox_tools shape). It mounts nothing under its own name and grants nothing: it reads grant rows an OWNER already approved in their own DM and returns one tool per row. Its own tier is open because resolving is a read of rows that already exist. Each MOUNTED name is classified on the RESERVED-NAMESPACE path instead of by a static row here — a runtime-minted name cannot have one — and its authoritative tier is the one pinned on the GRANT ROW at mint, from the reviewed verb definition, never re-derived from the mounted name (the false-open arm S0 closed)",

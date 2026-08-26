@@ -15,7 +15,6 @@ import {
   type WindowToolSource,
 } from "../agent/access/window-gate-manifest.js";
 import type { WindowGrain } from "../agent/identity/binding.js";
-import { nativeSubagentAtBuild } from "../agent/settings/settings.js";
 
 const require = createRequire(import.meta.url);
 const eveRoot = dirname(require.resolve("eve/package.json"));
@@ -148,20 +147,20 @@ firesWith(
     u("sandbox_tools"),
   ),
   'framework tool "web_fetch" is grain-gated but no windowGatedKit(...) in packages/core/agent/tools/ re-provides it per grain',
-  "a framework-gated name absent from EVERY windowGatedKit FAILS (the kit is no longer pinned to sandbox_tools — #96 added delegation_tools; the invariant is that SOME kit provides the name)",
+  "a framework-gated name absent from EVERY windowGatedKit FAILS (the invariant is that SOME kit provides it — the check is not pinned to sandbox_tools)",
 );
 {
   const problems = checkWindowGateManifest(
-    [{ name: "delegation_tools", source: 'export default windowGatedKit("delegation_tools", {\n  agent: defineTool(x),\n});' }],
+    [{ name: "other_tools", source: 'export default windowGatedKit("other_tools", {\n  web_fetch: defineTool(x),\n});' }],
     new Map([
-      ["agent", SENTINEL],
-      ["delegation_tools", 'export { default } from "@open-everywhere/core/agent/tools/delegation_tools.js";'],
+      ["web_fetch", SENTINEL],
+      ["other_tools", 'export { default } from "@open-everywhere/core/agent/tools/other_tools.js";'],
     ]),
-    ["agent"],
-    g({ agent: ["standing", "thread"] }),
-    u("delegation_tools"),
+    ["web_fetch"],
+    g({ web_fetch: fullKit() }),
+    u("other_tools"),
   );
-  ok(problems.length === 0, `a framework-named tool re-provided by a NON-sandbox kit (delegation_tools → agent) is clean (got: ${JSON.stringify(problems)})`);
+  ok(problems.length === 0, `a framework-named tool re-provided by a NON-sandbox kit (other_tools → web_fetch) is clean (got: ${JSON.stringify(problems)})`);
 }
 
 const OPTIN_KIT = [{ name: "sandbox_tools", source: 'export default windowGatedKit("sandbox_tools", {\n  bash: defineTool(x),\n  glob: defineTool(y),\n});' }];
@@ -242,82 +241,45 @@ firesWith(
 
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.spawn_thread_session]) === JSON.stringify(["standing"]), "spawn_thread_session is standing-only (window-only mint; no recursive thread trees)");
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.complete_thread]) === JSON.stringify(["thread"]), "complete_thread is thread-only");
-ok(JSON.stringify([...(WINDOW_GATED_TOOLS.agent ?? [])]) === JSON.stringify(["standing", "thread"]) && !WINDOW_UNGATED_TOOLS.has("agent"), "agent is grain-gated to standing+thread (a gated row again since #96; the disableTool() sentinel removes eve's built-in and delegation_tools.ts re-provides it per grain)");
-ok(JSON.stringify([...(WINDOW_GATED_TOOLS.stop_task ?? [])]) === JSON.stringify(["standing", "thread"]) && !WINDOW_UNGATED_TOOLS.has("stop_task"), "stop_task (OPE-730) carries agent's own matrix — only a seat that can delegate can un-delegate, and a task worker leaf never reaches the cancel door");
+ok(JSON.stringify([...(WINDOW_GATED_TOOLS.agent ?? [])]) === JSON.stringify(["standing", "thread"]) && !WINDOW_UNGATED_TOOLS.has("agent"), "agent is grain-gated to standing+thread — the ADMITTED-GRAIN table hooks/lean-seat.ts reads; the gate itself is the projection seam, since the tool is eve's built-in");
+ok(WINDOW_GATED_TOOLS.stop_task === undefined && WINDOW_GATED_TOOLS.return_result === undefined, "🔴 OPE-1145 item 2: the roll-own regime's two verbs carry NO manifest row — they are deleted, not merely disarmed");
 ok([...fullKit()].sort().join(",") === "task", "fullKit() = task-only — the ARMED shipped default since OPE-370 (default==prod); the flag-OFF Stage-C widening to task+native is pinned by the injected crafted case above");
 ok(
-  withheldFromGrain("standing").includes("bash") && withheldFromGrain("standing").includes("return_result") && withheldFromGrain("standing").includes("complete_thread"),
-  "a standing seat withholds the wide-hands set + return_result + complete_thread",
+  withheldFromGrain("standing").includes("bash") && withheldFromGrain("standing").includes("complete_thread"),
+  "a standing seat withholds the wide-hands set + complete_thread",
 );
 ok(
-  withheldFromGrain("native").length === 16,
-  "under the ARMED shipped default (OPE-370) a native seat withholds the delegation/lifecycle set (agent/stop_task/spawn_thread_session/complete_thread/return_result) AND the 11 wide-hands tools — the T2 narrowing is now the default posture (flag-off, native regains wide hands: the Stage-C byte-identical state, exercised via the injected crafted case above).",
+  withheldFromGrain("native").length === 14,
+  `under the ARMED shipped default (OPE-370) a native seat withholds the delegation/lifecycle set (agent/spawn_thread_session/complete_thread) AND the 11 wide-hands tools — 14 since OPE-1145 item 2 took stop_task and return_result out of the manifest entirely. The T2 narrowing is the default posture (flag-off, native regains wide hands: the Stage-C byte-identical state, exercised via the injected crafted case above). Got ${withheldFromGrain("native").length}: ${JSON.stringify(withheldFromGrain("native"))}`,
 );
 
 firesWith(
-  checkWindowGateManifest(
-    [{ name: "delegation_tools", source: 'export default windowGatedKit("delegation_tools", {\n  agent: defineTool(x),\n});' }],
-    new Map([["agent", SENTINEL], ["delegation_tools", 'export { default } from "@open-everywhere/core/agent/tools/delegation_tools.js";']]),
-    ["agent"],
-    g({ agent: ["standing"] }),
-    u("delegation_tools"),
-  ),
+  checkWindowGateManifest([], new Map(), ["agent"], g({ agent: ["standing"] }), u()),
   'WINDOW_GATED_TOOLS["agent"] must be exactly ["standing", "thread"]',
   "agent gated to the wrong grain FAILS (a task-leaf delegation is a recursion hole)",
 );
-firesWith(
-  checkWindowGateManifest(
-    [{ name: "delegation_tools", source: 'export default windowGatedKit("delegation_tools", {\n  agent: defineTool(x),\n});' }],
-    new Map([["agent", "export default someOtherThing();"], ["delegation_tools", 'export { default } from "@open-everywhere/core/agent/tools/delegation_tools.js";']]),
-    ["agent"],
-    g({ agent: ["standing", "thread"] }),
-    u("delegation_tools"),
-  ),
-  "is not a `disableTool()` sentinel",
-  "agent whose app shim is NOT a disableTool() sentinel FAILS (eve's built-in recursive subagent stays mounted and wins the name — the 2026-07-16 credential-broken path)",
-);
-{
-  const problems = checkWindowGateManifest(
-    [{ name: "delegation_tools", source: 'export default windowGatedKit("delegation_tools", {\n  agent: defineTool(x),\n});' }],
-    new Map([["agent", SENTINEL], ["delegation_tools", 'export { default } from "@open-everywhere/core/agent/tools/delegation_tools.js";']]),
-    ["agent"],
-    g({ agent: ["standing", "thread"] }),
-    u("delegation_tools"),
-  );
-  ok(problems.length === 0, `agent gated [standing,thread] + kit + sentinel is clean (the #96 post-fix shape) (got: ${JSON.stringify(problems)})`);
-}
 
-const armedKit = [{ name: "delegation_tools", source: 'export default windowGatedKit("delegation_tools", {\n  agent: defineTool(x),\n});' }];
 firesWith(
   checkWindowGateManifest(
-    armedKit,
-    new Map([["agent", SENTINEL], ["delegation_tools", 'export { default } from "@open-everywhere/core/agent/tools/delegation_tools.js";']]),
-    ["agent"],
-    g({ agent: ["standing", "thread"] }),
-    u("delegation_tools"),
-    undefined,
-    undefined,
-    undefined,
-    true,
-  ),
-  "roster artefacts are stale",
-  "ARMED + a still-present agent sentinel FAILS (roster generated against a different settings state — run oe build --accept)",
-);
-{
-  const problems = checkWindowGateManifest(
-    armedKit,
+    [{ name: "delegation_tools", source: 'export default windowGatedKit("delegation_tools", {\n  agent: defineTool(x),\n});' }],
     new Map([["delegation_tools", 'export { default } from "@open-everywhere/core/agent/tools/delegation_tools.js";']]),
     ["agent"],
     g({ agent: ["standing", "thread"] }),
     u("delegation_tools"),
-    undefined,
-    undefined,
-    undefined,
-    true,
-  );
+  ),
+  "is re-provided by a windowGatedKit",
+  "a kit that re-provides `agent` FAILS — a dynamic tool of that name COLLIDES with the built-in and kills the model call",
+);
+firesWith(
+  checkWindowGateManifest([], new Map([["agent", SENTINEL]]), ["agent"], g({ agent: ["standing", "thread"] }), u()),
+  "is a disableTool() sentinel",
+  "an `agent` disableTool() sentinel FAILS — it strips the built-in and nothing re-provides it, so every seat loses delegation entirely",
+);
+{
+  const problems = checkWindowGateManifest([], new Map(), ["agent"], g({ agent: ["standing", "thread"] }), u());
   ok(
-    !problems.some((p) => p.includes('"agent"')),
-    `ARMED + sentinel absent raises no agent problem (the built-in IS the delegation path; runtime gate = the projection seam) (got: ${JSON.stringify(problems)})`,
+    problems.length === 0,
+    `NEGATIVE CONTROL: agent gated [standing,thread] with NO kit and NO sentinel is clean — the shipped shape, so the two firesWith cases above read as real refusals rather than a rule that refuses everything (got: ${JSON.stringify(problems)})`,
   );
 }
 
@@ -363,11 +325,7 @@ for (const name of Object.keys(WINDOW_GATED_TOOLS)) {
   const subagentNames = existsSync(subagentDir)
     ? readdirSync(subagentDir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)
     : [];
-  const { SETTINGS_OVERRIDES: appOverrides } = (await import(
-    pathToFileURL(join(here, "../../../agent/settings/settings.ts")).href
-  )) as { SETTINGS_OVERRIDES: Parameters<typeof nativeSubagentAtBuild>[0] };
-  const realArmed = nativeSubagentAtBuild(appOverrides);
-  const problems = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOLS, undefined, undefined, undefined, subagentNames, undefined, realArmed);
+  const problems = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOLS, undefined, undefined, undefined, subagentNames);
   ok(problems.length === 0, `the REAL tool surface carries a clean, total window-gate manifest (problems: ${JSON.stringify(problems)})`);
   ok(coreTools.length >= 37, `the real scan actually covered the core tools dir (saw ${coreTools.length})`);
   ok(appShims.size >= 40, `the real scan covered the deploy shims (saw ${appShims.size})`);
@@ -391,7 +349,7 @@ for (const name of Object.keys(WINDOW_GATED_TOOLS)) {
   );
 
   const shimsWithout = (...names: string[]) => new Map([...appShims].filter(([slug]) => !names.includes(slug)));
-  const realArgs = [undefined, undefined, undefined, subagentNames, undefined, realArmed] as const;
+  const realArgs = [undefined, undefined, undefined, subagentNames] as const;
   const droppedOptIn = checkWindowGateManifest(coreTools, shimsWithout("glob", "grep"), FRAMEWORK_TOOLS, ...realArgs);
   ok(
     droppedOptIn.length === 0,
@@ -419,10 +377,9 @@ for (const name of Object.keys(WINDOW_GATED_TOOLS)) {
     fullKit(),
     subagentNames,
     new Set([...JOB_WAKE_TOOLS, "ghost_job_verb"]),
-    realArmed,
   );
   firesWith(stale, 'JOB_WAKE_TOOLS names "ghost_job_verb"', "a stale JOB_WAKE_TOOLS row FAILS (rule 6)");
-  const cleanKit = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOLS, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, fullKit(), subagentNames, JOB_WAKE_TOOLS, realArmed);
+  const cleanKit = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOLS, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, fullKit(), subagentNames, JOB_WAKE_TOOLS);
   ok(cleanKit.length === 0, `the REAL job kit is clean against the real surface (problems: ${JSON.stringify(cleanKit)})`);
 }
 

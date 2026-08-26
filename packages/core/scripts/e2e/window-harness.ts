@@ -177,16 +177,14 @@ export async function sessionMatrix<T extends { tag: string }>(
   return tagToSession;
 }
 
-export type DelegationArm = "native-tasks" | "native-sync" | "roll-own";
+export type DelegationArm = "native-tasks" | "native-sync";
 
-export function delegationArmOf(nativeSubagent: boolean, backgroundTasks: boolean): DelegationArm {
-  if (!nativeSubagent) return "roll-own";
+export function delegationArmOf(backgroundTasks: boolean): DelegationArm {
   return backgroundTasks ? "native-tasks" : "native-sync";
 }
 
 export interface DelegationEvidence {
   readonly nativeReceipt: boolean;
-  readonly rollOwnReceipt: boolean;
   readonly replied: boolean;
   readonly calls: readonly { readonly name: string; readonly errored: boolean }[] | null;
   readonly arm: DelegationArm;
@@ -200,9 +198,6 @@ export interface DelegationVerdict {
 export function classifyDelegationOutcome(ev: DelegationEvidence): DelegationVerdict {
   if (ev.nativeReceipt) {
     return { status: "PASS", reason: "a delegation.task_started row joined this seat's session — the native background-task route dispatched a worker" };
-  }
-  if (ev.rollOwnReceipt) {
-    return { status: "PASS", reason: "a task.spawned row joined this wake — the roll-own one-shot route dispatched a worker" };
   }
   if (!ev.replied) {
     return { status: "SKIP", reason: "no receipt row and no reply for this wake — the model did not choose to delegate this turn, or the turn is still running" };
@@ -220,8 +215,10 @@ export function classifyDelegationOutcome(ev: DelegationEvidence): DelegationVer
   if (ev.arm === "native-sync") {
     return { status: "PASS", reason: "the model called agent and the call did not error — on the native-sync arm (delegation.backgroundTasks off) no receipt row exists, so a clean call IS the receipt" };
   }
-  const expected = ev.arm === "native-tasks" ? "delegation.task_started (joined on the caller session)" : "task.spawned (joined on the wake)";
-  return { status: "FAIL", reason: `the model called agent, the call did NOT error, and yet no ${expected} row landed — the dispatch leg is broken on the ${ev.arm} arm` };
+  return {
+    status: "FAIL",
+    reason: `the model called agent, the call did NOT error, and yet no delegation.task_started (joined on the caller session) row landed — the dispatch leg is broken on the ${ev.arm} arm`,
+  };
 }
 
 export interface WithheldVerdict {

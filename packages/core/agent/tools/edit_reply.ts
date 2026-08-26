@@ -21,7 +21,7 @@ import { markWakeRepliedThisTurn } from "../channels/reply-signal.js";
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
 import { pendingDelegationOwing } from "../access/pending-delegation-signal.js";
 import { silentRoutineThisTurn } from "../routines/report.js";
-import { resolveOwnWindowToken } from "../access/oneshot-spawn.js";
+import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { preRegisterDynamicVariants } from "../access/window-gated.js";
 

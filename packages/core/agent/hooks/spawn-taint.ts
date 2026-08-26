@@ -7,7 +7,6 @@ import {
   registerTaintFlipObserver,
   untrustedIngestedThisTurn,
   OE_TAINTED_FIRE_ATTR,
-  OE_RESULT_TAINTED_ATTR,
   OE_CHAT_NONMEMBER_ATTR,
 } from "../access/taint-signal.js";
 import {
@@ -49,7 +48,6 @@ registerTaintVerdictSink((row: TaintVerdictRow) => {
 export const TAINT_SEED_ATTRS: readonly string[] = [
   OE_SPAWN_TAINTED_ATTR,
   OE_TAINTED_FIRE_ATTR,
-  OE_RESULT_TAINTED_ATTR,
   JOB_TAINT_ATTR,
   OE_CHAT_NONMEMBER_ATTR,
 ];

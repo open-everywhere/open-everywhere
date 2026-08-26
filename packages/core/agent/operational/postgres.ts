@@ -181,8 +181,6 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      task_id      text NOT NULL,
      result_json  text NOT NULL,
      created_at   text NOT NULL,
-     caller_token text,
-     delivered_at text,
      PRIMARY KEY (org_id, task_id)
    )`,
   `CREATE TABLE IF NOT EXISTS slack_attachment (
@@ -491,8 +489,6 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS first_wake_at text`,
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS last_input_tokens bigint`,
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS rotate_marked_at text`,
-  `ALTER TABLE task_result ADD COLUMN IF NOT EXISTS caller_token text`,
-  `ALTER TABLE task_result ADD COLUMN IF NOT EXISTS delivered_at text`,
   `ALTER TABLE unified_wake_target ADD COLUMN IF NOT EXISTS window_token text`,
   `ALTER TABLE unified_wake_target ADD COLUMN IF NOT EXISTS answered_at text`,
   `ALTER TABLE unified_wake_target ADD COLUMN IF NOT EXISTS answered_turn_id text`,
@@ -2729,24 +2725,23 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return rows.length > 0;
     },
 
-    async putTaskResult(org, taskId, resultJson, at, ttlMs, callerToken) {
+    async putTaskResult(org, taskId, resultJson, at, ttlMs) {
       const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
       await client.query("DELETE FROM task_result WHERE created_at < $1 AND org_id = $2", [cutoff, org]);
       await client.query(
-        `INSERT INTO task_result (org_id, task_id, result_json, created_at, caller_token) VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (org_id, task_id) DO UPDATE SET result_json = EXCLUDED.result_json, created_at = EXCLUDED.created_at, caller_token = EXCLUDED.caller_token`,
-        [org, taskId, resultJson, at, callerToken ?? null],
+        `INSERT INTO task_result (org_id, task_id, result_json, created_at) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (org_id, task_id) DO UPDATE SET result_json = EXCLUDED.result_json, created_at = EXCLUDED.created_at`,
+        [org, taskId, resultJson, at],
       );
     },
 
-    async putTaskResultIfAbsent(org, taskId, resultJson, at, ttlMs, callerToken) {
+    async putTaskResultIfAbsent(org, taskId, resultJson, at, ttlMs) {
       const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
       await client.query("DELETE FROM task_result WHERE created_at < $1 AND org_id = $2", [cutoff, org]);
       const { rows } = await client.query(
-        `INSERT INTO task_result (org_id, task_id, result_json, created_at, caller_token) VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (org_id, task_id) DO NOTHING
-         RETURNING task_id`,
-        [org, taskId, resultJson, at, callerToken ?? null],
+        `INSERT INTO task_result (org_id, task_id, result_json, created_at) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (org_id, task_id) DO NOTHING RETURNING task_id`,
+        [org, taskId, resultJson, at],
       );
       return rows.length > 0;
     },
@@ -2760,24 +2755,6 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     async deleteTaskResult(org, taskId) {
       const { rows } = await client.query("DELETE FROM task_result WHERE org_id = $1 AND task_id = $2 RETURNING task_id", [org, taskId]);
       return rows.length > 0;
-    },
-
-    async listUndeliveredTaskResults(org, callerToken, limit) {
-      const { rows } = await client.query(
-        `SELECT task_id, result_json, created_at FROM task_result
-         WHERE org_id = $1 AND caller_token = $2 AND delivered_at IS NULL
-         ORDER BY created_at ASC LIMIT $3`,
-        [org, callerToken, limit],
-      );
-      return (rows as { task_id: string; result_json: string; created_at: string }[]).map((r) => ({
-        taskId: r.task_id,
-        resultJson: r.result_json,
-        createdAt: r.created_at,
-      }));
-    },
-
-    async markTaskResultDelivered(org, taskId, at) {
-      await client.query("UPDATE task_result SET delivered_at = $1 WHERE org_id = $2 AND task_id = $3 AND delivered_at IS NULL", [at, org, taskId]);
     },
 
     async putSlackAttachment(org, fileId, rec, at, ttlMs) {

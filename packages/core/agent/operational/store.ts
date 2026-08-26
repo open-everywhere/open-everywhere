@@ -441,12 +441,6 @@ export interface ChannelSessionRow {
   readonly rotateMarkedAt: string | null;
 }
 
-export interface TaskResultRow {
-  readonly taskId: string;
-  readonly resultJson: string;
-  readonly createdAt: string;
-}
-
 export interface SlackAttachmentRow {
   readonly urlPrivate: string;
   readonly mimeType?: string;
@@ -758,12 +752,10 @@ export interface OperationalStore {
   getLatestTurnAnchorForChannel(org: string, channelKey: string): Promise<TurnAnchorRow | null>;
   clearTurnAnchor(org: string, windowKey: string): Promise<boolean>;
 
-  putTaskResult(org: string, taskId: string, resultJson: string, at: string, ttlMs: number, callerToken?: string): Promise<void>;
-  putTaskResultIfAbsent(org: string, taskId: string, resultJson: string, at: string, ttlMs: number, callerToken?: string): Promise<boolean>;
+  putTaskResult(org: string, taskId: string, resultJson: string, at: string, ttlMs: number): Promise<void>;
+  putTaskResultIfAbsent(org: string, taskId: string, resultJson: string, at: string, ttlMs: number): Promise<boolean>;
   getTaskResult(org: string, taskId: string): Promise<string | null>;
   deleteTaskResult(org: string, taskId: string): Promise<boolean>;
-  listUndeliveredTaskResults(org: string, callerToken: string, limit: number): Promise<readonly TaskResultRow[]>;
-  markTaskResultDelivered(org: string, taskId: string, at: string): Promise<void>;
 
   putSlackAttachment(org: string, fileId: string, rec: SlackAttachmentRow, at: string, ttlMs: number): Promise<void>;
   getSlackAttachment(org: string, fileId: string): Promise<SlackAttachmentRow | null>;

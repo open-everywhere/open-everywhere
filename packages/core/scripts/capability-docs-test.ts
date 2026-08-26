@@ -68,7 +68,7 @@ const check = (toolNames: string[], docs: { path: string; spans: string[] }[], e
 {
   const shipped = Object.keys(UNDOCUMENTED_TOOLS).sort();
   ok(
-    shipped.join(",") === "browser_tools,delegation_tools,sandbox_tools",
+    shipped.join(",") === "browser_tools,sandbox_tools",
     `10a: the shipped exemption table is exactly the three resolver files (found: ${shipped.join(", ") || "none"}). If you are adding a row, justify it here too.`,
   );
   ok(

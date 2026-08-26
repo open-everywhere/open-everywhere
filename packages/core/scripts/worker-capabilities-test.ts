@@ -69,7 +69,7 @@ const withFullKit = (kit: readonly WindowGrain[]): Record<string, readonly Windo
   Object.fromEntries(
     Object.entries(WINDOW_GATED_TOOLS).map(([name, grains]) => [
       name,
-      ["agent", "spawn_thread_session", "complete_thread", "return_result"].includes(name) ? grains : kit,
+      ["agent", "spawn_thread_session", "complete_thread"].includes(name) ? grains : kit,
     ]),
   );
 for (const grain of ["standing", "thread"] as const) {

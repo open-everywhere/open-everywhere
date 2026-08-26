@@ -138,8 +138,7 @@ function ok(cond: boolean, label: string): void {
 }
 
 {
-  const worker = renderSeatPersona({ seatKind: "worker", report: "task-result", midTurnPost: true });
-  const rollOwn = renderSeatPersona({ seatKind: "worker", report: "return-result", midTurnPost: true });
+  const worker = renderSeatPersona({ seatKind: "worker", midTurnPost: true });
   const seat = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } });
 
   ok(worker.includes("call `post_file` to attach it into the"), "🔴 a worker is told it CARRIES the file tools");
@@ -170,12 +169,10 @@ function ok(cond: boolean, label: string): void {
   ok(worker.includes("### Your report"), "🔴 …and tells it how to report");
   ok(worker.length > 2000, `fixture guard: the worker persona is a real block, not a stub (got ${worker.length} bytes)`);
 
-  ok(!worker.includes("`return_result`"), "🔴 the NATIVE worker is never sent at `return_result` — it refuses on that route");
-  ok(worker.includes("Your LAST message of this session is your report"), "🔴 …it is told its last message IS the report");
-  ok(rollOwn.includes("Call `return_result` ONCE"), "🔴 the ROLL-OWN worker is told to call `return_result`");
-  ok(!rollOwn.includes("Your LAST message of this session is your report"), "negative control: …and not the other route's mechanism");
+  ok(worker.includes("Your LAST message of this session is your report"), "🔴 the worker is told its LAST message IS the report");
+  ok(!worker.includes("return_result"), "🔴 …and is never sent at `return_result`, which no longer exists");
 
-  const noPost = renderSeatPersona({ seatKind: "worker", report: "task-result", midTurnPost: false });
+  const noPost = renderSeatPersona({ seatKind: "worker", midTurnPost: false });
   ok(worker.includes("### Speaking into the conversation"), "a worker that holds `reply` is told what it is for");
   ok(worker.includes(editReplyParagraph("")), "🔴 …built from the SHARED edit_reply paragraph, not a fourth copy");
   ok(!noPost.includes("### Speaking into the conversation"), "🔴 negative control: a worker with no mid-turn post reads no reply section at all");
@@ -213,13 +210,13 @@ function ok(cond: boolean, label: string): void {
   const addressed = renderSupervisorPersona(ctx, { messageToolOnly: true });
   const plain = renderSupervisorPersona(ctx);
   ok(!addressed.includes("### Speaking into the conversation"), "🔴 a wake-addressed worker reads no reply section — the address is undescribed and undriven");
-  ok(addressed.includes("Call `return_result` ONCE"), "…and still reads its report route in full, so it is not left mute");
+  ok(addressed.includes("### Your report"), "…and still reads its report route in full, so it is not left mute");
   ok(plain.includes("### Speaking into the conversation"), "negative control: the SAME worker off that path does read it — the withholding is the arm, not a deletion");
 }
 
 {
   const seat = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } });
-  const worker = renderSeatPersona({ seatKind: "worker", report: "task-result", midTurnPost: true });
+  const worker = renderSeatPersona({ seatKind: "worker", midTurnPost: true });
 
   ok(seat.includes("A react acknowledges; it does not answer"), "🔴 the seat is told a react is not an answer");
   ok(seat.includes("then still post ONE short reply before the turn ends"), "🔴 …and that an ADDRESSED message is owed one short reply");

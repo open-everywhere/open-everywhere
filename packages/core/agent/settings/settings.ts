@@ -47,7 +47,6 @@ export interface AgentSettings {
   };
   readonly delegation: {
     readonly oneshotAgent: boolean;
-    readonly nativeSubagent: boolean;
     readonly backgroundTasks: boolean;
   };
   readonly models: {
@@ -288,13 +287,7 @@ export const SETTINGS = {
       path: "delegation.oneshotAgent",
       shipped: true,
       summary:
-        "The one-shot `agent` delegation model: `agent` spawns a credential-correct new session that works, calls `return_result` and tears down. Disarming makes the whole delegation machinery inert.",
-    } satisfies SettingSpec<boolean>,
-    nativeSubagent: {
-      path: "delegation.nativeSubagent",
-      shipped: true,
-      summary:
-        "Use eve's BUILT-IN `agent` subagent as the delegation route. ON by default since OPE-396 — the roll-own SYNC delegation leg it replaced has been deleted, so disarming leaves the deployment with async-only roll-own delegation rather than a synchronous fallback. Disarming also takes an `oe build` (it must EMIT the static sentinel that suppresses the built-in), which is why it is code-only. Native children share the parent's sandbox and bind to the parent's identity. A tainted turn KEEPS its delegation verb (OPE-471): the taint mark rides the child's opening auth instead of withdrawing the tool, and the one accepted residual is the same-step race — a model step that issues an untrusted read and an `agent` call in one response spawns before the mark lands.",
+        "Whether this deployment DELEGATES at all. Armed, a conversational seat may hand a self-contained job to a full-hands worker through eve's built-in `agent`, and `spawn_thread_session` may mint a persistent thread seat. Disarming makes the whole delegation machinery inert: no seat holds `agent`, `spawn_thread_session` never mounts, and the wide-hands kit widens back to the task and native grains. There is no switch between delegation ROUTES — the built-in is the only one — so the only posture this expresses is LESS delegation.",
     } satisfies SettingSpec<boolean>,
     backgroundTasks: {
       path: "delegation.backgroundTasks",
@@ -788,7 +781,6 @@ export function getSettings(
     },
     delegation: {
       oneshotAgent: resolve(SETTINGS.delegation.oneshotAgent, o.delegation?.oneshotAgent, env),
-      nativeSubagent: resolve(SETTINGS.delegation.nativeSubagent, o.delegation?.nativeSubagent, env),
       backgroundTasks: resolve(SETTINGS.delegation.backgroundTasks, o.delegation?.backgroundTasks, env),
     },
     models: {
@@ -896,10 +888,6 @@ export function settingDocs(): readonly SettingDoc[] {
     }
   }
   return out.sort((a, b) => a.path.localeCompare(b.path));
-}
-
-export function nativeSubagentAtBuild(overrides: AgentSettingsOverrides): boolean {
-  return overrides.delegation?.nativeSubagent ?? SETTINGS.delegation.nativeSubagent.shipped;
 }
 
 export function backgroundTasksAtBuild(overrides: AgentSettingsOverrides): boolean {

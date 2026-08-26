@@ -42,7 +42,7 @@ export async function openTaskWake(input: {
     const wakeId = mintWakeId();
     const at = new Date().toISOString();
     await registerUnifiedWakeTarget(store, input.org, wakeId, origin, at, input.windowToken);
-    await store.putTaskResult(input.org, taskWakeKey(input.taskId), JSON.stringify({ wakeId }), at, TASK_WAKE_TTL_MS, undefined);
+    await store.putTaskResult(input.org, taskWakeKey(input.taskId), JSON.stringify({ wakeId }), at, TASK_WAKE_TTL_MS);
     return wakeId;
   } catch {
     return null;

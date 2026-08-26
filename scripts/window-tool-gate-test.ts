@@ -114,8 +114,7 @@ for (const wide of WIDE_HANDS_11) {
   ok(dmWithheld.has(wide), `a standing (DM) seat DROPS ${wide} (withheld from grain standing)`);
 }
 ok(dmWithheld.has("complete_thread"), "complete_thread (thread-only) is also absent from a standing DM seat");
-ok(dmWithheld.has("return_result"), "return_result (task-only, one-shot) is also absent from a standing DM seat");
-eq(dmWithheld.size, WIDE_HANDS_11.length + 2, "a standing (DM) seat withholds exactly the 11 wide-hands tools + complete_thread + return_result");
+eq(dmWithheld.size, WIDE_HANDS_11.length + 1, "a standing (DM) seat withholds exactly the 11 wide-hands tools + complete_thread");
 
 console.log("4. auditWindowToolGate (turn.tool_gated row):");
 await auditWindowToolGate({ org: "default", domain: "payments", grain: "standing", withheld: [], wakeId: "w-empty", sessionId: "s-empty" });

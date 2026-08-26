@@ -1,8 +1,6 @@
 export const UNDOCUMENTED_TOOLS: Readonly<Record<string, string>> = {
   sandbox_tools:
     "resolver file, not a capability: re-provides the disabled framework sandbox tools per session grain (access/window-gated.ts windowGatedKit) and mounts nothing under this name. The six tools it re-provides are each documented under their own names.",
-  delegation_tools:
-    "resolver file, not a capability: re-provides the framework-named `agent` tool per session grain, mounting nothing under this name. `agent` itself is documented.",
   browser_tools:
     "resolver file, not a capability: mounts the flag-gated agent-browser family (access/browser-toolkit.ts) and nothing under this name. The injected `browser_*` tools it mounts are documented in docs/capabilities/browser-qa.md.",
 };

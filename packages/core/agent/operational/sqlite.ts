@@ -209,13 +209,15 @@ function getDb(): DatabaseSync {
       created_at  TEXT NOT NULL,              -- ISO-8601 (lexicographic = chronological; TTL prune key)
       PRIMARY KEY (org_id, window_key)
     );
+    -- An org-scoped, TTL-pruned, OPAQUE key-value scratch table. The NAME is historical (see the
+    -- store interface's note): minted for the deleted roll-own delegation regime, now shared by the
+    -- native-subagent taint markers, the question bridge and the task-wake join, each under its own
+    -- key prefix.
     CREATE TABLE IF NOT EXISTS task_result (
       org_id       TEXT NOT NULL,
-      task_id      TEXT NOT NULL,             -- the unique one-shot task window token (per-call nonce)
-      result_json  TEXT NOT NULL,             -- {summary, artifacts?, error?} (opaque to the store)
+      task_id      TEXT NOT NULL,             -- the consumer's own namespaced key
+      result_json  TEXT NOT NULL,             -- opaque to the store; each consumer owns its shape
       created_at   TEXT NOT NULL,             -- ISO-8601 (lexicographic = chronological; TTL prune key)
-      caller_token TEXT,                      -- the delegating seat's standing window token (F1 reader key); NULL = unaddressable (degrade flag / pre-migration)
-      delivered_at TEXT,                      -- ISO-8601 when the result reached the caller; NULL = undelivered (reader recovers)
       PRIMARY KEY (org_id, task_id)
     );
     CREATE TABLE IF NOT EXISTS slack_attachment (
@@ -613,9 +615,6 @@ function getDb(): DatabaseSync {
     "ALTER TABLE channel_session ADD COLUMN first_wake_at TEXT",
     "ALTER TABLE channel_session ADD COLUMN last_input_tokens INTEGER",
     "ALTER TABLE channel_session ADD COLUMN rotate_marked_at TEXT",
-
-    "ALTER TABLE task_result ADD COLUMN caller_token TEXT",
-    "ALTER TABLE task_result ADD COLUMN delivered_at TEXT",
 
     "ALTER TABLE unified_wake_target ADD COLUMN window_token TEXT",
     "ALTER TABLE unified_wake_target ADD COLUMN answered_at TEXT",
@@ -2284,57 +2283,37 @@ export const sqliteOperationalStore: OperationalStore = {
     return getDb().prepare("DELETE FROM turn_anchor WHERE org_id = ? AND window_key = ?").run(org, windowKey).changes > 0;
   },
 
-  async putTaskResult(org, taskId, resultJson, at, ttlMs, callerToken) {
+  async putTaskResult(org, taskId, resultJson, at, ttlMs) {
     const handle = getDb();
     const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
     handle.prepare("DELETE FROM task_result WHERE created_at < ? AND org_id = ?").run(cutoff, org);
     handle
       .prepare(
-        `INSERT INTO task_result (org_id, task_id, result_json, created_at, caller_token) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT (org_id, task_id) DO UPDATE SET result_json = excluded.result_json, created_at = excluded.created_at, caller_token = excluded.caller_token`,
+        `INSERT INTO task_result (org_id, task_id, result_json, created_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT (org_id, task_id) DO UPDATE SET result_json = excluded.result_json, created_at = excluded.created_at`,
       )
-      .run(org, taskId, resultJson, at, callerToken ?? null);
+      .run(org, taskId, resultJson, at);
   },
 
-  async putTaskResultIfAbsent(org, taskId, resultJson, at, ttlMs, callerToken) {
+  async putTaskResultIfAbsent(org, taskId, resultJson, at, ttlMs) {
     const handle = getDb();
     const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
     handle.prepare("DELETE FROM task_result WHERE created_at < ? AND org_id = ?").run(cutoff, org);
     const info = handle
-      .prepare(
-        `INSERT INTO task_result (org_id, task_id, result_json, created_at, caller_token) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT (org_id, task_id) DO NOTHING`,
-      )
-      .run(org, taskId, resultJson, at, callerToken ?? null);
+      .prepare(`INSERT INTO task_result (org_id, task_id, result_json, created_at) VALUES (?, ?, ?, ?) ON CONFLICT (org_id, task_id) DO NOTHING`)
+      .run(org, taskId, resultJson, at);
     return info.changes > 0;
   },
 
   async getTaskResult(org, taskId) {
     const row = getDb().prepare("SELECT result_json FROM task_result WHERE org_id = ? AND task_id = ?").get(org, taskId) as
-      | { result_json: string }
+      | { result_json?: string }
       | undefined;
-    return row?.result_json ?? null;
+    return typeof row?.result_json === "string" ? row.result_json : null;
   },
 
   async deleteTaskResult(org, taskId) {
     return getDb().prepare("DELETE FROM task_result WHERE org_id = ? AND task_id = ?").run(org, taskId).changes > 0;
-  },
-
-  async listUndeliveredTaskResults(org, callerToken, limit) {
-    const rows = getDb()
-      .prepare(
-        `SELECT task_id, result_json, created_at FROM task_result
-         WHERE org_id = ? AND caller_token = ? AND delivered_at IS NULL
-         ORDER BY created_at ASC LIMIT ?`,
-      )
-      .all(org, callerToken, limit) as { task_id: string; result_json: string; created_at: string }[];
-    return rows.map((r) => ({ taskId: r.task_id, resultJson: r.result_json, createdAt: r.created_at }));
-  },
-
-  async markTaskResultDelivered(org, taskId, at) {
-    getDb()
-      .prepare("UPDATE task_result SET delivered_at = ? WHERE org_id = ? AND task_id = ? AND delivered_at IS NULL")
-      .run(at, org, taskId);
   },
 
   async putSlackAttachment(org, fileId, rec, at, ttlMs) {

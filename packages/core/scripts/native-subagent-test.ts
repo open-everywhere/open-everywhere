@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-native-subagent-")), "ops.sqlite3");
 process.env.OE_WORKSPACE = "dev";
@@ -27,7 +27,7 @@ import {
 import { OE_SPAWN_TAINTED_ATTR } from "../agent/channels/unified.js";
 import { canDelegateFromSeat, resolveOwnWindowToken } from "../agent/access/delegation-mount.js";
 import { resolveLeanSeatPosture } from "../agent/access/lean-seat.js";
-import { SETTINGS, getSettings, nativeSubagentAtBuild, registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
+import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -220,31 +220,6 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
   ok(rootRes.abortError === undefined && root.applied.length === 1, "a root session's deps carry no parentPublishedFingerprint, so the tripwire costs it not even a read");
 }
 
-ok(SETTINGS.delegation.nativeSubagent.shipped === true, "🔴 D6 (OPE-396): the shipped default is ON — a fresh clone gets eve-native delegation, which is what we run");
-{
-  const spec = SETTINGS.delegation.nativeSubagent as { env?: string; parseEnv?: unknown };
-  ok(spec.env === undefined, "🔴 D6 (OPE-411): the setting declares NO env override — the off-only kill switch is deleted, not merely undocumented");
-  ok(spec.parseEnv === undefined, "…and no parser either, which is the STRUCTURAL half: there is nothing for a string to be read by");
-}
-{
-  resetSettingsForTest();
-  ok(getSettings({}).delegation.nativeSubagent === true, "…so with nothing registered the resolved value is the shipped ON");
-  ok(getSettings({ OE_NATIVE_SUBAGENT: "0" }).delegation.nativeSubagent === true, "🔴 D6: `OE_NATIVE_SUBAGENT=0` no longer disarms anything — the deleted mirror is inert in BOTH directions");
-  registerSettings({ delegation: { nativeSubagent: false } });
-  ok(getSettings({}).delegation.nativeSubagent === false, "…and a REGISTERED override is what disarms it, which is the only route left");
-  ok(getSettings({ OE_NATIVE_SUBAGENT: "1" }).delegation.nativeSubagent === false, "…with no environment able to pull it back either");
-  resetSettingsForTest();
-}
-{
-  ok(nativeSubagentAtBuild({}) === true, "🔴 D6 BUILD (OPE-396): with no app override the build-time value is the shipped ON ⇒ roster.config.ts omits the `agent` disable sentinel ⇒ eve's built-in IS injected");
-  ok(nativeSubagentAtBuild({ delegation: { nativeSubagent: false } }) === false, "…and an app override in agent/settings.ts is what RE-EMITS it — a reviewed diff, paired with `oe build --accept` in the same PR");
-  const saved = process.env.OE_NATIVE_SUBAGENT;
-  process.env.OE_NATIVE_SUBAGENT = "0";
-  ok(nativeSubagentAtBuild({}) === true, "🔴 D6: the BUILD resolver is ENV-BLIND — a stray OE_NATIVE_SUBAGENT in whoever ran `oe build --accept` must never rewrite the committed roster.lock.json for everyone else. (Since OPE-411 the RUNTIME resolver is env-blind too, so this now pins the weaker of two walls — it stays because roster.lock.json is a committed artefact and that argument is independent of the mirrors.)");
-  if (saved === undefined) delete process.env.OE_NATIVE_SUBAGENT;
-  else process.env.OE_NATIVE_SUBAGENT = saved;
-}
-
 const require = createRequire(import.meta.url);
 const eveRoot = dirname(require.resolve("eve/package.json"));
 const { ContextContainer, contextStorage } = (await import(pathToFileURL(join(eveRoot, "dist/src/context/container.js")).href)) as {
@@ -259,20 +234,8 @@ function inSession<T>(fn: () => T): T {
   const { projectToolSet } = await import("../agent/access/untrusted-projection.js");
   const { setNativeDelegationSeat, nativeAgentAllowedNow } = await import("../agent/access/native-delegation-state.js");
   const { markUntrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
-  const { resolveWindowGated } = await import("../agent/access/window-gated.js");
 
   const makeToolset = () => ({ agent: { execute: () => undefined }, reply: { execute: () => undefined }, no_reply: { execute: () => undefined } });
-
-  registerSettings({ delegation: { nativeSubagent: false } });
-  inSession(() => {
-    setNativeDelegationSeat("no-seat");
-    const toolset = makeToolset();
-    projectToolSet(toolset as unknown as Record<string, unknown>);
-    ok("agent" in toolset, "🔴 D6 OFF: with the regime disarmed the projection seam never withdraws `agent` — the world is byte-identical, and the slot is not even read");
-  });
-
-  resetSettingsForTest();
-  ok(getSettings({}).delegation.nativeSubagent === true, "the SHIPPED default is what the remaining legs run under (no override needed since OPE-396)");
 
   inSession(() => {
     setNativeDelegationSeat("allow");
@@ -316,10 +279,10 @@ function inSession<T>(fn: () => T): T {
       read_file_upload: { execute: () => undefined },
       bash: { execute: () => undefined },
       post_file: { execute: () => undefined },
-      return_result: { execute: () => undefined },
+      update_status: { execute: () => undefined },
     };
     projectToolSet(toolset);
-    eq(Object.keys(toolset).sort(), ["bash", "describe_image", "post_file", "read_file_upload", "return_result"], "🔴 D6 LEAF, WHOLE KIT: the leaf withdrawal removes `agent` and NOTHING ELSE — a native child keeps its vision read, its upload read, its sandbox and its return leg");
+    eq(Object.keys(toolset).sort(), ["bash", "describe_image", "post_file", "read_file_upload", "update_status"], "🔴 D6 LEAF, WHOLE KIT: the leaf withdrawal removes `agent` and NOTHING ELSE — a native child keeps its vision read, its upload read, its sandbox and its return leg");
   });
 
   const { setWorkerWake } = await import("../agent/access/worker-seat-state.js");
@@ -394,22 +357,20 @@ function inSession<T>(fn: () => T): T {
   });
 
   {
-    const delegationKit = (await import("../agent/tools/delegation_tools.js")).default;
-    const resolvedOnParent = await resolveWindowGated(delegationKit, parentCtx);
-    ok(resolvedOnParent === null, "🔴 D6 THE COLLISION WALL: armed, OE's dynamic `agent` resolves to NOTHING even on a seat that would otherwise mount it. eve's harness/tool-loop.js throws `Dynamic tool \"agent\" collides with a runtime-visible subagent.` when a dynamic name meets the built-in's runtimeAction — a dynamic tool does NOT shadow the built-in, it kills the model call");
-  }
-
-  registerSettings({ delegation: { nativeSubagent: false } });
-  ok(getSettings({}).delegation.nativeSubagent === false, "…and a registered disarm puts the regime back off for the remaining sections");
-
-  {
-    const delegationKit = (await import("../agent/tools/delegation_tools.js")).default;
-    const resolved = (await resolveWindowGated(delegationKit, parentCtx)) as Record<string, unknown> | null;
-    ok(resolved !== null && "agent" in resolved, "🔴 D6 OFF: disarmed, OE's roll-own `agent` mounts on a delegating standing seat — this is what disarming actually buys, asserted rather than argued");
-    const shape = (resolved as Record<string, { inputSchema?: { shape?: Record<string, unknown> } }>).agent?.inputSchema?.shape ?? {};
-    eq(Object.keys(shape).sort(), ["brief", "thread"], "🔴 OPE-396: the roll-own fallback is ASYNC-ONLY — no `mode` argument exists, so disarming the native route REMOVES synchronous delegation rather than restoring it");
-    const onChild = await resolveWindowGated(delegationKit, childResolverCtx);
-    ok(onChild === null, "…and it does NOT mount inside a native child, in either regime: `task` grain is not on the `agent` row of the window-gate manifest, and the leaf rule refuses underneath it");
+    const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "agent", "tools");
+    const importAt = async (file: string): Promise<{ resolved: boolean; code?: unknown }> => {
+      try {
+        await import(pathToFileURL(join(toolsDir, file)).href);
+        return { resolved: true };
+      } catch (err) {
+        return { resolved: false, code: (err as { code?: unknown }).code };
+      }
+    };
+    const sibling = await importAt("reply.js");
+    ok(sibling.resolved, "positive control: the SAME construction resolves a surviving sibling (tools/reply.js) — so the refusal below is about the deleted file, not a broken path");
+    const { resolved, code } = await importAt("delegation_tools.js");
+    ok(!resolved, "🔴 D6 THE COLLISION WALL IS ABSENCE: tools/delegation_tools.ts does not exist, so no dynamic `agent` can resolve beside eve's built-in and the tool-loop collision is unreachable");
+    eq(code, "ERR_MODULE_NOT_FOUND", "…and it failed because the MODULE is gone, not because importing it threw for some other reason (which would leave the file — and the collision — in the tree)");
   }
   resetSettingsForTest();
 }
@@ -428,9 +389,6 @@ function inSession<T>(fn: () => T): T {
   ok(await subagentWasTainted("default", "sess-dirty-child"), "🔴 D7: a marked child reads back as tainted, durably and cross-session — the parent runs in a different session and cannot see the child's in-memory slot");
   ok(!(await subagentWasTainted("default", "sess-clean-child")), "…and the marker is per-child, not a global bit");
 
-  const undelivered = await getOperationalStore().listUndeliveredTaskResults("default", PARENT_TOKEN, 50);
-  ok(undelivered.every((r) => !r.taskId.startsWith("oe-subagent-taint:")), "🔴 D7: the marker carries NO callerToken, so it never appears in listUndeliveredTaskResults — it is a marker, not a result, and nothing will try to deliver it");
-
   ok(subagentCallTaintKey("sess-parent", "call_x").startsWith("oe-subagent-taint-by-call:"), "🔴 D7 OPE-437: the call-keyed marker is namespaced SEPARATELY from the session-keyed one, so the two rows for one delegation never collide");
   ok((await subagentCallTaintStatus("default", "sess-parent", "call_never_written")) === undefined, "🔴 D7 OPE-437: an unwritten call marker reads back `undefined`, distinct from `false` — this is the bit the fail-closed read below depends on");
   await claimSubagentCallClean("default", "sess-parent", "call_probe");
@@ -440,9 +398,6 @@ function inSession<T>(fn: () => T): T {
 
   await claimSubagentCallClean("default", "sess-parent", "call_probe");
   eq(await subagentCallTaintStatus("default", "sess-parent", "call_probe"), true, "🔴 D7 OPE-437 MONOTONIC: a CLEAN claim arriving AFTER a tainted write does NOT clobber it — the claim is put-if-absent, so the row settles on tainted whichever of the two lands last");
-
-  const undeliveredCall = await getOperationalStore().listUndeliveredTaskResults("default", PARENT_TOKEN, 50);
-  ok(undeliveredCall.every((r) => !r.taskId.startsWith("oe-subagent-taint-by-call:")), "…and the call-keyed row is ALSO invisible to the undelivered-result reader, same reasoning as the session-keyed one");
 
   await (async () => {
     const childHookCtx = { ...(childCtx as unknown as Record<string, unknown>), agent: { name: "oe", nodeId: "__root__" } };
@@ -461,7 +416,7 @@ function inSession<T>(fn: () => T): T {
       session: {
         id: "sess-seeded-child",
         parent: { sessionId: "sess-parent", callId: "call_seeded", rootSessionId: "sess-parent", turn: { id: "turn_1", sequence: 1 } },
-        auth: { current: { attributes: { ...PARENT_ATTRS, oe_result_tainted: "true" }, principalId: "UPROBE393", principalType: "slack-user" } },
+        auth: { current: { attributes: { ...PARENT_ATTRS, oe_spawn_tainted: "true" }, principalId: "UPROBE393", principalType: "slack-user" } },
       },
       agent: { name: "oe", nodeId: "__root__" },
     };
@@ -620,7 +575,7 @@ function inSession<T>(fn: () => T): T {
   }
 
   await contextStorage.run(new ContextContainer(), async () => {
-    const parent = fwdCtx({ id: "sess-fwd-parent", turn: { id: "turn_7", sequence: 7 }, attributes: { oe_result_tainted: "true" } });
+    const parent = fwdCtx({ id: "sess-fwd-parent", turn: { id: "turn_7", sequence: 7 }, attributes: { oe_spawn_tainted: "true" } });
     await turnStarted(parent);
     ok(untrustedIngestedThisTurn(), "precondition: the seed attribute tainted the parent's turn — synchronously, inside openTaintTurn");
     eq(

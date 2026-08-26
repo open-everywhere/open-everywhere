@@ -1,3 +1,4 @@
+
 import assert from "node:assert/strict";
 
 const __slackStubs = await import("./_slack-test-stubs.js");
@@ -42,7 +43,6 @@ import {
   divertToUnifiedWindow,
   windowEnabledFor,
   dispatchTaskWindow,
-  dispatchWindowWake,
   buildRedriveReinject,
   OE_SPAWN_TAINTED_ATTR,
   type UnifiedReceiveTarget,
@@ -400,23 +400,7 @@ try {
     "the self-call is HMAC-signed",
   );
 
-  const wakeInput = {
-    token: standingToken,
-    origin: slackOrigin,
-    wakeId: "done-wake-1",
-    message: "completion notice",
-    domain: DOMAIN,
-    authAttributes: { team_id: "T1" },
-    excludeTaskId: taskToken,
-  };
-  eq(await dispatchWindowWake(wakeInput), true, "cold dispatchWindowWake self-calls → true on 200");
-  eq(fetchCalls.length, 2, "completion wake was one more self-call");
-  eq((JSON.parse(String(fetchCalls[1].init.body)) as UnifiedDispatchPayload).excludeTaskResultId, taskToken, "excludeTaskId → excludeTaskResultId rides the hop");
-  fetchStatus = 500;
-  eq(await dispatchWindowWake(wakeInput), false, "self-call 500 → false (row stays the truth, never throws)");
-  fetchStatus = 200;
   fetchThrow = true;
-  eq(await dispatchWindowWake(wakeInput), false, "self-call network failure → false (never throws)");
 
   await assert.rejects(
     () =>
@@ -444,7 +428,6 @@ try {
     "no path at all → dispatchTaskWindow throws the instructive not-configured error",
   );
   n++;
-  eq(await dispatchWindowWake(wakeInput), false, "no path at all → dispatchWindowWake false");
   eq(buildRedriveReinject(DOMAIN, standingToken, {}), null, "no path at all → reinject null (redrive skipped, guard unburned)");
   const coldCalls = fetchCalls.length;
   process.env.OE_SPAWN_DISPATCH_SECRET = SECRET;
@@ -487,7 +470,6 @@ try {
   eq(received[1].message, "warm brief", "warm delivery carries the message");
   delete process.env.OE_SPAWN_DISPATCH_SECRET;
   delete process.env.OE_PUBLIC_BASE_URL;
-  eq(await dispatchWindowWake(wakeInput), true, "warm dispatchWindowWake works with NO self-dispatch config at all (in-process path)");
   ok(buildRedriveReinject(DOMAIN, standingToken, {}) !== null, "warm reinject available with no self-dispatch config");
 
 }

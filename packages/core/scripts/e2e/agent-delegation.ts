@@ -2,7 +2,7 @@ import {
   sleep, dS, makeWant, createRecorder, createInjector, createAuditReader, readToolCalls,
   classifyDelegationOutcome, delegationArmOf, type DelegationArm, type ToolCall,
 } from "./window-harness.js";
-import { nativeSubagentEnabled, backgroundTasksEnabled } from "../../agent/access/delegation-flag.js";
+import { backgroundTasksEnabled } from "../../agent/access/delegation-flag.js";
 import { type AuditWireEntry } from "./audit-read.js";
 
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
@@ -26,14 +26,13 @@ const { rowsSince, readFailed: auditReadFailed } = createAuditReader(TARGET, REA
 const toolCallsOf = (sessionId: string, sinceIso?: string): Promise<ToolCall[] | null> =>
   readToolCalls(TARGET, READ, sessionId, { paged: true, sinceIso });
 
-const ARM: DelegationArm = delegationArmOf(nativeSubagentEnabled(), backgroundTasksEnabled());
+const ARM: DelegationArm = delegationArmOf(backgroundTasksEnabled());
 
-function receiptsFor(rows: readonly AuditWireEntry[], wakeId: string): { nativeReceipt: boolean; rollOwnReceipt: boolean; sessionId: string | undefined; settled: AuditWireEntry | undefined } {
-  const rollOwn = rows.find((r) => r.action === "task.spawned" && (dS(r, "parentWakeId") === wakeId || dS(r, "wakeId") === wakeId));
+function receiptsFor(rows: readonly AuditWireEntry[], wakeId: string): { nativeReceipt: boolean; sessionId: string | undefined; settled: AuditWireEntry | undefined } {
   const sessionId = rows.find((r) => dS(r, "wakeId") === wakeId && (dS(r, "sessionId") ?? "").length > 0)?.detail?.sessionId as string | undefined;
   const started = sessionId === undefined ? undefined : rows.find((r) => r.action === "delegation.task_started" && dS(r, "session") === sessionId);
   const settled = started === undefined ? undefined : rows.find((r) => r.action === "delegation.task_settled" && dS(r, "task") === dS(started, "task"));
-  return { nativeReceipt: started !== undefined, rollOwnReceipt: rollOwn !== undefined, sessionId, settled };
+  return { nativeReceipt: started !== undefined, sessionId, settled };
 }
 
 const ASYNC_BRIEF =
@@ -51,9 +50,9 @@ async function t1aAsync(): Promise<void> {
   while (Date.now() < deadline) {
     await sleep(POLL_MS);
     const rows = await rowsSince(since);
-    const { nativeReceipt, rollOwnReceipt, sessionId, settled } = receiptsFor(rows, wakeId);
-    if (nativeReceipt || rollOwnReceipt) {
-      const route = nativeReceipt ? `delegation.task_started (caller session ${sessionId})` : "task.spawned (roll-own one-shot)";
+    const { nativeReceipt, sessionId, settled } = receiptsFor(rows, wakeId);
+    if (nativeReceipt) {
+      const route = `delegation.task_started (caller session ${sessionId})`;
       const close = settled === undefined ? "not yet settled at this read" : `settled status=${dS(settled, "status")} marker=${dS(settled, "marker")}`;
       return record("T1a", "PASS", `agent delegated on the ${ARM} arm — ${route}; ${close}. The worker does the job and its result reaches the caller.`);
     }
@@ -61,7 +60,7 @@ async function t1aAsync(): Promise<void> {
     if (reply) {
       const sid = dS(reply, "sessionId");
       const calls = sid ? await toolCallsOf(sid, since) : null;
-      const v = classifyDelegationOutcome({ nativeReceipt, rollOwnReceipt, replied: true, calls, arm: ARM });
+      const v = classifyDelegationOutcome({ nativeReceipt, replied: true, calls, arm: ARM });
       return record("T1a", v.status, `${v.reason} (wake ${wakeId}, session ${sid ?? "<absent>"}, arm ${ARM}).`);
     }
   }
@@ -76,23 +75,22 @@ async function t1cFile(): Promise<void> {
   while (Date.now() < deadline) {
     await sleep(POLL_MS);
     const rows = await rowsSince(since);
-    const { nativeReceipt, rollOwnReceipt, sessionId, settled } = receiptsFor(rows, wakeId);
-    if (nativeReceipt || rollOwnReceipt) {
-      const route = nativeReceipt ? `delegation.task_started (caller session ${sessionId})` : "task.spawned (roll-own one-shot)";
+    const { nativeReceipt, sessionId, settled } = receiptsFor(rows, wakeId);
+    if (nativeReceipt) {
+      const route = `delegation.task_started (caller session ${sessionId})`;
       const posted = rows.find((r) => r.action.endsWith(".post_file"));
       if (posted) {
         return record("T1c", "PASS", `agent delegated a FILE ask on the ${ARM} arm and the worker POSTED the artifact — ${route} then ${posted.action} (files=${dS(posted, "filenames") || "?"}). The standing seat carries no post_file; the worker delivered the file into the thread per renderOneShotBrief's carve-out.`);
       }
-      const returned = settled ?? rows.find((r) => r.action === "task.returned" && dS(r, "wakeId") === wakeId);
-      if (returned) {
-        return record("T1c", "FAIL", `the delegated worker RETURNED (${returned.action}) with no .post_file row — it did the work but never delivered the FILE into the thread (a text-only return leaves the requester empty-handed). Check renderOneShotBrief still permits post_file for a file task.`);
+      if (settled) {
+        return record("T1c", "FAIL", `the delegated worker SETTLED (${settled.action}) with no .post_file row — it did the work but never delivered the FILE into the thread (a text-only return leaves the requester empty-handed). Check the worker persona still permits post_file for a file task.`);
       }
     } else {
       const reply = rows.find((r) => r.action === "reply.post" && dS(r, "wakeId") === wakeId);
       if (reply) {
         const sid = dS(reply, "sessionId");
         const calls = sid ? await toolCallsOf(sid, since) : null;
-        const v = classifyDelegationOutcome({ nativeReceipt, rollOwnReceipt, replied: true, calls, arm: ARM });
+        const v = classifyDelegationOutcome({ nativeReceipt, replied: true, calls, arm: ARM });
         if (v.status === "PASS") {
           return record("T1c", "SKIP", `${v.reason} — but no .post_file row landed for the file ask (wake ${wakeId}, session ${sid ?? "<absent>"}). Artifact delivery UNVERIFIED on the ${ARM} arm.`);
         }

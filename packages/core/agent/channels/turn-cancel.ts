@@ -32,7 +32,7 @@ export interface CancelAnchoredTurnInput {
   readonly platform: string;
   readonly workspace: string;
   readonly requestedBy?: string;
-  readonly via: "reaction" | "command" | "tool";
+  readonly via: "reaction" | "command";
   readonly query: TurnAnchorQuery;
   readonly attachSession: AttachSessionForCancel;
 }

@@ -217,7 +217,7 @@ const TASK_FAMILY = ["task_cancel", "task_update"] as const;
   ok(removed.length > 0 && removed.every((k) => !survivors.has(k)), "restrictToolsetForJobWake reports every removed name");
   ok(removed.join(",") === [...removed].sort().join(","), "the removed list is sorted");
   ok([...survivors].every((k) => toolset[k] === before[k]), "surviving tool OBJECTS keep their identity — eve keys approvals in a WeakMap on them, so a swap would silently drop an approval gate");
-  ok(!survivors.has("sandbox_tools") && !survivors.has("delegation_tools"), "the per-grain kit RESOLVER slugs are not in the job kit either");
+  ok(!survivors.has("sandbox_tools") && !survivors.has("browser_tools"), "the per-grain kit RESOLVER slugs are not in the job kit either");
 }
 
 const require = createRequire(import.meta.url);

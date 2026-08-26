@@ -30,7 +30,9 @@ const { readAudit } = await import("../agent/audit/audit.js");
 const { WAKE_ACCOUNTING_SKIPPED_AUDIT_ACTION, UNACCOUNTED_WAKES_AUDIT_ACTION } = await import("../agent/channels/wake-accounting.js");
 const { auditUnaccountedWakesForTurn, auditLabels } = await import("../agent/channels/unified.js");
 const { SESSION_LIMIT_CONTINUATION_TOOL_NAME } = await import("../agent/channels/session-park.js");
-const wakeAccountingTurnHook = (await import("../agent/hooks/wake-accounting-turn.js")).default;
+const wakeAccountingTurnModule = await import("../agent/hooks/wake-accounting-turn.js");
+const wakeAccountingTurnHook = wakeAccountingTurnModule.default;
+const { requestsHoldTheWorkerOpen } = wakeAccountingTurnModule;
 
 const store = getOperationalStore();
 
@@ -228,6 +230,26 @@ const parkRequest = { requests: [{ requestId: "s-limit:input:900000", action: { 
     eq((await readAudit({ org: ORG, action: UNACCOUNTED_WAKES_AUDIT_ACTION })).length, beforeUn, "§7: a fully-accounted turn writes no unaccounted-wakes row");
     eq((await readAudit({ org: ORG, action: WAKE_ACCOUNTING_SKIPPED_AUDIT_ACTION })).length, beforeSkip, "§7: …and no skipped row either — it genuinely ran, it just found nothing");
   });
+}
+
+{
+  const park = { action: { toolName: "session_limit_continuation" } };
+  const question = { action: { toolName: "ask_question" } };
+
+  eq(requestsHoldTheWorkerOpen([park]), false, "§8: a lone session-limit park does NOT hold the turn open — nothing ever answers it");
+  eq(requestsHoldTheWorkerOpen([park, park]), false, "§8: …nor do several of them");
+
+  eq(requestsHoldTheWorkerOpen([question]), true, "§8: a real question HOLDS the turn open");
+  eq(requestsHoldTheWorkerOpen([park, question]), true, "🔴 §8: a park BESIDE a real question still holds — `some` is the right quantifier, and `every` would strand the question");
+  eq(requestsHoldTheWorkerOpen([question, park]), true, "§8: …in either order");
+
+  eq(requestsHoldTheWorkerOpen([]), true, "🔴 §8 FAIL-SOFT: an EMPTY request list holds the turn open — no evidence it finished deciding");
+  eq(requestsHoldTheWorkerOpen(undefined), true, "🔴 §8 FAIL-SOFT: undefined holds");
+  eq(requestsHoldTheWorkerOpen(null), true, "🔴 §8 FAIL-SOFT: null holds");
+  eq(requestsHoldTheWorkerOpen("not-an-array"), true, "🔴 §8 FAIL-SOFT: a non-array holds");
+  eq(requestsHoldTheWorkerOpen([{}]), true, "§8 FAIL-SOFT: a request with no `action` holds — an unrecognised shape is not a park");
+  eq(requestsHoldTheWorkerOpen([null]), true, "§8 FAIL-SOFT: a null ENTRY holds");
+  eq(requestsHoldTheWorkerOpen([{ action: { toolName: 42 } }]), true, "§8 FAIL-SOFT: a non-string toolName holds");
 }
 
 console.log(`✓ wake-accounting-turn: ${passed} assertions passed`);

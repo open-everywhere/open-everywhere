@@ -1,17 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { sweepStaleForkAppRoots } from "./fork-app-root";
-import {
-  ROLLOWN_OUTPUT_DIR,
-  ROLLOWN_SENTINEL_RELPATH,
-  ROLLOWN_SENTINEL_SOURCE,
-  rollOwnMissingMessage,
-  rollOwnTargetExists,
-} from "./rollown-target";
 import { sweepStaleSandboxSessions } from "./sandbox-session-sweep";
 
 export default async function globalSetup(): Promise<void> {
@@ -35,40 +28,12 @@ export default async function globalSetup(): Promise<void> {
           "SandboxTemplateNotProvisionedError. Run `npm run test:integration` once without the flag.",
       );
     }
-    if (!rollOwnTargetExists(root)) {
-      throw new Error(`OE_IT_SKIP_BUILD=1 but ${rollOwnMissingMessage(root)}`);
-    }
     return;
   }
   execFileSync("npm", ["run", "oe:build"], { cwd: root, stdio: "inherit" });
-  await buildRollOwnTarget(root);
   execFileSync("npx", ["eve", "build"], { cwd: root, stdio: "inherit" });
   await prewarmJustBashTemplate(root);
-  console.log(`integration global-setup: total ${((Date.now() - setupStartedAt) / 1000).toFixed(1)}s (oe:build + two eve builds + two prewarms, all serial).`);
-}
-
-async function buildRollOwnTarget(root: string): Promise<void> {
-  const sentinel = join(root, ROLLOWN_SENTINEL_RELPATH);
-  const output = join(root, ".output");
-  const rollOwn = join(root, ROLLOWN_OUTPUT_DIR);
-  if (existsSync(sentinel)) {
-    throw new Error(
-      `integration global-setup: ${ROLLOWN_SENTINEL_RELPATH} already exists. Either a previous run died mid-setup ` +
-        "(delete it), or this deployment now declares `delegation.nativeSubagent: false` — in which case the SHIPPED " +
-        "target is already the roll-own one and this second build must be retired, not repaired.",
-    );
-  }
-  rmSync(rollOwn, { recursive: true, force: true });
-  rmSync(output, { recursive: true, force: true });
-  writeFileSync(sentinel, ROLLOWN_SENTINEL_SOURCE, "utf8");
-  try {
-    execFileSync("npx", ["eve", "build"], { cwd: root, stdio: "inherit" });
-    await prewarmJustBashTemplate(root);
-    renameSync(output, rollOwn);
-  } finally {
-    rmSync(sentinel, { force: true });
-    rmSync(output, { recursive: true, force: true });
-  }
+  console.log(`integration global-setup: total ${((Date.now() - setupStartedAt) / 1000).toFixed(1)}s (oe:build + eve build + prewarm, all serial).`);
 }
 
 async function prewarmJustBashTemplate(root: string): Promise<void> {

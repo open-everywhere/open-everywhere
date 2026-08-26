@@ -108,12 +108,6 @@ export function taintedFireAttrs(tainted: boolean): Record<string, string> {
   return tainted ? { [OE_TAINTED_FIRE_ATTR]: "true" } : {};
 }
 
-export const OE_RESULT_TAINTED_ATTR = "oe_result_tainted";
-
-export function resultTaintedAttrs(tainted: boolean): Record<string, string> {
-  return tainted ? { [OE_RESULT_TAINTED_ATTR]: "true" } : {};
-}
-
 export const OE_CHAT_NONMEMBER_ATTR = "oe_chat_nonmember";
 
 export function nonMemberChatAttrs(nonMember: boolean): Record<string, string> {

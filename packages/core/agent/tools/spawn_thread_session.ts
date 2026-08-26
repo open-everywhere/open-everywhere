@@ -16,7 +16,7 @@ import {
 } from "../channels/window-key.js";
 import { recordThreadOwner, resolveThreadOwner } from "../channels/thread-ownership.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { resolveOwnWindowToken } from "../access/oneshot-spawn.js";
+import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
 import { appendAudit } from "../audit/audit.js";
 import { createHash } from "node:crypto";

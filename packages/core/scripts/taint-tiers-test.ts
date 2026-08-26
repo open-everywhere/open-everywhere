@@ -21,7 +21,6 @@ import { untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
 import { openTaintTurn } from "../agent/hooks/spawn-taint.js";
 import { renderWakeEnvelope } from "../agent/channels/wake-envelope.js";
 import { renderContext } from "../agent/channels/context-render.js";
-import { formatTaskResultDelta } from "../agent/access/task-result-delta.js";
 import { subscribePrPrompt } from "../agent/tools/subscribe_pr.js";
 import { renderPrFeedbackForModel } from "../agent/scm/pr-feedback.js";
 import { declaredWorkspaceTrust, defineSurface, registerSurfaces, _resetSurfacesForTest } from "../agent/identity/trust.js";
@@ -83,7 +82,7 @@ eq(tier({ kind: "connector", grantContentOrigin: "external" }), "untrusted", "co
 eq(tier({ kind: "web" }), "untrusted", "web: no bound instance, no membership, nothing that could make it internal");
 eq(tier({ kind: "webhook" }), "untrusted", "webhook: authored by whoever can reach the endpoint");
 eq(tier({ kind: "routine-event" }), "untrusted", "routine-event: the hydrated entity an outside party's action produced");
-eq(tier({ kind: "delegation-result" }), "untrusted", "delegation-result: the table DEFERS to the OPE-298 return stamp and does not try to out-guess a worker about what it read");
+eq(tier({ kind: "delegation-result" }), "untrusted", "delegation-result: untrusted by provenance — no declaring site survives OPE-1145 item 2; the row stays for switch totality and never consults the native leg's marker row");
 
 {
   const img = classifyIngestion({ kind: "image-description" });
@@ -430,14 +429,6 @@ await eveContextStorage().run(new FakeSession(), async () => {
     "🔴 given the SAME session context that made the unauth render taint, the member render does NOT — no ingestUntrusted call means nothing to mark",
   );
   eq(rows.length, 0, "…and the declaration writes no row: it reports `false`, which agrees with the trusted chat-message row");
-});
-
-await eveContextStorage().run(new FakeSession(), async () => {
-  rows.length = 0;
-  const block = formatTaskResultDelta([{ taskId: "t-1", resultJson: JSON.stringify({ summary: "worker prose" }), createdAt: "2026-08-08T09:00:00Z" }], 0);
-  ok(block !== null && block.includes("worker prose"), "the recovery reminder still carries the worker's snippet");
-  ok(block !== null && block.includes(UNTRUSTED_OPEN), "…still fenced");
-  eq(rows.length, 0, "delegation-result agrees with the table (both untrusted) ⇒ silent");
 });
 
 await eveContextStorage().run(new FakeSession(), async () => {

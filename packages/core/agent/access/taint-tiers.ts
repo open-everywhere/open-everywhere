@@ -74,7 +74,7 @@ export function classifyIngestion(src: IngestionSource): IngestionVerdict {
       return untrusted("a routine's event body — the hydrated entity an outside party's action produced");
 
     case "delegation-result":
-      return untrusted("a delegated worker's result — but the AUTHORITATIVE answer is the worker's own OPE-298 return stamp, not this row; the table defers to it");
+      return untrusted("a delegated worker's result — untrusted by provenance: a worker's prose distils whatever wide-hands reads it made");
 
     case "image-description":
       return untrusted("describe_image: a second model's transcription of pixels nobody proof-read — untrusted regardless of who posted it (ratified exception to the instance-binary rule, 2026-08-08)");

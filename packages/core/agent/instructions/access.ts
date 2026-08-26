@@ -19,7 +19,6 @@ import { renderApprovalPreviewFor } from "../access/approval-preview.js";
 import { resolveLeanSeatPosture } from "../access/lean-seat.js";
 import { SEAT_RECOVERY_READ_BUDGET } from "../access/seat-read-budget.js";
 import { renderWorkerCapabilityIndex } from "../access/worker-capabilities.js";
-import { readOneshotMarker } from "../access/oneshot-marker.js";
 import { WORKER_ONLY_TOOLS_STANDING, WORKER_ONLY_TOOLS_THREAD } from "../access/worker-capability-index.generated.js";
 import { renderPendingCancelNote } from "../channels/cancel-note.js";
 import { isSupervisorSession } from "../model/routing.js";
@@ -36,7 +35,6 @@ import {
   renderUnifiedSurfaces,
   type DeliveryArm,
   type SeatKind,
-  type WorkerReportRoute,
 } from "./seat-prompt.js";
 import type { Domain } from "../memory/domain.js";
 import {
@@ -169,7 +167,7 @@ export function renderSupervisorPersona(
 ): string {
   if (isWorkerSession(ctx)) {
     const midTurnPost = opts?.messageToolOnly === true ? false : workerHasMidTurnPost(ctx);
-    return renderSeatPersona({ seatKind: "worker", report: workerReportRoute(ctx), midTurnPost });
+    return renderSeatPersona({ seatKind: "worker", midTurnPost });
   }
   if (!isSupervisorSession(ctx)) return "";
   const sid = classifySessionId(ctx.channel?.continuationToken);
@@ -186,18 +184,6 @@ function isWorkerSession(ctx: BindableContext): boolean {
 
 function seatKindOf(ctx: BindableContext): SeatKind {
   return isWorkerSession(ctx) ? "worker" : "conversational";
-}
-
-function workerReportRoute(ctx: BindableContext): WorkerReportRoute {
-  try {
-    const auth = ctx.session?.auth as
-      | { current?: { attributes?: unknown } | null; initiator?: { attributes?: unknown } | null }
-      | undefined;
-    const marker = readOneshotMarker(auth?.current?.attributes) ?? readOneshotMarker(auth?.initiator?.attributes);
-    return marker ? "return-result" : "task-result";
-  } catch {
-    return "task-result";
-  }
 }
 
 function workerHasMidTurnPost(ctx: BindableContext): boolean {

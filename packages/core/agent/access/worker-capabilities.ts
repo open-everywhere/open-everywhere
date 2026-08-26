@@ -9,14 +9,12 @@ export interface WorkerCapabilityGroup {
   readonly tools: readonly string[];
 }
 
-export const WORKER_INDEX_MACHINERY: ReadonlySet<string> = new Set(["sandbox_tools", "delegation_tools", "browser_tools", "grant_tools"]);
+export const WORKER_INDEX_MACHINERY: ReadonlySet<string> = new Set(["sandbox_tools", "browser_tools", "grant_tools"]);
 
 export const WORKER_INDEX_LIFECYCLE: ReadonlySet<string> = new Set([
   "agent",
-  "stop_task",
   "spawn_thread_session",
   "complete_thread",
-  "return_result",
   "task_peek",
   "task_cancel",
   "task_sleep",

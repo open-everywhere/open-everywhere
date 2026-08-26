@@ -10,7 +10,6 @@ import spawnThreadSessionDynamic from "../../agent/tools/spawn_thread_session.js
 import readChannelDynamic from "../../agent/tools/read_channel.js";
 import readThreadDynamic from "../../agent/tools/read_thread.js";
 import editReplyDynamic from "../../agent/tools/edit_reply.js";
-import stopTaskDynamic from "../../agent/tools/stop_task.js";
 import completeThreadDynamic from "../../agent/tools/complete_thread.js";
 import setDmDeliveryDynamic from "../../agent/tools/set_dm_delivery.js";
 import requestCredentialGrantDynamic from "../../agent/tools/request_credential_grant.js";
@@ -192,7 +191,6 @@ export async function buildLeanSeatToolset(opts: {
     ["read_channel", readChannelDynamic],
     ["read_thread", readThreadDynamic],
     ["edit_reply", editReplyDynamic],
-    ["stop_task", stopTaskDynamic],
     ["complete_thread", completeThreadDynamic],
     ["set_dm_delivery", setDmDeliveryDynamic],
     ["request_credential_grant", requestCredentialGrantDynamic],

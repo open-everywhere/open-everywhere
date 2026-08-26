@@ -73,10 +73,10 @@ if (WINDOW_GATED_TOOLS.web_fetch !== fullKit()) {
   );
 }
 
-if (JSON.stringify([...WINDOW_GATED_TOOLS.return_result]) !== JSON.stringify(["task"])) {
+if (JSON.stringify([...WINDOW_GATED_TOOLS.complete_thread]) !== JSON.stringify(["thread"])) {
   problems.push(
-    `WINDOW_GATED_TOOLS.return_result read ${JSON.stringify([...WINDOW_GATED_TOOLS.return_result])} after the ` +
-      'flag flip — it is a FIXED ["task"] row and delegation.oneshotAgent must not touch it.',
+    `WINDOW_GATED_TOOLS.complete_thread read ${JSON.stringify([...WINDOW_GATED_TOOLS.complete_thread])} after the ` +
+      'flag flip — it is a FIXED ["thread"] row and delegation.oneshotAgent must not touch it.',
   );
 }
 if (JSON.stringify([...WINDOW_GATED_TOOLS.agent]) !== JSON.stringify(["standing", "thread"])) {

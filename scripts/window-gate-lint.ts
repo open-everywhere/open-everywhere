@@ -3,9 +3,7 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { checkWindowGateManifest, classifyFrameworkTools, type WindowToolSource } from "@open-everywhere/core/agent/access/window-gate-manifest.js";
-import { nativeSubagentAtBuild } from "@open-everywhere/core/agent/settings/settings.js";
 import { listDeclaredSubagents } from "@open-everywhere/core/agent/subagents/declared.js";
-import { SETTINGS_OVERRIDES } from "../agent/settings/settings.js";
 import { readDeclaredSubagents } from "./read-subagents.js";
 
 const require = createRequire(import.meta.url);
@@ -38,17 +36,7 @@ for (const f of readdirSync(appToolsDir).filter((f) => f.endsWith(".ts") && !f.s
 
 const subagentNames = listDeclaredSubagents(readDeclaredSubagents(root));
 
-const problems = checkWindowGateManifest(
-  coreTools,
-  appShims,
-  frameworkTools,
-  undefined,
-  undefined,
-  undefined,
-  subagentNames,
-  undefined,
-  nativeSubagentAtBuild(SETTINGS_OVERRIDES),
-);
+const problems = checkWindowGateManifest(coreTools, appShims, frameworkTools, undefined, undefined, undefined, subagentNames);
 
 if (problems.length > 0) {
   console.error(`✗ window-gate-lint: ${problems.length} problem(s):\n` + problems.map((p) => `  - ${p}`).join("\n"));

@@ -7,7 +7,7 @@ import { INVOKER_POSTURE_ATTR, resolveInvokerPosture } from "../access/invoker-p
 import { setInvokerPosture } from "../access/invoker-posture-state.js";
 import { WEBHOOK_MARKER_ATTR } from "../routines/fire-auth.js";
 import { jobFireStamped } from "../access/job-posture.js";
-import { nativeSubagentEnabled, oneshotAgentEnabled } from "../access/delegation-flag.js";
+import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { canDelegateFromSeat } from "../access/delegation-mount.js";
 import { domainLabelOf } from "../access/window-gated.js";
 import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../access/window-gate-manifest.js";
@@ -70,7 +70,6 @@ async function auditLeanSeatOnce(ctx: HookContext, grain: WindowGrain, dmSeat: b
 }
 
 function classifyNativeDelegationSeat(ctx: HookContext): void {
-  if (!nativeSubagentEnabled()) return;
   const c = ctx as unknown as BindableContext;
   try {
     if (isSubagentChildContext(c)) {

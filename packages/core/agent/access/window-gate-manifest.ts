@@ -23,10 +23,8 @@ export const WINDOW_GATED_TOOLS: Readonly<Record<string, readonly WindowGrain[]>
   get create_skill() { return fullKit(); },
   get delete_skill() { return fullKit(); },
   agent: ["standing", "thread"],
-  stop_task: ["standing", "thread"],
   spawn_thread_session: ["standing"],
   complete_thread: ["thread"],
-  return_result: ["task"],
 };
 
 export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
@@ -106,7 +104,6 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "memory_admin_list",
   "memory_admin_read",
   "sandbox_tools",
-  "delegation_tools",
   "browser_tools",
   "grant_tools",
   "web_search",
@@ -214,7 +211,6 @@ export function checkWindowGateManifest(
   wideHandsGrains: readonly WindowGrain[] = fullKit(),
   subagentNames: readonly string[] = [],
   jobKit: ReadonlySet<string> = JOB_WAKE_TOOLS,
-  nativeSubagentArmed = false,
 ): string[] {
   const WIDE_HANDS_KEY = grainKey(wideHandsGrains);
   const problems: string[] = [];
@@ -266,19 +262,9 @@ export function checkWindowGateManifest(
       if (grainKey(grains) !== grainKey(["standing", "thread"])) {
         problems.push(`WINDOW_GATED_TOOLS["agent"] must be exactly ["standing", "thread"] (the conversational-root seats delegate; NEVER task — a worker leaf holds the wide hands already and must not spawn recursively) — got [${grains.join(", ")}]`);
       }
-    } else if (name === "stop_task") {
-      if (grainKey(grains) !== grainKey(["standing", "thread"])) {
-        problems.push(
-          `WINDOW_GATED_TOOLS["stop_task"] must be exactly ["standing", "thread"] (the conversational-root seats that delegate are the only ones with a worker to stand down; NEVER task — a worker leaf delegated nothing and must not reach the cancel door for a sibling) — got [${grains.join(", ")}]`,
-        );
-      }
     } else if (name === "complete_thread") {
       if (grainKey(grains) !== "thread") {
         problems.push(`WINDOW_GATED_TOOLS["complete_thread"] must be exactly ["thread"] (only a thread seat owns a thread) — got [${grains.join(", ")}]`);
-      }
-    } else if (name === "return_result") {
-      if (grainKey(grains) !== "task") {
-        problems.push(`WINDOW_GATED_TOOLS["return_result"] must be exactly ["task"] (only a one-shot task returns a result) — got [${grains.join(", ")}]`);
       }
     } else if (grainKey(grains) !== WIDE_HANDS_KEY) {
       problems.push(
@@ -292,29 +278,36 @@ export function checkWindowGateManifest(
     if (subagentSet.has(name)) continue;
     const coreSrc = coreByName.get(name);
     if (coreSrc === undefined) {
-      if (!kitKeyProviders.has(name)) {
-        problems.push(
-          `framework tool "${name}" is grain-gated but no windowGatedKit(...) in packages/core/agent/tools/ re-provides it per grain — add it as a key to a kit resolver (e.g. sandbox_tools.ts for the sandbox/egress names, delegation_tools.ts for the delegation ones), or the tool is simply absent on every grain`,
-        );
-      }
       const shim = appShims.get(name);
       const isSentinel = shim !== undefined && /\bdisableTool\s*\(\s*\)/.test(shim);
-      if (name === "agent" && nativeSubagentArmed) {
+      if (name === "agent") {
+        if (kitKeyProviders.has(name)) {
+          problems.push(
+            `"agent" is re-provided by a windowGatedKit(...) — it must NOT be: eve's built-in \`agent\` is this deployment's delegation route, and a dynamic tool of that name COLLIDES with it (eve harness/tool-loop.js throws and kills the model call). Delete the kit key; the gate is access/untrusted-projection.ts.`,
+          );
+        }
         if (isSentinel) {
           problems.push(
-            `delegation.nativeSubagent is armed at build but agent/tools/agent.ts is still a disableTool() sentinel — roster artefacts are stale against the settings state; run \`oe build --accept\``,
+            `agent/tools/agent.ts is a disableTool() sentinel — it must NOT be: the sentinel removes eve's built-in \`agent\`, and since OPE-1145 item 2 nothing re-provides it, so every seat would lose delegation entirely. Roster artefacts are stale; run \`oe build --accept\`.`,
           );
         }
-      } else if (mountOf(name) === "opt-in") {
-        if (shim !== undefined && !isSentinel) {
+      } else {
+        if (!kitKeyProviders.has(name)) {
           problems.push(
-            `framework tool "${name}" is grain-gated, and the installed eve mounts it only when the app OPTS IN — but its app shim agent/tools/${name}.ts is an authored tool rather than a \`disableTool()\` sentinel, which IS opting in. An authored tool of a framework name mounts on EVERY session incl. standing seats, silently bypassing the grain gate; make the shim a \`disableTool()\` sentinel and let the windowGatedKit(...) resolver provide it per grain.`,
+            `framework tool "${name}" is grain-gated but no windowGatedKit(...) in packages/core/agent/tools/ re-provides it per grain — add it as a key to a kit resolver (e.g. sandbox_tools.ts for the sandbox/egress names), or the tool is simply absent on every grain`,
           );
         }
-      } else if (!isSentinel) {
-        problems.push(
-          `framework tool "${name}" is grain-gated but its app shim agent/tools/${name}.ts is not a \`disableTool()\` sentinel — without it eve's built-in of that name stays mounted on EVERY session incl. standing seats, silently bypassing the grain gate (for \`agent\` specifically: eve's harness injects its built-in recursive subagent unless disabledFrameworkTools carries the name, and that built-in — pre-OPE-393-hop — was the credential-broken path live-hit on 2026-07-16; under the armed native regime this arm is bypassed for \`agent\` above)`,
-        );
+        if (mountOf(name) === "opt-in") {
+          if (shim !== undefined && !isSentinel) {
+            problems.push(
+              `framework tool "${name}" is grain-gated, and the installed eve mounts it only when the app OPTS IN — but its app shim agent/tools/${name}.ts is an authored tool rather than a \`disableTool()\` sentinel, which IS opting in. An authored tool of a framework name mounts on EVERY session incl. standing seats, silently bypassing the grain gate; make the shim a \`disableTool()\` sentinel and let the windowGatedKit(...) resolver provide it per grain.`,
+            );
+          }
+        } else if (!isSentinel) {
+          problems.push(
+            `framework tool "${name}" is grain-gated but its app shim agent/tools/${name}.ts is not a \`disableTool()\` sentinel — without it eve's built-in of that name stays mounted on EVERY session incl. standing seats, silently bypassing the grain gate`,
+          );
+        }
       }
     } else if (!new RegExp(`windowGated\\(\\s*"${name}"`).test(coreSrc)) {
       problems.push(

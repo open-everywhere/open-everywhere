@@ -61,7 +61,7 @@ type Condition = "none" | "seat" | "worker";
 async function buildPrompts(): Promise<Record<Condition, string>> {
   const staticInstructions = readFileSync(join(REPO_ROOT, "agent/instructions.md"), "utf8");
   const scopeMd = await renderScopeMarkdown(workerCtx);
-  const workerPersona = renderWorkerPersona("task-result", true);
+  const workerPersona = renderWorkerPersona(true);
   const seatPersona = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } });
 
   if (!scopeMd.includes(workerPersona)) {

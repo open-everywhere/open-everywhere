@@ -25,9 +25,7 @@ import {
   untrustedIngestedThisTurn,
   taintKindsThisTurn,
   taintedFireAttrs,
-  resultTaintedAttrs,
   OE_TAINTED_FIRE_ATTR,
-  OE_RESULT_TAINTED_ATTR,
 } from "../agent/access/taint-signal.js";
 import { ingestUntrusted, normalizeFenceNonce, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 import { nativeAgentAllowedNow, setNativeDelegationSeat } from "../agent/access/native-delegation-state.js";
@@ -369,7 +367,6 @@ console.log("7 — off: no taint stamp rides any delivery:");
     await inSession(() => {
       hostileRead();
       eq(taintedFireAttrs(untrustedIngestedThisTurn()), { [OE_TAINTED_FIRE_ATTR]: "true" }, "[7/on] a fire composed on a tainted turn stamps the child's opening auth");
-      eq(resultTaintedAttrs(untrustedIngestedThisTurn()), { [OE_RESULT_TAINTED_ATTR]: "true" }, "[7/on] …and a delegation return stamps its caller's");
     });
   });
 
@@ -377,7 +374,6 @@ console.log("7 — off: no taint stamp rides any delivery:");
     await inSession(() => {
       hostileRead();
       eq(taintedFireAttrs(untrustedIngestedThisTurn()), {}, "[7/off] 🔴 the fire spreads an EMPTY bag — byte-identical to a deployment where nothing untrusted was ever read");
-      eq(resultTaintedAttrs(untrustedIngestedThisTurn()), {}, "[7/off] …and so does the delegation return");
       openTaintTurn({
         session: { id: "s", turn: { id: "t1" }, auth: { current: { attributes: { [OE_TAINTED_FIRE_ATTR]: "true" } } } },
       } as unknown as Parameters<typeof openTaintTurn>[0]);

@@ -10,7 +10,6 @@ export interface IngestionRoute {
 export const INGESTION_ROUTES: readonly IngestionRoute[] = [
   { key: "packages/core/agent/access/aws-output.ts#aws", file: "packages/core/agent/access/aws-output.ts", form: "ingestion-const", kind: "aws", label: "aws", pending: false },
   { key: "packages/core/agent/access/browser-toolkit.ts#browser_${op}", file: "packages/core/agent/access/browser-toolkit.ts", form: "ingestion-property", kind: "web", label: "browser_${op}", pending: false },
-  { key: "packages/core/agent/access/task-result-delta.ts#task_result", file: "packages/core/agent/access/task-result-delta.ts", form: "ingestion-property", kind: "delegation-result", label: "task_result", pending: false },
   { key: "packages/core/agent/access/untrusted-projection.ts#name", file: "packages/core/agent/access/untrusted-projection.ts", form: "ingestion-property", kind: "connector", label: "name", pending: false },
   { key: "packages/core/agent/channels/context-render.ts#context-render", file: "packages/core/agent/channels/context-render.ts", form: "noteIngestionVerdict", kind: "chat-message", label: "context-render", pending: false },
   { key: "packages/core/agent/channels/wake-envelope.ts#wake-envelope:${sourcePlatform}", file: "packages/core/agent/channels/wake-envelope.ts", form: "noteIngestionVerdict", kind: "chat-message", label: "wake-envelope:${sourcePlatform}", pending: false },

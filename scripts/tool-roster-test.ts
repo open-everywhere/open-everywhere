@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { nativeSubagentAtBuild } from "@open-everywhere/core/agent/settings/settings.js";
 import {
   PRIMITIVE_DISABLED,
   PRIMITIVE_MOUNTED,
@@ -197,16 +196,10 @@ try {
   ok(drift.mountedFromCore.length === core.length, "every core tool this app mounts is mounted under its own name");
 
   const declined = drift.declined.map((d) => d.name).sort((a, b) => a.localeCompare(b));
-  const { SETTINGS_OVERRIDES: appOverrides } = (await import(
-    pathToFileURL(join(repoRoot, "agent", "settings", "settings.ts")).href
-  )) as { SETTINGS_OVERRIDES: Parameters<typeof nativeSubagentAtBuild>[0] };
-  const expectAgentSentinel = !nativeSubagentAtBuild(appOverrides);
-  for (const name of ["bash", "read_file", "web_fetch", "write_file", ...(expectAgentSentinel ? ["agent"] : [])]) {
+  for (const name of ["bash", "read_file", "web_fetch", "write_file"]) {
     ok(declined.includes(name), `the real roster DECLINES the framework tool "${name}" by sentinel`);
   }
-  if (!expectAgentSentinel) {
-    ok(!declined.includes("agent"), "armed native regime: the real roster does NOT decline `agent` (the built-in is the delegation path)");
-  }
+  ok(!declined.includes("agent"), "the real roster does NOT decline `agent` — eve's built-in IS the delegation route");
   for (const name of ["glob", "grep"]) {
     ok(!declined.includes(name), `"${name}" is no longer declined by sentinel — eve never default-mounts it, so nothing needs disabling`);
     ok(!drift.mountedFromCore.some((e) => e.name === name), `"${name}" is not a core tool export`);

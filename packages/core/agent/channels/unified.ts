@@ -44,8 +44,6 @@ import { settleWakeAccounting, UNACCOUNTED_WAKES_AUDIT_ACTION, WAKE_ACCOUNTING_S
 import { maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
 import { unresumableAuditDetail } from "./session-resume.js";
 import { healPrunedDeploymentStrand } from "./stranded-seat.js";
-import { collectTaskResultDelta, markRecoveredDelivered } from "../access/task-result-delta.js";
-import { resultTaintedAttrs } from "../access/taint-signal.js";
 import { admitInboundSurface, providerSelection } from "../access/provider-selection.js";
 import { ingressSpendGate } from "../spend/ingress-gate.js";
 
@@ -669,7 +667,6 @@ export async function divertToUnifiedWindow(
     readonly window: UnifiedWindowWake;
     readonly surfaceKey: string;
     readonly auth: { attributes?: Record<string, unknown> };
-    readonly excludeTaskResultId?: string;
     readonly internalDispatch?: true;
   },
 ): Promise<void> {
@@ -705,27 +702,8 @@ export async function divertToUnifiedWindow(
     ...(input.window.addressing ? { addressing: input.window.addressing } : {}),
     ...(input.context && input.context.length > 0 ? { context: input.context } : {}),
   };
-  let recovered: { taskIds: readonly string[]; overflow: number } | null = null;
-  let recoveredTainted = false;
-  let message = input.message;
-  if (oneshotAgentEnabled()) {
-    try {
-      const key = parseWindowToken(bareToken);
-      if (key && !isTaskWindowId(key.windowId)) {
-        const delta = await collectTaskResultDelta(getOperationalStore(), deploymentOrg(), bareToken, input.excludeTaskResultId);
-        if (delta) {
-          message = `${message}\n\n${delta.reminder}`;
-          recovered = { taskIds: delta.taskIds, overflow: delta.overflow };
-          recoveredTainted = delta.tainted;
-        }
-      }
-    } catch {
-      recovered = null;
-    }
-  }
-  const deliveredAuth = recoveredTainted
-    ? { ...auth, attributes: { ...auth.attributes, ...resultTaintedAttrs(true) } }
-    : auth;
+  const message = input.message;
+  const deliveredAuth = auth;
   try {
     await receive(channel, target).send(message, { auth: completeWakeAuth(deliveredAuth) });
   } catch (err) {
@@ -737,17 +715,6 @@ export async function divertToUnifiedWindow(
       err,
     });
     throw err;
-  }
-  if (recovered) {
-    const org = deploymentOrg();
-    await markRecoveredDelivered(getOperationalStore(), org, recovered.taskIds, new Date().toISOString());
-    await appendAudit({
-      org,
-      platform: "unified",
-      workspace: parseWindowToken(bareToken)?.domain ?? "unknown",
-      action: "task.result_recovered",
-      detail: { taskIds: [...recovered.taskIds], count: recovered.taskIds.length, overflow: recovered.overflow, wakeId: input.window.wakeId },
-    }).catch(() => undefined);
   }
 }
 
@@ -855,36 +822,6 @@ export async function dispatchTaskWindow(input: {
     surfaceKey,
     auth: { attributes },
   });
-}
-
-export async function dispatchWindowWake(input: {
-  readonly token: string;
-  readonly origin: UnifiedWakeOrigin;
-  readonly wakeId: string;
-  readonly message: string;
-  readonly domain: string;
-  readonly authAttributes: Record<string, unknown>;
-  readonly excludeTaskId?: string;
-}): Promise<boolean> {
-  if (!crossProcessDispatchAvailable()) return false;
-  const surfaceKey = pickRedriveSurfaceKey(input.domain, input.origin.platform);
-  if (!surfaceKey) return false;
-  const attributes = isThreadSeatWindowToken(input.token)
-    ? { ...input.authAttributes, [OE_GRAIN_ATTR]: "thread" }
-    : input.authAttributes;
-  try {
-    await deliverUnifiedDispatch({
-      message: input.message,
-      token: input.token,
-      window: { wakeId: input.wakeId, origin: input.origin, addressing: "direct-mention" },
-      surfaceKey,
-      auth: { attributes },
-      ...(input.excludeTaskId ? { excludeTaskResultId: input.excludeTaskId } : {}),
-    });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export async function dispatchApprovalDecisionWake(input: {

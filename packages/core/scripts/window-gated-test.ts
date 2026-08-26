@@ -82,11 +82,10 @@ for (const name of WIDE_HANDS) {
 }
 eq(WINDOW_GATED_TOOLS.spawn_thread_session, ["standing"], "spawn_thread_session is standing-only (window-only mint; no recursive thread trees)");
 eq(WINDOW_GATED_TOOLS.complete_thread, ["thread"], "complete_thread is thread-only (only a thread seat owns a thread)");
-eq(WINDOW_GATED_TOOLS.return_result, ["task"], "return_result is task-only (only a one-shot task returns a result)");
+ok(WINDOW_GATED_TOOLS.return_result === undefined && WINDOW_GATED_TOOLS.stop_task === undefined, "🔴 OPE-1145 item 2: the roll-own regime's verbs carry NO manifest row at all — deleted, not disarmed");
 eq(WINDOW_GATED_TOOLS.agent, ["standing", "thread"], "agent is grain-gated to the conversational-root seats (standing+thread) — absent on native, and NEVER on a task worker leaf");
-eq(WINDOW_GATED_TOOLS.stop_task, ["standing", "thread"], "stop_task is grain-gated to the conversational-root seats (standing+thread) — the seats that have a worker to stand down");
-eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 5, "the gated table is EXACTLY the 11 wide-hands tools + the 5 delegation/lifecycle tools (agent/stop_task/spawn_thread_session/complete_thread/return_result) — nothing else narrows");
-eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_thread", "return_result"].sort(), "standing withholds the 11 wide-hands tools + complete_thread + return_result (it KEEPS agent, stop_task and the spawner — a standing seat is what delegates)");
+eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 3, "the gated table is EXACTLY the 11 wide-hands tools + the 3 delegation/lifecycle tools (agent/spawn_thread_session/complete_thread) — nothing else narrows. Three since OPE-1145 item 2 deleted stop_task and return_result with the roll-own regime.");
+eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_thread"].sort(), "standing withholds the 11 wide-hands tools + complete_thread (it KEEPS agent and the spawner — a standing seat is what delegates)");
 
 {
   const OFF = { wide: ["task", "native"] as const, armed: false };
@@ -119,15 +118,15 @@ eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_thread",
 }
 eq(
   [...withheldFromGrain("task")].sort(),
-  ["agent", "stop_task", "complete_thread", "spawn_thread_session"].sort(),
-  "task (the worker) withholds agent, stop_task, the standing-only spawner and complete_thread (it has its own wide hands + return_result; a worker leaf must not delegate recursively — since #96 that is ABSENCE, not an execute refusal — and it never stands a sibling down)",
+  ["agent", "complete_thread", "spawn_thread_session"].sort(),
+  "task (the worker) withholds agent, the standing-only spawner and complete_thread (it has its own wide hands; a worker leaf must not delegate recursively)",
 );
 eq(
   [...withheldFromGrain("native")].sort(),
-  [...WIDE_HANDS, "agent", "stop_task", "complete_thread", "return_result", "spawn_thread_session"].sort(),
-  "native withholds agent, stop_task and the rest of the delegation/lifecycle set AND the wide hands — the T2 narrowing, which since OPE-370 is the shipped default (disarm delegation and native keeps its wide hands again, the byte-identical Stage-C state)",
+  [...WIDE_HANDS, "agent", "complete_thread", "spawn_thread_session"].sort(),
+  "native withholds agent and the rest of the delegation/lifecycle set AND the wide hands — the T2 narrowing, which since OPE-370 is the shipped default",
 );
-eq([...withheldFromGrain("thread")].sort(), [...WIDE_HANDS, "return_result", "spawn_thread_session"].sort(), "a thread seat withholds the wide hands + return_result + the spawner (it keeps the conversational kit + agent + complete_thread)");
+eq([...withheldFromGrain("thread")].sort(), [...WIDE_HANDS, "spawn_thread_session"].sort(), "a thread seat withholds the wide hands + the spawner (it keeps the conversational kit and can delegate)");
 
 console.log("1. presence/absence matrix (windowGated):");
 for (const [name, grains] of Object.entries(WINDOW_GATED_TOOLS)) {
@@ -178,7 +177,7 @@ _resetWindowGateAuditForTest();
   const mk = () => ctxOf(STANDING_TOKEN, { sessionId, wakeId });
   await resolveWindowGated(windowGated("bash", stubEntry("bash")), mk());
   await resolveWindowGated(windowGated("checkout_repo", stubEntry("checkout_repo")), mk());
-  await resolveWindowGated(windowGated("return_result", stubEntry("return_result")), mk());
+  await resolveWindowGated(windowGated("complete_thread", stubEntry("complete_thread")), mk());
   const rows = await rowsFor(sessionId);
   eq(rows.length, 1, "many gated resolvers on ONE session ⇒ exactly one turn.tool_gated row");
   eq(await countRows(), base + 1, "…and exactly one row was ADDED overall");
@@ -224,8 +223,8 @@ _resetWindowGateAuditForTest();
   const attempt = attemptRow!.detail as Record<string, unknown>;
   eq(attempt.withheld, ["bash"], "the attempt row names the ONE tool attempted — never its input");
   eq(attempt.wakeId, "wake-backstop", "the attempt row is wakeId-stamped");
-  const ct = (await resolveWindowGated(windowGated("return_result", stubEntry("return_result")), grainCtx.task())) as GatedToolEntry;
-  await assert.rejects(() => Promise.resolve(ct.execute({}, grainCtx.native())), /not available on a native session/, "return_result's backstop refuses a native-grain execute");
+  const ct = (await resolveWindowGated(windowGated("complete_thread", stubEntry("complete_thread")), grainCtx.thread())) as GatedToolEntry;
+  await assert.rejects(() => Promise.resolve(ct.execute({}, grainCtx.native())), /not available on a native session/, "complete_thread's backstop refuses a native-grain execute");
   n++;
 }
 
@@ -474,11 +473,11 @@ console.log("6. mount refresh on a deployment change (OPE-632):");
         shouldMount,
         `live-read/windowGatedKit: …and the KIT wrapper agrees for a framework-named wide-hands tool (web_fetch) on the same seat`,
       );
-      const fixed = windowGatedKit("test_live_fixed", { return_result: stubEntry("return_result") });
+      const fixed = windowGatedKit("test_live_fixed", { complete_thread: stubEntry("complete_thread") });
       eq(
         (await resolveWindowGated(fixed, grainCtx.native())) === null,
         true,
-        `live-read/negative control: return_result is a FIXED ["task"] row and stays ABSENT on a native seat with delegation.oneshotAgent=${armed}`,
+        `live-read/negative control: complete_thread is a FIXED ["thread"] row and stays ABSENT on a native seat with delegation.oneshotAgent=${armed}`,
       );
     }
   } finally {

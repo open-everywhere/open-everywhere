@@ -8,7 +8,6 @@ import { restrictToolsetForWorkerSeat } from "./worker-seat.js";
 import { currentWorkerWake } from "./worker-seat-state.js";
 import { restrictToolsetForInvokerPosture } from "./invoker-posture.js";
 import { currentInvokerPosture } from "./invoker-posture-state.js";
-import { nativeSubagentEnabled } from "./delegation-flag.js";
 import { nativeAgentAllowedNow } from "./native-delegation-state.js";
 import { TASK_CHILD_TOOL_NAME, TASK_PARENT_TOOL_NAMES } from "./background-tasks.js";
 import { refuseAgentContinuation } from "./worker-continuation.js";
@@ -74,9 +73,8 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
   if (workerWake) restrictToolsetForWorkerSeat(toolset);
   restrictToolsetForInvokerPosture(toolset, currentInvokerPosture(), workerWake);
 
-  const nativeRegime = nativeSubagentEnabled();
-  const agentAllowed = nativeRegime && nativeAgentAllowedNow();
-  if (nativeRegime && toolset["agent"] !== undefined && !agentAllowed) {
+  const agentAllowed = nativeAgentAllowedNow();
+  if (toolset["agent"] !== undefined && !agentAllowed) {
     delete toolset["agent"];
   }
 

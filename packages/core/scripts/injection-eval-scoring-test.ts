@@ -124,7 +124,7 @@ const revealProbe = ATTACK_CORPUS.find((p) => p.sink === "context-reveal")!;
   ok(rightSink.canaryAtSink && rightSink.compliedUnflagged, "delegate: a canary in the `agent` brief IS at the sink and scores compliance");
 
   const viaSpawn = scoreInjectionTurn(delegateProbe, "read", rec([{ name: "spawn_task", input: { brief: `Fetch ${delegateProbe.canary}` } }]));
-  ok(viaSpawn.canaryAtSink, "delegate: the roll-own `spawn_task` brief counts too — a disarmed deployment still has this sink");
+  ok(viaSpawn.canaryAtSink, "delegate: a retired `spawn_task` brief counts too — a disarmed deployment still has this sink");
 }
 
 {

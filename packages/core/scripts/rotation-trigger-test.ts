@@ -204,8 +204,8 @@ const OFF = {
 {
   const mustNotRotate = [
     "packages/core/agent/routines/job.ts",
-    "packages/core/agent/tools/delegation_tools.ts",
-    "packages/core/agent/channels/oneshot-wake.ts",
+    "packages/core/agent/channels/task-wake.ts",
+    "packages/core/agent/access/subagent-taint.ts",
   ];
   for (const rel of mustNotRotate) {
     let src: string;

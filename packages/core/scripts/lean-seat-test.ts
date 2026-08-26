@@ -177,7 +177,7 @@ for (const decoy of GRANT_DECOYS.filter((d) => d.startsWith("grant__") && !d.inc
 
 ok(allowedOnWorkerSeat("ask_question"), "🔴 OPE-565: a delegated WORKER holds ask_question again — the question posts AND the room's answer routes back to the child");
 ok(allowedOnLeanSeat("ask_question"), "…and the INTERACTIVE seat still holds it, as it always did");
-for (const name of ["bash", "read_file", "write_file", "post_file", "web_search", "return_result", "complete_thread", "reply", "final_output", "notion__search", "some_tool_nobody_declared"]) {
+for (const name of ["bash", "read_file", "write_file", "post_file", "web_search", "describe_image", "complete_thread", "reply", "final_output", "notion__search", "some_tool_nobody_declared"]) {
   ok(allowedOnWorkerSeat(name), `the worker keeps ${name} — this set is ALLOW-by-default, an exclusion of BROKEN verbs, never a narrowing of the worker's kit`);
 }
 ok(!allowedOnWorkerSeat("stand_down"), "🔴 OPE-877: a worker does NOT hold stand_down — it marks the DELEGATING SEAT's engagement row (the worker inherits the seat's binding), so a worker could make its own parent stop following a channel the worker never followed");
@@ -386,24 +386,23 @@ inSession(() => {
       },
     } as never);
   const TASK_TOKEN = "unified:oe-dom:acme:win:t/C1/1721018940.000100:oe-sup:g3";
-  const rollOwnText = persona(TASK_TOKEN, true);
+  const markedText = persona(TASK_TOKEN, true);
   const nativeText = persona(TASK_TOKEN);
   const seatText = persona("unified:oe-dom:acme:oe-sup:g3");
-  ok(rollOwnText.length > 0 && nativeText.length > 0 && seatText.length > 0, "fixture sanity: the persona renders for BOTH a task token and a standing one");
+  ok(markedText.length > 0 && nativeText.length > 0 && seatText.length > 0, "fixture sanity: the persona renders for BOTH a task token and a standing one");
   ok(
-    !/cannot receive an answer/i.test(rollOwnText),
-    "🔴 OPE-565: a WORKER's valve no longer claims the answer cannot reach it — that sentence is false now, and a prompt must never tell the model something it can disprove",
+    !/cannot receive an answer/i.test(nativeText),
+    "🔴 OPE-565: a WORKER's valve no longer claims the answer cannot reach it — that sentence is false now, and a prompt must never tell the model something it can test",
   );
-  ok(rollOwnText.includes("return_result"), "…the ROLL-OWN report verb is still named, because it is still the route that always reaches a person");
-  ok(rollOwnText.indexOf("return_result") < rollOwnText.indexOf("ask_question"), "…and named FIRST — the valve steers on cost, and a question parks the worker while a report does not");
-  ok(!nativeText.includes("return_result"), "🔴 OPE-863: …and NEVER named on the eve-native route, where the same call refuses");
+  ok(!nativeText.includes("return_result"), "🔴 the worker is NEVER sent at `return_result` — the verb is deleted, so naming it would name nothing");
+  ok(markedText === nativeText, "🔴 OPE-1145 item 2: a stale `oe_oneshot` marker changes NOTHING about the persona — the roll-own arm it used to select is gone, so a leftover stamp on a live deployment can reach no second route");
   ok(nativeText.includes("Your LAST message of this session is your report"), "…that worker is pointed at its last message instead, which is what eve carries back");
-  for (const [label, workerText] of [["roll-own", rollOwnText], ["native", nativeText]] as const) {
+  for (const [label, workerText] of [["native", nativeText]] as const) {
     ok(workerText.includes("ask_question"), `${label}: \`ask_question\` is named as the real second route it now is`);
     ok(workerText.includes("PARKS this session"), `${label}: …and the COST is stated plainly: a question parks the worker`);
     ok(
       !/until somebody answers/i.test(workerText),
-      `🔴 ${label}: the valve does NOT promise an answer — the roll-own return leg is undriven, so "parks you until somebody answers" would be a false promise`,
+      `🔴 ${label}: the valve does NOT promise an answer — the return leg is undriven, so "parks you until somebody answers" would be a false promise`,
     );
     ok(
       /an answer might not/i.test(workerText),

@@ -22,7 +22,7 @@ import { DELEGATION_PENDING_REFUSAL_REASON, delegationPendingRefusalMessage, pen
 import { retargetTaskWakes, taskWakeUnreadRefusalMessage, TASK_WAKE_UNREAD_REFUSAL_REASON } from "../channels/task-wake.js";
 import { uningressedTurn } from "../access/task-wake-signal.js";
 import { silentRoutineThisTurn } from "../routines/report.js";
-import { resolveOwnWindowToken } from "../access/oneshot-spawn.js";
+import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { postUnifiedReply, unifiedEditLocus } from "../channels/unified-reply.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { preRegisterDynamicVariants } from "../access/window-gated.js";

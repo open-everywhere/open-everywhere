@@ -135,7 +135,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   },
   {
     area: "delegation-and-subagents",
-    globs: ["packages/core/agent/tools/spawn_thread_session.ts", "packages/core/agent/tools/delegation_tools.ts", "packages/core/agent/subagents/**"],
+    globs: ["packages/core/agent/tools/spawn_thread_session.ts", "packages/core/agent/subagents/**"],
     scenarios: ["J-SUP", "S-DM-NOTION", "S-MEM-READ", "J-UNI-X"],
     why: "Each of these pays a delegation round-trip as part of its own proof (S-MEM-READ/S-DM-NOTION need the control-read creds reached only via delegation; J-SUP/J-UNI-X route through a spawned worker). (S-DM-DISCORD retired at OPE-725 — see scenarios.ts.)",
   },

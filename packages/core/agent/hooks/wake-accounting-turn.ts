@@ -4,7 +4,12 @@ import { deploymentOrg, currentTurnId, currentWakeId, type BindableContext } fro
 import { consumeReactedThisTurn } from "../channels/react-signal.js";
 import { auditLabels, auditUnaccountedWakesForTurn } from "../channels/unified.js";
 import { bareTokenFromEveContext } from "../channels/window-key.js";
-import { requestsHoldTheWorkerOpen } from "./oneshot-complete.js";
+import { isSessionLimitContinuationRequest } from "../channels/session-park.js";
+
+export function requestsHoldTheWorkerOpen(requests: unknown): boolean {
+  if (!Array.isArray(requests) || requests.length === 0) return true;
+  return requests.some((r) => !isSessionLimitContinuationRequest(r));
+}
 
 const paused = defineState<{ awaiting: boolean }>("open-everywhere.wake-accounting.paused", () => ({ awaiting: false }));
 

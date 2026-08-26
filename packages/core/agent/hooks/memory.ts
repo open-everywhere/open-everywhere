@@ -231,12 +231,11 @@ function skipAsSubagentChild(ctx: HookContext, phase: string): boolean {
 
 type MemorySandbox = Awaited<ReturnType<HookContext["getSandbox"]>>;
 
-export type MemoryPersistOutcome = "completed" | "failed" | "returned" | "settled";
+export type MemoryPersistOutcome = "completed" | "failed" | "settled";
 
 const PERSIST_WHERE: Record<MemoryPersistOutcome, string> = {
   completed: "session.completed",
   failed: "session.failed",
-  returned: "return_result",
   settled: "delegation settlement",
 };
 
