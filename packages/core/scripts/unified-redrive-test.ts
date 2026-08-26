@@ -14,14 +14,12 @@ registerSlackTestBridge();
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-unified-redrive-")), "ops.sqlite3");
 delete process.env.OE_ORG;
-overrideSettingsForTest({ window: { unifiedRedrive: true } });
 delete process.env.OE_SPAWN_DISPATCH_SECRET;
 
 const { registerUnifiedWakeTarget } = await import("../agent/channels/unified-window.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { renderWake } = await import("../agent/channels/normalized-wake.js");
 const {
-  redriveEnabled,
   redriveGuardKey,
   buildRedriveWake,
   redriveCorrectiveText,
@@ -50,14 +48,15 @@ function makeAudit(sink: Record<string, unknown>[]): (e: Record<string, unknown>
 }
 
 {
-  overrideSettingsForTest({ window: { unifiedRedrive: true } });
-  ok(redriveEnabled() === true, "flag: the shipped default is ON (catch-and-correct is the safe posture)");
-  overrideSettingsForTest({ window: { unifiedRedrive: false } });
-  ok(redriveEnabled() === false, "flag: a registered `window.unifiedRedrive: false` turns the correction off");
-  process.env.OE_UNIFIED_REDRIVE = "1";
-  ok(redriveEnabled() === false, "🔴 flag: a stray OE_UNIFIED_REDRIVE cannot pull it back on — the mirror is deleted (OPE-411)");
+  process.env.OE_UNIFIED_REDRIVE = "0";
+  await registerUnifiedWakeTarget(store, ORG, "wake-no-switch", SLACK_ORIGIN, new Date().toISOString());
+  const injected: Captured[] = [];
+  const res = await maybeRedrive(
+    { org: ORG, workspace: "p", wakeId: "wake-no-switch", chars: 200, replied: false },
+    { store, reinject: makeReinject(injected), audit: makeAudit([]) },
+  );
+  ok(res.status === "redriven" && injected.length === 1, "🔴 no off switch: a stray OE_UNIFIED_REDRIVE=0 cannot suppress the correction — the redrive fires");
   delete process.env.OE_UNIFIED_REDRIVE;
-  overrideSettingsForTest({ window: { unifiedRedrive: true } });
 }
 
 {
@@ -132,18 +131,6 @@ function makeAudit(sink: Record<string, unknown>[]): (e: Record<string, unknown>
 }
 
 {
-  overrideSettingsForTest({ window: { unifiedRedrive: false } });
-  const W = "wake-flag-off";
-  await registerUnifiedWakeTarget(store, ORG, W, SLACK_ORIGIN, new Date().toISOString());
-  const injected: Captured[] = [];
-  const audits: Record<string, unknown>[] = [];
-  const res = await maybeRedrive({ org: ORG, workspace: "p", wakeId: W, chars: 200, replied: false }, { store, reinject: makeReinject(injected), audit: makeAudit(audits) });
-  ok(res.status === "disabled" && injected.length === 0 && audits.length === 0, "flag OFF: no reinject, no audit, no store touch — byte-identical no-op");
-  ok((await store.markEventSeen(ORG, redriveGuardKey(W), new Date().toISOString(), 1000)) === true, "flag OFF: the guard was NOT touched (the redrive never ran)");
-  overrideSettingsForTest({ window: { unifiedRedrive: true } });
-}
-
-{
   const W = "wake-throw";
   await registerUnifiedWakeTarget(store, ORG, W, SLACK_ORIGIN, new Date().toISOString());
   const throwing: RedriveReinject = async () => { throw new Error("post failed"); };
@@ -197,4 +184,4 @@ function makeAudit(sink: Record<string, unknown>[]): (e: Record<string, unknown>
   ok(landed[0].message.includes("CORRECTIVE-BODY-XYZ"), "reinject warm: the corrective body rides through as the wake message");
 }
 
-console.log(`✓ unified-redrive: ${n} assertions passed (flag default-on/off + corrective-wake render/re-stamp + fire-once/loop-guard/skips/fail-soft/throw over a real sqlite guard + buildRedriveReinject unavailable/warm arms)`);
+console.log(`✓ unified-redrive: ${n} assertions passed (no off switch + corrective-wake render/re-stamp + fire-once/loop-guard/skips/fail-soft/throw over a real sqlite guard + buildRedriveReinject unavailable/warm arms)`);

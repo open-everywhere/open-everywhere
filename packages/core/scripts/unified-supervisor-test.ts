@@ -146,7 +146,7 @@ ok(unifiedGenerationFromToken(WEIRD) === 12, "generation still parses with a col
 
 ok(unifiedWindowFromToken(TOK) === "payments", "windowId parses back out of the degenerate token (=== domain)");
 ok(unifiedWindowFromToken("C_PAY:oe-sup:g3") === undefined, "no windowId from a per-container token");
-ok(unifiedDomainSessionKey(unifiedWindowFromToken(TOK)!) === unifiedDomainSessionKey("payments"), "a legacy token's window registry key is byte-identical to the domain key (windowId === domain in step 1)");
+ok(unifiedDomainSessionKey(unifiedWindowFromToken(TOK)!) === unifiedDomainSessionKey("payments"), "a degenerate token's window registry key is byte-identical to the domain key (windowId === domain in step 1)");
 const EXPLICIT = "oe-dom:payments:win:chan-hr:oe-sup:g8";
 ok(unifiedDomainFromToken(EXPLICIT) === "payments", "explicit-window token still yields the domain (memory/access anchor survives the key split)");
 ok(unifiedWindowFromToken(EXPLICIT) === "chan-hr", "explicit-window token yields a windowId distinct from the domain");

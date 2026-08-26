@@ -8,7 +8,7 @@ export interface WindowKey {
 
 const EXPLICIT_WINDOW_TOKEN_RE = /^oe-dom:(.+):win:([^:]+):oe-sup:g(\d+)(?:-[0-9a-f]+)?$/;
 
-const LEGACY_WINDOW_TOKEN_RE = /^oe-dom:(.+):oe-sup:g(\d+)(?:-[0-9a-f]+)?$/;
+const DEGENERATE_WINDOW_TOKEN_RE = /^oe-dom:(.+):oe-sup:g(\d+)(?:-[0-9a-f]+)?$/;
 
 export function formatWindowToken(key: WindowKey): string {
   if (key.windowId === key.domain) {
@@ -26,8 +26,8 @@ export function parseWindowToken(token: unknown): WindowKey | undefined {
   if (typeof token !== "string") return undefined;
   const explicit = EXPLICIT_WINDOW_TOKEN_RE.exec(token);
   if (explicit) return { domain: explicit[1], windowId: explicit[2], generation: Number(explicit[3]) };
-  const legacy = LEGACY_WINDOW_TOKEN_RE.exec(token);
-  if (legacy) return { domain: legacy[1], windowId: legacy[1], generation: Number(legacy[2]) };
+  const degenerate = DEGENERATE_WINDOW_TOKEN_RE.exec(token);
+  if (degenerate) return { domain: degenerate[1], windowId: degenerate[1], generation: Number(degenerate[2]) };
   return undefined;
 }
 

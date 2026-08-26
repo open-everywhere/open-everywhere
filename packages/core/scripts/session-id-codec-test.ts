@@ -283,7 +283,7 @@ expectKind("x:oe-sup:g", "native", "native", "no-digit suffix");
   ok(saltSupervisorGeneration(bareWindow) !== saltSupervisorGeneration(bareWindow), "saltSupervisorGeneration: re-salting the SAME bare token twice yields DIFFERENT full tokens (reset→reuse defeated)");
 
   const saltedCases: ReadonlyArray<{ readonly bare: string; readonly note: string }> = [
-    { bare: "oe-dom:payments:oe-sup:g4", note: "degenerate window (LEGACY_WINDOW_TOKEN_RE)" },
+    { bare: "oe-dom:payments:oe-sup:g4", note: "degenerate window (DEGENERATE_WINDOW_TOKEN_RE)" },
     { bare: "oe-dom:payments:win:solo-C_PAY:oe-sup:g7", note: "explicit window (EXPLICIT_WINDOW_TOKEN_RE)" },
     { bare: "github:acme/widgets:oe-sup:g5", note: "per-container (SUPERVISOR_SUFFIX_RE)" },
     { bare: "linear:TEAM123:oe-sup:g5", note: "per-container linear" },

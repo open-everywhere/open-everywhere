@@ -23,7 +23,6 @@ import {
 import { bashTimeoutMs, backgroundGuardEnabled, DEFAULT_BASH_TIMEOUT_MS } from "../agent/stall/bash-hang-guard.js";
 import { domainSkillCap, DEFAULT_DOMAIN_SKILL_CAP } from "../agent/skills/domain-skills.js";
 import { auditSilencesEnabled } from "../agent/audit/audit.js";
-import { redriveEnabled } from "../agent/channels/unified-redrive.js";
 import { sourceScopedToolsEnabled, genericReadVerbsEnabled } from "../agent/access/source-scoped-mount.js";
 import { maxResultChars, DEFAULT_MAX_RESULT_CHARS } from "../agent/access/result-cap.js";
 import { stallThreshold, DEFAULT_STALL_THRESHOLD } from "../agent/stall/guard.js";
@@ -216,6 +215,7 @@ console.log("5 — a bad override fails the boot, not a turn:");
   };
   refuses(() => defineSettings({ windows: { topology: true } } as never), "unknown settings group", "[5] a typo'd GROUP is refused by name");
   refuses(() => defineSettings({ window: { topolgy: true } } as never), "unknown setting", "[5] a typo'd KEY is refused by name");
+  refuses(() => defineSettings({ window: { unifiedRedrive: false } } as never), "unknown setting", "[5] 🔴 OPE-1145 — `window.unifiedRedrive` is DELETED: a deployment that still registers the old off switch FAILS the boot, rather than booting with an ignored key and an operator who believes the correction is off");
   refuses(() => defineSettings({ bash: { timeoutMs: "600000" } } as never), "expected number", "[5] a wrong-typed value is refused");
   refuses(() => defineSettings({ skills: { domainSkillCap: 0 } }), "positive integer", "[5] an out-of-range value is refused by its validator");
   refuses(() => defineSettings({ sandbox: { extendMaxMinutes: -1 } }), "positive integer", "[5] …in both numeric settings");
@@ -294,7 +294,6 @@ console.log("6 — the public resolvers are schema-backed, with their names and 
   ok(backgroundGuardEnabled(), "[6] backgroundGuardEnabled() ⇒ shipped ON");
   eq(domainSkillCap(), 50, "[6] domainSkillCap() ⇒ shipped 50");
   ok(!auditSilencesEnabled(), "[6] auditSilencesEnabled() ⇒ shipped OFF");
-  ok(redriveEnabled(), "[6] redriveEnabled() ⇒ shipped ON");
   ok(!sourceScopedToolsEnabled(), "[6] sourceScopedToolsEnabled() ⇒ shipped OFF");
   ok(!genericReadVerbsEnabled(), "[6] genericReadVerbsEnabled() ⇒ shipped OFF");
   eq(maxResultChars(), 120_000, "[6] maxResultChars() ⇒ shipped 120k");

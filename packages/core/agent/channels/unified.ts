@@ -41,7 +41,7 @@ import { auditNoReplySentinelObserved } from "./chat-turn-audit.js";
 import { consumeRepliedThisTurn, repliedWakesThisTurn, declinedWakesThisTurn, refusalsForWakeThisTurn } from "./reply-signal.js";
 import { consumeReactedThisTurn } from "./react-signal.js";
 import { settleWakeAccounting, UNACCOUNTED_WAKES_AUDIT_ACTION, WAKE_ACCOUNTING_SKIPPED_AUDIT_ACTION, MAX_ACCOUNTING_WAKES } from "./wake-accounting.js";
-import { redriveEnabled, maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
+import { maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
 import { unresumableAuditDetail } from "./session-resume.js";
 import { healPrunedDeploymentStrand } from "./stranded-seat.js";
 import { collectTaskResultDelta, markRecoveredDelivered } from "../access/task-result-delta.js";
@@ -557,7 +557,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         },
       }).catch(() => undefined);
 
-      if (redriveEnabled() && !replied && bridgeRefusal === undefined && channel.continuation?.token !== undefined) {
+      if (!replied && bridgeRefusal === undefined && channel.continuation?.token !== undefined) {
         const wakeId = currentWakeId(bind);
         const rawToken = channel.continuation.token;
         const domain = unifiedDomainFromToken(rawToken);
@@ -570,7 +570,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         );
         if (outcome.status === "redriven") {
           ulog(`auto-redrive: re-injected a corrective wake for wake ${outcome.originalWakeId} (dropped ${action.text.length} chars) — one more turn to reply`);
-        } else if (outcome.status !== "disabled" && outcome.status !== "skip-replied") {
+        } else if (outcome.status !== "skip-replied") {
           ulog(`auto-redrive: NOT fired (${outcome.status}) for wake ${outcome.originalWakeId ?? "none"} — drop is final`);
         }
       }

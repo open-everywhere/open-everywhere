@@ -7,17 +7,12 @@ import {
   type UnifiedWakeTargetStore,
 } from "./unified-window.js";
 import { postArm } from "./post-arms.js";
-import { getSettings } from "../settings/settings.js";
 
 export const REDRIVE_ACTION = "unified.turn.redrive";
 
 export const REDRIVE_GUARD_PREFIX = "unified-redrive:";
 
 export const REDRIVE_GUARD_TTL_MS = WAKE_TARGET_TTL_MS;
-
-export function redriveEnabled(): boolean {
-  return getSettings().window.unifiedRedrive;
-}
 
 export function redriveGuardKey(wakeId: string): string {
   return `${REDRIVE_GUARD_PREFIX}${wakeId}`;
@@ -91,7 +86,6 @@ export interface RedriveDeps {
 }
 
 export type RedriveStatus =
-  | "disabled"
   | "skip-replied"
   | "skip-no-wake"
   | "skip-unresolved"
@@ -106,7 +100,6 @@ export interface RedriveResult {
 }
 
 export async function maybeRedrive(input: RedriveInput, deps: RedriveDeps): Promise<RedriveResult> {
-  if (!redriveEnabled()) return { status: "disabled" };
   if (input.replied) return { status: "skip-replied" };
   if (!input.wakeId) return { status: "skip-no-wake" };
   const wakeId = input.wakeId;

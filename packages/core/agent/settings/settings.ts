@@ -132,7 +132,6 @@ export interface AgentSettings {
   };
   readonly window: {
     readonly topology: boolean;
-    readonly unifiedRedrive: boolean;
   };
 }
 
@@ -676,12 +675,6 @@ export const SETTINGS = {
       summary:
         "The standing-WINDOW apparatus — the ONE gate governing both the per-channel `solo` window and the cross-surface `unified` window. Off, every domain runs the native per-container path and its `mode` is inert. **Arm deliberately: a window is a wider data blast radius.**",
     } satisfies SettingSpec<boolean>,
-    unifiedRedrive: {
-      path: "window.unifiedRedrive",
-      shipped: true,
-      summary:
-        "Auto-redrive a unified turn that ended in terminal prose instead of a `reply`, so the answer is delivered rather than dropped. Off restores the pre-redrive drop-and-lose behaviour exactly.",
-    } satisfies SettingSpec<boolean>,
   },
 };
 
@@ -894,7 +887,6 @@ export function getSettings(
     },
     window: {
       topology: resolve(SETTINGS.window.topology, o.window?.topology, env),
-      unifiedRedrive: resolve(SETTINGS.window.unifiedRedrive, o.window?.unifiedRedrive, env),
     },
   };
 }

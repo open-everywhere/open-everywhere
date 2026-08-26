@@ -1,3 +1,4 @@
+
 import assert from "node:assert/strict";
 import {
   formatWindowToken,
@@ -36,17 +37,17 @@ const eq = (a: unknown, b: unknown, label: string) => {
 
 const degen = windowKeyForDomain("payments", 3);
 eq(degen, { domain: "payments", windowId: "payments", generation: 3 }, "windowKeyForDomain defaults windowId to the domain");
-eq(formatWindowToken(degen), "oe-dom:payments:oe-sup:g3", "degenerate key serialises to the LEGACY token shape (byte-identical to pre-window unifiedSupervisorToken)");
+eq(formatWindowToken(degen), "oe-dom:payments:oe-sup:g3", "degenerate key serialises to the DEGENERATE token shape (byte-identical to pre-window unifiedSupervisorToken)");
 
 eq(parseWindowToken(formatWindowToken(degen)), degen, "degenerate key round-trips through format+parse");
 
-const LEGACY = "oe-dom:payments:oe-sup:g7";
-eq(parseWindowToken(LEGACY), { domain: "payments", windowId: "payments", generation: 7 }, "LEGACY token (no :win: segment) parses with windowId === domain — the backward-compat invariant");
-eq(formatWindowToken(parseWindowToken(LEGACY)!), LEGACY, "legacy token → key → token is byte-identical (no win segment introduced)");
+const DEGENERATE = "oe-dom:payments:oe-sup:g7";
+eq(parseWindowToken(DEGENERATE), { domain: "payments", windowId: "payments", generation: 7 }, "DEGENERATE token (no :win: segment) parses with windowId === domain — the id-equals-domain invariant");
+eq(formatWindowToken(parseWindowToken(DEGENERATE)!), DEGENERATE, "degenerate token → key → token is byte-identical (no win segment introduced)");
 
 const WEIRD = "oe-dom:team:sub:oe-sup:g12";
 eq(parseWindowToken(WEIRD), { domain: "team:sub", windowId: "team:sub", generation: 12 }, "colon-bearing domain parses (greedy backtrack)");
-eq(formatWindowToken(windowKeyForDomain("team:sub", 12)), WEIRD, "colon-bearing degenerate key serialises back to the same legacy token");
+eq(formatWindowToken(windowKeyForDomain("team:sub", 12)), WEIRD, "colon-bearing degenerate key serialises back to the same degenerate token");
 
 const explicit: WindowKey = { domain: "payments", windowId: "chan-hr", generation: 5 };
 eq(formatWindowToken(explicit), "oe-dom:payments:win:chan-hr:oe-sup:g5", "distinct windowId serialises to the explicit :win: form");
@@ -61,7 +62,7 @@ n++;
 eq(formatWindowToken({ domain: "a:b", windowId: "a:b", generation: 1 }), "oe-dom:a:b:oe-sup:g1", "colon-bearing domain in the degenerate (windowId === domain) form is NOT guarded — still serialises");
 
 const p = parseWindowToken("oe-dom:a:win:b:oe-sup:g1");
-ok(p?.domain === "a" && p?.windowId === "b" && p?.generation === 1, "explicit form wins over the greedy legacy match (domain=a, windowId=b, NOT domain=a:win:b)");
+ok(p?.domain === "a" && p?.windowId === "b" && p?.generation === 1, "explicit form wins over the greedy degenerate match (domain=a, windowId=b, NOT domain=a:win:b)");
 
 ok(formatWindowToken(degen).endsWith(":oe-sup:g3"), "degenerate token ends with the :oe-sup:g suffix");
 ok(formatWindowToken(explicit).endsWith(":oe-sup:g5"), "explicit token ends with the :oe-sup:g suffix (win segment sits BEFORE it — invisible to suffix detectors)");
@@ -75,7 +76,7 @@ eq(parseWindowToken(undefined), undefined, "undefined fails soft");
 eq(parseWindowToken(null), undefined, "null fails soft");
 eq(parseWindowToken(42), undefined, "a non-string fails soft");
 
-ok(isWindowToken(LEGACY), "isWindowToken true for a legacy token");
+ok(isWindowToken(DEGENERATE), "isWindowToken true for a degenerate token");
 ok(isWindowToken("oe-dom:payments:win:hr:oe-sup:g1"), "isWindowToken true for an explicit-window token");
 ok(!isWindowToken("C_PAY:oe-sup:g3"), "isWindowToken false for a per-container token");
 ok(!isWindowToken(undefined), "isWindowToken false for undefined");
@@ -95,7 +96,7 @@ ok(!isTaskWindowId("slack/T1/C_HR"), "isTaskWindowId false for a bare surface-ke
 ok(!isTaskWindowId("payments"), "isTaskWindowId false for a domain windowId (degenerate/standing)");
 ok(isTaskWindowToken(taskToken), "isTaskWindowToken true for a task token");
 ok(!isTaskWindowToken("oe-dom:payments:win:slack/T1/C_HR:oe-sup:g9"), "isTaskWindowToken false for a SOLO-window token (bare surface key windowId, not t/)");
-ok(!isTaskWindowToken(LEGACY), "isTaskWindowToken false for a legacy/degenerate standing token");
+ok(!isTaskWindowToken(DEGENERATE), "isTaskWindowToken false for a degenerate standing token");
 ok(!isTaskWindowToken("C_PAY:oe-sup:g3"), "isTaskWindowToken false for a per-container (non-window) token");
 ok(!isTaskWindowToken(undefined), "isTaskWindowToken fails soft on undefined");
 
@@ -123,7 +124,7 @@ ok(!isTaskWindowId(seatWin), "isTaskWindowId false for an s/ (thread-seat) windo
 ok(isThreadSeatWindowToken(seatToken), "isThreadSeatWindowToken true for a thread-seat token");
 ok(!isThreadSeatWindowToken(taskToken), "isThreadSeatWindowToken false for a task token (fail-closed: a task token is NOT a thread seat)");
 ok(!isTaskWindowToken(seatToken), "isTaskWindowToken false for a thread-seat token (a lost stamp on an s/ token never re-widens to task)");
-ok(!isThreadSeatWindowToken(LEGACY), "isThreadSeatWindowToken false for a legacy/degenerate standing token");
+ok(!isThreadSeatWindowToken(DEGENERATE), "isThreadSeatWindowToken false for a degenerate standing token");
 ok(!isThreadSeatWindowToken(undefined), "isThreadSeatWindowToken fails soft on undefined");
 
 assert.throws(() => threadSeatWindowId("teams/T/19:meeting@thread.v2", "act1"), /colon-free/, "threadSeatWindowId throws on a colon in channelKey");
@@ -189,7 +190,7 @@ eq(sessionGrantKeyFromToken("1234.5678"), "1234.5678", "a thread-ts native token
   eq(dmKey, { domain: dmAnchorDomain(DM_SURFACE), windowId: dmAnchorDomain(DM_SURFACE), generation: 4 }, "dmWindowKey is DEGENERATE — windowId === domain === the oe-dm/ pseudo-domain");
 
   const dmToken = formatWindowToken(dmKey);
-  eq(dmToken, "oe-dom:oe-dm/slack/T1/D999:oe-sup:g4", "a DM window serialises to the LEGACY/degenerate token shape — no :win: segment, no new grammar");
+  eq(dmToken, "oe-dom:oe-dm/slack/T1/D999:oe-sup:g4", "a DM window serialises to the DEGENERATE token shape — no :win: segment, no new grammar");
   eq(parseWindowToken(dmToken), dmKey, "a DM window token round-trips through format+parse");
   ok(dmToken.endsWith(":oe-sup:g4"), "a DM window token keeps the :oe-sup:g suffix (suffix detectors untouched)");
   ok(isWindowToken(dmToken), "isWindowToken true for a DM window token");
@@ -201,7 +202,7 @@ eq(sessionGrantKeyFromToken("1234.5678"), "1234.5678", "a thread-ts native token
   ok(!isDmAnchorWindowToken(dmWorker), "isDmAnchorWindowToken FALSE for a TASK window in a dm domain — a DM's worker is never mistaken for its seat");
   const dmThreadSeat = formatWindowToken({ domain: dmAnchorDomain(DM_SURFACE), windowId: threadSeatWindowId("slack/T1/D999", "1720000000.001"), generation: 2 });
   ok(!isDmAnchorWindowToken(dmThreadSeat), "isDmAnchorWindowToken FALSE for a THREAD-SEAT window in a dm domain (standing-grain only)");
-  ok(!isDmAnchorWindowToken(LEGACY), "isDmAnchorWindowToken FALSE for a regular channel/domain window token");
+  ok(!isDmAnchorWindowToken(DEGENERATE), "isDmAnchorWindowToken FALSE for a regular channel/domain window token");
   ok(!isDmAnchorWindowToken("oe-dom:payments:win:slack/T1/C_HR:oe-sup:g9"), "isDmAnchorWindowToken FALSE for a SOLO channel window token");
   ok(!isDmAnchorWindowToken("C_PAY:oe-sup:g3"), "isDmAnchorWindowToken FALSE for a per-container (non-window) token");
   ok(!isDmAnchorWindowToken("D999:oe-dm:g2"), "isDmAnchorWindowToken FALSE for an OPE-90 dm-seat token (a different grammar entirely)");
@@ -214,7 +215,7 @@ eq(sessionGrantKeyFromToken("1234.5678"), "1234.5678", "a thread-ts native token
   eq(dmAnchorSurfaceForToken(dmWorker), DM_SURFACE, "…and from a DM-anchored WORKER token (grain-agnostic)");
   eq(dmAnchorSurfaceForToken(dmThreadSeat), DM_SURFACE, "…and from a DM-anchored thread-seat token");
   eq(dmAnchorSurfaceForToken(`unified:${dmToken}`), DM_SURFACE, "…through eve's `unified:` send prefix");
-  eq(dmAnchorSurfaceForToken(LEGACY), undefined, "dmAnchorSurfaceForToken is undefined for a real config domain — the gates then fall through to the config arm");
+  eq(dmAnchorSurfaceForToken(DEGENERATE), undefined, "dmAnchorSurfaceForToken is undefined for a real config domain — the gates then fall through to the config arm");
   eq(dmAnchorSurfaceForToken("oe-dom:payments:win:t/slack/T1/C1/n:oe-sup:g3"), undefined, "…and for a NAMED-domain worker token");
   eq(dmAnchorSurfaceForToken("C_PAY:oe-sup:g3"), undefined, "…and for a per-container token");
   eq(dmAnchorSurfaceForToken(undefined), undefined, "…fail-soft on a non-string");

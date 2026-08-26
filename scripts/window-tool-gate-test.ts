@@ -31,7 +31,7 @@ const ctxFor = (token: string | undefined, grain?: string): BindableContext => (
   session: { auth: { current: { attributes: grain ? { oe_grain: grain } : {} } } },
 });
 
-const LEGACY = formatWindowToken({ domain: "payments", windowId: "payments", generation: 3 });
+const DEGENERATE = formatWindowToken({ domain: "payments", windowId: "payments", generation: 3 });
 const EXPLICIT = formatWindowToken({ domain: "payments", windowId: "slack/T1/C_PAY", generation: 3 });
 const TASK = formatWindowToken({ domain: "payments", windowId: taskWindowId("slack/C1", "1720000000.001"), generation: 3 });
 const THREAD_SEAT = formatWindowToken({ domain: "payments", windowId: threadSeatWindowId("slack/C1", "1720000000.001"), generation: 3 });
@@ -39,19 +39,19 @@ const PER_CONTAINER = "slack/T1/C_PAY:oe-sup:g3";
 const NATIVE = "cse_abc123def";
 
 console.log("1. windowGrainOf backstop (token classification, no stamp):");
-eq(windowGrainOf(ctxFor(LEGACY)), "standing", "legacy/degenerate window token ⇒ standing");
+eq(windowGrainOf(ctxFor(DEGENERATE)), "standing", "degenerate (id-equals-domain) window token ⇒ standing");
 eq(windowGrainOf(ctxFor(EXPLICIT)), "standing", "explicit solo-window token ⇒ standing");
 eq(windowGrainOf(ctxFor(TASK)), "task", "task (t/…) window token ⇒ task");
 eq(windowGrainOf(ctxFor(THREAD_SEAT)), "thread", "thread-seat (s/…) window token ⇒ thread (Stage T2 — a conversational presence, narrow hands)");
 eq(windowGrainOf(ctxFor(PER_CONTAINER)), "standing", "per-container ambient (`<chan>:oe-sup:g`, not a window token) ⇒ standing");
 eq(windowGrainOf(ctxFor(NATIVE)), "native", "native `cse_…` mention token (no supervisor suffix) ⇒ native");
-eq(windowGrainOf(ctxFor(`unified:${LEGACY}`)), "standing", "a `unified:`-prefixed window token ⇒ standing after the strip");
+eq(windowGrainOf(ctxFor(`unified:${DEGENERATE}`)), "standing", "a `unified:`-prefixed window token ⇒ standing after the strip");
 eq(windowGrainOf(ctxFor(`unified:${TASK}`)), "task", "a `unified:`-prefixed TASK token ⇒ task after the strip");
 eq(windowGrainOf(ctxFor(undefined)), "native", "a blank/unreadable token ⇒ native (full hands, the pre-gate default)");
 eq(windowGrainOf(ctxFor("garbage")), "native", "an unrecognised token ⇒ native");
 
 console.log("2. windowGrainOf primary (oe_grain stamp) precedence:");
-eq(windowGrainOf(ctxFor(LEGACY, "standing")), "standing", "stamp standing + standing token ⇒ standing");
+eq(windowGrainOf(ctxFor(DEGENERATE, "standing")), "standing", "stamp standing + standing token ⇒ standing");
 eq(windowGrainOf(ctxFor(TASK, "task")), "task", "stamp task + task token ⇒ task");
 eq(windowGrainOf(ctxFor(undefined, "standing")), "standing", "stamp standing + BLANK token ⇒ standing (primary honoured; token degradation covered)");
 eq(windowGrainOf(ctxFor(undefined, "task")), "task", "stamp task + BLANK token ⇒ task (primary honoured — the stamp is why a blank token is safe)");
@@ -59,8 +59,8 @@ eq(windowGrainOf(ctxFor(NATIVE, "native")), "native", "stamp native + native tok
 
 console.log("3. windowGrainOf spoof-resistance (fail-closed to narrow):");
 eq(windowGrainOf(ctxFor(PER_CONTAINER, "task")), "standing", "stamp task on a STANDING (per-container) token ⇒ standing (the spoof/bug case, fail-closed)");
-eq(windowGrainOf(ctxFor(LEGACY, "task")), "standing", "stamp task on a STANDING window token ⇒ standing (fail-closed)");
-eq(windowGrainOf(ctxFor(LEGACY, "native")), "standing", "stamp native on a STANDING window token ⇒ standing (a full claim loses to a standing token)");
+eq(windowGrainOf(ctxFor(DEGENERATE, "task")), "standing", "stamp task on a STANDING window token ⇒ standing (fail-closed)");
+eq(windowGrainOf(ctxFor(DEGENERATE, "native")), "standing", "stamp native on a STANDING window token ⇒ standing (a full claim loses to a standing token)");
 eq(windowGrainOf(ctxFor(THREAD_SEAT, "task")), "thread", "stamp task on a THREAD-SEAT token ⇒ thread (Stage T2 — a forged wide claim never re-widens a narrow seat; fail-closed to the token's narrow grain)");
 eq(windowGrainOf(ctxFor(THREAD_SEAT, "thread")), "thread", "stamp thread + thread-seat token ⇒ thread (primary + backstop agree)");
 eq(windowGrainOf(ctxFor(NATIVE, "task")), "native", "stamp task on a PRESENT native (cse_…) token ⇒ native (F2 — narrowed; a task stamp on a real @mention seat is a bug, since a legit worker always rides a t/ token)");
