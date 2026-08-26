@@ -2086,7 +2086,7 @@ export const SCENARIOS: readonly Scenario[] = [
             mustNotMatch: [/could ?n.?t (?:navigate|screenshot|read|open)/i, /no vision model/i, /not armed|capability is not|not available/i],
           }),
           qaReply.text,
-          "browser-QA loop: navigate → screenshot → describe_image({ path }) reports the page heading (OPE43)",
+          "browser-QA loop: navigate → screenshot → describe_image({ kind: \"path\", ref }) reports the page heading (OPE43)",
         );
       }
     },
