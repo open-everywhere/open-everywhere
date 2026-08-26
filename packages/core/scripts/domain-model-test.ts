@@ -1,3 +1,4 @@
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
@@ -141,6 +142,35 @@ async function connect(roles: readonly string[], actor = "admin@example.com") {
 }
 
 {
+  const { registerModelPricing, _resetModelPricingForTest } = await import("../agent/spend/pricing.js");
+  registerModelPricing({ "zai/glm-5.2": { inPerMtok: 1, outPerMtok: 2 } });
+  const admin = await connect(["admin"], "pricing-admin");
+
+  const rUnpriced = await callTool(admin, "set_domain_model", { org, domain: "eng", modelId: "deepseek/deepseek-v4-flash" });
+  ok("an allow-listed but UNPRICED pick still lands", !rUnpriced.isError && rUnpriced.body.ok === true);
+  ok("an unpriced pick is flagged unpriced=true", rUnpriced.body.unpriced === true);
+  ok("an unpriced pick's warning names the model and the $0 consequence", typeof rUnpriced.body.warning === "string" && rUnpriced.body.warning.includes("deepseek/deepseek-v4-flash") && rUnpriced.body.warning.includes("$0"));
+  ok("an unpriced pick is stored like any other", (await getOperationalStore().getDomainModel(org, "eng"))?.modelId === "deepseek/deepseek-v4-flash");
+
+  const rPriced = await callTool(admin, "set_domain_model", { org, domain: "eng", modelId: "zai/glm-5.2" });
+  ok("a PRICED pick lands with no unpriced flag", !rPriced.isError && rPriced.body.ok === true && rPriced.body.unpriced === undefined);
+  ok("a PRICED pick carries no warning", rPriced.body.warning === undefined);
+
+  const rReasoningOnly = await callTool(admin, "set_domain_model", { org, domain: "eng", reasoning: "low" });
+  ok("a reasoning-only pick carries no unpriced flag", !rReasoningOnly.isError && rReasoningOnly.body.unpriced === undefined);
+
+  const priceAudit = (await readAudit({ org })).filter((e) => e.action === "admin.model.set_domain" && e.principalId === "pricing-admin");
+  const unpricedRow = priceAudit.find((e) => (e.detail as { modelId?: string })?.modelId === "deepseek/deepseek-v4-flash");
+  const pricedRow = priceAudit.find((e) => (e.detail as { modelId?: string })?.modelId === "zai/glm-5.2");
+  ok("the audit row for an unpriced pick carries unpriced=true", (unpricedRow?.detail as { unpriced?: boolean } | undefined)?.unpriced === true);
+  ok("the audit row for a priced pick omits the flag", pricedRow !== undefined && (pricedRow.detail as { unpriced?: boolean }).unpriced === undefined);
+
+  await callTool(admin, "clear_domain_model", { org, domain: "eng" });
+  await admin.close();
+  _resetModelPricingForTest();
+}
+
+{
   registerConfig({
     loadBundles: () => [],
     loadBindings: () => [],
@@ -155,6 +185,7 @@ async function connect(roles: readonly string[], actor = "admin@example.com") {
   const admin = await connect(["admin"]);
   const r = await callTool(admin, "set_domain_model", { org, domain: "eng", modelId: "some/unlisted-model" });
   ok("with NO policy configured, any modelId is accepted (permissive envelope)", !r.isError && r.body.ok === true);
+  ok("a pick through the PERMISSIVE envelope is still flagged unpriced", r.body.unpriced === true);
   await callTool(admin, "clear_domain_model", { org, domain: "eng" });
   await admin.close();
   registerConfig({
@@ -279,4 +310,4 @@ function deps(opts: {
 }
 
 rmSync(dir, { recursive: true, force: true });
-console.log(`\n✓ domain model self-serve: ${n} assertions passed (RBAC + SET-time envelope clamp + resolver slotting + fail-soft)\n`);
+console.log(`\n✓ domain model self-serve: ${n} assertions passed (RBAC + SET-time envelope clamp + pricing report + resolver slotting + fail-soft)\n`);

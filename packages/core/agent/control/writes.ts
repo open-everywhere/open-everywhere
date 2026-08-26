@@ -11,6 +11,7 @@ import { siloTier } from "../memory/store.js";
 import { controlPartition } from "../memory/partition.js";
 import { deleteDomainSkill } from "../skills/domain-skills.js";
 import { isModelUsable, reasoningRank } from "../model/policy.js";
+import { modelPricing } from "../spend/pricing.js";
 import { reasoningCeilingForDomain } from "../memory/domain.js";
 import { stampHumanEdit } from "../memory/provenance.js";
 import { resolveApprovalClick, isOrgAdminOnlySpendCap } from "../approvals/flow.js";
@@ -400,10 +401,27 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
             return errorResult(`set_domain_model failed: reasoning "${a.reasoning}" exceeds domain "${a.domain}"'s effective reasoning ceiling "${ceiling}".`);
           }
         }
+        const unpriced = a.modelId !== undefined && modelPricing(a.modelId) === undefined;
         await store().setDomainModel(a.org, a.domain, { modelId: a.modelId, reasoning: a.reasoning }, actor);
         const picked = { ...(a.modelId ? { modelId: a.modelId } : {}), ...(a.reasoning ? { reasoning: a.reasoning } : {}) };
-        await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "admin.model.set_domain", detail: { domain: a.domain, ...picked } });
-        return jsonResult({ ok: true, org: a.org, domain: a.domain, ...picked });
+        await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "admin.model.set_domain", detail: { domain: a.domain, ...picked, ...(unpriced ? { unpriced: true } : {}) } });
+        return jsonResult({
+          ok: true,
+          org: a.org,
+          domain: a.domain,
+          ...picked,
+          ...(unpriced
+            ? {
+                unpriced: true,
+                warning:
+                  `The pick is set, but model "${a.modelId}" has no committed price in this deployment ` +
+                  `(agent/spend/model-pricing.ts, or core's built-in table). Calls on that model add $0 to the ` +
+                  `spend ledger, so domain "${a.domain}"'s turn spend stops counting against any USD cap over it ` +
+                  `until the rate is committed. The cap still sums every other priced row in the scope. Token ` +
+                  `caps are unaffected. Measure the rate (\`npm run probe:models\`) and commit it.`,
+              }
+            : {}),
+        });
       } catch (e) {
         return errorResult(`set_domain_model failed: ${e instanceof Error ? e.message : String(e)}`);
       }
