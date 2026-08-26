@@ -135,7 +135,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   },
   {
     area: "delegation-and-subagents",
-    globs: ["packages/core/agent/tools/spawn_task.ts", "packages/core/agent/tools/spawn_thread_session.ts", "packages/core/agent/tools/delegation_tools.ts", "packages/core/agent/subagents/**"],
+    globs: ["packages/core/agent/tools/spawn_thread_session.ts", "packages/core/agent/tools/delegation_tools.ts", "packages/core/agent/subagents/**"],
     scenarios: ["J-SUP", "S-DM-NOTION", "S-MEM-READ", "J-UNI-X"],
     why: "Each of these pays a delegation round-trip as part of its own proof (S-MEM-READ/S-DM-NOTION need the control-read creds reached only via delegation; J-SUP/J-UNI-X route through a spawned worker). (S-DM-DISCORD retired at OPE-725 — see scenarios.ts.)",
   },
@@ -147,7 +147,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "packages/core/agent/hooks/settlement-flush.ts",
     ],
     scenarios: ["S-TAINT-ROUTE-LIVE", "J-SUP", "S-DM-NOTION", "S-MEM-READ", "J-UNI-X"],
-    why: "All three files fire on every real spawn_task dispatch and settlement, through the same hooks/spawn-taint.ts wiring that calls openTaskWake/installTaskWake (task-wake.ts), addressedWakeThisTurn/noteTaskDispatchedThisTurn (dispatch-origin-signal.ts), and flushDirtyTreeAtTurnEnd/flushSettledMemory/noteTaskDispatched/noteTaskSettled/noteTaskViews (settlement-flush.ts). S-TAINT-ROUTE-LIVE's single-delegated-task arm already drives a real delegated worker through that exact wiring (see its ARM A/D shape in scenarios.ts); J-SUP/S-DM-NOTION/S-MEM-READ/J-UNI-X pay the same delegation round-trip (the delegation-and-subagents area above). A regression in any of these three files breaks the delegated round-trip all five scenarios already require to pass.",
+    why: "All three files fire on every real worker dispatch and settlement, through the same hooks/spawn-taint.ts wiring that calls openTaskWake/installTaskWake (task-wake.ts), addressedWakeThisTurn/noteTaskDispatchedThisTurn (dispatch-origin-signal.ts), and flushDirtyTreeAtTurnEnd/flushSettledMemory/noteTaskDispatched/noteTaskSettled/noteTaskViews (settlement-flush.ts). S-TAINT-ROUTE-LIVE's single-delegated-task arm already drives a real delegated worker through that exact wiring (see its ARM A/D shape in scenarios.ts); J-SUP/S-DM-NOTION/S-MEM-READ/J-UNI-X pay the same delegation round-trip (the delegation-and-subagents area above). A regression in any of these three files breaks the delegated round-trip all five scenarios already require to pass.",
   },
   {
     area: "connector-op-gating",

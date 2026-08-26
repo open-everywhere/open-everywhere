@@ -118,7 +118,6 @@ const mustBeWithheld: readonly [string, string][] = [
   ["create_skill", "durable authoring — persist leg"],
   ["delete_skill", "durable authoring"],
   ["agent", "delegation — the way a restricted seat would launder itself into a full-kit worker"],
-  ["spawn_task", "delegation"],
   ["spawn_thread_session", "delegation"],
   ["browser_navigate", "the runtime-injected wide-hands browser family"],
 ];

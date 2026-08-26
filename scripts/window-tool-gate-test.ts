@@ -1,3 +1,4 @@
+
 import assert from "node:assert/strict";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
 __regDiscord();
@@ -106,16 +107,15 @@ for (const [label, auth] of [["slack channel", slackChan], ["discord guild chann
 }
 
 const dmWithheld = new Set(withheldFromGrain("standing"));
-ok(!dmWithheld.has("spawn_task"), "a standing (DM) seat is not withheld spawn_task BY GRAIN — WINDOW_GATED_TOOLS[spawn_task] includes standing (the token-aware mount gate then withholds it on a DM's native token)");
-ok(WINDOW_GATED_TOOLS.spawn_task.includes("standing"), "spawn_task is grain-gated to standing (manifest) — the mount gate is layered on top, not a table change");
+ok(!dmWithheld.has("agent"), "a standing (DM) seat is not withheld `agent` BY GRAIN — WINDOW_GATED_TOOLS[agent] includes standing (the seat predicate then withholds it on a DM's native token)");
+ok(WINDOW_GATED_TOOLS.agent.includes("standing"), "`agent` is grain-gated to standing (manifest) — the mount predicate is layered on top, not a table change");
 const WIDE_HANDS_11 = ["bash", "glob", "grep", "read_file", "write_file", "web_fetch", "checkout_repo", "open_pull_request", "post_file", "create_skill", "delete_skill"];
 for (const wide of WIDE_HANDS_11) {
   ok(dmWithheld.has(wide), `a standing (DM) seat DROPS ${wide} (withheld from grain standing)`);
 }
-ok(dmWithheld.has("complete_task"), "complete_task (task-only) is also absent from a standing DM seat");
 ok(dmWithheld.has("complete_thread"), "complete_thread (thread-only) is also absent from a standing DM seat");
 ok(dmWithheld.has("return_result"), "return_result (task-only, one-shot) is also absent from a standing DM seat");
-eq(dmWithheld.size, WIDE_HANDS_11.length + 3, "a standing (DM) seat withholds exactly the 11 wide-hands tools + complete_task + complete_thread + return_result");
+eq(dmWithheld.size, WIDE_HANDS_11.length + 2, "a standing (DM) seat withholds exactly the 11 wide-hands tools + complete_thread + return_result");
 
 console.log("4. auditWindowToolGate (turn.tool_gated row):");
 await auditWindowToolGate({ org: "default", domain: "payments", grain: "standing", withheld: [], wakeId: "w-empty", sessionId: "s-empty" });

@@ -96,14 +96,14 @@ firesWith(
   "flag-OFF (injected): a wide-hands tool missing the native grain FAILS under the disarmed Stage-C matrix",
 );
 firesWith(
-  checkWindowGateManifest([{ name: "spawn_task", source: wrapped("spawn_task") }], new Map([["spawn_task", ""]]), [], g({ spawn_task: ["task"] }), u()),
-  'spawn_task"] must be exactly ["standing"]',
-  "spawn_task scoped to a non-standing grain FAILS (no recursive spawn)",
+  checkWindowGateManifest([{ name: "spawn_thread_session", source: wrapped("spawn_thread_session") }], new Map([["spawn_thread_session", ""]]), [], g({ spawn_thread_session: ["task"] }), u()),
+  'spawn_thread_session"] must be exactly ["standing"]',
+  "spawn_thread_session scoped to a non-standing grain FAILS (no recursive thread trees)",
 );
 firesWith(
-  checkWindowGateManifest([{ name: "complete_task", source: wrapped("complete_task") }], new Map([["complete_task", ""]]), [], g({ complete_task: ["standing"] }), u()),
-  'complete_task"] must be exactly ["task"]',
-  "complete_task leaking onto a standing seat FAILS",
+  checkWindowGateManifest([{ name: "complete_thread", source: wrapped("complete_thread") }], new Map([["complete_thread", ""]]), [], g({ complete_thread: ["standing"] }), u()),
+  'complete_thread"] must be exactly ["thread"]',
+  "complete_thread leaking onto a standing seat FAILS",
 );
 
 firesWith(
@@ -240,20 +240,18 @@ firesWith(
   "an app shim re-exporting a non-existent core file FAILS",
 );
 
-ok(JSON.stringify([...WINDOW_GATED_TOOLS.spawn_task]) === JSON.stringify(["standing"]), "spawn_task is standing-only");
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.spawn_thread_session]) === JSON.stringify(["standing"]), "spawn_thread_session is standing-only (window-only mint; no recursive thread trees)");
-ok(JSON.stringify([...WINDOW_GATED_TOOLS.complete_task]) === JSON.stringify(["task"]), "complete_task is task-only");
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.complete_thread]) === JSON.stringify(["thread"]), "complete_thread is thread-only");
 ok(JSON.stringify([...(WINDOW_GATED_TOOLS.agent ?? [])]) === JSON.stringify(["standing", "thread"]) && !WINDOW_UNGATED_TOOLS.has("agent"), "agent is grain-gated to standing+thread (a gated row again since #96; the disableTool() sentinel removes eve's built-in and delegation_tools.ts re-provides it per grain)");
 ok(JSON.stringify([...(WINDOW_GATED_TOOLS.stop_task ?? [])]) === JSON.stringify(["standing", "thread"]) && !WINDOW_UNGATED_TOOLS.has("stop_task"), "stop_task (OPE-730) carries agent's own matrix — only a seat that can delegate can un-delegate, and a task worker leaf never reaches the cancel door");
 ok([...fullKit()].sort().join(",") === "task", "fullKit() = task-only — the ARMED shipped default since OPE-370 (default==prod); the flag-OFF Stage-C widening to task+native is pinned by the injected crafted case above");
 ok(
-  withheldFromGrain("standing").includes("bash") && withheldFromGrain("standing").includes("complete_task") && withheldFromGrain("standing").includes("complete_thread"),
-  "a standing seat withholds the wide-hands set + complete_task + complete_thread",
+  withheldFromGrain("standing").includes("bash") && withheldFromGrain("standing").includes("return_result") && withheldFromGrain("standing").includes("complete_thread"),
+  "a standing seat withholds the wide-hands set + return_result + complete_thread",
 );
 ok(
-  withheldFromGrain("native").length === 18,
-  "under the ARMED shipped default (OPE-370) a native seat withholds the delegation/lifecycle set (agent/stop_task/spawn_task/spawn_thread_session/complete_task/complete_thread/return_result) AND the 11 wide-hands tools — the T2 narrowing is now the default posture (flag-off, native regains wide hands: the Stage-C byte-identical state, exercised via the injected crafted case above).",
+  withheldFromGrain("native").length === 16,
+  "under the ARMED shipped default (OPE-370) a native seat withholds the delegation/lifecycle set (agent/stop_task/spawn_thread_session/complete_thread/return_result) AND the 11 wide-hands tools — the T2 narrowing is now the default posture (flag-off, native regains wide hands: the Stage-C byte-identical state, exercised via the injected crafted case above).",
 );
 
 firesWith(

@@ -80,22 +80,20 @@ const WIDE_HANDS = ["bash", "glob", "grep", "read_file", "write_file", "web_fetc
 for (const name of WIDE_HANDS) {
   eq(WINDOW_GATED_TOOLS[name], ["task"], `"${name}" mounts on the one-shot task worker only, delegation armed (the shipped default — withheld from standing AND native)`);
 }
-eq(WINDOW_GATED_TOOLS.spawn_task, ["standing"], "spawn_task is standing-only (no recursive spawn; native has no window to mint into)");
 eq(WINDOW_GATED_TOOLS.spawn_thread_session, ["standing"], "spawn_thread_session is standing-only (window-only mint; no recursive thread trees)");
-eq(WINDOW_GATED_TOOLS.complete_task, ["task"], "complete_task is task-only (only a worker owns a thread)");
 eq(WINDOW_GATED_TOOLS.complete_thread, ["thread"], "complete_thread is thread-only (only a thread seat owns a thread)");
 eq(WINDOW_GATED_TOOLS.return_result, ["task"], "return_result is task-only (only a one-shot task returns a result)");
 eq(WINDOW_GATED_TOOLS.agent, ["standing", "thread"], "agent is grain-gated to the conversational-root seats (standing+thread) — absent on native, and NEVER on a task worker leaf");
 eq(WINDOW_GATED_TOOLS.stop_task, ["standing", "thread"], "stop_task is grain-gated to the conversational-root seats (standing+thread) — the seats that have a worker to stand down");
-eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 7, "the gated table is EXACTLY the 11 wide-hands tools + the 7 delegation/lifecycle tools (agent/stop_task/spawn_task/spawn_thread_session/complete_task/complete_thread/return_result) — nothing else narrows");
-eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_task", "complete_thread", "return_result"].sort(), "standing withholds the 11 wide-hands tools + complete_task + complete_thread + return_result (it KEEPS agent, stop_task and the spawners — a standing seat is what delegates)");
+eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 5, "the gated table is EXACTLY the 11 wide-hands tools + the 5 delegation/lifecycle tools (agent/stop_task/spawn_thread_session/complete_thread/return_result) — nothing else narrows");
+eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_thread", "return_result"].sort(), "standing withholds the 11 wide-hands tools + complete_thread + return_result (it KEEPS agent, stop_task and the spawner — a standing seat is what delegates)");
 
 {
   const OFF = { wide: ["task", "native"] as const, armed: false };
   const ON = { wide: ["task"] as const, armed: true };
   eq(memoryRecallRouteFor("task", OFF.wide, OFF.armed), "file-tools", "recall/flag-off: a task worker reads its own memory directly");
   eq(memoryRecallRouteFor("native", OFF.wide, OFF.armed), "file-tools", "recall/flag-off: a native @mention seat keeps its wide hands, so it reads directly");
-  eq(memoryRecallRouteFor("standing", OFF.wide, OFF.armed), "spawn_task", "recall/flag-off: a standing seat has no file tools — it delegates via spawn_task (the verb it mounts flag-off)");
+  eq(memoryRecallRouteFor("standing", OFF.wide, OFF.armed), "none", "recall/flag-off: a standing seat has no file tools AND no delegation verb (`agent` is flag-gated) — the index must say so, not point at a tool");
   eq(memoryRecallRouteFor("thread", OFF.wide, OFF.armed), "none", "recall/flag-off: a thread seat has neither file tools nor a delegation verb — the index must say so, not point at a tool");
   eq(memoryRecallRouteFor("task", ON.wide, ON.armed), "file-tools", "recall/flag-on: the one-shot worker is the sole seat with file tools");
   eq(memoryRecallRouteFor("standing", ON.wide, ON.armed), "agent", "recall/flag-on: a standing seat delegates the lookup via `agent` — THE OPE-121 route");
@@ -103,7 +101,7 @@ eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_task", "
   eq(memoryRecallRouteFor("native", ON.wide, ON.armed), "none", "recall/flag-on: a NATIVE @mention seat can neither read memory nor delegate (T5 gap — pinned so the regression is visible, not silent)");
 
   eq(memoryRecallRouteFor("standing", ON.wide, ON.armed, false), "none", "recall/seat: a standing seat with NO WINDOW (a DM root) is `none`, not `agent` — the verb's window wall refuses there every time");
-  eq(memoryRecallRouteFor("standing", OFF.wide, OFF.armed, false), "none", "recall/seat: …and flag-off the same seat is `none`, not `spawn_task` (both verbs share the window requirement)");
+  eq(memoryRecallRouteFor("standing", OFF.wide, OFF.armed, false), "none", "recall/seat: …and flag-off the same seat is `none` for BOTH reasons at once (no window AND no armed verb)");
   eq(memoryRecallRouteFor("thread", ON.wide, ON.armed, false), "none", "recall/seat: a thread seat with no window token is `none` too — the seat half is grain-independent");
   eq(memoryRecallRouteFor("task", ON.wide, ON.armed, false), "file-tools", "recall/seat: a worker's OWN file tools are unaffected — the seat half only ever downgrades a DELEGATION answer");
   eq(memoryRecallRouteFor("standing", ON.wide, ON.armed, true), memoryRecallRouteFor("standing", ON.wide, ON.armed), "recall/seat: the parameter DEFAULTS TRUE — every ctx-less caller keeps today's answer byte-for-byte");
@@ -121,15 +119,15 @@ eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_task", "
 }
 eq(
   [...withheldFromGrain("task")].sort(),
-  ["agent", "stop_task", "complete_thread", "spawn_task", "spawn_thread_session"].sort(),
-  "task (the worker) withholds agent, stop_task and the standing-only spawners + complete_thread (it has its own wide hands + complete_task + return_result; a worker leaf must not delegate recursively — since #96 that is ABSENCE, not an execute refusal — and it never stands a sibling down)",
+  ["agent", "stop_task", "complete_thread", "spawn_thread_session"].sort(),
+  "task (the worker) withholds agent, stop_task, the standing-only spawner and complete_thread (it has its own wide hands + return_result; a worker leaf must not delegate recursively — since #96 that is ABSENCE, not an execute refusal — and it never stands a sibling down)",
 );
 eq(
   [...withheldFromGrain("native")].sort(),
-  [...WIDE_HANDS, "agent", "stop_task", "complete_task", "complete_thread", "return_result", "spawn_task", "spawn_thread_session"].sort(),
+  [...WIDE_HANDS, "agent", "stop_task", "complete_thread", "return_result", "spawn_thread_session"].sort(),
   "native withholds agent, stop_task and the rest of the delegation/lifecycle set AND the wide hands — the T2 narrowing, which since OPE-370 is the shipped default (disarm delegation and native keeps its wide hands again, the byte-identical Stage-C state)",
 );
-eq([...withheldFromGrain("thread")].sort(), [...WIDE_HANDS, "complete_task", "return_result", "spawn_task", "spawn_thread_session"].sort(), "a thread seat withholds the wide hands + complete_task + return_result + the spawners (it keeps the conversational kit + agent + complete_thread)");
+eq([...withheldFromGrain("thread")].sort(), [...WIDE_HANDS, "return_result", "spawn_thread_session"].sort(), "a thread seat withholds the wide hands + return_result + the spawner (it keeps the conversational kit + agent + complete_thread)");
 
 console.log("1. presence/absence matrix (windowGated):");
 for (const [name, grains] of Object.entries(WINDOW_GATED_TOOLS)) {
@@ -180,7 +178,7 @@ _resetWindowGateAuditForTest();
   const mk = () => ctxOf(STANDING_TOKEN, { sessionId, wakeId });
   await resolveWindowGated(windowGated("bash", stubEntry("bash")), mk());
   await resolveWindowGated(windowGated("checkout_repo", stubEntry("checkout_repo")), mk());
-  await resolveWindowGated(windowGated("complete_task", stubEntry("complete_task")), mk());
+  await resolveWindowGated(windowGated("return_result", stubEntry("return_result")), mk());
   const rows = await rowsFor(sessionId);
   eq(rows.length, 1, "many gated resolvers on ONE session ⇒ exactly one turn.tool_gated row");
   eq(await countRows(), base + 1, "…and exactly one row was ADDED overall");
@@ -197,9 +195,9 @@ _resetWindowGateAuditForTest();
   eq((await rowsFor("sess-audit-2")).length, 1, "a second gated session emits its own row");
 
   const beforeFull = await countRows();
-  await resolveWindowGated(windowGated("spawn_task", stubEntry("spawn_task")), grainCtx.task());
-  eq(await countRows(), beforeFull, "withholding spawn_task from a TASK worker emits NO resolve-time row (task is a wide-hands grain — confinement, not narrowing)");
-  await resolveWindowGated(windowGated("spawn_task", stubEntry("spawn_task")), grainCtx.native());
+  await resolveWindowGated(windowGated("spawn_thread_session", stubEntry("spawn_thread_session")), grainCtx.task());
+  eq(await countRows(), beforeFull, "withholding spawn_thread_session from a TASK worker emits NO resolve-time row (task is a wide-hands grain — confinement, not narrowing)");
+  await resolveWindowGated(windowGated("spawn_thread_session", stubEntry("spawn_thread_session")), grainCtx.native());
   eq(await countRows(), beforeFull + 1, "a NATIVE seat DOES emit one resolve-time row, delegation armed — it is narrowed of the wide hands, and that narrowing is an auditable event");
 
   await resolveWindowGated(windowGated("bash", stubEntry("bash")), ctxOf(PER_CONTAINER_TOKEN, { sessionId: "sess-audit-3" }));
@@ -226,8 +224,8 @@ _resetWindowGateAuditForTest();
   const attempt = attemptRow!.detail as Record<string, unknown>;
   eq(attempt.withheld, ["bash"], "the attempt row names the ONE tool attempted — never its input");
   eq(attempt.wakeId, "wake-backstop", "the attempt row is wakeId-stamped");
-  const ct = (await resolveWindowGated(windowGated("complete_task", stubEntry("complete_task")), grainCtx.task())) as GatedToolEntry;
-  await assert.rejects(() => Promise.resolve(ct.execute({}, grainCtx.native())), /not available on a native session/, "complete_task's backstop refuses a native-grain execute");
+  const ct = (await resolveWindowGated(windowGated("return_result", stubEntry("return_result")), grainCtx.task())) as GatedToolEntry;
+  await assert.rejects(() => Promise.resolve(ct.execute({}, grainCtx.native())), /not available on a native session/, "return_result's backstop refuses a native-grain execute");
   n++;
 }
 
@@ -476,11 +474,11 @@ console.log("6. mount refresh on a deployment change (OPE-632):");
         shouldMount,
         `live-read/windowGatedKit: …and the KIT wrapper agrees for a framework-named wide-hands tool (web_fetch) on the same seat`,
       );
-      const fixed = windowGatedKit("test_live_fixed", { complete_task: stubEntry("complete_task") });
+      const fixed = windowGatedKit("test_live_fixed", { return_result: stubEntry("return_result") });
       eq(
         (await resolveWindowGated(fixed, grainCtx.native())) === null,
         true,
-        `live-read/negative control: complete_task is a FIXED ["task"] row and stays ABSENT on a native seat with delegation.oneshotAgent=${armed}`,
+        `live-read/negative control: return_result is a FIXED ["task"] row and stays ABSENT on a native seat with delegation.oneshotAgent=${armed}`,
       );
     }
   } finally {

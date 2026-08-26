@@ -8,10 +8,8 @@ import {
   type ThreadOwnershipStore,
 } from "../agent/channels/thread-ownership.js";
 import { taskWindowId, threadSeatWindowId, formatWindowToken } from "../agent/channels/window-key.js";
-import completeTask, { isOwnTokenTask } from "../agent/tools/complete_task.js";
 import completeThread, { isOwnTokenThreadSeat } from "../agent/tools/complete_thread.js";
 import { resolveWindowGated } from "../agent/access/window-gated.js";
-import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -81,29 +79,7 @@ await recordThreadOwner(stale, "acme", ref, OWNER, "2026-01-01T00:00:00Z");
 await stale.putThreadOwner("acme", "slack/C2", "999", taskTokenFor("slack/C2", "999", 3), new Date(Date.parse("2026-01-01T00:00:00Z") + THREAD_OWNER_TTL_MS + 1000).toISOString(), THREAD_OWNER_TTL_MS);
 ok((await resolveThreadOwner(stale, "acme", ref)) === null, "an ownership row past its TTL is pruned on the next same-org write (bounded table)");
 
-console.log("3. complete_task task-only guard:");
-overrideSettingsForTest({ delegation: { oneshotAgent: false } });
-const taskCtx = { channel: { kind: "unified", continuationToken: "unified:oe-dom:payments:win:t/slack/C9/171.5:oe-sup:g3" }, session: { auth: { current: { attributes: {} } } } };
-eq(
-  await resolveWindowGated(completeTask, { channel: { kind: "unified", continuationToken: "unified:oe-dom:payments:oe-sup:g3" }, session: { auth: { current: { attributes: {} } } } } as never),
-  null,
-  "a STANDING seat doesn't even resolve complete_task (structurally absent)",
-);
-const tool = (await resolveWindowGated(completeTask, taskCtx as never)) as { execute: (input: { summary?: string }, ctx: unknown) => Promise<unknown> };
-await assert.rejects(
-  () => tool.execute({}, { channel: { kind: "unified", continuationToken: "unified:oe-dom:payments:oe-sup:g3" }, session: {} }),
-  /not held by this conversational seat/,
-  "a STANDING seat (non-task token) is refused at execute — on a delegating window seat the OPE-301 lean arm speaks first, same fail-closed wall",
-);
-n++;
-await assert.rejects(
-  () => tool.execute({}, { channel: { kind: "unified", continuationToken: "unified:oe-dom:payments:oe-sup:g3" }, session: { auth: { current: { attributes: { oe_grain: "task" } } } } }),
-  /not held by this conversational seat/,
-  "a `task` stamp on a standing token still refuses (stamp spoof fails closed to narrow; the lean arm answers on the narrowed seat)",
-);
-n++;
-
-console.log("4. OPE-738 completer own-token guards (channel-less tool-execute contexts):");
+console.log("3. OPE-738 completer own-token guard (channel-less tool-execute contexts):");
 const seatToken = formatWindowToken({ domain: "payments", windowId: threadSeatWindowId("slack/C9", "171.5"), generation: 3 });
 const taskToken = taskTokenFor("slack/C9", "171.5", 3);
 const standingToken = "oe-dom:payments:oe-sup:g3";
@@ -116,21 +92,7 @@ ok(isOwnTokenThreadSeat(execCtx(seatToken, "thread")), "complete_thread's guard 
 ok(!isOwnTokenThreadSeat(execCtx(taskToken, "task")), "…and NO to a TASK worker's stamp (negative control — the guard is not answering yes to everything)");
 ok(!isOwnTokenThreadSeat(execCtx(standingToken, "standing")), "…and NO to a STANDING window seat's stamp");
 ok(!isOwnTokenThreadSeat(execCtx(undefined, "thread")), "…and NO when neither identity channel yields a token (fail-closed)");
-ok(isOwnTokenTask(execCtx(taskToken, "task")), "complete_task's guard says YES to a task worker that carries only the host stamp");
-ok(!isOwnTokenTask(execCtx(seatToken, "thread")), "…and NO to a THREAD SEAT's stamp (negative control)");
-ok(!isOwnTokenTask(execCtx(standingToken, "standing")), "…and NO to a STANDING window seat's stamp");
-ok(!isOwnTokenTask(execCtx(undefined, "task")), "…and NO when neither identity channel yields a token (fail-closed)");
 
-const taskEntry = (await resolveWindowGated(completeTask, execCtx(taskToken, "task"))) as {
-  execute: (input: { summary?: string }, ctx: unknown) => Promise<unknown>;
-};
-ok(taskEntry !== null && typeof taskEntry?.execute === "function", "complete_task RESOLVES on a channel-less task-grain context");
-await assert.rejects(
-  () => taskEntry.execute({}, execCtx(taskToken, "task")),
-  /couldn't resolve this task's thread to release/,
-  "complete_task gets PAST its own-token guard on a real task worker's context (it fails later, on the absent wake id)",
-);
-n++;
 const threadEntry = (await resolveWindowGated(completeThread, execCtx(seatToken, "thread"))) as {
   execute: (input: { summary?: string }, ctx: unknown) => Promise<unknown>;
 };

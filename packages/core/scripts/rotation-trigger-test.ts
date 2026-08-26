@@ -204,7 +204,6 @@ const OFF = {
 {
   const mustNotRotate = [
     "packages/core/agent/routines/job.ts",
-    "packages/core/agent/tools/spawn_task.ts",
     "packages/core/agent/tools/delegation_tools.ts",
     "packages/core/agent/channels/oneshot-wake.ts",
   ];

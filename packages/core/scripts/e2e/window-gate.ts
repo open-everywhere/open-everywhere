@@ -156,9 +156,9 @@ async function f3(): Promise<void> {
   }
   const dmWithheld = new Set(withheldFromGrain("standing"));
   const missingWide = WIDE_HANDS.filter((w) => !dmWithheld.has(w));
-  const keepsSpawn = !dmWithheld.has("spawn_task");
-  if (missingWide.length > 0 || !keepsSpawn) {
-    return record("F3", "FAIL", `standing DM kit wrong: wide-hands not withheld=[${missingWide.join(",")}], keeps spawn_task=${keepsSpawn}`);
+  const keepsDelegation = !dmWithheld.has("agent");
+  if (missingWide.length > 0 || !keepsDelegation) {
+    return record("F3", "FAIL", `standing DM kit wrong: wide-hands not withheld=[${missingWide.join(",")}], keeps agent=${keepsDelegation}`);
   }
 
   let legB = "leg B (live standing-token drive) skipped (no injectable window)";
@@ -175,7 +175,7 @@ async function f3(): Promise<void> {
     legB = `leg B drive error (${(e as Error).message}) — Leg A remains the binding proof`;
   }
 
-  record("F3", "PASS", `root DM seat NARROWED via the REAL ingress stamp — buildSlackAuth(im) stamps oe_grain=standing; windowGrainOf ⇒ standing (the STAMP narrows, not the token — which is why the verdict survived OPE-351 stage 2 re-seating a DM from a native token onto a real DM WINDOW token); the 12 wide-hands are withheld and spawn_task is kept BY GRAIN (table level). NB spawn_task's token-aware mount gate then keeps it structurally ABSENT on a DM seat — that exclusion is now stated POSITIVELY (by what a DM window token IS) rather than by the absence of a window token, so a first-classed DM still holds no thread-owning spawn: it delegates as a one-shot leaf via \`agent\`, and — the point of stage 2 — is WOKEN with the result (pinned in window-capability-test.ts P0-a(1b)). This exercises the actual production stamp (the former documented caveat is now a real pass). ${legB}. Not covered here: a fully-live DM eve session (needs a real Slack DM drive) — pinned by window-tool-gate-test.ts §3b (all surfaces) + the prod pack.`);
+  record("F3", "PASS", `root DM seat NARROWED via the REAL ingress stamp — buildSlackAuth(im) stamps oe_grain=standing; windowGrainOf ⇒ standing (the STAMP narrows, not the token — which is why the verdict survived OPE-351 stage 2 re-seating a DM from a native token onto a real DM WINDOW token); the 12 wide-hands are withheld and \`agent\` is kept BY GRAIN (table level). NB \`agent\`'s seat predicate (canDelegateFromSeat) then keeps it structurally ABSENT on a DM that is still on a NATIVE token — such a seat has no window to mint a child into. A DM re-seated onto a real DM WINDOW token by stage 2 DOES hold it: it delegates as a one-shot leaf and — the point of stage 2 — is WOKEN with the result (pinned in window-capability-test.ts P0-a(1b)). This exercises the actual production stamp (the former documented caveat is now a real pass). ${legB}. Not covered here: a fully-live DM eve session (needs a real Slack DM drive) — pinned by window-tool-gate-test.ts §3b (all surfaces) + the prod pack.`);
 }
 
 async function f4(): Promise<void> {

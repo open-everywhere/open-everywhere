@@ -21,9 +21,9 @@ const eq = (a: unknown, b: unknown, label: string) => {
 
 registerSyntheticConfig({ unified: true });
 
-console.log("1. mount/skip parity for the five OPE-1052 names:");
+console.log("1. mount/skip parity for the four OPE-1052 names:");
 {
-  for (const name of ["edit_reply", "stop_task", "spawn_task", "complete_thread", "set_dm_delivery"]) {
+  for (const name of ["edit_reply", "stop_task", "complete_thread", "set_dm_delivery"]) {
     ok(LEAN_SEAT_TOOLS.has(name), `sanity: ${name} is on the shipped lean roster`);
   }
 
@@ -37,7 +37,7 @@ console.log("1. mount/skip parity for the five OPE-1052 names:");
   ok(realEditReplyEntry !== null, "sanity: the shipped edit_reply dynamic resolves on this ctx");
   eq(mountedEditReply!.description, realEditReplyEntry!.description, "edit_reply's mounted description is the SHIPPED definition's, not a re-typed approximation");
 
-  for (const name of ["stop_task", "spawn_task", "complete_thread", "set_dm_delivery"]) {
+  for (const name of ["stop_task", "complete_thread", "set_dm_delivery"]) {
     ok(!(name in toolset), `${name} is not mounted on the unified standing seat (real mount-predicate fact)`);
     ok(skipped.includes(name), `🔴 negative control: ${name}'s absence is EXPLICIT (reported via onSkip), not a silent omission`);
   }
@@ -64,4 +64,4 @@ console.log("2. the drift guard fires on a roster name this builder does not kno
   ok(!mutable.has(bogusName), "cleanup: the roster is restored to its shipped membership");
 }
 
-console.log(`\n✓ offline-seat-roster-parity (OPE-1052): ${n} assertions passed (edit_reply/stop_task/spawn_task/complete_thread/set_dm_delivery are all resolved from the shipped roster, and a future un-wired name fails loud instead of silently under-mounting)`);
+console.log(`\n✓ offline-seat-roster-parity (OPE-1052): ${n} assertions passed (edit_reply/stop_task/complete_thread/set_dm_delivery are all resolved from the shipped roster, and a future un-wired name fails loud instead of silently under-mounting)`);

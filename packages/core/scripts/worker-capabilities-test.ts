@@ -69,7 +69,7 @@ const withFullKit = (kit: readonly WindowGrain[]): Record<string, readonly Windo
   Object.fromEntries(
     Object.entries(WINDOW_GATED_TOOLS).map(([name, grains]) => [
       name,
-      ["agent", "spawn_task", "spawn_thread_session", "complete_task", "complete_thread", "return_result"].includes(name) ? grains : kit,
+      ["agent", "spawn_thread_session", "complete_thread", "return_result"].includes(name) ? grains : kit,
     ]),
   );
 for (const grain of ["standing", "thread"] as const) {
@@ -148,19 +148,9 @@ for (const [label, block] of [
   ["the SYNC standing prompt with no async verb", renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent")],
   ["the BACKGROUND standing prompt", backgroundBlock],
   ["the BACKGROUND thread prompt", backgroundThreadBlock],
-  ["the SYNC `spawn_task` prompt (delegation.oneshotAgent disarmed)", renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "spawn_task")],
-  [
-    "the BACKGROUND `spawn_task` prompt",
-    renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "spawn_task", undefined, undefined, true),
-  ],
 ] as const) {
   ok(block.includes(SHARED_FS_SENTENCE), `🔴 OPE-584: ${label} carries the shared-filesystem sentence VERBATIM — one mechanism, one sentence, every delegating prompt`);
 }
-
-ok(
-  renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "spawn_task").includes("`spawn_task`"),
-  "the spawn_task render names its OWN verb — without this the two entries above could be passing on an `agent` paragraph",
-);
 
 ok(/BLOCKS this turn/.test(standingBlock), "🔴 the sync prompt still states the BLOCKING return shape — the shared-filesystem line is an addition, never a replacement");
 ok(/does NOT block/.test(backgroundBlock), "…and the background prompt still states the non-blocking one");
@@ -199,8 +189,6 @@ for (const [label, block] of [
   ["the SYNC standing prompt with no async verb", renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent")],
   ["the BACKGROUND standing prompt", backgroundBlock],
   ["the BACKGROUND thread prompt", backgroundThreadBlock],
-  ["the SYNC `spawn_task` prompt (delegation.oneshotAgent disarmed)", renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "spawn_task")],
-  ["the BACKGROUND `spawn_task` prompt", renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "spawn_task", undefined, undefined, true)],
 ] as const) {
   ok(block.includes(PERMISSION_STEER), `🔴 OPE-651: ${label} carries the permission steer VERBATIM — a seat must not pre-empt a gate it does not hold`);
 }

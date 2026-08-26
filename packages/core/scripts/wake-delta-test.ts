@@ -74,7 +74,7 @@ ok(formatMemoryDelta([]) === null, "formatter: empty pointer list → null (noth
   ok(content("file-tools").includes("re-read a path with your file tools"), "delta route file-tools: names the file tools");
   ok(index("file-tools").includes("re-read the relevant path"), "index-delta route file-tools: names a plain re-read");
 
-  for (const [route, verb] of [["agent", "`agent`"], ["spawn_task", "`spawn_task`"]] as const) {
+  for (const [route, verb] of [["agent", "`agent`"]] as const) {
     const c = content(route);
     const i = index(route);
     ok(c.includes("this seat has no file tools") && c.includes(verb), `delta route ${route}: disowns the file tools and names ${verb}`);

@@ -14,9 +14,7 @@ export const WORKER_INDEX_MACHINERY: ReadonlySet<string> = new Set(["sandbox_too
 export const WORKER_INDEX_LIFECYCLE: ReadonlySet<string> = new Set([
   "agent",
   "stop_task",
-  "spawn_task",
   "spawn_thread_session",
-  "complete_task",
   "complete_thread",
   "return_result",
   "task_peek",
@@ -205,7 +203,7 @@ const SHARED_FILESYSTEM_LINE =
 const DO_NOT_PRE_EMPT_THE_GATE =
   "Permission works the same way. Do not refuse an ask because you judge the person is not allowed it, or because the answer looks internal. You do not hold these verbs, so you do not hold their gates: a verb that needs standing checks it when the worker runs it, and refuses with a reason the person can act on. A refusal you write instead never reaches that gate, so the person gets your guess in place of the real reason. Route the ask, let the verb answer, and relay what it says — its refusal included.";
 
-function delegationReturnShape(route: "agent" | "spawn_task", asyncVerb: "spawn_thread_session" | undefined, backgroundTasks: boolean): string {
+function delegationReturnShape(route: "agent", asyncVerb: "spawn_thread_session" | undefined, backgroundTasks: boolean): string {
   if (!backgroundTasks) {
     const blocking = asyncVerb
       ? `\`${route}\` runs the worker and BLOCKS this turn until it answers — right for short work the person is waiting on, wrong for anything long, because nothing else in this room is delivered while you wait. For work that will take a while, use \`${asyncVerb}\`: it mints a durable seat that runs alongside you and reports back on its own.`
@@ -257,7 +255,7 @@ export function renderWorkerCapabilityIndex(
     "worker can see its own kit and you cannot, so naming a verb for it is a guess at a list that",
     "moves. Give it the context it needs in the brief itself — it does not share your backscroll.",
     "",
-    route === "agent" || route === "spawn_task" ? delegationReturnShape(route, asyncVerb, backgroundTasks) : "",
+    route === "agent" ? delegationReturnShape(route, asyncVerb, backgroundTasks) : "",
     "",
     "And never say you cannot do something that a worker can. Route it, say you have routed it, and",
     "come back with the answer. Routed work is NOT done until the worker reports back: acknowledge",

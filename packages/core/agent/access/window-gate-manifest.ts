@@ -24,9 +24,7 @@ export const WINDOW_GATED_TOOLS: Readonly<Record<string, readonly WindowGrain[]>
   get delete_skill() { return fullKit(); },
   agent: ["standing", "thread"],
   stop_task: ["standing", "thread"],
-  spawn_task: ["standing"],
   spawn_thread_session: ["standing"],
-  complete_task: ["task"],
   complete_thread: ["thread"],
   return_result: ["task"],
 };
@@ -125,7 +123,7 @@ export function withheldFromGrain(grain: WindowGrain): string[] {
   return Object.keys(WINDOW_GATED_TOOLS).filter((name) => !WINDOW_GATED_TOOLS[name].includes(grain));
 }
 
-export type MemoryRecallRoute = "file-tools" | "agent" | "spawn_task" | "none";
+export type MemoryRecallRoute = "file-tools" | "agent" | "none";
 
 export function memoryRecallRouteFor(
   grain: WindowGrain,
@@ -134,9 +132,8 @@ export function memoryRecallRouteFor(
   canDelegate: boolean = true,
 ): MemoryRecallRoute {
   if (wideHandsGrains.includes(grain)) return "file-tools";
-  if (!canDelegate) return "none";
-  const delegator = armed ? "agent" : "spawn_task";
-  return WINDOW_GATED_TOOLS[delegator].includes(grain) ? delegator : "none";
+  if (!canDelegate || !armed) return "none";
+  return WINDOW_GATED_TOOLS.agent.includes(grain) ? "agent" : "none";
 }
 
 export const JOB_WAKE_TOOLS: ReadonlySet<string> = new Set([
@@ -261,7 +258,7 @@ export function checkWindowGateManifest(
   }
 
   for (const [name, grains] of Object.entries(gated)) {
-    if (name === "spawn_task" || name === "spawn_thread_session") {
+    if (name === "spawn_thread_session") {
       if (grainKey(grains) !== "standing") {
         problems.push(`WINDOW_GATED_TOOLS["${name}"] must be exactly ["standing"] (a window-only spawner: no recursive spawn from a task/native/thread seat) — got [${grains.join(", ")}]`);
       }
@@ -274,10 +271,6 @@ export function checkWindowGateManifest(
         problems.push(
           `WINDOW_GATED_TOOLS["stop_task"] must be exactly ["standing", "thread"] (the conversational-root seats that delegate are the only ones with a worker to stand down; NEVER task — a worker leaf delegated nothing and must not reach the cancel door for a sibling) — got [${grains.join(", ")}]`,
         );
-      }
-    } else if (name === "complete_task") {
-      if (grainKey(grains) !== "task") {
-        problems.push(`WINDOW_GATED_TOOLS["complete_task"] must be exactly ["task"] (only a task worker owns a thread) — got [${grains.join(", ")}]`);
       }
     } else if (name === "complete_thread") {
       if (grainKey(grains) !== "thread") {

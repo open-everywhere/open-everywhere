@@ -89,7 +89,11 @@ export function _resetWindowGateAuditForTest(): void {
 
 function refusalFor(name: string, grain: WindowGrain): string {
   if (grain === "standing") {
-    return `${name} is not available on a standing (always-on watcher) seat — hand the work to spawn_task; the worker owns the thread with the full toolset.`;
+    return (
+      `${name} is not available on a standing (always-on watcher) seat — a worker runs it with ` +
+      "the full toolset. Hand it to one if this seat holds a delegation verb; if it holds none, say " +
+      "so rather than trying."
+    );
   }
   return `${name} is not available on a ${grain} session.`;
 }

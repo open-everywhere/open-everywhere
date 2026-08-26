@@ -70,7 +70,7 @@ ok(posture("standing", true, true) === "full", "a FIRE is never lean — fires a
 for (const name of ["reply", "no_reply", "react", "update_status"]) {
   ok(allowedOnLeanSeat(name), `the lean roster keeps the speak verb ${name}`);
 }
-for (const name of ["agent", "spawn_task", "spawn_thread_session", "complete_thread"]) {
+for (const name of ["agent", "spawn_thread_session", "complete_thread"]) {
   ok(allowedOnLeanSeat(name), `the lean roster keeps the delegation/lifecycle verb ${name} (the grain matrix still decides where it resolves)`);
 }
 for (const name of ["ask_question", "todo"]) {
@@ -177,7 +177,7 @@ for (const decoy of GRANT_DECOYS.filter((d) => d.startsWith("grant__") && !d.inc
 
 ok(allowedOnWorkerSeat("ask_question"), "🔴 OPE-565: a delegated WORKER holds ask_question again — the question posts AND the room's answer routes back to the child");
 ok(allowedOnLeanSeat("ask_question"), "…and the INTERACTIVE seat still holds it, as it always did");
-for (const name of ["bash", "read_file", "write_file", "post_file", "web_search", "return_result", "complete_task", "reply", "final_output", "notion__search", "some_tool_nobody_declared"]) {
+for (const name of ["bash", "read_file", "write_file", "post_file", "web_search", "return_result", "complete_thread", "reply", "final_output", "notion__search", "some_tool_nobody_declared"]) {
   ok(allowedOnWorkerSeat(name), `the worker keeps ${name} — this set is ALLOW-by-default, an exclusion of BROKEN verbs, never a narrowing of the worker's kit`);
 }
 ok(!allowedOnWorkerSeat("stand_down"), "🔴 OPE-877: a worker does NOT hold stand_down — it marks the DELEGATING SEAT's engagement row (the worker inherits the seat's binding), so a worker could make its own parent stop following a channel the worker never followed");

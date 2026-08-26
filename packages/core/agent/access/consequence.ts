@@ -322,12 +322,6 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     "de-escalation only (OPE-152): withdraws a routine's STANDING permissions so it goes back to drawing an approval card for every gated action, leaving the routine itself running. There is no configuration in which it widens anything — after it runs the routine can do strictly less unattended — so gating it would put a confirmation in front of the brake pedal. It still REFUSES without a verified principal, for attribution (the routine.grants_revoked audit row names who withdrew them), and the grants it deletes were each minted by a human's click in the first place",
   ),
   extend_workspace_time: open("extends this session's own sandbox window; capped (sandbox.extendMaxMinutes) and audited"),
-  spawn_task: open(
-    "delegation: mints an async thread-grain worker and dispatches to it, non-blocking. Escapes nothing this table doesn't re-gate INSIDE the child (egress + every L2 consequence gate fire again there); widens hands, not consequence, and delegation IS the standing seat's job — so open, fully audited (task.spawned). Taint is forwarded onto the child, not gated here",
-  ),
-  complete_task: open(
-    "a task worker releasing its own thread's ownership — the next message then wakes the standing seat instead. Reversible (the seat re-spawns), touches no memory/spend/audience beyond the ownership index; a conversational verb, audited (task.completed)",
-  ),
   spawn_thread_session: open(
     "presence (§B1, Stage T2): mints a persistent CONVERSATIONAL thread seat (narrow hands) and dispatches to it, non-blocking. Widens PRESENCE, not consequence — the seat has no wide hands and re-gates every L2 consequence itself; delegation/presence IS the standing seat's job. Open, fully audited (thread_seat.spawned); taint forwarded onto the child, not gated here",
   ),
@@ -344,7 +338,7 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     "a one-shot task worker reporting its result back to the seat that delegated it (delegation reshape, Phase 1): writes the durable result row + wakes the CALLER's OWN seat with the caller's OWN forwarded identity — no new audience. The summary rides untrusted-wrapped, so a consequential action the caller takes off it re-gates via the normal ingest-taint path. Widens nothing; audited (task.returned)",
   ),
   agent: open(
-    "delegation (reshape): both modes spawn a full-hands ONE-SHOT worker on a credential-correct new session (same rationale as spawn_task — re-gates every L2 consequence INSIDE the child, forwards taint, widens hands not consequence). async returns at once and the worker wakes the caller with its result; sync HOLDS FOCUS and block-polls the durable result row, returning it inline (degrading to async on MAX_WAIT). Escapes nothing this table doesn't re-gate in the worker; audited via task.spawned",
+    "delegation (reshape): both modes spawn a full-hands ONE-SHOT worker on a credential-correct new session — it re-gates every L2 consequence INSIDE the child, forwards taint, and widens hands not consequence. async returns at once and the worker wakes the caller with its result; sync HOLDS FOCUS and block-polls the durable result row, returning it inline (degrading to async on MAX_WAIT). Escapes nothing this table doesn't re-gate in the worker; audited via task.spawned",
   ),
   stop_task: open(
     "the seat standing DOWN a worker it delegated with `agent` (OPE-730) — de-escalation only, the same posture as stand_down and revoke_routine_permissions. After it runs the agent can do strictly LESS, so a card here would put a confirmation in front of the brake pedal, and the one person most likely to need it is the one watching the worker go wrong. It reaches no task outside the CALLER'S OWN DOMAIN: control/task-cancel.ts checks the named task token was minted from the caller's own domain and carries the `t/` task grain, over an HMAC-signed hop whose caller token is host-derived. It writes nothing but the shared turn.cancel_requested audit row, and the worker's own ending still reports back through the ordinary completion wake",

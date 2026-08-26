@@ -73,9 +73,9 @@ if (WINDOW_GATED_TOOLS.web_fetch !== fullKit()) {
   );
 }
 
-if (JSON.stringify([...WINDOW_GATED_TOOLS.complete_task]) !== JSON.stringify(["task"])) {
+if (JSON.stringify([...WINDOW_GATED_TOOLS.return_result]) !== JSON.stringify(["task"])) {
   problems.push(
-    `WINDOW_GATED_TOOLS.complete_task read ${JSON.stringify([...WINDOW_GATED_TOOLS.complete_task])} after the ` +
+    `WINDOW_GATED_TOOLS.return_result read ${JSON.stringify([...WINDOW_GATED_TOOLS.return_result])} after the ` +
       'flag flip — it is a FIXED ["task"] row and delegation.oneshotAgent must not touch it.',
   );
 }

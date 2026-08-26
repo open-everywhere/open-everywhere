@@ -21,7 +21,7 @@ const GRAINS: readonly WindowGrain[] = ["standing", "native", "thread", "task"];
 
 const leanFor = (grain: WindowGrain): boolean => {
   const route = memoryRecallRouteFor(grain);
-  return (grain === "standing" || grain === "thread") && (route === "agent" || route === "spawn_task");
+  return (grain === "standing" || grain === "thread") && route === "agent";
 };
 const holds = (name: string, grain: WindowGrain): boolean => {
   const mounted = WINDOW_GATED_TOOLS[name] ? WINDOW_GATED_TOOLS[name].includes(grain) : WINDOW_UNGATED_TOOLS.has(name);
@@ -107,7 +107,7 @@ ok(/will need approving/.test(renderedStanding) && /never its absence/.test(rend
 
 const unreachable = renderApprovalPreview({ ...standing, route: "none" });
 ok(/out of reach here/.test(unreachable), "route `none` renders the out-of-reach sentence instead of naming a delegation verb");
-ok(!/`agent`|`spawn_task`/.test(unreachable), "route `none` names NO delegation verb — the OPE-121 failure mode, at consequence granularity");
+ok(!/`agent`/.test(unreachable), "route `none` names NO delegation verb — the OPE-121 failure mode, at consequence granularity");
 
 const grantable = CARDED.filter((name) => {
   const via = TOOL_CONSEQUENCE[name].via;
