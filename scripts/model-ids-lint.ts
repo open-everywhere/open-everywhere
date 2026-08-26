@@ -1,5 +1,4 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { SETTINGS } from "@open-everywhere/core/agent/settings/settings.js";
 import {
   registerModelPricing,
@@ -16,52 +15,27 @@ import { loadModelPricing } from "../agent/spend/model-pricing.js";
 import { loadModelPolicy } from "../agent/model/policy.js";
 import { loadRoles } from "../agent/roles/roles.js";
 import { loadDomains } from "../agent/memory/domains.js";
+import { MODEL_ID, PRICE_TABLE, REGISTRY, ruleOneFiles, scanBareModelIds } from "./model-ids-scope.js";
 
-const APP_DIR = "agent";
-const REGISTRY = "agent/model/stacks.ts";
-const PRICE_TABLE = "agent/spend/model-pricing.ts";
 const RESOLVER = "agent/model/models.ts";
 const PRICING = "packages/core/agent/spend/pricing.ts";
 const CORE_DEFAULT = "packages/core/agent/model/default-model.ts";
 
-const VENDORS = [
-  "zai", "deepseek", "alibaba", "anthropic", "openai", "google", "meta", "mistral",
-  "moonshotai", "qwen", "xai", "cohere", "amazon", "minimax", "perplexity", "inception",
-];
-const MODEL_ID = new RegExp(`^(?:${VENDORS.join("|")})/[a-z0-9][a-z0-9.\\-]*$`, "i");
-
-function stripComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
-}
-
-function tsFilesUnder(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry);
-    if (statSync(p).isDirectory()) {
-      if (entry === "generated" || entry === "node_modules") continue;
-      out.push(...tsFilesUnder(p));
-    } else if (entry.endsWith(".ts")) out.push(p);
-  }
-  return out;
-}
-
 const reds: string[] = [];
 
 let scanned = 0;
-for (const file of tsFilesUnder(APP_DIR)) {
-  if (file === REGISTRY || file === PRICE_TABLE) continue;
-  scanned++;
-  const code = stripComments(readFileSync(file, "utf8"));
-  for (const m of code.matchAll(/["'`]([^"'`\n]+)["'`]/g)) {
-    if (!MODEL_ID.test(m[1])) continue;
-    const line = code.slice(0, m.index).split("\n").length;
+try {
+  const files = ruleOneFiles();
+  scanned = files.length;
+  for (const hit of scanBareModelIds(files)) {
     reds.push(
-      `BARE MODEL ID: ${file}:${line} names "${m[1]}" directly. Import the role const from ` +
+      `BARE MODEL ID: ${hit.file}:${hit.line} names "${hit.id}" directly. Import the role const from ` +
         `${RESOLVER} instead (PRIMARY_MODEL / UTILITY_MODEL / VISION_MODEL / SUPERVISOR_MODEL / JUDGE_MODEL), ` +
         `or put the id in a stack in ${REGISTRY} if it is a distinct job or a new stack.`,
     );
   }
+} catch (err) {
+  reds.push(`UNREADABLE FILE SET: RULE 1 could not list the app tree — ${err instanceof Error ? err.message : String(err)}`);
 }
 
 const resolverSrc = readFileSync(RESOLVER, "utf8");
@@ -144,7 +118,7 @@ for (const [alias, stack] of Object.entries(STACKS)) {
     if (!MODEL_ID.test(spec.id)) {
       reds.push(
         `MALFORMED ID: stack "${alias}" role "${role}" is "${spec.id}", which is not a <vendor>/<model> ` +
-          `id this gate recognises. Add the vendor to VENDORS in ${__filename.split("/").slice(-1)[0]} if it is new.`,
+          `id this gate recognises. Add the vendor to VENDORS in scripts/model-ids-scope.ts if it is new.`,
       );
     }
     if (!Number.isInteger(spec.contextWindowTokens) || spec.contextWindowTokens <= 0) {
@@ -211,7 +185,8 @@ if (reds.length > 0) {
 }
 
 console.log(
-  `✓ model-ids: ${scanned} app file(s) name no model id directly; ${STACK_ALIASES.length} stack(s) complete; ` +
+  `✓ model-ids: ${scanned} git-tracked app file(s) — the same set before and after a build — name no ` +
+    `model id directly; ${STACK_ALIASES.length} stack(s) complete; ` +
     `BUILT_IN pricing, core's literal and the models.stack default all agree on "${shippedPrimary}" (stack "${SHIPPED_STACK}"); ` +
     `all ${selected.length} selectable model(s) priced in code and consistent with the measured bands`,
 );
