@@ -122,7 +122,7 @@ export async function resolveGithubOwnerRepoFromGit(exec: Exec): Promise<{ owner
   return parseGithubOwnerRepo(res.stdout);
 }
 
-type GithubApiBody = { ok: true; body: unknown } | { ok: false; reason: string };
+export type GithubApiBody = { ok: true; body: unknown } | { ok: false; reason: string };
 
 function parseJsonBody(text: string): GithubApiBody {
   try {
@@ -132,7 +132,7 @@ function parseJsonBody(text: string): GithubApiBody {
   }
 }
 
-async function fetchGithubApi(input: {
+export async function fetchGithubApi(input: {
   ghArgs: string[];
   restPathSuffix: string;
   exec: Exec;
