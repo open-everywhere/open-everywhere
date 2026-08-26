@@ -1,6 +1,7 @@
-import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { writeFileIfChanged } from "./write-if-changed.js";
 import { settingDocs, settingEnvNames } from "@open-everywhere/core/agent/settings/settings.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -111,6 +112,6 @@ if (check) {
       `${owned.length} declared ops override(s), all documented, no second parse site`,
   );
 } else {
-  writeFileSync(referencePath, updated);
-  console.log(`✓ settings-docs: wrote ${settingDocs().length} setting(s) into ${REFERENCE}`);
+  const wrote = writeFileIfChanged(referencePath, updated);
+  console.log(`✓ settings-docs: ${REFERENCE} ${wrote ? "updated" : "already current"} — ${settingDocs().length} setting(s)`);
 }

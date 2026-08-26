@@ -1,6 +1,7 @@
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { writeFileIfChanged } from "./write-if-changed.js";
 import { workerOnlyTools } from "@open-everywhere/core/agent/access/worker-capabilities.js";
 import { checkWorkerCapabilityGroups } from "@open-everywhere/core/agent/access/worker-capabilities.js";
 
@@ -67,6 +68,9 @@ if (check) {
   }
   console.log(`✓ worker-capability index is current (${standing.length} worker-only tool(s) from a standing seat, ${thread.length} from a thread seat)`);
 } else {
-  writeFileSync(target, body);
-  console.log(`✓ wrote packages/core/agent/access/worker-capability-index.generated.ts (${standing.length} standing / ${thread.length} thread worker-only tools)`);
+  const wrote = writeFileIfChanged(target, body);
+  console.log(
+    `✓ ${wrote ? "wrote" : "already current"}: packages/core/agent/access/worker-capability-index.generated.ts ` +
+      `(${standing.length} standing / ${thread.length} thread worker-only tools)`,
+  );
 }

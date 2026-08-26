@@ -1,6 +1,7 @@
-import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { writeFileIfChanged } from "./write-if-changed.js";
 import {
   checkDocsSourceMap,
   docSummaryOf,
@@ -9,7 +10,11 @@ import {
   sectionForDocPath,
 } from "@open-everywhere/core/agent/docs/source-map.js";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const rootFlagAt = process.argv.indexOf("--root");
+const root =
+  rootFlagAt >= 0 && process.argv[rootFlagAt + 1] !== undefined
+    ? process.argv[rootFlagAt + 1]
+    : join(dirname(fileURLToPath(import.meta.url)), "..");
 const check = process.argv.includes("--check");
 
 const DOC_ENTRY_IMPORT = 'import type { DocEntry } from "@open-everywhere/core/agent/adapter-api.js";';
@@ -150,11 +155,13 @@ if (check) {
   }
   console.log(`✓ docs registry in sync — ${paths.length} docs (${[...perProvider.keys()].length} provider runbooks) across ${files.size} generated modules`);
 } else {
+  let written = 0;
   for (const [rel, content] of files) {
-    const abs = join(root, rel);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, content);
+    if (writeFileIfChanged(join(root, rel), content)) written++;
   }
   for (const rel of stale) rmSync(join(root, rel));
-  console.log(`✓ wrote ${files.size} generated modules for ${paths.length} docs${stale.length ? ` (removed ${stale.length} stale)` : ""}`);
+  console.log(
+    `✓ ${files.size} generated modules for ${paths.length} docs — ${written} written, ${files.size - written} already current` +
+      `${stale.length ? ` (removed ${stale.length} stale)` : ""}`,
+  );
 }

@@ -1,6 +1,7 @@
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
+import { writeFileIfChanged } from "./write-if-changed.js";
 
 export const PUBLISHABLE_PACKAGES = [
   "packages/core",
@@ -45,8 +46,8 @@ function main(): void {
       continue;
     }
     manifest.exports = expected;
-    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-    console.log(`✓ ${manifestPath}: ${Object.keys(expected).length - 1} subpath(s)`);
+    const wrote = writeFileIfChanged(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    console.log(`✓ ${manifestPath}: ${Object.keys(expected).length - 1} subpath(s)${wrote ? "" : " (already current)"}`);
   }
   if (check) {
     if (drifted.length > 0) {

@@ -1,6 +1,7 @@
-import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { writeFileIfChanged } from "./write-if-changed.js";
 import {
   checkIngestionSites,
   findIngestionSites,
@@ -163,6 +164,8 @@ if (check) {
   const pending = rows.filter((r) => r.pending).length;
   console.log(`✓ lint:ingestion: ${rows.length} route(s) over ${files.length} source file(s), every one a literal known kind with a label (${pending} pending on a TODO(ingestion) marker) — inventory current`);
 } else {
-  writeFileSync(target, body);
-  console.log(`✓ wrote ${relative(root, target)} (${rows.length} route(s) over ${files.length} source file(s))`);
+  const wrote = writeFileIfChanged(target, body);
+  console.log(
+    `✓ ${relative(root, target)} ${wrote ? "updated" : "already current"} (${rows.length} route(s) over ${files.length} source file(s))`,
+  );
 }

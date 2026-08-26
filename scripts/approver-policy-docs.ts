@@ -1,7 +1,8 @@
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertCoreDistFresh } from "./core-dist-freshness.js";
+import { writeFileIfChanged } from "./write-if-changed.js";
 import {
   checkActionKindCoverage,
   TOOL_CONSEQUENCE,
@@ -115,6 +116,6 @@ if (check) {
   }
   console.log(`✓ approver-policy-docs: ${summary}, every one in ${MANUAL} at the policy it registers; the manual still states the rule, and still names every admin family`);
 } else {
-  writeFileSync(manualPath, spliced.updated);
-  console.log(`✓ approver-policy-docs: wrote ${summary} into ${MANUAL}`);
+  const wrote = writeFileIfChanged(manualPath, spliced.updated);
+  console.log(`✓ approver-policy-docs: ${MANUAL} ${wrote ? "updated" : "already current"} — ${summary}`);
 }
