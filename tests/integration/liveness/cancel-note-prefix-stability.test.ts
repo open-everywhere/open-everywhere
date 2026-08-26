@@ -8,6 +8,7 @@ import {
   discordOeCommandPost,
   discordOeStopInteraction,
   DISCORD_LISTED_CHANNEL_ID,
+  readAuditRows,
   registerScript,
   waitFor,
   type RecordedRequest,
@@ -54,6 +55,7 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
   await bootAgent({ sharedSqlite: true });
   const org = deploymentOrg();
   const channelKey = turnChannelKey("discord", DISCORD_LISTED_CHANNEL_ID)!;
+  const sinceIso = new Date(Date.now() - 10_000).toISOString();
 
   const a = disposeLater(registerScript({ parent: [{ say: "ack ope693a" }] }));
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `${BOT_MENTION} ope693a`, messageId: "ope693-a" });
@@ -86,10 +88,11 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
   b.releaseHolds();
   b.dispose();
 
-  await waitFor(
-    async () => ((await resolveTurnAnchor(org, { channelKey })) === null ? true : undefined),
-    "the turn-anchor row cleared by the cancelled arm",
-  );
+  await waitFor(async () => {
+    const rows = await readAuditRows({ actions: ["turn.cancelled"], sinceIso });
+    return rows.length > 0 ? rows : undefined;
+  }, "the turn.cancelled row — the cancel arm has run and the reconstruction is pending");
+  expect(await resolveTurnAnchor(org, { channelKey })).toBeNull();
   expect(b.holdsCutShort()).toBe(1);
 
   const c = disposeLater(registerScript({ parent: [{ say: "ack ope693c" }] }));
