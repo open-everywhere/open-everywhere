@@ -334,7 +334,7 @@ console.log("P0-f — per-channel STANDING seat is NARROWED (Stage C flip):");
   eq(WINDOW_GATED_TOOLS.spawn_thread_session, ["standing"], "[P0-f] spawn_thread_session is grain-gated STANDING-only (window-only mint; no recursive thread trees)");
   ok(TOOL_CONSEQUENCE.complete_thread?.tier === "open", "[P0-f] complete_thread stays `open`");
   eq(WINDOW_GATED_TOOLS.complete_thread, ["thread"], "[P0-f] complete_thread is grain-gated THREAD-only");
-  eq(WINDOW_GATED_TOOLS.agent, ["standing", "thread"], "[P0-f] agent is grain-gated to the conversational-root seats (standing+thread) — a gated row again since #96 (eve 0.24.5 made the disableTool() sentinel valid, so mount-absence replaced the #80 static workaround); the sentinel shim removes eve's built-in and delegation_tools.ts re-provides the tool per grain");
+  eq(WINDOW_GATED_TOOLS.agent, ["standing", "thread"], "[P0-f] agent is grain-gated to the conversational-root seats (standing+thread) — the ONE name that cannot use mount-absence, because eve's harness injects its own built-in recursive subagent under `agent` unless a static authored tool claims the name; the gate runs at execute time via grainBackstopAtExecute instead");
   ok(TOOL_CONSEQUENCE.spawn === undefined && TOOL_CONSEQUENCE.dispatch === undefined && TOOL_CONSEQUENCE.delegate === undefined, "[P0-f] the delegation primitives are named exactly — no bare spawn/dispatch/delegate alias");
 
   const perContainerCtx = {

@@ -2834,7 +2834,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       if (ctx.auditRead) {
         const auditRead = ctx.auditRead;
-        const PERSIST_OUTCOMES = ["completed", "failed", "returned", "settled"] as const;
+        const PERSIST_OUTCOMES = ["completed", "failed", "settled"] as const;
         type MemoryWriteDetail = { readonly outcome?: unknown; readonly files?: unknown; readonly silo?: unknown };
         const rememberWrites = await pollOptional(
           async () => {
