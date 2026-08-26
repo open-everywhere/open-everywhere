@@ -1,4 +1,4 @@
-import { describeFilter, type SubscriptionFilter } from "./event-model.js";
+import { describeFilter, storedFilter } from "./event-model.js";
 import type { RoutinePolicyRule } from "./policy.js";
 
 export type RoutineTrigger =
@@ -10,8 +10,6 @@ export type RoutineTrigger =
       readonly kind: "event";
       readonly source: string;
       readonly jq?: string;
-      readonly match?: Readonly<Record<string, string>>;
-      readonly filter?: SubscriptionFilter;
     };
 
 export type RoutineReport =
@@ -122,6 +120,18 @@ export function assertReportConsistent(
       "A durable job can't use only-on-change — a job's fire always gets the job protocol (its own accumulated thread context), which supersedes the watch protocol entirely, so the diff step that would post only on change never runs and the job posts on EVERY fire instead. Drop `job`, or use `every-run` or `never` instead of `only-on-change`.",
     );
   }
+}
+
+export function assertKnownSubscription(trigger: RoutineTrigger): void {
+  if (trigger.kind !== "event") return;
+  const f = storedFilter(trigger);
+  if (f.kind !== "unknown") return;
+  throw new Error(
+    `This event subscription carries a filter shape this build cannot read: ${f.keys.join(", ")}. ` +
+      "A subscription filter is a jq expression (`jq`) and has been since OPE-210; the retired `filter` and `match` " +
+      "languages were deleted by OPE-1145. Rewrite the filter as jq rather than storing a shape nothing can evaluate — " +
+      "a row like this can never fire.",
+  );
 }
 
 export function isClockScheduled(t: RoutineTrigger): boolean {

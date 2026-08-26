@@ -268,7 +268,7 @@ function routine(over: Partial<Routine> & Pick<Routine, "id">): Routine {
     org: ORG,
     surfaceKey: "slack/T1/C-ENG",
     target: { channelId: "C-ENG" },
-    trigger: { kind: "event", source: "my-ci", filter: { all: [{ key: "status", in: ["failed"] }] } },
+    trigger: { kind: "event", source: "my-ci", jq: '(.fields["status"] | IN("failed"))' },
     prompt: "Tell the channel the build failed.",
     createdAt: "2026-07-01T00:00:00.000Z",
     status: "active",
@@ -421,7 +421,7 @@ async function post(
   const hook = makeHook();
   await armSecret(hook);
   const failedRoutine = routine({ id: "r-failed" });
-  const okRoutine = routine({ id: "r-ok", trigger: { kind: "event", source: "my-ci", filter: { all: [{ key: "status", in: ["ok"] }] } } });
+  const okRoutine = routine({ id: "r-ok", trigger: { kind: "event", source: "my-ci", jq: '(.fields["status"] | IN("ok"))' } });
 
   const body = JSON.stringify({ event: "build", action: "failed", fields: { status: "failed", branch: "main" } });
   const sink: Posted[] = [];
@@ -458,7 +458,7 @@ async function post(
   console.log("\n7. replay (real stores, both layers):");
   const hook = makeHook({ id: "ci-replay" });
   await armSecret(hook);
-  const r = routine({ id: "r-replay", trigger: { kind: "event", source: "ci-replay", filter: { all: [{ key: "status", in: ["failed"] }] } } });
+  const r = routine({ id: "r-replay", trigger: { kind: "event", source: "ci-replay", jq: '(.fields["status"] | IN("failed"))' } });
   const body = JSON.stringify({ event: "build", fields: { status: "failed" } });
   const headers = headersFor({}, body, SECRET, "msg_replay_1");
 
@@ -490,8 +490,8 @@ async function post(
   console.log("\n8. two hooks on one contract:");
   const ciA = makeHook({ id: "ci-alpha" });
   await armSecret(ciA);
-  const rAlpha = routine({ id: "r-alpha", trigger: { kind: "event", source: "ci-alpha", filter: { all: [{ key: "status", in: ["failed"] }] } } });
-  const rBeta = routine({ id: "r-beta", trigger: { kind: "event", source: "ci-beta", filter: { all: [{ key: "status", in: ["failed"] }] } } });
+  const rAlpha = routine({ id: "r-alpha", trigger: { kind: "event", source: "ci-alpha", jq: '(.fields["status"] | IN("failed"))' } });
+  const rBeta = routine({ id: "r-beta", trigger: { kind: "event", source: "ci-beta", jq: '(.fields["status"] | IN("failed"))' } });
   const body = JSON.stringify({ event: "build", fields: { status: "failed" } });
 
   const sink: Posted[] = [];

@@ -17,8 +17,8 @@ import { divertTriggeredFire, runFireSeatKey, type FireWindowDeps } from "./fire
 import { auditRoutineFireLost, auditRoutineSkip, type RoutineAuditDeps } from "./fire-audit.js";
 import { foldRoutineOutcome } from "./outcome-fold.js";
 import { eventPrompt } from "./events.js";
-import { normalizeDelivery, type NormalizedEvent, type TriggerDelivery } from "./event-model.js";
-import { evaluateSubscription, isEventTrigger, storedJq } from "./event-match.js";
+import { normalizeDelivery, type NormalizedEvent, type StoredSubscription, type TriggerDelivery } from "./event-model.js";
+import { evaluateSubscription, isEventTrigger, storedFilter } from "./event-match.js";
 import { stampSubscriptionMatch, type MatchStampDeps } from "./match-stamp.js";
 import { captureDocument } from "../webhooks/capture-window.js";
 import { CAPTURE_MAX_DELIVERIES } from "../operational/store.js";
@@ -102,6 +102,12 @@ interface FanOutTally {
   readonly skipped: number;
 }
 
+function auditFilterText(t: StoredSubscription): string {
+  const f = storedFilter(t);
+  if (f.kind === "jq") return f.expression;
+  return f.kind === "none" ? "(none)" : `(unreadable stored shape: ${f.keys.join(", ")})`;
+}
+
 async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanOutTally> {
   const org = deps.org ?? deploymentOrg();
   const list = deps.listRoutines ?? listAllRoutines;
@@ -152,7 +158,7 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
         {
           why: verdict.invalid,
           event: ev.event,
-          ...(isEventTrigger(r.trigger) ? { filter: storedJq(r.trigger) ?? "(none)", source: r.trigger.source } : {}),
+          ...(isEventTrigger(r.trigger) ? { filter: auditFilterText(r.trigger), source: r.trigger.source } : {}),
           note: "the subscription's filter could not be evaluated to a boolean, so the routine was skipped rather than fired",
         },
         auditDeps,

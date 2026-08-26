@@ -3,6 +3,7 @@ import { mintJobBound } from "../routines/bound.js";
 import { stallResetPatch } from "../routines/stall.js";
 import { computeNextRun } from "../routines/schedule.js";
 import {
+  assertKnownSubscription,
   assertReportConsistent,
   describeTrigger,
   isJobRoutine,
@@ -55,6 +56,7 @@ const routineEdit: ActionKind<RoutineEditArgs> = {
   },
   async execute(args, decidedBy) {
     assertReportConsistent(args.trigger, args.report, args.sessionMode);
+    assertKnownSubscription(args.trigger);
 
     const generation = args.generation + 1;
     const patch: Partial<Routine> = { prompt: args.prompt, promptGeneration: generation };

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Partition } from "../memory/partition.js";
-import { assertReportConsistent, type Routine } from "./routine.js";
+import { assertKnownSubscription, assertReportConsistent, type Routine } from "./routine.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { RoutinePromptProvenance, RoutinePromptRevisionRow } from "../operational/store.js";
 
@@ -26,6 +26,7 @@ export function getRoutine(org: string, surfaceKey: string, id: string): Promise
 
 export function addRoutine(_p: Partition, routine: Routine): Promise<Routine> {
   assertReportConsistent(routine.trigger, routine.report, routine.sessionMode);
+  assertKnownSubscription(routine.trigger);
   return getOperationalStore().addRoutine(routine);
 }
 

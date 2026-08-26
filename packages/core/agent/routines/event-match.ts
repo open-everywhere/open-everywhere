@@ -1,4 +1,4 @@
-import { eventNormalizer, registeredEventSources, storedJq, type EventNormalizer, type NormalizedEvent } from "./event-model.js";
+import { eventNormalizer, registeredEventSources, storedFilter, type EventNormalizer, type NormalizedEvent } from "./event-model.js";
 import { assertFilterShape, evaluateJqFilter, filterDocument } from "./jq-filter.js";
 import { webhookScheme } from "./scheme-name.js";
 import type { Routine, RoutineTrigger } from "./routine.js";
@@ -7,7 +7,7 @@ export function isEventTrigger(t: RoutineTrigger): t is Extract<RoutineTrigger, 
   return t.kind === "event";
 }
 
-export { filterToJq, storedJq } from "./event-model.js";
+export { storedFilter } from "./event-model.js";
 
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -57,9 +57,12 @@ export async function evaluateSubscription(routine: Routine, ev: NormalizedEvent
   if (!eventNormalizer(webhookScheme(ev))) {
     return { match: false, invalid: `no normalizer registered for source "${webhookScheme(ev)}"` };
   }
-  const expression = storedJq(t);
-  if (expression === undefined) return { match: true };
-  const outcome = await evaluateJqFilter(expression, filterDocument(ev));
+  const f = storedFilter(t);
+  if (f.kind === "unknown") {
+    return { match: false, invalid: `stored filter shape is unreadable in this build (${f.keys.join(", ")}) — a filter must be jq` };
+  }
+  if (f.kind === "none") return { match: true };
+  const outcome = await evaluateJqFilter(f.expression, filterDocument(ev));
   if ("error" in outcome) return { match: false, invalid: outcome.error };
   return { match: outcome.match };
 }

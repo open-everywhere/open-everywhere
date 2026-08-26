@@ -1,3 +1,4 @@
+
 import { registerEventNormalizer, resetEventNormalizersForTest } from "../agent/routines/event-model.js";
 
 let passed = 0;
@@ -37,10 +38,10 @@ const {
 } = await import("../agent/routines/event-model.js");
 type NormalizedEvent = import("../agent/routines/event-model.js").NormalizedEvent;
 type EventNormalizer = import("../agent/routines/event-model.js").EventNormalizer;
-type SubscriptionFilter = import("../agent/routines/event-model.js").SubscriptionFilter;
 type TriggerDelivery = import("../agent/routines/event-model.js").TriggerDelivery;
 
-const { evaluateSubscription, filterToJq, narrowsScope, storedJq, validateSubscription } = await import("../agent/routines/event-match.js");
+const { storedFilter } = await import("../agent/routines/event-model.js");
+const { evaluateSubscription, narrowsScope, validateSubscription } = await import("../agent/routines/event-match.js");
 const { evaluateJqFilter, filterDocument, probeFilter, FILTER_MAX_LENGTH } = await import("../agent/routines/jq-filter.js");
 const { liftGithubEvent, githubEventNormalizer } = await import("../agent/routines/github-normalizer.js");
 const { storedTrigger } = await import("../agent/tools/create_routine.js");
@@ -104,7 +105,7 @@ ok(
 );
 ok(
   normalizedEventDefect(bad({ scope: [{ kind: "container", id: "a" }, { kind: "container", id: "b" }] })) !== null,
-  "defect: a REPEATED scope kind is refused — otherwise `under: [{container: a}]` would match an event inside b",
+  "defect: a REPEATED scope kind is refused — otherwise `.scope.container == \"a\"` would match an event inside b",
 );
 ok(normalizedEventDefect(bad({ scope: [{ kind: "container", id: "" }] })) !== null, "defect: an empty scope id is refused");
 ok(SCOPE_KINDS.length === 5, "the scope vocabulary is CLOSED at five levels");
@@ -227,24 +228,38 @@ const ev = (e: NormalizedEvent, expression: string) => evaluateJqFilter(expressi
 }
 
 {
-  const legacy = { match: { event: "pull_request", action: "opened" } } as const;
-  const compiled = storedJq(legacy)!;
-  ok(compiled === '(.fields["event"] | IN("pull_request")) and (.fields["action"] | IN("opened"))', "legacy: `match` compiles to single-value IN clauses at READ time (no row migration)");
-  const hit = await ev(pr, compiled);
-  ok("match" in hit && hit.match === true, "legacy: the compiled filter matches exactly what the old exact-equality matcher matched");
-  const missCompiled = storedJq({ match: { action: "closed" } })!;
-  const miss = await ev(pr, missCompiled);
-  ok("match" in miss && miss.match === false, "legacy: a mismatching legacy filter still does not match");
-  ok(storedJq({}) === undefined, "legacy: a filter-less stored row is 'no filter', not an empty filter");
+  const jqRow = storedFilter({ jq: '.fields.action == "opened"' });
+  ok(jqRow.kind === "jq" && jqRow.expression === '.fields.action == "opened"', "one language: a stored jq row reads as its expression");
+  ok(storedFilter({ kind: "event", source: "github" } as never).kind === "none", "one language: a filter-less row is 'no filter' — the legacy all-events reading, still honoured");
+  ok(storedFilter({ match: undefined } as never).kind === "none", "one language: an explicitly-undefined key is absent, not an unreadable shape");
 
-  ok(filterToJq({ under: [{ kind: "container", id: "me/proj" }] }) === '(.scope.container == "me/proj")', "legacy: an `under` selector compiles to a plain scope equality");
-  ok(filterToJq({ all: [{ key: "action", notIn: ["opened"] }] }) === '(.fields["action"] | IN("opened") | not)', "legacy: `notIn` compiles to IN | not — which is where the absent-field reading comes from for free");
-  ok(filterToJq({}) === "true", "legacy: an EMPTY clause shape compiles to `true`, preserving its all-events meaning");
-  const both = await ev(pr, filterToJq({ under: [{ kind: "container", id: "me/proj" }], all: [{ key: "action", in: ["opened"] }] }));
-  ok("match" in both && both.match === true, "legacy: under + all compile to one AND-ed expression that still matches");
-  ok(filterToJq({ all: [{ key: 'a"b', in: ['x") or (true'] }] }) === '(.fields["a\\"b"] | IN("x\\") or (true"))', "legacy: keys and values are JSON-quoted — a stored value carrying jq syntax stays a string literal");
-  const quoted = await ev(pr, filterToJq({ all: [{ key: "action", in: ['x") or (true'] }] }));
-  ok("match" in quoted && quoted.match === false, "legacy: …and it evaluates as data — the smuggled `or (true)` does not make it match");
+  const retiredMatch = storedFilter({ match: { action: "opened" } } as never);
+  ok(retiredMatch.kind === "unknown", "one language: a surviving pre-OPE-163 `match` row is UNREADABLE — never silently filter-less");
+  ok(retiredMatch.kind === "unknown" && retiredMatch.keys.join(",") === "match", "one language: …and it names the offending key, so an audit row is actionable");
+  const retiredFilter = storedFilter({ filter: { all: [{ key: "action", in: ["opened"] }] } } as never);
+  ok(retiredFilter.kind === "unknown" && retiredFilter.keys.join(",") === "filter", "one language: a surviving OPE-163 `{all, under}` row is UNREADABLE too");
+  const invented = storedFilter({ jq: "true", where: "action = opened" } as never);
+  ok(invented.kind === "unknown" && invented.keys.join(",") === "where", "one language: an unknown key beats a valid `jq` beside it — a row nobody can fully read is not half-read");
+  const two = storedFilter({ filter: {}, match: {} } as never);
+  ok(two.kind === "unknown" && two.keys.join(",") === "filter,match", "one language: every unreadable key is named, sorted, not just the first");
+}
+
+{
+  const unreadable = eventRoutine({ kind: "event", source: "github", match: { event: "pull_request" } } as never);
+  const verdict = await evaluateSubscription(unreadable, pr);
+  ok(verdict.match === false, "loud/fire: an unreadable stored row NEVER fires — the row was written to narrow, and reading it as all-events would be a fire-hose");
+  ok("invalid" in verdict && verdict.invalid.includes("match"), "loud/fire: …it is reported INVALID (a routine.skip audit row) naming the key, not thrown — one bad row must not abort the fan-out");
+  const filterless = await evaluateSubscription(eventRoutine({ kind: "event", source: "github" }), pr);
+  ok(filterless.match === true && !("invalid" in filterless), "loud/fire: negative control — a genuinely filter-less row still matches every event");
+
+  const rendered = describeTrigger({ kind: "event", source: "github", match: { action: "opened" } } as never);
+  ok(rendered.includes("UNREADABLE") && rendered.includes("match"), "loud/render: an unreadable row describes itself as one — the renderer never differs from the behaviour");
+  ok(!rendered.includes("EVERY event"), "loud/render: …and it must NOT borrow the filter-less wording, which is the one thing it is not");
+
+  const { addRoutine } = await import("../agent/routines/store.js");
+  const row = { id: "r-x", org: "default", surfaceKey: "local/dev/a", prompt: "x", createdAt: "2026-08-25T00:00:00Z", status: "active", consecutiveFailures: 0 };
+  const refusal = await throwsAsync(() => addRoutine({} as never, { ...row, trigger: { kind: "event", source: "github", match: { action: "opened" } } } as never));
+  ok(refusal !== null && refusal.includes("cannot read") && refusal.includes("match"), "loud/store: the DURABLE WRITE refuses an unreadable subscription, so a migrated or hand-built row cannot enter the store");
 }
 
 {
@@ -262,9 +277,6 @@ const ev = (e: NormalizedEvent, expression: string) => evaluateJqFilter(expressi
   const unknownSource = eventRoutine({ kind: "event", source: "gitlab", jq: "true" });
   ok((await evaluateSubscription(unknownSource, pr)).match === false, "fire-time: a routine on a different source never matches");
   ok((await evaluateSubscription(eventRoutine({ kind: "interval", everyMinutes: 5 }), pr)).match === false, "fire-time: a clock routine never matches an event");
-
-  const legacyRow = await evaluateSubscription(eventRoutine({ kind: "event", source: "github", filter: { under: [{ kind: "container", id: "me/proj" }] } }), pr);
-  ok(legacyRow.match === true, "fire-time: a stored OPE-163 clause row still matches, via the read-time compiler");
 }
 
 {
@@ -325,7 +337,6 @@ const ev = (e: NormalizedEvent, expression: string) => evaluateJqFilter(expressi
   const expression = '.scope.container == "me/proj" and (.fields.action | IN("opened","reopened"))';
   const d = describeTrigger({ kind: "event", source: "github", jq: expression });
   ok(d.includes(expression), "describe: the arm card renders the EXACT expression that will be evaluated");
-  ok(describeTrigger({ kind: "event", source: "github", match: { action: "opened" } }).includes('(.fields["action"] | IN("opened"))'), "describe: a legacy row describes itself as the jq it COMPILES to — never differently from how it behaves");
   ok(describeFilter("github", {}).includes("EVERY event"), "describe: an unnarrowed subscription says so loudly");
 }
 

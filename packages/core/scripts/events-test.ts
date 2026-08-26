@@ -13,13 +13,13 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
-function eventRoutine(match?: Record<string, string>): Routine {
+function eventRoutine(jq?: string): Routine {
   return {
     id: "r-ev",
     org: "default",
     surfaceKey: "slack/T1/C9",
     target: { channelId: "C9" },
-    trigger: { kind: "event", source: "github", match },
+    trigger: { kind: "event", source: "github", jq },
     prompt: "Summarise the PR and flag risky files.",
     createdAt: "2026-06-24T00:00:00.000Z",
     status: "active",
@@ -50,10 +50,10 @@ const matches = async (r: Routine): Promise<boolean> => {
   return !("invalid" in v) && v.match;
 };
 ok(await matches(eventRoutine()), "no filter -> matches any github event");
-ok(await matches(eventRoutine({ event: "pull_request", action: "opened" })), "filter event+action matches");
-ok(!(await matches(eventRoutine({ action: "closed" }))), "filter action mismatch -> no match");
-ok(await matches(eventRoutine({ repo: "me/proj" })), "filter repo matches");
-ok(!(await matches(eventRoutine({ repo: "other/repo" }))), "filter repo mismatch -> no match");
+ok(await matches(eventRoutine('(.fields["event"] | IN("pull_request")) and (.fields["action"] | IN("opened"))')), "filter event+action matches");
+ok(!(await matches(eventRoutine('(.fields["action"] | IN("closed"))'))), "filter action mismatch -> no match");
+ok(await matches(eventRoutine('(.fields["repo"] | IN("me/proj"))')), "filter repo matches");
+ok(!(await matches(eventRoutine('(.fields["repo"] | IN("other/repo"))'))), "filter repo mismatch -> no match");
 const wrongSource: Routine = { ...eventRoutine(), trigger: { kind: "event", source: "gitlab" } };
 ok(!(await matches(wrongSource)), "different source -> no match");
 const clockRoutine: Routine = { ...eventRoutine(), trigger: { kind: "interval", everyMinutes: 5 } };

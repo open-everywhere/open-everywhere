@@ -94,7 +94,7 @@ type Trigger =
   | { kind: "interval"; everyMinutes: number }
   | { kind: "watch"; everyMinutes?: number; expr?: string }
   | { kind: "once"; at: string }
-  | { kind: "event"; source: string; match?: Record<string, string> };
+  | { kind: "event"; source: string };
 
 function nextIntervalAfter(anchor: Date, everyMinutes: number, notBefore: Date): Date {
   const period = Math.max(1, everyMinutes) * MIN;

@@ -471,7 +471,6 @@ export { admitTrigger } from "./routines/ingress.js";
 export { validateSubscription } from "./routines/event-match.js";
 export { evaluateJqFilter, filterDocument } from "./routines/jq-filter.js";
 export type { EventFilterDocument } from "./routines/jq-filter.js";
-export type { SubscriptionFilter, FilterClause, ScopeSelector } from "./routines/event-model.js";
 
 export { unifiedSupervisorToken, standingSeatRegistryKey, dmWindowRegistryKey } from "./channels/unified-supervisor.js";
 

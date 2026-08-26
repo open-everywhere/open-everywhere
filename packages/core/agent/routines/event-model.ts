@@ -51,54 +51,32 @@ export interface TriggerDelivery {
   readonly readableBy?: readonly Scope[];
 }
 
-export type FilterClause =
-  | { readonly key: string; readonly in: readonly string[] }
-  | { readonly key: string; readonly notIn: readonly string[] };
-
-export interface ScopeSelector {
-  readonly kind: ScopeKind;
-  readonly id: string;
-}
-
-export interface SubscriptionFilter {
-  readonly all?: readonly FilterClause[];
-  readonly under?: readonly ScopeSelector[];
-}
-
-export interface StoredSubscriptionShapes {
+export interface StoredSubscription {
   readonly jq?: string;
-  readonly filter?: SubscriptionFilter;
-  readonly match?: Readonly<Record<string, string>>;
 }
 
-function jqString(v: string): string {
-  return JSON.stringify(v);
+const KNOWN_SUBSCRIPTION_KEYS: readonly string[] = ["kind", "source", "jq"];
+
+export type StoredFilter =
+  | { readonly kind: "jq"; readonly expression: string }
+  | { readonly kind: "none" }
+  | { readonly kind: "unknown"; readonly keys: readonly string[] };
+
+export function storedFilter(t: StoredSubscription): StoredFilter {
+  const row = t as Readonly<Record<string, unknown>>;
+  const keys = Object.keys(row)
+    .filter((k) => !KNOWN_SUBSCRIPTION_KEYS.includes(k) && row[k] !== undefined)
+    .sort();
+  if (keys.length > 0) return { kind: "unknown", keys };
+  return t.jq ? { kind: "jq", expression: t.jq } : { kind: "none" };
 }
 
-function clauseToJq(c: FilterClause): string {
-  const key = `.fields[${jqString(c.key)}]`;
-  if ("in" in c) return `(${key} | IN(${c.in.map(jqString).join(", ")}))`;
-  return `(${key} | IN(${c.notIn.map(jqString).join(", ")}) | not)`;
-}
-
-export function filterToJq(filter: SubscriptionFilter): string {
-  const parts: string[] = [];
-  for (const s of filter.under ?? []) parts.push(`(.scope.${s.kind} == ${jqString(s.id)})`);
-  for (const c of filter.all ?? []) parts.push(clauseToJq(c));
-  return parts.length === 0 ? "true" : parts.join(" and ");
-}
-
-export function storedJq(t: StoredSubscriptionShapes): string | undefined {
-  if (t.jq) return t.jq;
-  if (t.filter) return filterToJq(t.filter);
-  if (!t.match) return undefined;
-  const clauses = Object.entries(t.match).map(([key, value]) => ({ key, in: [value] }) as FilterClause);
-  return clauses.length > 0 ? clauses.map(clauseToJq).join(" and ") : undefined;
-}
-
-export function describeFilter(source: string, t: StoredSubscriptionShapes): string {
-  const expression = storedJq(t);
-  return `on ${source} event${expression === undefined ? " (EVERY event from this source)" : ` where ${expression}`}`;
+export function describeFilter(source: string, t: StoredSubscription): string {
+  const f = storedFilter(t);
+  if (f.kind === "unknown") {
+    return `on ${source} event, but its stored filter shape is UNREADABLE here (${f.keys.join(", ")}) — it can never fire`;
+  }
+  return `on ${source} event${f.kind === "none" ? " (EVERY event from this source)" : ` where ${f.expression}`}`;
 }
 
 export interface EventNormalizer {

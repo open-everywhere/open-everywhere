@@ -269,28 +269,28 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
 }
 
 {
-  const under = routine({ id: "r-under", trigger: { kind: "event", source: "github", filter: { under: [{ kind: "container", id: "me/proj" }] } } });
+  const under = routine({ id: "r-under", trigger: { kind: "event", source: "github", jq: '.scope.container == "me/proj"' } });
   const h = harness([under]);
   await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
-  ok(h.fired.length === 1, "match: an `under` selector on the delivery's container FIRES");
+  ok(h.fired.length === 1, "match: a scope equality on the delivery's container FIRES");
 
-  const elsewhere = routine({ id: "r-elsewhere", trigger: { kind: "event", source: "github", filter: { under: [{ kind: "container", id: "other/repo" }] } } });
+  const elsewhere = routine({ id: "r-elsewhere", trigger: { kind: "event", source: "github", jq: '.scope.container == "other/repo"' } });
   const h2 = harness([elsewhere]);
   await fanOutDelivery(PR_BODY, "pull_request", undefined, h2.deps);
-  ok(h2.fired.length === 0, "match: an `under` selector naming a DIFFERENT container never fires");
+  ok(h2.fired.length === 0, "match: a scope equality naming a DIFFERENT container never fires");
 
   const set = routine({
     id: "r-in",
-    trigger: { kind: "event", source: "github", filter: { all: [{ key: "action", in: ["opened", "reopened", "synchronize"] }] } },
+    trigger: { kind: "event", source: "github", jq: '(.fields["action"] | IN("opened", "reopened", "synchronize"))' },
   });
   const h3 = harness([set]);
   await fanOutDelivery(PR_BODY, "pull_request", undefined, h3.deps);
-  ok(h3.fired.length === 1, "match: an `in` clause matches any value in the set");
+  ok(h3.fired.length === 1, "match: an `IN` clause matches any value in the set");
 
-  const notMe = routine({ id: "r-notin", trigger: { kind: "event", source: "github", filter: { all: [{ key: "sender", notIn: ["alice"] }] } } });
+  const notMe = routine({ id: "r-notin", trigger: { kind: "event", source: "github", jq: '(.fields["sender"] | IN("alice") | not)' } });
   const h4 = harness([notMe]);
   await fanOutDelivery(PR_BODY, "pull_request", undefined, h4.deps);
-  ok(h4.fired.length === 0, "match: a `notIn` clause SUPPRESSES the actor it names (the generic self-trigger guard)");
+  ok(h4.fired.length === 0, "match: an `IN(…) | not` clause SUPPRESSES the actor it names (the generic self-trigger guard)");
 }
 
 {
@@ -316,7 +316,7 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
 }
 
 {
-  const undeclared = routine({ id: "r-undeclared", trigger: { kind: "event", source: "github", filter: { all: [{ key: "branch", in: ["main"] }] } } });
+  const undeclared = routine({ id: "r-undeclared", trigger: { kind: "event", source: "github", jq: '(.fields["branch"] | IN("main"))' } });
   const h = harness([undeclared]);
   await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
   ok(h.fired.length === 0, "undeclared field: a filter on a field the source does not emit does NOT fire");
