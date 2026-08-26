@@ -21,7 +21,6 @@ import { defineDomain } from "../../agent/memory/domain.js";
 import { defineMemorySilo } from "../../agent/memory/silo.js";
 import { registerSlackFixtureMapper, registerSlackFixtureManifest } from "../_slack-test-stubs.js";
 import { registerCapabilityManifest } from "../../agent/identity/capabilities.js";
-import { overrideSettingsForTest } from "../../agent/settings/settings.js";
 import type { BindableContext } from "../../agent/identity/binding.js";
 import { LEAN_SEAT_TOOLS } from "../../agent/access/lean-seat.js";
 
@@ -170,7 +169,6 @@ export async function buildLeanSeatToolset(opts: {
   readonly onSkip?: (name: string) => void;
   readonly allowNoReply?: boolean;
 }): Promise<ToolSet> {
-  overrideSettingsForTest({ tools: { genericReadVerbs: true } });
   const rec = createRecorder(opts.calls, opts.resultFor);
   const skipped: string[] = [];
   const skip = (name: string): void => {

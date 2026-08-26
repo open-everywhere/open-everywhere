@@ -6,7 +6,6 @@ import {
   defineDomain,
   defineSurface,
   isSubagentChildContext,
-  overrideSettingsForTest,
   registerConfig,
   registerIdentityMapper,
   registerSurfaces,
@@ -89,7 +88,6 @@ registerConfig({
   pluginRegistry: {},
   skillContent: {},
 });
-overrideSettingsForTest({ tools: { sourceScopedMount: false } });
 
 const slackCtx = (channel: string): BindableContext =>
   ({

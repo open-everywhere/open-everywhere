@@ -1,15 +1,14 @@
 import type { SlackContext } from "eve/channels/slack";
 import { loadThreadContextMessages } from "eve/channels/slack";
 import type { SlackMessage } from "eve/channels/slack";
-import { MAX_MESSAGES, renderContext, genericReadVerbsEnabled, type ContextLine } from "@open-everywhere/core/agent/adapter-api.js";
+import { MAX_MESSAGES, renderContext, type ContextLine } from "@open-everywhere/core/agent/adapter-api.js";
 
 export { renderContext, type ContextLine };
 
 export function readMoreHint(): string {
-  const tools = genericReadVerbsEnabled() ? "read_channel or read_thread" : "read_slack_channel or read_slack_thread";
   return (
     "Note: the block above is the most recent messages only, capped for context size — there may " +
-    `be older history not shown. If you need it, fetch more with the ${tools} tool.`
+    "be older history not shown. If you need it, fetch more with the read_channel or read_thread tool."
   );
 }
 

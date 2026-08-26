@@ -1,7 +1,6 @@
 import { type AuditWireEntry } from "./audit-read.js";
 import { fetchTranscript } from "./transcript-read.js";
 import { sleep, dS, makeWant, createRecorder, createInjector, createAuditReader } from "./window-harness.js";
-import { sourceScopedToolsEnabled } from "../../agent/access/source-scoped-mount.js";
 import { isWindowToken } from "../../agent/channels/window-key.js";
 
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
@@ -81,7 +80,7 @@ async function transcriptOf(sessionId: string, sinceIso: string): Promise<{ tool
 
 async function s1(): Promise<void> {
   const since = new Date().toISOString();
-  const brief = `Please use your channel-reading tool (read_channel with platform "slack", or read_slack_channel if that is what you have) to pull recent messages from channel ${SLACK_CHANNEL_ID} in our domain, then reply here with SSM1-${RUN} summarising what you saw. If you cannot read Slack (no such tool, or it refuses), reply SSM1-${RUN} NOSLACK and say so.`;
+  const brief = `Please use your channel-reading tool (read_channel) to pull recent messages from channel ${SLACK_CHANNEL_ID} in our domain, then reply here with SSM1-${RUN} summarising what you saw. If you cannot read Slack (no such tool, or it refuses), reply SSM1-${RUN} NOSLACK and say so.`;
   const { wakeId, token } = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: { platform: "slack", channelId: SLACK_CHANNEL_ID }, text: brief });
   if (!isWindowToken(token)) return record("S1", "FAIL", `dispatched token ${token} is not a window token — the multi-source window did not resolve`);
   console.log(`  S1 injected multi-source Slack wake ${wakeId} → token ${token}`);
@@ -90,9 +89,9 @@ async function s1(): Promise<void> {
   const tr = await transcriptOf(sid, since);
   if (tr === null) return record("S1", "SKIP", `transcript fetch failed for session ${sid} — the mount cannot be observed this run. The mount decision is deterministically pinned offline (source-scoped-mount-test.ts).`);
   const calls = tr.tools;
-  const invokedReader = calls.includes("read_slack_channel") || calls.includes("read_channel");
+  const invokedReader = calls.includes("read_channel");
   if (invokedReader && !tr.text.includes("NOSLACK")) {
-    return record("S1", "PASS", `multi-source window MOUNTED the Slack reader — session ${sid} invoked ${calls.includes("read_channel") ? "the generic read_channel" : "read_slack_channel"} for the sibling Slack channel (slack ∈ sources) and replied without a refusal marker.`);
+    return record("S1", "PASS", `multi-source window ALLOWED the Slack read — session ${sid} invoked read_channel for the sibling Slack channel (slack ∈ sources) and replied without a refusal marker.`);
   }
   if (tr.text.includes("NOSLACK")) {
     return record("S1", "FAIL", `session ${sid} reported it could NOT read Slack (NOSLACK marker${invokedReader ? ", after invoking the reader — an execute fence refused a read that slack ∈ sources should allow" : " — the reader was absent"}) despite slack ∈ sources. The mount or fence over-narrowed.`);
@@ -103,7 +102,7 @@ async function s1(): Promise<void> {
 async function s2(): Promise<void> {
   const since = new Date().toISOString();
   const solo = `ssm-gh-${RUN}`;
-  const brief = `Please use your channel-reading tool (read_channel with platform "slack", or read_slack_channel if that is what you have) to read Slack channel ${SLACK_CHANNEL_ID}, then reply with SSM2-${RUN} summarising what you saw. If you cannot read Slack (no such tool, or it refuses), reply SSM2-${RUN} NOSLACK and say so.`;
+  const brief = `Please use your channel-reading tool (read_channel) to read Slack channel ${SLACK_CHANNEL_ID}, then reply with SSM2-${RUN} summarising what you saw. If you cannot read Slack (no such tool, or it refuses), reply SSM2-${RUN} NOSLACK and say so.`;
   const { wakeId, token } = await inject({ domain: DOMAIN, platform: "github", surfaceKey: GITHUB_SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: { platform: "github", owner: GITHUB_OWNER, repo: GITHUB_REPO, issueNumber: GITHUB_ISSUE }, text: brief, soloWindowId: solo });
   const isSolo = token.includes(`:win:${solo}:`);
   console.log(`  S2 injected solo-GitHub window wake ${wakeId} → token ${token} (windowId≠domain: ${isSolo})`);
@@ -113,9 +112,6 @@ async function s2(): Promise<void> {
   const tr = await transcriptOf(sid, since);
   if (tr === null) return record("S2", "SKIP", `transcript fetch failed for session ${sid} — the negative cannot be observed (a vacuous negative is not a passive negative); the narrowing is pinned offline (source-scoped-mount-test.ts S2 case).`);
   const calls = tr.tools;
-  if (calls.includes("read_slack_channel")) {
-    return record("S2", "FAIL", `session ${sid} INVOKED read_slack_channel on a solo-GitHub window (sources=[github]) — the Slack reader was NOT narrowed out (tools=[${[...new Set(calls)].join(",")}])`);
-  }
   if (calls.includes("read_channel")) {
     if (tr.text.includes("NOSLACK")) {
       return record("S2", "PASS", `solo-GitHub window REFUSED the cross-source Slack read at execute — session ${sid} invoked the generic read_channel and reported NOSLACK (slack ∉ sources=[github]). The per-platform execute fence held.`);
@@ -128,10 +124,6 @@ async function s2(): Promise<void> {
 async function main(): Promise<void> {
   console.log(`=== SOURCE-SCOPED MOUNT · Stage 1 per-route e2e · run ${RUN} · ${new Date().toISOString()} ===`);
   console.log(`target=${TARGET || "(unset)"} domain=${DOMAIN} slack=${SLACK_SURFACE} github=${GITHUB_SURFACE}`);
-  if (!sourceScopedToolsEnabled()) {
-    for (const id of ["S1", "S2"]) if (want(id)) record(id, "SKIP", "tools.sourceScopedMount is not set in THIS process — flag-OFF the mount is byte-identical (arm-on-unified), nothing to narrow. Re-run with the flag on AND a target deployed with `tools.sourceScopedMount` armed");
-    return summary();
-  }
   if (!TARGET || !READ || !INJECT) {
     for (const id of ["S1", "S2"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN / E2E_CONTROL_INJECT_TOKEN — cannot drive a live window.");
     return summary();

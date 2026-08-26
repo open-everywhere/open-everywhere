@@ -122,8 +122,9 @@ async function g1(): Promise<void> {
   await awaitFinalReply("G1", since, wakeId, sid);
   const calls = await toolNamesOf(sid, since);
   if (calls === null) return record("G1", "SKIP", `transcript fetch failed for session ${sid} — the mount cannot be observed this run. Render byte-identity + gate pinned offline (generic-read-verbs-test.ts).`);
-  if (calls.includes("read_channel")) return record("G1", "PASS", `session ${sid} invoked the GENERIC read_channel for slack (the behaviour-preserving successor to read_slack_channel) and replied.`);
-  if (calls.includes("read_slack_channel")) return record("G1", "FAIL", `session ${sid} invoked read_slack_channel — the target was NOT started with tools.genericReadVerbs: true (the Slack-specific reader should have retired).`);
+  if (calls.includes("read_channel")) return record("G1", "PASS", `session ${sid} invoked the GENERIC read_channel for slack (the behaviour-preserving successor to the deleted per-surface reader) and replied.`);
+  const legacyReaders = calls.filter((t) => t.startsWith("read_slack"));
+  if (legacyReaders.length > 0) return record("G1", "FAIL", `session ${sid} invoked ${legacyReaders.join(",")} — OPE-1145 deleted the per-surface Slack readers, so the target runs a build that predates the deletion and the generic verb did not take over.`);
   const rows = await rowsSince(since);
   let verdict = classifyDelegatedReadEvidence(rows, sid, "slack");
   if (verdict.kind === "delegated-unsettled") {
@@ -169,9 +170,9 @@ async function main(): Promise<void> {
         record(
           id,
           "SKIP",
-          `no recorded deploy carries ${GENERIC_READ_VERBS_SHA.slice(0, 8)} (agent/settings/settings.ts's tools.genericReadVerbs: true, OPE-434) — or no deploy record exists in this checkout ` +
-            "(.open-everywhere-deploy/known-good.json, written by `npm run deploy:verify -- --record`). On a pre-flag build read_slack_* is the correct reader, so there is nothing for read_channel to exercise. " +
-            "Deploy a build carrying the flag and record it; the legs arm themselves from the record.",
+          `no recorded deploy carries ${GENERIC_READ_VERBS_SHA.slice(0, 8)} (the first build that mounted the generic read verbs for this app, OPE-434) — or no deploy record exists in this checkout ` +
+            "(.open-everywhere-deploy/known-good.json, written by `npm run deploy:verify -- --record`). On an older build the per-surface Slack reader is the live one, so there is nothing for read_channel to exercise. " +
+            "Deploy a newer build and record it; the legs arm themselves from the record.",
         );
       }
     }

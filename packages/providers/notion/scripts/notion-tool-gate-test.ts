@@ -1,10 +1,19 @@
 import readNotionPage from "../agent/tools/read_notion_page.js";
 import readNotionComments from "../agent/tools/read_notion_comments.js";
 import type { BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
-import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { registerConfig } from "@open-everywhere/core/agent/adapter-api.js";
 
 delete process.env.OE_PLATFORM;
-overrideSettingsForTest({ tools: { sourceScopedMount: false } });
+
+registerConfig({
+  loadDomains: () => [],
+  loadSilos: () => [],
+  loadBundles: () => [],
+  loadBindings: () => [],
+  domainsForSurface: () => [],
+  pluginRegistry: {},
+  skillContent: {},
+});
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {

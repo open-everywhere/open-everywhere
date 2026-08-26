@@ -103,7 +103,6 @@ import { recordSpend } from "@open-everywhere/core/agent/spend/store.js";
 import { periodOf } from "@open-everywhere/core/agent/spend/spend.js";
 import { readAudit } from "@open-everywhere/core/agent/audit/audit.js";
 import replyTool from "@open-everywhere/core/agent/tools/reply.js";
-import readSlackChannel from "@open-everywhere/provider-slack/agent/tools/read_slack_channel.js";
 import type { RouteHandlerArgs } from "eve/channels";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
@@ -1461,15 +1460,6 @@ overrideSettingsForTest({ window: { topology: false } });
   throws(() => assertTurnSurface(toolCtx({}), "slack"), "assertTurnSurface FAILS CLOSED on a context whose origin it cannot name");
   throws(() => assertTurnSurface({ channel: { kind: "subagent" }, session: { auth: { current: { attributes: { oe_platform: "github" } } } } }, "slack"), "assertTurnSurface FIRES on a delegated worker of a github-origin turn (kind `subagent`, never `unified`)");
 
-  ok(arm(readSlackChannel, unifiedCtx("slack")) !== null, "read_slack_channel arms on a unified session (regardless of the current origin)");
-  ok(arm(readSlackChannel, { channel: { kind: "channel:github" }, session: { auth: { current: { attributes: {}, principalId: "U", principalType: "github-user" } } } }) === null, "read_slack_channel stays HIDDEN on a normal github session (byte-identical to today)");
-  const armedRead = arm(readSlackChannel, unifiedCtx("slack"));
-  await assert.rejects(
-    () => armedRead!.execute({ channel: "C_WINA" }, unifiedCtx("github")),
-    /reads slack, but the message that woke this turn came from github|per-surface read tool/,
-    "read_slack_channel EXECUTE refuses a GitHub-origin turn on a unified session (finding 1b — before any Slack API call)",
-  );
-  n++;
 }
 
 {

@@ -81,7 +81,7 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   {
     id: "conversation-history",
     headline: "Re-read a room's own history in full, and open or describe what was uploaded into it",
-    tools: ["read_channel", "read_thread", "read_slack_channel", "read_slack_thread", "read_file_upload", "describe_image", "read_routine_transcript"],
+    tools: ["read_channel", "read_thread", "read_file_upload", "describe_image", "read_routine_transcript"],
   },
   {
     id: "memory",

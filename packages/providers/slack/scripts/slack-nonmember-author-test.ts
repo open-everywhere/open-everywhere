@@ -16,6 +16,7 @@ import {
   type SlackMemberProbe,
 } from "../agent/channels/slack-events.js";
 import { renderMessages, slackReadAdapter } from "../agent/channels/slack-read.js";
+import { readChannelResult, defineDomain, registerConfig, type ReadAdapter, type RenderedLine } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerSlackProvider } from "../agent/register.js";
 
 let passed = 0;
@@ -218,5 +219,37 @@ ok(
   "negative control: …and a DECLARED author is not (=== [])",
 );
 _resetAuthorTrustForTest();
+
+{
+  registerConfig({
+    loadDomains: () => [defineDomain({ name: "join-fixture", channels: ["slack/T1/C1"] })],
+    loadSilos: () => [],
+    loadBundles: () => [],
+    loadBindings: () => [],
+    domainsForSurface: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+  });
+
+  const page = [{ user: "U_MEMBER", ts: "1", text: "hello there" }, { user: "U_GUEST", ts: "2", text: "hi back" }];
+  const memberOnly = [{ user: "U_MEMBER", ts: "1", text: "hello there" }];
+  const joined = (raw: readonly Record<string, unknown>[]): ReadAdapter =>
+    ({
+      platform: "slack",
+      wakeAddress: () => undefined,
+      readChannel: async (ctx: BindableContext, channel: string, limit?: number) =>
+        await slackReadAdapter.readChannel(ctx, channel, limit, async () => ({ messages: raw }) as never),
+      readThread: async (ctx: BindableContext, channel: string, threadTs: string, limit?: number) =>
+        await slackReadAdapter.readThread(ctx, channel, threadTs, limit, async () => ({ messages: raw }) as never),
+      refutedAuthorIds: async (ctx: BindableContext, lines: readonly RenderedLine[]) => await slackReadAdapter.refutedAuthorIds(ctx, lines, PROBE),
+    }) as unknown as ReadAdapter;
+
+  const marked = await readChannelResult(readCtx, "slack", joined(page), "C1");
+  ok(marked.authoredByNonMember === true, "🔴 THE JOIN: the REAL slackReadAdapter's refuted ids reach readChannelResult and set the grading fact — the shape the two halves agree on is pinned here, not assumed");
+  ok(marked.count === 2, "the join: the page comes back whole (grading is additive, never a filter)");
+
+  const clean = await readChannelResult(readCtx, "slack", joined(memberOnly), "C1");
+  ok(!("authoredByNonMember" in clean), "🔴 NEGATIVE CONTROL: a member-only page joined the same way carries NO field — so the positive above is the guest, not an always-mark");
+}
 
 console.log(`\n✅ slack non-member author: ${passed} assertions passed`);

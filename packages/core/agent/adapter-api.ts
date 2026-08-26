@@ -516,7 +516,7 @@ export type { ReactionSinkDeps, ReactionIngestOutcome, ReactionVerb } from "./ch
 export { assertSurfaceAllowed, chatReadIngestion, readChannelResult, readThreadResult } from "./channels/channel-read.js";
 export type { RenderedLine } from "./channels/channel-read.js";
 
-export { encodeChannelKey, decodeChannelKey, isChannelKey, containerIdForPlatform, CHANNEL_KEY_PREFIX } from "./channels/channel-key.js";
+export { encodeChannelKey, decodeChannelKey, isChannelKey, CHANNEL_KEY_PREFIX } from "./channels/channel-key.js";
 export type { ChannelAddress } from "./channels/channel-key.js";
 
 export { refutedReadAuthorIds, distinctReadAuthorIds } from "./channels/read-author-trust.js";
@@ -539,7 +539,6 @@ export type { ReplyDecision, ParticipationSignals } from "./channels/engagement.
 export { resolveWakeTrust, backscrollTrustResolver } from "./identity/wake-trust.js";
 
 export { ingestUntrusted } from "./access/untrusted.js";
-export { genericReadVerbsEnabled } from "./access/source-scoped-mount.js";
 
 export { awarenessWakeEnabled, statusVerbsFor, DEFAULT_STATUS_VERBS } from "./memory/domain.js";
 

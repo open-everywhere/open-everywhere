@@ -1,6 +1,6 @@
 import { type AuditWireEntry } from "./audit-read.js";
 import {
-  sleep, dS, makeWant, createRecorder, createInjector, createAuditReader, readToolCalls, sessionMatrix, scoreWithheldPair,
+  sleep, dS, makeWant, createRecorder, createInjector, createAuditReader, readToolCalls, wholeTranscriptText, sessionMatrix, scoreWithheldPair,
   type InjectBody, type Injected,
 } from "./window-harness.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
@@ -8,7 +8,6 @@ import { withheldFromGrain } from "../../agent/access/window-gate-manifest.js";
 import { LEAN_SEAT_TOOLS } from "../../agent/access/lean-seat.js";
 import { parseWindowToken } from "../../agent/channels/window-key.js";
 import { unifiedDomainSessionKey } from "../../agent/channels/unified-supervisor.js";
-import { sourceScopedToolsEnabled } from "../../agent/access/source-scoped-mount.js";
 import type { OperationalStore } from "../../agent/operational/store.js";
 
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
@@ -258,12 +257,9 @@ async function w3(): Promise<void> {
   if (!DISCORD_C) {
     return record("W3", "SKIP", "no dedicated Discord channel configured (E2E_SOLO_DISCORD unset) — the prod-resident e2e-solo domain is Slack-only until a Discord channel it OWNS exists (the bot lacks Manage Channels / the Slack token lacks channels:write, so one can't be auto-provisioned). The core solo proof is W1/W2/W4/W5; set E2E_SOLO_DISCORD to light up the sources-narrowing leg.");
   }
-  if (!sourceScopedToolsEnabled()) {
-    return record("W3", "SKIP", "tools.sourceScopedMount is not set in THIS process — flag-OFF the mount is byte-identical (arm-on-unified) and there is nothing to narrow, so a run would prove nothing. Re-run with the flag on AND a target deployed with `tools.sourceScopedMount` armed");
-  }
   const since = new Date().toISOString();
   const slackChannelId = SLACK_A.split("/").slice(2).join("/");
-  const brief = `Please use read_slack_channel to pull recent messages from Slack channel ${slackChannelId}, then reply with W3-${RUN} summarising what you saw. If you have no read_slack_channel tool at all, reply W3-${RUN} NOSLACK and say so explicitly.`;
+  const brief = `Please pull recent messages from Slack channel ${slackChannelId} and reply with W3-${RUN} summarising what you saw. If you cannot read that Slack channel — no tool for it, or it refuses — reply W3-${RUN} NOSLACK and say so explicitly.`;
   let inj: Injected;
   try {
     inj = await wakeAt(DOMAIN, DISCORD_C, brief);
@@ -289,10 +285,21 @@ async function w3(): Promise<void> {
     return record("W3", "SKIP", `transcript fetch failed for session ${sessionId} — observation UNAVAILABLE. A vacuous negative must never read as an observed absence (that is the whole reason readToolCalls returns null rather than []), so this is a SKIP, not a PASS. The narrowing is pinned offline (source-scoped-mount-test.ts).`);
   }
   const names = [...new Set(calls.map((c) => c.name))];
-  if (names.includes("read_slack_channel")) {
-    return record("W3", "FAIL", `session ${sessionId} INVOKED read_slack_channel on a SOLO DISCORD window (windowId=${DISCORD_C} ⇒ sources=["discord"]) — the Slack reader was NOT narrowed out of the mount. A Discord channel's window can read Slack. tools=[${names.join(",")}]`);
+  const slackReaders = names.filter((t) => t.startsWith("read_slack"));
+  if (slackReaders.length > 0) {
+    return record("W3", "FAIL", `session ${sessionId} INVOKED a per-surface Slack reader (${slackReaders.join(",")}) on a SOLO DISCORD window (windowId=${DISCORD_C} ⇒ sources=["discord"]) — OPE-1145 deleted that tool, so its presence means the deletion did not reach this target. tools=[${names.join(",")}]`);
   }
-  record("W3", "PASS", `the solo Discord window did NOT reach for the Slack reader — session ${sessionId} (joined via ${via}) ran without read_slack_channel (tools=[${names.join(",") || "none"}]) on a window whose sources derive to ["discord"] from its surface-key windowId. CORROBORATION, not proof: source-scoping emits no audit row (gap G7 — there is no turn.tool_scoped analogue), so absence is only visible as the model not invoking it. Unlike source-scoped-mount's S2, the window here is a REAL solo one, so the sources vector is the one a live wake derives (S2's synthetic windowId made platformOf return "" and fail closed to the origin platform). The binding proof remains the offline unit.`);
+  const tr = await wholeTranscriptText(TARGET, READ, sessionId).catch(() => null);
+  if (tr === null) {
+    return record("W3", "SKIP", `transcript text fetch failed for session ${sessionId} — the NOSLACK marker cannot be read, and a vacuous negative must never read as an observed absence. The narrowing is pinned offline (source-scoped-mount-test.ts).`);
+  }
+  if (tr.text.includes("NOSLACK")) {
+    return record("W3", "PASS", `the solo Discord window could NOT reach the Slack channel — session ${sessionId} (joined via ${via}) reported NOSLACK on a window whose sources derive to ["discord"] from its surface-key windowId (tools=[${names.join(",") || "none"}]). CORROBORATION, not proof: source-scoping emits no audit row (gap G7 — there is no turn.tool_scoped analogue). Unlike source-scoped-mount's S2, the window here is a REAL solo one, so the sources vector is the one a live wake derives (S2's synthetic windowId made platformOf return "" and fail closed to the origin platform). The binding proof remains the offline unit.`);
+  }
+  if (names.includes("read_channel") || names.includes("read_thread")) {
+    return record("W3", "FAIL", `session ${sessionId} invoked a chat reader on a SOLO DISCORD window asked for SLACK content and did NOT report NOSLACK — a cross-source read may have succeeded, or the agent answered about the wrong container without saying so. Verify the sources gate (tools=[${names.join(",") || "none"}], text tail: ${tr.text.slice(-300)})`);
+  }
+  record("W3", "SKIP", `session ${sessionId} (joined via ${via}) replied without invoking a reader and without the NOSLACK marker (tools=[${names.join(",") || "none"}]) — the model declined the brief rather than demonstrating the narrowing, so there is nothing to observe. The binding proof remains the offline unit (source-scoped-mount-test.ts).`);
 }
 
 async function w4(store: OperationalStore | null): Promise<void> {

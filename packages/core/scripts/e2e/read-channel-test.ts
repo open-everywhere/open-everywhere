@@ -39,7 +39,7 @@ const gitStdout = (args: readonly string[]): string => {
   const shallowClone = gitStdout(["rev-parse", "--is-shallow-repository"]) === "true";
   if (shouldAssertShaAncestry({ objectPresent: shaKnownLocally, shallowClone })) {
     const isAncestorOfHead = runsClean(["merge-base", "--is-ancestor", GENERIC_READ_VERBS_SHA, "HEAD"]);
-    ok(isAncestorOfHead, `GENERIC_READ_VERBS_SHA (${GENERIC_READ_VERBS_SHA.slice(0, 8)}) is a real ancestor of HEAD — agent/settings/settings.ts's tools.genericReadVerbs:true commit, OPE-434`);
+    ok(isAncestorOfHead, `GENERIC_READ_VERBS_SHA (${GENERIC_READ_VERBS_SHA.slice(0, 8)}) is a real ancestor of HEAD — the earliest build that mounts the generic read verbs, OPE-434`);
   } else {
     const why = shallowClone
       ? "this checkout is a SHALLOW clone, so the ancestry chain to HEAD is not present locally"

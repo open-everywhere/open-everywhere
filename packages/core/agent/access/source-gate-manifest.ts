@@ -4,8 +4,6 @@ export interface SourceToolFile {
 }
 
 export const SOURCE_SCOPED_TOOLS: Readonly<Record<string, string>> = {
-  read_slack_channel: "slack",
-  read_slack_thread: "slack",
   read_notion_page: "notion",
   read_notion_comments: "notion",
   read_linear_issue: "linear",
@@ -124,7 +122,7 @@ export function checkSourceGate(tools: readonly SourceToolFile[]): string[] {
     }
     if (SOURCE_SCOPED_TOOLS[name] === undefined) {
       problems.push(
-        `WORKER_CHAT_ARM_TOOLS names "${name}" but SOURCE_SCOPED_TOOLS does not — the worker-chat-arm set is a strict SUBSET of the per-surface set (it narrows the sources rule, it does not replace it)`,
+        `WORKER_CHAT_ARM_TOOLS names "${name}" but SOURCE_SCOPED_TOOLS does not — the worker-chat-arm set is a SUBSET of the per-surface set (it narrows the sources rule, it does not replace it)`,
       );
     }
   }

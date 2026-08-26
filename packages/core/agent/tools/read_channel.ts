@@ -4,7 +4,6 @@ import { ingestUntrustedModelOutput } from "../access/untrusted.js";
 import { type BindableContext, TurnOriginFenceError } from "../identity/binding.js";
 import { resolveWindowSources } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
-import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
 import { readChannelResult, chatReadIngestion, renderChannelBody, channelReadSource, keyedReadResult, WindowSourcesRefusalError } from "../channels/channel-read.js";
 import { resolveWakeChannel } from "../channels/wake-container.js";
 import { auditSourcesGateRefusal, auditOriginFenceRefusal } from "../channels/read-scope-audit.js";
@@ -84,7 +83,6 @@ preRegisterDynamicEntry("read_channel", "_single", readChannelEntry);
 export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
-      if (!genericReadVerbsEnabled()) return null;
       if (resolveWindowSources(ctx as BindableContext, safeDomains()).length === 0) return null;
       return readChannelEntry;
     },

@@ -118,8 +118,6 @@ export interface AgentSettings {
   };
   readonly tools: {
     readonly maxResultChars: number;
-    readonly sourceScopedMount: boolean;
-    readonly genericReadVerbs: boolean;
   };
   readonly turn: {
     readonly stepBudget: number;
@@ -353,7 +351,7 @@ export const SETTINGS = {
       shipped: "taint",
       validate: (v) => (v === "taint" || v === "withhold" ? undefined : 'must be "taint" or "withhold"'),
       summary:
-        'What the agent does with a message an EXCLUDED author wrote — an author the SURFACE positively refuted (Slack `is_restricted`/`is_ultra_restricted`/`is_stranger`, Entra `userType: "guest"`) or the OPERATOR\'s author-trust register refuted (`agent/identity/authors.ts`, Discord and Notion). `taint` (shipped) lets the text enter the context inside the untrusted-content envelope and leaves the consequence to the tainted-turn model and the approval plane. `withhold` stops the text ENTERING: an @mention or DM from that author gets a private notice and no action, ambient engagement never triggers on their messages, and their reply inside a permitted member\'s thread reaches the model as an arrived-marker with no body. It binds the READ verbs too: `read_channel`/`read_thread` replace that author\'s message text with the same arrived-marker, so a body a wake suppressed cannot be fetched back by reading the channel. A withheld body never ingests, so it never keys taint. The two mechanisms COEXIST — the envelope is provenance-based and stays as it is; withhold is identity-based. On a tenant the operator has NOT armed nothing is excluded, so `withhold` changes nothing there. \u26a0\ufe0f EVERY CHAT SURFACE READS IT, BUT THE EVIDENCE DIFFERS PER SURFACE. Slack and Teams refute an author themselves; Discord and Notion read the operator\'s register; GitHub refutes on the comment\'s `author_association` (`OWNER`, `MEMBER` and `COLLABORATOR` each hold a deliberate access grant and are internal — every other value, `CONTRIBUTOR` and `MANNEQUIN` included, is excluded); Linear refutes a workspace guest (`User.guest`). \u26a0\ufe0f GITHUB AND LINEAR HAVE NO PRIVATE CHANNEL back to a commenter, so an AMBIENT excluded author\'s message is a silent drop with an audit row and nothing posted. An explicit @mention from an excluded author still gets one fixed, identity-blind acknowledgement line (`EXTERNAL_MENTION_ACK` — names no person, no organisation, no setting, no verdict) on both surfaces, so the mentioning member never reads the agent as broken; on Linear it posts as a `response` Agent Activity, which also ends the session, so no spinner is left open. Two known limits elsewhere — a Slack GROUP DM has no partner to refute, so it can never be suppressed; and Discord\'s hydrated context lines are not filtered, so an excluded author quoted there still reaches the model when the TRIGGER author is permitted. The Stage-1 readers `read_slack_channel`/`read_slack_thread` (live only when `tools.genericReadVerbs` is off, the library default) share `read_channel`/`read_thread`\'s own grade-and-project body (`readChannelResult`/`readThreadResult`), so they carry both the author-taint mark and the `withhold` read half identically.',
+        'What the agent does with a message an EXCLUDED author wrote — an author the SURFACE positively refuted (Slack `is_restricted`/`is_ultra_restricted`/`is_stranger`, Entra `userType: "guest"`) or the OPERATOR\'s author-trust register refuted (`agent/identity/authors.ts`, Discord and Notion). `taint` (shipped) lets the text enter the context inside the untrusted-content envelope and leaves the consequence to the tainted-turn model and the approval plane. `withhold` stops the text ENTERING: an @mention or DM from that author gets a private notice and no action, ambient engagement never triggers on their messages, and their reply inside a permitted member\'s thread reaches the model as an arrived-marker with no body. It binds the READ verbs too: `read_channel`/`read_thread` replace that author\'s message text with the same arrived-marker, so a body a wake suppressed cannot be fetched back by reading the channel. A withheld body never ingests, so it never keys taint. The two mechanisms COEXIST — the envelope is provenance-based and stays as it is; withhold is identity-based. On a tenant the operator has NOT armed nothing is excluded, so `withhold` changes nothing there. \u26a0\ufe0f EVERY CHAT SURFACE READS IT, BUT THE EVIDENCE DIFFERS PER SURFACE. Slack and Teams refute an author themselves; Discord and Notion read the operator\'s register; GitHub refutes on the comment\'s `author_association` (`OWNER`, `MEMBER` and `COLLABORATOR` each hold a deliberate access grant and are internal — every other value, `CONTRIBUTOR` and `MANNEQUIN` included, is excluded); Linear refutes a workspace guest (`User.guest`). \u26a0\ufe0f GITHUB AND LINEAR HAVE NO PRIVATE CHANNEL back to a commenter, so an AMBIENT excluded author\'s message is a silent drop with an audit row and nothing posted. An explicit @mention from an excluded author still gets one fixed, identity-blind acknowledgement line (`EXTERNAL_MENTION_ACK` — names no person, no organisation, no setting, no verdict) on both surfaces, so the mentioning member never reads the agent as broken; on Linear it posts as a `response` Agent Activity, which also ends the session, so no spinner is left open. Two known limits elsewhere — a Slack GROUP DM has no partner to refute, so it can never be suppressed; and Discord\'s hydrated context lines are not filtered, so an excluded author quoted there still reaches the model when the TRIGGER author is permitted. EVERY chat reader — `read_channel`/`read_thread` and the delegated worker\'s `read_work_channel`/`read_work_thread` — routes through ONE grade-and-project body (`readChannelResult`/`readThreadResult`), so the author-taint mark and the `withhold` read half are declared once and no reader can declare them differently.',
     } satisfies SettingSpec<ExternalAuthorGrain>,
     roomGrain: {
       path: "externalPolicy.roomGrain",
@@ -608,18 +606,6 @@ export const SETTINGS = {
         "Per-tool-result character cap (~30k tokens), applied inside the untrusted-ingestion funnel so one avalanche result cannot blow the context window in a single shot.",
       format: (v) => `${v} chars`,
     } satisfies SettingSpec<number>,
-    sourceScopedMount: {
-      path: "tools.sourceScopedMount",
-      shipped: false,
-      summary:
-        "Stage 1 of the uniform mount rule: a per-surface reader (`read_slack_channel`, …) mounts iff its platform is one of the window's SOURCES. Off, the historical arm-on-any-unified-window guard applies and every live window keeps every reader it mounts today.",
-    } satisfies SettingSpec<boolean>,
-    genericReadVerbs: {
-      path: "tools.genericReadVerbs",
-      shipped: false,
-      summary:
-        "Stage 2: the surface-agnostic `read_channel` / `read_thread` pair mounts and the Slack-specific `read_slack_*` readers retire. A model-facing tool-surface change, deliberately armed independently of `tools.sourceScopedMount`.",
-    } satisfies SettingSpec<boolean>,
   },
   turn: {
     stepBudget: {
@@ -873,8 +859,6 @@ export function getSettings(
     },
     tools: {
       maxResultChars: resolve(SETTINGS.tools.maxResultChars, o.tools?.maxResultChars, env),
-      sourceScopedMount: resolve(SETTINGS.tools.sourceScopedMount, o.tools?.sourceScopedMount, env),
-      genericReadVerbs: resolve(SETTINGS.tools.genericReadVerbs, o.tools?.genericReadVerbs, env),
     },
     turn: {
       stepBudget: resolve(SETTINGS.turn.stepBudget, o.turn?.stepBudget, env),

@@ -207,14 +207,12 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   read_notion_comments: open("granted read of page comments/inline discussions; bounded by the room-level grant (membership is the ACL)"),
   read_linear_issue: open("granted read of an issue's body + comment thread via the workspace token; bounded by what that token is shared into (membership is the ACL)"),
   add_label: open("trivially reversible (react-class — un-label is one more add_label call away); entity-gated to ticketing surfaces (Linear/GitHub), audited per call"),
-  read_channel: open("generic channel read (Stage 2): a read of a channel the domain grants, into that conversation; per-platform gated by X ∈ sources in execute"),
-  read_thread: open("generic thread read (Stage 2): same-surface thread read of a domain-granted channel; per-platform gated in execute"),
+  read_channel: open("the channel read: a read of a channel the domain grants, into that conversation; per-platform gated by X ∈ sources in execute"),
+  read_thread: open("the thread read: same-surface thread read of a domain-granted channel; per-platform gated in execute"),
   read_work_channel: open(
     "the delegated worker's channel read (OPE-938): the SAME bytes read_channel returns from the SAME adapter and the same wake container, so it escapes nothing that verb does not. It is a narrower reach, not a wider one — it mounts only where the caller's domain declares the surface's work role (access/surface-work-grant.ts), where read_channel mounts on any window with sources",
   ),
   read_work_thread: open("the delegated worker's thread read (OPE-938) — same reach and same reasoning as read_work_channel, on the thread this turn arrived in"),
-  read_slack_channel: open("read of a channel the bot is already in, into that conversation"),
-  read_slack_thread: open("same-surface thread read"),
   session_cost: open("read of this session's own spend"),
   agent_version: open(
     "the running-version seam (OPE-991): a read of the deployment's OWN registered fact bag (commands/core.ts's AppInfo — the same one \"/oe status\" renders), never a repo read and never a guess. No principal in the output, nothing executed, nothing proposed — same class as explain_permission next to it",

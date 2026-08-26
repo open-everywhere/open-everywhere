@@ -1,5 +1,6 @@
+
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -21,13 +22,11 @@ import { discordReadAdapter, discordLinesFromRaw } from "@open-everywhere/provid
 import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
 import { teamsReadAdapter } from "@open-everywhere/provider-teams/agent/channels/teams-read.js";
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
-import { genericReadVerbsEnabled } from "@open-everywhere/core/agent/access/source-scoped-mount.js";
-import { overrideSettingsForTest, resetSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 import { ingestUntrusted, normalizeFenceNonce } from "@open-everywhere/core/agent/access/untrusted.js";
 import { defineDomain } from "@open-everywhere/core/agent/memory/domain.js";
 import type { BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { auditSourcesGateRefusal, auditOriginFenceRefusal } from "@open-everywhere/core/agent/channels/read-scope-audit.js";
-import { encodeChannelKey, decodeChannelKey, isChannelKey, containerIdForPlatform, CHANNEL_KEY_PREFIX } from "@open-everywhere/core/agent/channels/channel-key.js";
+import { encodeChannelKey, decodeChannelKey, isChannelKey, CHANNEL_KEY_PREFIX } from "@open-everywhere/core/agent/channels/channel-key.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -67,7 +66,7 @@ registerReadAdapter(fakeSlackAdapter);
   const chan: ChannelReadResult = { platform: "slack", channel: "C0ABC", count: 2, messages: MSGS };
   const oldChannelBody = `Recent messages in C0ABC (oldest first):\n[U1] hello there\n[U2] hi back`;
   const oldChannelSource = `slack channel C0ABC`;
-  ok(renderChannelBody(chan) === oldChannelBody, "golden: channel body is byte-identical to read_slack_channel for platform:slack");
+  ok(renderChannelBody(chan) === oldChannelBody, "golden: channel body is byte-identical to the deleted per-surface channel reader for platform:slack");
   ok(channelReadSource(chan) === oldChannelSource, "golden: channel untrusted-wrap source is byte-identical (`slack channel <ch>`)");
   const oldWrapped = { type: "text" as const, value: ingestUntrusted(oldChannelBody, { source: oldChannelSource }) };
   const newWrapped = { type: "text" as const, value: ingestUntrusted(renderChannelBody(chan), { source: channelReadSource(chan) }) };
@@ -78,7 +77,7 @@ registerReadAdapter(fakeSlackAdapter);
   ok(renderChannelBody(empty) === "No readable messages in C0ABC.", "golden: empty-channel body byte-identical");
 
   const thr: ThreadReadResult = { platform: "slack", channel: "C0ABC", thread_ts: "999.9", count: 2, messages: MSGS };
-  ok(renderThreadBody(thr) === `Thread 999.9 in C0ABC (oldest first):\n[U1] hello there\n[U2] hi back`, "golden: thread body byte-identical to read_slack_thread");
+  ok(renderThreadBody(thr) === `Thread 999.9 in C0ABC (oldest first):\n[U1] hello there\n[U2] hi back`, "golden: thread body byte-identical to the deleted per-surface thread reader");
   ok(threadReadSource(thr) === `slack thread C0ABC/999.9`, "golden: thread untrusted-wrap source byte-identical (`slack thread <ch>/<ts>`)");
   const thrEmpty: ThreadReadResult = { platform: "slack", channel: "C0ABC", thread_ts: "999.9", count: 0, messages: [] };
   ok(renderThreadBody(thrEmpty) === "No readable replies in thread 999.9.", "golden: empty-thread body byte-identical");
@@ -154,29 +153,16 @@ registerReadAdapter(fakeSlackAdapter);
 }
 
 {
-  resetSettingsForTest();
-  ok(genericReadVerbsEnabled() === false, "flag: nothing registered ⇒ OFF (read_slack_* is the live reader, byte-identical)");
-  overrideSettingsForTest({ tools: { genericReadVerbs: true } });
-  ok(genericReadVerbsEnabled() === true, "flag: `tools.genericReadVerbs: true` ⇒ ON (generic verbs mount, read_slack_* retire)");
-  overrideSettingsForTest({ tools: { genericReadVerbs: false } });
-  ok(genericReadVerbsEnabled() === false, "flag: `tools.genericReadVerbs: false` ⇒ OFF");
-  process.env.OE_GENERIC_READ_VERBS = "1";
-  ok(genericReadVerbsEnabled() === false, "flag: 🔴 a stray OE_GENERIC_READ_VERBS=1 does NOT arm the generic verbs — the mirror is deleted (OPE-411)");
-  delete process.env.OE_GENERIC_READ_VERBS;
-  resetSettingsForTest();
-
   const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "../packages/core/agent/tools");
   const slackToolsDir = join(dirname(fileURLToPath(import.meta.url)), "../packages/providers/slack/agent/tools");
-  const slackChanSrc = readFileSync(join(slackToolsDir, "read_slack_channel.ts"), "utf8");
-  const slackThreadSrc = readFileSync(join(slackToolsDir, "read_slack_thread.ts"), "utf8");
-  ok(/if \(genericReadVerbsEnabled\(\)\) return null;/u.test(slackChanSrc), "wiring: read_slack_channel retires when the flag is ON (returns null)");
-  ok(/if \(genericReadVerbsEnabled\(\)\) return null;/u.test(slackThreadSrc), "wiring: read_slack_thread retires when the flag is ON");
-  ok(slackChanSrc.indexOf("genericReadVerbsEnabled()") < slackChanSrc.indexOf("sourceScopedMount("), "wiring: the retire guard precedes the Stage-1 mount (flag-OFF path unchanged)");
+  for (const gone of ["read_slack_channel.ts", "read_slack_thread.ts"]) {
+    ok(!existsSync(join(slackToolsDir, gone)), `🔴 OPE-1145: the Slack bundle no longer authors ${gone} — the per-surface reader is deleted, not merely disarmed`);
+  }
 
   const readChanSrc = readFileSync(join(toolsDir, "read_channel.ts"), "utf8");
   const readThreadSrc = readFileSync(join(toolsDir, "read_thread.ts"), "utf8");
   for (const [name, src] of [["read_channel", readChanSrc], ["read_thread", readThreadSrc]] as const) {
-    ok(/if \(!genericReadVerbsEnabled\(\)\) return null;/u.test(src), `wiring: ${name} is ABSENT when the flag is OFF`);
+    ok(!/genericReadVerbsEnabled/u.test(src), `🔴 wiring: ${name} carries NO flag guard — it mounts on every deployment`);
     ok(src.includes("resolveWakeChannel("), `wiring: ${name} routes through the neutral execute chain (resolveWakeChannel → resolveReadAdapter)`);
     ok(!src.includes("resolveReadTarget("), `🔴 OPE-929: ${name} does NOT decode a model-supplied channel key — it takes no target at all`);
     ok(src.includes("resolveWindowSources("), `wiring: ${name} gates its mount on sources non-empty`);
@@ -272,11 +258,6 @@ registerReadAdapter(fakeSlackAdapter);
   ok(channelReadSource(keyed) === "slack channel ch_c2xhY2s6QzBBQkM", "render: the provenance label still names the SURFACE (provenance is not addressing) but addresses by key");
   const thr: ThreadReadResult = { platform: "slack", channel: "C0ABC", thread_ts: "999.9", count: 2, messages: MSGS };
   ok(renderThreadBody(keyedReadResult(thr)).startsWith("Thread 999.9 in ch_c2xhY2s6QzBBQkM (oldest first):"), "render: the thread body names the key, and thread_ts stays a raw message id (a message is not a place)");
-
-  ok(containerIdForPlatform("ch_c2xhY2s6QzBBQkM", "slack") === "C0ABC", "stage-1: read_slack_* decodes a slack key to the raw id it fetches with");
-  ok(containerIdForPlatform("C0ABC", "slack") === "C0ABC", "stage-1: …and a raw Slack id still passes through unchanged (the flag-off contract)");
-  assert.throws(() => containerIdForPlatform(encodeChannelKey("discord", "D1"), "slack"), /names a discord channel/u, "stage-1: a key naming ANOTHER platform is refused, never mis-addressed as a slack read");
-  n++;
 
   const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "../packages/core/agent/tools");
   for (const name of ["read_channel", "read_thread"] as const) {

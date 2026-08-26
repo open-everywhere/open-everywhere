@@ -3,10 +3,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { replayStepNames } from "@open-everywhere/core/agent/adapter-api.js";
-import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 delete process.env.OE_PLATFORM;
-overrideSettingsForTest({ tools: { sourceScopedMount: false } });
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

@@ -23,7 +23,6 @@ import {
 import { bashTimeoutMs, backgroundGuardEnabled, DEFAULT_BASH_TIMEOUT_MS } from "../agent/stall/bash-hang-guard.js";
 import { domainSkillCap, DEFAULT_DOMAIN_SKILL_CAP } from "../agent/skills/domain-skills.js";
 import { auditSilencesEnabled } from "../agent/audit/audit.js";
-import { sourceScopedToolsEnabled, genericReadVerbsEnabled } from "../agent/access/source-scoped-mount.js";
 import { maxResultChars, DEFAULT_MAX_RESULT_CHARS } from "../agent/access/result-cap.js";
 import { stallThreshold, DEFAULT_STALL_THRESHOLD } from "../agent/stall/guard.js";
 import { checkpointTtlHours } from "../agent/approvals/session-checkpoint.js";
@@ -294,8 +293,6 @@ console.log("6 — the public resolvers are schema-backed, with their names and 
   ok(backgroundGuardEnabled(), "[6] backgroundGuardEnabled() ⇒ shipped ON");
   eq(domainSkillCap(), 50, "[6] domainSkillCap() ⇒ shipped 50");
   ok(!auditSilencesEnabled(), "[6] auditSilencesEnabled() ⇒ shipped OFF");
-  ok(!sourceScopedToolsEnabled(), "[6] sourceScopedToolsEnabled() ⇒ shipped OFF");
-  ok(!genericReadVerbsEnabled(), "[6] genericReadVerbsEnabled() ⇒ shipped OFF");
   eq(maxResultChars(), 120_000, "[6] maxResultChars() ⇒ shipped 120k");
   eq(stallThreshold(), 3, "[6] stallThreshold() ⇒ shipped 3");
   eq(checkpointTtlHours(), 24, "[6] checkpointTtlHours() ⇒ shipped 24h");

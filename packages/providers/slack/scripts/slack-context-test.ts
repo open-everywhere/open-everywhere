@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { loadConversationContext, _resetBotIdentityCache, readMoreHint } from "../agent/channels/slack-context.js";
-import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE, overrideSettingsForTest, resetSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -60,7 +60,7 @@ const msg = (ts: string, threadTs: string) => ({ ts, threadTs, channelId: "C_TXN
   ok(out.length === 1 && out[0].startsWith(UNTRUSTED_OPEN), "channel path returns one untrusted entry");
   ok(out[0].indexOf("oldest") < out[0].indexOf("middle") && out[0].indexOf("middle") < out[0].indexOf("newest"), "rendered oldest-first");
   ok(!out[0].includes("joined"), "system subtype messages are dropped");
-  ok(!out[0].includes("read_slack_channel"), "short conversation (below the cap) → no 'fetch more' hint");
+  ok(!out[0].includes("read_channel"), "short conversation (below the cap) → no 'fetch more' hint");
 }
 
 {
@@ -72,46 +72,27 @@ const msg = (ts: string, threadTs: string) => ({ ts, threadTs, channelId: "C_TXN
       text: `m${9 - i}`,
     }));
 
-  resetSettingsForTest();
   {
     const out = await loadConversationContext(fakeCtx({ history: capHistory() }), msg("11.0", "11.0"));
-    ok(out.length === 1, "cap test (flag OFF): one context entry");
+    ok(out.length === 1, "cap test: one context entry");
     const untrustedEnd = out[0].indexOf(UNTRUSTED_CLOSE);
-    ok(untrustedEnd > -1, "cap test (flag OFF): untrusted block is present");
-    ok(out[0].includes("read_slack_channel") && out[0].includes("read_slack_thread"), "flag OFF: hitting the cap names the read_slack_* pair (the shipped default's live tools)");
-    ok(!out[0].includes("`read_channel`") && !/\bread_channel\b/u.test(out[0]) && !/\bread_thread\b/u.test(out[0]), "flag OFF: the hint does NOT name the generic verbs (not mounted on this deployment)");
-    const hintIdx = out[0].indexOf("read_slack_channel");
-    ok(hintIdx > untrustedEnd, "flag OFF: the hint is placed AFTER the untrusted-wrapped block, not inside it");
-  }
-
-  overrideSettingsForTest({ tools: { genericReadVerbs: true } });
-  {
-    const out = await loadConversationContext(fakeCtx({ history: capHistory() }), msg("11.0", "11.0"));
-    ok(out.length === 1, "cap test (flag ON): one context entry");
-    const untrustedEnd = out[0].indexOf(UNTRUSTED_CLOSE);
-    ok(untrustedEnd > -1, "cap test (flag ON): untrusted block is present");
-    ok(out[0].includes("read_channel") && out[0].includes("read_thread"), "flag ON: hitting the cap names the generic read_channel/read_thread pair that actually mounts");
-    ok(!out[0].includes("read_slack_channel") && !out[0].includes("read_slack_thread"), "🔴 flag ON: the hint does NOT still name the retired read_slack_* pair — this was the OPE-780 bug");
+    ok(untrustedEnd > -1, "cap test: untrusted block is present");
+    ok(out[0].includes("read_channel") && out[0].includes("read_thread"), "hitting the cap names the read_channel/read_thread pair that actually mounts");
+    ok(!out[0].includes("read_slack_channel") && !out[0].includes("read_slack_thread"), "the hint does not name the deleted read_slack_* pair (weak tripwire — see the section note)");
     const hintIdx = out[0].indexOf("read_channel");
-    ok(hintIdx > untrustedEnd, "flag ON: the hint is placed AFTER the untrusted-wrapped block, not inside it");
+    ok(hintIdx > untrustedEnd, "the hint is placed AFTER the untrusted-wrapped block, not inside it");
   }
-  resetSettingsForTest();
 }
 
 {
-  resetSettingsForTest();
-  ok(readMoreHint().includes("read_slack_channel") && readMoreHint().includes("read_slack_thread"), "readMoreHint(): flag OFF names read_slack_channel/read_slack_thread");
-  ok(!readMoreHint().includes("read_channel or read_thread"), "readMoreHint(): flag OFF does not name the generic pair");
-  overrideSettingsForTest({ tools: { genericReadVerbs: true } });
-  ok(readMoreHint().includes("read_channel or read_thread"), "readMoreHint(): flag ON names read_channel/read_thread");
-  ok(!readMoreHint().includes("read_slack_channel") && !readMoreHint().includes("read_slack_thread"), "readMoreHint(): flag ON does not name the retired read_slack_* pair");
-  resetSettingsForTest();
+  ok(readMoreHint().includes("read_channel or read_thread"), "readMoreHint(): names read_channel/read_thread");
+  ok(!readMoreHint().includes("read_slack_channel") && !readMoreHint().includes("read_slack_thread"), "readMoreHint(): names no deleted read_slack_* tool (weak tripwire — one unbranched literal)");
 }
 
 {
   const history = Array.from({ length: 5 }, (_, i) => ({ type: "message", user: "UA", ts: `${5 - i}.0`, text: `m${4 - i}` }));
   const out = await loadConversationContext(fakeCtx({ history }), msg("6.0", "6.0"));
-  ok(!out[0].includes("read_slack_channel") && !out[0].includes("read_slack_thread"), "below the cap → hint omitted (nothing more to fetch)");
+  ok(!out[0].includes("read_channel") && !out[0].includes("read_thread"), "below the cap → hint omitted (nothing more to fetch)");
 }
 
 {

@@ -4,7 +4,6 @@ import { bindFrom, registerIdentityMapper, type BindableContext } from "../agent
 import { registerConfig } from "../agent/access/config.js";
 import { registerReadAdapter, type ReadAdapter, type RenderedLine, type WakeReadAddress } from "../agent/channels/channel-read.js";
 import { resolveWakeChannel, requireWakeThreadRoot, WakeContainerError } from "../agent/channels/wake-container.js";
-import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import readChannelDynamic from "../agent/tools/read_channel.js";
 import readThreadDynamic from "../agent/tools/read_thread.js";
 
@@ -70,8 +69,6 @@ const DOMAINS = [{ name: "d", channels: [`${PLATFORM}/T1/C1`] }] as never;
 
 console.log("1. the tool surface:");
 {
-  overrideSettingsForTest({ tools: { genericReadVerbs: true } });
-
   const mount = (dyn: unknown): { inputSchema?: { shape?: Record<string, unknown>; parse?: (v: unknown) => unknown } } | null => {
     const handler = (dyn as { events: Record<string, (e: unknown, c: unknown) => unknown> }).events["session.started"];
     return handler({}, turn({ team_id: "T1", channel_id: "C1" })) as never;

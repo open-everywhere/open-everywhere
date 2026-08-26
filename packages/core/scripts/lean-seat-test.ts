@@ -95,14 +95,9 @@ for (const name of ["read_channel", "read_thread"]) {
   ok(allowedOnLeanSeat(name), `OPE-829: the lean roster holds ${name} — a seat with no reader can only guess or deny a referent it cannot see`);
   ok(LEAN_SEAT_TOOLS.has(name), `${name} is a NAMED LEAN_SEAT_TOOLS member, not merely surviving on a different default`);
 }
-for (const name of ["read_slack_channel", "read_slack_thread"]) {
-  ok(!allowedOnLeanSeat(name), `the Stage-1 per-surface reader ${name} stays WORKER-SIDE — a library-default deployment's seat is byte-unchanged by OPE-829`);
-}
 
 const mustBeRelocated: readonly [string, string][] = [
   ["describe_image", "worker-side (final ruling, supersedes the plan's §7 'kept'): the seat's only taint ingress becomes the delegation return stamp"],
-  ["read_slack_channel", "per-surface read pair (the Stage-1 readers stay worker-side; only the GENERIC pair moved onto the seat)"],
-  ["read_slack_thread", "per-surface read pair"],
   ["read_notion_page", "cross-surface read"],
   ["read_linear_issue", "cross-surface read"],
   ["read_file_upload", "worker-side; the durable attachment mirror resolves the id cross-process"],
@@ -304,7 +299,7 @@ inSession(() => {
   ok(currentLeanSeatPosture() === "lean", "a marked wake resolves LEAN inside a live session");
   const toolset = makeToolset();
   projectToolSet(toolset as unknown as Record<string, unknown>);
-  ok(!("purge_memory" in toolset) && !("read_slack_channel" in toolset) && !("aws" in toolset) && !("describe_image" in toolset) && !("web_search" in toolset), "projectToolSet withholds the relocated names on a lean wake");
+  ok(!("purge_memory" in toolset) && !("read_notion_page" in toolset) && !("aws" in toolset) && !("describe_image" in toolset) && !("web_search" in toolset), "projectToolSet withholds the relocated names on a lean wake");
   ok("reply" in toolset && "no_reply" in toolset && "agent" in toolset && "spawn_thread_session" in toolset && "todo" in toolset, "projectToolSet keeps the conversational roster");
   ok("read_channel" in toolset && "read_thread" in toolset, "projectToolSet KEEPS the recovery reads on a lean wake (OPE-829)");
   ok("final_output" in toolset, "the harness sink survives");
@@ -512,7 +507,7 @@ try {
 ok(!currentFireThrew, "…while a fire stamp on THIS delivery's own `current` still keeps the fire's posture");
 
 const standingWorkerOnly = workerOnlyTools("standing");
-ok(standingWorkerOnly.includes("purge_memory") && standingWorkerOnly.includes("aws") && standingWorkerOnly.includes("describe_image") && standingWorkerOnly.includes("read_slack_channel"), "the worker-capability index counts the relocated tools as worker-only from a delegating standing seat");
+ok(standingWorkerOnly.includes("purge_memory") && standingWorkerOnly.includes("aws") && standingWorkerOnly.includes("describe_image") && standingWorkerOnly.includes("read_notion_page"), "the worker-capability index counts the relocated tools as worker-only from a delegating standing seat");
 ok(!standingWorkerOnly.includes("reply") && !standingWorkerOnly.includes("update_status"), "…and never the seat's own roster verbs");
 ok(!standingWorkerOnly.includes("read_channel") && !standingWorkerOnly.includes("read_thread"), "…and the recovery reads have LEFT the worker-only index — the seat holds them directly now (OPE-829)");
 ok(standingWorkerOnly.length >= 60, `the index grew to the relocated surface (${standingWorkerOnly.length} worker-only tools — the roster cut, seen from the routing table)`);

@@ -6,7 +6,7 @@ import { sourceScopedMount, workerChatArmMount } from "../agent/access/source-sc
 import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 import { checkSourceGate, SOURCE_SCOPED_TOOLS, GENERIC_READ_VERBS, WORKER_CHAT_ARM_TOOLS, type SourceToolFile } from "../agent/access/source-gate-manifest.js";
 import { assertTurnSurface, isUnifiedWindowContext, channelPlatform, type BindableContext } from "../agent/identity/binding.js";
-import { defineDomain } from "../agent/memory/domain.js";
+import { defineDomain, type Domain } from "../agent/memory/domain.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -30,53 +30,32 @@ const payments = defineDomain({
 const hr = defineDomain({ name: "hr", channels: ["slack/T_ENG/C_HR"], ambientSupervisor: true });
 const domains = [payments, hr];
 
-const setFlag = (v: boolean | undefined) => {
-  if (v === undefined) resetSettingsForTest();
-  else overrideSettingsForTest({ tools: { sourceScopedMount: v } });
-};
-
-setFlag(undefined);
 {
-  const uni = mk("unified", { oe_platform: "github", oe_sources: "github" });
-  ok(sourceScopedMount(uni, "slack", () => domains) === true, "flag-OFF: a unified window mounts the Slack reader regardless of sources (arm-on-unified, byte-identical)");
-  ok(sourceScopedMount(uni, "notion", () => domains) === true, "flag-OFF: a unified window mounts the Notion reader regardless of sources (byte-identical)");
+  const uniGithubOnly = mk("unified", { oe_platform: "github", oe_sources: "github" });
+  ok(sourceScopedMount(uniGithubOnly, "slack", () => domains) === false, "🔴 OPE-1145: a unified window whose sources are github-only does NOT mount the Slack reader (the deleted flag-OFF branch mounted it)");
+  ok(sourceScopedMount(uniGithubOnly, "notion", () => domains) === false, "🔴 OPE-1145: …nor the Notion reader");
 
-  const slackSess = mk("slack", {});
-  ok(sourceScopedMount(slackSess, "slack", () => domains) === true, "flag-OFF: a Slack session mounts the Slack reader");
-  ok(sourceScopedMount(slackSess, "notion", () => domains) === false, "flag-OFF: a Slack session does NOT mount the Notion reader");
-
-  const ghSess = mk("github", {});
-  ok(sourceScopedMount(ghSess, "slack", () => domains) === false, "flag-OFF: a GitHub session does NOT mount the Slack reader");
-
-  const ctxs = [uni, slackSess, ghSess, mk("unified", {}), mk("channel:unified", { oe_platform: "notion" }), mk("notion", {})];
-  for (const c of ctxs) {
-    for (const p of ["slack", "notion", "github"]) {
-      const oldGuard = isUnifiedWindowContext(c) || channelPlatform(c) === p;
-      ok(sourceScopedMount(c, p, () => domains) === oldGuard, `flag-OFF equivalence: sourceScopedMount(${(c.channel as { kind: string }).kind}, ${p}) === (isUnified || platform===${p})`);
-    }
-  }
+  ok(sourceScopedMount(mk("github", {}), "slack", () => domains) === false, "a GitHub session does NOT mount the Slack reader");
 }
-
-setFlag(true);
 {
   const multi = mk("unified", { oe_platform: "slack", oe_sources: "slack,github,notion" });
-  ok(sourceScopedMount(multi, "slack", () => domains) === true, "flag-ON: a multi-source window mounts the Slack reader (slack ∈ sources)");
-  ok(sourceScopedMount(multi, "notion", () => domains) === true, "flag-ON: a multi-source window mounts the Notion reader (notion ∈ sources)");
+  ok(sourceScopedMount(multi, "slack", () => domains) === true, "a multi-source window mounts the Slack reader (slack ∈ sources)");
+  ok(sourceScopedMount(multi, "notion", () => domains) === true, "a multi-source window mounts the Notion reader (notion ∈ sources)");
 
   const soloGh = mk("unified", { oe_platform: "github", oe_sources: "github" });
-  ok(sourceScopedMount(soloGh, "slack", () => domains) === false, "flag-ON: a solo-GitHub window does NOT mount the Slack reader (slack ∉ sources) — the topology narrowing");
-  ok(sourceScopedMount(soloGh, "notion", () => domains) === false, "flag-ON: a solo-GitHub window does NOT mount the Notion reader (notion ∉ sources)");
+  ok(sourceScopedMount(soloGh, "slack", () => domains) === false, "a solo-GitHub window does NOT mount the Slack reader (slack ∉ sources) — the topology narrowing");
+  ok(sourceScopedMount(soloGh, "notion", () => domains) === false, "a solo-GitHub window does NOT mount the Notion reader (notion ∉ sources)");
 
   const recompute = mk("unified", { oe_platform: "slack" }, "oe-dom:payments:oe-sup:g1");
-  ok(sourceScopedMount(recompute, "slack", () => domains) === true, "flag-ON: no stamp → recompute from the window token + config mounts the Slack reader (slack ∈ payments sources)");
-  ok(sourceScopedMount(recompute, "notion", () => domains) === true, "flag-ON: recompute mounts the Notion reader (notion ∈ payments sources)");
+  ok(sourceScopedMount(recompute, "slack", () => domains) === true, "no stamp → recompute from the window token + config mounts the Slack reader (slack ∈ payments sources)");
+  ok(sourceScopedMount(recompute, "notion", () => domains) === true, "recompute mounts the Notion reader (notion ∈ payments sources)");
 
   const degraded = mk("unified", { oe_platform: "github" });
-  ok(sourceScopedMount(degraded, "slack", () => domains) === false, "flag-ON: no stamp + no window token → fail-closed to the single origin (github); Slack reader absent");
-  ok(sourceScopedMount(degraded, "github", () => domains) === true, "flag-ON: fail-closed origin still mounts the origin platform's own reader (github ∈ [github])");
+  ok(sourceScopedMount(degraded, "slack", () => domains) === false, "no stamp + no window token → fail-closed to the single origin (github); Slack reader absent");
+  ok(sourceScopedMount(degraded, "github", () => domains) === true, "fail-closed origin still mounts the origin platform's own reader (github ∈ [github])");
 
-  ok(sourceScopedMount(mk("slack", {}), "slack", () => domains) === true, "flag-ON: a normal Slack session fail-closes to [slack] → mounts the Slack reader");
-  ok(sourceScopedMount(mk("slack", {}), "notion", () => domains) === false, "flag-ON: a normal Slack session does NOT mount the Notion reader");
+  ok(sourceScopedMount(mk("slack", {}), "slack", () => domains) === true, "a normal Slack session fail-closes to [slack] → mounts the Slack reader");
+  ok(sourceScopedMount(mk("slack", {}), "notion", () => domains) === false, "a normal Slack session does NOT mount the Notion reader");
 }
 
 {
@@ -87,8 +66,6 @@ setFlag(true);
   assertTurnSurface(ghOriginMulti, "github");
   ok(true, "fence-compose: a GitHub-origin turn passes the fence for its OWN surface");
 }
-setFlag(undefined);
-
 {
   const seatNative = mk("notion", {});
   const seatStanding = mk("notion", { oe_grain: "standing" });
@@ -121,6 +98,16 @@ setFlag(undefined);
   ok(workerChatArmMount(hostile, "notion", () => domains) === false, "grain: an UNREADABLE ctx answers false rather than throwing out of the mount resolver");
 }
 
+{
+  const boom = (): readonly Domain[] => {
+    throw new Error("open-everywhere: app config not registered.");
+  };
+  const uni = mk("unified", { oe_platform: "notion", oe_sources: "notion" });
+  ok(sourceScopedMount(uni, "notion", boom) === false, "🔴 an unreadable domain roster answers false — sourceScopedMount never throws out of a mount resolver");
+  ok(workerChatArmMount(mk("notion", { oe_grain: "task" }), "notion", boom) === false, "🔴 …and the grain-narrowed spelling does not re-open the hole");
+  ok(sourceScopedMount(uni, "notion", () => domains) === true, "control: the same window mounts when the roster is readable — `false` above is the throw, not a dead predicate");
+  ok(workerChatArmMount(mk("notion", { oe_grain: "task" }), "notion", () => domains) === true, "control: …and so does the same worker");
+}
 
 const firesWith = (problems: string[], needle: string, label: string) =>
   ok(problems.some((p) => p.includes(needle)), `${label} (got: ${JSON.stringify(problems)})`);
@@ -137,13 +124,13 @@ firesWith(
 );
 
 firesWith(
-  checkSourceGate([{ name: "read_slack_channel", source: "export default defineDynamic({ /* no gate */ });" }, { name: "read_slack_thread", source: gated("slack") }, { name: "read_notion_page", source: workerGated("notion") }]),
+  checkSourceGate([{ name: "read_notion_page", source: "export default defineDynamic({ /* no gate */ });" }, { name: "read_notion_comments", source: workerGated("notion") }, { name: "read_linear_issue", source: workerGated("linear") }]),
   'must gate its mount via sourceScopedMount',
   "a declared per-surface tool with no sourceScopedMount call FAILS",
 );
 
 firesWith(
-  checkSourceGate([{ name: "read_slack_channel", source: gated("slack") + "\n" + armOnUnified("slack") }, { name: "read_slack_thread", source: gated("slack") }, { name: "read_notion_page", source: workerGated("notion") }]),
+  checkSourceGate([{ name: "read_notion_page", source: workerGated("notion") + "\n" + armOnUnified("notion") }, { name: "read_notion_comments", source: workerGated("notion") }, { name: "read_linear_issue", source: workerGated("linear") }]),
   'still carries the ad-hoc "arm on any unified window" guard',
   "a declared tool that keeps BOTH the source gate and the old compound guard FAILS",
 );
@@ -151,8 +138,6 @@ firesWith(
 {
   const cardGuard = 'if (channelPlatform(ctx as BindableContext) !== "slack") return null; // hide off Slack';
   const problems = checkSourceGate([
-    { name: "read_slack_channel", source: gated("slack") },
-    { name: "read_slack_thread", source: gated("slack") },
     { name: "read_notion_page", source: workerGated("notion") },
     { name: "read_notion_comments", source: workerGated("notion") },
     { name: "read_linear_issue", source: workerGated("linear") },
@@ -168,20 +153,18 @@ firesWith(
 }
 
 firesWith(
-  checkSourceGate([{ name: "read_slack_channel", source: gated("slack") }, { name: "read_slack_thread", source: gated("slack") }]),
+  checkSourceGate([{ name: "read_notion_page", source: workerGated("notion") }, { name: "read_notion_comments", source: workerGated("notion") }]),
   'no such tool file was scanned (stale row',
   "a declared tool absent from the scanned surface FAILS (no stale row)",
 );
 
 ok(
   JSON.stringify(SOURCE_SCOPED_TOOLS) ===
-    JSON.stringify({ read_slack_channel: "slack", read_slack_thread: "slack", read_notion_page: "notion", read_notion_comments: "notion", read_linear_issue: "linear" }),
-  "SOURCE_SCOPED_TOOLS pins the per-surface readers → their platforms (slack channel/thread, notion page/comments, linear issue)",
+    JSON.stringify({ read_notion_page: "notion", read_notion_comments: "notion", read_linear_issue: "linear" }),
+  "SOURCE_SCOPED_TOOLS pins the per-surface readers → their platforms (notion page/comments, linear issue)",
 );
 
 const perSurfaceOkNames = [
-  { name: "read_slack_channel", source: gated("slack") },
-  { name: "read_slack_thread", source: gated("slack") },
   { name: "read_notion_page", source: workerGated("notion") },
   { name: "read_notion_comments", source: workerGated("notion") },
   { name: "read_channel", source: "resolveReadAdapter();" },
@@ -204,7 +187,7 @@ firesWith(
   "a vendor container read with no chat-arm predicate FAILS",
 );
 firesWith(
-  checkSourceGate([{ name: "read_slack_channel", source: workerGated("slack") }]),
+  checkSourceGate([{ name: "read_discord_channel", source: workerGated("discord") }]),
   "is NOT declared in WORKER_CHAT_ARM_TOOLS",
   "an undeclared tool that calls workerChatArmMount FAILS",
 );
@@ -215,8 +198,6 @@ ok(
 );
 
 const perSurfaceOk = [
-  { name: "read_slack_channel", source: gated("slack") },
-  { name: "read_slack_thread", source: gated("slack") },
   { name: "read_notion_page", source: workerGated("notion") },
   { name: "read_notion_comments", source: workerGated("notion") },
   { name: "read_linear_issue", source: workerGated("linear") },

@@ -37,12 +37,3 @@ export function decodeChannelKey(key: string): ChannelAddress | null {
 export function isChannelKey(s: string): boolean {
   return decodeChannelKey(s) !== null;
 }
-
-export function containerIdForPlatform(input: string, platform: string): string {
-  const decoded = decodeChannelKey(input);
-  if (!decoded) return input;
-  if (decoded.platform !== platform) {
-    throw new Error(`read: that channel key names a ${decoded.platform} channel, and this tool reads ${platform}.`);
-  }
-  return decoded.container;
-}

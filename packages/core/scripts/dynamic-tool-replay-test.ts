@@ -9,15 +9,13 @@ import { randomBytes } from "node:crypto";
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-dynamic-replay-")), "ops.sqlite3");
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 delete process.env.OE_PLATFORM;
-overrideSettingsForTest({ tools: { genericReadVerbs: false } });
-overrideSettingsForTest({ tools: { sourceScopedMount: false } });
 
 import { replayStepNames } from "../agent/access/window-gated.js";
 import { formatWindowToken, taskWindowId } from "../agent/channels/window-key.js";
 import { registerBrowserToolkit } from "../agent/access/browser-toolkit.js";
 
 import { registerSlackFixtureMapper, registerSlackFixtureManifest } from "./_slack-test-stubs.js";
-import { overrideSettingsForTest, type AgentSettingsOverrides } from "../agent/settings/settings.js";
+import { overrideSettingsForTest, resetSettingsForTest, type AgentSettingsOverrides } from "../agent/settings/settings.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineBinding, defineBundle } from "../agent/access/bundle.js";
 import { defineDomain } from "../agent/memory/domain.js";
@@ -98,8 +96,8 @@ const CASES: readonly ToolCase[] = [
   { slug: "edit_reply", entryKey: "_base", ctx: slackCtx, variantManaged: true },
   { slug: "edit_reply", entryKey: "_single", ctx: unifiedCtx, variantManaged: true },
   { slug: "react", entryKey: "_single", ctx: slackCtx },
-  { slug: "read_channel", entryKey: "_single", ctx: slackCtx, settings: { tools: { genericReadVerbs: true } } },
-  { slug: "read_thread", entryKey: "_single", ctx: slackCtx, settings: { tools: { genericReadVerbs: true } } },
+  { slug: "read_channel", entryKey: "_single", ctx: slackCtx },
+  { slug: "read_thread", entryKey: "_single", ctx: slackCtx },
   { slug: "add_label", entryKey: "_single", ctx: githubCtx },
   { slug: "set_state", entryKey: "_single", ctx: githubCtx },
   { slug: "assign", entryKey: "_single", ctx: githubCtx },
@@ -216,7 +214,7 @@ for (const c of CASES) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    if (c.settings) overrideSettingsForTest({ tools: { genericReadVerbs: false, sourceScopedMount: false } });
+    if (c.settings) resetSettingsForTest();
   }
 }
 
@@ -320,7 +318,7 @@ console.log("5. durable callback descriptors across the REAL tool inventory (OPE
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;
       }
-      if (c.settings) overrideSettingsForTest({ tools: { genericReadVerbs: false, sourceScopedMount: false } });
+      if (c.settings) resetSettingsForTest();
     }
   }
 }

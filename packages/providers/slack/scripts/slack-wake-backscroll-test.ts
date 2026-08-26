@@ -9,7 +9,7 @@ import {
   type SlackRequester,
   type WakeBackscrollDeps,
 } from "../agent/channels/slack-wake-backscroll.js";
-import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE, overrideSettingsForTest, resetSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -92,13 +92,12 @@ const deps = (request: SlackRequester): WakeBackscrollDeps => ({ request, identi
   ok(out[0].indexOf("oldest") < out[0].indexOf("middle") && out[0].indexOf("middle") < out[0].indexOf("newest"), "rendered oldest-first");
   ok(!out[0].includes("joined"), "system subtype messages are dropped");
   ok(!out[0].includes("sender_type=user sender_id=UA] \n") && out[0].split("sender_type").length - 1 === 3, "empty-text messages are dropped (3 attributed lines, not 4)");
-  ok(!out[0].includes("read_slack_channel"), "only 3 lines rendered (below the cap) → no 'fetch more' hint");
+  ok(!out[0].includes("read_channel"), "only 3 lines rendered (below the cap) → no 'fetch more' hint");
 }
 
 {
   const capMessages = (): Msg[] => Array.from({ length: 13 }, (_, i) => ({ ts: `${13 - i}.0`, user: "UA", text: `m${12 - i}` }));
 
-  resetSettingsForTest();
   {
     const out = await fetchWakeBackscroll({ channelId: "C", ts: "99.0" }, deps(stub("conversations.history", capMessages())));
     ok(WAKE_BACKSCROLL_MAX === 10, "the cap constant is 10");
@@ -106,19 +105,10 @@ const deps = (request: SlackRequester): WakeBackscrollDeps => ({ request, identi
     ok(kept === WAKE_BACKSCROLL_MAX, `capped at WAKE_BACKSCROLL_MAX lines (${WAKE_BACKSCROLL_MAX})`);
     ok(out[0].includes("m12") && out[0].includes("m3") && !out[0].includes("m2") && !out[0].includes("m0"), "cap keeps the most-recent N, drops the oldest");
     const untrustedEnd = out[0].indexOf(UNTRUSTED_CLOSE);
-    ok(out[0].includes("read_slack_channel") && out[0].includes("read_slack_thread"), "flag OFF: hitting the cap names the read_slack_* pair (the shipped default's live tools)");
-    ok(untrustedEnd > -1 && out[0].indexOf("read_slack_channel") > untrustedEnd, "flag OFF: the hint is appended AFTER the untrusted-wrapped block");
+    ok(out[0].includes("read_channel") && out[0].includes("read_thread"), "hitting the cap names the read_channel/read_thread pair that actually mounts");
+    ok(!out[0].includes("read_slack_channel") && !out[0].includes("read_slack_thread"), "the hint does not name the deleted read_slack_* pair (weak tripwire — see slack-context-test.ts's section note)");
+    ok(untrustedEnd > -1 && out[0].indexOf("read_channel") > untrustedEnd, "the hint is appended AFTER the untrusted-wrapped block");
   }
-
-  overrideSettingsForTest({ tools: { genericReadVerbs: true } });
-  {
-    const out = await fetchWakeBackscroll({ channelId: "C", ts: "99.0" }, deps(stub("conversations.history", capMessages())));
-    const untrustedEnd = out[0].indexOf(UNTRUSTED_CLOSE);
-    ok(out[0].includes("read_channel") && out[0].includes("read_thread"), "flag ON: hitting the cap names the generic read_channel/read_thread pair that actually mounts");
-    ok(!out[0].includes("read_slack_channel") && !out[0].includes("read_slack_thread"), "🔴 flag ON: the hint does NOT still name the retired read_slack_* pair — this was the OPE-780 bug");
-    ok(untrustedEnd > -1 && out[0].indexOf("read_channel") > untrustedEnd, "flag ON: the hint is appended AFTER the untrusted-wrapped block");
-  }
-  resetSettingsForTest();
 }
 
 {

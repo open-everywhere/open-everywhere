@@ -38,6 +38,4 @@ export const INGESTION_ROUTES: readonly IngestionRoute[] = [
   { key: "packages/providers/notion/agent/tools/read_notion_comments.ts#read_notion_comments", file: "packages/providers/notion/agent/tools/read_notion_comments.ts", form: "ingestion-property", kind: "notion", label: "read_notion_comments", pending: false },
   { key: "packages/providers/notion/agent/tools/read_notion_page.ts#read_notion_page", file: "packages/providers/notion/agent/tools/read_notion_page.ts", form: "ingestion-property", kind: "notion", label: "read_notion_page", pending: false },
   { key: "packages/providers/slack/agent/channels/slack-events.ts#slack:channel-join-intro", file: "packages/providers/slack/agent/channels/slack-events.ts", form: "noteIngestionVerdict", kind: "chat-message", label: "slack:channel-join-intro", pending: false },
-  { key: "packages/providers/slack/agent/tools/read_slack_channel.ts#read_slack_channel", file: "packages/providers/slack/agent/tools/read_slack_channel.ts", form: "chatReadIngestion", kind: "chat-message", label: "read_slack_channel", pending: false },
-  { key: "packages/providers/slack/agent/tools/read_slack_thread.ts#read_slack_thread", file: "packages/providers/slack/agent/tools/read_slack_thread.ts", form: "chatReadIngestion", kind: "chat-message", label: "read_slack_thread", pending: false },
 ];

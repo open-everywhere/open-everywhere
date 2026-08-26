@@ -22,7 +22,6 @@ import { renderWorkerCapabilityIndex } from "../access/worker-capabilities.js";
 import { readOneshotMarker } from "../access/oneshot-marker.js";
 import { WORKER_ONLY_TOOLS_STANDING, WORKER_ONLY_TOOLS_THREAD } from "../access/worker-capability-index.generated.js";
 import { renderPendingCancelNote } from "../channels/cancel-note.js";
-import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
 import { isSupervisorSession } from "../model/routing.js";
 import { unifiedDomainFromToken } from "../channels/unified-supervisor.js";
 import { classifySessionId, windowTokenPlatform } from "../channels/window-key.js";
@@ -50,7 +49,7 @@ import {
 } from "../identity/binding.js";
 
 export function renderRecoveryReadDoctrine(lean: boolean): string {
-  if (!lean || !genericReadVerbsEnabled()) return "";
+  if (!lean) return "";
   return [
     "## When somebody refers to something you cannot see",
     "",
