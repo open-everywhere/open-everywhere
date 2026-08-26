@@ -38,8 +38,10 @@ export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string
   return [
     `*${requesterLabel}* asks to use your ${ask.connector} credential.`,
     "",
-    `• Tool: \`${ask.verb}\``,
-    `• Resource: \`${ask.resource}\``,
+    `• Tool: \`${quotedPurpose(ask.mcpTool ?? ask.verb)}\``,
+    `• On: \`${ask.resource}\``,
+    ...frozenLines(ask),
+    ...(ask.toolName === undefined ? [] : [`• They would gain the tool: \`${ask.toolName}\``]),
     `• Where: this one conversation only`,
     `• They asked for: ${modeWords(ask.requestedMode)}`,
     `• Their stated purpose: "${quotedPurpose(ask.purpose)}"`,
@@ -48,6 +50,46 @@ export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string
     "Reply `once`, `conversation`, `standing` or `no` if you cannot see the buttons.",
     "Approving lets that conversation run this one tool on this one resource with your credential. It grants nothing else.",
   ].join("\n");
+}
+
+function frozenLines(ask: CredentialGrantAskRow): readonly string[] {
+  const frozen = ask.frozenArgs;
+  if (frozen === undefined) return [];
+  const keys = Object.keys(frozen).sort();
+  if (keys.length === 0) {
+    return ["\u2022 Fixed arguments: none \u2014 that conversation chooses every argument this tool takes"];
+  }
+  const shown = keys.slice(0, FROZEN_KEYS_SHOWN);
+  const lines = [
+    `\u2022 Fixed arguments (${String(keys.length)}, and they cannot be changed):`,
+    ...shown.map((key) => {
+      const k = cardData(key, FROZEN_KEY_MAX);
+      const name = k.truncated ? `\`${k.text}\` \u26a0\ufe0f (name truncated)` : `\`${k.text}\``;
+      return `    \u00b7 ${name} = ${frozenValueLine(frozen[key])}`;
+    }),
+  ];
+  if (keys.length > shown.length) {
+    lines.push(
+      `    \u00b7 \u26a0\ufe0f ${String(keys.length - shown.length)} more fixed argument(s) are NOT shown here. Decline unless you know exactly what this asks for.`,
+    );
+  }
+  return lines;
+}
+
+const FROZEN_KEYS_SHOWN = 25;
+const FROZEN_VALUE_MAX = 120;
+const FROZEN_KEY_MAX = 60;
+
+function frozenValueLine(value: unknown): string {
+  const rendered = cardData(JSON.stringify(value) ?? "null", FROZEN_VALUE_MAX);
+  return rendered.truncated
+    ? `\`${rendered.text}\` \u26a0\ufe0f (value truncated \u2014 the grant fixes the FULL value, which is longer than this)`
+    : `\`${rendered.text}\``;
+}
+
+function cardData(raw: string, max: number): { readonly text: string; readonly truncated: boolean } {
+  const flat = raw.replace(/[\r\n]+/gu, " ").replace(/["'`]/gu, "").trim();
+  return flat.length > max ? { text: flat.slice(0, max), truncated: true } : { text: flat, truncated: false };
 }
 
 function modeWords(mode: CredentialGrantMode): string {
@@ -65,13 +107,41 @@ export function expiredGrantCardText(ask: CredentialGrantAskRow, requesterNotifi
   return [
     `⌛ EXPIRED — this request timed out.`,
     "",
-    `• Tool: \`${ask.verb}\``,
-    `• Resource: \`${ask.resource}\``,
+    `• Tool: \`${quotedPurpose(ask.mcpTool ?? ask.verb)}\``,
+    `• On: \`${ask.resource}\``,
     "",
     "Nothing was granted and nothing was spent. Tapping a button on this card now does nothing.",
     requesterNotified
       ? "The person who asked has been told the request lapsed, and they can ask again if they still need it."
       : "This deployment could not reach the conversation they asked from, so they have NOT been told — they may still be waiting on an answer.",
+  ].join("\n");
+}
+
+export function refusedGrantCardText(ask: CredentialGrantAskRow, gate: GrantApproveGate): string {
+  return [
+    `🚫 NOT GRANTED — your ${ask.connector} account could not lend this.`,
+    "",
+    `• Tool: \`${quotedPurpose(ask.mcpTool ?? ask.verb)}\``,
+    `• On: \`${ask.resource}\``,
+    "",
+    ask.mcpTool === undefined
+      ? "This request was raised by an older build and this one cannot complete it. Nothing was granted and nothing was spent."
+      : gate === "tool_absent"
+        ? `Your ${ask.connector} connection does not publish a tool by that name, so there was nothing to lend. Nothing was granted and nothing was spent.`
+        : `That request fixes arguments the ${ask.connector} tool does not take, so the grant could never have been spent. Nothing was granted and nothing was spent.`,
+    "This request is closed. Ask them to raise a fresh one if it is still needed.",
+  ].join("\n");
+}
+
+export type GrantApproveGate = "tool_absent" | "frozen_args_unknown";
+
+export function grantConsentPromptText(ask: CredentialGrantAskRow, url: string): string {
+  return [
+    `Before that ${ask.connector} grant can be approved, connect your own ${ask.connector} account.`,
+    "",
+    `Open this link, then press Approve on the request again: ${url}`,
+    "",
+    "The link connects YOUR account only — do not forward it. Nothing has been granted and nothing has been spent.",
   ].join("\n");
 }
 
@@ -93,6 +163,27 @@ export async function deliverGrantCard(ask: CredentialGrantAskRow, requesterLabe
 }
 
 export async function expireGrantCard(ask: CredentialGrantAskRow, requesterNotified: boolean): Promise<boolean> {
+  return await rewriteGrantCard(ask, expiredGrantCardText(ask, requesterNotified));
+}
+
+export async function refuseGrantCard(ask: CredentialGrantAskRow, gate: GrantApproveGate): Promise<boolean> {
+  return await rewriteGrantCard(ask, refusedGrantCardText(ask, gate));
+}
+
+async function rewriteGrantCard(ask: CredentialGrantAskRow, text: string): Promise<boolean> {
   if (ask.cardSurfaceId === undefined || ask.cardMessageId === undefined) return false;
-  return await editSurfaceText(ask.ownerPlatform, { channelId: ask.cardSurfaceId, messageId: ask.cardMessageId }, expiredGrantCardText(ask, requesterNotified));
+  return await editSurfaceText(ask.ownerPlatform, { channelId: ask.cardSurfaceId, messageId: ask.cardMessageId }, text);
+}
+
+export async function deliverGrantConsentPrompt(ask: CredentialGrantAskRow, url: string): Promise<boolean> {
+  if (!canDeliverDirectMessage(ask.ownerPlatform)) return false;
+  const arm = postArm(ask.ownerPlatform);
+  const deliver = arm?.deliverDirectMessage;
+  if (deliver === undefined || arm === undefined) return false;
+  try {
+    await deliver.call(arm, { principalId: ask.ownerNativeId, text: grantConsentPromptText(ask, url) });
+    return true;
+  } catch {
+    return false;
+  }
 }

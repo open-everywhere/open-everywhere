@@ -12,7 +12,12 @@ import { grantCardActionId, grantCardActions, OE_GRANT_ACTION_PREFIX, parseGrant
 import { resolveGrantOwner } from "../agent/access/credential-grant-ask.js";
 import { askForCredentialGrant } from "../agent/access/credential-grant-flow.js";
 import { _resetGrantableVerbsForTest, parseGrantResource, registerGrantableVerb } from "../agent/access/credential-grant.js";
+import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
+import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
+import { registerUserAuthFlow } from "../agent/connections/user-auth-flow.js";
 import { registerPostArm, type DirectMessageRequest } from "../agent/channels/post-arms.js";
+import { fakeMcpServer } from "./_fake-mcp-server.js";
+import { withPatchedFetch } from "./_fetch-test-utils.js";
 import type { ReplyTarget } from "../agent/channels/reply-post.js";
 import { _resetAccountDisplayNamesForTest, registerAccountDisplayName } from "../agent/identity/account-display-name.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
@@ -75,12 +80,48 @@ registerPostArm({
 const store = getOperationalStore();
 let clock = Date.parse("2026-01-29T18:22:00.000Z");
 
+const MCP_URL = "https://mcp.notion.com/mcp";
+const VENDOR_TOOL = "notion-fetch";
+const VENDOR_SCHEMA = {
+  properties: { id: { description: "the page id", type: "string" }, page_size: { type: "number" } },
+  required: ["id"],
+  type: "object",
+} as const;
+
+setRegisteredConnectorCredentials([
+  {
+    allows: ["user-oauth"],
+    connector: "notion",
+    credentials: [{ endpoints: { hosts: ["mcp.notion.com"] }, home: vercelConnectorHome("mcp.notion.com/notion-mcp"), id: "user-oauth", type: "user-oauth" }],
+  },
+]);
+selectConnectorTransport({ connector: "notion", directUrl: MCP_URL, provider: "notion" });
+registerUserAuthFlow({
+  environmentClaim: async () => "test",
+  isUserAuthRequired: () => false,
+  mintServiceToken: async () => ({ token: "SERVICE" }),
+  mintUserToken: async () => ({ token: "OWNER-TOKEN" }),
+  startAuthorization: async () => ({ url: "https://connect.example/consent" }),
+});
+const vendor = fakeMcpServer({ tools: [{ inputSchema: VENDOR_SCHEMA, name: VENDOR_TOOL }] });
+
 async function raise(
-  over: Partial<{ requester: string | undefined; resource: string; target: string | undefined; purpose: string; scope: string; now: number }> = {},
-): Promise<{ sent: boolean; askId?: string; reason?: string }> {
+  over: Partial<{
+    requester: string | undefined;
+    resource: string;
+    target: string | undefined;
+    purpose: string;
+    scope: string;
+    now: number;
+    tool: string;
+    frozenArgs: Record<string, unknown>;
+  }> = {},
+): Promise<{ sent: boolean; askId?: string; reason?: string; toolName?: string }> {
   const outcome = await askForCredentialGrant({
     connector: "notion",
     domainGrantsConnector: true,
+    frozenArgs: over.frozenArgs ?? { id: "abc123" },
+    mcpTool: over.tool ?? "notion-fetch",
     nowMs: over.now ?? clock,
     org: ORG,
     ownerHandle: "Rowan Hale",
@@ -93,13 +134,12 @@ async function raise(
     requesterLabel: "Requesting Person",
     requesterPrincipalId: "requester" in over ? over.requester : REQ,
     ...("target" in over ? (over.target === undefined ? {} : { requesterTarget: over.target }) : { requesterTarget: JSON.stringify(ROOM) }),
-    resource: over.resource ?? "notion:page/abc123",
     scopeKey: over.scope ?? "sess-chat-1",
     surface: stamps.surface,
-    verb: "read_page",
+    targetLabel: over.resource ?? "Launch page",
     workspace: WS,
   });
-  return outcome.sent ? { askId: outcome.askId, sent: true } : { reason: outcome.reason, sent: false };
+  return outcome.sent ? { askId: outcome.askId, sent: true, toolName: outcome.toolName } : { reason: outcome.reason, sent: false };
 }
 
 console.log("1. the owner is NAMED, never searched:");
@@ -183,7 +223,7 @@ console.log("3. the action-id grammar:");
 }
 
 console.log("4. the click route — only the owner may answer:");
-{
+await withPatchedFetch(vendor.fetch as unknown as typeof globalThis.fetch, async () => {
   const stranger = await resolveGrantCardClick({
     answer: "once",
     askId: firstAskId,
@@ -232,6 +272,23 @@ console.log("4. the click route — only the owner may answer:");
   eq(grant?.mode, "session", "…in the mode the BUTTON carried, not the mode the requester asked for (`once`)");
   eq(grant?.scopeKey, "sess-chat-1", "…scoped to the chat that asked");
   eq(grant?.ownerSlug, "rowan_hale", "…under the owner slug the ASK pinned");
+  eq(grant?.toolName, "grant__rowan_hale_notion__notion_fetch_launch_page", "…mounted under the name the ASK pinned, target label and all");
+  eq(owner.text.includes("grant__rowan_long_notion__notion_fetch_launch_page"), true, "…and the owner is told THAT name, not a recomposed grant__<owner>__<verb>");
+
+  const listed = vendor.seen.find((r) => (r.body?.["method"] as string | undefined) === "tools/list");
+  ok(listed !== undefined, "the owner's live connection was read at approve time");
+  eq(listed?.authorization, "Bearer OWNER-TOKEN", "…under the OWNER's own token");
+  ok(vendor.seen.every((r) => r.redirect === "error"), "…and every request went through the fenced fetch");
+
+  eq(
+    grant?.inputSchema,
+    {
+      properties: { id: { const: "abc123", description: "the page id", type: "string" }, page_size: { type: "number" } },
+      required: ["id"],
+      type: "object",
+    },
+    "the snapshot keeps the vendor's schema and PINS the granted argument with const — it is not hidden from the model",
+  );
 
   const twice = await resolveGrantCardClick({
     answer: "once",
@@ -243,14 +300,17 @@ console.log("4. the click route — only the owner may answer:");
   eq(twice.outcome, "gone", "a SECOND tap on an answered ask loses the CAS");
   const grantsForScope = await store.credentialGrantsForScope(ORG, "sess-chat-1");
   eq(grantsForScope.length, 1, "…and minted no second grant");
-}
+});
 
 console.log("5. the answer is posted back into the conversation that asked:");
-{
+await withPatchedFetch(vendor.fetch as unknown as typeof globalThis.fetch, async () => {
   eq(posted.length, 1, "the approval posted exactly one notice");
   eq(posted[0]?.target, ROOM, "…at the target the ASK pinned, not at anything resolved at click time");
   ok(posted[0]?.text.includes("approved"), "…and it says the grant was approved");
-  ok(posted[0]?.text.includes("grant__rowan_long__read_page"), "…and it NAMES the tool the chat now holds — the one fact the room needs to act");
+  ok(
+    posted[0]?.text.includes("grant__rowan_long_notion__notion_fetch_launch_page"),
+    "…and it NAMES the PINNED tool the chat now holds — the one fact the room needs to act, and never a recomposed name",
+  );
 
   posted.length = 0;
   const declineAsk = await raise({ resource: "notion:page/ghi789", scope: "sess-chat-2" });
@@ -279,10 +339,10 @@ console.log("5. the answer is posted back into the conversation that asked:");
   });
   eq(untargetedResult.outcome, "approved", "…and it can still be approved");
   eq(posted.length, 0, "…but NOTHING is posted, because nothing recorded where to post it — an honest absence, never a guessed room");
-}
+});
 
 console.log("6. the Slack door, and one audit row per tap:");
-{
+await withPatchedFetch(vendor.fetch as unknown as typeof globalThis.fetch, async () => {
   const notOurs = await handleGrantCardClick({ actions: [{ action_id: "oe_approval:approve:x" }], user: { id: "U-owner" } });
   eq(notOurs, false, "a payload carrying somebody else's action id is NOT ours — the caller forwards it untouched");
 
@@ -316,7 +376,7 @@ console.log("6. the Slack door, and one audit row per tap:");
     rows.every((r) => !JSON.stringify(r.detail).includes("draft the Q3 summary")),
     "…and no click row carries the model-authored purpose — ids and the outcome only",
   );
-}
+});
 
 console.log("7. the ask verb: a tainted turn may not ask, and the seat is the only holder:");
 {
@@ -330,7 +390,7 @@ console.log("7. the ask verb: a tainted turn may not ask, and the seat is the on
     markUntrustedIngestedThisTurn("connector");
     ok(untrustedIngestedThisTurn(), "the fixture really did mark the turn — without this the leg below would pass on an unmarked turn");
     return (await (requestCredentialGrantEntry as unknown as { execute(i: unknown, c: unknown): Promise<{ asked: boolean; message: string }> }).execute(
-      { owner: OWNER, purpose: "read it for me", requested_mode: "once", resource: "notion:page/taint", verb: "read_page" },
+      { connector: "notion", owner: OWNER, purpose: "read it for me", requested_mode: "once", target_label: "A page", tool: "notion-fetch" },
       {},
     )) as { asked: boolean; message: string };
   });
@@ -341,11 +401,30 @@ console.log("7. the ask verb: a tainted turn may not ask, and the seat is the on
   const clean = await inEveContext(new FakeEveContext(), async () => {
     ok(!untrustedIngestedThisTurn(), "the control turn is genuinely clean");
     return (await (requestCredentialGrantEntry as unknown as { execute(i: unknown, c: unknown): Promise<{ asked: boolean; message: string }> }).execute(
-      { owner: OWNER, purpose: "read it for me", requested_mode: "once", resource: "notion:page/taint", verb: "read_page" },
+      { connector: "notion", owner: OWNER, purpose: "read it for me", requested_mode: "once", target_label: "A page", tool: "notion-fetch" },
       {},
     )) as { asked: boolean; message: string };
   });
   ok(!clean.message.includes("read external content"), "a CLEAN turn is NOT refused for taint — it reaches the ordinary gates below it");
+
+  const wrongConnector = await inEveContext(new FakeEveContext(), async () =>
+    (await (requestCredentialGrantEntry as unknown as { execute(i: unknown, c: unknown): Promise<{ asked: boolean; message: string }> }).execute(
+      { connector: "linear", owner: OWNER, purpose: "read it for me", requested_mode: "once", target_label: "A project", tool: "linear-fetch" },
+      {},
+    )) as { asked: boolean; message: string },
+  );
+  eq(wrongConnector.asked, false, "a connector this deployment admits no grant role for is REFUSED");
+  ok(wrongConnector.message.includes("not a connector this deployment lends credentials for"), "…by name, naming the boundary");
+  ok(wrongConnector.message.includes("notion"), "…and listing what it does admit, so the model can correct itself in one step");
+
+  const badArgs = await inEveContext(new FakeEveContext(), async () =>
+    (await (requestCredentialGrantEntry as unknown as { execute(i: unknown, c: unknown): Promise<{ asked: boolean; message: string }> }).execute(
+      { connector: "notion", frozen_args: { id: undefined }, owner: OWNER, purpose: "read it", requested_mode: "once", target_label: "A page", tool: "notion-fetch" },
+      {},
+    )) as { asked: boolean; message: string },
+  );
+  eq(badArgs.asked, false, "🔴 an argument with NO VALUE is refused — JSON.stringify would DROP the key, and a dropped key is a lost narrowing");
+  ok(badArgs.message.includes("has no value"), "…naming the offending key rather than failing inside the store");
 }
 
 console.log(`\n✅ credential-grant ask + card lifecycle: ${n} assertions passed`);

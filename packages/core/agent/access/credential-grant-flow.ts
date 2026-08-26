@@ -2,21 +2,46 @@ import { randomUUID } from "node:crypto";
 import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
 import {
+  mintBorrowToken,
+  ownerHasConnectorConsent,
+  readBorrowToolSchema,
+  resolveBorrowConnection,
+  startOwnerConnectorAuthorization,
+  withinBorrowDeadline,
+  borrowDeadline,
+  type BorrowConnection,
+  type GrantBorrowDeps,
+} from "../connections/grant-mcp-borrow.js";
+import {
   credentialGrantExpiry,
   credentialGrantFromAsk,
   credentialGrantMintVerdict,
-  grantableVerb,
   GRANT_ASK_TTL_MS,
   type GrantMintInput,
   type GrantMintRefusal,
 } from "./credential-grant.js";
-import { deliverGrantCard, expireGrantCard, type GrantCardDelivery } from "./credential-grant-card.js";
-import { postGrantResolution, type GrantNoticeOutcome } from "./credential-grant-resolution.js";
 import {
+  deliverGrantCard,
+  deliverGrantConsentPrompt,
+  expireGrantCard,
+  refuseGrantCard,
+  type GrantApproveGate,
+  type GrantCardDelivery,
+} from "./credential-grant-card.js";
+import { grantOwnerSubject } from "./credential-grant-owner.js";
+import { postGrantResolution, type GrantNoticeOutcome } from "./credential-grant-resolution.js";
+import { pinFrozenArgsIntoSchema } from "./grant-schema-pin.js";
+import {
+  grantAuditResource,
+  grantBorrowResourceLabel,
+  grantFrozenArgsDigest,
+  grantToolName,
+  grantToolSlug,
   quotedPurpose,
   type CredentialGrantAskRow,
   type CredentialGrantMode,
   type CredentialGrantRow,
+  type GrantJsonObject,
 } from "../operational/credential-grant-rows.js";
 
 export interface GrantAuditStamps {
@@ -34,8 +59,9 @@ export interface AskForGrantInput extends GrantAuditStamps {
   readonly ownerNativeId: string;
   readonly ownerHandle: string;
   readonly connector: string;
-  readonly verb: string;
-  readonly resource: string;
+  readonly mcpTool: string;
+  readonly frozenArgs: GrantJsonObject;
+  readonly targetLabel: string;
   readonly scopeKey: string;
   readonly purpose: string;
   readonly requesterTarget?: string;
@@ -45,18 +71,30 @@ export interface AskForGrantInput extends GrantAuditStamps {
 }
 
 export type AskForGrantOutcome =
-  | { readonly sent: true; readonly askId: string; readonly ownerHandle: string }
+  | { readonly sent: true; readonly askId: string; readonly ownerHandle: string; readonly toolName: string }
   | { readonly sent: false; readonly reason: GrantMintRefusal | "owner_unreachable" };
 
 export async function askForCredentialGrant(input: AskForGrantInput): Promise<AskForGrantOutcome> {
   const store = getOperationalStore();
   const nowIso = new Date(input.nowMs).toISOString();
-  const live = await store.liveCredentialGrant(input.org, input.ownerPrincipalId, input.verb, input.scopeKey, nowIso);
+  const askId = randomUUID();
+  const toolSlug = grantToolSlug(input.mcpTool) ?? "";
+  const resource = grantBorrowResourceLabel(input.targetLabel, input.mcpTool, input.frozenArgs);
+  const live = await store.liveBorrowCredentialGrant(
+    input.org,
+    input.ownerPrincipalId,
+    input.connector,
+    input.mcpTool,
+    grantFrozenArgsDigest(input.frozenArgs),
+    input.scopeKey,
+    nowIso,
+  );
   const liveAsk =
     input.requesterPrincipalId === undefined
       ? null
-      : await store.liveCredentialGrantAsk(input.org, input.requesterPrincipalId, input.ownerPrincipalId, input.verb, input.resource, nowIso);
+      : await store.liveCredentialGrantAsk(input.org, input.requesterPrincipalId, input.ownerPrincipalId, toolSlug, resource, nowIso);
   const mintInput: GrantMintInput = {
+    borrow: { mcpTool: input.mcpTool, rowId: askId, takenToolNames: await takenGrantToolNames(input.org, input.scopeKey), targetLabel: input.targetLabel },
     connector: input.connector,
     domainGrantsConnector: input.domainGrantsConnector,
     liveAsk: liveAsk ?? undefined,
@@ -64,8 +102,6 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
     ownerHandle: input.ownerHandle,
     ownerPrincipalId: input.ownerPrincipalId,
     requesterPrincipalId: input.requesterPrincipalId,
-    resource: input.resource,
-    verb: input.verb,
   };
   const verdict = credentialGrantMintVerdict(mintInput);
   const requesterPrincipalId = input.requesterPrincipalId;
@@ -73,8 +109,8 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
     await auditGrant(input, "grant.refused", input.requesterPrincipalId, {
       connector: input.connector,
       gate: verdict.ok ? "unverified_requester" : verdict.reason,
-      resource: input.resource,
-      verb: input.verb,
+      resource: grantAuditResource({ frozenArgs: input.frozenArgs, mcpTool: input.mcpTool, resource }),
+      verb: toolSlug,
     });
     return { reason: verdict.ok ? "unverified_requester" : verdict.reason, sent: false };
   }
@@ -82,7 +118,9 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
     connector: input.connector,
     createdAt: nowIso,
     expiresAt: new Date(input.nowMs + GRANT_ASK_TTL_MS).toISOString(),
-    id: randomUUID(),
+    frozenArgs: input.frozenArgs,
+    id: askId,
+    mcpTool: input.mcpTool,
     ownerNativeId: input.ownerNativeId,
     ownerPlatform: input.ownerPlatform,
     ownerPrincipalId: input.ownerPrincipalId,
@@ -91,10 +129,11 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
     requestedMode: input.requestedMode,
     requesterPrincipalId,
     ...(input.requesterTarget === undefined ? {} : { requesterTarget: input.requesterTarget }),
-    resource: input.resource,
+    resource,
     scopeKey: input.scopeKey,
     status: "pending",
-    verb: input.verb,
+    toolName: verdict.toolName,
+    verb: toolSlug,
   };
   await store.addCredentialGrantAsk(input.org, ask);
   const delivery: GrantCardDelivery = await deliverGrantCard(ask, input.requesterLabel);
@@ -105,6 +144,7 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
       connector: ask.connector,
       gate: "owner_unreachable",
       reason: delivery.reason,
+      resource: grantAuditResource(ask),
       verb: ask.verb,
     });
     return { reason: "owner_unreachable", sent: false };
@@ -112,7 +152,7 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
   try {
     await store.setCredentialGrantAskCard(input.org, ask.id, delivery.surfaceId, delivery.messageId);
   } catch (err) {
-    console.log(`[open-everywhere:grant] card locus for ask ${ask.id} could not be stamped: ${String(err)}`);
+    log(`card locus for ask ${ask.id} could not be stamped: ${String(err)}`);
   }
   await auditGrant(input, "grant.asked", ask.requesterPrincipalId, {
     askId: ask.id,
@@ -120,16 +160,45 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
     owner: ask.ownerPrincipalId,
     purpose: quotedPurpose(ask.purpose),
     requestedMode: ask.requestedMode,
-    resource: ask.resource,
+    resource: grantAuditResource(ask),
     scopeKey: ask.scopeKey,
+    toolName: ask.toolName,
     verb: ask.verb,
   });
-  return { askId: ask.id, ownerHandle: ask.ownerSlug, sent: true };
+  return { askId: ask.id, ownerHandle: ask.ownerSlug, sent: true, toolName: verdict.toolName };
+}
+
+async function takenGrantToolNames(org: string, scopeKey: string): Promise<readonly string[]> {
+  const rows = await getOperationalStore().credentialGrantsForScope(org, scopeKey);
+  const names: string[] = [];
+  for (const row of rows) {
+    if (row.toolName !== undefined) {
+      names.push(row.toolName);
+      continue;
+    }
+    try {
+      names.push(grantToolName(row.ownerSlug, row.verb));
+    } catch {
+    }
+  }
+  return names;
 }
 
 export type ApproveGrantOutcome =
   | { readonly approved: true; readonly grant: CredentialGrantRow }
-  | { readonly approved: false; readonly reason: "not_pending_or_expired" | "verb_unregistered" | "mint_refused" };
+  | {
+      readonly approved: false;
+      readonly reason:
+        | "not_pending_or_expired"
+        | "mint_refused"
+        | "owner_unresolvable"
+        | "consent_required"
+        | "catalogue_unreachable"
+        | GrantApproveGate;
+      readonly prompted?: boolean;
+    };
+
+export const GRANT_CONSENT_LINK_TTL_MS = 60 * 60 * 1000;
 
 export async function approveCredentialGrant(
   stamps: GrantAuditStamps,
@@ -138,15 +207,27 @@ export async function approveCredentialGrant(
   approverPrincipalId: string,
   nowMs: number,
   standingMs?: number,
+  borrowDeps: GrantBorrowDeps = {},
 ): Promise<ApproveGrantOutcome> {
   const store = getOperationalStore();
   const nowIso = new Date(nowMs).toISOString();
   const grantId = randomUUID();
+
+  const pending = await store.getCredentialGrantAsk(stamps.org, askId);
+  if (pending === null || pending.status !== "pending" || pending.expiresAt <= nowIso) return { approved: false, reason: "not_pending_or_expired" };
+
+  const catalogue = await readApprovedToolSchema(stamps, pending, borrowDeps);
+  if (!catalogue.ok) {
+    if (catalogue.reason === "tool_absent" || catalogue.reason === "frozen_args_unknown") await closeRefusedAsk(stamps, pending, catalogue.reason, approverPrincipalId, nowIso);
+    return catalogue.reason === "consent_required"
+      ? { approved: false, prompted: catalogue.prompted, reason: "consent_required" }
+      : { approved: false, reason: catalogue.reason };
+  }
+
   const ask = await store.approveCredentialGrantAsk(stamps.org, askId, mode, grantId, nowIso);
   if (ask === null) return { approved: false, reason: "not_pending_or_expired" };
-  const definition = grantableVerb(ask.verb);
-  if (definition === undefined) return { approved: false, reason: "verb_unregistered" };
   const verdict = credentialGrantMintVerdict({
+    borrow: { mcpTool: ask.mcpTool ?? "", rowId: ask.id, takenToolNames: [], targetLabel: "" },
     connector: ask.connector,
     domainGrantsConnector: true,
     liveAsk: undefined,
@@ -154,17 +235,16 @@ export async function approveCredentialGrant(
     ownerHandle: ask.ownerSlug,
     ownerPrincipalId: ask.ownerPrincipalId,
     requesterPrincipalId: ask.requesterPrincipalId,
-    resource: ask.resource,
-    verb: ask.verb,
   });
   if (!verdict.ok || verdict.ownerSlug !== ask.ownerSlug) return { approved: false, reason: "mint_refused" };
   const grant = credentialGrantFromAsk(ask, {
     expiresAt: credentialGrantExpiry(mode, nowMs, standingMs),
     grantId,
+    inputSchema: catalogue.schema,
     mode,
     nowIso,
     ownerSlug: ask.ownerSlug,
-    tier: definition.tier,
+    tier: verdict.tier,
   });
   await store.addCredentialGrant(stamps.org, grant);
   await auditGrant(stamps, "grant.granted", approverPrincipalId, {
@@ -175,13 +255,98 @@ export async function approveCredentialGrant(
     mode: grant.mode,
     owner: grant.ownerPrincipalId,
     requester: grant.requesterPrincipalId,
-    resource: grant.resource,
+    resource: grantAuditResource(grant),
     scopeKey: grant.scopeKey,
     tier: grant.tier,
     verb: grant.verb,
   });
   await postGrantResolution(ask, { grant, kind: "approved" });
   return { approved: true, grant };
+}
+
+type ApprovedToolSchema =
+  | { readonly ok: true; readonly schema: GrantJsonObject }
+  | { readonly ok: false; readonly reason: "consent_required"; readonly prompted: boolean }
+  | { readonly ok: false; readonly reason: "owner_unresolvable" | "catalogue_unreachable" | GrantApproveGate };
+
+async function readApprovedToolSchema(stamps: GrantAuditStamps, ask: CredentialGrantAskRow, deps: GrantBorrowDeps): Promise<ApprovedToolSchema> {
+  const mcpTool = ask.mcpTool;
+  if (mcpTool === undefined) return { ok: false, reason: "tool_absent" };
+  const frozenArgs = ask.frozenArgs ?? {};
+  const owner = await grantOwnerSubject(stamps.org, ask.connector, ask.ownerPrincipalId);
+  if (owner === undefined) return { ok: false, reason: "owner_unresolvable" };
+
+  const deadline = borrowDeadline();
+
+  let conn: BorrowConnection;
+  try {
+    conn = resolveBorrowConnection(ask.connector, deps);
+  } catch (err) {
+    log(`ask ${ask.id}: the ${ask.connector} borrow connection could not be resolved: ${String(err)}`);
+    return { ok: false, reason: "catalogue_unreachable" };
+  }
+
+  const consent = await withinBorrowDeadline(deadline, "the consent probe", async () => await ownerHasConnectorConsent(conn, owner.vaultSubject)).catch(
+    () => undefined,
+  );
+  if (consent === false) {
+    let prompted = false;
+    try {
+      const url = await startOwnerConnectorAuthorization(conn, owner.vaultSubject, GRANT_CONSENT_LINK_TTL_MS);
+      prompted = await deliverGrantConsentPrompt(ask, url);
+    } catch (err) {
+      log(`ask ${ask.id}: no ${ask.connector} connect link could be minted for the owner: ${String(err)}`);
+    }
+    return { ok: false, prompted, reason: "consent_required" };
+  }
+
+  let entry: Awaited<ReturnType<typeof readBorrowToolSchema>>;
+  try {
+    const token = await withinBorrowDeadline(deadline, "the owner's token mint", async () => await mintBorrowToken(conn, owner.vaultSubject, deps));
+    entry = await readBorrowToolSchema(conn, mcpTool, frozenArgs, token, deps, deadline);
+  } catch (err) {
+    log(`ask ${ask.id}: the ${ask.connector} tool catalogue could not be read: ${String(err)}`);
+    return { ok: false, reason: "catalogue_unreachable" };
+  }
+  if (!entry.found) {
+    log(`ask ${ask.id}: the ${ask.connector} connection publishes no tool the ask names (${String(entry.published.length)} published)`);
+    return { ok: false, reason: "tool_absent" };
+  }
+  const pinned = pinFrozenArgsIntoSchema(entry.inputSchema, frozenArgs);
+  if (!pinned.ok) {
+    log(`ask ${ask.id}: the ask freezes ${String(pinned.unknownKeys.length)} argument(s) the ${ask.connector} tool does not declare`);
+    return { ok: false, reason: "frozen_args_unknown" };
+  }
+  return { ok: true, schema: pinned.schema };
+}
+
+async function closeRefusedAsk(
+  stamps: GrantAuditStamps,
+  ask: CredentialGrantAskRow,
+  gate: GrantApproveGate,
+  approverPrincipalId: string,
+  nowIso: string,
+): Promise<void> {
+  const won = await getOperationalStore().decideCredentialGrantAsk(stamps.org, ask.id, ["pending"], "expired", nowIso);
+  if (!won) return;
+  await auditGrant(stamps, "grant.refused", approverPrincipalId, {
+    askId: ask.id,
+    connector: ask.connector,
+    gate,
+    owner: ask.ownerPrincipalId,
+    resource: grantAuditResource(ask),
+    verb: ask.verb,
+  });
+  await postGrantResolution(ask, { gate, kind: "refused" });
+  try {
+    await refuseGrantCard(ask, gate);
+  } catch (err) {
+    log(`ask ${ask.id}: the owner's card could not be rewritten after a ${gate} refusal: ${String(err)}`);
+  }
+}
+
+function log(line: string): void {
+  console.log(`[open-everywhere:grant] ${line}`);
 }
 
 export async function declineCredentialGrant(stamps: GrantAuditStamps, askId: string, declinerPrincipalId: string, nowMs: number): Promise<boolean> {
@@ -231,11 +396,11 @@ export async function sweepCredentialGrants(org: string, nowIso: string): Promis
         connector: ask.connector,
         notice,
         owner: ask.ownerPrincipalId,
-        resource: ask.resource,
+        resource: grantAuditResource(ask),
         verb: ask.verb,
       });
     } catch (err) {
-      console.log(`[open-everywhere:grant] sweep: ask ${ask.id} could not be expired: ${String(err)}`);
+      log(`sweep: ask ${ask.id} could not be expired: ${String(err)}`);
     }
   }
   return { asks, cardsUpdated, grants: await store.expireCredentialGrants(org, nowIso), requesterNotices };

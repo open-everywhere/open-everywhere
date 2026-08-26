@@ -1,7 +1,7 @@
 import { classifyConnectorOpTier } from "./consequence.js";
-import { credentialOverrideFor, type CredentialBoundDomain } from "./domain-credentials.js";
 import {
   grantOwnerSlug,
+  grantTargetSlug,
   grantToolName,
   grantToolSlug,
   isGrantNameSegment,
@@ -13,10 +13,9 @@ import {
 } from "../operational/credential-grant-rows.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 
-export function credentialGrantRole(domain: CredentialBoundDomain | undefined, connector: string, grantRole: string): string | undefined {
-  const declared = credentialOverrideFor(domain, connector, grantRole);
-  if (!declared) return undefined;
-  return declared.use;
+export interface GrantBoundDomain {
+  readonly name?: string;
+  readonly credentialGrants?: readonly string[];
 }
 
 export interface CredentialGrantRole {
@@ -28,14 +27,44 @@ export const CREDENTIAL_GRANT_ROLES: readonly CredentialGrantRole[] = [
   { connector: "notion", role: "user-oauth" },
 ];
 
-export function domainsAdmitCredentialGrant(domains: readonly (CredentialBoundDomain | undefined)[], connector: string): boolean {
-  for (const domain of domains) {
-    for (const r of CREDENTIAL_GRANT_ROLES) {
-      if (r.connector !== connector) continue;
-      if (credentialGrantRole(domain, connector, r.role) !== undefined) return true;
+export function isCredentialGrantConnector(connector: string): boolean {
+  return CREDENTIAL_GRANT_ROLES.some((r) => r.connector === connector);
+}
+
+export function credentialGrantConnectors(): readonly string[] {
+  return [...new Set(CREDENTIAL_GRANT_ROLES.map((r) => r.connector))].sort();
+}
+
+export function domainsAdmitCredentialGrant(domains: readonly (GrantBoundDomain | undefined)[], connector: string): boolean {
+  if (!isCredentialGrantConnector(connector)) return false;
+  return domains.some((domain) => (domain?.credentialGrants ?? []).includes(connector));
+}
+
+export function credentialGrantDeclarationProblems(domain: GrantBoundDomain): readonly string[] {
+  const declared = domain.credentialGrants;
+  if (declared === undefined) return [];
+  const name = domain.name ?? "(unnamed)";
+  const bad: string[] = [];
+  if (!Array.isArray(declared)) return [`  "${name}" \`credentialGrants\` must be a list of connector ids`];
+  const seen = new Set<string>();
+  const admitted = credentialGrantConnectors();
+  for (const connector of declared) {
+    if (typeof connector !== "string" || connector.trim().length === 0) {
+      bad.push(`  "${name}" \`credentialGrants\` holds an entry that is not a non-empty connector id`);
+      continue;
+    }
+    if (seen.has(connector)) bad.push(`  "${name}" \`credentialGrants\` names "${connector}" more than once`);
+    seen.add(connector);
+    if (!admitted.includes(connector)) {
+      bad.push(
+        `  "${name}" \`credentialGrants\` names "${connector}", which this tree admits no credential-grant role for — ` +
+          `add the (connector, personal credential) pair to CREDENTIAL_GRANT_ROLES ` +
+          `(packages/core/agent/access/credential-grant.ts) in the same diff, or delete the entry ` +
+          `(admitted today: ${admitted.length > 0 ? admitted.join(", ") : "none"})`,
+      );
     }
   }
-  return false;
+  return bad;
 }
 
 export interface GrantResource {
@@ -111,6 +140,8 @@ export type GrantMintRefusal =
 
 export interface GrantBorrowMintInput {
   readonly mcpTool: string;
+  readonly targetLabel: string;
+  readonly rowId: string;
   readonly takenToolNames: readonly string[];
 }
 
@@ -120,8 +151,8 @@ export interface GrantMintInput {
   readonly ownerPrincipalId: string;
   readonly ownerHandle: string;
   readonly connector: string;
-  readonly verb: string;
-  readonly resource: string;
+  readonly verb?: string;
+  readonly resource?: string;
   readonly borrow?: GrantBorrowMintInput;
   readonly liveGrant: CredentialGrantRow | undefined;
   readonly liveAsk: CredentialGrantAskRow | undefined;
@@ -151,15 +182,16 @@ type GrantMintShape =
   | { readonly ok: false; readonly reason: GrantMintRefusal };
 
 function verbShape(input: GrantMintInput): GrantMintShape {
-  const definition = grantableVerb(input.verb);
+  const verb = input.verb ?? "";
+  const definition = grantableVerb(verb);
   if (definition === undefined) return { ok: false, reason: "unknown_verb" };
   if (definition.connector !== input.connector) return { ok: false, reason: "connector_mismatch" };
-  const resource = parseGrantResource(input.resource);
+  const resource = parseGrantResource(input.resource ?? "");
   if (resource === undefined) return { ok: false, reason: "resource_unparseable" };
   if (resource.connector !== input.connector) return { ok: false, reason: "connector_mismatch" };
   if (resource.kind !== definition.resourceKind) return { ok: false, reason: "resource_kind_mismatch" };
   if (definition.tier !== "read") return { ok: false, reason: "write_verb_out_of_slice" };
-  return { name: (ownerSlug) => tryCompose(() => grantToolName(ownerSlug, input.verb)), ok: true, tier: definition.tier };
+  return { name: (ownerSlug) => tryCompose(() => grantToolName(ownerSlug, verb)), ok: true, tier: definition.tier };
 }
 
 function borrowShape(connector: string, borrow: GrantBorrowMintInput): GrantMintShape {
@@ -168,10 +200,15 @@ function borrowShape(connector: string, borrow: GrantBorrowMintInput): GrantMint
   if (toolSlug === undefined) return { ok: false, reason: "illegal_tool_name" };
   const tier = classifyConnectorOpTier(`${connector}__${borrow.mcpTool}`);
   if (tier !== "read") return { ok: false, reason: "write_verb_out_of_slice" };
-  return { name: (ownerSlug) => tryCompose(() => nextGrantBorrowToolName(ownerSlug, connector, toolSlug, borrow.takenToolNames)), ok: true, tier };
+  const targetSlug = grantTargetSlug(borrow.targetLabel);
+  return {
+    name: (ownerSlug) => tryCompose(() => nextGrantBorrowToolName(ownerSlug, connector, toolSlug, targetSlug, borrow.rowId, borrow.takenToolNames)),
+    ok: true,
+    tier,
+  };
 }
 
-function tryCompose(compose: () => string): string | undefined {
+function tryCompose(compose: () => string | undefined): string | undefined {
   try {
     return compose();
   } catch {

@@ -3,7 +3,7 @@ import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { approveCredentialGrant, declineCredentialGrant, type GrantAuditStamps } from "./credential-grant-flow.js";
+import { approveCredentialGrant, declineCredentialGrant, type ApproveGrantOutcome, type GrantAuditStamps } from "./credential-grant-flow.js";
 import { parseGrantCardActionId, type GrantCardAnswer } from "./credential-grant-card.js";
 import { grantToolName, type CredentialGrantMode } from "../operational/credential-grant-rows.js";
 
@@ -49,20 +49,13 @@ export async function resolveGrantCardClick(input: GrantClickInput): Promise<Gra
     const approved = await approveCredentialGrant(input, ask.id, mode, clickerKey, input.nowMs);
     if (!approved.approved) {
       await noteClick(input, approved.reason === "not_pending_or_expired" ? "gone" : "failed");
-      return approved.reason === "not_pending_or_expired"
-        ? { outcome: "gone", text: "That request is no longer open — it was already answered, or it expired." }
-        : {
-            outcome: "failed",
-            text: "That could not be granted. Nothing changed, and nothing was granted. Ask them to raise it again.",
-          };
+      if (approved.reason === "not_pending_or_expired") {
+        return { outcome: "gone", text: "That request is no longer open — it was already answered, or it expired." };
+      }
+      return { outcome: "failed", text: approveFailureText(approved.reason, approved.prompted === true) };
     }
     await noteClick(input, "approved");
-    let named: string;
-    try {
-      named = `\`${grantToolName(approved.grant.ownerSlug, approved.grant.verb)}\``;
-    } catch {
-      named = `\`${approved.grant.verb}\``;
-    }
+    const named = `\`${approved.grant.toolName ?? composedName(approved.grant)}\``;
     return {
       outcome: "approved",
       text:
@@ -72,6 +65,36 @@ export async function resolveGrantCardClick(input: GrantClickInput): Promise<Gra
   } catch (err) {
     console.log(`[open-everywhere:grant] card click for ask ${input.askId} did not resolve: ${String(err)}`);
     return { outcome: "failed", text: "That could not be answered right now. Nothing changed, and nothing was granted. Try the button again." };
+  }
+}
+
+type GrantApproveFailure = Extract<ApproveGrantOutcome, { approved: false }>;
+
+function approveFailureText(reason: GrantApproveFailure["reason"], prompted: boolean): string {
+  switch (reason) {
+    case "consent_required":
+      return prompted
+        ? "Connect your own account first — I have sent you the link in a separate message. Open it, then press Approve here again. Nothing has been granted and nothing has been spent."
+        : "Your own account is not connected yet, and this deployment could not send you the link to connect it. Nothing has been granted. Ask an operator to check the connector setup.";
+    case "catalogue_unreachable":
+      return "Your account could not be reached just now, so nothing was granted and nothing was spent. Press Approve again in a moment.";
+    case "tool_absent":
+      return "Your connection publishes no tool by that name, so there was nothing to lend. Nothing was granted, this request is closed, and the person who asked has been told.";
+    case "frozen_args_unknown":
+      return "That request fixes arguments the tool does not take, so the grant could never have been spent. Nothing was granted, this request is closed, and the person who asked has been told.";
+    case "owner_unresolvable":
+      return "This deployment cannot resolve your account for that connector, so nothing could ever be spent under the grant. Nothing was granted. An operator fixes this, not another tap.";
+    case "not_pending_or_expired":
+    case "mint_refused":
+      return "That could not be granted. Nothing changed, and nothing was granted. Ask them to raise it again.";
+  }
+}
+
+function composedName(grant: { readonly ownerSlug: string; readonly verb: string }): string {
+  try {
+    return grantToolName(grant.ownerSlug, grant.verb);
+  } catch {
+    return grant.verb;
   }
 }
 

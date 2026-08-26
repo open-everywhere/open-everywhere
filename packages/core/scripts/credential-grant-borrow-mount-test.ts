@@ -71,28 +71,38 @@ _resetDynamicVariantsForTest();
 
 selectConnectorTransport({ connector: "notion", directUrl: MCP_URL, provider: "notion" });
 
-const borrowRow = (over: Partial<CredentialGrantRow> = {}): CredentialGrantRow => ({
-  askId: "ask-1",
-  connector: "notion",
-  createdAt: "2026-08-25T10:00:00.000Z",
-  expiresAt: "2099-01-01T00:00:00.000Z",
-  frozenArgs: { page_id: "OWNER-PAGE" },
-  id: "grant-1",
-  inputSchema: { properties: { page_size: { type: "number" } }, type: "object" },
-  mcpTool: "notion-fetch",
-  mode: "session",
-  ownerPrincipalId: "slack/W1/U-owner",
-  ownerSlug: "rowan",
-  purpose: "read the launch page",
-  requesterPrincipalId: "slack/W1/U-req",
-  resource: "notion-fetch page_id=OWNER-PAGE",
-  scopeKey: SCOPE,
-  status: "active",
-  tier: "read",
-  toolName: NAME,
-  verb: "notion_fetch",
-  ...over,
-});
+const borrowRow = (over: Partial<CredentialGrantRow> = {}): CredentialGrantRow => {
+  const base: CredentialGrantRow = {
+    askId: "ask-1",
+    connector: "notion",
+    createdAt: "2026-08-25T10:00:00.000Z",
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    frozenArgs: { page_id: "OWNER-PAGE" },
+    id: "grant-1",
+    inputSchema: { properties: { page_size: { type: "number" } }, type: "object" },
+    mcpTool: "notion-fetch",
+    mode: "session",
+    ownerPrincipalId: "slack/W1/U-owner",
+    ownerSlug: "rowan",
+    purpose: "read the launch page",
+    requesterPrincipalId: "slack/W1/U-req",
+    resource: "notion-fetch page_id=OWNER-PAGE",
+    scopeKey: SCOPE,
+    status: "active",
+    tier: "read",
+    toolName: NAME,
+    verb: "notion_fetch",
+    ...over,
+  };
+  const frozen = base.frozenArgs ?? {};
+  const pinned: Record<string, unknown> = { page_size: { type: "number" } };
+  for (const [k, v] of Object.entries(frozen)) pinned[k] = { const: v, type: "string" };
+  return {
+    ...base,
+    ...("inputSchema" in over ? {} : { inputSchema: { properties: pinned, required: Object.keys(frozen), type: "object" } }),
+    ...("resource" in over ? {} : { resource: `Launch page — notion-fetch(${JSON.stringify(frozen)})` }),
+  };
+};
 
 const descriptionOf = (entry: ReplayableToolEntry | undefined): string => (entry as unknown as { description?: string } | undefined)?.description ?? "";
 
@@ -118,7 +128,26 @@ console.log("1. the mount reads the row, not a registry:");
   eq(mountedGrantName(borrowRow({ toolName: "grant__alice_notion__notion_fetch" })), undefined, "a name carrying somebody ELSE's owner segment is skipped");
   eq(mountedGrantName(borrowRow({ toolName: "grant__rowan_linear__notion_fetch" })), undefined, "…and so is one naming a different connector");
   eq(mountedGrantName(borrowRow({ toolName: "grant__rowan_notion__notion_search" })), undefined, "…and so is one whose verb segment is not the slug of the tool this row lends");
-  eq(mountedGrantName(borrowRow({ toolName: "grant__rowan_notion_2__notion_fetch" })), "grant__rowan_notion_2__notion_fetch", "…while the ORDINAL form the grammar emits is admitted");
+  eq(
+    mountedGrantName(borrowRow({ toolName: "grant__rowan_notion__notion_fetch_launch_page" })),
+    "grant__rowan_notion__notion_fetch_launch_page",
+    "…while the target-label form the grammar emits is admitted",
+  );
+  eq(
+    mountedGrantName(borrowRow({ toolName: "grant__rowan_notion__notion_fetch_launch_page_a1b2c3" })),
+    "grant__rowan_notion__notion_fetch_launch_page_a1b2c3",
+    "…and so is the collision form, which appends a row-id fragment to the same segment",
+  );
+  eq(
+    mountedGrantName(borrowRow({ toolName: "grant__rowan_notion_2__notion_fetch" })),
+    undefined,
+    "🔴 …but the OLD ordinal-in-the-middle form is NOT: the middle segment must be this row's owner and connector exactly",
+  );
+  eq(
+    mountedGrantName(borrowRow({ toolName: "grant__rowan_notion__notion_fetchx" })),
+    undefined,
+    "…and a verb segment that merely STARTS WITH the tool slug's characters is refused — the boundary is a separator, not a prefix",
+  );
   eq(mountedGrantName(borrowRow({ mcpTool: undefined })), undefined, "a pinned name with no vendor tool beside it can be checked against nothing, so it is skipped");
 }
 

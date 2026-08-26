@@ -71,10 +71,10 @@ const rawDomains: Domain[] = [
     engagementTier: "neutral",
     reasoningCeiling: "high",
     models: { primary: { id: UTILITY_MODEL }, supervisor: { id: SUPERVISOR_MODEL, reasoning: "medium" } },
+    credentialGrants: ["notion"],
     credentials: [
       { connector: "slack", credential: "work-token", use: "chat-token" },
       { connector: "linear", credential: "workspace", use: "1a000000-0000-4000-8000-000000000001" },
-      { connector: "notion", credential: "user-oauth", use: "user-oauth-rest" },
     ],
   }),
 
@@ -221,10 +221,8 @@ const rawDomains: Domain[] = [
     ambientSupervisor: true,
     engagementTier: "neutral",
     models: { primary: { id: UTILITY_MODEL } },
-    credentials: [
-      { connector: "notion", credential: "team-key", use: "channel-key" },
-      { connector: "notion", credential: "user-oauth", use: "user-oauth-rest" },
-    ],
+    credentialGrants: ["notion"],
+    credentials: [{ connector: "notion", credential: "team-key", use: "channel-key" }],
   }),
 
 ];

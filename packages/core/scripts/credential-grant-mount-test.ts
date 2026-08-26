@@ -9,14 +9,18 @@ process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-grant-mount-"))
 delete process.env.OE_PLATFORM;
 
 import {
+  _resetGrantBorrowTransportsForTest,
   _resetGrantRoomNoticeForTest,
   _resetGrantTransportsForTest,
-  composedScopeDigest,
+  borrowScopeDigest,
+  registerGrantBorrowTransport,
   registerGrantRoomNotice,
-  registerGrantTransport,
   runGrantedCall,
 } from "../agent/access/credential-grant-broker.js";
-import { _resetGrantableVerbsForTest, parseGrantResource, registerGrantableVerb } from "../agent/access/credential-grant.js";
+import { _resetGrantableVerbsForTest } from "../agent/access/credential-grant.js";
+import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
+import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
+import { fakeMcpServer } from "./_fake-mcp-server.js";
 import { approveCredentialGrant, askForCredentialGrant, revokeCredentialGrant } from "../agent/access/credential-grant-flow.js";
 import { _resetDynamicVariantsForTest, mountedEntryCollisions, preRegisterDynamicEntry, registerDynamicVariant, type ReplayableToolEntry } from "../agent/access/window-gated.js";
 import { registerPostArm, type DirectMessageRequest } from "../agent/channels/post-arms.js";
@@ -58,32 +62,32 @@ registerPostArm({
 
 _resetGrantableVerbsForTest();
 _resetGrantTransportsForTest();
+_resetGrantBorrowTransportsForTest();
 _resetGrantRoomNoticeForTest();
 _resetDynamicVariantsForTest();
 
-registerGrantableVerb({
-  compose(grant, input) {
-    const resource = parseGrantResource(grant.resource);
-    const asked = typeof input.page_size === "number" ? input.page_size : 50;
-    return {
-      method: "GET",
-      query: { page_size: String(Math.min(Math.max(Math.trunc(asked), 1), 100)) },
-      url: `https://api.notion.com/v1/blocks/${resource?.id ?? ""}/children`,
-    };
-  },
-  connector: "notion",
-  describe: (grant) => `Read the one Notion page ${grant.ownerSlug} granted (${grant.resource}). Expires ${grant.expiresAt}.`,
-  inputSchema: { properties: { page_size: { type: "number" } }, type: "object" },
-  resourceKind: "page",
-  tier: "read",
-  verb: "read_page",
-});
+const MCP_URL = "https://mcp.notion.com/mcp";
+const VENDOR_TOOL = "notion-fetch";
+const VENDOR_SCHEMA = { properties: { id: { type: "string" }, page_size: { type: "number" } }, required: ["id"], type: "object" } as const;
+const GRANT_NAME = "grant__rowan_hale_notion__notion_fetch_launch_page";
 
-const sent: { url: string; query?: Record<string, string> }[] = [];
-registerGrantTransport("notion", async (request) => {
-  sent.push({ url: request.url, ...(request.query === undefined ? {} : { query: { ...request.query } }) });
+setRegisteredConnectorCredentials([
+  {
+    allows: ["user-oauth"],
+    connector: "notion",
+    credentials: [{ endpoints: { hosts: ["mcp.notion.com"] }, home: vercelConnectorHome("mcp.notion.com/notion-mcp"), id: "user-oauth", type: "user-oauth" }],
+  },
+]);
+selectConnectorTransport({ connector: "notion", directUrl: MCP_URL, provider: "notion" });
+const vendor = fakeMcpServer({ tools: [{ inputSchema: VENDOR_SCHEMA, name: VENDOR_TOOL }] });
+const BORROW_DEPS = { fetch: vendor.fetch, mintOwnerToken: async (): Promise<string> => "OWNER-TOKEN" };
+
+const sent: { mcpTool: string; input: Record<string, unknown> }[] = [];
+registerGrantBorrowTransport("notion", async (call) => {
+  sent.push({ input: { ...call.input }, mcpTool: call.mcpTool });
   return { blocks: ["one", "two"] };
 });
+
 const roomLines: string[] = [];
 registerGrantRoomNotice(async (line) => {
   roomLines.push(line);
@@ -102,9 +106,10 @@ const askInput = (scopeKey: string, mode: "once" | "session" | "standing") => ({
   requestedMode: mode,
   requesterLabel: "Ada",
   requesterPrincipalId: "slack/W1/U-req",
-  resource: "notion:page/abc123",
+  frozenArgs: { id: "abc123" },
+  mcpTool: VENDOR_TOOL,
   scopeKey,
-  verb: "read_page",
+  targetLabel: "Launch page",
 });
 
 const callCtx = (scopeKey: string, nowMs = NOW + 1000) => ({ ...stamps, nowMs, requesterPrincipalId: "slack/W1/U-req", scopeKey });
@@ -124,11 +129,11 @@ for (const mode of ["once", "session", "standing"] as const) {
   eq(card.principalId, "U-owner", `[${mode}] the card went to the OWNER's DM, never to the requesting room`);
   eq(card.actions?.length, 4, `[${mode}] the card carries the four mode buttons`);
 
-  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", mode, "slack/W1/U-owner", NOW + 500);
+  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", mode, "slack/W1/U-owner", NOW + 500, undefined, BORROW_DEPS);
   ok(approved.approved, `[${mode}] the owner's approval mints a grant`);
   const grant = approved.approved ? approved.grant : undefined;
   eq(grant?.mode, mode, `[${mode}] the row records the mode the owner PRESSED, not the one the requester suggested`);
-  eq(grant?.tier, "read", `[${mode}] the tier is copied from the verb definition at mint`);
+  eq(grant?.tier, "read", `[${mode}] the tier is the connector-op classifier answer for this vendor tool, pinned at mint`);
   grantIds[mode] = grant?.id ?? "";
 
   const mounted = (await (grantTools as { events: Record<string, (e: unknown, c: unknown) => Promise<unknown>> }).events["session.started"](
@@ -136,20 +141,21 @@ for (const mode of ["once", "session", "standing"] as const) {
     seatCtx(scopeKey),
   )) as Record<string, ReplayableToolEntry> | null;
   ok(mounted !== null && Object.keys(mounted).length === 1, `[${mode}] the resolver mounts exactly one tool for this chat`);
-  eq(Object.keys(mounted ?? {}), ["grant__rowan_long__read_page"], `[${mode}] mounted under grant__<ownerSlug>__<verb>`);
+  eq(Object.keys(mounted ?? {}), [GRANT_NAME], `[${mode}] mounted under the name the ASK pinned -- owner, connector, tool slug and target label`);
 
-  const throughMount = (await mounted!["grant__rowan_long__read_page"].execute({ page_size: 10 }, seatCtx(scopeKey))) as { ok: boolean; refused?: string };
+  const throughMount = (await mounted![GRANT_NAME].execute({ page_size: 10 }, seatCtx(scopeKey))) as { ok: boolean; refused?: string };
   eq(throughMount.ok ? "OK" : throughMount.refused, "unverified_requester", `[${mode}] the mounted entry reaches the broker and FAILS CLOSED with no verified requester`);
 
   const sentBefore = sent.length;
-  const result = (await runGrantedCall(grantIds[mode], { page_size: 10 }, callCtx(scopeKey))) as {
+  const result = (await runGrantedCall(grantIds[mode], { id: "abc123", page_size: 10 }, callCtx(scopeKey))) as {
     ok: boolean;
     disclosure?: string;
     result?: unknown;
   };
   ok(result.ok, `[${mode}] the granted call succeeds`);
-  eq(sent.length, sentBefore + 1, `[${mode}] the broker composed and sent exactly one vendor request`);
-  eq(sent[sent.length - 1].url, "https://api.notion.com/v1/blocks/abc123/children", `[${mode}] the composed URL carries the page id from the GRANT ROW`);
+  eq(sent.length, sentBefore + 1, `[${mode}] the broker sent exactly one vendor call`);
+  eq(sent[sent.length - 1].mcpTool, VENDOR_TOOL, `[${mode}] naming the vendor tool the ROW lends, in the vendor's own bytes`);
+  eq(sent[sent.length - 1].input, { id: "abc123", page_size: 10 }, `[${mode}] and carrying the model's arguments UNCHANGED -- the broker injects nothing`);
   ok(result.disclosure?.startsWith("acting as rowan_hale — granted tool") === true, `[${mode}] the result carries the HOST-AUTHORED acting-as line the model cannot write`);
   ok(roomLines[roomLines.length - 1] === result.disclosure, `[${mode}] …and the same line went to the room notice arm, so the room sees it independently of what the model relays`);
 }
@@ -175,18 +181,28 @@ console.log("   audit rows:");
   ok(!JSON.stringify(detail).includes("one") || !JSON.stringify(detail).includes("blocks"), "…and never the vendor OUTPUT");
 }
 
-console.log("2. the L1 bake — the resource is not an argument:");
+console.log("2. the granted argument is const-pinned in the schema, not hidden from the model:");
 {
   const grants = await store.credentialGrantsForScope(ORG, "session-session");
   const mounted = mountGrantEntries(grants);
-  const entry = mounted["grant__rowan_long__read_page"] as unknown as { inputSchema: { properties: Record<string, unknown> } };
-  const properties = Object.keys(entry.inputSchema.properties);
-  eq(properties, ["page_size"], "the mounted schema exposes ONLY the free variable — there is no page argument to widen");
+  const entry = mounted[GRANT_NAME] as unknown as { description: string; inputSchema: { properties: Record<string, unknown>; required?: unknown } };
+  eq(Object.keys(entry.inputSchema.properties).sort(), ["id", "page_size"], "the mounted schema keeps the vendor's OWN properties — the granted one is not subtracted");
+  eq(entry.inputSchema.properties["id"], { const: "abc123", type: "string" }, "…and the granted argument carries a JSON Schema `const` of the value the grant fixed");
+  eq(entry.inputSchema.required, ["id"], "…and it is REQUIRED, because the model has to SUPPLY it — the fence then validates what it sent");
+  eq(entry.inputSchema.properties["page_size"], { type: "number" }, "…while the free argument is left exactly as the vendor declared it");
+  ok(entry.description.includes("1 argument(s) are FIXED"), "the description names how many arguments are fixed…");
+  ok(entry.description.includes("refused before"), "…and says plainly that sending any other value is refused");
+
   const sentBefore = sent.length;
-  await runGrantedCall(grantIds.session, { page_id: "SOME-OTHER-PAGE", page_size: 10 }, callCtx("session-session"));
-  eq(sent.length, sentBefore + 1, "the call with a widening argument still ran");
-  eq(sent[sent.length - 1].url, "https://api.notion.com/v1/blocks/abc123/children", "…and composed the SAME url: a wider read is inexpressible, not merely refused");
-  eq(composedScopeDigest({ method: "GET", url: "https://api.notion.com/v1/blocks/abc123/children" }), "GET api.notion.com/v1/blocks/<id>/children", "the digest replaces the id rather than logging it");
+  await runGrantedCall(grantIds.session, { id: "SOME-OTHER-PAGE", page_size: 10 }, callCtx("session-session"));
+  eq(sent.length, sentBefore + 1, "the call with a widening argument still reaches the transport");
+  eq(sent[sent.length - 1].input, { id: "SOME-OTHER-PAGE", page_size: 10 }, "…with the model's own value intact — the broker does not silently correct it");
+
+  eq(
+    borrowScopeDigest(MCP_URL, VENDOR_TOOL, { id: "SOME-OTHER-PAGE", page_size: 10 }, { id: "abc123" }),
+    "mcp mcp.notion.com tools/call notion-fetch keys:id,page_size",
+    "the audit digest carries the argument NAMES and the host, never a value",
+  );
 }
 
 console.log("3. two sessions, one mounted name, the installed eve:");
@@ -243,7 +259,7 @@ console.log("4. mountedEntryCollisions over the grant names:");
 console.log("5. once-mode under concurrency, through the broker:");
 {
   const ask = await askForCredentialGrant(askInput("session-race", "once"));
-  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", "once", "slack/W1/U-owner", NOW + 500);
+  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", "once", "slack/W1/U-owner", NOW + 500, undefined, BORROW_DEPS);
   const grantId = approved.approved ? approved.grant.id : "";
   const sentBefore = sent.length;
   const results = await Promise.all([
@@ -268,19 +284,19 @@ console.log("6. revoke, out-of-scope, no transport, unverified requester:");
     { type: "session.started" },
     seatCtx("session-session"),
   )) as Record<string, ReplayableToolEntry> | null;
-  eq(Object.keys(mounted ?? {}), ["grant__rowan_long__read_page"], "the REVOKED grant's tool is still mounted — mount on existence, refuse on state");
+  eq(Object.keys(mounted ?? {}), [GRANT_NAME], "the REVOKED grant's tool is still mounted — mount on existence, refuse on state");
 }
 
 {
   const ask = await askForCredentialGrant(askInput("session-scope", "session"));
-  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", "session", "slack/W1/U-owner", NOW + 500);
+  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", "session", "slack/W1/U-owner", NOW + 500, undefined, BORROW_DEPS);
   const grantId = approved.approved ? approved.grant.id : "";
   const wrongRoom = await runGrantedCall(grantId, {}, callCtx("some-other-session"));
   eq(wrongRoom.ok ? "OK" : wrongRoom.refused, "out_of_scope", "a granted call from ANOTHER chat refuses `out_of_scope` — L0 holds at execute, not only at mount");
   const noRequester = await runGrantedCall(grantId, {}, { ...callCtx("session-scope"), requesterPrincipalId: undefined });
   eq(noRequester.ok ? "OK" : noRequester.refused, "unverified_requester", "a turn with no single verified requester refuses — nobody could be recorded as having spent the credential");
 
-  _resetGrantTransportsForTest();
+  _resetGrantBorrowTransportsForTest();
   const noTransport = await runGrantedCall(grantId, {}, callCtx("session-scope"));
   eq(noTransport.ok ? "OK" : noTransport.refused, "no_transport", "a connector with no registered transport refuses `no_transport`");
   eq((await store.getCredentialGrant(ORG, grantId))?.status, "active", "…and the grant is NOT spent by a deployment that could never have sent the request");

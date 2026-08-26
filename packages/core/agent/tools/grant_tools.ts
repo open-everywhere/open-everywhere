@@ -57,17 +57,19 @@ function verbOffer(grant: CredentialGrantRow): GrantToolOffer | undefined {
 
 function borrowOffer(grant: CredentialGrantRow, mcpTool: string): GrantToolOffer | undefined {
   if (grant.inputSchema === undefined) return undefined;
-  const frozenKeys = Object.keys(grant.frozenArgs ?? {});
+  const frozenKeys = Object.keys(grant.frozenArgs ?? {}).sort();
   const frozen =
     frozenKeys.length === 0
-      ? " The grant fixes no arguments."
-      : ` The grant fixes ${String(frozenKeys.length)} argument(s) — ${frozenKeys.sort().join(", ")} — and you cannot change them. ` +
-        `The values it fixed, rendered as data: "${quotedPurpose(JSON.stringify(grant.frozenArgs))}".`;
+      ? `This grant fixes no arguments — ${grant.ownerSlug} lent the tool itself, so you choose every argument.`
+      : `${String(frozenKeys.length)} argument(s) are FIXED by the grant — ${frozenKeys.join(", ")}. Each one's schema shows the single ` +
+        "value it may carry: SEND EXACTLY THAT. A call that sends any other value for a fixed argument, or omits one, is " +
+        `refused before the call reaches ${grant.connector}` +
+        `${grant.mode === "once" ? ", and this is a ONE-SHOT grant: a refused call still spends it, so do not guess" : ""}.`;
   return {
     description:
-      `Runs the ${grant.connector} tool \`${quotedPurpose(mcpTool)}\` as ${grant.ownerSlug}, with ${grant.ownerSlug}'s own ` +
-      `${grant.connector} account.${frozen} The grant expires ${grant.expiresAt}. An error from ${grant.connector} is the ` +
-      "vendor's own answer, not a refusal by this grant.",
+      `Runs the ${grant.connector} tool \`${quotedPurpose(mcpTool)}\` on "${grant.resource}" as ${grant.ownerSlug}, with ` +
+      `${grant.ownerSlug}'s own ${grant.connector} account. ${frozen} The grant expires ${grant.expiresAt}. An error from ` +
+      `${grant.connector} is the vendor's own answer, not a refusal by this grant.`,
     inputSchema: grant.inputSchema,
   };
 }
@@ -135,10 +137,10 @@ export function mountedGrantName(grant: CredentialGrantRow): string | undefined 
 
 function borrowNameFitsRow(grant: CredentialGrantRow, mcpTool: string, name: string): boolean {
   const segments = name.split("__");
-  const middle = segments[1] ?? "";
-  const prefix = `${grant.ownerSlug}_${grant.connector}`;
-  if (middle !== prefix && !(middle.startsWith(`${prefix}_`) && /^[0-9]+$/u.test(middle.slice(prefix.length + 1)))) return false;
-  return segments[2] === grantToolSlug(mcpTool);
+  if (segments[1] !== `${grant.ownerSlug}_${grant.connector}`) return false;
+  const toolSlug = grantToolSlug(mcpTool);
+  const verb = segments[2] ?? "";
+  return toolSlug !== undefined && (verb === toolSlug || verb.startsWith(`${toolSlug}_`));
 }
 
 function firstMinted(a: CredentialGrantRow, b: CredentialGrantRow): CredentialGrantRow {

@@ -58,10 +58,8 @@ const REPLAY_DOMAINS = [
   defineDomain({
     name: "replay-fixture",
     channels: [SLACK_FIXTURE_SURFACE, SLACK_FIXTURE_ELSEWHERE],
-    credentials: [
-      { connector: "slack", credential: "work-token", use: "chat-token" },
-      { connector: "notion", credential: "user-oauth", use: "user-oauth" },
-    ],
+    credentialGrants: ["notion"],
+    credentials: [{ connector: "slack", credential: "work-token", use: "chat-token" }],
   }),
 ];
 registerConfig({

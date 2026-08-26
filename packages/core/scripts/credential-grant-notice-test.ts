@@ -7,7 +7,7 @@ process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-grant-notice-")
 delete process.env.OE_PLATFORM;
 delete process.env.OE_EGRESS_SPOOF;
 
-import { registerGrantTransport, runGrantedCall } from "../agent/access/credential-grant-broker.js";
+import { registerGrantBorrowTransport, runGrantedCall } from "../agent/access/credential-grant-broker.js";
 import {
   deliverGrantOwnerNotice,
   grantOwnerNoticeText,
@@ -16,7 +16,10 @@ import {
   postGrantRoomNotice,
   withGrantRoomContext,
 } from "../agent/access/credential-grant-notice.js";
-import { _resetGrantableVerbsForTest, parseGrantResource, registerGrantableVerb } from "../agent/access/credential-grant.js";
+import { _resetGrantableVerbsForTest } from "../agent/access/credential-grant.js";
+import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
+import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
+import { fakeMcpServer } from "./_fake-mcp-server.js";
 import { approveCredentialGrant, askForCredentialGrant, revokeCredentialGrant } from "../agent/access/credential-grant-flow.js";
 import { _resetDynamicVariantsForTest, type ReplayableToolEntry } from "../agent/access/window-gated.js";
 import { recordRequesterIdentity } from "../agent/access/requester-identity.js";
@@ -95,22 +98,24 @@ registerPostArm({ ...slackArmMembers, deliverDirectMessage: captureDirectMessage
 _resetGrantableVerbsForTest();
 _resetDynamicVariantsForTest();
 
-registerGrantableVerb({
-  compose(grant) {
-    const resource = parseGrantResource(grant.resource);
-    return { method: "GET", url: `https://api.notion.com/v1/blocks/${resource?.id ?? ""}/children` };
-  },
-  connector: "notion",
-  describe: (grant) => `Read the one Notion page ${grant.ownerSlug} granted (${grant.resource}).`,
-  inputSchema: { properties: {}, type: "object" },
-  resourceKind: "page",
-  tier: "read",
-  verb: "read_page",
-});
-
 const sent: string[] = [];
-registerGrantTransport("notion", async (request) => {
-  sent.push(request.url);
+const MCP_URL = "https://mcp.notion.com/mcp";
+const VENDOR_TOOL = "notion-fetch";
+setRegisteredConnectorCredentials([
+  {
+    allows: ["user-oauth"],
+    connector: "notion",
+    credentials: [{ endpoints: { hosts: ["mcp.notion.com"] }, home: vercelConnectorHome("mcp.notion.com/notion-mcp"), id: "user-oauth", type: "user-oauth" }],
+  },
+]);
+selectConnectorTransport({ connector: "notion", directUrl: MCP_URL, provider: "notion" });
+const vendor = fakeMcpServer({
+  tools: [{ inputSchema: { properties: { id: { type: "string" } }, required: ["id"], type: "object" }, name: VENDOR_TOOL }],
+});
+const BORROW_DEPS = { fetch: vendor.fetch, mintOwnerToken: async (): Promise<string> => "OWNER-TOKEN" };
+
+registerGrantBorrowTransport("notion", async (call) => {
+  sent.push(call.mcpTool);
   return { blocks: ["one", "two"] };
 });
 
@@ -127,16 +132,17 @@ const askInput = (scopeKey: string, mode: "once" | "session" | "standing") => ({
   requestedMode: mode,
   requesterLabel: "Ada",
   requesterPrincipalId: "slack/T1/U-req",
-  resource: "notion:page/abc123",
+  frozenArgs: { id: "abc123" },
+  mcpTool: VENDOR_TOOL,
   scopeKey,
-  verb: "read_page",
+  targetLabel: "Launch page",
 });
 
 const store = getOperationalStore();
 
 const mintGrant = async (scopeKey: string, mode: "once" | "session" | "standing"): Promise<string> => {
   const ask = await askForCredentialGrant(askInput(scopeKey, mode));
-  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", mode, "slack/T1/U-owner", NOW + 500);
+  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", mode, "slack/T1/U-owner", NOW + 500, undefined, BORROW_DEPS);
   return approved.approved ? approved.grant.id : "";
 };
 
@@ -148,9 +154,9 @@ const callThroughMount = async (scopeKey: string): Promise<{ ok: boolean; disclo
       { type: "session.started" },
       ctx,
     )) as Record<string, ReplayableToolEntry> | null;
-    const entry = mounted?.["grant__rowan_long__read_page"];
+    const entry = mounted?.["grant__rowan_hale_notion__notion_fetch_launch_page"];
     assert.ok(entry !== undefined, "the mount projected the granted tool");
-    return (await entry.execute({}, ctx)) as { ok: boolean; disclosure?: string; refused?: string };
+    return (await entry.execute({ id: "abc123" }, ctx)) as { ok: boolean; disclosure?: string; refused?: string };
   });
 };
 

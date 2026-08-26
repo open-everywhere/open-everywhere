@@ -15,7 +15,7 @@ ok(fixture !== undefined, "the it-work-read-fixture-notion domain is defined —
 
 ok(
   domainsAdmitCredentialGrant([fixture], "notion"),
-  "it-work-read-fixture-notion does not admit a notion credential grant — declare { connector: \"notion\", credential: \"user-oauth\", use: \"<id>\" } on it (OPE-1060)",
+  'it-work-read-fixture-notion does not admit a notion credential grant — declare credentialGrants: ["notion"] on it (OPE-1060/OPE-1136)',
 );
 
 ok(
@@ -36,7 +36,23 @@ const liveDomains = domains.filter((d) => liveNames.includes(d.name));
 ok(
   domainsAdmitCredentialGrant(liveDomains, "notion"),
   "no domain reachable from the LIVE e2e-unified Slack surface admits a notion credential grant — " +
-    'declare { connector: "notion", credential: "user-oauth", use: "user-oauth-rest" } on e2e-unified (OPE-1060 slice 2)',
+    'declare credentialGrants: ["notion"] on e2e-unified (OPE-1060 slice 2, OPE-1136)',
+);
+
+ok(
+  !domainsAdmitCredentialGrant(
+    [{ credentials: [{ connector: "notion", credential: "user-oauth", use: "user-oauth-rest" }], name: "legacy" } as unknown as { name: string }],
+    "notion",
+  ),
+  "the OLD credential-override spelling still admits the grant plane — the declaration must be read from `credentialGrants` alone",
+);
+ok(
+  domainsAdmitCredentialGrant([{ credentialGrants: ["notion"], name: "new" }], "notion"),
+  "…and the new field DOES admit it, so the control above is discriminating the field rather than refusing everything",
+);
+ok(
+  !domainsAdmitCredentialGrant([{ credentialGrants: ["github"], name: "new" }], "github"),
+  "…and a connector CREDENTIAL_GRANT_ROLES does not name admits nothing, whatever a domain declares",
 );
 
 if (n === 0) {

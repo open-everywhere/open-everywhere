@@ -10,6 +10,7 @@ import {
 } from "../identity/surface-key-grammar.js";
 import { tenantRungRemedy } from "../access/tenant-admission.js";
 import { DM_ANCHOR_DOMAIN_PREFIX } from "../channels/window-key.js";
+import { credentialGrantDeclarationProblems } from "../access/credential-grant.js";
 import { domainCredentialProblems, type DomainCredentialOverride } from "../access/domain-credentials.js";
 import type { SessionMode } from "../access/resolver.js";
 import type { Trust } from "../identity/binding.js";
@@ -80,6 +81,8 @@ export interface Domain {
   readonly requestorEntitlementChecks?: boolean;
   readonly governanceDelivery?: GovernanceDeliveryMode;
   readonly credentials?: readonly DomainCredentialOverride[];
+
+  readonly credentialGrants?: readonly string[];
 }
 
 export type GovernanceDeliveryMode = "channel" | "dm-fallback";
@@ -630,6 +633,7 @@ export function assertDomainsValid(domains: readonly Domain[]): void {
       );
     }
     bad.push(...domainCredentialProblems(d));
+    bad.push(...credentialGrantDeclarationProblems(d));
     const hasExplicit = d.channels !== undefined || d.containers !== undefined;
     const hasMatch = d.match !== undefined;
     if (hasExplicit === hasMatch) {

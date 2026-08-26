@@ -1,4 +1,5 @@
 import { postArm } from "../channels/post-arms.js";
+import type { GrantApproveGate } from "./credential-grant-card.js";
 import { postReply, type ReplyTarget } from "../channels/reply-post.js";
 import { credentialGrantDisclosureLine, grantToolName, type CredentialGrantAskRow, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
 
@@ -6,7 +7,11 @@ function log(line: string): void {
   console.log(`[open-everywhere:grant] ${line}`);
 }
 
-export type GrantResolution = { readonly kind: "approved"; readonly grant: CredentialGrantRow } | { readonly kind: "declined" } | { readonly kind: "expired" };
+export type GrantResolution =
+  | { readonly kind: "approved"; readonly grant: CredentialGrantRow }
+  | { readonly kind: "declined" }
+  | { readonly kind: "expired" }
+  | { readonly kind: "refused"; readonly gate: GrantApproveGate };
 
 export function parseGrantRequesterTarget(raw: string | undefined): ReplyTarget | undefined {
   if (typeof raw !== "string" || raw.length === 0) return undefined;
@@ -27,10 +32,8 @@ export function grantResolutionText(ask: CredentialGrantAskRow, resolution: Gran
   const what = `\`${ask.verb}\` on \`${ask.resource}\``;
   switch (resolution.kind) {
     case "approved": {
-      let toolName: string;
-      try {
-        toolName = grantToolName(resolution.grant.ownerSlug, resolution.grant.verb);
-      } catch {
+      const toolName = resolution.grant.toolName ?? composedGrantToolName(resolution.grant);
+      if (toolName === undefined) {
         return `${ask.ownerSlug} approved the credential grant for ${what}. ${credentialGrantDisclosureLine(resolution.grant)}`;
       }
       return [
@@ -47,6 +50,22 @@ export function grantResolutionText(ask: CredentialGrantAskRow, resolution: Gran
         `Nothing was granted and no tool is mounted. ${ask.ownerSlug} did not decline — the request simply timed out.`,
         "You can ask again if it is still needed.",
       ].join("\n");
+    case "refused":
+      return [
+        `${ask.ownerSlug} approved the credential grant for ${what}, but it could not be minted.`,
+        resolution.gate === "tool_absent"
+          ? `Their ${ask.connector} connection publishes no tool by that name, so there was nothing to lend.`
+          : `The ${ask.connector} tool does not take the arguments the request fixed, so the grant could never have been spent.`,
+        "Nothing was granted and no tool is mounted. Check the tool name and the arguments against the connection, then ask again.",
+      ].join("\n");
+  }
+}
+
+function composedGrantToolName(grant: CredentialGrantRow): string | undefined {
+  try {
+    return grantToolName(grant.ownerSlug, grant.verb);
+  } catch {
+    return undefined;
   }
 }
 

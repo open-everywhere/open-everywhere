@@ -6,7 +6,8 @@ import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { resetRegisteredConnectorCredentials, setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
 import { McpCallFenceError } from "../agent/access/mcp-call-fence.js";
 import type { GrantOwnerSubject } from "../agent/access/credential-grant-owner.js";
-import { grantBorrowFetch, grantMcpTransport, mergeBorrowArguments } from "../agent/connections/grant-mcp-transport.js";
+import { grantMcpTransport } from "../agent/connections/grant-mcp-transport.js";
+import { grantBorrowFetch } from "../agent/connections/grant-mcp-borrow.js";
 import type { ConnectorTransportSpec } from "../agent/connections/connector-transport.js";
 import type { CredentialGrantRow } from "../agent/operational/credential-grant-rows.js";
 
@@ -51,7 +52,7 @@ const grantRow = (over: Partial<CredentialGrantRow> = {}): CredentialGrantRow =>
   expiresAt: "2099-01-01T00:00:00.000Z",
   frozenArgs: { page_id: "OWNER-PAGE" },
   id: "grant-1",
-  inputSchema: { properties: { page_size: { type: "number" } }, type: "object" },
+  inputSchema: { properties: { page_id: { const: "OWNER-PAGE", type: "string" }, page_size: { type: "number" } }, required: ["page_id"], type: "object" },
   mcpTool: "notion-fetch",
   mode: "session",
   ownerPrincipalId: "slack/W1/U-OWNER",
@@ -134,7 +135,7 @@ console.log("1. the fence sits in the real SDK's request path:");
       return "OWNER-TOKEN";
     },
   });
-  const result = (await transport({ input: { page_size: 5 }, mcpTool: "notion-fetch" }, grantRow(), OWNER)) as { content: unknown };
+  const result = (await transport({ input: { page_id: "OWNER-PAGE", page_size: 5 }, mcpTool: "notion-fetch" }, grantRow(), OWNER)) as { content: unknown };
   await settle();
 
   eq(result.content, [{ text: "the page body", type: "text" }], "the borrow returns the vendor's tools/call result, unshaped");
@@ -223,31 +224,46 @@ console.log("2. the pin the transport installs is built from the grant row:");
   eq(baseCalls, 1, "…and it is the only one that reached the base fetch");
 }
 
-console.log("3. the frozen arguments are spread OVER the model's input:");
+console.log("3. the model's arguments go out unchanged, and the fence is what enforces the freeze:");
 {
   catalogue({ hosts: ["mcp.notion.com"] });
   const server = fakeMcpServer();
   const transport = grantMcpTransport({ connectorSpec: () => SPEC, fetch: server.fetch, mintOwnerToken: async () => "OWNER-TOKEN" });
-  await transport({ input: { page_id: "ATTACKER-PAGE", page_size: 5 }, mcpTool: "notion-fetch" }, grantRow(), OWNER);
+  await transport({ input: { page_id: "OWNER-PAGE", page_size: 5 }, mcpTool: "notion-fetch" }, grantRow(), OWNER);
   await settle();
   const call = server.seen.find((r) => (r.body?.["method"] as string | undefined) === "tools/call");
   eq(
     (call!.body!["params"] as { arguments: unknown }).arguments,
     { page_id: "OWNER-PAGE", page_size: 5 },
-    "the vendor received the OWNER's frozen value and the model's free argument — frozen wins, the free half survives",
+    "the vendor received the model's arguments UNCHANGED — the transport merges nothing in",
   );
-  eq(
-    mergeBorrowArguments({ page_id: "ATTACKER-PAGE", page_size: 5 }, { page_id: "OWNER-PAGE" }),
-    { page_id: "OWNER-PAGE", page_size: 5 },
-    "the merge helper states the same order in one place",
-  );
+}
 
-  const asFlipped = { page_id: "ATTACKER-PAGE", page_size: 5 };
-  const fenced = grantBorrowFetch({ frozenArgs: { page_id: "OWNER-PAGE" }, mcpTool: "notion-fetch" }, MCP_URL, async () => new Response("{}"));
+{
+  catalogue({ hosts: ["mcp.notion.com"] });
+  const server = fakeMcpServer();
+  const transport = grantMcpTransport({ connectorSpec: () => SPEC, fetch: server.fetch, mintOwnerToken: async () => "OWNER-TOKEN" });
   await assert.rejects(
-    fenced(MCP_URL, { body: JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/call", params: { arguments: asFlipped, name: "notion-fetch" } }), method: "POST" }),
+    transport({ input: { page_id: "ATTACKER-PAGE", page_size: 5 }, mcpTool: "notion-fetch" }, grantRow(), OWNER),
     McpCallFenceError,
-    "the arguments a flipped merge would send are refused by the fence — compose is the primary control, the fence is the bound behind it",
+    "a model that sends the WRONG value for a frozen argument is REFUSED, not silently corrected",
+  );
+  n++;
+  await settle();
+  ok(
+    server.seen.every((r) => (r.body?.["method"] as string | undefined) !== "tools/call"),
+    "…and no tools/call ever reached the vendor — the refusal happens before the wire",
+  );
+}
+
+{
+  catalogue({ hosts: ["mcp.notion.com"] });
+  const server = fakeMcpServer();
+  const transport = grantMcpTransport({ connectorSpec: () => SPEC, fetch: server.fetch, mintOwnerToken: async () => "OWNER-TOKEN" });
+  await assert.rejects(
+    transport({ input: { page_size: 5 }, mcpTool: "notion-fetch" }, grantRow(), OWNER),
+    McpCallFenceError,
+    "a model that OMITS a frozen argument is refused too — an absent key is not the granted value",
   );
   n++;
 }

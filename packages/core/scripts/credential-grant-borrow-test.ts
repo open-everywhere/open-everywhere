@@ -16,7 +16,10 @@ import {
   type GrantMintInput,
 } from "../agent/access/credential-grant.js";
 import {
+  grantBorrowRowSuffix,
   grantBorrowToolName,
+  grantBorrowVerbSegment,
+  GRANT_TOOL_NAME_MAX,
   grantFrozenArgsDigest,
   grantJsonColumn,
   grantJsonFromColumn,
@@ -51,47 +54,97 @@ const rejects = async (fn: () => Promise<unknown>, label: string): Promise<void>
 };
 
 const ORG = "org-borrow";
+const ROW_ID = "00000000-0000-4000-8000-000000000009";
 const NOW = Date.parse("2026-01-20T16:07:00.000Z");
 const iso = (ms: number): string => new Date(ms).toISOString();
 
 console.log("1. the borrow name grammar:");
 
-eq(grantBorrowToolName("rowan_hale", "notion", "notion_fetch"), "grant__rowan_long_notion__notion_fetch", "the grammar is grant__<owner>_<connector>__<toolSlug>, with the vendor in the MIDDLE segment");
-eq(grantBorrowToolName("rowan_hale", "notion", "notion_fetch", 1), "grant__rowan_long_notion__notion_fetch", "ordinal 1 spells the BARE name — the first grant of a tool carries no suffix");
-eq(grantBorrowToolName("rowan_hale", "notion", "notion_fetch", 2), "grant__rowan_long_notion_2__notion_fetch", "ordinal 2 appends _2 to the MIDDLE segment, never to the verb segment");
-eq(grantBorrowToolName("rowan_hale", "notion", "notion_fetch", 11), "grant__rowan_long_notion_11__notion_fetch", "a two-digit ordinal composes too");
+eq(
+  grantBorrowToolName("rowan_hale", "notion", "notion_fetch_q3"),
+  "grant__rowan_hale_notion__notion_fetch_q3",
+  "the grammar is grant__<owner>_<connector>__<verbSegment>, with the vendor in the MIDDLE segment",
+);
+eq(grantBorrowVerbSegment("notion_fetch", "quarterly_report", 40), "notion_fetch_quarterly_report", "the verb segment is <toolSlug>_<targetSlug> — the ruled `verb_slug` shape");
+eq(grantBorrowVerbSegment("notion_fetch", undefined, 40), "notion_fetch", "an unslugifiable target label leaves the tool slug alone — a legal name, only less meaningful");
+eq(grantBorrowVerbSegment("notion_fetch", "quarterly_report", 20), "notion_fetch_quarter", "🔴 ONLY THE TARGET HALF TRUNCATES, and it is cut to the budget");
+eq(grantBorrowVerbSegment("notion_fetch", "quarterly_report", 13), "notion_fetch", "a budget that leaves the target no room drops it rather than emitting a bare separator");
+eq(grantBorrowVerbSegment("notion_fetch", "ab_cd_ef", 18), "notion_fetch_ab_cd", "a cut landing mid-word keeps what fits");
+eq(grantBorrowVerbSegment("notion_fetch", "ab_cd_ef", 16), "notion_fetch_ab", "🔴 a cut landing ON the separator strips it — a segment may never end in _");
+eq(grantBorrowVerbSegment("notion_fetch", "quarterly", 5), undefined, "a budget the TOOL slug cannot fit refuses outright — truncating it would name a different tool");
+for (const budget of [13, 16, 18, 20, 40]) {
+  const seg = grantBorrowVerbSegment("notion_fetch", "ab_cd_ef", budget);
+  ok(seg !== undefined && isGrantNameSegment(seg), `budget ${String(budget)}: the composed verb segment is one isGrantNameSegment accepts`);
+  ok(seg !== undefined && seg.length <= budget, `budget ${String(budget)}: …and it honours the budget`);
+}
 
-for (const ordinal of [1, 2, 7]) {
-  const name = grantBorrowToolName("rowan_hale", "notion", "notion_fetch", ordinal);
-  ok(isGrantToolName(name), `ordinal ${String(ordinal)}: the composed name is one isGrantToolName accepts`);
-  eq(name.split("__").length, 3, `ordinal ${String(ordinal)}: the composed name holds EXACTLY three segments, so S0's parser reads a verb from it`);
+eq(grantBorrowRowSuffix("00000000-0000-4000-8000-000000000010"), "3f2504", "the collision suffix is the first six segment-legal characters of the row id");
+eq(grantBorrowRowSuffix("----"), undefined, "an id with too few usable characters yields NOTHING — a refusal, never a padded stand-in");
+
+for (const target of ["quarterly_report", undefined]) {
+  const name = grantBorrowToolName("rowan_hale", "notion", grantBorrowVerbSegment("notion_fetch", target, 40)!);
+  ok(isGrantToolName(name), `target ${String(target)}: the composed name is one isGrantToolName accepts`);
+  eq(name.split("__").length, 3, `target ${String(target)}: the composed name holds EXACTLY three segments, so S0's parser reads a verb from it`);
 }
 ok(!isGrantToolName("grant__rowan_hale__notion__notion_fetch"), "…and a FOUR-segment name is refused by the same predicate — the check has teeth");
-eq(parseQualifiedToolName("grant__rowan_long_notion__notion_fetch")?.verb, "notion_fetch", "S0's parser reads the tool slug as the verb, and the owner+connector as the owner segment");
+eq(
+  parseQualifiedToolName("grant__rowan_hale_notion__notion_fetch_q3")?.verb,
+  "notion_fetch_q3",
+  "S0's parser reads the whole verb segment as the verb, and the owner+connector as the owner segment",
+);
 
 throws(() => grantBorrowToolName("rowan__hale", "notion", "notion_fetch"), "an owner segment holding __ throws rather than emitting a four-segment name");
 throws(() => grantBorrowToolName("rowan_hale", "notion__x", "notion_fetch"), "a connector segment holding __ throws");
-throws(() => grantBorrowToolName("rowan_hale", "notion", "notion-fetch"), "an UNSLUGIFIED tool name throws — the caller slugifies with grantToolSlug first");
-throws(() => grantBorrowToolName("rowan_hale", "notion", "notion_fetch", 0), "ordinal 0 throws — it names no grant");
-throws(() => grantBorrowToolName("rowan_hale", "notion", "notion_fetch", -2), "a negative ordinal throws");
-throws(() => grantBorrowToolName("rowan_hale", "notion", "notion_fetch", 1.5), "a fractional ordinal throws");
+throws(() => grantBorrowToolName("rowan_hale", "notion", "notion-fetch"), "an UNSLUGIFIED verb segment throws — the caller composes it with grantBorrowVerbSegment first");
+throws(
+  () => grantBorrowToolName("t".repeat(40), "notion", "notion_fetch_quarterly_report"),
+  `a name past the ${String(GRANT_TOOL_NAME_MAX)}-character bound throws rather than mounting a tool a model provider would reject`,
+);
 
 {
-  const first = nextGrantBorrowToolName("rowan_hale", "notion", "notion_fetch", []);
-  eq(first, "grant__rowan_long_notion__notion_fetch", "with nothing claimed, the next name is the bare one");
-  const second = nextGrantBorrowToolName("rowan_hale", "notion", "notion_fetch", [first]);
-  eq(second, "grant__rowan_long_notion_2__notion_fetch", "with the bare name claimed, the next one carries ordinal 2");
-  eq(nextGrantBorrowToolName("rowan_hale", "notion", "notion_fetch", [first, second]), "grant__rowan_long_notion_3__notion_fetch", "…and then 3, so a third grant of one tool still mounts");
+  const ROW_A = "00000000-0000-4000-8000-000000000011";
+  const ROW_B = "00000000-0000-4000-8000-000000000012";
+  const first = nextGrantBorrowToolName("rowan_hale", "notion", "notion_fetch", "quarterly_report", ROW_A, []);
+  eq(first, "grant__rowan_hale_notion__notion_fetch_quarterly_report", "with nothing claimed, the next name is the bare <tool>_<target> one — NO row-id suffix");
   eq(
-    nextGrantBorrowToolName("rowan_hale", "notion", "notion_fetch", [second]),
-    first,
-    "a HOLE is filled: with only ordinal 2 claimed, the bare name is free again and is taken",
+    nextGrantBorrowToolName("rowan_hale", "notion", "notion_fetch", "team_okrs", ROW_B, [first!]),
+    "grant__rowan_hale_notion__notion_fetch_team_okrs",
+    "🔴 A SECOND GRANT OF THE SAME TOOL ON A DIFFERENT TARGET NEEDS NO SUFFIX — the two names differ by what they differ about",
   );
   eq(
-    nextGrantBorrowToolName("rowan_hale", "notion", "notion_fetch", ["grant__someone_else_notion__notion_fetch", "grant__rowan_long_notion__notion_search"]),
-    first,
-    "another person's name and another tool's name claim nothing here — the ordinal is per (owner, connector, tool)",
+    nextGrantBorrowToolName("rowan_hale", "notion", "notion_fetch", "quarterly_report", ROW_B, [first!]),
+    "grant__rowan_hale_notion__notion_fetch_quarterly_report_cc33dd",
+    "…and only a genuine same-tool-same-label collision pays for the row-id fragment",
   );
+  eq(
+    nextGrantBorrowToolName("rowan_hale", "notion", "notion_fetch", "quarterly_report", ROW_A, []),
+    first,
+    "the suffix is NOT applied when nothing is claimed, whatever the row id is",
+  );
+  eq(
+    nextGrantBorrowToolName("rowan_hale", "notion", "notion_fetch", "quarterly_report", ROW_B, [
+      "grant__someone_else_notion__notion_fetch_quarterly_report",
+      "grant__rowan_hale_notion__notion_search_quarterly_report",
+    ]),
+    first,
+    "another person's name and another tool's name claim nothing here — the collision is per (owner, connector, tool, target)",
+  );
+  eq(
+    nextGrantBorrowToolName("rowan_hale", "notion", "notion_fetch", "quarterly_report", ROW_A, [first!, `${first!}_aa11bb`]),
+    undefined,
+    "🔴 BOTH CANDIDATES CLAIMED REFUSES — it needs one row id to have asked twice, so a name is never invented past the grammar",
+  );
+  eq(
+    nextGrantBorrowToolName("rowan_hale", "notion", "notion_fetch", "quarterly_report", "----", []),
+    undefined,
+    "a row id with no usable characters refuses — the collision suffix must be available BEFORE the bare name is offered",
+  );
+  const longTarget = "a_very_long_target_label_that_will_certainly_be_truncated_somewhere";
+  const bare = nextGrantBorrowToolName("rowan_hale", "notion", "notion_fetch", longTarget, ROW_A, []);
+  const collided = nextGrantBorrowToolName("rowan_hale", "notion", "notion_fetch", longTarget, ROW_A, [bare!]);
+  ok(bare !== undefined && collided !== undefined && collided === `${bare}_aa11bb`, "the collided name is the bare one plus the fragment — the truncation did not move");
+  ok(collided!.length <= GRANT_TOOL_NAME_MAX, `…and it still fits the ${String(GRANT_TOOL_NAME_MAX)}-character bound`);
+  ok(bare!.length <= GRANT_TOOL_NAME_MAX, "…as does the bare one");
 }
 
 eq(classifyConnectorOpTier(grantBorrowToolName("rowan_hale", "notion", "notion_fetch")), "read", "a borrow name for a read tool classifies read");
@@ -101,6 +154,25 @@ eq(
   "…and an owner segment spelling a DESTRUCTIVE verb leaves it read — the middle segment is inert",
 );
 eq(classifyConnectorOpTier(grantBorrowToolName("rowan_hale", "search", "notion_create_pages")), "write", "…and a CONNECTOR id spelling a read verb cannot open a write tool either");
+
+eq(classifyConnectorOpTier(grantBorrowToolName("rowan_hale", "notion", "notion_fetch_quarterly_report")), "read", "a neutral target label leaves a read tool read");
+eq(
+  classifyConnectorOpTier(grantBorrowToolName("rowan_hale", "notion", "notion_fetch_delete_me")),
+  "destructive",
+  "🔴 a target label spelling a DESTRUCTIVE verb RAISES the mounted name's tier — friction in the safe direction",
+);
+eq(
+  classifyConnectorOpTier(grantBorrowToolName("rowan_hale", "notion", "notion_create_pages_read_only")),
+  "write",
+  "…and a label spelling a READ verb cannot LOWER a write tool: `best` is already `write` when the tail is scanned",
+);
+
+eq(classifyConnectorOpTier(grantBorrowToolName("rowan_hale", "notion", "notion_frobnicate")), "destructive", "an UNRECOGNISED tool slug classifies destructive on its own…");
+eq(
+  classifyConnectorOpTier(grantBorrowToolName("rowan_hale", "notion", "notion_frobnicate_search_results")),
+  "read",
+  "🔴 …and a READ token in the target tail LOWERS it to read — the tail is NOT raise-only over an unrecognised head",
+);
 
 console.log("2. slugifying a vendor tool name:");
 
@@ -137,7 +209,7 @@ const baseBorrow: GrantMintInput = {
   domainGrantsConnector: true,
   liveAsk: undefined,
   liveGrant: undefined,
-  borrow: { mcpTool: "notion-fetch", takenToolNames: [] },
+  borrow: { mcpTool: "notion-fetch", rowId: ROW_ID, takenToolNames: [], targetLabel: "Quarterly report" },
   ownerHandle: "Rowan Hale",
   ownerPrincipalId: "slack/W1/U-owner",
   requesterPrincipalId: "slack/W1/U-req",
@@ -148,7 +220,11 @@ const baseBorrow: GrantMintInput = {
 {
   const verdict = credentialGrantMintVerdict(baseBorrow);
   ok(verdict.ok, "a READ vendor tool, in a granting domain, with one verified requester, MINTS a borrow");
-  eq(verdict.ok ? verdict.toolName : "", "grant__rowan_long_notion__notion_fetch", "…under the borrow grammar, with the handle slugified into the owner segment");
+  eq(
+    verdict.ok ? verdict.toolName : "",
+    "grant__rowan_hale_notion__notion_fetch_quarterly_report",
+    "…under the borrow grammar, with the handle slugified into the owner segment and the target label into the verb segment",
+  );
   eq(verdict.ok ? verdict.tier : "", "read", "…and the tier is read");
 }
 
@@ -157,7 +233,7 @@ let readOps = 0;
 let refusedOps = 0;
 for (const op of OPS) {
   const dmTier = classifyConnectorOpTier(`notion__${op}`);
-  const verdict = credentialGrantMintVerdict({ ...baseBorrow, borrow: { mcpTool: op, takenToolNames: [] } });
+  const verdict = credentialGrantMintVerdict({ ...baseBorrow, borrow: { ...baseBorrow.borrow!, mcpTool: op } });
   if (dmTier === "read") {
     readOps++;
     ok(verdict.ok, `"${op}" classifies read in a DM, so it mints as a borrow`);
@@ -171,7 +247,19 @@ ok(readOps >= 3 && refusedOps >= 3, "the op table exercises both arms — neithe
 eq(classifyConnectorOpTier("notion__frobnicate"), "destructive", "an UNRECOGNISED vendor op fails closed to destructive, so it can never be borrowed by accident");
 
 {
-  const verdict = credentialGrantMintVerdict({ ...baseBorrow, borrow: { mcpTool: "!!!", takenToolNames: [] } });
+  const unrecognised = credentialGrantMintVerdict({ ...baseBorrow, borrow: { ...baseBorrow.borrow!, mcpTool: "notion-frobnicate" } });
+  ok(!unrecognised.ok && unrecognised.reason === "write_verb_out_of_slice", "the mint REFUSES a vendor tool whose own classification is not read, so the head is never unrecognised");
+  const recognised = credentialGrantMintVerdict({ ...baseBorrow, borrow: { ...baseBorrow.borrow!, mcpTool: "notion-fetch" } });
+  ok(recognised.ok, "…while a read tool mints, so the refusal above is discriminating rather than universal");
+  eq(
+    classifyConnectorOpTier(recognised.ok ? recognised.toolName : ""),
+    "read",
+    "…and the name it minted classifies read on the FLOOR its head supplies, whatever the target label says",
+  );
+}
+
+{
+  const verdict = credentialGrantMintVerdict({ ...baseBorrow, borrow: { ...baseBorrow.borrow!, mcpTool: "!!!" } });
   ok(!verdict.ok && verdict.reason === "illegal_tool_name", "a tool name with no legal characters is refused BY NAME rather than throwing out of a pure verdict");
   ok(grantMintRefusalMessage("notion", "illegal_tool_name").length > 40, "…and its refusal copy names the boundary rather than saying no");
 }
@@ -190,8 +278,34 @@ eq(classifyConnectorOpTier("notion__frobnicate"), "destructive", "an UNRECOGNISE
   ok(!verdict.ok && verdict.reason === "no_domain_grant", "…and so does the domain check");
 }
 {
-  const verdict = credentialGrantMintVerdict({ ...baseBorrow, borrow: { mcpTool: "notion-fetch", takenToolNames: ["grant__rowan_long_notion__notion_fetch"] } });
-  eq(verdict.ok ? verdict.toolName : "", "grant__rowan_long_notion_2__notion_fetch", "a name already claimed in the chat pushes the mint to the next ordinal");
+  const verdict = credentialGrantMintVerdict({
+    ...baseBorrow,
+    borrow: { ...baseBorrow.borrow!, takenToolNames: ["grant__rowan_long_notion__notion_fetch_quarterly_report"] },
+  });
+  eq(
+    verdict.ok ? verdict.toolName : "",
+    `grant__rowan_hale_notion__notion_fetch_quarterly_report_${ROW_ID.replace(/[^a-z0-9]/gu, "").slice(0, 6)}`,
+    "a name already claimed in the chat pushes the mint onto the row-id fragment",
+  );
+}
+{
+  const verdict = credentialGrantMintVerdict({
+    ...baseBorrow,
+    borrow: { ...baseBorrow.borrow!, takenToolNames: ["grant__rowan_long_notion__notion_fetch_quarterly_report"], targetLabel: "Team OKRs" },
+  });
+  eq(verdict.ok ? verdict.toolName : "", "grant__rowan_hale_notion__notion_fetch_team_okrs", "…while a second grant of the same tool on a DIFFERENT target keeps a meaning-carrying name");
+}
+{
+  const verdict = credentialGrantMintVerdict({ ...baseBorrow, borrow: { ...baseBorrow.borrow!, targetLabel: "!!!" } });
+  eq(verdict.ok ? verdict.toolName : "", "grant__rowan_hale_notion__notion_fetch", "an unslugifiable target label is NOT a refusal — the name falls back to the tool slug alone");
+}
+{
+  const verdict = credentialGrantMintVerdict({ ...baseBorrow, borrow: { ...baseBorrow.borrow!, rowId: "----" } });
+  ok(!verdict.ok && verdict.reason === "illegal_tool_name", "a row id the collision suffix cannot be drawn from refuses BY NAME rather than throwing out of a pure verdict");
+}
+{
+  const verdict = credentialGrantMintVerdict({ ...baseBorrow, ownerHandle: "t".repeat(48) });
+  ok(!verdict.ok && verdict.reason === "illegal_tool_name", `an owner handle that pushes the name past ${String(GRANT_TOOL_NAME_MAX)} characters refuses rather than mounting an over-long name`);
 }
 {
   const verdict = credentialGrantMintVerdict({

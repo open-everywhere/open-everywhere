@@ -72,6 +72,10 @@ export function grantToolSlug(mcpTool: string): string | undefined {
   return grantNameSlug(mcpTool);
 }
 
+export function grantTargetSlug(targetLabel: string): string | undefined {
+  return grantNameSlug(targetLabel);
+}
+
 function grantNameSlug(raw: string): string | undefined {
   const slug = raw
     .toLowerCase()
@@ -93,25 +97,55 @@ export function isGrantToolName(name: string): boolean {
   return segments[0] === CREDENTIAL_GRANT_NAMESPACE && isGrantNameSegment(segments[1] ?? "") && isGrantNameSegment(segments[2] ?? "");
 }
 
-export function grantBorrowToolName(ownerSlug: string, connector: string, toolSlug: string, ordinal?: number): string {
+export const GRANT_TOOL_NAME_MAX = 64;
+
+const GRANT_ROW_SUFFIX_LEN = 6;
+
+export function grantBorrowVerbSegment(toolSlug: string, targetSlug: string | undefined, budget: number): string | undefined {
+  if (!isGrantNameSegment(toolSlug) || toolSlug.length > budget) return undefined;
+  if (targetSlug === undefined || !isGrantNameSegment(targetSlug)) return toolSlug;
+  const room = budget - toolSlug.length - 1;
+  if (room < 1) return toolSlug;
+  const cut = targetSlug.slice(0, room).replace(/_+$/u, "");
+  const tail = cut.length > 0 && isGrantNameSegment(cut) ? cut : undefined;
+  return tail === undefined ? toolSlug : `${toolSlug}_${tail}`;
+}
+
+export function grantBorrowRowSuffix(rowId: string): string | undefined {
+  const usable = rowId.toLowerCase().replace(/[^a-z0-9]+/gu, "");
+  const suffix = usable.slice(0, GRANT_ROW_SUFFIX_LEN);
+  return suffix.length === GRANT_ROW_SUFFIX_LEN ? suffix : undefined;
+}
+
+export function grantBorrowToolName(ownerSlug: string, connector: string, verbSegment: string): string {
   if (!isGrantNameSegment(ownerSlug)) throw new Error(`grantBorrowToolName: illegal owner segment "${ownerSlug}" (a segment may not contain "__")`);
   if (!isGrantNameSegment(connector)) throw new Error(`grantBorrowToolName: illegal connector segment "${connector}" (a segment may not contain "__")`);
-  if (!isGrantNameSegment(toolSlug)) throw new Error(`grantBorrowToolName: illegal tool segment "${toolSlug}" (slugify it with grantToolSlug first)`);
-  if (ordinal !== undefined && (!Number.isInteger(ordinal) || ordinal < 1)) {
-    throw new Error(`grantBorrowToolName: ordinal must be an integer of 1 or more, not ${String(ordinal)}`);
-  }
-  const suffix = ordinal === undefined || ordinal === 1 ? "" : `_${String(ordinal)}`;
-  const name = `${CREDENTIAL_GRANT_NAMESPACE}__${ownerSlug}_${connector}${suffix}__${toolSlug}`;
+  if (!isGrantNameSegment(verbSegment)) throw new Error(`grantBorrowToolName: illegal verb segment "${verbSegment}" (compose it with grantBorrowVerbSegment first)`);
+  const name = `${CREDENTIAL_GRANT_NAMESPACE}__${ownerSlug}_${connector}__${verbSegment}`;
   if (!isGrantToolName(name)) throw new Error(`grantBorrowToolName: composed an unreadable name "${name}"`);
+  if (name.length > GRANT_TOOL_NAME_MAX) throw new Error(`grantBorrowToolName: composed a ${String(name.length)}-character name, past the ${String(GRANT_TOOL_NAME_MAX)}-character bound`);
   return name;
 }
 
-export function nextGrantBorrowToolName(ownerSlug: string, connector: string, toolSlug: string, taken: readonly string[]): string {
+export function nextGrantBorrowToolName(
+  ownerSlug: string,
+  connector: string,
+  toolSlug: string,
+  targetSlug: string | undefined,
+  rowId: string,
+  taken: readonly string[],
+): string | undefined {
+  const fixed = CREDENTIAL_GRANT_NAMESPACE.length + 2 + ownerSlug.length + 1 + connector.length + 2;
+  const suffix = grantBorrowRowSuffix(rowId);
+  if (suffix === undefined) return undefined;
+  const verb = grantBorrowVerbSegment(toolSlug, targetSlug, GRANT_TOOL_NAME_MAX - fixed - (suffix.length + 1));
+  if (verb === undefined) return undefined;
   const claimed = new Set(taken);
-  for (let ordinal = 1; ; ordinal++) {
-    const name = grantBorrowToolName(ownerSlug, connector, toolSlug, ordinal);
+  for (const candidate of [verb, `${verb}_${suffix}`]) {
+    const name = grantBorrowToolName(ownerSlug, connector, candidate);
     if (!claimed.has(name)) return name;
   }
+  return undefined;
 }
 
 export function grantJsonColumn(value: GrantJsonObject | undefined): string | null {
@@ -225,6 +259,18 @@ export function credentialGrantRefusalMessage(row: Pick<CredentialGrantRow, "own
 
 export function credentialGrantDisclosureLine(row: Pick<CredentialGrantRow, "ownerSlug" | "verb" | "resource" | "expiresAt" | "purpose">): string {
   return `acting as ${row.ownerSlug} — granted tool \`${row.verb}\` on \`${row.resource}\`, expires ${row.expiresAt}, purpose: "${quotedPurpose(row.purpose)}"`;
+}
+
+export function grantBorrowResourceLabel(targetLabel: string, mcpTool: string, frozenArgs: GrantJsonObject): string {
+  const call = `${mcpTool}(${JSON.stringify(frozenArgs)})`;
+  const label = targetLabel.trim();
+  return quotedPurpose(label.length === 0 ? call : `${label} — ${call}`);
+}
+
+export function grantAuditResource(row: { readonly resource: string; readonly mcpTool?: string; readonly frozenArgs?: GrantJsonObject }): string {
+  if (row.mcpTool === undefined) return row.resource;
+  const keys = quotedPurpose(Object.keys(row.frozenArgs ?? {}).sort().join(","));
+  return `${quotedPurpose(row.mcpTool)} keys:${keys}`;
 }
 
 export function quotedPurpose(purpose: string): string {
