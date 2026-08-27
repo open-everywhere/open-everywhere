@@ -230,8 +230,20 @@ function prRecord(overrides: Record<string, unknown> = {}): Record<string, unkno
   if (!own) fail("5: this suite is what proves the rung is REACHED — unprotected, it can be deleted quietly and the rung dropped after it");
   else if (own.id !== "the-fence-itself") fail(`5: this suite should be protected by the-fence-itself — got ${own.id}`);
 
-  if (ruleFor("scripts/deploy-ci-gate-test.ts")) {
-    fail("5: negative control — scripts/deploy-ci-gate-test.ts sits at scripts/ root and must stay outside merge-gate-surface");
+  for (const path of [
+    "scripts/deploy-ci-gate-test.ts",
+    "scripts/deploy-cloud-proof-verify-test.ts",
+    "scripts/deploy-cloud-proof-post-test.ts",
+  ]) {
+    const sibling = ruleFor(path);
+    if (!sibling) fail(`5: ${path} proves a merge-gate enforcer — unprotected, an agent may neuter it and the enforcer reads clean`);
+    else if (sibling.id !== "merge-gate-surface") fail(`5: ${path} should be protected by merge-gate-surface — got ${sibling.id}`);
+  }
+
+  for (const path of ["scripts/deploy-smoke-test.ts", "scripts/deploy-test.ts"]) {
+    if (ruleFor(path)) {
+      fail(`5: negative control — ${path} gates a deploy, not a merge, and must stay outside merge-gate-surface`);
+    }
   }
 }
 

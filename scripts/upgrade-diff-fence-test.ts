@@ -111,9 +111,22 @@ const MARKED_BODY = "Bumps eve.\n\noe-upgrade: 111111111111111111111111111111111
     if (ruleFor(file) === undefined) fail(`3: ${file} is in OPE-992's minimum protected set and no rule covers it`);
   }
 
-  for (const file of ["scripts/deploy/ci-gate-lib.ts", "scripts/deploy/cloud-proof-post-lib.ts", ".claude/agents/builder.md"]) {
+  for (const file of [
+    "scripts/deploy/ci-gate-lib.ts",
+    "scripts/deploy/cloud-proof-post-lib.ts",
+    "scripts/deploy-ci-gate-test.ts",
+    "scripts/deploy-cloud-proof-verify-test.ts",
+    "scripts/deploy-cloud-proof-post-test.ts",
+    ".github/CODEOWNERS",
+  ]) {
     if (ruleFor(file)?.id !== "merge-gate-surface") {
-      fail(`3: ${file} is part of the merge gate — the enforcement scripts and the tracked run definitions they enforce — and merge-gate-surface must cover it`);
+      fail(`3: ${file} is part of the merge gate — the enforcement scripts, the tracked run definitions they enforce, those enforcers' own proving suites, and the code-owner list — and merge-gate-surface must cover it`);
+    }
+  }
+
+  for (const file of ["scripts/deploy-smoke-test.ts", "scripts/deploy-census-test.ts"]) {
+    if (ruleFor(file) !== undefined) {
+      fail(`3: ${file} gates a deploy, not a merge — it must stay outside merge-gate-surface. Got rule ${ruleFor(file)?.id}`);
     }
   }
 

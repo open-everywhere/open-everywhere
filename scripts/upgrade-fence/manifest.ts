@@ -44,14 +44,21 @@ export const PROTECTED_PATH_RULES: readonly ProtectedPathRule[] = [
   },
   {
     id: "merge-gate-surface",
-    paths: ["scripts/deploy/", ".claude/agents/"],
+    paths: [
+      "scripts/deploy/",
+      "scripts/deploy-ci-gate-test.ts",
+      "scripts/deploy-cloud-proof-verify-test.ts",
+      "scripts/deploy-cloud-proof-post-test.ts",
+      ".github/CODEOWNERS",
+    ],
     why:
-      "Two things that decide whether a change may merge. `scripts/deploy/` holds the enforcement scripts — the CI gate, " +
-      "and the cloud-proof verify and post that decide whether a run proved anything. `.claude/agents/` holds the tracked " +
-      "run definitions a cloud session follows: the builder's self-merge conditions and the reviewer's verdict rules. No " +
-      "code reads those files; a session does, which is why an edit to them changes what the agent may do. A diff that " +
-      "weakens either is a guardrail change, not an upgrade. This rule covers the two directories NAMED here and nothing " +
-      "else — the deploy scripts' own tests sit at `scripts/` root and are outside it.",
+      "Everything that decides whether a change may merge. `scripts/deploy/` holds the enforcement scripts — the CI gate, " +
+      "and the cloud-proof verify and post that decide whether a run proved anything. The three " +
+      "`scripts/deploy-*-test.ts` entries are those enforcers' own proving suites (OPE-1174), named by exact path because " +
+      "they sit at `scripts/` root, outside the prefix. A test rides with its enforcer for the reason security-lint-drivers " +
+      "gives below: a neutered test reports a clean scan. `.github/CODEOWNERS` is inert while the repo has no branch " +
+      "protection, and becomes a merge gate once a branch rule requires code-owner review. The post-deploy suites stay OUT — they gate a deploy, " +
+      "not a merge.",
   },
   {
     id: "the-fence-itself",
