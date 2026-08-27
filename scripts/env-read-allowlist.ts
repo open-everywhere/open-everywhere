@@ -1,3 +1,5 @@
+import { dynamicSiteKey, type DynamicEnvRead } from "./env-read-scan.js";
+
 export type EnvClass = "settings-lever" | "secret" | "connection" | "identity" | "platform" | "pending-migration";
 
 export interface AllowEntry {
@@ -39,6 +41,19 @@ allow("secret", [
   ["OE_TELEMETRY_OTLP_HEADERS", "OTLP request headers — the value carries the collector's auth token."],
   ["OE_NOTION_SECRET_BROKER", "secrets bootstrap: which broker holds the Notion memory token."],
   ["OE_NOTION_SECRET_REF", "secrets bootstrap: the ref that broker resolves to the Notion memory token."],
+  [
+    "OE_CONTROL_INJECT_TOKENS",
+    "the WAKE-INJECTION service tokens `POST /control/v1/test/wake` authenticates against — a disjoint family from OE_CONTROL_READ_TOKENS, and the sharper of the two (injection is a write and a spoofing vector).",
+  ],
+  [
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "secrets bootstrap: the file holding this deployment's AWS OIDC web-identity token, the standard AWS spelling a federated host injects.",
+  ],
+  ["OE_AWS_WEB_IDENTITY_TOKEN", "the inline AWS OIDC web-identity token, used where no token file exists."],
+  ["OE_DIRECTORY_OKTA_TOKEN_REF", "secrets bootstrap: the ref that resolves to the Okta API token."],
+  ["OE_DIRECTORY_OKTA_TOKEN_BROKER", "secrets bootstrap: which broker that Okta token ref resolves through."],
+  ["OE_CREDENTIAL_ENCRYPTION_KEY", "the AES-256-GCM key the db credential broker encrypts every stored credential with."],
+  ["OE_INTAKE_PAGE_SIGNING_KEY", "the signing secret for intake page tokens — absent, both page routes 404."],
 ]);
 
 allow("connection", [
@@ -68,6 +83,11 @@ allow("connection", [
   ["OE_ACCESS_ADMIN_CHANNEL", "the channel access requests are posted to — a wiring target, per install."],
   ["OE_ADMIN_OIDC_ISSUER", "the admin identity provider's issuer URL."],
   ["OE_ADMIN_OIDC_AUDIENCE", "the audience that provider mints for this deployment."],
+  ["OE_AWS_REGION", "the operator's default AWS region — which regional endpoints a mint and a CLI call reach."],
+  ["OE_AWS_SSO_REGION", "the Identity Center region, where the SSO OIDC and portal endpoints live."],
+  ["OE_DIRECTORY_PROVIDER", "adapter selection: which directory backing to arm at boot (\"okta\", or nothing)."],
+  ["OE_DIRECTORY_OKTA_ORG_URL", "the Okta org this deployment syncs against — an HTTPS target, per install."],
+  ["OE_OAUTH_NOTION_RESOURCE", "the hosted-MCP resource URL the Notion OAuth shortcut points at."],
 ]);
 
 allow("identity", [
@@ -91,6 +111,10 @@ allow("identity", [
   ["TEAMS_APP_ID", "the Teams spelling of that same app identity."],
   ["NOTION_BOT_NAME", "which Notion bot this deployment posts as."],
   ["NOTION_BOT_USER_ID", "that bot's Notion user id."],
+  [
+    "OE_AWS_SSO_CLIENT_ID",
+    "the pre-registered PUBLIC OIDC client id this deployment presents at the Identity Center link — the same class as LINEAR_CLIENT_ID, the public half of a client pair.",
+  ],
 ]);
 
 allow("platform", [
@@ -143,9 +167,87 @@ allow("pending-migration", [
   ["NOTION_VERSION", "OPE-1153: an API version pin, which is a product decision rather than a per-install fact."],
   ["OE_TELEMETRY", "OPE-1153: turns telemetry on or off."],
   ["OE_TELEMETRY_DEBUG", "OPE-1153: turns telemetry debug output on or off."],
+  [
+    "OE_ALLOW_MULTI_TENANT_PRINCIPALS",
+    "OPE-1153: turns the multi-tenant principal fence off wholesale — tenant-admission.ts calls it 'the opt-in that turns the whole fence off', which is a wall a dashboard must not lower.",
+  ],
+  [
+    "OE_DIRECTORY_AUTOCONFIRM",
+    "OPE-1153: the single documented escape from 'every directory link waits for its human'. Setting it to \"attested\" auto-confirms IdP-provisioned mappings.",
+  ],
+  ["OE_DIRECTORY_GROUP_ALLOWLIST", "OPE-1153: which IdP groups sync — a narrowing policy list, the same class as OE_TIDY_ORGS."],
+  ["OE_AWS_ENABLED", "OPE-1153: the master flag arming the whole AWS access plane, default OFF."],
+  ["OE_OAUTH_ENABLED", "OPE-1153: the master flag arming the own-rolled OAuth layer, default OFF."],
+  [
+    "OE_AWS_SSO_SCOPES",
+    "OPE-1153: the OAuth scopes the Identity Center link requests. A scope list is what access is asked for, so widening it from a dashboard widens the agent's reach.",
+  ],
+  [
+    "OE_OAUTH_CONFIG",
+    "OPE-1153: most of this JSON is per-install connection wiring — endpoints, public client ids, credential-store refs (never values) — but each provider entry also carries a `scopes` field, which oauth-client.ts puts straight on the authorize URL and on the dynamic client registration. That is the same widening lever as OE_AWS_SSO_SCOPES above, so the whole map is held here until the scopes rung moves to typed config. (The adapter's RESERVED_AUTHORIZE_PARAMS guard covers the `authorizeParams` map only; it does not reach `scopes`.)",
+  ],
+  [
+    "OE_DIRECTORY_OKTA_APPS",
+    "OPE-1153: the platform-to-Okta-app table looks like pure wiring, and its optional `:field` suffix is not: `userName` grades that app's mappings `asserted` and the default `externalId` grades them `attested` (adapters/agent/directory/okta.ts). Only `attested` is auto-confirmable, so this suffix is the second half of the OE_DIRECTORY_AUTOCONFIRM decision above and belongs in the same backlog.",
+  ],
+  ["OE_SCRIPTED_MODEL", "OPE-1153: arms the scripted stand-in model — a test valve read by runtime code, like OE_ALLOW_TEST_NETWORK."],
+  ["OE_MEMORY_SYNC_TIMING", "OPE-1153: arms the per-silo sync decomposition, a measurement flag costing a durable row per session."],
 ]);
 
 export const ENV_READ_ALLOWLIST: EnvAllowlist = ALLOWLIST;
+
+const DYNAMIC_SITES = new Map<string, string>([
+  [
+    "packages/core/agent/settings/settings.ts::spec.env",
+    "the settings schema's own ops-override read: the key is the `env` FIELD of a setting spec, so every name it reaches is already declared in settings.ts and generated into the configuration reference.",
+  ],
+  [
+    "packages/core/agent/access/credentials.ts::ref",
+    "an operator-authored credential ref resolved through the env broker — the name is config data, not a name this repo can carry.",
+  ],
+  [
+    "packages/core/agent/credentials/operator-secrets.ts::name",
+    "an operator secret looked up by the name the operator gave it.",
+  ],
+  [
+    "packages/core/agent/credentials/self-secrets.ts::name",
+    "the agent's own secret lookup, keyed by the same operator-given name.",
+  ],
+  [
+    "packages/providers/linear/agent/channels/linear-credentials.ts::name",
+    "`linearAppRegistry` sweeping `Object.keys(env)` for the multi-app slot ids — the key it tests is every name the process happens to carry, so no scanner resolves it. The slot family it looks for is the same runtime-built one the three template-literal sites below cover.",
+  ],
+  [
+    "packages/providers/linear/agent/channels/linear-credentials.ts::`${APP_SLOT_PREFIX}${slot}_CLIENT_ID`",
+    "a multi-app SLOT key — the slot id is deployment data, so the full variable name only exists at runtime.",
+  ],
+  [
+    "packages/providers/linear/agent/channels/linear-credentials.ts::`${APP_SLOT_PREFIX}${slot}_CLIENT_SECRET`",
+    "the client-secret half of that same runtime slot key.",
+  ],
+  [
+    "packages/providers/linear/agent/channels/linear-credentials.ts::`${APP_SLOT_PREFIX}${slot}_WEBHOOK_SECRET`",
+    "the webhook-secret half of that same runtime slot key.",
+  ],
+  [
+    "packages/adapters/agent/aws/cli.ts::k",
+    "the AWS CLI child-env builder copying its literal CHILD_ENV_PASSTHROUGH list plus LC_* locale keys out of this process — a deny-by-default copy, never a config read.",
+  ],
+  [
+    "packages/providers/teams/agent/ops.ts::k",
+    "the Teams preflight's `pick(env, ...keys)` helper walking the literal key list its caller passes. 🔴 The names reached this way are NOT inventoried — MICROSOFT_APP_PASSWORD, TEAMS_APP_PASSWORD, MICROSOFT_TENANT_ID and TEAMS_TENANT_ID have no allowlist entry, because no arm resolves a call-site argument list. Closing that needs call-site resolution, which OPE-1212 carries with the alias half.",
+  ],
+  [
+    "packages/core/agent/access/host-egress.ts::names[0]",
+    "the proxy-variable pair chosen by protocol. The pair holds BOTH spellings — the lowercase `https_proxy`/`http_proxy`, outside the `[A-Z][A-Z0-9_]*` shape either arm covers, and the uppercase HTTPS_PROXY/HTTP_PROXY, which are name-shaped and reached only through this index. So this excuse covers a real uppercase read, not just a lowercase one.",
+  ],
+  [
+    "packages/core/agent/access/host-egress.ts::key",
+    "the winner of that same lowercase-beats-uppercase choice, read one line later, with the same two spellings behind it.",
+  ],
+]);
+
+export const DYNAMIC_ENV_READ_SITES: ReadonlyMap<string, string> = DYNAMIC_SITES;
 
 const MIN_REASON_LENGTH = 10;
 
@@ -181,6 +283,46 @@ export function auditEnvReads(reads: ReadonlyMap<string, readonly string[]>, all
       out.push(
         `UNTICKETED PENDING MIGRATION: ${name} is held as pending-migration in scripts/env-read-allowlist.ts but its ` +
           `reason names no OPE ticket. File one and name it, or move the knob to settings/config.`,
+      );
+    }
+  }
+
+  return out;
+}
+
+export function auditDynamicEnvReads(
+  sites: readonly DynamicEnvRead[],
+  allowlist: ReadonlyMap<string, string> = DYNAMIC_ENV_READ_SITES,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  for (const site of [...sites].sort((a, b) => dynamicSiteKey(a).localeCompare(dynamicSiteKey(b)))) {
+    const key = dynamicSiteKey(site);
+    seen.add(key);
+    if (allowlist.has(key)) continue;
+    out.push(
+      `DYNAMIC ENV READ NOT ALLOWLISTED: ${site.file}:${site.line} reads the environment with a key this gate cannot ` +
+        `resolve to a name (\`${site.expr}\`), so no allowlist entry can cover the variable it reaches. If the key IS a ` +
+        `name, read it through a module-level \`const X = "NAME"\` (or an exported one) so the scan resolves it and the ` +
+        `name joins the allowlist in scripts/env-read-allowlist.ts. If the key is genuinely runtime data — an operator ` +
+        `secret ref, a credential slot — add "${key}" to DYNAMIC_ENV_READ_SITES in scripts/env-read-allowlist.ts WITH a ` +
+        `reason.`,
+    );
+  }
+
+  for (const [key, why] of allowlist) {
+    if (!seen.has(key)) {
+      out.push(
+        `STALE DYNAMIC SITE: "${key}" is excused in scripts/env-read-allowlist.ts but no such env read exists any ` +
+          `more — delete the entry.`,
+      );
+      continue;
+    }
+    if (why.trim().length < MIN_REASON_LENGTH) {
+      out.push(
+        `UNREASONED DYNAMIC SITE: "${key}" is excused in scripts/env-read-allowlist.ts with no stated reason. Say why ` +
+          `the key cannot be a name, or write the read so the scan resolves it.`,
       );
     }
   }

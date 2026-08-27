@@ -3,7 +3,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ENV_READ_ALLOWLIST, auditEnvReads, type AllowEntry, type EnvAllowlist } from "./env-read-allowlist.js";
+import {
+  DYNAMIC_ENV_READ_SITES,
+  ENV_READ_ALLOWLIST,
+  auditDynamicEnvReads,
+  auditEnvReads,
+  type AllowEntry,
+  type EnvAllowlist,
+} from "./env-read-allowlist.js";
+import { collectExportedNameConstants, dynamicSiteKey, scanComputedEnvReads } from "./env-read-scan.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const LINT = join(root, "scripts", "env-docs-lint.ts");
@@ -25,6 +33,15 @@ function fixture(names: readonly string[], root = "agent"): string {
   const body = names.map((n, i) => `export const probe${i} = process.env.${n};`).join("\n");
   writeFileSync(join(dir, root, "probe.ts"), `${body}\n`);
   writeFileSync(join(dir, ".env.example"), `${names.map((n) => `${n}=`).join("\n")}\n`);
+  return dir;
+}
+
+function sourceFixture(body: string, documented: readonly string[] = []): string {
+  const dir = mkdtempSync(join(tmpdir(), "oe-env-computed-"));
+  scratchRoots.push(dir);
+  mkdirSync(join(dir, "agent"), { recursive: true });
+  writeFileSync(join(dir, "agent", "probe.ts"), `${body}\n`);
+  writeFileSync(join(dir, ".env.example"), `${documented.map((n) => `${n}=`).join("\n")}\n`);
   return dir;
 }
 
@@ -114,11 +131,11 @@ function main(): void {
     for (const [, e] of ENV_READ_ALLOWLIST) census.set(e.klass, (census.get(e.klass) ?? 0) + 1);
     const expected: Record<string, number> = {
       "settings-lever": 0,
-      secret: 20,
-      connection: 26,
-      identity: 20,
+      secret: 27,
+      connection: 31,
+      identity: 21,
       platform: 11,
-      "pending-migration": 35,
+      "pending-migration": 45,
     };
     for (const [klass, n] of Object.entries(expected)) {
       ok(
@@ -126,7 +143,7 @@ function main(): void {
         `class ${klass} holds ${n} entries (found ${census.get(klass) ?? 0}) — if you meant to change this, say so here`,
       );
     }
-    ok(ENV_READ_ALLOWLIST.size === 112, `the allowlist holds 112 names (found ${ENV_READ_ALLOWLIST.size})`);
+    ok(ENV_READ_ALLOWLIST.size === 135, `the allowlist holds 135 names (found ${ENV_READ_ALLOWLIST.size})`);
   }
 
   {
@@ -139,6 +156,128 @@ function main(): void {
   {
     const r = lint(fixture(["OE_ORG"]));
     ok(!r.out.includes("STALE REVERSE_SCAN_SELF"), "the self-exclusion list names files that exist");
+  }
+
+  {
+    const src = [
+      `const INJECT_TOKEN_ENV = "OE_CONTROL_INJECT_TOKENS";`,
+      `export function entries(env: NodeJS.ProcessEnv = process.env): string | undefined {`,
+      `  return env[INJECT_TOKEN_ENV];`,
+      `}`,
+    ].join("\n");
+    const scan = scanComputedEnvReads("agent/auth.ts", src);
+    ok(scan.resolved.length === 1, `one resolved read (found ${scan.resolved.length})`);
+    ok(scan.resolved[0]?.name === "OE_CONTROL_INJECT_TOKENS", "…resolved to the name the constant holds");
+    ok(scan.dynamic.length === 0, "…and nothing left unresolved");
+
+    const bare = scanComputedEnvReads("agent/auth.ts", src.split("\n").slice(1).join("\n"));
+    ok(bare.resolved.length === 0, "an unresolvable key resolves to no name");
+    ok(bare.dynamic.length === 1 && bare.dynamic[0].expr === "INJECT_TOKEN_ENV", "…and is reported as a dynamic site instead");
+    ok(bare.dynamic[0].line === 2, "…at the line it sits on, so the message points somewhere");
+  }
+
+  {
+    const decl = `export const CREDENTIAL_KEY_ENV = "OE_CREDENTIAL_ENCRYPTION_KEY";`;
+    const use = `if (process.env[CREDENTIAL_KEY_ENV]) register();`;
+    const exported = collectExportedNameConstants([
+      ["packages/core/agent/credentials/db-broker.ts", decl],
+      ["agent/lib/register-adapters.ts", use],
+    ]);
+    const scan = scanComputedEnvReads("agent/lib/register-adapters.ts", use, exported);
+    ok(scan.resolved[0]?.name === "OE_CREDENTIAL_ENCRYPTION_KEY", "an imported key constant resolves across modules");
+
+    ok(scanComputedEnvReads("agent/lib/register-adapters.ts", use).dynamic.length === 1, "…and does not resolve without it");
+
+    const clash = collectExportedNameConstants([
+      ["a.ts", decl],
+      ["b.ts", `export const CREDENTIAL_KEY_ENV = "OE_SOMETHING_ELSE";`],
+    ]);
+    ok(clash.get("CREDENTIAL_KEY_ENV") === null, "a name exported with two values is ambiguous");
+    ok(scanComputedEnvReads("agent/lib/register-adapters.ts", use, clash).dynamic.length === 1, "…so the read stays dynamic");
+  }
+
+  {
+    const built = [
+      `interface Spawn {`,
+      `  readonly env: NodeJS.ProcessEnv;`,
+      `}`,
+      `function childEnv(spawn: Spawn): string | undefined {`,
+      `  const env: NodeJS.ProcessEnv = {};`,
+      `  return env[K] ?? spawn.env[K];`,
+      `}`,
+    ].join("\n");
+    const scan = scanComputedEnvReads("agent/cli.ts", built);
+    ok(scan.resolved.length === 0 && scan.dynamic.length === 0, "a locally-built env object is not this process's env");
+
+    const asParam = built.replace(`  const env: NodeJS.ProcessEnv = {};\n`, "").replace("(spawn: Spawn)", "(env: NodeJS.ProcessEnv, spawn: Spawn)");
+    ok(scanComputedEnvReads("agent/cli.ts", asParam).dynamic.length === 1, "…while the same read off a ProcessEnv parameter is one");
+
+    const defaulted = `export function f(deps: { env?: NodeJS.ProcessEnv } = {}) { const env = deps.env ?? process.env; return env[K]; }`;
+    ok(scanComputedEnvReads("agent/r.ts", defaulted).dynamic.length === 1, "`X.env ?? process.env` is a ProcessEnv alias");
+    const valueBinding = `export function g() { const key = process.env.OE_ORG ?? ""; return key[0]; }`;
+    const vb = scanComputedEnvReads("agent/v.ts", valueBinding);
+    ok(vb.dynamic.length === 0 && vb.resolved.length === 0, "…while `const key = process.env.X` binds a value, not the env");
+
+    ok(scanComputedEnvReads("agent/o.ts", `const K = "OE_ORG";\nexport const v = process.env?.[K];`).resolved[0]?.name === "OE_ORG", "`process.env?.[K]` is the same read");
+    ok(
+      scanComputedEnvReads("agent/m.ts", `const K = "OE_ORG";\nexport const v = process.env[\n  K\n];`).resolved[0]?.name === "OE_ORG",
+      "…and so is a key expression the formatter wrapped across lines",
+    );
+
+    const writes = `export function f(env: NodeJS.ProcessEnv = process.env) { env[K] = "x"; }`;
+    ok(scanComputedEnvReads("agent/w.ts", writes).dynamic.length === 0, "an assignment target is not a read");
+    ok(
+      scanComputedEnvReads("agent/w.ts", writes.replace('env[K] = "x";', "return env[K];")).dynamic.length === 1,
+      "…while reading the same key is",
+    );
+    const commented = [`// process.env[ref] is how the env broker resolves a ref.`, ` * env[SOME_CONST] too.`].join("\n");
+    ok(scanComputedEnvReads("agent/c.ts", commented).dynamic.length === 0, "a read written inside a comment is not a read");
+  }
+
+  {
+    const body = [`const K = "OE_SYNTHETIC_KNOB";`, `export const v = process.env[K];`].join("\n");
+    const r = lint(sourceFixture(body, ["OE_SYNTHETIC_KNOB"]));
+    ok(r.code !== 0, `a computed read of an unallowlisted name fails the lint (exit ${r.code})`);
+    ok(r.out.includes("ENV READ NOT ALLOWLISTED"), "…under the allowlist arm, exactly as a literal read does");
+    ok(r.out.includes("process.env.OE_SYNTHETIC_KNOB"), "…naming the variable the constant resolved to");
+    ok(r.out.includes("agent/probe.ts"), "…and the file that reads it");
+  }
+
+  {
+    const body = [`const K = "OE_ORG";`, `export const v = process.env[K];`].join("\n");
+    const r = lint(sourceFixture(body, ["OE_ORG"]));
+    const unallowed = r.out.split("\n").filter((l) => l.includes("ENV READ NOT ALLOWLISTED"));
+    ok(unallowed.length === 0, `a computed read of an ALLOWLISTED name raises no red (got: ${unallowed.join(" | ")})`);
+  }
+
+  {
+    const body = [`export function get(ref: string) { return process.env[ref]; }`].join("\n");
+    const r = lint(sourceFixture(body));
+    ok(r.code !== 0, `an unexcused dynamic env read fails the lint (exit ${r.code})`);
+    ok(r.out.includes("DYNAMIC ENV READ NOT ALLOWLISTED"), "…under the dynamic-site arm's own headline");
+    ok(r.out.includes("agent/probe.ts:1"), "…naming the file and line");
+    ok(r.out.includes("DYNAMIC_ENV_READ_SITES"), "…and saying where an excuse would go");
+  }
+
+  {
+    const site = { file: "agent/x.ts", line: 7, expr: "ref" };
+    const key = dynamicSiteKey(site);
+    ok(key === "agent/x.ts::ref", "the excuse key is <path>::<expression>, with no line number in it");
+
+    const excused = new Map([[key, "an operator-authored credential ref."]]);
+    ok(auditDynamicEnvReads([site], excused).length === 0, "an excused site is silent");
+    const stale = auditDynamicEnvReads([], excused);
+    ok(stale.length === 1 && stale[0].includes("STALE DYNAMIC SITE"), "an excuse for a site that is gone is a red");
+    const sibling = auditDynamicEnvReads([site, { file: "agent/x.ts", line: 9, expr: "other" }], excused);
+    ok(sibling.length === 1 && sibling[0].includes("agent/x.ts:9"), "a NEW key in an already-excused file is still a red");
+    const bare = auditDynamicEnvReads([site], new Map([[key, "ok"]]));
+    ok(bare.length === 1 && bare[0].includes("UNREASONED DYNAMIC SITE"), "an excuse with no reason is a red");
+  }
+
+  {
+    ok(DYNAMIC_ENV_READ_SITES.size === 12, `12 dynamic sites are excused (found ${DYNAMIC_ENV_READ_SITES.size})`);
+    const bare = [...DYNAMIC_ENV_READ_SITES].filter(([, why]) => why.trim().length < 10);
+    ok(bare.length === 0, `every excused site carries a reason (bare: ${bare.map(([k]) => k).join(", ")})`);
   }
 }
 

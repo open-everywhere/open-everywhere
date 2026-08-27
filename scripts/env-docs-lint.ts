@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ENV_READ_ALLOWLIST, auditEnvReads } from "./env-read-allowlist.js";
+import { ENV_READ_ALLOWLIST, DYNAMIC_ENV_READ_SITES, auditDynamicEnvReads, auditEnvReads } from "./env-read-allowlist.js";
+import { collectExportedNameConstants, scanComputedEnvReads, type DynamicEnvRead } from "./env-read-scan.js";
 
 const CODE_ROOTS = ["agent", "packages"];
 const DOC_ROOTS = ["docs"];
@@ -31,13 +32,29 @@ const codeFiles = CODE_ROOTS.flatMap((root) =>
   filesUnder(root, (name) => name.endsWith(".ts") && !name.endsWith(".d.ts") && !name.endsWith("-test.ts")),
 ).filter((p) => p.split("/").includes("agent"));
 
+const sources = codeFiles.map((file) => [file, readFileSync(file, "utf8")] as const);
+
 const reads = new Map<string, string[]>();
-for (const file of codeFiles) {
-  for (const m of readFileSync(file, "utf8").matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)) {
-    if (!reads.has(m[1])) reads.set(m[1], []);
-    const where = reads.get(m[1]);
-    if (where && !where.includes(file)) where.push(file);
+function recordRead(name: string, file: string): void {
+  if (!reads.has(name)) reads.set(name, []);
+  const where = reads.get(name);
+  if (where && !where.includes(file)) where.push(file);
+}
+
+for (const [file, source] of sources) {
+  for (const m of source.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)) recordRead(m[1], file);
+}
+
+const exportedNames = collectExportedNameConstants(sources);
+const dynamicSites: DynamicEnvRead[] = [];
+let computedReadCount = 0;
+for (const [file, source] of sources) {
+  const scan = scanComputedEnvReads(file, source, exportedNames);
+  for (const r of scan.resolved) {
+    if (!reads.get(r.name)?.includes(r.file)) computedReadCount++;
+    recordRead(r.name, r.file);
   }
+  dynamicSites.push(...scan.dynamic);
 }
 
 const documentation = [
@@ -95,6 +112,8 @@ for (const name of GRANDFATHERED) {
 
 reds.push(...auditEnvReads(reads));
 
+reds.push(...auditDynamicEnvReads(dynamicSites));
+
 const REVERSE_SCAN_ROOTS = ["agent", "packages", "scripts", "tests", "deploy"];
 
 const REVERSE_EXEMPT = new Map<string, string>([
@@ -120,6 +139,7 @@ const REVERSE_SCAN_SELF = [
   "scripts/env-docs-lint.ts",
   "scripts/env-read-allowlist.ts",
   "scripts/env-read-allowlist-test.ts",
+  "scripts/env-read-scan.ts",
 ];
 const LINT_SOURCE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 for (const self of REVERSE_SCAN_SELF) {
@@ -205,7 +225,10 @@ const pendingMigration = [...ENV_READ_ALLOWLIST.values()].filter((e) => e.klass 
 console.log(
   `✓ env-docs: ${reads.size} env name(s) read by the runtime — ${documentedCount} documented, ` +
     `${GRANDFATHERED.size} grandfathered (frozen 2026-08-10, must only shrink), 0 new gaps. ` +
+    `${computedReadCount} name-in-file read(s) reached their name through a COMPUTED key (OPE-1160). ` +
     `Reverse arm: ${documentedNames.size} documented name(s), ${REVERSE_EXEMPT.size} exempt, 0 stale rows. ` +
     `Allowlist arm: ${ENV_READ_ALLOWLIST.size} allowed, ${pendingMigration} pending migration to settings ` +
-    `(OPE-1153, must only shrink), 0 unallowed reads.`,
+    `(OPE-1153, must only shrink), 0 unallowed reads. ` +
+    `Dynamic-site arm: ${dynamicSites.length} unresolvable read site(s), ${DYNAMIC_ENV_READ_SITES.size} excused ` +
+    `(must only shrink).`,
 );
