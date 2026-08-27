@@ -3330,6 +3330,14 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return (rows as GrantAskPgRow[]).map(grantAskFromPgRow);
     },
 
+    async pendingCredentialGrantAsksForScope(org, scopeKey, nowIso) {
+      const { rows } = await client.query(
+        `${GRANT_ASK_SELECT} WHERE org_id = $1 AND scope_key = $2 AND status = 'pending' AND expires_at > $3 ORDER BY created_at ASC`,
+        [org, scopeKey, nowIso],
+      );
+      return (rows as GrantAskPgRow[]).map(grantAskFromPgRow);
+    },
+
     async addCredentialGrant(org: string, row: CredentialGrantRow) {
       refuseHalfBorrow("credential_grant", row);
       await client.query(
@@ -3409,12 +3417,26 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return r ? grantFromPgRow(r) : null;
     },
 
+    async refundCredentialGrant(org, id, burnedAt) {
+      const { rows } = await client.query(
+        `UPDATE credential_grant SET status = 'active', used_at = NULL
+         WHERE org_id = $1 AND id = $2 AND status = 'used' AND used_at = $3 AND revoked_at IS NULL RETURNING id`,
+        [org, id, burnedAt],
+      );
+      return (rows as unknown[]).length > 0;
+    },
+
     async revokeCredentialGrant(org, id, at) {
       const { rows } = await client.query(
         `UPDATE credential_grant SET status = 'revoked', revoked_at = $1 WHERE org_id = $2 AND id = $3 AND status = 'active' RETURNING id`,
         [at, org, id],
       );
-      return (rows as unknown[]).length > 0;
+      if ((rows as unknown[]).length > 0) return true;
+      await client.query(
+        `UPDATE credential_grant SET revoked_at = $1 WHERE org_id = $2 AND id = $3 AND status = 'used' AND revoked_at IS NULL`,
+        [at, org, id],
+      );
+      return false;
     },
 
     async expireCredentialGrants(org, nowIso) {

@@ -3,6 +3,7 @@ import {
   credentialGrantRefusalMessage,
   credentialGrantStateRefusal,
   grantAuditResource,
+  GrantUndispatchedError,
   quotedPurpose,
   type CredentialGrantRefusal,
   type CredentialGrantRow,
@@ -105,9 +106,11 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
   const owner = await grantOwnerSubject(ctx.org, grant.connector, grant.ownerPrincipalId);
   if (owner === undefined) return refuse("owner_unresolvable");
 
+  let burnedAt: string | undefined;
   if (grant.mode === "once") {
     const burned = await store.burnCredentialGrant(ctx.org, grant.id, nowIso);
     if (burned === null) return refuse("burned");
+    burnedAt = nowIso;
   }
 
   const send = path.prepare(input);
@@ -124,7 +127,30 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
     tier: grant.tier,
     verb: grant.verb,
   });
-  const result = await send.run(owner);
+  let result: unknown;
+  try {
+    result = await send.run(owner);
+  } catch (err) {
+    if (burnedAt !== undefined && err instanceof GrantUndispatchedError) {
+      try {
+        const refunded = await store.refundCredentialGrant(ctx.org, grant.id, burnedAt);
+        await auditGrant(ctx, "grant.refused", ctx.requesterPrincipalId, {
+          connector: grant.connector,
+          gate: "undispatched",
+          grantId: grant.id,
+          mode: grant.mode,
+          owner: grant.ownerPrincipalId,
+          refunded,
+          requester: ctx.requesterPrincipalId,
+          resource: grantAuditResource(grant),
+          verb: grant.verb,
+        });
+      } catch (refundErr) {
+        console.log(`[open-everywhere:grant] grant ${grant.id}: the undispatched-call refund could not be written: ${String(refundErr)}`);
+      }
+    }
+    throw err;
+  }
   if (roomNotice !== undefined) {
     try {
       await roomNotice(disclosure, grant);

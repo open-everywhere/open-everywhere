@@ -137,7 +137,7 @@ async function passes(label: string, pin: McpBorrowPin, url: string | URL, init?
   ok(err instanceof Error && err.message.includes("mcp-call-fence"), "§2 the refusal names the fence");
   ok(err instanceof Error && err.message.includes(TOOL), "§2 the refusal names the tool the grant lends");
   ok(err instanceof Error && err.message.includes(HOST), "§2 the refusal names the host the grant is pinned to");
-  ok(err instanceof Error && err.message.includes("not dialled"), "§2 the refusal says the vendor was not reached");
+  ok(err instanceof Error && err.message.includes("this request was not sent"), "§2 the refusal says THIS REQUEST was not sent — the narrow claim the fence can actually make");
 }
 
 {

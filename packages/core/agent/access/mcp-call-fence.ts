@@ -1,5 +1,5 @@
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { quotedPurpose } from "../operational/credential-grant-rows.js";
+import { GrantUndispatchedError, quotedPurpose } from "../operational/credential-grant-rows.js";
 
 export interface McpBorrowPin {
   readonly host: string;
@@ -7,7 +7,7 @@ export interface McpBorrowPin {
   readonly frozenArgs: Readonly<Record<string, unknown>>;
 }
 
-export class McpCallFenceError extends Error {}
+export class McpCallFenceError extends GrantUndispatchedError {}
 
 const ALLOWED_JSONRPC_METHODS: ReadonlySet<string> = new Set([
   "initialize",
@@ -78,7 +78,7 @@ export function fenceMcpBorrowFetch(pin: McpBorrowPin, base: FetchLike): FetchLi
   const frozenKeys = Object.keys(frozenArgs);
   const boundary = `the grant lends only \`${label(pinnedTool)}\` on \`${pinnedHost}\``;
   const refuse: (reason: string) => never = (reason) => {
-    throw new McpCallFenceError(`mcp-call-fence: ${reason} — ${boundary}; the vendor was not dialled.`);
+    throw new McpCallFenceError(`mcp-call-fence: ${reason} — ${boundary}; this request was not sent.`);
   };
 
   return async (url, init) => {

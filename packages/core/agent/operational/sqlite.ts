@@ -2874,6 +2874,13 @@ export const sqliteOperationalStore: OperationalStore = {
     return rows.map(grantAskFromSqliteRow);
   },
 
+  async pendingCredentialGrantAsksForScope(org, scopeKey, nowIso) {
+    const rows = getDb()
+      .prepare(`${GRANT_ASK_SQLITE_SELECT} WHERE org_id = ? AND scope_key = ? AND status = 'pending' AND expires_at > ? ORDER BY created_at ASC`)
+      .all(org, scopeKey, nowIso) as GrantAskSqliteRow[];
+    return rows.map(grantAskFromSqliteRow);
+  },
+
   async addCredentialGrant(org, row) {
     refuseHalfBorrow("credential_grant", row);
     getDb()
@@ -2956,11 +2963,24 @@ export const sqliteOperationalStore: OperationalStore = {
     return row ? grantFromSqliteRow(row) : null;
   },
 
-  async revokeCredentialGrant(org, id, at) {
+  async refundCredentialGrant(org, id, burnedAt) {
     const changes = getDb()
+      .prepare(
+        `UPDATE credential_grant SET status = 'active', used_at = NULL
+         WHERE org_id = ? AND id = ? AND status = 'used' AND used_at = ? AND revoked_at IS NULL`,
+      )
+      .run(org, id, burnedAt).changes;
+    return Number(changes) > 0;
+  },
+
+  async revokeCredentialGrant(org, id, at) {
+    const db = getDb();
+    const changes = db
       .prepare("UPDATE credential_grant SET status = 'revoked', revoked_at = ? WHERE org_id = ? AND id = ? AND status = 'active'")
       .run(at, org, id).changes;
-    return Number(changes) > 0;
+    if (Number(changes) > 0) return true;
+    db.prepare("UPDATE credential_grant SET revoked_at = ? WHERE org_id = ? AND id = ? AND status = 'used' AND revoked_at IS NULL").run(at, org, id);
+    return false;
   },
 
   async expireCredentialGrants(org, nowIso) {

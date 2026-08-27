@@ -231,6 +231,15 @@ export function credentialGrantStateRefusal(row: CredentialGrantRow, nowIso: str
   return undefined;
 }
 
+export class GrantUndispatchedError extends Error {}
+
+export function asGrantUndispatched(err: unknown): GrantUndispatchedError {
+  if (err instanceof GrantUndispatchedError) return err;
+  const marked = new GrantUndispatchedError(err instanceof Error ? err.message : String(err));
+  if (err !== undefined && err !== null) marked.cause = err;
+  return marked;
+}
+
 export function credentialGrantRefusalMessage(row: Pick<CredentialGrantRow, "ownerSlug" | "verb" | "resource">, reason: CredentialGrantRefusal): string {
   const what = `\`${row.verb}\` on \`${row.resource}\`, granted by ${row.ownerSlug}`;
   switch (reason) {

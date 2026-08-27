@@ -844,6 +844,7 @@ export interface OperationalStore {
   decideCredentialGrantAsk(org: string, id: string, from: readonly CredentialGrantAskState[], to: CredentialGrantAskState, at: string): Promise<boolean>;
   setCredentialGrantAskCard(org: string, id: string, surfaceId: string, messageId: string): Promise<void>;
   listExpiredCredentialGrantAsks(org: string, nowIso: string): Promise<readonly CredentialGrantAskRow[]>;
+  pendingCredentialGrantAsksForScope(org: string, scopeKey: string, nowIso: string): Promise<readonly CredentialGrantAskRow[]>;
   addCredentialGrant(org: string, row: CredentialGrantRow): Promise<void>;
   getCredentialGrant(org: string, id: string): Promise<CredentialGrantRow | null>;
   credentialGrantsForScope(org: string, scopeKey: string): Promise<readonly CredentialGrantRow[]>;
@@ -858,6 +859,7 @@ export interface OperationalStore {
     nowIso: string,
   ): Promise<CredentialGrantRow | null>;
   burnCredentialGrant(org: string, id: string, at: string): Promise<CredentialGrantRow | null>;
+  refundCredentialGrant(org: string, id: string, burnedAt: string): Promise<boolean>;
   revokeCredentialGrant(org: string, id: string, at: string): Promise<boolean>;
   expireCredentialGrants(org: string, nowIso: string): Promise<number>;
 

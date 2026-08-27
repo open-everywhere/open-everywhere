@@ -94,7 +94,12 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
       ? null
       : await store.liveCredentialGrantAsk(input.org, input.requesterPrincipalId, input.ownerPrincipalId, toolSlug, resource, nowIso);
   const mintInput: GrantMintInput = {
-    borrow: { mcpTool: input.mcpTool, rowId: askId, takenToolNames: await takenGrantToolNames(input.org, input.scopeKey), targetLabel: input.targetLabel },
+    borrow: {
+      mcpTool: input.mcpTool,
+      rowId: askId,
+      takenToolNames: await takenGrantToolNames(input.org, input.scopeKey, nowIso),
+      targetLabel: input.targetLabel,
+    },
     connector: input.connector,
     domainGrantsConnector: input.domainGrantsConnector,
     liveAsk: liveAsk ?? undefined,
@@ -168,19 +173,21 @@ export async function askForCredentialGrant(input: AskForGrantInput): Promise<As
   return { askId: ask.id, ownerHandle: ask.ownerSlug, sent: true, toolName: verdict.toolName };
 }
 
-async function takenGrantToolNames(org: string, scopeKey: string): Promise<readonly string[]> {
-  const rows = await getOperationalStore().credentialGrantsForScope(org, scopeKey);
+async function takenGrantToolNames(org: string, scopeKey: string, nowIso: string): Promise<readonly string[]> {
+  const store = getOperationalStore();
   const names: string[] = [];
-  for (const row of rows) {
+  const claim = (row: Pick<CredentialGrantRow, "ownerSlug" | "verb"> & { readonly toolName?: string }): void => {
     if (row.toolName !== undefined) {
       names.push(row.toolName);
-      continue;
+      return;
     }
     try {
       names.push(grantToolName(row.ownerSlug, row.verb));
     } catch {
     }
-  }
+  };
+  for (const row of await store.credentialGrantsForScope(org, scopeKey)) claim(row);
+  for (const ask of await store.pendingCredentialGrantAsksForScope(org, scopeKey, nowIso)) claim(ask);
   return names;
 }
 

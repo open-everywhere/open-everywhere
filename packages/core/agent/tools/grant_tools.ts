@@ -64,7 +64,7 @@ function borrowOffer(grant: CredentialGrantRow, mcpTool: string): GrantToolOffer
       : `${String(frozenKeys.length)} argument(s) are FIXED by the grant — ${frozenKeys.join(", ")}. Each one's schema shows the single ` +
         "value it may carry: SEND EXACTLY THAT. A call that sends any other value for a fixed argument, or omits one, is " +
         `refused before the call reaches ${grant.connector}` +
-        `${grant.mode === "once" ? ", and this is a ONE-SHOT grant: a refused call still spends it, so do not guess" : ""}.`;
+        `${grant.mode === "once" ? `, and this is a ONE-SHOT grant: a refusal does NOT spend it, but each attempt opens a session under ${grant.ownerSlug}'s account, so send the exact value rather than guessing` : ""}.`;
   return {
     description:
       `Runs the ${grant.connector} tool \`${quotedPurpose(mcpTool)}\` on "${grant.resource}" as ${grant.ownerSlug}, with ` +

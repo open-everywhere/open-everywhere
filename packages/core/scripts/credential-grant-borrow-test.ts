@@ -502,6 +502,42 @@ async function backendLegs(store: OperationalStore, label: string): Promise<void
     `${label}: …while a row that froze {} IS found under the digest of {} — absence and {} are two different rows`,
   );
 
+  await store.addCredentialGrantAsk(ORG, askRow("ask-scope-b", { id: "ask-scope-b", toolName: "grant__rowan_hale_notion__notion_fetch_b" }));
+  await store.addCredentialGrantAsk(ORG, askRow("ask-scope-dead", { id: "ask-scope-dead", status: "declined", toolName: "grant__rowan_hale_notion__notion_fetch_dead" }));
+  await store.addCredentialGrantAsk(ORG, askRow("ask-scope-other", { id: "ask-scope-other", scopeKey: "session-elsewhere", toolName: "grant__rowan_hale_notion__notion_fetch_other" }));
+  const claimed = (await store.pendingCredentialGrantAsksForScope(ORG, "session-borrow", iso(NOW))).map((r) => r.toolName).sort();
+  eq(claimed, ["grant__rowan_hale_notion__notion_fetch", "grant__rowan_hale_notion__notion_fetch_b"], `${label}: the scope read returns every PENDING ask in the chat, with its pinned name`);
+  ok(!claimed.includes("grant__rowan_hale_notion__notion_fetch_dead"), `${label}: …never a DECLINED one — an ask that will not mount claims no name`);
+  ok(!claimed.includes("grant__rowan_hale_notion__notion_fetch_other"), `${label}: …and never another chat's, so one room cannot rename another room's tool`);
+  eq(
+    (await store.pendingCredentialGrantAsksForScope(ORG, "session-borrow", iso(NOW + 120 * 60_000))).length,
+    0,
+    `${label}: a LAPSED pending ask reads as gone before any sweep has run — expiry is in the predicate`,
+  );
+
+  await store.addCredentialGrant(ORG, grantRow("g-refund", { mode: "once", scopeKey: "session-refund" }));
+  const refundBurn = iso(NOW + 1_000);
+  ok((await store.burnCredentialGrant(ORG, "g-refund", refundBurn)) !== null, `${label}: the once grant burns`);
+  eq(await store.refundCredentialGrant(ORG, "g-refund", iso(NOW + 9_999)), false, `${label}: 🔴 a refund carrying ANOTHER call's burn stamp loses — a loser cannot un-spend the winner's burn`);
+  eq((await store.getCredentialGrant(ORG, "g-refund"))?.status, "used", `${label}: …and the row stays spent`);
+  eq(await store.refundCredentialGrant(ORG, "g-refund", refundBurn), true, `${label}: the caller that OWNS the stamp refunds it`);
+  const refunded = await store.getCredentialGrant(ORG, "g-refund");
+  eq(refunded?.status, "active", `${label}: …the grant is ACTIVE again`);
+  eq(refunded?.usedAt, undefined, `${label}: …with the burn stamp CLEARED, so a later burn reads no leftover value`);
+  ok((await store.burnCredentialGrant(ORG, "g-refund", iso(NOW + 2_000))) !== null, `${label}: …and it can be burned again, which is what makes the refund worth anything`);
+
+  await store.addCredentialGrant(ORG, grantRow("g-refund-race", { mode: "once", scopeKey: "session-race" }));
+  const raceBurn = iso(NOW + 1_000);
+  ok((await store.burnCredentialGrant(ORG, "g-refund-race", raceBurn)) !== null, `${label}: the once grant burns, and the call is now in flight`);
+  eq(await store.revokeCredentialGrant(ORG, "g-refund-race", iso(NOW + 1_500)), false, `${label}: the owner's revoke answers false — the row was already spent, so no LIVE grant was revoked`);
+  eq((await store.getCredentialGrant(ORG, "g-refund-race"))?.revokedAt, iso(NOW + 1_500), `${label}: …but it stamped the owner's intent on the row`);
+  eq((await store.getCredentialGrant(ORG, "g-refund-race"))?.status, "used", `${label}: …without rewriting the status, so which arm ended the grant is still readable`);
+  eq(await store.refundCredentialGrant(ORG, "g-refund-race", raceBurn), false, `${label}: 🔴 the refund then LOSES — an owner's revoke is never undone by a call that refused after it`);
+  eq((await store.getCredentialGrant(ORG, "g-refund-race"))?.status, "used", `${label}: …and the grant stays terminal`);
+
+  await store.revokeCredentialGrant(ORG, "g-refund-race", iso(NOW + 5_000));
+  eq((await store.getCredentialGrant(ORG, "g-refund-race"))?.revokedAt, iso(NOW + 1_500), `${label}: a second revoke leaves the first stamp alone`);
+
   ok(await store.revokeCredentialGrant(ORG, "g-full", iso(NOW + 60_000)), `${label}: the grant revokes`);
   eq(
     (await store.liveBorrowCredentialGrant(ORG, "slack/W1/U-owner", "notion", "notion-fetch", key, "session-borrow", iso(NOW + 120_000)))?.id,

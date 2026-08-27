@@ -198,6 +198,40 @@ let firstAskId = "";
   if (afterTtl.askId) await store.decideCredentialGrantAsk(ORG, afterTtl.askId, ["pending"], "declined", new Date(clock).toISOString());
 }
 
+console.log("2b. a pending ask's mounted name is already claimed (OPE-1199):");
+{
+  const SCOPE = "sess-name-1";
+  const nowIso = (): string => new Date(clock).toISOString();
+
+  const a = await raise({ frozenArgs: { id: "page-a" }, scope: SCOPE });
+  ok(a.sent, "the first ask is sent");
+  const b = await raise({ frozenArgs: { id: "page-b" }, scope: SCOPE });
+  ok(b.sent, "…and a second ask, same tool and same label but frozen to a DIFFERENT page, is admitted — two decisions, not a nag");
+  ok(a.toolName !== undefined && b.toolName !== undefined, "both asks pinned a mounted tool name");
+  ok(a.toolName !== b.toolName, "🔴 the two pinned names DIFFER — a PENDING ask holds its name, so the second ask spells a distinct one");
+
+  const pending = await store.pendingCredentialGrantAsksForScope(ORG, SCOPE, nowIso());
+  eq([...pending.map((r) => r.toolName)].sort(), [a.toolName, b.toolName].sort(), "the scope read returns exactly the two pending asks, with their pinned names");
+
+  eq((await store.pendingCredentialGrantAsksForScope(ORG, "sess-name-2", nowIso())).length, 0, "another chat's read returns nothing — the claim is scoped to the conversation");
+  const elsewhere = await raise({ frozenArgs: { id: "page-a" }, requester: `slack/${WS}/U-third`, scope: "sess-name-2" });
+  eq(elsewhere.toolName, a.toolName, "…so the SAME borrow in ANOTHER chat spells the SAME bare name: a mounted name is claimed per chat, never per deployment");
+
+  for (const askId of [a.askId, b.askId]) {
+    if (askId !== undefined) await store.decideCredentialGrantAsk(ORG, askId, ["pending"], "declined", nowIso());
+  }
+  eq((await store.pendingCredentialGrantAsksForScope(ORG, SCOPE, nowIso())).length, 0, "both asks DECLINED: the scope read is empty again");
+  const afterDecline = await raise({ frozenArgs: { id: "page-c" }, scope: SCOPE });
+  eq(afterDecline.toolName, a.toolName, "…and the next ask takes the bare name back — a dead ask mounts nothing, so it claims nothing");
+
+  const before = clock;
+  clock += 31 * 60 * 1000;
+  eq((await store.pendingCredentialGrantAsksForScope(ORG, SCOPE, nowIso())).length, 0, "a LAPSED pending ask reads as gone, with no sweep having run");
+  const afterTtl = await raise({ frozenArgs: { id: "page-d" }, scope: SCOPE });
+  eq(afterTtl.toolName, a.toolName, "…and its name is free for the next ask");
+  clock = before;
+}
+
 console.log("3. the action-id grammar:");
 {
   for (const answer of ["once", "session", "standing", "decline"] as const) {

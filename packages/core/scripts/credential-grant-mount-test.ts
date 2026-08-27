@@ -18,8 +18,10 @@ import {
   runGrantedCall,
 } from "../agent/access/credential-grant-broker.js";
 import { _resetGrantableVerbsForTest } from "../agent/access/credential-grant.js";
+import { McpCallFenceError } from "../agent/access/mcp-call-fence.js";
 import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
+import { grantMcpTransport } from "../agent/connections/grant-mcp-transport.js";
 import { fakeMcpServer } from "./_fake-mcp-server.js";
 import { approveCredentialGrant, askForCredentialGrant, revokeCredentialGrant } from "../agent/access/credential-grant-flow.js";
 import { _resetDynamicVariantsForTest, mountedEntryCollisions, preRegisterDynamicEntry, registerDynamicVariant, type ReplayableToolEntry } from "../agent/access/window-gated.js";
@@ -318,6 +320,75 @@ console.log("7. the requester key grammar (OPE-1090):");
 
   eq(requesterKeyForGrantCall("discord", "w", { kind: "unverified", reason: "several people woke this turn" }), undefined, "an UNVERIFIED verdict still composes to undefined — this fix touches only the SHAPE of a named requester, not when one is named");
   eq(requesterKeyForGrantCall("discord", "w", { kind: "none" }), undefined, "…and a `none` verdict too");
+}
+
+console.log("8. a fence refusal refunds the once-mode burn (OPE-1198):");
+{
+  _resetGrantBorrowTransportsForTest();
+  registerGrantBorrowTransport("notion", grantMcpTransport(BORROW_DEPS));
+
+  const ask = await askForCredentialGrant(askInput("session-refund", "once"));
+  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", "once", "slack/W1/U-owner", NOW + 500, undefined, BORROW_DEPS);
+  const grantId = approved.approved ? approved.grant.id : "";
+  ok(grantId !== "", "a once-mode borrow grant is minted, frozen to page `abc123`");
+
+  const wireBefore = vendor.seen.length;
+  let refusal: unknown;
+  await runGrantedCall(grantId, { id: "some-other-page" }, callCtx("session-refund")).then(
+    () => ok(false, "the fence must refuse a call that does not carry the value the grant froze"),
+    (err: unknown) => {
+      refusal = err;
+    },
+  );
+  ok(refusal instanceof McpCallFenceError, "the wrong pinned argument trips the REAL fence — which refuses before it calls the wrapped fetch");
+
+  const wire = vendor.seen.slice(wireBefore);
+  eq(wire.filter((r) => (r.body as Record<string, unknown> | undefined)?.["method"] === "tools/call").length, 0, "🔴 NO `tools/call` reached the wire — the granted action was never sent");
+  ok(wire.some((r) => (r.body as Record<string, unknown> | undefined)?.["method"] === "initialize"), "…while the SDK's `initialize` DID: a refunded call still opens an authenticated session at the vendor, and nothing may claim otherwise");
+  const afterTrip = await store.getCredentialGrant(ORG, grantId);
+  eq(afterTrip?.status, "active", "🔴 the once grant is STILL ACTIVE — a refusal that dialled nothing does not spend the owner's approval");
+  eq(afterTrip?.usedAt, undefined, "…and the burn stamp is cleared, so a later call can win the CAS rather than reading a used row");
+
+  const good = await runGrantedCall(grantId, { id: "abc123" }, callCtx("session-refund"));
+  ok(good.ok, "the SAME grant then serves the call that carries the frozen value");
+  eq((await store.getCredentialGrant(ORG, grantId))?.status, "used", "…and THAT call burns it: the refund restored the approval, it did not remove the single-use bound");
+  const second = await runGrantedCall(grantId, { id: "abc123" }, callCtx("session-refund"));
+  eq(second.ok ? "OK" : second.refused, "burned", "…so a second call refuses `burned` — one shot is still one shot");
+
+  const rows = await readAudit({ org: ORG });
+  const undispatched = rows.filter((r) => r.action === "grant.refused" && (r.detail as Record<string, unknown>).gate === "undispatched");
+  eq(undispatched.length, 1, "the refund writes exactly ONE closing row, naming the gate `undispatched`");
+  const detail = (undispatched[0]?.detail ?? {}) as Record<string, unknown>;
+  eq(detail.refunded, true, "…which records that the owner's approval actually came back");
+  eq(detail.grantId, grantId, "…against the grant it re-opened");
+  eq(detail.owner, "slack/W1/U-owner", "…naming the owner whose approval was NOT spent");
+  ok(!JSON.stringify(detail).includes("some-other-page"), "…and it carries no argument VALUE, the same ids-and-names contract every row on this plane holds");
+}
+
+console.log("8b. a throw that cannot prove it sent nothing KEEPS the burn:");
+{
+  _resetGrantBorrowTransportsForTest();
+  registerGrantBorrowTransport("notion", async () => {
+    throw new Error("the vendor accepted the tools/call and the socket then died");
+  });
+  const ask = await askForCredentialGrant(askInput("session-keepburn", "once"));
+  const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", "once", "slack/W1/U-owner", NOW + 500, undefined, BORROW_DEPS);
+  const grantId = approved.approved ? approved.grant.id : "";
+  let threw = false;
+  await runGrantedCall(grantId, { id: "abc123" }, callCtx("session-keepburn")).then(
+    () => ok(false, "the transport's throw must reach the caller"),
+    () => {
+      threw = true;
+    },
+  );
+  ok(threw, "the transport throws a plain Error — a failure that cannot tell a delivered call from a lost one");
+  eq((await store.getCredentialGrant(ORG, grantId))?.status, "used", "🔴 the grant STAYS BURNED — the refund is fail-closed, and only a proven no-dispatch undoes a burn");
+  const rows = await readAudit({ org: ORG });
+  eq(
+    rows.filter((r) => r.action === "grant.refused" && (r.detail as Record<string, unknown>).gate === "undispatched").length,
+    1,
+    "…and no second `undispatched` row was written: this failure is not one",
+  );
 }
 
 console.log(`\ncredential-grant-mount: ${n} assertions passed.`);

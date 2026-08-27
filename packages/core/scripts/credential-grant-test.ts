@@ -220,6 +220,27 @@ const grantRow = (id: string, patch: Partial<CredentialGrantRow> = {}): Credenti
 }
 
 {
+  await store.addCredentialGrant(ORG, grantRow("grant-refund"));
+  const burnAt = iso(NOW + 1000);
+  ok((await store.burnCredentialGrant(ORG, "grant-refund", burnAt)) !== null, "the grant burns");
+  eq(await store.refundCredentialGrant(ORG, "grant-refund", burnAt), true, "the caller that owns the burn stamp refunds it");
+  const back = await store.getCredentialGrant(ORG, "grant-refund");
+  eq(back?.status, "active", "…and the row is ACTIVE again");
+  eq(back?.usedAt, undefined, "…with the stamp CLEARED, so a later burn reads no leftover value");
+  eq(await store.refundCredentialGrant(ORG, "grant-refund", burnAt), false, "a SECOND refund of the same stamp loses — the row is no longer `used`");
+
+  const winnerAt = iso(NOW + 2000);
+  ok((await store.burnCredentialGrant(ORG, "grant-refund", winnerAt)) !== null, "the grant burns again, at a different instant");
+  eq(await store.refundCredentialGrant(ORG, "grant-refund", burnAt), false, "a refund carrying ANOTHER call's burn stamp loses — a loser cannot un-spend the winner's burn");
+  eq((await store.getCredentialGrant(ORG, "grant-refund"))?.status, "used", "…and the row stays spent");
+
+  await store.addCredentialGrant(ORG, grantRow("grant-refund-revoked"));
+  await store.revokeCredentialGrant(ORG, "grant-refund-revoked", iso(NOW + 3100));
+  eq(await store.refundCredentialGrant(ORG, "grant-refund-revoked", iso(NOW + 3000)), false, "a refund of a REVOKED row loses");
+  eq((await store.getCredentialGrant(ORG, "grant-refund-revoked"))?.status, "revoked", "…and the grant stays ended — a refund never resurrects one its owner revoked");
+}
+
+{
   await store.addCredentialGrant(ORG, grantRow("grant-revoked"));
   eq(await store.revokeCredentialGrant(ORG, "grant-revoked", iso(NOW + 500)), true, "the first revoke wins");
   eq(await store.revokeCredentialGrant(ORG, "grant-revoked", iso(NOW + 600)), false, "a second revoke loses — the row is no longer active");
