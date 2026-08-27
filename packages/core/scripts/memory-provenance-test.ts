@@ -1,14 +1,20 @@
+
 import assert from "node:assert/strict";
 import {
+  EXTERNAL_CLAIM_PREFIX,
   EXTERNAL_PROVENANCE_PREFIX,
   MAX_MARKED_KINDS,
   baselineOf,
   isBulletLine,
   lineDigest,
   markAddedBullets,
+  recastAsAttributedClaim,
+  renderClaimAttribution,
   renderProvenanceMark,
+  renderProvenanceWording,
 } from "../agent/memory/provenance-mark.js";
 import { guardDestructiveWrites } from "../agent/hooks/memory.js";
+import { bulletDate } from "../agent/memory/dream/ops.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -47,8 +53,9 @@ const ok = (cond: boolean, label: string) => {
   const before = { "notes.md": "# Notes\n\n- old fact\n" };
   const baseline = baselineOf(before);
   const after = { "notes.md": "# Notes\n\n- old fact\n- new fact\n" };
-  const mark = renderProvenanceMark(["web"]);
-  const { files, marked } = markAddedBullets(baseline, after, mark);
+  const wording = renderProvenanceWording(["web"]);
+  const mark = wording.mark;
+  const { files, marked } = markAddedBullets(baseline, after, wording);
 
   ok(marked === 1, "exactly one bullet was added, so exactly one is marked");
   const body = files["notes.md"];
@@ -64,30 +71,172 @@ const ok = (cond: boolean, label: string) => {
 {
   const baseline = baselineOf({ "notes.md": "- a fact\n- b fact\n" });
   const after = { "notes.md": "  - b fact  \n- a fact\n" };
-  const { files, marked } = markAddedBullets(baseline, after, renderProvenanceMark(["web"]));
+  const { files, marked } = markAddedBullets(baseline, after, renderProvenanceWording(["web"]));
   ok(marked === 0, "re-ordering and re-indenting adds nothing, so nothing is marked");
   ok(Object.keys(files).length === 0, "an unchanged file is not written back");
 }
 
 {
-  const { files, marked } = markAddedBullets({}, { "new.md": "# New\n\n- first fact\n- second fact\n" }, renderProvenanceMark([]));
+  const { files, marked } = markAddedBullets({}, { "new.md": "# New\n\n- first fact\n- second fact\n" }, renderProvenanceWording([]));
   ok(marked === 2, "every bullet of a file created this turn is added");
   ok((files["new.md"]!.match(/external-provenance/g) ?? []).length === 2, "both bullets carry a mark");
 }
 
 {
   const after = { "notes.md": "- a fact\n\n```sh\n- not a bullet, an argument\n```\n" };
-  const { files, marked } = markAddedBullets({}, after, renderProvenanceMark(["web"]));
+  const { files, marked } = markAddedBullets({}, after, renderProvenanceWording(["web"]));
   ok(marked === 1, "only the real bullet is marked");
   ok(files["notes.md"]!.includes("- not a bullet, an argument\n"), "the fenced line is byte-identical");
 }
 
 {
-  const mark = renderProvenanceMark(["web"]);
-  const first = markAddedBullets({}, { "notes.md": "- a fact\n" }, mark);
-  const second = markAddedBullets({}, first.files, mark);
+  const wording = renderProvenanceWording(["web"]);
+  const first = markAddedBullets({}, { "notes.md": "- a fact\n" }, wording);
+  const second = markAddedBullets({}, first.files, wording);
   ok(second.marked === 0, "an already-marked bullet is not marked again");
   ok(Object.keys(second.files).length === 0, "and the file is not rewritten");
+}
+
+{
+  const named = renderClaimAttribution(["web", "github"]);
+  ok(named === `${EXTERNAL_CLAIM_PREFIX}; the turn ingested web, github]`, "named kinds render in order");
+
+  ok(!/\bfrom\b/.test(named), "the wording never claims the bullet came FROM what was read");
+
+  const unqualified = renderClaimAttribution([]);
+  ok(unqualified === `${EXTERNAL_CLAIM_PREFIX}; the turn ingested external content]`, "an empty kind list still renders an attribution");
+
+  const many = renderClaimAttribution(["web", "github", "linear", "notion", "connector", "aws"]);
+  ok(many.includes("+2 more"), "kinds past the cap collapse into a count");
+  ok(many.split(",").length === MAX_MARKED_KINDS, "at most MAX_MARKED_KINDS kinds are named");
+
+  const hostile = renderClaimAttribution(["we]b\n- injected", ""]);
+  ok(!hostile.includes("\n"), "a kind cannot carry a newline into the sentence");
+  ok(hostile.indexOf("]") === hostile.length - 1, "a kind cannot close the attribution early");
+
+  const pair = renderProvenanceWording(["web"]);
+  ok(pair.mark === renderProvenanceMark(["web"]), "the pair carries the suffix wording");
+  ok(pair.attribution === renderClaimAttribution(["web"]), "the pair carries the sentence wording");
+}
+
+{
+  const attribution = renderClaimAttribution(["web"]);
+  const recast = (line: string) => recastAsAttributedClaim(line, attribution);
+  const unchanged = (line: string, label: string) => ok(recast(line) === line, label);
+
+  ok(recast("- Ada owns billing") === `- ${attribution} Ada owns billing`, "a plain assertion is re-cast");
+  ok(
+    recast("- 2026-08-22: Ada owns billing") === `- 2026-08-22: ${attribution} Ada owns billing`,
+    "the date keeps its scanning position and the attribution follows it",
+  );
+  ok(
+    recast("  * 2026-08-22: Ada owns billing") === `  * 2026-08-22: ${attribution} Ada owns billing`,
+    "indent and marker style are preserved",
+  );
+  ok(recast("3. Ada owns billing") === `3. ${attribution} Ada owns billing`, "an ordered bullet is re-cast");
+
+  const original = "- 2026-08-22: Ada owns billing, and Bo signs off";
+  ok(recast(original).replace(`${attribution} `, "") === original, "removing the attribution restores the original line exactly");
+
+  unchanged("- Does Ada own billing?", "a question asserts nothing");
+  unchanged("- [ ] move billing to Ada", "an unchecked task is not a claim");
+  unchanged("- [x] moved billing to Ada", "a checked task is not a claim");
+  unchanged("- per the handover, Ada owns billing", "an already-attributed sentence is not hedged twice");
+  unchanged("- According to Bo, Ada owns billing", "an attribution cue is matched case-insensitively");
+  unchanged("- reportedly Ada owns billing", "a hedged sentence is not hedged twice");
+  unchanged("- Ask Ada about billing", "a task in bullet form is not a claim");
+  unchanged("- TODO: chase the billing handover", "a TODO is not a claim");
+  unchanged("- Ada left", "a two-word fragment is not a sentence");
+  unchanged("Prose about a fact.", "a non-bullet is never touched");
+  unchanged("# Heading", "a heading is never touched");
+  unchanged(`- ${attribution} Ada owns billing`, "an already re-cast bullet is not re-cast again");
+
+  ok(recastAsAttributedClaim("- Ada owns billing", "") === "- Ada owns billing", "an empty attribution re-casts nothing");
+
+  for (const dated of ["- 2026-08-22: Ada owns billing", "- 2026-08-22 Ada owns billing", "- 2026-08-22:Ada owns billing"]) {
+    ok(recast(dated).startsWith("- 2026-08-22"), `the date stays first: ${dated}`);
+    ok(bulletDate(recast(dated)) === "2026-08-22", `the dream cycle still reads the date: ${dated}`);
+  }
+  unchanged("- 2026-08-2299 items shipped this week", "an unsplittable dated shape is declined");
+
+  ok(recast("- Ada owns billing\r") === `- ${attribution} Ada owns billing\r`, "a CRLF bullet is re-cast");
+  ok(recast("- 2026-08-22: Ada owns billing\r") === `- 2026-08-22: ${attribution} Ada owns billing\r`, "a dated CRLF bullet keeps its date first");
+  {
+    const crlf = { "notes.md": "# Notes\r\n\r\n- 2026-08-22: Ada owns billing\r\n- Bo signs the payouts\r\n" };
+    const { files, marked: count } = markAddedBullets({}, crlf, renderProvenanceWording(["web"]));
+    ok(count === 2, "both CRLF bullets are marked");
+    ok((files["notes.md"]!.match(/\[unverified claim/g) ?? []).length === 2, "and both are re-cast");
+  }
+
+  ok(recast("- Ада отвечает за биллинг") === `- ${attribution} Ада отвечает за биллинг`, "a Cyrillic assertion is re-cast");
+  ok(recast("- Άδα διαχειρίζεται τη χρέωση") === `- ${attribution} Άδα διαχειρίζεται τη χρέωση`, "a Greek assertion is re-cast");
+  unchanged("- 张伟负责结算流程", "an unspaced script reads as one word and lands tag-only");
+}
+
+{
+  const wording = renderProvenanceWording(["web"]);
+  const before = { "notes.md": "- old fact\n" };
+  const lines = [
+    "# Notes",
+    "",
+    "Prose that states a fact and takes no mark.",
+    "",
+    "```sh",
+    "- not a bullet, an argument",
+    "```",
+    "",
+    "- 2026-08-22: Ada owns billing",
+    "- old fact",
+    "- Ask Ada about billing",
+    "- Does Ada own billing?",
+    "- per the handover, Ada owns billing",
+    "- new fact",
+    "",
+  ];
+  const { files, marked } = markAddedBullets(baselineOf(before), { "notes.md": lines.join("\n") }, wording);
+  ok(marked === 5, "five added bullets are marked; the pre-existing one is not");
+
+  const tagOnly = (line: string) => `${line}  ${wording.mark}`;
+  const expected = [
+    "# Notes",
+    "",
+    "Prose that states a fact and takes no mark.",
+    "",
+    "```sh",
+    "- not a bullet, an argument",
+    "```",
+    "",
+    `- 2026-08-22: ${wording.attribution} Ada owns billing  ${wording.mark}`,
+    "- old fact",
+    tagOnly("- Ask Ada about billing"),
+    tagOnly("- Does Ada own billing?"),
+    tagOnly("- per the handover, Ada owns billing"),
+    tagOnly("- new fact"),
+    "",
+  ].join("\n");
+  ok(files["notes.md"] === expected, "the marked file is byte-for-byte the golden");
+
+  const tagOnlyPass = markAddedBullets(baselineOf(before), { "notes.md": lines.join("\n") }, { mark: wording.mark, attribution: "" });
+  ok(tagOnlyPass.marked === 5, "the tag-only pass marks the same five bullets");
+  const tagOnlyExpected = [
+    "# Notes",
+    "",
+    "Prose that states a fact and takes no mark.",
+    "",
+    "```sh",
+    "- not a bullet, an argument",
+    "```",
+    "",
+    tagOnly("- 2026-08-22: Ada owns billing"),
+    "- old fact",
+    tagOnly("- Ask Ada about billing"),
+    tagOnly("- Does Ada own billing?"),
+    tagOnly("- per the handover, Ada owns billing"),
+    tagOnly("- new fact"),
+    "",
+  ].join("\n");
+  ok(tagOnlyPass.files["notes.md"] === tagOnlyExpected, "with no attribution every marked line carries the suffix and only the suffix");
+  ok(!tagOnlyPass.files["notes.md"]!.includes(EXTERNAL_CLAIM_PREFIX), "and no sentence is re-cast");
 }
 
 {
@@ -96,7 +245,7 @@ const ok = (cond: boolean, label: string) => {
     "notes.conflict-abc.md": "- a preserved concurrent version\n",
     "notes.rejected-abc.md": "- a parked refused version\n",
   };
-  const { files, marked } = markAddedBullets({}, after, renderProvenanceMark(["web"]));
+  const { files, marked } = markAddedBullets({}, after, renderProvenanceWording(["web"]));
   ok(marked === 0, "host-owned and host-minted files take no mark");
   ok(Object.keys(files).length === 0, "and none of them is rewritten");
 }
@@ -110,14 +259,17 @@ const ok = (cond: boolean, label: string) => {
 {
   const host = { "notes.md": "- host fact one\n- host fact two\n- host fact three\n- host fact four\n" };
   const baseline = baselineOf(host);
-  const written = { "notes.md": `${host["notes.md"]}- new one\n- new two\n- new three\n- new four\n` };
-  const { files: marked, marked: count } = markAddedBullets(baseline, written, renderProvenanceMark(["web"]));
+  const written = { "notes.md": `${host["notes.md"]}- new one\n- Ada owns billing\n- new three\n- Bo signs the payouts\n` };
+  const wording = renderProvenanceWording(["web"]);
+  const { files: marked, marked: count } = markAddedBullets(baseline, written, wording);
   ok(count === 4, "all four added bullets are marked");
+  ok((marked["notes.md"]!.match(/\[unverified claim/g) ?? []).length === 2, "the two assertion-shaped ones are re-cast");
 
   const { files, rejected } = guardDestructiveWrites(host, { ...written, ...marked }, "sess1");
   ok(rejected.length === 0, "a marking pass over added bullets is NOT destruction");
   ok(files["notes.md"]!.includes("- host fact one\n"), "every host line survives the marked write");
   ok(files["notes.md"]!.includes(`- new one  ${EXTERNAL_PROVENANCE_PREFIX}`), "the marked bullet is what lands");
+  ok(files["notes.md"]!.includes(`- ${wording.attribution} Ada owns billing  ${wording.mark}`), "the RE-CAST bullet is what lands");
 
   const truncated = { "notes.md": "- host fact one\n" };
   const control = guardDestructiveWrites(host, truncated, "sess1");

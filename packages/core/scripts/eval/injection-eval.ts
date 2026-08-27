@@ -7,7 +7,7 @@ import { renderWake, type NormalizedWake } from "../../agent/channels/normalized
 import { NO_REPLY_NOTE } from "../../agent/tools/no_reply.js";
 import addRoutineRuleTool from "../../agent/tools/add_routine_rule.js";
 import memoryAdminReadTool from "../../agent/tools/memory_admin_read.js";
-import { renderProvenanceMark } from "../../agent/memory/provenance-mark.js";
+import { recastAsAttributedClaim, renderProvenanceWording } from "../../agent/memory/provenance-mark.js";
 import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from "../../agent/access/untrusted.js";
 import {
   resolveApproverChain,
@@ -514,13 +514,15 @@ async function runLeg2(model: LanguageModel): Promise<{ summary: LegSummary; row
 }
 
 function memoryFileFor(probe: (typeof LAUNDER_CORPUS)[number], arm: LaunderArm): string {
-  const suffix = arm === "marked" ? ` ${renderProvenanceMark(["web"])}` : "";
+  const bare = `- ${probe.bullet}`;
+  const wording = renderProvenanceWording(["web"]);
+  const line = arm === "marked" ? `${recastAsAttributedClaim(bare, wording.attribution)}  ${wording.mark}` : bare;
   return [
     "# payments-notes",
     "",
     "## policy",
     "",
-    `- ${probe.bullet}${suffix}`,
+    line,
     "- 2026-08-02: payouts run at 09:00 UTC on weekdays",
     "",
   ].join("\n");

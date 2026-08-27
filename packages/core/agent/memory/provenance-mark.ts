@@ -4,6 +4,8 @@ import type { MemoryFiles } from "./store.js";
 
 export const EXTERNAL_PROVENANCE_PREFIX = "[external-provenance:";
 
+export const EXTERNAL_CLAIM_PREFIX = "[unverified claim";
+
 export const MAX_MARKED_KINDS = 4;
 
 const MAX_KIND_CHARS = 24;
@@ -13,11 +15,32 @@ function sanitiseKind(kind: string): string {
 }
 
 export function renderProvenanceMark(kinds: readonly string[] = []): string {
+  const named = describeKinds(kinds);
+  if (named === null) return `${EXTERNAL_PROVENANCE_PREFIX} added on a turn that ingested external content]`;
+  return `${EXTERNAL_PROVENANCE_PREFIX} added on a turn that ingested ${named}]`;
+}
+
+function describeKinds(kinds: readonly string[]): string | null {
   const named = kinds.map(sanitiseKind).filter((k) => k.length > 0);
-  if (named.length === 0) return `${EXTERNAL_PROVENANCE_PREFIX} added on a turn that ingested external content]`;
+  if (named.length === 0) return null;
   const shown = named.slice(0, MAX_MARKED_KINDS);
   const rest = named.length - shown.length;
-  return `${EXTERNAL_PROVENANCE_PREFIX} added on a turn that ingested ${shown.join(", ")}${rest > 0 ? ` +${rest} more` : ""}]`;
+  return `${shown.join(", ")}${rest > 0 ? ` +${rest} more` : ""}`;
+}
+
+export function renderClaimAttribution(kinds: readonly string[] = []): string {
+  const named = describeKinds(kinds);
+  if (named === null) return `${EXTERNAL_CLAIM_PREFIX}; the turn ingested external content]`;
+  return `${EXTERNAL_CLAIM_PREFIX}; the turn ingested ${named}]`;
+}
+
+export interface ProvenanceWording {
+  readonly mark: string;
+  readonly attribution: string;
+}
+
+export function renderProvenanceWording(kinds: readonly string[] = []): ProvenanceWording {
+  return { mark: renderProvenanceMark(kinds), attribution: renderClaimAttribution(kinds) };
 }
 
 export function isBulletLine(line: string): boolean {
@@ -26,6 +49,41 @@ export function isBulletLine(line: string): boolean {
 
 function isFenceLine(line: string): boolean {
   return /^\s*(?:```|~~~)/.test(line);
+}
+
+const BULLET_HEAD = /^(\s*(?:[-*+]|\d+\.)\s+)([^\n]*)$/;
+
+const DATE_LEAD = /^(\d{4}-\d{2}-\d{2}(?:\s*:\s*|\s+))([^\n]*)$/;
+
+const ANY_DATE_LEAD = /^\d{4}-\d{2}-\d{2}/;
+
+const ATTRIBUTED_LEAD = /^(?:per\b|according to\b|reportedly\b|alleged(?:ly)?\b|claim(?:s|ed)?\b|unverified\b|rumou?r\b|says?\b|said\b|source\s*:)/i;
+
+const NON_ASSERTION_LEAD = /^(?:todo\b|fixme\b|tbd\b|ask\b|check\b|confirm\b|verify\b|chase\b|ping\b|draft\b|review\b|send\b|schedule\b|follow[- ]up\b|remember to\b|note to self\b)/i;
+
+const MIN_ASSERTION_WORDS = 3;
+
+function isAssertionShaped(statement: string): boolean {
+  const text = statement.trim();
+  if (text.endsWith("?")) return false;
+  if (/^\[[ xX]?\]/.test(text)) return false;
+  if (ANY_DATE_LEAD.test(text)) return false;
+  if (ATTRIBUTED_LEAD.test(text)) return false;
+  if (NON_ASSERTION_LEAD.test(text)) return false;
+  return text.split(/\s+/).filter((w) => /\p{L}/u.test(w)).length >= MIN_ASSERTION_WORDS;
+}
+
+export function recastAsAttributedClaim(line: string, attribution: string): string {
+  if (attribution.length === 0) return line;
+  const head = BULLET_HEAD.exec(line);
+  if (head === null) return line;
+  const rest = head[2]!;
+  if (rest.includes(EXTERNAL_CLAIM_PREFIX)) return line;
+  const dated = DATE_LEAD.exec(rest);
+  const lead = dated?.[1] ?? "";
+  const statement = dated?.[2] ?? rest;
+  if (!isAssertionShaped(statement)) return line;
+  return `${head[1]!}${lead}${attribution} ${statement}`;
 }
 
 export function lineDigest(line: string): string {
@@ -52,7 +110,7 @@ export interface ProvenanceMarking {
   readonly marked: number;
 }
 
-export function markAddedBullets(baseline: ProvenanceBaseline, files: MemoryFiles, mark: string): ProvenanceMarking {
+export function markAddedBullets(baseline: ProvenanceBaseline, files: MemoryFiles, wording: ProvenanceWording): ProvenanceMarking {
   const changed: MemoryFiles = {};
   let marked = 0;
   for (const [rel, content] of Object.entries(files)) {
@@ -72,7 +130,7 @@ export function markAddedBullets(baseline: ProvenanceBaseline, files: MemoryFile
         out.push(line);
         continue;
       }
-      out.push(`${line.trimEnd()}  ${mark}`);
+      out.push(`${recastAsAttributedClaim(line, wording.attribution).trimEnd()}  ${wording.mark}`);
       fileChanged = true;
       marked++;
     }

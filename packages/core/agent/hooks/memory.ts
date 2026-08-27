@@ -11,7 +11,7 @@ import { renderMemoryIndex } from "../memory/listing.js";
 import { tierId, storeRoot, type MemoryFiles, type Tier } from "../memory/store.js";
 import { seedFor } from "../memory/layout.js";
 import { syncTierIntoSandbox, readTierFromSandbox, removeTierFiles, removeTierDir, tierSandboxDir, writeTierFile } from "../memory/sandbox-sync.js";
-import { baselineOf, markAddedBullets, renderProvenanceMark } from "../memory/provenance-mark.js";
+import { type ProvenanceWording, baselineOf, markAddedBullets, renderProvenanceWording } from "../memory/provenance-mark.js";
 import { untrustedIngestedThisTurn, taintKindsThisTurn } from "../access/taint-signal.js";
 import { taintEnabled } from "../access/taint-enforcement.js";
 import { readOnlyBanner, hasReadOnlyBanner, lockCommand, unlockCommand } from "../memory/readonly.js";
@@ -654,7 +654,8 @@ async function markProvenanceForTurn(ctx: MemoryPersistContext, where: string): 
     const target = await provenanceTargets(ctx);
     if (target === null) return;
     const tainted = untrustedIngestedThisTurn();
-    const mark = tainted ? renderProvenanceMark(taintKindsThisTurn()) : "";
+    const kinds = [...taintKindsThisTurn()];
+    const wording: ProvenanceWording = tainted ? renderProvenanceWording(kinds) : { mark: "", attribution: "" };
     const tiers: Record<string, Record<string, string[]>> = {};
     const markedFiles: string[] = [];
     let marked = 0;
@@ -664,7 +665,7 @@ async function markProvenanceForTurn(ctx: MemoryPersistContext, where: string): 
       let current = files;
       const held = state.tiers?.[tid];
       if (tainted && held !== undefined) {
-        const pass = markAddedBullets(held, files, mark);
+        const pass = markAddedBullets(held, files, wording);
         for (const [rel, content] of Object.entries(pass.files)) {
           await writeTierFile(target.sandbox, rm.tier, rel, content);
           markedFiles.push(`${tid}/${rel}`);
@@ -691,7 +692,7 @@ async function markProvenanceForTurn(ctx: MemoryPersistContext, where: string): 
           where,
           bullets: marked,
           files: markedFiles,
-          kinds: [...taintKindsThisTurn()],
+          kinds,
           ...(ctx.session?.id ? { sessionId: ctx.session.id } : {}),
         },
       });

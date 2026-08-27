@@ -446,7 +446,7 @@ test("OPE-727 negative control — the documented dispose-and-re-register patter
   settlement.dispose();
 });
 
-test("OPE-426/OPE-1162 — a worker turn that ingests a hostile plant marks the bullets it adds and the MARKED bytes reach the durable store, a clean worker turn's bullet reaches it unmarked, and only bullets are marked", async () => {
+test("OPE-426/OPE-1162/OPE-1210 — a worker turn that ingests a hostile plant lands its bullets CLAIM-SHAPED and marked in the durable store, a clean worker turn's bullet reaches it untouched, and only bullets are marked", async () => {
   await bootAgent({ sharedSqlite: true });
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.overrideSettingsForTest({ taint: { mode: "on" } });
@@ -469,6 +469,12 @@ test("OPE-426/OPE-1162 — a worker turn that ingests a hostile plant marks the 
   const stamp = Date.now();
   const marked = "provenance-fixture.md";
   const fenced = ["```sh", "- not a bullet, an argument", "```"].join("\n");
+  const facts = [
+    { id: `PROV-ADDED-A-${stamp}`, text: "Ada owns billing" },
+    { id: `PROV-ADDED-B-${stamp}`, text: "the handover names her" },
+  ];
+  const bulletOf = (f: { id: string; text: string }) => `- 2026-08-22: ${f.id} — ${f.text}`;
+  const cleanBullet = bulletOf({ id: `PROV-CLEAN-FACT-${stamp}`, text: "noted with nothing ingested" });
   const body = [
     "# Provenance fixture",
     "",
@@ -476,8 +482,7 @@ test("OPE-426/OPE-1162 — a worker turn that ingests a hostile plant marks the 
     "",
     fenced,
     "",
-    `- 2026-08-22: PROV-ADDED-A-${stamp} — Ada owns billing`,
-    `- 2026-08-22: PROV-ADDED-B-${stamp} — the handover names her`,
+    ...facts.map(bulletOf),
     "",
   ].join("\n");
 
@@ -525,8 +530,11 @@ test("OPE-426/OPE-1162 — a worker turn that ingests a hostile plant marks the 
   expect(detail.where).toBe("turn.completed");
   expect(JSON.stringify(detail)).not.toContain("PROV-ADDED-A");
 
-  const { renderProvenanceMark, EXTERNAL_PROVENANCE_PREFIX } = await import("@open-everywhere/core/agent/memory/provenance-mark.js");
+  const { renderProvenanceMark, renderClaimAttribution, EXTERNAL_PROVENANCE_PREFIX, EXTERNAL_CLAIM_PREFIX } = await import(
+    "@open-everywhere/core/agent/memory/provenance-mark.js"
+  );
   const expectedMark = renderProvenanceMark(detail.kinds ?? []);
+  const expectedAttribution = renderClaimAttribution(detail.kinds ?? []);
   const markedPath = siloFilePath("it-memory-brain", marked);
   const storedTainted = await waitFor(
     () => {
@@ -538,17 +546,22 @@ test("OPE-426/OPE-1162 — a worker turn that ingests a hostile plant marks the 
     120_000,
   );
 
-  for (const id of ["PROV-ADDED-A", "PROV-ADDED-B"]) {
-    const line = storedTainted.split("\n").find((l) => l.includes(`${id}-${stamp}`));
-    expect(line, `${id} reached the durable store`).toBeDefined();
-    expect(line).toContain(expectedMark);
+  for (const f of facts) {
+    const line = storedTainted.split("\n").find((l) => l.includes(f.id));
+    expect(line, `${f.id} reached the durable store`).toBeDefined();
+    expect(line).toContain(expectedAttribution);
+    expect(line!.indexOf(expectedAttribution)).toBeLessThan(line!.indexOf(f.text));
+    expect(line!.indexOf(expectedAttribution)).toBeLessThan(line!.indexOf(expectedMark));
+    expect(line).toBe(`- 2026-08-22: ${expectedAttribution} ${f.id} — ${f.text}  ${expectedMark}`);
   }
+  expect(storedTainted.split("\n").filter((l) => l.includes(EXTERNAL_CLAIM_PREFIX)).length).toBe(2);
   expect(expectedMark).toContain("file-upload");
   expect(storedTainted.split("\n").filter((l) => l.includes(EXTERNAL_PROVENANCE_PREFIX)).length).toBe(2);
   for (const bare of ["Prose about the handover, which is not a bullet and takes no mark.", "- not a bullet, an argument"]) {
     const line = storedTainted.split("\n").find((l) => l.includes(bare));
     expect(line, `${bare} reached the durable store`).toBeDefined();
     expect(line).not.toContain(EXTERNAL_PROVENANCE_PREFIX);
+    expect(line).not.toContain(EXTERNAL_CLAIM_PREFIX);
   }
 
   const clean = await drivePass({
@@ -559,7 +572,7 @@ test("OPE-426/OPE-1162 — a worker turn that ingests a hostile plant marks the 
         calls: [
           {
             tool: "write_file",
-            input: { filePath: "/workspace/memory/it-memory-brain/clean-fixture.md", content: `# Clean fixture\n\n- 2026-08-22: PROV-CLEAN-FACT-${stamp} — noted with nothing ingested\n` },
+            input: { filePath: "/workspace/memory/it-memory-brain/clean-fixture.md", content: `# Clean fixture\n\n${cleanBullet}\n` },
             id: "m5b-write",
           },
         ],
@@ -583,4 +596,6 @@ test("OPE-426/OPE-1162 — a worker turn that ingests a hostile plant marks the 
     120_000,
   );
   expect(storedClean).not.toContain(EXTERNAL_PROVENANCE_PREFIX);
+  expect(storedClean).not.toContain(EXTERNAL_CLAIM_PREFIX);
+  expect(storedClean.split("\n").find((l) => l.includes(`PROV-CLEAN-FACT-${stamp}`))).toBe(cleanBullet);
 });
