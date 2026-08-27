@@ -89,12 +89,17 @@ export function decideCiGate(input: { sha: string; checkRuns: CheckRun[]; isTip:
   return { verdict: "refuse", message: `could not classify CI state for ${short} from ${checkRuns.length} check-run(s) — refusing rather than guessing.` };
 }
 
-export type GithubApiFetchLike = (url: string, init: { headers: Record<string, string> }) => Promise<{ status: number; text(): Promise<string> }>;
+export type GithubApiFetchLike = (
+  url: string,
+  init: { headers: Record<string, string>; signal?: AbortSignal },
+) => Promise<{ status: number; text(): Promise<string> }>;
 
 export const GITHUB_API_BASE = "https://api.github.com";
 
+export const GITHUB_API_TIMEOUT_MS = 30_000;
+
 export const realGithubApiFetch: GithubApiFetchLike = async (url, init) => {
-  const res = await fetch(url, { headers: init.headers });
+  const res = await fetch(url, { headers: init.headers, signal: init.signal });
   return { status: res.status, text: () => res.text() };
 };
 
@@ -138,6 +143,7 @@ export async function fetchGithubApi(input: {
   exec: Exec;
   fetchImpl: GithubApiFetchLike;
   env: Env;
+  timeoutMs?: number;
 }): Promise<GithubApiBody> {
   const res = await input.exec("gh", input.ghArgs);
 
@@ -170,13 +176,41 @@ export async function fetchGithubApi(input: {
 
   const suffix = input.restPathSuffix ? `/${input.restPathSuffix}` : "";
   const url = `${GITHUB_API_BASE}/repos/${ownerRepo.owner}/${ownerRepo.repo}${suffix}`;
+  const timeoutMs = input.timeoutMs ?? GITHUB_API_TIMEOUT_MS;
+  const controller = new AbortController();
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      reject(new Error(`no response after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
   let httpRes: { status: number; text(): Promise<string> };
   let text: string;
   try {
-    httpRes = await input.fetchImpl(url, { headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json" } });
-    text = await httpRes.text();
+    const read = (async () => {
+      const res = await input.fetchImpl(url, {
+        headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json" },
+        signal: controller.signal,
+      });
+      return { res, body: await res.text() };
+    })();
+    const got = await Promise.race([read, deadline]);
+    httpRes = got.res;
+    text = got.body;
   } catch (err) {
+    if (timedOut) {
+      return {
+        ok: false,
+        reason: `REST fallback GET ${url} timed out after ${timeoutMs}ms — no answer from the GitHub REST API within the deadline; refusing rather than waiting.`,
+      };
+    }
     return { ok: false, reason: `REST fallback GET ${url} failed: ${err instanceof Error ? err.message : String(err)}` };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
   if (httpRes.status < 200 || httpRes.status >= 300) {
     return { ok: false, reason: `REST fallback GET ${url} → HTTP ${httpRes.status}: ${text.slice(0, 500)}` };

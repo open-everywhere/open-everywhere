@@ -9,10 +9,13 @@ import {
   decideCiGateViaCloudProof,
   fetchCheckRunsForSha,
   fetchCombinedStatusForSha,
+  fetchGithubApi,
   GITHUB_API_BASE,
+  GITHUB_API_TIMEOUT_MS,
   HEAVY_JOB_NAME,
   listFirstParentAncestors,
   parseGithubOwnerRepo,
+  realGithubApiFetch,
   resolveGithubOwnerRepoFromEnv,
   resolveGithubRestToken,
   runCiGate,
@@ -733,6 +736,99 @@ await check("REST fallback: the same response shape with a readable body PASSES 
   const okBody: GithubApiFetchLike = async () => ({ status: 200, text: async () => JSON.stringify({ total_count: 2, check_runs: GREEN }) });
   const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl: okBody, env: TOKEN_ENV });
   assert.equal(decision.verdict, "pass");
+});
+
+const TINY_TIMEOUT_MS = 25;
+const BOUNDED_MS = 5_000;
+
+async function withinBounds<T>(label: string, run: () => Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const guard = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label}: nothing came back within ${BOUNDED_MS}ms — the deadline under test did not end the wait`)), BOUNDED_MS);
+  });
+  try {
+    return await Promise.race([run(), guard]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+const restReadWithDeadline = (fetchImpl: GithubApiFetchLike) =>
+  fetchGithubApi({
+    ghArgs: ["api", `repos/{owner}/{repo}/commits/${SHA}/check-runs`, "--method", "GET"],
+    restPathSuffix: `commits/${SHA}/check-runs`,
+    exec: NO_GH_EXEC,
+    fetchImpl,
+    env: TOKEN_ENV,
+    timeoutMs: TINY_TIMEOUT_MS,
+  });
+
+await check("REST fallback: a fetch that NEVER settles REFUSES on the deadline, in bounded time — it never hangs the gate", async () => {
+  let handed: AbortSignal | undefined;
+  const neverSettles: GithubApiFetchLike = (_url, init) => {
+    handed = init.signal;
+    return new Promise<never>(() => {});
+  };
+
+  const started = Date.now();
+  const result = await withinBounds("a fetch that never settles", () => restReadWithDeadline(neverSettles));
+  const elapsed = Date.now() - started;
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.match(result.reason, /REST fallback GET/);
+    assert.match(result.reason, new RegExp(`timed out after ${TINY_TIMEOUT_MS}ms`));
+    assert.match(result.reason, /refusing rather than waiting/);
+  }
+  assert.ok(elapsed < BOUNDED_MS, `the deadline must end the wait — it took ${elapsed}ms`);
+  assert.ok(handed instanceof AbortSignal, "the fetch seam must be handed an AbortSignal");
+  assert.equal(handed?.aborted, true);
+});
+
+await check("REST fallback: a BODY that never settles refuses on the same deadline — the bound covers the body read, not only the headers", async () => {
+  const stalledBody: GithubApiFetchLike = async () => ({ status: 200, text: () => new Promise<string>(() => {}) });
+  const started = Date.now();
+  const result = await withinBounds("a body that never settles", () => restReadWithDeadline(stalledBody));
+  const elapsed = Date.now() - started;
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.reason, /timed out after/);
+  assert.ok(elapsed < BOUNDED_MS, `the deadline must cover the body read — it took ${elapsed}ms`);
+});
+
+await check("REST fallback: the same tiny deadline with a transport that ANSWERS parses normally — negative control for the timeout refusal", async () => {
+  const answers: GithubApiFetchLike = async () => ({ status: 200, text: async () => JSON.stringify({ total_count: 2, check_runs: GREEN }) });
+  const result = await restReadWithDeadline(answers);
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual((result.body as { check_runs: unknown }).check_runs, GREEN);
+});
+
+await check("the default deadline is a real, bounded number of milliseconds — no product caller opts out of it", () => {
+  assert.equal(Number.isFinite(GITHUB_API_TIMEOUT_MS), true);
+  assert.ok(GITHUB_API_TIMEOUT_MS > 0, "a non-positive default would refuse every read");
+  assert.ok(GITHUB_API_TIMEOUT_MS <= 120_000, "a deadline the operator outwaits is not a deadline");
+});
+
+await check("realGithubApiFetch: the deadline's AbortSignal reaches the real `fetch` — a timed-out socket is CANCELLED, not abandoned", async () => {
+  const originalFetch = globalThis.fetch;
+  const seen: { signal?: AbortSignal | null }[] = [];
+  const controller = new AbortController();
+  try {
+    globalThis.fetch = (async (_url: unknown, init: { signal?: AbortSignal | null }) => {
+      seen.push({ signal: init?.signal });
+      return { status: 200, text: async () => "{}" };
+    }) as unknown as typeof globalThis.fetch;
+
+    const res = await realGithubApiFetch(`${GITHUB_API_BASE}/repos/acme/oe`, {
+      headers: { accept: "application/vnd.github+json" },
+      signal: controller.signal,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), "{}");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].signal, controller.signal, "the real transport must pass the deadline's signal through to `fetch`");
 });
 
 await check("REST fallback: HTTP 500 REFUSES, naming the status and the body", async () => {
