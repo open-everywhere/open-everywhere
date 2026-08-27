@@ -149,7 +149,7 @@ export const unifiedReplyEntry = defineTool({
       const pendingNote =
         owingTask !== undefined
           ? " Your background worker for this conversation has NOT reported yet, so you do not have the answer it was asked for — never write that answer out yourself; report what the worker returns." +
-            " This post was delivered under a host line saying a delegated worker is still running and this message is not its result, so do not add that caveat yourself."
+            " This post was delivered under a host line saying this is still being worked on and what follows is an interim update, not the final result, so do not add that caveat yourself."
           : "";
       return {
         posted: true,

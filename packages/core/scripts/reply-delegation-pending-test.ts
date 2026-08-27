@@ -445,7 +445,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
       const ack = await callReply(w, "turn_699a", w, HANDOFF, false);
       ok(ack.posted === true, "§10a precondition: the `done:false` hand-off posts");
       ok(
-        typeof ack.note === "string" && ack.note.includes("not its result"),
+        typeof ack.note === "string" && ack.note.includes("not the final result"),
         "🔴 §10a/NOTE: the tool result tells the model the host framed this post, in the frame's own words — an in-band claim about the frame must not be able to drift from the frame",
       );
     });
@@ -541,7 +541,7 @@ const heldRows = async (): Promise<Record<string, unknown>[]> =>
       !/[*_`~[\]]/.test(PENDING_WORK_FRAME),
       "🔴 §10f: the frame carries NO markdown. Slack's emphasis dialect is not GitHub's, and one constant crosses six surfaces — a frame that renders as literal punctuation on five of them is worse than plain prose",
     );
-    ok(PENDING_WORK_FRAME.includes("not its result"), "§10f: …and it says the one honest thing the host actually knows — that this message is not the worker's answer");
+    ok(PENDING_WORK_FRAME.includes("not the final result"), "§10f: …and it says the one honest thing the host actually knows — that this message is not the worker's answer");
     const both = withReplierPrefix(withPendingWorkFrame("body", true), { taskLabel: "audit the ledger" });
     ok(both.startsWith("[audit the ledger] "), "🔴 §10f: the replier tier label stays OUTERMOST — the frame must never displace the signal a reader uses to tell a worker from the seat");
     ok(both.includes(PENDING_WORK_FRAME) && both.endsWith("body"), "§10f: …and both signals survive together, in that order");
