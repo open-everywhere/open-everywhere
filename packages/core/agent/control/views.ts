@@ -10,7 +10,7 @@ import { describeBound } from "../routines/bound.js";
 import { describeStall } from "../routines/stall.js";
 import { readAudit, auditRoot, type AuditFilter, type AuditEntry } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
-import { windowedSupervisorEnabled, windowModeFor, resolveDomainForChannel } from "../memory/domain.js";
+import { windowedSupervisorEnabled, windowIdFor, windowModeFor, resolveDomainForChannel } from "../memory/domain.js";
 import { principalSurfaces } from "../identity/principals.js";
 import { unionPrincipals } from "../identity/link-resolve.js";
 import { confirmedLinkSetPrincipals } from "../identity/link-store.js";
@@ -575,11 +575,18 @@ export interface UnifiedHumanRow {
   readonly surfacesInDomain: readonly string[];
   readonly surfacesNotIn: readonly string[];
 }
+export interface UnifiedWindowRow {
+  readonly windowId: string;
+  readonly kind: "group" | "domain" | "solo";
+  readonly members: readonly string[];
+  readonly platforms: readonly string[];
+}
 export interface UnifiedDomainAuditResult {
   readonly org: string;
   readonly domain: string;
   readonly unified: boolean;
   readonly singleWindow: boolean;
+  readonly windows: readonly UnifiedWindowRow[];
   readonly platforms: readonly string[];
   readonly containers: readonly UnifiedContainerRow[];
   readonly agentReach: {
@@ -617,7 +624,25 @@ export async function unifiedDomainAudit(q: UnifiedDomainAuditQuery): Promise<Un
   }
   const channels = [...(domain.channels ?? [])];
   const unified = channels.length > 0 && windowedSupervisorEnabled(channels[0], domains);
-  const singleWindow = unified && windowModeFor(channels[0], domains) === "unified";
+  const residueUnified = unified && windowModeFor(channels[0] ?? "", domains) === "unified";
+  const byWindow = new Map<string, { kind: UnifiedWindowRow["kind"]; members: string[] }>();
+  if (unified) {
+    for (const ch of channels) {
+      const grouped = windowIdFor(ch, domains);
+      const windowId = grouped ?? (residueUnified ? domain.name : ch);
+      const kind: UnifiedWindowRow["kind"] = grouped !== undefined ? "group" : residueUnified ? "domain" : "solo";
+      const row = byWindow.get(windowId);
+      if (row) row.members.push(ch);
+      else byWindow.set(windowId, { kind, members: [ch] });
+    }
+  }
+  const windows: UnifiedWindowRow[] = [...byWindow].map(([windowId, row]) => ({
+    windowId,
+    kind: row.kind,
+    members: row.members,
+    platforms: [...new Set(row.members.map((ch) => surfaceKeyParts(ch).platform))].sort(),
+  }));
+  const singleWindow = residueUnified && windows.length === 1;
 
   const perContainer = await Promise.all(
     channels.map(async (surfaceKey) => {
@@ -694,6 +719,7 @@ export async function unifiedDomainAudit(q: UnifiedDomainAuditQuery): Promise<Un
     domain: q.domain,
     unified,
     singleWindow,
+    windows,
     platforms,
     containers,
     agentReach: {

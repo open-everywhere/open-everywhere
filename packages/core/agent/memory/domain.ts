@@ -21,6 +21,15 @@ export type DomainMatch = "org" | "public" | "dm";
 
 export type WindowMode = "solo" | "unified";
 
+export interface WindowGroup {
+  readonly name: string;
+  readonly channels?: readonly string[];
+  readonly containers?: readonly string[];
+  readonly excludeContainers?: readonly string[];
+}
+
+export const WINDOW_GROUP_NAME_RE = /^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
 export type EngagementTier = "aggressive" | "neutral" | "reserved";
 
 export type ModelReasoning =
@@ -68,6 +77,7 @@ export interface Domain {
   readonly externalPolicy?: ExternalPolicyOverride;
   readonly awarenessWake?: boolean;
   readonly mode?: WindowMode;
+  readonly windows?: readonly WindowGroup[];
   readonly engagementTier?: EngagementTier;
   readonly models?: ModelRoutes;
   readonly reasoningCeiling?: ModelReasoning;
@@ -242,9 +252,101 @@ export function windowModeFor(channelKey: string, domains: readonly Domain[]): W
   return domainForChannel(channelKey, domains)?.mode ?? "solo";
 }
 
+export function windowGroupFor(channelKey: string, domain: Domain): WindowGroup | undefined {
+  const groups = domain.windows ?? [];
+  for (const group of groups) {
+    if (group.channels?.includes(channelKey)) return group;
+  }
+  for (const group of groups) {
+    if (firstMatching(group.containers, channelKey) === undefined) continue;
+    if (firstMatching(group.excludeContainers, channelKey) !== undefined) continue;
+    return group;
+  }
+  return undefined;
+}
+
+export function windowIdFor(channelKey: string, domains: readonly Domain[]): string | undefined {
+  const domain = domainForChannel(channelKey, domains);
+  if (!domain) return undefined;
+  return windowGroupFor(channelKey, domain)?.name;
+}
+
+function windowGroupShapeProblems(d: Domain): string[] {
+  const groups = d.windows ?? [];
+  const bad: string[] = [];
+  if (d.match !== undefined) {
+    bad.push(
+      `  "${d.name}" (match "${d.match}") must not set windows — a standing window is a TEAM-section feature, never a pseudo-domain (org=the "window everything" footgun; public/dm=external/personal surface)`,
+    );
+  }
+  if (d.ambientSupervisor !== true) {
+    bad.push(`  "${d.name}" declares windows but not ambientSupervisor — a window is a re-keyed ambient supervisor, so it REQUIRES ambientSupervisor: true`);
+  }
+  if (groups.length === 0) {
+    bad.push(`  "${d.name}" declares an EMPTY windows list — that grants nothing and reads as if it did; name at least one group, or drop the field`);
+  }
+  const seen = new Set<string>();
+  for (const g of groups) {
+    if (!WINDOW_GROUP_NAME_RE.test(g.name)) {
+      bad.push(
+        `  "${d.name}" names the window group "${g.name}", which is not a legal window id — a group name is lowercase kebab (${String(WINDOW_GROUP_NAME_RE)}) because it travels as the windowId through the session registry key ("oe-domain::<name>") and the supervisor token ("oe-dom:<domain>:win:<name>:oe-sup:g<gen>"), where "/" and ":" are structure`,
+      );
+      continue;
+    }
+    if (seen.has(g.name)) {
+      bad.push(`  "${d.name}" declares the window group "${g.name}" TWICE — a group name is the window id, so the second declaration could never be elected`);
+      continue;
+    }
+    seen.add(g.name);
+    const hasMembers = (g.channels?.length ?? 0) > 0 || (g.containers?.length ?? 0) > 0;
+    if (!hasMembers) {
+      bad.push(`  window group "${g.name}" of "${d.name}" names no members — give it channels and/or containers, or drop it (an empty group elects nobody)`);
+    }
+    if ((g.excludeContainers?.length ?? 0) > 0 && (g.containers?.length ?? 0) === 0) {
+      bad.push(`  window group "${g.name}" of "${d.name}" sets excludeContainers with no containers — exclusions carve out of a CLAIM, so this pair is dead config; delete it`);
+    }
+    for (const entry of g.excludeContainers ?? []) {
+      const parsed = parseContainerEntry(entry);
+      if (!parsed || parsed.kind === "group") {
+        bad.push(`  window group "${g.name}" of "${d.name}" excludes "${entry}", which is not a legal exclusion entry (a surface key, or a same-level \`prefix*\` glob)`);
+      } else if (parsed.kind === "tenant") {
+        bad.push(`  window group "${g.name}" of "${d.name}" excludes the whole tenant "${entry}" — a tenant-wide exclusion either cancels the group's claim outright or means nothing; name the surfaces`);
+      }
+    }
+    for (const entry of g.containers ?? []) {
+      const parsed = parseContainerEntry(entry);
+      if (parsed?.kind === "group") {
+        bad.push(
+          `  window group "${g.name}" of "${d.name}" claims container "${entry}", which uses the GROUP rung (\`<marker>:<id>\`) — that shape belongs to the TRUST registry (agent/identity/surfaces.ts), never to a window group`,
+        );
+        continue;
+      }
+      if (parsed?.kind === "surface" && !parsed.glob) {
+        bad.push(`  window group "${g.name}" of "${d.name}" claims container "${entry}", which names ONE exact surface — list it in this group's \`channels\` instead`);
+        continue;
+      }
+      if (!parsed) {
+        bad.push(`  window group "${g.name}" of "${d.name}" claims container "${entry}", which is not a legal container entry (see Domain.containers)`);
+        continue;
+      }
+      const withinDomainClaim = (d.containers ?? []).some((own) => {
+        const ownParsed = parseContainerEntry(own);
+        return ownParsed !== undefined && surfaceKeyEntriesIntersect(ownParsed, parsed);
+      });
+      if (!withinDomainClaim) {
+        bad.push(
+          `  window group "${g.name}" of "${d.name}" claims container "${entry}", which intersects none of that domain's own containers — a window narrows WITHIN its domain's claim and can never reach past it`,
+        );
+      }
+    }
+  }
+  return bad;
+}
+
 export function assertUnifiedDomainTrust(domains: readonly Domain[]): void {
   const bad: string[] = [];
   for (const d of domains) {
+    if (d.windows !== undefined) bad.push(...windowGroupShapeProblems(d));
     if (d.mode === undefined) continue;
     const isPseudo = d.match !== undefined;
     if (isPseudo) {
@@ -275,27 +377,39 @@ function vouchedPredicate(vouched: readonly string[] | VouchedInternalFor): Vouc
   return (workspaceKey, surfaceKey) => vset.has(workspaceKey) || vset.has(surfaceKey);
 }
 
+function windowMemberSets(d: Domain): ReadonlyMap<string, readonly string[]> {
+  const out = new Map<string, string[]>();
+  for (const ch of d.channels ?? []) {
+    const windowId = windowGroupFor(ch, d)?.name ?? (d.mode === "unified" ? d.name : ch);
+    const members = out.get(windowId);
+    if (members) members.push(ch);
+    else out.set(windowId, [ch]);
+  }
+  return out;
+}
+
 export function assertWindowSourcesVouched(domains: readonly Domain[], vouched: readonly string[] | VouchedInternalFor): void {
   const isInternal = vouchedPredicate(vouched);
   const trustEnv = (process.env.OE_TRUST ?? "").trim().toLowerCase() === "internal";
   const bad: string[] = [];
   for (const d of domains) {
-    if (d.mode !== "unified") continue;
-    const channels = d.channels ?? [];
-    if (channels.length <= 1) continue;
-    for (const ch of channels) {
-      const segs = ch.split("/");
-      const platform = segs[0] ?? "";
-      if (BINDING_TRUSTED_PLATFORMS.has(platform)) continue;
-      const workspaceKey = segs.slice(0, 2).join("/");
-      const okay = isInternal(workspaceKey, ch) || trustEnv;
-      if (!okay) {
-        bad.push(
-          `  domain "${d.name}" includes UN-vouched source "${ch}" in a multi-source (${channels.length}-channel) cross-surface window — vouch it in agent/identity/surfaces.ts (add "${ch}" or its workspace "${workspaceKey}"), or set OE_TRUST=internal for an internal-only deploy` +
-            (platform === "notion"
-              ? `. A Notion TRUST ROOT does not satisfy this gate: the ancestor walk runs per delivery against the live Notion API, so config load cannot resolve it. Declare this page in the register as well`
-              : ``),
-        );
+    for (const [windowId, members] of windowMemberSets(d)) {
+      if (members.length <= 1) continue;
+      const where = windowId === d.name ? `domain "${d.name}"` : `window "${windowId}" of domain "${d.name}"`;
+      for (const ch of members) {
+        const segs = ch.split("/");
+        const platform = segs[0] ?? "";
+        if (BINDING_TRUSTED_PLATFORMS.has(platform)) continue;
+        const workspaceKey = segs.slice(0, 2).join("/");
+        const okay = isInternal(workspaceKey, ch) || trustEnv;
+        if (!okay) {
+          bad.push(
+              `  ${where} includes UN-vouched source "${ch}" in a multi-source (${members.length}-channel) cross-surface window — vouch it in agent/identity/surfaces.ts (add "${ch}" or its workspace "${workspaceKey}"), or set OE_TRUST=internal for an internal-only deploy` +
+              (platform === "notion"
+                ? `. A Notion TRUST ROOT does not satisfy this gate: the ancestor walk runs per delivery against the live Notion API, so config load cannot resolve it. Declare this page in the register as well`
+                : ``),
+          );
+        }
       }
     }
   }
@@ -618,6 +732,78 @@ export function assertChannelExclusivity(domains: readonly Domain[]): void {
       "open-everywhere: a channel may belong to at most one memory domain, but:\n" +
         clashes.join("\n") +
         "\nRemove the channel from all but one domain (docs/capabilities/memory.md).",
+    );
+  }
+}
+
+export function assertWindowGroupExclusivity(domains: readonly Domain[]): void {
+  const clashes: string[] = [];
+  const domainNames = new Map<string, string>();
+  for (const d of domains) domainNames.set(d.name, d.name);
+  const groupOwner = new Map<string, string>();
+  for (const d of domains) {
+    for (const g of d.windows ?? []) {
+      if (domainNames.has(g.name)) {
+        clashes.push(
+          `  window group "${g.name}" of "${d.name}" has the same name as the domain "${g.name}" — a domain name is itself a window id (the id-equals-domain form), so the two would share the session registry row "oe-domain::${g.name}"`,
+        );
+      }
+      for (const ch of g.channels ?? []) {
+        const owner = domainForChannel(ch, domains);
+        if (owner?.name !== d.name) {
+          clashes.push(
+            `  window group "${g.name}" of "${d.name}" lists "${ch}", which config routes to ${owner ? `domain "${owner.name}"` : "no domain"} — a window slices a domain it cannot widen, so add the key to "${d.name}".channels first (or list it in a group of the domain that does own it)`,
+          );
+        }
+      }
+      const prev = groupOwner.get(g.name);
+      if (prev !== undefined && prev !== d.name) {
+        clashes.push(
+          `  the window group name "${g.name}" is declared by both "${prev}" and "${d.name}" — a window id keys the session registry GLOBALLY ("oe-domain::${g.name}"), so the two domains would share one standing context window`,
+        );
+      } else {
+        groupOwner.set(g.name, d.name);
+      }
+    }
+    const groups = d.windows ?? [];
+    for (let i = 0; i < groups.length; i++) {
+      for (let j = i + 1; j < groups.length; j++) {
+        const a = groups[i]!;
+        const b = groups[j]!;
+        if (a.name === b.name) continue;
+        for (const ch of a.channels ?? []) {
+          if (b.channels?.includes(ch) === true) {
+            clashes.push(`  "${ch}" is listed by both window groups "${a.name}" and "${b.name}" of "${d.name}"`);
+          }
+        }
+        for (const ae of a.containers ?? []) {
+          const ap = parseContainerEntry(ae);
+          if (!ap) continue;
+          for (const be of b.containers ?? []) {
+            const bp = parseContainerEntry(be);
+            if (!bp) continue;
+            if (!surfaceKeyEntriesIntersect(ap, bp)) continue;
+            const overlap = surfaceKeyEntryContains(ap, bp) ? bp : ap;
+            const covers = (g: WindowGroup): boolean =>
+              (g.excludeContainers ?? []).some((x) => {
+                const xp = parseContainerEntry(x);
+                return xp !== undefined && surfaceKeyEntryContains(xp, overlap);
+              });
+            if (covers(a) || covers(b)) continue;
+            const overlapText = surfaceKeyEntryContains(ap, bp) ? be : ae;
+            clashes.push(
+              `  the containers entries "${ae}" (window group "${a.name}") and "${be}" (window group "${b.name}") of "${d.name}" can match the SAME surface key, so which WINDOW owns it would depend on declaration order — narrow one of them, or add excludeContainers: ["${overlapText}"] to the group that should NOT get the overlap`,
+            );
+          }
+        }
+      }
+    }
+  }
+  if (clashes.length > 0) {
+    throw new Error(
+      "open-everywhere: invalid standing-window group configuration:\n" +
+        clashes.join("\n") +
+        "\n(memory/domain.ts assertWindowGroupExclusivity — a window id keys one standing session).",
     );
   }
 }

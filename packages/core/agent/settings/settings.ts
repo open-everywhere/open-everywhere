@@ -652,7 +652,7 @@ export const SETTINGS = {
       path: "window.topology",
       shipped: false,
       summary:
-        "The standing-WINDOW apparatus — the ONE gate governing both the per-channel `solo` window and the cross-surface `unified` window. Off, every domain runs the native per-container path and its `mode` is inert. **Arm deliberately: a window is a wider data blast radius.**",
+        "The standing-WINDOW apparatus — the ONE gate governing every window shape: a named `windows` group, the per-channel `solo` window, and the cross-surface `unified` window. Off, every domain runs the native per-container path and both `mode` and `windows` are inert. **Arm deliberately: a window is a wider data blast radius.**",
     } satisfies SettingSpec<boolean>,
   },
 };

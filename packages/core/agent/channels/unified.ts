@@ -35,7 +35,7 @@ import {
 } from "../access/requester-identity.js";
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
 import { pendingDelegationOwing, BRIDGE_WAKE_HELD_AUDIT_ACTION } from "../access/pending-delegation-signal.js";
-import { sourcesForWindow } from "./window-sources.js";
+import { sourcesForWindow, windowSourcesNeedConfig } from "./window-sources.js";
 import { finalMessageActionForTurn, isBareStop, replierLabelFor, withPendingWorkFrame, NO_REPLY_SENTINEL_REASON } from "./turn-delivery.js";
 import { auditNoReplySentinelObserved } from "./chat-turn-audit.js";
 import { consumeRepliedThisTurn, repliedWakesThisTurn, declinedWakesThisTurn, refusalsForWakeThisTurn } from "./reply-signal.js";
@@ -237,7 +237,7 @@ function windowSourcesForDivert(token: string, originPlatform: string): readonly
   try {
     const key = parseWindowToken(token);
     if (key) {
-      const domains = key.windowId === key.domain ? getConfig().loadDomains() : [];
+      const domains = windowSourcesNeedConfig(key.windowId, key.domain) ? getConfig().loadDomains() : [];
       const s = sourcesForWindow(key.windowId, key.domain, domains);
       if (s.length > 0) return s;
     }

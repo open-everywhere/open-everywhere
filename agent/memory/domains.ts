@@ -4,6 +4,7 @@ import {
   assertChannelExclusivity,
   assertDomainsValid,
   assertUnifiedDomainTrust,
+  assertWindowGroupExclusivity,
   type Domain,
 } from "@open-everywhere/core/agent/memory/domain.js";
 import { assertSingleTenantPerTenantScopedPlatform } from "@open-everywhere/core/agent/access/tenant-admission.js";
@@ -237,6 +238,7 @@ assertChannelExclusivity(domains);
 assertDomainsValid(domains);
 assertSingleTenantPerTenantScopedPlatform(domains);
 assertUnifiedDomainTrust(domains);
+assertWindowGroupExclusivity(domains);
 assertSilosValid(mergedSilos);
 assertExposedAgentsCurated(domains, mergedSilos, agentsOverlay.specs);
 

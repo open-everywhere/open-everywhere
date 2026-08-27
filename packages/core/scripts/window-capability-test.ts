@@ -300,6 +300,63 @@ console.log("P0-e — assertWindowSourcesVouched direct unit tests:");
     () => assertWindowSourcesVouched([defineDomain({ name: "plain", channels: ["github/a/x", "github/b/y"] }), orgGate], []),
     "[P0-e] a non-window (no crossSurfaceWindow) multi-channel domain is never vouch-checked",
   );
+
+  const groupedWin = (windows: readonly { name: string; channels: readonly string[] }[], channels: string[], mode?: "solo" | "unified") =>
+    defineDomain({ name: "grouped", channels, ambientSupervisor: true, ...(mode ? { mode } : {}), windows });
+
+  assert.throws(
+    () => assertWindowSourcesVouched([groupedWin([{ name: "pair", channels: ["github/a/x", "notion/b/y"] }], ["github/a/x", "notion/b/y", "github/c/z"]), orgGate], []),
+    /window "pair" of domain "grouped"[\s\S]*github\/a\/x[\s\S]*notion\/b\/y/,
+    "[P0-e/1167] a named GROUP merging two unvouched sources throws even though the domain's mode is the solo residue",
+  );
+  n++;
+  {
+    let message = "";
+    try {
+      assertWindowSourcesVouched([groupedWin([{ name: "pair", channels: ["github/a/x", "notion/b/y"] }], ["github/a/x", "notion/b/y", "github/c/z"]), orgGate], []);
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    ok(!message.includes("github/c/z"), "[P0-e/1167] a solo-residue channel in the same domain is NOT named — one-member windows stay exempt");
+  }
+  noThrow(
+    () =>
+      assertWindowSourcesVouched([groupedWin([{ name: "pair", channels: ["github/a/x", "notion/b/y"] }], ["github/a/x", "notion/b/y", "github/c/z"]), orgGate], [
+        "github/a/x",
+        "notion/b/y",
+      ]),
+    "[P0-e/1167] vouching the GROUP's members satisfies the gate; the unvouched solo member is irrelevant",
+  );
+  noThrow(
+    () => assertWindowSourcesVouched([groupedWin([{ name: "lone", channels: ["github/a/x"] }], ["github/a/x", "github/c/z"]), orgGate], []),
+    "[P0-e/1167] a ONE-member group is exempt (a window with one source cannot bleed cross-context)",
+  );
+  noThrow(
+    () => assertWindowSourcesVouched([groupedWin([{ name: "mix", channels: ["slack/T1/C_X", "github/a/x"] }], ["slack/T1/C_X", "github/a/x"]), orgGate], ["github/a/x"]),
+    "[P0-e/1167] the binding-trusted-platform exemption applies inside a group too",
+  );
+  {
+    const ch = "github/a/x";
+    const expected =
+      `  domain "win" includes UN-vouched source "${ch}" in a multi-source (2-channel) cross-surface window` +
+      ` — vouch it in agent/identity/surfaces.ts (add "${ch}" or its workspace "github/a"),` +
+      ` or set OE_TRUST=internal for an internal-only deploy`;
+    let message = "";
+    try {
+      assertWindowSourcesVouched([win([ch, "notion/b/y"]), orgGate], []);
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    ok(message.split("\n").includes(expected), "[P0-e/1167] a mode:unified domain with no groups emits the pre-OPE-1167 refusal line VERBATIM (byte-identical)");
+  }
+  noThrow(
+    () =>
+      assertWindowSourcesVouched(
+        [defineDomain({ name: "carved", channels: ["github/a/x", "notion/b/y"], ambientSupervisor: true, mode: "unified", windows: [{ name: "carve", channels: ["github/a/x"] }] }), orgGate],
+        [],
+      ),
+    "[P0-e/1167] carving a member into its own group shrinks the residue window to one source, which is exempt",
+  );
 }
 
 console.log("P0-f — per-channel STANDING seat is NARROWED (Stage C flip):");

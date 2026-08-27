@@ -1,11 +1,16 @@
+
 import assert from "node:assert/strict";
-import { sourcesForWindow, encodeSources, decodeSources } from "../agent/channels/window-sources.js";
+import { sourcesForWindow, windowSourcesNeedConfig, encodeSources, decodeSources } from "../agent/channels/window-sources.js";
 import { dmAnchorDomain, taskWindowId } from "../agent/channels/window-key.js";
 import { defineDomain } from "../agent/memory/domain.js";
 
 let n = 0;
 const eq = (a: unknown, b: unknown, label: string) => {
   assert.deepStrictEqual(a, b, label);
+  n++;
+};
+const ok = (cond: boolean, label: string) => {
+  assert.ok(cond, label);
   n++;
 };
 
@@ -56,6 +61,66 @@ eq(sourcesForWindow(teamsDm, teamsDm, []), ["teams"], "the arm is platform-agnos
 const dmTask = taskWindowId("slack/T_ENG/D999", "D999", "nonce1");
 eq(sourcesForWindow(dmTask, dmDomain, []), ["slack"], "a DM-ANCHORED WORKER still resolves through the TASK arm (windowId's channelKey), untouched by the new anchor arm");
 eq(sourcesForWindow("s/slack/T_ENG/D999/1720000000.001", dmDomain, []), ["slack"], "a DM-anchored thread seat resolves the DM's platform (not the 's' grain marker)");
+
+const CHATTER_A = "slack/T_ENG/C_CHATTER";
+const CHATTER_B = "discord/G_ACME/CH_CHATTER";
+const ALONE = "slack/T_ENG/C_ALONE";
+const grouped = defineDomain({
+  name: "chatter-dom",
+  channels: [CHATTER_A, CHATTER_B, ALONE, GH],
+  ambientSupervisor: true,
+  windows: [
+    { name: "chatter", channels: [CHATTER_A, CHATTER_B] },
+    { name: "shipping", containers: ["github/acme-ships/*"] },
+  ],
+  containers: ["github/acme-ships/*"],
+});
+const groupedDomains = [payments, soloDomain, grouped];
+
+eq(
+  sourcesForWindow("chatter", "chatter-dom", groupedDomains),
+  ["slack", "discord"],
+  "named group window: the DISTINCT platforms of THAT group's members, in declaration order",
+);
+assert.ok(
+  !sourcesForWindow("chatter", "chatter-dom", groupedDomains).includes("chatter"),
+  "PHANTOM GUARD: a group window NEVER reports its own name as a platform (the solo fallback's platformOf would)",
+);
+n++;
+eq(
+  sourcesForWindow("chatter", "chatter-dom", groupedDomains).length,
+  2,
+  "…and it reports exactly the group's two platforms, not the whole domain's three",
+);
+eq(sourcesForWindow("shipping", "chatter-dom", groupedDomains), [], "a CLAIM-only group yields the empty vector — claims are no more enumerable here than at the domain grain");
+eq(
+  sourcesForWindow("claim-only-dom", "claim-only-dom", [defineDomain({ name: "claim-only-dom", containers: ["github/acme-ships"], ambientSupervisor: true })]),
+  [],
+  "…and a claim-only DOMAIN's own window is empty for the same reason",
+);
+eq(sourcesForWindow("no-such-group", "chatter-dom", groupedDomains), [], "an undeclared slash-free windowId yields EMPTY (carriage fails it closed), never a phantom platform");
+eq(sourcesForWindow("chatter", "no-such-domain", groupedDomains), [], "a group name under an unknown domain yields EMPTY");
+eq(
+  sourcesForWindow("chatter-dom", "chatter-dom", groupedDomains),
+  ["slack", "discord", "github"],
+  "the degenerate id-equals-domain arm is still checked FIRST on a grouped domain",
+);
+eq(sourcesForWindow(ALONE, "chatter-dom", groupedDomains), ["slack"], "a solo (surface-key) window in a grouped domain is unchanged");
+
+ok(windowSourcesNeedConfig("payments", "payments"), "needs config: the degenerate id-equals-domain window reads the domain's channels");
+ok(windowSourcesNeedConfig("chatter", "chatter-dom"), "needs config: a NAMED GROUP (slash-free windowId) reads the group's members");
+ok(!windowSourcesNeedConfig(SLACK_A, "payments"), "identity-only: a solo surface-key window carries its platform in the id");
+ok(!windowSourcesNeedConfig(slackTask, "payments"), "identity-only: a task child reads its platform off the task windowId");
+ok(!windowSourcesNeedConfig(dmDomain, dmDomain), "identity-only: a DM anchor derives from the pseudo-domain");
+ok(!windowSourcesNeedConfig("s/slack/T_ENG/D999/1720000000.001", dmDomain), "identity-only: a thread seat is slash-bearing and DM-anchored");
+for (const [windowId, dom, expected] of [
+  [SLACK_A, "payments", ["slack"]],
+  [slackTask, "payments", ["slack"]],
+  [dmDomain, dmDomain, ["slack"]],
+  ["s/slack/T_ENG/D999/1720000000.001", dmDomain, ["slack"]],
+] as const) {
+  eq(sourcesForWindow(windowId, dom, []), [...expected], `a shape declared identity-only resolves its real sources with NO config: ${windowId}`);
+}
 
 eq(encodeSources(["slack", "github"]), "slack,github", "encodeSources comma-joins the vector");
 eq(decodeSources("slack,github"), ["slack", "github"], "decodeSources splits the stamp back to a vector");

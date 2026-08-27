@@ -135,15 +135,16 @@ export function checkWindowTargetAgainstConfig(domain: string, windowId: string 
   }
 
   if (windowId !== undefined) {
-    const owner = domainForChannel(windowId, domains);
-    if (owner?.name !== domain) {
+    const declaredGroup = domains.find((d) => d.name === domain)?.windows?.some((g) => g.name === windowId) === true;
+    const owner = declaredGroup ? undefined : domainForChannel(windowId, domains);
+    if (!declaredGroup && owner?.name !== domain) {
       return {
         ok: false,
         error:
           `refusing to rotate ${registryKey}: config routes "${windowId}" to ${owner ? `domain "${owner.name}"` : "no domain"}, not "${domain}".\n` +
           (owner
             ? `Re-run with the domain config actually assigns this channel to:\n  rotate-window.ts ${owner.name} --window ${windowId}\n`
-            : `"${windowId}" is in no domain's channels/containers roster in agent/memory/domains.ts — add it there, or rotate a channel that already is.\n`) +
+            : `"${windowId}" is neither a channel in any domain's channels/containers roster nor a window group declared by "${domain}" in agent/memory/domains.ts — add it there, or rotate a target that already is.\n`) +
           `Or pass --force to mint ${asked} anyway.`,
       };
     }

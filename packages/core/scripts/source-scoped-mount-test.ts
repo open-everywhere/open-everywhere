@@ -59,6 +59,27 @@ const domains = [payments, hr];
 }
 
 {
+  const groupedDomain = defineDomain({
+    name: "chatter-dom",
+    channels: ["slack/T_ENG/C_CHAT", "discord/G_ENG/CH_CHAT", "notion/W_ENG/P_ALONE"],
+    ambientSupervisor: true,
+    windows: [{ name: "chatter", channels: ["slack/T_ENG/C_CHAT", "discord/G_ENG/CH_CHAT"] }],
+  });
+  const groupedRoster: readonly Domain[] = [...domains, groupedDomain];
+  const groupWindow = mk("unified", { oe_platform: "slack" }, "oe-dom:chatter-dom:win:chatter:oe-sup:g1");
+
+  ok(sourceScopedMount(groupWindow, "slack", () => groupedRoster) === true, "group window: mounts the Slack reader (slack ∈ the group's sources)");
+  ok(sourceScopedMount(groupWindow, "discord", () => groupedRoster) === true, "group window: mounts the Discord reader — the OTHER member of the same group");
+  ok(sourceScopedMount(groupWindow, "notion", () => groupedRoster) === false, "group window: does NOT mount the Notion reader — that member sits in a different window of the same domain");
+  const soloOfGrouped = mk("unified", { oe_platform: "notion" }, "oe-dom:chatter-dom:win:notion/W_ENG/P_ALONE:oe-sup:g1");
+  ok(sourceScopedMount(soloOfGrouped, "notion", () => groupedRoster) === true, "the ungrouped member's solo window mounts its own reader");
+  ok(sourceScopedMount(soloOfGrouped, "slack", () => groupedRoster) === false, "…and mounts nothing from the group it is not in");
+  const phantom = mk("unified", { oe_platform: "slack" }, "oe-dom:chatter-dom:win:no-such-group:oe-sup:g1");
+  ok(sourceScopedMount(phantom, "discord", () => groupedRoster) === false, "an UNDECLARED group name mounts nothing beyond its origin (fail-closed, never a phantom source)");
+  ok(sourceScopedMount(phantom, "slack", () => groupedRoster) === true, "…and still mounts the origin platform's own reader");
+}
+
+{
   const ghOriginMulti = mk("unified", { oe_platform: "github", oe_sources: "slack,github,notion" });
   ok(sourceScopedMount(ghOriginMulti, "slack", () => domains) === true, "fence-compose: the Slack reader is MOUNTED on the multi-source window (slack ∈ sources)");
   assert.throws(() => assertTurnSurface(ghOriginMulti, "slack"), /reads slack, but the message that woke this turn came from github/u, "fence-compose: yet a GitHub-origin turn calling the Slack reader is FENCED per turn (mount ≠ fence)");

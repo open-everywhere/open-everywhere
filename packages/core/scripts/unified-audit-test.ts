@@ -38,7 +38,16 @@ const payments = defineDomain({
   admins: ["slack/T1/U_ADMIN"],
 });
 const org = defineDomain({ name: "org", match: "org" });
-const domains = [payments, org];
+const GRP_SLACK = "slack/T1/C_CHATTER";
+const GRP_DISCORD = "discord/G1/CH_CHATTER";
+const GRP_SOLO = "slack/T1/C_ALONE";
+const grouped = defineDomain({
+  name: "grouped",
+  channels: [GRP_SLACK, GRP_DISCORD, GRP_SOLO],
+  ambientSupervisor: true,
+  windows: [{ name: "chatter", channels: [GRP_SLACK, GRP_DISCORD] }],
+});
+const domains = [payments, grouped, org];
 
 registerConfig({
   loadBundles: () => [
@@ -98,6 +107,27 @@ const {
   ok(JSON.stringify(v.controllers) === JSON.stringify(["slack/T1/U_ADMIN"]), "controllers = domain admins, as the qualified roster keys they are stored as");
   ok(v.notes.some((nn) => nn.includes("Pure-read")), "notes state the pure-read discipline");
   ok(v.notes.some((nn) => nn.toLowerCase().includes("privacy ordinal")), "notes flag the not-yet-enforced privacy ordinal (honest)");
+}
+
+{
+  const v = await unifiedDomainAudit({ domain: "payments" });
+  ok(v.singleWindow === true, "a mode:unified domain with no groups still reports singleWindow (byte-compatible)");
+  ok(v.windows.length === 1, "…and exactly ONE window row");
+  ok(v.windows[0]!.windowId === "payments" && v.windows[0]!.kind === "domain", "…keyed by the domain name, kind 'domain'");
+  ok(JSON.stringify(v.windows[0]!.members) === JSON.stringify([SLACK, GH]), "…holding every roster channel");
+  ok(JSON.stringify(v.windows[0]!.platforms) === JSON.stringify(["github", "slack"]), "…and spanning both platforms");
+
+  const g = await unifiedDomainAudit({ domain: "grouped" });
+  ok(g.unified === true, "the grouped domain windows (gate on + ambient supervisor)");
+  ok(g.windows.length === 2, "a domain with one group over three channels reports TWO windows");
+  const chatter = g.windows.find((w) => w.windowId === "chatter")!;
+  const solo = g.windows.find((w) => w.windowId === GRP_SOLO)!;
+  ok(chatter?.kind === "group", "the named group is reported with kind 'group'");
+  ok(JSON.stringify(chatter.members) === JSON.stringify([GRP_SLACK, GRP_DISCORD]), "…with exactly its two members");
+  ok(JSON.stringify(chatter.platforms) === JSON.stringify(["discord", "slack"]), "…and the two platforms that share THAT window");
+  ok(solo?.kind === "solo" && JSON.stringify(solo.members) === JSON.stringify([GRP_SOLO]), "the ungrouped member is its own solo window");
+  ok(JSON.stringify(g.platforms) === JSON.stringify(["discord", "slack"]), "the DOMAIN spans two platforms");
+  ok(g.singleWindow === false, "singleWindow is FALSE when the domain's surfaces do not all share one window");
 }
 
 {

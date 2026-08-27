@@ -32,8 +32,20 @@ export function sourcesForWindow(windowId: string, domain: string, domains: read
     const d = domains.find((dm) => dm.name === domain);
     return distinctPlatforms(d?.channels ?? []);
   }
+  if (!windowId.includes("/")) {
+    const d = domains.find((dm) => dm.name === domain);
+    const group = d?.windows?.find((g) => g.name === windowId);
+    if (group === undefined) return [];
+    return distinctPlatforms(group.channels ?? []);
+  }
   const p = platformOf(windowId);
   return p.length > 0 ? [p] : [];
+}
+
+export function windowSourcesNeedConfig(windowId: string, domain: string): boolean {
+  if (isTaskWindowId(windowId)) return false;
+  if (dmSurfaceKeyFromAnchorDomain(domain) !== undefined) return false;
+  return windowId === domain || !windowId.includes("/");
 }
 
 export function encodeSources(sources: readonly string[]): string {

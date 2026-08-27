@@ -333,6 +333,22 @@ await store.rotateChannelSession(KNOWN_ORG, "oe-domain::slack/T1/C1", mintToken(
   }
 
   {
+    const GROUPED_DOMAIN = "e2e-config-guard-grouped";
+    const GRP_A = "slack/TCFGGRD1/CCFGGRD04";
+    const GRP_B = "slack/TCFGGRD1/CCFGGRD05";
+    const groupedDomains = [
+      ...domains,
+      defineDomain({ name: GROUPED_DOMAIN, channels: [GRP_A, GRP_B], ambientSupervisor: true, windows: [{ name: "guard-pair", channels: [GRP_A, GRP_B] }] }),
+    ];
+    eq(checkWindowTargetAgainstConfig(GROUPED_DOMAIN, "guard-pair", groupedDomains).ok, true, "a declared window GROUP name is an accepted --window target");
+    const unknown = checkWindowTargetAgainstConfig(GROUPED_DOMAIN, "no-such-group", groupedDomains);
+    eq(unknown.ok, false, "an UNDECLARED group name is still refused");
+    if (!unknown.ok) ok(unknown.error.includes("window group declared"), "…and the refusal says a group name is one of the two things it accepts");
+    eq(checkWindowTargetAgainstConfig(REAL_DOMAIN, "guard-pair", groupedDomains).ok, false, "another domain may not rotate a group it does not declare");
+    eq(checkWindowTargetAgainstConfig(GROUPED_DOMAIN, GRP_A, groupedDomains).ok, true, "a grouped domain's own channel is still an accepted target");
+  }
+
+  {
     const before = await store.getChannelSession(CFG_ORG, unifiedDomainSessionKey(REAL_SURFACE));
     const r = await rotateUnifiedWindow(store, CFG_ORG, FAKE_DOMAIN, REAL_SURFACE, { force: true, domains });
     ok(r.newRow.token !== before?.token, "--force mints the config-contradicting pair anyway");
