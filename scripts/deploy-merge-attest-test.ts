@@ -11,6 +11,7 @@ import {
   planFenceLeg,
   readDefaultBranch,
   readRequiredContexts,
+  refusalGuidance,
   resolveTree,
   runProofTransfer,
   UPGRADE_FENCE_CONTEXT,
@@ -438,6 +439,39 @@ check("an unreadable pull request refuses — a proof is never transferred untra
   const plan = await transfer({ headTree: TREE, mergeTree: TREE, headStatuses: GREEN, mergeStatuses: [] });
   assert.equal(plan.kind, "refuse");
   if (plan.kind === "refuse") assert.match(plan.reason, /could not read pull request/);
+});
+
+check("a refused --fence run says DO NOT MERGE — the act still ahead of it", () => {
+  const line = refusalGuidance({ kind: "fence" });
+  assert.match(line, /DO NOT MERGE\./, "the fence leg keeps the pre-merge instruction verbatim");
+  assert.equal(/DO NOT DEPLOY/.test(line), false, "negative control: the fence leg must NOT talk about deploying — the merge has not happened");
+});
+
+check("a refused --transfer run does NOT say DO NOT MERGE — the merge already happened", () => {
+  const line = refusalGuidance({ kind: "transfer", mergeSha: MERGE });
+  assert.equal(/DO NOT MERGE/.test(line), false, "🔴 OPE-1207: the transfer leg judges a merged commit, so it may never tell the caller not to merge");
+  assert.match(line, /DO NOT DEPLOY/, "the transfer leg names the act that IS still ahead — the deploy");
+  assert.match(line, /already happened/i, "…and says why the merge instruction does not apply");
+});
+
+check("a refused --transfer run names the merge commit it refused on", () => {
+  assert.match(refusalGuidance({ kind: "transfer", mergeSha: MERGE }), new RegExp(MERGE.slice(0, 12)), "the operator is told WHICH commit is unproven");
+  assert.match(refusalGuidance({ kind: "transfer", mergeSha: MERGE }), new RegExp(CLOUD_PROOF_CONTEXT.replace("/", "\\/")), "…and which status it is missing");
+  assert.match(
+    refusalGuidance({ kind: "transfer" }),
+    /named by --merge-sha/,
+    "the defensive branch: with no sha to name the line still refuses, and points at the flag rather than printing 'undefined'",
+  );
+});
+
+check("merge-attest.ts routes its refusal through refusalGuidance, not a literal of its own", () => {
+  const cli = readFileSync(join(ROOT, "scripts", "deploy", "merge-attest.ts"), "utf8");
+  assert.ok(cli.includes("refusalGuidance("), "the CLI must call the shared helper");
+  assert.equal(
+    cli.split("DO NOT MERGE.").length - 1,
+    2,
+    "🔴 exactly two DO NOT MERGE literals remain in the CLI, both on fence-only paths — a third means the shared refusal regrew one",
+  );
 });
 
 check("a legacy `contexts` list naming the check reads as required", () => {

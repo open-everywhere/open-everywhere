@@ -6,6 +6,7 @@ import {
   type ProtectionState,
   readDefaultBranch,
   readRequiredContexts,
+  refusalGuidance,
   resolveRepoLabel,
   runProofTransfer,
   UPGRADE_FENCE_CONTEXT,
@@ -38,6 +39,7 @@ const repo = await resolveRepoLabel({});
 console.log(`deploy:merge-attest: ${wantFence ? "--fence" : "--transfer"} on pull request #${prNumber}${repo ? ` in ${repo}` : ""}${dryRun ? " (dry run)" : ""}`);
 
 let plan: AttestPlan;
+let transferMergeSha: string | undefined;
 const advisories: string[] = [];
 
 if (wantFence) {
@@ -69,6 +71,7 @@ if (wantFence) {
 } else {
   const mergeSha = args.values.get("merge-sha");
   if (!mergeSha) usage("`--transfer` needs the commit the merge produced — `--merge-sha <sha>`.");
+  transferMergeSha = mergeSha;
   plan = await runProofTransfer({ prNumber, mergeSha, ...(targetUrl ? { targetUrl } : {}) });
 }
 
@@ -76,7 +79,7 @@ for (const line of advisories) console.log(`  ${line}`);
 
 if (plan.kind === "refuse") {
   console.error(`✗ deploy:merge-attest: ${plan.reason}`);
-  console.error("  Nothing was posted. DO NOT MERGE.");
+  console.error(`  ${refusalGuidance(wantFence ? { kind: "fence" } : { kind: "transfer", ...(transferMergeSha ? { mergeSha: transferMergeSha } : {}) })}`);
   process.exit(1);
 }
 

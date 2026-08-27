@@ -131,6 +131,35 @@ function recorder() {
 }
 
 {
+  const PINNED_PROBES: readonly [string, string][] = [
+    ["auth.test", "the bot's own identity, awaited before OK()"],
+    ["conversations.info", "channelFactsFor → channelInternalAndMeta, awaited before OK()"],
+    ["users.info", "authorFactsFor → slackAuthorIsMember, awaited before OK()"],
+  ];
+
+  for (const [operation, why] of PINNED_PROBES) {
+    const stub = stubFetch([rateLimited("30"), rateLimited("30"), rateLimited("30")]);
+    const clock = recorder();
+    let caught: unknown;
+    try {
+      await callSlackWebApi({ botToken: "t", operation, body: {} }, { fetch: stub.fetchLike, sleep: clock.sleep });
+    } catch (err) {
+      caught = err;
+    }
+    ok(caught instanceof RateLimitExhaustedError, `probe set: ${operation} ends in the named failure (${why})`);
+    eq(clock.slept, [2000], `probe set: ${operation} clamps a 30 s Retry-After to the 2 s probe cap — a drop from the set reads 30_000 here`);
+    eq(stub.requests.length, 2, `probe set: ${operation} makes 2 attempts, not the shared 4`);
+  }
+
+  for (const operation of ["conversations.list", "users.list", "conversations.history", "chat.update"]) {
+    const stub = stubFetch([rateLimited("30"), rateLimited("30"), rateLimited("30")]);
+    const clock = recorder();
+    await callSlackWebApi({ botToken: "t", operation, body: {} }, { fetch: stub.fetchLike, sleep: clock.sleep }).catch(() => undefined);
+    eq(clock.slept, [30_000, 30_000], `probe set: ${operation} is NOT a probe — it keeps the SHARED 30 s policy`);
+  }
+}
+
+{
   eq(encodeSlackForm({ channel: "C1", text: "a b" }), "channel=C1&text=a+b", "encode: form-encoded, spaces included");
   eq(encodeSlackForm({ a: 1, b: true }), "a=1&b=true", "encode: numbers and booleans stringify");
   eq(encodeSlackForm({ a: "x", b: null, c: undefined }), "a=x", "encode: null and undefined values are DROPPED, as eve dropped them");
@@ -174,4 +203,4 @@ function recorder() {
   }
 }
 
-console.log(`✓ slack-web-api: ${n} assertions passed (honoured Retry-After, named exhaustion, non-429 negative controls, the auth.test probe policy, ported encoding + token rules)`);
+console.log(`✓ slack-web-api: ${n} assertions passed (honoured Retry-After, named exhaustion, non-429 negative controls, the probe policy on all three PROBE_OPERATIONS members, ported encoding + token rules)`);

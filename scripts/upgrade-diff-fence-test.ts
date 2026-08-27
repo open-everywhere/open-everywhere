@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROTECTED_PATH_RULES, UPGRADE_MARKER_RE, checkManifestPaths } from "./upgrade-fence/manifest.js";
 import { formatUpgradeFenceReport, isBotAuthor, judgeUpgradeDiff, ruleFor } from "./upgrade-fence/judge.js";
-import { listPullRequestFiles, type FenceFetchFn } from "./upgrade-fence/pr-files.js";
+import { FenceFetchTimeoutError, listPullRequestFiles, type FenceFetchFn } from "./upgrade-fence/pr-files.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const problems: string[] = [];
@@ -152,11 +152,12 @@ const MARKED_BODY = "Bumps eve.\n\noe-upgrade: 111111111111111111111111111111111
   interface Outcome {
     readonly threw: boolean;
     readonly detail: string;
+    readonly error?: Error;
   }
   const outcome = (p: Promise<string[]>): Promise<Outcome> =>
     p.then(
       (list): Outcome => ({ threw: false, detail: `resolved with ${list.length} file(s)` }),
-      (err: Error): Outcome => ({ threw: true, detail: err.message }),
+      (err: Error): Outcome => ({ threw: true, detail: err.message, error: err }),
     );
 
   const truncated = await outcome(
@@ -178,6 +179,59 @@ const MARKED_BODY = "Bumps eve.\n\noe-upgrade: 111111111111111111111111111111111
   if (!refused.threw || !refused.detail.includes("403")) {
     fail(`4: a non-ok API response must throw, never yield an empty (clean-reading) file list. Got: ${refused.detail}`);
   }
+
+  const never: FenceFetchFn = () => new Promise(() => {});
+
+  const perRequest = await outcome(
+    listPullRequestFiles({ repo: "acme/oe", number: 1, token: "t", apiBase: "https://api.test", fetchFn: never, requestTimeoutMs: 25, totalTimeoutMs: 5_000 }),
+  );
+  if (!perRequest.threw || !perRequest.detail.includes("did not answer within")) {
+    fail(`4b: a request that never settles must refuse on the per-request bound, never hang. Got: ${perRequest.detail}`);
+  }
+  if (!(perRequest.error instanceof FenceFetchTimeoutError) || perRequest.error.reason !== "fetch-timeout") {
+    fail(`4b: the per-request refusal must be the NAMED FenceFetchTimeoutError carrying reason "fetch-timeout". Got: ${perRequest.error?.constructor.name}`);
+  }
+
+  const headersThenStall: FenceFetchFn = () =>
+    Promise.resolve({ ok: true, status: 200, text: () => new Promise<string>(() => {}), json: () => new Promise<unknown>(() => {}) });
+  const stalledBody = await outcome(
+    listPullRequestFiles({ repo: "acme/oe", number: 1, token: "t", apiBase: "https://api.test", fetchFn: headersThenStall, requestTimeoutMs: 25, totalTimeoutMs: 5_000 }),
+  );
+  if (!stalledBody.threw || !(stalledBody.error instanceof FenceFetchTimeoutError)) {
+    fail(`4b: a response whose BODY never settles must refuse on the same bound as the request. Got: ${stalledBody.detail}`);
+  }
+
+  const readings = [0, 0, 400, 900, 1_500];
+  let tick = 0;
+  let pagesFetched = 0;
+  const totalBudget = await outcome(
+    listPullRequestFiles({
+      repo: "acme/oe",
+      number: 1,
+      token: "t",
+      apiBase: "https://api.test",
+      fetchFn: () => {
+        pagesFetched++;
+        return ok(page(100));
+      },
+      totalTimeoutMs: 1_000,
+      now: () => readings[Math.min(tick++, readings.length - 1)] ?? 0,
+    }),
+  );
+  if (!totalBudget.threw || !totalBudget.detail.includes("outlasted its 1000 ms budget")) {
+    fail(`4b: the pagination loop must refuse on its whole-listing budget, not only per request. Got: ${totalBudget.detail}`);
+  }
+  if (!totalBudget.detail.includes("at page 4") || pagesFetched !== 3) {
+    fail(`4b: the budget must be spent ACROSS pages — 3 fetched, then a refusal at page 4. Got ${pagesFetched} fetched, detail: ${totalBudget.detail}`);
+  }
+  if (!(totalBudget.error instanceof FenceFetchTimeoutError)) {
+    fail(`4b: the whole-listing refusal must also be the NAMED FenceFetchTimeoutError. Got: ${totalBudget.error?.constructor.name}`);
+  }
+
+  const healthy = await outcome(
+    listPullRequestFiles({ repo: "acme/oe", number: 1, token: "t", apiBase: "https://api.test", fetchFn: () => ok([{ filename: "docs/x.md" }]) }),
+  );
+  if (healthy.threw) fail(`4b: a listing that answers immediately must NOT be refused by the timeout path. Got: ${healthy.detail}`);
 }
 
 {

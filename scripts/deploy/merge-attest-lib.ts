@@ -23,6 +23,16 @@ export type AttestPlan =
   | { kind: "refuse"; reason: string }
   | { kind: "post"; invocation: GhInvocation; context: string; state: "success" | "failure"; description: string; sha: string; note: string };
 
+export function refusalGuidance(leg: { kind: "fence" } | { kind: "transfer"; mergeSha?: string }): string {
+  if (leg.kind === "fence") return "Nothing was posted. DO NOT MERGE.";
+  const which = leg.mergeSha ? leg.mergeSha.slice(0, 12) : "named by --merge-sha";
+  return (
+    `Nothing was posted, and the merge has ALREADY happened — this is not a merge decision. The merge commit ${which} ` +
+    `is on the default branch carrying no transferred \`${CLOUD_PROOF_CONTEXT}\`. ` +
+    "DO NOT DEPLOY it until the refusal above is cleared, or a proof run judges that commit directly."
+  );
+}
+
 export function planFenceAttestation(input: { decision: MergeFenceDecision; targetUrl?: string }): AttestPlan {
   const { decision, targetUrl } = input;
   const subject = decision.subject;

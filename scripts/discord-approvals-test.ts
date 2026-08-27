@@ -41,6 +41,7 @@ const { guildIdFromScopeKey, isGuildAdminViaRest, isGuildMemberViaRest, discordA
   "@open-everywhere/provider-discord/agent/approvals/discord-admin.js"
 );
 const { clickerFloorRefusalNotice, cardPosterFor, judgeLiftNoticePosterFor, judgeContradictionNotice } = await import("@open-everywhere/core/agent/adapter-api.js");
+const { JUDGE_LIFT_DECIDED_BY } = await import("@open-everywhere/core/agent/approvals/judge-contradiction.js");
 const {
   PUBLIC_DISCORD_ROUTE,
   INTERNAL_DISCORD_ROUTE,
@@ -193,7 +194,7 @@ function clickPayload(
 }
 
 {
-  const wedge = row({ id: "wedge-render", status: "approved", decidedBy: "chain:judge" });
+  const wedge = row({ id: "wedge-render", status: "approved", decidedBy: JUDGE_LIFT_DECIDED_BY });
   const notice = judgeLiftNoticeDiscordCard(wedge, ["raise the cap to 5000"], "spend limit set");
   ok(notice.content.includes("**Ran without asking: spend.set**"), "notice leads with 'Ran without asking', never 'Approval requested'");
   ok(!notice.content.includes("Approval requested"), "notice never claims a card was requested — nobody was asked");
@@ -215,7 +216,7 @@ function clickPayload(
   ok(slackText.includes("This should not have run"), "cross-surface: Slack's notice uses the same button label");
   ok(slackText.includes("⚡ Auto-approved by the approval judge — no card was posted and this has already run · spend limit set"), "cross-surface: the ⚡ context line is word-for-word the same sentence");
 
-  assert.throws(() => judgeLiftNoticeDiscordCard(row({ org: "x".repeat(80), status: "approved", decidedBy: "chain:judge" }), ["l"], "done"), /100/);
+  assert.throws(() => judgeLiftNoticeDiscordCard(row({ org: "x".repeat(80), status: "approved", decidedBy: JUDGE_LIFT_DECIDED_BY }), ["l"], "done"), /100/);
   n++;
 }
 
@@ -356,7 +357,7 @@ const signedHeaders = (body: string, timestamp: string): Headers =>
 }
 
 {
-  const wedge = row({ id: "wedge-post", status: "approved", decidedBy: "chain:judge" });
+  const wedge = row({ id: "wedge-post", status: "approved", decidedBy: JUDGE_LIFT_DECIDED_BY });
   const calls: { url: string; init: RequestInit }[] = [];
   const fetchOk = (async (url: string, init: RequestInit) => {
     calls.push({ url, init });
@@ -380,7 +381,7 @@ const signedHeaders = (body: string, timestamp: string): Headers =>
   await assert.doesNotReject(() => postDiscordJudgeLiftNotice(wedge, ["l"], "done", { fetchFn: fetchOk }), "a missing bot token is swallowed");
   n++;
   await assert.doesNotReject(
-    () => postDiscordJudgeLiftNotice(row({ org: "x".repeat(80), status: "approved", decidedBy: "chain:judge" }), ["l"], "done", { token: "t", fetchFn: fetchOk }),
+    () => postDiscordJudgeLiftNotice(row({ org: "x".repeat(80), status: "approved", decidedBy: JUDGE_LIFT_DECIDED_BY }), ["l"], "done", { token: "t", fetchFn: fetchOk }),
     "an over-cap custom_id is swallowed (render throws, poster catches)",
   );
   n++;
@@ -840,12 +841,17 @@ const store = getOperationalStore();
   ok(onPending.data?.content === judgeContradictionNotice("not-judge-lift"), "…rendering core's ONE copy for not-judge-lift");
   ok((await store.getPendingAction("default", "dc-pending"))?.status === "pending", "…and the row is NOT consumed");
 
-  await store.addPendingAction(row({ id: "dc-config", status: "approved", decidedBy: "chain:mode:DANGEROUSLY_BYPASS" }));
+  const CONFIG_LIFT_DECIDED_BY: string = "chain:registry";
+  ok(
+    CONFIG_LIFT_DECIDED_BY !== JUDGE_LIFT_DECIDED_BY,
+    "contradict: the config-lift seed differs from JUDGE_LIFT_DECIDED_BY — the refusal below is about the lifter, not a typo",
+  );
+  await store.addPendingAction(row({ id: "dc-config", status: "approved", decidedBy: CONFIG_LIFT_DECIDED_BY }));
   const onConfig = (await handleDiscordApprovalInteraction(adminClick("dc-config"))) as Resp;
   ok(onConfig.data?.content === judgeContradictionNotice("not-judge-lift"), "contradict on a CONFIG lift is refused — only a judge verdict is overrulable");
   ok((await contradictionRows()).length === 0, "…and neither refused click wrote a row");
 
-  await store.addPendingAction(row({ id: "dc-wedge", status: "approved", decidedBy: "chain:judge", domain: "eng" }));
+  await store.addPendingAction(row({ id: "dc-wedge", status: "approved", decidedBy: JUDGE_LIFT_DECIDED_BY, domain: "eng" }));
   const noStanding = (await handleDiscordApprovalInteraction(clickPayload("oe-approval:dc-wedge:contradict:default", { user: "U_RANDO", permissions: "0" }))) as Resp;
   ok(noStanding.type === 4 && noStanding.data?.flags === 64, "a plain member's overrule is refused");
   ok(noStanding.data?.content !== judgeContradictionNotice("recorded"), "…with the denial copy, not the recorded copy");
