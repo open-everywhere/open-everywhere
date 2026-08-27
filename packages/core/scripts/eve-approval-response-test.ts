@@ -128,14 +128,11 @@ const aliceIssued = { ...alice, issuer: "https://slack.example" };
 
 {
   const { connectorApprovalPolicy } = await import("../agent/connections/connector-auth.js");
-  const connApproval = connectorApprovalPolicy() as { request?: unknown; response?: unknown };
-  ok(typeof connApproval === "object" && connApproval !== null, "connectorApprovalPolicy() returns an approval CONFIGURATION, not a bare function");
-  ok(typeof connApproval.request === "function", "…carrying the request policy (the connector-op gate is unchanged)");
-  ok(typeof connApproval.response === "function", "…and a response policy (the notion connection's site, OPE-575 adopt-part A)");
-  eq(
-    (connApproval.response as (c: unknown) => unknown)({ responder: bob, session: { initiator: alice } }),
-    { reason: FOREIGN_RESPONDER_REASON, status: "rejected" },
-    "the connection's response policy refuses a foreign responder",
+  const connApproval: unknown = connectorApprovalPolicy();
+  ok(typeof connApproval === "function", "connectorApprovalPolicy() returns a BARE request policy — the only shape eve's connection resolver keeps");
+  ok(
+    typeof (connApproval as { response?: unknown }).response !== "function",
+    "…and carries no response policy — a shape eve would drop",
   );
 }
 

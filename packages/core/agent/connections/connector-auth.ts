@@ -8,7 +8,7 @@ import {
 } from "eve/connections";
 import type { SessionContext } from "eve/context";
 import { once, type ApprovalStatus } from "eve/tools/approval";
-import type { ApprovalConfiguration, ApprovalPolicy } from "eve/tools";
+import type { ApprovalPolicy } from "eve/tools";
 import {
   assertConnectorGranted,
   boundConnectorCredential,
@@ -34,7 +34,6 @@ import { OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED } from "../access/requester-ide
 import { OE_CHAT_NONMEMBER_ATTR } from "../access/taint-signal.js";
 import { getSecretVia } from "../access/credentials.js";
 import { withDuplicateApprovalGuard } from "../access/approval-dedupe.js";
-import { initiatorBoundResponsePolicy } from "../approvals/eve-response-policy.js";
 import { resolvePartition } from "../memory/partition.js";
 import { actingPrincipalId, bindFrom, deploymentOrg } from "../identity/binding.js";
 import { appendAudit } from "../audit/audit.js";
@@ -375,11 +374,8 @@ async function decideConnectorWrite(
   return "user-approval";
 }
 
-export function connectorApprovalPolicy(): ApprovalConfiguration {
-  return {
-    request: withDuplicateApprovalGuard(connectorOpTieringEnabled() ? connectorOpApproval() : once()),
-    response: initiatorBoundResponsePolicy(),
-  };
+export function connectorApprovalPolicy(): ApprovalPolicy {
+  return withDuplicateApprovalGuard(connectorOpTieringEnabled() ? connectorOpApproval() : once());
 }
 
 export function userInteractiveOAuth<Resume extends JsonValue = JsonValue>(opts: {

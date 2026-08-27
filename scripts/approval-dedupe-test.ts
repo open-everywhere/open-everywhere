@@ -234,7 +234,7 @@ ok(DUPLICATE_APPROVAL_KEY_PREFIX.length > 0, "6a. the guard's dedupe key carries
   ok((await approvalOf(image)) === "not-applicable", "8d. an ungated post_file call (image, not HTML) stays not-applicable — the guard never widens a gate");
 
   const { connectorApprovalPolicy } = await import("@open-everywhere/core/agent/connections/connector-auth.js");
-  const policy = connectorApprovalPolicy().request;
+  const policy = connectorApprovalPolicy();
   const writeCtx = ctx({ sessionId: "live-session-notion", toolName: "notion__create_page", toolInput: { title: "hello" } });
   const firstWrite = await policy(writeCtx);
   ok(firstWrite === "user-approval", "8f. connectorApprovalPolicy() (opTiering off → once()) prompts on the first write ask");
@@ -275,7 +275,7 @@ ok(DUPLICATE_APPROVAL_KEY_PREFIX.length > 0, "6a. the guard's dedupe key carries
   };
   await inputRequestedHandler(hookEvent, hookCtx as never);
 
-  const policy = connectorApprovalPolicy().request;
+  const policy = connectorApprovalPolicy();
   const askCtx = ctx({ sessionId, toolName, toolInput: objectForm });
   const decision = await policy(askCtx);
   ok(
