@@ -44,6 +44,7 @@ export function beginTaintTurn(turnId: string | undefined): void {
 export function markUntrustedIngestedThisTurn(kind?: IngestionKind): void {
   if (!taintEnabled()) return;
   let flipped = false;
+  let kindsGrew = false;
   try {
     slot.update((cur) => {
       const state = readState(cur);
@@ -51,11 +52,13 @@ export function markUntrustedIngestedThisTurn(kind?: IngestionKind): void {
       const nextKinds = kind !== undefined && !kinds.includes(kind) ? [...kinds, kind] : kinds;
       if (state.tainted && nextKinds.length === kinds.length) return state;
       if (!state.tainted) flipped = true;
+      if (nextKinds.length > kinds.length) kindsGrew = true;
       return { turn: state.turn, tainted: true, ...(nextKinds.length > 0 ? { kinds: nextKinds } : {}) };
     });
   } catch {
   }
   if (flipped) notifyTaintFlipped();
+  if (kindsGrew) notifyTaintKindsGrew();
 }
 
 type TaintFlipObserver = () => void;
@@ -68,6 +71,23 @@ export function registerTaintFlipObserver(observer: TaintFlipObserver): void {
 
 function notifyTaintFlipped(): void {
   for (const observer of flipObservers) {
+    try {
+      observer();
+    } catch {
+    }
+  }
+}
+
+type TaintKindObserver = () => void;
+
+const kindObservers: TaintKindObserver[] = [];
+
+export function registerTaintKindObserver(observer: TaintKindObserver): void {
+  kindObservers.push(observer);
+}
+
+function notifyTaintKindsGrew(): void {
+  for (const observer of kindObservers) {
     try {
       observer();
     } catch {

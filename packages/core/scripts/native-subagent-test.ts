@@ -581,7 +581,7 @@ function inSession<T>(fn: () => T): T {
     eq(
       bagOf(parent)[ATTR],
       "sess-fwd-parent|turn_7",
-      "🔴 D9 PARENT SIDE: a tainted turn stamps `<sessionId>|<turnId>` onto its OWN auth attributes — the bag eve copies verbatim into every native child it dispatches",
+      "🔴 D9 PARENT SIDE: a tainted turn stamps `<sessionId>|<turnId>` onto its OWN auth attributes — the bag eve copies verbatim into every native child it dispatches. NO kind tail here: this turn was tainted by a SEED ATTRIBUTE, which knows the turn is tainted and not by what (OPE-1215)",
     );
   });
 
@@ -599,8 +599,14 @@ function inSession<T>(fn: () => T): T {
     markUntrustedIngestedThisTurn("web");
     eq(
       bagOf(mid)[ATTR],
-      "sess-fwd-midturn|turn_2",
+      "sess-fwd-midturn|turn_2|web",
       "🔴 D9 PARENT SIDE, MID-TURN: a taint arriving after the turn began stamps the bag too, through the taint-signal flip observer — SYNCHRONOUSLY, so it is in place before the next model call can emit a delegation",
+    );
+    markUntrustedIngestedThisTurn("github");
+    eq(
+      bagOf(mid)[ATTR],
+      "sess-fwd-midturn|turn_2|web,github",
+      "🔴 D9 PARENT SIDE, A SECOND SOURCE: the stamp WIDENS as the turn's kind list grows — one stamp, every source the child must be able to name",
     );
   });
 
@@ -609,7 +615,7 @@ function inSession<T>(fn: () => T): T {
     await turnStarted(again);
     markUntrustedIngestedThisTurn("web");
     eq(spawnTaint.recordTurnTaintForChildren(), true, "🔴 D9: a second writer for the same turn reports the stamp in place rather than skipping — the `action.result` belt is never a lie");
-    eq(bagOf(again)[ATTR], "sess-fwd-again|turn_5", "…and the bag still carries exactly one stamp, of identical bytes");
+    eq(bagOf(again)[ATTR], "sess-fwd-again|turn_5|web", "…and the bag still carries exactly one stamp, of identical bytes");
   });
 
   await contextStorage.run(new ContextContainer(), async () => {
@@ -676,7 +682,7 @@ function inSession<T>(fn: () => T): T {
     eq(
       untrustedIngestedThisTurn(),
       false,
-      "🔴 D9 DISCRIMINATOR, TURN HALF: a stamp naming turn_7 does NOT taint a child dispatched from turn_8 of the same session — this is what stops a stale stamp re-tainting a later turn",
+      "🔴 D9 DISCRIMINATOR, TURN HALF: on a child's FIRST turn, where `session.parent.turn` names the turn that really dispatched it, a stamp naming turn_7 does NOT taint a child dispatched from turn_8 of the same session (OPE-1215: the turn half is consulted on the first turn only — a later turn's pin is stale, and the adopted-stamp memo discriminates there instead)",
     );
   });
 
@@ -696,6 +702,21 @@ function inSession<T>(fn: () => T): T {
   });
 
   await contextStorage.run(new ContextContainer(), async () => {
+    const wrongSessionLater = fwdCtx({
+      id: "sess-fwd-wrong-session-later",
+      turn: { id: "turn_3", sequence: 3 },
+      parent: { sessionId: "sess-fwd-other", callId: "call_f8", turn: { id: "turn_7", sequence: 7 } },
+      attributes: { [ATTR]: "sess-fwd-parent|turn_9|web" },
+    });
+    await turnStarted(wrongSessionLater);
+    eq(
+      untrustedIngestedThisTurn(),
+      false,
+      "🔴 D9 DISCRIMINATOR, SESSION HALF ON A LATER TURN: a stamp naming ANOTHER parent session does not taint a child at `sequence > 0` — the half that carries the whole discrimination once the pin goes stale",
+    );
+  });
+
+  await contextStorage.run(new ContextContainer(), async () => {
     const root = fwdCtx({ id: "sess-fwd-root", turn: { id: "turn_9", sequence: 9 }, attributes: { [ATTR]: "sess-fwd-root|turn_8" } });
     await turnStarted(root);
     eq(untrustedIngestedThisTurn(), false, "🔴 D9: a session with NO `session.parent` never adopts, whatever its bag carries — the seat's own next turn and a roll-own worker are both this case");
@@ -706,10 +727,23 @@ function inSession<T>(fn: () => T): T {
       id: "sess-fwd-persistent",
       turn: { id: "turn_3", sequence: 3 },
       parent: { sessionId: "sess-fwd-parent", callId: "call_f3", turn: { id: "turn_7", sequence: 7 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_7" },
+      attributes: { [ATTR]: "sess-fwd-parent|turn_9|web" },
     });
     await turnStarted(later);
-    eq(untrustedIngestedThisTurn(), false, "🔴 D9: a persistent child's LATER turn does not re-adopt its dispatching turn's taint — the gate is the child's OWN `turn.sequence`");
+    eq(
+      untrustedIngestedThisTurn(),
+      true,
+      "🔴 D9 CONTINUATION: a persistent child's LATER turn ADOPTS a stamp it has not seen — the stamp names the parent's turn_9, the stale pin names turn_7, and the pin is not what decides",
+    );
+
+    const again = fwdCtx({
+      id: "sess-fwd-persistent",
+      turn: { id: "turn_4", sequence: 4 },
+      parent: { sessionId: "sess-fwd-parent", callId: "call_f3", turn: { id: "turn_7", sequence: 7 } },
+      attributes: { [ATTR]: "sess-fwd-parent|turn_9|web" },
+    });
+    await turnStarted(again);
+    eq(untrustedIngestedThisTurn(), false, "🔴 D9 THE MEMO: the SAME stamp arriving on the next turn of the SAME child adopts NOTHING — a value that outlived its delivery cannot re-taint forever");
   });
 
   await contextStorage.run(new ContextContainer(), async () => {

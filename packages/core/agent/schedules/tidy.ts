@@ -8,6 +8,7 @@ import type { Domain } from "../memory/domain.js";
 import { tidySilo, tidySiloJudged, type TidyResult, type JudgeStats } from "../memory/dream/tidy.js";
 import { dreamJudge } from "../memory/dream/judge.js";
 import { recordMemoryOpProposals, DREAM_ACTOR } from "../memory/dream/proposal.js";
+import { guardProvenanceMarks } from "../memory/provenance-mark.js";
 import { appendAudit } from "../audit/audit.js";
 import { sweepExpiredPendings } from "../approvals/flow.js";
 import { sweepCredentialGrants } from "../access/credential-grant-flow.js";
@@ -112,12 +113,33 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
         result = tidySilo(files, { now });
       }
 
-      if (result.changed) {
+      const guarded = guardProvenanceMarks(files, result.files);
+      if (guarded.reverted.length > 0) {
+        log(`provenance fence: kept pre-tidy bytes for ${org}/${silo.name} — ${guarded.reverted.join(", ")} would have lost an external-provenance mark`);
+      }
+      const changedAfterGuard = Object.entries(guarded.files).some(([rel, content]) => files[rel] !== content);
+      if (guarded.reverted.length > 0 && !changedAfterGuard) {
+        await appendAudit({
+          org,
+          platform: "memory",
+          workspace: silo.name,
+          principalId: DREAM_ACTOR,
+          action: "memory.tidy",
+          detail: {
+            silo: silo.name,
+            provider: silo.provider,
+            applied: [],
+            provenanceReverted: [...guarded.reverted],
+            version: null,
+          },
+        });
+      }
+      if (result.changed && changedAfterGuard) {
         try {
           const sha = await providerById(silo.provider).writeTier(
             p,
             tier,
-            result.files,
+            guarded.files,
             `dream:tidy [${tierId(tier)}] ${result.applied.length} safe op(s)`,
             silo,
             siloAccess(silo.name, domains),
@@ -133,6 +155,7 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
               silo: silo.name,
               provider: silo.provider,
               applied: result.applied.map((o) => ({ kind: o.kind, file: o.file, summary: o.summary })),
+              ...(guarded.reverted.length > 0 ? { provenanceReverted: [...guarded.reverted] } : {}),
               version: sha,
             },
           });
@@ -141,7 +164,8 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
           continue;
         }
       }
-      applied += result.applied.length;
+      const refused = new Set(guarded.reverted);
+      applied += result.applied.filter((o) => !refused.has(o.file)).length;
       proposed += await recordMemoryOpProposals(org, silo.name, result.proposals);
     }
     try {

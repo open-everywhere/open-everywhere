@@ -5,10 +5,13 @@ import {
   beginTaintTurn,
   markUntrustedIngestedThisTurn,
   registerTaintFlipObserver,
+  registerTaintKindObserver,
+  taintKindsThisTurn,
   untrustedIngestedThisTurn,
   OE_TAINTED_FIRE_ATTR,
   OE_CHAT_NONMEMBER_ATTR,
 } from "../access/taint-signal.js";
+import { INGESTION_KINDS, type IngestionKind } from "../access/taint-tiers.js";
 import {
   markSubagentTainted,
   claimSubagentCallClean,
@@ -178,9 +181,35 @@ registerTaintFlipObserver(() => {
   }
 });
 
+registerTaintKindObserver(() => {
+  recordTurnTaintForChildren();
+});
+
 export const TAINT_FORWARD_ACTION = "taint.forward";
 
 export const OE_PARENT_TURN_TAINTED_ATTR = "oe_parent_turn_tainted";
+
+interface ForwardStamp {
+  readonly sessionId: string;
+  readonly turnId: string;
+  readonly kinds: readonly IngestionKind[];
+  readonly raw: string;
+}
+
+function renderForwardStamp(sessionId: string, turnId: string, kinds: readonly string[]): string {
+  const named = kinds.filter((k): k is IngestionKind => (INGESTION_KINDS as readonly string[]).includes(k));
+  return named.length > 0 ? `${sessionId}|${turnId}|${named.join(",")}` : `${sessionId}|${turnId}`;
+}
+
+function parseForwardStamp(value: unknown): ForwardStamp | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  const parts = value.split("|");
+  if (parts.length < 2 || parts.length > 3) return null;
+  const [sessionId, turnId, tail] = parts;
+  if (sessionId === undefined || sessionId.length === 0 || turnId === undefined || turnId.length === 0) return null;
+  const kinds = (tail ?? "").split(",").filter((k): k is IngestionKind => (INGESTION_KINDS as readonly string[]).includes(k));
+  return { sessionId, turnId, kinds, raw: value };
+}
 
 const turnIdentity = defineState<{ org: string; sessionId: string; turnId: string; attrs: Record<string, unknown> | null } | null>(
   "open-everywhere.taint-forward.turn-identity",
@@ -223,7 +252,7 @@ export function recordTurnTaintForChildren(): boolean {
     if (!untrustedIngestedThisTurn()) return false;
     const who = turnIdentity.get();
     if (who === null || who.attrs === null) return false;
-    const stamp = `${who.sessionId}|${who.turnId}`;
+    const stamp = renderForwardStamp(who.sessionId, who.turnId, taintKindsThisTurn());
     who.attrs[OE_PARENT_TURN_TAINTED_ATTR] = stamp;
     if (who.attrs[OE_PARENT_TURN_TAINTED_ATTR] !== stamp) return false;
     let first = false;
@@ -247,27 +276,47 @@ export function recordTurnTaintForChildren(): boolean {
   }
 }
 
-function readParentTurn(ctx: HookContext): { sessionId: string; turnId: string } | null {
-  const session = (ctx as { session?: { turn?: { sequence?: unknown }; parent?: { sessionId?: unknown; turn?: { id?: unknown } } } }).session;
-  const ownSequence = session?.turn?.sequence;
-  if (typeof ownSequence === "number" && ownSequence > 0) return null;
-  const sessionId = session?.parent?.sessionId;
-  const turnId = session?.parent?.turn?.id;
-  if (typeof sessionId === "string" && sessionId.length > 0 && typeof turnId === "string" && turnId.length > 0) {
-    return { sessionId, turnId };
-  }
-  return null;
+function readParentSession(ctx: HookContext): string | null {
+  const sessionId = (ctx as { session?: { parent?: { sessionId?: unknown } } }).session?.parent?.sessionId;
+  if (typeof sessionId === "string" && sessionId.length > 0) return sessionId;
+  return readParentLink(ctx)?.sessionId ?? null;
 }
 
-function parentTurnTaintStampMatches(ctx: HookContext): boolean {
+function laterTurnOfSameChild(ctx: HookContext): boolean {
+  const seq = (ctx as { session?: { turn?: { sequence?: unknown } } }).session?.turn?.sequence;
+  return typeof seq === "number" && seq > 0;
+}
+
+const adoptedForwardStamps = defineState<readonly string[]>("open-everywhere.taint-forward.adopted-stamps", () => []);
+
+function memoKey(raw: string, turnId: string | undefined): string {
+  return typeof turnId === "string" && turnId.length > 0 ? `${raw}@${turnId}` : raw;
+}
+
+const MAX_REMEMBERED_STAMPS = 16;
+
+function matchingForwardStamp(ctx: HookContext): ForwardStamp | null {
   try {
-    const parent = readParentTurn(ctx);
-    if (parent === null) return false;
+    const parentSession = readParentSession(ctx);
+    if (parentSession === null) return null;
     const raw = currentAttrs(ctx)?.[OE_PARENT_TURN_TAINTED_ATTR];
-    const value = Array.isArray(raw) ? raw[0] : raw;
-    return typeof value === "string" && value === `${parent.sessionId}|${parent.turnId}`;
+    const stamp = parseForwardStamp(Array.isArray(raw) ? raw[0] : raw);
+    if (stamp === null || stamp.sessionId !== parentSession) return null;
+    if (!laterTurnOfSameChild(ctx)) {
+      const pinned = (ctx as { session?: { parent?: { turn?: { id?: unknown } } } }).session?.parent?.turn?.id;
+      if (typeof pinned === "string" && pinned.length > 0 && stamp.turnId !== pinned) return null;
+    }
+    let ownTurnId: string | undefined;
+    try {
+      ownTurnId = currentTurnId(ctx as unknown as BindableContext);
+    } catch {
+      ownTurnId = undefined;
+    }
+    const memo = adoptedForwardStamps.get();
+    if (memo.includes(memoKey(stamp.raw, ownTurnId))) return stamp;
+    return memo.some((k) => k === stamp.raw || k.startsWith(`${stamp.raw}@`)) ? null : stamp;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -293,7 +342,8 @@ export function adoptedParentTurnTaintThisTurn(ctx: HookContext): boolean {
 export function adoptParentTurnTaint(ctx: HookContext): boolean {
   if (!taintEnabled()) return false;
   try {
-    if (!parentTurnTaintStampMatches(ctx)) return false;
+    const stamp = matchingForwardStamp(ctx);
+    if (stamp === null) return false;
     let ownTurnId: string | undefined;
     try {
       ownTurnId = currentTurnId(ctx as unknown as BindableContext);
@@ -301,8 +351,12 @@ export function adoptParentTurnTaint(ctx: HookContext): boolean {
       ownTurnId = undefined;
     }
     parentTurnTaintAdopted.update(() => (typeof ownTurnId === "string" ? ownTurnId : ""));
-    markUntrustedIngestedThisTurn();
-    const parent = readParentTurn(ctx);
+    adoptedForwardStamps.update((cur) => {
+      const key = memoKey(stamp.raw, ownTurnId);
+      return cur.includes(key) ? cur : [...cur, key].slice(-MAX_REMEMBERED_STAMPS);
+    });
+    if (stamp.kinds.length === 0) markUntrustedIngestedThisTurn();
+    else for (const kind of stamp.kinds) markUntrustedIngestedThisTurn(kind);
     const sessionId = (ctx as { session?: { id?: string } }).session?.id;
     void appendAudit({
       org: deploymentOrg(),
@@ -312,8 +366,9 @@ export function adoptParentTurnTaint(ctx: HookContext): boolean {
       detail: {
         leg: "adopt",
         ...(typeof sessionId === "string" && sessionId.length > 0 ? { session: sessionId } : {}),
-        parentSession: parent?.sessionId ?? "",
-        parentTurn: parent?.turnId ?? "",
+        parentSession: stamp.sessionId,
+        parentTurn: stamp.turnId,
+        kinds: [...stamp.kinds],
       },
     }).catch(() => undefined);
     return true;

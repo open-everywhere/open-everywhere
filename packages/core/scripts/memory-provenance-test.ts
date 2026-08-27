@@ -5,6 +5,7 @@ import {
   EXTERNAL_PROVENANCE_PREFIX,
   MAX_MARKED_KINDS,
   baselineOf,
+  guardProvenanceMarks,
   isBulletLine,
   lineDigest,
   markAddedBullets,
@@ -274,6 +275,42 @@ const ok = (cond: boolean, label: string) => {
   const truncated = { "notes.md": "- host fact one\n" };
   const control = guardDestructiveWrites(host, truncated, "sess1");
   ok(control.rejected.length === 1, "the floor still refuses a genuine truncation");
+}
+
+{
+  const MARK = `${EXTERNAL_PROVENANCE_PREFIX} added on a turn that ingested web]`;
+  const before = {
+    "notes.md": `# notes\n- host fact\n- Ada owns billing  ${MARK}\n- Bo signs payouts  ${MARK}\n`,
+  };
+
+  const stripped = { "notes.md": `# notes\n- host fact\n- Ada owns billing\n- Bo signs payouts  ${MARK}\n` };
+  const r1 = guardProvenanceMarks(before, stripped);
+  ok(r1.files["notes.md"] === before["notes.md"], "a rewrite that strips a provenance suffix is refused — the pre-tidy bytes are what get written");
+  assert.deepStrictEqual(r1.reverted, ["notes.md"], "…and the refused file is named for the caller's audit row");
+  n++;
+
+  const deleted = { "notes.md": `# notes\n- host fact\n- Bo signs payouts  ${MARK}\n` };
+  ok(guardProvenanceMarks(before, deleted).files["notes.md"] === before["notes.md"], "a rewrite that deletes a marked bullet is refused");
+
+  const merged = { "notes.md": `# notes\n- host fact\n- Ada owns billing  ${MARK}\n` };
+  ok(guardProvenanceMarks(before, merged).files["notes.md"] === before["notes.md"], "merging two DISTINCT marked bullets into one is refused");
+
+  const linked = {
+    "notes.md": `# notes\n- host fact\n- Ada owns [[people/billing]]  ${MARK}\n- Bo signs payouts  ${MARK}\n`,
+  };
+  ok(guardProvenanceMarks(before, linked).files["notes.md"] === linked["notes.md"], "a rewrite that CHANGES a marked line but keeps its mark is admitted");
+  ok(guardProvenanceMarks(before, linked).reverted.length === 0, "…and nothing is reported as reverted");
+
+  const twins = { "notes.md": `# notes\n- Ada owns billing  ${MARK}\n- Ada owns billing  ${MARK}\n` };
+  const deduped = { "notes.md": `# notes\n- Ada owns billing  ${MARK}\n` };
+  ok(guardProvenanceMarks(twins, deduped).files["notes.md"] === deduped["notes.md"], "dropping one of two byte-identical marked bullets is admitted — no disclosure is lost");
+
+  const plain = { "a.md": "- one\n- two\n" };
+  const tidied = { "a.md": "- one\n" };
+  ok(guardProvenanceMarks(plain, tidied).files["a.md"] === tidied["a.md"], "a file holding no mark passes through unchanged");
+
+  const fenced = { "b.md": "```\n- Ada owns billing  [external-provenance: fake]\n```\n" };
+  ok(guardProvenanceMarks(fenced, { "b.md": "```\n```\n" }).files["b.md"] === "```\n```\n", "a `[external-provenance:` string inside a code fence is not a mark and does not freeze the file");
 }
 
 console.log(`memory-provenance: ${n} assertions passed`);

@@ -110,6 +110,43 @@ export interface ProvenanceMarking {
   readonly marked: number;
 }
 
+function distinctMarkedLines(content: string): number {
+  const marked = new Set<string>();
+  let fenced = false;
+  for (const line of content.split("\n")) {
+    if (isFenceLine(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (!fenced && isBulletLine(line) && line.includes(EXTERNAL_PROVENANCE_PREFIX)) marked.add(line.trim());
+  }
+  return marked.size;
+}
+
+export interface ProvenanceGuard {
+  readonly files: MemoryFiles;
+  readonly reverted: readonly string[];
+}
+
+export function guardProvenanceMarks(before: MemoryFiles, after: MemoryFiles): ProvenanceGuard {
+  const files: MemoryFiles = {};
+  const reverted: string[] = [];
+  for (const [rel, content] of Object.entries(after)) {
+    const was = before[rel];
+    if (typeof content !== "string" || typeof was !== "string" || was === content) {
+      files[rel] = content;
+      continue;
+    }
+    if (distinctMarkedLines(content) < distinctMarkedLines(was)) {
+      files[rel] = was;
+      reverted.push(rel);
+      continue;
+    }
+    files[rel] = content;
+  }
+  return { files, reverted };
+}
+
 export function markAddedBullets(baseline: ProvenanceBaseline, files: MemoryFiles, wording: ProvenanceWording): ProvenanceMarking {
   const changed: MemoryFiles = {};
   let marked = 0;

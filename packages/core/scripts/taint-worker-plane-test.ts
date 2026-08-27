@@ -199,7 +199,11 @@ console.log("5 — a native child of a tainted parent turn is MARKED, so section
     openTaintTurn(parent as never);
     markUntrustedIngestedThisTurn("web");
     ok(untrustedIngestedThisTurn(), "[5] precondition: the PARENT turn is tainted");
-    eq(parentBag[OE_PARENT_TURN_TAINTED_ATTR], "wplane-parent|turn_4", "[5] 🔴 THE STAMP: the tainted parent turn wrote its own (session, turn) pair into the auth bag eve copies");
+    eq(
+      parentBag[OE_PARENT_TURN_TAINTED_ATTR],
+      "wplane-parent|turn_4|web",
+      "[5] 🔴 THE STAMP: the tainted parent turn wrote its own (session, turn) pair into the auth bag eve copies — with the KIND it read (OPE-1215), so the child can name the source in any bullet it writes",
+    );
   });
   await inSession(() => {
     const child = {

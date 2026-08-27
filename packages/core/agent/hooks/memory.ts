@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { resolvePartition } from "../memory/partition.js";
-import { bindFrom, isSubagentChildContext, windowGrainOf, type BindableContext } from "../identity/binding.js";
+import { bindFrom, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { planFor, type ResolvedMemory } from "../memory/resolve.js";
 import { providerById } from "../memory/provider.js";
 import { renderMemoryIndex } from "../memory/listing.js";
@@ -488,7 +488,7 @@ async function unmaterialiseDroppedTiers(
   return removed;
 }
 
-async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
+async function resyncSupervisorReads(ctx: HookContext): Promise<readonly string[]> {
   let sandbox: Awaited<ReturnType<HookContext["getSandbox"]>> | null = null;
   let rootUnlocked = false;
   const openSandbox = async (): Promise<Awaited<ReturnType<HookContext["getSandbox"]>>> => {
@@ -504,7 +504,7 @@ async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
     return sandbox;
   };
   try {
-    await runSupervisorResync(ctx, openSandbox);
+    return await runSupervisorResync(ctx, openSandbox);
   } finally {
     if (rootUnlocked && sandbox) await lockMemoryRoot(sandbox);
   }
@@ -513,7 +513,7 @@ async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
 async function runSupervisorResync(
   ctx: HookContext,
   openSandbox: () => Promise<Awaited<ReturnType<HookContext["getSandbox"]>>>,
-): Promise<void> {
+): Promise<readonly string[]> {
   const binding = bindFrom(ctx);
   const p = resolvePartition(ctx);
   const plan = planFor(binding, p);
@@ -522,7 +522,7 @@ async function runSupervisorResync(
   const dropped = Object.entries(known)
     .filter(([tid]) => !planned.has(tid))
     .map(([tid, v]) => ({ tierId: tid, ...v }));
-  if (plan.reads.length === 0 && dropped.length === 0) return;
+  if (plan.reads.length === 0 && dropped.length === 0) return [];
   const last = readSyncVersions.get();
   const next: Record<string, string | null> = { ...last };
   let sandbox: Awaited<ReturnType<HookContext["getSandbox"]>> | null = null;
@@ -611,12 +611,12 @@ async function runSupervisorResync(
       log(`turn.started index refresh failed (silo materialisation itself already applied): ${String(err)}`);
     }
   }
+  return resynced;
 }
 
-function provenanceArmed(ctx: MemoryPersistContext): boolean {
+function provenanceArmed(): boolean {
   try {
-    if (!taintEnabled()) return false;
-    return windowGrainOf(ctx as unknown as BindableContext) === "task";
+    return taintEnabled();
   } catch {
     return false;
   }
@@ -625,7 +625,7 @@ function provenanceArmed(ctx: MemoryPersistContext): boolean {
 async function provenanceTargets(
   ctx: MemoryPersistContext,
 ): Promise<{ p: ReturnType<typeof resolvePartition>; principalId: string | undefined; writes: readonly ResolvedMemory[]; sandbox: MemorySandbox } | null> {
-  if (!provenanceArmed(ctx)) return null;
+  if (!provenanceArmed()) return null;
   const p = resolvePartition(ctx);
   const binding = bindFrom(ctx);
   const plan = planFor(binding, p);
@@ -644,6 +644,38 @@ async function captureProvenanceBaseline(ctx: MemoryPersistContext): Promise<voi
     log(`provenance baseline captured for ${target.writes.length} writable tier(s)`);
   } catch (err) {
     log(`provenance baseline capture SKIPPED — no bullet this session adds takes a mark: ${String(err)}`);
+  }
+}
+
+async function rebaseProvenanceAfterResync(ctx: MemoryPersistContext, resynced: readonly string[]): Promise<void> {
+  if (resynced.length === 0) return;
+  const touched = new Set(resynced);
+  let target: Awaited<ReturnType<typeof provenanceTargets>> = null;
+  try {
+    if (provenanceBaseline.get().armed !== true) return;
+    target = await provenanceTargets(ctx);
+    if (target === null) return;
+  } catch (err) {
+    log(`provenance re-base preamble failed, nothing advanced: ${String(err)}`);
+    return;
+  }
+  const advanced: string[] = [];
+  const dropped: string[] = [];
+  for (const rm of target.writes) {
+    const tid = tierId(rm.tier);
+    if (!touched.has(tid)) continue;
+    try {
+      const fresh = baselineOf(await readTierFromSandbox(target.sandbox, rm.tier));
+      provenanceBaseline.update((cur) => ({ ...cur, armed: true, tiers: { ...(cur.tiers ?? {}), [tid]: fresh } }));
+      advanced.push(tid);
+    } catch (err) {
+      provenanceBaseline.update((cur) => ({ ...cur, armed: true, tiers: Object.fromEntries(Object.entries(cur.tiers ?? {}).filter(([k]) => k !== tid)) }));
+      dropped.push(tid);
+      log(`provenance re-base could not read ${tid}, so it takes NO mark this turn: ${String(err)}`);
+    }
+  }
+  if (advanced.length > 0 || dropped.length > 0) {
+    log(`provenance baseline re-based over ${advanced.length} re-synced tier(s)${dropped.length > 0 ? `, ${dropped.length} dropped` : ""}`);
   }
 }
 
@@ -822,12 +854,18 @@ export default defineHook({
     },
 
     "turn.started": async (_event, ctx) => {
+      let resynced: readonly string[] = [];
       if (resyncArmed(ctx)) {
         try {
-          await resyncSupervisorReads(ctx);
+          resynced = await resyncSupervisorReads(ctx);
         } catch (err) {
           log(`turn.started re-sync skipped: ${String(err)}`);
         }
+      }
+      try {
+        await rebaseProvenanceAfterResync(ctx, resynced);
+      } catch (err) {
+        log(`provenance re-base skipped: ${String(err)}`);
       }
       await captureProvenanceBaseline(ctx);
     },

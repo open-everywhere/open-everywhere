@@ -1,3 +1,4 @@
+
 process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";
@@ -388,8 +389,14 @@ overrideSettingsForTest({ window: { topology: true } });
   const runs = s.sandbox.runs;
   await fire(s, "turn.started");
   ok(brain.calls.tierVersion + roStore.calls.tierVersion === probesBefore, "non-supervisor turn.started probes nothing");
-  ok(brain.calls.readTier === reads && s.sandbox.writes === writes && s.sandbox.runs === runs, "non-supervisor turn.started takes ZERO provider/sandbox actions");
+  ok(brain.calls.readTier === reads, "non-supervisor turn.started takes ZERO provider actions — the re-sync never runs for it");
+  ok(s.sandbox.writes === writes, "non-supervisor turn.started writes NOTHING into the sandbox — the re-materialisation never runs for it");
   ok(s.sandbox.files.get("memory/brain-silo/thread-test.md") === undefined, "non-supervisor session keeps today's session-start snapshot");
+
+  const runsAfterFirst = s.sandbox.runs;
+  ok(runsAfterFirst > runs, "precondition: the FIRST turn boundary did take the baseline listing — so the assertion below is not vacuous");
+  await fire(s, "turn.started");
+  ok(s.sandbox.runs === runsAfterFirst, "🔴 the seat's SECOND turn boundary takes ZERO sandbox actions — the provenance baseline is captured once per session, not once per turn");
 }
 
 overrideSettingsForTest({ window: { topology: false } });
@@ -404,7 +411,8 @@ overrideSettingsForTest({ window: { topology: false } });
   const runs = s.sandbox.runs;
   await fire(s, "turn.started");
   ok(brain.calls.tierVersion + roStore.calls.tierVersion === probesBefore, "gate OFF: turn.started probes nothing");
-  ok(brain.calls.readTier === reads && s.sandbox.writes === writes && s.sandbox.runs === runs, "gate OFF: turn.started takes ZERO provider/sandbox actions — byte-identical to today");
+  ok(brain.calls.readTier === reads, "gate OFF: turn.started takes ZERO provider actions — byte-identical to today");
+  ok(s.sandbox.writes === writes, "gate OFF: turn.started writes NOTHING into the sandbox — byte-identical to today");
   ok(s.sandbox.files.get("memory/brain-silo/gate-off.md") === undefined, "gate OFF: the supervisor keeps the session-start snapshot exactly as before this change");
 }
 
