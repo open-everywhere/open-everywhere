@@ -4,7 +4,9 @@ import {
   CredentialError,
   findConnectorCredential,
   guardCredentialFetch,
+  withRetryAfter,
   type CredentialEndpointRules,
+  type RateLimitRetryOptions,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { NOTION_CHANNEL_CREDENTIAL, NOTION_PROVIDER } from "./notion-credentials.js";
 import type { NotionParentLink } from "./notion-ancestry-trust.js";
@@ -154,6 +156,7 @@ export interface NotionCallOpts {
   readonly fetch?: FetchLike;
   readonly version?: string;
   readonly endpoints?: CredentialEndpointRules;
+  readonly retry?: Pick<RateLimitRetryOptions, "maxAttempts" | "capMs" | "fallbackMs" | "totalBudgetMs" | "sleep" | "now">;
 }
 
 function notionHeaders(opts: NotionCallOpts): Record<string, string> {
@@ -164,9 +167,29 @@ function notionHeaders(opts: NotionCallOpts): Record<string, string> {
   };
 }
 
+export function notionOperation(method: string | undefined, url: string): string {
+  const verb = (method ?? "GET").toUpperCase();
+  let path: string;
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    return verb;
+  }
+  const shape = path
+    .split("/")
+    .map((seg) => (/^[0-9a-f]{32}$/i.test(seg.replaceAll("-", "")) ? "{id}" : seg))
+    .join("/");
+  return `${verb} ${shape}`;
+}
+
 function notionFetch(url: string, init: RequestInit, opts: NotionCallOpts): Promise<Response> {
   const base = opts.fetch ?? (globalThis.fetch as FetchLike);
-  return guardCredentialFetch(opts.endpoints, "notion credential", base)(url, init);
+  const send = guardCredentialFetch(opts.endpoints, "notion credential", base);
+  return withRetryAfter(() => send(url, init), {
+    ...opts.retry,
+    surface: "notion",
+    operation: notionOperation(init.method, url),
+  });
 }
 
 export interface NotionComment {

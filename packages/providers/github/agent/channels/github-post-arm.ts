@@ -7,6 +7,8 @@ import {
   resolveGitHubInstallationId,
   warmCredential,
   markNotApplied,
+  withRetryAfter,
+  type RateLimitRetryOptions,
   type BrokeredSecret,
   type PostArm,
   type ReplyTarget,
@@ -75,17 +77,47 @@ async function installationTokenFor(origin: GitHubOrigin): Promise<string> {
   return installationToken.get({ appId: creds.appId, privateKeyPem: creds.privateKeyPem, installationId, owner: origin.owner, repo: origin.repo });
 }
 
+const GITHUB_API_BASE = "https://api.github.com";
+
+export type GitHubFetchLike = (input: string, init: RequestInit) => Promise<Response>;
+
+export interface GitHubWriteDeps {
+  readonly fetch?: GitHubFetchLike;
+  readonly retry?: Pick<RateLimitRetryOptions, "maxAttempts" | "capMs" | "fallbackMs" | "totalBudgetMs" | "sleep" | "now">;
+}
+
+export async function githubWrite(
+  input: {
+    readonly operation: string;
+    readonly method: "POST" | "PATCH";
+    readonly path: string;
+    readonly token: string;
+    readonly body: unknown;
+  },
+  deps: GitHubWriteDeps = {},
+): Promise<Response> {
+  const send = (): Promise<Response> =>
+    (deps.fetch ?? (globalThis.fetch as GitHubFetchLike))(`${GITHUB_API_BASE}${input.path}`, {
+      method: input.method,
+      headers: {
+        authorization: `Bearer ${input.token}`,
+        accept: "application/vnd.github+json",
+        "x-github-api-version": "2022-11-28",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(input.body),
+    });
+  return withRetryAfter(send, { ...deps.retry, surface: "github", operation: input.operation });
+}
+
 export async function liveGitHubPost(origin: GitHubOrigin, text: string): Promise<string> {
   const token = await installationTokenFor(origin);
-  const res = await fetch(`https://api.github.com/repos/${origin.owner}/${origin.repo}/issues/${origin.issueNumber}/comments`, {
+  const res = await githubWrite({
+    operation: "issues.createComment",
     method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      accept: "application/vnd.github+json",
-      "x-github-api-version": "2022-11-28",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ body: text }),
+    path: `/repos/${origin.owner}/${origin.repo}/issues/${origin.issueNumber}/comments`,
+    token,
+    body: { body: text },
   });
   if (!res.ok) {
     throw Object.assign(new Error(`reply couldn't post to GitHub — ${res.status} on ${origin.owner}/${origin.repo}#${origin.issueNumber}`), { status: res.status });
@@ -112,15 +144,12 @@ export async function liveGitHubEditComment(channelId: string, commentId: string
     throw markNotApplied(new Error(`edit_reply couldn't parse the GitHub locus "${channelId}" — expected "owner/repo".`));
   }
   const token = await installationTokenFor({ platform: "github", owner, repo, issueNumber: 0 });
-  const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/comments/${commentId}`, {
+  const res = await githubWrite({
+    operation: "issues.updateComment",
     method: "PATCH",
-    headers: {
-      authorization: `Bearer ${token}`,
-      accept: "application/vnd.github+json",
-      "x-github-api-version": "2022-11-28",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ body: text }),
+    path: `/repos/${owner}/${repo}/issues/comments/${commentId}`,
+    token,
+    body: { body: text },
   });
   if (!res.ok) {
     throw Object.assign(new Error(`edit_reply couldn't edit the GitHub comment — ${res.status} on ${owner}/${repo} comment ${commentId}`), { status: res.status });
@@ -155,15 +184,12 @@ async function liveGitHubReact(origin: GitHubOrigin, emoji: string): Promise<voi
     );
   }
   const token = await installationTokenFor(origin);
-  const res = await fetch(`https://api.github.com/repos/${origin.owner}/${origin.repo}/issues/${origin.issueNumber}/reactions`, {
+  const res = await githubWrite({
+    operation: "issues.createReaction",
     method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      accept: "application/vnd.github+json",
-      "x-github-api-version": "2022-11-28",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ content }),
+    path: `/repos/${origin.owner}/${origin.repo}/issues/${origin.issueNumber}/reactions`,
+    token,
+    body: { content },
   });
   if (!res.ok) {
     throw Object.assign(new Error(`react couldn't post to GitHub — ${res.status} on ${origin.owner}/${origin.repo}#${origin.issueNumber}`), { status: res.status });
