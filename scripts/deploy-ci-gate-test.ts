@@ -13,6 +13,7 @@ import {
   GITHUB_API_BASE,
   GITHUB_API_TIMEOUT_MS,
   HEAVY_JOB_NAME,
+  isTokenForbiddenResponse,
   listFirstParentAncestors,
   parseGithubOwnerRepo,
   realGithubApiFetch,
@@ -1066,6 +1067,212 @@ await check("the four refusal cases still name themselves — red / in flight / 
       assert.equal(other.own.test(c.message), false, `the ${c.label} refusal must not read as ${other.label}`);
     }
   }
+});
+
+const PAT_403_BODY = { message: "Resource not accessible by personal access token", documentation_url: "https://docs.github.com/rest", status: "403" };
+
+function shaRoutedRestFetch(fixture: {
+  checkRuns?: { status: number; body: unknown; raw?: string };
+  statuses?: Record<string, { status: number; body: unknown }>;
+}): GithubApiFetchLike {
+  return async (url) => {
+    const path = new URL(url).pathname;
+    if (path.endsWith("/check-runs")) {
+      const cr = fixture.checkRuns;
+      if (!cr) throw new Error(`shaRoutedRestFetch: no check-runs fixture for ${path}`);
+      return { status: cr.status, text: async () => cr.raw ?? JSON.stringify(cr.body) };
+    }
+    const m = /commits\/([0-9a-fA-F]+)\/status$/.exec(path);
+    if (m) {
+      const entry = fixture.statuses?.[m[1]];
+      if (!entry) throw new Error(`shaRoutedRestFetch: no status fixture for ${m[1]}`);
+      return { status: entry.status, text: async () => JSON.stringify(entry.body) };
+    }
+    throw new Error(`shaRoutedRestFetch: unhandled ${path}`);
+  };
+}
+
+function noGhExecWithGit(fixture: { ancestors?: string[]; diffs?: Record<string, string[]> }): Exec {
+  return async (command, args) => {
+    if (command === "gh") return GH_ENOENT;
+    if (command === "git" && args[0] === "rev-list") return { code: 0, stdout: `${(fixture.ancestors ?? []).join("\n")}\n`, stderr: "" };
+    if (command === "git" && args[0] === "diff") {
+      const paths = fixture.diffs?.[`${args[2]}..${args[3]}`];
+      if (paths === undefined) return { code: 1, stdout: "", stderr: `no diff fixture for ${args[2]}..${args[3]}` };
+      return { code: 0, stdout: paths.length ? `${paths.join("\n")}\n` : "", stderr: "" };
+    }
+    throw new Error(`noGhExecWithGit: unexpected exec(${command}, ${JSON.stringify(args)})`);
+  };
+}
+
+const statusOk = (statuses: CommitStatus[]) => ({ status: 200, body: { total_count: statuses.length, statuses } });
+const GREEN_PROOF = statusOk([{ context: CLOUD_PROOF_CONTEXT, state: "success" }]);
+
+check("isTokenForbiddenResponse: true ONLY for a 403 whose JSON message carries GitHub's PAT wording", () => {
+  assert.equal(isTokenForbiddenResponse({ status: 403, text: JSON.stringify(PAT_403_BODY) }), true);
+  assert.equal(isTokenForbiddenResponse({ status: 403, text: JSON.stringify({ message: "RESOURCE NOT ACCESSIBLE BY PERSONAL ACCESS TOKEN" }) }), true);
+
+  assert.equal(isTokenForbiddenResponse({ status: 401, text: JSON.stringify(PAT_403_BODY) }), false);
+  assert.equal(isTokenForbiddenResponse({ status: 404, text: JSON.stringify(PAT_403_BODY) }), false);
+  assert.equal(isTokenForbiddenResponse({ status: 403, text: JSON.stringify({ message: "Resource not accessible by integration" }) }), false);
+  assert.equal(isTokenForbiddenResponse({ status: 403, text: JSON.stringify({ error: "forbidden" }) }), false);
+  assert.equal(isTokenForbiddenResponse({ status: 403, text: JSON.stringify("Resource not accessible by personal access token") }), false);
+  assert.equal(isTokenForbiddenResponse({ status: 403, text: "Resource not accessible by personal access token" }), false);
+  assert.equal(isTokenForbiddenResponse({ status: 403, text: JSON.stringify({ message: "Forbidden", documentation_url: "not accessible by personal access token" }) }), false);
+  assert.equal(isTokenForbiddenResponse(undefined), false);
+});
+
+await check("fetchCheckRunsForSha: the PAT 403 still refuses — it is flagged, never turned into an empty check-run list", async () => {
+  const fetchImpl = shaRoutedRestFetch({ checkRuns: { status: 403, body: PAT_403_BODY } });
+  const result = await fetchCheckRunsForSha({ sha: SHA, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.forbiddenForToken, true);
+    assert.match(result.reason, /HTTP 403/);
+  }
+});
+
+await check("fetchCheckRunsForSha: a 500 is NOT flagged — the flag tracks the error class, not merely 'the read failed'", async () => {
+  const fetchImpl = shaRoutedRestFetch({ checkRuns: { status: 500, body: { message: "Server Error" } } });
+  const result = await fetchCheckRunsForSha({ sha: SHA, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.forbiddenForToken, undefined);
+});
+
+await check("runCiGate: the PAT 403 on check-runs + a GREEN oe/cloud-proof PASSES — the live-run shape", async () => {
+  const fetchImpl = shaRoutedRestFetch({ checkRuns: { status: 403, body: PAT_403_BODY }, statuses: { [SHA]: GREEN_PROOF } });
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "pass");
+  assert.match(decision.message, /oe\/cloud-proof/);
+  assert.match(decision.message, /could not be read with this token/);
+  assert.doesNotMatch(decision.message, /no GitHub check-run exists/);
+});
+
+await check("runCiGate: an EMPTY check-runs read still reports 'no GitHub check-run exists' — negative control for the 403 wording", async () => {
+  const fetchImpl = shaRoutedRestFetch({ checkRuns: { status: 200, body: { total_count: 0, check_runs: [] } }, statuses: { [SHA]: GREEN_PROOF } });
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "pass");
+  assert.match(decision.message, /no GitHub check-run exists/);
+  assert.doesNotMatch(decision.message, /could not be read with this token/);
+});
+
+await check("runCiGate: the PAT 403 + NO oe/cloud-proof anywhere REFUSES — the tolerance grants no verdict of its own", async () => {
+  const fetchImpl = shaRoutedRestFetch({
+    checkRuns: { status: 403, body: PAT_403_BODY },
+    statuses: { [SHA]: statusOk([]), [A1]: statusOk([]), [A2]: statusOk([]) },
+  });
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: noGhExecWithGit({ ancestors: [SHA, A1, A2] }), fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /no green oe\/cloud-proof status found/);
+});
+
+await check("runCiGate: the PAT 403 + a RED oe/cloud-proof REFUSES", async () => {
+  const fetchImpl = shaRoutedRestFetch({
+    checkRuns: { status: 403, body: PAT_403_BODY },
+    statuses: { [SHA]: statusOk([{ context: CLOUD_PROOF_CONTEXT, state: "failure" }]) },
+  });
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /oe\/cloud-proof is red/);
+});
+
+await check("runCiGate: the PAT 403 + a PENDING oe/cloud-proof REFUSES", async () => {
+  const fetchImpl = shaRoutedRestFetch({
+    checkRuns: { status: 403, body: PAT_403_BODY },
+    statuses: { [SHA]: statusOk([{ context: CLOUD_PROOF_CONTEXT, state: "pending" }]) },
+  });
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /still pending/);
+});
+
+await check("runCiGate: the IDENTICAL PAT 403 on the STATUS read still REFUSES — the tolerance names one endpoint", async () => {
+  const fetchImpl = shaRoutedRestFetch({
+    checkRuns: { status: 200, body: { total_count: 0, check_runs: [] } },
+    statuses: { [SHA]: { status: 403, body: PAT_403_BODY }, [A1]: statusOk([]), [A2]: GREEN_PROOF },
+  });
+  const exec = noGhExecWithGit({ ancestors: [SHA, A1, A2], diffs: { [`${A2}..${SHA}`]: ["docs/deploy/rollback.md"] } });
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /could not be read/);
+  assert.match(decision.message, /HTTP 403/);
+  assert.doesNotMatch(decision.message, /walk-back/);
+});
+
+await check("runCiGate: a PAT 403 on BOTH endpoints REFUSES — a token that reads nothing proves nothing", async () => {
+  const fetchImpl = shaRoutedRestFetch({ checkRuns: { status: 403, body: PAT_403_BODY }, statuses: { [SHA]: { status: 403, body: PAT_403_BODY } } });
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /refusing rather than guessing/);
+});
+
+for (const c of [
+  { label: "a 403 with GitHub's APP wording (not a PAT)", fixture: { status: 403, body: { message: "Resource not accessible by integration" } } },
+  { label: "a 403 with no recognisable message field", fixture: { status: 403, body: { error: "forbidden" } } },
+  { label: "a 403 whose body is not JSON", fixture: { status: 403, body: null, raw: "<html>403 Forbidden</html>" } },
+  { label: "a 401 (a bad or expired token)", fixture: { status: 401, body: { message: "Bad credentials" } } },
+  { label: "a 404 (the wrong repo, or no access to it)", fixture: { status: 404, body: { message: "Not Found" } } },
+  { label: "a 429 (rate limited)", fixture: { status: 429, body: { message: "API rate limit exceeded" } } },
+  { label: "a 500 (GitHub is unwell)", fixture: { status: 500, body: { message: "Server Error" } } },
+]) {
+  await check(`runCiGate: ${c.label} on check-runs still REFUSES, even with a green oe/cloud-proof present`, async () => {
+    const fetchImpl = shaRoutedRestFetch({ checkRuns: c.fixture, statuses: { [SHA]: GREEN_PROOF } });
+    const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+    assert.equal(decision.verdict, "refuse");
+    assert.match(decision.message, /could not read CI state/);
+  });
+}
+
+await check("runCiGate: a truncated check-runs page still REFUSES with a green oe/cloud-proof present — OPE-1118 survives OPE-1239", async () => {
+  const fetchImpl = shaRoutedRestFetch({
+    checkRuns: { status: 200, body: { total_count: 150, check_runs: greenRuns(30) } },
+    statuses: { [SHA]: GREEN_PROOF },
+  });
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /does not describe itself consistently/);
+});
+
+await check("runCiGate: `gh` exiting non-zero with the SAME 403 prose still REFUSES — prose is not a status code", async () => {
+  const ghForbidden: Exec = async (command) => {
+    if (command === "gh") return { code: 1, stdout: "", stderr: "gh: Resource not accessible by personal access token (HTTP 403)" };
+    throw new Error("unexpected exec");
+  };
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: ghForbidden, fetchImpl: PANIC_FETCH, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /could not read CI state/);
+  assert.match(decision.message, /exited 1/);
+});
+
+await check("runCiGate: the PAT 403 + no proof on the tip walks back to a green ancestor and PASSES on a non-runtime diff", async () => {
+  const fetchImpl = shaRoutedRestFetch({
+    checkRuns: { status: 403, body: PAT_403_BODY },
+    statuses: { [SHA]: statusOk([]), [A1]: statusOk([]), [A2]: GREEN_PROOF },
+  });
+  const exec = noGhExecWithGit({ ancestors: [SHA, A1, A2], diffs: { [`${A2}..${SHA}`]: ["docs/deploy/rollback.md"] } });
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "pass");
+  assert.match(decision.message, new RegExp(A2.slice(0, 12)));
+  assert.match(decision.message, /could not be read with this token/);
+  assert.doesNotMatch(decision.message, /no GitHub check-run exists/);
+});
+
+await check("runCiGate: the PAT 403 + a walk-back whose diff has a RUNTIME path REFUSES", async () => {
+  const fetchImpl = shaRoutedRestFetch({
+    checkRuns: { status: 403, body: PAT_403_BODY },
+    statuses: { [SHA]: statusOk([]), [A1]: statusOk([]), [A2]: GREEN_PROOF },
+  });
+  const exec = noGhExecWithGit({ ancestors: [SHA, A1, A2], diffs: { [`${A2}..${SHA}`]: ["agent/agent.ts"] } });
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /agent\/agent\.ts/);
+});
+
+await check("walkBackForHeavyProof: a PAT 403 on an ancestor's check-runs REFUSES — the tolerance does not reach this walk-back", async () => {
+  const fetchImpl = shaRoutedRestFetch({ checkRuns: { status: 403, body: PAT_403_BODY } });
+  const decision = await walkBackForHeavyProof({ sha: SHA, exec: noGhExecWithGit({ ancestors: [SHA, A1] }), fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /could not read CI state for ancestor/);
 });
 
 console.log(`✓ deploy-ci-gate: ${checks} check(s) passed (classification, decision matrix, spawn-trap seam, fetch→decide, walk-back, oe/cloud-proof lane, REST fallback transport, fail-closed fetch edge — all offline)`);

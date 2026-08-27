@@ -127,7 +127,7 @@ export async function resolveGithubOwnerRepoFromGit(exec: Exec): Promise<{ owner
   return parseGithubOwnerRepo(res.stdout);
 }
 
-export type GithubApiBody = { ok: true; body: unknown } | { ok: false; reason: string };
+export type GithubApiBody = { ok: true; body: unknown } | { ok: false; reason: string; http?: { status: number; text: string } };
 
 function parseJsonBody(text: string): GithubApiBody {
   try {
@@ -213,7 +213,7 @@ export async function fetchGithubApi(input: {
     if (timer !== undefined) clearTimeout(timer);
   }
   if (httpRes.status < 200 || httpRes.status >= 300) {
-    return { ok: false, reason: `REST fallback GET ${url} → HTTP ${httpRes.status}: ${text.slice(0, 500)}` };
+    return { ok: false, reason: `REST fallback GET ${url} → HTTP ${httpRes.status}: ${text.slice(0, 500)}`, http: { status: httpRes.status, text } };
   }
   return parseJsonBody(text);
 }
@@ -239,7 +239,22 @@ function truncationReason(input: { body: Record<string, unknown>; received: numb
   return undefined;
 }
 
-export type FetchCheckRunsResult = { ok: true; checkRuns: CheckRun[] } | { ok: false; reason: string };
+export const PAT_FORBIDDEN_MESSAGE_MARKER = "not accessible by personal access token";
+
+export function isTokenForbiddenResponse(http: { status: number; text: string } | undefined): boolean {
+  if (!http || http.status !== 403) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(http.text);
+  } catch {
+    return false;
+  }
+  if (!parsed || typeof parsed !== "object") return false;
+  const message = (parsed as Record<string, unknown>).message;
+  return typeof message === "string" && message.toLowerCase().includes(PAT_FORBIDDEN_MESSAGE_MARKER);
+}
+
+export type FetchCheckRunsResult = { ok: true; checkRuns: CheckRun[] } | { ok: false; reason: string; forbiddenForToken?: true };
 
 function parseCheckRunsResponse(body: unknown): FetchCheckRunsResult {
   const noArray = { ok: false as const, reason: "the check-runs response has no `check_runs` array — cannot evaluate CI state" };
@@ -272,7 +287,9 @@ export async function fetchCheckRunsForSha(input: { sha: string; exec?: Exec; fe
     fetchImpl: input.fetchImpl ?? realGithubApiFetch,
     env: input.env ?? process.env,
   });
-  if (!raw.ok) return { ok: false, reason: raw.reason };
+  if (!raw.ok) {
+    return isTokenForbiddenResponse(raw.http) ? { ok: false, reason: raw.reason, forbiddenForToken: true } : { ok: false, reason: raw.reason };
+  }
 
   return parseCheckRunsResponse(raw.body);
 }
@@ -368,6 +385,14 @@ export async function walkBackForHeavyProof(input: { sha: string; exec?: Exec; m
   return { verdict: "refuse", message: `walk-back for ${short}: no green heavy run found within ${maxDepth} ancestor commit(s) — refusing rather than guessing.` };
 }
 
+export type CheckRunsReadOutcome = { kind: "empty" } | { kind: "forbidden" };
+
+function checkRunsClause(outcome: CheckRunsReadOutcome, short: string): string {
+  return outcome.kind === "forbidden"
+    ? `check-runs for ${short} could not be read with this token (HTTP 403, ${PAT_FORBIDDEN_MESSAGE_MARKER})`
+    : `no GitHub check-run exists for ${short}`;
+}
+
 export type CommitStatus = { context: string; state: string };
 
 export type FetchCombinedStatusResult = { ok: true; statuses: CommitStatus[] } | { ok: false; reason: string };
@@ -419,12 +444,20 @@ export function classifyCloudProofStatus(statuses: CommitStatus[]): CloudProofSt
   return { kind: "red", state: status.state };
 }
 
-export async function walkBackForCloudProof(input: { sha: string; exec?: Exec; maxDepth?: number; fetchImpl?: GithubApiFetchLike; env?: Env }): Promise<CiGateDecision> {
+export async function walkBackForCloudProof(input: {
+  sha: string;
+  exec?: Exec;
+  maxDepth?: number;
+  fetchImpl?: GithubApiFetchLike;
+  env?: Env;
+  checkRunsRead?: CheckRunsReadOutcome;
+}): Promise<CiGateDecision> {
   const exec = input.exec ?? realExec;
   const fetchImpl = input.fetchImpl ?? realGithubApiFetch;
   const env = input.env ?? process.env;
   const maxDepth = input.maxDepth ?? WALK_BACK_MAX_DEPTH;
   const short = input.sha.slice(0, 12);
+  const clause = checkRunsClause(input.checkRunsRead ?? { kind: "empty" }, short);
 
   const ancestors = await listFirstParentAncestors({ sha: input.sha, count: maxDepth + 1, exec });
   if (!ancestors.ok) {
@@ -454,7 +487,7 @@ export async function walkBackForCloudProof(input: { sha: string; exec?: Exec; m
     if (isSkippableDiff(diff.paths)) {
       return {
         verdict: "pass",
-        message: `CI is green for ${short} via oe/cloud-proof: no GitHub check-run exists for this sha, but the nearest ancestor with a green oe/cloud-proof status is ${candidateShort} and the diff since then is non-runtime.`,
+        message: `CI is green for ${short} via oe/cloud-proof: ${clause}, but the nearest ancestor with a green oe/cloud-proof status is ${candidateShort} and the diff since then is non-runtime.`,
       };
     }
     const blocking = runtimePaths(diff.paths);
@@ -468,22 +501,31 @@ export async function walkBackForCloudProof(input: { sha: string; exec?: Exec; m
   return { verdict: "refuse", message: `cloud-proof walk-back for ${short}: no green oe/cloud-proof status found within ${maxDepth} ancestor commit(s) — refusing rather than guessing.` };
 }
 
-export async function decideCiGateViaCloudProof(input: { sha: string; isTip: boolean; exec?: Exec; fetchImpl?: GithubApiFetchLike; env?: Env }): Promise<CiGateDecision> {
+export async function decideCiGateViaCloudProof(input: {
+  sha: string;
+  isTip: boolean;
+  exec?: Exec;
+  fetchImpl?: GithubApiFetchLike;
+  env?: Env;
+  checkRunsRead?: CheckRunsReadOutcome;
+}): Promise<CiGateDecision> {
   const exec = input.exec ?? realExec;
   const fetchImpl = input.fetchImpl ?? realGithubApiFetch;
   const env = input.env ?? process.env;
   const short = input.sha.slice(0, 12);
+  const checkRunsRead = input.checkRunsRead ?? { kind: "empty" };
+  const clause = checkRunsClause(checkRunsRead, short);
   const fetched = await fetchCombinedStatusForSha({ sha: input.sha, exec, fetchImpl, env });
   if (!fetched.ok) {
     return {
       verdict: "refuse",
-      message: `no GitHub check-run exists for ${short}, and its oe/cloud-proof status could not be read (${fetched.reason}) — refusing rather than guessing.`,
+      message: `${clause}, and its oe/cloud-proof status could not be read (${fetched.reason}) — refusing rather than guessing.`,
     };
   }
 
   const cloud = classifyCloudProofStatus(fetched.statuses);
   if (cloud.kind === "success") {
-    return { verdict: "pass", message: `CI is green for ${short} via oe/cloud-proof (no GitHub check-run exists for this sha; oe/cloud-proof reports success).` };
+    return { verdict: "pass", message: `CI is green for ${short} via oe/cloud-proof (${clause}; oe/cloud-proof reports success).` };
   }
   if (cloud.kind === "pending") {
     return { verdict: "refuse", message: `oe/cloud-proof is still pending for ${short} — retry once it completes.` };
@@ -491,7 +533,7 @@ export async function decideCiGateViaCloudProof(input: { sha: string; isTip: boo
   if (cloud.kind === "red") {
     return { verdict: "refuse", message: `oe/cloud-proof is red for ${short} (${cloud.state}) — refusing.` };
   }
-  return walkBackForCloudProof({ sha: input.sha, exec, fetchImpl, env });
+  return walkBackForCloudProof({ sha: input.sha, exec, fetchImpl, env, checkRunsRead });
 }
 
 export async function runCiGate(input: { sha: string; isTip: boolean; exec?: Exec; fetchImpl?: GithubApiFetchLike; env?: Env }): Promise<CiGateDecision> {
@@ -500,11 +542,14 @@ export async function runCiGate(input: { sha: string; isTip: boolean; exec?: Exe
   const env = input.env ?? process.env;
   const fetched = await fetchCheckRunsForSha({ sha: input.sha, exec, fetchImpl, env });
   if (!fetched.ok) {
+    if (fetched.forbiddenForToken) {
+      return decideCiGateViaCloudProof({ sha: input.sha, isTip: input.isTip, exec, fetchImpl, env, checkRunsRead: { kind: "forbidden" } });
+    }
     return { verdict: "refuse", message: `could not read CI state for ${input.sha.slice(0, 12)}: ${fetched.reason}` };
   }
 
   if (fetched.checkRuns.length === 0) {
-    return decideCiGateViaCloudProof({ sha: input.sha, isTip: input.isTip, exec, fetchImpl, env });
+    return decideCiGateViaCloudProof({ sha: input.sha, isTip: input.isTip, exec, fetchImpl, env, checkRunsRead: { kind: "empty" } });
   }
 
   const decision = decideCiGate({ sha: input.sha, checkRuns: fetched.checkRuns, isTip: input.isTip });
