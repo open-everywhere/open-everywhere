@@ -148,11 +148,11 @@ function setEnv(values: { enabled?: boolean; domains?: string; platform?: string
   ok(resolveBrowserKit("task") !== null, "armed: a task (worker) seat mounts the kit");
   ok(resolveBrowserKit("standing") === null, "armed: a standing seat gets NOTHING (wide-hands doctrine, structural absence)");
   ok(resolveBrowserKit("thread") === null, "armed: a thread seat gets nothing");
-  const raw = process.env.OE_ONESHOT_AGENT?.trim().toLowerCase();
-  const delegationDisarmed = raw !== undefined && ["", "0", "false", "off", "no"].includes(raw);
-  if (delegationDisarmed) {
-    ok(resolveBrowserKit("native") !== null, "armed, delegation flag off: a native mention keeps wide hands ⇒ kit mounts");
-  }
+  overrideSettingsForTest({ delegation: { oneshotAgent: false } });
+  ok(resolveBrowserKit("native") !== null, "delegation DISARMED: a native mention keeps wide hands ⇒ the kit mounts");
+  overrideSettingsForTest({ delegation: { oneshotAgent: true } });
+  ok(resolveBrowserKit("native") === null, "delegation ARMED: a native mention is a delegating seat ⇒ no kit (the negative control)");
+  resetSettingsForTest();
 
   resetBrowserToolkitForTest();
   ok(resolveBrowserKit("task") === null, "unarmed: null on every grain — flag-off mounts nothing (byte-identical)");

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { linearSmokeSurfaceKey, linearSmokeTeamId, LINEAR_SMOKE_ORG } from "./deploy/linear-smoke-keys.js";
 
-process.env.LINEAR_API_KEY ??= "linear-test-key";
+process.env.LINEAR_API_KEY = "linear-test-key";
 
 await import("../agent/identity/surfaces.js");
 

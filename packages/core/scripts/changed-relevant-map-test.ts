@@ -7,7 +7,7 @@ const ok = (label: string, cond: boolean) => {
   n++;
 };
 
-process.env.OE_SQLITE_PATH ??= join("/tmp", `oe-changed-relevant-map-test-${process.pid}.sqlite3`);
+process.env.OE_SQLITE_PATH = join("/tmp", `oe-changed-relevant-map-test-${process.pid}.sqlite3`);
 
 const { SCENARIOS } = await import("./e2e/scenarios.js");
 const { CHANGED_RELEVANT_MAP, ALWAYS_RELEVANT, UNMAPPED_BY_DESIGN, relevantScenarios } = await import(

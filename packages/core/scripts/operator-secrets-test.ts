@@ -233,6 +233,7 @@ function cli(stdin = "") {
   const envFile = join(dir, "root-of-trust.env");
   writeFileSync(envFile, ["OE_ORG=from-file", "SLACK_BOT_TOKEN=should-not-be-lifted", "DATABASE_URL=postgres://ignored"].join("\n"), "utf8");
   delete process.env.OE_ORG;
+  delete process.env.SLACK_BOT_TOKEN;
   const applied = loadRootOfTrustEnv(envFile);
   ok(applied.includes("OE_ORG"), "env allowlist: a root-of-trust var IS lifted out of the file");
   ok(!applied.includes("SLACK_BOT_TOKEN") && process.env.SLACK_BOT_TOKEN === undefined, "🔴 env allowlist: a CHANNEL secret is NOT lifted into the process env");

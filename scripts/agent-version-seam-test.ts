@@ -17,7 +17,10 @@ function realEvePin(): string {
   return pkg.version;
 }
 
-if (process.env.OE_VERSION_SEAM_CHILD === "1") {
+const versionSeamChild = process.env.OE_VERSION_SEAM_CHILD;
+delete process.env.OE_VERSION_SEAM_CHILD;
+
+if (versionSeamChild === "1") {
   const scratch = mkdtempSync(join(tmpdir(), "oe-version-seam-child-"));
   process.env.OE_PGLITE_DIR = join(scratch, "pglite");
   process.env.OE_MEMORY_DIR = join(scratch, "memory");

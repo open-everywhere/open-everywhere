@@ -133,6 +133,8 @@ console.log("admitSlackInputResponse:");
 }
 
 {
+  const savedBotToken = process.env.SLACK_BOT_TOKEN;
+  delete process.env.SLACK_BOT_TOKEN;
   ok(process.env.SLACK_BOT_TOKEN === undefined, "precondition: no bot token in this unit-test process");
   let seenDefault: InputResponseScope | undefined;
   const res = await admitSlackInputResponse(ctx, submission, {
@@ -143,6 +145,8 @@ console.log("admitSlackInputResponse:");
   });
   ok(res !== null, "the live default guestVerdict wiring does not throw or hang with no token configured");
   ok(seenDefault !== undefined && !("answererIsGuest" in seenDefault), "with no token, the live default degrades to no verdict — the same absence as before OPE-589");
+  if (savedBotToken === undefined) delete process.env.SLACK_BOT_TOKEN;
+  else process.env.SLACK_BOT_TOKEN = savedBotToken;
 }
 
 {
