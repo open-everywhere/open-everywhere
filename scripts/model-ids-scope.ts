@@ -5,7 +5,7 @@ import { join } from "node:path";
 export const APP_DIR = "agent";
 export const REGISTRY = "agent/model/stacks.ts";
 export const PRICE_TABLE = "agent/spend/model-pricing.ts";
-const GENERATED_DIR = "generated";
+const EXEMPT_DIR_PREFIX = "agent/docs/generated/";
 
 export const VENDORS = [
   "zai", "deepseek", "alibaba", "anthropic", "openai", "google", "meta", "mistral",
@@ -38,7 +38,7 @@ export function ruleOneFiles(root: string = "."): string[] {
     );
   }
   const files = listed
-    .filter((file) => !file.split("/").includes(GENERATED_DIR))
+    .filter((file) => !file.startsWith(EXEMPT_DIR_PREFIX))
     .filter((file) => file !== REGISTRY && file !== PRICE_TABLE)
     .sort();
   if (files.length === 0) {

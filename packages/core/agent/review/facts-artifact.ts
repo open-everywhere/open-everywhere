@@ -97,7 +97,7 @@ export async function fetchConfigFacts(opts: FetchConfigFactsOpts): Promise<Fact
     return {
       kind: "not-triggered",
       reason:
-        `this PR touches none of the paths that trigger ${CONFIG_DIFF_WORKFLOW_PATH} (${CONFIG_DIFF_TRIGGER_PATHS.join(", ")}), ` +
+        `this PR touches none of the deployer-config paths a resolved-config diff covers (${CONFIG_DIFF_TRIGGER_PATHS.join(", ")}), ` +
         `so no resolved-config facts exist for it. That is a COMPUTED absence, not a blind spot: the deployer config is unchanged by ` +
         `this PR. It says nothing about the CODE the PR changes — code is reviewed as code (CODEOWNERS), and no config diff can see it.`,
     };

@@ -22,7 +22,7 @@ if (eventName && eventName !== "pull_request" && eventName !== "pull_request_tar
   console.log(`upgrade-diff-fence: event "${eventName}" is not a pull request — nothing to fence.`);
   process.exit(0);
 }
-if (!eventPath) fail("GITHUB_EVENT_PATH is not set — this script runs inside a GitHub Actions pull-request job.");
+if (!eventPath) fail("GITHUB_EVENT_PATH is not set — run this through `npm run deploy:merge-fence -- --pr <n>`.");
 
 let event: PullRequestEvent;
 try {

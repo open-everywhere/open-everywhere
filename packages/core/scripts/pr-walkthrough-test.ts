@@ -440,6 +440,29 @@ const NARRATION: WalkthroughNarration = {
   ok(noFacts.includes("blast radius to compute"), "…and §3 refuses to answer the widening question");
   ok(!noFacts.includes("`widens: no`"), "🔴 …and specifically never prints `widens: no`, which a reader would read as an all-clear");
 
+  ok(
+    !noFacts.includes("Facts by"),
+    "🔴 OPE-1173: a walkthrough with NO facts does not credit `scripts/config-diff.ts` for them",
+  );
+  ok(
+    noFacts.includes("carries NO resolved-config facts"),
+    "🔴 OPE-1173: …it says so plainly instead, and still names the ONE source it would have accepted",
+  );
+  ok(
+    noFacts.includes(".github/workflows/config-diff.yml") && noFacts.includes("never a PR comment"),
+    "…and keeps the forgery argument: the accepted source is a named workflow artifact, never a comment anyone could post",
+  );
+
+  const withFacts = renderWalkthrough({ pr: PR, diff: diffSnap(), facts: artifactFacts(facts([computed("access")])), narration: NARRATION });
+  ok(
+    withFacts.includes("Facts by `scripts/config-diff.ts`"),
+    "🔴 OPE-1173, the other direction: a walkthrough that DID get an artifact still credits the producer by name",
+  );
+  ok(
+    !withFacts.includes("carries NO resolved-config facts"),
+    "…and never claims an absence it does not have (without this the pair above passes on a footer that always says 'no facts')",
+  );
+
   const partial = renderWalkthrough({
     pr: PR,
     diff: diffSnap(),

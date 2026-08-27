@@ -65,11 +65,26 @@ ok(
   trackedGenerated.length > 0,
   "this repo tracks agent/docs/generated/*.ts (without them the next assertion could not fail)",
 );
-const generatedInSet = realFiles.filter((f) => f.split("/").includes("generated"));
+const docsGeneratedInSet = realFiles.filter((f) => f.startsWith("agent/docs/generated/"));
 ok(
-  generatedInSet.length === 0,
-  `RULE 1 reads no file under a generated/ directory — found: ${generatedInSet.join(", ")}`,
+  docsGeneratedInSet.length === 0,
+  `RULE 1 reads no file under agent/docs/generated/ — found: ${docsGeneratedInSet.join(", ")}`,
 );
+
+const trackedPluginGenerated = execFileSync("git", ["ls-files", "--", "agent/plugins/generated/*.ts"], {
+  cwd: REPO_ROOT,
+  encoding: "utf8",
+}).split("\n").filter((l) => l.length > 0);
+ok(
+  trackedPluginGenerated.length > 0,
+  "this repo tracks agent/plugins/generated/*.ts (without them the next assertion could not fail)",
+);
+for (const file of trackedPluginGenerated) {
+  ok(
+    realFiles.includes(file),
+    `OPE-1202: RULE 1 READS ${file} — extracted plugin code is not doc prose, and a registry entry that pinned a model id is exactly the config copy this rule catches`,
+  );
+}
 
 const fixture = mkdtempSync(join(tmpdir(), "oe-model-ids-scope-"));
 function write(rel: string, body: string): void {
@@ -98,7 +113,7 @@ write(PRICE_TABLE, 'export const RATES = { "openai/gpt-5.6-luna": { inPerMtok: 1
 write("agent/docs/generated/deploy.ts", 'export const DOC = "the shipped stack runs openai/gpt-5.6-luna";\n');
 write(".gitignore", "/agent/channels/\n/agent/hooks/\n/agent/lib/providers.generated.ts\n");
 git("add", "-A");
-refuses("ruleOneFiles() THROWS when git lists only exempt and generated/ files — a filtered-empty set is still an unread tree");
+refuses("ruleOneFiles() THROWS when git lists only exempt and docs-generated files — a filtered-empty set is still an unread tree");
 
 write("agent/model/models.ts", 'export const PRIMARY_MODEL = "x";\n');
 git("add", "--", "agent/model/models.ts");
@@ -164,6 +179,34 @@ ok(
   "an uncommitted edit that removes the literal clears the hit — the worktree wins over the index when it exists",
 );
 
+{
+  write("agent/plugins/generated/index.ts", 'export const GENERATED_PLUGIN_REGISTRY = { p: { model: "deepseek/deepseek-v4-flash-0731" } };\n');
+  git("add", "--", "agent/plugins/generated/index.ts");
+  const withPlugin = ruleOneFiles(fixture);
+  ok(
+    withPlugin.includes("agent/plugins/generated/index.ts"),
+    `RULE 1's set includes the extracted-plugin file — got: ${withPlugin.join(", ")}`,
+  );
+  const hits = scanBareModelIds(withPlugin, fixture);
+  ok(
+    hits.some((h) => h.file === "agent/plugins/generated/index.ts" && h.id === "deepseek/deepseek-v4-flash-0731"),
+    `the pinned model id in the extracted-plugin registry entry is REPORTED — got: ${JSON.stringify(hits)}`,
+  );
+
+  write("agent/plugins/generated/note.ts", '// the shipped stack runs openai/gpt-5.6-luna\nexport const N = 1;\n');
+  git("add", "--", "agent/plugins/generated/note.ts");
+  const withNote = scanBareModelIds(ruleOneFiles(fixture), fixture);
+  ok(
+    !withNote.some((h) => h.file === "agent/plugins/generated/note.ts"),
+    `a model id in a COMMENT under agent/plugins/generated/ is still not a hit — got: ${JSON.stringify(withNote)}`,
+  );
+}
+
+console.log(
+  `✓ model-ids scope: ${passed} assertions passed — RULE 1 reads ${realFiles.length} git-tracked file(s), ` +
+    `the same set before and after a build, and still reds on a bare literal in a tracked file`,
+);
+
 let lintOut = "";
 let lintFailed: string | undefined;
 try {
@@ -185,7 +228,3 @@ ok(
 
 rmSync(fixture, { recursive: true, force: true });
 
-console.log(
-  `✓ model-ids scope: ${passed} assertions passed — RULE 1 reads ${realFiles.length} git-tracked file(s), ` +
-    `the same set before and after a build, and still reds on a bare literal in a tracked file`,
-);

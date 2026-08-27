@@ -253,10 +253,15 @@ export function renderWalkthrough(input: RenderWalkthroughInput): string {
   out.push("### 5. What this walkthrough CANNOT tell you", "");
   out.push(...renderBlindSpots(input));
 
+  const factsProvenanceLine =
+    facts.kind === "artifact"
+      ? `Facts by \`scripts/config-diff.ts\` via the \`${CONFIG_DIFF_WORKFLOW_PATH}\` artifact (never a PR comment — anyone who can comment ` +
+        `could forge one).`
+      : `This walkthrough carries NO resolved-config facts. The only accepted source is a \`${CONFIG_DIFF_WORKFLOW_PATH}\` artifact ` +
+        `at this exact head sha — never a PR comment, because anyone who can comment could forge one — and no such run supplied one here.`;
   out.push(
     "---",
-    `<sub>Facts by \`scripts/config-diff.ts\` via the \`${CONFIG_DIFF_WORKFLOW_PATH}\` artifact (never a PR comment — anyone who can comment ` +
-      `could forge one). Narration is model output relayed by the session that asked for this walkthrough; §2 states what the spend ledger records ` +
+    `<sub>${factsProvenanceLine} Narration is model output relayed by the session that asked for this walkthrough; §2 states what the spend ledger records ` +
       `about a delegated run behind it. \`fresh_eyes_review\` is the intended narrator — a fresh session with zero tools and no history from the ` +
       `proposing session — and the ledger attests that a delegated session RAN, never which one or what it said. ` +
       `Rendered by \`packages/core/agent/review/pr-walkthrough.ts\` — the facts half is not model-passable. **The merge is the privilege gate.**</sub>`,

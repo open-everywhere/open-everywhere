@@ -130,6 +130,19 @@ function fakeFetch(res: { ok: boolean; status: number; text?: string }): {
   ok(willAbort.warn !== undefined && willAbort.warn.includes("ABORT"), "no proxy, no hatch → warn that sessions will ABORT");
   ok(willAbort.info.includes("none"), "no proxy, no hatch → info says posture = none");
 
+  ok(
+    willAbort.warn !== undefined && !willAbort.warn.includes("EVERY session"),
+    "OPE-1122: the no-proxy warn does NOT claim EVERY session aborts — docker applies a coarse \"deny-all\" and that session boots",
+  );
+  ok(
+    willAbort.warn !== undefined && willAbort.warn.includes("HOST ALLOW-LIST"),
+    "OPE-1122: …and it names the condition that DOES abort — a session that resolves a host allow-list (the positive half; without it the check above passes on any wording at all)",
+  );
+  ok(
+    willAbort.warn !== undefined && willAbort.warn.includes("deny-all"),
+    "OPE-1122: …and it states the docker case explicitly, so a reader is not left to infer the exception",
+  );
+
   const blankProxy = selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "   " } as NodeJS.ProcessEnv);
   ok(blankProxy.warn !== undefined, "blank OE_EGRESS_PROXY_URL is treated as no proxy");
 

@@ -37,9 +37,10 @@ export function selfHostEgressBootLog(env: NodeJS.ProcessEnv = process.env): Egr
   }
   return {
     warn:
-      "[open-everywhere:egress] ⚠ egress NOT enforceable — no OE_EGRESS_PROXY_URL configured and `egress.allowUnenforced` is off: EVERY session will ABORT at session.started (fail-closed). " +
+      "[open-everywhere:egress] ⚠ egress NOT enforceable — no OE_EGRESS_PROXY_URL configured and `egress.allowUnenforced` is off: any session that resolves a HOST ALLOW-LIST will ABORT at session.started (fail-closed). " +
+      "Neither wired backend applies a fine-grained policy: justbash rejects every setNetworkPolicy, and docker accepts only the coarse \"allow-all\"/\"deny-all\" strings. A session that reaches nothing compiles to \"deny-all\", which docker DOES apply — that session boots, with no network at all. " +
       "Wire the egress-proxy sidecar (docker-compose.yml / docs/deploy/platforms/self-host-egress.md), or declare `egress: { allowUnenforced: true }` in agent/settings.ts to run unenforced in dev.",
-    info: "[open-everywhere:egress] self-host egress posture = none (sessions fail-closed until a proxy is wired or egress.allowUnenforced is declared)",
+    info: "[open-everywhere:egress] self-host egress posture = none (a session needing any host fails closed until a proxy is wired or egress.allowUnenforced is declared)",
   };
 }
 
