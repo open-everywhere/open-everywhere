@@ -51,7 +51,7 @@ const SCAN_ROOTS = [join(REPO_ROOT, "packages/providers/slack/agent"), join(REPO
 const CALL_PATTERNS: RegExp[] = [
   /slackForm\(\s*"([a-zA-Z.]+)"/g,
   /\.slack\.request\(\s*"([a-zA-Z.]+)"/g,
-  /callSlackApi\(\{[^}]*operation:\s*"([a-zA-Z.]+)"/g,
+  /callSlackWebApi\(\{[^}]*operation:\s*"([a-zA-Z.]+)"/g,
   /callSlackRead\(\s*"([a-zA-Z.]+)"/g,
   /bridgeSlackReadCall\(\s*"([a-zA-Z.]+)"/g,
   /\bcall\(\s*"([a-zA-Z.]+)"/g,

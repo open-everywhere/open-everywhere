@@ -1,6 +1,7 @@
 import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } from "eve/channels";
 import { SLACK_SIGNATURE_HEADER, SLACK_TIMESTAMP_HEADER, slackSignatureMatches } from "./slack-signature.js";
-import { callSlackApi, slackContinuationToken } from "eve/channels/slack";
+import { slackContinuationToken } from "eve/channels/slack";
+import { callSlackWebApi } from "./slack-web-api.js";
 import {
   auditDmBotAuthorDrop,
   auditDmDriverAdmitted,
@@ -269,7 +270,7 @@ export function resolveBotIdentity(): Promise<{ readonly userId?: string; readon
   if (!botIdentityPromise) {
     botIdentityPromise = (async () => {
       try {
-        const json = (await callSlackApi({ botToken: undefined, operation: "auth.test", body: {} })) as {
+        const json = (await callSlackWebApi({ botToken: undefined, operation: "auth.test", body: {} })) as {
           ok?: boolean;
           user_id?: string;
           bot_id?: string;

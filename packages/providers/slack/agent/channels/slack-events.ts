@@ -1,4 +1,6 @@
-import { callSlackApi, slackContinuationToken } from "eve/channels/slack";
+import { slackContinuationToken } from "eve/channels/slack";
+import { callSlackWebApi } from "./slack-web-api.js";
+import { RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   resolvePartition,
   cancelAnchoredTurn,
@@ -1177,12 +1179,15 @@ const TRANSCRIPT_TOTAL_CHARS = 4000;
 export async function slackForm(method: string, body: string, token: string | undefined = process.env.SLACK_BOT_TOKEN): Promise<Record<string, unknown> | undefined> {
   if (!token) return undefined;
   try {
-    return (await callSlackApi({
+    return (await callSlackWebApi({
       botToken: token,
       operation: method,
       body: Object.fromEntries(new URLSearchParams(body)),
     })) as Record<string, unknown>;
-  } catch {
+  } catch (err) {
+    if (err instanceof RateLimitExhaustedError) {
+      console.warn(`[open-everywhere:slack] rate limited: ${method} gave up after ${err.attempts} attempts (waited ${err.waitedMs} ms)`);
+    }
     return undefined;
   }
 }

@@ -1,0 +1,192 @@
+import assert from "node:assert/strict";
+import {
+  DEFAULT_CAP_MS,
+  DEFAULT_FALLBACK_MS,
+  RateLimitExhaustedError,
+  parseRetryAfterMs,
+  withRetryAfter,
+} from "../agent/channels/rate-limit-retry.js";
+
+let n = 0;
+const ok = (cond: boolean, label: string) => {
+  assert.ok(cond, label);
+  n++;
+};
+const eq = (a: unknown, b: unknown, label: string) => {
+  assert.deepStrictEqual(a, b, label);
+  n++;
+};
+
+console.log("rate-limit-retry:");
+
+function rateLimited(retryAfter?: string): Response {
+  const headers = new Headers();
+  if (retryAfter !== undefined) headers.set("retry-after", retryAfter);
+  return new Response("{\"ok\":false,\"error\":\"ratelimited\"}", { status: 429, headers });
+}
+
+function scripted(queue: Array<Response | Error>) {
+  const state = { calls: 0 };
+  const send = async (): Promise<Response> => {
+    const next = queue[Math.min(state.calls, queue.length - 1)];
+    state.calls += 1;
+    if (next === undefined) throw new Error("scripted transport was given an empty queue");
+    if (next instanceof Error) throw next;
+    return next;
+  };
+  return { send, state };
+}
+
+function recorder() {
+  const slept: number[] = [];
+  return { slept, sleep: async (ms: number) => void slept.push(ms) };
+}
+
+{
+  const { send, state } = scripted([
+    rateLimited("2"),
+    rateLimited("5"),
+    new Response("{\"ok\":true,\"ts\":\"1.0\"}", { status: 200 }),
+  ]);
+  const clock = recorder();
+  const res = await withRetryAfter(send, { surface: "slack", operation: "chat.postMessage", sleep: clock.sleep });
+
+  eq(state.calls, 3, "429,429,200: the call is repeated until Slack stops refusing");
+  eq(clock.slept, [2000, 5000], "429 sequence: the HONOURED delays are exactly what Retry-After named (2 s, then 5 s)");
+  eq(res.status, 200, "429 sequence: the answer returned is the first non-429 response");
+  eq(await res.json(), { ok: true, ts: "1.0" }, "429 sequence: the success body reaches the caller intact");
+}
+
+{
+  const { send, state } = scripted([rateLimited("1"), rateLimited("1"), rateLimited("1"), rateLimited("1")]);
+  const clock = recorder();
+  let caught: unknown;
+  try {
+    await withRetryAfter(send, { surface: "slack", operation: "chat.postMessage", maxAttempts: 4, sleep: clock.sleep });
+  } catch (err) {
+    caught = err;
+  }
+
+  ok(caught instanceof RateLimitExhaustedError, "exhausted: the failure is a RateLimitExhaustedError, not undefined and not a bare Error");
+  eq((caught as Error).name, "RateLimitExhaustedError", "exhausted: the error NAME is the named failure a log or a caller reads");
+  eq(state.calls, 4, "exhausted: maxAttempts bounds the calls (4 attempts, not an unbounded loop)");
+  eq(clock.slept, [1000, 1000, 1000], "exhausted: 4 attempts means 3 waits — the last refusal is not slept on");
+  const err = caught as RateLimitExhaustedError;
+  eq(err.attempts, 4, "exhausted: the error reports the attempts made");
+  eq(err.waitedMs, 3000, "exhausted: the error reports the total honoured wait");
+  eq(err.surface, "slack", "exhausted: the error names the surface");
+  eq(err.operation, "chat.postMessage", "exhausted: the error names the operation");
+}
+
+{
+  const cases: Array<{ label: string; body: string; status: number }> = [
+    { label: "200 ok:true", body: "{\"ok\":true}", status: 200 },
+    { label: "200 ok:false (application refusal)", body: "{\"ok\":false,\"error\":\"channel_not_found\"}", status: 200 },
+    { label: "500 server error", body: "oops", status: 500 },
+    { label: "403 forbidden", body: "{\"ok\":false}", status: 403 },
+    { label: "408 request timeout (ambiguous, but not a rate limit)", body: "", status: 408 },
+    { label: "430 — adjacent to 429 and NOT it", body: "", status: 430 },
+  ];
+  for (const c of cases) {
+    const { send, state } = scripted([new Response(c.body, { status: c.status })]);
+    const clock = recorder();
+    const res = await withRetryAfter(send, { surface: "slack", operation: "chat.postMessage", sleep: clock.sleep });
+    eq(state.calls, 1, `negative control (${c.label}): called exactly once — never retried`);
+    eq(clock.slept, [], `negative control (${c.label}): ZERO sleeps — the non-429 path is untouched`);
+    eq(res.status, c.status, `negative control (${c.label}): the response passes through unchanged`);
+  }
+}
+
+{
+  const boom = new Error("socket hang up");
+  const { send, state } = scripted([boom]);
+  const clock = recorder();
+  let caught: unknown;
+  try {
+    await withRetryAfter(send, { surface: "slack", operation: "chat.postMessage", sleep: clock.sleep });
+  } catch (err) {
+    caught = err;
+  }
+  eq(caught, boom, "transport throw: the original error reaches the caller unwrapped");
+  eq(state.calls, 1, "transport throw: never retried — an unanswered write may already have applied");
+  eq(clock.slept, [], "transport throw: ZERO sleeps");
+}
+
+{
+  const { send } = scripted([rateLimited("86400"), new Response("{}", { status: 200 })]);
+  const clock = recorder();
+  await withRetryAfter(send, { surface: "slack", operation: "chat.postMessage", sleep: clock.sleep });
+  eq(clock.slept, [DEFAULT_CAP_MS], "cap: a Retry-After of a day is clamped to the per-wait ceiling");
+}
+{
+  const { send } = scripted([rateLimited(undefined), new Response("{}", { status: 200 })]);
+  const clock = recorder();
+  await withRetryAfter(send, { surface: "slack", operation: "chat.postMessage", sleep: clock.sleep });
+  eq(clock.slept, [DEFAULT_FALLBACK_MS], "fallback: a 429 with NO Retry-After waits the documented floor, not zero");
+}
+{
+  const { send } = scripted([rateLimited("not-a-delay"), new Response("{}", { status: 200 })]);
+  const clock = recorder();
+  await withRetryAfter(send, { surface: "slack", operation: "chat.postMessage", sleep: clock.sleep });
+  eq(clock.slept, [DEFAULT_FALLBACK_MS], "fallback: an unreadable Retry-After waits the floor rather than guessing");
+}
+
+{
+  const { send, state } = scripted([rateLimited("30"), rateLimited("30"), rateLimited("30"), rateLimited("30")]);
+  const clock = recorder();
+  let caught: unknown;
+  try {
+    await withRetryAfter(send, {
+      surface: "slack",
+      operation: "chat.postMessage",
+      maxAttempts: 4,
+      capMs: 30_000,
+      totalBudgetMs: 45_000,
+      sleep: clock.sleep,
+    });
+  } catch (err) {
+    caught = err;
+  }
+  ok(caught instanceof RateLimitExhaustedError, "budget: overrunning the total budget produces the same named failure");
+  eq(clock.slept, [30_000], "budget: the SECOND 30 s wait would exceed a 45 s budget, so it is never slept");
+  eq((caught as RateLimitExhaustedError).waitedMs, 30_000, "budget: the total wait stayed under the budget");
+  eq(state.calls, 2, "budget: the sequence stopped early — attempts were still available");
+}
+{
+  const { send } = scripted([rateLimited("30"), rateLimited("30"), rateLimited("30"), rateLimited("30")]);
+  const clock = recorder();
+  await withRetryAfter(send, { surface: "s", operation: "o", sleep: clock.sleep }).catch(() => undefined);
+  eq(clock.slept, [30_000, 30_000], "budget: at the DEFAULTS the 60 s budget stops the third wait, capping one call at 60 s");
+}
+
+{
+  const { send, state } = scripted([rateLimited("1")]);
+  const clock = recorder();
+  let caught: unknown;
+  try {
+    await withRetryAfter(send, { surface: "slack", operation: "x", maxAttempts: 1, sleep: clock.sleep });
+  } catch (err) {
+    caught = err;
+  }
+  ok(caught instanceof RateLimitExhaustedError, "maxAttempts=1: the single refusal is already exhaustion");
+  eq(state.calls, 1, "maxAttempts=1: exactly one call");
+  eq(clock.slept, [], "maxAttempts=1: no wait — there is no attempt left to wait for");
+}
+
+{
+  const now = Date.parse("2026-08-27T12:00:00Z");
+  eq(parseRetryAfterMs("30", now), 30_000, "parse: delta-seconds becomes milliseconds");
+  eq(parseRetryAfterMs("0", now), 0, "parse: a zero delay is zero, not the fallback");
+  eq(parseRetryAfterMs("  7  ", now), 7000, "parse: surrounding whitespace is tolerated");
+  eq(parseRetryAfterMs("Thu, 27 Aug 2026 12:00:20 GMT", now), 20_000, "parse: an HTTP-date becomes the delay to that instant");
+  eq(parseRetryAfterMs("Thu, 27 Aug 2026 11:59:00 GMT", now), 0, "parse: an HTTP-date already past clamps to 0");
+  eq(parseRetryAfterMs(null, now), undefined, "parse: an absent header has no delay");
+  eq(parseRetryAfterMs(undefined, now), undefined, "parse: an undefined header has no delay");
+  eq(parseRetryAfterMs("", now), undefined, "parse: an empty header has no delay");
+  eq(parseRetryAfterMs("   ", now), undefined, "parse: a whitespace-only header has no delay");
+  eq(parseRetryAfterMs("-5", now), undefined, "parse: a NEGATIVE value is not delta-seconds — it must not become a negative wait");
+  eq(parseRetryAfterMs("1.5", now), undefined, "parse: a fractional value is not delta-seconds");
+  eq(parseRetryAfterMs("soon", now), undefined, "parse: a word is neither form");
+}
+
+console.log(`✓ rate-limit-retry: ${n} assertions passed (honoured delay, named exhaustion, non-429 negative controls, cap/fallback/total-budget, Retry-After parsing)`);

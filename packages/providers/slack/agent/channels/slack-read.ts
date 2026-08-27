@@ -1,4 +1,4 @@
-import { callSlackApi } from "eve/channels/slack";
+import { callSlackWebApi } from "./slack-web-api.js";
 import {
   auditChannelReadRefusal,
   bindFrom,
@@ -64,7 +64,7 @@ export async function callSlackRead(operation: string, params: Record<string, st
   if (!process.env.SLACK_BOT_TOKEN) {
     throw new Error("SLACK_BOT_TOKEN is not set — the Slack read tools need the bot token to call the Web API.");
   }
-  const json = (await callSlackApi({ botToken: undefined, operation, body: params })) as SlackReadResponse;
+  const json = (await callSlackWebApi({ botToken: undefined, operation, body: params })) as SlackReadResponse;
   if (!json.ok) throw markNotApplied(new Error(`Slack ${operation} failed: ${json.error ?? "unknown error"}`));
   return json;
 }

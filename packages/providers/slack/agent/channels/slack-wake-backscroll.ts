@@ -1,4 +1,5 @@
-import { callSlackApi } from "eve/channels/slack";
+import { callSlackWebApi } from "./slack-web-api.js";
+import { RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
 import { linesFromMessages, readMoreHint } from "./slack-context.js";
 import {
   renderContext,
@@ -33,8 +34,11 @@ export interface WakeBackscrollDeps {
 
 const liveRequest: SlackRequester = async (method, params) => {
   try {
-    return (await callSlackApi({ botToken: undefined, operation: method, body: params })) as Record<string, unknown>;
-  } catch {
+    return (await callSlackWebApi({ botToken: undefined, operation: method, body: params })) as Record<string, unknown>;
+  } catch (err) {
+    if (err instanceof RateLimitExhaustedError) {
+      console.warn(`[open-everywhere:slack] rate limited: backscroll ${method} gave up after ${err.attempts} attempts (waited ${err.waitedMs} ms)`);
+    }
     return undefined;
   }
 };
