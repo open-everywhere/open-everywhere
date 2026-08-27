@@ -1,4 +1,5 @@
 import { buildGraph, resolveNode } from "../graph.js";
+import { EXTERNAL_CLAIM_LEAD, EXTERNAL_PROVENANCE_LEAD } from "../provenance-mark.js";
 import type { MemoryFiles } from "../store.js";
 import { salienceMap } from "./salience.js";
 
@@ -135,6 +136,14 @@ const STOP = new Set([
 const NEGATION = /\b(not|no|never|n't|dont|doesn't|isn't|aren't|wasn't|stop(?:ped)?|deprecat(?:ed)?|remov(?:ed)?|cancel(?:led)?|drop(?:ped)?|no longer|instead of)\b/i;
 const DATE_PREFIX = /^\s*-\s+(\d{4}-\d{2}-\d{2})\s*[:]?\s*/;
 
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const PROVENANCE_CARRIER = new RegExp(`${escapeRe(EXTERNAL_CLAIM_LEAD)}[^\\][]*\\]|${escapeRe(EXTERNAL_PROVENANCE_LEAD)}[^\\][]*\\]`, "g");
+
+export function factText(line: string): string {
+  return line.replace(PROVENANCE_CARRIER, " ");
+}
+
 interface BulletRef {
   readonly file: string;
   readonly line: string;
@@ -143,7 +152,7 @@ interface BulletRef {
 }
 
 export function isNegated(line: string): boolean {
-  return NEGATION.test(line);
+  return NEGATION.test(factText(line));
 }
 
 export function bulletDate(line: string): string | null {
@@ -151,7 +160,7 @@ export function bulletDate(line: string): string | null {
 }
 
 export function contentWords(line: string): Set<string> {
-  const body = line
+  const body = factText(line)
     .replace(DATE_PREFIX, "")
     .replace(/^\s*-\s+/, "")
     .replace(WIKILINK, " ")
@@ -167,7 +176,7 @@ function bulletRefs(files: MemoryFiles, exclude?: ReadonlySet<string>): BulletRe
     if (exclude?.has(file)) continue;
     for (const line of content.split("\n")) {
       if (!isBullet(line)) continue;
-      refs.push({ file, line, words: contentWords(line), negated: NEGATION.test(line) });
+      refs.push({ file, line, words: contentWords(line), negated: isNegated(line) });
     }
   }
   return refs;

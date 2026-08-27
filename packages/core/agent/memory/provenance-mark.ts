@@ -6,6 +6,11 @@ export const EXTERNAL_PROVENANCE_PREFIX = "[external-provenance:";
 
 export const EXTERNAL_CLAIM_PREFIX = "[unverified claim";
 
+export const EXTERNAL_CLAIM_LEAD = `${EXTERNAL_CLAIM_PREFIX}; the turn ingested `;
+export const EXTERNAL_PROVENANCE_LEAD = `${EXTERNAL_PROVENANCE_PREFIX} added on a turn that ingested `;
+
+const UNNAMED_SOURCE = "external content";
+
 export const MAX_MARKED_KINDS = 4;
 
 const MAX_KIND_CHARS = 24;
@@ -15,9 +20,7 @@ function sanitiseKind(kind: string): string {
 }
 
 export function renderProvenanceMark(kinds: readonly string[] = []): string {
-  const named = describeKinds(kinds);
-  if (named === null) return `${EXTERNAL_PROVENANCE_PREFIX} added on a turn that ingested external content]`;
-  return `${EXTERNAL_PROVENANCE_PREFIX} added on a turn that ingested ${named}]`;
+  return `${EXTERNAL_PROVENANCE_LEAD}${describeKinds(kinds) ?? UNNAMED_SOURCE}]`;
 }
 
 function describeKinds(kinds: readonly string[]): string | null {
@@ -29,9 +32,7 @@ function describeKinds(kinds: readonly string[]): string | null {
 }
 
 export function renderClaimAttribution(kinds: readonly string[] = []): string {
-  const named = describeKinds(kinds);
-  if (named === null) return `${EXTERNAL_CLAIM_PREFIX}; the turn ingested external content]`;
-  return `${EXTERNAL_CLAIM_PREFIX}; the turn ingested ${named}]`;
+  return `${EXTERNAL_CLAIM_LEAD}${describeKinds(kinds) ?? UNNAMED_SOURCE}]`;
 }
 
 export interface ProvenanceWording {

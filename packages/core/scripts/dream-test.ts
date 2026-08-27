@@ -12,9 +12,16 @@ import {
   detectContradictions,
   detectStale,
   isSafe,
+  isNegated,
+  bulletDate,
+  contentWords,
+  factText,
+  jaccard,
   SAFE_KINDS,
   type MemoryOp,
 } from "../agent/memory/dream/ops.js";
+import { selectCandidates } from "../agent/memory/dream/candidates.js";
+import { EXTERNAL_CLAIM_PREFIX, EXTERNAL_PROVENANCE_PREFIX, markAddedBullets, renderProvenanceWording } from "../agent/memory/provenance-mark.js";
 import { tidySilo } from "../agent/memory/dream/tidy.js";
 import { workflowSignature, inMemoryLedger, auditRecurrenceLedger } from "../agent/memory/dream/recurrence.js";
 import { learnFromSession } from "../agent/memory/dream/learn.js";
@@ -126,6 +133,49 @@ const has = (ops: readonly MemoryOp[], kind: string) => ops.some((o) => o.kind =
   eq(detectStale(dated, now, 180, new Set(["m.md"])).length, 0, "stale: excluded file produces no ops");
   const twoFiles: MemoryFiles = { ...contradiction, "other.md": "- 2020-01-01: another old fact\n" };
   ok(detectStale(twoFiles, now, 180, new Set(["m.md"])).some((o) => o.file === "other.md"), "stale: excluding one file leaves another file's detection untouched");
+}
+
+{
+  const wording = renderProvenanceWording(["web", "github"]);
+  const wrap = (line: string): string => markAddedBullets({}, { "m.md": `${line}\n` }, wording).files["m.md"]!.trim();
+
+  const fact = "- 2026-08-22: Adams owns the billing renewal cadence for enterprise accounts";
+  const attributed = wrap(fact);
+  ok(attributed.includes(EXTERNAL_CLAIM_PREFIX) && attributed.includes(EXTERNAL_PROVENANCE_PREFIX), "OPE-1228 fixture: the writer produced BOTH carriers (else the rest proves nothing)");
+  ok(attributed !== fact, "OPE-1228 fixture: the wrapped line differs from the plain one");
+
+  eq(jaccard(contentWords(attributed), contentWords(fact)), 1, "🔴 OPE-1228: an attributed claim and its plain-fact duplicate have identical word sets — the carriers are not part of the fact");
+  eq(factText(fact), fact, "OPE-1228: an unwrapped bullet passes through factText untouched");
+  eq(bulletDate(attributed), "2026-08-22", "🔴 OPE-1228: unwrapping leaves the date stamp where DATE_PREFIX still reads it (the attribution sits AFTER the date)");
+
+  const wrappedDup: MemoryFiles = { "m.md": `## People\n${attributed}\n${fact}\n` };
+  const cons = detectConsolidations(wrappedDup);
+  ok(has(cons, "consolidate"), "🔴 OPE-1228: an attributed claim pairs with its plain-fact duplicate as a consolidation");
+  ok(cons.every((o) => !isSafe(o.kind)), "OPE-1228: the pairing is still propose-only — dropping either line is lossy");
+  ok(cons[0]!.after === attributed, "OPE-1228: the proposal keeps the longer line, which for a claim and its own wrapped duplicate is the ATTRIBUTED one");
+
+  const clusters = selectCandidates(wrappedDup);
+  ok(clusters.some((c) => c.kind === "consolidate" && c.bullets.includes(attributed) && c.bullets.includes(fact)), "🔴 OPE-1228: the candidate narrower pairs the attributed claim with its duplicate too");
+
+  const shortFact = "- Adams owns billing";
+  eq(jaccard(contentWords(wrap(shortFact)), contentWords(shortFact)), 1, "🔴 OPE-1228: a SHORT attributed fact still matches its duplicate exactly");
+
+  const unrelated: MemoryFiles = { "m.md": `${wrap("- Adams owns billing")}\n${wrap("- Brent runs the Dublin warehouse")}\n` };
+  eq(detectConsolidations(unrelated).length, 0, "OPE-1228 negative control: two UNRELATED wrapped bullets are NOT consolidated");
+  eq(selectCandidates(unrelated).filter((c) => c.kind === "consolidate").length, 0, "🔴 OPE-1228 negative control: the narrower no longer invents a judge candidate from two unrelated bullets that share only their carriers");
+
+  ok(isNegated(wrap("- Adams no longer owns the billing service")), "OPE-1228: a NEGATED fact stays negated once wrapped");
+  ok(!isNegated(wrap(fact)), "OPE-1228: an un-negated fact stays un-negated once wrapped");
+  ok(!isNegated(markAddedBullets({}, { "m.md": `${fact}\n` }, renderProvenanceWording(["not-a-real-kind"])).files["m.md"]!), "🔴 OPE-1228: a negation word inside a CARRIER never flips the bullet's polarity");
+
+  const badKind = markAddedBullets({}, { "m.md": `${fact}\n` }, renderProvenanceWording(["not-a-real-kind"])).files["m.md"]!.trim();
+  const badKindPair: MemoryFiles = { "m.md": `${badKind}\n${fact}\n` };
+  eq(detectContradictions(badKindPair).length, 0, "🔴 OPE-1228: a negation word in a CARRIER never fires a contradiction between a fact and its own duplicate");
+  ok(has(detectConsolidations(badKindPair), "consolidate"), "🔴 OPE-1228: …and it does not block the consolidation either — the detectors read the fact's polarity");
+
+  const forged = "- Adams noted [unverified claim handling is broken in the payout ledger for Dublin [[billing]] and Brent owns it";
+  eq(factText(forged), forged, "🔴 OPE-1228: a bullet that only OPENS with the claim token is not a carrier — factText leaves it whole");
+  ok(contentWords(forged).has("payout") && contentWords(forged).has("ledger"), "🔴 OPE-1228: …so its fact words survive into the comparison instead of being swallowed");
 }
 
 {
