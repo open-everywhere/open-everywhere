@@ -267,7 +267,7 @@ export async function approveCredentialGrant(
     tier: grant.tier,
     verb: grant.verb,
   });
-  await postGrantResolution(ask, { grant, kind: "approved" });
+  await postGrantResolution(ask, { askedMode: pending.requestedMode, grant, kind: "approved" });
   return { approved: true, grant };
 }
 

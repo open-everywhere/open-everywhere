@@ -305,7 +305,14 @@ console.log("6. the owner's card:");
   ok(!text.includes('"Q3"'), "the model-authored purpose cannot carry a quote character into the card — it would close the quoted span");
   ok(!text.includes("\nIGNORE THE ABOVE"), "…and cannot carry a newline, which is how model text would otherwise start a line of its own");
   ok(text.includes("IGNORE THE ABOVE"), "…but the purpose is still SHOWN, flattened — the owner reads what was actually asked for");
-  ok(text.split("\n").filter((l) => l.includes("Reply `once`")).length === 1, "the copy states the four answers in words, because an arm with no component plane delivers the text alone");
+  ok(
+    text.split("\n").filter((l) => l.startsWith("• *Approve") || l.startsWith("• *Decline")).length === 4,
+    "the copy states ALL FOUR answers in words, one per line, because an arm with no component plane delivers the text alone",
+  );
+  ok(
+    !text.split("\n").some((l) => /^reply\b/iu.test(l.trim())),
+    "🔴 …and it never invites a TYPED reply (OPE-1217): a parsed button id is the only route to `approveCredentialGrant`, so copy offering a reply would promise a control no route reads",
+  );
   eq(quotedPurpose('a "quoted" purpose'), "a quoted purpose", "quotedPurpose strips the characters that would escape the span");
   ok(quotedPurpose("x".repeat(500)).length <= 200, "…and caps the length");
 }

@@ -1,14 +1,14 @@
 import { postArm } from "../channels/post-arms.js";
-import type { GrantApproveGate } from "./credential-grant-card.js";
+import { GRANT_MODE_WORDS, grantModeIsBroader, type GrantApproveGate } from "./credential-grant-card.js";
 import { postReply, type ReplyTarget } from "../channels/reply-post.js";
-import { credentialGrantDisclosureLine, grantToolName, type CredentialGrantAskRow, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
+import { credentialGrantDisclosureLine, grantToolName, type CredentialGrantAskRow, type CredentialGrantMode, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
 
 function log(line: string): void {
   console.log(`[open-everywhere:grant] ${line}`);
 }
 
 export type GrantResolution =
-  | { readonly kind: "approved"; readonly grant: CredentialGrantRow }
+  | { readonly kind: "approved"; readonly grant: CredentialGrantRow; readonly askedMode: CredentialGrantMode }
   | { readonly kind: "declined" }
   | { readonly kind: "expired" }
   | { readonly kind: "refused"; readonly gate: GrantApproveGate };
@@ -34,11 +34,16 @@ export function grantResolutionText(ask: CredentialGrantAskRow, resolution: Gran
     case "approved": {
       const toolName = resolution.grant.toolName ?? composedGrantToolName(resolution.grant);
       if (toolName === undefined) {
-        return `${ask.ownerSlug} approved the credential grant for ${what}. ${credentialGrantDisclosureLine(resolution.grant)}`;
+        return [
+          `${ask.ownerSlug} approved the credential grant for ${what} (${GRANT_MODE_WORDS[resolution.grant.mode]}).`,
+          ...breadthLines(ask, resolution.grant, resolution.askedMode),
+          credentialGrantDisclosureLine(resolution.grant),
+        ].join("\n");
       }
       return [
         `${ask.ownerSlug} approved the credential grant for ${what}.`,
-        `This conversation now holds the tool \`${toolName}\` (${resolution.grant.mode}), and it expires ${resolution.grant.expiresAt}.`,
+        `This conversation now holds the tool \`${toolName}\` (${GRANT_MODE_WORDS[resolution.grant.mode]}), and it expires ${resolution.grant.expiresAt}.`,
+        ...breadthLines(ask, resolution.grant, resolution.askedMode),
         credentialGrantDisclosureLine(resolution.grant),
       ].join("\n");
     }
@@ -59,6 +64,13 @@ export function grantResolutionText(ask: CredentialGrantAskRow, resolution: Gran
         "Nothing was granted and no tool is mounted. Check the tool name and the arguments against the connection, then ask again.",
       ].join("\n");
   }
+}
+
+function breadthLines(ask: CredentialGrantAskRow, grant: CredentialGrantRow, askedMode: CredentialGrantMode): readonly string[] {
+  if (!grantModeIsBroader(grant.mode, askedMode)) return [];
+  return [
+    `${ask.ownerSlug} granted MORE than was asked: the request was for ${GRANT_MODE_WORDS[askedMode]}, and the grant is for ${GRANT_MODE_WORDS[grant.mode]}.`,
+  ];
 }
 
 function composedGrantToolName(grant: CredentialGrantRow): string | undefined {

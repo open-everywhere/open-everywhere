@@ -10,7 +10,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
 import { approveCredentialGrant, askForCredentialGrant } from "../agent/access/credential-grant-flow.js";
-import { grantCardText } from "../agent/access/credential-grant-card.js";
+import { grantCardActions, grantCardText, GRANT_MODE_WORDS } from "../agent/access/credential-grant-card.js";
+import { grantResolutionText } from "../agent/access/credential-grant-resolution.js";
+import { grantOwnerNoticeText } from "../agent/access/credential-grant-notice.js";
 import { pinFrozenArgsIntoSchema } from "../agent/access/grant-schema-pin.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
 import { registerUserAuthFlow, resetUserAuthFlow, type UserAuthFlowProvider } from "../agent/connections/user-auth-flow.js";
@@ -90,7 +92,7 @@ registerUserAuthFlow(authFlow());
 const store = getOperationalStore();
 let scopeSeq = 0;
 
-async function raise(over: { frozenArgs?: Record<string, unknown>; tool?: string; label?: string } = {}): Promise<{ askId: string; scopeKey: string }> {
+async function raise(over: { frozenArgs?: Record<string, unknown>; tool?: string; label?: string; mode?: "once" | "session" | "standing" } = {}): Promise<{ askId: string; scopeKey: string }> {
   const scopeKey = `sess-${String(++scopeSeq)}`;
   const outcome = await askForCredentialGrant({
     ...stamps,
@@ -104,7 +106,7 @@ async function raise(over: { frozenArgs?: Record<string, unknown>; tool?: string
     ownerPlatform: "slack",
     ownerPrincipalId: OWNER,
     purpose: "draft the Q3 summary",
-    requestedMode: "session",
+    requestedMode: over.mode ?? "session",
     requesterLabel: "Ada",
     requesterPrincipalId: REQ,
     requesterTarget: JSON.stringify(ROOM),
@@ -139,6 +141,21 @@ const askRowFixture = {
   resource: "Launch page — notion-fetch({id:abc123})",
   scopeKey: "sess-card",
   status: "pending",
+  toolName: "grant__rowan_hale_notion__notion_fetch_launch_page",
+  verb: "notion_fetch",
+} as const;
+
+const grantRowFixture = {
+  askId: "ask-card-1",
+  connector: "notion",
+  expiresAt: "2026-08-26T21:00:00.000Z",
+  id: "grant-card-1",
+  mode: "session",
+  ownerPrincipalId: OWNER,
+  ownerSlug: "rowan_hale",
+  purpose: "draft the Q3 summary",
+  requesterPrincipalId: REQ,
+  resource: "Launch page — notion-fetch({id:abc123})",
   toolName: "grant__rowan_hale_notion__notion_fetch_launch_page",
   verb: "notion_fetch",
 } as const;
@@ -376,6 +393,89 @@ console.log("7. the minted row is the one the mount will read:");
   eq(grant?.toolName, "grant__rowan_hale_notion__notion_fetch_launch_page", "…the mounted name the ASK pinned, target label and all");
   eq(grant?.verb, "notion_fetch", "…the tool slug in the verb column");
   eq(grant?.resource, "Launch page — notion-fetch({id:abc123})", "…and the host-composed display label the card and the disclosure line read");
+}
+
+console.log("8. one reader-facing word per mode, on every surface that names one:");
+{
+  const MODES = ["once", "session", "standing"] as const;
+
+  eq(new Set(MODES.map((m) => GRANT_MODE_WORDS[m])).size, 3, "the three modes carry three DIFFERENT reader-facing words");
+  ok(
+    MODES.every((m) => GRANT_MODE_WORDS[m].trim().length > 0),
+    "…and none of them is blank, which would make every `includes` assertion below vacuously true",
+  );
+
+  for (const mode of MODES) {
+    const word = GRANT_MODE_WORDS[mode];
+    const ask = { ...askRowFixture, requestedMode: mode } as never;
+    const grant = { ...grantRowFixture, mode } as never;
+
+    const card = grantCardText(ask, "Ada");
+    ok(card.includes(`They asked for: ${word}`), `the card's ask line spells \`${mode}\` as "${word}"`);
+    const labels = grantCardActions(ask).map((a) => a.label);
+    ok(
+      labels.filter((l) => l.includes(word)).length === 1,
+      `…exactly one BUTTON carries that same word for \`${mode}\` — the word a person carries to every later surface`,
+    );
+
+    const room = grantResolutionText(ask, { askedMode: mode, grant, kind: "approved" });
+    ok(room.includes(`(${word})`), `the room confirmation spells \`${mode}\` as "${word}"`);
+
+    ok(grantOwnerNoticeText(grant).includes(`(${word})`), `the owner's first-use DM spells \`${mode}\` as "${word}"`);
+  }
+
+  for (const mode of ["session", "standing"] as const) {
+    const grant = { ...grantRowFixture, mode } as never;
+    const ask = { ...askRowFixture, requestedMode: mode } as never;
+    ok(!grantResolutionText(ask, { askedMode: mode, grant, kind: "approved" }).includes(`(${mode})`), `the room never prints the raw \`${mode}\` column value`);
+    ok(!grantOwnerNoticeText(grant).includes(`(${mode})`), `…nor does the owner's DM`);
+    ok(!grantCardActions(ask).some((a) => a.label.includes(mode)), `…nor does any button label`);
+  }
+}
+
+console.log("8b. a widened grant is reported to the room, and only a widened one:");
+{
+  registerUserAuthFlow(authFlow());
+
+  posted.length = 0;
+  const wide = await raise({ label: "Breadth wider page", mode: "once" });
+  const wideOk = await approveCredentialGrant(stamps, wide.askId, "session", OWNER, NOW + 500, undefined, deps(server({ tools: PUBLISHED })));
+  ok(wideOk.approved, "the owner answers the `once` ask with `this conversation`…");
+  const widened = posted[posted.length - 1]?.text ?? "";
+  ok(widened.includes("granted MORE than was asked"), "…and the ROOM is told the owner went wider than the request");
+  ok(
+    widened.includes(`the request was for ${GRANT_MODE_WORDS.once}`) && widened.includes(`the grant is for ${GRANT_MODE_WORDS.session}`),
+    "…naming BOTH breadths, in the same words the card spelled them with",
+  );
+
+  posted.length = 0;
+  const same = await raise({ label: "Breadth equal page", mode: "session" });
+  const sameOk = await approveCredentialGrant(stamps, same.askId, "session", OWNER, NOW + 500, undefined, deps(server({ tools: PUBLISHED })));
+  ok(sameOk.approved, "an ask answered at the breadth it requested still approves…");
+  ok(!(posted[posted.length - 1]?.text ?? "").includes("granted MORE"), "…and carries NO widening line");
+
+  posted.length = 0;
+  const narrow = await raise({ label: "Breadth narrower page", mode: "standing" });
+  const narrowOk = await approveCredentialGrant(stamps, narrow.askId, "once", OWNER, NOW + 500, undefined, deps(server({ tools: PUBLISHED })));
+  ok(narrowOk.approved, "an ask answered NARROWER than it requested still approves…");
+  ok(!(posted[posted.length - 1]?.text ?? "").includes("granted MORE"), "…and carries no widening line either");
+}
+
+console.log("8c. the card's answer list reads as options, and promises no reply:");
+{
+  const card = grantCardText(askRowFixture as never, "Ada");
+  const options = card.split("\n").filter((l) => l.startsWith("• *Approve") || l.startsWith("• *Decline"));
+  eq(options.length, 4, "each of the four answers reads as its OWN line — the old copy ran them together as `once`, `conversation`, `standing` or `no`");
+  ok(
+    options.every((l) => l.includes("—")),
+    "…and each one says what it MEANS, which is the half a bare word list left to the reader to guess",
+  );
+  ok(
+    !card.split("\n").some((l) => /^reply\b/iu.test(l.trim())),
+    "🔴 the card NEVER invites a typed reply — copy offering a control this deployment does not have is the defect class this plane's headers exist to stop",
+  );
+  ok(card.includes("nothing has been granted"), "…and a card whose buttons are missing or dead says NOTHING was granted…");
+  ok(card.includes("lapses on its own"), "…and that the request lapses by itself, which is true on every surface");
 }
 
 resetUserAuthFlow();

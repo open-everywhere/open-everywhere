@@ -7,6 +7,7 @@ import { parsePrincipalKey } from "../identity/principal-key.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { CredentialGrantRow } from "../operational/credential-grant-rows.js";
 import { registerGrantRoomNotice } from "./credential-grant-broker.js";
+import { GRANT_MODE_WORDS } from "./credential-grant-card.js";
 
 function log(line: string): void {
   console.log(`[open-everywhere:grant] ${line}`);
@@ -55,7 +56,7 @@ export function grantOwnerNoticeText(grant: CredentialGrantRow, requesterLabel?:
     `• Tool: \`${grant.verb}\``,
     `• Resource: \`${grant.resource}\``,
     `• Who ran it: ${requesterActorPhrase(grant.requesterPrincipalId, requesterLabel)}`,
-    `• Grant: \`${grant.id}\` (${grant.mode})`,
+    `• Grant: \`${grant.id}\` (${GRANT_MODE_WORDS[grant.mode]})`,
     "",
     grant.mode === "once"
       ? "That was a one-shot grant, so it is now spent. Nothing else can be run with it."

@@ -589,7 +589,7 @@ export {
 export type { SetKeyViewResult } from "./credentials/intake.js";
 export { OE_CONNECT_ACTION_PREFIX, handleConnectClick } from "./connections/connector-card.js";
 
-export { OE_GRANT_ACTION_PREFIX, grantCardActionId, parseGrantCardActionId, grantCardActions, grantCardText } from "./access/credential-grant-card.js";
+export { OE_GRANT_ACTION_PREFIX, grantCardActionId, parseGrantCardActionId, grantCardActions, grantCardText, GRANT_MODE_WORDS } from "./access/credential-grant-card.js";
 export type { GrantCardAnswer } from "./access/credential-grant-card.js";
 export { handleGrantCardClick, resolveGrantCardClick, GRANT_CARD_CLICK_ACTION } from "./access/credential-grant-click.js";
 export type { GrantClicker, GrantClickResult, GrantClickInput } from "./access/credential-grant-click.js";

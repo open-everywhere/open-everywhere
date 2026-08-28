@@ -5,6 +5,18 @@ import { quotedPurpose, type CredentialGrantAskRow, type CredentialGrantMode } f
 
 const STANDING_DAYS = Math.round(GRANT_STANDING_MAX_MS / (24 * 60 * 60 * 1000));
 
+export const GRANT_MODE_WORDS: Readonly<Record<CredentialGrantMode, string>> = {
+  once: "once",
+  session: "this conversation",
+  standing: `${String(STANDING_DAYS)} days`,
+};
+
+const GRANT_MODE_BREADTH: Readonly<Record<CredentialGrantMode, number>> = { once: 0, session: 1, standing: 2 };
+
+export function grantModeIsBroader(mode: CredentialGrantMode, thanMode: CredentialGrantMode): boolean {
+  return GRANT_MODE_BREADTH[mode] > GRANT_MODE_BREADTH[thanMode];
+}
+
 export const OE_GRANT_ACTION_PREFIX = "oe_grant:";
 
 export type GrantCardAnswer = CredentialGrantMode | "decline";
@@ -27,9 +39,9 @@ export function parseGrantCardActionId(raw: string | undefined): { readonly askI
 
 export function grantCardActions(ask: CredentialGrantAskRow): readonly DirectMessageAction[] {
   return [
-    { id: grantCardActionId(ask.id, "once"), intent: "affirm", label: "Approve once" },
-    { id: grantCardActionId(ask.id, "session"), intent: "affirm", label: "Approve for this conversation" },
-    { id: grantCardActionId(ask.id, "standing"), intent: "affirm", label: `Approve for ${STANDING_DAYS} days` },
+    { id: grantCardActionId(ask.id, "once"), intent: "affirm", label: `Approve ${GRANT_MODE_WORDS.once}` },
+    { id: grantCardActionId(ask.id, "session"), intent: "affirm", label: `Approve for ${GRANT_MODE_WORDS.session}` },
+    { id: grantCardActionId(ask.id, "standing"), intent: "affirm", label: `Approve for ${GRANT_MODE_WORDS.standing}` },
     { id: grantCardActionId(ask.id, "decline"), intent: "reject", label: "Decline" },
   ];
 }
@@ -43,11 +55,16 @@ export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string
     ...frozenLines(ask),
     ...(ask.toolName === undefined ? [] : [`• They would gain the tool: \`${ask.toolName}\``]),
     `• Where: this one conversation only`,
-    `• They asked for: ${modeWords(ask.requestedMode)}`,
+    `• They asked for: ${GRANT_MODE_WORDS[ask.requestedMode]}`,
     `• Their stated purpose: "${quotedPurpose(ask.purpose)}"`,
     "",
-    `You can approve it once, for this conversation, or for ${STANDING_DAYS} days — or decline.`,
-    "Reply `once`, `conversation`, `standing` or `no` if you cannot see the buttons.",
+    "Tap one button to answer:",
+    `• *Approve ${GRANT_MODE_WORDS.once}* — one single call, and the grant is spent.`,
+    `• *Approve for ${GRANT_MODE_WORDS.session}* — every call that conversation makes, until the grant expires.`,
+    `• *Approve for ${GRANT_MODE_WORDS.standing}* — a standing grant, clamped to a fixed ${String(STANDING_DAYS)}-day ceiling.`,
+    "• *Decline* — nothing is granted.",
+    "",
+    "A button is the only thing that can answer this. If the buttons are missing, or a tap seems to do nothing, nothing has been granted — the request then lapses on its own and they can raise a fresh one.",
     "Approving lets that conversation run this one tool on this one resource with your credential. It grants nothing else.",
   ].join("\n");
 }
@@ -90,17 +107,6 @@ function frozenValueLine(value: unknown): string {
 function cardData(raw: string, max: number): { readonly text: string; readonly truncated: boolean } {
   const flat = raw.replace(/[\r\n]+/gu, " ").replace(/["'`]/gu, "").trim();
   return flat.length > max ? { text: flat.slice(0, max), truncated: true } : { text: flat, truncated: false };
-}
-
-function modeWords(mode: CredentialGrantMode): string {
-  switch (mode) {
-    case "once":
-      return "one single call";
-    case "session":
-      return "this conversation";
-    case "standing":
-      return "a standing grant with an expiry";
-  }
 }
 
 export function expiredGrantCardText(ask: CredentialGrantAskRow, requesterNotified: boolean): string {

@@ -2,7 +2,7 @@ process.env.OE_SQLITE_PATH = ":memory:";
 process.env.SLACK_BOT_TOKEN = "xoxb-test";
 
 import assert from "node:assert/strict";
-import { grantCardActions, OE_GRANT_ACTION_PREFIX, parseGrantCardActionId } from "@open-everywhere/core/agent/adapter-api.js";
+import { grantCardActions, GRANT_MODE_WORDS, OE_GRANT_ACTION_PREFIX, parseGrantCardActionId } from "@open-everywhere/core/agent/adapter-api.js";
 import { classifyEnvelope } from "../agent/channels/slack-front.js";
 import { slackPostArm } from "../agent/channels/slack-post-arm.js";
 import { withPatchedFetch } from "./_fetch-test-utils.js";
@@ -96,6 +96,23 @@ console.log("4. the front route claims an oe_grant: interactivity payload:");
   eq(classifyEnvelope(payload("oe_connect:notion:user-oauth"), FORM_CT).kind, "connect-click", "the connector card still classifies as its own");
   eq(classifyEnvelope(payload("eve_input:x"), FORM_CT).kind, "forward", "eve's own HITL click still FORWARDS untouched");
   eq(classifyEnvelope(new URLSearchParams({ command: "/oe" }).toString(), FORM_CT).kind, "forward", "a slash command still forwards");
+}
+
+console.log("5. §3 — every rendered button spells its mode with the one reader-facing word:");
+{
+  const bodies = await deliver(grantCardActions(ASK) as never);
+  const post = bodies.find((b) => b.__method === "chat.postMessage");
+  const blocks = JSON.parse(post?.blocks ?? "[]") as { elements?: { action_id?: string; text?: { text?: string } }[] }[];
+  const elements = blocks[1]?.elements ?? [];
+  const labelFor = (answer: string): string => elements.find((e) => parseGrantCardActionId(e.action_id)?.answer === answer)?.text?.text ?? "";
+
+  for (const mode of ["once", "session", "standing"] as const) {
+    ok(labelFor(mode).includes(GRANT_MODE_WORDS[mode]), `the \`${mode}\` button a person SEES carries "${GRANT_MODE_WORDS[mode]}"`);
+  }
+
+  ok(!labelFor("session").includes("session"), "🔴 the session button never shows the raw `session` column value");
+  ok(!labelFor("standing").includes("standing"), "🔴 …nor does the standing button show `standing`");
+  ok(labelFor("decline").length > 0 && !labelFor("decline").includes("Approve"), "the reject button is not an approve in disguise");
 }
 
 console.log(`\n✅ slack grant card: ${n} assertions passed`);
