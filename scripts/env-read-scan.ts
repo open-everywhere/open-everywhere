@@ -72,6 +72,28 @@ function isWrite(source: string, closeIdx: number): boolean {
   return /^\s*=[^=]/.test(source.slice(closeIdx + 1, closeIdx + 8));
 }
 
+const ALIAS_DOT_READ = /(?<![.\w$])([A-Za-z_$][\w$]*)\s*\??\.\s*([A-Z][A-Z0-9_]*)\b/g;
+
+export function scanAliasDotReads(file: string, source: string, aliases: ReadonlySet<string>): ResolvedEnvRead[] {
+  if (aliases.size === 0) return [];
+  const out: ResolvedEnvRead[] = [];
+  const seen = new Set<string>();
+  for (const line of source.split("\n")) {
+    if (isCommentLine(line)) continue;
+    for (const m of line.matchAll(ALIAS_DOT_READ)) {
+      const [, base, name] = m;
+      if (!aliases.has(base)) continue;
+      if (!ENV_NAME.test(name)) continue;
+      const after = line.slice(m.index + m[0].length);
+      if (/^\s*=[^=>]/.test(after)) continue;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      out.push({ name, file });
+    }
+  }
+  return out;
+}
+
 export function scanComputedEnvReads(
   file: string,
   source: string,
@@ -131,6 +153,13 @@ export function scanComputedEnvReads(
     if (seenDynamic.has(key)) continue;
     seenDynamic.add(key);
     dynamic.push({ file, line: li + 1, expr });
+  }
+
+  for (const r of scanAliasDotReads(file, source, aliases)) {
+    const key = `${r.name}::${file}`;
+    if (seenResolved.has(key)) continue;
+    seenResolved.add(key);
+    resolved.push(r);
   }
 
   return { resolved, dynamic };

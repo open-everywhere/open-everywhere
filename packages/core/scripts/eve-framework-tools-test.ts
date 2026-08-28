@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { deriveRegistryMountSets, readEveFrameworkTools } from "../agent/access/eve-framework-tools.js";
+import { deriveRegistryMountSets, readEveFrameworkTools } from "./eve-framework-tools.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -31,6 +34,59 @@ const healthy = () => [
   reg("all-local-nodes", "agent.ts", "tools/bash.ts", "tools/read_file.ts", "channels/eve.ts"),
   reg("root", "tools/agent.ts", "tools/task_cancel.ts"),
 ];
+
+{
+  const here = dirname(fileURLToPath(import.meta.url));
+  const repoRoot = join(here, "..", "..", "..");
+
+  ok(existsSync(join(here, "eve-framework-tools.ts")), "the reader lives beside this test in packages/core/scripts/");
+  ok(
+    !existsSync(join(repoRoot, "packages", "core", "agent", "access", "eve-framework-tools.ts")),
+    "🔴 and NOT under packages/core/agent/ — that path is scanned by lint:hosted-externals and published on the exports map",
+  );
+
+  const providers = join(repoRoot, "packages", "providers");
+  const runtimeSrcDirs = [
+    join(repoRoot, "packages", "core", "agent"),
+    join(repoRoot, "packages", "adapters", "agent"),
+    join(repoRoot, "agent"),
+    ...(existsSync(providers)
+      ? readdirSync(providers, { withFileTypes: true })
+          .filter((e) => e.isDirectory())
+          .map((e) => join(providers, e.name, "agent"))
+      : []),
+  ].filter((d) => existsSync(d));
+  ok(runtimeSrcDirs.length >= 3, "the runtime source dirs resolved — an empty list would make the sweep below vacuous");
+
+  const walkTs = (dir: string, out: string[] = []): string[] => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) walkTs(p, out);
+      else if (e.name.endsWith(".ts") && !e.name.endsWith(".d.ts")) out.push(p);
+    }
+    return out;
+  };
+  const IMPORTS_READER = /(?:^\s*(?:import|export)[^;]*?from\s*|\bimport\s*\(\s*)["'][^"']*eve-framework-tools(?:\.js)?["']/m;
+  const offenders: string[] = [];
+  let scanned = 0;
+  for (const dir of runtimeSrcDirs) {
+    for (const file of walkTs(dir)) {
+      scanned++;
+      if (IMPORTS_READER.test(readFileSync(file, "utf8"))) offenders.push(file.slice(repoRoot.length + 1));
+    }
+  }
+  ok(scanned > 100, `the sweep read the tree — ${scanned} runtime source files (a near-zero count would make the next assertion vacuous)`);
+  eq(
+    offenders,
+    [],
+    "🔴 NO runtime module imports the framework-tool reader. It reaches node_modules/eve by absolute path, and the hosted bundle ships no node_modules/eve — a runtime import is a cold-start-class crash that every source-checkout test passes (OPE-1041)",
+  );
+
+  const gateImporters = ["scripts/window-gate-lint.ts", "scripts/subagents-lint.ts", "scripts/read-mounted-tools.ts"]
+    .map((rel) => join(repoRoot, rel))
+    .filter((p) => existsSync(p) && IMPORTS_READER.test(readFileSync(p, "utf8")));
+  eq(gateImporters.length, 3, "negative control: the same pattern DOES match the three root gates that import the reader");
+}
 
 {
   const sets = deriveRegistryMountSets(healthy());

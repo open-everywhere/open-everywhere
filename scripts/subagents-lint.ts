@@ -1,7 +1,7 @@
 import { readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readEveFrameworkTools } from "@open-everywhere/core/agent/access/eve-framework-tools.js";
+import { readEveFrameworkTools } from "../packages/core/scripts/eve-framework-tools.js";
 import { checkDeclaredSubagents } from "@open-everywhere/core/agent/subagents/declared.js";
 import { readDeclaredSubagents, subagentsDir } from "./read-subagents.js";
 

@@ -12,7 +12,7 @@ import {
   type PlanResult,
 } from "../agent/scaffold/roster-plan.js";
 import { SLOT_DIR } from "../agent/scaffold/roster-config.js";
-import { readEveFrameworkTools } from "../agent/access/eve-framework-tools.js";
+import { readEveFrameworkTools } from "./eve-framework-tools.js";
 import {
   CONFIG_FILE,
   applyPlan,

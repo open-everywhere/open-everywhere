@@ -11,7 +11,7 @@ import {
   type AllowEntry,
   type EnvAllowlist,
 } from "./env-read-allowlist.js";
-import { collectExportedNameConstants, dynamicSiteKey, scanComputedEnvReads } from "./env-read-scan.js";
+import { collectExportedNameConstants, dynamicSiteKey, processEnvAliases, scanAliasDotReads, scanComputedEnvReads } from "./env-read-scan.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const LINT = join(root, "scripts", "env-docs-lint.ts");
@@ -131,11 +131,11 @@ function main(): void {
     for (const [, e] of ENV_READ_ALLOWLIST) census.set(e.klass, (census.get(e.klass) ?? 0) + 1);
     const expected: Record<string, number> = {
       "settings-lever": 0,
-      secret: 27,
-      connection: 31,
-      identity: 21,
-      platform: 11,
-      "pending-migration": 45,
+      secret: 32,
+      connection: 37,
+      identity: 24,
+      platform: 13,
+      "pending-migration": 48,
     };
     for (const [klass, n] of Object.entries(expected)) {
       ok(
@@ -143,7 +143,7 @@ function main(): void {
         `class ${klass} holds ${n} entries (found ${census.get(klass) ?? 0}) — if you meant to change this, say so here`,
       );
     }
-    ok(ENV_READ_ALLOWLIST.size === 135, `the allowlist holds 135 names (found ${ENV_READ_ALLOWLIST.size})`);
+    ok(ENV_READ_ALLOWLIST.size === 154, `the allowlist holds 154 names (found ${ENV_READ_ALLOWLIST.size})`);
   }
 
   {
@@ -279,6 +279,50 @@ function main(): void {
     const bare = [...DYNAMIC_ENV_READ_SITES].filter(([, why]) => why.trim().length < 10);
     ok(bare.length === 0, `every excused site carries a reason (bare: ${bare.map(([k]) => k).join(", ")})`);
   }
+
+  {
+    const aliasSrc = [
+      "export function f(env: NodeJS.ProcessEnv = process.env) {",
+      "  const a = env.OE_ALPHA;",
+      "  const b = env?.OE_BETA;",
+      "  return [a, b];",
+      "}",
+    ].join("\n");
+    const found = scanAliasDotReads("f.ts", aliasSrc, processEnvAliases(aliasSrc)).map((r) => r.name).sort();
+    ok(found.join(",") === "OE_ALPHA,OE_BETA", `a dot read off the alias resolves, optional chain included (got ${found.join(",")})`);
+
+    const notAlias = ["export function g(cfg: Config) {", "  return cfg.OE_ALPHA;", "}"].join("\n");
+    ok(scanAliasDotReads("g.ts", notAlias, processEnvAliases(notAlias)).length === 0, "a property off a non-alias identifier is not a read");
+
+    const dotted = ["export function h(env: NodeJS.ProcessEnv = process.env, cfg: C) {", "  return cfg.env.OE_GAMMA;", "}"].join("\n");
+    ok(scanAliasDotReads("h.ts", dotted, processEnvAliases(dotted)).length === 0, "a DOTTED base never qualifies, even when the last segment is the alias name");
+
+    const write = ["export function w(env: NodeJS.ProcessEnv = process.env) {", '  env.OE_DELTA = "1";', "}"].join("\n");
+    ok(scanAliasDotReads("w.ts", write, processEnvAliases(write)).length === 0, "an assignment target is not a read");
+    const compound = ["export function c(env: NodeJS.ProcessEnv = process.env) {", '  env.OE_DELTA ??= "1";', "}"].join("\n");
+    ok(scanAliasDotReads("c.ts", compound, processEnvAliases(compound))[0]?.name === "OE_DELTA", "a compound assignment IS a read — it consults the key first");
+
+    const commented = ["export function k(env: NodeJS.ProcessEnv = process.env) {", "  // env.OE_EPSILON is deliberately not read here", "  return 1;", "}"].join("\n");
+    ok(scanAliasDotReads("k.ts", commented, processEnvAliases(commented)).length === 0, "a comment line is never a read");
+
+    const literal = ["export function l() {", "  return process.env.OE_ZETA;", "}"].join("\n");
+    ok(scanAliasDotReads("l.ts", literal, new Set(["env"])).length === 0, "a literal process.env read is the literal arm's, never this one");
+
+    const both = [
+      'const K = "OE_ETA";',
+      "export function m(env: NodeJS.ProcessEnv = process.env) {",
+      "  return [env[K], env.OE_ETA];",
+      "}",
+    ].join("\n");
+    const scan = scanComputedEnvReads("m.ts", both);
+    ok(scan.resolved.filter((r) => r.name === "OE_ETA").length === 1, "one name read two ways in one file is inventoried once");
+    ok(scan.dynamic.length === 0, "…and neither read becomes a dynamic site");
+
+    const dotOnly = ["export function n(env: NodeJS.ProcessEnv = process.env) {", "  return env.OE_THETA;", "}"].join("\n");
+    const folded = scanComputedEnvReads("n.ts", dotOnly);
+    ok(folded.resolved.some((r) => r.name === "OE_THETA"), "scanComputedEnvReads FOLDS the dot arm in — the lint calls this, not scanAliasDotReads");
+  }
+
 }
 
 try {

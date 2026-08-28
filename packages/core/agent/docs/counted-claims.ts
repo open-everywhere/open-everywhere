@@ -10,7 +10,7 @@ export interface CountedClaim {
 
 export type CountedFacts = Readonly<Record<string, readonly string[]>>;
 
-export const COUNTED_FACT_KEYS = ["lean-seat-tools", "worker-only-standing", "worker-only-thread"] as const;
+export const COUNTED_FACT_KEYS = ["lean-seat-tools", "worker-only-standing", "worker-only-thread", "settings-env-seams"] as const;
 
 export const COUNTED_CLAIMS: readonly CountedClaim[] = [
   {
@@ -54,6 +54,13 @@ export const COUNTED_CLAIMS: readonly CountedClaim[] = [
     fact: "worker-only-thread",
     kind: "count",
     pattern: String.raw`\(\x60WORKER_ONLY_TOOLS_THREAD\x60, (\d+) entries\)`,
+  },
+  {
+    id: "settings/sole-env-seam",
+    doc: "packages/core/agent/settings/settings.ts",
+    fact: "settings-env-seams",
+    kind: "names",
+    pattern: String.raw`When present — and only \x60([a-z.]+)\x60 has it —`,
   },
   {
     id: "agents/seat-holds",

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readEveFrameworkTools } from "../agent/access/eve-framework-tools.js";
+import { readEveFrameworkTools } from "./eve-framework-tools.js";
 import {
   checkWindowGateManifest,
   classifyFrameworkTools,

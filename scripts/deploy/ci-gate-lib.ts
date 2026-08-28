@@ -1,7 +1,7 @@
 import { fetchChangedPaths } from "../ci/changed-paths.js";
 import { isSkippableDiff, runtimePaths } from "../ci/skippable-paths.js";
 import { CLOUD_PROOF_CONTEXT } from "./cloud-proof-post-lib.js";
-import { type Env, type Exec, realExec } from "./lib.js";
+import { EXEC_TIMEOUT_MS, type Env, type Exec, realExec, withExecDeadline } from "./lib.js";
 
 export type CheckRun = {
   name: string;
@@ -10,8 +10,6 @@ export type CheckRun = {
 };
 
 const PASSING_CONCLUSIONS = new Set(["success", "neutral"]);
-
-export const HEAVY_JOB_NAME = "eve build + integration tier";
 
 export type CiGateClassification = {
   pending: CheckRun[];
@@ -50,7 +48,7 @@ export function decideCiGate(input: { sha: string; checkRuns: CheckRun[]; isTip:
         }
       : {
           verdict: "refuse",
-          message: `no CI run found for ${short}, and it is not the tip of main — its run may never have reported (tip-wins concurrency, OPE-1099/ci.yml). Deploy the current tip of main instead; its own run is the proof.`,
+          message: `no CI run found for ${short}, and it is not the tip of main — its run may never have reported (tip-wins concurrency on a fork that runs Actions). Deploy the current tip of main instead; its own run is the proof.`,
         };
   }
 
@@ -144,8 +142,13 @@ export async function fetchGithubApi(input: {
   fetchImpl: GithubApiFetchLike;
   env: Env;
   timeoutMs?: number;
+  execTimeoutMs?: number;
 }): Promise<GithubApiBody> {
-  const res = await input.exec("gh", input.ghArgs);
+  const res = await withExecDeadline(input.exec, input.execTimeoutMs)("gh", input.ghArgs);
+
+  if (res.timedOutMs !== undefined) {
+    return { ok: false, reason: `\`gh ${input.ghArgs.join(" ")}\` timed out after ${res.timedOutMs}ms — refusing rather than waiting.` };
+  }
 
   if (!res.spawnError) {
     if (res.code !== 0) {
@@ -220,23 +223,70 @@ export async function fetchGithubApi(input: {
 
 export const GITHUB_API_PAGE_SIZE = 100;
 
-function truncationReason(input: { body: Record<string, unknown>; received: number; what: string }): string | undefined {
-  if (input.received >= GITHUB_API_PAGE_SIZE) {
-    return (
-      `the ${input.what} response fills a whole page (${input.received} record(s), the per_page bound this gate asks for), ` +
-      "so GitHub may hold more behind it. This gate reads one page, and a red record beyond it would be invisible — " +
-      "refusing rather than passing on a read that cannot be shown to be complete."
-    );
+export const GITHUB_API_MAX_PAGES = 10;
+
+function exhaustedPagesReason(input: { received: number; pages: number; what: string }): string {
+  return (
+    `the ${input.what} read filled all ${input.pages} pages this gate will follow (${input.received} record(s) at ` +
+    `per_page=${GITHUB_API_PAGE_SIZE}), so GitHub may still hold more behind it. A red record beyond the last page ` +
+    "would be invisible — refusing rather than passing on a read that cannot be shown to be complete."
+  );
+}
+
+function selfInconsistentCountReason(input: { received: number; totalCount: unknown; pages: number; what: string }): string | undefined {
+  if (input.pages !== 1) return undefined;
+  const total = typeof input.totalCount === "number" && Number.isFinite(input.totalCount) ? input.totalCount : undefined;
+  if (total === undefined || total === input.received) return undefined;
+  return (
+    `the ${input.what} response does not describe itself consistently: GitHub reports total_count=${total} but this page carries ${input.received} record(s). ` +
+    "This gate cannot tell which is the true set — refusing rather than passing on a read it cannot trust."
+  );
+}
+
+export type PageRecords = { records: unknown[]; totalCount: unknown } | undefined;
+
+export type PagedRecordsResult =
+  | { ok: true; records: unknown[]; pages: number; totalCount: unknown }
+  | { ok: false; reason: string; http?: { status: number; text: string } };
+
+async function fetchPagedRecords(input: {
+  ghArgsFor: (page: number) => string[];
+  restPathSuffixFor: (page: number) => string;
+  read: (body: unknown) => PageRecords;
+  shapeReason: string;
+  what: string;
+  exec: Exec;
+  fetchImpl: GithubApiFetchLike;
+  env: Env;
+  maxPages?: number;
+}): Promise<PagedRecordsResult> {
+  const maxPages = input.maxPages ?? GITHUB_API_MAX_PAGES;
+  const records: unknown[] = [];
+  let totalCount: unknown;
+  let pages = 0;
+
+  for (let page = 1; page <= maxPages; page++) {
+    const raw = await fetchGithubApi({
+      ghArgs: input.ghArgsFor(page),
+      restPathSuffix: input.restPathSuffixFor(page),
+      exec: input.exec,
+      fetchImpl: input.fetchImpl,
+      env: input.env,
+    });
+    if (!raw.ok) return { ok: false, reason: raw.reason, ...(raw.http ? { http: raw.http } : {}) };
+
+    const got = input.read(raw.body);
+    if (got === undefined) return { ok: false, reason: input.shapeReason };
+    pages = page;
+    records.push(...got.records);
+    if (page === 1) totalCount = got.totalCount;
+    if (got.records.length < GITHUB_API_PAGE_SIZE) {
+      const inconsistent = selfInconsistentCountReason({ received: records.length, totalCount, pages, what: input.what });
+      return inconsistent ? { ok: false, reason: inconsistent } : { ok: true, records, pages, totalCount };
+    }
   }
-  const raw = input.body.total_count;
-  const total = typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
-  if (total !== undefined && total !== input.received) {
-    return (
-      `the ${input.what} response does not describe itself consistently: GitHub reports total_count=${total} but this page carries ${input.received} record(s). ` +
-      "This gate cannot tell which is the true set — refusing rather than passing on a read it cannot trust."
-    );
-  }
-  return undefined;
+
+  return { ok: false, reason: exhaustedPagesReason({ received: records.length, pages: maxPages, what: input.what }) };
 }
 
 export const PAT_FORBIDDEN_MESSAGE_MARKER = "not accessible by personal access token";
@@ -256,16 +306,16 @@ export function isTokenForbiddenResponse(http: { status: number; text: string } 
 
 export type FetchCheckRunsResult = { ok: true; checkRuns: CheckRun[] } | { ok: false; reason: string; forbiddenForToken?: true };
 
-function parseCheckRunsResponse(body: unknown): FetchCheckRunsResult {
-  const noArray = { ok: false as const, reason: "the check-runs response has no `check_runs` array — cannot evaluate CI state" };
-  if (!body || typeof body !== "object") return noArray;
+function readCheckRunsPage(body: unknown): PageRecords {
+  if (!body || typeof body !== "object") return undefined;
   const rec = body as Record<string, unknown>;
-  const raw = rec.check_runs;
-  if (!Array.isArray(raw)) return noArray;
+  if (!Array.isArray(rec.check_runs)) return undefined;
+  return { records: rec.check_runs, totalCount: rec.total_count };
+}
 
-  const truncated = truncationReason({ body: rec, received: raw.length, what: "check-runs" });
-  if (truncated) return { ok: false, reason: truncated };
+const NO_CHECK_RUNS_ARRAY = "the check-runs response has no `check_runs` array — cannot evaluate CI state";
 
+function parseCheckRunsRecords(raw: readonly unknown[]): FetchCheckRunsResult {
   const runs: CheckRun[] = [];
   for (const entry of raw) {
     if (!entry || typeof entry !== "object") continue;
@@ -279,44 +329,50 @@ function parseCheckRunsResponse(body: unknown): FetchCheckRunsResult {
   return { ok: true, checkRuns: runs };
 }
 
-export async function fetchCheckRunsForSha(input: { sha: string; exec?: Exec; fetchImpl?: GithubApiFetchLike; env?: Env }): Promise<FetchCheckRunsResult> {
-  const raw = await fetchGithubApi({
-    ghArgs: ["api", `repos/{owner}/{repo}/commits/${input.sha}/check-runs`, "--method", "GET", "-f", `per_page=${GITHUB_API_PAGE_SIZE}`],
-    restPathSuffix: `commits/${input.sha}/check-runs?per_page=${GITHUB_API_PAGE_SIZE}`,
+export async function fetchCheckRunsForSha(input: {
+  sha: string;
+  exec?: Exec;
+  fetchImpl?: GithubApiFetchLike;
+  env?: Env;
+  maxPages?: number;
+}): Promise<FetchCheckRunsResult> {
+  const raw = await fetchPagedRecords({
+    ghArgsFor: (page) => [
+      "api",
+      `repos/{owner}/{repo}/commits/${input.sha}/check-runs`,
+      "--method",
+      "GET",
+      "-f",
+      `per_page=${GITHUB_API_PAGE_SIZE}`,
+      "-f",
+      `page=${page}`,
+    ],
+    restPathSuffixFor: (page) => `commits/${input.sha}/check-runs?per_page=${GITHUB_API_PAGE_SIZE}&page=${page}`,
+    read: readCheckRunsPage,
+    shapeReason: NO_CHECK_RUNS_ARRAY,
+    what: "check-runs",
     exec: input.exec ?? realExec,
     fetchImpl: input.fetchImpl ?? realGithubApiFetch,
     env: input.env ?? process.env,
+    ...(input.maxPages !== undefined ? { maxPages: input.maxPages } : {}),
   });
   if (!raw.ok) {
     return isTokenForbiddenResponse(raw.http) ? { ok: false, reason: raw.reason, forbiddenForToken: true } : { ok: false, reason: raw.reason };
   }
 
-  return parseCheckRunsResponse(raw.body);
-}
-
-export type HeavyJobStatus =
-  | { kind: "success" }
-  | { kind: "skipped" }
-  | { kind: "absent" }
-  | { kind: "pending" }
-  | { kind: "red"; conclusion: string | null };
-
-export function classifyHeavyJob(checkRuns: CheckRun[]): HeavyJobStatus {
-  const run = checkRuns.find((r) => r.name === HEAVY_JOB_NAME);
-  if (!run) return { kind: "absent" };
-  if (run.status !== "completed") return { kind: "pending" };
-  if (run.conclusion === "success" || run.conclusion === "neutral") return { kind: "success" };
-  if (run.conclusion === "skipped") return { kind: "skipped" };
-  return { kind: "red", conclusion: run.conclusion };
+  return parseCheckRunsRecords(raw.records);
 }
 
 export const WALK_BACK_MAX_DEPTH = 50;
 
 export type AncestorListResult = { ok: true; shas: string[] } | { ok: false; reason: string };
 
-export async function listFirstParentAncestors(input: { sha: string; count: number; exec?: Exec }): Promise<AncestorListResult> {
-  const exec = input.exec ?? realExec;
+export async function listFirstParentAncestors(input: { sha: string; count: number; exec?: Exec; execTimeoutMs?: number }): Promise<AncestorListResult> {
+  const exec = withExecDeadline(input.exec ?? realExec, input.execTimeoutMs ?? EXEC_TIMEOUT_MS);
   const res = await exec("git", ["rev-list", "--first-parent", "-n", String(input.count), input.sha]);
+  if (res.timedOutMs !== undefined) {
+    return { ok: false, reason: `\`git rev-list\` timed out after ${res.timedOutMs}ms — refusing rather than waiting.` };
+  }
   if (res.spawnError) {
     return { ok: false, reason: `could not run \`git rev-list\` (${res.spawnError})` };
   }
@@ -336,55 +392,6 @@ export async function listFirstParentAncestors(input: { sha: string; count: numb
   return { ok: true, shas };
 }
 
-export async function walkBackForHeavyProof(input: { sha: string; exec?: Exec; maxDepth?: number; fetchImpl?: GithubApiFetchLike; env?: Env }): Promise<CiGateDecision> {
-  const exec = input.exec ?? realExec;
-  const fetchImpl = input.fetchImpl ?? realGithubApiFetch;
-  const env = input.env ?? process.env;
-  const maxDepth = input.maxDepth ?? WALK_BACK_MAX_DEPTH;
-  const short = input.sha.slice(0, 12);
-
-  const ancestors = await listFirstParentAncestors({ sha: input.sha, count: maxDepth + 1, exec });
-  if (!ancestors.ok) {
-    return { verdict: "refuse", message: `walk-back for ${short}: could not list ancestor commits (${ancestors.reason}) — refusing rather than guessing.` };
-  }
-
-  for (let i = 1; i < ancestors.shas.length; i++) {
-    const candidate = ancestors.shas[i];
-    const candidateShort = candidate.slice(0, 12);
-    const fetched = await fetchCheckRunsForSha({ sha: candidate, exec, fetchImpl, env });
-    if (!fetched.ok) {
-      return { verdict: "refuse", message: `walk-back for ${short}: could not read CI state for ancestor ${candidateShort} (${fetched.reason}) — refusing.` };
-    }
-
-    const heavy = classifyHeavyJob(fetched.checkRuns);
-    if (heavy.kind === "skipped") continue;
-
-    if (heavy.kind !== "success") {
-      const shown = heavy.kind === "red" ? `red: ${heavy.conclusion ?? "no conclusion"}` : heavy.kind;
-      return { verdict: "refuse", message: `walk-back for ${short}: ancestor ${candidateShort} has no usable heavy-job proof (${shown}) — refusing rather than guessing.` };
-    }
-
-    const diff = await fetchChangedPaths({ before: candidate, after: input.sha, exec });
-    if (!diff.ok) {
-      return { verdict: "refuse", message: `walk-back for ${short}: found a green heavy run at ${candidateShort}, but could not read the diff since then (${diff.reason}) — refusing.` };
-    }
-    if (isSkippableDiff(diff.paths)) {
-      return {
-        verdict: "pass",
-        message: `CI is green for ${short}: the heavy job was legitimately skipped (non-runtime diff), covered by the green heavy run at ${candidateShort}.`,
-      };
-    }
-    const blocking = runtimePaths(diff.paths);
-    const shown = blocking.slice(0, 10).join(", ") + (blocking.length > 10 ? ", …" : "");
-    return {
-      verdict: "refuse",
-      message: `walk-back for ${short}: the nearest green heavy run is ${candidateShort}, but the diff since then includes runtime path(s) the workflow's own skip never covered: ${shown} — waiting for this sha's own heavy run.`,
-    };
-  }
-
-  return { verdict: "refuse", message: `walk-back for ${short}: no green heavy run found within ${maxDepth} ancestor commit(s) — refusing rather than guessing.` };
-}
-
 export type CheckRunsReadOutcome = { kind: "empty" } | { kind: "forbidden" };
 
 function checkRunsClause(outcome: CheckRunsReadOutcome, short: string): string {
@@ -397,16 +404,16 @@ export type CommitStatus = { context: string; state: string };
 
 export type FetchCombinedStatusResult = { ok: true; statuses: CommitStatus[] } | { ok: false; reason: string };
 
-function parseCombinedStatusResponse(body: unknown): FetchCombinedStatusResult {
-  const noArray = { ok: false as const, reason: "the combined status response has no `statuses` array — cannot evaluate cloud-proof state" };
-  if (!body || typeof body !== "object") return noArray;
+function readCombinedStatusPage(body: unknown): PageRecords {
+  if (!body || typeof body !== "object") return undefined;
   const rec = body as Record<string, unknown>;
-  const raw = rec.statuses;
-  if (!Array.isArray(raw)) return noArray;
+  if (!Array.isArray(rec.statuses)) return undefined;
+  return { records: rec.statuses, totalCount: rec.total_count };
+}
 
-  const truncated = truncationReason({ body: rec, received: raw.length, what: "combined status" });
-  if (truncated) return { ok: false, reason: truncated };
+const NO_STATUSES_ARRAY = "the combined status response has no `statuses` array — cannot evaluate cloud-proof state";
 
+function parseCombinedStatusRecords(raw: readonly unknown[]): FetchCombinedStatusResult {
   const statuses: CommitStatus[] = [];
   for (const entry of raw) {
     if (!entry || typeof entry !== "object") continue;
@@ -418,17 +425,36 @@ function parseCombinedStatusResponse(body: unknown): FetchCombinedStatusResult {
   return { ok: true, statuses };
 }
 
-export async function fetchCombinedStatusForSha(input: { sha: string; exec?: Exec; fetchImpl?: GithubApiFetchLike; env?: Env }): Promise<FetchCombinedStatusResult> {
-  const raw = await fetchGithubApi({
-    ghArgs: ["api", `repos/{owner}/{repo}/commits/${input.sha}/status`, "--method", "GET", "-f", `per_page=${GITHUB_API_PAGE_SIZE}`],
-    restPathSuffix: `commits/${input.sha}/status?per_page=${GITHUB_API_PAGE_SIZE}`,
+export async function fetchCombinedStatusForSha(input: {
+  sha: string;
+  exec?: Exec;
+  fetchImpl?: GithubApiFetchLike;
+  env?: Env;
+  maxPages?: number;
+}): Promise<FetchCombinedStatusResult> {
+  const raw = await fetchPagedRecords({
+    ghArgsFor: (page) => [
+      "api",
+      `repos/{owner}/{repo}/commits/${input.sha}/status`,
+      "--method",
+      "GET",
+      "-f",
+      `per_page=${GITHUB_API_PAGE_SIZE}`,
+      "-f",
+      `page=${page}`,
+    ],
+    restPathSuffixFor: (page) => `commits/${input.sha}/status?per_page=${GITHUB_API_PAGE_SIZE}&page=${page}`,
+    read: readCombinedStatusPage,
+    shapeReason: NO_STATUSES_ARRAY,
+    what: "combined status",
     exec: input.exec ?? realExec,
     fetchImpl: input.fetchImpl ?? realGithubApiFetch,
     env: input.env ?? process.env,
+    ...(input.maxPages !== undefined ? { maxPages: input.maxPages } : {}),
   });
   if (!raw.ok) return { ok: false, reason: raw.reason };
 
-  return parseCombinedStatusResponse(raw.body);
+  return parseCombinedStatusRecords(raw.records);
 }
 
 export type CloudProofStatus = { kind: "success" } | { kind: "absent" } | { kind: "pending" } | { kind: "red"; state: string };
@@ -552,15 +578,5 @@ export async function runCiGate(input: { sha: string; isTip: boolean; exec?: Exe
     return decideCiGateViaCloudProof({ sha: input.sha, isTip: input.isTip, exec, fetchImpl, env, checkRunsRead: { kind: "empty" } });
   }
 
-  const decision = decideCiGate({ sha: input.sha, checkRuns: fetched.checkRuns, isTip: input.isTip });
-  if (decision.verdict === "pass") return decision;
-
-  const heavy = classifyHeavyJob(fetched.checkRuns);
-  const others = fetched.checkRuns.filter((r) => r.name !== HEAVY_JOB_NAME);
-  const othersGreen = others.length > 0 && others.every((r) => r.status === "completed" && (r.conclusion === "success" || r.conclusion === "neutral"));
-  if (heavy.kind !== "skipped" || !othersGreen) {
-    return decision;
-  }
-
-  return walkBackForHeavyProof({ sha: input.sha, exec, fetchImpl, env });
+  return decideCiGate({ sha: input.sha, checkRuns: fetched.checkRuns, isTip: input.isTip });
 }

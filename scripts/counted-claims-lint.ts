@@ -7,16 +7,28 @@ import {
   WORKER_ONLY_TOOLS_STANDING,
   WORKER_ONLY_TOOLS_THREAD,
 } from "@open-everywhere/core/agent/access/worker-capability-index.generated.js";
+import { SETTINGS } from "@open-everywhere/core/agent/settings/settings.js";
 import { COUNTED_CLAIMS, COUNTED_FACT_KEYS, checkCountedClaims, type CountedFacts } from "@open-everywhere/core/agent/docs/counted-claims.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 assertCoreDistFresh();
 
+function settingsEnvSeams(): string[] {
+  const out: string[] = [];
+  for (const group of Object.values(SETTINGS as Record<string, Record<string, { path: string; env?: string }>>)) {
+    for (const spec of Object.values(group)) {
+      if (typeof spec.env === "string") out.push(spec.path);
+    }
+  }
+  return out.sort();
+}
+
 const facts: CountedFacts = {
   "lean-seat-tools": [...LEAN_SEAT_TOOLS],
   "worker-only-standing": WORKER_ONLY_TOOLS_STANDING,
   "worker-only-thread": WORKER_ONLY_TOOLS_THREAD,
+  "settings-env-seams": settingsEnvSeams(),
 };
 
 const derived = new Set(Object.keys(facts));
@@ -48,5 +60,5 @@ if (report.problems.length > 0) {
 console.log(
   `✓ counted-claims-lint: ${report.checked}/${COUNTED_CLAIMS.length} counted claims hold across ${docs.size} document(s) — ` +
     `lean seat ${facts["lean-seat-tools"]?.length}, worker-only standing ${facts["worker-only-standing"]?.length}, ` +
-    `worker-only thread ${facts["worker-only-thread"]?.length}.`,
+    `worker-only thread ${facts["worker-only-thread"]?.length}, settings env seams ${facts["settings-env-seams"]?.length}.`,
 );

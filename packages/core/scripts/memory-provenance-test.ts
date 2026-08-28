@@ -313,4 +313,27 @@ const ok = (cond: boolean, label: string) => {
   ok(guardProvenanceMarks(fenced, { "b.md": "```\n```\n" }).files["b.md"] === "```\n```\n", "a `[external-provenance:` string inside a code fence is not a mark and does not freeze the file");
 }
 
+{
+  const MARK = `${EXTERNAL_PROVENANCE_PREFIX} added on a turn that ingested web]`;
+  const ATTR = `${EXTERNAL_CLAIM_PREFIX}; the turn ingested web]`;
+  const before = { "notes.md": `# notes\n- ${ATTR} Ada owns billing  ${MARK}\n` };
+
+  const laundered = { "notes.md": `# notes\n- Ada owns billing  ${MARK}\n` };
+  const guarded = guardProvenanceMarks(before, laundered);
+  ok(guarded.files["notes.md"] === before["notes.md"], "stripping the in-sentence attribution while keeping the suffix is REFUSED — the header promises both carriers");
+  assert.deepStrictEqual(guarded.reverted, ["notes.md"], "…and the refused file is named");
+  n++;
+
+  const kept = { "notes.md": `# notes\n- ${ATTR} Ada owns [[people/billing]]  ${MARK}\n` };
+  ok(guardProvenanceMarks(before, kept).files["notes.md"] === kept["notes.md"], "a rewrite that keeps both carriers is admitted");
+  ok(guardProvenanceMarks(before, kept).reverted.length === 0, "…and nothing is reported as reverted");
+
+  const twins = { "notes.md": `- ${ATTR} Ada owns billing  ${MARK}\n- ${ATTR} Ada owns billing  ${MARK}\n` };
+  const deduped = { "notes.md": `- ${ATTR} Ada owns billing  ${MARK}\n` };
+  ok(guardProvenanceMarks(twins, deduped).files["notes.md"] === deduped["notes.md"], "dedup of byte-identical doubly-carried bullets is still admitted");
+
+  const suffixOnly = { "notes.md": `- host fact  ${MARK}\n` };
+  ok(guardProvenanceMarks(suffixOnly, suffixOnly).files["notes.md"] === suffixOnly["notes.md"], "a suffix-only bullet is unaffected by the two-carrier count");
+}
+
 console.log(`memory-provenance: ${n} assertions passed`);

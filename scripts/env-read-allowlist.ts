@@ -54,6 +54,11 @@ allow("secret", [
   ["OE_DIRECTORY_OKTA_TOKEN_BROKER", "secrets bootstrap: which broker that Okta token ref resolves through."],
   ["OE_CREDENTIAL_ENCRYPTION_KEY", "the AES-256-GCM key the db credential broker encrypts every stored credential with."],
   ["OE_INTAKE_PAGE_SIGNING_KEY", "the signing secret for intake page tokens — absent, both page routes 404."],
+  ["AI_GATEWAY_API_KEY", "the model gateway key — the quickstart preflight checks its presence, and every inference call authenticates with it."],
+  ["LINEAR_WEBHOOK_SECRET", "the Linear webhook HMAC secret, verified by this repo's own `linear-webhook-verify.ts` as well as by eve's bundled handler."],
+  ["OE_GITHUB_APP_PRIVATE_KEY", "the GitHub App PEM this deployment mints installation tokens with — the OE-prefixed spelling `scm/config.ts` reads."],
+  ["OE_SPAWN_DISPATCH_SECRET", "the shared secret the self-dispatch route authenticates a spawned wake with."],
+  ["OE_TRANSCRIPT_RELAY_SECRET", "the shared secret the transcript relay route authenticates with."],
 ]);
 
 allow("connection", [
@@ -88,6 +93,12 @@ allow("connection", [
   ["OE_DIRECTORY_PROVIDER", "adapter selection: which directory backing to arm at boot (\"okta\", or nothing)."],
   ["OE_DIRECTORY_OKTA_ORG_URL", "the Okta org this deployment syncs against — an HTTPS target, per install."],
   ["OE_OAUTH_NOTION_RESOURCE", "the hosted-MCP resource URL the Notion OAuth shortcut points at."],
+  ["OE_DB_OWNER_URL", "the OWNER-role Postgres DSN, the second connection string of the two-role database setup — present ⇒ the app connects as a non-owner runtime role."],
+  ["NO_PROXY", "the standard no-proxy exemption list — which network destinations bypass the proxy. `host-egress.ts` mirrors undici's own `EnvHttpProxyAgent` reading of it, so this names destinations, not behaviour."],
+  ["OE_EGRESS_DENIAL_LOG", "where the self-host egress proxy writes its denial log — a filesystem path on a shared volume, per install."],
+  ["OE_GITHUB_INSTALLATION_ID", "which GitHub App INSTALLATION this deployment acts through — a wiring target, per install."],
+  ["OE_GITHUB_OWNER", "which owner that installation id belongs to; the pair builds the one-entry installation table."],
+  ["OE_GITHUB_INSTALLATIONS", "the owner-to-installation-id table, for a deployment installed into several orgs — the multi-entry form of the pair above."],
 ]);
 
 allow("identity", [
@@ -115,6 +126,9 @@ allow("identity", [
     "OE_AWS_SSO_CLIENT_ID",
     "the pre-registered PUBLIC OIDC client id this deployment presents at the Identity Center link — the same class as LINEAR_CLIENT_ID, the public half of a client pair.",
   ],
+  ["OE_GITHUB_APP_CLIENT_ID", "the GitHub App's PUBLIC OAuth client id — the same class as LINEAR_CLIENT_ID, the public half of a client pair."],
+  ["OE_GITHUB_APP_SLUG", "that App's slug, which the agent recognises its own posts by."],
+  ["OE_GITHUB_BOT_USER_ID", "the GitHub user id this deployment posts as."],
 ]);
 
 allow("platform", [
@@ -129,6 +143,8 @@ allow("platform", [
   ["OTEL_EXPORTER_OTLP_ENDPOINT", "the standard OTel endpoint var, read by the vendored exporter's own conventions."],
   ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "the standard OTel traces endpoint var, same convention."],
   ["CLAUDE_PROJECT_DIR", "injected by the Claude Code harness the ops server runs inside."],
+  ["VERCEL_URL", "the per-deployment hostname Vercel injects — the self-dispatch route builds its own callback origin from it. No operator sets it."],
+  ["VERCEL_PROJECT_PRODUCTION_URL", "the project's production hostname, injected by Vercel and preferred over VERCEL_URL so a preview never dispatches to itself."],
 ]);
 
 allow("pending-migration", [
@@ -192,6 +208,12 @@ allow("pending-migration", [
   ],
   ["OE_SCRIPTED_MODEL", "OPE-1153: arms the scripted stand-in model — a test valve read by runtime code, like OE_ALLOW_TEST_NETWORK."],
   ["OE_MEMORY_SYNC_TIMING", "OPE-1153: arms the per-silo sync decomposition, a measurement flag costing a durable row per session."],
+  [
+    "OE_SANDBOX_BACKEND",
+    "OPE-1153: picks the off-Vercel sandbox backend, and the two values are not peers — `backend-select.ts` documents `justbash` as \"Dev + testing only\" against the contained `docker` default. A dashboard that sets it lowers the isolation floor, which is a wall, not adapter selection.",
+  ],
+  ["OE_TEST_WAKE", "OPE-1153: arms `POST /control/v1/test/wake`, DEFAULT OFF — without it the route 404s. The same class as OE_ALLOW_TEST_NETWORK: a test valve read by runtime code."],
+  ["OE_EGRESS_DENIAL_POLL_MS", "OPE-1153: the denial-log poll interval — a clock."],
 ]);
 
 export const ENV_READ_ALLOWLIST: EnvAllowlist = ALLOWLIST;

@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolSource } from "@open-everywhere/core/agent/access/consequence.js";
-import { readEveFrameworkTools } from "@open-everywhere/core/agent/access/eve-framework-tools.js";
+import { readEveFrameworkTools } from "../packages/core/scripts/eve-framework-tools.js";
 import { listDeclaredSubagents } from "@open-everywhere/core/agent/subagents/declared.js";
 import { readDeclaredSubagents } from "./read-subagents.js";
 

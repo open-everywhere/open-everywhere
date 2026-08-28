@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkWindowGateManifest, classifyFrameworkTools, type WindowToolSource } from "@open-everywhere/core/agent/access/window-gate-manifest.js";
-import { readEveFrameworkTools } from "@open-everywhere/core/agent/access/eve-framework-tools.js";
+import { readEveFrameworkTools } from "../packages/core/scripts/eve-framework-tools.js";
 import { listDeclaredSubagents } from "@open-everywhere/core/agent/subagents/declared.js";
 import { readDeclaredSubagents } from "./read-subagents.js";
 

@@ -8,18 +8,52 @@ export type ExecResult = {
   stdout: string;
   stderr: string;
   spawnError?: string;
+  timedOutMs?: number;
 };
 export type Exec = (command: string, args: string[]) => Promise<ExecResult>;
 
+export const EXEC_TIMEOUT_MS = 60_000;
+
+export const REAL_EXEC_TIMEOUT_MS = 300_000;
+
 export const realExec: Exec = (command, args) =>
   new Promise((resolve) => {
-    execFile(command, args, { maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
-      const rawCode = (err as { code?: unknown } | null)?.code;
+    execFile(command, args, { maxBuffer: 16 * 1024 * 1024, timeout: REAL_EXEC_TIMEOUT_MS }, (err, stdout, stderr) => {
+      const failure = err as (Error & { code?: unknown; killed?: boolean }) | null;
+      const rawCode = failure?.code;
       const code = typeof rawCode === "number" ? rawCode : err ? 1 : 0;
       const spawnError = typeof rawCode === "string" ? `${rawCode}: ${(err as Error).message}` : undefined;
-      resolve({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? ""), ...(spawnError ? { spawnError } : {}) });
+      const killedByTimeout = failure?.killed === true && typeof rawCode !== "string";
+      resolve({
+        code,
+        stdout: String(stdout ?? ""),
+        stderr: killedByTimeout ? `${execTimeoutNote(command, REAL_EXEC_TIMEOUT_MS)} ${String(stderr ?? "")}`.trim() : String(stderr ?? ""),
+        ...(spawnError ? { spawnError } : {}),
+        ...(killedByTimeout ? { timedOutMs: REAL_EXEC_TIMEOUT_MS } : {}),
+      });
     });
   });
+
+export function execTimeoutNote(command: string, timeoutMs: number): string {
+  return `\`${command}\` did not finish within ${timeoutMs}ms and was killed — refusing rather than waiting.`;
+}
+
+export function withExecDeadline(exec: Exec, timeoutMs: number = EXEC_TIMEOUT_MS): Exec {
+  return async (command, args) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<ExecResult>((resolve) => {
+      timer = setTimeout(
+        () => resolve({ code: 1, stdout: "", stderr: execTimeoutNote(command, timeoutMs), timedOutMs: timeoutMs }),
+        timeoutMs,
+      );
+    });
+    try {
+      return await Promise.race([exec(command, args), deadline]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  };
+}
 
 export type Env = Record<string, string | undefined>;
 

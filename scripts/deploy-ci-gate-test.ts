@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
 
 import type { Env, Exec, ExecResult } from "./deploy/lib.js";
+import { EXEC_TIMEOUT_MS, REAL_EXEC_TIMEOUT_MS, withExecDeadline } from "./deploy/lib.js";
 import {
   classifyCheckRuns,
   classifyCloudProofStatus,
-  classifyHeavyJob,
   decideCiGate,
   decideCiGateViaCloudProof,
   fetchCheckRunsForSha,
   fetchCombinedStatusForSha,
   fetchGithubApi,
   GITHUB_API_BASE,
+  GITHUB_API_MAX_PAGES,
   GITHUB_API_TIMEOUT_MS,
-  HEAVY_JOB_NAME,
   isTokenForbiddenResponse,
   listFirstParentAncestors,
   parseGithubOwnerRepo,
@@ -21,7 +21,6 @@ import {
   resolveGithubRestToken,
   runCiGate,
   walkBackForCloudProof,
-  walkBackForHeavyProof,
   type CheckRun,
   type CommitStatus,
   type GithubApiFetchLike,
@@ -231,7 +230,7 @@ await check("fetchCheckRunsForSha: gh ENOENT + a token falls back to REST and pa
   assert.equal(result.ok, true);
   if (result.ok) assert.deepEqual(result.checkRuns, GREEN);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, `${GITHUB_API_BASE}/repos/acme/oe/commits/${SHA}/check-runs?per_page=100`);
+  assert.equal(calls[0].url, `${GITHUB_API_BASE}/repos/acme/oe/commits/${SHA}/check-runs?per_page=100&page=1`);
   assert.equal(calls[0].headers.authorization, "Bearer test-gh-token");
 });
 
@@ -241,7 +240,7 @@ await check("fetchCombinedStatusForSha: gh ENOENT + a token falls back to REST a
   const result = await fetchCombinedStatusForSha({ sha: SHA, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
   assert.equal(result.ok, true);
   if (result.ok) assert.deepEqual(result.statuses, [{ context: CLOUD_PROOF_CONTEXT, state: "success" }]);
-  assert.equal(calls[0].url, `${GITHUB_API_BASE}/repos/acme/oe/commits/${SHA}/status?per_page=100`);
+  assert.equal(calls[0].url, `${GITHUB_API_BASE}/repos/acme/oe/commits/${SHA}/status?per_page=100&page=1`);
 });
 
 await check("runCiGate: gh ENOENT + REST fallback → GREEN check-runs PASSES, same verdict as the gh path", async () => {
@@ -252,7 +251,7 @@ await check("runCiGate: gh ENOENT + REST fallback → GREEN check-runs PASSES, s
 
 await check("runCiGate: gh ENOENT + REST fallback → RED check-run REFUSES, same verdict as the gh path", async () => {
   const fetchImpl = routedRestFetch(
-    { "/check-runs": { status: 200, body: { check_runs: [GREEN[0], { name: HEAVY_JOB_NAME, status: "completed", conclusion: "failure" }] } } },
+    { "/check-runs": { status: 200, body: { check_runs: [GREEN[0], { name: "eve build + integration tier", status: "completed", conclusion: "failure" }] } } },
     [],
   );
   const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
@@ -262,7 +261,7 @@ await check("runCiGate: gh ENOENT + REST fallback → RED check-run REFUSES, sam
 
 await check("runCiGate: gh ENOENT + REST fallback → IN-FLIGHT check-run REFUSES, same verdict as the gh path", async () => {
   const fetchImpl = routedRestFetch(
-    { "/check-runs": { status: 200, body: { check_runs: [GREEN[0], { name: HEAVY_JOB_NAME, status: "in_progress", conclusion: null }] } } },
+    { "/check-runs": { status: 200, body: { check_runs: [GREEN[0], { name: "eve build + integration tier", status: "in_progress", conclusion: null }] } } },
     [],
   );
   const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
@@ -301,7 +300,7 @@ await check("fetchCheckRunsForSha: gh ENOENT + token + NO GITHUB_REPOSITORY fall
   const fetchImpl = routedRestFetch({ "/check-runs": { status: 200, body: { check_runs: GREEN } } }, calls);
   const result = await fetchCheckRunsForSha({ sha: SHA, exec, fetchImpl, env: { GH_TOKEN: "tok" } });
   assert.equal(result.ok, true);
-  assert.equal(calls[0].url, `${GITHUB_API_BASE}/repos/acme/oe/commits/${SHA}/check-runs?per_page=100`);
+  assert.equal(calls[0].url, `${GITHUB_API_BASE}/repos/acme/oe/commits/${SHA}/check-runs?per_page=100&page=1`);
 });
 
 await check("fetchCheckRunsForSha: gh ENOENT + token but no resolvable owner/repo (no GITHUB_REPOSITORY, no origin remote) REFUSES", async () => {
@@ -337,10 +336,10 @@ check("resolveGithubRestToken: GH_TOKEN wins over GITHUB_TOKEN; either alone wor
   assert.equal(resolveGithubRestToken({}), undefined);
 });
 
-check("decideCiGate: a 'skipped' heavy job, with nothing else considered, REFUSES on its own", () => {
+check("decideCiGate: a 'skipped' job among green ones REFUSES — a skip proves nothing on its own", () => {
   const decision = decideCiGate({
     sha: SHA,
-    checkRuns: [GREEN[0], { name: HEAVY_JOB_NAME, status: "completed", conclusion: "skipped" }],
+    checkRuns: [GREEN[0], { name: "eve build + integration tier", status: "completed", conclusion: "skipped" }],
     isTip: true,
   });
   assert.equal(decision.verdict, "refuse");
@@ -349,15 +348,6 @@ check("decideCiGate: a 'skipped' heavy job, with nothing else considered, REFUSE
 const A1 = "a1".repeat(20);
 const A2 = "b2".repeat(20);
 const A3 = "c3".repeat(20);
-
-check("classifyHeavyJob: success / skipped / red / pending / absent, read from the named check-run only", () => {
-  assert.deepEqual(classifyHeavyJob([{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "success" }]), { kind: "success" });
-  assert.deepEqual(classifyHeavyJob([{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "skipped" }]), { kind: "skipped" });
-  assert.deepEqual(classifyHeavyJob([{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "failure" }]), { kind: "red", conclusion: "failure" });
-  assert.deepEqual(classifyHeavyJob([{ name: HEAVY_JOB_NAME, status: "in_progress", conclusion: null }]), { kind: "pending" });
-  assert.deepEqual(classifyHeavyJob([GREEN[0]]), { kind: "absent" });
-  assert.deepEqual(classifyHeavyJob([]), { kind: "absent" });
-});
 
 function routedExec(fixture: { ancestors?: string[]; checkRuns?: Record<string, CheckRun[]>; diffs?: Record<string, string[]> }, calls: string[]) {
   return async (command: string, args: string[]): Promise<ExecResult> => {
@@ -383,82 +373,6 @@ function routedExec(fixture: { ancestors?: string[]; checkRuns?: Record<string, 
   };
 }
 
-await check("walkBackForHeavyProof: PASSES when the nearest green ancestor's cumulative diff is entirely skippable", async () => {
-  const calls: string[] = [];
-  const exec = routedExec(
-    {
-      ancestors: [SHA, A1, A2],
-      checkRuns: {
-        [A1]: [{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "skipped" }],
-        [A2]: [{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "success" }],
-      },
-      diffs: { [`${A2}..${SHA}`]: [".claude/skills/example/SKILL.md", "docs/deploy/rollback.md"] },
-    },
-    calls,
-  );
-  const decision = await walkBackForHeavyProof({ sha: SHA, exec });
-  assert.equal(decision.verdict, "pass");
-  assert.match(decision.message, new RegExp(A2.slice(0, 12)));
-  assert.match(decision.message, /legitimately skipped/);
-});
-
-await check("walkBackForHeavyProof: REFUSES when the cumulative diff includes a runtime path — names it", async () => {
-  const calls: string[] = [];
-  const exec = routedExec(
-    {
-      ancestors: [SHA, A1, A2],
-      checkRuns: {
-        [A1]: [{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "skipped" }],
-        [A2]: [{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "success" }],
-      },
-      diffs: { [`${A2}..${SHA}`]: [".claude/skills/example/SKILL.md", "agent/agent.ts"] },
-    },
-    calls,
-  );
-  const decision = await walkBackForHeavyProof({ sha: SHA, exec });
-  assert.equal(decision.verdict, "refuse");
-  assert.match(decision.message, /agent\/agent\.ts/);
-});
-
-await check("walkBackForHeavyProof: REFUSES immediately on a RED ancestor — never walks further back past it", async () => {
-  const calls: string[] = [];
-  const exec = routedExec(
-    {
-      ancestors: [SHA, A1, A2],
-      checkRuns: {
-        [A1]: [{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "failure" }],
-      },
-      diffs: {},
-    },
-    calls,
-  );
-  const decision = await walkBackForHeavyProof({ sha: SHA, exec });
-  assert.equal(decision.verdict, "refuse");
-  assert.match(decision.message, /\bred\b/);
-  assert.equal(
-    calls.some((c) => c.includes(A2)),
-    false,
-    "must not have called gh/git for the ancestor past the red one",
-  );
-});
-
-await check("walkBackForHeavyProof: REFUSES when no green run is found within maxDepth (ambiguous, not a pass)", async () => {
-  const calls: string[] = [];
-  const exec = routedExec(
-    {
-      ancestors: [SHA, A1, A2],
-      checkRuns: {
-        [A1]: [{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "skipped" }],
-        [A2]: [{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "skipped" }],
-      },
-      diffs: {},
-    },
-    calls,
-  );
-  const decision = await walkBackForHeavyProof({ sha: SHA, exec, maxDepth: 2 });
-  assert.equal(decision.verdict, "refuse");
-  assert.match(decision.message, /within 2 ancestor commit\(s\)/);
-});
 
 await check("listFirstParentAncestors: parses rev-list output, sha itself first", async () => {
   const exec = async () => ({ code: 0, stdout: `${SHA}\n${A1}\n${A2}\n`, stderr: "" });
@@ -474,13 +388,13 @@ await check("listFirstParentAncestors: a spawn failure refuses (same OPE-1028 di
   if (!result.ok) assert.match(result.reason, /could not run `git rev-list`/);
 });
 
-await check("runCiGate: end to end, a 'skipped' heavy job covered by a proven ancestor PASSES", async () => {
+await check("runCiGate: a 'skipped' job with every OTHER run green REFUSES — the walk-back that used to rescue it is gone", async () => {
   const calls: string[] = [];
   const exec = routedExec(
     {
       checkRuns: {
-        [SHA]: [GREEN[0], { name: HEAVY_JOB_NAME, status: "completed", conclusion: "skipped" }],
-        [A1]: [{ name: HEAVY_JOB_NAME, status: "completed", conclusion: "success" }],
+        [SHA]: [GREEN[0], { name: "eve build + integration tier", status: "completed", conclusion: "skipped" }],
+        [A1]: [{ name: "eve build + integration tier", status: "completed", conclusion: "success" }],
       },
       ancestors: [SHA, A1],
       diffs: { [`${A1}..${SHA}`]: ["AGENTS.md"] },
@@ -488,46 +402,24 @@ await check("runCiGate: end to end, a 'skipped' heavy job covered by a proven an
     calls,
   );
   const decision = await runCiGate({ sha: SHA, isTip: true, exec });
-  assert.equal(decision.verdict, "pass");
+  assert.equal(decision.verdict, "refuse");
+  assert.equal(
+    calls.filter((c) => c.startsWith("git ")).length,
+    0,
+    "no walk-back exists any more, so no rev-list/diff call may be made for a sha that has check-runs",
+  );
 });
 
-await check("runCiGate: a genuinely RED heavy job never triggers the walk-back (no git/gh calls made for it)", async () => {
+await check("runCiGate: a genuinely RED check-run REFUSES and makes no git call", async () => {
   const calls: string[] = [];
   const exec = routedExec(
-    { checkRuns: { [SHA]: [GREEN[0], { name: HEAVY_JOB_NAME, status: "completed", conclusion: "failure" }] } },
+    { checkRuns: { [SHA]: [GREEN[0], { name: "eve build + integration tier", status: "completed", conclusion: "failure" }] } },
     calls,
   );
   const decision = await runCiGate({ sha: SHA, isTip: true, exec });
   assert.equal(decision.verdict, "refuse");
   assert.match(decision.message, /red/);
-  assert.equal(
-    calls.filter((c) => c.startsWith("git ")).length,
-    0,
-    "a red heavy job must never trigger the walk-back's rev-list/diff calls",
-  );
-});
-
-await check("runCiGate: a 'skipped' heavy job alongside a non-green unit run never triggers the walk-back", async () => {
-  const calls: string[] = [];
-  const exec = routedExec(
-    {
-      checkRuns: {
-        [SHA]: [
-          { name: GREEN[0].name, status: "in_progress", conclusion: null },
-          { name: HEAVY_JOB_NAME, status: "completed", conclusion: "skipped" },
-        ],
-      },
-    },
-    calls,
-  );
-  const decision = await runCiGate({ sha: SHA, isTip: true, exec });
-  assert.equal(decision.verdict, "refuse");
-  assert.match(decision.message, /in flight/);
-  assert.equal(
-    calls.filter((c) => c.startsWith("git ")).length,
-    0,
-    "the unit job being non-green must block the walk-back before any git call is made",
-  );
+  assert.equal(calls.filter((c) => c.startsWith("git ")).length, 0, "a red check-run is the end of the decision");
 });
 
 function routedExecWithCloudProof(
@@ -809,6 +701,95 @@ await check("the default deadline is a real, bounded number of milliseconds — 
   assert.ok(GITHUB_API_TIMEOUT_MS <= 120_000, "a deadline the operator outwaits is not a deadline");
 });
 
+const HANGING_EXEC: Exec = () => new Promise<ExecResult>(() => {});
+
+await check("fetchGithubApi: a `gh` spawn that NEVER settles REFUSES on the deadline, in bounded time", async () => {
+  const started = Date.now();
+  const result = await withinBounds("a gh that never settles", () =>
+    fetchGithubApi({
+      ghArgs: ["api", `repos/{owner}/{repo}/commits/${SHA}/check-runs`, "--method", "GET"],
+      restPathSuffix: `commits/${SHA}/check-runs`,
+      exec: HANGING_EXEC,
+      fetchImpl: async () => {
+        throw new Error("the REST fallback must NOT be reached — a stalled gh is not a missing gh");
+      },
+      env: TOKEN_ENV,
+      execTimeoutMs: TINY_TIMEOUT_MS,
+    }),
+  );
+  const elapsed = Date.now() - started;
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.match(result.reason, new RegExp(`timed out after ${TINY_TIMEOUT_MS}ms`));
+    assert.match(result.reason, /refusing rather than waiting/);
+    assert.match(result.reason, /check-runs/, "the refusal names the call that stalled");
+  }
+  assert.ok(elapsed < BOUNDED_MS, `the deadline must end the wait — it took ${elapsed}ms`);
+});
+
+await check("fetchGithubApi: the same tiny exec bound with a `gh` that ANSWERS parses normally — negative control", async () => {
+  const answers: Exec = async () => ({ code: 0, stdout: JSON.stringify({ total_count: 2, check_runs: GREEN }), stderr: "" });
+  const result = await fetchGithubApi({
+    ghArgs: ["api", `repos/{owner}/{repo}/commits/${SHA}/check-runs`, "--method", "GET"],
+    restPathSuffix: `commits/${SHA}/check-runs`,
+    exec: answers,
+    fetchImpl: async () => {
+      throw new Error("the REST fallback must not be reached when `gh` answers");
+    },
+    env: TOKEN_ENV,
+    execTimeoutMs: TINY_TIMEOUT_MS,
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual((result.body as { check_runs: unknown }).check_runs, GREEN);
+});
+
+await check("runCiGate: a `gh` that never settles REFUSES in bounded time — the whole gate, not just the fetch edge", async () => {
+  const started = Date.now();
+  const decision = await withinBounds("runCiGate over a hanging gh", () =>
+    runCiGate({ sha: SHA, isTip: true, exec: withExecDeadline(HANGING_EXEC, TINY_TIMEOUT_MS), env: TOKEN_ENV }),
+  );
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /could not read CI state/);
+  assert.ok(Date.now() - started < BOUNDED_MS, "the gate must refuse, never wait");
+});
+
+await check("listFirstParentAncestors: a `git rev-list` that never settles REFUSES on the deadline, naming the timeout", async () => {
+  const started = Date.now();
+  const result = await withinBounds("a git rev-list that never settles", () =>
+    listFirstParentAncestors({ sha: SHA, count: 3, exec: HANGING_EXEC, execTimeoutMs: TINY_TIMEOUT_MS }),
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.match(result.reason, /git rev-list/);
+    assert.match(result.reason, new RegExp(`timed out after ${TINY_TIMEOUT_MS}ms`));
+  }
+  assert.ok(Date.now() - started < BOUNDED_MS, "the walk-back's git edge must be bounded too");
+});
+
+await check("withExecDeadline: a timeout is its OWN outcome — never a spawn failure, and never a silent exit 1", async () => {
+  const bounded = withExecDeadline(HANGING_EXEC, TINY_TIMEOUT_MS);
+  const res = await withinBounds("withExecDeadline over a hanging exec", () => bounded("gh", ["api", "x"]));
+  assert.equal(res.timedOutMs, TINY_TIMEOUT_MS);
+  assert.equal(res.spawnError, undefined, "a stalled command is not a spawn failure");
+  assert.notEqual(res.code, 0, "a timeout must never read as a clean exit");
+  assert.match(res.stderr, /did not finish within/);
+});
+
+await check("withExecDeadline: an exec that ANSWERS passes through untouched — no timedOutMs, same bytes", async () => {
+  const answers: Exec = async () => ({ code: 0, stdout: "out", stderr: "err" });
+  const res = await withExecDeadline(answers, TINY_TIMEOUT_MS)("git", ["status"]);
+  assert.deepEqual(res, { code: 0, stdout: "out", stderr: "err" });
+  assert.equal(res.timedOutMs, undefined);
+});
+
+await check("EXEC_TIMEOUT_MS: a real, bounded default no product caller opts out of", () => {
+  assert.equal(Number.isFinite(EXEC_TIMEOUT_MS), true);
+  assert.ok(EXEC_TIMEOUT_MS > 0, "a non-positive default would kill every command");
+  assert.ok(EXEC_TIMEOUT_MS <= 300_000, "a bound the operator outwaits is not a bound");
+  assert.ok(REAL_EXEC_TIMEOUT_MS > EXEC_TIMEOUT_MS, "the realExec backstop must be looser than the per-read bound it backs");
+  assert.ok(REAL_EXEC_TIMEOUT_MS <= 600_000, "…and still bounded — it exists to stop a command running forever");
+});
+
 await check("realGithubApiFetch: the deadline's AbortSignal reaches the real `fetch` — a timed-out socket is CANCELLED, not abandoned", async () => {
   const originalFetch = globalThis.fetch;
   const seen: { signal?: AbortSignal | null }[] = [];
@@ -896,20 +877,88 @@ await check("runCiGate: a check-runs page whose total_count EXCEEDS it REFUSES �
   assert.match(decision.message, /30 record/);
 });
 
-await check("runCiGate: a FULL check-runs page REFUSES even when total_count agrees — completeness rests on the page bound, not on total_count", async () => {
-  const fetchImpl = routedRestFetch({ "/check-runs": { status: 200, body: { total_count: 100, check_runs: greenRuns(100) } } }, []);
+function pagedRestFetch(
+  pathSuffix: string,
+  key: "check_runs" | "statuses",
+  records: unknown[],
+  calls: string[],
+  totalCount?: number,
+): GithubApiFetchLike {
+  return async (url) => {
+    calls.push(url);
+    const parsed = new URL(url);
+    if (!parsed.pathname.endsWith(pathSuffix)) throw new Error(`pagedRestFetch: no fixture for ${parsed.pathname}`);
+    const page = Number(parsed.searchParams.get("page") ?? "1");
+    const size = Number(parsed.searchParams.get("per_page") ?? "100");
+    const slice = records.slice((page - 1) * size, page * size);
+    const body: Record<string, unknown> = { [key]: slice };
+    if (totalCount !== undefined) body.total_count = totalCount;
+    return { status: 200, text: async () => JSON.stringify(body) };
+  };
+}
+
+await check("runCiGate: a full FIRST page followed by a short second page PASSES — the read is complete, so it must not refuse", async () => {
+  const calls: string[] = [];
+  const fetchImpl = pagedRestFetch("/check-runs", "check_runs", greenRuns(130), calls);
   const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
-  assert.equal(decision.verdict, "refuse");
-  assert.match(decision.message, /fills a whole page/);
+  assert.equal(decision.verdict, "pass");
+  assert.equal(calls.length, 2, "the gate must follow page 2 — one page is not a complete read of 130 records");
+  assert.match(calls[0], /page=1/);
+  assert.match(calls[1], /page=2/);
 });
 
-await check("runCiGate: a SHORT check-runs page with a matching total_count PASSES — negative control for both truncation branches", async () => {
+await check("runCiGate: a RED check-run on page 2 is SEEN and REFUSES as red — not merely refused as incomplete", async () => {
+  const records = [...greenRuns(100), { name: "late", status: "completed", conclusion: "failure" }];
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl: pagedRestFetch("/check-runs", "check_runs", records, []), env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, /CI is red for/);
+  assert.match(decision.message, /late/, "the refusal names the run it found on the second page");
+});
+
+await check("runCiGate: an endpoint that never runs out of full pages REFUSES at the page-count bound", async () => {
+  const fetchImpl = routedRestFetch({ "/check-runs": { status: 200, body: { check_runs: greenRuns(100) } } }, []);
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, new RegExp(`filled all ${GITHUB_API_MAX_PAGES} pages`));
+});
+
+await check("fetchCheckRunsForSha: the page bound is what stops the walk — a maxPages of 3 reads exactly 3 pages", async () => {
+  const calls: string[] = [];
+  const fetchImpl = pagedRestFetch("/check-runs", "check_runs", greenRuns(1000), calls);
+  const result = await fetchCheckRunsForSha({ sha: SHA, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV, maxPages: 3 });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.reason, /filled all 3 pages/);
+  assert.equal(calls.length, 3);
+});
+
+await check("fetchCheckRunsForSha: a read ending SHORT on the last allowed page PASSES — a short page is complete wherever it lands", async () => {
+  const calls: string[] = [];
+  const fetchImpl = pagedRestFetch("/check-runs", "check_runs", greenRuns(250), calls);
+  const result = await fetchCheckRunsForSha({ sha: SHA, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV, maxPages: 3 });
+  assert.equal(result.ok, true, "a short final page is a complete read, whichever page number it is");
+  if (result.ok) assert.equal(result.checkRuns.length, 250, "…and every record across all three pages is kept");
+  assert.equal(calls.length, 3, "it still read all three pages — the pass is not a short-circuit");
+});
+
+await check("fetchCheckRunsForSha: a FULL last allowed page still REFUSES — the exhausted case is untouched", async () => {
+  const calls: string[] = [];
+  const fetchImpl = pagedRestFetch("/check-runs", "check_runs", greenRuns(300), calls);
+  const result = await fetchCheckRunsForSha({ sha: SHA, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV, maxPages: 3 });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.match(result.reason, /filled all 3 pages/);
+    assert.match(result.reason, /300 record\(s\)/, "the refusal counts what it actually read");
+  }
+  assert.equal(calls.length, 3);
+});
+
+await check("runCiGate: a SHORT check-runs page with a matching total_count PASSES — negative control", async () => {
   const fetchImpl = routedRestFetch({ "/check-runs": { status: 200, body: { total_count: 99, check_runs: greenRuns(99) } } }, []);
   const decision = await runCiGate({ sha: SHA, isTip: true, exec: NO_GH_EXEC, fetchImpl, env: TOKEN_ENV });
   assert.equal(decision.verdict, "pass");
 });
 
-await check("fetchCheckRunsForSha: a total_count BELOW the delivered length also REFUSES — a self-inconsistent response is never trusted", async () => {
+await check("fetchCheckRunsForSha: a total_count BELOW the delivered length still REFUSES on a ONE-page read — a self-inconsistent response is never trusted", async () => {
   const result = await fetchCheckRunsForSha({ sha: SHA, exec: async () => ghStdout({ total_count: 2, check_runs: greenRuns(5) }), fetchImpl: PANIC_FETCH, env: NO_TOKEN_ENV });
   assert.equal(result.ok, false);
   if (!result.ok) {
@@ -918,7 +967,7 @@ await check("fetchCheckRunsForSha: a total_count BELOW the delivered length also
   }
 });
 
-await check("runCiGate: the truncation refusal is NOT REST-specific — the `gh` transport refuses the identical body", async () => {
+await check("runCiGate: the completeness refusal is NOT REST-specific — the `gh` transport refuses the identical body", async () => {
   const decision = await runCiGate({
     sha: SHA,
     isTip: true,
@@ -930,10 +979,7 @@ await check("runCiGate: the truncation refusal is NOT REST-specific — the `gh`
   assert.match(decision.message, /does not describe itself consistently/);
 });
 
-await check("fetchCheckRunsForSha: a FULL page with no total_count REFUSES; a short page without one still parses", async () => {
-  const full = await fetchCheckRunsForSha({ sha: SHA, exec: async () => ghStdout({ check_runs: greenRuns(100) }), fetchImpl: PANIC_FETCH, env: NO_TOKEN_ENV });
-  assert.equal(full.ok, false);
-  if (!full.ok) assert.match(full.reason, /fills a whole page/);
+await check("fetchCheckRunsForSha: a short page with NO total_count parses — GitHub returns min(available, per_page), so it is provably the whole set", async () => {
   const short = await fetchCheckRunsForSha({ sha: SHA, exec: async () => ghStdout({ check_runs: greenRuns(99) }), fetchImpl: PANIC_FETCH, env: NO_TOKEN_ENV });
   assert.equal(short.ok, true);
   if (short.ok) assert.equal(short.checkRuns.length, 99);
@@ -992,26 +1038,39 @@ await check("runCiGate: a COMPLETE status page with no oe/cloud-proof DOES enter
 });
 
 await check(
-  "runCiGate: a FULL status page REFUSES even when total_count agrees — an ancestor's green proof can never stand in for a proof that merely paged off",
+  "runCiGate: a red oe/cloud-proof on status page 2 is READ and refuses as red — it never reads as `absent` and never opens the walk-back",
   async () => {
     const calls: string[] = [];
-    const fetchImpl = routedRestFetch(
-      {
-        "/check-runs": { status: 200, body: { total_count: 0, check_runs: [] } },
-        "/status": { status: 200, body: { total_count: 100, statuses: otherStatuses(100) } },
-      },
-      [],
-    );
+    const statuses = [...otherStatuses(100), { context: CLOUD_PROOF_CONTEXT, state: "failure" }];
+    const fetchImpl: GithubApiFetchLike = async (url, init) =>
+      new URL(url).pathname.endsWith("/status")
+        ? pagedRestFetch("/status", "statuses", statuses, [])(url, init)
+        : { status: 200, text: async () => JSON.stringify({ total_count: 0, check_runs: [] }) };
     const decision = await runCiGate({ sha: SHA, isTip: true, exec: recordingNoGhExec(calls), fetchImpl, env: TOKEN_ENV });
     assert.equal(decision.verdict, "refuse");
-    assert.match(decision.message, /fills a whole page/);
+    assert.match(decision.message, /oe\/cloud-proof is red/);
     assert.equal(
       calls.some((c) => c.includes("rev-list")),
       false,
-      "the walk-back must never run over a status page that fills the per_page bound",
+      "🔴 the walk-back must never open for a proof that merely sat on a later page",
     );
   },
 );
+
+await check("runCiGate: a status endpoint that never runs out of full pages REFUSES at the page-count bound", async () => {
+  const calls: string[] = [];
+  const fetchImpl = routedRestFetch(
+    {
+      "/check-runs": { status: 200, body: { total_count: 0, check_runs: [] } },
+      "/status": { status: 200, body: { statuses: otherStatuses(100) } },
+    },
+    [],
+  );
+  const decision = await runCiGate({ sha: SHA, isTip: true, exec: recordingNoGhExec(calls), fetchImpl, env: TOKEN_ENV });
+  assert.equal(decision.verdict, "refuse");
+  assert.match(decision.message, new RegExp(`filled all ${GITHUB_API_MAX_PAGES} pages`));
+  assert.equal(calls.some((c) => c.includes("rev-list")), false, "the walk-back must never run over a status read that cannot be shown complete");
+});
 
 await check("runCiGate: a SHORT status page with a matching total_count still reaches the walk-back — negative control for the status page bound", async () => {
   const calls: string[] = [];
@@ -1054,8 +1113,8 @@ await check("the four refusal cases still name themselves — red / in flight / 
   };
 
   const cases = [
-    { label: "red", own: /CI is red for/, message: await restRefusal({ total_count: 2, check_runs: [GREEN[0], { name: HEAVY_JOB_NAME, status: "completed", conclusion: "failure" }] }) },
-    { label: "in flight", own: /still in flight/, message: await restRefusal({ total_count: 2, check_runs: [GREEN[0], { name: HEAVY_JOB_NAME, status: "in_progress", conclusion: null }] }) },
+    { label: "red", own: /CI is red for/, message: await restRefusal({ total_count: 2, check_runs: [GREEN[0], { name: "eve build + integration tier", status: "completed", conclusion: "failure" }] }) },
+    { label: "in flight", own: /still in flight/, message: await restRefusal({ total_count: 2, check_runs: [GREEN[0], { name: "eve build + integration tier", status: "in_progress", conclusion: null }] }) },
     { label: "no run yet", own: /no CI run found yet/, message: decideCiGate({ sha: SHA, checkRuns: [], isTip: true }).message },
     { label: "transport failure", own: /could not read CI state/, message: await restRefusal({ total_count: 150, check_runs: greenRuns(30) }) },
   ];
@@ -1268,11 +1327,5 @@ await check("runCiGate: the PAT 403 + a walk-back whose diff has a RUNTIME path 
   assert.match(decision.message, /agent\/agent\.ts/);
 });
 
-await check("walkBackForHeavyProof: a PAT 403 on an ancestor's check-runs REFUSES — the tolerance does not reach this walk-back", async () => {
-  const fetchImpl = shaRoutedRestFetch({ checkRuns: { status: 403, body: PAT_403_BODY } });
-  const decision = await walkBackForHeavyProof({ sha: SHA, exec: noGhExecWithGit({ ancestors: [SHA, A1] }), fetchImpl, env: TOKEN_ENV });
-  assert.equal(decision.verdict, "refuse");
-  assert.match(decision.message, /could not read CI state for ancestor/);
-});
 
-console.log(`✓ deploy-ci-gate: ${checks} check(s) passed (classification, decision matrix, spawn-trap seam, fetch→decide, walk-back, oe/cloud-proof lane, REST fallback transport, fail-closed fetch edge — all offline)`);
+console.log(`✓ deploy-ci-gate: ${checks} check(s) passed (classification, decision matrix, spawn-trap seam, fetch→decide, oe/cloud-proof walk-back, REST fallback transport, fail-closed fetch edge — all offline)`);

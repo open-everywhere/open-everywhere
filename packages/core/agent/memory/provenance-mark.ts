@@ -112,16 +112,19 @@ export interface ProvenanceMarking {
 }
 
 function distinctMarkedLines(content: string): number {
-  const marked = new Set<string>();
+  const suffixed = new Set<string>();
+  const attributed = new Set<string>();
   let fenced = false;
   for (const line of content.split("\n")) {
     if (isFenceLine(line)) {
       fenced = !fenced;
       continue;
     }
-    if (!fenced && isBulletLine(line) && line.includes(EXTERNAL_PROVENANCE_PREFIX)) marked.add(line.trim());
+    if (fenced || !isBulletLine(line)) continue;
+    if (line.includes(EXTERNAL_PROVENANCE_PREFIX)) suffixed.add(line.trim());
+    if (line.includes(EXTERNAL_CLAIM_PREFIX)) attributed.add(line.trim());
   }
-  return marked.size;
+  return suffixed.size + attributed.size;
 }
 
 export interface ProvenanceGuard {

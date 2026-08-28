@@ -1,5 +1,5 @@
 import type { Exec } from "../deploy/lib.js";
-import { realExec } from "../deploy/lib.js";
+import { EXEC_TIMEOUT_MS, realExec, withExecDeadline } from "../deploy/lib.js";
 
 const ZERO_SHA = "0000000000000000000000000000000000000000";
 
@@ -9,8 +9,8 @@ export function isRealSha(sha: string): boolean {
 
 export type ChangedPathsResult = { ok: true; paths: string[] } | { ok: false; reason: string };
 
-export async function fetchChangedPaths(input: { before: string; after: string; exec?: Exec }): Promise<ChangedPathsResult> {
-  const exec = input.exec ?? realExec;
+export async function fetchChangedPaths(input: { before: string; after: string; exec?: Exec; execTimeoutMs?: number }): Promise<ChangedPathsResult> {
+  const exec = withExecDeadline(input.exec ?? realExec, input.execTimeoutMs ?? EXEC_TIMEOUT_MS);
   if (!isRealSha(input.before) || !isRealSha(input.after)) {
     return {
       ok: false,
@@ -18,6 +18,9 @@ export async function fetchChangedPaths(input: { before: string; after: string; 
     };
   }
   const res = await exec("git", ["diff", "--name-only", input.before, input.after]);
+  if (res.timedOutMs !== undefined) {
+    return { ok: false, reason: `\`git diff --name-only\` timed out after ${res.timedOutMs}ms — refusing rather than waiting.` };
+  }
   if (res.spawnError) {
     return { ok: false, reason: `could not run \`git diff\` (${res.spawnError})` };
   }
