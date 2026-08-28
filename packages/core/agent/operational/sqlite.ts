@@ -506,6 +506,8 @@ function getDb(): DatabaseSync {
       expires_at             TEXT NOT NULL,
       used_at                TEXT,
       revoked_at             TEXT,
+      refund_turn            TEXT,            -- OPE-1264: the turn key the refund count below belongs to
+      refund_count           INTEGER NOT NULL DEFAULT 0, -- OPE-1264: refunds already claimed on that turn
       PRIMARY KEY (org_id, id)
     );
     CREATE INDEX IF NOT EXISTS credential_grant_org_scope ON credential_grant (org_id, scope_key);
@@ -660,6 +662,8 @@ function getDb(): DatabaseSync {
     "ALTER TABLE credential_grant ADD COLUMN frozen_args TEXT",
     "ALTER TABLE credential_grant ADD COLUMN tool_name TEXT",
     "ALTER TABLE credential_grant ADD COLUMN input_schema TEXT",
+    "ALTER TABLE credential_grant ADD COLUMN refund_turn TEXT",
+    "ALTER TABLE credential_grant ADD COLUMN refund_count INTEGER NOT NULL DEFAULT 0",
   ]) {
     try {
       handle.exec(ddl);
@@ -2970,6 +2974,20 @@ export const sqliteOperationalStore: OperationalStore = {
          WHERE org_id = ? AND id = ? AND status = 'used' AND used_at = ? AND revoked_at IS NULL`,
       )
       .run(org, id, burnedAt).changes;
+    return Number(changes) > 0;
+  },
+
+  async claimCredentialGrantRefund(org, id, turnKey, cap) {
+    const key = turnKey ?? null;
+    const changes = getDb()
+      .prepare(
+        `UPDATE credential_grant
+            SET refund_turn = COALESCE(?, refund_turn),
+                refund_count = CASE WHEN ? IS NOT NULL AND refund_turn IS NOT ? THEN 1 ELSE COALESCE(refund_count, 0) + 1 END
+          WHERE org_id = ? AND id = ?
+            AND ((? IS NOT NULL AND refund_turn IS NOT ?) OR COALESCE(refund_count, 0) < ?)`,
+      )
+      .run(key, key, key, org, id, key, key, cap).changes;
     return Number(changes) > 0;
   },
 

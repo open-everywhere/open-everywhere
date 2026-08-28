@@ -16,7 +16,6 @@ import {
   _resetGrantTransportsForTest,
   borrowScopeDigest,
   GRANT_REFUND_CAP_PER_TURN,
-  readRefundCapDamageForTest,
   registerGrantBorrowTransport,
   registerGrantRoomNotice,
   runGrantedCall,
@@ -492,32 +491,54 @@ console.log("9. the refund is capped per grant row per turn (OPE-1240):");
   });
 
   await inSession(session, async () => {
-    eq(await tripFence(across, ACROSS_SCOPE, "turn-cap-B"), "active", "🔴 the SAME row refunds again on a NEW turn — the allowance is per turn, and a durable slot alone would have said `used` here");
+    eq(await tripFence(across, ACROSS_SCOPE, "turn-cap-B"), "active", "🔴 the SAME row refunds again on a NEW turn — the allowance is per turn, and a count nothing rolled would have said `used` here");
   });
 
   {
-    const damagedSession = new FakeSession();
-    damagedSession.set({ name: "open-everywhere.grant-refund-cap" }, { counts: "corrupt", turn: "turn-damaged" });
-    const damaged = await mintOnce("session-refund-cap-d");
-    ok(damaged !== "", "a fourth once-mode grant is minted for the damaged-slot leg");
-    await inSession(damagedSession, async () => {
-      eq(await tripFence(damaged, "session-refund-cap-d", "turn-damaged"), "used", "🔴 a slot whose counts did not survive the round trip refuses the refund — an unreadable budget reads as SPENT, never as a fresh one");
+    const REDELIVERED_SCOPE = "session-refund-cap-d";
+    const redelivered = await mintOnce(REDELIVERED_SCOPE);
+    ok(redelivered !== "", "a fourth once-mode grant is minted for the per-session-state guard");
+    const crashed = new FakeSession();
+    await inSession(crashed, async () => {
+      for (let attempt = 1; attempt <= GRANT_REFUND_CAP_PER_TURN; attempt++) {
+        eq(await tripFence(redelivered, REDELIVERED_SCOPE, "turn-cap-R"), "active", `the first container spends allowance ${attempt} of ${GRANT_REFUND_CAP_PER_TURN}`);
+      }
     });
-    const damagedSibling = await mintOnce("session-refund-cap-e");
-    ok(damagedSibling !== "", "a fifth once-mode grant is minted, to be tripped in the SAME damaged turn");
-    await inSession(damagedSession, async () => {
-      eq(await tripFence(damagedSibling, "session-refund-cap-e", "turn-damaged"), "used", "🔴 a SECOND row in the same damaged turn is refused too — the damage was not cleared by refusing once, so a corrupt slot costs the allowance rather than one refund");
+    const replayed = new FakeSession();
+    await inSession(replayed, async () => {
+      eq(
+        await tripFence(redelivered, REDELIVERED_SCOPE, "turn-cap-R"),
+        "used",
+        "🔴 a FRESH eve container on the same turn is still refused — the count is stored beside the burn, so no per-session state can hand a replayed turn its allowance back",
+      );
     });
-    eq(readRefundCapDamageForTest({ counts: "corrupt" }), true, "the rehydrator reports damage for a counts value it could not have written…");
-    eq(readRefundCapDamageForTest({}), false, "…and NOT for the slot's own initial value, which is what a session's first refund reads");
-    eq(readRefundCapDamageForTest(undefined), false, "…nor for a slot that was never written");
-    eq(readRefundCapDamageForTest("not an object"), true, "…while a slot that is not an object at all reads as damaged");
+  }
+
+  {
+    const UNCLAIMABLE_SCOPE = "session-refund-cap-e";
+    const unclaimable = await mintOnce(UNCLAIMABLE_SCOPE);
+    ok(unclaimable !== "", "a fifth once-mode grant is minted for the unanswerable-claim leg");
+    const patchable = store as unknown as { claimCredentialGrantRefund: unknown };
+    const realClaim = patchable.claimCredentialGrantRefund;
+    patchable.claimCredentialGrantRefund = async (): Promise<boolean> => {
+      throw new Error('column "refund_count" does not exist');
+    };
+    try {
+      eq(await tripFence(unclaimable, UNCLAIMABLE_SCOPE, "turn-cap-U"), "used", "🔴 a claim the store could not answer refunds NOTHING — the owner's approval stays spent rather than being handed back uncounted");
+    } finally {
+      patchable.claimCredentialGrantRefund = realClaim;
+    }
+    const unclaimedRows = (await readAudit({ org: ORG })).filter((r) => r.action === "grant.refused" && (r.detail as Record<string, unknown>).gate === "refund_unclaimed");
+    eq(unclaimedRows.length, 1, "…and the chain still closes: exactly ONE `refund_unclaimed` row, so an approval spent on a call that never ran is never left unrecorded");
+    const unclaimedDetail = (unclaimedRows[0]?.detail ?? {}) as Record<string, unknown>;
+    eq(unclaimedDetail.grantId, unclaimable, "…naming the row whose approval stayed spent");
+    eq(unclaimedDetail.refunded, false, "…and recording that the approval did NOT come back");
   }
 
   const rows = await readAudit({ org: ORG });
   const cappedRows = rows.filter((r) => r.action === "grant.refused" && (r.detail as Record<string, unknown>).gate === "refund_capped");
   eq(cappedRows.filter((r) => (r.detail as Record<string, unknown>).grantId === capped).length, 1, "exactly ONE `refund_capped` row for the row whose allowance ran out — the K+1'th attempt, and nothing after it");
-  eq(cappedRows.length, 3, "…and two more, one per row refused by the damaged-slot leg — so no OTHER call in this pack was capped by accident");
+  eq(cappedRows.length, 2, "…and one more, from the redelivered turn — so no OTHER call in this pack was capped by accident");
   const detail = (cappedRows.find((r) => (r.detail as Record<string, unknown>).grantId === capped)?.detail ?? {}) as Record<string, unknown>;
   eq(detail.grantId, capped, "…against the row whose allowance ran out");
   eq(detail.refunded, false, "…recording that the approval did NOT come back, which is what `refund_capped` means and `undispatched` does not");

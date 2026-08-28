@@ -1,4 +1,3 @@
-import { defineState } from "eve/context";
 import {
   credentialGrantDisclosureLine,
   credentialGrantRefusalMessage,
@@ -67,64 +66,7 @@ export function _resetGrantRoomNoticeForTest(): void {
 
 const REFUND_CAP_PER_TURN = 3;
 
-interface GrantRefundCapState {
-  readonly turn?: string;
-  readonly counts?: Readonly<Record<string, number>>;
-  readonly damaged?: boolean;
-}
-
-const refundCapSlot = defineState<GrantRefundCapState>("open-everywhere.grant-refund-cap", () => ({}));
-
-function readRefundCapState(v: unknown): GrantRefundCapState {
-  if (v === undefined || v === null) return {};
-  if (typeof v !== "object") return { damaged: true };
-  const s = v as { turn?: unknown; counts?: unknown; damaged?: unknown };
-  const turn = typeof s.turn === "string" ? s.turn : undefined;
-  const raw = s.counts;
-  const carried = s.damaged === true;
-  const shape = (): GrantRefundCapState => {
-    if (raw === undefined) return {};
-    if (raw === null || typeof raw !== "object") return { damaged: true };
-    const counts: Record<string, number> = {};
-    for (const [grantId, spent] of Object.entries(raw as Record<string, unknown>)) {
-      counts[grantId] = typeof spent === "number" && Number.isInteger(spent) && spent >= 0 ? spent : REFUND_CAP_PER_TURN;
-    }
-    return { counts };
-  };
-  const read = shape();
-  return {
-    ...read,
-    ...(carried || read.damaged === true ? { damaged: true } : {}),
-    ...(turn === undefined ? {} : { turn }),
-  };
-}
-
-function claimGrantRefund(turnId: string | undefined, grantId: string): boolean {
-  let allowed = true;
-  try {
-    refundCapSlot.update((cur) => {
-      const state = readRefundCapState(cur);
-      const rolled = turnId !== undefined && state.turn !== turnId;
-      const counts = rolled ? {} : (state.counts ?? {});
-      const spent = counts[grantId] ?? 0;
-      const damaged = !rolled && state.damaged === true;
-      allowed = !damaged && spent < REFUND_CAP_PER_TURN;
-      const turn = turnId ?? state.turn;
-      const next = allowed ? { ...counts, [grantId]: spent + 1 } : counts;
-      const rolledState = turn === undefined ? { counts: next } : { counts: next, turn };
-      return damaged ? { ...rolledState, damaged: true } : rolledState;
-    });
-  } catch {
-    return true;
-  }
-  return allowed;
-}
-
 export const GRANT_REFUND_CAP_PER_TURN = REFUND_CAP_PER_TURN;
-
-export function readRefundCapDamageForTest(v: unknown): boolean {
-  return readRefundCapState(v).damaged === true;
-}
 
 export interface GrantCallContext extends GrantAuditStamps {
   readonly scopeKey: string;
@@ -195,12 +137,19 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
     result = await send.run(owner);
   } catch (err) {
     if (burnedAt !== undefined && err instanceof GrantUndispatchedError) {
-      const capped = !claimGrantRefund(ctx.turnId, grant.id);
+      let claimed = false;
+      let unclaimable = false;
       try {
-        const refunded = capped ? false : await store.refundCredentialGrant(ctx.org, grant.id, burnedAt);
+        claimed = await store.claimCredentialGrantRefund(ctx.org, grant.id, ctx.turnId, REFUND_CAP_PER_TURN);
+      } catch (claimErr) {
+        unclaimable = true;
+        console.log(`[open-everywhere:grant] grant ${grant.id}: the undispatched-call refund could not be CLAIMED, so the approval stays spent: ${String(claimErr)}`);
+      }
+      try {
+        const refunded = claimed ? await store.refundCredentialGrant(ctx.org, grant.id, burnedAt) : false;
         await auditGrant(ctx, "grant.refused", ctx.requesterPrincipalId, {
           connector: grant.connector,
-          gate: capped ? "refund_capped" : "undispatched",
+          gate: claimed ? "undispatched" : unclaimable ? "refund_unclaimed" : "refund_capped",
           grantId: grant.id,
           mode: grant.mode,
           owner: grant.ownerPrincipalId,
@@ -211,7 +160,7 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
         });
       } catch (refundErr) {
         console.log(
-          `[open-everywhere:grant] grant ${grant.id}: the undispatched-call ${capped ? "refund cap row" : "refund"} could not be written: ${String(refundErr)}`,
+          `[open-everywhere:grant] grant ${grant.id}: the undispatched-call ${claimed ? "refund" : "refund cap row"} could not be written: ${String(refundErr)}`,
         );
       }
     }

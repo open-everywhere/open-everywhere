@@ -414,6 +414,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      expires_at             text NOT NULL,
      used_at                text,
      revoked_at             text,
+     refund_turn            text,            -- OPE-1264: the turn key the refund count below belongs to
+     refund_count           integer NOT NULL DEFAULT 0, -- OPE-1264: refunds already claimed on that turn
      PRIMARY KEY (org_id, id)
    )`,
   `CREATE INDEX IF NOT EXISTS credential_grant_org_scope ON credential_grant (org_id, scope_key)`,
@@ -539,6 +541,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE credential_grant ADD COLUMN IF NOT EXISTS frozen_args text`,
   `ALTER TABLE credential_grant ADD COLUMN IF NOT EXISTS tool_name text`,
   `ALTER TABLE credential_grant ADD COLUMN IF NOT EXISTS input_schema text`,
+  `ALTER TABLE credential_grant ADD COLUMN IF NOT EXISTS refund_turn text`,
+  `ALTER TABLE credential_grant ADD COLUMN IF NOT EXISTS refund_count integer NOT NULL DEFAULT 0`,
   `DO $$
    BEGIN
      IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'identity_linked_ids' AND relkind = 'r')
@@ -3422,6 +3426,18 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         `UPDATE credential_grant SET status = 'active', used_at = NULL
          WHERE org_id = $1 AND id = $2 AND status = 'used' AND used_at = $3 AND revoked_at IS NULL RETURNING id`,
         [org, id, burnedAt],
+      );
+      return (rows as unknown[]).length > 0;
+    },
+
+    async claimCredentialGrantRefund(org, id, turnKey, cap) {
+      const { rows } = await client.query(
+        `UPDATE credential_grant
+            SET refund_turn = COALESCE($3::text, refund_turn),
+                refund_count = CASE WHEN $3::text IS NOT NULL AND refund_turn IS DISTINCT FROM $3::text THEN 1 ELSE COALESCE(refund_count, 0) + 1 END
+          WHERE org_id = $1 AND id = $2
+            AND (($3::text IS NOT NULL AND refund_turn IS DISTINCT FROM $3::text) OR COALESCE(refund_count, 0) < $4) RETURNING id`,
+        [org, id, turnKey ?? null, cap],
       );
       return (rows as unknown[]).length > 0;
     },

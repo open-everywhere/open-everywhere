@@ -1191,5 +1191,56 @@ const store = makeOperationalPostgresStore(client);
   ok((await store.getWebhookCaptureWindow("default", "old-hook"))?.captureUntil === "2020-01-01T00:00:00.000Z", "capture window: an ELAPSED deadline is returned unchanged, never filtered out by the store");
 }
 
+{
+  const grant = (id: string): Parameters<typeof store.addCredentialGrant>[1] => ({
+    askId: `ask-${id}`,
+    connector: "notion",
+    createdAt: "2026-07-28T00:00:00.000Z",
+    expiresAt: "2026-07-28T01:00:00.000Z",
+    id,
+    mode: "once",
+    ownerPrincipalId: "slack/W1/U-owner",
+    ownerSlug: "rowan_hale",
+    purpose: "draft the Q3 summary",
+    requesterPrincipalId: "slack/W1/U-req",
+    resource: "notion:page/abc123",
+    scopeKey: "session-1",
+    status: "active",
+    tier: "read",
+    verb: "read_page",
+  });
+  const CAP = 3;
+  await store.addCredentialGrant("default", grant("pg-claim"));
+  await store.addCredentialGrant("default", grant("pg-claim-sibling"));
+
+  const burnAt = "2026-07-28T00:10:00.000Z";
+  ok((await store.burnCredentialGrant("default", "pg-claim", burnAt)) !== null, "credential grant: a once-mode row burns");
+  ok((await store.refundCredentialGrant("default", "pg-claim", burnAt)) === true, "credential grant: the caller that owns the burn stamp refunds it");
+  ok((await store.getCredentialGrant("default", "pg-claim"))?.status === "active", "credential grant: …and the row is ACTIVE again on the real engine");
+
+  for (let attempt = 1; attempt <= CAP; attempt++) {
+    ok(await store.claimCredentialGrantRefund("default", "pg-claim", "turn_1", CAP), `credential grant: refund claim ${attempt} of ${CAP} lands`);
+  }
+  ok((await store.claimCredentialGrantRefund("default", "pg-claim", "turn_1", CAP)) === false, "🔴 credential grant: the K+1'th claim on one turn is refused — the count is a column, so it outlives any context a crashed step replayed away");
+  ok(await store.claimCredentialGrantRefund("default", "pg-claim", "turn_2", CAP), "🔴 credential grant: a NEW turn key rolls the count — the allowance is per turn, not per row lifetime");
+  ok(await store.claimCredentialGrantRefund("default", "pg-claim-sibling", "turn_1", CAP), "credential grant: another row keeps its own budget — the count is keyed by the row it sits on");
+  ok((await store.claimCredentialGrantRefund("acme", "pg-claim", "turn_9", CAP)) === false, "credential grant: the claim is org-scoped — another tenant cannot spend or roll this row's allowance");
+  ok((await store.claimCredentialGrantRefund("default", "pg-claim-absent", "turn_1", CAP)) === false, "credential grant: a row that does not exist claims nothing");
+
+  await store.addCredentialGrant("default", grant("pg-claim-noturn"));
+  for (let attempt = 1; attempt <= CAP; attempt++) {
+    ok(await store.claimCredentialGrantRefund("default", "pg-claim-noturn", "turn_1", CAP), `credential grant: the named turn spends allowance ${attempt} of ${CAP}`);
+  }
+  ok((await store.claimCredentialGrantRefund("default", "pg-claim-noturn", undefined, CAP)) === false, "🔴 credential grant: a claim with NO turn key is refused against a spent allowance — it never rolls the stored key");
+  ok(await store.claimCredentialGrantRefund("default", "pg-claim-noturn", "turn_9", CAP), "credential grant: …while a NAMED new turn does roll it, so the keyless refusal is the key's doing and not a dead statement");
+
+  await store.addCredentialGrant("default", grant("pg-claim-race"));
+  const claims = await Promise.all([
+    store.claimCredentialGrantRefund("default", "pg-claim-race", "turn_1", 1),
+    store.claimCredentialGrantRefund("default", "pg-claim-race", "turn_1", 1),
+  ]);
+  ok(claims.filter((won) => won).length === 1, "credential grant: two overlapping claims of a one-refund allowance — exactly ONE wins");
+}
+
 await closeAllTestPg();
 console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, two-role runtime posture (DDL escape closed) + tamper detection/refusal, broadened suppression detection (hostile trigger / restrictive policy / stray grant — detect+heal+fail-closed), event dedupe, domain skills, routine prompt revisions, domain model pick, ownership routing (ownerToken/kind), durable stopped marker, channel supervisor sessions, pending-action posted_to round-trip + decide CAS, github installations (upsert/list/delete + org isolation), migration)`);

@@ -241,6 +241,55 @@ const grantRow = (id: string, patch: Partial<CredentialGrantRow> = {}): Credenti
 }
 
 {
+  const CAP = 3;
+  await store.addCredentialGrant(ORG, grantRow("grant-claim"));
+  await store.addCredentialGrant(ORG, grantRow("grant-claim-sibling"));
+  for (let attempt = 1; attempt <= CAP; attempt++) {
+    eq(await store.claimCredentialGrantRefund(ORG, "grant-claim", "turn_1", CAP), true, `claim ${attempt} of ${CAP} lands`);
+  }
+  eq(await store.claimCredentialGrantRefund(ORG, "grant-claim", "turn_1", CAP), false, `🔴 claim ${CAP + 1} on the SAME turn is refused — the allowance is spent`);
+  eq(await store.claimCredentialGrantRefund(ORG, "grant-claim", "turn_1", CAP), false, "…and stays refused, so a capped turn cannot retry its way back in");
+  const claimed = await store.getCredentialGrant(ORG, "grant-claim");
+  eq(claimed?.status, "active", "a claim never touches the row's own state — it counts, and the burn/refund pair decides the status");
+  eq(claimed?.usedAt, undefined, "…nor the burn stamp the refund is keyed on");
+
+  eq(await store.claimCredentialGrantRefund(ORG, "grant-claim-sibling", "turn_1", CAP), true, "🔴 a DIFFERENT row in the SAME turn still claims — the count is a column on the row, so one row's exhaustion never spends another's");
+
+  eq(await store.claimCredentialGrantRefund(ORG, "grant-claim", "turn_2", CAP), true, "🔴 the SAME row claims again on a NEW turn — the allowance is per turn, and a count nothing rolled would have refused here");
+  for (let attempt = 2; attempt <= CAP; attempt++) {
+    eq(await store.claimCredentialGrantRefund(ORG, "grant-claim", "turn_2", CAP), true, `…and the new turn gets the WHOLE allowance: claim ${attempt} of ${CAP}`);
+  }
+  eq(await store.claimCredentialGrantRefund(ORG, "grant-claim", "turn_2", CAP), false, "…bounded at the same K, so a roll hands over one allowance and not an unbounded one");
+
+  eq(await store.claimCredentialGrantRefund(ORG, "grant-claim", "turn_1", CAP), true, "a claim under an EARLIER turn key rolls the count too — the row holds one key, not a set");
+
+  eq(await store.claimCredentialGrantRefund(ORG, "grant-missing", "turn_1", CAP), false, "a row that does not exist claims nothing — the fail-closed direction");
+
+  await store.addCredentialGrant(ORG, grantRow("grant-claim-one"));
+  eq(await store.claimCredentialGrantRefund(ORG, "grant-claim-one", "turn_1", 1), true, "a cap of one allows the first claim");
+  eq(await store.claimCredentialGrantRefund(ORG, "grant-claim-one", "turn_1", 1), false, "…and refuses the second");
+
+  await store.addCredentialGrant(ORG, grantRow("grant-claim-noturn"));
+  for (let attempt = 1; attempt <= CAP; attempt++) {
+    eq(await store.claimCredentialGrantRefund(ORG, "grant-claim-noturn", "turn_1", CAP), true, `the named turn spends allowance ${attempt} of ${CAP}`);
+  }
+  eq(await store.claimCredentialGrantRefund(ORG, "grant-claim-noturn", undefined, CAP), false, "🔴 a claim with NO turn key is refused against a spent allowance — it counts against the stored key rather than rolling it");
+  eq(await store.claimCredentialGrantRefund(ORG, "grant-claim-noturn", "turn_1", CAP), false, "…and the stored key is untouched, so the named turn is still spent too");
+  await store.addCredentialGrant(ORG, grantRow("grant-claim-noturn-only"));
+  for (let attempt = 1; attempt <= CAP; attempt++) {
+    eq(await store.claimCredentialGrantRefund(ORG, "grant-claim-noturn-only", undefined, CAP), true, `a keyless claim ${attempt} of ${CAP} still lands on a row that has never refunded`);
+  }
+  eq(await store.claimCredentialGrantRefund(ORG, "grant-claim-noturn-only", undefined, CAP), false, "…and the K+1'th keyless claim is refused: with nothing to roll, the allowance is the row's whole life");
+
+  await store.addCredentialGrant(ORG, grantRow("grant-claim-race"));
+  const [first, second] = await Promise.all([
+    store.claimCredentialGrantRefund(ORG, "grant-claim-race", "turn_1", 1),
+    store.claimCredentialGrantRefund(ORG, "grant-claim-race", "turn_1", 1),
+  ]);
+  eq([first, second].filter((won) => won).length, 1, "two overlapping claims of a one-refund allowance: exactly ONE wins");
+}
+
+{
   await store.addCredentialGrant(ORG, grantRow("grant-revoked"));
   eq(await store.revokeCredentialGrant(ORG, "grant-revoked", iso(NOW + 500)), true, "the first revoke wins");
   eq(await store.revokeCredentialGrant(ORG, "grant-revoked", iso(NOW + 600)), false, "a second revoke loses — the row is no longer active");

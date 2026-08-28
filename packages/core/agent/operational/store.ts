@@ -860,6 +860,7 @@ export interface OperationalStore {
   ): Promise<CredentialGrantRow | null>;
   burnCredentialGrant(org: string, id: string, at: string): Promise<CredentialGrantRow | null>;
   refundCredentialGrant(org: string, id: string, burnedAt: string): Promise<boolean>;
+  claimCredentialGrantRefund(org: string, id: string, turnKey: string | undefined, cap: number): Promise<boolean>;
   revokeCredentialGrant(org: string, id: string, at: string): Promise<boolean>;
   expireCredentialGrants(org: string, nowIso: string): Promise<number>;
 
