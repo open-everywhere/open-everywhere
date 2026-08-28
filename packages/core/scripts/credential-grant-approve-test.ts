@@ -319,13 +319,19 @@ console.log("6a. one shared deadline across the probe, the mint and the catalogu
   const slow = withinBorrowDeadline(budget, "a slow leg", async () => await new Promise((r) => setTimeout(r, 400)));
   await assert.rejects(slow, /did not answer within the approve-time budget/u, "a leg that outruns the shared budget is refused BY NAME");
   n++;
-  ok(budget.remainingMs() === 0, "…and the budget is spent afterwards, so a LATER leg cannot start a fresh clock");
-  await assert.rejects(
-    withinBorrowDeadline(budget, "the next leg", async () => "never runs"),
-    /budget was spent before the next leg could run/u,
-    "🔴 A SECOND LEG ON A SPENT BUDGET DOES NOT RUN — this is what makes the bound end-to-end rather than per-request",
+  let spentRefusal: unknown;
+  await withinBorrowDeadline(budget, "the next leg", async () => "never runs").then(
+    () => {
+      spentRefusal = undefined;
+    },
+    (err: unknown) => {
+      spentRefusal = err;
+    },
   );
-  n++;
+  ok(
+    spentRefusal instanceof Error && /budget was spent before the next leg could run/u.test(spentRefusal.message),
+    "🔴 A SECOND LEG ON A SPENT BUDGET DOES NOT RUN — this is what makes the bound end-to-end rather than per-request, and it is the same fact the old wall-clock row asserted",
+  );
 
   eq(await withinBorrowDeadline(borrowDeadline(2_000), "a quick leg", async () => "answered"), "answered", "a leg inside the budget returns normally");
 

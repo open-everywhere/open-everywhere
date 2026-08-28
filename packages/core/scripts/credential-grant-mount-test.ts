@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdtempSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
@@ -13,6 +15,8 @@ import {
   _resetGrantRoomNoticeForTest,
   _resetGrantTransportsForTest,
   borrowScopeDigest,
+  GRANT_REFUND_CAP_PER_TURN,
+  readRefundCapDamageForTest,
   registerGrantBorrowTransport,
   registerGrantRoomNotice,
   runGrantedCall,
@@ -114,7 +118,49 @@ const askInput = (scopeKey: string, mode: "once" | "session" | "standing") => ({
   targetLabel: "Launch page",
 });
 
-const callCtx = (scopeKey: string, nowMs = NOW + 1000) => ({ ...stamps, nowMs, requesterPrincipalId: "slack/W1/U-req", scopeKey });
+const callCtx = (scopeKey: string, nowMs = NOW + 1000, turnId?: string) => ({
+  ...stamps,
+  nowMs,
+  requesterPrincipalId: "slack/W1/U-req",
+  scopeKey,
+  ...(turnId === undefined ? {} : { turnId }),
+});
+
+class FakeSession {
+  private readonly store = new Map<string, unknown>();
+  get<T>(key: { name: string }): T | undefined {
+    return this.store.get(key.name) as T | undefined;
+  }
+  has(key: { name: string }): boolean {
+    return this.store.has(key.name);
+  }
+  require<T>(key: { name: string }): T {
+    if (!this.has(key)) throw new Error(`missing ${key.name}`);
+    return this.get(key) as T;
+  }
+  set<T>(key: { name: string }, v: T | ((c: T | undefined) => T)): T {
+    const next = typeof v === "function" ? (v as (c: T | undefined) => T)(this.get(key)) : v;
+    this.store.set(key.name, next);
+    return next;
+  }
+  ensure<T>(key: { name: string }, create: () => T): T {
+    return this.has(key) ? this.require(key) : this.set(key, create());
+  }
+  clearVirtualContext(): void {}
+  setVirtualContext(): void {}
+  *entries(): Generator<readonly [unknown, unknown]> {}
+}
+
+function eveContextStorage(): AsyncLocalStorage<unknown> {
+  const g = globalThis as Record<PropertyKey, unknown>;
+  const key = Symbol.for("eve.context-storage");
+  g[key] ??= new AsyncLocalStorage();
+  return g[key] as AsyncLocalStorage<unknown>;
+}
+
+async function inSession<T>(session: FakeSession, fn: () => T | Promise<T>): Promise<T> {
+  return eveContextStorage().run(session, fn);
+}
 
 console.log("1. ask -> owner card -> approve -> mount -> compose -> audit:");
 
@@ -389,6 +435,110 @@ console.log("8b. a throw that cannot prove it sent nothing KEEPS the burn:");
     1,
     "…and no second `undispatched` row was written: this failure is not one",
   );
+}
+
+console.log("9. the refund is capped per grant row per turn (OPE-1240):");
+{
+  _resetGrantBorrowTransportsForTest();
+  registerGrantBorrowTransport("notion", grantMcpTransport(BORROW_DEPS));
+
+  const mintOnce = async (scopeKey: string): Promise<string> => {
+    const ask = await askForCredentialGrant(askInput(scopeKey, "once"));
+    const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", "once", "slack/W1/U-owner", NOW + 500, undefined, BORROW_DEPS);
+    return approved.approved ? approved.grant.id : "";
+  };
+
+  const tripFence = async (grantId: string, scopeKey: string, turnId: string): Promise<string> => {
+    let refused: unknown;
+    await runGrantedCall(grantId, { id: "some-other-page" }, callCtx(scopeKey, NOW + 1000, turnId)).then(
+      () => {
+        refused = undefined;
+      },
+      (err: unknown) => {
+        refused = err;
+      },
+    );
+    assert.ok(refused instanceof McpCallFenceError, `the wrong pinned argument must trip the real fence (grant ${grantId}, ${turnId})`);
+    n++;
+    return (await store.getCredentialGrant(ORG, grantId))?.status ?? "missing";
+  };
+
+  const CAPPED_SCOPE = "session-refund-cap-a";
+  const SIBLING_SCOPE = "session-refund-cap-b";
+  const ACROSS_SCOPE = "session-refund-cap-c";
+  const capped = await mintOnce(CAPPED_SCOPE);
+  const sibling = await mintOnce(SIBLING_SCOPE);
+  const across = await mintOnce(ACROSS_SCOPE);
+  ok(capped !== "" && sibling !== "" && across !== "" && new Set([capped, sibling, across]).size === 3, "three distinct once-mode grants are minted, each frozen to page `abc123`");
+
+  const session = new FakeSession();
+
+  await inSession(session, async () => {
+    for (let attempt = 1; attempt <= GRANT_REFUND_CAP_PER_TURN; attempt++) {
+      eq(await tripFence(capped, CAPPED_SCOPE, "turn-cap-A"), "active", `refund ${attempt} of ${GRANT_REFUND_CAP_PER_TURN} still lands — the cap is an allowance, not a repeal of the refund`);
+    }
+
+    eq(await tripFence(capped, CAPPED_SCOPE, "turn-cap-A"), "used", `🔴 refund ${GRANT_REFUND_CAP_PER_TURN + 1} is REFUSED — the row stays spent, so one owner approval cannot open an unbounded number of vendor sessions in one turn`);
+
+    const afterCap = await runGrantedCall(capped, { id: "abc123" }, callCtx(CAPPED_SCOPE, NOW + 1000, "turn-cap-A"));
+    eq(afterCap.ok ? "OK" : afterCap.refused, "burned", "…and the model's NEXT call on that row refuses `burned` by name, through the state check that already runs before any burn");
+    ok(!afterCap.ok && afterCap.message.length > 0 && !afterCap.message.includes("some-other-page"), "…with host-authored copy that carries no argument value");
+
+    eq(await tripFence(sibling, SIBLING_SCOPE, "turn-cap-A"), "active", "🔴 a DIFFERENT grant row in the SAME turn still refunds — the counters are keyed per row, so one row's exhaustion never spends another's");
+
+    for (let attempt = 1; attempt <= GRANT_REFUND_CAP_PER_TURN; attempt++) {
+      eq(await tripFence(across, ACROSS_SCOPE, "turn-cap-A"), "active", `the third row spends allowance ${attempt} of ${GRANT_REFUND_CAP_PER_TURN} in this turn`);
+    }
+  });
+
+  await inSession(session, async () => {
+    eq(await tripFence(across, ACROSS_SCOPE, "turn-cap-B"), "active", "🔴 the SAME row refunds again on a NEW turn — the allowance is per turn, and a durable slot alone would have said `used` here");
+  });
+
+  {
+    const damagedSession = new FakeSession();
+    damagedSession.set({ name: "open-everywhere.grant-refund-cap" }, { counts: "corrupt", turn: "turn-damaged" });
+    const damaged = await mintOnce("session-refund-cap-d");
+    ok(damaged !== "", "a fourth once-mode grant is minted for the damaged-slot leg");
+    await inSession(damagedSession, async () => {
+      eq(await tripFence(damaged, "session-refund-cap-d", "turn-damaged"), "used", "🔴 a slot whose counts did not survive the round trip refuses the refund — an unreadable budget reads as SPENT, never as a fresh one");
+    });
+    const damagedSibling = await mintOnce("session-refund-cap-e");
+    ok(damagedSibling !== "", "a fifth once-mode grant is minted, to be tripped in the SAME damaged turn");
+    await inSession(damagedSession, async () => {
+      eq(await tripFence(damagedSibling, "session-refund-cap-e", "turn-damaged"), "used", "🔴 a SECOND row in the same damaged turn is refused too — the damage was not cleared by refusing once, so a corrupt slot costs the allowance rather than one refund");
+    });
+    eq(readRefundCapDamageForTest({ counts: "corrupt" }), true, "the rehydrator reports damage for a counts value it could not have written…");
+    eq(readRefundCapDamageForTest({}), false, "…and NOT for the slot's own initial value, which is what a session's first refund reads");
+    eq(readRefundCapDamageForTest(undefined), false, "…nor for a slot that was never written");
+    eq(readRefundCapDamageForTest("not an object"), true, "…while a slot that is not an object at all reads as damaged");
+  }
+
+  const rows = await readAudit({ org: ORG });
+  const cappedRows = rows.filter((r) => r.action === "grant.refused" && (r.detail as Record<string, unknown>).gate === "refund_capped");
+  eq(cappedRows.filter((r) => (r.detail as Record<string, unknown>).grantId === capped).length, 1, "exactly ONE `refund_capped` row for the row whose allowance ran out — the K+1'th attempt, and nothing after it");
+  eq(cappedRows.length, 3, "…and two more, one per row refused by the damaged-slot leg — so no OTHER call in this pack was capped by accident");
+  const detail = (cappedRows.find((r) => (r.detail as Record<string, unknown>).grantId === capped)?.detail ?? {}) as Record<string, unknown>;
+  eq(detail.grantId, capped, "…against the row whose allowance ran out");
+  eq(detail.refunded, false, "…recording that the approval did NOT come back, which is what `refund_capped` means and `undispatched` does not");
+  eq(detail.owner, "slack/W1/U-owner", "…and naming the owner whose approval stayed spent");
+  ok(!JSON.stringify(detail).includes("some-other-page"), "…carrying no argument VALUE, the same ids-and-names contract every row on this plane holds");
+  ok(
+    rows.filter((r) => r.action === "grant.refused" && (r.detail as Record<string, unknown>).gate === "undispatched").length > 1,
+    "…while the refunds that DID land still wrote `undispatched` rows: the two gates are a split, not a rename",
+  );
+}
+
+console.log("9b. the mount hands the broker the turn the cap is keyed on:");
+{
+  const source = await readFile(new URL("../agent/tools/grant_tools.ts", import.meta.url), "utf8");
+  const start = source.indexOf("export function grantToolEntry");
+  const after = source.indexOf("\nexport ", start + 1);
+  ok(start >= 0 && after > start, "grantToolEntry is locatable and bounded in the source");
+  const entry = source.slice(start, after);
+  ok(/const turnId = currentTurnId\(c\)/u.test(entry), "the mounted execute reads the eve turn id…");
+  const brokerCall = entry.slice(entry.indexOf("runGrantedCall("));
+  ok(/turnId === undefined \? \{\} : \{ turnId \}/u.test(brokerCall), "…and spreads it into the BROKER's call context, which is the only thing that arms the per-turn cap on a real turn");
 }
 
 console.log(`\ncredential-grant-mount: ${n} assertions passed.`);

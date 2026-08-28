@@ -1,7 +1,7 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { CONVERSATIONAL_ROOT_GRAINS } from "../access/window-gate-manifest.js";
 import { registerDynamicVariant, type ReplayableToolEntry } from "../access/window-gated.js";
-import { runGrantedCall } from "../access/credential-grant-broker.js";
+import { GRANT_REFUND_CAP_PER_TURN, runGrantedCall } from "../access/credential-grant-broker.js";
 import { installGrantUseNotices, withGrantRoomContext } from "../access/credential-grant-notice.js";
 import { grantableVerb } from "../access/credential-grant.js";
 import { installGrantBorrowTransports } from "../connections/grant-mcp-transport.js";
@@ -64,7 +64,11 @@ function borrowOffer(grant: CredentialGrantRow, mcpTool: string): GrantToolOffer
       : `${String(frozenKeys.length)} argument(s) are FIXED by the grant — ${frozenKeys.join(", ")}. Each one's schema shows the single ` +
         "value it may carry: SEND EXACTLY THAT. A call that sends any other value for a fixed argument, or omits one, is " +
         `refused before the call reaches ${grant.connector}` +
-        `${grant.mode === "once" ? `, and this is a ONE-SHOT grant: a refusal does NOT spend it, but each attempt opens a session under ${grant.ownerSlug}'s account, so send the exact value rather than guessing` : ""}.`;
+        `${
+          grant.mode === "once"
+            ? `, and this is a ONE-SHOT grant: a refusal that never reached ${grant.connector} gives the grant back, but only for the first ${String(GRANT_REFUND_CAP_PER_TURN)} refusals of this grant in one turn — after that it stays spent and this tool is finished. Each attempt also opens a session under ${grant.ownerSlug}'s account, so send the exact value rather than guessing`
+            : ""
+        }.`;
   return {
     description:
       `Runs the ${grant.connector} tool \`${quotedPurpose(mcpTool)}\` on "${grant.resource}" as ${grant.ownerSlug}, with ` +
@@ -82,7 +86,8 @@ export function grantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry |
     inputSchema: offer.inputSchema,
     async execute(input: unknown, ctx: unknown) {
       const c = ctx as BindableContext;
-      const requester = requesterThisTurn(currentTurnId(c));
+      const turnId = currentTurnId(c);
+      const requester = requesterThisTurn(turnId);
       let org = "unknown";
       let platform = "unknown";
       let workspace = "unknown";
@@ -103,6 +108,7 @@ export function grantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry |
           requesterPrincipalId: requesterKeyForGrantCall(platform, workspace, requester),
           scopeKey: currentSessionId(c) ?? "",
           ...(surface === undefined ? {} : { surface }),
+          ...(turnId === undefined ? {} : { turnId }),
           workspace,
         }),
       );
