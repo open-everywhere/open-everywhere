@@ -11,6 +11,7 @@ import {
   resolveGithubOwnerRepoFromGit,
   resolveGithubRestToken,
 } from "./ci-gate-lib.js";
+import { runDcoRung } from "./dco-lib.js";
 import { type Env, type Exec, realExec } from "./lib.js";
 
 export const FENCE_DRIVER_PATH = "scripts/upgrade-diff-fence.ts";
@@ -162,6 +163,7 @@ export async function extractBaseFence(input: { baseSha: string; exec?: Exec; tm
 export type MergeFenceDecision = {
   verdict: "clear" | "refuse";
   fence: "pass" | "warn" | "refuse" | "unknown";
+  dco: "pass" | "refuse" | "unreadable" | "unknown";
   message: string;
   detail: string;
   subject?: FenceSubject;
@@ -170,7 +172,7 @@ export type MergeFenceDecision = {
 export const GITHUB_API_URL_DEFAULT = "https://api.github.com";
 
 function refuse(message: string, detail = "", subject?: FenceSubject): MergeFenceDecision {
-  return { verdict: "refuse", fence: "unknown", message, detail, ...(subject ? { subject } : {}) };
+  return { verdict: "refuse", fence: "unknown", dco: "unknown", message, detail, ...(subject ? { subject } : {}) };
 }
 
 export async function runMergeFence(input: {
@@ -280,6 +282,7 @@ export async function runMergeFence(input: {
       verdict: "refuse",
       subject,
       fence: report.includes("REFUSED") ? "refuse" : "unknown",
+      dco: "unknown",
       message:
         `the base-ref fence exited ${ran.code} for pull request #${subject.number} (head ${subject.headSha.slice(0, 12)}, base ${subject.baseSha.slice(0, 12)}). ` +
         "DO NOT MERGE. A guardrail change goes in its own hand-written pull request, opened by a person.",
@@ -288,13 +291,41 @@ export async function runMergeFence(input: {
   }
 
   const warned = report.includes("::warning file=");
+  const fence = warned ? "warn" : "pass";
+  const fenceMessage = warned
+    ? `the base-ref fence WARNS on pull request #${subject.number}: it changes a protected path, and it reads as person-authored so the fence does not refuse it. Review those files as a guardrail change.`
+    : `the base-ref fence passes pull request #${subject.number} (head ${subject.headSha.slice(0, 12)}, judged with the fence at base ${subject.baseRef || "?"}@${subject.baseSha.slice(0, 12)}).`;
+
+  const dcoRun = await runDcoRung({ prNumber: subject.number, exec, fetchImpl, env });
+  if (!dcoRun.ok) {
+    return {
+      verdict: "refuse",
+      subject,
+      fence,
+      dco: "unreadable",
+      message: `${fenceMessage} But the DCO sign-off rung could not judge the commits: ${dcoRun.reason} — refusing rather than clearing commits it did not read.`,
+      detail: report,
+    };
+  }
+  if (dcoRun.judgement.verdict === "refuse") {
+    return {
+      verdict: "refuse",
+      subject,
+      fence,
+      dco: "refuse",
+      message:
+        `${fenceMessage} But the DCO sign-off rung REFUSES pull request #${subject.number}: ${dcoRun.judgement.message}\n` +
+        "  The DCO is what CONTRIBUTING.md, the pull-request template, the README badge and AGENTS.md all state this project requires.",
+      detail: report,
+    };
+  }
+
   return {
     verdict: "clear",
     subject,
-    fence: warned ? "warn" : "pass",
-    message: warned
-      ? `the base-ref fence WARNS on pull request #${subject.number}: it changes a protected path, and it reads as person-authored so the fence does not refuse it. Review those files as a guardrail change.`
-      : `the base-ref fence passes pull request #${subject.number} (head ${subject.headSha.slice(0, 12)}, judged with the fence at base ${subject.baseRef || "?"}@${subject.baseSha.slice(0, 12)}).`,
+    fence,
+    dco: "pass",
+    message: `${fenceMessage} DCO: ${dcoRun.judgement.message}`,
     detail: report,
   };
 }

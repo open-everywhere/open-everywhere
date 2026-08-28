@@ -75,7 +75,15 @@ export function planFenceAttestation(input: { decision: MergeFenceDecision; targ
     };
   }
 
-  const description = truncateDescription(`upgrade-fence ${decision.fence === "refuse" ? "REFUSED" : "could not run"}: PR #${subject.number} — do not merge`);
+  const refusedBy =
+    decision.dco === "refuse"
+      ? "DCO sign-off REFUSED"
+      : decision.dco === "unreadable"
+        ? "DCO sign-off could not run"
+        : decision.fence === "refuse"
+          ? "upgrade-fence REFUSED"
+          : "upgrade-fence could not run";
+  const description = truncateDescription(`${refusedBy}: PR #${subject.number} — do not merge`);
   return {
     kind: "post",
     invocation: buildStatusInvocation({ sha: head, state: "failure", context: UPGRADE_FENCE_CONTEXT, description, ...(targetUrl ? { targetUrl } : {}) }),

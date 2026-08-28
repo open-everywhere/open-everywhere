@@ -48,7 +48,7 @@ function subject(overrides: Partial<FenceSubject> = {}): FenceSubject {
 }
 
 function decision(overrides: Partial<MergeFenceDecision> = {}): MergeFenceDecision {
-  return { verdict: "clear", fence: "pass", message: "the base-ref fence passes", detail: "", subject: subject(), ...overrides };
+  return { verdict: "clear", fence: "pass", dco: "pass", message: "the base-ref fence passes", detail: "", subject: subject(), ...overrides };
 }
 
 function field(args: string[], key: string): string | undefined {
@@ -57,7 +57,7 @@ function field(args: string[], key: string): string | undefined {
 }
 
 check("a decision with NO subject posts nothing — the fence never read a pull request", () => {
-  const plan = planFenceAttestation({ decision: { verdict: "refuse", fence: "unknown", message: "no GitHub credential", detail: "" } });
+  const plan = planFenceAttestation({ decision: { verdict: "refuse", fence: "unknown", dco: "unknown", message: "no GitHub credential", detail: "" } });
   assert.equal(plan.kind, "refuse");
   if (plan.kind === "refuse") assert.match(plan.reason, /no judged sha/);
 });
@@ -123,6 +123,15 @@ check("a fence that could not RUN also posts failure, and says which of the two 
   assert.doesNotMatch(plan.description, /REFUSED/);
 });
 
+check("a DCO refusal names the DCO, not the fence — the fence passed", () => {
+  const plan = planFenceAttestation({ decision: decision({ verdict: "refuse", fence: "pass", dco: "refuse", message: "1 commit carries no sign-off" }) });
+  assert.equal(plan.kind, "post");
+  if (plan.kind !== "post") return;
+  assert.equal(plan.state, "failure");
+  assert.match(plan.description, /DCO sign-off REFUSED/);
+  assert.doesNotMatch(plan.description, /could not run/);
+});
+
 const CLEARED: Parameters<typeof planFenceLeg>[0] = { decision: decision(), defaultBranch: "main", protection: { kind: "required" }, requireProtection: true };
 
 check("the happy path clears: default-branch base, rule required, fence passes", () => {
@@ -182,7 +191,7 @@ check("the base-ref rule is checked BEFORE the fence verdict is read", () => {
 });
 
 check("a decision with no subject skips the base-ref rule and still posts nothing", () => {
-  const plan = planFenceLeg({ ...CLEARED, decision: { verdict: "refuse", fence: "unknown", message: "no GitHub credential", detail: "" } });
+  const plan = planFenceLeg({ ...CLEARED, decision: { verdict: "refuse", fence: "unknown", dco: "unknown", message: "no GitHub credential", detail: "" } });
   assert.equal(plan.kind, "refuse");
   if (plan.kind === "refuse") assert.match(plan.reason, /no judged sha/);
 });
