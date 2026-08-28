@@ -74,7 +74,7 @@ const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/wor
     "turnStep's auth write is still guarded on kind===`deliver` AND input.auth!==undefined (approval-resume keeps its stamps)",
   );
   ok(
-    /resumeHook\(\w+,\{kind:`deliver`,payloads:\[\{authorizationCallback:/.test(read("runtime/connections/callback-route.js")),
+    /resumeHook\(\w+,\{kind:`deliver`,payloads:\[\{authorizationCallback:/.test(read("execution/connections/callback-route.js")),
     "the connection authorization callback still resumes with NO `auth` field (auth-preserving resume)",
   );
 }
@@ -109,7 +109,7 @@ const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/wor
 }
 
 {
-  const authMod = read("runtime/sessions/auth.js");
+  const authMod = read("shared/session-auth.js");
   ok(/attributes:z\.record\(/.test(authMod), "eve still carries the runtimeSessionAuthContext zod schema (the shape this note is about)");
   ok(/export\{\};?\s*$/.test(authMod.trim()), "the runtime session-auth schema is still DEAD CODE (exports nothing) — eve does not validate/coerce delivered attributes");
 }

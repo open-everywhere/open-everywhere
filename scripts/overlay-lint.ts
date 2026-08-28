@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -67,7 +67,7 @@ const OVERLAYS: readonly OverlaySpec[] = [
     emitEmpty: () => emitHooksModule(emptyHooksFile()),
   },
   {
-    path: "agent/memory/agents.generated.ts",
+    path: "agent/memory/config/agents.generated.ts",
     what: "agents overlay",
     flow: "create_agent (memory/agents-codemod.ts)",
     parseModule: parseAgentsModule,
@@ -127,6 +127,24 @@ for (const spec of OVERLAYS) {
   if (next !== text) {
     writeFileSync(abs, next);
     wrote.push(spec.path);
+  }
+}
+
+const EVE_MEMORY_SLOT_DIR = "agent/memory";
+const AUTHORED_EVE_MEMORY_SLOTS: readonly string[] = [];
+if (existsSync(join(root, EVE_MEMORY_SLOT_DIR))) {
+  const strays = readdirSync(join(root, EVE_MEMORY_SLOT_DIR), { withFileTypes: true })
+    .filter((e) => e.isFile() && /\.(?:ts|mts|js|mjs)$/u.test(e.name))
+    .map((e) => e.name)
+    .filter((name) => !AUTHORED_EVE_MEMORY_SLOTS.includes(name));
+  if (strays.length > 0) {
+    problems.push(
+      `${EVE_MEMORY_SLOT_DIR}/ holds ${strays.length} module(s) eve will read as authored memory slots: ${strays.join(", ")}. ` +
+        `eve discovers every module directly inside that directory and requires a \`defineMemory()\` default export, so ` +
+        `the build fails with "Expected the memory export …". OE's memory CONFIGURATION belongs in ` +
+        `${EVE_MEMORY_SLOT_DIR}/config/ (eve's scan is not recursive); only a real memory provider belongs here, and it ` +
+        `must be listed in AUTHORED_EVE_MEMORY_SLOTS in this file.`,
+    );
   }
 }
 

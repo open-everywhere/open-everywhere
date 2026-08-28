@@ -37,7 +37,7 @@ export function readGrantReach(surfaceKey: string, readableBy: ReadableBy | unde
       unreachable: [
         `${surfaceKey} belongs to no memory domain, and this ingress grants ${describeReadableBy(readableBy)} — which names no domain-independent level ` +
           `(an org-, tenant- or surface-level grant would still reach it). So no routine armed there can read this ingress's events. ` +
-          `Add the channel to a domain in the app's memory/domains.ts, point this at a channel already in one, or widen the grant.`,
+          `Add the channel to a domain in the app's memory/config/domains.ts, point this at a channel already in one, or widen the grant.`,
       ],
     };
   }
@@ -64,7 +64,7 @@ export function grantDomainsExist(readableBy: ReadableBy | undefined, domains: r
       impossible: [],
       unreachable: [
         `the read grant names ${list}, and this deployment declares no memory domains at all — so nothing can read this ingress's events yet. ` +
-          `Declare the domain(s) in the app's memory/domains.ts; until then the grant matches nothing.`,
+          `Declare the domain(s) in the app's memory/config/domains.ts; until then the grant matches nothing.`,
       ],
     };
   }

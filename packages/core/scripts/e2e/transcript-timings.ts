@@ -633,8 +633,8 @@ export function fmtMs(v: number | null): string {
 export function renderCompaction(c: CompactionTiming): string | null {
   if (c.requested === 0 && c.completed === 0) return null;
   const parts = [c.requested === c.completed ? `${c.completed} pass(es)` : `${c.completed} pass(es) of ${c.requested} requested`];
-  if (c.reduced > 0) parts.push(`${c.reduced} reduced the history`);
-  if (c.noOp > 0) parts.push(`${c.noOp} NO-OP — returned the history UNCHANGED (the OPE-689 shape: the trigger fired and the session did not shrink)`);
+  if (c.reduced > 0) parts.push(`${c.reduced} did compaction work`);
+  if (c.noOp > 0) parts.push(`${c.noOp} NO-OP — the compaction work step returned its input UNCHANGED (the OPE-689 shape: the trigger fired and the session did not shrink)`);
   if (c.unstamped > 0) parts.push(`${c.unstamped} with no \`reduced\` stamp — UNDECIDABLE (pre-OPE-697 transcript, or eve's event factory rather than maybeCompact)`);
   return `${c.noOp > 0 ? "⚠ " : ""}compaction: ${parts.join(", ")}`;
 }

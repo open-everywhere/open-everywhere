@@ -36,7 +36,7 @@ function userInfo(id: string, name: string): Record<string, unknown> {
 async function armSeams(): Promise<void> {
   await bootAgent();
 
-  const { loadDomains } = await import("../../../agent/memory/domains");
+  const { loadDomains } = await import("../../../agent/memory/config/domains");
   const key = `slack/${SLACK_TEAM_ID}/${SLACK_WINDOW_CHANNEL_ID}`;
   const home = loadDomains().find((d) => (d.channels ?? []).includes(key));
   expect(home, `${key} is in no domain — a mention there cannot reach a window seat`).toBeDefined();

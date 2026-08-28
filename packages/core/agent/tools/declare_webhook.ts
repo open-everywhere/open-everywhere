@@ -166,7 +166,7 @@ export default defineTool({
       if (unknownDomains.length > 0) {
         throw new Error(
           `This deployment has no memory domain called ${unknownDomains.map((d) => `"${d}"`).join(", ")} — a grant naming one would refuse every routine forever. ` +
-            (declaredDomains.size > 0 ? `The declared domains are: ${[...declaredDomains].sort().join(", ")}.` : "No domains are declared at all, so an operator has to add one (in agent/memory/domains.ts, by PR) before any webhook can be readable by anything."),
+            (declaredDomains.size > 0 ? `The declared domains are: ${[...declaredDomains].sort().join(", ")}.` : "No domains are declared at all, so an operator has to add one (in agent/memory/config/domains.ts, by PR) before any webhook can be readable by anything."),
         );
       }
     }

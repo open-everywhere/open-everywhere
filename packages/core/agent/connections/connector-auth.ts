@@ -8,7 +8,7 @@ import {
 } from "eve/connections";
 import type { SessionContext } from "eve/context";
 import { once, type ApprovalStatus } from "eve/tools/approval";
-import type { ApprovalPolicy } from "eve/tools";
+import type { ApprovalPolicy } from "eve/tools/approval";
 import {
   assertConnectorGranted,
   boundConnectorCredential,

@@ -1,6 +1,6 @@
 import { defineWebhook, assertWebhooksValid, type WebhookHook } from "@open-everywhere/core/agent/webhooks/config.js";
 import { loadHooksOverlay } from "./hooks-overlay.js";
-import { loadDomains } from "../memory/domains.js";
+import { loadDomains } from "../memory/config/domains.js";
 
 const hooks: WebhookHook[] = [
   defineWebhook({

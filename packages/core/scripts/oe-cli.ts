@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -13,6 +12,7 @@ import {
   type PlanResult,
 } from "../agent/scaffold/roster-plan.js";
 import { SLOT_DIR } from "../agent/scaffold/roster-config.js";
+import { readEveFrameworkTools } from "../agent/access/eve-framework-tools.js";
 import {
   CONFIG_FILE,
   applyPlan,
@@ -59,12 +59,8 @@ function flagValue(args: readonly string[], name: string): string | undefined {
 
 async function frameworkToolNames(repoRoot: string): Promise<string[] | undefined> {
   try {
-    const require = createRequire(pathToFileURL(join(repoRoot, "package.json")).href);
-    const eveRoot = dirname(require.resolve("eve/package.json"));
-    const mod = (await import(pathToFileURL(join(eveRoot, "dist/src/runtime/framework-tools/index.js")).href)) as {
-      getAllFrameworkToolNames(): ReadonlySet<string>;
-    };
-    return [...mod.getAllFrameworkToolNames()];
+    const tools = await readEveFrameworkTools({ resolveFrom: pathToFileURL(join(repoRoot, "package.json")).href });
+    return [...tools.all];
   } catch {
     return undefined;
   }

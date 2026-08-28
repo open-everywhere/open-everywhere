@@ -77,9 +77,13 @@ ok(
   /selectRecentWindowSize\([A-Za-z_$]{1,2},[A-Za-z_$]{1,2}\?\{\.\.\.i,recentWindowSize:1\}:i\)/.test(src),
   "wiring: selectRecentWindowSize still reads the original config — per-message budgeting keeps the estimator",
 );
+const wrapper =
+  /async function compactMessages\(([A-Za-z_$]{1,2}),([A-Za-z_$]{1,2}),([A-Za-z_$]{1,2}),([A-Za-z_$]{1,2}),([A-Za-z_$]{1,2}),([A-Za-z_$]{1,2}),([A-Za-z_$]{1,2}),([A-Za-z_$]{1,2})=!1\)\{return __oeNoteNoOpCompaction\(\1,await __oeCompactMessagesInner\(\1,\2,\3,\4,\5,\6,\7,\8\),\3,\8\)\}/.exec(
+    src,
+  );
 ok(
-  src.includes("async function compactMessages(t,r,i,a,o,c,l,d=!1){return __oeNoteNoOpCompaction(t,await __oeCompactMessagesInner(t,r,i,a,o,c,l,d),i,d)}"),
-  "wiring: the exported compactMessages delegates to the inner function through the no-op backstop",
+  wrapper !== null,
+  "wiring: the exported compactMessages forwards every parameter to the inner function and routes its result through the no-op backstop",
 );
 ok(src.includes("export{compactMessages,"), "wiring: `compactMessages` is still the exported name, so every eve caller gets the wrapper");
 
@@ -327,9 +331,10 @@ ok(
   ),
   "event-wiring: the OPE-73 untrusted-projection hook is still byte-exact beside the OPE-697 helpers",
 );
+const workStepPin = /:\[\.\.\.([A-Za-z_$]{1,2})\];__oeRed=__oeCompactionReduced\(\1,([A-Za-z_$]{1,2})\);if\([A-Za-z_$]{1,2}=\[\.\.\.[A-Za-z_$]{1,2}\.memory,\.\.\.\2\],/.exec(toolLoopSrc);
 ok(
-  /__oeRed=__oeCompactionReduced\([A-Za-z_$]{1,2}\.messages,[A-Za-z_$]{1,2}=await compactMessages\(/.test(toolLoopSrc),
-  "event-wiring: the flag is computed from the INPUT list at the compactMessages call site",
+  workStepPin !== null,
+  "event-wiring: the flag is computed from the work step's OWN input and output, between the ternary that runs it and the memory rebuild that consumes it",
 );
 ok(
   /await [A-Za-z_$]{1,2}\(__oeWithReduced\(createCompactionCompletedEvent\(/.test(toolLoopSrc),
@@ -385,32 +390,56 @@ interface Emitted {
 }
 type WorkStep = (messages: Msg[]) => Msg[];
 
-function driveMaybeCompact(work: WorkStep, onCompaction?: () => Msg[]): Promise<Emitted[]> {
+interface DriveOptions {
+  readonly compactTriggered?: boolean;
+  readonly canonicalizeTriggered?: boolean;
+  readonly memoryRecords?: string[];
+  readonly supersededRecords?: string[];
+}
+
+function driveMaybeCompact(work: WorkStep, onCompaction?: () => Msg[], opts: DriveOptions = {}): Promise<Emitted[]> {
   const events: Emitted[] = [];
+  const memoryRecords = opts.memoryRecords ?? [];
+  const supersededRecords = opts.supersededRecords ?? [];
   const factory = new Function(
     "shouldCompact",
+    "shouldCanonicalizeMemory",
+    "canonicalizeMemoryRecords",
     "resolveCompactionModel",
     "requireSessionModelReference",
+    "mergeProviderSafetyIdentifier",
     "createCompactionRequestedEvent",
     "createCompactionCompletedEvent",
     "formatLanguageModelGatewayId",
     "getInputTokenCount",
     "compactMessages",
     "buildGatewayAttributionHeaders",
+    "contextStorage",
+    "prepareMemoryCompaction",
+    "drainMemoryCommit",
     "__oeCompactionReduced",
     "__oeWithReduced",
     `${maybeCompactSrc}\nreturn maybeCompact;`,
   ) as (...deps: unknown[]) => (input: Record<string, unknown>) => Promise<{ messages: Msg[] }>;
 
   const maybeCompact = factory(
-    () => true,
+    () => opts.compactTriggered ?? true,
+    () => opts.canonicalizeTriggered ?? false,
+    (messages: Msg[]) => ({
+      memory: messages.filter((m) => memoryRecords.includes(String(m.content))),
+      ordinary: messages.filter((m) => !memoryRecords.includes(String(m.content)) && !supersededRecords.includes(String(m.content))),
+    }),
     async () => ({ model: { modelId: "stub" }, providerOptions: undefined }),
     () => ({ modelId: "stub" }),
+    (_ref: unknown, providerOptions: unknown) => providerOptions,
     createCompactionRequestedEvent,
     createCompactionCompletedEvent,
     () => "stub/model",
     () => 999,
     async (messages: Msg[]) => work(messages),
+    () => undefined,
+    { getStore: () => undefined },
+    () => undefined,
     () => undefined,
     isReduced,
     withReduced,
@@ -433,6 +462,7 @@ function driveMaybeCompact(work: WorkStep, onCompaction?: () => Msg[]): Promise<
       agent: {},
       compaction: { recentWindowSize: 2, threshold: THRESHOLD },
       sessionId: "s-1",
+      state: {},
     },
   }).then(() => events);
 }
@@ -490,6 +520,31 @@ function completedEvent(events: Emitted[]): Emitted {
     () => [{ role: "assistant", content: "appended after compaction" }],
   );
   ok(completedEvent(events).data.reduced === true, "event-honesty: a real reduction with an appended message still reports true");
+}
+
+{
+  const events = await driveMaybeCompact(() => [{ role: "user", content: "SUMMARY" }], undefined, {
+    compactTriggered: false,
+    canonicalizeTriggered: true,
+  });
+  ok(
+    events.some((e) => e.type === "compaction.completed"),
+    "event-honesty: a canonicalization-only pass still emits completed — eve's contract, unchanged",
+  );
+  ok(
+    completedEvent(events).data.reduced === false,
+    "🔴 event-honesty: a pass where ONLY memory canonicalization fired reports reduced === false — the work step never ran, so no compaction happened",
+  );
+}
+{
+  const events = await driveMaybeCompact((messages) => messages.map((m) => ({ ...m })), undefined, {
+    memoryRecords: ["one"],
+    supersededRecords: ["two"],
+  });
+  ok(
+    completedEvent(events).data.reduced === false,
+    "🔴 event-honesty: a no-op work step reports reduced === false even when canonicalization DROPPED a superseded record and shortened the rebuilt history — the flag measures the work step, not the history",
+  );
 }
 
 console.log(

@@ -122,7 +122,7 @@ export function resolveChatDmTargetFrom(
     `direct-messaging ${parsed.connector} person "${parsed.id}" is refused: this session's memory domain declares no ` +
       `${parsed.connector} container, so it does not work on that surface at all. A grant cannot reach a surface the ` +
       `domain does not hold. The remedy is to give that domain a ${parsed.connector} container in its \`channels\` ` +
-      `(memory/domains.ts), which is a reviewed config change, and then grant the person.`,
+      `(memory/config/domains.ts), which is a reviewed config change, and then grant the person.`,
   );
 }
 

@@ -35,7 +35,7 @@ import { assertStoreIdentity } from "../../packages/core/scripts/store-identity-
 
 import { loadBundles } from "../../agent/access/bundles.js";
 import { loadConnectorCredentials } from "../../agent/access/connector-credentials.js";
-import { loadDomains } from "../../agent/memory/domains.js";
+import { loadDomains } from "../../agent/memory/config/domains.js";
 import { loadWebhooks } from "../../agent/webhooks/hooks.js";
 import { DeployConfigError, parseArgs } from "./lib.js";
 

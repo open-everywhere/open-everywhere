@@ -324,14 +324,14 @@ export function configSnippet(
     .join("\n");
   const memoryRefs = topology.silos.map((s) => JSON.stringify(s.name)).join(", ");
   return [
-    "// --- paste into agent/memory/domains.ts (operator-owned; the seeder cannot edit it) ---",
+    "// --- paste into agent/memory/config/domains.ts (operator-owned; the seeder cannot edit it) ---",
     "// silos:",
     siloLines,
     "// domain — TWO surfaces on ONE unified window (`mode` requires `ambientSupervisor`; the pair is",
     "// what makes probe M4 'cross-surface one-brain' runnable). Each channel must belong to NO other",
     "// domain: a channel lives in at most one (assertChannelExclusivity), so if another fixture already",
     "// claims one of these, hand it over under the same OE_MEMORY_EVAL gate — see the e2e-b/e2e-unified",
-    "// yields in agent/memory/domains.ts.",
+    "// yields in agent/memory/config/domains.ts.",
     `  defineDomain({ name: ${JSON.stringify(domain)}, channels: [${JSON.stringify(channel)}, ${JSON.stringify(crossSurfaceChannel)}], memory: [${memoryRefs}], ambientSupervisor: true, mode: "unified" }),`,
   ].join("\n");
 }

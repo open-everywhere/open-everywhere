@@ -27,7 +27,7 @@ const lifecycle = (await import(u("context/dynamic-tool-lifecycle.js"))) as {
   refreshDynamicSessionToolsForRuntimeRevision?(i: unknown): Promise<void>;
 };
 type ReplayFn = (closure: Record<string, unknown>, ...a: unknown[]) => unknown;
-const durable = (await import(u("shared/durable-dynamic-tool-callbacks.js"))) as {
+const durable = (await import(u("tools/durable-callbacks.js"))) as {
   stampDurableDynamicCallback<T extends (...a: never[]) => unknown>(cb: T, d: { callback: ReplayFn; closure: Record<string, unknown> }): T;
   lookupDurableDynamicCallback(toolName: string, phase: string): ReplayFn | undefined;
   hasUnregisteredDurableDynamicCallbacks(meta: readonly { callbacks: Record<string, unknown>; name: string }[]): boolean;

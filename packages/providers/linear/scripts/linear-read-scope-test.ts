@@ -202,16 +202,16 @@ const ctxFor = (surface: string, issueId?: string, issueIdentifier?: string, org
   const notFound = linearScopeRefusal(ISSUE_GHOST, ghostVerdict, "read", false, true);
   ok(notFound.includes("could not be resolved in this workspace"), "a target the lookup could not place says the lookup found nothing");
   ok(notFound.includes("visible to the workspace credential"), "…and names the credential, which is the thing that decided");
-  ok(!notFound.includes("memory/domains.ts"), "…and does NOT blame the memory domain, which decided nothing");
+  ok(!notFound.includes("memory/config/domains.ts"), "…and does NOT blame the memory domain, which decided nothing");
   ok(!notFound.includes("containers"), "…and does NOT offer the domain-grant remedy, which would not work");
 
   const noWorkspace = linearScopeRefusal("PAY-9", { allowed: false, reason: "target-unresolvable", callerDomain: "payments" }, "read", true);
-  ok(noWorkspace.includes("memory/domains.ts") && noWorkspace.includes("containers"), "a caller with NO workspace still gets the domain remedy");
+  ok(noWorkspace.includes("memory/config/domains.ts") && noWorkspace.includes("containers"), "a caller with NO workspace still gets the domain remedy");
   ok(noWorkspace.includes('credential: "workspace"'), "…and the work-grant remedy, which for it is real");
   ok(!noWorkspace.includes("could not be resolved in this workspace"), "…and never the not-found copy");
 
   const crossDomain = linearScopeRefusal(ISSUE_ENG, linearIssueScope(keyFor(ORG, TEAM_PAY), [], ISSUE_ENG, TEAM_ENG, DOMAINS), "read", false, true);
-  ok(crossDomain.includes("memory/domains.ts") && !crossDomain.includes("could not be resolved in this workspace"), "a cross-domain refusal keeps its own copy");
+  ok(crossDomain.includes("memory/config/domains.ts") && !crossDomain.includes("could not be resolved in this workspace"), "a cross-domain refusal keeps its own copy");
 
   const turn = ctxFor(TEAM_PAY, ISSUE_OWN);
   const resolver = async (ref: string): Promise<string | undefined> => TEAM_OF[ref];
@@ -223,7 +223,7 @@ const ctxFor = (surface: string, issueId?: string, issueIdentifier?: string, org
   }
   ok(wired instanceof ChannelScopeError, "the wired fence still refuses an unplaceable issue");
   ok((wired as Error).message.includes("could not be resolved in this workspace"), "…and the message the model reads is the not-found copy");
-  ok(!(wired as Error).message.includes("memory/domains.ts"), "…with no false domain remedy in it");
+  ok(!(wired as Error).message.includes("memory/config/domains.ts"), "…with no false domain remedy in it");
 }
 
 {

@@ -1,4 +1,4 @@
-import type { ApprovalResponseDecision, ApprovalResponsePolicy } from "eve/tools";
+import type { ApprovalResponseDecision, ApprovalResponsePolicy } from "eve/tools/approval";
 
 export interface ResponderIdentity {
   readonly authenticator: string;

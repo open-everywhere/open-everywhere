@@ -21,19 +21,26 @@ const eq = (a: unknown, b: unknown, label: string) => {
 
 const require = createRequire(import.meta.url);
 const eveRoot = require.resolve("eve/package.json").replace(/package\.json$/, "");
-const registry = (await import(`${eveRoot}dist/src/runtime/subagents/registry.js`)) as {
-  getSubagentToolInputJsonSchema(persistent: boolean): unknown;
+const agentContract = (await import(`${eveRoot}dist/src/tools/framework/agent-contract.js`)) as {
+  SUBAGENT_TOOL_INPUT_SCHEMA: unknown;
 };
-const toolSchema = (await import(`${eveRoot}dist/src/shared/tool-schema.js`)) as { toInputSchema(schema: unknown): unknown };
+const askQuestion = (await import(`${eveRoot}dist/src/tools/framework/ask-question.js`)) as {
+  ASK_QUESTION_INPUT_SCHEMA: unknown;
+};
+const toolSchema = (await import(`${eveRoot}dist/src/tools/schema.js`)) as {
+  serializeInputSchema(schema: unknown): unknown;
+  toInputSchema(schema: unknown): unknown;
+};
 
-const persistentSchema = () => toolSchema.toInputSchema(registry.getSubagentToolInputJsonSchema(true));
-const plainSchema = () => toolSchema.toInputSchema(registry.getSubagentToolInputJsonSchema(false));
+const rehydrated = (schema: unknown) => toolSchema.toInputSchema(toolSchema.serializeInputSchema(schema));
+const persistentSchema = () => rehydrated(agentContract.SUBAGENT_TOOL_INPUT_SCHEMA);
+const plainSchema = () => rehydrated(askQuestion.ASK_QUESTION_INPUT_SCHEMA);
 
 const advertised = (schema: unknown): Record<string, unknown> =>
   (asSchema(schema as never).jsonSchema as { properties?: Record<string, unknown> }).properties ?? {};
 
-ok("agentId" in advertised(persistentSchema()), "§0 eve's PERSISTENT subagent schema really does advertise `agentId` — the premise this control exists for");
-ok(!("agentId" in advertised(plainSchema())), "§0 eve's non-persistent schema does NOT — which is why the flag-off arm needs no flag read");
+ok("agentId" in advertised(persistentSchema()), "§0 eve's subagent schema really does advertise `agentId` — the premise this control exists for");
+ok(!("agentId" in advertised(plainSchema())), "§0 …and an eve tool schema without it has no `agentId`, so the no-op arm below is checking a real difference");
 
 const agentsNote = { role: "user", content: '[Agents]\n<agents>\n<agent id="ag_1:abc" name="worker" availability="available">(available)</agent>\n</agents>' };
 const messages: unknown[] = [
@@ -130,7 +137,7 @@ ok(callOne.agent.inputSchema === callTwo.agent.inputSchema, "🔴 §2 one origin
 
 const off = { agent: { inputSchema: plainSchema() } };
 const offSchema = off.agent.inputSchema;
-eq(refuseAgentContinuation(off as Record<string, unknown>), false, "🔴 §4 eve's non-persistent schema has no `agentId`, so nothing is replaced — the flag-off arm is byte-identical WITHOUT a flag read");
+eq(refuseAgentContinuation(off as Record<string, unknown>), false, "🔴 §4 an eve schema with no `agentId` is left alone, so nothing is replaced — the refusal keys on the FIELD, never on a flag");
 ok(off.agent.inputSchema === offSchema, "…the tool object is untouched, down to schema identity");
 
 eq(refuseAgentContinuation({ bash: { inputSchema: plainSchema() } }), false, "§4 no `agent` tool ⇒ no-op");

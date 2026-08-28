@@ -201,7 +201,7 @@ export async function assertTeamsChannelAllowed(ctx: BindableContext, channelId:
   const scope = domain ? `domain "${domain}"` : "this channel's (no multi-channel domain)";
   throw new ChannelScopeError(
     `channel "${channelId}" is not in ${scope} teams read scope. The agent may only read channels in its ` +
-      `memory domain (memory/domains.ts). Add the channel to the domain's \`channels\` to grant it.`,
+      `memory domain (memory/config/domains.ts). Add the channel to the domain's \`channels\` to grant it.`,
   );
 }
 

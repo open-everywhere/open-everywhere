@@ -2,7 +2,7 @@ import "../agent/lib/register-config.js";
 import { loadBindings, loadBundles } from "../agent/access/bundles.js";
 import { loadConnectorCredentials } from "../agent/access/connector-credentials.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
-import { loadDomains, domainsForSurface } from "../agent/memory/domains.js";
+import { loadDomains, domainsForSurface } from "../agent/memory/config/domains.js";
 import { loadGroups } from "../agent/identity/groups.js";
 import { resolveDomainForChannel } from "@open-everywhere/core/agent/memory/domain.js";
 import { resolveAccess, type ResolveRequest } from "@open-everywhere/core/agent/access/resolver.js";

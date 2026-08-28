@@ -253,7 +253,7 @@ console.log("5. durable callback descriptors across the REAL tool inventory (OPE
     ContinuationTokenKey: unknown;
   };
   const { ChannelKey } = (await import(distUrl("runtime/sessions/runtime-context-keys.js"))) as { ChannelKey: unknown };
-  const nativeDurable = (await import(distUrl("shared/durable-dynamic-tool-callbacks.js"))) as {
+  const nativeDurable = (await import(distUrl("tools/durable-callbacks.js"))) as {
     lookupDurableDynamicCallback(toolName: string, phase: string): ((c: Record<string, unknown>, ...a: unknown[]) => unknown) | undefined;
   };
 

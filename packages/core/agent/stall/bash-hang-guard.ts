@@ -125,10 +125,10 @@ async function raceTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   }
 }
 
-export function withBashHangGuard(tool: ToolDefinition): ToolDefinition {
+export function withBashHangGuard<I, O>(tool: ToolDefinition<I, O>): ToolDefinition<I, O> {
   return {
     ...tool,
-    async execute(input: unknown, ctx: ToolContext) {
+    async execute(input: I, ctx: ToolContext): Promise<O> {
       const command = typeof (input as { command?: unknown } | undefined)?.command === "string" ? ((input as { command: string }).command) : "";
 
       if (backgroundGuardEnabled() && backgroundsWithoutRedirect(command)) {
@@ -139,9 +139,9 @@ export function withBashHangGuard(tool: ToolDefinition): ToolDefinition {
       }
 
       const ms = bashTimeoutMs();
-      if (ms <= 0) return tool.execute(input, ctx);
+      if (ms <= 0) return (await tool.execute(input, ctx)) as O;
       try {
-        return await raceTimeout(Promise.resolve(tool.execute(input, ctx)), ms);
+        return (await raceTimeout(Promise.resolve(tool.execute(input, ctx)), ms)) as O;
       } catch (err) {
         if (err instanceof Error && err.message === bashTimeoutMessage(ms)) {
           emitTelemetry("oe.feature.used", { "oe.feature": "bash_hang_guard", "oe.outcome": "unverified" });

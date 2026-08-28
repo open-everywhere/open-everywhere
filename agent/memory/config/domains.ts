@@ -11,9 +11,9 @@ import { assertSingleTenantPerTenantScopedPlatform } from "@open-everywhere/core
 import { defineMemorySilo, assertSilosValid, type MemorySilo } from "@open-everywhere/core/agent/memory/silo.js";
 import { assertExposedAgentsCurated } from "@open-everywhere/core/agent/memory/agents-codemod.js";
 import { applyRoleDefaults } from "@open-everywhere/core/agent/roles/role.js";
-import { loadRoles } from "../roles/roles.js";
+import { loadRoles } from "../../roles/roles.js";
 import { loadAgentsOverlay } from "./agents-overlay.js";
-import { UTILITY_MODEL, SUPERVISOR_MODEL } from "../model/models.js";
+import { UTILITY_MODEL, SUPERVISOR_MODEL } from "../../model/models.js";
 
 const silos: MemorySilo[] = [
   defineMemorySilo({ name: "org-brain", provider: "postgres" }),

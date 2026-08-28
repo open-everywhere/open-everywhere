@@ -162,7 +162,7 @@ export function notionScopeRefusal(pageId: string, verdict: NotionScopeVerdict):
   const scope = verdict.callerDomain ? `domain "${verdict.callerDomain}"` : "this page's (no domain owns this session's page)";
   return (
     `Notion page "${pageId}" is not in ${scope} read scope. The agent may only read pages in its ` +
-    "memory domain (memory/domains.ts). Add the page to the domain's `channels` as " +
+    "memory domain (memory/config/domains.ts). Add the page to the domain's `channels` as " +
     "`notion/<workspace>/<page>`, or claim the workspace in `containers`, to grant it."
   );
 }

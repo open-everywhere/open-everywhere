@@ -1489,7 +1489,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(healthy.compaction.reduced === 1 && healthy.compaction.noOp === 0 && healthy.compaction.unstamped === 0, `a reduced:true pass is EXPLICITLY not a no-op (noOp === 0, not merely absent); got ${JSON.stringify(healthy.compaction)}`);
   const healthyLine = renderCompaction(healthy.compaction)!;
   ok(!healthyLine.includes("NO-OP") && !healthyLine.startsWith("⚠"), `…and real work is never flagged: no NO-OP text, no ⚠ marker; got ${JSON.stringify(healthyLine)}`);
-  ok(healthyLine.includes("1 reduced the history"), `…the healthy line still REPORTS the pass, so "how many compactions ran" is answerable; got ${JSON.stringify(healthyLine)}`);
+  ok(healthyLine.includes("1 did compaction work"), `…the healthy line still REPORTS the pass, so "how many compactions ran" is answerable; got ${JSON.stringify(healthyLine)}`);
 
   ok(s.compaction.completed === 0 && s.compaction.requested === 0, "a session with no compaction events counts zero, not null");
   ok(renderCompaction(s.compaction) === null, "…and renders NO line at all, so the line's presence is itself the signal");

@@ -31,7 +31,7 @@ export const notionSearchEntry = defineTool({
     if (!grant) {
       throw new Error(
         "This domain holds no Notion work grant, so Notion search is unavailable here. " +
-          "An operator grants it by declaring the domain's Notion work credential in agent/memory/domains.ts.",
+          "An operator grants it by declaring the domain's Notion work credential in agent/memory/config/domains.ts.",
       );
     }
     const cred = await resolveNotionCredential(grant.credential);

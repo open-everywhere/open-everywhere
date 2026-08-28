@@ -22,13 +22,28 @@ const read = (rel: string): string => readFileSync(join(distSrc, rel), "utf8");
 console.log(`parked-child-lifecycle: pinning against installed eve ${eveVersion}`);
 
 {
+  const contract = read("tools/framework/task-contract.js");
   const json = read("tasks/json.js");
-  const base = /taskViewJsonBaseShape=\{([^}]*)\}/.exec(json)?.[1];
+  const base = /taskViewJsonBaseShape=\{([^}]*)\}/.exec(contract)?.[1];
   ok(base !== undefined, "PIN 1: eve still projects task views through `taskViewJsonBaseShape`");
   ok(base!.includes("metadata:"), "PIN 1: the projected view still carries `metadata`");
   ok(base!.includes("taskId:"), "PIN 1: the projected view still carries `taskId`");
-  ok(!json.includes("executor"), "PIN 1 🔴: the task-view JSON schema still names no `executor` — no worker session id reaches OE");
-  ok(!json.includes("usage"), "PIN 1: the task-view JSON schema still names no `usage` either — the same strip, same projection");
+  ok(
+    /TASK_VIEW_JSON_SCHEMA\.parse\(/.test(json),
+    "PIN 1: `taskViewToJson` still parses every view through `TASK_VIEW_JSON_SCHEMA` — the parse IS the strip",
+  );
+  ok(
+    /TASK_VIEW_JSON_SCHEMA=z\.discriminatedUnion\(`status`,\[z\.object\(/.test(contract),
+    "PIN 1: the task-view JSON schema arms are still NON-strict `z.object`s, which strip unnamed keys (a `strictObject` would THROW instead, a different behaviour with a different failure mode)",
+  );
+  ok(
+    !contract.includes("executor") && !json.includes("executor"),
+    "PIN 1 🔴: neither the task-view JSON schema nor its projector names `executor` — no worker session id reaches OE",
+  );
+  ok(
+    !contract.includes("usage") && !json.includes("usage"),
+    "PIN 1: neither names `usage` either — the same strip, same projection",
+  );
 }
 
 {

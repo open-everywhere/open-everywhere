@@ -5,7 +5,7 @@ import "../agent/lib/register-config.js";
 import { loadBindings, loadBundles } from "../agent/access/bundles.js";
 import { loadConnectorCredentials } from "../agent/access/connector-credentials.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
-import { loadDomains, loadSilos, domainsForSurface } from "../agent/memory/domains.js";
+import { loadDomains, loadSilos, domainsForSurface } from "../agent/memory/config/domains.js";
 import { loadRoles } from "../agent/roles/roles.js";
 import { loadWebhooks } from "../agent/webhooks/hooks.js";
 import { loadPrincipals } from "../agent/identity/principals.js";

@@ -36,7 +36,7 @@ export default defineTool({
     if (roles.length === 0) {
       throw new Error(
         `memory_admin_read requires an org admin, or a domain admin for at least one memory domain. Your id ("${caller}") ` +
-          `isn't listed on the "org" pseudo-domain's admins or any explicit domain's admins (Domain.admins, agent/memory/domains.ts).`,
+          `isn't listed on the "org" pseudo-domain's admins or any explicit domain's admins (Domain.admins, agent/memory/config/domains.ts).`,
       );
     }
     const venue = await requireAdminReadVenue(ctx, { roles, principalId: caller, kind: "memory.admin_read" });

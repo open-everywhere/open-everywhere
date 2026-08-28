@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { createRequire } from "node:module";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { readEveFrameworkTools } from "../agent/access/eve-framework-tools.js";
 import {
   checkWindowGateManifest,
   classifyFrameworkTools,
@@ -16,19 +16,9 @@ import {
 } from "../agent/access/window-gate-manifest.js";
 import type { WindowGrain } from "../agent/identity/binding.js";
 
-const require = createRequire(import.meta.url);
-const eveRoot = dirname(require.resolve("eve/package.json"));
-const eveFrameworkTools = (await import(pathToFileURL(join(eveRoot, "dist/src/runtime/framework-tools/index.js")).href)) as {
-  getAllFrameworkToolNames(): ReadonlySet<string>;
-  getFrameworkToolDefinitions?: (config?: unknown) => readonly { readonly name: string }[];
-  getOptInFrameworkToolNames?: () => ReadonlySet<string>;
-};
-const FRAMEWORK_TOOL_NAMES = [...eveFrameworkTools.getAllFrameworkToolNames(), "connection_search"];
-const FRAMEWORK_TOOLS = classifyFrameworkTools(
-  FRAMEWORK_TOOL_NAMES,
-  eveFrameworkTools.getFrameworkToolDefinitions?.().map((d) => d.name),
-  eveFrameworkTools.getOptInFrameworkToolNames?.(),
-);
+const eveFrameworkTools = await readEveFrameworkTools();
+const FRAMEWORK_TOOL_NAMES = [...eveFrameworkTools.all];
+const FRAMEWORK_TOOLS = classifyFrameworkTools(FRAMEWORK_TOOL_NAMES, eveFrameworkTools.defaultMounted, eveFrameworkTools.optIn);
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

@@ -20,13 +20,13 @@ export interface AmbientSkipRecord {
 function fixFor(reason: AmbientSkip, surfaceKey: string, domain: string | undefined, via?: DomainVia): string {
   const tenant = surfaceKey.split("/").slice(0, 2).join("/");
   if (reason === "domain-refused") {
-    return `domain "${domain}" routes "${surfaceKey}" but has not opted in — set ambientSupervisor: true on it (agent/memory/domains.ts)`;
+    return `domain "${domain}" routes "${surfaceKey}" but has not opted in — set ambientSupervisor: true on it (agent/memory/config/domains.ts)`;
   }
   if (via?.startsWith("excluded:")) {
     const [, excludingDomain, ...rest] = via.split(":");
-    return `"${surfaceKey}" IS inside domain "${excludingDomain}"'s containers claim, but its excludeContainers entry "${rest.join(":")}" carves it back out (exclude always wins) — drop or narrow that exclusion, or add the surface to a domain's channels (agent/memory/domains.ts)`;
+    return `"${surfaceKey}" IS inside domain "${excludingDomain}"'s containers claim, but its excludeContainers entry "${rest.join(":")}" carves it back out (exclude always wins) — drop or narrow that exclusion, or add the surface to a domain's channels (agent/memory/config/domains.ts)`;
   }
-  return `no domain routes "${surfaceKey}" — add it to a domain's channels, or claim it with containers: ["${tenant}"] (the whole tenant) or a same-level glob like containers: ["${tenant}/<prefix>*"] (agent/memory/domains.ts)`;
+  return `no domain routes "${surfaceKey}" — add it to a domain's channels, or claim it with containers: ["${tenant}"] (the whole tenant) or a same-level glob like containers: ["${tenant}/<prefix>*"] (agent/memory/config/domains.ts)`;
 }
 
 export async function auditAmbientSkip(p: AmbientSkipRecord): Promise<AmbientSkip | undefined> {

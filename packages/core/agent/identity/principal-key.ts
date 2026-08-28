@@ -63,7 +63,7 @@ export function principalKeyReplacementHint(entry: string, tenant: string | unde
   const id = slash > 0 ? entry.slice(slash + 1) : entry;
   return tenant
     ? `On ${platform} a person id is issued PER WORKSPACE, so the key needs the workspace rung. This deployment declares exactly one ${platform} workspace, so the replacement is "${platform}/${tenant}/${id}".`
-    : `On ${platform} a person id is issued PER WORKSPACE, so the key needs the workspace rung: "${platform}/<tenant-id>/${id}". The tenant id is the SECOND segment of this deployment's ${platform} channel keys in agent/memory/domains.ts (a channel "${platform}/T0AB1CD2E/C123" makes the key "${platform}/T0AB1CD2E/${id}").`;
+    : `On ${platform} a person id is issued PER WORKSPACE, so the key needs the workspace rung: "${platform}/<tenant-id>/${id}". The tenant id is the SECOND segment of this deployment's ${platform} channel keys in agent/memory/config/domains.ts (a channel "${platform}/T0AB1CD2E/C123" makes the key "${platform}/T0AB1CD2E/${id}").`;
 }
 
 const TENANT_SCOPED_PLATFORMS: ReadonlySet<string> = new Set(["slack"]);

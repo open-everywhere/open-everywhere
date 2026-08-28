@@ -5,7 +5,7 @@ process.env.LINEAR_API_KEY = "linear-test-key";
 
 await import("../agent/identity/surfaces.js");
 
-const { loadDomains } = await import("../agent/memory/domains.js");
+const { loadDomains } = await import("../agent/memory/config/domains.js");
 const { externalPolicyOverrideFor } = await import("@open-everywhere/core/agent/memory/domain.js");
 const { resolveExternalPolicy } = await import("@open-everywhere/core/agent/access/external-policy.js");
 const { declaredTrustForKeys } = await import("@open-everywhere/core/agent/identity/trust.js");
@@ -38,7 +38,7 @@ for (const clock of CLOCKS) {
 const sampleKey = linearSmokeSurfaceKey(linearSmokeTeamId(Date.now()));
 ok(
   externalPolicyOverrideFor(sampleKey, domains)?.roomGrain === "silent",
-  `THE POLICY HALF: agent/memory/domains.ts "e2e-linear-signed-delivery" still declares externalPolicy.roomGrain "silent" over ${sampleKey}`,
+  `THE POLICY HALF: agent/memory/config/domains.ts "e2e-linear-signed-delivery" still declares externalPolicy.roomGrain "silent" over ${sampleKey}`,
 );
 ok(
   declaredTrustForKeys(tenantOf(sampleKey), sampleKey) === "public",

@@ -145,9 +145,21 @@ export async function resolveDynamicEntry(mod: unknown, ctx: BindableContext): P
   return resolved === null || resolved === undefined ? null : (resolved as MountableEntry);
 }
 
-export async function eveFrameworkTool(file: string): Promise<Record<string, unknown>> {
-  const base = import.meta.resolve("eve/tools").replace(/\/src\/.*$/, "/src/runtime/framework-tools/");
-  return (await import(base + file)) as Record<string, unknown>;
+export async function eveFrameworkTool(distRelativePath: string): Promise<Record<string, unknown>> {
+  const base = import.meta.resolve("eve/tools").replace(/\/src\/.*$/, "/src/");
+  return (await import(base + distRelativePath)) as Record<string, unknown>;
+}
+
+export async function eveFrameworkToolDefinition(distRelativePath: string): Promise<MountableEntry> {
+  const mod = await eveFrameworkTool(distRelativePath);
+  const definition = mod.default;
+  if (definition === undefined) {
+    throw new Error(
+      `eve's ${distRelativePath} default-exports nothing — the probe cannot mount the tool it ships. ` +
+        `eve moved or renamed the module; find its new home rather than skipping the mount.`,
+    );
+  }
+  return definition as MountableEntry;
 }
 
 export async function replyEntryForSeat(ctx: BindableContext): Promise<MountableEntry> {
@@ -199,16 +211,10 @@ export async function buildLeanSeatToolset(opts: {
     if (entry !== null) set[name] = rec(name, entry);
     else skip(name);
   }
-  const agentMod = await eveFrameworkTool("agent.js");
-  set.agent = rec("agent", agentMod.AGENT_TOOL_DEFINITION as MountableEntry);
-  const askMod = await eveFrameworkTool("ask-question.js");
-  set.ask_question = rec("ask_question", askMod.ASK_QUESTION_TOOL_DEFINITION as MountableEntry);
-  const todoMod = await eveFrameworkTool("todo.js");
-  set.todo = rec("todo", todoMod.TODO_TOOL_DEFINITION as MountableEntry);
-  const taskMod = await eveFrameworkTool("tasks.js");
-  for (const def of taskMod.TASK_TOOL_DEFINITIONS as readonly (MountableEntry & { readonly name: string })[]) {
-    if (def.name === "task_cancel") set[def.name] = rec(def.name, def);
-  }
+  set.agent = rec("agent", await eveFrameworkToolDefinition("tools/framework/agent.js"));
+  set.ask_question = rec("ask_question", await eveFrameworkToolDefinition("tools/framework/ask-question.js"));
+  set.todo = rec("todo", await eveFrameworkToolDefinition("tools/provided/todo.js"));
+  set.task_cancel = rec("task_cancel", await eveFrameworkToolDefinition("tools/framework/task-cancel.js"));
   const accountedFor = new Set([...Object.keys(set), ...skipped]);
   const unaccounted = [...LEAN_SEAT_TOOLS].filter((name) => !accountedFor.has(name));
   if (unaccounted.length > 0) {

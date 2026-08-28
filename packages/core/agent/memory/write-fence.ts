@@ -103,10 +103,10 @@ export function assertMemoryWriteAllowed(toolName: string, filePath: string, ctx
   if (refusal) throw new Error(`${toolName}: ${refusal}`);
 }
 
-export function withMemoryWriteFence(toolName: string, tool: ToolDefinition): ToolDefinition {
+export function withMemoryWriteFence<I, O>(toolName: string, tool: ToolDefinition<I, O>): ToolDefinition<I, O> {
   return {
     ...tool,
-    async execute(input: unknown, ctx: ToolContext) {
+    execute(input: I, ctx: ToolContext) {
       const filePath = (input as { filePath?: unknown } | null | undefined)?.filePath;
       if (typeof filePath === "string") assertMemoryWriteAllowed(toolName, filePath, ctx);
       return tool.execute(input, ctx);

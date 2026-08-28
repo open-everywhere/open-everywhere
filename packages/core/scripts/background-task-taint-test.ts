@@ -181,15 +181,22 @@ async function runChild(callId: string, sessionId: string, taint: boolean): Prom
     );
   }
 
-  const frameworkTasks = eveSrc("runtime/framework-tools/tasks.js");
+  const frameworkTasks = eveSrc("tools/framework/task-contract.js");
   const schema = frameworkTasks === null ? null : /SUBAGENT_TASK_RECEIPT_OUTPUT_SCHEMA=z\.strictObject\(\{([^}]*)\}\)/.exec(frameworkTasks);
-  if (schema !== null) {
+  if (schema === null) {
+    throw new Error(
+      "🔴 PART 0B PRODUCER B: cannot read `SUBAGENT_TASK_RECEIPT_OUTPUT_SCHEMA` out of eve's " +
+        "dist/src/tools/framework/task-contract.js. The reader below claims to track eve's own shape; " +
+        "without it every PRODUCER B assertion is vacuous. Find where eve moved the constant.",
+    );
+  }
+  {
     const body = schema[1] ?? "";
     const keys = [...body.matchAll(/(?:^|,)([A-Za-z_$][\w$]*):/g)].map((m) => m[1]).sort();
     eq(keys, ["agentId", "status", "taskId"], "🔴 PART 0B PRODUCER B: eve's `SUBAGENT_TASK_RECEIPT_OUTPUT_SCHEMA` still names exactly `agentId`, `status`, `taskId` — the three fields arm B reads. A rename here is a silent settlement outage everywhere else");
     ok(/status:z\.literal\(`working`\)/.test(body), "🔴 PART 0B PRODUCER B: eve still stamps the receipt status as the literal `working` — arm B's positive discriminator");
 
-    const localSubagent = eveSrc("runtime/framework-tools/subagent/local.js");
+    const localSubagent = eveSrc("execution/tools/subagent/local.js");
     ok(localSubagent !== null && /execution:`background`/.test(localSubagent), "🔴 PART 0B PRODUCER B: eve's local subagent tool still declares `execution: \"background\"`, which is what routes the delegation through generic tool execution and produces the plain `tool-result` envelope");
 
     eq(

@@ -224,7 +224,7 @@ const ok = (cond: boolean, label: string): void => { assert.ok(cond, label); n++
   ok(extractMemoryPathReads(real).join() === "memory/payments-brain/MEMORY.md", "extractMemoryPathReads: a real tool-call path is still counted (the deny-list is brief-shaped keys only)");
 }
 
-ok(DOMAIN_REASONING_CEILING === "high", "DOMAIN_REASONING_CEILING is 'high' — must equal the e2e-memory domain's reasoningCeiling in agent/memory/domains.ts, or every '@high' battery result is really @medium");
+ok(DOMAIN_REASONING_CEILING === "high", "DOMAIN_REASONING_CEILING is 'high' — must equal the e2e-memory domain's reasoningCeiling in agent/memory/config/domains.ts, or every '@high' battery result is really @medium");
 
 {
   const wakeId = "0d9f-uuid-1234";

@@ -197,7 +197,7 @@ export default defineTool({
       channelId,
       threadTs: binding.threadTs ?? null,
       configRepo: ar.configRepo,
-      agentsPath: ar.agentsPath ?? "agent/memory/agents.generated.ts",
+      agentsPath: ar.agentsPath ?? "agent/memory/config/agents.generated.ts",
     };
 
     const posted = await requestApproval(

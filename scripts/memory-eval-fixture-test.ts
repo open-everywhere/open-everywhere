@@ -23,7 +23,7 @@ type Snapshot = {
 const PROBE_KEYS = [NOTION, SLACK_MEM, ...UNMOVED];
 
 if (process.argv.includes("--probe")) {
-  const { loadDomains, domainsForSurface } = await import("../agent/memory/domains.js");
+  const { loadDomains, domainsForSurface } = await import("../agent/memory/config/domains.js");
   const domains = loadDomains();
   const resolve = (key: string): string | null => {
     const [platform, workspace, ...rest] = key.split("/");

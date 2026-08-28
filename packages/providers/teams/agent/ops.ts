@@ -37,7 +37,7 @@ export function boundaryCheck(boundary: TeamsReadBoundary): Check {
       status: "info",
       detail:
         "TENANT-WIDE — the app registration holds a Graph application permission that reads EVERY channel message in the tenant. " +
-        "Microsoft applies no per-team check, so the domain allowlist in memory/domains.ts is the ONLY fence on cross-team reads.",
+        "Microsoft applies no per-team check, so the domain allowlist in memory/config/domains.ts is the ONLY fence on cross-team reads.",
       fix:
         `harden: remove ${TENANT_WIDE_CHANNEL_READ_ROLES.join(" / ")} from the Entra app registration and grant the per-team RSC ` +
         "permission ChannelMessage.Read.Group instead (install the Teams app into each team) — docs/deploy/surfaces/teams.md",

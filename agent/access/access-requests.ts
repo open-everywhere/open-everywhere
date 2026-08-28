@@ -3,7 +3,7 @@ import { emptyAgentsFile } from "@open-everywhere/core/agent/memory/agents-codem
 import { loadBaseBundles, loadBaseBindings } from "./bundles.js";
 import { loadBaseConnectorCredentials } from "./connector-credentials.js";
 import { loadBaseWebhooks } from "../webhooks/hooks.js";
-import { loadBaseDomains, loadBaseSilos } from "../memory/domains.js";
+import { loadBaseDomains, loadBaseSilos } from "../memory/config/domains.js";
 import { loadGroups } from "../identity/groups.js";
 
 export function loadAccessRequests(): AccessRequestsConfig | null {

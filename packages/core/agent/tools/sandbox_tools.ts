@@ -1,5 +1,10 @@
 import { defineTool } from "eve/tools";
-import { bash, glob, grep, readFile, writeFile, webFetch } from "eve/tools/defaults";
+import { bash } from "eve/tools/bash";
+import { glob } from "eve/tools/glob";
+import { grep } from "eve/tools/grep";
+import { readFile } from "eve/tools/read_file";
+import { writeFile } from "eve/tools/write_file";
+import { webFetch } from "eve/tools/web_fetch";
 import { withStallGuard } from "../stall/guard.js";
 import { withBashHangGuard } from "../stall/bash-hang-guard.js";
 import { windowGatedKit } from "../access/window-gated.js";

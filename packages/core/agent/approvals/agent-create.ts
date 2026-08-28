@@ -120,7 +120,7 @@ export async function executeAgentCreate(args: AgentCreateArgs, decidedBy: strin
   const cfg = requireAgentCreateConfig(deps.config);
   const repo = cfg.configRepo;
   const base = cfg.configBase ?? "main";
-  const agentsPath = cfg.agentsPath ?? "agent/memory/agents.generated.ts";
+  const agentsPath = cfg.agentsPath ?? "agent/memory/config/agents.generated.ts";
   const branch = `agent-create/${args.requestId}`;
   if (!isSafeBranchName(branch)) {
     throw new Error(`unsafe agent-create branch name "${branch}"`);

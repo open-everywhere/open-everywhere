@@ -98,7 +98,7 @@ const FIRE = {
   const lifecycle = await import(pathToFileURL(join(eveRoot, "dist/src/context/dynamic-tool-lifecycle.js")).href);
   const builder = await import(pathToFileURL(join(eveRoot, "dist/src/context/build-dynamic-tools.js")).href);
   const harnessTools = await import(pathToFileURL(join(eveRoot, "dist/src/harness/tools.js")).href);
-  const toolSchema = await import(pathToFileURL(join(eveRoot, "dist/src/shared/tool-schema.js")).href);
+  const toolSchema = await import(pathToFileURL(join(eveRoot, "dist/src/tools/schema.js")).href);
 
   const makeCtx = (): Record<string, unknown> => {
     const durable = new Map<unknown, unknown>();

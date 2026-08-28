@@ -28,8 +28,8 @@ const eveRoot = dirname(require.resolve("eve/package.json"));
 const lifecycle = await import(pathToFileURL(join(eveRoot, "dist/src/context/dynamic-tool-lifecycle.js")).href);
 const builder = await import(pathToFileURL(join(eveRoot, "dist/src/context/build-dynamic-tools.js")).href);
 const harnessTools = await import(pathToFileURL(join(eveRoot, "dist/src/harness/tools.js")).href);
-const toolSchema = await import(pathToFileURL(join(eveRoot, "dist/src/shared/tool-schema.js")).href);
-const durable = (await import(pathToFileURL(join(eveRoot, "dist/src/shared/durable-dynamic-tool-callbacks.js")).href)) as {
+const toolSchema = await import(pathToFileURL(join(eveRoot, "dist/src/tools/schema.js")).href);
+const durable = (await import(pathToFileURL(join(eveRoot, "dist/src/tools/durable-callbacks.js")).href)) as {
   stampDurableDynamicCallback<T extends (...a: never[]) => unknown>(cb: T, d: { callback: (c: Record<string, unknown>, ...a: never[]) => unknown; closure: Record<string, unknown> }): T;
 };
 
@@ -119,7 +119,7 @@ interface BuiltTool {
 }
 
 {
-  const connectionSearchSrc = readFileSync(join(eveRoot, "dist/src/runtime/framework-tools/connection-search-dynamic.js"), "utf8");
+  const connectionSearchSrc = readFileSync(join(eveRoot, "dist/src/execution/tools/connection-search.js"), "utf8");
   ok(
     connectionSearchSrc.includes("qualifiedConnectionToolName"),
     "1C: eve still mints connector tools as <connection>__<tool> (the naming convention isConnectorExternalName keys on)",

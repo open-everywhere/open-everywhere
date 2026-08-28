@@ -11,7 +11,7 @@ const LINT_OVERLAYS = [
   "agent/access/grants.generated.ts",
   "agent/access/credential-bindings.generated.ts",
   "agent/webhooks/hooks.generated.ts",
-  "agent/memory/agents.generated.ts",
+  "agent/memory/config/agents.generated.ts",
   "agent/identity/groups.generated.ts",
 ] as const;
 const scratchRoot = mkdtempSync(join(tmpdir(), "oe-overlay-lint-"));
@@ -28,7 +28,7 @@ const OVERLAYS = [
   "agent/access/grants.generated.ts",
   "agent/access/credential-bindings.generated.ts",
   "agent/webhooks/hooks.generated.ts",
-  "agent/memory/agents.generated.ts",
+  "agent/memory/config/agents.generated.ts",
 ] as const;
 
 let passed = 0;

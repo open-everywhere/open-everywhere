@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Approval, ApprovalContext, ApprovalStatus } from "eve/tools/approval";
-import type { ApprovalPolicy } from "eve/tools";
+import type { ApprovalPolicy } from "eve/tools/approval";
 import { deploymentOrg } from "../identity/binding.js";
 import { getOperationalStore } from "../operational/provider.js";
 

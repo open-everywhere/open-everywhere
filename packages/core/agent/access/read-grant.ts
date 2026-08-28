@@ -50,7 +50,7 @@ export function readableByDefects(readableBy: ReadableBy | undefined): readonly 
       case "domain":
         if (!s.domain) bad.push(`${where} needs domain — a domain-level grant can never match without one`);
         else if (s.domain.includes("/")) {
-          bad.push(`${where} domain "${s.domain}" contains "/" — a domain scope takes the BARE name from memory/domains.ts ("payments"), deliberately NOT tenant-qualified`);
+          bad.push(`${where} domain "${s.domain}" contains "/" — a domain scope takes the BARE name from memory/config/domains.ts ("payments"), deliberately NOT tenant-qualified`);
         }
         break;
       case "surface":

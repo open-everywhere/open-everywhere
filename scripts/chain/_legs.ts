@@ -149,7 +149,7 @@ const VARIABLE_DYNAMIC_IMPORT = /\bimport\(\s*`[^`]*\$\{/u;
 export const ROOT_SUBPROCESS_LEGS: ReadonlyMap<string, string> = new Map([
   [
     "test:memory-eval-fixture",
-    "spawns itself via `process.execArgv` to reload agent/memory/domains.ts under each " +
+    "spawns itself via `process.execArgv` to reload agent/memory/config/domains.ts under each " +
       "OE_MEMORY_EVAL state. execArgv only carries tsx's loader flags when the leg itself was " +
       "launched by `npx tsx` — vitest's own worker process does not have them, so the self-respawn " +
       "cannot resolve a bare `.ts`-mapped import in-process.",

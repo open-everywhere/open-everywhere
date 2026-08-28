@@ -423,7 +423,7 @@ export function assertBindingsValid(bindings: readonly Binding[], bundles: reado
     }
     if (domain?.includes("/")) {
       bad.push(
-        `  ${where} scope.domain "${domain}" contains "/" — a domain scope takes the BARE domain name from memory/domains.ts ("payments"), deliberately NOT tenant-qualified: domains are cross-platform, so one grant is one binding`,
+        `  ${where} scope.domain "${domain}" contains "/" — a domain scope takes the BARE domain name from memory/config/domains.ts ("payments"), deliberately NOT tenant-qualified: domains are cross-platform, so one grant is one binding`,
       );
     }
     if (group !== undefined && group.trim().length === 0) {

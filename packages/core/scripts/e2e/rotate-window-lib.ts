@@ -83,7 +83,7 @@ export function checkWindowTargetResumable(domain: string, windowId: string | un
         `A solo per-channel window row is minted by the LIVE wake path, so its absence means no wake has ever landed on this window. ` +
         `There is no accumulated context to isolate from, and the row this would create may be one no wake ever reads — ` +
         `a domain in "unified" mode keeps ONE degenerate window at ${unifiedDomainSessionKey(domain)}.\n` +
-        `Read the channel's domain and mode in agent/memory/domains.ts, then rotate the window it actually has:\n` +
+        `Read the channel's domain and mode in agent/memory/config/domains.ts, then rotate the window it actually has:\n` +
         `  rotate-window.ts ${domain}\n` +
         `Or pass --force to mint ${asked} anyway.`,
     };
@@ -126,10 +126,10 @@ export function checkWindowTargetAgainstConfig(domain: string, windowId: string 
     return {
       ok: false,
       error:
-        `refusing to rotate ${registryKey}: no domain named "${domain}" exists in agent/memory/domains.ts.\n` +
+        `refusing to rotate ${registryKey}: no domain named "${domain}" exists in agent/memory/config/domains.ts.\n` +
         `Every wake resolves its window through the domain roster, so a target naming a domain the config does not ` +
         `declare addresses a row no live wake will ever read — a permanently dead mint, whatever the store already holds for it.\n` +
-        `Read the deployment's real domain names in agent/memory/domains.ts, then rotate one of those.\n` +
+        `Read the deployment's real domain names in agent/memory/config/domains.ts, then rotate one of those.\n` +
         `Or pass --force to mint ${asked} anyway.`,
     };
   }
@@ -144,7 +144,7 @@ export function checkWindowTargetAgainstConfig(domain: string, windowId: string 
           `refusing to rotate ${registryKey}: config routes "${windowId}" to ${owner ? `domain "${owner.name}"` : "no domain"}, not "${domain}".\n` +
           (owner
             ? `Re-run with the domain config actually assigns this channel to:\n  rotate-window.ts ${owner.name} --window ${windowId}\n`
-            : `"${windowId}" is neither a channel in any domain's channels/containers roster nor a window group declared by "${domain}" in agent/memory/domains.ts — add it there, or rotate a target that already is.\n`) +
+            : `"${windowId}" is neither a channel in any domain's channels/containers roster nor a window group declared by "${domain}" in agent/memory/config/domains.ts — add it there, or rotate a target that already is.\n`) +
           `Or pass --force to mint ${asked} anyway.`,
       };
     }

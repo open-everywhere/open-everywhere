@@ -1,3 +1,4 @@
+import { eveFrameworkToolDefinition } from "./eval/_offline-seat.js";
 import addRoutineRuleTool from "../agent/tools/add_routine_rule.js";
 import noReplyTool from "../agent/tools/no_reply.js";
 import updateStatusTool from "../agent/tools/update_status.js";
@@ -63,20 +64,13 @@ function zodKeys(entry: unknown): readonly string[] {
   return shape === undefined ? [] : Object.keys(shape);
 }
 
-async function eveFrameworkTool(file: string): Promise<Record<string, unknown>> {
-  const base = import.meta.resolve("eve/tools").replace(/\/src\/.*$/, "/src/runtime/framework-tools/");
-  return (await import(base + file)) as Record<string, unknown>;
-}
-
 async function checkFieldNames(): Promise<void> {
-  const agentMod = await eveFrameworkTool("agent.js");
-  const askMod = await eveFrameworkTool("ask-question.js");
   const reachable: Record<string, unknown> = {
     add_routine_rule: addRoutineRuleTool,
     no_reply: noReplyTool,
     update_status: updateStatusTool,
-    agent: agentMod.AGENT_TOOL_DEFINITION,
-    ask_question: askMod.ASK_QUESTION_TOOL_DEFINITION,
+    agent: await eveFrameworkToolDefinition("tools/framework/agent.js"),
+    ask_question: await eveFrameworkToolDefinition("tools/framework/ask-question.js"),
   };
   for (const [name, entry] of Object.entries(reachable)) {
     const keys = zodKeys(entry);

@@ -27,10 +27,10 @@ afterAll(async () => {
 });
 
 async function pinFixtureDomainGrant(): Promise<void> {
-  const { loadDomains } = await import("../../../agent/memory/domains");
+  const { loadDomains } = await import("../../../agent/memory/config/domains");
   const { domainHoldsSurfaceWorkGrant } = await import("@open-everywhere/core/agent/access/surface-work-grant.js");
   const home = loadDomains().find((d) => d.name === "it-work-read-fixture-notion");
-  expect(home, `the "it-work-read-fixture-notion" domain is missing from agent/memory/domains.ts — this arm cannot measure a mount`).toBeDefined();
+  expect(home, `the "it-work-read-fixture-notion" domain is missing from agent/memory/config/domains.ts — this arm cannot measure a mount`).toBeDefined();
   expect(
     domainHoldsSurfaceWorkGrant(home, "notion"),
     `"it-work-read-fixture-notion" declares NO notion work role — restore its \`credentials\` entry before re-running this arm`,

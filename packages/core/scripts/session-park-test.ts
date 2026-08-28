@@ -124,7 +124,7 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
   );
 
   const steps = read("execution/workflow-steps.js");
-  const hookDispatch = /handleEvent=async\((\w+),\w+\)=>\{let (\w+)=[^;]*?await emit\(\1\);await dispatchStreamEventHooks\(\{[^}]*event:\2\}\)/u.exec(steps);
+  const hookDispatch = /handleEvent=async\((\w+),\w+\)=>\{let (\w+)=[^;]*?await emit\(\1\)[^;]*;await dispatchStreamEventHooks\(\{[^}]*event:\2\}\)/u.exec(steps);
   ok(hookDispatch !== null, "workflow-steps.js still wraps `emit` in a `handleEvent` that dispatches authored stream-event hooks");
   ok(
     /createExecutionNodeStep\(\{[\s\S]{0,400}?handleEvent[,}]/.test(steps),

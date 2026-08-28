@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { loadDomains, domainsForSurface } from "../agent/memory/domains.js";
+import { loadDomains, domainsForSurface } from "../agent/memory/config/domains.js";
 import { loadBindings, loadBundles } from "../agent/access/bundles.js";
 import { loadConnectorCredentials } from "../agent/access/connector-credentials.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";

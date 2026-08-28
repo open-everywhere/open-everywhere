@@ -66,10 +66,23 @@ for (const name of ["readAppVersion", "readEvePin"] as const) {
 
 const evePinBody = extractFunctionBody(bundle, "readEvePin");
 if (evePinBody !== undefined && !evePinBody.includes(EVE_RUNTIME_VERSION)) {
-  problems.push(
-    `readEvePin: the compiled body does not contain the pinned eve version ${JSON.stringify(EVE_RUNTIME_VERSION)} ` +
-      `— the value did not survive bundling. Body: ${evePinBody}`,
-  );
+  const readIdentifier = /\b([A-Za-z_$][\w$]*)\s*\.trim\(\)/u.exec(evePinBody)?.[1];
+  const pinBinding =
+    readIdentifier === undefined
+      ? undefined
+      : new RegExp(`\\b(?:const|let|var)\\s+${readIdentifier}\\s*=\\s*["']${EVE_RUNTIME_VERSION.replace(/\./gu, "\\.")}["']`, "u");
+  if (readIdentifier === undefined) {
+    problems.push(
+      `readEvePin: the compiled body neither contains the pinned eve version ${JSON.stringify(EVE_RUNTIME_VERSION)} ` +
+        `nor reads it off a module-scope binding this check can name. Body: ${evePinBody}`,
+    );
+  } else if (pinBinding !== undefined && !pinBinding.test(bundle)) {
+    problems.push(
+      `readEvePin: the compiled body reads the pin off \`${readIdentifier}\`, but the bundle declares no ` +
+        `\`${readIdentifier} = ${JSON.stringify(EVE_RUNTIME_VERSION)}\` — the value did not survive bundling. ` +
+        `Body: ${evePinBody}`,
+    );
+  }
 }
 
 const appPackageJsonPath = join(ROOT, "package.json");

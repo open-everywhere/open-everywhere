@@ -349,7 +349,7 @@ const T_OTHER = resourceAddress("teams", CONTAINER_RESOURCE_TYPE, T_OTHER_ID);
     dCrossErr = e;
   }
   ok((dCrossErr as ChatWriteGrantError).boundary === "cross-domain", "the discord cross-domain refusal names the DOMAIN boundary, not the grant");
-  ok((dCrossErr as ChatWriteGrantError).message.includes("memory/domains.ts"), "the discord cross-domain refusal names the DOMAIN remedy");
+  ok((dCrossErr as ChatWriteGrantError).message.includes("memory/config/domains.ts"), "the discord cross-domain refusal names the DOMAIN remedy");
 
   const slackOnly: readonly Domain[] = [{ name: "solo", channels: [HOME] }];
   ok(chatWriteTargetsFrom(HOME, dGranted, slackOnly).length === 0, "a caller whose domain rosters NO discord container names no discord target");

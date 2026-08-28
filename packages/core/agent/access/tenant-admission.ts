@@ -105,7 +105,7 @@ export function unadmittedTenantLog(platform: string, tenant: string, admitted: 
   return (
     `[open-everywhere:${platform}] wake dropped — tenant "${tenant}" is not admitted on this deployment ` +
     `(declared: ${[...admitted].sort().join(", ") || "none"}). A ${platform} person id is issued per tenant, so admitting a second one ` +
-    `would let two people share one principal key. Add a channel for that tenant to agent/memory/domains.ts, or set ${MULTI_TENANT_ENV}=1 ` +
+    `would let two people share one principal key. Add a channel for that tenant to agent/memory/config/domains.ts, or set ${MULTI_TENANT_ENV}=1 ` +
     "to accept multi-tenant principals deliberately (OPE-309)."
   );
 }

@@ -217,7 +217,7 @@ function argsFor(s: AgentSpec, over: Partial<AgentCreateArgs> = {}): AgentCreate
     channelId: "C_AGENT",
     threadTs: "1720009900.000100",
     configRepo: "acme/agent-config",
-    agentsPath: "agent/memory/agents.generated.ts",
+    agentsPath: "agent/memory/config/agents.generated.ts",
     ...over,
   };
 }

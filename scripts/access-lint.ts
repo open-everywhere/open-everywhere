@@ -1,5 +1,5 @@
 import { loadBundles, loadBindings } from "../agent/access/bundles.js";
-import { loadDomains } from "../agent/memory/domains.js";
+import { loadDomains } from "../agent/memory/config/domains.js";
 import { loadGroups } from "../agent/identity/groups.js";
 import { lintAccessConfig } from "@open-everywhere/core/agent/access/lint.js";
 

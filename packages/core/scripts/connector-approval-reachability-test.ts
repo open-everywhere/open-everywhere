@@ -4,7 +4,7 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { defineTool } from "eve/tools";
-import type { ApprovalPolicy } from "eve/tools";
+import type { ApprovalPolicy } from "eve/tools/approval";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-approval-reach-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -175,7 +175,7 @@ eq(
 console.log("4. eve's connection-search dynamic still reads the registry:");
 {
   const { readFileSync } = await import("node:fs");
-  const src = readFileSync(join(distSrc, "runtime", "framework-tools", "connection-search-dynamic.js"), "utf8");
+  const src = readFileSync(join(distSrc, "execution", "tools", "connection-search.js"), "utf8");
   const mount = /(\w+)\s*=\s*\w+\.getConnectionApproval\(\w+\)[\s\S]{0,400}?approval:\s*\1\b/.exec(src);
   ok(mount !== null, "the dynamic mounts a discovered tool with `approval:` set from getConnectionApproval");
 }

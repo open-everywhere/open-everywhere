@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { createRequire } from "node:module";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { readEveFrameworkTools } from "../agent/access/eve-framework-tools.js";
 import {
   checkActionKindCoverage,
   checkActionKindRegistry,
@@ -22,12 +22,7 @@ import {
 import { actionKind } from "../agent/approvals/actions.js";
 import "../agent/approvals/flow.js";
 
-const require = createRequire(import.meta.url);
-const eveRoot = dirname(require.resolve("eve/package.json"));
-const { getAllFrameworkToolNames } = (await import(
-  pathToFileURL(join(eveRoot, "dist/src/runtime/framework-tools/index.js")).href
-)) as { getAllFrameworkToolNames(): ReadonlySet<string> };
-const FRAMEWORK_TOOL_NAMES = [...getAllFrameworkToolNames(), "connection_search"];
+const FRAMEWORK_TOOL_NAMES = [...(await readEveFrameworkTools()).all];
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

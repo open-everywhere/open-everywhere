@@ -1,16 +1,11 @@
 import { readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { createRequire } from "node:module";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { readEveFrameworkTools } from "@open-everywhere/core/agent/access/eve-framework-tools.js";
 import { checkDeclaredSubagents } from "@open-everywhere/core/agent/subagents/declared.js";
 import { readDeclaredSubagents, subagentsDir } from "./read-subagents.js";
 
-const require = createRequire(import.meta.url);
-const eveRoot = dirname(require.resolve("eve/package.json"));
-const { getAllFrameworkToolNames } = (await import(
-  pathToFileURL(join(eveRoot, "dist/src/runtime/framework-tools/index.js")).href
-)) as { getAllFrameworkToolNames(): ReadonlySet<string> };
-const disableableFrameworkTools = [...getAllFrameworkToolNames()].filter((n) => n !== "agent").sort();
+const disableableFrameworkTools = [...(await readEveFrameworkTools()).defaultMounted].sort();
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const coreToolsDir = join(root, "packages", "core", "agent", "tools");

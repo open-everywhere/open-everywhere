@@ -131,11 +131,11 @@ export function linearScopeRefusal(
   const workGrant = grantCapable
     ? " This session was woken on another surface, so the domain's Linear WORK grant is what lets it act in that workspace: add " +
       '`credentials: [{ connector: "linear", credential: "workspace", use: "<organization_id>" }]` to the domain ' +
-      "(agent/memory/domains.ts)."
+      "(agent/memory/config/domains.ts)."
     : "";
   return (
     `Linear target "${targetRef}" is not in ${scope} ${direction} scope, so it is refused. ${why} ` +
-    `The agent ${may} in its memory domain (memory/domains.ts). Add the team to ` +
+    `The agent ${may} in its memory domain (memory/config/domains.ts). Add the team to ` +
     "the domain's `channels` as `linear/<organization_id>/<team_id>`, or claim the whole workspace in " +
     `\`containers\` as \`linear/<organization_id>\`, to grant it.${workGrant}`
   ).replace(/\s{2,}/g, " ");

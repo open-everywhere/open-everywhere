@@ -57,7 +57,7 @@ export function lintBroadGrants(
     if (binding.allowBroad !== undefined && !broad) {
       const why =
         binding.scope.level === "domain"
-          ? ` — a domain binding is only broad while its domain claims a tenant via \`containers\` (agent/memory/domains.ts), and "${binding.scope.domain}" claims none`
+          ? ` — a domain binding is only broad while its domain claims a tenant via \`containers\` (agent/memory/config/domains.ts), and "${binding.scope.domain}" claims none`
           : binding.scope.level === "group"
             ? ` — a group binding is only broad while its group holds a link-set member or ${GROUP_BROAD_MEMBERS}+ members (agent/identity/groups.ts), and "${binding.scope.group}" holds neither`
             : "";
@@ -83,7 +83,7 @@ export function lintBroadGrants(
         );
       } else if (claimed) {
         problems.push(
-          `broad credentialed grant (via domain claim): bundle "${binding.bundle}" carries ${fields.join(" + ")} bound at domain scope — but domain "${binding.scope.domain}" claims ${claimed.join(", ")} via \`containers\` (agent/memory/domains.ts), so this reaches EVERY surface those entries match, including ones created later that nobody will ever list. ` +
+          `broad credentialed grant (via domain claim): bundle "${binding.bundle}" carries ${fields.join(" + ")} bound at domain scope — but domain "${binding.scope.domain}" claims ${claimed.join(", ")} via \`containers\` (agent/memory/config/domains.ts), so this reaches EVERY surface those entries match, including ones created later that nobody will ever list. ` +
             `The binding reads as narrow; the width comes from the domain. Either enumerate the domain's surfaces in \`channels\`, or NARROW the claim — a same-level glob (\`platform/<tenant>/<prefix>*\`) with \`excludeContainers\` is strictly less reach than a whole-tenant claim (OPE-417) — or accept it deliberately with allowBroad: "<reason>" on the binding (access/bundle.ts).`,
         );
       } else {

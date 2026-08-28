@@ -46,7 +46,7 @@ function userInfo(id: string, name: string): Record<string, unknown> {
 async function armSeams(): Promise<void> {
   await bootAgent();
 
-  const { loadDomains } = await import("../../../agent/memory/domains");
+  const { loadDomains } = await import("../../../agent/memory/config/domains");
   const wakeKey = `slack/${SLACK_TEAM_ID}/${WAKE_CHANNEL_ID}`;
   const siblingKey = `slack/${SLACK_TEAM_ID}/${SIBLING_CHANNEL_ID}`;
   const home = loadDomains().find((d) => (d.channels ?? []).includes(wakeKey));
@@ -218,7 +218,7 @@ test("② a delegated worker holds neither chat read — the seat holds both", a
 test("③ the delegated worker holds the WORK-plane chat reads its domain is granted", async () => {
   const { handle } = await driven();
 
-  const { loadDomains } = await import("../../../agent/memory/domains");
+  const { loadDomains } = await import("../../../agent/memory/config/domains");
   const { domainHoldsSurfaceWorkGrant } = await import("@open-everywhere/core/agent/access/surface-work-grant.js");
   const home = loadDomains().find((d) => (d.channels ?? []).includes(`slack/${SLACK_TEAM_ID}/${WAKE_CHANNEL_ID}`));
   expect(home, "the wake channel is in no domain — this arm cannot measure a mount").toBeDefined();

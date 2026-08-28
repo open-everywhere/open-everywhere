@@ -115,7 +115,7 @@ export async function assertSurfaceAllowed(ctx: BindableContext, platform: strin
   const scope = domain ? `domain "${domain}"` : "this channel's (no multi-channel domain)";
   throw new ChannelScopeError(
     `channel "${surfaceId}" is not in ${scope} ${platform} read scope. The agent may only read channels in its ` +
-      `memory domain (memory/domains.ts). Add the channel to the domain's \`channels\` to grant it.`,
+      `memory domain (memory/config/domains.ts). Add the channel to the domain's \`channels\` to grant it.`,
   );
 }
 

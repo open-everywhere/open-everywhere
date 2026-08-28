@@ -292,7 +292,7 @@ await store.rotateChannelSession(KNOWN_ORG, "oe-domain::slack/T1/C1", mintToken(
     eq(verdict.ok, false, "🔴 THE FIX: checkWindowTargetAgainstConfig refuses a domain name the roster never declared (ok is exactly false)");
     if (!verdict.ok) {
       ok(verdict.error.includes(FAKE_DOMAIN), "…the refusal names the offending domain");
-      ok(verdict.error.includes("agent/memory/domains.ts"), "…and points at the config file that is the source of truth");
+      ok(verdict.error.includes("agent/memory/config/domains.ts"), "…and points at the config file that is the source of truth");
       ok(verdict.error.includes("--force"), "…and names the override");
     }
 

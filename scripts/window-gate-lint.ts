@@ -1,24 +1,15 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { createRequire } from "node:module";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { checkWindowGateManifest, classifyFrameworkTools, type WindowToolSource } from "@open-everywhere/core/agent/access/window-gate-manifest.js";
+import { readEveFrameworkTools } from "@open-everywhere/core/agent/access/eve-framework-tools.js";
 import { listDeclaredSubagents } from "@open-everywhere/core/agent/subagents/declared.js";
 import { readDeclaredSubagents } from "./read-subagents.js";
 
-const require = createRequire(import.meta.url);
-const eveRoot = dirname(require.resolve("eve/package.json"));
-const eveFrameworkTools = (await import(pathToFileURL(join(eveRoot, "dist/src/runtime/framework-tools/index.js")).href)) as {
-  getAllFrameworkToolNames(): ReadonlySet<string>;
-  getFrameworkToolDefinitions?: (config?: unknown) => readonly { readonly name: string }[];
-  getOptInFrameworkToolNames?: () => ReadonlySet<string>;
-};
-const frameworkToolNames = [...eveFrameworkTools.getAllFrameworkToolNames(), "connection_search"];
-const frameworkTools = classifyFrameworkTools(
-  frameworkToolNames,
-  eveFrameworkTools.getFrameworkToolDefinitions?.().map((d) => d.name),
-  eveFrameworkTools.getOptInFrameworkToolNames?.(),
-);
+const eveFrameworkTools = await readEveFrameworkTools();
+if (eveFrameworkTools.optInDrift !== undefined) console.warn(`  ! eve mount sets: ${eveFrameworkTools.optInDrift}`);
+const frameworkToolNames = eveFrameworkTools.all;
+const frameworkTools = classifyFrameworkTools(frameworkToolNames, eveFrameworkTools.defaultMounted, eveFrameworkTools.optIn);
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const coreToolsDir = join(root, "packages", "core", "agent", "tools");

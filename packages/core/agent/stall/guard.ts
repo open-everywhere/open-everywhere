@@ -163,17 +163,19 @@ function consumeTrip(toolName: string, input: unknown): { tripped: boolean; stri
   }
 }
 
-export function withStallGuard(toolName: string, tool: ToolDefinition): ToolDefinition {
+export function withStallGuard<I, O>(toolName: string, tool: ToolDefinition<I, O>): ToolDefinition<I, O> {
   if (!isGuardedTool(toolName)) return tool;
   return {
     ...tool,
-    async execute(input: unknown, ctx: ToolContext) {
+    execute(input: I, ctx: ToolContext) {
       const { tripped, strikes } = consumeTrip(toolName, input);
       if (tripped) {
-        emitTelemetry("oe.feature.used", { "oe.feature": "stall_guard", "oe.outcome": "tripped" });
-        await auditToolAction(ctx, "stall.nudge", { tool: toolName, threshold: stallThreshold(), strikes });
-        console.warn(`[open-everywhere:stall-guard] nudged "${toolName}" after ${stallThreshold()} identical calls (strike ${strikes})`);
-        throw new Error(stallNudge(toolName, strikes));
+        return (async (): Promise<never> => {
+          emitTelemetry("oe.feature.used", { "oe.feature": "stall_guard", "oe.outcome": "tripped" });
+          await auditToolAction(ctx, "stall.nudge", { tool: toolName, threshold: stallThreshold(), strikes });
+          console.warn(`[open-everywhere:stall-guard] nudged "${toolName}" after ${stallThreshold()} identical calls (strike ${strikes})`);
+          throw new Error(stallNudge(toolName, strikes));
+        })();
       }
       return tool.execute(input, ctx);
     },

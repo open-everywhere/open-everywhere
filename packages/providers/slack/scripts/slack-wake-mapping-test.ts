@@ -52,7 +52,7 @@ ok(classifyWakeMapping({ platform: "discord", mode: "channel", workspaceId: unde
 {
   const copy = unmappedWakeCopy("slack", UNMAPPED_CHANNEL);
   ok(copy.includes(UNMAPPED_CHANNEL), "the nudge names the channel id the operator must map");
-  ok(copy.includes("agent/memory/domains.ts"), "…the file to edit");
+  ok(copy.includes("agent/memory/config/domains.ts"), "…the file to edit");
   ok(copy.includes(`slack/<workspace-id>/${UNMAPPED_CHANNEL}`), "…and the exact fully-qualified line shape to add");
   ok(copy.length < 400, "…terse (tool-instruction-brevity: a config nudge, not an essay)");
 }

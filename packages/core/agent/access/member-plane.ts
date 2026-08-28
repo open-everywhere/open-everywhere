@@ -58,7 +58,7 @@ export function memberPlaneRefusalMessage(connector: string, reason: MemberPlane
       return (
         `connection "${connector}": this domain does not admit personal credentials in its rooms. ` +
         `A domain grants the member plane by declaring the connector's member role in its own ` +
-        `\`credentials\` (agent/memory/domains.ts) — absence is a refusal, never the org default.`
+        `\`credentials\` (agent/memory/config/domains.ts) — absence is a refusal, never the org default.`
       );
     case "member_plane_unverified_requester":
       return (

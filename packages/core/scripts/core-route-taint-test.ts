@@ -56,7 +56,7 @@ function assertClean(route: string): void {
 const require = createRequire(import.meta.url);
 const eveRoot = dirname(require.resolve("eve/package.json"));
 const harnessTools = await import(pathToFileURL(join(eveRoot, "dist/src/harness/tools.js")).href);
-const toolSchema = await import(pathToFileURL(join(eveRoot, "dist/src/shared/tool-schema.js")).href);
+const toolSchema = await import(pathToFileURL(join(eveRoot, "dist/src/tools/schema.js")).href);
 type BuiltTool = { toModelOutput?: (args: { output: unknown; toolCallId: string }) => Promise<{ type: string; value: unknown }> };
 function buildSet(defs: Array<Record<string, unknown>>): Record<string, BuiltTool> {
   const converted = defs.map((d) => ({ ...d, inputSchema: toolSchema.toInputSchema(d.inputSchema) }));

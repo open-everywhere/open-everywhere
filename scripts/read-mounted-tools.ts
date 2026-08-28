@@ -1,8 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { join } from "node:path";
 import type { ToolSource } from "@open-everywhere/core/agent/access/consequence.js";
+import { readEveFrameworkTools } from "@open-everywhere/core/agent/access/eve-framework-tools.js";
 import { listDeclaredSubagents } from "@open-everywhere/core/agent/subagents/declared.js";
 import { readDeclaredSubagents } from "./read-subagents.js";
 
@@ -31,12 +30,7 @@ export function readAuthoredTools(repoRoot: string): Map<string, ToolSource> {
 }
 
 export async function readFrameworkToolNames(): Promise<string[]> {
-  const require = createRequire(import.meta.url);
-  const eveRoot = dirname(require.resolve("eve/package.json"));
-  const { getAllFrameworkToolNames } = (await import(
-    pathToFileURL(join(eveRoot, "dist/src/runtime/framework-tools/index.js")).href
-  )) as { getAllFrameworkToolNames(): ReadonlySet<string> };
-  return [...getAllFrameworkToolNames(), "connection_search"];
+  return [...(await readEveFrameworkTools()).all];
 }
 
 export function readSubagentToolNames(repoRoot: string): string[] {

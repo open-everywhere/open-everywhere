@@ -349,7 +349,7 @@ console.log("5. replay alias + eve's own replay path (eve step registry):");
   type Ref = { callback: unknown; closure: unknown };
   const descriptorsOf = (e: unknown): Record<string, Ref | undefined> => ((e as Record<symbol, unknown>)[DURABLE_TOOL_CALLBACKS] as Record<string, Ref | undefined>) ?? {};
   ok(
-    readFileSync(join(eveRoot, "dist/src/shared/durable-dynamic-tool-callbacks.js"), "utf8").includes("Symbol.for(`eve:durable-dynamic-tool-callbacks`)"),
+    readFileSync(join(eveRoot, "dist/src/tools/durable-callbacks.js"), "utf8").includes("Symbol.for(`eve:durable-dynamic-tool-callbacks`)"),
     "the descriptor symbol OE stamps is the one the installed eve reads (pinned against eve's own bytes, not from memory)",
   );
   const singleArmed = descriptorsOf((await resolveWindowGated(windowGated("bash", stubEntry("bash")), grainCtx.task())) as unknown);

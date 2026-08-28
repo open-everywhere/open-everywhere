@@ -71,7 +71,7 @@ function wakeAt(domain: string, surfaceKey: string, text: string): Promise<Injec
 function unarmedReason(e: unknown, surfaceKey: string): string | null {
   const m = (e as Error).message ?? "";
   if (m.includes("no standing window")) {
-    return `the target REFUSED to inject at ${surfaceKey} — fail-closed at test-route gate 3a: no standing window (mode solo / unified) is enabled for it. The target must be started with window.topology: true (arms the WINDOW_TOPOLOGY_ENABLED code capability the ${DOMAIN} fixture's mode "solo" needs; the fixture itself is always registered in agent/memory/domains.ts). This is the state W5 asserts as CORRECT — it is only a SKIP here.`;
+    return `the target REFUSED to inject at ${surfaceKey} — fail-closed at test-route gate 3a: no standing window (mode solo / unified) is enabled for it. The target must be started with window.topology: true (arms the WINDOW_TOPOLOGY_ENABLED code capability the ${DOMAIN} fixture's mode "solo" needs; the fixture itself is always registered in agent/memory/config/domains.ts). This is the state W5 asserts as CORRECT — it is only a SKIP here.`;
   }
   if (m.includes("no unified session for window")) {
     return `the ${surfaceKey} window has NO channel_session row yet and this run could not seed one (DATABASE_URL ${DB ? "wired but the rotate failed — see the [store] warning above" : "unset"}). The solo windows are per-CHANNEL and brand new, so nothing has ever minted their rows: re-run with DATABASE_URL pointed at the target's database (rotation is what mints them).`;

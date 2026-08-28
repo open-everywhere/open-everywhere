@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { loadDomains, domainsForSurface } from "../agent/memory/domains.js";
+import { loadDomains, domainsForSurface } from "../agent/memory/config/domains.js";
 import { domainsAdmitCredentialGrant } from "@open-everywhere/core/agent/access/credential-grant.js";
 
 let n = 0;

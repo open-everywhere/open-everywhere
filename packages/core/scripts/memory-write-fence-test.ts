@@ -187,7 +187,7 @@ function planWith(silos: readonly MemorySilo[], memory: readonly string[]): Memo
   const shapeOf = (t: ToolDefinition) => JSON.stringify({ ...(t as unknown as Record<string, unknown>), execute: undefined });
   ok(shapeOf(fencedOk) === shapeOf(okTool), "the wrap replaces execute and nothing else (name/description/inputSchema survive)");
 
-  const { writeFile } = await import("eve/tools/defaults");
+  const { writeFile } = await import("eve/tools/write_file");
   const schema = (writeFile as unknown as { inputSchema: { safeParse(v: unknown): { success: boolean } } }).inputSchema;
   ok(schema.safeParse({ filePath: "/workspace/a.md", content: "x" }).success, "🔴 eve's write_file still takes `filePath` — the field the fence reads. A rename here disarms the fence silently.");
   ok(!schema.safeParse({ path: "/workspace/a.md", content: "x" }).success, "…and the schema is strict, so the field name above is the ONLY one a validated call can carry");

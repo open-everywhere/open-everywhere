@@ -81,7 +81,7 @@ const distUrl = (rel: string): string => pathToFileURL(join(eveRoot, "dist", "sr
 const lifecycle = (await import(distUrl("context/dynamic-tool-lifecycle.js"))) as {
   validateDurableDynamicToolCallbacks(name: string, entry: unknown): { execute: { closure: Record<string, unknown> } };
 };
-const durable = (await import(distUrl("shared/durable-dynamic-tool-callbacks.js"))) as {
+const durable = (await import(distUrl("tools/durable-callbacks.js"))) as {
   lookupDurableDynamicCallback(toolName: string, phase: string): ((closure: Record<string, unknown>, ...args: unknown[]) => unknown) | undefined;
 };
 

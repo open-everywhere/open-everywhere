@@ -33,7 +33,7 @@ const u = (rel: string): string => pathToFileURL(join(eveRoot, "dist/src", rel))
 const harnessTools = (await import(u("harness/tools.js"))) as {
   buildToolSetFromDefinitions(i: { approvedTools: Set<string>; tools: unknown[] }): Record<string, BuiltTool>;
 };
-const toolSchema = (await import(u("shared/tool-schema.js"))) as { toInputSchema(s: unknown): unknown };
+const toolSchema = (await import(u("tools/schema.js"))) as { toInputSchema(s: unknown): unknown };
 const lifecycle = (await import(u("context/dynamic-tool-lifecycle.js"))) as {
   dispatchDynamicToolEvent(e: unknown): Promise<void>;
   replayDynamicSessionTools(meta: readonly unknown[], resolvers: readonly unknown[]): Replayed[];

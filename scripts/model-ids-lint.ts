@@ -14,7 +14,7 @@ import { SHIPPED_STACK, STACKS, STACK_ALIASES, isStackAlias } from "../agent/mod
 import { loadModelPricing } from "../agent/spend/model-pricing.js";
 import { loadModelPolicy } from "../agent/model/policy.js";
 import { loadRoles } from "../agent/roles/roles.js";
-import { loadDomains } from "../agent/memory/domains.js";
+import { loadDomains } from "../agent/memory/config/domains.js";
 import { MODEL_ID, PRICE_TABLE, REGISTRY, ruleOneFiles, scanBareModelIds } from "./model-ids-scope.js";
 
 const RESOLVER = "agent/model/models.ts";
@@ -140,7 +140,7 @@ const selected = [
 for (const id of unpricedModelIds(selected)) {
   reds.push(
     `UNPRICED MODEL: "${id}" is selectable by this config — a shipped stack (${REGISTRY}), the model-policy ` +
-      `allow-list (agent/model/policy.ts), or a route pin in agent/memory/domains.ts or agent/roles/roles.ts ` +
+      `allow-list (agent/model/policy.ts), or a route pin in agent/memory/config/domains.ts or agent/roles/roles.ts ` +
       `— but no code table prices it. A USD cap counts an unpriced call as $0 ` +
       `— evidence-only, never a guessed rate — so a $ budget over this model would enforce over nothing. ` +
       `FIX: measure the rate (\`npm run probe:models\`; the gateway's public catalog at ` +

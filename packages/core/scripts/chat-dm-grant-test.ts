@@ -216,7 +216,7 @@ const ORG = "default";
   ok(chatDmTargetsFrom(HOME, rayGranted, DOMAINS).length === 0, "a slack-only domain names no discord person, however the bundle is bound");
   const cross = refusal(HOME, rayGranted, RAY);
   ok(cross.boundary === "cross-domain", "a granted discord person refuses as `cross-domain` for a domain with no discord container");
-  ok(cross.message.includes("memory/domains.ts"), "the discord cross-domain refusal names the DOMAIN remedy");
+  ok(cross.message.includes("memory/config/domains.ts"), "the discord cross-domain refusal names the DOMAIN remedy");
   ok(cross.message !== ungranted.message, "the two discord refusals are different messages, because the remedies are different files");
 
   const malformed = refusal(DISCORD_HOME, rayGranted, RAY_ID);
@@ -249,7 +249,7 @@ const ORG = "default";
 
   const cross = refusal(DISCORD_HOME, granted, SARAH);
   ok(cross.boundary === "cross-domain", "a granted person on a surface the domain does not work on refuses as `cross-domain`");
-  ok(cross.message.includes("memory/domains.ts"), "the cross-domain refusal names the DOMAIN remedy");
+  ok(cross.message.includes("memory/config/domains.ts"), "the cross-domain refusal names the DOMAIN remedy");
   ok(cross.message !== ungranted.message, "the two refusals are different messages, because the remedies are different files");
 
   const blind = refusal(undefined, granted, SARAH);

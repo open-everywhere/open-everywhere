@@ -387,7 +387,7 @@ async function onInbound(
 
   if (classifyWakeMapping({ platform: "slack", mode, workspaceId: message.teamId }) === "unmapped") {
     console.log(
-      `[open-everywhere:slack] unmapped-channel wake dropped — no turn (channel ${message.channelId} resolved no team; map it in agent/memory/domains.ts)`,
+      `[open-everywhere:slack] unmapped-channel wake dropped — no turn (channel ${message.channelId} resolved no team; map it in agent/memory/config/domains.ts)`,
     );
     auditWakeDropped(message, UNMAPPED_WAKE_DROP_REASON, { door: "mention", channelType: facts.channelType ?? null });
     try {

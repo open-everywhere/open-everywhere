@@ -32,10 +32,10 @@ const TEAMS_BOT_RECIPIENT_ID = "28:it1064-teams-bot";
 const TEAMS_AUTHOR_ID = "it1064-teams-author";
 
 async function pinFixtureDomainGrant(domainName: string, connector: "discord" | "teams" | "linear"): Promise<void> {
-  const { loadDomains } = await import("../../../agent/memory/domains");
+  const { loadDomains } = await import("../../../agent/memory/config/domains");
   const { domainHoldsSurfaceWorkGrant } = await import("@open-everywhere/core/agent/access/surface-work-grant.js");
   const home = loadDomains().find((d) => d.name === domainName);
-  expect(home, `the "${domainName}" domain is missing from agent/memory/domains.ts — this arm cannot measure a mount`).toBeDefined();
+  expect(home, `the "${domainName}" domain is missing from agent/memory/config/domains.ts — this arm cannot measure a mount`).toBeDefined();
   expect(
     domainHoldsSurfaceWorkGrant(home, connector),
     `"${domainName}" declares NO ${connector} work role — restore its \`credentials\` entry before re-running this arm`,

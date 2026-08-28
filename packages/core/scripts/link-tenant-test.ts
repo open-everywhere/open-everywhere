@@ -81,7 +81,7 @@ function row(over: Partial<LinkedIdRow> & { platform: string; tenant: string; na
     threw = e instanceof Error ? e.message : String(e);
   }
   ok(threw === linkTenantUnresolvableMessage("slack"), "fail-loud: the throw carries the ONE operator-actionable message, naming both fixes");
-  ok(threw.includes("agent/memory/domains.ts") && threw.includes("OE_ALLOW_MULTI_TENANT_PRINCIPALS"), "fail-loud: …and that message names the declare-the-channel fix and the multi-tenant knob by their real spellings");
+  ok(threw.includes("agent/memory/config/domains.ts") && threw.includes("OE_ALLOW_MULTI_TENANT_PRINCIPALS"), "fail-loud: …and that message names the declare-the-channel fix and the multi-tenant knob by their real spellings");
   ok(tryLinkTenantOf("github", undefined) === LINK_TENANT_NONE, "fail-closed is SCOPED: a vendor-global platform still answers with no config at all");
 
   configWithSlackTenants([WS_A, WS_B]);
@@ -219,7 +219,7 @@ const OLD_SQLITE_DDL = OLD_PG_DDL.replace(/text/g, "TEXT");
   const lines: string[] = [];
   await bootBackfillLinkTenants({ log: (l) => lines.push(l) });
   ok(lines.length === 1 && lines[0] === linkTenantBackfillWarning("slack"), "🔴 property 6: the BOOT hook logs the operator line…");
-  ok(lines[0]!.includes("agent/memory/domains.ts") && lines[0]!.includes("DORMANT"), "property 6: …which names the self-healing fix and says plainly that the links are dormant");
+  ok(lines[0]!.includes("agent/memory/config/domains.ts") && lines[0]!.includes("DORMANT"), "property 6: …which names the self-healing fix and says plainly that the links are dormant");
 
   configWithSlackTenants([WS_A]);
   const filled = await backfillLinkTenants();

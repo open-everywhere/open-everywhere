@@ -109,7 +109,7 @@ const ok = (cond: boolean, label: string) => {
 {
   const log = unadmittedTenantLog("slack", "T_TWO", new Set(["T_ONE"]));
   ok(log.includes("T_TWO") && log.includes("T_ONE"), "the log names the REFUSED tenant and what this deployment does admit");
-  ok(log.includes("agent/memory/domains.ts") && log.includes(MULTI_TENANT_ENV), "…and both remedies: declare that tenant, or opt in explicitly");
+  ok(log.includes("agent/memory/config/domains.ts") && log.includes(MULTI_TENANT_ENV), "…and both remedies: declare that tenant, or opt in explicitly");
   ok(UNADMITTED_TENANT_DROP_REASON.length > 0 && UNADMITTED_TENANT_DROP_REASON.includes("alias"), "the audit reason is one greppable string that says WHY, not just THAT");
 }
 
