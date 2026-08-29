@@ -5,12 +5,13 @@ import {
   supportedReadPlatforms,
   READ_ADAPTERS,
   ChannelScopeError,
+  RateLimitExhaustedError,
   type BindableContext,
   type PrFetchFn,
   type RenderedLine,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerGithubProvider } from "../agent/register.js";
-import { githubReadAdapter, parseGithubContainer, reviewThreadLines } from "../agent/channels/github-read.js";
+import { githubReadAdapter, parseGithubContainer, reviewThreadLines, getJson } from "../agent/channels/github-read.js";
 import { buildGitHubAuth } from "../agent/channels/github-identity.js";
 
 process.env.GITHUB_TOKEN = "gh-test-token";
@@ -196,6 +197,59 @@ eq(reviewThreadLines(REVIEW_COMMENTS, "12345"), [], "a root nothing replies to r
     !t.urls.some((u) => u.includes("evil") || u.includes("secret")),
     "no refused read reached the network — the fence runs BEFORE the fetch",
   );
+}
+
+{
+  const retryAfter = (seconds: string): PrFetchFn => {
+    const headers = new Headers();
+    headers.set("retry-after", seconds);
+    let calls = 0;
+    return (async () => {
+      calls++;
+      if (calls === 1) return { ok: false, status: 429, headers, text: async () => "rate limited", json: async () => ({}) };
+      return { ok: true, status: 200, text: async () => JSON.stringify(ISSUE_7), json: async () => ISSUE_7 };
+    }) as unknown as PrFetchFn;
+  };
+  const slept: number[] = [];
+  const got = await getJson<typeof ISSUE_7>(retryAfter("2"), "https://api.github.com/repos/acme/api/issues/7", "gh-test-token", "issues.get", {
+    sleep: async (ms) => void slept.push(ms),
+  });
+  eq(slept, [2000], "§7 the read seam honours a 429's Retry-After — the delay is the exact header value");
+  eq(got.title, "Broken", "§7 the eventual success is returned once the 429 clears");
+}
+{
+  let calls = 0;
+  const notFound: PrFetchFn = async () => {
+    calls++;
+    return { ok: false, status: 404, text: async () => "nope", json: async () => ({}) };
+  };
+  const slept: number[] = [];
+  await assert.rejects(
+    () => getJson(notFound, "https://api.github.com/repos/acme/api/issues/999", "gh-test-token", "issues.get", { sleep: async (ms) => void slept.push(ms) }),
+    /read: GitHub GET failed/,
+    "§7 negative control: a 404 throws the plain read-failed error, not a retry exhaustion",
+  );
+  passed++;
+  eq(calls, 1, "§7 negative control: a 404 is requested EXACTLY once");
+  eq(slept, [], "§7 negative control: zero sleeps");
+}
+{
+  const headers = new Headers();
+  headers.set("retry-after", "1");
+  const alwaysLimited: PrFetchFn = (async () => ({ ok: false, status: 429, headers, text: async () => "rate limited", json: async () => ({}) })) as unknown as PrFetchFn;
+  const slept: number[] = [];
+  let caught: unknown;
+  try {
+    await getJson(alwaysLimited, "https://api.github.com/repos/acme/api/issues/7/comments", "gh-test-token", "issues.comments.list", {
+      sleep: async (ms) => void slept.push(ms),
+    });
+  } catch (err) {
+    caught = err;
+  }
+  ok(caught instanceof RateLimitExhaustedError, "§7 exhaustion: the NAMED RateLimitExhaustedError");
+  eq((caught as RateLimitExhaustedError).surface, "github", "§7 exhaustion: the surface names github");
+  eq((caught as RateLimitExhaustedError).operation, "issues.comments.list", "§7 exhaustion: the operation is the vendor route name");
+  eq(slept, [1000, 1000, 1000], "§7 exhaustion: three waits under the shared default");
 }
 
 console.log(`✓ github-read: ${passed} assertions passed`);

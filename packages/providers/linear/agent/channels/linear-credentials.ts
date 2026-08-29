@@ -1,5 +1,5 @@
-import { warmCredential } from "@open-everywhere/core/agent/adapter-api.js";
-import type { BrokeredSecret } from "@open-everywhere/core/agent/adapter-api.js";
+import { warmCredential, withRetryAfterLoose, RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
+import type { BrokeredSecret, RetryPolicy } from "@open-everywhere/core/agent/adapter-api.js";
 
 const TOKEN_ENDPOINT = "https://api.linear.app/oauth/token";
 const DEFAULT_TTL_SEC = 30 * 24 * 60 * 60;
@@ -42,6 +42,7 @@ export async function mintLinearAppActorToken(
   clientId: string,
   clientSecret: string,
   fetchFn: LinearMintFetch = globalThis.fetch as unknown as LinearMintFetch,
+  retry?: RetryPolicy,
 ): Promise<BrokeredSecret> {
   const body = new URLSearchParams({
     grant_type: "client_credentials",
@@ -52,8 +53,12 @@ export async function mintLinearAppActorToken(
   }).toString();
   let res: { ok: boolean; status: number; text(): Promise<string>; json(): Promise<unknown> };
   try {
-    res = await fetchFn(TOKEN_ENDPOINT, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body });
+    res = await withRetryAfterLoose(
+      () => fetchFn(TOKEN_ENDPOINT, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body }),
+      { ...retry, surface: "linear", operation: "oauth.token" },
+    );
   } catch (err) {
+    if (err instanceof RateLimitExhaustedError) throw err;
     throw new Error(`Linear client-credentials mint failed — network error calling ${TOKEN_ENDPOINT}: ${String(err)}`);
   }
   if (!res.ok) {

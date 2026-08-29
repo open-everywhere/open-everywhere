@@ -1,4 +1,5 @@
 import type { Selector } from "../memory/selection.js";
+import { withRetryAfterLoose, type RetryPolicy } from "../channels/rate-limit-retry.js";
 
 const API = "https://api.github.com";
 
@@ -32,6 +33,7 @@ export class GitHubContents {
   constructor(
     private readonly fetchFn: HttpFetch = globalThis.fetch as unknown as HttpFetch,
     private readonly apiBase: string = API,
+    private readonly retry?: RetryPolicy,
   ) {}
 
   private headers(token: string): Record<string, string> {
@@ -51,10 +53,10 @@ export class GitHubContents {
   async listFiles(repo: string, dir: string, branch: string, token: string, selector: Selector): Promise<Record<string, string>> {
     const out: Record<string, string> = {};
     const walk = async (path: string, segs: string[]): Promise<void> => {
-      const res = await this.fetchFn(`${this.url(repo, path)}?ref=${encodeURIComponent(branch)}`, {
-        method: "GET",
-        headers: this.headers(token),
-      });
+      const res = await withRetryAfterLoose(
+        () => this.fetchFn(`${this.url(repo, path)}?ref=${encodeURIComponent(branch)}`, { method: "GET", headers: this.headers(token) }),
+        { ...this.retry, surface: "github", operation: "repos.contents.list" },
+      );
       if (res.status === 404) return;
       if (!res.ok) throw new Error(`github contents list ${repo}/${path}: ${res.status} ${await res.text()}`);
       const body = (await res.json()) as ContentEntry[] | ContentEntry;
@@ -72,10 +74,10 @@ export class GitHubContents {
   }
 
   async getFile(repo: string, path: string, branch: string, token: string): Promise<{ content: string; sha: string } | null> {
-    const res = await this.fetchFn(`${this.url(repo, path)}?ref=${encodeURIComponent(branch)}`, {
-      method: "GET",
-      headers: this.headers(token),
-    });
+    const res = await withRetryAfterLoose(
+      () => this.fetchFn(`${this.url(repo, path)}?ref=${encodeURIComponent(branch)}`, { method: "GET", headers: this.headers(token) }),
+      { ...this.retry, surface: "github", operation: "repos.contents.get" },
+    );
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`github get ${repo}/${path}: ${res.status} ${await res.text()}`);
     const body = (await res.json()) as FileResponse;
@@ -93,28 +95,31 @@ export class GitHubContents {
     committer: CommitId,
     sha?: string,
   ): Promise<string | null> {
-    const res = await this.fetchFn(this.url(repo, path), {
-      method: "PUT",
-      headers: this.headers(token),
-      body: JSON.stringify({
-        message,
-        content: Buffer.from(content, "utf-8").toString("base64"),
-        branch,
-        committer,
-        ...(sha ? { sha } : {}),
-      }),
-    });
+    const res = await withRetryAfterLoose(
+      () =>
+        this.fetchFn(this.url(repo, path), {
+          method: "PUT",
+          headers: this.headers(token),
+          body: JSON.stringify({
+            message,
+            content: Buffer.from(content, "utf-8").toString("base64"),
+            branch,
+            committer,
+            ...(sha ? { sha } : {}),
+          }),
+        }),
+      { ...this.retry, surface: "github", operation: "repos.contents.put" },
+    );
     if (!res.ok) throw new Error(`github put ${repo}/${path}: ${res.status} ${await res.text()}`);
     const body = (await res.json()) as WriteResponse;
     return body.commit?.sha ?? body.content?.sha ?? null;
   }
 
   async deleteFile(repo: string, path: string, sha: string, message: string, branch: string, token: string, committer: CommitId): Promise<string | null> {
-    const res = await this.fetchFn(this.url(repo, path), {
-      method: "DELETE",
-      headers: this.headers(token),
-      body: JSON.stringify({ message, sha, branch, committer }),
-    });
+    const res = await withRetryAfterLoose(
+      () => this.fetchFn(this.url(repo, path), { method: "DELETE", headers: this.headers(token), body: JSON.stringify({ message, sha, branch, committer }) }),
+      { ...this.retry, surface: "github", operation: "repos.contents.delete" },
+    );
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`github delete ${repo}/${path}: ${res.status} ${await res.text()}`);
     const body = (await res.json()) as WriteResponse;

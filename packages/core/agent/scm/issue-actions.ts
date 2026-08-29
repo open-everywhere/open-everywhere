@@ -6,6 +6,7 @@ import { prApiHeaders, type PrFetchFn } from "./pr.js";
 import { currentTurnGithubTarget, type BindableContext } from "../identity/binding.js";
 import type { EntityActionAdapter } from "../channels/entity-actions.js";
 import type { CreatedTicket, TicketCreateAdapter, TicketDraft } from "../channels/ticket-create.js";
+import { withRetryAfterLoose, type RetryPolicy } from "../channels/rate-limit-retry.js";
 
 export function parseGithubEntityId(id: string): { repo: string; number: number } {
   const m = /^([^/#]+\/[^/#]+)#(\d+)$/.exec(id);
@@ -34,11 +35,13 @@ export interface GithubActionOpts {
   readonly apiBase?: string;
   readonly resolveToken?: (repo: string) => Promise<string>;
   readonly capabilities?: readonly RepoCapability[];
+  readonly retry?: RetryPolicy;
 }
 
 async function callIssueApi(
   repo: string,
   number: number,
+  operation: string,
   path: string,
   method: "PATCH" | "POST",
   body: Record<string, unknown>,
@@ -47,7 +50,11 @@ async function callIssueApi(
   const fetchFn = opts.fetchFn ?? (globalThis.fetch as unknown as PrFetchFn);
   const apiBase = opts.apiBase ?? "https://api.github.com";
   const token = await (opts.resolveToken ?? ((r: string) => resolveIssueWriteToken(r, getGitHubApp(), opts.capabilities ?? [])))(repo);
-  const res = await fetchFn(`${apiBase}${path}`, { method, headers: prApiHeaders(token), body: JSON.stringify(body) });
+  const res = await withRetryAfterLoose(() => fetchFn(`${apiBase}${path}`, { method, headers: prApiHeaders(token), body: JSON.stringify(body) }), {
+    ...opts.retry,
+    surface: "github",
+    operation,
+  });
   if (!res.ok) {
     throw new Error(`GitHub issue action failed for ${repo}#${number}: ${res.status} ${await res.text()}`);
   }
@@ -59,19 +66,19 @@ export async function setGithubIssueState(entityId: string, state: string, opts:
   if (normalized !== "open" && normalized !== "closed") {
     throw new Error(`GitHub: state must be "open" or "closed" (got "${state}").`);
   }
-  await callIssueApi(repo, number, `/repos/${repo}/issues/${number}`, "PATCH", { state: normalized }, opts);
+  await callIssueApi(repo, number, "issues.update", `/repos/${repo}/issues/${number}`, "PATCH", { state: normalized }, opts);
   return `GitHub ${repo}#${number} state set to "${normalized}".`;
 }
 
 export async function assignGithubIssue(entityId: string, assignee: string, opts: GithubActionOpts = {}): Promise<string> {
   const { repo, number } = parseGithubEntityId(entityId);
-  await callIssueApi(repo, number, `/repos/${repo}/issues/${number}/assignees`, "POST", { assignees: [assignee] }, opts);
+  await callIssueApi(repo, number, "issues.assignees.add", `/repos/${repo}/issues/${number}/assignees`, "POST", { assignees: [assignee] }, opts);
   return `GitHub ${repo}#${number} assigned to ${assignee}.`;
 }
 
 export async function addGithubIssueLabel(entityId: string, label: string, opts: GithubActionOpts = {}): Promise<string> {
   const { repo, number } = parseGithubEntityId(entityId);
-  await callIssueApi(repo, number, `/repos/${repo}/issues/${number}/labels`, "POST", { labels: [label] }, opts);
+  await callIssueApi(repo, number, "issues.labels.add", `/repos/${repo}/issues/${number}/labels`, "POST", { labels: [label] }, opts);
   return `Label "${label}" added to GitHub ${repo}#${number}.`;
 }
 
@@ -115,11 +122,15 @@ export async function createGithubIssue(repo: string, draft: TicketDraft, opts: 
   const fetchFn = opts.fetchFn ?? (globalThis.fetch as unknown as PrFetchFn);
   const apiBase = opts.apiBase ?? "https://api.github.com";
   const token = await (opts.resolveToken ?? ((r: string) => resolveIssueWriteToken(r, getGitHubApp(), opts.capabilities ?? [])))(repo);
-  const res = await fetchFn(`${apiBase}/repos/${repo}/issues`, {
-    method: "POST",
-    headers: prApiHeaders(token),
-    body: JSON.stringify({ title: draft.title, body: draft.body }),
-  });
+  const res = await withRetryAfterLoose(
+    () =>
+      fetchFn(`${apiBase}/repos/${repo}/issues`, {
+        method: "POST",
+        headers: prApiHeaders(token),
+        body: JSON.stringify({ title: draft.title, body: draft.body }),
+      }),
+    { ...opts.retry, surface: "github", operation: "issues.create" },
+  );
   if (!res.ok) {
     throw new Error(`GitHub issue creation failed for ${repo}: ${res.status} ${await res.text()}`);
   }

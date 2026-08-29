@@ -1,7 +1,7 @@
 import { renderBlocks, pageTitle, type BlockNode } from "../agent/memory/blocks.js";
 import { NotionClient, makeNotionProvider, type HttpFetch } from "../agent/memory/memory.js";
 import type { Partition } from "@open-everywhere/core/agent/adapter-api.js";
-import { siloTier } from "@open-everywhere/core/agent/adapter-api.js";
+import { siloTier, RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
 const TIER = siloTier("baseline");
 
 let passed = 0;
@@ -123,6 +123,57 @@ try {
   ok(false, "missing container should throw");
 } catch {
   ok(true, "missing container → throws");
+}
+
+{
+  const headers = new Headers();
+  headers.set("retry-after", "2");
+  let calls = 0;
+  const rateLimitedThenOk: HttpFetch = async () => {
+    calls++;
+    if (calls === 1) return { ok: false, status: 429, headers, text: async () => "rate limited", json: async () => ({}) } as never;
+    return { ok: true, status: 200, text: async () => JSON.stringify({ results: [] }), json: async () => ({ results: [] }) };
+  };
+  const slept: number[] = [];
+  const client = new NotionClient("tok", rateLimitedThenOk, "https://api.notion.com", undefined, { sleep: async (ms) => void slept.push(ms) });
+  const out = await client.children("root");
+  ok(slept.length === 1 && slept[0] === 2000, "backoff: the honoured delay is the exact Retry-After value (2 s)");
+  ok(calls === 2, "backoff: the children GET is repeated until Notion accepts it");
+  ok(Array.isArray(out) && out.length === 0, "backoff: the eventual (empty) result is returned once the 429 clears");
+}
+{
+  let calls = 0;
+  const forbidden: HttpFetch = async () => {
+    calls++;
+    return { ok: false, status: 403, text: async () => "forbidden", json: async () => ({}) } as never;
+  };
+  const slept: number[] = [];
+  const client = new NotionClient("tok", forbidden, "https://api.notion.com", undefined, { sleep: async (ms) => void slept.push(ms) });
+  try {
+    await client.children("root");
+    ok(false, "backoff negative control: a 403 must throw");
+  } catch (err) {
+    ok(err instanceof Error && String(err.message).includes("403"), "backoff negative control: the 403 propagates as the plain read error");
+  }
+  ok(calls === 1, "backoff negative control: a 403 is requested EXACTLY once");
+  ok(slept.length === 0, "backoff negative control: zero sleeps");
+}
+{
+  const headers = new Headers();
+  headers.set("retry-after", "1");
+  const alwaysLimited: HttpFetch = async () => ({ ok: false, status: 429, headers, text: async () => "rate limited", json: async () => ({}) }) as never;
+  const slept: number[] = [];
+  const client = new NotionClient("tok", alwaysLimited, "https://api.notion.com", undefined, { sleep: async (ms) => void slept.push(ms) });
+  let caught: unknown;
+  try {
+    await client.children("root");
+  } catch (err) {
+    caught = err;
+  }
+  ok(caught instanceof RateLimitExhaustedError, "backoff exhaustion: the NAMED RateLimitExhaustedError");
+  ok((caught as RateLimitExhaustedError).surface === "notion", "backoff exhaustion: the surface names notion");
+  ok((caught as RateLimitExhaustedError).operation === "blocks.children.list", "backoff exhaustion: the operation is the vendor route name");
+  ok(slept.length === 3 && slept.every((ms) => ms === 1000), "backoff exhaustion: three waits under the shared default");
 }
 
 console.log(`✓ notion-memory: ${passed} assertions passed (blocks→MD codec + recursive read-only pull, offline fake)`);

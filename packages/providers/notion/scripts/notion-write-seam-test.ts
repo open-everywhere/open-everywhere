@@ -67,8 +67,8 @@ const AGENT_FILES = tsFiles(join(PKG_ROOT, "agent"));
     { file: GRANT_SEAM_REL, covered: true, why: "the granted plane — a composed call under the OWNER's token" },
     {
       file: "agent/memory/memory.ts",
-      covered: false,
-      why: "NotionClient — the memory backing's READ-ONLY block reader. Typed over HttpFetch, not Response, so the shared primitive cannot wrap it without a shim (OPE follow-up).",
+      covered: true,
+      why: "NotionClient — the memory backing's READ-ONLY block reader. Typed over HttpFetch, not Response; carries the 429 backoff via withRetryAfterLoose since OPE-1255.",
     },
   ];
 

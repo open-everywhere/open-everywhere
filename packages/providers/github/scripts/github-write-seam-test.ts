@@ -83,8 +83,8 @@ const seamCode = stripComments(readFileSync(SEAM, "utf8"));
     { file: SEAM_REL, covered: true, why: "the write seam itself — comment, edit and reaction, all with the 429 backoff" },
     {
       file: "agent/channels/github-read.ts",
-      covered: false,
-      why: "PrFetchFn — the READ-ONLY issue/PR reader. Distinct from the write path OPE-1235 covers, and it still fails on the first 429 (OPE follow-up).",
+      covered: true,
+      why: "PrFetchFn — the READ-ONLY issue/PR reader. Distinct from the write path OPE-1235 covers; carries the 429 backoff via withRetryAfterLoose since OPE-1255.",
     },
   ];
 

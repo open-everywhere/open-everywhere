@@ -657,6 +657,6 @@ export { routineIdOf } from "./hooks/spend.js";
 export { liveTaskIds, liveTaskCount } from "./access/live-delegated-tasks.js";
 export { LIVE_DELEGATED_TASKS_STATE_KEY } from "./access/live-delegated-tasks.js";
 
-export { withRetryAfter, parseRetryAfterMs, RateLimitExhaustedError } from "./channels/rate-limit-retry.js";
+export { withRetryAfter, withRetryAfterLoose, parseRetryAfterMs, RateLimitExhaustedError } from "./channels/rate-limit-retry.js";
 export { RATE_LIMITED_STATUS, DEFAULT_MAX_ATTEMPTS, DEFAULT_CAP_MS, DEFAULT_FALLBACK_MS } from "./channels/rate-limit-retry.js";
-export type { RateLimitRetryOptions } from "./channels/rate-limit-retry.js";
+export type { RateLimitRetryOptions, RetryPolicy } from "./channels/rate-limit-retry.js";

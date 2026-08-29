@@ -1,12 +1,10 @@
+import { resolveTeamsAppId, splitTeamsMessageText, TEAMS_MESSAGE_TEXT_MAX_LENGTH } from "eve/channels/teams";
 import {
-  callTeamsConnectorApi,
-  resolveTeamsAppId,
-  sendTeamsActivity,
-  replyToTeamsActivity,
-  splitTeamsMessageText,
-  updateTeamsActivity,
-  TEAMS_MESSAGE_TEXT_MAX_LENGTH,
-} from "eve/channels/teams";
+  teamsConnectorWrite,
+  sendTeamsActivityBackedOff,
+  replyToTeamsActivityBackedOff,
+  updateTeamsActivityBackedOff,
+} from "./teams-connector.js";
 import { isTrustedTeamsServiceUrl } from "./teams-origin-codec.js";
 import {
   teamsPersonalConversationRef,
@@ -38,13 +36,13 @@ export async function dispatchTeamsReply(target: TeamsTarget, text: string): Pro
     throw markNotApplied(new Error(`reply couldn't post to Teams — serviceUrl is not a Bot Framework host (conversation ${target.conversationId})`));
   }
   const res = target.replyToActivityId
-    ? await replyToTeamsActivity({
+    ? await replyToTeamsActivityBackedOff({
         serviceUrl: target.serviceUrl,
         conversationId: target.conversationId,
         activityId: target.replyToActivityId,
         body: { type: "message", text },
       })
-    : await sendTeamsActivity({
+    : await sendTeamsActivityBackedOff({
         serviceUrl: target.serviceUrl,
         conversationId: target.conversationId,
         body: { type: "message", text },
@@ -62,13 +60,13 @@ async function liveTeamsPost(origin: TeamsOrigin, text: string): Promise<string>
   let id: string;
   try {
     const res = origin.replyToActivityId
-      ? await replyToTeamsActivity({
+      ? await replyToTeamsActivityBackedOff({
           serviceUrl: origin.serviceUrl,
           conversationId: origin.conversationId,
           activityId: origin.replyToActivityId,
           body: { type: "message", text },
         })
-      : await sendTeamsActivity({
+      : await sendTeamsActivityBackedOff({
           serviceUrl: origin.serviceUrl,
           conversationId: origin.conversationId,
           body: { type: "message", text },
@@ -97,14 +95,14 @@ export async function editTeamsMessage(locus: EditLocus, messageId: string, text
     );
   }
   try {
-    await updateTeamsActivity({
+    await updateTeamsActivityBackedOff({
       serviceUrl: locus.serviceUrl,
       conversationId: locus.channelId,
       activityId: messageId,
       body: { type: "message", text },
     });
-  } catch {
-    throw new Error(`edit_reply couldn't update the Teams message — the Connector update failed (conversation ${locus.channelId})`);
+  } catch (err) {
+    throw carryFailureSignals(err, new Error(`edit_reply couldn't update the Teams message — the Connector update failed (conversation ${locus.channelId})`));
   }
 }
 
@@ -116,7 +114,8 @@ function requireTeamsAppCredential(what: string): void {
 
 async function openTeamsPersonalConversation(region: { readonly serviceUrl: string; readonly tenantId: string }, principalId: string): Promise<string> {
   const appId = await resolveTeamsAppId();
-  const res = await callTeamsConnectorApi({
+  const res = await teamsConnectorWrite({
+    operation: "conversations.create",
     serviceUrl: region.serviceUrl,
     path: "/v3/conversations",
     method: "POST",
@@ -166,7 +165,7 @@ async function deliverTeamsDirectMessage(input: DirectMessageRequest): Promise<D
   const parts = splitTeamsMessageText(input.text);
   let messageId = "";
   for (const part of parts) {
-    const res = await sendTeamsActivity({ serviceUrl: ref.serviceUrl, conversationId: ref.conversationId, body: { type: "message", text: part } });
+    const res = await sendTeamsActivityBackedOff({ serviceUrl: ref.serviceUrl, conversationId: ref.conversationId, body: { type: "message", text: part } });
     if (messageId.length === 0) messageId = res.id;
   }
   return { surfaceId: ref.conversationId, messageId: messageId || "unknown" };

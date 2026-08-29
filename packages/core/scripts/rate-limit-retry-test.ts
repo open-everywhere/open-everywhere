@@ -5,6 +5,7 @@ import {
   RateLimitExhaustedError,
   parseRetryAfterMs,
   withRetryAfter,
+  withRetryAfterLoose,
 } from "../agent/channels/rate-limit-retry.js";
 
 let n = 0;
@@ -189,4 +190,88 @@ function recorder() {
   eq(parseRetryAfterMs("soon", now), undefined, "parse: a word is neither form");
 }
 
-console.log(`✓ rate-limit-retry: ${n} assertions passed (honoured delay, named exhaustion, non-429 negative controls, cap/fallback/total-budget, Retry-After parsing)`);
+{
+  const headers = new Headers();
+  headers.set("retry-after", "2");
+  let calls = 0;
+  const send = async () => {
+    calls++;
+    if (calls === 1) return { ok: false, status: 429, headers, text: async () => "x", json: async () => ({}) };
+    return { ok: true, status: 200, headers: new Headers(), text: async () => "ok", json: async () => ({ ok: true }) };
+  };
+  const clock = recorder();
+  const res = await withRetryAfterLoose(send, { surface: "s", operation: "o", sleep: clock.sleep });
+  eq(clock.slept, [2000], "loose 8a: a response that already carries headers honours Retry-After exactly");
+  eq(res.status, 200, "loose 8a: the eventual success is returned");
+}
+{
+  let calls = 0;
+  const send = async () => {
+    calls++;
+    if (calls === 1) return { ok: false, status: 429, text: async () => "x", json: async () => ({}) };
+    return { ok: true, status: 200, text: async () => "ok", json: async () => ({ ok: true }) };
+  };
+  const clock = recorder();
+  const res = await withRetryAfterLoose(send, { surface: "s", operation: "o", sleep: clock.sleep });
+  eq(clock.slept, [DEFAULT_FALLBACK_MS], "loose 8b: a headers-less response retries on the fallback wait, not zero and not a crash");
+  eq(res.status, 200, "loose 8b: the eventual success is returned");
+}
+{
+  class FakeResponse {
+    constructor(
+      readonly ok: boolean,
+      readonly status: number,
+      private readonly bodyText: string,
+    ) {}
+    async text(): Promise<string> {
+      return this.bodyText;
+    }
+    async json(): Promise<unknown> {
+      return JSON.parse(this.bodyText);
+    }
+  }
+  let calls = 0;
+  const send = async (): Promise<FakeResponse> => {
+    calls++;
+    if (calls === 1) return new FakeResponse(false, 429, "{}");
+    return new FakeResponse(true, 200, '{"minted":"tok"}');
+  };
+  const clock = recorder();
+  const res = await withRetryAfterLoose(send, { surface: "s", operation: "o", sleep: clock.sleep });
+  eq(clock.slept, [DEFAULT_FALLBACK_MS], "loose 8c: a class-instance response also retries on the fallback wait");
+  eq(res.status, 200, "loose 8c: status (an own property) survives the proxy");
+  ok(res instanceof FakeResponse, "loose 8c: the proxy still reports as an instance of the original class");
+  eq(await res.json(), { minted: "tok" }, "🔴 loose 8c: json() — a PROTOTYPE method — still works and resolves `this` correctly through the proxy");
+  const withHeaders = res as unknown as { headers: { get(name: string): string | null } };
+  eq(withHeaders.headers.get("retry-after"), null, "loose 8c: the injected headers accessor answers null for every header");
+}
+{
+  let calls = 0;
+  const send = async () => {
+    calls++;
+    return { ok: true, status: 200, text: async () => "ok", json: async () => ({ ok: true }) };
+  };
+  const clock = recorder();
+  await withRetryAfterLoose(send, { surface: "s", operation: "o", sleep: clock.sleep });
+  eq(clock.slept, [], "loose 8d negative control: a headers-less 2xx sleeps zero times");
+  eq(calls, 1, "loose 8d negative control: called exactly once");
+}
+{
+  let calls = 0;
+  const send = async () => {
+    calls++;
+    return { ok: false, status: 429, text: async () => "x", json: async () => ({}) };
+  };
+  const clock = recorder();
+  let caught: unknown;
+  try {
+    await withRetryAfterLoose(send, { surface: "loose-surface", operation: "loose-op", sleep: clock.sleep });
+  } catch (err) {
+    caught = err;
+  }
+  ok(caught instanceof RateLimitExhaustedError, "loose 8e: exhaustion through the loose adapter is still the NAMED failure");
+  eq((caught as RateLimitExhaustedError).surface, "loose-surface", "loose 8e: the surface survives the adapter");
+  eq(calls, 4, "loose 8e: four attempts under the shared default");
+}
+
+console.log(`✓ rate-limit-retry: ${n} assertions passed (honoured delay, named exhaustion, non-429 negative controls, cap/fallback/total-budget, Retry-After parsing, the withRetryAfterLoose adapter)`);

@@ -13,7 +13,7 @@ import {
   staticLinearToken,
   type LinearMintFetch,
 } from "../agent/channels/linear-credentials.js";
-import { readAudit, deploymentOrg } from "@open-everywhere/core/agent/adapter-api.js";
+import { readAudit, deploymentOrg, RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -391,6 +391,55 @@ try {
     process.env.LINEAR_APP_SOAK_CLIENT_SECRET = "soak-secret";
     ok(linearAppRegistry().length === 1, "half-configured: the entry appears once its client secret is set");
     ok(linearCredentialsConfigured() === true, "half-configured: a registered app alone makes the surface count as credentialed");
+  }
+
+  {
+    const headers = new Headers();
+    headers.set("retry-after", "2");
+    let calls = 0;
+    const rateLimitedThenOk: LinearMintFetch = async () => {
+      calls++;
+      if (calls === 1) return { ok: false, status: 429, headers, text: async () => "rate limited", json: async () => ({}) } as never;
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ access_token: "minted-after-429", expires_in: 3600 }) };
+    };
+    const slept: number[] = [];
+    const minted = await mintLinearAppActorToken("c", "s", rateLimitedThenOk, { sleep: async (ms) => void slept.push(ms) });
+    ok(slept.length === 1 && slept[0] === 2000, "backoff: the honoured delay is the exact Retry-After value (2 s)");
+    ok(calls === 2, "backoff: the token POST is repeated until Linear accepts it");
+    ok(minted.value === "minted-after-429", "backoff: the eventual token is returned once the 429 clears");
+  }
+  {
+    let calls = 0;
+    const forbidden: LinearMintFetch = async () => {
+      calls++;
+      return { ok: false, status: 403, text: async () => "forbidden", json: async () => ({}) } as never;
+    };
+    const slept: number[] = [];
+    let threw = false;
+    try {
+      await mintLinearAppActorToken("c", "s", forbidden, { sleep: async (ms) => void slept.push(ms) });
+    } catch {
+      threw = true;
+    }
+    ok(threw, "backoff negative control: a 403 still throws");
+    ok(calls === 1, "backoff negative control: a 403 is requested EXACTLY once");
+    ok(slept.length === 0, "backoff negative control: zero sleeps");
+  }
+  {
+    const headers = new Headers();
+    headers.set("retry-after", "1");
+    const alwaysLimited: LinearMintFetch = async () => ({ ok: false, status: 429, headers, text: async () => "rate limited", json: async () => ({}) }) as never;
+    const slept: number[] = [];
+    let caught: unknown;
+    try {
+      await mintLinearAppActorToken("c", "s", alwaysLimited, { sleep: async (ms) => void slept.push(ms) });
+    } catch (err) {
+      caught = err;
+    }
+    ok(caught instanceof RateLimitExhaustedError, "🔴 backoff exhaustion: the NAMED RateLimitExhaustedError survives the mint's own catch block unwrapped");
+    ok((caught as RateLimitExhaustedError).surface === "linear", "backoff exhaustion: the surface names linear");
+    ok((caught as RateLimitExhaustedError).operation === "oauth.token", "backoff exhaustion: the operation is the vendor route name");
+    ok(slept.length === 3 && slept.every((ms) => ms === 1000), "backoff exhaustion: three waits under the shared default");
   }
 
   console.log(`\n✓ linear-credentials: ${passed} assertions passed`);

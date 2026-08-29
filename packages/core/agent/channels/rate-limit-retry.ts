@@ -39,6 +39,12 @@ export function parseRetryAfterMs(value: string | null | undefined, nowMs: numbe
   return Math.max(0, at - nowMs);
 }
 
+export interface RetryableResponse {
+  readonly status: number;
+  readonly headers: { get(name: string): string | null };
+  readonly body?: { cancel(): Promise<unknown> } | null;
+}
+
 export interface RateLimitRetryOptions {
   readonly surface: string;
   readonly operation: string;
@@ -50,11 +56,13 @@ export interface RateLimitRetryOptions {
   readonly now?: () => number;
 }
 
+export type RetryPolicy = Pick<RateLimitRetryOptions, "maxAttempts" | "capMs" | "fallbackMs" | "totalBudgetMs" | "sleep" | "now">;
+
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function withRetryAfter(send: () => Promise<Response>, opts: RateLimitRetryOptions): Promise<Response> {
+export async function withRetryAfter<T extends RetryableResponse>(send: () => Promise<T>, opts: RateLimitRetryOptions): Promise<T> {
   const maxAttempts = Math.max(1, Math.floor(opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS));
   const capMs = Math.max(0, opts.capMs ?? DEFAULT_CAP_MS);
   const fallbackMs = Math.max(0, opts.fallbackMs ?? DEFAULT_FALLBACK_MS);
@@ -75,4 +83,26 @@ export async function withRetryAfter(send: () => Promise<Response>, opts: RateLi
     waitedMs += delayMs;
     await sleep(delayMs);
   }
+}
+
+export function withRetryAfterLoose<T extends { readonly status: number }>(
+  send: () => Promise<T>,
+  opts: RateLimitRetryOptions,
+): Promise<T> {
+  return withRetryAfter(async () => {
+    const res = await send();
+    const existing = (res as { headers?: unknown }).headers;
+    if (existing !== null && typeof existing === "object" && typeof (existing as { get?: unknown }).get === "function") {
+      return res as T & RetryableResponse;
+    }
+    const noHeaders: { get(name: string): string | null } = { get: () => null };
+    const withHeaders = new Proxy(res as object, {
+      get(target, prop, receiver) {
+        if (prop === "headers") return noHeaders;
+        const value = Reflect.get(target, prop, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    return withHeaders as T & RetryableResponse;
+  }, opts);
 }

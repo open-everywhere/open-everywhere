@@ -16,6 +16,8 @@ import {
   type MemoryFiles,
   assertCredentialEndpointAllowed,
   type CredentialEndpointRules,
+  withRetryAfterLoose,
+  type RetryPolicy,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { posix } from "node:path";
 import { renderBlocks, pageTitle, PAGE_BLOCK_TYPES, type BlockNode, type LinkResolver, type LinkTarget } from "./blocks.js";
@@ -58,6 +60,7 @@ export class NotionClient {
     fetchFn: HttpFetch = globalThis.fetch as unknown as HttpFetch,
     private readonly apiBase: string = API,
     endpoints?: CredentialEndpointRules,
+    private readonly retry?: RetryPolicy,
   ) {
     this.fetchFn = guardHttpFetch(endpoints, fetchFn);
   }
@@ -67,14 +70,18 @@ export class NotionClient {
     let cursor: string | undefined;
     do {
       const qs = new URLSearchParams({ page_size: "100", ...(cursor ? { start_cursor: cursor } : {}) });
-      const res = await this.fetchFn(`${this.apiBase}/v1/blocks/${blockId}/children?${qs}`, {
-        method: "GET",
-        headers: {
-          authorization: `Bearer ${this.token}`,
-          "Notion-Version": NOTION_VERSION,
-          accept: "application/json",
-        },
-      });
+      const res = await withRetryAfterLoose(
+        () =>
+          this.fetchFn(`${this.apiBase}/v1/blocks/${blockId}/children?${qs}`, {
+            method: "GET",
+            headers: {
+              authorization: `Bearer ${this.token}`,
+              "Notion-Version": NOTION_VERSION,
+              accept: "application/json",
+            },
+          }),
+        { ...this.retry, surface: "notion", operation: "blocks.children.list" },
+      );
       if (!res.ok) throw new Error(`notion children ${blockId}: ${res.status} ${await res.text()}`);
       const body = (await res.json()) as ChildrenResponse;
       out.push(...(body.results ?? []));

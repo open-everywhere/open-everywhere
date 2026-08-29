@@ -1,5 +1,6 @@
 import { getGitHubApp } from "../scm/provider.js";
 import { createBranch, deleteRef, getBranchSha, updateRef } from "../scm/refs.js";
+import { RateLimitExhaustedError } from "../channels/rate-limit-retry.js";
 import { createOrUpdatePullRequest } from "../scm/pr.js";
 import { PENDING_REF_PREFIX } from "../scm/git.js";
 import { appendAudit } from "../audit/audit.js";
@@ -70,7 +71,11 @@ export async function executePrOpen(args: PrOpenArgs, decidedBy: string, deps: P
     token,
   });
 
-  await (deps.deleteRef ?? deleteRef)({ repo: args.repo, ref: `${PENDING_REF_PREFIX}/${args.head}`, token }).catch(() => {});
+  await (deps.deleteRef ?? deleteRef)({ repo: args.repo, ref: `${PENDING_REF_PREFIX}/${args.head}`, token }).catch((err: unknown) => {
+    if (err instanceof RateLimitExhaustedError) {
+      console.warn(`[open-everywhere:github] rate limited: git.refs.delete gave up after ${err.attempts} attempts (waited ${err.waitedMs} ms) — the pending ref is leftover clutter, not a failed PR`);
+    }
+  });
 
   await appendAudit({
     ...whereFromScope(args.org, args.scopeKey),

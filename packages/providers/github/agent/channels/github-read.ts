@@ -3,11 +3,13 @@ import {
   bindFrom,
   prApiHeaders,
   resolveConversationReadToken,
+  withRetryAfterLoose,
   ChannelScopeError,
   type AdapterReadFetch,
   type BindableContext,
   type PrFetchFn,
   type RenderedLine,
+  type RetryPolicy,
   type WakeReadAddress,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { githubReviewThreadRoot } from "./github-identity.js";
@@ -41,8 +43,8 @@ export function parseGithubContainer(container: string): GitHubContainer | undef
 
 const liveGithubFetch = globalThis.fetch as unknown as PrFetchFn;
 
-async function getJson<T>(fetchFn: PrFetchFn, url: string, token: string): Promise<T> {
-  const res = await fetchFn(url, { method: "GET", headers: prApiHeaders(token) });
+export async function getJson<T>(fetchFn: PrFetchFn, url: string, token: string, operation: string, retry?: RetryPolicy): Promise<T> {
+  const res = await withRetryAfterLoose(() => fetchFn(url, { method: "GET", headers: prApiHeaders(token) }), { ...retry, surface: "github", operation });
   if (!res.ok) throw new Error(`read: GitHub GET failed (HTTP ${res.status}) for ${url}.`);
   return (await res.json()) as T;
 }
@@ -106,7 +108,7 @@ async function admitContainer(ctx: BindableContext, channel: string): Promise<Gi
 }
 
 async function fetchIssue(fetchFn: PrFetchFn, token: string, target: GitHubContainer): Promise<RawIssue> {
-  return await getJson<RawIssue>(fetchFn, `${API_BASE}/repos/${target.repoFull}/issues/${target.number}`, token);
+  return await getJson<RawIssue>(fetchFn, `${API_BASE}/repos/${target.repoFull}/issues/${target.number}`, token, "issues.get");
 }
 
 async function fetchRecentComments(
@@ -119,10 +121,10 @@ async function fetchRecentComments(
   const url = (page: number): string =>
     `${API_BASE}/repos/${target.repoFull}/issues/${target.number}/comments?per_page=${GITHUB_MAX_PAGE}&page=${page}`;
   const lastPage = Math.max(1, Math.ceil(total / GITHUB_MAX_PAGE));
-  let out = await getJson<RawComment[]>(fetchFn, url(lastPage), token);
+  let out = await getJson<RawComment[]>(fetchFn, url(lastPage), token, "issues.comments.list");
   if (!Array.isArray(out)) return [];
   if (out.length < limit && lastPage > 1) {
-    const previous = await getJson<RawComment[]>(fetchFn, url(lastPage - 1), token);
+    const previous = await getJson<RawComment[]>(fetchFn, url(lastPage - 1), token, "issues.comments.list");
     if (Array.isArray(previous)) out = [...previous, ...out];
   }
   return out.slice(-limit);
@@ -136,6 +138,7 @@ async function fetchReviewComments(fetchFn: PrFetchFn, token: string, target: Gi
       fetchFn,
       `${API_BASE}/repos/${target.repoFull}/pulls/${target.number}/comments?per_page=${GITHUB_MAX_PAGE}&page=${page}`,
       token,
+      "pulls.comments.list",
     );
     if (!Array.isArray(batch) || batch.length === 0) {
       mightBeTruncated = false;

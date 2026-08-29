@@ -12,6 +12,7 @@ delete process.env.OE_PRINCIPAL;
 const { readAudit } = await import("../agent/audit/audit.js");
 const { actionKind } = await import("../agent/approvals/actions.js");
 const { executePrOpen } = await import("../agent/approvals/pr-open.js");
+const { RateLimitExhaustedError } = await import("../agent/channels/rate-limit-retry.js");
 const { default: openPullRequestGated } = await import("../agent/tools/open_pull_request.js");
 const { resolveWindowGated } = await import("../agent/access/window-gated.js");
 const openPullRequestTool = (await resolveWindowGated(openPullRequestGated, { channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_grain: "task" } } } } } as never)) as { execute(input: unknown, ctx: unknown): Promise<any> };
@@ -56,7 +57,14 @@ function args(over: Partial<PrOpenArgs> = {}): PrOpenArgs {
   };
 }
 
-function fakeDeps(opts: { currentSha?: string | null; prUpdated?: boolean; updateRefFails?: string; deleteRefFails?: boolean; createBranchExists?: boolean }) {
+function fakeDeps(opts: {
+  currentSha?: string | null;
+  prUpdated?: boolean;
+  updateRefFails?: string;
+  deleteRefFails?: boolean;
+  deleteRefRateLimited?: boolean;
+  createBranchExists?: boolean;
+}) {
   const calls: string[] = [];
   const deps: PrOpenExecuteDeps = {
     resolveToken: async () => "tok",
@@ -74,6 +82,7 @@ function fakeDeps(opts: { currentSha?: string | null; prUpdated?: boolean; updat
     },
     deleteRef: async ({ ref }) => {
       calls.push(`deleteRef:${ref}`);
+      if (opts.deleteRefRateLimited) throw new RateLimitExhaustedError({ surface: "github", operation: "git.refs.delete", attempts: 4, waitedMs: 3000 });
       if (opts.deleteRefFails) throw new Error("cleanup boom");
       return "deleted";
     },
@@ -161,6 +170,23 @@ ok(kind!.policy === "member", "pr.open is MEMBER policy — the card is the inje
   const { deps } = fakeDeps({ currentSha: null, deleteRefFails: true });
   const outcome = await executePrOpen(args(), "U_APPROVER", deps);
   ok(outcome.includes("opened PR #7"), "a failed staging-ref cleanup never fails the publish (best-effort by contract)");
+}
+
+{
+  const warnings: unknown[][] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args);
+  try {
+    const { deps } = fakeDeps({ currentSha: null, deleteRefRateLimited: true });
+    const outcome = await executePrOpen(args(), "U_APPROVER", deps);
+    ok(outcome.includes("opened PR #7"), "🔴 a rate-limited staging-ref cleanup ALSO never fails the publish");
+    ok(
+      warnings.some((w) => typeof w[0] === "string" && w[0].includes("git.refs.delete") && w[0].includes("4 attempts")),
+      "🔴 …but the exhaustion is LOGGED by name before the swallow — never a silent drop",
+    );
+  } finally {
+    console.warn = realWarn;
+  }
 }
 
 {

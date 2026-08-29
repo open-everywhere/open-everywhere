@@ -1,11 +1,6 @@
 import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } from "eve/channels";
-import {
-  verifyTeamsRequest,
-  parseTeamsActivity,
-  teamsThreadRootActivityId,
-  sendTeamsActivity,
-  type TeamsMessageActivity,
-} from "eve/channels/teams";
+import { verifyTeamsRequest, parseTeamsActivity, teamsThreadRootActivityId, type TeamsMessageActivity } from "eve/channels/teams";
+import { sendTeamsActivityBackedOff } from "./teams-connector.js";
 import {
   buildTeamsAuth,
   teamsMembershipType,
@@ -72,6 +67,7 @@ import {
   recordWakeTail,
   dmWindowRegistryKey,
   type AttachSessionForCancel,
+  RateLimitExhaustedError,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
@@ -188,9 +184,15 @@ export function teamsExternalVerdict(input: {
 
 async function postTeamsNotice(a: TeamsMessageActivity, text: string): Promise<boolean> {
   try {
-    await sendTeamsActivity({ serviceUrl: a.serviceUrl, conversationId: a.conversation.id, body: { type: "message", text } });
+    await sendTeamsActivityBackedOff(
+      { serviceUrl: a.serviceUrl, conversationId: a.conversation.id, body: { type: "message", text } },
+      { retry: { maxAttempts: 2, capMs: 2_000 } },
+    );
     return true;
-  } catch {
+  } catch (err) {
+    if (err instanceof RateLimitExhaustedError) {
+      console.warn(`[open-everywhere:teams] rate limited: conversations.activities.send gave up after ${err.attempts} attempts (waited ${err.waitedMs} ms)`);
+    }
     return false;
   }
 }
