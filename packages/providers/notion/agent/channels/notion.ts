@@ -33,6 +33,9 @@ import {
   carryTailForward,
   type WakeMessageInput,
   recordWakeTail,
+  postHostNotice,
+  detectBridgeableInputRequest,
+  renderQuestionForSurface,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { notionChannelCredentialFor, notionIntegrations, resolveNotionInboundSecret, NOTION_CHANNEL_CREDENTIAL } from "./notion-credentials.js";
 import { NOTION_EVENT_SOURCE, notionEventDeliveryId, notionTriggerScopeVerdict } from "./notion-event-normalizer.js";
@@ -424,6 +427,17 @@ export default defineChannel<NotionState, { state: NotionState }>({
             credentialId: s(attrs?.credential_id),
           } satisfies NotionReplyTarget)
         : undefined;
+    },
+    async "input.requested"(data, channel) {
+      const target = channel.state.oeReplyTarget;
+      if (target === undefined) return;
+      const question = detectBridgeableInputRequest((data as { requests?: unknown } | undefined)?.requests);
+      if (!question) return;
+      try {
+        await postHostNotice({ platform: "notion", ...target }, renderQuestionForSurface(question));
+      } catch (err) {
+        log(`input-request could not be posted into discussion ${target.discussionId}: ${String(err)}`);
+      }
     },
     async "message.completed"(data, channel, ctx) {
       const sessionId = ctx?.session?.id;

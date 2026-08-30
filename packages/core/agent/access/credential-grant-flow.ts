@@ -21,6 +21,8 @@ import {
   type GrantMintRefusal,
 } from "./credential-grant.js";
 import {
+  approveGrantCard,
+  declineGrantCard,
   deliverGrantCard,
   deliverGrantConsentPrompt,
   expireGrantCard,
@@ -268,6 +270,11 @@ export async function approveCredentialGrant(
     verb: grant.verb,
   });
   await postGrantResolution(ask, { askedMode: pending.requestedMode, grant, kind: "approved" });
+  try {
+    await approveGrantCard(ask, grant);
+  } catch (err) {
+    log(`ask ${ask.id}: the owner's card could not be rewritten after approval: ${String(err)}`);
+  }
   return { approved: true, grant };
 }
 
@@ -363,7 +370,14 @@ export async function declineCredentialGrant(stamps: GrantAuditStamps, askId: st
   if (!decided) return false;
   await auditGrant(stamps, "grant.declined", declinerPrincipalId, { askId, reason: "declined" });
   const ask = await store.getCredentialGrantAsk(stamps.org, askId);
-  if (ask !== null) await postGrantResolution(ask, { kind: "declined" });
+  if (ask !== null) {
+    await postGrantResolution(ask, { kind: "declined" });
+    try {
+      await declineGrantCard(ask);
+    } catch (err) {
+      log(`ask ${askId}: the owner's card could not be rewritten after decline: ${String(err)}`);
+    }
+  }
   return true;
 }
 

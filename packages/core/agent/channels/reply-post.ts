@@ -246,6 +246,10 @@ export async function postReply(target: ReplyTarget, text: string, audit?: Reply
   return id ?? REPLY_DEDUPE_SKIPPED_ID;
 }
 
+export async function postHostNotice(target: ReplyTarget, text: string): Promise<string> {
+  return await postReply(target, text);
+}
+
 export function replyEditLocus(target: ReplyTarget): EditLocus | null {
   switch (target.platform) {
     case "slack":

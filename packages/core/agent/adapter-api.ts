@@ -261,6 +261,9 @@ export { recordOwnPost } from "./channels/own-post-ledger.js";
 
 export { postTerminalProse } from "./channels/reply-post.js";
 export type { ReplyAudit, ReplierLabel } from "./channels/reply-post.js";
+export { postHostNotice } from "./channels/reply-post.js";
+export { detectBridgeableInputRequest, renderQuestionForSurface } from "./channels/question-bridge.js";
+export type { BridgeableQuestion } from "./channels/question-bridge.js";
 
 export { auditNoReplySentinelObserved } from "./channels/chat-turn-audit.js";
 export type { ChatAuditPartition } from "./channels/chat-turn-audit.js";

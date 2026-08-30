@@ -404,6 +404,7 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
   };
   const turnStarted = (ctx: unknown) => notionChannel.adapter["turn.started"]!({}, ctx);
   const completed = (message: string | null, ctx: unknown) => notionChannel.adapter["message.completed"]!({ finishReason: "stop", message }, ctx);
+  const inputRequested = (requests: unknown, ctx: unknown) => notionChannel.adapter["input.requested"]!({ requests }, ctx);
 
   const realFetch = globalThis.fetch;
   let posts: Array<{ body: { discussion_id?: string } }> = [];
@@ -508,6 +509,37 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
     }, attrs);
     ok(posts.length === 0, "🔴 OPE-811: a per-doc (non-unified) notion turn drops its terminal text exactly like a windowed one");
     ok((await readAudit2({ action: "turn.supervisor_prose_dropped" })).length === droppedBeforePerDoc + 1, "OPE-811: and audits the drop — one seat, one delivery contract, whatever the topology");
+
+    posts = [];
+    await inSession(async () => {
+      const ctx = { state };
+      await turnStarted(ctx);
+      await inputRequested(
+        [{ action: { toolName: "notion__notion-create-pages" }, kind: "tool-approval", prompt: "Approve tool call?", requestId: "approval-1" }],
+        ctx,
+      );
+    }, attrs);
+    ok(posts.length === 1, "notion input.requested: a tool-approval prompt is posted into the discussion — before this fix, nothing was");
+    ok(posts[0]?.body.discussion_id === DISCUSSION, "…into the SAME discussion the turn's reply target snapshotted");
+
+    posts = [];
+    await inSession(async () => {
+      const ctx = { state };
+      await turnStarted(ctx);
+      await inputRequested([{ action: { toolName: "session_limit_continuation" }, requestId: "park-1" }], ctx);
+    }, attrs);
+    ok(posts.length === 0, "notion input.requested: eve's session-limit park posts nothing here (not this handler's to answer)");
+
+    posts = [];
+    await inSession(async () => {
+      const ctx = { state };
+      await turnStarted(ctx);
+      await inputRequested(
+        [{ action: { toolName: "notion__notion-create-pages" }, kind: "tool-approval", prompt: "Approve tool call?", requestId: "approval-2" }],
+        ctx,
+      );
+    }, {});
+    ok(posts.length === 0, "notion input.requested: no resolvable discussion this turn ⇒ posts nothing, never a guessed target");
   } finally {
     globalThis.fetch = realFetch;
     resetRegisteredConnectorCredentials();

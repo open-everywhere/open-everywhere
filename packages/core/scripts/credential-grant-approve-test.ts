@@ -9,8 +9,9 @@ delete process.env.OE_PLATFORM;
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
-import { approveCredentialGrant, askForCredentialGrant } from "../agent/access/credential-grant-flow.js";
-import { grantCardActions, grantCardText, GRANT_MODE_WORDS } from "../agent/access/credential-grant-card.js";
+import { approveCredentialGrant, askForCredentialGrant, declineCredentialGrant } from "../agent/access/credential-grant-flow.js";
+import { grantCardActions, grantCardText, GRANT_MODE_WORDS, approvedGrantCardText, declinedGrantCardText } from "../agent/access/credential-grant-card.js";
+import { registerSlackTestBridge } from "./_slack-test-stubs.js";
 import { grantResolutionText } from "../agent/access/credential-grant-resolution.js";
 import { grantOwnerNoticeText } from "../agent/access/credential-grant-notice.js";
 import { pinFrozenArgsIntoSchema } from "../agent/access/grant-schema-pin.js";
@@ -69,6 +70,16 @@ registerPostArm({
   resolveTarget: () => null,
 });
 registerAccountDisplayName("slack", async () => ({ handle: "rowan", name: "Rowan Hale" }));
+
+const chatUpdates: { channel: string; ts: string; text: string }[] = [];
+registerSlackTestBridge({
+  form: async (method: string, body: string) => {
+    if (method !== "chat.update") return { ok: true };
+    const params = new URLSearchParams(body);
+    chatUpdates.push({ channel: params.get("channel") ?? "", text: params.get("text") ?? "", ts: params.get("ts") ?? "" });
+    return { ok: true };
+  },
+});
 
 setRegisteredConnectorCredentials([
   {
@@ -422,6 +433,13 @@ console.log("8. one reader-facing word per mode, on every surface that names one
     ok(room.includes(`(${word})`), `the room confirmation spells \`${mode}\` as "${word}"`);
 
     ok(grantOwnerNoticeText(grant).includes(`(${word})`), `the owner's first-use DM spells \`${mode}\` as "${word}"`);
+
+    const phrase = mode === "once" ? word : `for ${word}`;
+    ok(
+      approvedGrantCardText(ask, grant).includes(`You approved ${phrase}, and it expires`),
+      `the terminal card spells \`${mode}\` as "${phrase}" — the button's own phrasing, preposition included`,
+    );
+    ok(labels.includes(`Approve ${phrase}`), `…and that phrase IS a real button label for \`${mode}\`, never a second spelling of it`);
   }
 
   for (const mode of ["session", "standing"] as const) {
@@ -476,6 +494,38 @@ console.log("8c. the card's answer list reads as options, and promises no reply:
   );
   ok(card.includes("nothing has been granted"), "…and a card whose buttons are missing or dead says NOTHING was granted…");
   ok(card.includes("lapses on its own"), "…and that the request lapses by itself, which is true on every surface");
+}
+
+console.log("9. an approve or a decline rewrites the owner's card — it no longer says 'tap one button':");
+{
+  const approvedText = approvedGrantCardText(askRowFixture as never, grantRowFixture as never);
+  ok(approvedText.includes("✅ APPROVED"), "the approved card says what was decided");
+  ok(approvedText.includes("Tapping a button on this card now does nothing"), "…and states the buttons are dead");
+  ok(!approvedText.includes("Tap one button to answer"), "NEGATIVE CONTROL: the live card's own call-to-action is gone from the decided one");
+
+  const declinedText = declinedGrantCardText(askRowFixture as never);
+  ok(declinedText.includes("🚫 DECLINED"), "the declined card says what was decided");
+  ok(declinedText.includes("Nothing was granted and nothing was spent"), "…and that nothing was spent");
+  ok(!declinedText.includes("Tap one button to answer"), "NEGATIVE CONTROL: same for the decline card");
+
+  {
+    const vendor = server({ tools: PUBLISHED });
+    const { askId } = await raise({ label: "Card rewrite check — approve" });
+    const before = chatUpdates.length;
+    const approved = await approveCredentialGrant(stamps, askId, "session", OWNER, NOW + 500, undefined, deps(vendor));
+    ok(approved.approved, "the approval mints a grant (fixture sanity)");
+    eq(chatUpdates.length, before + 1, "the approve path rewrote the owner's card exactly once");
+    ok(chatUpdates[chatUpdates.length - 1].text.includes("✅ APPROVED"), "…with the approved terminal copy");
+    ok(!chatUpdates[chatUpdates.length - 1].text.includes("Tap one button to answer"), "…never the live card's buttons-are-open copy");
+  }
+  {
+    const { askId } = await raise({ label: "Card rewrite check — decline" });
+    const before = chatUpdates.length;
+    const declined = await declineCredentialGrant(stamps, askId, OWNER, NOW + 500);
+    ok(declined, "the decline is recorded (fixture sanity)");
+    eq(chatUpdates.length, before + 1, "the decline path rewrote the owner's card exactly once");
+    ok(chatUpdates[chatUpdates.length - 1].text.includes("🚫 DECLINED"), "…with the declined terminal copy");
+  }
 }
 
 resetUserAuthFlow();

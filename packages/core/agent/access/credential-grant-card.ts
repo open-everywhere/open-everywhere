@@ -1,7 +1,7 @@
 import { canDeliverDirectMessage, postArm, type DirectMessageAction } from "../channels/post-arms.js";
 import { editSurfaceText } from "../channels/surface-message-ops.js";
 import { GRANT_STANDING_MAX_MS } from "./credential-grant.js";
-import { quotedPurpose, type CredentialGrantAskRow, type CredentialGrantMode } from "../operational/credential-grant-rows.js";
+import { quotedPurpose, type CredentialGrantAskRow, type CredentialGrantMode, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
 
 const STANDING_DAYS = Math.round(GRANT_STANDING_MAX_MS / (24 * 60 * 60 * 1000));
 
@@ -39,11 +39,15 @@ export function parseGrantCardActionId(raw: string | undefined): { readonly askI
   return { answer, askId };
 }
 
+function grantModePhrase(mode: CredentialGrantMode): string {
+  return mode === "once" ? GRANT_MODE_WORDS.once : `for ${GRANT_MODE_WORDS[mode]}`;
+}
+
 export function grantCardActions(ask: CredentialGrantAskRow): readonly DirectMessageAction[] {
   return [
-    { id: grantCardActionId(ask.id, "once"), intent: "affirm", label: `Approve ${GRANT_MODE_WORDS.once}` },
-    { id: grantCardActionId(ask.id, "session"), intent: "affirm", label: `Approve for ${GRANT_MODE_WORDS.session}` },
-    { id: grantCardActionId(ask.id, "standing"), intent: "affirm", label: `Approve for ${GRANT_MODE_WORDS.standing}` },
+    { id: grantCardActionId(ask.id, "once"), intent: "affirm", label: `Approve ${grantModePhrase("once")}` },
+    { id: grantCardActionId(ask.id, "session"), intent: "affirm", label: `Approve ${grantModePhrase("session")}` },
+    { id: grantCardActionId(ask.id, "standing"), intent: "affirm", label: `Approve ${grantModePhrase("standing")}` },
     { id: grantCardActionId(ask.id, "decline"), intent: "reject", label: "Decline" },
   ];
 }
@@ -143,6 +147,29 @@ export function refusedGrantCardText(ask: CredentialGrantAskRow, gate: GrantAppr
 
 export type GrantApproveGate = "tool_absent" | "frozen_args_unknown";
 
+export function approvedGrantCardText(ask: CredentialGrantAskRow, grant: Pick<CredentialGrantRow, "mode" | "expiresAt">): string {
+  return [
+    `✅ APPROVED — you approved this request.`,
+    "",
+    `• Tool: \`${quotedPurpose(ask.mcpTool ?? ask.verb)}\``,
+    `• On: \`${ask.resource}\``,
+    "",
+    `You approved ${grantModePhrase(grant.mode)}, and it expires ${grant.expiresAt}.`,
+    "Tapping a button on this card now does nothing.",
+  ].join("\n");
+}
+
+export function declinedGrantCardText(ask: CredentialGrantAskRow): string {
+  return [
+    `🚫 DECLINED — you declined this request.`,
+    "",
+    `• Tool: \`${quotedPurpose(ask.mcpTool ?? ask.verb)}\``,
+    `• On: \`${ask.resource}\``,
+    "",
+    "Nothing was granted and nothing was spent. Tapping a button on this card now does nothing.",
+  ].join("\n");
+}
+
 export function grantConsentPromptText(ask: CredentialGrantAskRow, url: string): string {
   return [
     `Before that ${ask.connector} grant can be approved, connect your own ${ask.connector} account.`,
@@ -176,6 +203,14 @@ export async function expireGrantCard(ask: CredentialGrantAskRow, requesterNotif
 
 export async function refuseGrantCard(ask: CredentialGrantAskRow, gate: GrantApproveGate): Promise<boolean> {
   return await rewriteGrantCard(ask, refusedGrantCardText(ask, gate));
+}
+
+export async function approveGrantCard(ask: CredentialGrantAskRow, grant: Pick<CredentialGrantRow, "mode" | "expiresAt">): Promise<boolean> {
+  return await rewriteGrantCard(ask, approvedGrantCardText(ask, grant));
+}
+
+export async function declineGrantCard(ask: CredentialGrantAskRow): Promise<boolean> {
+  return await rewriteGrantCard(ask, declinedGrantCardText(ask));
 }
 
 async function rewriteGrantCard(ask: CredentialGrantAskRow, text: string): Promise<boolean> {
