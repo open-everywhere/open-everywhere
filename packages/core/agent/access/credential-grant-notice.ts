@@ -8,14 +8,14 @@ import { getOperationalStore } from "../operational/provider.js";
 import type { CredentialGrantRow } from "../operational/credential-grant-rows.js";
 import { registerGrantRoomNotice } from "./credential-grant-broker.js";
 import { GRANT_MODE_WORDS } from "./credential-grant-card.js";
+import { auditGrant, type GrantAuditStamps } from "./credential-grant-flow.js";
 
 function log(line: string): void {
   console.log(`[open-everywhere:grant] ${line}`);
 }
 
-export interface GrantRoomContext {
+export interface GrantRoomContext extends GrantAuditStamps {
   readonly ctx: BindableContext;
-  readonly org: string;
 }
 
 const roomContext = new AsyncLocalStorage<GrantRoomContext>();
@@ -98,8 +98,38 @@ export async function deliverGrantOwnerNotice(
   if (deliver === undefined || arm === undefined) return false;
   const won = await store.claimNotice(context.org, grantUseNoticeKey(grant.id), atIso);
   if (!won) return false;
-  await deliver.call(arm, { principalId: ask.ownerNativeId, text: grantOwnerNoticeText(grant, requesterLabel) });
+  try {
+    await deliver.call(arm, { principalId: ask.ownerNativeId, text: grantOwnerNoticeText(grant, requesterLabel) });
+  } catch (err) {
+    await auditOwnerNotice(context, grant, ask.ownerPlatform, "failed", err);
+    throw err;
+  }
+  await auditOwnerNotice(context, grant, ask.ownerPlatform, "sent");
   return true;
+}
+
+async function auditOwnerNotice(
+  stamps: GrantAuditStamps,
+  grant: CredentialGrantRow,
+  ownerPlatform: string,
+  outcome: "sent" | "failed",
+  err?: unknown,
+): Promise<void> {
+  try {
+    await auditGrant(stamps, "grant.notified", grant.ownerPrincipalId, {
+      connector: grant.connector,
+      grantId: grant.id,
+      mode: grant.mode,
+      outcome,
+      owner: grant.ownerPrincipalId,
+      ownerPlatform,
+      requester: grant.requesterPrincipalId,
+      verb: grant.verb,
+      ...(err === undefined ? {} : { error: err instanceof Error ? err.name : "unknown" }),
+    });
+  } catch (auditErr) {
+    log(`grant.notified row was not written for grant ${grant.id}: ${String(auditErr)}`);
+  }
 }
 
 export function installGrantUseNotices(): void {

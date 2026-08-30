@@ -17,7 +17,8 @@ import {
   registerGrantableVerb,
   type GrantMintInput,
 } from "../agent/access/credential-grant.js";
-import { expiredGrantCardText, grantCardActions, grantCardText } from "../agent/access/credential-grant-card.js";
+import { expiredGrantCardText, grantCardActions, grantCardText, GRANT_MODE_WORDS, GRANT_ONCE_MAX_ATTEMPTS_PER_TURN } from "../agent/access/credential-grant-card.js";
+import { GRANT_REFUND_CAP_PER_TURN } from "../agent/access/credential-grant-broker.js";
 import { grantResolutionText } from "../agent/access/credential-grant-resolution.js";
 import {
   credentialGrantRefusalMessage,
@@ -361,6 +362,30 @@ console.log("6. the owner's card:");
   ok(
     !text.split("\n").some((l) => /^reply\b/iu.test(l.trim())),
     "🔴 …and it never invites a TYPED reply (OPE-1217): a parsed button id is the only route to `approveCredentialGrant`, so copy offering a reply would promise a control no route reads",
+  );
+
+  eq(
+    GRANT_ONCE_MAX_ATTEMPTS_PER_TURN,
+    GRANT_REFUND_CAP_PER_TURN + 1,
+    "🔴 the card's attempt ceiling IS the broker's refund cap plus the first call — a drift here would print a bound the broker does not enforce",
+  );
+  const onceLine = text.split("\n").find((l) => l.startsWith(`• *Approve ${GRANT_MODE_WORDS.once}*`));
+  ok(onceLine !== undefined, "the `once` bullet is present");
+  ok(
+    (onceLine ?? "").includes(String(GRANT_ONCE_MAX_ATTEMPTS_PER_TURN)),
+    "…and it states the attempt ceiling, interpolated from the pinned constant rather than typed as prose",
+  );
+  ok(
+    !/one single call/iu.test(onceLine ?? ""),
+    "🔴 …and NEVER 'one single call, and the grant is spent' — the burn is a DISPATCHED call, and a blocked attempt refunds, so that sentence undersold what one approval admits (OPE-1198/OPE-1240)",
+  );
+  ok(
+    /in one turn/iu.test(onceLine ?? ""),
+    "🔴 …and it SCOPES that ceiling to one turn — the broker's allowance rolls at the turn boundary (both stores reset `refund_count` when `refund_turn` changes), so a bullet stating the number as an absolute ceiling would promise the owner a bound the code does not enforce",
+  );
+  ok(
+    (onceLine ?? "").includes("notion"),
+    "…and it names the connector the call would actually reach, so 'one call' is anchored to something the owner recognises",
   );
   eq(quotedPurpose('a "quoted" purpose'), "a quoted purpose", "quotedPurpose strips the characters that would escape the span");
   ok(quotedPurpose("x".repeat(500)).length <= 200, "…and caps the length");

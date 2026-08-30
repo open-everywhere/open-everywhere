@@ -100,7 +100,7 @@ export function grantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry |
         surface = p.surface;
       } catch {
       }
-      return withGrantRoomContext({ ctx: c, org }, () =>
+      return withGrantRoomContext({ ctx: c, org, platform, workspace, ...(surface === undefined ? {} : { surface }) }, () =>
         runGrantedCall(grant.id, (input ?? {}) as Record<string, unknown>, {
           nowMs: Date.now(),
           org,

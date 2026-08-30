@@ -18,7 +18,7 @@ export const discordMessageOps: SurfaceMessageOps = {
     const res = await fetch(`${API}/channels/${channelId}/messages/${messageId}`, {
       method: "PATCH",
       headers: { authorization: `Bot ${botToken()}`, "content-type": "application/json" },
-      body: JSON.stringify({ content: text }),
+      body: JSON.stringify({ components: [], content: text }),
     });
     if (!res.ok) throw new Error(`Discord edit-message failed (${res.status}) for channel ${channelId}`);
   },

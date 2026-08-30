@@ -5,6 +5,8 @@ import { quotedPurpose, type CredentialGrantAskRow, type CredentialGrantMode } f
 
 const STANDING_DAYS = Math.round(GRANT_STANDING_MAX_MS / (24 * 60 * 60 * 1000));
 
+export const GRANT_ONCE_MAX_ATTEMPTS_PER_TURN = 4;
+
 export const GRANT_MODE_WORDS: Readonly<Record<CredentialGrantMode, string>> = {
   once: "once",
   session: "this conversation",
@@ -59,7 +61,7 @@ export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string
     `• Their stated purpose: "${quotedPurpose(ask.purpose)}"`,
     "",
     "Tap one button to answer:",
-    `• *Approve ${GRANT_MODE_WORDS.once}* — one single call, and the grant is spent.`,
+    `• *Approve ${GRANT_MODE_WORDS.once}* — one call that actually reaches ${ask.connector}. An attempt blocked before it is sent costs nothing and can be retried — at most ${String(GRANT_ONCE_MAX_ATTEMPTS_PER_TURN)} attempts in one turn.`,
     `• *Approve for ${GRANT_MODE_WORDS.session}* — every call that conversation makes, until the grant expires.`,
     `• *Approve for ${GRANT_MODE_WORDS.standing}* — a standing grant, clamped to a fixed ${String(STANDING_DAYS)}-day ceiling.`,
     "• *Decline* — nothing is granted.",

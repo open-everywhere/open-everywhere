@@ -249,7 +249,7 @@ console.log("7. an unaddressable room still DMs the owner:");
   const grantId = await mintGrant("session-noroom", "standing");
   const postsBefore = posted.length;
   const dmsBefore = dmed.length;
-  await withGrantRoomContext({ ctx: seatCtx("session-noroom", false), org: ORG }, () =>
+  await withGrantRoomContext({ ctx: seatCtx("session-noroom", false), ...stamps }, () =>
     runGrantedCall(grantId, {}, { ...stamps, nowMs: NOW + 1000, requesterPrincipalId: "slack/T1/U-req", scopeKey: "session-noroom" }),
   );
   eq(posted.length, postsBefore, "the room half posted nothing — an unresolvable target is an honest 'cannot post here'");
@@ -262,7 +262,7 @@ console.log("7b. no DM arm — the first-use claim survives:");
   registerPostArm({ ...slackArmMembers, platform: "slack" });
   const postsBefore = posted.length;
   const dmsBefore = dmed.length;
-  await withGrantRoomContext({ ctx: seatCtx("session-nodm"), org: ORG }, () =>
+  await withGrantRoomContext({ ctx: seatCtx("session-nodm"), ...stamps }, () =>
     runGrantedCall(grantId, {}, { ...stamps, nowMs: NOW + 1000, requesterPrincipalId: "slack/T1/U-req", scopeKey: "session-nodm" }),
   );
   eq(posted.length, postsBefore + 1, "the room still saw the line");
@@ -274,7 +274,7 @@ console.log("7b. no DM arm — the first-use claim survives:");
   );
 
   registerPostArm({ ...slackArmMembers, deliverDirectMessage: captureDirectMessage, platform: "slack" });
-  await withGrantRoomContext({ ctx: seatCtx("session-nodm"), org: ORG }, () =>
+  await withGrantRoomContext({ ctx: seatCtx("session-nodm"), ...stamps }, () =>
     runGrantedCall(grantId, {}, { ...stamps, nowMs: NOW + 2000, requesterPrincipalId: "slack/T1/U-req", scopeKey: "session-nodm" }),
   );
   eq(dmed.length, dmsBefore + 1, "…the owner IS DMed on the next call, once a DM arm exists");
@@ -291,6 +291,62 @@ console.log("8. the audit log:");
     7,
     "…while every one of the seven successful granted calls above IS recorded, where a granted call belongs: a `grant.used` row naming both principals",
   );
+
+  const notified = rows.filter((r) => r.action === "grant.notified");
+  const noticeDms = dmed.filter((d) => d.text.includes("credential was just used"));
+  eq(notified.length, noticeDms.length, "one `grant.notified` row per owner-notice DM that actually went out — the row IS the delivery evidence, not a restatement of intent");
+  ok(notified.length > 0, "…and that count is not zero, so the assertion above is a measurement rather than 0 === 0");
+  eq(
+    notified.filter((r) => r.detail?.outcome === "sent").length,
+    notified.length,
+    "…every one of them says `sent`, because every DM above was delivered by an arm that returned",
+  );
+  ok(
+    notified.length < rows.filter((r) => r.action === "grant.used").length,
+    "…and there are FEWER notice rows than granted calls: the row follows the once-per-grant claim, never the call",
+  );
+  const sample = notified[0];
+  eq(sample.principalId, "slack/T1/U-owner", "the row is attributed to the OWNER — the person it is evidence about");
+  eq(sample.detail?.requester, "slack/T1/U-req", "…and carries the REQUESTER too, so it joins to `grant.used` by eye");
+  eq(sample.detail?.ownerPlatform, "slack", "…and the platform the DM was addressed on");
+  ok(typeof sample.detail?.grantId === "string" && sample.detail.grantId.length > 0, "…and the grant id a revocation would name");
+  eq(sample.detail?.resource, undefined, "🔴 …and NEVER the resource: the DM's text is composed from model-authored arguments, and this plane audits ids and names");
+}
+
+console.log("8b. the owner DM fails — and the failure is a row:");
+{
+  const grantId = await mintGrant("session-dmfail", "standing");
+  const notifiedBefore = (await readAudit({ org: ORG })).filter((r) => r.action === "grant.notified").length;
+  const dmsBefore = dmed.length;
+  registerPostArm({
+    ...slackArmMembers,
+    deliverDirectMessage: async (): Promise<{ messageId: string; surfaceId: string }> => {
+      const err = new Error("slack refused chat.postMessage to D-owner");
+      err.name = "DmTransportError";
+      throw err;
+    },
+    platform: "slack",
+  });
+  const result = await callThroughMount("session-dmfail");
+  registerPostArm({ ...slackArmMembers, deliverDirectMessage: captureDirectMessage, platform: "slack" });
+
+  ok(result.ok, "the granted call still succeeded — a notice is never a gate, however it fails");
+  eq(dmed.length, dmsBefore, "…and no DM was captured, because the arm threw before delivering one");
+  const rows = (await readAudit({ org: ORG })).filter((r) => r.action === "grant.notified");
+  eq(rows.length, notifiedBefore + 1, "…yet the attempt left EXACTLY ONE new row — the send result is recorded whether or not it worked");
+  const row = rows.find((r) => r.detail?.grantId === grantId);
+  assert.ok(row !== undefined, "…naming the grant whose owner was not reached");
+  eq(row.detail?.outcome, "failed", "…and the row says `failed`, which is the fact an operator asking 'was the owner told?' needs");
+  eq(row.detail?.error, "DmTransportError", "…and the error CLASS");
+  ok(
+    !JSON.stringify(row.detail).includes("D-owner"),
+    "🔴 …never the thrown MESSAGE: a transport error quotes the address it could not reach, and an audit row is not the place for it",
+  );
+  eq(
+    await store.noticeClaimed(ORG, grantUseNoticeKey(grantId)),
+    true,
+    "…and the claim STAYS held: a failed send does not give it back (the pager this design refuses), which is why the row has to exist at all",
+  );
 }
 
 console.log("9. the two halves called directly:");
@@ -300,7 +356,7 @@ console.log("9. the two halves called directly:");
   eq(await postGrantRoomNotice(undefined, "acting as rowan_hale", grant, "2026-05-04T05:52:02.000Z"), false, "postGrantRoomNotice with NO context posts nothing and reports false");
   eq(await deliverGrantOwnerNotice(undefined, grant, "2026-05-04T05:52:02.000Z"), false, "deliverGrantOwnerNotice with NO context delivers nothing and reports false");
   eq(
-    await deliverGrantOwnerNotice({ ctx: seatCtx("session-standing"), org: ORG }, grant, "2026-05-04T05:52:02.000Z"),
+    await deliverGrantOwnerNotice({ ctx: seatCtx("session-standing"), ...stamps }, grant, "2026-05-04T05:52:02.000Z"),
     false,
     "…and a grant whose claim is already held delivers nothing, however it is called",
   );
