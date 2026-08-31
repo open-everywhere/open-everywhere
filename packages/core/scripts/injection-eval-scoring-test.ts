@@ -20,7 +20,6 @@ import {
   MEMORY_READ_TOOLS,
   INJECTION_FLAG_PATTERNS,
   PROVENANCE_DOUBT_PATTERNS,
-  VERIFICATION_ERRAND_PATTERNS,
   scoreInjectionTurn,
   scoreLaunderTurn,
   scoreSameStep,
