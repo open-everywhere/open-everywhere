@@ -54,7 +54,7 @@ const run = (text: string, over: Partial<CountedClaim> = {}, facts: CountedFacts
 
 {
   const r = run("The seat holds many tools today.", { pattern: String.raw`holds (\w+) tools` });
-  ok(r.problems.length === 1 && r.problems[0]?.includes("not an integer") === true, "3: a non-integer capture is reported, never coerced");
+  ok(r.problems.length === 1 && r.problems[0]?.includes("not a number") === true, "3: a non-numeric capture is reported, never coerced");
 }
 
 {
@@ -121,6 +121,69 @@ const run = (text: string, over: Partial<CountedClaim> = {}, facts: CountedFacts
   ok(covered.has("AGENTS.md"), "8f: AGENTS.md is still covered");
 
   ok(COUNTED_CLAIMS.some((c) => c.kind === "names"), "8g: at least one shipped claim checks the name list itself");
+
+  ok(covered.has("docs/capabilities/connectors-and-providers.md"), "8h: the connectors manual is still covered");
+  ok(COUNTED_CLAIMS.some((c) => c.kind === "scalar"), "8i: at least one shipped claim checks a bare bound");
 }
 
-console.log(`✓ counted-claims: ${passed} assertions — a drifted count or name list fails, and a claim that stops matching its prose fails rather than passing silently`);
+{
+  const facts: CountedFacts = { ...FACTS, cap: 3 };
+  const scalar = (over: Partial<CountedClaim> = {}): Partial<CountedClaim> => ({
+    fact: "cap",
+    kind: "scalar",
+    pattern: String.raw`capped at (\d+) per row`,
+    ...over,
+  });
+
+  const bad = run("Refunds are capped at 5 per row today.", scalar(), facts);
+  ok(bad.problems.length === 1, "9a: a stated bound that differs from the constant is a problem");
+  ok(bad.problems[0]?.includes("says 5") === true, "9b: the problem quotes what the document says");
+  ok(bad.problems[0]?.includes("code holds 3") === true, "9c: the problem quotes the constant, not a list length");
+
+  const good = run("Refunds are capped at 3 per row today.", scalar(), facts);
+  ok(good.problems.length === 0, "9d: the same document with the right number is green");
+  ok(good.checked === 1, "9e: the green reports the claim as actually evaluated, not skipped");
+
+  const asLength = run("Refunds are capped at 3 per row today.", scalar({ fact: "roster" }), facts);
+  ok(asLength.problems.length === 1, "9f: a scalar claim over a NAME LIST is a problem, even when the length matches");
+  ok(asLength.problems[0]?.includes("needs a number fact") === true, "9g: the problem says the fact's shape is wrong");
+}
+
+{
+  const facts: CountedFacts = { ...FACTS, cap: 3, attempts: 4 };
+  const words = (pattern: string, fact: string): Partial<CountedClaim> => ({ fact, kind: "scalar", pattern });
+
+  const cardinal = run("It admits at most four sessions.", words(String.raw`at most (\w+) sessions`, "attempts"), facts);
+  ok(cardinal.problems.length === 0, "10a: a cardinal word that states the constant is green");
+
+  const cardinalWrong = run("It admits at most five sessions.", words(String.raw`at most (\w+) sessions`, "attempts"), facts);
+  ok(cardinalWrong.problems.length === 1 && cardinalWrong.problems[0]?.includes("says 5") === true, "10b: the WRONG cardinal word is red, and the problem reports its value");
+
+  const ordinal = run("The fourth refund is refused.", words(String.raw`The (\w+) refund is refused`, "attempts"), facts);
+  ok(ordinal.problems.length === 0, "10c: an ordinal word resolves to the same value as its cardinal");
+
+  const ordinalWrong = run("The third refund is refused.", words(String.raw`The (\w+) refund is refused`, "attempts"), facts);
+  ok(ordinalWrong.problems.length === 1 && ordinalWrong.problems[0]?.includes("says 3") === true, "10d: the WRONG ordinal word is red");
+
+  const tooBig = run("It admits at most nineteen sessions.", words(String.raw`at most (\w+) sessions`, "attempts"), facts);
+  ok(tooBig.problems.length === 1 && tooBig.problems[0]?.includes("not a number") === true, "10e: a number word past the supported range is reported, not coerced");
+
+  const asCount = run("The seat holds three tools today.", { pattern: String.raw`holds (\w+) tools` }, facts);
+  ok(asCount.problems.length === 0, "10f: a count claim reads a number word as well");
+}
+
+{
+  const facts: CountedFacts = { ...FACTS, cap: 3 };
+
+  const asCount = run("The seat holds 3 tools today.", { fact: "cap" }, facts);
+  ok(asCount.problems.length === 1, "11a: a count claim over a number fact is a problem, even when the number matches");
+  ok(asCount.problems[0]?.includes("needs a name-list fact") === true, "11b: the problem says a bound holds no members to count");
+
+  const asNames = run("The roster is exactly: `reply`.", { fact: "cap", kind: "names", pattern: String.raw`exactly: ([^.]+)\.` }, facts);
+  ok(asNames.problems.length === 1 && asNames.problems[0]?.includes("needs a name-list fact") === true, "11c: a names claim over a number fact is the same problem");
+}
+
+console.log(
+  `✓ counted-claims: ${passed} assertions — a drifted count, name list or bound fails, a number word reads as its value, ` +
+    `and a claim that stops matching its prose fails rather than passing silently`,
+);

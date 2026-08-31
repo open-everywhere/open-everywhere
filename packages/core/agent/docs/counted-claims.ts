@@ -1,4 +1,4 @@
-export type CountedClaimKind = "count" | "names";
+export type CountedClaimKind = "count" | "names" | "scalar";
 
 export interface CountedClaim {
   readonly id: string;
@@ -8,9 +8,16 @@ export interface CountedClaim {
   readonly pattern: string;
 }
 
-export type CountedFacts = Readonly<Record<string, readonly string[]>>;
+export type CountedFacts = Readonly<Record<string, readonly string[] | number>>;
 
-export const COUNTED_FACT_KEYS = ["lean-seat-tools", "worker-only-standing", "worker-only-thread", "settings-env-seams"] as const;
+export const COUNTED_FACT_KEYS = [
+  "lean-seat-tools",
+  "worker-only-standing",
+  "worker-only-thread",
+  "settings-env-seams",
+  "grant-refund-cap-per-turn",
+  "grant-once-max-attempts-per-turn",
+] as const;
 
 export const COUNTED_CLAIMS: readonly CountedClaim[] = [
   {
@@ -83,6 +90,34 @@ export const COUNTED_CLAIMS: readonly CountedClaim[] = [
     kind: "count",
     pattern: String.raw`the wide delegated child \(seat \+ (\d+),`,
   },
+  {
+    id: "connectors/grant-refund-cap",
+    doc: "docs/capabilities/connectors-and-providers.md",
+    fact: "grant-refund-cap-per-turn",
+    kind: "scalar",
+    pattern: String.raw`\*\*Refunds are capped at (\d+) per grant row per turn\*\*`,
+  },
+  {
+    id: "connectors/grant-once-vendor-sessions",
+    doc: "docs/capabilities/connectors-and-providers.md",
+    fact: "grant-once-max-attempts-per-turn",
+    kind: "scalar",
+    pattern: String.raw`one approval admits at most (\w+)\s+vendor sessions inside a turn`,
+  },
+  {
+    id: "connectors/grant-refund-restorations",
+    doc: "docs/capabilities/connectors-and-providers.md",
+    fact: "grant-refund-cap-per-turn",
+    kind: "scalar",
+    pattern: String.raw`the first burn plus (\w+) restorations`,
+  },
+  {
+    id: "connectors/grant-refund-refused-ordinal",
+    doc: "docs/capabilities/connectors-and-providers.md",
+    fact: "grant-once-max-attempts-per-turn",
+    kind: "scalar",
+    pattern: String.raw`The (\w+) refund is\s+refused and the row stays spent`,
+  },
 ];
 
 export interface CountedClaimsInput {
@@ -98,6 +133,24 @@ export interface CountedClaimsReport {
 
 function captureGroupCount(pattern: string): number {
   return (new RegExp(`${pattern}|`).exec("")?.length ?? 1) - 1;
+}
+
+const CARDINAL_WORDS: readonly string[] = [
+  "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+];
+
+const ORDINAL_WORDS: readonly string[] = [
+  "zeroth", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth",
+];
+
+function parseStatedNumber(capture: string): number | undefined {
+  const text = capture.trim().toLowerCase();
+  if (/^\d+$/.test(text)) return Number.parseInt(text, 10);
+  const cardinal = CARDINAL_WORDS.indexOf(text);
+  if (cardinal >= 0) return cardinal;
+  const ordinal = ORDINAL_WORDS.indexOf(text);
+  if (ordinal >= 0) return ordinal;
+  return undefined;
 }
 
 function parseNameList(capture: string): string[] {
@@ -135,6 +188,17 @@ export function checkCountedClaims(input: CountedClaimsInput): CountedClaimsRepo
       continue;
     }
 
+    const factNumber = typeof fact === "number" ? fact : undefined;
+    const factNames = typeof fact === "number" ? undefined : fact;
+    if (claim.kind === "scalar" && factNumber === undefined) {
+      problems.push(`${at}: a "scalar" claim needs a number fact, and "${claim.fact}" is a name list — check the fact's shape, not just its name`);
+      continue;
+    }
+    if (claim.kind !== "scalar" && factNames === undefined) {
+      problems.push(`${at}: a "${claim.kind}" claim needs a name-list fact, and "${claim.fact}" is a number — a bound holds no members to count or name`);
+      continue;
+    }
+
     const text = input.docs.get(claim.doc);
     if (text === undefined) {
       problems.push(`${at}: the document was not read — it moved or was deleted, so the claim can no longer be checked`);
@@ -167,18 +231,24 @@ export function checkCountedClaims(input: CountedClaimsInput): CountedClaimsRepo
     checked += 1;
     const capture = found[0] ?? "";
 
-    if (claim.kind === "count") {
-      const stated = Number.parseInt(capture, 10);
-      if (!Number.isInteger(stated)) {
-        problems.push(`${at}: captured "${capture}", which is not an integer — the pattern's group is on the wrong text`);
-      } else if (stated !== fact.length) {
-        problems.push(`${at}: the document says ${stated}, the code holds ${fact.length} (fact "${claim.fact}")`);
+    if (claim.kind === "count" || claim.kind === "scalar") {
+      const stated = parseStatedNumber(capture);
+      if (stated === undefined) {
+        problems.push(
+          `${at}: captured "${capture}", which is not a number — the pattern's group is on the wrong text. ` +
+            `Digits are read, and so is a cardinal or ordinal number word up to "twelve".`,
+        );
+        continue;
+      }
+      const held = factNumber ?? factNames?.length ?? Number.NaN;
+      if (stated !== held) {
+        problems.push(`${at}: the document says ${stated}, the code holds ${held} (fact "${claim.fact}")`);
       }
       continue;
     }
 
     const stated = new Set(parseNameList(capture));
-    const actual = new Set(fact);
+    const actual = new Set(factNames);
     const missing = [...actual].filter((n) => !stated.has(n));
     const extra = [...stated].filter((n) => !actual.has(n));
     if (missing.length > 0 || extra.length > 0) {

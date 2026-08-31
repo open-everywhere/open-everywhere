@@ -8,6 +8,8 @@ import {
   WORKER_ONLY_TOOLS_THREAD,
 } from "@open-everywhere/core/agent/access/worker-capability-index.generated.js";
 import { SETTINGS } from "@open-everywhere/core/agent/settings/settings.js";
+import { GRANT_REFUND_CAP_PER_TURN } from "@open-everywhere/core/agent/access/credential-grant-broker.js";
+import { GRANT_ONCE_MAX_ATTEMPTS_PER_TURN } from "@open-everywhere/core/agent/access/credential-grant-card.js";
 import { COUNTED_CLAIMS, COUNTED_FACT_KEYS, checkCountedClaims, type CountedFacts } from "@open-everywhere/core/agent/docs/counted-claims.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -29,6 +31,8 @@ const facts: CountedFacts = {
   "worker-only-standing": WORKER_ONLY_TOOLS_STANDING,
   "worker-only-thread": WORKER_ONLY_TOOLS_THREAD,
   "settings-env-seams": settingsEnvSeams(),
+  "grant-refund-cap-per-turn": GRANT_REFUND_CAP_PER_TURN,
+  "grant-once-max-attempts-per-turn": GRANT_ONCE_MAX_ATTEMPTS_PER_TURN,
 };
 
 const derived = new Set(Object.keys(facts));
@@ -57,8 +61,14 @@ if (report.problems.length > 0) {
   process.exit(1);
 }
 
+function factValue(key: string): number {
+  const fact = facts[key];
+  return typeof fact === "number" ? fact : (fact?.length ?? Number.NaN);
+}
+
 console.log(
   `✓ counted-claims-lint: ${report.checked}/${COUNTED_CLAIMS.length} counted claims hold across ${docs.size} document(s) — ` +
-    `lean seat ${facts["lean-seat-tools"]?.length}, worker-only standing ${facts["worker-only-standing"]?.length}, ` +
-    `worker-only thread ${facts["worker-only-thread"]?.length}, settings env seams ${facts["settings-env-seams"]?.length}.`,
+    `lean seat ${factValue("lean-seat-tools")}, worker-only standing ${factValue("worker-only-standing")}, ` +
+    `worker-only thread ${factValue("worker-only-thread")}, settings env seams ${factValue("settings-env-seams")}, ` +
+    `grant refund cap ${factValue("grant-refund-cap-per-turn")}, once-grant attempts ${factValue("grant-once-max-attempts-per-turn")}.`,
 );
