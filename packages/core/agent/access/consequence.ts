@@ -75,18 +75,30 @@ function connectorPathTokens(toolName: string): string[] {
   return segments.slice(1).join("__").toLowerCase().split(/[_-]/);
 }
 
-export function classifyConnectorOpTier(toolName: string): ConnectorOpTier {
+export type OpTierBasis = "destructive-verb" | "write-verb" | "read-verb" | "unrecognised";
+
+export interface ConnectorOpTierVerdict {
+  readonly tier: ConnectorOpTier;
+  readonly basis: OpTierBasis;
+}
+
+export function classifyConnectorOpTierVerdict(toolName: string): ConnectorOpTierVerdict {
   let best: ConnectorOpTier | undefined;
   for (const token of connectorOpVerbTokens(toolName)) {
-    if (CONNECTOR_DESTRUCTIVE_VERBS.includes(token)) return "destructive";
+    if (CONNECTOR_DESTRUCTIVE_VERBS.includes(token)) return { tier: "destructive", basis: "destructive-verb" };
     if (CONNECTOR_WRITE_VERBS.includes(token)) best = "write";
     else if (best === undefined && CONNECTOR_READ_VERBS.includes(token)) best = "read";
   }
+  const basis: OpTierBasis = best === "write" ? "write-verb" : best === "read" ? "read-verb" : "unrecognised";
   for (const token of connectorPathTokens(toolName)) {
-    if (CONNECTOR_DESTRUCTIVE_VERBS.includes(token)) return "destructive";
+    if (CONNECTOR_DESTRUCTIVE_VERBS.includes(token)) return { tier: "destructive", basis };
     if (best === "read" && CONNECTOR_WRITE_VERBS.includes(token)) best = "write";
   }
-  return best ?? "destructive";
+  return { tier: best ?? "destructive", basis };
+}
+
+export function classifyConnectorOpTier(toolName: string): ConnectorOpTier {
+  return classifyConnectorOpTierVerdict(toolName).tier;
 }
 
 export function restMethodTier(method: string): ConnectorOpTier {

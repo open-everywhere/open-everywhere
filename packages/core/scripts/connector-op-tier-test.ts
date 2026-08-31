@@ -1,6 +1,7 @@
 import {
   classifyConnectorOp,
   classifyConnectorOpTier,
+  classifyConnectorOpTierVerdict,
   connectorOpName,
   CONNECTOR_DESTRUCTIVE_VERBS,
   CONNECTOR_READ_VERBS,
@@ -10,6 +11,8 @@ import {
   parseQualifiedToolName,
   TOOL_CONSEQUENCE,
   type ConnectorOpTier,
+  type ConnectorOpTierVerdict,
+  type OpTierBasis,
 } from "../agent/access/consequence.js";
 import { WORKER_ONLY_TOOLS_STANDING, WORKER_ONLY_TOOLS_THREAD } from "../agent/access/worker-capability-index.generated.js";
 import { connectorOpApproval, connectorApprovalPolicy } from "../agent/connections/connector-auth.js";
@@ -87,6 +90,99 @@ function oracleTier(toolName: string): ConnectorOpTier {
 
 const TIER_RANK: Readonly<Record<ConnectorOpTier, number>> = { read: 0, write: 1, destructive: 2 };
 
+const BASIS_IMPLIED_TIER: Readonly<Record<OpTierBasis, ConnectorOpTier>> = {
+  "read-verb": "read",
+  "write-verb": "write",
+  "destructive-verb": "destructive",
+  unrecognised: "destructive",
+};
+
+function hasConnectionPath(toolName: string): boolean {
+  const parsed = parseQualifiedToolName(toolName);
+  return parsed?.connection !== undefined && parsed.connection.includes("__");
+}
+
+function checkedVerdict(toolName: string): ConnectorOpTierVerdict {
+  const verdict = classifyConnectorOpTierVerdict(toolName);
+  const viaTier = classifyConnectorOpTier(toolName);
+  if (viaTier !== verdict.tier) {
+    console.error(`✗ NOT OBSERVATION-EQUIVALENT: ${toolName} — classifyConnectorOpTier says ${viaTier}, the verdict says ${verdict.tier}`);
+    process.exit(1);
+  }
+  const implied = BASIS_IMPLIED_TIER[verdict.basis];
+  const broken = hasConnectionPath(toolName) ? TIER_RANK[verdict.tier] < TIER_RANK[implied] : verdict.tier !== implied;
+  if (broken) {
+    console.error(`✗ BASIS LAW BROKEN: ${toolName} — basis ${verdict.basis} implies ${implied}, tier is ${verdict.tier}`);
+    process.exit(1);
+  }
+  return verdict;
+}
+
+for (const verb of CONNECTOR_READ_VERBS) {
+  const v = checkedVerdict(`notion__${verb}`);
+  ok(v.tier === "read" && v.basis === "read-verb", `read verb ${verb} → read on a read-verb basis`);
+}
+for (const verb of CONNECTOR_WRITE_VERBS) {
+  const v = checkedVerdict(`notion__${verb}`);
+  ok(v.tier === "write" && v.basis === "write-verb", `write verb ${verb} → write on a write-verb basis`);
+}
+for (const verb of CONNECTOR_DESTRUCTIVE_VERBS) {
+  const v = checkedVerdict(`notion__${verb}`);
+  ok(v.tier === "destructive" && v.basis === "destructive-verb", `destructive verb ${verb} → destructive on a destructive-verb basis`);
+}
+
+ok(classifyConnectorOpTierVerdict("notion__delete_page").basis === "destructive-verb", "a KNOWN destructive verb reports a destructive-verb basis");
+ok(classifyConnectorOpTierVerdict("notion__frobnicate_widget").basis === "unrecognised", "…and an unknown verb at the SAME tier reports `unrecognised` — the fail-closed default, not a delete");
+for (const unknown of ["notion__frobnicate", "notion__", "helpdesk__constructor", "sentinel__op", "grant__frobnicate", "grant__a__b__c", "grant__search"]) {
+  const v = checkedVerdict(unknown);
+  ok(v.tier === "destructive" && v.basis === "unrecognised", `${unknown} → destructive on an UNRECOGNISED basis`);
+}
+
+{
+  const v = checkedVerdict("acme__delete__query");
+  ok(v.tier === "destructive", "a destructive PATH token raises a read verb to destructive");
+  ok(v.basis === "read-verb", "…and the basis still reports the VERB pass — the op's own verb reads, the connection path is what gated it");
+}
+{
+  const v = checkedVerdict("acme__delete__create_page");
+  ok(v.tier === "destructive" && v.basis === "write-verb", "a destructive path token over a WRITE verb keeps the write-verb basis");
+}
+{
+  const v = checkedVerdict("acme__delete__frobnicate");
+  ok(v.tier === "destructive" && v.basis === "unrecognised", "…and over an UNKNOWN verb the basis stays unrecognised — the path never rescues it into a named reason");
+}
+{
+  const v = checkedVerdict("acme__create__query");
+  ok(v.tier === "write" && v.basis === "read-verb", "a write path token raises a read verb to write, and the basis stays read-verb");
+}
+{
+  const v = checkedVerdict("acme__search__query");
+  ok(v.tier === "read" && v.basis === "read-verb", "a read path token changes neither tier nor basis");
+}
+{
+  const v = checkedVerdict("grant__amy_delete__get_page");
+  ok(v.tier === "read" && v.basis === "read-verb", "the reserved OWNER segment reaches neither tier nor basis — a handle is not a verb");
+}
+ok(classifyConnectorOpTierVerdict("notion__get_or_create_entity").basis === "write-verb", "a compound verb's write token supplies the basis, whatever its head token says");
+ok(classifyConnectorOpTierVerdict("x__get_delete_marker").basis === "destructive-verb", "…and a destructive token in a compound verb wins the basis outright");
+ok(classifyConnectorOpTierVerdict("search").basis === "read-verb", "an unqualified name is tokenised whole — `search` reads, on a read-verb basis");
+
+for (const [name, tier, basis] of [
+  ["acme__delete_search", "destructive", "destructive-verb"],
+  ["delete__delete_search", "read", "read-verb"],
+  ["delete__delete_page", "destructive", "unrecognised"],
+  ["get__get_frobnicate", "destructive", "unrecognised"],
+] as const) {
+  const v = checkedVerdict(name);
+  ok(v.tier === tier, `head-prefix strip: ${name} → ${tier}`);
+  ok(v.basis === basis, `…on a ${basis} basis (${name})`);
+  ok(oracleTier(name) === tier, `…and the pre-OPE-1060 oracle agrees, so OPE-1321 moved nothing here (${name})`);
+}
+ok(
+  classifyConnectorOpTier("delete__delete_search") === "read" && classifyConnectorOpTier("acme__delete_search") === "destructive",
+  "🔴 the SAME op name classifies read or destructive depending only on the CONNECTION SLUG — the open arm OPE-1325 owns",
+);
+
 for (const falseOpen of [
   "grant__will_read__frobnicate",
   "grant__team_get__frobnicate",
@@ -94,7 +190,9 @@ for (const falseOpen of [
   "wiki__list__frobnicate",
 ]) {
   ok(oracleTier(falseOpen) === "read", `NEGATIVE CONTROL — the pre-fix classifier called ${falseOpen} a READ, so the call took NO card`);
-  ok(classifyConnectorOpTier(falseOpen) === "destructive", `${falseOpen} → destructive: an unknown verb fails closed, whatever the middle segment spells`);
+  const v = checkedVerdict(falseOpen);
+  ok(v.tier === "destructive", `${falseOpen} → destructive: an unknown verb fails closed, whatever the middle segment spells`);
+  ok(v.basis === "unrecognised", `…and the basis SAYS the verb was unrecognised, so no caller may read the gate as a delete (${falseOpen})`);
   ok(classifyConnectorOp(falseOpen) === "gate:member", `${falseOpen} → gate:member: the call now takes a card`);
 }
 
@@ -111,7 +209,9 @@ ok(oracleTier("grant__delete__query") === "destructive", "the pre-fix classifier
 ok(classifyConnectorOpTier("grant__delete__query") === "read", "…and the fix does not — the owner segment is inert in BOTH directions (no grant tool ships yet)");
 
 for (const malformed of ["grant__frobnicate", "grant__a__b__c", "grant__amy__", "grant__"]) {
-  ok(classifyConnectorOpTier(malformed) === "destructive", `malformed reserved name ${malformed} → destructive (fail-closed)`);
+  const v = checkedVerdict(malformed);
+  ok(v.tier === "destructive", `malformed reserved name ${malformed} → destructive (fail-closed)`);
+  ok(v.basis === "unrecognised", `…on an unrecognised basis: an unparseable name yields no verb tokens at all (${malformed})`);
   ok(classifyConnectorOp(malformed) === "gate:member", `malformed reserved name ${malformed} → gate:member`);
 }
 ok(classifyConnectorOpTier("grant__search") === "destructive", "🔴 a two-segment `grant__search` does NOT read as a connector op called `grant` — the reserved head fails closed");
@@ -173,8 +273,9 @@ let twoSegmentChecked = 0;
 for (const head of CONNECTION_HEADS) {
   for (const verb of VERB_SHAPES) {
     const name = `${head}__${verb}`;
-    if (classifyConnectorOpTier(name) !== oracleTier(name)) {
-      console.error(`✗ two-segment name changed tier: ${name} — was ${oracleTier(name)}, now ${classifyConnectorOpTier(name)}`);
+    const verdict = checkedVerdict(name);
+    if (verdict.tier !== oracleTier(name)) {
+      console.error(`✗ two-segment name changed tier: ${name} — was ${oracleTier(name)}, now ${verdict.tier}`);
       process.exit(1);
     }
     twoSegmentChecked++;
@@ -184,8 +285,9 @@ ok(twoSegmentChecked > 3000, `two-segment corpus is real (${twoSegmentChecked} n
 
 let observedChanged = 0;
 for (const name of OBSERVED_QUALIFIED_NAMES) {
-  if (classifyConnectorOpTier(name) !== oracleTier(name)) {
-    console.error(`✗ an OBSERVED tool name changed tier: ${name} — was ${oracleTier(name)}, now ${classifyConnectorOpTier(name)}`);
+  const verdict = checkedVerdict(name);
+  if (verdict.tier !== oracleTier(name)) {
+    console.error(`✗ an OBSERVED tool name changed tier: ${name} — was ${oracleTier(name)}, now ${verdict.tier}`);
     observedChanged++;
   }
 }
@@ -193,16 +295,26 @@ ok(observedChanged === 0, `every one of the ${OBSERVED_QUALIFIED_NAMES.length} q
 
 let threeSegmentChecked = 0;
 let tightened = 0;
+let raisedOffBasis = 0;
+const basisByVerb = new Map<string, OpTierBasis>();
 for (const head of ["acme", "wiki", "helpdesk", "notion", "search"]) {
   for (const middle of ["search", "list", "delete", "create", "mirror", "will_read", "amy", "team_get"]) {
     for (const verb of ["query", "get_page", "create_page", "delete_page", "frobnicate", ""]) {
       const name = `${head}__${middle}__${verb}`;
-      const now = classifyConnectorOpTier(name);
+      const verdict = checkedVerdict(name);
+      const now = verdict.tier;
       const was = oracleTier(name);
       if (TIER_RANK[now] < TIER_RANK[was]) {
         console.error(`✗ three-segment name got MORE OPEN: ${name} — was ${was}, now ${now}`);
         process.exit(1);
       }
+      const settled = basisByVerb.get(verb);
+      if (settled === undefined) basisByVerb.set(verb, verdict.basis);
+      else if (settled !== verdict.basis) {
+        console.error(`✗ the basis LEAKED a path token: ${name} — verb \`${verb}\` reported ${settled} elsewhere, ${verdict.basis} here`);
+        process.exit(1);
+      }
+      if (TIER_RANK[now] > TIER_RANK[BASIS_IMPLIED_TIER[verdict.basis]]) raisedOffBasis++;
       if (TIER_RANK[now] > TIER_RANK[was]) tightened++;
       threeSegmentChecked++;
     }
@@ -210,6 +322,8 @@ for (const head of ["acme", "wiki", "helpdesk", "notion", "search"]) {
 }
 ok(threeSegmentChecked === 240, `three-segment corpus is complete (${threeSegmentChecked} names)`);
 ok(tightened > 0, `…and the fix genuinely tightens ${tightened} of them — an all-equal result would mean the defect was never reachable`);
+ok(basisByVerb.size === 6, `the three-segment corpus visited all 6 verb shapes (${basisByVerb.size})`);
+ok(raisedOffBasis > 0, `…and the path pass really does raise ${raisedOffBasis} of them ABOVE their basis — an all-equal result would mean the tier/basis split was never exercised`);
 
 const AUTHORED_AND_FRAMEWORK: readonly string[] = [
   ...Object.keys(TOOL_CONSEQUENCE),
