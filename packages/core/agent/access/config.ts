@@ -1,4 +1,5 @@
 import type { Bundle, Binding } from "./bundle.js";
+import type { ConnectorOpTier } from "./consequence.js";
 import type { ConnectorCredentials } from "./connector-credentials.js";
 import type { NetworkAccessBinding } from "./network-access.js";
 import type { AgentsFile } from "../memory/agents-codemod.js";
@@ -55,6 +56,8 @@ export interface AppConfig {
   loadPrincipals?(): readonly Principal[];
   loadGroups?(): readonly Group[];
   auditScrub?(text: string): string;
+
+  connectorOpTier?(op: { readonly connection: string; readonly verb: string; readonly toolName: string }): ConnectorOpTier | undefined;
 }
 
 let registered: AppConfig | null = null;

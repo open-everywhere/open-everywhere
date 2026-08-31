@@ -25,6 +25,7 @@ import { ROUTINE_MARKER, routineGrantKey, type Routine } from "../agent/routines
 import { routineFireAttributes, webhookFireAttributes } from "../agent/routines/fire-auth.js";
 import { declaredPermissionKinds, grantDeclaredRoutinePermissions } from "../agent/routines/grants.js";
 import { overrideSettingsForTest, registerSettings } from "../agent/settings/settings.js";
+import { effectiveConnectorOpTier } from "../agent/access/connector-op-gating.js";
 
 const { registerConfig } = await import("../agent/access/config.js");
 registerConfig({
@@ -410,5 +411,56 @@ console.log("§14 the permission key is read off the same bag the plane would pi
   );
 }
 
+console.log("§18 an arm cannot stand the unattended fence down:");
+{
+  const armed = (tier: "read" | "write" | "destructive" | undefined) => ({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+    connectorOpTier: () => tier,
+  });
+  const UNKNOWN_OP = "notion__frobnicate_widget";
+
+  registerConfig(armed(undefined));
+  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(), UNKNOWN_OP)), "control: with no arm, an unrecognised op is refused on an unattended fire");
+
+  registerConfig(armed("read"));
+  ok(effectiveConnectorOpTier(UNKNOWN_OP) === "read", "the arm really did decide the op down to `read` (the seam moved)");
+  ok((await ask(connectorApprovalPolicy(), HUMAN_AUTH, UNKNOWN_OP)) === "not-applicable", "…and a HUMAN turn takes the arm's answer: no card, the op runs");
+
+  const decision = await ask(connectorApprovalPolicy(), fireAuth(), UNKNOWN_OP);
+  ok(isDenied(decision), "🔴 an everything-is-read arm does NOT open an unrecognised op on an unattended fire — the fence floors on the built-in");
+  ok(rowFor(await refusedRows(), UNKNOWN_OP)?.detail?.["tier"] === "destructive", "…and it is refused at the BUILT-IN's tier, not the arm's");
+
+  registerConfig(armed("write"));
+  ok(effectiveConnectorOpTier(UNKNOWN_OP) === "write", "the arm really did answer `write` for the unrecognised op (the seam moved)");
+  let refusedDeclaration = false;
+  try {
+    declaredPermissionKinds([`tool:${UNKNOWN_OP}`]);
+  } catch {
+    refusedDeclaration = true;
+  }
+  ok(refusedDeclaration, "🔴 the DECLARATION of an unrecognised op is refused at propose time — the static tier, which no arm moves");
+  ok(declaredPermissionKinds([`tool:${INVITE_OP}`]).length === 1, "control: a recognised write declares cleanly, so the refusal above is the tier and not the vocabulary");
+  await grantDeclaredRoutinePermissions({
+    org: "default",
+    routine: ROUTINE,
+    declared: [`tool:${UNKNOWN_OP}`],
+    grantedBy: "U0HUMAN",
+    tainted: false,
+    nowIso: new Date().toISOString(),
+  });
+  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(), UNKNOWN_OP)), "🔴 …so arming that declaration lifts nothing, and the fire is still refused");
+
+  registerConfig(armed("read"));
+  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(), INVITE_OP)), "a recognised write is still refused under an everything-is-read arm");
+
+  registerConfig(armed(undefined));
+}
+
 rmSync(tmp, { recursive: true, force: true });
-console.log(`✓ connector-unattended-fence: ${passed} assertions passed (refuse + lift + attended/read untouched + destructive-never + TAINTED-never + per-tool keying + legacy refused + ordering + fail-soft + bag selection)`);
+console.log(`✓ connector-unattended-fence: ${passed} assertions passed (refuse + lift + attended/read untouched + destructive-never + TAINTED-never + per-tool keying + legacy refused + ordering + fail-soft + bag selection + the OPE-1321 arm floor)`);

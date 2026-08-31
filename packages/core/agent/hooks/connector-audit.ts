@@ -2,8 +2,8 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { appendAudit } from "../audit/audit.js";
 import { bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
-import { classifyConnectorOpTier, connectorOpName, isConnectorOpTool, parseQualifiedToolName } from "../access/consequence.js";
-import { effectiveConnectorOpConsequence, effectiveConnectorOpTier } from "../access/connector-op-gating.js";
+import { connectorOpName, isConnectorOpTool, parseQualifiedToolName } from "../access/consequence.js";
+import { connectorOpConsequenceOfTier, connectorOpTierParts } from "../access/connector-op-gating.js";
 
 interface ToolResultLike {
   readonly kind?: string;
@@ -23,8 +23,7 @@ async function auditOpResult(event: unknown, ctx: HookContext): Promise<void> {
     const connection = toolName.slice(0, toolName.indexOf("__"));
     const op = connectorOpName(toolName);
     const status = typeof data?.status === "string" ? data.status : undefined;
-    const baseOpTier = classifyConnectorOpTier(toolName);
-    const effectiveOpTier = effectiveConnectorOpTier(toolName);
+    const tiers = connectorOpTierParts(toolName);
 
     let org = deploymentOrg();
     let platform = "unknown";
@@ -51,9 +50,12 @@ async function auditOpResult(event: unknown, ctx: HookContext): Promise<void> {
       detail: {
         connection,
         op,
-        tier: effectiveConnectorOpConsequence(toolName),
-        opTier: effectiveOpTier,
-        ...(effectiveOpTier !== baseOpTier ? { baseOpTier } : {}),
+        tier: connectorOpConsequenceOfTier(tiers.tier),
+        opTier: tiers.tier,
+        ...(tiers.tier !== tiers.base ? { baseOpTier: tiers.base } : {}),
+        ...(tiers.armPresent ? { opTierArm: true } : {}),
+        ...(tiers.arm !== undefined ? { armOpTier: tiers.arm } : {}),
+        ...(tiers.armDecided ? { opTierArmDecided: true } : {}),
         ...(status !== undefined ? { status } : {}),
         ...(result.isError ? { isError: true } : {}),
       },

@@ -19,8 +19,8 @@ import {
 } from "../access/connector-scope.js";
 import { vercelConnectorOf } from "../access/connector-credentials.js";
 import { assertCredentialEndpointHostAllowed } from "../access/credential-endpoints.js";
-import { isConnectorOpTool, parseQualifiedToolName } from "../access/consequence.js";
-import { effectiveConnectorOpTier } from "../access/connector-op-gating.js";
+import { classifyConnectorOpTier, isConnectorOpTool, parseQualifiedToolName } from "../access/consequence.js";
+import { effectiveConnectorOpTier, joinConnectorOpTiers } from "../access/connector-op-gating.js";
 import { sharedVaultSubjectFor } from "../access/group-request.js";
 import { rawVaultSubject, SHARED_VAULT_SUBJECT_PREFIX } from "../identity/oauth-vault-share.js";
 import { connectorOpTieringEnabled, connectorLinkSetVaultEnabled, connectorMemberPlaneEnabled } from "./connector-flags.js";
@@ -479,12 +479,15 @@ export function withUnattendedConnectorFence(
   const tainted = deps.tainted ?? untrustedIngestedThisTurn;
   return async (ctx): Promise<ApprovalStatus> => {
     const decision = await policy(ctx);
-    if (!decisionWouldPrompt(decision)) return decision;
     if (!isConnectorOpTool(ctx.toolName)) return decision;
     const connection = parseQualifiedToolName(ctx.toolName)?.connection;
     if (connection === undefined || connection.length === 0) return decision;
-    const tier = effectiveConnectorOpTier(ctx.toolName);
+    const baseTier = classifyConnectorOpTier(ctx.toolName);
+    const seamTier = effectiveConnectorOpTier(ctx.toolName);
+    const tier = joinConnectorOpTiers(baseTier, seamTier);
     if (tier === "read") return decision;
+    const armOpened = seamTier === "read";
+    if (!decisionWouldPrompt(decision) && !armOpened) return decision;
     const auth = ctx.session?.auth;
     if (auth === undefined || auth === null) return decision;
     const facts = await fencedTurnFacts(auth as import("eve/context").SessionAuth, surfaceContext);
