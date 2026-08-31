@@ -54,6 +54,7 @@ export interface AppConfig {
   loadBlobHosting?(): BlobHostingConfig | undefined;
   loadPrincipals?(): readonly Principal[];
   loadGroups?(): readonly Group[];
+  auditScrub?(text: string): string;
 }
 
 let registered: AppConfig | null = null;

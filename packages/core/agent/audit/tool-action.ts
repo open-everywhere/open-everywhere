@@ -1,5 +1,6 @@
 import type { BindableContext } from "../identity/binding.js";
 import { bindFrom } from "../identity/binding.js";
+import { getConfig } from "../access/config.js";
 import { resolvePartition } from "../memory/partition.js";
 import { appendAudit } from "./audit.js";
 
@@ -13,10 +14,35 @@ const SECRET_SHAPES: readonly RegExp[] = [
   /\bAKIA[0-9A-Z]{12,}/g,
 ];
 
+function builtInAuditScrub(text: string): string {
+  let scrubbed = text;
+  for (const shape of SECRET_SHAPES) scrubbed = scrubbed.replace(shape, "[redacted]");
+  return scrubbed;
+}
+
+function registeredAuditScrubArm(): ((text: string) => string) | undefined {
+  try {
+    return getConfig().auditScrub;
+  } catch {
+    return undefined;
+  }
+}
+
+function scrubForAudit(raw: string): string {
+  const builtIn = builtInAuditScrub(raw);
+  const arm = registeredAuditScrubArm();
+  if (!arm) return builtIn;
+  try {
+    return builtInAuditScrub(arm(builtIn));
+  } catch (err) {
+    console.warn(`[open-everywhere:audit] auditScrub arm threw; kept the built-in scrub: ${String(err)}`);
+    return builtIn;
+  }
+}
+
 export function auditErrorDetail(err: unknown): { readonly error: string } {
   const raw = err instanceof Error ? err.message : String(err);
-  let text = raw;
-  for (const shape of SECRET_SHAPES) text = text.replace(shape, "[redacted]");
+  let text = scrubForAudit(raw);
   text = text.replace(/\s+/g, " ").trim();
   return { error: text.length <= MAX_AUDIT_ERROR_CHARS ? text : `${text.slice(0, MAX_AUDIT_ERROR_CHARS)}…` };
 }
