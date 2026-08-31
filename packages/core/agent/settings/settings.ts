@@ -1,5 +1,6 @@
 import { processRegistrySlot } from "../lib/process-registry.js";
 import { SLACK_DRIVER_PAIR } from "../testing/driver-allowlist.js";
+import { sandboxRegionProblem } from "../sandbox/vercel-create.js";
 
 export type TaintTierMode = "enforced" | "dryrun";
 
@@ -94,6 +95,7 @@ export interface AgentSettings {
     readonly timeoutMs: number;
     readonly snapshotExpirationMs: number;
     readonly image: string;
+    readonly region: string;
   };
   readonly spend: {
     readonly usageEventsTtlDays: number;
@@ -503,6 +505,14 @@ export const SETTINGS = {
         "Off-Vercel `docker()` backend only: the sandbox container image. Empty ⇒ the bare `docker({})` eve otherwise mints. Ignored under `justbash` and on Vercel.",
       format: (v) => (v === "" ? "`` (the backend's own default)" : v),
     } satisfies SettingSpec<string>,
+    region: {
+      path: "sandbox.region",
+      shipped: "",
+      validate: sandboxRegionProblem,
+      summary:
+        "Vercel region to create sandboxes in — the data-residency pin for sandbox COMPUTE, the sibling of the AI Gateway's `inferenceRegion` for inference. Empty (the default) pins nothing. **The pinned eve cannot honour it yet**: it creates sandboxes through its own vendored `@vercel/sandbox`, whose `Sandbox.create` has no `region`, so a value would be dropped silently. Setting it therefore REFUSES THE BOOT with that reason rather than running in the default region under a residency claim. Read at boot, applied at sandbox CREATE, and inert off Vercel (a loud warning says so).",
+      format: (v) => (v === "" ? "`` (no pin — Vercel's own default region)" : v),
+    } satisfies SettingSpec<string>,
   },
   skills: {
     domainSkillCap: {
@@ -828,6 +838,7 @@ export function getSettings(
       timeoutMs: resolve(SETTINGS.sandbox.timeoutMs, o.sandbox?.timeoutMs, env),
       snapshotExpirationMs: resolve(SETTINGS.sandbox.snapshotExpirationMs, o.sandbox?.snapshotExpirationMs, env),
       image: resolve(SETTINGS.sandbox.image, o.sandbox?.image, env),
+      region: resolve(SETTINGS.sandbox.region, o.sandbox?.region, env),
     },
     spend: {
       usageEventsTtlDays: resolve(SETTINGS.spend.usageEventsTtlDays, o.spend?.usageEventsTtlDays, env),
