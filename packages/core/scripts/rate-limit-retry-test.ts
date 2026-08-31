@@ -274,4 +274,48 @@ function recorder() {
   eq(calls, 4, "loose 8e: four attempts under the shared default");
 }
 
-console.log(`✓ rate-limit-retry: ${n} assertions passed (honoured delay, named exhaustion, non-429 negative controls, cap/fallback/total-budget, Retry-After parsing, the withRetryAfterLoose adapter)`);
+{
+  const { send } = scripted([rateLimited("9"), new Response("{}", { status: 200 })]);
+  const clock = recorder();
+  await withRetryAfter(send, { surface: "discord", operation: "POST /x", sleep: clock.sleep, retryAfterMs: () => 750 });
+  eq(clock.slept, [750], "override 9a: the body-based delay (750 ms) wins over the 9 s header");
+}
+{
+  const { send } = scripted([rateLimited("3"), new Response("{}", { status: 200 })]);
+  const clock = recorder();
+  await withRetryAfter(send, { surface: "discord", operation: "POST /x", sleep: clock.sleep, retryAfterMs: () => undefined });
+  eq(clock.slept, [3000], "override 9b: an override that yields nothing falls back to the header (3 s)");
+}
+{
+  for (const bad of [-5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const { send } = scripted([rateLimited("2"), new Response("{}", { status: 200 })]);
+    const clock = recorder();
+    await withRetryAfter(send, { surface: "d", operation: "o", sleep: clock.sleep, retryAfterMs: () => bad });
+    eq(clock.slept, [2000], `override 9c: an unusable override value (${bad}) falls back to the header, not a wrong wait`);
+  }
+}
+{
+  const { send } = scripted([new Response("{}", { status: 200 })]);
+  const clock = recorder();
+  let overrideCalls = 0;
+  const res = await withRetryAfter(send, {
+    surface: "d",
+    operation: "o",
+    sleep: clock.sleep,
+    retryAfterMs: () => {
+      overrideCalls++;
+      return 500;
+    },
+  });
+  eq(overrideCalls, 0, "override 9d: a non-429 never consults the body override");
+  eq(clock.slept, [], "override 9d: …and it is not slept on");
+  eq(res.status, 200, "override 9d: the 200 passes through untouched");
+}
+{
+  const { send } = scripted([rateLimited("9"), new Response("{}", { status: 200 })]);
+  const clock = recorder();
+  await withRetryAfter(send, { surface: "d", operation: "o", sleep: clock.sleep, retryAfterMs: async () => 250 });
+  eq(clock.slept, [250], "override 9e: an ASYNC override is awaited, and its value wins");
+}
+
+console.log(`✓ rate-limit-retry: ${n} assertions passed (honoured delay, named exhaustion, non-429 negative controls, cap/fallback/total-budget, Retry-After parsing, the withRetryAfterLoose adapter, the retryAfterMs body override)`);

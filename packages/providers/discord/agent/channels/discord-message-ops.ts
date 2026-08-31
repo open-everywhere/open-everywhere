@@ -1,5 +1,6 @@
 import type { SurfaceMessageOps, OutboundFile } from "@open-everywhere/core/agent/adapter-api.js";
 import { discordPostMessage } from "./discord-post.js";
+import { discordFetch } from "./discord-rest.js";
 
 const API = "https://discord.com/api/v10";
 
@@ -15,7 +16,7 @@ export const discordMessageOps: SurfaceMessageOps = {
     return discordPostMessage(channelId, text, opts?.replyToMessageId ? { replyToMessageId: opts.replyToMessageId } : undefined);
   },
   async editMessage(channelId, messageId, text) {
-    const res = await fetch(`${API}/channels/${channelId}/messages/${messageId}`, {
+    const res = await discordFetch("PATCH /channels/{id}/messages/{id}", `${API}/channels/${channelId}/messages/${messageId}`, {
       method: "PATCH",
       headers: { authorization: `Bot ${botToken()}`, "content-type": "application/json" },
       body: JSON.stringify({ components: [], content: text }),
@@ -29,10 +30,11 @@ export const discordMessageOps: SurfaceMessageOps = {
   async setReaction(channelId, messageId, emoji, on) {
     const encoded = encodeURIComponent(emoji);
     try {
-      const res = await fetch(`${API}/channels/${channelId}/messages/${messageId}/reactions/${encoded}/@me`, {
-        method: on ? "PUT" : "DELETE",
-        headers: { authorization: `Bot ${botToken()}` },
-      });
+      const res = await discordFetch(
+        on ? "PUT /channels/{id}/messages/{id}/reactions/{emoji}/@me" : "DELETE /channels/{id}/messages/{id}/reactions/{emoji}/@me",
+        `${API}/channels/${channelId}/messages/${messageId}/reactions/${encoded}/@me`,
+        { method: on ? "PUT" : "DELETE", headers: { authorization: `Bot ${botToken()}` } },
+      );
       if (!res.ok && !(!on && res.status === 404)) {
         console.warn(`[open-everywhere:discord] reaction ${on ? "add" : "remove"} failed (${res.status}) for message ${messageId}`);
       }
@@ -48,7 +50,7 @@ export const discordMessageOps: SurfaceMessageOps = {
       const ab = file.bytes.buffer.slice(file.bytes.byteOffset, file.bytes.byteOffset + file.bytes.byteLength) as ArrayBuffer;
       form.append(`files[${i}]`, new Blob([ab], { type: file.contentType }), file.filename);
     });
-    const res = await fetch(`${API}/channels/${channelId}/messages`, {
+    const res = await discordFetch("POST /channels/{id}/messages", `${API}/channels/${channelId}/messages`, {
       method: "POST",
       headers: { authorization: `Bot ${botToken()}` },
       body: form,

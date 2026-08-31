@@ -54,6 +54,7 @@ export interface RateLimitRetryOptions {
   readonly totalBudgetMs?: number;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly now?: () => number;
+  readonly retryAfterMs?: (res: RetryableResponse) => number | undefined | Promise<number | undefined>;
 }
 
 export type RetryPolicy = Pick<RateLimitRetryOptions, "maxAttempts" | "capMs" | "fallbackMs" | "totalBudgetMs" | "sleep" | "now">;
@@ -74,7 +75,10 @@ export async function withRetryAfter<T extends RetryableResponse>(send: () => Pr
   for (let attempt = 1; ; attempt += 1) {
     const res = await send();
     if (res.status !== RATE_LIMITED_STATUS) return res;
-    const named = parseRetryAfterMs(res.headers.get("retry-after"), now());
+    let named = opts.retryAfterMs ? await opts.retryAfterMs(res) : undefined;
+    if (named === undefined || !Number.isFinite(named) || named < 0) {
+      named = parseRetryAfterMs(res.headers.get("retry-after"), now());
+    }
     void res.body?.cancel().catch(() => undefined);
     const delayMs = Math.min(capMs, named ?? fallbackMs);
     if (attempt >= maxAttempts || waitedMs + delayMs > totalBudgetMs) {

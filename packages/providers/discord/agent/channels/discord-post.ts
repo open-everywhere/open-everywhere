@@ -1,4 +1,5 @@
 import { markNotApplied } from "@open-everywhere/core/agent/adapter-api.js";
+import { discordFetch } from "./discord-rest.js";
 
 const API = "https://discord.com/api/v10";
 
@@ -91,7 +92,7 @@ export async function discordPostMessage(channelId: string, content: string, opt
 }
 
 export async function discordOpenDmChannel(userId: string): Promise<string> {
-  const res = await fetch(`${API}/users/@me/channels`, {
+  const res = await discordFetch("POST /users/@me/channels", `${API}/users/@me/channels`, {
     method: "POST",
     headers: botHeaders(botToken()),
     body: JSON.stringify({ recipient_id: userId }),
@@ -124,7 +125,7 @@ export async function discordPostMessageWithButtons(channelId: string, content: 
       new Error(`Discord create-message with buttons cannot split ${content.length} characters (cap ${DISCORD_MESSAGE_MAX}) for channel ${channelId}`),
     );
   }
-  const res = await fetch(`${API}/channels/${channelId}/messages`, {
+  const res = await discordFetch("POST /channels/{id}/messages", `${API}/channels/${channelId}/messages`, {
     method: "POST",
     headers: botHeaders(botToken()),
     body: JSON.stringify({
@@ -152,7 +153,7 @@ export async function discordPostMessageWithButtons(channelId: string, content: 
 }
 
 async function discordPostOne(channelId: string, content: string, replyToMessageId?: string): Promise<string> {
-  const res = await fetch(`${API}/channels/${channelId}/messages`, {
+  const res = await discordFetch("POST /channels/{id}/messages", `${API}/channels/${channelId}/messages`, {
     method: "POST",
     headers: botHeaders(botToken()),
     body: JSON.stringify({
@@ -177,7 +178,7 @@ export async function discordEditMessage(channelId: string, messageId: string, c
       ),
     );
   }
-  const res = await fetch(`${API}/channels/${channelId}/messages/${messageId}`, {
+  const res = await discordFetch("PATCH /channels/{id}/messages/{id}", `${API}/channels/${channelId}/messages/${messageId}`, {
     method: "PATCH",
     headers: botHeaders(botToken()),
     body: JSON.stringify({ content }),
@@ -229,10 +230,11 @@ export async function discordAddReaction(channelId: string, messageId: string, e
       ),
     );
   }
-  const res = await fetch(`${API}/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(unicode)}/@me`, {
-    method: "PUT",
-    headers: botHeaders(botToken()),
-  });
+  const res = await discordFetch(
+    "PUT /channels/{id}/messages/{id}/reactions/{emoji}/@me",
+    `${API}/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(unicode)}/@me`,
+    { method: "PUT", headers: botHeaders(botToken()) },
+  );
   if (!res.ok) {
     throw Object.assign(new Error(`react couldn't post to Discord — ${res.status} on channel ${channelId}`), { status: res.status });
   }
@@ -240,7 +242,7 @@ export async function discordAddReaction(channelId: string, messageId: string, e
 
 export async function discordExistingThreadForMessage(channelId: string, messageId: string): Promise<string | null> {
   try {
-    const msgRes = await fetch(`${API}/channels/${channelId}/messages/${messageId}`, {
+    const msgRes = await discordFetch("GET /channels/{id}/messages/{id}", `${API}/channels/${channelId}/messages/${messageId}`, {
       headers: botHeaders(botToken()),
     });
     if (!msgRes.ok) return null;
@@ -253,11 +255,15 @@ export async function discordExistingThreadForMessage(channelId: string, message
 
 export async function discordThreadForMessage(channelId: string, messageId: string, name: string): Promise<string | null> {
   try {
-    const res = await fetch(`${API}/channels/${channelId}/messages/${messageId}/threads`, {
-      method: "POST",
-      headers: botHeaders(botToken()),
-      body: JSON.stringify({ name: name.slice(0, 100) || "thread", auto_archive_duration: 1440 }),
-    });
+    const res = await discordFetch(
+      "POST /channels/{id}/messages/{id}/threads",
+      `${API}/channels/${channelId}/messages/${messageId}/threads`,
+      {
+        method: "POST",
+        headers: botHeaders(botToken()),
+        body: JSON.stringify({ name: name.slice(0, 100) || "thread", auto_archive_duration: 1440 }),
+      },
+    );
     if (res.ok) {
       const body = (await res.json()) as { id?: unknown };
       return typeof body?.id === "string" ? body.id : null;
