@@ -2,8 +2,16 @@ import type { PendingActionRow } from "./types.js";
 
 const PR_OPEN_KIND = "pr.open";
 
+const CONNECTOR_OP_KIND_PREFIX = "connector.op:";
+
 export function connectorSessionKind(connector: string): string {
-  return `connector.op:${connector}`;
+  return `${CONNECTOR_OP_KIND_PREFIX}${connector}`;
+}
+
+const CONNECTOR_TOOL_KIND_PREFIX = "connector.tool:";
+
+export function connectorToolPermissionKind(tool: string): string {
+  return `${CONNECTOR_TOOL_KIND_PREFIX}${tool}`;
 }
 
 export function sessionGrantKind(row: Pick<PendingActionRow, "kind" | "argsJson">): string | null {
@@ -27,15 +35,30 @@ export function grantButtonLabel(row: Pick<PendingActionRow, "argsJson">): strin
   return grantLifetime(sessionId) === "routine" ? "Approve for this routine (standing)" : "Approve for session";
 }
 
+const CONNECTOR_TOOL_DECLARATION_PREFIX = "tool:";
+
+const TOOL_NAME_SEGMENT = /^[a-z0-9][a-z0-9_-]*$/u;
+
+const RESERVED_TOOL_NAMESPACE = "grant";
+
 export function routinePermissionKind(declared: string): string | null {
   if (declared === PR_OPEN_KIND) return PR_OPEN_KIND;
-  const connector = declared.startsWith("connector:") ? declared.slice("connector:".length) : null;
-  if (connector !== null && /^[a-z0-9][a-z0-9_-]*$/u.test(connector)) return connectorSessionKind(connector);
-  return null;
+  if (!declared.startsWith(CONNECTOR_TOOL_DECLARATION_PREFIX)) return null;
+  const tool = declared.slice(CONNECTOR_TOOL_DECLARATION_PREFIX.length);
+  const segments = tool.split("__");
+  if (segments.length < 2) return null;
+  if (segments[0] === RESERVED_TOOL_NAMESPACE) return null;
+  if (!segments.every((segment) => TOOL_NAME_SEGMENT.test(segment))) return null;
+  return connectorToolPermissionKind(tool);
 }
 
 export function describeGrantKind(kind: string): string {
   if (kind === PR_OPEN_KIND) return "open pull requests";
-  if (kind.startsWith("connector.op:")) return `write to ${kind.slice("connector.op:".length)}`;
+  if (kind.startsWith(CONNECTOR_TOOL_KIND_PREFIX)) {
+    return `use the "${kind.slice(CONNECTOR_TOOL_KIND_PREFIX.length)}" tool`;
+  }
+  if (kind.startsWith(CONNECTOR_OP_KIND_PREFIX)) {
+    return `nothing — "${kind.slice(CONNECTOR_OP_KIND_PREFIX.length)}" is a legacy row that lifts no tool`;
+  }
   return kind;
 }

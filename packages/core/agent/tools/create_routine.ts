@@ -138,12 +138,15 @@ export default defineTool({
       .describe(
         "STANDING PERMISSIONS this routine may use without asking, declared here so the human arms the " +
           "routine AND its permissions in one read. Only two things are declarable: \"pr.open\" (open pull " +
-          "requests) and \"connector:<slug>\" (write to that connector, e.g. \"connector:notion\"). " +
-          "INFER CONSERVATIVELY — declare only what the prompt CERTAINLY needs every single fire ('read the " +
-          "queue and comment on each ticket' certainly needs the comment). Under-declaring costs one approval " +
-          "prompt when it fires, which a human can then make standing with a click; over-declaring silently " +
-          "widens what runs unattended at 03:00. When in doubt, leave it out. Deletes are never declarable and " +
-          "always ask. Omit entirely for a routine that only reads or only posts here.",
+          "requests) and \"tool:<connector tool>\" — ONE ROW PER TOOL, named exactly as you would call the " +
+          "tool, e.g. \"tool:notion__share_page\". A row lifts THAT TOOL ONLY: a routine that writes with " +
+          "three tools declares three rows, and a connector slug on its own (\"tool:notion\") names no tool " +
+          "and is refused. INFER CONSERVATIVELY — declare only what the prompt CERTAINLY needs every single " +
+          "fire ('read the queue and comment on each ticket' certainly needs the comment tool). " +
+          "Under-declaring costs the routine one refused step, which the human fixes by re-creating it with " +
+          "that row; over-declaring silently widens what runs unattended at 03:00. When in doubt, leave it " +
+          "out. Deletes are never declarable and always ask. Omit entirely for a routine that only reads or " +
+          "only posts here.",
       ),
   }),
   outputSchema: z.object({

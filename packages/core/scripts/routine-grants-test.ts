@@ -18,9 +18,20 @@ import {
   grantDeclaredRoutinePermissions,
   listRoutinePermissions,
   revokeRoutinePermissions,
+  unarmedDeclarations,
 } from "../agent/routines/grants.js";
-import { connectorSessionKind, describeGrantKind, grantButtonLabel, grantLifetime, routinePermissionKind, sessionGrantKind } from "../agent/approvals/session-grant.js";
-import { permissionLines } from "../agent/approvals/routine-create.js";
+import {
+  connectorSessionKind,
+  connectorToolPermissionKind,
+  describeGrantKind,
+  grantButtonLabel,
+  grantLifetime,
+  routinePermissionKind,
+  sessionGrantKind,
+} from "../agent/approvals/session-grant.js";
+import { isReservedNamespaceTool } from "../agent/access/consequence.js";
+import { permissionLines, type RoutineCreateArgs } from "../agent/approvals/routine-create.js";
+import { actionKind } from "../agent/approvals/actions.js";
 import { routineFireAttributes } from "../agent/routines/fire-auth.js";
 import { proposingSessionId } from "../agent/identity/binding.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
@@ -82,20 +93,31 @@ const NOW = "2026-03-30T11:30:00.000Z";
 
 {
   ok(
-    JSON.stringify(declaredPermissionKinds(["pr.open", "connector:notion"])) === JSON.stringify(["pr.open", connectorSessionKind("notion")]),
-    "the two declarable permissions map onto the two real grant grains",
+    JSON.stringify(declaredPermissionKinds(["pr.open", "tool:notion__share_page"])) === JSON.stringify(["pr.open", connectorToolPermissionKind("notion__share_page")]),
+    "the two declarable permissions map onto pr.open and ONE named tool",
   );
-  ok(JSON.stringify(declaredPermissionKinds(["connector:notion", "connector:notion"])) === JSON.stringify([connectorSessionKind("notion")]), "duplicates collapse");
+  ok(
+    JSON.stringify(declaredPermissionKinds(["tool:notion__share_page", "tool:notion__share_page"])) === JSON.stringify([connectorToolPermissionKind("notion__share_page")]),
+    "duplicates collapse",
+  );
+  ok(
+    JSON.stringify(declaredPermissionKinds(["tool:notion__share_page", "tool:notion__invite_user"])).includes("notion__invite_user"),
+    "two tools on the same connection are two separate rows, never one class",
+  );
   ok(declaredPermissionKinds([]).length === 0, "declaring nothing is legal (the default)");
 
   for (const bad of [
     "delete",
-    "notion__notion_delete_page",
+    "connector:notion",
+    "tool:notion",
     "connector.op:notion",
-    "connector:",
-    "connector:Notion",
-    "connector:no tion",
-    "connector:a:b",
+    "connector.tool:notion__share_page",
+    "tool:",
+    "tool:Notion__Share_Page",
+    "tool:notion__share page",
+    "tool:notion__a:b",
+    "tool:notion___share_page",
+    "tool:grant__U0OWNER__send",
     "skill.create",
     "memory.purge",
     "spend.set",
@@ -104,24 +126,41 @@ const NOW = "2026-03-30T11:30:00.000Z";
   ]) {
     ok(routinePermissionKind(bad) === null, `"${bad}" is not a declarable permission`);
   }
-  const err = await throwsAsync(() => declaredPermissionKinds(["connector:notion", "delete"]), "an undeclarable permission is refused at propose time");
-  ok(err.includes("pr.open") && err.includes("connector:<slug>"), "the refusal names the whole legal vocabulary");
+  ok(isReservedNamespaceTool("grant__U0OWNER__send"), "…and that name really is the reserved namespace, per access/consequence.ts");
+  ok(!isReservedNamespaceTool("notion__share_page"), "…while an ordinary connector op is not");
+
+  const err = await throwsAsync(() => declaredPermissionKinds(["tool:notion__share_page", "delete"]), "an undeclarable permission is refused at propose time");
+  ok(err.includes("pr.open") && err.includes("tool:notion__share_page"), "the refusal names the whole legal vocabulary, with the per-tool shape");
+
+  ok(routinePermissionKind("tool:notion__delete_page") !== null, "the SHAPE of a delete-tier tool is well-formed (which is why the tier check below is needed)");
+  const destructive = await throwsAsync(() => declaredPermissionKinds(["tool:notion__delete_page"]), "a delete-tier tool is refused at propose time");
+  ok(destructive.includes("DELETE-tier") && destructive.includes("never lift"), "…and the refusal says why, so the author can fix it");
+
   const capped = await throwsAsync(
-    () => declaredPermissionKinds(Array.from({ length: MAX_DECLARED_PERMISSIONS + 1 }, (_, i) => `connector:c${i}`)),
+    () => declaredPermissionKinds(Array.from({ length: MAX_DECLARED_PERMISSIONS + 1 }, (_, i) => `tool:notion__create_c${i}`)),
     "a shotgun declaration past the card-readability cap is refused",
   );
   ok(capped.includes(String(MAX_DECLARED_PERMISSIONS)), "the cap refusal names the cap");
 
   ok(describeGrantKind("pr.open") === "open pull requests", "pr.open renders in plain language");
-  ok(describeGrantKind(connectorSessionKind("notion")) === "write to notion", "a connector grant renders in plain language");
-  ok(describeGrantKind("something.new") === "something.new", "an unrecognised grain renders VERBATIM — a grant is never hidden from the reader");
-  ok(JSON.stringify(describeDeclaredPermissions(["pr.open", "connector:notion"])) === JSON.stringify(["open pull requests", "write to notion"]), "the declared set renders in order");
+  ok(
+    describeGrantKind(connectorToolPermissionKind("notion__share_page")) === 'use the "notion__share_page" tool',
+    "a per-tool row renders the TOOL, which is what the human is being asked to buy",
+  );
+  const legacy = describeGrantKind(connectorSessionKind("notion"));
+  ok(legacy.includes("legacy") && !legacy.startsWith("write to notion"), "a stored LEGACY row renders as the inert record it is, never as a live connector write");
+  ok(legacy.includes("notion"), "…and still names it, because a row hidden from the reader is worse than an ugly one");
+  ok(describeGrantKind("something.new") === "something.new", "an unrecognised grain renders VERBATIM — a row is never hidden from the reader");
+  ok(
+    JSON.stringify(describeDeclaredPermissions(["pr.open", "tool:notion__share_page"])) === JSON.stringify(["open pull requests", 'use the "notion__share_page" tool']),
+    "the declared set renders in order",
+  );
 }
 
 {
   ok(permissionLines({}).length === 0, "a routine that declares nothing adds NO line (the card is unchanged)");
-  const line = permissionLines({ permissions: ["pr.open", "connector:notion"], tainted: false })[0];
-  ok(line.includes("open pull requests") && line.includes("write to notion"), "the card names each permission in plain language");
+  const line = permissionLines({ permissions: ["pr.open", "tool:notion__share_page"], tainted: false })[0];
+  ok(line.includes("open pull requests") && line.includes("notion__share_page"), "the card names each permission in plain language, and names the TOOL");
   ok(line.includes("anything else will ask you first"), "the card states the fallback: everything else still gates");
   const taintedLine = permissionLines({ permissions: ["pr.open"], tainted: true })[0];
   ok(taintedLine.includes("NOT granted"), "a TAINTED proposal's card says the declaration is refused, rather than hiding it");
@@ -131,14 +170,14 @@ const NOW = "2026-03-30T11:30:00.000Z";
   const written = await grantDeclaredRoutinePermissions({
     org: ORG,
     routine: ROUTINE,
-    declared: ["pr.open", "connector:notion"],
+    declared: ["pr.open", "tool:notion__share_page"],
     grantedBy: "U_CLICKER",
     tainted: false,
     nowIso: NOW,
   });
-  ok(JSON.stringify(written) === JSON.stringify(["pr.open", connectorSessionKind("notion")]), "arming writes exactly the declared grains");
+  ok(JSON.stringify(written) === JSON.stringify(["pr.open", connectorToolPermissionKind("notion__share_page")]), "arming writes exactly the declared rows");
   const held = await listRoutinePermissions(ORG, ROUTINE, NOW);
-  ok(JSON.stringify(held) === JSON.stringify([connectorSessionKind("notion"), "pr.open"].map(describeGrantKind)), "the standing set is READABLE (kind-ascending)");
+  ok(JSON.stringify(held) === JSON.stringify([connectorToolPermissionKind("notion__share_page"), "pr.open"].map(describeGrantKind)), "the standing set is READABLE (kind-ascending)");
   const row = await getOperationalStore().getSessionApproval(ORG, routineGrantKey(ROUTINE), "pr.open", NOW);
   ok(row?.grantedBy === "U_CLICKER", "the grant is attributed to the human who CLICKED, not to the proposing model");
   ok(row?.expiresAt === ROUTINE_GRANT_NO_EXPIRY, "a routine grant carries no TTL — its death is the generation key + revoke, never a silent expiry");
@@ -149,7 +188,7 @@ const NOW = "2026-03-30T11:30:00.000Z";
   const none = await grantDeclaredRoutinePermissions({
     org: ORG,
     routine: taintedRoutine,
-    declared: ["pr.open", "connector:notion"],
+    declared: ["pr.open", "tool:notion__share_page"],
     grantedBy: "U_CLICKER",
     tainted: true,
     nowIso: NOW,
@@ -164,7 +203,7 @@ const NOW = "2026-03-30T11:30:00.000Z";
   await getOperationalStore().setSessionApproval({
     org: ORG,
     sessionId: routineGrantKey(edited),
-    kind: connectorSessionKind("linear"),
+    kind: connectorToolPermissionKind("linear__create_issue"),
     grantedBy: "U_NIGHT",
     createdAt: NOW,
     expiresAt: ROUTINE_GRANT_NO_EXPIRY,
@@ -181,7 +220,7 @@ const NOW = "2026-03-30T11:30:00.000Z";
   const partition = { org: ORG, platform: "slack", workspace: "T1", surface: "C1", surfaceKey: ROUTINE.surfaceKey } as unknown as Partition;
   const live = { ...ROUTINE, id: "r-revoke01" };
   await addRoutine(partition, live);
-  await grantDeclaredRoutinePermissions({ org: ORG, routine: live, declared: ["pr.open", "connector:notion"], grantedBy: "U_CLICKER", tainted: false, nowIso: NOW });
+  await grantDeclaredRoutinePermissions({ org: ORG, routine: live, declared: ["pr.open", "tool:notion__share_page"], grantedBy: "U_CLICKER", tainted: false, nowIso: NOW });
   ok((await listRoutinePermissions(ORG, live, NOW)).length === 2, "the routine holds a standing set");
 
   const revoked = await revokeRoutinePermissions(ORG, live);
@@ -209,10 +248,74 @@ const NOW = "2026-03-30T11:30:00.000Z";
 }
 
 {
-  ok(grantButtonLabel({ argsJson: JSON.stringify({ sessionId: routineGrantKey(ROUTINE) }) }) === "Approve for this routine (standing)", "a fire's card offers a STANDING grant, and says so");
+  ok(grantButtonLabel({ argsJson: JSON.stringify({ sessionId: routineGrantKey(ROUTINE) }) }) === "Approve for this routine (standing)", "a ROUTINE-keyed frozen arg maps to the STANDING wording (the label rule, not a live card)");
   ok(grantButtonLabel({ argsJson: JSON.stringify({ sessionId: "oe-dom:eng:win:slack/T1/C1:oe-sup:g1" }) }) === "Approve for session", "a human turn's card is unchanged");
   ok(grantButtonLabel({ argsJson: "{" }) === "Approve for session", "unparseable frozen args fall back to the conservative wording");
   ok(grantButtonLabel({ argsJson: "{}" }) === "Approve for session", "so does an args bag with no session at all");
+}
+
+{
+  const legacyCard = { ...ROUTINE, id: "r-frozen01" };
+  const written = await grantDeclaredRoutinePermissions({
+    org: ORG,
+    routine: legacyCard,
+    declared: ["pr.open", "connector:notion"],
+    grantedBy: "U_CLICKER",
+    tainted: false,
+    nowIso: NOW,
+  });
+  ok(JSON.stringify(written) === JSON.stringify(["pr.open"]), "a frozen LEGACY declaration is SKIPPED at arm time, and the rest of the card still arms");
+  ok((await listRoutinePermissions(ORG, legacyCard, NOW)).length === 1, "…so exactly one row is live, and no legacy row is written");
+  ok(JSON.stringify(unarmedDeclarations(["pr.open", "connector:notion"], written)) === JSON.stringify(["connector:notion"]), "…and the skipped declaration is named, never dropped in silence");
+  ok(unarmedDeclarations(["pr.open", "tool:notion__share_page"], ["pr.open", connectorToolPermissionKind("notion__share_page")]).length === 0, "control: a set this build DOES accept, all of it written, names nothing as unarmed");
+  ok(JSON.stringify(unarmedDeclarations(["tool:notion__delete_page"], [])) === JSON.stringify(["tool:notion__delete_page"]), "a delete-tier tool is unarmed as well as undeclarable");
+  ok(
+    JSON.stringify(unarmedDeclarations(["pr.open", "connector:notion"], [])) === JSON.stringify(["pr.open", "connector:notion"]),
+    "a TAINTED card arms NOTHING, so every declaration is named — not just the one the vocabulary rejects",
+  );
+  ok(
+    JSON.stringify(unarmedDeclarations(["pr.open", "tool:notion__share_page"], ["pr.open"])) === JSON.stringify(["tool:notion__share_page"]),
+    "a declaration whose row write FAILED is named too",
+  );
+  await throwsAsync(() => declaredPermissionKinds(["connector:notion"]), "propose time still REFUSES the legacy spelling outright (tolerance is arm-time only)");
+  const unknownVerb = await throwsAsync(() => declaredPermissionKinds(["tool:notion__frobnicate"]), "an unrecognised verb is refused (it fails closed to the delete tier)");
+  ok(unknownVerb.includes("does not recognise"), "…and the refusal names the unrecognised-verb case, not only the delete case");
+}
+
+{
+  const partition = { org: ORG, platform: "slack", workspace: "T1", surface: "C1", surfaceKey: ROUTINE.surfaceKey } as unknown as Partition;
+  const create = actionKind("routine.create");
+  ok(create !== undefined && create.kind === "routine.create", "the routine.create action kind is registered");
+  const click = (permissions: readonly string[], tainted: boolean): Promise<string> =>
+    (create as { execute(a: RoutineCreateArgs, by: string): Promise<string> }).execute(
+      {
+        org: ORG,
+        partition,
+        surfaceKey: ROUTINE.surfaceKey,
+        target: { channelId: "C1" },
+        trigger: ROUTINE.trigger,
+        prompt: ROUTINE.prompt,
+        createdBy: "U_AUTHOR",
+        ...(tainted ? { tainted: true } : {}),
+        permissions,
+      },
+      "U_CLICKER",
+    );
+
+  const mixed = await click(["pr.open", "connector:notion"], false);
+  ok(mixed.includes("standing permission to"), "the armed half of a frozen card is reported as standing");
+  ok(mixed.includes(`NOT armed: "connector:notion"`), "…and the half this build cannot arm is NAMED in the outcome the human reads");
+  ok(!mixed.includes(`NOT armed: "pr.open"`), "…without dragging the armed declaration into the refusal");
+  ok(mixed.includes("asks a person"), "…and says what happens instead when the routine reaches that step");
+
+  const tainted = await click(["pr.open", "connector:notion"], true);
+  ok(!tainted.includes("standing permission to"), "a TAINTED proposal reports no standing permission at all");
+  ok(tainted.includes(`NOT armed: "pr.open" · "connector:notion"`), "…and names EVERY declaration, not only the one the vocabulary rejects");
+  ok(tainted.includes("read external content"), "…and gives the reason, so the human is not left inferring a vocabulary problem");
+
+  const clean = await click(["pr.open", "tool:notion__share_page"], false);
+  ok(clean.includes("standing permission to"), "a fully armable card reports its standing set");
+  ok(!clean.includes("NOT armed"), "…and says nothing about anything being unarmed");
 }
 
 console.log(`✓ routine-grants: ${passed} assertions passed`);

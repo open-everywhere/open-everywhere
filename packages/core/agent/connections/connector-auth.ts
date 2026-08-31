@@ -8,6 +8,9 @@ import {
 } from "eve/connections";
 import type { SessionContext } from "eve/context";
 import { once, type ApprovalStatus } from "eve/tools/approval";
+import { connectorToolPermissionKind } from "../approvals/session-grant.js";
+import { getOperationalStore } from "../operational/provider.js";
+import { routineGrantKeyStamped } from "../routines/routine.js";
 import type { ApprovalPolicy } from "eve/tools/approval";
 import {
   assertConnectorGranted,
@@ -16,7 +19,7 @@ import {
 } from "../access/connector-scope.js";
 import { vercelConnectorOf } from "../access/connector-credentials.js";
 import { assertCredentialEndpointHostAllowed } from "../access/credential-endpoints.js";
-import { isConnectorOpTool } from "../access/consequence.js";
+import { isConnectorOpTool, parseQualifiedToolName } from "../access/consequence.js";
 import { effectiveConnectorOpTier } from "../access/connector-op-gating.js";
 import { sharedVaultSubjectFor } from "../access/group-request.js";
 import { rawVaultSubject, SHARED_VAULT_SUBJECT_PREFIX } from "../identity/oauth-vault-share.js";
@@ -31,11 +34,11 @@ import {
   type MemberPlaneAuthLike,
 } from "../access/member-plane.js";
 import { OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED } from "../access/requester-identity.js";
-import { OE_CHAT_NONMEMBER_ATTR } from "../access/taint-signal.js";
+import { OE_CHAT_NONMEMBER_ATTR, untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getSecretVia } from "../access/credentials.js";
 import { withDuplicateApprovalGuard } from "../access/approval-dedupe.js";
 import { resolvePartition } from "../memory/partition.js";
-import { actingPrincipalId, bindFrom, deploymentOrg } from "../identity/binding.js";
+import { actingPrincipalId, bindFrom, deploymentOrg, unattendedFrom } from "../identity/binding.js";
 import { appendAudit } from "../audit/audit.js";
 import {
   requireUserAuthFlow,
@@ -375,7 +378,163 @@ async function decideConnectorWrite(
 }
 
 export function connectorApprovalPolicy(): ApprovalPolicy {
-  return withDuplicateApprovalGuard(connectorOpTieringEnabled() ? connectorOpApproval() : once());
+  return withDuplicateApprovalGuard(
+    withUnattendedConnectorFence(connectorOpTieringEnabled() ? connectorOpApproval() : once()),
+  );
+}
+
+export const ASK_UNATTENDED_SENTENCE =
+  "An unattended run cannot wait on an approval card; arm the permission on the routine's creation card, or ask a person to do this.";
+
+export const TAINTED_ASK_UNATTENDED_SENTENCE =
+  "This turn read external content, so this action needs a person to confirm it — and this run is unattended, so there is nobody to ask. No standing grant lifts that; ask a person to do this, or raise it again in a turn that has not read anything external.";
+
+export function unattendedConnectorRefusalMessage(
+  connection: string,
+  toolName: string,
+  tier: ReturnType<typeof effectiveConnectorOpTier>,
+  tainted: boolean,
+): string {
+  const declaration = !tainted && tier === "write" ? `Declare "tool:${toolName}" on the routine's creation card to lift it. ` : "";
+  return (
+    `connection "${connection}": the ${tier}-tier op "${toolName}" needs approval and nobody is attending this run. ` +
+    `${tainted ? TAINTED_ASK_UNATTENDED_SENTENCE : ASK_UNATTENDED_SENTENCE} ${declaration}` +
+    `The op did not run.`
+  );
+}
+
+export interface UnattendedConnectorFenceDeps {
+  readonly surfaceContext?: typeof surfaceContextFromAuth;
+  readonly grantExists?: (org: string, grantKey: string, kind: string, nowIso: string) => Promise<boolean>;
+  readonly audit?: typeof appendAudit;
+  readonly tainted?: () => boolean;
+}
+
+async function routineGrantExists(org: string, grantKey: string, kind: string, nowIso: string): Promise<boolean> {
+  return (await getOperationalStore().getSessionApproval(org, grantKey, kind, nowIso)) !== null;
+}
+
+interface FencedTurnFacts {
+  readonly unattended: boolean;
+  readonly org: string;
+  readonly platform: string;
+  readonly workspace: string;
+  readonly surface?: string;
+  readonly principalId?: string;
+  readonly grantKey?: string;
+}
+
+async function fencedTurnFacts(
+  auth: import("eve/context").SessionAuth,
+  surfaceContext: typeof surfaceContextFromAuth,
+): Promise<FencedTurnFacts | null> {
+  const ctx = await surfaceContext(auth).catch(() => null);
+  if (!ctx) return null;
+  const grantKey = routineGrantKeyStamped((auth.current ?? auth.initiator)?.attributes);
+  try {
+    const binding = bindFrom(ctx);
+    const partition = resolvePartition(ctx);
+    return {
+      unattended: unattendedFrom(binding),
+      org: partition.org,
+      platform: partition.platform,
+      workspace: partition.workspace,
+      ...(partition.surface === undefined ? {} : { surface: partition.surface }),
+      ...(binding.principalId === undefined ? {} : { principalId: binding.principalId }),
+      ...(grantKey === undefined ? {} : { grantKey }),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function callAsync<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await fn();
+  } catch {
+    return fallback;
+  }
+}
+
+function call<T>(fn: () => T, fallback: T): T {
+  try {
+    return fn();
+  } catch {
+    return fallback;
+  }
+}
+
+function decisionWouldPrompt(decision: ApprovalStatus): boolean {
+  if (decision === true || decision === "user-approval") return true;
+  return typeof decision === "object" && decision !== null && decision.type === "user-approval";
+}
+
+export function withUnattendedConnectorFence(
+  policy: ApprovalPolicy,
+  deps: UnattendedConnectorFenceDeps = {},
+): ApprovalPolicy {
+  const surfaceContext = deps.surfaceContext ?? surfaceContextFromAuth;
+  const grantExists = deps.grantExists ?? routineGrantExists;
+  const audit = deps.audit ?? appendAudit;
+  const tainted = deps.tainted ?? untrustedIngestedThisTurn;
+  return async (ctx): Promise<ApprovalStatus> => {
+    const decision = await policy(ctx);
+    if (!decisionWouldPrompt(decision)) return decision;
+    if (!isConnectorOpTool(ctx.toolName)) return decision;
+    const connection = parseQualifiedToolName(ctx.toolName)?.connection;
+    if (connection === undefined || connection.length === 0) return decision;
+    const tier = effectiveConnectorOpTier(ctx.toolName);
+    if (tier === "read") return decision;
+    const auth = ctx.session?.auth;
+    if (auth === undefined || auth === null) return decision;
+    const facts = await fencedTurnFacts(auth as import("eve/context").SessionAuth, surfaceContext);
+    if (facts === null || !facts.unattended) return decision;
+    const kind = connectorToolPermissionKind(ctx.toolName);
+    const nowIso = new Date().toISOString();
+    const poisoned = call(tainted, false);
+    const lifted =
+      !poisoned &&
+      tier === "write" &&
+      facts.grantKey !== undefined &&
+      (await callAsync(() => grantExists(facts.org, facts.grantKey as string, kind, nowIso), false));
+    const where = {
+      org: facts.org,
+      platform: facts.platform,
+      workspace: facts.workspace,
+      ...(facts.surface === undefined ? {} : { surface: facts.surface }),
+      ...(facts.principalId === undefined ? {} : { principalId: facts.principalId }),
+    };
+    if (lifted) {
+      await callAsync(
+        () =>
+          audit({
+            ...where,
+            action: "connector.unattended_lift",
+            detail: { connection, op: ctx.toolName, tier, grant: kind, routine: facts.grantKey },
+          }),
+        undefined,
+      );
+      return "not-applicable";
+    }
+    await callAsync(
+      () =>
+        audit({
+          ...where,
+          action: "connector.refused",
+          detail: {
+            connection,
+            op: ctx.toolName,
+            tier,
+            reason: poisoned ? "ask-unattended-tainted" : "ask-unattended",
+            grant: kind,
+            ...(poisoned ? { tainted: true } : {}),
+            ...(facts.grantKey === undefined ? { routine: null } : { routine: facts.grantKey }),
+          },
+        }),
+      undefined,
+    );
+    return { type: "denied", reason: unattendedConnectorRefusalMessage(connection, ctx.toolName, tier, poisoned) };
+  };
 }
 
 export function userInteractiveOAuth<Resume extends JsonValue = JsonValue>(opts: {

@@ -114,7 +114,7 @@ const grantable = CARDED.filter((name) => {
   return via.kind === "action-kind" && routinePermissionKind(via.action) !== null;
 });
 eq(grantable, ["open_pull_request"], "exactly ONE carded tool is declarable as a standing routine permission — the rest always ask");
-ok(routinePermissionKind("connector:notion") !== null, "the other grantable grain is a connector write, which carries no static registry row (runtime-injected ops)");
+ok(routinePermissionKind("tool:notion__share_page") !== null, "the other declarable grain is ONE connector tool, which carries no static registry row (runtime-injected ops)");
 
 for (const grain of GRAINS) {
   eq(renderApprovalPreviewFor(grain), renderApprovalPreviewFor(grain), `[${grain}] the block is a pure function of grain — re-rendering it cannot churn the prompt cache`);

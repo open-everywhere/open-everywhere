@@ -2,7 +2,7 @@ import { addRoutine, newRoutineId } from "../routines/store.js";
 import { computeNextRun } from "../routines/schedule.js";
 import { describeTrigger, routineGrantGeneration, type Routine, type RoutineReport, type RoutineTrigger } from "../routines/routine.js";
 import { mintJobBound } from "../routines/bound.js";
-import { describeDeclaredPermissions, grantDeclaredRoutinePermissions } from "../routines/grants.js";
+import { describeDeclaredPermissions, grantDeclaredRoutinePermissions, unarmedDeclarations } from "../routines/grants.js";
 import { describeGrantKind } from "./session-grant.js";
 import { appendAudit } from "../audit/audit.js";
 import type { Partition } from "../memory/partition.js";
@@ -100,9 +100,11 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       action: "routine.create",
       detail: { id: routine.id, trigger: describeTrigger(args.trigger, args.report), nextRunAt: routine.nextRunAt, armedBy: decidedBy, tainted: Boolean(args.tainted), ...(args.sessionMode === "job" ? { sessionMode: "job" } : {}), ...(args.report ? { report: args.report.kind } : {}) },
     });
+    const unarmed = unarmedDeclarations(args.permissions ?? [], granted);
     return (
       `routine ${routine.id} armed — ${describeTrigger(args.trigger, args.report)}${routine.nextRunAt ? ` (first run ${routine.nextRunAt})` : ""}` +
-      `${granted.length > 0 ? `; standing permission to ${granted.map(describeGrantKind).join(" · ")} (revoke with revoke_routine_permissions)` : ""}.`
+      `${granted.length > 0 ? `; standing permission to ${granted.map(describeGrantKind).join(" · ")} (revoke with revoke_routine_permissions)` : ""}` +
+      `${unarmed.length > 0 ? `; NOT armed: ${unarmed.map((d) => `"${d}"`).join(" · ")} — the routine asks a person when it reaches that step${args.tainted ? " (nothing was made standing: this routine was authored in a turn that read external content)" : ""}` : ""}.`
     );
   },
 };

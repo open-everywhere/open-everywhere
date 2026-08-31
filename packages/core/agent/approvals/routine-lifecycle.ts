@@ -47,7 +47,7 @@ const routineEdit: ActionKind<RoutineEditArgs> = {
   summarize(args) {
     return [
       `Rewrite routine ${args.id} — ${args.description} — keeps its schedule, history and run state`,
-      "🔑 any standing approvals this routine has accumulated are REVOKED by this edit — it starts again from the default gates",
+      "🔑 the standing permissions declared on this routine's creation card are REVOKED by this edit — it starts again from the default gates",
       ...(args.tainted ? ["⚠ proposed in a turn that read external content — read the new text carefully before arming"] : []),
       `Was:\n> ${clip(args.previousPrompt)}`,
       `Now:\n> ${clip(args.prompt)}`,

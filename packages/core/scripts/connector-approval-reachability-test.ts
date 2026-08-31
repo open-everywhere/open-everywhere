@@ -108,6 +108,7 @@ async function eveApprovalVerdict(input: {
   readonly sessionId: string;
   readonly toolInput?: unknown;
   readonly approvedTools?: ReadonlySet<string>;
+  readonly auth?: unknown;
 }): Promise<unknown> {
   const toolSet = buildToolSetFromDefinitions({
     approvedTools: input.approvedTools ?? new Set<string>(),
@@ -116,7 +117,7 @@ async function eveApprovalVerdict(input: {
   });
   const decide = buildToolApproval(toolSet);
   const container = new ContextContainer();
-  container.set(SessionKey, { sessionId: input.sessionId, turn: {} });
+  container.set(SessionKey, { sessionId: input.sessionId, turn: {}, ...(input.auth === undefined ? {} : { auth: input.auth }) });
   return await contextStorage.run(container, () =>
     decide({ toolCall: { toolName: input.toolName, input: input.toolInput ?? {}, toolCallId: `call-${input.toolName}` } }),
   );
@@ -169,6 +170,45 @@ eq(
     await eveApprovalVerdict({ toolName, approval: connectionApproval, sessionId: "reach-deny-other", toolInput }),
     "user-approval",
     "…while another session still raises (negative control on the deny)",
+  );
+}
+
+{
+  const { FIRE_PRINCIPAL_ATTR, FIRE_UNATTENDED_ATTR } = await import("../agent/identity/binding.js");
+  const { ROUTINE_MARKER } = await import("../agent/routines/routine.js");
+  const fireAuth = {
+    current: {
+      attributes: {
+        [FIRE_PRINCIPAL_ATTR]: "U0CREATOR",
+        [FIRE_UNATTENDED_ATTR]: "true",
+        [ROUTINE_MARKER.id]: "r-reach",
+        [ROUTINE_MARKER.surface]: "s/slack:C0REACH/main",
+        [ROUTINE_MARKER.org]: "default",
+        team_id: "T0REACH",
+        channel_id: "C0REACH",
+        channel_type: "channel",
+      },
+    },
+  };
+  const fired = (await eveApprovalVerdict({
+    toolName: "notion__notion-create-pages",
+    approval: connectionApproval,
+    sessionId: "reach-unattended",
+    toolInput: { title: "x" },
+    auth: fireAuth,
+  })) as { type?: string; reason?: string } | undefined;
+  ok(
+    typeof fired === "object" && fired !== null && fired.type === "denied",
+    "3e. an UNATTENDED fire's connector WRITE is DENIED through eve's own resolution — the fence is REACHED",
+  );
+  ok(
+    typeof fired?.reason === "string" && fired.reason.includes("unattended run cannot wait on an approval card"),
+    "…carrying the approvals plane's ask-unattended sentence to the model",
+  );
+  eq(
+    await eveApprovalVerdict({ toolName: "notion__notion-create-pages", approval: connectionApproval, sessionId: "reach-attended-control", toolInput: { title: "x" } }),
+    "user-approval",
+    "…while the same write with no fire bag still RAISES (negative control on the fence)",
   );
 }
 
