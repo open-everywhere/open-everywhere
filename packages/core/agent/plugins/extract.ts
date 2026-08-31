@@ -95,15 +95,20 @@ function connectionFile(slug: string, server: ParsedMcpServer): string {
   const description =
     server.description ?? `MCP connector "${slug}" (extracted from a plugin). Review and refine this description.`;
   return `// GENERATED from a plugin MCP server by scripts/extract-plugin.ts — review before trusting.
-// Eve connection (host-side connector plane). The per-surface HARD gate
-// (assertConnectorGranted) + once() approval are applied by default, matching
-// agent/connections/notion.ts. \`auth\` is the resolver form (eve#299): Eve hands the
-// caller's session context to the resolver once per execution step, so the gate reads
-// the caller identity straight off \`ctx.session.auth\` — no ALS reach needed. Swap
-// getToken for a real credential source in a real deployment.
+// Eve connection (host-side connector plane). Two gates are wired by default, matching
+// agent/connections/notion.ts: the per-surface HARD gate (assertConnectorGranted) inside
+// getToken, and \`connectorApprovalPolicy()\` on \`approval\` — the duplicate-approval guard,
+// then the unattended fence, then per-op read/write tiering where the deployment arms it.
+// 🔴 The fence is why this is not a bare \`once()\`: a connector WRITE on an unattended fire
+// must REFUSE, not mint an approval card nobody is there to click, which parks the fire
+// forever (OPE-1274). A scaffolded connection that kept \`once()\` would re-open that stall in
+// a self-hoster's tree. \`auth\` is the resolver form (eve#299): Eve hands the caller's session
+// context to the resolver once per execution step, so the gate reads the caller identity
+// straight off \`ctx.session.auth\` — no ALS reach needed. Swap getToken for a real credential
+// source in a real deployment.
 import { defineMcpClientConnection } from "eve/connections";
-import { once } from "eve/tools/approval";
 import type { SessionContext } from "eve/context";
+import { connectorApprovalPolicy } from "./connector-auth.js";
 import { assertConnectorGranted } from "../access/connector-scope.js";
 
 export default defineMcpClientConnection({
@@ -119,7 +124,7 @@ export default defineMcpClientConnection({
       return { token };
     },
   }),
-  approval: once(),
+  approval: connectorApprovalPolicy(),
 });
 `;
 }

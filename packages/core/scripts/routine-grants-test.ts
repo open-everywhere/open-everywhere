@@ -155,6 +155,30 @@ const NOW = "2026-03-30T11:30:00.000Z";
     JSON.stringify(describeDeclaredPermissions(["pr.open", "tool:notion__share_page"])) === JSON.stringify(["open pull requests", 'use the "notion__share_page" tool']),
     "the declared set renders in order",
   );
+
+  const legacyOnly = describeDeclaredPermissions(["connector:notion"]);
+  ok(legacyOnly.length === 1, "an unmappable frozen declaration still gets a line — the empty list is what hid it from the reader");
+  ok(legacyOnly[0].includes("unrecognised declaration") && legacyOnly[0].includes("connector:notion"), "…and the line NAMES the frozen text, so the human can see what the model asked for");
+  ok(legacyOnly[0].includes("grants nothing"), "…while promising nothing, because this build cannot map it onto any row");
+  const armedCard = permissionLines({ permissions: ["connector:notion"], tainted: false });
+  ok(armedCard.length === 1, "the CARD itself now carries that line — the drop was invisible one layer up, which is where it mattered");
+
+  ok(armedCard[0].includes("may, without asking") && armedCard[0].includes("connector:notion"), "ARMED frame: the card names the frozen declaration");
+  ok(armedCard[0].includes("grants nothing"), "…and says it buys nothing, so 'may, without asking' cannot be read as authority");
+  const taintedCard = permissionLines({ permissions: ["connector:notion"], tainted: true });
+  ok(taintedCard.length === 1, "TAINTED frame: an unmappable declaration on a poisoned card is rendered, not hidden");
+  ok(taintedCard[0].includes("connector:notion"), "…and it names what the model ASKED for, rather than reporting the ask as empty");
+  ok(!taintedCard[0].includes("permission to nothing"), "…and the composed sentence never says the model asked for NOTHING, which is the false reading a bare-'nothing' lead produced");
+  ok(taintedCard[0].includes("NOT granted"), "…while still saying nothing was granted");
+
+  const unliftable = describeDeclaredPermissions(["tool:notion__delete_page"]);
+  ok(unliftable[0] !== 'use the "notion__delete_page" tool', "…but NOT the live-authority wording, which no row backs");
+  ok(unliftable[0].includes("notion__delete_page") && unliftable[0].includes("never lifted") && unliftable[0].includes("grants nothing"), "…it says the tool is never lifted and grants nothing, and still names it");
+
+  const mixed = describeDeclaredPermissions(["pr.open", "connector:notion", "tool:notion__delete_page", "tool:notion__share_page"]);
+  ok(mixed.length === 4, "every declaration gets exactly one line, in the declaration's order");
+  ok(mixed[0] === "open pull requests" && mixed[3] === 'use the "notion__share_page" tool', "the two ARMABLE rows still render as live authority — the fix under-promises the others, it does not blanket the card");
+  ok(!mixed[0].includes("grants nothing") && !mixed[3].includes("grants nothing"), "…negative control: the grants-nothing qualifier is NOT stamped on rows that do arm");
 }
 
 {

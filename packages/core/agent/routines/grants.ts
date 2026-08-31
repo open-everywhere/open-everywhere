@@ -70,8 +70,15 @@ export function unarmedDeclarations(declared: readonly string[], granted: readon
 export function describeDeclaredPermissions(declared: readonly string[]): string[] {
   const out: string[] = [];
   for (const d of declared) {
-    const kind = routinePermissionKind(d.trim());
-    if (kind && !out.includes(describeGrantKind(kind))) out.push(describeGrantKind(kind));
+    const trimmed = d.trim();
+    const kind = routinePermissionKind(trimmed);
+    const line =
+      kind === null
+        ? `unrecognised declaration: "${trimmed}" (grants nothing)`
+        : namesUnliftableTool(trimmed)
+          ? `the "${declaredToolName(trimmed)}" tool, never lifted on an unattended fire (grants nothing)`
+          : describeGrantKind(kind);
+    if (!out.includes(line)) out.push(line);
   }
   return out;
 }
