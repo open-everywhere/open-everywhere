@@ -83,9 +83,13 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
   const send = read("channel/channel-address.js");
   const modeVar = /mode:(\w+)\.mode\?\?`conversation`/.exec(send)?.[1];
   ok(modeVar !== undefined, "channel-address.js still defaults an unspecified `mode` to `conversation`");
+  const capabilitiesTernary = `${modeVar as string}\\.mode===\`task\`\\?void 0:\\{requestInput:!0\\}`;
+  const inlinePlacement = new RegExp(`capabilities:${capabilitiesTernary}`).test(send);
+  const hoistedLocal = new RegExp(`(\\w+)=${capabilitiesTernary}`).exec(send)?.[1];
+  const hoistedPlacement = hoistedLocal !== undefined && new RegExp(`capabilities:${hoistedLocal}[,}]`).test(send);
   ok(
-    new RegExp(`capabilities:${modeVar as string}\\.mode===\`task\`\\?void 0:\\{requestInput:!0\\}`).test(send),
-    "channel-address.js still declares `capabilities: { requestInput: true }` for every non-task run (⊇ conversation — OE's seats)",
+    inlinePlacement || hoistedPlacement,
+    "channel-address.js still declares `capabilities: { requestInput: true }` for every non-task run (⊇ conversation — OE's seats), written inline or through a hoisted local",
   );
   ok(
     /=await \w+\.runtime\.dispatchContinuation\(\{command:\w+,continuationToken:\w+\}\)/.test(send),
@@ -124,7 +128,7 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
   );
 
   const steps = read("execution/workflow-steps.js");
-  const hookDispatch = /handleEvent=async\((\w+),\w+\)=>\{let (\w+)=[^;]*?await emit\(\1\)[^;]*;await dispatchStreamEventHooks\(\{[^}]*event:\2\}\)/u.exec(steps);
+  const hookDispatch = /handleEvent=async\((\w+),\w+\)=>\{let (\w+)=[^;]*?await emit\(\1\)[^;]*;[^;]*?await dispatchStreamEventHooks\(\{[^}]*event:\2\}\)/u.exec(steps);
   ok(hookDispatch !== null, "workflow-steps.js still wraps `emit` in a `handleEvent` that dispatches authored stream-event hooks");
   ok(
     /createExecutionNodeStep\(\{[\s\S]{0,400}?handleEvent[,}]/.test(steps),

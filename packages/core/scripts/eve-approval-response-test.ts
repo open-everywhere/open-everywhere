@@ -71,11 +71,50 @@ console.log("1. eve dist pins:");
 
   const authRequiredSet = /(\w+)=new Set\(\w+\.flatMap\(\w+=>\w+\.responseAuthRequiredRequestIds\?\?\[\]\)\)/.exec(coordBody);
   ok(authRequiredSet !== null, "the coordinator still builds a Set of responseAuthRequiredRequestIds from the pending batches");
-  const parkBranch = new RegExp(`${authRequiredSet?.[1] as string}\\.size>0\\)return deliveryResult\\([^;]*\`park\``);
-  ok(parkBranch.test(coordBody), "a message arriving with no responses and no active candidates PARKS when the request requires response auth");
+  const setVar = authRequiredSet?.[1] as string;
+
+  const responseVar = /for\(let\{auth:\w+,response:(\w+)\}of \w+\)/.exec(coordBody)?.[1];
+  ok(responseVar !== undefined, "the coordinator still walks the submitted responses one at a time");
   ok(
-    coordBody.includes("Please use the Approve or Cancel buttons to respond to this approval."),
-    "…and the dropped message is answered with eve's use-the-buttons feedback",
+    new RegExp(`if\\(!${setVar}\\.has\\(${responseVar as string}\\.requestId\\)\\)\\{[^;]*;[\\s\\S]{0,300}?settleDirectApprovalResponse\\(`).test(coordBody),
+    "the response-auth set is read PER REQUEST, gating the DIRECT-SETTLE path — a request that does NOT require response auth settles there, one that does falls through to the candidate path",
+  );
+
+  ok(
+    !new RegExp(`${setVar}\\.size>0`).test(coordBody),
+    "the 0.47.2 batch-level park branch (`<set>.size > 0` ⇒ park) is GONE — a follow-up message is no longer dropped",
+  );
+  ok(
+    !coord.includes("Please use the Approve or Cancel buttons to respond to this approval."),
+    "…and eve's use-the-buttons feedback string went with it — nothing in the coordinator answers a follow-up that way",
+  );
+
+  const parkGuard = /if\((\w+)&&\w+\.length===0&&!hasMeaningfulInput\(\w+\)\)return deliveryResult\(/.exec(coordBody);
+  ok(parkGuard !== null, "the one surviving park is guarded by the consumed-response condition");
+  ok(
+    new RegExp(`${parkGuard?.[1] as string}=hasResponseForRequest\\(`).test(coordBody),
+    "…and that guard is hasResponseForRequest — the park is about a spent response, never about an open card",
+  );
+  ok((coordBody.match(/`park`/gu) ?? []).length === 1, "…and it is the ONLY park the coordinator can return");
+
+  const extraction = read("harness/input-extraction.js");
+  const approvalLoop = extraction.slice(extraction.indexOf("function extractApprovalRequests("));
+  const approvalVar = /(\w+)=\w+\.data;if\(\w+\.includedRequestIds!==void 0/.exec(approvalLoop)?.[1];
+  ok(approvalVar !== undefined, "extractApprovalRequests still walks the parsed tool-approval requests one at a time");
+  ok(
+    new RegExp(`\\|\\|${approvalVar as string}\\.isAutomatic===!0\\)continue`).test(approvalLoop),
+    "…and it SKIPS every `isAutomatic` approval — the byte that keeps a `denied` decision from ever becoming a clickable card (§12's premise)",
+  );
+
+  const approvalStatus = read("approval/definition.d.ts");
+  const statusUnion = /export type ApprovalStatus =([^;]*);/.exec(approvalStatus)?.[1];
+  ok(statusUnion !== undefined, "eve still declares the request-time `ApprovalStatus` union");
+  for (const member of ['"denied"', '"user-approval"', '"approved"', '"not-applicable"']) {
+    ok((statusUnion as string).includes(member), `…and ${member} is still one of its members`);
+  }
+  ok(
+    /readonly type: "denied";/.test(approvalStatus) && /readonly type: "user-approval";/.test(approvalStatus),
+    "…and `denied` is a SEPARATE decision from `user-approval`, in the object form too",
   );
 
   const dyn = read("context/build-dynamic-tools.js");

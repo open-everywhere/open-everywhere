@@ -362,7 +362,70 @@ ok(DUPLICATE_APPROVAL_KEY_PREFIX.length > 0, "6a. the guard's dedupe key carries
   ok(store2.size() === 1, "11j. the non-prompting decision never touched the store (negative control: only a genuine prompt is fingerprinted)");
 }
 
+{
+  const { registerDiscordProvider } = await import("@open-everywhere/provider-discord/agent/register.js");
+  registerDiscordProvider();
+  const { resolveWindowGated, approvalRequestOf } = await import("@open-everywhere/core/agent/access/window-gated.js");
+  const postFile = await resolveWindowGated(
+    (await import("@open-everywhere/core/agent/tools/post_file.js")).default,
+    { channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_grain: "task" } } } } } as never,
+  );
+  const approvalOf = approvalRequestOf(postFile as unknown as { approval?: never }) as unknown as (
+    c: ApprovalContext,
+  ) => Promise<ApprovalStatus> | ApprovalStatus;
+
+  const { default: approvalRaisedHook } = await import("@open-everywhere/core/agent/hooks/approval-raised.js");
+  const inputRequestedHandler = (
+    approvalRaisedHook as unknown as { events: { "input.requested": (event: unknown, c: unknown) => Promise<void> } }
+  ).events["input.requested"];
+
+  const sessionId = "live-session-followup-repropose";
+  const toolName = "post_file";
+  const act = { files: [{ source: { path: "report.html" }, filename: "report.html" }] };
+
+  const turnA = ctx({ sessionId, toolName, toolInput: act, turnId: "turn_follow_a" });
+  ok((await approvalOf(turnA)) === "user-approval", "12a. turn A's first proposal prompts — eve raises the card");
+
+  const turnBEarly = ctx({ sessionId, toolName, toolInput: act, turnId: "turn_follow_b" });
+  ok(
+    (await approvalOf(turnBEarly)) === "user-approval",
+    "12b. before the raise is recorded, the follow-up turn's identical re-propose still prompts (the negative control for 12c)",
+  );
+
+  await inputRequestedHandler(
+    {
+      data: {
+        requests: [{ action: { callId: "call-follow-a", input: act, kind: "tool-call", toolName }, kind: "tool-approval" }],
+        sequence: 1,
+        stepIndex: 0,
+        turnId: "turn_follow_a",
+      },
+    },
+    { session: { id: sessionId, auth: {} as never, turn: {} as never } } as never,
+  );
+
+  const turnB = ctx({ sessionId, toolName, toolInput: act, turnId: "turn_follow_b" });
+  const reproposed = await approvalOf(turnB);
+  const denied = typeof reproposed === "object" && reproposed !== null && reproposed.type === "denied";
+  ok(denied, "12c. the follow-up turn's re-propose of the SAME act lands on the OPEN card — DENIED, so no second card is raised and the act does not run");
+  ok(
+    denied && ((reproposed as { reason?: unknown }).reason as string | undefined ?? "").length > 0,
+    "12d. …and it carries a reason the model can relay, so the human is pointed back at the card that is already open",
+  );
+
+  const otherAct = ctx({
+    sessionId,
+    toolName,
+    toolInput: { files: [{ source: { path: "other.html" }, filename: "other.html" }] },
+    turnId: "turn_follow_b",
+  });
+  ok(
+    (await approvalOf(otherAct)) === "user-approval",
+    "12e. a DIFFERENT act proposed in the same follow-up turn still prompts — the dedup is per fingerprint, never per session, and this is the gap eve's blanket park used to cover",
+  );
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(
-  `✓ approval-dedupe — ${passed} assertions (duplicate-card suppression, crash-recovery ordering, OPE-476 residual, no false dedup, fail-open, window expiry, string/object input convergence, live post_file + connector-auth wiring, both approval authoring shapes)`,
+  `✓ approval-dedupe — ${passed} assertions (duplicate-card suppression, crash-recovery ordering, OPE-476 residual, no false dedup, fail-open, window expiry, string/object input convergence, live post_file + connector-auth wiring, both approval authoring shapes, the eve-0.47.3 follow-up re-propose)`,
 );
