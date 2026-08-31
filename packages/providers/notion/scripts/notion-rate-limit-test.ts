@@ -1,13 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  RateLimitExhaustedError,
-  setRegisteredConnectorCredentials,
-  vercelConnectorHome,
-  type CredentialGrantRow,
-  type GrantOwnerSubject,
-  type GrantedRequest,
-} from "@open-everywhere/core/agent/adapter-api.js";
-import { NOTION_GRANT_CREDENTIAL, notionGrantTransport } from "../agent/channels/notion-grant-transport.js";
+import { RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   createCommentReply,
   notionOperation,
@@ -264,86 +256,6 @@ function recorder() {
     "GET /v1/blocks/abc123/children",
     "operation: a segment that is NOT uuid-shaped is NOT redacted — the rule keys on the shape, and Notion's own ids are always uuids",
   );
-}
-
-{
-  const OAUTH_HOME = "mcp.notion.com/notion-mcp";
-  const PAGE = "00000000-0000-4000-8000-000000000014";
-  setRegisteredConnectorCredentials([
-    {
-      allows: ["api-key", "user-oauth"],
-      connector: "notion",
-      credentials: [
-        {
-          endpoints: { hosts: ["api.notion.com"], methods: ["GET"], pathPrefixes: ["/v1/"] },
-          home: vercelConnectorHome(OAUTH_HOME),
-          id: NOTION_GRANT_CREDENTIAL,
-          type: "user-oauth" as const,
-        },
-      ],
-      description: "notion (rate-limit test catalogue)",
-    },
-  ]);
-
-  const grant = {
-    askId: "ask-1", connector: "notion", createdAt: "2026-01-29T18:22:00.000Z", expiresAt: "2026-01-20T16:07:00.000Z",
-    id: "grant-1", mode: "session", ownerPrincipalId: "slack/W1/U-owner", ownerSlug: "rowan",
-    purpose: "draft the Q3 summary", requesterPrincipalId: "slack/W1/U-req", resource: `notion:page/${PAGE}`,
-    scopeKey: "session-1", status: "active", tier: "read", verb: "read_page",
-  } as CredentialGrantRow;
-  const ownerSubject: GrantOwnerSubject = { org: "acme", vaultSubject: "p:acme/slack/W1/U-owner" };
-  const request: GrantedRequest = { method: "GET", url: `https://api.notion.com/v1/blocks/${PAGE}/children` };
-
-  function armGrant(queue: Response[], sleep: (ms: number) => Promise<void>) {
-    let calls = 0;
-    const transport = notionGrantTransport({
-      async fetch() {
-        const next = queue[calls];
-        calls += 1;
-        if (next === undefined) throw new Error("stub fetch ran out of responses");
-        return next;
-      },
-      async mintOwnerToken() {
-        return "tok-owner";
-      },
-      retry: { sleep },
-    });
-    return { transport, calls: () => calls };
-  }
-
-  {
-    const clock = recorder();
-    const armed = armGrant([rateLimited("2"), new Response(JSON.stringify({ object: "list", results: [] }), { status: 200 })], clock.sleep);
-    await armed.transport(request, grant, ownerSubject);
-    eq(clock.slept, [2000], "granted plane: the honoured delay is EXACTLY the Retry-After the refusal named");
-    eq(armed.calls(), 2, "granted plane: the call is repeated, not abandoned on the first 429");
-  }
-
-  {
-    const clock = recorder();
-    const armed = armGrant([rateLimited("1"), rateLimited("1"), rateLimited("1"), rateLimited("1")], clock.sleep);
-    let caught: unknown;
-    try {
-      await armed.transport(request, grant, ownerSubject);
-    } catch (err) {
-      caught = err;
-    }
-    ok(caught instanceof RateLimitExhaustedError, "granted plane: exhaustion ends in the NAMED failure, not a bare HTTP 429 refusal message");
-    const e = caught as RateLimitExhaustedError;
-    eq(e.surface, "notion", "granted plane: the surface names Notion");
-    eq(e.operation, "GET /v1/blocks/{id}/children", "granted plane: the operation is the endpoint SHAPE — the page id is redacted");
-    eq(e.attempts, 4, "granted plane: four attempts under the shared default");
-    ok(!e.message.includes("tok-owner"), "🔴 granted plane: the OWNER'S minted token is nowhere in the message");
-    eq(armed.calls(), 4, "granted plane: the fourth refusal is not followed by a fifth request");
-  }
-
-  {
-    const clock = recorder();
-    const armed = armGrant([new Response(JSON.stringify({ object: "list", results: [] }), { status: 200 })], clock.sleep);
-    await armed.transport(request, grant, ownerSubject);
-    eq(clock.slept, [], "granted plane negative control: a 200 sleeps ZERO times");
-    eq(armed.calls(), 1, "granted plane negative control: a 200 is requested EXACTLY once");
-  }
 }
 
 console.log(`  ${n} assertions passed`);

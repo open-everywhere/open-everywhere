@@ -17,7 +17,6 @@ console.log("notion write seam (OPE-1233):");
 
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const API_SEAM_REL = "agent/channels/notion-api.ts";
-const GRANT_SEAM_REL = "agent/channels/notion-grant-transport.ts";
 
 function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
@@ -55,16 +54,11 @@ const AGENT_FILES = tsFiles(join(PKG_ROOT, "agent"));
   const api = stripComments(readFileSync(join(PKG_ROOT, API_SEAM_REL), "utf8"));
   ok(/withRetryAfter\(\(\)\s*=>\s*send\(url, init\)/.test(api), "🔴 §1 `notionFetch` still dispatches through `withRetryAfter` — remove it and every Notion REST call silently loses its backoff");
   ok(/surface:\s*"notion"/.test(api), "§1 the REST funnel names the notion surface");
-
-  const grant = stripComments(readFileSync(join(PKG_ROOT, GRANT_SEAM_REL), "utf8"));
-  ok(/withRetryAfter\(\(\)\s*=>\s*send\(url, init\)/.test(grant), "🔴 §1 the GRANTED plane still dispatches through `withRetryAfter` too");
-  ok(/surface:\s*"notion"/.test(grant), "§1 the granted funnel names the notion surface");
 }
 
 {
   const KNOWN_TRANSPORTS: ReadonlyArray<{ file: string; covered: boolean; why: string }> = [
     { file: API_SEAM_REL, covered: true, why: "notionFetch — every REST call the channel makes, reads and writes alike" },
-    { file: GRANT_SEAM_REL, covered: true, why: "the granted plane — a composed call under the OWNER's token" },
     {
       file: "agent/memory/memory.ts",
       covered: true,

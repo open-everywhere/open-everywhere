@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
-import { NOTION_GRANT_CREDENTIAL } from "../packages/providers/notion/agent/channels/notion-grant-transport.js";
 import { loadBindings, loadBundles } from "../agent/access/bundles.js";
 import { loadConnectorCredentials } from "../agent/access/connector-credentials.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
@@ -126,36 +125,23 @@ ok(
 
 {
   const notionCat = catalogues.find((c) => c.connector === "notion")!;
-  const rest = notionCat.credentials.find((cr) => cr.id === "user-oauth-rest");
-  ok(rest !== undefined, "the shipped notion catalogue declares the per-user REST credential 'user-oauth-rest'");
-  ok(rest?.type === "user-oauth", "…and it is PER-USER — an api-key here would spend the deployment's own integration under a person's name");
-  ok(rest?.endpoints !== undefined, "🔴 …and it declares `endpoints`, which the grant transport refuses to mint without");
-  ok(
-    credentialEndpointVerdict(rest?.endpoints, "https://api.notion.com/v1/blocks/abc/children", "GET").allowed,
-    "the real rules ADMIT the grantable verb's actual call shape (GET /v1/blocks/…/children) — the positive control that makes the refusals below mean something",
-  );
-  ok(!credentialEndpointVerdict(rest?.endpoints, "https://evil.example/v1/blocks/abc/children", "GET").allowed, "🔴 …and REFUSE a wrong-host call, which is what an unfenced credential would have allowed");
-  ok(!credentialEndpointVerdict(rest?.endpoints, "https://api.notion.com/v1/blocks/abc/children", "POST").allowed, "…and REFUSE a write: every grantable Notion verb today is a read");
-  ok(!credentialEndpointHostVerdict(rest?.endpoints, "https://mcp.notion.com/mcp").allowed, "…and REFUSE hosted MCP, which is the OTHER token family's host");
-
-  const mcpUser = notionCat.credentials.find((cr) => cr.id === "user-oauth");
-  ok(mcpUser !== undefined, "the MCP-family per-user credential 'user-oauth' still exists");
-  ok(JSON.stringify(mcpUser?.home) !== JSON.stringify(rest?.home), "…and the two per-user credentials are homed at DIFFERENT OAuth providers — two token families, two clients");
+  const perUser = notionCat.credentials.filter((cr) => cr.type === "user-oauth");
+  ok(perUser.length === 1, `🔴 the shipped notion catalogue declares EXACTLY ONE per-user credential — got ${perUser.length}; a second is unreachable, not additive`);
+  const mcpUser = perUser[0];
+  ok(mcpUser?.id === "user-oauth", "…and it is the MCP-family credential `user-oauth`, the only family hosted mcp.notion.com accepts");
+  ok(mcpUser?.endpoints !== undefined, "🔴 …and it declares `endpoints` — `guardCredentialFetch` returns the base fetch BY IDENTITY when handed no rules, so an unfenced per-user credential is an unfenced person");
 
   ok(
-    notionCat.credentials.some((cr) => cr.id === NOTION_GRANT_CREDENTIAL),
-    `the granted transport names the notion credential "${NOTION_GRANT_CREDENTIAL}", which the shipped catalogue does not declare`,
-  );
-  const granted = notionCat.credentials.find((cr) => cr.id === NOTION_GRANT_CREDENTIAL);
-  ok(granted?.type === "user-oauth", `…and it is PER-USER, not "${granted?.type}" — a grant spends one named person's reach`);
-  ok(granted?.endpoints !== undefined, "…and it declares `endpoints`, without which the transport refuses every granted call");
-  ok(
-    credentialEndpointVerdict(granted?.endpoints, "https://api.notion.com/v1/blocks/abc/children", "GET").allowed,
-    "…and its fence ADMITS the grantable verb's real call shape (GET api.notion.com/v1/blocks/…/children)",
+    credentialEndpointHostVerdict(mcpUser?.endpoints, "https://mcp.notion.com/mcp").allowed,
+    "the real rules ADMIT hosted MCP — the host a borrowed Notion tool call is sent to",
   );
   ok(
-    JSON.stringify(granted?.home) === JSON.stringify(rest?.home),
-    "🔴 …and it is the REST-family credential — the MCP-family token gets 401 from api.notion.com",
+    !credentialEndpointHostVerdict(mcpUser?.endpoints, "https://evil.example/mcp").allowed,
+    "🔴 …and REFUSE a wrong-host call, which is what an unfenced credential would have allowed",
+  );
+  ok(
+    !credentialEndpointHostVerdict(mcpUser?.endpoints, "https://api.notion.com/v1/users/me").allowed,
+    "🔴 …and REFUSE api.notion.com — no granted Notion call reaches REST at all now the REST arm is deleted",
   );
 }
 
