@@ -481,17 +481,22 @@ export function withUnattendedConnectorFence(
     const decision = await policy(ctx);
     if (!isConnectorOpTool(ctx.toolName)) return decision;
     const connection = parseQualifiedToolName(ctx.toolName)?.connection;
-    if (connection === undefined || connection.length === 0) return decision;
     const baseTier = classifyConnectorOpTier(ctx.toolName);
     const seamTier = effectiveConnectorOpTier(ctx.toolName);
     const tier = joinConnectorOpTiers(baseTier, seamTier);
     if (tier === "read") return decision;
     const armOpened = seamTier === "read";
     if (!decisionWouldPrompt(decision) && !armOpened) return decision;
+    const armOpenedRefusal = (): ApprovalStatus => ({
+      type: "denied",
+      reason: unattendedConnectorRefusalMessage(connection ?? "", ctx.toolName, tier, call(tainted, false)),
+    });
+    if (connection === undefined || connection.length === 0) return armOpened ? armOpenedRefusal() : decision;
     const auth = ctx.session?.auth;
-    if (auth === undefined || auth === null) return decision;
+    if (auth === undefined || auth === null) return armOpened ? armOpenedRefusal() : decision;
     const facts = await fencedTurnFacts(auth as import("eve/context").SessionAuth, surfaceContext);
-    if (facts === null || !facts.unattended) return decision;
+    if (facts === null) return armOpened ? armOpenedRefusal() : decision;
+    if (!facts.unattended) return decision;
     const kind = connectorToolPermissionKind(ctx.toolName);
     const nowIso = new Date().toISOString();
     const poisoned = call(tainted, false);

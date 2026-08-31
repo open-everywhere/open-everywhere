@@ -17,9 +17,11 @@ import {
   ASK_UNATTENDED_SENTENCE,
   TAINTED_ASK_UNATTENDED_SENTENCE,
   connectorApprovalPolicy,
+  connectorOpApproval,
   unattendedConnectorRefusalMessage,
   withUnattendedConnectorFence,
 } from "../agent/connections/connector-auth.js";
+import { classifyConnectorOpTier } from "../agent/access/consequence.js";
 import { connectorSessionKind, connectorToolPermissionKind } from "../agent/approvals/session-grant.js";
 import { ROUTINE_MARKER, routineGrantKey, type Routine } from "../agent/routines/routine.js";
 import { routineFireAttributes, webhookFireAttributes } from "../agent/routines/fire-auth.js";
@@ -462,5 +464,60 @@ console.log("§18 an arm cannot stand the unattended fence down:");
   registerConfig(armed(undefined));
 }
 
+console.log("§19 an unreadable bag does not stand the fence down on the arm-opened path:");
+{
+  const armed = (tier: "read" | "write" | "destructive" | undefined) => ({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+    connectorOpTier: () => tier,
+  });
+  const OPENED_OP = "notion__frobnicate_gadget";
+  const openedPolicy = (deps: Parameters<typeof withUnattendedConnectorFence>[1] = {}) =>
+    withUnattendedConnectorFence(fixedPolicy("not-applicable"), deps);
+
+  registerConfig(armed("read"));
+  ok(classifyConnectorOpTier(OPENED_OP) === "destructive", "precondition: the BUILT-IN abstains on this verb and falls to its fail-closed destructive");
+  ok(effectiveConnectorOpTier(OPENED_OP) === "read", "precondition: the arm decided it down to `read`, so the seam sits BELOW the built-in");
+  ok(
+    (await connectorOpApproval()(approvalCtx(fireAuth(), OPENED_OP))) === "not-applicable",
+    "🔴 precondition: the WRAPPED policy raises no card for an arm-opened op — so a stand-down returns `not-applicable`, which RUNS the op",
+  );
+
+  const noAuth = await ask(connectorApprovalPolicy(), undefined, OPENED_OP);
+  ok(isDenied(noAuth), "🔴 an unattended fire with NO `session.auth` is REFUSED under an everything-is-read arm, not executed");
+  ok(isDenied(noAuth) && (noAuth.reason ?? "").includes(ASK_UNATTENDED_SENTENCE), "…with the approvals plane's own ask-unattended sentence");
+  ok(isDenied(noAuth) && (noAuth.reason ?? "").includes("destructive-tier"), "…naming the BUILT-IN's tier, which is the tier the arm could not lower");
+  ok(isDenied(await ask(connectorApprovalPolicy(), null, OPENED_OP)), "a NULL auth bag refuses on the same path");
+  const poisoned = await ask(openedPolicy({ tainted: () => true }), undefined, OPENED_OP);
+  ok(isDenied(poisoned) && (poisoned.reason ?? "").includes(TAINTED_ASK_UNATTENDED_SENTENCE), "a TAINTED arm-opened stand-down refuses with the plane's TAINTED sentence");
+  ok(isDenied(poisoned) && !(poisoned.reason ?? "").includes(ASK_UNATTENDED_SENTENCE), "…and not the plain one, whose advice a poisoned turn cannot act on");
+  const unbindable = await ask(openedPolicy({ surfaceContext: async () => null }), fireAuth(), OPENED_OP);
+  ok(isDenied(unbindable), "🔴 a surface that will not bind is REFUSED under the same arm — an unprovable turn is not a proven attended one");
+  ok(isDenied(unbindable) && (unbindable.reason ?? "").includes(ASK_UNATTENDED_SENTENCE), "…with the same sentence");
+  ok(rowFor(await refusedRows(), OPENED_OP) === undefined, "…and neither refusal writes a `connector.refused` row — there is no readable bag to attribute one to");
+
+  ok((await ask(connectorApprovalPolicy(), HUMAN_AUTH, OPENED_OP)) === "not-applicable", "a PROVEN attended turn still takes the arm's answer: no card, the op runs");
+
+  const RESERVED_OP = "grant__U0OWNER__frobnicate";
+  const EMPTY_CONNECTION_OP = "__frobnicate";
+  ok(effectiveConnectorOpTier(RESERVED_OP) === "destructive", "a RESERVED-namespace name is never lowered by an arm — the arm is not consulted for a name that parses to NO connection");
+  ok(effectiveConnectorOpTier(EMPTY_CONNECTION_OP) === "read", "🔴 …but an EMPTY connection IS passed to the arm, which lowers it — so this stand-down is arm-openable and the two cases are not alike");
+  ok(isDenied(await ask(openedPolicy(), fireAuth(), EMPTY_CONNECTION_OP)), "🔴 an unattended fire on an arm-opened `__<verb>` name is REFUSED, not executed");
+  ok((await ask(openedPolicy(), fireAuth(), RESERVED_OP)) === "not-applicable", "control: the RESERVED name still stands the fence down — no arm opened it, so nothing changed for the credential-grant plane");
+
+  registerConfig(armed(undefined));
+  const fenced = withUnattendedConnectorFence(fixedPolicy("user-approval"));
+  ok((await fenced({ toolName: OPENED_OP, approvedTools: new Set<string>(), callId: "c", toolInput: {} } as never)) === "user-approval", "no arm: no session at all → the wrapped decision still stands, verbatim");
+  ok((await ask(fenced, null, OPENED_OP)) === "user-approval", "no arm: a null auth → the wrapped decision still stands, verbatim");
+  ok((await ask(withUnattendedConnectorFence(fixedPolicy("user-approval"), { surfaceContext: async () => null }), fireAuth(), OPENED_OP)) === "user-approval", "no arm: a surface that will not bind → the wrapped decision still stands, verbatim");
+  ok(isDenied(await ask(openedPolicy(), fireAuth(), EMPTY_CONNECTION_OP)) === false, "no arm: the `__<verb>` name stands the fence down again — the refusal above was the arm and nothing else");
+  ok((await ask(withUnattendedConnectorFence(fixedPolicy("user-approval"), { surfaceContext: async () => null }), HUMAN_AUTH, OPENED_OP)) === "user-approval", "no arm: an attended turn on an unbindable surface still raises its card");
+}
+
 rmSync(tmp, { recursive: true, force: true });
-console.log(`✓ connector-unattended-fence: ${passed} assertions passed (refuse + lift + attended/read untouched + destructive-never + TAINTED-never + per-tool keying + legacy refused + ordering + fail-soft + bag selection + the OPE-1321 arm floor)`);
+console.log(`✓ connector-unattended-fence: ${passed} assertions passed (refuse + lift + attended/read untouched + destructive-never + TAINTED-never + per-tool keying + legacy refused + ordering + fail-soft + bag selection + the OPE-1321 arm floor + the OPE-1336 arm-opened stand-downs)`);
