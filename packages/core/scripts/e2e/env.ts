@@ -80,6 +80,9 @@ export const ENV = {
   spendCapFixture: "E2E_SPEND_CAP_FIXTURE",
   spendGateDoor: "E2E_SPEND_GATE_DOOR",
   accessPersonalFixture: "E2E_ACCESS_PERSONAL_FIXTURE",
+  routineConnectorFixture: "E2E_ROUTINE_CONNECTOR_FIXTURE",
+  discordGrantOwner: "E2E_DISCORD_GRANT_OWNER",
+  discordGrantTapped: "E2E_DISCORD_GRANT_TAPPED",
   expectModels: "E2E_EXPECT_MODELS",
   expectModelsRequired: "E2E_EXPECT_MODELS_REQUIRED",
 } as const;

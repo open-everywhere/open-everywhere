@@ -2,6 +2,21 @@ import { tmpdir } from "node:os";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  allAtWriteTier,
+  allAttributedToRoutine,
+  allNameGrantKind,
+  allNoticesDelivered,
+  connectorToolGrantKind,
+  discordOwnedAsks,
+  discordOwnedGrants,
+  isUnattendedFenceRefusal,
+  isUnattendedLift,
+  noticesForGrant,
+  ownerPlatformOf,
+  refusedUnverifiedRequester,
+  splitFenceRows,
+} from "../packages/core/scripts/e2e/grant-fence-rows.js";
 import type { AuditWireEntry } from "../packages/core/scripts/e2e/audit-read.js";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
@@ -306,6 +321,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "S-LINK-SLACK", "S20", "S23", "S24", "J-TEAMS", "J-TEAMS-DM", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC", "J-SUP",
     "J-UNIFIED", "J-UNI-X", "J-PR", "S-PR-SESSION", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "J-WORKFLOW", "S-NOTION-WRITE", "S-CONNECTOR-TIER",
     "S-DM-NOTION", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-TAINT-DRYRUN", "S-TAINT-ROUTE-LIVE", "S-TAINT-UNATTENDED-DENY",
+    "S-ROUTINE-CONNECTOR-WRITE", "S-DISCORD-GRANT",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
@@ -319,12 +335,12 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
       s.requires.length > 0 && s.requires.every((c) => KNOWN.has(c)),
       `${s.id} requires only known capabilities`,
     );
-    okShape(s.timeoutMs >= 120_000 && s.timeoutMs <= 3_900_000, `${s.id} budget is within the 120s–65min envelope`);
+    okShape(s.timeoutMs >= 120_000 && s.timeoutMs <= 5_400_000, `${s.id} budget is within the 120s–90min envelope`);
   }
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
   ok(
-    optional.join(",") === "S-MEM-READ,S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER,S-DM-NOTION,S-CONNECT-CARD,S-APIKEY-INTAKE,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY",
-    "the plan's stretch scenarios PLUS the gated Notion read PLUS the cross-surface unified money-shot PLUS the two connector-WRITE scenarios PLUS the folded DM personal-Notion + channel connector-card journeys PLUS the api-key intake leg PLUS S-MEM-READ (the OPE-121 memory-READ assertion: needs the control-read creds to see anything, and pays a delegation round-trip) PLUS S-TAINT-DRYRUN (double opt-in: extended lane AND E2E_TAINT_DRYRUN=1 — it drives read tools across up to four surfaces purely to populate the source-tier verdict log) PLUS S-TAINT-ROUTE-LIVE (OPE-439: costs a real fetch + up to two delegated propose round-trips) PLUS S-TAINT-UNATTENDED-DENY (OPE-452: needs E2E_ROUTINES_ALLOW_WAIT=1 — a real ~10min dispatcher tick) are optional (S11–S23 are core coverage) (S-DM-DISCORD retired at OPE-725)",
+    optional.join(",") === "S-MEM-READ,S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER,S-DM-NOTION,S-CONNECT-CARD,S-APIKEY-INTAKE,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT",
+    "the plan's stretch scenarios PLUS the gated Notion read PLUS the cross-surface unified money-shot PLUS the two connector-WRITE scenarios PLUS the folded DM personal-Notion + channel connector-card journeys PLUS the api-key intake leg PLUS S-MEM-READ (the OPE-121 memory-READ assertion: needs the control-read creds to see anything, and pays a delegation round-trip) PLUS S-TAINT-DRYRUN (double opt-in: extended lane AND E2E_TAINT_DRYRUN=1 — it drives read tools across up to four surfaces purely to populate the source-tier verdict log) PLUS S-TAINT-ROUTE-LIVE (OPE-439: costs a real fetch + up to two delegated propose round-trips) PLUS S-TAINT-UNATTENDED-DENY (OPE-452: needs E2E_ROUTINES_ALLOW_WAIT=1 — a real ~10min dispatcher tick) PLUS S-ROUTINE-CONNECTOR-WRITE (OPE-1328: the same switch, and TWO ticks — its refusal arm and its lift arm each need their own fire) PLUS S-DISCORD-GRANT (OPE-1310: needs a named Discord grant OWNER who can receive a real DM, and its second half needs a human to tap a card the harness cannot forge) are optional (S11–S23 are core coverage) (S-DM-DISCORD retired at OPE-725)",
   );
 
   const KNOWN_SURFACES = new Set(["slack", "teams", "discord", "github", "linear", "notion", "cross"]);
@@ -341,8 +357,8 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(SCENARIOS.find((s) => s.id === "J-GH")!.surface === "github", "J-GH is the github surface");
   const nonSlack = SCENARIOS.filter((s) => s.surface !== "slack").map((s) => s.id).sort();
   ok(
-    nonSlack.join(",") === "J-DISC,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-TEAMS-DM,J-UNI-X,J-WORKFLOW,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DM-NOTION,S-NOTION-WRITE,S-PR-SESSION,S8",
-    "the non-slack scenarios are exactly J-DISC(discord)/S8+J-UNI-X+J-PR+S-PR-SESSION+J-WORKFLOW(cross)/J-TEAMS+J-TEAMS-DM(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER+S-DM-NOTION+S-CONNECT-CARD+S-APIKEY-INTAKE(notion) (S-DM-DISCORD retired at OPE-725)",
+    nonSlack.join(",") === "J-DISC,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-TEAMS-DM,J-UNI-X,J-WORKFLOW,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DISCORD-GRANT,S-DM-NOTION,S-NOTION-WRITE,S-PR-SESSION,S-ROUTINE-CONNECTOR-WRITE,S8",
+    "the non-slack scenarios are exactly J-DISC+S-DISCORD-GRANT(discord)/S8+J-UNI-X+J-PR+S-PR-SESSION+J-WORKFLOW(cross)/J-TEAMS+J-TEAMS-DM(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER+S-DM-NOTION+S-CONNECT-CARD+S-APIKEY-INTAKE+S-ROUTINE-CONNECTOR-WRITE(notion) (S-DM-DISCORD retired at OPE-725)",
   );
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
   ok(smoke.join(",") === "J1,J-TEAMS", "the smoke lane is exactly J1 (slack wake+reply) + J-TEAMS (teams)");
@@ -351,7 +367,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "the security suite is F-SEC (tainted-remember/SSRF/injection) + S-PR-BOUNDARY (ungranted-repo PR refusal) + S-AWS-BOUNDARY (ungranted-AWS refusal: no host execution, no credential material)",
   );
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
-  ok(unjudged.join(",") === "S-MEM-READ,S6,S10,S-LINK-SLACK,J-NOT,J-SUP,S-PR-SESSION,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY", "S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY are fully deterministic — no judge (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; hard gates: route status / audited silence / reply-target / in-channel presence)");
+  ok(unjudged.join(",") === "S-MEM-READ,S6,S10,S-LINK-SLACK,J-NOT,J-SUP,S-PR-SESSION,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT", "S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; hard gates: route status / audited silence / reply-target / in-channel presence)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
   ok(req("S11") === "slack+slackPrivate", "S11 requires slack + slackPrivate");
   ok(req("J2") === "slack+slackChannelB", "J2 (memory journey) requires slack + slackChannelB (the union of S4's slack and S12's slack+slackChannelB)");
@@ -2396,6 +2412,92 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
 }
 
 rmSync(dir, { recursive: true, force: true });
+{
+  const grantRow = (action: string, detail: Record<string, unknown>): AuditWireEntry => ({
+    ts: "2026-05-05T23:30:00.000Z",
+    org: "default",
+    platform: "slack",
+    workspace: "T1",
+    action,
+    detail,
+  });
+  const OP = "notion__create_page";
+  const KIND = "connector.tool:notion__create_page";
+  ok(connectorToolGrantKind(OP) === KIND, "connectorToolGrantKind spells the per-TOOL memo kind the declare vocabulary and the fence both key on");
+
+  const fenceRefusal = grantRow("connector.refused", { connection: "notion", op: OP, tier: "write", reason: "ask-unattended", grant: KIND, routine: "rt_1:3" });
+  const taintedRefusal = grantRow("connector.refused", { connection: "notion", op: OP, tier: "write", reason: "ask-unattended-tainted", grant: KIND, tainted: true, routine: null });
+  const disclosureRefusal = grantRow("connector.refused", { connection: "notion", op: OP, reason: "audience_floor" });
+  const scopeRefusal = grantRow("connector.refused", { connection: "notion", op: OP, reason: "unresolved_surface" });
+  const otherOpRefusal = grantRow("connector.refused", { connection: "notion", op: "notion__update_page", tier: "write", reason: "ask-unattended", grant: "connector.tool:notion__update_page" });
+  const lift = grantRow("connector.unattended_lift", { connection: "notion", op: OP, tier: "write", grant: KIND, routine: "rt_1:3" });
+  const otherOpLift = grantRow("connector.unattended_lift", { connection: "notion", op: "notion__update_page", tier: "write", grant: "connector.tool:notion__update_page", routine: "rt_1:3" });
+
+  ok(isUnattendedFenceRefusal(fenceRefusal, OP), "the fence's own ask-unattended refusal is recognised");
+  ok(isUnattendedFenceRefusal(taintedRefusal, OP), "the TAINTED variant counts too — a poisoned fire is still a fire the fence refused, and splitting them would red a run that merely ingested something");
+  ok(!isUnattendedFenceRefusal(disclosureRefusal, OP), "NEGATIVE: the disclosure plane's audience_floor refusal shares the connector.refused action and is NOT the fence — counting it would report the fence working where it never ran");
+  ok(!isUnattendedFenceRefusal(scopeRefusal, OP), "NEGATIVE: the scope gate's unresolved_surface refusal is not the fence either");
+  ok(!isUnattendedFenceRefusal(otherOpRefusal, OP), "NEGATIVE: a refusal for a DIFFERENT op does not answer for this one — the fence's lookup is per-TOOL, so arm A's verdict must not be satisfiable by another tool's row");
+  ok(!isUnattendedFenceRefusal(lift, OP), "NEGATIVE: a lift row is not a refusal");
+  ok(isUnattendedLift(lift, OP) && !isUnattendedLift(otherOpLift, OP) && !isUnattendedLift(fenceRefusal, OP), "the lift reader matches its own op's lift and nothing else");
+
+  const split = splitFenceRows([fenceRefusal, disclosureRefusal, scopeRefusal, otherOpRefusal, lift, otherOpLift], OP);
+  ok(split.refused.length === 1 && split.lifted.length === 1 && split.otherRefusals.length === 2, "splitFenceRows separates the fence family, the lift, and the other-plane refusals it reports alongside — so an absence with other refusals beside it is a different diagnosis from a bare absence");
+
+  ok(allAtWriteTier([fenceRefusal, taintedRefusal]), "allAtWriteTier accepts write-tier rows");
+  ok(!allAtWriteTier([fenceRefusal, grantRow("connector.refused", { op: OP, tier: "destructive", reason: "ask-unattended", grant: KIND })]), "NEGATIVE: one destructive-tier row fails the whole gate — the tier is what decides liftability");
+  ok(!allAtWriteTier([]), "VACUITY: allAtWriteTier([]) is FALSE — Array.every answers true for an empty array, which is exactly how a gate reports \"every refusal named the write tier\" having seen none");
+
+  ok(allNameGrantKind([fenceRefusal, lift], KIND), "allNameGrantKind accepts rows naming the per-tool kind");
+  ok(!allNameGrantKind([fenceRefusal, grantRow("connector.refused", { op: OP, tier: "write", reason: "ask-unattended", grant: "connector.op:notion" })], KIND), "NEGATIVE: the SUPERSEDED per-connector spelling (connector.op:<slug>) fails the join — it is refused by the declare vocabulary and never widened, so a live leg must go red rather than accept one");
+  ok(!allNameGrantKind([], KIND), "VACUITY: allNameGrantKind([]) is FALSE");
+
+  ok(allAttributedToRoutine([lift]), "allAttributedToRoutine accepts a lift naming its routine grant key");
+  ok(!allAttributedToRoutine([grantRow("connector.unattended_lift", { op: OP, grant: KIND, routine: null })]), "NEGATIVE: a lift with routine:null is unattributed — it cannot answer whose click authorised the write, which is the row's whole audit value");
+  ok(!allAttributedToRoutine([grantRow("connector.unattended_lift", { op: OP, grant: KIND, routine: "" })]), "NEGATIVE: an EMPTY routine key is not an attribution either");
+  ok(!allAttributedToRoutine([]), "VACUITY: allAttributedToRoutine([]) is FALSE");
+
+  const discordAsk = grantRow("grant.asked", { askId: "ask_1", connector: "notion", owner: "discord/900000000000000001", purpose: "\"e2e\"", requestedMode: "borrow", resource: "page", scopeKey: "discord/g1/c1", toolName: "notion__fetch", verb: "read" });
+  const slackAsk = grantRow("grant.asked", { askId: "ask_2", connector: "notion", owner: "slack/T1/U1", purpose: "\"e2e\"", requestedMode: "borrow", resource: "page", scopeKey: "slack/T1/C1", toolName: "notion__fetch", verb: "read" });
+  const tenantScopedAsk = grantRow("grant.asked", { askId: "ask_3", connector: "notion", owner: "teams/tenant-1/U9", toolName: "notion__fetch", verb: "read" });
+  const discordGrant = grantRow("grant.granted", { askId: "ask_1", connector: "notion", grantId: "g1", mode: "borrow", owner: "discord/900000000000000001", requester: "discord/900000000000000002", tier: "read", verb: "read" });
+  const slackGrant = grantRow("grant.granted", { askId: "ask_2", connector: "notion", grantId: "g2", mode: "borrow", owner: "slack/T1/U1", requester: "slack/T1/U2", tier: "read", verb: "read" });
+  const unverified = grantRow("grant.refused", { connector: "notion", gate: "unverified_requester" });
+  const domainRefusal = grantRow("grant.refused", { connector: "notion", gate: "domain_not_admitted" });
+
+  ok(ownerPlatformOf(discordAsk) === "discord", "ownerPlatformOf reads the head segment of the owner PRINCIPAL KEY — the discriminator grant.asked actually carries");
+  ok(ownerPlatformOf(tenantScopedAsk) === "teams", "ownerPlatformOf handles the THREE-segment tenant-scoped key shape too — the platform is the head segment either way");
+  ok(ownerPlatformOf(grantRow("grant.asked", { owner: "nokey" })) === undefined, "NEGATIVE: a value with no separator is not a principal key — fail closed rather than read the whole string as a platform");
+  ok(ownerPlatformOf(grantRow("grant.asked", { owner: "" })) === undefined, "NEGATIVE: an empty owner reads as no platform");
+  ok(ownerPlatformOf(grantRow("grant.asked", { ownerPlatform: "discord" })) === undefined, "🔴 NEGATIVE, THE REGRESSION THIS PINS: a row carrying ONLY ownerPlatform yields no owner platform — grant.asked never carries that field, so a reader that accepted it would match nothing on every real deployment while passing here");
+  ok(
+    ownerPlatformOf(grantRow("grant.asked", { owner: "slack/T1/U1", ownerPlatform: "discord" })) === "slack",
+    "🔴 NEGATIVE (fallback variant): with a slack OWNER KEY and a contradicting ownerPlatform on the same row, the reader answers slack — the owner key is the discriminator and the platform field is never consulted on an ask",
+  );
+  ok(
+    discordOwnedAsks([grantRow("grant.asked", { owner: "slack/T1/U1", ownerPlatform: "discord" })]).length === 0,
+    "🔴 NEGATIVE (fallback variant, at the call site): a Slack-owned ask is not the Discord fixture however the row is decorated",
+  );
+
+  ok(discordOwnedAsks([discordAsk, slackAsk, tenantScopedAsk]).length === 1, "discordOwnedAsks reads the OWNER's platform, not the driving surface — a Slack-owned ask raised from Discord is not the fixture OPE-1310 needs");
+  ok(discordOwnedAsks([slackAsk]).length === 0, "NEGATIVE: a Slack-owned ask alone does not satisfy the Discord fixture gate");
+  ok(discordOwnedAsks([discordGrant]).length === 0, "NEGATIVE: the reader is pinned to grant.asked — a granted row is a different event and must not stand in for the ask");
+  ok(discordOwnedGrants([discordGrant, slackGrant]).length === 1, "discordOwnedGrants isolates the Discord-owned tap evidence");
+  ok(discordOwnedGrants([discordAsk]).length === 0, "NEGATIVE: an ASK is not a grant — the tap pin must not be satisfied by the row an untapped run already wrote");
+
+  ok(refusedUnverifiedRequester([unverified, domainRefusal]).length === 1, "refusedUnverifiedRequester isolates the ONE refusal whose cause this pack cannot settle from the trail alone");
+  ok(refusedUnverifiedRequester([domainRefusal]).length === 0, "NEGATIVE: every other gate value is a real refusal and is reported as one, never skipped past");
+
+  const sentNotice = grantRow("grant.notified", { outcome: "sent", ownerPlatform: "discord", owner: "discord/900000000000000001", grantId: "g1" });
+  const failedNotice = grantRow("grant.notified", { outcome: "failed", ownerPlatform: "discord", owner: "discord/900000000000000001", grantId: "g2", error: "Error" });
+  ok(noticesForGrant([sentNotice, failedNotice], "g1").length === 1, "noticesForGrant keys the notice to ONE grant id — the notice is claimed once per grant forever, so a leg must ask about its own grant, not its own time window");
+  ok(noticesForGrant([sentNotice], "g2").length === 0, "NEGATIVE: another grant's notice does not answer for this one");
+  ok(noticesForGrant([grantRow("grant.used", { grantId: "g1" })], "g1").length === 0, "NEGATIVE: a grant.used row is not a notice — the pairing of the two is the whole finding");
+  ok(allNoticesDelivered([sentNotice], "discord"), "allNoticesDelivered accepts a delivered Discord notice");
+  ok(!allNoticesDelivered([sentNotice, failedNotice], "discord"), "NEGATIVE: a failed notice means the owner was NOT told — accepting it would invert the row's whole purpose");
+  ok(!allNoticesDelivered([grantRow("grant.notified", { outcome: "sent", ownerPlatform: "slack" })], "discord"), "NEGATIVE: a notice delivered on Slack does not prove Discord's DM arm ran");
+  ok(!allNoticesDelivered([], "discord"), "VACUITY: allNoticesDelivered([]) is FALSE");
+}
 console.log(
   `✓ e2e-driver: ${passed} assertions passed (${shapeChecks} are per-scenario roster-shape checks, ` +
     `${passed - shapeChecks} are harness/driver logic — neither half is a product-behaviour coverage figure)`,

@@ -23,8 +23,8 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "discord-provider",
     globs: ["packages/providers/discord/**"],
-    scenarios: ["J-DISC", "S8"],
-    why: "J-DISC is surface: \"discord\"; S8 is the Slack→Discord cross-surface recall leg (surface: \"cross\"). (S-DM-DISCORD retired at OPE-725 — see scenarios.ts.)",
+    scenarios: ["J-DISC", "S8", "S-DISCORD-GRANT"],
+    why: "J-DISC is surface: \"discord\"; S8 is the Slack→Discord cross-surface recall leg (surface: \"cross\"); S-DISCORD-GRANT drives the Discord grant-card door (access/discord-grant-click.ts) and the Discord DM arm the owner notice rides. (S-DM-DISCORD retired at OPE-725 — see scenarios.ts.)",
   },
   {
     area: "teams-provider",
@@ -88,8 +88,8 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "routines",
     globs: ["packages/core/agent/routines/**", "packages/core/agent/tools/*_routine*.ts", "packages/core/agent/tools/*routine*.ts"],
-    scenarios: ["S23", "S-TAINT-UNATTENDED-DENY"],
-    why: "S23 proves create_routine(\"once\") acks; S-TAINT-UNATTENDED-DENY proves a real dispatcher-fired routine's gated action is refused before the approval plane (doctrine P2.6).",
+    scenarios: ["S23", "S-TAINT-UNATTENDED-DENY", "S-ROUTINE-CONNECTOR-WRITE"],
+    why: "S23 proves create_routine(\"once\") acks; S-TAINT-UNATTENDED-DENY proves a real dispatcher-fired routine's gated action is refused before the approval plane (doctrine P2.6); S-ROUTINE-CONNECTOR-WRITE is the only leg reading a routine's DECLARED standing-permission row back at fire time (routines/grants.ts), so a change to the grant key or the declare vocabulary reds it.",
   },
   {
     area: "webhooks",
@@ -112,8 +112,8 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "credentials-and-connectors",
     globs: ["packages/core/agent/credentials/**", "packages/core/agent/connections/**"],
-    scenarios: ["S-NOTION-WRITE", "S-CONNECTOR-TIER", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-AWS-BOUNDARY"],
-    why: "These are the connector-WRITE and credential-intake legs (doctrine P3.9) — a credential broker or connector-auth regression breaks them without necessarily breaking a read-only Notion scenario.",
+    scenarios: ["S-NOTION-WRITE", "S-CONNECTOR-TIER", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-AWS-BOUNDARY", "S-ROUTINE-CONNECTOR-WRITE", "S-DISCORD-GRANT"],
+    why: "These are the connector-WRITE and credential-intake legs (doctrine P3.9) — a credential broker or connector-auth regression breaks them without necessarily breaking a read-only Notion scenario. S-ROUTINE-CONNECTOR-WRITE is the only leg on `withUnattendedConnectorFence` (connections/connector-auth.ts), and S-DISCORD-GRANT the only one on the credential-GRANT plane.",
   },
   {
     area: "aws-tool",
