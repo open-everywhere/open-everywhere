@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { join, resolve, posix } from "node:path";
 import { extractPlugin, parseFrontmatter, slugify, renderGeneratedIndex } from "../agent/plugins/extract.js";
 import { parsePluginDir } from "../agent/plugins/parse.js";
 import { resolveAccess, type ResolveRequest } from "../agent/access/resolver.js";
@@ -98,7 +98,14 @@ const byPath = (p: string) => files.find((f) => f.path === p);
   ok(!!conn && conn.content.includes("auth: (ctx: SessionContext) =>"), "connection auth is the resolver form, not a static provider");
   ok(!!conn && conn.content.includes("process.env.ACME_API_KEY"), "token env detected from the server's headers");
   ok(!!conn && conn.content.includes("approval: connectorApprovalPolicy(),"), "connection wires the unattended fence via connectorApprovalPolicy(), matching notion.ts — a bare once() would park an unattended write on a card nobody clicks");
-  ok(!!conn && conn.content.includes('import { connectorApprovalPolicy } from "./connector-auth.js";'), "…and emits the import that binds it, in the relative form notion.ts uses");
+  ok(
+    !!conn && conn.content.includes('import { connectorApprovalPolicy } from "@open-everywhere/core/agent/connections/connector-auth.js";'),
+    "…and emits the import that binds it, as a package specifier that resolves outside packages/core",
+  );
+  ok(
+    !!conn && conn.content.includes('import { assertConnectorGranted } from "@open-everywhere/core/agent/access/connector-scope.js";'),
+    "the hard gate's import is a package specifier too",
+  );
   const notionSrc = readFileSync(resolve(import.meta.dirname, "..", "agent", "connections", "notion.ts"), "utf-8");
   const approvalWire = (src: string): string => /^[ \t]*approval: (.+)$/m.exec(src)?.[1] ?? "";
   ok(approvalWire(notionSrc) === "connectorApprovalPolicy(),", "notion.ts still carries the wire the scaffold claims parity with (RED the day it changes)");
@@ -157,6 +164,10 @@ const byPath = (p: string) => files.find((f) => f.path === p);
   ok(!!generated && generated.content.includes("acme-tools__deploy-runbook"), "generated module embeds the skill content");
   ok(!!generated && generated.content.includes("export const REGISTRY_ENTRY"), "generated module exports its registry entry");
   ok(!!generated && !/path:\s*`agent\/skills\//.test(generated.content), "generated module never embeds a raw agent/skills/ write pattern");
+  ok(
+    !!generated && generated.content.includes('from "@open-everywhere/core/agent/plugins/types.js";'),
+    "generated module reaches its core type by package specifier, so it resolves outside packages/core",
+  );
   ok(files.filter((f) => f.path.startsWith("agent/plugins/generated/")).length === 1, "exactly one generated file for one plugin");
 }
 
@@ -196,6 +207,57 @@ const byPath = (p: string) => files.find((f) => f.path === p);
   ok(!writesAgentSkills.test(extractSrc), "extract.ts source contains no `path: `agent/skills/...`` write pattern");
   ok(!writesAgentSkills.test(cliSrc), "extract-plugin.ts CLI source contains no `path: `agent/skills/...`` write pattern");
   ok(!files.some((f) => f.path.startsWith("agent/skills/")), "no OutputFile from this extraction ever targets agent/skills/");
+}
+
+{
+  const corePkgPath = resolve(import.meta.dirname, "..", "package.json");
+  const coreExports = (JSON.parse(readFileSync(corePkgPath, "utf-8")) as { exports: Record<string, unknown> }).exports;
+  const scanned = [...files, { path: "agent/plugins/generated/index.ts", content: renderGeneratedIndex([pluginName]) }];
+  const emittedPaths = new Set(scanned.map((f) => f.path));
+  const specifiers = (src: string): string[] => [...src.matchAll(/\bfrom\s+"([^"]+)"/g)].map((m) => m[1]);
+  const selfContained = (fromPath: string, spec: string): boolean =>
+    emittedPaths.has(posix.normalize(posix.join(posix.dirname(fromPath), spec)).replace(/\.js$/, ".ts"));
+  let relativeSeen = 0;
+  let coreSeen = 0;
+
+  for (const f of scanned) {
+    if (!f.path.endsWith(".ts")) continue;
+    ok(
+      !/^\s*import\s+["']/m.test(f.content) && !/\bfrom\s+'/.test(f.content),
+      `emitted ${f.path}: uses only double-quoted \`from\` imports, the one form this scan can see`,
+    );
+    for (const spec of specifiers(f.content)) {
+      if (spec.startsWith(".")) {
+        relativeSeen++;
+        ok(
+          selfContained(f.path, spec),
+          `emitted ${f.path}: relative specifier "${spec}" points at another file this extraction emits ` +
+            `(a relative reach into packages/core resolves only inside packages/core)`,
+        );
+      } else if (spec.startsWith("@open-everywhere/core/")) {
+        coreSeen++;
+        const subpath = `.${spec.slice("@open-everywhere/core".length)}`;
+        ok(Object.hasOwn(coreExports, subpath), `emitted ${f.path}: "${spec}" is a subpath core's exports map publishes`);
+        ok(
+          existsSync(resolve(import.meta.dirname, "..", subpath.replace(/^\.\//, "").replace(/\.js$/, ".ts"))),
+          `emitted ${f.path}: "${spec}" is backed by a source module in packages/core`,
+        );
+      }
+    }
+  }
+
+  ok(coreSeen >= 3, "the scan saw at least the three core package specifiers — the connection's two gate imports + the generated module's type import");
+  ok(relativeSeen >= 1, "…and the loop's accept path ran on a real relative specifier — the aggregator's sibling import");
+
+  ok(
+    !selfContained("agent/connections/acme-tools__search.ts", "./connector-auth.js"),
+    "control: the exact pre-OPE-1337 relative specifier is rejected — this is what reds if the scaffold regresses",
+  );
+  ok(
+    !selfContained("agent/connections/acme-tools__search.ts", "../access/connector-scope.js"),
+    "control: the pre-OPE-1337 parent-relative specifier is rejected too",
+  );
+  ok(!Object.hasOwn(coreExports, "./agent/connections/connector-auth.ts"), "control: the exports map is keyed by .js subpaths, so a .ts subpath is correctly absent");
 }
 
 {

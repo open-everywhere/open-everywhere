@@ -106,10 +106,17 @@ function connectionFile(slug: string, server: ParsedMcpServer): string {
 // context to the resolver once per execution step, so the gate reads the caller identity
 // straight off \`ctx.session.auth\` — no ALS reach needed. Swap getToken for a real credential
 // source in a real deployment.
+//
+// 🔴 The two gate imports are PACKAGE specifiers, never relative ones (OPE-1337). This file
+// lands in a self-hoster's \`agent/connections/\`, which holds neither module and declares no
+// path alias, so \`./connector-auth.js\` resolves only inside packages/core. Outside it the
+// scaffold fails typecheck, and the likely repair — deleting the import and the gate with it —
+// re-opens the OPE-1274 unattended stall this scaffold exists to close. Both paths are in
+// core's exports map, so a consumer that depends on the published package resolves them.
 import { defineMcpClientConnection } from "eve/connections";
 import type { SessionContext } from "eve/context";
-import { connectorApprovalPolicy } from "./connector-auth.js";
-import { assertConnectorGranted } from "../access/connector-scope.js";
+import { connectorApprovalPolicy } from "@open-everywhere/core/agent/connections/connector-auth.js";
+import { assertConnectorGranted } from "@open-everywhere/core/agent/access/connector-scope.js";
 
 export default defineMcpClientConnection({
   url: ${JSON.stringify(server.url)},
